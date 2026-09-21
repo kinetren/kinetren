@@ -2681,9 +2681,22 @@ impl KtApp {
                             tr(k::tl::hint::LEVEL)
                         });
                     }
-                    Some((_, ClipZone::Body)) => {
+                    Some((id, ClipZone::Body)) => {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-                        zone_hint = Some(tr(k::tl::hint::CLIP));
+                        // ЧТО ЗНАЧИТ БУЛАВКА — говорится там же, где она
+                        // нарисована (Р.59, стадия 3): «сколько ручек из
+                        // объявленных этот выпуск поменял».
+                        let ov = self
+                            .model
+                            .clip(id)
+                            .filter(|c| !c.overrides.is_empty())
+                            .map(|c| self.instance_override_counts(c));
+                        match ov {
+                            Some((n, total)) => {
+                                hint_owned = Some(crate::tf!(k::pubp::OVERRIDDEN, n, total));
+                            }
+                            None => zone_hint = Some(tr(k::tl::hint::CLIP)),
+                        }
                     }
                     None => {
                         // «пустое место» говорилось и НАД морф/камера-блоком:
@@ -3673,19 +3686,18 @@ impl KtApp {
         // Превью ЛЕНТ (Р.56, п.452). Заявки ставятся ДО цикла отрисовки и
         // по ключу (лента, редакция) — значит ни зум, ни прокрутка их не
         // порождают (инвариант 8), а повторная заявка снимается дедупом.
-        let reel_hashes = self.reel_hashes();
-        let reel_keys: std::collections::HashMap<ClipId, crate::reel_preview::ReelKey> = self
+        // Ключ — по ЭКЗЕМПЛЯРУ (Р.59, стадия 3): у экземпляра с
+        // переопределениями своя редакция ленты и свои кадры.
+        let reel_keys = self.reel_keys();
+        let wanted: Vec<(crate::reel_preview::ReelKey, Vec<kt_model::Override>)> = self
             .model
             .project()
             .clips
             .iter()
-            .filter_map(|c| {
-                let h = *reel_hashes.get(&c.media)?;
-                Some((c.id, crate::reel_preview::ReelKey { seq: c.media, hash: h }))
-            })
+            .filter_map(|c| Some((*reel_keys.get(&c.id)?, c.overrides.clone())))
             .collect();
-        for key in reel_keys.values().copied().collect::<Vec<_>>() {
-            self.request_reel_preview(key);
+        for (key, ov) in wanted {
+            self.request_reel_preview(key, &ov);
         }
         let peaks = self.peaks.lock().unwrap();
         let offline = self.offline.lock().unwrap().clone();
@@ -4105,6 +4117,14 @@ impl KtApp {
                     let n = self.model.document().sequence_uses(c.media);
                     if n > 1 {
                         label.push_str(&format!("  ×{n}"));
+                    }
+                    // БУЛАВКА — «этот экземпляр отличается от ленты»
+                    // (Р.59, стадия 3). Место уже занято подписью, своей
+                    // полосы под признак не заводим (правило 13); сколько
+                    // именно ручек переопределено — в подсказке.
+                    if !c.overrides.is_empty() {
+                        label.push(' ');
+                        label.push_str(crate::icons::PIN);
                     }
                 }
                 if !c.fx.is_empty() {
@@ -5308,6 +5328,28 @@ impl KtApp {
                             }
                         }
                     });
+                    ui.separator();
+                }
+                // ПАРАМЕТРЫ КОМПОЗИЦИИ — первым пунктом у экземпляра
+                // (Р.59, стадия 3): это то, зачем потребитель к вложению
+                // и приходит чаще всего. Рядом — авторский список: пара
+                // «заполнить» / «объявить» живёт в одном месте.
+                if self.is_nest(id) {
+                    let seq = self.model.clip(id).map(|c| c.media);
+                    let r = ui.button(tr(k::pubp::INST_OPEN));
+                    crate::widgets::field_probe::note("pub.inst_open", r.rect);
+                    if r.clicked() {
+                        self.open_inst_params(id);
+                        ui.close();
+                    }
+                    let r = ui.button(tr(k::pubp::LIST_OPEN));
+                    crate::widgets::field_probe::note("pub.list_open", r.rect);
+                    if r.clicked() {
+                        if let Some(seq) = seq {
+                            self.open_published_win(seq);
+                        }
+                        ui.close();
+                    }
                     ui.separator();
                 }
                 if ui.button(tr(k::tl::menu::COPY)).clicked() {

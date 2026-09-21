@@ -208,42 +208,7 @@ fn production_corpus() -> Vec<(String, String)> {
 /// значит её никто не зовёт, и это надо объяснить предложением, а не
 /// словом «TODO». Подключил к UI — обязан отсюда убрать (иначе список за
 /// год покроет всё и перестанет что-либо значить).
-const NOT_FROM_UI: &[(&str, &str)] = &[
-    // Р.59, стадия 3: модель, движок и формат публичных параметров легли
-    // отдельным коммитом, окна публикации и параметров композиции — следующим.
-    // Список САМОЧИСТЯЩИЙСЯ: как только приложение начнёт создавать команду,
-    // этот же тест потребует убрать строку отсюда.
-    (
-        "PublishParam",
-        "Р.59 стадия 3: окно «Публичные параметры» ленты идёт следующим коммитом; \
-         до него объявить ручку можно только из модели и тестов",
-    ),
-    (
-        "UnpublishParam",
-        "Р.59 стадия 3: снятие ручки живёт в том же окне «Публичные параметры», \
-         которое приезжает следующим коммитом",
-    ),
-    (
-        "SetPublished",
-        "Р.59 стадия 3: переименование и сужение пределов — строка того же окна \
-         «Публичные параметры», оно приезжает следующим коммитом",
-    ),
-    (
-        "ReorderPublished",
-        "Р.59 стадия 3: порядок ручек в окне потребителя задаётся окном \
-         «Публичные параметры», которое приезжает следующим коммитом",
-    ),
-    (
-        "SetOverride",
-        "Р.59 стадия 3: окно «Параметры композиции» у экземпляра приезжает \
-         следующим коммитом; модель и движок уже умеют переопределения",
-    ),
-    (
-        "ClearOverride",
-        "Р.59 стадия 3: кнопка сброса строки живёт в окне «Параметры композиции», \
-         которое приезжает следующим коммитом",
-    ),
-];
+const NOT_FROM_UI: &[(&str, &str)] = &[];
 
 /// Тест 252 (Р.38): осиротевших команд нет.
 ///
@@ -1004,12 +969,12 @@ fn verbs(e: crate::timeline::TlEntity) -> Vec<(Verb, Reach)> {
 /// доступности берётся из исходного текста и многоточия не содержит
 /// никогда, поэтому «усечено или перенесено» по ней не отличить.
 #[derive(Clone)]
-struct PaintedText {
-    src: String,
-    drawn: String,
-    rows: usize,
-    elided: bool,
-    rect: egui::Rect,
+pub(crate) struct PaintedText {
+    pub src: String,
+    pub drawn: String,
+    pub rows: usize,
+    pub elided: bool,
+    pub rect: egui::Rect,
 }
 
 fn collect_texts(shape: &egui::epaint::Shape, out: &mut Vec<PaintedText>) {
@@ -1030,7 +995,7 @@ fn collect_texts(shape: &egui::epaint::Shape, out: &mut Vec<PaintedText>) {
     }
 }
 
-fn painted_texts(h: &egui_kittest::Harness<'_, crate::app::KtApp>) -> Vec<PaintedText> {
+pub(crate) fn painted_texts(h: &egui_kittest::Harness<'_, crate::app::KtApp>) -> Vec<PaintedText> {
     let mut out = Vec::new();
     for cs in &h.output().shapes {
         collect_texts(&cs.shape, &mut out);
@@ -2067,4 +2032,174 @@ fn t669_generator_thumbs_follow_the_event_address() {
         "карточка вида без кадра осталась ЧЁРНЫМ прямоугольником — \
          невозможность показать картинку обязана быть видна (правило 16)"
     );
+}
+
+/// Тест 682 (Р.59, стадия 3): дверь публикации ОДНА и она достижима.
+///
+/// Утверждаются три следствия, каждое — из точки, откуда действует
+/// человек: (1) правый клик по подписи параметра ВНУТРИ ленты предлагает
+/// «Опубликовать…», а по уже объявленной — «Снять публикацию»; и так
+/// и при полном входе, и в раскрытой полосе; (2) вне ленты этого пункта
+/// НЕТ ВОВСЕ (правило 9), а строка состояния объясняет почему (правило
+/// 16); (3) меню экземпляра достаёт до ОБОИХ окон — потребительского и
+/// авторского.
+#[test]
+fn t682_publishing_is_reachable_from_inside_a_reel_only() {
+    use crate::i18n::{k, tr};
+    use crate::layout_tests::harness_news_template;
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+
+    // подпись параметра — ВЕРХНЯЯ из одноимённых: то же имя стоит ещё и
+    // кнопкой выбора кривой ниже (урок t281)
+    let label_top =
+        |h: &mut egui_kittest::Harness<'_, crate::app::KtApp>, label: &str| -> Option<egui::Rect> {
+            h.query_all_by_label_contains(label)
+                .map(|n| n.rect())
+                .min_by(|a, b| a.top().total_cmp(&b.top()))
+        };
+    // ЯЗЫК ставит харнесс, поэтому подписи спрашиваются ПОСЛЕ его
+    // создания: собранная раньше строка пришла бы на языке по умолчанию,
+    // и тест искал бы в русском окне английское слово.
+    let labels = || {
+        (
+            tr(k::pubp::PUBLISH).to_string(),
+            tr(k::pubp::UNPUBLISH).to_string(),
+            // объявленный ряд и НЕобъявленный: у первого дверь ведёт
+            // наружу, у второго — внутрь
+            crate::widgets::param_label_scoped(kt_model::ParamScope::Generator, "size"),
+            crate::widgets::param_label_scoped(kt_model::ParamScope::Generator, "line_spacing"),
+        )
+    };
+
+    // ---- 1а) ПОЛНЫЙ ВХОД ---------------------------------------------
+    {
+        let (mut h, s) = harness_news_template();
+        let (publish, unpublish, published_row, free_row) = labels();
+        h.state_mut().enter_nest(s.a);
+        h.step();
+        h.state_mut().open_fx_editor_head(s.inner);
+        h.step();
+        h.step();
+        let rect = label_top(&mut h, &free_row).expect("подписи необъявленного ряда нет");
+        let before = h.query_all_by_label_contains(&publish).count();
+        right_click(&mut h, rect.center());
+        assert!(
+            h.query_all_by_label_contains(&publish).count() > before,
+            "внутри ленты правый клик по подписи не предложил публикацию"
+        );
+        let _ = (&unpublish, &published_row);
+    }
+
+    // ---- 1в) уже объявленный ряд предлагает СНЯТИЕ, той же дверью ----
+    // Свой харнесс: закрывать меню Esc'ом нельзя — он каскадом гасит и
+    // само окно, и следующая проверка щупала бы пустой экран.
+    {
+        let (mut h, s) = harness_news_template();
+        let (_pub, unpublish, published_row, _free) = labels();
+        h.state_mut().enter_nest(s.a);
+        h.step();
+        h.state_mut().open_fx_editor_head(s.inner);
+        h.step();
+        h.step();
+        let rect = label_top(&mut h, &published_row).expect("подписи объявленного ряда нет");
+        let before = h.query_all_by_label_contains(&unpublish).count();
+        right_click(&mut h, rect.center());
+        assert!(
+            h.query_all_by_label_contains(&unpublish).count() > before,
+            "у объявленной ручки нет обратного действия — она была бы ловушкой"
+        );
+    }
+
+    // ---- 1б) РАСКРЫТАЯ ПОЛОСА ----------------------------------------
+    {
+        let (mut h, s) = harness_news_template();
+        let (publish, _un, _pub_row, free_row) = labels();
+        h.state_mut().expand_in_place(s.a);
+        h.step();
+        h.step();
+        assert!(!h.state().model.bands().is_empty(), "полоса не раскрылась — сцена не та");
+        h.state_mut().open_fx_editor_head(s.inner);
+        h.step();
+        h.step();
+        let rect = label_top(&mut h, &free_row).expect("подписи в полосе нет");
+        let before = h.query_all_by_label_contains(&publish).count();
+        right_click(&mut h, rect.center());
+        assert!(
+            h.query_all_by_label_contains(&publish).count() > before,
+            "в раскрытой полосе публикация недостижима, хотя содержимое то же самое"
+        );
+    }
+
+    // ---- 2) ВНЕ ЛЕНТЫ пункта нет -------------------------------------
+    {
+        let (mut h, _s) = harness_news_template();
+        let (publish, _un, _pr, _fr) = labels();
+        let root = {
+            let doc = h.state().model.document();
+            h.state()
+                .model
+                .project()
+                .clips
+                .iter()
+                .find(|c| c.r#gen.is_none() && doc.sequence(c.media).is_none())
+                .map(|c| c.id)
+                .expect("корневое событие из файла")
+        };
+        assert!(
+            h.state_mut().apply(Command::SetFx {
+                id: root,
+                fx: vec![FxInstance::Gain { db: 0.0, pan: 0.0 }],
+            })
+        );
+        h.step();
+        h.state_mut().open_fx_editor(root);
+        h.step();
+        h.step();
+        let db = crate::widgets::param_label("db");
+        let rect = label_top(&mut h, &db).expect("подписи усиления в окне нет");
+        // СНАЧАЛА подсказка (меню бы её накрыло): молчанием отсутствие
+        // пункта не остаётся — строка состояния называет причину
+        h.hover_at(rect.center());
+        h.step();
+        h.step();
+        let hint = h.state().hover_hint.clone().unwrap_or_default();
+        assert!(
+            hint.contains(tr(k::pubp::OUTSIDE_REEL)),
+            "подсказка не объяснила, где живёт публикация: {hint:?}"
+        );
+        let before = h.query_all_by_label_contains(&publish).count();
+        right_click(&mut h, rect.center());
+        assert_eq!(
+            h.query_all_by_label_contains(&publish).count(),
+            before,
+            "вне ленты пункт публикации появился — это мёртвый контрол (правило 9)"
+        );
+    }
+
+    // ---- 3) меню экземпляра достаёт до ОБОИХ окон --------------------
+    {
+        let (mut h, s) = harness_news_template();
+        h.step();
+        let g = h.state().tl_geom.clone().expect("геометрия таймлайна");
+        let c = h.state().model.clip(s.b).cloned().expect("второй выпуск");
+        let pos = egui::pos2(
+            g.tick_to_x((c.start + kt_time::Tick(c.duration.0 / 2)).0),
+            g.lane_y(kt_model::ClipKind::Video, c.lane, 0.5),
+        );
+        right_click(&mut h, pos);
+        let labels: Vec<String> = h
+            .query_all_by_label_contains("")
+            .filter_map(|n| {
+                use egui_kittest::kittest::NodeT;
+                n.accesskit_node().label().map(|l| l.to_string())
+            })
+            .collect();
+        for want in [tr(k::pubp::INST_OPEN), tr(k::pubp::LIST_OPEN)] {
+            assert!(
+                labels.iter().any(|l| l.contains(want)),
+                "меню экземпляра не ведёт к «{want}»: {labels:?}"
+            );
+        }
+    }
 }

@@ -236,8 +236,13 @@ impl ReelPreviews {
     /// Правка внутри ленты: старые редакции больше не нужны, и незаконченная
     /// работа по ним — тем более. Негативный кэш ленты чистится ЦЕЛИКОМ:
     /// инвалидация — единственный повод попробовать снова (t69 у тумб).
-    pub fn invalidate_seq(&mut self, seq: MediaId, keep_hash: u64) {
-        let stale = |k: &ReelKey| k.seq == seq && k.hash != keep_hash;
+    ///
+    /// `keep` — ЖИВЫЕ редакции этой ленты, а не одна (Р.59, стадия 3):
+    /// с переопределениями у одной ленты столько редакций, сколько
+    /// различающихся экземпляров, и «оставить одну» означало бы, что два
+    /// выпуска вечно выбрасывают работу друг друга.
+    pub fn invalidate_seq(&mut self, seq: MediaId, keep: &std::collections::HashSet<u64>) {
+        let stale = |k: &ReelKey| k.seq == seq && !keep.contains(&k.hash);
         self.ready.retain(|k, _| !stale(k));
         self.failed.retain(|k, _| k.seq != seq);
         self.queue.retain(|(k, _)| !stale(k));

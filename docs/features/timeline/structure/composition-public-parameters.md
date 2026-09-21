@@ -6,13 +6,13 @@ priority: A
 cost: XL
 category: timeline/structure
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: да
 crates: [kt-model, kt-engine, kt-otio, kt-app]
 invariants: [3, 4, 7, 11]
 ui_rules: [13, 16, 17, 20]
 round: Р.59
-point: null
-tests: []
+point: 469
+tests: [t671, t672, t673, t674, t675, t676, t677, t678, t679, t680, t681, t682, t683, t684, t685, t686, t687, t688, t689, t690]
 depends_on: [F-TL-004, F-TXT-002]
 checked: 2026-09-21
 ---

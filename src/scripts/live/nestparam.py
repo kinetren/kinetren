@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+"""Живой сценарий Р.59 (стадия 3): новостной шаблон целиком, руками.
+
+Претензия владельца дословно: «кто-то создал проект-шаблон для новостного
+выпуска… очевидно не будут же люди каждый раз лезть в композицию и менять
+там текст логотипы».
+
+Харнесс-тесты t682-t685 проверяют достижимость и вёрстку в синтетической
+сцене. Здесь вопрос другой: доходит ли путь ЦЕЛИКОМ настоящей мышью — от
+правого клика по подписи внутри композиции до второго выпуска, у которого
+свой заголовок, и обратно до правки шаблона, которую видят оба.
+
+Шаги, каждый со своим наблюдаемым следствием:
+
+1. собрать шаблон: титр и цветная плашка-логотип, свёрнутые в композицию;
+2. ВНУТРИ композиции опубликовать заголовок (правый клик по полю текста)
+   и ширину логотипа (правый клик по ПОДПИСИ поля) — в файле у ленты
+   появляются две объявленные ручки;
+3. поставить композицию ВТОРОЙ раз из бина;
+4. у второго выпуска открыть «Параметры композиции» и поменять заголовок
+   и ширину — в файле переопределения лежат ТОЛЬКО у него;
+5. поправить заголовок в САМОМ шаблоне — правка доезжает до обоих: у
+   первого выпуска меняется показанный текст (своего у него нет), у
+   второго остаётся его собственный.
+"""
+import json
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(__file__))
+from kt_live import Live, geometry, project_with_clips, require_tools  # noqa: E402
+
+SEC = 90000
+
+
+def walk(node):
+    """Все узлы документа .otio — публикации и переопределения лежат в
+    сайдкаре `metadata.kt`, а вложение в файле это Stack внутри трека."""
+    if isinstance(node, dict):
+        yield node
+        for v in node.values():
+            yield from walk(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from walk(v)
+
+
+def published_of(doc):
+    """Объявленные ручки всех лент документа."""
+    out = []
+    for n in walk(doc):
+        kt = n.get("metadata", {}).get("kt") if isinstance(n.get("metadata"), dict) else None
+        if isinstance(kt, dict) and kt.get("published"):
+            out.extend(kt["published"])
+        if isinstance(n.get("published"), list) and n.get("published"):
+            out.extend(n["published"])
+    # один и тот же сайдкар встречается в обходе один раз, но подстрахуемся
+    seen, uniq = set(), []
+    for p in out:
+        key = json.dumps(p, sort_keys=True, ensure_ascii=False)
+        if key not in seen:
+            seen.add(key)
+            uniq.append(p)
+    return uniq
+
+
+def override_sets(doc):
+    """Наборы переопределений всех событий — по одному списку на событие,
+    у которого он непуст."""
+    out = []
+    for n in walk(doc):
+        meta = n.get("metadata")
+        if not isinstance(meta, dict):
+            continue
+        kt = meta.get("kt")
+        if isinstance(kt, dict) and kt.get("overrides"):
+            out.append(kt["overrides"])
+    return out
+
+
+def title_text(doc):
+    """Текст титра ВНУТРИ шаблона — то, что правится один раз на всех."""
+    for n in walk(doc):
+        meta = n.get("metadata")
+        if not isinstance(meta, dict):
+            continue
+        kt = meta.get("kt")
+        if isinstance(kt, dict) and isinstance(kt.get("gen"), dict):
+            g = kt["gen"]
+            if "text" in g:
+                return g["text"]
+    return None
+
+
+def leave_reel(app):
+    """Наружу Esc-КАСКАДОМ: одна клавиша не делает два дела, поэтому
+    выделение, полоса и выход снимаются по очереди (Р.55)."""
+    for _ in range(5):
+        if app.geom()["nest"]["depth"] == 0:
+            return True
+        app.key("Escape")
+        time.sleep(0.5)
+    return app.geom()["nest"]["depth"] == 0
+
+
+def make_generator(app, group, kind, at_ticks):
+    """Создать генератор из меню бина — тот же путь, что у человека."""
+    win = geometry()
+    b = app.geom()["bin"]
+    app.click(app.x_at(at_ticks), app.ruler_y())
+    time.sleep(0.4)
+    app.right_click(
+        win["x"] + int((b["left"] + b["right"]) / 2),
+        win["y"] + int(b["bottom"]) - 10,
+    )
+    app.click_probe("gen.new", "пункт «Создать генератор»")
+    app.hover_probe(f"gen.new.group.{group}", f"группа «{group}»")
+    app.click_probe(f"gen.new.{kind}", f"вид «{kind}» в подменю")
+    time.sleep(0.6)
+    # созданный генератор открывает своё окно эффектов — закрываем, иначе
+    # оно перекрывает бин и таймлайн
+    app.key("Escape")
+    time.sleep(0.4)
+
+
+def main(out):
+    require_tools()
+    path = os.path.join(out, "nestparam.otio")
+    proj = project_with_clips(path, [(0.0, 2.0, "synth:Ramp")])
+    os.environ["KT_AUTOSAVE_SECS"] = "600"
+
+    with Live("nestparam", out, project=proj) as app:
+        y = app.lane_y("video", 0, 0.6)
+
+        # --- 1. шаблон: титр и цветная плашка ---------------------------
+        make_generator(app, "titles", "text", 3 * SEC)
+        make_generator(app, "shapes", "rect", 6 * SEC)
+        app.shot("built")
+        clips = app.live_clips()
+        app.expect(len(clips) == 3, f"генераторы не встали на монтаж: {clips}")
+
+        gens = sorted(c for c in clips if c[0] >= 3 * SEC)
+        app.click(app.x_at(gens[0][0] + gens[0][1] // 2), y)
+        app.click(app.x_at(gens[1][0] + gens[1][1] // 2), y, mods=("ctrl",))
+        app.right_click(app.x_at(gens[1][0] + gens[1][1] // 2), y)
+        app.click_probe("nest.collapse", "пункт сворачивания в композицию")
+        time.sleep(0.6)
+        app.expect(
+            len(app.live_clips()) == 2,
+            f"шаблон не свернулся в одну композицию: {app.live_clips()}",
+        )
+
+        # --- 2. публикация ВНУТРИ композиции ----------------------------
+        inst = max(app.live_clips())
+        inst_x = app.x_at(inst[0] + inst[1] // 2)
+        app.right_click(inst_x, y)
+        app.click_probe("nest.enter", "пункт «Войти в ленту»")
+        time.sleep(0.8)
+        app.expect(app.geom()["nest"]["depth"] == 1, "вход внутрь композиции не состоялся")
+
+        inner = sorted(app.live_clips())
+        # ЗАГОЛОВОК — на самом поле текста: подписи у многострочного поля
+        # нет и заводить её ради одной надписи нельзя (правило 13)
+        app.double_click(app.x_at(inner[0][0] + inner[0][1] // 2), y)
+        time.sleep(0.8)
+        app.expect(app.has_probe("titlew.text"), "окно титра внутри композиции открылось")
+        app.right_click_probe("titlew.text", "поле текста титра")
+        app.click_probe("pub.publish.text", "пункт «Опубликовать…» у заголовка")
+        time.sleep(0.5)
+        app.expect(app.has_probe("pub.dialog.name"), "диалог имени ручки открылся")
+        app.shot("publish-dialog")
+        app.click_probe("pub.dialog.ok", "подтверждение публикации")
+        time.sleep(0.6)
+        app.key("Escape")
+        time.sleep(0.4)
+
+        # ШИРИНА ЛОГОТИПА — правым кликом по ПОДПИСИ числового поля
+        app.double_click(app.x_at(inner[1][0] + inner[1][1] // 2), y)
+        time.sleep(0.8)
+        app.right_click_probe("lbl.w", "подпись ширины плашки")
+        app.click_probe("pub.publish.w", "пункт «Опубликовать…» у ширины")
+        time.sleep(0.5)
+        app.click_probe("pub.dialog.ok", "подтверждение публикации ширины")
+        time.sleep(0.6)
+        app.key("Escape")
+        time.sleep(0.4)
+        app.shot("published")
+
+        saved = app.saved_project()
+        pubs = published_of(saved.doc)
+        app.expect(
+            len(pubs) == 2,
+            f"объявленных ручек в файле не две: {[p.get('name') for p in pubs]}",
+        )
+        ids = {p["target"]["param"]: p["id"] for p in pubs}
+        app.expect("text" in ids and "w" in ids, f"в файле не те ручки: {ids}")
+
+        # --- 3. второй выпуск -------------------------------------------
+        app.expect(leave_reel(app), "Esc-каскад вывел наружу")
+        app.click(app.x_at(10 * SEC), app.ruler_y())
+        time.sleep(0.4)
+        card = next((f for f in app.geom().get("fields", []) if f["param"] == "bin.reel"), None)
+        app.expect(card is not None, "карточка композиции в бине показана")
+        if card:
+            win = geometry()
+            app.right_click(
+                win["x"] + int(card["x"] + card["w"] / 2),
+                win["y"] + int(card["y"] + card["h"] / 2),
+            )
+            app.click_probe("bin.place", "пункт «Поставить» у карточки композиции")
+        time.sleep(0.8)
+        places = app.live_clips()
+        app.expect(len(places) == 3, f"второй выпуск не встал: {places}")
+
+        # --- 4. у второго выпуска СВОИ значения -------------------------
+        second = max(places)
+        sx = app.x_at(second[0] + second[1] // 2)
+        app.click(sx, y)
+        app.right_click(sx, y)
+        app.click_probe("pub.inst_open", "пункт «Параметры композиции»")
+        time.sleep(0.8)
+        app.shot("instance-window")
+        app.expect(
+            app.has_probe(f"inst.value.{ids['text']}"),
+            "строка заголовка в окне параметров композиции",
+        )
+        app.click_probe(f"inst.value.{ids['text']}", "поле заголовка второго выпуска")
+        for ch in ["v", "t", "o", "r", "o", "y"]:
+            app.key(ch)
+        time.sleep(0.5)
+        # ширина: клик по DragValue переводит его в ввод числом
+        app.click_probe(f"inst.value.{ids['w']}", "поле ширины второго выпуска")
+        for ch in ["ctrl+a", "0", "period", "9"]:
+            app.key(ch)
+        app.key("Return")
+        time.sleep(0.6)
+        app.key("Escape")
+        time.sleep(0.5)
+
+        saved = app.saved_project()
+        sets = override_sets(saved.doc)
+        app.expect(
+            len(sets) == 1,
+            f"переопределения лежат не у одного события: наборов {len(sets)}",
+        )
+        app.expect(
+            bool(sets) and len(sets[0]) == 2,
+            f"второй выпуск переопределил не обе ручки: {sets}",
+        )
+        app.shot("second-differs")
+
+        # --- 5. правка ШАБЛОНА догоняет оба выпуска ----------------------
+        was = title_text(saved.doc)
+        app.expect(was is not None, f"текст титра шаблона найден в файле: {was!r}")
+        # ПЕРВЫЙ ВЫПУСК — экземпляр той же ленты, а не исходный клип
+        # проекта: `min` по всему монтажу взял бы его и щёлкнул мимо
+        first = min(c for c in app.live_clips() if c[1] == second[1])
+        fx = app.x_at(first[0] + first[1] // 2)
+        app.right_click(fx, y)
+        app.click_probe("nest.enter", "вход в композицию через ПЕРВЫЙ выпуск")
+        time.sleep(0.8)
+        inner = sorted(app.live_clips())
+        app.double_click(app.x_at(inner[0][0] + inner[0][1] // 2), y)
+        time.sleep(0.8)
+        app.click_probe("titlew.text", "поле текста титра шаблона")
+        for ch in ["z", "z"]:
+            app.key(ch)
+        time.sleep(0.5)
+        app.key("Escape")
+        time.sleep(0.4)
+        app.expect(leave_reel(app), "Esc-каскад вывел наружу после правки шаблона")
+
+        saved = app.saved_project()
+        now = title_text(saved.doc)
+        app.expect(
+            now != was,
+            f"правка шаблона не записалась: было {was!r}, стало {now!r}",
+        )
+        sets = override_sets(saved.doc)
+        app.expect(
+            len(sets) == 1 and len(sets[0]) == 2,
+            f"правка шаблона задела переопределения второго выпуска: {sets}",
+        )
+        # у ПЕРВОГО выпуска своего заголовка нет — он показывает новый
+        # текст шаблона; у ВТОРОГО свой, и он остался
+        own = [o for o in sets[0] if o["pub_id"] == ids["text"]]
+        app.expect(len(own) == 1, f"переопределение заголовка второго выпуска пропало: {sets}")
+        # значение переопределения лежит тегированным (`{"t":…,"v":…}`)
+        app.expect(
+            own and own[0]["value"].get("v") != now,
+            f"второй выпуск сравнялся с шаблоном: {own} против {now!r}",
+        )
+        app.shot("template-edited")
+        return app.done()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1] if len(sys.argv) > 1 else "."))

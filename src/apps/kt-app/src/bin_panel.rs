@@ -99,6 +99,8 @@ enum ReelVerb {
     Expand,
     Open,
     Rename,
+    /// Окно «Публичные параметры» ленты (Р.59, стадия 3).
+    Published,
     Remove,
 }
 
@@ -819,6 +821,21 @@ impl KtApp {
                         crate::theme::BAND_EDGE,
                     );
                 }
+                // СКОЛЬКО РУЧЕК ОБЪЯВЛЕНО (Р.59, стадия 3) — булавка с
+                // числом в свободном углу карточки: шаблон отличим от
+                // обычной композиции с одного взгляда, и своей полосы под
+                // это не заводится (правило 13). Ноль не пишется — «×1»
+                // того же рода шум.
+                let pubs = seq.published.len();
+                if pubs > 0 {
+                    p.text(
+                        thumb_rect.left_bottom() + egui::vec2(4.0, -2.0),
+                        egui::Align2::LEFT_BOTTOM,
+                        format!("{}{pubs}", crate::icons::PIN),
+                        egui::FontId::proportional(11.0),
+                        crate::theme::BAND_EDGE,
+                    );
+                }
             }
         }
         let kinds = if is_reel { None } else { self.thumbs.kinds(id) };
@@ -947,6 +964,9 @@ impl KtApp {
                     (k::tl::menu::NEST_EXPAND_HERE, ReelVerb::Expand),
                     (k::tl::menu::NEST_ENTER, ReelVerb::Open),
                     (k::tl::menu::NEST_RENAME, ReelVerb::Rename),
+                    // авторский список ручек — ТО ЖЕ ТЕЛО, что у пункта
+                    // меню экземпляра (правило 17)
+                    (k::pubp::LIST_OPEN, ReelVerb::Published),
                 ] {
                     let r = ui.button(tr(key));
                     crate::widgets::field_probe::note(
@@ -954,6 +974,7 @@ impl KtApp {
                             ReelVerb::Expand => "bin.reel.expand",
                             ReelVerb::Open => "bin.reel.open",
                             ReelVerb::Rename => "bin.reel.rename",
+                            ReelVerb::Published => "bin.reel.published",
                             ReelVerb::Remove => "bin.reel.remove",
                         },
                         r.rect,
@@ -1118,6 +1139,7 @@ impl KtApp {
                     self.model.document().sequence(seq).map(|s| s.name.clone()).unwrap_or_default();
                 self.seq_name = Some(crate::app::SeqNameDialog { seq, name, focus: true });
             }
+            ReelVerb::Published => self.open_published_win(seq),
             ReelVerb::Remove => {
                 // АДРЕСНОЕ удаление: раньше была только кнопка «убрать
                 // неиспользованные», то есть все сразу. Занятая лента

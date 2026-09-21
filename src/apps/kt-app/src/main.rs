@@ -29,6 +29,7 @@ mod layout_tests;
 mod meters;
 mod morpher_editor;
 mod project_lock;
+mod pubparam;
 #[cfg(test)]
 mod reach_tests;
 mod reel_preview;

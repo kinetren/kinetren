@@ -201,6 +201,13 @@ impl KtApp {
         let mut panel_pick: Option<crate::ctx_menu::PanelTarget> = None;
         // окно живёт, пока жива хоть одна его цепочка
         ed.members.retain(|id| self.model.clip(*id).is_some());
+        // Публикация (Р.59, стадия 3): документ клонируется ОДИН раз на
+        // отрисовку окна — `publish_ctx` зовётся на каждый носитель, и
+        // клон проекта на строку был бы аллокацией в пути отрисовки.
+        let pub_doc = self.model.document();
+        // окно параметров композиции открывается ПОСЛЕ отрисовки: внутри
+        // ui-замыкания `self` занят заимствованием
+        let mut open_inst_params: Option<ClipId> = None;
         let Some(anchor) = self.model.clip(ed.clip).cloned() else {
             ed.open = false;
             return;
@@ -477,6 +484,38 @@ impl KtApp {
                             if gen_kind.is_none() {
                                 sel_slot = crate::widgets::ChainSel::Fx(sel_slot.fx().unwrap_or(0));
                             }
+                            // КРОШКА к параметрам композиции (Р.59, стадия
+                            // 3): у события-ВЛОЖЕНИЯ головы-источника нет,
+                            // но объявленные лентой ручки правятся отсюда
+                            // же — не уходя в контекст-меню (правило 17,
+                            // та же дверь двумя путями).
+                            if pub_doc.sequence(clip.media).is_some() {
+                                let n = pub_doc
+                                    .sequence(clip.media)
+                                    .map(|s| s.published.len())
+                                    .unwrap_or(0);
+                                let r = ui.add_enabled(
+                                    n > 0,
+                                    egui::Button::new(format!(
+                                        "{} {}",
+                                        crate::icons::PIN,
+                                        tr(k::pubp::INST_TITLE)
+                                    )),
+                                );
+                                crate::widgets::field_probe::note("pub.fx_crumb", r.rect);
+                                crate::app::hint_into(
+                                    &mut hover_out,
+                                    r.clone(),
+                                    if n > 0 {
+                                        tr(k::pubp::INST_OPEN)
+                                    } else {
+                                        tr(k::pubp::INST_NONE)
+                                    },
+                                );
+                                if r.clicked() {
+                                    open_inst_params = Some(*id);
+                                }
+                            }
                             let mut query = std::mem::take(&mut ed.picker_query);
                             let head_slot = gen_kind.as_ref().map(|g| crate::widgets::HeadSlot {
                                 label: crate::tf!(k::genw::HEAD, crate::gen_ui::kind_name(g)),
@@ -521,8 +560,14 @@ impl KtApp {
                             if let (crate::widgets::ChainSel::Head, Some(g)) =
                                 (sel_slot, gen_kind.as_mut())
                             {
+                                let gen_pubc = self.publish_ctx(
+                                    &pub_doc,
+                                    *id,
+                                    kt_model::ParamOwner::Generator,
+                                );
                                 let gctx = crate::gen_ui::GenCtx {
                                     clip: &clip,
+                                    pubc: Some(&gen_pubc),
                                     uses: uses_of.get(&clip.media).copied().unwrap_or(1),
                                     frame: frame_size,
                                     frame_step,
@@ -574,6 +619,11 @@ impl KtApp {
                                 // локальный клон `auto` умирал вместе с
                                 // кадром, и поле «скидывалось на предыдущее
                                 // значение».
+                                let pubc = self.publish_ctx(
+                                    &pub_doc,
+                                    *id,
+                                    kt_model::ParamOwner::FxSlot { slot: sel },
+                                );
                                 params_changed |= draw_video_fx_params(
                                     ui,
                                     f,
@@ -581,6 +631,7 @@ impl KtApp {
                                     &cameras,
                                     clip.kind == ClipKind::Video,
                                     &mut hover_out,
+                                    Some(&pubc),
                                 );
                                 let mut auto_ch = false;
                                 if let Some(curves) = auto.get_mut(sel) {
@@ -724,6 +775,9 @@ impl KtApp {
         }
         if let Some(t) = panel_pick {
             self.set_panel_target(t); // цели гасят друг друга (п.363)
+        }
+        if let Some(id) = open_inst_params {
+            self.open_inst_params(id);
         }
         if let Some(h) = hover_out {
             self.hover_hint = Some(h); // подсказка едет в строку состояния
@@ -1087,6 +1141,9 @@ pub(crate) fn draw_video_fx_params(
     on_video: bool,
     // накопитель подсказок кадра (Р.48: у графика АЧХ своя подсказка)
     hover: &mut Option<String>,
+    // контекст ПУБЛИКАЦИИ подписи (Р.59, стадия 3). `None` у носителя,
+    // адреса которому не существует, — морфер-патча.
+    pubc: Option<&crate::widgets::PublishCtx>,
 ) -> crate::widgets::ParamsChanged {
     use kt_model::PanMode;
     // Р.43 п.291: правка БАЗЫ и правка КРИВОЙ — разные команды. Всё
@@ -1303,7 +1360,7 @@ pub(crate) fn draw_video_fx_params(
     // --- числовые параметры: одна сетка на все варианты -------------------
     // связанная с кривыми (Р.38 пп.15-16): у параметра с живой кривой поле
     // правит ВЫБРАННЫЙ КЛЮЧ, а не невидимую базу
-    ch |= crate::widgets::params_grid_bound(ui, ("fxp", fx_display_name(f)), f, skip, bind);
+    ch |= crate::widgets::params_grid_bound(ui, ("fxp", fx_display_name(f)), f, skip, bind, pubc);
 
     // --- хвост: камера Pan3d и кейфреймы CamMotion ------------------------
     match f {

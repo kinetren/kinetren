@@ -80,6 +80,8 @@ fn generator_param_label(name: &str) -> Option<&'static str> {
         "beep_db" => tr(k::genp::BEEP_DB),
         "area" => tr(k::genp::AREA),
         "level" => tr(k::genp::LEVEL),
+        // Р.59: текст титра — такое же свойство, как остальные
+        "text" => tr(k::genp::TEXT),
         // Р.59, стадия 2: анимация титра — обычные числа вида
         "reveal" => tr(k::genp::REVEAL),
         "reveal_soft" => tr(k::genp::REVEAL_SOFT),
@@ -169,10 +171,20 @@ pub fn color_row<P: HasParams + ?Sized>(
     names: [&str; 3],
     alpha: Option<&str>,
     probe: Option<&str>,
+    pubc: Option<&PublishCtx>,
 ) -> bool {
     let mut changed = false;
+    // Основа имени цвета — ЕГО адрес как свойства (Р.59): каналы
+    // `<stem>_r/_g/_b/_a` это обычные числовые ряды, а цвет выводится из
+    // них (`derive_color_groups`), поэтому и публикуется он стеблем.
+    let stem = names[0].strip_suffix("_r").unwrap_or(names[0]).to_string();
+    // ДВЕРИ НЕТ ТАМ, КУДА НЕЛЬЗЯ ВОЙТИ (правило 9). У титра цвета — не
+    // свойства вовсе («первое законное исключение» F-TXT-001): они лежат
+    // прямо в варианте, мимо паспорта, и публикация на них умерла бы в
+    // валидации. Спрашиваем сам носитель, а не список исключений.
+    let pubc = pubc.filter(|_| f.value_type(&stem).is_some());
     ui.horizontal(|ui| {
-        ui.label(label);
+        pub_label(ui, label, pubc, &stem, kt_model::ParamType::Color);
         let get = |n: &str| f.get_param(n).unwrap_or(0.0).round().clamp(0.0, 255.0) as u8;
         let (r, g, b) = (get(names[0]), get(names[1]), get(names[2]));
         let a = alpha.map(&get).unwrap_or(255);
@@ -645,13 +657,193 @@ pub fn hint(r: &egui::Response, text: &str) {
     }
 }
 
+// ---- публикация свойства наружу (Р.59, стадия 3) -------------------------
+
+/// Контекст ПУБЛИКАЦИИ у подписи поля.
+///
+/// Дверь одна: объявить свойство наружу можно только правым кликом по
+/// ПОДПИСИ его поля. Второго входа не заводим намеренно — иначе «где же
+/// это публикуется» стало бы вопросом, а публичный набор ленты обязан
+/// собираться там, где автор на свойство и смотрит (разведка F-TL-012:
+/// панель Essential Graphics собирается РУКАМИ, а не выводится из
+/// содержимого).
+///
+/// Носитель окна решает, давать ли контекст вообще: у морфер-патча
+/// адреса не существует (`ParamOwner` его не знает), и он передаёт
+/// `None`.
+pub struct PublishCtx {
+    /// Лента, внутри которой стоит носитель. `None` — мы в КОРНЕ: корень
+    /// никому не экземпляр, публиковать у него нечего, и пункта меню НЕТ
+    /// ВОВСЕ (правило 9 «мёртвых контролов не бывает»). Почему — говорит
+    /// подсказка подписи (правило 16).
+    pub seq: Option<kt_model::MediaId>,
+    pub clip: kt_model::ClipId,
+    pub owner: kt_model::ParamOwner,
+    /// Уже объявленные ручки ЭТОГО носителя: имя свойства → номер ручки.
+    /// По ней строка узнаёт себя, рисует булавку и предлагает снятие.
+    pub published: std::collections::HashMap<String, kt_model::PubId>,
+    /// Объяснять ли в подсказке, ПОЧЕМУ пункта нет (правило 16).
+    ///
+    /// Только когда в документе композиции есть: в проекте без единой
+    /// ленты фраза «публикация живёт внутри композиции» висела бы у
+    /// КАЖДОЙ подписи и рассказывала бы про механизм, которого человек
+    /// ещё не завёл, — это шум (правило 9 и правило 10).
+    pub explain_outside: bool,
+}
+
+/// Что попросила подпись поля. Исполняет `KtApp` в конце кадра — внутри
+/// `Window::show` до модели не дотянуться.
+#[derive(Debug, Clone)]
+pub enum PublishReq {
+    /// Открыть диалог имени для этой цели. Имя по умолчанию — ПОДПИСЬ
+    /// поля на языке интерфейса; дальше это текст АВТОРА.
+    Publish {
+        seq: kt_model::MediaId,
+        addr: kt_model::ParamAddr,
+        ty: kt_model::ParamType,
+        label: String,
+    },
+    Unpublish {
+        seq: kt_model::MediaId,
+        id: kt_model::PubId,
+    },
+}
+
+/// Сток заявок подписи — тот же механизм, что `hint_sink`: виджет кладёт,
+/// `KtApp` забирает в конце кадра.
+pub(crate) mod publish_sink {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static REQ: RefCell<Option<super::PublishReq>> = const { RefCell::new(None) };
+    }
+
+    pub(crate) fn put(r: super::PublishReq) {
+        REQ.with(|t| *t.borrow_mut() = Some(r));
+    }
+
+    pub(crate) fn take() -> Option<super::PublishReq> {
+        REQ.with(|t| t.borrow_mut().take())
+    }
+}
+
+/// Булавка перед подписью объявленного свойства.
+fn pin_prefix(pubc: Option<&PublishCtx>, param: &str) -> &'static str {
+    match pubc {
+        Some(c) if c.published.contains_key(param) => crate::icons::PIN,
+        _ => "",
+    }
+}
+
+/// Правый клик по подписи: «Опубликовать…» либо «Снять публикацию».
+///
+/// Вне ленты пункта НЕТ (правило 9), и это не молчание: подсказка самой
+/// подписи объясняет, где публикация вообще живёт (правило 16).
+fn publish_menu(
+    r: &egui::Response,
+    pubc: Option<&PublishCtx>,
+    param: &str,
+    label: &str,
+    ty: kt_model::ParamType,
+) {
+    let Some(c) = pubc else { return };
+    let Some(seq) = c.seq else { return };
+    let existing = c.published.get(param).copied();
+    let (clip, owner, param) = (c.clip, c.owner.clone(), param.to_string());
+    let label = label.to_string();
+    r.clone().context_menu(|ui| {
+        match existing {
+            Some(id) => {
+                let resp = ui.button(tr(k::pubp::UNPUBLISH));
+                field_probe::note(&format!("pub.unpublish.{param}"), resp.rect);
+                if resp.clicked() {
+                    publish_sink::put(PublishReq::Unpublish { seq, id });
+                    ui.close();
+                }
+            }
+            None => {
+                let resp = ui.button(tr(k::pubp::PUBLISH));
+                field_probe::note(&format!("pub.publish.{param}"), resp.rect);
+                if resp.clicked() {
+                    publish_sink::put(PublishReq::Publish {
+                        seq,
+                        addr: kt_model::ParamAddr::new(clip, owner.clone(), param.clone()),
+                        ty: ty.clone(),
+                        label: label.clone(),
+                    });
+                    ui.close();
+                }
+            }
+        };
+    });
+}
+
+/// Дверь публикации на САМОМ ПОЛЕ — там, где подписи нет и заводить её
+/// ради одной надписи нельзя (правило 13). Единственный такой случай —
+/// многострочный текст титра: он занимает всю ширину формы.
+pub fn publish_on_field(
+    r: &egui::Response,
+    pubc: Option<&PublishCtx>,
+    param: &str,
+    label: &str,
+    ty: kt_model::ParamType,
+) {
+    publish_menu(r, pubc, param, label, ty);
+}
+
+/// Подпись НЕЧИСЛОВОГО свойства (текст, цвет, выбор, медиа) — та же дверь
+/// публикации, что и у числа. Возвращает `Response`, чтобы носитель мог
+/// повесить свою подсказку.
+pub fn pub_label(
+    ui: &mut egui::Ui,
+    text: &str,
+    pubc: Option<&PublishCtx>,
+    param: &str,
+    ty: kt_model::ParamType,
+) -> egui::Response {
+    let shown = format!("{}{text}", pin_prefix(pubc, param));
+    let r = ui.add(egui::Label::new(shown).sense(egui::Sense::click()));
+    field_probe::note(&format!("lbl.{param}"), r.rect);
+    publish_menu(&r, pubc, param, text, ty);
+    if r.hovered()
+        && let Some(c) = pubc
+        && c.seq.is_none()
+        && c.explain_outside
+    {
+        hint_sink::put(tr(k::pubp::OUTSIDE_REEL));
+    }
+    r
+}
+
 /// Подпись параметра — КЛИКАБЕЛЬНАЯ: двойной клик сбрасывает параметр к
 /// умолчанию спеки (Р.53, п.415). «Вернуть как было» не должно требовать
 /// от пользователя помнить число; подсказка об этом висит на самой
 /// подписи, а значит находится там же, где и жест.
-fn param_label_widget(ui: &mut egui::Ui, text: impl Into<egui::RichText>) -> bool {
+fn param_label_widget(
+    ui: &mut egui::Ui,
+    text: impl Into<egui::RichText>,
+    pubc: Option<&PublishCtx>,
+    param: &str,
+    plain: &str,
+) -> bool {
     let r = ui.add(egui::Label::new(text.into()).sense(egui::Sense::click()));
-    hint(&r, tr(k::fx::HINT_RESET));
+    // ПОДПИСЬ — тоже цель жеста (двойной клик, правый клик), значит её
+    // прямоугольник обязан уезжать наружу: живому сценарию нечем найти
+    // `Label` в дереве доступности, а угадывать смещения он не должен.
+    field_probe::note(&format!("lbl.{param}"), r.rect);
+    // Р.59, стадия 3: та же подпись — дверь публикации. Подсказка одна на
+    // обе роли (правило 10), и вне ленты она честно говорит, почему
+    // пункта нет (правило 16).
+    publish_menu(&r, pubc, param, plain, kt_model::ParamType::Num);
+    match pubc {
+        Some(c) if c.seq.is_none() && c.explain_outside => {
+            hint(&r, &format!("{}\n{}", tr(k::fx::HINT_RESET), tr(k::pubp::OUTSIDE_REEL)))
+        }
+        Some(c) if c.seq.is_some() => {
+            hint(&r, &format!("{}\n{}", tr(k::fx::HINT_RESET), tr(k::pubp::HINT_LABEL)))
+        }
+        _ => hint(&r, tr(k::fx::HINT_RESET)),
+    }
     r.double_clicked()
 }
 
@@ -667,14 +859,16 @@ pub fn param_row_bound<P: HasParams + ?Sized>(
     f: &mut P,
     spec: &ParamSpec,
     bind: Option<&mut CurveBind<'_>>,
+    pubc: Option<&PublishCtx>,
 ) -> ParamsChanged {
     let none = ParamsChanged::default();
     let Some(base) = f.get_param(&spec.name) else { return none };
     // подпись — СВОЕЙ области носителя (Р.53, п.414): «size» у титра это
     // кегль, а не зерно эффекта Noise
     let label = param_label_scoped(f.params_scope(), &spec.name);
+    let pin = format!("{}{label}", pin_prefix(pubc, &spec.name));
     let Some(bind) = bind else {
-        let reset = param_label_widget(ui, label);
+        let reset = param_label_widget(ui, pin, pubc, &spec.name, &label);
         let mut v = if reset { spec.default } else { base };
         let r = param_value(ui, spec, &mut v);
         field_probe::note(&spec.name, r.rect);
@@ -685,7 +879,7 @@ pub fn param_row_bound<P: HasParams + ?Sized>(
         return none;
     };
     let Some(ci) = bind.index_of(&spec.name) else {
-        let reset = param_label_widget(ui, label);
+        let reset = param_label_widget(ui, pin, pubc, &spec.name, &label);
         let mut v = if reset { spec.default } else { base };
         let r = param_value(ui, spec, &mut v);
         field_probe::note(&spec.name, r.rect);
@@ -703,7 +897,10 @@ pub fn param_row_bound<P: HasParams + ?Sized>(
     };
     let reset = param_label_widget(
         ui,
-        egui::RichText::new(label).color(crate::automation::curve_color(ci)),
+        egui::RichText::new(pin).color(crate::automation::curve_color(ci)),
+        pubc,
+        &spec.name,
+        &label,
     );
     let c = &mut bind.curves[ci];
     let mut v = if reset { spec.default } else { bound_value(c, key, bind.at) };
@@ -749,8 +946,9 @@ pub fn params_grid<P: HasParams + ?Sized>(
     id: impl std::hash::Hash + std::fmt::Debug,
     f: &mut P,
     skip: &[&str],
+    pubc: Option<&PublishCtx>,
 ) -> bool {
-    params_grid_bound(ui, id, f, skip, None).base
+    params_grid_bound(ui, id, f, skip, None, pubc).base
 }
 
 /// Та же сетка, но связанная с кривыми (Р.38 пп.15-16).
@@ -760,6 +958,7 @@ pub fn params_grid_bound<P: HasParams + ?Sized>(
     f: &mut P,
     skip: &[&str],
     mut bind: Option<&mut CurveBind<'_>>,
+    pubc: Option<&PublishCtx>,
 ) -> ParamsChanged {
     // Паспорт КОПИРУЕТСЯ, а не заимствуется у владельца (Р.59): он
     // заимствуется у `self`, и живой заём не дал бы писать в него в том
@@ -775,7 +974,7 @@ pub fn params_grid_bound<P: HasParams + ?Sized>(
     egui::Grid::new(id).num_columns(4).spacing([8.0, 4.0]).show(ui, |ui| {
         for pair in specs.chunks(2) {
             for spec in pair {
-                changed |= param_row_bound(ui, f, spec, bind.as_deref_mut());
+                changed |= param_row_bound(ui, f, spec, bind.as_deref_mut(), pubc);
             }
             ui.end_row();
         }

@@ -151,6 +151,8 @@ impl KtApp {
     }
 
     fn draw_one_transition_editor(&mut self, ctx: &egui::Context, ed: &mut TransitionEditor) {
+        // документ для публикации — один клон на отрисовку окна (Р.59)
+        let pub_doc = self.model.document();
         let Some(cur) = self.model.project().transitions.iter().find(|t| t.id == ed.id).cloned()
         else {
             ed.open = false; // переход умер (растащили клипы) — окно уходит
@@ -312,7 +314,13 @@ impl KtApp {
                             }
                         });
                     }
-                    changed |= widgets::params_grid(ui, ("trp", ed.id), &mut t.kind, skip);
+                    let pubc = self.publish_ctx(
+                        &pub_doc,
+                        kt_model::ClipId(0),
+                        kt_model::ParamOwner::Transition { id: ed.id },
+                    );
+                    changed |=
+                        widgets::params_grid(ui, ("trp", ed.id), &mut t.kind, skip, Some(&pubc));
 
                     // ---- кривые параметров вида (Р.34 К4) --------------
                     if !t.kind.param_specs().is_empty() {

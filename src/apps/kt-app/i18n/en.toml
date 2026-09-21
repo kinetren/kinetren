@@ -1042,6 +1042,7 @@ align_r = "Right"
 # Подписи параметров генераторов (Р.53 п.414): своя область — «size» у
 # титра это КЕГЛЬ, а не зерно эффекта Noise.
 [genp]
+text = "Text"
 reveal = "Reveal"
 reveal_soft = "Reveal edge"
 offset_x = "Offset X"
@@ -1077,3 +1078,32 @@ tone_db = "Tone level:"
 fps = "Frames per second:"
 mono = "Grey"
 tone = "1 kHz tone"
+
+# Публичные параметры композиции (Р.59, стадия 3). ИМЯ РУЧКИ сюда не
+# попадает никогда: его придумывает автор проекта, это содержимое
+# документа, а не текст программы (t131/t684).
+[pubp]
+publish = "Publish…"
+unpublish = "Unpublish"
+hint_label = "Right-click: publish this property of the composition"
+outside_reel = "Publishing lives inside a composition: enter the reel, then right-click a parameter label"
+dialog_title = "Publish a parameter"
+dialog_name = "Name"
+dialog_do = "Publish"
+list_title = "Public parameters"
+list_open = "Public parameters…"
+list_empty = "Nothing is published yet: right-click a parameter label inside the reel"
+list_hint_order = "Order of the rows the consumer sees"
+range_min = "min"
+range_max = "max"
+inst_title = "Composition parameters"
+inst_open = "Composition parameters…"
+inst_none = "This composition declares no parameters: enter it and publish what instances may change"
+inst_target_gone = "target is gone"
+reset = "Reset"
+reset_hint = "Back to the template value"
+template = "template: {0}"
+overridden = "Overridden: {0} of {1}"
+unpublish_title = "Unpublish"
+unpublish_ask = "Unpublish «{0}»? Overrides it will delete: {1}"
+done = "Done"

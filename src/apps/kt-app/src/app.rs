@@ -515,6 +515,14 @@ pub struct KtApp {
     pub preset_save: Option<PresetSaveDialog>,
     /// Окно переименования вложенной ленты (Р.50).
     pub seq_name: Option<SeqNameDialog>,
+    /// Диалог имени публикуемой ручки (Р.59, стадия 3).
+    pub publish_dialog: Option<crate::pubparam::PublishDialog>,
+    /// Окно «Публичные параметры» ленты — сторона АВТОРА. Одно на
+    /// программу: набор объявляется у ТОЙ ленты, в которой стоишь.
+    pub published_win: Option<crate::pubparam::PublishedWin>,
+    /// Окна «Параметры композиции» экземпляров — сторона ПОТРЕБИТЕЛЯ.
+    /// Список, а не одно: сравнить два выпуска рядом — обычная работа.
+    pub inst_params: Vec<crate::pubparam::InstParamsWin>,
     /// Путь внутрь вложений: по уровню на каждый вход (Р.50, В1).
     pub nest_path: Vec<NestStep>,
     /// Полоса, раскрытая ВНУТРИ ленты на момент выхода из неё (Р.58,
@@ -604,7 +612,7 @@ pub struct KtApp {
     /// Редакции ЛЕНТ на текущей модели (ключ превью). Считается по
     /// `model_rev`, как карты варпа: `content_hash` обходит содержимое
     /// ленты, и делать это на каждый UI-кадр незачем.
-    pub reel_hash_cache: (Option<u64>, Arc<HashMap<MediaId, u64>>),
+    pub reel_hash_cache: (Option<u64>, Arc<HashMap<ClipId, crate::reel_preview::ReelKey>>),
 }
 
 impl KtApp {
@@ -840,6 +848,9 @@ impl KtApp {
             duck: None,
             preset_save: None,
             seq_name: None,
+            publish_dialog: None,
+            published_win: None,
+            inst_params: Vec::new(),
             nest_path: Vec::new(),
             reel_bands: std::collections::HashMap::new(),
             shared_warned: Default::default(),
@@ -1039,6 +1050,9 @@ impl KtApp {
             duck: None,
             preset_save: None,
             seq_name: None,
+            publish_dialog: None,
+            published_win: None,
+            inst_params: Vec::new(),
             nest_path: Vec::new(),
             reel_bands: std::collections::HashMap::new(),
             shared_warned: Default::default(),
@@ -1501,6 +1515,15 @@ impl KtApp {
         self.draw_duck_dialog(&ctx);
         self.draw_preset_save(&ctx);
         self.draw_seq_name(&ctx);
+        // Публичные параметры композиции (Р.59, стадия 3): диалог имени,
+        // окно автора и окна потребителей.
+        self.draw_publish_dialog(&ctx);
+        self.draw_published_win(&ctx);
+        self.draw_inst_params(&ctx);
+        // заявка подписи поля забирается ПОСЛЕ отрисовки окон — внутри
+        // `Window::show` до модели не дотянуться (тот же механизм, что у
+        // `hint_sink`)
+        self.drain_publish_req();
         self.draw_render_dialog(&ctx);
         self.draw_diagnostics(&ctx);
 
@@ -2417,7 +2440,20 @@ impl KtApp {
         if self.paste_names.take().is_some() {
             return;
         }
-        // 1) закрыть верхнее наше окно
+        // 1) закрыть верхнее наше окно. Окна публичных параметров (Р.59,
+        // стадия 3) идут ПЕРЕД окнами эффектов: их открывают поверх — и
+        // человек ждёт, что Esc уберёт то, что он видит последним.
+        // Диалог имени ручки в каскад не входит намеренно: он гасит Esc
+        // сам, как окно имени ленты, — пока в нём фокус, сюда вообще не
+        // доходит (`egui_wants_keyboard_input`).
+        if let Some(w) = self.inst_params.iter_mut().rev().find(|w| w.open) {
+            w.open = false;
+            return;
+        }
+        if let Some(w) = self.published_win.as_mut().filter(|w| w.open) {
+            w.open = false;
+            return;
+        }
         if self.render_setup.open {
             self.render_setup.open = false;
             return;
@@ -7110,21 +7146,39 @@ impl KtApp {
         self.warp_cache.maps.clone()
     }
 
-    /// Редакции ЛЕНТ документа: `MediaId` → `content_hash` (Р.56, п.452).
+    /// Ключи превью по ЭКЗЕМПЛЯРАМ: `ClipId` → (лента, редакция)
+    /// (Р.56 п.452, переписано в Р.59 стадии 3 — t680).
+    ///
+    /// Редакция ленты стала функцией ПАРЫ (лента, набор переопределений
+    /// экземпляра), поэтому и ключ превью — по экземпляру: два выпуска с
+    /// разными заголовками обязаны показывать на таймлайне СВОИ кадры, а
+    /// не кадры шаблона. У экземпляра без переопределений
+    /// `instance_content` РАВЕН `content_hash`, так что прежние ключи,
+    /// дисковый ярус и все проекты без публикаций не двигаются ни на бит.
     ///
     /// Считается по `model_rev`, как карты варпа: хэш обходит всё
-    /// содержимое ленты, и делать это на каждый UI-кадр незачем. Правка
-    /// внутри ленты меняет хэш — старое превью тут же становится ненужным
-    /// и выбрасывается вместе с незаконченной работой по нему.
-    pub fn reel_hashes(&mut self) -> Arc<HashMap<MediaId, u64>> {
+    /// содержимое ленты, и делать это на каждый UI-кадр незачем.
+    pub fn reel_keys(&mut self) -> Arc<HashMap<ClipId, crate::reel_preview::ReelKey>> {
         if self.reel_hash_cache.0 != Some(self.model_rev) {
             let doc = self.model.document();
-            let mut map = HashMap::new();
+            let mut map: HashMap<ClipId, crate::reel_preview::ReelKey> = HashMap::new();
+            // У ОДНОЙ ленты теперь НЕСКОЛЬКО живых редакций сразу, и
+            // инвалидация обязана держать их все: выброси она «чужую»,
+            // два экземпляра пересчитывали бы друг друга по кругу.
+            let mut live: HashMap<MediaId, std::collections::HashSet<u64>> = HashMap::new();
             for s in &doc.sequences {
-                map.insert(s.id, kt_engine::content_hash(&doc, s.id));
+                live.entry(s.id).or_default();
             }
-            for (id, h) in &map {
-                self.reel_previews.invalidate_seq(*id, *h);
+            for c in &self.model.project().clips {
+                if !live.contains_key(&c.media) {
+                    continue;
+                }
+                let hash = kt_engine::instance_content(&doc, c.media, &c.overrides);
+                map.insert(c.id, crate::reel_preview::ReelKey { seq: c.media, hash });
+                live.entry(c.media).or_default().insert(hash);
+            }
+            for (id, hs) in &live {
+                self.reel_previews.invalidate_seq(*id, hs);
             }
             self.reel_hash_cache = (Some(self.model_rev), Arc::new(map));
         }
@@ -7136,11 +7190,40 @@ impl KtApp {
     /// Ключ не зависит ни от зума, ни от прокрутки, поэтому скролл и зум
     /// заказов не порождают (инвариант 8): повторная заявка по тому же
     /// ключу отбрасывается дедупом.
-    pub fn request_reel_preview(&mut self, key: crate::reel_preview::ReelKey) {
+    pub fn request_reel_preview(
+        &mut self,
+        key: crate::reel_preview::ReelKey,
+        overrides: &[kt_model::Override],
+    ) {
         if self.reel_previews.get(&key).is_some() {
             return;
         }
-        let Some(p) = self.model.document().reel_as_root(key.seq) else { return };
+        let Some(mut p) = self.model.document().reel_as_root(key.seq) else { return };
+        // Переопределения ВПЕКАЮТСЯ в документ, который считает превью:
+        // ключ у нас уже по экземпляру, и посчитай мы шаблон — полоса
+        // показала бы чужой заголовок под своим ключом (t680).
+        // Правило одно на программу: набор ложится ДО морфер-слоёв, тем
+        // же `apply_overrides`, что зовёт `resolve_reel`.
+        if !overrides.is_empty() {
+            // `swap_reel` уже положил набор ленты в `published` корня
+            let published = p.published.clone();
+            let frame_step = 90_000 / p.settings.fps.max(1) as i64;
+            let mut clips = std::mem::take(&mut p.clips);
+            let mut trans = std::mem::take(&mut p.transitions);
+            let mut cams = std::mem::take(&mut p.cameras);
+            kt_model::apply_overrides(
+                &published,
+                overrides,
+                &mut clips,
+                &mut trans,
+                &mut cams,
+                frame_step,
+                &|m| p.default_gen_for(m),
+            );
+            p.clips = clips;
+            p.transitions = trans;
+            p.cameras = cams;
+        }
         let base = self.project_path.as_ref().and_then(|p| p.parent()).map(|p| p.to_path_buf());
         let db = self.index_db_path();
         self.reel_previews.request(key, p, db, base);

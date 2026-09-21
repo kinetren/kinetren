@@ -546,6 +546,10 @@ impl KtApp {
                                 &cameras,
                                 false,
                                 &mut hover_out,
+                                // у слота морфер-ПАТЧА адреса не
+                                // существует (`ParamOwner` его не знает),
+                                // и мёртвого пункта меню тут не будет
+                                None,
                             )
                             .any();
                             let start = ev.start;

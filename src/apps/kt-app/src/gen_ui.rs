@@ -535,6 +535,10 @@ pub struct GenEdit {
 pub struct GenCtx<'a> {
     /// Событие-владелец: домен кривых — его материал.
     pub clip: &'a kt_model::ClipEvent,
+    /// Контекст ПУБЛИКАЦИИ (Р.59, стадия 3): подписи полей генератора —
+    /// та же дверь наружу, что у параметров эффекта. Именно здесь живёт
+    /// «заголовок новости» из претензии владельца.
+    pub pubc: Option<&'a crate::widgets::PublishCtx>,
     /// Сколько мест на монтаже у этого генератора («применить ко всем»).
     pub uses: usize,
     /// Размер кадра проекта — по нему считается путь бегущей строки.
@@ -598,6 +602,21 @@ pub fn draw_gen_section(
             let r = ui.add(te);
             crate::widgets::field_probe::note("titlew.text", r.rect);
             widgets::hint(&r, tr(k::titlew::HINT_TEXT));
+            // ПУБЛИКАЦИЯ ЗАГОЛОВКА — то, ради чего затеян весь раунд
+            // («не будут же люди каждый раз лезть в композицию и менять
+            // там текст»). У многострочного поля титра подписи нет и
+            // заводить её ради одной надписи нельзя (правило 13),
+            // поэтому дверь висит на самом поле — там же, где жест.
+            widgets::publish_on_field(
+                &r,
+                ctx.pubc,
+                "text",
+                // имя ручки ПО УМОЛЧАНИЮ — короткая подпись свойства, а не
+                // фраза подсказки: дальше его правит автор, но начинать
+                // ему с предложения не следует
+                tr(k::genp::TEXT),
+                kt_model::ParamType::Text { multiline: true },
+            );
             if r.changed() {
                 out.changed.base = true;
             }
@@ -647,8 +666,15 @@ pub fn draw_gen_section(
         skip.extend_from_slice(names);
     }
     for (i, (label, names)) in groups.iter().enumerate() {
-        if widgets::color_row(ui, tr(*label), kind, *names, alpha, (i == 0).then_some("genw.color"))
-        {
+        if widgets::color_row(
+            ui,
+            tr(*label),
+            kind,
+            *names,
+            alpha,
+            (i == 0).then_some("genw.color"),
+            ctx.pubc,
+        ) {
             out.changed.base = true;
         }
     }
@@ -679,8 +705,14 @@ pub fn draw_gen_section(
     );
     {
         let mut bind = widgets::CurveBind { curves: auto, sel: view.sel, at };
-        out.changed |=
-            widgets::params_grid_bound(ui, ("genp", clip.id.0), kind, &skip, Some(&mut bind));
+        out.changed |= widgets::params_grid_bound(
+            ui,
+            ("genp", clip.id.0),
+            kind,
+            &skip,
+            Some(&mut bind),
+            ctx.pubc,
+        );
     }
 
     // ---- «применить ко всем»: отдельная команда, один шаг истории ------

@@ -435,6 +435,22 @@ class Live:
         self.expect(False, what or f"программа отдала прямоугольник «{name}»")
         return False
 
+    def right_click_probe(self, name, what=None):
+        """Правый клик по виджету из дампа геометрии. Нужен подписям полей:
+        публикация свойства композиции живёт ровно там (Р.59, стадия 3)."""
+        for _ in range(20):
+            f = next((f for f in self.geom().get("fields", []) if f["param"] == name), None)
+            if f:
+                win = geometry()
+                self.right_click(
+                    win["x"] + int(f["x"] + f["w"] / 2),
+                    win["y"] + int(f["y"] + f["h"] / 2),
+                )
+                return True
+            time.sleep(0.25)
+        self.expect(False, what or f"программа отдала прямоугольник «{name}»")
+        return False
+
     def hover_probe(self, name, what=None):
         """Навести на виджет по его прямоугольнику из дампа. Подменю egui
         раскрывается НАВЕДЕНИЕМ, а клик по нему закрывает всё меню."""

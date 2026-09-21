@@ -56,6 +56,8 @@ impl KtApp {
     }
 
     fn draw_one_camera_editor(&mut self, ctx: &egui::Context, ed: &mut CameraEditor) {
+        // документ для публикации — один клон на отрисовку окна (Р.59)
+        let pub_doc = self.model.document();
         let Some(cur) = self.model.project().cameras.iter().find(|c| c.id == ed.id).cloned() else {
             ed.open = false; // камеру удалили — окно уходит
             return;
@@ -88,7 +90,15 @@ impl KtApp {
                     changed |= ui.text_edit_singleline(&mut c.name).changed();
                 });
                 // числовые параметры — та же сетка, что у эффектов
-                changed |= widgets::params_grid(ui, ("camp", ed.id), &mut c.cam, &[]);
+                // подписи камеры — та же дверь публикации (Р.59): камера
+                // это структура ленты, и «наезд выпуска» объявляется
+                // наружу ровно так же, как заголовок
+                let pubc = self.publish_ctx(
+                    &pub_doc,
+                    kt_model::ClipId(0),
+                    kt_model::ParamOwner::Camera { id: ed.id },
+                );
+                changed |= widgets::params_grid(ui, ("camp", ed.id), &mut c.cam, &[], Some(&pubc));
                 ui.horizontal(|ui| {
                     changed |= ui.checkbox(&mut c.cam.ortho, tr(k::cam::ORTHO)).changed();
                     // точка интереса: two-node камера, как в AE

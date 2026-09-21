@@ -212,7 +212,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-CMP-001 | Конкатенация трансформов | сделано | A | XL | да | `compositing/transforms/transform-concatenation.md` |
 | F-TL-004 | Вложенные секвенции — монтаж, который ведёт себя как клип | сделано | A | XL | да | `timeline/structure/nested-sequences.md` |
 | F-TL-011 | Раскрытие вложения НА МЕСТЕ | сделано | A | XL | да | `timeline/structure/inline-nest-expansion.md` |
-| F-TL-012 | Публичные параметры композиции | принято | A | XL | нет | `timeline/structure/composition-public-parameters.md` |
+| F-TL-012 | Публичные параметры композиции | принято | A | XL | да | `timeline/structure/composition-public-parameters.md` |
 | F-AUD-011 | Distortion / сатурация и Bitcrusher | сделано | B | S | да | `audio/processing/distortion-and-bitcrush.md` |
 | F-AUD-012 | Stereo Width (mid/side-ширина) | сделано | B | S | да | `audio/processing/stereo-width.md` |
 | F-COL-002 | Служебное рядом с проектом — кэш, индекс и замок на общем диске | кандидат | B | S | частично | `collab/assets/sidecar-on-a-share.md` |

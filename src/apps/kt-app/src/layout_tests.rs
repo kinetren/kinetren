@@ -10700,11 +10700,30 @@ fn t597_enter_cascade_decision_and_selection() {
     );
 }
 
+/// Ключ превью ленты по её ПЕРВОМУ экземпляру (Р.59, стадия 3: ключ стал
+/// парой «лента + набор переопределений экземпляра», t680).
+#[cfg(test)]
+fn reel_key_of(
+    h: &mut Harness<'static, KtApp>,
+    seq: kt_model::MediaId,
+) -> crate::reel_preview::ReelKey {
+    let inst = h
+        .state()
+        .model
+        .project()
+        .clips
+        .iter()
+        .find(|c| c.media == seq)
+        .map(|c| c.id)
+        .expect("на монтаже нет ни одного экземпляра ленты");
+    *h.state_mut().reel_keys().get(&inst).expect("ключ превью экземпляра")
+}
+
 /// Тест 599 (Р.56, п.452): служба превью лент — очередь, дедуп,
 /// инвалидация и потолок кадров.
 #[test]
 fn t599_reel_preview_service_rules() {
-    use crate::reel_preview::{MAX_FRAMES_PER_REEL, ReelKey, ReelPreviews};
+    use crate::reel_preview::{MAX_FRAMES_PER_REEL, ReelPreviews};
     use kt_time::Tick;
 
     // ШАГ ПОЛОСЫ — ступень лестницы тумб, и кадров не больше потолка
@@ -10723,18 +10742,19 @@ fn t599_reel_preview_service_rules() {
     }
 
     let (mut h, _g, seq) = harness_with_nest();
-    let hash = *h.state_mut().reel_hashes().get(&seq).expect("хэш ленты");
-    let key = ReelKey { seq, hash };
+    let key = reel_key_of(&mut h, seq);
+    let hash = key.hash;
 
     // ДЕДУП: вторая заявка по тому же ключу работы не добавляет
-    h.state_mut().request_reel_preview(key);
+    h.state_mut().request_reel_preview(key, &[]);
     let pending = h.state().reel_previews.pending();
     assert!(pending >= 1, "заявка не встала в очередь");
-    h.state_mut().request_reel_preview(key);
+    h.state_mut().request_reel_preview(key, &[]);
     assert_eq!(h.state().reel_previews.pending(), pending, "дубль заявки прошёл");
 
     // ИНВАЛИДАЦИЯ: другая редакция той же ленты снимает старую работу
-    h.state_mut().reel_previews.invalidate_seq(seq, hash ^ 1);
+    let keep = std::collections::HashSet::from([hash ^ 1]);
+    h.state_mut().reel_previews.invalidate_seq(seq, &keep);
     assert_eq!(h.state().reel_previews.pending(), 0, "устаревшая работа осталась в очереди");
 }
 
@@ -10746,10 +10766,9 @@ fn t599_reel_preview_service_rules() {
 /// событий - кадров и аудио-пиков»).
 #[test]
 fn t600_reel_frames_and_peaks_reach_the_timeline() {
-    use crate::reel_preview::ReelKey;
     let (mut h, _g, seq) = harness_with_nest();
-    let hash = *h.state_mut().reel_hashes().get(&seq).expect("хэш ленты");
-    let key = ReelKey { seq, hash };
+    let key = reel_key_of(&mut h, seq);
+    let hash = key.hash;
 
     // аудио-половина ленты: без неё пики проверять не на чем
     let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().clone();
@@ -10809,7 +10828,7 @@ fn t600_reel_frames_and_peaks_reach_the_timeline() {
         "правка внутри ленты"
     );
     h.step();
-    let fresh = *h.state_mut().reel_hashes().get(&seq).expect("хэш после правки");
+    let fresh = reel_key_of(&mut h, seq).hash;
     assert_ne!(fresh, hash, "правка внутри ленты не изменила редакцию — инвалидировать нечем");
     assert!(
         h.state().reel_previews.get(&key).is_none(),
@@ -10821,10 +10840,8 @@ fn t600_reel_frames_and_peaks_reach_the_timeline() {
 /// а служба тумб про ленту не знает вовсе.
 #[test]
 fn t601_scrolling_does_not_order_reel_work() {
-    use crate::reel_preview::ReelKey;
     let (mut h, _g, seq) = harness_with_nest();
-    let hash = *h.state_mut().reel_hashes().get(&seq).expect("хэш ленты");
-    let key = ReelKey { seq, hash };
+    let key = reel_key_of(&mut h, seq);
     let deadline = std::time::Instant::now() + WAIT_BG;
     // ждём КОНЦА работы, а не только кадров: `pending()` считает и
     // бегущую задачу, и тест мерил бы её, а не новые заявки
@@ -10923,8 +10940,7 @@ fn t640_reel_preview_survives_reopen_from_sidecar() {
             .build_ui_state(|ui, app: &mut KtApp| app.draw_all(ui), app);
         crate::icons::install_fonts(&h.ctx);
         h.step();
-        let hash = *h.state_mut().reel_hashes().get(&seq).expect("reel hash");
-        let key = ReelKey { seq, hash };
+        let key = reel_key_of(&mut h, seq);
         let deadline = std::time::Instant::now() + WAIT_BG;
         while h.state().reel_previews.get(&key).map(|p| p.peaks.is_none()).unwrap_or(true)
             && std::time::Instant::now() < deadline
@@ -11959,4 +11975,517 @@ fn t668_preset_writes_curves_and_keeps_the_layout() {
         None,
         "без кривых «машинка» перестаёт быть машинкой — иначе новый титр звался бы ею"
     );
+}
+
+// ---- Публичные параметры композиции (Р.59, стадия 3) --------------------
+
+/// Новостной шаблон для тестов: лента с ТИТРОМ внутри, поставленная
+/// дважды, и шесть объявленных наружу ручек — по одной на каждый тип
+/// значения.
+///
+/// Сцена НЕ вырожденная намеренно: второй экземпляр стоит в другом месте
+/// и переопределяет заголовок. На сцене «один экземпляр без
+/// переопределений» половина утверждений ниже выполнялась бы сама собой.
+pub(crate) struct NewsScene {
+    pub seq: kt_model::MediaId,
+    /// Титр ВНУТРИ ленты — цель текстовых публикаций.
+    pub inner: kt_model::ClipId,
+    /// Цветной логотип внутри ленты — цель цветовой и медийной.
+    pub logo_clip: kt_model::ClipId,
+    /// Первый выпуск (шаблонные значения) и второй (свой заголовок).
+    pub a: kt_model::ClipId,
+    pub b: kt_model::ClipId,
+    pub headline: kt_model::PubId,
+    pub tint: kt_model::PubId,
+    pub size: kt_model::PubId,
+    pub align: kt_model::PubId,
+    pub logo: kt_model::PubId,
+    pub flip: kt_model::PubId,
+}
+
+/// Собрать сцену. Публикации ставятся ИЗНУТРИ ленты — командами, как это
+/// делает окно: команда правит ту ленту, в которой стоишь.
+pub(crate) fn harness_news_template() -> (Harness<'static, KtApp>, NewsScene) {
+    use kt_model::*;
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    h.state_mut().create_generator(GeneratorKind::default_text());
+    h.step();
+    let (_media, title) = made_generator(&h);
+    // непустой титр: у вида с умолчаниями текста нет вовсе, и «шаблон»
+    // выглядел бы пустым
+    let mut kind = gen_of(&h, title);
+    if let GeneratorKind::Text { text, .. } = &mut kind {
+        *text = "ВЫПУСК".into();
+    }
+    assert!(h.state_mut().apply(Command::SetClipGen { id: title, kind: Some(kind) }));
+    h.step();
+    // ЛОГОТИП — цветная плашка рядом с титром. Цвет у неё настоящий ряд
+    // паспорта (`color_*` с единицей Rgb8), в отличие от красок титра:
+    // те живут прямо в варианте и свойствами не являются вовсе.
+    h.state_mut().create_generator(GeneratorKind::Solid { color_r: 200, color_g: 30, color_b: 30 });
+    h.step();
+    let (_lm, logo_clip) = made_generator(&h);
+    {
+        let (start, lane) = h
+            .state()
+            .model
+            .clip(title)
+            .map(|c| (c.start + c.duration, c.lane))
+            .expect("титр на месте");
+        assert!(h.state_mut().apply(Command::MoveClip {
+            id: logo_clip,
+            new_start: start,
+            new_lane: lane
+        }));
+    }
+    h.step();
+    // окна, открытые созданием генераторов, сцене мешают: дальше свои
+    h.state_mut().fx_editors.clear();
+    h.state_mut().selected.clear();
+    h.state_mut().selected.insert(title);
+    h.state_mut().selected.insert(logo_clip);
+    h.step();
+    h.state_mut().collapse_selection();
+    h.step();
+    h.step();
+    let seq = h.state().model.document().sequences.last().expect("лента").id;
+    let a = h
+        .state()
+        .model
+        .project()
+        .clips
+        .iter()
+        .find(|c| c.media == seq)
+        .expect("экземпляр ленты")
+        .id;
+
+    // ---- объявляем ручки ИЗНУТРИ ленты ------------------------------
+    h.state_mut().enter_nest(a);
+    h.step();
+    assert_eq!(h.state().model.editing(), Some(seq), "вход внутрь ленты не состоялся");
+    let inner = h
+        .state()
+        .model
+        .project()
+        .clips
+        .iter()
+        .find(|c| matches!(c.r#gen, Some(GeneratorKind::Text { .. })))
+        .expect("титр внутри ленты")
+        .id;
+    let logo_in = h
+        .state()
+        .model
+        .project()
+        .clips
+        .iter()
+        .find(|c| matches!(c.r#gen, Some(GeneratorKind::Solid { .. })))
+        .expect("логотип внутри ленты")
+        .id;
+    let mut next = 0u64;
+    let mut publish = |h: &mut Harness<'static, KtApp>,
+                       name: &str,
+                       clip: ClipId,
+                       owner: ParamOwner,
+                       param: &str,
+                       ty: ParamType| {
+        next += 1;
+        let id = PubId(next);
+        let param = PublishedParam {
+            id,
+            name: name.to_string(),
+            target: ParamAddr::new(clip, owner, param),
+            ty,
+            range: PubRange::default(),
+        };
+        assert!(
+            h.state_mut().apply(Command::PublishParam { param: Box::new(param) }),
+            "публикация «{name}» отвергнута"
+        );
+        h.step();
+        id
+    };
+    let headline = publish(
+        &mut h,
+        "Заголовок",
+        inner,
+        ParamOwner::Generator,
+        "text",
+        ParamType::Text { multiline: true },
+    );
+    let tint =
+        publish(&mut h, "Цвет логотипа", logo_in, ParamOwner::Generator, "color", ParamType::Color);
+    let size = publish(&mut h, "Кегль", inner, ParamOwner::Generator, "size", ParamType::Num);
+    let align_ty = h
+        .state()
+        .model
+        .document()
+        .addr_type(Some(seq), &ParamAddr::new(inner, ParamOwner::Generator, "align"));
+    let align = publish(
+        &mut h,
+        "Выключка",
+        inner,
+        ParamOwner::Generator,
+        "align",
+        align_ty.expect("у титра есть выключка"),
+    );
+    let logo = publish(&mut h, "Логотип", logo_in, ParamOwner::ClipAttr, "media", ParamType::Media);
+    let flip =
+        publish(&mut h, "Задом наперёд", inner, ParamOwner::ClipAttr, "reversed", ParamType::Flag);
+
+    h.state_mut().leave_nest();
+    h.step();
+    assert_eq!(h.state().model.editing(), None, "выход из ленты не состоялся");
+
+    // ---- второй выпуск ----------------------------------------------
+    let mut b_clip = h.state().model.project().clips.iter().find(|c| c.id == a).cloned().unwrap();
+    let free = h.state().model.document().clips.iter().map(|c| c.id.0).max().unwrap_or(0) + 40;
+    b_clip.id = ClipId(free);
+    b_clip.start = kt_time::Tick(600_000);
+    b_clip.link_group = None;
+    assert!(h.state_mut().apply(Command::AddClip(b_clip)), "второй выпуск не встал");
+    h.step();
+    let b = ClipId(free);
+    (h, NewsScene { seq, inner, logo_clip: logo_in, a, b, headline, tint, size, align, logo, flip })
+}
+
+/// Тест 680 (Р.59, стадия 3): у превью ЛЕНТЫ ключ по ЭКЗЕМПЛЯРУ.
+///
+/// До этого раунда служба `reel_preview` ключевалась `(лента,
+/// content_hash)`, то есть РЕДАКЦИЕЙ ШАБЛОНА. С переопределениями это
+/// значит, что два выпуска с разными заголовками показывали бы на
+/// таймлайне ОДНИ И ТЕ ЖЕ кадры — кадры первого из них. Утверждение
+/// теста — следствие: ключи двух экземпляров РАЗНЫЕ, а у экземпляра без
+/// переопределений ключ остался прежним (байт в байт `content_hash`).
+#[test]
+fn t680_reel_preview_keys_are_per_instance() {
+    use kt_model::*;
+    let (mut h, s) = harness_news_template();
+
+    // без переопределений оба выпуска делят ОДИН ключ: проекты, которые
+    // публикацией не пользуются, не платят ничего
+    let keys = h.state_mut().reel_keys();
+    let (ka, kb) = (*keys.get(&s.a).expect("ключ A"), *keys.get(&s.b).expect("ключ B"));
+    assert_eq!(ka, kb, "экземпляры без переопределений обязаны делить один ключ превью");
+    let plain = kt_engine::content_hash(&h.state().model.document(), s.seq);
+    assert_eq!(ka.hash, plain, "пустой набор сдвинул редакцию ленты — поехали бы все ключи");
+
+    // второй выпуск получает СВОЙ заголовок
+    assert!(h.state_mut().apply(Command::SetOverride {
+        id: s.b,
+        ov: Box::new(Override::value(s.headline, ParamValue::Text("ВТОРОЙ ВЫПУСК".into()))),
+    }));
+    h.step();
+    let keys = h.state_mut().reel_keys();
+    let (ka2, kb2) = (*keys.get(&s.a).expect("ключ A"), *keys.get(&s.b).expect("ключ B"));
+    assert_eq!(ka2, ka, "шаблонный экземпляр не трогали — его ключ обязан остаться прежним");
+    assert_ne!(
+        ka2, kb2,
+        "переопределённый экземпляр получил ключ шаблона: на таймлайне он показал бы ЧУЖИЕ кадры"
+    );
+
+    // и обе редакции ЖИВЫ одновременно: инвалидация не имеет права
+    // выбрасывать соседнюю, иначе два выпуска пересчитывали бы друг друга
+    // по кругу
+    h.state_mut().request_reel_preview(ka2, &[]);
+    let ov_b = h.state().model.clip(s.b).map(|c| c.overrides.clone()).unwrap_or_default();
+    h.state_mut().request_reel_preview(kb2, &ov_b);
+    let pending = h.state().reel_previews.pending();
+    assert!(pending >= 2, "две редакции одной ленты не встали в очередь разом: {pending}");
+}
+
+/// Тест 683 (Р.59, стадия 3): окно «Параметры композиции» рисует КАЖДЫЙ
+/// тип своим виджетом, сброс шлёт `ClearOverride`, а число с кривой
+/// садит ключ в материале ЭКЗЕМПЛЯРА.
+#[test]
+fn t683_instance_params_window_draws_every_type() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let (mut h, s) = harness_news_template();
+    h.state_mut().open_inst_params(s.b);
+    h.step();
+    h.step();
+    assert_eq!(h.state().inst_params.len(), 1, "окно параметров композиции не открылось");
+
+    // ИМЕНА АВТОРА видны все и в объявленном порядке
+    for name in ["Заголовок", "Цвет логотипа", "Кегль", "Выключка", "Логотип", "Задом наперёд"]
+    {
+        assert!(
+            h.query_all_by_label_contains(name).count() > 0,
+            "строки «{name}» в окне нет — тип нарисован нечем"
+        );
+    }
+
+    // --- ТЕКСТ: поле правит переопределение --------------------------
+    let win = h.state().inst_params[0].gesture;
+    assert!(h.state_mut().apply_coalesced(
+        Command::SetOverride {
+            id: s.b,
+            ov: Box::new(Override::value(s.headline, ParamValue::Text("ВТОРОЙ".into()))),
+        },
+        win
+    ));
+    h.step();
+    assert_eq!(
+        h.state().model.document().instance_value(h.state().model.clip(s.b).unwrap(), s.headline),
+        Some(ParamValue::Text("ВТОРОЙ".into())),
+        "переопределение заголовка не доехало до модели"
+    );
+    // а ШАБЛОН при этом цел: сосед играет своим
+    assert_eq!(
+        h.state().model.document().published_value(s.seq, s.headline),
+        Some(ParamValue::Text("ВЫПУСК".into())),
+        "правка экземпляра уехала в ленту — это была бы правка всех мест сразу"
+    );
+
+    // --- СБРОС: кнопка строки шлёт ClearOverride ---------------------
+    h.step();
+    let reset = format!("{} Заголовок", tr(k::pubp::RESET));
+    let before = h.state().model.clip(s.b).map(|c| c.overrides.len()).unwrap_or(0);
+    assert_eq!(before, 1, "к этому месту у второго выпуска ровно одно переопределение");
+    h.get_by_label(&reset).click();
+    h.step();
+    h.step();
+    assert_eq!(
+        h.state().model.clip(s.b).map(|c| c.overrides.len()),
+        Some(0),
+        "кнопка сброса не сняла переопределение"
+    );
+
+    // --- ТИПЫ: объявленное совпадает с тем, что у цели ЖИВЬЁМ --------
+    // окно рисует строку ПО ТИПУ, и разойдись объявление с целью —
+    // человек получил бы чекбокс на месте текста
+    {
+        let doc = h.state().model.document();
+        let seq = doc.sequence(s.seq).cloned().expect("лента");
+        for (id, want) in [
+            (s.headline, ParamType::Text { multiline: true }),
+            (s.tint, ParamType::Color),
+            (s.size, ParamType::Num),
+            (s.align, ParamType::Choice { variants: std::borrow::Cow::Borrowed(&[]) }),
+            (s.logo, ParamType::Media),
+            (s.flip, ParamType::Flag),
+        ] {
+            let p = seq.published.iter().find(|p| p.id == id).expect("объявленная ручка");
+            let live = doc.addr_type(Some(s.seq), &p.target).expect("цель жива");
+            assert!(
+                live.same_family(&want) && p.ty.same_family(&want),
+                "ручка «{}» объявлена не тем типом: {:?} против живого {live:?}",
+                p.name,
+                p.ty
+            );
+        }
+        // цветная ручка целит в ЛОГОТИП, а не в титр: адрес — часть
+        // объявления, и перепутай окно носителя, правился бы чужой ряд
+        let tint = seq.published.iter().find(|p| p.id == s.tint).unwrap();
+        assert!(kt_model::same_clip(tint.target.clip, s.logo_clip), "цвет объявлен не у логотипа");
+    }
+
+    // --- ЧИСЛО С КРИВОЙ: ключ садится в материале ЭКЗЕМПЛЯРА ---------
+    // второй выпуск стоит НЕ в нуле (start = 600_000), поэтому «материал
+    // экземпляра» и «время проекта» тут различимы — сцена не вырождена
+    let inst = h.state().model.clip(s.b).cloned().unwrap();
+    assert_ne!(inst.start.0, 0, "сцена выродилась: у экземпляра в нуле домен не отличить");
+    let frame_step = 90_000 / h.state().model.project().settings.fps.max(1) as i64;
+    let at = kt_model::clip_material_at(
+        inst.source_in,
+        inst.start,
+        inst.duration,
+        inst.reversed,
+        frame_step,
+        h.state().player.transport.playhead(),
+    );
+    let curve = ParamCurve {
+        param: "size".into(),
+        keys: vec![AutoKey { t: at, v: 96.0 }],
+        ease: false,
+        source: CurveSource::Keys,
+    };
+    assert!(h.state_mut().apply_coalesced(
+        Command::SetOverride {
+            id: s.b,
+            ov: Box::new(Override {
+                pub_id: s.size,
+                value: ParamValue::Num(96.0),
+                curves: vec![curve],
+            }),
+        },
+        win
+    ));
+    h.step();
+    let got = h
+        .state()
+        .model
+        .clip(s.b)
+        .and_then(|c| c.overrides.iter().find(|o| o.pub_id == s.size).cloned())
+        .expect("переопределение кегля");
+    assert_eq!(got.curves.len(), 1, "кривая переопределения не доехала");
+    assert_eq!(got.curves[0].keys[0].t, at, "ключ сел не в материале экземпляра");
+
+    // и модель ЭТО ВИДИТ: разрешение ленты под набором отдаёт кривую цели
+    let doc = h.state().model.document();
+    let ov = h.state().model.clip(s.b).unwrap().overrides.clone();
+    let resolved = doc.resolve_reel(Some(s.seq), &ov);
+    let target = resolved.clips.iter().find(|c| kt_model::same_clip(c.id, s.inner)).unwrap();
+    assert!(
+        target.gen_auto.iter().any(|c| c.param == "size"),
+        "кривая переопределения не доехала до цели внутри ленты"
+    );
+}
+
+/// Тест 684 (Р.59, стадия 3): ИМЯ АВТОРА — содержимое документа.
+///
+/// Решение владельца: «имена публичных параметров — свободный текст
+/// автора». Значит оно рисуется ДОСЛОВНО, мимо каталога переводов, как
+/// имя события или ленты, и сторож t131 обязан остаться зелёным (в коде
+/// ни одного нового русского литерала).
+#[test]
+fn t684_author_names_are_shown_verbatim() {
+    use kt_model::*;
+    let (mut h, s) = harness_news_template();
+    // кириллица и арабица — два письма с разной раскладкой; арабское имя
+    // проверяет ещё и то, что текст ПРОЕКТА не переупорядочивается как
+    // строка каталога
+    let names = ["Заголовок выпуска №3", "عنوان النشرة"];
+    h.state_mut().enter_nest(s.a);
+    h.step();
+    for (id, name) in [s.headline, s.tint].iter().zip(names) {
+        let mut p = h
+            .state()
+            .model
+            .document()
+            .sequence(s.seq)
+            .unwrap()
+            .published
+            .iter()
+            .find(|p| p.id == *id)
+            .cloned()
+            .unwrap();
+        p.name = name.to_string();
+        assert!(h.state_mut().apply(Command::SetPublished { param: Box::new(p) }));
+        h.step();
+    }
+    h.state_mut().leave_nest();
+    h.step();
+
+    h.state_mut().open_inst_params(s.b);
+    h.step();
+    h.step();
+    // смотреть надо на ГАЛЛЕИ, а не на дерево доступности: доступное имя
+    // кнопки сброса составное и несёт имя ручки тоже — по нему «дословно
+    // ли нарисовано» не отличить (урок t255/t548). Берём ИСХОДНЫЙ текст
+    // галлеи: перестановка слов у арабского живёт в `tr()` (i18n::bidi) и
+    // применяется ДО отрисовки, поэтому расхождение здесь означало бы
+    // ровно то, чего быть не должно, — имя автора прошло через каталог.
+    let drawn = |h: &Harness<'static, KtApp>| -> Vec<String> {
+        crate::reach_tests::painted_texts(h).into_iter().map(|t| t.src).collect()
+    };
+    for name in names {
+        assert!(
+            drawn(&h).iter().any(|t| t == name),
+            "имя автора «{name}» не НАРИСОВАНО дословно: {:?}",
+            drawn(&h)
+        );
+    }
+
+    // ЯЗЫК ПРОГРАММЫ имя автора не трогает: переключили каталог — имя то же
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+    h.step();
+    h.step();
+    assert!(
+        drawn(&h).iter().any(|t| t == tr(k::pubp::RESET)),
+        "язык программы не переключился — дальнейшее утверждение пусто"
+    );
+    for name in names {
+        assert!(
+            drawn(&h).iter().any(|t| t == name),
+            "имя автора «{name}» уехало вместе с языком программы"
+        );
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+    h.step();
+}
+
+/// Тест 685 (Р.59, стадия 3): бейджи.
+///
+/// Булавка на экземпляре С переопределениями, число объявленных ручек на
+/// карточке ленты в бине, и НИЧЕГО из этого — когда публикаций нет.
+#[test]
+fn t685_badges_show_overrides_and_publications() {
+    use kt_model::*;
+    let (mut h, s) = harness_news_template();
+
+    // --- НИЧЕГО, пока не переопределено -------------------------------
+    let inst = h.state().model.clip(s.b).cloned().unwrap();
+    assert!(inst.overrides.is_empty());
+    assert_eq!(
+        h.state().instance_override_counts(&inst),
+        (0, 6),
+        "счётчик обязан знать и сколько объявлено, и сколько тронуто"
+    );
+
+    // --- БУЛАВКА и подсказка после переопределения ---------------------
+    assert!(h.state_mut().apply(Command::SetOverride {
+        id: s.b,
+        ov: Box::new(Override::value(s.headline, ParamValue::Text("ВТОРОЙ".into()))),
+    }));
+    h.step();
+    let inst = h.state().model.clip(s.b).cloned().unwrap();
+    assert_eq!(h.state().instance_override_counts(&inst), (1, 6));
+    // и БУЛАВКА ПО-НАСТОЯЩЕМУ НАРИСОВАНА на событии: смотреть надо на
+    // галлеи, а не на модель — «поле выставилось» не следствие (Р.40)
+    h.step();
+    h.step();
+    let pinned: Vec<String> = crate::reach_tests::painted_texts(&h)
+        .into_iter()
+        .map(|t| t.src)
+        .filter(|s| s.contains(crate::icons::PIN))
+        .collect();
+    // подпись СОБЫТИЯ несёт булавку в хвосте («имя ×N 📌»), карточка
+    // бина — в голове («📌6»): это разные бейджи, и путать их нельзя
+    assert!(
+        pinned.iter().any(|s| s.ends_with(crate::icons::PIN) && s.len() > 4),
+        "булавки на событии-экземпляре не нарисовано: {pinned:?}"
+    );
+    assert!(
+        pinned.iter().any(|s| s.starts_with(crate::icons::PIN)),
+        "числа объявленных ручек на карточке ленты не нарисовано: {pinned:?}"
+    );
+    // подсказка НАЗЫВАЕТ числа — «булавка есть, а что значит» без этого
+    // было бы загадкой (правило 16)
+    let hint = crate::tf!(k::pubp::OVERRIDDEN, 1, 6);
+    assert!(hint.contains('1') && hint.contains('6'), "подсказка не называет чисел: {hint}");
+    // соседний выпуск булавки не получил: переопределение — свойство
+    // ЭКЗЕМПЛЯРА, а не ленты
+    assert!(
+        h.state().model.clip(s.a).unwrap().overrides.is_empty(),
+        "переопределение расползлось на соседний экземпляр"
+    );
+
+    // --- КАРТОЧКА БИНА: число объявленных ручек ------------------------
+    assert_eq!(h.state().published_of(s.seq).len(), 6, "карточка ленты берёт число ручек отсюда");
+    // лента без публикаций числа не показывает — «×1» того же рода шум
+    {
+        let app = h.state_mut();
+        let ids: Vec<PubId> = app.published_of(s.seq).iter().map(|p| p.id).collect();
+        app.enter_nest(s.a);
+        for id in ids {
+            assert!(app.apply(Command::UnpublishParam { id }), "снятие ручки отвергнуто");
+        }
+        app.leave_nest();
+    }
+    h.step();
+    assert_eq!(h.state().published_of(s.seq).len(), 0);
+    // и переопределения ушли ВМЕСТЕ с ручками — мёртвой булавки не бывает
+    assert!(
+        h.state().model.clip(s.b).unwrap().overrides.is_empty(),
+        "снятие публикаций оставило переопределение: булавка врала бы"
+    );
+    h.step();
+    h.step();
+    let left: Vec<String> = crate::reach_tests::painted_texts(&h)
+        .into_iter()
+        .map(|t| t.src)
+        .filter(|s| s.contains(crate::icons::PIN))
+        .collect();
+    assert!(left.is_empty(), "бейджи остались там, где публикаций больше нет: {left:?}");
 }
