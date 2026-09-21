@@ -189,6 +189,7 @@ fn t649_formula_curves_are_refused_loudly() {
     let mut c = ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,

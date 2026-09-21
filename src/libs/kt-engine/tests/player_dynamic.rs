@@ -19,6 +19,7 @@ fn base_project() -> Project {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -82,6 +83,7 @@ fn t18_add_media_preserves_cache_coverage_and_transport() {
     p2.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(2),
         link_group: None,
         kind: ClipKind::Audio,
@@ -275,6 +277,7 @@ fn t316_replace_media_updates_the_decode_stage() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -334,6 +337,7 @@ fn t500_retune_keeps_worker_and_renderer() {
         // Р.59, стадия 2: значения — на СОБЫТИИ, источник стоит по его адресу
         r#gen: Some(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(2),
         link_group: None,
         kind: ClipKind::Video,
@@ -469,6 +473,7 @@ fn t661_a_value_edit_does_not_rebuild_the_renderer() {
     project.clips.push(ClipEvent {
         r#gen: Some(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(2),
         link_group: None,
         kind: ClipKind::Video,

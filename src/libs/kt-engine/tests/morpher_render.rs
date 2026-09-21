@@ -42,6 +42,7 @@ fn project_with_clip(media: MediaId, source_in: Tick, fx: Vec<FxInstance>) -> Pr
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,

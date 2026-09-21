@@ -35,6 +35,7 @@ fn fx_project(fx: Vec<FxInstance>, pattern_path: &str, dur_frames: i64) -> Proje
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -274,6 +275,7 @@ fn t6_graph_rebuild_mid_tail_preserves_state() {
     p2.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(99),
         link_group: None,
         kind: ClipKind::Audio,

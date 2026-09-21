@@ -208,7 +208,42 @@ fn production_corpus() -> Vec<(String, String)> {
 /// значит её никто не зовёт, и это надо объяснить предложением, а не
 /// словом «TODO». Подключил к UI — обязан отсюда убрать (иначе список за
 /// год покроет всё и перестанет что-либо значить).
-const NOT_FROM_UI: &[(&str, &str)] = &[];
+const NOT_FROM_UI: &[(&str, &str)] = &[
+    // Р.59, стадия 3: модель, движок и формат публичных параметров легли
+    // отдельным коммитом, окна публикации и параметров композиции — следующим.
+    // Список САМОЧИСТЯЩИЙСЯ: как только приложение начнёт создавать команду,
+    // этот же тест потребует убрать строку отсюда.
+    (
+        "PublishParam",
+        "Р.59 стадия 3: окно «Публичные параметры» ленты идёт следующим коммитом; \
+         до него объявить ручку можно только из модели и тестов",
+    ),
+    (
+        "UnpublishParam",
+        "Р.59 стадия 3: снятие ручки живёт в том же окне «Публичные параметры», \
+         которое приезжает следующим коммитом",
+    ),
+    (
+        "SetPublished",
+        "Р.59 стадия 3: переименование и сужение пределов — строка того же окна \
+         «Публичные параметры», оно приезжает следующим коммитом",
+    ),
+    (
+        "ReorderPublished",
+        "Р.59 стадия 3: порядок ручек в окне потребителя задаётся окном \
+         «Публичные параметры», которое приезжает следующим коммитом",
+    ),
+    (
+        "SetOverride",
+        "Р.59 стадия 3: окно «Параметры композиции» у экземпляра приезжает \
+         следующим коммитом; модель и движок уже умеют переопределения",
+    ),
+    (
+        "ClearOverride",
+        "Р.59 стадия 3: кнопка сброса строки живёт в окне «Параметры композиции», \
+         которое приезжает следующим коммитом",
+    ),
+];
 
 /// Тест 252 (Р.38): осиротевших команд нет.
 ///
@@ -326,6 +361,7 @@ fn scene(
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Video,
@@ -638,6 +674,7 @@ fn t254_click_is_a_click() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -726,6 +763,7 @@ fn t547_gallery_click_reaches_the_model() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -1018,6 +1056,7 @@ fn picker_harness(
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind,
@@ -1254,6 +1293,7 @@ fn strip_metrics(file: &str) -> (f32, Vec<PaintedText>) {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,

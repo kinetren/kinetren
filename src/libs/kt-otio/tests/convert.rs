@@ -15,6 +15,7 @@ fn clip(id: u64, kind: ClipKind, lane: u32, start: i64, dur: i64, media: u64) ->
     ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind,
@@ -329,6 +330,7 @@ fn t165_overlapping_lane_survives_layer_roundtrip() {
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Video,
@@ -1998,4 +2000,71 @@ fn t665_old_generator_files_migrate_to_the_event() {
     );
     // и прочитанный проект законен — то есть мигрировал ЦЕЛИКОМ
     back.project.validate().expect("мигрированный проект законен");
+}
+
+/// Тест 681 (Р.59, стадия 3): публичные параметры и переопределения
+/// переживают круг, а версия поднимается ПО СОДЕРЖИМОМУ — ТЕМ ЖЕ
+/// предикатом, что и генератор на событии (одна версия на раунд).
+///
+/// Старый ридер такой файл обязан отвергнуть, и это правильно: иначе он
+/// молча сыграл бы все экземпляры шаблонными значениями — десять выпусков
+/// новостей с одним заголовком и ни одного видимого признака.
+#[test]
+fn t681_published_params_and_overrides_round_trip() {
+    let mut p = nested_project();
+    // ручка у ленты: текст титра внутри неё
+    p.media.push(MediaRef { id: MediaId(7), path: "gen:text".into() });
+    let mut title = clip(13, ClipKind::Video, 1, 0, 45_000, 7);
+    let mut kind = kt_model::GeneratorKind::default_text();
+    if let kt_model::GeneratorKind::Text { text, .. } = &mut kind {
+        *text = "Заголовок по умолчанию".into();
+    }
+    title.r#gen = Some(kind);
+    let s = p.sequences.iter_mut().find(|s| s.id == MediaId(100)).unwrap();
+    s.clips.push(title);
+    s.video_lanes = 2;
+    s.published = vec![kt_model::PublishedParam {
+        id: kt_model::PubId(1),
+        // имя — свободный текст АВТОРА (решение владельца Р.59)
+        name: "Заголовок новости".into(),
+        target: kt_model::ParamAddr::new(ClipId(13), kt_model::ParamOwner::Generator, "text"),
+        ty: kt_model::ParamType::Text { multiline: false },
+        range: kt_model::PubRange { min: None, max: None },
+    }];
+    // у ВТОРОГО экземпляра — своё значение
+    let inst = p.clips.iter_mut().filter(|c| c.media == MediaId(100)).nth(1).unwrap();
+    inst.overrides = vec![kt_model::Override::value(
+        kt_model::PubId(1),
+        kt_model::ParamValue::Text("Второй выпуск".into()),
+    )];
+    p.validate().expect("шаблон с переопределением законен");
+
+    let text = save_project(&p, &Retained::default(), None);
+    assert_eq!(
+        kt_otio::kt_version(&parse_document(&text).unwrap()),
+        Some(kt_otio::KT_META_V9),
+        "публичные параметры обязаны поднимать ТУ ЖЕ версию, что генератор на \
+         событии: версия одна на раунд и считается по содержимому"
+    );
+
+    let back = load_project(&text, None).expect("файл с публикациями читается");
+    assert_eq!(
+        back.project.sequence(MediaId(100)).unwrap().published,
+        p.sequences.iter().find(|s| s.id == MediaId(100)).unwrap().published,
+        "объявленный набор не пережил круг"
+    );
+    assert_eq!(back.project.clips, p.clips, "переопределения не пережили круг");
+    assert_eq!(text, save_project(&back.project, &back.retained, None), "идемпотентность");
+
+    // ...и файл БЕЗ этих полей не двинулся ни на символ
+    let plain = save_project(&nested_project(), &Retained::default(), None);
+    assert!(
+        !plain.contains("published") && !plain.contains("overrides"),
+        "поля публикации протекли в файл, который ими не пользуется"
+    );
+    assert_eq!(
+        kt_otio::kt_version(&parse_document(&plain).unwrap()),
+        Some(kt_otio::KT_META_V6),
+        "обычная лента обязана остаться на своей версии"
+    );
 }

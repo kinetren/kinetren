@@ -395,6 +395,7 @@ fn t94_forward_navigation_advances() {
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Video,
@@ -475,6 +476,7 @@ fn t95_clip_drag_snaps_to_neighbour() {
                 p.clips.push(ClipEvent {
                     r#gen: None,
                     gen_auto: Vec::new(),
+                    overrides: Vec::new(),
                     id: ClipId(n),
                     link_group: None,
                     kind: ClipKind::Video,
@@ -1230,6 +1232,7 @@ fn t122_insert_lane_after_clicked_row() {
         p.clips.push(kt_model::ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: kt_model::ClipId(1),
             link_group: None,
             kind: kt_model::ClipKind::Audio,
@@ -1321,6 +1324,7 @@ fn t120_space_hold_boosts_playback() {
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Audio,
@@ -1441,6 +1445,7 @@ fn t119_shift_nav_drags_region() {
             p.clips.push(ClipEvent {
                 r#gen: None,
                 gen_auto: Vec::new(),
+                overrides: Vec::new(),
                 id: ClipId(i as u64 + 1),
                 link_group: None,
                 kind: ClipKind::Video,
@@ -1953,6 +1958,7 @@ fn t139_move_plan_crossfade_and_clamp() {
     let clip = |id: u64, lane: u32, start: i64, dur: i64| ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Audio,
@@ -2050,6 +2056,7 @@ fn t139_drag_overlap_creates_crossfade() {
             p.clips.push(ClipEvent {
                 r#gen: None,
                 gen_auto: Vec::new(),
+                overrides: Vec::new(),
                 id: ClipId(n),
                 link_group: None,
                 kind: ClipKind::Video,
@@ -2128,6 +2135,7 @@ fn t140_transition_edge_and_body_drags() {
             p.clips.push(ClipEvent {
                 r#gen: None,
                 gen_auto: Vec::new(),
+                overrides: Vec::new(),
                 id: ClipId(n),
                 link_group: None,
                 kind: ClipKind::Video,
@@ -2244,6 +2252,7 @@ fn t163_overlap_drag_changes_nothing_but_position() {
             p.clips.push(ClipEvent {
                 r#gen: None,
                 gen_auto: Vec::new(),
+                overrides: Vec::new(),
                 id: ClipId(n),
                 link_group: group,
                 kind,
@@ -2340,6 +2349,7 @@ fn t160_pulling_apart_restores_trimmed_material() {
             p.clips.push(ClipEvent {
                 r#gen: None,
                 gen_auto: Vec::new(),
+                overrides: Vec::new(),
                 id: ClipId(n),
                 link_group: None,
                 kind: ClipKind::Video,
@@ -2428,6 +2438,7 @@ fn t157_fade_edge_drag_without_neighbour() {
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Video,
@@ -2653,6 +2664,7 @@ fn t169_preview_material_shifts_only_on_trim_start() {
     let orig = ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -2785,6 +2797,7 @@ fn t172_blocked_gesture_is_an_error_not_a_pale_hint() {
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(n),
             link_group: None,
             kind: ClipKind::Video,
@@ -2900,6 +2913,7 @@ fn t173_corner_fade_and_level_gestures() {
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Video,
@@ -3023,6 +3037,7 @@ fn t176_audio_and_video_share_one_level_line() {
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Audio,
@@ -3143,6 +3158,7 @@ fn t221_automation_widget_maps_material_and_keeps_input_stable() {
     let mut c = ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -3239,6 +3255,7 @@ fn t219_one_window_for_the_whole_link_group() {
     let clip = |id: u64, kind: ClipKind, lane: u32| ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(id),
         link_group: Some(GroupId(7)),
         kind,
@@ -3315,6 +3332,7 @@ fn t218_morpher_source_field_takes_files_and_reverts() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -3403,6 +3421,7 @@ fn t217_one_chain_widget_for_events_and_morphers() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(9),
         link_group: None,
         kind: ClipKind::Video,
@@ -3501,6 +3520,7 @@ fn t193_fx_editor_automation_coalesces_into_one_undo() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(9),
         link_group: None,
         kind: ClipKind::Video,
@@ -3641,6 +3661,7 @@ pub(crate) fn harness_three_clips_dt(
             p.clips.push(ClipEvent {
                 r#gen: None,
                 gen_auto: Vec::new(),
+                overrides: Vec::new(),
                 id: ClipId(i as u64 + 1),
                 link_group: None,
                 kind: ClipKind::Video,
@@ -3830,6 +3851,7 @@ fn t211_returned_source_replaces_its_placeholder() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -3912,6 +3934,7 @@ fn t210_render_with_missing_sources_warns_and_runs() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -3989,6 +4012,7 @@ fn t209_missing_source_opens_with_placeholder_and_notices() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -4195,6 +4219,7 @@ fn t204_multi_drag_moves_the_whole_block() {
     let clip = |id: u64, start: i64| ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,
@@ -4371,6 +4396,7 @@ fn t200_coalesced_edits_bump_revision_and_keep_dirty() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(9),
         link_group: None,
         kind: ClipKind::Video,
@@ -5151,6 +5177,7 @@ fn t376_clip_ids_are_not_reused_within_a_session() {
         app.apply(Command::AddClip(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Video,
@@ -6661,6 +6688,7 @@ fn t242_morph_editor_shows_target_mode_and_timing() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -6750,6 +6778,7 @@ fn t244_morpher_has_one_chain_with_pinned_head() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -6902,6 +6931,7 @@ fn t246_thin_row_is_clickable_and_zoom_anchor_holds() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -7121,6 +7151,7 @@ fn t248_video_warp_shows_only_what_matters() {
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(id),
             link_group: Some(GroupId(1)),
             kind,
@@ -7178,6 +7209,7 @@ fn t249_previews_follow_the_warp() {
     let clip = |fx: Vec<FxInstance>, reversed: bool| ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -7258,6 +7290,7 @@ fn t258_morph_layer_reuses_lane_and_honours_region() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -7618,6 +7651,7 @@ fn t265_automation_axis_and_field_bind() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -8231,6 +8265,7 @@ fn t281_typed_key_value_reaches_the_model() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(9),
         link_group: None,
         kind: ClipKind::Audio,
@@ -8342,6 +8377,7 @@ fn t286_region_edits_do_not_rebuild_the_engine() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -8468,6 +8504,7 @@ fn t343_paste_chain_into_morpher_carries_curves() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -8538,6 +8575,7 @@ fn harness_with_fx_window() -> egui_kittest::Harness<'static, crate::app::KtApp>
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -8707,6 +8745,7 @@ fn harness_with_eq_window() -> egui_kittest::Harness<'static, crate::app::KtApp>
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -9294,6 +9333,7 @@ fn t460_fade_handle_redrag_keeps_kind() {
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Video,
@@ -9385,6 +9425,7 @@ fn t460b_overlap_redrag_keeps_kind() {
             p.clips.push(ClipEvent {
                 r#gen: None,
                 gen_auto: Vec::new(),
+                overrides: Vec::new(),
                 id: ClipId(n),
                 link_group: None,
                 kind: ClipKind::Video,

@@ -638,8 +638,33 @@ impl Player {
                     .into_iter()
                     .map(crate::nest_source_id)
                     .collect();
+                // ВСЕ адреса, которые несут состояние этого события
+                // (Р.59, стадия 3). У экземпляра с переопределениями
+                // источник СВОЙ — адрес посолен набором, — и ретюн
+                // обязан доехать до каждого: правка кегля в титре
+                // шаблона иначе не дошла бы до второго выпуска до
+                // первой пересборки плана. Список считает тот же
+                // `gen_sources`, что поднимает источники.
+                let wanted = crate::gen_sources(&p);
                 drop(p);
-                self.update_gen_at(addr, state, stale);
+                self.update_gen_at(addr, state, stale.clone());
+                for (a, st) in wanted {
+                    if a == addr {
+                        continue;
+                    }
+                    let live = self.gen_states.lock().unwrap().get(&a).cloned();
+                    match live {
+                        Some(o) if o == st => {}
+                        Some(o) if kt_media::factory::can_retune_gen(&o, &st) => {
+                            self.update_gen_at(a, st, stale.clone());
+                        }
+                        Some(_) => {
+                            self.gen_states.lock().unwrap().insert(a, st.clone());
+                            self.replace_media(a, kt_media::factory::open_gen(&st));
+                        }
+                        None => {}
+                    }
+                }
                 true
             }
             None => false,

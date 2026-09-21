@@ -35,9 +35,11 @@ pub struct FxStateStore {
 /// дало бы третий, ничей результат: внутренний реверб обязан звучать
 /// вперёд ВНУТРИ ленты, а зеркало снаружи даёт обратный реверб.
 pub struct NestStream {
-    /// Какая лента. Экземпляр могли перевесить на другую (`SetClipMedia`) —
-    /// тогда поток начинается заново, а не наследует чужое состояние.
-    pub seq: kt_model::MediaId,
+    /// Какая лента И какая её РЕДАКЦИЯ (Р.59, стадия 3). Экземпляр могли
+    /// перевесить на другую ленту (`SetClipMedia`) или сменить ему
+    /// переопределения — в обоих случаях поток начинается заново, а не
+    /// наследует чужое состояние.
+    pub seq: crate::video::NestKey,
     pub store: FxStateStore,
     /// Непрерывный отрезок уже посчитанных бёрстов, свежие в конце.
     /// Повторный запрос того же бёрста — обычное дело (`render_plain_clip`
@@ -61,11 +63,11 @@ pub struct NestStream {
 impl NestStream {
     /// Свежий поток. `pub`, потому что заводит его и продюсер в `audio.rs`:
     /// там читатель становится известен только в момент чтения.
-    pub fn new_for(seq: kt_model::MediaId, preroll: u32, block: u32) -> NestStream {
+    pub fn new_for(seq: crate::video::NestKey, preroll: u32, block: u32) -> NestStream {
         NestStream::new(seq, preroll, block)
     }
 
-    fn new(seq: kt_model::MediaId, preroll: u32, block: u32) -> NestStream {
+    fn new(seq: crate::video::NestKey, preroll: u32, block: u32) -> NestStream {
         NestStream {
             seq,
             store: FxStateStore::new(),
@@ -184,7 +186,7 @@ impl FxStateStore {
     pub fn nest_mut(
         &mut self,
         id: ClipId,
-        seq: kt_model::MediaId,
+        seq: crate::video::NestKey,
         preroll: u32,
         block: u32,
     ) -> &mut NestStream {

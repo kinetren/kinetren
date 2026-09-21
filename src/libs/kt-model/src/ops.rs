@@ -5,6 +5,7 @@
 
 use crate::model::{Command, MIN_CLIP_DURATION};
 use crate::project::*;
+use crate::published as kt_published;
 use kt_time::{Tick, TickRange};
 
 /// Блок обмена (Р.24): клипы + переходы, у которых ОБА конца попали в блок
@@ -1470,6 +1471,7 @@ pub fn collapse_into_sequence(
         cmds.push(Command::AddClip(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id,
             link_group: group,
             kind: k,
@@ -1546,6 +1548,12 @@ pub struct ExpandReport {
     pub warp_dropped: bool,
     /// Сколько дорожек пришлось вставить под содержимое.
     pub lanes_inserted: usize,
+    /// Сколько переопределений ВПЕЧЕНО в развёрнутое содержимое (Р.59,
+    /// стадия 3). «Что видел, то и получил»: снаружи экземпляр рисовался
+    /// со своими значениями, и развёрнутые куски обязаны рисоваться так
+    /// же. Ссылки на ленту после разворачивания нет, значит и ручке жить
+    /// негде — поэтому число называется вслух.
+    pub overrides_baked: usize,
 }
 
 /// Развернуть экземпляр обратно на дорожки.
@@ -1564,6 +1572,35 @@ pub fn expand_instance(p: &Project, id: ClipId, n: NestIds<'_>) -> (Vec<Command>
         reverse_dropped: inst.reversed,
         warp_dropped: crate::chain_warps_time(&inst.active_fx(), &inst.active_fx_auto()),
         lanes_inserted: 0,
+        overrides_baked: inst
+            .overrides
+            .iter()
+            .filter(|o| seq.published.iter().any(|x| x.id == o.pub_id))
+            .count(),
+    };
+    // ПЕРЕОПРЕДЕЛЕНИЯ ВПЕКАЮТСЯ (Р.59, стадия 3): полоса раскрытия
+    // показывает ШАБЛОН (она ссылка, а не копия), а разворачивание —
+    // необратимое действие, после которого ленты под этими кусками нет.
+    // Значит значения обязаны уехать в сами куски.
+    let mut patched;
+    let seq = if report.overrides_baked == 0 {
+        seq
+    } else {
+        patched = seq.clone();
+        let published = patched.published.clone();
+        let frame_step = 90_000 / p.settings.fps.max(1) as i64;
+        let (clips, transitions, cameras) =
+            (&mut patched.clips, &mut patched.transitions, &mut patched.cameras);
+        kt_published::apply_overrides(
+            &published,
+            &inst.overrides,
+            clips,
+            transitions,
+            cameras,
+            frame_step,
+            &|m| p.default_gen_for(m),
+        );
+        &patched
     };
     // окно экземпляра в координатах содержимого
     let win = TickRange::new(inst.source_in, inst.source_in + inst.duration);
@@ -1875,6 +1912,7 @@ pub fn import_as_sequences(
         cmds.push(Command::AddClip(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id,
             link_group: group,
             kind: k,

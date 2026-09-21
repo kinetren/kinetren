@@ -14,6 +14,7 @@ fn clip(id: u64, kind: ClipKind, lane: u32, start: i64, dur: i64, src: i64) -> C
     ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind,
@@ -160,6 +161,7 @@ fn t164_legacy_import_keeps_overlaps_and_lanes() {
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(id),
             link_group: group.map(GroupId),
             kind,

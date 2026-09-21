@@ -26,6 +26,7 @@ fn clip(id: u64, media: u64, start: Tick, dur: Tick) -> ClipEvent {
     ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,
@@ -244,6 +245,9 @@ fn t426_sequence_does_not_lag_behind_the_root() {
         camera_lanes: _,
         lane_order: _,
         overlap_layers: _,
+        // публичные параметры (Р.59, стадия 3) — СОДЕРЖИМОЕ ленты: у
+        // корня поле есть только потому, что вход внутрь сделан обменом
+        published: _,
         // --- свойства ДОКУМЕНТА: своих у ленты нет по решению владельца
         // «вложение наследует настройки родителя» (Р.50) ---
         format_version: _,
@@ -277,6 +281,7 @@ fn t426_sequence_does_not_lag_behind_the_root() {
         camera_lanes: _,
         lane_order: _,
         overlap_layers: _,
+        published: _,
     } = s;
 
     // умолчания ленты совпадают с умолчаниями корня: пустая лента и пустой

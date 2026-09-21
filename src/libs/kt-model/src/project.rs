@@ -3,6 +3,8 @@
 use kt_time::{Tick, TickRange};
 use serde::{Deserialize, Serialize};
 
+use crate::published::{Override, ParamAddr, ParamOwner, PubId, PublishedParam, ResolvedReel};
+
 pub const FORMAT_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -544,6 +546,120 @@ pub trait HasParams {
     fn param_idx(&self, name: &str) -> Option<usize> {
         self.param_specs().iter().position(|s| s.name == name)
     }
+
+    /// Свойства, которых НЕТ среди числовых рядов и флагов: текст, выбор,
+    /// ссылка на медиа. Пусто у подавляющего большинства владельцев —
+    /// объявляет их только тот, у кого они есть (титр — свой текст и
+    /// семью шрифта).
+    fn extra_specs(&self) -> Vec<ParamSpec> {
+        Vec::new()
+    }
+
+    /// Цветовые группы — ВЫВОДЯТСЯ из паспорта (Р.59, стадия 3), а не
+    /// объявляются: ручной список был бы вторым источником того же факта.
+    fn color_groups(&self) -> Vec<ColorGroup> {
+        derive_color_groups(self.param_specs())
+    }
+
+    /// Тип свойства по имени. `None` — такого свойства у владельца нет,
+    /// и это ровно то, чем валидация ловит публикацию на исчезнувшую цель.
+    fn value_type(&self, name: &str) -> Option<ParamType> {
+        if self.color_groups().iter().any(|g| g.stem == name) {
+            return Some(ParamType::Color);
+        }
+        if let Some(s) = self.param_spec(name) {
+            return Some(s.ty.clone());
+        }
+        if self.flag_specs().iter().any(|f| f.name == name) {
+            return Some(ParamType::Flag);
+        }
+        self.extra_specs().into_iter().find(|s| s.name == name).map(|s| s.ty)
+    }
+
+    /// ТИПИЗИРОВАННОЕ чтение. Умолчание разводит имя по трём существующим
+    /// путям (число, флаг, компоненты цвета); владельцы с текстом и
+    /// выбором переопределяют.
+    fn get_value(&self, name: &str) -> Option<ParamValue> {
+        default_get_value(self, name)
+    }
+
+    /// ТИПИЗИРОВАННАЯ запись. Возвращает false, если такого свойства нет
+    /// или тип не тот: молчаливая подмена типа была бы порчей.
+    fn set_value(&mut self, name: &str, v: &ParamValue) -> bool {
+        default_set_value(self, name, v)
+    }
+}
+
+/// Тело умолчания `HasParams::get_value` СВОБОДНОЙ функцией: переопределяя
+/// метод, владелец обязан уметь позвать умолчание, а из перекрытого метода
+/// трейта оно недоступно.
+pub fn default_get_value<T: HasParams + ?Sized>(o: &T, name: &str) -> Option<ParamValue> {
+    if let Some(g) = o.color_groups().into_iter().find(|g| g.stem == name) {
+        let ch = |sfx: &str| {
+            o.get_param(&format!("{name}_{sfx}")).unwrap_or(0.0).round().clamp(0.0, 255.0) as u8
+        };
+        let a = if g.alpha { ch("a") } else { 255 };
+        return Some(ParamValue::Color([ch("r"), ch("g"), ch("b"), a]));
+    }
+    if o.param_spec(name).is_some() {
+        return o.get_param(name).map(ParamValue::Num);
+    }
+    if o.flag_specs().iter().any(|f| f.name == name) {
+        return o.get_flag(name).map(ParamValue::Flag);
+    }
+    None
+}
+
+/// Тело умолчания `HasParams::set_value`.
+pub fn default_set_value<T: HasParams + ?Sized>(o: &mut T, name: &str, v: &ParamValue) -> bool {
+    match v {
+        ParamValue::Color(rgba) => {
+            let Some(g) = o.color_groups().into_iter().find(|g| g.stem == name) else {
+                return false;
+            };
+            let mut ok = true;
+            for (i, sfx) in ["r", "g", "b"].iter().enumerate() {
+                ok &= o.set_param(&format!("{name}_{sfx}"), rgba[i] as f64);
+            }
+            if g.alpha {
+                ok &= o.set_param(&format!("{name}_a"), rgba[3] as f64);
+            }
+            ok
+        }
+        ParamValue::Num(x) => o.param_spec(name).is_some() && o.set_param(name, *x),
+        ParamValue::Flag(b) => o.set_flag(name, *b),
+        _ => false,
+    }
+}
+
+/// Спека текстового свойства (паспорт строится в рантайме — Р.59).
+pub fn text_spec(name: &'static str, multiline: bool) -> ParamSpec {
+    ParamSpec {
+        name: std::borrow::Cow::Borrowed(name),
+        ty: ParamType::Text { multiline },
+        min: 0.0,
+        max: 0.0,
+        default: 0.0,
+        step: 0.0,
+        unit: ParamUnit::None,
+        kind: ParamKind::Smooth,
+        label: std::borrow::Cow::Borrowed(""),
+    }
+}
+
+/// Спека свойства-выбора; варианты — КЛЮЧИ, а не номера.
+pub fn choice_spec(name: &'static str, variants: &'static [&'static str]) -> ParamSpec {
+    ParamSpec {
+        name: std::borrow::Cow::Borrowed(name),
+        ty: ParamType::Choice { variants: std::borrow::Cow::Borrowed(variants) },
+        min: 0.0,
+        max: 0.0,
+        default: 0.0,
+        step: 0.0,
+        unit: ParamUnit::None,
+        kind: ParamKind::Smooth,
+        label: std::borrow::Cow::Borrowed(""),
+    }
 }
 
 impl HasParams for FxInstance {
@@ -898,6 +1014,11 @@ pub trait Reel {
     }
     fn overlaps_allowed(&self) -> bool {
         true
+    }
+    /// Объявленные наружу ручки (Р.59, стадия 3). У корня пусто по
+    /// смыслу: корень никому не экземпляр.
+    fn published(&self) -> &[PublishedParam] {
+        &[]
     }
 }
 
@@ -1329,6 +1450,11 @@ pub struct Sequence {
     pub lane_order: Vec<(LaneKind, u32)>,
     #[serde(default = "default_true")]
     pub overlap_layers: bool,
+    /// Объявленные наружу ручки ленты (Р.59, стадия 3). Пустой список не
+    /// сериализуется — лента без публикаций ведёт себя и пишется как
+    /// сегодня, байт в байт.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub published: Vec<PublishedParam>,
 }
 
 impl Sequence {
@@ -1346,6 +1472,7 @@ impl Sequence {
             camera_lanes: 0,
             lane_order: Vec::new(),
             overlap_layers: true,
+            published: Vec::new(),
         }
     }
 
@@ -1412,6 +1539,9 @@ impl Reel for Project {
     fn overlaps_allowed(&self) -> bool {
         self.overlap_layers
     }
+    fn published(&self) -> &[PublishedParam] {
+        &self.published
+    }
 }
 
 impl Reel for Sequence {
@@ -1432,6 +1562,9 @@ impl Reel for Sequence {
     }
     fn overlaps_allowed(&self) -> bool {
         self.overlap_layers
+    }
+    fn published(&self) -> &[PublishedParam] {
+        &self.published
     }
 }
 
@@ -1552,6 +1685,16 @@ pub struct Project {
     /// сохранённая под именем. Морфер ссылается на них ПО ИМЕНИ.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub areas: Vec<MarkedArea>,
+    /// Публичные параметры ЛЕНТЫ, содержимое которой сейчас стоит на
+    /// месте корня (Р.59, стадия 3).
+    ///
+    /// Поле есть и здесь, и у `Sequence`, ровно по той же причине, по
+    /// которой здесь лежат `morphers`, `cameras` и `lane_order`: вход
+    /// внутрь ленты сделан ОБМЕНОМ содержимого (`swap_reel`), и команда
+    /// правит ту ленту, в которой стоишь, не зная о вложениях вовсе.
+    /// У настоящего корня набор всегда пуст: корень никому не экземпляр.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub published: Vec<PublishedParam>,
 }
 
 fn default_true() -> bool {
@@ -3295,6 +3438,16 @@ pub struct ClipEvent {
     /// Разрешает их ИСТОЧНИК по своему `pts`, а не план кадра.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gen_auto: Vec<ParamCurve>,
+    /// Переопределения публичных параметров ЛЕНТЫ, на которую смотрит это
+    /// событие (Р.59, стадия 3).
+    ///
+    /// Законны только у экземпляра вложения и только на ОПУБЛИКОВАННОЕ
+    /// (решение владельца: «экземпляр переопределяет только
+    /// опубликованное»). Это единственное место, куда можно положить
+    /// отличие экземпляра от ленты: вложение у нас — ССЫЛКА, и правка
+    /// ленты доезжает до всех мест сама.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub overrides: Vec<Override>,
 }
 
 fn one_f32() -> f32 {
@@ -4788,7 +4941,8 @@ pub enum ParamUnit {
 ///
 /// Кривыми анимируются `Num` и `Color` (поканально); остальное меняется
 /// СТУПЕНЬКОЙ — промежуточных значений у выбора и у текста не бывает.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(from = "ParamTypeRepr", into = "ParamTypeRepr")]
 pub enum ParamType {
     #[default]
     Num,
@@ -4815,6 +4969,148 @@ impl ParamType {
     pub fn curvable(&self) -> bool {
         matches!(self, ParamType::Num | ParamType::Color)
     }
+
+    /// Список вариантов `Choice` В ФАЙЛ НЕ ЕДЕТ (Р.59, стадия 3): он
+    /// принадлежит ЦЕЛИ и читается у неё живьём — по той же причине, по
+    /// которой не хранится значение шаблона. Сохранённая копия разошлась
+    /// бы с целью молча, как только в меню добавится пункт.
+    ///
+    /// Тот же ЛИ это тип, безотносительно набора вариантов у `Choice`.
+    ///
+    /// Публикация запоминает тип цели, а список вариантов у цели может
+    /// пополниться новой сборкой — сравнивай мы `==`, публикация умирала
+    /// бы от добавления пункта в меню.
+    pub fn same_family(&self, other: &ParamType) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+}
+
+/// Представление `ParamType` в файле: только СЕМЕЙСТВО.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "k", rename_all = "snake_case")]
+enum ParamTypeRepr {
+    Num,
+    Flag,
+    Color,
+    Choice,
+    Text {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        multiline: bool,
+    },
+    Media,
+}
+
+impl From<ParamTypeRepr> for ParamType {
+    fn from(r: ParamTypeRepr) -> ParamType {
+        match r {
+            ParamTypeRepr::Num => ParamType::Num,
+            ParamTypeRepr::Flag => ParamType::Flag,
+            ParamTypeRepr::Color => ParamType::Color,
+            ParamTypeRepr::Choice => {
+                ParamType::Choice { variants: std::borrow::Cow::Borrowed(&[]) }
+            }
+            ParamTypeRepr::Text { multiline } => ParamType::Text { multiline },
+            ParamTypeRepr::Media => ParamType::Media,
+        }
+    }
+}
+
+impl From<ParamType> for ParamTypeRepr {
+    fn from(t: ParamType) -> ParamTypeRepr {
+        match t {
+            ParamType::Num => ParamTypeRepr::Num,
+            ParamType::Flag => ParamTypeRepr::Flag,
+            ParamType::Color => ParamTypeRepr::Color,
+            ParamType::Choice { .. } => ParamTypeRepr::Choice,
+            ParamType::Text { multiline } => ParamTypeRepr::Text { multiline },
+            ParamType::Media => ParamTypeRepr::Media,
+        }
+    }
+}
+
+/// ЗНАЧЕНИЕ свойства (Р.59, стадия 3).
+///
+/// До этого раунда значением было только число: флаг, выбор, цвет (лежит
+/// тройкой чисел), текст и ссылка на медиа рисовались руками в своих
+/// окнах и свойствами не были. Публичный параметр композиции обязан
+/// уметь нести любое из шести — иначе «заголовок выпуска» и «логотип»
+/// выразить нечем.
+///
+/// Теги serde СТАБИЛЬНЫ: значение уезжает в файл (переопределение у
+/// экземпляра), и переименование варианта сломало бы чужие проекты.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "t", content = "v", rename_all = "snake_case")]
+pub enum ParamValue {
+    Num(f64),
+    Text(String),
+    /// rgba8. Каналы в цели — обычные числовые ряды `<stem>_r/_g/_b/_a`.
+    Color([u8; 4]),
+    Flag(bool),
+    /// КЛЮЧ варианта, а не номер: номер поехал бы при добавлении
+    /// варианта в середину.
+    Choice(String),
+    Media(MediaId),
+}
+
+impl ParamValue {
+    pub fn ty(&self) -> ParamType {
+        match self {
+            ParamValue::Num(_) => ParamType::Num,
+            ParamValue::Text(_) => ParamType::Text { multiline: false },
+            ParamValue::Color(_) => ParamType::Color,
+            ParamValue::Flag(_) => ParamType::Flag,
+            ParamValue::Choice(_) => {
+                ParamType::Choice { variants: std::borrow::Cow::Borrowed(&[]) }
+            }
+            ParamValue::Media(_) => ParamType::Media,
+        }
+    }
+
+    pub fn as_num(&self) -> Option<f64> {
+        match self {
+            ParamValue::Num(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    pub fn as_media(&self) -> Option<MediaId> {
+        match self {
+            ParamValue::Media(m) => Some(*m),
+            _ => None,
+        }
+    }
+}
+
+/// Цветовое свойство, ВЫВЕДЕННОЕ из числовых рядов владельца (Р.59).
+///
+/// Цвет не объявляется отдельным рядом и не поедет в формат: все 69
+/// компонент уже названы `<stem>_{r,g,b}` с единицей `Rgb8`, и группа
+/// выводится из них. Поэтому ручные списки цветов в интерфейсе — второй
+/// источник того же факта, и они удаляются.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColorGroup {
+    /// Основа имени: `color`, `a`, `tl`, `tint`, …
+    pub stem: String,
+    /// Есть ли у группы четвёртая компонента `<stem>_a`.
+    pub alpha: bool,
+}
+
+/// Вывести цветовые группы из паспорта. Ряд `<stem>_r` с единицей `Rgb8`
+/// и парой `_g`/`_b` рядом — это цвет; `_a` добавляет альфу.
+pub fn derive_color_groups(specs: &[ParamSpec]) -> Vec<ColorGroup> {
+    let has = |n: &str| specs.iter().any(|s| s.name == n && s.unit == ParamUnit::Rgb8);
+    let mut out = Vec::new();
+    for s in specs {
+        if s.unit != ParamUnit::Rgb8 {
+            continue;
+        }
+        let Some(stem) = s.name.strip_suffix("_r") else { continue };
+        if !has(&format!("{stem}_g")) || !has(&format!("{stem}_b")) {
+            continue;
+        }
+        out.push(ColorGroup { stem: stem.to_string(), alpha: has(&format!("{stem}_a")) });
+    }
+    out
 }
 
 /// Имя свойства: у встроенных видов — статическая строка из объявления,
@@ -6101,6 +6397,27 @@ pub enum ProjectError {
     GenKindMismatch(ClipId),
     #[error("clip {0:?}: generator curve '{1}' names no parameter of this kind")]
     GenAutoOrphan(ClipId, String),
+    // --- публичные параметры композиции (Р.59, стадия 3) ---
+    #[error("reel {0:?}: duplicate published parameter id {1:?}")]
+    PublishedDuplicateId(Option<MediaId>, PubId),
+    #[error("reel {0:?}: published parameter {1:?} has an empty name")]
+    PublishedUnnamed(Option<MediaId>, PubId),
+    #[error("reel {0:?}: published parameter {1:?} points at a property that no longer exists")]
+    PublishedTargetMissing(Option<MediaId>, PubId),
+    #[error("reel {0:?}: published parameter {1:?} was declared with a different type")]
+    PublishedTypeMismatch(Option<MediaId>, PubId),
+    #[error("clip {0:?} carries overrides but does not sit on a reel")]
+    OverrideOnPlainClip(ClipId),
+    #[error("clip {0:?}: override {1:?} names nothing the reel published")]
+    OverrideDangling(ClipId, PubId),
+    #[error("clip {0:?}: override {1:?} carries a value of another type")]
+    OverrideTypeMismatch(ClipId, PubId),
+    #[error("clip {0:?}: override {1:?} carries a curve this property cannot take")]
+    OverrideCurveNotAllowed(ClipId, PubId),
+    #[error("clip {0:?}: override {1:?} has curve keys that are not finite and sorted")]
+    OverrideBadCurve(ClipId, PubId),
+    #[error("clip {0:?}: duplicate override {1:?}")]
+    OverrideDuplicate(ClipId, PubId),
 }
 
 /// Полная проверка перехода против проекта: стык, умещаемость, минимум,
@@ -6214,6 +6531,7 @@ impl Project {
         Project {
             format_version: FORMAT_VERSION,
             settings,
+            published: Vec::new(),
             media: Vec::new(),
             clips: Vec::new(),
             markers: Vec::new(),
@@ -6461,6 +6779,11 @@ impl Project {
         std::mem::swap(&mut self.camera_lanes, &mut s.camera_lanes);
         std::mem::swap(&mut self.lane_order, &mut s.lane_order);
         std::mem::swap(&mut self.overlap_layers, &mut s.overlap_layers);
+        // Публичный набор — СОДЕРЖИМОЕ ленты: его цели это её клипы, а
+        // они сейчас переезжают на место корня. Не поменяй мы и его —
+        // публикация указывала бы на клипы, которых в этой ленте больше
+        // нет, и `reconcile_published` снёс бы её на первой же команде.
+        std::mem::swap(&mut self.published, &mut s.published);
     }
 
     /// Документ, в котором ЛЕНТА `seq` стоит КОРНЕМ (Р.56, п.452).
@@ -6491,13 +6814,151 @@ impl Project {
     /// (`effective_clips`) остаётся эталоном-оракулом: с ним готовое
     /// поддерево сверяется байт-в-байт (закон Э).
     pub fn effective_reel(&self, seq: Option<MediaId>) -> Vec<ClipEvent> {
-        match seq {
-            None => self.morph_pass(self, &self.rows()),
+        self.resolve_reel(seq, &[]).clips
+    }
+
+    /// То же, но под НАБОРОМ ПЕРЕОПРЕДЕЛЕНИЙ экземпляра (Р.59, стадия 3).
+    ///
+    /// Пустой набор обязан идти путём, побайтово равным прежнему: ни
+    /// клона ленты, ни клона переходов и камер (`Cow::Borrowed`). На этом
+    /// стоят GOLDEN_VIDEO/GOLDEN_AUDIO и «ноль цены без использования»
+    /// (t673/t676).
+    ///
+    /// Переопределения ложатся **ДО** морфер-слоёв — см. модуль
+    /// `published`: адрес автора это структура ленты, какой он её видит.
+    pub fn resolve_reel(&self, seq: Option<MediaId>, overrides: &[Override]) -> ResolvedReel<'_> {
+        let reel: &dyn Reel = match seq {
+            None => self,
             Some(id) => match self.sequence(id) {
-                Some(s) => self.morph_pass(s, &s.rows()),
-                None => Vec::new(),
+                Some(s) => s,
+                None => {
+                    return ResolvedReel {
+                        clips: Vec::new(),
+                        transitions: std::borrow::Cow::Borrowed(&[]),
+                        cameras: std::borrow::Cow::Borrowed(&[]),
+                    };
+                }
             },
+        };
+        let rows = reel.rows();
+        let live = !overrides.is_empty()
+            && reel.published().iter().any(|p| overrides.iter().any(|o| o.pub_id == p.id));
+        if !live {
+            return ResolvedReel {
+                clips: self.morph_pass(reel, &rows),
+                transitions: std::borrow::Cow::Borrowed(reel.transitions()),
+                cameras: std::borrow::Cow::Borrowed(reel.cameras()),
+            };
         }
+        let Some(id) = seq else {
+            // у корня публичных параметров не бывает (он никому не
+            // экземпляр), и попасть сюда можно только ошибкой вызывающего
+            debug_assert!(false, "the root reel is nobody's instance and takes no overrides");
+            return ResolvedReel {
+                clips: self.morph_pass(reel, &rows),
+                transitions: std::borrow::Cow::Borrowed(reel.transitions()),
+                cameras: std::borrow::Cow::Borrowed(reel.cameras()),
+            };
+        };
+        let mut s = self.sequence(id).expect("checked above").clone();
+        let frame_step = 90_000 / self.settings.fps.max(1) as i64;
+        let published = s.published.clone();
+        crate::published::apply_overrides(
+            &published,
+            overrides,
+            &mut s.clips,
+            &mut s.transitions,
+            &mut s.cameras,
+            frame_step,
+            &|m| self.default_gen_for(m),
+        );
+        let clips = self.morph_pass(&s, &rows);
+        ResolvedReel {
+            clips,
+            transitions: std::borrow::Cow::Owned(s.transitions),
+            cameras: std::borrow::Cow::Owned(s.cameras),
+        }
+    }
+
+    /// ЖИВОЕ значение цели публикации — то самое «значение шаблона»,
+    /// которое мы НЕ ХРАНИМ (Р.59, стадия 3).
+    ///
+    /// `seq` — лента, внутри которой живёт адрес. `None` — корень (у него
+    /// публикаций не бывает, но чтение адреса законно: так окно
+    /// публикации спрашивает цель до того, как ручка заведена).
+    pub fn addr_value(&self, seq: Option<MediaId>, addr: &ParamAddr) -> Option<ParamValue> {
+        let reel: &dyn Reel = match seq {
+            None => self,
+            Some(id) => self.sequence(id)?,
+        };
+        let name = addr.param.as_str();
+        match &addr.owner {
+            ParamOwner::Transition { id } => {
+                reel.transitions().iter().find(|t| t.id == *id)?.kind.get_value(name)
+            }
+            ParamOwner::Camera { id } => {
+                reel.cameras().iter().find(|c| c.id == *id)?.cam.get_value(name)
+            }
+            owner => {
+                let c = reel.clips().iter().find(|c| c.id == addr.clip)?;
+                match owner {
+                    ParamOwner::FxSlot { slot } => c.fx.get(*slot)?.get_value(name),
+                    ParamOwner::Generator => c.r#gen.as_ref()?.get_value(name),
+                    ParamOwner::ClipAttr => crate::published::clip_attr_value(c, name),
+                    // шаблон в шаблоне: значение внутреннего экземпляра —
+                    // его переопределение, а нет его — значение шаблона
+                    // ЕГО ленты, тем же кодом этажом ниже
+                    ParamOwner::Nested { pub_id } => self.instance_value(c, *pub_id),
+                    _ => None,
+                }
+            }
+        }
+    }
+
+    /// Тип цели вживую — им валидация ловит «цель сменила вид».
+    pub fn addr_type(&self, seq: Option<MediaId>, addr: &ParamAddr) -> Option<ParamType> {
+        let reel: &dyn Reel = match seq {
+            None => self,
+            Some(id) => self.sequence(id)?,
+        };
+        let name = addr.param.as_str();
+        match &addr.owner {
+            ParamOwner::Transition { id } => {
+                reel.transitions().iter().find(|t| t.id == *id)?.kind.value_type(name)
+            }
+            ParamOwner::Camera { id } => {
+                reel.cameras().iter().find(|c| c.id == *id)?.cam.value_type(name)
+            }
+            owner => {
+                let c = reel.clips().iter().find(|c| c.id == addr.clip)?;
+                match owner {
+                    ParamOwner::FxSlot { slot } => c.fx.get(*slot)?.value_type(name),
+                    ParamOwner::Generator => c.r#gen.as_ref()?.value_type(name),
+                    ParamOwner::ClipAttr => crate::published::clip_attr_type(name),
+                    ParamOwner::Nested { pub_id } => {
+                        let inner = self.sequence(c.media)?;
+                        inner.published.iter().find(|p| p.id == *pub_id).map(|p| p.ty.clone())
+                    }
+                    _ => None,
+                }
+            }
+        }
+    }
+
+    /// Значение ШАБЛОНА объявленной ручки: читается у цели живьём.
+    pub fn published_value(&self, seq: MediaId, id: PubId) -> Option<ParamValue> {
+        let p = self.sequence(seq)?.published.iter().find(|p| p.id == id)?;
+        self.addr_value(Some(seq), &p.target)
+    }
+
+    /// ДЕЙСТВУЮЩЕЕ значение ручки у экземпляра: переопределение, а нет
+    /// его — значение шаблона. Ровно это показывает окно параметров
+    /// композиции и ровно это едет в картинку.
+    pub fn instance_value(&self, inst: &ClipEvent, id: PubId) -> Option<ParamValue> {
+        if let Some(o) = inst.overrides.iter().find(|o| o.pub_id == id) {
+            return Some(o.value.clone());
+        }
+        self.published_value(inst.media, id)
     }
 
     /// Раскрытие вложений (Р.50, п.383).
@@ -6559,7 +7020,12 @@ impl Project {
         }
         // окно экземпляра в координатах содержимого
         let win = TickRange::new(inst.source_in, inst.source_in + inst.duration);
-        let inner = self.morph_pass(seq, &seq.rows());
+        // ПЕРЕОПРЕДЕЛЕНИЯ ЭКЗЕМПЛЯРА (Р.59, стадия 3) применяются и здесь.
+        // Раскрытие — эталон-оракул закона Э и то, что печатает `kt-cli
+        // probe`: покажи оно ШАБЛОН, оракул сверял бы поддерево не с тем,
+        // а probe отвечал бы на жалобу «тут другой заголовок» чужим
+        // текстом.
+        let inner = self.resolve_reel(Some(seq.id), &inst.overrides).clips;
         // Адреса кусков считаются от НАСТОЯЩЕГО клипа-экземпляра: так
         // `same_clip` доводит кусок обратно до события, по которому человек
         // кликнул, а `slice_id` не переполняется поверх собственного тега.
@@ -6750,7 +7216,7 @@ impl Project {
             if !rows_are_canonical(&reel.rows()) {
                 return Err(ProjectError::LaneOrderNotCanonical(seq));
             }
-            self.validate_reel(reel, seq.is_none(), &sources, &media_ids, &mut clip_ids)?;
+            self.validate_reel(reel, seq, &sources, &media_ids, &mut clip_ids)?;
         }
         Ok(())
     }
@@ -6854,14 +7320,92 @@ impl Project {
     /// `clip.media` (файлы и ленты), `media_ids` — только файлы (морфер-слой
     /// берёт материал из файла: вложение под слоем — отдельное решение, и
     /// молча считать его файлом нельзя).
+    /// Объявленные наружу ручки ленты (Р.59, стадия 3).
+    ///
+    /// Тип цели сверяется ЖИВЬЁМ, а не с хранимой копией: копия — второй
+    /// источник того же факта, и «ручка, которая ни на что не действует»
+    /// (минус разведки F-TL-012) обязана быть ошибкой загрузки, а не
+    /// сюрпризом потребителя.
+    fn validate_published(
+        &self,
+        reel: &dyn Reel,
+        seq: Option<MediaId>,
+    ) -> Result<(), ProjectError> {
+        if reel.published().is_empty() {
+            return Ok(());
+        }
+        let mut ids = std::collections::HashSet::new();
+        for p in reel.published() {
+            if !ids.insert(p.id) {
+                return Err(ProjectError::PublishedDuplicateId(seq, p.id));
+            }
+            if p.name.trim().is_empty() {
+                return Err(ProjectError::PublishedUnnamed(seq, p.id));
+            }
+            let Some(ty) = self.addr_type(seq, &p.target) else {
+                return Err(ProjectError::PublishedTargetMissing(seq, p.id));
+            };
+            if !ty.same_family(&p.ty) {
+                return Err(ProjectError::PublishedTypeMismatch(seq, p.id));
+            }
+        }
+        Ok(())
+    }
+
+    /// Переопределения экземпляра: только на вложении и только на
+    /// ОПУБЛИКОВАННОЕ (решение владельца).
+    pub fn validate_overrides_for(&self, c: &ClipEvent) -> Result<(), ProjectError> {
+        self.validate_overrides(c)
+    }
+
+    fn validate_overrides(&self, c: &ClipEvent) -> Result<(), ProjectError> {
+        if c.overrides.is_empty() {
+            return Ok(());
+        }
+        let Some(s) = self.sequence(c.media) else {
+            return Err(ProjectError::OverrideOnPlainClip(c.id));
+        };
+        let mut seen = std::collections::HashSet::new();
+        for o in &c.overrides {
+            if !seen.insert(o.pub_id) {
+                return Err(ProjectError::OverrideDuplicate(c.id, o.pub_id));
+            }
+            let Some(p) = s.published.iter().find(|p| p.id == o.pub_id) else {
+                return Err(ProjectError::OverrideDangling(c.id, o.pub_id));
+            };
+            if !o.value.ty().same_family(&p.ty) {
+                return Err(ProjectError::OverrideTypeMismatch(c.id, o.pub_id));
+            }
+            if o.curves.is_empty() {
+                continue;
+            }
+            if !p.ty.curvable() || !crate::published::owner_takes_curves(&p.target.owner) {
+                return Err(ProjectError::OverrideCurveNotAllowed(c.id, o.pub_id));
+            }
+            for cur in &o.curves {
+                if !cur.source.is_keys() {
+                    return Err(ProjectError::CurveSourceUnsupported(c.id));
+                }
+                let sorted = cur.keys.windows(2).all(|w| w[0].t <= w[1].t);
+                let finite = cur.keys.iter().all(|k| k.t.0 >= 0 && k.v.is_finite());
+                if !sorted || !finite {
+                    return Err(ProjectError::OverrideBadCurve(c.id, o.pub_id));
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn validate_reel(
         &self,
         reel: &dyn Reel,
-        is_root: bool,
+        seq: Option<MediaId>,
         sources: &std::collections::HashSet<MediaId>,
         media_ids: &std::collections::HashSet<MediaId>,
         seen_clips: &mut std::collections::HashSet<ClipId>,
     ) -> Result<(), ProjectError> {
+        let is_root = seq.is_none();
+        self.validate_published(reel, seq)?;
         let mut clip_ids = std::collections::HashSet::new();
         for c in reel.clips() {
             if !seen_clips.insert(c.id) {
@@ -6884,6 +7428,7 @@ impl Project {
             }
             check_fx_auto(c.id, &c.fx_auto)?;
             check_clip_gen(c, self.gen_media_path(c.media))?;
+            self.validate_overrides(c)?;
             // ЦЕПОЧКА, РЕВЕРС И ВАРП на вложении законны (Р.55, С4).
             // До этого раунда реверс и растяжение отвергались: суб-микс
             // читался строго по порядку, а обоим нужно читать иначе.

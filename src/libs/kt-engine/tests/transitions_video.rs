@@ -25,6 +25,7 @@ fn project_pair() -> Project {
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Video,
@@ -324,6 +325,7 @@ fn t174_clip_opacity_scales_the_layer() {
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Video,
@@ -795,6 +797,7 @@ fn t464_overlap_transition_reaches_picture() {
             p.clips.push(ClipEvent {
                 r#gen: None,
                 gen_auto: Vec::new(),
+                overrides: Vec::new(),
                 id: ClipId(id),
                 link_group: None,
                 kind: ClipKind::Video,
@@ -1076,6 +1079,7 @@ fn t521_alpha_layer_under_a_chain_shows_through() {
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Video,

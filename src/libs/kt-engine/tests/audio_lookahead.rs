@@ -36,6 +36,7 @@ fn project(fx: Vec<FxInstance>, pattern: &str) -> Project {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,

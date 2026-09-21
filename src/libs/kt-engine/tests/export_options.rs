@@ -22,6 +22,7 @@ fn tiny_project() -> Project {
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(id),
             link_group: Some(GroupId(1)),
             kind,
@@ -150,6 +151,7 @@ fn t33_exported_file_contains_every_frame() {
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(id),
             link_group: Some(GroupId(1)),
             kind,

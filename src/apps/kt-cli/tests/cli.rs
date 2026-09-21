@@ -235,6 +235,7 @@ fn t307_relative_media_paths_resolve_once() {
     p.clips.push(kt_model::ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: kt_model::ClipId(1),
         link_group: None,
         kind: kt_model::ClipKind::Video,

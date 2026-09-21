@@ -58,6 +58,7 @@ fn t212_keys_stick_to_material_through_edits() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -221,6 +222,7 @@ fn clip_with_fx() -> ClipEvent {
     ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -529,6 +531,7 @@ fn t248_warp_rate_is_shared_by_the_link_group() {
     let mk = |id: u64, kind: ClipKind| ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(id),
         link_group: Some(GroupId(1)),
         kind,

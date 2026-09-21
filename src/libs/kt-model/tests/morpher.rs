@@ -18,6 +18,7 @@ fn base_project() -> TimelineModel {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(10),
         link_group: None,
         kind: ClipKind::Audio,
@@ -37,6 +38,7 @@ fn base_project() -> TimelineModel {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(11),
         link_group: None,
         kind: ClipKind::Video,

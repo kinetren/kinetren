@@ -38,6 +38,7 @@ fn t19_copy_region_fragment_paste_renders_identically() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -109,6 +110,7 @@ fn t19_two_fragments_pasted_back_to_back_are_seamless() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,

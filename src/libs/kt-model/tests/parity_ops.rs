@@ -35,6 +35,7 @@ fn clip(
     ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(id),
         link_group: group.map(GroupId),
         kind,

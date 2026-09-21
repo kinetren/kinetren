@@ -16,6 +16,7 @@ fn scene_at(start_a: Tick, source_in_b: Tick, start_b: Tick, reversed_b: bool) -
     let clip = |id: u64, media: u64, lane: u32, start: Tick, src: Tick, rev: bool| ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Audio,

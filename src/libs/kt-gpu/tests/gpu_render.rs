@@ -30,6 +30,7 @@ fn project() -> Project {
     let clip = |id: u64, lane: u32, start: i64, dur: i64, media: u64, opacity: f32| ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,
@@ -239,6 +240,7 @@ fn nested_project(outer_fx: Vec<FxInstance>, outer_opacity: f32) -> Project {
     let ev = |id: u64, lane: u32, start: i64, dur: i64, media: u64, opacity: f32| ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,
@@ -405,6 +407,7 @@ fn t496_gpu_frame_identity_follows_content() {
         // Р.59, стадия 2: значения — на СОБЫТИИ
         r#gen: Some(solid(32)),
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -656,4 +659,67 @@ fn t632_reel_stage_and_chain_input_conform_gpu_to_cpu() {
         assert!(gpu.iter().any(|&x| x != 0), "{name}: GPU-композит чёрный — вложение выпало");
         assert!(cpu.iter().any(|&x| x != 0), "{name}: CPU-композит чёрный — вложение выпало");
     }
+}
+
+/// Тест 687 (Р.59, стадия 3): два ПО-РАЗНОМУ переопределённых экземпляра
+/// одной ленты сходятся на обоих бэкендах.
+///
+/// Инвариант 7 читается тут буквально: «превью подставляет одно, экспорт
+/// другое» — это второй путь композиции. Публичные значения разрешает
+/// МОДЕЛЬ, до плана, поэтому у исполнителей и шанса разойтись быть не
+/// должно; тест сторожит, что план у экземпляров и правда РАЗНЫЙ (иначе
+/// он был бы зелёным ни на чём).
+#[test]
+fn t687_two_differently_overridden_instances_conform_gpu_to_cpu() {
+    use kt_engine::VideoGpuExec;
+    let Some(e) = test_engine() else { return };
+    let sec = 90_000i64;
+    let q = Quality { width: 128, height: 72 };
+
+    let mut p = nested_project(vec![], 1.0);
+    // ручка: уровень ВЕРХНЕГО события внутри ленты
+    let s = p.sequences.iter_mut().find(|s| s.id == MediaId(100)).unwrap();
+    s.published = vec![kt_model::PublishedParam {
+        id: kt_model::PubId(1),
+        name: "Уровень плашки".into(),
+        target: kt_model::ParamAddr::new(ClipId(3), kt_model::ParamOwner::ClipAttr, "opacity"),
+        ty: kt_model::ParamType::Num,
+        range: kt_model::PubRange { min: None, max: None },
+    }];
+    // второй экземпляр той же ленты — со своим значением
+    let mut twin = p.clips[0].clone();
+    twin.id = ClipId(11);
+    twin.start = Tick(4 * sec);
+    twin.overrides =
+        vec![kt_model::Override::value(kt_model::PubId(1), kt_model::ParamValue::Num(1.0))];
+    p.clips.push(twin);
+    p.validate().expect("две по-разному переопределённые постановки законны");
+
+    let at = |k: i64| Tick(k + 20 * 3000);
+    let mut frames = Vec::new();
+    for t in [at(0), at(4 * sec)] {
+        let (mut video, cache) = warm_cache(&p, q, t);
+        let plan = video.frame_plan(&cache, t, q);
+        let mut gpu = Vec::new();
+        let complete = e.execute_into(&plan, &mut gpu).expect("GPU обязан УМЕТЬ поддерево");
+        assert!(complete, "прогретый композит с вложением обязан быть полным");
+        drop(plan);
+        let (cpu, cpu_complete) = video.compose_from_cache(&cache, t, q);
+        assert!(cpu_complete);
+        assert_frames_close(
+            &cpu,
+            &gpu,
+            q.width,
+            q.height,
+            FrameTol::EXACT,
+            "экземпляр с переопределением",
+        );
+        assert!(gpu.iter().any(|&x| x != 0), "GPU-композит экземпляра чёрный");
+        frames.push(cpu);
+    }
+    assert_ne!(
+        frames[0], frames[1],
+        "экземпляры нарисовали ОДНО: переопределение не доехало до плана, и \
+         конформанс проверен ни на чём"
+    );
 }

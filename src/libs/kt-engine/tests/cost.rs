@@ -76,6 +76,7 @@ fn base(n: u64) -> Project {
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(i + 1),
             link_group: None,
             kind: ClipKind::Audio,
@@ -103,6 +104,7 @@ fn with_distant(mut p: Project, extra: u64) -> Project {
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(10_000 + i),
             link_group: None,
             kind: ClipKind::Audio,

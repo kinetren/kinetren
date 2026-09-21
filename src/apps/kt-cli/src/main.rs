@@ -75,6 +75,19 @@ fn probe_range(
                 s.end().as_secs_f64(),
                 indent = depth * 2
             );
+            // ПУБЛИЧНЫЕ ПАРАМЕТРЫ (Р.59, стадия 3): первое, что надо
+            // спросить по жалобе «два выпуска играют один заголовок».
+            for pp in &s.published {
+                println!(
+                    "  {:indent$}  published {:?} '{}' -> clip {:?} {}",
+                    "",
+                    pp.id,
+                    pp.name,
+                    pp.target.clip,
+                    pp.target.param,
+                    indent = depth * 2
+                );
+            }
             for c in &s.clips {
                 if p.sequence(c.media).is_some() {
                     print_reel(p, c.media, depth + 1, &here);
@@ -173,6 +186,17 @@ fn probe_range(
             },
             if c.reversed { "  REVERSED" } else { "" }
         );
+        // Переопределения ЭТОГО экземпляра — тем же списком: «почему
+        // здесь другой текст» отвечается одной строкой.
+        for o in &c.overrides {
+            let name = s
+                .published
+                .iter()
+                .find(|x| x.id == o.pub_id)
+                .map(|x| x.name.as_str())
+                .unwrap_or("<dangling>");
+            println!("    override {:?} '{}' = {:?}", o.pub_id, name, o.value);
+        }
     }
 
     // Что морфер-слои ИЗМЕНИЛИ против файла (Р.43, п.298): подменённый
@@ -907,6 +931,7 @@ fn demo_project(synth: bool) -> Project {
                 fx: Vec<FxInstance>| ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind,

@@ -16,6 +16,7 @@ fn sample_project() -> Project {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(10),
         link_group: Some(GroupId(1)),
         kind: ClipKind::Video,
@@ -35,6 +36,7 @@ fn sample_project() -> Project {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(11),
         link_group: Some(GroupId(1)),
         kind: ClipKind::Audio,

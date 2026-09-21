@@ -56,6 +56,7 @@ fn audio_clip(
     ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Audio,

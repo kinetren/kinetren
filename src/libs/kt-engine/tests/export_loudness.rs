@@ -17,6 +17,7 @@ fn project_with(gain_db: f32, secs: f64) -> Project {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,

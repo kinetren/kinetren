@@ -20,6 +20,7 @@ fn base_project() -> Project {
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Audio,
@@ -647,6 +648,7 @@ fn t462_overlap_transition_model() {
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(3),
         link_group: None,
         kind: ClipKind::Audio,

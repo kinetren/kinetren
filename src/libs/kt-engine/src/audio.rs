@@ -58,6 +58,10 @@ struct AudioClip {
     /// глушится через `overlap_at` — иначе двойное затухание.
     fade_in_excl: bool,
     fade_out_excl: bool,
+    /// Вложенная лента и РЕДАКЦИЯ этого экземпляра (Р.59, стадия 3).
+    /// `None` — обычный источник. Пустой набор переопределений даёт ту же
+    /// редакцию, что у соседей, и суб-микс остаётся ОДИН на ленту.
+    nest: Option<crate::video::NestKey>,
 }
 
 /// Вес кроссфейда по окнам переходов клипа. Позиционный и направления не
@@ -154,7 +158,7 @@ pub struct AudioRenderer {
     /// `chain_source_window_ext`, `fill_source` и ПОРЯДОК СЛОЖЕНИЯ f32 не
     /// меняются ни на строку: вложение — просто один из клипов в
     /// `active_clips`, и GOLDEN_AUDIO не двигается.
-    nests: std::collections::HashMap<kt_model::MediaId, AudioRenderer>,
+    nests: std::collections::HashMap<crate::video::NestKey, AudioRenderer>,
 }
 
 /// Фетчер, за которым вложенные ленты выглядят обычными источниками.
@@ -179,10 +183,14 @@ pub struct AudioRenderer {
 /// недетерминизма, которого в аудио не бывает (инвариант 11).
 struct NestFetcher<'a> {
     inner: &'a mut dyn AudioFetcher,
-    reels: &'a std::collections::HashMap<kt_model::MediaId, AudioRenderer>,
+    reels: &'a std::collections::HashMap<crate::video::NestKey, AudioRenderer>,
     states: &'a mut std::collections::HashMap<kt_model::ClipId, crate::fxstore::NestStream>,
     /// Пре-ролл и блок — свойства ЛЕНТЫ, посчитанные при сборке рендерера.
-    prerolls: &'a std::collections::HashMap<kt_model::MediaId, (u32, u32)>,
+    prerolls: &'a std::collections::HashMap<crate::video::NestKey, (u32, u32)>,
+    /// Какой суб-рендерер читает какой ЭКЗЕМПЛЯР (Р.59, стадия 3). По
+    /// одному адресу ленты их теперь несколько — по одному на редакцию, —
+    /// и выбрать правильный можно только зная ЧИТАТЕЛЯ.
+    keys: &'a std::collections::HashMap<kt_model::ClipId, crate::video::NestKey>,
     /// Кто читает СЕЙЧАС (`begin_clip`). У вложения свой поток на каждый
     /// экземпляр, и без этого пять мест одной ленты дрались бы за один
     /// курсор продюсера.
@@ -228,13 +236,19 @@ impl AudioFetcher for NestFetcher<'_> {
         media: kt_model::MediaId,
         idx: i64,
     ) -> Option<std::sync::Arc<kt_media::AudioBurst>> {
-        let Some(reel) = self.reels.get(&media) else { return self.inner.audio_burst(media, idx) };
+        if !self.reels.keys().any(|k| k.0 == media) {
+            return self.inner.audio_burst(media, idx);
+        }
         // Читатель обязан быть объявлен: без него пять экземпляров одной
         // ленты делили бы один поток. Ловим в debug, а в release честно
         // отдаём тишину, а не чужой звук.
         debug_assert!(self.cur.is_some(), "submix read without begin_clip: reader unknown");
         let who = self.cur?;
-        let (preroll, block) = self.prerolls.get(&media).copied().unwrap_or((0, 1));
+        // РЕДАКЦИЮ выбирает ЧИТАТЕЛЬ (Р.59, стадия 3): адрес ленты общий,
+        // а суб-микс у экземпляра с переопределениями свой.
+        let key = self.keys.get(&who).copied().filter(|k| k.0 == media)?;
+        let reel = self.reels.get(&key)?;
+        let (preroll, block) = self.prerolls.get(&key).copied().unwrap_or((0, 1));
         let raw = self.raw;
         let st = {
             let e = self.states.entry(who);
@@ -242,12 +256,12 @@ impl AudioFetcher for NestFetcher<'_> {
             match e {
                 Entry::Occupied(o) => o.into_mut(),
                 Entry::Vacant(v) => {
-                    v.insert(crate::fxstore::NestStream::new_for(media, preroll, block))
+                    v.insert(crate::fxstore::NestStream::new_for(key, preroll, block))
                 }
             }
         };
-        if st.seq != media {
-            *st = crate::fxstore::NestStream::new_for(media, preroll, block);
+        if st.seq != key {
+            *st = crate::fxstore::NestStream::new_for(key, preroll, block);
         }
         st.preroll = preroll;
         st.block = block;
@@ -435,18 +449,30 @@ fn overlap_weight(clips: &[AudioClip], covers: &OverlapMap, ci: usize, frame: i6
 
 impl AudioRenderer {
     pub fn new(project: &Project) -> AudioRenderer {
-        AudioRenderer::build_reel(project, None, 0)
+        AudioRenderer::build_reel(project, None, &[], 0)
     }
 
     fn build_reel(
         project: &Project,
         seq: Option<kt_model::MediaId>,
+        overrides: &[kt_model::Override],
         depth: usize,
     ) -> AudioRenderer {
         // морфер-слои уже применены (подмена источника, live FX batch) —
         // движок про морфер не знает (H1); вложения НЕ раскрываются: у
         // каждого свой суб-микс (Р.50, Б4)
-        let effective = project.effective_reel(seq);
+        let resolved = project.resolve_reel(seq, overrides);
+        let effective = &resolved.clips;
+        // СОЛЬ адреса источника (Р.59, стадия 3) — та же, что у видео:
+        // звучащий генератор (SMPTE с тоном) внутри ленты обязан слышать
+        // значения СВОЕГО экземпляра.
+        let salt = crate::video::gen_salt(
+            match seq.and_then(|id| project.sequence(id)) {
+                Some(s) => &s.published,
+                None => &project.published,
+            },
+            overrides,
+        );
         let mut clips: Vec<AudioClip> = effective
             .iter()
             .filter(|c| c.kind == ClipKind::Audio)
@@ -477,7 +503,7 @@ impl AudioRenderer {
                     // адрес ИСТОЧНИКА, а не медиа (Р.59, стадия 2): у
                     // звучащего генератора (SMPTE с тоном, отсчёт с
                     // биипом) значения на событии, значит и поток свой
-                    media: crate::clip_source_addr(c),
+                    media: crate::video::clip_source_addr_in(c, salt),
                     addr: kt_fx::chain_addr_knots(&active, &auto, (end - start).max(1))
                         .map(std::sync::Arc::new),
                     fx: active,
@@ -491,6 +517,9 @@ impl AudioRenderer {
                     tail_ext: 0,
                     fade_in_excl: false,
                     fade_out_excl: false,
+                    nest: project.sequence(c.media).map(|_| {
+                        (c.media, crate::instance_content(project, c.media, &c.overrides))
+                    }),
                 }
             })
             .collect();
@@ -503,7 +532,7 @@ impl AudioRenderer {
             Some(s) => s,
             None => project,
         };
-        for t in reel.transitions() {
+        for t in resolved.transitions.iter() {
             // НАЛОЖЕННЫЙ переход (Р.51, п.399): окно — сама зона
             // перекрытия, ручек нет (материал у обеих сторон настоящий),
             // кривая работает вместо зашитого equal-power перекрытия
@@ -574,10 +603,12 @@ impl AudioRenderer {
         let overlaps = overlapping_clips(&clips, &covers);
         let mut nests = std::collections::HashMap::new();
         if depth < kt_model::MAX_NEST_DEPTH {
-            for id in clips.iter().filter_map(|c| project.sequence(c.media).map(|s| s.id)) {
-                nests
-                    .entry(id)
-                    .or_insert_with(|| AudioRenderer::build_reel(project, Some(id), depth + 1));
+            for c in effective.iter().filter(|c| c.kind == ClipKind::Audio) {
+                let Some(id) = project.sequence(c.media).map(|s| s.id) else { continue };
+                let key = (id, crate::instance_content(project, id, &c.overrides));
+                nests.entry(key).or_insert_with(|| {
+                    AudioRenderer::build_reel(project, Some(id), &c.overrides, depth + 1)
+                });
             }
         }
         AudioRenderer {
@@ -669,7 +700,7 @@ impl AudioRenderer {
             if !c.fx.is_empty() {
                 tail = tail.max(kt_fx::chain_tail(&c.fx, &c.auto).to_audio_frames());
             }
-            if let Some(sub) = self.nests.get(&c.media) {
+            if let Some(sub) = c.nest.and_then(|k| self.nests.get(&k)) {
                 tail = tail.max(sub.reel_preroll_bursts() as i64 * AUDIO_BURST_FRAMES as i64);
             }
         }
@@ -682,8 +713,8 @@ impl AudioRenderer {
     }
 
     /// Пре-ролл и блок ленты, на которую смотрит этот экземпляр.
-    fn nest_preroll(&self, media: kt_model::MediaId) -> (u32, u32) {
-        match self.nests.get(&media) {
+    fn nest_preroll(&self, key: crate::video::NestKey) -> (u32, u32) {
+        match self.nests.get(&key) {
             Some(sub) => {
                 let p = sub.reel_preroll_bursts();
                 // Блок вчетверо длиннее пре-ролла: накладные переезда при
@@ -697,8 +728,20 @@ impl AudioRenderer {
         }
     }
 
-    fn nest_prerolls(&self) -> std::collections::HashMap<kt_model::MediaId, (u32, u32)> {
-        self.nests.keys().map(|id| (*id, self.nest_preroll(*id))).collect()
+    fn nest_prerolls(&self) -> std::collections::HashMap<crate::video::NestKey, (u32, u32)> {
+        self.nests.keys().map(|k| (*k, self.nest_preroll(*k))).collect()
+    }
+
+    /// Какой суб-рендерер читает ЭТОТ экземпляр. Ключ — пара (лента,
+    /// редакция): по одному адресу медиа их с Р.59 может быть несколько.
+    fn nest_keys(&self) -> std::collections::HashMap<kt_model::ClipId, crate::video::NestKey> {
+        self.clips.iter().filter_map(|c| c.nest.map(|k| (c.id, k))).collect()
+    }
+
+    /// Сколько СУБ-МИКСОВ держит эта лента (Р.59, стадия 3): два
+    /// экземпляра без переопределений обязаны делить один.
+    pub fn nest_count(&self) -> usize {
+        self.nests.len()
     }
 
     /// Синхронизировать FX-состояние с этим графом (вызывается владельцем
@@ -713,12 +756,13 @@ impl AudioRenderer {
         // цепочки — те же state-объекты, хвосты ревербов живут (инвариант 3)
 
         for c in &self.clips {
-            let Some(sub) = self.nests.get(&c.media) else { continue };
-            let (preroll, block) = self.nest_preroll(c.media);
-            sub.sync_fx(&mut store.nest_mut(c.id, c.media, preroll, block).store);
+            let Some(key) = c.nest else { continue };
+            let Some(sub) = self.nests.get(&key) else { continue };
+            let (preroll, block) = self.nest_preroll(key);
+            sub.sync_fx(&mut store.nest_mut(c.id, key, preroll, block).store);
         }
         let live: std::collections::HashSet<_> =
-            self.clips.iter().filter(|c| self.nests.contains_key(&c.media)).map(|c| c.id).collect();
+            self.clips.iter().filter(|c| c.nest.is_some()).map(|c| c.id).collect();
         store.retain_nests(&|id| live.contains(&id));
     }
 
@@ -757,12 +801,14 @@ impl AudioRenderer {
         // одновременно нечем.
         let mut states = store.take_nests();
         let prerolls = self.nest_prerolls();
+        let keys = self.nest_keys();
         let stats = {
             let mut f = NestFetcher {
                 inner: fetcher,
                 reels: &self.nests,
                 states: &mut states,
                 prerolls: &prerolls,
+                keys: &keys,
                 cur: None,
                 warmups: 0,
                 raw: false,
@@ -938,11 +984,13 @@ impl AudioRenderer {
         }
         let mut states = std::collections::HashMap::new();
         let prerolls = self.nest_prerolls();
+        let keys = self.nest_keys();
         let mut f = NestFetcher {
             inner: fetcher,
             reels: &self.nests,
             states: &mut states,
             prerolls: &prerolls,
+            keys: &keys,
             cur: None,
             warmups: 0,
             raw: true,
@@ -1211,7 +1259,7 @@ impl AudioRenderer {
             // ЗАКАЗ УХОДИТ ВГЛУБЬ (Р.50): у ленты источника нет, есть
             // содержимое. Спрашиваем её о ТОМ ЖЕ окне потребления, но в её
             // собственных кадрах — правда у префетча и рендера одна (п.13).
-            if let Some(sub) = self.nests.get(&c.media) {
+            if let Some((key, sub)) = c.nest.and_then(|k| self.nests.get(&k).map(|s| (k, s))) {
                 // ЗАКАЗ УХОДИТ ВГЛУБЬ, но продюсер суб-микса читает ленту
                 // ШИРЕ окна потребления: при чтении НАЗАД каждый бёрст —
                 // переезд, а переезд начинается с границы блока минус
@@ -1219,7 +1267,7 @@ impl AudioRenderer {
                 // кэша на каждом переезде — вечный промах (п.13, t17).
                 // Правило ОДНО на рендер и на префетч: разойдись они, и
                 // это был бы тот же класс дефекта.
-                let (preroll, block) = self.nest_preroll(c.media);
+                let (preroll, block) = self.nest_preroll(key);
                 // ГЕЙТ ПО НЕМОНОТОННОСТИ (Р.57): назад читает и зеркальный
                 // экземпляр, и знаковая скорость — продюсеру всё равно,
                 // что именно развернуло чтение.

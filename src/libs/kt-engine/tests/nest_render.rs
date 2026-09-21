@@ -66,6 +66,7 @@ fn ev(id: u64, kind: ClipKind, lane: u32, start: Tick, dur: Tick, media: u64) ->
     ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind,

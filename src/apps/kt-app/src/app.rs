@@ -5762,6 +5762,7 @@ impl KtApp {
             cmds.push(Command::AddClip(kt_model::ClipEvent {
                 r#gen: None,
                 gen_auto: Vec::new(),
+                overrides: Vec::new(),
                 id,
                 link_group: group,
                 kind: k,
@@ -5852,6 +5853,7 @@ impl KtApp {
             cmds.push(Command::AddClip(ClipEvent {
                 r#gen: None,
                 gen_auto: Vec::new(),
+                overrides: Vec::new(),
                 id: ClipId(next_id),
                 link_group: group,
                 kind,
@@ -8952,6 +8954,7 @@ mod repaint_tests {
         let clip = |id: u64, start: i64, dur: i64| ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Video,

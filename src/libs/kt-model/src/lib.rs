@@ -12,10 +12,12 @@ pub mod genmedia;
 pub mod model;
 pub mod ops;
 pub mod project;
+pub mod published;
 pub mod warp;
 
 pub use autoplan::*;
 pub use genmedia::*;
 pub use model::*;
 pub use project::*;
+pub use published::*;
 pub use warp::*;

@@ -174,6 +174,7 @@ fn t475_set_media_path_command() {
     p.clips.push(ClipEvent {
         r#gen: Some(kt_model::GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -383,6 +384,7 @@ fn t656_generator_values_live_on_the_event() {
     let plain = ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -445,6 +447,7 @@ fn t657_generator_values_are_validated_against_the_media() {
         p.clips.push(ClipEvent {
             r#gen: Some(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Video,

@@ -77,9 +77,15 @@ struct VideoClip {
     /// Вложенная лента (Р.50, волна Б): вместо кадра из кэша слой получает
     /// СУБ-КОМПОЗИТ — и цепочка, навешенная на это событие, применяется к
     /// СОБРАННОЙ картинке, а не к каждому куску. Ради этого всё и затевалось.
-    nest: Option<MediaId>,
+    /// Ключ — ПАРА (лента, редакция ЭКЗЕМПЛЯРА): с Р.59 у двух
+    /// экземпляров одной ленты могут быть разные переопределения, и это
+    /// разное содержимое. Пустой набор даёт `content == content_hash`,
+    /// поэтому экземпляры без переопределений по-прежнему делят ОДИН
+    /// суб-рендерер (t442/t443 живы).
+    nest: Option<NestKey>,
     /// Хэш редакции ленты: правка ВНУТРИ не трогает ни одного поля
-    /// экземпляра, поэтому без него мемо отдавало бы стейл.
+    /// экземпляра, поэтому без него мемо отдавало бы стейл. С Р.59 —
+    /// функция ПАРЫ (лента, набор переопределений).
     content: u64,
     /// Ступень суб-композита — МАКСИМУМ по всем экземплярам этой ленты в
     /// дереве (Р.50, Б5). Свойство ЛЕНТЫ, а не экземпляра: разойдись они —
@@ -151,6 +157,27 @@ impl VideoClip {
 /// Считается Debug-представлением — тем же приёмом, что `fx_chain_hash`:
 /// f64 печатается shortest-roundtrip, значит детерминированно, а новое поле
 /// модели попадает в хэш САМО.
+/// Адрес суб-рендерера: ЛЕНТА плюс РЕДАКЦИЯ экземпляра (Р.59, стадия 3).
+pub type NestKey = (MediaId, u64);
+
+/// Редакция ленты, какой её видит ЭТОТ экземпляр (Р.59, стадия 3).
+///
+/// Пустой набор переопределений обязан давать РОВНО `content_hash`:
+/// иначе сдвинулись бы все ключи мемоизации, sidecar-превью и GPU-планы
+/// у проектов, которые публикацией не пользуются вовсе.
+pub fn instance_content(project: &Project, seq: MediaId, overrides: &[kt_model::Override]) -> u64 {
+    let base = content_hash(project, seq);
+    if overrides.is_empty() {
+        return base;
+    }
+    // Тем же приёмом, что и сам `content_hash`: Debug-представление
+    // детерминировано (f64 печатается shortest-roundtrip), и новое поле
+    // переопределения попадает в хэш САМО.
+    xxhash_rust::xxh3::xxh3_64(
+        &[base.to_le_bytes().as_slice(), format!("{overrides:?}").as_bytes()].concat(),
+    )
+}
+
 pub fn content_hash(project: &Project, seq: MediaId) -> u64 {
     use xxhash_rust::xxh3::Xxh3;
     let mut h = Xxh3::new();
@@ -172,6 +199,9 @@ fn hash_reel(project: &Project, seq: MediaId, depth: usize, h: &mut xxhash_rust:
     h.update(format!("{:?}", s.transitions).as_bytes());
     h.update(format!("{:?}", s.morphers).as_bytes());
     h.update(format!("{:?}", s.cameras).as_bytes());
+    // объявленный набор ручек — тоже СОДЕРЖИМОЕ ленты: сужение предела
+    // меняет то, что рисуется у экземпляра с переопределением
+    h.update(format!("{:?}", s.published).as_bytes());
     for c in &s.clips {
         if project.sequence(c.media).is_some() {
             hash_reel(project, c.media, depth + 1, h);
@@ -301,7 +331,7 @@ pub struct VideoRenderer {
     /// Рендереры вложенных лент (Р.50). Дерево строится ОДИН раз вместе с
     /// корнем: правка модели пересоздаёт рендерер целиком, и стейл-узлов
     /// не бывает по построению.
-    nests: std::collections::HashMap<MediaId, VideoRenderer>,
+    nests: std::collections::HashMap<NestKey, VideoRenderer>,
 }
 
 /// Кадр(ы) источника для момента `t`: основной и, в режиме «смешивание»,
@@ -408,13 +438,18 @@ fn nest_scales(project: &Project) -> std::collections::HashMap<MediaId, u32> {
     let mut out: std::collections::HashMap<MediaId, u32> = std::collections::HashMap::new();
     let grid = FpsGrid::new(project.settings.fps);
     let size = (project.settings.width, project.settings.height);
-    let reels = std::iter::once(None).chain(project.sequences.iter().map(|s| Some(s.id)));
-    for reel in reels {
-        let cams = match reel.and_then(|id| project.sequence(id)) {
-            Some(s) => &s.cameras,
-            None => &project.cameras,
-        };
-        for c in project.effective_reel(reel) {
+    // ОБХОД ДЕРЕВА ЭКЗЕМПЛЯРОВ, а не плоский перебор лент (Р.59, стадия
+    // 3): содержимое ленты теперь зависит от набора переопределений того
+    // экземпляра, через который в неё вошли, — а значит и зум цепочки
+    // внутри неё. Ступень при этом остаётся ОДНОЙ на ленту (t450):
+    // разные ступени дали бы внутреннему клипу два ключа кэша и два
+    // заказа. Максимум просто стал честным.
+    let mut seen: std::collections::HashSet<(MediaId, u64)> = std::collections::HashSet::new();
+    let mut stack: Vec<(Option<MediaId>, Vec<kt_model::Override>, usize)> =
+        vec![(None, Vec::new(), 0)];
+    while let Some((reel, ov, depth)) = stack.pop() {
+        let resolved = project.resolve_reel(reel, &ov);
+        for c in &resolved.clips {
             if c.kind != ClipKind::Video || project.sequence(c.media).is_none() {
                 continue;
             }
@@ -429,12 +464,17 @@ fn nest_scales(project: &Project) -> std::collections::HashMap<MediaId, u32> {
                 c.source_in,
                 c.reversed,
                 &grid,
-                cams,
+                &resolved.cameras,
                 size,
             );
             let want = kt_fx::geom::ss_taps(zoom).max(1);
             let e = out.entry(c.media).or_insert(1);
             *e = (*e).max(want);
+            if depth < kt_model::MAX_NEST_DEPTH
+                && seen.insert((c.media, instance_content(project, c.media, &c.overrides)))
+            {
+                stack.push((Some(c.media), c.overrides.clone(), depth + 1));
+            }
         }
     }
     out
@@ -641,7 +681,7 @@ impl VideoRenderer {
     }
 
     fn build(project: &Project, facts: &SourceFacts) -> VideoRenderer {
-        VideoRenderer::build_reel(project, facts, &nest_scales(project), None, 0)
+        VideoRenderer::build_reel(project, facts, &nest_scales(project), None, &[], 0)
     }
 
     fn build_reel(
@@ -649,21 +689,33 @@ impl VideoRenderer {
         facts: &SourceFacts,
         nest_scales: &std::collections::HashMap<MediaId, u32>,
         seq: Option<MediaId>,
+        overrides: &[kt_model::Override],
         depth: usize,
     ) -> VideoRenderer {
         // морфер-слои применены здесь, движок их не видит (H1); вложения
-        // НЕ раскрываются — у каждого свой узел плана (Р.50, волна Б)
-        let effective = project.effective_reel(seq);
+        // НЕ раскрываются — у каждого свой узел плана (Р.50, волна Б).
+        // Переопределения ЭКЗЕМПЛЯРА тоже разрешает модель (Р.59, стадия
+        // 3): движок про публикацию не знает вовсе, ему достаются готовые
+        // клипы. Пустой набор идёт байт-в-байт прежним путём.
+        let resolved = project.resolve_reel(seq, overrides);
+        let effective = &resolved.clips;
         let grid = FpsGrid::new(project.settings.fps);
         // Камеры — СВОИ у каждой ленты, и `head_zoom` обязан считаться по
         // ним же: `nest_scales` выбирает камеры именно так, а ступень
         // ленты и вход цепочки экземпляра сравниваются между собой
         // (`clip_chain_scale`). Разные наборы камер разводили бы их сами
         // по себе на Pan3d внутри ленты со своими камерами.
-        let cams = match seq.and_then(|id| project.sequence(id)) {
-            Some(s) => &s.cameras,
-            None => &project.cameras,
-        };
+        let cams: &[kt_model::CameraEvent] = &resolved.cameras;
+        // СОЛЬ адреса источника (Р.59, стадия 3) — одна на всю ленту
+        // экземпляра. Считается ТЕМ ЖЕ кодом, что и в `gen_sources`:
+        // заказ и чтение обязаны спрашивать один адрес (инвариант 4).
+        let salt = gen_salt(
+            match seq.and_then(|id| project.sequence(id)) {
+                Some(s) => &s.published,
+                None => &project.published,
+            },
+            overrides,
+        );
         let mut clips: Vec<VideoClip> = effective
             .iter()
             .filter(|c| c.kind == ClipKind::Video)
@@ -671,8 +723,10 @@ impl VideoRenderer {
                 let fx = c.active_fx(); // bypass-слоты отфильтрованы (п.2)
                 let auto = c.active_fx_auto();
                 let warp = kt_model::clip_warp_of(&fx, &auto, c.source_in, c.duration, c.reversed);
-                let nest = project.sequence(c.media).map(|_| c.media);
-                let content = nest.map(|id| content_hash(project, id)).unwrap_or(0);
+                let nest = project
+                    .sequence(c.media)
+                    .map(|_| (c.media, instance_content(project, c.media, &c.overrides)));
+                let content = nest.map(|(_, h)| h).unwrap_or(0);
                 let fx_hash = fx_chain_hash(
                     &fx,
                     &auto,
@@ -707,7 +761,7 @@ impl VideoRenderer {
                     end: c.start + c.duration,
                     source_in: c.source_in,
                     lane: c.lane,
-                    media: clip_source_addr(c),
+                    media: clip_source_addr_in(c, salt),
                     reversed: c.reversed,
                     fx,
                     auto_plan,
@@ -723,21 +777,25 @@ impl VideoRenderer {
                     tail_ext: Tick::ZERO,
                     warp,
                     head_zoom,
-                    native: facts.natives.get(&clip_source_addr(c)).copied(),
+                    native: facts.natives.get(&clip_source_addr_in(c, salt)).copied(),
                     nest,
                     content,
-                    nest_scale: nest.and_then(|id| nest_scales.get(&id).copied()).unwrap_or(1),
-                    procedural: facts.procedural.contains(&clip_source_addr(c)),
+                    nest_scale: nest.and_then(|(id, _)| nest_scales.get(&id).copied()).unwrap_or(1),
+                    procedural: facts.procedural.contains(&clip_source_addr_in(c, salt)),
                 }
             })
             .collect();
         // окна dissolve из переходов (Р.24): пары находят друг друга по
         // равенству окна на одной дорожке (compose блендит их одним слоем)
+        // Геометрию стыков даёт ЛЕНТА КАК ЕСТЬ: переопределения меняют
+        // значения, а не `start`/`duration`, поэтому `joint`/`overlap_pair`
+        // считаются по ней. Вид и кривые перехода берутся из РАЗРЕШЁННОГО
+        // набора — их-то публикация и правит.
         let reel: &dyn kt_model::Reel = match seq.and_then(|id| project.sequence(id)) {
             Some(s) => s,
             None => project,
         };
-        for t in reel.transitions() {
+        for t in resolved.transitions.iter() {
             // НАЛОЖЕННЫЙ переход (Р.51, п.399): окно — сама зона
             // перекрытия, ручек нет (материал обеих сторон настоящий,
             // ext = 0). Дальше пара находит себя обычным find_pair по
@@ -801,9 +859,18 @@ impl VideoRenderer {
         // вражеского файла.
         let mut nests = std::collections::HashMap::new();
         if depth < kt_model::MAX_NEST_DEPTH {
-            for id in clips.iter().filter_map(|c| c.nest) {
-                nests.entry(id).or_insert_with(|| {
-                    VideoRenderer::build_reel(project, facts, nest_scales, Some(id), depth + 1)
+            for c in effective.iter().filter(|c| c.kind == ClipKind::Video) {
+                let Some(id) = project.sequence(c.media).map(|_| c.media) else { continue };
+                let key = (id, instance_content(project, id, &c.overrides));
+                nests.entry(key).or_insert_with(|| {
+                    VideoRenderer::build_reel(
+                        project,
+                        facts,
+                        nest_scales,
+                        Some(id),
+                        &c.overrides,
+                        depth + 1,
+                    )
                 });
             }
         }
@@ -814,10 +881,7 @@ impl VideoRenderer {
             blend: Vec::new(),
             // камеры — СВОИ у каждой ленты: внутрь вложения можно класть
             // камеры, и правило активной камеры считается по её ленте
-            cameras: match seq.and_then(|id| project.sequence(id)) {
-                Some(s) => s.cameras.clone(),
-                None => project.cameras.clone(),
-            },
+            cameras: resolved.cameras.to_vec(),
             project_size: (project.settings.width, project.settings.height),
             nests,
         }
@@ -851,7 +915,7 @@ impl VideoRenderer {
             // в режиме «смешивание» слой читает ДВА кадра — префетч
             // обязан согреть оба, иначе второй не запросят никогда
             let (a, b) = clip_frame_keys(c, t, &self.grid, blend_footage);
-            match c.nest.and_then(|id| self.nests.get(&id)) {
+            match c.nest.and_then(|k| self.nests.get(&k)) {
                 // внутреннее время ленты НЕПРЕРЫВНО (Р.56, п.448): заказ
                 // спускается по тому же тику, на котором план собирает
                 // суб-композит, а КАЧЕСТВО увеличено ступенью ленты —
@@ -938,7 +1002,7 @@ impl VideoRenderer {
     ) -> Vec<(kt_model::ClipId, Vec<std::ops::Range<i64>>)> {
         let mut out = Vec::new();
         for c in &self.clips {
-            let Some(sub) = c.nest.and_then(|id| self.nests.get(&id)) else { continue };
+            let Some(sub) = c.nest.and_then(|k| self.nests.get(&k)) else { continue };
             // Окно — по ПРОЛЁТУ материала (Р.55 С4, ось уточнена в Р.57):
             // у растянутого экземпляра оно не равно его длине на
             // таймлайне, и полоска врала бы в ХОРОШУЮ сторону — то, чего
@@ -983,7 +1047,7 @@ impl VideoRenderer {
                 continue;
             }
             // вложенная лента внутри ленты — та же арифметика этажом ниже
-            let cold = if let Some(sub) = c.nest.and_then(|id| self.nests.get(&id)) {
+            let cold = if let Some(sub) = c.nest.and_then(|k| self.nests.get(&k)) {
                 // РАСТЯНУТОЕ или ЗЕРКАЛЬНОЕ вложение — целиком или никак,
                 // ровно как растянутый файловый ребёнок (Р.55, С4):
                 // `shift_runs` — ЛИНЕЙНАЯ карта, и под варпом она врёт, а
@@ -1115,6 +1179,16 @@ impl VideoRenderer {
         execute_plan_cpu(&plan, cache, &mut self.fx_scratch, &mut self.blend, out)
     }
 
+    /// Сколько СУБ-РЕНДЕРЕРОВ держит эта лента (Р.59, стадия 3).
+    ///
+    /// Сторож выигрыша t442/t443: два экземпляра одной ленты БЕЗ
+    /// переопределений обязаны делить ОДИН узел — в этом и был смысл
+    /// дерева. Ключ стал парой (лента, редакция), и без счётчика это
+    /// свойство проверить снаружи нечем.
+    pub fn nest_count(&self) -> usize {
+        self.nests.len()
+    }
+
     /// Максимум одновременных видео-слоёв (с ручками переходов) — экспорт
     /// делит бюджет чанка на это число (Р.31 п.4).
     pub fn max_concurrent_layers(&self) -> usize {
@@ -1141,7 +1215,7 @@ impl VideoRenderer {
             // одновременно живо внутри него (Р.50). Недосчёт делает БАЙТЫ
             // ЭКСПОРТА зависящими от тайминга кэша — дословно регрессия
             // Р.37 С5.
-            if let Some(sub) = c.nest.and_then(|id| self.nests.get(&id)) {
+            if let Some(sub) = c.nest.and_then(|k| self.nests.get(&k)) {
                 w += sub.max_concurrent_layers_in(nest_blend(c, blend_footage)) as i32;
             }
             evs.push((c.start.0 - c.head_ext.0, w));
@@ -1177,7 +1251,7 @@ struct PlanCtx<'a> {
     cameras: &'a [kt_model::CameraEvent],
     project_size: (u32, u32),
     /// Рендереры вложенных лент — из них строятся суб-планы (Р.50).
-    nests: &'a std::collections::HashMap<MediaId, VideoRenderer>,
+    nests: &'a std::collections::HashMap<NestKey, VideoRenderer>,
     /// Мемоизировать ли пост-FX: наследуется ВНИЗ. Иначе суб-композиты
     /// вытеснят ещё не использованные пре-кадры соседних слоёв из
     /// 192-мегабайтного бюджета экспорта — дословно регрессия Р.31 п.4.
@@ -1260,7 +1334,7 @@ fn layer_src<'a>(
     // только различие `key_hash`; ветка смешивания кадров читала бы по
     // этому адресу кадр ЧУЖОГО ФАЙЛА.
     let source = match clip.nest {
-        Some(seq) => nest_source_id(seq),
+        Some((seq, _)) => nest_source_id(seq),
         None => SourceId(clip.media.0),
     };
     // Р.46 (п.318): слой читает кадр СВОЕГО качества декода — того же,
@@ -1333,7 +1407,7 @@ fn layer_src<'a>(
     // те же, что у файла, а пола нет — у ленты нет кадров, чтобы к ним
     // прижиматься, зато есть титры и автоматизация, которым пол виден как
     // дёрганье по два кадра.
-    let input = match clip.nest.and_then(|id| ctx.nests.get(&id).map(|r| (id, r))) {
+    let input = match clip.nest.and_then(|k| ctx.nests.get(&k).map(|r| (k.0, r))) {
         Some((id, sub)) => {
             let blend = nest_blend(clip, ctx.blend_footage);
             let sub_ctx = PlanCtx {
@@ -1720,26 +1794,109 @@ pub fn gen_source_addr(id: kt_model::ClipId) -> MediaId {
     MediaId(kt_model::GEN_TAG | id.0)
 }
 
+/// СОЛЬ адреса источника внутри ленты (Р.59, стадия 3).
+///
+/// Ноль — ровно тогда, когда ни одна ручка набора не способна дотянуться
+/// до источника (`overrides_touch_sources`), и тогда адреса остаются
+/// побайтово прежними: корень, лента без публикаций и экземпляр без
+/// переопределений не платят ничего.
+pub fn gen_salt(published: &[kt_model::PublishedParam], ov: &[kt_model::Override]) -> u64 {
+    if !kt_model::overrides_touch_sources(published, ov) {
+        return 0;
+    }
+    // Debug-представление детерминировано (f64 печатается
+    // shortest-roundtrip), и новое поле переопределения попадает в соль
+    // само — тот же приём, что у `content_hash`.
+    xxhash_rust::xxh3::xxh3_64(format!("{ov:?}").as_bytes()) | 1
+}
+
+/// Адрес источника генератора ВНУТРИ экземпляра с переопределениями.
+///
+/// До Р.59 адрес однозначно определял значения: событие одно — значения
+/// одни. Переопределение снимает эту посылку (одно событие внутри ленты
+/// играет в двух выпусках разным заголовком), и адрес обязан её вернуть:
+/// иначе заказ и чтение сойдутся на одном адресе — инвариант 4 формально
+/// цел, — а кадр придёт ЧУЖОЙ, и «второй выпуск» молча покажет первый.
+///
+/// Свободных битов в адресе нет (клип < кусок < генератор < лента), и
+/// адрес солится ХЭШЕМ. Это законно ровно потому же, почему законен
+/// `content_hash`: 62 бита, чистая функция, и `gen_sources` считает её
+/// ТЕМ ЖЕ кодом — заказ и чтение спрашивают одно и то же.
+pub fn gen_source_addr_in(id: kt_model::ClipId, salt: u64) -> MediaId {
+    if salt == 0 {
+        return gen_source_addr(id);
+    }
+    let h = xxhash_rust::xxh3::xxh3_64(
+        &[id.0.to_le_bytes().as_slice(), salt.to_le_bytes().as_slice()].concat(),
+    );
+    MediaId(kt_model::GEN_TAG | (h & (kt_model::GEN_TAG - 1)))
+}
+
+/// `clip_source_addr` внутри экземпляра ленты: у генератора — солёный
+/// адрес, у всех остальных — адрес медиа, как было.
+pub fn clip_source_addr_in(c: &kt_model::ClipEvent, salt: u64) -> MediaId {
+    match c.r#gen {
+        Some(_) => gen_source_addr_in(c.id, salt),
+        None => c.media,
+    }
+}
+
 /// Все генераторы ДОКУМЕНТА: корень и каждая лента, через ту же дверь
 /// выдачи клипов, что и рендер (`effective_reel` — морферы уже
 /// применены). Плеер, экспорт и kt-cli поднимают источники ровно по
 /// этому списку: второго перечисления быть не должно, иначе экспорт
 /// отрендерил бы не то, что показывало превью.
 pub fn gen_sources(project: &Project) -> Vec<(MediaId, kt_model::GenState)> {
-    let mut out = Vec::new();
-    let mut reel = |seq: Option<MediaId>| {
-        for c in project.effective_reel(seq).iter() {
-            if let Some(k) = &c.r#gen {
-                out.push((
-                    gen_source_addr(c.id),
-                    kt_model::GenState { kind: k.clone(), auto: c.gen_auto.clone() },
-                ));
-            }
+    let mut out: Vec<(MediaId, kt_model::GenState)> = Vec::new();
+    let mut have: std::collections::HashSet<MediaId> = std::collections::HashSet::new();
+    let mut push = |addr: MediaId, st: kt_model::GenState| {
+        if have.insert(addr) {
+            out.push((addr, st));
         }
     };
-    reel(None);
-    for s in &project.sequences {
-        reel(Some(s.id));
+    // 1) КАЖДАЯ лента со своим шаблонным содержимым — как было до Р.59.
+    //    Ленту, никуда не поставленную, тоже видно: её показывает бин и
+    //    её считает служба превью, и терять её источники нельзя.
+    for seq in std::iter::once(None).chain(project.sequences.iter().map(|s| Some(s.id))) {
+        for c in project.effective_reel(seq).iter() {
+            if let Some(k) = &c.r#gen {
+                push(
+                    gen_source_addr(c.id),
+                    kt_model::GenState { kind: k.clone(), auto: c.gen_auto.clone() },
+                );
+            }
+        }
+    }
+    // 2) ОБХОД ДЕРЕВА ЭКЗЕМПЛЯРОВ (Р.59, стадия 3): у экземпляра с
+    //    переопределениями свои значения, а значит и свой адрес. Список
+    //    строится ТЕМ ЖЕ кодом, что и адреса в плане (`build_reel`), —
+    //    разойдись они, префетч грел бы адрес, которого нет.
+    let mut seen: std::collections::HashSet<(MediaId, u64)> = std::collections::HashSet::new();
+    let mut stack: Vec<(Option<MediaId>, Vec<kt_model::Override>, usize)> =
+        vec![(None, Vec::new(), 0)];
+    while let Some((seq, ov, depth)) = stack.pop() {
+        let published: &[kt_model::PublishedParam] = match seq {
+            None => &project.published,
+            Some(id) => match project.sequence(id) {
+                Some(s) => &s.published,
+                None => continue,
+            },
+        };
+        let salt = gen_salt(published, &ov);
+        for c in project.resolve_reel(seq, &ov).clips.iter() {
+            if let Some(k) = &c.r#gen {
+                push(
+                    gen_source_addr_in(c.id, salt),
+                    kt_model::GenState { kind: k.clone(), auto: c.gen_auto.clone() },
+                );
+            }
+            if project.sequence(c.media).is_some()
+                && depth < kt_model::MAX_NEST_DEPTH
+                && seen.insert((c.media, instance_content(project, c.media, &c.overrides)))
+            {
+                stack.push((Some(c.media), c.overrides.clone(), depth + 1));
+            }
+        }
     }
     out
 }

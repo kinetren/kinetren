@@ -53,6 +53,11 @@ pub const KT_META_V8: u32 = 8;
 /// прочла бы значения из пути медиа — а их там больше нет, — и показала
 /// бы пустой титр вместо заголовка, причём во всех местах сразу. Отказ
 /// честнее.
+/// Той же версией (решение раунда: версия ОДНА, поднимается ПО
+/// СОДЕРЖИМОМУ) — публичные параметры композиции и переопределения у
+/// экземпляра (Р.59, стадия 3). Старый ридер сыграл бы все экземпляры
+/// шаблонными значениями: десять выпусков новостей с одним заголовком,
+/// и ни одного видимого признака. Отказ честнее.
 pub const KT_META_V9: u32 = 9;
 
 // ---- типизированные конверты metadata.kt (приём otio-types) -----------------
@@ -127,6 +132,11 @@ pub struct KtTimelineMeta {
     /// то же поле в их `KtSequence`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub overlap_transitions: Vec<KtOverlapTransition>,
+    /// Публичные параметры ленты, стоящей на месте КОРНЯ (Р.59, стадия
+    /// 3). В сохранённом документе это всегда пусто — корень никому не
+    /// экземпляр, — но молча терять содержимое модели нельзя.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub published: Vec<kt_model::PublishedParam>,
     /// Форвард-милосердие к будущим версиям (Р.29): неизвестные kt-поля
     /// v3+ возятся passthrough'ом — следующие добавки не потребуют
     /// жёсткого отказа, если старый ридер ничего из них не теряет.
@@ -159,6 +169,11 @@ pub struct KtSequence {
     /// Наложенные переходы ленты (Р.51, п.399).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub overlap_transitions: Vec<KtOverlapTransition>,
+    /// Публичные параметры ЛЕНТЫ (Р.59, стадия 3): объявленные автором
+    /// ручки со ссылками внутрь неё. Пусто — лента без публикаций, и
+    /// файл байт-в-байт прежний.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub published: Vec<kt_model::PublishedParam>,
     /// Карта слоёв ЛЕНТЫ (Р.28 этажом ниже): перекрытые события одной её
     /// дорожки лежат соседними треками внутри её `Stack`. Без карты они
     /// разъехались бы по разным дорожкам — тот же дефект, что был у корня.
@@ -286,6 +301,10 @@ pub struct KtClipMeta {
     pub r#gen: Option<kt_model::GeneratorKind>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gen_auto: Vec<kt_model::ParamCurve>,
+    /// Переопределения публичных параметров ЛЕНТЫ у ЭТОГО экземпляра
+    /// (Р.59, стадия 3). Пусто — экземпляр играет шаблон.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub overrides: Vec<kt_model::Override>,
     /// Форвард-милосердие (Р.29): неизвестные kt-поля будущих версий.
     #[serde(default, flatten)]
     pub extra: Map<String, Value>,

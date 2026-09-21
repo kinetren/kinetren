@@ -142,6 +142,7 @@ fn vclip(id: u64, lane: u32) -> ClipEvent {
     ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,

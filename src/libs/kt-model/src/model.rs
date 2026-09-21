@@ -7,6 +7,7 @@
 
 use crate::genmedia::GeneratorKind;
 use crate::project::*;
+use crate::published::*;
 use kt_time::{Tick, TickRange};
 
 pub const MAX_UNDO: usize = 80;
@@ -416,6 +417,38 @@ pub enum Command {
         id: ClipId,
         media: MediaId,
     },
+    // --- публичные параметры композиции (Р.59, стадия 3) ---
+    /// Объявить свойство ТЕКУЩЕЙ ленты наружу.
+    ///
+    /// Ленту команда не называет намеренно: вход внутрь сделан обменом
+    /// содержимого (`swap_reel`), и команда правит ту ленту, в которой
+    /// стоишь, — ровно как `AddClip` и все остальные шестьдесят рук.
+    PublishParam {
+        param: Box<PublishedParam>,
+    },
+    /// Снять ручку. Переопределения на неё исчезают тем же шагом истории
+    /// (`reconcile_published`) — мёртвой ручки снаружи не остаётся.
+    UnpublishParam {
+        id: PubId,
+    },
+    /// Переименование и сужение пределов — полная замена объявления.
+    SetPublished {
+        param: Box<PublishedParam>,
+    },
+    /// Порядок ручек в окне потребителя — часть авторского интерфейса
+    /// (Resolve 21 завёл его отдельно, разведка F-TL-012).
+    ReorderPublished {
+        order: Vec<PubId>,
+    },
+    /// Переопределение у ЭКЗЕМПЛЯРА. Полная замена одной ручки.
+    SetOverride {
+        id: ClipId,
+        ov: Box<Override>,
+    },
+    ClearOverride {
+        id: ClipId,
+        pub_id: PubId,
+    },
 }
 
 impl Command {
@@ -453,6 +486,8 @@ impl Command {
             | Command::SetClipGen { id, .. }
             | Command::SetClipGenAuto { id, .. }
             | Command::UnlinkClip { id }
+            | Command::SetOverride { id, .. }
+            | Command::ClearOverride { id, .. }
             | Command::SetClipMedia { id, .. } => Some(*id),
             _ => None,
         }
@@ -518,6 +553,16 @@ impl Command {
             | Command::RemoveSequence { .. }
             | Command::RenameSequence { .. }
             | Command::SetSequenceContent { .. }
+            // Переопределение и публикация меняют СОДЕРЖИМОЕ ленты,
+            // какой её видит движок: редакция становится другой, план
+            // обязан пересобраться. Закон П сюда не распространяется —
+            // полосой `retune` такое не довезёшь.
+            | Command::PublishParam { .. }
+            | Command::UnpublishParam { .. }
+            | Command::SetPublished { .. }
+            | Command::ReorderPublished { .. }
+            | Command::SetOverride { .. }
+            | Command::ClearOverride { .. }
             | Command::SetClipMedia { .. } => true,
         }
     }
@@ -541,6 +586,10 @@ pub enum CommandError {
     NameTaken(String),
     #[error("split point outside clip")]
     SplitOutside,
+    #[error("published parameter {0:?} not found")]
+    PublishedNotFound(PubId),
+    #[error("the new order is not a permutation of the published set")]
+    PublishedOrderBroken,
     #[error("invalid clip: {0}")]
     InvalidClip(#[from] ProjectError),
     #[error("transition {0:?} not found")]
@@ -725,6 +774,12 @@ impl Band {
                 | Command::RemoveSequence { .. }
                 | Command::RenameSequence { .. }
                 | Command::SetSequenceContent { .. }
+                | Command::PublishParam { .. }
+                | Command::UnpublishParam { .. }
+                | Command::SetPublished { .. }
+                | Command::ReorderPublished { .. }
+                | Command::SetOverride { .. }
+                | Command::ClearOverride { .. }
                 | Command::SetClipMedia { .. } => {}
             }
         }
@@ -1039,6 +1094,17 @@ impl TimelineModel {
         for b in bands.iter().rev() {
             scratch.unmerge_reel(b).map_err(CommandError::InvalidLayout)?;
         }
+        // Судьба публикаций — ТЕМ ЖЕ шагом истории и по тому же образцу,
+        // что у переходов: цель исчезла — исчезает и ручка, и все её
+        // переопределения во всех экземплярах дерева. Иначе снаружи
+        // остаётся ручка, которая ни на что не действует, и узнаёт об
+        // этом потребитель (минус разведки F-TL-012).
+        //
+        // ПОСЛЕ сборки полос, и это не порядок ради порядка: пока полоса
+        // раскрыта, содержимое ленты физически лежит в корне, а её
+        // публикации остаются в `sequences` — каждая цель выглядела бы
+        // пропавшей, и раскрытие тихо сносило бы весь публичный набор.
+        Self::reconcile_published(&mut scratch, self.editing);
         // Валидация — ПО ДОКУМЕНТУ: в рабочем виде экземпляр ленты, в
         // которой стоим, лежит внутри неё самой и выглядит циклом.
         if let Some(seq) = self.editing {
@@ -1381,6 +1447,47 @@ impl TimelineModel {
                     return Err(CommandError::MediaNotFound(*media));
                 }
             }
+            // Публикация проверяется ТЕМ ЖЕ кодом, что и валидация файла:
+            // второго правила «что считать живой целью» быть не может.
+            Command::PublishParam { param } => {
+                if p.published.iter().any(|x| x.id == param.id) {
+                    return Err(CommandError::IdInUse(param.id.0));
+                }
+                Self::check_published_on(p, param)?;
+            }
+            Command::SetPublished { param } => {
+                if !p.published.iter().any(|x| x.id == param.id) {
+                    return Err(CommandError::PublishedNotFound(param.id));
+                }
+                Self::check_published_on(p, param)?;
+            }
+            Command::UnpublishParam { id } => {
+                if !p.published.iter().any(|x| x.id == *id) {
+                    return Err(CommandError::PublishedNotFound(*id));
+                }
+            }
+            Command::ReorderPublished { order } => {
+                // ПЕРЕСТАНОВКА, а не правка набора: порядок обязан быть
+                // перестановкой ровно того, что объявлено, иначе команда
+                // молча теряла бы или дублировала ручки.
+                let mut a: Vec<u64> = order.iter().map(|x| x.0).collect();
+                let mut b: Vec<u64> = p.published.iter().map(|x| x.id.0).collect();
+                a.sort_unstable();
+                b.sort_unstable();
+                if a != b {
+                    return Err(CommandError::PublishedOrderBroken);
+                }
+            }
+            Command::SetOverride { id, ov } => {
+                let c = find(*id)?;
+                let mut probe = c.clone();
+                probe.overrides.retain(|x| x.pub_id != ov.pub_id);
+                probe.overrides.push((**ov).clone());
+                p.validate_overrides_for(&probe).map_err(CommandError::InvalidClip)?;
+            }
+            Command::ClearOverride { id, .. } => {
+                find(*id)?;
+            }
             // Значения генератора проверяются ТЕМ ЖЕ кодом, что и
             // валидация файла (`check_clip_gen`): второго правила «что
             // считать согласованным» быть не может, разойдись они — окно
@@ -1528,6 +1635,28 @@ impl TimelineModel {
             if !p.media.iter().any(|x| x.id == mid) {
                 return Err(CommandError::MediaNotFound(mid));
             }
+        }
+        Ok(())
+    }
+
+    /// Проверка ОБЪЯВЛЕНИЯ публичного параметра тем же кодом, что и
+    /// валидация файла (Р.59, стадия 3).
+    ///
+    /// Лента здесь — ТЕКУЩАЯ, то есть корень рабочего вида: вход внутрь
+    /// сделан обменом содержимого, и цели публикации лежат ровно там.
+    fn check_published_on(p: &Project, param: &PublishedParam) -> Result<(), CommandError> {
+        if param.name.trim().is_empty() {
+            return Err(CommandError::InvalidClip(ProjectError::PublishedUnnamed(None, param.id)));
+        }
+        let Some(ty) = p.addr_type(None, &param.target) else {
+            return Err(CommandError::InvalidClip(ProjectError::PublishedTargetMissing(
+                None, param.id,
+            )));
+        };
+        if !ty.same_family(&param.ty) {
+            return Err(CommandError::InvalidClip(ProjectError::PublishedTypeMismatch(
+                None, param.id,
+            )));
         }
         Ok(())
     }
@@ -1831,7 +1960,39 @@ impl TimelineModel {
                 let mut c = Self::clip_mut_on(p, id).clone();
                 c.media = media;
                 fit_gen_to_media(p, &mut c);
+                // Экземпляр переехал на ДРУГУЮ ленту — чужие
+                // переопределения на ней не значат ничего.
+                c.overrides.clear();
                 *Self::clip_mut_on(p, id) = c;
+            }
+            Command::PublishParam { param } => p.published.push(*param),
+            Command::SetPublished { param } => {
+                if let Some(slot) = p.published.iter_mut().find(|x| x.id == param.id) {
+                    *slot = *param;
+                }
+            }
+            Command::UnpublishParam { id } => {
+                // Переопределения снятой ручки убирает `reconcile_published`
+                // ТЕМ ЖЕ шагом истории — по всему документу сразу, а не
+                // только там, куда дотянулась эта команда.
+                p.published.retain(|x| x.id != id);
+            }
+            Command::ReorderPublished { order } => {
+                let mut out = Vec::with_capacity(p.published.len());
+                for id in &order {
+                    if let Some(x) = p.published.iter().find(|x| x.id == *id) {
+                        out.push(x.clone());
+                    }
+                }
+                p.published = out;
+            }
+            Command::SetOverride { id, ov } => {
+                let c = Self::clip_mut_on(p, id);
+                c.overrides.retain(|x| x.pub_id != ov.pub_id);
+                c.overrides.push(*ov);
+            }
+            Command::ClearOverride { id, pub_id } => {
+                Self::clip_mut_on(p, id).overrides.retain(|x| x.pub_id != pub_id);
             }
             Command::SetSettings { settings } => p.settings = settings,
             Command::AddMorpher(m) => {
@@ -2015,9 +2176,110 @@ impl TimelineModel {
         }
     }
 
+    /// Судьба публикаций и переопределений после пакета команд (Р.59,
+    /// стадия 3) — образец `reconcile_transitions`.
+    ///
+    /// `root_is` — чья лента стоит СЕЙЧАС на месте корня (вход внутрь
+    /// сделан обменом содержимого). Без этого адреса нельзя понять, чьи
+    /// переопределения осиротели, когда ручку сняли изнутри ленты.
+    ///
+    /// Цель, сменившая ТИП, считается исчезнувшей: слот, которому
+    /// подменили вид эффекта, — это другой слот, и ручка на нём уже ни на
+    /// что не действует.
+    fn reconcile_published(p: &mut Project, root_is: Option<MediaId>) {
+        // Быстрый путь первой строкой: проект без публикаций и без
+        // переопределений — подавляющее большинство — платит один обход
+        // и ни одной аллокации.
+        let none = p.published.is_empty()
+            && p.sequences.iter().all(|s| s.published.is_empty())
+            && p.clips
+                .iter()
+                .chain(p.sequences.iter().flat_map(|s| s.clips.iter()))
+                .all(|c| c.overrides.is_empty());
+        if none {
+            return;
+        }
+        // ДО НЕПОДВИЖНОЙ ТОЧКИ. Снятие ручки внутренней ленты убивает
+        // ручку внешней, которая на неё ссылалась (`Nested`), — а та
+        // могла быть целью ещё одной этажом выше. Один проход оставил бы
+        // мёртвую ссылку до конца батча, и `validate` отверг бы ВЕСЬ
+        // жест: правка была бы законной, а не проходила бы.
+        for _ in 0..=max_publish_cascade() {
+            if !Self::reconcile_published_once(p, root_is) {
+                break;
+            }
+        }
+    }
+
+    /// Один проход согласования. Возвращает `true`, если что-то сняли, —
+    /// значит надо пройти ещё раз.
+    fn reconcile_published_once(p: &mut Project, root_is: Option<MediaId>) -> bool {
+        let root_keep: Vec<bool> = {
+            let alive = |seq: Option<MediaId>, prm: &PublishedParam| {
+                p.addr_type(seq, &prm.target).is_some_and(|t| t.same_family(&prm.ty))
+            };
+            p.published.iter().map(|x| alive(None, x)).collect()
+        };
+        let seq_keep: Vec<Vec<bool>> = p
+            .sequences
+            .iter()
+            .map(|s| {
+                s.published
+                    .iter()
+                    .map(|x| {
+                        p.addr_type(Some(s.id), &x.target).is_some_and(|t| t.same_family(&x.ty))
+                    })
+                    .collect()
+            })
+            .collect();
+        let removed = root_keep.iter().any(|k| !k) || seq_keep.iter().flatten().any(|k| !k);
+        let mut it = root_keep.into_iter();
+        p.published.retain(|_| it.next().unwrap_or(true));
+        for (s, keeps) in p.sequences.iter_mut().zip(seq_keep) {
+            let mut it = keeps.into_iter();
+            s.published.retain(|_| it.next().unwrap_or(true));
+        }
+        // Живые ручки по адресу ленты. Порядок важен: лента, стоящая на
+        // месте корня, держит свой набор в `p.published`, а её запись в
+        // `sequences` — чужое содержимое.
+        let mut sets: std::collections::HashMap<MediaId, std::collections::HashSet<PubId>> =
+            std::collections::HashMap::new();
+        if let Some(rid) = root_is {
+            sets.insert(rid, p.published.iter().map(|x| x.id).collect());
+        }
+        for s in &p.sequences {
+            sets.entry(s.id).or_insert_with(|| s.published.iter().map(|x| x.id).collect());
+        }
+        let prune = |c: &mut ClipEvent| {
+            if c.overrides.is_empty() {
+                return;
+            }
+            match sets.get(&c.media) {
+                Some(ids) => c.overrides.retain(|o| ids.contains(&o.pub_id)),
+                // событие уехало на файл — переопределять больше нечего
+                None => c.overrides.clear(),
+            }
+        };
+        for c in &mut p.clips {
+            prune(c);
+        }
+        for s in &mut p.sequences {
+            for c in &mut s.clips {
+                prune(c);
+            }
+        }
+        removed
+    }
+
     fn clip_mut_on(p: &mut Project, id: ClipId) -> &mut ClipEvent {
         p.clips.iter_mut().find(|c| c.id == id).unwrap()
     }
+}
+
+/// Сколько раз максимум может каскадировать снятие публикации: цепочка
+/// ссылок `Nested` не длиннее дерева лент.
+fn max_publish_cascade() -> usize {
+    crate::MAX_NEST_DEPTH
 }
 
 fn reconcile_reel(clips: &[ClipEvent], transitions: &mut Vec<TransitionEvent>) {

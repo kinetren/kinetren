@@ -23,8 +23,9 @@ use kt_time::Tick;
 use serde::{Deserialize, Serialize};
 
 use crate::project::{
-    FlagSpec, HasParams, ParamCurve, ParamKind, ParamScope, ParamSpec, ParamUnit, apply_curves,
-    flags_for, fx_cast, params_for,
+    FlagSpec, HasParams, ParamCurve, ParamKind, ParamScope, ParamSpec, ParamUnit, ParamValue,
+    apply_curves, choice_spec, default_get_value, default_set_value, flags_for, fx_cast,
+    params_for, text_spec,
 };
 
 /// Вид генератора с параметрами. Serde-представление (internally tagged
@@ -901,6 +902,121 @@ impl HasParams for GeneratorKind {
     fn set_flag(&mut self, name: &str, v: bool) -> bool {
         gen_set_flag(self, name, v)
     }
+
+    /// Нечисловые свойства титра (Р.59, стадия 3). Ради них раунд и
+    /// затевался: «заголовок выпуска» — это ТЕКСТ, и публиковать наружу
+    /// нужно именно его, а не кегль.
+    fn extra_specs(&self) -> Vec<ParamSpec> {
+        match self {
+            GeneratorKind::Text { .. } => vec![
+                text_spec("text", true),
+                text_spec("family", false),
+                choice_spec("align", TEXT_ALIGN_KEYS),
+                choice_spec("anchor", TEXT_ANCHOR_KEYS),
+            ],
+            _ => Vec::new(),
+        }
+    }
+
+    fn get_value(&self, name: &str) -> Option<ParamValue> {
+        if let GeneratorKind::Text { text, family, align, anchor, .. } = self {
+            match name {
+                "text" => return Some(ParamValue::Text(text.clone())),
+                "family" => return Some(ParamValue::Text(family.clone())),
+                "align" => return Some(ParamValue::Choice(align_key(*align).into())),
+                "anchor" => return Some(ParamValue::Choice(anchor_key(*anchor).into())),
+                _ => {}
+            }
+        }
+        default_get_value(self, name)
+    }
+
+    fn set_value(&mut self, name: &str, v: &ParamValue) -> bool {
+        if let GeneratorKind::Text { text, family, align, anchor, .. } = self {
+            match (name, v) {
+                ("text", ParamValue::Text(s)) => {
+                    *text = s.clone();
+                    return true;
+                }
+                ("family", ParamValue::Text(s)) => {
+                    *family = s.clone();
+                    return true;
+                }
+                ("align", ParamValue::Choice(k)) => {
+                    let Some(a) = align_of_key(k) else { return false };
+                    *align = a;
+                    return true;
+                }
+                ("anchor", ParamValue::Choice(k)) => {
+                    let Some(a) = anchor_of_key(k) else { return false };
+                    *anchor = a;
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        default_set_value(self, name, v)
+    }
+}
+
+const TEXT_ALIGN_KEYS: &[&str] = &["left", "center", "right"];
+const TEXT_ANCHOR_KEYS: &[&str] = &[
+    "top_left",
+    "top_center",
+    "top_right",
+    "center_left",
+    "center",
+    "center_right",
+    "bottom_left",
+    "bottom_center",
+    "bottom_right",
+];
+
+fn align_key(a: TextAlign) -> &'static str {
+    match a {
+        TextAlign::Left => "left",
+        TextAlign::Center => "center",
+        TextAlign::Right => "right",
+    }
+}
+
+fn align_of_key(k: &str) -> Option<TextAlign> {
+    match k {
+        "left" => Some(TextAlign::Left),
+        "center" => Some(TextAlign::Center),
+        "right" => Some(TextAlign::Right),
+        _ => None,
+    }
+}
+
+fn anchor_key(a: TextAnchor) -> &'static str {
+    match a {
+        TextAnchor::TopLeft => "top_left",
+        TextAnchor::TopCenter => "top_center",
+        TextAnchor::TopRight => "top_right",
+        TextAnchor::CenterLeft => "center_left",
+        TextAnchor::Center => "center",
+        TextAnchor::CenterRight => "center_right",
+        TextAnchor::BottomLeft => "bottom_left",
+        TextAnchor::BottomCenter => "bottom_center",
+        TextAnchor::BottomRight => "bottom_right",
+    }
+}
+
+fn anchor_of_key(k: &str) -> Option<TextAnchor> {
+    TEXT_ANCHOR_KEYS.iter().position(|x| *x == k).map(|i| {
+        [
+            TextAnchor::TopLeft,
+            TextAnchor::TopCenter,
+            TextAnchor::TopRight,
+            TextAnchor::CenterLeft,
+            TextAnchor::Center,
+            TextAnchor::CenterRight,
+            TextAnchor::BottomLeft,
+            TextAnchor::BottomCenter,
+            TextAnchor::BottomRight,
+        ][i]
+    })
 }
 
 /// Путь-псевдосхема, за которым не стоит файла: `synth:` (тестовые

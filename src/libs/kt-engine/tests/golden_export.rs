@@ -46,6 +46,7 @@ fn golden_project() -> Project {
         ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Audio,
@@ -68,6 +69,7 @@ fn golden_project() -> Project {
         ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(2),
             link_group: None,
             kind: ClipKind::Audio,
@@ -88,6 +90,7 @@ fn golden_project() -> Project {
         ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(3),
             link_group: None,
             kind: ClipKind::Audio,
@@ -108,6 +111,7 @@ fn golden_project() -> Project {
         ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(4),
             link_group: None,
             kind: ClipKind::Audio,
@@ -162,6 +166,7 @@ fn golden_project() -> Project {
         ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(5),
             link_group: None,
             kind: ClipKind::Video,
@@ -181,6 +186,7 @@ fn golden_project() -> Project {
         ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
+            overrides: Vec::new(),
             id: ClipId(6),
             link_group: None,
             kind: ClipKind::Video,
@@ -410,6 +416,7 @@ fn generator_project() -> (Project, Sources) {
     let clip = |id: u64, lane: u32, start: i64, dur: i64, media: u64| ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,

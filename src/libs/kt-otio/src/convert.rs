@@ -327,11 +327,20 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             // параметры генератора на СОБЫТИИ (Р.59, стадия 2): старая
             // сборка полезла бы за ними в путь медиа, где их больше нет,
             // и показала бы пустой титр — причём во всех местах разом
+            //
+            // Публичные параметры композиции и переопределения у
+            // экземпляра (Р.59, стадия 3) — ТА ЖЕ версия: решение раунда
+            // «одна версия на раунд, поднимается ПО СОДЕРЖИМОМУ», и
+            // предикат обязан быть ОДНИМ местом. Старая сборка сыграла бы
+            // все экземпляры шаблонными значениями — десять выпусков
+            // новостей с одним заголовком и ни одного видимого признака.
             let has_v9 = p
                 .clips
                 .iter()
                 .chain(p.sequences.iter().flat_map(|s| s.clips.iter()))
-                .any(|c| c.r#gen.is_some());
+                .any(|c| c.r#gen.is_some() || !c.overrides.is_empty())
+                || !p.published.is_empty()
+                || p.sequences.iter().any(|s| !s.published.is_empty());
             if has_v9 {
                 crate::meta::KT_META_V9
             } else if has_v8 {
@@ -445,6 +454,7 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                             })
                         },
                         overlap_transitions: overlap_transition_list(s),
+                        published: s.published.clone(),
                     }
                 })
                 .collect();
@@ -452,6 +462,7 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             v
         },
         overlap_transitions: overlap_transition_list(p),
+        published: p.published.clone(),
         extra: retained.timeline_kt_extra.clone(),
     };
     kt_set(&mut meta, &kt);
@@ -967,6 +978,7 @@ fn nest_to_otio(
             start: displaced_start(c, at),
             r#gen: c.r#gen.clone(),
             gen_auto: c.gen_auto.clone(),
+            overrides: c.overrides.clone(),
             extra: Map::new(),
         },
     );
@@ -1132,6 +1144,7 @@ fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str, at: Tick) 
             start: displaced_start(c, at),
             r#gen: c.r#gen.clone(),
             gen_auto: c.gen_auto.clone(),
+            overrides: c.overrides.clone(),
             extra: ex.kt_extra.clone(),
         },
     );
@@ -1306,6 +1319,7 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
                     seq.morphers = meta.morphers.clone();
                     seq.cameras = meta.cameras.clone();
                     seq.overlap_layers = meta.overlap_layers;
+                    seq.published = meta.published.clone();
                 }
                 None => cx
                     .notices
@@ -1384,6 +1398,7 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
             }
         }
         p.morph_lanes = kt.morph_lanes;
+        p.published = kt.published;
         p.morphers = kt.morphers;
         // морферы файла ДО v4 — прежняя семантика: патч на цели целиком,
         // время блока не действует (Р.35, односторонний апгрейд)
@@ -2018,6 +2033,7 @@ fn read_foreign_nest(
     let make = |id: ClipId, kind: ClipKind, lane: u32| ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
+        overrides: Vec::new(),
         id,
         link_group: group,
         kind,
@@ -2187,6 +2203,9 @@ fn read_nest(
     let start = meta.as_ref().and_then(|m| m.start).map(Tick).unwrap_or(start);
     Ok(ClipEvent {
         r#gen: None,
+        // Переопределения ЭКЗЕМПЛЯРА ленты — из нашего конверта (Р.59,
+        // стадия 3). Чужой файл их не несёт и нести не может.
+        overrides: meta.as_ref().map(|m| m.overrides.clone()).unwrap_or_default(),
         gen_auto: Vec::new(),
         id,
         link_group: meta.as_ref().and_then(|m| m.link_group).map(GroupId),
@@ -2376,6 +2395,9 @@ fn clip_from_otio(
         _ => start,
     };
     let mut ev = ClipEvent {
+        // Обычное событие переопределять нечего (`validate` это и
+        // требует): набор пуст по построению.
+        overrides: Vec::new(),
         // Значения генератора — из НАШЕГО конверта, если он есть (Р.59,
         // стадия 2). Нет его — клип остаётся пустым, и `normalize()`
         // достаёт значения из пути медиа: файлы Р.52..Р.58 держали их
