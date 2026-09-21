@@ -393,6 +393,8 @@ fn t94_forward_navigation_advances() {
         let mut p = app.model.project().clone();
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Video,
@@ -471,6 +473,8 @@ fn t95_clip_drag_snaps_to_neighbour() {
             p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
             for (n, start) in [(1u64, 0i64), (2, FAR)] {
                 p.clips.push(ClipEvent {
+                    r#gen: None,
+                    gen_auto: Vec::new(),
                     id: ClipId(n),
                     link_group: None,
                     kind: ClipKind::Video,
@@ -1224,6 +1228,8 @@ fn t122_insert_lane_after_clicked_row() {
         p.audio_lanes = 3;
         p.media.push(kt_model::MediaRef { id: kt_model::MediaId(1), path: "synth:1".into() });
         p.clips.push(kt_model::ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: kt_model::ClipId(1),
             link_group: None,
             kind: kt_model::ClipKind::Audio,
@@ -1313,6 +1319,8 @@ fn t120_space_hold_boosts_playback() {
         let mut p = app.model.project().clone();
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Audio,
@@ -1431,6 +1439,8 @@ fn t119_shift_nav_drags_region() {
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         for (i, start) in [90_000i64, 270_000, 450_000].into_iter().enumerate() {
             p.clips.push(ClipEvent {
+                r#gen: None,
+                gen_auto: Vec::new(),
                 id: ClipId(i as u64 + 1),
                 link_group: None,
                 kind: ClipKind::Video,
@@ -1941,6 +1951,8 @@ fn t139_move_plan_crossfade_and_clamp() {
     use kt_time::Tick;
 
     let clip = |id: u64, lane: u32, start: i64, dur: i64| ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Audio,
@@ -2036,6 +2048,8 @@ fn t139_drag_overlap_creates_crossfade() {
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         for (n, start) in [(1u64, 0i64), (2, 200_000)] {
             p.clips.push(ClipEvent {
+                r#gen: None,
+                gen_auto: Vec::new(),
                 id: ClipId(n),
                 link_group: None,
                 kind: ClipKind::Video,
@@ -2112,6 +2126,8 @@ fn t140_transition_edge_and_body_drags() {
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         for (n, start, src) in [(1u64, 0i64, 0i64), (2, 90_000, 30_000)] {
             p.clips.push(ClipEvent {
+                r#gen: None,
+                gen_auto: Vec::new(),
                 id: ClipId(n),
                 link_group: None,
                 kind: ClipKind::Video,
@@ -2226,6 +2242,8 @@ fn t163_overlap_drag_changes_nothing_but_position() {
             (3, ClipKind::Video, 200_000, None),
         ] {
             p.clips.push(ClipEvent {
+                r#gen: None,
+                gen_auto: Vec::new(),
                 id: ClipId(n),
                 link_group: group,
                 kind,
@@ -2320,6 +2338,8 @@ fn t160_pulling_apart_restores_trimmed_material() {
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         for (n, start) in [(1u64, 0i64), (2, 200_000)] {
             p.clips.push(ClipEvent {
+                r#gen: None,
+                gen_auto: Vec::new(),
                 id: ClipId(n),
                 link_group: None,
                 kind: ClipKind::Video,
@@ -2406,6 +2426,8 @@ fn t157_fade_edge_drag_without_neighbour() {
         let mut p = app.model.project().clone();
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Video,
@@ -2629,6 +2651,8 @@ fn t169_preview_material_shifts_only_on_trim_start() {
     use kt_time::Tick;
 
     let orig = ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -2759,6 +2783,8 @@ fn t172_blocked_gesture_is_an_error_not_a_pale_hint() {
     // клипы 2 и 3 стоят встык: любое попадание между ними — наезд на ДВОИХ
     for (n, start) in [(1u64, 0i64), (2, 200_000), (3, 250_000)] {
         p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(n),
             link_group: None,
             kind: ClipKind::Video,
@@ -2872,6 +2898,8 @@ fn t173_corner_fade_and_level_gestures() {
         let mut p = app.model.project().clone();
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Video,
@@ -2993,6 +3021,8 @@ fn t176_audio_and_video_share_one_level_line() {
         let mut p = app.model.project().clone();
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Audio,
@@ -3111,6 +3141,8 @@ fn t221_automation_widget_maps_material_and_keeps_input_stable() {
 
     // прямой клип: материал = таймлайн со сдвигом на точку входа
     let mut c = ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -3205,6 +3237,8 @@ fn t219_one_window_for_the_whole_link_group() {
     let mut p = app.model.project().clone();
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     let clip = |id: u64, kind: ClipKind, lane: u32| ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(id),
         link_group: Some(GroupId(7)),
         kind,
@@ -3279,6 +3313,8 @@ fn t218_morpher_source_field_takes_files_and_reverts() {
     let mut p = app.model.project().clone();
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -3365,6 +3401,8 @@ fn t217_one_chain_widget_for_events_and_morphers() {
     let mut p = app.model.project().clone();
     p.media.push(MediaRef { id: MediaId(9), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(9),
         link_group: None,
         kind: ClipKind::Video,
@@ -3461,6 +3499,8 @@ fn t193_fx_editor_automation_coalesces_into_one_undo() {
     let mut p = app.model.project().clone();
     p.media.push(MediaRef { id: MediaId(9), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(9),
         link_group: None,
         kind: ClipKind::Video,
@@ -3587,7 +3627,7 @@ fn harness_three_clips() -> (Harness<'static, KtApp>, crate::timeline::TlGeom) {
 }
 
 #[cfg(test)]
-fn harness_three_clips_dt(
+pub(crate) fn harness_three_clips_dt(
     step_dt: Option<f32>,
 ) -> (Harness<'static, KtApp>, crate::timeline::TlGeom) {
     use kt_model::*;
@@ -3599,6 +3639,8 @@ fn harness_three_clips_dt(
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         for (i, start) in [0i64, 100_000, 200_000].iter().enumerate() {
             p.clips.push(ClipEvent {
+                r#gen: None,
+                gen_auto: Vec::new(),
                 id: ClipId(i as u64 + 1),
                 link_group: None,
                 kind: ClipKind::Video,
@@ -3786,6 +3828,8 @@ fn t211_returned_source_replaces_its_placeholder() {
     // открытии он не откроется, а к моменту возврата станет валидным
     p.media.push(MediaRef { id: MediaId(1), path: "later.mp4".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -3866,6 +3910,8 @@ fn t210_render_with_missing_sources_warns_and_runs() {
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "gone.mp4".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -3941,6 +3987,8 @@ fn t209_missing_source_opens_with_placeholder_and_notices() {
     p.media.push(MediaRef { id: MediaId(1), path: "no-such-clip.mp4".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "also-gone.wav".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -4145,6 +4193,8 @@ fn t204_multi_drag_moves_the_whole_block() {
     });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     let clip = |id: u64, start: i64| ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,
@@ -4319,6 +4369,8 @@ fn t200_coalesced_edits_bump_revision_and_keep_dirty() {
     let mut p = app.model.project().clone();
     p.media.push(MediaRef { id: MediaId(9), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(9),
         link_group: None,
         kind: ClipKind::Video,
@@ -5097,6 +5149,8 @@ fn t376_clip_ids_are_not_reused_within_a_session() {
 
     let make = |app: &mut crate::app::KtApp, id: u64| {
         app.apply(Command::AddClip(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Video,
@@ -5924,30 +5978,76 @@ pub(crate) fn generator_pixel_after(
     }
 }
 
-/// Тест 477 (Р.52): «Создать генератор» — медиа без файла появляется в
-/// модели и в сервисах: путь канонический, источник поднят, карточка
-/// бина получает вид «видео без аудио» и «длительности нет», окно
-/// параметров открывается сразу и повторно (из меню карточки и меню
-/// события — оба пути зовут одно `open_generator_editor`).
+/// Событие-генератор, только что созданное из меню: (медиа, событие).
+/// Значения живут на СОБЫТИИ (Р.59, стадия 2), поэтому тесту нужно и то
+/// и другое.
+pub(crate) fn made_generator(
+    h: &egui_kittest::Harness<'_, crate::app::KtApp>,
+) -> (kt_model::MediaId, kt_model::ClipId) {
+    let p = h.state().model.project();
+    let m = p.media.last().expect("медиа генератора");
+    let c = p.clips.iter().find(|c| c.media == m.id).expect("событие генератора");
+    (m.id, c.id)
+}
+
+/// Что выбрано в полосе цепочки окна эффектов этого события.
+pub(crate) fn chain_sel(
+    h: &egui_kittest::Harness<'_, crate::app::KtApp>,
+    clip: kt_model::ClipId,
+) -> Option<crate::widgets::ChainSel> {
+    h.state()
+        .fx_editors
+        .iter()
+        .find(|e| e.members.contains(&clip))
+        .and_then(|e| e.selected.get(&clip).copied())
+}
+
+/// Значения генератора события — то, что с Р.59 и есть «параметры».
+pub(crate) fn gen_of(
+    h: &egui_kittest::Harness<'_, crate::app::KtApp>,
+    clip: kt_model::ClipId,
+) -> kt_model::GeneratorKind {
+    h.state().model.clip(clip).and_then(|c| c.r#gen.clone()).expect("у события есть генератор")
+}
+
+/// Тест 477 (Р.52, переписан в Р.59 стадии 2): «Создать генератор» —
+/// медиа без файла появляется в модели и в сервисах, а ЗНАЧЕНИЯ ложатся
+/// на СОБЫТИЕ.
+///
+/// Что изменилось по решению владельца: путь медиа несёт теперь ТОЛЬКО
+/// ВИД (`gen:solid`), выбранные в меню значения едут на событие, и
+/// «окно параметров» — это окно эффектов события с выбранной ГОЛОВОЙ
+/// полосы. Своего окна у генератора больше нет: владелец просил видеть
+/// источник первой крошкой цепочки, в том же окне.
 #[test]
 fn t477_create_generator_from_bin() {
     use kt_model::*;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
     let before = h.state().model.project().media.len();
-    h.state_mut().create_generator(GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 });
+    let made = GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 };
+    h.state_mut().create_generator(made.clone());
     h.step();
+    let (id, clip) = made_generator(&h);
     let app = h.state();
     let p = app.model.project();
     assert_eq!(p.media.len(), before + 1, "медиа не добавилось");
-    let m = p.media.last().unwrap();
-    assert_eq!(m.path, "gen:solid:c=ff8800", "путь обязан быть каноническим");
-    assert!(p.is_gen_media(m.id));
-    // окно параметров открыто сразу после создания
-    assert_eq!(app.generator_editors.len(), 1, "окно генератора не открылось");
-    assert_eq!(app.generator_editors[0].media, m.id);
+    assert_eq!(
+        p.media.last().unwrap().path,
+        "gen:solid",
+        "путь медиа несёт ТОЛЬКО вид: значения переехали на событие"
+    );
+    assert!(p.is_gen_media(id));
+    assert_eq!(gen_of(&h, clip), made, "выбранные значения обязаны лечь на СОБЫТИЕ");
+    // «окно параметров» открыто сразу — и открыто на ГОЛОВЕ полосы
+    assert_eq!(app.fx_editors.len(), 1, "окно параметров не открылось");
+    assert!(app.fx_editors[0].members.contains(&clip));
+    assert_eq!(
+        chain_sel(&h, clip),
+        Some(crate::widgets::ChainSel::Head),
+        "форма генератора — ПЕРВАЯ КРОШКА цепочки, и окно обязано открыться на ней"
+    );
     // сервис тумб знает вид и «длительность» — карточка нарисует тумбу,
     // а не «♪», и скроет нулевую длительность
-    let id = m.id;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let _ = app.thumbs.duration_or_probe(id);
     loop {
@@ -5962,72 +6062,93 @@ fn t477_create_generator_from_bin() {
     assert_eq!(h.state().thumbs.duration(id), Some(kt_time::Tick(0)));
     // повторное открытие (второй путь меню) не плодит второе окно
     h.state_mut().open_generator_editor(id);
-    assert_eq!(h.state().generator_editors.len(), 1, "окно обязано быть одно");
-    // снимок синка источников зарегистрирован — правки пойдут диффом
-    assert_eq!(h.state().media_paths.get(&id).map(String::as_str), Some("gen:solid:c=ff8800"));
+    assert_eq!(h.state().fx_editors.len(), 1, "окно обязано быть одно");
+    // снимки синка зарегистрированы — правки пойдут диффом
+    assert_eq!(h.state().media_paths.get(&id).map(String::as_str), Some("gen:solid"));
+    assert_eq!(
+        h.state().gen_states.get(&clip).map(|st| st.kind.clone()),
+        Some(made),
+        "снимок источника события обязан знать его значения"
+    );
 }
 
-/// Тест 478 (Р.52, усилен в Р.53 п.412): правка цвета в живой сессии
-/// окна доезжает до МОДЕЛИ, до ИСТОЧНИКА плеера и до КАРТИНКИ;
-/// «Отмена» возвращает backup; вся сессия — ОДИН шаг undo, и undo тоже
-/// доезжает до картинки.
+/// Тест 478 (Р.52, усилен в Р.53 п.412, переписан в Р.59 стадии 2):
+/// правка цвета в живой сессии окна доезжает до МОДЕЛИ, до ИСТОЧНИКА
+/// плеера и до КАРТИНКИ; «Отмена» возвращает backup; вся сессия — ОДИН
+/// шаг undo, и undo тоже доезжает до картинки.
 ///
-/// Утверждение «источник ПЕРЕСОЗДАН» заменено на «картинка новая»
-/// намеренно и с решения владельца (Р.53): пересоздание потока было
-/// ценой, а не целью — теперь источник перенастраивается на месте
-/// (t500), а проверять надо следствие, которое видит человек.
+/// Механизм новый (`SetClipGen` на событии вместо `SetMediaPath` на
+/// медиа), утверждение прежнее: правка видна человеку, а не только
+/// модели. Картинка спрашивается по АДРЕСУ ИСТОЧНИКА СОБЫТИЯ — с Р.59
+/// это единственное правило (`kt_engine::clip_source_addr`).
 #[test]
 fn t478_generator_edit_reaches_model_and_source() {
     use kt_model::*;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
     h.state_mut().create_generator(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 });
     h.step();
-    let id = h.state().model.project().media.last().unwrap().id;
-    let gesture = h.state().generator_editors[0].gesture;
+    let (id, clip) = made_generator(&h);
+    let addr = kt_engine::gen_source_addr(clip);
+    let gesture = h.state().fx_editors[0].gesture;
     let depth = h.state().model.undo_depth();
 
     // сессия окна: две правки цвета тем же gesture (как шлёт пипетка)
-    for c in ["gen:solid:c=104080", "gen:solid:c=ff8800"] {
+    for c in [(0x10, 0x40, 0x80), (0xff, 0x88, 0x00)] {
+        let kind = GeneratorKind::Solid { color_r: c.0, color_g: c.1, color_b: c.2 };
         let app = h.state_mut();
-        assert!(app.apply_coalesced(Command::SetMediaPath { id, path: c.into() }, gesture));
+        assert!(app.apply_coalesced(Command::SetClipGen { id: clip, kind: Some(kind) }, gesture));
         h.step();
     }
+    assert_eq!(
+        gen_of(&h, clip),
+        GeneratorKind::Solid { color_r: 0xff, color_g: 0x88, color_b: 0x00 }
+    );
     let app = h.state();
-    assert_eq!(app.model.project().media.last().unwrap().path, "gen:solid:c=ff8800");
     // источник плеера догнал модель (перенастройкой, а не пересозданием)
-    assert_eq!(app.media_paths.get(&id).map(String::as_str), Some("gen:solid:c=ff8800"));
+    assert_eq!(
+        app.gen_states.get(&clip).map(|st| st.kind.clone()),
+        Some(GeneratorKind::Solid { color_r: 0xff, color_g: 0x88, color_b: 0x00 })
+    );
     assert_eq!(app.model.undo_depth(), depth + 1, "сессия окна — один шаг истории");
     // ...и до КАРТИНКИ: источник плеера отдаёт кадр НОВОГО цвета
-    let (px, serial) = crate::layout_tests::generator_pixel_after(&h, id, 0)
+    let (px, serial) = crate::layout_tests::generator_pixel_after(&h, addr, 0)
         .expect("кадр генератора так и не пришёл");
     assert_eq!(px, [255, 136, 0], "правка обязана доехать до картинки, а не только до модели");
 
     // undo возвращает и модель, и картинку (хук в undo, а не только в apply)
     h.state_mut().undo();
     h.step();
-    let app = h.state();
-    assert_eq!(app.model.project().media.last().unwrap().path, "gen:solid");
     assert_eq!(
-        app.media_paths.get(&id).map(String::as_str),
-        Some("gen:solid"),
+        gen_of(&h, clip),
+        GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 },
+        "undo обязан вернуть значения события"
+    );
+    assert_eq!(
+        h.state().gen_states.get(&clip).map(|st| st.kind.clone()),
+        Some(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
         "undo обязан догнать источник — иначе картинка отстаёт от модели"
     );
-    let (px, _) = crate::layout_tests::generator_pixel_after(&h, id, serial)
+    let (px, _) = crate::layout_tests::generator_pixel_after(&h, addr, serial)
         .expect("после undo новый кадр так и не пришёл");
     assert_eq!(px, [0, 0, 0], "undo обязан доехать до картинки");
 
-    // «Отмена» окна: команда backup тем же gesture + окно закрывается;
-    // после смерти медиа окно уходит само
+    // «Отмена» окна: снимок ГОЛОВЫ взят на открытии и откатывается тем
+    // же gesture — значения источника часть той же сессии окна
     h.state_mut().redo();
     h.step();
-    let backup = h.state().generator_editors[0].backup_path.clone();
-    assert_eq!(backup, "gen:solid", "backup — путь на момент открытия");
+    let backup = h.state().fx_editors[0].gen_backup.clone();
+    assert_eq!(
+        backup.iter().find(|(c, _, _)| *c == clip).map(|(_, k, _)| k.clone()).unwrap(),
+        Some(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
+        "backup — значения на момент открытия"
+    );
     {
         let app = h.state_mut();
-        assert!(app.apply_coalesced(Command::SetMediaPath { id, path: backup }, gesture));
+        let kind = backup.iter().find(|(c, _, _)| *c == clip).unwrap().1.clone();
+        assert!(app.apply_coalesced(Command::SetClipGen { id: clip, kind }, gesture));
     }
     h.step();
-    assert_eq!(h.state().model.project().media.last().unwrap().path, "gen:solid");
+    assert_eq!(gen_of(&h, clip), GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 });
     {
         // клип генератора снимаем первым: создание кладёт его сразу
         // (п.416), а медиа под живым событием модель удалить не даёт
@@ -6039,66 +6160,78 @@ fn t478_generator_edit_reaches_model_and_source() {
         assert!(app.apply(Command::RemoveMedia { id }));
     }
     h.step();
-    assert!(h.state().generator_editors.is_empty(), "окно мёртвого медиа обязано закрыться");
+    assert!(h.state().fx_editors.is_empty(), "окно мёртвого события обязано закрыться");
     assert!(!h.state().media_paths.contains_key(&id), "источник мёртвого медиа снят");
+    assert!(!h.state().gen_states.contains_key(&clip), "источник мёртвого события снят");
 }
 
-/// Тест 487 (Р.52 С3): у титра СВОЁ окно — все входы генераторов
-/// маршрутизируются в него; правка текста через сессию окна доезжает до
-/// модели каноническим путём и схлопывается в один шаг undo; окно
-/// умирает вместе с медиа.
+/// Тест 487 (Р.52 С3, переписан в Р.59 стадии 2): все входы генераторов
+/// ведут в ОДНО место — окно эффектов события с выбранной головой;
+/// правка текста через сессию окна доезжает до модели, схлопывается в
+/// один шаг undo, и окно умирает вместе с событием.
+///
+/// Что изменилось по решению владельца: отдельного окна титра больше
+/// нет («запрятан в жопу» — про прежнюю развязку окон), а текст живёт на
+/// СОБЫТИИ, а не в строке-адресе медиа. Утверждение прежнее: набранный
+/// текст доезжает до модели без потерь и одним шагом истории.
 #[test]
 fn t487_title_editor_routes_and_edits() {
     use kt_model::*;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
     h.state_mut().create_generator(GeneratorKind::default_text());
     h.step();
-    let app = h.state();
-    assert_eq!(app.title_editors.len(), 1, "титру положено СВОЁ окно");
-    assert!(app.generator_editors.is_empty(), "общее окно генератора не открывается для титра");
-    let id = app.model.project().media.last().unwrap().id;
-    let gesture = app.title_editors[0].gesture;
-    let depth = app.model.undo_depth();
+    let (id, clip) = made_generator(&h);
+    assert_eq!(h.state().fx_editors.len(), 1, "форма титра — в окне эффектов события");
+    assert_eq!(
+        chain_sel(&h, clip),
+        Some(crate::widgets::ChainSel::Head),
+        "титр обязан открыться на голове полосы"
+    );
+    let gesture = h.state().fx_editors[0].gesture;
+    let depth = h.state().model.undo_depth();
 
-    // сессия окна: набранный текст уезжает каноническим gen:text-путём
-    let mut kind = kt_model::parse_gen_path(&h.state().model.project().media.last().unwrap().path)
-        .expect("титр парсится");
+    // сессия окна: набранный текст уезжает на СОБЫТИЕ
+    let mut kind = gen_of(&h, clip);
     if let GeneratorKind::Text { text, .. } = &mut kind {
         *text = "Привет,\nтитр!".into();
     }
-    let path = format_gen_path(&kind);
     {
         let app = h.state_mut();
-        assert!(app.apply_coalesced(Command::SetMediaPath { id, path: path.clone() }, gesture));
+        assert!(
+            app.apply_coalesced(
+                Command::SetClipGen { id: clip, kind: Some(kind.clone()) },
+                gesture
+            )
+        );
     }
     h.step();
-    let app = h.state();
-    assert_eq!(app.model.project().media.last().unwrap().path, path);
+    assert_eq!(gen_of(&h, clip), kind, "текст доехал до события целиком");
     assert_eq!(
-        kt_model::parse_gen_path(&path),
-        Some(kind),
-        "текст пережил путь лослесс (экранирование)"
+        h.state().model.project().media.last().unwrap().path,
+        "gen:text",
+        "в пути медиа остаётся ТОЛЬКО вид"
     );
-    assert_eq!(app.model.undo_depth(), depth + 1, "сессия окна — один шаг истории");
-    assert_eq!(app.media_paths.get(&id).map(String::as_str), Some(path.as_str()));
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "сессия окна — один шаг истории");
+    assert_eq!(
+        h.state().gen_states.get(&clip).map(|st| st.kind.clone()),
+        Some(kind),
+        "правка обязана доехать до источника события"
+    );
 
     // повторное открытие — то же окно
     h.state_mut().open_generator_editor(id);
-    assert_eq!(h.state().title_editors.len(), 1);
+    assert_eq!(h.state().fx_editors.len(), 1);
 
-    // медиа умерло — окно ушло. Клип титра снимаем первым: создание
-    // генератора кладёт его сразу (п.416), а медиа под живым событием
-    // модель удалить не даёт — и правильно делает.
+    // событие умерло — окно ушло
     {
         let app = h.state_mut();
         let clips: Vec<ClipId> =
             app.model.project().clips.iter().filter(|c| c.media == id).map(|c| c.id).collect();
         assert!(!clips.is_empty(), "создание генератора обязано ставить клип (п.416)");
         app.apply_batch(clips.into_iter().map(|id| Command::RemoveClip { id }).collect());
-        assert!(app.apply(Command::RemoveMedia { id }));
     }
     h.step();
-    assert!(h.state().title_editors.is_empty(), "окно мёртвого титра обязано закрыться");
+    assert!(h.state().fx_editors.is_empty(), "окно мёртвого титра обязано закрыться");
 }
 
 /// Тест 488 (Р.52 С3, правило UI 11): «глифа нет» — видимый ответ.
@@ -6114,25 +6247,25 @@ fn t488_missing_glyph_warning() {
         }
     };
     set(&mut k, "Привет, Kinotrain! ёЁ №5");
-    assert_eq!(crate::title_editor::title_warning(&k), None, "кириллица покрыта");
+    assert_eq!(crate::gen_ui::title_warning(&k), None, "кириллица покрыта");
     set(&mut k, "до 漢字 после");
-    let warn = crate::title_editor::title_warning(&k).expect("CJK непокрыт — ответ обязан быть");
+    let warn = crate::gen_ui::title_warning(&k).expect("CJK непокрыт — ответ обязан быть");
     assert!(warn.contains("U+5B57") || warn.contains("U+6F22"), "{warn}");
     assert!(warn.contains("+1"), "счётчик остальных: {warn}");
     set(&mut k, "");
-    assert_eq!(crate::title_editor::title_warning(&k), None);
+    assert_eq!(crate::gen_ui::title_warning(&k), None);
 }
 
 /// Тест 489 (Р.52 С3): safe-зоны — 5 % и 10 % от кадра превью, видны
-/// ровно пока открыто окно титра.
+/// ровно пока правится титр.
 #[test]
 fn t489_safe_zones_follow_title_window() {
     use kt_model::GeneratorKind;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
-    assert!(!h.state().show_safe_zones(), "без окна титра зоны не рисуются");
+    assert!(!h.state().show_safe_zones(), "без правки титра зоны не рисуются");
     h.state_mut().create_generator(GeneratorKind::default_text());
     h.step();
-    assert!(h.state().show_safe_zones(), "окно титра включает зоны");
+    assert!(h.state().show_safe_zones(), "форма титра включает зоны");
     let img = egui::Rect::from_min_max(egui::pos2(100.0, 200.0), egui::pos2(300.0, 300.0));
     let [action, title] = crate::app::safe_zone_rects(img);
     assert_eq!(action.min, egui::pos2(110.0, 205.0));
@@ -6140,44 +6273,42 @@ fn t489_safe_zones_follow_title_window() {
     assert_eq!(title.min, egui::pos2(120.0, 210.0));
     assert_eq!(title.max, egui::pos2(280.0, 290.0));
     // окно закрыли — зоны ушли
-    h.state_mut().title_editors[0].open = false;
+    h.state_mut().fx_editors[0].open = false;
     h.step();
     assert!(!h.state().show_safe_zones());
 }
 
-/// Тест 495 (Р.52 С6): драг титра ПРЯМО В ПРЕВЬЮ — рамка блока при
-/// открытом окне, перетаскивание в три шага пишет pos_x/pos_y ТОЙ ЖЕ
-/// командой и тем же gesture, что окно (правило 17 по построению).
+/// Тест 495 (Р.52 С6, переписан в Р.59 стадии 2): драг титра ПРЯМО В
+/// ПРЕВЬЮ — рамка блока, пока титр правится, а перетаскивание в три шага
+/// пишет pos_x/pos_y ТОЙ ЖЕ командой (`SetClipGen`) и тем же gesture,
+/// что форма в окне (правило 17 по построению).
 #[test]
 fn t495_title_drag_in_preview_writes_pos() {
     use kt_model::*;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
     h.state_mut().create_generator(GeneratorKind::default_text());
     h.step();
-    let id = h.state().model.project().media.last().unwrap().id;
-    let gesture = h.state().title_editors[0].gesture;
+    let (_id, clip) = made_generator(&h);
+    let gesture = h.state().fx_editors[0].gesture;
     // титру нужен видимый блок — даём текст той же сессией окна
-    let mut kind =
-        kt_model::parse_gen_path(&h.state().model.project().media.last().unwrap().path).unwrap();
+    let mut kind = gen_of(&h, clip);
     if let GeneratorKind::Text { text, size, .. } = &mut kind {
         *text = "DRAG".into();
         *size = 0.2;
     }
     {
         let app = h.state_mut();
-        let path = format_gen_path(&kind);
-        assert!(app.apply_coalesced(Command::SetMediaPath { id, path }, gesture));
+        assert!(app.apply_coalesced(Command::SetClipGen { id: clip, kind: Some(kind) }, gesture));
     }
     h.step();
     let preview = h.state().preview_rect;
     assert!(preview.width() > 40.0, "превью в харнесте есть: {preview:?}");
 
     let depth = h.state().model.undo_depth();
-    let before =
-        match kt_model::parse_gen_path(&h.state().model.project().media.last().unwrap().path) {
-            Some(GeneratorKind::Text { pos_x, pos_y, .. }) => (pos_x, pos_y),
-            _ => unreachable!(),
-        };
+    let before = match gen_of(&h, clip) {
+        GeneratorKind::Text { pos_x, pos_y, .. } => (pos_x, pos_y),
+        _ => unreachable!(),
+    };
     assert_eq!(before, (0.5, 0.5));
 
     // драг в ТРИ шага из центра превью (блок с якорем Center сидит там)
@@ -6191,11 +6322,10 @@ fn t495_title_drag_in_preview_writes_pos() {
     h.drop_at(c + egui::vec2(40.0, 24.0));
     h.step();
 
-    let after =
-        match kt_model::parse_gen_path(&h.state().model.project().media.last().unwrap().path) {
-            Some(GeneratorKind::Text { pos_x, pos_y, .. }) => (pos_x, pos_y),
-            _ => unreachable!(),
-        };
+    let after = match gen_of(&h, clip) {
+        GeneratorKind::Text { pos_x, pos_y, .. } => (pos_x, pos_y),
+        _ => unreachable!(),
+    };
     assert!(
         after.0 > before.0 + 0.01 && after.1 > before.1 + 0.01,
         "драг обязан сдвинуть позицию: {before:?} -> {after:?}"
@@ -6207,26 +6337,30 @@ fn t495_title_drag_in_preview_writes_pos() {
     );
 }
 
-/// Тест 502 (Р.53, п.412): сессия правки генератора НЕ пересоздаёт
-/// источник и НЕ пересобирает рендереры. Тридцать правок цвета — ровно
-/// столько, сколько даёт секунда драга пипетки: до этого пункта каждая
-/// гасила и поднимала поток декодера и дважды пересобирала графы, а на
-/// игре это гарантированные провалы звука (претензия владельца Р.53).
+/// Тест 502 (Р.53, п.412; переписан в Р.59 стадии 2): сессия правки
+/// генератора НЕ пересоздаёт источник и НЕ пересобирает рендереры.
+/// Тридцать правок цвета — ровно столько, сколько даёт секунда драга
+/// пипетки: до п.412 каждая гасила и поднимала поток декодера и дважды
+/// пересобирала графы, а на игре это гарантированные провалы звука.
+///
+/// Механизм новый (`SetClipGen` вместо `SetMediaPath`), закон П тот же:
+/// команда, не трогающая план, не имеет права пересобирать рендереры.
 #[test]
 fn t502_generator_edit_does_not_respawn_source() {
     use kt_model::*;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
     h.state_mut().create_generator(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 });
     h.step();
-    let id = h.state().model.project().media.last().unwrap().id;
-    let gesture = h.state().generator_editors[0].gesture;
+    let (_id, clip) = made_generator(&h);
+    let addr = kt_engine::gen_source_addr(clip);
+    let gesture = h.state().fx_editors[0].gesture;
     let spawns = h.state().player.worker_spawns();
     let pver = h.state().player.project_version();
 
     for i in 0..30u8 {
-        let path = format!("gen:solid:c={i:02x}{i:02x}{i:02x}");
+        let kind = GeneratorKind::Solid { color_r: i, color_g: i, color_b: i };
         let app = h.state_mut();
-        assert!(app.apply_coalesced(Command::SetMediaPath { id, path }, gesture));
+        assert!(app.apply_coalesced(Command::SetClipGen { id: clip, kind: Some(kind) }, gesture));
         h.step();
     }
 
@@ -6239,15 +6373,15 @@ fn t502_generator_edit_does_not_respawn_source() {
     assert_eq!(
         app.player.project_version(),
         pver,
-        "рендереры пересобирались: SetMediaPath план не трогает (закон П)"
+        "рендереры пересобирались: SetClipGen план не трогает (закон П)"
     );
     assert_eq!(
-        app.media_paths.get(&id).map(String::as_str),
-        Some("gen:solid:c=1d1d1d"),
+        app.gen_states.get(&clip).map(|st| st.kind.clone()),
+        Some(GeneratorKind::Solid { color_r: 0x1d, color_g: 0x1d, color_b: 0x1d }),
         "снимок синка обязан догнать модель"
     );
     assert_eq!(
-        crate::layout_tests::generator_pixel(&h, id),
+        crate::layout_tests::generator_pixel(&h, addr),
         Some([0x1d, 0x1d, 0x1d]),
         "последняя правка обязана доехать до картинки"
     );
@@ -6311,8 +6445,8 @@ fn t505_missing_font_warns_once() {
     }
     h.state_mut().create_generator(kind.clone());
     h.step();
-    let id = h.state().model.project().media.last().unwrap().id;
-    let gesture = h.state().title_editors[0].gesture;
+    let (_id, clip) = made_generator(&h);
+    let gesture = h.state().fx_editors[0].gesture;
     let notices = h.state().notices.len();
 
     for i in 0..40 {
@@ -6321,9 +6455,7 @@ fn t505_missing_font_warns_once() {
             *text = "a".repeat(i + 1);
         }
         let app = h.state_mut();
-        assert!(
-            app.apply_coalesced(Command::SetMediaPath { id, path: format_gen_path(&k) }, gesture)
-        );
+        assert!(app.apply_coalesced(Command::SetClipGen { id: clip, kind: Some(k) }, gesture));
         h.step();
     }
     let added = h.state().notices.len() - notices;
@@ -6527,6 +6659,8 @@ fn t242_morph_editor_shows_target_mode_and_timing() {
     let mut p = app.model.project().clone();
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -6614,6 +6748,8 @@ fn t244_morpher_has_one_chain_with_pinned_head() {
     let mut p = app.model.project().clone();
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -6764,6 +6900,8 @@ fn t246_thin_row_is_clickable_and_zoom_anchor_holds() {
     let mut p = app.model.project().clone();
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -6981,6 +7119,8 @@ fn t248_video_warp_shows_only_what_matters() {
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     for (id, kind) in [(1u64, ClipKind::Video), (2, ClipKind::Audio)] {
         p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(id),
             link_group: Some(GroupId(1)),
             kind,
@@ -7036,6 +7176,8 @@ fn t249_previews_follow_the_warp() {
     const SEC: i64 = 90_000;
 
     let clip = |fx: Vec<FxInstance>, reversed: bool| ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -7114,6 +7256,8 @@ fn t258_morph_layer_reuses_lane_and_honours_region() {
     let mut p = app.model.project().clone();
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -7472,6 +7616,8 @@ fn t265_automation_axis_and_field_bind() {
     let mut p = app.model.project().clone();
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -8083,6 +8229,8 @@ fn t281_typed_key_value_reaches_the_model() {
     let mut p = app.model.project().clone();
     p.media.push(MediaRef { id: MediaId(9), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(9),
         link_group: None,
         kind: ClipKind::Audio,
@@ -8192,6 +8340,8 @@ fn t286_region_edits_do_not_rebuild_the_engine() {
     let mut p = app.model.project().clone();
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -8316,6 +8466,8 @@ fn t343_paste_chain_into_morpher_carries_curves() {
     let mut p = app.model.project().clone();
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -8384,6 +8536,8 @@ fn harness_with_fx_window() -> egui_kittest::Harness<'static, crate::app::KtApp>
     let mut p = app.model.project().clone();
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -8551,6 +8705,8 @@ fn harness_with_eq_window() -> egui_kittest::Harness<'static, crate::app::KtApp>
     let mut p = app.model.project().clone();
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -9136,6 +9292,8 @@ fn t460_fade_handle_redrag_keeps_kind() {
         let mut p = app.model.project().clone();
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Video,
@@ -9225,6 +9383,8 @@ fn t460b_overlap_redrag_keeps_kind() {
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         for (n, start, src_in) in [(1u64, 0i64, 0i64), (2, 90_000, 20_000)] {
             p.clips.push(ClipEvent {
+                r#gen: None,
+                gen_auto: Vec::new(),
                 id: ClipId(n),
                 link_group: None,
                 kind: ClipKind::Video,
@@ -9382,15 +9542,15 @@ fn t466_overlap_transition_reachable() {
     assert_eq!((w.end - w.start).0, 20_000, "окно = зона перекрытия");
 }
 
-/// Тест 511 (Р.53, п.415): пикер вида ОДИН на оба окна, и смена вида
-/// роутит пользователя в нужное окно.
+/// Тест 511 (Р.53, п.415; переписан в Р.59 стадии 2): пикер вида ОДИН,
+/// и смена вида доезжает до модели, не выкидывая человека из окна.
 ///
-/// До этого пункта окно титра было тупиком: вид генератора в нём не
-/// показывался вовсе, и сменить титр обратно на цвет или градиент было
-/// нечем (правило 17 — парные способы одного действия ведут себя
-/// одинаково). Смена вида — СВОЙ шаг истории (правило 20): один Ctrl+Z
-/// возвращает титр со всем набранным текстом, а не откатывает заодно
-/// правку цвета.
+/// До Р.53 окно титра было тупиком: вид генератора в нём не показывался
+/// вовсе, и сменить титр обратно на цвет было нечем (правило 17). С Р.59
+/// окон стало одно, и роутить больше некуда — утверждение сузилось до
+/// сути: пикер есть, вид меняется, форма остаётся на месте, а смена вида
+/// — СВОЙ шаг истории (правило 20): один Ctrl+Z возвращает титр со всем
+/// набранным текстом, а не откатывает заодно правку цвета.
 ///
 /// Пикер щупается по РОЛИ: у `ComboBox` в accesskit нет label, показанный
 /// текст лежит в `value` — по подписи его не найти (родня заметки про
@@ -9405,44 +9565,41 @@ fn t511_kind_picker_routes_between_windows() {
     h.step();
     h.step();
     h.step();
-    let id = h.state().model.project().media.last().unwrap().id;
-    assert_eq!(h.state().title_editors.len(), 1, "титр открывается в своём окне");
-    assert!(h.state().generator_editors.is_empty());
+    let (_id, clip) = made_generator(&h);
+    assert_eq!(h.state().fx_editors.len(), 1, "форма генератора — в окне события");
     let depth = h.state().model.undo_depth();
 
-    let text_name = crate::generator_editor::kind_name(&GeneratorKind::default_text());
-    let solid_name = crate::generator_editor::kind_name(&GeneratorKind::Solid {
-        color_r: 0,
-        color_g: 0,
-        color_b: 0,
-    });
+    let text_name = crate::gen_ui::kind_name(&GeneratorKind::default_text());
+    let solid_name =
+        crate::gen_ui::kind_name(&GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 });
 
-    // пикер вида ЕСТЬ в окне титра и показывает «Текст»
+    // пикер вида ЕСТЬ в форме и показывает «Текст»
     h.get(by().role(Role::ComboBox).value(text_name)).click();
     h.step();
     h.get_by_label(solid_name).click();
     h.step();
     h.step();
 
-    // следствие: вид сменился, титра больше нет, пользователь — в общем окне
+    // следствие: вид сменился и в медиа, и на событии, окно на месте
     let app = h.state();
     assert_eq!(app.model.project().media.last().unwrap().path, "gen:solid");
-    assert!(app.title_editors.is_empty(), "окно титра осталось на не-титре");
-    assert_eq!(app.generator_editors.len(), 1, "смена вида не привела в общее окно");
-    assert_eq!(app.generator_editors[0].media, id, "окно открылось не на том медиа");
+    assert!(
+        matches!(gen_of(&h, clip), GeneratorKind::Solid { .. }),
+        "значения события обязаны переодеться вместе с видом"
+    );
+    assert_eq!(app.fx_editors.len(), 1, "смена вида не имеет права закрывать окно");
     assert_eq!(app.model.undo_depth(), depth + 1, "смена вида — ровно один шаг истории");
 
-    // и обратно: «Текст» из общего окна уводит в окно титра
+    // и обратно: «Текст» тем же пикером
     h.get(by().role(Role::ComboBox).value(solid_name)).click();
     h.step();
     h.get_by_label(text_name).click();
     h.step();
     h.step();
     let app = h.state();
-    let path = app.model.project().media.last().unwrap().path.clone();
-    assert!(path.starts_with("gen:text"), "вид не вернулся в титр: {path}");
-    assert_eq!(app.title_editors.len(), 1, "«Текст» обязан привести в окно титра");
-    assert!(app.generator_editors.is_empty(), "общее окно осталось открытым на титре");
+    assert_eq!(app.model.project().media.last().unwrap().path, "gen:text");
+    assert!(matches!(gen_of(&h, clip), GeneratorKind::Text { .. }), "вид не вернулся в титр");
+    assert_eq!(app.fx_editors.len(), 1, "форма осталась одна");
 }
 
 /// Тест 516 (Р.53, п.415): доля кадра ПОКАЗЫВАЕТСЯ процентом, а хранится
@@ -9547,8 +9704,19 @@ fn t518_unknown_kind_is_loud_and_widget_hints_reach_the_status_line() {
         "подсказка общего виджета не доехала до строки состояния"
     );
 
-    // вид новее сборки: окно уходит, но пользователь слышит почему
+    // вид новее сборки: формы у него нет, но пользователь слышит почему.
+    // С Р.59 значения живут на СОБЫТИИ, и неизвестный вид снимает их —
+    // голова полосы исчезает, окно эффектов остаётся (цепочка-то жива).
     let notices = h.state().notices.len();
+    let clip = h
+        .state()
+        .model
+        .project()
+        .clips
+        .iter()
+        .find(|c| c.media == id)
+        .map(|c| c.id)
+        .expect("событие генератора");
     {
         let app = h.state_mut();
         let _ = app.apply(Command::SetMediaPath { id, path: "gen:from_the_future".into() });
@@ -9556,8 +9724,11 @@ fn t518_unknown_kind_is_loud_and_widget_hints_reach_the_status_line() {
     h.step();
     h.step();
     let app = h.state();
-    assert!(app.title_editors.is_empty(), "окно осталось на непарсящемся пути");
-    assert!(app.notices.len() > notices, "непарсящийся путь закрыл окно МОЛЧА");
+    assert!(
+        app.model.clip(clip).is_some_and(|c| c.r#gen.is_none()),
+        "у неизвестного вида не может быть формы — значения обязаны сняться"
+    );
+    assert!(app.notices.len() > notices, "непарсящийся путь снял форму МОЛЧА");
 }
 
 /// Тест 512 (Р.53, п.416): новый генератор появляется НА МОНТАЖЕ, а не
@@ -9622,11 +9793,7 @@ fn t513_generator_clip_is_labelled_by_its_kind() {
     let ru = name_of(&mut h).expect("у события генератора нет подписи");
     assert_eq!(
         ru,
-        crate::generator_editor::kind_name(&GeneratorKind::Solid {
-            color_r: 255,
-            color_g: 136,
-            color_b: 0
-        })
+        crate::gen_ui::kind_name(&GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 })
     );
     assert!(!ru.contains("gen:"), "подпись всё ещё сырой путь: {ru}");
     assert!(!ru.contains("ff8800"), "параметры уехали в подпись: {ru}");
@@ -9665,7 +9832,7 @@ fn t514_double_click_on_a_card_gives_one_clip_and_the_window() {
     }
     let id = h.state().model.project().media.last().unwrap().id;
     // окно создания закрываем: тест про ОТКРЫТИЕ двойным кликом
-    h.state_mut().generator_editors.clear();
+    h.state_mut().fx_editors.clear();
     h.state_mut().player.seek(kt_time::Tick(700_000));
     h.step();
     let before = h.state().model.project().clips.iter().filter(|c| c.media == id).count();
@@ -9679,8 +9846,11 @@ fn t514_double_click_on_a_card_gives_one_clip_and_the_window() {
     let app = h.state();
     let after = app.model.project().clips.iter().filter(|c| c.media == id).count();
     assert_eq!(after, before + 1, "двойной клик поставил не один клип, а {}", after - before);
-    assert_eq!(app.generator_editors.len(), 1, "двойной клик по карточке не открыл окно");
-    assert_eq!(app.generator_editors[0].media, id);
+    assert_eq!(app.fx_editors.len(), 1, "двойной клик по карточке не открыл окно");
+    assert!(
+        app.model.clip(app.fx_editors[0].clip).is_some_and(|c| c.media == id && c.r#gen.is_some()),
+        "окно открылось не на событии этого генератора"
+    );
 }
 
 /// Тест 515 (Р.53, п.416): карточка говорит, во СКОЛЬКИХ местах стоит
@@ -9724,16 +9894,21 @@ fn t515_card_counts_places_on_the_timeline() {
     );
 }
 
-/// Тест 540 (Р.53, п.424): пресет титра ставит ВСЁ одним шагом истории, а
-/// активный пресет определяется ОБРАТНОЙ функцией.
+/// Тест 540 (Р.53, п.424; переписан в Р.59 стадии 2): пресет титра
+/// ставит ВСЁ одним шагом истории, а активный пресет определяется
+/// ОБРАТНОЙ функцией.
 ///
 /// Решение владельца дословно: «пресет ставит всё», включая позицию и
 /// якорь, один Ctrl+Z возвращает весь набор, а ручная подкрутка честно
 /// показывает «не совпадает ни с одним». Флага «какой пресет нажимали» в
 /// программе нет намеренно: он врал бы после первой же правки поля.
+///
+/// Что изменилось: «всё» теперь включает и АНИМАЦИЮ — она стала
+/// обычными кривыми на событии (`gen_auto`), и они уезжают тем же одним
+/// шагом (кривые проверяет t668).
 #[test]
 fn t540_title_preset_sets_everything_in_one_step() {
-    use crate::title_editor::{active_preset, title_presets};
+    use crate::gen_ui::{active_preset, title_presets};
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
 
@@ -9742,10 +9917,18 @@ fn t540_title_preset_sets_everything_in_one_step() {
     let base = GeneratorKind::default_text();
     for (i, pr) in title_presets().iter().enumerate() {
         let made = pr.applied(&base);
-        assert_eq!(active_preset(&made), Some(i), "пресет {i} не узнаёт собственный результат");
+        let curves = pr.curves(&made, (1920, 1080), kt_time::Tick::ZERO);
+        assert_eq!(
+            active_preset(&made, &curves),
+            Some(i),
+            "пресет {i} не узнаёт собственный результат"
+        );
     }
-    // умолчание титра ни одному пресету не равно — и это честно
-    assert_eq!(active_preset(&base), None, "пустой титр не обязан совпадать с пресетом");
+    // умолчание титра ни одному пресету не равно — и это честно. По
+    // ЗНАЧЕНИЯМ пустой титр совпадает с «печатной машинкой» (тот же кегль
+    // и та же середина кадра), и различает их ровно вторая половина
+    // пресета — кривые, которых у нового титра нет.
+    assert_eq!(active_preset(&base, &[]), None, "пустой титр не обязан совпадать с пресетом");
 
     // ...и то же в ОКНЕ: нажатие ставит набор полей одной командой
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
@@ -9753,38 +9936,33 @@ fn t540_title_preset_sets_everything_in_one_step() {
     for _ in 0..3 {
         h.step();
     }
-    let id = h.state().model.project().media.last().unwrap().id;
+    let (_id, clip) = made_generator(&h);
     let depth = h.state().model.undo_depth();
-    let before = h.state().model.project().media.last().unwrap().path.clone();
+    let before = gen_of(&h, clip);
 
     let label = crate::i18n::tr(title_presets()[0].key);
     h.get_by_label(label).click();
     h.step();
     h.step();
 
-    let app = h.state();
-    let path = app.model.project().media.last().unwrap().path.clone();
-    assert_ne!(path, before, "нажатие пресета ничего не изменило");
-    let made = kt_model::parse_gen_path(&path).expect("титр остался титром");
-    assert_eq!(active_preset(&made), Some(0), "окно поставило не тот набор");
+    let made = gen_of(&h, clip);
+    let curves = h.state().model.clip(clip).map(|c| c.gen_auto.clone()).unwrap_or_default();
+    assert_ne!(made, before, "нажатие пресета ничего не изменило");
+    assert_eq!(active_preset(&made, &curves), Some(0), "окно поставило не тот набор");
     let GeneratorKind::Text { anchor, pos_y, size, .. } = &made else { unreachable!() };
     assert_eq!(*anchor, TextAnchor::BottomLeft, "пресет обязан ставить и ЯКОРЬ");
     assert!(*pos_y > 0.5 && *size < 0.07, "пресет обязан ставить и позицию, и кегль");
-    assert_eq!(app.model.undo_depth(), depth + 1, "пресет — ровно один шаг истории");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "пресет — ровно один шаг истории");
 
     // один Ctrl+Z возвращает весь набор разом
     h.state_mut().undo();
     h.step();
-    assert_eq!(
-        h.state().model.project().media.last().unwrap().path,
-        before,
-        "undo обязан вернуть титр целиком"
-    );
-    let _ = id;
+    assert_eq!(gen_of(&h, clip), before, "undo обязан вернуть титр целиком");
 }
 
-/// Тест 541 (Р.53, п.412): правка параметров при НЕПОДВИЖНОМ курсоре
-/// доезжает до ЭКРАНА, а не только до кэша плеера.
+/// Тест 541 (Р.53, п.412; переписан в Р.59 стадии 2): правка параметров
+/// при НЕПОДВИЖНОМ курсоре доезжает до ЭКРАНА, а не только до кэша
+/// плеера.
 ///
 /// Нашёл этот дефект живой сценарий, а не харнесс, и это ровно тот
 /// случай, о котором предупреждает CLAUDE.md: t478 спрашивает кэш плеера
@@ -9802,8 +9980,8 @@ fn t541_param_edit_repaints_the_preview_without_moving_the_playhead() {
     for _ in 0..4 {
         h.step();
     }
-    let id = h.state().model.project().media.last().unwrap().id;
-    let gesture = h.state().generator_editors[0].gesture;
+    let (_id, clip) = made_generator(&h);
+    let gesture = h.state().fx_editors[0].gesture;
 
     // дать превью устояться: ключ посчитан, композит полон
     for _ in 0..40 {
@@ -9820,7 +9998,10 @@ fn t541_param_edit_repaints_the_preview_without_moving_the_playhead() {
     {
         let app = h.state_mut();
         assert!(app.apply_coalesced(
-            Command::SetMediaPath { id, path: "gen:solid:c=ff8800".into() },
+            Command::SetClipGen {
+                id: clip,
+                kind: Some(GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 }),
+            },
             gesture
         ));
     }
@@ -9845,7 +10026,8 @@ fn t541_param_edit_repaints_the_preview_without_moving_the_playhead() {
     );
 }
 
-/// Тест 542 (Р.53, п.415): цвета в окне титра — НАСТОЯЩИЕ.
+/// Тест 542 (Р.53, п.415; переписан в Р.59 стадии 2): цвета в форме
+/// титра — НАСТОЯЩИЕ.
 ///
 /// Регрессия, которую нашёл живой сценарий, а не харнесс: пипетка титра
 /// была переведена на общий `color_row`, а тот читает значения через
@@ -9855,11 +10037,11 @@ fn t541_param_edit_repaints_the_preview_without_moving_the_playhead() {
 /// при первом же касании) прозрачно-чёрной, и титр переставал рисоваться
 /// вовсе. Ни один тест этого не видел — они щупали текст и числа.
 ///
-/// Тест утверждает СЛЕДСТВИЕ: окно показывает те же цвета, что лежат в
-/// модели, и hex-поле рядом с пипеткой показывает их же.
+/// Тест утверждает СЛЕДСТВИЕ: форма показывает те же цвета, что лежат в
+/// модели, и hex-поле рядом с пипеткой показывает их же. Форма теперь
+/// живёт в окне эффектов события — щупается она там же.
 #[test]
 fn t542_title_window_shows_real_colors() {
-    use egui_kittest::kittest::Queryable;
     use kt_model::*;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
     let mut kind = GeneratorKind::default_text();
@@ -9876,7 +10058,7 @@ fn t542_title_window_shows_real_colors() {
     // РОЛИ: у текстового поля в accesskit нет label, содержимое лежит в
     // `value` (родня заметки про DragValue и ComboBox).
     use eframe::egui::accesskit::Role;
-    use egui_kittest::kittest::{NodeT, by};
+    use egui_kittest::kittest::{NodeT, Queryable, by};
     let shown: Vec<String> = h
         .query_all(by().role(Role::MultilineTextInput))
         .chain(h.query_all(by().role(Role::TextInput)))
@@ -9884,7 +10066,7 @@ fn t542_title_window_shows_real_colors() {
         .collect();
     assert!(
         shown.iter().any(|s| s == "ff8800c8"),
-        "окно титра показывает не тот цвет заливки: {shown:?}"
+        "форма титра показывает не тот цвет заливки: {shown:?}"
     );
 
     // и умолчание титра НЕ прозрачно-чёрное: иначе новый титр невидим
@@ -11489,4 +11671,251 @@ fn t637b_view_before_zero_only_inside_a_reel_and_the_cursor_never() {
             "a click before zero at y={y} must put the cursor at 0, not before"
         );
     }
+}
+
+/// Тест 666 (Р.59, стадия 2): форма генератора в окне события доезжает
+/// до МОДЕЛИ — и значением, и кривой.
+///
+/// Утверждается то, что делает человек: он открыл окно эффектов события,
+/// увидел ИСТОЧНИК первой крошкой, напечатал в поле титра — и текст лежит
+/// на СОБЫТИИ; нажал «+ кривая» и выбрал ряд — и на событии появилась его
+/// кривая. Прежние окна генератора и титра тем самым закрыты не
+/// «удалением кода», а переносом: все их входы ведут сюда.
+///
+/// Харнесса два, и это не лень: форма титра — самая высокая в программе,
+/// и её меню кривых в окне харнесса открывается уже за нижней кромкой.
+/// Кривые при этом свойство ЛЮБОГО генератора, поэтому щупаются на
+/// компактном виде, а поле текста — на титре.
+#[test]
+fn t666_generator_form_in_the_fx_window_reaches_the_model() {
+    use eframe::egui::accesskit::Role;
+    use egui_kittest::kittest::{Queryable, by};
+    use kt_model::*;
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+
+    // ---- КРИВАЯ: «+ кривая» → ряд -----------------------------------
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    h.state_mut().create_generator(GeneratorKind::NoiseField { amount: 0.5, mono: false });
+    for _ in 0..3 {
+        h.step();
+    }
+    let (_id, clip) = made_generator(&h);
+    assert_eq!(
+        chain_sel(&h, clip),
+        Some(crate::widgets::ChainSel::Head),
+        "источник обязан быть ПЕРВОЙ КРОШКОЙ и быть выбран сразу"
+    );
+    assert!(
+        h.state().model.clip(clip).is_some_and(|c| c.gen_auto.is_empty()),
+        "у нового генератора кривых быть не должно"
+    );
+    let depth = h.state().model.undo_depth();
+    h.get_by_label(crate::i18n::tr(crate::i18n::k::fx::AUTO_ADD)).click();
+    h.step();
+    h.step();
+    // подпись ряда есть и в сетке значений, и в открывшемся меню —
+    // жмём ПОСЛЕДНЮЮ: меню рисуется поверх (идиома t193)
+    let row = crate::widgets::param_label_scoped(kt_model::ParamScope::Generator, "amount");
+    h.get_all_by_label(row.as_str()).last().expect("пункт меню ряда").click();
+    h.step();
+    h.step();
+    let curves = h.state().model.clip(clip).map(|c| c.gen_auto.clone()).unwrap_or_default();
+    assert_eq!(curves.len(), 1, "кривая не доехала до события: {curves:?}");
+    assert_eq!(curves[0].param, "amount");
+    assert_eq!(
+        curves[0].keys.first().map(|k| k.t),
+        h.state().model.clip(clip).map(|c| c.source_in),
+        "кривая генератора живёт в тике МАТЕРИАЛА — по нему её и разрешает источник"
+    );
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "правка в окне — шаг истории");
+
+    // ---- ЗНАЧЕНИЕ: печатаем в поле титра, как человек ----------------
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    h.state_mut().create_generator(GeneratorKind::default_text());
+    for _ in 0..3 {
+        h.step();
+    }
+    let (_id, clip) = made_generator(&h);
+    let depth = h.state().model.undo_depth();
+    h.get(by().role(Role::MultilineTextInput)).click();
+    h.step();
+    for part in ["Вы", "пуск"] {
+        h.event(egui::Event::Text(part.into()));
+        h.step();
+        h.step();
+    }
+    match gen_of(&h, clip) {
+        GeneratorKind::Text { text, .. } => {
+            assert_eq!(text, "Выпуск", "набранный текст не доехал до события")
+        }
+        other => panic!("вид подменился: {other:?}"),
+    }
+    assert_eq!(
+        h.state().model.undo_depth(),
+        depth + 1,
+        "вся сессия окна — ОДИН шаг истории: иначе каждый символ титра попал бы в undo"
+    );
+}
+
+/// Тест 667 (Р.59, стадия 2): «Применить ко всем (×N)» — ОТДЕЛЬНАЯ
+/// команда и ОДИН шаг истории.
+///
+/// Решение владельца: правка одного события соседей больше не трогает, а
+/// «править во всех местах разом» остаётся доступным отдельным жестом.
+/// Значит утверждать надо обе половины: пока кнопку не нажали — сосед не
+/// шелохнулся; нажали — сосед догнал, и один Ctrl+Z вернул его назад.
+#[test]
+fn t667_apply_to_all_is_one_command_and_one_step() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    h.state_mut().create_generator(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 });
+    h.step();
+    let (id, first) = made_generator(&h);
+    // второе место того же генератора
+    h.state_mut().player.seek(kt_time::Tick(700_000));
+    h.state_mut().place_media_at_cursor(id);
+    h.step();
+    let second = h
+        .state()
+        .model
+        .project()
+        .clips
+        .iter()
+        .find(|c| c.media == id && c.id != first)
+        .map(|c| c.id)
+        .expect("второе событие генератора");
+
+    // правка ОДНОГО события соседа не трогает
+    let gesture = h.state().fx_editors[0].gesture;
+    let mine = GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 };
+    {
+        let app = h.state_mut();
+        assert!(
+            app.apply_coalesced(
+                Command::SetClipGen { id: first, kind: Some(mine.clone()) },
+                gesture
+            )
+        );
+    }
+    h.step();
+    assert_eq!(gen_of(&h, first), mine);
+    assert_eq!(
+        gen_of(&h, second),
+        GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 },
+        "правка одного события не имеет права трогать соседей"
+    );
+
+    // ...а кнопка — трогает, и говорит об этом числом мест
+    let depth = h.state().model.undo_depth();
+    let label = crate::tf!(crate::i18n::k::genw::APPLY_ALL, 2usize);
+    assert!(h.query_by_label(&label).is_some(), "кнопки «{label}» нет в форме источника");
+    h.get_by_label(&label).click();
+    h.step();
+    h.step();
+    assert_eq!(gen_of(&h, second), mine, "«применить ко всем» не догнало соседа");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "жест обязан быть ОДНИМ шагом истории");
+    h.state_mut().undo();
+    h.step();
+    assert_eq!(
+        gen_of(&h, second),
+        GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 },
+        "один Ctrl+Z обязан вернуть соседа"
+    );
+}
+
+/// Тест 668 (Р.59, стадия 2): пресет анимации титра ставит КРИВЫЕ, а
+/// раскладка от них не двигается.
+///
+/// Пять прежних режимов анимации были полем МОДЕЛИ, и движок знал про
+/// «печатную машинку». Теперь это имя НАБОРА КРИВЫХ, формулы живут в
+/// одном месте (`kt_model::text_anim_curves`) — ими же читаются старые
+/// файлы, и разойдись миграция с пресетом, проект прошлой сборки поехал
+/// бы не так.
+///
+/// Вторая половина — правило F-TXT-006: раскладка считается ОДИН РАЗ, а
+/// анимация только модулирует. Значит блок текста у титра с анимацией и
+/// без неё обязан быть тем же самым: поедет он — и «бегущая строка»
+/// начнёт переносить слова под себя.
+#[test]
+fn t668_preset_writes_curves_and_keeps_the_layout() {
+    use crate::gen_ui::title_presets;
+    use kt_model::*;
+    let mut base = GeneratorKind::default_text();
+    if let GeneratorKind::Text { text, .. } = &mut base {
+        *text = "Бегущая строка выпуска".into();
+    }
+    let frame = (1920u32, 1080u32);
+    let src_in = kt_time::Tick(123_456);
+
+    // «Бегущая строка»: один ряд, ключи от +span/2 до −span/2, якорь —
+    // ВХОД события (кривые генератора живут в тике материала)
+    let crawl = title_presets().iter().find(|p| p.anim == TextAnim::Crawl).expect("пресет");
+    let made = crawl.applied(&base);
+    let curves = crawl.curves(&made, frame, src_in);
+    assert_eq!(curves.len(), 1, "бегущая строка — ровно один анимируемый ряд");
+    assert_eq!(curves[0].param, "offset_x");
+    assert!(!curves[0].ease, "проход линейный: со сглаживанием строка ехала бы рывками");
+    assert_eq!(curves[0].keys.len(), 2);
+    assert_eq!(curves[0].keys[0].t, src_in, "кривая обязана начинаться на ВХОДЕ события");
+    assert_eq!(
+        curves[0].keys[1].t.0 - src_in.0,
+        (crawl.anim_secs * 90_000.0).round() as i64,
+        "длительность прохода — прежняя (старые файлы читаются теми же формулами)"
+    );
+    let block = kt_media::generator::title_layout(&made, frame.0, frame.1).expect("раскладка");
+    let span = 1.0 + block.block.w / frame.0 as f64;
+    assert!(
+        (curves[0].keys[0].v - span / 2.0).abs() < 1e-9
+            && (curves[0].keys[1].v + span / 2.0).abs() < 1e-9,
+        "путь считается по РАСКЛАДКЕ блока: {:?}",
+        curves[0].keys
+    );
+
+    // ...и раскладка от анимации НЕ зависит: сдвиг модулирует показ, а
+    // не переносит слова (F-TXT-006)
+    let mut moved = made.clone();
+    moved.set_param("offset_x", 0.37);
+    moved.set_param("reveal", 0.25);
+    let after = kt_media::generator::title_layout(&moved, frame.0, frame.1).expect("раскладка");
+    assert_eq!(
+        (after.block.w, after.block.h),
+        (block.block.w, block.block.h),
+        "анимация сдвинула РАСКЛАДКУ — правило «считается один раз» нарушено"
+    );
+
+    // «Печатная машинка»: пресет у неё есть, и он ведёт ряд `reveal`
+    let tw = title_presets().iter().find(|p| p.anim == TextAnim::Typewriter).expect("пресет");
+    let made = tw.applied(&base);
+    let c = tw.curves(&made, frame, kt_time::Tick::ZERO);
+    assert_eq!(c.len(), 1);
+    assert_eq!(c[0].param, "reveal");
+    assert_eq!(c[0].keys.first().map(|k| k.v), Some(0.0));
+    assert_eq!(c[0].keys.last().map(|k| k.v), Some(1.0));
+
+    // «Проявление» ведёт ТОТ ЖЕ ряд, и различает их ширина фронта — она
+    // постоянна во времени, значит это ЗНАЧЕНИЕ, а не кривая (кривая из
+    // одного ключа была бы вторым способом записать то же самое).
+    // Пресета у него нет, поэтому спрашиваем общие формулы напрямую —
+    // те же, которыми читаются старые файлы.
+    for (anim, soft) in [(TextAnim::Typewriter, 0.0), (TextAnim::Fade, 1.0)] {
+        let mut k = base.clone();
+        text_anim_values(&mut k, anim);
+        let GeneratorKind::Text { reveal_soft, .. } = &k else { unreachable!() };
+        assert_eq!(*reveal_soft, soft, "{anim:?}: ширина фронта — значение, а не кривая");
+        let c = text_anim_curves(anim, 2.0, 2.0);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].param, "reveal", "{anim:?} ведёт тот же ряд");
+    }
+
+    // ...и «активный пресет» на этих двух не путается: он сравнивает и
+    // значения, и набор кривых
+    let curves_tw = tw.curves(&made, frame, kt_time::Tick::ZERO);
+    assert_eq!(crate::gen_ui::active_preset(&made, &curves_tw), Some(2));
+    assert_eq!(
+        crate::gen_ui::active_preset(&made, &[]),
+        None,
+        "без кривых «машинка» перестаёт быть машинкой — иначе новый титр звался бы ею"
+    );
 }

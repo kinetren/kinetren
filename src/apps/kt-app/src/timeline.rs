@@ -3929,7 +3929,14 @@ impl KtApp {
                         // квантование ОТ НУЛЯ ФАЙЛА — общий кэш с бином
                         // (п.11 р.6, тест 62)
                         let src_t = key_at(tl, step);
-                        let key = crate::thumbs::ThumbKey { media: c.media, t: src_t };
+                        // адрес ИСТОЧНИКА события, а не его медиа (Р.59,
+                        // стадия 2): значения генератора живут на событии,
+                        // и филмстрип обязан показывать ИХ, а не умолчания
+                        // вида, которыми подписано медиа
+                        let key = crate::thumbs::ThumbKey {
+                            media: kt_engine::clip_source_addr(c),
+                            t: src_t,
+                        };
                         let tex = match self.thumb_textures.get(&key) {
                             Some(t) => Some(t.clone()),
                             None => match self.thumbs.get(&key) {
@@ -5339,16 +5346,15 @@ impl KtApp {
                 // прямоугольники пунктов — наружу для живых сценариев
                 // (Р.49): меню egui в дереве доступности не ищется, а
                 // угадывать смещения сценарий не должен
-                // генератор (Р.52): параметры — свойство МЕДИА, окно одно
-                // на все клипы этого генератора; тот же пункт есть в меню
-                // карточки бина (правило 17)
-                if let Some(media) = self.model.clip(id).map(|c| c.media)
-                    && self.model.project().is_gen_media(media)
-                {
+                // генератор (Р.52 → Р.59, стадия 2): значения живут на
+                // СОБЫТИИ, и правятся они первой крошкой его же окна
+                // эффектов — отдельного окна генератора больше нет. Тот
+                // же пункт есть в меню карточки бина (правило 17).
+                if self.model.clip(id).is_some_and(|c| c.r#gen.is_some()) {
                     let r = ui.button(tr(k::tl::menu::GEN_PARAMS));
                     crate::widgets::field_probe::note("gen.params", r.rect);
                     if r.clicked() {
-                        self.open_generator_editor(media);
+                        self.open_fx_editor_head(id);
                         ui.close();
                     }
                 }

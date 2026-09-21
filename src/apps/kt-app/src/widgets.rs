@@ -80,7 +80,11 @@ fn generator_param_label(name: &str) -> Option<&'static str> {
         "beep_db" => tr(k::genp::BEEP_DB),
         "area" => tr(k::genp::AREA),
         "level" => tr(k::genp::LEVEL),
-        "anim_secs" => tr(k::genp::ANIM_SECS),
+        // Р.59, стадия 2: анимация титра — обычные числа вида
+        "reveal" => tr(k::genp::REVEAL),
+        "reveal_soft" => tr(k::genp::REVEAL_SOFT),
+        "offset_x" => tr(k::genp::OFFSET_X),
+        "offset_y" => tr(k::genp::OFFSET_Y),
         _ => return None,
     })
 }
@@ -816,8 +820,16 @@ pub struct ChainEdit<'a> {
 pub struct HeadSlot<'a> {
     pub label: String,
     /// Включён ли (у морфера — `!patch.src_off`).
-    pub on: &'a mut bool,
+    ///
+    /// `None` — выключателя у головы НЕТ и быть не может: у события с
+    /// генератором голова это его ИСТОЧНИК (Р.59, стадия 2), а источник
+    /// не выключают — выключенный он оставил бы событие без картинки
+    /// вовсе. Мёртвая галка тут была бы нарушением правила 9.
+    pub on: Option<&'a mut bool>,
     pub hint: &'a str,
+    /// Цвет подписи: у морфера фиолетовый (цвет слоя), у источника
+    /// генератора — акцент программы.
+    pub color: egui::Color32,
 }
 
 /// Что выбрано в полосе. Отдельный тип, а не «голова = 0» — иначе
@@ -970,34 +982,42 @@ pub fn chain_strip(
         // приколотая голова: своя галка, фиолетовая подпись, ни драга,
         // ни крестика — она не эффект
         if let Some(h) = edit.head.as_mut() {
-            if crate::app::hint_into(hover, ui.checkbox(h.on, ""), h.hint).changed() {
+            if let Some(on) = h.on.as_deref_mut()
+                && crate::app::hint_into(hover, ui.checkbox(on, ""), h.hint).changed()
+            {
                 ch.head = true;
             }
-            let text = slot_text(ui, &h.label, crate::theme::MORPH_SLOT, !*h.on);
+            let head_on = h.on.as_deref().copied().unwrap_or(true);
+            let text = slot_text(ui, &h.label, h.color, !head_on);
             let resp = crate::app::hint_into(
                 hover,
                 ui.selectable_label(*edit.selected == ChainSel::Head, text),
                 h.hint,
             );
+            crate::widgets::field_probe::note("fx.head", resp.rect);
             if resp.clicked() {
                 *edit.selected = ChainSel::Head;
             }
             // голова тоже отвечает на правую кнопку (п.363): у неё есть
-            // ровно одно действие — своя галка, и молчать об этом нельзя
+            // ровно одно действие — своя галка, и молчать об этом нельзя.
+            // Галки нет (источник генератора) — меню не врёт пунктом, а
+            // называет голову: имя усечено, а полное надо где-то видеть.
             let head_label = h.label.clone();
-            let head_on = *h.on;
+            let switchable = h.on.is_some();
             let mut head_toggle = false;
             resp.clone().context_menu(|ui| {
                 *ctx.picked = Some(crate::ctx_menu::PanelTarget::FxHead { chain: ctx.chain });
                 ui.label(egui::RichText::new(head_label.clone()).strong());
-                let label = if head_on { tr(k::fx::DISABLE) } else { tr(k::fx::ENABLE) };
-                if ui.button(label).clicked() {
-                    head_toggle = true;
-                    ui.close();
+                if switchable {
+                    let label = if head_on { tr(k::fx::DISABLE) } else { tr(k::fx::ENABLE) };
+                    if ui.button(label).clicked() {
+                        head_toggle = true;
+                        ui.close();
+                    }
                 }
             });
-            if head_toggle {
-                *h.on = !head_on;
+            if head_toggle && let Some(on) = h.on.as_deref_mut() {
+                *on = !head_on;
                 ch.head = true;
             }
             // полное имя — в подсказке: усечённое видно, а какой файл

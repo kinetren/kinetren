@@ -209,6 +209,8 @@ fn t9_prefetch_pass_is_idempotent() {
     });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -286,6 +288,8 @@ fn t287_stutter_of_micro_clips_asks_for_one_burst() {
     let step = kt_time::Tick(90);
     for i in 0..400u64 {
         p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(i + 1),
             link_group: None,
             kind: ClipKind::Audio,

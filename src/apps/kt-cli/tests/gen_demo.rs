@@ -23,6 +23,8 @@ fn project() -> Project {
 
 fn clip(id: u64, start_s: i64, dur_s: i64, media: u64, fx: Vec<FxInstance>) -> ClipEvent {
     ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,

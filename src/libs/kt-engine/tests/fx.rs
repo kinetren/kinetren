@@ -33,6 +33,8 @@ fn fx_project(fx: Vec<FxInstance>, pattern_path: &str, dur_frames: i64) -> Proje
     });
     p.media.push(MediaRef { id: MediaId(1), path: pattern_path.into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -270,6 +272,8 @@ fn t6_graph_rebuild_mid_tail_preserves_state() {
     let mut p2 = p1.clone();
     p2.media.push(MediaRef { id: MediaId(2), path: "synth:silence".into() });
     p2.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(99),
         link_group: None,
         kind: ClipKind::Audio,

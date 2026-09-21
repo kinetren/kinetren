@@ -24,6 +24,8 @@ fn settings() -> ProjectSettings {
 
 fn clip(id: u64, media: u64, start: Tick, dur: Tick) -> ClipEvent {
     ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,

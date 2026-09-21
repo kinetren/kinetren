@@ -18,6 +18,8 @@ fn base_project() -> Project {
     p.media.push(MediaRef { id: MediaId(1), path: "synth:Ramp".into() });
     for (id, start) in [(1u64, 0i64), (2, 48_000), (3, 96_000)] {
         p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Audio,
@@ -643,6 +645,8 @@ fn t462_overlap_transition_model() {
     // 4. третий клип в окне — отказ с именем виновника
     let mut p = overlap_project();
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(3),
         link_group: None,
         kind: ClipKind::Audio,

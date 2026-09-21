@@ -80,8 +80,24 @@ struct Queue {
     /// отменяется (иначе seek посреди драга пипетки молча выбросил бы её,
     /// и источник навсегда остался бы со старыми параметрами),
     /// приоритетом не задерживается, последняя выигрывает.
-    retune: Option<String>,
+    /// Вместе с грузом едет список ЧУЖИХ адресов, которые протухают от
+    /// этой перенастройки (Р.59, стадия 2): мемо суб-композитов лент, в
+    /// которых лежит это событие. Чистит их ТОТ ЖЕ поток и ровно там же,
+    /// где чистит свой кэш, — иначе между «инвалидировали» и «применили»
+    /// успевает пройти композит на СТАРОМ кадре и заново записать стейл.
+    retune: Option<(Retune, Vec<SourceId>)>,
     closed: bool,
+}
+
+/// Чем перенастраивают живой источник (Р.59, стадия 2).
+///
+/// Полоса та же и правило то же («не запрос, последняя выигрывает»),
+/// изменился только груз: у генератора на событии значения в путь не
+/// укладываются — там кривые, — поэтому они едут состоянием.
+#[derive(Debug, Clone)]
+pub enum Retune {
+    Path(String),
+    Gen(kt_model::GenState),
 }
 
 impl Queue {
@@ -159,8 +175,19 @@ impl MediaWorker {
     /// выбрасывает САМ воркер — тот же поток, который их вставляет,
     /// поэтому гонки «старый кадр дописан после чистки» не бывает.
     pub fn retune(&self, path: &str) {
+        self.retune_with(Retune::Path(path.to_string()), Vec::new());
+    }
+
+    /// Перенастроить на новые ЗНАЧЕНИЯ генератора (Р.59, стадия 2).
+    /// `stale` — адреса, чьи мемоизированные результаты зависят от этого
+    /// источника (ленты-предки события).
+    pub fn retune_gen(&self, state: kt_model::GenState, stale: Vec<SourceId>) {
+        self.retune_with(Retune::Gen(state), stale);
+    }
+
+    fn retune_with(&self, r: Retune, stale: Vec<SourceId>) {
         let mut q = self.shared.queue.lock().unwrap();
-        q.retune = Some(path.to_string());
+        q.retune = Some((r, stale));
         self.shared.idle.store(false, Ordering::Release);
         drop(q);
         self.shared.cond.notify_one();
@@ -232,9 +259,12 @@ fn worker_loop(
                 // ПЕРЕНАСТРОЙКА — первой, до выбора задания (п.411):
                 // дальше пойдут ключи, которые обязаны считаться уже
                 // новыми параметрами.
-                if let Some(path) = q.retune.take() {
+                if let Some((r, stale)) = q.retune.take() {
                     drop(q);
-                    let applied = source.retune(&path);
+                    let applied = match &r {
+                        Retune::Path(path) => source.retune(path),
+                        Retune::Gen(state) => source.retune_gen(state),
+                    };
                     debug_assert!(
                         applied,
                         "source rejected retune: the caller must ask factory::can_retune first"
@@ -243,6 +273,9 @@ fn worker_loop(
                         // кадры старых параметров выбрасывает ТОТ ЖЕ поток,
                         // что их вставляет: гонки нет по построению
                         cache.invalidate_source(source_id);
+                        for s in stale {
+                            cache.invalidate_source(s);
+                        }
                         failed_video.clear();
                         failed_audio.clear();
                     }

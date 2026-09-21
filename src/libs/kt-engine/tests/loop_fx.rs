@@ -72,6 +72,8 @@ fn base_project() -> Project {
 
 fn clip(id: u64, media: u64, lane: u32, start: i64, dur: i64, src_in: i64) -> ClipEvent {
     ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Audio,

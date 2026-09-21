@@ -140,6 +140,8 @@ fn settings30() -> ProjectSettings {
 
 fn vclip(id: u64, lane: u32) -> ClipEvent {
     ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,

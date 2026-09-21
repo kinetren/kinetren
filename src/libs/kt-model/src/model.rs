@@ -5,6 +5,7 @@
 //! оставляет no-op записей в истории (дефект q старого TimelineEditor, где
 //! push шёл до проверок).
 
+use crate::genmedia::GeneratorKind;
 use crate::project::*;
 use kt_time::{Tick, TickRange};
 
@@ -25,6 +26,59 @@ pub const MAX_UNDO: usize = 80;
 /// Синхронно: наличие слота, `rate` и его кривая. Своё у каждого:
 /// параметры реверба, режим кадров, bypass слота (галка на видео-слоте —
 /// это и есть «отключить замедление картинки»).
+/// Значения генератора — общие у link-пары A/V НА ОДНОМ МЕДИА (Р.59,
+/// стадия 2).
+///
+/// Прецедент и обоснование те же, что у `sync_warp_to_link_group`:
+/// звучащий генератор (SMPTE с тоном, отсчёт с биипом) кладёт на
+/// таймлайн ПАРУ событий на одно медиа, и у них один вид. Разойдись
+/// значения — картинка показывала бы полосы одного уровня, а тон звучал
+/// бы от другого, и объяснить это было бы нечем. Правило живёт В МОДЕЛИ,
+/// потому что команды прилетают не только из окна: их шлют вставка
+/// цепочки, «применить ко всем» и ридер формата.
+///
+/// Разные медиа не синхронизируются: у них разные виды и разные адреса
+/// источника — это уже не пара, а два независимых генератора.
+fn sync_gen_to_link_group(p: &mut Project, id: ClipId) {
+    let Some(src) = p.clips.iter().find(|c| c.id == id) else { return };
+    let Some(group) = src.link_group else { return };
+    let (media, kind, auto) = (src.media, src.r#gen.clone(), src.gen_auto.clone());
+    for c in &mut p.clips {
+        if c.id != id && c.link_group == Some(group) && c.media == media {
+            c.r#gen = kind.clone();
+            c.gen_auto = auto.clone();
+        }
+    }
+}
+
+/// Привести значения генератора в согласие с МЕДИА события (Р.59).
+///
+/// Единственное место, где значения появляются или исчезают сами: клип
+/// лёг на генератор — берём вид из пути медиа (там же и живут значения
+/// старых файлов, так что миграция выходит бесплатной); клип уехал на
+/// файл — значений у него быть не может.
+fn fit_gen_to_media(p: &Project, c: &mut ClipEvent) {
+    match p.default_gen_for(c.media) {
+        Some(k) => {
+            let same = c.r#gen.as_ref().is_some_and(|g| g.tag() == k.tag());
+            if !same {
+                c.r#gen = Some(k);
+                c.gen_auto.clear();
+            }
+        }
+        None => {
+            c.r#gen = None;
+            c.gen_auto.clear();
+        }
+    }
+}
+
+/// Проверка согласованности значений генератора для команды — ТЕМ ЖЕ
+/// кодом, что и валидация файла.
+fn kt_check(p: &Project, c: &ClipEvent) -> Result<(), CommandError> {
+    check_clip_gen(c, p.gen_media_path(c.media)).map_err(CommandError::InvalidClip)
+}
+
 fn sync_warp_to_link_group(p: &mut Project, id: ClipId) {
     let Some(src) = p.clips.iter().find(|c| c.id == id) else { return };
     let Some(group) = src.link_group else { return };
@@ -192,6 +246,30 @@ pub enum Command {
     SetFxAuto {
         id: ClipId,
         auto: Vec<Vec<ParamCurve>>,
+    },
+    /// Значения генератора НА СОБЫТИИ (Р.59, стадия 2).
+    ///
+    /// Плана кадра не трогает (`touches_render_plan() == false`): адрес
+    /// источника считается от события, а не от значений, и они доезжают
+    /// до ЖИВОГО источника полосой `retune` — ровно то, ради чего эта
+    /// полоса заводилась в Р.53. Иначе каждое нажатие клавиши в титре
+    /// останавливало бы аудио-render-поток.
+    SetClipGen {
+        id: ClipId,
+        kind: Option<GeneratorKind>,
+    },
+    /// Кривые параметров генератора (домен — тик материала, как fx_auto).
+    SetClipGenAuto {
+        id: ClipId,
+        auto: Vec<ParamCurve>,
+    },
+    /// «Править во всех местах разом» — ОТДЕЛЬНАЯ команда (решение
+    /// владельца Р.59): правка одного события соседей больше не трогает,
+    /// а «мест: N» остаётся доступно и умещается в один шаг истории.
+    ApplyGenToAll {
+        media: MediaId,
+        kind: GeneratorKind,
+        auto: Vec<ParamCurve>,
     },
     LinkClips {
         ids: Vec<ClipId>,
@@ -372,6 +450,8 @@ impl Command {
             | Command::SetFxBypass { id, .. }
             | Command::SetFx { id, .. }
             | Command::SetFxAuto { id, .. }
+            | Command::SetClipGen { id, .. }
+            | Command::SetClipGenAuto { id, .. }
             | Command::UnlinkClip { id }
             | Command::SetClipMedia { id, .. } => Some(*id),
             _ => None,
@@ -380,7 +460,12 @@ impl Command {
 
     pub fn touches_render_plan(&self) -> bool {
         match self {
-            Command::SetMediaPath { .. } => false,
+            // Значения генератора — свойство ИСТОЧНИКА, а не плана (тот
+            // же закон П, что у пути медиа). Их адресат — воркер этого
+            // события, `Player::update_gen`.
+            Command::SetMediaPath { .. }
+            | Command::SetClipGen { .. }
+            | Command::SetClipGenAuto { .. } => false,
             Command::NoteBirth { .. }
             | Command::AddMedia { .. }
             | Command::AddClip(_)
@@ -397,6 +482,7 @@ impl Command {
             | Command::SetFxBypass { .. }
             | Command::SetFx { .. }
             | Command::SetFxAuto { .. }
+            | Command::ApplyGenToAll { .. }
             | Command::LinkClips { .. }
             | Command::UnlinkClip { .. }
             | Command::AddTransition(_)
@@ -608,6 +694,9 @@ impl Band {
                 | Command::SetFxBypass { .. }
                 | Command::SetFx { .. }
                 | Command::SetFxAuto { .. }
+                | Command::SetClipGen { .. }
+                | Command::SetClipGenAuto { .. }
+                | Command::ApplyGenToAll { .. }
                 | Command::LinkClips { .. }
                 | Command::UnlinkClip { .. }
                 | Command::AddTransition(_)
@@ -1292,6 +1381,43 @@ impl TimelineModel {
                     return Err(CommandError::MediaNotFound(*media));
                 }
             }
+            // Значения генератора проверяются ТЕМ ЖЕ кодом, что и
+            // валидация файла (`check_clip_gen`): второго правила «что
+            // считать согласованным» быть не может, разойдись они — окно
+            // ставило бы состояние, которое проект потом отказался бы
+            // сохранить.
+            Command::SetClipGen { id, kind } => {
+                let c = find(*id)?;
+                let mut probe = c.clone();
+                probe.r#gen = kind.clone();
+                if kind.is_none() {
+                    probe.gen_auto.clear();
+                }
+                kt_check(p, &probe)?;
+            }
+            Command::SetClipGenAuto { id, auto } => {
+                let c = find(*id)?;
+                let mut probe = c.clone();
+                probe.gen_auto = auto.clone();
+                kt_check(p, &probe)?;
+            }
+            Command::ApplyGenToAll { media, kind, auto } => {
+                if p.gen_media_path(*media).is_none() {
+                    return Err(CommandError::MediaNotFound(*media));
+                }
+                let mut probe = ClipEvent {
+                    r#gen: Some(kind.clone()),
+                    gen_auto: auto.clone(),
+                    media: *media,
+                    ..p.clips
+                        .iter()
+                        .find(|c| c.media == *media)
+                        .cloned()
+                        .ok_or(CommandError::MediaNotFound(*media))?
+                };
+                probe.media = *media;
+                kt_check(p, &probe)?;
+            }
             Command::SetSettings { settings } => {
                 if settings.fps == 0 || kt_time::TICK_HZ % settings.fps as i64 != 0 {
                     return Err(CommandError::InvalidClip(ProjectError::BadFps));
@@ -1429,18 +1555,50 @@ impl TimelineModel {
         match cmd {
             Command::NoteBirth { .. } => {}
             Command::AddMedia { id, path } => {
+                // Путь генератора несёт ТОЛЬКО ВИД (Р.59, стадия 2) — и
+                // приводится к канону в тех же двух местах, что и у
+                // `SetMediaPath`. Значения приезжают отдельно, на СОБЫТИИ:
+                // иначе первая же проверка споткнулась бы о «вид значений
+                // не тот, что в пути».
+                let path = match crate::genmedia::parse_gen_path(&path) {
+                    Some(k) => crate::genmedia::gen_kind_path(&k),
+                    None => path,
+                };
                 p.media.push(MediaRef { id, path });
             }
             Command::SetMediaPath { id, path } => {
+                // Путь генератора несёт ТОЛЬКО ВИД (Р.59, стадия 2), и
+                // приводит его к канону это место: команда осталась
+                // дверью relink'а, а путь для неё по-прежнему непрозрачен,
+                // поэтому окно может прислать и полный старый путь.
+                // События на этом медиа обязаны остаться согласованными —
+                // иначе первая же правка упёрлась бы в `GenKindMismatch`.
+                let canon = match crate::genmedia::parse_gen_path(&path) {
+                    Some(k) => crate::genmedia::gen_kind_path(&k),
+                    None => path,
+                };
                 if let Some(m) = p.media.iter_mut().find(|m| m.id == id) {
-                    m.path = path;
+                    m.path = canon;
+                }
+                let mut touched: Vec<ClipEvent> = std::mem::take(&mut p.clips);
+                for c in touched.iter_mut().filter(|c| c.media == id) {
+                    fit_gen_to_media(p, c);
+                }
+                p.clips = touched;
+                for i in 0..p.sequences.len() {
+                    let mut cs = std::mem::take(&mut p.sequences[i].clips);
+                    for c in cs.iter_mut().filter(|c| c.media == id) {
+                        fit_gen_to_media(p, c);
+                    }
+                    p.sequences[i].clips = cs;
                 }
             }
-            Command::AddClip(c) => {
+            Command::AddClip(mut c) => {
                 match c.kind {
                     ClipKind::Video => p.video_lanes = p.video_lanes.max(c.lane + 1),
                     ClipKind::Audio => p.audio_lanes = p.audio_lanes.max(c.lane + 1),
                 }
+                fit_gen_to_media(p, &mut c);
                 p.clips.push(c)
             }
             Command::RemoveClip { id } => {
@@ -1565,6 +1723,32 @@ impl TimelineModel {
                 Self::clip_mut_on(p, id).fx_auto = auto;
                 sync_warp_to_link_group(p, id);
             }
+            Command::SetClipGen { id, kind } => {
+                let c = Self::clip_mut_on(p, id);
+                if kind.is_none() {
+                    c.gen_auto.clear();
+                }
+                c.r#gen = kind;
+                sync_gen_to_link_group(p, id);
+            }
+            Command::SetClipGenAuto { id, auto } => {
+                Self::clip_mut_on(p, id).gen_auto = auto;
+                sync_gen_to_link_group(p, id);
+            }
+            Command::ApplyGenToAll { media, kind, auto } => {
+                let apply = |clips: &mut Vec<ClipEvent>| {
+                    for c in clips {
+                        if c.media == media {
+                            c.r#gen = Some(kind.clone());
+                            c.gen_auto = auto.clone();
+                        }
+                    }
+                };
+                apply(&mut p.clips);
+                for s in &mut p.sequences {
+                    apply(&mut s.clips);
+                }
+            }
             Command::LinkClips { ids, group } => {
                 for c in &mut p.clips {
                     if ids.contains(&c.id) {
@@ -1643,7 +1827,12 @@ impl TimelineModel {
                     *slot = *content;
                 }
             }
-            Command::SetClipMedia { id, media } => Self::clip_mut_on(p, id).media = media,
+            Command::SetClipMedia { id, media } => {
+                let mut c = Self::clip_mut_on(p, id).clone();
+                c.media = media;
+                fit_gen_to_media(p, &mut c);
+                *Self::clip_mut_on(p, id) = c;
+            }
             Command::SetSettings { settings } => p.settings = settings,
             Command::AddMorpher(m) => {
                 p.morph_lanes = p.morph_lanes.max(m.lane + 1);

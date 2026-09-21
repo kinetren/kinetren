@@ -468,12 +468,15 @@ pub struct KtApp {
     pub fx_editors: Vec<crate::fx_editor::FxEditor>,
     /// Окна переходов (Р.33 С4) — по одному на переход.
     pub transition_editors: Vec<crate::transition_editor::TransitionEditor>,
-    pub generator_editors: Vec<crate::generator_editor::GeneratorEditor>,
-    pub title_editors: Vec<crate::title_editor::TitleEditor>,
     /// Пути медиа, под которые у плеера подняты источники, — снимок для
     /// `sync_media_sources` (Р.52): смена пути (окно генератора,
     /// undo/redo) видна диффом против него.
     pub(crate) media_paths: HashMap<MediaId, String>,
+    /// Значения генераторов, под которые подняты ИСТОЧНИКИ СОБЫТИЙ
+    /// (Р.59, стадия 2). С этого раунда параметры живут на событии, и
+    /// адрес источника считается от него (`kt_engine::clip_source_addr`),
+    /// поэтому снимок ключуется событием, а не медиа.
+    pub(crate) gen_states: HashMap<ClipId, kt_model::GenState>,
     /// Первый вызов синка принимает состояние build_player как данность.
     pub(crate) media_synced: bool,
     /// Ревизия модели, на которой синк отработал (Р.53, п.413): карта
@@ -817,9 +820,8 @@ impl KtApp {
             fx_thumbs: crate::fx_thumbs::FxThumbService::start(),
             fx_editors: Vec::new(),
             transition_editors: Vec::new(),
-            generator_editors: Vec::new(),
-            title_editors: Vec::new(),
             media_paths: HashMap::new(),
+            gen_states: HashMap::new(),
             media_synced: false,
             media_synced_rev: 0,
             media_sync_builds: 0,
@@ -1017,9 +1019,8 @@ impl KtApp {
             fx_thumbs: crate::fx_thumbs::FxThumbService::start(),
             fx_editors: Vec::new(),
             transition_editors: Vec::new(),
-            generator_editors: Vec::new(),
-            title_editors: Vec::new(),
             media_paths: HashMap::new(),
+            gen_states: HashMap::new(),
             media_synced: false,
             media_synced_rev: 0,
             media_sync_builds: 0,
@@ -1494,8 +1495,6 @@ impl KtApp {
         self.draw_search(&ctx);
         self.draw_fx_editors(&ctx);
         self.draw_transition_editors(&ctx);
-        self.draw_generator_editors(&ctx);
-        self.draw_title_editors(&ctx);
         self.draw_camera_editors(&ctx);
         self.draw_morph_editors(&ctx);
         self.draw_paste_names(&ctx);
@@ -2428,14 +2427,6 @@ impl KtApp {
             return;
         }
         if let Some(ed) = self.morph_editors.iter_mut().rev().find(|e| e.open) {
-            ed.open = false;
-            return;
-        }
-        if let Some(ed) = self.title_editors.iter_mut().rev().find(|e| e.open) {
-            ed.open = false;
-            return;
-        }
-        if let Some(ed) = self.generator_editors.iter_mut().rev().find(|e| e.open) {
             ed.open = false;
             return;
         }
@@ -3792,18 +3783,89 @@ impl KtApp {
     /// правок и из undo/redo — иначе undo смены цвета не доехал бы до
     /// картинки: источник живёт вне project→player синка.
     /// Подменённый шрифт титра — ВИДИМОЕ уведомление (Р.52 С4).
-    fn note_missing_title_font(&mut self, path: &str) {
-        let Some(kind) = kt_model::parse_gen_path(path) else { return };
-        let kt_model::GeneratorKind::Text { family, .. } = &kind else { return };
-        // о каждой семье говорим ОДИН раз за сессию (п.413): путь титра
+    ///
+    /// Р.59, стадия 2: семья живёт на СОБЫТИИ, а не в пути медиа, —
+    /// поэтому спрашивают отсюда с готовым видом, а не с путём.
+    fn note_missing_title_font(&mut self, kind: &kt_model::GeneratorKind) {
+        let kt_model::GeneratorKind::Text { family, .. } = kind else { return };
+        // о каждой семье говорим ОДИН раз за сессию (п.413): титр
         // меняется на каждый символ, и без дедупа это шторм
         if self.font_warned.contains(family) {
             return;
         }
-        if let Some(warn) = crate::title_editor::font_warning(&kind) {
+        if let Some(warn) = crate::gen_ui::font_warning(kind) {
             self.font_warned.insert(family.clone());
             self.note(warn);
         }
+    }
+
+    /// ЗНАЧЕНИЯ генераторов доезжают до живых источников (Р.59, стадия 2).
+    ///
+    /// Структурные правки (событие родилось, умерло, сменило вид) едут
+    /// сами: их команды трогают план, значит `set_project` уже позвал
+    /// `Player::sync_generators`. Здесь остаётся ровно то, что план НЕ
+    /// трогает (закон П) — значения и кривые: их адресат воркер этого
+    /// события, а не рендереры. Иначе каждое нажатие клавиши в титре
+    /// останавливало бы аудио-render-поток, и это ровно та претензия
+    /// владельца, ради которой в Р.53 заводилась полоса `retune`.
+    fn sync_gen_sources(&mut self) {
+        let mut cur: HashMap<ClipId, kt_model::GenState> = HashMap::new();
+        {
+            let doc = self.model.document();
+            for c in doc.clips.iter().chain(doc.sequences.iter().flat_map(|s| s.clips.iter())) {
+                if let Some(k) = &c.r#gen {
+                    cur.insert(
+                        c.id,
+                        kt_model::GenState { kind: k.clone(), auto: c.gen_auto.clone() },
+                    );
+                }
+            }
+        }
+        if cur == self.gen_states {
+            return;
+        }
+        // паспорт источника мог смениться (SMPTE со включённым тоном —
+        // это уже ЗВУЧАЩЕЕ медиа, другой набор клипов): тогда
+        // перенастройка честно отказывается, и источник пересоздаётся
+        let mut respawn = false;
+        let mut fonts: Vec<kt_model::GeneratorKind> = Vec::new();
+        for (id, st) in &cur {
+            let old = self.gen_states.get(id);
+            if old == Some(st) {
+                continue;
+            }
+            fonts.push(st.kind.clone());
+            let addr = kt_engine::gen_source_addr(*id);
+            // Тумбы события: у сервиса тумб СВОЙ источник, и ему нужен
+            // кадр, а не адрес, — поэтому путь полный, со значениями.
+            let path = kt_model::format_gen_path(&st.kind);
+            match old {
+                Some(prev) => {
+                    if !self.player.update_gen(*id, st.kind.clone(), st.auto.clone()) {
+                        respawn = true;
+                    }
+                    let prev_path = kt_model::format_gen_path(&prev.kind);
+                    if kt_media::factory::can_retune(&prev_path, &path) {
+                        self.thumbs.retune_media(addr, path);
+                    } else {
+                        self.thumbs.add_media(addr, path);
+                        self.thumbs.invalidate_media(addr);
+                    }
+                }
+                None => self.thumbs.add_media(addr, path),
+            }
+            // ячейки пикера помнят ТОТ ЖЕ ThumbKey, а он от значений
+            // генератора не зависит (дефект-близнец п.412)
+            self.fx_thumbs.invalidate_media(addr);
+        }
+        if respawn {
+            let p = self.player_project();
+            self.player.sync_generators(&p);
+        }
+        for k in fonts {
+            self.note_missing_title_font(&k);
+        }
+        self.gen_states = cur;
     }
 
     /// Драг титра ПРЯМО В ПРЕВЬЮ (Р.52 С6): рамка блока текста из той же
@@ -3817,14 +3879,9 @@ impl KtApp {
         painter: &egui::Painter,
         img: egui::Rect,
     ) {
-        let Some((media, gesture)) =
-            self.title_editors.iter().find(|e| e.open).map(|e| (e.media, e.gesture))
-        else {
-            return;
-        };
-        let Some(kt_model::Source::File(m)) = self.model.project().source(media) else { return };
-        let path = m.path.clone();
-        let Some(mut kind) = kt_model::parse_gen_path(&path) else { return };
+        let Some((clip, gesture)) = self.edited_title() else { return };
+        let Some(mut kind) = self.model.clip(clip).and_then(|c| c.r#gen.clone()) else { return };
+        let before = kind.clone();
         let (iw, ih) = (img.width().max(1.0) as u32, img.height().max(1.0) as u32);
         let Some(info) = kt_media::generator::title_layout(&kind, iw, ih) else { return };
         let b = info.block;
@@ -3840,11 +3897,8 @@ impl KtApp {
             egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(120, 190, 255, 200)),
             egui::StrokeKind::Outside,
         );
-        let resp = ui.interact(
-            frame.expand(8.0),
-            ui.id().with(("title-drag", media)),
-            egui::Sense::drag(),
-        );
+        let resp =
+            ui.interact(frame.expand(8.0), ui.id().with(("title-drag", clip)), egui::Sense::drag());
         if resp.dragged() {
             let d = resp.drag_delta();
             if d != egui::Vec2::ZERO
@@ -3852,10 +3906,11 @@ impl KtApp {
             {
                 *pos_x = (*pos_x + d.x as f64 / img.width().max(1.0) as f64).clamp(0.0, 1.0);
                 *pos_y = (*pos_y + d.y as f64 / img.height().max(1.0) as f64).clamp(0.0, 1.0);
-                let new_path = kt_model::format_gen_path(&kind);
-                if new_path != path {
+                // ТА ЖЕ команда и тот же gesture, что у формы в окне
+                // (правило 17 по построению); значения живут на СОБЫТИИ
+                if kind != before {
                     self.apply_coalesced(
-                        kt_model::Command::SetMediaPath { id: media, path: new_path },
+                        kt_model::Command::SetClipGen { id: clip, kind: Some(kind) },
                         gesture,
                     );
                 }
@@ -3866,9 +3921,32 @@ impl KtApp {
         }
     }
 
-    /// Safe-зоны рисуются, пока открыто хоть одно окно титра (Р.52 С3).
+    /// Событие, чей ТИТР сейчас правится (Р.59, стадия 2): открытое окно
+    /// эффектов, в котором выбрана ГОЛОВА полосы, а источник события —
+    /// текст. Своего окна у титра больше нет, поэтому и рамка драга, и
+    /// safe-зоны спрашивают одно и то же место.
+    pub(crate) fn edited_title(&self) -> Option<(ClipId, u64)> {
+        for ed in self.fx_editors.iter().rev().filter(|e| e.open) {
+            for id in &ed.members {
+                if ed.selected.get(id) != Some(&crate::widgets::ChainSel::Head) {
+                    continue;
+                }
+                let is_text = self
+                    .model
+                    .clip(*id)
+                    .and_then(|c| c.r#gen.as_ref())
+                    .is_some_and(|g| matches!(g, kt_model::GeneratorKind::Text { .. }));
+                if is_text {
+                    return Some((*id, ed.gesture));
+                }
+            }
+        }
+        None
+    }
+
+    /// Safe-зоны рисуются, пока правится титр (Р.52 С3).
     pub(crate) fn show_safe_zones(&self) -> bool {
-        self.title_editors.iter().any(|e| e.open)
+        self.edited_title().is_some()
     }
 
     pub(crate) fn sync_media_sources(&mut self) {
@@ -3886,17 +3964,16 @@ impl KtApp {
         let cur: HashMap<MediaId, String> =
             self.model.document().media.iter().map(|m| (m.id, m.path.clone())).collect();
         if !self.media_synced {
-            // первый вызов: источники уже поднял build_player; заодно —
-            // видимое уведомление о подмене шрифтов титров (С4: проект с
-            // чужой машины, семьи здесь нет)
-            for path in cur.values() {
-                self.note_missing_title_font(path);
-            }
+            // первый вызов: источники уже поднял build_player
             self.media_paths = cur;
             self.media_synced = true;
+            self.sync_gen_sources();
             return;
         }
         if self.media_paths == cur {
+            // состав медиа тот же, а ЗНАЧЕНИЯ генераторов могли
+            // измениться: они живут на событиях (Р.59, стадия 2)
+            self.sync_gen_sources();
             return;
         }
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
@@ -3917,7 +3994,6 @@ impl KtApp {
                 && self.player.retune_media(*id, path)
             {
                 self.player.set_media_path(*id, path);
-                self.note_missing_title_font(path);
                 self.thumbs.retune_media(*id, resolved);
                 // ячейки пикера помнят ТОТ ЖЕ ThumbKey, а он от параметров
                 // генератора не зависит: без этой строки полоска показывала
@@ -3937,7 +4013,6 @@ impl KtApp {
             } else {
                 self.player.add_media(*id, src);
             }
-            self.note_missing_title_font(path);
             self.thumbs.add_media(*id, resolved);
             self.thumbs.invalidate_media(*id);
         }
@@ -3947,6 +4022,7 @@ impl KtApp {
             self.player.remove_media(id);
         }
         self.media_paths = cur;
+        self.sync_gen_sources();
     }
 
     /// «Создать генератор» из меню бина (Р.52): медиа + источник +
@@ -3960,7 +4036,8 @@ impl KtApp {
     /// приходилось вслепую, потом идти в бин и ставить карточку руками.
     /// Ctrl+Z возвращает всё разом, потому что батч один.
     pub fn create_generator(&mut self, kind: kt_model::GeneratorKind) {
-        let path = kt_model::format_gen_path(&kind);
+        // Р.59, стадия 2: в пути медиа — ВИД, значения едут на СОБЫТИИ.
+        let path = kt_model::gen_kind_path(&kind);
         let id = MediaId(self.next_media_id());
         // источник поднимаем сами (снимок синка — ДО apply); он же отдаёт
         // паспорт, по которому считается набор клипов
@@ -3976,6 +4053,13 @@ impl KtApp {
         let at = self.player.transport.playhead();
         let mut cmds = vec![Command::AddMedia { id, path: path.clone() }];
         cmds.extend(self.clip_cmds_for(id, &info, at, None));
+        // выбранные в меню значения — на события этого же батча: одним
+        // шагом истории, как и всё остальное создание (Р.53, п.416)
+        for c in cmds.iter_mut() {
+            if let Command::AddClip(ev) = c {
+                ev.r#gen = Some(kind.clone());
+            }
+        }
         if !self.apply_batch(cmds) {
             self.media_paths.remove(&id);
             return;
@@ -5676,6 +5760,8 @@ impl KtApp {
             next_clip += 1;
             first.get_or_insert(id);
             cmds.push(Command::AddClip(kt_model::ClipEvent {
+                r#gen: None,
+                gen_auto: Vec::new(),
                 id,
                 link_group: group,
                 kind: k,
@@ -5764,6 +5850,8 @@ impl KtApp {
                 _ => 0,
             };
             cmds.push(Command::AddClip(ClipEvent {
+                r#gen: None,
+                gen_auto: Vec::new(),
                 id: ClipId(next_id),
                 link_group: group,
                 kind,
@@ -6967,7 +7055,7 @@ pub struct WarpCache {
 /// его же зовёт карточка бина.
 pub fn media_display_name(path: &str) -> String {
     if let Some(kd) = kt_model::parse_gen_path(path) {
-        return crate::generator_editor::kind_name(&kd).to_string();
+        return crate::gen_ui::kind_name(&kd).to_string();
     }
     std::path::Path::new(path)
         .file_name()
@@ -7082,12 +7170,17 @@ impl KtApp {
                 self.player.nest_coverage().into_iter().collect();
             let mut per_clip = HashMap::new();
             for c in &self.model.project().clips {
+                // адрес ИСТОЧНИКА события (Р.59, стадия 2): у генератора
+                // значения живут на событии, и греется его собственный
+                // источник. Правило одно на программу — заказ, чтение и
+                // полоска обязаны спрашивать `clip_source_addr` (инв. 4).
+                let src = kt_engine::clip_source_addr(c);
                 let runs = match c.kind {
                     ClipKind::Audio => {
                         let f0 = c.source_in.to_audio_frames();
                         let f1 = (c.source_in + c.duration).to_audio_frames();
                         self.player.cache.coverage(
-                            kt_engine::source_id(c.media),
+                            kt_engine::source_id(src),
                             kt_cache::BurstKind::Audio,
                             f0.div_euclid(AUDIO_BURST_FRAMES as i64)
                                 ..((f1 - 1).div_euclid(AUDIO_BURST_FRAMES as i64) + 1),
@@ -7111,7 +7204,7 @@ impl KtApp {
                         let mut runs: Vec<std::ops::Range<i64>> = Vec::new();
                         for dq in qs {
                             runs.extend(self.player.cache.coverage(
-                                kt_engine::source_id(c.media),
+                                kt_engine::source_id(src),
                                 kt_cache::BurstKind::video(Some(dq)),
                                 b0..b1.max(b0 + 1),
                             ));
@@ -8857,6 +8950,8 @@ mod repaint_tests {
         });
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         let clip = |id: u64, start: i64, dur: i64| ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Video,

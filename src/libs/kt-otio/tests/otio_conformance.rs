@@ -43,6 +43,8 @@ fn sample() -> Project {
     p.media.push(MediaRef { id: MediaId(2), path: "media/b.mp4".into() });
     for (id, start, src, media) in [(1u64, 0i64, 0i64, 1u64), (2, 90_000, 30_000, 2)] {
         p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Audio,

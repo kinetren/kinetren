@@ -13,6 +13,8 @@ use kt_time::Tick;
 
 fn clip(id: u64, kind: ClipKind, lane: u32, start: i64, dur: i64, media: u64) -> ClipEvent {
     ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind,
@@ -325,6 +327,8 @@ fn t165_overlapping_lane_survives_layer_roundtrip() {
     // три клипа одной дорожки: два перекрываются, третий встык
     for (id, start, dur) in [(1u64, 0i64, 90_000i64), (2, 45_000, 90_000), (3, 200_000, 45_000)] {
         p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Video,
@@ -1516,15 +1520,20 @@ fn find_schema<'a>(v: &'a serde_json::Value, tag: &str, out: &mut Vec<&'a serde_
 #[test]
 fn t473_generator_reference_roundtrip() {
     let mut p = rich_project();
-    p.media.push(MediaRef { id: MediaId(7), path: "gen:solid:c=ff8800".into() });
+    // Р.59, стадия 2: в пути медиа — ВИД, значения на событии
+    let orange = kt_model::GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 };
+    p.media.push(MediaRef { id: MediaId(7), path: "gen:solid".into() });
     p.media.push(MediaRef { id: MediaId(8), path: "synth:ramp".into() });
     let mut g = clip(30, ClipKind::Video, 0, 200_000, 45_000, 7);
     g.source_in = Tick(4_500);
+    g.r#gen = Some(orange.clone());
     p.clips.push(g);
     p.clips.push(clip(31, ClipKind::Audio, 0, 200_000, 45_000, 8));
     // тот же генератор внутри вложенной ленты (Р.50): reel_children один
     let mut seq = Sequence::new(MediaId(9_000_000), "лента");
-    seq.clips.push(clip(40, ClipKind::Video, 0, 0, 30_000, 7));
+    let mut inner = clip(40, ClipKind::Video, 0, 0, 30_000, 7);
+    inner.r#gen = Some(orange);
+    seq.clips.push(inner);
     p.sequences.push(seq);
     p.clips.push(clip(32, ClipKind::Video, 1, 300_000, 30_000, 9_000_000));
     p.validate().unwrap();
@@ -1565,24 +1574,29 @@ fn t473_generator_reference_roundtrip() {
     let b = load_project(&text, None).expect("файл с генератором читается");
     assert_eq!(
         b.project.media.iter().find(|m| m.id == MediaId(7)).unwrap().path,
-        "gen:solid:c=ff8800",
-        "канонический gen:-путь пережил круг"
+        "gen:solid",
+        "в пути медиа остаётся ВИД (Р.59, стадия 2)"
     );
     assert_eq!(b.project.sequence(MediaId(9_000_000)).unwrap().clips[0].media, MediaId(7));
     assert_eq!(b.project.clips, p.clips, "клипы пережили круг");
     assert_eq!(text, save_project(&b.project, &b.retained, None), "идемпотентность");
 
-    // генератор версию файла не двигает: тот же проект БЕЗ генератора
-    // обязан получить ту же kt.v
+    // Р.59, стадия 2: генератор ТЕПЕРЬ бампает версию — значения уехали с
+    // пути медиа на событие, и старая сборка полезла бы за ними в путь и
+    // показала бы умолчания во всех местах разом. Прежнее ожидание
+    // («генератор версию не двигает», Р.52) снято этим решением: тогда
+    // старой сборке доставалась заметная заглушка, теперь — молчаливо
+    // не тот кадр, а это уже порча.
     let mut plain = rich_project();
     plain.sequences.push(Sequence::new(MediaId(9_000_000), "лента"));
     plain.clips.push(clip(32, ClipKind::Video, 1, 300_000, 30_000, 9_000_000));
     plain.validate().unwrap();
     let vp: serde_json::Value =
         serde_json::from_str(&save_project(&plain, &Retained::default(), None)).unwrap();
-    assert_eq!(
-        v["metadata"]["kt"]["v"], vp["metadata"]["kt"]["v"],
-        "генератор не бампает версию: старой сборке достаётся заметная заглушка"
+    assert_eq!(v["metadata"]["kt"]["v"], kt_otio::KT_META_V9 as u64);
+    assert!(
+        vp["metadata"]["kt"]["v"].as_u64().unwrap() < kt_otio::KT_META_V9 as u64,
+        "проект без генератора версию не поднимает"
     );
 }
 
@@ -1592,8 +1606,10 @@ fn t473_generator_reference_roundtrip() {
 #[test]
 fn t474_foreign_generator_kind_is_passthrough() {
     let mut p = rich_project();
-    p.media.push(MediaRef { id: MediaId(7), path: "gen:solid:c=ff8800".into() });
-    p.clips.push(clip(30, ClipKind::Video, 0, 200_000, 45_000, 7));
+    p.media.push(MediaRef { id: MediaId(7), path: "gen:solid".into() });
+    let mut g = clip(30, ClipKind::Video, 0, 200_000, 45_000, 7);
+    g.r#gen = Some(kt_model::GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 });
+    p.clips.push(g);
     p.validate().unwrap();
     let text = save_project(&p, &Retained::default(), None);
 
@@ -1632,7 +1648,9 @@ fn t474_foreign_generator_kind_is_passthrough() {
 fn t494_smpte_alias_import() {
     let mut p = rich_project();
     p.media.push(MediaRef { id: MediaId(7), path: "gen:smpte".into() });
-    p.clips.push(clip(30, ClipKind::Video, 0, 200_000, 45_000, 7));
+    let mut g = clip(30, ClipKind::Video, 0, 200_000, 45_000, 7);
+    g.r#gen = Some(kt_model::GeneratorKind::SmpteBars { tone: false, tone_db: -20.0 });
+    p.clips.push(g);
     p.validate().unwrap();
     let ours = save_project(&p, &Retained::default(), None);
     // «чужой редактор»: то же содержимое, но вид назван по-апстримовски
@@ -1849,4 +1867,135 @@ fn t638_negative_start_inside_a_reel_survives_the_round_trip() {
     let plain = save_project(&nested_project(), &Retained::default(), None);
     let tl = parse_document(&plain).unwrap();
     assert_eq!(kt_starts(&tl.tracks.children), 0, "kt.start leaked into ordinary files");
+}
+
+// ---- Р.59, стадия 2: параметры генератора на СОБЫТИИ ---------------------
+
+/// Тест 664: значения генератора и их кривые переживают круг, версия
+/// файла поднимается ПО СОДЕРЖИМОМУ, а чужой читатель видит значения
+/// ЭТОГО события первоклассной схемой.
+///
+/// Два титра на ОДНОМ виде с разным текстом — сцена, которой до этого
+/// раунда не существовало: текст был частью адреса медиа. Ради неё всё и
+/// затевалось (шаблон новостного выпуска, претензия владельца п.1).
+#[test]
+fn t664_generator_values_on_the_event_round_trip() {
+    let mut p = rich_project();
+    let title = |text: &str| {
+        let mut k = kt_model::GeneratorKind::default_text();
+        if let kt_model::GeneratorKind::Text { text: t, .. } = &mut k {
+            *t = text.into();
+        }
+        k
+    };
+    p.media.push(MediaRef { id: MediaId(7), path: "gen:text".into() });
+    let mut a = clip(30, ClipKind::Video, 0, 200_000, 45_000, 7);
+    a.r#gen = Some(title("Первый выпуск"));
+    a.gen_auto = kt_model::text_anim_curves(kt_model::TextAnim::Typewriter, 2.0, 2.0);
+    let mut b = clip(31, ClipKind::Video, 1, 200_000, 45_000, 7);
+    b.r#gen = Some(title("Второй выпуск"));
+    p.clips.push(a);
+    p.clips.push(b);
+    p.validate().unwrap();
+
+    let text = save_project(&p, &Retained::default(), None);
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        v["metadata"]["kt"]["v"],
+        kt_otio::KT_META_V9 as u64,
+        "генератор на событии обязан поднять версию: старая сборка полезла бы \
+         за значениями в путь медиа, где их больше нет"
+    );
+
+    // чужой читатель видит ЗНАЧЕНИЯ КАЖДОГО события первоклассной схемой
+    let mut gens = Vec::new();
+    find_schema(&v, "GeneratorReference.1", &mut gens);
+    assert_eq!(gens.len(), 2, "у каждого события своя ссылка на материал");
+    let texts: std::collections::BTreeSet<String> = gens
+        .iter()
+        .map(|g| g["parameters"]["text"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert!(texts.contains("Первый выпуск") && texts.contains("Второй выпуск"), "{texts:?}");
+
+    let back = load_project(&text, None).expect("файл со значениями на событии читается");
+    assert_eq!(
+        back.project.media.iter().find(|m| m.id == MediaId(7)).unwrap().path,
+        "gen:text",
+        "в пути медиа остаётся ВИД"
+    );
+    assert_eq!(back.project.clips, p.clips, "значения и кривые не пережили круг");
+    assert_eq!(text, save_project(&back.project, &back.retained, None), "идемпотентность");
+}
+
+/// Тест 665: файл Р.52..Р.58 мигрирует бесплатно — значения из ПУТИ
+/// медиа раздаются событиям, а прежний режим анимации титра становится
+/// кривыми теми же формулами, что и пресет в окне.
+///
+/// Разойдись миграция с пресетом — проект, сохранённый прошлой сборкой,
+/// поехал бы не так, как та же кнопка, нажатая руками. Поэтому формулы
+/// живут в ОДНОМ месте (`kt_model::text_anim_curves`), и тест сверяет
+/// результат чтения именно с ним.
+#[test]
+fn t665_old_generator_files_migrate_to_the_event() {
+    // «старый файл»: генератор со ЗНАЧЕНИЯМИ в parameters и режимом
+    // анимации полем — ровно то, что писала сборка Р.53
+    let mut p = rich_project();
+    p.media.push(MediaRef { id: MediaId(7), path: "gen:text".into() });
+    let mut c = clip(30, ClipKind::Video, 0, 200_000, 45_000, 7);
+    c.r#gen = Some(kt_model::GeneratorKind::default_text());
+    p.clips.push(c);
+    p.validate().unwrap();
+    let text = save_project(&p, &Retained::default(), None);
+    let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    // руками приводим файл к СТАРОЙ форме: kt.gen у клипа нет, значения и
+    // режим — в parameters, версия v8
+    v["metadata"]["kt"]["v"] = serde_json::json!(8);
+    fn patch(v: &mut serde_json::Value) {
+        match v {
+            serde_json::Value::Object(m) => {
+                if m.get("OTIO_SCHEMA").and_then(|s| s.as_str()) == Some("GeneratorReference.1")
+                    && let Some(serde_json::Value::Object(pr)) = m.get_mut("parameters")
+                {
+                    pr.insert("text".into(), serde_json::json!("Старый титр"));
+                    pr.insert("anim".into(), serde_json::json!("typewriter"));
+                    pr.insert("anim_secs".into(), serde_json::json!(2.0));
+                }
+                if let Some(serde_json::Value::Object(kt)) = m.get_mut("kt") {
+                    kt.shift_remove("gen");
+                    kt.shift_remove("gen_auto");
+                }
+                for x in m.values_mut() {
+                    patch(x);
+                }
+            }
+            serde_json::Value::Array(a) => a.iter_mut().for_each(patch),
+            _ => {}
+        }
+    }
+    patch(&mut v);
+    let old = serde_json::to_string(&v).unwrap();
+    assert!(!old.contains("\"gen\""), "в старом файле секции значений быть не должно");
+
+    let back = load_project(&old, None).expect("старый файл читается");
+    assert_eq!(
+        back.project.media.iter().find(|m| m.id == MediaId(7)).unwrap().path,
+        "gen:text",
+        "путь медиа укоротился до вида"
+    );
+    let c = back.project.clips.iter().find(|c| c.id == ClipId(30)).expect("клип на месте");
+    match &c.r#gen {
+        Some(kt_model::GeneratorKind::Text { text, reveal_soft, .. }) => {
+            assert_eq!(text, "Старый титр", "значения обязаны доехать до события");
+            assert_eq!(*reveal_soft, 0.0, "у машинки фронт жёсткий");
+        }
+        other => panic!("вид не тот: {other:?}"),
+    }
+    assert_eq!(
+        c.gen_auto,
+        kt_model::text_anim_curves(kt_model::TextAnim::Typewriter, 2.0, 2.0),
+        "режим анимации обязан стать ТЕМИ ЖЕ кривыми, что ставит пресет"
+    );
+    // и прочитанный проект законен — то есть мигрировал ЦЕЛИКОМ
+    back.project.validate().expect("мигрированный проект законен");
 }

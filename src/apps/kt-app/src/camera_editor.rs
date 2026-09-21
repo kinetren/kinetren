@@ -137,7 +137,7 @@ impl KtApp {
                     if let Some(name) = add {
                         let v = c.cam.get_param(&name).unwrap_or(0.0);
                         c.auto.push(ParamCurve {
-                            param: name.into(),
+                            param: name,
                             ease: true,
                             keys: vec![kt_model::AutoKey { t: Tick(0), v }],
                             source: Default::default(),

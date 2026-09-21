@@ -64,6 +64,8 @@ fn direct() -> DirectFetcher {
 
 fn ev(id: u64, kind: ClipKind, lane: u32, start: Tick, dur: Tick, media: u64) -> ClipEvent {
     ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind,
@@ -1151,31 +1153,50 @@ fn flat_kind() -> GeneratorKind {
     GeneratorKind::Solid { color_r: 20, color_g: 20, color_b: 20 }
 }
 
-fn sources_gen() -> Vec<(MediaId, Box<dyn MediaSource>)> {
+/// Р.59, стадия 2: источники генераторов стоят по адресам СОБЫТИЙ, и
+/// список у них один на всех — `gen_sources`.
+fn sources_gen(p: &Project) -> Vec<(MediaId, Box<dyn MediaSource>)> {
     let mut v = sources();
-    for (id, k) in [(GEN, gen_kind()), (FLAT, flat_kind())] {
-        v.push((
-            MediaId(id),
-            Box::new(kt_media::generator::GeneratorSource::new(k)) as Box<dyn MediaSource>,
-        ));
+    for (addr, state) in kt_engine::gen_sources(p) {
+        v.push((addr, kt_media::factory::open_gen(&state)));
     }
     v
 }
 
 /// Факты открытых источников — ровно так, как их собирают плеер, экспорт и
 /// kt-cli: спросив у ОТКРЫТОГО источника его паспорт.
-fn facts() -> kt_engine::SourceFacts {
+fn facts(p: &Project) -> kt_engine::SourceFacts {
     let mut f = kt_engine::SourceFacts::default();
-    for (id, s) in sources_gen() {
+    for (id, s) in sources_gen(p) {
         f.observe(id, s.info());
     }
     f
 }
 
+/// Значения генератора живут на СОБЫТИИ (Р.59, стадия 2): фикстура
+/// раздаёт их всем событиям на процедурных медиа.
+fn fix_gen(p: &mut Project) {
+    let put = |cs: &mut Vec<kt_model::ClipEvent>| {
+        for c in cs.iter_mut() {
+            if c.media == MediaId(GEN) {
+                c.r#gen = Some(gen_kind());
+            } else if c.media == MediaId(FLAT) {
+                c.r#gen = Some(flat_kind());
+            }
+        }
+    };
+    put(&mut p.clips);
+    for i in 0..p.sequences.len() {
+        let mut cs = std::mem::take(&mut p.sequences[i].clips);
+        put(&mut cs);
+        p.sequences[i].clips = cs;
+    }
+}
+
 fn base_gen() -> Project {
     let mut p = base();
-    p.media.push(MediaRef { id: MediaId(GEN), path: format_gen_path(&gen_kind()) });
-    p.media.push(MediaRef { id: MediaId(FLAT), path: format_gen_path(&flat_kind()) });
+    p.media.push(MediaRef { id: MediaId(GEN), path: gen_kind_path(&gen_kind()) });
+    p.media.push(MediaRef { id: MediaId(FLAT), path: gen_kind_path(&flat_kind()) });
     p
 }
 
@@ -1232,6 +1253,7 @@ fn one_child_nest(
     inst.source_in = Tick(0);
     inst.fx = warp.map(|(r, m)| vec![warp_fx(r, m)]).unwrap_or_default();
     p.clips.push(inst);
+    fix_gen(&mut p);
     p.validate().expect("замедленное вложение законно");
     p
 }
@@ -1239,10 +1261,10 @@ fn one_child_nest(
 /// Композит момента `t`, прогретый РОВНО тем, что заказал `layers_at`
 /// (заказ == чтение — инвариант 4). Рендерер знает факты источников.
 fn render_with_facts(p: &Project, t: Tick, q: Quality) -> (Vec<u8>, bool) {
-    let mut video = VideoRenderer::new_with_facts(p, &facts());
+    let mut video = VideoRenderer::new_with_facts(p, &facts(p));
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
-        sources_gen().into_iter().collect();
+        sources_gen(p).into_iter().collect();
     for (media, src_pts, dq) in video.layers_at(t, q) {
         let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(dq)).unwrap();
         cache.insert_video(
@@ -1324,7 +1346,7 @@ fn t579_a_slowed_reel_animates_in_half_steps() {
 #[test]
 fn t580_footage_is_pinned_and_the_order_does_not_move() {
     let plain = one_child_nest(1, Some((0.5, FrameMode::Nearest)), vec![], vec![]);
-    let v = VideoRenderer::new_with_facts(&plain, &facts());
+    let v = VideoRenderer::new_with_facts(&plain, &facts(&plain));
     for i in 0..10i64 {
         let (a, _) = render_with_facts(&plain, Tick(2 * i * FRAME), QV);
         let (b, _) = render_with_facts(&plain, Tick((2 * i + 1) * FRAME), QV);
@@ -1343,7 +1365,7 @@ fn t580_footage_is_pinned_and_the_order_does_not_move() {
     // с автоматизацией внутри — кадры РАЗНЫЕ, а заказ тот же: двигается
     // процедурное, футаж стоит
     let live = one_child_nest(1, Some((0.5, FrameMode::Nearest)), vec![grade()], grade_curve());
-    let vl = VideoRenderer::new_with_facts(&live, &facts());
+    let vl = VideoRenderer::new_with_facts(&live, &facts(&live));
     for i in 0..10i64 {
         let (a, _) = render_with_facts(&live, Tick(2 * i * FRAME), QV);
         let (b, _) = render_with_facts(&live, Tick((2 * i + 1) * FRAME), QV);
@@ -1399,13 +1421,13 @@ fn t581_blend_on_a_nest_mixes_footage_inside() {
     );
 
     // ЗАКАЗ несёт обе стороны: не согрей вторую — слой голодал бы вечно
-    let v = VideoRenderer::new_with_facts(&blend, &facts());
+    let v = VideoRenderer::new_with_facts(&blend, &facts(&blend));
     let keys: Vec<(MediaId, Tick, Quality)> = v.layers_at(t, QV);
     assert!(
         keys.contains(&(MediaId(1), Tick(0), QV)) && keys.contains(&(MediaId(1), Tick(FRAME), QV)),
         "в заказе нет соседа пары: {keys:?}"
     );
-    let vn = VideoRenderer::new_with_facts(&near, &facts());
+    let vn = VideoRenderer::new_with_facts(&near, &facts(&near));
     assert_eq!(vn.layers_at(t, QV).len(), 1, "«ближайший» заказывает ОДИН кадр");
 }
 
@@ -1425,9 +1447,9 @@ fn t582_the_memo_key_carries_the_frame_mode() {
     // кэш ОДИН на оба прогона — в программе он и есть один
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
 
-    let mut vb = VideoRenderer::new_with_facts(&blend, &facts());
+    let mut vb = VideoRenderer::new_with_facts(&blend, &facts(&blend));
     let mixed = warm_and_compose(&mut vb, &cache, t, QV);
-    let mut vn = VideoRenderer::new_with_facts(&near, &facts());
+    let mut vn = VideoRenderer::new_with_facts(&near, &facts(&near));
     let clean = warm_and_compose(&mut vn, &cache, t, QV);
 
     let mut synth = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Sine { hz: 440.0 });
@@ -1468,12 +1490,12 @@ fn t583_the_chunk_budget_counts_the_pair_inside_the_reel() {
     let blend = one_child_nest(1, Some((0.5, FrameMode::Blend)), vec![], vec![]);
     let near = one_child_nest(1, Some((0.5, FrameMode::Nearest)), vec![], vec![]);
     assert_eq!(
-        VideoRenderer::new_with_facts(&near, &facts()).max_concurrent_layers(),
+        VideoRenderer::new_with_facts(&near, &facts(&near)).max_concurrent_layers(),
         2,
         "буфер суб-композита плюс один ребёнок"
     );
     assert_eq!(
-        VideoRenderer::new_with_facts(&blend, &facts()).max_concurrent_layers(),
+        VideoRenderer::new_with_facts(&blend, &facts(&blend)).max_concurrent_layers(),
         3,
         "смешивающий ЛИСТ внутри ленты держит два кадра — бюджет обязан их увидеть"
     );
@@ -1526,6 +1548,7 @@ fn t585_procedural_sources_run_on_the_continuous_tick() {
     c.source_in = Tick(0);
     c.fx = vec![warp_fx(0.5, FrameMode::Nearest)];
     root.clips.push(c);
+    fix_gen(&mut root);
     root.validate().expect("замедленный генератор в корне законен");
     for i in 0..8i64 {
         let (a, ca) = render_with_facts(&root, Tick(2 * i * FRAME), QV);
@@ -1551,7 +1574,7 @@ fn t585_procedural_sources_run_on_the_continuous_tick() {
     // (в) ПОЛОСКА ПРОГРЕТОСТИ честна: пустой кэш — холодно, прогретое
     // ЦЕЛИКОМ окно — тепло. Растянутый ребёнок считается «целиком или
     // никак» (Р.55, С4), и врать в хорошую сторону она не имеет права.
-    let v = VideoRenderer::new_with_facts(&nested, &facts());
+    let v = VideoRenderer::new_with_facts(&nested, &facts(&nested));
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let body = 0..PART.0;
     let cold = v.nest_coverage(&cache, QV);
@@ -1562,7 +1585,7 @@ fn t585_procedural_sources_run_on_the_continuous_tick() {
         cold[0].1
     );
     let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
-        sources_gen().into_iter().collect();
+        sources_gen(&nested).into_iter().collect();
     for (media, src_pts, dq) in
         v.wanted_frames(kt_time::TickRange::new(Tick(0), Tick(PART.0 * 2)), QV)
     {

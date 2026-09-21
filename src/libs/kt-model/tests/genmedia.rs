@@ -172,6 +172,8 @@ fn t475_set_media_path_command() {
     });
     p.media.push(kt_model::MediaRef { id: MediaId(1), path: "gen:solid".into() });
     p.clips.push(ClipEvent {
+        r#gen: Some(kt_model::GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -196,26 +198,39 @@ fn t475_set_media_path_command() {
         Err(CommandError::MediaNotFound(MediaId(9)))
     ));
 
-    // правка видна: путь сменился, клип ссылается на то же медиа
+    // Р.59, стадия 2: путь медиа несёт ТОЛЬКО ВИД, поэтому полный путь
+    // приводится к канону, а значения достаются событию. Прежнее ожидание
+    // («путь хранит параметры») снято решением владельца «параметры
+    // генератора — на событие».
     m.apply(Command::SetMediaPath { id: MediaId(1), path: "gen:solid:c=ff8800".into() }).unwrap();
-    assert_eq!(m.project().media[0].path, "gen:solid:c=ff8800");
+    assert_eq!(m.project().media[0].path, "gen:solid", "в пути остаётся вид");
     assert!(m.project().is_gen(&m.project().clips[0]));
 
-    // undo возвращает прежний путь
+    // смена ВИДА переодевает события этого медиа: иначе первая же правка
+    // упёрлась бы в «вид значений не тот, что в пути»
+    m.apply(Command::SetMediaPath { id: MediaId(1), path: "gen:gradient".into() }).unwrap();
+    assert_eq!(m.project().media[0].path, "gen:gradient");
+    assert!(
+        matches!(m.project().clips[0].r#gen, Some(kt_model::GeneratorKind::Gradient { .. })),
+        "событие обязано переодеться вместе с медиа"
+    );
+
+    // undo возвращает прежний вид ВМЕСТЕ со значениями события
     m.undo().unwrap();
     assert_eq!(m.project().media[0].path, "gen:solid");
+    assert!(matches!(m.project().clips[0].r#gen, Some(kt_model::GeneratorKind::Solid { .. })));
     m.redo().unwrap();
-    assert_eq!(m.project().media[0].path, "gen:solid:c=ff8800");
+    assert_eq!(m.project().media[0].path, "gen:gradient");
 
     // сессия окна: три правки одним жестом = ОДИН undo-шаг
     let before_depth = m.undo_depth();
-    for c in ["gen:solid:c=110000", "gen:solid:c=220000", "gen:solid:c=330000"] {
+    for c in ["gen:checker", "gen:corners", "gen:transparent"] {
         m.apply_coalesced(Command::SetMediaPath { id: MediaId(1), path: c.into() }, 42).unwrap();
     }
-    assert_eq!(m.project().media[0].path, "gen:solid:c=330000");
+    assert_eq!(m.project().media[0].path, "gen:transparent");
     assert_eq!(m.undo_depth(), before_depth + 1, "жест схлопнулся в один шаг");
     m.undo().unwrap();
-    assert_eq!(m.project().media[0].path, "gen:solid:c=ff8800", "undo жеста — до сессии");
+    assert_eq!(m.project().media[0].path, "gen:gradient", "undo жеста — до сессии");
 }
 
 /// Тест 510 (Р.53, п.414): флаги видов — полный паспорт. Каждое
@@ -323,4 +338,180 @@ fn t525_kinds_differ_by_their_numbers() {
     for t in kt_model::TestTable::ALL {
         assert!(GeneratorKind::TestPattern { table: t }.param_specs().is_empty());
     }
+}
+
+// ---- Р.59, стадия 2: параметры генератора на СОБЫТИИ ----------------------
+
+/// Тест 656: модель несёт значения генератора на событии, а путь медиа —
+/// ТОЛЬКО ВИД; байты файлов без генераторов при этом не двигаются.
+///
+/// Три утверждения, и каждое держит свой кусок раунда: «в пути остаётся
+/// вид» (иначе два титра с разным текстом снова стали бы двумя медиа),
+/// «сорт варианта из пути не уходит» (имя вида есть функция значения —
+/// правило п.419), «пустые поля не сериализуются» (иначе прежние проекты
+/// перестали бы быть байт-стабильными).
+#[test]
+fn t656_generator_values_live_on_the_event() {
+    use kt_model::{ClipEvent, ClipId, ClipKind, GeneratorKind, MediaId, TestTable, gen_kind_path};
+    use kt_time::Tick;
+
+    // путь несёт вид; значения из него вычищены
+    let mut orange = GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 };
+    assert_eq!(gen_kind_path(&orange), "gen:solid");
+    orange = GeneratorKind::default_text();
+    if let GeneratorKind::Text { text, size, .. } = &mut orange {
+        *text = "Заголовок".into();
+        *size = 0.3;
+    }
+    assert_eq!(gen_kind_path(&orange), "gen:text", "текст титра в пути медиа не живёт");
+
+    // СОРТ варианта — часть адреса: пять таблиц это пять строк меню, и
+    // имя вида у них функция значения
+    assert_eq!(gen_kind_path(&GeneratorKind::TestPattern { table: TestTable::Ebu75 }), "gen:table");
+    assert_eq!(
+        gen_kind_path(&GeneratorKind::TestPattern { table: TestTable::Grayscale }),
+        "gen:table:tb=grey"
+    );
+    // и путь вида всегда разбирается обратно в ТОТ ЖЕ вид
+    for k in GeneratorKind::all() {
+        let back = kt_model::parse_gen_path(&gen_kind_path(&k)).expect("путь вида разбирается");
+        assert_eq!(back.tag(), k.tag(), "вид не пережил круг через путь");
+        assert_eq!(gen_kind_path(&back), gen_kind_path(&k), "путь вида не канонический");
+    }
+
+    // пустые поля события не сериализуются: файл без генератора байт-в-байт
+    let plain = ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(90_000),
+        source_in: Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    };
+    let json = serde_json::to_string(&plain).unwrap();
+    assert!(!json.contains("\"gen\""), "поле gen попало в файл без генератора: {json}");
+    assert!(!json.contains("gen_auto"), "поле gen_auto попало в файл без генератора");
+
+    // а с генератором — переживает круг
+    let mut g = plain.clone();
+    g.r#gen = Some(GeneratorKind::Solid { color_r: 1, color_g: 2, color_b: 3 });
+    g.gen_auto = kt_model::text_anim_curves(kt_model::TextAnim::Typewriter, 1.0, 2.0);
+    let back: ClipEvent = serde_json::from_str(&serde_json::to_string(&g).unwrap()).unwrap();
+    assert_eq!(back, g, "значения и кривые генератора не пережили круг через serde");
+
+    // адресное пространство: кусок морфер-слоя тоже помещается под GEN_TAG
+    let slice = kt_model::slice_id(ClipId(kt_model::MAX_REAL_CLIP_ID - 1), u16::MAX as u32);
+    assert!(slice.0 < kt_model::GEN_TAG, "адрес куска залез в диапазон генератора");
+    let addr = kt_model::GEN_TAG + slice.0;
+    assert_eq!(addr, kt_model::GEN_TAG | slice.0, "тег генератора обязан не пересекаться с id");
+    assert!(addr < kt_model::NEST_TAG, "адрес генератора залез в диапазон ленты");
+}
+
+/// Тест 657: валидация значений генератора — БЕЗ ЛЕГАСИ.
+///
+/// Строгость здесь бесплатна: значения появляются и исчезают ровно
+/// вместе с медиа (`AddClip`/`SetClipMedia`/`SetMediaPath` держат это
+/// сами), поэтому любое расхождение — это испорченный файл, а не
+/// состояние, в котором кто-то мог оказаться честно.
+#[test]
+fn t657_generator_values_are_validated_against_the_media() {
+    use kt_model::{
+        AutoKey, ClipEvent, ClipId, ClipKind, GeneratorKind, MediaId, MediaRef, ParamCurve,
+        Project, ProjectError, ProjectSettings, TestTable,
+    };
+    use kt_time::Tick;
+
+    let mk = || {
+        let mut p = Project::new(ProjectSettings {
+            fps: 30,
+            width: 64,
+            height: 36,
+            sample_rate: 48000,
+            pitch_engine: Default::default(),
+        });
+        p.media.push(MediaRef { id: MediaId(1), path: "gen:solid".into() });
+        p.media.push(MediaRef { id: MediaId(2), path: "movie.mp4".into() });
+        p.clips.push(ClipEvent {
+            r#gen: Some(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
+            gen_auto: Vec::new(),
+            id: ClipId(1),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane: 0,
+            start: Tick(0),
+            duration: Tick(90_000),
+            source_in: Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx: vec![],
+            fx_bypass: vec![],
+            fx_auto: vec![],
+            opacity: 1.0,
+            fx_off: false,
+        });
+        p
+    };
+    mk().validate().expect("согласованное состояние законно");
+
+    // на генераторе, но без значений
+    let mut p = mk();
+    p.clips[0].r#gen = None;
+    assert!(matches!(p.validate(), Err(ProjectError::GenMissing(ClipId(1)))));
+
+    // значения на ФАЙЛЕ
+    let mut p = mk();
+    p.clips[0].media = MediaId(2);
+    assert!(matches!(p.validate(), Err(ProjectError::GenOnFile(ClipId(1)))));
+
+    // вид значений не тот, что в пути медиа
+    let mut p = mk();
+    p.clips[0].r#gen = Some(GeneratorKind::TestPattern { table: TestTable::Ebu75 });
+    assert!(matches!(p.validate(), Err(ProjectError::GenKindMismatch(ClipId(1)))));
+    // и СОРТ — тоже часть вида
+    let mut p = mk();
+    p.media[0].path = "gen:table".into();
+    p.clips[0].r#gen = Some(GeneratorKind::TestPattern { table: TestTable::Grayscale });
+    assert!(matches!(p.validate(), Err(ProjectError::GenKindMismatch(ClipId(1)))));
+
+    // кривая-сирота ОТВЕРГАЕТСЯ: вид у события ровно один, взяться сироте
+    // неоткуда, а молча не действующая кривая выглядит как «анимация
+    // пропала» (у `fx_auto` правило другое — там слот мог сменить вид)
+    let curve = |name: &str| ParamCurve {
+        param: name.into(),
+        ease: false,
+        keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(90_000), v: 255.0 }],
+        source: Default::default(),
+    };
+    let mut p = mk();
+    p.clips[0].gen_auto = vec![curve("color_r")];
+    p.validate().expect("кривая на существующий параметр законна");
+    let mut p = mk();
+    p.clips[0].gen_auto = vec![curve("nope")];
+    assert!(matches!(p.validate(), Err(ProjectError::GenAutoOrphan(ClipId(1), _))));
+
+    // структурная проверка: ключи по возрастанию, значения конечны
+    let mut p = mk();
+    let mut bad = curve("color_r");
+    bad.keys.reverse();
+    p.clips[0].gen_auto = vec![bad];
+    assert!(matches!(p.validate(), Err(ProjectError::BadFxAuto(ClipId(1)))));
+
+    // источник кривой, которого мы ещё не умеем считать, — громкий отказ
+    let mut p = mk();
+    let mut formula = curve("color_r");
+    formula.source = kt_model::CurveSource::Formula { expr: "t".into() };
+    p.clips[0].gen_auto = vec![formula];
+    assert!(matches!(p.validate(), Err(ProjectError::CurveSourceUnsupported(ClipId(1)))));
 }

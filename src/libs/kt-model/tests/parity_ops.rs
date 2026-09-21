@@ -33,6 +33,8 @@ fn clip(
     src_in: i64,
 ) -> ClipEvent {
     ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(id),
         link_group: group.map(GroupId),
         kind,

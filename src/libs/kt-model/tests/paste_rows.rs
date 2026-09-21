@@ -23,6 +23,8 @@ fn settings() -> ProjectSettings {
 
 fn clip(id: u64, kind: ClipKind, lane: u32) -> ClipEvent {
     ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(id),
         link_group: Some(GroupId(1)),
         kind,

@@ -449,6 +449,14 @@ fn media_facts(project: &Project, project_path: &str) -> kt_engine::SourceFacts 
             out.observe(m.id, kt_media::MediaSource::info(&*src));
         }
     }
+    // генераторы стоят по адресам СОБЫТИЙ (Р.59, стадия 2), и факты у них
+    // спрашиваются по тем же адресам — иначе ступень декода у титра
+    // считалась бы «натив неизвестен», а замедленный титр опять стал бы
+    // ступенчатым
+    for (addr, state) in kt_engine::gen_sources(project) {
+        let src = kt_media::factory::open_gen(&state);
+        out.observe(addr, kt_media::MediaSource::info(&*src));
+    }
     out
 }
 
@@ -487,6 +495,10 @@ fn open_sources(
             Err(e) if strict => return Err(format!("{resolved}: {e}")),
             Err(e) => eprintln!("  skipped (not on this machine): {resolved}: {e}"),
         }
+    }
+    // см. `media_facts`: источники генераторов адресуются событиями
+    for (addr, state) in kt_engine::gen_sources(project) {
+        fetcher.add_source(addr, kt_media::factory::open_gen(&state));
     }
     Ok(fetcher)
 }
@@ -893,6 +905,8 @@ fn demo_project(synth: bool) -> Project {
                 m: u64,
                 gain: f32,
                 fx: Vec<FxInstance>| ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind,

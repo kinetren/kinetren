@@ -27,6 +27,8 @@ fn project(fps: u32, reversed: bool) -> Project {
     });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,

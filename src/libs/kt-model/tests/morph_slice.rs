@@ -13,6 +13,8 @@ const LEN: Tick = Tick(90_000);
 
 fn clip(id: u64, kind: ClipKind, lane: u32, start: Tick, dur: Tick) -> ClipEvent {
     ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind,
@@ -763,6 +765,8 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
     });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -850,6 +854,8 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
 
 fn warped(rate: f64, keys: Vec<AutoKey>, reversed: bool) -> ClipEvent {
     ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,

@@ -74,6 +74,8 @@ fn base(n: u64) -> Project {
     p.audio_lanes = n.max(1) as u32;
     for i in 0..n {
         p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(i + 1),
             link_group: None,
             kind: ClipKind::Audio,
@@ -99,6 +101,8 @@ fn base(n: u64) -> Project {
 fn with_distant(mut p: Project, extra: u64) -> Project {
     for i in 0..extra {
         p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(10_000 + i),
             link_group: None,
             kind: ClipKind::Audio,

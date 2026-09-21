@@ -1259,6 +1259,21 @@ fn canon_order(rows: Vec<(LaneKind, u32)>, n: LaneBases) -> Vec<(LaneKind, u32)>
 /// молча поделили бы кэш. Проверяется в `validate`.
 pub const NEST_TAG: u64 = 1 << 63;
 
+/// Следующий бит адреса медиа отдан ГЕНЕРАТОРУ НА СОБЫТИИ (Р.59, стадия 2).
+///
+/// Значения генератора живут на клипе, значит и источник у каждого клипа
+/// СВОЙ: адрес берётся как `GEN_TAG | id` события. Адрес считается от
+/// СОБЫТИЯ, а не от значений — он входит в план, и хэш значений в нём
+/// означал бы пересборку плана на каждое нажатие клавиши (ровно то, что
+/// владелец назвал «ужасно» в Р.53). Форма заказа `(адрес, тик,
+/// качество)` не меняется, поэтому «заказ == чтение», полоски
+/// прогретости, префетч и экспорт-чанки работают без правок.
+///
+/// Тег обязан лежать НИЖЕ `NEST_TAG` и ВЫШЕ любого id клипа — включая
+/// синтетические id кусков морфер-слоя (`slice_id`). Это и держит
+/// `const _` ниже.
+pub const GEN_TAG: u64 = 1 << 62;
+
 /// Предел глубины вложенности (Р.50, п.378).
 ///
 /// Число ПОСЧИТАНО, а не выбрано круглым: в момент композита уровня в
@@ -1958,6 +1973,17 @@ impl MorphPatch {
     pub fn apply_to(&self, c: &mut ClipEvent, anchor: Tick, frame_step: i64) {
         if self.replaces_source() {
             if let Some(m) = self.media {
+                // Подмена источника меняет МЕДИА, а значения генератора —
+                // свойство события на КОНКРЕТНОМ медиа (Р.59, стадия 2).
+                // Патч их не несёт и придумать не может, поэтому цель
+                // остаётся без них: адрес источника вырождается в `media`,
+                // и кадр берётся у общего источника вида — того же, что
+                // рисует бин. Придумай мы значения — слой рисовал бы
+                // «чей-то чужой титр», а это молчаливая порча.
+                if c.media != m {
+                    c.r#gen = None;
+                    c.gen_auto.clear();
+                }
                 c.media = m;
             }
             let was = c.source_in;
@@ -2442,11 +2468,28 @@ pub fn lane_key(c: &ClipEvent) -> (LaneKind, u32) {
 /// Настоящие клипы в этот диапазон не попадают (проверяет `validate`),
 /// поэтому оригинал восстанавливается из самого id и побочные таблицы не
 /// нужны.
-pub const SLICE_TAG: u64 = 1 << 63;
+///
+/// **Бит понижен с 63-го до 61-го в Р.59 (стадия 2).** Адрес источника
+/// генератора берётся как `GEN_TAG | id` СОБЫТИЯ, а событием бывает и
+/// кусок слоя: останься тег наверху, `GEN_TAG | slice_id` залез бы в
+/// диапазон `NEST_TAG`, и кусок титра молча поделил бы кэш с лентой.
+/// Ниже — `const _`-сторож, который не даст развести эти три числа.
+pub const SLICE_TAG: u64 = 1 << 61;
 /// Столько младших бит id отдано номеру куска.
 const SLICE_IDX_BITS: u32 = 16;
 /// Потолок id настоящего клипа (всё выше зарезервировано под куски).
-pub const MAX_REAL_CLIP_ID: u64 = 1 << (63 - SLICE_IDX_BITS);
+pub const MAX_REAL_CLIP_ID: u64 = 1 << (61 - SLICE_IDX_BITS);
+
+/// Адресное пространство целиком: настоящий клип < кусок < генератор <
+/// лента. Нарушение любого неравенства — это два разных объекта с одним
+/// ключом кэша, и заметно это стало бы стейл-картинкой, а не падением.
+const _: () = {
+    // куски помещаются под своим тегом…
+    assert!(MAX_REAL_CLIP_ID << SLICE_IDX_BITS <= SLICE_TAG);
+    // …а САМЫЙ СТАРШИЙ кусок — строго ниже тега генератора
+    assert!(SLICE_TAG + (MAX_REAL_CLIP_ID << SLICE_IDX_BITS) <= GEN_TAG);
+    assert!(GEN_TAG < NEST_TAG);
+};
 
 /// Id куска — чистая функция от (оригинал, номер). Ни счётчиков, ни
 /// хэшей: id не должен двигаться от правки соседнего клипа или переноса
@@ -2575,6 +2618,14 @@ pub fn clip_slice(c: &ClipEvent, w: TickRange, id: ClipId) -> ClipEvent {
                 for k in &mut cur.keys {
                     k.t = k.t + shift;
                 }
+            }
+        }
+        // кривые генератора живут в том же домене (тик материала) и
+        // обязаны ехать той же дельтой — иначе у куска титра «печатная
+        // машинка» начинается не там, где у соседнего куска
+        for cur in &mut s.gen_auto {
+            for k in &mut cur.keys {
+                k.t = k.t + shift;
             }
         }
     }
@@ -3230,6 +3281,20 @@ pub struct ClipEvent {
     /// не сериализуется, файлы байт-стабильны.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fx_off: bool,
+    /// Вид генератора СО ЗНАЧЕНИЯМИ (Р.59, стадия 2).
+    ///
+    /// `Some` тогда и только тогда, когда `media` — генератор; сам вид
+    /// обязан совпадать с видом в пути медиа (`gen_kind_path`), это
+    /// проверяет `validate`. До этого раунда значения лежали в пути
+    /// медиа, то есть были общими на все места использования, и «второй
+    /// выпуск с другим заголовком» записать было физически некуда.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub r#gen: Option<crate::GeneratorKind>,
+    /// Кривые параметров генератора. Домен `t` — ТИК МАТЕРИАЛА, как у
+    /// `fx_auto`: ключ приклеен к материалу, а не к длине события.
+    /// Разрешает их ИСТОЧНИК по своему `pts`, а не план кадра.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gen_auto: Vec<ParamCurve>,
 }
 
 fn one_f32() -> f32 {
@@ -3565,6 +3630,41 @@ impl CurveSource {
 /// обрезкой ключ, он вернётся, если событие снова растянуть. Имя
 /// параметра НЕ проверяется жёстко: кривая-сирота (переименованный/чужой
 /// параметр) молча не действует — правки схемы не валят загрузку файла.
+/// Генератор на событии и его кривые (Р.59, стадия 2).
+///
+/// Строго, без легаси: значения есть тогда и только тогда, когда медиа —
+/// генератор, вид совпадает с видом в пути, кривая-сирота ОТВЕРГАЕТСЯ.
+/// У `fx_auto` сирота законна (слот мог сменить вид, а кривая — спрятанная
+/// работа человека), здесь — нет: вид генератора у события ровно один и
+/// меняется он вместе с медиа, так что сироте взяться неоткуда, а молча
+/// не действующая кривая выглядела бы как «анимация пропала».
+pub fn check_clip_gen(c: &ClipEvent, media_kind_path: Option<&str>) -> Result<(), ProjectError> {
+    let Some(g) = &c.r#gen else {
+        return match media_kind_path {
+            Some(_) => Err(ProjectError::GenMissing(c.id)),
+            None => Ok(()),
+        };
+    };
+    let Some(path) = media_kind_path else { return Err(ProjectError::GenOnFile(c.id)) };
+    if crate::genmedia::gen_kind_path(g) != path {
+        return Err(ProjectError::GenKindMismatch(c.id));
+    }
+    for cur in &c.gen_auto {
+        if !cur.source.is_keys() {
+            return Err(ProjectError::CurveSourceUnsupported(c.id));
+        }
+        let sorted = cur.keys.windows(2).all(|w| w[0].t <= w[1].t);
+        let finite = cur.keys.iter().all(|k| k.t.0 >= 0 && k.v.is_finite());
+        if !sorted || !finite {
+            return Err(ProjectError::BadFxAuto(c.id));
+        }
+        if g.param_spec(&cur.param).is_none() {
+            return Err(ProjectError::GenAutoOrphan(c.id, cur.param.clone()));
+        }
+    }
+    Ok(())
+}
+
 pub fn check_fx_auto(id: ClipId, auto: &[Vec<ParamCurve>]) -> Result<(), ProjectError> {
     for curves in auto {
         for c in curves {
@@ -3611,12 +3711,20 @@ pub fn curve_value(keys: &[AutoKey], ease: bool, at: Tick) -> f64 {
 /// Применить кривые слота к эффекту в материальной позиции `at`.
 /// Возвращает число сработавших кривых (сироты не считаются).
 pub fn apply_fx_auto(fx: &mut FxInstance, curves: &[ParamCurve], at: Tick) -> usize {
+    apply_curves(fx, curves, at)
+}
+
+/// То же для ЛЮБОГО владельца свойств (Р.59): вид генератора, переход,
+/// камера. Одно правило разрешения кривой на все носители — второго
+/// заводить нельзя, разойдись они, «эффект» и «генератор» показывали бы
+/// разные значения на одном и том же тике.
+pub fn apply_curves<T: HasParams + ?Sized>(t: &mut T, curves: &[ParamCurve], at: Tick) -> usize {
     let mut applied = 0;
     for c in curves {
         if c.keys.is_empty() {
             continue;
         }
-        if fx.set_param(&c.param, curve_value(&c.keys, c.ease, at)) {
+        if t.set_param(&c.param, curve_value(&c.keys, c.ease, at)) {
             applied += 1;
         }
     }
@@ -5984,6 +6092,15 @@ pub enum ProjectError {
         "clip {0:?}: this curve is driven by a formula or a link, and nothing evaluates those yet"
     )]
     CurveSourceUnsupported(ClipId),
+    // --- параметры генератора на событии (Р.59, стадия 2) ---
+    #[error("clip {0:?} sits on a generator but carries no generator values")]
+    GenMissing(ClipId),
+    #[error("clip {0:?} carries generator values but its media is a file")]
+    GenOnFile(ClipId),
+    #[error("clip {0:?}: generator values are of a different kind than the media says")]
+    GenKindMismatch(ClipId),
+    #[error("clip {0:?}: generator curve '{1}' names no parameter of this kind")]
+    GenAutoOrphan(ClipId, String),
 }
 
 /// Полная проверка перехода против проекта: стык, умещаемость, минимум,
@@ -6470,6 +6587,62 @@ impl Project {
         }
     }
 
+    /// Перенос параметров генератора из ПУТИ МЕДИА на СОБЫТИЕ (Р.59,
+    /// стадия 2) — ЕДИНСТВЕННОЕ место миграции.
+    ///
+    /// Файлы Р.52..Р.58 держали значения строкой `gen:text:t=…`, то есть
+    /// делили их между всеми местами использования. Здесь путь
+    /// укорачивается до ВИДА, а значения раздаются событиям — каждому своя
+    /// копия, ровно та, что была. Прежний режим анимации титра
+    /// (`am=`/`ams=`) превращается в кривые тем же кодом, что и пресет в
+    /// окне (`text_anim_curves`): разойдись они, старый проект поехал бы
+    /// не так, как та же кнопка, нажатая руками.
+    ///
+    /// Событие, у которого значения уже есть, не трогается: это файл
+    /// нового формата, и путь у него уже короткий.
+    pub fn migrate_gen_to_events(&mut self) {
+        use crate::genmedia::{
+            gen_kind_path, parse_gen_path_full, text_anim_curves, text_anim_values,
+        };
+        let mut per_media: std::collections::HashMap<MediaId, crate::GeneratorKind> =
+            std::collections::HashMap::new();
+        let mut legacy: std::collections::HashMap<MediaId, Vec<ParamCurve>> =
+            std::collections::HashMap::new();
+        for m in &mut self.media {
+            let Some((mut kind, anim)) = parse_gen_path_full(&m.path) else { continue };
+            if let Some(a) = anim {
+                // «блок не шире кадра»: точный пролёт знает только
+                // раскладка, а её здесь нет — и это ровно тот случай,
+                // когда приблизиться честнее, чем тянуть в модель kt-text.
+                legacy.insert(m.id, text_anim_curves(a.anim, a.secs, 2.0));
+                text_anim_values(&mut kind, a.anim);
+            }
+            m.path = gen_kind_path(&kind);
+            per_media.insert(m.id, kind);
+        }
+        if per_media.is_empty() {
+            return;
+        }
+        let fill = |clips: &mut Vec<ClipEvent>| {
+            for c in clips {
+                if c.r#gen.is_some() {
+                    continue;
+                }
+                let Some(k) = per_media.get(&c.media) else { continue };
+                c.r#gen = Some(k.clone());
+                if c.gen_auto.is_empty()
+                    && let Some(curves) = legacy.get(&c.media)
+                {
+                    c.gen_auto = curves.clone();
+                }
+            }
+        };
+        fill(&mut self.clips);
+        for s in &mut self.sequences {
+            fill(&mut s.clips);
+        }
+    }
+
     /// Зоны клипа, внутри которых граница морфер-слоя ставиться не может
     /// (находка 1 Р.35): окна переходов и наезды соседей по дорожке. Резка
     /// там сломала бы НЕ цель, а окружение — у видео порядок композиции
@@ -6497,6 +6670,10 @@ impl Project {
         // порядок и сломал байт-стабильность проекта (тест 12)
         self.markers.sort_by_key(|m| m.t);
         self.markers.dedup_by_key(|m| m.t);
+        // параметры генератора переехали на событие (Р.59, стадия 2):
+        // чинится на ЧТЕНИИ, потому что файлы Р.52..Р.58 держали их в
+        // пути медиа
+        self.migrate_gen_to_events();
         // номер дорожки = ранг строки (Р.56, п.449): чинится на ЧТЕНИИ,
         // потому что старые файлы (и чужие импорты) знают только номера.
         // Перестановка отдаётся наружу — читателю формата она нужна для
@@ -6706,6 +6883,7 @@ impl Project {
                 return Err(ProjectError::UnknownMedia(c.id, c.media));
             }
             check_fx_auto(c.id, &c.fx_auto)?;
+            check_clip_gen(c, self.gen_media_path(c.media))?;
             // ЦЕПОЧКА, РЕВЕРС И ВАРП на вложении законны (Р.55, С4).
             // До этого раунда реверс и растяжение отвергались: суб-микс
             // читался строго по порядку, а обоим нужно читать иначе.
@@ -6860,10 +7038,25 @@ impl Project {
     }
 
     pub fn is_gen_media(&self, id: MediaId) -> bool {
-        self.media
-            .iter()
-            .find(|m| m.id == id)
-            .is_some_and(|m| crate::genmedia::parse_gen_path(&m.path).is_some())
+        self.gen_media_path(id).is_some()
+    }
+
+    /// Путь-ВИД генератора по адресу медиа. `None` — это не генератор
+    /// (файл, лента, битый `gen:` из будущей сборки). Единственная дверь:
+    /// и валидация, и команды, и сборка источников спрашивают её.
+    pub fn gen_media_path(&self, id: MediaId) -> Option<&str> {
+        let m = self.media.iter().find(|m| m.id == id)?;
+        crate::genmedia::parse_gen_path(&m.path).map(|_| m.path.as_str())
+    }
+
+    /// Вид генератора по УМОЛЧАНИЮ для медиа-адреса: тем его заполняют
+    /// команды, создающие событие на генераторе (`AddClip`,
+    /// `SetClipMedia`). Значения приходят из пути, поэтому старый полный
+    /// путь мигрирует сам собой — и это ЕДИНСТВЕННОЕ место, где такое
+    /// заполнение происходит.
+    pub fn default_gen_for(&self, id: MediaId) -> Option<crate::GeneratorKind> {
+        let m = self.media.iter().find(|m| m.id == id)?;
+        crate::genmedia::parse_gen_path(&m.path)
     }
 
     /// Сколько мест в ДЕРЕВЕ ссылается на эту ленту.

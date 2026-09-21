@@ -187,6 +187,8 @@ fn t649_formula_curves_are_refused_loudly() {
     });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     let mut c = ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,

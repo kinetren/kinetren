@@ -111,6 +111,13 @@ pub fn render_raw_audio_range(
     for (id, s) in sources {
         fetcher.add_source(id, s);
     }
+    // Генераторы экспорт открывает САМ (Р.59, стадия 2): их адреса
+    // производны от событий, вызывающему их взять неоткуда, а список —
+    // тот же `gen_sources`, по которому их поднимает плеер. Разойдись
+    // они, экспорт отрендерил бы не то, что показывало превью.
+    for (addr, state) in crate::gen_sources(project) {
+        fetcher.add_source(addr, kt_media::factory::open_gen(&state));
+    }
     let renderer = AudioRenderer::new(project);
     let mut store = FxStateStore::new();
     renderer.sync_fx(&mut store);
@@ -206,6 +213,10 @@ pub fn render_raw_video_range_with(
     let mut stats = ExportStats::default();
     let mut src: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         sources.into_iter().collect();
+    // см. `render_raw_audio_range`: генераторы открывает сам экспорт
+    for (addr, state) in crate::gen_sources(project) {
+        src.insert(addr, kt_media::factory::open_gen(&state));
+    }
     // факты источников: натив для ступени декода (Р.46, п.321) и
     // процедурность для непрерывного времени (Р.56, п.448). Экспорт обязан
     // спрашивать ТО ЖЕ, что превью, — иначе превью и файл разойдутся.

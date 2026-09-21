@@ -140,13 +140,13 @@ pub use prefetch::prefetch_audio_pass;
 pub use transitions::TransMix;
 pub use transport::Transport;
 pub use video::{
-    SourceFacts, VideoRenderer, compose_plan_cpu, content_hash, nest_memo_key, nest_source_id,
-    resolve_cam3d, video_cache_idx,
+    SourceFacts, VideoRenderer, clip_source_addr, compose_plan_cpu, content_hash, gen_source_addr,
+    gen_sources, nest_memo_key, nest_source_id, reel_chain_of_clip, resolve_cam3d, video_cache_idx,
 };
 pub use video_plan::{
     Cam3d, FramePlan, GpuBackendInfo, GpuExecError, LayerSrc, PlanLayer, VideoGpuExec,
 };
-pub use worker::{DecodeRequest, MediaWorker, RequestKind};
+pub use worker::{DecodeRequest, MediaWorker, RequestKind, Retune};
 
 /// Приоритеты запросов к MediaWorker. Порядок значим (инвариант №5).
 /// Растяжение времени клипа для ЧУЖИХ потребителей (Р.37 п.3).

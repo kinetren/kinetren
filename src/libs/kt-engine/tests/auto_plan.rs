@@ -13,8 +13,16 @@ use kt_time::Tick;
 
 const SEC: i64 = 90_000;
 
-fn clip(id: u64, lane: u32, start: i64, fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>) -> ClipEvent {
+fn clip(
+    id: u64,
+    lane: u32,
+    start: i64,
+    fx: Vec<FxInstance>,
+    auto: Vec<Vec<ParamCurve>>,
+) -> ClipEvent {
     ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,
@@ -68,7 +76,7 @@ fn t644_a_clip_without_curves_borrows_its_chain() {
         ],
         3,
     );
-    let mut v = VideoRenderer::new(&p);
+    let v = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let q = Quality { width: 64, height: 36 };
     let plan = v.frame_plan(&cache, Tick(SEC), q);
@@ -117,7 +125,7 @@ fn t645_curves_on_one_clip_do_not_tax_the_others() {
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     // сосед идёт ПЕРВЫМ слоем (задний план — большая дорожка)
     let neighbour = |p: &Project| -> (bool, u64, Vec<FxInstance>) {
-        let mut v = VideoRenderer::new(p);
+        let v = VideoRenderer::new(p);
         let plan = v.frame_plan(&cache, Tick(SEC), q);
         let kt_engine::video_plan::PlanLayer::One { src, .. } = &plan.layers[0] else {
             panic!("the first layer must be an ordinary one");

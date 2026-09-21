@@ -16,6 +16,8 @@ fn base_project() -> TimelineModel {
     p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:440".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(10),
         link_group: None,
         kind: ClipKind::Audio,
@@ -33,6 +35,8 @@ fn base_project() -> TimelineModel {
         fx_off: false,
     });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(11),
         link_group: None,
         kind: ClipKind::Video,

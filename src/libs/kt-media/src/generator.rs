@@ -1,8 +1,14 @@
 //! Генератор медиа (Р.52, F-TXT-003): третий вид источника без файла —
 //! после `SyntheticSource` (тесты) и `PlaceholderSource` (пропавший
-//! файл). Картинку считает сам, параметры зашиты при создании: они —
-//! функция МЕДИА (`gen:`-путь, словарь — `kt_model::GeneratorKind`),
-//! правка параметров = пересоздание источника (`Player::replace_media`).
+//! файл). Картинку считает сам.
+//!
+//! **Значения и их кривые приезжают состоянием (`GenState`, Р.59 стадия
+//! 2), а не строкой пути.** Они — свойство СОБЫТИЯ, поэтому источник
+//! поднимается по адресу события (`GEN_TAG | id`), а правка значений
+//! доезжает до живого источника перенастройкой (`retune_gen`), без
+//! пересоздания потока. Кривые разрешает ИМЕННО ИСТОЧНИК, по своему
+//! `pts`: в заказе лежит `(адрес, тик, качество)`, и кадр обязан быть
+//! функцией этой тройки — иначе ключ кэша перестаёт определять кадр.
 //!
 //! Контракты, на которых всё стоит:
 //! - кадр РОВНО запрошенного Quality — композит молча выбрасывает слой
@@ -12,8 +18,10 @@
 //! - «нет звука» = `has_audio: false` И `Ok(AudioBurst::silence)` —
 //!   `Err` копится в negative-кэше воркера ложными underrun'ами.
 
+use std::borrow::Cow;
+
 use crate::{AudioBurst, MediaError, MediaInfo, MediaSource, Quality, VideoFrame};
-use kt_model::GeneratorKind;
+use kt_model::{GenState, GeneratorKind};
 use kt_time::Tick;
 
 /// «Запас деталей» векторного источника: генератор рисует резко в любой
@@ -30,9 +38,9 @@ pub const GEN_NATIVE: u32 = 4096;
 /// нужна только чтобы контракт трейта не имел дыры.
 const DEFAULT_Q: Quality = Quality { width: 1920, height: 1080 };
 
-/// Источник-генератор: кадр считается из `GeneratorKind`.
+/// Источник-генератор: кадр считается из `GenState`.
 pub struct GeneratorSource {
-    kind: GeneratorKind,
+    state: GenState,
     info: MediaInfo,
     /// Кадр видов, не зависящих от времени, строится один раз на
     /// запрошенное качество (паттерн `PlaceholderSource`).
@@ -41,8 +49,19 @@ pub struct GeneratorSource {
 
 impl GeneratorSource {
     pub fn new(kind: GeneratorKind) -> GeneratorSource {
-        let info = Self::info_for(&kind);
-        GeneratorSource { kind, info, cache: None }
+        GeneratorSource::from_state(GenState::new(kind))
+    }
+
+    /// Источник из состояния события (Р.59, стадия 2).
+    pub fn from_state(state: GenState) -> GeneratorSource {
+        let info = Self::info_for(&state.kind);
+        GeneratorSource { state, info, cache: None }
+    }
+
+    /// Вид СО ЗНАЧЕНИЯМИ на момент `pts` материала. Без кривых —
+    /// заимствование: неанимированный генератор не платит ни аллокации.
+    pub fn kind_at(&self, pts: Tick) -> Cow<'_, GeneratorKind> {
+        self.state.kind_at(pts)
     }
 
     /// Паспорт источника для вида — ЕДИНСТВЕННОЕ место, где он считается
@@ -70,7 +89,11 @@ impl GeneratorSource {
     }
 
     pub fn kind(&self) -> &GeneratorKind {
-        &self.kind
+        &self.state.kind
+    }
+
+    pub fn state(&self) -> &GenState {
+        &self.state
     }
 
     /// Буфер кадра ДЛЯ ВЫДАЧИ. Живые виды (шум, тайм-код) рисуются сразу
@@ -78,22 +101,23 @@ impl GeneratorSource {
     /// рисуются один раз на качество и копируются (Р.53, п.413: копий на
     /// запрос было ДВЕ — в кэш и из кэша, стало одна).
     fn frame_bytes(&mut self, pts: Tick, q: Quality) -> Box<[u8]> {
-        if depends_on_time(&self.kind) {
-            return render_at(&self.kind, pts, q.width, q.height);
+        // Кривые делают ЛЮБОЙ вид зависящим от времени — одноэлементный
+        // кэш по Quality тогда отдавал бы первый кадр всю дорогу.
+        if self.state.animated() || depends_on_time(&self.state.kind) {
+            let kind = self.state.kind_at(pts);
+            return render_at(&kind, pts, q.width, q.height);
         }
         if self.cache.as_ref().is_none_or(|(cq, _)| *cq != q) {
-            self.cache = Some((q, render_at(&self.kind, Tick(0), q.width, q.height)));
+            self.cache = Some((q, render_at(&self.state.kind, Tick(0), q.width, q.height)));
         }
         self.cache.as_ref().expect("frame was just built").1.clone()
     }
 }
 
+/// Зависит ли кадр ВИДА от времени сам по себе. Титр сюда больше не
+/// входит: его анимация стала обычными кривыми (Р.59, стадия 2), а
+/// кривые видит `GenState::animated`.
 fn depends_on_time(kind: &GeneratorKind) -> bool {
-    // у титра — ТОЛЬКО анимированного (Р.53, п.424): статические титры
-    // остаются в кэше по Quality, как были
-    if let GeneratorKind::Text { anim, .. } = kind {
-        return anim.animated();
-    }
     matches!(
         kind,
         GeneratorKind::NoiseField { .. }
@@ -138,11 +162,7 @@ fn render_at(kind: &GeneratorKind, pts: Tick, w: u32, h: u32) -> Box<[u8]> {
             }
             buf.into_boxed_slice()
         }
-        GeneratorKind::Text { .. } => {
-            let mut p = text_params(kind);
-            animate_text(&mut p, kind, pts, w, h);
-            kt_text::render_rgba(&p, w, h)
-        }
+        GeneratorKind::Text { .. } => kt_text::render_rgba(&text_params(kind, w, h), w, h),
         GeneratorKind::Gradient { angle_deg, a_r, a_g, a_b, b_r, b_g, b_b } => {
             // проекция нормированных координат на направление угла,
             // растянутая на весь кадр: при любом угле оба цвета видны
@@ -671,13 +691,13 @@ fn lowbias32(mut x: u32) -> u32 {
 /// `text_params`: окно, кадр и рамка обязаны видеть одни значения.
 pub fn title_layout(kind: &GeneratorKind, w: u32, h: u32) -> Option<kt_text::LayoutInfo> {
     matches!(kind, GeneratorKind::Text { .. })
-        .then(|| kt_text::layout_info(&text_params(kind), w, h))
+        .then(|| kt_text::layout_info(&text_params(kind, w, h), w, h))
 }
 
 /// ЕДИНСТВЕННАЯ функция перевода хранимого титра (kt-model) во вход
 /// растеризатора (kt-text) — второго парсера не бывает (kt-text/CLAUDE.md):
 /// окно и кадр обязаны видеть одни и те же значения.
-fn text_params(kind: &GeneratorKind) -> kt_text::TextParams {
+fn text_params(kind: &GeneratorKind, w: u32, h: u32) -> kt_text::TextParams {
     let GeneratorKind::Text {
         text,
         family,
@@ -705,8 +725,10 @@ fn text_params(kind: &GeneratorKind) -> kt_text::TextParams {
         shadow_g,
         shadow_b,
         shadow_a,
-        anim: _,
-        anim_secs: _,
+        reveal,
+        reveal_soft,
+        offset_x,
+        offset_y,
         plate_pad_x,
         plate_pad_y,
         plate_r,
@@ -760,49 +782,14 @@ fn text_params(kind: &GeneratorKind) -> kt_text::TextParams {
         plate_pad: (*plate_pad_x, *plate_pad_y),
         plate: [*plate_r, *plate_g, *plate_b, *plate_a],
         order: [layer(&order[0]), layer(&order[1]), layer(&order[2]), layer(&order[3])],
-        // анимация приезжает отдельно (`animate_text`): раскладка и
-        // цвета от времени не зависят, а окно титра и рамка драга в
-        // превью обязаны видеть ТИТР, а не его текущий кадр
-        reveal: 1.0,
-        reveal_soft: 0.0,
-        offset: (0.0, 0.0),
-    }
-}
-
-/// Два числа анимации титра из pts МАТЕРИАЛА (Р.53, пп.423-424).
-///
-/// Времени в kt-text нет и не будет: сюда приходит тик, отсюда уходят
-/// «доля раскрытия» и «смещение блока в px». Смещение КВАНТУЕТСЯ до
-/// 1/64 px здесь же — kt-text складывает уже квантованное, и взаимная
-/// геометрия глифов между кадрами бит-в-бит постоянна.
-fn animate_text(p: &mut kt_text::TextParams, kind: &GeneratorKind, pts: Tick, w: u32, h: u32) {
-    let GeneratorKind::Text { anim, anim_secs, .. } = kind else { return };
-    if !anim.animated() {
-        return;
-    }
-    let secs = anim_secs.max(1.0 / 1000.0);
-    let prog = (pts.0.max(0) as f64 / 90_000.0 / secs).clamp(0.0, 1.0);
-    match anim {
-        kt_model::TextAnim::None => {}
-        kt_model::TextAnim::Typewriter => p.reveal = prog,
-        kt_model::TextAnim::Fade => {
-            p.reveal = prog;
-            // фронт шириной в один кластер: буква успевает проявиться
-            p.reveal_soft = 1.0;
-        }
-        kt_model::TextAnim::Crawl | kt_model::TextAnim::Roll => {
-            // блок проезжает кадр НАСКВОЗЬ: путь = кадр + сам блок, и
-            // размер блока берётся у той же раскладки (второй проход
-            // шейпинга — цена честного прохода при любом якоре)
-            let b = kt_text::layout_info(p, w, h).block;
-            if *anim == kt_model::TextAnim::Crawl {
-                let span = w as f64 + b.w;
-                p.offset.0 = span / 2.0 - prog * span;
-            } else {
-                let span = h as f64 + b.h;
-                p.offset.1 = span / 2.0 - prog * span;
-            }
-        }
+        // Анимация титра — ОБЫЧНЫЕ ЧИСЛА вида (Р.59, стадия 2): режимов
+        // больше нет, кривые разрешены до вызова (`GenState::kind_at`).
+        // Смещение хранится в ДОЛЯХ КАДРА (титр переживает смену формата
+        // проекта), в пиксели переводится здесь; квант 1/64 px остаётся
+        // там, где был, — в kt-text.
+        reveal: *reveal,
+        reveal_soft: *reveal_soft,
+        offset: (offset_x * w as f64, offset_y * h as f64),
     }
 }
 
@@ -814,14 +801,14 @@ impl MediaSource for GeneratorSource {
     fn read_audio_burst(&mut self, idx: i64) -> Result<AudioBurst, MediaError> {
         // тон SMPTE: 1 кГц синус на уровне tone_db, sample-accurate от
         // глобального номера сэмпла (байт-в-байт, как AudioPattern::Sine)
-        if let GeneratorKind::SmpteBars { tone: true, tone_db } = &self.kind {
+        if let GeneratorKind::SmpteBars { tone: true, tone_db } = &self.state.kind {
             return Ok(tone_1k(idx, *tone_db, |_| true));
         }
         // Биип отсчёта (Р.53, п.421) — ТОТ ЖЕ код, что тон SMPTE, только
         // с воротами: звучит ровно на целых секундах, длиной 1/fps, и
         // молчит в остальное время. Фаза берётся от ГЛОБАЛЬНОГО номера
         // сэмпла, поэтому seek не щёлкает (как у тона).
-        if let GeneratorKind::Leader { seconds, fps, beep: true, beep_db } = &self.kind {
+        if let GeneratorKind::Leader { seconds, fps, beep: true, beep_db } = &self.state.kind {
             let total = (*seconds).max(1) as i64 * 90_000;
             let step = 90_000 / (*fps).max(1) as i64;
             return Ok(tone_1k(idx, *beep_db, |n| {
@@ -845,7 +832,7 @@ impl MediaSource for GeneratorSource {
     ) -> Result<VideoFrame, MediaError> {
         let q = quality.unwrap_or(DEFAULT_Q);
         let rgba = self.frame_bytes(pts, q);
-        let has_alpha = kind_has_alpha(&self.kind);
+        let has_alpha = kind_has_alpha(&self.state.kind);
         Ok(VideoFrame { pts, width: q.width, height: q.height, rgba, has_alpha })
     }
 
@@ -860,10 +847,16 @@ impl MediaSource for GeneratorSource {
     /// разбирается.
     fn retune(&mut self, path: &str) -> bool {
         let Some(kind) = kt_model::parse_gen_path(path) else { return false };
-        if Self::info_for(&kind) != self.info {
+        self.retune_gen(&kt_model::GenState::new(kind))
+    }
+
+    /// Перенастройка на НОВЫЕ ЗНАЧЕНИЯ события (Р.59, стадия 2) — та же
+    /// полоса, что и у пути, только без строки посередине.
+    fn retune_gen(&mut self, state: &kt_model::GenState) -> bool {
+        if Self::info_for(&state.kind) != self.info {
             return false;
         }
-        self.kind = kind;
+        self.state = state.clone();
         self.cache = None;
         true
     }
@@ -1267,16 +1260,28 @@ mod tests {
         assert_eq!(peak(&mut loud, mid), 0.0, "между секундами обязана быть тишина");
     }
 
-    /// t539 (Р.53, пп.423-424): анимация титра идёт по pts МАТЕРИАЛА, а
-    /// кэш по Quality отключается ТОЛЬКО у анимированного — статические
-    /// титры от появления анимации не страдают.
+    /// t539 (Р.53, пп.423-424; переписан в Р.59, стадия 2): анимация
+    /// титра идёт по pts МАТЕРИАЛА, а кэш по Quality отключается ТОЛЬКО
+    /// у анимированного — статические титры от появления анимации не
+    /// страдают.
+    ///
+    /// Что изменилось в ожидании: режимов `am=tw`/`am=cr` в модели больше
+    /// нет (решение владельца Р.59 «параметры генератора — на событие»).
+    /// Те же пять анимаций теперь строятся кривыми — `text_anim_curves`, —
+    /// и проверяется здесь ровно то же самое поведение, только собранное
+    /// из обычных свойств.
     #[test]
     fn t539_title_animation_follows_material_time() {
+        use kt_model::{GenState, TextAnim, text_anim_curves, text_anim_values};
         let q = Quality { width: 240, height: 120 };
         let ink = |f: &VideoFrame| f.rgba.chunks_exact(4).map(|p| p[3] as u64).sum::<u64>();
+        let titled = |anim: TextAnim| {
+            let mut kind = kt_model::parse_gen_path("gen:text:t=ABCD:s=0.3").expect("путь титра");
+            text_anim_values(&mut kind, anim);
+            GeneratorSource::from_state(GenState { kind, auto: text_anim_curves(anim, 2.0, 2.0) })
+        };
         // машинка: в нуле пусто, к концу — весь текст
-        let k = kt_model::parse_gen_path("gen:text:t=ABCD:am=tw:ams=2:s=0.3").expect("путь титра");
-        let mut s = GeneratorSource::new(k);
+        let mut s = titled(TextAnim::Typewriter);
         let a = s.read_video_frame(Tick(0), Some(q)).unwrap();
         let mid = s.read_video_frame(Tick(90_000), Some(q)).unwrap();
         let end = s.read_video_frame(Tick(180_000), Some(q)).unwrap();
@@ -1289,8 +1294,7 @@ mod tests {
         assert_eq!(end.rgba, want.rgba, "после раскрытия титр обязан стать обычным");
 
         // бегущая строка: блок ЕДЕТ, а не проявляется
-        let cr = kt_model::parse_gen_path("gen:text:t=ABCD:am=cr:ams=2:s=0.3").expect("путь");
-        let mut c = GeneratorSource::new(cr);
+        let mut c = titled(TextAnim::Crawl);
         let f0 = c.read_video_frame(Tick(45_000), Some(q)).unwrap();
         let f1 = c.read_video_frame(Tick(90_000), Some(q)).unwrap();
         assert_ne!(f0.rgba, f1.rgba, "бегущая строка обязана ехать");
@@ -1308,8 +1312,14 @@ mod tests {
 
         // кэш по Quality: статический титр считается ОДИН раз, анимация —
         // на каждый кадр (иначе движение замерло бы)
-        assert!(!depends_on_time(&kt_model::parse_gen_path("gen:text:t=A").unwrap()));
-        assert!(depends_on_time(&kt_model::parse_gen_path("gen:text:t=A:am=tw").unwrap()));
+        let plain = kt_model::parse_gen_path("gen:text:t=A").unwrap();
+        assert!(!depends_on_time(&plain), "вид титра от времени не зависит");
+        assert!(!GenState::new(plain.clone()).animated(), "без кривых титр статичен");
+        assert!(
+            GenState { kind: plain, auto: text_anim_curves(TextAnim::Typewriter, 2.0, 2.0) }
+                .animated(),
+            "кривая обязана выключить одноэлементный кэш"
+        );
     }
 
     /// t472: «нет звука» — это тишина `Ok`, никогда не `Err` (иначе

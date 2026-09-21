@@ -707,7 +707,7 @@ impl VideoRenderer {
                     end: c.start + c.duration,
                     source_in: c.source_in,
                     lane: c.lane,
-                    media: c.media,
+                    media: clip_source_addr(c),
                     reversed: c.reversed,
                     fx,
                     auto_plan,
@@ -723,11 +723,11 @@ impl VideoRenderer {
                     tail_ext: Tick::ZERO,
                     warp,
                     head_zoom,
-                    native: facts.natives.get(&c.media).copied(),
+                    native: facts.natives.get(&clip_source_addr(c)).copied(),
                     nest,
                     content,
                     nest_scale: nest.and_then(|id| nest_scales.get(&id).copied()).unwrap_or(1),
-                    procedural: facts.procedural.contains(&c.media),
+                    procedural: facts.procedural.contains(&clip_source_addr(c)),
                 }
             })
             .collect();
@@ -1639,14 +1639,23 @@ fn nest_frame_cpu(
         return Some(f);
     }
     let mut buf = scratch.take(w as usize * h as usize * 4);
-    if !execute_plan_cpu(&n.plan, cache, scratch, blend, &mut buf) {
+    let whole = execute_plan_cpu(&n.plan, cache, scratch, blend, &mut buf);
+    if !whole {
         *complete = false;
     }
     unpremultiply(&mut buf);
     let rgba: Box<[u8]> = buf[..].into();
     scratch.put(buf);
     let frame = Arc::new(VideoFrame { pts: n.inner_t, width: w, height: h, rgba, has_alpha: true });
-    if memoize {
+    // МЕМОИЗИРУЕТСЯ ТОЛЬКО ПОЛНЫЙ суб-композит (Р.59, стадия 2).
+    //
+    // Голодный кадр — это НЕ функция редакции ленты, а функция того, что
+    // успел положить в кэш воркер. Записав его под ключом редакции, мы
+    // получали чёрную ленту НАВСЕГДА: ключ от прогрева не двигается,
+    // перезапросить нечего, и снаружи композит объявлен полным (голод
+    // виден только в тот единственный проход, где он случился). Живой
+    // плеер попадал в это на каждом холодном старте.
+    if memoize && whole {
         cache.insert_postfx_video(source, q_key, key, n.inner_t.0, frame.clone());
     }
     Some(frame)
@@ -1686,6 +1695,86 @@ pub fn nest_memo_key(content_hash: u64, blend: bool) -> u64 {
         return content_hash;
     }
     xxhash_rust::xxh3::xxh3_64(&[content_hash.to_le_bytes().as_slice(), b"blend"].concat())
+}
+
+/// Адрес ИСТОЧНИКА события (Р.59, стадия 2) — ЕДИНСТВЕННОЕ правило.
+///
+/// У генератора значения живут на событии, значит и источник у каждого
+/// события свой: адрес берётся от ЕГО id. У всех остальных — адрес медиа,
+/// как было. Форма заказа `(адрес, тик, качество)` не изменилась, поэтому
+/// «заказ == чтение», полоски прогретости, префетч, экспорт-чанки и
+/// покрытие лент работают без правок (инвариант 4).
+///
+/// Спрашивать это обязаны ВСЕ: план, префетч, экспорт, kt-cli и полоски.
+/// Разойдись двое — вечный промах кэша по адресу, ровно тот класс
+/// дефектов, против которого стоит инвариант 4.
+pub fn clip_source_addr(c: &kt_model::ClipEvent) -> MediaId {
+    match c.r#gen {
+        Some(_) => gen_source_addr(c.id),
+        None => c.media,
+    }
+}
+
+/// Адрес источника генератора по событию.
+pub fn gen_source_addr(id: kt_model::ClipId) -> MediaId {
+    MediaId(kt_model::GEN_TAG | id.0)
+}
+
+/// Все генераторы ДОКУМЕНТА: корень и каждая лента, через ту же дверь
+/// выдачи клипов, что и рендер (`effective_reel` — морферы уже
+/// применены). Плеер, экспорт и kt-cli поднимают источники ровно по
+/// этому списку: второго перечисления быть не должно, иначе экспорт
+/// отрендерил бы не то, что показывало превью.
+pub fn gen_sources(project: &Project) -> Vec<(MediaId, kt_model::GenState)> {
+    let mut out = Vec::new();
+    let mut reel = |seq: Option<MediaId>| {
+        for c in project.effective_reel(seq).iter() {
+            if let Some(k) = &c.r#gen {
+                out.push((
+                    gen_source_addr(c.id),
+                    kt_model::GenState { kind: k.clone(), auto: c.gen_auto.clone() },
+                ));
+            }
+        }
+    };
+    reel(None);
+    for s in &project.sequences {
+        reel(Some(s.id));
+    }
+    out
+}
+
+/// Лента, В КОТОРОЙ лежит событие, и все её предки — по этому списку
+/// протухает мемоизация суб-композитов при перенастройке источника
+/// (Р.59, стадия 2).
+///
+/// Скрытый дефект, который здесь закрывается: правка титра ВНУТРИ ленты
+/// идёт по retune-полосе, проект при этом не меняется, а ключ мемо
+/// суб-композита — `content_hash` ленты — считается от МОДЕЛИ. Значит он
+/// не двигается, и лента продолжает отдавать картинку со старым текстом
+/// до первой правки плана. Сторож — t663.
+///
+/// Корень в список не входит: у него мемо нет, его композит собирается
+/// каждый кадр.
+pub fn reel_chain_of_clip(project: &Project, id: kt_model::ClipId) -> Vec<MediaId> {
+    let origin = kt_model::slice_origin(id).unwrap_or(id);
+    let Some(home) =
+        project.sequences.iter().find(|s| s.clips.iter().any(|c| c.id == origin)).map(|s| s.id)
+    else {
+        return Vec::new();
+    };
+    let mut chain = vec![home];
+    let mut i = 0;
+    while i < chain.len() {
+        let cur = chain[i];
+        i += 1;
+        for s in &project.sequences {
+            if !chain.contains(&s.id) && s.clips.iter().any(|c| c.media == cur) {
+                chain.push(s.id);
+            }
+        }
+    }
+    chain
 }
 
 /// Адрес ленты в кэше. Старший бит `MediaId` отдан вложениям (Р.50):

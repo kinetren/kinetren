@@ -69,6 +69,27 @@ pub fn can_retune(old: &str, new: &str) -> bool {
     GeneratorSource::info_for(&a) == GeneratorSource::info_for(&b)
 }
 
+/// Источник генератора по СОСТОЯНИЮ СОБЫТИЯ (Р.59, стадия 2).
+///
+/// Отдельная дверь рядом с `open_pseudo`: у генератора на событии пути
+/// со значениями больше нет — значения приходят из модели, а `gen:`-путь
+/// медиа несёт только вид. Все, кто поднимает источники (плеер, экспорт,
+/// kt-cli), зовут именно её, поэтому «что нарисует генератор» считается
+/// в одном месте.
+pub fn open_gen(state: &kt_model::GenState) -> Box<dyn MediaSource> {
+    Box::new(GeneratorSource::from_state(state.clone()))
+}
+
+/// Можно ли перевести ЖИВОЙ источник на новые ЗНАЧЕНИЯ без пересоздания.
+/// Близнец `can_retune` и обязан совпадать с `MediaSource::retune_gen`
+/// точь-в-точь (сторож — t660): расходись они, вызывающий либо зря гасит
+/// поток, либо считает перенастроенным то, что ею не было.
+pub fn can_retune_gen(old: &kt_model::GenState, new: &kt_model::GenState) -> bool {
+    // паспорт обязан остаться прежним: у SMPTE включение тона делает
+    // медиа звучащим, а это уже другой набор клипов на таймлайне
+    GeneratorSource::info_for(&old.kind) == GeneratorSource::info_for(&new.kind)
+}
+
 /// Открытие любого пути: псевдо — из фабрики, файл — FFmpeg с sidecar
 /// индекс-БД (пакетный индекс из БД при неизменном файле, тест 34).
 #[cfg(feature = "ffmpeg")]
@@ -120,6 +141,52 @@ mod tests {
         assert!(!can_retune("a.mp4", "b.mp4"));
         assert!(!can_retune("synth:ramp", "synth:sine:440"));
         assert!(!can_retune("gen:solid", "a.mp4"));
+    }
+
+    /// t660 (Р.59, стадия 2; близнец t499): предикат фабрики и
+    /// реализация источника не расходятся НИ НА ОДНОЙ паре СОСТОЯНИЙ.
+    ///
+    /// Разойдись они — вызывающий либо зря гасит поток декодера, либо
+    /// считает перенастроенным то, что ею не было, и картинка навсегда
+    /// остаётся старой.
+    #[test]
+    fn t660_can_retune_gen_equals_retune_gen() {
+        use kt_model::{GenState, GeneratorKind, TextAnim, text_anim_curves};
+        let mut states: Vec<GenState> =
+            GeneratorKind::all().into_iter().map(GenState::new).collect();
+        // вариации, меняющие паспорт и не меняющие его
+        states.push(GenState::new(GeneratorKind::Solid { color_r: 1, color_g: 2, color_b: 3 }));
+        states.push(GenState::new(GeneratorKind::SmpteBars { tone: true, tone_db: -12.0 }));
+        states.push(GenState::new(GeneratorKind::SmpteBars { tone: false, tone_db: -6.0 }));
+        states.push(GenState::new(GeneratorKind::Leader {
+            seconds: 3,
+            fps: 30,
+            beep: true,
+            beep_db: -20.0,
+        }));
+        // и состояние С КРИВЫМИ: паспорта они не трогают, значит
+        // перенастройка обязана их принимать
+        states.push(GenState {
+            kind: GeneratorKind::default_text(),
+            auto: text_anim_curves(TextAnim::Typewriter, 2.0, 2.0),
+        });
+
+        for a in &states {
+            for b in &states {
+                let predicate = can_retune_gen(a, b);
+                let actual = GeneratorSource::from_state(a.clone()).retune_gen(b);
+                assert_eq!(
+                    predicate,
+                    actual,
+                    "{} -> {}: предикат разошёлся с реализацией",
+                    a.kind.tag(),
+                    b.kind.tag()
+                );
+            }
+        }
+        // файловые источники значений генератора не принимают никогда
+        let mut synth = crate::synthetic::SyntheticSource::new(Tick(90_000), AudioPattern::Ramp);
+        assert!(!MediaSource::retune_gen(&mut synth, &states[0]));
     }
 
     /// t471b: маршрутизация фабрики — обе псевдо-схемы в любом регистре,

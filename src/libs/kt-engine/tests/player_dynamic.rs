@@ -17,6 +17,8 @@ fn base_project() -> Project {
     });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -78,6 +80,8 @@ fn t18_add_media_preserves_cache_coverage_and_transport() {
     let mut p2 = project.clone();
     p2.media.push(MediaRef { id: MediaId(2), path: "synth:2".into() });
     p2.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(2),
         link_group: None,
         kind: ClipKind::Audio,
@@ -269,6 +273,8 @@ fn t316_replace_media_updates_the_decode_stage() {
     });
     p.media.push(MediaRef { id: MediaId(1), path: "checker".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -325,6 +331,9 @@ fn t500_retune_keeps_worker_and_renderer() {
     // клип-генератор поверх аудио-клипа базового проекта
     project.media.push(MediaRef { id: MediaId(2), path: "gen:solid".into() });
     project.clips.push(ClipEvent {
+        // Р.59, стадия 2: значения — на СОБЫТИИ, источник стоит по его адресу
+        r#gen: Some(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
+        gen_auto: Vec::new(),
         id: ClipId(2),
         link_group: None,
         kind: ClipKind::Video,
@@ -343,25 +352,18 @@ fn t500_retune_keeps_worker_and_renderer() {
     });
     project.validate().unwrap();
 
-    let open_gen = |path: &str| -> Box<dyn kt_media::MediaSource> {
-        match kt_media::factory::open_pseudo(path) {
-            Some(Ok(s)) => s,
-            _ => unreachable!("gen: путь обязан открыться"),
-        }
-    };
+    // источник генератора поднимает САМ плеер (`sync_generators`): его
+    // адрес производен от события, и вызывающему его взять неоткуда
     let (player, _consumer) = Player::new(
         project,
-        vec![
-            (
-                MediaId(1),
-                Box::new(SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Dc { value: 1.0 })),
-            ),
-            (MediaId(2), open_gen("gen:solid")),
-        ],
+        vec![(
+            MediaId(1),
+            Box::new(SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Dc { value: 1.0 })),
+        )],
     );
     let q = kt_media::Quality { width: 64, height: 36 };
     player.set_preview_quality(q);
-    let sid = kt_engine::source_id(MediaId(2));
+    let sid = kt_engine::source_id(kt_engine::gen_source_addr(ClipId(2)));
     let idx = kt_engine::video::video_cache_idx(Tick(0));
 
     // прогреваем кадр чёрного генератора
@@ -386,11 +388,15 @@ fn t500_retune_keeps_worker_and_renderer() {
     let pver = player.project_version();
     let cver = player.content_version();
 
+    let orange = GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 };
     assert!(
-        kt_media::factory::can_retune("gen:solid", "gen:solid:c=ff8800"),
+        kt_media::factory::can_retune_gen(
+            &kt_model::GenState::new(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
+            &kt_model::GenState::new(orange.clone())
+        ),
         "цвет меняется без смены паспорта"
     );
-    assert!(player.retune_media(MediaId(2), "gen:solid:c=ff8800"));
+    assert!(player.update_gen(ClipId(2), orange, Vec::new()));
 
     assert_eq!(player.worker_spawns(), spawns, "поток декодера обязан остаться живым");
     assert_eq!(player.project_version(), pver, "рендереры пересобирать незачем: план тот же");
@@ -423,4 +429,84 @@ fn t500_retune_keeps_worker_and_renderer() {
     // и поток за всё это время так и не пересоздавался
     assert_eq!(player.worker_spawns(), spawns);
     assert_eq!(player.project_version(), pver);
+}
+
+/// Тест 661 (Р.59, стадия 2): правка ЗНАЧЕНИЯ генератора не пересобирает
+/// рендереры и не растит версию проекта.
+///
+/// Это и есть смысл всей стадии: адрес источника считается от СОБЫТИЯ, а
+/// не от значений, поэтому план от них не зависит — а `set_project` это
+/// клон всего проекта плюс остановка аудио-render-потока. До Р.53 такую
+/// цену платило каждое нажатие клавиши в поле титра; здесь то же правило
+/// закрепляется за новым носителем значений.
+#[test]
+fn t661_a_value_edit_does_not_rebuild_the_renderer() {
+    use kt_model::{Command, GeneratorKind, ParamCurve};
+
+    // закон П на уровне КОМАНД: исчерпывающий match в kt-model не даст
+    // забыть про новую команду, а здесь зафиксирован её ответ
+    let set = Command::SetClipGen {
+        id: ClipId(2),
+        kind: Some(GeneratorKind::Solid { color_r: 1, color_g: 1, color_b: 1 }),
+    };
+    let auto = Command::SetClipGenAuto { id: ClipId(2), auto: Vec::<ParamCurve>::new() };
+    assert!(!set.touches_render_plan(), "значения генератора плана не касаются");
+    assert!(!auto.touches_render_plan(), "кривые генератора разрешает ИСТОЧНИК, не план");
+    // а вот «применить ко всем» правит ДОКУМЕНТ — состав источников мог
+    // измениться, и звать её как правку значения нельзя
+    assert!(
+        Command::ApplyGenToAll {
+            media: MediaId(2),
+            kind: GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 },
+            auto: vec![],
+        }
+        .touches_render_plan()
+    );
+
+    // и то же самое у плеера: поток жив, версия проекта стоит
+    let mut project = base_project();
+    project.media.push(MediaRef { id: MediaId(2), path: "gen:solid".into() });
+    project.clips.push(ClipEvent {
+        r#gen: Some(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
+        gen_auto: Vec::new(),
+        id: ClipId(2),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(90_000 * 4),
+        source_in: Tick(0),
+        media: MediaId(2),
+        gain_db: 0.0,
+        reversed: false,
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        fx: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    project.validate().unwrap();
+    let (player, _consumer) = Player::new(
+        project,
+        vec![(
+            MediaId(1),
+            Box::new(SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Dc { value: 1.0 })),
+        )],
+    );
+    let spawns = player.worker_spawns();
+    let pver = player.project_version();
+    let cver = player.content_version();
+    assert!(player.update_gen(
+        ClipId(2),
+        GeneratorKind::Solid { color_r: 9, color_g: 9, color_b: 9 },
+        kt_model::text_anim_curves(kt_model::TextAnim::Typewriter, 1.0, 2.0),
+    ));
+    assert_eq!(player.worker_spawns(), spawns, "поток декодера пересоздавать незачем");
+    assert_eq!(player.project_version(), pver, "рендереры пересобирать незачем: план тот же");
+    assert!(player.content_version() > cver, "префетч обязан проснуться");
+    // хранимый проект остаётся правдивым: его читают экспорт и диагностика
+    let p = player.project();
+    let c = p.clips.iter().find(|c| c.id == ClipId(2)).unwrap();
+    assert!(matches!(c.r#gen, Some(GeneratorKind::Solid { color_r: 9, .. })));
+    assert!(!c.gen_auto.is_empty(), "кривые обязаны доехать до хранимого проекта");
 }

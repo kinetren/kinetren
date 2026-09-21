@@ -43,6 +43,8 @@ fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>) -> Project {
     });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,

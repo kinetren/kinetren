@@ -14,6 +14,8 @@ fn sample_project() -> Project {
     });
     p.media.push(MediaRef { id: MediaId(1), path: "clips/a.mp4".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(10),
         link_group: Some(GroupId(1)),
         kind: ClipKind::Video,
@@ -31,6 +33,8 @@ fn sample_project() -> Project {
         fx_off: false,
     });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(11),
         link_group: Some(GroupId(1)),
         kind: ClipKind::Audio,

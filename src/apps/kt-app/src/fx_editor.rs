@@ -24,12 +24,21 @@ pub struct FxEditor {
     /// Состояние КАЖДОЙ цепочки на момент открытия — «Отмена» откатывает
     /// всё окно, а не только якорь.
     pub backup: Vec<ChainSnapshot>,
+    /// Значения генератора на момент открытия (Р.59, стадия 2): у
+    /// события-генератора голова полосы — его ИСТОЧНИК, и «Отмена»
+    /// обязана возвращать и его, иначе окно откатывало бы половину своей
+    /// же сессии.
+    pub gen_backup: Vec<(ClipId, Option<GeneratorKind>, Vec<kt_model::ParamCurve>)>,
     pub gesture: u64,
-    /// Выбранный слот в каждой цепочке.
-    pub selected: std::collections::HashMap<ClipId, usize>,
+    /// Что выбрано в каждой цепочке: слот эффекта или приколотая голова.
+    pub selected: std::collections::HashMap<ClipId, crate::widgets::ChainSel>,
     /// Состояние виджета автоматизации на каждую (цепочку, слот):
     /// вид, выбранный ключ, незакоммиченный ввод времени.
     pub auto_views: std::collections::HashMap<(ClipId, usize), crate::automation::AutoView>,
+    /// То же для кривых ГЕНЕРАТОРА: у головы своего индекса слота нет.
+    pub gen_views: std::collections::HashMap<ClipId, crate::automation::AutoView>,
+    /// Кэш предупреждений титра на кадр (п.413).
+    pub gen_warn: std::collections::HashMap<ClipId, crate::gen_ui::GenWarn>,
     /// Момент, на кадре которого считаются миниатюры пикера (Р.54).
     /// Пока НЕ играем — следует за курсором (он неподвижен, картинка
     /// стабильна); при игре остаётся на последнем значении: пересчитывать
@@ -45,6 +54,52 @@ impl KtApp {
     /// Открыть окно FX. Окно, которое уже показывает эту цепочку (своим
     /// якорем или как партнёра), второй раз не открывается: у A/V-пары
     /// одно окно на обе дорожки.
+    /// Открыть окно эффектов события НА ГОЛОВЕ — то есть на форме его
+    /// источника (Р.59, стадия 2).
+    ///
+    /// Прежние окна генератора и титра исчезли: владелец просил видеть
+    /// генератор крошкой ПЕРЕД эффектами, в том же окне. Все входы
+    /// («Параметры генератора…» у события, у карточки бина, создание из
+    /// меню) ведут сюда — второго тела у этого действия нет (правило 17).
+    pub fn open_fx_editor_head(&mut self, clip: ClipId) {
+        self.open_fx_editor(clip);
+        if let Some(ed) = self.fx_editors.iter_mut().find(|e| e.members.contains(&clip)) {
+            ed.open = true;
+            ed.selected.insert(clip, crate::widgets::ChainSel::Head);
+        }
+    }
+
+    /// Окно эффектов МЕДИА-генератора: его правит первое событие на этом
+    /// медиа. Значения живут на СОБЫТИИ, поэтому «параметры медиа» без
+    /// события больше не существуют — и молчать об этом нельзя (правило
+    /// 16): вид меняется из карточки бина, а править нечего, пока
+    /// генератор не поставлен на монтаж.
+    pub fn open_generator_editor(&mut self, media: MediaId) {
+        let Some(kt_model::Source::File(m)) = self.model.project().source(media) else {
+            return;
+        };
+        let path = m.path.clone();
+        // не генератор (или вид новее сборки — заглушка): МОЛЧАТЬ нельзя
+        if kt_model::parse_gen_path(&path).is_none() {
+            self.note(crate::tf!(k::genw::UNKNOWN_KIND, path));
+            return;
+        }
+        // ищем в РАБОЧЕМ ВИДЕ: окно правит то, что человек видит на
+        // таймлайне, а события чужой (не раскрытой) ленты ему отсюда
+        // недоступны — к ним он идёт через саму ленту
+        let first = self
+            .model
+            .project()
+            .clips
+            .iter()
+            .find(|c| c.media == media && c.r#gen.is_some())
+            .map(|c| c.id);
+        match first {
+            Some(id) => self.open_fx_editor_head(id),
+            None => self.note(tr(k::genw::NO_EVENTS)),
+        }
+    }
+
     pub fn open_fx_editor(&mut self, clip: ClipId) {
         if self.fx_editors.iter().any(|e| e.members.contains(&clip)) {
             return;
@@ -68,18 +123,36 @@ impl KtApp {
             .filter_map(|id| self.model.clip(*id))
             .map(|m| (m.id, m.fx.clone(), m.fx_auto.clone(), m.fx_bypass.clone(), m.fx_off))
             .collect();
+        let gen_backup = members
+            .iter()
+            .filter_map(|id| self.model.clip(*id))
+            .map(|m| (m.id, m.r#gen.clone(), m.gen_auto.clone()))
+            .collect();
+        // у события-генератора с пустой цепочкой выбирать нечего, кроме
+        // головы: `Fx(0)` на пустой цепочке показал бы пустоту
         let selected = members
             .iter()
-            .filter_map(|id| self.model.clip(*id).map(|m| (m.id, m.fx.len().saturating_sub(1))))
+            .filter_map(|id| self.model.clip(*id))
+            .map(|m| {
+                let sel = if m.fx.is_empty() && m.r#gen.is_some() {
+                    crate::widgets::ChainSel::Head
+                } else {
+                    crate::widgets::ChainSel::Fx(m.fx.len().saturating_sub(1))
+                };
+                (m.id, sel)
+            })
             .collect();
         self.fx_editors.push(FxEditor {
             clip,
             members,
             picker_query: String::new(),
             backup,
+            gen_backup,
             gesture: self.gesture_counter,
             selected,
             auto_views: std::collections::HashMap::new(),
+            gen_views: std::collections::HashMap::new(),
+            gen_warn: std::collections::HashMap::new(),
             preview_t: None,
             opened_at: std::time::Instant::now(),
             open: true,
@@ -194,6 +267,16 @@ impl KtApp {
             auto: Option<Vec<Vec<kt_model::ParamCurve>>>,
             bypass: Option<Vec<bool>>,
             off: Option<bool>,
+            /// Значения генератора события (Р.59, стадия 2) — `SetClipGen`.
+            r#gen: Option<GeneratorKind>,
+            /// Его кривые — `SetClipGenAuto`.
+            gen_auto: Option<Vec<kt_model::ParamCurve>>,
+            /// Пресет титра ставит ВСЁ разом — и это СВОЙ шаг истории.
+            own_step: bool,
+            /// «Применить ко всем»: `ApplyGenToAll`, один шаг истории.
+            apply_all: bool,
+            /// Смена ВИДА генератора: свойство медиа, свой шаг истории.
+            switch_kind: Option<GeneratorKind>,
         }
         let mut edits: Vec<Edited> = Vec::new();
         let mut revert = false;
@@ -206,6 +289,14 @@ impl KtApp {
         // замок оси один на программу (Р.40 п.15)
         let axis_linked = self.auto_axis_linked;
         let mut axis_req = crate::automation::AxisReq::default();
+        // «мест: N» у генератора и путь бегущей строки — считаются ДО
+        // отрисовки: внутри ui-замыкания `&mut self` уже занят, а счётчик
+        // мест линейно обходит дерево и на кадр его считать незачем
+        let uses_of = self.media_uses();
+        let frame_size = {
+            let st = &self.model.project().settings;
+            (st.width, st.height)
+        };
         let mut open = ed.open;
         let members = ed.members.clone();
         // ---- контекст миниатюр пикера (Р.54, п.432) -------------------
@@ -292,8 +383,12 @@ impl KtApp {
             (crate::fx_thumbs::FxThumbBase::Pattern, None)
         } else {
             let warps = self.warp_maps();
+            // адрес ИСТОЧНИКА события, а не его медиа (Р.59, стадия 2):
+            // у генератора значения живут на событии, и кадр у каждого
+            // свой. Правило одно на программу — `clip_source_addr`.
+            let pv_src = kt_engine::clip_source_addr(&anchor);
             let key = crate::thumbs::ThumbKey {
-                media: anchor.media,
+                media: pv_src,
                 t: crate::thumbs::material_key_t(
                     anchor.source_in.0,
                     warps.get(&anchor.id),
@@ -311,13 +406,10 @@ impl KtApp {
                         // декода (механизм скраба бина, п.14 р.7)
                         self.thumbs.request_near(key, pv_step * 2);
                     }
-                    let poster = if decode_ok {
-                        self.thumbs.poster_t_or_request(anchor.media)
-                    } else {
-                        None
-                    };
+                    let poster =
+                        if decode_ok { self.thumbs.poster_t_or_request(pv_src) } else { None };
                     let pk = poster
-                        .map(|t| crate::thumbs::ThumbKey { media: anchor.media, t })
+                        .map(|t| crate::thumbs::ThumbKey { media: pv_src, t })
                         .and_then(|pk| self.thumbs.get(&pk).map(|img| (pk, img)));
                     match pk {
                         Some((pk, img)) => (crate::fx_thumbs::FxThumbBase::Thumb(pk), Some(img)),
@@ -351,6 +443,13 @@ impl KtApp {
                     let mut auto = clip.fx_auto.clone();
                     auto.resize(fx.len(), Vec::new());
                     let mut chain_on = !clip.fx_off;
+                    // ГОЛОВА полосы (Р.59, стадия 2): у события-генератора
+                    // это его ИСТОЧНИК, первой крошкой перед эффектами —
+                    // ровно как просил владелец. Значения правятся тут же,
+                    // в этом же окне; своего окна у генератора больше нет.
+                    let mut gen_kind = clip.r#gen.clone();
+                    let mut gen_auto = clip.gen_auto.clone();
+                    let mut gen_edit = crate::gen_ui::GenEdit::default();
                     let mut ch = crate::widgets::ChainChanged::default();
                     let mut params_changed = crate::widgets::ParamsChanged::default();
                     let head = crate::tf!(
@@ -371,11 +470,22 @@ impl KtApp {
                             // выбранный слот и строку поиска берём в
                             // локальные переменные: иначе два поля одного
                             // и того же `ed` одолжены одновременно
-                            // у цепочки события головы нет: выбор всегда
-                            // слот эффекта, поэтому индекс хранится как был
                             let mut sel_slot =
-                                crate::widgets::ChainSel::Fx(*ed.selected.get(id).unwrap_or(&0));
+                                *ed.selected.get(id).unwrap_or(&crate::widgets::ChainSel::Fx(0));
+                            // головы нет — выбирать её нечем: у события без
+                            // генератора она и не рисуется
+                            if gen_kind.is_none() {
+                                sel_slot = crate::widgets::ChainSel::Fx(sel_slot.fx().unwrap_or(0));
+                            }
                             let mut query = std::mem::take(&mut ed.picker_query);
+                            let head_slot = gen_kind.as_ref().map(|g| crate::widgets::HeadSlot {
+                                label: crate::tf!(k::genw::HEAD, crate::gen_ui::kind_name(g)),
+                                // выключателя у источника нет: выключенный
+                                // он оставил бы событие без картинки вовсе
+                                on: None,
+                                hint: tr(k::genw::HEAD_HINT),
+                                color: crate::theme::ACCENT,
+                            });
                             ch = crate::widgets::chain_strip(
                                 ui,
                                 ("fxchain", id.0),
@@ -385,7 +495,7 @@ impl KtApp {
                                     auto: &mut auto,
                                     selected: &mut sel_slot,
                                     master_on: &mut chain_on,
-                                    head: None,
+                                    head: head_slot,
                                     presets: crate::widgets::ChainPresets {
                                         rows: &preset_rows,
                                         save: &mut preset_save,
@@ -406,8 +516,41 @@ impl KtApp {
                                 if clip.kind == ClipKind::Audio { None } else { Some(&mut pv) },
                             );
                             ed.picker_query = query;
-                            let sel = sel_slot.fx().unwrap_or(0);
-                            ed.selected.insert(*id, sel);
+                            ed.selected.insert(*id, sel_slot);
+                            // ---- ГОЛОВА: форма источника (Р.59) --------
+                            if let (crate::widgets::ChainSel::Head, Some(g)) =
+                                (sel_slot, gen_kind.as_mut())
+                            {
+                                let gctx = crate::gen_ui::GenCtx {
+                                    clip: &clip,
+                                    uses: uses_of.get(&clip.media).copied().unwrap_or(1),
+                                    frame: frame_size,
+                                    frame_step,
+                                    playhead,
+                                    tl_view,
+                                    axis_linked,
+                                };
+                                let view = ed.gen_views.entry(*id).or_default();
+                                let warn = ed.gen_warn.entry(*id).or_default();
+                                gen_edit = crate::gen_ui::draw_gen_section(
+                                    ui,
+                                    &gctx,
+                                    g,
+                                    &mut gen_auto,
+                                    view,
+                                    warn,
+                                    &mut hover_out,
+                                );
+                                if let Some(t) = gen_edit.seek {
+                                    seek = Some(t);
+                                }
+                                // просьбы про ОСЬ собираются с ВСЕХ графиков
+                                // окна и применяются один раз (Р.40 п.15)
+                                axis_req.set_linked =
+                                    gen_edit.axis.set_linked.or(axis_req.set_linked);
+                                axis_req.set_view = gen_edit.axis.set_view.or(axis_req.set_view);
+                            }
+                            let sel = sel_slot.fx().unwrap_or(usize::MAX);
                             if let Some(f) = fx.get_mut(sel) {
                                 // параметры — ОДНИМ кодом по спекам модели
                                 // позиция курсора в домене кривой слота —
@@ -517,13 +660,23 @@ impl KtApp {
                             // про пустую цепочку говорит сама полоса —
                             // второй раз повторять не надо
                         });
-                    if ch.any() || params_changed.any() {
+                    if ch.any()
+                        || params_changed.any()
+                        || gen_edit.changed.any()
+                        || gen_edit.apply_all
+                        || gen_edit.switch_kind.is_some()
+                    {
                         edits.push(Edited {
                             clip: *id,
                             fx: (ch.fx || params_changed.base).then_some(fx),
                             auto: (ch.auto || params_changed.curve).then_some(auto),
                             bypass: ch.bypass.then_some(bypass),
                             off: ch.master.then_some(!chain_on),
+                            r#gen: gen_edit.changed.base.then_some(gen_kind).flatten(),
+                            gen_auto: gen_edit.changed.curve.then_some(gen_auto),
+                            own_step: gen_edit.preset,
+                            apply_all: gen_edit.apply_all,
+                            switch_kind: gen_edit.switch_kind,
                         });
                     }
                 }
@@ -595,11 +748,42 @@ impl KtApp {
                 self.apply_coalesced(Command::SetFxBypass { id, bypass }, ed.gesture);
                 self.apply_coalesced(Command::SetFxOff { id, off }, ed.gesture);
             }
+            // ...и ЗНАЧЕНИЯ ИСТОЧНИКА тоже: голова полосы — часть той же
+            // сессии окна, и откатывать половину её было бы ложью
+            for (id, kind, auto) in ed.gen_backup.clone() {
+                if self.model.clip(id).is_none_or(|c| c.r#gen == kind && c.gen_auto == auto) {
+                    continue;
+                }
+                self.apply_coalesced(Command::SetClipGen { id, kind: kind.clone() }, ed.gesture);
+                self.apply_coalesced(Command::SetClipGenAuto { id, auto }, ed.gesture);
+            }
             return;
         }
         for e in edits {
+            // Смена ВИДА — свойство МЕДИА и СВОЙ шаг истории (правило 20):
+            // один Ctrl+Z обязан отменять «случайно ткнул другой вид», а
+            // не всю работу в окне. Значения событий переодевает сама
+            // модель (`fit_gen_to_media`), поэтому команда одна.
+            if let Some(kind) = e.switch_kind {
+                let Some(media) = self.model.clip(e.clip).map(|c| c.media) else { continue };
+                self.gesture_counter += 1;
+                let g = self.gesture_counter;
+                self.apply_coalesced(
+                    Command::SetMediaPath { id: media, path: kt_model::gen_kind_path(&kind) },
+                    g,
+                );
+                continue;
+            }
+            // Пресет ставит ВСЁ (значения и кривые) — тоже свой шаг
+            // истории: нажал, не понравилось, один Ctrl+Z вернул набор.
+            let gesture = if e.own_step {
+                self.gesture_counter += 1;
+                self.gesture_counter
+            } else {
+                ed.gesture
+            };
             if let Some(fx) = e.fx {
-                self.set_fx_coalesced(e.clip, fx, ed.gesture);
+                self.set_fx_coalesced(e.clip, fx, gesture);
             }
             if let Some(mut auto) = e.auto {
                 // ключи держим отсортированными (модель это валидирует)
@@ -608,16 +792,45 @@ impl KtApp {
                         c.keys.sort_by_key(|k| k.t.0);
                     }
                 }
-                self.set_fx_auto_coalesced(e.clip, auto, ed.gesture);
+                self.set_fx_auto_coalesced(e.clip, auto, gesture);
             }
             if let Some(mut b) = e.bypass {
                 while b.last() == Some(&false) {
                     b.pop(); // хвостовые false не сериализуются зря
                 }
-                self.apply_coalesced(Command::SetFxBypass { id: e.clip, bypass: b }, ed.gesture);
+                self.apply_coalesced(Command::SetFxBypass { id: e.clip, bypass: b }, gesture);
             }
             if let Some(off) = e.off {
-                self.apply_coalesced(Command::SetFxOff { id: e.clip, off }, ed.gesture);
+                self.apply_coalesced(Command::SetFxOff { id: e.clip, off }, gesture);
+            }
+            // Значения генератора: команда ТОЛЬКО при реально изменившемся
+            // значении (п.200) — иначе ревизия росла бы каждый кадр жеста.
+            if let Some(kind) = e.r#gen
+                && self.model.clip(e.clip).is_some_and(|c| c.r#gen.as_ref() != Some(&kind))
+            {
+                self.apply_coalesced(Command::SetClipGen { id: e.clip, kind: Some(kind) }, gesture);
+            }
+            if let Some(mut auto) = e.gen_auto {
+                for c in auto.iter_mut() {
+                    c.keys.sort_by_key(|k| k.t.0);
+                }
+                if self.model.clip(e.clip).is_some_and(|c| c.gen_auto != auto) {
+                    self.apply_coalesced(Command::SetClipGenAuto { id: e.clip, auto }, gesture);
+                }
+            }
+            // «Применить ко всем» — ОТДЕЛЬНАЯ команда и отдельный шаг
+            // истории: правка одного события соседей не трогает, а этот
+            // жест трогает все и говорит об этом подписью.
+            if e.apply_all
+                && let Some(c) = self.model.clip(e.clip).cloned()
+                && let Some(kind) = c.r#gen.clone()
+            {
+                self.gesture_counter += 1;
+                let g = self.gesture_counter;
+                self.apply_coalesced(
+                    Command::ApplyGenToAll { media: c.media, kind, auto: c.gen_auto.clone() },
+                    g,
+                );
             }
         }
     }

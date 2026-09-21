@@ -17,7 +17,7 @@ mod font_tests;
 mod fx_editor;
 mod fx_registry;
 mod fx_thumbs;
-mod generator_editor;
+mod gen_ui;
 mod graphs;
 mod i18n;
 #[cfg(test)]
@@ -36,7 +36,6 @@ mod render_dialog;
 mod theme;
 mod thumbs;
 mod timeline;
-mod title_editor;
 mod toolbar;
 mod transition_editor;
 mod user_store;

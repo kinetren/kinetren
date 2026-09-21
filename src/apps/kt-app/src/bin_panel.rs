@@ -220,6 +220,8 @@ impl KtApp {
         let mut to_place: Option<MediaId> = None;
         let mut to_measure: Option<MediaId> = None;
         let mut to_gen: Option<MediaId> = None;
+        // смена ВИДА генератора из карточки (Р.59, стадия 2)
+        let mut to_kind: Option<(MediaId, kt_model::GeneratorKind)> = None;
         let mut to_remove: Option<MediaId> = None;
         let mut pending = false;
         let mut drag_out: Option<MediaId> = None;
@@ -300,6 +302,7 @@ impl KtApp {
                     &mut to_place,
                     &mut to_measure,
                     &mut to_gen,
+                    &mut to_kind,
                     &mut to_remove,
                 );
                 // перетаскивание внутри бина двигает карточку (и всю её
@@ -448,6 +451,7 @@ impl KtApp {
                         &mut to_place,
                         &mut to_measure,
                         &mut to_gen,
+                        &mut to_kind,
                         &mut to_remove,
                     );
                     if resp.dragged() {
@@ -473,6 +477,11 @@ impl KtApp {
         }
         if let Some(id) = to_gen {
             self.open_generator_editor(id);
+        }
+        if let Some((id, kd)) = to_kind {
+            // путь медиа несёт ТОЛЬКО ВИД, значения событий переодевает
+            // сама модель (`fit_gen_to_media`) — команда одна
+            self.apply(kt_model::Command::SetMediaPath { id, path: kt_model::gen_kind_path(&kd) });
         }
         if let Some(id) = to_place {
             self.place_media_at_cursor(id);
@@ -537,7 +546,7 @@ impl KtApp {
             ui.separator();
             // генераторы (Р.52) — ТО ЖЕ ТЕЛО, что в главном меню
             // (правило 17): второго списка видов не бывает
-            if let Some(kd) = crate::generator_editor::generator_menu(ui) {
+            if let Some(kd) = crate::gen_ui::generator_menu(ui) {
                 new_gen = Some(kd);
             }
             // ПУСТАЯ ЛЕНТА (Р.55, С6). До этого раунда `AddSequence`
@@ -729,6 +738,7 @@ impl KtApp {
         to_place: &mut Option<MediaId>,
         to_measure: &mut Option<MediaId>,
         to_gen: &mut Option<MediaId>,
+        to_kind: &mut Option<(MediaId, kt_model::GeneratorKind)>,
         to_remove: &mut Option<MediaId>,
     ) -> egui::Response {
         let is_reel = reels.contains(&id);
@@ -739,7 +749,7 @@ impl KtApp {
             path.to_string()
         } else {
             match &gen_kind {
-                Some(kd) => crate::generator_editor::kind_name(kd).to_string(),
+                Some(kd) => crate::gen_ui::kind_name(kd).to_string(),
                 None => std::path::Path::new(path)
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
@@ -813,8 +823,22 @@ impl KtApp {
         }
         let kinds = if is_reel { None } else { self.thumbs.kinds(id) };
         let audio_only = kinds == Some((false, true));
+        // ВИД С УМОЛЧАНИЯМИ даёт пустой кадр (Р.59, стадия 2): значения
+        // переехали на событие, и у титра умолчание — пустая строка.
+        // Чёрный прямоугольник тут был бы молчанием о том, что показать
+        // нечего, — пишем ИМЯ ВИДА (правило 16).
+        let blank_gen = gen_kind.as_ref().is_some_and(crate::gen_ui::blank_default);
         if is_reel {
             // всё уже нарисовано выше
+        } else if blank_gen {
+            crate::widgets::field_probe::note("bin.gen.name", thumb_rect);
+            p.text(
+                thumb_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                &name,
+                egui::FontId::proportional(12.0),
+                ui.visuals().weak_text_color(),
+            );
         } else if audio_only {
             self.draw_bin_waveform(&p, thumb_rect, id);
         } else if !is_synth && !is_off {
@@ -950,10 +974,18 @@ impl KtApp {
             }
             if gen_kind.is_some() {
                 // у генератора вместо замера громкости (мерить нечего:
-                // аудио нет) — его окно параметров; тот же пункт, что в
-                // меню события на таймлайне (правило 17)
+                // аудио нет) — форма параметров его события; тот же
+                // пункт, что в меню события на таймлайне (правило 17)
                 if ui.button(tr(k::tl::menu::GEN_PARAMS)).clicked() {
                     *to_gen = Some(id);
+                    ui.close();
+                }
+                // ВИД — свойство медиа, и менять его можно даже когда
+                // событий на монтаже ещё нет (значений у медиа больше
+                // нет, а вид есть). Список видов ОДИН на все входы —
+                // то же тело, что у создания (правило 17).
+                if let Some(kd) = crate::gen_ui::generator_kind_menu(ui, tr(k::genw::CHANGE_KIND)) {
+                    *to_kind = Some((id, kd));
                     ui.close();
                 }
             } else if ui.button(tr(k::bin::menu::MEASURE_LOUDNESS)).clicked() {

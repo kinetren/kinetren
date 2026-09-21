@@ -474,7 +474,10 @@ impl AudioRenderer {
                     source_in: c.source_in.to_audio_frames(),
                     lane: c.lane,
                     gain: db_to_linear(c.gain_db),
-                    media: c.media,
+                    // адрес ИСТОЧНИКА, а не медиа (Р.59, стадия 2): у
+                    // звучащего генератора (SMPTE с тоном, отсчёт с
+                    // биипом) значения на событии, значит и поток свой
+                    media: crate::clip_source_addr(c),
                     addr: kt_fx::chain_addr_knots(&active, &auto, (end - start).max(1))
                         .map(std::sync::Arc::new),
                     fx: active,

@@ -1468,6 +1468,8 @@ pub fn collapse_into_sequence(
             cmds.push(Command::NoteBirth { child: id, parent });
         }
         cmds.push(Command::AddClip(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id,
             link_group: group,
             kind: k,
@@ -1871,6 +1873,8 @@ pub fn import_as_sequences(
         let id = ClipId(*n.clip);
         *n.clip += 1;
         cmds.push(Command::AddClip(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id,
             link_group: group,
             kind: k,

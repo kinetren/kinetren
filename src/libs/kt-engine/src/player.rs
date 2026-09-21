@@ -165,6 +165,11 @@ pub struct Player {
     content_version: Arc<AtomicU64>,
     /// Счётчик поднятых потоков-декодеров (сторож t500/t502).
     worker_spawns: Arc<AtomicU64>,
+    /// Значения генераторов, которые СЕЙЧАС стоят в живых источниках
+    /// (Р.59, стадия 2). Спрашивать их у самих источников нельзя —
+    /// ими эксклюзивно владеет поток воркера (инвариант 5), — а диф
+    /// «что изменилось» нужен здесь.
+    gen_states: Mutex<HashMap<MediaId, kt_model::GenState>>,
     /// Кэш графа для sample_levels_at (п.1): (версия, renderer, store).
     levels_probe: Mutex<Option<(u64, AudioRenderer, FxStateStore)>>,
     pub loop_stats: Arc<LoopStats>,
@@ -325,14 +330,23 @@ impl Player {
             project_version,
             content_version,
             worker_spawns,
+            gen_states: Mutex::new(HashMap::new()),
             loop_stats,
             levels_probe: Mutex::new(None),
         };
+        // источники генераторов поднимает САМ плеер: их адреса
+        // производны от событий, и вызывающему их взять неоткуда
+        let p = player.project.lock().unwrap().clone();
+        player.sync_generators(&p);
         (player, consumer)
     }
 
     pub fn set_project(&self, p: Project) {
         self.project_version.fetch_add(1, Ordering::AcqRel);
+        // состав генераторов — функция ПРОЕКТА, и считать её обязан тот,
+        // кто проект принимает: адреса производны от событий, и
+        // вызывающему их взять неоткуда
+        self.sync_generators(&p);
         self.wake_after_project_swap(p);
     }
 
@@ -538,6 +552,113 @@ impl Player {
         self.content_version.fetch_add(1, Ordering::AcqRel);
         self.wake.notify();
         true
+    }
+
+    /// Привести ИСТОЧНИКИ ГЕНЕРАТОРОВ в соответствие проекту (Р.59,
+    /// стадия 2).
+    ///
+    /// Диф по АДРЕСУ: появившийся генератор получает поток, исчезнувший
+    /// его теряет, у оставшегося значения доезжают перенастройкой — поток
+    /// жив, кэш чужих источников цел, рендереры не пересобираются.
+    /// Пересоздание остаётся ровно на один случай: паспорт источника
+    /// изменился (SMPTE со включённым тоном становится ЗВУЧАЩИМ медиа, а
+    /// это уже другой набор клипов), и тогда `can_retune_gen` честно
+    /// говорит «нет».
+    pub fn sync_generators(&self, p: &Project) {
+        let wanted = crate::gen_sources(p);
+        let want_ids: std::collections::HashSet<MediaId> =
+            wanted.iter().map(|(id, _)| *id).collect();
+        let stale: Vec<MediaId> = self
+            .workers
+            .read()
+            .unwrap()
+            .keys()
+            .filter(|m| m.0 & kt_model::GEN_TAG != 0 && !want_ids.contains(m))
+            .copied()
+            .collect();
+        for m in stale {
+            self.remove_media(m);
+            self.cache.invalidate_source(kt_cache::SourceId(m.0));
+        }
+        for (addr, state) in wanted {
+            let live = self.gen_states.lock().unwrap().get(&addr).cloned();
+            match live {
+                Some(old) if old == state => {}
+                Some(old) if kt_media::factory::can_retune_gen(&old, &state) => {
+                    self.update_gen_at(addr, state, Vec::new());
+                }
+                Some(_) => {
+                    self.gen_states.lock().unwrap().insert(addr, state.clone());
+                    self.replace_media(addr, kt_media::factory::open_gen(&state));
+                }
+                None => {
+                    self.gen_states.lock().unwrap().insert(addr, state.clone());
+                    self.add_media(addr, kt_media::factory::open_gen(&state));
+                }
+            }
+        }
+    }
+
+    /// Новые ЗНАЧЕНИЯ генератора одного события — без пересборки
+    /// рендереров и без бампа версии проекта (Р.59, стадия 2; тот же
+    /// закон П, что у `set_media_path`).
+    ///
+    /// `project` нужен, чтобы узнать ЛЕНТЫ-ПРЕДКИ события: их
+    /// суб-композиты мемоизированы по `content_hash` модели, а модель
+    /// правкой значений не двигается — без явной инвалидации лента
+    /// продолжала бы отдавать старую картинку.
+    pub fn update_gen(
+        &self,
+        clip: kt_model::ClipId,
+        kind: kt_model::GeneratorKind,
+        auto: Vec<kt_model::ParamCurve>,
+    ) -> bool {
+        let addr = crate::gen_source_addr(clip);
+        let state = kt_model::GenState { kind, auto };
+        let live = self.gen_states.lock().unwrap().get(&addr).cloned();
+        match live {
+            Some(old) if !kt_media::factory::can_retune_gen(&old, &state) => false,
+            Some(_) => {
+                // значения хранимого проекта обязаны остаться правдивыми:
+                // `Player::project()` читают экспорт и диагностика
+                let mut p = self.project.lock().unwrap();
+                let put = |cs: &mut Vec<kt_model::ClipEvent>| {
+                    for c in cs.iter_mut().filter(|c| c.id == clip) {
+                        c.r#gen = Some(state.kind.clone());
+                        c.gen_auto = state.auto.clone();
+                    }
+                };
+                put(&mut p.clips);
+                for i in 0..p.sequences.len() {
+                    let mut cs = std::mem::take(&mut p.sequences[i].clips);
+                    put(&mut cs);
+                    p.sequences[i].clips = cs;
+                }
+                let stale: Vec<kt_cache::SourceId> = crate::reel_chain_of_clip(&p, clip)
+                    .into_iter()
+                    .map(crate::nest_source_id)
+                    .collect();
+                drop(p);
+                self.update_gen_at(addr, state, stale);
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn update_gen_at(
+        &self,
+        addr: MediaId,
+        state: kt_model::GenState,
+        stale: Vec<kt_cache::SourceId>,
+    ) {
+        self.gen_states.lock().unwrap().insert(addr, state.clone());
+        let workers = self.workers.read().unwrap();
+        let Some(w) = workers.get(&addr) else { return };
+        w.retune_gen(state, stale);
+        drop(workers);
+        self.content_version.fetch_add(1, Ordering::AcqRel);
+        self.wake.notify();
     }
 
     /// Попросить кадр у воркера напрямую (Р.53): тот же продуктовый

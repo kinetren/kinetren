@@ -342,7 +342,7 @@ impl KtApp {
             // ТО ЖЕ ТЕЛО, что в меню пустого места бина (правило 17).
             // До Р.55 генератор создавался ТОЛЬКО оттуда, и найти этот
             // вход человек не смог — претензия 8 раунда дословно.
-            if let Some(kd) = crate::generator_editor::generator_menu(ui) {
+            if let Some(kd) = crate::gen_ui::generator_menu(ui) {
                 self.create_generator(kd);
                 ui.close();
             }

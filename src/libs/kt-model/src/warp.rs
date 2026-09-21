@@ -1220,6 +1220,8 @@ mod signed_tests {
         use crate::{ClipEvent, ClipId, ClipKind, FrameMode, FxInstance, MediaId};
         let dur = Tick(360_000);
         let mk = |rate: f64, reversed: bool| ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Audio,

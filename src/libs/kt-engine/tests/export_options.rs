@@ -20,6 +20,8 @@ fn tiny_project() -> Project {
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     for (id, kind, lane) in [(1u64, ClipKind::Video, 0u32), (2, ClipKind::Audio, 0)] {
         p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(id),
             link_group: Some(GroupId(1)),
             kind,
@@ -146,6 +148,8 @@ fn t33_exported_file_contains_every_frame() {
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     for (id, kind, lane) in [(1u64, ClipKind::Video, 0u32), (2, ClipKind::Audio, 0)] {
         p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(id),
             link_group: Some(GroupId(1)),
             kind,

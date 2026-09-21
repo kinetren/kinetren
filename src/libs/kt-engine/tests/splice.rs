@@ -36,6 +36,8 @@ fn t19_copy_region_fragment_paste_renders_identically() {
     });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -105,6 +107,8 @@ fn t19_two_fragments_pasted_back_to_back_are_seamless() {
     });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,

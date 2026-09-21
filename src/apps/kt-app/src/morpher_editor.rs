@@ -447,8 +447,9 @@ impl KtApp {
                         master_on: &mut enabled,
                         head: Some(crate::widgets::HeadSlot {
                             label: head_label(&ev.patch, &media_names),
-                            on: &mut src_on,
+                            on: Some(&mut src_on),
                             hint: tr(k::mrph::SRC_SLOT_HINT),
+                            color: crate::theme::MORPH_SLOT,
                         }),
                     },
                     false,

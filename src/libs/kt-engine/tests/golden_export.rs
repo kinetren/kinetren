@@ -44,6 +44,8 @@ fn golden_project() -> Project {
     p.clips = vec![
         // конкатенация встык (ramp продолжает источник)
         ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Audio,
@@ -64,6 +66,8 @@ fn golden_project() -> Project {
         // переход (окно то же) — байты рендера обязаны совпасть со старым
         // GOLDEN (краеугольная проверка конверсии, т.136)
         ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(2),
             link_group: None,
             kind: ClipKind::Audio,
@@ -82,6 +86,8 @@ fn golden_project() -> Project {
         },
         // кроссфейд: DC через переход со вторым ramp-клипом
         ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(3),
             link_group: None,
             kind: ClipKind::Audio,
@@ -100,6 +106,8 @@ fn golden_project() -> Project {
         },
         // slowed с автоматизацией + реверб на отдельной дорожке
         ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(4),
             link_group: None,
             kind: ClipKind::Audio,
@@ -152,6 +160,8 @@ fn golden_project() -> Project {
         },
         // видео: два слоя с перекрытием (z-композит)
         ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(5),
             link_group: None,
             kind: ClipKind::Video,
@@ -169,6 +179,8 @@ fn golden_project() -> Project {
             fx_off: false,
         },
         ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(6),
             link_group: None,
             kind: ClipKind::Video,
@@ -393,8 +405,11 @@ fn generator_project() -> (Project, Sources) {
         pitch_engine: Default::default(),
     });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:dc:0.25".into() });
-    p.media.push(MediaRef { id: MediaId(2), path: "gen:solid:c=ff8800".into() });
+    // Р.59, стадия 2: в пути медиа — ВИД, значения на событии
+    p.media.push(MediaRef { id: MediaId(2), path: "gen:solid".into() });
     let clip = |id: u64, lane: u32, start: i64, dur: i64, media: u64| ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,
@@ -412,18 +427,14 @@ fn generator_project() -> (Project, Sources) {
         fx_off: false,
     };
     // фон — вся сцена; solid входит на 30_000 (кадр №10) верхним слоем
-    p.clips = vec![clip(1, 1, 0, 90_000, 1), clip(2, 0, 30_000, 60_000, 2)];
+    let mut g2 = clip(2, 0, 30_000, 60_000, 2);
+    g2.r#gen = Some(kt_model::GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 });
+    p.clips = vec![clip(1, 1, 0, 90_000, 1), g2];
     p.validate().unwrap();
+    // источник генератора открывает САМ экспорт (Р.59, стадия 2): его
+    // адрес производен от события, и вызывающему его взять неоткуда
     let sources: Sources =
-        vec![
-            (MediaId(1), Box::new(SyntheticSource::new(Tick(90_000), AudioPattern::Silence))),
-            (
-                MediaId(2),
-                Box::new(kt_media::generator::GeneratorSource::new(
-                    kt_model::GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 },
-                )),
-            ),
-        ];
+        vec![(MediaId(1), Box::new(SyntheticSource::new(Tick(90_000), AudioPattern::Silence)))];
     (p, sources)
 }
 
@@ -469,6 +480,10 @@ fn t479_generator_preview_equals_export() {
     let t = Tick(target as i64 * 3000);
     let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         sources.into_iter().collect();
+    // превью поднимает источники генераторов тем же списком, что экспорт
+    for (addr, state) in kt_engine::gen_sources(&p) {
+        srcs.insert(addr, kt_media::factory::open_gen(&state));
+    }
     for (media, src_pts, q) in video.layers_at(t, q) {
         let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(q)).unwrap();
         cache.insert_video(

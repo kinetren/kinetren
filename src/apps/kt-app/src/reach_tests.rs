@@ -324,6 +324,8 @@ fn scene(
         let mut p = app.model.project().clone();
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Video,
@@ -341,12 +343,16 @@ fn scene(
             fx_off: false,
         });
         if e == E::Generator {
-            // событие-генератор: своё медиа с `gen:`-путём и клип по нему
-            p.media.push(MediaRef { id: MediaId(200), path: "gen:solid:c=ff8800".into() });
+            // событие-генератор: медиа несёт ТОЛЬКО ВИД, а ЗНАЧЕНИЯ живут
+            // на событии (Р.59, стадия 2) — иначе `validate` отвергает
+            // сцену, и это правильно: без значений генератору нечего
+            // рисовать
+            p.media.push(MediaRef { id: MediaId(200), path: "gen:solid".into() });
             let mut genclip = p.clips[0].clone();
             genclip.id = ClipId(4);
             genclip.media = MediaId(200);
             genclip.start = Tick(600_000);
+            genclip.r#gen = Some(GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 });
             p.clips.push(genclip);
         }
         if e == E::Nest {
@@ -630,6 +636,8 @@ fn t254_click_is_a_click() {
     let mut p = app.model.project().clone();
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -654,7 +662,7 @@ fn t254_click_is_a_click() {
 
     // целимся в НЕ выбранный сейчас слот, каким бы ни было умолчание окна
     let sel_of = |h: &egui_kittest::Harness<'_, crate::app::KtApp>| {
-        h.state().fx_editors[0].selected.get(&ClipId(1)).copied().unwrap_or(0)
+        h.state().fx_editors[0].selected.get(&ClipId(1)).and_then(|s| s.fx()).unwrap_or(0)
     };
     let was = sel_of(&h);
     let want = 1 - was;
@@ -716,6 +724,8 @@ fn t547_gallery_click_reaches_the_model() {
     let mut p = app.model.project().clone();
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -1006,6 +1016,8 @@ fn picker_harness(
     let mut p = app.model.project().clone();
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind,
@@ -1240,6 +1252,8 @@ fn strip_metrics(file: &str) -> (f32, Vec<PaintedText>) {
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.media.push(MediaRef { id: MediaId(2), path: format!("/tmp/{file}") });
     p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -1551,14 +1565,14 @@ fn t560_generator_is_reachable_from_the_main_menu() {
     let toolbar =
         std::fs::read_to_string(root.join("apps/kt-app/src/toolbar.rs")).expect("нет toolbar.rs");
     assert!(
-        toolbar.contains("generator_editor::generator_menu(ui)"),
+        toolbar.contains("gen_ui::generator_menu(ui)"),
         "в главном меню нет пункта «Создать генератор…» — единственным входом \
          остался правый клик по пустому фону бина, а его человек не нашёл"
     );
     let bin = std::fs::read_to_string(root.join("apps/kt-app/src/bin_panel.rs"))
         .expect("нет bin_panel.rs");
     assert!(
-        bin.contains("generator_editor::generator_menu(ui)"),
+        bin.contains("gen_ui::generator_menu(ui)"),
         "меню бина строит свой список видов — разойдись они, новый вид появился бы \
          в одном входе и не появился в другом (правило 17)"
     );
@@ -1791,13 +1805,13 @@ fn t508_every_param_has_a_label() {
         }
     };
     for k in kt_model::GeneratorKind::all() {
-        let mut covered: Vec<&str> = crate::generator_editor::color_groups(&k)
+        let mut covered: Vec<&str> = crate::gen_ui::color_groups(&k)
             .iter()
             .flat_map(|(_, names)| names.iter().copied())
             .collect();
         // четвёртая компонента (альфа фигур, Р.53 п.419) закрыта той же
         // пипеткой — окно передаёт её в `color_row` отдельным параметром
-        covered.extend(crate::generator_editor::color_alpha(&k));
+        covered.extend(crate::gen_ui::color_alpha(&k));
         check(k.tag(), &k, &covered);
     }
     // у переходов цвет рисует своя пипетка (окно перехода, Р.33 С4)
@@ -1928,4 +1942,89 @@ fn t637c_gesture_time_floor_is_never_a_bare_zero() {
     // и оба правила в файле действительно есть
     assert!(src.contains("time_floor()"), "events lost their time floor");
     assert!(src.contains("CURSOR_FLOOR"), "the cursor floor lost its name");
+}
+
+/// Тест 669 (Р.59, стадия 2): картинки генератора берутся по АДРЕСУ
+/// СОБЫТИЯ, а вид без картинки называет себя.
+///
+/// Значения переехали на событие, и у медиа их больше нет: спроси
+/// филмстрип `c.media` — и он покажет умолчания вида, то есть чёрный
+/// прямоугольник вместо набранного титра. Правило одно на программу —
+/// `kt_engine::clip_source_addr`, и оно же держит инвариант 4 («заказ ==
+/// чтение»).
+///
+/// Вторая половина — правило 16: у карточки бина вид с умолчаниями
+/// законно даёт ПУСТОЙ кадр (у титра умолчание — пустая строка), и
+/// молчать об этом нельзя: карточка пишет имя вида прямо в тумбе.
+#[test]
+fn t669_generator_thumbs_follow_the_event_address() {
+    use kt_model::GeneratorKind;
+
+    // 1) предикат «кадра не будет» честен
+    assert!(crate::gen_ui::blank_default(&GeneratorKind::default_text()));
+    assert!(crate::gen_ui::blank_default(&GeneratorKind::Transparent));
+    assert!(!crate::gen_ui::blank_default(&GeneratorKind::Solid {
+        color_r: 255,
+        color_g: 136,
+        color_b: 0
+    }));
+
+    // 2) филмстрип и полоска прогретости спрашивают АДРЕС СОБЫТИЯ
+    let root = workspace_root();
+    for (rel, what) in [
+        ("apps/kt-app/src/timeline.rs", "филмстрип"),
+        ("apps/kt-app/src/app.rs", "полоска прогретости"),
+        ("apps/kt-app/src/fx_editor.rs", "кадр-основа галереи"),
+    ] {
+        let src = strip_comments(&std::fs::read_to_string(root.join(rel)).expect(rel));
+        assert!(
+            src.contains("clip_source_addr"),
+            "{what} ({rel}) спрашивает медиа события, а не его ИСТОЧНИК: \
+             у генератора значения живут на событии, и медиа знает только вид"
+        );
+    }
+
+    // 3) источник тумб события поднят по этому адресу и знает ЗНАЧЕНИЯ
+    let (mut h, _g) = crate::layout_tests::harness_three_clips_dt(Some(0.02));
+    let made = GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 };
+    h.state_mut().create_generator(made.clone());
+    h.step();
+    let (media, clip) = crate::layout_tests::made_generator(&h);
+    let addr = kt_engine::gen_source_addr(clip);
+    assert_ne!(addr, media, "адрес источника события обязан отличаться от адреса медиа");
+    let _ = h.state().thumbs.duration_or_probe(addr);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if let Some((v, a)) = h.state().thumbs.kinds(addr) {
+            assert!(v && !a, "источник события генератора — видео без аудио");
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "тумб-источник события так и не поднялся: филмстрип генератора останется пустым"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        h.step();
+    }
+    assert_eq!(
+        h.state().gen_states.get(&clip).map(|s| s.kind.clone()),
+        Some(made),
+        "снимок источника обязан нести ЗНАЧЕНИЯ события"
+    );
+
+    // 4) карточка пустого вида пишет ИМЯ ВИДА прямо в тумбе
+    h.state_mut().create_generator(GeneratorKind::default_text());
+    for _ in 0..4 {
+        h.step();
+    }
+    let text_media = h.state().model.project().media.last().unwrap().id;
+    let card = h.state().bin_card_rect(text_media).expect("карточка титра не нарисована");
+    let want = crate::gen_ui::kind_name(&GeneratorKind::default_text());
+    let inside =
+        painted_texts(&h).into_iter().any(|t| t.src == want && card.contains(t.rect.center()));
+    assert!(
+        inside,
+        "карточка вида без кадра осталась ЧЁРНЫМ прямоугольником — \
+         невозможность показать картинку обязана быть видна (правило 16)"
+    );
 }

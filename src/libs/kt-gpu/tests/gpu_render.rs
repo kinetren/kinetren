@@ -28,6 +28,8 @@ fn project() -> Project {
     }
     let sec = 90_000i64;
     let clip = |id: u64, lane: u32, start: i64, dur: i64, media: u64, opacity: f32| ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,
@@ -235,6 +237,8 @@ fn nested_project(outer_fx: Vec<FxInstance>, outer_opacity: f32) -> Project {
         p.media.push(MediaRef { id: MediaId(id), path: "synth:ramp".into() });
     }
     let ev = |id: u64, lane: u32, start: i64, dur: i64, media: u64, opacity: f32| ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,
@@ -396,8 +400,11 @@ fn t496_gpu_frame_identity_follows_content() {
         pitch_engine: Default::default(),
     });
     let solid = |r: u8| GeneratorKind::Solid { color_r: r, color_g: 0, color_b: 0 };
-    p.media.push(MediaRef { id: MediaId(1), path: format_gen_path(&solid(32)) });
+    p.media.push(MediaRef { id: MediaId(1), path: kt_model::gen_kind_path(&solid(32)) });
     p.clips.push(ClipEvent {
+        // Р.59, стадия 2: значения — на СОБЫТИИ
+        r#gen: Some(solid(32)),
+        gen_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -421,7 +428,7 @@ fn t496_gpu_frame_identity_follows_content() {
         let frame = src.read_video_frame(Tick(0), Some(q)).unwrap();
         // ТОТ ЖЕ адрес: источник, индекс и размер не меняются
         cache.insert_video(
-            kt_engine::source_id(MediaId(1)),
+            kt_engine::source_id(kt_engine::gen_source_addr(ClipId(1))),
             Some(q),
             kt_engine::video::video_cache_idx(Tick(0)),
             frame.into(),

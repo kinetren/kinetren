@@ -34,6 +34,8 @@ fn project(clips: Vec<ClipEvent>) -> Project {
 
 fn clip(id: u64, start_f: i64, dur_f: i64, src_in_f: i64, media: u64) -> ClipEvent {
     ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Audio,

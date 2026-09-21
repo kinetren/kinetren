@@ -1,19 +1,30 @@
 //! Генераторы медиа (Р.52, F-TXT-003 + F-TXT-001): медиа, у которого нет
-//! файла — картинку считает источник. Параметры генератора — функция
-//! МЕДИА, а не клипа (кэш движка ключуется MediaId), поэтому они живут в
-//! `MediaRef.path` строкой `gen:<вид>[:<ключ>=<знач>]*` — как тестовая
-//! схема `synth:`, ноль новых полей в модели и в kt-секции. Здесь —
-//! ЕДИНСТВЕННЫЙ словарь видов и ЕДИНСТВЕННЫЙ разбор/сборка пути: разбор
-//! `synth:` был продублирован в kt-app и kt-cli и уже расходился по
+//! файла — картинку считает источник.
+//!
+//! **Значения параметров живут на СОБЫТИИ (Р.59, стадия 2).** До этого
+//! раунда они лежали строкой в `MediaRef.path`, то есть были функцией
+//! МЕДИА: два титра на одну запись бина физически не могли нести разный
+//! текст, и «поменять заголовок во втором выпуске» было некуда записать.
+//! Теперь в пути остаётся ТОЛЬКО ВИД (`gen_kind_path`: `gen:text`,
+//! `gen:table:tb=grey`) — он и есть «что это за медиа» и кэш-полоска
+//! (решение Р.53 в силе), а значения и их кривые — `ClipEvent.gen` и
+//! `ClipEvent.gen_auto`. Разбор старых полных путей остаётся здесь же
+//! (`parse_gen_path_full`) и служит миграции.
+//!
+//! Здесь — ЕДИНСТВЕННЫЙ словарь видов и ЕДИНСТВЕННЫЙ разбор/сборка пути:
+//! разбор `synth:` был продублирован в kt-app и kt-cli и уже расходился по
 //! регистру (сноска п.211), поэтому разбор регистронезависимый, а вторых
 //! парсеров не бывает. Рендерит кадры kt-media (`GeneratorSource`),
 //! формат обмена — kt-otio (`GeneratorReference.1`).
 
+use std::borrow::Cow;
+
+use kt_time::Tick;
 use serde::{Deserialize, Serialize};
 
 use crate::project::{
-    FlagSpec, HasParams, ParamKind, ParamScope, ParamSpec, ParamUnit, flags_for, fx_cast,
-    params_for,
+    FlagSpec, HasParams, ParamCurve, ParamKind, ParamScope, ParamSpec, ParamUnit, apply_curves,
+    flags_for, fx_cast, params_for,
 };
 
 /// Вид генератора с параметрами. Serde-представление (internally tagged
@@ -107,14 +118,23 @@ pub enum GeneratorKind {
         plate_a: u8,
         #[serde(default = "default_order")]
         order: [TextLayer; 4],
-        /// Анимация титра (Р.53, пп.423-424). Времени в kt-text нет:
-        /// kt-media считает из pts материала ДВА числа — долю раскрытия
-        /// и смещение блока, — и передаёт их растеризатору.
+        /// Доля раскрытия кластеров 0..1 (Р.53, п.423 — теперь ЧИСЛО, а
+        /// не режим). Пять прежних зашитых анимаций стали пресетами в
+        /// приложении: оно ставит на эти четыре числа обычные кривые, и
+        /// «печатная машинка» перестала быть особым случаем движка.
+        #[serde(default = "default_one")]
+        reveal: f64,
+        /// Ширина фронта раскрытия В КЛАСТЕРАХ: 0 — жёсткий срез,
+        /// 1 — буква успевает проявиться (прежний режим «мягко»).
         #[serde(default)]
-        anim: TextAnim,
-        /// Длительность раскрытия или полного прохода, СЕКУНДЫ.
-        #[serde(default = "default_anim_secs")]
-        anim_secs: f64,
+        reveal_soft: f64,
+        /// Смещение всего блока в долях ШИРИНЫ кадра (и высоты у `y`):
+        /// доля, а не пиксели, потому что титр переживает смену формата
+        /// проекта — то же правило, что у `pos_x`/`pos_y`.
+        #[serde(default)]
+        offset_x: f64,
+        #[serde(default)]
+        offset_y: f64,
     },
     /// Линейный градиент между двумя цветами (угол в градусах).
     Gradient {
@@ -314,9 +334,15 @@ pub enum GeneratorKind {
     },
 }
 
-/// Анимация титра (Р.53, пп.423-424).
+/// ПРЕСЕТ анимации титра (Р.53 пп.423-424 → Р.59 стадия 2).
 ///
-/// Две ветви и они РАЗНЫЕ по существу: раскрытие меняет ВИДИМОСТЬ
+/// Раньше это был режим В МОДЕЛИ, и движок знал про «печатную машинку».
+/// Теперь это имя НАБОРА КРИВЫХ (`text_anim_curves`): модель хранит
+/// только числа, а пресет — способ их расставить. Тип остался ради двух
+/// вещей: пунктов меню пресетов в окне титра и миграции старых файлов,
+/// где режим лежал полем (`am=`/`ams=` в пути, `anim` в `parameters`).
+///
+/// Две ветви по-прежнему РАЗНЫЕ по существу: раскрытие меняет ВИДИМОСТЬ
 /// кластеров, движение — СМЕЩЕНИЕ всего блока. Смешивать их в одно поле
 /// «скорость» нельзя: у раскрытия конец есть, у движения он за кадром.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -358,6 +384,48 @@ impl TextAnim {
     pub fn animated(self) -> bool {
         self != TextAnim::None
     }
+}
+
+/// Кривые пресета анимации титра — ОДНО место, где живут формулы
+/// (Р.59, стадия 2).
+///
+/// Зачем функция в модели, а не в окне: этими же формулами читаются
+/// старые файлы (`am=tw:ams=2` и `anim` в `parameters`), и разойдись
+/// миграция с пресетом — проект, сохранённый прошлой сборкой, поехал бы
+/// не так, как тот же пресет, поставленный руками.
+///
+/// `secs` — прежняя длительность прохода; `span` — полный путь блока в
+/// долях кадра (`1 + размер_блока/размер_кадра`): окно знает раскладку и
+/// передаёт точный, миграция — 2.0 («блок не шире кадра»). Кривые в
+/// домене ТИКА МАТЕРИАЛА, якорь — `source_in` события, поэтому
+/// вызывающий добавляет его сам.
+pub fn text_anim_curves(anim: TextAnim, secs: f64, span: f64) -> Vec<ParamCurve> {
+    let end = Tick((secs.max(1.0 / 1000.0) * 90_000.0).round() as i64);
+    let ramp = |param: &str, a: f64, b: f64| ParamCurve {
+        param: param.to_string(),
+        // ЛИНЕЙНО, а не ease: прежний код считал `prog` без сглаживания,
+        // и «печатная машинка» со smoothstep печатала бы рывками.
+        ease: false,
+        keys: vec![crate::AutoKey { t: Tick::ZERO, v: a }, crate::AutoKey { t: end, v: b }],
+        source: crate::CurveSource::Keys,
+    };
+    match anim {
+        TextAnim::None => Vec::new(),
+        TextAnim::Typewriter | TextAnim::Fade => vec![ramp("reveal", 0.0, 1.0)],
+        TextAnim::Crawl => vec![ramp("offset_x", span / 2.0, -span / 2.0)],
+        TextAnim::Roll => vec![ramp("offset_y", span / 2.0, -span / 2.0)],
+    }
+}
+
+/// Значения, которые пресет ставит ПОМИМО кривых. У мягкого проявления
+/// это ширина фронта: она постоянна во времени, и кривая из одного ключа
+/// была бы вторым способом записать то же самое.
+pub fn text_anim_values(kind: &mut GeneratorKind, anim: TextAnim) {
+    let GeneratorKind::Text { reveal, reveal_soft, offset_x, offset_y, .. } = kind else { return };
+    *reveal = 1.0;
+    *reveal_soft = if anim == TextAnim::Fade { 1.0 } else { 0.0 };
+    *offset_x = 0.0;
+    *offset_y = 0.0;
 }
 
 /// Разновидность инженерной таблицы (Р.53, п.422).
@@ -646,8 +714,10 @@ impl GeneratorKind {
             plate_b: 0,
             plate_a: 0,
             order: default_order(),
-            anim: TextAnim::None,
-            anim_secs: default_anim_secs(),
+            reveal: 1.0,
+            reveal_soft: 0.0,
+            offset_x: 0.0,
+            offset_y: 0.0,
         }
     }
 
@@ -703,6 +773,12 @@ params_for! { GeneratorKind, gen_specs, gen_set_param, gen_get_param, gen_set_id
         shadow_blur: f64, 0.0, 0.5, 0.06, 0.005, Percent, Smooth;
         plate_pad_x: f64, 0.0, 2.0, 0.25, 0.01, Ratio, Smooth;
         plate_pad_y: f64, 0.0, 2.0, 0.12, 0.01, Ratio, Smooth;
+        // Р.59: анимация титра — обычные числа, новые ряды В КОНЦЕ
+        // (индексная адресация Р.59 стадии 1 стабильна по построению).
+        reveal: f64, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
+        reveal_soft: f64, 0.0, 1.0, 0.0, 0.01, Norm, Smooth;
+        offset_x: f64, -4.0, 4.0, 0.0, 0.001, Percent, Smooth;
+        offset_y: f64, -4.0, 4.0, 0.0, 0.001, Percent, Smooth;
     },
     Gradient {
         angle_deg: f64, 0.0, 360.0, 90.0, 1.0, Deg, Smooth;
@@ -840,15 +916,107 @@ pub fn is_pseudo_path(path: &str) -> bool {
 /// значение — `None`: выше это честная ошибка «файл отсутствует», а не
 /// молчаливое умолчание (урок сноски п.211).
 pub fn parse_gen_path(path: &str) -> Option<GeneratorKind> {
+    parse_gen_path_full(path).map(|(k, _)| k)
+}
+
+/// Режим анимации титра из СТАРОГО пути (Р.53). Отдельный выход разбора,
+/// потому что в виде его больше нет: миграция превращает его в кривые
+/// (`text_anim_curves`), а не в поле.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LegacyTextAnim {
+    pub anim: TextAnim,
+    pub secs: f64,
+}
+
+/// Разбор `gen:`-пути ВМЕСТЕ с легаси-режимом анимации.
+///
+/// Единственная дверь разбора: `parse_gen_path` — обёртка, отбрасывающая
+/// режим. Ключи `am`/`ams` встречаются только в файлах Р.53..Р.58, и
+/// понимать их обязан ровно один парсер — иначе миграция и чтение
+/// разошлись бы в том, что считать битым путём.
+pub fn parse_gen_path_full(path: &str) -> Option<(GeneratorKind, Option<LegacyTextAnim>)> {
     let rest = strip_ci(path, "gen:")?;
     let mut toks = rest.split(':');
     let tag = toks.next()?.to_ascii_lowercase();
     let mut kind = GeneratorKind::default_for_tag(&tag)?;
+    let mut anim: Option<TextAnim> = None;
+    let mut secs = default_anim_secs();
     for t in toks {
         let (key, val) = t.split_once('=')?;
-        apply_token(&mut kind, &key.to_ascii_lowercase(), val)?;
+        let key = key.to_ascii_lowercase();
+        if matches!(kind, GeneratorKind::Text { .. }) {
+            match key.as_str() {
+                "am" => {
+                    anim = Some(TextAnim::from_token(val)?);
+                    continue;
+                }
+                "ams" => {
+                    secs = val.parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0)?;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        apply_token(&mut kind, &key, val)?;
     }
-    Some(kind)
+    let legacy = anim.filter(|a| a.animated()).map(|a| LegacyTextAnim { anim: a, secs });
+    Some((kind, legacy))
+}
+
+/// Путь медиа, несущий ТОЛЬКО ВИД (Р.59, стадия 2).
+///
+/// Значения переехали на событие, а в `MediaRef.path` осталось «что это
+/// за медиа» — тег вида. Единственное исключение — «сорт» варианта, у
+/// которого имя вида есть функция ЗНАЧЕНИЯ (правило п.419: пять
+/// инженерных таблиц — один вид с полем `table`, но пять строк меню).
+/// Сорт числом не является и кривой не автоматизируется, поэтому он
+/// часть адреса, а не значение события.
+pub fn gen_kind_path(k: &GeneratorKind) -> String {
+    match k {
+        GeneratorKind::TestPattern { table } if *table != TestTable::default() => {
+            format!("gen:table:tb={}", table.token())
+        }
+        _ => format!("gen:{}", k.tag()),
+    }
+}
+
+/// Состояние генератора для ИСТОЧНИКА: вид со значениями плюс кривые
+/// (Р.59, стадия 2).
+///
+/// Кривые разрешает ИСТОЧНИК по своему `pts` (тик материала), а не план:
+/// у заказа форма `(адрес, тик, качество)`, и хэш значений в адресе
+/// означал бы пересборку плана на каждое нажатие клавиши. Отсюда жёсткое
+/// ограничение: компилированный план автоматизации (`AutoPlan`) кривые
+/// генератора НЕ ТРОГАЕТ — иначе план и источник разошлись бы, и ключ
+/// кэша перестал бы определять кадр.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GenState {
+    pub kind: GeneratorKind,
+    pub auto: Vec<ParamCurve>,
+}
+
+impl GenState {
+    pub fn new(kind: GeneratorKind) -> GenState {
+        GenState { kind, auto: Vec::new() }
+    }
+
+    /// Вид СО ЗНАЧЕНИЯМИ на момент `pts` материала. Без кривых —
+    /// `Borrowed`: неанимированный генератор не платит ни аллокации
+    /// (правило ноля цены, претензия владельца п.4 Р.59).
+    pub fn kind_at(&self, pts: Tick) -> Cow<'_, GeneratorKind> {
+        if self.auto.is_empty() {
+            return Cow::Borrowed(&self.kind);
+        }
+        let mut k = self.kind.clone();
+        apply_curves(&mut k, &self.auto, pts);
+        Cow::Owned(k)
+    }
+
+    /// Зависит ли кадр от времени ИЗ-ЗА кривых. Вид, зависящий от времени
+    /// сам по себе (шум, тайм-код), знает про себя kt-media.
+    pub fn animated(&self) -> bool {
+        !self.auto.is_empty()
+    }
 }
 
 /// Канонический `gen:`-путь: нижний регистр, умолчания не пишутся,
@@ -902,8 +1070,10 @@ pub fn format_gen_path(k: &GeneratorKind) -> String {
             plate_b,
             plate_a,
             order,
-            anim,
-            anim_secs,
+            reveal,
+            reveal_soft,
+            offset_x,
+            offset_y,
         } => {
             // умолчания не пишутся; f64 — кратчайшая точная запись Display
             if !text.is_empty() {
@@ -971,11 +1141,17 @@ pub fn format_gen_path(k: &GeneratorKind) -> String {
             if *order != default_order() {
                 push("or", order.iter().map(|l| layer_letter(*l)).collect());
             }
-            if *anim != TextAnim::default() {
-                push("am", anim.token().into());
+            if *reveal != 1.0 {
+                push("rv", f(reveal));
             }
-            if *anim_secs != default_anim_secs() {
-                push("ams", f(anim_secs));
+            if *reveal_soft != 0.0 {
+                push("rvs", f(reveal_soft));
+            }
+            if *offset_x != 0.0 {
+                push("ox", f(offset_x));
+            }
+            if *offset_y != 0.0 {
+                push("oy", f(offset_y));
             }
         }
         GeneratorKind::Gradient { angle_deg, a_r, a_g, a_b, b_r, b_g, b_b } => {
@@ -1296,15 +1472,21 @@ fn apply_token(k: &mut GeneratorKind, key: &str, val: &str) -> Option<()> {
             plate_b,
             plate_a,
             order,
-            anim,
-            anim_secs,
+            reveal,
+            reveal_soft,
+            offset_x,
+            offset_y,
         } => {
             let n = || val.parse::<f64>().ok().filter(|v| v.is_finite());
             match key {
-                "am" => *anim = TextAnim::from_token(val)?,
-                "ams" => {
-                    *anim_secs = val.parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0)?
-                }
+                // ЛЕГАСИ-ключи режима анимации (Р.53): вид их больше не
+                // несёт, поэтому их ловит разбор целиком
+                // (`parse_gen_path_full`), а сюда они не доходят.
+                "am" | "ams" => return None,
+                "rv" => *reveal = n()?,
+                "rvs" => *reveal_soft = n()?,
+                "ox" => *offset_x = n()?,
+                "oy" => *offset_y = n()?,
                 "t" => *text = unescape_gen_value(val)?,
                 "f" => *family = unescape_gen_value(val)?,
                 "b" => *bold = val == "1",

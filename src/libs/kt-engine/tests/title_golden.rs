@@ -7,7 +7,6 @@
 //! (kt-text/CLAUDE.md, FONT-MANIFEST.txt).
 
 use kt_engine::{VideoRenderer, render_raw_video};
-use kt_media::generator::GeneratorSource;
 use kt_media::{MediaSource, Quality};
 use kt_model::*;
 use kt_time::Tick;
@@ -39,9 +38,14 @@ fn title_project() -> (Project, Sources) {
         (*fill_r, *fill_g, *fill_b) = (255, 136, 0);
     }
     let solid = GeneratorKind::Solid { color_r: 16, color_g: 32, color_b: 64 };
-    p.media.push(MediaRef { id: MediaId(1), path: format_gen_path(&solid) });
-    p.media.push(MediaRef { id: MediaId(2), path: format_gen_path(&title) });
+    // Р.59, стадия 2 (t662): в пути медиа остаётся ВИД, значения уехали
+    // на событие. ПЕРЕПИСАНА ТОЛЬКО КОНСТРУКЦИЯ ПРОЕКТА — эталон
+    // `GOLDEN_TITLE_VIDEO` обязан остаться прежним до бита.
+    p.media.push(MediaRef { id: MediaId(1), path: gen_kind_path(&solid) });
+    p.media.push(MediaRef { id: MediaId(2), path: gen_kind_path(&title) });
     let clip = |id: u64, lane: u32, media: u64| ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,
@@ -58,12 +62,15 @@ fn title_project() -> (Project, Sources) {
         opacity: 1.0,
         fx_off: false,
     };
-    p.clips = vec![clip(1, 1, 1), clip(2, 0, 2)];
+    let mut back = clip(1, 1, 1);
+    back.r#gen = Some(solid);
+    let mut front = clip(2, 0, 2);
+    front.r#gen = Some(title);
+    p.clips = vec![back, front];
     p.validate().unwrap();
-    let sources: Sources = vec![
-        (MediaId(1), Box::new(GeneratorSource::new(solid))),
-        (MediaId(2), Box::new(GeneratorSource::new(title))),
-    ];
+    // источники генераторов открывает САМ экспорт: их адреса производны
+    // от событий, и вызывающему их взять неоткуда
+    let sources: Sources = vec![];
     (p, sources)
 }
 
@@ -134,6 +141,10 @@ fn t485_title_preview_equals_export() {
     let t = Tick(7 * 3000);
     let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         sources.into_iter().collect();
+    // превью поднимает источники генераторов тем же списком, что экспорт
+    for (addr, state) in kt_engine::gen_sources(&p) {
+        srcs.insert(addr, kt_media::factory::open_gen(&state));
+    }
     for (media, src_pts, q) in video.layers_at(t, q) {
         let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(q)).unwrap();
         cache.insert_video(
@@ -146,4 +157,28 @@ fn t485_title_preview_equals_export() {
     let (preview, complete) = video.compose_from_cache(&cache, t, q);
     assert!(complete, "композит титра обязан быть полон");
     assert_eq!(preview, export_frame, "превью и экспорт обязаны совпадать байт-в-байт");
+}
+
+/// Тест 662 (Р.59, стадия 2): переезд значений генератора на СОБЫТИЕ
+/// БАЙТОВ НЕ ТРОГАЕТ.
+///
+/// Здесь переписана только конструкция проекта (значения уехали из пути
+/// медиа на клип), а эталон обязан остаться прежним до бита. Красный
+/// тест означает, что раунд что-то посчитал иначе, а не что эталон пора
+/// обновить (правило раунда: GOLDEN_* не перегенерируются).
+#[test]
+fn t662_moving_values_to_the_event_did_not_move_the_golden() {
+    let (p, sources) = title_project();
+    assert!(sources.is_empty(), "источники генераторов поднимает сам экспорт");
+    // путь медиа несёт ТОЛЬКО ВИД
+    assert_eq!(p.media[0].path, "gen:solid");
+    assert_eq!(p.media[1].path, "gen:text", "текст титра в пути медиа не живёт");
+    // а значения — на событиях, и у каждого свои
+    assert!(matches!(p.clips[0].r#gen, Some(GeneratorKind::Solid { .. })));
+    assert!(matches!(p.clips[1].r#gen, Some(GeneratorKind::Text { .. })));
+    // адрес источника производен от СОБЫТИЯ
+    assert_eq!(kt_engine::clip_source_addr(&p.clips[1]), kt_engine::gen_source_addr(p.clips[1].id));
+    let (v, _) = run_hash();
+    assert_eq!(v, 0x95267f57405a8c95, "эталон титра сдвинулся: 0x{v:016x} — это регрессия");
+    assert_eq!(v, GOLDEN_TITLE_VIDEO);
 }

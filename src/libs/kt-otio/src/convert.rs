@@ -324,7 +324,17 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             // вложенные ленты (Р.50): старая сборка прочла бы вложение
             // серым плейсхолдером (п.158) и при первой перезаписи вернула
             // бы живой монтаж в файл мёртвым сырьём
-            if has_v8 {
+            // параметры генератора на СОБЫТИИ (Р.59, стадия 2): старая
+            // сборка полезла бы за ними в путь медиа, где их больше нет,
+            // и показала бы пустой титр — причём во всех местах разом
+            let has_v9 = p
+                .clips
+                .iter()
+                .chain(p.sequences.iter().flat_map(|s| s.clips.iter()))
+                .any(|c| c.r#gen.is_some());
+            if has_v9 {
+                crate::meta::KT_META_V9
+            } else if has_v8 {
                 crate::meta::KT_META_V8
             } else if has_v7 {
                 crate::meta::KT_META_V7
@@ -955,6 +965,8 @@ fn nest_to_otio(
             opacity: c.opacity,
             fx_off: c.fx_off,
             start: displaced_start(c, at),
+            r#gen: c.r#gen.clone(),
+            gen_auto: c.gen_auto.clone(),
             extra: Map::new(),
         },
     );
@@ -982,8 +994,32 @@ fn generator_ref_path(gr: &GeneratorReference) -> Option<String> {
         .or_else(|| crate::generator_alias(&gr.generator_kind))?;
     let mut fields = gr.parameters.clone();
     fields.insert("kind".into(), Value::String(tag.to_string()));
+    // ЛЕГАСИ-режим анимации титра (Р.53) — полями `anim`/`anim_secs`.
+    // Вид их больше не несёт, и serde их просто проигнорировал бы, поэтому
+    // они переезжают в путь токенами `am`/`ams`: дальше их подберёт
+    // ЕДИНСТВЕННАЯ миграция (`Project::migrate_gen_to_events`), которая и
+    // превращает режим в кривые. Второй копии этих формул не бывает.
+    let anim = fields.shift_remove("anim").and_then(|v| v.as_str().map(str::to_string));
+    let anim_secs = fields.shift_remove("anim_secs").and_then(|v| v.as_f64());
     let kind: kt_model::GeneratorKind = serde_json::from_value(Value::Object(fields)).ok()?;
-    Some(kt_model::format_gen_path(&kind))
+    let mut path = kt_model::format_gen_path(&kind);
+    if let Some(a) = anim.as_deref().and_then(legacy_anim_token)
+        && a != "no"
+    {
+        path.push_str(&format!(":am={a}"));
+        if let Some(sec) = anim_secs.filter(|v| v.is_finite() && *v > 0.0) {
+            path.push_str(&format!(":ams={sec}"));
+        }
+    }
+    Some(path)
+}
+
+/// Имя легаси-режима из файла (`typewriter`) → токен пути (`tw`).
+fn legacy_anim_token(name: &str) -> Option<&'static str> {
+    kt_model::TextAnim::ALL
+        .into_iter()
+        .find(|a| format!("{a:?}").to_lowercase() == name)
+        .map(|a| a.token())
 }
 
 /// Поля `GeneratorKind` словарём `parameters` (без служебного `kind` —
@@ -1021,7 +1057,10 @@ fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str, at: Tick) 
     let active_key =
         if ex.active_key.is_empty() { DEFAULT_MEDIA_KEY.to_string() } else { ex.active_key };
     if !target_url.is_empty() {
-        if let Some(kind) = kt_model::parse_gen_path(target_url) {
+        // Значения — С СОБЫТИЯ (Р.59, стадия 2); путь несёт только вид,
+        // и разбирать его приходится лишь у клипа без значений (чужой
+        // импорт, битая kt-секция).
+        if let Some(kind) = c.r#gen.clone().or_else(|| kt_model::parse_gen_path(target_url)) {
             // генератор пишется ПЕРВОКЛАССНОЙ схемой OTIO (Р.52):
             // name/metadata/extra прежнего узла сохраняются, вид и
             // параметры перезаписываются каноном. `available_range`
@@ -1091,6 +1130,8 @@ fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str, at: Tick) 
             opacity: c.opacity,
             fx_off: c.fx_off,
             start: displaced_start(c, at),
+            r#gen: c.r#gen.clone(),
+            gen_auto: c.gen_auto.clone(),
             extra: ex.kt_extra.clone(),
         },
     );
@@ -1975,6 +2016,8 @@ fn read_foreign_nest(
         None
     };
     let make = |id: ClipId, kind: ClipKind, lane: u32| ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id,
         link_group: group,
         kind,
@@ -2143,6 +2186,8 @@ fn read_nest(
     // истинное время — из конверта, если трек его выразить не смог (Р.58)
     let start = meta.as_ref().and_then(|m| m.start).map(Tick).unwrap_or(start);
     Ok(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id,
         link_group: meta.as_ref().and_then(|m| m.link_group).map(GroupId),
         kind,
@@ -2331,6 +2376,19 @@ fn clip_from_otio(
         _ => start,
     };
     let mut ev = ClipEvent {
+        // Значения генератора — из НАШЕГО конверта, если он есть (Р.59,
+        // стадия 2). Нет его — клип остаётся пустым, и `normalize()`
+        // достаёт значения из пути медиа: файлы Р.52..Р.58 держали их
+        // именно там, и миграция живёт в ОДНОМ месте.
+        r#gen: meta
+            .as_ref()
+            .filter(|_| is_ours && kt_model::parse_gen_path(&url).is_some())
+            .and_then(|m| m.r#gen.clone()),
+        gen_auto: meta
+            .as_ref()
+            .filter(|_| is_ours && kt_model::parse_gen_path(&url).is_some())
+            .map(|m| m.gen_auto.clone())
+            .unwrap_or_default(),
         id,
         link_group: meta.as_ref().and_then(|m| m.link_group).map(GroupId),
         kind,

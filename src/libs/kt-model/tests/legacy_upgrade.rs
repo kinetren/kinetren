@@ -12,6 +12,8 @@ use kt_time::Tick;
 
 fn clip(id: u64, kind: ClipKind, lane: u32, start: i64, dur: i64, src: i64) -> ClipEvent {
     ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind,
@@ -156,6 +158,8 @@ fn t164_legacy_import_keeps_overlaps_and_lanes() {
     // зона и микро-наезд в один тик
     let mut add = |id: u64, kind: ClipKind, lane: u32, start: i64, dur: i64, group: Option<u64>| {
         p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
             id: ClipId(id),
             link_group: group.map(GroupId),
             kind,
