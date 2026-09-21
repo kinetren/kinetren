@@ -1,0 +1,73 @@
+schema: spec-driven
+
+# Kinotrain — нелинейный видеоредактор, cargo workspace в src/ (документы по-русски).
+# Проектные решения живут в openspec/specs/<cap>/: spec.md — контракт (требования и
+# сценарии, каждый сценарий называет регрессионный тест tNNN), design.md — «почему»
+# (что болело, что отвергли и почему, неочевидные детали с путями src/…).
+context: |
+  Kinotrain — нелинейный видеоредактор; код — cargo workspace в `src/` (libs/kt-time,
+  kt-model, kt-otio, kt-media, kt-text, kt-cache, kt-fx, kt-gpu, kt-engine; apps/kt-app
+  GUI на eframe, apps/kt-cli headless). Все документы и артефакты пишутся по-русски.
+  Инструменты: `openspec` CLI работает только на Node ≥ 20
+  (`export PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"`); работа заканчивается
+  `src/scripts/finish.sh` и версией `vYY.MM.DD-hash` в отчёте.
+
+  Модель времени: тик = 1/90000 с (i64), аудио 48 kHz stereo f32, burst = 1024 кадра =
+  1920 тиков, tick↔sample = 15/8 точно; в формате проекта только тики (capability time-model).
+
+  Двенадцать инвариантов (нарушение любого — регрессия, у каждого есть тест):
+   1. Аудио внутри движка всегда f32 48 kHz/2ch — audio-render.
+   2. FX-состояние трогает только аудио-render-поток — audio-render.
+   3. Правка модели не уничтожает FX-состояние (diff цепочек по clip id) — audio-render.
+   4. Кэш — единственная правда о coverage; ступень декода — свойство клипа и часть
+      заказа (заказ == чтение) — video-plan, media-index.
+   5. Экземпляром декодера владеет ровно один поток: живое воспроизведение — через
+      очередь MediaWorker, офлайн — свой короткоживущий источник (BgJob) — media-index.
+   6. cpal-колбэк — мастер-часы; голодание не останавливает время — transport.
+   7. Код композиции один для превью и экспорта; CPU — байт-эталон, GPU — по допускам
+      `FrameTol`; гео-серии — одним проходом — video-plan, video-fx.
+   8. Скролл/зум таймлайна не порождает декод-запросов — media-index, ui-timeline.
+   9. Экспорт полностью внутрипроцессный (libav* системного FFmpeg) — export.
+  10. Бинарь не линкуется с libav*: FFmpeg через dlopen 6/7/8 — media-index.
+  11. Детерминизм: аудио байт-в-байт всегда; видео на CPU — против эталона; на GPU —
+      между прогонами на одном устройстве — video-plan, export.
+  12. Показ видео не квантуется аудио-колбэком, UI не греет систему (repaint только при
+      движении) — transport, ui-timeline.
+
+  Capability (по поведению): time-model, transport, audio-render, video-plan, video-fx,
+  audio-fx, transitions, automation, morpher, compositions, generators, media-index,
+  export, project-format, durability, ui-timeline, ui-reach.
+
+  Летописи: `docs/user-feedback.md` — слова и решения владельца по раундам (первоисточник,
+  дописывается ПЕРЕД работой); `docs/features/` — разведка ЧУЖИХ редакторов (наши решения
+  там только ссылкой `CAPABILITY:`); `docs/porting-notes.md` — заморожен на §470
+  (история порта, новые главы не пишутся). Перед новой функцией — заметка в docs/features/
+  (`python3 src/scripts/features-index.py --check`).
+
+rules:
+  proposal:
+    - >-
+      Перед разделом Capabilities прочитать `openspec/specs/<cap>/design.md` КАЖДОЙ затрагиваемой capability (не только spec.md): там причины прежних решений, отвергнутые варианты и пределы, поставленные владельцем по прямой просьбе.
+    - >-
+      Перед новой ФУНКЦИЕЙ (не дефектом) проверить `docs/features/` — есть ли заметка с разведкой чужих редакторов; нет — сначала завести её (правила в docs/features/README.md).
+    - >-
+      Занести претензию/решения владельца в `docs/user-feedback.md` его словами до начала работы.
+  design:
+    - >-
+      Решение, противоречащее `openspec/specs/<cap>/design.md` или его разделу «Отвергнуто и почему», оформлять явным пунктом «Пересмотр: <решение> — <причина>»; молчаливая отмена прежнего решения запрещена.
+    - >-
+      Предел, режим или вид, поставленные по прямой просьбе владельца (design.md, «Что было и у кого болело»), не менять без новой просьбы.
+    - >-
+      Не добавлять зависимость от FFmpeg/аудио-железа в kt-time/kt-model/kt-fx/kt-cache/ядро kt-engine; wgpu живёт только в kt-gpu.
+  specs:
+    - >-
+      Каждый сценарий несёт строку `- **TEST** tNNN (`путь/tests/файл.rs`)`; новый регрессионный тест получает следующий свободный номер tNNN (сквозная нумерация).
+    - >-
+      Пары «правятся только вместе» (transitions.rs ↔ composite.wgsl, kt-fx/geom.rs ↔ geom_fused.wgsl) — оба файла в одном сценарии.
+  tasks:
+    - >-
+      Каждая задача называет тест tNNN или живой сценарий `src/scripts/live/*.py`, которым проверяется; обязательные тесты крейта — в `openspec show <cap> --type spec`.
+    - >-
+      Последняя задача — `src/scripts/finish.sh` (пересборка kt-app/kt-cli, версия в отчёте); о скорости судить только по релизной сборке.
+    - >-
+      После архива change: вердикт заметки docs/features/ обновить (статус, `CAPABILITY:`), а «почему» — дописать в `openspec/specs/<cap>/design.md`.

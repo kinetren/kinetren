@@ -26,3 +26,7 @@ __pycache__/
 # В репозиторий не попадает НИКОГДА — ни значение, ни файл.
 /.env
 .env.*
+
+# OpenSpec CLI (npm) и локальные настройки Claude
+/node_modules/
+.claude/settings.local.json
