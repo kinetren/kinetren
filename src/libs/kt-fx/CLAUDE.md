@@ -1,5 +1,7 @@
 # kt-fx
 
+> Контракты крейта и обязательные тесты — `openspec/specs/{audio-fx,video-fx,video-plan}/spec.md`, причины решений — `design.md` рядом.
+
 Аудио-FX: slowed (rubato-варispeed) + reverb (freeverb) + gain. Без FFmpeg/аудио-железа.
 
 Видео-FX (`video.rs` + `geom.rs`): эффекты v1, RGBA8, CPU. С Р.29 это

@@ -1,5 +1,7 @@
 # kt-engine
 
+> Контракты крейта и обязательные тесты — `openspec/specs/{transport,audio-render,video-plan,transitions,compositions,export}/spec.md`, причины решений — `design.md` рядом.
+
 Render graph, планировщик декода, transport, prefetch, экспорт. Ядро собирается без FFmpeg/аудио-железа (реальные источники приходят из kt-media по трейту).
 
 ## Инварианты

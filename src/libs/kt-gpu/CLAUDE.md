@@ -1,5 +1,7 @@
 # kt-gpu
 
+> Контракты крейта и обязательные тесты — `openspec/specs/{video-plan,video-fx}/spec.md`, причины решений — `design.md` рядом.
+
 GPU-бэкенд видео-FX и композита (Р.29): wgpu, фрагментные WGSL-пассы.
 Реализует `kt_engine::VideoGpuExec`; kt-engine от крейта НЕ зависит —
 исполнитель инжектится сверху (kt-app: устройство eframe, kt-cli/экспорт:

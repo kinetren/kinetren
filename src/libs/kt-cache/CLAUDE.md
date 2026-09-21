@@ -1,5 +1,7 @@
 # kt-cache
 
+> Контракты крейта и обязательные тесты — `openspec/specs/{media-index}/spec.md`, причины решений — `design.md` рядом.
+
 Кэш burst'ов + coverage. Без FFmpeg/аудио-железа.
 
 ## Инварианты

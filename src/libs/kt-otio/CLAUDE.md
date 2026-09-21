@@ -1,5 +1,7 @@
 # kt-otio
 
+> Контракты крейта и обязательные тесты — `openspec/specs/{project-format}/spec.md`, причины решений — `design.md` рядом.
+
 Родной формат проекта — OpenTimelineIO (.otio, JSON). Чистый Rust (serde_json),
 БЕЗ FFmpeg/аудио/C++-биндингов/url-крейта. Зависимости: kt-time (+kt-model с
 этапа convert). Эталон семантики — C++/Python библиотека OTIO 0.18.x.

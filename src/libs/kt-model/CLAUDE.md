@@ -1,5 +1,7 @@
 # kt-model
 
+> Контракты крейта и обязательные тесты — `openspec/specs/{automation,morpher,compositions,transitions,project-format}/spec.md`, причины решений — `design.md` рядом.
+
 Модель таймлайна + команды + undo. Без FFmpeg, без аудио-железа. Формат
 проекта живёт в kt-otio (Р.24): здесь остался ТОЛЬКО ридер легаси-.ktproj
 (from_json/from_json_unvalidated — вход пункта «Импортировать…») и

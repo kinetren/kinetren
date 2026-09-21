@@ -1,5 +1,7 @@
 # kt-media
 
+> Контракты крейта и обязательные тесты — `openspec/specs/{media-index,generators}/spec.md`, причины решений — `design.md` рядом.
+
 Источники медиа: трейт `MediaSource`, `SyntheticSource` (тесты), `FfmpegSource` (мост к kt-ffmpeg, feature `ffmpeg`), `PlaceholderSource` (пропавший файл), `GeneratorSource` (генераторы Р.52), единая фабрика псевдо-путей (`factory`), sidecar индекс-БД (схема — docs/media-index.md).
 
 ## Инварианты
