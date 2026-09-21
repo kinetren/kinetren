@@ -72,6 +72,16 @@ NET_COSTS = ("учётная запись", "общие часы", "журнал
              "адрес материала")
 ANCHOR_RE = re.compile(r"^(src/[\w./-]+?)(?::\d+(?:-\d+)?|::[\w:]+)?$")
 
+# Пятая волна (change bootstrap-specs-from-chronicles, 2026-09-21): проектные
+# решения переехали в OpenSpec. «Как ложится» обязана назвать capability
+# (`CAPABILITY: openspec/specs/<cap>/`, каталог существует и несёт spec.md), а у
+# ЗАМОРОЖЕННЫХ статусов раздел — ссылка плюс одна строка сути (≤ 5 непустых строк,
+# путей src/ не требуется). У живых статусов пути src/ по-прежнему обязательны.
+SPECS = ROOT / "openspec" / "specs"
+FROZEN_STATUSES = ("сделано", "принято", "уже-есть", "отвергнуто")
+FROZEN_FITS_MAX_LINES = 5
+CAPABILITY_RE = re.compile(r"^CAPABILITY:\s*(.+)$", re.M)
+
 
 def parse_front(text):
     """Frontmatter → dict. Значение: список [a, b], null, либо строка."""
@@ -259,11 +269,28 @@ def check():
             bad("«Что говорят пользователи»: нужна дословная цитата (строка с >) "
                 "и ссылка, либо пометка «НЕТ ЦИТАТ:» с объяснением, что искали")
         fits = sec.get("Как ложится на Kinotrain", "")
-        if "src/" not in fits:
+        status = front.get("status")
+        cap_lines = CAPABILITY_RE.findall(fits)
+        for cl in cap_lines:
+            for cap in re.findall(r"openspec/specs/([\w-]+)/", cl):
+                if not (SPECS / cap / "spec.md").is_file():
+                    bad(f"«CAPABILITY:» указывает на openspec/specs/{cap}/ — "
+                        "такой capability нет (или в ней нет spec.md)")
+            if "openspec/specs/" not in cl:
+                bad("«CAPABILITY:» без пути openspec/specs/<cap>/")
+        if status in FROZEN_STATUSES:
+            if len(cap_lines) != 1:
+                bad("замороженный статус: «Как ложится» обязана нести ровно одну "
+                    "строку «CAPABILITY: openspec/specs/<cap>/» — решение живёт там")
+            n_lines = sum(1 for l in fits.splitlines() if l.strip())
+            if n_lines > FROZEN_FITS_MAX_LINES:
+                bad(f"замороженный статус: «Как ложится» — {n_lines} строк при "
+                    f"пределе {FROZEN_FITS_MAX_LINES}; проектирование — в "
+                    "openspec/specs/<cap>/design.md, не здесь")
+        elif "src/" not in fits:
             bad("«Как ложится на Kinotrain»: нет ни одного пути вида src/… — "
                 "раздел написан вслепую")
 
-        status = front.get("status")
         if status == "отвергнуто" and len(sec.get("Вердикт", "")) < 40:
             bad("статус «отвергнуто» без внятной причины в «Вердикт»")
         if status == "сделано":
