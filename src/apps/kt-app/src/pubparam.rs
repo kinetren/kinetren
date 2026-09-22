@@ -861,7 +861,12 @@ impl KtApp {
                             let mb = ui.menu_button(tr(k::fx::AUTO_ADD), |ui| {
                                 for &i in &free {
                                     // пункт — ИМЯ АВТОРА дословно (t684)
-                                    if ui.button(&list[i].name).clicked() {
+                                    let item = ui.button(&list[i].name);
+                                    crate::widgets::field_probe::note(
+                                        &format!("inst.auto_add.{}", list[i].id.0),
+                                        item.rect,
+                                    );
+                                    if item.clicked() {
                                         // стартовая кривая — константа
                                         // действующего значения на весь
                                         // материал экземпляра, как у слота
@@ -886,6 +891,7 @@ impl KtApp {
                                 }
                             });
                             crate::widgets::hint(&mb.response, tr(k::pubp::AUTO_ADD_HINT));
+                            crate::widgets::field_probe::note("inst.auto_add", mb.response.rect);
                         }
                     });
                     if !auto.is_empty() {
@@ -918,6 +924,7 @@ impl KtApp {
                             frame_step,
                             linked: axis_linked,
                         };
+                        let top = ui.cursor().min;
                         let res = crate::automation::draw(
                             ui,
                             ("instauto", w.clip.0),
@@ -926,6 +933,10 @@ impl KtApp {
                             view,
                             playhead,
                             &mut hover_out,
+                        );
+                        crate::widgets::field_probe::note(
+                            "inst.auto",
+                            egui::Rect::from_min_max(top, ui.cursor().min),
                         );
                         if res.changed {
                             // какая ручка поехала, виджет не сообщает —

@@ -238,8 +238,44 @@ def main(out):
         app.key("Escape")
         time.sleep(0.5)
 
+        # --- 4b. КРИВАЯ ручки: заводится названным действием и ВИДНА ----
+        # Претензия Р.60: «кривых автоматизаций я нигде не вижу… ни одной
+        # кнопки в окне про автоматизацию нет». Живьём проверяем ровно
+        # это: у действия есть имя, после него в окне появляется виджет,
+        # а ключи уезжают в файл.
+        app.right_click(sx, y)
+        app.click_probe("pub.inst_open", "окно параметров композиции ещё раз")
+        time.sleep(0.8)
+        app.expect(
+            not app.has_probe(f"inst.curve.{ids['w']}"),
+            "в окне остался безымянный глиф записи ключей",
+        )
+        app.click_probe("inst.auto_add", "меню «+ кривая»")
+        time.sleep(0.6)
+        app.click_probe(f"inst.auto_add.{ids['w']}", "пункт «ширина» в меню кривой")
+        time.sleep(0.8)
+        app.expect(app.has_probe("inst.auto"), "виджет автоматизации появился в окне")
+        app.shot("instance-curve")
+        app.key("Escape")
+        time.sleep(0.5)
+
         saved = app.saved_project()
         sets = override_sets(saved.doc)
+        curved = [
+            o
+            for st in sets
+            for o in st
+            if o["pub_id"] == ids["w"] and o.get("curves")
+        ]
+        app.expect(
+            len(curved) == 1,
+            f"кривая ручки не доехала до файла: {sets}",
+        )
+        keys = curved[0]["curves"][0].get("keys", []) if curved else []
+        app.expect(
+            len(keys) >= 2,
+            f"стартовая кривая не легла константой на весь материал: {keys}",
+        )
         app.expect(
             len(sets) == 1,
             f"переопределения лежат не у одного события: наборов {len(sets)}",

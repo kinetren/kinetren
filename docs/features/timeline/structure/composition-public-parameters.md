@@ -1,7 +1,7 @@
 ---
 id: F-TL-012
 title: Публичные параметры композиции
-status: принято
+status: сделано
 priority: A
 cost: XL
 category: timeline/structure
@@ -10,11 +10,11 @@ we_have: да
 crates: [kt-model, kt-engine, kt-otio, kt-app]
 invariants: [3, 4, 7, 11]
 ui_rules: [13, 16, 17, 20]
-round: Р.59
+round: Р.59, Р.60
 point: 469
-tests: [t671, t672, t673, t674, t675, t676, t677, t678, t679, t680, t681, t682, t683, t684, t685, t686, t687, t688, t689, t690]
+tests: [t671, t672, t673, t674, t675, t676, t677, t678, t679, t680, t681, t682, t683, t684, t685, t686, t687, t688, t689, t690, t691, t692, t693, t694]
 depends_on: [F-TL-004, F-TXT-002]
-checked: 2026-09-21
+checked: 2026-09-22
 ---
 
 # F-TL-012 — Публичные параметры композиции
