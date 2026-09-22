@@ -11,8 +11,8 @@
 
 ## 2. Окно автора: пределы от паспорта цели
 
-- [ ] 2.1 `pubparam.rs`, `draw_published_win`: поля `min`/`max` показывают `range.min.unwrap_or(spec.min)`/`spec.max` через `addr_spec`; правка пишет через `PubRange::narrowed`; кнопка «к пределам цели» (`icons::CLEAR`-стиль, подпись в i18n) → `PubRange::default()`; подсказка `widgets::hint`; проверка — t692b (`src/apps/kt-app/src/layout_tests.rs`): после публикации проба `pub.row.min.<id>` показывает `spec.min`, не 0; сужение и сброс доезжают до модели
-- [ ] 2.2 i18n ×5 каталогов (`pubp.range_reset`, `pubp.range_hint`, `pubp.auto_add_hint`, `pubp.auto_hint`), при новых глифах — `python3 scripts/subset-fonts.py`; проверка — t100, t125, t128, t171 зелёные
+- [x] 2.1 `pubparam.rs`, `draw_published_win`: поля `min`/`max` показывают `range.min.unwrap_or(spec.min)`/`spec.max` через `addr_spec`; правка пишет через `PubRange::narrowed`; кнопка «к пределам цели» (`icons::CLEAR`-стиль, подпись в i18n) → `PubRange::default()`; подсказка `widgets::hint`; проверка — t692b (`src/apps/kt-app/src/layout_tests.rs`): после публикации проба `pub.row.min.<id>` показывает `spec.min`, не 0; сужение и сброс доезжают до модели
+- [x] 2.2 i18n ×5 каталогов (`pubp.range_reset`, `pubp.range_hint`, `pubp.auto_add_hint`, `pubp.auto_hint`), при новых глифах — `python3 scripts/subset-fonts.py`; проверка — t100, t125, t128, t171 зелёные
 
 ## 3. Окно потребителя: виджет автоматизации вместо глифа
 

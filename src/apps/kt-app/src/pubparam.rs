@@ -379,6 +379,14 @@ impl KtApp {
             tr(k::pubp::LIST_TITLE),
             self.model.document().sequence(w.seq).map(|s| s.name.clone()).unwrap_or_default()
         );
+        // Паспорт цели — единственный источник пределов (Р.60). Снимаем
+        // его ДО окна: `self` внутри замыкания окна уже занят. Ряд идёт
+        // ПАРАЛЛЕЛЬНО `list` — порядок строк меняется командой, то есть
+        // со следующего кадра, и разъехаться они внутри кадра не могут.
+        let specs: Vec<Option<kt_model::ParamSpec>> = {
+            let doc = self.model.document();
+            list.iter().map(|p| doc.addr_spec(Some(w.seq), &p.target)).collect()
+        };
         let mut open = w.open;
         egui::Window::new(title)
             .id(egui::Id::new(("published_win", w.seq.0)))
@@ -423,18 +431,33 @@ impl KtApp {
                         }
                         // сужение пределов — только у числа: у остальных
                         // типов «между вариантами» ничего нет, и мёртвое
-                        // поле было бы нарушением правила 9
-                        if list[i].ty == ParamType::Num {
-                            let mut lo = list[i].range.min.unwrap_or(f64::NAN);
-                            let mut hi = list[i].range.max.unwrap_or(f64::NAN);
+                        // поле было бы нарушением правила 9.
+                        //
+                        // Умолчание — ПАСПОРТ ЦЕЛИ (Р.60): пустое сужение
+                        // рисовалось нулём («значения min max всегда в 0
+                        // проставляются по умолчанию»), хотя у цели свои
+                        // пределы есть. Копии паспорта в публикации нет —
+                        // она разошлась бы с целью при первой правке
+                        // внутри ленты, как разошлась бы копия значения
+                        // шаблона.
+                        if list[i].ty == ParamType::Num
+                            && let Some(spec) = specs.get(i).cloned().flatten()
+                        {
+                            let mut lo = list[i].range.min.unwrap_or(spec.min);
+                            let mut hi = list[i].range.max.unwrap_or(spec.max);
                             let mut edited = false;
+                            let step = if spec.step > 0.0 { spec.step } else { 0.05 };
                             for (label, v, is_min) in [
                                 (tr(k::pubp::RANGE_MIN), &mut lo, true),
                                 (tr(k::pubp::RANGE_MAX), &mut hi, false),
                             ] {
                                 ui.label(label);
-                                let mut x = if v.is_nan() { 0.0 } else { *v };
-                                let rr = ui.add(egui::DragValue::new(&mut x).speed(0.05));
+                                let rr = ui.add(
+                                    egui::DragValue::new(v)
+                                        .range(spec.min..=spec.max)
+                                        .speed(step),
+                                );
+                                crate::widgets::hint(&rr, tr(k::pubp::RANGE_HINT));
                                 crate::widgets::field_probe::note(
                                     &format!(
                                         "pub.row.{}.{}",
@@ -444,15 +467,28 @@ impl KtApp {
                                     rr.rect,
                                 );
                                 if rr.changed() {
-                                    *v = x;
                                     edited = true;
                                 }
                             }
+                            // «к пределам цели» — снять сужение целиком.
+                            // Без этой кнопки суженную ручку нельзя было
+                            // бы вернуть в исходное состояние иначе как
+                            // сняв и объявив заново (правило 9).
+                            let narrowed = !list[i].range.is_empty();
+                            let rst = ui
+                                .add_enabled(narrowed, egui::Button::new(tr(k::pubp::RANGE_RESET)));
+                            crate::widgets::hint(&rst, tr(k::pubp::RANGE_RESET_HINT));
+                            crate::widgets::field_probe::note(
+                                &format!("pub.row.range_reset.{}", id.0),
+                                rst.rect,
+                            );
+                            if rst.clicked() {
+                                list[i].range = PubRange::default();
+                                edited = true;
+                            } else if edited {
+                                list[i].range = PubRange::narrowed(&spec, lo, hi);
+                            }
                             if edited {
-                                list[i].range = PubRange {
-                                    min: (!lo.is_nan()).then_some(lo),
-                                    max: (!hi.is_nan()).then_some(hi),
-                                };
                                 cmds.push(Command::SetPublished {
                                     param: Box::new(list[i].clone()),
                                 });

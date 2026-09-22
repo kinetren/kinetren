@@ -12332,6 +12332,122 @@ fn t683_instance_params_window_draws_every_type() {
     );
 }
 
+/// Тест 692b (Р.60): пределы ручки в окне АВТОРА приходят из паспорта цели.
+///
+/// «Еще значения min max всегда в 0 проставляются по умолчанию» — пустое
+/// сужение (`Option::None`) рисовалось нулём, и автор видел ручку, у которой
+/// якобы разрешено ровно ничего. Утверждение теста — наблюдаемое следствие:
+/// в окне НАРИСОВАНЫ пределы цели, а не нули; кнопка «к пределам цели»
+/// доступна только у суженной ручки и снимает сужение в МОДЕЛИ.
+#[test]
+fn t692b_author_window_shows_the_target_range() {
+    use eframe::egui::accesskit::Role;
+    use egui_kittest::kittest::{NodeT, Queryable, by};
+    use kt_model::*;
+    let (mut h, s) = harness_news_template();
+
+    // паспорт цели «Кегля» — то, что окно ОБЯЗАНО показать
+    let spec = {
+        let doc = h.state().model.document();
+        let p = doc
+            .sequence(s.seq)
+            .expect("лента")
+            .published
+            .iter()
+            .find(|p| p.id == s.size)
+            .expect("ручка «Кегль»")
+            .clone();
+        doc.addr_spec(Some(s.seq), &p.target).expect("паспорт цели «Кегля»")
+    };
+    assert!(spec.max > spec.min, "паспорт кегля вырожден: {spec:?}");
+    assert!(
+        spec.min != 0.0 || spec.max != 0.0,
+        "тест ничего не докажет: у цели пределы и так нулевые"
+    );
+
+    h.state_mut().open_published_win(s.seq);
+    h.step();
+    h.step();
+
+    let shown: Vec<String> = h
+        .query_all(by().role(Role::SpinButton))
+        .filter_map(|n| n.accesskit_node().value().map(|v| v.to_string()))
+        .collect();
+    let has = |x: f64| {
+        shown.iter().any(|t| t.trim().replace(',', ".").parse::<f64>().is_ok_and(|v| {
+            (v - x).abs() <= (spec.step.abs() * 0.5).max(1e-6)
+        }))
+    };
+    assert!(
+        has(spec.min) && has(spec.max),
+        "окно автора не показало пределы цели ({} … {}): {shown:?}",
+        spec.min,
+        spec.max
+    );
+
+    // --- сужение доезжает до модели и снимается одной кнопкой ---------
+    let narrowed = PubRange { min: Some(spec.min + spec.step), max: Some(spec.max - spec.step) };
+    {
+        let mut p = h
+            .state()
+            .model
+            .document()
+            .sequence(s.seq)
+            .expect("лента")
+            .published
+            .iter()
+            .find(|p| p.id == s.size)
+            .cloned()
+            .expect("ручка «Кегль»");
+        p.range = narrowed;
+        assert!(
+            h.state_mut().apply(Command::SetPublished { param: Box::new(p) }),
+            "сужение отвергнуто"
+        );
+    }
+    h.step();
+    h.step();
+    assert!(
+        !h.state()
+            .model
+            .document()
+            .sequence(s.seq)
+            .expect("лента")
+            .published
+            .iter()
+            .find(|p| p.id == s.size)
+            .expect("ручка")
+            .range
+            .is_empty(),
+        "сужение не легло в модель"
+    );
+
+    h.get_by_label(tr(k::pubp::RANGE_RESET)).click();
+    h.step();
+    h.step();
+    assert!(
+        h.state()
+            .model
+            .document()
+            .sequence(s.seq)
+            .expect("лента")
+            .published
+            .iter()
+            .find(|p| p.id == s.size)
+            .expect("ручка")
+            .range
+            .is_empty(),
+        "кнопка «к пределам цели» сужение не сняла"
+    );
+
+    // и после сброса окно снова показывает пределы цели
+    let shown: Vec<String> = h
+        .query_all(by().role(Role::SpinButton))
+        .filter_map(|n| n.accesskit_node().value().map(|v| v.to_string()))
+        .collect();
+    assert!(has(spec.min) && has(spec.max), "после сброса пределы цели не вернулись: {shown:?}");
+}
+
 /// Тест 684 (Р.59, стадия 3): ИМЯ АВТОРА — содержимое документа.
 ///
 /// Решение владельца: «имена публичных параметров — свободный текст
