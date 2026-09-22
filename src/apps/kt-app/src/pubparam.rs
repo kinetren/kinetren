@@ -68,7 +68,24 @@ pub struct InstParamsWin {
     pub backup: Vec<Override>,
     /// Строка запроса пикера медиа — своя на окно.
     pub query: String,
+    /// Состояние виджета автоматизации: активная кривая, выбранный ключ,
+    /// вид графика. Своё на окно — как у слота эффекта и у генератора
+    /// (Р.60): до этого раунда кривые переопределений вообще нечем было
+    /// показать, и окно молча писало ключи по курсору.
+    pub view: crate::automation::AutoView,
     pub open: bool,
+}
+
+/// Имя кривой ручки В ПРЕДЕЛАХ ОКНА.
+///
+/// Виджет автоматизации рисует кривые ОДНОГО носителя и различает их по
+/// `ParamCurve::param`. У переопределений имя цели (`radius`, `text`) не
+/// годится: две ручки ленты вправе целиться в одноимённые параметры
+/// разных событий, и в окне они слиплись бы в одну линию. Поэтому внутри
+/// окна кривая зовётся по НОМЕРУ РУЧКИ, а при записи в модель имя
+/// возвращается целевое — то самое, которое ждёт `apply_overrides`.
+fn pub_key(id: PubId) -> String {
+    format!("pub{}", id.0)
 }
 
 /// Человекочитаемое значение ручки — одной строкой рядом со строкой.
@@ -283,6 +300,7 @@ impl KtApp {
             gesture: self.gesture_counter,
             backup: c.overrides.clone(),
             query: String::new(),
+            view: crate::automation::AutoView::default(),
             open: true,
         });
     }
@@ -630,6 +648,31 @@ impl KtApp {
             frame_step,
             self.player.transport.playhead(),
         );
+        // Ось графика — МАТЕРИАЛ ЭКЗЕМПЛЯРА, тот же домен, в котором
+        // садится ключ; у зеркального экземпляра концы меняются местами,
+        // поэтому min/max, а не «первый-последний».
+        let mat_range = {
+            let a = kt_model::clip_material_at(
+                inst.source_in,
+                inst.start,
+                inst.duration,
+                inst.reversed,
+                frame_step,
+                inst.start,
+            );
+            let b = kt_model::clip_material_at(
+                inst.source_in,
+                inst.start,
+                inst.duration,
+                inst.reversed,
+                frame_step,
+                inst.start + inst.duration,
+            );
+            (kt_time::Tick(a.0.min(b.0)), kt_time::Tick(a.0.max(b.0).max(a.0.min(b.0) + 1)))
+        };
+        let tl_view = self.tl_view();
+        let axis_linked = self.auto_axis_linked;
+        let playhead = self.player.transport.playhead();
         let media: Vec<(MediaId, String)> = doc
             .media
             .iter()
@@ -638,6 +681,46 @@ impl KtApp {
             .filter(|m| doc.sequence(m.id).is_none())
             .map(|m| (m.id, m.path.clone()))
             .collect();
+        // Паспорта ручек: пределы ЦЕЛИ, суженные автором, и ГОТОВАЯ
+        // подпись — имя автора (Р.59: непустой `label` у динамического
+        // владельца рисуется дословно, мимо каталога, t684).
+        let specs: Vec<kt_model::ParamSpec> = list
+            .iter()
+            .map(|p| {
+                let base = doc.addr_spec(Some(w.seq), &p.target);
+                let mut sp = base.unwrap_or(kt_model::ParamSpec {
+                    name: Default::default(),
+                    ty: p.ty.clone(),
+                    min: 0.0,
+                    max: 1.0,
+                    default: 0.0,
+                    step: 0.01,
+                    unit: kt_model::ParamUnit::None,
+                    kind: kt_model::ParamKind::Smooth,
+                    label: Default::default(),
+                });
+                sp.min = p.range.min.unwrap_or(sp.min).max(sp.min);
+                sp.max = p.range.max.unwrap_or(sp.max).min(sp.max);
+                sp.name = std::borrow::Cow::Owned(pub_key(p.id));
+                sp.label = std::borrow::Cow::Owned(p.name.clone());
+                sp
+            })
+            .collect();
+        // Кривые ВСЕХ ручек — одним рядом: виджет рисует кривые одного
+        // носителя, а носитель здесь — экземпляр. В модели они лежат по
+        // переопределениям, поэтому имя на время окна подменяется на
+        // номер ручки и возвращается при записи.
+        let mut auto: Vec<kt_model::ParamCurve> = Vec::new();
+        for p in &list {
+            if let Some(o) = inst.overrides.iter().find(|o| o.pub_id == p.id)
+                && let Some(c) = o.curves.iter().find(|c| c.param == p.target.param)
+            {
+                let mut c = c.clone();
+                c.param = pub_key(p.id);
+                auto.push(c);
+            }
+        }
+        let auto_before = auto.clone();
         let (over_n, total) = self.instance_override_counts(&inst);
         let title = format!(
             "{} — {}",
@@ -645,10 +728,20 @@ impl KtApp {
             doc.sequence(w.seq).map(|s| s.name.clone()).unwrap_or_default()
         );
         let mut ops: Vec<Command> = Vec::new();
+        // что править в модели по итогам кадра: ручки с изменённым
+        // значением, ручки со сброшенным переопределением и действующие
+        // значения всех строк (кривой нужна база, если её заводят)
+        let mut dirty: Vec<PubId> = Vec::new();
+        let mut drop_curve: Vec<PubId> = Vec::new();
+        let mut values: Vec<ParamValue> = Vec::new();
+        let mut axis_req = crate::automation::AxisReq::default();
+        let mut seek: Option<kt_time::Tick> = None;
+        let mut hover_out: Option<String> = None;
         let mut cancel = false;
         let mut done = false;
         let mut open = w.open;
         let mut query = std::mem::take(&mut w.query);
+        let view = &mut w.view;
         egui::Window::new(title)
             .id(egui::Id::new(("inst_params", w.clip.0)))
             .open(&mut open)
@@ -664,7 +757,7 @@ impl KtApp {
                     .num_columns(4)
                     .spacing([8.0, 4.0])
                     .show(ui, |ui| {
-                        for p in &list {
+                        for (i, p) in list.iter().enumerate() {
                             let ov = inst.overrides.iter().find(|o| o.pub_id == p.id).cloned();
                             let tmpl = doc.published_value(w.seq, p.id);
                             let cur = ov
@@ -681,52 +774,21 @@ impl KtApp {
                             let name = if dim { name.weak() } else { name };
                             ui.label(name);
                             let mut next = cur.clone();
-                            let mut curves =
-                                ov.as_ref().map(|o| o.curves.clone()).unwrap_or_default();
-                            let mut changed = draw_value_row(
+                            let mut bind = crate::widgets::CurveBind {
+                                curves: &mut auto,
+                                sel: view.sel,
+                                at,
+                            };
+                            let changed = draw_value_row(
                                 ui,
                                 p,
+                                &specs[i],
                                 &mut next,
-                                &mut curves,
-                                at,
+                                &mut bind,
                                 &media,
                                 &mut query,
                                 doc.addr_type(Some(w.seq), &p.target),
                             );
-                            // «+ кривая»: у числа и цвета переопределение
-                            // умеет ехать по времени, у ступенчатых типов
-                            // половины между вариантами нет
-                            if p.ty.curvable() {
-                                // кнопка ПЕРЕКЛЮЧАЕТ: заведённую кривую
-                                // надо уметь и снять, иначе контрол
-                                // остаётся навсегда погашенным (правило 9),
-                                // а единственным выходом был бы полный
-                                // сброс строки
-                                let has = curves.iter().any(|c| c.param == p.target.param);
-                                let glyph =
-                                    if has { crate::icons::CLEAR } else { crate::icons::PLUS };
-                                let b = ui.add(egui::Button::new(glyph).small());
-                                crate::widgets::field_probe::note(
-                                    &format!("inst.curve.{}", p.id.0),
-                                    b.rect,
-                                );
-                                if b.clicked() {
-                                    if has {
-                                        curves.retain(|c| c.param != p.target.param);
-                                    } else {
-                                        curves.push(kt_model::ParamCurve {
-                                            param: p.target.param.clone(),
-                                            keys: vec![kt_model::AutoKey {
-                                                t: at,
-                                                v: next.as_num().unwrap_or(0.0),
-                                            }],
-                                            ease: false,
-                                            source: kt_model::CurveSource::Keys,
-                                        });
-                                    }
-                                    changed = true;
-                                }
-                            }
                             // значение ШАБЛОНА рядом — читается живьём,
                             // копии в файле нет (решение владельца)
                             let t = tmpl
@@ -763,15 +825,125 @@ impl KtApp {
                             crate::widgets::hint(&reset, tr(k::pubp::RESET_HINT));
                             if reset.clicked() {
                                 ops.push(Command::ClearOverride { id: w.clip, pub_id: p.id });
+                                drop_curve.push(p.id);
                             } else if changed {
-                                ops.push(Command::SetOverride {
-                                    id: w.clip,
-                                    ov: Box::new(Override { pub_id: p.id, value: next, curves }),
-                                });
+                                dirty.push(p.id);
                             }
+                            values.push(next);
                             ui.end_row();
                         }
                     });
+
+                // ---- АВТОМАТИЗАЦИЯ ------------------------------------
+                //
+                // Тот же виджет, что у слота эффекта и у генератора
+                // (решение Р.34 «один механизм анимации на всё»). До
+                // Р.60 окно правило кривые ВСЛЕПУЮ: безымянный глиф
+                // заводил кривую, и каждая правка поля клала ключ по
+                // курсору, а посмотреть на кривую было негде.
+                let curvable: Vec<usize> =
+                    (0..list.len()).filter(|&i| list[i].ty.curvable()).collect();
+                if !curvable.is_empty() {
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        // заголовок секции объясняет, ЧЬИ это кривые:
+                        // ось у них — время экземпляра, а не ленты
+                        let ttl = ui.label(tr(k::pubp::AUTO_TITLE));
+                        crate::widgets::hint(&ttl, tr(k::pubp::AUTO_HINT));
+                        let free: Vec<usize> = curvable
+                            .iter()
+                            .copied()
+                            .filter(|&i| !auto.iter().any(|c| c.param == pub_key(list[i].id)))
+                            .collect();
+                        if !free.is_empty() {
+                            // МЕНЮ, а не глиф: у действия обязано быть
+                            // имя — и в интерфейсе, и для харнесса
+                            let mb = ui.menu_button(tr(k::fx::AUTO_ADD), |ui| {
+                                for &i in &free {
+                                    // пункт — ИМЯ АВТОРА дословно (t684)
+                                    if ui.button(&list[i].name).clicked() {
+                                        // стартовая кривая — константа
+                                        // действующего значения на весь
+                                        // материал экземпляра, как у слота
+                                        let v0 = values
+                                            .get(i)
+                                            .and_then(|v| v.as_num())
+                                            .unwrap_or(specs[i].default);
+                                        auto.push(kt_model::ParamCurve {
+                                            param: pub_key(list[i].id),
+                                            ease: true,
+                                            keys: vec![
+                                                kt_model::AutoKey { t: mat_range.0, v: v0 },
+                                                kt_model::AutoKey { t: mat_range.1, v: v0 },
+                                            ],
+                                            source: Default::default(),
+                                        });
+                                        view.active = auto.len() - 1;
+                                        view.sel = None;
+                                        dirty.push(list[i].id);
+                                        ui.close();
+                                    }
+                                }
+                            });
+                            crate::widgets::hint(&mb.response, tr(k::pubp::AUTO_ADD_HINT));
+                        }
+                    });
+                    if !auto.is_empty() {
+                        let to_tl = |t: kt_time::Tick| {
+                            kt_model::clip_timeline_at(
+                                inst.source_in,
+                                inst.start,
+                                inst.duration,
+                                inst.reversed,
+                                frame_step,
+                                t,
+                            )
+                        };
+                        let to_mat = |t: kt_time::Tick| {
+                            kt_model::clip_material_at(
+                                inst.source_in,
+                                inst.start,
+                                inst.duration,
+                                inst.reversed,
+                                frame_step,
+                                t,
+                            )
+                        };
+                        let actx = crate::automation::AutoCtx {
+                            specs: &specs,
+                            range: mat_range,
+                            view: crate::automation::view_in_curve(&to_mat, tl_view),
+                            to_timeline: &to_tl,
+                            to_curve: &to_mat,
+                            frame_step,
+                            linked: axis_linked,
+                        };
+                        let res = crate::automation::draw(
+                            ui,
+                            ("instauto", w.clip.0),
+                            &actx,
+                            &mut auto,
+                            view,
+                            playhead,
+                            &mut hover_out,
+                        );
+                        if res.changed {
+                            // какая ручка поехала, виджет не сообщает —
+                            // сверяем со снимком начала кадра
+                            for p in &list {
+                                let k = pub_key(p.id);
+                                let now = auto.iter().find(|c| c.param == k);
+                                let was = auto_before.iter().find(|c| c.param == k);
+                                if now != was {
+                                    dirty.push(p.id);
+                                }
+                            }
+                        }
+                        seek = res.seek;
+                        axis_req = axis_req.merge(&res);
+                    }
+                }
+
                 ui.separator();
                 ui.horizontal(|ui| {
                     if ui.button(tr(k::pubp::DONE)).clicked() {
@@ -783,6 +955,37 @@ impl KtApp {
                 });
             });
         w.query = query;
+        // Одна команда на ручку: значение строки плюс её кривая, имя
+        // которой возвращается ЦЕЛЕВЫМ — таким его ждёт `apply_overrides`.
+        dirty.retain(|id| !drop_curve.contains(id));
+        dirty.dedup();
+        for (i, p) in list.iter().enumerate() {
+            if !dirty.contains(&p.id) {
+                continue;
+            }
+            let key = pub_key(p.id);
+            let curves: Vec<kt_model::ParamCurve> = auto
+                .iter()
+                .filter(|c| c.param == key)
+                .map(|c| {
+                    let mut c = c.clone();
+                    c.param = p.target.param.clone();
+                    c
+                })
+                .collect();
+            let value = values.get(i).cloned().unwrap_or(ParamValue::Num(0.0));
+            ops.push(Command::SetOverride {
+                id: w.clip,
+                ov: Box::new(Override { pub_id: p.id, value, curves }),
+            });
+        }
+        if let Some(t) = seek {
+            self.player.seek(t);
+        }
+        self.apply_axis_req(axis_req);
+        if let Some(h) = hover_out {
+            crate::widgets::hint_sink::put(&h);
+        }
         // ВСЯ сессия окна — один шаг истории: токен жеста общий на все
         // строки и на откат
         for c in ops {
@@ -833,32 +1036,51 @@ fn media_name(media: &[(MediaId, String)], id: MediaId) -> String {
 fn draw_value_row(
     ui: &mut egui::Ui,
     p: &PublishedParam,
+    spec: &kt_model::ParamSpec,
     v: &mut ParamValue,
-    curves: &mut [kt_model::ParamCurve],
-    at: kt_time::Tick,
+    bind: &mut crate::widgets::CurveBind<'_>,
     media: &[(MediaId, String)],
     query: &mut String,
     live_ty: Option<ParamType>,
 ) -> bool {
     let probe = format!("inst.value.{}", p.id.0);
+    let key = pub_key(p.id);
     let mut changed = false;
     match v {
         ParamValue::Num(x) => {
-            let ci = curves.iter().position(|c| c.param == p.target.param);
+            // ЕДИНСТВЕННОЕ место, где решается «ключ или константа»:
+            // ключ по курсору пишется, только когда кривая ЗАВЕДЕНА и
+            // НАРИСОВАНА (правило Р.60). Раньше кривую заводил безымянный
+            // глиф, и окно превращалось в скрытый режим записи.
+            let ci = bind.curves.iter().position(|c| c.param == key);
             let mut shown = match ci {
-                Some(i) => crate::widgets::bound_value(&curves[i], None, at),
+                Some(i) => {
+                    let sel = match bind.sel {
+                        Some((c, k)) if c == i && k < bind.curves[i].keys.len() => Some(k),
+                        _ => None,
+                    };
+                    crate::widgets::bound_value(&bind.curves[i], sel, bind.at)
+                }
                 None => *x,
             };
-            // пределы — объявленные автором поверх пределов цели
-            let lo = p.range.min.unwrap_or(-1e9);
-            let hi = p.range.max.unwrap_or(1e9);
-            let r = ui.add(egui::DragValue::new(&mut shown).range(lo..=hi).speed(0.05));
+            // пределы ЦЕЛИ, суженные автором, — оба уже в паспорте
+            let step = if spec.step > 0.0 { spec.step } else { 0.05 };
+            let r = ui.add(
+                egui::DragValue::new(&mut shown).range(spec.min..=spec.max).speed(step),
+            );
             crate::widgets::field_probe::note(&probe, r.rect);
             if r.changed() {
                 match ci {
                     // КЛЮЧ садится в домене ЭКЗЕМПЛЯРА — это и есть время
                     // ленты, модель переведёт его в материал цели сама
-                    Some(i) => crate::widgets::bound_apply(&mut curves[i], None, at, shown),
+                    Some(i) => {
+                        let sel = match bind.sel {
+                            Some((c, k)) if c == i && k < bind.curves[i].keys.len() => Some(k),
+                            _ => None,
+                        };
+                        let at = bind.at;
+                        crate::widgets::bound_apply(&mut bind.curves[i], sel, at, shown);
+                    }
                     None => *x = shown,
                 }
                 changed = true;

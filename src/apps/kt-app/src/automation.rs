@@ -203,6 +203,18 @@ impl AutoCtx<'_> {
     fn spec(&self, param: &str) -> Option<&ParamSpec> {
         self.specs.iter().find(|s| s.name == param)
     }
+
+    /// Подпись кривой. У встроенных рядов имя snake_case переводится
+    /// каталогом; у ДИНАМИЧЕСКОГО владельца (публичный параметр
+    /// композиции, завтра плагин) имя придумал АВТОР, в каталог оно
+    /// попасть не может — и лежит готовой подписью в `ParamSpec::label`
+    /// (Р.59). Виджет обязан рисовать её дословно, мимо `tr()` (t684).
+    pub(crate) fn label(&self, param: &str) -> String {
+        match self.spec(param) {
+            Some(s) if !s.label.is_empty() => s.label.to_string(),
+            _ => crate::widgets::param_label(param),
+        }
+    }
 }
 
 /// Окно главного таймлайна в домене кривой. Переводится ТЕМ ЖЕ
@@ -382,7 +394,7 @@ fn toolbar(
         // «добавил второй параметр, а редактируется первый» (п.17). До
         // Р.38 новый параметр не становился активным вовсе.
         for (ci, c) in curves.iter().enumerate() {
-            let name = crate::widgets::param_label(&c.param);
+            let name = ctx.label(&c.param);
             let text = egui::RichText::new(name).color(curve_color(ci));
             if crate::app::hint_into(
                 hover,
@@ -753,7 +765,7 @@ fn graph(
         p.text(
             egui::pos2(rect.right() - 6.0, plot.top() + 2.0),
             egui::Align2::RIGHT_TOP,
-            crate::widgets::param_label(&c.param),
+            ctx.label(&c.param),
             egui::FontId::proportional(11.0),
             col,
         );
@@ -861,7 +873,7 @@ fn table(
             ui.strong(tr(k::fx::COL_TIME));
             ui.strong(tr(k::fx::COL_FRAC));
             for c in curves.iter() {
-                ui.strong(crate::widgets::param_label(&c.param));
+                ui.strong(ctx.label(&c.param));
             }
             ui.end_row();
             for t in &times {

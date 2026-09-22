@@ -2203,3 +2203,92 @@ fn t682_publishing_is_reachable_from_inside_a_reel_only() {
         }
     }
 }
+
+/// Тест 693 (Р.60): кривые ЛЮБОГО носителя показывает ОДИН виджет.
+///
+/// Решение Р.34 — «один механизм анимации на всё». Окно параметров
+/// композиции его обошло: завело собственную запись ключей (поле писало
+/// ключ по курсору) и не завело ни графика, ни таблицы. Владелец: «кривых
+/// автоматизаций я нигде не вижу… ни одной кнопки в окне про автоматизацию
+/// нет».
+///
+/// Сторож двусторонний. Сверху — по КОДУ: примитивы записи в кривую
+/// (`bound_apply`/`bound_value`) живут только там, где живёт сам виджет;
+/// снизу — по СЛЕДСТВИЮ: у каждого окна, правящего значение по времени,
+/// есть вызов виджета, а у его контролов — подсказка в строке состояния
+/// (правило 10: всплывающих у нас нет).
+#[test]
+fn t693_every_carrier_draws_its_curves_with_the_one_widget() {
+    let root = workspace_root();
+
+    // --- 1. примитивы кривой не зовутся мимо виджета ------------------
+    const HOME: [&str; 2] = ["apps/kt-app/src/widgets.rs", "apps/kt-app/src/automation.rs"];
+    let mut files: Vec<String> = Vec::new();
+    for dir in ["libs", "apps"] {
+        collect_rs(&root.join(dir), &mut files);
+    }
+    let mut bad: Vec<String> = Vec::new();
+    for rel in &files {
+        if HOME.contains(&rel.as_str()) || rel.contains("/tests/") || rel.ends_with("_tests.rs") {
+            continue;
+        }
+        let src = strip_comments(&std::fs::read_to_string(root.join(rel)).expect(rel));
+        for (n, line) in src.lines().enumerate() {
+            let t = line.trim();
+            // `CurveBind` — законная дверь: она и есть «поле, связанное с
+            // кривой», и живёт в том же доме, что виджет
+            if (t.contains("bound_apply(") || t.contains("bound_value("))
+                && !t.contains("bind.")
+                && !t.contains("fn bound_")
+            {
+                bad.push(format!("{rel}:{}: {t}", n + 1));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "запись в кривую мимо единственного виджета ({}): так и появился \
+         невидимый редактор ключей в окне параметров композиции:\n  {}",
+        HOME.join(", "),
+        bad.join("\n  ")
+    );
+
+    // --- 2. у каждого носителя есть вызов виджета ---------------------
+    for (rel, who) in [
+        ("apps/kt-app/src/fx_editor.rs", "слот эффекта"),
+        ("apps/kt-app/src/gen_ui.rs", "генератор на событии"),
+        ("apps/kt-app/src/camera_editor.rs", "камера"),
+        ("apps/kt-app/src/pubparam.rs", "публичный параметр композиции"),
+    ] {
+        let src = std::fs::read_to_string(root.join(rel)).expect(rel);
+        assert!(
+            src.contains("automation::draw("),
+            "{who} ({rel}) правит значение по времени, но виджета автоматизации не зовёт — \
+             значит, у него завёлся свой редактор ключей"
+        );
+    }
+
+    // --- 3. следствие: контрол назван и объясняет себя ----------------
+    use crate::i18n::{k, tr};
+    use crate::layout_tests::harness_news_template;
+    let (mut h, s) = harness_news_template();
+    h.state_mut().open_inst_params(s.b);
+    h.step();
+    h.step();
+    let add = {
+        use egui_kittest::kittest::Queryable;
+        h.query_all_by_label(tr(k::fx::AUTO_ADD))
+            .map(|n| n.rect())
+            .next()
+            .expect("в окне параметров композиции нет НАЗВАННОГО действия «завести кривую»")
+    };
+    h.hover_at(add.center());
+    h.step();
+    h.step();
+    let hint = h.state().hover_hint.clone();
+    assert_eq!(
+        hint.as_deref(),
+        Some(tr(k::pubp::AUTO_ADD_HINT)),
+        "у действия «завести кривую» нет подсказки в строке состояния (правило 10): {hint:?}"
+    );
+}

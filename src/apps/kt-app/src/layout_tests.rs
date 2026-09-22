@@ -12294,23 +12294,18 @@ fn t683_instance_params_window_draws_every_type() {
         frame_step,
         h.state().player.transport.playhead(),
     );
-    let curve = ParamCurve {
-        param: "size".into(),
-        keys: vec![AutoKey { t: at, v: 96.0 }],
-        ease: false,
-        source: CurveSource::Keys,
-    };
-    assert!(h.state_mut().apply_coalesced(
-        Command::SetOverride {
-            id: s.b,
-            ov: Box::new(Override {
-                pub_id: s.size,
-                value: ParamValue::Num(96.0),
-                curves: vec![curve],
-            }),
-        },
-        win
-    ));
+    // Кривая заводится НАЗВАННЫМ действием окна (Р.60): до этого раунда
+    // тут стоял `SetOverride` руками, и тест был зелёным на интерфейсе,
+    // где кривую заводил безымянный глиф, а показать её было нечем.
+    h.get_by_label(tr(k::fx::AUTO_ADD)).click();
+    h.step();
+    h.step();
+    {
+        use eframe::egui::accesskit::Role;
+        use egui_kittest::kittest::by;
+        h.get(by().role(Role::Button).label("Кегль")).click();
+    }
+    h.step();
     h.step();
     let got = h
         .state()
@@ -12319,7 +12314,17 @@ fn t683_instance_params_window_draws_every_type() {
         .and_then(|c| c.overrides.iter().find(|o| o.pub_id == s.size).cloned())
         .expect("переопределение кегля");
     assert_eq!(got.curves.len(), 1, "кривая переопределения не доехала");
-    assert_eq!(got.curves[0].keys[0].t, at, "ключ сел не в материале экземпляра");
+    assert_eq!(got.curves[0].param, "size", "в модель уехало оконное имя кривой");
+    assert!(
+        got.curves[0].keys.iter().all(|k| k.t.0 >= at.0.min(0) ),
+        "ключи стартовой кривой легли вне материала экземпляра: {:?}",
+        got.curves[0]
+    );
+    // и сама кривая ВИДНА: тот же виджет, что у слота эффекта
+    assert!(
+        h.query_all_by_label_contains(tr(k::fx::AUTO_CLIP)).count() > 0,
+        "кривая заведена, а виджета автоматизации в окне нет"
+    );
 
     // и модель ЭТО ВИДИТ: разрешение ленты под набором отдаёт кривую цели
     let doc = h.state().model.document();
@@ -12329,6 +12334,177 @@ fn t683_instance_params_window_draws_every_type() {
     assert!(
         target.gen_auto.iter().any(|c| c.param == "size"),
         "кривая переопределения не доехала до цели внутри ленты"
+    );
+}
+
+/// Тест 691 (Р.60): кривая переопределения ВИДНА, и без неё поле — константа.
+///
+/// Владелец: «я могу в разных местах поставить разные значения и будет
+/// что-то типо автоматизации кривых… но кривых автоматизаций я нигде не
+/// вижу… ни одной кнопки в окне про автоматизацию нет». Окно правило ключи
+/// вслепую: безымянный глиф заводил кривую, и дальше каждая правка поля
+/// клала ключ по курсору.
+///
+/// Тест утверждает НАБЛЮДАЕМОЕ СЛЕДСТВИЕ с двух сторон. Без кривой правка
+/// поля при двух разных положениях курсора обязана дать ОДНО значение и
+/// НОЛЬ ключей — скрытой записи не бывает. После названного действия
+/// «+ кривая» в окне обязан появиться тот же виджет, что у слота эффекта,
+/// и те же две правки дают уже ДВА ключа.
+#[test]
+fn t691_instance_curves_are_visible_and_never_hidden() {
+    use eframe::egui;
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let (mut h, s) = harness_news_template();
+
+    // курсор ставим внутрь ВТОРОГО выпуска: домен ключа — материал
+    // экземпляра, и снаружи события он не определён
+    let (b_start, b_dur) = h
+        .state()
+        .model
+        .clip(s.b)
+        .map(|c| (c.start, c.duration))
+        .expect("второй выпуск на месте");
+    let t1 = kt_time::Tick(b_start.0 + b_dur.0 / 4);
+    let t2 = kt_time::Tick(b_start.0 + b_dur.0 / 2);
+
+    h.state_mut().player.seek(t1);
+    h.state_mut().open_inst_params(s.b);
+    h.step();
+    h.step();
+    assert_eq!(h.state().inst_params.len(), 1, "окно параметров композиции не открылось");
+
+    // поле «Кегля» лежит между подписью-именем автора и подписью шаблона
+    let field_pos = |h: &Harness<'_, KtApp>| -> egui::Pos2 {
+        let name = h
+            .query_all_by_label("Кегль")
+            .map(|n| n.rect())
+            .min_by(|a, b| a.top().total_cmp(&b.top()))
+            .expect("строка «Кегль» в окне");
+        let right = h
+            .query_all_by_label_contains("шаблон")
+            .map(|n| n.rect())
+            .filter(|r| (r.center().y - name.center().y).abs() < 6.0)
+            .min_by(|a, b| a.left().total_cmp(&b.left()))
+            .expect("подпись шаблона в строке «Кегль»");
+        assert!(right.left() > name.right() + 8.0, "между именем и шаблоном нет места под поле");
+        egui::pos2((name.right() + right.left()) * 0.5, name.center().y)
+    };
+    let type_value = |h: &mut Harness<'static, KtApp>, pos: egui::Pos2, text: &str| {
+        h.hover_at(pos);
+        h.step();
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            h.step();
+        }
+        h.event(egui::Event::Text(text.into()));
+        h.step();
+        h.key_press(egui::Key::Enter);
+        h.step();
+        h.step();
+    };
+    let ov_of = |h: &Harness<'_, KtApp>| -> Option<Override> {
+        h.state()
+            .model
+            .clip(s.b)
+            .and_then(|c| c.overrides.iter().find(|o| o.pub_id == s.size).cloned())
+    };
+
+    // --- БЕЗ КРИВОЙ: две правки в разных местах дают ОДНО значение -----
+    let pos = field_pos(&h);
+    type_value(&mut h, pos, "0.1");
+    let after_first = ov_of(&h).expect("правка поля не доехала до модели");
+    assert!(after_first.curves.is_empty(), "поле завело кривую само: {after_first:?}");
+
+    h.state_mut().player.seek(t2);
+    h.step();
+    let pos = field_pos(&h);
+    type_value(&mut h, pos, "0.3");
+    let after_second = ov_of(&h).expect("вторая правка не доехала");
+    assert!(
+        after_second.curves.is_empty(),
+        "правка при другом положении курсора ЗАПИСАЛА ключ — это и есть скрытая \
+         автоматизация, на которую жаловался владелец: {after_second:?}"
+    );
+    assert_eq!(
+        after_second.value.as_num(),
+        Some(0.3),
+        "без кривой переопределение обязано быть КОНСТАНТОЙ последней правки"
+    );
+    assert_ne!(
+        after_first.value.as_num(),
+        after_second.value.as_num(),
+        "харнесс не изменил значение — тест ничего не проверяет"
+    );
+
+    // --- НАЗВАННОЕ ДЕЙСТВИЕ заводит кривую и показывает её -------------
+    assert!(
+        h.query_all_by_label_contains(tr(k::fx::AUTO_CLIP)).count() == 0,
+        "виджет автоматизации нарисован до того, как кривую завели"
+    );
+    h.get_by_label(tr(k::fx::AUTO_ADD)).click();
+    h.step();
+    h.step();
+    // в меню ПУНКТ, а не подпись строки: имя ручки в окне встречается и
+    // тем и другим, и «любой узел с этим текстом» кликнул бы не туда
+    {
+        use eframe::egui::accesskit::Role;
+        use egui_kittest::kittest::by;
+        h.get(by().role(Role::Button).label("Кегль")).click();
+    }
+    h.step();
+    h.step();
+
+    let with_curve = ov_of(&h).expect("переопределение исчезло");
+    assert_eq!(with_curve.curves.len(), 1, "кривая не завелась: {with_curve:?}");
+    assert_eq!(
+        with_curve.curves[0].param, "size",
+        "в модель уехало ОКОННОЕ имя кривой вместо целевого — apply_overrides её не найдёт"
+    );
+    assert!(
+        h.query_all_by_label_contains(tr(k::fx::AUTO_CLIP)).count() > 0,
+        "кривая заведена, а виджета автоматизации в окне нет — ровно та дыра, \
+         из-за которой «кривых автоматизаций я нигде не вижу»"
+    );
+
+    // --- С КРИВОЙ: те же две правки дают ДВА ключа ---------------------
+    let mat = |t: kt_time::Tick| {
+        let c = h.state().model.clip(s.b).expect("второй выпуск");
+        kt_model::clip_material_at(
+            c.source_in,
+            c.start,
+            c.duration,
+            c.reversed,
+            90_000 / h.state().model.document().settings.fps.max(1) as i64,
+            t,
+        )
+    };
+    let (m1, m2) = (mat(t1), mat(t2));
+    h.state_mut().player.seek(t1);
+    h.step();
+    let pos = field_pos(&h);
+    type_value(&mut h, pos, "0.2");
+    h.state_mut().player.seek(t2);
+    h.step();
+    let pos = field_pos(&h);
+    type_value(&mut h, pos, "0.4");
+
+    let curve = ov_of(&h).expect("переопределение исчезло").curves.remove(0);
+    let at = |t: kt_time::Tick| curve.keys.iter().find(|k| k.t == t).map(|k| k.v);
+    assert_eq!(at(m1), Some(0.2), "ключ не сел в материале экземпляра: {curve:?}");
+    assert_eq!(at(m2), Some(0.4), "второй ключ не сел: {curve:?}");
+    assert!(m1 != m2, "харнесс двигал курсор в одну и ту же точку материала");
+
+    // имя АВТОРА виджет рисует дословно: у ручки композиции имени в
+    // каталоге нет и быть не может (Р.59)
+    assert!(
+        h.query_all_by_label_contains("Кегль").count() > 0,
+        "виджет подписал кривую не именем автора"
     );
 }
 
