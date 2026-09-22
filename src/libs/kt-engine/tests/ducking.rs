@@ -24,7 +24,8 @@ fn project() -> Project {
         height: 36,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:voice".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "synth:music".into() });
     let clip = |id: u64, lane: u32, media: u64, from_s: f64, len_s: f64| ClipEvent {

@@ -14,7 +14,8 @@ fn base_project() -> Project {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:Ramp".into() });
     for (id, start) in [(1u64, 0i64), (2, 48_000), (3, 96_000)] {
         p.clips.push(ClipEvent {

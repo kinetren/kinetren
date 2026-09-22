@@ -7,6 +7,7 @@ use kt_time::Tick;
 
 fn cam(id: u64, lane: u32, start: i64, dur: i64) -> CameraEvent {
     CameraEvent {
+        ease: true,
         id: CameraId(id),
         lane,
         start: Tick(start),
@@ -15,7 +16,6 @@ fn cam(id: u64, lane: u32, start: i64, dur: i64) -> CameraEvent {
         cam: CameraParams::default(),
         keyframes: vec![],
         auto: vec![],
-        ease: true,
     }
 }
 
@@ -26,7 +26,8 @@ fn project() -> Project {
         height: 720,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    })
+    
+    default_shape: Default::default(),})
 }
 
 #[test]
@@ -166,8 +167,8 @@ fn t231_camera_curves_replace_keyframes() {
     let mut both = c.clone();
     both.auto = vec![ParamCurve {
         param: "pos_x".into(),
-        ease: false,
-        keys: vec![AutoKey { t: Tick(0), v: 7.0 }],
+
+        keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 7.0)]),
         source: Default::default(),
     }];
     assert!(!kt_model::migrate_legacy_camera(&mut both), "миграция не трогает готовые кривые");

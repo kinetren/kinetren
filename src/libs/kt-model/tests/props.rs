@@ -96,10 +96,11 @@ mod frozen {
 }
 
 fn curve(param: &str, a: f64, b: f64, ease: bool) -> ParamCurve {
+    // прежнее булево сглаживание — это одна форма на все отрезки (Р.61)
+    let shape = if ease { SegShape::DEFAULT } else { SegShape::Linear };
     ParamCurve {
         param: param.into(),
-        ease,
-        keys: vec![AutoKey { t: Tick(0), v: a }, AutoKey { t: Tick(90_000), v: b }],
+        keys: vec![AutoKey::shaped(Tick(0), a, shape), AutoKey::shaped(Tick(90_000), b, shape)],
         source: CurveSource::Keys,
     }
 }
@@ -169,7 +170,6 @@ fn t643b_nothing_to_do_compiles_to_nothing() {
     );
     let keyless = vec![vec![ParamCurve {
         param: "db".into(),
-        ease: true,
         keys: vec![],
         source: CurveSource::Keys,
     }]];
@@ -184,7 +184,8 @@ fn t649_formula_curves_are_refused_loudly() {
         height: 36,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     let mut c = ClipEvent {
         r#gen: None,

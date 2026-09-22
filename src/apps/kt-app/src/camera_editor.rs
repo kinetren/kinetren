@@ -148,8 +148,7 @@ impl KtApp {
                         let v = c.cam.get_param(&name).unwrap_or(0.0);
                         c.auto.push(ParamCurve {
                             param: name,
-                            ease: true,
-                            keys: vec![kt_model::AutoKey { t: Tick(0), v }],
+                            keys: vec![kt_model::AutoKey::at(Tick(0), v)],
                             source: Default::default(),
                         });
                         changed = true;

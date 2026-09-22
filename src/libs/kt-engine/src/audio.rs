@@ -619,6 +619,7 @@ impl AudioRenderer {
             overlaps,
             overlap_layers,
             opts: kt_fx::ChainOpts { pitch_engine: project.settings.pitch_engine },
+            
             nests,
         }
     }

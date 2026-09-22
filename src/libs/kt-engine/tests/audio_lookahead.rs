@@ -31,7 +31,8 @@ fn project(fx: Vec<FxInstance>, pattern: &str) -> Project {
         height: 36,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: pattern.into() });
     p.clips.push(ClipEvent {
         r#gen: None,

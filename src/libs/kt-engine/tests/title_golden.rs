@@ -29,7 +29,8 @@ fn title_project() -> (Project, Sources) {
         height: 180,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     let mut title = GeneratorKind::default_text();
     if let GeneratorKind::Text { text, bold, size, fill_r, fill_g, fill_b, .. } = &mut title {
         *text = "Kinotrain\nР.52 титр".into();

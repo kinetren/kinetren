@@ -38,7 +38,8 @@ fn sample() -> Project {
         height: 720,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "media/a.mp4".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "media/b.mp4".into() });
     for (id, start, src, media) in [(1u64, 0i64, 0i64, 1u64), (2, 90_000, 30_000, 2)] {

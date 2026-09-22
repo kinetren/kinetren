@@ -25,7 +25,6 @@ use kt_time::Tick;
 struct PlannedCurve {
     slot: u32,
     idx: u16,
-    ease: bool,
     keys: Box<[crate::AutoKey]>,
 }
 
@@ -55,7 +54,6 @@ impl AutoPlan {
                 curves.push(PlannedCurve {
                     slot: slot as u32,
                     idx: idx as u16,
-                    ease: c.ease,
                     keys: c.keys.clone().into_boxed_slice(),
                 });
             }
@@ -73,7 +71,7 @@ impl AutoPlan {
     pub fn apply(&self, fx: &mut [FxInstance], at: Tick) {
         for c in &self.curves {
             let Some(f) = fx.get_mut(c.slot as usize) else { continue };
-            f.set_param_idx(c.idx as usize, curve_value(&c.keys, c.ease, at));
+            f.set_param_idx(c.idx as usize, curve_value(&c.keys, at));
         }
     }
 

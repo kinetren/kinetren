@@ -892,7 +892,8 @@ fn draw_title_extras(ui: &mut egui::Ui, id: kt_model::ClipId, g: &mut GeneratorK
 ///
 /// Сам виджет один (`automation::draw`, правило «своего редактора
 /// кейфреймов ни у кого быть не должно»), здесь только то, что про
-/// кривую как свойство источника: список свободных параметров, ease и
+/// кривую как свойство источника: список свободных параметров, форма всех
+/// отрезков и
 /// снятие кривой. Домен — материал события, ровно тот `pts`, по которому
 /// кривые разрешает ИСТОЧНИК (`GenState::kind_at`): разойдись они, ключ
 /// кэша перестал бы определять кадр.
@@ -925,10 +926,9 @@ fn draw_gen_auto(
                         let v0 = kind.get_param(n).unwrap_or(spec.default);
                         curves.push(kt_model::ParamCurve {
                             param: n.to_string(),
-                            ease: true,
                             keys: vec![
-                                kt_model::AutoKey { t: src_in, v: v0 },
-                                kt_model::AutoKey { t: kt_time::Tick(mat_end), v: v0 },
+                                kt_model::AutoKey::at(src_in, v0),
+                                kt_model::AutoKey::at(kt_time::Tick(mat_end), v0),
                             ],
                             source: Default::default(),
                         });
@@ -940,7 +940,7 @@ fn draw_gen_auto(
             });
         }
         if let Some(c) = curves.get_mut(view.active) {
-            changed |= ui.checkbox(&mut c.ease, tr(k::fx::EASE)).changed();
+            changed |= crate::widgets::shape_all_control(ui, c, hover);
             if ui.button(tr(k::fx::AUTO_REMOVE)).clicked() {
                 let i = view.active;
                 curves.remove(i);

@@ -29,7 +29,8 @@ fn settings() -> ProjectSettings {
         height: 36,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    }
+    
+    default_shape: Default::default(),}
 }
 
 fn clip(id: u64, media: u64, start: Tick, dur: Tick) -> ClipEvent {
@@ -393,8 +394,7 @@ fn t672b_validation_refuses_dangling_and_mistyped_overrides() {
         value: ParamValue::Text("раз".into()),
         curves: vec![ParamCurve {
             param: "text".into(),
-            ease: true,
-            keys: vec![AutoKey { t: Tick::ZERO, v: 0.0 }],
+            keys: vec![AutoKey::at(Tick::ZERO, 0.0)],
             source: CurveSource::Keys,
         }],
     }];

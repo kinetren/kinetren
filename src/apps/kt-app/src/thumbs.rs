@@ -745,7 +745,8 @@ mod key_tests {
             height: 360,
             sample_rate: 48000,
             pitch_engine: Default::default(),
-        });
+        
+        default_shape: Default::default(),});
         let svc = ThumbService::start(&project, None);
         let id = MediaId(99); // медиа НЕТ в карте сервиса
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -793,7 +794,8 @@ mod key_tests {
             height: 360,
             sample_rate: 48000,
             pitch_engine: Default::default(),
-        });
+        
+        default_shape: Default::default(),});
         let id = MediaId(1);
         project.media.push(kt_model::MediaRef { id, path: "gen:solid:c=ff8800".into() });
         // прогон дважды: без пути проекта (нет БД) и с путём (БД есть,

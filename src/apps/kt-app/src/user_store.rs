@@ -269,11 +269,11 @@ mod tests {
                 bypass: false,
                 curves: vec![kt_model::ParamCurve {
                     param: "radius".into(),
-                    ease: false,
-                    keys: vec![
-                        kt_model::AutoKey { t: kt_time::Tick(45_000), v: 1.0 },
-                        kt_model::AutoKey { t: kt_time::Tick(135_000), v: 48.0 },
-                    ],
+
+                    keys: kt_model::AutoKey::linear(vec![
+                        kt_model::AutoKey::at(kt_time::Tick(45_000), 1.0),
+                        kt_model::AutoKey::at(kt_time::Tick(135_000), 48.0),
+                    ]),
                     source: Default::default(),
                 }],
             }],

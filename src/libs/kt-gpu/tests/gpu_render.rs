@@ -22,7 +22,8 @@ fn project() -> Project {
         height: 72,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     for id in [1u64, 2] {
         p.media.push(MediaRef { id: MediaId(id), path: "synth:ramp".into() });
     }
@@ -233,7 +234,8 @@ fn nested_project(outer_fx: Vec<FxInstance>, outer_opacity: f32) -> Project {
         height: 72,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     for id in [1u64, 2] {
         p.media.push(MediaRef { id: MediaId(id), path: "synth:ramp".into() });
     }
@@ -400,7 +402,8 @@ fn t496_gpu_frame_identity_follows_content() {
         height: 36,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     let solid = |r: u8| GeneratorKind::Solid { color_r: r, color_g: 0, color_b: 0 };
     p.media.push(MediaRef { id: MediaId(1), path: kt_model::gen_kind_path(&solid(32)) });
     p.clips.push(ClipEvent {
@@ -482,8 +485,8 @@ fn animated_nested_project(outer_fx: Vec<FxInstance>) -> Project {
         vec![FxInstance::ColorGrade { brightness: 0.0, contrast: 0.0, saturation: 1.0, hue: 0.0 }];
     child.fx_auto = vec![vec![ParamCurve {
         param: "brightness".into(),
-        ease: false,
-        keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(60_000), v: 0.9 }],
+
+        keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 0.0), AutoKey::at(Tick(60_000), 0.9)]),
         source: Default::default(),
     }]];
     p.validate().unwrap();

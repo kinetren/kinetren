@@ -406,8 +406,8 @@ pub fn text_anim_curves(anim: TextAnim, secs: f64, span: f64) -> Vec<ParamCurve>
         param: param.to_string(),
         // ЛИНЕЙНО, а не ease: прежний код считал `prog` без сглаживания,
         // и «печатная машинка» со smoothstep печатала бы рывками.
-        ease: false,
-        keys: vec![crate::AutoKey { t: Tick::ZERO, v: a }, crate::AutoKey { t: end, v: b }],
+
+        keys: crate::AutoKey::linear(vec![crate::AutoKey::at(Tick::ZERO, a), crate::AutoKey::at(end, b)]),
         source: crate::CurveSource::Keys,
     };
     match anim {

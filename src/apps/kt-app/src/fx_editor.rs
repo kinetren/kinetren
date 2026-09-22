@@ -937,10 +937,9 @@ pub(crate) fn draw_auto_for(
                             let v0 = f.get_param(n).unwrap_or(spec.default);
                             curves.push(kt_model::ParamCurve {
                                 param: n.to_string(),
-                                ease: true,
                                 keys: vec![
-                                    kt_model::AutoKey { t: src_in, v: v0 },
-                                    kt_model::AutoKey { t: kt_time::Tick(mat_end), v: v0 },
+                                    kt_model::AutoKey::at(src_in, v0),
+                                    kt_model::AutoKey::at(kt_time::Tick(mat_end), v0),
                                 ],
                                 source: Default::default(),
                             });
@@ -961,7 +960,7 @@ pub(crate) fn draw_auto_for(
         // (automation::toolbar): их получают все носители кривых разом.
         // Здесь остаётся то, что про КРИВУЮ как параметр слота.
         if let Some(c) = curves.get_mut(view.active) {
-            changed |= ui.checkbox(&mut c.ease, tr(k::fx::EASE)).changed();
+            changed |= crate::widgets::shape_all_control(ui, c, hover_out);
             if ui.button(tr(k::fx::AUTO_REMOVE)).clicked() {
                 let i = view.active;
                 curves.remove(i);
@@ -1386,7 +1385,7 @@ pub(crate) fn draw_video_fx_params(
                 });
             });
         }
-        FxInstance::CamMotion { keyframes, .. } => {
+        FxInstance::CamMotion { ease: true, keyframes, .. } => {
             ui.weak(crate::tf!(k::fx::KEYFRAMES_N, keyframes.len()));
             ui.horizontal(|ui| {
                 if ui.button(tr(k::fx::ADD_KF)).clicked() {

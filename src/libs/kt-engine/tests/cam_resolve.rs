@@ -12,6 +12,7 @@ use kt_time::Tick;
 
 fn cam(id: u64, lane: u32, start: i64, dur: i64, rot_y: f64) -> CameraEvent {
     CameraEvent {
+        ease: true,
         id: CameraId(id),
         lane,
         start: Tick(start),
@@ -20,7 +21,6 @@ fn cam(id: u64, lane: u32, start: i64, dur: i64, rot_y: f64) -> CameraEvent {
         cam: CameraParams { rot_y, ..CameraParams::default() },
         keyframes: vec![],
         auto: vec![],
-        ease: true,
     }
 }
 

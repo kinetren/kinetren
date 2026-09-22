@@ -19,7 +19,8 @@ fn settings() -> ProjectSettings {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    }
+    
+    default_shape: Default::default(),}
 }
 
 fn clip(id: u64, media: u64, start: Tick, dur: Tick) -> ClipEvent {
@@ -769,6 +770,7 @@ fn t558_cameras_travel_into_the_sequence() {
     p.clips.push(clip(12, 1, LEN, LEN));
     p.camera_lanes = 1;
     p.cameras.push(CameraEvent {
+        ease: true,
         id: CameraId(7),
         lane: 0,
         start: Tick::ZERO,
@@ -777,7 +779,6 @@ fn t558_cameras_travel_into_the_sequence() {
         cam: Default::default(),
         keyframes: Vec::new(),
         auto: Vec::new(),
-        ease: true,
     });
     p.validate().expect("фикстура законна");
 
@@ -893,6 +894,7 @@ fn expandable() -> Project {
         enabled: true,
     });
     s.cameras.push(CameraEvent {
+        ease: true,
         id: CameraId(7),
         lane: 0,
         start: Tick::ZERO,
@@ -901,7 +903,6 @@ fn expandable() -> Project {
         cam: Default::default(),
         keyframes: Vec::new(),
         auto: Vec::new(),
-        ease: true,
     });
     // СВОЙ порядок строк: морф-строка сверху, иначе слой не накрывает ничего
     s.lane_order = vec![

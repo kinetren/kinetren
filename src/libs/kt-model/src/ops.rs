@@ -242,7 +242,7 @@ fn block_extras(p: &Project, clips: &[ClipEvent], base: Option<Tick>, len: Tick)
         .cameras
         .iter()
         .filter(|c| kt_time::TickRange::new(c.start, c.start + c.duration).overlaps(&win))
-        .map(|c| CameraEvent { start: c.start - base, ..c.clone() })
+        .map(|c| CameraEvent { ease: true, start: c.start - base, ..c.clone() })
         .collect();
     let areas = p
         .areas
@@ -1055,8 +1055,13 @@ pub fn rebase_curves(curves: &[ParamCurve], from: Tick, to: Tick) -> Vec<ParamCu
         .iter()
         .map(|c| ParamCurve {
             param: c.param.clone(),
-            ease: c.ease,
-            keys: c.keys.iter().map(|k| AutoKey { t: Tick((k.t.0 + d).max(0)), v: k.v }).collect(),
+            // форма отрезка едет с ключом: перенос кривой в другое
+            // событие не вправе менять её вид
+            keys: c
+                .keys
+                .iter()
+                .map(|k| AutoKey::shaped(Tick((k.t.0 + d).max(0)), k.v, k.shape))
+                .collect(),
             source: Default::default(),
         })
         .collect()
@@ -1143,7 +1148,7 @@ pub fn duck_curve_commands(
             match keys.last_mut() {
                 // на реверсе ключи идут в обратном порядке — сортировка ниже
                 Some(k) if k.t == t => k.v = v,
-                _ => keys.push(AutoKey { t, v }),
+                _ => keys.push(AutoKey::at(t, v)),
             }
         };
         let ducked = base - depth_db;
@@ -1167,7 +1172,6 @@ pub fn duck_curve_commands(
         auto[slot].retain(|cur| cur.param != "db");
         auto[slot].push(ParamCurve {
             param: "db".into(),
-            ease: true,
             keys,
             source: Default::default(),
         });

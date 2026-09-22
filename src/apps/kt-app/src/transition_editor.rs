@@ -343,8 +343,7 @@ impl KtApp {
                                 let v = t.kind.get_param(&name).unwrap_or(0.0);
                                 t.auto.push(kt_model::ParamCurve {
                                     param: name,
-                                    ease: true,
-                                    keys: vec![kt_model::AutoKey { t: kt_time::Tick::ZERO, v }],
+                                    keys: vec![kt_model::AutoKey::at(kt_time::Tick::ZERO, v)],
                                     source: Default::default(),
                                 });
                                 changed = true;

@@ -186,6 +186,7 @@ pub fn chain_lookahead(fx: &[FxInstance], auto: &AutoProfiles) -> i64 {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ChainOpts {
     pub pitch_engine: kt_model::PitchEngine,
+
 }
 
 pub fn chain_tail(fx: &[FxInstance], auto: &AutoProfiles) -> Tick {

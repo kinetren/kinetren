@@ -41,7 +41,8 @@ fn raw_project(clips: Vec<ClipEvent>) -> Project {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips = clips;
     // тесты t143 закрепляют конверсию наездов в переходы/дорожки — она живёт
@@ -151,7 +152,8 @@ fn t164_legacy_import_keeps_overlaps_and_lanes() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.video_lanes = 2;
     p.audio_lanes = 2;

@@ -29,7 +29,7 @@ pub type ParamPoints = [(f64, f64)];
 /// Значение профиля в позиции tau (линейная интерполяция, края зажаты).
 /// `base` возвращается только у ПУСТОГО профиля: непустой перекрывает
 /// параметр целиком (семантика v1 — кривая главнее ручки).
-pub fn param_at(base: f64, points: &ParamPoints, tau: f64, ease: bool) -> f64 {
+pub fn param_at(base: f64, points: &ParamPoints, tau: f64, shapes: &[crate::SegShape]) -> f64 {
     let s = tau;
     if points.is_empty() {
         return base;
@@ -37,14 +37,15 @@ pub fn param_at(base: f64, points: &ParamPoints, tau: f64, ease: bool) -> f64 {
     if s <= points[0].0 {
         return points[0].1;
     }
-    for w in points.windows(2) {
+    for (i, w) in points.windows(2).enumerate() {
         if s <= w[1].0 {
             let span = (w[1].0 - w[0].0).max(1e-12);
-            let mut a = (s - w[0].0) / span;
-            if ease {
-                a = a * a * (3.0 - 2.0 * a);
-            }
-            return w[0].1 * (1.0 - a) + w[1].1 * a;
+            let a = (s - w[0].0) / span;
+            // форму несёт ЛЕВЫЙ ключ отрезка — и звук, и график зовут
+            // ОДНУ функцию `SegShape::at` (Р.61); короткий ряд форм
+            // значит «прямая», как у `rate`
+            let shape = shapes.get(i).copied().unwrap_or(crate::SegShape::Linear);
+            return shape.at(a, w[0].1, w[1].1);
         }
     }
     points[points.len() - 1].1
@@ -56,7 +57,7 @@ pub fn param_at(base: f64, points: &ParamPoints, tau: f64, ease: bool) -> f64 {
 /// интеграл от smoothstep был бы четвёртой степени. Р.37 сделал ease
 /// принципиально считаемым, но выигрыша в нём нет.
 pub fn rate_at(base: f64, points: &ParamPoints, tau: f64) -> f64 {
-    param_at(base, points, tau, false)
+    param_at(base, points, tau, &[])
 }
 
 // ---------------------------------------------------------------------------
@@ -524,7 +525,9 @@ pub fn avg_rate(base: f64, points: &ParamPoints) -> f64 {
 #[derive(Debug, Clone, PartialEq)]
 struct SlotCurve {
     param: String,
-    ease: bool,
+    /// Форма отрезка ПОСЛЕ каждой точки (Р.61); у `rate` всегда пусто —
+    /// профиль скорости кусочно-линеен по закону.
+    shapes: Vec<crate::SegShape>,
     points: Vec<(f64, f64)>,
 }
 
@@ -571,8 +574,14 @@ impl AutoProfiles {
                         .filter(|c| !c.keys.is_empty())
                         .map(|c| {
                             // rate обязан остаться кусочно-линейным: на нём
-                            // стоят аналитические формулы карты варпа
-                            let ease = c.ease && c.param != "rate";
+                            // стоят аналитические формулы карты варпа, и
+                            // любая другая форма на нём отвергается ещё
+                            // командой (Р.61) — здесь страховка
+                            let shapes: Vec<crate::SegShape> = if c.param == "rate" {
+                                Vec::new()
+                            } else {
+                                c.keys.iter().map(|k| k.shape).collect()
+                            };
                             // значение клампится ЗДЕСЬ: `segments` клампит
                             // концы до интерполяции, а `eff_rate` — после,
                             // и на ключе вне RATE_CLAMP они разъезжались.
@@ -604,7 +613,7 @@ impl AutoProfiles {
                             } else {
                                 pts
                             };
-                            SlotCurve { param: c.param.clone(), ease, points: pts }
+                            SlotCurve { param: c.param.clone(), shapes, points: pts }
                         })
                         .collect()
                 })
@@ -624,18 +633,18 @@ impl AutoProfiles {
             .map_or(&[], |c| c.points.as_slice())
     }
 
-    /// Сглаживание кривой параметра: узлам, читающим значение ПО
-    /// ПОЗИЦИИ (LFO, питч), нужен тот же флаг, что и `value`.
-    pub fn ease_of(&self, slot: usize, param: &str) -> bool {
+    /// Формы отрезков кривой параметра: узлам, читающим значение ПО
+    /// ПОЗИЦИИ (LFO, питч), нужен тот же ряд, что и `value`.
+    pub fn shapes_of(&self, slot: usize, param: &str) -> &[crate::SegShape] {
         self.slots
             .get(slot)
             .and_then(|s| s.iter().find(|c| c.param == param))
-            .is_some_and(|c| c.ease)
+            .map_or(&[], |c| &c.shapes)
     }
 
     /// Значение параметра слота в позиции материала s.
     pub fn value(&self, slot: usize, param: &str, base: f64, s: f64) -> f64 {
-        param_at(base, self.points(slot, param), s, self.ease_of(slot, param))
+        param_at(base, self.points(slot, param), s, self.shapes_of(slot, param))
     }
 
     /// Индекс слота с варпом и его профиль скорости — на нём стоит вся
@@ -985,12 +994,12 @@ mod reversed_tests {
         let len = kt_time::Tick(90_000).to_audio_frames();
         let curves = vec![vec![ParamCurve {
             param: "db".into(),
-            ease: false,
-            keys: vec![
-                AutoKey { t: kt_time::Tick(0), v: 0.0 },
-                AutoKey { t: kt_time::Tick(90_000 / 4), v: 10.0 },
-                AutoKey { t: kt_time::Tick(90_000), v: 0.0 },
-            ],
+
+            keys: AutoKey::linear(vec![
+                AutoKey::at(kt_time::Tick(0), 0.0),
+                AutoKey::at(kt_time::Tick(90_000 / 4), 10.0),
+                AutoKey::at(kt_time::Tick(90_000), 0.0),
+            ]),
             source: Default::default(),
         }]];
 

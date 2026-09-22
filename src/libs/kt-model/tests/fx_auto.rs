@@ -8,36 +8,41 @@ use kt_model::*;
 use kt_time::Tick;
 
 fn key(t: i64, v: f64) -> AutoKey {
-    AutoKey { t: Tick(t), v }
+    AutoKey::at(Tick(t), v)
+}
+
+fn lin(t: i64, v: f64) -> AutoKey {
+    AutoKey::shaped(Tick(t), v, SegShape::Linear)
 }
 
 #[test]
 fn t190_curve_value_semantics() {
     let keys = vec![key(20_000, 10.0), key(80_000, 40.0)];
     // кламп краёв: до первой точки и после последней — крайние значения
-    assert_eq!(curve_value(&keys, false, Tick(0)), 10.0);
-    assert_eq!(curve_value(&keys, false, Tick(20_000)), 10.0);
-    assert_eq!(curve_value(&keys, false, Tick(100_000)), 40.0);
+    assert_eq!(curve_value(&keys, Tick(0)), 10.0);
+    assert_eq!(curve_value(&keys, Tick(20_000)), 10.0);
+    assert_eq!(curve_value(&keys, Tick(100_000)), 40.0);
     assert_eq!(
-        curve_value(&keys, false, Tick(5_000_000)),
+        curve_value(&keys, Tick(5_000_000)),
         40.0,
         "далеко за последним ключом — его значение"
     );
     // домен НЕ клампится сверху: позиция за телом клипа законна (ручка
     // перехода, пре-ролл) и продолжает кривую крайним значением
-    assert_eq!(curve_value(&keys, false, Tick(-1)), 10.0);
-    // линейная середина сегмента
-    assert!((curve_value(&keys, false, Tick(50_000)) - 25.0).abs() < 1e-9);
-    // ease: середина совпадает (smoothstep(0.5)=0.5), четверть — нет
-    assert!((curve_value(&keys, true, Tick(50_000)) - 25.0).abs() < 1e-9);
-    let quarter_lin = curve_value(&keys, false, Tick(35_000));
-    let quarter_ease = curve_value(&keys, true, Tick(35_000));
-    assert!(quarter_ease < quarter_lin, "ease поджимает начало сегмента");
+    assert_eq!(curve_value(&keys, Tick(-1)), 10.0);
+    // середина сегмента совпадает у прямой и у третьего порядка
+    // (smoothstep(0.5) = 0.5), четверть — нет
+    let straight = vec![lin(20_000, 10.0), lin(80_000, 40.0)];
+    assert!((curve_value(&straight, Tick(50_000)) - 25.0).abs() < 1e-9);
+    assert!((curve_value(&keys, Tick(50_000)) - 25.0).abs() < 1e-9);
+    let quarter_lin = curve_value(&straight, Tick(35_000));
+    let quarter_smooth = curve_value(&keys, Tick(35_000));
+    assert!(quarter_smooth < quarter_lin, "третий порядок поджимает начало отрезка");
     // одна точка — константа
-    assert_eq!(curve_value(&[key(50_000, 7.0)], true, Tick(0)), 7.0);
-    assert_eq!(curve_value(&[key(50_000, 7.0)], true, Tick(90_000)), 7.0);
+    assert_eq!(curve_value(&[key(50_000, 7.0)], Tick(0)), 7.0);
+    assert_eq!(curve_value(&[key(50_000, 7.0)], Tick(90_000)), 7.0);
     // пустая кривая — ноль (не срабатывает через apply_fx_auto)
-    assert_eq!(curve_value(&[], false, Tick(50_000)), 0.0);
+    assert_eq!(curve_value(&[], Tick(50_000)), 0.0);
 }
 
 /// Ключи приклеены к МАТЕРИАЛУ (Р.33, решение пользователя): обрезка их
@@ -53,7 +58,8 @@ fn t212_keys_stick_to_material_through_edits() {
         height: 180,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
         r#gen: None,
@@ -73,8 +79,8 @@ fn t212_keys_stick_to_material_through_edits() {
         fx_bypass: vec![],
         fx_auto: vec![vec![ParamCurve {
             param: "radius".into(),
-            ease: false,
-            keys: vec![key(0, 1.0), key(45_000, 40.0), key(90_000, 10.0)],
+
+            keys: AutoKey::linear(vec![key(0, 1.0), key(45_000, 40.0), key(90_000, 10.0)]),
             source: Default::default(),
         }]],
         opacity: 1.0,
@@ -113,8 +119,8 @@ fn t212_keys_stick_to_material_through_edits() {
         kt_model::clip_material_at(r.source_in, r.start, r.duration, false, 3000, Tick(45_000));
     assert_eq!(left_end, right_start, "стык разреза — одна материальная точка");
     assert_eq!(
-        curve_value(&l.fx_auto[0][0].keys, false, left_end),
-        curve_value(&r.fx_auto[0][0].keys, false, right_start),
+        curve_value(&l.fx_auto[0][0].keys, left_end),
+        curve_value(&r.fx_auto[0][0].keys, right_start),
         "кривая через разрез непрерывна"
     );
 }
@@ -202,17 +208,17 @@ fn t190_apply_fx_auto() {
     let curves = vec![
         ParamCurve {
             param: "radius".into(),
-            ease: false,
-            keys: vec![key(0, 1.0), key(90_000, 47.0)],
+
+            keys: AutoKey::linear(vec![key(0, 1.0), key(90_000, 47.0)]),
             source: Default::default(),
         },
         ParamCurve {
             param: "orphan".into(),
-            ease: false,
-            keys: vec![key(0, 5.0)],
+
+            keys: AutoKey::linear(vec![key(0, 5.0)]),
             source: Default::default(),
         },
-        ParamCurve { param: "empty".into(), ease: false, keys: vec![], source: Default::default() },
+        ParamCurve { param: "empty".into(), keys: AutoKey::linear(vec![]), source: Default::default() },
     ];
     assert_eq!(apply_fx_auto(&mut f, &curves, Tick(45_000)), 1, "сироты и пустые не считаются");
     assert_eq!(f.get_param("radius"), Some(24.0), "лерп 1..47 в середине");
@@ -248,7 +254,8 @@ fn model_with_clip() -> TimelineModel {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(clip_with_fx());
     p.validate().unwrap();
@@ -261,13 +268,12 @@ fn t190_commands_undo_and_truncation() {
     let auto = vec![
         vec![ParamCurve {
             param: "radius".into(),
-            ease: false,
-            keys: vec![key(0, 1.0), key(90_000, 48.0)],
+
+            keys: AutoKey::linear(vec![key(0, 1.0), key(90_000, 48.0)]),
             source: Default::default(),
         }],
         vec![ParamCurve {
             param: "strength".into(),
-            ease: true,
             keys: vec![key(0, 0.0), key(90_000, 2.0)],
             source: Default::default(),
         }],
@@ -281,8 +287,8 @@ fn t190_commands_undo_and_truncation() {
     {
         let bad = vec![vec![ParamCurve {
             param: "radius".into(),
-            ease: false,
-            keys: bad_keys,
+
+            keys: AutoKey::linear(bad_keys),
             source: Default::default(),
         }]];
         assert!(
@@ -310,14 +316,14 @@ fn t190_files_without_auto_are_byte_stable() {
     c.fx_auto = vec![
         vec![ParamCurve {
             param: "radius".into(),
-            ease: false,
-            keys: vec![key(0, 1.0)],
+
+            keys: AutoKey::linear(vec![key(0, 1.0)]),
             source: Default::default(),
         }],
         vec![ParamCurve {
             param: "strength".into(),
-            ease: false,
-            keys: vec![key(0, 1.0)],
+
+            keys: AutoKey::linear(vec![key(0, 1.0)]),
             source: Default::default(),
         }],
     ];
@@ -338,8 +344,8 @@ fn t214_master_switch_disables_chain_without_losing_it() {
     let mut m = model_with_clip();
     let auto = vec![vec![ParamCurve {
         param: "radius".into(),
-        ease: false,
-        keys: vec![key(0, 1.0), key(90_000, 48.0)],
+
+        keys: AutoKey::linear(vec![key(0, 1.0), key(90_000, 48.0)]),
         source: Default::default(),
     }]];
     m.apply(Command::SetFxAuto { id: ClipId(1), auto: auto.clone() }).unwrap();
@@ -407,13 +413,12 @@ fn t215_fx_clipboard_slot_chain_and_envelope() {
     let auto = vec![
         vec![ParamCurve {
             param: "radius".into(),
-            ease: false,
-            keys: vec![key(0, 1.0), key(90_000, 48.0)],
+
+            keys: AutoKey::linear(vec![key(0, 1.0), key(90_000, 48.0)]),
             source: Default::default(),
         }],
         vec![ParamCurve {
             param: "strength".into(),
-            ease: true,
             keys: vec![key(0, 0.0), key(90_000, 2.0)],
             source: Default::default(),
         }],
@@ -526,7 +531,8 @@ fn t248_warp_rate_is_shared_by_the_link_group() {
         height: 36,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     let mk = |id: u64, kind: ClipKind| ClipEvent {
         r#gen: None,
@@ -586,14 +592,14 @@ fn t248_warp_rate_is_shared_by_the_link_group() {
     // кривая rate тоже синхронна, а кривые ДРУГИХ параметров — нет
     let curve = ParamCurve {
         param: "rate".into(),
-        ease: false,
-        keys: vec![key(0, 1.0), key(90_000, 2.0)],
+
+        keys: AutoKey::linear(vec![key(0, 1.0), key(90_000, 2.0)]),
         source: Default::default(),
     };
     let mix = ParamCurve {
         param: "mix".into(),
-        ease: false,
-        keys: vec![key(0, 0.9)],
+
+        keys: AutoKey::linear(vec![key(0, 0.9)]),
         source: Default::default(),
     };
     m.apply(Command::SetFxAuto { id: ClipId(2), auto: vec![vec![], vec![curve, mix]] }).unwrap();
@@ -649,8 +655,8 @@ fn t342_append_chain_block_is_one_truth() {
     use kt_model::ops;
     let curves = vec![ParamCurve {
         param: "radius".into(),
-        ease: false,
-        keys: vec![key(45_000, 1.0), key(135_000, 48.0)],
+
+        keys: AutoKey::linear(vec![key(45_000, 1.0), key(135_000, 48.0)]),
         source: Default::default(),
     }];
     let block = ops::FxChainBlock {
@@ -706,4 +712,191 @@ fn t342_append_chain_block_is_one_truth() {
     assert_eq!(auto3.len(), 2, "пустые кривые доращиваются до длины цепочки");
     assert!(auto3[0].is_empty(), "у прежнего слота кривых не появилось");
     assert!(!auto3[1].is_empty(), "у вставленного — появились");
+}
+
+// ---- 695, 697 (Р.61). форма отрезка ---------------------------------------
+
+/// Замороженный ОРАКУЛ прежнего сглаживания: дословная копия `curve_value`
+/// в редакции до Р.61, когда форма была одна на кривую (`ease: bool`).
+///
+/// Живёт в тесте намеренно. Умолчание формы обязано считать РОВНО то же
+/// самое: иначе двинутся `GOLDEN_AUDIO` и `GOLDEN_VIDEO`, а это регрессия
+/// детерминизма, а не новая возможность.
+fn frozen_curve_value(keys: &[AutoKey], ease: bool, at: Tick) -> f64 {
+    let Some(first) = keys.first() else { return 0.0 };
+    if at <= first.t {
+        return first.v;
+    }
+    for w in keys.windows(2) {
+        let (a, b) = (&w[0], &w[1]);
+        if at <= b.t {
+            let span = (b.t.0 - a.t.0).max(1) as f64;
+            let mut s = (((at.0 - a.t.0) as f64) / span).clamp(0.0, 1.0);
+            if ease {
+                s = s * s * (3.0 - 2.0 * s);
+            }
+            return a.v + (b.v - a.v) * s;
+        }
+    }
+    keys.last().unwrap().v
+}
+
+/// Тест 695 (Р.61): формы отрезка считаются замкнуто и детерминированно.
+///
+/// Форма принадлежит ЛЕВОМУ ключу отрезка и имеет СВОИ параметры — не одно
+/// общее число «жёсткости» (решение владельца: зигзаг есть форма отрезка,
+/// пересмотр вердикта F-AUT-009 п.3). Отсюда два обязательства: концы
+/// отрезка совпадают со значениями ключей у всех форм, кроме ступени, и
+/// амплитуда зигзага задаётся В ЕДИНИЦАХ ПАРАМЕТРА — иначе дрожание вокруг
+/// ПОСТОЯННОГО значения (самый частый случай) схлопнулось бы в ноль.
+#[test]
+fn t695_segment_shapes_are_closed_form_and_join_at_keys() {
+    let shapes = [
+        SegShape::Linear,
+        SegShape::DEFAULT,
+        SegShape::EaseIn { tension: 1.0 },
+        SegShape::EaseOut { tension: 1.0 },
+        SegShape::EaseIn { tension: 0.0 },
+        SegShape::EaseOut { tension: 4.0 },
+        SegShape::Smooth { tension: 0.0 },
+        SegShape::Smooth { tension: 4.0 },
+        SegShape::Zigzag { periods: 3.5, amplitude: 2.0, profile: ZigProfile::Triangle },
+        SegShape::Zigzag { periods: 1.0, amplitude: 2.0, profile: ZigProfile::Square },
+        SegShape::Zigzag { periods: 7.0, amplitude: 2.0, profile: ZigProfile::Sine },
+    ];
+
+    // --- КОНЦЫ совпадают с ключами у всех форм, кроме ступени ---------
+    for sh in shapes {
+        assert!((sh.at(0.0, 10.0, 40.0) - 10.0).abs() < 1e-12, "левый конец разошёлся: {sh:?}");
+        assert!((sh.at(1.0, 10.0, 40.0) - 40.0).abs() < 1e-12, "правый конец разошёлся: {sh:?}");
+    }
+    // ступень держит левое значение и приходит в правое ровно на ключе
+    assert_eq!(SegShape::Hold.at(0.0, 10.0, 40.0), 10.0);
+    assert_eq!(SegShape::Hold.at(0.999, 10.0, 40.0), 10.0, "ступень обязана держать значение");
+    assert_eq!(SegShape::Hold.at(1.0, 10.0, 40.0), 40.0);
+
+    // --- ДЕТЕРМИНИЗМ: два прогона байт-в-байт -------------------------
+    let probe = |sh: SegShape| -> Vec<u64> {
+        (0..=64).map(|i| sh.at(i as f64 / 64.0, -3.0, 11.0).to_bits()).collect()
+    };
+    for sh in shapes {
+        assert_eq!(probe(sh), probe(sh), "форма {sh:?} не детерминирована");
+    }
+
+    // --- ЗИГЗАГ вокруг ПОСТОЯННОГО значения ---------------------------
+    // ровно тот случай, ради которого амплитуда в единицах параметра:
+    // перепад между ключами нулевой, и доля схлопнула бы дрожание
+    let zz = SegShape::Zigzag { periods: 4.0, amplitude: 5.0, profile: ZigProfile::Triangle };
+    let vals: Vec<f64> = (0..=200).map(|i| zz.at(i as f64 / 200.0, 7.0, 7.0)).collect();
+    let (lo, hi) = vals.iter().fold((f64::MAX, f64::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
+    assert!(hi - lo > 4.0, "зигзаг на постоянном отрезке не дрожит: {lo}..{hi}");
+    assert!(hi <= 7.0 + 5.0 + 1e-9 && lo >= 7.0 - 5.0 - 1e-9, "вышел за амплитуду: {lo}..{hi}");
+    assert_eq!(vals[0], 7.0, "левый конец зигзага обязан сойтись с ключом");
+    assert_eq!(*vals.last().unwrap(), 7.0, "правый конец зигзага обязан сойтись с ключом");
+    // дробное число периодов законно и концы всё равно сходятся
+    let odd = SegShape::Zigzag { periods: 2.5, amplitude: 1.0, profile: ZigProfile::Sine };
+    assert!((odd.at(0.0, 1.0, 2.0) - 1.0).abs() < 1e-12);
+    assert!((odd.at(1.0, 1.0, 2.0) - 2.0).abs() < 1e-12);
+
+    // --- ФОРМУ несёт ЛЕВЫЙ ключ отрезка -------------------------------
+    let keys = vec![
+        AutoKey::shaped(Tick(0), 0.0, SegShape::Hold),
+        AutoKey::shaped(Tick(90_000), 10.0, SegShape::Linear),
+        AutoKey::at(Tick(180_000), 20.0),
+    ];
+    assert_eq!(curve_value(&keys, Tick(45_000)), 0.0, "первый отрезок — ступень");
+    assert!(
+        (curve_value(&keys, Tick(135_000)) - 15.0).abs() < 1e-9,
+        "второй отрезок — прямая, его форму задаёт СВОЙ левый ключ"
+    );
+}
+
+/// Тест 695b (Р.61): умолчание формы считает ровно прежнее сглаживание.
+///
+/// Сторож причины, а не следствия: значения сверяются с ЗАМОРОЖЕННЫМ
+/// оракулом прежней редакции. Разойдись они хоть в последнем бите —
+/// сдвинутся закоммиченные эталоны аудио и видео.
+#[test]
+fn t695b_default_shape_equals_the_frozen_smoothstep() {
+    let cases: Vec<Vec<AutoKey>> = vec![
+        vec![key(0, 0.0), key(90_000, 1.0)],
+        vec![key(20_000, 10.0), key(80_000, 40.0), key(150_000, -5.0)],
+        vec![key(50_000, 7.0)],
+        vec![],
+        vec![key(-90_000, 3.0), key(0, 9.0)],
+    ];
+    let probes = [
+        Tick(-1_000_000),
+        Tick(-1),
+        Tick(0),
+        Tick(1),
+        Tick(19_999),
+        Tick(35_000),
+        Tick(45_000),
+        Tick(50_000),
+        Tick(80_000),
+        Tick(90_000),
+        Tick(5_000_000),
+    ];
+    let mut checked = 0usize;
+    for keys in &cases {
+        for t in probes {
+            let now = curve_value(keys, t);
+            let was = frozen_curve_value(keys, true, t);
+            assert_eq!(
+                now.to_bits(),
+                was.to_bits(),
+                "умолчание формы разошлось с прежним сглаживанием на {t:?}: {now} против {was}"
+            );
+            // и прямая обязана совпасть с прежним `ease = false`
+            let straight: Vec<AutoKey> = AutoKey::linear(keys.clone());
+            assert_eq!(
+                curve_value(&straight, t).to_bits(),
+                frozen_curve_value(keys, false, t).to_bits(),
+                "прямая разошлась с прежним «без сглаживания» на {t:?}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked >= 50, "проб слишком мало, чтобы что-то утверждать: {checked}");
+}
+
+/// Тест 697 (Р.61): умолчание формы живёт в ПРОЕКТЕ, не в настройках
+/// машины, и применяется к новым ключам; «ко всем отрезкам» — команда.
+///
+/// Настройка машины дала бы ровно тот класс, что `Lock Envelopes to Events`
+/// у Vegas: один файл, два поведения.
+#[test]
+fn t697_default_shape_lives_in_the_project_and_applies_to_new_keys() {
+    let zig = SegShape::Zigzag { periods: 2.0, amplitude: 0.5, profile: ZigProfile::Square };
+
+    // «применить ко всем отрезкам» — одна функция модели, не UI
+    let keys = vec![key(0, 0.0), key(90_000, 1.0), key(180_000, 2.0)];
+    let all = AutoKey::all_shaped(keys.clone(), zig);
+    assert!(all.iter().all(|k| k.shape == zig), "форма легла не на все отрезки");
+    assert_eq!(all.len(), keys.len(), "команда не вправе менять число ключей");
+    assert_eq!(
+        all.iter().map(|k| (k.t, k.v.to_bits())).collect::<Vec<_>>(),
+        keys.iter().map(|k| (k.t, k.v.to_bits())).collect::<Vec<_>>(),
+        "команда формы не вправе двигать ключи"
+    );
+
+    // прежние ключи не трогаются сменой умолчания: умолчание действует
+    // на НОВЫЕ, и это проверяется тем, что конструктор берёт DEFAULT
+    assert_eq!(AutoKey::at(Tick(0), 0.0).shape, SegShape::DEFAULT);
+    assert!(SegShape::DEFAULT.is_default());
+    assert!(!SegShape::Linear.is_default());
+
+    // умолчание проекта едет В ФАЙЛЕ (поле документа), а не в настройках
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 64,
+        height: 36,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    
+    default_shape: Default::default(),});
+    p.settings.default_shape = zig;
+    let json = serde_json::to_string(&p.settings).expect("настройки сериализуются");
+    assert!(json.contains("zigzag"), "умолчание формы не уехало в документ: {json}");
 }

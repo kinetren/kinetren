@@ -11,14 +11,11 @@ use kt_model::FxInstance;
 fn profiles(points: &[(f64, f64)], len_frames: i64) -> kt_fx::AutoProfiles {
     let curves = vec![vec![kt_model::ParamCurve {
         param: "rate".into(),
-        ease: false,
-        keys: points
+
+        keys: kt_model::AutoKey::linear(points
             .iter()
-            .map(|(s, r)| kt_model::AutoKey {
-                t: kt_time::Tick::from_audio_frames((s * len_frames as f64).round() as i64),
-                v: *r,
-            })
-            .collect(),
+            .map(|(s, r)| kt_model::AutoKey::at(kt_time::Tick::from_audio_frames((s * len_frames as f64).round() as i64), *r,))
+            .collect()),
         source: Default::default(),
     }]];
     kt_fx::AutoProfiles::from_curves(&curves, 0, len_frames)

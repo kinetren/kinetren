@@ -22,7 +22,8 @@ fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, engine: PitchEngine)
         height: 36,
         sample_rate: 48000,
         pitch_engine: engine,
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:tone".into() });
     p.clips.push(ClipEvent {
         r#gen: None,
@@ -155,11 +156,11 @@ fn t337_neutral_pitch_is_byte_passthrough() {
     // а живая кривая нейтралью НЕ является, даже при нулевой базе
     let curve = vec![vec![ParamCurve {
         param: "semitones".into(),
-        ease: false,
-        keys: vec![
-            AutoKey { t: Tick(0), v: 0.0 },
-            AutoKey { t: Tick::from_audio_frames(DUR), v: 7.0 },
-        ],
+
+        keys: AutoKey::linear(vec![
+            AutoKey::at(Tick(0), 0.0),
+            AutoKey::at(Tick::from_audio_frames(DUR), 7.0),
+        ]),
         source: Default::default(),
     }]];
     let auto_c = kt_fx::AutoProfiles::from_curves_rev(&curve, 0, DUR, false);

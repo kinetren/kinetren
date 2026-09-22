@@ -1747,8 +1747,10 @@ pub struct PitchNode {
     cents: f32,
     st_points: Vec<(f64, f64)>,
     ct_points: Vec<(f64, f64)>,
-    st_ease: bool,
-    ct_ease: bool,
+    /// Формы отрезков кривых (Р.61): узел, читающий значение ПО ПОЗИЦИИ,
+    /// обязан видеть тот же ряд форм, что и остальная программа.
+    st_shapes: Vec<kt_model::SegShape>,
+    ct_shapes: Vec<kt_model::SegShape>,
     clip_len: i64,
     /// 0 — нейтраль (узел прозрачен).
     la: i64,
@@ -1771,8 +1773,8 @@ impl PitchNode {
             cents: 0.0,
             st_points: Vec::new(),
             ct_points: Vec::new(),
-            st_ease: true,
-            ct_ease: true,
+            st_shapes: Vec::new(),
+            ct_shapes: Vec::new(),
             clip_len: 1,
             la: 0,
             ring: vec![0.0; PITCH_RING * CH],
@@ -1796,8 +1798,8 @@ impl PitchNode {
     fn bind(&mut self, auto: &AutoProfiles, slot: usize, clip_len: i64) {
         self.st_points = auto.points(slot, "semitones").to_vec();
         self.ct_points = auto.points(slot, "cents").to_vec();
-        self.st_ease = auto.ease_of(slot, "semitones");
-        self.ct_ease = auto.ease_of(slot, "cents");
+        self.st_shapes = auto.shapes_of(slot, "semitones").to_vec();
+        self.ct_shapes = auto.shapes_of(slot, "cents").to_vec();
         self.clip_len = clip_len.max(1);
         self.refresh_la();
     }
@@ -1818,8 +1820,8 @@ impl PitchNode {
     /// Коэффициент высоты на позиции `p` (клип-локальный кадр).
     fn ratio_at(&self, p: i64) -> f64 {
         let tau = p as f64 / self.clip_len as f64;
-        let st = kt_model::param_at(self.semitones as f64, &self.st_points, tau, self.st_ease);
-        let ct = kt_model::param_at(self.cents as f64, &self.ct_points, tau, self.ct_ease);
+        let st = kt_model::param_at(self.semitones as f64, &self.st_points, tau, &self.st_shapes);
+        let ct = kt_model::param_at(self.cents as f64, &self.ct_points, tau, &self.ct_shapes);
         (2f64).powf((st + ct / 100.0) / 12.0).clamp(0.25, 4.0)
     }
 

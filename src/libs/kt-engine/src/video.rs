@@ -130,7 +130,7 @@ impl TransAnim {
             if !c.keys.is_empty() {
                 k.set_param(
                     &c.param,
-                    kt_model::curve_value(&c.keys, c.ease, Tick(t.0 - self.w0.0)),
+                    kt_model::curve_value(&c.keys, Tick(t.0 - self.w0.0)),
                 );
             }
         }

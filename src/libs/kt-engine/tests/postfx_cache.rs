@@ -15,7 +15,8 @@ fn project_with_fx(fx: Vec<FxInstance>, start_frames: i64) -> Project {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
         r#gen: None,
@@ -187,6 +188,7 @@ fn t66d_camera_edit_invalidates_postfx() {
         camera: None,
     };
     let cam_at = |pos_x: f64, start: i64| CameraEvent {
+        ease: true,
         id: CameraId(1),
         lane: 0,
         start: Tick(start),
@@ -195,7 +197,6 @@ fn t66d_camera_edit_invalidates_postfx() {
         cam: CameraParams { pos_x, ..CameraParams::default() },
         keyframes: vec![],
         auto: vec![],
-        ease: true,
     };
     let with_cam = |cam: CameraEvent| {
         let mut p = project_with_fx(vec![pan3d.clone()], 48_000);

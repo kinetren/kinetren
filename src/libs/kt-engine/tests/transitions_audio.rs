@@ -20,7 +20,8 @@ fn project(clips: Vec<ClipEvent>) -> Project {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     let mut ids: Vec<MediaId> = clips.iter().map(|c| c.media).collect();
     ids.sort();
     ids.dedup();

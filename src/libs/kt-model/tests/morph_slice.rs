@@ -41,7 +41,8 @@ fn base() -> Project {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:440".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "synth:ramp".into() });
     p.clips.push(clip(10, ClipKind::Video, 0, Tick(0), LEN));
@@ -763,7 +764,8 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
         r#gen: None,
@@ -800,8 +802,8 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
             video_fx: vec![FxInstance::blur(4)],
             video_auto: vec![vec![ParamCurve {
                 param: "radius".into(),
-                ease: false,
-                keys: vec![AutoKey { t: Tick(0), v: 2.0 }, AutoKey { t: Tick(90_000 * 2), v: 9.0 }],
+
+                keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 2.0), AutoKey::at(Tick(90_000 * 2), 9.0)]),
                 source: Default::default(),
             }]],
             ..Default::default()
@@ -843,8 +845,8 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
     assert!(only.is_empty());
     only.video_auto = vec![vec![ParamCurve {
         param: "radius".into(),
-        ease: false,
-        keys: vec![AutoKey { t: Tick(0), v: 1.0 }],
+
+        keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 1.0)]),
         source: Default::default(),
     }]];
     assert!(!only.is_empty(), "патч с кривыми обязан сериализоваться");
@@ -876,8 +878,7 @@ fn warped(rate: f64, keys: Vec<AutoKey>, reversed: bool) -> ClipEvent {
         } else {
             vec![vec![ParamCurve {
                 param: "rate".into(),
-                ease: false,
-                keys,
+                keys: AutoKey::linear(keys),
                 source: Default::default(),
             }]]
         },
@@ -925,7 +926,7 @@ fn t270c_split_on_a_rate_curve_moves_keys_with_the_anchor() {
     // рампа 1.0 → 2.0 по всему событию; ключи в тиках материала от source_in
     let c = warped(
         1.0,
-        vec![AutoKey { t: Tick(90_000), v: 1.0 }, AutoKey { t: Tick(90_000 + 4 * 90_000), v: 2.0 }],
+        vec![AutoKey::at(Tick(90_000), 1.0), AutoKey::at(Tick(90_000 + 4 * 90_000), 2.0)],
         false,
     );
     let at = Tick(2 * 90_000);
@@ -1159,12 +1160,12 @@ fn t291_source_replacement_carries_the_clips_own_curves() {
         }];
         p.clips[0].fx_auto = vec![vec![ParamCurve {
             param: "rot_y".into(),
-            ease: false,
-            keys: vec![
-                AutoKey { t: Tick(3_000), v: 0.0 },
-                AutoKey { t: peak, v: 30.0 },
-                AutoKey { t: Tick(3_000 + LEN.0), v: 0.0 },
-            ],
+
+            keys: AutoKey::linear(vec![
+                AutoKey::at(Tick(3_000), 0.0),
+                AutoKey::at(peak, 30.0),
+                AutoKey::at(Tick(3_000 + LEN.0), 0.0),
+            ]),
             source: Default::default(),
         }]];
         let mut m = layer(Tick(0), LEN);
@@ -1196,7 +1197,7 @@ fn t291_source_replacement_carries_the_clips_own_curves() {
         let mid = Tick(c.start.0 + c.duration.0 / 2);
         let mat =
             kt_model::clip_material_at(c.source_in, c.start, c.duration, c.reversed, STEP, mid);
-        kt_model::curve_value(&c.fx_auto[0][0].keys, false, mat)
+        kt_model::curve_value(&c.fx_auto[0][0].keys, mat)
     };
     let (a, b) = (at(&plain), at(&patched));
     assert!((a - 30.0).abs() < 1e-6, "без подмены в середине события стоит пик кривой, а не {a}");

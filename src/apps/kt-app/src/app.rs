@@ -623,7 +623,8 @@ impl KtApp {
             height: 720,
             sample_rate: 48000,
             pitch_engine: Default::default(),
-        })
+        
+        default_shape: Default::default(),})
     }
 
     /// Р.29: собрать GPU-движок видео-FX на живом устройстве eframe и
@@ -8979,7 +8980,8 @@ mod repaint_tests {
             height: 360,
             sample_rate: 48000,
             pitch_engine: Default::default(),
-        });
+        
+        default_shape: Default::default(),});
         p.media.push(MediaRef { id: MediaId(1), path: "/tmp/Интервью.mp4".into() });
         p.markers.push(Marker::named(Tick(5000), "Интро"));
         p.markers.push(Marker::named(Tick(9000), "интервью — начало"));
@@ -9032,7 +9034,8 @@ mod repaint_tests {
             height: 360,
             sample_rate: 48000,
             pitch_engine: Default::default(),
-        });
+        
+        default_shape: Default::default(),});
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         let clip = |id: u64, start: i64, dur: i64| ClipEvent {
             r#gen: None,
@@ -9088,7 +9091,8 @@ mod repaint_tests {
             height: 360,
             sample_rate: 48000,
             pitch_engine: Default::default(),
-        });
+        
+        default_shape: Default::default(),});
         assert_eq!(stop_points(&empty), vec![0]);
     }
 

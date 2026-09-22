@@ -15,7 +15,8 @@ fn project() -> Project {
         height: 720,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "detail.mp4".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "green.mp4".into() });
     p
@@ -92,10 +93,9 @@ fn gen_demo_concat() {
     // норму, зум в конце устраняет сетки; финал обязан быть резким.
     let mut p = project();
     let mut c = clip(1, 0, 8, 1, vec![grid2(), pan3d(1.0), grid2(), pan3d(1.0)]);
-    let key = |t_s: f64, v: f64| AutoKey { t: Tick((t_s * SEC as f64) as i64), v };
+    let key = |t_s: f64, v: f64| AutoKey::at(Tick((t_s * SEC as f64) as i64), v);
     let curve = |param: &str, keys: Vec<AutoKey>| ParamCurve {
         param: param.into(),
-        ease: true,
         keys,
         source: Default::default(),
     };
@@ -240,10 +240,9 @@ fn gen_demo_concat() {
     // кривой phase (волна бежит), CornerPin с кривыми углов (экран
     // «устанавливается» на место).
     let mut p = project();
-    let key = |t_s: f64, v: f64| AutoKey { t: Tick((t_s * SEC as f64) as i64), v };
+    let key = |t_s: f64, v: f64| AutoKey::at(Tick((t_s * SEC as f64) as i64), v);
     let curve = |param: &str, keys: Vec<AutoKey>| ParamCurve {
         param: param.into(),
-        ease: true,
         keys,
         source: Default::default(),
     };

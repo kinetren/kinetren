@@ -17,7 +17,8 @@ fn project_pair() -> Project {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     for id in [1u64, 2] {
         p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
     }
@@ -317,7 +318,8 @@ fn t174_clip_opacity_scales_the_layer() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     for id in [1u64, 2] {
         p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
     }
@@ -512,8 +514,8 @@ fn t232_transition_params_animate() {
     // окно перехода — [81_000, 99_000): кривая угла от 0° к 80°
     let curve = vec![ParamCurve {
         param: "angle".into(),
-        ease: false,
-        keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(18_000), v: 80.0 }],
+
+        keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 0.0), AutoKey::at(Tick(18_000), 80.0)]),
         source: Default::default(),
     }];
     let t = Tick(96_000); // ближе к концу окна — угол уже большой
@@ -534,8 +536,8 @@ fn t232_transition_params_animate() {
     p.transitions[0].kind = TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.0 };
     p.transitions[0].auto = vec![ParamCurve {
         param: "angle".into(),
-        ease: false,
-        keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(900_000), v: 80.0 }],
+
+        keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 0.0), AutoKey::at(Tick(900_000), 80.0)]),
         source: Default::default(),
     }];
     p.validate().expect("ключ за краем окна — законный спрятанный ключ");
@@ -788,7 +790,8 @@ fn t464_overlap_transition_reaches_picture() {
             height: 360,
             sample_rate: 48000,
             pitch_engine: Default::default(),
-        });
+        
+        default_shape: Default::default(),});
         for id in [1u64, 2] {
             p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
         }
@@ -1071,7 +1074,8 @@ fn t521_alpha_layer_under_a_chain_shows_through() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     for id in [1u64, 2] {
         p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
     }

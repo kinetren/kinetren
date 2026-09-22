@@ -34,7 +34,8 @@ fn golden_project() -> Project {
         height: 72,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     for (id, path) in
         [(1, "synth:ramp"), (2, "synth:dc:0.5"), (3, "synth:impulse"), (4, "synth:ramp")]
     {
@@ -130,20 +131,20 @@ fn golden_project() -> Project {
             fx_auto: vec![vec![
                 ParamCurve {
                     param: "rate".into(),
-                    ease: false,
-                    keys: vec![
-                        AutoKey { t: Tick(2 * sec * 3 / 10), v: 1.0 },
-                        AutoKey { t: Tick(2 * sec * 7 / 10), v: 0.5 },
-                    ],
+
+                    keys: AutoKey::linear(vec![
+                        AutoKey::at(Tick(2 * sec * 3 / 10), 1.0),
+                        AutoKey::at(Tick(2 * sec * 7 / 10), 0.5),
+                    ]),
                     source: Default::default(),
                 },
                 ParamCurve {
                     param: "mix".into(),
-                    ease: false,
-                    keys: vec![
-                        AutoKey { t: Tick(2 * sec * 3 / 10), v: 0.4 },
-                        AutoKey { t: Tick(2 * sec * 7 / 10), v: 0.1 },
-                    ],
+
+                    keys: AutoKey::linear(vec![
+                        AutoKey::at(Tick(2 * sec * 3 / 10), 0.4),
+                        AutoKey::at(Tick(2 * sec * 7 / 10), 0.1),
+                    ]),
                     source: Default::default(),
                 },
             ]],
@@ -409,7 +410,8 @@ fn generator_project() -> (Project, Sources) {
         height: 72,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:dc:0.25".into() });
     // Р.59, стадия 2: в пути медиа — ВИД, значения на событии
     p.media.push(MediaRef { id: MediaId(2), path: "gen:solid".into() });

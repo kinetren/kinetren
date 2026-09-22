@@ -21,7 +21,8 @@ fn base() -> Project {
         height: 54,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    })
+    
+    default_shape: Default::default(),})
 }
 
 fn title(text: &str) -> GeneratorKind {

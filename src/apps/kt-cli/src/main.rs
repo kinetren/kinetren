@@ -621,7 +621,8 @@ fn run(args: &[String]) -> i32 {
                 height: 1080,
                 sample_rate: 48000,
                 pitch_engine: Default::default(),
-            });
+            
+            default_shape: Default::default(),});
             let base = std::path::Path::new(path).parent().map(|d| d.to_path_buf());
             let out = kt_otio::save_project(&p, &Retained::default(), base.as_deref());
             if let Err(c) = write_project(path, &out, force) {
@@ -967,30 +968,30 @@ fn demo_project(synth: bool) -> Project {
     // автоматизация slowed — общими кривыми (Р.33): ключи в тиках
     // МАТЕРИАЛА клипа 25 (source_in = 0, длина 74 с)
     let slowed_auto = |dur: f64| -> Vec<Vec<ParamCurve>> {
-        let key = |u: f64, v: f64| AutoKey { t: t(u * dur), v };
+        let key = |u: f64, v: f64| AutoKey::at(t(u * dur), v);
         vec![vec![
             ParamCurve {
                 param: "rate".into(),
-                ease: false,
-                keys: vec![
+
+                keys: AutoKey::linear(vec![
                     key(0.0, 1.0),
                     key(0.28, 0.86),
                     key(0.62, 0.72),
                     key(0.84, 0.9),
                     key(1.0, 0.66),
-                ],
+                ]),
                 source: Default::default(),
             },
             ParamCurve {
                 param: "mix".into(),
-                ease: false,
-                keys: vec![
+
+                keys: AutoKey::linear(vec![
                     key(0.0, 0.12),
                     key(0.28, 0.34),
                     key(0.62, 0.55),
                     key(0.84, 0.3),
                     key(1.0, 0.62),
-                ],
+                ]),
                 source: Default::default(),
             },
         ]]
@@ -1001,7 +1002,8 @@ fn demo_project(synth: bool) -> Project {
         height: 1080,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     let files = [
         (1u64, "media/drone_coast.mp4"),
         (2, "media/city_night_broll.mp4"),
@@ -1082,23 +1084,20 @@ fn demo_project(synth: bool) -> Project {
     // ход камеры демо-клипа — кривыми Pan (было тремя кейфреймами
     // CamMotion; Р.34 К2: механизм анимации один на программу)
     if let Some(c) = p.clips.iter_mut().find(|c| c.id == ClipId(5)) {
-        let key = |u: f64, v: f64| AutoKey { t: t(20.0 + u * 14.0), v };
+        let key = |u: f64, v: f64| AutoKey::at(t(20.0 + u * 14.0), v);
         c.fx_auto = vec![vec![
             ParamCurve {
                 param: "pan_x".into(),
-                ease: true,
                 keys: vec![key(0.0, -0.12), key(0.55, 0.0), key(1.0, 0.14)],
                 source: Default::default(),
             },
             ParamCurve {
                 param: "pan_y".into(),
-                ease: true,
                 keys: vec![key(0.0, 0.05), key(0.55, 0.0), key(1.0, -0.06)],
                 source: Default::default(),
             },
             ParamCurve {
                 param: "zoom".into(),
-                ease: true,
                 keys: vec![key(0.0, 1.05), key(0.55, 1.28), key(1.0, 1.45)],
                 source: Default::default(),
             },

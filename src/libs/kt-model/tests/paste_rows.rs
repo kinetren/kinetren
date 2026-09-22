@@ -18,7 +18,8 @@ fn settings() -> ProjectSettings {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    }
+    
+    default_shape: Default::default(),}
 }
 
 fn clip(id: u64, kind: ClipKind, lane: u32) -> ClipEvent {
@@ -62,6 +63,7 @@ fn block() -> ops::ClipBlock {
             enabled: true,
         }],
         cameras: vec![CameraEvent {
+            ease: true,
             id: CameraId(1),
             lane: 1,
             start: Tick(0),
@@ -70,7 +72,6 @@ fn block() -> ops::ClipBlock {
             cam: CameraParams::default(),
             keyframes: vec![],
             auto: vec![],
-            ease: true,
         }],
         ..Default::default()
     }

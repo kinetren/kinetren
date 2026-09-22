@@ -169,7 +169,8 @@ fn t475_set_media_path_command() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(kt_model::MediaRef { id: MediaId(1), path: "gen:solid".into() });
     p.clips.push(ClipEvent {
         r#gen: Some(kt_model::GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
@@ -441,7 +442,8 @@ fn t657_generator_values_are_validated_against_the_media() {
             height: 36,
             sample_rate: 48000,
             pitch_engine: Default::default(),
-        });
+        
+        default_shape: Default::default(),});
         p.media.push(MediaRef { id: MediaId(1), path: "gen:solid".into() });
         p.media.push(MediaRef { id: MediaId(2), path: "movie.mp4".into() });
         p.clips.push(ClipEvent {
@@ -493,8 +495,8 @@ fn t657_generator_values_are_validated_against_the_media() {
     // пропала» (у `fx_auto` правило другое — там слот мог сменить вид)
     let curve = |name: &str| ParamCurve {
         param: name.into(),
-        ease: false,
-        keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(90_000), v: 255.0 }],
+
+        keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 0.0), AutoKey::at(Tick(90_000), 255.0)]),
         source: Default::default(),
     };
     let mut p = mk();

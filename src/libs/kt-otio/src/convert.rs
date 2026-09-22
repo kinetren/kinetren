@@ -1212,7 +1212,8 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
             height: s.height,
             sample_rate: s.sample_rate,
             pitch_engine: s.pitch_engine.unwrap_or_default(),
-        })
+        
+        default_shape: Default::default(),})
         .unwrap_or_else(|| {
             notices.push("imported with default project settings".into());
             ProjectSettings {
@@ -1221,7 +1222,8 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
                 height: 1080,
                 sample_rate: 48000,
                 pitch_engine: Default::default(),
-            }
+            
+            default_shape: Default::default(),}
         });
     let mut p = Project::new(settings);
     let mut retained = Retained {
@@ -1530,21 +1532,33 @@ fn curves_from_progress(
     let legacy: Vec<LegacyCurve> = serde_json::from_value(v.clone()).unwrap_or_default();
     legacy
         .into_iter()
-        .map(|c| kt_model::ParamCurve {
-            param: c.param,
-            ease: c.ease,
-            keys: c
-                .keys
-                .into_iter()
-                .map(|k| kt_model::AutoKey {
-                    // старый домен видео-кривых считался по прогрессу
-                    // ТАЙМЛАЙНА — у реверсированного клипа он зеркален
-                    // материалу
-                    t: kt_model::material_from_progress(k.t, source_in, duration, reversed),
-                    v: k.v,
-                })
-                .collect(),
-            source: Default::default(),
+        .map(|c| {
+            // прежнее булево сглаживание разворачивается в ОДНУ форму на
+            // все отрезки (Р.61, D1b): значения после чтения обязаны
+            // совпасть с прежними побитово
+            let shape = if c.ease {
+                kt_model::SegShape::DEFAULT
+            } else {
+                kt_model::SegShape::Linear
+            };
+            kt_model::ParamCurve {
+                param: c.param,
+                keys: c
+                    .keys
+                    .into_iter()
+                    .map(|k| {
+                        // старый домен видео-кривых считался по прогрессу
+                        // ТАЙМЛАЙНА — у реверсированного клипа он зеркален
+                        // материалу
+                        kt_model::AutoKey::shaped(
+                            kt_model::material_from_progress(k.t, source_in, duration, reversed),
+                            k.v,
+                            shape,
+                        )
+                    })
+                    .collect(),
+                source: Default::default(),
+            }
         })
         .collect()
 }

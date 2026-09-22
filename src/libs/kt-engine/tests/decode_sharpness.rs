@@ -101,7 +101,8 @@ fn project(fx: Vec<FxInstance>) -> Project {
         height: H,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "checker".into() });
     p.clips.push(ClipEvent {
         r#gen: None,

@@ -11,7 +11,8 @@ fn sample_project() -> Project {
         height: 1080,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "clips/a.mp4".into() });
     p.clips.push(ClipEvent {
         r#gen: None,

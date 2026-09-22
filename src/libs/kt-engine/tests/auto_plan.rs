@@ -45,8 +45,7 @@ fn clip(
 fn curve(param: &str, a: f64, b: f64) -> ParamCurve {
     ParamCurve {
         param: param.into(),
-        ease: true,
-        keys: vec![AutoKey { t: Tick(0), v: a }, AutoKey { t: Tick(2 * SEC), v: b }],
+        keys: vec![AutoKey::at(Tick(0), a), AutoKey::at(Tick(2 * SEC), b)],
         source: CurveSource::Keys,
     }
 }
@@ -58,7 +57,8 @@ fn project(clips: Vec<ClipEvent>, lanes: u32) -> Project {
         height: 36,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips = clips;
     p.video_lanes = lanes;

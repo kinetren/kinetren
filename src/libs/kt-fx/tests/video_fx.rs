@@ -68,8 +68,8 @@ fn t26_golden_hashes_all_effects() {
         (
             "cammotion",
             FxInstance::CamMotion {
-                mode: PanMode::Fit,
                 ease: true,
+                mode: PanMode::Fit,
                 time_scale: 1.0,
                 keyframes: vec![
                     CamKeyframe { t: 0.0, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 },
@@ -214,8 +214,8 @@ fn t68_pooled_chain_identical_with_dirty_scratch() {
     let all: Vec<Vec<FxInstance>> = vec![
         vec![FxInstance::Pan { mode: PanMode::Fill, pan_x: 0.3, pan_y: -0.2, zoom: 1.4 }],
         vec![FxInstance::CamMotion {
-            mode: PanMode::Fill,
             ease: true,
+            mode: PanMode::Fill,
             time_scale: 1.0,
             keyframes: vec![],
         }],

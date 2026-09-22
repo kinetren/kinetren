@@ -967,7 +967,7 @@ impl TransitionEvent {
         let mut k = self.kind.clone();
         for c in &self.auto {
             if !c.keys.is_empty() {
-                k.set_param(&c.param, curve_value(&c.keys, c.ease, local));
+                k.set_param(&c.param, curve_value(&c.keys, local));
             }
         }
         k
@@ -2297,7 +2297,7 @@ impl MorpherEvent {
             }
         };
         let mut keys: Vec<AutoKey> = Vec::with_capacity(gate.len() * 4 + 2);
-        let mut push = |t: i64, v: f64| keys.push(AutoKey { t: Tick(t - self.start.0), v });
+        let mut push = |t: i64, v: f64| keys.push(AutoKey::at(Tick(t - self.start.0), v));
         for w in gate {
             if w.start > body.start {
                 push(w.start.0 - 1, 0.0);
@@ -2318,8 +2318,7 @@ impl MorpherEvent {
         keys.dedup_by_key(|k| k.t.0);
         (!keys.is_empty()).then(|| ParamCurve {
             param: "amount".into(),
-            ease: false,
-            keys,
+            keys: AutoKey::linear(keys),
             source: Default::default(),
         })
     }
@@ -2337,15 +2336,19 @@ impl MorpherEvent {
         let s = self.strength;
         let mut keys = Vec::with_capacity(4);
         if fi > 0 {
-            keys.push(AutoKey { t: Tick(0), v: 0.0 });
+            keys.push(AutoKey::at(Tick(0), 0.0));
         }
-        keys.push(AutoKey { t: Tick(fi), v: s });
-        keys.push(AutoKey { t: Tick(d - fo), v: s });
+        keys.push(AutoKey::at(Tick(fi), s));
+        keys.push(AutoKey::at(Tick(d - fo), s));
         if fo > 0 {
-            keys.push(AutoKey { t: Tick(d), v: 0.0 });
+            keys.push(AutoKey::at(Tick(d), 0.0));
         }
         keys.dedup_by_key(|k| k.t.0);
-        Some(ParamCurve { param: "amount".into(), ease: false, keys, source: Default::default() })
+        Some(ParamCurve {
+            param: "amount".into(),
+            keys: AutoKey::linear(keys),
+            source: Default::default(),
+        })
     }
 
     /// Наложить слой на кусок цели: патч плюс слот СИЛЫ (Р.38 п.12).
@@ -3410,6 +3413,17 @@ pub struct ProjectSettings {
     /// байт-стабильны.
     #[serde(default, skip_serializing_if = "is_default_pitch_engine")]
     pub pitch_engine: PitchEngine,
+    
+    /// Форма отрезка у НОВЫХ ключей (Р.61).
+    ///
+    /// Живёт в ПРОЕКТЕ, а не в настройках программы: настройка машины
+    /// дала бы «один файл — два поведения» (урок `Lock Envelopes to
+    /// Events` у Vegas), и проект перестал бы описывать сам себя.
+    /// Смена умолчания НЕ трогает уже поставленные ключи — для этого
+    /// есть команда «применить форму ко всем отрезкам».
+    /// Умолчание в файл не пишется: прежние проекты байт-стабильны.
+    #[serde(default, skip_serializing_if = "SegShape::is_default")]
+    pub default_shape: SegShape,
 }
 
 fn is_default_pitch_engine(e: &PitchEngine) -> bool {
@@ -3776,18 +3790,183 @@ impl ClipEvent {
 pub struct AutoKey {
     pub t: Tick,
     pub v: f64,
+    /// Форма отрезка ПОСЛЕ этого ключа (Р.61). До Р.61 форма была одна на
+    /// всю кривую — булево `ParamCurve::ease`, — и ни «этот участок
+    /// ступенькой», ни зигзаг им не выражались.
+    ///
+    /// У последнего ключа поле не действует: справа отрезка нет.
+    /// Умолчание (`Smooth { tension: 1.0 }`) считает РОВНО прежний
+    /// `smoothstep01` и не сериализуется — байты прежних файлов и
+    /// `GOLDEN_*` не двигаются.
+    #[serde(default, skip_serializing_if = "SegShape::is_default")]
+    pub shape: SegShape,
 }
 
-/// Кривая одного параметра одного FX-слота. Между точками — линейная
-/// интерполяция (smoothstep при ease, как CamMotion), за краями — крайние
+impl AutoKey {
+    /// Ключ с формой по умолчанию. Конструктор, а не литерал: поле формы
+    /// добавлено позже, и сто двадцать литералов по дереву переписывать
+    /// на каждое новое поле — второй способ забыть про одно из них.
+    pub const fn at(t: Tick, v: f64) -> AutoKey {
+        AutoKey { t, v, shape: SegShape::DEFAULT }
+    }
+
+    /// Ключ с явной формой отрезка после него.
+    pub const fn shaped(t: Tick, v: f64, shape: SegShape) -> AutoKey {
+        AutoKey { t, v, shape }
+    }
+
+    /// Проставить всем ключам одну форму — «применить ко всем отрезкам».
+    pub fn all_shaped(mut keys: Vec<AutoKey>, shape: SegShape) -> Vec<AutoKey> {
+        for k in &mut keys {
+            k.shape = shape;
+        }
+        keys
+    }
+
+    /// Кусочно-линейная кривая одной строкой (частый случай в тестах и в
+    /// путях, где сглаживание запрещено, — например у скорости варпа).
+    pub fn linear(keys: Vec<AutoKey>) -> Vec<AutoKey> {
+        AutoKey::all_shaped(keys, SegShape::Linear)
+    }
+}
+
+/// Профиль зигзага: чем именно дрожит отрезок.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ZigProfile {
+    /// Треугольник — самый дешёвый и самый «ручной» на вид.
+    #[default]
+    Triangle,
+    /// Прямоугольник: значение прыгает между двумя уровнями.
+    Square,
+    /// Синус — единственный гладкий из трёх.
+    Sine,
+}
+
+/// Форма отрезка между двумя соседними ключами (Р.61).
+///
+/// Набор ЗАКРЫТ, и у каждого вида СВОИ параметры — не одно общее число
+/// «жёсткости». Так решено потому, что зигзаг признан формой отрезка
+/// (решение владельца, пересмотр вердикта F-AUT-009 п.3), а ему одного
+/// числа мало: нужны и периоды, и амплитуда, и профиль.
+///
+/// Каждая форма — ЗАМКНУТАЯ функция `(s ∈ [0,1], a, b, параметры)` без
+/// состояния: на этом стоят и мемоизация пост-FX, и детерминизм.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "s", rename_all = "snake_case")]
+pub enum SegShape {
+    /// Прямая: значение идёт от `a` к `b` линейно.
+    Linear,
+    /// Третий порядок. `tension = 1` — ровно прежний `smoothstep01`;
+    /// 0 вырождается в прямую, больше единицы — резче у концов.
+    Smooth { tension: f64 },
+    /// Ступень: до следующего ключа держится значение левого.
+    Hold,
+    /// Мягкий старт, резкий приход.
+    EaseIn { tension: f64 },
+    /// Резкий старт, мягкий приход.
+    EaseOut { tension: f64 },
+    /// Дрожание вокруг линии `a → b`.
+    ///
+    /// **Амплитуда — в ЕДИНИЦАХ ПАРАМЕТРА, а не долей перепада `b − a`**:
+    /// самый частый зигзаг есть дрожание вокруг ПОСТОЯННОГО значения, где
+    /// перепад равен нулю, и доля схлопнула бы фичу ровно там, где она
+    /// нужна. Кламп пределами цели делает вызывающий — паспорт свойства
+    /// знает их, а форма нет.
+    Zigzag { periods: f64, amplitude: f64, profile: ZigProfile },
+}
+
+impl Default for SegShape {
+    fn default() -> SegShape {
+        SegShape::DEFAULT
+    }
+}
+
+impl SegShape {
+    /// Умолчание — прежнее сглаживание кривой (`ease = true`).
+    pub const DEFAULT: SegShape = SegShape::Smooth { tension: 1.0 };
+
+    pub fn is_default(&self) -> bool {
+        *self == SegShape::DEFAULT
+    }
+
+    /// Значение НА ОТРЕЗКЕ: `s` — доля пути от левого ключа к правому.
+    ///
+    /// Концы обязаны совпадать со значениями ключей у всех форм, кроме
+    /// ступени: иначе кривая рвалась бы на каждом ключе.
+    pub fn at(self, s: f64, a: f64, b: f64) -> f64 {
+        let s = s.clamp(0.0, 1.0);
+        match self {
+            SegShape::Linear => a + (b - a) * s,
+            SegShape::Hold => {
+                if s >= 1.0 {
+                    b
+                } else {
+                    a
+                }
+            }
+            // `tension = 1` обязано давать РОВНО `s*s*(3-2s)`: на этом
+            // стоят GOLDEN_* и замороженный оракул t695b
+            SegShape::Smooth { tension } => {
+                let k = tension.clamp(0.0, 4.0);
+                // концы шкалы натяжения считаются ТОЧНО, а не формулой
+                // смешивания: `s + (w − s)·1` арифметически равно `w`, но
+                // в плавающей точке — нет, и умолчание разошлось бы с
+                // прежним сглаживанием в последнем бите, сдвинув GOLDEN_*
+                let f = if k == 1.0 {
+                    s * s * (3.0 - 2.0 * s)
+                } else if k == 0.0 {
+                    s
+                } else {
+                    let w = s * s * (3.0 - 2.0 * s);
+                    s + (w - s) * k
+                };
+                a + (b - a) * f
+            }
+            SegShape::EaseIn { tension } => {
+                let k = tension.clamp(0.0, 4.0).max(f64::MIN_POSITIVE);
+                a + (b - a) * s.powf(1.0 + k)
+            }
+            SegShape::EaseOut { tension } => {
+                let k = tension.clamp(0.0, 4.0).max(f64::MIN_POSITIVE);
+                a + (b - a) * (1.0 - (1.0 - s).powf(1.0 + k))
+            }
+            SegShape::Zigzag { periods, amplitude, profile } => {
+                let base = a + (b - a) * s;
+                // концы обязаны совпасть с ключами: окно гасит дрожание
+                // на краях, иначе кривая рвалась бы на каждом ключе.
+                // Парабола, а не синус: `sin(pi)` в плавающей точке равен
+                // 1.2e-16, и правый конец не сходился с ключом ТОЧНО.
+                let win = 4.0 * s * (1.0 - s);
+                let ph = s * periods.abs().min(1024.0);
+                let w = match profile {
+                    ZigProfile::Triangle => {
+                        let f = (ph * 2.0).rem_euclid(2.0);
+                        if f <= 1.0 { f * 2.0 - 1.0 } else { 3.0 - f * 2.0 }
+                    }
+                    ZigProfile::Square => {
+                        if ph.rem_euclid(1.0) < 0.5 {
+                            1.0
+                        } else {
+                            -1.0
+                        }
+                    }
+                    ZigProfile::Sine => (2.0 * std::f64::consts::PI * ph).sin(),
+                };
+                base + amplitude * w * win
+            }
+        }
+    }
+}
+
+/// Кривая одного параметра одного FX-слота. Форма КАЖДОГО отрезка живёт
+/// на его левом ключе (`AutoKey::shape`, Р.61); за краями — крайние
 /// значения. Имя параметра — snake_case поля варианта (как в файле);
 /// кривая-сирота (имя не подходит варианту) молча не действует —
 /// валидация ловит её при загрузке/командах.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ParamCurve {
     pub param: String,
-    #[serde(default = "default_true")]
-    pub ease: bool,
     pub keys: Vec<AutoKey>,
     /// ОТКУДА берутся значения (Р.59, п.466). Сегодня — только ключи;
     /// формула и связь с другим свойством занимают место в схеме, но
@@ -3796,9 +3975,88 @@ pub struct ParamCurve {
     /// невычислимой кривой падал громко, а не рисовал не то.
     ///
     /// Поле не пишется, пока источник — ключи: байты прежних файлов не
-    /// двигаются ни на один символ.
-    #[serde(default, skip_serializing_if = "CurveSource::is_keys")]
+    /// двигаются ни на один символ. Сериализация кривой своя (см. ниже),
+    /// поэтому атрибутов serde на полях нет.
     pub source: CurveSource,
+}
+
+/// Провод кривой в файл (Р.61, D1b).
+///
+/// В МОДЕЛИ форма живёт на ключе; в ФАЙЛЕ она пишется ПО СОДЕРЖИМОМУ —
+/// тем же правилом, что и версия конверта. Кривая, все ключи которой
+/// несут одну выразимую форму, пишется ПРЕЖНИМ полем `ease` и ни одного
+/// байта не двигает; форма, от неё отличная, едет на своём ключе и
+/// поднимает файл до v10.
+///
+/// Без этого простое удаление `ease` сдвинуло бы байты КАЖДОГО файла с
+/// кривыми — то есть сломало бы «файл без новшеств остаётся прежним»
+/// (t433b по всем фикстурам и golden `demo-3d.otio`, t189b).
+#[derive(Serialize, Deserialize)]
+struct KeyWire {
+    t: Tick,
+    v: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shape: Option<SegShape>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CurveWire {
+    param: String,
+    #[serde(default = "default_true")]
+    ease: bool,
+    keys: Vec<KeyWire>,
+    #[serde(default, skip_serializing_if = "CurveSource::is_keys")]
+    source: CurveSource,
+}
+
+impl ParamCurve {
+    /// Форма, которую выражает прежнее булево поле: `true` — третий
+    /// порядок с прежним сглаживанием, `false` — прямая.
+    fn implied_shape(ease: bool) -> SegShape {
+        if ease { SegShape::DEFAULT } else { SegShape::Linear }
+    }
+}
+
+impl Serialize for ParamCurve {
+    fn serialize<S: serde::Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        // `ease = false` ровно тогда, когда ВСЯ кривая прямая: так файл
+        // прежнего вида пишется прежними байтами
+        let ease = !self.keys.iter().all(|k| k.shape == SegShape::Linear);
+        let implied = ParamCurve::implied_shape(ease);
+        let keys: Vec<KeyWire> = self
+            .keys
+            .iter()
+            .map(|k| KeyWire { t: k.t, v: k.v, shape: (k.shape != implied).then_some(k.shape) })
+            .collect();
+        let n = if self.source.is_keys() { 3 } else { 4 };
+        let mut st = ser.serialize_struct("ParamCurve", n)?;
+        st.serialize_field("param", &self.param)?;
+        st.serialize_field("ease", &ease)?;
+        st.serialize_field("keys", &keys)?;
+        if self.source.is_keys() {
+            st.skip_field("source")?;
+        } else {
+            st.serialize_field("source", &self.source)?;
+        }
+        st.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for ParamCurve {
+    fn deserialize<D: serde::Deserializer<'de>>(de: D) -> Result<ParamCurve, D::Error> {
+        let w = CurveWire::deserialize(de)?;
+        let implied = ParamCurve::implied_shape(w.ease);
+        Ok(ParamCurve {
+            param: w.param,
+            keys: w
+                .keys
+                .into_iter()
+                .map(|k| AutoKey { t: k.t, v: k.v, shape: k.shape.unwrap_or(implied) })
+                .collect(),
+            source: w.source,
+        })
+    }
 }
 
 /// Источник значений кривой (Р.59, п.466).
@@ -3877,6 +4135,15 @@ pub fn check_fx_auto(id: ClipId, auto: &[Vec<ParamCurve>]) -> Result<(), Project
             if !sorted || !ok {
                 return Err(ProjectError::BadFxAuto(id));
             }
+            // СКОРОСТЬ принимает только прямую (Р.61). Замкнутая форма
+            // обратной карты варпа стоит на кусочно-линейном профиле:
+            // интеграл от третьего порядка был бы четвёртой степени, а
+            // от зигзага не выражается вовсе. Отказ ГРОМКИЙ — тихое
+            // выбрасывание формы показало бы в редакторе одно, а в
+            // звуке другое.
+            if c.param == "rate" && c.keys.iter().any(|k| k.shape != SegShape::Linear) {
+                return Err(ProjectError::RateShapeMustBeLinear(id));
+            }
         }
     }
     Ok(())
@@ -3886,7 +4153,7 @@ pub fn check_fx_auto(id: ClipId, auto: &[Vec<ParamCurve>]) -> Result<(), Project
 /// их значения (кламп краёв, как cam_at). Домен НЕ клампится: позиция за
 /// телом клипа (ручка перехода, пре-ролл) законна и честно продолжает
 /// кривую её крайним значением.
-pub fn curve_value(keys: &[AutoKey], ease: bool, at: Tick) -> f64 {
+pub fn curve_value(keys: &[AutoKey], at: Tick) -> f64 {
     let Some(first) = keys.first() else { return 0.0 };
     if at <= first.t {
         return first.v;
@@ -3895,11 +4162,9 @@ pub fn curve_value(keys: &[AutoKey], ease: bool, at: Tick) -> f64 {
         let (a, b) = (&w[0], &w[1]);
         if at <= b.t {
             let span = (b.t.0 - a.t.0).max(1) as f64;
-            let mut s = (((at.0 - a.t.0) as f64) / span).clamp(0.0, 1.0);
-            if ease {
-                s = s * s * (3.0 - 2.0 * s); // smoothstep01
-            }
-            return a.v + (b.v - a.v) * s;
+            let s = (((at.0 - a.t.0) as f64) / span).clamp(0.0, 1.0);
+            // форму отрезка несёт ЛЕВЫЙ ключ — он и решает (Р.61)
+            return a.shape.at(s, a.v, b.v);
         }
     }
     keys.last().unwrap().v
@@ -3921,7 +4186,7 @@ pub fn apply_curves<T: HasParams + ?Sized>(t: &mut T, curves: &[ParamCurve], at:
         if c.keys.is_empty() {
             continue;
         }
-        if t.set_param(&c.param, curve_value(&c.keys, c.ease, at)) {
+        if t.set_param(&c.param, curve_value(&c.keys, at)) {
             applied += 1;
         }
     }
@@ -3991,9 +4256,8 @@ pub fn migrate_legacy_slowed(c: &mut ClipEvent) -> bool {
         }
         // доля материала у slowed считалась ОТ source_in — зеркало реверса
         // ей не нужно (в отличие от видео-кривых прежнего домена)
-        let key = |u: f64, v: f64| AutoKey {
-            t: material_from_progress(u, c.source_in, c.duration, false),
-            v,
+        let key = |u: f64, v: f64| {
+            AutoKey::at(material_from_progress(u, c.source_in, c.duration, false), v)
         };
         for (param, pick) in [
             ("rate", Box::new(|k: &SlowedKeyframe| k.rate) as Box<dyn Fn(&SlowedKeyframe) -> f64>),
@@ -4004,8 +4268,8 @@ pub fn migrate_legacy_slowed(c: &mut ClipEvent) -> bool {
             }
             c.fx_auto[i].push(ParamCurve {
                 param: param.into(),
-                ease: false,
-                keys: legacy.iter().map(|k| key(k.t, pick(k))).collect(),
+
+                keys: AutoKey::linear(legacy.iter().map(|k| key(k.t, pick(k))).collect()),
                 source: Default::default(),
             });
         }
@@ -4049,15 +4313,20 @@ pub fn migrate_legacy_camera(c: &mut CameraEvent) -> bool {
         if vals.windows(2).all(|w| (w[0] - w[1]).abs() < 1e-12) {
             continue;
         }
+        // прежнее булево сглаживание камеры становится ОДНОЙ формой на
+        // все отрезки: значения после конверсии обязаны совпасть побитово
+        let shape = if ease { SegShape::DEFAULT } else { SegShape::Linear };
         c.auto.push(ParamCurve {
             param: (*name).into(),
-            ease,
             keys: keys
                 .iter()
                 .zip(&vals)
-                .map(|(k, v)| AutoKey {
-                    t: Tick((k.t.clamp(0.0, 1.0) * dur).round() as i64),
-                    v: *v,
+                .map(|(k, v)| {
+                    AutoKey::shaped(
+                        Tick((k.t.clamp(0.0, 1.0) * dur).round() as i64),
+                        *v,
+                        shape,
+                    )
                 })
                 .collect(),
             source: Default::default(),
@@ -4106,15 +4375,20 @@ pub fn migrate_legacy_cammotion(c: &mut ClipEvent) -> bool {
             if c.fx_auto[i].iter().any(|c| c.param == param) {
                 continue; // кривая нового домена уже есть — она главнее
             }
+            // то же правило, что у камеры: булево сглаживание легаси
+            // становится одной формой на все отрезки
+            let shape = if ease { SegShape::DEFAULT } else { SegShape::Linear };
             c.fx_auto[i].push(ParamCurve {
                 param: param.into(),
-                ease,
                 keys: keys
                     .iter()
-                    .map(|k| AutoKey {
+                    .map(|k| {
                         // u_eff = u·scale ⇒ ключ достигается при u = t/scale
-                        t: material_from_progress(k.t / scale, c.source_in, c.duration, false),
-                        v: pick(k),
+                        AutoKey::shaped(
+                            material_from_progress(k.t / scale, c.source_in, c.duration, false),
+                            pick(k),
+                            shape,
+                        )
                     })
                     .collect(),
                 source: Default::default(),
@@ -5953,7 +6227,7 @@ impl CameraEvent {
                 if c.keys.is_empty() {
                     continue;
                 }
-                cam.set_param(&c.param, curve_value(&c.keys, c.ease, local));
+                cam.set_param(&c.param, curve_value(&c.keys, local));
             }
             return cam;
         }
@@ -6432,6 +6706,12 @@ pub enum ProjectError {
         "clip {0:?}: this curve is driven by a formula or a link, and nothing evaluates those yet"
     )]
     CurveSourceUnsupported(ClipId),
+    // --- форма отрезка (Р.61) ---
+    #[error(
+        "clip {0:?}: the speed curve takes the linear shape only — the closed-form warp map \
+         stands on a piecewise-linear profile"
+    )]
+    RateShapeMustBeLinear(ClipId),
     // --- параметры генератора на событии (Р.59, стадия 2) ---
     #[error("clip {0:?} sits on a generator but carries no generator values")]
     GenMissing(ClipId),

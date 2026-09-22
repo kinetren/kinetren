@@ -36,7 +36,8 @@ fn settings() -> ProjectSettings {
         height: 36,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    }
+    
+    default_shape: Default::default(),}
 }
 
 fn sources() -> Vec<(MediaId, Box<dyn MediaSource>)> {
@@ -1226,10 +1227,10 @@ fn grade() -> FxInstance {
 fn grade_curve() -> Vec<Vec<ParamCurve>> {
     vec![vec![ParamCurve {
         param: "brightness".into(),
-        ease: false,
+
         // 0.9 на PART материала — это 3.8 уровня яркости на ПОЛУКАДР:
         // видно в байтах и не упирается в потолок на заливке 20
-        keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: PART, v: 0.9 }],
+        keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 0.0), AutoKey::at(PART, 0.9)]),
         source: Default::default(),
     }]]
 }

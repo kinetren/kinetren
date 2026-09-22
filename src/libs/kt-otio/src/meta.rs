@@ -248,6 +248,7 @@ pub struct KtSettings {
     /// про выбор.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pitch_engine: Option<kt_model::PitchEngine>,
+
 }
 
 /// Регион/loop — транспорт-удобство вне OTIO-семантики (тики).

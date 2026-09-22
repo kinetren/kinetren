@@ -127,7 +127,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
             "cammotion",
             vec![FxInstance::CamMotion {
                 mode: PanMode::Fit,
-                ease: true,
+            ease: true,
                 time_scale: 1.0,
                 keyframes: vec![
                     CamKeyframe { t: 0.0, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 },

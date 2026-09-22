@@ -23,7 +23,8 @@ fn project(w: u32, h: u32, fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>) -> P
         height: h,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "checker".into() });
     p.clips.push(ClipEvent {
         r#gen: None,
@@ -118,11 +119,10 @@ fn t310_decode_stage_formula() {
 fn t311_head_zoom_samples_the_whole_clip() {
     let q = Quality { width: 320, height: 180 };
     let nat = Some((1280, 720));
-    let key = |t_s: f64, v: f64| AutoKey { t: Tick((t_s * SEC as f64) as i64), v };
+    let key = |t_s: f64, v: f64| AutoKey::at(Tick((t_s * SEC as f64) as i64), v);
     // зум 1 → 4 к концу клипа: на первом кадре цепочка ещё тождественна
     let curve = ParamCurve {
         param: "zoom".into(),
-        ease: true,
         keys: vec![key(0.0, 1.0), key(2.0, 4.0)],
         source: Default::default(),
     };
@@ -135,7 +135,6 @@ fn t311_head_zoom_samples_the_whole_clip() {
     // обратная кривая (зум в начале) — тот же максимум
     let back = ParamCurve {
         param: "zoom".into(),
-        ease: true,
         keys: vec![key(0.0, 4.0), key(2.0, 1.0)],
         source: Default::default(),
     };
@@ -152,7 +151,6 @@ fn t311_head_zoom_samples_the_whole_clip() {
         vec![zoom(1.0)],
         vec![vec![ParamCurve {
             param: "zoom".into(),
-            ease: true,
             keys: vec![key(0.0, 1.0), key(2.0, 4.0)],
             source: Default::default(),
         }]],

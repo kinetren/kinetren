@@ -22,7 +22,8 @@ fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool) -> P
         height: 36,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
         r#gen: None,
@@ -93,9 +94,9 @@ fn t247_video_follows_the_rate_curve() {
     let dur = 4 * SEC;
     let curve = vec![vec![ParamCurve {
         param: "rate".into(),
-        ease: false,
+
         // ключи — в тиках МАТЕРИАЛА от source_in (домен Р.37: ось линейна)
-        keys: vec![AutoKey { t: Tick(SEC), v: 1.0 }, AutoKey { t: Tick(SEC + dur), v: 2.0 }],
+        keys: AutoKey::linear(vec![AutoKey::at(Tick(SEC), 1.0), AutoKey::at(Tick(SEC + dur), 2.0)]),
         source: Default::default(),
     }]];
     let p = project(vec![FxInstance::slowed_reverb(1.0, 0.0, 85.0)], curve, false);
@@ -332,11 +333,11 @@ fn t272_split_renders_the_same_frames() {
             vec![FxInstance::slowed_reverb(1.0, 0.0, 85.0)],
             vec![vec![ParamCurve {
                 param: "rate".into(),
-                ease: false,
-                keys: vec![
-                    AutoKey { t: Tick(SEC), v: 1.0 },
-                    AutoKey { t: Tick(SEC + 4 * SEC), v: 2.0 },
-                ],
+
+                keys: AutoKey::linear(vec![
+                    AutoKey::at(Tick(SEC), 1.0),
+                    AutoKey::at(Tick(SEC + 4 * SEC), 2.0),
+                ]),
                 source: Default::default(),
             }]],
             false,
@@ -387,11 +388,11 @@ fn t272b_video_curves_use_the_linear_axis() {
             vec![],
             vec![ParamCurve {
                 param: "radius".into(),
-                ease: false,
-                keys: vec![
-                    AutoKey { t: Tick(SEC), v: 1.0 },
-                    AutoKey { t: Tick(SEC + 2 * SEC), v: 48.0 },
-                ],
+
+                keys: AutoKey::linear(vec![
+                    AutoKey::at(Tick(SEC), 1.0),
+                    AutoKey::at(Tick(SEC + 2 * SEC), 48.0),
+                ]),
                 source: Default::default(),
             }],
         ],
@@ -443,8 +444,8 @@ fn t604a_video_follows_a_signed_curve() {
     // 1 → −1: позиция поднимается к середине события и возвращается
     let curve = vec![vec![ParamCurve {
         param: "rate".into(),
-        ease: false,
-        keys: vec![AutoKey { t: Tick(SEC), v: 1.0 }, AutoKey { t: Tick(SEC + dur), v: -1.0 }],
+
+        keys: AutoKey::linear(vec![AutoKey::at(Tick(SEC), 1.0), AutoKey::at(Tick(SEC + dur), -1.0)]),
         source: Default::default(),
     }]];
     let track = pts_track(&project(vec![FxInstance::slowed_reverb(1.0, 0.0, 85.0)], curve, false));
@@ -521,8 +522,8 @@ fn t604e_prefetch_matches_reads_under_a_sign_change() {
     let dur = 4 * SEC;
     let curve = vec![vec![ParamCurve {
         param: "rate".into(),
-        ease: false,
-        keys: vec![AutoKey { t: Tick(SEC), v: 2.0 }, AutoKey { t: Tick(SEC + dur), v: -2.0 }],
+
+        keys: AutoKey::linear(vec![AutoKey::at(Tick(SEC), 2.0), AutoKey::at(Tick(SEC + dur), -2.0)]),
         source: Default::default(),
     }]];
     let p = project(vec![FxInstance::slowed_reverb(1.0, 0.0, 85.0)], curve, false);

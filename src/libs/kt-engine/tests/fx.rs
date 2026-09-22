@@ -30,7 +30,8 @@ fn fx_project(fx: Vec<FxInstance>, pattern_path: &str, dur_frames: i64) -> Proje
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: pattern_path.into() });
     p.clips.push(ClipEvent {
         r#gen: None,
@@ -61,14 +62,11 @@ fn fx_project(fx: Vec<FxInstance>, pattern_path: &str, dur_frames: i64) -> Proje
 fn rate_curve(points: &[(f64, f64)], dur_frames: i64) -> Vec<Vec<ParamCurve>> {
     vec![vec![ParamCurve {
         param: "rate".into(),
-        ease: false,
-        keys: points
+
+        keys: AutoKey::linear(points
             .iter()
-            .map(|(s, r)| AutoKey {
-                t: Tick::from_audio_frames((s * dur_frames as f64).round() as i64),
-                v: *r,
-            })
-            .collect(),
+            .map(|(s, r)| AutoKey::at(Tick::from_audio_frames((s * dur_frames as f64).round() as i64), *r,))
+            .collect()),
         source: Default::default(),
     }]]
 }
@@ -530,12 +528,12 @@ fn t213_audio_gain_follows_its_curve() {
     // кривая громкости: тишина → 0 dB → тишина, ключи в тиках материала
     let auto = vec![vec![ParamCurve {
         param: "db".into(),
-        ease: false,
-        keys: vec![
-            AutoKey { t: Tick::from_audio_frames(0), v: -60.0 },
-            AutoKey { t: Tick::from_audio_frames(dur / 2), v: 0.0 },
-            AutoKey { t: Tick::from_audio_frames(dur), v: -60.0 },
-        ],
+
+        keys: AutoKey::linear(vec![
+            AutoKey::at(Tick::from_audio_frames(0), -60.0),
+            AutoKey::at(Tick::from_audio_frames(dur / 2), 0.0),
+            AutoKey::at(Tick::from_audio_frames(dur), -60.0),
+        ]),
         source: Default::default(),
     }]];
     let p = fx_project_auto(fx, auto, "synth:sine:440", dur);
@@ -682,11 +680,11 @@ fn t229_new_audio_params() {
     // ---- Gain.pan автоматизируется тем же механизмом ---------------------
     let curve = vec![vec![ParamCurve {
         param: "pan".into(),
-        ease: false,
-        keys: vec![
-            AutoKey { t: Tick(0), v: -1.0 },
-            AutoKey { t: Tick::from_audio_frames(dur), v: 1.0 },
-        ],
+
+        keys: AutoKey::linear(vec![
+            AutoKey::at(Tick(0), -1.0),
+            AutoKey::at(Tick::from_audio_frames(dur), 1.0),
+        ]),
         source: Default::default(),
     }]];
     let swept = render(vec![FxInstance::Gain { db: 0.0, pan: 0.0 }], curve);
@@ -797,12 +795,12 @@ fn t246_gain_curve_peaks_at_event_middle_under_warp() {
         vec![],
         vec![ParamCurve {
             param: "db".into(),
-            ease: false,
-            keys: vec![
-                AutoKey { t: t(0.0), v: -60.0 },
-                AutoKey { t: t(0.5), v: 0.0 },
-                AutoKey { t: t(1.0), v: -60.0 },
-            ],
+
+            keys: AutoKey::linear(vec![
+                AutoKey::at(t(0.0), -60.0),
+                AutoKey::at(t(0.5), 0.0),
+                AutoKey::at(t(1.0), -60.0),
+            ]),
             source: Default::default(),
         }],
     ];
@@ -863,11 +861,11 @@ fn t320_slot_order_is_honest_gain_before_reverb_fades_the_input() {
         vec![
             vec![ParamCurve {
                 param: "db".into(),
-                ease: false,
-                keys: vec![
-                    AutoKey { t: Tick(0), v: 0.0 },
-                    AutoKey { t: Tick::from_audio_frames(dur / 4), v: -60.0 },
-                ],
+
+                keys: AutoKey::linear(vec![
+                    AutoKey::at(Tick(0), 0.0),
+                    AutoKey::at(Tick::from_audio_frames(dur / 4), -60.0),
+                ]),
                 source: Default::default(),
             }],
             vec![],

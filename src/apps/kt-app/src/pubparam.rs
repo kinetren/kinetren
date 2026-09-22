@@ -876,10 +876,9 @@ impl KtApp {
                                             .unwrap_or(specs[i].default);
                                         auto.push(kt_model::ParamCurve {
                                             param: pub_key(list[i].id),
-                                            ease: true,
                                             keys: vec![
-                                                kt_model::AutoKey { t: mat_range.0, v: v0 },
-                                                kt_model::AutoKey { t: mat_range.1, v: v0 },
+                                                kt_model::AutoKey::at(mat_range.0, v0),
+                                                kt_model::AutoKey::at(mat_range.1, v0),
                                             ],
                                             source: Default::default(),
                                         });

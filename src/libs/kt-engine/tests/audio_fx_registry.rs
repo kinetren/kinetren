@@ -22,7 +22,8 @@ fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool) -> P
         height: 36,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:clicks".into() });
     p.clips.push(ClipEvent {
         r#gen: None,
@@ -90,11 +91,11 @@ fn rms(s: &[f32]) -> f64 {
 fn curve_for(spec: &ParamSpec, probe: f64) -> Vec<Vec<ParamCurve>> {
     vec![vec![ParamCurve {
         param: spec.name.to_string(),
-        ease: false,
-        keys: vec![
-            AutoKey { t: Tick(0), v: spec.default },
-            AutoKey { t: Tick::from_audio_frames(DUR), v: probe },
-        ],
+
+        keys: AutoKey::linear(vec![
+            AutoKey::at(Tick(0), spec.default),
+            AutoKey::at(Tick::from_audio_frames(DUR), probe),
+        ]),
         source: Default::default(),
     }]]
 }
@@ -260,10 +261,9 @@ fn t322_audio_registry_contract() {
         if let Some(sp) = f.auto_params().next() {
             let curve = vec![vec![kt_model::ParamCurve {
                 param: sp.name.to_string(),
-                ease: true,
                 keys: vec![
-                    kt_model::AutoKey { t: Tick(0), v: sp.min },
-                    kt_model::AutoKey { t: Tick(DUR), v: sp.max },
+                    kt_model::AutoKey::at(Tick(0), sp.min),
+                    kt_model::AutoKey::at(Tick(DUR), sp.max),
                 ],
                 source: Default::default(),
             }]];
@@ -338,11 +338,11 @@ fn t325_lfo_phase_is_a_function_of_position() {
     };
     let curve = vec![vec![ParamCurve {
         param: "rate_hz".into(),
-        ease: false,
-        keys: vec![
-            AutoKey { t: Tick(0), v: 2.0 },
-            AutoKey { t: Tick::from_audio_frames(DUR), v: 8.0 },
-        ],
+
+        keys: AutoKey::linear(vec![
+            AutoKey::at(Tick(0), 2.0),
+            AutoKey::at(Tick::from_audio_frames(DUR), 8.0),
+        ]),
         source: Default::default(),
     }]];
     let swept = sine_render(curve);
@@ -487,7 +487,8 @@ fn t327_print_dense_chain_cost() {
         height: 36,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:clicks".into() });
     for i in 0..7 {
         p.clips.push(ClipEvent {
@@ -559,7 +560,8 @@ fn bench_pitch_cost() {
             height: 36,
             sample_rate: 48000,
             pitch_engine: engine,
-        });
+        
+        default_shape: Default::default(),});
         p.media.push(MediaRef { id: MediaId(1), path: "synth:clicks".into() });
         p.clips.push(ClipEvent {
             r#gen: None,

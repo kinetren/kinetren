@@ -650,6 +650,120 @@ pub(crate) mod hint_sink {
     }
 }
 
+/// Человекочитаемое имя формы отрезка.
+pub fn shape_label(s: kt_model::SegShape) -> &'static str {
+    use kt_model::SegShape as S;
+    match s {
+        S::Linear => tr(k::fx::SHAPE_LINEAR),
+        S::Smooth { .. } => tr(k::fx::SHAPE_SMOOTH),
+        S::Hold => tr(k::fx::SHAPE_HOLD),
+        S::EaseIn { .. } => tr(k::fx::SHAPE_EASE_IN),
+        S::EaseOut { .. } => tr(k::fx::SHAPE_EASE_OUT),
+        S::Zigzag { .. } => tr(k::fx::SHAPE_ZIGZAG),
+    }
+}
+
+/// Закрытый набор форм в порядке показа. ОДИН список на всю программу:
+/// два списка разошлись бы, и вид, забытый в одном, стал бы недостижим.
+pub fn all_shapes() -> [kt_model::SegShape; 6] {
+    use kt_model::SegShape as S;
+    [
+        S::Linear,
+        S::DEFAULT,
+        S::Hold,
+        S::EaseIn { tension: 1.0 },
+        S::EaseOut { tension: 1.0 },
+        S::Zigzag { periods: 4.0, amplitude: 0.1, profile: Default::default() },
+    ]
+}
+
+/// «Форма всех отрезков кривой» — команда над кривой, а не настройка
+/// машины (Р.61): настройка машины дала бы «один файл, два поведения».
+///
+/// У скорости варпа форма только прямая: на кусочно-линейном профиле
+/// стоит замкнутая карта растяжения. Отказ ГРОМКИЙ — строкой состояния,
+/// а не молча погашенным контролом.
+pub fn shape_all_control(
+    ui: &mut egui::Ui,
+    curve: &mut kt_model::ParamCurve,
+    hover: &mut Option<String>,
+) -> bool {
+    let mut changed = false;
+    let rate = curve.param == "rate";
+    let cur = curve.keys.first().map(|k| k.shape).unwrap_or_default();
+    ui.label(tr(k::fx::SHAPE_ALL));
+    let r = egui::ComboBox::from_id_salt(("shape_all", curve.param.clone()))
+        .selected_text(shape_label(cur))
+        .show_ui(ui, |ui| {
+            for s in all_shapes() {
+                if ui.selectable_label(s == cur, shape_label(s)).clicked() {
+                    if rate && s != kt_model::SegShape::Linear {
+                        *hover = Some(tr(k::fx::SHAPE_RATE_LINEAR).to_string());
+                        continue;
+                    }
+                    for k in &mut curve.keys {
+                        k.shape = s;
+                    }
+                    changed = true;
+                }
+            }
+        });
+    crate::app::hint_into(hover, r.response, tr(k::fx::SHAPE_ALL_HINT));
+    // ПАРАМЕТРЫ формы — рядом с ней: у каждого вида они свои, и общего
+    // числа «жёсткости» тут нет (Р.61, D2). Правка ложится на все
+    // отрезки — это и есть «форма всех отрезков».
+    let mut next = cur;
+    match &mut next {
+        kt_model::SegShape::Smooth { tension }
+        | kt_model::SegShape::EaseIn { tension }
+        | kt_model::SegShape::EaseOut { tension } => {
+            ui.label(tr(k::fx::SHAPE_TENSION));
+            if ui.add(egui::DragValue::new(tension).range(0.0..=4.0).speed(0.02)).changed() {
+                changed = true;
+            }
+        }
+        kt_model::SegShape::Zigzag { periods, amplitude, profile } => {
+            ui.label(tr(k::fx::SHAPE_PERIODS));
+            if ui.add(egui::DragValue::new(periods).range(0.25..=256.0).speed(0.1)).changed() {
+                changed = true;
+            }
+            ui.label(tr(k::fx::SHAPE_AMP));
+            // амплитуда в ЕДИНИЦАХ ПАРАМЕТРА: зигзаг вокруг постоянного
+            // значения — самый частый, и доля перепада схлопнула бы его
+            if ui.add(egui::DragValue::new(amplitude).speed(0.01)).changed() {
+                changed = true;
+            }
+            ui.label(tr(k::fx::SHAPE_PROFILE));
+            let name = |p: kt_model::ZigProfile| match p {
+                kt_model::ZigProfile::Triangle => tr(k::fx::ZIG_TRIANGLE),
+                kt_model::ZigProfile::Square => tr(k::fx::ZIG_SQUARE),
+                kt_model::ZigProfile::Sine => tr(k::fx::ZIG_SINE),
+            };
+            egui::ComboBox::from_id_salt(("zig_profile", curve.param.clone()))
+                .selected_text(name(*profile))
+                .show_ui(ui, |ui| {
+                    for pr in [
+                        kt_model::ZigProfile::Triangle,
+                        kt_model::ZigProfile::Square,
+                        kt_model::ZigProfile::Sine,
+                    ] {
+                        if ui.selectable_label(*profile == pr, name(pr)).clicked() {
+                            *profile = pr;
+                            changed = true;
+                        }
+                    }
+                });
+        }
+        kt_model::SegShape::Linear | kt_model::SegShape::Hold => {}
+    }
+    if next != cur && !rate {
+        for k in &mut curve.keys {
+            k.shape = next;
+        }
+    }
+    changed
+}
+
 /// Подсказка у виджета, нарисованного в замыкании.
 pub fn hint(r: &egui::Response, text: &str) {
     if r.hovered() {
@@ -921,7 +1035,7 @@ pub fn param_row_bound<P: HasParams + ?Sized>(
 pub fn bound_value(c: &kt_model::ParamCurve, key: Option<usize>, at: kt_time::Tick) -> f64 {
     match key.filter(|k| *k < c.keys.len()) {
         Some(k) => c.keys[k].v,
-        None => kt_model::curve_value(&c.keys, c.ease, at),
+        None => kt_model::curve_value(&c.keys, at),
     }
 }
 
@@ -932,7 +1046,7 @@ pub fn bound_apply(c: &mut kt_model::ParamCurve, key: Option<usize>, at: kt_time
         Some(k) => c.keys[k].v = v,
         None => {
             c.keys.retain(|k| k.t != at);
-            c.keys.push(kt_model::AutoKey { t: at, v });
+            c.keys.push(kt_model::AutoKey::at(at, v));
             c.keys.sort_by_key(|k| k.t.0);
         }
     }

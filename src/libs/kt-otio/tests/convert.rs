@@ -41,7 +41,8 @@ fn rich_project() -> Project {
         height: 720,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     for id in [1u64, 2, 3] {
         p.media.push(MediaRef { id: MediaId(id), path: format!("media/m{id}.mp4") });
     }
@@ -323,7 +324,8 @@ fn t165_overlapping_lane_survives_layer_roundtrip() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "media/a.mp4".into() });
     // три клипа одной дорожки: два перекрываются, третий встык
     for (id, start, dur) in [(1u64, 0i64, 90_000i64), (2, 45_000, 90_000), (3, 200_000, 45_000)] {
@@ -499,14 +501,14 @@ fn project_3d() -> Project {
     // автоматизация (Р.30): кривая поворота — замораживается тем же golden
     p.clips[0].fx_auto = vec![vec![ParamCurve {
         param: "rot_y".into(),
-        ease: true,
-        keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(90_000), v: 90.0 }],
+        keys: vec![AutoKey::at(Tick(0), 0.0), AutoKey::at(Tick(90_000), 90.0)],
         source: Default::default(),
     }]];
     // две камеры на двух дорожках, с перекрытием по времени и кейфреймами
     p.camera_lanes = 2;
     p.cameras = vec![
         CameraEvent {
+            ease: true,
             id: CameraId(1),
             lane: 0,
             start: Tick(0),
@@ -518,24 +520,21 @@ fn project_3d() -> Project {
             auto: vec![
                 ParamCurve {
                     param: "pos_x".into(),
-                    ease: true,
                     keys: vec![
-                        AutoKey { t: Tick(0), v: 0.0 },
-                        AutoKey { t: Tick(90_000), v: 60.0 },
+                        AutoKey::at(Tick(0), 0.0),
+                        AutoKey::at(Tick(90_000), 60.0),
                     ],
                     source: Default::default(),
                 },
                 ParamCurve {
                     param: "fov_deg".into(),
-                    ease: true,
                     keys: vec![
-                        AutoKey { t: Tick(0), v: 39.6 },
-                        AutoKey { t: Tick(90_000), v: 30.0 },
+                        AutoKey::at(Tick(0), 39.6),
+                        AutoKey::at(Tick(90_000), 30.0),
                     ],
                     source: Default::default(),
                 },
             ],
-            ease: true,
         },
         CameraEvent {
             id: CameraId(2),
@@ -647,8 +646,8 @@ fn t192_fx_auto_roundtrip_and_v3() {
     p.clips[0].fx = vec![FxInstance::blur(8)];
     p.clips[0].fx_auto = vec![vec![ParamCurve {
         param: "radius".into(),
-        ease: false,
-        keys: vec![AutoKey { t: Tick(0), v: 1.0 }, AutoKey { t: Tick(90_000), v: 48.0 }],
+
+        keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 1.0), AutoKey::at(Tick(90_000), 48.0)]),
         source: Default::default(),
     }]];
     p.validate().unwrap();
@@ -687,8 +686,8 @@ fn t212_pre_v3_curves_migrate_to_material_ticks() {
     p.clips[0].fx = vec![FxInstance::blur(8)];
     p.clips[0].fx_auto = vec![vec![ParamCurve {
         param: "radius".into(),
-        ease: false,
-        keys: vec![AutoKey { t: Tick(0), v: 1.0 }, AutoKey { t: Tick(90_000), v: 48.0 }],
+
+        keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 1.0), AutoKey::at(Tick(90_000), 48.0)]),
         source: Default::default(),
     }]];
     p.validate().unwrap();
@@ -779,8 +778,7 @@ fn t222_transition_kind_roundtrip_and_version() {
     p.transitions[0].kind = TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.2 };
     p.transitions[0].auto = vec![ParamCurve {
         param: "angle".into(),
-        ease: true,
-        keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(13_500), v: 45.0 }],
+        keys: vec![AutoKey::at(Tick(0), 0.0), AutoKey::at(Tick(13_500), 45.0)],
         source: Default::default(),
     }];
     p.validate().unwrap();
@@ -1137,7 +1135,8 @@ fn nested_project() -> Project {
         height: 720,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     for id in [1u64, 2] {
         p.media.push(MediaRef { id: MediaId(id), path: format!("media/m{id}.mp4") });
     }
@@ -1781,12 +1780,12 @@ fn t606_signed_rate_survives_the_round_trip() {
     p.clips[0].fx = vec![FxInstance::slowed_reverb(-0.5, 0.0, 85.0)];
     p.clips[0].fx_auto = vec![vec![ParamCurve {
         param: "rate".into(),
-        ease: false,
-        keys: vec![
-            AutoKey { t: Tick(0), v: 1.0 },
-            AutoKey { t: Tick(45_000), v: 0.0 },
-            AutoKey { t: Tick(90_000), v: -2.0 },
-        ],
+
+        keys: AutoKey::linear(vec![
+            AutoKey::at(Tick(0), 1.0),
+            AutoKey::at(Tick(45_000), 0.0),
+            AutoKey::at(Tick(90_000), -2.0),
+        ]),
         source: Default::default(),
     }]];
     p.validate().unwrap();
@@ -1819,7 +1818,8 @@ fn t638_negative_start_inside_a_reel_survives_the_round_trip() {
         height: 720,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "media/m1.mp4".into() });
     let mut s = Sequence::new(MediaId(100), "Заставка");
     // первое событие начинается ДО нуля ленты; второе стоит в своём

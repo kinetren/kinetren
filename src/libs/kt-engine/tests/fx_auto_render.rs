@@ -40,7 +40,8 @@ fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>) -> Project {
         height: H,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
         r#gen: None,
@@ -86,14 +87,14 @@ fn t191_animated_equals_static_at_each_moment() {
     let auto = vec![
         vec![ParamCurve {
             param: "radius".into(),
-            ease: false,
-            keys: vec![AutoKey { t: Tick(0), v: 1.0 }, AutoKey { t: Tick(SPAN), v: 47.0 }],
+
+            keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 1.0), AutoKey::at(Tick(SPAN), 47.0)]),
             source: Default::default(),
         }],
         vec![ParamCurve {
             param: "strength".into(),
-            ease: false,
-            keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(SPAN), v: 2.0 }],
+
+            keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 0.0), AutoKey::at(Tick(SPAN), 2.0)]),
             source: Default::default(),
         }],
     ];
@@ -124,8 +125,8 @@ fn t191_postfx_cache_no_stale_across_time_and_curve_edits() {
     let curve = |v1: f64| {
         vec![vec![ParamCurve {
             param: "radius".into(),
-            ease: false,
-            keys: vec![AutoKey { t: Tick(0), v: 1.0 }, AutoKey { t: Tick(SPAN), v: v1 }],
+
+            keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 1.0), AutoKey::at(Tick(SPAN), v1)]),
             source: Default::default(),
         }]]
     };
@@ -158,8 +159,8 @@ fn t230_cammotion_migrates_to_pan_curves() {
     ];
     for (label, scale) in [("scale=1", 1.0f64), ("scale=2", 2.0)] {
         let cam = FxInstance::CamMotion {
-            mode: PanMode::Fit,
             ease: true,
+            mode: PanMode::Fit,
             time_scale: scale,
             keyframes: keys.clone(),
         };
@@ -188,8 +189,8 @@ fn t230_cammotion_migrates_to_pan_curves() {
     // ПУСТЫЕ кейфреймы у CamMotion означали не статику, а пресет v1
     // «наезд 1.0 → 1.35»: движение обязано пережить миграцию
     let empty = FxInstance::CamMotion {
-        mode: PanMode::Fit,
         ease: true,
+        mode: PanMode::Fit,
         time_scale: 1.0,
         keyframes: vec![],
     };
@@ -207,16 +208,16 @@ fn t230_cammotion_migrates_to_pan_curves() {
 
     // кривая НОВОГО домена главнее легаси-кейфреймов
     let cam = FxInstance::CamMotion {
-        mode: PanMode::Fit,
         ease: true,
+        mode: PanMode::Fit,
         time_scale: 1.0,
         keyframes: keys.clone(),
     };
     let mut c = project(vec![cam], vec![]).clips[0].clone();
     c.fx_auto = vec![vec![ParamCurve {
         param: "zoom".into(),
-        ease: false,
-        keys: vec![AutoKey { t: Tick(0), v: 4.0 }],
+
+        keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 4.0)]),
         source: Default::default(),
     }]];
     kt_model::migrate_legacy_cammotion(&mut c);

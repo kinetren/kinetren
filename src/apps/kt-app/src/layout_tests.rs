@@ -1981,7 +1981,8 @@ fn t139_move_plan_crossfade_and_clamp() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     // поведение Р.24/Р.26 живёт в режиме БЕЗ переслаивания (Р.28)
     p.overlap_layers = false;
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
@@ -2637,7 +2638,8 @@ fn t150_project_io_is_otio() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     let otio = dir.join("ok.otio");
     std::fs::write(&otio, kt_otio::save_project(&p, &kt_otio::Retained::default(), Some(&dir)))
         .unwrap();
@@ -2789,7 +2791,8 @@ fn t172_blocked_gesture_is_an_error_not_a_pale_hint() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.overlap_layers = false; // блокировка возможна только в этом режиме
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     // клипы 2 и 3 стоят встык: любое попадание между ними — наезд на ДВОИХ
@@ -3217,8 +3220,8 @@ fn t221_automation_widget_maps_material_and_keeps_input_stable() {
     view.mode = AutoMode::Table;
     let mut curves = [ParamCurve {
         param: "radius".into(),
-        ease: false,
-        keys: vec![AutoKey { t: Tick(45_000), v: 1.0 }, AutoKey { t: Tick(135_000), v: 48.0 }],
+
+        keys: AutoKey::linear(vec![AutoKey::at(Tick(45_000), 1.0), AutoKey::at(Tick(135_000), 48.0)]),
         source: Default::default(),
     }];
     // пользователь начал править время ВТОРОГО ключа на значение МЕНЬШЕ
@@ -3535,11 +3538,11 @@ fn t193_fx_editor_automation_coalesces_into_one_undo() {
         fx_bypass: vec![],
         fx_auto: vec![vec![ParamCurve {
             param: "radius".into(),
-            ease: false,
-            keys: vec![
-                AutoKey { t: kt_time::Tick(0), v: 1.0 },
-                AutoKey { t: kt_time::Tick(90_000), v: 48.0 },
-            ],
+
+            keys: AutoKey::linear(vec![
+                AutoKey::at(kt_time::Tick(0), 1.0),
+                AutoKey::at(kt_time::Tick(90_000), 48.0),
+            ]),
             source: Default::default(),
         }]],
         opacity: 1.0,
@@ -3559,8 +3562,8 @@ fn t193_fx_editor_automation_coalesces_into_one_undo() {
     let auto = vec![
         vec![ParamCurve {
             param: "radius".into(),
-            ease: false,
-            keys: vec![AutoKey { t: kt_time::Tick(0), v: 2.0 }],
+
+            keys: AutoKey::linear(vec![AutoKey::at(kt_time::Tick(0), 2.0)]),
             source: Default::default(),
         }],
         vec![],
@@ -3844,7 +3847,8 @@ fn t211_returned_source_replaces_its_placeholder() {
         height: 180,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     // «пропавший» файл: имя synth-источника, которого нет на диске — при
     // открытии он не откроется, а к моменту возврата станет валидным
     p.media.push(MediaRef { id: MediaId(1), path: "later.mp4".into() });
@@ -3928,7 +3932,8 @@ fn t210_render_with_missing_sources_warns_and_runs() {
         height: 180,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "gone.mp4".into() });
     p.clips.push(ClipEvent {
@@ -4006,7 +4011,8 @@ fn t209_missing_source_opens_with_placeholder_and_notices() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "no-such-clip.mp4".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "also-gone.wav".into() });
     p.clips.push(ClipEvent {
@@ -4214,7 +4220,8 @@ fn t204_multi_drag_moves_the_whole_block() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     let clip = |id: u64, start: i64| ClipEvent {
         r#gen: None,
@@ -5512,7 +5519,8 @@ fn t367_restore_puts_work_in_editor_and_repeats() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     for i in 1..=3 {
         p.media.push(MediaRef { id: MediaId(i), path: format!("synth:{i}") });
     }
@@ -5558,7 +5566,8 @@ fn t367_restore_puts_work_in_editor_and_repeats() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    }));
+    
+    default_shape: Default::default(),}));
     assert_eq!(app.model.project().media.len(), 0);
     app.offer_recovery_list(
         crate::app::recovery_candidates_at(Some(&proj), &dir.join("none")),
@@ -6603,6 +6612,7 @@ fn t231_camera_editor_opens_and_edits() {
         let mut p = app.model.project().clone();
         p.camera_lanes = 1;
         p.cameras.push(CameraEvent {
+            ease: true,
             id: CameraId(1),
             lane: 0,
             start: Tick(0),
@@ -6611,7 +6621,6 @@ fn t231_camera_editor_opens_and_edits() {
             cam: CameraParams::default(),
             keyframes: vec![],
             auto: vec![],
-            ease: true,
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -6648,8 +6657,7 @@ fn t231_camera_editor_opens_and_edits() {
         c.name = "main".into();
         c.auto = vec![ParamCurve {
             param: "pos_z".into(),
-            ease: true,
-            keys: vec![AutoKey { t: Tick(0), v: -900.0 }, AutoKey { t: Tick(120_000), v: -300.0 }],
+            keys: vec![AutoKey::at(Tick(0), -900.0), AutoKey::at(Tick(120_000), -300.0)],
             source: Default::default(),
         }];
         assert!(app.apply_coalesced(Command::SetCamera(c), gesture));
@@ -7622,8 +7630,8 @@ fn t265_automation_axis_and_field_bind() {
     // ---- пп.15-16: поле правит ровно то, что показывает --------------
     let mut c = ParamCurve {
         param: "db".into(),
-        ease: false,
-        keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(90_000), v: 6.0 }],
+
+        keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 0.0), AutoKey::at(Tick(90_000), 6.0)]),
         source: Default::default(),
     };
     // выбран ключ — поле показывает и правит ЕГО
@@ -7636,7 +7644,7 @@ fn t265_automation_axis_and_field_bind() {
     assert!((mid - 1.5).abs() < 1e-9, "показано значение кривой под курсором: {mid}");
     bound_apply(&mut c, None, Tick(45_000), 4.0);
     assert_eq!(c.keys.len(), 3, "правка без выбранного ключа ставит ключ под курсором");
-    assert_eq!(c.keys[1], AutoKey { t: Tick(45_000), v: 4.0 });
+    assert_eq!(c.keys[1], AutoKey::at(Tick(45_000), 4.0));
     assert!(c.keys.windows(2).all(|w| w[0].t.0 <= w[1].t.0), "порядок ключей не нарушен");
     // выбор за пределами кривой не роняет и трактуется как «не выбран»
     assert_eq!(bound_value(&c, Some(99), Tick(0)), c.keys[0].v);
@@ -8186,8 +8194,8 @@ fn t279_axis_lock_and_keys_that_stay() {
         c.fx = vec![FxInstance::blur(4)];
         c.fx_auto = vec![vec![ParamCurve {
             param: "radius".into(),
-            ease: false,
-            keys: vec![AutoKey { t: Tick(10_000), v: 1.0 }, AutoKey { t: Tick(40_000), v: 9.0 }],
+
+            keys: AutoKey::linear(vec![AutoKey::at(Tick(10_000), 1.0), AutoKey::at(Tick(40_000), 9.0)]),
             source: Default::default(),
         }]];
         let mut p = app.model.project().clone();
@@ -8280,11 +8288,11 @@ fn t281_typed_key_value_reaches_the_model() {
         fx_bypass: vec![],
         fx_auto: vec![vec![ParamCurve {
             param: "rate".into(),
-            ease: false,
-            keys: vec![
-                AutoKey { t: kt_time::Tick(0), v: 1.0 },
-                AutoKey { t: kt_time::Tick(90_000), v: 2.0 },
-            ],
+
+            keys: AutoKey::linear(vec![
+                AutoKey::at(kt_time::Tick(0), 1.0),
+                AutoKey::at(kt_time::Tick(90_000), 2.0),
+            ]),
             source: Default::default(),
         }]],
         opacity: 1.0,
@@ -8531,11 +8539,11 @@ fn t343_paste_chain_into_morpher_carries_curves() {
             bypass: false,
             curves: vec![ParamCurve {
                 param: "radius".into(),
-                ease: false,
-                keys: vec![
-                    AutoKey { t: kt_time::Tick(45_000), v: 1.0 },
-                    AutoKey { t: kt_time::Tick(135_000), v: 48.0 },
-                ],
+
+                keys: AutoKey::linear(vec![
+                    AutoKey::at(kt_time::Tick(45_000), 1.0),
+                    AutoKey::at(kt_time::Tick(135_000), 48.0),
+                ]),
                 source: Default::default(),
             }],
         }],
@@ -8590,11 +8598,11 @@ fn harness_with_fx_window() -> egui_kittest::Harness<'static, crate::app::KtApp>
         fx_bypass: vec![false],
         fx_auto: vec![vec![ParamCurve {
             param: "radius".into(),
-            ease: false,
-            keys: vec![
-                AutoKey { t: kt_time::Tick(30_000), v: 1.0 },
-                AutoKey { t: kt_time::Tick(120_000), v: 48.0 },
-            ],
+
+            keys: AutoKey::linear(vec![
+                AutoKey::at(kt_time::Tick(30_000), 1.0),
+                AutoKey::at(kt_time::Tick(120_000), 48.0),
+            ]),
             source: Default::default(),
         }]],
         opacity: 1.0,
@@ -8683,10 +8691,9 @@ fn t346_preset_insert_appends_chain_with_curves() {
             bypass: false,
             curves: vec![ParamCurve {
                 param: "strength".into(),
-                ease: true,
                 keys: vec![
-                    AutoKey { t: kt_time::Tick(0), v: 0.2 },
-                    AutoKey { t: kt_time::Tick(90_000), v: 1.5 },
+                    AutoKey::at(kt_time::Tick(0), 0.2),
+                    AutoKey::at(kt_time::Tick(90_000), 1.5),
                 ],
                 source: Default::default(),
             }],
@@ -9361,8 +9368,8 @@ fn t460_fade_handle_redrag_keeps_kind() {
             audio: AudioCurve::SCurve,
             auto: vec![ParamCurve {
                 param: "angle".into(),
-                ease: false,
-                keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(30_000), v: 45.0 }],
+
+                keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 0.0), AutoKey::at(Tick(30_000), 45.0)]),
                 source: Default::default(),
             }],
             invert: false,
@@ -11913,7 +11920,10 @@ fn t668_preset_writes_curves_and_keeps_the_layout() {
     let curves = crawl.curves(&made, frame, src_in);
     assert_eq!(curves.len(), 1, "бегущая строка — ровно один анимируемый ряд");
     assert_eq!(curves[0].param, "offset_x");
-    assert!(!curves[0].ease, "проход линейный: со сглаживанием строка ехала бы рывками");
+    assert!(
+        curves[0].keys.iter().all(|k| k.shape == kt_model::SegShape::Linear),
+        "проход линейный: со сглаживанием строка ехала бы рывками"
+    );
     assert_eq!(curves[0].keys.len(), 2);
     assert_eq!(curves[0].keys[0].t, src_in, "кривая обязана начинаться на ВХОДЕ события");
     assert_eq!(

@@ -36,7 +36,8 @@ fn settings() -> ProjectSettings {
         height: 54,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    }
+    
+    default_shape: Default::default(),}
 }
 
 fn title(text: &str) -> GeneratorKind {
@@ -303,14 +304,14 @@ fn t674_an_override_curve_lands_on_the_same_material_frame() {
     p.clips.push(b);
 
     // ключи — в тиках ЛЕНТЫ
-    let key = |t: i64, v: f64| AutoKey { t: Tick(t), v };
+    let key = |t: i64, v: f64| AutoKey::at(Tick(t), v);
     let ov = Override {
         pub_id: ZOOM,
         value: ParamValue::Num(1.0),
         curves: vec![ParamCurve {
             param: "zoom".into(),
-            ease: false,
-            keys: vec![key(FRAME * 5, 1.0), key(FRAME * 25, 3.0)],
+
+            keys: AutoKey::linear(vec![key(FRAME * 5, 1.0), key(FRAME * 25, 3.0)]),
             source: CurveSource::Keys,
         }],
     };

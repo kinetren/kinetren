@@ -19,7 +19,8 @@ fn clip(reversed: bool, fx: Vec<FxInstance>, kind: ClipKind) -> Project {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
         r#gen: None,
@@ -353,7 +354,8 @@ fn signed_clip(rate: f64, source_in_frames: i64, reversed: bool) -> Project {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    });
+    
+    default_shape: Default::default(),});
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
         r#gen: None,
@@ -458,11 +460,11 @@ fn t618_turning_point_is_a_palindrome() {
     // 1 → −1: разворот ровно посередине события
     p.clips[0].fx_auto = vec![vec![ParamCurve {
         param: "rate".into(),
-        ease: false,
-        keys: vec![
-            AutoKey { t: Tick::from_audio_frames(9_600), v: 1.0 },
-            AutoKey { t: Tick::from_audio_frames(9_600 + 48_000), v: -1.0 },
-        ],
+
+        keys: AutoKey::linear(vec![
+            AutoKey::at(Tick::from_audio_frames(9_600), 1.0),
+            AutoKey::at(Tick::from_audio_frames(9_600 + 48_000), -1.0),
+        ]),
         source: Default::default(),
     }]];
     let out = render(&p, n);
@@ -503,11 +505,11 @@ fn t619_zero_rate_is_silence_with_a_ringing_tail() {
     q.clips[0].fx = vec![FxInstance::slowed_reverb(1.0, 0.6, 85.0)];
     q.clips[0].fx_auto = vec![vec![ParamCurve {
         param: "rate".into(),
-        ease: false,
-        keys: vec![
-            AutoKey { t: Tick::from_audio_frames(9_600), v: 1.0 },
-            AutoKey { t: Tick::from_audio_frames(9_600 + 24_000), v: 0.0 },
-        ],
+
+        keys: AutoKey::linear(vec![
+            AutoKey::at(Tick::from_audio_frames(9_600), 1.0),
+            AutoKey::at(Tick::from_audio_frames(9_600 + 24_000), 0.0),
+        ]),
         source: Default::default(),
     }]];
     let out = render(&q, n);

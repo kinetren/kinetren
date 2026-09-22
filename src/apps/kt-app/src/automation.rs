@@ -437,9 +437,9 @@ fn toolbar(
             let targets: Vec<usize> = if all { (0..curves.len()).collect() } else { vec![active] };
             for ci in targets {
                 let Some(c) = curves.get_mut(ci) else { continue };
-                let v = kt_model::curve_value(&c.keys, c.ease, at);
+                let v = kt_model::curve_value(&c.keys, at);
                 c.keys.retain(|k| k.t != at);
-                c.keys.push(kt_model::AutoKey { t: at, v });
+                c.keys.push(kt_model::AutoKey::at(at, v));
                 c.keys.sort_by_key(|k| k.t.0);
             }
             if let Some(c) = curves.get(active) {
@@ -819,7 +819,7 @@ fn graph(
                 let u = ((plot.bottom() - 6.0 - pos.y) / (plot.height() - 12.0)).clamp(0.0, 1.0);
                 let v = axis_of(&spec).unmap(lo + (hi - lo) * u as f64).clamp(spec.min, spec.max);
                 c.keys.retain(|k| k.t != t);
-                c.keys.push(kt_model::AutoKey { t, v });
+                c.keys.push(kt_model::AutoKey::at(t, v));
                 c.keys.sort_by_key(|k| k.t.0);
                 view.sel = c.keys.iter().position(|k| k.t == t).map(|ki| (view.active, ki));
                 out.changed = true;
@@ -839,7 +839,10 @@ fn graph(
         let (lo, hi) = win_of(&curves[ci], &spec, view, ci);
         let u = ((plot.bottom() - 6.0 - pos.y) / (plot.height() - 12.0)).clamp(0.0, 1.0);
         let v = axis_of(&spec).unmap(lo + (hi - lo) * u as f64).clamp(spec.min, spec.max);
-        curves[ci].keys[ki] = kt_model::AutoKey { t, v };
+        // форма отрезка принадлежит ключу и при перетаскивании обязана
+        // остаться: иначе драг молча превращал бы зигзаг в сглаживание
+        let shape = curves[ci].keys[ki].shape;
+        curves[ci].keys[ki] = kt_model::AutoKey::shaped(t, v, shape);
         // порядок восстанавливаем сразу, но выбор следует за СВОИМ ключом
         curves[ci].keys.sort_by_key(|k| k.t.0);
         view.sel = curves[ci].keys.iter().position(|k| k.t == t).map(|ki| (ci, ki));
@@ -922,8 +925,8 @@ fn table(
                         None => {
                             // пустая клетка — кнопка «поставить сюда ключ»
                             if ui.small_button(tr(k::fx::CELL_ADD)).clicked() {
-                                let v = kt_model::curve_value(&c.keys, c.ease, tick);
-                                c.keys.push(kt_model::AutoKey { t: tick, v });
+                                let v = kt_model::curve_value(&c.keys, tick);
+                                c.keys.push(kt_model::AutoKey::at(tick, v));
                                 c.keys.sort_by_key(|k| k.t.0);
                                 out.changed = true;
                             }
