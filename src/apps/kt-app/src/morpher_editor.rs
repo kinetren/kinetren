@@ -268,7 +268,7 @@ impl KtApp {
         let mut enabled = ev.enabled;
         let mut fx_clip = self.fx_clipboard.clone();
         let dflt_shape = self.model.document().settings.default_shape;
-        let mut env_clip = self.env_clipboard.clone();
+        let mut paste_req = false;
         // подсказки — в статусбар, как везде (попапов в программе нет)
         let mut hover_out: Option<String> = None;
         // цель правого клика в полосе цепочки (п.363): полоса — виджет,
@@ -576,7 +576,7 @@ impl KtApp {
                                     default_shape: dflt_shape,
                                 },
                                 playhead,
-                                &mut env_clip,
+                                &mut paste_req,
                                 (ed.id.0, i),
                                 &mut hover_out,
                             );
@@ -652,7 +652,6 @@ impl KtApp {
             return;
         }
         self.fx_clipboard = fx_clip;
-        self.env_clipboard = env_clip;
         if need_selection {
             // невозможность действия — ошибкой, а не блёклой строкой (п.16 р.28)
             self.note(tr(k::mrph::NEED_SELECTION));

@@ -452,10 +452,17 @@ pub struct KtApp {
     /// Passthrough-остатки загруженного .otio (чужие поля/схемы/metadata):
     /// пишутся обратно при каждом сохранении, вне undo (Р.24).
     pub retained: kt_otio::Retained,
-    /// Буфер огибающей автоматизации (п.5 v1.3, порт «Copy envelopes»).
-    /// Буфер огибающих (Р.33): кривые одного слота. Модель блока —
-    /// `kt_model::ops::EnvelopeBlock`, ею же пользуется системный буфер.
-    pub env_clipboard: Option<kt_model::ops::EnvelopeBlock>,
+    /// Заказанное ЧТЕНИЕ системного буфера огибающих (Р.61).
+    ///
+    /// Зеркала буфера внутри программы БОЛЬШЕ НЕТ: оно гасило кнопку на
+    /// содержимом, скопированном в другом окне, и запрещало вставку в
+    /// чужой вид эффекта. Здесь живёт не содержимое, а конечная задача
+    /// «сходи прочитай» — на X11 синхронное чтение собственного буфера
+    /// повисло бы в цикле событий, который в этот момент рисует.
+    pub env_read: Option<crate::envclip::ClipJob>,
+    /// Остаток сопоставления, который решает человек: кривые, чьих имён у
+    /// цели нет, и свободные параметры цели.
+    pub env_fit: Option<crate::envclip::FitDialog>,
     /// Буфер FX-цепочки/слота.
     pub fx_clipboard: Option<kt_model::ops::FxChainBlock>,
     /// Медиа, чьи файлы сейчас недоступны (watchdog, 900 мс).
@@ -815,7 +822,8 @@ impl KtApp {
             reopen_rx: None,
             clipboard: kt_model::ops::ClipBlock::default(),
             retained: kt_otio::Retained::default(),
-            env_clipboard: None,
+            env_read: None,
+            env_fit: None,
             fx_clipboard: None,
             offline: Arc::new(Mutex::new(std::collections::HashSet::new())),
             watchdog: None,
@@ -1017,7 +1025,8 @@ impl KtApp {
             reopen_rx: None,
             clipboard: kt_model::ops::ClipBlock::default(),
             retained,
-            env_clipboard: None,
+            env_read: None,
+            env_fit: None,
             fx_clipboard: None,
             offline,
             watchdog: Some(watchdog),
@@ -1521,6 +1530,7 @@ impl KtApp {
         self.draw_publish_dialog(&ctx);
         self.draw_published_win(&ctx);
         self.draw_inst_params(&ctx);
+        self.draw_env_fit(&ctx);
         // заявка подписи поля забирается ПОСЛЕ отрисовки окон — внутри
         // `Window::show` до модели не дотянуться (тот же механизм, что у
         // `hint_sink`)
@@ -1570,6 +1580,7 @@ impl KtApp {
                 .ok();
         }
         self.poll_returned_sources();
+        self.poll_env_clipboard();
         // Офлайн-анализ: забрать готовое, запустить следующее (п.372).
         // `animating` держится на `is_running()`, а не на «окно открыто» —
         // иначе перерисовка не остановится после финиша (повтор t38).

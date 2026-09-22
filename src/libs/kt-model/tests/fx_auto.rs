@@ -900,3 +900,67 @@ fn t697_default_shape_lives_in_the_project_and_applies_to_new_keys() {
     let json = serde_json::to_string(&p.settings).expect("настройки сериализуются");
     assert!(json.contains("zigzag"), "умолчание формы не уехало в документ: {json}");
 }
+
+// ---- 700 (Р.61). сопоставление полей при вставке огибающей -----------------
+
+/// Тест 700 (Р.61): вставка в ДРУГОЙ вид эффекта раскладывает кривые, и ни
+/// одна не теряется молча.
+///
+/// Владелец: «пусть хотя бы ремаппинг предложит полей». До Р.61 кнопка
+/// вставки на чужом виде просто гасла — ремаппинг не отсутствовал, а был
+/// ЗАПРЕЩЁН.
+#[test]
+fn t700_envelope_fits_into_another_effect_kind() {
+    let curve = |p: &str| ParamCurve {
+        param: p.into(),
+        keys: vec![AutoKey::at(Tick(0), 1.0), AutoKey::at(Tick(90_000), 8.0)],
+        source: CurveSource::Keys,
+    };
+    let blur = FxInstance::Blur { radius: 8, radius_y: 0 };
+    let names: Vec<String> = blur.param_specs().iter().map(|s| s.name.to_string()).collect();
+    assert!(names.len() >= 2, "у Blur есть хотя бы два параметра: {names:?}");
+
+    // --- всё совпало: остатка нет, окно показывать не надо ------------
+    let all: Vec<ParamCurve> = names.iter().map(|n| curve(n)).collect();
+    let fit = kt_model::ops::fit_envelope(&all, &blur);
+    assert_eq!(fit.matched.len(), all.len(), "совпавшие не легли молча");
+    assert!(fit.leftover.is_empty(), "остаток из ниоткуда: {:?}", fit.leftover);
+    assert!(fit.free.is_empty(), "свободных быть не должно — все заняты");
+
+    // --- часть не совпала: она НАЗВАНА, а не потеряна -----------------
+    let mixed = vec![curve(&names[0]), curve("нет_такого_поля"), curve("и_этого_тоже")];
+    let fit = kt_model::ops::fit_envelope(&mixed, &blur);
+    assert_eq!(fit.matched.len(), 1, "совпавшая не легла");
+    assert_eq!(fit.leftover.len(), 2, "несовпавшие обязаны быть названы: {fit:?}");
+    assert_eq!(
+        fit.matched.len() + fit.leftover.len(),
+        mixed.len(),
+        "кривая потерялась между ветками — ровно то, чего быть не должно"
+    );
+    assert!(
+        fit.free.iter().any(|f| f == &names[1]),
+        "свободный параметр цели не предложен: {:?}",
+        fit.free
+    );
+    assert!(
+        !fit.free.iter().any(|f| f == &names[0]),
+        "занятый параметр предложен как свободный"
+    );
+
+    // --- ремаппинг меняет АДРЕС, а не содержимое ----------------------
+    let src = ParamCurve {
+        param: "чужое".into(),
+        keys: vec![
+            AutoKey::shaped(Tick(0), 1.0, SegShape::Hold),
+            AutoKey::shaped(Tick(45_000), 4.0, SegShape::Linear),
+        ],
+        source: CurveSource::Keys,
+    };
+    let moved = kt_model::ops::remap_curve(src.clone(), &names[1]);
+    assert_eq!(moved.param, names[1], "адрес не сменился");
+    assert_eq!(moved.keys, src.keys, "сопоставление тронуло ключи или формы отрезков");
+
+    // --- вставка в СВОЙ вид по-прежнему проходит целиком --------------
+    let same = kt_model::ops::fit_envelope(&all, &FxInstance::Blur { radius: 2, radius_y: 2 });
+    assert!(same.leftover.is_empty(), "свой вид дал остаток");
+}

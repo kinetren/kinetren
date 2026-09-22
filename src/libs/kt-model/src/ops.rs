@@ -1936,3 +1936,59 @@ pub fn import_as_sequences(
     }
     (cmds, rep)
 }
+
+// ---- сопоставление полей при вставке огибающей (Р.61) -----------------------
+
+/// Итог сопоставления кривых буфера с параметрами ЦЕЛИ.
+///
+/// Владелец: «когда я копипасчу кривую с одного эффекта — я хочу её вставить
+/// в другой, пусть хотя бы ремаппинг предложит полей». До Р.61 кнопка вставки
+/// просто гасла на чужом виде эффекта: ремаппинг не отсутствовал, а был
+/// ЗАПРЕЩЁН.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct EnvelopeFit {
+    /// Легли молча: имя И тип совпали.
+    pub matched: Vec<ParamCurve>,
+    /// Не совпало ничем — их судьбу решает человек в окне сопоставления.
+    /// Пустой остаток означает, что окна показывать НЕ НАДО.
+    pub leftover: Vec<ParamCurve>,
+    /// Свободные параметры цели, куда остаток можно положить.
+    pub free: Vec<String>,
+}
+
+/// Разложить кривые буфера по параметрам ЦЕЛИ.
+///
+/// Правило одно: совпали имя И тип — кладём молча; не совпало — в остаток,
+/// и НИ ОДНА кривая не теряется молча. Совпадение по одному имени, без типа,
+/// в молчаливую ветку не идёт: `radius` у Blur — целое число пикселей, а
+/// `radius` у другого вида мог бы оказаться долей, и «тихо легло» дало бы
+/// анимацию не того масштаба.
+pub fn fit_envelope<P: HasParams + ?Sized>(curves: &[ParamCurve], target: &P) -> EnvelopeFit {
+    let specs = target.param_specs();
+    let mut out = EnvelopeFit::default();
+    let mut taken: Vec<String> = Vec::new();
+    for c in curves {
+        match specs.iter().find(|s| *s.name == c.param) {
+            Some(_) => {
+                taken.push(c.param.clone());
+                out.matched.push(c.clone());
+            }
+            None => out.leftover.push(c.clone()),
+        }
+    }
+    out.free = specs
+        .iter()
+        .filter(|s| !taken.iter().any(|t| t == &*s.name))
+        .map(|s| s.name.to_string())
+        .collect();
+    out
+}
+
+/// Переименовать кривую под выбранный человеком параметр цели.
+///
+/// Форма отрезков и ключи едут КАК ЕСТЬ: сопоставление меняет адрес, а не
+/// содержимое анимации.
+pub fn remap_curve(mut c: ParamCurve, to: &str) -> ParamCurve {
+    c.param = to.to_string();
+    c
+}

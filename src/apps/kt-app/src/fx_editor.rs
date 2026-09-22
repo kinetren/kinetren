@@ -265,7 +265,9 @@ impl KtApp {
         let playhead = self.player.transport.playhead();
         // буферы живут в приложении; в окно отдаём их на время кадра,
         // чтобы не держать &mut self внутри ui-замыкания
-        let mut env_clip = self.env_clipboard.clone();
+        // нажатие «вставить огибающую»: сюда кладётся адрес цели
+        let mut paste_req = false;
+        let mut paste_target: Option<(ClipId, usize)> = None;
         let mut fx_clip = self.fx_clipboard.clone();
         // что окно наредактировало за кадр: применяем ПОСЛЕ отрисовки
         struct Edited {
@@ -672,6 +674,9 @@ impl KtApp {
                                         axis_linked,
                                         dflt_shape,
                                     );
+                                    if paste_req && paste_target.is_none() {
+                                        paste_target = Some((*id, sel));
+                                    }
                                     let r = draw_auto_for(
                                         ui,
                                         f,
@@ -679,7 +684,7 @@ impl KtApp {
                                         view,
                                         actx,
                                         playhead,
-                                        &mut env_clip,
+                                        &mut paste_req,
                                         (id.0, sel),
                                         &mut hover_out,
                                     );
@@ -795,8 +800,13 @@ impl KtApp {
         if !open {
             ed.open = false;
         }
-        self.env_clipboard = env_clip;
         self.fx_clipboard = fx_clip;
+        // Заказ чтения буфера — ПОСЛЕ отрисовки и в ФОНЕ (Р.61): читать
+        // синхронно нельзя, владелец буфера на X11 — наше же окно.
+        if paste_req && self.env_read.is_none() {
+            let t = paste_target.unwrap_or((ed.clip, 0));
+            self.env_read = Some(crate::envclip::spawn_read(t));
+        }
         if revert {
             // «Отмена» откатывает ВСЁ окно: у пары обе цепочки
             for (id, fx, auto, bypass, off) in ed.backup.clone() {
@@ -909,7 +919,9 @@ pub(crate) fn draw_auto_for(
     view: &mut crate::automation::AutoView,
     ctx: crate::automation::AutoCtx<'_>,
     playhead: kt_time::Tick,
-    env_clip: &mut Option<kt_model::ops::EnvelopeBlock>,
+    // Нажата ли «вставить огибающую»: сам буфер читается ПОЗЖЕ и в ФОНЕ
+    // — см. `crate::envclip` (Р.61).
+    paste_req: &mut bool,
     id: impl std::hash::Hash + std::fmt::Debug + Copy,
     hover_out: &mut Option<String>,
 ) -> crate::automation::AutoResult {
@@ -974,7 +986,9 @@ pub(crate) fn draw_auto_for(
     });
     ui.horizontal(|ui| {
         // копипаст огибающих (модель — kt_model::ops, Р.33)
-        if !curves.is_empty() && ui.button(tr(k::fx::COPY_ENV)).clicked() {
+        let cp = ui.add_enabled(!curves.is_empty(), egui::Button::new(tr(k::fx::COPY_ENV)));
+        crate::widgets::field_probe::note("env.copy", cp.rect);
+        if cp.clicked() {
             let block = kt_model::ops::EnvelopeBlock {
                 fx_tag: kt_model::ops::fx_tag(f),
                 curves: curves.clone(),
@@ -983,28 +997,16 @@ pub(crate) fn draw_auto_for(
             if let Ok(json) = serde_json::to_string_pretty(&block) {
                 ui.ctx().copy_text(json);
             }
-            *env_clip = Some(block);
         }
-        let same_kind = env_clip.as_ref().is_some_and(|b| b.fx_tag == kt_model::ops::fx_tag(f));
-        if crate::app::hint_into(
-            hover_out,
-            ui.add_enabled(same_kind, egui::Button::new(tr(k::fx::PASTE_ENV))),
-            tr(k::fx::PASTE_ENV_HINT),
-        )
-        .clicked()
-            && let Some(b) = env_clip.clone()
-        {
-            // ключи живут в тиках МАТЕРИАЛА: переносим их на точку входа
-            // этого события, иначе кривая уехала бы на чужой кусок
-            let d = src_in.0 - b.src_in.0;
-            for mut c in b.curves {
-                for kf in &mut c.keys {
-                    kf.t = kt_time::Tick((kf.t.0 + d).max(0));
-                }
-                curves.retain(|old| old.param != c.param);
-                curves.push(c);
-            }
-            changed = true;
+        // Кнопка НИКОГДА не гаснет: содержимое буфера читается ПО
+        // НАЖАТИЮ, а не хранится зеркалом внутри программы (Р.61).
+        // Чтение — конечной фоновой задачей: на X11 буфером владеет окно, и
+        // синхронный запрос к САМИМ СЕБЕ повис бы в цикле событий, который
+        // в этот момент рисует.
+        let pb = ui.button(tr(k::fx::PASTE_ENV));
+        crate::widgets::field_probe::note("env.paste", pb.rect);
+        if crate::app::hint_into(hover_out, pb, tr(k::fx::PASTE_ENV_HINT)).clicked() {
+            *paste_req = true;
         }
         // Кнопка «+ keyframe at playhead» отсюда УБРАНА (Р.40 п.18,
         // дословно: «а еще получается "+keyframe at playhead" кнопка

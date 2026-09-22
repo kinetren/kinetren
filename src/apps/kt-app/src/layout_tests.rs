@@ -12523,6 +12523,136 @@ fn t691_instance_curves_are_visible_and_never_hidden() {
     );
 }
 
+/// Тест 700b (Р.61): окно сопоставления открывается только при остатке, а
+/// пропущенная кривая НАЗЫВАЕТСЯ.
+#[test]
+fn t700b_field_mapping_dialog_never_loses_a_curve_silently() {
+    use crate::envclip::FitDialog;
+    use kt_model::{AutoKey, ParamCurve};
+    use kt_time::Tick;
+
+    let (mut h, _g) = harness_three_clips();
+    let id = h.state().model.project().clips[0].id;
+    let blur = kt_model::FxInstance::Blur { radius: 8, radius_y: 0 };
+    assert!(h.state_mut().apply(kt_model::Command::SetFx { id, fx: vec![blur.clone()] }));
+    h.step();
+
+    let free: Vec<String> = blur.param_specs().iter().map(|s| s.name.to_string()).collect();
+    let curve = |p: &str| ParamCurve {
+        param: p.into(),
+        keys: vec![AutoKey::at(Tick(0), 1.0), AutoKey::at(Tick(45_000), 7.0)],
+        source: Default::default(),
+    };
+
+    // остаток из двух кривых: одну кладём в свободный параметр, вторую нет
+    h.state_mut().env_fit = Some(FitDialog {
+        target: (id, 0),
+        delta: 0,
+        rows: vec![(curve("чужое_1"), Some(free[0].clone())), (curve("чужое_2"), None)],
+        free: free.clone(),
+        matched: Vec::new(),
+        open: true,
+    });
+    h.step();
+    h.step();
+    {
+        use egui_kittest::kittest::Queryable;
+        assert!(
+            h.query_all_by_label_contains(tr(k::fx::FIT_TITLE)).count() > 0,
+            "окно сопоставления не открылось при непустом остатке"
+        );
+        h.get_by_label(tr(k::fx::FIT_DO)).click();
+    }
+    h.step();
+    h.step();
+
+    // выбранная кривая доехала до модели ПОД НОВЫМ именем
+    let auto = h.state().model.clip(id).map(|c| c.fx_auto.clone()).unwrap_or_default();
+    let got: Vec<String> =
+        auto.first().map(|v| v.iter().map(|c| c.param.clone()).collect()).unwrap_or_default();
+    assert_eq!(got, vec![free[0].clone()], "сопоставленная кривая не легла: {auto:?}");
+    // а пропущенная НАЗВАНА, а не исчезла молча
+    let msg = h.state().status.as_ref().map(|(m, _)| m.clone()).unwrap_or_default();
+    assert!(
+        msg.contains('1'),
+        "пропущенная кривая исчезла молча — ровно то, чего быть не должно: {msg:?}"
+    );
+
+    // окно закрылось и второй раз само не открывается
+    assert!(h.state().env_fit.is_none(), "окно сопоставления осталось висеть");
+}
+
+/// Тест 699 (Р.61): три исхода чтения буфера, и ни одного молчаливого.
+///
+/// Владелец: «нужно по нажатию кнопки брать значение из реального буфера и
+/// уже потом проверять можно вставить или нет, и предложить действия».
+/// Отсюда: свой блок — кладём; чужой текст и пустой буфер — НАЗВАННАЯ
+/// ошибка, а не погашенная кнопка.
+#[test]
+fn t699_clipboard_is_read_on_press_and_explains_refusals() {
+    use crate::envclip::ClipRead;
+    use kt_model::{AutoKey, ParamCurve};
+    use kt_time::Tick;
+
+    // блок огибающей переживает системный буфер ТЕМ ЖЕ текстом, каким
+    // туда попадает: копирование пишет json, чтение его разбирает
+    let block = kt_model::ops::EnvelopeBlock {
+        fx_tag: "blur".into(),
+        curves: vec![ParamCurve {
+            param: "radius".into(),
+            keys: vec![AutoKey::at(Tick(0), 1.0), AutoKey::at(Tick(90_000), 9.0)],
+            source: Default::default(),
+        }],
+        src_in: Tick(12_345),
+    };
+    let json = serde_json::to_string_pretty(&block).expect("блок сериализуется");
+    let parsed: kt_model::ops::EnvelopeBlock =
+        serde_json::from_str(&json).expect("и разбирается обратно");
+    assert_eq!(parsed, block, "блок не пережил круг через текст буфера");
+
+    // чужой текст и пустая строка РАЗЛИЧАЮТСЯ, и у каждого своя причина
+    assert!(
+        serde_json::from_str::<kt_model::ops::EnvelopeBlock>("просто текст").is_err(),
+        "чужой текст разобрался как огибающая"
+    );
+    let foreign = tr(k::fx::PASTE_ENV_FOREIGN);
+    let empty = tr(k::fx::PASTE_ENV_EMPTY);
+    assert_ne!(foreign, empty, "у двух разных отказов один текст — причина не названа");
+    for t in [foreign, empty] {
+        assert!(t.len() > 20, "отказ не объясняет причину: {t:?}");
+    }
+    // и оба исхода существуют в типе, а не «молчание по умолчанию»
+    assert!(matches!(ClipRead::Foreign, ClipRead::Foreign));
+    assert!(matches!(ClipRead::Empty, ClipRead::Empty));
+
+    // --- окно сопоставления открывается ТОЛЬКО при остатке ------------
+    let blur = kt_model::FxInstance::Blur { radius: 8, radius_y: 0 };
+    let own = kt_model::ops::fit_envelope(&block.curves, &blur);
+    assert!(own.leftover.is_empty(), "свой вид дал остаток — окно показалось бы зря");
+    let alien = ParamCurve {
+        param: "чужое_поле".into(),
+        keys: vec![AutoKey::at(Tick(0), 1.0)],
+        source: Default::default(),
+    };
+    let mixed = kt_model::ops::fit_envelope(&[alien], &blur);
+    assert_eq!(mixed.leftover.len(), 1, "остаток не назван — кривая потерялась бы молча");
+    assert!(!mixed.free.is_empty(), "не предложено ни одного параметра цели");
+
+    // --- кнопка вставки ЖИВАЯ даже когда класть нечего ----------------
+    let (mut h, _g) = harness_three_clips();
+    let id = h.state().model.project().clips[0].id;
+    assert!(h.state_mut().apply(kt_model::Command::SetFx { id, fx: vec![blur.clone()] }));
+    h.step();
+    h.state_mut().open_fx_editor(id);
+    h.step();
+    h.step();
+    {
+        use egui_kittest::kittest::Queryable;
+        let n = h.query_all_by_label(tr(k::fx::PASTE_ENV)).count();
+        assert!(n > 0, "кнопки «вставить огибающую» нет в окне вовсе");
+    }
+}
+
 /// Тест 698 (Р.61): форма правится ПО УЧАСТКУ, соседи целы, «ко всем» —
 /// один шаг; график рисуется той же функцией значения, что считает рендер.
 ///

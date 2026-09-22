@@ -11,6 +11,7 @@ mod bg;
 mod bin_panel;
 mod camera_editor;
 mod ctx_menu;
+mod envclip;
 mod eq_graph;
 #[cfg(test)]
 mod font_tests;

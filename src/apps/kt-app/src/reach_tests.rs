@@ -2292,3 +2292,79 @@ fn t693_every_carrier_draws_its_curves_with_the_one_widget() {
         "у действия «завести кривую» нет подсказки в строке состояния (правило 10): {hint:?}"
     );
 }
+
+/// Тест 699b (Р.61): состояния буфера обмена внутри программы НЕ БЫВАЕТ.
+///
+/// Владелец опознал дефект по косвенному признаку: «судя по тому что кнопка
+/// может быть "disabled" — в коде есть какое-то состояние буфера обмена —
+/// что плохо». Он был прав: копирование писало и в системный буфер, и в
+/// зеркало `env_clipboard`, а доступность кнопки решалась ПО ЗЕРКАЛУ —
+/// скопированное во втором окне программы вставить было нельзя.
+///
+/// Сторож двусторонний: по КОДУ — зеркала нет и кнопка вставки не гасится;
+/// по СЛЕДСТВИЮ — разбор буфера живёт в одном месте и зовётся из фона.
+#[test]
+fn t699b_no_clipboard_state_lives_inside_the_program() {
+    let root = workspace_root();
+    let mut files: Vec<String> = Vec::new();
+    collect_rs(&root.join("apps"), &mut files);
+
+    // --- 1. зеркала буфера огибающих не осталось ----------------------
+    let mut bad: Vec<String> = Vec::new();
+    for rel in &files {
+        if rel.ends_with("_tests.rs") {
+            continue;
+        }
+        let src = strip_comments(&std::fs::read_to_string(root.join(rel)).expect(rel));
+        for (n, line) in src.lines().enumerate() {
+            // ищем ПОЛЕ, а не любое вхождение строки: `poll_env_clipboard`
+            // — это как раз чтение системного буфера, оно законно
+            if line.contains(".env_clipboard") || line.contains("env_clipboard:") {
+                bad.push(format!("{rel}:{}: {}", n + 1, line.trim()));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "зеркало буфера огибающих вернулось — кнопка снова будет гаснуть на \
+         содержимом, скопированном в другом окне:\n  {}",
+        bad.join("\n  ")
+    );
+
+    // --- 2. кнопка вставки не гасится ---------------------------------
+    for rel in &files {
+        if rel.ends_with("_tests.rs") {
+            continue;
+        }
+        let src = strip_comments(&std::fs::read_to_string(root.join(rel)).expect(rel));
+        for (n, line) in src.lines().enumerate() {
+            let t = line.trim();
+            assert!(
+                !(t.contains("add_enabled") && t.contains("PASTE_ENV")),
+                "{rel}:{}: кнопка вставки огибающей снова гаснет — содержимое \
+                 буфера обязано читаться ПО НАЖАТИЮ, а не решать доступность",
+                n + 1
+            );
+        }
+    }
+
+    // --- 3. системный буфер трогает РОВНО одно место ------------------
+    const HOME: &str = "apps/kt-app/src/envclip.rs";
+    let mut readers: Vec<String> = Vec::new();
+    for rel in &files {
+        let src = strip_comments(&std::fs::read_to_string(root.join(rel)).expect(rel));
+        if src.contains("arboard::") && rel != HOME {
+            readers.push(rel.clone());
+        }
+    }
+    assert!(
+        readers.is_empty(),
+        "системный буфер читается мимо единственного дома ({HOME}): {readers:?}"
+    );
+    let home = std::fs::read_to_string(root.join(HOME)).expect(HOME);
+    assert!(
+        home.contains("BgJob::spawn"),
+        "чтение буфера перестало быть фоновой задачей: на X11 буфером владеет \
+         окно, и синхронный запрос к самим себе повиснет в цикле событий"
+    );
+}
