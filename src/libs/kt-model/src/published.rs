@@ -31,8 +31,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::genmedia::GeneratorKind;
 use crate::project::{
-    CameraEvent, CameraId, ClipEvent, ClipId, HasParams, MediaId, ParamCurve, ParamType,
-    ParamValue, TransitionEvent, TransitionId, clip_material_at,
+    CameraEvent, CameraId, ClipEvent, ClipId, HasParams, MediaId, ParamCurve, ParamKind,
+    ParamSpec, ParamType, ParamUnit, ParamValue, TransitionEvent, TransitionId, clip_material_at,
 };
 
 /// Номер публичного параметра внутри ленты. Адрес, переживающий
@@ -55,6 +55,21 @@ pub struct PubRange {
 impl PubRange {
     pub fn is_empty(&self) -> bool {
         self.min.is_none() && self.max.is_none()
+    }
+
+    /// Нормализовать сужение против паспорта ЦЕЛИ (Р.60).
+    ///
+    /// Предел, равный пределу цели, — это ОТСУТСТВИЕ сужения, а не
+    /// число: иначе первая же публикация писала бы в файл копию
+    /// паспорта, и та разошлась бы с целью при смене версии эффекта.
+    /// Допуск — половина шага паспорта: поле отдаёт число, округлённое
+    /// до шага, и точного равенства на нём не бывает.
+    pub fn narrowed(spec: &ParamSpec, min: f64, max: f64) -> PubRange {
+        let eps = (spec.step.abs() * 0.5).max(f64::EPSILON);
+        PubRange {
+            min: (min > spec.min + eps).then_some(min),
+            max: (max < spec.max - eps).then_some(max),
+        }
     }
 
     /// Зажать число объявленными пределами. Пределы цели при этом никуда
@@ -336,6 +351,30 @@ pub const CLIP_ATTRS: &[(&str, ParamType)] = &[
 
 pub fn clip_attr_type(name: &str) -> Option<ParamType> {
     CLIP_ATTRS.iter().find(|(n, _)| *n == name).map(|(_, t)| t.clone())
+}
+
+/// Паспорт атрибута события. Пределы — ТЕ ЖЕ, которыми их клампит
+/// `set_clip_attr`: второй набор чисел разошёлся бы с первым (Р.60).
+pub fn clip_attr_spec(name: &str) -> Option<ParamSpec> {
+    let ty = clip_attr_type(name)?;
+    // ±6.0206 дБ — множитель 2.0, та же шкала, что у полосы уровня на
+    // таймлайне (`RAIL_DB_SPAN` вдвое шире, потому что она двусторонняя)
+    let (min, max, default, step, unit) = match name {
+        "opacity" => (0.0, 1.0, 1.0, 0.01, ParamUnit::Norm),
+        "gain_db" => (-6.0206, 6.0206, 0.0, 0.1, ParamUnit::Db),
+        _ => (0.0, 1.0, 0.0, 1.0, ParamUnit::None),
+    };
+    Some(ParamSpec {
+        name: std::borrow::Cow::Owned(name.to_string()),
+        ty,
+        min,
+        max,
+        default,
+        step,
+        unit,
+        kind: ParamKind::Smooth,
+        label: std::borrow::Cow::Borrowed(""),
+    })
 }
 
 pub fn clip_attr_value(c: &ClipEvent, name: &str) -> Option<ParamValue> {

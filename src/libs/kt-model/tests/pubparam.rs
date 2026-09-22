@@ -519,3 +519,156 @@ fn t690_a_band_shows_the_template_and_expanding_bakes_the_overrides() {
         "впекание не имеет права трогать САМУ ЛЕНТУ"
     );
 }
+
+// ---- 692, 694 (Р.60). паспорт цели — единственный источник пределов --------
+
+/// Тест 694 (Р.60): паспорт свойства ПО АДРЕСУ есть у каждого владельца.
+///
+/// До Р.60 модель отвечала на «какой тип у этой цели» (`addr_type`) и «какое
+/// у неё значение» (`addr_value`), но не на «какие у неё пределы» — и окно
+/// автора рисовало пустое сужение нулём. Паспорт обязан приходить оттуда же,
+/// откуда тип, и совпадать с ним по типу: разойдутся — у цвета окажется
+/// паспорт компоненты, а тип группы.
+#[test]
+fn t694_addr_spec_answers_for_every_owner() {
+    let mut p = template();
+
+    // слот эффекта: пределы и умолчание — паспорта самого эффекта
+    let fx = ParamAddr::new(PLATE, ParamOwner::FxSlot { slot: 0 }, "radius");
+    let s = p.addr_spec(Some(SEQ), &fx).expect("паспорт слота");
+    assert_eq!(Some(s.ty.clone()), p.addr_type(Some(SEQ), &fx), "тип разошёлся с addr_type");
+    let native = FxInstance::Blur { radius: 8, radius_y: 0 }
+        .param_spec("radius")
+        .expect("у Blur есть radius")
+        .clone();
+    assert_eq!((s.min, s.max, s.default), (native.min, native.max, native.default));
+    assert!(s.max > 0.0, "паспорт слота пришёл пустым: {s:?}");
+
+    // генератор на событии
+    let gen_addr = ParamAddr::new(TITLE, ParamOwner::Generator, "text");
+    let s = p.addr_spec(Some(SEQ), &gen_addr).expect("паспорт генератора");
+    assert_eq!(Some(s.ty), p.addr_type(Some(SEQ), &gen_addr), "тип генератора разошёлся");
+
+    // атрибут события: пределы те же, которыми его клампит модель
+    let att = ParamAddr::new(PLATE, ParamOwner::ClipAttr, "opacity");
+    let s = p.addr_spec(Some(SEQ), &att).expect("паспорт атрибута");
+    assert_eq!(Some(s.ty.clone()), p.addr_type(Some(SEQ), &att));
+    assert_eq!((s.min, s.max, s.default), (0.0, 1.0, 1.0), "пределы уровня не те");
+    let media_att = ParamAddr::new(PLATE, ParamOwner::ClipAttr, "media");
+    assert_eq!(
+        p.addr_spec(Some(SEQ), &media_att).map(|s| s.ty),
+        p.addr_type(Some(SEQ), &media_att),
+        "у ссылки на медиа паспорт и тип разошлись"
+    );
+
+    // переход и камера — свои номера, `clip` в адресе не участвует
+    {
+        let s = p.sequences.iter_mut().find(|s| s.id == SEQ).expect("лента");
+        s.transitions.push(TransitionEvent {
+            id: TransitionId(1),
+            a: Some(TITLE),
+            b: Some(PLATE),
+            in_offset: Tick(FRAME),
+            out_offset: Tick(FRAME),
+            kind: TransitionKind::default(),
+            audio: Default::default(),
+            auto: Vec::new(),
+            invert: false,
+        });
+    }
+    let tr_name = {
+        let s = p.sequences.iter().find(|s| s.id == SEQ).expect("лента");
+        s.transitions[0].kind.param_specs().first().map(|x| x.name.to_string())
+    };
+    if let Some(name) = tr_name {
+        let addr = ParamAddr::new(ClipId(0), ParamOwner::Transition { id: TransitionId(1) }, &name);
+        let s = p.addr_spec(Some(SEQ), &addr).expect("паспорт перехода");
+        assert_eq!(Some(s.ty), p.addr_type(Some(SEQ), &addr), "тип перехода разошёлся");
+    }
+
+    // цель исчезла — паспорта нет, ровно как типа
+    let gone = ParamAddr::new(ClipId(999), ParamOwner::FxSlot { slot: 0 }, "radius");
+    assert!(p.addr_spec(Some(SEQ), &gone).is_none(), "паспорт у мёртвой цели");
+    assert!(p.addr_type(Some(SEQ), &gone).is_none());
+    let no_such = ParamAddr::new(PLATE, ParamOwner::FxSlot { slot: 0 }, "нет_такого");
+    assert!(p.addr_spec(Some(SEQ), &no_such).is_none(), "паспорт у несуществующего имени");
+
+    // вложенная публикация: наружу едет паспорт ЦЕЛИ, суженный внутренней
+    // ручкой — потребитель внешней ленты не получает больше, чем разрешил
+    // автор внутренней
+    let mut outer = Sequence::new(MediaId(200), "Обёртка");
+    let mut inst = clip(50, SEQ.0, Tick::ZERO, LEN);
+    inst.media = SEQ;
+    outer.clips.push(inst);
+    p.media.push(MediaRef { id: MediaId(200), path: "seq:200".into() });
+    p.sequences.push(outer);
+    let nested = ParamAddr::new(ClipId(50), ParamOwner::Nested { pub_id: BLUR }, "radius");
+    let s = p.addr_spec(Some(MediaId(200)), &nested).expect("паспорт вложенной ручки");
+    assert_eq!(
+        (s.min, s.max),
+        (2.0, 16.0),
+        "сужение внутренней ручки не наложилось на паспорт цели: {s:?}"
+    );
+    assert!(
+        s.default >= s.min && s.default <= s.max,
+        "умолчание уехало за суженные пределы: {s:?}"
+    );
+}
+
+/// Тест 692 (Р.60): сужение хранится ТОЛЬКО как сужение.
+///
+/// «Еще значения min max всегда в 0 проставляются по умолчанию» — пустое
+/// `Option` рисовалось нулём. Обратная половина правила: предел, равный
+/// пределу цели, обязан лечь в файл как отсутствие, иначе первая же
+/// публикация запишет туда копию паспорта, и та разойдётся с целью при
+/// смене версии эффекта (тот же довод, что против хранимого значения
+/// шаблона, Р.59).
+#[test]
+fn t692_a_published_range_stores_narrowing_only() {
+    let p = template();
+    let addr = ParamAddr::new(PLATE, ParamOwner::FxSlot { slot: 0 }, "radius");
+    let spec = p.addr_spec(Some(SEQ), &addr).expect("паспорт цели");
+
+    // только что опубликованная ручка сужения не несёт
+    let fresh = PubRange::default();
+    assert!(fresh.is_empty(), "свежая публикация уже что-то сузила");
+    assert_eq!(
+        (fresh.min.unwrap_or(spec.min), fresh.max.unwrap_or(spec.max)),
+        (spec.min, spec.max),
+        "окно автора показало бы не пределы цели"
+    );
+
+    // пределы цели, выставленные руками, — это ОТСУТСТВИЕ сужения
+    let same = PubRange::narrowed(&spec, spec.min, spec.max);
+    assert!(same.is_empty(), "пределы цели записались копией: {same:?}");
+
+    // сузили только сверху — снизу по-прежнему ничего
+    let hi = PubRange::narrowed(&spec, spec.min, spec.max / 2.0);
+    assert_eq!(hi.min, None, "снизу появилось сужение из ниоткуда");
+    assert_eq!(hi.max, Some(spec.max / 2.0));
+
+    // попытка РАСШИРИТЬ пределы цели сужением не становится
+    let wide = PubRange::narrowed(&spec, spec.min - 100.0, spec.max + 100.0);
+    assert!(wide.is_empty(), "расширение записалось как сужение: {wide:?}");
+
+    // возврат к пределу цели снимает сужение
+    let back = PubRange::narrowed(&spec, spec.min, spec.max);
+    assert!(back.is_empty(), "возврат к пределу цели сужение не снял");
+
+    // кламп в обе стороны — поверх пределов цели
+    let narrow = PubRange { min: Some(4.0), max: Some(6.0) };
+    assert_eq!(narrow.clamp(1.0), 4.0);
+    assert_eq!(narrow.clamp(99.0), 6.0);
+
+    // и сериализация: пустое сужение полей не рождает
+    let json = serde_json::to_string(&PublishedParam {
+        id: BLUR,
+        name: "Размытие".into(),
+        target: addr,
+        ty: ParamType::Num,
+        range: PubRange::default(),
+    })
+    .expect("сериализация");
+    assert!(!json.contains("min"), "пустое сужение уехало в файл: {json}");
+    assert!(!json.contains("max"), "пустое сужение уехало в файл: {json}");
+}

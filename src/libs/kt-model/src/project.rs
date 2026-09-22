@@ -576,6 +576,50 @@ pub trait HasParams {
         self.extra_specs().into_iter().find(|s| s.name == name).map(|s| s.ty)
     }
 
+    /// ПАСПОРТ свойства по имени — зеркало `value_type` (Р.60).
+    ///
+    /// Единственный источник пределов, шага и умолчания для публикации и
+    /// для окна потребителя. Копии паспорта в публикации не будет по той
+    /// же причине, по которой не хранится значение шаблона: она
+    /// разошлась бы с целью при первой правке внутри ленты. Порядок
+    /// веток обязан совпадать с `value_type` — разойдутся, и у цвета
+    /// паспорт окажется от компоненты, а тип от группы.
+    fn value_spec(&self, name: &str) -> Option<ParamSpec> {
+        if self.color_groups().iter().any(|g| g.stem == name) {
+            // пределы цвета берутся у компоненты `_r`: она и есть шкала
+            // хранения (Rgb8), а не выдумка интерфейса
+            let comp = self.param_spec(&format!("{name}_r")).cloned();
+            return Some(ParamSpec {
+                name: std::borrow::Cow::Owned(name.to_string()),
+                ty: ParamType::Color,
+                min: comp.as_ref().map_or(0.0, |s| s.min),
+                max: comp.as_ref().map_or(255.0, |s| s.max),
+                default: comp.as_ref().map_or(0.0, |s| s.default),
+                step: comp.as_ref().map_or(1.0, |s| s.step),
+                unit: ParamUnit::Rgb8,
+                kind: comp.as_ref().map_or(ParamKind::Smooth, |s| s.kind),
+                label: std::borrow::Cow::Borrowed(""),
+            });
+        }
+        if let Some(s) = self.param_spec(name) {
+            return Some(s.clone());
+        }
+        if let Some(f) = self.flag_specs().iter().find(|f| f.name == name) {
+            return Some(ParamSpec {
+                name: std::borrow::Cow::Borrowed(f.name),
+                ty: ParamType::Flag,
+                min: 0.0,
+                max: 1.0,
+                default: f.default as u8 as f64,
+                step: 1.0,
+                unit: ParamUnit::None,
+                kind: ParamKind::Structural,
+                label: std::borrow::Cow::Borrowed(""),
+            });
+        }
+        self.extra_specs().into_iter().find(|s| s.name == name)
+    }
+
     /// ТИПИЗИРОВАННОЕ чтение. Умолчание разводит имя по трём существующим
     /// путям (число, флаг, компоненты цвета); владельцы с текстом и
     /// выбором переопределяют.
@@ -6938,6 +6982,55 @@ impl Project {
                     ParamOwner::Nested { pub_id } => {
                         let inner = self.sequence(c.media)?;
                         inner.published.iter().find(|p| p.id == *pub_id).map(|p| p.ty.clone())
+                    }
+                    _ => None,
+                }
+            }
+        }
+    }
+
+    /// ПАСПОРТ свойства по адресу — зеркало `addr_type` (Р.60).
+    ///
+    /// Пределы, шаг и умолчание публичной ручки берутся ОТСЮДА, а не из
+    /// нуля: «значения min max всегда в 0 проставляются по умолчанию» —
+    /// пустое сужение рисовалось нулём, хотя паспорт цели свои пределы
+    /// знает. `match` по владельцу исчерпывающий — новый владелец не
+    /// соберётся, пока сюда не дописана ветка.
+    pub fn addr_spec(&self, seq: Option<MediaId>, addr: &ParamAddr) -> Option<ParamSpec> {
+        let reel: &dyn Reel = match seq {
+            None => self,
+            Some(id) => self.sequence(id)?,
+        };
+        let name = addr.param.as_str();
+        match &addr.owner {
+            ParamOwner::Transition { id } => {
+                reel.transitions().iter().find(|t| t.id == *id)?.kind.value_spec(name)
+            }
+            ParamOwner::Camera { id } => {
+                reel.cameras().iter().find(|c| c.id == *id)?.cam.value_spec(name)
+            }
+            owner => {
+                let c = reel.clips().iter().find(|c| c.id == addr.clip)?;
+                match owner {
+                    ParamOwner::FxSlot { slot } => c.fx.get(*slot)?.value_spec(name),
+                    ParamOwner::Generator => c.r#gen.as_ref()?.value_spec(name),
+                    ParamOwner::ClipAttr => crate::published::clip_attr_spec(name),
+                    ParamOwner::Nested { pub_id } => {
+                        // Наружу едет паспорт ЦЕЛИ внутренней ручки,
+                        // СУЖЕННЫЙ её же пределами: потребитель внешней
+                        // ленты не вправе получить больше, чем разрешил
+                        // автор внутренней.
+                        let inner = self.sequence(c.media)?;
+                        let p = inner.published.iter().find(|p| p.id == *pub_id)?;
+                        let mut s = self.addr_spec(Some(c.media), &p.target)?;
+                        if let Some(lo) = p.range.min {
+                            s.min = s.min.max(lo);
+                        }
+                        if let Some(hi) = p.range.max {
+                            s.max = s.max.min(hi);
+                        }
+                        s.default = s.default.clamp(s.min, s.max);
+                        Some(s)
                     }
                     _ => None,
                 }
