@@ -9,6 +9,7 @@
 
 pub mod autoplan;
 pub mod formula;
+pub mod links;
 pub mod genmedia;
 pub mod model;
 pub mod ops;
@@ -20,6 +21,7 @@ pub use autoplan::*;
 pub use genmedia::*;
 pub use model::*;
 pub use formula::{Formula, FormulaError, FormulaErrorKind};
+pub use links::{LinkCtx, LinkPath, read_link, stop_value};
 pub use project::*;
 pub use published::*;
 pub use warp::*;

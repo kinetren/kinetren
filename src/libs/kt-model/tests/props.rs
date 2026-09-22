@@ -211,12 +211,25 @@ fn t649_formula_curves_are_refused_loudly() {
     p.video_lanes = 1;
     p.validate().expect("a project with ordinary key curves is legal");
 
-    // ...а формулу сегодня считать нечем, и это ОТКАЗ, а не тихий рендер
+    // ...а с Р.61 формула СЧИТАЕТСЯ: отвергается не источник, а источник,
+    // который НЕ РАЗРЕШАЕТСЯ. Тихий рендер «по ключам» показал бы не то,
+    // что записано в файле.
     c.fx_auto[0][0].source = CurveSource::Formula { expr: "t * 2".into() };
-    p.clips[0] = c;
-    let err = p.validate().expect_err("a formula-driven curve must be refused");
+    c.fx_auto[0][0].keys.clear();
+    p.clips[0] = c.clone();
+    p.validate().expect("a formula-driven curve is legal since Р.61");
+
+    c.fx_auto[0][0].source = CurveSource::Formula { expr: "1 + ".into() };
+    p.clips[0] = c.clone();
+    let err = p.validate().expect_err("an unparseable formula must be refused");
     assert!(
-        matches!(err, ProjectError::CurveSourceUnsupported(ClipId(1))),
-        "wrong error for an unsupported curve source: {err:?}"
+        matches!(err, ProjectError::CurveSourceBroken(ClipId(1), _)),
+        "wrong error for a broken curve source: {err:?}"
     );
+
+    c.fx_auto[0][0].source =
+        CurveSource::Link { path: "не адрес".into(), expr: None, stops: Vec::new() };
+    p.clips[0] = c;
+    let err = p.validate().expect_err("a malformed link address must be refused");
+    assert!(matches!(err, ProjectError::CurveSourceBroken(ClipId(1), _)), "{err:?}");
 }

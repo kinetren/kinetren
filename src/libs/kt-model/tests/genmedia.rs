@@ -513,10 +513,23 @@ fn t657_generator_values_are_validated_against_the_media() {
     p.clips[0].gen_auto = vec![bad];
     assert!(matches!(p.validate(), Err(ProjectError::BadFxAuto(ClipId(1)))));
 
-    // источник кривой, которого мы ещё не умеем считать, — громкий отказ
+    // формула СЧИТАЕТСЯ с Р.61, но ключей при ней быть не может: текст
+    // задаёт кривую целиком, и ключи рядом были бы вторым источником
+    // правды о значении
     let mut p = mk();
     let mut formula = curve("color_r");
-    formula.source = kt_model::CurveSource::Formula { expr: "t".into() };
+    formula.source = kt_model::CurveSource::Formula { expr: "t * 2".into() };
+    p.clips[0].gen_auto = vec![formula.clone()];
+    assert!(
+        matches!(p.validate(), Err(ProjectError::CurveSourceBroken(ClipId(1), _))),
+        "формула с ключами обязана быть отказом"
+    );
+    formula.keys.clear();
+    p.clips[0].gen_auto = vec![formula.clone()];
+    p.validate().expect("формула без ключей законна");
+
+    // НЕРАЗБИРАЕМЫЙ текст — громкий отказ, а не тихий рендер по ключам
+    formula.source = kt_model::CurveSource::Formula { expr: "(((".into() };
     p.clips[0].gen_auto = vec![formula];
-    assert!(matches!(p.validate(), Err(ProjectError::CurveSourceUnsupported(ClipId(1)))));
+    assert!(matches!(p.validate(), Err(ProjectError::CurveSourceBroken(ClipId(1), _))));
 }

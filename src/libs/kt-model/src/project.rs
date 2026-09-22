@@ -4106,16 +4106,61 @@ pub enum CurveSource {
     /// Ключи, расставленные человеком, — единственный работающий сегодня.
     #[default]
     Keys,
-    /// Своя детерминированная мини-формула от времени и соседних
-    /// свойств. Вычислитель — отдельный раунд (F-AUT-007).
+    /// Своя детерминированная мини-формула от времени и адресуемых
+    /// свойств (Р.61). Ключей у такой кривой нет.
     Formula { expr: String },
-    /// Значение ведёт другое свойство (F-AUT-008).
-    Link { path: String },
+    /// Значение ведёт ДРУГОЕ свойство (Р.61).
+    ///
+    /// `path` — адрес источника (см. `LinkPath`). Необязательное
+    /// выражение `expr` пересчитывает прочитанное значение; в нём
+    /// ведущее свойство доступно под именем `src`, а время материала —
+    /// под именем `t` (в секундах).
+    Link {
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expr: Option<String>,
+        /// Пороги и снимки для НЕЧИСЛОВОЙ цели (Р.61): флаг переключается
+        /// порогом, выбор/текст/медиа/цвет — снимками на отметках оси
+        /// ЗНАЧЕНИЯ ведущего свойства. Ось у риги — значение, а не время,
+        /// и путать их нельзя.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        stops: Vec<LinkStop>,
+    },
+}
+
+/// Отметка на оси ЗНАЧЕНИЯ ведущего свойства (Р.61).
+///
+/// От ключа отличается осью: у ключа она ВРЕМЯ, здесь — значение ведущего.
+/// Между отметками держится предыдущий снимок: рига переключает шрифт и
+/// вариант ступенькой, «половины» между вариантами не существует.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LinkStop {
+    /// Значение ведущего свойства, начиная с которого действует снимок.
+    pub at: f64,
+    /// Что подставить. Тип обязан совпасть с типом цели — иначе валидация.
+    pub value: ParamValue,
 }
 
 impl CurveSource {
     pub fn is_keys(&self) -> bool {
         matches!(self, CurveSource::Keys)
+    }
+
+    /// Адрес ведущего свойства, если источник производный.
+    pub fn link_path(&self) -> Option<&str> {
+        match self {
+            CurveSource::Link { path, .. } => Some(path),
+            _ => None,
+        }
+    }
+
+    /// Текст выражения, если он есть (у связи — необязательный).
+    pub fn expr(&self) -> Option<&str> {
+        match self {
+            CurveSource::Formula { expr } => Some(expr),
+            CurveSource::Link { expr, .. } => expr.as_deref(),
+            CurveSource::Keys => None,
+        }
     }
 }
 
@@ -4145,9 +4190,7 @@ pub fn check_clip_gen(c: &ClipEvent, media_kind_path: Option<&str>) -> Result<()
         return Err(ProjectError::GenKindMismatch(c.id));
     }
     for cur in &c.gen_auto {
-        if !cur.source.is_keys() {
-            return Err(ProjectError::CurveSourceUnsupported(c.id));
-        }
+        check_curve_source(c.id, cur)?;
         let sorted = cur.keys.windows(2).all(|w| w[0].t <= w[1].t);
         let finite = cur.keys.iter().all(|k| k.t.0 >= 0 && k.v.is_finite());
         if !sorted || !finite {
@@ -4160,16 +4203,50 @@ pub fn check_clip_gen(c: &ClipEvent, media_kind_path: Option<&str>) -> Result<()
     Ok(())
 }
 
+/// Источник кривой обязан РАЗРЕШАТЬСЯ (Р.61).
+///
+/// Формула — разбираться; у неё ключей быть не может: кривая задана текстом
+/// целиком, и ключи рядом были бы вторым источником правды о значении.
+/// Связь — иметь адрес по форме и, если есть, разбираемое выражение;
+/// достижимость адреса проверяет `links::check_links`, потому что она
+/// зависит от ленты, а не от одной кривой.
+pub fn check_curve_source(id: ClipId, c: &ParamCurve) -> Result<(), ProjectError> {
+    match &c.source {
+        CurveSource::Keys => {}
+        CurveSource::Formula { expr } => {
+            crate::formula::Formula::parse(expr)
+                .map_err(|e| ProjectError::CurveSourceBroken(id, e.to_string()))?;
+            if !c.keys.is_empty() {
+                return Err(ProjectError::CurveSourceBroken(
+                    id,
+                    "a formula curve carries keys: the text defines it whole".into(),
+                ));
+            }
+        }
+        CurveSource::Link { path, expr, .. } => {
+            if crate::links::LinkPath::parse(path).is_none() {
+                return Err(ProjectError::CurveSourceBroken(
+                    id,
+                    format!("link address {path:?} is not of the form <clip>/<owner>/<param>"),
+                ));
+            }
+            if let Some(e) = expr {
+                crate::formula::Formula::parse(e)
+                    .map_err(|er| ProjectError::CurveSourceBroken(id, er.to_string()))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn check_fx_auto(id: ClipId, auto: &[Vec<ParamCurve>]) -> Result<(), ProjectError> {
     for curves in auto {
         for c in curves {
-            // Источник, которого мы ещё не умеем считать, — ГРОМКИЙ
-            // отказ (Р.59, п.466). Молчаливое «нарисуем по ключам»
-            // показало бы не то, что записано в файле, а это худший
-            // сорт расхождения: человек видит картинку и верит ей.
-            if !c.source.is_keys() {
-                return Err(ProjectError::CurveSourceUnsupported(id));
-            }
+            // Источник, который НЕ РАЗРЕШАЕТСЯ, — ГРОМКИЙ отказ (Р.59,
+            // п.466; Р.61). Молчаливое «нарисуем по ключам» показало бы
+            // не то, что записано в файле, а это худший сорт
+            // расхождения: человек видит картинку и верит ей.
+            check_curve_source(id, c)?;
             let sorted = c.keys.windows(2).all(|w| w[0].t <= w[1].t);
             let ok = c.keys.iter().all(|k| k.t.0 >= 0 && k.v.is_finite());
             if !sorted || !ok {
@@ -6746,6 +6823,11 @@ pub enum ProjectError {
         "clip {0:?}: this curve is driven by a formula or a link, and nothing evaluates those yet"
     )]
     CurveSourceUnsupported(ClipId),
+    #[error("clip {0:?}: the curve source cannot be resolved: {1}")]
+    CurveSourceBroken(ClipId, String),
+    // --- связь свойств (Р.61) ---
+    #[error("{0}")]
+    BadLink(#[from] crate::links::LinkError),
     // --- форма отрезка (Р.61) ---
     #[error(
         "clip {0:?}: the speed curve takes the linear shape only — the closed-form warp map \
@@ -7630,6 +7712,10 @@ impl Project {
                 return Err(ProjectError::LaneOrderNotCanonical(seq));
             }
             self.validate_reel(reel, seq, &sources, &media_ids, &mut clip_ids)?;
+            // Связи ОДНОЙ ленты (Р.61): адрес разрешим, границу ленты не
+            // пересекает, циклов нет. Проверка на ленту, а не на проект,
+            // ровно потому, что адресное пространство замкнуто лентой.
+            crate::links::check_links(reel).map_err(ProjectError::BadLink)?;
         }
         Ok(())
     }
