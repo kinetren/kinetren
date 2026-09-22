@@ -341,7 +341,43 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                 .any(|c| c.r#gen.is_some() || !c.overrides.is_empty())
                 || !p.published.is_empty()
                 || p.sequences.iter().any(|s| !s.published.is_empty());
-            if has_v9 {
+            // форма отрезка, не выразимая прежним булевым полем (Р.61):
+            // однородная «третий порядок» или «прямая» версию НЕ двигают —
+            // они пишутся тем же `ease`, что и раньше, байт в байт (D1b).
+            // Всё остальное старая сборка прочла бы однородным: зигзаг
+            // стал бы прямой, ступень — плавным переездом, и ни одного
+            // признака порчи.
+            let curve_needs_v10 = |c: &kt_model::ParamCurve| {
+                let ease = !c.keys.iter().all(|k| k.shape == kt_model::SegShape::Linear);
+                let implied = if ease {
+                    kt_model::SegShape::DEFAULT
+                } else {
+                    kt_model::SegShape::Linear
+                };
+                c.keys.iter().any(|k| k.shape != implied)
+            };
+            let clip_needs_v10 = |c: &kt_model::ClipEvent| {
+                c.fx_auto.iter().flatten().chain(c.gen_auto.iter()).any(curve_needs_v10)
+            };
+            let reel_needs_v10 = |reel: &dyn kt_model::Reel| {
+                reel.clips().iter().any(clip_needs_v10)
+                    || reel.transitions().iter().any(|t| t.auto.iter().any(curve_needs_v10))
+                    || reel.cameras().iter().any(|c| c.auto.iter().any(curve_needs_v10))
+            };
+            let has_v10 = reel_needs_v10(p)
+                || p.sequences.iter().any(|s| reel_needs_v10(s as &dyn kt_model::Reel))
+                || p.morphers.iter().any(|m| {
+                    m.patch
+                        .video_auto
+                        .iter()
+                        .chain(m.patch.audio_auto.iter())
+                        .flatten()
+                        .any(curve_needs_v10)
+                })
+                || p.settings.default_shape != kt_model::SegShape::DEFAULT;
+            if has_v10 {
+                crate::meta::KT_META_V10
+            } else if has_v9 {
                 crate::meta::KT_META_V9
             } else if has_v8 {
                 crate::meta::KT_META_V8
@@ -369,6 +405,8 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             // дефолт в файл не пишется (skip_serializing_if)
             pitch_engine: (p.settings.pitch_engine != Default::default())
                 .then_some(p.settings.pitch_engine),
+            default_shape: (p.settings.default_shape != Default::default())
+                .then_some(p.settings.default_shape),
         }),
         transport: (p.region.is_some() || p.loop_enabled).then(|| KtTransport {
             region: p.region.map(|r| (r.start.0, r.end.0)),
@@ -1212,8 +1250,8 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
             height: s.height,
             sample_rate: s.sample_rate,
             pitch_engine: s.pitch_engine.unwrap_or_default(),
-        
-        default_shape: Default::default(),})
+            default_shape: s.default_shape.unwrap_or_default(),
+        })
         .unwrap_or_else(|| {
             notices.push("imported with default project settings".into());
             ProjectSettings {
@@ -1222,8 +1260,8 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
                 height: 1080,
                 sample_rate: 48000,
                 pitch_engine: Default::default(),
-            
-            default_shape: Default::default(),}
+                default_shape: Default::default(),
+            }
         });
     let mut p = Project::new(settings);
     let mut retained = Retained {

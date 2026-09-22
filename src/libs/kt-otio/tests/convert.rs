@@ -2068,3 +2068,145 @@ fn t681_published_params_and_overrides_round_trip() {
         "обычная лента обязана остаться на своей версии"
     );
 }
+
+// ---- 698b, 698c (Р.61). форма отрезка в файле -------------------------------
+
+/// Тест 698b (Р.61): версия поднимается ПО СОДЕРЖИМОМУ, и однородная форма
+/// её не двигает.
+///
+/// Прежнее булево поле `ease` остаётся проводом для формы, которую оно
+/// выражает: третий порядок и прямая пишутся им и байты не двигают. Всё
+/// остальное старая сборка прочла бы ОДНОРОДНЫМ — зигзаг стал бы прямой,
+/// ступень плавным переездом, — и ни одного признака порчи. Отсюда v10.
+#[test]
+fn t698b_segment_shape_raises_the_version_only_when_it_has_to() {
+    use kt_model::{AutoKey, SegShape, ZigProfile};
+
+    let with_curve = |shapes: Vec<SegShape>| -> Project {
+        let mut p = rich_project();
+        let keys: Vec<AutoKey> = shapes
+            .iter()
+            .enumerate()
+            .map(|(i, s)| AutoKey::shaped(Tick(i as i64 * 30_000), i as f64, *s))
+            .collect();
+        let c = p.clips.iter_mut().find(|c| !c.fx.is_empty()).expect("клип с эффектом");
+        c.fx_auto = vec![vec![kt_model::ParamCurve {
+            param: "radius".into(),
+            keys,
+            source: Default::default(),
+        }]];
+        p
+    };
+    let ver = |p: &Project| {
+        let text = save_project(p, &Retained::default(), None);
+        kt_otio::kt_version(&parse_document(&text).unwrap())
+    };
+
+    // ОДНОРОДНЫЕ формы, выразимые прежним полем, версию не двигают
+    let plain = ver(&rich_project());
+    let smooth = with_curve(vec![SegShape::DEFAULT, SegShape::DEFAULT]);
+    let linear = with_curve(vec![SegShape::Linear, SegShape::Linear]);
+    assert_ne!(ver(&smooth), Some(kt_otio::KT_META_V10), "третий порядок поднял версию зря");
+    assert_ne!(ver(&linear), Some(kt_otio::KT_META_V10), "прямая подняла версию зря");
+    assert!(plain.is_some(), "версия обязана быть у любого нашего файла");
+
+    // РАЗНЫЕ формы на одной кривой — v10
+    let mixed = with_curve(vec![SegShape::Linear, SegShape::DEFAULT]);
+    assert_eq!(ver(&mixed), Some(kt_otio::KT_META_V10), "разные формы обязаны поднять версию");
+
+    // форма, прежним полем НЕ выразимая, — v10, даже будучи однородной
+    for s in [
+        SegShape::Hold,
+        SegShape::EaseIn { tension: 1.0 },
+        SegShape::Zigzag { periods: 3.0, amplitude: 0.5, profile: ZigProfile::Sine },
+        SegShape::Smooth { tension: 2.0 },
+    ] {
+        assert_eq!(ver(&with_curve(vec![s, s])), Some(kt_otio::KT_META_V10), "форма {s:?}");
+    }
+
+    // умолчание формы у ПРОЕКТА — тоже содержимое файла
+    let mut dflt = rich_project();
+    dflt.settings.default_shape = SegShape::Hold;
+    assert_eq!(ver(&dflt), Some(kt_otio::KT_META_V10), "умолчание формы не подняло версию");
+}
+
+/// Тест 698c (Р.61): круг тождественен, а прежнее поле `ease` читается
+/// как однородная форма и даёт ПОБИТОВО те же значения кривой.
+#[test]
+fn t698c_shapes_round_trip_and_the_old_ease_field_migrates() {
+    use kt_model::{AutoKey, SegShape, ZigProfile, curve_value};
+
+    let mut p = rich_project();
+    let keys = vec![
+        AutoKey::shaped(Tick(0), 1.0, SegShape::Hold),
+        AutoKey::shaped(Tick(30_000), 8.0, SegShape::Linear),
+        AutoKey::shaped(
+            Tick(60_000),
+            3.0,
+            SegShape::Zigzag { periods: 2.5, amplitude: 1.5, profile: ZigProfile::Triangle },
+        ),
+        AutoKey::shaped(Tick(90_000), 5.0, SegShape::EaseOut { tension: 2.0 }),
+    ];
+    {
+        let c = p.clips.iter_mut().find(|c| !c.fx.is_empty()).expect("клип с эффектом");
+        c.fx_auto = vec![vec![kt_model::ParamCurve {
+            param: "radius".into(),
+            keys: keys.clone(),
+            source: Default::default(),
+        }]];
+    }
+    p.validate().expect("формы отрезка законны");
+
+    let text = save_project(&p, &Retained::default(), None);
+    let back = load_project(&text, None).expect("файл с формами читается");
+    let got = &back
+        .project
+        .clips
+        .iter()
+        .find(|c| !c.fx_auto.is_empty())
+        .expect("клип на месте")
+        .fx_auto[0][0];
+    assert_eq!(got.keys, keys, "формы отрезка не пережили круг");
+    assert_eq!(
+        text,
+        save_project(&back.project, &back.retained, None),
+        "круг не идемпотентен"
+    );
+
+    // --- ПРЕЖНЕЕ поле `ease` читается как ОДНОРОДНАЯ форма -------------
+    // и значения кривой обязаны совпасть ПОБИТОВО со значениями до чтения
+    for (ease, want) in [(true, SegShape::DEFAULT), (false, SegShape::Linear)] {
+        let src: Vec<AutoKey> = vec![
+            AutoKey::shaped(Tick(0), 2.0, want),
+            AutoKey::shaped(Tick(45_000), 9.0, want),
+            AutoKey::shaped(Tick(90_000), 4.0, want),
+        ];
+        let mut q = rich_project();
+        {
+            let c = q.clips.iter_mut().find(|c| !c.fx.is_empty()).unwrap();
+            c.fx_auto = vec![vec![kt_model::ParamCurve {
+                param: "radius".into(),
+                keys: src.clone(),
+                source: Default::default(),
+            }]];
+        }
+        let t = save_project(&q, &Retained::default(), None);
+        // в файле лежит именно ПРЕЖНЕЕ поле, а не формы на ключах
+        assert!(
+            t.contains(&format!("\"ease\": {ease}")),
+            "однородная форма {want:?} записана не прежним полем"
+        );
+        assert!(!t.contains("\"shape\""), "однородная форма зря написала формы на ключах");
+
+        let r = load_project(&t, None).expect("читается");
+        let got = &r.project.clips.iter().find(|c| !c.fx_auto.is_empty()).unwrap().fx_auto[0][0];
+        assert_eq!(got.keys, src, "форма после чтения разошлась");
+        for at in [Tick(0), Tick(1), Tick(22_500), Tick(45_000), Tick(70_000), Tick(90_001)] {
+            assert_eq!(
+                curve_value(&got.keys, at).to_bits(),
+                curve_value(&src, at).to_bits(),
+                "значение кривой после круга разошлось на {at:?}"
+            );
+        }
+    }
+}
