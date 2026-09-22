@@ -267,6 +267,7 @@ impl KtApp {
         // события; буфер FX общий с окном событий
         let mut enabled = ev.enabled;
         let mut fx_clip = self.fx_clipboard.clone();
+        let dflt_shape = self.model.document().settings.default_shape;
         let mut env_clip = self.env_clipboard.clone();
         // подсказки — в статусбар, как везде (попапов в программе нет)
         let mut hover_out: Option<String> = None;
@@ -572,6 +573,7 @@ impl KtApp {
                                     to_curve: &to_cur,
                                     frame_step,
                                     linked: self.auto_axis_linked,
+                                    default_shape: dflt_shape,
                                 },
                                 playhead,
                                 &mut env_clip,

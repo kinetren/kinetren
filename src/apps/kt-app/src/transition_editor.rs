@@ -360,6 +360,7 @@ impl KtApp {
                             to_curve: &to_cur,
                             frame_step,
                             linked: self.auto_axis_linked,
+                            default_shape: Default::default(),
                         };
                         let res = crate::automation::draw(
                             ui,

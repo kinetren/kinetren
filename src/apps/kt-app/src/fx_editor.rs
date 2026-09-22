@@ -295,6 +295,7 @@ impl KtApp {
         let tl_view = self.tl_view();
         // замок оси один на программу (Р.40 п.15)
         let axis_linked = self.auto_axis_linked;
+        let dflt_shape = self.model.document().settings.default_shape;
         let mut axis_req = crate::automation::AxisReq::default();
         // «мест: N» у генератора и путь бегущей строки — считаются ДО
         // отрисовки: внутри ui-замыкания `&mut self` уже занят, а счётчик
@@ -566,6 +567,7 @@ impl KtApp {
                                     kt_model::ParamOwner::Generator,
                                 );
                                 let gctx = crate::gen_ui::GenCtx {
+                                    default_shape: dflt_shape,
                                     clip: &clip,
                                     pubc: Some(&gen_pubc),
                                     uses: uses_of.get(&clip.media).copied().unwrap_or(1),
@@ -668,6 +670,7 @@ impl KtApp {
                                         &to_mat,
                                         tl_view,
                                         axis_linked,
+                                        dflt_shape,
                                     );
                                     let r = draw_auto_for(
                                         ui,
@@ -935,14 +938,13 @@ pub(crate) fn draw_auto_for(
                         if ui.button(crate::widgets::param_label(n)).clicked() {
                             // стартовая кривая — константа текущего значения
                             let v0 = f.get_param(n).unwrap_or(spec.default);
-                            curves.push(kt_model::ParamCurve {
-                                param: n.to_string(),
-                                keys: vec![
-                                    kt_model::AutoKey::at(src_in, v0),
-                                    kt_model::AutoKey::at(kt_time::Tick(mat_end), v0),
-                                ],
-                                source: Default::default(),
-                            });
+                            curves.push(kt_model::ParamCurve::constant(
+                                n,
+                                src_in,
+                                kt_time::Tick(mat_end),
+                                v0,
+                                ctx.default_shape,
+                            ));
                             // новый параметр становится АКТИВНЫМ (Р.38
                             // п.17: «добавил второй параметр — но
                             // редактируется только первый»): раньше клик

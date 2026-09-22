@@ -7583,6 +7583,7 @@ fn t265_automation_axis_and_field_bind() {
     let id = |t: Tick| t;
     // замок с Р.40 живёт в UiState (один на программу), а не в AutoView
     let mut ctx = AutoCtx {
+        default_shape: Default::default(),
         specs: &[],
         range: (Tick(0), Tick(90_000 * 10)),
         view: (Tick(90_000 * 2), Tick(90_000 * 4)),
@@ -7644,7 +7645,11 @@ fn t265_automation_axis_and_field_bind() {
     assert!((mid - 1.5).abs() < 1e-9, "показано значение кривой под курсором: {mid}");
     bound_apply(&mut c, None, Tick(45_000), 4.0);
     assert_eq!(c.keys.len(), 3, "правка без выбранного ключа ставит ключ под курсором");
-    assert_eq!(c.keys[1], AutoKey::at(Tick(45_000), 4.0));
+    // новый ключ НАСЛЕДУЕТ форму отрезка, который делит (Р.61): иначе
+    // клик по графику молча превращал бы зигзаг в сглаживание, а у
+    // скорости варпа сглаженный ключ был бы отказом валидации
+    assert_eq!(c.keys[1], AutoKey::shaped(Tick(45_000), 4.0, c.keys[0].shape));
+    assert_eq!(c.keys[1].shape, kt_model::SegShape::Linear, "форма отрезка не унаследована");
     assert!(c.keys.windows(2).all(|w| w[0].t.0 <= w[1].t.0), "порядок ключей не нарушен");
     // выбор за пределами кривой не роняет и трактуется как «не выбран»
     assert_eq!(bound_value(&c, Some(99), Tick(0)), c.keys[0].v);
@@ -12515,6 +12520,96 @@ fn t691_instance_curves_are_visible_and_never_hidden() {
     assert!(
         h.query_all_by_label_contains("Кегль").count() > 0,
         "виджет подписал кривую не именем автора"
+    );
+}
+
+/// Тест 698 (Р.61): форма правится ПО УЧАСТКУ, соседи целы, «ко всем» —
+/// один шаг; график рисуется той же функцией значения, что считает рендер.
+///
+/// Владелец: «в автоматизациях хотелось бы задавать формы отрезков… а
+/// можно и отдельную кривую сконфигурировать по своему, другим типом».
+/// Отсюда два обязательства, которые тест и утверждает: правка одного
+/// участка НЕ трогает соседние (форма принадлежит левому ключу отрезка), а
+/// у скорости варпа форма только прямая, и отказ ГРОМКИЙ.
+#[test]
+fn t698_segment_shape_is_edited_per_segment() {
+    use kt_model::{AutoKey, ParamCurve, SegShape, ZigProfile, curve_value};
+    use kt_time::Tick;
+
+    // --- правка участка не трогает соседей ----------------------------
+    let mut c = ParamCurve {
+        param: "radius".into(),
+        keys: vec![
+            AutoKey::at(Tick(0), 0.0),
+            AutoKey::at(Tick(30_000), 10.0),
+            AutoKey::at(Tick(60_000), 5.0),
+        ],
+        source: Default::default(),
+    };
+    let before: Vec<SegShape> = c.keys.iter().map(|k| k.shape).collect();
+    let zig = SegShape::Zigzag { periods: 3.0, amplitude: 2.0, profile: ZigProfile::Triangle };
+    c.keys[1].shape = zig;
+    assert_eq!(c.keys[0].shape, before[0], "левый сосед участка изменился");
+    assert_eq!(c.keys[2].shape, before[2], "правый сосед участка изменился");
+    // и значение ПЕРВОГО участка осталось прежним
+    assert_eq!(
+        curve_value(&c.keys, Tick(15_000)).to_bits(),
+        SegShape::DEFAULT.at(0.5, 0.0, 10.0).to_bits(),
+        "первый участок поехал от правки второго"
+    );
+    // а ВТОРОЙ теперь дрожит
+    let mid = curve_value(&c.keys, Tick(45_000));
+    let plain = SegShape::DEFAULT.at(0.5, 10.0, 5.0);
+    assert!((mid - plain).abs() > 0.1, "участок не взял новую форму: {mid} против {plain}");
+
+    // --- «ко всем отрезкам» — один шаг --------------------------------
+    let all = AutoKey::all_shaped(c.keys.clone(), SegShape::Hold);
+    assert!(all.iter().all(|k| k.shape == SegShape::Hold), "форма легла не на все участки");
+    assert_eq!(all.len(), c.keys.len(), "команда не вправе менять число ключей");
+
+    // --- ГРАФИК считает ту же функцию, что рендер ---------------------
+    // (рисование берёт `curve_value`; второй формулы в программе нет —
+    // это же утверждает сторож t693 про единственный виджет)
+    for t in [Tick(0), Tick(7_000), Tick(30_000), Tick(45_000), Tick(60_000)] {
+        let direct = {
+            let keys = &c.keys;
+            let i = keys.windows(2).position(|w| t >= w[0].t && t < w[1].t);
+            match i {
+                Some(i) => {
+                    let (a, b) = (&keys[i], &keys[i + 1]);
+                    let span = (b.t.0 - a.t.0).max(1) as f64;
+                    a.shape.at((t.0 - a.t.0) as f64 / span, a.v, b.v)
+                }
+                None if t >= keys.last().unwrap().t => keys.last().unwrap().v,
+                None => keys[0].v,
+            }
+        };
+        assert_eq!(
+            curve_value(&c.keys, t).to_bits(),
+            direct.to_bits(),
+            "рисунок и рендер считают участок по-разному на {t:?}"
+        );
+    }
+
+    // --- у СКОРОСТИ форма только прямая, и отказ назван ---------------
+    let rate = ParamCurve::constant("rate", Tick(0), Tick(90_000), 1.0, SegShape::DEFAULT);
+    assert!(
+        rate.keys.iter().all(|k| k.shape == SegShape::Linear),
+        "стартовая кривая скорости обязана быть прямой при ЛЮБОМ умолчании проекта: {rate:?}"
+    );
+    let other = ParamCurve::constant("radius", Tick(0), Tick(90_000), 1.0, SegShape::Hold);
+    assert!(
+        other.keys.iter().all(|k| k.shape == SegShape::Hold),
+        "у обычного параметра стартовая кривая берёт умолчание проекта"
+    );
+    let mut bad = rate.clone();
+    bad.keys[0].shape = SegShape::DEFAULT;
+    assert!(
+        matches!(
+            kt_model::check_fx_auto(kt_model::ClipId(1), &[vec![bad]]),
+            Err(kt_model::ProjectError::RateShapeMustBeLinear(_))
+        ),
+        "сглаженная скорость прошла молча"
     );
 }
 

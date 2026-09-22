@@ -548,6 +548,8 @@ pub struct GenCtx<'a> {
     /// Окно ГЛАВНОГО таймлайна (замок оси графика).
     pub tl_view: (kt_time::Tick, kt_time::Tick),
     pub axis_linked: bool,
+    /// Форма отрезка у новых кривых — поле ПРОЕКТА (Р.61).
+    pub default_shape: kt_model::SegShape,
 }
 
 /// Форма генератора: вид, значения, кривые — ОДНИМ телом на все входы.
@@ -924,14 +926,13 @@ fn draw_gen_auto(
                     let label = crate::widgets::param_label_scoped(kind.params_scope(), n);
                     if ui.button(label).clicked() {
                         let v0 = kind.get_param(n).unwrap_or(spec.default);
-                        curves.push(kt_model::ParamCurve {
-                            param: n.to_string(),
-                            keys: vec![
-                                kt_model::AutoKey::at(src_in, v0),
-                                kt_model::AutoKey::at(kt_time::Tick(mat_end), v0),
-                            ],
-                            source: Default::default(),
-                        });
+                        curves.push(kt_model::ParamCurve::constant(
+                            n,
+                            src_in,
+                            kt_time::Tick(mat_end),
+                            v0,
+                            ctx.default_shape,
+                        ));
                         view.active = curves.len() - 1;
                         view.sel = None;
                         changed = true;
@@ -979,6 +980,7 @@ fn draw_gen_auto(
         to_curve: &to_mat,
         frame_step,
         linked: ctx.axis_linked,
+        default_shape: ctx.default_shape,
     };
     let mut res = crate::automation::draw(
         ui,

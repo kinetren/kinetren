@@ -185,6 +185,10 @@ pub struct AutoCtx<'a> {
     /// только ЧИТАЕТ, а просьбу переключить возвращает в `AutoResult` —
     /// иначе одно окно молча правило бы состояние всех остальных.
     pub linked: bool,
+    /// Форма отрезка у НОВЫХ кривых (поле ПРОЕКТА, Р.61). Новый КЛЮЧ
+    /// форму наследует у отрезка, который делит, — умолчание нужно лишь
+    /// когда делить нечего.
+    pub default_shape: kt_model::SegShape,
     /// Домен кривой → тик таймлайна (мини-таймлайн двигает главный курсор).
     pub to_timeline: &'a dyn Fn(Tick) -> Tick,
     /// Тик таймлайна → домен кривой (позиция курсора на графике).
@@ -235,8 +239,10 @@ pub fn clip_ctx<'a>(
     to_mat: &'a dyn Fn(Tick) -> Tick,
     tl_view: (Tick, Tick),
     linked: bool,
+    default_shape: kt_model::SegShape,
 ) -> AutoCtx<'a> {
     AutoCtx {
+        default_shape,
         specs: fx.param_specs(),
         range: (clip.source_in, Tick(clip.source_in.0 + clip.duration.0.max(1))),
         view: view_in_curve(to_mat, tl_view),
@@ -438,9 +444,7 @@ fn toolbar(
             for ci in targets {
                 let Some(c) = curves.get_mut(ci) else { continue };
                 let v = kt_model::curve_value(&c.keys, at);
-                c.keys.retain(|k| k.t != at);
-                c.keys.push(kt_model::AutoKey::at(at, v));
-                c.keys.sort_by_key(|k| k.t.0);
+                kt_model::insert_key(&mut c.keys, at, v, ctx.default_shape);
             }
             if let Some(c) = curves.get(active) {
                 view.sel = c.keys.iter().position(|k| k.t == at).map(|ki| (active, ki));
@@ -723,8 +727,54 @@ fn graph(
         let menu_hit = resp.hover_pos().and_then(|pos| view.key_at(pos));
         let mut del: Option<(usize, usize)> = None;
         let mut picked: Option<(usize, usize)> = None;
+        // Правый клик по УЧАСТКУ (не по ключу) — форма этого отрезка
+        // (Р.61). Соседние участки не трогаются: форма принадлежит
+        // ЛЕВОМУ ключу отрезка, и меняется ровно он.
+        let seg_hit: Option<(usize, usize)> = resp.hover_pos().and_then(|pos| {
+            if menu_hit.is_some() || !plot.contains(pos) {
+                return None;
+            }
+            let ci = view.active;
+            let t = t_of(pos.x);
+            let keys = &curves.get(ci)?.keys;
+            keys.windows(2).position(|w| t >= w[0].t.0 && t < w[1].t.0).map(|ki| (ci, ki))
+        });
+        let mut set_shape: Option<(usize, usize, kt_model::SegShape)> = None;
+        let mut shape_all: Option<(usize, kt_model::SegShape)> = None;
         resp.clone().context_menu(|ui| {
             let Some((ci, ki)) = menu_hit else {
+                if let Some((ci, ki)) = seg_hit {
+                    let rate = curves.get(ci).is_some_and(|c| c.param == "rate");
+                    let cur = curves[ci].keys[ki].shape;
+                    ui.label(egui::RichText::new(tr(k::fx::SHAPE_SEGMENT)).strong());
+                    if rate {
+                        // невозможность — ОШИБКА с причиной, а не тишина
+                        ui.label(
+                            egui::RichText::new(tr(k::fx::SHAPE_RATE_LINEAR)).weak().small(),
+                        );
+                    } else {
+                        for sh in crate::widgets::all_shapes() {
+                            let on = std::mem::discriminant(&sh) == std::mem::discriminant(&cur);
+                            if ui
+                                .selectable_label(on, crate::widgets::shape_label(sh))
+                                .clicked()
+                            {
+                                set_shape = Some((ci, ki, sh));
+                                ui.close();
+                            }
+                        }
+                        ui.separator();
+                        ui.menu_button(tr(k::fx::SHAPE_ALL), |ui| {
+                            for sh in crate::widgets::all_shapes() {
+                                if ui.button(crate::widgets::shape_label(sh)).clicked() {
+                                    shape_all = Some((ci, sh));
+                                    ui.close();
+                                }
+                            }
+                        });
+                    }
+                    return;
+                }
                 ui.close();
                 return;
             };
@@ -747,6 +797,20 @@ fn graph(
             }
         });
         out.key_menu = picked;
+        if let Some((ci, ki, sh)) = set_shape
+            && curves.get(ci).is_some_and(|c| ki < c.keys.len())
+        {
+            curves[ci].keys[ki].shape = sh;
+            out.changed = true;
+        }
+        if let Some((ci, sh)) = shape_all
+            && let Some(c) = curves.get_mut(ci)
+        {
+            for k in &mut c.keys {
+                k.shape = sh;
+            }
+            out.changed = true;
+        }
         if let Some((ci, ki)) = del
             && curves.get(ci).is_some_and(|c| ki < c.keys.len())
         {
@@ -818,9 +882,7 @@ fn graph(
                 let t = Tick(t_of(pos.x).clamp(m0, m1));
                 let u = ((plot.bottom() - 6.0 - pos.y) / (plot.height() - 12.0)).clamp(0.0, 1.0);
                 let v = axis_of(&spec).unmap(lo + (hi - lo) * u as f64).clamp(spec.min, spec.max);
-                c.keys.retain(|k| k.t != t);
-                c.keys.push(kt_model::AutoKey::at(t, v));
-                c.keys.sort_by_key(|k| k.t.0);
+                kt_model::insert_key(&mut c.keys, t, v, ctx.default_shape);
                 view.sel = c.keys.iter().position(|k| k.t == t).map(|ki| (view.active, ki));
                 out.changed = true;
             }
@@ -926,8 +988,7 @@ fn table(
                             // пустая клетка — кнопка «поставить сюда ключ»
                             if ui.small_button(tr(k::fx::CELL_ADD)).clicked() {
                                 let v = kt_model::curve_value(&c.keys, tick);
-                                c.keys.push(kt_model::AutoKey::at(tick, v));
-                                c.keys.sort_by_key(|k| k.t.0);
+                                kt_model::insert_key(&mut c.keys, tick, v, kt_model::SegShape::Linear);
                                 out.changed = true;
                             }
                         }

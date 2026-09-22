@@ -922,6 +922,7 @@ impl KtApp {
                             to_curve: &to_mat,
                             frame_step,
                             linked: axis_linked,
+                            default_shape: doc.settings.default_shape,
                         };
                         let top = ui.cursor().min;
                         let res = crate::automation::draw(

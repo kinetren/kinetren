@@ -1044,11 +1044,9 @@ pub fn bound_value(c: &kt_model::ParamCurve, key: Option<usize>, at: kt_time::Ti
 pub fn bound_apply(c: &mut kt_model::ParamCurve, key: Option<usize>, at: kt_time::Tick, v: f64) {
     match key.filter(|k| *k < c.keys.len()) {
         Some(k) => c.keys[k].v = v,
-        None => {
-            c.keys.retain(|k| k.t != at);
-            c.keys.push(kt_model::AutoKey::at(at, v));
-            c.keys.sort_by_key(|k| k.t.0);
-        }
+        // форма отрезка НАСЛЕДУЕТСЯ: правка поля не вправе менять вид
+        // кривой, а у скорости варпа сглаженный ключ был бы отказом
+        None => kt_model::insert_key(&mut c.keys, at, v, kt_model::SegShape::Linear),
     }
 }
 

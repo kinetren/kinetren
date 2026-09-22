@@ -167,6 +167,7 @@ impl KtApp {
                     to_curve: &to_cur,
                     frame_step,
                     linked: self.auto_axis_linked,
+                    default_shape: self.model.document().settings.default_shape,
                 };
                 let res = crate::automation::draw(
                     ui,

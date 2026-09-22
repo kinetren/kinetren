@@ -3830,6 +3830,29 @@ impl AutoKey {
     }
 }
 
+/// Вставить ключ, сохранив ФОРМУ ОТРЕЗКА, который он делит (Р.61).
+///
+/// Единственное правило вставки на всю программу. Ключ, поставленный
+/// посреди зигзага, обязан оставить зигзаг с обеих сторон: иначе клик по
+/// графику молча превращал бы кривую в сглаживание. У скорости варпа то
+/// же правило спасает от отказа валидации — там все отрезки прямые, и
+/// новый ключ прямой по наследству, а не по счастливой случайности.
+///
+/// `keys` остаётся отсортированным; ключ в ту же позицию заменяется.
+pub fn insert_key(keys: &mut Vec<AutoKey>, at: Tick, v: f64, default: SegShape) {
+    // форма делимого отрезка = форма ближайшего ключа СЛЕВА; слева нет —
+    // форма первого; ключей нет вовсе — умолчание проекта
+    let shape = keys
+        .iter()
+        .rev()
+        .find(|k| k.t <= at)
+        .or_else(|| keys.first())
+        .map_or(default, |k| k.shape);
+    keys.retain(|k| k.t != at);
+    keys.push(AutoKey::shaped(at, v, shape));
+    keys.sort_by_key(|k| k.t.0);
+}
+
 /// Профиль зигзага: чем именно дрожит отрезок.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -4014,6 +4037,23 @@ impl ParamCurve {
     /// порядок с прежним сглаживанием, `false` — прямая.
     fn implied_shape(ease: bool) -> SegShape {
         if ease { SegShape::DEFAULT } else { SegShape::Linear }
+    }
+}
+
+impl ParamCurve {
+    /// Стартовая кривая-КОНСТАНТА для параметра (Р.61).
+    ///
+    /// Единственное место, где решается форма НОВОЙ кривой: умолчание
+    /// проекта, но у скорости варпа ВСЕГДА прямая — на кусочно-линейном
+    /// профиле стоит замкнутая карта растяжения, и сглаженная стартовая
+    /// кривая была бы отказом валидации в ту же секунду.
+    pub fn constant(param: &str, from: Tick, to: Tick, v: f64, default: SegShape) -> ParamCurve {
+        let shape = if param == "rate" { SegShape::Linear } else { default };
+        ParamCurve {
+            param: param.to_string(),
+            keys: vec![AutoKey::shaped(from, v, shape), AutoKey::shaped(to, v, shape)],
+            source: CurveSource::Keys,
+        }
     }
 }
 
