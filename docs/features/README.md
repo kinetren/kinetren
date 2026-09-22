@@ -144,12 +144,12 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | Каталог | Код | О чём | Написано / план |
 |---|---|---|---|
 | `morpher/` | MPH | adjustment-слои: наше против чужого | 8 / 8 |
-| `color/` | CLR | цветокоррекция, scopes, LUT | 7 / 7 |
+| `color/` | CLR | цветокоррекция, scopes, LUT, управление цветом | 8 / 8 |
 | `masks/` | MSK | маски, кеинг, трекинг, стабилизация | 6 / 6 |
 | `audio/` | AUD | обработка и микширование звука | 12 / 9 |
 | `timeline/` | TL | операции над событиями, структура монтажа | 12 / 5 |
 | `titles/` | TXT | титры, генераторы, субтитры | 6 / 4 |
-| `time/` | SPD | скорость, ретайминг, синхронизация | 4 / 4 |
+| `time/` | SPD | скорость, ретайминг, синхронизация, приведение частоты | 5 / 5 |
 | `automation/` | AUT | ключи, кривые, пресеты | 9 / 6 |
 | `media/` | MED | организация медиа, прокси, источники | 6 / 3 |
 | `export/` | EXP | пресеты, очередь, smart render | 4 / 3 |
@@ -209,7 +209,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-AUD-001 | Параметрический эквалайзер | сделано | A | S | да | `audio/processing/eq-parametric.md` |
 | F-RES-007 | «В превью было одно, а в экспорте другое» | уже-есть | A | S | да | `resilience/environment/preview-vs-export-mismatch.md` |
 | F-AUD-009 | Delay / Echo на событии | сделано | A | M | да | `audio/processing/delay-echo.md` |
-| F-CLR-007 | Базовая цветокоррекция событием — ColorGrade, Duotone, Posterize | сделано | A | M | да | `color/grading/basic-color-fx.md` |
+| F-CLR-008 | Базовая цветокоррекция событием — ColorGrade, Duotone, Posterize | сделано | A | M | да | `color/grading/basic-color-fx.md` |
 | F-FX-001 | Стилизация — Vignette, Pixelate, Halftone, Sharpen | сделано | A | M | да | `fx/stylize/vignette-pixelate-halftone-sharpen.md` |
 | F-FX-004 | 3D-трансформы — Corner Pin и Cylinder | сделано | A | M | да | `fx/three-d/corner-pin-and-cylinder.md` |
 | F-RES-008 | Установка и упаковка: приложение, которое не запустилось | кандидат | A | M | частично | `resilience/environment/packaging-and-install.md` |
@@ -371,6 +371,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-MSK-006 | Стабилизация: Warp Stabilizer и родня | кандидат | B | XL | нет | `masks/stabilization/warp-stabilizer.md` |
 | F-PRJ-001 | Несколько секвенций (таймлайнов) в одном проекте | кандидат | B | XL | нет | `project/structure/multiple-sequences.md` |
 | F-SPD-003 | Интерполяция кадров при замедлении: три ступени качества | кандидат | B | XL | частично | `time/retiming/optical-flow-interpolation.md` |
+| F-SPD-005 | Приведение частоты кадров источника к сетке проекта | исследовано | B | L | частично | `time/retiming/frame-rate-conform.md` |
 | F-COL-009 | Отдал на цвет — принял обратно | кандидат | C | S | нет | `collab/handoff/out-and-back.md` |
 | F-COL-028 | Чат внутри редактора | отвергнуто | C | S | нет | `collab/review/chat-next-to-the-document.md` |
 | F-COL-035 | Конфликт как отдельный файл | исследовано | C | S | нет | `collab/merge/conflict-as-a-file.md` |
@@ -387,6 +388,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-COL-041 | Облачного рендера нет ни у кого | отвергнуто | C | L | нет | `collab/offload/no-native-cloud-render.md` |
 | F-HLP-028 | Туры, coach marks и интерактивные уроки | отвергнуто | C | L | нет | `help/onboarding/guided-tour-and-coachmarks.md` |
 | F-CLR-006 | Нодовый граф против линейной цепочки эффектов | отвергнуто | C | XL | нет | `color/workflow/node-vs-layer-grading.md` |
+| F-CLR-008 | Управление цветом — теги пространства, рабочее пространство, вывод | исследовано | B | XL | нет | `color/management/color-management-and-tags.md` |
 | F-COL-029 | Почему слияния нет ни у кого | отвергнуто | C | XL | нет | `collab/merge/nobody-merges.md` |
 | F-FX-006 | Частицы и эмиттеры | исследовано | C | XL | нет | `fx/simulate/particles-and-emitters.md` |
 | F-TL-005 | Мультикамерный монтаж | исследовано | C | XL | нет | `timeline/structure/multicam.md` |

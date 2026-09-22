@@ -2,8 +2,8 @@
 
 ## 0. Документация до кода
 
-- [ ] 0.1 Завести заметки `docs/features/time/retiming/frame-rate-conform.md` (приведение частоты кадров источника: ближайший/дублирование/смешение, у кого где живёт) и `docs/features/color/management/color-management-and-tags.md` (теги пространства и диапазона, рабочее пространство), статус `исследовано`, вердикт «отложено» со ссылкой на Р.62; `python3 src/scripts/features-index.py --check` зелёный, таблица README обновлена руками.
-- [ ] 0.2 В `openspec/specs/compositions/design.md` — пункт «Пересмотр: свой растр и fps у ленты — решение владельца Р.62» и в «Отложено» видео-плана — приведение частоты и цвет; проверка — `openspec validate --specs`.
+- [x] 0.1 Завести заметки `docs/features/time/retiming/frame-rate-conform.md` (приведение частоты кадров источника: ближайший/дублирование/смешение, у кого где живёт) и `docs/features/color/management/color-management-and-tags.md` (теги пространства и диапазона, рабочее пространство), статус `исследовано`, вердикт «отложено» со ссылкой на Р.62; `python3 src/scripts/features-index.py --check` зелёный, таблица README обновлена руками.
+- [x] 0.2 В `openspec/specs/compositions/design.md` — пункт «Пересмотр: свой растр и fps у ленты — решение владельца Р.62» и в «Отложено» видео-плана — приведение частоты и цвет; проверка — `openspec validate --specs`.
 
 ## 1. Геометрия слоя (A1)
 
