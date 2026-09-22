@@ -1,7 +1,7 @@
 ---
 id: F-AUT-007
 title: Выражения: свойство, ведомое формулой
-status: принято
+status: сделано
 priority: B
 cost: XL
 category: automation/keyframes
@@ -11,8 +11,8 @@ crates: [kt-model, kt-engine, kt-fx, kt-app, kt-otio]
 invariants: [11]
 ui_rules: [20]
 round: Р.61
-point: null
-tests: []
+point: 462
+tests: [t701, t707, t708, t709, t710, t698d]
 depends_on: [F-EXT-002]
 checked: 2026-09-22
 ---
@@ -177,7 +177,7 @@ to Keyframes`, и советуют её ровно по двум поводам 
 
 ## Как ложится на Kinotrain
 CAPABILITY: openspec/specs/automation/ — контракт в `spec.md`, «почему» и пути в коде в `design.md`.
-Выражения — своя мини-формула, считается вживую на кадре; в Р.59 сделан только интерфейс (паспорт в рантайме), сама формула отвергается валидацией.
+Своя мини-формула с закрытым набором операций, без окружения; разрешается в числа до аудио-потока, ноль цены без использования.
 
 ## Оценка
 
