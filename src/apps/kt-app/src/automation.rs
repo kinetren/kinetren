@@ -401,7 +401,15 @@ fn toolbar(
         // Р.38 новый параметр не становился активным вовсе.
         for (ci, c) in curves.iter().enumerate() {
             let name = ctx.label(&c.param);
+            // производная кривая ОТЛИЧИМА: рядом с именем видно, чем она
+            // ведома — адресом источника или формулой (Р.61)
+            let name = match &c.source {
+                kt_model::CurveSource::Keys => name,
+                kt_model::CurveSource::Link { path, .. } => format!("{name} <- {path}"),
+                kt_model::CurveSource::Formula { .. } => format!("{name} = ƒ"),
+            };
             let text = egui::RichText::new(name).color(curve_color(ci));
+            let text = if c.source.is_keys() { text } else { text.italics() };
             if crate::app::hint_into(
                 hover,
                 ui.selectable_label(view.active == ci, text),
@@ -411,6 +419,23 @@ fn toolbar(
             {
                 view.active = ci;
                 view.sel = None;
+            }
+        }
+        // «Отвязать» — производная кривая становится обычными ключами по
+        // ТЕКУЩИМ значениям. Без этого действия контрол оставался бы
+        // навсегда погашенным, а единственным выходом было бы снять
+        // кривую целиком (правило 9).
+        if let Some(c) = curves.get_mut(view.active)
+            && !c.source.is_keys()
+        {
+            let b = ui.button(tr(k::fx::UNLINK));
+            crate::app::hint_into(hover, b.clone(), tr(k::fx::UNLINK_HINT));
+            crate::widgets::field_probe::note("auto.unlink", b.rect);
+            if b.clicked() {
+                // значения уже разрешены моделью при сборке — здесь
+                // остаётся снять сам источник
+                c.source = kt_model::CurveSource::Keys;
+                out.changed = true;
             }
         }
         ui.separator();
@@ -682,6 +707,13 @@ fn graph(
             let pts: Vec<egui::Pos2> =
                 c.keys.iter().map(|k| egui::pos2(x_of(k.t.0), y_of(k.v))).collect();
             p.add(egui::Shape::line(pts, egui::Stroke::new(1.0, col)));
+        }
+        // ПРОИЗВОДНАЯ кривая (связь или формула) мышкой не правится: ключей
+        // у неё нет, и перетаскивание точки молча создало бы третью правду о
+        // значении (Р.61). Её линия рисуется штрихом, а маркеров ключей нет
+        // вовсе — значит и щуп по ним не сработает.
+        if !c.source.is_keys() {
+            continue;
         }
         for (ki, k) in c.keys.iter().enumerate() {
             let (x, y) = (x_of(k.t.0), y_of(k.v));

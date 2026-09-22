@@ -21,7 +21,7 @@ pub use autoplan::*;
 pub use genmedia::*;
 pub use model::*;
 pub use formula::{Formula, FormulaError, FormulaErrorKind};
-pub use links::{LinkCtx, LinkPath, read_link, stop_value};
+pub use links::{LinkCtx, LinkPath, read_link, resolve_derived, stop_value};
 pub use project::*;
 pub use published::*;
 pub use warp::*;

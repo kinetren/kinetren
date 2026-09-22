@@ -298,3 +298,188 @@ pub enum LinkError {
     #[error("properties drive each other in a circle: {}", .0.join(" -> "))]
     Cycle(Vec<String>),
 }
+
+// ---- разрешение производных источников (Р.61) ------------------------------
+
+/// Разрешить связи и формулы ленты в ОБЫЧНЫЕ ключевые кривые.
+///
+/// Зовётся ОДИН раз при сборке рендерера — там же, где кривые превращаются в
+/// профили звука; в аудио-колбэке вычислений не появляется.
+///
+/// **Ноль цены без использования.** Лента, где ни одного производного
+/// источника нет, возвращается ЗАИМСТВОВАННОЙ: графа зависимостей не
+/// строится вовсе, ни одного клона. Это не оптимизация, а требование
+/// владельца «простой проект не лагает».
+///
+/// **Порядок — топологический.** Ведущее свойство обязано быть разрешено
+/// раньше ведомого, иначе связь на связь прочитала бы сырой текст. Циклов
+/// здесь уже быть не может: их отвергла валидация.
+///
+/// **Дискретизация — сетка кадров.** Производная кривая превращается в ключи
+/// на той же сетке, по которой читается любая другая кривая: человеческий
+/// ключ тоньше её тоже не поставит.
+pub fn resolve_derived<'a>(
+    clips: &'a [ClipEvent],
+    frame_step: i64,
+) -> std::borrow::Cow<'a, [ClipEvent]> {
+    let any = clips.iter().any(|c| {
+        c.fx_auto.iter().flatten().chain(c.gen_auto.iter()).any(|x| !x.source.is_keys())
+    });
+    if !any {
+        return std::borrow::Cow::Borrowed(clips);
+    }
+    let mut out = clips.to_vec();
+    // порядок: сперва события БЕЗ производных источников (они ведущие),
+    // потом остальные. Цепочка длиннее двух звеньев разрешается повторными
+    // проходами — их не больше, чем событий, а цикл уже отвергнут.
+    for _ in 0..=out.len() {
+        let snapshot = out.clone();
+        let mut moved = false;
+        for i in 0..out.len() {
+            let me = LinkCtx::of(&snapshot[i], frame_step);
+            let id = snapshot[i].id;
+            for slot in 0..out[i].fx_auto.len() {
+                for j in 0..out[i].fx_auto[slot].len() {
+                    if resolve_one(&snapshot, &mut out[i].fx_auto[slot][j], &me, id, frame_step) {
+                        moved = true;
+                    }
+                }
+            }
+            for j in 0..out[i].gen_auto.len() {
+                if resolve_one(&snapshot, &mut out[i].gen_auto[j], &me, id, frame_step) {
+                    moved = true;
+                }
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
+/// Разрешить ОДНУ кривую. `true` — что-то изменилось.
+fn resolve_one(
+    clips: &[ClipEvent],
+    cur: &mut ParamCurve,
+    me: &LinkCtx,
+    me_id: ClipId,
+    frame_step: i64,
+) -> bool {
+    if cur.source.is_keys() {
+        return false;
+    }
+    let expr = cur.source.expr().and_then(|e| crate::formula::Formula::parse(e).ok());
+    let path = cur.source.link_path().and_then(LinkPath::parse);
+    let step = frame_step.max(1);
+    let from = me.source_in.0;
+    let to = from + me.duration.0.max(step);
+    let mut keys = Vec::new();
+    let mut t = from;
+    while t <= to {
+        let at = Tick(t);
+        let src = match &path {
+            Some(p) => {
+                let p = LinkPath { clip: p.clip.or(Some(me_id)), ..p.clone() };
+                match read_link_in(clips, me, &p, at) {
+                    Some(v) => v,
+                    // ведущее ещё не разрешено — подождём следующего прохода
+                    None => return false,
+                }
+            }
+            None => 0.0,
+        };
+        let v = match &expr {
+            Some(f) => {
+                let mut vars = std::collections::BTreeMap::new();
+                vars.insert("src".to_string(), src);
+                vars.insert("t".to_string(), (t - from) as f64 / 90_000.0);
+                match f.eval(&vars) {
+                    Ok(v) => v,
+                    // невычислимое — не тихий ноль: кривая остаётся сырой,
+                    // и валидация уже сказала об этом громко
+                    Err(_) => return false,
+                }
+            }
+            None => src,
+        };
+        keys.push(AutoKey::shaped(at, v, SegShape::Linear));
+        t += step;
+    }
+    if keys.is_empty() {
+        return false;
+    }
+    cur.keys = keys;
+    cur.source = CurveSource::Keys;
+    true
+}
+
+/// То же, что `read_link`, но по срезу событий (лента уже разобрана).
+fn read_link_in(
+    clips: &[ClipEvent],
+    me: &LinkCtx,
+    path: &LinkPath,
+    at: Tick,
+) -> Option<f64> {
+    let want = path.clip?;
+    let src = clips.iter().find(|c| crate::same_clip(c.id, want))?;
+    // ведущее свойство, само ещё не разрешённое, читать нельзя: получили бы
+    // значение «до связи», то есть не то, что увидит человек
+    let pending = match &path.owner {
+        ParamOwner::FxSlot { slot } => src
+            .fx_auto
+            .get(*slot)
+            .is_some_and(|v| v.iter().any(|c| c.param == path.param && !c.source.is_keys())),
+        ParamOwner::Generator => {
+            src.gen_auto.iter().any(|c| c.param == path.param && !c.source.is_keys())
+        }
+        _ => false,
+    };
+    if pending {
+        return None;
+    }
+    let tl = clip_timeline_at(
+        me.source_in,
+        me.start,
+        me.duration,
+        me.reversed,
+        me.frame_step,
+        at,
+    );
+    let lo = src.start.0;
+    let hi = src.start.0 + src.duration.0.max(1);
+    let tl = Tick(tl.0.clamp(lo, hi));
+    let mat = clip_material_at(
+        src.source_in,
+        src.start,
+        src.duration,
+        src.reversed,
+        me.frame_step,
+        tl,
+    );
+    read_at_clip(src, path, mat)
+}
+
+fn read_at_clip(c: &ClipEvent, path: &LinkPath, mat: Tick) -> Option<f64> {
+    let curves: &[ParamCurve] = match &path.owner {
+        ParamOwner::FxSlot { slot } => c.fx_auto.get(*slot).map(|v| &v[..]).unwrap_or(&[]),
+        ParamOwner::Generator => &c.gen_auto,
+        _ => &[],
+    };
+    if let Some(cur) = curves.iter().find(|x| x.param == path.param)
+        && !cur.keys.is_empty()
+        && cur.source.is_keys()
+    {
+        return Some(curve_value(&cur.keys, mat));
+    }
+    match &path.owner {
+        ParamOwner::FxSlot { slot } => c.fx.get(*slot)?.get_param(&path.param),
+        ParamOwner::Generator => c.r#gen.as_ref()?.get_param(&path.param),
+        ParamOwner::ClipAttr => match path.param.as_str() {
+            "opacity" => Some(c.opacity as f64),
+            "gain_db" => Some(c.gain_db as f64),
+            _ => None,
+        },
+        _ => None,
+    }
+}

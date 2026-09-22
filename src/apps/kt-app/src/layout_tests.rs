@@ -12523,6 +12523,80 @@ fn t691_instance_curves_are_visible_and_never_hidden() {
     );
 }
 
+/// Тест 706 (Р.61): производная кривая ВИДНА, но мышкой не правится, и её
+/// можно отвязать.
+///
+/// Владелец: «итоговый граф тоже рисуется но не редактируется мышкой».
+/// Редактируемый производный график был бы третьей правдой о значении:
+/// ключей у такой кривой нет, и перетаскивание точки некуда записать.
+#[test]
+fn t706_a_driven_curve_is_visible_but_not_draggable() {
+    use crate::automation::{AutoCtx, AutoView};
+    use kt_model::{AutoKey, CurveSource, ParamCurve};
+    use kt_time::Tick;
+
+    let id = |t: Tick| t;
+    let ctx = AutoCtx {
+        default_shape: Default::default(),
+        specs: &[],
+        range: (Tick(0), Tick(90_000)),
+        view: (Tick(0), Tick(90_000)),
+        to_timeline: &id,
+        to_curve: &id,
+        frame_step: 3000,
+        linked: true,
+    };
+    let _ = &ctx;
+
+    // --- у производной кривой МАРКЕРОВ КЛЮЧЕЙ нет ---------------------
+    // (щуп ходит по нарисованному: нет маркера — нет и попадания)
+    let mut view = AutoView::default();
+    view.key_marks.clear();
+    assert!(
+        view.key_at(eframe::egui::pos2(10.0, 10.0)).is_none(),
+        "щуп нашёл ключ там, где ничего не нарисовано"
+    );
+
+    // --- «отвязать» превращает её в обычные ключи ---------------------
+    let mut driven = ParamCurve {
+        param: "radius".into(),
+        keys: vec![AutoKey::at(Tick(0), 3.0), AutoKey::at(Tick(90_000), 9.0)],
+        source: CurveSource::Link {
+            path: "2/fx0/radius".into(),
+            expr: Some("src * 2".into()),
+            stops: Vec::new(),
+        },
+    };
+    assert!(!driven.source.is_keys(), "кривая не производная — тест ничего не проверяет");
+    let before = driven.keys.clone();
+    driven.source = CurveSource::Keys;
+    assert!(driven.source.is_keys(), "«отвязать» не сняло источник");
+    assert_eq!(driven.keys, before, "«отвязать» изменило значения — они уже разрешены моделью");
+
+    // --- подпись показывает, ЧЕМ она ведома ---------------------------
+    let link = CurveSource::Link {
+        path: "2/fx0/radius".into(),
+        expr: None,
+        stops: Vec::new(),
+    };
+    assert_eq!(link.link_path(), Some("2/fx0/radius"), "адрес источника не достать для подписи");
+    let f = CurveSource::Formula { expr: "t * 2".into() };
+    assert_eq!(f.expr(), Some("t * 2"), "текст формулы не достать для подписи");
+    assert_eq!(CurveSource::Keys.expr(), None);
+    assert_eq!(CurveSource::Keys.link_path(), None);
+
+    // --- действие «отвязать» ДОСТИЖИМО и объясняет себя ---------------
+    for lang in crate::i18n::Lang::ALL {
+        crate::i18n::set_lang(lang);
+        let name = tr(k::fx::UNLINK);
+        let hint = tr(k::fx::UNLINK_HINT);
+        assert!(!name.is_empty(), "{}: у действия «отвязать» нет имени", lang.code());
+        assert!(hint.len() > 20, "{}: подсказка не объясняет действие: {hint}", lang.code());
+        assert_ne!(name, hint, "{}: подсказка повторяет имя", lang.code());
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+}
+
 /// Тест 700b (Р.61): окно сопоставления открывается только при остатке, а
 /// пропущенная кривая НАЗЫВАЕТСЯ.
 #[test]

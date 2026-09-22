@@ -314,3 +314,111 @@ fn t704_non_numeric_targets_follow_thresholds_and_snapshots() {
     let j = serde_json::to_string(&bare).expect("сериализуется");
     assert!(!j.contains("stops"), "пустые снимки уехали в файл: {j}");
 }
+
+/// Тест 705 (Р.61): разрешение производных источников стоит НОЛЬ, когда их
+/// нет, и не облагает соседей, когда они есть.
+///
+/// Требование владельца: «если проект простой без выкрутасов — то и лагать
+/// он не должен вовсе, ведь плагины/кривые не применяются». У звука это
+/// правило исполнено с самого начала; здесь оно проверяется тестом, а не
+/// обещанием.
+#[test]
+fn t705_derived_sources_cost_nothing_when_unused() {
+    // --- НЕТ производных источников — лента ЗАИМСТВУЕТСЯ --------------
+    let mut plain = Vec::new();
+    for i in 1..=8 {
+        let mut c = clip(i, (i as i64 - 1) * SEC, SEC, 0);
+        c.fx_auto[0].push(driver("radius", 1.0, 9.0, 0, SEC));
+        plain.push(c);
+    }
+    let got = resolve_derived(&plain, FRAME);
+    assert!(
+        matches!(got, std::borrow::Cow::Borrowed(_)),
+        "лента без связей и формул скопирована — графа не должно быть вовсе"
+    );
+    assert_eq!(&got[..], &plain[..], "заимствованная лента изменилась");
+
+    // --- ОДНА связь среди многих: соседи побайтово прежние ------------
+    let mut mixed = plain.clone();
+    mixed[7].fx_auto[0].push(ParamCurve {
+        param: "radius_y".into(),
+        keys: Vec::new(),
+        source: CurveSource::Link {
+            path: "1/fx0/radius".into(),
+            expr: Some("src * 2".into()),
+            stops: Vec::new(),
+        },
+    });
+    let out = resolve_derived(&mixed, FRAME);
+    assert!(matches!(out, std::borrow::Cow::Owned(_)), "связь не разрешилась вовсе");
+    for i in 0..7 {
+        assert_eq!(
+            out[i], plain[i],
+            "событие {i} изменилось от связи на СОСЕДНЕМ — цена поехала по монтажу"
+        );
+    }
+
+    // --- связь разрешилась в обычные ключи ---------------------------
+    let done = &out[7].fx_auto[0][1];
+    assert!(done.source.is_keys(), "источник остался сырым: {:?}", done.source);
+    assert!(!done.keys.is_empty(), "ключей после разрешения нет");
+    assert!(
+        done.keys.iter().all(|k| k.shape == SegShape::Linear),
+        "производная кривая обязана быть кусочно-линейной: она сэмплирована"
+    );
+    // и значения — ровно удвоенный ведущий
+    let lead = &plain[0].fx_auto[0][0];
+    for k in &done.keys {
+        let tl = kt_model::clip_timeline_at(
+            plain[7].source_in,
+            plain[7].start,
+            plain[7].duration,
+            false,
+            FRAME,
+            k.t,
+        );
+        let tl = Tick(tl.0.clamp(plain[0].start.0, plain[0].start.0 + plain[0].duration.0));
+        let mat = kt_model::clip_material_at(
+            plain[0].source_in,
+            plain[0].start,
+            plain[0].duration,
+            false,
+            FRAME,
+            tl,
+        );
+        let want = kt_model::curve_value(&lead.keys, mat) * 2.0;
+        assert!((k.v - want).abs() < 1e-9, "выражение пересчёта не применилось: {} vs {want}", k.v);
+    }
+
+    // --- ЦЕПОЧКА A → B → C разрешается целиком -----------------------
+    let mut chain = vec![clip(1, 0, SEC, 0), clip(2, 0, SEC, 0), clip(3, 0, SEC, 0)];
+    chain[0].fx_auto[0].push(driver("radius", 2.0, 2.0, 0, SEC));
+    chain[1].fx_auto[0].push(ParamCurve {
+        param: "radius".into(),
+        keys: Vec::new(),
+        source: CurveSource::Link {
+            path: "1/fx0/radius".into(),
+            expr: Some("src + 1".into()),
+            stops: Vec::new(),
+        },
+    });
+    chain[2].fx_auto[0].push(ParamCurve {
+        param: "radius".into(),
+        keys: Vec::new(),
+        source: CurveSource::Link {
+            path: "2/fx0/radius".into(),
+            expr: Some("src + 1".into()),
+            stops: Vec::new(),
+        },
+    });
+    let out = resolve_derived(&chain, FRAME);
+    for (i, want) in [(1usize, 3.0), (2usize, 4.0)] {
+        let c = &out[i].fx_auto[0][0];
+        assert!(c.source.is_keys(), "звено {i} цепочки осталось сырым");
+        let v = c.keys[0].v;
+        assert!(
+            (v - want).abs() < 1e-9,
+            "звено {i} разрешилось до ведущего: {v}, ждали {want} (порядок не топологический)"
+        );
+    }
+}

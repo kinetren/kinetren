@@ -7133,9 +7133,15 @@ impl Project {
     /// внутрь вложения можно класть всё, включая слои, — значит и этот
     /// проход обязан уметь работать по ленте, а не только по корню.
     fn morph_pass(&self, reel: &dyn Reel, rows: &[(LaneKind, u32)]) -> Vec<ClipEvent> {
+        // Производные источники разрешаются ЗДЕСЬ — в единственной двери,
+        // через которую содержимое ленты выходит к движку (Р.61). Лента без
+        // связей и формул проходит ЗАИМСТВОВАННОЙ: графа не строится вовсе,
+        // байты прежние.
+        let step = 90_000 / self.settings.fps.max(1) as i64;
+        let resolved = crate::links::resolve_derived(reel.clips(), step);
         let ms_all = reel.morphers();
         if ms_all.is_empty() {
-            return reel.clips().to_vec();
+            return resolved.into_owned();
         }
         // шаг кадра нужен для перевода ключей слоя в материал цели
         let frame_step = 90_000 / self.settings.fps.max(1) as i64;
@@ -7143,8 +7149,8 @@ impl Project {
         // Порядок наложения — СНИЗУ ВВЕРХ (нижний слой первым, как
         // adjustment layer в AE); внутри строки прежнее правило по id.
         ms.sort_by_key(|m| (std::cmp::Reverse(m.row_in(rows)), m.id));
-        let mut out = Vec::with_capacity(reel.clips().len());
-        for c in reel.clips() {
+        let mut out = Vec::with_capacity(resolved.len());
+        for c in resolved.iter() {
             let wins: Vec<Vec<TickRange>> =
                 ms.iter().map(|m| m.windows_on(c, self, reel, rows)).collect();
             let body = TickRange::new(c.start, c.start + c.duration);
