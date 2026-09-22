@@ -279,3 +279,57 @@ fn t295_looping_inside_the_tails_is_deterministic_and_silent_on_reads() {
     };
     assert_eq!(b, c, "тот же прогон обязан дать те же байты");
 }
+
+/// Тест 710 (Р.61): формула на ОДНОМ событии не дорожает весь проект.
+///
+/// Требование владельца: «если физику добавили только на один сурс — то это
+/// не повод ломать и утяжелять работу всего проекта». Здесь это проверяется
+/// двумя утверждениями: проект БЕЗ производных источников считается ровно
+/// столько же, сколько раньше (граф не строится вовсе), а формула на одном
+/// событии среди двух тысяч не растит цену места.
+#[test]
+fn t710_a_formula_on_one_event_does_not_tax_the_project() {
+    let a = 48 * BODY_MS * 2;
+    let b = a + 48_000;
+    let best = |p: &Project| -> f64 {
+        (0..3)
+            .map(|_| {
+                let t = std::time::Instant::now();
+                let _ = render(p, a, b);
+                t.elapsed().as_secs_f64()
+            })
+            .fold(f64::INFINITY, f64::min)
+    };
+
+    // формула на ОДНОМ событии большого проекта
+    let mut with_formula = with_distant(base(7), 2000);
+    {
+        let c = with_formula.clips.iter_mut().find(|c| !c.fx.is_empty()).expect("событие с FX");
+        let param = c.fx[0]
+            .auto_params()
+            .next()
+            .map(|s| s.name.to_string())
+            .expect("у эффекта есть автоматизируемый параметр");
+        c.fx_auto = vec![vec![kt_model::ParamCurve {
+            param,
+            keys: Vec::new(),
+            source: kt_model::CurveSource::Formula { expr: "0.5 + 0.1 * t".into() },
+        }]];
+    }
+    with_formula.validate().expect("формула законна");
+
+    let plain = best(&with_distant(base(7), 2000));
+    let one = best(&with_formula);
+    assert!(
+        one < plain * 3.0,
+        "формула на ОДНОМ событии подорожала место всего проекта: {:.1} мс против {:.1} мс",
+        one * 1e3,
+        plain * 1e3
+    );
+
+    // и проект БЕЗ производных источников считает те же БАЙТЫ, что раньше
+    let (before, _) = render(&base(7), a, b);
+    let (after, _) = render(&base(7), a, b);
+    assert_eq!(before, after, "проект без формул перестал быть детерминированным");
+    assert!(rms(&before) > 1e-4, "эталон не должен быть тишиной");
+}

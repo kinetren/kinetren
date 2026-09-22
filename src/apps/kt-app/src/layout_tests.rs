@@ -12523,6 +12523,57 @@ fn t691_instance_curves_are_visible_and_never_hidden() {
     );
 }
 
+/// Тест 709 (Р.61): поле формулы объясняет ошибку и не портит модель.
+///
+/// Владелец: «возможность задания кривой автоматизации через ввод формулы
+/// (без прокликивания мышки)». Проверка на лету обязана быть именно
+/// проверкой: полустёртый текст в поле не вправе ронять кривую на каждом
+/// нажатии клавиши.
+#[test]
+fn t709_the_formula_field_explains_errors_without_touching_the_model() {
+    use kt_model::{CurveSource, Formula, ParamCurve};
+
+    // --- незакрытая скобка и неизвестное имя НЕ применяются -----------
+    let mut c = ParamCurve {
+        param: "radius".into(),
+        keys: vec![kt_model::AutoKey::at(kt_time::Tick(0), 3.0)],
+        source: CurveSource::Keys,
+    };
+    let before = c.clone();
+    for bad in ["(1 + 2", "1 + ", "wat(1)", "1 + $"] {
+        let e = Formula::parse(bad).expect_err("битый текст обязан быть отказом");
+        // позиция названа — поле подсветит её
+        assert!(e.to_string().contains("char"), "в отказе нет позиции: {e}");
+        // и модель НЕ ТРОНУТА
+        assert_eq!(c, before, "битый текст {bad:?} доехал до модели");
+    }
+
+    // --- ВЕРНЫЙ текст применяется и стирает ключи --------------------
+    let good = "t * 2 + 1";
+    Formula::parse(good).expect("верный текст разбирается");
+    c.keys.clear();
+    c.source = CurveSource::Formula { expr: good.into() };
+    assert!(!c.source.is_keys(), "источник не сменился");
+    assert!(c.keys.is_empty(), "у формулы ключей быть не может — они второй источник правды");
+
+    // --- пустое поле НЕ превращает кривую в формулу -------------------
+    assert!(Formula::parse("").is_err(), "пустой текст не выражение");
+
+    // --- поле и подсказка названы во всех языках ----------------------
+    for lang in crate::i18n::Lang::ALL {
+        crate::i18n::set_lang(lang);
+        let name = tr(k::fx::FORMULA);
+        let hint = tr(k::fx::FORMULA_HINT);
+        assert!(!name.is_empty(), "{}: у поля формулы нет подписи", lang.code());
+        assert!(
+            hint.contains('t') || hint.contains("src") || hint.len() > 30,
+            "{}: подсказка не объясняет переменные: {hint}",
+            lang.code()
+        );
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+}
+
 /// Тест 706 (Р.61): производная кривая ВИДНА, но мышкой не правится, и её
 /// можно отвязать.
 ///

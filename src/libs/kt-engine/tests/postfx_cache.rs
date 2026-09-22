@@ -234,3 +234,58 @@ fn t66d_camera_edit_invalidates_postfx() {
     // мемоизации (тот же ключ) — камера в ключе не мешает переиспользованию
     assert_eq!(a, c, "дефолтная камера воспроизводит p1");
 }
+
+/// Тест 708 (Р.61): правка ТОЛЬКО текста формулы пересчитывает кадр.
+///
+/// Причина, по которой это отдельный тест: формула разрешается в числа ДО
+/// того, как движок считает ключ пост-FX. Значит требование «правка формулы
+/// не оставит на экране прежние кадры» держится НЕ на том, что текст лежит в
+/// хэше, а на том, что разрешение идёт раньше хэша и меняет сами значения.
+/// Утверждение теста — наблюдаемое следствие: кадр другой, стейла нет.
+#[test]
+fn t708_editing_the_formula_text_invalidates_the_frame() {
+    // виньетка ВИДНА на плоском кадре: она гасит края независимо от
+    // содержимого, в отличие от размытия (на однородной картинке оно
+    // тождество) и от Pan3d (без камеры квад уходит из кадра совсем)
+    let with_formula = |expr: &str| {
+        let mut p = project_with_fx(
+            vec![FxInstance::Vignette { strength: 0.5, radius: 0.7, softness: 0.45 }],
+            48_000,
+        );
+        p.clips[0].fx_auto = vec![vec![ParamCurve {
+            param: "strength".into(),
+            keys: Vec::new(),
+            source: CurveSource::Formula { expr: expr.into() },
+        }]];
+        p.validate().expect("формула законна");
+        p
+    };
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let t = Tick(90_000 + 3000);
+
+    let p1 = with_formula("0.1");
+    let vr1 = VideoRenderer::new(&p1);
+    warm_pre_fx(&vr1, &cache, t, q);
+    let mut vr1 = vr1;
+    let (a, c1) = vr1.compose_from_cache(&cache, t, q);
+    assert!(c1, "первый кадр не собрался");
+    assert!(a.iter().any(|&b| b != 0), "кадр пуст — тест ничего не докажет");
+
+    // правится ТОЛЬКО текст: параметры эффекта те же
+    let p2 = with_formula("0.9");
+    let mut vr2 = VideoRenderer::new(&p2);
+    let (b, c2) = vr2.compose_from_cache(&cache, t, q);
+    assert!(c2, "второй кадр не собрался");
+    assert_ne!(
+        a, b,
+        "правка текста формулы отдала СТЕЙЛ: значения меняются, а ключ пост-FX — нет"
+    );
+
+    // тот же текст — тот же кадр: ключ не «дрожит» на ровном месте
+    let p3 = with_formula("0.1");
+    let mut vr3 = VideoRenderer::new(&p3);
+    let (c, c3) = vr3.compose_from_cache(&cache, t, q);
+    assert!(c3);
+    assert_eq!(a, c, "одинаковая формула дала разные кадры — ключ недетерминирован");
+}

@@ -421,6 +421,47 @@ fn toolbar(
                 view.sel = None;
             }
         }
+        // ПОЛЕ ФОРМУЛЫ (Р.61): владелец просил «возможность задания кривой
+        // автоматизации через ввод формулы (без прокликивания мышки)».
+        // Проверка на лету: ошибка показывается С ПОЗИЦИЕЙ и К МОДЕЛИ НЕ
+        // ПРИМЕНЯЕТСЯ — иначе полустёртый текст ронял бы кривую на каждом
+        // нажатии клавиши.
+        if let Some(c) = curves.get_mut(view.active) {
+            let mut text = match &c.source {
+                kt_model::CurveSource::Formula { expr } => expr.clone(),
+                kt_model::CurveSource::Link { expr, .. } => expr.clone().unwrap_or_default(),
+                kt_model::CurveSource::Keys => String::new(),
+            };
+            ui.label(tr(k::fx::FORMULA));
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut text).desired_width(170.0).hint_text("t * 2"),
+            );
+            crate::widgets::field_probe::note("auto.formula", r.rect);
+            crate::app::hint_into(hover, r.clone(), tr(k::fx::FORMULA_HINT));
+            if r.changed() {
+                match kt_model::Formula::parse(&text) {
+                    Ok(_) if text.trim().is_empty() => {}
+                    Ok(_) => {
+                        // текст ЗАКОННЫЙ — только теперь он едет в модель
+                        c.source = match &c.source {
+                            kt_model::CurveSource::Link { path, stops, .. } => {
+                                kt_model::CurveSource::Link {
+                                    path: path.clone(),
+                                    expr: Some(text.clone()),
+                                    stops: stops.clone(),
+                                }
+                            }
+                            _ => {
+                                c.keys.clear();
+                                kt_model::CurveSource::Formula { expr: text.clone() }
+                            }
+                        };
+                        out.changed = true;
+                    }
+                    Err(e) => *hover = Some(e.to_string()),
+                }
+            }
+        }
         // «Отвязать» — производная кривая становится обычными ключами по
         // ТЕКУЩИМ значениям. Без этого действия контрол оставался бы
         // навсегда погашенным, а единственным выходом было бы снять

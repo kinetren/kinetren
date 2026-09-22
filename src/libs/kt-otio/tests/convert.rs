@@ -2210,3 +2210,81 @@ fn t698c_shapes_round_trip_and_the_old_ease_field_migrates() {
         }
     }
 }
+
+/// Тест 698d (Р.61): неразрешимый источник в файле — ошибка с адресом.
+///
+/// Тихий рендер «по ключам» показал бы не то, что записано в файле, а это
+/// худший сорт расхождения: человек видит картинку и верит ей.
+#[test]
+fn t698d_a_broken_curve_source_is_an_error_with_an_address() {
+    let with_source = |src: kt_model::CurveSource| {
+        let mut p = rich_project();
+        let c = p.clips.iter_mut().find(|c| !c.fx.is_empty()).expect("клип с эффектом");
+        c.fx_auto = vec![vec![kt_model::ParamCurve {
+            param: "radius".into(),
+            keys: Vec::new(),
+            source: src,
+        }]];
+        p
+    };
+
+    // формула, которая не разбирается
+    let bad = with_source(kt_model::CurveSource::Formula { expr: "1 + ".into() });
+    let err = bad.validate().expect_err("неразбираемая формула обязана быть отказом");
+    let text = err.to_string();
+    assert!(text.contains("ClipId") || text.contains("clip"), "отказ без адреса: {text}");
+    assert!(text.len() > 25, "отказ не объясняет причину: {text}");
+
+    // адрес связи не по форме
+    let bad = with_source(kt_model::CurveSource::Link {
+        path: "совсем не адрес".into(),
+        expr: None,
+        stops: Vec::new(),
+    });
+    assert!(bad.validate().is_err(), "кривой адрес связи прошёл молча");
+
+    // связь на СУЩЕСТВУЮЩЕЕ свойство законна и переживает круг
+    let mut ok = rich_project();
+    let ids: Vec<ClipId> = ok.clips.iter().map(|c| c.id).collect();
+    assert!(ids.len() >= 2, "нужно хотя бы два события");
+    {
+        let lead = ok.clips.iter_mut().find(|c| !c.fx.is_empty()).expect("ведущий");
+        lead.fx_auto = vec![vec![kt_model::ParamCurve {
+            param: "radius".into(),
+            keys: vec![
+                kt_model::AutoKey::at(Tick(0), 2.0),
+                kt_model::AutoKey::at(Tick(45_000), 6.0),
+            ],
+            source: Default::default(),
+        }]];
+    }
+    let lead_id = ok.clips.iter().find(|c| !c.fx_auto.is_empty()).map(|c| c.id).expect("ведущий");
+    if let Some(f) = ok.clips.iter_mut().find(|c| c.id != lead_id && !c.fx.is_empty()) {
+        f.fx_auto = vec![vec![kt_model::ParamCurve {
+            param: "radius_y".into(),
+            keys: Vec::new(),
+            source: kt_model::CurveSource::Link {
+                path: format!("{}/fx0/radius", lead_id.0),
+                expr: Some("src / 2".into()),
+                stops: Vec::new(),
+            },
+        }]];
+        ok.validate().expect("связь на существующее свойство законна");
+        let text = save_project(&ok, &Retained::default(), None);
+        assert_eq!(
+            kt_otio::kt_version(&parse_document(&text).unwrap()),
+            Some(kt_otio::KT_META_V10),
+            "рабочий источник кривой обязан поднять версию до v10"
+        );
+        let back = load_project(&text, None).expect("файл со связью читается");
+        let got = back
+            .project
+            .clips
+            .iter()
+            .find_map(|c| c.fx_auto.first().and_then(|v| v.iter().find(|x| !x.source.is_keys())))
+            .expect("связь не пережила круг");
+        assert_eq!(got.source.link_path(), Some(format!("{}/fx0/radius", lead_id.0).as_str()));
+        assert_eq!(got.source.expr(), Some("src / 2"), "выражение пересчёта не пережило круг");
+        assert_eq!(text, save_project(&back.project, &back.retained, None), "идемпотентность");
+    }
+}

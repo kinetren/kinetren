@@ -422,3 +422,77 @@ fn t705_derived_sources_cost_nothing_when_unused() {
         );
     }
 }
+
+/// Тест 707 (Р.61): формула — источник значения, кривая без ключей.
+///
+/// Владелец: «возможность задания кривой автоматизации через ввод формулы
+/// (без прокликивания мышки)». Разрешается тем же кодом, что связь: разница
+/// только в том, что адреса у неё нет, а есть время.
+#[test]
+fn t707_a_formula_is_a_curve_without_keys() {
+    let formula = |expr: &str| ParamCurve {
+        param: "radius".into(),
+        keys: Vec::new(),
+        source: CurveSource::Formula { expr: expr.into() },
+    };
+
+    // --- формула ОТ ВРЕМЕНИ ------------------------------------------
+    let mut c = clip(1, 0, 2 * SEC, 0);
+    c.fx_auto[0].push(formula("t * 10"));
+    let only = vec![c.clone()];
+    let out = resolve_derived(&only, FRAME);
+    let got = &out[0].fx_auto[0][0];
+    assert!(got.source.is_keys(), "формула не разрешилась: {:?}", got.source);
+    assert!(got.keys.len() > 30, "сетка кадров дала слишком мало точек: {}", got.keys.len());
+    // независимый оракул: t в СЕКУНДАХ от начала материала события
+    for k in &got.keys {
+        let t_s = (k.t.0 - c.source_in.0) as f64 / 90_000.0;
+        assert!(
+            (k.v - t_s * 10.0).abs() < 1e-9,
+            "формула посчиталась не так: в {:?} дала {}, ждали {}",
+            k.t,
+            k.v,
+            t_s * 10.0
+        );
+    }
+
+    // --- формула, ЧИТАЮЩАЯ другое свойство, идёт тем же адресом ------
+    let mut lead = clip(1, 0, 2 * SEC, 0);
+    lead.fx_auto[0].push(driver("radius", 4.0, 4.0, 0, 2 * SEC));
+    let mut follow = clip(2, 0, 2 * SEC, 0);
+    follow.fx_auto[0].push(ParamCurve {
+        param: "radius_y".into(),
+        keys: Vec::new(),
+        source: CurveSource::Link {
+            path: "1/fx0/radius".into(),
+            expr: Some("src * src".into()),
+            stops: Vec::new(),
+        },
+    });
+    let pair = vec![lead, follow];
+    let out = resolve_derived(&pair, FRAME);
+    let sq = &out[1].fx_auto[0][0];
+    assert!(sq.source.is_keys(), "связь с выражением не разрешилась");
+    assert!((sq.keys[0].v - 16.0).abs() < 1e-9, "выражение над ведущим не применилось: {}", sq.keys[0].v);
+
+    // --- у формулы на СКОРОСТИ то же правило, что у не-прямой формы --
+    let mut p = base();
+    let mut rate = clip(1, 0, SEC, 0);
+    rate.fx = vec![FxInstance::slowed_reverb(1.0, 0.0, 85.0)];
+    rate.fx_bypass = vec![false];
+    rate.fx_auto = vec![vec![formula("1 + t")]];
+    rate.fx_auto[0][0].param = "rate".into();
+    p.clips.push(rate);
+    // формула законна сама по себе; после разрешения ключи ПРЯМЫЕ, и
+    // значит правило скорости не нарушено — сэмплированная кривая по
+    // построению кусочно-линейна
+    let out = resolve_derived(&p.clips, FRAME);
+    assert!(
+        out[0].fx_auto[0][0].keys.iter().all(|k| k.shape == SegShape::Linear),
+        "разрешённая формула на скорости обязана быть кусочно-линейной"
+    );
+    assert!(
+        kt_model::check_fx_auto(ClipId(1), &out[0].fx_auto).is_ok(),
+        "разрешённая формула на скорости отвергнута"
+    );
+}

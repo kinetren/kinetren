@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""Живой сценарий Р.61: кривая, заданная ФОРМУЛОЙ, видна и доезжает до файла.
+
+Владелец: «возможность задания кривой автоматизации через ввод формулы (без
+прокликивания мышки)» и «итоговый граф тоже рисуется но не редактируется
+мышкой».
+
+Харнесс проверяет модель и вёрстку по отдельности; здесь — настоящий kt-app:
+текст набирается в настоящее поле, следствие ищется в сохранённом файле.
+"""
+import os
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(__file__))
+from kt_live import KT_CLI, Live, require_tools  # noqa: E402
+
+SEC = 90000
+
+
+def walk(node):
+    yield node
+    if isinstance(node, dict):
+        for v in node.values():
+            yield from walk(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from walk(v)
+
+
+def sources(doc):
+    """Источники всех кривых документа: «keys» либо вид производного."""
+    out = []
+    for n in walk(doc):
+        meta = n.get("metadata") if isinstance(n, dict) else None
+        if not isinstance(meta, dict):
+            continue
+        kt = meta.get("kt")
+        if isinstance(kt, dict) and isinstance(kt.get("auto"), list):
+            for c in kt["auto"]:
+                if isinstance(c, dict):
+                    src = c.get("source")
+                    out.append(src.get("kind") if isinstance(src, dict) else "keys")
+    return out
+
+
+def main(out):
+    require_tools()
+    proj = os.path.join(out, "curvesrc.otio")
+    subprocess.run([KT_CLI, "demo", proj, "--force"], check=True, capture_output=True)
+
+    with Live("curvesrc", out, project=proj) as app:
+        # ВНЕ линии уровня: двойной клик по ней сбрасывает громкость
+        y = app.lane_y("audio", 1, frac=0.50)
+        app.double_click(app.x_at(10 * SEC), y)
+        time.sleep(0.9)
+        app.shot("fx-window")
+
+        before = sources(app.saved_project().doc)
+        app.expect(bool(before), f"у демо-проекта есть кривые: {before}")
+        app.expect(
+            all(s == "keys" for s in before),
+            f"до правки все кривые ключевые: {before}",
+        )
+
+        app.expect(app.has_probe("auto.formula"), "поле формулы есть в окне автоматизации")
+
+        # --- БИТЫЙ текст показывает ошибку и НЕ портит модель ---------
+        app.click_probe("auto.formula", "поле формулы")
+        for ch in ["parenleft", "1", "plus"]:
+            app.key(ch)
+        time.sleep(0.6)
+        app.shot("broken-formula")
+        mid = sources(app.saved_project().doc)
+        app.expect(
+            all(s == "keys" for s in mid),
+            f"битый текст доехал до модели: {mid}",
+        )
+
+        # --- ВЕРНЫЙ текст применяется ---------------------------------
+        app.key("ctrl+a")
+        for ch in ["t", "asterisk", "2"]:
+            app.key(ch)
+        app.key("Return")
+        time.sleep(0.9)
+        app.shot("formula-applied")
+
+        after = sources(app.saved_project().doc)
+        app.expect(
+            "formula" in after,
+            f"формула не доехала до ФАЙЛА: было {before}, стало {after}",
+        )
+
+        # --- «отвязать» возвращает обычные ключи ----------------------
+        if app.has_probe("auto.unlink"):
+            app.click_probe("auto.unlink", "отвязать кривую")
+            time.sleep(0.8)
+            back = sources(app.saved_project().doc)
+            app.expect(
+                "formula" not in back,
+                f"«отвязать» не сняло источник: {back}",
+            )
+            app.shot("unlinked")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1] if len(sys.argv) > 1 else "target/live-out/curvesrc")
