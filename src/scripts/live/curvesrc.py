@@ -79,14 +79,27 @@ def main(out):
         )
 
         # --- ВЕРНЫЙ текст применяется ---------------------------------
-        app.key("ctrl+a")
-        for ch in ["t", "asterisk", "2"]:
-            app.key(ch)
-        app.key("Return")
-        time.sleep(0.9)
+        #
+        # Ввод делается с ПОВТОРОМ: под полной нагрузкой (весь finish.sh)
+        # поле успевает потерять фокус между кликом и первой клавишей, и
+        # сценарий мигал. Повтор — не «пересдача красного»: каждая попытка
+        # заново кликает поле и заново набирает текст, а утверждение
+        # проверяется ПОСЛЕ них (§458: мигание чинится, а не игнорируется).
+        after = before
+        for attempt in range(3):
+            app.click_probe("auto.formula", f"поле формулы (попытка {attempt + 1})")
+            time.sleep(0.5)
+            # чистим поле по-символьно: ctrl+a у egui выделяет не всегда
+            for _ in range(24):
+                app.key("BackSpace")
+            for ch in ["t", "asterisk", "2"]:
+                app.key(ch)
+            app.key("Return")
+            time.sleep(1.0)
+            after = sources(app.saved_project().doc)
+            if "formula" in after:
+                break
         app.shot("formula-applied")
-
-        after = sources(app.saved_project().doc)
         app.expect(
             "formula" in after,
             f"формула не доехала до ФАЙЛА: было {before}, стало {after}",
