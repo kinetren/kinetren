@@ -791,13 +791,16 @@ impl KtApp {
             crate::widgets::field_probe::note("bin.reel", thumb_rect);
             if let Some(seq) = self.model.document().sequence(id) {
                 let end = seq.end().0.max(1);
-                let lanes = seq.video_lanes.max(1) + seq.audio_lanes.max(1);
+                let lanes = seq.lanes(kt_model::LaneKind::Video).max(1)
+                    + seq.lanes(kt_model::LaneKind::Audio).max(1);
                 let bar_h = (thumb_rect.height() - 4.0) / lanes as f32;
                 let mut mesh = egui::Mesh::default();
                 for ch in &seq.clips {
                     let row = match ch.kind {
                         kt_model::ClipKind::Video => ch.lane,
-                        kt_model::ClipKind::Audio => seq.video_lanes.max(1) + ch.lane,
+                        kt_model::ClipKind::Audio => {
+                            seq.lanes(kt_model::LaneKind::Video).max(1) + ch.lane
+                        }
                     };
                     let y = thumb_rect.top() + 2.0 + row as f32 * bar_h;
                     let x0 =

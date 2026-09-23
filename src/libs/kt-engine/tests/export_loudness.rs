@@ -43,7 +43,7 @@ fn project_with(gain_db: f32, secs: f64) -> Project {
         opacity: 1.0,
         fx_off: false,
     });
-    p.audio_lanes = 1;
+    p.ensure_tracks(kt_model::LaneKind::Audio, 1);
     p.normalize();
     p
 }

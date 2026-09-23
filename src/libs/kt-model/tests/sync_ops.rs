@@ -44,7 +44,7 @@ fn scene_at(start_a: Tick, source_in_b: Tick, start_b: Tick, reversed_b: bool) -
     };
     p.clips.push(clip(1, 1, 0, start_a, Tick(90_000), false));
     p.clips.push(clip(2, 2, 1, start_b, source_in_b, reversed_b));
-    p.audio_lanes = 2;
+    p.ensure_tracks(LaneKind::Audio, 2);
     p.normalize();
     p
 }

@@ -96,13 +96,25 @@ pub struct KtTimelineMeta {
     pub bin_layout: Vec<(kt_model::MediaId, f32, f32)>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bin_free: bool,
+    /// СЧЁТЧИКИ дорожек: пустая строка невыразима содержимым, и файлы всех
+    /// прежних раундов держат её здесь. С Р.62 это ПРОИЗВОДНОЕ от вектора
+    /// дорожек — пишется по-прежнему (байт-стабильность, t433b), читается
+    /// как основа, если `tracks` нет.
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub morph_lanes: u32,
-    /// Порядок строк дорожек (Р.35): переехал из `ui.lane_order` в
-    /// модель, потому что морфер-слой сделал его частью КАРТИНКИ.
-    /// Пусто = естественный блочный порядок.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// ЛЕГАСИ (до Р.62): порядок строк отдельным полем. Теперь порядок —
+    /// это порядок `tracks`; поле только читается.
+    #[serde(default, skip_serializing)]
     pub lane_order: Vec<(kt_model::LaneKind, u32)>,
+    /// ДОРОЖКИ-ОБЪЕКТЫ сверху вниз (Р.62, change B) — порядок строк,
+    /// выключатели, уровень, режим наложения, высота и цепочка служебных
+    /// строк. Пишется, только когда есть что сказать: у проекта с
+    /// естественным порядком и пустыми свойствами файл байт-в-байт прежний
+    /// (t433b). Имя, `enabled` и цепочка дорожек ВИДЕО и АУДИО живут на
+    /// самих `Track` файла — чужой редактор обязан их видеть; сюда они
+    /// не дублируются.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tracks: Vec<KtTrack>,
     /// Именованные области «время × дорожки» (Р.35 п.2). Своих сущностей
     /// в OTIO у них нет (Marker описывает только время), поэтому едут в
     /// нашей секции целиком.
@@ -157,6 +169,55 @@ pub struct KtTimelineMeta {
     pub extra: Map<String, Value>,
 }
 
+/// ДОРОЖКА в конверте (Р.62). Для видео и аудио несёт только то, чего
+/// в OTIO-треке нет (id, уровень, режим наложения, соло, замок, высота);
+/// для служебных строк (морф, камера) — всё, включая имя и цепочку:
+/// OTIO-трека у них не бывает.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct KtTrack {
+    pub kind: kt_model::LaneKind,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub id: u64,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    pub height: f32,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mute: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub solo: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub lock: bool,
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub gain_db: f64,
+    #[serde(default = "one_f64", skip_serializing_if = "is_one_f64")]
+    pub opacity: f64,
+    #[serde(default, skip_serializing_if = "is_normal_blend")]
+    pub blend: kt_model::BlendMode,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fx_off: bool,
+}
+
+fn is_zero_u64(v: &u64) -> bool {
+    *v == 0
+}
+
+fn is_zero_f64(v: &f64) -> bool {
+    *v == 0.0
+}
+
+fn one_f64() -> f64 {
+    1.0
+}
+
+fn is_one_f64(v: &f64) -> bool {
+    *v == 1.0
+}
+
+fn is_normal_blend(b: &kt_model::BlendMode) -> bool {
+    *b == kt_model::BlendMode::Normal
+}
+
 /// Сайдкар вложенной ленты (Р.50): всё, чему в OTIO места нет.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct KtSequence {
@@ -170,8 +231,11 @@ pub struct KtSequence {
     pub morph_lanes: u32,
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub camera_lanes: u32,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing)]
     pub lane_order: Vec<(kt_model::LaneKind, u32)>,
+    /// Дорожки ленты (Р.62) — как у корня.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tracks: Vec<KtTrack>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub morphers: Vec<kt_model::MorpherEvent>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

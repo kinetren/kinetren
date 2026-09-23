@@ -213,7 +213,7 @@ fn t649_formula_curves_are_refused_loudly() {
         fx_off: false,
     };
     p.clips.push(c.clone());
-    p.video_lanes = 1;
+    p.ensure_tracks(LaneKind::Video, 1);
     p.validate().expect("a project with ordinary key curves is legal");
 
     // ...а с Р.61 формула СЧИТАЕТСЯ: отвергается не источник, а источник,

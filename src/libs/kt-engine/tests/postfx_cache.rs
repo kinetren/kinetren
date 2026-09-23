@@ -208,7 +208,7 @@ fn t66d_camera_edit_invalidates_postfx() {
     };
     let with_cam = |cam: CameraEvent| {
         let mut p = project_with_fx(vec![pan3d.clone()], 48_000);
-        p.camera_lanes = 1;
+        p.ensure_tracks(kt_model::LaneKind::Camera, 1);
         p.cameras = vec![cam];
         p.validate().unwrap();
         p

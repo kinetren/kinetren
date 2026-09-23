@@ -227,18 +227,18 @@ fn t35_lanes_and_roundtrip() {
     let mut ev = replace_morpher(1, vec![ClipId(10)]);
     ev.lane = 0;
     m.apply(Command::AddMorpher(ev)).unwrap();
-    assert_eq!(m.project().morph_lanes, 1);
+    assert_eq!(m.project().lanes(LaneKind::Morph), 1);
 
-    m.apply(Command::InsertMorphLane { at: 0 }).unwrap();
+    m.apply(Command::InsertTrack { kind: LaneKind::Morph, at: 0 }).unwrap();
     assert_eq!(m.project().morphers[0].lane, 1, "вставка сдвинула событие");
 
     let json = serde_json::to_string(m.project()).unwrap();
     let loaded = Project::from_json(&json).unwrap();
     assert_eq!(&loaded, m.project(), "round-trip");
 
-    m.apply(Command::RemoveMorphLane { at: 1 }).unwrap();
+    m.apply(Command::RemoveTrack { kind: LaneKind::Morph, at: 1 }).unwrap();
     assert!(m.project().morphers.is_empty(), "события дорожки удалены");
-    assert_eq!(m.project().morph_lanes, 1);
+    assert_eq!(m.project().lanes(LaneKind::Morph), 1);
 
     // валидация: morpher не может ссылаться на отсутствующий клип
     let mut bad = m.project().clone();

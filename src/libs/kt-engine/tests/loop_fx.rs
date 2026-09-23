@@ -291,6 +291,7 @@ fn t168_complex_montage_plays_without_underruns() {
         auto: vec![],
         invert: false,
     });
+    p.normalize(); // дорожки под содержимое (Р.62)
     p.validate().unwrap();
     let r = AudioRenderer::new(&p);
 

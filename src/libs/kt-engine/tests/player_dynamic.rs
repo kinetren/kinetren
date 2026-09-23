@@ -112,6 +112,7 @@ fn t18_add_media_preserves_cache_coverage_and_transport() {
         opacity: 1.0,
         fx_off: false,
     });
+    p2.normalize(); // дорожки под содержимое (Р.62)
     p2.validate().unwrap();
     player.set_project(p2);
 

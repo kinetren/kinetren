@@ -1045,6 +1045,8 @@ pub trait Reel {
     /// Строки сверху вниз. Единственный способ узнать, что «ниже», и —
     /// с Р.56 — то, чему обязан соответствовать НОМЕР дорожки.
     fn rows(&self) -> Vec<(LaneKind, u32)>;
+    /// Дорожки-объекты (Р.62).
+    fn tracks(&self) -> &[Track];
     /// Остальное содержимое ленты. Умолчания — пустота: реализующий
     /// обязан переопределить только то, что у него есть.
     fn morphers(&self) -> &[MorpherEvent] {
@@ -1131,21 +1133,19 @@ impl LaneBases {
     }
 
     pub fn of_root(p: &Project) -> LaneBases {
-        LaneBases {
-            video: p.video_lanes,
-            audio: p.audio_lanes,
-            morph: p.morph_lanes,
-            camera: p.camera_lanes,
-        }
+        LaneBases::of_tracks(&p.tracks)
     }
 
     pub fn of_seq(s: &Sequence) -> LaneBases {
-        LaneBases {
-            video: s.video_lanes,
-            audio: s.audio_lanes,
-            morph: s.morph_lanes,
-            camera: s.camera_lanes,
+        LaneBases::of_tracks(&s.tracks)
+    }
+
+    pub fn of_tracks(tracks: &[Track]) -> LaneBases {
+        let mut n = LaneBases::default();
+        for t in tracks {
+            *n.get_mut(t.kind) += 1;
         }
+        n
     }
 }
 
@@ -1199,11 +1199,21 @@ impl Band {
     pub fn of(p: &Project, inst: ClipId) -> Option<Band> {
         let c = p.clips.iter().find(|c| c.id == inst)?;
         let s = p.sequence(c.media)?;
+        // Блок дорожек ленты встаёт СРАЗУ ПОД строкой экземпляра (Р.62,
+        // change B: дорожки — объекты, номер = ранг вектора). Значит
+        // первая дорожка полосы каждого вида получает ранг «сколько
+        // строк этого вида стоит не ниже экземпляра».
+        let rows = p.rows();
+        let at = rows.iter().position(|&k| k == lane_key(c)).map(|i| i + 1).unwrap_or(rows.len());
+        let mut base = LaneBases::default();
+        for &(k, _) in &rows[..at] {
+            *base.get_mut(k) += 1;
+        }
         Some(Band {
             inst,
             seq: c.media,
             dt: c.start - c.source_in,
-            base: LaneBases::of_root(p),
+            base,
             len: LaneBases::of_seq(s),
         })
     }
@@ -1242,16 +1252,37 @@ impl Project {
     /// один раз (п.394), и `unmerge_reel` возвращает всё на место.
     pub fn merge_reel(&mut self, b: &Band) {
         let Some(i) = self.sequences.iter().position(|s| s.id == b.seq) else { return };
-        let (mut clips, mut trans, mut morphs, mut cams, order) = {
+        let (mut clips, mut trans, mut morphs, mut cams, tracks) = {
             let s = &mut self.sequences[i];
             (
                 std::mem::take(&mut s.clips),
                 std::mem::take(&mut s.transitions),
                 std::mem::take(&mut s.morphers),
                 std::mem::take(&mut s.cameras),
-                s.rows(),
+                std::mem::take(&mut s.tracks),
             )
         };
+        // корневое содержимое ниже блока полосы сдвигается на его длину:
+        // номер = ранг, а блок встаёт между
+        let shift =
+            |k: LaneKind, lane: u32| if lane >= b.base.get(k) { lane + b.len.get(k) } else { lane };
+        for c in &mut self.clips {
+            c.lane = shift(lane_key(c).0, c.lane);
+        }
+        for m in &mut self.morphers {
+            m.lane = shift(LaneKind::Morph, m.lane);
+        }
+        for c in &mut self.cameras {
+            c.lane = shift(LaneKind::Camera, c.lane);
+        }
+        for f in &mut self.foreign {
+            f.lane = shift(lane_key_of(f.kind), f.lane);
+        }
+        for a in &mut self.areas {
+            for e in a.lanes.iter_mut() {
+                e.1 = shift(e.0, e.1);
+            }
+        }
         for c in &mut clips {
             c.start = c.start + b.dt;
             c.lane += b.base.get(lane_key(c).0);
@@ -1268,20 +1299,9 @@ impl Project {
         self.transitions.append(&mut trans);
         self.morphers.append(&mut morphs);
         self.cameras.append(&mut cams);
-        self.video_lanes = b.base.video + b.len.video;
-        self.audio_lanes = b.base.audio + b.len.audio;
-        self.morph_lanes = b.base.morph + b.len.morph;
-        self.camera_lanes = b.base.camera + b.len.camera;
         // СТРОКИ ПОЛОСЫ встают неразрывным блоком СРАЗУ ПОД строкой
-        // экземпляра: видимое место задаётся только порядком, а номера
-        // остаются в хвосте пространства.
-        let mut rows = normalize_lane_order(
-            &self.lane_order,
-            b.base.video,
-            b.base.audio,
-            b.base.morph,
-            b.base.camera,
-        );
+        // экземпляра
+        let rows = self.rows();
         let at = self
             .clips
             .iter()
@@ -1289,12 +1309,9 @@ impl Project {
             .and_then(|c| rows.iter().position(|&k| k == lane_key(c)))
             .map(|p| p + 1)
             .unwrap_or(rows.len());
-        let shifted: Vec<(LaneKind, u32)> =
-            order.into_iter().map(|(k, l)| (k, l + b.base.get(k))).collect();
-        for (j, row) in shifted.into_iter().enumerate() {
-            rows.insert(at + j, row);
+        for (j, t) in tracks.into_iter().enumerate() {
+            self.tracks.insert(at + j, t);
         }
-        self.lane_order = rows;
     }
 
     /// Собрать ленту обратно — С ДОКАЗАТЕЛЬСТВОМ, что никто не сменил полосу.
@@ -1356,64 +1373,52 @@ impl Project {
             c.start = c.start - b.dt;
             c.lane -= b.base.camera;
         }
-        // ПОРЯДОК СТРОК делится на корневой и полосы; блок полосы обязан
-        // остаться НЕРАЗРЫВНЫМ — иначе человек утащил корневую строку в
-        // середину раскрытия, и «где чья строка» перестало быть вопросом
-        // с ответом
-        let rows = normalize_lane_order(
-            &self.lane_order,
-            b.base.video + b.len.video,
-            b.base.audio + b.len.audio,
-            b.base.morph + b.len.morph,
-            b.base.camera + b.len.camera,
-        );
-        // Порядок ПРОСТО ДЕЛИТСЯ, и разрыв блока ошибкой не считается.
-        // Блок полосы заново ставится под строкой экземпляра при КАЖДОЙ
-        // пересборке вида, поэтому «корневая строка посреди раскрытия» —
-        // состояние, которое не живёт дольше кадра: его порождает сама
-        // вставка дорожки (`lane_order_insert` кладёт новую строку рядом с
-        // той, чей номер занял). Делать из этого отказ значило бы ронять
-        // весь батч на обычном «добавь дорожку», а относительный порядок и
-        // корневых строк, и строк ленты при делении сохраняется.
-        let mut root_rows = Vec::new();
-        let mut band_rows = Vec::new();
-        for &(k, l) in &rows {
-            if b.owns(k, l) {
-                band_rows.push((k, l - b.base.get(k)));
-            } else {
-                root_rows.push((k, l));
+        // корневое содержимое ниже блока возвращается на свои номера
+        let unshift = |k: LaneKind, lane: u32| {
+            if lane >= b.base.get(k) + b.len.get(k) { lane - b.len.get(k) } else { lane }
+        };
+        for c in &mut self.clips {
+            c.lane = unshift(lane_key(c).0, c.lane);
+        }
+        for m in &mut self.morphers {
+            m.lane = unshift(LaneKind::Morph, m.lane);
+        }
+        for c in &mut self.cameras {
+            c.lane = unshift(LaneKind::Camera, c.lane);
+        }
+        for f in &mut self.foreign {
+            f.lane = unshift(lane_key_of(f.kind), f.lane);
+        }
+        for a in &mut self.areas {
+            for e in a.lanes.iter_mut() {
+                e.1 = unshift(e.0, e.1);
             }
         }
-        // ПУСТОЙ порядок — каноническая форма «натуральный», и вернуть
-        // надо именно её: иначе «раскрыл и свернул» записывало бы в проект
-        // явный порядок там, где его не было, и тождество ломалось бы на
-        // файле, а не на экране.
-        self.lane_order = canon_order(root_rows, b.base);
-        self.video_lanes = b.base.video.max(1);
-        self.audio_lanes = b.base.audio.max(1);
-        self.morph_lanes = b.base.morph;
-        self.camera_lanes = b.base.camera;
+        // ДОРОЖКИ полосы возвращаются ленте в порядке строк; у корня
+        // остаётся его вектор без блока
+        let rows = self.rows();
+        let mut band_tracks = Vec::new();
+        let mut root_tracks = Vec::new();
+        for (idx, t) in std::mem::take(&mut self.tracks).into_iter().enumerate() {
+            let (k, l) = rows[idx];
+            if b.owns(k, l) {
+                band_tracks.push(t);
+            } else {
+                root_tracks.push(t);
+            }
+        }
+        self.tracks = root_tracks;
         let s =
             self.sequences.iter_mut().find(|s| s.id == b.seq).expect("reel presence checked above");
         s.clips = inner;
         s.transitions = trans;
         s.morphers = morphs;
         s.cameras = cams;
-        s.video_lanes = b.len.video.max(1);
-        s.audio_lanes = b.len.audio.max(1);
-        s.morph_lanes = b.len.morph;
-        s.camera_lanes = b.len.camera;
-        s.lane_order = canon_order(band_rows, b.len);
+        s.tracks = band_tracks;
+        s.ensure_tracks(LaneKind::Video, 1);
+        s.ensure_tracks(LaneKind::Audio, 1);
         Ok(())
     }
-}
-
-/// Привести порядок строк к канонической форме: натуральный записывается
-/// ПУСТЫМ вектором (Р.55, С5). Без этого «раскрыл и свернул» проставляло бы
-/// явный порядок там, где его не было.
-fn canon_order(rows: Vec<(LaneKind, u32)>, n: LaneBases) -> Vec<(LaneKind, u32)> {
-    let natural = normalize_lane_order(&[], n.video.max(1), n.audio.max(1), n.morph, n.camera);
-    if rows == natural { Vec::new() } else { rows }
 }
 
 /// Старший бит адреса медиа отдан вложенным лентам (Р.50).
@@ -1482,16 +1487,19 @@ pub struct Sequence {
     pub morphers: Vec<MorpherEvent>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cameras: Vec<CameraEvent>,
-    #[serde(default = "default_lanes")]
-    pub video_lanes: u32,
-    #[serde(default = "default_lanes")]
-    pub audio_lanes: u32,
-    #[serde(default, skip_serializing_if = "is_zero_u32")]
-    pub morph_lanes: u32,
-    #[serde(default, skip_serializing_if = "is_zero_u32")]
-    pub camera_lanes: u32,
+    /// Дорожки ленты — те же объекты, что у корня (Р.62).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub lane_order: Vec<(LaneKind, u32)>,
+    pub tracks: Vec<Track>,
+    #[serde(default, rename = "video_lanes", skip_serializing)]
+    pub legacy_video_lanes: u32,
+    #[serde(default, rename = "audio_lanes", skip_serializing)]
+    pub legacy_audio_lanes: u32,
+    #[serde(default, rename = "morph_lanes", skip_serializing)]
+    pub legacy_morph_lanes: u32,
+    #[serde(default, rename = "camera_lanes", skip_serializing)]
+    pub legacy_camera_lanes: u32,
+    #[serde(default, rename = "lane_order", skip_serializing)]
+    pub legacy_lane_order: Vec<(LaneKind, u32)>,
     #[serde(default = "default_true")]
     pub overlap_layers: bool,
     /// Объявленные наружу ручки ленты (Р.59, стадия 3). Пустой список не
@@ -1519,16 +1527,83 @@ impl Sequence {
             transitions: Vec::new(),
             morphers: Vec::new(),
             cameras: Vec::new(),
-            video_lanes: default_lanes(),
-            audio_lanes: default_lanes(),
-            morph_lanes: 0,
-            camera_lanes: 0,
-            lane_order: Vec::new(),
+            // id назначает `Project::assign_track_ids`: у ленты нет доступа к
+            // пространству id документа
+            tracks: vec![
+                Track::new(TrackId(0), LaneKind::Video),
+                Track::new(TrackId(0), LaneKind::Audio),
+            ],
+            legacy_video_lanes: 0,
+            legacy_audio_lanes: 0,
+            legacy_morph_lanes: 0,
+            legacy_camera_lanes: 0,
+            legacy_lane_order: Vec::new(),
             overlap_layers: true,
             published: Vec::new(),
             raster: None,
             fps: None,
         }
+    }
+
+    pub fn lanes(&self, kind: LaneKind) -> u32 {
+        self.tracks.iter().filter(|t| t.kind == kind).count() as u32
+    }
+
+    pub fn track_at(&self, kind: LaneKind, lane: u32) -> Option<&Track> {
+        track_index(&self.tracks, kind, lane).map(|i| &self.tracks[i])
+    }
+
+    pub fn track_at_mut(&mut self, kind: LaneKind, lane: u32) -> Option<&mut Track> {
+        track_index(&self.tracks, kind, lane).map(move |i| &mut self.tracks[i])
+    }
+
+    pub fn track_label(&self, kind: LaneKind, lane: u32) -> String {
+        self.track_at(kind, lane)
+            .map(|t| t.label(lane))
+            .unwrap_or_else(|| default_lane_label(kind, lane))
+    }
+
+    /// Дописать дорожки вида до `n` штук (в конец строк).
+    pub fn ensure_tracks(&mut self, kind: LaneKind, n: u32) {
+        while self.lanes(kind) < n {
+            let at = natural_insert_pos(&self.tracks, kind);
+            self.tracks.insert(at, Track::new(TrackId(0), kind));
+        }
+    }
+
+    /// Легаси-счётчики и порядок ленты → вектор дорожек (односторонне).
+    fn legacy(&self) -> LegacyLanes {
+        LegacyLanes {
+            video_lanes: self.legacy_video_lanes,
+            audio_lanes: self.legacy_audio_lanes,
+            morph_lanes: self.legacy_morph_lanes,
+            camera_lanes: self.legacy_camera_lanes,
+            lane_order: self.legacy_lane_order.clone(),
+        }
+    }
+
+    fn clear_legacy(&mut self) {
+        self.legacy_video_lanes = 0;
+        self.legacy_audio_lanes = 0;
+        self.legacy_morph_lanes = 0;
+        self.legacy_camera_lanes = 0;
+        self.legacy_lane_order = Vec::new();
+    }
+
+    /// Сколько дорожек каждого вида ТРЕБУЕТ содержимое.
+    fn needed(&self) -> LaneBases {
+        let mut n = LaneBases::default();
+        for c in &self.clips {
+            let k = lane_key(c).0;
+            *n.get_mut(k) = n.get(k).max(c.lane + 1);
+        }
+        for m in &self.morphers {
+            n.morph = n.morph.max(m.lane + 1);
+        }
+        for c in &self.cameras {
+            n.camera = n.camera.max(c.lane + 1);
+        }
+        n
     }
 
     /// Свои настройки законны? Растр — чётный в пределах 16…8192, fps —
@@ -1544,13 +1619,7 @@ impl Sequence {
 
     /// Строки ленты сверху вниз — то же правило, что у корня.
     pub fn rows(&self) -> Vec<(LaneKind, u32)> {
-        normalize_lane_order(
-            &self.lane_order,
-            self.video_lanes,
-            self.audio_lanes,
-            self.morph_lanes,
-            self.camera_lanes,
-        )
+        rows_of_tracks(&self.tracks)
     }
 
     /// Конец содержимого ленты.
@@ -1558,27 +1627,48 @@ impl Sequence {
         self.clips.iter().map(|c| c.start + c.duration).max().unwrap_or(Tick::ZERO)
     }
 
-    /// Перенумеровать содержимое так, чтобы номер дорожки стал её рангом
-    /// среди строк своего вида (Р.56, п.449). То же правило, что у корня.
+    /// Дорожки ленты из легаси-полей (счётчики, `lane_order`) — на ЧТЕНИИ,
+    /// односторонне; затем дописать до содержимого. Имена служебных строк
+    /// ленты старый формат не хранил.
     pub fn canonicalize_lanes(&mut self) -> LanePerm {
+        let need = self.needed();
+        let perm = if self.tracks.is_empty() {
+            let legacy = self.legacy();
+            self.tracks = tracks_from_legacy(&legacy, need, &[], &[]);
+            self.clear_legacy();
+            self.reorder_rows(&legacy.lane_order)
+        } else {
+            self.clear_legacy();
+            LanePerm::identity(LaneBases::of_seq(self))
+        };
+        self.ensure_tracks(LaneKind::Video, need.video.max(1));
+        self.ensure_tracks(LaneKind::Audio, need.audio.max(1));
+        self.ensure_tracks(LaneKind::Morph, need.morph);
+        self.ensure_tracks(LaneKind::Camera, need.camera);
+        perm
+    }
+
+    /// Единственная дверь перестановки строк ленты — см. `Project::set_lane_order`.
+    pub fn reorder_rows(&mut self, order: &[(LaneKind, u32)]) -> LanePerm {
         let n = LaneBases::of_seq(self);
-        let mut rows = self.rows();
-        let perm = LanePerm::from_rows(&rows, n);
-        if perm.is_identity() {
-            self.lane_order = canon_order(rows, n);
-            return perm;
+        let norm = normalize_lane_order(order, n.video, n.audio, n.morph, n.camera);
+        let perm = LanePerm::from_rows(&norm, n);
+        let old = std::mem::take(&mut self.tracks);
+        self.tracks = norm
+            .iter()
+            .filter_map(|&(k, l)| track_index(&old, k, l).map(|i| old[i].clone()))
+            .collect();
+        if !perm.is_identity() {
+            for c in &mut self.clips {
+                c.lane = perm.map_clip(c.kind, c.lane);
+            }
+            for m in &mut self.morphers {
+                m.lane = perm.map(LaneKind::Morph, m.lane);
+            }
+            for c in &mut self.cameras {
+                c.lane = perm.map(LaneKind::Camera, c.lane);
+            }
         }
-        for c in &mut self.clips {
-            c.lane = perm.map_clip(c.kind, c.lane);
-        }
-        for m in &mut self.morphers {
-            m.lane = perm.map(LaneKind::Morph, m.lane);
-        }
-        for c in &mut self.cameras {
-            c.lane = perm.map(LaneKind::Camera, c.lane);
-        }
-        perm.remap_keys(&mut rows);
-        self.lane_order = canon_order(rows, n);
         perm
     }
 }
@@ -1589,6 +1679,9 @@ impl Reel for Project {
     }
     fn rows(&self) -> Vec<(LaneKind, u32)> {
         Project::rows(self)
+    }
+    fn tracks(&self) -> &[Track] {
+        &self.tracks
     }
     fn transitions(&self) -> &[TransitionEvent] {
         &self.transitions
@@ -1616,6 +1709,9 @@ impl Reel for Sequence {
     }
     fn rows(&self) -> Vec<(LaneKind, u32)> {
         Sequence::rows(self)
+    }
+    fn tracks(&self) -> &[Track] {
+        &self.tracks
     }
     fn transitions(&self) -> &[TransitionEvent] {
         &self.transitions
@@ -1672,27 +1768,22 @@ pub struct Project {
     /// Loop по региону (вне undo).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub loop_enabled: bool,
-    /// Явное число дорожек — пустые дорожки полноценны (кнопки add track,
-    /// вставка дорожки дропом в зазор). На загрузке нормализуется вверх
-    /// до max(lane клипов)+1.
-    #[serde(default = "default_lanes")]
-    pub video_lanes: u32,
-    #[serde(default = "default_lanes")]
-    pub audio_lanes: u32,
-    /// Morph-дорожки (порт v1): отдельный тип дорожек, клипы на них не
-    /// живут — только morph-события. 0 = дорожек нет (старые файлы).
-    #[serde(default, skip_serializing_if = "is_zero_u32")]
-    pub morph_lanes: u32,
-    /// Порядок строк дорожек сверху вниз (Р.35). ПЕРЕЕХАЛ СЮДА ИЗ
-    /// `UiState`: морфер-слой действует «на всё, что ниже», значит
-    /// порядок влияет на картинку — а всё, что влияет на картинку,
-    /// обязано ходить через undo и жить в модели.
-    ///
-    /// Инвариант: либо ПУСТО (естественный блочный порядок V..A..M..C),
-    /// либо ПОЛНЫЙ нормализованный вектор. Иначе проект после первого же
-    /// открытия обрастал бы полем и терял байт-стабильность.
+    /// ДОРОЖКИ — объекты сверху вниз (Р.62, change B): порядок вектора =
+    /// порядок строк, номер события = ранг среди дорожек своего вида.
+    /// Пустые дорожки полноценны. На загрузке дописывается вверх до
+    /// max(lane содержимого)+1 и не меньше одной видео и одной аудио.
+    /// Счётчики и `lane_order` прежних раундов — `legacy_*`, только на
+    /// чтение.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub lane_order: Vec<(LaneKind, u32)>,
+    pub tracks: Vec<Track>,
+    #[serde(default, rename = "video_lanes", skip_serializing)]
+    pub legacy_video_lanes: u32,
+    #[serde(default, rename = "audio_lanes", skip_serializing)]
+    pub legacy_audio_lanes: u32,
+    #[serde(default, rename = "morph_lanes", skip_serializing)]
+    pub legacy_morph_lanes: u32,
+    #[serde(default, rename = "lane_order", skip_serializing)]
+    pub legacy_lane_order: Vec<(LaneKind, u32)>,
     /// Morph-события. Применяются к клипам в `effective_clips()`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub morphers: Vec<MorpherEvent>,
@@ -1740,10 +1831,8 @@ pub struct Project {
     /// сохранение молча укорачивало чужой монтаж). None — длина по клипам.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeline_end: Option<Tick>,
-    /// Камерные дорожки (Р.29, 3D-композитинг): отдельный тип дорожек,
-    /// как морф-дорожки. 0 = дорожек нет (старые файлы байт-стабильны).
-    #[serde(default, skip_serializing_if = "is_zero_u32")]
-    pub camera_lanes: u32,
+    #[serde(default, rename = "camera_lanes", skip_serializing)]
+    pub legacy_camera_lanes: u32,
     /// Камеры-события. Активную в момент t выбирает `active_camera_at`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cameras: Vec<CameraEvent>,
@@ -2669,6 +2758,13 @@ fn covers_whole(gate: &[TickRange], body: TickRange) -> bool {
 
 /// Ключ строки события: вид дорожки и её номер. Отображение было
 /// продублировано четырежды в `timeline.rs` и дважды в `convert.rs`.
+pub fn lane_key_of(k: ClipKind) -> LaneKind {
+    match k {
+        ClipKind::Video => LaneKind::Video,
+        ClipKind::Audio => LaneKind::Audio,
+    }
+}
+
 pub fn lane_key(c: &ClipEvent) -> (LaneKind, u32) {
     match c.kind {
         ClipKind::Video => (LaneKind::Video, c.lane),
@@ -3048,7 +3144,9 @@ pub struct UiState {
     /// в Р.35 стал содержимым, потому что морфер действует «на всё, что
     /// ниже». Абсолютные пиксели: вертикальный зум переопределение не
     /// трогает, иначе «поставил дорожке высоту» не держалось бы.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// ЛЕГАСИ-вход (до Р.62 высота жила здесь): переносится на дорожку
+    /// при чтении (`normalize`), писатель сюда больше не пишет.
+    #[serde(default, skip_serializing)]
     pub lane_heights: Vec<(LaneKind, u32, f32)>,
     /// Группы карточек бина (п.13 р.11): рамка + имя + замок. Одиночный
     /// «замок» — это группа из одного члена без имени, отдельного поля
@@ -3059,7 +3157,9 @@ pub struct UiState {
     /// Имена дорожек (п.2 р.10). Пусто → подпись по формуле V1/A1/M1.
     /// Вне undo, как весь UiState; имя привязано к (вид, индекс) и едет
     /// вместе с содержимым при перестановке дорожек.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// ЛЕГАСИ-вход (до Р.62 имя жило здесь): переносится на дорожку при
+    /// чтении (`normalize`), писатель сюда больше не пишет.
+    #[serde(default, skip_serializing)]
     pub lane_names: Vec<(LaneKind, u32, String)>,
     /// Замок оси графика автоматизации (Р.40 п.15). ОДИН НА ВСЮ ПРОГРАММУ
     /// и помнится в проекте — решение пользователя дословно: «Один на всю
@@ -3104,14 +3204,374 @@ pub fn prune_bin_groups(groups: &mut Vec<BinGroup>, alive: &[MediaId]) {
 }
 
 /// Вид дорожки в display-порядке (ClipKind не годится: нет Morph/Camera).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LaneKind {
+    #[default]
     Video,
     Audio,
     Morph,
     /// Камерные дорожки (Р.29): живут только камеры-события.
     Camera,
+}
+
+impl LaneKind {
+    pub const ALL: [LaneKind; 4] =
+        [LaneKind::Video, LaneKind::Audio, LaneKind::Morph, LaneKind::Camera];
+}
+
+/// Стабильный адрес ДОРОЖКИ (Р.62, change B). Номер дорожки — ранг строки
+/// (Р.56) и меняется при вставке соседа; id — нет. На нём держится
+/// FX-состояние цепочки дорожки (инвариант 3) и адресация свойств.
+/// `0` — «ещё не назначен» (`Sequence::new`, содержимое сворачивания);
+/// назначает `Project::assign_track_ids` — на чтении и после команды.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default, Serialize, Deserialize,
+)]
+pub struct TrackId(pub u64);
+
+/// Режим наложения композита ВИДЕОДОРОЖКИ на слои ниже (Р.62, F-CMP-003).
+/// `out = lerp(below, blend(below, above), α_above × уровень)`; Normal —
+/// прежний alpha_over байт-в-байт.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlendMode {
+    #[default]
+    Normal,
+    Multiply,
+    Screen,
+    Add,
+    Subtract,
+    Darken,
+    Lighten,
+    Overlay,
+    Difference,
+}
+
+impl BlendMode {
+    pub const ALL: [BlendMode; 9] = [
+        BlendMode::Normal,
+        BlendMode::Multiply,
+        BlendMode::Screen,
+        BlendMode::Add,
+        BlendMode::Subtract,
+        BlendMode::Darken,
+        BlendMode::Lighten,
+        BlendMode::Overlay,
+        BlendMode::Difference,
+    ];
+    pub fn tag(self) -> &'static str {
+        match self {
+            BlendMode::Normal => "normal",
+            BlendMode::Multiply => "multiply",
+            BlendMode::Screen => "screen",
+            BlendMode::Add => "add",
+            BlendMode::Subtract => "subtract",
+            BlendMode::Darken => "darken",
+            BlendMode::Lighten => "lighten",
+            BlendMode::Overlay => "overlay",
+            BlendMode::Difference => "difference",
+        }
+    }
+}
+
+/// Пределы уровня аудиодорожки в дБ (паспорт свойств дорожки, Р.62).
+pub const TRACK_GAIN_MIN_DB: f64 = -60.0;
+pub const TRACK_GAIN_MAX_DB: f64 = 24.0;
+
+fn is_normal_blend(b: &BlendMode) -> bool {
+    *b == BlendMode::Normal
+}
+
+fn is_zero_track_id(id: &TrackId) -> bool {
+    id.0 == 0
+}
+
+/// ДОРОЖКА — объект модели (Р.62, change B). Порядок вектора дорожек =
+/// порядок строк сверху вниз; номер дорожки у события — её ранг среди
+/// дорожек своего вида (инвариант Р.56 не менялся). Имя и высота живут
+/// ЗДЕСЬ и ходят через undo; выключатели, уровень, цепочка и режим
+/// наложения — содержимое проекта (решение владельца: mute и solo
+/// действуют на экспорт).
+///
+/// Уровень — по виду: у аудио `gain_db` (дБ, 0 — как было), у видео
+/// `opacity` (доля, 1 — как было); неродное поле остаётся умолчанием.
+/// Служебные строки (морф, камера) несут только имя, высоту и замок.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Track {
+    #[serde(skip_serializing_if = "is_zero_track_id")]
+    pub id: TrackId,
+    pub kind: LaneKind,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// Высота строки в пикселях; 0 — расчётная.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub height: f32,
+    #[serde(skip_serializing_if = "is_false")]
+    pub mute: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub solo: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub lock: bool,
+    #[serde(skip_serializing_if = "is_zero_f64")]
+    pub gain_db: f64,
+    #[serde(skip_serializing_if = "is_one")]
+    pub opacity: f64,
+    #[serde(skip_serializing_if = "is_normal_blend")]
+    pub blend: BlendMode,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub fx: Vec<FxInstance>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub fx_bypass: Vec<bool>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub fx_off: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub fx_auto: Vec<Vec<ParamCurve>>,
+}
+
+impl Default for Track {
+    fn default() -> Self {
+        Track::new(TrackId(0), LaneKind::Video)
+    }
+}
+
+/// Свойства дорожки одним куском — то, что правит окно «Свойства
+/// дорожки» и команда `SetTrackProps` (цепочка — отдельной командой).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TrackProps {
+    pub name: String,
+    pub height: f32,
+    pub mute: bool,
+    pub solo: bool,
+    pub lock: bool,
+    pub gain_db: f64,
+    pub opacity: f64,
+    pub blend: BlendMode,
+}
+
+impl Track {
+    pub fn new(id: TrackId, kind: LaneKind) -> Track {
+        Track {
+            id,
+            kind,
+            name: String::new(),
+            height: 0.0,
+            mute: false,
+            solo: false,
+            lock: false,
+            gain_db: 0.0,
+            opacity: 1.0,
+            blend: BlendMode::Normal,
+            fx: Vec::new(),
+            fx_bypass: Vec::new(),
+            fx_off: false,
+            fx_auto: Vec::new(),
+        }
+    }
+
+    /// Подпись строки: имя пользователя либо формула V1/A1/M1/C1 по рангу.
+    pub fn label(&self, lane: u32) -> String {
+        if self.name.is_empty() { default_lane_label(self.kind, lane) } else { self.name.clone() }
+    }
+
+    pub fn props(&self) -> TrackProps {
+        TrackProps {
+            name: self.name.clone(),
+            height: self.height,
+            mute: self.mute,
+            solo: self.solo,
+            lock: self.lock,
+            gain_db: self.gain_db,
+            opacity: self.opacity,
+            blend: self.blend,
+        }
+    }
+
+    pub fn set_props(&mut self, p: &TrackProps) {
+        self.name = p.name.clone();
+        self.height = p.height;
+        self.mute = p.mute;
+        self.solo = p.solo;
+        self.lock = p.lock;
+        self.gain_db = p.gain_db;
+        self.opacity = p.opacity;
+        self.blend = p.blend;
+    }
+
+    /// Активные слоты цепочки (bypass отфильтрован), как у события.
+    pub fn active_fx(&self) -> Vec<FxInstance> {
+        if self.fx_off {
+            return Vec::new();
+        }
+        self.fx
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !self.fx_bypass.get(*i).copied().unwrap_or(false))
+            .map(|(_, f)| f.clone())
+            .collect()
+    }
+
+    /// Нужна ли дорожке СТАДИЯ в аудио-миксе (сумма → цепочка → уровень →
+    /// гашение): без неё события складываются в выход прежним порядком —
+    /// байт-в-байт (GOLDEN_AUDIO). Соло решает вызывающий (множество по виду).
+    pub fn needs_audio_stage(&self) -> bool {
+        self.kind == LaneKind::Audio
+            && (self.mute || self.gain_db != 0.0 || !self.active_fx().is_empty())
+    }
+
+    /// Нужна ли видеодорожке стадия (неявная лента в плане): цепочка,
+    /// уровень ≠ 1 или режим ≠ Normal. Mute/solo видео — исключение из
+    /// композита, стадии не требует.
+    pub fn needs_video_stage(&self) -> bool {
+        self.kind == LaneKind::Video
+            && (self.opacity != 1.0
+                || self.blend != BlendMode::Normal
+                || !self.active_fx().is_empty())
+    }
+
+    /// НОВШЕСТВО Р.62 на дорожке: то, чего прежние сборки не знали вовсе и
+    /// молча потеряли бы (выключатели, уровень, режим наложения, цепочка).
+    /// Имя и высота сюда НЕ входят: имя и до Р.62 жило в `Track.name`
+    /// файла, высота — в `ui`, и старый читатель терял бы разве что
+    /// удобство. От этого предиката зависит версия файла.
+    pub fn has_novelty(&self) -> bool {
+        self.mute
+            || self.solo
+            || self.lock
+            || self.gain_db != 0.0
+            || self.opacity != 1.0
+            || self.blend != BlendMode::Normal
+            || !self.fx.is_empty()
+            || self.fx_off
+    }
+
+    /// Ничего, кроме вида и id, не задано — в файл пишется только конверт.
+    pub fn is_plain(&self) -> bool {
+        self.name.is_empty()
+            && self.height == 0.0
+            && !self.mute
+            && !self.solo
+            && !self.lock
+            && self.gain_db == 0.0
+            && self.opacity == 1.0
+            && self.blend == BlendMode::Normal
+            && self.fx.is_empty()
+            && self.fx_auto.iter().all(|a| a.is_empty())
+            && !self.fx_off
+    }
+}
+
+/// Формула подписи дорожки без имени: V1/A1/M1/C1 по рангу.
+pub fn default_lane_label(kind: LaneKind, lane: u32) -> String {
+    let p = match kind {
+        LaneKind::Video => "V",
+        LaneKind::Audio => "A",
+        LaneKind::Morph => "M",
+        LaneKind::Camera => "C",
+    };
+    format!("{p}{}", lane + 1)
+}
+
+/// Строки по вектору дорожек: `(вид, ранг внутри вида)` — определение
+/// номера дорожки (Р.56 через Р.62).
+pub fn rows_of_tracks(tracks: &[Track]) -> Vec<(LaneKind, u32)> {
+    let mut n = LaneBases::default();
+    tracks
+        .iter()
+        .map(|t| {
+            let c = n.get_mut(t.kind);
+            let r = *c;
+            *c += 1;
+            (t.kind, r)
+        })
+        .collect()
+}
+
+/// Куда встаёт НОВАЯ дорожка вида `kind` без явного места: после последней
+/// своего вида, иначе после блока предшествующих видов (V..A..M..C) —
+/// естественный блочный порядок прежних счётчиков, на котором стоят
+/// сцены тестов и умолчание «морф-строки под аудио».
+pub fn natural_insert_pos(tracks: &[Track], kind: LaneKind) -> usize {
+    let rank = |k: LaneKind| LaneKind::ALL.iter().position(|&x| x == k).unwrap_or(0);
+    let mine = rank(kind);
+    let mut pos = 0;
+    for (i, t) in tracks.iter().enumerate() {
+        if rank(t.kind) <= mine {
+            pos = i + 1;
+        }
+    }
+    pos
+}
+
+/// Индекс дорожки вида `kind` с рангом `lane` в векторе.
+pub fn track_index(tracks: &[Track], kind: LaneKind, lane: u32) -> Option<usize> {
+    let mut rank = 0u32;
+    for (i, t) in tracks.iter().enumerate() {
+        if t.kind == kind {
+            if rank == lane {
+                return Some(i);
+            }
+            rank += 1;
+        }
+    }
+    None
+}
+
+/// Дорожки старого файла: счётчики, `lane_order`, имена и высоты в `ui`.
+/// Только ЧИТАЮТСЯ (миграция односторонняя, Р.62): писатель этих полей
+/// больше не знает, а `normalize` превращает их в вектор дорожек.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct LegacyLanes {
+    #[serde(default)]
+    pub video_lanes: u32,
+    #[serde(default)]
+    pub audio_lanes: u32,
+    #[serde(default)]
+    pub morph_lanes: u32,
+    #[serde(default)]
+    pub camera_lanes: u32,
+    #[serde(default)]
+    pub lane_order: Vec<(LaneKind, u32)>,
+}
+
+impl LegacyLanes {
+    pub fn is_empty(&self) -> bool {
+        *self == LegacyLanes::default()
+    }
+}
+
+/// Развернуть легаси-счётчики в вектор дорожек: натуральный порядок
+/// V..A..M..C, затем перестановка по `lane_order` (содержимое
+/// перенумеровывается ТЕМ ЖЕ отображением, что вернётся вызывающему).
+/// Имена и высоты (`ui`) ключуются СТАРЫМИ номерами — вешаются до
+/// перестановки, дальше едут вместе с объектом.
+fn tracks_from_legacy(
+    legacy: &LegacyLanes,
+    need: LaneBases,
+    names: &[(LaneKind, u32, String)],
+    heights: &[(LaneKind, u32, f32)],
+) -> Vec<Track> {
+    let n = LaneBases {
+        video: legacy.video_lanes.max(need.video).max(1),
+        audio: legacy.audio_lanes.max(need.audio).max(1),
+        morph: legacy.morph_lanes.max(need.morph),
+        camera: legacy.camera_lanes.max(need.camera),
+    };
+    let mut out = Vec::new();
+    for kind in LaneKind::ALL {
+        for lane in 0..n.get(kind) {
+            let mut t = Track::new(TrackId(0), kind);
+            if let Some((_, _, nm)) = names.iter().find(|(k, l, _)| *k == kind && *l == lane) {
+                t.name = nm.clone();
+            }
+            if let Some((_, _, h)) = heights.iter().find(|(k, l, _)| *k == kind && *l == lane) {
+                t.height = *h;
+            }
+            out.push(t);
+        }
+    }
+    out
 }
 
 /// Нормализация display-порядка дорожек к фактическим счётчикам (тест 49):
@@ -3292,100 +3752,10 @@ pub fn lane_order_remove(rows: &mut Vec<(LaneKind, u32)>, kind: LaneKind, at: u3
     }
 }
 
-/// Синхронизация имён дорожек при ВСТАВКЕ дорожки (п.2 р.10).
-pub fn lane_names_insert(names: &mut [(LaneKind, u32, String)], kind: LaneKind, at: u32) {
-    lane_keyed_insert(names, kind, at)
-}
-
-/// Сдвиг ЛЮБОЙ таблицы, адресованной парой (вид, дорожка), при вставке
-/// дорожки: имена, высоты строк. Р.56: высоты раньше не сдвигались вовсе —
-/// после вставки дорожки заданная человеком высота оказывалась у соседа.
-pub fn lane_keyed_insert<T>(items: &mut [(LaneKind, u32, T)], kind: LaneKind, at: u32) {
-    for e in items.iter_mut() {
-        if e.0 == kind && e.1 >= at {
-            e.1 += 1;
-        }
-    }
-}
-
-/// То же при УДАЛЕНИИ дорожки: запись удалённой уходит, остальные съезжают.
-pub fn lane_keyed_remove<T>(items: &mut Vec<(LaneKind, u32, T)>, kind: LaneKind, at: u32) {
-    items.retain(|(k, l, _)| !(*k == kind && *l == at));
-    for e in items.iter_mut() {
-        if e.0 == kind && e.1 > at {
-            e.1 -= 1;
-        }
-    }
-}
-
-/// Синхронизация имён при УДАЛЕНИИ дорожки: имя удалённой уходит,
-/// остальные сдвигаются.
-pub fn lane_names_remove(names: &mut Vec<(LaneKind, u32, String)>, kind: LaneKind, at: u32) {
-    names.retain(|(k, l, _)| !(*k == kind && *l == at));
-    for e in names.iter_mut() {
-        if e.0 == kind && e.1 > at {
-            e.1 -= 1;
-        }
-    }
-}
-
-/// Имя дорожки едет ВМЕСТЕ с содержимым при перестановке (иначе
-/// пользователь перетащит «Голос» вниз, а подпись останется наверху).
-pub fn lane_names_swap(names: &mut [(LaneKind, u32, String)], kind: LaneKind, a: u32, b: u32) {
-    for e in names.iter_mut() {
-        if e.0 == kind {
-            if e.1 == a {
-                e.1 = b;
-            } else if e.1 == b {
-                e.1 = a;
-            }
-        }
-    }
-}
-
-/// Имена при ДАЛЬНЕЙ перестановке (перетащили дорожку через несколько
-/// строк): содержимое едет по формуле сдвига (см. `reorder_lane` в
-/// kt-app) — имена обязаны ехать по ней же, иначе подпись приклеится к
-/// чужой дорожке (п.5 р.16).
-pub fn lane_names_rotate(
-    names: &mut [(LaneKind, u32, String)],
-    kind: LaneKind,
-    from: u32,
-    to: u32,
-) {
-    if from == to {
-        return;
-    }
-    for e in names.iter_mut() {
-        if e.0 != kind {
-            continue;
-        }
-        e.1 = if e.1 == from {
-            to
-        } else if from < to && e.1 > from && e.1 <= to {
-            e.1 - 1
-        } else if from > to && e.1 >= to && e.1 < from {
-            e.1 + 1
-        } else {
-            e.1
-        };
-    }
-}
-
-/// Подпись дорожки: пользовательское имя либо формула V1/A1/M1.
-pub fn lane_label(names: &[(LaneKind, u32, String)], kind: LaneKind, lane: u32) -> String {
-    if let Some((_, _, n)) = names.iter().find(|(k, l, _)| *k == kind && *l == lane)
-        && !n.is_empty()
-    {
-        return n.clone();
-    }
-    let p = match kind {
-        LaneKind::Video => "V",
-        LaneKind::Audio => "A",
-        LaneKind::Morph => "M",
-        LaneKind::Camera => "C",
-    };
-    format!("{p}{}", lane + 1)
+/// Подпись дорожки по формуле — см. `Project::track_label` для имени
+/// пользователя (Р.62: имена живут на дорожке-объекте).
+pub fn lane_label(kind: LaneKind, lane: u32) -> String {
+    default_lane_label(kind, lane)
 }
 
 /// Полуоткрытый регион [start, end), start < end.
@@ -7160,9 +7530,11 @@ pub enum ProjectError {
     // --- раскрытие ленты на месте (Р.55, С5) ---
     #[error("clip {0:?} crossed the expanded band boundary: an event cannot change reels")]
     BandEscape(ClipId),
-    // --- номер дорожки = ранг строки (Р.56, п.449) ---
-    #[error("reel {0:?}: lane numbers must follow row order within each kind")]
-    LaneOrderNotCanonical(Option<MediaId>),
+    // --- дорожки-объекты (Р.62, change B) ---
+    #[error("reel {0:?}: {1:?} track {2} does not exist")]
+    TrackMissing(Option<MediaId>, LaneKind, u32),
+    #[error("track {0:?}: curves on a track are not supported yet (timeline-time domain)")]
+    TrackCurvesUnsupported(TrackId),
     // --- источник значений кривой (Р.59, п.466) ---
     #[error(
         "clip {0:?}: this curve is driven by a formula or a link, and nothing evaluates those yet"
@@ -7328,10 +7700,14 @@ impl Project {
             markers: Vec::new(),
             region: None,
             loop_enabled: false,
-            video_lanes: 1,
-            audio_lanes: 1,
-            morph_lanes: 0,
-            lane_order: Vec::new(),
+            tracks: vec![
+                Track::new(TrackId(1), LaneKind::Video),
+                Track::new(TrackId(2), LaneKind::Audio),
+            ],
+            legacy_video_lanes: 0,
+            legacy_audio_lanes: 0,
+            legacy_morph_lanes: 0,
+            legacy_lane_order: Vec::new(),
             morphers: Vec::new(),
             transitions: Vec::new(),
             foreign: Vec::new(),
@@ -7340,10 +7716,208 @@ impl Project {
             overlap_layers: true,
             trim_stretches_auto: false,
             timeline_end: None,
-            camera_lanes: 0,
+            legacy_camera_lanes: 0,
             cameras: Vec::new(),
             areas: Vec::new(),
         }
+    }
+
+    pub fn lanes(&self, kind: LaneKind) -> u32 {
+        self.tracks.iter().filter(|t| t.kind == kind).count() as u32
+    }
+
+    pub fn track_at(&self, kind: LaneKind, lane: u32) -> Option<&Track> {
+        track_index(&self.tracks, kind, lane).map(|i| &self.tracks[i])
+    }
+
+    pub fn track_at_mut(&mut self, kind: LaneKind, lane: u32) -> Option<&mut Track> {
+        track_index(&self.tracks, kind, lane).map(move |i| &mut self.tracks[i])
+    }
+
+    /// Дорожка КОРНЯ по id (рабочий вид: содержимое текущей ленты стоит корнем).
+    pub fn track(&self, id: TrackId) -> Option<&Track> {
+        self.tracks.iter().find(|t| t.id == id)
+    }
+
+    pub fn track_mut(&mut self, id: TrackId) -> Option<&mut Track> {
+        self.tracks.iter_mut().find(|t| t.id == id)
+    }
+
+    /// Дорожка в любом месте документа (корень или лента).
+    pub fn find_track(&self, id: TrackId) -> Option<&Track> {
+        self.track(id)
+            .or_else(|| self.sequences.iter().find_map(|s| s.tracks.iter().find(|t| t.id == id)))
+    }
+
+    pub fn track_label(&self, kind: LaneKind, lane: u32) -> String {
+        self.track_at(kind, lane)
+            .map(|t| t.label(lane))
+            .unwrap_or_else(|| default_lane_label(kind, lane))
+    }
+
+    /// Дописать дорожки вида до `n` штук (в конец строк).
+    pub fn ensure_tracks(&mut self, kind: LaneKind, n: u32) {
+        while self.lanes(kind) < n {
+            let at = natural_insert_pos(&self.tracks, kind);
+            self.tracks.insert(at, Track::new(TrackId(0), kind));
+        }
+        self.assign_track_ids();
+    }
+
+    /// Первый свободный id дорожки во ВСЁМ документе.
+    pub fn next_track_id(&self) -> TrackId {
+        let m = self
+            .tracks
+            .iter()
+            .chain(self.sequences.iter().flat_map(|s| s.tracks.iter()))
+            .map(|t| t.id.0)
+            .max()
+            .unwrap_or(0);
+        TrackId(m + 1)
+    }
+
+    /// Назначить id всем дорожкам без него (и разрешить дубли): корень,
+    /// затем ленты, по порядку строк — детерминированно. Идемпотентно.
+    pub fn assign_track_ids(&mut self) {
+        let mut seen = std::collections::HashSet::new();
+        let mut next = self.next_track_id().0;
+        let mut fix = |t: &mut Track| {
+            if t.id.0 == 0 || !seen.insert(t.id) {
+                t.id = TrackId(next);
+                seen.insert(t.id);
+                next += 1;
+            }
+        };
+        for t in &mut self.tracks {
+            fix(t);
+        }
+        for s in &mut self.sequences {
+            for t in &mut s.tracks {
+                fix(t);
+            }
+        }
+    }
+
+    /// Вставить дорожку вида `kind` с рангом `at` (строка встаёт прямо над
+    /// бывшей `at`, при её отсутствии — в конец); содержимое вида с
+    /// номером ≥ at сдвигается на +1. Возвращает id новой дорожки.
+    pub fn insert_track(&mut self, kind: LaneKind, at: u32) -> TrackId {
+        let at = at.min(self.lanes(kind));
+        for c in &mut self.clips {
+            if lane_key(c).0 == kind && c.lane >= at {
+                c.lane += 1;
+            }
+        }
+        for m in &mut self.morphers {
+            if kind == LaneKind::Morph && m.lane >= at {
+                m.lane += 1;
+            }
+        }
+        for c in &mut self.cameras {
+            if kind == LaneKind::Camera && c.lane >= at {
+                c.lane += 1;
+            }
+        }
+        for f in &mut self.foreign {
+            if lane_key_of(f.kind) == kind && f.lane >= at {
+                f.lane += 1;
+            }
+        }
+        for a in &mut self.areas {
+            for e in a.lanes.iter_mut() {
+                if e.0 == kind && e.1 >= at {
+                    e.1 += 1;
+                }
+            }
+        }
+        let id = self.next_track_id();
+        // строка встаёт над бывшей `at`; ранга `at` нет — в конец блока
+        // своего вида (естественный порядок), а не в конец списка
+        let pos = track_index(&self.tracks, kind, at)
+            .unwrap_or_else(|| natural_insert_pos(&self.tracks, kind));
+        self.tracks.insert(pos, Track::new(id, kind));
+        id
+    }
+
+    /// Удалить дорожку вида `kind` с рангом `at` вместе с её содержимым;
+    /// номера выше съезжают на −1.
+    pub fn remove_track(&mut self, kind: LaneKind, at: u32) {
+        let Some(pos) = track_index(&self.tracks, kind, at) else { return };
+        self.tracks.remove(pos);
+        match kind {
+            LaneKind::Video | LaneKind::Audio => {
+                self.clips.retain(|c| !(lane_key(c).0 == kind && c.lane == at));
+                self.foreign.retain(|f| !(lane_key_of(f.kind) == kind && f.lane == at));
+            }
+            LaneKind::Morph => self.morphers.retain(|m| m.lane != at),
+            LaneKind::Camera => self.cameras.retain(|c| c.lane != at),
+        }
+        for c in &mut self.clips {
+            if lane_key(c).0 == kind && c.lane > at {
+                c.lane -= 1;
+            }
+        }
+        for m in &mut self.morphers {
+            if kind == LaneKind::Morph && m.lane > at {
+                m.lane -= 1;
+            }
+        }
+        for c in &mut self.cameras {
+            if kind == LaneKind::Camera && c.lane > at {
+                c.lane -= 1;
+            }
+        }
+        for f in &mut self.foreign {
+            if lane_key_of(f.kind) == kind && f.lane > at {
+                f.lane -= 1;
+            }
+        }
+        for a in &mut self.areas {
+            a.lanes.retain(|&(k, l)| !(k == kind && l == at));
+            for e in a.lanes.iter_mut() {
+                if e.0 == kind && e.1 > at {
+                    e.1 -= 1;
+                }
+            }
+        }
+    }
+
+    fn legacy(&self) -> LegacyLanes {
+        LegacyLanes {
+            video_lanes: self.legacy_video_lanes,
+            audio_lanes: self.legacy_audio_lanes,
+            morph_lanes: self.legacy_morph_lanes,
+            camera_lanes: self.legacy_camera_lanes,
+            lane_order: self.legacy_lane_order.clone(),
+        }
+    }
+
+    fn clear_legacy(&mut self) {
+        self.legacy_video_lanes = 0;
+        self.legacy_audio_lanes = 0;
+        self.legacy_morph_lanes = 0;
+        self.legacy_camera_lanes = 0;
+        self.legacy_lane_order = Vec::new();
+    }
+
+    /// Сколько дорожек каждого вида ТРЕБУЕТ содержимое корня.
+    fn needed(&self) -> LaneBases {
+        let mut n = LaneBases::default();
+        for c in &self.clips {
+            let k = lane_key(c).0;
+            *n.get_mut(k) = n.get(k).max(c.lane + 1);
+        }
+        for f in &self.foreign {
+            let k = lane_key_of(f.kind);
+            *n.get_mut(k) = n.get(k).max(f.lane + 1);
+        }
+        for m in &self.morphers {
+            n.morph = n.morph.max(m.lane + 1);
+        }
+        for c in &self.cameras {
+            n.camera = n.camera.max(c.lane + 1);
+        }
+        n
     }
 
     /// Активная камера в момент t: событие, чьё [start, start+duration)
@@ -7359,13 +7933,7 @@ impl Project {
     /// Порядок строк сверху вниз, нормализованный к фактическим
     /// счётчикам дорожек. Единственный способ узнать, что «ниже».
     pub fn rows(&self) -> Vec<(LaneKind, u32)> {
-        normalize_lane_order(
-            &self.lane_order,
-            self.video_lanes,
-            self.audio_lanes,
-            self.morph_lanes,
-            self.camera_lanes,
-        )
+        rows_of_tracks(&self.tracks)
     }
 
     /// Все занятые имена ОДНОГО пространства: области и метки-диапазоны.
@@ -7396,63 +7964,78 @@ impl Project {
         self.rows().iter().position(|&k| k == key)
     }
 
-    /// Записать порядок строк и привести номера к рангам — ЕДИНСТВЕННАЯ
-    /// дверь к `lane_order` (Р.56, п.449).
+    /// Переставить строки — ЕДИНСТВЕННАЯ дверь перестановки (Р.56, п.449;
+    /// Р.62: строки — вектор дорожек).
     ///
-    /// `order` называет строки ТЕКУЩИМИ номерами; после записи содержимое
-    /// перенумеровано так, что номер дорожки внутри вида равен её рангу
-    /// среди строк этого вида. Естественный порядок схлопывается в пустой
-    /// вектор (инвариант поля, Р.55 С5).
-    pub fn set_lane_order(&mut self, order: &[(LaneKind, u32)]) {
-        let norm = normalize_lane_order(
-            order,
-            self.video_lanes,
-            self.audio_lanes,
-            self.morph_lanes,
-            self.camera_lanes,
-        );
-        self.lane_order = canon_order(norm, LaneBases::of_root(self));
-        self.canonicalize_lanes();
+    /// `order` называет строки ТЕКУЩИМИ номерами; дорожки-объекты
+    /// переставляются в этот порядок, содержимое перенумеровано так, что
+    /// номер внутри вида равен рангу. Дубли и небылицы выбрасываются,
+    /// недостающие дописываются в конец. Возвращает перестановку номеров.
+    pub fn set_lane_order(&mut self, order: &[(LaneKind, u32)]) -> LanePerm {
+        let n = LaneBases::of_root(self);
+        let norm = normalize_lane_order(order, n.video, n.audio, n.morph, n.camera);
+        let perm = LanePerm::from_rows(&norm, n);
+        let old = std::mem::take(&mut self.tracks);
+        self.tracks = norm
+            .iter()
+            .filter_map(|&(k, l)| track_index(&old, k, l).map(|i| old[i].clone()))
+            .collect();
+        if !perm.is_identity() {
+            for c in &mut self.clips {
+                c.lane = perm.map_clip(c.kind, c.lane);
+            }
+            for m in &mut self.morphers {
+                m.lane = perm.map(LaneKind::Morph, m.lane);
+            }
+            for c in &mut self.cameras {
+                c.lane = perm.map(LaneKind::Camera, c.lane);
+            }
+            for f in &mut self.foreign {
+                f.lane = perm.map_clip(f.kind, f.lane);
+            }
+            // область адресуется СЕМАНТИЧЕСКИМИ ключами дорожек — значит едет
+            // с перенумерацией, иначе «слой на этих дорожках» уехал бы на чужие
+            for a in &mut self.areas {
+                perm.remap_keys(&mut a.lanes);
+            }
+        }
+        perm
     }
 
-    /// Перенумеровать содержимое КОРНЯ и всех лент под инвариант «номер
-    /// дорожки = ранг строки» (Р.56, п.449). Возвращает перестановку
+    /// Дорожки из легаси-полей КОРНЯ и всех лент (счётчики, `lane_order`,
+    /// `ui.lane_names/lane_heights`) — на ЧТЕНИИ, односторонне (Р.62);
+    /// затем дописать дорожки до содержимого. Возвращает перестановку
     /// КОРНЯ: читателю формата она нужна, чтобы переставить свои
     /// побочные таблицы (чужие OTIO-треки в kt-otio).
     pub fn canonicalize_lanes(&mut self) -> LanePerm {
         for s in &mut self.sequences {
             s.canonicalize_lanes();
         }
-        let n = LaneBases::of_root(self);
-        let mut rows = self.rows();
-        let perm = LanePerm::from_rows(&rows, n);
-        if perm.is_identity() {
-            self.lane_order = canon_order(rows, n);
-            return perm;
+        let need = self.needed();
+        let perm = if self.tracks.is_empty() {
+            let legacy = self.legacy();
+            let (names, heights) = self
+                .ui
+                .as_ref()
+                .map(|u| (u.lane_names.clone(), u.lane_heights.clone()))
+                .unwrap_or_default();
+            self.tracks = tracks_from_legacy(&legacy, need, &names, &heights);
+            self.clear_legacy();
+            self.set_lane_order(&legacy.lane_order)
+        } else {
+            self.clear_legacy();
+            LanePerm::identity(LaneBases::of_root(self))
+        };
+        if let Some(u) = &mut self.ui {
+            u.lane_names = Vec::new();
+            u.lane_heights = Vec::new();
+            u.lane_order = Vec::new();
         }
-        for c in &mut self.clips {
-            c.lane = perm.map_clip(c.kind, c.lane);
-        }
-        for m in &mut self.morphers {
-            m.lane = perm.map(LaneKind::Morph, m.lane);
-        }
-        for c in &mut self.cameras {
-            c.lane = perm.map(LaneKind::Camera, c.lane);
-        }
-        for f in &mut self.foreign {
-            f.lane = perm.map_clip(f.kind, f.lane);
-        }
-        // область адресуется СЕМАНТИЧЕСКИМИ ключами дорожек — значит едет
-        // с перенумерацией, иначе «слой на этих дорожках» уехал бы на чужие
-        for a in &mut self.areas {
-            perm.remap_keys(&mut a.lanes);
-        }
-        if let Some(ui) = &mut self.ui {
-            perm.remap_keyed(&mut ui.lane_names);
-            perm.remap_keyed(&mut ui.lane_heights);
-        }
-        perm.remap_keys(&mut rows);
-        self.lane_order = canon_order(rows, n);
+        self.ensure_tracks(LaneKind::Video, need.video.max(1));
+        self.ensure_tracks(LaneKind::Audio, need.audio.max(1));
+        self.ensure_tracks(LaneKind::Morph, need.morph);
+        self.ensure_tracks(LaneKind::Camera, need.camera);
+        self.assign_track_ids();
         perm
     }
 
@@ -7570,11 +8153,7 @@ impl Project {
         std::mem::swap(&mut self.transitions, &mut s.transitions);
         std::mem::swap(&mut self.morphers, &mut s.morphers);
         std::mem::swap(&mut self.cameras, &mut s.cameras);
-        std::mem::swap(&mut self.video_lanes, &mut s.video_lanes);
-        std::mem::swap(&mut self.audio_lanes, &mut s.audio_lanes);
-        std::mem::swap(&mut self.morph_lanes, &mut s.morph_lanes);
-        std::mem::swap(&mut self.camera_lanes, &mut s.camera_lanes);
-        std::mem::swap(&mut self.lane_order, &mut s.lane_order);
+        std::mem::swap(&mut self.tracks, &mut s.tracks);
         std::mem::swap(&mut self.overlap_layers, &mut s.overlap_layers);
         // Публичный набор — СОДЕРЖИМОЕ ленты: его цели это её клипы, а
         // они сейчас переезжают на место корня. Не поменяй мы и его —
@@ -7963,20 +8542,6 @@ impl Project {
     /// Нормализация после загрузки: число дорожек подтягивается вверх до
     /// фактических lane клипов (файлы, писанные до появления полей).
     pub fn normalize(&mut self) -> LanePerm {
-        for c in &self.clips {
-            match c.kind {
-                ClipKind::Video => self.video_lanes = self.video_lanes.max(c.lane + 1),
-                ClipKind::Audio => self.audio_lanes = self.audio_lanes.max(c.lane + 1),
-            }
-        }
-        self.video_lanes = self.video_lanes.max(1);
-        self.audio_lanes = self.audio_lanes.max(1);
-        for m in &self.morphers {
-            self.morph_lanes = self.morph_lanes.max(m.lane + 1);
-        }
-        for c in &self.cameras {
-            self.camera_lanes = self.camera_lanes.max(c.lane + 1);
-        }
         // ВАЖНО: stable-сортировка и дедуп по времени — при двух метках на
         // один тик с разными именами unstable дал бы недетерминированный
         // порядок и сломал байт-стабильность проекта (тест 12)
@@ -8065,12 +8630,40 @@ impl Project {
         // МОЛЧА обменялись бы материалом, стартовым таймкодом и эффектами.
         let mut clip_ids = std::collections::HashSet::new();
         for (seq, reel) in self.reels() {
-            // НОМЕР ДОРОЖКИ = РАНГ СТРОКИ (Р.56, п.449). Проверка стоит на
-            // КАНОНЕ; бенч (`merge_reel`) её не видит и не обязан: полоса
-            // раскрытия намеренно лежит в ХВОСТЕ числового пространства, а
-            // `simulate` валидирует уже после `unmerge_reel`.
-            if !rows_are_canonical(&reel.rows()) {
-                return Err(ProjectError::LaneOrderNotCanonical(seq));
+            // ДОРОЖКА СУЩЕСТВУЕТ (Р.62): номер события — ранг среди дорожек
+            // своего вида, и событие на несуществующей дорожке не имеет
+            // строки на экране — «создать можно, управлять нельзя».
+            // Чтение дописывает дорожки (`normalize`); валидация отвергает.
+            let n = LaneBases::of_tracks(reel.tracks());
+            for c in reel.clips() {
+                let k = lane_key(c).0;
+                if c.lane >= n.get(k) {
+                    return Err(ProjectError::TrackMissing(seq, k, c.lane));
+                }
+            }
+            for m in reel.morphers() {
+                if m.lane >= n.morph {
+                    return Err(ProjectError::TrackMissing(seq, LaneKind::Morph, m.lane));
+                }
+            }
+            for c in reel.cameras() {
+                if c.lane >= n.camera {
+                    return Err(ProjectError::TrackMissing(seq, LaneKind::Camera, c.lane));
+                }
+            }
+            if n.video == 0 || n.audio == 0 {
+                return Err(ProjectError::TrackMissing(
+                    seq,
+                    if n.video == 0 { LaneKind::Video } else { LaneKind::Audio },
+                    0,
+                ));
+            }
+            // кривые на дорожке — следующий change (домен времени
+            // таймлайна): принимать их молча в домене материала нельзя
+            for t in reel.tracks() {
+                if t.fx_auto.iter().any(|a| !a.is_empty()) {
+                    return Err(ProjectError::TrackCurvesUnsupported(t.id));
+                }
             }
             self.validate_reel(reel, seq, &sources, &media_ids, &mut clip_ids)?;
             // Связи ОДНОЙ ленты (Р.61): адрес разрешим, границу ленты не

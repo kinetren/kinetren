@@ -77,6 +77,7 @@ fn title_project() -> (Project, Sources) {
     let mut front = clip(2, 0, 2);
     front.r#gen = Some(title);
     p.clips = vec![back, front];
+    p.normalize(); // дорожки под содержимое (Р.62)
     p.validate().unwrap();
     // источники генераторов открывает САМ экспорт: их адреса производны
     // от событий, и вызывающему их взять неоткуда

@@ -71,8 +71,8 @@ fn new_fields_round_trip_and_old_json_loads() {
     p.markers = vec![Marker::at(Tick(1000)), Marker::at(Tick(5000))];
     p.region = Some(Region { start: Tick(100), end: Tick(50_000) });
     p.loop_enabled = true;
-    p.video_lanes = 2;
-    p.audio_lanes = 3;
+    p.ensure_tracks(LaneKind::Video, 2);
+    p.ensure_tracks(LaneKind::Audio, 3);
     let json = serde_json::to_string(&p).unwrap();
     let p2 = Project::from_json(&json).unwrap();
     assert_eq!(p, p2);
@@ -80,14 +80,20 @@ fn new_fields_round_trip_and_old_json_loads() {
     // «старый» JSON без новых полей: убираем их и грузим
     let mut v: serde_json::Value = serde_json::from_str(&json).unwrap();
     let obj = v.as_object_mut().unwrap();
-    for k in ["markers", "region", "loop_enabled", "video_lanes", "audio_lanes"] {
+    // «старый» файл знал счётчики, а с Р.62 дорожки — объекты: убираем и
+    // вектор, и прежние поля, чтобы читалось ровно то, что даёт содержимое
+    for k in ["markers", "region", "loop_enabled", "tracks", "video_lanes", "audio_lanes"] {
         obj.remove(k);
     }
     let p3 = Project::from_json(&v.to_string()).unwrap();
     assert_eq!(p3.markers, vec![]);
     assert_eq!(p3.region, None);
     assert!(!p3.loop_enabled);
-    assert_eq!((p3.video_lanes, p3.audio_lanes), (1, 1), "нормализовано из клипов");
+    assert_eq!(
+        (p3.lanes(LaneKind::Video), p3.lanes(LaneKind::Audio)),
+        (1, 1),
+        "нормализовано из клипов"
+    );
 }
 
 // ---- apply_batch -------------------------------------------------------------
@@ -161,17 +167,21 @@ fn markers_sorted_and_region_survives_undo() {
 #[test]
 fn insert_lane_shifts_only_same_kind() {
     let mut m = TimelineModel::new(base());
-    m.apply(Command::InsertLane { kind: ClipKind::Audio, at: 0 }).unwrap();
-    assert_eq!(m.project().audio_lanes, 2);
-    assert_eq!(m.project().video_lanes, 1, "видео не тронуто");
+    m.apply(Command::InsertTrack { kind: LaneKind::Audio, at: 0 }).unwrap();
+    assert_eq!(m.project().lanes(LaneKind::Audio), 2);
+    assert_eq!(m.project().lanes(LaneKind::Video), 1, "видео не тронуто");
     for c in &m.project().clips {
         match c.kind {
             ClipKind::Audio => assert_eq!(c.lane, 1, "аудио-клипы сдвинуты"),
             ClipKind::Video => assert_eq!(c.lane, 0),
         }
     }
-    // SetLanes не может осиротить клипы
-    assert!(m.apply(Command::SetLanes { video: 1, audio: 1 }).is_err());
+    // удалить несуществующую дорожку нельзя, последнюю видео — тоже
+    assert!(m.apply(Command::RemoveTrack { kind: LaneKind::Audio, at: 5 }).is_err());
+    assert!(matches!(
+        m.apply(Command::RemoveTrack { kind: LaneKind::Video, at: 0 }),
+        Err(CommandError::LastTrack(LaneKind::Video))
+    ));
 }
 
 #[test]
@@ -420,7 +430,7 @@ fn t30_magnetize_desynced_pair_converges() {
 fn t30_lane_delete_via_batch_is_single_undo() {
     let mut p = base();
     // вторая аудио-дорожка с клипом
-    p.audio_lanes = 2;
+    p.ensure_tracks(LaneKind::Audio, 2);
     p.clips.push(clip(20, None, ClipKind::Audio, 1, 200_000, 90_000, 0));
     p.normalize();
     p.validate().unwrap();
@@ -428,13 +438,9 @@ fn t30_lane_delete_via_batch_is_single_undo() {
     let before = m.project().clone();
 
     // удаление дорожки A1 (lane 0): её клипы удаляются, верхние съезжают
-    let cmds = vec![
-        Command::RemoveClip { id: ClipId(11) },
-        Command::MoveClip { id: ClipId(20), new_start: Tick(200_000), new_lane: 0 },
-        Command::SetLanes { video: 1, audio: 1 },
-    ];
-    m.apply_batch(cmds).unwrap();
-    assert_eq!(m.project().audio_lanes, 1);
+    // с Р.62 это ОДНА команда: дорожка уносит события, верхние съезжают
+    m.apply(Command::RemoveTrack { kind: LaneKind::Audio, at: 0 }).unwrap();
+    assert_eq!(m.project().lanes(LaneKind::Audio), 1);
     assert!(m.project().clips.iter().all(|c| c.kind != ClipKind::Audio || c.lane == 0));
 
     m.undo().unwrap();
@@ -494,68 +500,41 @@ fn t89_named_markers() {
 /// сдвигают индексы, перестановка переносит имя вместе с содержимым.
 #[test]
 fn t90_lane_names() {
-    use kt_model::{lane_label, lane_names_insert, lane_names_remove, lane_names_swap};
-    let mut names = vec![
-        (LaneKind::Video, 0, "Камера".to_string()),
-        (LaneKind::Video, 1, "Титры".to_string()),
-        (LaneKind::Audio, 0, "Голос".to_string()),
-    ];
+    use LaneKind::{Audio, Video};
+    let mut p = base();
+    p.ensure_tracks(Video, 2);
+    p.track_at_mut(Video, 0).unwrap().name = "Камера".into();
+    p.track_at_mut(Video, 1).unwrap().name = "Титры".into();
+    p.track_at_mut(Audio, 0).unwrap().name = "Голос".into();
     // подпись: имя или формула
-    assert_eq!(lane_label(&names, LaneKind::Video, 0), "Камера");
-    assert_eq!(lane_label(&names, LaneKind::Video, 5), "V6");
-    assert_eq!(lane_label(&[], LaneKind::Audio, 2), "A3");
+    assert_eq!(p.track_label(Video, 0), "Камера");
+    assert_eq!(p.track_label(Video, 5), "V6");
+    assert_eq!(lane_label(Audio, 2), "A3");
 
-    // вставка дорожки сдвигает те, что ниже
-    lane_names_insert(&mut names, LaneKind::Video, 0);
-    assert_eq!(lane_label(&names, LaneKind::Video, 1), "Камера");
-    assert_eq!(lane_label(&names, LaneKind::Video, 2), "Титры");
-    assert_eq!(lane_label(&names, LaneKind::Audio, 0), "Голос", "чужой вид не тронут");
+    // вставка дорожки сдвигает те, что ниже (имя едет с объектом)
+    p.insert_track(Video, 0);
+    assert_eq!(p.track_label(Video, 1), "Камера");
+    assert_eq!(p.track_label(Video, 2), "Титры");
+    assert_eq!(p.track_label(Audio, 0), "Голос", "чужой вид не тронут");
 
     // удаление убирает своё имя и подтягивает остальные
-    lane_names_remove(&mut names, LaneKind::Video, 1);
-    assert_eq!(lane_label(&names, LaneKind::Video, 1), "Титры");
+    p.remove_track(Video, 1);
+    assert_eq!(p.track_label(Video, 1), "Титры");
+    assert_eq!(p.track_label(Video, 0), "V1");
 
-    // перестановка переносит имя вместе с содержимым
-    lane_names_swap(&mut names, LaneKind::Video, 1, 3);
-    assert_eq!(lane_label(&names, LaneKind::Video, 3), "Титры");
-    assert_eq!(lane_label(&names, LaneKind::Video, 1), "V2");
+    // перестановка переносит имя вместе с содержимым — имя живёт на
+    // ОБЪЕКТЕ, отдельной таблицы имён больше нет (Р.62)
+    p.set_lane_order(&[(Video, 1), (Video, 0), (Audio, 0)]);
+    assert_eq!(p.track_label(Video, 0), "Титры");
+    assert_eq!(p.track_label(Video, 1), "V2");
 
-    // ДАЛЬНЯЯ перестановка (п.5 р.16): имена едут по той же формуле
-    // сдвига, что и клипы в reorder_lane, — иначе подпись приклеится к
-    // чужой дорожке
-    let mut rot = vec![
-        (LaneKind::Audio, 0, "Голос".to_string()),
-        (LaneKind::Audio, 1, "Музыка".to_string()),
-        (LaneKind::Audio, 2, "Шумы".to_string()),
-    ];
-    kt_model::lane_names_rotate(&mut rot, LaneKind::Audio, 0, 2);
-    assert_eq!(lane_label(&rot, LaneKind::Audio, 2), "Голос");
-    assert_eq!(lane_label(&rot, LaneKind::Audio, 0), "Музыка");
-    assert_eq!(lane_label(&rot, LaneKind::Audio, 1), "Шумы");
-    // и обратно — состояние восстанавливается
-    kt_model::lane_names_rotate(&mut rot, LaneKind::Audio, 2, 0);
-    assert_eq!(lane_label(&rot, LaneKind::Audio, 0), "Голос");
-    assert_eq!(lane_label(&rot, LaneKind::Audio, 1), "Музыка");
-    assert_eq!(lane_label(&rot, LaneKind::Audio, 2), "Шумы");
-
-    // round-trip через проект: пустой вектор не сериализуется
-    let mut p = Project::new(ProjectSettings {
-        fps: 30,
-        width: 640,
-        height: 360,
-        sample_rate: 48000,
-        pitch_engine: Default::default(),
-
-        default_shape: Default::default(),
-
-        conform: Default::default(),
-
-        settings_explicit: false,
-    });
-    p.ui = Some(UiState { lane_names: names.clone(), ..Default::default() });
+    // round-trip через проект: имя — на дорожке, в `ui` его нет
     let json = serde_json::to_string(&p).unwrap();
     assert!(json.contains("Титры"));
-    assert_eq!(Project::from_json(&json).unwrap().ui.unwrap().lane_names, names);
+    assert!(!json.contains("lane_names"));
+    let q = Project::from_json(&json).unwrap();
+    assert_eq!(q.track_label(Video, 0), "Титры");
+    assert_eq!(q.track_label(Audio, 0), "Голос");
     let empty = UiState::default();
     assert!(!serde_json::to_string(&empty).unwrap().contains("lane_names"));
 }

@@ -239,6 +239,7 @@ fn golden_project() -> Project {
         auto: vec![],
         invert: false,
     });
+    p.normalize(); // дорожки под содержимое (Р.62)
     p.validate().unwrap();
     p
 }
@@ -470,6 +471,7 @@ fn generator_project() -> (Project, Sources) {
     let mut g2 = clip(2, 0, 30_000, 60_000, 2);
     g2.r#gen = Some(kt_model::GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 });
     p.clips = vec![clip(1, 1, 0, 90_000, 1), g2];
+    p.normalize(); // дорожки под содержимое (Р.62)
     p.validate().unwrap();
     // источник генератора открывает САМ экспорт (Р.59, стадия 2): его
     // адрес производен от события, и вызывающему его взять неоткуда

@@ -103,7 +103,7 @@ fn t36_replace_renders_as_new_source_and_bake_is_noop_for_render() {
         fade_out: Tick::ZERO,
         enabled: true,
     });
-    p.morph_lanes = 1;
+    p.ensure_tracks(kt_model::LaneKind::Morph, 1);
     p.validate().unwrap();
 
     let with_morph = render(&p);
@@ -141,7 +141,7 @@ fn t36_effect_batch_is_live() {
         fade_out: Tick::ZERO,
         enabled: true,
     });
-    p.morph_lanes = 1;
+    p.ensure_tracks(kt_model::LaneKind::Morph, 1);
     p.validate().unwrap();
 
     let with_morph = render(&p);

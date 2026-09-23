@@ -182,7 +182,7 @@ fn t247_layer_never_slices_a_stretched_clip() {
         let mut p = project(vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)], vec![], false);
         p.clips[0].kind = kind;
         if kind == ClipKind::Audio {
-            p.audio_lanes = 1;
+            p.ensure_tracks(kt_model::LaneKind::Audio, 1);
         }
         p.markers.push(Marker {
             t: Tick(SEC),
@@ -190,7 +190,7 @@ fn t247_layer_never_slices_a_stretched_clip() {
             name: "врез".into(),
             color: None,
         });
-        p.morph_lanes = 1;
+        p.ensure_tracks(kt_model::LaneKind::Morph, 1);
         p.morphers.push(MorpherEvent {
             id: MorphId(1),
             lane: 0,

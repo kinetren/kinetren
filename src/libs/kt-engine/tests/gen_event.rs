@@ -78,6 +78,7 @@ fn two_titles() -> Project {
         *pos_y = 0.8;
     }
     p.clips = vec![a, b];
+    p.normalize(); // дорожки под содержимое (Р.62)
     p.validate().expect("два титра на одном виде законны");
     p
 }

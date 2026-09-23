@@ -1173,9 +1173,9 @@ fn demo_project(synth: bool) -> Project {
     });
     p.region = Some(Region { start: t(34.0), end: t(66.0) });
     p.loop_enabled = true;
-    p.video_lanes = 3;
-    p.audio_lanes = 3;
-    p.morph_lanes = 1;
+    p.ensure_tracks(kt_model::LaneKind::Video, 3);
+    p.ensure_tracks(kt_model::LaneKind::Audio, 3);
+    p.ensure_tracks(kt_model::LaneKind::Morph, 1);
     p.morphers = vec![MorpherEvent {
         id: MorphId(1),
         lane: 0,

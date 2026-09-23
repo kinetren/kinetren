@@ -278,11 +278,9 @@ pub struct KtApp {
     /// Куда подмотать окно таймлайна на следующем кадре (п.11 р.9:
     /// прыжок к точке остановки должен показывать курсор).
     pub pending_reveal: Option<i64>,
-    /// Имена дорожек (п.2 р.10) — зеркало UiState.lane_names.
-    pub lane_names: Vec<(kt_model::LaneKind, u32, String)>,
+
     /// Индивидуальные высоты строк (Р.38 п.11) — зеркало
-    /// UiState.lane_heights. Удобство: `dirty_ui`, не `dirty_content`.
-    pub lane_heights: Vec<(kt_model::LaneKind, u32, f32)>,
+
     /// Активный инлайн-ввод имени метки (п.1 р.10).
     pub marker_edit: Option<MarkerEdit>,
     /// Запросить фокус полю имени метки (один раз при открытии).
@@ -765,8 +763,6 @@ impl KtApp {
             last_user_scroll: None,
             pending_unmax_drag: false,
             pending_reveal: None,
-            lane_names: Vec::new(),
-            lane_heights: Vec::new(),
             marker_edit: None,
             marker_edit_focus: false,
             lane_edit: None,
@@ -971,8 +967,6 @@ impl KtApp {
             last_user_scroll: None,
             pending_unmax_drag: false,
             pending_reveal: None,
-            lane_names: Vec::new(),
-            lane_heights: Vec::new(),
             marker_edit: None,
             marker_edit_focus: false,
             lane_edit: None,
@@ -1165,8 +1159,6 @@ impl KtApp {
             if ui.meters_w > 0.0 {
                 app.meters_w = ui.meters_w.clamp(METERS_W_MIN, METERS_W_MAX);
             }
-            app.lane_names = ui.lane_names;
-            app.lane_heights = ui.lane_heights;
         }
         // Р.49 п.360: рабочее место пользователя сильнее того, что лежит в
         // чужом файле. Пустое хранилище (первый запуск после переезда)
@@ -1218,15 +1210,31 @@ impl KtApp {
     }
 
     /// Индивидуальная высота строки (Р.38 п.11). `None` — сбросить к
-    /// расчётной. Это УДОБСТВО: `dirty_ui`, звёздочку не зажигает и
-    /// автосейв не запускает (правило «правки содержимого ≠ правки
-    /// удобства», п.5 р.11).
+    /// расчётной. С Р.62 высота живёт НА ДОРОЖКЕ и ходит через undo
+    /// вместе с именем: трёх параллельных векторов свойств больше нет.
     pub fn set_row_height(&mut self, key: (kt_model::LaneKind, u32), h: Option<f32>) {
-        self.lane_heights.retain(|(k, l, _)| (*k, *l) != key);
-        if let Some(h) = h {
-            self.lane_heights.push((key.0, key.1, h));
+        let Some(t) = self.model.project().track_at(key.0, key.1) else { return };
+        let (id, mut props) = (t.id, t.props());
+        props.height = h.unwrap_or(0.0);
+        if props != t.props() {
+            self.apply(Command::SetTrackProps { id, props });
         }
-        self.dirty_ui = true;
+    }
+
+    /// Высоты строк для геометрии кадра: `(вид, номер, px)`.
+    pub fn row_heights(&self) -> Vec<(kt_model::LaneKind, u32, f32)> {
+        let p = self.model.project();
+        p.rows()
+            .into_iter()
+            .filter_map(|(k, l)| {
+                p.track_at(k, l).filter(|t| t.height > 0.0).map(|t| (k, l, t.height))
+            })
+            .collect()
+    }
+
+    /// Подпись строки: имя дорожки либо формула V1/A1/M1/C1.
+    pub fn row_label(&self, kind: kt_model::LaneKind, lane: u32) -> String {
+        self.model.project().track_label(kind, lane)
     }
 
     /// Видимое окно главного таймлайна в тиках (Р.38 п.14): по нему
@@ -1254,8 +1262,10 @@ impl KtApp {
             bin_layout: self.bin_layout.iter().map(|(id, p)| (*id, p.x, p.y)).collect(),
             bin_groups: self.bin_groups.clone(),
             meters_w: keep.meters_w,
-            lane_names: self.lane_names.clone(),
-            lane_heights: self.lane_heights.clone(),
+            // имена и высоты дорожек с Р.62 живут на дорожках-объектах
+            // (модель, undo); в `ui` остались только легаси-входы чтения
+            lane_names: Vec::new(),
+            lane_heights: Vec::new(),
             auto_axis_unlinked: !self.auto_axis_linked,
         }
     }
@@ -2085,12 +2095,7 @@ impl KtApp {
         if !self.search_open {
             return;
         }
-        let hits = search_hits(
-            self.model.project(),
-            &self.lane_names,
-            &self.bin_groups,
-            &self.search_query,
-        );
+        let hits = search_hits(self.model.project(), &self.bin_groups, &self.search_query);
         let mut open = true;
         let mut go: Option<Hit> = None;
         egui::Window::new(tr(k::win::SEARCH_TITLE))
@@ -2583,9 +2588,9 @@ impl KtApp {
         if self.apply(Command::SetLaneOrder { order: rows }) {
             // имена и высоты живут ВНЕ undo и адресуются парой (вид,
             // номер) — значит едут тем же отображением, что содержимое
-            perm.remap_keyed(&mut self.lane_names);
-            perm.remap_keyed(&mut self.lane_heights);
-            self.dirty_ui = true;
+            // имя и высота живут НА ДОРОЖКЕ и едут вместе с объектом —
+            // перекладывать их отдельно больше нечем (Р.62)
+            let _ = perm;
         }
     }
 
@@ -2610,18 +2615,7 @@ impl KtApp {
     /// соседние существовали и были покрыты t90, но из приложения не
     /// вызывались — после вставки подпись оказывалась у чужой дорожки.
     pub fn insert_lane_at(&mut self, kind: LaneKind, at: u32) -> bool {
-        let ok = match kind {
-            LaneKind::Video => self.apply(Command::InsertLane { kind: ClipKind::Video, at }),
-            LaneKind::Audio => self.apply(Command::InsertLane { kind: ClipKind::Audio, at }),
-            LaneKind::Morph => self.apply(Command::InsertMorphLane { at }),
-            LaneKind::Camera => self.apply(Command::InsertCameraLane { at }),
-        };
-        if ok {
-            // строку в порядке двигает САМА команда (Р.35) — снаружи её
-            // звали руками и половину случаев забывали (п.122)
-            kt_model::lane_names_insert(&mut self.lane_names, kind, at);
-            self.dirty_ui = true;
-        }
+        let ok = self.apply(Command::InsertTrack { kind, at });
         ok
     }
 
@@ -2643,12 +2637,7 @@ impl KtApp {
             Some(pos) => rows[..=pos].iter().filter(|e| e.0 == kind).count() as u32,
             None => rows.iter().filter(|e| e.0 == kind).count() as u32,
         };
-        let insert = match kind {
-            LaneKind::Video => Command::InsertLane { kind: ClipKind::Video, at },
-            LaneKind::Audio => Command::InsertLane { kind: ClipKind::Audio, at },
-            LaneKind::Morph => Command::InsertMorphLane { at },
-            LaneKind::Camera => Command::InsertCameraLane { at },
-        };
+        let insert = Command::InsertTrack { kind, at };
         // Порядок считаем САМИ и кладём в тот же батч: `lane_order_insert`
         // ставит строку перед следующей дорожкой СВОЕГО вида, а если такой
         // нет — в самый конец списка. Живая проверка: клик по V2 при
@@ -2663,55 +2652,22 @@ impl KtApp {
             let to = order.iter().position(|&x| x == row).map(|i| i + 1).unwrap_or(order.len());
             order.insert(to, e);
         }
-        if self.apply_batch(vec![insert, Command::SetLaneOrder { order }]) {
-            kt_model::lane_names_insert(&mut self.lane_names, kind, at);
-            kt_model::lane_keyed_insert(&mut self.lane_heights, kind, at);
-            self.dirty_ui = true;
-        }
+        self.apply_batch(vec![insert, Command::SetLaneOrder { order }]);
     }
 
     /// Удаление дорожки (п.8, решение пользователя: вместе с событиями,
-    /// один undo-шаг): RemoveClip событий + сдвиг верхних + SetLanes−1.
+    /// один undo-шаг). С Р.62 это ОДНА команда модели: она уносит события
+    /// дорожки, съезжает номера выше и забирает с собой имя, высоту и
+    /// свойства — трёх параллельных таблиц больше нет.
     pub fn delete_lane(&mut self, kind: ClipKind, lane: u32) {
-        // `SetLanes` при открытой полосе модель не принимает (Р.56): её
-        // граница осталась бы там, где события уже не лежат
+        // правку СТРОК при открытой полосе модель не принимает (Р.56)
         self.collapse_bands_for_rows();
-        let p = self.model.project();
-        let (v, a) = (p.video_lanes.max(1), p.audio_lanes.max(1));
-        let lanes_of_kind = match kind {
-            ClipKind::Video => v,
-            ClipKind::Audio => a,
-        };
-        if lanes_of_kind <= 1 {
+        let lk = kt_model::lane_key_of(kind);
+        if self.model.project().lanes(lk) <= 1 {
             self.note(tr(k::msg::LAST_LANE));
             return;
         }
-        let mut cmds = Vec::new();
-        for c in &p.clips {
-            if c.kind == kind && c.lane == lane {
-                cmds.push(Command::RemoveClip { id: c.id });
-            }
-        }
-        for c in &p.clips {
-            if c.kind == kind && c.lane > lane {
-                cmds.push(Command::MoveClip { id: c.id, new_start: c.start, new_lane: c.lane - 1 });
-            }
-        }
-        let (nv, na) = match kind {
-            ClipKind::Video => (v - 1, a),
-            ClipKind::Audio => (v, a - 1),
-        };
-        cmds.push(Command::SetLanes { video: nv, audio: na });
-        // имя удалённой дорожки уходит вместе с ней, остальные съезжают
-        // (п.5 р.16)
-        let lk = match kind {
-            ClipKind::Video => LaneKind::Video,
-            ClipKind::Audio => LaneKind::Audio,
-        };
-        kt_model::lane_names_remove(&mut self.lane_names, lk, lane);
-        kt_model::lane_keyed_remove(&mut self.lane_heights, lk, lane);
-        self.dirty_ui = true;
-        self.apply_batch(cmds);
+        self.apply(Command::RemoveTrack { kind: lk, at: lane });
     }
 
     /// Видимый диапазон таймлайна в тиках (для расчёта «куда смотреть»).
@@ -4932,6 +4888,22 @@ impl KtApp {
             self.note(tr(k::msg::PASTE_LANES_CLAMPED));
         }
         let mut block = block;
+        // ВСТАВКА В КОРЕНЬ НЕ ЛЕЗЕТ В РАСКРЫТУЮ ПОЛОСУ (Р.62). До change B
+        // полоса лежала в ХВОСТЕ числового пространства, и низкие номера
+        // всегда принадлежали корню; теперь строки полосы стоят ПОД своим
+        // экземпляром, то есть в середине, и половина пары (аудио к
+        // кликнутому видео) могла молча уехать внутрь ленты. Строку
+        // кликают у ОДНОГО вида — остальные виды перешагивают полосу.
+        if target.is_none() && !self.model.bands().is_empty() {
+            let mut push = kt_model::LaneBases::default();
+            for k in [LaneKind::Video, LaneKind::Audio, LaneKind::Morph, LaneKind::Camera] {
+                let Some((first, _)) = block.lane_span(k) else { continue };
+                if let Some(b) = self.model.band_of_row(k, first) {
+                    *push.get_mut(k) = b.base.get(k) + b.len.get(k) - first;
+                }
+            }
+            block.offset_lanes(push);
+        }
         // Дорожки под блок заводятся ЯВНО. Молчаливый рост в `AddClip`
         // при раскрытой полосе положил бы событие не в ту ленту: номер
         // `base` принадлежит полосе, а `base + len` — уже никому.
@@ -4948,12 +4920,7 @@ impl KtApp {
             };
             for i in have.get(k)..need.get(k) {
                 let at = tail + (i - have.get(k));
-                grow.push(match k {
-                    LaneKind::Video => Command::InsertLane { kind: ClipKind::Video, at },
-                    LaneKind::Audio => Command::InsertLane { kind: ClipKind::Audio, at },
-                    LaneKind::Morph => Command::InsertMorphLane { at },
-                    LaneKind::Camera => Command::InsertCameraLane { at },
-                });
+                grow.push(Command::InsertTrack { kind: k, at });
             }
         }
         if let Some((base, _)) = target {
@@ -5124,8 +5091,8 @@ impl KtApp {
         let Some(sel) = self.require_one_selected() else { return };
         let Some(c) = self.model.clip(sel).cloned() else { return };
         let lanes = match c.kind {
-            ClipKind::Video => self.model.project().video_lanes,
-            ClipKind::Audio => self.model.project().audio_lanes,
+            ClipKind::Video => self.model.project().lanes(kt_model::LaneKind::Video),
+            ClipKind::Audio => self.model.project().lanes(kt_model::LaneKind::Audio),
         };
         let new_lane = (c.lane as i64 + delta as i64).clamp(0, lanes.saturating_sub(1) as i64);
         if new_lane as u32 != c.lane {
@@ -5386,8 +5353,8 @@ impl KtApp {
         // выбирает сама `InsertCameraLane` (`lane_order_insert`): рядом с
         // прочими камерными строками. Своей раскладки тут не считаем —
         // разошлась бы с меню строки, которое зовёт ту же команду.
-        let lane = self.model.project().camera_lanes;
-        if self.apply(Command::InsertCameraLane { at: lane }) {
+        let lane = self.model.project().lanes(kt_model::LaneKind::Camera);
+        if self.apply(Command::InsertTrack { kind: LaneKind::Camera, at: lane }) {
             self.add_camera_at_playhead(lane);
         }
     }
@@ -5535,7 +5502,7 @@ impl KtApp {
             return;
         }
         let id = MorphId(self.next_morph_id());
-        let mut cmds = vec![Command::InsertMorphLane { at: 0 }];
+        let mut cmds = vec![Command::InsertTrack { kind: LaneKind::Morph, at: 0 }];
         // порядок строк: новая морф-строка наверх, остальные как были
         let mut order: Vec<(LaneKind, u32)> = self
             .model
@@ -7843,7 +7810,6 @@ pub struct Hit {
 /// фильтр FX-реестра: тестируется без UI. Пустой запрос — пусто.
 pub fn search_hits(
     p: &kt_model::Project,
-    lane_names: &[(kt_model::LaneKind, u32, String)],
     // группы живут в приложении и попадают в проект только при
     // сохранении — поиск обязан видеть ЖИВЫЕ (п.13 р.11)
     groups: &[kt_model::BinGroup],
@@ -7907,14 +7873,15 @@ pub fn search_hits(
             ));
         }
     }
-    let (v, a) = (p.video_lanes.max(1), p.audio_lanes.max(1));
+    let (v, a) =
+        (p.lanes(kt_model::LaneKind::Video).max(1), p.lanes(kt_model::LaneKind::Audio).max(1));
     for (kind, count) in [
         (kt_model::LaneKind::Video, v),
         (kt_model::LaneKind::Audio, a),
-        (kt_model::LaneKind::Morph, p.morph_lanes),
+        (kt_model::LaneKind::Morph, p.lanes(kt_model::LaneKind::Morph)),
     ] {
         for lane in 0..count {
-            let label = kt_model::lane_label(lane_names, kind, lane);
+            let label = p.track_label(kind, lane);
             if let Some(r) = rank(&label) {
                 let at =
                     p.clips.iter().filter(|c| c.lane == lane).map(|c| c.start.0).min().unwrap_or(0);
@@ -9129,7 +9096,8 @@ mod repaint_tests {
         p.media.push(MediaRef { id: MediaId(1), path: "/tmp/Интервью.mp4".into() });
         p.markers.push(Marker::named(Tick(5000), "Интро"));
         p.markers.push(Marker::named(Tick(9000), "интервью — начало"));
-        let names = vec![(LaneKind::Audio, 0, "Голос".to_string())];
+        // имя дорожки с Р.62 живёт на дорожке-объекте
+        p.track_at_mut(LaneKind::Audio, 0).unwrap().name = "Голос".into();
         let groups = vec![BinGroup {
             name: "Планы города".into(),
             members: vec![MediaId(1)],
@@ -9137,31 +9105,31 @@ mod repaint_tests {
         }];
 
         // пустой запрос — пусто
-        assert!(search_hits(&p, &names, &groups, "   ").is_empty());
+        assert!(search_hits(&p, &groups, "   ").is_empty());
 
         // регистр не важен, точное совпадение первым
-        let hits = search_hits(&p, &names, &groups, "интро");
+        let hits = search_hits(&p, &groups, "интро");
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].kind, HitKind::Marker);
         assert_eq!(hits[0].at, 5000);
 
         // одна подстрока находит и метку, и медиа
-        let hits = search_hits(&p, &names, &groups, "интервью");
+        let hits = search_hits(&p, &groups, "интервью");
         assert!(hits.iter().any(|h| h.kind == HitKind::Marker));
         assert!(hits.iter().any(|h| h.kind == HitKind::Media));
 
         // дорожка по пользовательскому имени и по формуле
-        assert!(search_hits(&p, &names, &groups, "голос").iter().any(|h| h.kind == HitKind::Track));
-        assert!(search_hits(&p, &names, &groups, "v1").iter().any(|h| h.kind == HitKind::Track));
+        assert!(search_hits(&p, &groups, "голос").iter().any(|h| h.kind == HitKind::Track));
+        assert!(search_hits(&p, &groups, "v1").iter().any(|h| h.kind == HitKind::Track));
 
         // мимо
-        assert!(search_hits(&p, &names, &groups, "щщщ").is_empty());
+        assert!(search_hits(&p, &groups, "щщщ").is_empty());
         // группы бина тоже ищутся по имени (п.13 р.11)
-        let hits = search_hits(&p, &names, &groups, "планы");
+        let hits = search_hits(&p, &groups, "планы");
         assert!(hits.iter().any(|h| h.kind == HitKind::Group), "группа не найдена: {hits:?}");
         // безымянная группа в выдачу не лезет
         let anon = vec![BinGroup { name: String::new(), members: vec![MediaId(1)], locked: true }];
-        assert!(search_hits(&p, &names, &anon, "").is_empty());
+        assert!(search_hits(&p, &anon, "").is_empty());
     }
 
     /// Тест 82 (п.16 р.8): умная навигация — точки остановки и прыжки.

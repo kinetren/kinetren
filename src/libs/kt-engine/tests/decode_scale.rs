@@ -414,6 +414,7 @@ fn t714_order_equals_read_on_every_conform_rule() {
         c.geometry.rule = *r;
         p.clips.push(c);
     }
+    p.normalize(); // дорожки под содержимое (Р.62)
     p.validate().unwrap();
     let facts = kt_engine::SourceFacts {
         natives: natives(1080, 1920),

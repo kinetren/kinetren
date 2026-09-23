@@ -44,6 +44,7 @@ fn project_with_audio_clips(clips: Vec<ClipEvent>) -> Project {
         p.media.push(MediaRef { id, path: format!("synth:{}", id.0) });
     }
     p.clips = clips;
+    p.normalize(); // дорожки под содержимое (Р.62)
     p.validate().unwrap();
     p
 }

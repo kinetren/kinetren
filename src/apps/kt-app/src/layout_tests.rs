@@ -573,13 +573,13 @@ fn t96_dirty_split_and_loop_survives_esc() {
     let mut h = harness();
     assert!(!h.state().dirty_content && !h.state().dirty_ui, "свежий проект чист");
 
-    // --- удобства: регион, loop, зум, раскладка бина, имя дорожки
+    // --- удобства: регион, loop, зум, раскладка бина (имя дорожки с Р.62
+    // — СОДЕРЖИМОЕ модели и проверяется ниже, вместе с правками монтажа)
     h.state_mut().model.set_region(Region::normalized(Tick(0), Tick(90_000)));
     h.state_mut().on_region_changed();
     h.state_mut().toggle_loop();
     h.state_mut().ticks_per_px = 4321.0;
     h.state_mut().bin_layout.insert(MediaId(3), egui::pos2(12.0, 34.0));
-    h.state_mut().lane_names.push((LaneKind::Video, 0, "камера".into()));
     h.step();
     assert!(
         !h.state().dirty_content,
@@ -1129,17 +1129,19 @@ fn t101_edge_buttons_are_clickable() {
 /// перестановки подпись приклеивалась к чужой дорожке.
 #[test]
 fn t122_insert_lane_after_clicked_row() {
-    use kt_model::{LaneKind, lane_label};
+    use kt_model::LaneKind;
     let mut h = harness();
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-        p.video_lanes = 3;
-        p.audio_lanes = 2;
+        p.ensure_tracks(kt_model::LaneKind::Video, 3);
+        p.ensure_tracks(kt_model::LaneKind::Audio, 2);
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
-        app.lane_names =
-            vec![(LaneKind::Video, 1, "Титры".into()), (LaneKind::Audio, 1, "Голос".into())];
+        edit_project(app, |p| {
+            p.track_at_mut(LaneKind::Video, 1).unwrap().name = "Титры".into();
+            p.track_at_mut(LaneKind::Audio, 1).unwrap().name = "Голос".into();
+        });
     }
     h.step();
 
@@ -1147,7 +1149,11 @@ fn t122_insert_lane_after_clicked_row() {
     // строка ровно СЛЕДУЮЩАЯ, а не в конце списка
     h.state_mut().insert_lane_after_row(LaneKind::Video, Some((LaneKind::Video, 0)));
     h.step();
-    assert_eq!(h.state().model.project().video_lanes, 4, "дорожка не добавилась");
+    assert_eq!(
+        h.state().model.project().lanes(kt_model::LaneKind::Video),
+        4,
+        "дорожка не добавилась"
+    );
     assert_eq!(
         h.state().model.project().rows()[1],
         (LaneKind::Video, 1),
@@ -1156,16 +1162,11 @@ fn t122_insert_lane_after_clicked_row() {
     );
     // имя «Титры» ехало на V2 (индекс 1) — обязано уехать на индекс 2
     assert_eq!(
-        lane_label(&h.state().lane_names, LaneKind::Video, 2),
+        h.state().row_label(LaneKind::Video, 2),
         "Титры",
-        "имя не поехало вместе со своей дорожкой: {:?}",
-        h.state().lane_names
+        "имя не поехало вместе со своей дорожкой"
     );
-    assert_eq!(
-        lane_label(&h.state().lane_names, LaneKind::Video, 1),
-        "V2",
-        "новая дорожка забрала чужое имя"
-    );
+    assert_eq!(h.state().row_label(LaneKind::Video, 1), "V2", "новая дорожка забрала чужое имя");
 
     // --- клик по ПОСЛЕДНЕЙ строке своего вида: строка обязана встать
     // сразу под ней, а не в самый низ списка. Именно это и нашлось живой
@@ -1208,32 +1209,33 @@ fn t122_insert_lane_after_clicked_row() {
     );
 
     // --- morph тоже добавляется из меню
-    let m0 = h.state().model.project().morph_lanes;
+    let m0 = h.state().model.project().lanes(kt_model::LaneKind::Morph);
     h.state_mut().insert_lane_after_row(LaneKind::Morph, None);
     h.step();
-    assert_eq!(h.state().model.project().morph_lanes, m0 + 1, "morph-дорожка не добавилась");
+    assert_eq!(
+        h.state().model.project().lanes(kt_model::LaneKind::Morph),
+        m0 + 1,
+        "morph-дорожка не добавилась"
+    );
 
     // --- удаление: имя уходит вместе с дорожкой, соседи съезжают
     {
         let app = h.state_mut();
-        app.lane_names =
-            vec![(LaneKind::Audio, 0, "Музыка".into()), (LaneKind::Audio, 1, "Голос".into())];
+        edit_project(app, |p| {
+            p.track_at_mut(LaneKind::Audio, 0).unwrap().name = "Музыка".into();
+            p.track_at_mut(LaneKind::Audio, 1).unwrap().name = "Голос".into();
+        });
         app.delete_lane(kt_model::ClipKind::Audio, 0);
     }
     h.step();
-    assert_eq!(
-        lane_label(&h.state().lane_names, LaneKind::Audio, 0),
-        "Голос",
-        "после удаления имена не съехали: {:?}",
-        h.state().lane_names
-    );
+    assert_eq!(h.state().row_label(LaneKind::Audio, 0), "Голос", "после удаления имена не съехали");
 
     // --- перестановка: имя едет за содержимым (иначе «Голос» останется
     // на чужой строке)
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-        p.audio_lanes = 3;
+        p.ensure_tracks(kt_model::LaneKind::Audio, 3);
         p.media.push(kt_model::MediaRef { id: kt_model::MediaId(1), path: "synth:1".into() });
         p.clips.push(kt_model::ClipEvent {
             r#gen: None,
@@ -1260,7 +1262,7 @@ fn t122_insert_lane_after_clicked_row() {
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
-        app.lane_names = vec![(LaneKind::Audio, 0, "Голос".into())];
+        edit_project(app, |p| p.track_at_mut(LaneKind::Audio, 0).unwrap().name = "Голос".into());
         // строки, а не номера: с Р.56 номер дорожки — это РАНГ строки, и
         // перестановка идёт одной командой на любые виды
         let rows = app.model.project().rows();
@@ -1275,10 +1277,9 @@ fn t122_insert_lane_after_clicked_row() {
         "содержимое не переехало — тест ниже проверял бы не то"
     );
     assert_eq!(
-        lane_label(&h.state().lane_names, LaneKind::Audio, 2),
+        h.state().row_label(LaneKind::Audio, 2),
         "Голос",
-        "имя не поехало за содержимым при перестановке: {:?}",
-        h.state().lane_names
+        "имя не поехало за содержимым при перестановке"
     );
 }
 
@@ -3424,7 +3425,7 @@ fn t218_morpher_source_field_takes_files_and_reverts() {
         opacity: 1.0,
         fx_off: false,
     });
-    p.morph_lanes = 1;
+    p.ensure_tracks(kt_model::LaneKind::Morph, 1);
     p.morphers.push(MorpherEvent {
         id: MorphId(1),
         lane: 0,
@@ -3517,7 +3518,7 @@ fn t217_one_chain_widget_for_events_and_morphers() {
         fx_off: false,
     });
     // морфер-батч с двумя эффектами — вторая цепочка тем же виджетом
-    p.morph_lanes = 1;
+    p.ensure_tracks(kt_model::LaneKind::Morph, 1);
     p.morphers.push(MorpherEvent {
         id: MorphId(1),
         lane: 0,
@@ -3725,6 +3726,17 @@ fn t194_autosave_runs_in_background() {
 #[cfg(test)]
 fn harness_three_clips() -> (Harness<'static, KtApp>, crate::timeline::TlGeom) {
     harness_three_clips_dt(None)
+}
+
+/// Правка модели ФИКСТУРЫ напрямую (тест готовит сцену, а не жест):
+/// клон рабочего вида, правка, новая модель. С Р.62 так ставятся имя и
+/// высота дорожки — они живут на дорожке-объекте.
+#[cfg(test)]
+fn edit_project(app: &mut KtApp, f: impl FnOnce(&mut kt_model::Project)) {
+    let mut p = app.model.project().clone();
+    f(&mut p);
+    p.validate().expect("фикстура законна");
+    app.model = kt_model::TimelineModel::new(p);
 }
 
 #[cfg(test)]
@@ -4789,12 +4801,17 @@ fn t391_workspace_falls_back_to_file_and_project_keeps_its_own() {
     // а вот ЭТО остаётся в проекте: оно про монтаж, а не про рабочее место
     let mut h = harness();
     let app = h.state_mut();
-    app.lane_names = vec![(kt_model::LaneKind::Audio, 0, "Речь".into())];
-    app.lane_heights = vec![(kt_model::LaneKind::Video, 0, 88.0)];
+    // имя и высота дорожки с Р.62 — СОДЕРЖИМОЕ модели (ходят через undo),
+    // а не поля `ui`: в рабочем месте им делать нечего тем более
+    edit_project(app, |p| {
+        p.track_at_mut(kt_model::LaneKind::Audio, 0).unwrap().name = "Речь".into();
+        p.track_at_mut(kt_model::LaneKind::Video, 0).unwrap().height = 88.0;
+    });
     app.bin_free = true;
     let ui = app.ui_state_for_test();
-    assert_eq!(ui.lane_names.len(), 1, "имя дорожки обязано ехать вместе с монтажом");
-    assert_eq!(ui.lane_heights.len(), 1, "высота дорожки обязана ехать вместе с монтажом");
+    assert!(ui.lane_names.is_empty(), "имя дорожки больше не живёт в ui");
+    assert!(ui.lane_heights.is_empty(), "высота дорожки больше не живёт в ui");
+    assert_eq!(app.row_label(kt_model::LaneKind::Audio, 0), "Речь");
     assert!(ui.bin_free, "раскладка бина — часть монтажа");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -4871,7 +4888,7 @@ fn t392_double_click_on_level_rail_resets_level() {
         a.lane = 0;
         a.gain_db = -3.0;
         p.clips.push(a);
-        p.audio_lanes = p.audio_lanes.max(1);
+        p.ensure_tracks(kt_model::LaneKind::Audio, p.lanes(kt_model::LaneKind::Audio).max(1));
         p.clips[0].opacity = 0.35;
         app.model = kt_model::TimelineModel::new(p);
     }
@@ -4970,7 +4987,7 @@ fn t393_menu_accelerator_promises_only_what_the_key_does() {
     let (mut h2, _) = harness_three_clips();
     {
         let app = h2.state_mut();
-        assert!(app.apply(Command::InsertCameraLane { at: 0 }));
+        assert!(app.apply(Command::InsertTrack { kind: kt_model::LaneKind::Camera, at: 0 }));
         app.player.seek(Tick(320_000));
         app.add_camera_at_playhead(0);
         app.camera_editors.clear();
@@ -5196,7 +5213,7 @@ fn t420_ducking_runs_in_the_background() {
         a.kind = ClipKind::Audio;
         a.lane = 0;
         p.clips.push(a);
-        p.audio_lanes = p.audio_lanes.max(1);
+        p.ensure_tracks(kt_model::LaneKind::Audio, p.lanes(kt_model::LaneKind::Audio).max(1));
         app.model = kt_model::TimelineModel::new(p);
         // окно настроек дакинга, как его собирает диалог
         app.duck = Some(crate::app::DuckDialog {
@@ -6739,7 +6756,7 @@ fn t231_camera_editor_opens_and_edits() {
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-        p.camera_lanes = 1;
+        p.ensure_tracks(kt_model::LaneKind::Camera, 1);
         p.cameras.push(CameraEvent {
             ease: true,
             id: CameraId(1),
@@ -6845,7 +6862,7 @@ fn t242_morph_editor_shows_target_mode_and_timing() {
         opacity: 1.0,
         fx_off: false,
     });
-    p.morph_lanes = 1;
+    p.ensure_tracks(kt_model::LaneKind::Morph, 1);
     p.morphers.push(MorpherEvent {
         id: MorphId(1),
         lane: 0,
@@ -7094,7 +7111,7 @@ fn t246_thin_row_is_clickable_and_zoom_anchor_holds() {
         opacity: 1.0,
         fx_off: false,
     });
-    p.morph_lanes = 1;
+    p.ensure_tracks(kt_model::LaneKind::Morph, 1);
     p.morphers.push(MorpherEvent {
         id: MorphId(1),
         lane: 0,
@@ -7177,7 +7194,7 @@ fn t248_band_becomes_named_area() {
 
     // окно морфера: ссылка на область рисуется чипом
     let mut p = app.model.project().clone();
-    p.morph_lanes = 1;
+    p.ensure_tracks(kt_model::LaneKind::Morph, 1);
     p.morphers.push(MorpherEvent {
         id: MorphId(1),
         lane: 0,
@@ -7469,7 +7486,7 @@ fn t258_morph_layer_reuses_lane_and_honours_region() {
     app.player.seek(Tick(180_000));
     app.add_morph_layer();
     let pr = app.model.project().clone();
-    assert_eq!(pr.morph_lanes, 1, "первая морф-дорожка заведена");
+    assert_eq!(pr.lanes(kt_model::LaneKind::Morph), 1, "первая морф-дорожка заведена");
     assert_eq!(pr.morphers.len(), 1);
     assert_eq!(pr.morphers[0].start, Tick(180_000), "блок встал под курсором");
     assert_eq!(pr.morphers[0].duration, Tick(90 * 1500), "и на 1.5 с");
@@ -7478,7 +7495,11 @@ fn t258_morph_layer_reuses_lane_and_honours_region() {
     app.player.seek(Tick(495_000)); // кратно 15: playhead живёт в аудиокадрах
     app.add_morph_layer();
     let pr = app.model.project().clone();
-    assert_eq!(pr.morph_lanes, 1, "вторая морф-дорожка НЕ заводится: «слой» — не «дорожка»");
+    assert_eq!(
+        pr.lanes(kt_model::LaneKind::Morph),
+        1,
+        "вторая морф-дорожка НЕ заводится: «слой» — не «дорожка»"
+    );
     assert_eq!(pr.morphers.len(), 2, "а блок добавился");
     assert_eq!(pr.morphers[1].lane, 0, "на ту же дорожку");
     assert_eq!(pr.morphers[1].start, Tick(495_000));
@@ -7578,7 +7599,7 @@ fn t260_camera_and_marker_left_edge_are_reachable() {
     let (mut h, _) = harness_three_clips();
     {
         let app = h.state_mut();
-        assert!(app.apply(Command::InsertCameraLane { at: 0 }));
+        assert!(app.apply(Command::InsertTrack { kind: kt_model::LaneKind::Camera, at: 0 }));
         app.player.seek(Tick(90_000));
         app.add_camera_at_playhead(0);
         assert!(app.apply(Command::AddMarker { at: Tick(45_000), duration: Tick(30_000) }));
@@ -7698,17 +7719,19 @@ fn t262_per_track_height() {
     h.drop_at(egui::pos2(gx, row0_bottom + 40.0));
     h.step();
     let app = h.state();
-    assert_eq!(app.lane_heights.len(), 1, "высота дорожки запомнена: {:?}", app.lane_heights);
-    let (k, l, hh) = app.lane_heights[0];
+    let over = app.row_heights();
+    assert_eq!(over.len(), 1, "высота дорожки запомнена: {over:?}");
+    let (k, l, hh) = over[0];
     assert_eq!((k, l), g0.rows[0], "запомнена ИМЕННО та строка, за кромку которой тянули");
     assert!((hh - want).abs() < 3.0, "высота {hh} ≈ {want}");
-    assert!(!app.dirty_content, "высота — удобство, а не содержимое: звёздочка не зажигается");
-    assert!(app.dirty_ui, "но записать её при следующем сохранении надо");
+    // с Р.62 высота живёт НА ДОРОЖКЕ и ходит через undo вместе с именем
+    assert!(app.dirty_content, "высота дорожки — содержимое модели");
 
     // и сброс возвращает расчётную
     let app = h.state_mut();
     app.set_row_height(g0.rows[0], None);
-    assert!(app.lane_heights.is_empty(), "сброс убирает переопределение");
+    assert!(app.row_heights().is_empty(), "сброс убирает переопределение");
+    assert!(app.model.undo_depth() >= 2, "высота обязана ходить через undo");
 }
 
 /// Тест 265 (Р.38 пп.14-18): панель автоматизации.
@@ -8064,7 +8087,11 @@ fn t275_morph_layer_never_hides_a_block_under_another() {
     h.step();
     let pr = h.state().model.project().clone();
     assert_eq!(pr.morphers.len(), 2, "оба блока созданы");
-    assert_eq!(pr.morph_lanes, 2, "занятое место обязано увести блок на новую дорожку");
+    assert_eq!(
+        pr.lanes(kt_model::LaneKind::Morph),
+        2,
+        "занятое место обязано увести блок на новую дорожку"
+    );
     assert_ne!(pr.morphers[0].lane, pr.morphers[1].lane, "и они не на одной дорожке");
 
     // третье «+M» в СВОБОДНОЕ время: новой дорожки быть не должно —
@@ -8077,7 +8104,11 @@ fn t275_morph_layer_never_hides_a_block_under_another() {
     }
     h.step();
     let pr = h.state().model.project().clone();
-    assert_eq!(pr.morph_lanes, 2, "свободное время — дорожка переиспользуется");
+    assert_eq!(
+        pr.lanes(kt_model::LaneKind::Morph),
+        2,
+        "свободное время — дорожка переиспользуется"
+    );
     assert_eq!(pr.morphers.len(), 3);
 
     // и следствие, ради которого всё: каждый блок ловится мышью в СВОЕЙ
@@ -8115,8 +8146,8 @@ fn t276_service_blocks_move_between_lanes() {
         app.add_morph_layer();
         app.add_morph_layer(); // вторая строка (место занято) — есть куда везти
         app.morph_editors.clear();
-        assert!(app.apply(Command::InsertCameraLane { at: 0 }));
-        assert!(app.apply(Command::InsertCameraLane { at: 1 }));
+        assert!(app.apply(Command::InsertTrack { kind: kt_model::LaneKind::Camera, at: 0 }));
+        assert!(app.apply(Command::InsertTrack { kind: kt_model::LaneKind::Camera, at: 1 }));
         app.player.seek(Tick(300_000));
         app.add_camera_at_playhead(0);
     }
@@ -8184,7 +8215,7 @@ fn t277_rubber_band_catches_service_blocks() {
         app.player.seek(Tick(100_000));
         app.add_morph_layer();
         app.morph_editors.clear();
-        assert!(app.apply(Command::InsertCameraLane { at: 0 }));
+        assert!(app.apply(Command::InsertTrack { kind: kt_model::LaneKind::Camera, at: 0 }));
         app.player.seek(Tick(100_000));
         app.add_camera_at_playhead(0);
         app.sel_tool = true; // рамка обычным драгом

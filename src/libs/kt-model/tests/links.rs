@@ -49,7 +49,7 @@ fn base() -> Project {
         settings_explicit: false,
     });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
-    p.video_lanes = 1;
+    p.ensure_tracks(LaneKind::Video, 1);
     p
 }
 
@@ -157,7 +157,7 @@ fn t702b_a_link_never_crosses_the_reel_boundary() {
         source: CurveSource::Link { path: "1/fx0/radius".into(), expr: None, stops: Vec::new() },
     });
     seq.clips.push(inner);
-    seq.video_lanes = 1;
+    seq.ensure_tracks(LaneKind::Video, 1);
     p.sequences.push(seq);
     p.media.push(MediaRef { id: MediaId(2), path: "synth:2".into() });
     let mut root = clip(1, 0, 3 * SEC, 0);
@@ -193,7 +193,7 @@ fn t702b_a_link_never_crosses_the_reel_boundary() {
     });
     seq.clips.push(lead);
     seq.clips.push(follow);
-    seq.video_lanes = 1;
+    seq.ensure_tracks(LaneKind::Video, 1);
     q.sequences.push(seq);
     q.media.push(MediaRef { id: MediaId(2), path: "synth:2".into() });
     q.validate().expect("связь внутри одной ленты законна");

@@ -161,7 +161,7 @@ fn template() -> Project {
     t.r#gen = Some(title("ПЕРВЫЙ"));
     s.clips.push(t);
     s.clips.push(clip(PLATE.0, ClipKind::Video, 1, Tick::ZERO, PART, 2));
-    s.video_lanes = 2;
+    s.ensure_tracks(kt_model::LaneKind::Video, 2);
     s.published = vec![
         PublishedParam {
             id: HEADLINE,
@@ -559,7 +559,7 @@ fn t686_a_template_inside_a_template_resolves_recursively() {
     mid.source_in = Tick::ZERO;
     outer.clips.push(mid);
     outer.clips.push(clip(PLATE.0, ClipKind::Video, 1, Tick::ZERO, PART, 2));
-    outer.video_lanes = 2;
+    outer.ensure_tracks(kt_model::LaneKind::Video, 2);
     outer.published = vec![PublishedParam {
         id: PubId(50),
         name: "Заголовок выпуска".into(),

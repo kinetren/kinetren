@@ -85,7 +85,7 @@ fn template() -> Project {
     plate.lane = 1;
     plate.fx = vec![FxInstance::Blur { radius: 8, radius_y: 0 }];
     s.clips.push(plate);
-    s.video_lanes = 2;
+    s.ensure_tracks(LaneKind::Video, 2);
     s.published = vec![
         PublishedParam {
             id: HEADLINE,
@@ -485,7 +485,7 @@ fn t690_a_band_shows_the_template_and_expanding_bakes_the_overrides() {
     p.clips.retain(|c| c.id != INST_B);
     p.clips.iter_mut().find(|c| c.id == INST_A).unwrap().overrides =
         vec![Override::value(HEADLINE, ParamValue::Text("Второй выпуск".into()))];
-    p.video_lanes = 1;
+    p.ensure_tracks(LaneKind::Video, 1);
     p.validate().expect("сцена законна");
 
     // --- полоса: раскрыть и собрать — ПОБАЙТОВОЕ тождество ---------------

@@ -1499,7 +1499,7 @@ impl KtApp {
 
     pub fn lane_counts(&self) -> (u32, u32) {
         let p = self.model.project();
-        (p.video_lanes.max(1), p.audio_lanes.max(1))
+        (p.lanes(kt_model::LaneKind::Video).max(1), p.lanes(kt_model::LaneKind::Audio).max(1))
     }
 
     /// Меню строки КЛИПОВ — одно на заголовок строки и на саму дорожку
@@ -1538,12 +1538,12 @@ impl KtApp {
                 ui.close();
             }
             if ui.button(tr(k::tl::lane::RENAME)).clicked() {
-                let cur = kt_model::lane_label(&self.lane_names, lk, lane);
+                let cur = self.row_label(lk, lane);
                 self.lane_edit = Some(crate::app::LaneEdit { kind: lk, lane, buf: cur });
                 self.lane_edit_focus = true;
                 ui.close();
             }
-            if self.lane_heights.iter().any(|(k, l, _)| (*k, *l) == (lk, lane))
+            if self.model.project().track_at(lk, lane).is_some_and(|t| t.height > 0.0)
                 && ui.button(tr(k::tl::lane::RESET_HEIGHT)).clicked()
             {
                 self.set_row_height((lk, lane), None);
@@ -1629,7 +1629,8 @@ impl KtApp {
                 self.add_morpher_at(lane);
                 ui.close();
             }
-            if !self.lane_heights.iter().any(|(k, l, _)| (*k, *l) == (LaneKind::Morph, lane)) {
+            if !self.model.project().track_at(LaneKind::Morph, lane).is_some_and(|t| t.height > 0.0)
+            {
                 // сбрасывать нечего — пункт молча ничего не сделал бы
             } else if ui.button(tr(k::tl::lane::RESET_HEIGHT)).clicked() {
                 self.set_row_height((LaneKind::Morph, lane), None);
@@ -1639,7 +1640,7 @@ impl KtApp {
             // двойной клик по заголовку переименовывает СТРОКУ
             // ЛЮБОГО вида, а пункта меню у служебных не было
             if ui.button(tr(k::tl::lane::RENAME)).clicked() {
-                let cur = kt_model::lane_label(&self.lane_names, LaneKind::Morph, lane);
+                let cur = self.row_label(LaneKind::Morph, lane);
                 self.lane_edit =
                     Some(crate::app::LaneEdit { kind: LaneKind::Morph, lane, buf: cur });
                 self.lane_edit_focus = true;
@@ -1651,9 +1652,7 @@ impl KtApp {
                 tr(k::tl::lane::DELETE).to_string()
             };
             if ui.button(del_label).clicked() {
-                if self.apply(Command::RemoveMorphLane { at: lane }) {
-                    kt_model::lane_names_remove(&mut self.lane_names, LaneKind::Morph, lane);
-                }
+                self.apply(Command::RemoveTrack { kind: LaneKind::Morph, at: lane });
                 ui.close();
             }
             if ui.button(tr(k::tl::lane::INSERT_MORPH_BELOW)).clicked() {
@@ -1669,7 +1668,12 @@ impl KtApp {
                 self.add_camera_at_playhead(lane);
                 ui.close();
             }
-            if !self.lane_heights.iter().any(|(k, l, _)| (*k, *l) == (LaneKind::Camera, lane)) {
+            if !self
+                .model
+                .project()
+                .track_at(LaneKind::Camera, lane)
+                .is_some_and(|t| t.height > 0.0)
+            {
                 // сбрасывать нечего — пункт молча ничего не сделал бы
             } else if ui.button(tr(k::tl::lane::RESET_HEIGHT)).clicked() {
                 self.set_row_height((LaneKind::Camera, lane), None);
@@ -1679,7 +1683,7 @@ impl KtApp {
             // двойной клик по заголовку переименовывает СТРОКУ
             // ЛЮБОГО вида, а пункта меню у служебных не было
             if ui.button(tr(k::tl::lane::RENAME)).clicked() {
-                let cur = kt_model::lane_label(&self.lane_names, LaneKind::Camera, lane);
+                let cur = self.row_label(LaneKind::Camera, lane);
                 self.lane_edit =
                     Some(crate::app::LaneEdit { kind: LaneKind::Camera, lane, buf: cur });
                 self.lane_edit_focus = true;
@@ -1691,9 +1695,7 @@ impl KtApp {
                 tr(k::tl::lane::DELETE).to_string()
             };
             if ui.button(del_label).clicked() {
-                if self.apply(Command::RemoveCameraLane { at: lane }) {
-                    kt_model::lane_names_remove(&mut self.lane_names, LaneKind::Camera, lane);
-                }
+                self.apply(Command::RemoveTrack { kind: LaneKind::Camera, at: lane });
                 ui.close();
             }
             if ui.button(tr(k::tl::lane::INSERT_CAMERA_BELOW)).clicked() {
@@ -1732,7 +1734,11 @@ impl KtApp {
         let (clip_hint, morph_hint, cam_hint) = {
             let (v, a) = self.lane_counts();
             let p = self.model.project();
-            ((v + a).max(1) as usize, p.morph_lanes as usize, p.camera_lanes as usize)
+            (
+                (v + a).max(1) as usize,
+                p.lanes(kt_model::LaneKind::Morph) as usize,
+                p.lanes(kt_model::LaneKind::Camera) as usize,
+            )
         };
         // ---- зум/пан + edge-autoscroll при драге --------------------------
         let mut view_start = self.view_start;
@@ -2046,8 +2052,8 @@ impl KtApp {
 
         // ---- дорожки ---------------------------------------------------------
         let (video_lanes, audio_lanes) = self.lane_counts();
-        let morph_lanes = self.model.project().morph_lanes;
-        let camera_lanes = self.model.project().camera_lanes;
+        let morph_lanes = self.model.project().lanes(kt_model::LaneKind::Morph);
+        let camera_lanes = self.model.project().lanes(kt_model::LaneKind::Camera);
         let vl = vertical_layout(
             rect.height(),
             (video_lanes + audio_lanes).max(1) as usize,
@@ -2067,7 +2073,7 @@ impl KtApp {
         // фактическим счётчикам дорожек на каждый кадр
         let rows = self.model.project().rows();
         // кэш геометрии для маппинга вне draw_timeline (дроп п.2, строки п.6)
-        let row_over = self.lane_heights.clone();
+        let row_over = self.row_heights();
         let geom = TlGeom::new(
             rect,
             base_h,
@@ -2126,9 +2132,9 @@ impl KtApp {
                         .map(|s| s.name.clone())
                         .unwrap_or_default();
                     let local = lane - b.base.get(kind);
-                    format!("{name} {}", kt_model::lane_label(&[], kind, local))
+                    format!("{name} {}", kt_model::lane_label(kind, local))
                 }
-                None => kt_model::lane_label(&self.lane_names, kind, lane),
+                None => self.row_label(kind, lane),
             };
             painter.rect_filled(lane_rect, 0.0, fill);
             // ФОН ПОЛОСЫ тонирован: две системы координат на одном экране
@@ -2252,7 +2258,7 @@ impl KtApp {
                 && let Some(pos) = gutter_resp.interact_pointer_pos()
                 && let Some((kind, lane)) = geom.key_at_y(pos.y)
             {
-                let cur = kt_model::lane_label(&self.lane_names, kind, lane);
+                let cur = self.row_label(kind, lane);
                 self.lane_edit = Some(crate::app::LaneEdit { kind, lane, buf: cur });
                 self.lane_edit_focus = true;
                 self.drag = None;
@@ -2657,7 +2663,7 @@ impl KtApp {
             } else if pos.x < rect.left() {
                 // полное имя дорожки — в подсказке (ярлык может быть усечён)
                 if let Some((k, l)) = geom.key_at_y(pos.y) {
-                    let name = kt_model::lane_label(&self.lane_names, k, l);
+                    let name = self.row_label(k, l);
                     hint_owned = Some(crate::tf!(k::tl::hint::LANE_NAMED, name));
                 } else {
                     zone_hint = Some(tr(k::tl::hint::LANE));
@@ -2738,10 +2744,8 @@ impl KtApp {
                                 // на дорожке подсказка НАЗЫВАЕТ дорожку и говорит
                                 // про её меню: с Р.40 ПКМ здесь даёт меню строки,
                                 // а не одну лишь вставку
-                                hint_owned = Some(crate::tf!(
-                                    k::tl::hint::LANE_FREE,
-                                    kt_model::lane_label(&self.lane_names, lk, l)
-                                ));
+                                hint_owned =
+                                    Some(crate::tf!(k::tl::hint::LANE_FREE, self.row_label(lk, l)));
                                 ""
                             } else if geom.morph_lane_at_y(pos.y).is_some() {
                                 // ПУСТАЯ служебная строка говорит, ЧТО на неё
@@ -3854,7 +3858,8 @@ impl KtApp {
                 let win = (c.source_in.0, c.source_in.0 + dur);
                 let span = (win.1 - win.0).max(1) as f32;
                 let mut mesh = egui::Mesh::default();
-                let lanes = seq.video_lanes.max(1) + seq.audio_lanes.max(1);
+                let lanes = seq.lanes(kt_model::LaneKind::Video).max(1)
+                    + seq.lanes(kt_model::LaneKind::Audio).max(1);
                 let bar_h = (clip_rect.height() - 4.0) / lanes as f32;
                 for ch in &seq.clips {
                     let (a, b) = (ch.start.0, (ch.start + ch.duration).0);
@@ -3864,7 +3869,7 @@ impl KtApp {
                     }
                     let row = match ch.kind {
                         ClipKind::Video => ch.lane,
-                        ClipKind::Audio => seq.video_lanes.max(1) + ch.lane,
+                        ClipKind::Audio => seq.lanes(kt_model::LaneKind::Video).max(1) + ch.lane,
                     };
                     let y = clip_rect.top() + 2.0 + row as f32 * bar_h;
                     let r = egui::Rect::from_min_max(
@@ -5004,12 +5009,15 @@ impl KtApp {
                 });
             match done {
                 Some(true) => {
+                    // имя — СОДЕРЖИМОЕ дорожки (Р.62): один шаг истории
                     let name = buf.trim().to_string();
-                    self.lane_names.retain(|(k, l, _)| !(*k == ed.kind && *l == ed.lane));
-                    if !name.is_empty() {
-                        self.lane_names.push((ed.kind, ed.lane, name));
+                    if let Some(t) = self.model.project().track_at(ed.kind, ed.lane) {
+                        let (id, mut props) = (t.id, t.props());
+                        props.name = name;
+                        if props != t.props() {
+                            self.apply(Command::SetTrackProps { id, props });
+                        }
                     }
-                    self.dirty_ui = true;
                     self.lane_edit = None;
                 }
                 Some(false) => self.lane_edit = None,

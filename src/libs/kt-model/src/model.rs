@@ -317,15 +317,24 @@ pub enum Command {
         at: Tick,
         duration: Tick,
     },
-    /// Вставить пустую дорожку типа `kind` в позицию `at`; lane клипов
-    /// этого типа >= at сдвигаются на +1.
-    InsertLane {
-        kind: ClipKind,
+    /// Вставить пустую дорожку вида `kind` с рангом `at` (Р.62: одна
+    /// команда на все четыре вида); номера содержимого вида ≥ at сдвигаются
+    /// на +1, строка встаёт прямо над бывшей `at` (в конец, если её нет).
+    InsertTrack {
+        kind: LaneKind,
         at: u32,
     },
-    SetLanes {
-        video: u32,
-        audio: u32,
+    /// Удалить дорожку вместе с её содержимым; номера выше съезжают на −1.
+    /// Последняя видео- или аудио-дорожка не удаляется (`LastTrack`).
+    RemoveTrack {
+        kind: LaneKind,
+        at: u32,
+    },
+    /// Свойства дорожки одним куском: имя, высота, выключатели, уровень,
+    /// режим наложения (Р.62). Цепочка — `SetTrackFx`.
+    SetTrackProps {
+        id: TrackId,
+        props: TrackProps,
     },
     RemoveMedia {
         id: MediaId,
@@ -372,28 +381,12 @@ pub enum Command {
         name: String,
         lanes: Vec<(LaneKind, u32)>,
     },
-    /// Вставить morph-дорожку в позицию `at` (lane событий >= at сдвигается).
-    InsertMorphLane {
-        at: u32,
-    },
-    /// Удалить morph-дорожку вместе с её событиями.
-    RemoveMorphLane {
-        at: u32,
-    },
     /// Камеры (Р.29, 3D-композитинг) — по образцу морферных команд.
     AddCamera(CameraEvent),
     /// Полная замена события (окно параметров; в UI — coalesced-жест).
     SetCamera(CameraEvent),
     RemoveCamera {
         id: CameraId,
-    },
-    /// Вставить камерную дорожку в позицию `at`.
-    InsertCameraLane {
-        at: u32,
-    },
-    /// Удалить камерную дорожку вместе с её событиями.
-    RemoveCameraLane {
-        at: u32,
     },
     // --- вложенные секвенции (Р.50) ---
     /// Завести пустую ленту. Содержимое приезжает отдельной командой:
@@ -543,8 +536,9 @@ impl Command {
             | Command::SetMarkerName { .. }
             | Command::MoveMarker { .. }
             | Command::SetMarkerDuration { .. }
-            | Command::InsertLane { .. }
-            | Command::SetLanes { .. }
+            | Command::InsertTrack { .. }
+            | Command::RemoveTrack { .. }
+            | Command::SetTrackProps { .. }
             | Command::RemoveMedia { .. }
             | Command::SetSettings { .. }
             | Command::AddMorpher(_)
@@ -557,13 +551,9 @@ impl Command {
             | Command::RenameArea { .. }
             | Command::SetAreaRange { .. }
             | Command::SetAreaLanes { .. }
-            | Command::InsertMorphLane { .. }
-            | Command::RemoveMorphLane { .. }
             | Command::AddCamera(_)
             | Command::SetCamera(_)
             | Command::RemoveCamera { .. }
-            | Command::InsertCameraLane { .. }
-            | Command::RemoveCameraLane { .. }
             | Command::AddSequence { .. }
             | Command::RemoveSequence { .. }
             | Command::RenameSequence { .. }
@@ -622,6 +612,18 @@ pub enum CommandError {
     MediaInUse(MediaId),
     #[error("lane count would orphan clips")]
     LanesTooFew,
+    #[error("{0:?} track {1} does not exist")]
+    TrackMissing(LaneKind, u32),
+    #[error("the last {0:?} track cannot be removed")]
+    LastTrack(LaneKind),
+    #[error("track {0:?} not found")]
+    TrackNotFound(TrackId),
+    #[error("track {0:?}: property out of range")]
+    TrackPropOutOfRange(TrackId),
+    #[error("track {0:?}: curves on a track are not supported yet")]
+    TrackCurvesUnsupported(TrackId),
+    #[error("track {0:?} is locked")]
+    TrackLocked(TrackId),
     #[error("morpher {0:?} not found")]
     MorpherNotFound(MorphId),
     #[error("morpher needs at least one target clip")]
@@ -709,17 +711,7 @@ impl Band {
     pub fn after_batch(&mut self, cmds: &[Command]) {
         for cmd in cmds {
             match cmd {
-                Command::InsertLane { kind, at } => {
-                    let lk = match kind {
-                        ClipKind::Video => LaneKind::Video,
-                        ClipKind::Audio => LaneKind::Audio,
-                    };
-                    self.lane_inserted(lk, *at);
-                }
-                Command::InsertMorphLane { at } => self.lane_inserted(LaneKind::Morph, *at),
-                Command::InsertCameraLane { at } => self.lane_inserted(LaneKind::Camera, *at),
-                Command::RemoveMorphLane { at } => self.lane_removed(LaneKind::Morph, *at),
-                Command::RemoveCameraLane { at } => self.lane_removed(LaneKind::Camera, *at),
+                Command::InsertTrack { kind, at } => self.lane_inserted(*kind, *at),
                 // `SetLanes` ПОЛОСУ НЕ ДВИГАЕТ, и это решение, а не
                 // недосмотр. Команда задаёт число дорожек целиком, а клипы
                 // при этом не перенумеровываются — значит граница полосы
@@ -736,8 +728,11 @@ impl Band {
                 // `unmerge_reel` разобрал бы их не по тем лентам. Обе
                 // команды отвергает `simulate` при открытой полосе
                 // (`CommandError::BandsOpen`), сюда они не доходят.
-                Command::SetLanes { .. } | Command::SetLaneOrder { .. } => {
-                    debug_assert!(false, "SetLanes/SetLaneOrder are refused while a band is open")
+                Command::RemoveTrack { .. } | Command::SetLaneOrder { .. } => {
+                    debug_assert!(
+                        false,
+                        "RemoveTrack/SetLaneOrder are refused while a band is open"
+                    )
                 }
                 // Всё остальное номеров дорожек не двигает. Перечислено
                 // поимённо НАРОЧНО: `_ =>` спрятал бы следующую команду,
@@ -784,6 +779,7 @@ impl Band {
                 | Command::RenameArea { .. }
                 | Command::SetAreaRange { .. }
                 | Command::SetAreaLanes { .. }
+                | Command::SetTrackProps { .. }
                 | Command::AddCamera(_)
                 | Command::SetCamera(_)
                 | Command::RemoveCamera { .. }
@@ -814,15 +810,6 @@ impl Band {
             // До Р.56 такая дорожка не доставалась никому, и событие на
             // ней молча уезжало в корень.
             *self.len.get_mut(kind) += 1;
-        }
-    }
-
-    fn lane_removed(&mut self, kind: LaneKind, lane: u32) {
-        let base = self.base.get(kind);
-        if lane < base {
-            *self.base.get_mut(kind) = base.saturating_sub(1);
-        } else if lane < base + self.len.get(kind) {
-            *self.len.get_mut(kind) = self.len.get(kind).saturating_sub(1);
         }
     }
 }
@@ -1079,7 +1066,7 @@ impl TimelineModel {
         if !self.bands.is_empty()
             && cmds
                 .iter()
-                .any(|c| matches!(c, Command::SetLaneOrder { .. } | Command::SetLanes { .. }))
+                .any(|c| matches!(c, Command::SetLaneOrder { .. } | Command::RemoveTrack { .. }))
         {
             return Err(CommandError::BandsOpen);
         }
@@ -1391,16 +1378,31 @@ impl TimelineModel {
                     return Err(CommandError::MarkerExists(*to));
                 }
             }
-            Command::InsertLane { .. } => {}
-            Command::SetLanes { video, audio } => {
-                let need_v =
-                    p.clips.iter().filter(|c| c.kind == ClipKind::Video).map(|c| c.lane + 1).max();
-                let need_a =
-                    p.clips.iter().filter(|c| c.kind == ClipKind::Audio).map(|c| c.lane + 1).max();
-                if *video < need_v.unwrap_or(1).max(1) || *audio < need_a.unwrap_or(1).max(1) {
-                    return Err(CommandError::LanesTooFew);
+            Command::InsertTrack { .. } => {}
+            Command::RemoveTrack { kind, at } => {
+                let n = p.lanes(*kind);
+                if *at >= n {
+                    return Err(CommandError::TrackMissing(*kind, *at));
+                }
+                if matches!(kind, LaneKind::Video | LaneKind::Audio) && n <= 1 {
+                    return Err(CommandError::LastTrack(*kind));
                 }
             }
+            Command::SetTrackProps { id, props } => {
+                if p.track(*id).is_none() {
+                    return Err(CommandError::TrackNotFound(*id));
+                }
+                if !props.opacity.is_finite()
+                    || !(0.0..=1.0).contains(&props.opacity)
+                    || !props.gain_db.is_finite()
+                    || !(TRACK_GAIN_MIN_DB..=TRACK_GAIN_MAX_DB).contains(&props.gain_db)
+                    || !props.height.is_finite()
+                    || props.height < 0.0
+                {
+                    return Err(CommandError::TrackPropOutOfRange(*id));
+                }
+            }
+
             Command::RemoveMedia { id } => {
                 if !p.media.iter().any(|m| m.id == *id) {
                     return Err(CommandError::MediaNotFound(*id));
@@ -1468,8 +1470,8 @@ impl TimelineModel {
                 let need = |k: ClipKind| {
                     content.clips.iter().filter(|c| c.kind == k).map(|c| c.lane + 1).max()
                 };
-                if content.video_lanes < need(ClipKind::Video).unwrap_or(1).max(1)
-                    || content.audio_lanes < need(ClipKind::Audio).unwrap_or(1).max(1)
+                if content.lanes(LaneKind::Video) < need(ClipKind::Video).unwrap_or(1).max(1)
+                    || content.lanes(LaneKind::Audio) < need(ClipKind::Audio).unwrap_or(1).max(1)
                 {
                     return Err(CommandError::LanesTooFew);
                 }
@@ -1582,9 +1584,7 @@ impl TimelineModel {
                     return Err(CommandError::MorpherNotFound(*id));
                 }
             }
-            Command::SetLaneOrder { .. }
-            | Command::InsertMorphLane { .. }
-            | Command::SetTrimStretchesAuto { .. } => {}
+            Command::SetLaneOrder { .. } | Command::SetTrimStretchesAuto { .. } => {}
             Command::AddArea(a) => {
                 if a.name.trim().is_empty() {
                     return Err(CommandError::AreaUnnamed);
@@ -1635,17 +1635,6 @@ impl TimelineModel {
             Command::RemoveCamera { id } => {
                 if !p.cameras.iter().any(|x| x.id == *id) {
                     return Err(CommandError::CameraNotFound(*id));
-                }
-            }
-            Command::InsertCameraLane { .. } => {}
-            Command::RemoveCameraLane { at } => {
-                if *at >= p.camera_lanes {
-                    return Err(CommandError::CameraLaneNotFound(*at));
-                }
-            }
-            Command::RemoveMorphLane { at } => {
-                if *at >= p.morph_lanes {
-                    return Err(CommandError::MorphLaneNotFound(*at));
                 }
             }
         }
@@ -1758,10 +1747,7 @@ impl TimelineModel {
                 }
             }
             Command::AddClip(mut c) => {
-                match c.kind {
-                    ClipKind::Video => p.video_lanes = p.video_lanes.max(c.lane + 1),
-                    ClipKind::Audio => p.audio_lanes = p.audio_lanes.max(c.lane + 1),
-                }
+                p.ensure_tracks(lane_key_of(c.kind), c.lane + 1);
                 fit_gen_to_media(p, &mut c);
                 p.clips.push(c)
             }
@@ -1779,10 +1765,7 @@ impl TimelineModel {
                     let c = p.clips.iter().find(|c| c.id == id).unwrap();
                     (c.link_group, new_start - c.start, c.kind)
                 };
-                match kind {
-                    ClipKind::Video => p.video_lanes = p.video_lanes.max(new_lane + 1),
-                    ClipKind::Audio => p.audio_lanes = p.audio_lanes.max(new_lane + 1),
-                }
+                p.ensure_tracks(lane_key_of(kind), new_lane + 1);
                 for c in &mut p.clips {
                     if c.id == id {
                         c.start = new_start;
@@ -1960,35 +1943,23 @@ impl TimelineModel {
                     m.duration = duration;
                 }
             }
-            Command::InsertLane { kind, at } => {
-                let mut rows = p.rows();
-                match kind {
-                    ClipKind::Video => p.video_lanes = (p.video_lanes.max(at) + 1).max(1),
-                    ClipKind::Audio => p.audio_lanes = (p.audio_lanes.max(at) + 1).max(1),
-                }
-                for c in &mut p.clips {
-                    if c.kind == kind && c.lane >= at {
-                        c.lane += 1;
-                    }
-                }
-                let lk = match kind {
-                    ClipKind::Video => LaneKind::Video,
-                    ClipKind::Audio => LaneKind::Audio,
-                };
-                lane_order_insert(&mut rows, lk, at);
-                p.set_lane_order(&rows);
+            Command::InsertTrack { kind, at } => {
+                p.insert_track(kind, at);
             }
-            Command::SetLanes { video, audio } => {
-                // порядок строк подтягивается сам: normalize_lane_order
-                // выбрасывает исчезнувшие и дописывает появившиеся
-                p.video_lanes = video.max(1);
-                p.audio_lanes = audio.max(1);
-                let cur = p.lane_order.clone();
-                p.set_lane_order(&cur);
+            Command::RemoveTrack { kind, at } => p.remove_track(kind, at),
+            Command::SetTrackProps { id, props } => {
+                if let Some(t) = p.track_mut(id) {
+                    t.set_props(&props);
+                }
             }
-            Command::SetLaneOrder { order } => p.set_lane_order(&order),
+            Command::SetLaneOrder { order } => {
+                p.set_lane_order(&order);
+            }
             Command::RemoveMedia { id } => p.media.retain(|m| m.id != id),
-            Command::AddSequence { id, name } => p.sequences.push(Sequence::new(id, name)),
+            Command::AddSequence { id, name } => {
+                p.sequences.push(Sequence::new(id, name));
+                p.assign_track_ids();
+            }
             Command::RemoveSequence { id } => p.sequences.retain(|s| s.id != id),
             Command::SetSequenceSettings { id, raster, fps } => {
                 if let Some(s) = p.sequence_mut(id) {
@@ -2046,13 +2017,11 @@ impl TimelineModel {
             }
             Command::SetSettings { settings } => p.settings = settings,
             Command::AddMorpher(m) => {
-                p.morph_lanes = p.morph_lanes.max(m.lane + 1);
+                p.ensure_tracks(LaneKind::Morph, m.lane + 1);
                 p.morphers.push(m);
-                let cur = p.lane_order.clone();
-                p.set_lane_order(&cur); // новая дорожка попадает в порядок
             }
             Command::SetMorpher(m) => {
-                p.morph_lanes = p.morph_lanes.max(m.lane + 1);
+                p.ensure_tracks(LaneKind::Morph, m.lane + 1);
                 if let Some(slot) = p.morphers.iter_mut().find(|x| x.id == m.id) {
                     *slot = m;
                 }
@@ -2145,36 +2114,11 @@ impl TimelineModel {
                     a.lanes = lanes;
                 }
             }
-            Command::InsertMorphLane { at } => {
-                let mut rows = p.rows();
-                p.morph_lanes = (p.morph_lanes.max(at) + 1).max(1);
-                for m in &mut p.morphers {
-                    if m.lane >= at {
-                        m.lane += 1;
-                    }
-                }
-                // сдвиг display-строк — ВНУТРИ команды, которая знает `at`
-                // (снаружи его звали руками, и половину случаев забывали)
-                lane_order_insert(&mut rows, LaneKind::Morph, at);
-                p.set_lane_order(&rows);
-            }
-            Command::RemoveMorphLane { at } => {
-                let mut rows = p.rows();
-                p.morphers.retain(|m| m.lane != at);
-                for m in &mut p.morphers {
-                    if m.lane > at {
-                        m.lane -= 1;
-                    }
-                }
-                p.morph_lanes = p.morph_lanes.saturating_sub(1);
-                lane_order_remove(&mut rows, LaneKind::Morph, at);
-                p.set_lane_order(&rows);
-            }
             Command::AddCamera(c) => {
                 // строка обязана СУЩЕСТВОВАТЬ, иначе камера легла бы на
                 // невидимую дорожку: создать можно, управлять нельзя.
                 // То же правило, что у `MoveClip` для видео и аудио.
-                p.camera_lanes = p.camera_lanes.max(c.lane + 1);
+                p.ensure_tracks(LaneKind::Camera, c.lane + 1);
                 p.cameras.push(c);
             }
             Command::SetCamera(c) => {
@@ -2183,29 +2127,6 @@ impl TimelineModel {
                 }
             }
             Command::RemoveCamera { id } => p.cameras.retain(|c| c.id != id),
-            Command::InsertCameraLane { at } => {
-                let mut rows = p.rows();
-                p.camera_lanes = (p.camera_lanes.max(at) + 1).max(1);
-                for c in &mut p.cameras {
-                    if c.lane >= at {
-                        c.lane += 1;
-                    }
-                }
-                lane_order_insert(&mut rows, LaneKind::Camera, at);
-                p.set_lane_order(&rows);
-            }
-            Command::RemoveCameraLane { at } => {
-                let mut rows = p.rows();
-                p.cameras.retain(|c| c.lane != at);
-                for c in &mut p.cameras {
-                    if c.lane > at {
-                        c.lane -= 1;
-                    }
-                }
-                p.camera_lanes = p.camera_lanes.saturating_sub(1);
-                lane_order_remove(&mut rows, LaneKind::Camera, at);
-                p.set_lane_order(&rows);
-            }
         }
     }
 

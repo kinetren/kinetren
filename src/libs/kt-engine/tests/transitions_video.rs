@@ -361,6 +361,7 @@ fn t174_clip_opacity_scales_the_layer() {
             fx_off: false,
         });
     }
+    p.normalize(); // дорожки под содержимое (Р.62)
     p.validate().unwrap();
 
     let render = |p: &Project| {
@@ -1149,6 +1150,7 @@ fn t521_alpha_layer_under_a_chain_shows_through() {
     ];
     p.clips[0].fx_bypass = vec![false; 2];
     p.clips[0].fx_auto = vec![vec![]; 2];
+    p.normalize(); // дорожки под содержимое (Р.62)
     p.validate().unwrap();
 
     let render = |p: &Project| {

@@ -1,8 +1,9 @@
 //! Тест 49 (docs/porting-notes.md, п.6 v1.4): display-порядок дорожек.
-//! normalize_lane_order: пусто → блочный V..A..M; дубли/мусор вычищаются,
-//! недостающие дописываются. lane_order_insert/remove — shift-aware
-//! синхронизация вектора при вставке/удалении дорожки. Serde-roundtrip
-//! UiState.lane_order; старые файлы без поля читаются (default пусто).
+//! С Р.62 (change B) строки — ВЕКТОР ДОРОЖЕК-ОБЪЕКТОВ: `normalize_lane_order`
+//! осталась чистой функцией нормализации заказа перестановки (дубли/мусор
+//! вычищаются, недостающие дописываются), `lane_order_insert/remove` —
+//! shift-aware синхронизация заказанного порядка. Старые файлы со
+//! счётчиками и `lane_order` читаются в дорожки односторонне.
 
 use kt_model::LaneKind::{Audio as A, Camera as C, Morph as M, Video as V};
 use kt_model::*;
@@ -36,41 +37,39 @@ fn t49_insert_remove_shift_aware() {
     assert_eq!(rows, vec![(V, 0), (A, 0), (V, 1), (M, 0), (A, 1)]);
     // нормализация после операций — идемпотентна (вектор уже корректен)
     assert_eq!(normalize_lane_order(&rows, 2, 2, 1, 0), rows);
+    // и ТО ЖЕ делает `Project::insert_track`: строка над бывшей `at`; ранга
+    // `at` нет — в конец БЛОКА своего вида (естественный порядок V..A..M..C,
+    // а не хвост списка: в приложении место всё равно задаёт `SetLaneOrder`)
+    let mut p = Project::new(settings30());
+    p.ensure_tracks(M, 1);
+    p.set_lane_order(&[(V, 0), (A, 0), (M, 0)]);
+    p.insert_track(V, 0);
+    assert_eq!(p.rows(), vec![(V, 0), (V, 1), (A, 0), (M, 0)]);
+    p.insert_track(A, 1);
+    assert_eq!(p.rows(), vec![(V, 0), (V, 1), (A, 0), (A, 1), (M, 0)]);
+    p.remove_track(V, 0);
+    assert_eq!(p.rows(), vec![(V, 0), (A, 0), (A, 1), (M, 0)]);
 }
 
 #[test]
 fn t49_lane_order_serde_roundtrip() {
     // с Р.35 порядок строк живёт В МОДЕЛИ (морфер-слой действует «на всё,
-    // что ниже», значит порядок влияет на картинку), а `ui.lane_order`
-    // остался легаси-входом и больше не пишется
-    let mut p = Project::new(ProjectSettings {
-        fps: 30,
-        width: 640,
-        height: 360,
-        sample_rate: 48000,
-        pitch_engine: Default::default(),
-
-        default_shape: Default::default(),
-
-        conform: Default::default(),
-
-        settings_explicit: false,
-    });
-    p.morph_lanes = 1;
+    // что ниже», значит порядок влияет на картинку); с Р.62 — это порядок
+    // вектора дорожек, и отдельного поля нет ни в модели, ни в файле
+    let mut p = Project::new(settings30());
+    p.ensure_tracks(M, 1);
     p.set_lane_order(&[(M, 0), (V, 0), (A, 0)]);
-    assert_eq!(p.lane_order, vec![(M, 0), (V, 0), (A, 0)]);
+    assert_eq!(p.rows(), vec![(M, 0), (V, 0), (A, 0)]);
     let json = serde_json::to_string(&p).unwrap();
+    assert!(!json.contains("lane_order"), "отдельного поля порядка больше нет");
     let loaded = Project::from_json(&json).unwrap();
     assert_eq!(loaded, p, "round-trip порядка строк");
     assert_eq!(loaded.rows(), vec![(M, 0), (V, 0), (A, 0)], "строки в том же порядке");
 
-    // ЕСТЕСТВЕННЫЙ порядок схлопывается в пусто: иначе проект после
-    // первого же открытия обрастал бы полем и терял байт-стабильность
+    // естественный порядок читается так же
     let mut nat = p.clone();
     nat.set_lane_order(&[(V, 0), (A, 0), (M, 0)]);
-    assert!(nat.lane_order.is_empty(), "естественный порядок не хранится");
     let json2 = serde_json::to_string(&nat).unwrap();
-    assert!(!json2.contains("lane_order"), "пустой вектор не сериализуется");
     assert_eq!(Project::from_json(&json2).unwrap(), nat);
     assert_eq!(nat.rows(), vec![(V, 0), (A, 0), (M, 0)], "и всё равно даёт порядок");
 
@@ -85,21 +84,9 @@ fn t49_lane_order_serde_roundtrip() {
 #[test]
 fn t241_lane_order_is_model_state() {
     use kt_model::{Command, TimelineModel};
-    let mut m = TimelineModel::new(Project::new(ProjectSettings {
-        fps: 30,
-        width: 640,
-        height: 360,
-        sample_rate: 48000,
-        pitch_engine: Default::default(),
-
-        default_shape: Default::default(),
-
-        conform: Default::default(),
-
-        settings_explicit: false,
-    }));
+    let mut m = TimelineModel::new(Project::new(settings30()));
     // вставка morph-дорожки САМА кладёт строку в порядок
-    m.apply(Command::InsertMorphLane { at: 0 }).unwrap();
+    m.apply(Command::InsertTrack { kind: M, at: 0 }).unwrap();
     assert_eq!(m.project().rows(), vec![(V, 0), (A, 0), (M, 0)]);
 
     // перестановка — команда, и она откатывается
@@ -112,9 +99,8 @@ fn t241_lane_order_is_model_state() {
     assert_eq!(m.project().rows(), want, "redo вернул перестановку");
 
     // удаление дорожки уносит её строку без ручной синхронизации
-    m.apply(Command::RemoveMorphLane { at: 0 }).unwrap();
+    m.apply(Command::RemoveTrack { kind: M, at: 0 }).unwrap();
     assert_eq!(m.project().rows(), vec![(V, 0), (A, 0)]);
-    assert!(m.project().lane_order.is_empty(), "остался естественный порядок");
 
     // мусор в команде нормализуется, а не проходит в модель
     m.apply(Command::SetLaneOrder { order: vec![(V, 0), (V, 0), (M, 7), (A, 0)] }).unwrap();
@@ -136,6 +122,9 @@ fn t188_camera_lanes_in_display_order() {
     assert_eq!(rows, vec![(V, 0), (C, 0), (C, 1)]);
     lane_order_remove(&mut rows, C, 0);
     assert_eq!(rows, vec![(V, 0), (C, 0)]);
+    let mut p = Project::new(settings30());
+    p.ensure_tracks(C, 2);
+    assert_eq!(p.rows(), vec![(V, 0), (A, 0), (C, 0), (C, 1)]);
 }
 
 // ---- Р.56, п.449: НОМЕР ДОРОЖКИ = РАНГ СТРОКИ --------------------------------
@@ -185,7 +174,7 @@ fn vclip(id: u64, lane: u32) -> ClipEvent {
 fn three_video_lanes() -> Project {
     let mut p = Project::new(settings30());
     p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:440".into() });
-    p.video_lanes = 3;
+    p.ensure_tracks(V, 3);
     // по событию на каждой дорожке, на РАЗНЫХ временах: перекрытие тут ни
     // при чём, а различить дорожки после перенумерации надо по id
     for (i, id) in [(0u32, 1u64), (1, 2), (2, 3)] {
@@ -204,7 +193,7 @@ fn three_video_lanes() -> Project {
 /// композита («закинул туда видео, и его не видно»). Утверждение здесь —
 /// СЛЕДСТВИЕ: порядок выдачи клипов движку (`effective_clips`,
 /// отсортированный как в `VideoRenderer::build_reel`) совпадает с
-/// порядком строк.
+/// порядком строк. С Р.62 имя и высота — на дорожке-объекте и едут с ним.
 #[test]
 fn t588_lane_number_is_row_rank() {
     let mut p = three_video_lanes();
@@ -223,10 +212,12 @@ fn t588_lane_number_is_row_rank() {
         start: kt_time::Tick(500_000),
         duration: kt_time::Tick(1_000),
     });
-    let mut ui = UiState::default();
-    ui.lane_names = vec![(V, 2, "Потолок".into())];
-    ui.lane_heights = vec![(V, 2, 42.0)];
-    p.ui = Some(ui);
+    {
+        let t = p.track_at_mut(V, 2).unwrap();
+        t.name = "Потолок".into();
+        t.height = 42.0;
+    }
+    let ceiling = p.track_at(V, 2).unwrap().id;
     p.validate().unwrap();
 
     let mut m = TimelineModel::new(p);
@@ -234,20 +225,20 @@ fn t588_lane_number_is_row_rank() {
     m.apply(Command::SetLaneOrder { order: vec![(V, 2), (V, 0), (V, 1), (A, 0)] }).unwrap();
     let p = m.project();
 
-    // номера стали рангами, и явного порядка больше нет — он естественный
-    assert!(p.lane_order.is_empty(), "после перенумерации порядок обязан стать естественным");
+    // номера стали рангами
     assert_eq!(p.rows(), vec![(V, 0), (V, 1), (V, 2), (A, 0)]);
     let lane_of = |id: u64| p.clips.iter().find(|c| c.id == ClipId(id)).unwrap().lane;
     assert_eq!(lane_of(3), 0, "бывшая нижняя строка стала ВЕРХНЕЙ дорожкой");
     assert_eq!(lane_of(1), 1);
     assert_eq!(lane_of(2), 2);
 
-    // побочные таблицы едут тем же отображением
+    // побочные таблицы едут тем же отображением, объект — как объект
     assert_eq!(p.areas[0].lanes, vec![(V, 0)], "область осталась на СВОЕЙ дорожке");
     assert_eq!(p.foreign[0].lane, 0, "чужой трек уехал бы на соседний");
-    let ui = p.ui.as_ref().unwrap();
-    assert_eq!(ui.lane_names, vec![(V, 0, "Потолок".into())]);
-    assert_eq!(ui.lane_heights, vec![(V, 0, 42.0)]);
+    let t = p.track_at(V, 0).unwrap();
+    assert_eq!(t.id, ceiling, "id дорожки стабилен при перестановке");
+    assert_eq!(t.name, "Потолок");
+    assert_eq!(t.height, 42.0);
 
     // СЛЕДСТВИЕ: порядок композиции == порядок строк. Движок сортирует
     // `(Reverse(lane), start)` и рисует задний план первым — значит
@@ -262,76 +253,101 @@ fn t588_lane_number_is_row_rank() {
     let p = m.project();
     assert_eq!(p.clips.iter().find(|c| c.id == ClipId(3)).unwrap().lane, 2, "undo не вернул номер");
     assert_eq!(p.areas[0].lanes, vec![(V, 2)]);
+    assert_eq!(p.track_at(V, 2).unwrap().name, "Потолок", "имя уехало от своей дорожки под undo");
     m.redo().unwrap();
     assert_eq!(m.project().clips.iter().find(|c| c.id == ClipId(3)).unwrap().lane, 0);
 }
 
-/// Тест 589 (Р.56, п.449). Инвариант сторожит `validate` — и ровно на
-/// КАНОНЕ: бенч раскрытия из-под него выведен намеренно.
+/// Тест 589 (Р.56, п.449; Р.62). Инвариант сторожит `validate`: событие на
+/// несуществующей дорожке (номер за рангом последней) — ошибка и в корне,
+/// и в ленте; чтение (`normalize`) дописывает дорожки.
 #[test]
 fn t589_validate_guards_canon_but_not_the_bench() {
     let mut p = three_video_lanes();
-    // поле правится НАПРЯМУЮ, мимо set_lane_order: так выглядит чужой файл
-    p.lane_order = vec![(V, 1), (V, 0), (V, 2), (A, 0)];
+    // дорожку убрали, событие осталось — так выглядит чужой или битый файл
+    let gone = p.track_at(V, 2).unwrap().id;
+    p.tracks.retain(|t| t.id != gone);
     assert!(
-        matches!(p.validate(), Err(ProjectError::LaneOrderNotCanonical(None))),
-        "неканонический порядок в КОРНЕ обязан быть ошибкой"
+        matches!(p.validate(), Err(ProjectError::TrackMissing(None, V, 2))),
+        "событие без дорожки в КОРНЕ обязано быть ошибкой: {:?}",
+        p.validate()
     );
 
     // то же внутри ленты
     let mut p2 = three_video_lanes();
     let mut s = Sequence::new(MediaId(9), "Reel");
-    s.video_lanes = 2;
     s.clips.push(vclip(10, 0));
     let mut c = vclip(11, 1);
     c.start = kt_time::Tick(200_000);
     s.clips.push(c);
-    s.lane_order = vec![(V, 1), (V, 0), (A, 0)];
     p2.sequences.push(s);
     assert!(
-        matches!(p2.validate(), Err(ProjectError::LaneOrderNotCanonical(Some(MediaId(9))))),
-        "неканонический порядок в ЛЕНТЕ обязан быть ошибкой"
+        matches!(p2.validate(), Err(ProjectError::TrackMissing(Some(MediaId(9)), V, 1))),
+        "событие без дорожки в ЛЕНТЕ обязано быть ошибкой"
     );
     // и чинится чтением
     p2.normalize();
     p2.validate().expect("после normalize документ канонический");
+    assert_eq!(p2.sequence(MediaId(9)).unwrap().lanes(V), 2);
 }
 
-/// Тест 590 (Р.56, п.449). Канонизация чинится на ЧТЕНИИ — и в корне, и в
-/// каждой ленте: обратной совместимости не обещано, старые файлы знают
-/// только номера.
+/// Тест 590 (Р.56, п.449; Р.62). Старый файл знает только счётчики,
+/// `lane_order` и имена в `ui`: чтение превращает их в дорожки — и в
+/// корне, и в каждой ленте — односторонне, а содержимое перенумеровано
+/// под ранги строк.
 #[test]
 fn t590_load_canonicalizes_root_and_reels() {
-    let mut p = three_video_lanes();
-    p.lane_order = vec![(V, 2), (A, 0), (V, 0), (V, 1)];
-    let mut s = Sequence::new(MediaId(9), "Reel");
-    s.video_lanes = 2;
-    s.clips.push(vclip(10, 0));
-    let mut c = vclip(11, 1);
-    c.start = kt_time::Tick(200_000);
-    s.clips.push(c);
-    s.lane_order = vec![(V, 1), (V, 0), (A, 0)];
-    p.sequences.push(s);
-    p.clips.push({
-        let mut c = vclip(12, 0);
-        c.media = MediaId(9);
-        c.start = kt_time::Tick(900_000);
-        c
+    let p = three_video_lanes();
+    let mut v = serde_json::to_value(&p).unwrap();
+    // конверт ДО Р.62: без `tracks`, со счётчиками, порядком и именами в ui
+    v.as_object_mut().unwrap().remove("tracks");
+    v["video_lanes"] = serde_json::json!(3);
+    v["audio_lanes"] = serde_json::json!(1);
+    v["lane_order"] = serde_json::json!([["video", 2], ["audio", 0], ["video", 0], ["video", 1]]);
+    v["ui"] = serde_json::json!({
+        "view_start": 0.0, "ticks_per_px": 100.0, "cursor": 0,
+        "lane_names": [["video", 2, "Потолок"]],
+        "lane_heights": [["video", 2, 42.0]]
     });
+    v["sequences"] = serde_json::json!([{
+        "id": 9, "name": "Reel", "video_lanes": 2, "audio_lanes": 1,
+        "lane_order": [["video", 1], ["video", 0], ["audio", 0]],
+        "clips": [
+            serde_json::to_value(vclip(10, 0)).unwrap(),
+            serde_json::to_value({ let mut c = vclip(11, 1); c.start = kt_time::Tick(200_000); c }).unwrap()
+        ]
+    }]);
+    v["clips"].as_array_mut().unwrap().push(
+        serde_json::to_value({
+            let mut c = vclip(12, 0);
+            c.media = MediaId(9);
+            c.start = kt_time::Tick(900_000);
+            c
+        })
+        .unwrap(),
+    );
 
-    let json = serde_json::to_string(&p).unwrap();
-    let loaded = Project::from_json(&json).expect("канонизация на чтении делает файл валидным");
-    assert_eq!(loaded.rows()[0], (V, 0));
+    let loaded = Project::from_json(&v.to_string()).expect("старый конверт читается");
+    assert_eq!(loaded.rows(), vec![(V, 0), (A, 0), (V, 1), (V, 2)], "порядок строк из lane_order");
     assert_eq!(
         loaded.clips.iter().find(|c| c.id == ClipId(3)).unwrap().lane,
         0,
         "в корне верхняя строка не стала дорожкой 0"
     );
+    let top = loaded.track_at(V, 0).unwrap();
+    assert_eq!(top.name, "Потолок", "имя из ui.lane_names не доехало до дорожки");
+    assert_eq!(top.height, 42.0, "высота из ui.lane_heights не доехала до дорожки");
+    assert!(loaded.ui.as_ref().is_none_or(|u| u.lane_names.is_empty()), "легаси-имена не очищены");
     let s = &loaded.sequences[0];
+    assert_eq!(s.rows(), vec![(V, 0), (V, 1), (A, 0)]);
     assert_eq!(
         s.clips.iter().find(|c| c.id == ClipId(11)).unwrap().lane,
         0,
         "лента не канонизирована"
     );
-    assert!(s.lane_order.is_empty(), "у ленты остался явный порядок");
+    assert!(loaded.tracks.iter().all(|t| t.id.0 != 0), "id не назначены");
+    assert!(s.tracks.iter().all(|t| t.id.0 != 0), "id ленты не назначены");
+    let all: Vec<TrackId> = loaded.tracks.iter().chain(s.tracks.iter()).map(|t| t.id).collect();
+    let uniq: std::collections::HashSet<TrackId> = all.iter().copied().collect();
+    assert_eq!(all.len(), uniq.len(), "id дорожек не уникальны по документу");
 }

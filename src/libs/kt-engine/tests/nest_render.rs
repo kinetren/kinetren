@@ -113,9 +113,9 @@ fn decomposed(kind: ClipKind) -> Project {
     p.clips.push(ev(2, kind, 0, PART, PART, 1));
     p.clips.push(ev(3, kind, 0, PART + PART, PART, 2));
     if kind == ClipKind::Video {
-        p.video_lanes = 1;
+        p.ensure_tracks(kt_model::LaneKind::Video, 1);
     } else {
-        p.audio_lanes = 1;
+        p.ensure_tracks(kt_model::LaneKind::Audio, 1);
     }
     p.validate().expect("Decompose(P) обязан быть законным");
     p
@@ -277,7 +277,7 @@ fn nest_with(outer_opacity: f32, fx: Vec<FxInstance>) -> Project {
     let mut p = base();
     let mut s = Sequence::new(MediaId(100), "Кусок");
     s.clips = inner_pair();
-    s.video_lanes = 2;
+    s.ensure_tracks(kt_model::LaneKind::Video, 2);
     p.sequences.push(s);
     let mut inst = ev(10, ClipKind::Video, 0, Tick(0), PART + PART, 100);
     inst.source_in = Tick(0);
@@ -297,7 +297,7 @@ fn spread_with(opacity: f32, fx: Vec<FxInstance>) -> Project {
         c.fx = fx.clone();
     }
     p.clips = flat;
-    p.video_lanes = 2;
+    p.ensure_tracks(kt_model::LaneKind::Video, 2);
     p.validate().expect("развёрнутый проект законен");
     p
 }
@@ -343,7 +343,7 @@ fn t439_semi_transparent_subcomposite_is_not_twice_as_dark() {
     child.opacity = 0.5;
     s.clips = vec![child.clone()];
     nested.sequences.push(s);
-    nested.video_lanes = 2;
+    nested.ensure_tracks(kt_model::LaneKind::Video, 2);
     // ФОН другого цвета: у синтетики цвет — функция pts, поэтому без
     // своей точки входа фон и содержимое совпали бы, и потемнение было бы
     // не на чем увидеть
@@ -356,7 +356,7 @@ fn t439_semi_transparent_subcomposite_is_not_twice_as_dark() {
     nested.validate().unwrap();
 
     let mut flat = base();
-    flat.video_lanes = 2;
+    flat.ensure_tracks(kt_model::LaneKind::Video, 2);
     flat.clips.push(bg_clip.clone());
     flat.clips.push(child);
     flat.validate().unwrap();
@@ -1077,7 +1077,7 @@ fn t564_two_instances_of_one_reel_do_not_share_a_reverb() {
     twin.lane = 1;
     twin.start = Tick(PART.0 / 2);
     p.clips.push(twin);
-    p.audio_lanes = 2;
+    p.ensure_tracks(kt_model::LaneKind::Audio, 2);
     p.validate().expect("лента в двух местах законна");
     let both = render_audio(&p, frames);
 
@@ -1751,7 +1751,7 @@ fn t631b_chain_input_is_the_instances_own() {
     let big = Quality { width: q.width * 3, height: q.height * 3 };
     let mut content = base();
     content.clips = vec![ev(2, ClipKind::Video, 0, Tick(0), PART, 1)];
-    content.video_lanes = 1;
+    content.ensure_tracks(kt_model::LaneKind::Video, 1);
     content.validate().unwrap();
     let sub = render_checker(&content, Tick(FRAME * 5), big).0;
     let src = kt_fx::video::Frame { w: big.width, h: big.height, rgba: sub, has_alpha: false };

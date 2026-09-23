@@ -198,10 +198,9 @@ fn hash_reel(project: &Project, seq: MediaId, depth: usize, h: &mut xxhash_rust:
         return;
     }
     h.update(&[s.overlap_layers as u8]);
-    for v in [s.video_lanes, s.audio_lanes, s.morph_lanes, s.camera_lanes] {
-        h.update(&v.to_le_bytes());
-    }
-    h.update(format!("{:?}", s.lane_order).as_bytes());
+    // ДОРОЖКИ ленты (Р.62) — редакция целиком: порядок строк, выключатели,
+    // уровень, режим наложения и цепочка дорожки меняют картинку и звук
+    h.update(format!("{:?}", s.tracks).as_bytes());
     h.update(format!("{:?}", s.clips).as_bytes());
     h.update(format!("{:?}", s.transitions).as_bytes());
     h.update(format!("{:?}", s.morphers).as_bytes());

@@ -198,7 +198,7 @@ fn t425_document_wide_ids_and_closed_reels() {
     // в чужой ленте вернула бы None из joint(), и слой молча перестал бы
     // действовать
     let mut p = base();
-    p.morph_lanes = 1;
+    p.ensure_tracks(LaneKind::Morph, 1);
     let mut s = seq(100, "Кусок", vec![clip(10, 1, Tick(0), LEN)]);
     s.morphers.push(MorpherEvent {
         id: MorphId(1),
@@ -213,7 +213,7 @@ fn t425_document_wide_ids_and_closed_reels() {
         fade_in: Tick(0),
         fade_out: Tick(0),
     });
-    s.morph_lanes = 1;
+    s.ensure_tracks(LaneKind::Morph, 1);
     p.sequences.push(s);
     p.clips.push(clip(1, 100, Tick(0), LEN));
     assert!(
@@ -248,11 +248,13 @@ fn t426_sequence_does_not_lag_behind_the_root() {
         transitions: _,
         morphers: _,
         cameras: _,
-        video_lanes: _,
-        audio_lanes: _,
-        morph_lanes: _,
-        camera_lanes: _,
-        lane_order: _,
+        // дорожки-объекты (Р.62, change B) и легаси-счётчики только на чтение
+        tracks: _,
+        legacy_video_lanes: _,
+        legacy_audio_lanes: _,
+        legacy_morph_lanes: _,
+        legacy_camera_lanes: _,
+        legacy_lane_order: _,
         overlap_layers: _,
         // публичные параметры (Р.59, стадия 3) — СОДЕРЖИМОЕ ленты: у
         // корня поле есть только потому, что вход внутрь сделан обменом
@@ -284,11 +286,12 @@ fn t426_sequence_does_not_lag_behind_the_root() {
         transitions: _,
         morphers: _,
         cameras: _,
-        video_lanes: _,
-        audio_lanes: _,
-        morph_lanes: _,
-        camera_lanes: _,
-        lane_order: _,
+        tracks: _,
+        legacy_video_lanes: _,
+        legacy_audio_lanes: _,
+        legacy_morph_lanes: _,
+        legacy_camera_lanes: _,
+        legacy_lane_order: _,
         overlap_layers: _,
         published: _,
         // свои растр и fps (Р.62): свойство ЛЕНТЫ, у корня их роль
@@ -302,8 +305,14 @@ fn t426_sequence_does_not_lag_behind_the_root() {
     // картинку само по себе
     let s = Sequence::new(MediaId(100), "Кусок");
     let p = Project::new(settings());
-    assert_eq!((s.video_lanes, s.audio_lanes), (p.video_lanes, p.audio_lanes));
-    assert_eq!((s.morph_lanes, s.camera_lanes), (p.morph_lanes, p.camera_lanes));
+    assert_eq!(
+        (s.lanes(LaneKind::Video), s.lanes(LaneKind::Audio)),
+        (p.lanes(LaneKind::Video), p.lanes(LaneKind::Audio))
+    );
+    assert_eq!(
+        (s.lanes(LaneKind::Morph), s.lanes(LaneKind::Camera)),
+        (p.lanes(LaneKind::Morph), p.lanes(LaneKind::Camera))
+    );
     assert_eq!(s.overlap_layers, p.overlap_layers);
     assert_eq!(s.end(), Tick(0), "пустая лента обязана кончаться в нуле");
 }
@@ -709,7 +718,7 @@ fn t557_a_layer_inside_covers_what_it_covered_outside() {
     let mut p = base();
     p.clips.push(clip(11, 1, Tick::ZERO, LEN));
     p.clips.push(clip(12, 1, LEN, LEN));
-    p.morph_lanes = 1;
+    p.ensure_tracks(LaneKind::Morph, 1);
     p.morphers.push(MorpherEvent {
         id: MorphId(1),
         lane: 0,
@@ -728,7 +737,7 @@ fn t557_a_layer_inside_covers_what_it_covered_outside() {
     });
     // строка морфера СВЕРХУ — иначе «всё, что ниже» не накрывает ничего и
     // снаружи, и сравнивать было бы не с чем
-    p.lane_order = vec![(LaneKind::Morph, 0), (LaneKind::Video, 0)];
+    p.set_lane_order(&[(LaneKind::Morph, 0), (LaneKind::Video, 0)]);
     p.validate().expect("фикстура законна");
 
     // что слой накрывал СНАРУЖИ: оба события получили зеркало
@@ -780,7 +789,7 @@ fn t558_cameras_travel_into_the_sequence() {
     let mut p = base();
     p.clips.push(clip(11, 1, Tick::ZERO, LEN));
     p.clips.push(clip(12, 1, LEN, LEN));
-    p.camera_lanes = 1;
+    p.ensure_tracks(LaneKind::Camera, 1);
     p.cameras.push(CameraEvent {
         ease: true,
         id: CameraId(7),
@@ -806,7 +815,10 @@ fn t558_cameras_travel_into_the_sequence() {
     assert_eq!(s.cameras.len(), 1, "камеры нет внутри ленты");
     assert_eq!(s.cameras[0].id, CameraId(7), "камера родилась заново вместо переезда");
     assert_eq!(s.cameras[0].start, Tick::ZERO, "камера не ребейзнута в ось ленты");
-    assert!(s.camera_lanes >= 1, "камерная строка внутри ленты не заведена — камеры не видно");
+    assert!(
+        s.lanes(LaneKind::Camera) >= 1,
+        "камерная строка внутри ленты не заведена — камеры не видно"
+    );
     assert!(
         s.rows().contains(&(LaneKind::Camera, 0)),
         "камерной строки нет в порядке строк ленты: {:?}",
@@ -828,7 +840,7 @@ fn t559_collapsing_under_an_area_layer_is_possible() {
     let mut p = base();
     p.clips.push(clip(11, 1, Tick::ZERO, LEN));
     p.clips.push(clip(12, 1, LEN, LEN));
-    p.morph_lanes = 1;
+    p.ensure_tracks(LaneKind::Morph, 1);
     p.areas.push(MarkedArea {
         name: "Кусок".into(),
         start: Tick::ZERO,
@@ -879,16 +891,16 @@ fn expandable() -> Project {
     let mut p = base();
     p.clips.push(clip(1, 1, Tick::ZERO, LEN));
     p.clips.push(clip(2, 1, Tick(3 * LEN.0), LEN));
-    p.video_lanes = 1;
-    p.audio_lanes = 1;
+    p.ensure_tracks(LaneKind::Video, 1);
+    p.ensure_tracks(LaneKind::Audio, 1);
 
     let mut s = Sequence::new(MediaId(100), "Кусок");
     s.clips = vec![clip(11, 1, Tick::ZERO, LEN), clip(12, 1, LEN, LEN)];
     s.clips[1].lane = 1;
-    s.video_lanes = 2;
-    s.audio_lanes = 1;
-    s.morph_lanes = 1;
-    s.camera_lanes = 1;
+    s.ensure_tracks(LaneKind::Video, 2);
+    s.ensure_tracks(LaneKind::Audio, 1);
+    s.ensure_tracks(LaneKind::Morph, 1);
+    s.ensure_tracks(LaneKind::Camera, 1);
     s.morphers.push(MorpherEvent {
         id: MorphId(5),
         lane: 0,
@@ -917,13 +929,13 @@ fn expandable() -> Project {
         auto: Vec::new(),
     });
     // СВОЙ порядок строк: морф-строка сверху, иначе слой не накрывает ничего
-    s.lane_order = vec![
+    s.reorder_rows(&[
         (LaneKind::Morph, 0),
         (LaneKind::Video, 0),
         (LaneKind::Video, 1),
         (LaneKind::Audio, 0),
         (LaneKind::Camera, 0),
-    ];
+    ]);
     p.sequences.push(s);
 
     let mut inst = clip(20, 100, Tick(LEN.0), Tick(2 * LEN.0));
@@ -1014,22 +1026,20 @@ fn t567_an_event_cannot_change_reels_inside_a_band() {
         "экземпляр уехал внутрь собственной ленты — она стала бы содержать саму себя"
     );
 
-    // корневая строка ПОСРЕДИ блока раскрытия — не ошибка: блок ставится
-    // заново при каждой пересборке вида, а относительный порядок и
-    // корневых строк, и строк ленты при делении сохраняется
+    // дорожка, вставленная ВНУТРЬ блока раскрытия (так делает `InsertTrack`
+    // при открытой полосе; `after_batch` растит `len`), достаётся ЛЕНТЕ,
+    // а строки корня остаются прежними (Р.62: блок — часть вектора дорожек)
     let mut p = p0.clone();
     p.merge_reel(&b);
-    let mut rows = p.rows();
-    let first_band = rows.iter().position(|&(k, l)| b.owns(k, l)).expect("строка полосы");
-    let root_row = rows.iter().rposition(|&(k, l)| !b.owns(k, l)).expect("корневая строка");
-    let moved = rows.remove(root_row);
-    rows.insert(first_band + 1, moved);
-    p.lane_order = rows;
-    p.unmerge_reel(&b).expect("разрыв блока ронять батч не имеет права");
+    let mut grown = b;
+    p.insert_track(LaneKind::Video, b.base.video + 1);
+    grown.len.video += 1;
+    p.unmerge_reel(&grown).expect("вставка внутри блока ронять батч не имеет права");
+    assert_eq!(p.rows(), p0.rows(), "строки КОРНЯ поехали от дорожки, вставленной в полосу");
     assert_eq!(
-        p.sequence(MediaId(100)).map(|s| s.rows()),
-        p0.sequence(MediaId(100)).map(|s| s.rows()),
-        "порядок строк ЛЕНТЫ поехал от чужой строки посреди блока"
+        p.sequence(MediaId(100)).map(|s| s.lanes(LaneKind::Video)),
+        p0.sequence(MediaId(100)).map(|s| s.lanes(LaneKind::Video) + 1),
+        "дорожка полосы обязана уехать в ленту"
     );
 }
 
@@ -1046,10 +1056,10 @@ fn t567_an_event_cannot_change_reels_inside_a_band() {
 fn t568_inserting_and_removing_lanes_does_not_break_a_band() {
     // корневая дорожка НИЖЕ начала полосы — полоса едет вниз целиком
     for (name, cmd) in [
-        ("видео-дорожка в корне", Command::InsertLane { kind: ClipKind::Video, at: 0 }),
-        ("аудио-дорожка в корне", Command::InsertLane { kind: ClipKind::Audio, at: 0 }),
-        ("морф-строка в корне", Command::InsertMorphLane { at: 0 }),
-        ("камерная строка в корне", Command::InsertCameraLane { at: 0 }),
+        ("видео-дорожка в корне", Command::InsertTrack { kind: LaneKind::Video, at: 0 }),
+        ("аудио-дорожка в корне", Command::InsertTrack { kind: LaneKind::Audio, at: 0 }),
+        ("морф-строка в корне", Command::InsertTrack { kind: LaneKind::Morph, at: 0 }),
+        ("камерная строка в корне", Command::InsertTrack { kind: LaneKind::Camera, at: 0 }),
     ] {
         let mut m = TimelineModel::new(expandable());
         assert!(m.expand_band(ClipId(20)), "полоса не раскрылась");
@@ -1223,7 +1233,7 @@ fn t575_imported_addresses_never_collide() {
     dst.clips.push(clip(1, 1, Tick::ZERO, LEN));
     dst.clips.push(clip(2, 1, LEN, LEN));
     dst.clips[1].lane = 1;
-    dst.video_lanes = 2;
+    dst.ensure_tracks(LaneKind::Video, 2);
     dst.validate().unwrap();
 
     let mut m = TimelineModel::new(dst);
@@ -1269,12 +1279,9 @@ fn t591_the_bench_is_exempt_and_row_commands_are_refused() {
     let mut m = TimelineModel::new(expandable());
     assert!(m.expand_band(ClipId(20)), "полоса не раскрылась");
 
-    // рабочий вид НЕ канонический — и это законно
-    assert!(
-        !rows_are_canonical(&m.project().rows()),
-        "сцена выродилась: в бенче строки и так по возрастанию, тест ничего не утверждает"
-    );
-    // а канон — канонический, и валидация его принимает
+    // рабочий вид с Р.62 канонический ПО ПОСТРОЕНИЮ (блок полосы — часть
+    // вектора дорожек), и бенч больше не исключение
+    assert!(rows_are_canonical(&m.project().rows()));
     assert!(rows_are_canonical(&m.document().rows()));
     m.document().validate().expect("канон обязан оставаться валидным при открытой полосе");
 
@@ -1294,8 +1301,11 @@ fn t591_the_bench_is_exempt_and_row_commands_are_refused() {
         "порядок строк при открытой полосе обязан быть отвергнут"
     );
     assert!(
-        matches!(m.apply(Command::SetLanes { video: 2, audio: 1 }), Err(CommandError::BandsOpen)),
-        "число дорожек при открытой полосе обязано быть отвергнуто"
+        matches!(
+            m.apply(Command::RemoveTrack { kind: LaneKind::Video, at: 0 }),
+            Err(CommandError::BandsOpen)
+        ),
+        "удаление дорожки при открытой полосе обязано быть отвергнуто"
     );
     assert_eq!(m.bands().len(), 1, "отказ не имеет права свернуть раскрытие сам");
 }
@@ -1313,7 +1323,7 @@ fn t592_a_lane_at_the_band_tail_belongs_to_the_band() {
     let base = m.bands()[0].base.video;
     let len = m.bands()[0].len.video;
 
-    m.apply(Command::InsertLane { kind: ClipKind::Video, at: base + len })
+    m.apply(Command::InsertTrack { kind: LaneKind::Video, at: base + len })
         .expect("вставка в хвост полосы обязана проходить");
     assert_eq!(m.bands()[0].len.video, len + 1, "хвостовая дорожка не досталась полосе");
 
@@ -1366,13 +1376,13 @@ fn t598_reel_as_root_is_a_valid_document() {
 #[test]
 fn t635_a_band_inside_an_entered_reel_counts_from_that_reel() {
     let mut p = base();
-    p.video_lanes = 1;
-    p.audio_lanes = 1;
+    p.ensure_tracks(LaneKind::Video, 1);
+    p.ensure_tracks(LaneKind::Audio, 1);
     // Y — лента-внучка
     let mut y = Sequence::new(MediaId(101), "Внучка");
     y.clips = vec![clip(31, 1, Tick::ZERO, LEN), clip(32, 1, LEN, LEN)];
-    y.video_lanes = 1;
-    y.audio_lanes = 1;
+    y.ensure_tracks(LaneKind::Video, 1);
+    y.ensure_tracks(LaneKind::Audio, 1);
     // X — лента с экземпляром Y на ВТОРОЙ дорожке: базы обязаны выйти
     // равными числу дорожек X, а не корня
     let mut x = Sequence::new(MediaId(100), "Дочка");
@@ -1380,8 +1390,8 @@ fn t635_a_band_inside_an_entered_reel_counts_from_that_reel() {
     let mut yi = clip(22, 101, LEN, Tick(2 * LEN.0));
     yi.lane = 1;
     x.clips.push(yi);
-    x.video_lanes = 2;
-    x.audio_lanes = 2;
+    x.ensure_tracks(LaneKind::Video, 2);
+    x.ensure_tracks(LaneKind::Audio, 2);
     p.sequences.push(y);
     p.sequences.push(x);
     p.clips.push(clip(1, 1, Tick::ZERO, LEN));
@@ -1395,10 +1405,13 @@ fn t635_a_band_inside_an_entered_reel_counts_from_that_reel() {
 
     assert!(m.expand_band(ClipId(22)), "a band inside an entered reel must open");
     let b = &m.bands()[0];
+    // Р.62: блок полосы встаёт СРАЗУ ПОД строкой экземпляра (V2 ленты X):
+    // видео-база — две строки X над ним, аудио-база — ноль (строки аудио X
+    // лежат НИЖЕ блока и на время раскрытия сдвинуты на его длину)
     assert_eq!(
         (b.base.video, b.base.audio),
-        (2, 2),
-        "band bases must count the lanes of the reel we stand in, not the root"
+        (2, 0),
+        "band bases must count the rows of the reel we stand in above the instance, not the root"
     );
     assert_eq!(b.dt, LEN, "band time offset is the instance start minus source_in");
     let inner = m.project().clips.iter().find(|c| c.id == ClipId(31)).expect("band content");

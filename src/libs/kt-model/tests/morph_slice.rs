@@ -54,7 +54,7 @@ fn base() -> Project {
     p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:440".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "synth:ramp".into() });
     p.clips.push(clip(10, ClipKind::Video, 0, Tick(0), LEN));
-    p.morph_lanes = 1;
+    p.ensure_tracks(LaneKind::Morph, 1);
     p
 }
 
@@ -221,7 +221,7 @@ fn t236_degenerate_windows() {
     // а значит резать ради неё незачем. Раньше тут было три куска.
     let mut p = base();
     p.clips.push(clip(11, ClipKind::Audio, 0, Tick(0), LEN));
-    p.audio_lanes = 1;
+    p.ensure_tracks(LaneKind::Audio, 1);
     let mut m = layer(Tick(30_000), Tick(30_000));
     m.patch.media = None;
     m.targets = MorphTargets::Clips { ids: vec![ClipId(10), ClipId(11)] };
@@ -332,8 +332,8 @@ fn t236_untimed_morpher_ignores_block_position() {
 #[test]
 fn t235_below_layer_and_bottom_up_order() {
     let mut p = base();
-    p.video_lanes = 2;
-    p.audio_lanes = 1;
+    p.ensure_tracks(LaneKind::Video, 2);
+    p.ensure_tracks(LaneKind::Audio, 1);
     p.clips.push(clip(20, ClipKind::Video, 1, Tick(0), LEN));
     p.clips.push(clip(30, ClipKind::Audio, 0, Tick(0), LEN));
     let mut m = layer(Tick(0), LEN);
@@ -377,7 +377,7 @@ fn t235_below_layer_and_bottom_up_order() {
 #[test]
 fn t235_layer_order_is_bottom_up_and_undoable() {
     let mut p = base();
-    p.morph_lanes = 2;
+    p.ensure_tracks(LaneKind::Morph, 2);
     for (id, lane, fx) in [
         (1u64, 0u32, FxInstance::Mirror { horizontal: true, vertical: false }),
         (2, 1, FxInstance::Mirror { horizontal: false, vertical: true }),
@@ -522,7 +522,7 @@ fn t247_named_areas_and_references() {
     assert_eq!(unique_name(&taken, "  ", "область"), "область");
 
     let mut p = base();
-    p.video_lanes = 2;
+    p.ensure_tracks(LaneKind::Video, 2);
     p.clips.push(clip(20, ClipKind::Video, 1, Tick(0), LEN));
     p.areas.push(MarkedArea {
         name: "финал".into(),
@@ -805,8 +805,8 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
         opacity: 1.0,
         fx_off: false,
     });
-    p.morph_lanes = 1;
-    p.lane_order = vec![(LaneKind::Morph, 0), (LaneKind::Video, 0), (LaneKind::Audio, 0)];
+    p.ensure_tracks(LaneKind::Morph, 1);
+    p.set_lane_order(&[(LaneKind::Morph, 0), (LaneKind::Video, 0), (LaneKind::Audio, 0)]);
     p.morphers.push(MorpherEvent {
         id: MorphId(1),
         lane: 0,
@@ -1073,7 +1073,7 @@ fn t288_layer_does_not_reach_a_warped_clip_outside_its_window() {
     // строка слоя обязана быть ВЫШЕ дорожки клипа, иначе `Below` не
     // накрывает его и тест зеленел бы по совсем другой причине
     let above = |p: &mut Project| {
-        p.lane_order = vec![(LaneKind::Morph, 0), (LaneKind::Video, 0), (LaneKind::Audio, 0)];
+        p.set_lane_order(&[(LaneKind::Morph, 0), (LaneKind::Video, 0), (LaneKind::Audio, 0)]);
     };
 
     // --- 1. варп у САМОГО КЛИПА: блок далеко, трогать нечего -------------
@@ -1111,7 +1111,7 @@ fn t288_layer_does_not_reach_a_warped_clip_outside_its_window() {
     m.patch = MorphPatch { audio_fx: vec![warp.clone()], ..Default::default() };
     p.morphers.push(m);
     p.clips.push(clip(11, ClipKind::Audio, 0, Tick(0), LEN));
-    p.audio_lanes = 1;
+    p.ensure_tracks(LaneKind::Audio, 1);
     p.validate().unwrap();
 
     let eff = p.effective_clips();

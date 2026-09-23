@@ -91,12 +91,13 @@ fn rich_project() -> Project {
         view_start: 0.0,
         ticks_per_px: 1000.0,
         cursor: 42_000,
-        lane_names: vec![
-            (LaneKind::Video, 0, "MAIN".into()),
-            (LaneKind::Audio, 0, "DIALOG".into()),
-        ],
         ..Default::default()
     });
+    // имена дорожек с Р.62 живут на дорожках-объектах, а не в `ui`
+    p.ensure_tracks(LaneKind::Video, 1);
+    p.ensure_tracks(LaneKind::Audio, 1);
+    p.track_at_mut(LaneKind::Video, 0).unwrap().name = "MAIN".into();
+    p.track_at_mut(LaneKind::Audio, 0).unwrap().name = "DIALOG".into();
     p.normalize();
     p.validate().unwrap();
     p
@@ -136,7 +137,8 @@ fn t152_mapping_semantics_roundtrip() {
     assert_eq!(m.color.as_deref(), Some("GREEN"), "цвет нормализован дефолтом эталона");
     let ui = p2.ui.as_ref().unwrap();
     assert_eq!(ui.cursor, 42_000);
-    assert!(ui.lane_names.contains(&(LaneKind::Video, 0, "MAIN".into())));
+    assert_eq!(p2.track_label(LaneKind::Video, 0), "MAIN", "имя дорожки пережило круг");
+    assert_eq!(p2.track_label(LaneKind::Audio, 0), "DIALOG");
 
     // стабильность: второй круг байт-в-байт (идемпотентность на уровне проекта)
     let text2 = save_project(&p2, &bundle.retained, None);
@@ -379,7 +381,11 @@ fn t165_overlapping_lane_survives_layer_roundtrip() {
     assert_eq!(back.clips.len(), 3);
     assert!(back.clips.iter().all(|c| c.lane == 0), "дорожка собрана обратно: {:?}", back.clips);
     assert_eq!(back.clips, p.clips, "геометрия клипов не изменилась");
-    assert_eq!(back.video_lanes, p.video_lanes, "дорожек столько же");
+    assert_eq!(
+        back.lanes(kt_model::LaneKind::Video),
+        p.lanes(kt_model::LaneKind::Video),
+        "дорожек столько же"
+    );
 
     // второй круг байт-в-байт (идемпотентность, расширение т.144)
     let again = save_project(&back, &Retained::default(), None);
@@ -521,7 +527,7 @@ fn project_3d() -> Project {
         source: Default::default(),
     }]];
     // две камеры на двух дорожках, с перекрытием по времени и кейфреймами
-    p.camera_lanes = 2;
+    p.ensure_tracks(kt_model::LaneKind::Camera, 2);
     p.cameras = vec![
         CameraEvent {
             ease: true,
@@ -594,7 +600,7 @@ fn t189_cameras_roundtrip_and_conditional_version() {
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["metadata"]["kt"]["v"], 3, "кривые нового домена поднимают до v3");
     let b = load_project(&text, None).expect("наш 3D-файл читается");
-    assert_eq!(b.project.camera_lanes, 2);
+    assert_eq!(b.project.lanes(kt_model::LaneKind::Camera), 2);
     assert_eq!(b.project.cameras, p.cameras, "камеры пережили круг");
     assert_eq!(b.project.clips.iter().find(|c| c.id == ClipId(1)).unwrap().fx, p.clips[0].fx);
     let again = save_project(&b.project, &b.retained, None);
@@ -921,19 +927,23 @@ fn t240_morpher_schema_v4_and_legacy_read() {
     assert_ne!(v["metadata"]["kt"]["v"], 4, "без морферов версия не растёт");
 }
 
-/// Тест 241b (Р.35 С1): порядок строк переехал из `ui.lane_order` в
+/// Тест 241b (Р.35 С1): порядок строк переехал из `ui.rows()` в
 /// модель. Файл со старым полем апгрейдится односторонне, новый пишет
 /// своё, а проект с естественным порядком остаётся байт-стабильным.
 #[test]
 fn t241_lane_order_moved_into_model() {
     let mut p = rich_project();
-    p.morph_lanes = 1;
+    p.ensure_tracks(kt_model::LaneKind::Morph, 1);
     p.set_lane_order(&[(kt_model::LaneKind::Morph, 0)]);
-    assert!(!p.lane_order.is_empty(), "перемешанный порядок хранится");
+    assert!(!p.rows().is_empty(), "перемешанный порядок хранится");
     p.validate().unwrap();
     let text = save_project(&p, &Retained::default(), None);
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert!(v["metadata"]["kt"]["lane_order"].is_array(), "порядок пишется своим полем");
+    // с Р.62 порядок строк — это порядок ДОРОЖЕК в конверте; отдельного
+    // поля `lane_order` больше нет ни в модели, ни в файле
+    let tracks = v["metadata"]["kt"]["tracks"].as_array().expect("дорожки в конверте");
+    assert_eq!(tracks[0]["kind"], "morph", "перемешанный порядок пишется дорожками");
+    assert!(v["metadata"]["kt"].get("lane_order").is_none(), "своего поля порядка больше нет");
     assert!(
         v["metadata"]["kt"]["ui"].get("lane_order").is_none(),
         "в ui порядок больше не пишется"
@@ -942,18 +952,33 @@ fn t241_lane_order_moved_into_model() {
     assert_eq!(b.project.rows(), p.rows(), "порядок пережил круг");
     assert_eq!(text, save_project(&b.project, &b.retained, None), "идемпотентность");
 
-    // СТАРЫЙ файл: порядок лежал в ui.lane_order — читается оттуда
-    let mut old: serde_json::Value = serde_json::from_str(&text).unwrap();
-    let order = old["metadata"]["kt"]["lane_order"].clone();
-    old["metadata"]["kt"].as_object_mut().unwrap().remove("lane_order");
-    old["metadata"]["kt"]["ui"]["lane_order"] = order;
-    let b = load_project(&serde_json::to_string_pretty(&old).unwrap(), None)
-        .expect("файл со старым местом порядка обязан открываться");
-    assert_eq!(b.project.rows(), p.rows(), "порядок переехал из ui в модель");
+    // СТАРЫЙ файл: порядок лежал своим полем (Р.35) или ещё раньше — в
+    // `ui.lane_order`; оба места читаются, ни одно не пишется (Р.62)
+    let order = serde_json::to_value(p.rows()).unwrap();
+    for at in ["kt", "ui"] {
+        let mut old: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let kt = old["metadata"]["kt"].as_object_mut().unwrap();
+        kt.remove("tracks");
+        kt.insert("morph_lanes".into(), serde_json::json!(1));
+        match at {
+            "kt" => {
+                kt.insert("lane_order".into(), order.clone());
+            }
+            _ => old["metadata"]["kt"]["ui"]["lane_order"] = order.clone(),
+        }
+        let b = load_project(&serde_json::to_string_pretty(&old).unwrap(), None)
+            .expect("файл со старым местом порядка обязан открываться");
+        assert_eq!(b.project.rows(), p.rows(), "порядок из {at} не переехал в дорожки");
+    }
 
-    // естественный порядок поля не заводит
+    // естественный порядок конверта дорожек не заводит
     let plain = save_project(&rich_project(), &Retained::default(), None);
-    assert!(!plain.contains("lane_order"), "естественный порядок не хранится");
+    assert!(!plain.contains("lane_order"), "поля порядка больше нет");
+    let pv: serde_json::Value = serde_json::from_str(&plain).unwrap();
+    assert!(
+        pv["metadata"]["kt"].get("tracks").is_none(),
+        "естественный порядок дорожек без свойств в конверт не пишется"
+    );
 }
 
 /// Тест 248b (Р.35 С4): именованные области ездят в файле и поднимают
@@ -998,7 +1023,7 @@ fn t251_broken_kt_meta_is_an_error() {
         Ok(b) => panic!(
             "битый конверт открылся молча: {} клипов, {} дорожек",
             b.project.clips.len(),
-            b.project.video_lanes
+            b.project.lanes(kt_model::LaneKind::Video)
         ),
     }
     // чужой файл БЕЗ нашей секции по-прежнему открывается
@@ -1047,9 +1072,10 @@ fn t383_broken_clip_kt_section_is_an_error() {
     assert!(msg.contains('c') && msg.contains("lane"), "в сообщении нет адреса клипа: {msg}");
 }
 
-/// Тест 384 (Р.49 А10): чужое у ДОРОЖКИ возвращается на место — эффекты,
-/// маркеры и флаг «выключена». Своих дорожечных эффектов у нас нет, а у
-/// соседей есть, и круг их терял молча.
+/// Тест 384 (Р.49 А10; пересмотрен Р.62): чужое у ДОРОЖКИ возвращается на
+/// место — ЧУЖИЕ эффекты и маркеры. Флаг «выключена» с Р.62 читается как
+/// MUTE дорожки (своё mute у нас появилось) и пишется обратно из него —
+/// notice «у Kinotrain нет per-track mute» снят по существу.
 #[test]
 fn t384_track_foreign_effects_markers_and_enabled_survive() {
     let doc = r#"{"OTIO_SCHEMA":"Timeline.1","name":"t","tracks":{"OTIO_SCHEMA":"Stack.1",
@@ -1071,9 +1097,8 @@ fn t384_track_foreign_effects_markers_and_enabled_survive() {
     "global_start_time":null,"metadata":{}}"#;
     let b = load_project(doc, None).expect("файл читается");
     assert!(
-        b.notices.iter().any(|n| n.contains("disabled")),
-        "о выключенной чужой дорожке не сказано ни слова: {:?}",
-        b.notices
+        b.project.track_at(kt_model::LaneKind::Video, 0).is_some_and(|t| t.mute),
+        "чужая выключенная дорожка обязана стать заглушённой, а не включиться молча"
     );
 
     let out = save_project(&b.project, &b.retained, None);
@@ -1186,7 +1211,7 @@ fn nested_project() -> Project {
         fade_in: Tick(0),
         fade_out: Tick(0),
     });
-    s.morph_lanes = 1;
+    s.ensure_tracks(kt_model::LaneKind::Morph, 1);
     p.sequences.push(s);
 
     // экземпляр стоит ДВАЖДЫ — тело инлайнится в каждый, на чтении они
@@ -1256,7 +1281,7 @@ fn t431_nested_reel_survives_the_round_trip() {
     assert_eq!(s.clips, p.sequences[0].clips, "содержимое ленты поле-в-поле");
     assert_eq!(s.transitions, p.sequences[0].transitions, "кроссфейд внутри ленты");
     assert_eq!(s.morphers, p.sequences[0].morphers, "морфер-слой ленты — из сайдкара");
-    assert_eq!(s.morph_lanes, 1, "морф-дорожка ленты — из сайдкара");
+    assert_eq!(s.lanes(kt_model::LaneKind::Morph), 1, "морф-дорожка ленты — из сайдкара");
     assert_eq!(q.clips, p.clips, "экземпляры поле-в-поле (уровень, цепочка, окно)");
     assert_eq!(q.sequence_uses(MediaId(100)), 2, "лента обязана остаться в двух местах");
 
@@ -1704,22 +1729,31 @@ fn t494_smpte_alias_import() {
 #[test]
 fn t593_owner_shaped_file_loads_canonically() {
     let mut p = rich_project();
-    p.video_lanes = 3;
-    p.morph_lanes = 1;
+    p.ensure_tracks(kt_model::LaneKind::Video, 3);
+    p.ensure_tracks(kt_model::LaneKind::Morph, 1);
     // «под потолком»: самая НИЖНЯЯ по номеру видео-дорожка стоит второй
     // строкой сверху, сразу под морф-строкой
     p.clips.push(clip(3, ClipKind::Video, 2, 0, 90_000, 3));
-    p.lane_order = vec![
-        (LaneKind::Morph, 0),
-        (LaneKind::Video, 2),
-        (LaneKind::Video, 0),
-        (LaneKind::Video, 1),
-        (LaneKind::Audio, 0),
-    ];
     let text = save_project(&p, &Retained::default(), None);
 
-    // чужая metadata на треке бывшей video2 — вписываем прямо в документ
+    // ФАЙЛ ВЛАДЕЛЬЦА — легаси-форма (до Р.62): номера дорожек не равны
+    // рангам строк, порядок лежит своим полем `lane_order`, вектора
+    // дорожек в конверте нет вовсе
     let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    {
+        let kt = v["metadata"]["kt"].as_object_mut().unwrap();
+        kt.remove("tracks");
+        kt.insert(
+            "lane_order".into(),
+            serde_json::json!([
+                ["morph", 0],
+                ["video", 2],
+                ["video", 0],
+                ["video", 1],
+                ["audio", 0]
+            ]),
+        );
+    }
     {
         let tracks = v["tracks"]["children"].as_array_mut().unwrap();
         // писатель гонит видео снизу вверх: (V,2) — ПЕРВЫЙ трек
@@ -2042,7 +2076,7 @@ fn t681_published_params_and_overrides_round_trip() {
     title.r#gen = Some(kind);
     let s = p.sequences.iter_mut().find(|s| s.id == MediaId(100)).unwrap();
     s.clips.push(title);
-    s.video_lanes = 2;
+    s.ensure_tracks(kt_model::LaneKind::Video, 2);
     s.published = vec![kt_model::PublishedParam {
         id: kt_model::PubId(1),
         // имя — свободный текст АВТОРА (решение владельца Р.59)

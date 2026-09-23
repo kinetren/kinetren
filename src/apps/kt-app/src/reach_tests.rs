@@ -226,7 +226,7 @@ fn t252_no_orphan_commands() {
         "парсер вариантов Command сломался: найдено {}, ожидалось не меньше 40",
         variants.len()
     );
-    for sentinel in ["AddClip", "SetFxAuto", "RemoveCameraLane"] {
+    for sentinel in ["AddClip", "SetFxAuto", "RemoveTrack"] {
         assert!(
             variants.iter().any(|v| v == sentinel),
             "парсер потерял Command::{sentinel} — дальнейший результат ничего не значит"
@@ -411,7 +411,7 @@ fn scene(
         // региона и спор за один пиксель решал бы порядок хит-тестов
         app.player.seek(Tick(200_000));
         app.add_morph_layer();
-        assert!(app.apply(Command::InsertCameraLane { at: 0 }));
+        assert!(app.apply(Command::InsertTrack { kind: kt_model::LaneKind::Camera, at: 0 }));
         app.player.seek(Tick(250_000));
         app.add_camera_at_playhead(0);
         // камера покороче: сцене нужно СВОБОДНОЕ место на её строке —

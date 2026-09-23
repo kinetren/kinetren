@@ -145,7 +145,7 @@ fn t143_video_overlap_demotes_later_clip_below() {
         2,
         "старый фон уехал вниз"
     );
-    assert!(p.video_lanes >= 3);
+    assert!(p.lanes(LaneKind::Video) >= 3);
 }
 
 /// Тест 164 (п.164 porting-notes, Р.28): импорт старого проекта НИЧЕГО не
@@ -168,8 +168,8 @@ fn t164_legacy_import_keeps_overlaps_and_lanes() {
         settings_explicit: false,
     });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
-    p.video_lanes = 2;
-    p.audio_lanes = 2;
+    p.ensure_tracks(LaneKind::Video, 2);
+    p.ensure_tracks(LaneKind::Audio, 2);
     // характерная для реального проекта смесь: A/V-пара с наездом, тройная
     // зона и микро-наезд в один тик
     let mut add = |id: u64, kind: ClipKind, lane: u32, start: i64, dur: i64, group: Option<u64>| {
@@ -206,7 +206,7 @@ fn t164_legacy_import_keeps_overlaps_and_lanes() {
     add(7, ClipKind::Video, 1, 44_999, 45_000, None); // микро-наезд в 1 тик
 
     let before = p.clips.clone();
-    let (lanes_v, lanes_a) = (p.video_lanes, p.audio_lanes);
+    let (lanes_v, lanes_a) = (p.lanes(LaneKind::Video), p.lanes(LaneKind::Audio));
     let report = kt_model::ops::upgrade_legacy(&mut p);
 
     assert_eq!(p.clips.len(), before.len(), "ни один клип не пропал");
@@ -219,7 +219,11 @@ fn t164_legacy_import_keeps_overlaps_and_lanes() {
             c.id
         );
     }
-    assert_eq!((p.video_lanes, p.audio_lanes), (lanes_v, lanes_a), "дорожки не размножились");
+    assert_eq!(
+        (p.lanes(LaneKind::Video), p.lanes(LaneKind::Audio)),
+        (lanes_v, lanes_a),
+        "дорожки не размножились"
+    );
     assert!(p.transitions.is_empty(), "перекрытия остались перекрытиями, а не переходами");
     assert_eq!(report.transitions_created, 0);
     assert_eq!(report.audio_moved, 0);

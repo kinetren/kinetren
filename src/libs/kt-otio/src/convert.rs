@@ -26,7 +26,7 @@ use crate::schema::{
 use crate::{DEFAULT_MEDIA_KEY, Error};
 use kt_model::{
     AudioCurve, ClipEvent, ClipId, ClipKind, ForeignEvent, GroupId, MediaId, MediaRef, Project,
-    ProjectSettings, Sequence, TransitionEvent, TransitionId, TransitionKind, UiState,
+    ProjectSettings, Sequence, TransitionEvent, TransitionId, TransitionKind,
 };
 use kt_time::Tick;
 
@@ -205,10 +205,8 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             clips: &p.clips,
             foreign: &p.foreign,
             transitions: &p.transitions,
-            video_lanes: p.video_lanes,
-            audio_lanes: p.audio_lanes,
+            tracks: &p.tracks,
             timeline_end,
-            lane_names: p.ui.as_ref().map(|u| u.lane_names.as_slice()).unwrap_or(&[]),
             retained,
         },
         p,
@@ -284,7 +282,7 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                     || t.audio != AudioCurve::default()
                     || !t.auto.is_empty()
             });
-            let has_cams = !cameras.is_empty() || p.camera_lanes > 0;
+            let has_cams = !cameras.is_empty() || p.lanes(kt_model::LaneKind::Camera) > 0;
             // версия ПО СОДЕРЖИМОМУ: кривые нового домена — v3, камеры —
             // v2, иначе v1 (файл без наших новшеств открывается старыми
             // сборками и остаётся байт-стабильным)
@@ -383,7 +381,13 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             };
             let reel_needs_v11 =
                 |reel: &dyn kt_model::Reel| reel.clips().iter().any(clip_needs_v11);
+            // дорожка-объект с любым не-умолчанием — тоже новшество (Р.62,
+            // change B): старая сборка потеряла бы mute, уровень, режим и
+            // цепочку дорожки молча
+            let track_needs_v11 = |t: &kt_model::Track| t.has_novelty();
             let has_v11 = reel_needs_v11(p)
+                || p.tracks.iter().any(track_needs_v11)
+                || p.sequences.iter().any(|s| s.tracks.iter().any(track_needs_v11))
                 || p.sequences.iter().any(|s| reel_needs_v11(s as &dyn kt_model::Reel))
                 || p.morphers.iter().any(|m| {
                     m.patch
@@ -435,13 +439,12 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             region: p.region.map(|r| (r.start.0, r.end.0)),
             loop_enabled: p.loop_enabled,
         }),
-        // в kt.ui — только morph/camera-имена (v/a живут в Track.name) и
-        // без bin-полей (они в kt.bin_*): единственный источник каждого
-        // факта
+        // имена дорожек с Р.62 живут на самих дорожках (`Track.name` файла
+        // и `kt.tracks` у служебных строк), в `ui` их больше нет; bin-поля
+        // тоже отдельно (kt.bin_*) — один дом у каждого факта
         ui: p.ui.clone().map(|mut u| {
-            u.lane_names.retain(|(k, _, _)| {
-                matches!(k, kt_model::LaneKind::Morph | kt_model::LaneKind::Camera)
-            });
+            u.lane_names = Vec::new();
+            u.lane_heights = Vec::new();
             u.bin_groups = Vec::new();
             u.bin_layout = Vec::new();
             u.bin_free = false;
@@ -456,18 +459,21 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
         bin_groups: p.ui.as_ref().map(|u| u.bin_groups.clone()).unwrap_or_default(),
         bin_layout: p.ui.as_ref().map(|u| u.bin_layout.clone()).unwrap_or_default(),
         bin_free: p.ui.as_ref().map(|u| u.bin_free).unwrap_or(false),
-        morph_lanes: p.morph_lanes,
-        lane_order: p.lane_order.clone(),
+        morph_lanes: p.lanes(kt_model::LaneKind::Morph),
+        lane_order: Vec::new(),
+        tracks: track_list(&p.tracks),
         areas: p.areas.clone(),
-        // длина сверх материала и число дорожек (пустые в файл не пишем)
+        // длина сверх материала (пустые дорожки в файл не пишем)
         end: p.timeline_end.map(|t| t.0),
-        lanes: Some((p.video_lanes, p.audio_lanes)),
+        lanes: Some((p.lanes(kt_model::LaneKind::Video), p.lanes(kt_model::LaneKind::Audio))),
         layers: {
             let lo = |k, l| {
                 layers_of(&p.clips, &p.foreign, retained.tracks.contains_key(&(k, l)), k, l) as u32
             };
-            let v: Vec<u32> = (0..p.video_lanes).map(|l| lo(ClipKind::Video, l)).collect();
-            let a: Vec<u32> = (0..p.audio_lanes).map(|l| lo(ClipKind::Audio, l)).collect();
+            let v: Vec<u32> =
+                (0..p.lanes(kt_model::LaneKind::Video)).map(|l| lo(ClipKind::Video, l)).collect();
+            let a: Vec<u32> =
+                (0..p.lanes(kt_model::LaneKind::Audio)).map(|l| lo(ClipKind::Audio, l)).collect();
             // пишем, только когда есть что сказать: без перекрытий и с
             // включённой опцией файл остаётся байт-в-байт прежним
             let multi = v.iter().chain(a.iter()).any(|n| *n > 1);
@@ -478,7 +484,7 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             })
         },
         morphers,
-        camera_lanes: p.camera_lanes,
+        camera_lanes: p.lanes(kt_model::LaneKind::Camera),
         cameras,
         sequences: {
             let mut v: Vec<crate::meta::KtSequence> = p
@@ -492,20 +498,23 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                     crate::meta::KtSequence {
                         id: s.id.0,
                         name: s.name.clone(),
-                        video_lanes: s.video_lanes,
-                        audio_lanes: s.audio_lanes,
-                        morph_lanes: s.morph_lanes,
-                        camera_lanes: s.camera_lanes,
-                        lane_order: s.lane_order.clone(),
+                        video_lanes: s.lanes(kt_model::LaneKind::Video),
+                        audio_lanes: s.lanes(kt_model::LaneKind::Audio),
+                        morph_lanes: s.lanes(kt_model::LaneKind::Morph),
+                        camera_lanes: s.lanes(kt_model::LaneKind::Camera),
+                        lane_order: Vec::new(),
+                        tracks: track_list(&s.tracks),
                         morphers,
                         cameras,
                         overlap_layers: s.overlap_layers,
                         layers: {
                             let lo = |k, l| layers_of(&s.clips, &[], false, k, l) as u32;
-                            let v: Vec<u32> =
-                                (0..s.video_lanes).map(|l| lo(ClipKind::Video, l)).collect();
-                            let a: Vec<u32> =
-                                (0..s.audio_lanes).map(|l| lo(ClipKind::Audio, l)).collect();
+                            let v: Vec<u32> = (0..s.lanes(kt_model::LaneKind::Video))
+                                .map(|l| lo(ClipKind::Video, l))
+                                .collect();
+                            let a: Vec<u32> = (0..s.lanes(kt_model::LaneKind::Audio))
+                                .map(|l| lo(ClipKind::Audio, l))
+                                .collect();
                             // как у корня: пишем, только когда слой не один
                             let multi = v.iter().chain(a.iter()).any(|n| *n > 1);
                             (multi || !s.overlap_layers).then(|| crate::meta::KtLayers {
@@ -689,13 +698,138 @@ struct ReelWrite<'a> {
     clips: &'a [ClipEvent],
     foreign: &'a [ForeignEvent],
     transitions: &'a [TransitionEvent],
-    video_lanes: u32,
-    audio_lanes: u32,
+    /// Дорожки-объекты ленты (Р.62): имя, выключатели и цепочка едут на
+    /// сам OTIO-трек, порядок и остальное — в конверт.
+    tracks: &'a [kt_model::Track],
     timeline_end: Tick,
-    /// Имена дорожек. У вложенной ленты своего `ui` нет — пусто.
-    lane_names: &'a [(kt_model::LaneKind, u32, String)],
     /// Чужое сырьё. У наших лент его не бывает — пустой `Retained`.
     retained: &'a Retained,
+}
+
+impl ReelWrite<'_> {
+    fn lanes(&self, kind: kt_model::LaneKind) -> u32 {
+        self.tracks.iter().filter(|t| t.kind == kind).count() as u32
+    }
+
+    fn track(&self, kind: kt_model::LaneKind, lane: u32) -> Option<&kt_model::Track> {
+        kt_model::track_index(self.tracks, kind, lane).map(|i| &self.tracks[i])
+    }
+}
+
+/// Цепочка FX в стандартные `Effect.1` — ОДИН код для события, вложения и
+/// ДОРОЖКИ (Р.62): расходись они, дорожечная цепочка читалась бы иначе.
+fn chain_effects(
+    fx: &[kt_model::FxInstance],
+    bypass: &[bool],
+    auto: &[Vec<kt_model::ParamCurve>],
+) -> Vec<EffectNode> {
+    let mut out = Vec::new();
+    for (i, f) in fx.iter().enumerate() {
+        let mut md = Map::new();
+        kt_set(&mut md, f);
+        if let Some(curves) = auto.get(i).filter(|v| !v.is_empty()) {
+            crate::meta::kt_entry_mut(&mut md).insert(
+                "auto".into(),
+                serde_json::to_value(curves).expect("curves are serializable"),
+            );
+        }
+        out.push(EffectNode::Effect(Effect {
+            name: String::new(),
+            effect_name: format!("kt:{}", fx_tag(f)),
+            enabled: !bypass.get(i).copied().unwrap_or(false),
+            metadata: md,
+            extra: Map::new(),
+        }));
+    }
+    out
+}
+
+/// Разобрать `Effect.1` дорожки: наши `kt:`-эффекты в цепочку, чужие —
+/// обратно вызывающему (они возвращаются в файл нетронутыми, п.358).
+fn read_chain_effects(
+    effects: &[EffectNode],
+) -> (Vec<kt_model::FxInstance>, Vec<bool>, Vec<Vec<kt_model::ParamCurve>>, Vec<EffectNode>) {
+    let mut fx: Vec<kt_model::FxInstance> = Vec::new();
+    let mut bypass: Vec<bool> = Vec::new();
+    let mut auto: Vec<Vec<kt_model::ParamCurve>> = Vec::new();
+    let mut rest: Vec<EffectNode> = Vec::new();
+    for e in effects {
+        match e {
+            EffectNode::Effect(eff) if eff.effect_name.starts_with("kt:") => {
+                match kt_get::<kt_model::FxInstance>(&eff.metadata) {
+                    Some(inst) => {
+                        fx.push(inst);
+                        bypass.push(!eff.enabled);
+                        auto.push(
+                            eff.metadata
+                                .get(crate::meta::KT_NS)
+                                .and_then(|kt| kt.get("auto"))
+                                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                                .unwrap_or_default(),
+                        );
+                    }
+                    None => rest.push(e.clone()),
+                }
+            }
+            other => rest.push(other.clone()),
+        }
+    }
+    while bypass.last() == Some(&false) {
+        bypass.pop();
+    }
+    while auto.last().is_some_and(|v| v.is_empty()) {
+        auto.pop();
+    }
+    (fx, bypass, auto, rest)
+}
+
+/// Конверт дорожек ленты (Р.62). Пусто — писать нечего: порядок
+/// естественный и все дорожки без свойств, файл байт-в-байт прежний.
+fn track_list(tracks: &[kt_model::Track]) -> Vec<crate::meta::KtTrack> {
+    let natural = {
+        let mut v: Vec<kt_model::LaneKind> = Vec::new();
+        for k in kt_model::LaneKind::ALL {
+            v.extend(tracks.iter().filter(|t| t.kind == k).map(|t| t.kind));
+        }
+        v
+    };
+    let order_natural = tracks.iter().map(|t| t.kind).eq(natural.iter().copied());
+    // имя и цепочка ВИДЕО/АУДИО живут на самих треках файла; служебные
+    // строки своего трека не имеют, поэтому их имя — здесь
+    // писать конверт незачем, если порядок естественный и сказать о
+    // дорожках нечего: имя видео/аудио живёт на самом треке файла
+    let own_fact = |t: &kt_model::Track| {
+        t.has_novelty()
+            || t.height != 0.0
+            || (matches!(t.kind, kt_model::LaneKind::Morph | kt_model::LaneKind::Camera)
+                && !t.name.is_empty())
+    };
+    if order_natural && !tracks.iter().any(own_fact) {
+        return Vec::new();
+    }
+    tracks
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let lane = tracks[..i].iter().filter(|x| x.kind == t.kind).count() as u32;
+            let on_track = matches!(t.kind, kt_model::LaneKind::Video | kt_model::LaneKind::Audio);
+            let _ = lane;
+            crate::meta::KtTrack {
+                kind: t.kind,
+                id: t.id.0,
+                // имя видео/аудио — в `Track.name` файла (один дом факта)
+                name: if on_track { String::new() } else { t.name.clone() },
+                height: t.height,
+                mute: t.mute,
+                solo: t.solo,
+                lock: t.lock,
+                gain_db: t.gain_db,
+                opacity: t.opacity,
+                blend: t.blend,
+                fx_off: t.fx_off,
+            }
+        })
+        .collect()
 }
 
 fn reel_children(
@@ -937,16 +1071,18 @@ fn reel_children(
         }
         // только ЯВНОЕ имя дорожки (дефолтные ярлыки V1/A1 в файл не пишем —
         // иначе чужой/новый проект после круга обрастает фиктивными именами)
-        let lk = match kind {
-            ClipKind::Video => kt_model::LaneKind::Video,
-            ClipKind::Audio => kt_model::LaneKind::Audio,
-        };
-        let name = r
-            .lane_names
-            .iter()
-            .find(|(k, l, _)| *k == lk && *l == lane)
-            .map(|(_, _, n)| n.clone())
-            .unwrap_or_default();
+        let lk = kt_model::lane_key_of(kind);
+        let t = r.track(lk, lane);
+        let name = t.map(|t| t.name.clone()).unwrap_or_default();
+        // ЦЕПОЧКА дорожки — стандартными `Effect.1` тем же кодом, что у
+        // клипа (Р.62); чужие эффекты возвращаются на место (п.358).
+        // Слой расслоения несёт только чужое: цепочка принадлежит слою 0.
+        let mut effects = tx.effects.clone();
+        if layer == 0
+            && let Some(t) = t
+        {
+            effects.extend(chain_effects(&t.fx, &t.fx_bypass, &t.fx_auto));
+        }
         children.push(Composable::Track(Track {
             name: if layer > 0 {
                 String::new() // имя дорожки несёт слой 0
@@ -961,11 +1097,11 @@ fn reel_children(
             },
             children: kids,
             source_range: None,
-            // чужое у дорожки возвращается на место (п.358); на слоях
-            // расслоения его не дублируем — оно принадлежит слою 0
-            effects: tx.effects.clone(),
+            effects,
             markers: tx.markers.clone(),
-            enabled: tx.enabled,
+            // `enabled = !mute` (Р.62): чужой читатель видит заглушённую
+            // дорожку честно, а не «у Kinotrain нет per-track mute»
+            enabled: tx.enabled && !t.is_some_and(|t| t.mute),
             metadata: tx.metadata.clone(),
             extra: tx.extra.clone(),
         }));
@@ -976,12 +1112,12 @@ fn reel_children(
     // не пишем вовсе (число дорожек живёт в metadata.kt).
     // Видео снизу вверх (OTIO: поздний трек поверх), затем аудио по порядку.
     let mut children: Vec<Composable> = Vec::new();
-    for lane in (0..r.video_lanes).rev() {
+    for lane in (0..r.lanes(kt_model::LaneKind::Video)).rev() {
         for layer in 0..layers_of(ClipKind::Video, lane) {
             emit_track(&mut children, ClipKind::Video, lane, layer);
         }
     }
-    for lane in 0..r.audio_lanes {
+    for lane in 0..r.lanes(kt_model::LaneKind::Audio) {
         for layer in 0..layers_of(ClipKind::Audio, lane) {
             emit_track(&mut children, ClipKind::Audio, lane, layer);
         }
@@ -1015,10 +1151,8 @@ fn nest_to_otio(
                 clips: &seq.clips,
                 foreign: &[],
                 transitions: &seq.transitions,
-                video_lanes: seq.video_lanes,
-                audio_lanes: seq.audio_lanes,
+                tracks: &seq.tracks,
                 timeline_end: Tick::ZERO,
-                lane_names: &[],
                 retained: &empty,
             },
             p,
@@ -1372,6 +1506,7 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
             bad_kt: &mut bad_kt,
             track_extras: Some(&mut track_extras),
             seqs: Vec::new(),
+            seq_facts: HashMap::new(),
             pending: Vec::new(),
             seq_layers: kt
                 .as_ref()
@@ -1384,6 +1519,7 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
         // аудио-половины чужих вложений, встреченных на видео-дорожках
         // (и наоборот) — они рождаются вне обхода своей дорожки
         root.clips.extend(std::mem::take(&mut cx.pending));
+        let mut seq_facts = std::mem::take(&mut cx.seq_facts);
         for (id, mut seq) in std::mem::take(&mut cx.seqs) {
             // сайдкар (Р.50): дорожки, порядок строк, морферы и камеры
             // ленты — то, чего OTIO не выражает. Не сошлось с файлом —
@@ -1391,44 +1527,48 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
             match kt.as_ref().and_then(|k| k.sequences.iter().find(|s| s.id == id.0)) {
                 Some(meta) => {
                     seq.name = meta.name.clone();
-                    seq.video_lanes = meta.video_lanes.max(1);
-                    seq.audio_lanes = meta.audio_lanes.max(1);
-                    seq.morph_lanes = meta.morph_lanes;
-                    seq.camera_lanes = meta.camera_lanes;
-                    seq.lane_order = meta.lane_order.clone();
                     seq.morphers = meta.morphers.clone();
                     seq.cameras = meta.cameras.clone();
                     seq.overlap_layers = meta.overlap_layers;
                     seq.published = meta.published.clone();
+                    let facts = seq_facts.remove(&id).unwrap_or_default();
+                    seq.tracks = build_tracks(
+                        &meta.tracks,
+                        (
+                            meta.video_lanes,
+                            meta.audio_lanes,
+                            meta.morph_lanes,
+                            meta.camera_lanes,
+                            &meta.lane_order,
+                        ),
+                        &facts,
+                        reel_need(&seq),
+                    );
                 }
-                None => cx
-                    .notices
-                    .push(format!("nested reel '{}' has no kt sidecar — read as is", seq.name)),
-            }
-            // дорожек не меньше, чем занято содержимым: сайдкар мог
-            // разойтись с файлом, а validate этого не простит
-            for (k, n) in
-                [(ClipKind::Video, &mut seq.video_lanes), (ClipKind::Audio, &mut seq.audio_lanes)]
-            {
-                let need =
-                    seq.clips.iter().filter(|c| c.kind == k).map(|c| c.lane + 1).max().unwrap_or(1);
-                *n = (*n).max(need).max(1);
+                None => {
+                    cx.notices
+                        .push(format!("nested reel '{}' has no kt sidecar — read as is", seq.name));
+                    let facts = seq_facts.remove(&id).unwrap_or_default();
+                    seq.tracks = build_tracks(&[], (0, 0, 0, 0, &[]), &facts, reel_need(&seq));
+                }
             }
             p.sequences.push(seq);
         }
     }
-    p.clips = root.clips;
-    p.transitions = root.transitions;
-    p.foreign = root.foreign;
+    p.clips = std::mem::take(&mut root.clips);
+    p.transitions = std::mem::take(&mut root.transitions);
+    p.foreign = std::mem::take(&mut root.foreign);
     if root.end > p.timeline_end.unwrap_or(Tick::ZERO) {
         p.timeline_end = Some(root.end);
-    }
-    if !root.lane_names.is_empty() {
-        p.ui.get_or_insert_with(UiState::default).lane_names.extend(root.lane_names);
     }
     retained.tracks = track_extras;
 
     // конверт kt: транспорт/ui/бин/морферы/камеры
+    let mut kt_tracks: Vec<crate::meta::KtTrack> = Vec::new();
+    let mut kt_legacy: (u32, u32, u32, u32, Vec<(kt_model::LaneKind, u32)>) =
+        (0, 0, 0, 0, Vec::new());
+    let mut kt_names: Vec<(kt_model::LaneKind, u32, String)> = Vec::new();
+    let mut kt_heights: Vec<(kt_model::LaneKind, u32, f32)> = Vec::new();
     if let Some(kt) = kt {
         // неизвестные kt-поля будущих версий — passthrough (Р.29)
         retained.timeline_kt_extra = kt.extra.clone();
@@ -1448,23 +1588,21 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
             p.region = tr.region.and_then(|(s, e)| kt_model::Region::normalized(Tick(s), Tick(e)));
             p.loop_enabled = tr.loop_enabled;
         }
-        // порядок строк: своё поле, а из ui.lane_order — только апгрейд
-        // старого файла (односторонний, поле больше не пишется)
         p.areas = kt.areas;
-        p.lane_order = kt.lane_order;
-        if p.lane_order.is_empty()
+        // ЛЕГАСИ-порядок строк: своё поле, а из `ui.lane_order` — апгрейд
+        // ещё более старого файла (оба только на чтение, Р.62)
+        let mut legacy_order = kt.lane_order.clone();
+        if legacy_order.is_empty()
             && let Some(u) = &kt.ui
         {
-            p.lane_order = u.lane_order.clone();
+            legacy_order = u.lane_order.clone();
         }
+        let legacy_names = kt.ui.as_ref().map(|u| u.lane_names.clone()).unwrap_or_default();
+        let legacy_heights = kt.ui.as_ref().map(|u| u.lane_heights.clone()).unwrap_or_default();
         if let Some(mut ui) = kt.ui {
-            // имена дорожек v/a приезжают из Track.name; morph/camera — из ui
-            let mut names = p.ui.take().map(|u| u.lane_names).unwrap_or_default();
-            ui.lane_names.retain(|(k, _, _)| {
-                matches!(k, kt_model::LaneKind::Morph | kt_model::LaneKind::Camera)
-            });
-            names.extend(ui.lane_names.clone());
-            ui.lane_names = names;
+            // имена и высоты дорожек с Р.62 живут на дорожках-объектах
+            ui.lane_names = Vec::new();
+            ui.lane_heights = Vec::new();
             ui.bin_groups = kt.bin_groups;
             ui.bin_layout = kt.bin_layout;
             ui.bin_free = kt.bin_free;
@@ -1477,7 +1615,6 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
                 p.media.push(MediaRef { id: MediaId(bm.id), path });
             }
         }
-        p.morph_lanes = kt.morph_lanes;
         p.published = kt.published;
         p.morphers = kt.morphers;
         // морферы файла ДО v4 — прежняя семантика: патч на цели целиком,
@@ -1487,7 +1624,6 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
                 kt_model::migrate_legacy_morpher(m);
             }
         }
-        p.camera_lanes = kt.camera_lanes;
         p.cameras = kt.cameras;
         // кейфреймы камер старого домена → общие кривые (Р.34 К3)
         for c in &mut p.cameras {
@@ -1496,14 +1632,64 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
         if let Some(end) = kt.end {
             p.timeline_end = Some(Tick(end));
         }
-        // число дорожек нашего проекта (пустые в файл не пишутся, Р.25);
-        // normalize() ниже поднимет его, если клипы требуют больше
         if let Some(l) = &kt.layers {
             p.overlap_layers = !l.off;
         }
-        if let Some((v, a)) = kt.lanes {
-            p.video_lanes = p.video_lanes.max(v);
-            p.audio_lanes = p.audio_lanes.max(a);
+        // ДОРОЖКИ КОРНЯ (Р.62): конверт (порядок, свойства, служебные
+        // строки) + факты самих треков файла (имя, `enabled`, цепочка);
+        // ни того, ни другого нет — легаси-счётчики и `lane_order`.
+        let (lv, la) = kt.lanes.unwrap_or((0, 0));
+        kt_tracks = kt.tracks.clone();
+        kt_legacy = (lv, la, kt.morph_lanes, kt.camera_lanes, legacy_order.clone());
+        kt_names = legacy_names;
+        kt_heights = legacy_heights;
+    }
+
+    // ДОРОЖКИ (Р.62) — ВНЕ конверта: чужой файл конверта не имеет вовсе,
+    // а дорожки у него есть (имя, `enabled`, чужие эффекты на треке).
+    let mut need = [0u32; 4];
+    let kind_idx = |k: ClipKind| match k {
+        ClipKind::Video => 0usize,
+        ClipKind::Audio => 1usize,
+    };
+    for c in &p.clips {
+        let i = kind_idx(c.kind);
+        need[i] = need[i].max(c.lane + 1);
+    }
+    for f in &p.foreign {
+        let i = kind_idx(f.kind);
+        need[i] = need[i].max(f.lane + 1);
+    }
+    for m in &p.morphers {
+        need[2] = need[2].max(m.lane + 1);
+    }
+    for c in &p.cameras {
+        need[3] = need[3].max(c.lane + 1);
+    }
+    p.tracks = build_tracks(
+        &kt_tracks,
+        (kt_legacy.0, kt_legacy.1, kt_legacy.2, kt_legacy.3, &kt_legacy.4),
+        &root.track_facts,
+        need,
+    );
+    // ЛЕГАСИ-ПОРЯДОК строк (до Р.62 — своё поле либо `ui.lane_order`):
+    // применяется ЕДИНСТВЕННОЙ дверью перестановки, и её перестановка
+    // нужна чужому сырью треков (оно адресовано парой «вид, номер»)
+    if kt_tracks.is_empty() && !kt_legacy.4.is_empty() {
+        let perm = p.set_lane_order(&kt_legacy.4.clone());
+        retained.remap_tracks(&perm);
+    }
+    // имена и высоты старого файла (`ui`) — на дорожки, односторонне
+    for (k, l, name) in kt_names {
+        if let Some(t) = p.track_at_mut(k, l)
+            && t.name.is_empty()
+        {
+            t.name = name;
+        }
+    }
+    for (k, l, h) in kt_heights {
+        if let Some(t) = p.track_at_mut(k, l) {
+            t.height = h;
         }
     }
 
@@ -1647,7 +1833,8 @@ struct ReelRead {
     foreign: Vec<ForeignEvent>,
     /// Конец содержимого: у корня из него получается `timeline_end`.
     end: Tick,
-    lane_names: Vec<(kt_model::LaneKind, u32, String)>,
+    /// Что сказали сами треки файла: имя, `enabled`, цепочка (Р.62).
+    track_facts: Vec<(kt_model::LaneKind, u32, TrackFacts)>,
 }
 
 /// Общее на весь документ при чтении: счётчики адресов, накопитель чужого
@@ -1674,6 +1861,9 @@ struct ReadCtx<'a> {
     track_extras: Option<&'a mut HashMap<(ClipKind, u32), TrackExtra>>,
     /// Прочитанные ленты: адрес → содержимое.
     seqs: Vec<(MediaId, Sequence)>,
+    /// Что сказали треки файла о дорожках КАЖДОЙ вложенной ленты (Р.62):
+    /// сайдкар ленты приезжает позже, а факты рождаются при обходе.
+    seq_facts: HashMap<MediaId, Vec<(kt_model::LaneKind, u32, TrackFacts)>>,
     /// Карты слоёв вложенных лент из сайдкара `kt.sequences`.
     seq_layers: HashMap<u64, crate::meta::KtLayers>,
     /// События, рождённые ВНЕ обхода своей дорожки: аудио-половина чужого
@@ -1773,21 +1963,16 @@ fn read_reel(
             markers: track.markers.clone(),
             enabled: track.enabled,
         };
-        if !track.enabled {
-            // правило 16: невозможность/необычность — вслух, а не молча
-            cx.notices.push(format!(
-                "track '{}' is disabled in the file; Kinotrain has no per-track mute — \
-                 the flag is kept on save",
-                if track.name.is_empty() { "<unnamed>" } else { &track.name }
-            ));
-        }
-        if !track.name.is_empty() {
-            let lk = match kind {
-                ClipKind::Video => kt_model::LaneKind::Video,
-                ClipKind::Audio => kt_model::LaneKind::Audio,
-            };
-            out.lane_names.push((lk, lane, track.name.clone()));
-        }
+        // Р.62: `enabled: false` — это MUTE дорожки, а не «мы такого не
+        // умеем»; цепочка дорожки читается тем же кодом, что у клипа, а
+        // чужие эффекты остаются в `Retained` и вернутся в файл.
+        let (fx, bypass, auto, foreign_fx) = read_chain_effects(&track.effects);
+        tx.effects = foreign_fx;
+        out.track_facts.push((
+            kt_model::lane_key_of(kind),
+            lane,
+            TrackFacts { name: track.name.clone(), enabled: track.enabled, fx, bypass, auto },
+        ));
         let mut cursor = Tick::ZERO;
         let mut gap_ordinal = 0usize;
         let mut pending_transition: Option<(Tick, Tick, TransitionExtra)> = None;
@@ -2090,15 +2275,11 @@ fn read_foreign_nest(
         addr,
         if name.trim().is_empty() { format!("Nested {}", addr.0) } else { name.clone() },
     );
-    for (k, n) in [(ClipKind::Video, &mut seq.video_lanes), (ClipKind::Audio, &mut seq.audio_lanes)]
-    {
-        *n =
-            body.clips.iter().filter(|c| c.kind == k).map(|c| c.lane + 1).max().unwrap_or(1).max(1);
-    }
     let both = body.clips.iter().any(|c| c.kind == ClipKind::Video)
         && body.clips.iter().any(|c| c.kind == ClipKind::Audio);
     seq.clips = body.clips;
     seq.transitions = body.transitions;
+    cx.seq_facts.insert(addr, std::mem::take(&mut body.track_facts));
     cx.seqs.push((addr, seq));
 
     let id = ClipId(*cx.next_clip_id);
@@ -2256,6 +2437,113 @@ fn nest_effects(
     (fx, bypass, auto, reversed)
 }
 
+/// ДОРОЖКИ ленты из конверта и из самих треков файла (Р.62).
+///
+/// Конверт авторитетен для НАШИХ файлов: он несёт порядок строк, служебные
+/// строки и свойства, которых в OTIO нет. Чужой файл конверта не имеет —
+/// тогда дорожки строятся из легаси-счётчиков, а имя и `enabled` берутся с
+/// треков (`enabled: false` читается как mute: чужая выключенная дорожка
+/// обязана остаться выключенной, а не «включиться» молча).
+fn build_tracks(
+    list: &[crate::meta::KtTrack],
+    legacy: (u32, u32, u32, u32, &[(kt_model::LaneKind, u32)]),
+    per_track: &[(kt_model::LaneKind, u32, TrackFacts)],
+    need: [u32; 4],
+) -> Vec<kt_model::Track> {
+    use kt_model::LaneKind as K;
+    let mut out: Vec<kt_model::Track> = if list.is_empty() {
+        // чужой или старый файл: натуральный порядок из счётчиков
+        let n = [
+            legacy.0.max(need[0]).max(1),
+            legacy.1.max(need[1]).max(1),
+            legacy.2.max(need[2]),
+            legacy.3.max(need[3]),
+        ];
+        let mut v = Vec::new();
+        for (i, kind) in K::ALL.into_iter().enumerate() {
+            for _ in 0..n[i] {
+                v.push(kt_model::Track::new(kt_model::TrackId(0), kind));
+            }
+        }
+        v
+    } else {
+        list.iter()
+            .map(|t| {
+                let mut x = kt_model::Track::new(kt_model::TrackId(t.id), t.kind);
+                x.name = t.name.clone();
+                x.height = t.height;
+                x.mute = t.mute;
+                x.solo = t.solo;
+                x.lock = t.lock;
+                x.gain_db = t.gain_db;
+                x.opacity = t.opacity;
+                x.blend = t.blend;
+                x.fx_off = t.fx_off;
+                x
+            })
+            .collect()
+    };
+    // факты с самих треков файла: имя, `enabled` и цепочка видео/аудио
+    for (kind, lane, facts) in per_track {
+        let mut rank = 0u32;
+        for t in out.iter_mut() {
+            if t.kind != *kind {
+                continue;
+            }
+            if rank == *lane {
+                if !facts.name.is_empty() {
+                    t.name = facts.name.clone();
+                }
+                t.mute = t.mute || !facts.enabled;
+                t.fx = facts.fx.clone();
+                t.fx_bypass = facts.bypass.clone();
+                t.fx_auto = facts.auto.clone();
+                break;
+            }
+            rank += 1;
+        }
+    }
+    // дорожек не меньше, чем занято содержимым
+    for (i, kind) in K::ALL.into_iter().enumerate() {
+        let have = out.iter().filter(|t| t.kind == *&kind).count() as u32;
+        let want = need[i].max(if i < 2 { 1 } else { 0 });
+        for _ in have..want {
+            let at = kt_model::natural_insert_pos(&out, kind);
+            out.insert(at, kt_model::Track::new(kt_model::TrackId(0), kind));
+        }
+    }
+    out
+}
+
+/// Сколько дорожек каждого вида требует содержимое ленты.
+fn reel_need(seq: &Sequence) -> [u32; 4] {
+    let mut n = [0u32; 4];
+    for c in &seq.clips {
+        let i = match c.kind {
+            ClipKind::Video => 0,
+            ClipKind::Audio => 1,
+        };
+        n[i] = n[i].max(c.lane + 1);
+    }
+    for m in &seq.morphers {
+        n[2] = n[2].max(m.lane + 1);
+    }
+    for c in &seq.cameras {
+        n[3] = n[3].max(c.lane + 1);
+    }
+    n
+}
+
+/// Что о дорожке сказал сам OTIO-трек.
+#[derive(Default, Clone)]
+struct TrackFacts {
+    name: String,
+    enabled: bool,
+    fx: Vec<kt_model::FxInstance>,
+    bypass: Vec<bool>,
+    auto: Vec<Vec<kt_model::ParamCurve>>,
+}
+
 /// Свои растр и fps ленты из конверта `kt` (Р.62); нет ключей — проект.
 fn read_reel_settings(metadata: &Map<String, Value>, seq: &mut Sequence) {
     let Some(kt) = metadata.get(crate::meta::KT_NS).and_then(|v| v.as_object()) else {
@@ -2330,6 +2618,7 @@ fn read_nest(
             read_reel_settings(&st.metadata, &mut seq);
             seq.clips = std::mem::take(&mut body.clips);
             seq.transitions = std::mem::take(&mut body.transitions);
+            cx.seq_facts.insert(addr, std::mem::take(&mut body.track_facts));
             cx.seqs.push((addr, seq));
         }
         None => {
@@ -2337,6 +2626,7 @@ fn read_nest(
             read_reel_settings(&st.metadata, &mut seq);
             seq.clips = std::mem::take(&mut body.clips);
             seq.transitions = std::mem::take(&mut body.transitions);
+            cx.seq_facts.insert(seq_id, std::mem::take(&mut body.track_facts));
             cx.seqs.push((seq_id, seq));
         }
     }

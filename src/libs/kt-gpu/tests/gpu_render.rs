@@ -64,6 +64,7 @@ fn project() -> Project {
         clip(1, 0, 0, 2 * sec, 1, 1.0),
         clip(2, 1, sec / 2, sec, 2, 0.75), // верхний слой с уровнем
     ];
+    p.normalize(); // дорожки под содержимое (Р.62)
     p.validate().unwrap();
     p
 }
@@ -277,7 +278,7 @@ fn nested_project(outer_fx: Vec<FxInstance>, outer_opacity: f32) -> Project {
     };
     let mut s = Sequence::new(MediaId(100), "Кусок");
     s.clips = vec![ev(2, 1, 0, 2 * sec, 1, 1.0), ev(3, 0, sec / 2, sec, 2, 0.5)];
-    s.video_lanes = 2;
+    s.ensure_tracks(kt_model::LaneKind::Video, 2);
     p.sequences.push(s);
     let mut inst = ev(10, 0, 0, 2 * sec, 100, outer_opacity);
     inst.fx = outer_fx;

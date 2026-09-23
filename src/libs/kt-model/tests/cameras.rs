@@ -38,7 +38,7 @@ fn project() -> Project {
 #[test]
 fn t188_active_camera_rule() {
     let mut p = project();
-    p.camera_lanes = 2;
+    p.ensure_tracks(LaneKind::Camera, 2);
     // три камеры: перекрытие по времени на разных дорожках и на одной
     p.cameras = vec![
         cam(1, 1, 0, 200_000),      // нижняя дорожка, рано
@@ -63,9 +63,9 @@ fn t188_active_camera_rule() {
 #[test]
 fn t188_camera_commands_undo() {
     let mut m = TimelineModel::new(project());
-    assert!(m.apply(Command::InsertCameraLane { at: 0 }).is_ok());
+    assert!(m.apply(Command::InsertTrack { kind: LaneKind::Camera, at: 0 }).is_ok());
     assert!(m.apply(Command::AddCamera(cam(1, 0, 0, 90_000))).is_ok());
-    assert_eq!(m.project().camera_lanes, 1);
+    assert_eq!(m.project().lanes(LaneKind::Camera), 1);
     assert_eq!(m.project().cameras.len(), 1);
     // дубль id — отказ
     assert!(m.apply(Command::AddCamera(cam(1, 0, 10, 100))).is_err());
@@ -88,8 +88,8 @@ fn t188_camera_commands_undo() {
     ];
     assert!(m.apply(Command::AddCamera(bad)).is_err(), "кейфреймы не отсортированы");
     // удаление дорожки уносит события; undo возвращает всё
-    assert!(m.apply(Command::RemoveCameraLane { at: 0 }).is_ok());
-    assert_eq!(m.project().camera_lanes, 0);
+    assert!(m.apply(Command::RemoveTrack { kind: LaneKind::Camera, at: 0 }).is_ok());
+    assert_eq!(m.project().lanes(LaneKind::Camera), 0);
     assert!(m.project().cameras.is_empty());
     m.undo().unwrap();
     assert_eq!(m.project().cameras.len(), 1);
@@ -106,7 +106,7 @@ fn t188_project_without_cameras_is_byte_stable() {
     assert!(!json.contains("camera"), "пустые камерные поля не пишутся: {json}");
     // а с камерами — round-trip честный
     let mut p2 = project();
-    p2.camera_lanes = 1;
+    p2.ensure_tracks(LaneKind::Camera, 1);
     p2.cameras.push(cam(1, 0, 0, 90_000));
     let json2 = serde_json::to_string(&p2).unwrap();
     let back: Project = serde_json::from_str(&json2).unwrap();
@@ -120,7 +120,7 @@ fn t188_project_without_cameras_is_byte_stable() {
 #[test]
 fn t231_camera_curves_replace_keyframes() {
     let mut p = project();
-    p.camera_lanes = 1;
+    p.ensure_tracks(LaneKind::Camera, 1);
     let mut c = cam(1, 0, 90_000, 90_000);
     c.ease = false;
     c.keyframes = vec![

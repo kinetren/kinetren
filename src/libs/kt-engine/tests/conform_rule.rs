@@ -46,6 +46,7 @@ fn project(rules: &[Conform], project_rule: ConformRule) -> Project {
         c.geometry.rule = *r;
         p.clips.push(c);
     }
+    p.normalize(); // дорожки под содержимое (Р.62)
     p.validate().unwrap();
     p
 }

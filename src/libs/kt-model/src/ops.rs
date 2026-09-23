@@ -899,7 +899,7 @@ pub fn upgrade_legacy(p: &mut Project) -> UpgradeReport {
         let lane = free_audio_lane_below(p, mover);
         // счётчик дорожек бампается СРАЗУ: иначе следующий mover считает
         // добавленную дорожку несуществующей и летит на неё же (вечный цикл)
-        p.audio_lanes = p.audio_lanes.max(lane + 1);
+        p.ensure_tracks(LaneKind::Audio, lane + 1);
         if let Some(c) = p.clips.iter_mut().find(|c| c.id == mover) {
             c.lane = lane;
         }
@@ -985,7 +985,7 @@ fn find_overlap_mover(p: &Project, kind: ClipKind) -> Option<ClipId> {
 fn free_audio_lane_below(p: &Project, mover: ClipId) -> u32 {
     let me = p.clips.iter().find(|c| c.id == mover).unwrap();
     let (m0, m1) = (me.start, me.start + me.duration);
-    for lane in (me.lane + 1)..p.audio_lanes {
+    for lane in (me.lane + 1)..p.lanes(LaneKind::Audio) {
         let busy = p.clips.iter().any(|c| {
             c.id != mover
                 && c.kind == ClipKind::Audio
@@ -997,7 +997,7 @@ fn free_audio_lane_below(p: &Project, mover: ClipId) -> u32 {
             return lane;
         }
     }
-    p.audio_lanes
+    p.lanes(LaneKind::Audio)
 }
 
 // ---- буфер обмена FX (Р.33) --------------------------------------------
@@ -1367,25 +1367,30 @@ pub fn collapse_into_sequence(
     };
     content.morphers = block.morphers.iter().filter(|m| !refs_stay(m)).cloned().collect();
     content.cameras = block.cameras.clone();
-    content.video_lanes = lanes_needed(&content.clips, ClipKind::Video).max(1);
-    content.audio_lanes = lanes_needed(&content.clips, ClipKind::Audio).max(1);
-    content.morph_lanes = content.morphers.iter().map(|m| m.lane + 1).max().unwrap_or(0);
-    content.camera_lanes = content.cameras.iter().map(|c| c.lane + 1).max().unwrap_or(0);
-    // ПОРЯДОК СТРОК едет вместе с содержимым (Р.55, С3). Без него у ленты
-    // порядок дефолтный — видео, аудио, морферы, камеры, — а в нём
-    // морф-строки идут ПОСЛЕДНИМИ. Слой в режиме «всё, что ниже» требует
-    // цели НИЖЕ себя, и под ним не оказывается ничего: слой уехал внутрь
-    // и там умер. Ровно это владелец и увидел («морфер не попадает туда»).
-    content.lane_order = p
+    // ДОРОЖКИ ленты — те дорожки корня, что нужны содержимому, В ПОРЯДКЕ
+    // СТРОК корня (Р.55, С3; Р.62 — объекты). Без порядка у ленты
+    // морф-строки шли бы последними, и слой «всё, что ниже» уезжал внутрь
+    // и там умирал («морфер не попадает туда»). Свойства дорожки
+    // (имя, замок, уровень) едут копией; id назначаются заново — у корня
+    // остаются свои.
+    let need = LaneBases {
+        video: lanes_needed(&content.clips, ClipKind::Video).max(1),
+        audio: lanes_needed(&content.clips, ClipKind::Audio).max(1),
+        morph: content.morphers.iter().map(|m| m.lane + 1).max().unwrap_or(0),
+        camera: content.cameras.iter().map(|c| c.lane + 1).max().unwrap_or(0),
+    };
+    content.tracks = p
         .rows()
         .into_iter()
-        .filter(|&(k, l)| match k {
-            LaneKind::Video => l < content.video_lanes,
-            LaneKind::Audio => l < content.audio_lanes,
-            LaneKind::Morph => l < content.morph_lanes,
-            LaneKind::Camera => l < content.camera_lanes,
+        .filter(|&(k, l)| l < need.get(k))
+        .filter_map(|(k, l)| p.track_at(k, l).cloned())
+        .map(|mut t| {
+            t.id = TrackId(0);
+            t
         })
         .collect();
+    content.ensure_tracks(LaneKind::Video, need.video);
+    content.ensure_tracks(LaneKind::Audio, need.audio);
     content.overlap_layers = p.overlap_layers;
 
     let mut report = CollapseReport {
@@ -1650,7 +1655,7 @@ pub fn expand_instance(p: &Project, id: ClipId, n: NestIds<'_>) -> (Vec<Command>
         let need = block.clips.iter().filter(|c| c.kind == k).map(|c| c.lane + 1).max();
         let (Some(need), Some(&at)) = (need, lane_of.get(&k)) else { continue };
         for _ in 1..need {
-            cmds.push(Command::InsertLane { kind: k, at: at + 1 });
+            cmds.push(Command::InsertTrack { kind: lane_key_of(k), at: at + 1 });
             report.lanes_inserted += 1;
         }
         for c in block.clips.iter_mut().filter(|c| c.kind == k) {
@@ -1870,10 +1875,27 @@ pub fn import_as_sequences(
             *n.camera += 1;
             out.cameras.push(copy);
         }
-        out.video_lanes = lanes_needed(&out.clips, ClipKind::Video).max(1);
-        out.audio_lanes = lanes_needed(&out.clips, ClipKind::Audio).max(1);
-        out.morph_lanes = out.morphers.iter().map(|m| m.lane + 1).max().unwrap_or(0);
-        out.camera_lanes = out.cameras.iter().map(|c| c.lane + 1).max().unwrap_or(0);
+        // дорожки — в порядке строк источника, свойства копией, id заново
+        let need = LaneBases {
+            video: lanes_needed(&out.clips, ClipKind::Video).max(1),
+            audio: lanes_needed(&out.clips, ClipKind::Audio).max(1),
+            morph: out.morphers.iter().map(|m| m.lane + 1).max().unwrap_or(0),
+            camera: out.cameras.iter().map(|c| c.lane + 1).max().unwrap_or(0),
+        };
+        out.tracks = from
+            .rows()
+            .into_iter()
+            .filter(|&(k, l)| l < need.get(k))
+            .filter_map(|(k, l)| {
+                from.tracks().iter().nth(track_index(from.tracks(), k, l)?).cloned()
+            })
+            .map(|mut t| {
+                t.id = TrackId(0);
+                t
+            })
+            .collect();
+        out.ensure_tracks(LaneKind::Video, need.video);
+        out.ensure_tracks(LaneKind::Audio, need.audio);
         Some(out)
     };
 
@@ -1884,7 +1906,6 @@ pub fn import_as_sequences(
         body.id = id;
         body.name = s.name.clone();
         body.overlap_layers = s.overlap_layers;
-        body.lane_order = s.lane_order.clone();
         cmds.push(Command::AddSequence { id, name: body.name.clone() });
         cmds.push(Command::SetSequenceContent { id, content: Box::new(body) });
     }
@@ -1892,7 +1913,6 @@ pub fn import_as_sequences(
     root.id = root_id;
     root.name = name.to_string();
     root.overlap_layers = src.overlap_layers;
-    root.lane_order = src.lane_order.clone();
     let len = block_len(&root.clips);
     cmds.push(Command::AddSequence { id: root_id, name: name.to_string() });
     cmds.push(Command::SetSequenceContent { id: root_id, content: Box::new(root) });

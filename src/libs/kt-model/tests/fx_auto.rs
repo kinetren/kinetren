@@ -391,7 +391,7 @@ fn t214_master_switch_disables_chain_without_losing_it() {
 
     // выключенный морфер не применяется к целям, но остаётся на дорожке
     let mut p = m.project().clone();
-    p.morph_lanes = 1;
+    p.ensure_tracks(LaneKind::Morph, 1);
     p.morphers.push(MorpherEvent {
         id: MorphId(1),
         lane: 0,

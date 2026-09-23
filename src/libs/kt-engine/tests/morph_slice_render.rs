@@ -72,7 +72,7 @@ fn base(kind: ClipKind) -> Project {
     p.media.push(MediaRef { id: MediaId(2), path: "synth:ramp".into() });
     p.clips.push(clip(10, kind, Tick(0), LEN));
     p.clips.push(clip(11, kind, LEN, LEN));
-    p.morph_lanes = 1;
+    p.ensure_tracks(kt_model::LaneKind::Morph, 1);
     p
 }
 

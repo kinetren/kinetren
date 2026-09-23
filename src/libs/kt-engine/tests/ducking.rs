@@ -59,6 +59,7 @@ fn project() -> Project {
     p.clips.push(clip(1, 0, 1, 2.0, 0.6));
     p.clips.push(clip(2, 0, 1, 3.2, 0.6));
     p.clips.push(clip(3, 1, 2, 0.0, 6.0));
+    p.normalize(); // дорожки под содержимое (Р.62)
     p.validate().unwrap();
     p
 }

@@ -128,7 +128,6 @@ fn t595_block_is_shifted_to_the_clicked_row() {
 
 #[test]
 fn t595b_localize_converts_a_band_block_into_reel_coordinates() {
-    use LaneKind::*;
     // полоса раскрытия: у видов РАЗНЫЕ базы — ровно то, из-за чего пара
     // разъезжалась при вставке
     let base = LaneBases { video: 3, audio: 2, morph: 1, camera: 0 };
@@ -174,19 +173,9 @@ fn t595c_paste_grows_lanes_in_one_step() {
         (LaneKind::Morph, need.morph),
         (LaneKind::Camera, need.camera),
     ] {
-        let have = match k {
-            LaneKind::Video => m.project().video_lanes,
-            LaneKind::Audio => m.project().audio_lanes,
-            LaneKind::Morph => m.project().morph_lanes,
-            LaneKind::Camera => m.project().camera_lanes,
-        };
+        let have = m.project().lanes(k);
         for at in have..n {
-            cmds.push(match k {
-                LaneKind::Video => Command::InsertLane { kind: ClipKind::Video, at },
-                LaneKind::Audio => Command::InsertLane { kind: ClipKind::Audio, at },
-                LaneKind::Morph => Command::InsertMorphLane { at },
-                LaneKind::Camera => Command::InsertCameraLane { at },
-            });
+            cmds.push(Command::InsertTrack { kind: k, at });
         }
     }
     let (mut c, mut g, mut t, mut mo, mut ca) = (100u64, 100u64, 100u64, 100u64, 100u64);
@@ -208,7 +197,15 @@ fn t595c_paste_grows_lanes_in_one_step() {
     assert_eq!(m.undo_depth(), depth + 1, "вставка стоила больше одного шага истории");
 
     let p = m.project();
-    assert_eq!((p.video_lanes, p.audio_lanes, p.morph_lanes, p.camera_lanes), (5, 7, 4, 5));
+    assert_eq!(
+        (
+            p.lanes(LaneKind::Video),
+            p.lanes(LaneKind::Audio),
+            p.lanes(LaneKind::Morph),
+            p.lanes(LaneKind::Camera)
+        ),
+        (5, 7, 4, 5)
+    );
     let v = p.clips.iter().find(|c| c.kind == ClipKind::Video).unwrap();
     let a = p.clips.iter().find(|c| c.kind == ClipKind::Audio).unwrap();
     assert_eq!((v.lane, a.lane), (4, 6), "пара приехала не на свои дорожки");
