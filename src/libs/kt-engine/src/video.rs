@@ -20,6 +20,11 @@ use crate::video_plan::{Cam3d, FramePlan, LayerSrc, PlanLayer};
 
 #[derive(Debug, Clone)]
 struct VideoClip {
+    /// Дорожка ЗАГЛУШЕНА (mute либо не в соло-множестве, Р.62): слой в
+    /// композит не идёт, а ЗАКАЗ ПРЕФЕТЧА остаётся — снятие mute иначе
+    /// давало бы чёрный кадр до прогрева (инвариант 4 про заказ == чтение
+    /// сохраняется: греем то же, что прочтём, когда дорожку вернут).
+    silent: bool,
     id: kt_model::ClipId,
     start: Tick,
     end: Tick,
@@ -810,6 +815,19 @@ impl VideoRenderer {
             },
             overrides,
         );
+        // ГАШЕНИЕ ВИДЕОДОРОЖКИ (Р.62): mute либо соло-множество СВОЕГО
+        // вида. Уровень и режим наложения дорожки — стадия плана (она
+        // приходит отдельно), а гашение слоя стадии не требует.
+        let tracks: &[kt_model::Track] = match seq.and_then(|id| project.sequence(id)) {
+            Some(s) => &s.tracks,
+            None => &project.tracks,
+        };
+        let solo_on = tracks.iter().any(|t| t.kind == kt_model::LaneKind::Video && t.solo);
+        let silent_lane = |lane: u32| -> bool {
+            kt_model::track_index(tracks, kt_model::LaneKind::Video, lane)
+                .map(|i| &tracks[i])
+                .is_some_and(|t| t.mute || (solo_on && !t.solo))
+        };
         let mut clips: Vec<VideoClip> = effective
             .iter()
             .filter(|c| c.kind == ClipKind::Video)
@@ -889,6 +907,7 @@ impl VideoRenderer {
                     end: c.start + c.duration,
                     source_in: c.source_in,
                     lane: c.lane,
+                    silent: silent_lane(c.lane),
                     media: clip_source_addr_in(c, salt),
                     reversed: c.reversed,
                     fx,
@@ -1601,7 +1620,9 @@ fn build_plan<'a>(
 ) -> FramePlan<'a> {
     let mut layers = Vec::new();
     for (i, clip) in clips.iter().enumerate() {
-        if !clip.active_at(t) {
+        // заглушённая дорожка в композит не идёт; её ЗАКАЗ при этом
+        // остаётся (`layers_at_into`/`wanted_frames` флага не смотрят)
+        if !clip.active_at(t) || clip.silent {
             continue;
         }
         // фейд у края/Gap: пары нет по модели, слой всегда идёт через

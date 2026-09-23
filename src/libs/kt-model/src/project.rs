@@ -3614,6 +3614,44 @@ impl HasParams for Track {
     }
 }
 
+/// ЧТО НЕ ПОПАДЁТ В ФАЙЛ (Р.62): имена заглушённых дорожек и активное
+/// соло по видам. Mute и solo — содержимое проекта и действуют на
+/// экспорт (решение владельца), значит программа ОБЯЗАНА сказать об этом
+/// до старта — и окно рендера, и kt-cli одной формулировкой.
+pub struct SilencedTracks {
+    /// Имена заглушённых (mute) дорожек сверху вниз.
+    pub muted: Vec<String>,
+    /// Имена дорожек в СОЛО (пусто — соло не включено).
+    pub solo: Vec<String>,
+}
+
+impl SilencedTracks {
+    pub fn is_empty(&self) -> bool {
+        self.muted.is_empty() && self.solo.is_empty()
+    }
+}
+
+/// Собрать список по ленте (корню или вложенной).
+pub fn silenced_tracks(reel: &dyn Reel) -> SilencedTracks {
+    let rows = reel.rows();
+    let solo_on = |k: LaneKind| reel.tracks().iter().any(|t| t.kind == k && t.solo);
+    let mut muted = Vec::new();
+    let mut solo = Vec::new();
+    for (i, (kind, lane)) in rows.iter().enumerate() {
+        let Some(t) = reel.tracks().get(i) else { continue };
+        if !kind.has_switches() {
+            continue;
+        }
+        if t.mute || (solo_on(*kind) && !t.solo) {
+            muted.push(t.label(*lane));
+        }
+        if t.solo {
+            solo.push(t.label(*lane));
+        }
+    }
+    SilencedTracks { muted, solo }
+}
+
 /// Формула подписи дорожки без имени: V1/A1/M1/C1 по рангу.
 pub fn default_lane_label(kind: LaneKind, lane: u32) -> String {
     let p = match kind {

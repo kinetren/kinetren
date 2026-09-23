@@ -697,6 +697,8 @@ close = "Close"
 
 # Подсказки главного окна (правый низ статусбара).
 missing_warn = "sources unavailable ({0}), they render as placeholders: {1}"
+muted_warn = "muted tracks ({0}) will not be in the file: {1}"
+solo_warn = "solo is on ({0}): only these tracks will be in the file: {1}"
 missing_after = "rendered as placeholders ({0}): {1}"
 missing_layers = "video layers lost: {0}"
 loudness = "Loudness: {0} LUFS, true peak {1} dBTP, range {2} LU"

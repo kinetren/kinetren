@@ -697,6 +697,8 @@ close = "Cerrar"
 
 # Подсказки главного окна (правый низ статусбара).
 missing_warn = "fuentes no disponibles ({0}), se renderizan como marcadores: {1}"
+muted_warn = "pistas silenciadas ({0}), no estarán en el archivo: {1}"
+solo_warn = "solo activado ({0}), solo estas pistas estarán en el archivo: {1}"
 missing_after = "renderizado con marcadores ({0}): {1}"
 missing_layers = "capas de vídeo perdidas: {0}"
 loudness = "Sonoridad: {0} LUFS, pico real {1} dBTP, rango {2} LU"

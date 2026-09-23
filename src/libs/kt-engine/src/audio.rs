@@ -463,6 +463,32 @@ impl AudioRenderer {
         // каждого свой суб-микс (Р.50, Б4)
         let resolved = project.resolve_reel(seq, overrides);
         let effective = &resolved.clips;
+        // МНОЖИТЕЛЬ ДОРОЖКИ (Р.62, change B): уровень в дБ, гашение mute и
+        // соло-множеством СВОЕГО вида. Это ещё один СКАЛЯР после весов и
+        // gain события, поэтому он складывается с `gain` клипа в одно
+        // число: порядок сложения f32 не меняется ни на такт, и
+        // GOLDEN_AUDIO стоит (стадия со своим буфером нужна только
+        // цепочке дорожки — она приходит отдельно).
+        //
+        // Гашение — МНОЖИТЕЛЬ 0, а не выброс клипа из графа: FX-состояние
+        // события живо, и снятие mute не начинается с холодного реверба
+        // (инвариант 3).
+        let tracks: &[kt_model::Track] = match seq.and_then(|id| project.sequence(id)) {
+            Some(s) => &s.tracks,
+            None => &project.tracks,
+        };
+        let solo_on = tracks.iter().any(|t| t.kind == kt_model::LaneKind::Audio && t.solo);
+        let track_gain = |lane: u32| -> f32 {
+            let Some(t) =
+                kt_model::track_index(tracks, kt_model::LaneKind::Audio, lane).map(|i| &tracks[i])
+            else {
+                return 1.0;
+            };
+            if t.mute || (solo_on && !t.solo) {
+                return 0.0;
+            }
+            db_to_linear(t.gain_db as f32)
+        };
         // СОЛЬ адреса источника (Р.59, стадия 3) — та же, что у видео:
         // звучащий генератор (SMPTE с тоном) внутри ленты обязан слышать
         // значения СВОЕГО экземпляра.
@@ -499,7 +525,7 @@ impl AudioRenderer {
                     ext_end: end + tail,
                     source_in: c.source_in.to_audio_frames(),
                     lane: c.lane,
-                    gain: db_to_linear(c.gain_db),
+                    gain: db_to_linear(c.gain_db) * track_gain(c.lane),
                     // адрес ИСТОЧНИКА, а не медиа (Р.59, стадия 2): у
                     // звучащего генератора (SMPTE с тоном, отсчёт с
                     // биипом) значения на событии, значит и поток свой

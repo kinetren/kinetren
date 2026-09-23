@@ -560,7 +560,30 @@ fn open_sources(
     Ok(fetcher)
 }
 
+/// Сказать, ЧТО НЕ ПОПАДЁТ В ФАЙЛ (Р.62): заглушённые дорожки и активное
+/// соло — до рендера, той же формулировкой, что окно рендера. Отказа нет:
+/// mute и solo — содержимое проекта (решение владельца), но молчать о них
+/// нельзя (правило 16).
+fn report_silenced(project: &Project) {
+    let s = kt_model::silenced_tracks(project);
+    if !s.muted.is_empty() {
+        println!(
+            "notice: muted tracks ({}) will not be in the file: {}",
+            s.muted.len(),
+            s.muted.join(", ")
+        );
+    }
+    if !s.solo.is_empty() {
+        println!(
+            "notice: solo is on ({}): only these tracks will be in the file: {}",
+            s.solo.len(),
+            s.solo.join(", ")
+        );
+    }
+}
+
 fn render_wav(project: &Project, project_path: &str, output: &str, allow_missing: bool) -> i32 {
+    report_silenced(project);
     // Открытие источников — ОДНО на рендер и диагностику (Р.49, п.359):
     // тут лежала вторая копия того же цикла, и разъехалась она бы молча.
     // `--allow-missing` рендерит тишиной вместо отказа: иногда это ровно
@@ -834,6 +857,7 @@ fn run(args: &[String]) -> i32 {
                 }
                 Ok(out)
             };
+            report_silenced(&project);
             let (audio_sources, video_sources) = match (open_all(), open_all()) {
                 (Ok(a), Ok(v)) => (a, v),
                 (Err(e), _) | (_, Err(e)) => {

@@ -13798,3 +13798,47 @@ fn t722b_project_rule_change_repaints_the_paused_preview() {
     }
     assert!(repainted, "правило «заполнить» применено, а превью на паузе осталось с полями");
 }
+
+/// Тест 740 (Р.62, change B): окно рендера ПЕРЕЧИСЛЯЕТ заглушённые
+/// дорожки и активное соло ДО старта — там же, где говорит о недоступных
+/// исходниках. Отказа нет (mute и solo — содержимое проекта, решение
+/// владельца), но молчать нельзя: «забыл снять соло — сдал одну дорожку»
+/// (правила 16, 19). Утверждается ОТРИСОВАННОЕ: имя дорожки в окне.
+#[test]
+fn t740_render_dialog_lists_muted_and_solo_tracks() {
+    use kt_model::LaneKind::{Audio, Video};
+    let mut h = harness_three_clips_dt(None).0;
+    {
+        let app = h.state_mut();
+        edit_project(app, |p| {
+            p.ensure_tracks(Audio, 2);
+            p.track_at_mut(Video, 0).unwrap().name = "Титры".into();
+            p.track_at_mut(Video, 0).unwrap().mute = true;
+            p.track_at_mut(Audio, 1).unwrap().name = "Голос".into();
+            p.track_at_mut(Audio, 1).unwrap().solo = true;
+        });
+        app.render_setup.open = true;
+    }
+    h.step();
+    h.step();
+    let texts: Vec<String> =
+        crate::reach_tests::painted_texts(&h).into_iter().map(|t| t.src).collect();
+    let all = texts.join(" | ");
+    assert!(
+        all.contains("Титры"),
+        "окно рендера молчит о заглушённой дорожке — «в файле её не будет» человек узнает потом: {all}"
+    );
+    assert!(all.contains("Голос"), "окно рендера молчит об активном соло: {all}");
+
+    // без заглушённых и соло — ни строки лишней (правило 9)
+    let mut h2 = harness_three_clips_dt(None).0;
+    h2.state_mut().render_setup.open = true;
+    h2.step();
+    h2.step();
+    let clean: String = crate::reach_tests::painted_texts(&h2)
+        .into_iter()
+        .map(|t| t.src)
+        .collect::<Vec<_>>()
+        .join(" | ");
+    assert!(!clean.contains("Титры") && !clean.contains("Голос"));
+}

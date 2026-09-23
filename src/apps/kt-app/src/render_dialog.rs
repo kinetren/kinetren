@@ -404,6 +404,38 @@ impl KtApp {
                         ),
                     );
                 }
+                // ЧТО НЕ ПОПАДЁТ В ФАЙЛ (Р.62): mute и solo — содержимое
+                // проекта и действуют на экспорт (решение владельца),
+                // значит сказать о них обязаны ДО старта и там же, где
+                // говорим о недоступных исходниках (правила 16, 19).
+                // Адрес «где изменить» — заголовок дорожки, и он назван
+                // именем самой дорожки.
+                let doc = self.model.document();
+                let silenced = kt_model::silenced_tracks(&doc);
+                if !silenced.is_empty() {
+                    ui.add_space(4.0);
+                    let col = egui::Color32::from_rgb(255, 190, 120);
+                    if !silenced.muted.is_empty() {
+                        ui.colored_label(
+                            col,
+                            crate::tf!(
+                                k::render::MUTED_WARN,
+                                silenced.muted.len(),
+                                silenced.muted.join(", ")
+                            ),
+                        );
+                    }
+                    if !silenced.solo.is_empty() {
+                        ui.colored_label(
+                            col,
+                            crate::tf!(
+                                k::render::SOLO_WARN,
+                                silenced.solo.len(),
+                                silenced.solo.join(", ")
+                            ),
+                        );
+                    }
+                }
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     if ui.button(tr(k::render::START)).clicked() {

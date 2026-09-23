@@ -398,3 +398,50 @@ fn t727_probe_reports_conform_geometry() {
     assert!(text.contains("rule="), "…с правилом события:\n{text}");
     assert!(text.contains("decode="), "…и размером декода:\n{text}");
 }
+
+/// Тест 740b (Р.62, change B): kt-cli говорит, ЧТО НЕ ПОПАДЁТ В ФАЙЛ, —
+/// заглушённые дорожки и активное соло, той же формулировкой, что окно
+/// рендера, и ДО рендера. Отказа нет: mute и solo — содержимое проекта
+/// (решение владельца), но молчать о них нельзя.
+#[test]
+fn t740b_cli_reports_muted_and_solo_before_render() {
+    let dir = std::env::temp_dir().join(format!("kt-cli-t740b-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("demo.otio");
+    let st = cli().args(["demo", path.to_str().unwrap(), "--force"]).output().unwrap();
+    assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+
+    // без заглушённых дорожек — ни строки лишней
+    let wav = dir.join("out.wav");
+    let out = cli()
+        .args(["render", path.to_str().unwrap(), wav.to_str().unwrap(), "--allow-missing"])
+        .output()
+        .unwrap();
+    let clean = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(!clean.contains("muted tracks"), "лишняя строка на проекте без mute: {clean}");
+
+    // глушим первую аудиодорожку и включаем соло на видео — обе строки
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    {
+        let kt = v["metadata"]["kt"].as_object_mut().unwrap();
+        let tracks = kt.entry("tracks").or_insert(serde_json::json!([]));
+        // конверт дорожек: порядок строк сверху вниз (видео, затем аудио)
+        *tracks = serde_json::json!([
+            {"kind": "video", "id": 1, "solo": true},
+            {"kind": "audio", "id": 2, "mute": true},
+        ]);
+    }
+    let muted_path = dir.join("muted.otio");
+    std::fs::write(&muted_path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+
+    let out = cli()
+        .args(["render", muted_path.to_str().unwrap(), wav.to_str().unwrap(), "--allow-missing"])
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(out.status.success(), "рендер обязан идти, а не отказывать: {said}");
+    assert!(said.contains("muted tracks"), "kt-cli молчит о заглушённой дорожке: {said}");
+    assert!(said.contains("solo is on"), "kt-cli молчит об активном соло: {said}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
