@@ -500,6 +500,119 @@ impl Command {
         }
     }
 
+    /// СТРОКИ, содержимое которых команда правит (Р.62, change B) —
+    /// ЕДИНСТВЕННАЯ функция, по которой проверяется замок дорожки.
+    ///
+    /// Match ИСЧЕРПЫВАЮЩИЙ и без `_ =>`: новая команда не соберётся, пока
+    /// её не отнесли к одной из двух половин — «трогает события» (тогда
+    /// назови строки) или «не трогает» (пустой список). Это тот же приём,
+    /// что у `Band::after_batch`, и по той же причине: пропущенная строка
+    /// здесь означает жест, прошедший сквозь замок молча.
+    ///
+    /// Свойства САМОЙ дорожки (`SetTrackProps`) под замок не попадают —
+    /// иначе запертую дорожку нельзя было бы отпереть.
+    pub fn target_rows(&self, p: &Project) -> Vec<(LaneKind, u32)> {
+        let of_clip =
+            |id: ClipId| p.clips.iter().find(|c| c.id == id).map(|c| (lane_key_of(c.kind), c.lane));
+        let mut out: Vec<(LaneKind, u32)> = Vec::new();
+        let mut add = |row: Option<(LaneKind, u32)>| {
+            if let Some(r) = row
+                && !out.contains(&r)
+            {
+                out.push(r);
+            }
+        };
+        match self {
+            // события клипов: и откуда берут, и куда кладут
+            Command::AddClip(c) => add(Some((lane_key_of(c.kind), c.lane))),
+            Command::MoveClip { id, new_lane, .. } => {
+                add(of_clip(*id));
+                add(of_clip(*id).map(|(k, _)| (k, *new_lane)));
+            }
+            Command::RemoveClip { id }
+            | Command::TrimStart { id, .. }
+            | Command::TrimEnd { id, .. }
+            | Command::Split { id, .. }
+            | Command::SetGain { id, .. }
+            | Command::SetOpacity { id, .. }
+            | Command::SetGeometry { id, .. }
+            | Command::SetFxOff { id, .. }
+            | Command::SetReversed { id, .. }
+            | Command::SetFxBypass { id, .. }
+            | Command::SetFx { id, .. }
+            | Command::SetFxAuto { id, .. }
+            | Command::SetClipGen { id, .. }
+            | Command::SetClipGenAuto { id, .. }
+            | Command::UnlinkClip { id }
+            | Command::SetOverride { id, .. }
+            | Command::ClearOverride { id, .. }
+            | Command::SetClipMedia { id, .. } => add(of_clip(*id)),
+            Command::LinkClips { ids, .. } => {
+                for id in ids {
+                    add(of_clip(*id));
+                }
+            }
+            // «во всех местах разом»: строки ВСЕХ событий этого медиа
+            Command::ApplyGenToAll { media, .. } => {
+                for c in p.clips.iter().filter(|c| c.media == *media) {
+                    add(Some((lane_key_of(c.kind), c.lane)));
+                }
+            }
+            // переходы живут НА СТЫКЕ двух событий — запирается любая из строк
+            Command::AddTransition(t) | Command::SetTransition(t) => {
+                add(t.a.and_then(of_clip));
+                add(t.b.and_then(of_clip));
+            }
+            Command::RemoveTransition { id } => {
+                if let Some(t) = p.transitions.iter().find(|t| t.id == *id) {
+                    add(t.a.and_then(of_clip));
+                    add(t.b.and_then(of_clip));
+                }
+            }
+            // морферы и камеры — события своих служебных строк
+            Command::AddMorpher(m) | Command::SetMorpher(m) => add(Some((LaneKind::Morph, m.lane))),
+            Command::RemoveMorpher { id } | Command::BakeMorpher { id } => {
+                add(p.morphers.iter().find(|m| m.id == *id).map(|m| (LaneKind::Morph, m.lane)));
+            }
+            Command::AddCamera(c) | Command::SetCamera(c) => add(Some((LaneKind::Camera, c.lane))),
+            Command::RemoveCamera { id } => {
+                add(p.cameras.iter().find(|c| c.id == *id).map(|c| (LaneKind::Camera, c.lane)));
+            }
+            // удаление дорожки уносит её события — это тоже правка содержимого
+            Command::RemoveTrack { kind, at } => add(Some((*kind, *at))),
+            // СОДЕРЖИМОГО СТРОК НЕ ТРОГАЮТ — перечислено поимённо
+            Command::NoteBirth { .. }
+            | Command::AddMedia { .. }
+            | Command::SetMediaPath { .. }
+            | Command::RemoveMedia { .. }
+            | Command::SetSettings { .. }
+            | Command::SetTrimStretchesAuto { .. }
+            | Command::AddMarker { .. }
+            | Command::RemoveMarker { .. }
+            | Command::SetMarkerName { .. }
+            | Command::MoveMarker { .. }
+            | Command::SetMarkerDuration { .. }
+            | Command::InsertTrack { .. }
+            | Command::SetTrackProps { .. }
+            | Command::SetLaneOrder { .. }
+            | Command::AddArea(_)
+            | Command::RemoveArea { .. }
+            | Command::RenameArea { .. }
+            | Command::SetAreaRange { .. }
+            | Command::SetAreaLanes { .. }
+            | Command::AddSequence { .. }
+            | Command::RemoveSequence { .. }
+            | Command::RenameSequence { .. }
+            | Command::SetSequenceSettings { .. }
+            | Command::SetSequenceContent { .. }
+            | Command::PublishParam { .. }
+            | Command::UnpublishParam { .. }
+            | Command::SetPublished { .. }
+            | Command::ReorderPublished { .. } => {}
+        }
+        out
+    }
+
     pub fn touches_render_plan(&self) -> bool {
         match self {
             // Значения генератора — свойство ИСТОЧНИКА, а не плана (тот
@@ -1225,6 +1338,16 @@ impl TimelineModel {
     }
 
     fn check_on(p: &Project, cmd: &Command) -> Result<(), CommandError> {
+        // ЗАМОК ДОРОЖКИ (Р.62): одна проверка на весь реестр команд.
+        // Свойства самой дорожки сюда не попадают — запертую дорожку
+        // надо чем-то отпирать.
+        for (k, l) in cmd.target_rows(p) {
+            if p.track_at(k, l).is_some_and(|t| t.lock) {
+                return Err(CommandError::TrackLocked(
+                    p.track_at(k, l).map(|t| t.id).unwrap_or_default(),
+                ));
+            }
+        }
         let find =
             |id: ClipId| p.clips.iter().find(|c| c.id == id).ok_or(CommandError::ClipNotFound(id));
         match cmd {

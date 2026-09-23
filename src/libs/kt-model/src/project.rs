@@ -3218,6 +3218,12 @@ pub enum LaneKind {
 impl LaneKind {
     pub const ALL: [LaneKind; 4] =
         [LaneKind::Video, LaneKind::Audio, LaneKind::Morph, LaneKind::Camera];
+
+    /// Есть ли у строки этого вида mute и solo: у служебных (морф,
+    /// камера) их нет — глушить там нечего (правило UI 9).
+    pub fn has_switches(self) -> bool {
+        matches!(self, LaneKind::Video | LaneKind::Audio)
+    }
 }
 
 /// Стабильный адрес ДОРОЖКИ (Р.62, change B). Номер дорожки — ранг строки
@@ -3459,6 +3465,152 @@ impl Track {
             && self.fx.is_empty()
             && self.fx_auto.iter().all(|a| a.is_empty())
             && !self.fx_off
+    }
+}
+
+/// Ключи режимов наложения для паспорта свойств (Р.62): `Choice` хранит
+/// КЛЮЧ варианта, а не номер — номер поехал бы при вставке в середину.
+pub const BLEND_KEYS: &[&str] = &[
+    "normal",
+    "multiply",
+    "screen",
+    "add",
+    "subtract",
+    "darken",
+    "lighten",
+    "overlay",
+    "difference",
+];
+
+/// Предел высоты строки в паспорте: 0 — «расчётная».
+pub const TRACK_HEIGHT_MAX: f64 = 400.0;
+
+const TRACK_FLAGS: &[FlagSpec] = &[
+    FlagSpec { name: "mute", default: false },
+    FlagSpec { name: "solo", default: false },
+    FlagSpec { name: "lock", default: false },
+];
+
+const TRACK_HEIGHT_SPEC: ParamSpec =
+    ParamSpec::num("height", 0.0, TRACK_HEIGHT_MAX, 0.0, 1.0, ParamUnit::Px, ParamKind::Structural);
+
+/// ПАСПОРТ СВОЙСТВ ДОРОЖКИ (Р.62, change B). Уровень, непрозрачность,
+/// высота, выключатели и режим наложения — типизированные свойства с
+/// клампом: окно свойств и редактор читают пределы отсюда, а не из своих
+/// литералов (прецедент Р.33 — Gain был −24…24 в одном окне и −48…24 в
+/// другом). Кривых у дорожки НЕТ: её ключ — тик таймлайна, а это второй
+/// домен автоматизации (следующий change), поэтому ряды объявлены
+/// `ParamKind::Structural` — `auto_params()` их не отдаёт, и повесить
+/// кривую нечем ни команде, ни интерфейсу.
+impl HasParams for Track {
+    fn param_specs(&self) -> &[ParamSpec] {
+        const A: &[ParamSpec] = &[
+            ParamSpec::num(
+                "gain_db",
+                TRACK_GAIN_MIN_DB,
+                TRACK_GAIN_MAX_DB,
+                0.0,
+                0.1,
+                ParamUnit::Db,
+                ParamKind::Structural,
+            ),
+            TRACK_HEIGHT_SPEC,
+        ];
+        const V: &[ParamSpec] = &[
+            ParamSpec::num("opacity", 0.0, 1.0, 1.0, 0.01, ParamUnit::Norm, ParamKind::Structural),
+            TRACK_HEIGHT_SPEC,
+        ];
+        const S: &[ParamSpec] = &[TRACK_HEIGHT_SPEC];
+        // уровень — ПО ВИДУ: у аудио дБ, у видео непрозрачность; чужого
+        // ряда у дорожки нет, иначе в окне свойств висел бы мёртвый
+        // контрол (правило UI 9)
+        match self.kind {
+            LaneKind::Audio => A,
+            LaneKind::Video => V,
+            _ => S,
+        }
+    }
+
+    fn get_param(&self, name: &str) -> Option<f64> {
+        match name {
+            "gain_db" if self.kind == LaneKind::Audio => Some(self.gain_db),
+            "opacity" if self.kind == LaneKind::Video => Some(self.opacity),
+            "height" => Some(self.height as f64),
+            _ => None,
+        }
+    }
+
+    fn set_param(&mut self, name: &str, v: f64) -> bool {
+        let Some(spec) = self.param_spec(name) else { return false };
+        let v = v.clamp(spec.min, spec.max);
+        match name {
+            "gain_db" => self.gain_db = v,
+            "opacity" => self.opacity = v,
+            "height" => self.height = v as f32,
+            _ => return false,
+        }
+        true
+    }
+
+    fn get_param_idx(&self, idx: usize) -> Option<f64> {
+        let name = self.param_specs().get(idx)?.name.clone();
+        self.get_param(&name)
+    }
+
+    fn set_param_idx(&mut self, idx: usize, v: f64) -> bool {
+        let Some(name) = self.param_specs().get(idx).map(|s| s.name.clone()) else { return false };
+        self.set_param(&name, v)
+    }
+
+    fn flag_specs(&self) -> &'static [FlagSpec] {
+        // у служебных строк из выключателей только замок: глушить и
+        // солировать морф-слой нечего (правило UI 9)
+        if self.kind.has_switches() { TRACK_FLAGS } else { &TRACK_FLAGS[2..] }
+    }
+
+    fn get_flag(&self, name: &str) -> Option<bool> {
+        match name {
+            "mute" if self.kind.has_switches() => Some(self.mute),
+            "solo" if self.kind.has_switches() => Some(self.solo),
+            "lock" => Some(self.lock),
+            _ => None,
+        }
+    }
+
+    fn set_flag(&mut self, name: &str, v: bool) -> bool {
+        match name {
+            "mute" if self.kind.has_switches() => self.mute = v,
+            "solo" if self.kind.has_switches() => self.solo = v,
+            "lock" => self.lock = v,
+            _ => return false,
+        }
+        true
+    }
+
+    fn extra_specs(&self) -> Vec<ParamSpec> {
+        match self.kind {
+            LaneKind::Video => vec![choice_spec("blend", BLEND_KEYS)],
+            _ => Vec::new(),
+        }
+    }
+
+    fn get_value(&self, name: &str) -> Option<ParamValue> {
+        if name == "blend" && self.kind == LaneKind::Video {
+            return Some(ParamValue::Choice(self.blend.tag().into()));
+        }
+        default_get_value(self, name)
+    }
+
+    fn set_value(&mut self, name: &str, v: &ParamValue) -> bool {
+        if name == "blend"
+            && self.kind == LaneKind::Video
+            && let ParamValue::Choice(key) = v
+        {
+            let Some(b) = BlendMode::ALL.into_iter().find(|b| b.tag() == key) else { return false };
+            self.blend = b;
+            return true;
+        }
+        default_set_value(self, name, v)
     }
 }
 

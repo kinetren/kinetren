@@ -2457,3 +2457,83 @@ fn t728_conform_geometry_and_reel_settings_round_trip_as_v11() {
     assert!((last.v - kt_model::pan_to_pos(1.0, 2.0)).abs() < 1e-12, "значения ключей пересчитаны");
     assert!(c.geometry.is_default(), "ведущий узел события миграция не трогает");
 }
+
+/// Тест 731 (Р.62, change B): ДОРОЖКА в файле. Выключатели, уровень,
+/// режим наложения, высота и цепочка переживают круг и поднимают конверт
+/// до v11; `Track.enabled` равен `!mute` (чужой редактор видит
+/// заглушённую дорожку честно); имя живёт в `Track.name`, а порядок
+/// строк — в порядке дорожек конверта. Проект БЕЗ дорожечных новшеств
+/// байт-стабилен на прежней версии (t433b держит то же на фикстурах).
+#[test]
+fn t731_track_envelope_round_trip_and_version() {
+    use kt_model::{BlendMode, FxInstance, LaneKind};
+    // без новшеств — версия прежняя и конверта дорожек нет
+    let plain = rich_project();
+    let text0 = save_project(&plain, &Retained::default(), None);
+    let v0 = kt_otio::kt_version(&parse_document(&text0).unwrap()).unwrap();
+    assert!(v0 < kt_otio::KT_META_V11, "проект без дорожечных новшеств не v11 (v{v0})");
+
+    let mut p = rich_project();
+    p.ensure_tracks(LaneKind::Video, 2);
+    {
+        let t = p.track_at_mut(LaneKind::Video, 0).unwrap();
+        t.name = "Потолок".into();
+        t.mute = true;
+        t.opacity = 0.5;
+        t.blend = BlendMode::Screen;
+        t.height = 72.0;
+        t.fx = vec![FxInstance::blur(6)];
+        // «ничего не выключено» — это ПУСТОЙ вектор: хвост из `false`
+        // читатель срезает, как и у клипа (одна форма на оба)
+    }
+    {
+        let t = p.track_at_mut(LaneKind::Audio, 0).unwrap();
+        t.solo = true;
+        t.lock = true;
+        t.gain_db = -6.0;
+    }
+    p.validate().unwrap();
+
+    let text = save_project(&p, &Retained::default(), None);
+    assert_eq!(
+        kt_otio::kt_version(&parse_document(&text).unwrap()),
+        Some(kt_otio::KT_META_V11),
+        "не-умолчание дорожки — новшество v11"
+    );
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    // ЧУЖОЙ ЧИТАТЕЛЬ: выключенная дорожка выключена, имя на месте, цепочка
+    // стандартными Effect.1 — всё это видно без нашей секции
+    let tracks = v["tracks"]["children"].as_array().unwrap();
+    let top = tracks
+        .iter()
+        .find(|t| t["kind"] == "Video" && t["name"] == "Потолок")
+        .expect("имя дорожки живёт в Track.name");
+    assert_eq!(top["enabled"], false, "enabled обязан равняться !mute");
+    assert_eq!(top["effects"][0]["effect_name"], "kt:blur", "цепочка дорожки не стандартная");
+    // а наше — в конверте, и имя видео/аудио туда НЕ дублируется
+    let kt_tracks = v["metadata"]["kt"]["tracks"].as_array().expect("конверт дорожек");
+    assert_eq!(kt_tracks.len(), p.tracks.len());
+    assert!(kt_tracks.iter().all(|t| t.get("name").is_none()), "имя дорожки продублировано");
+    assert_eq!(kt_tracks[0]["blend"], "screen");
+
+    // КРУГ: модель совпала, запись идемпотентна
+    let b = load_project(&text, None).expect("файл с дорожками читается");
+    let q = &b.project;
+    assert_eq!(q.tracks, p.tracks, "дорожки пережили круг поле-в-поле");
+    assert_eq!(save_project(q, &b.retained, None), text, "идемпотентность записи");
+
+    // ПОРЯДОК СТРОК — порядок дорожек конверта, отдельного поля нет
+    let mut p2 = p.clone();
+    p2.ensure_tracks(LaneKind::Morph, 1);
+    p2.set_lane_order(&[
+        (LaneKind::Morph, 0),
+        (LaneKind::Video, 0),
+        (LaneKind::Video, 1),
+        (LaneKind::Audio, 0),
+    ]);
+    let text2 = save_project(&p2, &Retained::default(), None);
+    assert!(!text2.contains("lane_order"), "своего поля порядка больше нет");
+    let b2 = load_project(&text2, None).unwrap();
+    assert_eq!(b2.project.rows(), p2.rows(), "порядок строк пережил круг");
+    assert_eq!(b2.project.track_label(LaneKind::Video, 0), "Потолок");
+}
