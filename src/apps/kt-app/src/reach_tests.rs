@@ -2383,3 +2383,26 @@ fn t699b_no_clipboard_state_lives_inside_the_program() {
          окно, и синхронный запрос к самим себе повиснет в цикле событий"
     );
 }
+
+/// Тест 720 (Р.62): окно настроек проекта достижимо из меню «Файл» — из
+/// точки, откуда действует человек, а не вызовом функции.
+#[test]
+fn t720_project_settings_reachable_from_the_file_menu() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    let mut h = crate::layout_tests::harness();
+    h.get_by_label(tr(k::menu::file::TITLE)).click();
+    h.step();
+    h.step();
+    let labels = crate::layout_tests::menu_labels(&mut h);
+    assert!(
+        h.query_by_label(tr(k::menu::file::PROJECT_SETTINGS)).is_some(),
+        "пункт «Настройки проекта…» обязан быть в меню «Файл»; видно: {labels:?}"
+    );
+    h.get_by_label(tr(k::menu::file::PROJECT_SETTINGS)).click();
+    h.step();
+    h.step();
+    assert!(h.state().settings_win.is_some(), "пункт меню открывает окно");
+    assert!(h.query_by_label(tr(k::settings::TITLE)).is_some());
+    assert!(h.query_by_label(tr(k::settings::APPLY)).is_some());
+}

@@ -4846,7 +4846,7 @@ fn right_click_at(h: &mut Harness<'_, KtApp>, pos: egui::Pos2) {
 }
 
 /// Подписи пунктов открытого меню.
-fn menu_labels(h: &mut Harness<'_, KtApp>) -> Vec<String> {
+pub(crate) fn menu_labels(h: &mut Harness<'_, KtApp>) -> Vec<String> {
     use egui_kittest::kittest::{NodeT, Queryable};
     h.query_all_by_label_contains("")
         .filter_map(|n| n.accesskit_node().label().map(|l| l.to_string()))
@@ -13320,7 +13320,7 @@ fn t685_badges_show_overrides_and_publications() {
 /// ошибка в строке состояния, узел остаётся.
 #[test]
 fn t716b_lead_geometry_in_the_chain_editor() {
-    use egui_kittest::kittest::{NodeT, Queryable};
+    use egui_kittest::kittest::Queryable;
     use kt_model::*;
     let mut h = harness();
     let app = h.state_mut();
@@ -13403,4 +13403,181 @@ fn t716b_lead_geometry_in_the_chain_editor() {
     assert!(app.error_status.is_some(), "удаление ведущего узла — ошибка, не тишина");
     assert_eq!(app.model.clip(ClipId(1)).unwrap().fx.len(), 1, "Blur не пострадал");
     assert_eq!(app.model.clip(ClipId(1)).unwrap().geometry.rule, Conform::Fill);
+}
+
+/// Тест 720b (Р.62): окно настроек проекта — поля с проверкой, отказ
+/// ошибочным стилем, применение одной командой, флаг явных настроек,
+/// повторное открытие и возврат фокуса.
+#[test]
+fn t720b_project_settings_window_validates_and_applies() {
+    use egui_kittest::kittest::Queryable;
+    let mut h = harness();
+    // дважды подряд: окно обязано открываться повторно
+    for _ in 0..2 {
+        h.state_mut().open_project_settings();
+        h.step();
+        assert!(h.query_by_label(tr(k::settings::TITLE)).is_some(), "окно открыто");
+        h.get_by_label(tr(k::settings::CANCEL)).click();
+        h.step();
+        h.step();
+        assert!(h.query_by_label(tr(k::settings::TITLE)).is_none(), "«Отмена» закрывает");
+    }
+    // нечётная ширина — отказ ошибкой, настройки не тронуты
+    h.state_mut().open_project_settings();
+    h.step();
+    let before = h.state().model.document().settings.clone();
+    {
+        let d = h.state_mut().settings_win.as_mut().unwrap();
+        d.width = "1441".into();
+        d.height = "1080".into();
+    }
+    h.get_by_label(tr(k::settings::APPLY)).click();
+    h.step();
+    h.step();
+    let app = h.state();
+    assert!(app.settings_win.is_some(), "окно остаётся открытым при отказе");
+    assert!(app.error_status.is_some(), "нечётная ширина — ошибка, не тишина");
+    assert_eq!(app.model.document().settings, before);
+    // 29.97 — невыразимо: отказ
+    {
+        let d = h.state_mut().settings_win.as_mut().unwrap();
+        d.width = "1440".into();
+        d.fps = "29.97".into();
+        h.state_mut().error_status = None;
+    }
+    h.get_by_label(tr(k::settings::APPLY)).click();
+    h.step();
+    h.step();
+    assert!(h.state().error_status.is_some(), "29.97 отвергается с причиной");
+    assert_eq!(h.state().model.document().settings, before);
+    // 1440×1080 при 50 fps и правило «заполнить» — одна команда, флаг явности
+    {
+        let d = h.state_mut().settings_win.as_mut().unwrap();
+        d.fps = "50".into();
+        d.conform = kt_model::ConformRule::Fill;
+    }
+    let undo_before = h.state().model.undo_depth();
+    h.get_by_label(tr(k::settings::APPLY)).click();
+    h.step();
+    h.step();
+    let app = h.state();
+    let s = app.model.document().settings.clone();
+    assert_eq!((s.width, s.height, s.fps), (1440, 1080, 50));
+    assert_eq!(s.conform, kt_model::ConformRule::Fill);
+    assert!(s.settings_explicit, "применение ставит флаг явных настроек");
+    assert_eq!(app.model.undo_depth(), undo_before + 1, "одна команда");
+    assert!(app.settings_win.is_none(), "окно закрылось");
+    // фокус отдан: горячие клавиши живы (правило 14)
+    assert!(!h.ctx.memory(|m| m.focused().is_some()), "поле не держит фокус после закрытия");
+    // комбо панели превью показывает то же (одно тело)
+    assert!(
+        h.query_by_label("1440×1080").is_some()
+            || h.query_all_by_label_contains("1440").count() > 0
+    );
+}
+
+/// Тест 721 (Р.62): первый клип в пустой проект с неявными настройками задаёт
+/// растр и fps одним undo-шагом с постановкой; явные настройки не трогаются;
+/// 29.97 — растр принят, fps прежний, подсказка называет причину.
+#[test]
+fn t721_first_clip_sets_project_settings() {
+    use kt_model::*;
+    let info = |w: u32, h: u32, fps: (u32, u32)| kt_media::MediaInfo {
+        duration: kt_time::Tick(90_000),
+        has_video: true,
+        has_audio: false,
+        fps: Some(fps),
+        width: w,
+        height: h,
+        sar: (1, 1),
+    };
+    let mut h = harness();
+    let width_before = h.state().model.document().settings.width;
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        assert!(app.model.project().clips.is_empty());
+        assert!(!app.model.document().settings.settings_explicit);
+        let undo_before = app.model.undo_depth();
+        let cmds =
+            app.clip_cmds_for(MediaId(1), &info(1440, 1080, (25, 1)), kt_time::Tick(0), None);
+        assert!(matches!(cmds[0], Command::SetSettings { .. }), "настройки — первым в батче");
+        app.apply_batch(cmds);
+        let s = app.model.document().settings.clone();
+        assert_eq!((s.width, s.height, s.fps), (1440, 1080, 25));
+        assert_eq!(app.model.project().clips.len(), 1);
+        assert_eq!(app.model.undo_depth(), undo_before + 1, "постановка и настройки — один шаг");
+        let msg = app.status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+        assert!(msg.contains("1440"), "подсказка называет принятый растр: {msg}");
+        app.undo();
+        assert!(app.model.project().clips.is_empty());
+        assert_eq!(app.model.document().settings.width, width_before, "undo вернул и настройки");
+    }
+    // явные настройки: второй проект, окно применено — постановка не трогает
+    {
+        let app = h.state_mut();
+        let mut st = app.model.document().settings.clone();
+        st.settings_explicit = true;
+        app.apply(Command::SetSettings { settings: st });
+        let cmds = app.clip_cmds_for(MediaId(1), &info(640, 480, (30, 1)), kt_time::Tick(0), None);
+        assert!(cmds.iter().all(|c| !matches!(c, Command::SetSettings { .. })));
+        app.apply_batch(cmds);
+        assert_eq!(app.model.document().settings.width, width_before);
+    }
+    // 29.97 в пустой проект без явных настроек: растр принят, fps нет
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.clips.clear();
+        p.settings.settings_explicit = false;
+        p.settings.fps = 30;
+        app.model = kt_model::TimelineModel::new(p);
+        let cmds =
+            app.clip_cmds_for(MediaId(1), &info(1280, 720, (30_000, 1001)), kt_time::Tick(0), None);
+        app.apply_batch(cmds);
+        let s = app.model.document().settings.clone();
+        assert_eq!((s.width, s.height, s.fps), (1280, 720, 30));
+        let msg = app.status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+        assert!(msg.contains("90000"), "подсказка объясняет, почему fps не принят: {msg}");
+    }
+}
+
+/// Тест 722 (Р.62): несовпадение пропорций при постановке сообщается с
+/// адресом «где изменить»; совпадение — молчит.
+#[test]
+fn t722_aspect_mismatch_is_reported_with_an_address() {
+    use kt_model::*;
+    let info = |w: u32, h: u32| kt_media::MediaInfo {
+        duration: kt_time::Tick(90_000),
+        has_video: true,
+        has_audio: false,
+        fps: Some((30, 1)),
+        width: w,
+        height: h,
+        sar: (1, 1),
+    };
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.settings.width = 1920;
+    p.settings.height = 1080;
+    p.settings.settings_explicit = true;
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    // 4:3 в 16:9 — подсказка с правилом и адресом
+    let cmds = app.clip_cmds_for(MediaId(1), &info(640, 480), kt_time::Tick(0), None);
+    app.apply_batch(cmds);
+    let msg = app.status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+    assert!(msg.contains("640×480") && msg.contains("1920×1080"), "{msg}");
+    assert!(msg.contains(tr(k::fx::CONFORM_FIT)), "правило названо: {msg}");
+    assert!(msg.contains(tr(k::menu::file::PROJECT_SETTINGS)), "адрес назван: {msg}");
+    // 16:9 в 16:9 — молчание
+    app.status = None;
+    let cmds = app.clip_cmds_for(MediaId(1), &info(1280, 720), kt_time::Tick(90_000), None);
+    app.apply_batch(cmds);
+    assert!(app.status.is_none(), "совпадающие пропорции не сообщаются");
 }

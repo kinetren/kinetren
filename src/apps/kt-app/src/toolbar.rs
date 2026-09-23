@@ -364,6 +364,13 @@ impl KtApp {
                 self.start_render();
                 ui.close();
             }
+            // Р.62: окно настроек проекта — одно тело с комбо панели превью
+            let r = ui.button(tr(k::menu::file::PROJECT_SETTINGS));
+            crate::widgets::field_probe::note("file.project_settings", r.rect);
+            if r.clicked() {
+                self.open_project_settings();
+                ui.close();
+            }
             ui.separator();
             if ui.button(tr(k::menu::file::QUIT)).clicked() {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);

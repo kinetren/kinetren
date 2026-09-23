@@ -35,6 +35,7 @@ mod pubparam;
 mod reach_tests;
 mod reel_preview;
 mod render_dialog;
+mod settings_window;
 mod theme;
 mod thumbs;
 mod timeline;

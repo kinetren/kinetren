@@ -523,6 +523,8 @@ pub struct KtApp {
     pub tl_hover_row: Option<(LaneKind, u32)>,
     pub duck: Option<DuckDialog>,
     pub preset_save: Option<PresetSaveDialog>,
+    /// Окно «Настройки проекта» (Р.62).
+    pub settings_win: Option<crate::settings_window::SettingsWindow>,
     /// Окно переименования вложенной ленты (Р.50).
     pub seq_name: Option<SeqNameDialog>,
     /// Диалог имени публикуемой ручки (Р.59, стадия 3).
@@ -865,6 +867,7 @@ impl KtApp {
             tl_hover_row: None,
             duck: None,
             preset_save: None,
+            settings_win: None,
             seq_name: None,
             publish_dialog: None,
             published_win: None,
@@ -1069,6 +1072,7 @@ impl KtApp {
             tl_hover_row: None,
             duck: None,
             preset_save: None,
+            settings_win: None,
             seq_name: None,
             publish_dialog: None,
             published_win: None,
@@ -1534,6 +1538,7 @@ impl KtApp {
         self.draw_paste_names(&ctx);
         self.draw_duck_dialog(&ctx);
         self.draw_preset_save(&ctx);
+        self.draw_settings_window(&ctx);
         self.draw_seq_name(&ctx);
         // Публичные параметры композиции (Р.59, стадия 3): диалог имени,
         // окно автора и окна потребителей.
@@ -5916,6 +5921,84 @@ impl KtApp {
         let group = (info.has_video && info.has_audio).then(|| GroupId(self.next_group_id()));
         let mut next_id = self.next_clip_id();
         let mut cmds = Vec::new();
+        // Р.62: ПЕРВЫЙ клип в пустой проект с неявными настройками задаёт
+        // растр и fps (как Premiere: «изменить настройки под клип»); дальше
+        // несовпадение пропорций НЕ спрашивает (правило 4), а сообщает с
+        // адресом «где изменить» (правила 16, 19). Процедурные источники
+        // (fps = None) пропорций не имеют и проект не задают.
+        if info.has_video && info.fps.is_some() {
+            let settings = self.model.document().settings.clone();
+            let (vw, vh) = info.view_size();
+            let even = |v: f64| ((v.round() as u32).max(16)) & !1;
+            let (w, h) = (even(vw), even(vh));
+            let empty_root =
+                self.model.editing().is_none() && self.model.project().clips.is_empty();
+            if empty_root && !settings.settings_explicit {
+                let fps = info
+                    .fps
+                    .filter(|(n, d)| *d > 0 && n % d == 0)
+                    .map(|(n, d)| n / d)
+                    .filter(|f| (1..=120).contains(f) && 90_000 % f == 0);
+                let mut st = settings.clone();
+                st.width = w;
+                st.height = h;
+                if let Some(f) = fps {
+                    st.fps = f;
+                }
+                if st != settings {
+                    // доля превью сохраняется (п.20 р.7)
+                    let pq = self.player.preview_quality();
+                    let frac = pq.width as f32 / settings.width.max(1) as f32;
+                    self.player.set_preview_quality(kt_media::Quality {
+                        width: (((w as f32 * frac) as u32).max(2)) & !1,
+                        height: (((h as f32 * frac) as u32).max(2)) & !1,
+                    });
+                    cmds.push(Command::SetSettings { settings: st });
+                }
+                match fps {
+                    Some(f) => self.note(crate::tf!(k::msg::FIRST_CLIP_SET_PROJECT, w, h, f)),
+                    None => {
+                        let (n, d) = info.fps.unwrap_or((0, 1));
+                        let shown = format!("{:.3}", n as f64 / d.max(1) as f64);
+                        self.note(crate::tf!(
+                            k::msg::FIRST_CLIP_FPS_KEPT,
+                            w,
+                            h,
+                            shown,
+                            settings.fps
+                        ));
+                    }
+                }
+            } else {
+                let pa = settings.width as f64 / settings.height.max(1) as f64;
+                let va = vw / vh.max(1.0);
+                if ((va - pa) / pa).abs() > 0.01 {
+                    let name = self
+                        .model
+                        .project()
+                        .media
+                        .iter()
+                        .find(|m| m.id == media_id)
+                        .map(|m| {
+                            std::path::Path::new(&m.path)
+                                .file_name()
+                                .map(|f| f.to_string_lossy().to_string())
+                                .unwrap_or_else(|| m.path.clone())
+                        })
+                        .unwrap_or_default();
+                    let rule = crate::settings_window::rule_label(settings.conform);
+                    self.note(crate::tf!(
+                        k::msg::CONFORM_MISMATCH,
+                        name,
+                        w,
+                        h,
+                        settings.width,
+                        settings.height,
+                        rule
+                    ));
+                }
+            }
+        }
         for (kind, present) in
             [(ClipKind::Video, info.has_video), (ClipKind::Audio, info.has_audio)]
         {
