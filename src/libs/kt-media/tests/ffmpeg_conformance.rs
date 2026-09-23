@@ -361,3 +361,27 @@ fn t112_video_frame_selection_is_floor_on_mismatched_fps() {
         );
     }
 }
+
+// ---- Пиксельное соотношение (Р.62, t711) ----------------------------------
+
+/// Тест 711: SAR доезжает от потока до вида кадра. Два файла с ОДНИМИ
+/// пикселями 640×480 и SAR 1:1 / 2:1: `info()` отдаёт разные виды (4:3 и
+/// 8:3), а декод при равном Quality — байт-в-байт один. До Р.62 анаморф
+/// был невыразим: оба файла давали один и тот же растянутый кадр.
+#[test]
+fn t711_sar_reaches_the_view_and_only_the_view() {
+    let mut a = FfmpegSource::open(&fixture("testsrc_sar11.mp4")).unwrap();
+    let mut b = FfmpegSource::open(&fixture("testsrc_sar21.mp4")).unwrap();
+    assert_eq!((a.info().width, a.info().height), (640, 480));
+    assert_eq!((b.info().width, b.info().height), (640, 480));
+    assert_eq!(a.info().sar, (1, 1), "квадратный пиксель — 1:1");
+    assert_eq!(b.info().sar, (2, 1), "sample_aspect_ratio потока прочитан");
+    assert_eq!(a.info().view_size(), (640.0, 480.0), "вид 4:3");
+    assert_eq!(b.info().view_size(), (1280.0, 480.0), "вид 8:3: ширина × SAR");
+    // пиксели одни: SAR не трогает декод, он трогает только ВИД
+    let q = Some(Quality { width: 320, height: 240 });
+    let fa = a.read_video_frame(Tick(3600 * 5), q).unwrap();
+    let fb = b.read_video_frame(Tick(3600 * 5), q).unwrap();
+    assert_eq!((fa.width, fa.height), (320, 240));
+    assert_eq!(fa.rgba, fb.rgba, "кадр ровно запрошенного качества; SAR не растягивает декод");
+}

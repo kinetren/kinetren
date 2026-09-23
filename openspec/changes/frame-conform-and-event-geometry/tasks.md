@@ -7,12 +7,12 @@
 
 ## 1. Геометрия слоя (A1)
 
-- [ ] 1.1 `kt-media`: `MediaInfo.sar` (num/den, умолчание 1:1) и `display_size()`; `kt-ffmpeg` читает `sample_aspect_ratio` кадра/потока; `SyntheticSource` принимает `sar`. Тест t711 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`, фикстура с `-sar 2:1` в `src/fixtures/gen.sh`) и t711b без FFmpeg (`src/libs/kt-media/src/synthetic.rs`).
+- [x] 1.1 `kt-media`: `MediaInfo.sar` (num/den, умолчание 1:1) и `display_size()`; `kt-ffmpeg` читает `sample_aspect_ratio` кадра/потока; `SyntheticSource` принимает `sar`. Тест t711 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`, фикстура с `-sar 2:1` в `src/fixtures/gen.sh`) и t711b без FFmpeg (`src/libs/kt-media/src/synthetic.rs`).
 - [x] 1.2 `kt-fx`: `conform_geometry(native_display, canvas, rule, crop, zoom) -> LayerGeom` и таблица четырёх правил; тест t712 (`src/libs/kt-fx/tests/conform.rs`): вертикальный/горизонтальный/меньший/больший источник × 4 правила, SAR 2:1, чётность и потолок 4096, «как есть» крупнее холста.
 - [x] 1.3 `kt-fx::geom` + `kt-gpu` `geom_fused.wgsl`: краевой примитив `Transparent` и аффин размещения в гео-программе, парой; тест t713 (`src/libs/kt-fx/tests/video_fx.rs` + `src/libs/kt-gpu/tests/parity.rs`): поля прозрачны на обоих бэкендах, класс допуска EXACT для K = 1, identity-аффин байт-в-байт равен старому пути.
 - [x] 1.4 `kt-engine` `video_plan.rs`/`video.rs` + `kt-gpu/src/engine.rs`: `LayerSrc` несёт `LayerGeom`; заказ `(media, pts, Quality)` берёт `decode` из геометрии; `fits` сверяет с размером декода; композит кладёт слой в `rect` (CPU и GPU). Тест t714 (`src/libs/kt-engine/tests/decode_scale.rs`): заказ == чтение на четырёх правилах, ступень от размера приведения; t714b (`src/libs/kt-gpu/tests/gpu_render.rs`) конформанс размещения.
 - [x] 1.5 Golden не двигаются: t715 (`src/libs/kt-engine/tests/golden_export.rs`) — `GOLDEN_VIDEO`, t11/t67/t184 зелёные без перегенерации; вертикальный источник в 16:9 даёт кадр с прозрачными/фоновыми полями (замер геометрии белого прямоугольника, как в F-MED-004).
-- [ ] 1.6 Тумбы: `THUMB` рамка → размер по виду источника; sidecar-таблица аддитивна; филмстрип рисует поля цветом строки. Тест t719 (`src/apps/kt-app/src/thumbs.rs` + `layout_tests.rs`): вертикальный клип не раздавлен, скролл не заказывает декод (t8-класс).
+- [x] 1.6 Тумбы: `THUMB` рамка → размер по виду источника; sidecar-таблица аддитивна; филмстрип рисует поля цветом строки. Тест t719 (`src/apps/kt-app/src/thumbs.rs` + `layout_tests.rs`): вертикальный клип не раздавлен, скролл не заказывает декод (t8-класс).
 
 ## 2. Узел «Геометрия» (A2)
 
@@ -37,8 +37,8 @@
 
 ## 5. Формат и финал
 
-- [ ] 5.1 `kt-otio`: v11 по содержимому (правило проекта ≠ Fit, явное правило/параметры ведущего узла, настройки ленты, `settings_explicit`), миграция `Pan` → ведущий узел, ведущий узел с умолчаниями не пишется; тест t728 (`src/libs/kt-otio/tests/convert.rs`): круг v11, файл без новшеств байт-стабилен на прежней версии (t433b), старый `Pan` читается в узел с теми же числами.
-- [ ] 5.2 Экспорт в разрешении ≠ проекта приводит теми же долями: t728b (`src/libs/kt-engine/tests/golden_export.rs`) — кадр 1280×720 экспорта подобен превью 1920×1080 в допуске.
-- [ ] 5.3 Живой сценарий `src/scripts/live/conform.py`: бросить вертикальный файл в 16:9 — превью с полями, подсказка в строке состояния, окно настроек открывается по адресу, смена правила проекта меняет картинку; скриншоты в `target/live-out`.
-- [ ] 5.4 Спеки: обновить сценарии capability по делте, `openspec validate --strict`; F-MED-004 → «в-работе» с `round: Р.62`.
-- [ ] 5.5 `cargo test --workspace`, `cargo clippy --all-targets`, `./src/scripts/finish.sh` — версия в отчёте; коммит стадии.
+- [x] 5.1 `kt-otio`: v11 по содержимому (правило проекта ≠ Fit, явное правило/параметры ведущего узла, настройки ленты, `settings_explicit`), миграция `Pan` → ведущий узел, ведущий узел с умолчаниями не пишется; тест t728 (`src/libs/kt-otio/tests/convert.rs`): круг v11, файл без новшеств байт-стабилен на прежней версии (t433b), старый `Pan` читается в узел с теми же числами.
+- [x] 5.2 Экспорт в разрешении ≠ проекта приводит теми же долями: t728b (`src/libs/kt-engine/tests/golden_export.rs`) — кадр 1280×720 экспорта подобен превью 1920×1080 в допуске.
+- [x] 5.3 Живой сценарий `src/scripts/live/conform.py`: бросить вертикальный файл в 16:9 — превью с полями, подсказка в строке состояния, окно настроек открывается по адресу, смена правила проекта меняет картинку; скриншоты в `target/live-out`.
+- [x] 5.4 Спеки: обновить сценарии capability по делте, `openspec validate --strict`; F-MED-004 → «в-работе» с `round: Р.62`.
+- [x] 5.5 `cargo test --workspace`, `cargo clippy --all-targets`, `./src/scripts/finish.sh` — версия в отчёте; коммит стадии.

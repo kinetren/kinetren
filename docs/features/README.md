@@ -218,7 +218,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-CLR-002 | Кривые RGB/Luma и кривые «по признаку» | кандидат | A | L | нет | `color/primary/curves-rgb-and-luma.md` |
 | F-FX-002 | Искажения — Lens, Twirl, Ripple, Kaleidoscope, Chromatic Aberration | сделано | A | L | да | `fx/distort/warp-family-and-chromatic-aberration.md` |
 | F-MED-003 | Картинки, секвенции кадров и материал с альфой | кандидат | A | L | частично | `media/sources/image-sequences-and-alpha.md` |
-| F-MED-004 | Правило приведения кадра — вписать, заполнить, растянуть или оставить | кандидат | A | L | частично | `media/sources/import-scaling-policy.md` |
+| F-MED-004 | Правило приведения кадра — вписать, заполнить, растянуть или оставить | в-работе | A | L | частично | `media/sources/import-scaling-policy.md` |
 | F-TL-001 | Ripple — правка со сдвигом всего, что правее | кандидат | A | L | нет | `timeline/trimming/ripple-delete.md` |
 | F-TXT-001 | Текст в кадре: титры, подписи, нижние трети | сделано | A | L | да | `titles/text/text-generator.md` |
 | F-CMP-001 | Конкатенация трансформов | сделано | A | XL | да | `compositing/transforms/transform-concatenation.md` |

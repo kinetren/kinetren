@@ -343,7 +343,7 @@ pub struct KtApp {
     /// Последний отправленный заголовок окна (шлём Title только при смене).
     pub(crate) last_title: String,
     /// Переиспользуемый буфер композиции превью (без аллокаций на кадр).
-    preview_buf: Vec<u8>,
+    pub(crate) preview_buf: Vec<u8>,
     /// Троттлинг glow-мипа: каждые N новых кадров (амбиент не мерцает).
     glow_skip: u8,
     /// Имя адаптера/бэкенда wgpu (диагностика перф-панели).
@@ -577,6 +577,12 @@ pub struct KtApp {
     /// (Р.53, п.412): ключ превью её обязан учитывать, иначе правка
     /// параметров при неподвижном курсоре не доезжает до экрана.
     pub preview_content: u64,
+    /// Версия ПРОЕКТА в плеере на момент последнего композита (Р.62,
+    /// t722b): правка модели на паузе — правило приведения, параметр FX,
+    /// уровень — не двигает ни курсор, ни качество, ни содержимое
+    /// источников, и без этого поля превью висело со старым кадром до
+    /// первого движения playhead'а (нашёл живой сценарий `conform`).
+    pub preview_project: u64,
     /// Когда превью впервые стало неполным (скрим «Загрузка» — после 180 мс,
     /// как в v1, чтобы не мигал на быстрых промахах; п.14).
     pub incomplete_since: Option<std::time::Instant>,
@@ -889,6 +895,7 @@ impl KtApp {
             perf: PerfState::new(),
             preview_key: None,
             preview_content: 0,
+            preview_project: 0,
             incomplete_since: None,
             last_compose_retry: std::time::Instant::now(),
             thumb_textures: HashMap::new(),
@@ -1094,6 +1101,7 @@ impl KtApp {
             perf: PerfState::new(),
             preview_key: None,
             preview_content: 0,
+            preview_project: 0,
             incomplete_since: None,
             last_compose_retry: std::time::Instant::now(),
             thumb_textures: HashMap::new(),
@@ -6077,16 +6085,22 @@ impl KtApp {
         // сценарий `generator` показал чёрное превью при оранжевом
         // значении в модели).
         let content = self.player.content_version();
+        // …и ПРОЕКТ — часть ключа тоже (Р.62, t722b): смена правила
+        // приведения в окне настроек на паузе не трогает ничего из
+        // перечисленного выше, и композит считался «уже посчитанным»
+        let project = self.player.project_version();
         let need = match self.preview_key {
             Some((pt, pq, was_complete)) => {
                 pt != key_now.0
                     || pq != key_now.1
                     || !was_complete
                     || self.preview_content != content
+                    || self.preview_project != project
             }
             None => true,
         };
         self.preview_content = content;
+        self.preview_project = project;
         let new_frame = self.preview_key.map(|k| k.0) != Some(key_now.0);
         let mut complete = self.preview_key.map(|k| k.2).unwrap_or(false);
         if need {

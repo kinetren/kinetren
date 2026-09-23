@@ -13581,3 +13581,189 @@ fn t722_aspect_mismatch_is_reported_with_an_address() {
     app.apply_batch(cmds);
     assert!(app.status.is_none(), "совпадающие пропорции не сообщаются");
 }
+
+/// Тест 719 (Р.62): тумба вертикального клипа НЕ раздавлена — нарисована
+/// в пропорциях источника, по центру ячейки, а скролл и зум таймлайна не
+/// заказывают ни одного декода (инвариант 8: единственный ключ клипа ≤5 c
+/// уже в текстурах). Щупается ОТРИСОВАННОЕ: прямоугольник картинки в
+/// шейпах кадра, а не поле сервиса.
+#[test]
+fn t719_vertical_thumb_keeps_its_aspect_and_scroll_orders_no_decode() {
+    use kt_model::ClipKind;
+    let (mut h, _g) = harness_three_clips_dt(None);
+    h.step();
+    h.step();
+    // ключи спрашивает САМ филмстрип (арифметику шага тест не повторяет);
+    // клип 50 000 тиков ≤ 5 c → шаг постоянен при любом зуме, ключей мало
+    let mut keys: Vec<crate::thumbs::ThumbKey> = h.state().thumbs.requested_keys();
+    keys.sort_by_key(|k| (k.media.0, k.t));
+    keys.dedup();
+    assert!(!keys.is_empty(), "филмстрип не заказал ни одной тумбы");
+    assert!(
+        keys.iter().all(|k| h
+            .state()
+            .model
+            .project()
+            .clips
+            .iter()
+            .any(|c| c.kind == ClipKind::Video && kt_engine::clip_source_addr(c) == k.media)),
+        "ключи не про видео-события сцены: {keys:?}"
+    );
+    let img = egui::ColorImage::filled([100, 180], egui::Color32::from_rgb(200, 40, 40));
+    let tex = h.ctx.load_texture("t719-vertical", img, egui::TextureOptions::LINEAR);
+    // текстуры — под ВСЕ ключи, какие может дать сетка шага (кратные
+    // 0.5 c, клип 50 000 тиков): зум открывает новые моменты, и это
+    // законный заказ; сторож ниже — про то, что ГОТОВОЕ не заказывается
+    let media: std::collections::BTreeSet<kt_model::MediaId> =
+        keys.iter().map(|k| k.media).collect();
+    for m in &media {
+        for t in (0..=150_000).step_by(5_000) {
+            h.state_mut()
+                .thumb_textures
+                .insert(crate::thumbs::ThumbKey { media: *m, t }, tex.clone());
+        }
+    }
+    h.step();
+    h.step();
+    let before = h.state().thumbs.requested_total();
+
+    fn image_rects(
+        shapes: &[egui::epaint::ClippedShape],
+        id: egui::TextureId,
+        out: &mut Vec<egui::Rect>,
+    ) {
+        fn walk(sh: &egui::Shape, id: egui::TextureId, out: &mut Vec<egui::Rect>) {
+            match sh {
+                // `painter.image` в egui 0.36 кладёт меш с текстурой
+                egui::Shape::Mesh(m) if m.texture_id == id => out.push(m.calc_bounds()),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, id, out)),
+                _ => {}
+            }
+        }
+        shapes.iter().for_each(|c| walk(&c.shape, id, out));
+    }
+    let mut rects = Vec::new();
+    image_rects(&h.output().shapes, tex.id(), &mut rects);
+    let n_shapes = h.output().shapes.len();
+    let n_mesh =
+        h.output().shapes.iter().filter(|c| matches!(c.shape, egui::Shape::Mesh(_))).count();
+    assert!(
+        !rects.is_empty(),
+        "вертикальная тумба не нарисована ни разу (shapes={n_shapes}, meshes={n_mesh}, \
+         offline={:?}, tex={:?}, keys={:?})",
+        h.state().offline.lock().unwrap(),
+        h.state().thumb_textures.keys().collect::<Vec<_>>(),
+        keys
+    );
+    // полная (не обрезанная краем события) ячейка: ширина = высота·100/180
+    let full = rects.iter().find(|r| (r.width() / r.height() - 100.0 / 180.0).abs() < 0.03);
+    assert!(
+        full.is_some(),
+        "тумба раздавлена: ни один прямоугольник не в пропорциях 100:180, есть {:?}",
+        rects.iter().map(|r| (r.width(), r.height())).collect::<Vec<_>>()
+    );
+    assert!(
+        rects.iter().all(|r| r.width() <= r.height() * 16.0 / 9.0 * 0.6 + 1.0),
+        "вертикальная тумба растянута на всю ячейку 16:9"
+    );
+
+    // скролл и зум — ни одного нового заказа декода (инвариант 8)
+    let (vs, tpp) = (h.state().view_start, h.state().ticks_per_px);
+    h.state_mut().view_start = vs + 2_000.0;
+    h.step();
+    h.state_mut().ticks_per_px = tpp * 0.5;
+    h.step();
+    h.state_mut().ticks_per_px = tpp * 2.0;
+    h.state_mut().view_start = vs;
+    h.step();
+    h.step();
+    assert_eq!(
+        h.state().thumbs.requested_total(),
+        before,
+        "скролл/зум таймлайна заказал декод тумб (инвариант 8)"
+    );
+}
+
+/// Тест 722b (Р.62): смена правила приведения в окне настроек НА ПАУЗЕ
+/// пересобирает превью. Нашёл живой сценарий `conform`: правило было
+/// записано в файл, а в окне висел прежний кадр — ключ превью не видел
+/// версии проекта (ни курсор, ни качество, ни содержимое источников
+/// правка не трогает). Утверждается СЛЕДСТВИЕ: пиксель поля меняется.
+#[test]
+fn t722b_project_rule_change_repaints_the_paused_preview() {
+    use kt_model::*;
+    use kt_time::Tick;
+    let mut h = harness_lang_dt(crate::i18n::Lang::Ru, Some(0.02));
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        // вертикальный проект, горизонтальный синтетический источник 64×36:
+        // «вписать» оставляет поля сверху и снизу, «заполнить» — нет
+        p.settings.width = 36;
+        p.settings.height = 64;
+        p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+        p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
+            overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
+            id: ClipId(1),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane: 0,
+            start: Tick(0),
+            duration: Tick(90_000),
+            source_in: Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx: vec![],
+            fx_bypass: vec![],
+            fx_auto: vec![],
+            opacity: 1.0,
+            fx_off: false,
+        });
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.push_project_to_player();
+        // источник поднимается так же, как это делает создание генератора:
+        // первый синк лишь снимает состав медиа, сам он источники не поднимает
+        let src = crate::util::open_source("synth:ramp").expect("synthetic source");
+        app.media_paths.insert(MediaId(1), "synth:ramp".into());
+        app.player.add_media(MediaId(1), src);
+        // холст превью — в пропорциях ПРОЕКТА (окно настроек делает это
+        // само; здесь настройки подменены мимо него)
+        app.player.set_preview_quality(kt_media::Quality { width: 36, height: 64 });
+        app.player.seek(Tick(30_000));
+    }
+    for _ in 0..120 {
+        h.step();
+        if h.state().preview_key.is_some_and(|k| k.2) {
+            break;
+        }
+    }
+    assert!(h.state().preview_key.is_some_and(|k| k.2), "превью так и не посчиталось");
+    let top_dark = |app: &KtApp| -> bool {
+        let (_, (w, hgt), _) = app.preview_key.unwrap();
+        assert!(hgt > 4 && app.preview_buf.len() >= (w * hgt * 4) as usize);
+        let i = ((w + w / 2) * 4) as usize; // строка 1, середина
+        app.preview_buf[i..i + 3].iter().all(|&v| v < 8)
+    };
+    assert!(top_dark(h.state()), "«вписать» горизонтального в вертикальный: сверху поле");
+
+    let mut st = h.state().model.document().settings.clone();
+    st.conform = ConformRule::Fill;
+    st.settings_explicit = true;
+    assert!(h.state_mut().apply(Command::SetSettings { settings: st }));
+    let mut repainted = false;
+    for _ in 0..120 {
+        h.step();
+        if h.state().preview_key.is_some_and(|k| k.2) && !top_dark(h.state()) {
+            repainted = true;
+            break;
+        }
+    }
+    assert!(repainted, "правило «заполнить» применено, а превью на паузе осталось с полями");
+}

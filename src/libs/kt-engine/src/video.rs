@@ -628,11 +628,15 @@ fn clip_head_zoom(
     lead: Option<kt_fx::conform::LeadCtx>,
 ) -> f64 {
     let (pw, ph) = (project_size.0.max(2), project_size.1.max(2));
-    if !kt_fx::video::has_video_fx_in(fx, lead, pw, ph) {
+    let live = plan.is_some();
+    // Тождество проверяется по СТАТИЧЕСКИМ значениям: узел «Геометрия» с
+    // zoom 1 и кривой 1 → 4 статически тождествен, а к концу клипа
+    // просит ступень 4 (t311). С живым планом ранний выход невозможен —
+    // до Р.62 его спасал Pan, который тождеством не считался никогда.
+    if !live && !kt_fx::video::has_video_fx_in(fx, lead, pw, ph) {
         return 1.0;
     }
     let has_3d = fx.iter().any(|f| matches!(f, kt_model::FxInstance::Pan3d { .. }));
-    let live = plan.is_some();
     let span = (end.0 - start.0).max(1);
     let mut probes: Vec<Tick> = Vec::new();
     if live || has_3d || !cameras.is_empty() {

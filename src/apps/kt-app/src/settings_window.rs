@@ -66,6 +66,16 @@ fn shape_label(s: &SegShape) -> &'static str {
     }
 }
 
+/// Имя щупа правила для живых сценариев (`settings.conform.<rule>`).
+fn rule_probe(r: ConformRule) -> &'static str {
+    match r {
+        ConformRule::Fit => "settings.conform.fit",
+        ConformRule::Fill => "settings.conform.fill",
+        ConformRule::Stretch => "settings.conform.stretch",
+        ConformRule::AsIs => "settings.conform.as_is",
+    }
+}
+
 pub fn rule_label(r: ConformRule) -> &'static str {
     match r {
         ConformRule::Fit => tr(k::fx::CONFORM_FIT),
@@ -190,7 +200,8 @@ impl KtApp {
                             ConformRule::Stretch,
                             ConformRule::AsIs,
                         ] {
-                            ui.selectable_value(&mut d.conform, r, rule_label(r));
+                            let resp = ui.selectable_value(&mut d.conform, r, rule_label(r));
+                            crate::widgets::field_probe::note(rule_probe(r), resp.rect);
                         }
                     });
                     ui.end_row();
@@ -241,7 +252,9 @@ impl KtApp {
                     .small(),
                 );
                 ui.horizontal(|ui| {
-                    if ui.button(tr(k::settings::APPLY)).clicked() {
+                    let ra = ui.button(tr(k::settings::APPLY));
+                    crate::widgets::field_probe::note("settings.apply", ra.rect);
+                    if ra.clicked() {
                         apply = true;
                     }
                     if ui.button(tr(k::settings::CANCEL)).clicked() {

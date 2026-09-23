@@ -138,6 +138,11 @@ impl MediaIndexDb {
                t_ticks  INTEGER NOT NULL,
                score    INTEGER NOT NULL
              );
+             CREATE TABLE IF NOT EXISTS thumb_meta (
+               media_id INTEGER PRIMARY KEY,
+               w        INTEGER NOT NULL,
+               h        INTEGER NOT NULL
+             );
              CREATE TABLE IF NOT EXISTS loudness (
                media_id  INTEGER PRIMARY KEY,
                lufs_x100 INTEGER NOT NULL,
@@ -571,6 +576,28 @@ impl MediaIndexDb {
         self.conn.execute(
             "INSERT OR REPLACE INTO poster(media_id, t_ticks, score) VALUES(?1,?2,?3)",
             params![media_id, t_ticks, score],
+        )?;
+        Ok(())
+    }
+
+    /// Размер, в котором записаны тумбы медиа (Р.62, t719). Строки НЕТ у
+    /// сайдкаров, собранных до приведения тумб к виду источника: их тумбы
+    /// 320×180 раздавлены, и читать их нельзя — они перестраиваются при
+    /// первом заказе. Таблица аддитивна: бампа схемы (и потери индекса и
+    /// пиков всех медиа) ради этого не нужно.
+    pub fn thumb_size(&self, media_id: i64) -> Result<Option<(u32, u32)>, IndexError> {
+        Ok(self
+            .conn
+            .query_row("SELECT w, h FROM thumb_meta WHERE media_id=?1", params![media_id], |r| {
+                Ok((r.get::<_, i64>(0)? as u32, r.get::<_, i64>(1)? as u32))
+            })
+            .optional()?)
+    }
+
+    pub fn put_thumb_size(&self, media_id: i64, w: u32, h: u32) -> Result<(), IndexError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO thumb_meta(media_id, w, h) VALUES(?1,?2,?3)",
+            params![media_id, w as i64, h as i64],
         )?;
         Ok(())
     }

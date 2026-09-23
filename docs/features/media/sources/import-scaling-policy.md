@@ -1,7 +1,7 @@
 ---
 id: F-MED-004
 title: Правило приведения кадра — вписать, заполнить, растянуть или оставить
-status: кандидат
+status: в-работе
 priority: A
 cost: L
 category: media/sources
@@ -10,9 +10,9 @@ we_have: частично
 crates: [kt-ffmpeg, kt-media, kt-engine, kt-fx, kt-gpu, kt-model, kt-app]
 invariants: [4, 7, 8, 11]
 ui_rules: [4, 9, 16, 19, 20]
-round: null
+round: Р.62
 point: null
-tests: []
+tests: [t711, t712, t713, t714, t715, t716, t717, t718, t719, t720, t721, t722, t722b, t723, t724, t725, t726, t727, t728, t728b]
 depends_on: [F-MED-003, F-EXP-001]
 trackers: [kde-invent, olive, pitivi, kde-bugzilla, mlt]
 checked: 2026-09-08

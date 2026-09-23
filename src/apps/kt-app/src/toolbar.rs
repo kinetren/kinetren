@@ -325,7 +325,7 @@ impl KtApp {
     /// Пункты меню (три корневых). Отдельно от контейнера, чтобы их же
     /// показывал бургер при узкой колонке.
     fn menu_items(&mut self, ui: &mut egui::Ui) -> f32 {
-        ui.menu_button(tr(k::menu::file::TITLE), |ui| {
+        let file_btn = ui.menu_button(tr(k::menu::file::TITLE), |ui| {
             if ui.button(tr(k::menu::file::NEW)).clicked() {
                 self.new_project();
                 ui.close();
@@ -377,6 +377,7 @@ impl KtApp {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
         });
+        crate::widgets::field_probe::note("menu.file", file_btn.response.rect);
         let edit_btn = ui.menu_button(tr(k::menu::edit::TITLE), |ui| {
             if Self::menu_btn(ui, tr(k::menu::edit::UNDO), "Ctrl+Z") {
                 self.undo();

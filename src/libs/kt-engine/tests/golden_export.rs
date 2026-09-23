@@ -577,3 +577,58 @@ fn t715_vertical_source_gets_fields_in_export() {
     // рамка «вписать» вертикального 36×64 в 128×72: 72·36/64 = 40.5 px
     assert!((39..=42).contains(&lit), "fitted width ≈ 40.5 px, got {lit}");
 }
+
+/// Тест 728b (Р.62): экспорт в разрешении ≠ проекта приводит ТЕМИ ЖЕ
+/// долями. Вертикальный источник в проекте 1920×1080: кадр экспорта
+/// 1280×720 подобен кадру 1920×1080 — доля ширины заливки и её центр
+/// совпадают в допуске ресемплинга; правило и узел не пересчитываются.
+#[test]
+fn t728b_export_in_another_resolution_is_similar_to_preview() {
+    let mut p = golden_project();
+    p.clips.retain(|c| c.id == ClipId(5));
+    p.clips[0].duration = Tick(3000 * 6);
+    p.transitions.clear();
+    p.morphers.clear();
+    p.settings.width = 1920;
+    p.settings.height = 1080;
+    let src = || -> Vec<(MediaId, Box<dyn MediaSource>)> {
+        vec![(
+            MediaId(1),
+            Box::new(
+                SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence)
+                    .with_video_size(36, 64),
+            ),
+        )]
+    };
+    let profile = |q: Quality| -> (f64, f64) {
+        let mut captured: Option<Vec<u8>> = None;
+        let mut n = 0usize;
+        render_raw_video(&p, src(), q, |rgba| {
+            if n == 3 {
+                captured = Some(rgba.to_vec());
+            }
+            n += 1;
+            Ok(())
+        })
+        .unwrap();
+        let f = captured.expect("frame 3");
+        let y = q.height / 2;
+        let lit: Vec<u32> = (0..q.width)
+            .filter(|&x| {
+                let i = ((y * q.width + x) * 4) as usize;
+                f[i..i + 3].iter().any(|&v| v >= 8)
+            })
+            .collect();
+        assert!(!lit.is_empty(), "{}×{}: пустой кадр", q.width, q.height);
+        let w = q.width as f64;
+        (lit.len() as f64 / w, (lit[0] + lit[lit.len() - 1]) as f64 / 2.0 / w)
+    };
+    let (frac_a, mid_a) = profile(Quality { width: 1920, height: 1080 });
+    let (frac_b, mid_b) = profile(Quality { width: 1280, height: 720 });
+    // «вписать» 36×64 в 16:9: ширина заливки = 36/64 · 9/16 = 0.3164 холста
+    let want = 36.0 / 64.0 * 9.0 / 16.0;
+    assert!((frac_a - want).abs() < 2.0 / 1080.0, "1080p: доля {frac_a} ≠ {want}");
+    assert!((frac_b - want).abs() < 2.0 / 720.0, "720p: доля {frac_b} ≠ {want}");
+    assert!((frac_a - frac_b).abs() < 2.0 / 720.0, "доли разошлись: {frac_a} / {frac_b}");
+    assert!((mid_a - 0.5).abs() < 1.0 / 720.0 && (mid_b - 0.5).abs() < 1.0 / 720.0);
+}

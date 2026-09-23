@@ -17,6 +17,29 @@ use std::sync::{Arc, Mutex};
 
 pub const THUMB_W: u32 = 320;
 pub const THUMB_H: u32 = 180;
+
+/// Размер тумбы ПО ВИДУ источника (Р.62, t719): вид (ширина × SAR,
+/// высота) вписывается в рамку `THUMB_W × THUMB_H`, стороны чётные. До
+/// Р.62 заказ был ровно 320×180, а декодер отдаёт кадр ровно запрошенного
+/// качества — вертикальный клип приезжал раздавленным, и филмстрип был
+/// первым местом, где человек видел дефект приведения.
+pub fn thumb_quality(view: (f64, f64)) -> Quality {
+    let (vw, vh) = (view.0.max(1.0), view.1.max(1.0));
+    let k = (THUMB_W as f64 / vw).min(THUMB_H as f64 / vh);
+    let even = |v: f64| ((v.round() as u32).max(2)) & !1;
+    Quality { width: even(vw * k), height: even(vh * k) }
+}
+
+/// Размещение тумбы в ячейке филмстрипа: картинка вписывается по ВЫСОТЕ
+/// ячейки; узкая — центрируется, поля по бокам — тело события (цвет
+/// строки); широкая (шире ячейки — край события) остаётся в своём масштабе
+/// и режется справа, как прежде. Отдаёт (смещение от левого края ячейки,
+/// полная ширина картинки); видимая ширина = `min(fit_w, cell_w − off)`.
+pub fn thumb_cell_fit(cell_w: f32, cell_h: f32, tex_w: f32, tex_h: f32) -> (f32, f32) {
+    let aspect = if tex_h > 0.0 { tex_w / tex_h } else { 16.0 / 9.0 };
+    let fit_w = (cell_h * aspect).max(1.0);
+    (((cell_w - fit_w) * 0.5).max(0.0), fit_w)
+}
 /// Качество JPEG в sidecar — одно на тумбы файлов и кадры полос лент
 /// (`reel_frame`, Р.58): рисуются они рядом и одним кодом.
 pub const THUMB_JPEG_QUALITY: u8 = 80;
@@ -214,6 +237,13 @@ struct Shared {
     /// п.412): после перенастройки параметров генератора его `SourceLru`
     /// держал бы источник со старыми параметрами и рисовал старые тумбы.
     drop_sources: Mutex<HashSet<MediaId>>,
+    /// Сколько НОВЫХ заказов встало в очередь за всё время — сторожу
+    /// «скролл/зум не заказывает декод» (инвариант 8, t719): очередь
+    /// воркер опустошает сам, и её длина ничего не доказывает.
+    requests: std::sync::atomic::AtomicUsize,
+    /// Журнал заказанных ключей — только под `cfg!(test)`: харнесс узнаёт,
+    /// какие ключи спросил филмстрип, не повторяя его арифметику.
+    request_log: Mutex<Vec<ThumbKey>>,
 }
 
 pub struct ThumbService {
@@ -235,6 +265,8 @@ impl ThumbService {
             kinds: Mutex::new(HashMap::new()),
             media: Mutex::new(HashMap::new()),
             drop_sources: Mutex::new(HashSet::new()),
+            requests: std::sync::atomic::AtomicUsize::new(0),
+            request_log: Mutex::new(Vec::new()),
         });
         let media: HashMap<MediaId, String> = {
             let base = project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
@@ -255,6 +287,17 @@ impl ThumbService {
             .spawn(move || worker(sh, db_path))
             .expect("spawn thumbs");
         ThumbService { shared }
+    }
+
+    /// Сколько заказов ждёт воркера — сторожу «скролл/зум не заказывает
+    /// декод» (инвариант 8, t719).
+    pub(crate) fn requested_total(&self) -> usize {
+        self.shared.requests.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn requested_keys(&self) -> Vec<ThumbKey> {
+        self.shared.request_log.lock().unwrap().clone()
     }
 
     /// Поставить в очередь (dedup); отрисовка никогда не блокируется.
@@ -303,6 +346,10 @@ impl ThumbService {
         }
         let mut q = self.shared.queue.lock().unwrap();
         if q.1.insert(key) {
+            self.shared.requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if cfg!(test) {
+                self.shared.request_log.lock().unwrap().push(key);
+            }
             q.0.push_back((key, tol)); // pop_back = LIFO: свежие первыми
             drop(q);
             self.shared.cond.notify_one();
@@ -467,7 +514,9 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
             let db_id = *db_ids.entry(key.media).or_insert_with(|| {
                 db.ensure_media(std::path::Path::new(path)).map(|(id, _)| id).unwrap_or(-1)
             });
-            if db_id >= 0 {
+            // тумбы, записанные ДО приведения к виду источника, раздавлены:
+            // без строки thumb_meta сайдкар не читается, а перестраивается
+            if db_id >= 0 && db.thumb_size(db_id).ok().flatten().is_some() {
                 jpeg = db.thumbnail(db_id, key.t).ok().flatten();
                 if jpeg.is_none() && near_tol > 0 {
                     // ближайшая готовая тумба вместо декода; публикуется под
@@ -515,14 +564,15 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                 .unwrap()
                 .insert(key.media, (src.info().has_video, src.info().has_audio));
             let mut ok = false;
-            if let Ok(frame) =
-                src.read_video_frame(Tick(key.t), Some(Quality { width: THUMB_W, height: THUMB_H }))
+            let tq = thumb_quality(src.info().view_size());
+            if let Ok(frame) = src.read_video_frame(Tick(key.t), Some(tq))
                 && let Some(buf) = encode_thumb_jpeg(frame.width, frame.height, frame.rgba.into())
             {
                 if let (Some(db), Some(&db_id)) = (&db, db_ids.get(&key.media))
                     && db_id >= 0
                 {
                     let _ = db.put_thumbnail(db_id, key.t, &buf);
+                    let _ = db.put_thumb_size(db_id, frame.width, frame.height);
                 }
                 jpeg = Some(buf);
                 ok = true;
@@ -670,7 +720,8 @@ fn find_poster(
                 }
             }
             let src = sources.get_mut(media).expect("source just inserted");
-            match src.read_video_frame(Tick(t), Some(Quality { width: THUMB_W, height: THUMB_H })) {
+            let tq = thumb_quality(src.info().view_size());
+            match src.read_video_frame(Tick(t), Some(tq)) {
                 Ok(f) => frame_score(&f.rgba, f.width, f.height),
                 Err(_) => break,
             }
@@ -693,6 +744,35 @@ fn find_poster(
 #[cfg(test)]
 mod key_tests {
     use super::*;
+
+    /// Тест 719 (Р.62): тумба — в пропорциях ВИДА источника, а не рамки.
+    /// Вертикальный 1080×1920 → 100×180 (чётно), анаморф 720×576 с SAR
+    /// 16:15 → вид 768×576 → 240×180, широкий 16:9 — прежние 320×180
+    /// (кэш и голдены не двигаются). Размещение в ячейке центрирует.
+    #[test]
+    fn t719_thumb_quality_follows_the_view_and_cell_fit_centres() {
+        assert_eq!(thumb_quality((1920.0, 1080.0)), Quality { width: 320, height: 180 });
+        assert_eq!(thumb_quality((1080.0, 1920.0)), Quality { width: 100, height: 180 });
+        assert_eq!(thumb_quality((768.0, 576.0)), Quality { width: 240, height: 180 });
+        assert_eq!(thumb_quality((640.0, 480.0)), Quality { width: 240, height: 180 });
+        assert_eq!(thumb_quality((4000.0, 3000.0)), Quality { width: 240, height: 180 });
+        let q = thumb_quality((1.0, 1.0));
+        assert!(q.width % 2 == 0 && q.height % 2 == 0 && q.width >= 2 && q.height >= 2);
+        // ячейка 16:9 высотой 36: широкая тумба заполняет её целиком…
+        assert_eq!(thumb_cell_fit(64.0, 36.0, 320.0, 180.0), (0.0, 64.0));
+        // …вертикальная вписана по высоте и стоит по центру
+        let (off, w) = thumb_cell_fit(64.0, 36.0, 100.0, 180.0);
+        assert!((w - 20.0).abs() < 1e-3, "ширина по высоте ячейки: {w}");
+        assert!((off - 22.0).abs() < 1e-3, "центрирование: {off}");
+        // ячейка уже картинки (край события): смещение ноль, масштаб
+        // прежний — картинка режется справа, а не сжимается
+        let (off, w) = thumb_cell_fit(10.0, 36.0, 320.0, 180.0);
+        assert_eq!((off, w), (0.0, 64.0));
+        // узкая картинка в ячейке, обрезанной краем события, центрируется
+        // в том, что осталось
+        let (off, w) = thumb_cell_fit(30.0, 36.0, 100.0, 180.0);
+        assert!((w - 20.0).abs() < 1e-3 && (off - 5.0).abs() < 1e-3, "{off} {w}");
+    }
 
     /// Тест 87 (п.4 р.9): метрика информативности кадра — чёрный,
     /// белый и одноцветный кадры дают 0, картинка со структурой — больше

@@ -769,6 +769,10 @@ impl KtApp {
         if gen_kind.is_some() {
             // карточка генератора — наружу для живых сценариев (Р.52)
             crate::widgets::field_probe::note("bin.gen", thumb_rect);
+        } else if !is_reel && !is_synth {
+            // карточка ФАЙЛА — живому сценарию приведения (Р.62) нужна
+            // постановка через бин, чтобы увидеть подсказку о несовпадении
+            crate::widgets::field_probe::note("bin.file", thumb_rect);
         }
         let resp = ui.interact(
             thumb_rect,

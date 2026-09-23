@@ -35,6 +35,16 @@ gen testsrc_25fps.mp4 -f lavfi -i "testsrc=size=320x180:rate=25:duration=2" \
 gen testsrc_vp9.webm -f lavfi -i "testsrc=size=320x180:rate=30:duration=2" \
     -c:v libvpx-vp9 -cpu-used 8 -g 15 -f webm
 
+# Р.62 (t711): ОДНИ пиксели 640×480, РАЗНЫЙ SAR (1:1 и 2:1) — вид 4:3
+# против 8:3; кадры декода при равном Quality обязаны совпасть байт-в-байт,
+# различие живёт только в MediaInfo.sar. Один проход энкодера на оба
+# файла невозможен (SAR пишется в SPS), поэтому — одинаковые детерминированные
+# генераторы и одинаковые параметры x264.
+gen testsrc_sar11.mp4 -f lavfi -i "testsrc=size=640x480:rate=25:duration=1" \
+    -vf "setsar=1/1" -c:v libx264 -preset veryfast -g 25 -pix_fmt yuv420p -f mp4
+gen testsrc_sar21.mp4 -f lavfi -i "testsrc=size=640x480:rate=25:duration=1" \
+    -vf "setsar=2/1" -c:v libx264 -preset veryfast -g 25 -pix_fmt yuv420p -f mp4
+
 # 2 c муксованный A/V (h264 + aac 48k stereo)
 gen muxed_av.mp4 \
     -f lavfi -i "testsrc=size=320x180:rate=30:duration=2" \

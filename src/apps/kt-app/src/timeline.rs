@@ -1036,9 +1036,22 @@ impl KtApp {
             self.nest_crumbs().last().cloned().unwrap_or_default().replace('"', "'"),
             self.model.editing().map(|m| self.model.document().sequence_uses(m)).unwrap_or(0),
         );
+        // строка состояния КАК НАРИСОВАНА (Р.62): сценарий приведения
+        // проверяет подсказку о несовпадении, а читать пиксели текста нельзя
+        let status_shown: String = self
+            .status_line_shown
+            .0
+            .chars()
+            .map(|c| match c {
+                '\\' => '/',
+                '"' => '\'',
+                c if c.is_control() => ' ',
+                c => c,
+            })
+            .collect();
         let json = format!(
             "{{\"playhead\":{},\"playing\":{},\"base_rate\":{:.3},\"fields\":[{}],\"clips\":[{}],\
-             \"nest\":{},\"clipboard\":{},\
+             \"nest\":{},\"clipboard\":{},\"status\":\"{}\",\
              \"underruns\":{},\"callback_underruns\":{},\
              \"window\":{{\"w\":{:.1},\"h\":{:.1}}},\
              \"bin\":{{\"left\":{:.1},\"right\":{:.1},\"top\":{:.1},\"bottom\":{:.1}}},\
@@ -1054,6 +1067,7 @@ impl KtApp {
             clips.join(","),
             nest,
             self.clipboard.clips.len(),
+            status_shown,
             self.player.underruns.load(ord),
             self.player.shared.callback_underruns.load(ord),
             screen.width(),
@@ -3898,13 +3912,22 @@ impl KtApp {
                             }),
                         };
                         if let Some(t) = tex {
+                            // тумба в пропорциях ИСТОЧНИКА (Р.62, t719):
+                            // вертикальная стоит по центру ячейки, поля по
+                            // бокам — тело события; ничего не растягивается
+                            let [tw, th] = t.size();
+                            let cell_w = thumb_w.min(clip_rect.right() - x);
+                            let (off, fit_w) = crate::thumbs::thumb_cell_fit(
+                                cell_w, thumb_h, tw as f32, th as f32,
+                            );
+                            let x_img = x + off;
                             let dst = egui::Rect::from_min_size(
-                                egui::pos2(x, clip_rect.top() + 1.0),
-                                egui::vec2(thumb_w.min(clip_rect.right() - x), thumb_h),
+                                egui::pos2(x_img, clip_rect.top() + 1.0),
+                                egui::vec2(fit_w.min(cell_w - off).max(0.0), thumb_h),
                             );
                             let uv = egui::Rect::from_min_max(
                                 egui::pos2(0.0, 0.0),
-                                egui::pos2((dst.width() / thumb_w).min(1.0), 1.0),
+                                egui::pos2((dst.width() / fit_w).min(1.0), 1.0),
                             );
                             painter.image(t.id(), dst, uv, egui::Color32::WHITE);
                             painter.rect(
@@ -3978,13 +4001,22 @@ impl KtApp {
                             },
                         };
                         if let Some(t) = tex {
+                            // тумба в пропорциях ИСТОЧНИКА (Р.62, t719):
+                            // вертикальная стоит по центру ячейки, поля по
+                            // бокам — тело события; ничего не растягивается
+                            let [tw, th] = t.size();
+                            let cell_w = thumb_w.min(clip_rect.right() - x);
+                            let (off, fit_w) = crate::thumbs::thumb_cell_fit(
+                                cell_w, thumb_h, tw as f32, th as f32,
+                            );
+                            let x_img = x + off;
                             let dst = egui::Rect::from_min_size(
-                                egui::pos2(x, clip_rect.top() + 1.0),
-                                egui::vec2(thumb_w.min(clip_rect.right() - x), thumb_h),
+                                egui::pos2(x_img, clip_rect.top() + 1.0),
+                                egui::vec2(fit_w.min(cell_w - off).max(0.0), thumb_h),
                             );
                             let uv = egui::Rect::from_min_max(
                                 egui::pos2(0.0, 0.0),
-                                egui::pos2((dst.width() / thumb_w).min(1.0), 1.0),
+                                egui::pos2((dst.width() / fit_w).min(1.0), 1.0),
                             );
                             painter.image(t.id(), dst, uv, egui::Color32::WHITE);
                             // кадры филмстрипа: тонкая рамка + зазор
