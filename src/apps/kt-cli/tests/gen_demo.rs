@@ -73,7 +73,7 @@ fn pan3d(scale: f64) -> FxInstance {
 }
 
 fn zoom(z: f64) -> FxInstance {
-    FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: z }
+    FxInstance::geometry_zoom(z)
 }
 
 fn save(p: &mut Project, name: &str) {

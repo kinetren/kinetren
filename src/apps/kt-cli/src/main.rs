@@ -325,6 +325,39 @@ fn probe_range(
             dq.height
         );
     }
+    // ПРАВИЛО ПРИВЕДЕНИЯ (Р.62): по жалобе «картинка растянута/обрезана/с
+    // полями» смотреть сюда — правило события (разрешённое проектом), вид
+    // источника (натив × SAR), рамка на холсте и размер декода
+    println!("\n-- conform (frame rule) --");
+    println!("  project rule: {:?}", project.settings.conform);
+    for c in eff_all.iter().filter(|c| c.kind == kt_model::ClipKind::Video) {
+        if c.start >= t1 || c.start + c.duration <= t0 {
+            continue;
+        }
+        let rule = c.geometry.rule.resolve(project.settings.conform);
+        let view = facts.views.get(&c.media).copied();
+        let canvas = (q.width as f64, q.height as f64);
+        let frame = kt_fx::conform::conform_dest(view, canvas, rule);
+        let g = kt_fx::conform::conform_geometry(
+            view,
+            (q.width, q.height),
+            rule,
+            [c.geometry.crop_l, c.geometry.crop_t, c.geometry.crop_r, c.geometry.crop_b],
+        );
+        println!(
+            "  conform clip {}: rule={:?} ({:?} on the event) view={} frame={:.0}x{:.0} decode={}x{} node@{}{}",
+            c.id.0,
+            rule,
+            c.geometry.rule,
+            view.map(|(w, h)| format!("{w:.0}x{h:.0}")).unwrap_or_else(|| "unknown/stretch".into()),
+            frame.0,
+            frame.1,
+            g.decode.0,
+            g.decode.1,
+            c.geometry_pos,
+            if c.geometry.params_identity() { "" } else { " (node not identity)" }
+        );
+    }
     let mut per_q: std::collections::BTreeMap<(u64, u32, u32), usize> = Default::default();
     for (media, _, dq) in vr.wanted_frames(kt_time::TickRange::new(t0, t1), q) {
         *per_q.entry((media.0, dq.width, dq.height)).or_default() += 1;
@@ -957,10 +990,10 @@ fn demo_project(synth: bool) -> Project {
         opacity: 1.0,
         fx_off: false,
     };
-    let pan = FxInstance::Pan { mode: PanMode::Fill, pan_x: 0.02, pan_y: -0.03, zoom: 1.18 };
+    let pan = FxInstance::geometry_at(-0.002, 0.002, 1.18);
     // тот же ход камеры, что был кейфреймами CamMotion, — теперь кривыми
     // на Pan (Р.34 К2: механизм анимации в программе один)
-    let cam = FxInstance::Pan { mode: PanMode::Fill, pan_x: -0.12, pan_y: 0.05, zoom: 1.05 };
+    let cam = FxInstance::geometry_at(0.003, -0.001, 1.05);
     let slowed = FxInstance::SlowedReverb {
         rate: 0.86,
         mix: 0.34,
@@ -1100,12 +1133,12 @@ fn demo_project(synth: bool) -> Project {
         let key = |u: f64, v: f64| AutoKey::at(t(20.0 + u * 14.0), v);
         c.fx_auto = vec![vec![
             ParamCurve {
-                param: "pan_x".into(),
+                param: "pos_x".into(),
                 keys: vec![key(0.0, -0.12), key(0.55, 0.0), key(1.0, 0.14)],
                 source: Default::default(),
             },
             ParamCurve {
-                param: "pan_y".into(),
+                param: "pos_y".into(),
                 keys: vec![key(0.0, 0.05), key(0.55, 0.0), key(1.0, -0.06)],
                 source: Default::default(),
             },

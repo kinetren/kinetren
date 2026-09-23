@@ -380,3 +380,21 @@ fn t389_render_refuses_missing_media_unless_allowed() {
     assert!(wav.exists(), "с --allow-missing рендер обязан пройти");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Тест 727 (Р.62): probe называет правило приведения, вид источника,
+/// размер декода и рамку каждого видео-события в окне — первое, что
+/// спросят по жалобе «картинка растянута/обрезана».
+#[test]
+fn t727_probe_reports_conform_geometry() {
+    let dir = std::env::temp_dir().join(format!("kt-cli-t727-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("probe.otio");
+    let st = cli().args(["demo", path.to_str().unwrap()]).output().unwrap();
+    assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+    let out = cli().args(["probe", path.to_str().unwrap(), "0", "2"]).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(text.contains("conform"), "probe обязан печатать приведение:\n{text}");
+    assert!(text.contains("rule="), "…с правилом события:\n{text}");
+    assert!(text.contains("decode="), "…и размером декода:\n{text}");
+}

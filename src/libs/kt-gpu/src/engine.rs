@@ -461,14 +461,6 @@ fn chain_ops(
                     .find(|f| kt_fx::geom::is_geo_active(f, lead, out_w, out_h))
                     .expect("legacy run has a geo step")
                 {
-                    FxInstance::Pan { mode, pan_x, pan_y, zoom } => {
-                        let frame = kt_fx::video::pan_frame(
-                            w, h, out_w, out_h, *mode, *pan_x, *pan_y, *zoom,
-                        );
-                        ops.push(FxOp::Resample { tw: mow, th: moh, frame });
-                        w = mow;
-                        h = moh;
-                    }
                     FxInstance::CamMotion { mode, ease, time_scale, keyframes } => {
                         let (px, py, z) = kt_fx::video::cam_at(keyframes, u, *ease, *time_scale);
                         let frame = kt_fx::video::pan_frame(w, h, out_w, out_h, *mode, px, py, z);
@@ -481,7 +473,7 @@ fn chain_ops(
                             ops.push(FxOp::Mirror { h: *horizontal, v: *vertical });
                         }
                     }
-                    _ => debug_assert!(false, "legacy geo must be Pan/CamMotion/Mirror"),
+                    _ => debug_assert!(false, "legacy geo must be CamMotion/Mirror"),
                 },
                 kt_fx::geom::GeomExec::Fused(prog) => {
                     w = prog.out_w;

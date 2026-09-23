@@ -47,8 +47,7 @@ pub struct Cam3d {
 pub fn is_geo(f: &FxInstance) -> bool {
     matches!(
         f,
-        FxInstance::Pan { .. }
-            | FxInstance::Geometry { .. }
+        FxInstance::Geometry { .. }
             | FxInstance::CamMotion { .. }
             | FxInstance::Mirror { .. }
             | FxInstance::EventGrid { .. }
@@ -356,13 +355,11 @@ pub fn build_geom_exec_in(
         if k_in == k_out && matches!(steps[0], FxInstance::Mirror { .. }) {
             return GeomExec::Legacy;
         }
-        // одиночный Pan/CamMotion БЕЗ минификации И БЕЗ K×-краёв — старое
+        // одиночный CamMotion БЕЗ минификации И БЕЗ K×-краёв — старое
         // ядро байт-в-байт; иначе — слитый проход (суперсемплинг п.309 /
-        // конъюгация п.314; legacy pan_zoom умеет только 1×-выход)
-        if k_in == 1
-            && k_out == 1
-            && matches!(steps[0], FxInstance::Pan { .. } | FxInstance::CamMotion { .. })
-        {
+        // конъюгация п.314; legacy pan_zoom умеет только 1×-выход). Узел
+        // «Геометрия» (Р.62) всегда слитый: у него прозрачные поля.
+        if k_in == 1 && k_out == 1 && matches!(steps[0], FxInstance::CamMotion { .. }) {
             let prog =
                 build_program(steps, in_w, in_h, out_w, out_h, u, cam3d, burst_index, 1, 1, lead);
             if prog.ss == (SsSpec::Const { nx: 1, ny: 1 }) {
@@ -480,13 +477,6 @@ fn build_program(
     let mut has_alpha = false;
     for f in steps {
         match f {
-            FxInstance::Pan { mode, pan_x, pan_y, zoom } => {
-                let (x0, y0, cw, ch) =
-                    crate::video::pan_frame(w, h, out_w, out_h, *mode, *pan_x, *pan_y, *zoom);
-                fw.push(Step::Frame { x0, y0, cw, ch, iw: w, ih: h });
-                w = mow;
-                h = moh;
-            }
             FxInstance::CamMotion { mode, ease, time_scale, keyframes } => {
                 let (px, py, z) = crate::video::cam_at(keyframes, u, *ease, *time_scale);
                 let (x0, y0, cw, ch) =

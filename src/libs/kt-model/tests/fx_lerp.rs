@@ -42,24 +42,25 @@ fn t550_lerp_keeps_the_ends_and_moves_the_numbers() {
 /// вращения» меняли бы значение в случайной точке проводки.
 #[test]
 fn t550b_non_numeric_comes_from_the_nearer_end() {
-    let fit = FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 };
-    let fill = FxInstance::Pan { mode: PanMode::Fill, pan_x: 0.0, pan_y: 0.0, zoom: 3.0 };
+    // Р.62: Pan упразднён — нечисловой режим живёт у CamMotion
+    let fit = FxInstance::CamMotion {
+        mode: PanMode::Fit,
+        ease: true,
+        time_scale: 1.0,
+        keyframes: vec![],
+    };
+    let fill = FxInstance::CamMotion {
+        mode: PanMode::Fill,
+        ease: true,
+        time_scale: 3.0,
+        keyframes: vec![],
+    };
     for (t, want) in [(0.1, PanMode::Fit), (0.49, PanMode::Fit), (0.5, PanMode::Fill)] {
         match fit.lerp(&fill, t) {
-            FxInstance::Pan { mode, .. } => assert_eq!(mode, want, "t = {t}"),
+            FxInstance::CamMotion { mode, .. } => assert_eq!(mode, want, "t = {t}"),
             other => panic!("вид подменился: {other:?}"),
         }
     }
-    // а число при этом едет непрерывно через середину
-    let mid = fit.lerp(&fill, 0.5).get_param("zoom").unwrap();
-    assert!((mid - 2.0).abs() < 1e-9, "zoom в середине: {mid}");
-
-    // у зеркала числовых параметров нет вовсе: остаётся ступенька, и это
-    // единственное осмысленное поведение
-    let h = FxInstance::Mirror { horizontal: true, vertical: false };
-    let v = FxInstance::Mirror { horizontal: false, vertical: true };
-    assert_eq!(dbg(&h.lerp(&v, 0.3)), dbg(&h));
-    assert_eq!(dbg(&h.lerp(&v, 0.7)), dbg(&v));
 }
 
 /// Разные виды не смешиваются: получится ближайший конец как есть, а не

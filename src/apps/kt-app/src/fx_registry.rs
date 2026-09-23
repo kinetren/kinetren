@@ -50,7 +50,6 @@ fn video_meta(name: &str) -> (Key, Option<Key>) {
     // Полными путями намеренно: тест 125 ищет ключ каталога по пути `k::…`
     // и сокращённый `use` спрятал бы использование.
     match name {
-        "Pan" => (k::fxreg::cat::MOTION, Some(k::fxreg::kw::PAN)),
         "Geometry" => (k::fxreg::cat::MOTION, Some(k::fxreg::kw::GEOMETRY)),
         "Mirror" => (k::fxreg::cat::GEOMETRY, Some(k::fxreg::kw::MIRROR)),
         "Blur" => (k::fxreg::cat::BLUR, Some(k::fxreg::kw::BLUR)),
@@ -113,13 +112,8 @@ fn var(tmpl: &FxInstance, name: Key, sets: &[(&str, f64)]) -> FxVariant {
 /// t125 ищет ключ каталога по пути, сокращённый `use` спрятал бы его.
 fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
     match name {
-        "Pan" => vec![
-            var(tmpl, k::fxreg::var::CLOSEUP, &[("zoom", 1.25)]),
-            var(tmpl, k::fxreg::var::PUNCH, &[("zoom", 2.0)]),
-            var(tmpl, k::fxreg::var::OFFCENTER, &[("zoom", 1.4), ("pan_x", 0.33)]),
-        ],
-        // Р.62: дополнительный узел «Геометрия» — те же три варианта, что
-        // у Pan (тождественный дефолт иконкой служить не может, t543)
+        // Р.62: дополнительный узел «Геометрия» — три варианта (тождественный
+        // дефолт иконкой служить не может, t543)
         "Geometry" => vec![
             var(tmpl, k::fxreg::var::CLOSEUP, &[("zoom", 1.25)]),
             var(tmpl, k::fxreg::var::PUNCH, &[("zoom", 2.0)]),

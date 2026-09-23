@@ -63,7 +63,7 @@ fn natives(w: u32, h: u32) -> std::collections::HashMap<MediaId, (u32, u32)> {
 }
 
 fn zoom(z: f64) -> FxInstance {
-    FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: z }
+    FxInstance::geometry_zoom(z)
 }
 
 /// Качество декода клипа (единственный слой проекта) при данном Quality.

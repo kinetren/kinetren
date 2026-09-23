@@ -97,11 +97,6 @@ fn run_window_end(
 fn legacy_lens(step: &FxInstance, lw: u32, lh: u32, out_w: u32, out_h: u32, u: f64) -> (f64, f64) {
     let (mow, moh) = (out_w.max(2) as f64, out_h.max(2) as f64);
     match step {
-        FxInstance::Pan { mode, pan_x, pan_y, zoom } => {
-            let (_, _, cw, ch) =
-                crate::video::pan_frame(lw, lh, out_w, out_h, *mode, *pan_x, *pan_y, *zoom);
-            (cw / mow, ch / moh)
-        }
         FxInstance::CamMotion { mode, ease, time_scale, keyframes } => {
             let (px, py, z) = crate::video::cam_at(keyframes, u, *ease, *time_scale);
             let (_, _, cw, ch) = crate::video::pan_frame(lw, lh, out_w, out_h, *mode, px, py, z);

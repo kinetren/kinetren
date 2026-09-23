@@ -4476,10 +4476,12 @@ pub fn migrate_legacy_camera(c: &mut CameraEvent) -> bool {
     true
 }
 
-/// CamMotion → Pan + кривые (Р.34 К2). У Pan те же три параметра уже
-/// есть в спеках, то есть «CamMotion с кейфреймами» — это в точности
-/// «Pan с кривыми»; конверсия убирает дублирующий механизм анимации, а
-/// не портирует его.
+/// CamMotion → узел «Геометрия» + кривые (Р.34 К2, с Р.62 — вместо Pan).
+/// У узла те же три параметра (положение и зум), то есть «CamMotion с
+/// кейфреймами» — это «Геометрия с кривыми»; конверсия убирает
+/// дублирующий механизм анимации, а не портирует его. Пан прежней рамки
+/// (−1..1 в пределах свободного места) переводится в положение (доли
+/// холста): `pos = −pan·(1 − 1/zoom)/2` при зуме ключа.
 ///
 /// Тонкости, которые легко потерять: (1) пустые кейфреймы у CamMotion
 /// означали НЕ статику, а v1-пресет «наезд 1.0 → 1.35» — он
@@ -4487,6 +4489,13 @@ pub fn migrate_legacy_camera(c: &mut CameraEvent) -> bool {
 /// (2) `time_scale` разгонял чтение кейфреймов (`u_eff = u · scale`),
 /// поэтому позиция ключа делится на него; (3) `ease` жил на эффекте, а в
 /// новом домене он у каждой кривой свой.
+/// Пан прежней рамки (−1..1 в пределах свободного места при зуме z) →
+/// положение узла «Геометрия» в долях холста.
+pub fn pan_to_pos(pan: f64, zoom: f64) -> f64 {
+    let z = zoom.clamp(0.05, 32.0);
+    -pan.clamp(-4.0, 4.0) * (1.0 - 1.0 / z) / 2.0
+}
+
 pub fn migrate_legacy_cammotion(c: &mut ClipEvent) -> bool {
     let mut touched = false;
     for i in 0..c.fx.len() {
@@ -4503,14 +4512,22 @@ pub fn migrate_legacy_cammotion(c: &mut ClipEvent) -> bool {
             keyframes.clone()
         };
         let first = keys[0];
-        c.fx[i] =
-            FxInstance::Pan { mode, pan_x: first.pan_x, pan_y: first.pan_y, zoom: first.zoom };
+        let _ = mode; // режим прежней рамки: все три давали один кадр (F-MED-004)
+        c.fx[i] = FxInstance::geometry_at(
+            pan_to_pos(first.pan_x, first.zoom),
+            pan_to_pos(first.pan_y, first.zoom),
+            first.zoom,
+        );
         if c.fx_auto.len() <= i {
             c.fx_auto.resize(i + 1, Vec::new());
         }
         for (param, pick) in [
-            ("pan_x", Box::new(|k: &CamKeyframe| k.pan_x) as Box<dyn Fn(&CamKeyframe) -> f64>),
-            ("pan_y", Box::new(|k: &CamKeyframe| k.pan_y)),
+            (
+                "pos_x",
+                Box::new(|k: &CamKeyframe| pan_to_pos(k.pan_x, k.zoom))
+                    as Box<dyn Fn(&CamKeyframe) -> f64>,
+            ),
+            ("pos_y", Box::new(|k: &CamKeyframe| pan_to_pos(k.pan_y, k.zoom))),
             ("zoom", Box::new(|k: &CamKeyframe| k.zoom)),
         ] {
             if c.fx_auto[i].iter().any(|c| c.param == param) {
@@ -4956,17 +4973,6 @@ pub enum FxInstance {
         #[serde(default = "default_half_f32")]
         curvature: f32,
     },
-    /// Кроп-рамка + пан/зум в размер проекта.
-    Pan {
-        #[serde(default)]
-        mode: PanMode,
-        #[serde(default)]
-        pan_x: f64,
-        #[serde(default)]
-        pan_y: f64,
-        #[serde(default = "default_zoom")]
-        zoom: f64,
-    },
     /// Узел «Геометрия» (Р.62): кроп (доли входа), положение (доли холста),
     /// зум, поворот вокруг якоря; вне рамки — ПРОЗРАЧНО. Ведущий узел
     /// события живёт в `ClipEvent.geometry` и несёт ещё правило
@@ -5235,7 +5241,6 @@ impl FxInstance {
             FxInstance::Ripple { .. } => "ripple",
             FxInstance::Kaleidoscope { .. } => "kaleidoscope",
             FxInstance::Cylinder3d { .. } => "cylinder3d",
-            FxInstance::Pan { .. } => "pan",
             FxInstance::Geometry { .. } => "geometry",
             FxInstance::CamMotion { .. } => "cam_motion",
             FxInstance::Mirror { .. } => "mirror",
@@ -5294,7 +5299,6 @@ impl FxInstance {
                 FxInstance::ripple(),
                 FxInstance::kaleidoscope(),
                 FxInstance::cylinder3d(),
-                FxInstance::pan(),
                 FxInstance::geometry(),
                 FxInstance::cam_motion(),
                 FxInstance::mirror(),
@@ -6058,11 +6062,6 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
         y2: f64, -1.0, 2.0, 1.0, 0.005, Norm, Smooth;
         x3: f64, -1.0, 2.0, 1.0, 0.005, Norm, Smooth;
         y3: f64, -1.0, 2.0, 1.0, 0.005, Norm, Smooth;
-    },
-    Pan {
-        pan_x: f64, -4.0, 4.0, 0.0, 0.01, Norm, Smooth;
-        pan_y: f64, -4.0, 4.0, 0.0, 0.01, Norm, Smooth;
-        zoom: f64, 0.05, 32.0, 1.0, 0.01, Ratio, Smooth;
     },
     Geometry {
         crop_l: f64, 0.0, 0.95, 0.0, 0.005, Norm, Smooth;
@@ -6898,8 +6897,23 @@ impl FxInstance {
         FxInstance::Cylinder3d { curvature: 0.5 }
     }
 
-    pub fn pan() -> FxInstance {
-        FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 }
+    /// Дополнительный узел «Геометрия» с зумом вокруг центра (замена
+    /// прежнего «Pan: растянуть, зум z»).
+    pub fn geometry_zoom(zoom: f64) -> FxInstance {
+        let mut g = EventGeometry { zoom, ..Default::default() }.node();
+        if let FxInstance::Geometry { lead, .. } = &mut g {
+            *lead = false;
+        }
+        g
+    }
+
+    /// Дополнительный узел «Геометрия» с положением (доли холста) и зумом.
+    pub fn geometry_at(pos_x: f64, pos_y: f64, zoom: f64) -> FxInstance {
+        let mut g = EventGeometry { pos_x, pos_y, zoom, ..Default::default() }.node();
+        if let FxInstance::Geometry { lead, .. } = &mut g {
+            *lead = false;
+        }
+        g
     }
 
     pub fn geometry() -> FxInstance {

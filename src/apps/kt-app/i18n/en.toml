@@ -431,7 +431,6 @@ color = "Color"
 # (сравниваются с вводом пользователя), пишутся в нижнем регистре.
 [fxreg.kw]
 pan3d = "pan 3d perspective camera layer"
-pan = "pan zoom crop framing"
 geometry = "geometry crop position zoom rotate frame conform"
 mirror = "mirror flip reflection"
 blur = "blur soft softness"

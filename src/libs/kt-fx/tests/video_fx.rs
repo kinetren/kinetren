@@ -57,7 +57,8 @@ fn mean_rgb(f: &Frame) -> f64 {
 /// эффекта. Последняя санкционированная правка: noise → counter-based hash
 /// (Р.29, параллелизуемый RNG для GPU); остальные 9 не менялись с v1.
 const GOLDEN: [(&str, u64); 10] = [
-    ("pan", 0x40755635c15a2c4a),
+    // Р.62: строка Pan стала узлом «Геометрия» с тем же зумом и сдвигом
+    ("pan", 0x6c0bcbba503e2045),
     ("cammotion", 0x796fb338df86d795),
     ("mirror", 0x6e6b11df22c1c072),
     ("blur", 0xec8d2f412f21f555),
@@ -72,7 +73,7 @@ const GOLDEN: [(&str, u64); 10] = [
 #[test]
 fn t26_golden_hashes_all_effects() {
     let cases: Vec<(&str, FxInstance)> = vec![
-        ("pan", FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.3, pan_y: -0.2, zoom: 1.5 }),
+        ("pan", FxInstance::geometry_at(-0.05, 0.03333, 1.5)),
         (
             "cammotion",
             FxInstance::CamMotion {
@@ -201,7 +202,7 @@ fn t26_eventgrid_tiles_are_identical() {
 #[test]
 fn t26_pan_stretch_identity_when_no_zoom() {
     // stretch + zoom 1 + pan 0 на кадре размеров out = почти тождество
-    let out = run(FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 });
+    let out = run(FxInstance::geometry_zoom(1.0));
     let src = test_frame();
     let diff: u64 = out
         .rgba
@@ -220,7 +221,7 @@ fn t26_pan_stretch_identity_when_no_zoom() {
 fn t68_pooled_chain_identical_with_dirty_scratch() {
     use kt_fx::video::{FxScratch, apply_video_chain_pooled};
     let all: Vec<Vec<FxInstance>> = vec![
-        vec![FxInstance::Pan { mode: PanMode::Fill, pan_x: 0.3, pan_y: -0.2, zoom: 1.4 }],
+        vec![FxInstance::geometry_at(-0.04286, 0.02857, 1.4)],
         vec![FxInstance::CamMotion {
             ease: true,
             mode: PanMode::Fill,
@@ -487,8 +488,7 @@ fn t228_glow_vhs_greenscreen_params() {
 fn t328_golden_cycle_over_the_registry() {
     use kt_fx::geom::{is_geo, is_pointwise};
     const GOLDEN_ALL: &[(&str, u64)] = &[
-        ("pan", 0x05719cf53332c61a),
-        // Р.62: узел «Геометрия» с умолчаниями — тождество (identity-хэш)
+        // Р.62: Pan упразднён; узел «Геометрия» с умолчаниями — тождество
         ("geometry", 0x05719cf53332c61a),
         ("cam_motion", 0x410e2d08915e02e9),
         ("mirror", 0x6e6b11df22c1c072),

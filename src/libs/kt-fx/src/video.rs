@@ -574,11 +574,6 @@ pub(crate) fn apply_legacy_geo(
     scratch: &mut FxScratch,
 ) -> Frame {
     match f {
-        FxInstance::Pan { mode, pan_x, pan_y, zoom } => {
-            let nf = pan_zoom(&frame, ctx, *mode, *pan_x, *pan_y, *zoom, scratch);
-            scratch.put(frame.rgba);
-            nf
-        }
         FxInstance::CamMotion { mode, ease, time_scale, keyframes } => {
             let (px, py, z) = cam_at(keyframes, ctx.u, *ease, *time_scale);
             let nf = pan_zoom(&frame, ctx, *mode, px, py, z, scratch);

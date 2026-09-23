@@ -170,12 +170,7 @@ fn first_frame(p: &Project) -> Vec<u8> {
 /// один в один.
 #[test]
 fn t315_zoom_beyond_quality_is_sharp() {
-    let zoomed = first_frame(&project(vec![FxInstance::Pan {
-        mode: PanMode::Stretch,
-        pan_x: 0.0,
-        pan_y: 0.0,
-        zoom: 2.0,
-    }]));
+    let zoomed = first_frame(&project(vec![FxInstance::geometry_zoom(2.0)]));
     let c = contrast(&zoomed, W, H);
     println!("t315 contrast: {c:.1}");
     // до Р.46 здесь ровно 0.0 (серый); порог — с большим запасом ниже

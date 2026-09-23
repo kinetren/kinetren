@@ -179,8 +179,8 @@ fn t230_cammotion_migrates_to_pan_curves() {
             "{label}: миграция обязана сработать"
         );
         assert!(
-            matches!(after.clips[0].fx[0], FxInstance::Pan { .. }),
-            "{label}: CamMotion обязан стать Pan"
+            matches!(after.clips[0].fx[0], FxInstance::Geometry { .. }),
+            "{label}: CamMotion обязан стать узлом «Геометрия»"
         );
         assert_eq!(after.clips[0].fx_auto[0].len(), 3, "{label}: три кривые");
         after.validate().unwrap();

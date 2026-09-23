@@ -122,11 +122,7 @@ fn run_both(engine: &dyn VideoGpuExec, p: &FramePlan<'_>) -> (Vec<u8>, Vec<u8>, 
 fn t181_effect_parity_gpu_vs_cpu() {
     let Some(engine) = test_engine() else { return };
     let cases: Vec<(&str, Vec<FxInstance>, FrameTol)> = vec![
-        (
-            "pan",
-            vec![FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.3, pan_y: -0.2, zoom: 1.5 }],
-            FrameTol::BILINEAR,
-        ),
+        ("pan", vec![FxInstance::geometry_at(-0.05, 0.03333, 1.5)], FrameTol::BILINEAR),
         (
             "cammotion",
             vec![FxInstance::CamMotion {
@@ -243,8 +239,8 @@ fn t181_effect_parity_gpu_vs_cpu() {
         (
             "geo-pan-pan",
             vec![
-                FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.3, pan_y: -0.2, zoom: 1.5 },
-                FxInstance::Pan { mode: PanMode::Stretch, pan_x: -0.1, pan_y: 0.1, zoom: 1.2 },
+                FxInstance::geometry_at(-0.05, 0.03333, 1.5),
+                FxInstance::geometry_at(0.008333, -0.008333, 1.2),
             ],
             FrameTol::BILINEAR,
         ),
@@ -254,7 +250,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
             "geo-grid-pan-zoomback",
             vec![
                 FxInstance::EventGrid { cols: 2, rows: 2, center: true },
-                FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 },
+                FxInstance::geometry_zoom(2.0),
             ],
             FrameTol::BILINEAR,
         ),
@@ -263,7 +259,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
             "geo-pan-shrink-clamp",
             vec![
                 FxInstance::Mirror { horizontal: false, vertical: true },
-                FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 0.6 },
+                FxInstance::geometry_zoom(0.6),
             ],
             FrameTol::BILINEAR,
         ),
@@ -276,7 +272,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
             vec![
                 FxInstance::EventGrid { cols: 2, rows: 2, center: false },
                 FxInstance::greenscreen([0, 255, 0], 70, 25),
-                FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 },
+                FxInstance::geometry_zoom(2.0),
             ],
             FrameTol::THRESHOLD,
         ),
@@ -285,7 +281,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
             vec![
                 FxInstance::EventGrid { cols: 2, rows: 2, center: true },
                 FxInstance::Noise { amount: 0.6, size: 2, color: true },
-                FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.1, pan_y: 0.0, zoom: 1.8 },
+                FxInstance::geometry_at(-0.02222, -0.0, 1.8),
             ],
             FrameTol::THRESHOLD,
         ),
@@ -296,7 +292,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
             vec![
                 FxInstance::EventGrid { cols: 2, rows: 2, center: false },
                 FxInstance::Vhs { rgb_shift: 2, bleed: 0.3, scan_step: 5, jitter: 0.4 },
-                FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 },
+                FxInstance::geometry_zoom(2.0),
             ],
             FrameTol::BILINEAR,
         ),
@@ -305,7 +301,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
             vec![
                 FxInstance::EventGrid { cols: 2, rows: 2, center: true },
                 FxInstance::blur(8),
-                FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 },
+                FxInstance::geometry_zoom(2.0),
             ],
             FrameTol::BILINEAR,
         ),
@@ -314,7 +310,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
             vec![
                 FxInstance::EventGrid { cols: 2, rows: 2, center: false },
                 FxInstance::glow(0.9),
-                FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.1, pan_y: 0.0, zoom: 1.8 },
+                FxInstance::geometry_at(-0.02222, -0.0, 1.8),
             ],
             FrameTol::BILINEAR,
         ),
@@ -323,7 +319,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
             vec![
                 FxInstance::EventGrid { cols: 2, rows: 2, center: false },
                 FxInstance::edges(48),
-                FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 },
+                FxInstance::geometry_zoom(2.0),
             ],
             FrameTol::THRESHOLD,
         ),
@@ -335,7 +331,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
                 FxInstance::EventGrid { cols: 2, rows: 2, center: false },
                 FxInstance::blur(4),
                 FxInstance::Noise { amount: 0.5, size: 2, color: true },
-                FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 },
+                FxInstance::geometry_zoom(2.0),
             ],
             FrameTol::THRESHOLD,
         ),
@@ -376,7 +372,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         (
             "layer-mix-after-resize",
             vec![
-                FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.2, pan_y: 0.0, zoom: 1.4 },
+                FxInstance::geometry_at(-0.02857, -0.0, 1.4),
                 FxInstance::blur(6),
                 FxInstance::LayerMix { amount: 0.35, from: 1 },
             ],
@@ -440,7 +436,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
     let src = Src::new(
         2000,
         Some(frame(96, 54, false, 0)),
-        vec![FxInstance::Pan { mode: PanMode::Fill, pan_x: 0.1, pan_y: 0.0, zoom: 1.2 }],
+        vec![FxInstance::geometry_at(-0.008333, -0.0, 1.2)],
     );
     let p = plan(90_000, vec![one(&src, 4096, false)]);
     let (cpu, gpu, _, _) = run_both(engine.as_ref(), &p);
@@ -489,7 +485,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
 #[test]
 fn t309_decode_stage_parity_gpu_vs_cpu() {
     let Some(engine) = test_engine() else { return };
-    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    let zoom2 = FxInstance::geometry_zoom(2.0);
     let grid2 = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
     let cases: Vec<(&str, Vec<FxInstance>, FrameTol)> = vec![
         // чистая конъюгация: 2×-вход сводится зумом ровно в Quality
@@ -640,10 +636,7 @@ fn t183_gpu_deterministic_on_device_and_dirty_pool() {
     let src = Src::new(
         10,
         Some(frame(96, 54, false, 3)),
-        vec![
-            FxInstance::Pan { mode: PanMode::Fill, pan_x: 0.2, pan_y: 0.1, zoom: 1.3 },
-            FxInstance::glow(1.2),
-        ],
+        vec![FxInstance::geometry_at(-0.02308, -0.01154, 1.3), FxInstance::glow(1.2)],
     );
     let bg = Src::new(11, Some(frame(W, H, false, 0)), vec![]);
     let mk = |t: i64| plan(t, vec![one(&bg, 4096, false), one(&src, 3000, true)]);
@@ -664,7 +657,7 @@ fn t183_gpu_deterministic_on_device_and_dirty_pool() {
             FxInstance::EventGrid { cols: 3, rows: 2, center: true },
             FxInstance::blur(12),
             FxInstance::Mirror { horizontal: true, vertical: false },
-            FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 },
+            FxInstance::geometry_zoom(2.0),
         ],
     );
     let mut _j = Vec::new();
@@ -867,8 +860,7 @@ fn t329_parity_cycle_over_the_registry() {
     let Some(engine) = test_engine() else { return };
     // (тег, допуск одиночного, допуск сэндвича)
     let classes: &[(&str, FrameTol, FrameTol)] = &[
-        ("pan", FrameTol::BILINEAR, FrameTol::BILINEAR),
-        // Р.62: узел «Геометрия» — аффин/Proj слитого прохода
+        // Р.62: Pan упразднён; узел «Геометрия» — аффин/Proj слитого прохода
         ("geometry", FrameTol::GEOM, FrameTol::GEOM),
         ("cam_motion", FrameTol::BILINEAR, FrameTol::BILINEAR),
         ("mirror", FrameTol::EXACT, FrameTol::BILINEAR),
@@ -919,7 +911,7 @@ fn t329_parity_cycle_over_the_registry() {
         "t329 class table and the video registry must cover each other"
     );
     let grid2 = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
-    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    let zoom2 = FxInstance::geometry_zoom(2.0);
     for (i, f) in video.iter().enumerate() {
         let (tol_single, tol_sand) = table[f.tag()];
         let cam = matches!(f, FxInstance::Pan3d { .. })

@@ -6,7 +6,7 @@
 
 use kt_fx::geom::{GeomExec, build_geom_exec, is_geo};
 use kt_fx::video::{Frame, VideoFxCtx, apply_video_chain};
-use kt_model::{FxInstance, PanMode};
+use kt_model::FxInstance;
 
 const W: u32 = 64;
 const H: u32 = 36;
@@ -65,12 +65,19 @@ fn mirror_h(f: &Frame) -> Vec<u8> {
 /// РОВНО в одном месте (kt-fx), оба бэкенда его спрашивают.
 #[test]
 fn t297_routing_single_legacy_multi_fused() {
-    let pan = FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.3, pan_y: -0.2, zoom: 1.5 };
+    // Р.62: Pan упразднён; старое ядро осталось у одиночного CamMotion, а
+    // узел «Геометрия» ВСЕГДА слитый (у него прозрачные поля)
+    let cam = FxInstance::cam_motion();
+    let pan = FxInstance::geometry_at(-0.05, 0.03333, 1.5);
     let mir = FxInstance::Mirror { horizontal: true, vertical: false };
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: true };
     assert!(matches!(
-        build_geom_exec(&[&pan], W, H, W, H, 0.5, None, 90_000, 1, 1),
+        build_geom_exec(&[&cam], W, H, W, H, 0.5, None, 90_000, 1, 1),
         GeomExec::Legacy
+    ));
+    assert!(matches!(
+        build_geom_exec(&[&pan], W, H, W, H, 0.5, None, 90_000, 1, 1),
+        GeomExec::Fused(_)
     ));
     assert!(matches!(
         build_geom_exec(&[&mir], W, H, W, H, 0.5, None, 90_000, 1, 1),
@@ -251,7 +258,7 @@ fn contrast(f: &Frame) -> f64 {
 #[test]
 fn t296_net_identity_chain_preserves_detail() {
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
-    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    let zoom2 = FxInstance::geometry_zoom(2.0);
     let out = apply_video_chain(&[grid, zoom2], checkerboard(), &ctx());
     let c = contrast(&out);
     assert!(c >= 250.0, "шахматка обязана вернуться целой, контраст {c:.1}");
@@ -347,10 +354,10 @@ fn t300_ss_taps_and_routing_boundary() {
     assert_eq!(ss_taps(3.97), 4);
     assert_eq!(ss_taps(100.0), 4); // потолок
 
-    // Pan без минификации — старое ядро (байты до Р.44); с минификацией —
-    // слитый проход ради суперсемплинга
-    let pan1 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 };
-    let pan_min = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 0.9 };
+    // CamMotion без минификации — старое ядро (байты до Р.44); узел
+    // «Геометрия» с минификацией — слитый проход ради суперсемплинга
+    let pan1 = FxInstance::cam_motion();
+    let pan_min = FxInstance::geometry_zoom(0.9);
     assert!(matches!(
         build_geom_exec(&[&pan1], W, H, W, H, 0.5, None, 90_000, 1, 1),
         GeomExec::Legacy
@@ -422,11 +429,7 @@ fn bench_geom_1080p() {
             out.h
         );
     };
-    bench(
-        "pan legacy (zoom 1.5)",
-        &[FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 1.5 }],
-        &bctx,
-    );
+    bench("pan legacy (zoom 1.5)", &[FxInstance::geometry_zoom(1.5)], &bctx);
     bench("grid 2x2 слитый + SS 2x2", std::slice::from_ref(&grid), &bctx);
     bench(
         "цепочка пользователя grid→pan3d→grid→pan3d(зум)",
@@ -436,7 +439,7 @@ fn bench_geom_1080p() {
     bench("pan3d одиночный (perpixel-пробы)", &[p3(0.9)], &ctx3d);
     // K×-барьеры (п.314): на 1080p k_cap = 4096/1920 = 2 — барьер-сегмент
     // работает в 3840×2160
-    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    let zoom2 = FxInstance::geometry_zoom(2.0);
     bench(
         "grid→vhs(K=2)→zoom, барьер в 3840×2160",
         &[
@@ -491,7 +494,7 @@ fn bench_fx_1080p() {
             out.h
         );
     };
-    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    let zoom2 = FxInstance::geometry_zoom(2.0);
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: true };
     bench(
         "colorgrade+vignette (2 барьера)",
@@ -577,7 +580,7 @@ fn t306_chain_plan_segmentation() {
 fn t305_pointwise_inside_run() {
     use kt_fx::plan::{PlanOp, plan_chain};
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
-    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    let zoom2 = FxInstance::geometry_zoom(2.0);
     let gs = FxInstance::greenscreen([0, 255, 0], 70, 25);
 
     // (0) сегментация: внутренний поточечный поглощён — ран ОДИН
@@ -859,7 +862,7 @@ fn t303_barrier_kernels_res_invariant() {
 fn t302_barrier_no_longer_kills_detail() {
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
     let vhs0 = FxInstance::Vhs { rgb_shift: 0, bleed: 0.0, scan_step: 0, jitter: 0.0 };
-    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    let zoom2 = FxInstance::geometry_zoom(2.0);
     let out = apply_video_chain(&[grid, vhs0, zoom2], checkerboard(), &ctx());
     let c = contrast(&out);
     assert!(c >= 200.0, "шахматка сквозь K×-барьер, контраст {c:.1}");
@@ -874,8 +877,8 @@ fn t304_k_only_with_squeeze_and_zoom() {
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
     let vhs = FxInstance::vhs(4, 0.4);
     let mir = FxInstance::Mirror { horizontal: true, vertical: false };
-    let zoom05 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 0.5 };
-    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    let zoom05 = FxInstance::geometry_zoom(0.5);
+    let zoom2 = FxInstance::geometry_zoom(2.0);
     let k_of = |fx: &[FxInstance]| -> Vec<u32> {
         plan_chain(fx, W, H, 1, W, H, 0.5, None, 90_000, &[])
             .ops
@@ -924,8 +927,8 @@ fn t308_in_scale_feeds_the_squeeze_budget() {
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
     let vhs = FxInstance::vhs(4, 0.4);
     let mir = FxInstance::Mirror { horizontal: true, vertical: false };
-    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
-    let zoom12 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 1.2 };
+    let zoom2 = FxInstance::geometry_zoom(2.0);
+    let zoom12 = FxInstance::geometry_zoom(1.2);
     let k_of = |fx: &[FxInstance], s: u32| -> Vec<u32> {
         plan_chain(fx, W * s, H * s, s, W, H, 0.5, None, 90_000, &[])
             .ops
@@ -957,7 +960,7 @@ fn t308b_mirror_run_between_k_segments() {
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
     let vhs = FxInstance::vhs(4, 0.4);
     let mir = FxInstance::Mirror { horizontal: true, vertical: false };
-    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    let zoom2 = FxInstance::geometry_zoom(2.0);
     let out = run(&[grid, vhs, mir, FxInstance::blur(8), zoom2]);
     assert_eq!((out.w, out.h), (W, H), "chain must land in Quality");
 }
@@ -976,7 +979,7 @@ fn luma(f: &Frame, x: u32, y: u32) -> f64 {
 fn t330_new_pointwise_absorb_and_meaning() {
     use kt_fx::plan::{PlanOp, plan_chain};
     let grid2 = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
-    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    let zoom2 = FxInstance::geometry_zoom(2.0);
 
     // (а) поглощение: каждый новый поточечный между гео-шагами — ран ОДИН
     for f in [
@@ -1177,7 +1180,7 @@ fn t331_corner_pin() {
 
     // (5) серия с гео — один ран
     let grid2 = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
-    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    let zoom2 = FxInstance::geometry_zoom(2.0);
     let fx = vec![grid2, right, zoom2];
     let p = plan_chain(&fx, W, H, 1, W, H, 0.5, None, 90_000, &[]);
     assert_eq!(p.ops.len(), 1, "corner pin is geo: the series stays one run");
@@ -1437,11 +1440,7 @@ fn t333_warp_prims() {
     assert!(mx > (3 * W / 4) as f64 + 2.0, "cylinder must push mid-side content outward: {mx:.1}");
 
     // (8) серия варпов + зум — ОДИН ран
-    let fx = vec![
-        FxInstance::lens_distort(),
-        FxInstance::twirl(),
-        FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 },
-    ];
+    let fx = vec![FxInstance::lens_distort(), FxInstance::twirl(), FxInstance::geometry_zoom(2.0)];
     let p = plan_chain(&fx, W, H, 1, W, H, 0.5, None, 90_000, &[]);
     assert_eq!(p.ops.len(), 1, "warp series stays one fused run");
     assert!(matches!(p.ops[0], PlanOp::Run { i: 0, j: 3, .. }));

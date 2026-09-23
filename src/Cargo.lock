@@ -1993,6 +1993,7 @@ version = "0.1.0"
 dependencies = [
  "kt-cache",
  "kt-engine",
+ "kt-fx",
  "kt-gpu",
  "kt-media",
  "kt-model",

@@ -311,7 +311,7 @@ fn t316_replace_media_updates_the_decode_stage() {
         reversed: false,
         fx_bypass: vec![],
         fx_auto: vec![],
-        fx: vec![FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 }],
+        fx: vec![FxInstance::geometry_zoom(2.0)],
         opacity: 1.0,
         fx_off: false,
     });

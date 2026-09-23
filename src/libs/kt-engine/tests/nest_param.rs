@@ -291,8 +291,7 @@ fn t674_an_override_curve_lands_on_the_same_material_frame() {
     // перевод домена вырождался бы в тождество и ничего не проверял
     let mut plate = clip(PLATE.0, ClipKind::Video, 0, Tick(FRAME * 5), PART, 2);
     plate.source_in = Tick(FRAME * 40);
-    plate.fx =
-        vec![FxInstance::Pan { mode: Default::default(), pan_x: 0.0, pan_y: 0.0, zoom: 1.0 }];
+    plate.fx = vec![FxInstance::geometry_zoom(1.0)];
     s.clips.push(plate);
     s.published = vec![PublishedParam {
         id: ZOOM,
@@ -479,7 +478,7 @@ fn t679_a_published_zoom_raises_the_reel_stage_and_keeps_it_single() {
     let mut outer = Sequence::new(SEQ, "Выпуск");
     let mut mid = clip(20, ClipKind::Video, 0, Tick::ZERO, PART, 101);
     mid.source_in = Tick::ZERO;
-    mid.fx = vec![FxInstance::Pan { mode: Default::default(), pan_x: 0.0, pan_y: 0.0, zoom: 1.0 }];
+    mid.fx = vec![FxInstance::geometry_zoom(1.0)];
     outer.clips.push(mid);
     outer.published = vec![PublishedParam {
         id: ZOOM,

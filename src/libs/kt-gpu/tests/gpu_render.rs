@@ -633,10 +633,7 @@ fn t587_blend_on_a_nest_differs_from_nearest_on_gpu() {
 /// ВПИСЫВАЕТСЯ (`NestSrc::fit_to`, на GPU это `Resample` во весь кадр).
 fn twin_nest_project(twin_fx: Vec<FxInstance>) -> Project {
     let sec = 90_000i64;
-    let mut p = nested_project(
-        vec![FxInstance::Pan { mode: Default::default(), pan_x: 0.0, pan_y: 0.0, zoom: 3.0 }],
-        1.0,
-    );
+    let mut p = nested_project(vec![FxInstance::geometry_zoom(3.0)], 1.0);
     let mut twin = p.clips[0].clone();
     twin.id = ClipId(11);
     twin.start = Tick(10 * sec);
@@ -659,16 +656,10 @@ fn t632_reel_stage_and_chain_input_conform_gpu_to_cpu() {
         ("glow", vec![FxInstance::glow(1.0)]),
         (
             "leading mix",
-            vec![
-                FxInstance::Pan { mode: Default::default(), pan_x: 0.0, pan_y: 0.0, zoom: 2.0 },
-                FxInstance::LayerMix { amount: 0.5, from: 0 },
-            ],
+            vec![FxInstance::geometry_zoom(2.0), FxInstance::LayerMix { amount: 0.5, from: 0 }],
         ),
         // без вписывания: экземпляр сам просит ступень ленты
-        (
-            "same zoom",
-            vec![FxInstance::Pan { mode: Default::default(), pan_x: 0.0, pan_y: 0.0, zoom: 3.0 }],
-        ),
+        ("same zoom", vec![FxInstance::geometry_zoom(3.0)]),
     ];
     for (name, fx) in cases {
         let p = twin_nest_project(fx);

@@ -796,7 +796,7 @@ fn zooming_nest(zoom: f64) -> Project {
     p.sequences.push(s);
     let mut inst = ev(10, ClipKind::Video, 0, Tick(0), PART, 100);
     inst.source_in = Tick(0);
-    inst.fx = vec![FxInstance::Pan { mode: Default::default(), pan_x: 0.0, pan_y: 0.0, zoom }];
+    inst.fx = vec![FxInstance::geometry_zoom(zoom)];
     p.clips.push(inst);
     p.validate().expect("зумящее вложение законно");
     p
@@ -1686,7 +1686,7 @@ fn lone_reel(fx: Vec<FxInstance>) -> Project {
 }
 
 fn pan(zoom: f64) -> FxInstance {
-    FxInstance::Pan { mode: Default::default(), pan_x: 0.0, pan_y: 0.0, zoom }
+    FxInstance::geometry_zoom(zoom)
 }
 
 const T_TWIN: Tick = Tick(10 * PART.0 + FRAME * 5);

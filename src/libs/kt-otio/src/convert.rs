@@ -2158,6 +2158,41 @@ fn read_foreign_nest(
 /// Эффекты вложения: та же раскладка, что у клипа, но чужого у нас тут не
 /// бывает — вложение мы пишем сами. Кривые читаются в домене v3+ (тики
 /// материала): файл с вложением не может быть старше v6.
+
+/// Прежний эффект `kt:pan` (упразднён Р.62) → дополнительный узел
+/// «Геометрия» на том же слоте: индексы слотов не двигаются, кривые
+/// `pan_x`/`pan_y` переезжают на `pos_x`/`pos_y` (пересчёт `pan_to_pos`
+/// при зуме базы), `zoom` остаётся. Режим прежней рамки не переносится:
+/// все три давали один кадр (F-MED-004).
+fn migrate_pan_effect(
+    metadata: &Map<String, Value>,
+) -> Option<(kt_model::FxInstance, Vec<kt_model::ParamCurve>)> {
+    let kt = metadata.get(crate::meta::KT_NS)?.as_object()?;
+    let num = |k: &str, d: f64| kt.get(k).and_then(|v| v.as_f64()).unwrap_or(d);
+    let (px, py, z) = (num("pan_x", 0.0), num("pan_y", 0.0), num("zoom", 1.0));
+    let inst = kt_model::FxInstance::geometry_at(
+        kt_model::pan_to_pos(px, z),
+        kt_model::pan_to_pos(py, z),
+        z,
+    );
+    let mut auto: Vec<kt_model::ParamCurve> =
+        kt.get("auto").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
+    for c in auto.iter_mut() {
+        let flip = match c.param.as_str() {
+            "pan_x" => Some("pos_x"),
+            "pan_y" => Some("pos_y"),
+            _ => None,
+        };
+        if let Some(name) = flip {
+            c.param = name.into();
+            for k in c.keys.iter_mut() {
+                k.v = kt_model::pan_to_pos(k.v, z);
+            }
+        }
+    }
+    Some((inst, auto))
+}
+
 fn nest_effects(
     st: &Stack,
     cx: &mut ReadCtx<'_>,
@@ -2168,6 +2203,13 @@ fn nest_effects(
     let mut reversed = false;
     for e in &st.effects {
         match e {
+            EffectNode::Effect(eff) if eff.effect_name == "kt:pan" => {
+                if let Some((inst, curves)) = migrate_pan_effect(&eff.metadata) {
+                    fx.push(inst);
+                    bypass.push(!eff.enabled);
+                    auto.push(curves);
+                }
+            }
             EffectNode::Effect(eff) if eff.effect_name.starts_with("kt:") => {
                 match kt_get::<kt_model::FxInstance>(&eff.metadata) {
                     Some(inst) => {
@@ -2402,6 +2444,14 @@ fn clip_from_otio(
     };
     for (i, e) in c.effects.iter().enumerate() {
         match e {
+            EffectNode::Effect(eff) if eff.effect_name == "kt:pan" => {
+                // прежний Pan (Р.62) — узел «Геометрия» на том же слоте
+                if let Some((inst, curves)) = migrate_pan_effect(&eff.metadata) {
+                    fx.push(inst);
+                    fx_auto.push(serde_json::to_value(curves).ok());
+                    bypass.push(!eff.enabled);
+                }
+            }
             EffectNode::Effect(eff) if eff.effect_name.starts_with("kt:") => {
                 match kt_get::<kt_model::FxInstance>(&eff.metadata) {
                     Some(inst) => {

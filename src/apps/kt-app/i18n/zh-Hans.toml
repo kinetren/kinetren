@@ -431,7 +431,6 @@ color = "颜色"
 # (сравниваются с вводом пользователя), пишутся в нижнем регистре.
 [fxreg.kw]
 pan3d = "pan 3d 透视 摄像机 图层"
-pan = "pan zoom 平移 缩放 裁剪 构图 crop"
 geometry = "几何 裁切 位置 缩放 旋转 geometry crop"
 mirror = "mirror flip 镜像 翻转 反射"
 blur = "blur 模糊 柔化 虚化"

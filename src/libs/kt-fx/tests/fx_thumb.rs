@@ -9,7 +9,7 @@
 
 use kt_fx::video::{Frame, apply_video_chain, fit_into, render_fx_thumb, test_pattern};
 use kt_fx::video::{FxScratch, VideoFxCtx};
-use kt_model::{FxInstance, PanMode};
+use kt_model::FxInstance;
 use xxhash_rust::xxh3::xxh3_64;
 
 /// Опорный размер — размер тумбы источника (kt-app: 320×180): именно на
@@ -91,9 +91,9 @@ fn t544c_identity_is_identity_and_a_variant_is_not() {
     let base = hash(&p);
     assert_eq!(hash(&thumb(&p, &[])), base, "empty chain moved the bytes");
 
-    let identity = FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 };
+    let identity = FxInstance::geometry_zoom(1.0);
     assert_eq!(hash(&thumb(&p, &[identity])), base, "Pan defaults are not identity any more");
-    let zoomed = FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.0, pan_y: 0.0, zoom: 1.25 };
+    let zoomed = FxInstance::geometry_zoom(1.25);
     assert_ne!(hash(&thumb(&p, &[zoomed])), base, "a zoom variant shows nothing");
 
     // Color Grade и Corner Pin — те же тождества по шаблону

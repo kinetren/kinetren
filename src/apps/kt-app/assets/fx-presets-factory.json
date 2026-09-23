@@ -85,8 +85,7 @@
       "slots": [
         {
           "fx": {
-            "kind": "pan",
-            "mode": "stretch",
+            "kind": "geometry",
             "zoom": 1.0
           },
           "curves": [

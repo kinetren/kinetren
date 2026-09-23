@@ -474,8 +474,8 @@ impl KtApp {
                     // индексы слотов остаются сырыми (по ним адресуются
                     // кривые, публикация и контекст-меню), а выбор узла —
                     // свой вариант `ChainSel::Lead`.
-                    let lead_pos0 = (clip.kind == ClipKind::Video)
-                        .then(|| clip.geometry_pos.min(fx.len()));
+                    let lead_pos0 =
+                        (clip.kind == ClipKind::Video).then(|| clip.geometry_pos.min(fx.len()));
                     let mut lead_pos = lead_pos0.unwrap_or(0);
                     let mut lead_node = clip.geometry.node();
                     let mut lead_auto = clip.geometry_auto.clone();
@@ -571,9 +571,15 @@ impl KtApp {
                                 auto_s.insert(lp, lead_auto.clone());
                                 sel_s = match sel_slot {
                                     crate::widgets::ChainSel::Fx(i) => {
-                                        crate::widgets::ChainSel::Fx(if i >= lp { i + 1 } else { i })
+                                        crate::widgets::ChainSel::Fx(if i >= lp {
+                                            i + 1
+                                        } else {
+                                            i
+                                        })
                                     }
-                                    crate::widgets::ChainSel::Lead => crate::widgets::ChainSel::Fx(lp),
+                                    crate::widgets::ChainSel::Lead => {
+                                        crate::widgets::ChainSel::Fx(lp)
+                                    }
                                     other => other,
                                 };
                             }
@@ -684,8 +690,8 @@ impl KtApp {
                             // на время секции он кладётся в хвост локальной
                             // цепочки и снимается обратно (адрес кривых у
                             // него свой — `usize::MAX`)
-                            let lead_sel = sel_slot == crate::widgets::ChainSel::Lead
-                                && lead_pos0.is_some();
+                            let lead_sel =
+                                sel_slot == crate::widgets::ChainSel::Lead && lead_pos0.is_some();
                             if lead_sel {
                                 fx.push(lead_node.clone());
                                 auto.push(lead_auto.clone());
@@ -737,30 +743,32 @@ impl KtApp {
                                         kt_model::Conform::Stretch => tr(k::fx::CONFORM_STRETCH),
                                         kt_model::Conform::AsIs => tr(k::fx::CONFORM_AS_IS),
                                     };
-                                    ui.horizontal(|ui| {
+                                    // ряд из пяти слов, а не выпадающий список:
+                                    // один клик, всё видно (правило 9 — режим
+                                    // виден, а не спрятан)
+                                    let r = ui.horizontal(|ui| {
                                         ui.label(tr(k::fx::CONFORM));
-                                        let r = egui::ComboBox::from_id_salt(("conform", id.0))
-                                            .selected_text(label(lead_rule))
-                                            .show_ui(ui, |ui| {
-                                                for c in [
-                                                    kt_model::Conform::Project,
-                                                    kt_model::Conform::Fit,
-                                                    kt_model::Conform::Fill,
-                                                    kt_model::Conform::Stretch,
-                                                    kt_model::Conform::AsIs,
-                                                ] {
-                                                    params_changed.base |= ui
-                                                        .selectable_value(&mut lead_rule, c, label(c))
-                                                        .changed();
-                                                }
-                                            });
-                                        crate::widgets::field_probe::note("geo.conform", r.response.rect);
-                                        crate::app::hint_into(
-                                            &mut hover_out,
-                                            r.response,
-                                            tr(k::fx::LEAD_HINT),
-                                        );
+                                        for c in [
+                                            kt_model::Conform::Project,
+                                            kt_model::Conform::Fit,
+                                            kt_model::Conform::Fill,
+                                            kt_model::Conform::Stretch,
+                                            kt_model::Conform::AsIs,
+                                        ] {
+                                            params_changed.base |= ui
+                                                .selectable_value(&mut lead_rule, c, label(c))
+                                                .changed();
+                                        }
                                     });
+                                    crate::widgets::field_probe::note(
+                                        "geo.conform",
+                                        r.response.rect,
+                                    );
+                                    crate::app::hint_into(
+                                        &mut hover_out,
+                                        r.response,
+                                        tr(k::fx::LEAD_HINT),
+                                    );
                                 }
                                 params_changed |= draw_video_fx_params(
                                     ui,
@@ -1204,7 +1212,6 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         // полосе морфера она подписана как «Сила» (Р.38 п.12)
         FxInstance::LayerMix { .. } => "Layer mix",
         FxInstance::SlowedReverb { .. } => "Slowed+Reverb",
-        FxInstance::Pan { .. } => "Pan",
         // ведущий узел помечен точкой: он один, неудаляем и не из каталога
         FxInstance::Geometry { lead: true, .. } => "• Geometry",
         FxInstance::Geometry { .. } => "Geometry",
@@ -1255,13 +1262,11 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
 
 /// Шаблоны видео-FX с дефолтами v1 (кнопка «+ видео-FX…»).
 pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
-    use kt_model::PanMode;
     vec![
         // CamMotion из списка убран (Р.34 К2): его кейфреймы — это Pan
         // с кривыми, и старые проекты конвертируются при чтении.
-        ("Pan", FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 }),
         // Р.62: узел «Геометрия» из каталога — дополнительный (ведущий у
-        // события есть всегда и в каталоге не живёт)
+        // события есть всегда и в каталоге не живёт); прежний Pan упразднён
         ("Geometry", FxInstance::geometry_node()),
         ("Mirror", FxInstance::Mirror { horizontal: true, vertical: false }),
         ("Blur", FxInstance::blur(8)),
@@ -1369,7 +1374,6 @@ pub(crate) fn draw_video_fx_params(
             });
         };
     match f {
-        FxInstance::Pan { mode, .. } => mode_row(ui, mode, &mut ch),
         FxInstance::Delay { pingpong, .. } => {
             ui.horizontal(|ui| {
                 ch.base |= ui.checkbox(pingpong, tr(k::fx::PINGPONG)).changed();

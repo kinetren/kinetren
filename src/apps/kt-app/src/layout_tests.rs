@@ -13313,3 +13313,94 @@ fn t685_badges_show_overrides_and_publications() {
         .collect();
     assert!(left.is_empty(), "бейджи остались там, где публикаций больше нет: {left:?}");
 }
+
+/// Тест 716b (Р.62): ведущий узел «Геометрия» в редакторе цепочки —
+/// первый и помечен, выбирается кликом, показывает правило приведения,
+/// смена правила доезжает до модели одним шагом истории; крестик на нём —
+/// ошибка в строке состояния, узел остаётся.
+#[test]
+fn t716b_lead_geometry_in_the_chain_editor() {
+    use egui_kittest::kittest::{NodeT, Queryable};
+    use kt_model::*;
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
+        overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![FxInstance::blur(8)],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.open_fx_editor(ClipId(1));
+    h.step();
+    h.step();
+
+    // ведущий узел виден и помечен; обычный «Blur» тоже на месте
+    let lead_label = crate::fx_editor::fx_display_name(&EventGeometry::default().node());
+    assert!(h.query_by_label(lead_label).is_some(), "ведущий узел обязан быть в полосе");
+    assert!(h.query_by_label(crate::fx_editor::fx_display_name(&FxInstance::blur(8))).is_some());
+    // клик по узлу выбирает его — и появляется правило приведения
+    h.get_by_label(lead_label).click();
+    h.step();
+    h.step();
+    assert_eq!(
+        h.state().fx_editors[0].selected.get(&ClipId(1)),
+        Some(&crate::widgets::ChainSel::Lead),
+        "клик по ведущему узлу выбирает его, а не слот с тем же индексом"
+    );
+    assert!(h.query_by_label(tr(k::fx::CONFORM)).is_some(), "правило приведения показано");
+    // смена правила через комбо → SetGeometry, один шаг истории
+    let undo_before = h.state().model.undo_depth();
+    h.get_by_label(tr(k::fx::CONFORM_FILL)).click();
+    h.step();
+    h.step();
+    let app = h.state();
+    assert_eq!(
+        app.model.clip(ClipId(1)).unwrap().geometry.rule,
+        Conform::Fill,
+        "правило доехало до модели"
+    );
+    assert_eq!(app.model.undo_depth(), undo_before + 1, "сессия окна — один шаг истории");
+    assert_eq!(app.model.clip(ClipId(1)).unwrap().fx.len(), 1, "цепочка модели узел не содержит");
+    // крестик на ведущем узле — отказ ошибкой, узел на месте
+    // крестик ведущего узла — ближайший справа на его строке (в полосе
+    // есть и другие крестики: у слота Blur и у поля поиска)
+    let lead_rect = h.get_by_label(lead_label).rect();
+    let crosses: Vec<_> = h.get_all_by_label(crate::icons::CLEAR).collect();
+    assert!(crosses.len() >= 2, "у каждого слота свой крестик");
+    let lead_cross = crosses
+        .iter()
+        .filter(|n| {
+            let r = n.rect();
+            (r.center().y - lead_rect.center().y).abs() < 10.0 && r.min.x > lead_rect.max.x
+        })
+        .min_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
+        .expect("крестик справа от ведущего узла");
+    lead_cross.click();
+    h.step();
+    h.step();
+    let app = h.state();
+    assert!(app.error_status.is_some(), "удаление ведущего узла — ошибка, не тишина");
+    assert_eq!(app.model.clip(ClipId(1)).unwrap().fx.len(), 1, "Blur не пострадал");
+    assert_eq!(app.model.clip(ClipId(1)).unwrap().geometry.rule, Conform::Fill);
+}

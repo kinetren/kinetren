@@ -1867,6 +1867,9 @@ impl TimelineModel {
                 // перестановку слотов редактор ведёт сам и шлёт SetFxAuto
                 // тем же жестом
                 c.fx_auto.truncate(fx.len());
+                // ведущий узел «Геометрия» (Р.62) стоял за концом
+                // укоротившейся цепочки — прижимается к её концу
+                c.geometry_pos = c.geometry_pos.min(fx.len());
                 c.fx = fx;
                 sync_warp_to_link_group(p, id);
             }
