@@ -21,6 +21,9 @@ pub struct VideoFxCtx {
     /// Ступень декода кадра (Р.46, п.318): входной кадр в in_scale раз
     /// крупнее логического размера цепочки. 1 — как было всегда.
     pub in_scale: u32,
+    /// Контекст ведущего узла «Геометрия» (Р.62): вид источника и правило
+    /// приведения. `None` — узел считается «растянуть» (рамка = холст).
+    pub lead: Option<crate::conform::LeadCtx>,
 }
 
 /// Кадр в работе.
@@ -166,7 +169,7 @@ pub fn render_fx_thumb(
         fit_into(base, w, h, &mut buf);
         Frame { w, h, rgba: buf, has_alpha: base.has_alpha }
     };
-    let ctx = VideoFxCtx { out_w: w, out_h: h, u, burst_index, cam3d, in_scale: 1 };
+    let ctx = VideoFxCtx { out_w: w, out_h: h, u, burst_index, cam3d, in_scale: 1, lead: None };
     apply_video_chain_pooled(fx, src, &ctx, scratch)
 }
 
@@ -193,7 +196,7 @@ pub fn apply_video_chain_pooled(
 ) -> Frame {
     // План строится ОБЩИМ кодом (crate::plan, п.311) — тем же, что зовёт
     // GPU-путь; здесь только исполнение опов.
-    let plan = crate::plan::plan_chain(
+    let plan = crate::plan::plan_chain_in(
         fx,
         frame.w,
         frame.h,
@@ -204,6 +207,7 @@ pub fn apply_video_chain_pooled(
         ctx.cam3d,
         ctx.burst_index,
         &[],
+        ctx.lead,
     );
     for op in plan.ops {
         frame = match op {
@@ -211,7 +215,7 @@ pub fn apply_video_chain_pooled(
                 crate::geom::GeomExec::Legacy => {
                     let step = fx[i..j]
                         .iter()
-                        .find(|f| crate::geom::is_geo(f))
+                        .find(|f| crate::geom::is_geo_active(f, ctx.lead, ctx.out_w, ctx.out_h))
                         .expect("legacy run has a geo step");
                     apply_legacy_geo(step, frame, ctx, scratch)
                 }
@@ -591,10 +595,26 @@ pub(crate) fn apply_legacy_geo(
 
 /// Есть ли в цепочке видео-эффекты (иначе композит идёт без копий).
 pub fn has_video_fx(fx: &[FxInstance]) -> bool {
+    has_video_fx_in(fx, None, 0, 0)
+}
+
+/// То же с контекстом ведущего узла «Геометрия» (Р.62): ведущий узел с
+/// тождественными параметрами — «не эффект» ровно тогда, когда рамка
+/// приведения равна холсту; иначе он обязан положить кадр в рамку.
+pub fn has_video_fx_in(
+    fx: &[FxInstance],
+    lead: Option<crate::conform::LeadCtx>,
+    out_w: u32,
+    out_h: u32,
+) -> bool {
     // сила слоя (Р.38 п.12) — не пиксельный фильтр, а правило смешения
     // входа цепочки с выходом; её применяет kt-engine ПОСЛЕ цепочки.
     // Цепочка из одной только силы пикселей не трогает вовсе.
-    fx.iter().any(|f| !f.is_audio() && !f.is_layer_mix())
+    fx.iter().any(|f| {
+        !f.is_audio()
+            && !f.is_layer_mix()
+            && !crate::geom::geometry_is_identity_in(f, lead, out_w, out_h)
+    })
 }
 
 /// Вписать кадр в `ow`×`oh` ТОЙ ЖЕ билинейкой, что и все остальные

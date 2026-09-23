@@ -36,13 +36,18 @@ fn clip_with(rate_keys: Vec<AutoKey>) -> ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
     }
 }
 
 #[test]
 fn t696_speed_curve_takes_the_linear_shape_only() {
-    let straight =
-        vec![AutoKey::shaped(Tick(0), 0.5, SegShape::Linear), AutoKey::shaped(LEN, 2.0, SegShape::Linear)];
+    let straight = vec![
+        AutoKey::shaped(Tick(0), 0.5, SegShape::Linear),
+        AutoKey::shaped(LEN, 2.0, SegShape::Linear),
+    ];
 
     // прямая законна
     assert!(
@@ -78,11 +83,11 @@ fn t696_speed_curve_takes_the_linear_shape_only() {
     c.fx_auto[0].push(ParamCurve {
         param: "mix".into(),
         keys: vec![
-            AutoKey::shaped(Tick(0), 0.0, SegShape::Zigzag {
-                periods: 4.0,
-                amplitude: 0.1,
-                profile: ZigProfile::Sine,
-            }),
+            AutoKey::shaped(
+                Tick(0),
+                0.0,
+                SegShape::Zigzag { periods: 4.0, amplitude: 0.1, profile: ZigProfile::Sine },
+            ),
             AutoKey::at(LEN, 1.0),
         ],
         source: CurveSource::Keys,

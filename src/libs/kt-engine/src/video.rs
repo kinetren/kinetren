@@ -74,6 +74,13 @@ struct VideoClip {
     /// Нативный размер файла, если известен. `None` — ступень 1: раздувать
     /// декод вслепую нельзя (заглушка отсутствующего файла, синтетика).
     native: Option<(u32, u32)>,
+    /// Контекст ведущего узла «Геометрия» (Р.62): вид источника (натив ×
+    /// SAR) и разрешённое правило приведения. У ленты вид неизвестен
+    /// намеренно: суб-композит собирается в размере холста, рамка = холст.
+    lead: Option<kt_fx::conform::LeadCtx>,
+    /// Кроп ведущего узла (доли источника) — входит в размер декода: рамка
+    /// растягивается обратно на весь кадр, декодер отдаёт кадр целиком.
+    crop: [f64; 4],
     /// Вложенная лента (Р.50, волна Б): вместо кадра из кэша слой получает
     /// СУБ-КОМПОЗИТ — и цепочка, навешенная на это событие, применяется к
     /// СОБРАННОЙ картинке, а не к каждому куску. Ради этого всё и затевалось.
@@ -128,10 +135,7 @@ impl TransAnim {
         let mut k = self.kind.clone();
         for c in &self.auto {
             if !c.keys.is_empty() {
-                k.set_param(
-                    &c.param,
-                    kt_model::curve_value(&c.keys, Tick(t.0 - self.w0.0)),
-                );
+                k.set_param(&c.param, kt_model::curve_value(&c.keys, Tick(t.0 - self.w0.0)));
             }
         }
         crate::TransMix::of(&k)
@@ -383,7 +387,10 @@ pub fn video_cache_idx(source_pts: Tick) -> i64 {
 /// натива над Quality, округление ВВЕРХ — решение владельца: остаток
 /// дотянет sws при декоде) и потолок промежуточных буферов.
 fn clip_decode_scale(clip: &VideoClip, quality: Quality) -> u32 {
-    let (qw, qh) = (quality.width.max(2), quality.height.max(2));
+    // база — размер приведения (Р.62): рамка правила на холсте Quality,
+    // растянутая на весь кадр; у ленты — сам холст
+    let base = clip_base_quality(clip, quality);
+    let (qw, qh) = (base.width.max(2), base.height.max(2));
     let cap = (kt_fx::plan::MAX_INTER_DIM / qw.max(qh)).max(1);
     // ВЛОЖЕНИЕ (Р.50, Б5): «натива» у ленты нет — суб-композит можно
     // собрать в любом размере, запас не ограничен ничем, кроме потолка
@@ -455,7 +462,12 @@ fn nest_scales(project: &Project) -> std::collections::HashMap<MediaId, u32> {
             }
             let fx = c.active_fx();
             let auto = c.active_fx_auto();
+            let (fx, auto) = materialize_lead(c, fx, auto);
             let plan = kt_model::AutoPlan::compile(&fx, &auto);
+            let lead = Some(kt_fx::conform::LeadCtx::new(
+                None,
+                c.geometry.rule.resolve(project.settings.conform),
+            ));
             let zoom = clip_head_zoom(
                 &fx,
                 plan.as_ref(),
@@ -466,6 +478,7 @@ fn nest_scales(project: &Project) -> std::collections::HashMap<MediaId, u32> {
                 &grid,
                 &resolved.cameras,
                 size,
+                lead,
             );
             let want = kt_fx::geom::ss_taps(zoom).max(1);
             let e = out.entry(c.media).or_insert(1);
@@ -519,11 +532,62 @@ fn scaled(q: Quality, s: u32) -> Quality {
     if s <= 1 { q } else { Quality { width: q.width * s, height: q.height * s } }
 }
 
+/// Размер приведения клипа (Р.62): в какой размер декодер тянет ПОЛНЫЙ
+/// кадр при ступени 1 — рамка правила на холсте `quality`, растянутая
+/// обратно на весь кадр (кроп вырезает узел). У ленты — холст.
+fn clip_base_quality(clip: &VideoClip, quality: Quality) -> Quality {
+    if clip.nest.is_some() {
+        return quality;
+    }
+    let lead =
+        clip.lead.unwrap_or(kt_fx::conform::LeadCtx::new(None, kt_model::ConformRule::Stretch));
+    let g = kt_fx::conform::conform_geometry(
+        lead.view,
+        (quality.width, quality.height),
+        lead.rule,
+        clip.crop,
+    );
+    Quality { width: g.decode.0, height: g.decode.1 }
+}
+
 /// Качество декода клипа. ЕДИНСТВЕННОЕ место решения: заказ префетча,
 /// чтение композита и полоски прогретости обязаны спрашивать его — иначе
 /// греется не то, что читается (t247d по оси размера, t312).
 fn clip_decode_quality(clip: &VideoClip, quality: Quality) -> Quality {
-    scaled(quality, clip_decode_scale(clip, quality))
+    scaled(clip_base_quality(clip, quality), clip_decode_scale(clip, quality))
+}
+
+/// Ведущий узел «Геометрия» — в цепочку движка (Р.62). Позиция —
+/// `geometry_pos` в счёте АКТИВНЫХ слотов (bypass-слоты отфильтрованы);
+/// кривые (`auto`) получают пустой слот на той же позиции, чтобы индексы
+/// остались параллельны; `LayerMix.from`, указывающий на слот после
+/// точки вставки, сдвигается на один. У аудио-события узла нет.
+fn materialize_lead(
+    c: &kt_model::ClipEvent,
+    mut fx: Vec<kt_model::FxInstance>,
+    mut auto: Vec<Vec<kt_model::ParamCurve>>,
+) -> (Vec<kt_model::FxInstance>, Vec<Vec<kt_model::ParamCurve>>) {
+    if c.kind != ClipKind::Video {
+        return (fx, auto);
+    }
+    let want = c.geometry_pos.min(c.fx.len());
+    let pos = (0..want).filter(|&i| !c.fx_bypass.get(i).copied().unwrap_or(false)).count();
+    let pos = pos.min(fx.len());
+    for f in fx.iter_mut() {
+        if let kt_model::FxInstance::LayerMix { from, .. } = f
+            && (*from as usize) >= pos
+        {
+            *from += 1;
+        }
+    }
+    fx.insert(pos, c.geometry.node());
+    if auto.len() >= pos {
+        auto.insert(pos, c.geometry_auto.clone());
+    } else if !c.geometry_auto.is_empty() {
+        auto.resize(pos, Vec::new());
+        auto.push(c.geometry_auto.clone());
+    }
+    (fx, auto)
 }
 
 /// Максимум нетто-зума цепочки за длительность клипа (Р.46, п.320).
@@ -544,11 +608,12 @@ fn clip_head_zoom(
     grid: &FpsGrid,
     cameras: &[kt_model::CameraEvent],
     project_size: (u32, u32),
+    lead: Option<kt_fx::conform::LeadCtx>,
 ) -> f64 {
-    if !kt_fx::video::has_video_fx(fx) {
+    let (pw, ph) = (project_size.0.max(2), project_size.1.max(2));
+    if !kt_fx::video::has_video_fx_in(fx, lead, pw, ph) {
         return 1.0;
     }
-    let (pw, ph) = (project_size.0.max(2), project_size.1.max(2));
     let has_3d = fx.iter().any(|f| matches!(f, kt_model::FxInstance::Pan3d { .. }));
     let live = plan.is_some();
     let span = (end.0 - start.0).max(1);
@@ -607,7 +672,7 @@ fn clip_head_zoom(
             Cam3d { cam, world_scale: 1.0 }
         });
         let u = (t.0 - start.0) as f64 / span as f64;
-        best = best.max(kt_fx::plan::chain_head_zoom(&owned, pw, ph, u, cam3d));
+        best = best.max(kt_fx::plan::chain_head_zoom_in(&owned, pw, ph, u, cam3d, lead));
     }
     best
 }
@@ -626,6 +691,9 @@ pub struct SourceFacts {
     /// Источники БЕЗ своей сетки кадров (Р.56): кадр — чистая функция
     /// тика. Им пол по сетке не ставится.
     pub procedural: std::collections::HashSet<MediaId>,
+    /// Вид кадра источника (натив × пиксельное соотношение, Р.62) — вход
+    /// правила приведения. Считается ТЕМ ЖЕ каналом, что нативы.
+    pub views: std::collections::HashMap<MediaId, (f64, f64)>,
 }
 
 impl SourceFacts {
@@ -635,8 +703,10 @@ impl SourceFacts {
     pub fn observe(&mut self, media: MediaId, info: &kt_media::MediaInfo) {
         if info.has_video {
             self.natives.insert(media, (info.width, info.height));
+            self.views.insert(media, info.view_size());
         } else {
             self.natives.remove(&media);
+            self.views.remove(&media);
         }
         // «Своей сетки кадров нет» — это и есть определение процедурного
         // источника: у файла fps берётся из контейнера, у генератора,
@@ -669,7 +739,11 @@ impl VideoRenderer {
     ) -> VideoRenderer {
         VideoRenderer::new_with_facts(
             project,
-            &SourceFacts { natives: natives.clone(), procedural: Default::default() },
+            &SourceFacts {
+                natives: natives.clone(),
+                procedural: Default::default(),
+                views: Default::default(),
+            },
         )
     }
 
@@ -722,6 +796,11 @@ impl VideoRenderer {
             .map(|c| {
                 let fx = c.active_fx(); // bypass-слоты отфильтрованы (п.2)
                 let auto = c.active_fx_auto();
+                // Ведущий узел «Геометрия» (Р.62) материализуется В ЦЕПОЧКУ
+                // на позиции `geometry_pos` (в счёте активных слотов):
+                // индексы слотов модели не двигаются, а цепочка движка —
+                // одна последовательность, как у Vegas.
+                let (fx, auto) = materialize_lead(c, fx, auto);
                 let warp = kt_model::clip_warp_of(&fx, &auto, c.source_in, c.duration, c.reversed);
                 let nest = project
                     .sequence(c.media)
@@ -744,6 +823,23 @@ impl VideoRenderer {
                 // Хэш выше посчитан от СЫРЫХ кривых: ключи кэша не
                 // двигаются от смены способа адресации.
                 let auto_plan = kt_model::AutoPlan::compile(&fx, &auto);
+                let addr = clip_source_addr_in(c, salt);
+                // контекст приведения: вид источника (у ленты — неизвестен,
+                // рамка = холст) и правило события, разрешённое проектом
+                // ПРОЦЕДУРНЫЙ источник (генератор, титр, заглушка) — функция
+                // запрошенного качества, пропорций у него нет: вид None →
+                // рамка = холст, узел тождествен (spec generators, Р.62)
+                let procedural = facts.procedural.contains(&addr);
+                let lead = Some(kt_fx::conform::LeadCtx::new(
+                    if nest.is_some() || procedural {
+                        None
+                    } else {
+                        facts.views.get(&addr).copied()
+                    },
+                    c.geometry.rule.resolve(project.settings.conform),
+                ));
+                let crop =
+                    [c.geometry.crop_l, c.geometry.crop_t, c.geometry.crop_r, c.geometry.crop_b];
                 let head_zoom = clip_head_zoom(
                     &fx,
                     auto_plan.as_ref(),
@@ -754,6 +850,7 @@ impl VideoRenderer {
                     &grid,
                     cams,
                     (project.settings.width, project.settings.height),
+                    lead,
                 );
                 VideoClip {
                     id: c.id,
@@ -777,11 +874,13 @@ impl VideoRenderer {
                     tail_ext: Tick::ZERO,
                     warp,
                     head_zoom,
-                    native: facts.natives.get(&clip_source_addr_in(c, salt)).copied(),
+                    native: facts.natives.get(&addr).copied(),
+                    lead,
+                    crop,
                     nest,
                     content,
                     nest_scale: nest.and_then(|(id, _)| nest_scales.get(&id).copied()).unwrap_or(1),
-                    procedural: facts.procedural.contains(&clip_source_addr_in(c, salt)),
+                    procedural,
                 }
             })
             .collect();
@@ -1398,7 +1497,8 @@ fn layer_src<'a>(
     };
     let cam3d = resolve_cam3d(&clip.fx, ctx.cameras, t, quality.width, ctx.project_size.0);
     debug_assert!(
-        src_scale == 1 || kt_fx::video::has_video_fx(&fx),
+        src_scale == 1
+            || kt_fx::video::has_video_fx_in(&fx, clip.lead, quality.width, quality.height),
         "a clip without video fx never gets a chain input above 1x"
     );
     // ВХОД слоя. У вложения это не кадр из кэша, а СУБ-КОМПОЗИТ: план
@@ -1452,6 +1552,7 @@ fn layer_src<'a>(
         u,
         cam3d,
         blend,
+        lead: clip.lead,
     }
 }
 
@@ -1967,7 +2068,7 @@ fn layer_frame_cpu(
     // играет 6.8 fps даже прогретым); эффекты детерминированы по
     // (t, fx_hash) → байт-идентичность сохранена. GPU-исполнитель эту
     // мемоизацию не трогает (у него свой ReadbackCache в kt-gpu).
-    let has_fx = kt_fx::video::has_video_fx(&src.fx);
+    let has_fx = kt_fx::video::has_video_fx_in(&src.fx, src.lead, q_key.0, q_key.1);
     // СИЛА СЛОЯ (Р.38 п.12): слот `LayerMix` смешивает состояние ДО
     // вклада слоя с состоянием после него. Значение уже разрешено
     // автоматизацией при построении плана, а `fx_hash` хэширует всю
@@ -1982,7 +2083,7 @@ fn layer_frame_cpu(
     // (натив появился/исчез, сменилась кривая зума) — без неё кэш отдал бы
     // стейл (t313).
     let nest_scale = src.input.nest().map_or(0, |n| n.nest_scale);
-    let key_hash = postfx_key_hash(src.fx_hash, &src.cam3d, src.src_scale, nest_scale);
+    let key_hash = postfx_key_hash(src.fx_hash, &src.cam3d, src.src_scale, nest_scale, &src.lead);
     if has_fx && let Some(f) = cache.get_postfx_video(src.source, q_key, key_hash, t.0) {
         return Some(f);
     }
@@ -2016,6 +2117,7 @@ fn layer_frame_cpu(
         burst_index: t.0,
         cam3d: src.cam3d,
         in_scale: src.src_scale,
+        lead: src.lead,
     };
     let mut rgba = scratch.take(frame.rgba.len());
     rgba.copy_from_slice(&frame.rgba);
@@ -2045,11 +2147,29 @@ fn layer_frame_cpu(
 /// Ключ пост-FX мемоизации: статический хэш цепочки + разрешённая камера
 /// момента (Р.44, t66d). None — константное слагаемое: 2D-цепочки
 /// по-прежнему различаются только fx_hash.
-fn postfx_key_hash(fx_hash: u64, cam3d: &Option<Cam3d>, src_scale: u32, nest_scale: u32) -> u64 {
+fn postfx_key_hash(
+    fx_hash: u64,
+    cam3d: &Option<Cam3d>,
+    src_scale: u32,
+    nest_scale: u32,
+    lead: &Option<kt_fx::conform::LeadCtx>,
+) -> u64 {
     use xxhash_rust::xxh3::Xxh3;
     let mut h = Xxh3::new();
     h.update(&fx_hash.to_le_bytes());
     h.update(&src_scale.to_le_bytes());
+    // контекст ведущего узла (Р.62): та же цепочка на том же кадре с
+    // другим правилом приведения — другая картинка, другой ключ
+    match lead {
+        None => h.update(&[0u8]),
+        Some(l) => {
+            h.update(&[1u8, l.rule as u8]);
+            if let Some((vw, vh)) = l.view {
+                h.update(&vw.to_bits().to_le_bytes());
+                h.update(&vh.to_bits().to_le_bytes());
+            }
+        }
+    }
     // Ступень ЛЕНТЫ — тоже в ключ (Р.58, п.459). У экземпляра без зума
     // вход цепочки равен 1 и при ступени 1, и при ступени 3 (её поднял
     // зумящий БЛИЗНЕЦ), а байты разные: во втором случае цепочка получает

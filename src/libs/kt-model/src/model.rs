@@ -222,6 +222,13 @@ pub enum Command {
         id: ClipId,
         opacity: f32,
     },
+    /// Ведущий узел «Геометрия» события и его позиция в цепочке (Р.62).
+    SetGeometry {
+        id: ClipId,
+        geometry: crate::EventGeometry,
+        pos: usize,
+        auto: Vec<ParamCurve>,
+    },
     /// Мастер-выключатель FX-цепочки события (Р.33). Состояние слотов не
     /// трогает: включил обратно — цепочка та же.
     SetFxOff {
@@ -478,6 +485,7 @@ impl Command {
             | Command::Split { id, .. }
             | Command::SetGain { id, .. }
             | Command::SetOpacity { id, .. }
+            | Command::SetGeometry { id, .. }
             | Command::SetFxOff { id, .. }
             | Command::SetReversed { id, .. }
             | Command::SetFxBypass { id, .. }
@@ -512,6 +520,7 @@ impl Command {
             | Command::SetTrimStretchesAuto { .. }
             | Command::SetGain { .. }
             | Command::SetOpacity { .. }
+            | Command::SetGeometry { .. }
             | Command::SetFxOff { .. }
             | Command::SetReversed { .. }
             | Command::SetFxBypass { .. }
@@ -738,6 +747,7 @@ impl Band {
                 | Command::SetTrimStretchesAuto { .. }
                 | Command::SetGain { .. }
                 | Command::SetOpacity { .. }
+                | Command::SetGeometry { .. }
                 | Command::SetFxOff { .. }
                 | Command::SetReversed { .. }
                 | Command::SetFxBypass { .. }
@@ -1261,6 +1271,12 @@ impl TimelineModel {
             | Command::UnlinkClip { id }
             | Command::MoveClip { id, .. } => {
                 find(*id)?;
+            }
+            Command::SetGeometry { id, pos, .. } => {
+                let c = find(*id)?;
+                if *pos > c.fx.len() {
+                    return Err(CommandError::InvalidClip(ProjectError::BadGeometryPos(*id)));
+                }
             }
             Command::SetFxAuto { id, auto } => {
                 find(*id)?;
@@ -1832,6 +1848,12 @@ impl TimelineModel {
             Command::SetGain { id, gain_db } => Self::clip_mut_on(p, id).gain_db = gain_db,
             Command::SetOpacity { id, opacity } => {
                 Self::clip_mut_on(p, id).opacity = opacity.clamp(0.0, 1.0)
+            }
+            Command::SetGeometry { id, geometry, pos, auto } => {
+                let c = Self::clip_mut_on(p, id);
+                c.geometry = geometry;
+                c.geometry_pos = pos.min(c.fx.len());
+                c.geometry_auto = auto;
             }
             Command::SetFxOff { id, off } => Self::clip_mut_on(p, id).fx_off = off,
             Command::SetReversed { id, reversed } => Self::clip_mut_on(p, id).reversed = reversed,

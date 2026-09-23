@@ -15,6 +15,9 @@ fn clip(id: u64, kind: ClipKind, lane: u32, start: i64, dur: i64, src: i64) -> C
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind,
@@ -41,8 +44,13 @@ fn raw_project(clips: Vec<ClipEvent>) -> Project {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips = clips;
     // тесты t143 закрепляют конверсию наездов в переходы/дорожки — она живёт
@@ -152,8 +160,13 @@ fn t164_legacy_import_keeps_overlaps_and_lanes() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.video_lanes = 2;
     p.audio_lanes = 2;
@@ -164,6 +177,9 @@ fn t164_legacy_import_keeps_overlaps_and_lanes() {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(id),
             link_group: group.map(GroupId),
             kind,

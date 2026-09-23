@@ -12,8 +12,13 @@ fn base() -> Project {
         height: 720,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "a.mp4".into() });
     // A/V-пара 0..90000 + одиночный аудио 90000..180000
     p.clips.push(clip(10, Some(1), ClipKind::Video, 0, 0, 90_000, 0));
@@ -37,6 +42,9 @@ fn clip(
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(id),
         link_group: group.map(GroupId),
         kind,
@@ -444,8 +452,13 @@ fn t89_named_markers() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     // старый проект: markers — просто числа
     p.markers = vec![Marker::at(Tick(5000)), Marker::at(Tick(1000))];
     let old_json = r#"{"format_version":1,"settings":{"fps":30,"width":640,"height":360,"sample_rate":48000},"media":[],"clips":[],"markers":[1000,5000]}"#;
@@ -532,8 +545,13 @@ fn t90_lane_names() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.ui = Some(UiState { lane_names: names.clone(), ..Default::default() });
     let json = serde_json::to_string(&p).unwrap();
     assert!(json.contains("Титры"));

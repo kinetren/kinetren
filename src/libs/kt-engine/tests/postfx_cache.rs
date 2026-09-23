@@ -15,13 +15,21 @@ fn project_with_fx(fx: Vec<FxInstance>, start_frames: i64) -> Project {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -277,10 +285,7 @@ fn t708_editing_the_formula_text_invalidates_the_frame() {
     let mut vr2 = VideoRenderer::new(&p2);
     let (b, c2) = vr2.compose_from_cache(&cache, t, q);
     assert!(c2, "второй кадр не собрался");
-    assert_ne!(
-        a, b,
-        "правка текста формулы отдала СТЕЙЛ: значения меняются, а ключ пост-FX — нет"
-    );
+    assert_ne!(a, b, "правка текста формулы отдала СТЕЙЛ: значения меняются, а ключ пост-FX — нет");
 
     // тот же текст — тот же кадр: ключ не «дрожит» на ровном месте
     let p3 = with_formula("0.1");

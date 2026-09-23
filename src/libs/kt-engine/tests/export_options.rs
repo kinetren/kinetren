@@ -16,14 +16,22 @@ fn tiny_project() -> Project {
         height: 180,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     for (id, kind, lane) in [(1u64, ClipKind::Video, 0u32), (2, ClipKind::Audio, 0)] {
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(id),
             link_group: Some(GroupId(1)),
             kind,
@@ -146,14 +154,22 @@ fn t33_exported_file_contains_every_frame() {
         height: 180,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     for (id, kind, lane) in [(1u64, ClipKind::Video, 0u32), (2, ClipKind::Audio, 0)] {
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(id),
             link_group: Some(GroupId(1)),
             kind,

@@ -30,8 +30,13 @@ fn project_with_audio_clips(clips: Vec<ClipEvent>) -> Project {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     let mut media_ids: Vec<MediaId> = clips.iter().map(|c| c.media).collect();
     media_ids.sort();
     media_ids.dedup();
@@ -55,6 +60,9 @@ fn audio_clip(
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Audio,
@@ -493,8 +501,13 @@ fn t84_master_gain_is_clamped() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     let (player, _rx) = kt_engine::Player::new(p, vec![]);
     player.set_master_gain(1e20);
     assert!(
@@ -582,8 +595,13 @@ fn t162_overlap_rejected_when_option_off() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips = vec![audio_clip(1, 0, 0, 2000, 0, 1), audio_clip(2, 0, 1000, 2000, 0, 1)];
     p.overlap_layers = false;

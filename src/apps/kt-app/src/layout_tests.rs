@@ -396,6 +396,9 @@ fn t94_forward_navigation_advances() {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Video,
@@ -477,6 +480,9 @@ fn t95_clip_drag_snaps_to_neighbour() {
                     r#gen: None,
                     gen_auto: Vec::new(),
                     overrides: Vec::new(),
+                    geometry: Default::default(),
+                    geometry_pos: 0,
+                    geometry_auto: Vec::new(),
                     id: ClipId(n),
                     link_group: None,
                     kind: ClipKind::Video,
@@ -1233,6 +1239,9 @@ fn t122_insert_lane_after_clicked_row() {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: kt_model::ClipId(1),
             link_group: None,
             kind: kt_model::ClipKind::Audio,
@@ -1325,6 +1334,9 @@ fn t120_space_hold_boosts_playback() {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Audio,
@@ -1446,6 +1458,9 @@ fn t119_shift_nav_drags_region() {
                 r#gen: None,
                 gen_auto: Vec::new(),
                 overrides: Vec::new(),
+                geometry: Default::default(),
+                geometry_pos: 0,
+                geometry_auto: Vec::new(),
                 id: ClipId(i as u64 + 1),
                 link_group: None,
                 kind: ClipKind::Video,
@@ -1959,6 +1974,9 @@ fn t139_move_plan_crossfade_and_clamp() {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Audio,
@@ -1981,8 +1999,13 @@ fn t139_move_plan_crossfade_and_clamp() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     // поведение Р.24/Р.26 живёт в режиме БЕЗ переслаивания (Р.28)
     p.overlap_layers = false;
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
@@ -2058,6 +2081,9 @@ fn t139_drag_overlap_creates_crossfade() {
                 r#gen: None,
                 gen_auto: Vec::new(),
                 overrides: Vec::new(),
+                geometry: Default::default(),
+                geometry_pos: 0,
+                geometry_auto: Vec::new(),
                 id: ClipId(n),
                 link_group: None,
                 kind: ClipKind::Video,
@@ -2137,6 +2163,9 @@ fn t140_transition_edge_and_body_drags() {
                 r#gen: None,
                 gen_auto: Vec::new(),
                 overrides: Vec::new(),
+                geometry: Default::default(),
+                geometry_pos: 0,
+                geometry_auto: Vec::new(),
                 id: ClipId(n),
                 link_group: None,
                 kind: ClipKind::Video,
@@ -2254,6 +2283,9 @@ fn t163_overlap_drag_changes_nothing_but_position() {
                 r#gen: None,
                 gen_auto: Vec::new(),
                 overrides: Vec::new(),
+                geometry: Default::default(),
+                geometry_pos: 0,
+                geometry_auto: Vec::new(),
                 id: ClipId(n),
                 link_group: group,
                 kind,
@@ -2351,6 +2383,9 @@ fn t160_pulling_apart_restores_trimmed_material() {
                 r#gen: None,
                 gen_auto: Vec::new(),
                 overrides: Vec::new(),
+                geometry: Default::default(),
+                geometry_pos: 0,
+                geometry_auto: Vec::new(),
                 id: ClipId(n),
                 link_group: None,
                 kind: ClipKind::Video,
@@ -2440,6 +2475,9 @@ fn t157_fade_edge_drag_without_neighbour() {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Video,
@@ -2638,8 +2676,13 @@ fn t150_project_io_is_otio() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     let otio = dir.join("ok.otio");
     std::fs::write(&otio, kt_otio::save_project(&p, &kt_otio::Retained::default(), Some(&dir)))
         .unwrap();
@@ -2667,6 +2710,9 @@ fn t169_preview_material_shifts_only_on_trim_start() {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -2791,8 +2837,13 @@ fn t172_blocked_gesture_is_an_error_not_a_pale_hint() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.overlap_layers = false; // блокировка возможна только в этом режиме
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     // клипы 2 и 3 стоят встык: любое попадание между ними — наезд на ДВОИХ
@@ -2801,6 +2852,9 @@ fn t172_blocked_gesture_is_an_error_not_a_pale_hint() {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(n),
             link_group: None,
             kind: ClipKind::Video,
@@ -2917,6 +2971,9 @@ fn t173_corner_fade_and_level_gestures() {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Video,
@@ -3041,6 +3098,9 @@ fn t176_audio_and_video_share_one_level_line() {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Audio,
@@ -3162,6 +3222,9 @@ fn t221_automation_widget_maps_material_and_keeps_input_stable() {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -3221,7 +3284,10 @@ fn t221_automation_widget_maps_material_and_keeps_input_stable() {
     let mut curves = [ParamCurve {
         param: "radius".into(),
 
-        keys: AutoKey::linear(vec![AutoKey::at(Tick(45_000), 1.0), AutoKey::at(Tick(135_000), 48.0)]),
+        keys: AutoKey::linear(vec![
+            AutoKey::at(Tick(45_000), 1.0),
+            AutoKey::at(Tick(135_000), 48.0),
+        ]),
         source: Default::default(),
     }];
     // пользователь начал править время ВТОРОГО ключа на значение МЕНЬШЕ
@@ -3259,6 +3325,9 @@ fn t219_one_window_for_the_whole_link_group() {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(id),
         link_group: Some(GroupId(7)),
         kind,
@@ -3336,6 +3405,9 @@ fn t218_morpher_source_field_takes_files_and_reverts() {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -3425,6 +3497,9 @@ fn t217_one_chain_widget_for_events_and_morphers() {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(9),
         link_group: None,
         kind: ClipKind::Video,
@@ -3524,6 +3599,9 @@ fn t193_fx_editor_automation_coalesces_into_one_undo() {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(9),
         link_group: None,
         kind: ClipKind::Video,
@@ -3665,6 +3743,9 @@ pub(crate) fn harness_three_clips_dt(
                 r#gen: None,
                 gen_auto: Vec::new(),
                 overrides: Vec::new(),
+                geometry: Default::default(),
+                geometry_pos: 0,
+                geometry_auto: Vec::new(),
                 id: ClipId(i as u64 + 1),
                 link_group: None,
                 kind: ClipKind::Video,
@@ -3847,8 +3928,13 @@ fn t211_returned_source_replaces_its_placeholder() {
         height: 180,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     // «пропавший» файл: имя synth-источника, которого нет на диске — при
     // открытии он не откроется, а к моменту возврата станет валидным
     p.media.push(MediaRef { id: MediaId(1), path: "later.mp4".into() });
@@ -3856,6 +3942,9 @@ fn t211_returned_source_replaces_its_placeholder() {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -3932,14 +4021,22 @@ fn t210_render_with_missing_sources_warns_and_runs() {
         height: 180,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "gone.mp4".into() });
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -4011,14 +4108,22 @@ fn t209_missing_source_opens_with_placeholder_and_notices() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "no-such-clip.mp4".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "also-gone.wav".into() });
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -4220,13 +4325,21 @@ fn t204_multi_drag_moves_the_whole_block() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     let clip = |id: u64, start: i64| ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,
@@ -4404,6 +4517,9 @@ fn t200_coalesced_edits_bump_revision_and_keep_dirty() {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(9),
         link_group: None,
         kind: ClipKind::Video,
@@ -5185,6 +5301,9 @@ fn t376_clip_ids_are_not_reused_within_a_session() {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Video,
@@ -5519,8 +5638,13 @@ fn t367_restore_puts_work_in_editor_and_repeats() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     for i in 1..=3 {
         p.media.push(MediaRef { id: MediaId(i), path: format!("synth:{i}") });
     }
@@ -5566,8 +5690,13 @@ fn t367_restore_puts_work_in_editor_and_repeats() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),}));
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    }));
     assert_eq!(app.model.project().media.len(), 0);
     app.offer_recovery_list(
         crate::app::recovery_candidates_at(Some(&proj), &dir.join("none")),
@@ -6697,6 +6826,9 @@ fn t242_morph_editor_shows_target_mode_and_timing() {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -6787,6 +6919,9 @@ fn t244_morpher_has_one_chain_with_pinned_head() {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -6940,6 +7075,9 @@ fn t246_thin_row_is_clickable_and_zoom_anchor_holds() {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -7160,6 +7298,9 @@ fn t248_video_warp_shows_only_what_matters() {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(id),
             link_group: Some(GroupId(1)),
             kind,
@@ -7218,6 +7359,9 @@ fn t249_previews_follow_the_warp() {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -7299,6 +7443,9 @@ fn t258_morph_layer_reuses_lane_and_honours_region() {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -7665,6 +7812,9 @@ fn t265_automation_axis_and_field_bind() {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -8200,7 +8350,10 @@ fn t279_axis_lock_and_keys_that_stay() {
         c.fx_auto = vec![vec![ParamCurve {
             param: "radius".into(),
 
-            keys: AutoKey::linear(vec![AutoKey::at(Tick(10_000), 1.0), AutoKey::at(Tick(40_000), 9.0)]),
+            keys: AutoKey::linear(vec![
+                AutoKey::at(Tick(10_000), 1.0),
+                AutoKey::at(Tick(40_000), 9.0),
+            ]),
             source: Default::default(),
         }]];
         let mut p = app.model.project().clone();
@@ -8279,6 +8432,9 @@ fn t281_typed_key_value_reaches_the_model() {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(9),
         link_group: None,
         kind: ClipKind::Audio,
@@ -8391,6 +8547,9 @@ fn t286_region_edits_do_not_rebuild_the_engine() {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -8518,6 +8677,9 @@ fn t343_paste_chain_into_morpher_carries_curves() {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -8589,6 +8751,9 @@ fn harness_with_fx_window() -> egui_kittest::Harness<'static, crate::app::KtApp>
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -8758,6 +8923,9 @@ fn harness_with_eq_window() -> egui_kittest::Harness<'static, crate::app::KtApp>
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -9346,6 +9514,9 @@ fn t460_fade_handle_redrag_keeps_kind() {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Video,
@@ -9374,7 +9545,10 @@ fn t460_fade_handle_redrag_keeps_kind() {
             auto: vec![ParamCurve {
                 param: "angle".into(),
 
-                keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 0.0), AutoKey::at(Tick(30_000), 45.0)]),
+                keys: AutoKey::linear(vec![
+                    AutoKey::at(Tick(0), 0.0),
+                    AutoKey::at(Tick(30_000), 45.0),
+                ]),
                 source: Default::default(),
             }],
             invert: false,
@@ -9438,6 +9612,9 @@ fn t460b_overlap_redrag_keeps_kind() {
                 r#gen: None,
                 gen_auto: Vec::new(),
                 overrides: Vec::new(),
+                geometry: Default::default(),
+                geometry_pos: 0,
+                geometry_auto: Vec::new(),
                 id: ClipId(n),
                 link_group: None,
                 kind: ClipKind::Video,
@@ -12331,7 +12508,7 @@ fn t683_instance_params_window_draws_every_type() {
     assert_eq!(got.curves.len(), 1, "кривая переопределения не доехала");
     assert_eq!(got.curves[0].param, "size", "в модель уехало оконное имя кривой");
     assert!(
-        got.curves[0].keys.iter().all(|k| k.t.0 >= at.0.min(0) ),
+        got.curves[0].keys.iter().all(|k| k.t.0 >= at.0.min(0)),
         "ключи стартовой кривой легли вне материала экземпляра: {:?}",
         got.curves[0]
     );
@@ -12374,12 +12551,8 @@ fn t691_instance_curves_are_visible_and_never_hidden() {
 
     // курсор ставим внутрь ВТОРОГО выпуска: домен ключа — материал
     // экземпляра, и снаружи события он не определён
-    let (b_start, b_dur) = h
-        .state()
-        .model
-        .clip(s.b)
-        .map(|c| (c.start, c.duration))
-        .expect("второй выпуск на месте");
+    let (b_start, b_dur) =
+        h.state().model.clip(s.b).map(|c| (c.start, c.duration)).expect("второй выпуск на месте");
     let t1 = kt_time::Tick(b_start.0 + b_dur.0 / 4);
     let t2 = kt_time::Tick(b_start.0 + b_dur.0 / 2);
 
@@ -12625,11 +12798,7 @@ fn t706_a_driven_curve_is_visible_but_not_draggable() {
     assert_eq!(driven.keys, before, "«отвязать» изменило значения — они уже разрешены моделью");
 
     // --- подпись показывает, ЧЕМ она ведома ---------------------------
-    let link = CurveSource::Link {
-        path: "2/fx0/radius".into(),
-        expr: None,
-        stops: Vec::new(),
-    };
+    let link = CurveSource::Link { path: "2/fx0/radius".into(), expr: None, stops: Vec::new() };
     assert_eq!(link.link_path(), Some("2/fx0/radius"), "адрес источника не достать для подписи");
     let f = CurveSource::Formula { expr: "t * 2".into() };
     assert_eq!(f.expr(), Some("t * 2"), "текст формулы не достать для подписи");
@@ -12910,9 +13079,12 @@ fn t692b_author_window_shows_the_target_range() {
         .filter_map(|n| n.accesskit_node().value().map(|v| v.to_string()))
         .collect();
     let has = |x: f64| {
-        shown.iter().any(|t| t.trim().replace(',', ".").parse::<f64>().is_ok_and(|v| {
-            (v - x).abs() <= (spec.step.abs() * 0.5).max(1e-6)
-        }))
+        shown.iter().any(|t| {
+            t.trim()
+                .replace(',', ".")
+                .parse::<f64>()
+                .is_ok_and(|v| (v - x).abs() <= (spec.step.abs() * 0.5).max(1e-6))
+        })
     };
     assert!(
         has(spec.min) && has(spec.max),

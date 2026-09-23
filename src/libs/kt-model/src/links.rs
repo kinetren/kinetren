@@ -102,14 +102,7 @@ pub fn read_link(reel: &dyn Reel, me: &LinkCtx, path: &LinkPath, at: Tick) -> Op
         Some(id) => clips.iter().find(|c| crate::same_clip(c.id, id))?,
     };
     // общий знаменатель — ТАЙМЛАЙН
-    let tl = clip_timeline_at(
-        me.source_in,
-        me.start,
-        me.duration,
-        me.reversed,
-        me.frame_step,
-        at,
-    );
+    let tl = clip_timeline_at(me.source_in, me.start, me.duration, me.reversed, me.frame_step, at);
     // вне тела источника берётся его крайнее значение: клампим тик, а не
     // молчим — иначе связь «пропадала» бы на краях и это выглядело бы
     // случайной поломкой
@@ -118,24 +111,13 @@ pub fn read_link(reel: &dyn Reel, me: &LinkCtx, path: &LinkPath, at: Tick) -> Op
     let lo = src.start.0;
     let hi = src.start.0 + src.duration.0.max(1);
     let tl = Tick(tl.0.clamp(lo, hi));
-    let mat = clip_material_at(
-        src.source_in,
-        src.start,
-        src.duration,
-        src.reversed,
-        me.frame_step,
-        tl,
-    );
+    let mat =
+        clip_material_at(src.source_in, src.start, src.duration, src.reversed, me.frame_step, tl);
     read_at(reel, Some(src), path, mat)
 }
 
 /// Значение свойства владельца в ЕГО материальной позиции.
-fn read_at(
-    reel: &dyn Reel,
-    src: Option<&ClipEvent>,
-    path: &LinkPath,
-    mat: Tick,
-) -> Option<f64> {
+fn read_at(reel: &dyn Reel, src: Option<&ClipEvent>, path: &LinkPath, mat: Tick) -> Option<f64> {
     let c = match src {
         Some(c) => c,
         None => reel.clips().iter().find(|c| c.id == path.clip.unwrap_or(c.id))?,
@@ -322,9 +304,9 @@ pub fn resolve_derived<'a>(
     clips: &'a [ClipEvent],
     frame_step: i64,
 ) -> std::borrow::Cow<'a, [ClipEvent]> {
-    let any = clips.iter().any(|c| {
-        c.fx_auto.iter().flatten().chain(c.gen_auto.iter()).any(|x| !x.source.is_keys())
-    });
+    let any = clips
+        .iter()
+        .any(|c| c.fx_auto.iter().flatten().chain(c.gen_auto.iter()).any(|x| !x.source.is_keys()));
     if !any {
         return std::borrow::Cow::Borrowed(clips);
     }
@@ -415,12 +397,7 @@ fn resolve_one(
 }
 
 /// То же, что `read_link`, но по срезу событий (лента уже разобрана).
-fn read_link_in(
-    clips: &[ClipEvent],
-    me: &LinkCtx,
-    path: &LinkPath,
-    at: Tick,
-) -> Option<f64> {
+fn read_link_in(clips: &[ClipEvent], me: &LinkCtx, path: &LinkPath, at: Tick) -> Option<f64> {
     let want = path.clip?;
     let src = clips.iter().find(|c| crate::same_clip(c.id, want))?;
     // ведущее свойство, само ещё не разрешённое, читать нельзя: получили бы
@@ -438,25 +415,12 @@ fn read_link_in(
     if pending {
         return None;
     }
-    let tl = clip_timeline_at(
-        me.source_in,
-        me.start,
-        me.duration,
-        me.reversed,
-        me.frame_step,
-        at,
-    );
+    let tl = clip_timeline_at(me.source_in, me.start, me.duration, me.reversed, me.frame_step, at);
     let lo = src.start.0;
     let hi = src.start.0 + src.duration.0.max(1);
     let tl = Tick(tl.0.clamp(lo, hi));
-    let mat = clip_material_at(
-        src.source_in,
-        src.start,
-        src.duration,
-        src.reversed,
-        me.frame_step,
-        tl,
-    );
+    let mat =
+        clip_material_at(src.source_in, src.start, src.duration, src.reversed, me.frame_step, tl);
     read_at_clip(src, path, mat)
 }
 

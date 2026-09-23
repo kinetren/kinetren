@@ -30,13 +30,21 @@ fn fx_project(fx: Vec<FxInstance>, pattern_path: &str, dur_frames: i64) -> Proje
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: pattern_path.into() });
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -63,10 +71,14 @@ fn rate_curve(points: &[(f64, f64)], dur_frames: i64) -> Vec<Vec<ParamCurve>> {
     vec![vec![ParamCurve {
         param: "rate".into(),
 
-        keys: AutoKey::linear(points
-            .iter()
-            .map(|(s, r)| AutoKey::at(Tick::from_audio_frames((s * dur_frames as f64).round() as i64), *r,))
-            .collect()),
+        keys: AutoKey::linear(
+            points
+                .iter()
+                .map(|(s, r)| {
+                    AutoKey::at(Tick::from_audio_frames((s * dur_frames as f64).round() as i64), *r)
+                })
+                .collect(),
+        ),
         source: Default::default(),
     }]]
 }
@@ -274,6 +286,9 @@ fn t6_graph_rebuild_mid_tail_preserves_state() {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(99),
         link_group: None,
         kind: ClipKind::Audio,

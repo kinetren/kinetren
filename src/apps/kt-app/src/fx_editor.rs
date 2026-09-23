@@ -29,6 +29,9 @@ pub struct FxEditor {
     /// обязана возвращать и его, иначе окно откатывало бы половину своей
     /// же сессии.
     pub gen_backup: Vec<(ClipId, Option<GeneratorKind>, Vec<kt_model::ParamCurve>)>,
+    /// Ведущий узел «Геометрия» на момент открытия (Р.62): «Отмена»
+    /// возвращает и его — он часть той же полосы.
+    pub geo_backup: Vec<(ClipId, kt_model::EventGeometry, usize, Vec<kt_model::ParamCurve>)>,
     pub gesture: u64,
     /// Что выбрано в каждой цепочке: слот эффекта или приколотая голова.
     pub selected: std::collections::HashMap<ClipId, crate::widgets::ChainSel>,
@@ -128,6 +131,11 @@ impl KtApp {
             .filter_map(|id| self.model.clip(*id))
             .map(|m| (m.id, m.r#gen.clone(), m.gen_auto.clone()))
             .collect();
+        let geo_backup = members
+            .iter()
+            .filter_map(|id| self.model.clip(*id))
+            .map(|m| (m.id, m.geometry, m.geometry_pos, m.geometry_auto.clone()))
+            .collect();
         // у события-генератора с пустой цепочкой выбирать нечего, кроме
         // головы: `Fx(0)` на пустой цепочке показал бы пустоту
         let selected = members
@@ -148,6 +156,7 @@ impl KtApp {
             picker_query: String::new(),
             backup,
             gen_backup,
+            geo_backup,
             gesture: self.gesture_counter,
             selected,
             auto_views: std::collections::HashMap::new(),
@@ -286,9 +295,13 @@ impl KtApp {
             apply_all: bool,
             /// Смена ВИДА генератора: свойство медиа, свой шаг истории.
             switch_kind: Option<GeneratorKind>,
+            /// Ведущий узел «Геометрия», его позиция и кривые (Р.62) —
+            /// `SetGeometry`, тот же шаг истории, что и цепочка.
+            geometry: Option<(kt_model::EventGeometry, usize, Vec<kt_model::ParamCurve>)>,
         }
         let mut edits: Vec<Edited> = Vec::new();
         let mut revert = false;
+        let mut lead_refused = false;
         // мини-таймлайн виджета автоматизации двигает ГЛАВНЫЙ курсор
         let mut seek: Option<kt_time::Tick> = None;
         let frame_step = 90_000 / self.model.project().settings.fps.max(1) as i64;
@@ -452,6 +465,21 @@ impl KtApp {
                     bypass.resize(fx.len(), false);
                     let mut auto = clip.fx_auto.clone();
                     auto.resize(fx.len(), Vec::new());
+                    // ВЕДУЩИЙ узел «Геометрия» (Р.62) — вклеивается в полосу
+                    // на свою позицию, как Pan/Crop в Vegas: перетаскивается,
+                    // не удаляется, такой же узел добавляется из каталога.
+                    // В модели он — поле события, не слот: индексы слотов и
+                    // адреса кривых от него не двигаются.
+                    // Вклейка живёт ТОЛЬКО внутри вызова полосы: наружу
+                    // индексы слотов остаются сырыми (по ним адресуются
+                    // кривые, публикация и контекст-меню), а выбор узла —
+                    // свой вариант `ChainSel::Lead`.
+                    let lead_pos0 = (clip.kind == ClipKind::Video)
+                        .then(|| clip.geometry_pos.min(fx.len()));
+                    let mut lead_pos = lead_pos0.unwrap_or(0);
+                    let mut lead_node = clip.geometry.node();
+                    let mut lead_auto = clip.geometry_auto.clone();
+                    let mut lead_rule = clip.geometry.rule;
                     let mut chain_on = !clip.fx_off;
                     // ГОЛОВА полосы (Р.59, стадия 2): у события-генератора
                     // это его ИСТОЧНИК, первой крошкой перед эффектами —
@@ -484,8 +512,11 @@ impl KtApp {
                                 *ed.selected.get(id).unwrap_or(&crate::widgets::ChainSel::Fx(0));
                             // головы нет — выбирать её нечем: у события без
                             // генератора она и не рисуется
-                            if gen_kind.is_none() {
-                                sel_slot = crate::widgets::ChainSel::Fx(sel_slot.fx().unwrap_or(0));
+                            if gen_kind.is_none() && sel_slot == crate::widgets::ChainSel::Head {
+                                sel_slot = crate::widgets::ChainSel::Fx(0);
+                            }
+                            if lead_pos0.is_none() && sel_slot == crate::widgets::ChainSel::Lead {
+                                sel_slot = crate::widgets::ChainSel::Fx(0);
                             }
                             // КРОШКА к параметрам композиции (Р.59, стадия
                             // 3): у события-ВЛОЖЕНИЯ головы-источника нет,
@@ -528,14 +559,32 @@ impl KtApp {
                                 hint: tr(k::genw::HEAD_HINT),
                                 color: crate::theme::ACCENT,
                             });
+                            // спликс ведущего узла на его позицию + перевод
+                            // выбора в индексы полосы
+                            let (mut fx_s, mut bypass_s, mut auto_s) =
+                                (fx.clone(), bypass.clone(), auto.clone());
+                            let mut sel_s = sel_slot;
+                            if let Some(lp) = lead_pos0 {
+                                let lp = lp.min(fx_s.len());
+                                fx_s.insert(lp, lead_node.clone());
+                                bypass_s.insert(lp, false);
+                                auto_s.insert(lp, lead_auto.clone());
+                                sel_s = match sel_slot {
+                                    crate::widgets::ChainSel::Fx(i) => {
+                                        crate::widgets::ChainSel::Fx(if i >= lp { i + 1 } else { i })
+                                    }
+                                    crate::widgets::ChainSel::Lead => crate::widgets::ChainSel::Fx(lp),
+                                    other => other,
+                                };
+                            }
                             ch = crate::widgets::chain_strip(
                                 ui,
                                 ("fxchain", id.0),
                                 crate::widgets::ChainEdit {
-                                    fx: &mut fx,
-                                    bypass: &mut bypass,
-                                    auto: &mut auto,
-                                    selected: &mut sel_slot,
+                                    fx: &mut fx_s,
+                                    bypass: &mut bypass_s,
+                                    auto: &mut auto_s,
+                                    selected: &mut sel_s,
                                     master_on: &mut chain_on,
                                     head: head_slot,
                                     presets: crate::widgets::ChainPresets {
@@ -558,6 +607,38 @@ impl KtApp {
                                 if clip.kind == ClipKind::Audio { None } else { Some(&mut pv) },
                             );
                             ed.picker_query = query;
+                            // ведущий узел ВЫКЛЕИВАЕТСЯ обратно: в модель
+                            // уходят сырая цепочка и отдельно узел с позицией
+                            // и кривыми. Крестик на нём — отказ (правило 16):
+                            // узел в модели остаётся, человеку — ошибка.
+                            if lead_pos0.is_some() {
+                                match fx_s.iter().position(|f| f.is_lead_geometry()) {
+                                    Some(li) => {
+                                        lead_node = fx_s.remove(li);
+                                        if li < bypass_s.len() {
+                                            bypass_s.remove(li);
+                                        }
+                                        if li < auto_s.len() {
+                                            lead_auto = auto_s.remove(li);
+                                        }
+                                        lead_pos = li;
+                                        sel_s = match sel_s {
+                                            crate::widgets::ChainSel::Fx(j) if j == li => {
+                                                crate::widgets::ChainSel::Lead
+                                            }
+                                            crate::widgets::ChainSel::Fx(j) if j > li => {
+                                                crate::widgets::ChainSel::Fx(j - 1)
+                                            }
+                                            other => other,
+                                        };
+                                    }
+                                    None => lead_refused = true,
+                                }
+                            }
+                            fx = fx_s;
+                            bypass = bypass_s;
+                            auto = auto_s;
+                            sel_slot = sel_s;
                             ed.selected.insert(*id, sel_slot);
                             // ---- ГОЛОВА: форма источника (Р.59) --------
                             if let (crate::widgets::ChainSel::Head, Some(g)) =
@@ -599,7 +680,22 @@ impl KtApp {
                                     gen_edit.axis.set_linked.or(axis_req.set_linked);
                                 axis_req.set_view = gen_edit.axis.set_view.or(axis_req.set_view);
                             }
-                            let sel = sel_slot.fx().unwrap_or(usize::MAX);
+                            // ВЕДУЩИЙ узел правится тем же кодом, что слот:
+                            // на время секции он кладётся в хвост локальной
+                            // цепочки и снимается обратно (адрес кривых у
+                            // него свой — `usize::MAX`)
+                            let lead_sel = sel_slot == crate::widgets::ChainSel::Lead
+                                && lead_pos0.is_some();
+                            if lead_sel {
+                                fx.push(lead_node.clone());
+                                auto.push(lead_auto.clone());
+                            }
+                            let sel = if lead_sel {
+                                fx.len() - 1
+                            } else {
+                                sel_slot.fx().unwrap_or(usize::MAX)
+                            };
+                            let view_key = if lead_sel { usize::MAX } else { sel };
                             if let Some(f) = fx.get_mut(sel) {
                                 // параметры — ОДНИМ кодом по спекам модели
                                 // позиция курсора в домене кривой слота —
@@ -613,7 +709,8 @@ impl KtApp {
                                     frame_step,
                                     playhead,
                                 );
-                                let view_sel = ed.auto_views.get(&(*id, sel)).and_then(|v| v.sel);
+                                let view_sel =
+                                    ed.auto_views.get(&(*id, view_key)).and_then(|v| v.sel);
                                 let mut bind = auto.get_mut(sel).map(|curves| {
                                     crate::widgets::CurveBind { curves, sel: view_sel, at }
                                 });
@@ -623,11 +720,48 @@ impl KtApp {
                                 // локальный клон `auto` умирал вместе с
                                 // кадром, и поле «скидывалось на предыдущее
                                 // значение».
-                                let pubc = self.publish_ctx(
-                                    &pub_doc,
-                                    *id,
-                                    kt_model::ParamOwner::FxSlot { slot: sel },
-                                );
+                                let pubc = (!lead_sel).then(|| {
+                                    self.publish_ctx(
+                                        &pub_doc,
+                                        *id,
+                                        kt_model::ParamOwner::FxSlot { slot: sel },
+                                    )
+                                });
+                                // правило приведения — только у ВЕДУЩЕГО
+                                // узла: «следовать проекту» либо своё
+                                if f.is_lead_geometry() {
+                                    let label = |c: kt_model::Conform| match c {
+                                        kt_model::Conform::Project => tr(k::fx::CONFORM_PROJECT),
+                                        kt_model::Conform::Fit => tr(k::fx::CONFORM_FIT),
+                                        kt_model::Conform::Fill => tr(k::fx::CONFORM_FILL),
+                                        kt_model::Conform::Stretch => tr(k::fx::CONFORM_STRETCH),
+                                        kt_model::Conform::AsIs => tr(k::fx::CONFORM_AS_IS),
+                                    };
+                                    ui.horizontal(|ui| {
+                                        ui.label(tr(k::fx::CONFORM));
+                                        let r = egui::ComboBox::from_id_salt(("conform", id.0))
+                                            .selected_text(label(lead_rule))
+                                            .show_ui(ui, |ui| {
+                                                for c in [
+                                                    kt_model::Conform::Project,
+                                                    kt_model::Conform::Fit,
+                                                    kt_model::Conform::Fill,
+                                                    kt_model::Conform::Stretch,
+                                                    kt_model::Conform::AsIs,
+                                                ] {
+                                                    params_changed.base |= ui
+                                                        .selectable_value(&mut lead_rule, c, label(c))
+                                                        .changed();
+                                                }
+                                            });
+                                        crate::widgets::field_probe::note("geo.conform", r.response.rect);
+                                        crate::app::hint_into(
+                                            &mut hover_out,
+                                            r.response,
+                                            tr(k::fx::LEAD_HINT),
+                                        );
+                                    });
+                                }
                                 params_changed |= draw_video_fx_params(
                                     ui,
                                     f,
@@ -635,11 +769,11 @@ impl KtApp {
                                     &cameras,
                                     clip.kind == ClipKind::Video,
                                     &mut hover_out,
-                                    Some(&pubc),
+                                    pubc.as_ref(),
                                 );
                                 let mut auto_ch = false;
                                 if let Some(curves) = auto.get_mut(sel) {
-                                    let view = ed.auto_views.entry((*id, sel)).or_default();
+                                    let view = ed.auto_views.entry((*id, view_key)).or_default();
                                     // домен слота события — материал;
                                     // перевод учитывает РЕВЕРС и больше
                                     // ничего (Р.37: скорость ось не
@@ -674,7 +808,7 @@ impl KtApp {
                                         axis_linked,
                                         dflt_shape,
                                     );
-                                    if paste_req && paste_target.is_none() {
+                                    if paste_req && paste_target.is_none() && !lead_sel {
                                         paste_target = Some((*id, sel));
                                     }
                                     let r = draw_auto_for(
@@ -685,12 +819,13 @@ impl KtApp {
                                         actx,
                                         playhead,
                                         &mut paste_req,
-                                        (id.0, sel),
+                                        (id.0, view_key),
                                         &mut hover_out,
                                     );
                                     auto_ch = r.changed;
-                                    // правый клик по ключу — тоже цель (п.364)
-                                    if let Some((ci, ki)) = r.key_menu {
+                                    // правый клик по ключу — тоже цель (п.364);
+                                    // у ведущего узла адреса слота нет
+                                    if let (Some((ci, ki)), false) = (r.key_menu, lead_sel) {
                                         panel_pick = Some(crate::ctx_menu::PanelTarget::CurveKey {
                                             chain: *id,
                                             slot: sel,
@@ -716,14 +851,31 @@ impl KtApp {
                                 }
                                 ch.auto |= auto_ch;
                             }
+                            if lead_sel {
+                                lead_auto = auto.pop().unwrap_or_default();
+                                lead_node = fx.pop().unwrap_or_else(FxInstance::geometry);
+                            }
                             // про пустую цепочку говорит сама полоса —
                             // второй раз повторять не надо
                         });
+                    // ведущий узел ВЫКЛЕИВАЕТСЯ обратно: в модель уходят
+                    // сырая цепочка и отдельно узел с позицией и кривыми.
+                    // Крестик на нём — отказ (правило 16): узел в модели
+                    // остаётся, человеку — ошибка в строке состояния.
+                    let geometry_edit = lead_pos0.map(|_| {
+                        let g = kt_model::EventGeometry { rule: lead_rule, ..Default::default() }
+                            .with_node(&lead_node);
+                        (g, lead_pos.min(fx.len()), lead_auto.clone())
+                    });
+                    let geo_changed = geometry_edit.as_ref().is_some_and(|(g, p, a)| {
+                        *g != clip.geometry || *p != clip.geometry_pos || *a != clip.geometry_auto
+                    });
                     if ch.any()
                         || params_changed.any()
                         || gen_edit.changed.any()
                         || gen_edit.apply_all
                         || gen_edit.switch_kind.is_some()
+                        || geo_changed
                     {
                         edits.push(Edited {
                             clip: *id,
@@ -736,6 +888,7 @@ impl KtApp {
                             own_step: gen_edit.preset,
                             apply_all: gen_edit.apply_all,
                             switch_kind: gen_edit.switch_kind,
+                            geometry: geo_changed.then_some(geometry_edit).flatten(),
                         });
                     }
                 }
@@ -753,7 +906,9 @@ impl KtApp {
 
         // запросы полосы по пресетам (Р.48): полоса их только кладёт —
         // файл пишет окно, потому что диалог имени живёт у приложения
-        if let Some(block) = preset_save.take() {
+        if let Some(mut block) = preset_save.take() {
+            // ведущий узел — свойство события, в пресет цепочки не идёт
+            block.slots.retain(|s| !s.fx.is_lead_geometry());
             self.preset_save = Some(crate::app::PresetSaveDialog {
                 block,
                 name: String::new(),
@@ -790,6 +945,9 @@ impl KtApp {
         if let Some(h) = hover_out {
             self.hover_hint = Some(h); // подсказка едет в строку состояния
         }
+        if lead_refused {
+            self.refuse(tr(k::fx::LEAD_LOCKED));
+        }
         // просьбы графика про ОСЬ применяет одно место (Р.40 п.15)
         self.apply_axis_req(axis_req);
         if let Some(t) = seek {
@@ -823,6 +981,15 @@ impl KtApp {
                 }
                 self.apply_coalesced(Command::SetClipGen { id, kind: kind.clone() }, ed.gesture);
                 self.apply_coalesced(Command::SetClipGenAuto { id, auto }, ed.gesture);
+            }
+            // ...и ведущий узел «Геометрия» (Р.62) — та же полоса
+            for (id, geometry, pos, auto) in ed.geo_backup.clone() {
+                if self.model.clip(id).is_none_or(|c| {
+                    c.geometry == geometry && c.geometry_pos == pos && c.geometry_auto == auto
+                }) {
+                    continue;
+                }
+                self.apply_coalesced(Command::SetGeometry { id, geometry, pos, auto }, ed.gesture);
             }
             return;
         }
@@ -869,6 +1036,15 @@ impl KtApp {
             }
             if let Some(off) = e.off {
                 self.apply_coalesced(Command::SetFxOff { id: e.clip, off }, gesture);
+            }
+            if let Some((geometry, pos, mut auto)) = e.geometry {
+                for c in auto.iter_mut() {
+                    c.keys.sort_by_key(|k| k.t.0);
+                }
+                self.apply_coalesced(
+                    Command::SetGeometry { id: e.clip, geometry, pos, auto },
+                    gesture,
+                );
             }
             // Значения генератора: команда ТОЛЬКО при реально изменившемся
             // значении (п.200) — иначе ревизия росла бы каждый кадр жеста.
@@ -1029,6 +1205,9 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::LayerMix { .. } => "Layer mix",
         FxInstance::SlowedReverb { .. } => "Slowed+Reverb",
         FxInstance::Pan { .. } => "Pan",
+        // ведущий узел помечен точкой: он один, неудаляем и не из каталога
+        FxInstance::Geometry { lead: true, .. } => "• Geometry",
+        FxInstance::Geometry { .. } => "Geometry",
         FxInstance::CamMotion { .. } => "CamMotion",
         FxInstance::Mirror { .. } => "Mirror",
         FxInstance::Blur { .. } => "Blur",
@@ -1081,6 +1260,9 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
         // CamMotion из списка убран (Р.34 К2): его кейфреймы — это Pan
         // с кривыми, и старые проекты конвертируются при чтении.
         ("Pan", FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 }),
+        // Р.62: узел «Геометрия» из каталога — дополнительный (ведущий у
+        // события есть всегда и в каталоге не живёт)
+        ("Geometry", FxInstance::geometry_node()),
         ("Mirror", FxInstance::Mirror { horizontal: true, vertical: false }),
         ("Blur", FxInstance::blur(8)),
         ("Greenscreen", FxInstance::greenscreen([0, 255, 0], 70, 25)),

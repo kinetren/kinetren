@@ -230,13 +230,21 @@ fn t307_relative_media_paths_resolve_once() {
         height: 180,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(kt_model::MediaRef { id: kt_model::MediaId(1), path: "clip.mp4".into() });
     p.clips.push(kt_model::ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: kt_model::ClipId(1),
         link_group: None,
         kind: kt_model::ClipKind::Video,

@@ -17,8 +17,13 @@ fn project_pair() -> Project {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     for id in [1u64, 2] {
         p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
     }
@@ -27,6 +32,9 @@ fn project_pair() -> Project {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Video,
@@ -318,8 +326,13 @@ fn t174_clip_opacity_scales_the_layer() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     for id in [1u64, 2] {
         p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
     }
@@ -328,6 +341,9 @@ fn t174_clip_opacity_scales_the_layer() {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Video,
@@ -790,8 +806,13 @@ fn t464_overlap_transition_reaches_picture() {
             height: 360,
             sample_rate: 48000,
             pitch_engine: Default::default(),
-        
-        default_shape: Default::default(),});
+
+            default_shape: Default::default(),
+
+            conform: Default::default(),
+
+            settings_explicit: false,
+        });
         for id in [1u64, 2] {
             p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
         }
@@ -801,6 +822,9 @@ fn t464_overlap_transition_reaches_picture() {
                 r#gen: None,
                 gen_auto: Vec::new(),
                 overrides: Vec::new(),
+                geometry: Default::default(),
+                geometry_pos: 0,
+                geometry_auto: Vec::new(),
                 id: ClipId(id),
                 link_group: None,
                 kind: ClipKind::Video,
@@ -1074,8 +1098,13 @@ fn t521_alpha_layer_under_a_chain_shows_through() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     for id in [1u64, 2] {
         p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
     }
@@ -1084,6 +1113,9 @@ fn t521_alpha_layer_under_a_chain_shows_through() {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Video,

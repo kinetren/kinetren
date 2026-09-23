@@ -68,6 +68,7 @@ fn layer<'a>(fx: &'a [FxInstance], frame: &Arc<VideoFrame>, id: u64) -> PlanLaye
             u: 0.5,
             cam3d: Some(Cam3d { cam: CameraParams::default(), world_scale: 1.0 }),
             blend: None,
+            lead: None,
         },
         alpha_k: 4096,
         scale_alpha: false,

@@ -433,9 +433,8 @@ fn toolbar(
                 kt_model::CurveSource::Keys => String::new(),
             };
             ui.label(tr(k::fx::FORMULA));
-            let r = ui.add(
-                egui::TextEdit::singleline(&mut text).desired_width(170.0).hint_text("t * 2"),
-            );
+            let r = ui
+                .add(egui::TextEdit::singleline(&mut text).desired_width(170.0).hint_text("t * 2"));
             crate::widgets::field_probe::note("auto.formula", r.rect);
             crate::app::hint_into(hover, r.clone(), tr(k::fx::FORMULA_HINT));
             if r.changed() {
@@ -822,16 +821,11 @@ fn graph(
                     ui.label(egui::RichText::new(tr(k::fx::SHAPE_SEGMENT)).strong());
                     if rate {
                         // невозможность — ОШИБКА с причиной, а не тишина
-                        ui.label(
-                            egui::RichText::new(tr(k::fx::SHAPE_RATE_LINEAR)).weak().small(),
-                        );
+                        ui.label(egui::RichText::new(tr(k::fx::SHAPE_RATE_LINEAR)).weak().small());
                     } else {
                         for sh in crate::widgets::all_shapes() {
                             let on = std::mem::discriminant(&sh) == std::mem::discriminant(&cur);
-                            if ui
-                                .selectable_label(on, crate::widgets::shape_label(sh))
-                                .clicked()
-                            {
+                            if ui.selectable_label(on, crate::widgets::shape_label(sh)).clicked() {
                                 set_shape = Some((ci, ki, sh));
                                 ui.close();
                             }
@@ -1061,7 +1055,12 @@ fn table(
                             // пустая клетка — кнопка «поставить сюда ключ»
                             if ui.small_button(tr(k::fx::CELL_ADD)).clicked() {
                                 let v = kt_model::curve_value(&c.keys, tick);
-                                kt_model::insert_key(&mut c.keys, tick, v, kt_model::SegShape::Linear);
+                                kt_model::insert_key(
+                                    &mut c.keys,
+                                    tick,
+                                    v,
+                                    kt_model::SegShape::Linear,
+                                );
                                 out.changed = true;
                             }
                         }

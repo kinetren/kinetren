@@ -58,6 +58,8 @@ struct Src {
     cam3d: Option<kt_engine::Cam3d>,
     /// Ступень декода слоя (Р.46): кадр в src_scale раз крупнее Quality.
     src_scale: u32,
+    /// Контекст ведущего узла «Геометрия» (Р.62).
+    lead: Option<kt_fx::conform::LeadCtx>,
 }
 
 impl Src {
@@ -73,6 +75,7 @@ impl Src {
             u: 0.5,
             cam3d: None,
             src_scale: 1,
+            lead: None,
         }
     }
 
@@ -91,6 +94,7 @@ impl Src {
             u: self.u,
             cam3d: self.cam3d,
             blend: None,
+            lead: self.lead,
         }
     }
 }
@@ -127,7 +131,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
             "cammotion",
             vec![FxInstance::CamMotion {
                 mode: PanMode::Fit,
-            ease: true,
+                ease: true,
                 time_scale: 1.0,
                 keyframes: vec![
                     CamKeyframe { t: 0.0, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 },
@@ -864,6 +868,8 @@ fn t329_parity_cycle_over_the_registry() {
     // (тег, допуск одиночного, допуск сэндвича)
     let classes: &[(&str, FrameTol, FrameTol)] = &[
         ("pan", FrameTol::BILINEAR, FrameTol::BILINEAR),
+        // Р.62: узел «Геометрия» — аффин/Proj слитого прохода
+        ("geometry", FrameTol::GEOM, FrameTol::GEOM),
         ("cam_motion", FrameTol::BILINEAR, FrameTol::BILINEAR),
         ("mirror", FrameTol::EXACT, FrameTol::BILINEAR),
         ("blur", FrameTol::BILINEAR, FrameTol::BILINEAR),
@@ -962,6 +968,25 @@ fn t329_parity_cycle_over_the_registry() {
             FrameTol::BILINEAR,
         ),
         (FxInstance::Posterize { levels: 4 }, FrameTol::THRESHOLD, FrameTol::THRESHOLD),
+        // Р.62: дополнительный узел «Геометрия» с кропом, сдвигом, зумом и
+        // поворотом (Proj-аффин + Bounds)
+        (
+            FxInstance::Geometry {
+                lead: false,
+                crop_l: 0.1,
+                crop_t: 0.05,
+                crop_r: 0.15,
+                crop_b: 0.1,
+                pos_x: 0.08,
+                pos_y: -0.05,
+                zoom: 1.3,
+                rot: 20.0,
+                anchor_x: 0.4,
+                anchor_y: 0.6,
+            },
+            FrameTol::GEOM,
+            FrameTol::GEOM,
+        ),
         (
             FxInstance::Vignette { strength: 0.9, radius: 0.3, softness: 0.2 },
             FrameTol::BILINEAR,
@@ -1052,4 +1077,45 @@ fn t329_parity_cycle_over_the_registry() {
     let p = plan(90_000, vec![one(&src, 4096, false)]);
     let (cpu, gpu, ..) = run_both(engine.as_ref(), &p);
     assert_frames_close(&cpu, &gpu, W, H, FrameTol::THRESHOLD, "tuned-shadow-alpha-zoom");
+}
+
+/// Тест 714b (Р.62): размещение ведущим узлом «Геометрия» — GPU против
+/// CPU. Вертикальный кадр в 16:9 по правилу «вписать» (прозрачные поля),
+/// «как есть» (за край) и с поворотом; класс допуска — билинейный, поля
+/// (альфа 0 против 255) обязаны совпасть точно.
+#[test]
+fn t714b_lead_geometry_placement_parity() {
+    use kt_fx::conform::{ConformRule, LeadCtx};
+    let Some(engine) = test_engine() else { return };
+    let vertical = frame(36, 64, false, 0);
+    let rot = {
+        let mut g = kt_model::EventGeometry { rot: 30.0, zoom: 1.2, ..Default::default() };
+        g.rule = kt_model::Conform::Fit;
+        g.node()
+    };
+    let cases: Vec<(&str, ConformRule, FxInstance)> = vec![
+        ("fit", ConformRule::Fit, FxInstance::geometry()),
+        ("fill", ConformRule::Fill, FxInstance::geometry()),
+        ("as_is", ConformRule::AsIs, FxInstance::geometry()),
+        // «растянуть» здесь нет: рамка = холст, узел тождествен, и кадр
+        // обязан прийти уже в размере холста (контракт декодера) — это
+        // прежний путь без единого ресемпла, его сторожит t182
+        ("rot", ConformRule::Fit, rot),
+    ];
+    for (name, rule, node) in cases {
+        let mut src = Src::new(7, Some(vertical.clone()), vec![node]);
+        src.lead = Some(LeadCtx::new(Some((36.0, 64.0)), rule));
+        let p = plan(0, vec![one(&src, 4096, false)]);
+        let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
+        assert!(cc && cg, "{name}: complete on both");
+        assert_frames_close(&cpu, &gpu, W, H, FrameTol::BILINEAR, name);
+        if name == "fit" {
+            // поля: слева и справа композит прозрачен → фон (0,0,0,0) на обоих
+            for y in 0..H {
+                let i = ((y * W) * 4) as usize;
+                assert_eq!(&cpu[i..i + 4], &[0, 0, 0, 0], "cpu left field y={y}");
+                assert_eq!(&gpu[i..i + 4], &[0, 0, 0, 0], "gpu left field y={y}");
+            }
+        }
+    }
 }

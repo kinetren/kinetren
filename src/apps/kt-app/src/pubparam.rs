@@ -471,9 +471,7 @@ impl KtApp {
                             ] {
                                 ui.label(label);
                                 let rr = ui.add(
-                                    egui::DragValue::new(v)
-                                        .range(spec.min..=spec.max)
-                                        .speed(step),
+                                    egui::DragValue::new(v).range(spec.min..=spec.max).speed(step),
                                 );
                                 crate::widgets::hint(&rr, tr(k::pubp::RANGE_HINT));
                                 crate::widgets::field_probe::note(
@@ -774,11 +772,8 @@ impl KtApp {
                             let name = if dim { name.weak() } else { name };
                             ui.label(name);
                             let mut next = cur.clone();
-                            let mut bind = crate::widgets::CurveBind {
-                                curves: &mut auto,
-                                sel: view.sel,
-                                at,
-                            };
+                            let mut bind =
+                                crate::widgets::CurveBind { curves: &mut auto, sel: view.sel, at };
                             let changed = draw_value_row(
                                 ui,
                                 p,
@@ -1076,9 +1071,7 @@ fn draw_value_row(
             };
             // пределы ЦЕЛИ, суженные автором, — оба уже в паспорте
             let step = if spec.step > 0.0 { spec.step } else { 0.05 };
-            let r = ui.add(
-                egui::DragValue::new(&mut shown).range(spec.min..=spec.max).speed(step),
-            );
+            let r = ui.add(egui::DragValue::new(&mut shown).range(spec.min..=spec.max).speed(step));
             crate::widgets::field_probe::note(&probe, r.rect);
             if r.changed() {
                 match ci {

@@ -13,6 +13,8 @@
 //     фаза `(r / cell) * in − 0.5` (дословно старое ядро event_grid).
 //   3 Proj:   три строки обратной гомографии Pan3d      — 3 слота;
 //     вход — центр-space; t.z ≤ 0 (за камерой) и uv вне [0,1]² — прозрачно.
+//   5 Bounds: (x0, x1, y0, y1) — вне рамки прозрачно     — 1 слот
+//     (Р.62, узел «Геометрия»: поля приведения не выдумывают пикселей).
 //
 // Tap-таблица (Р.45, п.312): поглощённые поточечные опы (Greenscreen/
 // Noise) — слоты 46+2i (meta|params, params2), счётчик в h.w битах 24..31;
@@ -102,6 +104,14 @@ fn geo_map(px: f32, py: f32) -> vec3<f32> {
                         x = qx;
                         y = qy;
                     }
+                }
+            }
+        } else if (kind == 5u) { // Bounds (Р.62): зеркало kt_fx::geom::map_pos
+            let b = G.p[cur];
+            cur = cur + 1u;
+            if (dead == 0.0) {
+                if (x < b.x || x > b.y || y < b.z || y > b.w) {
+                    dead = 2.0; // вне рамки — прозрачно
                 }
             }
         } else if (kind == 4u) { // Warp (Р.47): зеркало kt_fx::geom::warp_map
@@ -277,6 +287,14 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
                         x = qx;
                         y = qy;
                     }
+                }
+            }
+        } else if (kind == 5u) { // Bounds (Р.62): зеркало kt_fx::geom::map_pos
+            let b = G.p[cur];
+            cur = cur + 1u;
+            if (dead == 0.0) {
+                if (x < b.x || x > b.y || y < b.z || y > b.w) {
+                    dead = 2.0; // вне рамки — прозрачно
                 }
             }
         } else if (kind == 4u) { // Warp (Р.47): зеркало kt_fx::geom::warp_map

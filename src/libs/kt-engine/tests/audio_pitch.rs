@@ -22,13 +22,21 @@ fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, engine: PitchEngine)
         height: 36,
         sample_rate: 48000,
         pitch_engine: engine,
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:tone".into() });
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,

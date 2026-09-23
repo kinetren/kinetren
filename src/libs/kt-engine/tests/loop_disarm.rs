@@ -33,8 +33,13 @@ fn project_with_audio_clips(clips: Vec<ClipEvent>) -> Project {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     let mut media_ids: Vec<MediaId> = clips.iter().map(|c| c.media).collect();
     media_ids.sort();
     media_ids.dedup();
@@ -58,6 +63,9 @@ fn audio_clip(
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Audio,

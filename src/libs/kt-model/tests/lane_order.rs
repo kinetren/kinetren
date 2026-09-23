@@ -49,8 +49,13 @@ fn t49_lane_order_serde_roundtrip() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.morph_lanes = 1;
     p.set_lane_order(&[(M, 0), (V, 0), (A, 0)]);
     assert_eq!(p.lane_order, vec![(M, 0), (V, 0), (A, 0)]);
@@ -86,8 +91,13 @@ fn t241_lane_order_is_model_state() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),}));
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    }));
     // вставка morph-дорожки САМА кладёт строку в порядок
     m.apply(Command::InsertMorphLane { at: 0 }).unwrap();
     assert_eq!(m.project().rows(), vec![(V, 0), (A, 0), (M, 0)]);
@@ -137,8 +147,13 @@ fn settings30() -> ProjectSettings {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),}
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    }
 }
 
 fn vclip(id: u64, lane: u32) -> ClipEvent {
@@ -146,6 +161,9 @@ fn vclip(id: u64, lane: u32) -> ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,

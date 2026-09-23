@@ -206,13 +206,21 @@ fn t9_prefetch_pass_is_idempotent() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Audio,
@@ -284,8 +292,13 @@ fn t287_stutter_of_micro_clips_asks_for_one_burst() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     // 400 событий по 90 тиков встык, все с одной точки материала
     let step = kt_time::Tick(90);
@@ -294,6 +307,9 @@ fn t287_stutter_of_micro_clips_asks_for_one_burst() {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(i + 1),
             link_group: None,
             kind: ClipKind::Audio,

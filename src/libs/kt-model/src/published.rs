@@ -31,8 +31,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::genmedia::GeneratorKind;
 use crate::project::{
-    CameraEvent, CameraId, ClipEvent, ClipId, HasParams, MediaId, ParamCurve, ParamKind,
-    ParamSpec, ParamType, ParamUnit, ParamValue, TransitionEvent, TransitionId, clip_material_at,
+    CameraEvent, CameraId, ClipEvent, ClipId, HasParams, MediaId, ParamCurve, ParamKind, ParamSpec,
+    ParamType, ParamUnit, ParamValue, TransitionEvent, TransitionId, clip_material_at,
 };
 
 /// Номер публичного параметра внутри ленты. Адрес, переживающий

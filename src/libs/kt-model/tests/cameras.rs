@@ -26,8 +26,13 @@ fn project() -> Project {
         height: 720,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),})
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    })
 }
 
 #[test]

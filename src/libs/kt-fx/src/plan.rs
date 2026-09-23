@@ -21,9 +21,10 @@
 //! слайса обязан совпадать с куском плана целого (t306). Стопы обнуляют
 //! оба аккумулятора K (смешение всегда на 1×).
 
+use crate::conform::LeadCtx;
 use crate::geom::{
-    Cam3d, GeomExec, MAX_GEO_STEPS, MAX_PRIM_SLOTS, MAX_PRIMS, MAX_TAP_OPS, build_geom_exec,
-    is_geo, is_pointwise, ss_taps,
+    Cam3d, GeomExec, MAX_GEO_STEPS, MAX_PRIM_SLOTS, MAX_PRIMS, MAX_TAP_OPS, build_geom_exec_in,
+    is_geo, is_geo_active, is_pointwise, ss_taps,
 };
 use kt_model::FxInstance;
 
@@ -56,7 +57,15 @@ pub struct ChainPlan {
 /// `max_geo`), прозрачные аудио и ВНУТРЕННИЕ поточечные; хвостовые не-гео
 /// отрезаются (ведущие невозможны по построению — окно начинается с гео).
 /// Барьер, слот силы, стоп-индекс или потолок шагов завершают окно.
-fn run_window_end(fx: &[FxInstance], i: usize, stops: &[usize], max_geo: usize) -> usize {
+fn run_window_end(
+    fx: &[FxInstance],
+    i: usize,
+    stops: &[usize],
+    max_geo: usize,
+    lead: Option<LeadCtx>,
+    out_w: u32,
+    out_h: u32,
+) -> usize {
     let mut j = i;
     let mut end = i;
     let mut geo = 0usize;
@@ -65,15 +74,17 @@ fn run_window_end(fx: &[FxInstance], i: usize, stops: &[usize], max_geo: usize) 
             break;
         }
         let f = &fx[j];
-        if is_geo(f) {
+        if is_geo_active(f, lead, out_w, out_h) {
             geo += 1;
             if geo > max_geo {
                 break;
             }
             j += 1;
             end = j; // окно всегда заканчивается гео-шагом
-        } else if f.is_audio() || is_pointwise(f) {
-            j += 1; // войдёт в окно, только если дальше ещё гео
+        } else if f.is_audio() || is_pointwise(f) || is_geo(f) {
+            // аудио, внутренние поточечные и ТОЖДЕСТВЕННЫЙ узел «Геометрия»
+            // прозрачны: войдут в окно, только если дальше ещё гео
+            j += 1;
         } else {
             break;
         }
@@ -120,6 +131,7 @@ fn segment(
     cam3d: Option<Cam3d>,
     burst_index: i64,
     stops: &[usize],
+    lead: Option<LeadCtx>,
 ) -> Vec<RawKind> {
     let (mow, moh) = (out_w.max(2), out_h.max(2));
     let (mut w, mut h) = (in_w, in_h);
@@ -130,17 +142,31 @@ fn segment(
             raw.push(RawKind::Snapshot);
         }
         let f = &fx[idx];
-        if is_geo(f) {
+        if is_geo_active(f, lead, out_w, out_h) {
             // Бюджеты юниформы GPU (примы/слоты/tap-опы) известны только
             // после построения программы — строим и, если не влезла,
             // ужимаем окно по числу гео-шагов (в точке разреза качество =
             // прежнее пошаговое). Программы крошечные, перестройка дёшева.
             let mut max_geo = MAX_GEO_STEPS;
             let (j, exec) = loop {
-                let j = run_window_end(fx, idx, stops, max_geo);
-                let steps: Vec<&FxInstance> =
-                    fx[idx..j].iter().filter(|g| is_geo(g) || is_pointwise(g)).collect();
-                let exec = build_geom_exec(&steps, w, h, out_w, out_h, u, cam3d, burst_index, 1, 1);
+                let j = run_window_end(fx, idx, stops, max_geo, lead, out_w, out_h);
+                let steps: Vec<&FxInstance> = fx[idx..j]
+                    .iter()
+                    .filter(|g| is_geo_active(g, lead, out_w, out_h) || is_pointwise(g))
+                    .collect();
+                let exec = build_geom_exec_in(
+                    &steps,
+                    w,
+                    h,
+                    out_w,
+                    out_h,
+                    u,
+                    cam3d,
+                    burst_index,
+                    1,
+                    1,
+                    lead,
+                );
                 let fits = match &exec {
                     GeomExec::Legacy => true,
                     GeomExec::Fused(p) => {
@@ -162,8 +188,10 @@ fn segment(
                     p.lens
                 }
                 GeomExec::Legacy => {
-                    let step =
-                        fx[idx..j].iter().find(|g| is_geo(g)).expect("legacy run has a geo step");
+                    let step = fx[idx..j]
+                        .iter()
+                        .find(|g| is_geo_active(g, lead, out_w, out_h))
+                        .expect("legacy run has a geo step");
                     let l = legacy_lens(step, w, h, out_w, out_h, u);
                     if !matches!(step, FxInstance::Mirror { .. }) {
                         w = mow;
@@ -178,10 +206,10 @@ fn segment(
         }
         if f.is_layer_mix() {
             raw.push(RawKind::Mix { idx });
-        } else if !f.is_audio() {
+        } else if !f.is_audio() && !is_geo(f) {
             // барьер: нелокальный эффект либо ведущий/замыкающий поточечный
             raw.push(RawKind::Barrier { idx });
-        } // аудио-FX прозрачны
+        } // аудио-FX и тождественный узел «Геометрия» прозрачны
         idx += 1;
     }
     raw
@@ -217,6 +245,18 @@ pub fn chain_head_zoom(
     u: f64,
     cam3d: Option<Cam3d>,
 ) -> f64 {
+    chain_head_zoom_in(fx, out_w, out_h, u, cam3d, None)
+}
+
+/// То же с контекстом ведущего узла «Геометрия» (Р.62).
+pub fn chain_head_zoom_in(
+    fx: &[FxInstance],
+    out_w: u32,
+    out_h: u32,
+    u: f64,
+    cam3d: Option<Cam3d>,
+    lead: Option<LeadCtx>,
+) -> f64 {
     let stops: Vec<usize> = fx
         .iter()
         .enumerate()
@@ -225,7 +265,7 @@ pub fn chain_head_zoom(
             _ => None,
         })
         .collect();
-    let raw = segment(fx, out_w, out_h, out_w, out_h, u, cam3d, 0, &stops);
+    let raw = segment(fx, out_w, out_h, out_w, out_h, u, cam3d, 0, &stops, lead);
     let (_, head) = tail_zooms(&raw);
     head.0.max(head.1).max(1.0)
 }
@@ -252,6 +292,25 @@ pub fn plan_chain(
     burst_index: i64,
     stops: &[usize],
 ) -> ChainPlan {
+    plan_chain_in(fx, in_w, in_h, in_scale, out_w, out_h, u, cam3d, burst_index, stops, None)
+}
+
+/// То же с контекстом ведущего узла «Геометрия» (Р.62): оба бэкенда
+/// обязаны подавать один и тот же `lead`.
+#[allow(clippy::too_many_arguments)]
+pub fn plan_chain_in(
+    fx: &[FxInstance],
+    in_w: u32,
+    in_h: u32,
+    in_scale: u32,
+    out_w: u32,
+    out_h: u32,
+    u: f64,
+    cam3d: Option<Cam3d>,
+    burst_index: i64,
+    stops: &[usize],
+    lead: Option<LeadCtx>,
+) -> ChainPlan {
     let (mow, moh) = (out_w.max(2), out_h.max(2));
     let s = in_scale.max(1);
     debug_assert!(
@@ -262,7 +321,7 @@ pub fn plan_chain(
     debug_assert!(s == 1 || !stops.contains(&0), "leading stop forbids a decode stage");
 
     // --- A: сегментация и 1×-программы (пп.311-312) ---
-    let raw = segment(fx, in_w / s, in_h / s, out_w, out_h, u, cam3d, burst_index, stops);
+    let raw = segment(fx, in_w / s, in_h / s, out_w, out_h, u, cam3d, burst_index, stops, lead);
 
     // --- B: назад — нетто-зум хвоста на каждый барьер ---
     let (tail, _) = tail_zooms(&raw);
@@ -325,9 +384,11 @@ pub fn plan_chain(
                     Some(RawKind::Barrier { .. }) => kmap[ri + 1],
                     _ => 1,
                 };
-                let steps: Vec<&FxInstance> =
-                    fx[*i..*j].iter().filter(|g| is_geo(g) || is_pointwise(g)).collect();
-                let exec = build_geom_exec(
+                let steps: Vec<&FxInstance> = fx[*i..*j]
+                    .iter()
+                    .filter(|g| is_geo_active(g, lead, out_w, out_h) || is_pointwise(g))
+                    .collect();
+                let exec = build_geom_exec_in(
                     &steps,
                     w,
                     h,
@@ -338,6 +399,7 @@ pub fn plan_chain(
                     burst_index,
                     cur_k,
                     k_out,
+                    lead,
                 );
                 match &exec {
                     GeomExec::Fused(p) => {

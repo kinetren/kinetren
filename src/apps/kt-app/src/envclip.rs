@@ -175,37 +175,36 @@ impl crate::app::KtApp {
             .collapsible(false)
             .show(ctx, |ui| {
                 ui.label(egui::RichText::new(tr(k::fx::FIT_HINT)).weak().small());
-                egui::Grid::new("env_fit_grid").num_columns(2).spacing([8.0, 4.0]).show(
-                    ui,
-                    |ui| {
-                        for (i, (c, pick)) in d.rows.iter_mut().enumerate() {
-                            ui.label(crate::widgets::param_label(&c.param));
-                            let text = pick.clone().unwrap_or_else(|| tr(k::fx::FIT_SKIP).into());
-                            let r = egui::ComboBox::from_id_salt(("env_fit", i))
-                                .selected_text(text)
-                                .show_ui(ui, |ui| {
-                                    if ui.selectable_label(pick.is_none(), tr(k::fx::FIT_SKIP)).clicked()
+                egui::Grid::new("env_fit_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+                    for (i, (c, pick)) in d.rows.iter_mut().enumerate() {
+                        ui.label(crate::widgets::param_label(&c.param));
+                        let text = pick.clone().unwrap_or_else(|| tr(k::fx::FIT_SKIP).into());
+                        let r = egui::ComboBox::from_id_salt(("env_fit", i))
+                            .selected_text(text)
+                            .show_ui(ui, |ui| {
+                                if ui
+                                    .selectable_label(pick.is_none(), tr(k::fx::FIT_SKIP))
+                                    .clicked()
+                                {
+                                    *pick = None;
+                                }
+                                for f in &d.free {
+                                    let on = pick.as_deref() == Some(f.as_str());
+                                    if ui
+                                        .selectable_label(on, crate::widgets::param_label(f))
+                                        .clicked()
                                     {
-                                        *pick = None;
+                                        *pick = Some(f.clone());
                                     }
-                                    for f in &d.free {
-                                        let on = pick.as_deref() == Some(f.as_str());
-                                        if ui
-                                            .selectable_label(on, crate::widgets::param_label(f))
-                                            .clicked()
-                                        {
-                                            *pick = Some(f.clone());
-                                        }
-                                    }
-                                });
-                            crate::widgets::field_probe::note(
-                                &format!("envfit.pick.{i}"),
-                                r.response.rect,
-                            );
-                            ui.end_row();
-                        }
-                    },
-                );
+                                }
+                            });
+                        crate::widgets::field_probe::note(
+                            &format!("envfit.pick.{i}"),
+                            r.response.rect,
+                        );
+                        ui.end_row();
+                    }
+                });
                 ui.separator();
                 ui.horizontal(|ui| {
                     let b = ui.button(tr(k::fx::FIT_DO));

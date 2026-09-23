@@ -22,8 +22,13 @@ fn project() -> Project {
         height: 72,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     for id in [1u64, 2] {
         p.media.push(MediaRef { id: MediaId(id), path: "synth:ramp".into() });
     }
@@ -32,6 +37,9 @@ fn project() -> Project {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,
@@ -234,8 +242,13 @@ fn nested_project(outer_fx: Vec<FxInstance>, outer_opacity: f32) -> Project {
         height: 72,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     for id in [1u64, 2] {
         p.media.push(MediaRef { id: MediaId(id), path: "synth:ramp".into() });
     }
@@ -243,6 +256,9 @@ fn nested_project(outer_fx: Vec<FxInstance>, outer_opacity: f32) -> Project {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,
@@ -402,8 +418,13 @@ fn t496_gpu_frame_identity_follows_content() {
         height: 36,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     let solid = |r: u8| GeneratorKind::Solid { color_r: r, color_g: 0, color_b: 0 };
     p.media.push(MediaRef { id: MediaId(1), path: kt_model::gen_kind_path(&solid(32)) });
     p.clips.push(ClipEvent {
@@ -411,6 +432,9 @@ fn t496_gpu_frame_identity_follows_content() {
         r#gen: Some(solid(32)),
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,

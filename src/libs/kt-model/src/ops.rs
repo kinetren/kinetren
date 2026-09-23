@@ -1170,11 +1170,7 @@ pub fn duck_curve_commands(
         let mut auto = c.fx_auto.clone();
         auto.resize(fx.len(), Vec::new());
         auto[slot].retain(|cur| cur.param != "db");
-        auto[slot].push(ParamCurve {
-            param: "db".into(),
-            keys,
-            source: Default::default(),
-        });
+        auto[slot].push(ParamCurve { param: "db".into(), keys, source: Default::default() });
         if fx.len() != c.fx.len() {
             out.push(Command::SetFx { id: *id, fx });
         }
@@ -1476,6 +1472,9 @@ pub fn collapse_into_sequence(
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id,
             link_group: group,
             kind: k,
@@ -1917,6 +1916,9 @@ pub fn import_as_sequences(
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id,
             link_group: group,
             kind: k,

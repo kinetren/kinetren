@@ -393,6 +393,12 @@ pub fn param_label(name: &str) -> String {
         "rot_z" => tr(k::fxp::ROT_Z),
         "anchor_x" => tr(k::fxp::ANCHOR_X),
         "anchor_y" => tr(k::fxp::ANCHOR_Y),
+        // узел «Геометрия» (Р.62)
+        "crop_l" => tr(k::fxp::CROP_L),
+        "crop_t" => tr(k::fxp::CROP_T),
+        "crop_r" => tr(k::fxp::CROP_R),
+        "crop_b" => tr(k::fxp::CROP_B),
+        "rot" => tr(k::fxp::ROT),
         "scale" => tr(k::fxp::SCALE),
         "fov_deg" => tr(k::fxp::FOV_DEG),
         // видео-эффекты Р.47 (Кв2)
@@ -1168,6 +1174,9 @@ pub enum ChainSel {
     #[default]
     Head,
     Fx(usize),
+    /// Ведущий узел «Геометрия» события (Р.62): в полосе он слот, в
+    /// модели — поле события, поэтому индекса среди `fx` у него нет.
+    Lead,
 }
 
 impl ChainSel {
@@ -1175,7 +1184,7 @@ impl ChainSel {
     pub fn fx(self) -> Option<usize> {
         match self {
             ChainSel::Fx(i) => Some(i),
-            ChainSel::Head => None,
+            ChainSel::Head | ChainSel::Lead => None,
         }
     }
 }

@@ -29,8 +29,13 @@ fn title_project() -> (Project, Sources) {
         height: 180,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     let mut title = GeneratorKind::default_text();
     if let GeneratorKind::Text { text, bold, size, fill_r, fill_g, fill_b, .. } = &mut title {
         *text = "Kinotrain\nР.52 титр".into();
@@ -48,6 +53,9 @@ fn title_project() -> (Project, Sources) {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,

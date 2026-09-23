@@ -36,8 +36,13 @@ fn settings() -> ProjectSettings {
         height: 54,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),}
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    }
 }
 
 fn title(text: &str) -> GeneratorKind {
@@ -69,6 +74,9 @@ fn clip(id: u64, kind: ClipKind, lane: u32, start: Tick, dur: Tick, media: u64) 
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
     }
 }
 

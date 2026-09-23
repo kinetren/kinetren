@@ -621,8 +621,13 @@ fn run(args: &[String]) -> i32 {
                 height: 1080,
                 sample_rate: 48000,
                 pitch_engine: Default::default(),
-            
-            default_shape: Default::default(),});
+
+                default_shape: Default::default(),
+
+                conform: Default::default(),
+
+                settings_explicit: false,
+            });
             let base = std::path::Path::new(path).parent().map(|d| d.to_path_buf());
             let out = kt_otio::save_project(&p, &Retained::default(), base.as_deref());
             if let Err(c) = write_project(path, &out, force) {
@@ -933,6 +938,9 @@ fn demo_project(synth: bool) -> Project {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind,
@@ -1002,8 +1010,13 @@ fn demo_project(synth: bool) -> Project {
         height: 1080,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     let files = [
         (1u64, "media/drone_coast.mp4"),
         (2, "media/city_night_broll.mp4"),

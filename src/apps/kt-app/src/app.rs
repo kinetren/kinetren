@@ -504,6 +504,9 @@ pub struct KtApp {
     pub last_autosave: std::time::Instant,
     /// Хинт наведённой кнопки тулбара — дублируется в статусбар (порт).
     pub hover_hint: Option<String>,
+    /// Отказ действию вне таймлайна (Р.62): показывается ОШИБКОЙ в строке
+    /// состояния, как упор жеста (`blocked`), с тем же TTL, что статус.
+    pub error_status: Option<(String, std::time::Instant)>,
     /// Препятствие текущего жеста (п.5 Р.28): подсвечивается на таймлайне,
     /// подсказка идёт ОШИБОЧНЫМ стилем и говорит, куда смотреть.
     pub blocked: Option<crate::timeline::Blocked>,
@@ -630,8 +633,13 @@ impl KtApp {
             height: 720,
             sample_rate: 48000,
             pitch_engine: Default::default(),
-        
-        default_shape: Default::default(),})
+
+            default_shape: Default::default(),
+
+            conform: Default::default(),
+
+            settings_explicit: false,
+        })
     }
 
     /// Р.29: собрать GPU-движок видео-FX на живом устройстве eframe и
@@ -850,6 +858,7 @@ impl KtApp {
             render_setup: Default::default(),
             last_autosave: std::time::Instant::now(),
             hover_hint: None,
+            error_status: None,
             blocked: None,
             last_band: None,
             paste_names: None,
@@ -1053,6 +1062,7 @@ impl KtApp {
             render_setup: Default::default(),
             last_autosave: std::time::Instant::now(),
             hover_hint: None,
+            error_status: None,
             blocked: None,
             last_band: None,
             paste_names: None,
@@ -2004,7 +2014,12 @@ impl KtApp {
         let mode = if self.dnd_hover.is_some() { Some(tr(k::hint::DROP_HERE)) } else { None };
         let status =
             self.status.as_ref().map(|(m, at)| (m.as_str(), at.elapsed().as_millis() as u64));
-        let blocked = self.blocked.map(|b| self.blocked_text(b));
+        let blocked = self.blocked.map(|b| self.blocked_text(b)).or_else(|| {
+            self.error_status
+                .as_ref()
+                .filter(|(_, at)| (at.elapsed().as_millis() as u64) < STATUS_TTL_MS)
+                .map(|(t, _)| t.clone())
+        });
         let (text, kind) = status_line(
             blocked.as_deref(),
             self.hover_hint.as_deref(),
@@ -2721,6 +2736,16 @@ impl KtApp {
         let text = msg.into();
         self.push_notice(Severity::Info, text.clone());
         self.status = Some((text, std::time::Instant::now()));
+    }
+
+    /// Отказ: невозможность действия показывается как ОШИБКА, а не блёклой
+    /// подсказкой (правило 16) — красным в строке состояния, в журнал и в
+    /// ретроспективу.
+    pub fn refuse(&mut self, msg: impl Into<String>) {
+        let text = msg.into();
+        crate::journal::log("REFUSE", &text);
+        self.push_notice(Severity::Warn, text.clone());
+        self.error_status = Some((text, std::time::Instant::now()));
     }
 
     /// Warning-уведомление: в статусбар и в ретроспективу (п.18).
@@ -5811,6 +5836,9 @@ impl KtApp {
                 r#gen: None,
                 gen_auto: Vec::new(),
                 overrides: Vec::new(),
+                geometry: Default::default(),
+                geometry_pos: 0,
+                geometry_auto: Vec::new(),
                 id,
                 link_group: group,
                 kind: k,
@@ -5902,6 +5930,9 @@ impl KtApp {
                 r#gen: None,
                 gen_auto: Vec::new(),
                 overrides: Vec::new(),
+                geometry: Default::default(),
+                geometry_pos: 0,
+                geometry_auto: Vec::new(),
                 id: ClipId(next_id),
                 link_group: group,
                 kind,
@@ -8991,8 +9022,13 @@ mod repaint_tests {
             height: 360,
             sample_rate: 48000,
             pitch_engine: Default::default(),
-        
-        default_shape: Default::default(),});
+
+            default_shape: Default::default(),
+
+            conform: Default::default(),
+
+            settings_explicit: false,
+        });
         p.media.push(MediaRef { id: MediaId(1), path: "/tmp/Интервью.mp4".into() });
         p.markers.push(Marker::named(Tick(5000), "Интро"));
         p.markers.push(Marker::named(Tick(9000), "интервью — начало"));
@@ -9045,13 +9081,21 @@ mod repaint_tests {
             height: 360,
             sample_rate: 48000,
             pitch_engine: Default::default(),
-        
-        default_shape: Default::default(),});
+
+            default_shape: Default::default(),
+
+            conform: Default::default(),
+
+            settings_explicit: false,
+        });
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         let clip = |id: u64, start: i64, dur: i64| ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Video,
@@ -9102,8 +9146,13 @@ mod repaint_tests {
             height: 360,
             sample_rate: 48000,
             pitch_engine: Default::default(),
-        
-        default_shape: Default::default(),});
+
+            default_shape: Default::default(),
+
+            conform: Default::default(),
+
+            settings_explicit: false,
+        });
         assert_eq!(stop_points(&empty), vec![0]);
     }
 

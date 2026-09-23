@@ -117,6 +117,11 @@ fn encode_geom(prog: &kt_fx::geom::GeomProgram) -> GeomUniform {
                 cur += 2;
                 4
             }
+            GeomPrim::Bounds { x0, x1, y0, y1 } => {
+                u.p[cur] = [*x0 as f32, *x1 as f32, *y0 as f32, *y1 as f32];
+                cur += 1;
+                5
+            }
         };
         kinds |= kind << (i * 4);
     }
@@ -406,6 +411,8 @@ fn chain_ops(
     u: f64,
     t: Tick,
     cam3d: Option<Cam3d>,
+    // Контекст ведущего узла «Геометрия» (Р.62): тот же, что у CPU.
+    lead: Option<kt_fx::conform::LeadCtx>,
     // Альфа ВХОДА цепочки (Р.53, п.418). Свёртка `has_alpha_known`
     // говорит только о том, высказался ли какой-то шаг; пока никто не
     // высказался, альфа кадра — это альфа источника, и премультипликацию
@@ -434,8 +441,9 @@ fn chain_ops(
         .collect();
     // План цепочки строит kt-fx (Р.45, п.311) — ОБЩИЙ код обоих бэкендов
     // (инвариант №7); здесь опы только транслируются в FxOp.
-    let plan =
-        kt_fx::plan::plan_chain(fx, src_w, src_h, src_scale, out_w, out_h, u, cam3d, t.0, &froms);
+    let plan = kt_fx::plan::plan_chain_in(
+        fx, src_w, src_h, src_scale, out_w, out_h, u, cam3d, t.0, &froms, lead,
+    );
     for op in plan.ops {
         match op {
             kt_fx::plan::PlanOp::Snapshot => ops.push(FxOp::Snapshot),
@@ -450,7 +458,7 @@ fn chain_ops(
             kt_fx::plan::PlanOp::Run { i, j, exec } => match exec {
                 kt_fx::geom::GeomExec::Legacy => match fx[i..j]
                     .iter()
-                    .find(|f| kt_fx::geom::is_geo(f))
+                    .find(|f| kt_fx::geom::is_geo_active(f, lead, out_w, out_h))
                     .expect("legacy run has a geo step")
                 {
                     FxInstance::Pan { mode, pan_x, pan_y, zoom } => {
@@ -1297,7 +1305,7 @@ impl Inner {
             let (cw, ch) = fit.unwrap_or((sw, sh));
             let (mut ops, (fw, fh), ha, ha_known, (mw, mh)) =
                 // суб-композит всегда с альфой (см. ниже)
-                chain_ops(&src.fx, cw, ch, src.src_scale, ow, oh, src.u, t, src.cam3d, true);
+                chain_ops(&src.fx, cw, ch, src.src_scale, ow, oh, src.u, t, src.cam3d, src.lead, true);
             if fit.is_some() {
                 ops.insert(
                     0,
@@ -1329,6 +1337,7 @@ impl Inner {
             src.u,
             t,
             src.cam3d,
+            src.lead,
             frame.has_alpha,
         );
         // K×-промежутки плана (п.314) обязаны влезать в лимит текстур
@@ -1897,6 +1906,23 @@ impl Inner {
 /// НОМЕРОМ содержимого (Р.53, п.409), а не парой (source, cache_idx):
 /// по адресу мемо отдавал бы старый композит после правки параметров
 /// генератора при неподвижном курсоре.
+fn put_lead(h: &mut xxhash_rust::xxh3::Xxh3, lead: &Option<kt_fx::conform::LeadCtx>) {
+    match lead {
+        None => h.update(&[0u8]),
+        Some(l) => {
+            h.update(&[1u8, l.rule as u8]);
+            match l.view {
+                None => h.update(&[0u8]),
+                Some((w, hh)) => {
+                    h.update(&[1u8]);
+                    h.update(&w.to_bits().to_le_bytes());
+                    h.update(&hh.to_bits().to_le_bytes());
+                }
+            }
+        }
+    }
+}
+
 fn plan_key(plan: &FramePlan<'_>) -> u64 {
     fn put_src(h: &mut Xxh3, s: &LayerSrc<'_>) {
         h.update(&s.source.0.to_le_bytes());
@@ -1920,6 +1946,9 @@ fn plan_key(plan: &FramePlan<'_>) -> u64 {
         h.update(&s.src_scale.to_le_bytes());
         h.update(&s.u.to_bits().to_le_bytes());
         put_cam3d(h, &s.cam3d);
+        // контекст ведущего узла «Геометрия» (Р.62): тот же кадр с той же
+        // цепочкой, но с другим правилом/видом — другая картинка
+        put_lead(h, &s.lead);
         match &s.input {
             kt_engine::video_plan::LayerInput::Frame(None) => h.update(&[0u8]),
             kt_engine::video_plan::LayerInput::Frame(Some(f)) => {

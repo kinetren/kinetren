@@ -10,7 +10,15 @@ const W: u32 = 64;
 const H: u32 = 36;
 
 fn ctx() -> VideoFxCtx {
-    VideoFxCtx { out_w: W, out_h: H, u: 0.5, burst_index: 90_000, cam3d: None, in_scale: 1 }
+    VideoFxCtx {
+        out_w: W,
+        out_h: H,
+        u: 0.5,
+        burst_index: 90_000,
+        cam3d: None,
+        in_scale: 1,
+        lead: None,
+    }
 }
 
 /// Детерминированный кадр: градиенты + «зелёный экран» в правом нижнем углу.
@@ -480,6 +488,8 @@ fn t328_golden_cycle_over_the_registry() {
     use kt_fx::geom::{is_geo, is_pointwise};
     const GOLDEN_ALL: &[(&str, u64)] = &[
         ("pan", 0x05719cf53332c61a),
+        // Р.62: узел «Геометрия» с умолчаниями — тождество (identity-хэш)
+        ("geometry", 0x05719cf53332c61a),
         ("cam_motion", 0x410e2d08915e02e9),
         ("mirror", 0x6e6b11df22c1c072),
         ("blur", 0xec8d2f412f21f555),
@@ -553,4 +563,100 @@ fn t328_golden_cycle_over_the_registry() {
             f.tag()
         );
     }
+}
+
+// ---- Р.62: узел «Геометрия» ------------------------------------------------
+
+/// Вертикальный кадр 36×64: градиент + непрозрачная альфа.
+fn vertical_frame() -> Frame {
+    let (w, h) = (36u32, 64u32);
+    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 4) as usize;
+            rgba[i] = (x * 7) as u8;
+            rgba[i + 1] = (y * 4) as u8;
+            rgba[i + 2] = 200;
+            rgba[i + 3] = 255;
+        }
+    }
+    Frame { w, h, rgba, has_alpha: false }
+}
+
+fn lead_ctx(view: (f64, f64), rule: kt_fx::conform::ConformRule) -> VideoFxCtx {
+    VideoFxCtx { lead: Some(kt_fx::conform::LeadCtx::new(Some(view), rule)), ..ctx() }
+}
+
+/// Тест 713 (Р.62): ведущий узел кладёт вертикальный кадр в 16:9 с
+/// ПРОЗРАЧНЫМИ полями; на совпадающих пропорциях узел с умолчаниями —
+/// тождество байт-в-байт (прежний путь без единого ресемпла).
+#[test]
+fn t713_lead_geometry_places_with_transparent_fields() {
+    use kt_fx::conform::ConformRule;
+    let lead = vec![FxInstance::geometry()];
+    // совпадающие пропорции: узел прозрачен, кадр не тронут
+    let same = apply_video_chain(&lead, test_frame(), &lead_ctx((64.0, 36.0), ConformRule::Fit));
+    assert_eq!(same.rgba, test_frame().rgba, "identity lead must be byte-identical");
+    assert!(!same.has_alpha);
+    // вертикальный источник, «вписать»: рамка 20.25×36 по центру, поля прозрачны
+    let out = apply_video_chain(&lead, vertical_frame(), &lead_ctx((36.0, 64.0), ConformRule::Fit));
+    assert_eq!((out.w, out.h), (W, H));
+    assert!(out.has_alpha, "fields are transparent, the node produces alpha");
+    let alpha = |x: u32, y: u32| out.rgba[((y * W + x) * 4 + 3) as usize];
+    for y in 0..H {
+        assert_eq!(alpha(0, y), 0, "left field transparent at y={y}");
+        assert_eq!(alpha(W - 1, y), 0, "right field transparent at y={y}");
+        assert_eq!(alpha(W / 2, y), 255, "centre opaque at y={y}");
+    }
+    let opaque = (0..W).filter(|&x| alpha(x, H / 2) == 255).count();
+    assert!((19..=22).contains(&opaque), "frame width ≈ 20.25 px, got {opaque}");
+    // «заполнить»: полей нет, кадр обрезан сверху и снизу
+    let fill =
+        apply_video_chain(&lead, vertical_frame(), &lead_ctx((36.0, 64.0), ConformRule::Fill));
+    assert!(fill.rgba.chunks(4).all(|p| p[3] == 255), "fill has no transparent pixel");
+    // «как есть»: 36×64 по центру холста 64×36 — торчит за край сверху и снизу
+    let asis =
+        apply_video_chain(&lead, vertical_frame(), &lead_ctx((36.0, 64.0), ConformRule::AsIs));
+    let a2 = |x: u32, y: u32| asis.rgba[((y * W + x) * 4 + 3) as usize];
+    assert_eq!(a2(0, 0), 0);
+    assert_eq!(a2(W / 2, 0), 255, "as-is sticks out: column opaque to the edge");
+    let opaque = (0..W).filter(|&x| a2(x, H / 2) == 255).count();
+    assert!((35..=37).contains(&opaque), "as-is keeps 36 px, got {opaque}");
+    // «растянуть»: весь холст, непрозрачно
+    let st =
+        apply_video_chain(&lead, vertical_frame(), &lead_ctx((36.0, 64.0), ConformRule::Stretch));
+    assert!(st.rgba.chunks(4).all(|p| p[3] == 255));
+}
+
+/// Тест 717 (Р.62): эффекты ДО ведущего узла работают в пространстве
+/// источника, ПОСЛЕ — на холсте; поворот на 90° с зумом заполняет холст.
+#[test]
+fn t717_before_lead_is_source_space_after_is_canvas() {
+    use kt_fx::conform::ConformRule;
+    let vig = FxInstance::Vignette { strength: 1.0, radius: 0.5, softness: 0.5 };
+    let c = lead_ctx((36.0, 64.0), ConformRule::Fit);
+    let before = apply_video_chain(&[vig.clone(), FxInstance::geometry()], vertical_frame(), &c);
+    let after = apply_video_chain(&[FxInstance::geometry(), vig.clone()], vertical_frame(), &c);
+    assert_eq!((before.w, before.h), (W, H));
+    assert_eq!((after.w, after.h), (W, H));
+    assert_ne!(before.rgba, after.rgba, "vignette in source space differs from canvas space");
+    // виньетка В ИСТОЧНИКЕ темнит его собственные боковые кромки (узкий
+    // кадр, край далеко от центра); НА ХОЛСТЕ тот же столбец стоит у
+    // центра холста и почти не темнеет — у «after» он светлее
+    let px = |f: &Frame, x: u32, y: u32| {
+        f.rgba[((y * W + x) * 4) as usize..((y * W + x) * 4 + 3) as usize].to_vec()
+    };
+    let lum = |p: Vec<u8>| p.iter().map(|&v| v as u32).sum::<u32>();
+    let edge = W / 2 - 9; // левая кромка рамки 20.25 px по центру холста
+    assert!(
+        lum(px(&after, edge, H / 2)) > lum(px(&before, edge, H / 2)),
+        "canvas-space vignette leaves the source edge brighter"
+    );
+    // поворот 90° + зум: вертикальный источник накрывает холст целиком
+    let mut g = kt_model::EventGeometry { rot: 90.0, zoom: 1.8, ..Default::default() };
+    g.rule = kt_model::Conform::Fit;
+    let rot = apply_video_chain(&[g.node()], vertical_frame(), &c);
+    assert!(rot.rgba.chunks(4).all(|p| p[3] == 255), "rotated + zoomed source covers the canvas");
+    let corner = &rot.rgba[0..3];
+    assert_ne!(corner, &[0u8, 0, 0], "corner carries source pixels");
 }

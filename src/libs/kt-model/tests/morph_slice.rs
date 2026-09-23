@@ -16,6 +16,9 @@ fn clip(id: u64, kind: ClipKind, lane: u32, start: Tick, dur: Tick) -> ClipEvent
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind,
@@ -41,8 +44,13 @@ fn base() -> Project {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:440".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "synth:ramp".into() });
     p.clips.push(clip(10, ClipKind::Video, 0, Tick(0), LEN));
@@ -764,13 +772,21 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -803,7 +819,10 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
             video_auto: vec![vec![ParamCurve {
                 param: "radius".into(),
 
-                keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 2.0), AutoKey::at(Tick(90_000 * 2), 9.0)]),
+                keys: AutoKey::linear(vec![
+                    AutoKey::at(Tick(0), 2.0),
+                    AutoKey::at(Tick(90_000 * 2), 9.0),
+                ]),
                 source: Default::default(),
             }]],
             ..Default::default()
@@ -861,6 +880,9 @@ fn warped(rate: f64, keys: Vec<AutoKey>, reversed: bool) -> ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,

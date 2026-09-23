@@ -349,11 +349,8 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             // признака порчи.
             let curve_needs_v10 = |c: &kt_model::ParamCurve| {
                 let ease = !c.keys.iter().all(|k| k.shape == kt_model::SegShape::Linear);
-                let implied = if ease {
-                    kt_model::SegShape::DEFAULT
-                } else {
-                    kt_model::SegShape::Linear
-                };
+                let implied =
+                    if ease { kt_model::SegShape::DEFAULT } else { kt_model::SegShape::Linear };
                 c.keys.iter().any(|k| k.shape != implied)
             };
             let clip_needs_v10 = |c: &kt_model::ClipEvent| {
@@ -375,7 +372,30 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                         .any(curve_needs_v10)
                 })
                 || p.settings.default_shape != kt_model::SegShape::DEFAULT;
-            if has_v10 {
+            // v11 (Р.62): правило проекта не «вписать», явные настройки,
+            // ведущий узел с не-умолчанием или не первым, узел «Геометрия»
+            // в цепочке — старая сборка потеряла бы или не прочла
+            let clip_needs_v11 = |c: &kt_model::ClipEvent| {
+                !c.geometry.is_default()
+                    || c.geometry_pos != 0
+                    || !c.geometry_auto.is_empty()
+                    || c.fx.iter().any(|f| matches!(f, kt_model::FxInstance::Geometry { .. }))
+            };
+            let reel_needs_v11 =
+                |reel: &dyn kt_model::Reel| reel.clips().iter().any(clip_needs_v11);
+            let has_v11 = reel_needs_v11(p)
+                || p.sequences.iter().any(|s| reel_needs_v11(s as &dyn kt_model::Reel))
+                || p.morphers.iter().any(|m| {
+                    m.patch
+                        .video_fx
+                        .iter()
+                        .any(|f| matches!(f, kt_model::FxInstance::Geometry { .. }))
+                })
+                || p.settings.conform != Default::default()
+                || p.settings.settings_explicit;
+            if has_v11 {
+                crate::meta::KT_META_V11
+            } else if has_v10 {
                 crate::meta::KT_META_V10
             } else if has_v9 {
                 crate::meta::KT_META_V9
@@ -407,6 +427,8 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                 .then_some(p.settings.pitch_engine),
             default_shape: (p.settings.default_shape != Default::default())
                 .then_some(p.settings.default_shape),
+            conform: (p.settings.conform != Default::default()).then_some(p.settings.conform),
+            settings_explicit: p.settings.settings_explicit,
         }),
         transport: (p.region.is_some() || p.loop_enabled).then(|| KtTransport {
             region: p.region.map(|r| (r.start.0, r.end.0)),
@@ -1017,6 +1039,9 @@ fn nest_to_otio(
             r#gen: c.r#gen.clone(),
             gen_auto: c.gen_auto.clone(),
             overrides: c.overrides.clone(),
+            geometry: (!c.geometry.is_default()).then_some(c.geometry),
+            geometry_pos: c.geometry_pos,
+            geometry_auto: c.geometry_auto.clone(),
             extra: Map::new(),
         },
     );
@@ -1183,6 +1208,9 @@ fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str, at: Tick) 
             r#gen: c.r#gen.clone(),
             gen_auto: c.gen_auto.clone(),
             overrides: c.overrides.clone(),
+            geometry: (!c.geometry.is_default()).then_some(c.geometry),
+            geometry_pos: c.geometry_pos,
+            geometry_auto: c.geometry_auto.clone(),
             extra: ex.kt_extra.clone(),
         },
     );
@@ -1251,6 +1279,8 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
             sample_rate: s.sample_rate,
             pitch_engine: s.pitch_engine.unwrap_or_default(),
             default_shape: s.default_shape.unwrap_or_default(),
+            conform: s.conform.unwrap_or_default(),
+            settings_explicit: s.settings_explicit,
         })
         .unwrap_or_else(|| {
             notices.push("imported with default project settings".into());
@@ -1260,6 +1290,8 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
                 height: 1080,
                 sample_rate: 48000,
                 pitch_engine: Default::default(),
+                conform: Default::default(),
+                settings_explicit: false,
                 default_shape: Default::default(),
             }
         });
@@ -1574,11 +1606,8 @@ fn curves_from_progress(
             // прежнее булево сглаживание разворачивается в ОДНУ форму на
             // все отрезки (Р.61, D1b): значения после чтения обязаны
             // совпасть с прежними побитово
-            let shape = if c.ease {
-                kt_model::SegShape::DEFAULT
-            } else {
-                kt_model::SegShape::Linear
-            };
+            let shape =
+                if c.ease { kt_model::SegShape::DEFAULT } else { kt_model::SegShape::Linear };
             kt_model::ParamCurve {
                 param: c.param,
                 keys: c
@@ -2086,6 +2115,9 @@ fn read_foreign_nest(
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id,
         link_group: group,
         kind,
@@ -2274,6 +2306,9 @@ fn read_nest(
         fx_auto,
         opacity: meta.as_ref().map(|m| m.opacity).unwrap_or(1.0),
         fx_off: meta.as_ref().map(|m| m.fx_off).unwrap_or(false),
+        geometry: meta.as_ref().and_then(|m| m.geometry).unwrap_or_default(),
+        geometry_pos: meta.as_ref().map(|m| m.geometry_pos).unwrap_or(0),
+        geometry_auto: meta.as_ref().map(|m| m.geometry_auto.clone()).unwrap_or_default(),
     })
 }
 
@@ -2474,6 +2509,9 @@ fn clip_from_otio(
         gain_db: meta.as_ref().map(|m| m.gain).unwrap_or(0.0),
         opacity: meta.as_ref().map(|m| m.opacity).unwrap_or(1.0),
         fx_off: meta.as_ref().is_some_and(|m| m.fx_off),
+        geometry: meta.as_ref().and_then(|m| m.geometry).unwrap_or_default(),
+        geometry_pos: meta.as_ref().map(|m| m.geometry_pos).unwrap_or(0),
+        geometry_auto: meta.as_ref().map(|m| m.geometry_auto.clone()).unwrap_or_default(),
         reversed,
         fx,
         fx_auto,

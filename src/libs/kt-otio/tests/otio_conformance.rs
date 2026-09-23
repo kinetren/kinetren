@@ -38,8 +38,13 @@ fn sample() -> Project {
         height: 720,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "media/a.mp4".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "media/b.mp4".into() });
     for (id, start, src, media) in [(1u64, 0i64, 0i64, 1u64), (2, 90_000, 30_000, 2)] {
@@ -47,6 +52,9 @@ fn sample() -> Project {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Audio,

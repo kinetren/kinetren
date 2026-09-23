@@ -232,15 +232,19 @@ impl Source {
         } else {
             Tick(0)
         };
-        let (fps, src_w, src_h) = if video_idx >= 0 {
+        let (fps, src_w, src_h, sar) = if video_idx >= 0 {
             let st = unsafe { &**sc.streams.add(video_idx as usize) };
             let par = unsafe { &*st.codecpar };
             let r = st.avg_frame_rate;
             let fps =
                 if r.num > 0 && r.den > 0 { Some((r.num as u32, r.den as u32)) } else { Some((30, 1)) };
-            (fps, par.width.max(0) as u32, par.height.max(0) as u32)
+            // SAR (Р.62): у потока приоритет над кодеком (контейнер знает
+            // о ремапе), ноль/отрицательное — не задано → 1:1
+            let pick = |a: ffi::AVRational| (a.num > 0 && a.den > 0).then_some((a.num as u32, a.den as u32));
+            let sar = pick(st.sample_aspect_ratio).or_else(|| pick(par.sample_aspect_ratio)).unwrap_or((1, 1));
+            (fps, par.width.max(0) as u32, par.height.max(0) as u32, sar)
         } else {
-            (None, 0, 0)
+            (None, 0, 0, (1, 1))
         };
         let probe = Probe {
             duration,
@@ -249,6 +253,7 @@ impl Source {
             fps,
             width: src_w,
             height: src_h,
+            sar,
         };
         unsafe { (api.avformat_close_input)(&mut scan) };
 

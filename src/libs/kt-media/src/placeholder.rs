@@ -49,6 +49,7 @@ impl PlaceholderSource {
                 fps: None,
                 width: DEFAULT_W,
                 height: DEFAULT_H,
+                sar: (1, 1),
             },
             label: label.into(),
             cache: None,

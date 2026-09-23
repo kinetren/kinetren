@@ -31,6 +31,9 @@ fn clip(id: u64, start: i64, dur: i64, src_in: i64) -> ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
     }
 }
 
@@ -42,6 +45,8 @@ fn base() -> Project {
         sample_rate: 48000,
         pitch_engine: Default::default(),
         default_shape: Default::default(),
+        conform: Default::default(),
+        settings_explicit: false,
     });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.video_lanes = 1;
@@ -149,11 +154,7 @@ fn t702b_a_link_never_crosses_the_reel_boundary() {
     inner.fx_auto[0].push(ParamCurve {
         param: "radius".into(),
         keys: Vec::new(),
-        source: CurveSource::Link {
-            path: "1/fx0/radius".into(),
-            expr: None,
-            stops: Vec::new(),
-        },
+        source: CurveSource::Link { path: "1/fx0/radius".into(), expr: None, stops: Vec::new() },
     });
     seq.clips.push(inner);
     seq.video_lanes = 1;
@@ -301,11 +302,7 @@ fn t704_non_numeric_targets_follow_thresholds_and_snapshots() {
     assert!(stop_value(&[], 1.0).is_none());
 
     // отметки едут в файл вместе со связью
-    let src = CurveSource::Link {
-        path: "1/gen/text".into(),
-        expr: None,
-        stops: stops.clone(),
-    };
+    let src = CurveSource::Link { path: "1/gen/text".into(), expr: None, stops: stops.clone() };
     let j = serde_json::to_string(&src).expect("сериализуется");
     let back: CurveSource = serde_json::from_str(&j).expect("читается");
     assert_eq!(back, src, "снимки не пережили круг");
@@ -473,7 +470,11 @@ fn t707_a_formula_is_a_curve_without_keys() {
     let out = resolve_derived(&pair, FRAME);
     let sq = &out[1].fx_auto[0][0];
     assert!(sq.source.is_keys(), "связь с выражением не разрешилась");
-    assert!((sq.keys[0].v - 16.0).abs() < 1e-9, "выражение над ведущим не применилось: {}", sq.keys[0].v);
+    assert!(
+        (sq.keys[0].v - 16.0).abs() < 1e-9,
+        "выражение над ведущим не применилось: {}",
+        sq.keys[0].v
+    );
 
     // --- у формулы на СКОРОСТИ то же правило, что у не-прямой формы --
     let mut p = base();

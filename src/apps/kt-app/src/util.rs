@@ -637,8 +637,13 @@ mod tests {
             height: 360,
             sample_rate: 48000,
             pitch_engine: Default::default(),
-        
-        default_shape: Default::default(),});
+
+            default_shape: Default::default(),
+
+            conform: Default::default(),
+
+            settings_explicit: false,
+        });
         let svc = crate::thumbs::ThumbService::start(&project, None);
         svc.add_media(MediaId(3), fixture("testsrc_h264.mp4"));
         let key = crate::thumbs::ThumbKey { media: MediaId(3), t: 0 };

@@ -75,6 +75,7 @@ impl FfmpegSource {
             fps: p.fps,
             width: p.width,
             height: p.height,
+            sar: p.sar,
         };
         let src_size = (p.width.max(2), p.height.max(2));
         Ok(FfmpegSource { inner, info, src_size })

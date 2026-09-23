@@ -224,6 +224,7 @@ fn bench_simd_1080p() {
         burst_index: 90_000,
         cam3d: None,
         in_scale: 1,
+        lead: None,
     };
     for (name, fx) in [
         ("greenscreen", FxInstance::greenscreen([0, 255, 0], 70, 25)),
@@ -334,6 +335,7 @@ fn t198_edges_scalar_eq_simd() {
                     burst_index: 90_000,
                     cam3d: None,
                     in_scale: 1,
+                    lead: None,
                 };
                 let got = apply_video_chain(&[FxInstance::edges(th)], src, &ctx);
                 if got.rgba != want {
@@ -378,6 +380,7 @@ fn t198_vhs_scalar_eq_simd() {
                             burst_index: burst,
                             cam3d: None,
                             in_scale: 1,
+                            lead: None,
                         };
                         let got = apply_video_chain(&[FxInstance::vhs(shift, bleed)], src, &ctx);
                         if got.rgba != want {

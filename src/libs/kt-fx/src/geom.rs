@@ -16,6 +16,7 @@
 //! Мульти-шаговые серии дают НОВЫЕ байты (лучше: без потерь) — это
 //! санкционировано владельцем (docs/user-feedback.md Р.44).
 
+use crate::conform::{ConformRule, LeadCtx, conform_dest};
 use crate::video::{Frame, FxScratch};
 use kt_model::FxInstance;
 
@@ -47,6 +48,7 @@ pub fn is_geo(f: &FxInstance) -> bool {
     matches!(
         f,
         FxInstance::Pan { .. }
+            | FxInstance::Geometry { .. }
             | FxInstance::CamMotion { .. }
             | FxInstance::Mirror { .. }
             | FxInstance::EventGrid { .. }
@@ -58,6 +60,41 @@ pub fn is_geo(f: &FxInstance) -> bool {
             | FxInstance::Kaleidoscope { .. }
             | FxInstance::Cylinder3d { .. }
     )
+}
+
+/// Тождествен ли узел «Геометрия» В КОНТЕКСТЕ (Р.62). Дополнительный узел
+/// тождествен при тождественных параметрах; ВЕДУЩИЙ — ещё и только когда
+/// рамка приведения равна холсту: иначе он обязан положить кадр чужих
+/// пропорций в рамку с прозрачными полями. Без контекста ведущий
+/// считается «растянуть» (рамка = холст).
+pub fn geometry_is_identity_in(
+    f: &FxInstance,
+    lead: Option<LeadCtx>,
+    out_w: u32,
+    out_h: u32,
+) -> bool {
+    match f {
+        FxInstance::Geometry { lead: is_lead, .. } => {
+            if !f.geometry_is_identity() {
+                return false;
+            }
+            if !*is_lead {
+                return true;
+            }
+            let Some(l) = lead else { return true };
+            let (mow, moh) = (out_w.max(2) as f64, out_h.max(2) as f64);
+            let d = conform_dest(l.view, (mow, moh), l.rule);
+            (d.0 - mow).abs() < 1e-6 && (d.1 - moh).abs() < 1e-6
+        }
+        _ => false,
+    }
+}
+
+/// Гео-шаг, который ДЕЙСТВУЕТ: гео-вид, кроме тождественного узла
+/// «Геометрия» — тот прозрачен для сегментации, как аудио-FX, иначе
+/// одиночный Pan/Mirror рядом с ним терял бы старое ядро (t297).
+pub fn is_geo_active(f: &FxInstance, lead: Option<LeadCtx>, out_w: u32, out_h: u32) -> bool {
+    is_geo(f) && !geometry_is_identity_in(f, lead, out_w, out_h)
 }
 
 /// Диагональная аффинная карта index-space: `x_in = ax·x + bx` (линейная
@@ -114,6 +151,11 @@ pub enum GeomPrim {
     /// вне [0,1]² — вне квада → прозрачно; иначе выход = q (uv), пост-аффин
     /// `q·in − 0.5` скомпонован построителем (дословно старый pan3d.wgsl).
     Proj { m: [[f64; 3]; 3] },
+    /// Границы рамки (Р.62, узел «Геометрия»): координата вне
+    /// [x0,x1]×[y0,y1] index-space — ПРОЗРАЧНО (короткое замыкание).
+    /// В отличие от Clamp (плато) пикселей не выдумывает: поля
+    /// приведения обязаны быть прозрачными (урок Pitivi #1378).
+    Bounds { x0: f64, x1: f64, y0: f64, y1: f64 },
     /// Нелинейный варп (Р.47 Кв4): вход и выход — НОРМАЛИЗОВАННОЕ
     /// центрированное пространство стадии (пред/пост-аффины строит
     /// builder; r=1 — короткая полуось, cylinder нормируется по X на
@@ -251,7 +293,7 @@ impl GeomProgram {
         self.prims
             .iter()
             .map(|p| match p {
-                GeomPrim::Affine(_) | GeomPrim::Clamp { .. } => 1,
+                GeomPrim::Affine(_) | GeomPrim::Clamp { .. } | GeomPrim::Bounds { .. } => 1,
                 GeomPrim::Fold { .. } => 2,
                 GeomPrim::Proj { .. } => 3,
                 GeomPrim::Warp { .. } => 2,
@@ -285,6 +327,25 @@ pub fn build_geom_exec(
     k_in: u32,
     k_out: u32,
 ) -> GeomExec {
+    build_geom_exec_in(steps, in_w, in_h, out_w, out_h, u, cam3d, burst_index, k_in, k_out, None)
+}
+
+/// То же с контекстом ведущего узла «Геометрия» (Р.62): вид источника и
+/// правило приведения. Продуктовые вызовы идут через планировщик.
+#[allow(clippy::too_many_arguments)]
+pub fn build_geom_exec_in(
+    steps: &[&FxInstance],
+    in_w: u32,
+    in_h: u32,
+    out_w: u32,
+    out_h: u32,
+    u: f64,
+    cam3d: Option<Cam3d>,
+    burst_index: i64,
+    k_in: u32,
+    k_out: u32,
+    lead: Option<LeadCtx>,
+) -> GeomExec {
     debug_assert!(!steps.is_empty());
     if steps.len() == 1 {
         // одиночное зеркало ресемпла не делает — старое ядро (in-place
@@ -302,7 +363,8 @@ pub fn build_geom_exec(
             && k_out == 1
             && matches!(steps[0], FxInstance::Pan { .. } | FxInstance::CamMotion { .. })
         {
-            let prog = build_program(steps, in_w, in_h, out_w, out_h, u, cam3d, burst_index, 1, 1);
+            let prog =
+                build_program(steps, in_w, in_h, out_w, out_h, u, cam3d, burst_index, 1, 1, lead);
             if prog.ss == (SsSpec::Const { nx: 1, ny: 1 }) {
                 return GeomExec::Legacy;
             }
@@ -320,6 +382,7 @@ pub fn build_geom_exec(
         burst_index,
         k_in,
         k_out,
+        lead,
     ))
 }
 
@@ -357,6 +420,19 @@ enum Step {
         iw: u32,
         ih: u32,
     },
+    /// Узел «Геометрия» (Р.62): кроп источника → рамка на холсте с
+    /// зумом, положением и поворотом вокруг якоря; вне рамки — прозрачно.
+    /// Без поворота — диагональный аффин, с поворотом — Proj-аффин
+    /// (последняя строка (0,0,1)); `bounds` — границы кропа в index-space
+    /// входа, `None` — рамка накрывает холст целиком (полей нет).
+    Place {
+        aff: Aff,
+        m: [[f64; 3]; 3],
+        rot0: bool,
+        bounds: Option<(f64, f64, f64, f64)>,
+        iw: u32,
+        ih: u32,
+    },
     /// Нелинейный варп Р.47: растр не меняет, работает в нормализованном
     /// центрированном пространстве своей стадии.
     Warp {
@@ -382,6 +458,7 @@ fn build_program(
     burst_index: i64,
     k_in: u32,
     k_out: u32,
+    lead: Option<LeadCtx>,
 ) -> GeomProgram {
     let (mow, moh) = (out_w.max(2), out_h.max(2));
     // Конъюгация K× (Р.45, п.314): ВСЯ арифметика шагов живёт в
@@ -417,6 +494,80 @@ fn build_program(
                 fw.push(Step::Frame { x0, y0, cw, ch, iw: w, ih: h });
                 w = mow;
                 h = moh;
+            }
+            FxInstance::Geometry {
+                lead: is_lead,
+                crop_l,
+                crop_t,
+                crop_r,
+                crop_b,
+                pos_x,
+                pos_y,
+                zoom,
+                rot,
+                anchor_x,
+                anchor_y,
+            } => {
+                // тождественный узел — прозрачен (планировщик его и не
+                // подаёт; здесь — для прямых вызовов и тестов)
+                if geometry_is_identity_in(f, lead, out_w, out_h) {
+                    continue;
+                }
+                let (l, t, r, b) = (
+                    crop_l.clamp(0.0, 0.95),
+                    crop_t.clamp(0.0, 0.95),
+                    crop_r.clamp(0.0, 0.95),
+                    crop_b.clamp(0.0, 0.95),
+                );
+                let kx = (1.0 - l - r).max(0.05);
+                let ky = (1.0 - t - b).max(0.05);
+                let (iw, ih) = (w as f64, h as f64);
+                let (cx0, cy0, cw, ch) = (l * iw, t * ih, kx * iw, ky * ih);
+                let (fw_, fh_) = (mow as f64, moh as f64);
+                // рамка: ведущий — по правилу приведения от ВИДА источника
+                // (кроп режет вид до правила), дополнительный — как есть
+                let dest = if *is_lead {
+                    let lc = lead.unwrap_or(LeadCtx { view: None, rule: ConformRule::Stretch });
+                    conform_dest(lc.view.map(|(vw, vh)| (vw * kx, vh * ky)), (fw_, fh_), lc.rule)
+                } else {
+                    (cw, ch)
+                };
+                let z = zoom.clamp(0.05, 32.0);
+                let (dw, dh) = ((dest.0 * z).max(1e-6), (dest.1 * z).max(1e-6));
+                let ccx = fw_ / 2.0 + pos_x.clamp(-2.0, 2.0) * fw_;
+                let ccy = fh_ / 2.0 + pos_y.clamp(-2.0, 2.0) * fh_;
+                let (ox, oy) = (ccx - dw / 2.0, ccy - dh / 2.0);
+                let (axp, ayp) =
+                    (ox + anchor_x.clamp(0.0, 1.0) * dw, oy + anchor_y.clamp(0.0, 1.0) * dh);
+                let rot0 = *rot == 0.0;
+                let covers = rot0 && ox <= 0.0 && oy <= 0.0 && ox + dw >= fw_ && oy + dh >= fh_;
+                let bounds =
+                    (!covers).then_some((cx0 - 0.5, cx0 + cw - 0.5, cy0 - 0.5, cy0 + ch - 0.5));
+                // без поворота: index выхода → index входа (x_in = ax·x + bx)
+                let (sx, sy) = (cw / dw, ch / dh);
+                let aff = Aff {
+                    ax: sx,
+                    bx: cx0 - ox * sx + 0.5 * sx - 0.5,
+                    ay: sy,
+                    by: cy0 - oy * sy + 0.5 * sy - 0.5,
+                };
+                // с поворотом: центр-space выхода p′ → uv полного входа,
+                // p = A + R(−rot)(p′ − A), q = (cx0 + (p − o)·c/d) / in
+                let (c, sn) = (rot.to_radians().cos(), rot.to_radians().sin());
+                let (kx_, ky_) = (cw / (dw * iw), ch / (dh * ih));
+                let m = [
+                    [c * kx_, sn * kx_, (axp - c * axp - sn * ayp - ox) * kx_ + cx0 / iw],
+                    [-sn * ky_, c * ky_, (ayp + sn * axp - c * ayp - oy) * ky_ + cy0 / ih],
+                    [0.0, 0.0, 1.0],
+                ];
+                fw.push(Step::Place { aff, m, rot0, bounds, iw: w, ih: h });
+                w = mow;
+                h = moh;
+                if bounds.is_some() {
+                    // поля рамки прозрачны — узел ПРОИЗВОДИТ альфу
+                    has_alpha_known = true;
+                    has_alpha = true;
+                }
             }
             FxInstance::Mirror { horizontal, vertical } => {
                 if *horizontal || *vertical {
@@ -702,6 +853,20 @@ fn build_program(
                 // uv → index-space входа: sx = q·in − 0.5 (как pan3d.wgsl)
                 pending = Aff { ax: *iw as f64, bx: -0.5, ay: *ih as f64, by: -0.5 };
             }
+            Step::Place { aff, m, rot0, bounds, iw, ih } => {
+                if *rot0 {
+                    pending = pending.then(aff);
+                } else {
+                    pending = pending.then(&Aff { ax: 1.0, bx: 0.5, ay: 1.0, by: 0.5 });
+                    flush(&mut pending, &mut prims);
+                    prims.push(GeomPrim::Proj { m: *m });
+                    pending = Aff { ax: *iw as f64, bx: -0.5, ay: *ih as f64, by: -0.5 };
+                }
+                if let Some((x0, x1, y0, y1)) = bounds {
+                    flush(&mut pending, &mut prims);
+                    prims.push(GeomPrim::Bounds { x0: *x0, x1: *x1, y0: *y0, y1: *y1 });
+                }
+            }
             Step::Warp { mode, p, iw, ih } => {
                 let (rw, rh) = (*iw as f64, *ih as f64);
                 // r = 1 — короткая полуось; cylinder нормируется по X
@@ -760,7 +925,10 @@ fn build_program(
                         lx *= in_w / cw;
                         ly *= in_h / ch;
                     }
-                    GeomPrim::Clamp { .. } | GeomPrim::Proj { .. } | GeomPrim::Warp { .. } => {}
+                    GeomPrim::Clamp { .. }
+                    | GeomPrim::Bounds { .. }
+                    | GeomPrim::Proj { .. }
+                    | GeomPrim::Warp { .. } => {}
                 }
             }
             (SsSpec::Const { nx: ss_taps(lx), ny: ss_taps(ly) }, (lx, ly))
@@ -1100,6 +1268,11 @@ fn map_pos(prims: &[GeomPrim], ox: f64, oy: f64) -> Mapped {
                 x = x.clamp(*x0, *x1);
                 y = y.clamp(*y0, *y1);
             }
+            GeomPrim::Bounds { x0, x1, y0, y1 } => {
+                if x < *x0 || x > *x1 || y < *y0 || y > *y1 {
+                    return Mapped::Transparent;
+                }
+            }
             GeomPrim::Fold { gw, gh, cw, ch, in_w, in_h } => {
                 if x < 0.0 || y < 0.0 || x >= *gw || y >= *gh {
                     return Mapped::Black;
@@ -1190,6 +1363,11 @@ fn map_pos_rec(
             GeomPrim::Clamp { x0, x1, y0, y1 } => {
                 x = x.clamp(*x0, *x1);
                 y = y.clamp(*y0, *y1);
+            }
+            GeomPrim::Bounds { x0, x1, y0, y1 } => {
+                if x < *x0 || x > *x1 || y < *y0 || y > *y1 {
+                    return (Mapped::Transparent, pi);
+                }
             }
             GeomPrim::Fold { gw, gh, cw, ch, in_w, in_h } => {
                 if x < 0.0 || y < 0.0 || x >= *gw || y >= *gh {

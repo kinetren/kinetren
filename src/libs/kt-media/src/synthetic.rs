@@ -78,6 +78,7 @@ impl SyntheticSource {
                 fps: Some((30, 1)),
                 width: 64,
                 height: 36,
+                sar: (1, 1),
             },
             pattern,
             audio_reads: 0,
@@ -95,6 +96,21 @@ impl SyntheticSource {
     }
 
     /// Включить собственную сетку кадров источника (п.14 р.14).
+    /// Заявленный натив кадра (Р.62): синтетика рисует заливку в любой
+    /// запрошенный размер, а вид (`info().width/height`) — вход правила
+    /// приведения.
+    pub fn with_video_size(mut self, w: u32, h: u32) -> Self {
+        self.info.width = w.max(1);
+        self.info.height = h.max(1);
+        self
+    }
+
+    /// Пиксельное соотношение (Р.62): вид кадра = width × sar.
+    pub fn with_sar(mut self, num: u32, den: u32) -> Self {
+        self.info.sar = (num.max(1), den.max(1));
+        self
+    }
+
     pub fn with_video_fps(mut self, fps: u32) -> Self {
         self.video_fps = Some(fps);
         self.info.fps = Some((fps, 1));
@@ -265,6 +281,7 @@ impl CheckerSource {
                 fps: Some((30, 1)),
                 width: native_w.max(2),
                 height: native_h.max(2),
+                sar: (1, 1),
             },
             native: (native_w.max(2), native_h.max(2)),
         }
@@ -322,6 +339,22 @@ impl MediaSource for CheckerSource {
 
 #[cfg(test)]
 mod tests {
+    /// Р.62 (t711b): пиксельное соотношение — часть фактов источника и
+    /// без FFmpeg: синтетика несёт то же поле, вид = ширина × SAR.
+    #[test]
+    fn t711b_synthetic_carries_sar_into_the_view() {
+        use super::*;
+        let s = SyntheticSource::new(Tick(90_000), AudioPattern::Silence);
+        assert_eq!(s.info().sar, (1, 1));
+        assert_eq!(s.info().view_size(), (64.0, 36.0));
+        let s = s.with_sar(2, 1);
+        assert_eq!(s.info().sar, (2, 1));
+        assert_eq!(s.info().view_size(), (128.0, 36.0));
+        // нулевой знаменатель не проходит: клампится к 1
+        let s = SyntheticSource::new(Tick(90_000), AudioPattern::Silence).with_sar(0, 0);
+        assert_eq!(s.info().sar, (1, 1));
+    }
+
     use super::*;
 
     #[test]

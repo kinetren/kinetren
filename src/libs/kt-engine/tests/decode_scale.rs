@@ -23,13 +23,21 @@ fn project(w: u32, h: u32, fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>) -> P
         height: h,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "checker".into() });
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -365,4 +373,69 @@ fn t633_a_layer_of_a_foreign_size_is_never_silent() {
          уходит в экспорт как годный, и события в нём просто нет"
     );
     assert!(out.chunks(4).all(|px| px[3] == 0), "слой чужого размера всё-таки попал в кадр");
+}
+
+/// Тест 714 (Р.62): заказ равен чтению на КАЖДОМ правиле приведения.
+/// Вертикальный источник 1080×1920 четырьмя событиями с четырьмя
+/// правилами в проекте 1920×1080: размер декода — рамка правила
+/// («вписать» 608×1080, «заполнить» 1920×3414, «как есть» 1080×1920,
+/// «растянуть» 1920×1080), ступень считана от размера приведения, и
+/// композит, прогретый строго по `wanted_frames`, полон.
+#[test]
+fn t714_order_equals_read_on_every_conform_rule() {
+    let q = Quality { width: 1920, height: 1080 };
+    let rules = [Conform::Fit, Conform::Fill, Conform::AsIs, Conform::Stretch];
+    let mut p = project(1920, 1080, vec![], vec![]);
+    p.clips.clear();
+    for (i, r) in rules.iter().enumerate() {
+        let mut c = ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
+            overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
+            id: ClipId(10 + i as u64),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane: i as u32,
+            start: Tick(0),
+            duration: Tick(2 * SEC),
+            source_in: Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx: vec![],
+            fx_bypass: vec![],
+            fx_auto: vec![],
+            opacity: 1.0,
+            fx_off: false,
+        };
+        c.geometry.rule = *r;
+        p.clips.push(c);
+    }
+    p.validate().unwrap();
+    let facts = kt_engine::SourceFacts {
+        natives: natives(1080, 1920),
+        procedural: Default::default(),
+        views: std::collections::HashMap::from([(MediaId(1), (1080.0, 1920.0))]),
+    };
+    let mut vr = kt_engine::VideoRenderer::new_with_facts(&p, &facts);
+    assert_eq!(vr.layers_at(Tick(STEP), q).len(), 4);
+    let want = [(608, 1080), (1920, 3412), (1080, 1920), (1920, 1080)];
+    for (id, dq) in vr.video_decode_qualities(q) {
+        let i = (id.0 - 10) as usize;
+        assert_eq!((dq.width, dq.height), want[i], "rule {:?}", rules[i]);
+    }
+    // заказ == чтение: греем строго по wanted_frames и композим
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let mut src = CheckerSource::new(Tick(2 * SEC), 1080, 1920);
+    for (media, pts, dq) in vr.wanted_frames(TickRange::new(Tick(0), Tick(2 * STEP)), q) {
+        let f = src.read_video_frame(pts, Some(dq)).unwrap();
+        assert_eq!((f.width, f.height), (dq.width, dq.height));
+        cache.insert_video(kt_engine::source_id(media), Some(dq), video_cache_idx(pts), f.into());
+    }
+    let (frame, complete) = vr.compose_from_cache(&cache, Tick(STEP), q);
+    assert!(complete, "every layer found its own decode size");
+    assert_eq!(frame.len(), (q.width * q.height * 4) as usize);
 }

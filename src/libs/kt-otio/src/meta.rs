@@ -14,7 +14,7 @@ pub const KT_NS: &str = "kt";
 /// правило р.24 «наше чтобы никто не ломал»); иначе v=1 — файлы без 3D
 /// байт-стабильны и открываются старыми сборками. Один Pan3d версию НЕ
 /// бампает: неизвестный эффект деградирует в foreign-passthrough.
-pub const KT_META_VERSION: u32 = 10;
+pub const KT_META_VERSION: u32 = 11;
 pub const KT_META_V1: u32 = 1;
 /// Камеры и камерные дорожки (Р.29).
 pub const KT_META_V2: u32 = 2;
@@ -70,6 +70,8 @@ pub const KT_META_V9: u32 = 9;
 /// Кривая с однородной выразимой формой версию НЕ двигает и пишется
 /// прежними байтами (D1b).
 pub const KT_META_V10: u32 = 10;
+/// Р.62: правило приведения, ведущий узел «Геометрия», настройки ленты.
+pub const KT_META_V11: u32 = 11;
 
 // ---- типизированные конверты metadata.kt (приём otio-types) -----------------
 // Структурно-мелкое — СВОИ типы (эволюция модели не двигает схему файла
@@ -244,6 +246,10 @@ pub struct KtLayers {
     pub audio: Vec<u32>,
 }
 
+fn is_zero_usize(v: &usize) -> bool {
+    *v == 0
+}
+
 fn is_zero_u32(v: &u32) -> bool {
     *v == 0
 }
@@ -264,6 +270,14 @@ pub struct KtSettings {
     /// по-разному. Умолчание не пишется — прежние файлы байт-стабильны.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_shape: Option<kt_model::SegShape>,
+    /// Правило приведения кадра по умолчанию (Р.62). «Вписать» не
+    /// пишется — прежние файлы байт-стабильны.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conform: Option<kt_model::ConformRule>,
+    /// Настройки выставлены явно (Р.62): пока нет — первый клип задаёт
+    /// растр и fps. `false` не пишется.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub settings_explicit: bool,
 }
 
 /// Регион/loop — транспорт-удобство вне OTIO-семантики (тики).
@@ -321,6 +335,14 @@ pub struct KtClipMeta {
     /// (Р.59, стадия 3). Пусто — экземпляр играет шаблон.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub overrides: Vec<kt_model::Override>,
+    /// Ведущий узел «Геометрия» (Р.62). Умолчание (следовать проекту,
+    /// тождественные параметры) не пишется — файлы байт-стабильны.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry: Option<kt_model::EventGeometry>,
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub geometry_pos: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub geometry_auto: Vec<kt_model::ParamCurve>,
     /// Форвард-милосердие (Р.29): неизвестные kt-поля будущих версий.
     #[serde(default, flatten)]
     pub extra: Map<String, Value>,

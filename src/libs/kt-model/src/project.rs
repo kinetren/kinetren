@@ -3413,7 +3413,7 @@ pub struct ProjectSettings {
     /// байт-стабильны.
     #[serde(default, skip_serializing_if = "is_default_pitch_engine")]
     pub pitch_engine: PitchEngine,
-    
+
     /// Форма отрезка у НОВЫХ ключей (Р.61).
     ///
     /// Живёт в ПРОЕКТЕ, а не в настройках программы: настройка машины
@@ -3424,6 +3424,20 @@ pub struct ProjectSettings {
     /// Умолчание в файл не пишется: прежние проекты байт-стабильны.
     #[serde(default, skip_serializing_if = "SegShape::is_default")]
     pub default_shape: SegShape,
+    /// Правило приведения кадра ПО УМОЛЧАНИЮ (Р.62): действует на все
+    /// события с `Conform::Project`, задним числом. Умолчание «вписать»
+    /// не пишется — прежние файлы байт-стабильны.
+    #[serde(default, skip_serializing_if = "is_default_rule")]
+    pub conform: ConformRule,
+    /// Настройки выставлены ЯВНО (окно настроек применено). Пока `false`,
+    /// первый клип в пустой проект задаёт растр и fps (правило 20: явное
+    /// решение постановкой не трогается). `false` не пишется.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub settings_explicit: bool,
+}
+
+fn is_default_rule(r: &ConformRule) -> bool {
+    *r == ConformRule::default()
 }
 
 fn is_default_pitch_engine(e: &PitchEngine) -> bool {
@@ -3506,6 +3520,24 @@ pub struct ClipEvent {
     /// ленты доезжает до всех мест сама.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub overrides: Vec<Override>,
+    /// Ведущий узел «Геометрия» (Р.62). У аудио-события не участвует.
+    /// Умолчание не сериализуется — прежние файлы байт-стабильны;
+    /// событие без узла тождественно узлу «следовать проекту».
+    #[serde(default, skip_serializing_if = "EventGeometry::is_default")]
+    pub geometry: EventGeometry,
+    /// Позиция ведущего узла в цепочке: перед слотом `fx[geometry_pos]`
+    /// (0 — первым, `fx.len()` — последним). Эффекты ДО него работают в
+    /// пространстве источника, ПОСЛЕ — на холсте.
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub geometry_pos: usize,
+    /// Кривые параметров ведущего узла (домен — тик материала, как у
+    /// `fx_auto`). Движок кладёт их в слот узла при материализации.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub geometry_auto: Vec<ParamCurve>,
+}
+
+fn is_zero_usize(v: &usize) -> bool {
+    *v == 0
 }
 
 fn one_f32() -> f32 {
@@ -3842,12 +3874,8 @@ impl AutoKey {
 pub fn insert_key(keys: &mut Vec<AutoKey>, at: Tick, v: f64, default: SegShape) {
     // форма делимого отрезка = форма ближайшего ключа СЛЕВА; слева нет —
     // форма первого; ключей нет вовсе — умолчание проекта
-    let shape = keys
-        .iter()
-        .rev()
-        .find(|k| k.t <= at)
-        .or_else(|| keys.first())
-        .map_or(default, |k| k.shape);
+    let shape =
+        keys.iter().rev().find(|k| k.t <= at).or_else(|| keys.first()).map_or(default, |k| k.shape);
     keys.retain(|k| k.t != at);
     keys.push(AutoKey::shaped(at, v, shape));
     keys.sort_by_key(|k| k.t.0);
@@ -4439,11 +4467,7 @@ pub fn migrate_legacy_camera(c: &mut CameraEvent) -> bool {
                 .iter()
                 .zip(&vals)
                 .map(|(k, v)| {
-                    AutoKey::shaped(
-                        Tick((k.t.clamp(0.0, 1.0) * dur).round() as i64),
-                        *v,
-                        shape,
-                    )
+                    AutoKey::shaped(Tick((k.t.clamp(0.0, 1.0) * dur).round() as i64), *v, shape)
                 })
                 .collect(),
             source: Default::default(),
@@ -4943,6 +4967,38 @@ pub enum FxInstance {
         #[serde(default = "default_zoom")]
         zoom: f64,
     },
+    /// Узел «Геометрия» (Р.62): кроп (доли входа), положение (доли холста),
+    /// зум, поворот вокруг якоря; вне рамки — ПРОЗРАЧНО. Ведущий узел
+    /// события живёт в `ClipEvent.geometry` и несёт ещё правило
+    /// приведения; этот вариант — дополнительные узлы из каталога и форма,
+    /// в которой ведущий доезжает до kt-fx.
+    Geometry {
+        /// Ведущий узел события (Р.62): материализован движком из
+        /// `ClipEvent.geometry`, несёт правило приведения через контекст
+        /// kt-fx. В цепочке модели (`fx`) не хранится — там всегда `false`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        lead: bool,
+        #[serde(default, skip_serializing_if = "is_zero_f64")]
+        crop_l: f64,
+        #[serde(default, skip_serializing_if = "is_zero_f64")]
+        crop_t: f64,
+        #[serde(default, skip_serializing_if = "is_zero_f64")]
+        crop_r: f64,
+        #[serde(default, skip_serializing_if = "is_zero_f64")]
+        crop_b: f64,
+        #[serde(default, skip_serializing_if = "is_zero_f64")]
+        pos_x: f64,
+        #[serde(default, skip_serializing_if = "is_zero_f64")]
+        pos_y: f64,
+        #[serde(default = "default_zoom", skip_serializing_if = "is_one")]
+        zoom: f64,
+        #[serde(default, skip_serializing_if = "is_zero_f64")]
+        rot: f64,
+        #[serde(default = "default_half", skip_serializing_if = "is_half")]
+        anchor_x: f64,
+        #[serde(default = "default_half", skip_serializing_if = "is_half")]
+        anchor_y: f64,
+    },
     /// Пан/зум по кейфреймам прогресса клипа (smoothstep при ease).
     CamMotion {
         #[serde(default)]
@@ -5180,6 +5236,7 @@ impl FxInstance {
             FxInstance::Kaleidoscope { .. } => "kaleidoscope",
             FxInstance::Cylinder3d { .. } => "cylinder3d",
             FxInstance::Pan { .. } => "pan",
+            FxInstance::Geometry { .. } => "geometry",
             FxInstance::CamMotion { .. } => "cam_motion",
             FxInstance::Mirror { .. } => "mirror",
             FxInstance::Blur { .. } => "blur",
@@ -5238,6 +5295,7 @@ impl FxInstance {
                 FxInstance::kaleidoscope(),
                 FxInstance::cylinder3d(),
                 FxInstance::pan(),
+                FxInstance::geometry(),
                 FxInstance::cam_motion(),
                 FxInstance::mirror(),
                 FxInstance::blur(8),
@@ -6006,6 +6064,18 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
         pan_y: f64, -4.0, 4.0, 0.0, 0.01, Norm, Smooth;
         zoom: f64, 0.05, 32.0, 1.0, 0.01, Ratio, Smooth;
     },
+    Geometry {
+        crop_l: f64, 0.0, 0.95, 0.0, 0.005, Norm, Smooth;
+        crop_t: f64, 0.0, 0.95, 0.0, 0.005, Norm, Smooth;
+        crop_r: f64, 0.0, 0.95, 0.0, 0.005, Norm, Smooth;
+        crop_b: f64, 0.0, 0.95, 0.0, 0.005, Norm, Smooth;
+        pos_x: f64, -2.0, 2.0, 0.0, 0.005, Norm, Smooth;
+        pos_y: f64, -2.0, 2.0, 0.0, 0.005, Norm, Smooth;
+        zoom: f64, 0.05, 32.0, 1.0, 0.01, Ratio, Smooth;
+        rot: f64, -360.0, 360.0, 0.0, 0.5, Deg, Smooth;
+        anchor_x: f64, 0.0, 1.0, 0.5, 0.005, Norm, Smooth;
+        anchor_y: f64, 0.0, 1.0, 0.5, 0.005, Norm, Smooth;
+    },
     CamMotion {
         time_scale: f64, 0.05, 8.0, 1.0, 0.01, Ratio, Smooth;
     },
@@ -6209,6 +6279,192 @@ pub enum PanMode {
     Fill,
     Stretch,
 }
+
+/// Правило приведения кадра источника к холсту (Р.62, F-MED-004):
+/// вписать с ПРОЗРАЧНЫМИ полями / заполнить с обрезкой / растянуть /
+/// как есть (1:1 пиксель по центру, крупнее холста — за край).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConformRule {
+    #[default]
+    Fit,
+    Fill,
+    Stretch,
+    AsIs,
+}
+
+/// Правило у СОБЫТИЯ: следовать проекту либо своё. Уровень «проект +
+/// исключение у события» — решение владельца Р.62: смена умолчания проекта
+/// переписывает всех, кто ему следует, и не трогает явные.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Conform {
+    #[default]
+    Project,
+    Fit,
+    Fill,
+    Stretch,
+    AsIs,
+}
+
+impl Conform {
+    /// Разрешить правило события правилом проекта.
+    pub fn resolve(self, project: ConformRule) -> ConformRule {
+        match self {
+            Conform::Project => project,
+            Conform::Fit => ConformRule::Fit,
+            Conform::Fill => ConformRule::Fill,
+            Conform::Stretch => ConformRule::Stretch,
+            Conform::AsIs => ConformRule::AsIs,
+        }
+    }
+
+    pub fn from_rule(r: ConformRule) -> Conform {
+        match r {
+            ConformRule::Fit => Conform::Fit,
+            ConformRule::Fill => Conform::Fill,
+            ConformRule::Stretch => Conform::Stretch,
+            ConformRule::AsIs => Conform::AsIs,
+        }
+    }
+}
+
+/// ВЕДУЩИЙ узел «Геометрия» видео-события (Р.62): правило приведения +
+/// кроп (доли источника), положение (доли холста, 0 — по центру), зум,
+/// поворот (градусы) вокруг якоря (доли рамки). Стоит в цепочке ПЕРВЫМ
+/// (`ClipEvent.geometry_pos`), перетаскивается, не удаляется — как
+/// Pan/Crop в Vegas.
+///
+/// Поле события, а НЕ слот `fx`: так индексы слотов и адреса кривых/связей
+/// не сдвигаются от того, что у события появился узел; движок
+/// материализует его в цепочку на позиции `geometry_pos` при сборке.
+/// Дополнительные узлы того же вида — `FxInstance::Geometry` (без правила).
+/// Место под маску (отдельный change): соседнее поле, порядок внутри узла —
+/// кроп → маска → размещение.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct EventGeometry {
+    #[serde(default, skip_serializing_if = "is_default_conform")]
+    pub rule: Conform,
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub crop_l: f64,
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub crop_t: f64,
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub crop_r: f64,
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub crop_b: f64,
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub pos_x: f64,
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub pos_y: f64,
+    #[serde(default = "default_zoom", skip_serializing_if = "is_one")]
+    pub zoom: f64,
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub rot: f64,
+    #[serde(default = "default_half", skip_serializing_if = "is_half")]
+    pub anchor_x: f64,
+    #[serde(default = "default_half", skip_serializing_if = "is_half")]
+    pub anchor_y: f64,
+}
+
+fn is_default_conform(c: &Conform) -> bool {
+    *c == Conform::Project
+}
+fn is_half(v: &f64) -> bool {
+    *v == 0.5
+}
+
+impl Default for EventGeometry {
+    fn default() -> Self {
+        EventGeometry {
+            rule: Conform::Project,
+            crop_l: 0.0,
+            crop_t: 0.0,
+            crop_r: 0.0,
+            crop_b: 0.0,
+            pos_x: 0.0,
+            pos_y: 0.0,
+            zoom: 1.0,
+            rot: 0.0,
+            anchor_x: 0.5,
+            anchor_y: 0.5,
+        }
+    }
+}
+
+impl EventGeometry {
+    pub fn is_default(&self) -> bool {
+        *self == EventGeometry::default()
+    }
+
+    /// Параметры тождественны (правило не в счёт): узел ничего не
+    /// двигает, только приводит кадр по правилу.
+    pub fn params_identity(&self) -> bool {
+        self.node().geometry_is_identity()
+    }
+
+    /// Тот же узел как слот цепочки (без правила) — форма, которую видит
+    /// kt-fx. Ведущий узел материализуется движком в цепочку на позиции
+    /// `geometry_pos`.
+    pub fn node(&self) -> FxInstance {
+        FxInstance::Geometry {
+            lead: true,
+            crop_l: self.crop_l,
+            crop_t: self.crop_t,
+            crop_r: self.crop_r,
+            crop_b: self.crop_b,
+            pos_x: self.pos_x,
+            pos_y: self.pos_y,
+            zoom: self.zoom,
+            rot: self.rot,
+            anchor_x: self.anchor_x,
+            anchor_y: self.anchor_y,
+        }
+    }
+
+    /// Обратно из слота (правило остаётся своё).
+    pub fn with_node(mut self, n: &FxInstance) -> EventGeometry {
+        if let FxInstance::Geometry {
+            crop_l,
+            crop_t,
+            crop_r,
+            crop_b,
+            pos_x,
+            pos_y,
+            zoom,
+            rot,
+            anchor_x,
+            anchor_y,
+            ..
+        } = n
+        {
+            self.crop_l = *crop_l;
+            self.crop_t = *crop_t;
+            self.crop_r = *crop_r;
+            self.crop_b = *crop_b;
+            self.pos_x = *pos_x;
+            self.pos_y = *pos_y;
+            self.zoom = *zoom;
+            self.rot = *rot;
+            self.anchor_x = *anchor_x;
+            self.anchor_y = *anchor_y;
+        }
+        self
+    }
+}
+
+params_for_struct! { EventGeometry {
+    crop_l: f64, 0.0, 0.95, 0.0, 0.005, Norm, Smooth;
+    crop_t: f64, 0.0, 0.95, 0.0, 0.005, Norm, Smooth;
+    crop_r: f64, 0.0, 0.95, 0.0, 0.005, Norm, Smooth;
+    crop_b: f64, 0.0, 0.95, 0.0, 0.005, Norm, Smooth;
+    pos_x: f64, -2.0, 2.0, 0.0, 0.005, Norm, Smooth;
+    pos_y: f64, -2.0, 2.0, 0.0, 0.005, Norm, Smooth;
+    zoom: f64, 0.05, 32.0, 1.0, 0.01, Ratio, Smooth;
+    rot: f64, -360.0, 360.0, 0.0, 0.5, Deg, Smooth;
+    anchor_x: f64, 0.0, 1.0, 0.5, 0.005, Norm, Smooth;
+    anchor_y: f64, 0.0, 1.0, 0.5, 0.005, Norm, Smooth;
+}}
 
 /// Тип аудио-фильтра (Р.47): срез сверху/снизу/полоса.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -6646,6 +6902,53 @@ impl FxInstance {
         FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 }
     }
 
+    pub fn geometry() -> FxInstance {
+        EventGeometry::default().node()
+    }
+
+    /// Дополнительный (не ведущий) узел «Геометрия» из каталога.
+    pub fn geometry_node() -> FxInstance {
+        let mut g = EventGeometry::default().node();
+        if let FxInstance::Geometry { lead, .. } = &mut g {
+            *lead = false;
+        }
+        g
+    }
+
+    /// Ведущий ли это узел «Геометрия» (материализованный движком).
+    pub fn is_lead_geometry(&self) -> bool {
+        matches!(self, FxInstance::Geometry { lead: true, .. })
+    }
+
+    /// Узел «Геометрия» с тождественными параметрами. Правило приведения
+    /// сюда не входит: тождествен ли ВЕДУЩИЙ узел, решает kt-fx по виду
+    /// источника и холсту (`geometry_is_identity_in`).
+    pub fn geometry_is_identity(&self) -> bool {
+        match self {
+            FxInstance::Geometry {
+                crop_l,
+                crop_t,
+                crop_r,
+                crop_b,
+                pos_x,
+                pos_y,
+                zoom,
+                rot,
+                ..
+            } => {
+                *crop_l == 0.0
+                    && *crop_t == 0.0
+                    && *crop_r == 0.0
+                    && *crop_b == 0.0
+                    && *pos_x == 0.0
+                    && *pos_y == 0.0
+                    && *zoom == 1.0
+                    && *rot == 0.0
+            }
+            _ => false,
+        }
+    }
+
     pub fn cam_motion() -> FxInstance {
         FxInstance::CamMotion { mode: PanMode::Fit, ease: true, time_scale: 1.0, keyframes: vec![] }
     }
@@ -6757,6 +7060,10 @@ pub enum ProjectError {
     DuplicateMediaId(MediaId),
     #[error("settings: fps must divide {tick_hz}", tick_hz = kt_time::TICK_HZ)]
     BadFps,
+    #[error("project conform rule must be a rule, not «follow project»")]
+    BadConform,
+    #[error("clip {0:?}: geometry position beyond the chain")]
+    BadGeometryPos(ClipId),
     #[error("region: end must be greater than start")]
     BadRegion,
     #[error("duplicate morpher id {0:?}")]
@@ -7656,6 +7963,11 @@ impl Project {
         }
         if self.settings.fps == 0 || kt_time::TICK_HZ % self.settings.fps as i64 != 0 {
             return Err(ProjectError::BadFps);
+        }
+        for c in self.reels().flat_map(|(_, r)| r.clips().iter()) {
+            if c.geometry_pos > c.fx.len() {
+                return Err(ProjectError::BadGeometryPos(c.id));
+            }
         }
         let mut media_ids = std::collections::HashSet::new();
         for m in &self.media {

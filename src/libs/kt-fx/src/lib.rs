@@ -29,6 +29,7 @@ pub enum PullKind {
     Warmup,
 }
 
+pub mod conform;
 pub mod geom;
 pub mod plan;
 pub mod simd;

@@ -169,13 +169,21 @@ fn t475_set_media_path_command() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(kt_model::MediaRef { id: MediaId(1), path: "gen:solid".into() });
     p.clips.push(ClipEvent {
         r#gen: Some(kt_model::GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -386,6 +394,9 @@ fn t656_generator_values_live_on_the_event() {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -442,14 +453,22 @@ fn t657_generator_values_are_validated_against_the_media() {
             height: 36,
             sample_rate: 48000,
             pitch_engine: Default::default(),
-        
-        default_shape: Default::default(),});
+
+            default_shape: Default::default(),
+
+            conform: Default::default(),
+
+            settings_explicit: false,
+        });
         p.media.push(MediaRef { id: MediaId(1), path: "gen:solid".into() });
         p.media.push(MediaRef { id: MediaId(2), path: "movie.mp4".into() });
         p.clips.push(ClipEvent {
             r#gen: Some(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Video,

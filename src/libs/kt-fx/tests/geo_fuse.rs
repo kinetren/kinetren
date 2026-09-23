@@ -12,7 +12,15 @@ const W: u32 = 64;
 const H: u32 = 36;
 
 fn ctx() -> VideoFxCtx {
-    VideoFxCtx { out_w: W, out_h: H, u: 0.5, burst_index: 90_000, cam3d: None, in_scale: 1 }
+    VideoFxCtx {
+        out_w: W,
+        out_h: H,
+        u: 0.5,
+        burst_index: 90_000,
+        cam3d: None,
+        in_scale: 1,
+        lead: None,
+    }
 }
 
 /// Кадр как в t26: градиенты + зелёный угол.
@@ -375,8 +383,15 @@ fn bench_geom_1080p() {
         px[3] = 255;
     }
     let mk = || Frame { w: bw, h: bh, rgba: rgba.clone(), has_alpha: false };
-    let bctx =
-        VideoFxCtx { out_w: bw, out_h: bh, u: 0.5, burst_index: 90_000, cam3d: None, in_scale: 1 };
+    let bctx = VideoFxCtx {
+        out_w: bw,
+        out_h: bh,
+        u: 0.5,
+        burst_index: 90_000,
+        cam3d: None,
+        in_scale: 1,
+        lead: None,
+    };
     let ctx3d = VideoFxCtx {
         cam3d: Some(Cam3d { cam: kt_model::CameraParams::default(), world_scale: 1.0 }),
         ..bctx
@@ -454,8 +469,15 @@ fn bench_fx_1080p() {
         px[3] = 255;
     }
     let mk = || Frame { w: bw, h: bh, rgba: rgba.clone(), has_alpha: false };
-    let bctx =
-        VideoFxCtx { out_w: bw, out_h: bh, u: 0.5, burst_index: 90_000, cam3d: None, in_scale: 1 };
+    let bctx = VideoFxCtx {
+        out_w: bw,
+        out_h: bh,
+        u: 0.5,
+        burst_index: 90_000,
+        cam3d: None,
+        in_scale: 1,
+        lead: None,
+    };
     let npx = (bw * bh) as f64;
     let bench = |name: &str, fx: &[FxInstance]| {
         let t0 = Instant::now();

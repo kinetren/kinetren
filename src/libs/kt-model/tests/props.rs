@@ -168,11 +168,8 @@ fn t643b_nothing_to_do_compiles_to_nothing() {
         AutoPlan::compile(&chain, &orphan).is_none(),
         "a chain of orphan curves must compile to None — otherwise the clip pays for nothing"
     );
-    let keyless = vec![vec![ParamCurve {
-        param: "db".into(),
-        keys: vec![],
-        source: CurveSource::Keys,
-    }]];
+    let keyless =
+        vec![vec![ParamCurve { param: "db".into(), keys: vec![], source: CurveSource::Keys }]];
     assert!(AutoPlan::compile(&chain, &keyless).is_none(), "a curve without keys is not live");
 }
 
@@ -184,13 +181,21 @@ fn t649_formula_curves_are_refused_loudly() {
         height: 36,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     let mut c = ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,

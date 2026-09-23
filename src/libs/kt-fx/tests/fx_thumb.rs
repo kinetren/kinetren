@@ -138,7 +138,15 @@ fn t544e_thumb_is_fit_plus_chain_and_nothing_else() {
     let want = apply_video_chain(
         &fx,
         fitted,
-        &VideoFxCtx { out_w: w, out_h: h, u: 0.5, burst_index: 90_000, cam3d: None, in_scale: 1 },
+        &VideoFxCtx {
+            out_w: w,
+            out_h: h,
+            u: 0.5,
+            burst_index: 90_000,
+            cam3d: None,
+            in_scale: 1,
+            lead: None,
+        },
     );
 
     let mut scratch = FxScratch::default();

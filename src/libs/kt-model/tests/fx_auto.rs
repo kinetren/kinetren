@@ -58,13 +58,21 @@ fn t212_keys_stick_to_material_through_edits() {
         height: 180,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -218,7 +226,11 @@ fn t190_apply_fx_auto() {
             keys: AutoKey::linear(vec![key(0, 5.0)]),
             source: Default::default(),
         },
-        ParamCurve { param: "empty".into(), keys: AutoKey::linear(vec![]), source: Default::default() },
+        ParamCurve {
+            param: "empty".into(),
+            keys: AutoKey::linear(vec![]),
+            source: Default::default(),
+        },
     ];
     assert_eq!(apply_fx_auto(&mut f, &curves, Tick(45_000)), 1, "сироты и пустые не считаются");
     assert_eq!(f.get_param("radius"), Some(24.0), "лерп 1..47 в середине");
@@ -229,6 +241,9 @@ fn clip_with_fx() -> ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,
@@ -254,8 +269,13 @@ fn model_with_clip() -> TimelineModel {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(clip_with_fx());
     p.validate().unwrap();
@@ -531,13 +551,21 @@ fn t248_warp_rate_is_shared_by_the_link_group() {
         height: 36,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     let mk = |id: u64, kind: ClipKind| ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(id),
         link_group: Some(GroupId(1)),
         kind,
@@ -894,8 +922,13 @@ fn t697_default_shape_lives_in_the_project_and_applies_to_new_keys() {
         height: 36,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.settings.default_shape = zig;
     let json = serde_json::to_string(&p.settings).expect("настройки сериализуются");
     assert!(json.contains("zigzag"), "умолчание формы не уехало в документ: {json}");
@@ -942,10 +975,7 @@ fn t700_envelope_fits_into_another_effect_kind() {
         "свободный параметр цели не предложен: {:?}",
         fit.free
     );
-    assert!(
-        !fit.free.iter().any(|f| f == &names[0]),
-        "занятый параметр предложен как свободный"
-    );
+    assert!(!fit.free.iter().any(|f| f == &names[0]), "занятый параметр предложен как свободный");
 
     // --- ремаппинг меняет АДРЕС, а не содержимое ----------------------
     let src = ParamCurve {

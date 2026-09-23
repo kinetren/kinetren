@@ -11,13 +11,21 @@ fn sample_project() -> Project {
         height: 1080,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "clips/a.mp4".into() });
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(10),
         link_group: Some(GroupId(1)),
         kind: ClipKind::Video,
@@ -38,6 +46,9 @@ fn sample_project() -> Project {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(11),
         link_group: Some(GroupId(1)),
         kind: ClipKind::Audio,

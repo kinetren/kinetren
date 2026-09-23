@@ -16,6 +16,9 @@ fn clip(id: u64, kind: ClipKind, lane: u32, start: i64, dur: i64, media: u64) ->
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind,
@@ -41,8 +44,13 @@ fn rich_project() -> Project {
         height: 720,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     for id in [1u64, 2, 3] {
         p.media.push(MediaRef { id: MediaId(id), path: format!("media/m{id}.mp4") });
     }
@@ -324,8 +332,13 @@ fn t165_overlapping_lane_survives_layer_roundtrip() {
         height: 360,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "media/a.mp4".into() });
     // три клипа одной дорожки: два перекрываются, третий встык
     for (id, start, dur) in [(1u64, 0i64, 90_000i64), (2, 45_000, 90_000), (3, 200_000, 45_000)] {
@@ -333,6 +346,9 @@ fn t165_overlapping_lane_survives_layer_roundtrip() {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Video,
@@ -520,18 +536,12 @@ fn project_3d() -> Project {
             auto: vec![
                 ParamCurve {
                     param: "pos_x".into(),
-                    keys: vec![
-                        AutoKey::at(Tick(0), 0.0),
-                        AutoKey::at(Tick(90_000), 60.0),
-                    ],
+                    keys: vec![AutoKey::at(Tick(0), 0.0), AutoKey::at(Tick(90_000), 60.0)],
                     source: Default::default(),
                 },
                 ParamCurve {
                     param: "fov_deg".into(),
-                    keys: vec![
-                        AutoKey::at(Tick(0), 39.6),
-                        AutoKey::at(Tick(90_000), 30.0),
-                    ],
+                    keys: vec![AutoKey::at(Tick(0), 39.6), AutoKey::at(Tick(90_000), 30.0)],
                     source: Default::default(),
                 },
             ],
@@ -1135,8 +1145,13 @@ fn nested_project() -> Project {
         height: 720,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     for id in [1u64, 2] {
         p.media.push(MediaRef { id: MediaId(id), path: format!("media/m{id}.mp4") });
     }
@@ -1818,8 +1833,13 @@ fn t638_negative_start_inside_a_reel_survives_the_round_trip() {
         height: 720,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "media/m1.mp4".into() });
     let mut s = Sequence::new(MediaId(100), "Заставка");
     // первое событие начинается ДО нуля ленты; второе стоит в своём
@@ -2159,19 +2179,11 @@ fn t698c_shapes_round_trip_and_the_old_ease_field_migrates() {
 
     let text = save_project(&p, &Retained::default(), None);
     let back = load_project(&text, None).expect("файл с формами читается");
-    let got = &back
-        .project
-        .clips
-        .iter()
-        .find(|c| !c.fx_auto.is_empty())
-        .expect("клип на месте")
-        .fx_auto[0][0];
+    let got =
+        &back.project.clips.iter().find(|c| !c.fx_auto.is_empty()).expect("клип на месте").fx_auto
+            [0][0];
     assert_eq!(got.keys, keys, "формы отрезка не пережили круг");
-    assert_eq!(
-        text,
-        save_project(&back.project, &back.retained, None),
-        "круг не идемпотентен"
-    );
+    assert_eq!(text, save_project(&back.project, &back.retained, None), "круг не идемпотентен");
 
     // --- ПРЕЖНЕЕ поле `ease` читается как ОДНОРОДНАЯ форма -------------
     // и значения кривой обязаны совпасть ПОБИТОВО со значениями до чтения

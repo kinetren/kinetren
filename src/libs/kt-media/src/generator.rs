@@ -85,6 +85,7 @@ impl GeneratorSource {
             fps: None,
             width: GEN_NATIVE,
             height: GEN_NATIVE,
+            sar: (1, 1),
         }
     }
 

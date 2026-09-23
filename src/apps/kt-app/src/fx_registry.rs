@@ -51,6 +51,7 @@ fn video_meta(name: &str) -> (Key, Option<Key>) {
     // и сокращённый `use` спрятал бы использование.
     match name {
         "Pan" => (k::fxreg::cat::MOTION, Some(k::fxreg::kw::PAN)),
+        "Geometry" => (k::fxreg::cat::MOTION, Some(k::fxreg::kw::GEOMETRY)),
         "Mirror" => (k::fxreg::cat::GEOMETRY, Some(k::fxreg::kw::MIRROR)),
         "Blur" => (k::fxreg::cat::BLUR, Some(k::fxreg::kw::BLUR)),
         "Greenscreen" => (k::fxreg::cat::KEY, Some(k::fxreg::kw::GREENSCREEN)),
@@ -116,6 +117,13 @@ fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
             var(tmpl, k::fxreg::var::CLOSEUP, &[("zoom", 1.25)]),
             var(tmpl, k::fxreg::var::PUNCH, &[("zoom", 2.0)]),
             var(tmpl, k::fxreg::var::OFFCENTER, &[("zoom", 1.4), ("pan_x", 0.33)]),
+        ],
+        // Р.62: дополнительный узел «Геометрия» — те же три варианта, что
+        // у Pan (тождественный дефолт иконкой служить не может, t543)
+        "Geometry" => vec![
+            var(tmpl, k::fxreg::var::CLOSEUP, &[("zoom", 1.25)]),
+            var(tmpl, k::fxreg::var::PUNCH, &[("zoom", 2.0)]),
+            var(tmpl, k::fxreg::var::OFFCENTER, &[("zoom", 1.4), ("pos_x", -0.12)]),
         ],
         // у зеркала числовых параметров нет вовсе — только две галки,
         // поэтому вариантов ровно два: третье состояние и есть шаблон

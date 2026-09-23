@@ -34,8 +34,13 @@ fn golden_project() -> Project {
         height: 72,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     for (id, path) in
         [(1, "synth:ramp"), (2, "synth:dc:0.5"), (3, "synth:impulse"), (4, "synth:ramp")]
     {
@@ -48,6 +53,9 @@ fn golden_project() -> Project {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(1),
             link_group: None,
             kind: ClipKind::Audio,
@@ -71,6 +79,9 @@ fn golden_project() -> Project {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(2),
             link_group: None,
             kind: ClipKind::Audio,
@@ -92,6 +103,9 @@ fn golden_project() -> Project {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(3),
             link_group: None,
             kind: ClipKind::Audio,
@@ -113,6 +127,9 @@ fn golden_project() -> Project {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(4),
             link_group: None,
             kind: ClipKind::Audio,
@@ -168,6 +185,9 @@ fn golden_project() -> Project {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(5),
             link_group: None,
             kind: ClipKind::Video,
@@ -188,6 +208,9 @@ fn golden_project() -> Project {
             r#gen: None,
             gen_auto: Vec::new(),
             overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
             id: ClipId(6),
             link_group: None,
             kind: ClipKind::Video,
@@ -410,8 +433,13 @@ fn generator_project() -> (Project, Sources) {
         height: 72,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:dc:0.25".into() });
     // Р.59, стадия 2: в пути медиа — ВИД, значения на событии
     p.media.push(MediaRef { id: MediaId(2), path: "gen:solid".into() });
@@ -419,6 +447,9 @@ fn generator_project() -> (Project, Sources) {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(id),
         link_group: None,
         kind: ClipKind::Video,
@@ -505,4 +536,44 @@ fn t479_generator_preview_equals_export() {
     let (preview_frame, complete) = video.compose_from_cache(&cache, t, q);
     assert!(complete, "композит с генератором обязан быть полон");
     assert_eq!(preview_frame, frame_a, "превью и экспорт обязаны совпадать байт-в-байт");
+}
+
+/// Тест 715 (Р.62): golden не двигаются (t11/t67 выше зелёные без
+/// перегенерации — на совпадающих пропорциях ведущий узел тождествен), а
+/// вертикальный источник в 16:9 даёт кадр с ПОЛЯМИ: замер геометрии
+/// заливки по готовому кадру экспорта, как в F-MED-004.
+#[test]
+fn t715_vertical_source_gets_fields_in_export() {
+    let mut p = golden_project();
+    // один видео-клип (id 5) на медиа 1; аудио и второй слой не нужны
+    p.clips.retain(|c| c.id == ClipId(5));
+    p.transitions.clear();
+    p.morphers.clear();
+    let q = Quality { width: 128, height: 72 };
+    let src: Vec<(MediaId, Box<dyn MediaSource>)> = vec![(
+        MediaId(1),
+        Box::new(
+            SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence).with_video_size(36, 64),
+        ),
+    )];
+    let mut captured: Option<Vec<u8>> = None;
+    let mut n = 0usize;
+    render_raw_video(&p, src, q, |rgba| {
+        if n == 3 {
+            captured = Some(rgba.to_vec());
+        }
+        n += 1;
+        Ok(())
+    })
+    .unwrap();
+    let f = captured.expect("frame 3");
+    let px =
+        |x: u32, y: u32| &f[((y * q.width + x) * 4) as usize..((y * q.width + x) * 4 + 3) as usize];
+    let dark = |x: u32, y: u32| px(x, y).iter().all(|&v| v < 8);
+    // поля слева и справа — фон, середина — заливка источника
+    assert!(dark(0, 36) && dark(127, 36), "fields are background");
+    assert!(!dark(64, 36), "centre is the source");
+    let lit = (0..q.width).filter(|&x| !dark(x, 36)).count();
+    // рамка «вписать» вертикального 36×64 в 128×72: 72·36/64 = 40.5 px
+    assert!((39..=42).contains(&lit), "fitted width ≈ 40.5 px, got {lit}");
 }

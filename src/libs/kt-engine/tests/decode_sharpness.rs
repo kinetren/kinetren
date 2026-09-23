@@ -39,6 +39,7 @@ impl MediaSource for Checker {
             fps: Some((30, 1)),
             width: NW,
             height: NH,
+            sar: (1, 1),
         })
     }
 
@@ -101,13 +102,21 @@ fn project(fx: Vec<FxInstance>) -> Project {
         height: H,
         sample_rate: 48000,
         pitch_engine: Default::default(),
-    
-    default_shape: Default::default(),});
+
+        default_shape: Default::default(),
+
+        conform: Default::default(),
+
+        settings_explicit: false,
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "checker".into() });
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
         overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
         id: ClipId(1),
         link_group: None,
         kind: ClipKind::Video,

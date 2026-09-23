@@ -124,7 +124,13 @@ enum Fun {
 impl Fun {
     fn arity(self) -> usize {
         match self {
-            Fun::Abs | Fun::Floor | Fun::Ceil | Fun::Round | Fun::Sqrt | Fun::Sin | Fun::Cos
+            Fun::Abs
+            | Fun::Floor
+            | Fun::Ceil
+            | Fun::Round
+            | Fun::Sqrt
+            | Fun::Sin
+            | Fun::Cos
             | Fun::Noise => 1,
             Fun::Min | Fun::Max => 2,
             Fun::Clamp | Fun::Lerp => 3,
@@ -179,12 +185,10 @@ impl Formula {
 fn eval(n: &Node, vars: &BTreeMap<String, f64>) -> Result<f64, FormulaError> {
     Ok(match n {
         Node::Num(v) => *v,
-        Node::Var(name) => *vars
-            .get(name)
-            .ok_or_else(|| FormulaError {
-                at: 0,
-                kind: FormulaErrorKind::UnknownName(name.clone()),
-            })?,
+        Node::Var(name) => *vars.get(name).ok_or_else(|| FormulaError {
+            at: 0,
+            kind: FormulaErrorKind::UnknownName(name.clone()),
+        })?,
         Node::Neg(a) => -eval(a, vars)?,
         Node::Bin(op, a, b) => {
             let (x, y) = (eval(a, vars)?, eval(b, vars)?);
@@ -381,22 +385,17 @@ impl Parser<'_> {
                     if args.len() != 3 {
                         return Err(FormulaError {
                             at: st,
-                            kind: FormulaErrorKind::Arity {
-                                name,
-                                want: 3,
-                                got: args.len(),
-                            },
+                            kind: FormulaErrorKind::Arity { name, want: 3, got: args.len() },
                         });
                     }
                     let mut it = args.into_iter();
                     let (c, a, b) = (it.next().unwrap(), it.next().unwrap(), it.next().unwrap());
                     return Ok(Node::If(Box::new(c), Box::new(a), Box::new(b)));
                 }
-                let f = Fun::by_name(&name)
-                    .ok_or_else(|| FormulaError {
-                        at: st,
-                        kind: FormulaErrorKind::UnknownName(name.clone()),
-                    })?;
+                let f = Fun::by_name(&name).ok_or_else(|| FormulaError {
+                    at: st,
+                    kind: FormulaErrorKind::UnknownName(name.clone()),
+                })?;
                 if args.len() != f.arity() {
                     return Err(FormulaError {
                         at: st,

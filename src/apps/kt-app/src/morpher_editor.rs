@@ -523,7 +523,7 @@ impl KtApp {
                 ui.separator();
 
                 match ed.sel {
-                    crate::widgets::ChainSel::Head => {
+                    crate::widgets::ChainSel::Head | crate::widgets::ChainSel::Lead => {
                         changed |= self.morph_source_section(ui, ed, &mut ev, &mut pick_file);
                     }
                     crate::widgets::ChainSel::Fx(i) => {
