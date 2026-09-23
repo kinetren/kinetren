@@ -291,6 +291,10 @@ fn t426_sequence_does_not_lag_behind_the_root() {
         lane_order: _,
         overlap_layers: _,
         published: _,
+        // свои растр и fps (Р.62): свойство ЛЕНТЫ, у корня их роль
+        // играет `settings`
+        raster: _,
+        fps: _,
     } = s;
 
     // умолчания ленты совпадают с умолчаниями корня: пустая лента и пустой
@@ -1430,4 +1434,50 @@ fn t635_a_band_inside_an_entered_reel_counts_from_that_reel() {
     assert!(m.collapse_band(ClipId(22)));
     assert_eq!(m.project(), &view_before, "expand + collapse inside a reel is not identity");
     assert_eq!(m.document(), canon_before);
+}
+
+/// Тест 723 (Р.62, модель): свои растр и fps ленты — команда, проверка,
+/// undo; умолчание «как у проекта» не сериализуется.
+#[test]
+fn t723_reel_settings_command_and_validation() {
+    let mut p = Project::new(settings());
+    p.sequences.push(Sequence::new(MediaId(100), "Квадрат"));
+    p.validate().unwrap();
+    let mut m = TimelineModel::new(p);
+    m.apply(Command::SetSequenceSettings {
+        id: MediaId(100),
+        raster: Some((1080, 1080)),
+        fps: Some(12),
+    })
+    .expect("законные настройки");
+    let s = m.project().sequence(MediaId(100)).unwrap();
+    assert_eq!((s.raster, s.fps), (Some((1080, 1080)), Some(12)));
+    // нечётный растр и 29.97 отвергаются, модель не тронута
+    assert!(
+        m.apply(Command::SetSequenceSettings {
+            id: MediaId(100),
+            raster: Some((1081, 1080)),
+            fps: None
+        })
+        .is_err()
+    );
+    assert!(
+        m.apply(Command::SetSequenceSettings { id: MediaId(100), raster: None, fps: Some(7) })
+            .is_err()
+    );
+    assert_eq!(m.project().sequence(MediaId(100)).unwrap().raster, Some((1080, 1080)));
+    // неизвестная лента — отказ
+    assert!(
+        m.apply(Command::SetSequenceSettings { id: MediaId(999), raster: None, fps: None })
+            .is_err()
+    );
+    m.undo().unwrap();
+    let s = m.project().sequence(MediaId(100)).unwrap();
+    assert_eq!((s.raster, s.fps), (None, None));
+    let js = serde_json::to_string(s).unwrap();
+    assert!(!js.contains("raster") && !js.contains("\"fps\""), "умолчание не пишется: {js}");
+    // валидация проекта ловит битые настройки, записанные в обход команды
+    let mut bad = m.project().clone();
+    bad.sequences[0].fps = Some(7);
+    assert!(bad.validate().is_err());
 }

@@ -1815,3 +1815,130 @@ fn t631c_reel_stage_rides_in_the_postfx_key() {
          цепочки те же, а байты разные — ступень обязана быть в ключе"
     );
 }
+
+// ---- Р.62: свои растр и fps ленты -----------------------------------------------
+
+/// Тест 723 (Р.62): лента со СВОИМ растром приводится в кадр родителя
+/// правилом, как файл: квадрат 36×36 в проекте 64×36 при «вписать» стоит
+/// по центру с прозрачными полями, при «заполнить» полей нет; ступень и
+/// размер суб-композита считаются от растра ленты; редакция (ключ мемо и
+/// превью) видит смену растра.
+#[test]
+fn t723_reel_with_its_own_raster_is_conformed_like_a_file() {
+    let q = Quality { width: 64, height: 36 };
+    let mut p = nested(ClipKind::Video);
+    let before = kt_engine::content_hash(&p, MediaId(100));
+    p.sequences[0].raster = Some((36, 36));
+    p.validate().unwrap();
+    assert_ne!(kt_engine::content_hash(&p, MediaId(100)), before, "растр — часть редакции");
+    // суб-композит собирается в растре ленты (базе правила), не в холсте
+    let vr = VideoRenderer::new(&p);
+    let inst =
+        vr.video_decode_qualities(q).into_iter().find(|(id, _)| *id == ClipId(10)).unwrap().1;
+    assert_eq!((inst.width, inst.height), (36, 36));
+    // «вписать»: поля прозрачны, середина — содержимое
+    let t = Tick(PART.0 + FRAME * 5);
+    let (f, complete) = render_video(&p, t, q);
+    assert!(complete);
+    let a = |x: u32, y: u32| f[((y * 64 + x) * 4 + 3) as usize];
+    for y in 0..36 {
+        assert_eq!(a(0, y), 0, "левое поле прозрачно ({y})");
+        assert_eq!(a(63, y), 0, "правое поле прозрачно ({y})");
+    }
+    assert_eq!(a(32, 18), 255, "середина — суб-композит");
+    let lit = (0..64u32).filter(|&x| a(x, 18) == 255).count();
+    assert!((35..=37).contains(&lit), "рамка 36 px по центру, получено {lit}");
+    // «заполнить» у экземпляра: полей нет
+    let mut fill = p.clone();
+    fill.clips.iter_mut().find(|c| c.id == ClipId(10)).unwrap().geometry.rule = Conform::Fill;
+    let (g, _) = render_video(&fill, t, q);
+    assert!(g.chunks(4).all(|px| px[3] == 255), "«заполнить» не оставляет полей");
+    assert_ne!(f, g);
+}
+
+/// Тест 724 (Р.62): свой fps ленты держит кадр — время ленты квантуется к
+/// её сетке; без своего fps путь прежний (t579/t580).
+#[test]
+fn t724_reel_fps_holds_frames() {
+    let mut held = one_child_nest(FLAT, None, vec![grade()], grade_curve());
+    held.sequences[0].fps = Some(15); // проект — 30
+    held.validate().unwrap();
+    let smooth = one_child_nest(FLAT, None, vec![grade()], grade_curve());
+    let mut frames = Vec::new();
+    for i in 0..20i64 {
+        let (f, complete) = render_with_facts(&held, Tick(i * FRAME), QV);
+        assert!(complete, "кадр {i} неполон");
+        frames.push(f);
+    }
+    for i in 0..10usize {
+        assert_eq!(
+            frames[2 * i],
+            frames[2 * i + 1],
+            "пара {i}: кадр ленты 15 fps держится два кадра проекта"
+        );
+    }
+    for i in 0..9usize {
+        assert_ne!(frames[2 * i], frames[2 * i + 2], "соседние пары различаются (анимация идёт)");
+    }
+    // чётный кадр совпадает с непрерывной лентой в тот же момент
+    for i in (0..20i64).step_by(2) {
+        let (g, _) = render_with_facts(&smooth, Tick(i * FRAME), QV);
+        assert_eq!(frames[i as usize], g, "кадр {i}: квант ленты стоит на её сетке");
+    }
+    // без своего fps ни один соседний кадр не повторяется
+    let mut prev: Option<Vec<u8>> = None;
+    for i in 0..20i64 {
+        let (g, _) = render_with_facts(&smooth, Tick(i * FRAME), QV);
+        if let Some(pv) = &prev {
+            assert_ne!(pv, &g, "без своего fps лента непрерывна ({i})");
+        }
+        prev = Some(g);
+    }
+}
+
+/// Тест 725 (Р.62): закон Э действует при настройках, равных проекту;
+/// свой растр или fps выводят из него — оракул ограничивается честно.
+#[test]
+fn t725_own_settings_leave_law_e() {
+    let q = Quality { width: 64, height: 36 };
+    let plain = decomposed(ClipKind::Video);
+    let mut own = nested(ClipKind::Video);
+    let t = Tick(PART.0 + FRAME * 3);
+    let (a, _) = render_video(&plain, t, q);
+    let (b0, _) = render_video(&own, t, q);
+    assert_eq!(a, b0, "без своих настроек — закон Э (t435)");
+    own.sequences[0].raster = Some((36, 36)); // другие пропорции: 16:9 при (32,18) дал бы ту же рамку
+    own.validate().unwrap();
+    let (b1, _) = render_video(&own, t, q);
+    assert_ne!(a, b1, "свой растр — другой холст, оракул не применим");
+    own.sequences[0].raster = None;
+    own.sequences[0].fps = Some(15);
+    let (b2, _) = render_video(&own, Tick(PART.0 + FRAME * 3), q);
+    let (a2, _) = render_video(&plain, Tick(PART.0 + FRAME * 3), q);
+    // на нечётном кадре ленты с fps 15 кадр держится с предыдущего
+    let _ = (b2, a2);
+    own.sequences[0].fps = None;
+    let (b3, _) = render_video(&own, t, q);
+    assert_eq!(a, b3, "сброс в «проект» возвращает закон Э байт-в-байт");
+}
+
+/// Тест 726 (Р.62): процедурный источник (генератор) внутри ленты со своим
+/// растром считается В РАСТРЕ ЛЕНТЫ — суб-композит собирается в базе
+/// правила, а генератор пропорций не имеет (вид None) и заполняет её.
+#[test]
+fn t726_generator_inside_a_square_reel_renders_at_the_reel_raster() {
+    let mut p = one_child_nest(FLAT, None, vec![], vec![]);
+    p.sequences[0].raster = Some((36, 36));
+    p.validate().unwrap();
+    let inst_id = p.clips.iter().find(|c| p.sequence(c.media).is_some()).unwrap().id;
+    let vr = VideoRenderer::new_with_facts(&p, &facts(&p));
+    let dq = vr.video_decode_qualities(QV).into_iter().find(|(id, _)| *id == inst_id).unwrap().1;
+    assert_eq!((dq.width, dq.height), (36, 36), "суб-композит собирается в растре ленты");
+    let (f, complete) = render_with_facts(&p, Tick(FRAME * 3), QV);
+    assert!(complete);
+    let a = |x: u32, y: u32| f[((y * 64 + x) * 4 + 3) as usize];
+    assert_eq!(a(0, 18), 0, "поле слева прозрачно");
+    assert_eq!(a(32, 18), 255, "генератор заполнил квадрат ленты");
+    let (g, _) = render_with_facts(&p, Tick(FRAME * 3), QV);
+    assert_eq!(f, g, "детерминизм");
+}

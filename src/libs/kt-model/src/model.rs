@@ -412,6 +412,12 @@ pub enum Command {
         id: MediaId,
         name: String,
     },
+    /// Свои растр и fps ленты (Р.62); `None` — как у проекта.
+    SetSequenceSettings {
+        id: MediaId,
+        raster: Option<(u32, u32)>,
+        fps: Option<u32>,
+    },
     /// Полная замена СОДЕРЖИМОГО ленты (Box — чтобы `Command` не разнесло
     /// по размеру ради одного варианта).
     SetSequenceContent {
@@ -561,6 +567,7 @@ impl Command {
             | Command::AddSequence { .. }
             | Command::RemoveSequence { .. }
             | Command::RenameSequence { .. }
+            | Command::SetSequenceSettings { .. }
             | Command::SetSequenceContent { .. }
             // Переопределение и публикация меняют СОДЕРЖИМОЕ ленты,
             // какой её видит движок: редакция становится другой, план
@@ -783,6 +790,7 @@ impl Band {
                 | Command::AddSequence { .. }
                 | Command::RemoveSequence { .. }
                 | Command::RenameSequence { .. }
+                | Command::SetSequenceSettings { .. }
                 | Command::SetSequenceContent { .. }
                 | Command::PublishParam { .. }
                 | Command::UnpublishParam { .. }
@@ -1437,6 +1445,17 @@ impl TimelineModel {
                     return Err(CommandError::InvalidClip(ProjectError::SequenceUnnamed(*id)));
                 }
             }
+            Command::SetSequenceSettings { id, raster, fps } => {
+                let Some(s) = p.sequence(*id) else {
+                    return Err(CommandError::SequenceNotFound(*id));
+                };
+                let mut probe = s.clone();
+                probe.raster = *raster;
+                probe.fps = *fps;
+                if !probe.settings_ok() {
+                    return Err(CommandError::InvalidClip(ProjectError::BadSequenceSettings(*id)));
+                }
+            }
             Command::SetSequenceContent { id, content } => {
                 if p.sequence(*id).is_none() {
                     return Err(CommandError::SequenceNotFound(*id));
@@ -1971,6 +1990,12 @@ impl TimelineModel {
             Command::RemoveMedia { id } => p.media.retain(|m| m.id != id),
             Command::AddSequence { id, name } => p.sequences.push(Sequence::new(id, name)),
             Command::RemoveSequence { id } => p.sequences.retain(|s| s.id != id),
+            Command::SetSequenceSettings { id, raster, fps } => {
+                if let Some(s) = p.sequence_mut(id) {
+                    s.raster = raster;
+                    s.fps = fps;
+                }
+            }
             Command::RenameSequence { id, name } => {
                 if let Some(s) = p.sequence_mut(id) {
                     s.name = name;

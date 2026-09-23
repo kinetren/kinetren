@@ -741,3 +741,25 @@ fn t687_two_differently_overridden_instances_conform_gpu_to_cpu() {
          конформанс проверен ни на чём"
     );
 }
+
+/// Тест 724b (Р.62): свой fps ленты — на GPU конформанс EXACT с CPU, и
+/// кадр держится (чётный и нечётный кадры проекта равны).
+#[test]
+fn t724b_reel_fps_holds_frames_on_gpu() {
+    let Some(e) = test_engine() else { return };
+    let q = Quality { width: 128, height: 72 };
+    let mut p = animated_nested_project(vec![]);
+    p.sequences[0].fps = Some(15);
+    p.validate().unwrap();
+    let mut video = VideoRenderer::new(&p);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let (even, odd, next) = (Tick(20 * 3000), Tick(21 * 3000), Tick(22 * 3000));
+    let (cpu_e, gpu_e) = cpu_and_gpu(&e, &mut video, &cache, q, even);
+    let (cpu_o, gpu_o) = cpu_and_gpu(&e, &mut video, &cache, q, odd);
+    let (_, gpu_n) = cpu_and_gpu(&e, &mut video, &cache, q, next);
+    assert_frames_close(&cpu_e, &gpu_e, q.width, q.height, FrameTol::EXACT, "t724b-even");
+    assert_frames_close(&cpu_o, &gpu_o, q.width, q.height, FrameTol::EXACT, "t724b-odd");
+    assert_eq!(gpu_e, gpu_o, "лента 15 fps в проекте 30: нечётный кадр держит чётный");
+    assert_ne!(gpu_e, gpu_n, "следующий кадр ленты — другой");
+    assert!(gpu_e.iter().any(|&x| x != 0), "кадр чёрный — сверять нечего");
+}

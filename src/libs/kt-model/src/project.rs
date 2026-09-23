@@ -1499,6 +1499,15 @@ pub struct Sequence {
     /// сегодня, байт в байт.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub published: Vec<PublishedParam>,
+    /// СВОЙ растр ленты (Р.62, пересмотр Р.50 по просьбе владельца).
+    /// `None` — проект. Экземпляр приводится в кадр родителя тем же
+    /// правилом, что файл, с видом = растр ленты.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raster: Option<(u32, u32)>,
+    /// СВОЙ fps ленты: квантование её непрерывного времени к своей сетке
+    /// (кадр держится, без смешения). `None` — проект. На звук не влияет.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fps: Option<u32>,
 }
 
 impl Sequence {
@@ -1517,7 +1526,20 @@ impl Sequence {
             lane_order: Vec::new(),
             overlap_layers: true,
             published: Vec::new(),
+            raster: None,
+            fps: None,
         }
+    }
+
+    /// Свои настройки законны? Растр — чётный в пределах 16…8192, fps —
+    /// делитель 90 000 в пределах 1…120 (та же проверка, что у проекта).
+    pub fn settings_ok(&self) -> bool {
+        let raster_ok = self.raster.is_none_or(|(w, h)| {
+            [w, h].iter().all(|v| (16..=8192).contains(v) && v.is_multiple_of(2))
+        });
+        let fps_ok =
+            self.fps.is_none_or(|f| (1..=120).contains(&f) && kt_time::TICK_HZ % f as i64 == 0);
+        raster_ok && fps_ok
     }
 
     /// Строки ленты сверху вниз — то же правило, что у корня.
@@ -7078,6 +7100,8 @@ pub enum ProjectError {
     BadConform,
     #[error("clip {0:?}: geometry position beyond the chain")]
     BadGeometryPos(ClipId),
+    #[error("reel {0:?}: raster must be even 16..8192, fps a divisor of 90000 in 1..120")]
+    BadSequenceSettings(MediaId),
     #[error("region: end must be greater than start")]
     BadRegion,
     #[error("duplicate morpher id {0:?}")]
@@ -7981,6 +8005,11 @@ impl Project {
         for c in self.reels().flat_map(|(_, r)| r.clips().iter()) {
             if c.geometry_pos > c.fx.len() {
                 return Err(ProjectError::BadGeometryPos(c.id));
+            }
+        }
+        for s in &self.sequences {
+            if !s.settings_ok() {
+                return Err(ProjectError::BadSequenceSettings(s.id));
             }
         }
         let mut media_ids = std::collections::HashSet::new();

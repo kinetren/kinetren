@@ -392,7 +392,8 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                         .any(|f| matches!(f, kt_model::FxInstance::Geometry { .. }))
                 })
                 || p.settings.conform != Default::default()
-                || p.settings.settings_explicit;
+                || p.settings.settings_explicit
+                || p.sequences.iter().any(|s| s.raster.is_some() || s.fps.is_some());
             if has_v11 {
                 crate::meta::KT_META_V11
             } else if has_v10 {
@@ -1047,6 +1048,13 @@ fn nest_to_otio(
     );
     // адрес ленты — вот по этому ключу экземпляры схлопываются на чтении
     crate::meta::kt_entry_mut(&mut meta).insert("seq".into(), Value::from(seq.id.0));
+    // свои растр и fps ленты (Р.62) — только когда заданы
+    if let Some((w, h)) = seq.raster {
+        crate::meta::kt_entry_mut(&mut meta).insert("raster".into(), serde_json::json!([w, h]));
+    }
+    if let Some(f) = seq.fps {
+        crate::meta::kt_entry_mut(&mut meta).insert("fps".into(), Value::from(f));
+    }
     Stack {
         name: seq.name.clone(),
         children,
@@ -2248,6 +2256,22 @@ fn nest_effects(
     (fx, bypass, auto, reversed)
 }
 
+/// Свои растр и fps ленты из конверта `kt` (Р.62); нет ключей — проект.
+fn read_reel_settings(metadata: &Map<String, Value>, seq: &mut Sequence) {
+    let Some(kt) = metadata.get(crate::meta::KT_NS).and_then(|v| v.as_object()) else {
+        return;
+    };
+    if let Some(r) = kt.get("raster").and_then(|v| v.as_array())
+        && r.len() == 2
+        && let (Some(w), Some(h)) = (r[0].as_u64(), r[1].as_u64())
+    {
+        seq.raster = Some((w as u32, h as u32));
+    }
+    if let Some(f) = kt.get("fps").and_then(|v| v.as_u64()) {
+        seq.fps = Some(f as u32);
+    }
+}
+
 fn read_nest(
     st: &Stack,
     kind: ClipKind,
@@ -2303,12 +2327,14 @@ fn read_nest(
                 st.name
             ));
             let mut seq = Sequence::new(addr, st.name.clone());
+            read_reel_settings(&st.metadata, &mut seq);
             seq.clips = std::mem::take(&mut body.clips);
             seq.transitions = std::mem::take(&mut body.transitions);
             cx.seqs.push((addr, seq));
         }
         None => {
             let mut seq = Sequence::new(seq_id, st.name.clone());
+            read_reel_settings(&st.metadata, &mut seq);
             seq.clips = std::mem::take(&mut body.clips);
             seq.transitions = std::mem::take(&mut body.transitions);
             cx.seqs.push((seq_id, seq));

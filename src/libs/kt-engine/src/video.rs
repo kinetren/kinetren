@@ -98,6 +98,9 @@ struct VideoClip {
     /// дереве (Р.50, Б5). Свойство ЛЕНТЫ, а не экземпляра: разойдись они —
     /// у внутреннего клипа два ключа кэша и два заказа.
     nest_scale: u32,
+    /// СВОЙ fps ленты (Р.62): внутреннее время экземпляра квантуется к её
+    /// сетке (кадр держится). `None` — непрерывно, как Р.56.
+    nest_fps: Option<u32>,
     /// ПРОЦЕДУРНЫЙ источник (Р.56, п.448): у медиа нет своей сетки кадров,
     /// кадр — чистая функция тика (генераторы, титры, заглушка). Такому
     /// клипу пол по сетке не ставится: под растяжением он обязан двигаться
@@ -206,6 +209,9 @@ fn hash_reel(project: &Project, seq: MediaId, depth: usize, h: &mut xxhash_rust:
     // объявленный набор ручек — тоже СОДЕРЖИМОЕ ленты: сужение предела
     // меняет то, что рисуется у экземпляра с переопределением
     h.update(format!("{:?}", s.published).as_bytes());
+    // свои растр и fps (Р.62) — редакция: другой холст или другая сетка —
+    // другой кадр, ключи мемо и превью ленты обязаны это видеть
+    h.update(format!("{:?}{:?}", s.raster, s.fps).as_bytes());
     for c in &s.clips {
         if project.sequence(c.media).is_some() {
             hash_reel(project, c.media, depth + 1, h);
@@ -264,7 +270,16 @@ fn clip_source_pts(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
 /// мемо суб-композита отдавало ту же запись, и всё процедурное внутри
 /// (титры, анимация, автоматизация, камеры) шло ступеньками по два кадра.
 fn clip_inner_tick(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
-    clip_material_pos(c, t, grid)
+    let m = clip_material_pos(c, t, grid);
+    match c.nest_fps {
+        // СВОЙ fps ленты (Р.62): её время квантуется к её сетке — кадр
+        // держится до следующего, без смешения; это намеренные ступеньки
+        Some(f) if f > 0 => {
+            let step = kt_time::TICK_HZ / f as i64;
+            Tick(m.0.div_euclid(step) * step)
+        }
+        _ => m,
+    }
 }
 
 /// Смешивает ли этот экземпляр кадры (Р.56, п.448). Наследуется ВНИЗ: на
@@ -465,7 +480,7 @@ fn nest_scales(project: &Project) -> std::collections::HashMap<MediaId, u32> {
             let (fx, auto) = materialize_lead(c, fx, auto);
             let plan = kt_model::AutoPlan::compile(&fx, &auto);
             let lead = Some(kt_fx::conform::LeadCtx::new(
-                None,
+                project.sequence(c.media).and_then(|s| s.raster).map(|(w, h)| (w as f64, h as f64)),
                 c.geometry.rule.resolve(project.settings.conform),
             ));
             let zoom = clip_head_zoom(
@@ -536,11 +551,13 @@ fn scaled(q: Quality, s: u32) -> Quality {
 /// кадр при ступени 1 — рамка правила на холсте `quality`, растянутая
 /// обратно на весь кадр (кроп вырезает узел). У ленты — холст.
 fn clip_base_quality(clip: &VideoClip, quality: Quality) -> Quality {
-    if clip.nest.is_some() {
-        return quality;
-    }
     let lead =
         clip.lead.unwrap_or(kt_fx::conform::LeadCtx::new(None, kt_model::ConformRule::Stretch));
+    // лента без своего растра — холст родителя (закон Э); со своим (Р.62) —
+    // рамка правила, как у файла: суб-композит собирается в ней
+    if clip.nest.is_some() && lead.view.is_none() {
+        return quality;
+    }
     let g = kt_fx::conform::conform_geometry(
         lead.view,
         (quality.width, quality.height),
@@ -830,14 +847,25 @@ impl VideoRenderer {
                 // запрошенного качества, пропорций у него нет: вид None →
                 // рамка = холст, узел тождествен (spec generators, Р.62)
                 let procedural = facts.procedural.contains(&addr);
+                // ЛЕНТА со своим растром (Р.62) — вид = её растр, экземпляр
+                // приводится как файл; без своего растра вид неизвестен и
+                // рамка равна холсту (закон Э)
+                let reel_raster = nest
+                    .and_then(|_| project.sequence(c.media))
+                    .and_then(|s| s.raster)
+                    .map(|(w, h)| (w as f64, h as f64));
+                let view = if nest.is_some() {
+                    reel_raster
+                } else if procedural {
+                    None
+                } else {
+                    facts.views.get(&addr).copied()
+                };
                 let lead = Some(kt_fx::conform::LeadCtx::new(
-                    if nest.is_some() || procedural {
-                        None
-                    } else {
-                        facts.views.get(&addr).copied()
-                    },
+                    view,
                     c.geometry.rule.resolve(project.settings.conform),
                 ));
+                let nest_fps = nest.and_then(|_| project.sequence(c.media)).and_then(|s| s.fps);
                 let crop =
                     [c.geometry.crop_l, c.geometry.crop_t, c.geometry.crop_r, c.geometry.crop_b];
                 let head_zoom = clip_head_zoom(
@@ -880,6 +908,7 @@ impl VideoRenderer {
                     nest,
                     content,
                     nest_scale: nest.and_then(|(id, _)| nest_scales.get(&id).copied()).unwrap_or(1),
+                    nest_fps,
                     procedural,
                 }
             })
@@ -1023,7 +1052,7 @@ impl VideoRenderer {
                 // листья, и греть им надо обе стороны пары.
                 Some(sub) => sub.layers_at_into(
                     a,
-                    scaled(quality, clip_decode_scale(c, quality)),
+                    clip_decode_quality(c, quality),
                     nest_blend(c, blend_footage),
                     out,
                 ),
@@ -1527,7 +1556,7 @@ fn layer_src<'a>(
                 &sub_ctx,
                 cache,
                 src_pts,
-                scaled(quality, stage),
+                clip_decode_quality(clip, quality),
                 ctx.memoize,
             );
             crate::video_plan::LayerInput::Nest(Box::new(crate::video_plan::NestSrc {

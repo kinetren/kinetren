@@ -2300,3 +2300,127 @@ fn t698d_a_broken_curve_source_is_an_error_with_an_address() {
         assert_eq!(text, save_project(&back.project, &back.retained, None), "идемпотентность");
     }
 }
+
+
+/// Тест 728 (Р.62): v11 по содержимому. Правило проекта, явные настройки,
+/// геометрия события (правило-исключение, кадрирование, позиция ведущего
+/// узла, его кривые), собственные растр и fps ленты — всё переживает круг
+/// и поднимает конверт до v11; файл БЕЗ этого остаётся на прежней версии
+/// (t433b держит байты старых фикстур). Прежний эффект `kt:pan` читается
+/// узлом «Геометрия» на том же слоте с пересчётом `pan → pos`.
+#[test]
+fn t728_conform_geometry_and_reel_settings_round_trip_as_v11() {
+    // 1. плоский проект без ничего нового — версия не двигается
+    let plain = rich_project();
+    let text0 = save_project(&plain, &Retained::default(), None);
+    let v0 = kt_otio::kt_version(&parse_document(&text0).unwrap()).unwrap();
+    assert!(v0 < kt_otio::KT_META_V11, "проект без геометрии не должен быть v11 (v{v0})");
+
+    // 2. правило проекта — само по себе v11
+    let mut p = rich_project();
+    p.settings.conform = ConformRule::Fill;
+    p.settings.settings_explicit = true;
+    let text = save_project(&p, &Retained::default(), None);
+    assert_eq!(kt_otio::kt_version(&parse_document(&text).unwrap()), Some(kt_otio::KT_META_V11));
+    let b = load_project(&text, None).unwrap();
+    assert_eq!(b.project.settings.conform, ConformRule::Fill);
+    assert!(b.project.settings.settings_explicit, "явность настроек — содержимое файла");
+
+    // 3. геометрия события: исключение из правила, кадрирование, ведущий
+    //    узел не первым, кривая на нём
+    let mut p = rich_project();
+    p.clips[0].geometry = EventGeometry {
+        rule: Conform::AsIs,
+        crop_l: 0.1,
+        crop_r: 0.2,
+        pos_x: 0.05,
+        zoom: 1.5,
+        rot: 10.0,
+        ..Default::default()
+    };
+    p.clips[0].fx = vec![FxInstance::blur(4)];
+    p.clips[0].fx_auto = vec![vec![]];
+    p.clips[0].fx_bypass = vec![false];
+    p.clips[0].geometry_pos = 1;
+    p.clips[0].geometry_auto = vec![ParamCurve {
+        param: "zoom".into(),
+        keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 1.0), AutoKey::at(Tick(45_000), 2.0)]),
+        source: Default::default(),
+    }];
+    // и ещё один узел «Геометрия» в цепочке события 2 — тоже v11
+    p.clips[1].fx = vec![FxInstance::geometry_zoom(1.25)];
+    p.clips[1].fx_auto = vec![vec![]];
+    p.clips[1].fx_bypass = vec![false];
+    p.validate().unwrap();
+    let text = save_project(&p, &Retained::default(), None);
+    assert_eq!(kt_otio::kt_version(&parse_document(&text).unwrap()), Some(kt_otio::KT_META_V11));
+    let b = load_project(&text, None).unwrap();
+    let c = b.project.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
+    assert_eq!(c.geometry, p.clips[0].geometry, "геометрия события пережила круг");
+    assert_eq!(c.geometry_pos, 1, "позиция ведущего узла пережила круг");
+    assert_eq!(c.geometry_auto, p.clips[0].geometry_auto, "кривые ведущего узла");
+    let c2 = b.project.clips.iter().find(|c| c.id == ClipId(2)).unwrap();
+    assert_eq!(c2.fx, p.clips[1].fx, "узел «Геометрия» в цепочке");
+    assert_eq!(save_project(&b.project, &b.retained, None), text, "идемпотентность");
+
+    // 4. лента со своими растром и fps
+    let mut p = rich_project();
+    let mut s = Sequence::new(MediaId(100), "Квадрат");
+    s.raster = Some((720, 720));
+    s.fps = Some(25);
+    s.clips.push(clip(41, ClipKind::Video, 0, 0, 30_000, 1));
+    p.sequences.push(s);
+    p.clips.push(clip(45, ClipKind::Video, 0, 90_000, 30_000, 100));
+    p.validate().unwrap();
+    let text = save_project(&p, &Retained::default(), None);
+    assert_eq!(kt_otio::kt_version(&parse_document(&text).unwrap()), Some(kt_otio::KT_META_V11));
+    let b = load_project(&text, None).unwrap();
+    let q = b.project.sequence(MediaId(100)).expect("лента прочлась");
+    assert_eq!(q.raster, Some((720, 720)), "растр ленты пережил круг");
+    assert_eq!(q.fps, Some(25), "fps ленты пережил круг");
+    assert_eq!(save_project(&b.project, &b.retained, None), text, "идемпотентность с лентой");
+
+    // 5. прежний `kt:pan` → узел «Геометрия» на том же слоте, pan → pos
+    let mut p = rich_project();
+    p.clips[0].fx = vec![FxInstance::blur(4), FxInstance::gain(1.0)];
+    p.clips[0].fx_auto = vec![vec![], vec![]];
+    p.clips[0].fx_bypass = vec![false, false];
+    p.validate().unwrap();
+    let text = save_project(&p, &Retained::default(), None);
+    let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let effects = &mut v["tracks"]["children"][1]["children"][0]["effects"];
+    assert_eq!(effects[0]["effect_name"], "kt:blur");
+    // второй слот подменяем старым паном с зумом 2 и кривой по pan_x
+    effects[1] = serde_json::json!({
+        "OTIO_SCHEMA": "Effect.1",
+        "name": "",
+        "effect_name": "kt:pan",
+        "enabled": true,
+        "metadata": {"kt": {
+            "kind": "pan", "pan_x": 0.5, "pan_y": -0.5, "zoom": 2.0, "mode": "crop",
+            "auto": [{"param": "pan_x", "keys": [{"t": 0, "v": 0.0}, {"t": 45000, "v": 1.0}]}]
+        }}
+    });
+    let b = load_project(&serde_json::to_string_pretty(&v).unwrap(), None)
+        .expect("файл с прежним kt:pan читается");
+    let c = b.project.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
+    assert_eq!(c.fx.len(), 2, "слот пана не исчез и не сдвинул соседей");
+    assert!(matches!(c.fx[0], FxInstance::Blur { .. }));
+    match &c.fx[1] {
+        FxInstance::Geometry { lead, pos_x, pos_y, zoom, .. } => {
+            assert!(!lead, "мигрированный пан — обычный узел, не ведущий");
+            assert_eq!(*zoom, 2.0);
+            let want = kt_model::pan_to_pos(0.5, 2.0);
+            assert!((pos_x - want).abs() < 1e-12, "pan_x → pos_x при зуме 2: {pos_x} ≠ {want}");
+            let want = kt_model::pan_to_pos(-0.5, 2.0);
+            assert!((pos_y - want).abs() < 1e-12, "pan_y → pos_y: {pos_y} ≠ {want}");
+        }
+        other => panic!("ожидался узел «Геометрия», получено {other:?}"),
+    }
+    let curve = &c.fx_auto[1];
+    assert_eq!(curve.len(), 1);
+    assert_eq!(curve[0].param, "pos_x", "кривая pan_x переехала на pos_x");
+    let last = curve[0].keys.last().unwrap();
+    assert!((last.v - kt_model::pan_to_pos(1.0, 2.0)).abs() < 1e-12, "значения ключей пересчитаны");
+    assert!(c.geometry.is_default(), "ведущий узел события миграция не трогает");
+}

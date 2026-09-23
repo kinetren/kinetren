@@ -367,6 +367,7 @@ impl KtApp {
             // Р.62: окно настроек проекта — одно тело с комбо панели превью
             let r = ui.button(tr(k::menu::file::PROJECT_SETTINGS));
             crate::widgets::field_probe::note("file.project_settings", r.rect);
+            let r = self.hint(r, tr(k::hint::PROJECT_SETTINGS));
             if r.clicked() {
                 self.open_project_settings();
                 ui.close();

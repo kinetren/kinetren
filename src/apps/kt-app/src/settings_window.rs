@@ -17,6 +17,11 @@ use kt_model::{Command, ConformRule, PitchEngine, SegShape};
 pub const FPS_CHOICES: [u32; 12] = [12, 15, 18, 20, 24, 25, 30, 36, 45, 48, 50, 60];
 
 pub struct SettingsWindow {
+    /// `Some` — окно правит ЛЕНТУ (рабочий вид внутри неё): только растр и
+    /// fps, каждый с галкой «как в проекте» (Р.62).
+    pub reel: Option<kt_model::MediaId>,
+    pub inherit_size: bool,
+    pub inherit_fps: bool,
     pub width: String,
     pub height: String,
     pub fps: String,
@@ -75,10 +80,26 @@ impl KtApp {
     /// документа, а не раскрытой ленты).
     pub fn open_project_settings(&mut self) {
         let s = self.model.document().settings.clone();
+        // внутри ленты та же дверь правит ЛЕНТУ: у неё свои растр и fps
+        let reel = self.model.editing();
+        let seq = reel.and_then(|id| self.model.document().sequence(id).cloned());
+        let (inherit_size, inherit_fps, w, h, fps) = match seq {
+            Some(seq) => (
+                seq.raster.is_none(),
+                seq.fps.is_none(),
+                seq.raster.map(|r| r.0).unwrap_or(s.width),
+                seq.raster.map(|r| r.1).unwrap_or(s.height),
+                seq.fps.unwrap_or(s.fps),
+            ),
+            None => (false, false, s.width, s.height, s.fps),
+        };
         self.settings_win = Some(SettingsWindow {
-            width: s.width.to_string(),
-            height: s.height.to_string(),
-            fps: s.fps.to_string(),
+            reel,
+            inherit_size,
+            inherit_fps,
+            width: w.to_string(),
+            height: h.to_string(),
+            fps: fps.to_string(),
             conform: s.conform,
             pitch: s.pitch_engine,
             shape: s.default_shape,
@@ -93,7 +114,14 @@ impl KtApp {
         let mut apply = false;
         let mut cancel = false;
         let cur = self.model.document().settings.clone();
-        egui::Window::new(tr(k::settings::TITLE))
+        let reel_name =
+            d.reel.and_then(|id| self.model.document().sequence(id).map(|s| s.name.clone()));
+        let title = match &reel_name {
+            Some(n) => crate::tf!(k::settings::REEL_TITLE, n),
+            None => tr(k::settings::TITLE).to_string(),
+        };
+        let is_reel = d.reel.is_some();
+        egui::Window::new(title)
             .id(egui::Id::new("project_settings"))
             .open(&mut open)
             .resizable(false)
@@ -102,7 +130,11 @@ impl KtApp {
                 egui::Grid::new("project_settings_grid").num_columns(2).show(ui, |ui| {
                     ui.label(tr(k::settings::SIZE));
                     ui.horizontal(|ui| {
-                        let rw = ui.add(
+                        if is_reel {
+                            ui.checkbox(&mut d.inherit_size, tr(k::settings::INHERIT));
+                        }
+                        let rw = ui.add_enabled(
+                            !(is_reel && d.inherit_size),
                             egui::TextEdit::singleline(&mut d.width)
                                 .id(egui::Id::new("settings_w"))
                                 .desired_width(56.0),
@@ -113,7 +145,8 @@ impl KtApp {
                             d.focus = false;
                         }
                         ui.label("×");
-                        let rh = ui.add(
+                        let rh = ui.add_enabled(
+                            !(is_reel && d.inherit_size),
                             egui::TextEdit::singleline(&mut d.height)
                                 .id(egui::Id::new("settings_h"))
                                 .desired_width(56.0),
@@ -123,7 +156,11 @@ impl KtApp {
                     ui.end_row();
                     ui.label(tr(k::settings::FPS));
                     ui.horizontal(|ui| {
-                        let rf = ui.add(
+                        if is_reel {
+                            ui.checkbox(&mut d.inherit_fps, tr(k::settings::INHERIT));
+                        }
+                        let rf = ui.add_enabled(
+                            !(is_reel && d.inherit_fps),
                             egui::TextEdit::singleline(&mut d.fps)
                                 .id(egui::Id::new("settings_fps"))
                                 .desired_width(48.0),
@@ -139,6 +176,9 @@ impl KtApp {
                         }
                     });
                     ui.end_row();
+                    if is_reel {
+                        return;
+                    }
                     ui.label(tr(k::settings::SAMPLE_RATE));
                     ui.label(format!("{} Hz", cur.sample_rate));
                     ui.end_row();
@@ -190,7 +230,9 @@ impl KtApp {
                     ui.colored_label(crate::app::HINT_ERROR, e);
                 }
                 ui.label(
-                    egui::RichText::new(if cur.settings_explicit {
+                    egui::RichText::new(if is_reel {
+                        tr(k::settings::REEL_NOTE)
+                    } else if cur.settings_explicit {
                         tr(k::settings::EXPLICIT_NOTE)
                     } else {
                         tr(k::settings::ADOPT_NOTE)
@@ -207,7 +249,22 @@ impl KtApp {
                     }
                 });
             });
-        if apply {
+        if apply && let Some(id) = d.reel {
+            let raster =
+                if d.inherit_size { Ok(None) } else { parse_size(&d.width, &d.height).map(Some) };
+            let fps = if d.inherit_fps { Ok(None) } else { parse_fps(&d.fps).map(Some) };
+            match (raster, fps) {
+                (Ok(raster), Ok(fps)) => {
+                    self.apply(Command::SetSequenceSettings { id, raster, fps });
+                    open = false;
+                }
+                (r, f) => {
+                    let e = r.err().or(f.err()).unwrap_or_default();
+                    self.refuse(e.clone());
+                    d.error = Some(e);
+                }
+            }
+        } else if apply {
             match (parse_size(&d.width, &d.height), parse_fps(&d.fps)) {
                 (Ok((w, h)), Ok(fps)) => {
                     let mut st = cur.clone();

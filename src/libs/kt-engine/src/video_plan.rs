@@ -152,12 +152,12 @@ impl NestSrc<'_> {
             "chain input {src_scale}x is above the reel stage {}x",
             self.nest_scale
         );
-        debug_assert_eq!(
-            (self.plan.out_w, self.plan.out_h),
-            (out_w * self.nest_scale, out_h * self.nest_scale),
-            "the sub-plan is built at the reel stage"
-        );
-        Some((out_w * src_scale, out_h * src_scale))
+        // суб-план собран в БАЗЕ ленты × ступень: база — холст родителя
+        // либо, у ленты со своим растром (Р.62), рамка правила приведения
+        let s = self.nest_scale.max(1);
+        let (bw, bh) = (self.plan.out_w / s, self.plan.out_h / s);
+        let _ = (out_w, out_h);
+        Some((bw * src_scale, bh * src_scale))
     }
 }
 
