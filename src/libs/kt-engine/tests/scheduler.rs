@@ -213,7 +213,7 @@ fn t9_prefetch_pass_is_idempotent() {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -299,7 +299,7 @@ fn t287_stutter_of_micro_clips_asks_for_one_burst() {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     // 400 событий по 90 тиков встык, все с одной точки материала
     let step = kt_time::Tick(90);
     for i in 0..400u64 {

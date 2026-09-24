@@ -391,7 +391,7 @@ fn t94_forward_navigation_advances() {
         let app = h.state_mut();
         // проект с точками, НЕ кратными аудио-сетке: 1000, 4000, 7000
         let mut p = app.model.project().clone();
-        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
@@ -474,7 +474,7 @@ fn t95_clip_drag_snaps_to_neighbour() {
         {
             let app = h.state_mut();
             let mut p = app.model.project().clone();
-            p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+            p.media.push(MediaRef::new(MediaId(1), "synth:1"));
             for (n, start) in [(1u64, 0i64), (2, FAR)] {
                 p.clips.push(ClipEvent {
                     r#gen: None,
@@ -835,7 +835,7 @@ fn t99_bin_groups() {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
         for n in 1..=3u64 {
-            p.media.push(MediaRef { id: MediaId(n), path: format!("synth:{n}") });
+            p.media.push(MediaRef::new(MediaId(n), format!("synth:{n}")));
         }
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -1236,7 +1236,7 @@ fn t122_insert_lane_after_clicked_row() {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
         p.ensure_tracks(kt_model::LaneKind::Audio, 3);
-        p.media.push(kt_model::MediaRef { id: kt_model::MediaId(1), path: "synth:1".into() });
+        p.media.push(kt_model::MediaRef::new(kt_model::MediaId(1), "synth:1"));
         p.clips.push(kt_model::ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
@@ -1330,7 +1330,7 @@ fn t120_space_hold_boosts_playback() {
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
@@ -1453,7 +1453,7 @@ fn t119_shift_nav_drags_region() {
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         for (i, start) in [90_000i64, 270_000, 450_000].into_iter().enumerate() {
             p.clips.push(ClipEvent {
                 r#gen: None,
@@ -1557,7 +1557,7 @@ fn t118_bin_autoscrolls_and_wheel_works() {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
         for n in 1..=3u64 {
-            p.media.push(MediaRef { id: MediaId(n), path: format!("synth:{n}") });
+            p.media.push(MediaRef::new(MediaId(n), format!("synth:{n}")));
         }
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -2009,7 +2009,7 @@ fn t139_move_plan_crossfade_and_clamp() {
     });
     // поведение Р.24/Р.26 живёт в режиме БЕЗ переслаивания (Р.28)
     p.overlap_layers = false;
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:1"));
     p.clips = vec![clip(1, 0, 0, 90_000), clip(2, 0, 200_000, 90_000), clip(3, 0, 400_000, 90_000)];
     p.validate().unwrap();
 
@@ -2076,7 +2076,7 @@ fn t139_drag_overlap_creates_crossfade() {
         let mut p = app.model.project().clone();
         // поведение Р.24/Р.26 живёт в режиме БЕЗ переслаивания (Р.28)
         p.overlap_layers = false;
-        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         for (n, start) in [(1u64, 0i64), (2, 200_000)] {
             p.clips.push(ClipEvent {
                 r#gen: None,
@@ -2158,7 +2158,7 @@ fn t140_transition_edge_and_body_drags() {
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         for (n, start, src) in [(1u64, 0i64, 0i64), (2, 90_000, 30_000)] {
             p.clips.push(ClipEvent {
                 r#gen: None,
@@ -2273,7 +2273,7 @@ fn t163_overlap_drag_changes_nothing_but_position() {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
         assert!(p.overlap_layers, "переслаивание включено по умолчанию");
-        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         // A/V-пара + одиночный видео-клип: проверяем и группы, и одиночек
         for (n, kind, start, group) in [
             (1u64, ClipKind::Video, 0i64, Some(GroupId(1))),
@@ -2378,7 +2378,7 @@ fn t160_pulling_apart_restores_trimmed_material() {
         let mut p = app.model.project().clone();
         // поведение Р.24/Р.26 живёт в режиме БЕЗ переслаивания (Р.28)
         p.overlap_layers = false;
-        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         for (n, start) in [(1u64, 0i64), (2, 200_000)] {
             p.clips.push(ClipEvent {
                 r#gen: None,
@@ -2471,7 +2471,7 @@ fn t157_fade_edge_drag_without_neighbour() {
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
@@ -2846,7 +2846,7 @@ fn t172_blocked_gesture_is_an_error_not_a_pale_hint() {
         settings_explicit: false,
     });
     p.overlap_layers = false; // блокировка возможна только в этом режиме
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:1"));
     // клипы 2 и 3 стоят встык: любое попадание между ними — наезд на ДВОИХ
     for (n, start) in [(1u64, 0i64), (2, 200_000), (3, 250_000)] {
         p.clips.push(ClipEvent {
@@ -2967,7 +2967,7 @@ fn t173_corner_fade_and_level_gestures() {
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
@@ -3094,7 +3094,7 @@ fn t176_audio_and_video_share_one_level_line() {
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
@@ -3321,7 +3321,7 @@ fn t219_one_window_for_the_whole_link_group() {
     let mut h = harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     let clip = |id: u64, kind: ClipKind, lane: u32| ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -3401,7 +3401,7 @@ fn t218_morpher_source_field_takes_files_and_reverts() {
     let mut h = harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -3493,7 +3493,7 @@ fn t217_one_chain_widget_for_events_and_morphers() {
     let mut h = harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(9), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(9), "synth:ramp"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -3595,7 +3595,7 @@ fn t193_fx_editor_automation_coalesces_into_one_undo() {
     // видео-клип с Blur и живой кривой — секция автоматизации рисуется
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(9), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(9), "synth:ramp"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -3749,7 +3749,7 @@ pub(crate) fn harness_three_clips_dt(
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         for (i, start) in [0i64, 100_000, 200_000].iter().enumerate() {
             p.clips.push(ClipEvent {
                 r#gen: None,
@@ -3949,7 +3949,7 @@ fn t211_returned_source_replaces_its_placeholder() {
     });
     // «пропавший» файл: имя synth-источника, которого нет на диске — при
     // открытии он не откроется, а к моменту возврата станет валидным
-    p.media.push(MediaRef { id: MediaId(1), path: "later.mp4".into() });
+    p.media.push(MediaRef::new(MediaId(1), "later.mp4"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -4040,8 +4040,8 @@ fn t210_render_with_missing_sources_warns_and_runs() {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
-    p.media.push(MediaRef { id: MediaId(2), path: "gone.mp4".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+    p.media.push(MediaRef::new(MediaId(2), "gone.mp4"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -4127,8 +4127,8 @@ fn t209_missing_source_opens_with_placeholder_and_notices() {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "no-such-clip.mp4".into() });
-    p.media.push(MediaRef { id: MediaId(2), path: "also-gone.wav".into() });
+    p.media.push(MediaRef::new(MediaId(1), "no-such-clip.mp4"));
+    p.media.push(MediaRef::new(MediaId(2), "also-gone.wav"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -4344,7 +4344,7 @@ fn t204_multi_drag_moves_the_whole_block() {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:1"));
     let clip = |id: u64, start: i64| ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -4524,7 +4524,7 @@ fn t200_coalesced_edits_bump_revision_and_keep_dirty() {
     let app = h.state_mut();
     app.project_path = Some(target.clone());
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(9), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(9), "synth:ramp"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -5663,7 +5663,7 @@ fn t367_restore_puts_work_in_editor_and_repeats() {
         settings_explicit: false,
     });
     for i in 1..=3 {
-        p.media.push(MediaRef { id: MediaId(i), path: format!("synth:{i}") });
+        p.media.push(MediaRef::new(MediaId(i), format!("synth:{i}")));
     }
     let rec = crate::app::recovery_path_for(Some(&proj));
     std::fs::write(&rec, kt_otio::save_project(&p, &Default::default(), rec.parent())).unwrap();
@@ -6838,7 +6838,7 @@ fn t242_morph_editor_shows_target_mode_and_timing() {
     let mut h = harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -6931,7 +6931,7 @@ fn t244_morpher_has_one_chain_with_pinned_head() {
     let mut h = harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -7087,7 +7087,7 @@ fn t246_thin_row_is_clickable_and_zoom_anchor_holds() {
     let mut h = harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -7309,7 +7309,7 @@ fn t248_video_warp_shows_only_what_matters() {
     let mut h = harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     for (id, kind) in [(1u64, ClipKind::Video), (2, ClipKind::Audio)] {
         p.clips.push(ClipEvent {
             r#gen: None,
@@ -7430,7 +7430,7 @@ fn t249_previews_follow_the_warp() {
     let mut h = harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     p.clips.push(slow);
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
@@ -7455,7 +7455,7 @@ fn t258_morph_layer_reuses_lane_and_honours_region() {
     let mut h = harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:1"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -7830,7 +7830,7 @@ fn t265_automation_axis_and_field_bind() {
     let mut h = harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:1"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -8458,7 +8458,7 @@ fn t281_typed_key_value_reaches_the_model() {
     let mut h = harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(9), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(9), "synth:ramp"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -8573,7 +8573,7 @@ fn t286_region_edits_do_not_rebuild_the_engine() {
     let mut h = harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -8703,7 +8703,7 @@ fn t343_paste_chain_into_morpher_carries_curves() {
     let mut h = harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -8777,7 +8777,7 @@ fn harness_with_fx_window() -> egui_kittest::Harness<'static, crate::app::KtApp>
     let mut h = harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -8949,7 +8949,7 @@ fn harness_with_eq_window() -> egui_kittest::Harness<'static, crate::app::KtApp>
     let mut h = harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -9540,7 +9540,7 @@ fn t460_fade_handle_redrag_keeps_kind() {
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
@@ -9637,7 +9637,7 @@ fn t460b_overlap_redrag_keeps_kind() {
         let mut p = app.model.project().clone();
         // ветка кроссфейда из наезда живёт в режиме БЕЗ переслаивания (Р.28)
         p.overlap_layers = false;
-        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         for (n, start, src_in) in [(1u64, 0i64, 0i64), (2, 90_000, 20_000)] {
             p.clips.push(ClipEvent {
                 r#gen: None,
@@ -10506,7 +10506,7 @@ fn t576_dropping_a_project_asks_and_keeps_the_work() {
     {
         // чужой проект на диске — минимальный, но законный
         let mut p = kt_model::Project::new(h.state().model.project().settings.clone());
-        p.media.push(kt_model::MediaRef { id: kt_model::MediaId(1), path: "synth:1".into() });
+        p.media.push(kt_model::MediaRef::new(kt_model::MediaId(1), "synth:1"));
         p.clips.push(h.state().model.project().clips[0].clone());
         p.clips[0].media = kt_model::MediaId(1);
         let text = kt_otio::save_project(&p, &kt_otio::Retained::default(), None);
@@ -10568,7 +10568,7 @@ fn t577_dropping_a_project_can_insert_it_as_a_composition() {
     let foreign = dir.join("foreign.otio");
     {
         let mut p = kt_model::Project::new(h.state().model.project().settings.clone());
-        p.media.push(kt_model::MediaRef { id: kt_model::MediaId(1), path: "synth:1".into() });
+        p.media.push(kt_model::MediaRef::new(kt_model::MediaId(1), "synth:1"));
         p.clips.push(h.state().model.project().clips[0].clone());
         p.clips[0].media = kt_model::MediaId(1);
         let text = kt_otio::save_project(&p, &kt_otio::Retained::default(), None);
@@ -11127,7 +11127,7 @@ fn t640_reel_preview_survives_reopen_from_sidecar() {
             p.media.iter().map(|m| m.id.0).chain(p.sequences.iter().map(|s| s.id.0)).max().unwrap()
                 + 1,
         );
-        p.media.push(MediaRef { id: file_id, path: "extra.bin".into() });
+        p.media.push(MediaRef::new(file_id, "extra.bin"));
         let next_id = p
             .clips
             .iter()
@@ -13356,7 +13356,7 @@ fn t716b_lead_geometry_in_the_chain_editor() {
     let mut h = harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -13527,7 +13527,7 @@ fn t721_first_clip_sets_project_settings() {
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-        p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+        p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
         assert!(app.model.project().clips.is_empty());
@@ -13596,7 +13596,7 @@ fn t722_aspect_mismatch_is_reported_with_an_address() {
     p.settings.width = 1920;
     p.settings.height = 1080;
     p.settings.settings_explicit = true;
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
     // 4:3 в 16:9 — подсказка с правилом и адресом
@@ -13732,7 +13732,7 @@ fn t722b_project_rule_change_repaints_the_paused_preview() {
         // «вписать» оставляет поля сверху и снизу, «заполнить» — нет
         p.settings.width = 36;
         p.settings.height = 64;
-        p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+        p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),

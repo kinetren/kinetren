@@ -60,7 +60,7 @@ const TOP_IN: i64 = 3_000;
 
 fn project() -> Project {
     let mut p = Project::new(settings());
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:silence".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:silence"));
     let mut top = clip(1, 0, 1);
     top.source_in = Tick(TOP_IN);
     p.clips = vec![top, clip(2, 1, 1)];
@@ -170,7 +170,7 @@ fn t736_track_chain_covers_the_whole_composite() {
     use kt_model::{BlendMode, FxInstance};
     // одна дорожка, два события встык с переходом между ними
     let mut p = Project::new(settings());
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:silence".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:silence"));
     let mut a = clip(1, 0, 1);
     a.duration = Tick(6_000);
     let mut b = clip(2, 0, 1);

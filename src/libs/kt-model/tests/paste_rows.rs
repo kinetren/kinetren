@@ -161,7 +161,7 @@ fn t595b_localize_converts_a_band_block_into_reel_coordinates() {
 #[test]
 fn t595c_paste_grows_lanes_in_one_step() {
     let mut p = Project::new(settings());
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:440".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:sine:440"));
     let mut m = TimelineModel::new(p);
     let (b, _) = block().shifted_to_row(Some((LaneKind::Camera, 4)));
 

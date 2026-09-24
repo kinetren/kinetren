@@ -18,7 +18,7 @@ fn project(rules: &[Conform], project_rule: ConformRule) -> Project {
         conform: project_rule,
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "vertical".into() });
+    p.media.push(MediaRef::new(MediaId(1), "vertical"));
     for (i, r) in rules.iter().enumerate() {
         let mut c = ClipEvent {
             r#gen: None,

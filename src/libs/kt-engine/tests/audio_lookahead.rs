@@ -38,7 +38,7 @@ fn project(fx: Vec<FxInstance>, pattern: &str) -> Project {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: pattern.into() });
+    p.media.push(MediaRef::new(MediaId(1), pattern));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),

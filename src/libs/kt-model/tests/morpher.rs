@@ -19,8 +19,8 @@ fn base_project() -> TimelineModel {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:440".into() });
-    p.media.push(MediaRef { id: MediaId(2), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:sine:440"));
+    p.media.push(MediaRef::new(MediaId(2), "synth:ramp"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),

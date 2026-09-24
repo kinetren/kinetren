@@ -26,7 +26,7 @@ fn clip(reversed: bool, fx: Vec<FxInstance>, kind: ClipKind) -> Project {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:1"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -369,7 +369,7 @@ fn signed_clip(rate: f64, source_in_frames: i64, reversed: bool) -> Project {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:1"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),

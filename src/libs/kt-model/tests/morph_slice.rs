@@ -51,8 +51,8 @@ fn base() -> Project {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:440".into() });
-    p.media.push(MediaRef { id: MediaId(2), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:sine:440"));
+    p.media.push(MediaRef::new(MediaId(2), "synth:ramp"));
     p.clips.push(clip(10, ClipKind::Video, 0, Tick(0), LEN));
     p.ensure_tracks(LaneKind::Morph, 1);
     p
@@ -779,7 +779,7 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:1"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),

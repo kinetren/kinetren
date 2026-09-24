@@ -31,8 +31,8 @@ fn project() -> Project {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:voice".into() });
-    p.media.push(MediaRef { id: MediaId(2), path: "synth:music".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:voice"));
+    p.media.push(MediaRef::new(MediaId(2), "synth:music"));
     let clip = |id: u64, lane: u32, media: u64, from_s: f64, len_s: f64| ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),

@@ -17,8 +17,8 @@ fn scene_at(start_a: Tick, source_in_b: Tick, start_b: Tick, reversed_b: bool) -
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
-    p.media.push(MediaRef { id: MediaId(2), path: "synth:sine:440".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+    p.media.push(MediaRef::new(MediaId(2), "synth:sine:440"));
     let clip = |id: u64, media: u64, lane: u32, start: Tick, src: Tick, rev: bool| ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),

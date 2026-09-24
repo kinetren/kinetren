@@ -47,8 +47,8 @@ fn title_project() -> (Project, Sources) {
     // Р.59, стадия 2 (t662): в пути медиа остаётся ВИД, значения уехали
     // на событие. ПЕРЕПИСАНА ТОЛЬКО КОНСТРУКЦИЯ ПРОЕКТА — эталон
     // `GOLDEN_TITLE_VIDEO` обязан остаться прежним до бита.
-    p.media.push(MediaRef { id: MediaId(1), path: gen_kind_path(&solid) });
-    p.media.push(MediaRef { id: MediaId(2), path: gen_kind_path(&title) });
+    p.media.push(MediaRef::new(MediaId(1), gen_kind_path(&solid)));
+    p.media.push(MediaRef::new(MediaId(2), gen_kind_path(&title)));
     let clip = |id: u64, lane: u32, media: u64| ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),

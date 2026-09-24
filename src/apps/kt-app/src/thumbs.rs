@@ -888,7 +888,7 @@ mod key_tests {
             settings_explicit: false,
         });
         let id = MediaId(1);
-        project.media.push(kt_model::MediaRef { id, path: "gen:solid:c=ff8800".into() });
+        project.media.push(kt_model::MediaRef::new(id, "gen:solid:c=ff8800"));
         // прогон дважды: без пути проекта (нет БД) и с путём (БД есть,
         // но генератору она закрыта по ключу file_identity)
         let db_project = std::env::temp_dir().join(format!("kt-t476-{}.otio", std::process::id()));

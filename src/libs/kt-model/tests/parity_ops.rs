@@ -19,7 +19,7 @@ fn base() -> Project {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "a.mp4".into() });
+    p.media.push(MediaRef::new(MediaId(1), "a.mp4"));
     // A/V-пара 0..90000 + одиночный аудио 90000..180000
     p.clips.push(clip(10, Some(1), ClipKind::Video, 0, 0, 90_000, 0));
     p.clips.push(clip(11, Some(1), ClipKind::Audio, 0, 0, 90_000, 0));

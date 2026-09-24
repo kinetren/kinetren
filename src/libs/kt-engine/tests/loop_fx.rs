@@ -71,8 +71,8 @@ fn base_project() -> Project {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
-    p.media.push(MediaRef { id: MediaId(2), path: "synth:sine".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+    p.media.push(MediaRef::new(MediaId(2), "synth:sine"));
     p
 }
 

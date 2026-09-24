@@ -29,7 +29,7 @@ fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, engine: PitchEngine)
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:tone".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:tone"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),

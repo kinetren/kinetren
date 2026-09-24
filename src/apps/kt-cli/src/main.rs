@@ -1153,7 +1153,7 @@ fn demo_project(synth: bool) -> Project {
         (8, "synth:dc:0.05"),
     ];
     for (id, path) in if synth { synths } else { files } {
-        p.media.push(MediaRef { id: MediaId(id), path: path.into() });
+        p.media.push(MediaRef::new(MediaId(id), path));
     }
     p.clips = vec![
         clip(1, ClipKind::Video, 0, 0.0, 12.0, 2.0, 1, 0.0, vec![pan.clone()]),

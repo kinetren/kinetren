@@ -1297,6 +1297,36 @@ impl TimelineModel {
         self.bench.loop_enabled = on;
     }
 
+    /// ИЗМЕРЕННАЯ длина материала — вне undo (Р.63 п.2).
+    ///
+    /// Это не правка, а ФАКТ о файле: его приносит тот, кто источник
+    /// открыл, и приносит асинхронно (фоновый синк медиа, возврат
+    /// пропавшего файла). Командой это быть не может по двум причинам:
+    /// откатывать «мы узнали, что файл длится 226 с» нечего, а звёздочка
+    /// «проект изменён» от открытия источника — прямое нарушение правила
+    /// «правки удобства не делают вид, что пользователь что-то изменил»
+    /// (п.5 р.11). Соседи по этой полке — регион, loop и вьюпорт.
+    ///
+    /// Возвращает `true`, если значение ДЕЙСТВИТЕЛЬНО изменилось: синк
+    /// зовут на каждом кадре, и молчаливое «то же самое» не должно
+    /// двигать ни ревизию, ни автосейв.
+    pub fn note_media_length(&mut self, id: crate::MediaId, duration: kt_time::Tick) -> bool {
+        let mut set = |p: &mut crate::Project| -> bool {
+            match p.media.iter_mut().find(|m| m.id == id) {
+                Some(m) if m.duration != Some(duration) && duration.0 > 0 => {
+                    m.duration = Some(duration);
+                    true
+                }
+                _ => false,
+            }
+        };
+        // длина живёт у медиа ПРОЕКТА (список медиа один на документ), а
+        // рабочий вид и канон — разные проекты: правим оба, как регион
+        let a = set(&mut self.project);
+        let b = set(&mut self.bench);
+        a || b
+    }
+
     /// Вьюпорт (вне undo, как регион) — сохраняется в файл проекта.
     pub fn set_ui_state(&mut self, ui: Option<crate::UiState>) {
         self.project.ui = ui.clone();
@@ -1882,7 +1912,7 @@ impl TimelineModel {
                     Some(k) => crate::genmedia::gen_kind_path(&k),
                     None => path,
                 };
-                p.media.push(MediaRef { id, path });
+                p.media.push(MediaRef::new(id, path));
             }
             Command::SetMediaPath { id, path } => {
                 // Путь генератора несёт ТОЛЬКО ВИД (Р.59, стадия 2), и
@@ -1971,12 +2001,30 @@ impl TimelineModel {
             Command::TrimEnd { id, new_end } => {
                 let stretch = p.trim_stretches_auto;
                 let group = p.clips.iter().find(|c| c.id == id).and_then(|c| c.link_group);
+                // длины медиа берём ДО цикла: внутри `p.clips` занят
+                // мутабельно, а `media_duration` смотрит в тот же проект
+                let lens: Vec<(ClipId, Option<Tick>)> = p
+                    .clips
+                    .iter()
+                    .filter(|c| c.id == id || (group.is_some() && c.link_group == group))
+                    .map(|c| (c.id, p.media_duration(c.media)))
+                    .collect();
                 for c in &mut p.clips {
                     if c.id != id && (group.is_none() || c.link_group != group) {
                         continue;
                     }
+                    let media_len =
+                        lens.iter().find(|(cid, _)| *cid == c.id).and_then(|(_, l)| *l);
                     let min_end = c.start + MIN_CLIP_DURATION;
-                    let ne = Tick(new_end.0.max(min_end.0).min(trim_max_end(c).0));
+                    // Край материала — такой же упор, как его начало (Р.63).
+                    // Предел НЕ МЕНЬШЕ нынешнего конца: событие, которое
+                    // уже длиннее материала (файлы до Р.63), двигается в
+                    // пределах сделанного и подрезается свободно — само
+                    // оно не укорачивается (правило 20), только расти
+                    // дальше ему больше не дают.
+                    let was_end = (c.start + c.duration).0;
+                    let limit = trim_max_end_in(c, media_len).0.max(was_end);
+                    let ne = Tick(new_end.0.max(min_end.0).min(limit));
                     let (span_old, anchor_old) = (crate::clip_material_span(c), c.source_in);
                     *c = clip_slice(c, TickRange::new(c.start, ne), c.id);
                     if stretch {

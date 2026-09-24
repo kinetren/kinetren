@@ -22,8 +22,8 @@ fn project() -> Project {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "detail.mp4".into() });
-    p.media.push(MediaRef { id: MediaId(2), path: "green.mp4".into() });
+    p.media.push(MediaRef::new(MediaId(1), "detail.mp4"));
+    p.media.push(MediaRef::new(MediaId(2), "green.mp4"));
     p
 }
 
@@ -168,7 +168,7 @@ fn gen_demo_concat() {
     // клип 3 — тот же зум на detail.mp4 (1280x720, запаса нет): рядом
     // видно, что резкость берётся ИЗ ФАЙЛА, а не из зума.
     let mut p = project();
-    p.media.push(MediaRef { id: MediaId(3), path: "detail-hi.mp4".into() });
+    p.media.push(MediaRef::new(MediaId(3), "detail-hi.mp4"));
     p.clips = vec![
         clip(1, 0, 4, 3, vec![]),
         clip(2, 4, 4, 3, vec![zoom(2.0)]),

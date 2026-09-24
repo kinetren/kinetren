@@ -237,7 +237,7 @@ fn t307_relative_media_paths_resolve_once() {
 
         settings_explicit: false,
     });
-    p.media.push(kt_model::MediaRef { id: kt_model::MediaId(1), path: "clip.mp4".into() });
+    p.media.push(kt_model::MediaRef::new(kt_model::MediaId(1), "clip.mp4"));
     p.clips.push(kt_model::ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),

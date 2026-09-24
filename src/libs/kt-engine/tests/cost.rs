@@ -76,7 +76,7 @@ fn base(n: u64) -> Project {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     p.ensure_tracks(kt_model::LaneKind::Audio, n.max(1) as u32);
     for i in 0..n {
         p.clips.push(ClipEvent {

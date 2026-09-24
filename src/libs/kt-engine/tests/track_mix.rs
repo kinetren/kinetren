@@ -58,7 +58,7 @@ fn project(clips: Vec<ClipEvent>) -> Project {
     ids.sort();
     ids.dedup();
     for id in ids {
-        p.media.push(MediaRef { id, path: format!("synth:{}", id.0) });
+        p.media.push(MediaRef::new(id, format!("synth:{}", id.0)));
     }
     p.clips = clips;
     p.normalize();

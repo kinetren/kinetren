@@ -41,7 +41,7 @@ fn project_with_audio_clips(clips: Vec<ClipEvent>) -> Project {
     media_ids.sort();
     media_ids.dedup();
     for id in media_ids {
-        p.media.push(MediaRef { id, path: format!("synth:{}", id.0) });
+        p.media.push(MediaRef::new(id, format!("synth:{}", id.0)));
     }
     p.clips = clips;
     p.normalize(); // дорожки под содержимое (Р.62)
@@ -603,7 +603,7 @@ fn t162_overlap_rejected_when_option_off() {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:1"));
     p.clips = vec![audio_clip(1, 0, 0, 2000, 0, 1), audio_clip(2, 0, 1000, 2000, 0, 1)];
     p.overlap_layers = false;
     assert!(matches!(p.validate(), Err(ProjectError::ClipOverlap(..))));

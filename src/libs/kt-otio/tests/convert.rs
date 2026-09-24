@@ -52,7 +52,7 @@ fn rich_project() -> Project {
         settings_explicit: false,
     });
     for id in [1u64, 2, 3] {
-        p.media.push(MediaRef { id: MediaId(id), path: format!("media/m{id}.mp4") });
+        p.media.push(MediaRef::new(MediaId(id), format!("media/m{id}.mp4")));
     }
     // видео: 2 дорожки (z-порядок!), аудио: пара встык с переходом
     p.clips.push(clip(1, ClipKind::Video, 0, 0, 90_000, 1)); // верхний слой
@@ -341,7 +341,7 @@ fn t165_overlapping_lane_survives_layer_roundtrip() {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "media/a.mp4".into() });
+    p.media.push(MediaRef::new(MediaId(1), "media/a.mp4"));
     // три клипа одной дорожки: два перекрываются, третий встык
     for (id, start, dur) in [(1u64, 0i64, 90_000i64), (2, 45_000, 90_000), (3, 200_000, 45_000)] {
         p.clips.push(ClipEvent {
@@ -1178,7 +1178,7 @@ fn nested_project() -> Project {
         settings_explicit: false,
     });
     for id in [1u64, 2] {
-        p.media.push(MediaRef { id: MediaId(id), path: format!("media/m{id}.mp4") });
+        p.media.push(MediaRef::new(MediaId(id), format!("media/m{id}.mp4")));
     }
     // лента: два события встык, кроссфейд между ними, свой морфер-слой и
     // своя камера — то, чего OTIO не выражает и что едет сайдкаром
@@ -1563,8 +1563,8 @@ fn t473_generator_reference_roundtrip() {
     let mut p = rich_project();
     // Р.59, стадия 2: в пути медиа — ВИД, значения на событии
     let orange = kt_model::GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 };
-    p.media.push(MediaRef { id: MediaId(7), path: "gen:solid".into() });
-    p.media.push(MediaRef { id: MediaId(8), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(7), "gen:solid"));
+    p.media.push(MediaRef::new(MediaId(8), "synth:ramp"));
     let mut g = clip(30, ClipKind::Video, 0, 200_000, 45_000, 7);
     g.source_in = Tick(4_500);
     g.r#gen = Some(orange.clone());
@@ -1647,7 +1647,7 @@ fn t473_generator_reference_roundtrip() {
 #[test]
 fn t474_foreign_generator_kind_is_passthrough() {
     let mut p = rich_project();
-    p.media.push(MediaRef { id: MediaId(7), path: "gen:solid".into() });
+    p.media.push(MediaRef::new(MediaId(7), "gen:solid"));
     let mut g = clip(30, ClipKind::Video, 0, 200_000, 45_000, 7);
     g.r#gen = Some(kt_model::GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 });
     p.clips.push(g);
@@ -1688,7 +1688,7 @@ fn t474_foreign_generator_kind_is_passthrough() {
 #[test]
 fn t494_smpte_alias_import() {
     let mut p = rich_project();
-    p.media.push(MediaRef { id: MediaId(7), path: "gen:smpte".into() });
+    p.media.push(MediaRef::new(MediaId(7), "gen:smpte"));
     let mut g = clip(30, ClipKind::Video, 0, 200_000, 45_000, 7);
     g.r#gen = Some(kt_model::GeneratorKind::SmpteBars { tone: false, tone_db: -20.0 });
     p.clips.push(g);
@@ -1874,7 +1874,7 @@ fn t638_negative_start_inside_a_reel_survives_the_round_trip() {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "media/m1.mp4".into() });
+    p.media.push(MediaRef::new(MediaId(1), "media/m1.mp4"));
     let mut s = Sequence::new(MediaId(100), "Заставка");
     // первое событие начинается ДО нуля ленты; второе стоит в своём
     // времени, но в треке OTIO легло бы на курсор (0 + 50 000 > 45 000)
@@ -1944,7 +1944,7 @@ fn t664_generator_values_on_the_event_round_trip() {
         }
         k
     };
-    p.media.push(MediaRef { id: MediaId(7), path: "gen:text".into() });
+    p.media.push(MediaRef::new(MediaId(7), "gen:text"));
     let mut a = clip(30, ClipKind::Video, 0, 200_000, 45_000, 7);
     a.r#gen = Some(title("Первый выпуск"));
     a.gen_auto = kt_model::text_anim_curves(kt_model::TextAnim::Typewriter, 2.0, 2.0);
@@ -1996,7 +1996,7 @@ fn t665_old_generator_files_migrate_to_the_event() {
     // «старый файл»: генератор со ЗНАЧЕНИЯМИ в parameters и режимом
     // анимации полем — ровно то, что писала сборка Р.53
     let mut p = rich_project();
-    p.media.push(MediaRef { id: MediaId(7), path: "gen:text".into() });
+    p.media.push(MediaRef::new(MediaId(7), "gen:text"));
     let mut c = clip(30, ClipKind::Video, 0, 200_000, 45_000, 7);
     c.r#gen = Some(kt_model::GeneratorKind::default_text());
     p.clips.push(c);
@@ -2067,7 +2067,7 @@ fn t665_old_generator_files_migrate_to_the_event() {
 fn t681_published_params_and_overrides_round_trip() {
     let mut p = nested_project();
     // ручка у ленты: текст титра внутри неё
-    p.media.push(MediaRef { id: MediaId(7), path: "gen:text".into() });
+    p.media.push(MediaRef::new(MediaId(7), "gen:text"));
     let mut title = clip(13, ClipKind::Video, 1, 0, 45_000, 7);
     let mut kind = kt_model::GeneratorKind::default_text();
     if let kt_model::GeneratorKind::Text { text, .. } = &mut kind {
@@ -2569,7 +2569,7 @@ fn t747_old_rate_curves_with_ease_open_as_linear() {
         conform: Default::default(),
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "media/m1.mp4".into() });
+    p.media.push(MediaRef::new(MediaId(1), "media/m1.mp4"));
 
     // 1) кривая скорости на СОБЫТИИ + чужая кривая рядом (её «плавно»
     //    обязано остаться «плавно»)

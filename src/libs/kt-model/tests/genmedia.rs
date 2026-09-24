@@ -176,7 +176,7 @@ fn t475_set_media_path_command() {
 
         settings_explicit: false,
     });
-    p.media.push(kt_model::MediaRef { id: MediaId(1), path: "gen:solid".into() });
+    p.media.push(kt_model::MediaRef::new(MediaId(1), "gen:solid"));
     p.clips.push(ClipEvent {
         r#gen: Some(kt_model::GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
         gen_auto: Vec::new(),
@@ -460,8 +460,8 @@ fn t657_generator_values_are_validated_against_the_media() {
 
             settings_explicit: false,
         });
-        p.media.push(MediaRef { id: MediaId(1), path: "gen:solid".into() });
-        p.media.push(MediaRef { id: MediaId(2), path: "movie.mp4".into() });
+        p.media.push(MediaRef::new(MediaId(1), "gen:solid"));
+        p.media.push(MediaRef::new(MediaId(2), "movie.mp4"));
         p.clips.push(ClipEvent {
             r#gen: Some(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
             gen_auto: Vec::new(),

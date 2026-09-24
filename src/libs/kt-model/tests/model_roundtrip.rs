@@ -18,7 +18,7 @@ fn sample_project() -> Project {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "clips/a.mp4".into() });
+    p.media.push(MediaRef::new(MediaId(1), "clips/a.mp4"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),

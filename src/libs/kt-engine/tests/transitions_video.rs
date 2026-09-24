@@ -25,7 +25,7 @@ fn project_pair() -> Project {
         settings_explicit: false,
     });
     for id in [1u64, 2] {
-        p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
+        p.media.push(MediaRef::new(MediaId(id), format!("synth:{id}")));
     }
     for (id, start, src_in, media) in [(1u64, 0i64, 0i64, 1u64), (2, 90_000, 30_000, 2)] {
         p.clips.push(ClipEvent {
@@ -334,7 +334,7 @@ fn t174_clip_opacity_scales_the_layer() {
         settings_explicit: false,
     });
     for id in [1u64, 2] {
-        p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
+        p.media.push(MediaRef::new(MediaId(id), format!("synth:{id}")));
     }
     for (id, lane, media) in [(1u64, 0u32, 1u64), (2, 1, 2)] {
         p.clips.push(ClipEvent {
@@ -815,7 +815,7 @@ fn t464_overlap_transition_reaches_picture() {
             settings_explicit: false,
         });
         for id in [1u64, 2] {
-            p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
+            p.media.push(MediaRef::new(MediaId(id), format!("synth:{id}")));
         }
         // лесенка: [0..120к) и [60к..180к), перекрытие [60к..120к)
         for (id, start, media) in [(1u64, 0i64, 1u64), (2, 60_000, 2)] {
@@ -1107,7 +1107,7 @@ fn t521_alpha_layer_under_a_chain_shows_through() {
         settings_explicit: false,
     });
     for id in [1u64, 2] {
-        p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
+        p.media.push(MediaRef::new(MediaId(id), format!("synth:{id}")));
     }
     for (id, lane, media) in [(1u64, 0u32, 1u64), (2, 1, 2)] {
         p.clips.push(ClipEvent {

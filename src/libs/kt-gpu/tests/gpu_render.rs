@@ -30,7 +30,7 @@ fn project() -> Project {
         settings_explicit: false,
     });
     for id in [1u64, 2] {
-        p.media.push(MediaRef { id: MediaId(id), path: "synth:ramp".into() });
+        p.media.push(MediaRef::new(MediaId(id), "synth:ramp"));
     }
     let sec = 90_000i64;
     let clip = |id: u64, lane: u32, start: i64, dur: i64, media: u64, opacity: f32| ClipEvent {
@@ -251,7 +251,7 @@ fn nested_project(outer_fx: Vec<FxInstance>, outer_opacity: f32) -> Project {
         settings_explicit: false,
     });
     for id in [1u64, 2] {
-        p.media.push(MediaRef { id: MediaId(id), path: "synth:ramp".into() });
+        p.media.push(MediaRef::new(MediaId(id), "synth:ramp"));
     }
     let ev = |id: u64, lane: u32, start: i64, dur: i64, media: u64, opacity: f32| ClipEvent {
         r#gen: None,
@@ -427,7 +427,7 @@ fn t496_gpu_frame_identity_follows_content() {
         settings_explicit: false,
     });
     let solid = |r: u8| GeneratorKind::Solid { color_r: r, color_g: 0, color_b: 0 };
-    p.media.push(MediaRef { id: MediaId(1), path: kt_model::gen_kind_path(&solid(32)) });
+    p.media.push(MediaRef::new(MediaId(1), kt_model::gen_kind_path(&solid(32))));
     p.clips.push(ClipEvent {
         // Р.59, стадия 2: значения — на СОБЫТИИ
         r#gen: Some(solid(32)),

@@ -46,7 +46,7 @@ fn vclip(id: u64, lane: u32, start: i64) -> ClipEvent {
 
 fn project() -> Project {
     let mut p = Project::new(settings30());
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:440".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:sine:440"));
     p.ensure_tracks(V, 2);
     p.clips.push(vclip(1, 0, 0));
     p.clips.push(vclip(2, 1, 100_000));

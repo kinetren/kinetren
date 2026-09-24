@@ -44,7 +44,7 @@ fn project_with_audio_clips(clips: Vec<ClipEvent>) -> Project {
     media_ids.sort();
     media_ids.dedup();
     for id in media_ids {
-        p.media.push(MediaRef { id, path: format!("synth:{}", id.0) });
+        p.media.push(MediaRef::new(id, format!("synth:{}", id.0)));
     }
     p.clips = clips;
     p.validate().unwrap();

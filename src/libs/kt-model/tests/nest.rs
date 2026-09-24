@@ -56,7 +56,7 @@ fn clip(id: u64, media: u64, start: Tick, dur: Tick) -> ClipEvent {
 
 fn base() -> Project {
     let mut p = Project::new(settings());
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:440".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:sine:440"));
     p
 }
 
@@ -224,7 +224,7 @@ fn t425_document_wide_ids_and_closed_reels() {
 
     // старший бит адреса отдан лентам в движке: файл там же — общий ключ кэша
     let mut p = Project::new(settings());
-    p.media.push(MediaRef { id: MediaId(NEST_TAG | 5), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(NEST_TAG | 5), "synth:ramp"));
     assert!(
         matches!(p.validate(), Err(ProjectError::MediaIdTooLarge(..))),
         "адрес медиа со взведённым старшим битом пропущен"
@@ -323,7 +323,7 @@ fn t426_sequence_does_not_lag_behind_the_root() {
 /// и одно «снаружи» слева, с которым второе склеено переходом.
 fn montage() -> Project {
     let mut p = base();
-    p.media.push(MediaRef { id: MediaId(2), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(2), "synth:ramp"));
     for (i, start) in (0..4).map(|i| (i, Tick(i * LEN.0))) {
         // второй файл стоит РОВНО на том, что уедет внутрь ленты: так
         // проверяется, что медиа держит всё дерево, а не только корень
@@ -576,7 +576,7 @@ fn t430_outer_transition_is_rehung_and_media_is_held_by_the_whole_tree() {
 /// Проект: корневое событие и лента с двумя событиями внутри.
 fn with_reel() -> (TimelineModel, MediaId) {
     let mut p = base();
-    p.media.push(MediaRef { id: MediaId(2), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(2), "synth:ramp"));
     let mut s = Sequence::new(MediaId(100), "Кусок");
     s.clips.push(clip(20, 1, Tick(0), LEN));
     s.clips.push(clip(21, 2, LEN, LEN));
@@ -1141,10 +1141,10 @@ fn t569_an_edit_inside_a_band_lands_in_the_reel() {
 /// СВОИ области с метками — то, что приехать НЕ должно.
 fn foreign() -> Project {
     let mut p = Project::new(settings());
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:440".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:sine:440"));
     // ОДИН из путей совпадает с тем, что уже стоит у нас: он обязан быть
     // УЗНАН, а не приехать вторым экземпляром
-    p.media.push(MediaRef { id: MediaId(2), path: "foreign:only".into() });
+    p.media.push(MediaRef::new(MediaId(2), "foreign:only"));
     let mut inner = Sequence::new(MediaId(50), "Вложенная чужая");
     inner.clips = vec![clip(90, 1, Tick::ZERO, LEN)];
     p.sequences.push(inner);

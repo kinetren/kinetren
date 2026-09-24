@@ -508,6 +508,11 @@ pub struct KtApp {
     /// Препятствие текущего жеста (п.5 Р.28): подсвечивается на таймлайне,
     /// подсказка идёт ОШИБОЧНЫМ стилем и говорит, куда смотреть.
     pub blocked: Option<crate::timeline::Blocked>,
+    /// КОНЕЦ МАТЕРИАЛА, в который упёрся трим (Р.63 п.2): тик, где
+    /// кончается файл. Препятствие тут не событие, а край источника —
+    /// подсветить нечего, но СКАЗАТЬ обязаны (правило 16), иначе край
+    /// просто перестаёт ехать и это выглядит как заедание мыши.
+    pub blocked_material: Option<i64>,
     /// ЗАПЕРТАЯ дорожка, в которую упёрся жест (Р.62): подсвечивается
     /// красным ровно один кадр, как и любое другое препятствие.
     /// Запертая дорожка, в которую упёрся жест, и МОМЕНТ отказа. Время
@@ -876,6 +881,7 @@ impl KtApp {
             hover_hint: None,
             error_status: None,
             blocked: None,
+            blocked_material: None,
             blocked_track: None,
             last_band: None,
             paste_names: None,
@@ -1082,6 +1088,7 @@ impl KtApp {
             hover_hint: None,
             error_status: None,
             blocked: None,
+            blocked_material: None,
             blocked_track: None,
             last_band: None,
             paste_names: None,
@@ -2114,7 +2121,14 @@ impl KtApp {
         let mode = if self.dnd_hover.is_some() { Some(tr(k::hint::DROP_HERE)) } else { None };
         let status =
             self.status.as_ref().map(|(m, at)| (m.as_str(), at.elapsed().as_millis() as u64));
-        let blocked = self.blocked.map(|b| self.blocked_text(b)).or_else(|| {
+        let blocked = self
+            .blocked
+            .map(|b| self.blocked_text(b))
+            .or_else(|| {
+                self.blocked_material
+                    .map(|t| crate::tf!(k::tl::hint::TRIM_MATERIAL_END, format!("{:.1}", t as f64 / 90_000.0)))
+            })
+            .or_else(|| {
             self.error_status
                 .as_ref()
                 .filter(|(_, at)| (at.elapsed().as_millis() as u64) < STATUS_TTL_MS)
@@ -4129,8 +4143,20 @@ impl KtApp {
             let label = crate::util::media_label(path);
             let (src, err) =
                 crate::util::open_source_or_placeholder(&resolved, db.as_deref(), &label);
+            let opened = err.is_none();
             if let Some(e) = err {
                 self.note(e);
+            }
+            // ДЛИНА МАТЕРИАЛА — от того, кто источник открыл (Р.63 п.2).
+            // Модель её не добывает (закон П), а без неё у правого трима
+            // нет упора: ровно так событие уезжает за конец файла и
+            // «звучит тишиной». Заглушка своей длины не знает — её
+            // паспорт пуст, и предела не появится.
+            if opened {
+                let d = src.info().duration;
+                if d.0 > 0 {
+                    self.model.note_media_length(*id, d);
+                }
             }
             if known.is_some() {
                 self.player.replace_media(*id, src);
@@ -9193,7 +9219,7 @@ mod repaint_tests {
 
             settings_explicit: false,
         });
-        p.media.push(MediaRef { id: MediaId(1), path: "/tmp/Интервью.mp4".into() });
+        p.media.push(MediaRef::new(MediaId(1), "/tmp/Интервью.mp4"));
         p.markers.push(Marker::named(Tick(5000), "Интро"));
         p.markers.push(Marker::named(Tick(9000), "интервью — начало"));
         // имя дорожки с Р.62 живёт на дорожке-объекте
@@ -9253,7 +9279,7 @@ mod repaint_tests {
 
             settings_explicit: false,
         });
-        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         let clip = |id: u64, start: i64, dur: i64| ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),

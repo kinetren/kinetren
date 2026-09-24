@@ -26,7 +26,7 @@ fn slowed_project() -> Project {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:1"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),

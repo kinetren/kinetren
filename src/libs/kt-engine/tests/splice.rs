@@ -40,7 +40,7 @@ fn t19_copy_region_fragment_paste_renders_identically() {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:1"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -121,7 +121,7 @@ fn t19_two_fragments_pasted_back_to_back_are_seamless() {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:1"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),

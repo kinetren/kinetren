@@ -19,7 +19,7 @@ fn project_with(gain_db: f32, secs: f64) -> Project {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:1000".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:sine:1000"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),

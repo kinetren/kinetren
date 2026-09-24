@@ -73,9 +73,9 @@ fn title_kind(text: &str) -> GeneratorKind {
 /// Шаблон новостного выпуска: титр-заголовок и подложка с размытием.
 fn template() -> Project {
     let mut p = Project::new(settings());
-    p.media.push(MediaRef { id: MediaId(1), path: gen_kind_path(&title_kind("")) });
-    p.media.push(MediaRef { id: MediaId(2), path: "synth:2".into() });
-    p.media.push(MediaRef { id: MediaId(3), path: "synth:3".into() });
+    p.media.push(MediaRef::new(MediaId(1), gen_kind_path(&title_kind(""))));
+    p.media.push(MediaRef::new(MediaId(2), "synth:2"));
+    p.media.push(MediaRef::new(MediaId(3), "synth:3"));
 
     let mut s = Sequence::new(SEQ, "Выпуск");
     let mut title = clip(TITLE.0, 1, Tick::ZERO, LEN);
@@ -608,7 +608,7 @@ fn t694_addr_spec_answers_for_every_owner() {
     let mut inst = clip(50, SEQ.0, Tick::ZERO, LEN);
     inst.media = SEQ;
     outer.clips.push(inst);
-    p.media.push(MediaRef { id: MediaId(200), path: "seq:200".into() });
+    p.media.push(MediaRef::new(MediaId(200), "seq:200"));
     p.sequences.push(outer);
     let nested = ParamAddr::new(ClipId(50), ParamOwner::Nested { pub_id: BLUR }, "radius");
     let s = p.addr_spec(Some(MediaId(200)), &nested).expect("паспорт вложенной ручки");

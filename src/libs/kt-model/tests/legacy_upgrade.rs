@@ -51,7 +51,7 @@ fn raw_project(clips: Vec<ClipEvent>) -> Project {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:1"));
     p.clips = clips;
     // тесты t143 закрепляют конверсию наездов в переходы/дорожки — она живёт
     // в режиме БЕЗ переслаивания (Р.28); с переслаиванием импорт ничего не
@@ -167,7 +167,7 @@ fn t164_legacy_import_keeps_overlaps_and_lanes() {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:1"));
     p.ensure_tracks(LaneKind::Video, 2);
     p.ensure_tracks(LaneKind::Audio, 2);
     // характерная для реального проекта смесь: A/V-пара с наездом, тройная

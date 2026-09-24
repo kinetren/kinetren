@@ -68,7 +68,7 @@ fn clip(id: u64, lane: u32, start: i64, dur: i64, media: u64) -> ClipEvent {
 /// Два титра ОДНОГО вида (одно медиа) с разным текстом.
 fn two_titles() -> Project {
     let mut p = base();
-    p.media.push(MediaRef { id: MediaId(1), path: gen_kind_path(&title("")) });
+    p.media.push(MediaRef::new(MediaId(1), gen_kind_path(&title(""))));
     let mut a = clip(1, 1, 0, 90_000, 1);
     a.r#gen = Some(title("AAAA"));
     let mut b = clip(2, 0, 0, 90_000, 1);
@@ -163,7 +163,7 @@ fn t658_order_equals_read_for_two_titles_of_one_kind() {
 #[test]
 fn t659_a_curve_on_a_generator_parameter_moves_the_bytes() {
     let mut p = base();
-    p.media.push(MediaRef { id: MediaId(1), path: gen_kind_path(&title("")) });
+    p.media.push(MediaRef::new(MediaId(1), gen_kind_path(&title(""))));
     let mut c = clip(1, 0, 0, 180_000, 1);
     let mut k = title("ANIMATED");
     // пресет «печатная машинка» — те же формулы, что у миграции
@@ -208,7 +208,7 @@ fn t663_a_reel_does_not_serve_a_stale_frame_after_a_retune() {
     let mut p = base();
     let dark = GeneratorKind::Solid { color_r: 16, color_g: 16, color_b: 16 };
     let bright = GeneratorKind::Solid { color_r: 220, color_g: 220, color_b: 220 };
-    p.media.push(MediaRef { id: MediaId(1), path: gen_kind_path(&dark) });
+    p.media.push(MediaRef::new(MediaId(1), gen_kind_path(&dark)));
     let mut s = Sequence::new(MediaId(100), "лента");
     let mut inner = clip(1, 0, 0, 90_000, 1);
     inner.r#gen = Some(dark);

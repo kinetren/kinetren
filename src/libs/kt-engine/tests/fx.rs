@@ -37,7 +37,7 @@ fn fx_project(fx: Vec<FxInstance>, pattern_path: &str, dur_frames: i64) -> Proje
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: pattern_path.into() });
+    p.media.push(MediaRef::new(MediaId(1), pattern_path));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -281,7 +281,7 @@ fn t6_graph_rebuild_mid_tail_preserves_state() {
     no_underruns(r1.render_frames_with(&mut fb, &mut store_b, 0, &mut split[..half * CH]));
 
     let mut p2 = p1.clone();
-    p2.media.push(MediaRef { id: MediaId(2), path: "synth:silence".into() });
+    p2.media.push(MediaRef::new(MediaId(2), "synth:silence"));
     p2.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),

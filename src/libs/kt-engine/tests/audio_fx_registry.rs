@@ -29,7 +29,7 @@ fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool) -> P
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:clicks".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:clicks"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -502,7 +502,7 @@ fn t327_print_dense_chain_cost() {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:clicks".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:clicks"));
     for i in 0..7 {
         p.clips.push(ClipEvent {
             r#gen: None,
@@ -583,7 +583,7 @@ fn bench_pitch_cost() {
 
             settings_explicit: false,
         });
-        p.media.push(MediaRef { id: MediaId(1), path: "synth:clicks".into() });
+        p.media.push(MediaRef::new(MediaId(1), "synth:clicks"));
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),

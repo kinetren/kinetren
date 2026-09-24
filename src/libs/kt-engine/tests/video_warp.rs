@@ -29,7 +29,7 @@ fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool) -> P
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),

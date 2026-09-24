@@ -2566,6 +2566,7 @@ impl KtApp {
         self.snap_line = None;
         // препятствие живёт РОВНО пока жест в него упирается (п.5)
         self.blocked = None;
+        self.blocked_material = None;
         // магнит включён всегда; Ctrl его снимает (п.2 р.11). Тот же Ctrl,
         // нажатый ДО захвата пустого места, начинает рамку выделения
         // (Р.33 п.7) — на переносе события магнит от этого не страдает
@@ -3400,7 +3401,29 @@ impl KtApp {
                         DragMode::TrimEnd => {
                             let raw = x_to_tick(pos.x);
                             let snapped = self.snap(raw, Some(d.id));
-                            d.cur_end = snapped.max(d.cur_start + MIN_CLIP_DURATION.0);
+                            let want = snapped.max(d.cur_start + MIN_CLIP_DURATION.0);
+                            // КОНЕЦ МАТЕРИАЛА — такой же упор, как чужое
+                            // событие (Р.63 п.2): предел считает модель
+                            // (одна формула на превью жеста и на команду),
+                            // а превью обязано упереться ВИДИМО, иначе
+                            // край едет, а команда его срезает — «ничего
+                            // не происходит».
+                            let limit = {
+                                let p = self.model.project();
+                                p.clips.iter().find(|c| c.id == d.id).map(|c| {
+                                    let len = p.media_duration(c.media);
+                                    kt_model::trim_max_end_in(c, len)
+                                        .0
+                                        .max((c.start + c.duration).0)
+                                })
+                            };
+                            d.cur_end = match limit {
+                                Some(l) if want > l => {
+                                    self.blocked_material = Some(l);
+                                    l
+                                }
+                                _ => want,
+                            };
                         }
                     }
                     self.drag = Some(Drag::Clip(d));

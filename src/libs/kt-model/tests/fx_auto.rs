@@ -65,7 +65,7 @@ fn t212_keys_stick_to_material_through_edits() {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -276,7 +276,7 @@ fn model_with_clip() -> TimelineModel {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     p.clips.push(clip_with_fx());
     p.validate().unwrap();
     TimelineModel::new(p)
@@ -558,7 +558,7 @@ fn t248_warp_rate_is_shared_by_the_link_group() {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     let mk = |id: u64, kind: ClipKind| ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),

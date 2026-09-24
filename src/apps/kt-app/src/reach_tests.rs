@@ -322,7 +322,7 @@ fn scene(
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         p.clips.push(ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
@@ -351,7 +351,7 @@ fn scene(
             // на событии (Р.59, стадия 2) — иначе `validate` отвергает
             // сцену, и это правильно: без значений генератору нечего
             // рисовать
-            p.media.push(MediaRef { id: MediaId(200), path: "gen:solid".into() });
+            p.media.push(MediaRef::new(MediaId(200), "gen:solid"));
             let mut genclip = p.clips[0].clone();
             genclip.id = ClipId(4);
             genclip.media = MediaId(200);
@@ -638,7 +638,7 @@ fn t254_click_is_a_click() {
     let mut h = crate::layout_tests::harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -730,7 +730,7 @@ fn t547_gallery_click_reaches_the_model() {
     let mut h = crate::layout_tests::harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -1026,7 +1026,7 @@ fn picker_harness(
     let mut h = crate::layout_tests::harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -1265,8 +1265,8 @@ fn strip_metrics(file: &str) -> (f32, Vec<PaintedText>) {
     let mut h = crate::layout_tests::harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
-    p.media.push(MediaRef { id: MediaId(2), path: format!("/tmp/{file}") });
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+    p.media.push(MediaRef::new(MediaId(2), format!("/tmp/{file}")));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),

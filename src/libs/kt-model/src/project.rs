@@ -2888,6 +2888,46 @@ pub fn trim_min_start(c: &ClipEvent) -> Tick {
     Tick((c.start.0 + dt.round() as i64).max(0))
 }
 
+/// Насколько вправо можно утащить КОНЕЦ клипа, ЗНАЯ длину материала
+/// (Р.63 п.2). `None` — длина неизвестна (генератор, лента, ещё не
+/// открытый файл), и предела нет, как было всегда.
+///
+/// Прямое событие упирается концом в конец материала ровно так же, как
+/// началом — в его начало: край справа такой же край, как слева. Предел
+/// считается ПО МАТЕРИАЛУ, поэтому замедленное событие упирается позже
+/// (при rate 0.5 секунда материала — две секунды на таймлайне), а
+/// ускоренное раньше — карта варпа спрашивается той же функцией, что у
+/// левого края.
+pub fn trim_max_end_in(c: &ClipEvent, media_len: Option<Tick>) -> Tick {
+    let by_material = || -> Tick {
+        let Some(len) = media_len.filter(|l| l.0 > 0) else {
+            return Tick(i64::MAX / 4);
+        };
+        // сколько материала осталось справа от точки входа
+        let left = (len.0 - c.source_in.0).max(0);
+        let Some(warp) = crate::clip_warp(c) else {
+            return Tick(c.start.0 + left);
+        };
+        let span = c.duration.0.max(1) as f64;
+        if crate::eff_rate(warp.base(), warp.prof(), 0.0) <= 0.0 {
+            return Tick(i64::MAX / 4);
+        }
+        // выходное время, за которое съедается `left` материала
+        let s = left as f64 / span;
+        let dt = crate::output_time_for_source(warp.base(), warp.prof(), s) * span;
+        if !dt.is_finite() {
+            return Tick(i64::MAX / 4);
+        }
+        Tick(c.start.0.saturating_add(dt.round() as i64))
+    };
+    if !c.reversed {
+        return by_material();
+    }
+    // у зеркального предел ставит материал СЛЕВА (он уезжает вниз), и он
+    // жёстче правого — берём оба
+    Tick(trim_max_end(c).0.min(by_material().0))
+}
+
 /// Насколько вправо можно утащить КОНЕЦ клипа. Симметрично: у зеркального
 /// клипа расширение вправо тянет `source_in` вниз, и предел ставит материал.
 pub fn trim_max_end(c: &ClipEvent) -> Tick {
@@ -4043,6 +4083,45 @@ pub struct MediaRef {
     pub id: MediaId,
     /// Путь относительно файла проекта.
     pub path: String,
+    /// Длительность материала, ЕСЛИ ОНА ИЗВЕСТНА (Р.63 п.2).
+    ///
+    /// Модель сама её не добывает и добывать не может (закон П: что лежит
+    /// по адресу — свойство ИСТОЧНИКА). Её записывает тот, кто источник
+    /// ОТКРЫЛ: kt-app при постановке и синке медиа, kt-cli при probe,
+    /// читатель файла — из конверта. Отсюда `Option`: у генератора и
+    /// ленты своей длительности нет, у не открытого ещё файла её пока
+    /// никто не измерил, и в этих случаях предела у трима нет — как было
+    /// всегда.
+    ///
+    /// Зачем модели это знать. До Р.63 `trim_max_end` у незеркального
+    /// события отдавал `i64::MAX / 4`: правый край можно было утащить
+    /// сколько угодно вправо, за конец материала, и никто об этом не
+    /// говорил. Ровно так у владельца событие стало длиной 316.967 с при
+    /// файле 226.268 с — последние 11.5 с материала «звучали» тишиной и
+    /// считались underrun'ами (Р.63 п.2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration: Option<Tick>,
+}
+
+impl Project {
+    /// Длина материала этого медиа, если её кто-то измерил (Р.63).
+    /// Единственная дверь: у ленты своей длительности нет (её содержимое
+    /// кончается само), у генератора её не бывает вовсе.
+    pub fn media_duration(&self, id: MediaId) -> Option<Tick> {
+        self.media.iter().find(|m| m.id == id).and_then(|m| m.duration).filter(|d| d.0 > 0)
+    }
+}
+
+impl MediaRef {
+    /// Медиа без известной длительности — обычный случай на создании.
+    pub fn new(id: MediaId, path: impl Into<String>) -> MediaRef {
+        MediaRef { id, path: path.into(), duration: None }
+    }
+
+    /// То же, но длительность уже измерена открывшим источник.
+    pub fn with_duration(id: MediaId, path: impl Into<String>, duration: Tick) -> MediaRef {
+        MediaRef { id, path: path.into(), duration: Some(duration) }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

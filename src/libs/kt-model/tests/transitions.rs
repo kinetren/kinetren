@@ -21,7 +21,7 @@ fn base_project() -> Project {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:Ramp".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:Ramp"));
     for (id, start) in [(1u64, 0i64), (2, 48_000), (3, 96_000)] {
         p.clips.push(ClipEvent {
             r#gen: None,

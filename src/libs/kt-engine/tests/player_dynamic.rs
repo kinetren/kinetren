@@ -21,7 +21,7 @@ fn base_project() -> Project {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:1"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -88,7 +88,7 @@ fn t18_add_media_preserves_cache_coverage_and_transport() {
     // добавление второго медиа — инкрементально
     player.add_media(MediaId(2), synth());
     let mut p2 = project.clone();
-    p2.media.push(MediaRef { id: MediaId(2), path: "synth:2".into() });
+    p2.media.push(MediaRef::new(MediaId(2), "synth:2"));
     p2.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -292,7 +292,7 @@ fn t316_replace_media_updates_the_decode_stage() {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "checker".into() });
+    p.media.push(MediaRef::new(MediaId(1), "checker"));
     p.clips.push(ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -354,7 +354,7 @@ fn t316_replace_media_updates_the_decode_stage() {
 fn t500_retune_keeps_worker_and_renderer() {
     let mut project = base_project();
     // клип-генератор поверх аудио-клипа базового проекта
-    project.media.push(MediaRef { id: MediaId(2), path: "gen:solid".into() });
+    project.media.push(MediaRef::new(MediaId(2), "gen:solid"));
     project.clips.push(ClipEvent {
         // Р.59, стадия 2: значения — на СОБЫТИИ, источник стоит по его адресу
         r#gen: Some(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
@@ -494,7 +494,7 @@ fn t661_a_value_edit_does_not_rebuild_the_renderer() {
 
     // и то же самое у плеера: поток жив, версия проекта стоит
     let mut project = base_project();
-    project.media.push(MediaRef { id: MediaId(2), path: "gen:solid".into() });
+    project.media.push(MediaRef::new(MediaId(2), "gen:solid"));
     project.clips.push(ClipEvent {
         r#gen: Some(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
         gen_auto: Vec::new(),

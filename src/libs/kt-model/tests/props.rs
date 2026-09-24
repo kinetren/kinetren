@@ -188,7 +188,7 @@ fn t649_formula_curves_are_refused_loudly() {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:1"));
     let mut c = ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),

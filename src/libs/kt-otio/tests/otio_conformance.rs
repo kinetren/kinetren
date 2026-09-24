@@ -45,8 +45,8 @@ fn sample() -> Project {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "media/a.mp4".into() });
-    p.media.push(MediaRef { id: MediaId(2), path: "media/b.mp4".into() });
+    p.media.push(MediaRef::new(MediaId(1), "media/a.mp4"));
+    p.media.push(MediaRef::new(MediaId(2), "media/b.mp4"));
     for (id, start, src, media) in [(1u64, 0i64, 0i64, 1u64), (2, 90_000, 30_000, 2)] {
         p.clips.push(ClipEvent {
             r#gen: None,

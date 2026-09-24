@@ -1042,6 +1042,7 @@ fn reel_children(
                             r.retained,
                             &url_of(&media_path(c.media)),
                             at,
+                            p.media_duration(c.media),
                         ))),
                     }
                     if let Some(t) = trans_after.get(&c.id) {
@@ -1257,7 +1258,13 @@ fn displaced_start(c: &ClipEvent, at: Tick) -> Option<i64> {
     (c.start != at).then_some(c.start.0)
 }
 
-fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str, at: Tick) -> Clip {
+fn clip_to_otio(
+    c: &ClipEvent,
+    retained: &Retained,
+    target_url: &str,
+    at: Tick,
+    media_len: Option<Tick>,
+) -> Clip {
     let mut ex = retained.clips.get(&c.id).cloned().unwrap_or_default();
     // Клип, рождённый в редакторе, конверта не имеет — ссылки на материал
     // берём у МЕДИА (п.356). Иначе потерялся бы `available_range`, а вместе
@@ -1315,6 +1322,17 @@ fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str, at: Tick) 
                 },
             };
             active.target_url = target_url.to_string();
+            // ДЛИНА МАТЕРИАЛА — в стандартное поле OTIO (Р.63 п.2), а не в
+            // наш конверт: `available_range` ровно про это и есть, и чужой
+            // читатель понимает его без нас. Пишем ТОЛЬКО когда поля не
+            // было: пришедшее из чужого файла — passthrough (его начало
+            // мы и так читаем как таймкод материала), и переписывать его
+            // своим замером значило бы «понимать наполовину».
+            if active.available_range.is_none()
+                && let Some(len) = media_len.filter(|l| l.0 > 0)
+            {
+                active.available_range = Some(range(Tick(0), len));
+            }
             media_refs.insert(active_key.clone(), Some(MediaRefNode::External(active)));
         }
     }
@@ -1612,7 +1630,7 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
             let path = resolve_url(base_dir, &bm.path);
             // адрес мог уже приехать с событием ленты — дубля быть не должно
             if !p.media.iter().any(|m| m.id == MediaId(bm.id)) {
-                p.media.push(MediaRef { id: MediaId(bm.id), path });
+                p.media.push(MediaRef::new(MediaId(bm.id), path));
             }
         }
         p.published = kt.published;
@@ -2728,7 +2746,21 @@ fn clip_from_otio(
         }),
     };
     if !media_list.iter().any(|m| m.id == media) {
-        media_list.push(MediaRef { id: media, path: resolve_url(base_dir, &url) });
+        // ДЛИНА МАТЕРИАЛА — из стандартного `available_range` внешней
+        // ссылки (Р.63 п.2). У генератора её нет и быть не может: там
+        // `available_range` пишется потреблённым куском, а не длиной
+        // источника, и принять его за длину значило бы поставить
+        // генератору упор трима из ниоткуда.
+        let len = match c.active_media() {
+            Some(MediaRefNode::External(er)) => {
+                er.available_range.map(|r| r.duration.to_ticks()).filter(|d| d.0 > 0)
+            }
+            _ => None,
+        };
+        media_list.push(match len {
+            Some(d) => MediaRef::with_duration(media, resolve_url(base_dir, &url), d),
+            None => MediaRef::new(media, resolve_url(base_dir, &url)),
+        });
     }
     let id = match &meta {
         Some(m) if is_ours => ClipId(m.id),

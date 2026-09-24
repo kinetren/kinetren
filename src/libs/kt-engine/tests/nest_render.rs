@@ -97,7 +97,7 @@ fn ev(id: u64, kind: ClipKind, lane: u32, start: Tick, dur: Tick, media: u64) ->
 fn base() -> Project {
     let mut p = Project::new(settings());
     for id in [1u64, 2, 3] {
-        p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
+        p.media.push(MediaRef::new(MediaId(id), format!("synth:{id}")));
     }
     p
 }
@@ -1205,8 +1205,8 @@ fn fix_gen(p: &mut Project) {
 
 fn base_gen() -> Project {
     let mut p = base();
-    p.media.push(MediaRef { id: MediaId(GEN), path: gen_kind_path(&gen_kind()) });
-    p.media.push(MediaRef { id: MediaId(FLAT), path: gen_kind_path(&flat_kind()) });
+    p.media.push(MediaRef::new(MediaId(GEN), gen_kind_path(&gen_kind())));
+    p.media.push(MediaRef::new(MediaId(FLAT), gen_kind_path(&flat_kind())));
     p
 }
 

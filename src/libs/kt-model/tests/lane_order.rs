@@ -173,7 +173,7 @@ fn vclip(id: u64, lane: u32) -> ClipEvent {
 
 fn three_video_lanes() -> Project {
     let mut p = Project::new(settings30());
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:440".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:sine:440"));
     p.ensure_tracks(V, 3);
     // по событию на каждой дорожке, на РАЗНЫХ временах: перекрытие тут ни
     // при чём, а различить дорожки после перенумерации надо по id

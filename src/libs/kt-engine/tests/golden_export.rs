@@ -44,7 +44,7 @@ fn golden_project() -> Project {
     for (id, path) in
         [(1, "synth:ramp"), (2, "synth:dc:0.5"), (3, "synth:impulse"), (4, "synth:ramp")]
     {
-        p.media.push(MediaRef { id: MediaId(id), path: path.into() });
+        p.media.push(MediaRef::new(MediaId(id), path));
     }
     let sec = 90_000i64;
     p.clips = vec![
@@ -441,9 +441,9 @@ fn generator_project() -> (Project, Sources) {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:dc:0.25".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:dc:0.25"));
     // Р.59, стадия 2: в пути медиа — ВИД, значения на событии
-    p.media.push(MediaRef { id: MediaId(2), path: "gen:solid".into() });
+    p.media.push(MediaRef::new(MediaId(2), "gen:solid"));
     let clip = |id: u64, lane: u32, start: i64, dur: i64, media: u64| ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),

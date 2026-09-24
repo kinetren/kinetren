@@ -67,7 +67,7 @@ fn project(clips: Vec<ClipEvent>, lanes: u32) -> Project {
 
         settings_explicit: false,
     });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.media.push(MediaRef::new(MediaId(1), "synth:1"));
     p.clips = clips;
     p.ensure_tracks(kt_model::LaneKind::Video, lanes);
     p.validate().expect("fixture is legal");

@@ -88,12 +88,12 @@ fn solid(r: u8, g: u8, b: u8) -> GeneratorKind {
 
 fn base() -> Project {
     let mut p = Project::new(settings());
-    p.media.push(MediaRef { id: MediaId(1), path: gen_kind_path(&title("")) });
-    p.media.push(MediaRef { id: MediaId(2), path: "synth:2".into() });
+    p.media.push(MediaRef::new(MediaId(1), gen_kind_path(&title(""))));
+    p.media.push(MediaRef::new(MediaId(2), "synth:2"));
     // «логотип»: заливка своего цвета. Синтетика для подмены не годится —
     // её кадр есть функция ТИКА, и два разных синтетических медиа в один
     // момент дают один цвет: тест был бы зелёным ни на чём.
-    p.media.push(MediaRef { id: MediaId(3), path: gen_kind_path(&solid(220, 20, 20)) });
+    p.media.push(MediaRef::new(MediaId(3), gen_kind_path(&solid(220, 20, 20))));
     p
 }
 
