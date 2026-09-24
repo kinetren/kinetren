@@ -994,3 +994,93 @@ fn t700_envelope_fits_into_another_effect_kind() {
     let same = kt_model::ops::fit_envelope(&all, &FxInstance::Blur { radius: 2, radius_y: 2 });
     assert!(same.leftover.is_empty(), "свой вид дал остаток");
 }
+
+/// Тест 747b (Р.63 п.1): кривая скорости из ПРЕЖНЕГО файла звучит так же,
+/// как звучала до Р.61.
+///
+/// Утверждается не «форма прямая» (это сказал бы и сам читатель), а
+/// СЛЕДСТВИЕ: значения кривой и карта растяжения совпадают с
+/// кусочно-линейным профилем — тем самым, по которому варп считал всегда,
+/// потому что поля `ease` он не читал вовсе. Сторож сцены: у сглаженной
+/// кривой значение в середине отрезка ДРУГОЕ, иначе тест ничего не ловит.
+#[test]
+fn t747b_rate_curve_from_old_file_sounds_piecewise_linear() {
+    let wire = r#"{"param":"rate","ease":true,"keys":[{"t":0,"v":1.0},{"t":90000,"v":0.5}]}"#;
+    let c: ParamCurve = serde_json::from_str(wire).expect("прежняя кривая читается");
+    assert!(
+        c.keys.iter().all(|k| k.shape == SegShape::Linear),
+        "кривая скорости прочитана не прямой: {:?}",
+        c.keys
+    );
+
+    // эталон — та же кривая, записанная прямой явно
+    let linear = ParamCurve {
+        param: "rate".into(),
+        keys: vec![
+            AutoKey::shaped(Tick(0), 1.0, SegShape::Linear),
+            AutoKey::shaped(Tick(90_000), 0.5, SegShape::Linear),
+        ],
+        source: Default::default(),
+    };
+    // и «плавный» вариант — то, во что её превращал читатель Р.61
+    let smooth = ParamCurve {
+        param: "x".into(),
+        keys: vec![
+            AutoKey::shaped(Tick(0), 1.0, SegShape::default()),
+            AutoKey::shaped(Tick(90_000), 0.5, SegShape::default()),
+        ],
+        source: Default::default(),
+    };
+    for t in [0, 15_000, 22_500, 45_000, 67_500, 90_000] {
+        assert_eq!(
+            curve_value(&c.keys, Tick(t)),
+            curve_value(&linear.keys, Tick(t)),
+            "значение в {t} разошлось с прямой"
+        );
+    }
+    let mid = 22_500;
+    assert!(
+        (curve_value(&smooth.keys, Tick(mid)) - curve_value(&linear.keys, Tick(mid))).abs() > 1e-6,
+        "сцена вырождена: сглаженная и прямая кривые совпали в середине отрезка"
+    );
+
+    // карта варпа: профиль и позиция по нему считаются от ПРЯМОЙ
+    let mut clip = ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
+        overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Audio,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(90_000),
+        source_in: Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![FxInstance::slowed_reverb(1.0, 0.5, 120.0)],
+        fx_bypass: vec![false],
+        fx_auto: vec![vec![c.clone()]],
+        opacity: 1.0,
+        fx_off: false,
+    };
+    let from_old = clip_warp(&clip).expect("варп есть");
+    clip.fx_auto = vec![vec![linear.clone()]];
+    let from_linear = clip_warp(&clip).expect("варп есть");
+    for u in [0.0, 0.25, 0.5, 0.75, 1.0] {
+        assert_eq!(
+            eff_rate(from_old.base(), from_old.prof(), u),
+            eff_rate(from_linear.base(), from_linear.prof(), u),
+            "скорость в {u} разошлась с прямым профилем"
+        );
+    }
+    assert_eq!(
+        from_old.used(),
+        from_linear.used(),
+        "потреблённый материал разошёлся: карта варпа не та, что до Р.61"
+    );
+}

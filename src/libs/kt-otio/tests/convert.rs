@@ -2537,3 +2537,153 @@ fn t731_track_envelope_round_trip_and_version() {
     assert_eq!(b2.project.rows(), p2.rows(), "порядок строк пережил круг");
     assert_eq!(b2.project.track_label(LaneKind::Video, 0), "Потолок");
 }
+
+/// Тест 747 (Р.63 п.1): файл ДО Р.61 с кривыми СКОРОСТИ открывается.
+///
+/// У владельца `untitled_v26.09.19.otio` (14 кривых `rate` с `ease: true`)
+/// перестал открываться совсем: читатель Р.61 разворачивал прежнее булево
+/// в «плавно», а валидатор скорости с того же раунда принимает только
+/// прямую. До Р.61 карта варпа поля `ease` не читала ВОВСЕ — кривая
+/// скорости всегда звучала кусочно-линейной, значит верный перевод —
+/// прямая. Форма файла здесь та же, что у владельца: кривая `rate` на
+/// событии, в патче морфера и внутри вложенной ленты.
+#[test]
+fn t747_old_rate_curves_with_ease_open_as_linear() {
+    fn rate_curve(v0: f64, v1: f64) -> ParamCurve {
+        ParamCurve {
+            param: "rate".into(),
+            keys: vec![
+                AutoKey::shaped(Tick(0), v0, SegShape::Linear),
+                AutoKey::shaped(Tick(45_000), v1, SegShape::Linear),
+            ],
+            source: Default::default(),
+        }
+    }
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 1280,
+        height: 720,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+        default_shape: Default::default(),
+        conform: Default::default(),
+        settings_explicit: false,
+    });
+    p.media.push(MediaRef { id: MediaId(1), path: "media/m1.mp4".into() });
+
+    // 1) кривая скорости на СОБЫТИИ + чужая кривая рядом (её «плавно»
+    //    обязано остаться «плавно»)
+    let mut c = clip(1, ClipKind::Audio, 0, 0, 90_000, 1);
+    c.fx = vec![FxInstance::slowed_reverb(0.75, 0.5, 120.0), FxInstance::gain(0.0)];
+    c.fx_bypass = vec![false, false];
+    c.fx_auto = vec![
+        vec![rate_curve(1.0, 0.25)],
+        vec![ParamCurve {
+            param: "gain_db".into(),
+            keys: vec![
+                AutoKey::shaped(Tick(0), -6.0, SegShape::default()),
+                AutoKey::shaped(Tick(45_000), 0.0, SegShape::default()),
+            ],
+            source: Default::default(),
+        }],
+    ];
+    p.clips.push(c);
+
+    // 2) кривая скорости в ПАТЧЕ МОРФЕРА
+    let mut patch = MorphPatch::default();
+    patch.audio_fx = vec![FxInstance::slowed_reverb(0.8, 0.2, 85.0)];
+    patch.audio_bypass = vec![false];
+    patch.audio_auto = vec![vec![rate_curve(1.0, 0.5)]];
+    p.morphers.push(MorpherEvent {
+        id: MorphId(1),
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(90_000),
+        targets: MorphTargets::Below,
+        patch,
+        enabled: true,
+        timed: true,
+        strength: 1.0,
+        fade_in: Tick(0),
+        fade_out: Tick(0),
+    });
+
+    // 3) кривая скорости ВНУТРИ ЛЕНТЫ
+    let mut s = Sequence::new(MediaId(100), "Лента");
+    let mut inner = clip(11, ClipKind::Audio, 0, 0, 90_000, 1);
+    inner.fx = vec![FxInstance::slowed_reverb(0.9, 0.1, 60.0)];
+    inner.fx_bypass = vec![false];
+    inner.fx_auto = vec![vec![rate_curve(1.0, 0.75)]];
+    s.clips.push(inner);
+    p.sequences.push(s);
+    p.clips.push(clip(2, ClipKind::Video, 0, 0, 90_000, 100));
+
+    p.normalize();
+    p.validate().unwrap();
+    let text = save_project(&p, &Retained::default(), None);
+
+    // приводим файл к ПРЕЖНЕМУ виду: у кривых скорости `ease: true`, как
+    // писали сборки до Р.61 (они писали его ВСЕГДА, см. Р.61 D1b)
+    let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let mut patched = 0usize;
+    fn old_ease(x: &mut serde_json::Value, n: &mut usize) {
+        match x {
+            serde_json::Value::Object(m) => {
+                if m.get("param").and_then(|p| p.as_str()) == Some("rate")
+                    && m.contains_key("ease")
+                {
+                    m.insert("ease".into(), serde_json::Value::Bool(true));
+                    *n += 1;
+                }
+                for (_, val) in m.iter_mut() {
+                    old_ease(val, n);
+                }
+            }
+            serde_json::Value::Array(a) => a.iter_mut().for_each(|val| old_ease(val, n)),
+            _ => {}
+        }
+    }
+    old_ease(&mut v, &mut patched);
+    assert_eq!(patched, 3, "сцена вырождена: кривых скорости в файле не три");
+    let old_text = serde_json::to_string_pretty(&v).unwrap();
+
+    // на прежнем коде здесь `RateShapeMustBeLinear` и файл не открывается
+    let bundle = load_project(&old_text, None).expect("файл прежней сборки обязан открыться");
+    let q = &bundle.project;
+    let rates: Vec<&ParamCurve> = q
+        .clips
+        .iter()
+        .flat_map(|c| c.fx_auto.iter().flatten())
+        .chain(q.morphers.iter().flat_map(|m| m.patch.audio_auto.iter().flatten()))
+        .chain(
+            q.sequences
+                .iter()
+                .flat_map(|s| s.clips.iter())
+                .flat_map(|c| c.fx_auto.iter().flatten()),
+        )
+        .filter(|c| c.param == "rate")
+        .collect();
+    assert_eq!(rates.len(), 3, "кривые скорости потерялись при чтении");
+    for c in &rates {
+        assert!(
+            c.keys.iter().all(|k| k.shape == SegShape::Linear),
+            "кривая скорости прочитана НЕ прямой: {:?}",
+            c.keys
+        );
+    }
+    // чужая кривая своё сглаживание сохранила
+    let gain = q
+        .clips
+        .iter()
+        .flat_map(|c| c.fx_auto.iter().flatten())
+        .find(|c| c.param == "gain_db")
+        .expect("кривая gain_db на месте");
+    assert!(
+        gain.keys.iter().all(|k| k.shape != SegShape::Linear),
+        "у чужой кривой `ease: true` обязано остаться сглаживанием: {:?}",
+        gain.keys
+    );
+    // пересохранение законно и читается снова (миграция односторонняя)
+    let again = save_project(q, &bundle.retained, None);
+    load_project(&again, None).expect("пересохранённый файл читается");
+}

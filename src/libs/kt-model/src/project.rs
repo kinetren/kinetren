@@ -4655,10 +4655,30 @@ struct CurveWire {
 }
 
 impl ParamCurve {
-    /// Форма, которую выражает прежнее булево поле: `true` — третий
-    /// порядок с прежним сглаживанием, `false` — прямая.
-    fn implied_shape(ease: bool) -> SegShape {
-        if ease { SegShape::DEFAULT } else { SegShape::Linear }
+    /// Форма, которую выражает прежнее булево поле `ease`, С УЧЁТОМ ИМЕНИ
+    /// параметра (Р.63): `true` — третий порядок с прежним сглаживанием,
+    /// `false` — прямая, а у СКОРОСТИ варпа — прямая всегда.
+    ///
+    /// Про скорость это не поблажка валидатору, а верный перевод. До Р.61
+    /// карта варпа поля `ease` не читала ВОВСЕ (его читал только `cam_at`
+    /// камеры): кривая скорости всегда звучала кусочно-линейной, каким бы
+    /// ни было булево. Развернув `ease: true` в «плавно», читатель Р.61
+    /// придумывал форму, которой в звуке никогда не было, — и файл
+    /// владельца (14 кривых `rate`) перестал открываться вовсе
+    /// (`RateShapeMustBeLinear`, Р.63 п.1). Читатель знает имя параметра,
+    /// значит знает и единственно верную форму.
+    ///
+    /// ЯВНАЯ форма на ключе (поле `shape`, файлы с v10) тут не трогается:
+    /// её наш писатель у скорости не производит, а пришедшую снаружи
+    /// валидация по-прежнему отвергает громко.
+    pub fn implied_shape_of(param: &str, ease: bool) -> SegShape {
+        if param == "rate" {
+            SegShape::Linear
+        } else if ease {
+            SegShape::DEFAULT
+        } else {
+            SegShape::Linear
+        }
     }
 }
 
@@ -4685,7 +4705,7 @@ impl Serialize for ParamCurve {
         // `ease = false` ровно тогда, когда ВСЯ кривая прямая: так файл
         // прежнего вида пишется прежними байтами
         let ease = !self.keys.iter().all(|k| k.shape == SegShape::Linear);
-        let implied = ParamCurve::implied_shape(ease);
+        let implied = ParamCurve::implied_shape_of(&self.param, ease);
         let keys: Vec<KeyWire> = self
             .keys
             .iter()
@@ -4708,7 +4728,7 @@ impl Serialize for ParamCurve {
 impl<'de> Deserialize<'de> for ParamCurve {
     fn deserialize<D: serde::Deserializer<'de>>(de: D) -> Result<ParamCurve, D::Error> {
         let w = CurveWire::deserialize(de)?;
-        let implied = ParamCurve::implied_shape(w.ease);
+        let implied = ParamCurve::implied_shape_of(&w.param, w.ease);
         Ok(ParamCurve {
             param: w.param,
             keys: w

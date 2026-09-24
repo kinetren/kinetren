@@ -1799,9 +1799,10 @@ fn curves_from_progress(
         .map(|c| {
             // прежнее булево сглаживание разворачивается в ОДНУ форму на
             // все отрезки (Р.61, D1b): значения после чтения обязаны
-            // совпасть с прежними побитово
-            let shape =
-                if c.ease { kt_model::SegShape::DEFAULT } else { kt_model::SegShape::Linear };
+            // совпасть с прежними побитово. Правило ОДНО на оба читателя
+            // (этот и `Deserialize for ParamCurve`) и знает про скорость
+            // варпа — Р.63, см. `implied_shape_of`.
+            let shape = kt_model::ParamCurve::implied_shape_of(&c.param, c.ease);
             kt_model::ParamCurve {
                 param: c.param,
                 keys: c
