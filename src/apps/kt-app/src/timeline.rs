@@ -4820,6 +4820,56 @@ impl KtApp {
             }
         }
 
+        // ---- ХВОСТ БЕЗ МАТЕРИАЛА (Р.63 п.2): штриховка ------------------------
+        //
+        // Событие может быть длиннее файла (край утащили за конец, скорость
+        // поменяли) — тогда за этой чертой тишина и стоп-кадр. Пока хвост
+        // ничем не отличался от материала, это выглядело как «луп ломает
+        // звук»: человек видел событие, а звука в нём не было. Показываем
+        // тем же приёмом, что зону наложения, и НЕ трогаем модель (правило
+        // 20 — ничего не отрубается само).
+        {
+            let p = self.model.project();
+            for c in &p.clips {
+                let Some(end) = kt_model::material_end_on_timeline(c, p.media_duration(c.media))
+                else {
+                    continue;
+                };
+                let body_end = (c.start + c.duration).0;
+                if end >= body_end {
+                    continue;
+                }
+                let (x0, x1) = (tick_to_x(end), tick_to_x(body_end));
+                if x1 < rect.left() || x0 > rect.right() {
+                    continue;
+                }
+                let (kind, lane) = kt_model::lane_key(c);
+                let kind = match kind {
+                    LaneKind::Audio => ClipKind::Audio,
+                    _ => ClipKind::Video,
+                };
+                let top = lane_top(kind, lane);
+                let r = egui::Rect::from_min_max(
+                    egui::pos2(x0, top),
+                    egui::pos2(x1, top + lane_h_at(kind, lane) - 2.0),
+                );
+                let clipped = painter.with_clip_rect(r.intersect(rect));
+                let st = egui::Stroke::new(
+                    1.0,
+                    egui::Color32::from_rgba_unmultiplied(255, 190, 120, 40),
+                );
+                let mut x = r.left() - r.height();
+                while x < r.right() {
+                    clipped.line_segment(
+                        [egui::pos2(x, r.bottom()), egui::pos2(x + r.height(), r.top())],
+                        st,
+                    );
+                    x += 7.0;
+                }
+                crate::widgets::field_probe::note(&format!("clip.{}.no_material", c.id.0), r);
+            }
+        }
+
         // ---- переходы (Р.24, п.140): подложка + X + риска стыка ---------------
         {
             let p = self.model.project();

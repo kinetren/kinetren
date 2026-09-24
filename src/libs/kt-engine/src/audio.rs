@@ -246,6 +246,18 @@ impl NestFetcher<'_> {
 }
 
 impl AudioFetcher for NestFetcher<'_> {
+    /// Край материала — ВОПРОС К ИСТОЧНИКУ, и обёртка обязана его
+    /// пропускать (Р.63 п.2). Умолчание трейта («края нет») здесь
+    /// молчаливо гасило бы весь механизм: у ленты своего материала нет,
+    /// а у её листьев и у обычных медиа — есть, и ответ знает `inner`.
+    fn material_end_frames(&mut self, media: kt_model::MediaId) -> Option<i64> {
+        // у самой ленты края нет: её тишину даёт собственный суб-микс
+        if self.reels.keys().any(|k| k.0 == media) {
+            return None;
+        }
+        self.inner.material_end_frames(media)
+    }
+
     fn begin_clip(&mut self, id: kt_model::ClipId) {
         self.cur = Some(id);
         self.inner.begin_clip(id);

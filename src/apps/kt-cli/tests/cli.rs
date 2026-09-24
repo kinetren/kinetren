@@ -515,3 +515,66 @@ fn t746_probe_prints_tracks_with_switches_level_blend_and_stage() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Тест 748b (Р.63 п.2): `probe` называет конец материала.
+///
+/// По жалобе «в конце тишина» первым делом спрашивают probe — и он обязан
+/// сказать, что материал кончился раньше события, а не заставлять считать
+/// это в уме по длине файла и скорости.
+#[test]
+fn t748b_probe_names_the_material_end() {
+    let dir = std::env::temp_dir().join(format!("kt-cli-t748b-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("edge.otio");
+    let st = cli().args(["demo", path.to_str().unwrap(), "--force"]).output().unwrap();
+    assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+
+    // событие ДЛИННЕЕ материала: синтетический источник длится час
+    // (`SYNTH_DURATION`), поэтому растягиваем событие на полтора часа
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let mut patched = 0usize;
+    fn stretch(x: &mut serde_json::Value, n: &mut usize) {
+        match x {
+            serde_json::Value::Object(m) => {
+                if m.get("OTIO_SCHEMA").and_then(|s| s.as_str()).is_some_and(|s| s.starts_with("Clip"))
+                    && let Some(sr) = m.get_mut("source_range")
+                    && let Some(d) = sr.get_mut("duration")
+                    && let Some(val) = d.get_mut("value")
+                {
+                    *val = serde_json::json!(5400.0 * 90_000.0);
+                    *n += 1;
+                }
+                for (_, val) in m.iter_mut() {
+                    stretch(val, n);
+                }
+            }
+            serde_json::Value::Array(a) => a.iter_mut().for_each(|val| stretch(val, n)),
+            _ => {}
+        }
+    }
+    stretch(&mut v, &mut patched);
+    assert!(patched > 0, "сцена вырождена: событий в демо-проекте нет");
+    let long = dir.join("long.otio");
+    std::fs::write(&long, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+
+    let out = cli().args(["probe", long.to_str().unwrap(), "0", "2"]).output().unwrap();
+    let said = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        said.contains("material ends at"),
+        "probe молчит о конце материала — по жалобе «в конце тишина» спрашивать нечего:\n{said}"
+    );
+    assert!(
+        said.contains("not starvation"),
+        "probe не сказал, что тишина за краем — не голодание: {said}"
+    );
+
+    // событие ВНУТРИ материала — ни строки лишней (правило 9)
+    let out = cli().args(["probe", path.to_str().unwrap(), "0", "2"]).output().unwrap();
+    let clean = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        !clean.contains("material ends at"),
+        "у события внутри материала строки о конце быть не должно: {clean}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

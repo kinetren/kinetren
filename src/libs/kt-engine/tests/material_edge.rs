@@ -122,6 +122,23 @@ fn t748_material_end_is_silence_not_starvation() {
     assert!(all.iter().any(|s| *s != 0.0), "замедленное событие обязано звучать");
     assert_eq!((under, warm), (0, 0), "у замедленного события голодания нет");
 
+    // ---- 2б. КАК У ВЛАДЕЛЬЦА: замедление 0.75 и хвост за материалом ------
+    // 2 с материала при rate 0.75 съедаются за 2.67 с, а событие длится 4 с:
+    // последние 1.33 с читают за концом файла ЧЕРЕЗ ЦЕПОЧКУ FX (варп), а не
+    // прямым путём — это ровно случай Rolling Stones.
+    let p = project(Some(0.75));
+    let mut f = fetcher_with_eof();
+    let (tail, under, warm) = render(&p, &mut f, 3.0, 0.9);
+    assert!(
+        tail.iter().all(|s| s.abs() < 1e-6),
+        "за концом материала на варп-пути обязана быть тишина"
+    );
+    assert_eq!(
+        (under, warm),
+        (0, 0),
+        "хвост варп-события за материалом посчитан голоданием (случай владельца)"
+    );
+
     // ---- 3. голодание ВНУТРИ материала по-прежнему считается -------------
     // пустой кэш-фетчер: бёрстов нет, но материал есть — это настоящий
     // underrun, и он обязан остаться видимым
@@ -149,6 +166,39 @@ fn t748_material_end_is_silence_not_starvation() {
     // а за краем — ноль, тем же фетчером
     let (_, under_tail, _) = render(&p, &mut Empty { end: Some(MEDIA_SECS * 48_000) }, 2.5, 1.0);
     assert_eq!(under_tail, 0, "за краем материала промахов не бывает");
+
+    // ---- 3б. ОБЁРТКА ФЕТЧЕРА обязана пропускать вопрос о крае ------------
+    // Ловушка, стоившая половины задачи: `NestFetcher` оборачивает фетчер
+    // на КАЖДОМ проекте (он же ведёт `begin_clip`), а умолчание трейта —
+    // «края нет». Не переопредели его обёртка, механизм молчит целиком:
+    // на проекте владельца хвост считался голоданием ровно поэтому.
+    {
+        struct Wrap<'a>(&'a mut dyn AudioFetcher);
+        impl AudioFetcher for Wrap<'_> {
+            fn audio_burst(
+                &mut self,
+                m: MediaId,
+                i: i64,
+            ) -> Option<std::sync::Arc<kt_media::AudioBurst>> {
+                self.0.audio_burst(m, i)
+            }
+            // намеренно НЕ переопределяем material_end_frames
+        }
+        let p = project(None);
+        let mut inner = fetcher_with_eof();
+        let (_, under, _) = render(&p, &mut Wrap(&mut inner), 2.5, 1.0);
+        assert!(
+            under > 0,
+            "сцена вырождена: обёртка без делегирования обязана терять край"
+        );
+        // а настоящая обёртка движка — делегирует
+        let mut direct = fetcher_with_eof();
+        assert_eq!(
+            direct.material_end_frames(MediaId(1)),
+            Some(MEDIA_SECS * 48_000),
+            "DirectFetcher обязан знать конец материала"
+        );
+    }
 
     // ---- 4. без известной длины — поведение прежнее -----------------------
     let (_, under_unknown, _) = render(&p, &mut Empty { end: None }, 2.5, 1.0);

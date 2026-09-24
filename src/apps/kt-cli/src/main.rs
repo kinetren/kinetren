@@ -205,6 +205,19 @@ fn probe_range(
                 kt_time::Tick(w.used()).as_secs_f64(),
             );
         }
+        // ХВОСТ ЗА МАТЕРИАЛОМ (Р.63 п.2): первое, что надо спросить по
+        // жалобе «в конце тишина». Длина известна не всегда (генератор,
+        // лента, не открытый файл) — молчим только тогда.
+        if let Some(at) =
+            kt_model::material_end_on_timeline(c, project.media_duration(c.media))
+        {
+            println!(
+                "      material ends at {:.3} s (event goes to {:.3} s): \
+                 silence and a held frame past it, not starvation",
+                kt_time::Tick(at).as_secs_f64(),
+                (c.start + c.duration).as_secs_f64(),
+            );
+        }
     }
     if shown == 0 {
         println!("  (none)");
@@ -858,6 +871,24 @@ fn run(args: &[String]) -> i32 {
                 Err(code) => return code,
             };
             let timed = args.iter().any(|a| a == "--time");
+            // ДЛИНЫ МАТЕРИАЛА меряем сами (Р.63 п.2): в проектах до этого
+            // раунда их в файле нет, а именно по ним probe отвечает на
+            // жалобу «в конце тишина». Открываем те же источники, что и
+            // для заказа; недоступные просто молчат.
+            let mut project = project;
+            if let Ok(mut f) = open_sources(&project, input.as_str(), false, None) {
+                let ids: Vec<kt_model::MediaId> = project.media.iter().map(|m| m.id).collect();
+                for id in ids {
+                    if let Some(src) = f.source_mut(id) {
+                        let d = src.info().duration;
+                        if d.0 > 0 {
+                            if let Some(m) = project.media.iter_mut().find(|m| m.id == id) {
+                                m.duration = Some(d);
+                            }
+                        }
+                    }
+                }
+            }
             probe_range(&project, Some(input.as_str()), from, to, timed.then_some(input.as_str()))
         }
         Some("render") => {

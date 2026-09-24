@@ -698,9 +698,19 @@ impl KtApp {
         project: &Project,
         base: Option<&Path>,
         index_db: Option<&Path>,
-    ) -> (Player, Option<audio_out::AudioOutput>, Vec<(MediaId, String, String)>) {
+    ) -> (
+        Player,
+        Option<audio_out::AudioOutput>,
+        Vec<(MediaId, String, String)>,
+        Vec<(MediaId, kt_time::Tick)>,
+    ) {
         let mut sources = Vec::new();
         let mut missing = Vec::new();
+        // ДЛИНЫ МАТЕРИАЛА (Р.63 п.2): их знает только тот, кто открыл
+        // источник, а на СТАРТЕ это здесь. Без этого модель узнавала бы
+        // их лишь при следующей смене пути — то есть у открытого проекта
+        // никогда, и хвост за концом файла ничем бы не отличался.
+        let mut lens: Vec<(MediaId, kt_time::Tick)> = Vec::new();
         for m in &project.media {
             let label = crate::util::media_label(&m.path);
             let (src, err) = crate::util::open_source_or_placeholder(
@@ -711,6 +721,7 @@ impl KtApp {
             if let Some(e) = err {
                 missing.push((m.id, label, e));
             }
+            lens.push((m.id, src.info().duration));
             sources.push((m.id, src));
         }
         let (player, ring) = Player::new(project.clone(), sources);
@@ -724,13 +735,13 @@ impl KtApp {
                 None
             }
         };
-        (player, audio, missing)
+        (player, audio, missing, lens)
     }
 
     pub(crate) fn new_empty(error: Option<String>) -> KtApp {
         let project = Self::empty_project();
         let project2 = project.clone();
-        let (player, audio, _) = Self::build_player(&project, None, None);
+        let (player, audio, _, _) = Self::build_player(&project, None, None);
         let peaks: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
         let loudness_map: Arc<Mutex<crate::util::LoudnessMap>> =
             Arc::new(Mutex::new(Default::default()));
@@ -930,7 +941,7 @@ impl KtApp {
     pub(crate) fn open(path: &Path) -> Result<KtApp, String> {
         let base = path.parent();
         let (project, retained, notices) = load_project_file(path)?;
-        let (player, audio, err) =
+        let (player, audio, err, media_lens) =
             Self::build_player(&project, base, Some(&path.with_extension("ktindex.db")));
         let (offline, watchdog) = spawn_media_watchdog(&project, base);
         let thumbs_svc = crate::thumbs::ThumbService::start(&project, Some(path.to_path_buf()));
@@ -1186,6 +1197,12 @@ impl KtApp {
         // Р.49 п.360: рабочее место пользователя сильнее того, что лежит в
         // чужом файле. Пустое хранилище (первый запуск после переезда)
         // оставляет значения из файла — миграция без единой строки кода.
+        // измеренные длины материала — В МОДЕЛЬ (Р.63 п.2): от них зависят
+        // упор трима и штриховка хвоста. Вне undo и без звёздочки: это
+        // факт о файле, а не правка.
+        for (id, d) in media_lens {
+            app.model.note_media_length(id, d);
+        }
         app.workspace = crate::user_store::load_workspace();
         if app.workspace.meters_w > 0.0 {
             app.meters_w = app.workspace.meters_w.clamp(METERS_W_MIN, METERS_W_MAX);

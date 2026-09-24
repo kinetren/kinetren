@@ -14285,3 +14285,84 @@ fn t745_locked_track_refuses_every_gesture_with_a_reason() {
         "глушение запертой дорожки перестало действовать на файл"
     );
 }
+
+/// Тест 748d (Р.63 п.2): хвост события БЕЗ МАТЕРИАЛА виден на полосе.
+///
+/// Событие может быть длиннее файла (край утащили за конец ещё до Р.63,
+/// скорость поменяли) — и тогда в его хвосте тишина и стоп-кадр. Пока
+/// хвост выглядел как обычный материал, это читалось как «луп ломает
+/// звук»: человек видит событие, а звука в нём нет. Утверждается
+/// НАРИСОВАННОЕ: штриховка начинается там же, где кончается материал по
+/// модели, и у события внутри материала её нет вовсе.
+#[test]
+fn t748d_tail_without_material_is_hatched() {
+    use kt_model::LaneKind::Video;
+    let (mut h, _) = harness_three_clips_dt(None);
+    // событие 0..50_000 на медиа, которого хватает только на 20_000
+    {
+        let app = h.state_mut();
+        edit_project(app, |p| {
+            p.media[0].duration = Some(kt_time::Tick(20_000));
+        });
+    }
+    h.step();
+    h.step();
+
+    let probe = |h: &Harness<'_, KtApp>| -> Option<egui::Rect> {
+        h.state().model.project().clips.first().and_then(|c| {
+            let len = h.state().model.project().media_duration(c.media);
+            kt_model::material_end_on_timeline(c, len).map(|end| {
+                let g = h.state().tl_geom.clone().expect("геометрия");
+                let row = g.rows.iter().position(|r| *r == (Video, 0)).unwrap();
+                egui::Rect::from_min_max(
+                    egui::pos2(g.tick_to_x(end), g.row_top(row)),
+                    egui::pos2(
+                        g.tick_to_x((c.start + c.duration).0),
+                        g.row_top(row) + g.row_h(row),
+                    ),
+                )
+            })
+        })
+    };
+    let r = probe(&h).expect("модель знает, где кончается материал");
+    assert!(r.width() > 1.0, "хвост без материала обязан быть шире пикселя");
+
+    // НАРИСОВАНО: в зоне хвоста есть штриховка — линии, которых нет в
+    // теле события. Считаем отрезки, попавшие в прямоугольник хвоста.
+    // Штрих — диагональ во всю высоту строки: внутри узкого хвоста она не
+    // помещается и обрезается КЛИП-ПРЯМОУГОЛЬНИКОМ. Считаем по нему: у
+    // хвоста он свой и ничей больше.
+    let lines_in = |h: &Harness<'_, KtApp>, r: egui::Rect| -> usize {
+        fn walk(s: &egui::epaint::Shape, n: &mut usize) {
+            use egui::epaint::Shape;
+            match s {
+                Shape::Vec(v) => v.iter().for_each(|s| walk(s, n)),
+                Shape::LineSegment { .. } => *n += 1,
+                _ => {}
+            }
+        }
+        let mut n = 0;
+        for cs in &h.output().shapes {
+            let c = cs.clip_rect;
+            if (c.left() - r.left()).abs() < 2.0 && (c.right() - r.right()).abs() < 2.0 {
+                walk(&cs.shape, &mut n);
+            }
+        }
+        n
+    };
+    let hatch = lines_in(&h, r);
+    assert!(hatch >= 2, "штриховки в хвосте без материала нет (линий {hatch})");
+
+    // у события ВНУТРИ материала хвоста нет вовсе (правило 9)
+    {
+        let app = h.state_mut();
+        edit_project(app, |p| {
+            p.media[0].duration = Some(kt_time::Tick(10 * 90_000));
+        });
+    }
+    h.step();
+    h.step();
+    assert!(probe(&h).is_none(), "у события внутри материала хвоста быть не должно");
+    let body = egui::Rect::from_min_max(r.min, r.max);
+    assert_eq!(lines_in(&h, body), 0, "штриховка осталась там, где материал есть");
+}
