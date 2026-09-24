@@ -24,6 +24,14 @@ pub struct TrackWindow {
     /// Токен жеста: вся сессия окна — ОДИН шаг истории (как у окна FX).
     pub gesture: u64,
     pub picker_query: String,
+    /// Настройки ДАКИНГА (Р.63 п.8): инструмент помнит, что в него ввели
+    /// прошлый раз, — они приезжают из `user_store` при открытии окна и
+    /// уезжают туда при вызове. «Какого хера я вынужден каждый раз
+    /// запоминать какие я параметры ввел в предыдущий раз?» (владелец).
+    pub duck: kt_engine::ducking::DuckParams,
+    /// Дорожка-ИСТОЧНИК речи (та, ПОД которую приглушаем фон этой).
+    /// Она про ЭТОТ проект, поэтому в общем хранилище ей не место.
+    pub duck_src: Option<u32>,
     pub selected: crate::widgets::ChainSel,
     pub focus: bool,
     pub open: bool,
@@ -37,7 +45,10 @@ impl KtApp {
             return;
         }
         let Some(t) = self.model.project().track(id) else { return };
+        let duck = self.workspace.duck.unwrap_or_default();
         self.track_win = Some(TrackWindow {
+            duck,
+            duck_src: None,
             id,
             backup: t.props(),
             fx_backup: (t.fx.clone(), t.fx_bypass.clone(), t.fx_off),
@@ -81,6 +92,9 @@ impl KtApp {
         let mut curves_dropped = false;
         let mut changed_fx = false;
         let mut hover: Option<String> = None;
+        // «Дакинг» жмут внутри окна, а считать его — дело `&mut self`:
+        // намерение собирается здесь и исполняется после отрисовки
+        let mut duck_go = false;
         let title = crate::tf!(k::track::TITLE, track.label(lane));
         egui::Window::new(title)
             .id(egui::Id::new(("track_window", w.id.0)))
@@ -224,6 +238,117 @@ impl KtApp {
                 ui.label(
                     egui::RichText::new(tr(k::track::NO_CURVES_HINT)).weak().small(),
                 );
+                // ДАКИНГ — ЗДЕСЬ, а не своим окном (Р.63 п.8). Владелец:
+                // «очень уёбский способ управления. это банально можно
+                // удобнее сделать через fx-аудио на весь трек». Фон — та
+                // дорожка, чьё окно открыто; речь выбирается рядом.
+                if track.kind == LaneKind::Audio {
+                    ui.separator();
+                    ui.label(egui::RichText::new(tr(k::msg::DUCK_TITLE)).strong());
+                    let lanes: Vec<u32> = {
+                        let mut v: Vec<u32> = self
+                            .model
+                            .project()
+                            .clips
+                            .iter()
+                            .filter(|c| c.kind == kt_model::ClipKind::Audio && c.lane != lane)
+                            .map(|c| c.lane)
+                            .collect();
+                        v.sort_unstable();
+                        v.dedup();
+                        v
+                    };
+                    let mut src = w.duck_src.or_else(|| lanes.first().copied());
+                    ui.horizontal(|ui| {
+                        ui.label(tr(k::msg::DUCK_SOURCE_LANE));
+                        let cb = egui::ComboBox::from_id_salt(("duck_lane", w.id.0))
+                            .selected_text(match src {
+                                Some(l) => format!("{}", l + 1),
+                                None => "—".to_string(),
+                            })
+                            .show_ui(ui, |ui| {
+                                for l in &lanes {
+                                    let mut cur = src;
+                                    if ui
+                                        .selectable_value(&mut cur, Some(*l), format!("{}", l + 1))
+                                        .clicked()
+                                    {
+                                        src = cur;
+                                    }
+                                }
+                            });
+                        crate::widgets::field_probe::note("duck.src", cb.response.rect);
+                    });
+                    w.duck_src = src;
+                    egui::Grid::new(("duck_params", w.id.0)).num_columns(2).show(ui, |ui| {
+                        let mut row = |ui: &mut egui::Ui,
+                                       probe: &str,
+                                       label: &str,
+                                       v: &mut f64,
+                                       lo: f64,
+                                       hi: f64,
+                                       step: f64,
+                                       suffix: &str| {
+                            ui.label(label);
+                            let r = ui.add(
+                                egui::DragValue::new(v)
+                                    .range(lo..=hi)
+                                    .speed(step)
+                                    .suffix(suffix),
+                            );
+                            crate::widgets::field_probe::note(probe, r.rect);
+                            ui.end_row();
+                        };
+                        row(
+                            ui,
+                            "duck.threshold",
+                            tr(k::fxp::THRESHOLD_DB),
+                            &mut w.duck.threshold_db,
+                            -60.0,
+                            0.0,
+                            0.5,
+                            " dB",
+                        );
+                        row(
+                            ui,
+                            "duck.depth",
+                            tr(k::msg::DUCK_DEPTH),
+                            &mut w.duck.depth_db,
+                            0.0,
+                            24.0,
+                            0.5,
+                            " dB",
+                        );
+                        row(
+                            ui,
+                            "duck.attack",
+                            tr(k::fxp::ATTACK_MS),
+                            &mut w.duck.attack_ms,
+                            10.0,
+                            1000.0,
+                            5.0,
+                            " ms",
+                        );
+                        row(
+                            ui,
+                            "duck.release",
+                            tr(k::fxp::RELEASE_MS),
+                            &mut w.duck.release_ms,
+                            10.0,
+                            2000.0,
+                            10.0,
+                            " ms",
+                        );
+                    });
+                    // правило 19: сказать, что это СНИМОК
+                    ui.label(egui::RichText::new(tr(k::msg::DUCK_NOTE)).weak().small());
+                    let r = ui.add_enabled(src.is_some(), egui::Button::new(tr(k::msg::DUCK_DO)));
+                    crate::widgets::field_probe::note("duck.do", r.rect);
+                    crate::widgets::hint(&r, tr(k::msg::DUCK_NOTE));
+                    if r.clicked() {
+                        duck_go = true;
+                    }
+                }
                 ui.horizontal(|ui| {
                     let r = ui.button(tr(k::track::CLOSE));
                     crate::widgets::field_probe::note("track.close", r.rect);
@@ -276,6 +401,31 @@ impl KtApp {
                         w.gesture,
                     );
                 }
+            }
+        }
+        if duck_go && let Some(src) = w.duck_src {
+            // ЦЕЛИ — события ЭТОЙ дорожки: окно про неё и открыто, и
+            // «что приглушаем» спрашивать второй раз незачем
+            let targets: Vec<kt_model::ClipId> = self
+                .model
+                .project()
+                .clips
+                .iter()
+                .filter(|c| c.kind == kt_model::ClipKind::Audio && c.lane == lane)
+                .map(|c| c.id)
+                .collect();
+            if targets.is_empty() {
+                self.refuse(tr(k::msg::DUCK_NOTHING));
+            } else {
+                // ИНСТРУМЕНТ ПОМНИТ, что в него ввели (Р.63 п.8)
+                self.workspace.duck = Some(w.duck);
+                crate::user_store::save_workspace(&self.workspace);
+                let d = crate::app::DuckDialog {
+                    targets,
+                    src_lane: src,
+                    params: w.duck,
+                };
+                self.start_ducking(&d);
             }
         }
         if open && w.open {

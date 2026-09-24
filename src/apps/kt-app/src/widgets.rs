@@ -1389,6 +1389,12 @@ pub fn chain_strip(
                 ),
                 tr(k::fx::SLOT_HINT),
             );
+            // слот отдаёт свой прямоугольник живым сценариям: полоса —
+            // единственный способ выбрать слот, а угадывать смещения
+            // внутри окна сценарий не должен (Р.27)
+            if crate::widgets::field_probe::on() {
+                crate::widgets::field_probe::note(&format!("fx.slot.{i}"), resp.rect);
+            }
             if resp.clicked() {
                 *edit.selected = ChainSel::Fx(i);
             }

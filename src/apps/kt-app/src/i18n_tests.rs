@@ -296,3 +296,37 @@ fn t171_transition_menu_labels_say_what_and_where() {
         );
     }
 }
+
+/// Тест 756c (Р.63 п.8.1): дакинг НАЗВАН ПО ОТРАСЛИ.
+///
+/// Владелец: «я не понимаю что такое duck under a track "приглушить под
+/// дорожкой"??? что??? что находится под дорожкой что надо приглушить??
+/// это Audio-Ducking? почему ты нормально это не назвал? замечание будущим
+/// агентам». Правило из этого: у функции, у которой есть отраслевое имя,
+/// в интерфейсе стоит ОНО — иначе человек не может связать нашу кнопку с
+/// тем, что знает из Vegas/Premiere/Resolve.
+#[test]
+fn t756c_ducking_is_named_the_way_the_industry_names_it() {
+    for lang in Lang::ALL {
+        i18n::set_lang(lang);
+        let menu = i18n::tr(i18n::k::tl::menu::DUCK).to_lowercase();
+        let title = i18n::tr(i18n::k::msg::DUCK_TITLE).to_lowercase();
+        for (what, s) in [("пункт меню", &menu), ("заголовок", &title)] {
+            // прежнее имя было ОПИСАНИЕМ МЕСТА («под дорожкой»), а не
+            // названием функции — и объяснить его было нечем
+            assert!(
+                !s.contains("под дорожкой") && !s.contains("under a track"),
+                "{}: {what} всё ещё называет место, а не функцию: {s:?}",
+                lang.code()
+            );
+        }
+        // отраслевое имя: «дакинг» / «ducking» / 闪避 / خفض
+        let known = ["дакинг", "ducking", "闪避", "خفض"];
+        assert!(
+            known.iter().any(|k| menu.contains(k)) && known.iter().any(|k| title.contains(k)),
+            "{}: отраслевого имени нет ни в пункте меню ({menu:?}), ни в заголовке ({title:?})",
+            lang.code()
+        );
+    }
+    i18n::set_lang(Lang::Ru);
+}

@@ -141,12 +141,16 @@ impl KtApp {
             .map(|m| (m.id, m.geometry, m.geometry_pos, m.geometry_auto.clone()))
             .collect();
         // у события-генератора с пустой цепочкой выбирать нечего, кроме
-        // головы: `Fx(0)` на пустой цепочке показал бы пустоту
+        // головы: `Fx(0)` на пустой цепочке показал бы пустоту. У
+        // ЭКЗЕМПЛЯРА ленты голова — «Параметры композиции» (Р.63 п.12), и
+        // правило то же.
+        let doc = self.model.document();
         let selected = members
             .iter()
             .filter_map(|id| self.model.clip(*id))
             .map(|m| {
-                let sel = if m.fx.is_empty() && m.r#gen.is_some() {
+                let has_head = m.r#gen.is_some() || doc.sequence(m.media).is_some();
+                let sel = if m.fx.is_empty() && has_head {
                     crate::widgets::ChainSel::Head
                 } else {
                     crate::widgets::ChainSel::Fx(m.fx.len().saturating_sub(1))

@@ -419,6 +419,39 @@ mod tests {
         }
         assert!(any_audio && any_video, "заводские обязаны покрывать оба вида событий");
     }
+
+    /// Тест 756b (Р.63 п.8.3): ИНСТРУМЕНТ ПОМНИТ, что в него ввели.
+    ///
+    /// Владелец: «какого хера я вынужден каждый раз запоминать какие я
+    /// параметры ввел в предыдущий раз? почему агент игнорирует требования
+    /// удобства пользователя…». Настройки дакинга — свойство ИНСТРУМЕНТА,
+    /// а не проекта: они живут в общем хранилище рядом с шириной метров.
+    #[test]
+    fn t756b_ducking_settings_survive_the_workspace_roundtrip() {
+        let d = tmp_dir("duck");
+        let path = d.join("workspace.json");
+        let mut w = Workspace::default();
+        assert!(w.duck.is_none(), "по умолчанию настроек нет — берутся умолчания инструмента");
+        w.duck = Some(kt_engine::ducking::DuckParams {
+            threshold_db: -28.5,
+            depth_db: 14.0,
+            attack_ms: 200.0,
+            release_ms: 600.0,
+        });
+        w.meters_w = 123.0;
+        save_workspace_at(&path, &w);
+        let back = load_workspace_at(&path);
+        assert_eq!(back.duck, w.duck, "настройки дакинга не пережили круг через файл");
+        assert_eq!(back.meters_w, 123.0, "соседние поля хранилища пострадали");
+
+        // файл БЕЗ секции читается по-прежнему: старое рабочее место цело
+        let old = d.join("old.json");
+        std::fs::write(&old, "{\"version\":1,\"meters_w\":77.0,\"views\":[]}\n").unwrap();
+        let back = load_workspace_at(&old);
+        assert!(back.duck.is_none(), "в файле без секции настройки взялись из ниоткуда");
+        assert_eq!(back.meters_w, 77.0);
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }
 
 // ---- рабочее место (Р.49, п.360) ------------------------------------------
@@ -457,6 +490,10 @@ pub struct Workspace {
     pub meters_w: f32,
     /// Вид по проекту, свежие впереди.
     views: Vec<(String, ProjectView)>,
+    /// Настройки ДАКИНГА (Р.63 п.8): инструмент обязан помнить, что в
+    /// него ввели прошлый раз. Дорожки здесь нет намеренно — она про
+    /// ПРОЕКТ, а хранилище общее на все.
+    pub duck: Option<kt_engine::ducking::DuckParams>,
     /// Файл прочитан из будущей версии — только чтение.
     readonly: bool,
 }
@@ -497,6 +534,16 @@ pub fn load_workspace_at(path: &std::path::Path) -> Workspace {
     let ver = v.get("version").and_then(|x| x.as_u64()).unwrap_or(0);
     let mut w = Workspace { readonly: ver > WORKSPACE_VERSION, ..Default::default() };
     w.meters_w = v.get("meters_w").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+    if let Some(d) = v.get("duck") {
+        let num = |k: &str, dflt: f64| d.get(k).and_then(|x| x.as_f64()).unwrap_or(dflt);
+        let dflt = kt_engine::ducking::DuckParams::default();
+        w.duck = Some(kt_engine::ducking::DuckParams {
+            threshold_db: num("threshold_db", dflt.threshold_db),
+            depth_db: num("depth_db", dflt.depth_db),
+            attack_ms: num("attack_ms", dflt.attack_ms),
+            release_ms: num("release_ms", dflt.release_ms),
+        });
+    }
     if let Some(arr) = v.get("views").and_then(|x| x.as_array()) {
         for e in arr.iter().take(WORKSPACE_KEEP) {
             let (Some(path), Some(vs), Some(tp)) = (
@@ -539,11 +586,24 @@ pub fn save_workspace_at(path: &std::path::Path, w: &Workspace) {
             })
         })
         .collect();
-    let doc = serde_json::json!({
+    let mut doc = serde_json::json!({
         "version": WORKSPACE_VERSION,
         "meters_w": w.meters_w,
         "views": views,
     });
+    if let Some(d) = w.duck
+        && let Some(o) = doc.as_object_mut()
+    {
+        o.insert(
+            "duck".into(),
+            serde_json::json!({
+                "threshold_db": d.threshold_db,
+                "depth_db": d.depth_db,
+                "attack_ms": d.attack_ms,
+                "release_ms": d.release_ms,
+            }),
+        );
+    }
     if let Some(d) = path.parent() {
         let _ = std::fs::create_dir_all(d);
     }

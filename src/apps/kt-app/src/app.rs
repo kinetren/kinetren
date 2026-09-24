@@ -533,7 +533,6 @@ pub struct KtApp {
     /// над таймлайном. Ctrl+V кладёт блок сюда: клавиатурная вставка
     /// обязана попадать туда же, куда попала бы вставка из меню.
     pub tl_hover_row: Option<(LaneKind, u32)>,
-    pub duck: Option<DuckDialog>,
     pub preset_save: Option<PresetSaveDialog>,
     /// Окно «Настройки проекта» (Р.62).
     pub settings_win: Option<crate::settings_window::SettingsWindow>,
@@ -896,7 +895,6 @@ impl KtApp {
             last_band: None,
             paste_names: None,
             tl_hover_row: None,
-            duck: None,
             preset_save: None,
             settings_win: None,
             track_win: None,
@@ -1102,7 +1100,6 @@ impl KtApp {
             last_band: None,
             paste_names: None,
             tl_hover_row: None,
-            duck: None,
             preset_save: None,
             settings_win: None,
             track_win: None,
@@ -1664,7 +1661,6 @@ impl KtApp {
         self.draw_camera_editors(&ctx);
         self.draw_morph_editors(&ctx);
         self.draw_paste_names(&ctx);
-        self.draw_duck_dialog(&ctx);
         self.draw_preset_save(&ctx);
         self.draw_settings_window(&ctx);
         self.draw_track_window(&ctx);
@@ -2594,9 +2590,6 @@ impl KtApp {
         }
         // 0) окно префикса вставки (Р.35 п.4)
         if self.preset_save.take().is_some() {
-            return;
-        }
-        if self.duck.take().is_some() {
             return;
         }
         if self.paste_names.take().is_some() {
@@ -4658,101 +4651,6 @@ impl KtApp {
     /// Окно автодакинга. По кнопке считает огибающую дорожки-источника
     /// (честным рендером — гейны, фейды и FX там уже учтены) и кладёт
     /// кривую громкости на выделенные события ОДНИМ шагом истории.
-    fn draw_duck_dialog(&mut self, ctx: &egui::Context) {
-        let Some(mut d) = self.duck.take() else { return };
-        let mut go = false;
-        let mut cancel = false;
-        let mut open = true;
-        let lanes: Vec<u32> = {
-            let mut v: Vec<u32> = self
-                .model
-                .project()
-                .clips
-                .iter()
-                .filter(|c| c.kind == kt_model::ClipKind::Audio)
-                .map(|c| c.lane)
-                .collect();
-            v.sort_unstable();
-            v.dedup();
-            v
-        };
-        egui::Window::new(tr(k::msg::DUCK_TITLE))
-            .id(egui::Id::new("duck"))
-            .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(tr(k::msg::DUCK_SOURCE_LANE));
-                    egui::ComboBox::from_id_salt("duck_lane")
-                        .selected_text(format!("{}", d.src_lane + 1))
-                        .show_ui(ui, |ui| {
-                            for l in &lanes {
-                                ui.selectable_value(&mut d.src_lane, *l, format!("{}", l + 1));
-                            }
-                        });
-                });
-                egui::Grid::new("duck_params").num_columns(2).show(ui, |ui| {
-                    ui.label(tr(k::fxp::THRESHOLD_DB));
-                    ui.add(
-                        egui::DragValue::new(&mut d.params.threshold_db)
-                            .range(-60.0..=0.0)
-                            .speed(0.5)
-                            .suffix(" dB"),
-                    );
-                    ui.end_row();
-                    ui.label(tr(k::msg::DUCK_DEPTH));
-                    ui.add(
-                        egui::DragValue::new(&mut d.params.depth_db)
-                            .range(0.0..=24.0)
-                            .speed(0.5)
-                            .suffix(" dB"),
-                    );
-                    ui.end_row();
-                    ui.label(tr(k::fxp::ATTACK_MS));
-                    ui.add(
-                        egui::DragValue::new(&mut d.params.attack_ms)
-                            .range(10.0..=1000.0)
-                            .speed(5.0)
-                            .suffix(" ms"),
-                    );
-                    ui.end_row();
-                    ui.label(tr(k::fxp::RELEASE_MS));
-                    ui.add(
-                        egui::DragValue::new(&mut d.params.release_ms)
-                            .range(10.0..=2000.0)
-                            .speed(10.0)
-                            .suffix(" ms"),
-                    );
-                    ui.end_row();
-                });
-                // правило 19: сказать, что это СНИМОК — поменяется музыка,
-                // вызвать заново
-                ui.label(egui::RichText::new(tr(k::msg::DUCK_NOTE)).weak().small());
-                ui.horizontal(|ui| {
-                    if ui.button(tr(k::msg::DUCK_DO)).clicked() {
-                        go = true;
-                    }
-                    if ui.button(tr(k::fx::CANCEL)).clicked() {
-                        cancel = true;
-                    }
-                });
-            });
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            cancel = true;
-        }
-        if go {
-            ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("duck")));
-            self.start_ducking(&d);
-            return;
-        }
-        if cancel || !open {
-            ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("duck")));
-            return;
-        }
-        self.duck = Some(d);
-    }
-
     /// Посчитать интервалы и применить кривую.
     ///
     /// Анализ читает источники НАПРЯМУЮ, своим фетчером: декодерами

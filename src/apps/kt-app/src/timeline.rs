@@ -5835,9 +5835,13 @@ impl KtApp {
                     self.cut_action();
                     ui.close();
                 }
-                if ui.button(tr(k::tl::menu::FX)).clicked() {
-                    self.open_fx_editor(id);
-                    ui.close();
+                {
+                    let r = ui.button(tr(k::tl::menu::FX));
+                    crate::widgets::field_probe::note("tl.fx", r.rect);
+                    if r.clicked() {
+                        self.open_fx_editor(id);
+                        ui.close();
+                    }
                 }
                 if ui.button(tr(k::tl::menu::REGION_FROM_EVENT)).clicked() {
                     self.region_from_event(id);
@@ -5873,27 +5877,16 @@ impl KtApp {
                 }
                 // автодакинг (Р.48): считает паузы по другой дорожке и
                 // кладёт кривую громкости на выделенные события
+                // ДАКИНГ живёт в окне ДОРОЖКИ (Р.63 п.8): своего окна у
+                // него больше нет, а пункт меню — короткий путь туда же
+                // (правило 17: у двери одно тело). Владелец: «это банально
+                // можно удобнее сделать через fx-аудио на весь трек».
                 if is_audio && ui.button(tr(k::tl::menu::DUCK)).clicked() {
-                    if !self.is_selected(id) {
-                        self.select_only(id);
-                    }
-                    let targets: Vec<ClipId> = self.selected.iter().copied().collect();
                     let my_lane = self.model.clip(id).map(|c| c.lane).unwrap_or(0);
-                    // источник по умолчанию — соседняя аудио-дорожка
-                    let src = self
-                        .model
-                        .project()
-                        .clips
-                        .iter()
-                        .filter(|c| c.kind == ClipKind::Audio && c.lane != my_lane)
-                        .map(|c| c.lane)
-                        .min()
-                        .unwrap_or(my_lane);
-                    self.duck = Some(crate::app::DuckDialog {
-                        targets,
-                        src_lane: src,
-                        params: Default::default(),
-                    });
+                    if let Some(t) = self.model.project().track_at(LaneKind::Audio, my_lane) {
+                        let tid = t.id;
+                        self.open_track_window(tid);
+                    }
                     ui.close();
                 }
                 if is_audio && ui.button(tr(k::tl::menu::RESET_GAIN)).clicked() {

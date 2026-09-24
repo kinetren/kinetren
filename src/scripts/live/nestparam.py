@@ -124,6 +124,40 @@ def make_generator(app, group, kind, at_ticks):
     time.sleep(0.4)
 
 
+def video_row_ys(app):
+    """Экранные y всех ВИДЕО-строк. Раскрытая полоса добавляет свои строки
+    с номерами из хвоста числового пространства (Р.55), и угадывать их
+    сценарию нечем — он их перебирает."""
+    g = app.geom()
+    win = geometry()
+    return [
+        win["y"] + int(r["top"] + r.get("h", g["lane_h"]) * 0.5)
+        for r in g["rows"]
+        if r["kind"] == "video"
+    ]
+
+
+def open_window_in_rows(app, x, probe, avoid=None, limit=6):
+    """Открыть окно эффектов события, строка которого заранее неизвестна.
+
+    ПУНКТОМ МЕНЮ, а не двойным кликом: внутри раскрытой полосы двойной
+    клик — жест самой полосы (сворачивание, Р.55), и сценарий закрывал бы
+    то, что сам же открыл. `avoid` — строка экземпляра, её не трогаем."""
+    for yy in video_row_ys(app)[:limit]:
+        if avoid is not None and abs(yy - avoid) < 12:
+            continue
+        app.right_click(x, yy)
+        time.sleep(0.4)
+        if app.has_probe("tl.fx", tries=2):
+            app.click_probe("tl.fx", "пункт «Эффекты…» события")
+            time.sleep(0.8)
+            if app.has_probe(probe, tries=4):
+                return True
+        app.key("Escape")
+        time.sleep(0.3)
+    return False
+
+
 def main(out):
     require_tools()
     path = os.path.join(out, "nestparam.otio")
@@ -335,6 +369,117 @@ def main(out):
             f"второй выпуск сравнялся с шаблоном: {own} против {now!r}",
         )
         app.shot("template-edited")
+
+        # --- 6. ПУБЛИКАЦИЯ ИЗ ПОЛОСЫ не тащит внутрь (Р.63 п.11) --------
+        # Владелец: «если опубликовать параметр не входя полностью в
+        # композицию — то зачем-то мы автоматически полностью входим в
+        # композицию». Раскрываем полосу (двойной клик) и публикуем
+        # ОТТУДА: глубина входа обязана остаться нулевой.
+        first = min(c for c in app.live_clips() if c[1] == second[1])
+        fx0 = app.x_at(first[0] + app.seconds(1))
+        rows_before = len(video_row_ys(app))
+        # раскрытие — ПУНКТОМ МЕНЮ, а не двойным кликом: у двойного клика
+        # тот же эффект, но он же и сворачивает, и сценарий, промахнувшись
+        # строкой, закрыл бы полосу молча
+        app.right_click(fx0, y)
+        app.click_probe("nest.expand_here", "пункт «Раскрыть здесь»")
+        time.sleep(1.2)
+        app.expect(
+            len(video_row_ys(app)) > rows_before,
+            f"полоса раскрылась: строк было {rows_before}, стало {len(video_row_ys(app))}",
+        )
+        app.expect(
+            app.geom()["nest"]["depth"] == 0,
+            "полоса раскрыта, а человек остался в корне",
+        )
+        app.expect(
+            open_window_in_rows(app, fx0, "titlew.text", avoid=y),
+            "окно титра открылось ИЗ ПОЛОСЫ",
+        )
+        app.right_click_probe("lbl.size", "подпись кегля титра в полосе")
+        app.click_probe("pub.publish.size", "пункт «Опубликовать…» у кегля")
+        time.sleep(0.5)
+        app.click_probe("pub.dialog.ok", "подтверждение публикации из полосы")
+        time.sleep(0.8)
+        app.expect(
+            app.geom()["nest"]["depth"] == 0,
+            "подтверждение публикации утащило внутрь композиции (п.11)",
+        )
+        app.shot("published-from-band")
+        saved = app.saved_project()
+        pubs = published_of(saved.doc)
+        app.expect(
+            len(pubs) == 3,
+            f"ручка из полосы не легла в ленту: {[p.get('name') for p in pubs]}",
+        )
+
+        # --- 7. п.10: РУЧКА ЭФФЕКТА у экземпляра меняет КАДР ------------
+        # «накинул Radial blur, опубликовал параметр количества, поменял
+        # его на композиции — а оно не меняется».
+        app.click_probe("fxreg.add", "пикер эффектов в окне титра")
+        for ch in "radial":
+            app.key(ch)
+        time.sleep(0.5)
+        app.click_probe("fxreg.tpl.radial_blur", "строка «Радиальное размытие» в пикере")
+        time.sleep(0.8)
+        # у титра выбрана ГОЛОВА (его источник), поэтому новый слот надо
+        # ещё и выбрать — полосой, как человек
+        app.click_probe("fx.slot.0", "слот размытия в полосе цепочки")
+        time.sleep(0.5)
+        app.shot("blur-added")
+        app.expect(app.has_probe("lbl.amount"), "параметры размытия показаны")
+        app.right_click_probe("lbl.amount", "подпись количества размытия")
+        app.click_probe("pub.publish.amount", "пункт «Опубликовать…» у количества")
+        time.sleep(0.5)
+        app.click_probe("pub.dialog.ok", "подтверждение публикации количества")
+        time.sleep(0.8)
+        app.key("Escape")
+        time.sleep(0.4)
+        saved = app.saved_project()
+        pubs = published_of(saved.doc)
+        amount = next((p["id"] for p in pubs if p["target"]["param"] == "amount"), None)
+        app.expect(amount is not None, f"ручка количества не объявлена: {pubs}")
+
+        # полосу сворачиваем — тем же пунктом меню (правило 14: жест
+        # обязан работать ПОВТОРНО)
+        app.right_click(fx0, y)
+        app.click_probe("nest.expand_here", "пункт «Раскрыть здесь» второй раз")
+        time.sleep(1.0)
+
+        # курсор — на второй выпуск, запоминаем кадр
+        app.click(app.x_at(second[0] + app.seconds(1)), app.ruler_y())
+        time.sleep(1.2)
+        before_px = app.pixel_settled(app.preview_center())
+        app.shot("before-amount")
+
+        app.click(sx, y)
+        app.right_click(sx, y)
+        app.click_probe("pub.inst_open", "пункт «Параметры композиции»")
+        time.sleep(0.8)
+        # ГОЛОВА ПОЛОСЫ, а не своё окно (Р.63 п.12)
+        app.expect(app.has_probe("fx.head"), "параметры композиции — голова полосы цепочки")
+        app.expect(
+            amount is not None and app.has_probe(f"inst.value.{amount}"),
+            "ручки количества нет в голове полосы",
+        )
+        app.click_probe(f"inst.value.{amount}", "поле количества у второго выпуска")
+        for ch in ["ctrl+a", "0", "period", "9"]:
+            app.key(ch)
+        app.key("Return")
+        time.sleep(1.2)
+        app.shot("after-amount")
+        after_px = app.pixel_settled(app.preview_center(), differs_from=before_px)
+        app.expect(
+            after_px != before_px,
+            f"кадр второго выпуска не изменился от ручки размытия: {before_px} → {after_px}",
+        )
+        saved = app.saved_project()
+        sets = override_sets(saved.doc)
+        app.expect(
+            any(o["pub_id"] == amount for st in sets for o in st),
+            f"переопределение количества не доехало до файла: {sets}",
+        )
+
         return app.done()
 
 

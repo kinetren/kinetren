@@ -5215,17 +5215,16 @@ fn t420_ducking_runs_in_the_background() {
         p.clips.push(a);
         p.ensure_tracks(kt_model::LaneKind::Audio, p.lanes(kt_model::LaneKind::Audio).max(1));
         app.model = kt_model::TimelineModel::new(p);
-        // окно настроек дакинга, как его собирает диалог
-        app.duck = Some(crate::app::DuckDialog {
-            targets: vec![ClipId(50)],
-            src_lane: 0,
-            params: Default::default(),
-        });
     }
     h.step();
 
-    // жмём «применить» тем же телом, что и кнопка
-    let d = h.state().duck.clone().expect("диалог дакинга");
+    // жмём «Дакинг» тем же телом, что и кнопка в окне ДОРОЖКИ (Р.63 п.8):
+    // своего окна у дакинга больше нет
+    let d = crate::app::DuckDialog {
+        targets: vec![ClipId(50)],
+        src_lane: 0,
+        params: Default::default(),
+    };
     h.state_mut().start_ducking(&d);
     // UI-поток НЕ ЗАБЛОКИРОВАН: кадр проходит сразу, задача считается фоном
     let t = std::time::Instant::now();
@@ -15113,4 +15112,97 @@ fn h_clip(h: &Harness<'_, KtApp>, want: kt_model::ClipId) -> u64 {
         .find(|e| e.members.contains(&want))
         .map(|e| e.clip.0)
         .expect("окно FX экземпляра открыто")
+}
+
+/// Тест 756 (Р.63 п.8): ДАКИНГ живёт в окне аудиодорожки и помнит настройки.
+///
+/// Владелец, тремя замечаниями подряд: «я не понимаю что такое duck under a
+/// track… это Audio-Ducking? почему ты нормально это не назвал?»; «также
+/// очень уёбский способ управления. это банально можно удобнее сделать
+/// через fx-аудио на весь трек»; «какого хера я вынужден каждый раз
+/// запоминать какие я параметры ввел в предыдущий раз?». Отсюда три
+/// утверждения: секция стоит в окне ДОРОЖКИ-фона, отдельного окна нет,
+/// параметры приезжают из общего хранилища и уезжают туда при вызове.
+#[test]
+fn t756_ducking_lives_in_the_track_window_and_remembers_its_settings() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let (mut h, _) = harness_three_clips_dt(None);
+    // сцена: фон на A1 и «речь» на A2
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.ensure_tracks(LaneKind::Audio, 2);
+        let mut bed = p.clips.first().cloned().expect("в сцене есть событие");
+        bed.id = ClipId(70);
+        bed.kind = ClipKind::Audio;
+        bed.lane = 0;
+        bed.link_group = None;
+        bed.fx = Vec::new();
+        bed.fx_bypass = Vec::new();
+        bed.fx_auto = Vec::new();
+        bed.geometry = Default::default();
+        bed.geometry_auto = Vec::new();
+        let mut voice = bed.clone();
+        voice.id = ClipId(71);
+        voice.lane = 1;
+        p.clips.push(bed);
+        p.clips.push(voice);
+        p.validate().expect("сцена законна");
+        app.model = kt_model::TimelineModel::new(p);
+        // ИНСТРУМЕНТ ПОМНИТ: прошлый раз ввели вот это
+        app.workspace.duck = Some(kt_engine::ducking::DuckParams {
+            threshold_db: -28.0,
+            depth_db: 14.0,
+            attack_ms: 200.0,
+            release_ms: 600.0,
+        });
+    }
+    h.step();
+    let track = h.state().model.project().track_at(LaneKind::Audio, 0).unwrap().id;
+    h.state_mut().open_track_window(track);
+    h.step();
+    h.step();
+
+    // секция НА МЕСТЕ и названа по отрасли
+    for key in [k::msg::DUCK_TITLE, k::msg::DUCK_SOURCE_LANE, k::msg::DUCK_DO] {
+        let s = tr(key).to_string();
+        assert!(
+            h.query_all_by_label_contains(&s).count() > 0,
+            "в окне дорожки нет строки «{s}» — дакингу негде жить"
+        );
+    }
+    // ...и пришли ЗАПОМНЕННЫЕ параметры, а не умолчания
+    let w = h.state().track_win.as_ref().expect("окно дорожки открыто");
+    assert_eq!(w.duck.threshold_db, -28.0, "порог не приехал из хранилища");
+    assert_eq!(w.duck.depth_db, 14.0, "глубина не приехала из хранилища");
+    assert_eq!(w.duck.release_ms, 600.0, "отпускание не приехало из хранилища");
+    // источник по умолчанию — соседняя аудиодорожка
+    assert_eq!(
+        h.state().track_win.as_ref().and_then(|w| w.duck_src),
+        Some(1),
+        "дорожка-источник не предложена — кнопка была бы мёртвой"
+    );
+
+    // ЖМЁМ «Дакинг»: задача ставится, а настройки уезжают в хранилище
+    h.get_by_label_contains(&tr(k::msg::DUCK_DO).to_string()).click();
+    h.step();
+    let started = h.state().duck_pending.is_some() || h.state().analysis.current().is_some();
+    // цели — события ЭТОЙ дорожки: окно про неё и открыто
+    let targets: Vec<ClipId> =
+        h.state().duck_pending.as_ref().map(|d| d.targets.clone()).unwrap_or_default();
+    // задача фоновая и на синтетике считается мгновенно — ждём её конца,
+    // чтобы не оставить поток за спиной у следующего теста
+    let deadline = std::time::Instant::now() + WAIT_BG;
+    while h.state().duck_pending.is_some() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+    assert!(started, "кнопка дакинга в окне дорожки ничего не запустила");
+    assert_eq!(targets, vec![ClipId(70)], "цели дакинга — не события дорожки-фона");
+    assert_eq!(
+        h.state().workspace.duck.map(|d| d.depth_db),
+        Some(14.0),
+        "настройки не записались в общее хранилище — в следующий раз их снова вводить руками"
+    );
 }
