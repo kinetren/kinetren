@@ -157,14 +157,14 @@ fn t671_publishing_and_overriding_go_through_commands() {
         range: PubRange { min: Some(2.0), max: Some(16.0) },
     };
     m.apply_batch(vec![
-        Command::PublishParam { param: Box::new(head.clone()) },
-        Command::PublishParam { param: Box::new(blur.clone()) },
+        Command::PublishParam { seq: SEQ, param: Box::new(head.clone()) },
+        Command::PublishParam { seq: SEQ, param: Box::new(blur.clone()) },
     ])
     .expect("публикация двух живых целей законна");
 
     // дубль номера — отказ, а не молчаливая перезапись
     assert!(
-        m.apply_batch(vec![Command::PublishParam { param: Box::new(head.clone()) }]).is_err(),
+        m.apply_batch(vec![Command::PublishParam { seq: SEQ, param: Box::new(head.clone()) }]).is_err(),
         "два объявления с одним номером обязаны быть отказом: номер — это АДРЕС"
     );
     // цель, которой нет, — тоже отказ
@@ -174,13 +174,13 @@ fn t671_publishing_and_overriding_go_through_commands() {
         ..head.clone()
     };
     assert!(
-        m.apply_batch(vec![Command::PublishParam { param: Box::new(ghost) }]).is_err(),
+        m.apply_batch(vec![Command::PublishParam { seq: SEQ, param: Box::new(ghost) }]).is_err(),
         "публикация на несуществующий слот обязана быть отказом: ручка, которая ни \
          на что не действует, — это минус, который разведка назвала прямо"
     );
 
     // порядок — часть авторского интерфейса
-    m.apply_batch(vec![Command::ReorderPublished { order: vec![BLUR, HEADLINE] }])
+    m.apply_batch(vec![Command::ReorderPublished { seq: SEQ, order: vec![BLUR, HEADLINE] }])
         .expect("перестановка законна");
     assert_eq!(
         m.project().published.iter().map(|x| x.id).collect::<Vec<_>>(),
@@ -188,14 +188,14 @@ fn t671_publishing_and_overriding_go_through_commands() {
         "порядок ручек не применился"
     );
     assert!(
-        m.apply_batch(vec![Command::ReorderPublished { order: vec![BLUR] }]).is_err(),
+        m.apply_batch(vec![Command::ReorderPublished { seq: SEQ, order: vec![BLUR] }]).is_err(),
         "порядок обязан быть ПЕРЕСТАНОВКОЙ: неполный список молча потерял бы ручку"
     );
 
     // переименование и сужение предела
     let renamed =
         PublishedParam { name: "Заголовок выпуска".into(), ..head.clone() };
-    m.apply_batch(vec![Command::SetPublished { param: Box::new(renamed) }])
+    m.apply_batch(vec![Command::SetPublished { seq: SEQ, param: Box::new(renamed) }])
         .expect("переименование законно");
     assert_eq!(
         m.project().published.iter().find(|x| x.id == HEADLINE).map(|x| x.name.as_str()),
@@ -363,7 +363,7 @@ fn t672_a_published_target_lives_and_dies_with_its_clip() {
 
     // снятие ручки руками действует так же — по всему дереву сразу
     m.set_editing(Some(SEQ));
-    m.apply_batch(vec![Command::UnpublishParam { id: HEADLINE }]).expect("снятие законно");
+    m.apply_batch(vec![Command::UnpublishParam { seq: SEQ, id: HEADLINE }]).expect("снятие законно");
     m.set_editing(None);
     assert!(
         m.project().clips.iter().find(|c| c.id == INST_B).unwrap().overrides.is_empty(),
@@ -836,4 +836,191 @@ fn t752_the_lead_geometry_is_a_publishable_owner() {
         "цель исчезла, а ручка геометрии осталась висеть"
     );
     m.project().validate().expect("после согласования проект законен");
+}
+
+// ---- 753. команда называет ленту, а не контекст --------------------------------
+
+const SEQ2: MediaId = MediaId(200);
+const FROM_BAND: PubId = PubId(10);
+const FROM_INSIDE: PubId = PubId(11);
+const FROM_OTHER: PubId = PubId(12);
+const ON_TRANS: PubId = PubId(13);
+
+/// Тест 753 (Р.63 п.11): публикация адресует ЛЕНТУ, а не то место, где
+/// стоит человек.
+///
+/// Владелец: «если опубликовать параметр не входя полностью в композицию —
+/// то зачем-то мы автоматически полностью входим в композицию». Вход был
+/// не капризом интерфейса, а следствием команды: она правила «ту ленту, в
+/// которой стоишь», и из раскрытой полосы ручка легла бы в КОРЕНЬ. Теперь
+/// лента названа в самой команде — и три места подачи дают один результат,
+/// `editing()` не двигается, а несуществующая лента получает отказ.
+#[test]
+fn t753_publishing_names_the_reel_not_the_context() {
+    let mut p = template();
+    // соседняя лента — чтобы подать команду ИЗ ДРУГОЙ ленты
+    let mut s2 = Sequence::new(SEQ2, "Соседняя");
+    s2.clips.push(clip(30, 3, Tick::ZERO, LEN));
+    s2.ensure_tracks(LaneKind::Video, 1);
+    p.sequences.push(s2);
+    let mut inst2 = clip(20, SEQ2.0, Tick(LEN.0 * 2), LEN);
+    inst2.lane = 1;
+    p.clips.push(inst2);
+    p.ensure_tracks(LaneKind::Video, 2);
+    // и переход ВНУТРИ первой ленты: его ручка адресуется той же `seq`
+    {
+        let s = p.sequence_mut(SEQ).expect("лента");
+        let mut b = clip(3, 2, LEN, LEN);
+        b.lane = 1;
+        s.clips.push(b);
+        s.transitions.push(TransitionEvent {
+            id: TransitionId(1),
+            a: Some(PLATE),
+            b: Some(ClipId(3)),
+            in_offset: Tick(FRAME * 2),
+            out_offset: Tick(FRAME * 2),
+            // у кроссфейда своих чисел нет вовсе — публиковать нечего;
+            // берём вид с параметрами
+            kind: TransitionKind::Wipe { angle: 0.0, softness: 0.15, dir: Default::default() },
+            audio: Default::default(),
+            auto: Vec::new(),
+            invert: false,
+        });
+    }
+    p.validate().expect("сцена законна");
+    let mut m = TimelineModel::new(p);
+
+    let decl = |id: PubId, name: &str, target: ParamAddr| PublishedParam {
+        id,
+        name: name.to_string(),
+        target,
+        ty: ParamType::Num,
+        range: PubRange::default(),
+    };
+    let zoom = |c: ClipId| ParamAddr::new(c, ParamOwner::Geometry, "zoom");
+
+    // --- 1) ИЗ КОРНЯ, лента раскрыта полосой ------------------------------
+    assert!(m.expand_band(INST_A), "полоса раскрытия обязана открыться");
+    assert_eq!(m.editing(), None, "сцена: человек стоит в КОРНЕ");
+    m.apply_batch(vec![Command::PublishParam {
+        seq: SEQ,
+        param: Box::new(decl(FROM_BAND, "Из полосы", zoom(PLATE))),
+    }])
+    .expect("публикация из полосы законна");
+    assert_eq!(
+        m.editing(),
+        None,
+        "подтверждение публикации ВОШЛО в ленту — ровно то, что владелец назвал \
+         «зачем-то мы автоматически полностью входим в композицию»"
+    );
+    assert!(
+        m.document().sequence(SEQ).unwrap().published.iter().any(|x| x.id == FROM_BAND),
+        "ручка легла не в названную ленту"
+    );
+    // переход ленты адресуется ТОЙ ЖЕ `seq` из той же полосы (закрыт
+    // упор «Отложено» Р.59: раньше до него было не дотянуться)
+    m.apply_batch(vec![Command::PublishParam {
+        seq: SEQ,
+        param: Box::new(PublishedParam {
+            id: ON_TRANS,
+            name: "Мягкость стыка".into(),
+            target: ParamAddr::new(
+                ClipId(0),
+                ParamOwner::Transition { id: TransitionId(1) },
+                "softness",
+            ),
+            ty: m
+                .document()
+                .addr_type(
+                    Some(SEQ),
+                    &ParamAddr::new(
+                        ClipId(0),
+                        ParamOwner::Transition { id: TransitionId(1) },
+                        "softness",
+                    ),
+                )
+                .expect("у кроссфейда есть мягкость"),
+            range: PubRange::default(),
+        }),
+    }])
+    .expect("публикация параметра перехода из полосы законна");
+    assert!(
+        m.document().sequence(SEQ).unwrap().published.iter().any(|x| x.id == ON_TRANS),
+        "ручка перехода легла не в названную ленту"
+    );
+    m.collapse_all_bands();
+
+    // --- 2) ИЗНУТРИ САМОЙ ленты -------------------------------------------
+    m.set_editing(Some(SEQ));
+    m.apply_batch(vec![Command::PublishParam {
+        seq: SEQ,
+        param: Box::new(decl(FROM_INSIDE, "Изнутри", zoom(TITLE))),
+    }])
+    .expect("публикация изнутри законна");
+    assert!(
+        m.project().published.iter().any(|x| x.id == FROM_INSIDE),
+        "стоя ВНУТРИ ленты, ручка не легла в неё же"
+    );
+    m.set_editing(None);
+
+    // --- 3) ИЗ ДРУГОЙ ленты ------------------------------------------------
+    m.set_editing(Some(SEQ2));
+    m.apply_batch(vec![Command::PublishParam {
+        seq: SEQ,
+        param: Box::new(decl(FROM_OTHER, "Из соседней", zoom(ClipId(3)))),
+    }])
+    .expect("публикация в НАЗВАННУЮ ленту из другой законна");
+    assert_eq!(m.editing(), Some(SEQ2), "команда утащила человека из его ленты");
+    m.set_editing(None);
+
+    // все три ручки — в ОДНОЙ ленте, и она названная
+    let set = m.document().sequence(SEQ).unwrap().published.clone();
+    for id in [FROM_BAND, FROM_INSIDE, FROM_OTHER, ON_TRANS] {
+        assert!(set.iter().any(|x| x.id == id), "ручка {id:?} не дошла до ленты: {set:?}");
+    }
+    assert!(
+        m.document().sequence(SEQ2).unwrap().published.is_empty(),
+        "ручка уехала в соседнюю ленту — именно там она и умерла бы тем же батчем"
+    );
+    assert!(m.document().published.is_empty(), "ручка легла в КОРЕНЬ: он никому не экземпляр");
+
+    // --- 4) НЕСУЩЕСТВУЮЩАЯ лента — отказ с адресом ------------------------
+    let ghost = MediaId(777);
+    assert_eq!(
+        m.apply_batch(vec![Command::PublishParam {
+            seq: ghost,
+            param: Box::new(decl(PubId(14), "В никуда", zoom(TITLE))),
+        }]),
+        Err(CommandError::SequenceNotFound(ghost)),
+        "публикация в несуществующую ленту обязана быть ОТКАЗОМ с адресом"
+    );
+    assert_eq!(
+        m.apply_batch(vec![Command::UnpublishParam { seq: ghost, id: FROM_BAND }]),
+        Err(CommandError::SequenceNotFound(ghost))
+    );
+
+    // --- 5) снятие и правка объявления адресуются так же -------------------
+    m.apply_batch(vec![Command::SetPublished {
+        seq: SEQ,
+        param: Box::new(decl(FROM_BAND, "Переименована", zoom(PLATE))),
+    }])
+    .expect("правка объявления из корня законна");
+    assert_eq!(
+        m.document()
+            .sequence(SEQ)
+            .unwrap()
+            .published
+            .iter()
+            .find(|x| x.id == FROM_BAND)
+            .map(|x| x.name.clone()),
+        Some("Переименована".to_string()),
+        "правка объявления не дошла до названной ленты"
+    );
+    m.apply_batch(vec![Command::UnpublishParam { seq: SEQ, id: FROM_BAND }])
+        .expect("снятие из корня законно");
+    assert!(
+        !m.document().sequence(SEQ).unwrap().published.iter().any(|x| x.id == FROM_BAND),
+        "снятие не дошло до названной ленты"
+    );
+    m.document().validate().expect("документ обязан остаться законным");
 }

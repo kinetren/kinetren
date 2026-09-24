@@ -12321,7 +12321,7 @@ pub(crate) fn harness_news_template() -> (Harness<'static, KtApp>, NewsScene) {
             range: PubRange::default(),
         };
         assert!(
-            h.state_mut().apply(Command::PublishParam { param: Box::new(param) }),
+            h.state_mut().apply(Command::PublishParam { seq, param: Box::new(param) }),
             "публикация «{name}» отвергнута"
         );
         h.step();
@@ -13140,7 +13140,7 @@ fn t692b_author_window_shows_the_target_range() {
             .expect("ручка «Кегль»");
         p.range = narrowed;
         assert!(
-            h.state_mut().apply(Command::SetPublished { param: Box::new(p) }),
+            h.state_mut().apply(Command::SetPublished { seq: s.seq, param: Box::new(p) }),
             "сужение отвергнуто"
         );
     }
@@ -13216,7 +13216,7 @@ fn t684_author_names_are_shown_verbatim() {
             .cloned()
             .unwrap();
         p.name = name.to_string();
-        assert!(h.state_mut().apply(Command::SetPublished { param: Box::new(p) }));
+        assert!(h.state_mut().apply(Command::SetPublished { seq: s.seq, param: Box::new(p) }));
         h.step();
     }
     h.state_mut().leave_nest();
@@ -13324,7 +13324,7 @@ fn t685_badges_show_overrides_and_publications() {
         let ids: Vec<PubId> = app.published_of(s.seq).iter().map(|p| p.id).collect();
         app.enter_nest(s.a);
         for id in ids {
-            assert!(app.apply(Command::UnpublishParam { id }), "снятие ручки отвергнуто");
+            assert!(app.apply(Command::UnpublishParam { seq: s.seq, id }), "снятие ручки отвергнуто");
         }
         app.leave_nest();
     }
@@ -14807,6 +14807,7 @@ fn t752c_an_instance_edits_the_published_lead_geometry() {
     h.step();
     assert!(
         h.state_mut().apply(Command::PublishParam {
+            seq: s.seq,
             param: Box::new(PublishedParam {
                 id: zoom,
                 name: "Крупность".into(),
@@ -14861,4 +14862,73 @@ fn t752c_an_instance_edits_the_published_lead_geometry() {
         ka2, kb2,
         "ключ превью не поехал: на таймлайне переопределённый выпуск показал бы ЧУЖИЕ кадры"
     );
+}
+
+/// Тест 753b (Р.63 п.11): подтверждение публикации НЕ входит в ленту.
+///
+/// Владелец: «если опубликовать параметр не входя полностью в композицию —
+/// то зачем-то мы автоматически полностью входим в композицию». Вход был
+/// следствием команды (она правила «ту ленту, в которой стоишь»); теперь
+/// лента названа, и человек остаётся там, где стоял, — в корне с раскрытой
+/// полосой. Утверждение — наблюдаемое: `editing()` не изменился, а ручка
+/// лежит в ленте полосы.
+#[test]
+fn t753b_confirming_a_publication_keeps_you_where_you_stand() {
+    use egui_kittest::kittest::Queryable;
+    let (mut h, s) = harness_news_template();
+    let publish = tr(k::pubp::PUBLISH).to_string();
+    let ok = tr(k::pubp::DIALOG_DO).to_string();
+    let free_row =
+        crate::widgets::param_label_scoped(kt_model::ParamScope::Generator, "line_spacing");
+
+    // человек стоит в КОРНЕ, лента раскрыта полосой
+    h.state_mut().expand_in_place(s.a);
+    h.step();
+    h.step();
+    assert!(!h.state().model.bands().is_empty(), "полоса не раскрылась — сцена не та");
+    assert_eq!(h.state().model.editing(), None, "сцена: человек в корне");
+    h.state_mut().open_fx_editor_head(s.inner);
+    h.step();
+    h.step();
+
+    // правый клик по подписи → «Опубликовать…»
+    let rect = h
+        .query_all_by_label_contains(&free_row)
+        .map(|n| n.rect())
+        .min_by(|a, b| a.top().total_cmp(&b.top()))
+        .expect("подписи ряда нет");
+    let pos = rect.center();
+    h.hover_at(pos);
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.step();
+    h.step();
+    h.get_by_label_contains(&publish).click();
+    h.step();
+    h.step();
+    assert!(h.state().publish_dialog.is_some(), "окно подтверждения не открылось");
+
+    // подтверждаем
+    h.get_by_label_contains(&ok).click();
+    h.step();
+    h.step();
+
+    assert_eq!(
+        h.state().model.editing(),
+        None,
+        "подтверждение утащило человека внутрь ленты (на прежнем коде — утаскивало)"
+    );
+    assert!(
+        !h.state().model.bands().is_empty(),
+        "полоса закрылась сама — а она и есть рабочее место человека"
+    );
+    let set = h.state().model.document().sequence(s.seq).map(|q| q.published.len()).unwrap_or(0);
+    assert_eq!(set, 7, "ручка не легла в ленту полосы: в наборе {set} вместо семи");
 }

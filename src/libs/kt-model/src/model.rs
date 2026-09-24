@@ -436,26 +436,35 @@ pub enum Command {
         media: MediaId,
     },
     // --- публичные параметры композиции (Р.59, стадия 3) ---
-    /// Объявить свойство ТЕКУЩЕЙ ленты наружу.
+    /// Объявить свойство НАЗВАННОЙ ленты наружу.
     ///
-    /// Ленту команда не называет намеренно: вход внутрь сделан обменом
-    /// содержимого (`swap_reel`), и команда правит ту ленту, в которой
-    /// стоишь, — ровно как `AddClip` и все остальные шестьдесят рук.
+    /// **Лента называется ЯВНО (Р.63 п.11), и это не украшение.** До
+    /// этого раунда команда правила «ту ленту, в которой стоишь», и
+    /// публикация из раскрытой полосы требовала СНАЧАЛА войти в ленту:
+    /// «если опубликовать параметр не входя полностью в композицию — то
+    /// зачем-то мы автоматически полностью входим в композицию»
+    /// (владелец). Адрес в самой команде снимает и вход, и зависимость
+    /// от контекста: ручка ложится в названную ленту, где бы человек ни
+    /// стоял, а несуществующая лента — честный отказ.
     PublishParam {
+        seq: MediaId,
         param: Box<PublishedParam>,
     },
     /// Снять ручку. Переопределения на неё исчезают тем же шагом истории
     /// (`reconcile_published`) — мёртвой ручки снаружи не остаётся.
     UnpublishParam {
+        seq: MediaId,
         id: PubId,
     },
     /// Переименование и сужение пределов — полная замена объявления.
     SetPublished {
+        seq: MediaId,
         param: Box<PublishedParam>,
     },
     /// Порядок ручек в окне потребителя — часть авторского интерфейса
     /// (Resolve 21 завёл его отдельно, разведка F-TL-012).
     ReorderPublished {
+        seq: MediaId,
         order: Vec<PubId>,
     },
     /// Переопределение у ЭКЗЕМПЛЯРА. Полная замена одной ручки.
@@ -1205,10 +1214,14 @@ impl TimelineModel {
         // месте корня (Р.50, В1), и команда правит его, не зная о
         // вложениях вовсе.
         let mut scratch = self.bench.clone();
+        // ГДЕ СТОИМ: нужно только адресным командам публикации — набор
+        // ленты, в которой стоишь, лежит в корне рабочего вида, а
+        // остальных — в `sequences` (Р.63 п.11)
+        let scope = self.editing;
         let run = |scratch: &mut Project| -> Result<(), CommandError> {
             for cmd in cmds {
-                Self::check_on(scratch, cmd)?;
-                Self::mutate_on(scratch, cmd.clone());
+                Self::check_on(scratch, scope, cmd)?;
+                Self::mutate_on(scratch, scope, cmd.clone());
             }
             Ok(())
         };
@@ -1385,7 +1398,38 @@ impl TimelineModel {
         self.undo.len()
     }
 
-    fn check_on(p: &Project, cmd: &Command) -> Result<(), CommandError> {
+    /// Набор публикаций НАЗВАННОЙ ленты в РАБОЧЕМ виде (Р.63 п.11).
+    ///
+    /// Вход внутрь ленты сделан ОБМЕНОМ содержимого, поэтому набор той
+    /// ленты, в которой стоишь, лежит в корне, а всех прочих — в
+    /// `sequences`. Раскрытая полоса содержимое в корень переносит, а
+    /// набор ленты оставляет на месте (t672) — и это ровно тот случай,
+    /// ради которого адрес и заведён.
+    fn published_slot<'a>(
+        p: &'a Project,
+        scope: Option<MediaId>,
+        seq: MediaId,
+    ) -> Option<&'a Vec<PublishedParam>> {
+        if scope == Some(seq) {
+            Some(&p.published)
+        } else {
+            p.sequence(seq).map(|s| &s.published)
+        }
+    }
+
+    fn published_slot_mut<'a>(
+        p: &'a mut Project,
+        scope: Option<MediaId>,
+        seq: MediaId,
+    ) -> Option<&'a mut Vec<PublishedParam>> {
+        if scope == Some(seq) {
+            Some(&mut p.published)
+        } else {
+            p.sequence_mut(seq).map(|s| &mut s.published)
+        }
+    }
+
+    fn check_on(p: &Project, scope: Option<MediaId>, cmd: &Command) -> Result<(), CommandError> {
         // ЗАМОК ДОРОЖКИ (Р.62): одна проверка на весь реестр команд.
         // Свойства самой дорожки сюда не попадают — запертую дорожку
         // надо чем-то отпирать.
@@ -1681,29 +1725,37 @@ impl TimelineModel {
             }
             // Публикация проверяется ТЕМ ЖЕ кодом, что и валидация файла:
             // второго правила «что считать живой целью» быть не может.
-            Command::PublishParam { param } => {
-                if p.published.iter().any(|x| x.id == param.id) {
+            Command::PublishParam { seq, param } => {
+                let set = Self::published_slot(p, scope, *seq)
+                    .ok_or(CommandError::SequenceNotFound(*seq))?;
+                if set.iter().any(|x| x.id == param.id) {
                     return Err(CommandError::IdInUse(param.id.0));
                 }
-                Self::check_published_on(p, param)?;
+                Self::check_published_on(p, scope, *seq, param)?;
             }
-            Command::SetPublished { param } => {
-                if !p.published.iter().any(|x| x.id == param.id) {
+            Command::SetPublished { seq, param } => {
+                let set = Self::published_slot(p, scope, *seq)
+                    .ok_or(CommandError::SequenceNotFound(*seq))?;
+                if !set.iter().any(|x| x.id == param.id) {
                     return Err(CommandError::PublishedNotFound(param.id));
                 }
-                Self::check_published_on(p, param)?;
+                Self::check_published_on(p, scope, *seq, param)?;
             }
-            Command::UnpublishParam { id } => {
-                if !p.published.iter().any(|x| x.id == *id) {
+            Command::UnpublishParam { seq, id } => {
+                let set = Self::published_slot(p, scope, *seq)
+                    .ok_or(CommandError::SequenceNotFound(*seq))?;
+                if !set.iter().any(|x| x.id == *id) {
                     return Err(CommandError::PublishedNotFound(*id));
                 }
             }
-            Command::ReorderPublished { order } => {
+            Command::ReorderPublished { seq, order } => {
                 // ПЕРЕСТАНОВКА, а не правка набора: порядок обязан быть
                 // перестановкой ровно того, что объявлено, иначе команда
                 // молча теряла бы или дублировала ручки.
+                let set = Self::published_slot(p, scope, *seq)
+                    .ok_or(CommandError::SequenceNotFound(*seq))?;
                 let mut a: Vec<u64> = order.iter().map(|x| x.0).collect();
-                let mut b: Vec<u64> = p.published.iter().map(|x| x.id.0).collect();
+                let mut b: Vec<u64> = set.iter().map(|x| x.id.0).collect();
                 a.sort_unstable();
                 b.sort_unstable();
                 if a != b {
@@ -1861,13 +1913,24 @@ impl TimelineModel {
     /// Проверка ОБЪЯВЛЕНИЯ публичного параметра тем же кодом, что и
     /// валидация файла (Р.59, стадия 3).
     ///
-    /// Лента здесь — ТЕКУЩАЯ, то есть корень рабочего вида: вход внутрь
-    /// сделан обменом содержимого, и цели публикации лежат ровно там.
-    fn check_published_on(p: &Project, param: &PublishedParam) -> Result<(), CommandError> {
+    /// Лента НАЗЫВАЕТСЯ (Р.63 п.11), и цель ищется в ней. Содержимое
+    /// той ленты, в которой стоишь, лежит в корне рабочего вида — как и
+    /// содержимое ленты, РАСКРЫТОЙ ПОЛОСОЙ, хотя набор её публикаций
+    /// остался в `sequences`. Поэтому поиск цели падает обратно в корень:
+    /// ошибиться этим нельзя — итоговый документ всё равно проходит
+    /// `validate`, и чужая цель там отвергается.
+    fn check_published_on(
+        p: &Project,
+        scope: Option<MediaId>,
+        seq: MediaId,
+        param: &PublishedParam,
+    ) -> Result<(), CommandError> {
         if param.name.trim().is_empty() {
             return Err(CommandError::InvalidClip(ProjectError::PublishedUnnamed(None, param.id)));
         }
-        let Some(ty) = p.addr_type(None, &param.target) else {
+        let in_reel = (scope != Some(seq)).then_some(seq);
+        let found = p.addr_type(in_reel, &param.target).or_else(|| p.addr_type(None, &param.target));
+        let Some(ty) = found else {
             return Err(CommandError::InvalidClip(ProjectError::PublishedTargetMissing(
                 None, param.id,
             )));
@@ -1899,7 +1962,7 @@ impl TimelineModel {
         Ok(())
     }
 
-    fn mutate_on(p: &mut Project, cmd: Command) {
+    fn mutate_on(p: &mut Project, scope: Option<MediaId>, cmd: Command) {
         match cmd {
             Command::NoteBirth { .. } => {}
             Command::AddMedia { id, path } => {
@@ -2210,26 +2273,36 @@ impl TimelineModel {
                 c.overrides.clear();
                 *Self::clip_mut_on(p, id) = c;
             }
-            Command::PublishParam { param } => p.published.push(*param),
-            Command::SetPublished { param } => {
-                if let Some(slot) = p.published.iter_mut().find(|x| x.id == param.id) {
+            Command::PublishParam { seq, param } => {
+                if let Some(set) = Self::published_slot_mut(p, scope, seq) {
+                    set.push(*param);
+                }
+            }
+            Command::SetPublished { seq, param } => {
+                if let Some(slot) = Self::published_slot_mut(p, scope, seq)
+                    .and_then(|set| set.iter_mut().find(|x| x.id == param.id))
+                {
                     *slot = *param;
                 }
             }
-            Command::UnpublishParam { id } => {
+            Command::UnpublishParam { seq, id } => {
                 // Переопределения снятой ручки убирает `reconcile_published`
                 // ТЕМ ЖЕ шагом истории — по всему документу сразу, а не
                 // только там, куда дотянулась эта команда.
-                p.published.retain(|x| x.id != id);
-            }
-            Command::ReorderPublished { order } => {
-                let mut out = Vec::with_capacity(p.published.len());
-                for id in &order {
-                    if let Some(x) = p.published.iter().find(|x| x.id == *id) {
-                        out.push(x.clone());
-                    }
+                if let Some(set) = Self::published_slot_mut(p, scope, seq) {
+                    set.retain(|x| x.id != id);
                 }
-                p.published = out;
+            }
+            Command::ReorderPublished { seq, order } => {
+                if let Some(set) = Self::published_slot_mut(p, scope, seq) {
+                    let mut out = Vec::with_capacity(set.len());
+                    for id in &order {
+                        if let Some(x) = set.iter().find(|x| x.id == *id) {
+                            out.push(x.clone());
+                        }
+                    }
+                    *set = out;
+                }
             }
             Command::SetOverride { id, ov } => {
                 let c = Self::clip_mut_on(p, id);

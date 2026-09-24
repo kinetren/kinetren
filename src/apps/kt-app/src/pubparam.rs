@@ -227,7 +227,7 @@ impl KtApp {
                 // тоже обязательно — переопределения умрут во всех местах.
                 let n = self.override_uses(seq, id);
                 if n == 0 {
-                    self.apply(Command::UnpublishParam { id });
+                    self.apply(Command::UnpublishParam { seq, id });
                 } else {
                     self.open_published_win(seq);
                     if let Some(w) = self.published_win.as_mut() {
@@ -354,13 +354,12 @@ impl KtApp {
         }
         if go && !d.name.trim().is_empty() {
             ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("pub_name")));
-            // Команда правит ТУ ленту, в которой стоишь. Публикация из
-            // раскрытой полосы адресует содержимое ЕЁ ленты, поэтому
-            // подтверждение заодно и входит туда: иначе ручка легла бы в
-            // соседнюю ленту и умерла бы тем же батчем.
-            if self.model.editing() != Some(d.seq) && !self.enter_reel_for_authoring(d.seq) {
-                return;
-            }
+            // Команда НАЗЫВАЕТ ленту (Р.63 п.11), поэтому входить в неё
+            // подтверждение больше не обязано: «если опубликовать
+            // параметр не входя полностью в композицию — то зачем-то мы
+            // автоматически полностью входим в композицию» (владелец).
+            // Человек остаётся там, где стоял, — в корне с раскрытой
+            // полосой или в соседней ленте.
             let param = PublishedParam {
                 id: self.next_pub_id(d.seq),
                 name: d.name.trim().to_string(),
@@ -368,7 +367,7 @@ impl KtApp {
                 ty: d.ty.clone(),
                 range: PubRange::default(),
             };
-            self.apply(Command::PublishParam { param: Box::new(param) });
+            self.apply(Command::PublishParam { seq: d.seq, param: Box::new(param) });
             return;
         }
         if cancel || !open {
@@ -385,7 +384,9 @@ impl KtApp {
         if self.model.document().sequence(w.seq).is_none() {
             return;
         }
-        let mut list = self.published_of(w.seq);
+        // лента у окна ОДНА и названа — команды несут её адрес (Р.63 п.11)
+        let seq = w.seq;
+        let mut list = self.published_of(seq);
         let mut cmds: Vec<Command> = Vec::new();
         let mut cancel = false;
         let mut confirm_now: Option<(PubId, usize)> = None;
@@ -445,7 +446,10 @@ impl KtApp {
                             r.rect,
                         );
                         if r.changed() {
-                            cmds.push(Command::SetPublished { param: Box::new(list[i].clone()) });
+                            cmds.push(Command::SetPublished {
+                                seq,
+                                param: Box::new(list[i].clone()),
+                            });
                         }
                         // сужение пределов — только у числа: у остальных
                         // типов «между вариантами» ничего нет, и мёртвое
@@ -506,6 +510,7 @@ impl KtApp {
                             }
                             if edited {
                                 cmds.push(Command::SetPublished {
+                                    seq,
                                     param: Box::new(list[i].clone()),
                                 });
                             }
@@ -571,10 +576,10 @@ impl KtApp {
             self.apply_coalesced(c, w.gesture);
         }
         if let Some(o) = order {
-            self.apply_coalesced(Command::ReorderPublished { order: o }, w.gesture);
+            self.apply_coalesced(Command::ReorderPublished { seq, order: o }, w.gesture);
         }
         if let Some(id) = do_unpublish {
-            self.apply_coalesced(Command::UnpublishParam { id }, w.gesture);
+            self.apply_coalesced(Command::UnpublishParam { seq, id }, w.gesture);
         }
         if cancel {
             // тем же токеном: возврат не заводит второго шага истории.
@@ -584,12 +589,12 @@ impl KtApp {
             for p in &w.backup {
                 if now.iter().any(|x| x.id == p.id) {
                     self.apply_coalesced(
-                        Command::SetPublished { param: Box::new(p.clone()) },
+                        Command::SetPublished { seq, param: Box::new(p.clone()) },
                         w.gesture,
                     );
                 } else {
                     self.apply_coalesced(
-                        Command::PublishParam { param: Box::new(p.clone()) },
+                        Command::PublishParam { seq, param: Box::new(p.clone()) },
                         w.gesture,
                     );
                 }
@@ -601,7 +606,7 @@ impl KtApp {
                 .filter(|id| w.backup.iter().any(|p| p.id == *id))
                 .collect();
             if o.len() == self.published_of(w.seq).len() {
-                self.apply_coalesced(Command::ReorderPublished { order: o }, w.gesture);
+                self.apply_coalesced(Command::ReorderPublished { seq, order: o }, w.gesture);
             }
             return;
         }
