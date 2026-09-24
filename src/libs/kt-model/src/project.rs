@@ -6404,7 +6404,8 @@ pub(crate) use fx_cast;
 /// спеки, чтобы попасть в общую сетку полей и в общий виджет кривых).
 /// Одна декларация — спеки, чтение и запись с клампом.
 macro_rules! params_for_struct {
-    ($ty:ident { $( $field:ident : $t:ident, $lo:expr, $hi:expr, $def:expr, $step:expr, $unit:ident, $kind:ident );+ $(;)? }) => {
+    ($ty:ident { $( $field:ident : $t:ident, $lo:expr, $hi:expr, $def:expr, $step:expr, $unit:ident, $kind:ident );+ $(;)? }
+     $( choice $cname:ident : $ckeys:expr, $cty:ty );* $(;)?) => {
         impl HasParams for $ty {
             fn param_specs(&self) -> &[ParamSpec] {
                 const S: &[ParamSpec] = &[ $( ParamSpec::num(
@@ -6438,6 +6439,27 @@ macro_rules! params_for_struct {
                 } i += 1; )+
                 let _ = i;
                 false
+            }
+            // Свойства-ВЫБОРЫ структуры (Р.63). Без них ветки пусты, и
+            // поведение побайтово равно прежнему: `extra_specs` отдаёт
+            // пустой вектор, а значение идёт умолчаниями трейта.
+            fn extra_specs(&self) -> Vec<ParamSpec> {
+                vec![ $( choice_spec(stringify!($cname), $ckeys) ),* ]
+            }
+            fn get_value(&self, name: &str) -> Option<ParamValue> {
+                $( if name == stringify!($cname) {
+                    return Some(ParamValue::Choice(self.$cname.tag().into()));
+                } )*
+                default_get_value(self, name)
+            }
+            fn set_value(&mut self, name: &str, v: &ParamValue) -> bool {
+                $( if name == stringify!($cname) {
+                    let ParamValue::Choice(key) = v else { return false };
+                    let Some(x) = <$cty>::from_tag(key) else { return false };
+                    self.$cname = x;
+                    return true;
+                } )*
+                default_set_value(self, name, v)
             }
         }
     };
@@ -7030,6 +7052,23 @@ impl Conform {
         }
     }
 
+    /// КЛЮЧ варианта для паспорта свойства (`Choice` хранит ключ, а не
+    /// номер). Совпадает с тем, что пишет serde, — второго написания у
+    /// одного факта быть не должно.
+    pub fn tag(self) -> &'static str {
+        match self {
+            Conform::Project => "project",
+            Conform::Fit => "fit",
+            Conform::Fill => "fill",
+            Conform::Stretch => "stretch",
+            Conform::AsIs => "as_is",
+        }
+    }
+
+    pub fn from_tag(key: &str) -> Option<Conform> {
+        CONFORM_KEYS.iter().position(|k| *k == key).map(|i| CONFORM_ALL[i])
+    }
+
     pub fn from_rule(r: ConformRule) -> Conform {
         match r {
             ConformRule::Fit => Conform::Fit,
@@ -7164,6 +7203,12 @@ impl EventGeometry {
     }
 }
 
+/// Ключи правила приведения для паспорта свойства (Р.63): правило —
+/// такое же публикуемое свойство ведущего узла, как зум.
+pub const CONFORM_KEYS: &[&str] = &["project", "fit", "fill", "stretch", "as_is"];
+const CONFORM_ALL: [Conform; 5] =
+    [Conform::Project, Conform::Fit, Conform::Fill, Conform::Stretch, Conform::AsIs];
+
 params_for_struct! { EventGeometry {
     crop_l: f64, 0.0, 0.95, 0.0, 0.005, Norm, Smooth;
     crop_t: f64, 0.0, 0.95, 0.0, 0.005, Norm, Smooth;
@@ -7175,7 +7220,7 @@ params_for_struct! { EventGeometry {
     rot: f64, -360.0, 360.0, 0.0, 0.5, Deg, Smooth;
     anchor_x: f64, 0.0, 1.0, 0.5, 0.005, Norm, Smooth;
     anchor_y: f64, 0.0, 1.0, 0.5, 0.005, Norm, Smooth;
-}}
+} choice rule: CONFORM_KEYS, Conform}
 
 /// Тип аудио-фильтра (Р.47): срез сверху/снизу/полоса.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -8605,7 +8650,12 @@ impl Project {
                     // его переопределение, а нет его — значение шаблона
                     // ЕГО ленты, тем же кодом этажом ниже
                     ParamOwner::Nested { pub_id } => self.instance_value(c, *pub_id),
-                    _ => None,
+                    // у аудио-события узла геометрии нет вовсе: адрес
+                    // «не существует», и валидация скажет это словом
+                    ParamOwner::Geometry => {
+                        (c.kind == ClipKind::Video).then(|| c.geometry.get_value(name))?
+                    }
+                    ParamOwner::Transition { .. } | ParamOwner::Camera { .. } => None,
                 }
             }
         }
@@ -8635,7 +8685,10 @@ impl Project {
                         let inner = self.sequence(c.media)?;
                         inner.published.iter().find(|p| p.id == *pub_id).map(|p| p.ty.clone())
                     }
-                    _ => None,
+                    ParamOwner::Geometry => {
+                        (c.kind == ClipKind::Video).then(|| c.geometry.value_type(name))?
+                    }
+                    ParamOwner::Transition { .. } | ParamOwner::Camera { .. } => None,
                 }
             }
         }
@@ -8684,7 +8737,10 @@ impl Project {
                         s.default = s.default.clamp(s.min, s.max);
                         Some(s)
                     }
-                    _ => None,
+                    ParamOwner::Geometry => {
+                        (c.kind == ClipKind::Video).then(|| c.geometry.value_spec(name))?
+                    }
+                    ParamOwner::Transition { .. } | ParamOwner::Camera { .. } => None,
                 }
             }
         }

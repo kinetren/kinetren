@@ -1311,7 +1311,7 @@ impl TimelineModel {
     /// зовут на каждом кадре, и молчаливое «то же самое» не должно
     /// двигать ни ревизию, ни автосейв.
     pub fn note_media_length(&mut self, id: crate::MediaId, duration: kt_time::Tick) -> bool {
-        let mut set = |p: &mut crate::Project| -> bool {
+        let set = |p: &mut crate::Project| -> bool {
             match p.media.iter_mut().find(|m| m.id == id) {
                 Some(m) if m.duration != Some(duration) && duration.0 > 0 => {
                     m.duration = Some(duration);

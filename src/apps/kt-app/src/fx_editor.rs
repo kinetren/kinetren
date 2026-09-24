@@ -726,13 +726,22 @@ impl KtApp {
                                 // локальный клон `auto` умирал вместе с
                                 // кадром, и поле «скидывалось на предыдущее
                                 // значение».
-                                let pubc = (!lead_sel).then(|| {
-                                    self.publish_ctx(
-                                        &pub_doc,
-                                        *id,
-                                        kt_model::ParamOwner::FxSlot { slot: sel },
-                                    )
-                                });
+                                // ДВЕРЬ ПУБЛИКАЦИИ ЕСТЬ И У ВЕДУЩЕГО УЗЛА
+                                // (Р.63 п.9): «по какой причине у первого
+                                // geometry нет возможности опубликовать
+                                // параметры а у второго есть?» — разница
+                                // была только в том, что у узла не было
+                                // адреса. Теперь он есть, и подписи полей
+                                // ведут в ту же дверь тем же кодом.
+                                let pubc = Some(self.publish_ctx(
+                                    &pub_doc,
+                                    *id,
+                                    if lead_sel {
+                                        kt_model::ParamOwner::Geometry
+                                    } else {
+                                        kt_model::ParamOwner::FxSlot { slot: sel }
+                                    },
+                                ));
                                 // правило приведения — только у ВЕДУЩЕГО
                                 // узла: «следовать проекту» либо своё
                                 if f.is_lead_geometry() {

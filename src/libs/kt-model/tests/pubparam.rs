@@ -680,3 +680,160 @@ fn t692_a_published_range_stores_narrowing_only() {
     assert!(!json.contains("min"), "пустое сужение уехало в файл: {json}");
     assert!(!json.contains("max"), "пустое сужение уехало в файл: {json}");
 }
+
+// ---- 752. ведущая геометрия — такой же носитель ручки -------------------------
+
+const ZOOM: PubId = PubId(4);
+
+/// Тест 752 (Р.63 п.9): ВЕДУЩАЯ ГЕОМЕТРИЯ публикуется как любой слот.
+///
+/// Владелец: «по какой причине у первого geometry нет возможности
+/// опубликовать параметры а у второго есть? ведь этот первый geometry идет
+/// как fx, разве нет? или у нас дубли кода?». Не дубли — ДЫРА В АДРЕСАЦИИ:
+/// ведущий узел живёт своим полем события, а `ParamOwner` о нём не знал.
+/// Паспорт, `set_value` и кривые у него ровно те же, что у слота, поэтому
+/// тест утверждает то же самое, что t671/t672 утверждают про слот: значение
+/// шаблона читается живьём, переопределение действует числом и кривой,
+/// адрес переживает трим и левую половину разреза, смерть цели уносит ручку,
+/// а у аудио-события такого адреса не существует.
+#[test]
+fn t752_the_lead_geometry_is_a_publishable_owner() {
+    let mut p = template();
+    {
+        let s = p.sequence_mut(SEQ).expect("лента");
+        s.published.push(PublishedParam {
+            id: ZOOM,
+            name: "Крупность подложки".into(),
+            target: ParamAddr::new(PLATE, ParamOwner::Geometry, "zoom"),
+            ty: ParamType::Num,
+            range: PubRange::default(),
+        });
+    }
+    p.validate().expect("ручка на ведущей геометрии законна");
+
+    // --- значение ШАБЛОНА читается живьём, как у слота --------------------
+    assert_eq!(
+        p.published_value(SEQ, ZOOM),
+        Some(ParamValue::Num(1.0)),
+        "значение шаблона обязано читаться У ЦЕЛИ, а не храниться в объявлении"
+    );
+    let spec = p
+        .addr_spec(Some(SEQ), &ParamAddr::new(PLATE, ParamOwner::Geometry, "zoom"))
+        .expect("паспорт цели");
+    assert!(spec.min > 0.0 && spec.max >= 32.0, "паспорт пришёл не от узла геометрии: {spec:?}");
+
+    // --- переопределение ЧИСЛОМ меняет кадр экземпляра --------------------
+    let zoom_of = |p: &Project, ov: &[Override]| -> f64 {
+        let r = p.resolve_reel(Some(SEQ), ov);
+        r.clips.iter().find(|c| same_clip(c.id, PLATE)).expect("подложка").geometry.zoom
+    };
+    assert_eq!(zoom_of(&p, &[]), 1.0, "без переопределения — значение шаблона");
+    assert_eq!(
+        zoom_of(&p, &[Override::value(ZOOM, ParamValue::Num(2.5))]),
+        2.5,
+        "переопределение зума не доехало до ведущего узла"
+    );
+    assert_eq!(
+        p.sequence(SEQ).unwrap().clips.iter().find(|c| c.id == PLATE).unwrap().geometry.zoom,
+        1.0,
+        "переопределение экземпляра переписало САМУ ленту"
+    );
+
+    // --- кривая ложится в `geometry_auto` и переводится в материал цели ---
+    let curve = ParamCurve {
+        param: "zoom".into(),
+        keys: vec![AutoKey::at(Tick::ZERO, 1.0), AutoKey::at(Tick(FRAME * 10), 3.0)],
+        source: CurveSource::Keys,
+    };
+    let ov = vec![Override { pub_id: ZOOM, value: ParamValue::Num(2.5), curves: vec![curve] }];
+    let r = p.resolve_reel(Some(SEQ), &ov);
+    let plate = r.clips.iter().find(|c| same_clip(c.id, PLATE)).expect("подложка");
+    assert_eq!(plate.geometry_auto.len(), 1, "кривая не доехала до дома ведущего узла");
+    assert_eq!(plate.geometry_auto[0].param, "zoom");
+    assert_eq!(
+        plate.geometry_auto[0].keys.iter().map(|k| k.t.0).collect::<Vec<_>>(),
+        vec![0, FRAME * 10],
+        "ключи не переведены в материал цели тем же кодом, что у слота"
+    );
+    // и она ЗАКОННА: носитель кривой объявлен
+    let mut with = p.clone();
+    with.clips.iter_mut().find(|c| c.id == INST_A).unwrap().overrides = ov.clone();
+    with.validate().expect("кривая на ведущей геометрии — законный носитель");
+
+    // --- ПРАВИЛО приведения — такое же свойство (выбор) -------------------
+    {
+        let s = p.sequence_mut(SEQ).expect("лента");
+        s.published.push(PublishedParam {
+            id: PubId(5),
+            name: "Правило кадра".into(),
+            target: ParamAddr::new(PLATE, ParamOwner::Geometry, "rule"),
+            ty: ParamType::Choice { variants: std::borrow::Cow::Borrowed(CONFORM_KEYS) },
+            range: PubRange::default(),
+        });
+    }
+    p.validate().expect("ручка на правиле законна");
+    let r = p.resolve_reel(Some(SEQ), &[Override::value(
+        PubId(5),
+        ParamValue::Choice("fill".into()),
+    )]);
+    assert_eq!(
+        r.clips.iter().find(|c| same_clip(c.id, PLATE)).unwrap().geometry.rule,
+        Conform::Fill,
+        "правило приведения не переопределилось"
+    );
+
+    // --- У АУДИО-СОБЫТИЯ такого адреса НЕ СУЩЕСТВУЕТ ----------------------
+    let mut bad = template();
+    {
+        let s = bad.sequence_mut(SEQ).expect("лента");
+        let mut a = clip(70, 3, Tick::ZERO, LEN);
+        a.kind = ClipKind::Audio;
+        a.lane = 0;
+        s.clips.push(a);
+        s.ensure_tracks(LaneKind::Audio, 1);
+        s.published.push(PublishedParam {
+            id: ZOOM,
+            name: "Зум у звука".into(),
+            target: ParamAddr::new(ClipId(70), ParamOwner::Geometry, "zoom"),
+            ty: ParamType::Num,
+            range: PubRange::default(),
+        });
+    }
+    assert_eq!(
+        bad.addr_type(Some(SEQ), &ParamAddr::new(ClipId(70), ParamOwner::Geometry, "zoom")),
+        None,
+        "у аудио-события ведущего узла нет — адрес обязан быть НЕсуществующим"
+    );
+    assert!(
+        matches!(bad.validate(), Err(ProjectError::PublishedTargetMissing(Some(SEQ), ZOOM))),
+        "публикация геометрии у звука прошла валидацию молча"
+    );
+
+    // --- СУДЬБА ЦЕЛИ: та же, что у слота ----------------------------------
+    let mut m = TimelineModel::new(p.clone());
+    m.set_editing(Some(SEQ));
+    m.apply_batch(vec![Command::TrimEnd { id: PLATE, new_end: Tick(LEN.0 - FRAME * 5) }])
+        .expect("трим законен");
+    assert!(
+        m.project().published.iter().any(|x| x.id == ZOOM),
+        "трим цели убил ручку геометрии: адрес — ClipId, а не окно"
+    );
+    m.apply_batch(vec![Command::Split {
+        id: PLATE,
+        at: Tick(FRAME * 10),
+        new_id: ClipId(51),
+        new_group: None,
+    }])
+    .expect("разрез законен");
+    assert!(
+        m.project().published.iter().any(|x| x.id == ZOOM),
+        "разрез обязан оставить ручку на ЛЕВОЙ половине"
+    );
+    m.apply_batch(vec![Command::RemoveClip { id: PLATE }]).expect("удаление законно");
+    m.set_editing(None);
+    assert!(
+        !m.project().sequence(SEQ).unwrap().published.iter().any(|x| x.id == ZOOM),
+        "цель исчезла, а ручка геометрии осталась висеть"
+    );
+    m.project().validate().expect("после согласования проект законен");
+}

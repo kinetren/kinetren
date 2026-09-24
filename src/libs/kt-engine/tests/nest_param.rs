@@ -698,3 +698,67 @@ fn t675b_an_overridden_instance_gets_its_own_generator_source() {
     bare.sequence_mut(SEQ).unwrap().published.clear();
     assert_eq!(addrs(&bare), before, "публикация сама по себе завела лишние источники");
 }
+
+// ---- 752a. ведущая геометрия доезжает до кадра --------------------------------
+
+const GEO: PubId = PubId(5);
+
+/// Тест 752a (Р.63 п.9): опубликованный зум ВЕДУЩЕЙ ГЕОМЕТРИИ меняет кадр
+/// экземпляра — так же, как опубликованный текст титра.
+///
+/// Владелец: «по какой причине у первого geometry нет возможности
+/// опубликовать параметры а у второго есть?». Ведущий узел живёт своим
+/// полем события, а не слотом `fx`, — и это ровно та разница, которая
+/// НЕ ДОЛЖНА быть видна снаружи: паспорт, `set_value` и кривые у него те
+/// же. Утверждение здесь — наблюдаемое: кадры двух экземпляров разные,
+/// заказ сошёлся с чтением, редакция ленты у них разная.
+#[test]
+fn t752a_a_published_lead_geometry_changes_the_instance_frame() {
+    let mut p = template();
+    {
+        let s = p.sequences.iter_mut().find(|s| s.id == SEQ).expect("лента");
+        // ЦЕЛЬ — титр, а не подложка: подложка синтетическая и в кадре
+        // однородна, а зум однородного пятна ничего не меняет — тест был
+        // бы зелёным ни на чём
+        let title = s.clips.iter_mut().find(|c| c.id == TITLE).expect("титр");
+        title.geometry.zoom = 1.0;
+        s.published.push(PublishedParam {
+            id: GEO,
+            name: "Крупность заголовка".into(),
+            target: ParamAddr::new(TITLE, ParamOwner::Geometry, "zoom"),
+            ty: ParamType::Num,
+            range: PubRange::default(),
+        });
+    }
+    p.validate().expect("проект с ручкой на ведущей геометрии законен");
+
+    // объявление САМО ПО СЕБЕ бесплатно: кадры экземпляров совпадают
+    let mid = Tick(FRAME * 10);
+    let (a0, ca) = compose(&p, mid);
+    let (b0, cb) = compose(&p, Tick(PART.0 + mid.0));
+    assert!(ca && cb, "композит неполон — заказ разошёлся с чтением");
+    assert_eq!(a0, b0, "объявление ручки изменило кадр: публикация обязана быть бесплатной");
+
+    // ...а переопределение у ВТОРОГО экземпляра меняет только его
+    let mut z = p.clone();
+    set_override(&mut z, INST_B, Override::value(GEO, ParamValue::Num(3.0)));
+    let (a, ca) = compose(&z, mid);
+    let (b, cb) = compose(&z, Tick(PART.0 + mid.0));
+    assert!(ca && cb, "композит неполон под переопределением геометрии");
+    assert_ne!(
+        a, b,
+        "зум ведущей геометрии не доехал до кадра экземпляра: узел живёт полем \
+         события, но снаружи обязан быть таким же носителем, как слот"
+    );
+    assert_eq!(a, a0, "переопределение второго экземпляра изменило ПЕРВЫЙ");
+    assert!(b.iter().any(|&x| x != 0), "кадр чёрный — тест проверен ни на чём");
+
+    // редакция ленты у них разная — значит и ключи мемо разные
+    let ov = &z.clips.iter().find(|c| c.id == INST_B).unwrap().overrides;
+    assert_ne!(
+        kt_engine::instance_content(&z, SEQ, ov),
+        kt_engine::instance_content(&z, SEQ, &[]),
+        "редакция с переопределением геометрии равна шаблонной: суб-композит \
+         достался бы обоим экземплярам один"
+    );
+}

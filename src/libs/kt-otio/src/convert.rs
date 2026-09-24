@@ -379,8 +379,17 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                     || !c.geometry_auto.is_empty()
                     || c.fx.iter().any(|f| matches!(f, kt_model::FxInstance::Geometry { .. }))
             };
-            let reel_needs_v11 =
-                |reel: &dyn kt_model::Reel| reel.clips().iter().any(clip_needs_v11);
+            // опубликованная ручка ВЕДУЩЕЙ ГЕОМЕТРИИ (Р.63) — то же
+            // новшество Р.62: адрес `owner: "geometry"` старая сборка не
+            // разберёт вовсе, и сказать об этом обязана версия, а не
+            // ошибка разбора
+            let reel_needs_v11 = |reel: &dyn kt_model::Reel| {
+                reel.clips().iter().any(clip_needs_v11)
+                    || reel
+                        .published()
+                        .iter()
+                        .any(|p| matches!(p.target.owner, kt_model::ParamOwner::Geometry))
+            };
             // дорожка-объект с любым не-умолчанием — тоже новшество (Р.62,
             // change B): старая сборка потеряла бы mute, уровень, режим и
             // цепочку дорожки молча

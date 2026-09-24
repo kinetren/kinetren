@@ -14788,3 +14788,77 @@ fn t751_the_menu_target_is_latched_on_press() {
         crate::reach_tests::painted_texts(&h).into_iter().map(|t| t.src).collect();
     assert!(shown.iter().any(|s| s == &head), "в меню ключа нет заголовка «{head}»: {shown:?}");
 }
+
+/// Тест 752c (Р.63 п.9): ручка ведущей геометрии действует у ЭКЗЕМПЛЯРА.
+///
+/// Вторая половина претензии «у первого geometry нет возможности
+/// опубликовать параметры»: мало открыть дверь автору — потребитель обязан
+/// получить обычную ручку, которая меняет КАДР и, значит, ключ превью
+/// ленты (иначе на таймлайне он увидит чужие кадры, t680).
+#[test]
+fn t752c_an_instance_edits_the_published_lead_geometry() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let (mut h, s) = harness_news_template();
+
+    // автор объявляет зум ведущего узла титра
+    let zoom = PubId(50);
+    h.state_mut().enter_nest(s.a);
+    h.step();
+    assert!(
+        h.state_mut().apply(Command::PublishParam {
+            param: Box::new(PublishedParam {
+                id: zoom,
+                name: "Крупность".into(),
+                target: ParamAddr::new(s.inner, ParamOwner::Geometry, "zoom"),
+                ty: ParamType::Num,
+                range: PubRange::default(),
+            }),
+        }),
+        "публикация зума ведущего узла отвергнута"
+    );
+    h.step();
+    h.state_mut().leave_nest();
+    h.step();
+
+    // окно потребителя рисует ручку ИМЕНЕМ АВТОРА
+    h.state_mut().open_inst_params(s.b);
+    h.step();
+    h.step();
+    assert!(
+        h.query_all_by_label_contains("Крупность").count() > 0,
+        "ручка ведущей геометрии не показана потребителю"
+    );
+
+    // ...и правка поля (тем же жестом, что шлёт окно) меняет КАДР
+    let keys = h.state_mut().reel_keys();
+    let (ka, kb) = (*keys.get(&s.a).expect("ключ A"), *keys.get(&s.b).expect("ключ B"));
+    assert_eq!(ka, kb, "сцена: до правки оба выпуска делят один ключ превью");
+    let win = h.state().inst_params[0].gesture;
+    assert!(h.state_mut().apply_coalesced(
+        Command::SetOverride { id: s.b, ov: Box::new(Override::value(zoom, ParamValue::Num(3.0))) },
+        win
+    ));
+    h.step();
+
+    let doc = h.state().model.document();
+    let inst = h.state().model.clip(s.b).cloned().expect("второй выпуск");
+    let r = doc.resolve_reel(Some(s.seq), &inst.overrides);
+    assert_eq!(
+        r.clips.iter().find(|c| same_clip(c.id, s.inner)).map(|c| c.geometry.zoom),
+        Some(3.0),
+        "переопределение не доехало до ведущего узла внутри ленты"
+    );
+    assert_eq!(
+        doc.published_value(s.seq, zoom),
+        Some(ParamValue::Num(1.0)),
+        "правка экземпляра уехала в САМУ ленту — это была бы правка всех мест сразу"
+    );
+    let keys = h.state_mut().reel_keys();
+    let (ka2, kb2) = (*keys.get(&s.a).expect("ключ A"), *keys.get(&s.b).expect("ключ B"));
+    assert_eq!(ka2, ka, "шаблонный экземпляр не трогали — его ключ обязан остаться прежним");
+    assert_ne!(
+        ka2, kb2,
+        "ключ превью не поехал: на таймлайне переопределённый выпуск показал бы ЧУЖИЕ кадры"
+    );
+}

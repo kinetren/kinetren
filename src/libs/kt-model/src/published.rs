@@ -110,6 +110,17 @@ pub enum ParamOwner {
     Camera {
         id: CameraId,
     },
+    /// ВЕДУЩИЙ УЗЕЛ «Геометрия» события (Р.62): правило приведения,
+    /// кроп, позиция, зум, поворот, якорь.
+    ///
+    /// Узел живёт не в `fx`, а своим полем `ClipEvent::geometry` — и
+    /// до Р.63 у него единственного не было адреса публикации: «по какой
+    /// причине у первого geometry нет возможности опубликовать параметры
+    /// а у второго есть? или у нас дубли кода?» (владелец). Не дубли —
+    /// дыра в адресации: паспорт, `set_value` и кривые у него ровно те
+    /// же, что у слота, и ветка здесь стоит ровно поэтому одна строка
+    /// длиной. У аудио-события узла нет, и адрес отвергает валидация.
+    Geometry,
     /// Публичный параметр ленты, вложенной ВНУТРЬ этой (шаблон в
     /// шаблоне). Внешняя лента патчит `overrides` внутреннего экземпляра,
     /// дальше он разбирается сам — рекурсия бесплатна по построению.
@@ -189,7 +200,13 @@ pub struct ResolvedReel<'a> {
 /// кривая там была бы хуже отказа. У свойства события (`opacity`,
 /// `gain_db`) носителя кривой нет вовсе.
 pub fn owner_takes_curves(owner: &ParamOwner) -> bool {
-    matches!(owner, ParamOwner::FxSlot { .. } | ParamOwner::Generator | ParamOwner::Nested { .. })
+    matches!(
+        owner,
+        ParamOwner::FxSlot { .. }
+            | ParamOwner::Generator
+            | ParamOwner::Geometry
+            | ParamOwner::Nested { .. }
+    )
 }
 
 /// Перевести ключи кривой из времени ЛЕНТЫ в материал цели.
@@ -290,6 +307,16 @@ fn apply_one(
                 let retimed: Vec<ParamCurve> =
                     ov.curves.iter().cloned().map(|x| retime_curve(x, c, frame_step)).collect();
                 put_curves(&mut c.gen_auto, retimed);
+            }
+        }
+        ParamOwner::Geometry => {
+            // тот же паспорт и тот же `set_value`, что у слота; кривые —
+            // в свой дом `geometry_auto` (домен тот же, тик материала)
+            c.geometry.set_value(name, &value);
+            if !ov.curves.is_empty() {
+                let retimed: Vec<ParamCurve> =
+                    ov.curves.iter().cloned().map(|x| retime_curve(x, c, frame_step)).collect();
+                put_curves(&mut c.geometry_auto, retimed);
             }
         }
         ParamOwner::ClipAttr => set_clip_attr(c, name, &value, default_gen),

@@ -2121,6 +2121,40 @@ fn t681_published_params_and_overrides_round_trip() {
         Some(kt_otio::KT_META_V6),
         "обычная лента обязана остаться на своей версии"
     );
+
+    // ...а ручка на ВЕДУЩЕЙ ГЕОМЕТРИИ (Р.63 п.9) — новшество Р.62: адрес
+    // `owner: "geometry"` старая сборка не разберёт вовсе, и сказать об
+    // этом обязана ВЕРСИЯ, а не ошибка разбора
+    let mut g = p.clone();
+    g.sequences
+        .iter_mut()
+        .find(|s| s.id == MediaId(100))
+        .unwrap()
+        .published
+        .push(kt_model::PublishedParam {
+            id: kt_model::PubId(2),
+            name: "Крупность заголовка".into(),
+            target: kt_model::ParamAddr::new(
+                ClipId(13),
+                kt_model::ParamOwner::Geometry,
+                "zoom",
+            ),
+            ty: kt_model::ParamType::Num,
+            range: kt_model::PubRange { min: None, max: None },
+        });
+    g.validate().expect("ручка на ведущей геометрии законна");
+    let gtext = save_project(&g, &Retained::default(), None);
+    assert_eq!(
+        kt_otio::kt_version(&parse_document(&gtext).unwrap()),
+        Some(kt_otio::KT_META_V11),
+        "публикация ведущей геометрии обязана поднять версию по СОДЕРЖИМОМУ"
+    );
+    let gback = load_project(&gtext, None).expect("файл с геометрической ручкой читается");
+    assert_eq!(
+        gback.project.sequence(MediaId(100)).unwrap().published,
+        g.sequences.iter().find(|s| s.id == MediaId(100)).unwrap().published,
+        "адрес геометрии не пережил круг"
+    );
 }
 
 // ---- 698b, 698c (Р.61). форма отрезка в файле -------------------------------
@@ -2590,10 +2624,12 @@ fn t747_old_rate_curves_with_ease_open_as_linear() {
     p.clips.push(c);
 
     // 2) кривая скорости в ПАТЧЕ МОРФЕРА
-    let mut patch = MorphPatch::default();
-    patch.audio_fx = vec![FxInstance::slowed_reverb(0.8, 0.2, 85.0)];
-    patch.audio_bypass = vec![false];
-    patch.audio_auto = vec![vec![rate_curve(1.0, 0.5)]];
+    let patch = MorphPatch {
+        audio_fx: vec![FxInstance::slowed_reverb(0.8, 0.2, 85.0)],
+        audio_bypass: vec![false],
+        audio_auto: vec![vec![rate_curve(1.0, 0.5)]],
+        ..Default::default()
+    };
     p.morphers.push(MorpherEvent {
         id: MorphId(1),
         lane: 0,

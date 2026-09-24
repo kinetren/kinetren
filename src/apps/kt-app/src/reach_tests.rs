@@ -2562,3 +2562,51 @@ fn t741_track_has_every_verb_and_paired_paths_are_one_body() {
         "глушение обязано быть одним шагом истории на любом пути"
     );
 }
+
+/// Тест 752b (Р.63 п.9): дверь публикации есть и у ВЕДУЩЕГО УЗЛА.
+///
+/// Владелец: «по какой причине у первого geometry нет возможности
+/// опубликовать параметры а у второго есть? ведь этот первый geometry идет
+/// как fx, разве нет? или у нас дубли кода?». Дублей нет — у ведущего узла
+/// не было АДРЕСА публикации, и дверь была закрыта одним `!lead_sel`.
+/// Утверждение — из точки человека: выбрал узел, правый клик по подписи
+/// зума, пункт «Опубликовать…» есть (на прежнем коде его не было).
+#[test]
+fn t752b_publishing_is_reachable_at_the_lead_geometry() {
+    use crate::i18n::{k, tr};
+    use crate::layout_tests::harness_news_template;
+    use egui_kittest::kittest::Queryable;
+
+    let (mut h, s) = harness_news_template();
+    let publish = tr(k::pubp::PUBLISH).to_string();
+    let zoom = crate::widgets::param_label("zoom");
+    h.state_mut().enter_nest(s.a);
+    h.step();
+    h.state_mut().open_fx_editor(s.inner);
+    h.step();
+    h.step();
+
+    // выбираем ВЕДУЩИЙ узел — его подпись стоит в полосе цепочки
+    let lead = crate::fx_editor::fx_display_name(&kt_model::EventGeometry::default().node());
+    h.get_by_label(lead).click();
+    h.step();
+    h.step();
+    assert_eq!(
+        h.state().fx_editors[0].selected.get(&s.inner),
+        Some(&crate::widgets::ChainSel::Lead),
+        "ведущий узел не выбран — тест щупал бы обычный слот"
+    );
+
+    let rect = h
+        .query_all_by_label_contains(&zoom)
+        .map(|n| n.rect())
+        .min_by(|a, b| a.top().total_cmp(&b.top()))
+        .expect("подписи зума у ведущего узла нет");
+    let before = h.query_all_by_label_contains(&publish).count();
+    right_click(&mut h, rect.center());
+    assert!(
+        h.query_all_by_label_contains(&publish).count() > before,
+        "у ведущего узла дверь публикации закрыта, хотя свойства у него те же, \
+         что у слота: «или у нас дубли кода?»"
+    );
+}
