@@ -5952,10 +5952,7 @@ impl KtApp {
                     // доля превью сохраняется (п.20 р.7)
                     let pq = self.player.preview_quality();
                     let frac = pq.width as f32 / settings.width.max(1) as f32;
-                    self.player.set_preview_quality(kt_media::Quality {
-                        width: (((w as f32 * frac) as u32).max(2)) & !1,
-                        height: (((h as f32 * frac) as u32).max(2)) & !1,
-                    });
+                    self.player.set_preview_quality(preview_quality_for(w, h, frac));
                     cmds.push(Command::SetSettings { settings: st });
                 }
                 match fps {
@@ -6644,10 +6641,8 @@ impl KtApp {
                     .map(|(i, _)| i)
                     .unwrap_or(2)
             };
-            let q_for = |w: u32, h: u32, f: f32| kt_media::Quality {
-                width: (((w as f32 * f) as u32).max(2)) & !1,
-                height: (((h as f32 * f) as u32).max(2)) & !1,
-            };
+            // размер доли — ПОДОБНЫЙ кадру проекта (Р.64)
+            let q_for = preview_quality_for;
             let mut fps = proj.fps;
             let before_fps = fps;
             let r = egui::ComboBox::from_id_salt("fps")
@@ -8186,6 +8181,40 @@ pub fn format_rate(r: f32) -> String {
 }
 
 /// Ключ кадра превью: тик, выровненный по сетке fps проекта (тест 39).
+/// Размер превью по доле — ПОДОБНЫЙ кадру проекта (Р.64).
+///
+/// Независимое чётное округление осей врало: 1920×1080 при 1/8 давало
+/// 240×134 (1.791), при 1/16 — 120×66 (1.818) вместо 1.778. «Вписать»
+/// считает рамку ОТ ХОЛСТА, поэтому превью и экспорт получали разные
+/// рамки, а экранный контрол показывал бы не то, что уедет в файл.
+///
+/// Чётность остаётся требованием декодера (4:2:0), поэтому точного подобия
+/// на малых долях не существует — берём ближайшую ЧЁТНУЮ ПАРУ из
+/// окрестности ±2 по каждой оси, минимизирующую ошибку отношения; при
+/// равенстве — большую площадь.
+pub fn preview_quality_for(w: u32, h: u32, f: f32) -> kt_media::Quality {
+    let even = |v: f32| ((v.max(2.0) as u32).max(2)) & !1;
+    let (w0, h0) = (even(w as f32 * f), even(h as f32 * f));
+    let want = w.max(1) as f64 / h.max(1) as f64;
+    let mut best = (w0, h0);
+    let mut best_err = f64::MAX;
+    for dw in [-2i64, 0, 2] {
+        for dh in [-2i64, 0, 2] {
+            let cw = (w0 as i64 + dw).max(2) as u32 & !1;
+            let ch = (h0 as i64 + dh).max(2) as u32 & !1;
+            let err = (cw as f64 / ch as f64 - want).abs();
+            let better = err < best_err - 1e-12
+                || ((err - best_err).abs() <= 1e-12
+                    && (cw as u64 * ch as u64) > (best.0 as u64 * best.1 as u64));
+            if better {
+                best = (cw, ch);
+                best_err = err;
+            }
+        }
+    }
+    kt_media::Quality { width: best.0, height: best.1 }
+}
+
 pub fn preview_key_tick(grid: kt_time::FpsGrid, t: Tick) -> i64 {
     grid.align_floor(t).0
 }
@@ -8962,6 +8991,84 @@ mod repaint_tests {
         // пустой регион игнорируется
         assert_eq!(toggle(false, true, 150, Some((100, 100)), true), A::SeekStart(0));
         assert_eq!(toggle(false, false, 500, Some((100, 100)), true), A::Resume { seek: None });
+    }
+
+    /// Тест 765 (Р.64): доля превью ПОДОБНА кадру проекта.
+    ///
+    /// Независимое чётное округление осей давало 1920×1080 → 240×134 при
+    /// 1/8 и 120×66 при 1/16 (1.791 и 1.818 против 1.778): «вписать»
+    /// считало на превью другую рамку, чем в экспорте, и экранный контрол
+    /// показывал бы не то, что уедет в файл.
+    #[test]
+    fn t765_preview_fraction_keeps_the_project_aspect() {
+        use super::preview_quality_for;
+        for (pw, ph) in [(1920u32, 1080u32), (1080, 1920), (1280, 720), (1998, 1080)] {
+            let want = pw as f64 / ph as f64;
+            for f in [1.0f32, 0.5, 0.25, 0.125, 0.0625] {
+                let q = preview_quality_for(pw, ph, f);
+                assert!(q.width >= 2 && q.height >= 2, "{pw}x{ph} @{f}: вырожденный размер {q:?}");
+                assert!(
+                    q.width.is_multiple_of(2) && q.height.is_multiple_of(2),
+                    "{pw}x{ph} @{f}: нечётный размер {q:?} — декодер 4:2:0 его не отдаст"
+                );
+                // отклонение отношения — не больше половины пикселя по
+                // КОРОТКОЙ стороне (точнее чётность не позволяет)
+                let got = q.width as f64 / q.height as f64;
+                let short = q.width.min(q.height) as f64;
+                let tol = want * (0.5 / short) * 2.0;
+                assert!(
+                    (got - want).abs() <= tol,
+                    "{pw}x{ph} @{f}: превью {q:?} не подобно кадру — {got:.4} против {want:.4} \
+                     (допуск {tol:.4})"
+                );
+            }
+        }
+        // РАМКА «вписать» одна и та же в ДОЛЯХ холста на всех долях —
+        // то, ради чего подобие и нужно: превью и экспорт обязаны считать
+        // одну рамку. (Проверка стоит здесь, а не в kt-fx: там нет доли
+        // превью, а в kt-app есть обе половины.)
+        for view in [(1080.0f64, 1920.0f64), (3840.0, 2160.0), (720.0, 720.0)] {
+            let mut ref_frac: Option<(f64, f64)> = None;
+            for f in [1.0f32, 0.5, 0.25, 0.125, 0.0625] {
+                let q = preview_quality_for(1920, 1080, f);
+                let canvas = (q.width as f64, q.height as f64);
+                let d = kt_fx::conform::conform_dest(
+                    Some(view),
+                    canvas,
+                    kt_fx::conform::ConformRule::Fit,
+                );
+                let frac = (d.0 / canvas.0, d.1 / canvas.1);
+                match ref_frac {
+                    None => ref_frac = Some(frac),
+                    Some(r) => {
+                        let tol = 1.0 / q.width.min(q.height) as f64;
+                        assert!(
+                            (frac.0 - r.0).abs() <= tol && (frac.1 - r.1).abs() <= tol,
+                            "вид {view:?} @{f}: рамка «вписать» в долях холста разошлась — \
+                             {frac:?} против {r:?} (допуск {tol:.4})"
+                        );
+                    }
+                }
+            }
+        }
+
+        // …и это НЕ «любой размер подходит»: прежнее независимое
+        // округление на этих же долях не проходит собственный допуск
+        for (f, w, h) in [(0.125f32, 240u32, 134u32), (0.0625, 120, 66)] {
+            let want = 1920.0 / 1080.0;
+            let got = w as f64 / h as f64;
+            let tol = want * (0.5 / h.min(w) as f64) * 2.0;
+            assert!(
+                (got - want).abs() > tol,
+                "сцена вырождена: прежнее округление @{f} ({w}x{h}) уложилось в допуск"
+            );
+            let now = preview_quality_for(1920, 1080, f);
+            assert_ne!(
+                (now.width, now.height),
+                (w, h),
+                "@{f} доля осталась прежней — функция ничего не изменила"
+            );
+        }
     }
 
     /// Тест 39 (п.1 v1.4): ключ превью выровнен по сетке fps — внутри

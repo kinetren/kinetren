@@ -293,10 +293,8 @@ impl KtApp {
                         let pq = self.player.preview_quality();
                         let frac = pq.width as f32 / cur.width.max(1) as f32;
                         self.apply(Command::SetSettings { settings: st });
-                        self.player.set_preview_quality(kt_media::Quality {
-                            width: (((w as f32 * frac) as u32).max(2)) & !1,
-                            height: (((h as f32 * frac) as u32).max(2)) & !1,
-                        });
+                        self.player
+                            .set_preview_quality(crate::app::preview_quality_for(w, h, frac));
                     } else if !cur.settings_explicit {
                         let mut st = cur.clone();
                         st.settings_explicit = true;
