@@ -402,6 +402,14 @@ impl Player {
         *self.preview_quality.lock().unwrap()
     }
 
+    /// ВИД ИСТОЧНИКА (натив × пиксельное соотношение) — интерфейсу, чтобы
+    /// он мог посчитать рамку размещения той же функцией, что рендер
+    /// (Р.64). К декодеру интерфейс не ходит: экземпляром владеет воркер
+    /// (инвариант 5), а факты источников плеер уже держит у себя.
+    pub fn source_view(&self, media: MediaId) -> Option<(f64, f64)> {
+        self.natives.read().ok()?.views.get(&media).copied()
+    }
+
     pub fn play(&self) {
         self.flight.push(crate::flight::Ev::Play, self.transport.playhead_frames(), 0);
         self.transport.set_playing(true);

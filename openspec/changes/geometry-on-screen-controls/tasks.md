@@ -2,9 +2,9 @@
 
 ## 1. Одна арифметика размещения (фундамент)
 
-- [ ] 1.1 `kt-fx/src/geom.rs`: вынести размещение ведущего узла в публичную `lead_placement(lead, canvas, &EventGeometry) -> Placement { ox, oy, dw, dh, rot_deg, anchor_px, crop_view }`; ветка `FxInstance::Geometry` построителя считает свой `Aff`/`Proj` ИЗ НЕЁ (второй формулы не остаётся). Проверка: `cargo test -p kt-fx -p kt-gpu` зелёные без перегенерации golden (t712–t715, t224), новый t761 — часть про прямоугольник.
-- [ ] 1.2 Там же — обратная пара чистых функций: `pos_for_drag`, `zoom_for_handle`, `rot_for_point`, `crop_for_handle`, `anchor_move`. `anchor_move` возвращает `(anchor, pos)`, при которых `lead_placement` даёт ТОТ ЖЕ прямоугольник и угол; тест t761 (`src/libs/kt-fx/tests/placement.rs`) сверяет прямоугольники при повороте 0° и 30° и требует точного возврата запрошенного смещения.
-- [ ] 1.3 `Player::source_view(media) -> Option<(f64, f64)>` поверх `SourceFacts.views` (kt-engine), чтобы интерфейс знал вид источника, не ходя к декодеру (инвариант 5). Проверка: тест t760 пользуется им для рамки; `cargo test -p kt-engine` зелёный.
+- [x] 1.1 `kt-fx/src/geom.rs`: вынести размещение ведущего узла в публичную `lead_placement(lead, canvas, &EventGeometry) -> Placement { ox, oy, dw, dh, rot_deg, anchor_px, crop_view }`; ветка `FxInstance::Geometry` построителя считает свой `Aff`/`Proj` ИЗ НЕЁ (второй формулы не остаётся). Проверка: `cargo test -p kt-fx -p kt-gpu` зелёные без перегенерации golden (t712–t715, t224), новый t761 — часть про прямоугольник.
+- [x] 1.2 Там же — обратная пара чистых функций: `pos_for_drag`, `zoom_for_handle`, `rot_for_point`, `crop_for_handle`, `anchor_move`. `anchor_move` возвращает `(anchor, pos)`, при которых `lead_placement` даёт ТОТ ЖЕ прямоугольник и угол; тест t761 (`src/libs/kt-fx/tests/placement.rs`) сверяет прямоугольники при повороте 0° и 30° и требует точного возврата запрошенного смещения.
+- [x] 1.3 `Player::source_view(media) -> Option<(f64, f64)>` поверх `SourceFacts.views` (kt-engine), чтобы интерфейс знал вид источника, не ходя к декодеру (инвариант 5). Проверка: тест t760 пользуется им для рамки; `cargo test -p kt-engine` зелёный.
 
 ## 2. Доля превью подобна кадру проекта
 

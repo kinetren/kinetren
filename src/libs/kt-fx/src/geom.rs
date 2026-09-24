@@ -124,6 +124,305 @@ impl Aff {
     }
 }
 
+/// РАЗМЕЩЕНИЕ узла «Геометрия» на холсте (Р.64): рамка, поворот и якорь в
+/// координатах холста (логические px выхода) плюс окно кропа во ВХОДЕ.
+///
+/// Это ЕДИНСТВЕННАЯ арифметика размещения в программе: из неё строит свой
+/// аффин/гомографию гео-программа рендера и по ней же рисует рамку
+/// интерфейс. Вторая копия формул разошлась бы с первой молча — ровно тот
+/// класс дефектов, из-за которого правило куска в Р.39 свели к
+/// `clip_slice`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Placement {
+    /// Левый верх рамки на холсте (до поворота).
+    pub ox: f64,
+    pub oy: f64,
+    /// Размер рамки на холсте.
+    pub dw: f64,
+    pub dh: f64,
+    /// Поворот вокруг якоря, градусы (как в модели).
+    pub rot_deg: f64,
+    /// Точка якоря на холсте — центр поворота и масштаба.
+    pub anchor: (f64, f64),
+    /// Окно кропа во ВХОДНОМ кадре: (x0, y0, w, h) в px входа.
+    pub crop_in: (f64, f64, f64, f64),
+}
+
+impl Placement {
+    /// Четыре угла рамки НА ХОЛСТЕ с учётом поворота: TL, TR, BR, BL.
+    /// Именно их рисует интерфейс и по ним же сверяются тесты якоря:
+    /// «картинка не сдвинулась» — это про повёрнутый квад, а не про
+    /// осевой прямоугольник.
+    pub fn corners(&self) -> [(f64, f64); 4] {
+        let (c, s) = (self.rot_deg.to_radians().cos(), self.rot_deg.to_radians().sin());
+        let (ax, ay) = self.anchor;
+        let raw = [
+            (self.ox, self.oy),
+            (self.ox + self.dw, self.oy),
+            (self.ox + self.dw, self.oy + self.dh),
+            (self.ox, self.oy + self.dh),
+        ];
+        raw.map(|(x, y)| {
+            let (dx, dy) = (x - ax, y - ay);
+            (ax + c * dx - s * dy, ay + s * dx + c * dy)
+        })
+    }
+
+    /// Центр рамки на холсте (совпадает с центром повёрнутого квада).
+    pub fn center(&self) -> (f64, f64) {
+        let cs = self.corners();
+        ((cs[0].0 + cs[2].0) / 2.0, (cs[0].1 + cs[2].1) / 2.0)
+    }
+}
+
+/// Размещение узла «Геометрия» на холсте. `None` — не узел геометрии.
+///
+/// `in_size` — логический размер ВХОДНОГО кадра шага (px), `canvas` —
+/// логический размер выхода. Ведущий узел берёт рамку по правилу
+/// приведения от ВИДА источника (кроп режет вид ДО правила), обычный —
+/// по кропнутому входу.
+pub fn geometry_placement(
+    f: &FxInstance,
+    lead: Option<LeadCtx>,
+    in_size: (f64, f64),
+    canvas: (f64, f64),
+) -> Option<Placement> {
+    let FxInstance::Geometry {
+        lead: is_lead,
+        crop_l,
+        crop_t,
+        crop_r,
+        crop_b,
+        pos_x,
+        pos_y,
+        zoom,
+        rot,
+        anchor_x,
+        anchor_y,
+    } = f
+    else {
+        return None;
+    };
+    let (l, t, r, b) = (
+        crop_l.clamp(0.0, 0.95),
+        crop_t.clamp(0.0, 0.95),
+        crop_r.clamp(0.0, 0.95),
+        crop_b.clamp(0.0, 0.95),
+    );
+    let kx = (1.0 - l - r).max(0.05);
+    let ky = (1.0 - t - b).max(0.05);
+    let (iw, ih) = (in_size.0.max(1.0), in_size.1.max(1.0));
+    let (cx0, cy0, cw, ch) = (l * iw, t * ih, kx * iw, ky * ih);
+    let (fw_, fh_) = (canvas.0.max(2.0), canvas.1.max(2.0));
+    let dest = if *is_lead {
+        let lc = lead.unwrap_or(LeadCtx { view: None, rule: ConformRule::Stretch });
+        conform_dest(lc.view.map(|(vw, vh)| (vw * kx, vh * ky)), (fw_, fh_), lc.rule)
+    } else {
+        (cw, ch)
+    };
+    let z = zoom.clamp(0.05, 32.0);
+    let (dw, dh) = ((dest.0 * z).max(1e-6), (dest.1 * z).max(1e-6));
+    let ccx = fw_ / 2.0 + pos_x.clamp(-2.0, 2.0) * fw_;
+    let ccy = fh_ / 2.0 + pos_y.clamp(-2.0, 2.0) * fh_;
+    let (ox, oy) = (ccx - dw / 2.0, ccy - dh / 2.0);
+    Some(Placement {
+        ox,
+        oy,
+        dw,
+        dh,
+        rot_deg: *rot,
+        anchor: (ox + anchor_x.clamp(0.0, 1.0) * dw, oy + anchor_y.clamp(0.0, 1.0) * dh),
+        crop_in: (cx0, cy0, cw, ch),
+    })
+}
+
+/// Ручка рамки трансформации (Р.64). Углы и стороны — масштаб, `Rot` —
+/// поворот, `Anchor` — якорь, `Crop*` — кроп своей стороны.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Handle {
+    TopLeft,
+    Top,
+    TopRight,
+    Right,
+    BottomRight,
+    Bottom,
+    BottomLeft,
+    Left,
+    Rot,
+    Anchor,
+    CropLeft,
+    CropTop,
+    CropRight,
+    CropBottom,
+}
+
+impl Handle {
+    /// Точка ручки НА ХОЛСТЕ (с учётом поворота) — и рисунок, и хит-тест
+    /// берут её отсюда, второго списка координат не заводится.
+    pub fn point(self, pl: &Placement) -> (f64, f64) {
+        let cs = pl.corners();
+        let mid = |a: (f64, f64), b: (f64, f64)| ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+        match self {
+            Handle::TopLeft => cs[0],
+            Handle::Top | Handle::CropTop => mid(cs[0], cs[1]),
+            Handle::TopRight => cs[1],
+            Handle::Right | Handle::CropRight => mid(cs[1], cs[2]),
+            Handle::BottomRight => cs[2],
+            Handle::Bottom | Handle::CropBottom => mid(cs[2], cs[3]),
+            Handle::BottomLeft => cs[3],
+            Handle::Left | Handle::CropLeft => mid(cs[3], cs[0]),
+            Handle::Anchor => pl.anchor,
+            // ручка поворота — над верхней стороной, на длине ROT_ARM
+            Handle::Rot => {
+                let top = mid(cs[0], cs[1]);
+                let (dx, dy) = (top.0 - pl.center().0, top.1 - pl.center().1);
+                let len = (dx * dx + dy * dy).sqrt().max(1e-6);
+                (top.0 + dx / len * ROT_ARM, top.1 + dy / len * ROT_ARM)
+            }
+        }
+    }
+
+    /// Противоположная точка — та, что остаётся НА МЕСТЕ при тяге за эту.
+    fn opposite(self, pl: &Placement) -> Option<(f64, f64)> {
+        let cs = pl.corners();
+        let mid = |a: (f64, f64), b: (f64, f64)| ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+        Some(match self {
+            Handle::TopLeft => cs[2],
+            Handle::TopRight => cs[3],
+            Handle::BottomRight => cs[0],
+            Handle::BottomLeft => cs[1],
+            Handle::Top => mid(cs[2], cs[3]),
+            Handle::Bottom => mid(cs[0], cs[1]),
+            Handle::Left => mid(cs[1], cs[2]),
+            Handle::Right => mid(cs[3], cs[0]),
+            _ => return None,
+        })
+    }
+}
+
+/// Длина плеча ручки поворота в px ХОЛСТА (рисунок и хит-тест — одно
+/// число).
+pub const ROT_ARM: f64 = 28.0;
+
+/// Позиция узла после переноса рамки на `(dx, dy)` px холста.
+pub fn pos_for_drag(pos: (f64, f64), canvas: (f64, f64), d: (f64, f64)) -> (f64, f64) {
+    let (fw, fh) = (canvas.0.max(2.0), canvas.1.max(2.0));
+    ((pos.0 + d.0 / fw).clamp(-2.0, 2.0), (pos.1 + d.1 / fh).clamp(-2.0, 2.0))
+}
+
+/// Зум и позиция при тяге ручки масштаба в точку `p` холста: ПРОТИВО-
+/// ПОЛОЖНАЯ точка рамки остаётся на месте (правило отрасли), зум
+/// равномерный — у узла он один на обе оси.
+pub fn zoom_for_handle(
+    pl: &Placement,
+    h: Handle,
+    p: (f64, f64),
+    zoom: f64,
+    pos: (f64, f64),
+    canvas: (f64, f64),
+) -> Option<(f64, (f64, f64))> {
+    let fixed = h.opposite(pl)?;
+    let from = h.point(pl);
+    let (d0x, d0y) = (from.0 - fixed.0, from.1 - fixed.1);
+    let (d1x, d1y) = (p.0 - fixed.0, p.1 - fixed.1);
+    let len0 = (d0x * d0x + d0y * d0y).sqrt();
+    if len0 < 1e-6 {
+        return None;
+    }
+    // проекция на исходное направление: тяга вбок рамку не переворачивает
+    let k = ((d1x * d0x + d1y * d0y) / (len0 * len0)).max(0.01);
+    let z = (zoom * k).clamp(0.05, 32.0);
+    // реальный коэффициент после клампа — из него и считается сдвиг
+    let kk = z / zoom.max(1e-9);
+    let (cx, cy) = pl.center();
+    let nc = (fixed.0 + (cx - fixed.0) * kk, fixed.1 + (cy - fixed.1) * kk);
+    Some((z, pos_for_drag(pos, canvas, (nc.0 - cx, nc.1 - cy))))
+}
+
+/// Угол узла, при котором ручка поворота смотрит в точку `p` холста.
+/// Шаг `step_deg` (Shift) — округление к ближайшему кратному.
+pub fn rot_for_point(pl: &Placement, p: (f64, f64), step_deg: Option<f64>) -> f64 {
+    let (ax, ay) = pl.anchor;
+    // нулевой угол ручки — «вверх» от якоря в НЕповёрнутой рамке
+    let base = (-std::f64::consts::FRAC_PI_2).to_degrees();
+    let cur = (p.1 - ay).atan2(p.0 - ax).to_degrees();
+    let mut deg = cur - base;
+    if let Some(st) = step_deg.filter(|s| *s > 0.0) {
+        deg = (deg / st).round() * st;
+    }
+    // держим в (-360, 360], как паспорт параметра
+    deg %= 360.0;
+    deg.clamp(-360.0, 360.0)
+}
+
+/// Кроп после тяги ручки кропа в точку `p` холста. Возвращает
+/// `[l, t, r, b]` в долях ИСХОДНОГО вида.
+pub fn crop_for_handle(
+    pl: &Placement,
+    h: Handle,
+    p: (f64, f64),
+    crop: [f64; 4],
+) -> Option<[f64; 4]> {
+    // переводим точку в систему НЕповёрнутой рамки
+    let (c, s) = ((-pl.rot_deg).to_radians().cos(), (-pl.rot_deg).to_radians().sin());
+    let (ax, ay) = pl.anchor;
+    let (dx, dy) = (p.0 - ax, p.1 - ay);
+    let (lx, ly) = (ax + c * dx - s * dy, ay + s * dx + c * dy);
+    // доля вдоль стороны рамки → доля ВИДА: рамка показывает уже
+    // кропнутый вид, поэтому шаг доли делится на оставшуюся часть
+    let (u, v) = ((lx - pl.ox) / pl.dw.max(1e-6), (ly - pl.oy) / pl.dh.max(1e-6));
+    let (kx, ky) = ((1.0 - crop[0] - crop[2]).max(0.05), (1.0 - crop[1] - crop[3]).max(0.05));
+    let mut out = crop;
+    match h {
+        Handle::CropLeft => out[0] = (crop[0] + u * kx).clamp(0.0, 0.95),
+        Handle::CropRight => out[2] = (crop[2] + (1.0 - u) * kx).clamp(0.0, 0.95),
+        Handle::CropTop => out[1] = (crop[1] + v * ky).clamp(0.0, 0.95),
+        Handle::CropBottom => out[3] = (crop[3] + (1.0 - v) * ky).clamp(0.0, 0.95),
+        _ => return None,
+    }
+    // взаимный предел: суммарный кроп оси не съедает вид целиком
+    if out[0] + out[2] > 0.95 || out[1] + out[3] > 0.95 {
+        return None;
+    }
+    Some(out)
+}
+
+/// ЯКОРЬ в точку `p` холста + КОМПЕНСАЦИЯ позиции: повёрнутый квад
+/// остаётся на месте.
+///
+/// Компенсация выведена из того же размещения, а не из отдельной формулы:
+/// поворот идёт вокруг якоря, значит смена якоря вращает картинку вокруг
+/// другой точки, и позицию надо подвинуть на `R⁻¹(I − R)(A − A′)`. У
+/// After Effects компенсация на повёрнутом слое врёт — сторож сверяет
+/// УГЛЫ квада, а не значения параметров.
+pub fn anchor_move(
+    pl: &Placement,
+    p: (f64, f64),
+    pos: (f64, f64),
+    canvas: (f64, f64),
+) -> ((f64, f64), (f64, f64)) {
+    // точка в системе НЕповёрнутой рамки → доли рамки
+    let (c, s) = ((-pl.rot_deg).to_radians().cos(), (-pl.rot_deg).to_radians().sin());
+    let (ax, ay) = pl.anchor;
+    let (dx, dy) = (p.0 - ax, p.1 - ay);
+    let (lx, ly) = (ax + c * dx - s * dy, ay + s * dx + c * dy);
+    let na = (
+        ((lx - pl.ox) / pl.dw.max(1e-6)).clamp(0.0, 1.0),
+        ((ly - pl.oy) / pl.dh.max(1e-6)).clamp(0.0, 1.0),
+    );
+    // новая точка якоря при СТАРОЙ позиции
+    let a2 = (pl.ox + na.0 * pl.dw, pl.oy + na.1 * pl.dh);
+    let (ex, ey) = (ax - a2.0, ay - a2.1);
+    // Показ точки слоя — `A + R(q − A)`. Сместив якорь на `E = A′ − A` и
+    // позицию на `Δ`, получаем `A + E + Δ + R(q − A − E)`; равенство
+    // прежнему показу даёт `Δ = (R − I)·E`, то есть ровно `(I − R)(A − A′)`
+    // — без второго поворота. Лишний `R⁻¹` здесь и был бы той самой
+    // «аналитической компенсацией, которая врёт на повороте».
+    let (cr, sr) = (pl.rot_deg.to_radians().cos(), pl.rot_deg.to_radians().sin());
+    let (ddx, ddy) = (ex - (cr * ex - sr * ey), ey - (sr * ex + cr * ey));
+    (na, pos_for_drag(pos, canvas, (ddx, ddy)))
+}
+
 /// Примитив программы обратного прохода. Порядок примитивов = порядок
 /// применения (от ПОСЛЕДНЕГО эффекта серии к первому); после последнего
 /// примитива координата — в index-space входного кадра серии.
@@ -485,50 +784,26 @@ fn build_program(
                 w = mow;
                 h = moh;
             }
-            FxInstance::Geometry {
-                lead: is_lead,
-                crop_l,
-                crop_t,
-                crop_r,
-                crop_b,
-                pos_x,
-                pos_y,
-                zoom,
-                rot,
-                anchor_x,
-                anchor_y,
-            } => {
+            // ВСЕ ЧИСЛА УЗЛА разбирает `geometry_placement` — здесь
+            // остаётся только поворот (он нужен обеим ветвям карты)
+            FxInstance::Geometry { rot, .. } => {
                 // тождественный узел — прозрачен (планировщик его и не
                 // подаёт; здесь — для прямых вызовов и тестов)
                 if geometry_is_identity_in(f, lead, out_w, out_h) {
                     continue;
                 }
-                let (l, t, r, b) = (
-                    crop_l.clamp(0.0, 0.95),
-                    crop_t.clamp(0.0, 0.95),
-                    crop_r.clamp(0.0, 0.95),
-                    crop_b.clamp(0.0, 0.95),
-                );
-                let kx = (1.0 - l - r).max(0.05);
-                let ky = (1.0 - t - b).max(0.05);
+                // РАЗМЕЩЕНИЕ СЧИТАЕТ ОДНА ФУНКЦИЯ (Р.64): та же, по которой
+                // интерфейс рисует рамку над кадром. Своих формул рамки
+                // здесь больше нет — разошлись бы молча.
                 let (iw, ih) = (w as f64, h as f64);
-                let (cx0, cy0, cw, ch) = (l * iw, t * ih, kx * iw, ky * ih);
                 let (fw_, fh_) = (mow as f64, moh as f64);
-                // рамка: ведущий — по правилу приведения от ВИДА источника
-                // (кроп режет вид до правила), дополнительный — как есть
-                let dest = if *is_lead {
-                    let lc = lead.unwrap_or(LeadCtx { view: None, rule: ConformRule::Stretch });
-                    conform_dest(lc.view.map(|(vw, vh)| (vw * kx, vh * ky)), (fw_, fh_), lc.rule)
-                } else {
-                    (cw, ch)
+                let pl = match geometry_placement(f, lead, (iw, ih), (fw_, fh_)) {
+                    Some(p) => p,
+                    None => continue,
                 };
-                let z = zoom.clamp(0.05, 32.0);
-                let (dw, dh) = ((dest.0 * z).max(1e-6), (dest.1 * z).max(1e-6));
-                let ccx = fw_ / 2.0 + pos_x.clamp(-2.0, 2.0) * fw_;
-                let ccy = fh_ / 2.0 + pos_y.clamp(-2.0, 2.0) * fh_;
-                let (ox, oy) = (ccx - dw / 2.0, ccy - dh / 2.0);
-                let (axp, ayp) =
-                    (ox + anchor_x.clamp(0.0, 1.0) * dw, oy + anchor_y.clamp(0.0, 1.0) * dh);
+                let (cx0, cy0, cw, ch) = pl.crop_in;
+                let (ox, oy, dw, dh) = (pl.ox, pl.oy, pl.dw, pl.dh);
+                let (axp, ayp) = pl.anchor;
                 let rot0 = *rot == 0.0;
                 let covers = rot0 && ox <= 0.0 && oy <= 0.0 && ox + dw >= fw_ && oy + dh >= fh_;
                 let bounds =
