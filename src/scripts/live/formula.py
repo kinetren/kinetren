@@ -48,11 +48,13 @@ def main(out):
         # 1б) заводим кривую РУКАМИ — тем же путём, что человек
         app.click_probe("auto.add", "кнопка «+ кривая»")
         time.sleep(0.4)
+        # ВАРП В СПИСОК НЕ БЕРЁМ: у скорости форма только прямая (t698), и
+        # меню участка честно показало бы отказ вместо списка форм
         added = next(
             (
                 f["param"]
                 for f in app.geom().get("fields", [])
-                if f["param"].startswith("auto.add.")
+                if f["param"].startswith("auto.add.") and not f["param"].endswith(".rate")
             ),
             None,
         )
@@ -61,7 +63,27 @@ def main(out):
             app.click_probe(added, f"пункт {added}")
         app.expect(app.has_probe("auto.formula"), "поле формулы показано после заведения кривой")
 
-        # 2) НАБОР ПО СИМВОЛУ: текст не должен исчезать, ключи — умирать
+        # 2) МЕНЮ ФОРМ: правый клик по участку — и до меню НАДО ДОТЯНУТЬСЯ
+        # («контекстное меню просто пропадает я не успеваю дотянуться до
+        # него»). Указатель уходит с точки клика к пункту — меню обязано
+        # остаться, а форма лечь на участок между теми же двумя ключами.
+        app.right_click_probe("auto.seg.0", "участок кривой между первыми ключами")
+        app.expect(app.has_probe("auto.shape.2"), "правый клик по участку открыл список форм")
+        app.shot("shapemenu")
+        app.hover_probe("auto.shape.2", "пункт «ступень»")
+        app.expect(
+            app.has_probe("auto.shape.2"),
+            "меню на месте, пока указатель тянется к пункту",
+        )
+        app.click_probe("auto.shape.2", "пункт «ступень»")
+        time.sleep(0.4)
+        app.saved_project()
+        app.expect(
+            '"hold"' in open(path, encoding="utf-8").read(),
+            "форма участка доехала до файла",
+        )
+
+        # 3) НАБОР ПО СИМВОЛУ: текст не должен исчезать, ключи — умирать
         app.click_probe("auto.formula", "поле формулы")
         app.type_text("sin(t)*3+5")
         app.shot("typed")
@@ -90,7 +112,7 @@ def main(out):
         )
         _ = before, saved
 
-        # 3) ФОКУС: клик по таймлайну — и пробел ИГРАЕТ
+        # 4) ФОКУС: клик по таймлайну — и пробел ИГРАЕТ
         app.click(app.x_at(2 * SEC), y)
         time.sleep(0.3)
         was = app.playing()
@@ -105,7 +127,7 @@ def main(out):
             app.key("space")
             time.sleep(0.3)
 
-        # 4) КНОПКА окна тоже не должна забирать клавиатуру навсегда
+        # 5) КНОПКА окна тоже не должна забирать клавиатуру навсегда
         app.click_probe("fxreg.add", "кнопка пикера в окне эффекта")
         app.key("Escape")  # закрыть попап пикера
         time.sleep(0.3)

@@ -861,6 +861,21 @@ fn graph(
             ));
             view.key_marks.push((ci, ki, egui::pos2(x, y)));
         }
+        // УЧАСТКИ активной кривой — цель живого сценария (Р.63 п.5):
+        // правый клик обязан попасть МЕЖДУ ключами, а где они, знает
+        // только отрисовка. `format!` под флагом: в draw-путях на кадр не
+        // аллоцируем (инвариант 12).
+        if ci == view.active && crate::widgets::field_probe::on() {
+            for ki in 0..c.keys.len().saturating_sub(1) {
+                crate::widgets::field_probe::note(
+                    &format!("auto.seg.{ki}"),
+                    egui::Rect::from_min_max(
+                        egui::pos2(x_of(c.keys[ki].t.0), plot.top()),
+                        egui::pos2(x_of(c.keys[ki + 1].t.0), plot.bottom()),
+                    ),
+                );
+            }
+        }
     }
     // щуп — по НАРИСОВАННОМУ, и один на все каналы
     let hit = resp.interact_pointer_pos().and_then(|pos| view.key_at(pos));
@@ -942,9 +957,18 @@ fn graph(
                         // невозможность — ОШИБКА с причиной, а не тишина
                         ui.label(egui::RichText::new(tr(k::fx::SHAPE_RATE_LINEAR)).weak().small());
                     } else {
-                        for sh in crate::widgets::all_shapes() {
+                        for (i, sh) in crate::widgets::all_shapes().into_iter().enumerate() {
                             let on = std::mem::discriminant(&sh) == std::mem::discriminant(&cur);
-                            if ui.selectable_label(on, crate::widgets::shape_label(sh)).clicked() {
+                            let r = ui.selectable_label(on, crate::widgets::shape_label(sh));
+                            // пункты меню — цель живого сценария: он обязан
+                            // ДОТЯНУТЬСЯ до них указателем (Р.63 п.5)
+                            if crate::widgets::field_probe::on() {
+                                crate::widgets::field_probe::note(
+                                    &format!("auto.shape.{i}"),
+                                    r.rect,
+                                );
+                            }
+                            if r.clicked() {
                                 set_shape = Some((ci, ki, sh));
                                 ui.close();
                             }
