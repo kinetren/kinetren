@@ -2574,6 +2574,11 @@ impl KtApp {
             self.render_setup.open = false;
             return;
         }
+        // окно дорожки (Р.62) — такое же «наше окно», как окно эффектов
+        if let Some(w) = self.track_win.as_mut().filter(|w| w.open) {
+            w.open = false;
+            return;
+        }
         if let Some(ed) = self.fx_editors.iter_mut().rev().find(|e| e.open) {
             ed.open = false;
             return;

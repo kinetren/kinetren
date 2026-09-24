@@ -69,12 +69,16 @@ impl KtApp {
                 self.model.project().track_at(track.kind, *l).map(|t| t.id) == Some(w.id)
             })
             .unwrap_or(0);
+        let name_id = egui::Id::new(("track_name", w.id.0));
         let mut open = w.open;
         let mut cancel = false;
         let mut props = track.props();
         let (mut fx, mut bypass) = (track.fx.clone(), track.fx_bypass.clone());
         let mut fx_off = track.fx_off;
         let mut changed_props = false;
+        // вставка цепочки может привезти огибающие; у дорожки их некуда
+        // положить — говорим об этом ВСЛУХ (правило 16)
+        let mut curves_dropped = false;
         let mut changed_fx = false;
         let mut hover: Option<String> = None;
         let title = crate::tf!(k::track::TITLE, track.label(lane));
@@ -205,6 +209,15 @@ impl KtApp {
                     );
                     changed_fx |= ch.any();
                     fx_off = !chain_on;
+                    // КРИВАЯ НА ДОРОЖКЕ — ОТКАЗ С ПРИЧИНОЙ, а не молчание.
+                    // Полоса общая с событием (правило 17), и вставить в
+                    // неё цепочку с автоматизацией человек может в любой
+                    // момент. Уроним её молча — он увидит «эффект тот же,
+                    // а звучит иначе» и будет искать дефект в движке.
+                    if auto.iter().any(|c| !c.is_empty()) {
+                        curves_dropped = true;
+                        auto.clear();
+                    }
                 }
                 ui.label(
                     egui::RichText::new(tr(k::track::NO_CURVES_HINT)).weak().small(),
@@ -222,6 +235,14 @@ impl KtApp {
                     }
                 });
             });
+        // Esc закрывает окно КАСКАДОМ (`escape_action`), правки оставляя,
+        // — как у окна FX: они применяются на лету, а вернуть их целиком
+        // умеет «Отмена». Своего обработчика окну не нужно: фокус в поле
+        // имени Esc снимает сам egui в начале кадра, поэтому до каскада
+        // клавиша доходит тем же нажатием.
+        if curves_dropped {
+            self.refuse(tr(k::track::CURVES_DROPPED));
+        }
         if let Some(h) = hover {
             self.hover_hint = Some(h);
         }
@@ -259,7 +280,7 @@ impl KtApp {
             self.track_win = Some(w);
         } else {
             // всё, что берёт фокус, обязано его ОТДАВАТЬ (правило 14)
-            ctx.memory_mut(|m| m.surrender_focus(egui::Id::new(("track_name", w.id.0))));
+            ctx.memory_mut(|m| m.surrender_focus(name_id));
         }
     }
 }

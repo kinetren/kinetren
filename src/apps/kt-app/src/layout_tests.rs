@@ -13996,3 +13996,176 @@ fn t742_track_badges_take_a_human_click_and_never_move() {
     assert!(m.lock, "клик в первую ячейку служебной строки не запер её");
     assert!(!m.mute, "служебная строка не имеет права заглушиться");
 }
+
+/// Тест 743 (Р.62, change B, 4.2): окно «Свойства дорожки». Проверяется
+/// то, что делает человек: открыл, поправил имя, уровень и режим, закрыл —
+/// и ВСЯ сессия откатывается ОДНИМ Ctrl+Z (как у окна FX). «Отмена»
+/// возвращает снимок, окно отдаёт фокус (правило 14), пределы полей
+/// приходят из паспорта, а не из литералов окна (прецедент Gain в Р.33).
+#[test]
+fn t743_track_window_is_one_undo_step_and_gives_focus_back() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::{HasParams, LaneKind::Video};
+    let (mut h, _) = harness_three_clips_dt(None);
+    let id = h.state().model.project().track_at(Video, 0).unwrap().id;
+    let props_of = |h: &Harness<'_, KtApp>| {
+        h.state().model.project().track(id).unwrap().props()
+    };
+    let was = props_of(&h);
+    let depth0 = h.state().model.undo_depth();
+
+    // ---- пределы полей — ИЗ ПАСПОРТА --------------------------------------
+    {
+        let p = h.state().model.project().clone();
+        let v = p.track(id).unwrap();
+        let a = p.track_at(kt_model::LaneKind::Audio, 0).unwrap();
+        assert!(v.param_spec("opacity").is_some(), "у видеодорожки нет строки уровня");
+        assert!(v.param_spec("gain_db").is_none(), "децибелы на ВИДЕОдорожке — чужая строка");
+        let g = a.param_spec("gain_db").expect("у аудиодорожки обязан быть уровень");
+        assert_eq!(
+            (g.min, g.max),
+            (kt_model::TRACK_GAIN_MIN_DB, kt_model::TRACK_GAIN_MAX_DB),
+            "окно обязано брать пределы у паспорта, иначе они разъедутся с моделью"
+        );
+    }
+
+    // ---- одна сессия — один шаг истории -----------------------------------
+    h.state_mut().open_track_window(id);
+    h.step();
+    h.step();
+    // имя: поле забирает фокус при открытии, печатаем как человек
+    h.event(egui::Event::Text("Титры".into()));
+    h.step();
+    // режим наложения и выключатель — в том же окне и той же сессии
+    let multiply = crate::track_window::blend_label(kt_model::BlendMode::Multiply).to_string();
+    h.get_by_label(&multiply).click();
+    h.step();
+    let mute_label = crate::i18n::tr(crate::i18n::k::track::MUTE).to_string();
+    h.get_by_label(&mute_label).click();
+    h.step();
+
+    let now = props_of(&h);
+    assert_eq!(now.name, "Титры", "имя не доехало до модели");
+    assert_eq!(now.blend, kt_model::BlendMode::Multiply, "режим наложения не доехал");
+    assert!(now.mute, "выключатель не доехал");
+    assert_eq!(
+        h.state().model.undo_depth(),
+        depth0 + 1,
+        "сессия окна разложилась на несколько шагов истории: человек будет жать Ctrl+Z \
+         столько раз, сколько полей тронул"
+    );
+    h.state_mut().undo();
+    h.step();
+    assert_eq!(props_of(&h), was, "один Ctrl+Z обязан вернуть ВСЮ сессию окна");
+
+    // выделение готовим ЗАРАНЕЕ: клавишу жмём сразу после закрытия окна,
+    // без лишних кадров — иначе фокус успеет отпуститься сам и проверка
+    // правила 14 ничего не значит
+    {
+        let app = h.state_mut();
+        app.selected.clear();
+        app.selected.insert(kt_model::ClipId(1));
+    }
+
+    // ---- «Отмена» возвращает снимок и закрывает окно -----------------------
+    h.state_mut().open_track_window(id);
+    h.step();
+    h.step();
+    h.get_by_label(&mute_label).click();
+    h.step();
+    assert!(props_of(&h).mute, "сцена не состоялась: отменять нечего");
+    h.get_by_label(crate::i18n::tr(crate::i18n::k::track::CANCEL)).click();
+    h.step();
+    h.step();
+    assert_eq!(props_of(&h), was, "«Отмена» не вернула свойства дорожки");
+    assert!(h.state().track_win.is_none(), "«Отмена» не закрыла окно");
+
+    // ---- Esc закрывает, а фокус возвращается (правило 14) ------------------
+    // Поле имени забирает фокус при открытии, и пока оно его держит, до
+    // каскада Esc не доходит вовсе — окно обязано ловить его само. А
+    // закрывшись, окно обязано фокус ОТДАТЬ: иначе клавиатура мертва до
+    // клика мимо.
+    h.state_mut().open_track_window(id);
+    h.step();
+    h.step();
+    assert!(
+        h.state().track_win.is_some(),
+        "сцена не состоялась: окно не открылось"
+    );
+    h.key_press(egui::Key::Escape);
+    h.step();
+    assert!(h.state().track_win.is_none(), "Esc не закрыл окно дорожки");
+    h.key_press_modifiers(egui::Modifiers::ALT, egui::Key::M);
+    h.step();
+    assert!(
+        props_of(&h).mute,
+        "после закрытия окна клавиши мертвы: поле имени не отдало фокус egui"
+    );
+}
+
+/// Тест 744 (Р.62, change B, 4.3): цепочка ДОРОЖКИ — та же полоса, что у
+/// события (правило 17), а огибающая, приехавшая с вставленной цепочкой,
+/// отвергается ВСЛУХ и с причиной (правило 16): у дорожки автоматизации
+/// нет, и молча уронить кривые нельзя — человек увидел бы «эффект тот же,
+/// а звучит иначе» и искал бы дефект в движке.
+#[test]
+fn t744_track_chain_is_the_same_strip_and_refuses_curves_aloud() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::{FxInstance, LaneKind::Audio, ParamCurve};
+    let (mut h, _) = harness_three_clips_dt(None);
+    let id = {
+        let app = h.state_mut();
+        edit_project(app, |p| p.ensure_tracks(Audio, 1));
+        app.model.project().track_at(Audio, 0).unwrap().id
+    };
+    h.step();
+
+    // в буфере — цепочка С ОГИБАЮЩЕЙ, как её кладёт полоса события
+    h.state_mut().fx_clipboard = Some(kt_model::ops::FxChainBlock {
+        slots: vec![kt_model::ops::FxSlotBlock {
+            fx: FxInstance::gain(-6.0),
+            bypass: false,
+            curves: vec![ParamCurve {
+                param: "gain_db".into(),
+                keys: vec![
+                    kt_model::AutoKey::at(kt_time::Tick(0), -6.0),
+                    kt_model::AutoKey::at(kt_time::Tick(90_000), 0.0),
+                ],
+                source: Default::default(),
+            }],
+        }],
+        src_in: kt_time::Tick::ZERO,
+        fx_off: false,
+    });
+    h.state_mut().open_track_window(id);
+    h.step();
+    h.step();
+
+    // полоса цепочки у дорожки — ТА ЖЕ: кнопка вставки на месте
+    let paste = crate::i18n::tr(crate::i18n::k::fx::PASTE_CHAIN).to_string();
+    assert!(
+        h.query_by_label(&paste).is_some(),
+        "у дорожки нет общей полосы цепочки: вставлять эффекты нечем"
+    );
+    h.get_by_label(&paste).click();
+    h.step();
+    h.step();
+
+    let t = h.state().model.project().track(id).unwrap().clone();
+    assert_eq!(t.fx.len(), 1, "эффект не доехал до цепочки дорожки");
+    assert!(
+        matches!(t.fx[0], FxInstance::Gain { .. }),
+        "в цепочку дорожки попал не тот эффект: {:?}",
+        t.fx[0]
+    );
+    let err = h.state().error_status.clone().map(|(m, _)| m);
+    assert!(
+        err.as_deref() == Some(crate::i18n::tr(crate::i18n::k::track::CURVES_DROPPED)),
+        "кривая пропала молча — человеку не сказали ни что отброшено, ни куда её класть: {err:?}"
+    );
+    // и сама модель кривых у дорожки не носит
+    assert!(
+        h.state().model.project().validate().is_ok(),
+        "дорожка с кривыми прошла проверку проекта"
+    );
+}
