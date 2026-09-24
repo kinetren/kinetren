@@ -1001,6 +1001,14 @@ pub fn fx_picker_with_head(
                                 ui.button(e.name),
                                 tr(k::fxreg::TEMPLATE_HINT),
                             );
+                            // строка ШАБЛОНА тоже отдаёт прямоугольник: у
+                            // окна без кадра-основы (цепочка дорожки)
+                            // галереи вариантов нет вовсе, и живому
+                            // сценарию иначе не во что целиться
+                            crate::widgets::field_probe::note(
+                                &format!("fxreg.tpl.{}", e.template.tag()),
+                                r.rect,
+                            );
                             if r.clicked() {
                                 hit_name = Some(e.template.clone());
                             }

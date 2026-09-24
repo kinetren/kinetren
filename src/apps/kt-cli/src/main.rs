@@ -57,6 +57,62 @@ fn probe_range(
     );
     println!("range {from:.3}..{to:.3} s");
 
+    // ДОРОЖКИ (Р.62): первое, что надо спросить по жалобе «дорожки не
+    // слышно» и «картинка светлее, чем в превью». Печатаются ВСЕ строки,
+    // а не только особенные: «дорожка на месте и ничем не тронута» —
+    // такой же ответ, как «заглушена».
+    println!("\n-- tracks --");
+    let sil = kt_model::silenced_tracks(project);
+    for (kind, lane) in project.rows() {
+        let Some(t) = project.track_at(kind, lane) else { continue };
+        let mut flags: Vec<String> = Vec::new();
+        if t.mute {
+            flags.push("MUTE".into());
+        }
+        if t.solo {
+            flags.push("SOLO".into());
+        }
+        if t.lock {
+            flags.push("LOCK".into());
+        }
+        // «стадия» — цена и место: у аудио это своя цепочка на СУММЕ
+        // событий, у видео — неявная лента в плане (композит дорожки
+        // целиком). Её наличие объясняет и звук, и расход.
+        let stage = match kind {
+            kt_model::LaneKind::Audio if t.needs_audio_stage() => " stage:audio",
+            kt_model::LaneKind::Video if t.needs_video_stage() => " stage:video",
+            _ => "",
+        };
+        let level = match kind {
+            kt_model::LaneKind::Audio => format!("{:+.1} dB", t.gain_db),
+            kt_model::LaneKind::Video => format!("opacity {:.2}", t.opacity),
+            _ => "—".into(),
+        };
+        let fx = if t.fx.is_empty() {
+            String::new()
+        } else {
+            format!("  fx {}{}", t.fx.len(), if t.fx_off { " (off)" } else { "" })
+        };
+        println!(
+            "  {:<8} {:?} {}  blend {:?}  [{}]{}{}",
+            t.label(lane),
+            kind,
+            level,
+            t.blend,
+            flags.join(" "),
+            fx,
+            stage
+        );
+    }
+    // СОЛО — отдельной строкой: «слышно одну дорожку» разбирается им, а
+    // не перечислением выключателей у каждой строки.
+    if !sil.solo.is_empty() {
+        println!("  solo active: {} — other tracks of these kinds are silent", sil.solo.join(", "));
+    }
+    if !sil.muted.is_empty() {
+        println!("  muted: {} — they will not be in the file either", sil.muted.join(", "));
+    }
+
     // ВЛОЖЕНИЯ (Р.50): «чтобы понять, откуда кадр, войди в N уровней» —
     // это наш минус, а не фича. Дерево печатается сразу и целиком.
     if !project.sequences.is_empty() {

@@ -445,3 +445,73 @@ fn t740b_cli_reports_muted_and_solo_before_render() {
     assert!(said.contains("solo is on"), "kt-cli молчит об активном соло: {said}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Тест 746 (Р.62, change B, 4.6): `probe` печатает ДОРОЖКИ. Жалобы
+/// «дорожки не слышно» и «картинка светлее, чем в превью» разбираются
+/// именно этими строками: выключатели, уровень, режим наложения и есть ли
+/// у дорожки стадия (цепочка на сумме событий у аудио, неявная лента у
+/// видео). Печатаются ВСЕ строки: «дорожка на месте и ничем не тронута» —
+/// такой же ответ, как «заглушена».
+#[test]
+fn t746_probe_prints_tracks_with_switches_level_blend_and_stage() {
+    let dir = std::env::temp_dir().join(format!("kt-cli-t746-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("demo.otio");
+    let st = cli().args(["demo", path.to_str().unwrap(), "--force"]).output().unwrap();
+    assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+
+    let plain = String::from_utf8_lossy(
+        &cli().args(["probe", path.to_str().unwrap(), "0", "5"]).output().unwrap().stdout,
+    )
+    .to_string();
+    assert!(plain.contains("-- tracks --"), "у probe нет раздела дорожек: {plain}");
+    assert!(plain.contains("V1"), "дорожка без новшеств не показана — её тоже надо видеть");
+    assert!(!plain.contains("MUTE"), "выключатель на нетронутой дорожке: {plain}");
+    assert!(!plain.contains("stage:"), "стадия на дорожке без цепочки, уровня и режима");
+
+    // дорожка с уровнем, режимом, глушением и соло
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    {
+        let kt = v["metadata"]["kt"].as_object_mut().unwrap();
+        kt.insert(
+            "tracks".into(),
+            serde_json::json!([
+                {"kind": "video", "id": 1, "name": "Титры", "opacity": 0.5,
+                 "blend": "multiply", "solo": true},
+                {"kind": "audio", "id": 2, "gain_db": -6.0, "mute": true},
+            ]),
+        );
+    }
+    let p2 = dir.join("tracks.otio");
+    std::fs::write(&p2, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+    let said = String::from_utf8_lossy(
+        &cli().args(["probe", p2.to_str().unwrap(), "0", "5"]).output().unwrap().stdout,
+    )
+    .to_string();
+    let tracks = said
+        .split("-- tracks --")
+        .nth(1)
+        .unwrap_or("")
+        .split("-- ")
+        .next()
+        .unwrap_or("")
+        .to_string();
+    for want in [
+        "Титры",       // имя дорожки, а не формула
+        "opacity 0.50", // уровень видео
+        "Multiply",    // режим наложения
+        "SOLO",
+        "-6.0 dB", // уровень аудио
+        "MUTE",
+        "stage:audio", // −6 дБ на аудио = стадия дорожки
+        "stage:video", // непрозрачность и режим = неявная лента
+    ] {
+        assert!(tracks.contains(want), "в разделе дорожек нет «{want}»:\n{tracks}");
+    }
+    assert!(
+        said.contains("solo active") && said.contains("muted:"),
+        "probe не сказал, что из этого не попадёт в файл: {said}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -416,7 +416,7 @@ impl KtApp {
                     ui.add_space(4.0);
                     let col = egui::Color32::from_rgb(255, 190, 120);
                     if !silenced.muted.is_empty() {
-                        ui.colored_label(
+                        let r = ui.colored_label(
                             col,
                             crate::tf!(
                                 k::render::MUTED_WARN,
@@ -424,9 +424,10 @@ impl KtApp {
                                 silenced.muted.join(", ")
                             ),
                         );
+                        crate::widgets::field_probe::note("render.muted", r.rect);
                     }
                     if !silenced.solo.is_empty() {
-                        ui.colored_label(
+                        let r = ui.colored_label(
                             col,
                             crate::tf!(
                                 k::render::SOLO_WARN,
@@ -434,6 +435,7 @@ impl KtApp {
                                 silenced.solo.join(", ")
                             ),
                         );
+                        crate::widgets::field_probe::note("render.solo", r.rect);
                     }
                 }
                 ui.add_space(6.0);

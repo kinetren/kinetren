@@ -360,7 +360,9 @@ impl KtApp {
                 ui.close();
             }
             ui.separator();
-            if ui.button(tr(k::menu::file::RENDER)).clicked() {
+            let r = ui.button(tr(k::menu::file::RENDER));
+            crate::widgets::field_probe::note("file.render", r.rect);
+            if r.clicked() {
                 self.start_render();
                 ui.close();
             }

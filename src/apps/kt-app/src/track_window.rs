@@ -129,36 +129,38 @@ impl KtApp {
                         changed_props |= r.changed();
                         ui.end_row();
                     }
-                    if track.kind == LaneKind::Video {
-                        ui.label(tr(k::track::BLEND));
-                        ui.horizontal_wrapped(|ui| {
-                            for m in BlendMode::ALL {
-                                let r =
-                                    ui.selectable_value(&mut props.blend, m, blend_label(m));
-                                crate::widgets::field_probe::note(
-                                    &format!("track.blend.{}", m.tag()),
-                                    r.rect,
-                                );
-                                changed_props |= r.changed();
-                            }
-                        });
-                        ui.end_row();
-                    }
-                    ui.label(tr(k::track::SWITCHES));
-                    ui.horizontal(|ui| {
-                        if track.kind.has_switches() {
-                            let r = ui.checkbox(&mut props.mute, tr(k::track::MUTE));
-                            crate::widgets::field_probe::note("track.mute", r.rect);
-                            changed_props |= r.changed();
-                            let r = ui.checkbox(&mut props.solo, tr(k::track::SOLO));
-                            crate::widgets::field_probe::note("track.solo", r.rect);
+                });
+                // РЕЖИМ НАЛОЖЕНИЯ И ВЫКЛЮЧАТЕЛИ — СВОИМИ строками, а не
+                // ячейками сетки. Девять кнопок режима переносятся на
+                // вторую строку, а `Grid` высоту ПЕРЕНОСА не меряет: в
+                // живом окне вторая строка кнопок наезжала на
+                // «Выключатели» (правило 7, поймано сценарием track.py).
+                if track.kind == LaneKind::Video {
+                    ui.label(tr(k::track::BLEND));
+                    ui.horizontal_wrapped(|ui| {
+                        for m in BlendMode::ALL {
+                            let r = ui.selectable_value(&mut props.blend, m, blend_label(m));
+                            crate::widgets::field_probe::note(
+                                &format!("track.blend.{}", m.tag()),
+                                r.rect,
+                            );
                             changed_props |= r.changed();
                         }
-                        let r = ui.checkbox(&mut props.lock, tr(k::track::LOCK));
-                        crate::widgets::field_probe::note("track.lock", r.rect);
-                        changed_props |= r.changed();
                     });
-                    ui.end_row();
+                }
+                ui.label(tr(k::track::SWITCHES));
+                ui.horizontal(|ui| {
+                    if track.kind.has_switches() {
+                        let r = ui.checkbox(&mut props.mute, tr(k::track::MUTE));
+                        crate::widgets::field_probe::note("track.mute", r.rect);
+                        changed_props |= r.changed();
+                        let r = ui.checkbox(&mut props.solo, tr(k::track::SOLO));
+                        crate::widgets::field_probe::note("track.solo", r.rect);
+                        changed_props |= r.changed();
+                    }
+                    let r = ui.checkbox(&mut props.lock, tr(k::track::LOCK));
+                    crate::widgets::field_probe::note("track.lock", r.rect);
+                    changed_props |= r.changed();
                 });
                 // ЦЕПОЧКА — та же полоса, что у события (правило 17).
                 // Служебным строкам её не даём: эффектов у них нет.

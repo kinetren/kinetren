@@ -14067,6 +14067,29 @@ fn t743_track_window_is_one_undo_step_and_gives_focus_back() {
         app.selected.insert(kt_model::ClipId(1));
     }
 
+    // ---- строки формы не наезжают друг на друга (правило 7) ---------------
+    // Девять кнопок режима переносятся на вторую строку, а `Grid` высоту
+    // ПЕРЕНОСА не меряет: в живом окне вторая строка наезжала на
+    // «Выключатели», и харнесс этого не видел, пока не начал сверять
+    // ПРЯМОУГОЛЬНИКИ нарисованного.
+    {
+        let painted = crate::reach_tests::painted_texts(&h);
+        let rect_of = |name: &str| {
+            painted.iter().find(|t| t.src == name).map(|t| t.rect)
+        };
+        let last_blend =
+            crate::track_window::blend_label(kt_model::BlendMode::Difference).to_string();
+        let sw = crate::i18n::tr(crate::i18n::k::track::SWITCHES).to_string();
+        if let (Some(a), Some(b)) = (rect_of(&last_blend), rect_of(&sw)) {
+            assert!(
+                !a.intersects(b),
+                "кнопки режима наложения наезжают на «Выключатели»: {a:?} и {b:?}"
+            );
+        } else {
+            panic!("в окне дорожки не нарисованы режим наложения и выключатели");
+        }
+    }
+
     // ---- «Отмена» возвращает снимок и закрывает окно -----------------------
     h.state_mut().open_track_window(id);
     h.step();
