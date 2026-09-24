@@ -14169,3 +14169,96 @@ fn t744_track_chain_is_the_same_strip_and_refuses_curves_aloud() {
         "дорожка с кривыми прошла проверку проекта"
     );
 }
+
+/// Тест 745 (Р.62, change B, 4.4): ЗАМОК дорожки в интерфейсе. Жест по
+/// запертой дорожке — не тишина и не блёклая подсказка, а ошибка, которая
+/// называет дорожку и место, где замок снять (правила 16 и 19), плюс
+/// красная подсветка самой строки (механизм t172). Проверяются все четыре
+/// жеста, которыми событие правят; глушение при этом продолжает
+/// действовать — замок про РЕДАКТИРОВАНИЕ, а не про звук.
+#[test]
+fn t745_locked_track_refuses_every_gesture_with_a_reason() {
+    use kt_model::{ClipId, LaneKind::Video};
+    let (mut h, g) = harness_three_clips_dt(None);
+    let id = h.state().model.project().track_at(Video, 0).unwrap().id;
+    {
+        let app = h.state_mut();
+        let mut props = app.model.project().track(id).unwrap().props();
+        props.lock = true;
+        app.model.apply(kt_model::Command::SetTrackProps { id, props }).unwrap();
+    }
+    h.step();
+    let start_of = |h: &Harness<'_, KtApp>, c: ClipId| {
+        h.state().model.project().clips.iter().find(|x| x.id == c).map(|x| (x.start, x.duration))
+    };
+    let was = start_of(&h, ClipId(1)).unwrap();
+    let row = g.rows.iter().position(|r| *r == (Video, 0)).unwrap();
+    let y = g.row_top(row) + g.row_h(row) * 0.6;
+    let body = egui::pos2(g.tick_to_x(20_000), y);
+
+    // ---- перенос --------------------------------------------------------
+    h.state_mut().error_status = None;
+    h.drag_at(body);
+    h.step();
+    h.hover_at(body + egui::vec2(9.0, 0.0));
+    h.step();
+    h.hover_at(body + egui::vec2(120.0, 0.0));
+    h.step();
+    h.drop_at(body + egui::vec2(120.0, 0.0));
+    h.step();
+    assert_eq!(start_of(&h, ClipId(1)), Some(was), "запертая дорожка отдала событие драгу");
+    let label = h.state().row_label(Video, 0);
+    let err = h.state().error_status.clone().map(|(m, _)| m).unwrap_or_default();
+    assert!(
+        err.contains(&label),
+        "отказ не назвал дорожку («{label}»), человек не поймёт, что именно мешает: {err:?}"
+    );
+    assert!(
+        h.state().blocked_track.map(|(t, _)| t) == Some(id),
+        "строка запертой дорожки не подсвечена — отказ выглядит как «нажал, и ничего»"
+    );
+
+    // ---- тримминг правого края ------------------------------------------
+    let edge = egui::pos2(g.tick_to_x(50_000) - 2.0, y);
+    h.drag_at(edge);
+    h.step();
+    h.hover_at(edge + egui::vec2(9.0, 0.0));
+    h.step();
+    h.hover_at(edge + egui::vec2(60.0, 0.0));
+    h.step();
+    h.drop_at(edge + egui::vec2(60.0, 0.0));
+    h.step();
+    assert_eq!(start_of(&h, ClipId(1)), Some(was), "запертая дорожка дала себя подтянуть");
+
+    // ---- разрез и удаление клавишами ------------------------------------
+    let n = h.state().model.project().clips.len();
+    {
+        let app = h.state_mut();
+        app.selected.clear();
+        app.selected.insert(ClipId(1));
+        app.player.seek(kt_time::Tick(20_000));
+    }
+    h.step();
+    h.key_press(egui::Key::S);
+    h.step();
+    assert_eq!(h.state().model.project().clips.len(), n, "запертое событие разрезалось");
+    h.key_press(egui::Key::Delete);
+    h.step();
+    assert_eq!(h.state().model.project().clips.len(), n, "запертое событие удалилось");
+    assert!(
+        h.state().blocked_track.map(|(t, _)| t) == Some(id),
+        "отказ от КЛАВИШИ не подсветил строку: `handle_keys` идёт раньше отрисовки, и \
+         подсветка, гаснущая каждый кадр, живёт ровно ноль кадров"
+    );
+
+    // ---- замок про правку, а не про звук --------------------------------
+    h.state_mut().toggle_track_badge(id, crate::timeline::TrackBadge::Mute);
+    h.step();
+    let p = h.state().model.project().clone();
+    assert!(p.track(id).unwrap().lock, "бейдж снял чужой выключатель");
+    assert!(p.track(id).unwrap().mute, "свойства ЗАПЕРТОЙ дорожки править нельзя стало");
+    assert!(
+        kt_model::silenced_tracks(&p).muted.contains(&label),
+        "глушение запертой дорожки перестало действовать на файл"
+    );
+}

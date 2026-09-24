@@ -1566,6 +1566,54 @@ impl KtApp {
         (p.lanes(kt_model::LaneKind::Video).max(1), p.lanes(kt_model::LaneKind::Audio).max(1))
     }
 
+    /// ГЛАГОЛЫ ДОРОЖКИ в меню строки (Р.62) — ОДНО тело на все виды
+    /// строк и на оба меню (клиповое и служебное). Бейдж, пункт меню и
+    /// горячая клавиша ведут в `toggle_track_badge`, потому что парные
+    /// пути одного действия обязаны вести себя одинаково (правило 17):
+    /// разойдись они, «заглушил из меню» и «заглушил бейджем» дали бы
+    /// разный результат на одной и той же дорожке.
+    ///
+    /// Глушение, соло и цепочка показываются ТОЛЬКО там, где они есть:
+    /// у служебных строк глушить и обрабатывать нечего, а мёртвый пункт
+    /// меню запрещён правилом 9 ровно так же, как мёртвый бейдж.
+    fn track_menu_items(&mut self, ui: &mut egui::Ui, lk: LaneKind, lane: u32) {
+        let Some(id) = self.model.project().track_at(lk, lane).map(|t| t.id) else { return };
+        let r = ui.button(tr(k::track::MENU_PROPS));
+        crate::widgets::field_probe::note("track.menu.props", r.rect);
+        if r.clicked() {
+            self.open_track_window(id);
+            ui.close();
+        }
+        if lk.has_switches() {
+            let r = ui.button(tr(k::track::MENU_MUTE));
+            crate::widgets::field_probe::note("track.menu.mute", r.rect);
+            if r.clicked() {
+                self.toggle_track_badge(id, TrackBadge::Mute);
+                ui.close();
+            }
+            let r = ui.button(tr(k::track::MENU_SOLO));
+            crate::widgets::field_probe::note("track.menu.solo", r.rect);
+            if r.clicked() {
+                self.toggle_track_badge(id, TrackBadge::Solo);
+                ui.close();
+            }
+        }
+        let r = ui.button(tr(k::track::MENU_LOCK));
+        crate::widgets::field_probe::note("track.menu.lock", r.rect);
+        if r.clicked() {
+            self.toggle_track_badge(id, TrackBadge::Lock);
+            ui.close();
+        }
+        if lk.has_switches() {
+            let r = ui.button(tr(k::track::MENU_FX));
+            crate::widgets::field_probe::note("track.menu.fx", r.rect);
+            if r.clicked() {
+                self.open_track_fx(id);
+                ui.close();
+            }
+        }
+    }
+
     /// Меню строки КЛИПОВ — одно на заголовок строки и на саму дорожку
     /// (Р.40, правило С0). Раньше оно жило только в `gutter_resp`, и
     /// переименовать или удалить дорожку человек мог лишь из полосы
@@ -1607,41 +1655,7 @@ impl KtApp {
                 self.lane_edit_focus = true;
                 ui.close();
             }
-            // ДОРОЖКА-ОБЪЕКТ (Р.62): те же глаголы, что у бейджей, и ТЕМ
-            // ЖЕ ТЕЛОМ (правило 17) — меню, бейдж и клавиша не имеют
-            // права разойтись
-            if let Some(id) = self.model.project().track_at(lk, lane).map(|t| t.id) {
-                let r = ui.button(tr(k::track::MENU_PROPS));
-                crate::widgets::field_probe::note("track.menu.props", r.rect);
-                if r.clicked() {
-                    self.open_track_window(id);
-                    ui.close();
-                }
-                let r = ui.button(tr(k::track::MENU_MUTE));
-                crate::widgets::field_probe::note("track.menu.mute", r.rect);
-                if r.clicked() {
-                    self.toggle_track_badge(id, TrackBadge::Mute);
-                    ui.close();
-                }
-                let r = ui.button(tr(k::track::MENU_SOLO));
-                crate::widgets::field_probe::note("track.menu.solo", r.rect);
-                if r.clicked() {
-                    self.toggle_track_badge(id, TrackBadge::Solo);
-                    ui.close();
-                }
-                let r = ui.button(tr(k::track::MENU_LOCK));
-                crate::widgets::field_probe::note("track.menu.lock", r.rect);
-                if r.clicked() {
-                    self.toggle_track_badge(id, TrackBadge::Lock);
-                    ui.close();
-                }
-                let r = ui.button(tr(k::track::MENU_FX));
-                crate::widgets::field_probe::note("track.menu.fx", r.rect);
-                if r.clicked() {
-                    self.open_track_fx(id);
-                    ui.close();
-                }
-            }
+            self.track_menu_items(ui, lk, lane);
             if self.model.project().track_at(lk, lane).is_some_and(|t| t.height > 0.0)
                 && ui.button(tr(k::tl::lane::RESET_HEIGHT)).clicked()
             {
@@ -1758,6 +1772,7 @@ impl KtApp {
                 self.insert_lane_at(LaneKind::Morph, lane + 1);
                 ui.close();
             }
+            self.track_menu_items(ui, LaneKind::Morph, lane);
         }
         if let Some(CtxTarget::CameraLane(lane)) = self.ctx_target {
             let n = self.model.project().cameras.iter().filter(|c| c.lane == lane).count();
@@ -1801,6 +1816,7 @@ impl KtApp {
                 self.insert_lane_at(LaneKind::Camera, lane + 1);
                 ui.close();
             }
+            self.track_menu_items(ui, LaneKind::Camera, lane);
         }
     }
 
@@ -2550,7 +2566,6 @@ impl KtApp {
         self.snap_line = None;
         // препятствие живёт РОВНО пока жест в него упирается (п.5)
         self.blocked = None;
-        self.blocked_track = None;
         // магнит включён всегда; Ctrl его снимает (п.2 р.11). Тот же Ctrl,
         // нажатый ДО захвата пустого места, начинает рамку выделения
         // (Р.33 п.7) — на переносе события магнит от этого не страдает
@@ -5357,7 +5372,13 @@ impl KtApp {
             let Some(track) = self.model.project().track_at(kind, lane) else { continue };
             // ПРЕПЯТСТВИЕ ЖЕСТА — замок дорожки (Р.62): подсвечиваем ту
             // строку, в которую упёрлись, ровно как событие-препятствие
-            if self.blocked_track == Some(track.id) {
+            if self
+                .blocked_track
+                .is_some_and(|(id, at)| {
+                    id == track.id
+                        && (at.elapsed().as_millis() as u64) < crate::app::STATUS_TTL_MS
+                })
+            {
                 full_painter.rect_filled(
                     egui::Rect::from_min_max(
                         egui::pos2(gutter.left(), row_top),

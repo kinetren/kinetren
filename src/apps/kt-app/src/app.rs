@@ -510,7 +510,13 @@ pub struct KtApp {
     pub blocked: Option<crate::timeline::Blocked>,
     /// ЗАПЕРТАЯ дорожка, в которую упёрся жест (Р.62): подсвечивается
     /// красным ровно один кадр, как и любое другое препятствие.
-    pub blocked_track: Option<kt_model::TrackId>,
+    /// Запертая дорожка, в которую упёрся жест, и МОМЕНТ отказа. Время
+    /// тут не для красоты: отказ приходит и от КЛАВИШИ (удаление,
+    /// разрез), а `handle_keys` идёт раньше отрисовки таймлайна — гасни
+    /// подсветка каждый кадр, человек увидел бы её ровно один кадр, то
+    /// есть никогда. Живёт столько же, сколько текст отказа в строке
+    /// состояния (`STATUS_TTL_MS`).
+    pub blocked_track: Option<(kt_model::TrackId, std::time::Instant)>,
     /// Последняя рамка выделения в ДОМЕНЕ МОДЕЛИ (время × ключи дорожек)
     /// — из неё делается именованная область (Р.35 п.2). Сессионное:
     /// пережить перезапуск ему незачем.
@@ -1260,7 +1266,7 @@ impl KtApp {
                     self.model.project().track_at(k, l).map(|t| t.label(l))
                 })
                 .unwrap_or_default();
-            self.blocked_track = Some(*id);
+            self.blocked_track = Some((*id, std::time::Instant::now()));
             self.refuse(crate::tf!(k::track::LOCKED, name));
             return;
         }

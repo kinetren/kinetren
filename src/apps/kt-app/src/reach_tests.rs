@@ -945,19 +945,19 @@ fn verbs(e: crate::timeline::TlEntity) -> Vec<(Verb, Reach)> {
             (Verb::Create, Reach::Elsewhere("события кладёт медиа-бин переносом, t99")),
             (Verb::Rename, menu(tr(k::tl::lane::RENAME))),
             (Verb::Delete, menu(tr(k::tl::lane::DELETE))),
-            (Verb::Open, Reach::Absent("дорожка и есть содержимое — открывать у неё нечего")),
+            (Verb::Open, menu(tr(k::track::MENU_PROPS))),
         ],
         E::MorphLane => vec![
             (Verb::Create, menu(tr(k::tl::lane::ADD_MORPHER_HERE))),
             (Verb::Rename, menu(tr(k::tl::lane::RENAME))),
             (Verb::Delete, menu(tr(k::tl::lane::DELETE))),
-            (Verb::Open, Reach::Absent("дорожка и есть содержимое — открывать у неё нечего")),
+            (Verb::Open, menu(tr(k::track::MENU_PROPS))),
         ],
         E::CameraLane => vec![
             (Verb::Create, menu(tr(k::tl::lane::ADD_CAMERA_HERE))),
             (Verb::Rename, menu(tr(k::tl::lane::RENAME))),
             (Verb::Delete, menu(tr(k::tl::lane::DELETE))),
-            (Verb::Open, Reach::Absent("дорожка и есть содержимое — открывать у неё нечего")),
+            (Verb::Open, menu(tr(k::track::MENU_PROPS))),
         ],
         E::Region => vec![
             (Verb::Create, Reach::Elsewhere("драг по руллеру с пустого места, t96")),
@@ -2405,4 +2405,160 @@ fn t720_project_settings_reachable_from_the_file_menu() {
     assert!(h.state().settings_win.is_some(), "пункт меню открывает окно");
     assert!(h.query_by_label(tr(k::settings::TITLE)).is_some());
     assert!(h.query_by_label(tr(k::settings::APPLY)).is_some());
+}
+
+/// Тест 741 (Р.62, change B, 4.5): у ДОРОЖКИ полный набор глаголов, и
+/// парные пути одного действия — одно тело.
+///
+/// Два утверждения, которых не делают ни t253 (он про сущности и их
+/// меню), ни t742 (он про бейджи):
+///
+/// 1. Глушение, соло и цепочка есть ровно там, где им есть что делать.
+///    У служебной строки их нет ни бейджем, ни пунктом меню: мёртвый
+///    контрол — нарушение правила 9, и «в меню-то он есть» тут не ответ.
+/// 2. Бейдж, пункт меню и горячая клавиша дают ОДИН И ТОТ ЖЕ результат и
+///    один шаг истории. Разойдись они — «заглушил из меню» и «заглушил
+///    бейджем» вели бы себя по-разному на одной дорожке (правило 17).
+#[test]
+fn t741_track_has_every_verb_and_paired_paths_are_one_body() {
+    use crate::timeline::{GUTTER_W, TrackBadge};
+    use egui_kittest::kittest::Queryable;
+    use kt_model::LaneKind::{Audio, Camera, Morph, Video};
+
+    let scene = || {
+        let (mut h, _) = crate::layout_tests::harness_three_clips_dt(None);
+        {
+            let app = h.state_mut();
+            app.model.apply(kt_model::Command::InsertTrack { kind: Morph, at: 0 }).unwrap();
+            app.model.apply(kt_model::Command::InsertTrack { kind: Camera, at: 0 }).unwrap();
+        }
+        h.step();
+        let g = h.state().tl_geom.clone().expect("геометрия таймлайна");
+        (h, g)
+    };
+
+    // подписи берём ПОСЛЕ создания харнесса: язык каталога живёт в TLS
+    // UI-потока, и посчитанные раньше строки пришли бы на другом языке
+    let mut problems: Vec<String> = Vec::new();
+    for kind in [Video, Audio, Morph, Camera] {
+        let (mut h, g) = scene();
+        let switches = [
+            crate::i18n::tr(crate::i18n::k::track::MENU_MUTE),
+            crate::i18n::tr(crate::i18n::k::track::MENU_SOLO),
+            crate::i18n::tr(crate::i18n::k::track::MENU_FX),
+        ];
+        let always = [
+            crate::i18n::tr(crate::i18n::k::track::MENU_PROPS),
+            crate::i18n::tr(crate::i18n::k::track::MENU_LOCK),
+        ];
+        let row = g.rows.iter().position(|r| *r == (kind, 0)).expect("строка на экране");
+        // жмём ПО ДОРОЖКЕ, а не в заголовок: человек тычет туда, где
+        // видит строку (урок Р.40). Место — СВОБОДНОЕ: попади клик в
+        // событие, откроется его меню, и проверялась бы не дорожка
+        let pos = egui::pos2(g.tick_to_x(400_000), g.row_center_y(row));
+        let count = |h: &egui_kittest::Harness<'_, crate::app::KtApp>, l: &str| {
+            h.query_all_by_label_contains(l).count()
+        };
+        let before: Vec<usize> =
+            always.iter().chain(switches.iter()).map(|l| count(&h, l)).collect();
+        right_click(&mut h, pos);
+        let after: Vec<usize> =
+            always.iter().chain(switches.iter()).map(|l| count(&h, l)).collect();
+        for (i, l) in always.iter().enumerate() {
+            if after[i] <= before[i] {
+                problems.push(format!(
+                    "{kind:?}: пункта «{l}» нет в меню строки — свойствами дорожки \
+                     управлять нечем"
+                ));
+            }
+        }
+        for (i, l) in switches.iter().enumerate() {
+            let j = always.len() + i;
+            let shown = after[j] > before[j];
+            if kind.has_switches() && !shown {
+                problems.push(format!("{kind:?}: пункта «{l}» нет, а глушить тут есть что"));
+            }
+            if !kind.has_switches() && shown {
+                problems.push(format!(
+                    "{kind:?}: пункт «{l}» на служебной строке — он ничего не делает, \
+                     а мёртвых контролов не бывает (правило 9)"
+                ));
+            }
+        }
+        // и бейджи говорят ровно то же самое
+        let badges = crate::timeline::row_badges(kind);
+        let want = if kind.has_switches() { 4 } else { 1 };
+        if badges.len() != want {
+            problems.push(format!(
+                "{kind:?}: бейджей {} вместо {want} — ряд и меню разошлись",
+                badges.len()
+            ));
+        }
+    }
+    assert!(problems.is_empty(), "глаголы дорожки:\n  {}", problems.join("\n  "));
+
+    // ---- 2. три пути — один результат и один шаг истории --------------------
+    let mute_by = |what: &str| {
+        let (mut h, g) = scene();
+        let id = h.state().model.project().track_at(Video, 0).unwrap().id;
+        let row = g.rows.iter().position(|r| *r == (Video, 0)).unwrap();
+        let depth0 = h.state().model.undo_depth();
+        match what {
+            "badge" => {
+                let r = TrackBadge::row_rects(
+                    Video,
+                    g.rect.left() - GUTTER_W,
+                    g.row_top(row),
+                    g.row_h(row),
+                )
+                .into_iter()
+                .find(|(b, _)| *b == TrackBadge::Mute)
+                .unwrap()
+                .1;
+                let pos = r.center();
+                h.hover_at(pos);
+                h.step();
+                for pressed in [true, false] {
+                    h.event(egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                }
+                h.step();
+                h.step();
+            }
+            "menu" => {
+                right_click(&mut h, egui::pos2(g.tick_to_x(400_000), g.row_center_y(row)));
+                h.get_by_label(crate::i18n::tr(crate::i18n::k::track::MENU_MUTE)).click();
+                h.step();
+                h.step();
+            }
+            "key" => {
+                {
+                    let app = h.state_mut();
+                    app.selected.clear();
+                    app.selected.insert(kt_model::ClipId(1));
+                }
+                h.step();
+                h.key_press_modifiers(egui::Modifiers::ALT, egui::Key::M);
+                h.step();
+            }
+            _ => unreachable!(),
+        }
+        let t = h.state().model.project().track(id).unwrap().clone();
+        (t, h.state().model.undo_depth() - depth0)
+    };
+    let (badge, steps_b) = mute_by("badge");
+    let (menu, steps_m) = mute_by("menu");
+    let (key, steps_k) = mute_by("key");
+    assert!(badge.mute, "бейдж не заглушил дорожку");
+    assert_eq!(badge, menu, "бейдж и пункт меню дали РАЗНУЮ дорожку — тела разошлись");
+    assert_eq!(badge, key, "бейдж и горячая клавиша дали РАЗНУЮ дорожку — тела разошлись");
+    assert_eq!(
+        (steps_b, steps_m, steps_k),
+        (1, 1, 1),
+        "глушение обязано быть одним шагом истории на любом пути"
+    );
 }
