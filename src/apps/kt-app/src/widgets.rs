@@ -870,7 +870,10 @@ fn publish_menu(
     let Some(seq) = c.seq else { return };
     let existing = c.published.get(param).copied();
     let (clip, owner, param) = (c.clip, c.owner.clone(), param.to_string());
-    let label = label.to_string();
+    // ИМЯ ПО УМОЛЧАНИЮ — подпись БЕЗ двоеточия: у полей оно часть вёрстки
+    // («Кегль:»), а у ручки композиции это её имя, и «Кегль:» в списке
+    // выглядит опечаткой (замечено живым сценарием, Р.63)
+    let label = label.trim().trim_end_matches(':').trim().to_string();
     r.clone().context_menu(|ui| {
         match existing {
             Some(id) => {
