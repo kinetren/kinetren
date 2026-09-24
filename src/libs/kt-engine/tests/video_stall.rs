@@ -137,3 +137,80 @@ fn t28_worker_inserts_grid_span_coverage() {
     assert_eq!(cov, vec![0..n * STEP], "полоса должна быть непрерывной: {cov:?}");
     worker.shutdown();
 }
+
+/// Тест 758 (Р.63 п.13): после ПРЫЖКА звук не ждёт видео.
+///
+/// Жалоба владельца: «я просто прыгнул на участок с одним длинным
+/// событием… но это не повод так долго подгружать видео с такими
+/// underruns». По флайт-логу каждый прыжок в файл 870 с давал секунды
+/// полной тишины, при том что офлайн-цена рендера того же места — 2 %
+/// реального времени: звук стоял в очереди ЗА кадрами того же воркера.
+///
+/// Утверждается СЛЕДСТВИЕ: на прыжке первые аудио-бёрсты обслужены раньше
+/// видео, то есть звук успевает к дедлайну, а видео догоняет само.
+#[test]
+fn t758_audio_is_served_before_video_after_a_seek() {
+    let cache = Arc::new(BurstCache::new(CacheConfig::default()));
+    let stats = Arc::new(SyntheticStats::default());
+    // «медленный 1080p»: кадр дороже бёрста аудио — ровно как H.264 у
+    // владельца против дешёвого декода Opus
+    let src = SyntheticSource::with_stats(Tick(90_000 * 900), AudioPattern::Ramp, stats.clone())
+        .with_video_delay(std::time::Duration::from_millis(12));
+    let worker = MediaWorker::spawn(MediaId(1), Box::new(src), cache.clone());
+
+    // ПРЫЖОК в хвост: префетч видео уже заказал окно вокруг новой точки и
+    // воркер УЖЕ НАЧАЛ его декодировать — именно в эту дыру и попадает
+    // звук воспроизведения (спан не смотрел в очередь до самого конца)
+    let jump_tick = 800 * TICK_HZ;
+    let first_burst = jump_tick / kt_time::AUDIO_BURST_TICKS;
+    for i in 0..64i64 {
+        worker.submit(DecodeRequest {
+            kind: RequestKind::video_on_grid(Tick(jump_tick + i * STEP), Some(Q), STEP),
+            prio: Priority::NearPrefetch,
+            generation: 0,
+        });
+    }
+    // даём воркеру войти в спан (один кадр = 12 мс)
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    for i in 0..8i64 {
+        worker.submit(DecodeRequest {
+            kind: RequestKind::Audio { idx: first_burst + i },
+            prio: Priority::Playback,
+            generation: 0,
+        });
+    }
+
+    // Звук обязан появиться БЫСТРО: восемь бёрстов — это 170 мс материала,
+    // и ждать их дольше, чем они звучат, значит гарантированно молчать.
+    // Мерка — кольцо вывода (около 85 мс): всё, что дольше, слышно тишиной.
+    // Спан здесь 64 кадра по 12 мс = 768 мс одним куском на прежнем коде.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
+    let mut got = 0;
+    while std::time::Instant::now() < deadline {
+        got = (0..8)
+            .filter(|i| cache.get_audio(source_id(MediaId(1)), first_burst + i).is_some())
+            .count();
+        if got == 8 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let vid = stats.video_reads.load(Relaxed);
+    assert_eq!(
+        got, 8,
+        "звук после прыжка не успел: прочитано {got} из 8 бёрстов, \
+         а видео-кадров за то же время — {vid} (звук ждёт видео)"
+    );
+    // и видео при этом не брошено — оно догоняет следом
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(900);
+    while std::time::Instant::now() < deadline && stats.video_reads.load(Relaxed) < 8 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        stats.video_reads.load(Relaxed) >= 8,
+        "видео перестало догонять после того, как звук пропустили вперёд: кадров {}, звук {}",
+        stats.video_reads.load(Relaxed),
+        stats.audio_reads.load(Relaxed)
+    );
+    worker.shutdown();
+}

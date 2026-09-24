@@ -248,6 +248,14 @@ fn worker_loop(
             VideoSpan {
                 keys: Vec<(Tick, i64)>, // (pts, step покрытия)
                 quality: Option<(u32, u32)>,
+                /// Поколение первого ключа: с ним недоделанный хвост
+                /// возвращается в очередь и честно отменяется seek'ом.
+                generation_of_span: u64,
+                /// Приоритет первого ключа: спан прерывается только ради
+                /// СТРОГО более срочного звука. При равном приоритете
+                /// прерывать нельзя — видео-курсор пошёл бы зигзагом за
+                /// аудио, а это ping-pong seek (дефект h, сторож t21).
+                prio_of_span: crate::Priority,
             },
         }
         let job = {
@@ -289,7 +297,7 @@ fn worker_loop(
                     }
                     Some(Pick::Video(key)) => {
                         let (_prio, first_pts, quality) = key;
-                        let (_g, first_step) = q.video.remove(&key).unwrap_or((0, 1));
+                        let (first_gen, first_step) = q.video.remove(&key).unwrap_or((0, 1));
                         // Добор спана ПОВЕРХ приоритетов (п.19а): Playback-ключ
                         // становится НАЧАЛОМ спана, а NearPrefetch-хвост едет
                         // тем же декод-проходом. Раньше добор брал только свой
@@ -325,7 +333,12 @@ fn worker_loop(
                             }
                             q.video.remove(&k);
                         }
-                        break Job::VideoSpan { keys, quality };
+                        break Job::VideoSpan {
+                            keys,
+                            quality,
+                            generation_of_span: first_gen,
+                            prio_of_span: key.0,
+                        };
                     }
                     None => {
                         shared.idle.store(true, Ordering::Release);
@@ -349,7 +362,7 @@ fn worker_loop(
                     }
                 }
             }
-            Job::VideoSpan { keys, quality } => {
+            Job::VideoSpan { keys, quality, generation_of_span, prio_of_span } => {
                 let q = quality.map(into_q);
                 cursor_video = keys.last().map(|(k, _)| k.0).unwrap_or(cursor_video);
                 let missing: Vec<(Tick, i64)> = keys
@@ -371,14 +384,62 @@ fn worker_loop(
                     missing.iter().map(|(k, s)| (k.0, *s)).collect();
                 let pts_only: Vec<Tick> = missing.iter().map(|(k, _)| *k).collect();
                 let mut emitted: std::collections::HashSet<i64> = std::collections::HashSet::new();
-                let res = source.read_video_span(&pts_only, q, &mut |k, frame| {
-                    emitted.insert(k.0);
-                    let span = steps.get(&k.0).copied().unwrap_or(1).max(1);
-                    cache.insert_video_span(source_id, q, k.0, span, Arc::new(frame));
-                });
+                // СПАН ДЕКОДИРУЕТСЯ ЧАНКАМИ, и между ними воркер смотрит в
+                // очередь (Р.63 п.13).
+                //
+                // Почему это не оптимизация, а дефект. Спан добирает до 64
+                // ключей и отдаёт их декодеру ОДНИМ вызовом: на 1080p это
+                // 22-61 мс на кадр, то есть до 4 секунд, в которые воркер
+                // не смотрит в очередь ВООБЩЕ. Прилетевший в это время
+                // Playback-бёрст аудио ждёт весь спан, каким бы высоким ни
+                // был его приоритет — и плеер молчит. Именно это видно во
+                // флайт-логе владельца: после каждого прыжка 1-6 с полной
+                // тишины при цене самого рендера 2 % реального времени, а
+                // сам аудио-бёрст декодируется за 14 мкс против 22-61 мс у
+                // кадра. Брошенный хвост спана ничего не теряет: проход
+                // префетча идемпотентен и переспросит недостающее (t9).
+                const SPAN_CHUNK: usize = 4;
+                let mut res = Ok(());
+                let mut done_keys = 0usize;
+                for chunk in pts_only.chunks(SPAN_CHUNK) {
+                    res = source.read_video_span(chunk, q, &mut |k, frame| {
+                        emitted.insert(k.0);
+                        let span = steps.get(&k.0).copied().unwrap_or(1).max(1);
+                        cache.insert_video_span(source_id, q, k.0, span, Arc::new(frame));
+                    });
+                    done_keys += chunk.len();
+                    if res.is_err() {
+                        break;
+                    }
+                    // звук СРОЧНЕЕ этого спана ждать не может — отдаём поток
+                    let audio_waits = {
+                        let q = shared.queue.lock().unwrap();
+                        q.audio.keys().next().is_some_and(|(p, _)| *p < prio_of_span)
+                    };
+                    if audio_waits {
+                        // НЕДОДЕЛАННОЕ ВОЗВРАЩАЕМ В ОЧЕРЕДЬ, а не бросаем:
+                        // ключи уже сняты с неё при сборке спана, и молча
+                        // потерять их значило бы понадеяться, что кто-то
+                        // переспросит. Префетч — переспросит, а вот
+                        // тумбнейл и разовая заявка — нет. Кладём как
+                        // ближний префетч: Playback-ключ у спана всегда
+                        // ПЕРВЫЙ и уже посчитан.
+                        let mut q = shared.queue.lock().unwrap();
+                        for k in pts_only.iter().skip(done_keys) {
+                            let step = steps.get(&k.0).copied().unwrap_or(1).max(1);
+                            q.video
+                                .entry((prio_of_span, k.0, quality))
+                                .or_insert((generation_of_span, step));
+                        }
+                        break;
+                    }
+                }
                 if res.is_ok() {
-                    // ключи, не закрытые декодером (EOF) — в negative-кэш
-                    for k in pts_only {
+                    // Ключи, не закрытые декодером (EOF) — в negative-кэш,
+                    // но ТОЛЬКО те, до которых мы дошли: брошенный хвост
+                    // спана не декодировался вовсе, и пометить его
+                    // «мёртвым» значило бы не показать эти кадры НИКОГДА.
+                    for k in pts_only.iter().take(done_keys) {
                         if !emitted.contains(&k.0) {
                             failed_video.insert((k.0, quality));
                         }
