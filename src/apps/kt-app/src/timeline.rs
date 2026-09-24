@@ -5668,7 +5668,11 @@ impl KtApp {
                     let r = ui.button(tr(k::pubp::INST_OPEN));
                     crate::widgets::field_probe::note("pub.inst_open", r.rect);
                     if r.clicked() {
-                        self.open_inst_params(id);
+                        // ОКНО FX НА ГОЛОВЕ, а не своё окно (Р.63 п.12):
+                        // «параметры композиции открываются в отдельном
+                        // окне, когда их можно поместить в тот же
+                        // fx-chain» — запрет владельца на лишние окна
+                        self.open_fx_editor_head(id);
                         ui.close();
                     }
                     let r = ui.button(tr(k::pubp::LIST_OPEN));

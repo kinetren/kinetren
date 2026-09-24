@@ -762,3 +762,80 @@ fn t752a_a_published_lead_geometry_changes_the_instance_frame() {
          достался бы обоим экземплярам один"
     );
 }
+
+// ---- 755. ручка СЛОТА ЭФФЕКТА действует у экземпляра --------------------------
+
+const AMOUNT: PubId = PubId(6);
+
+/// Тест 755 (Р.63 п.10): опубликованная ручка СЛОТА ЭФФЕКТА меняет кадр
+/// экземпляра — проверено на своём параметре, а не на зуме.
+///
+/// Владелец: «Я взял MCR, закинул его в композицию, накинул Radial blur,
+/// опубликовал параметр количества, поменял его на композиции — а оно не
+/// меняется». Путь слота до этого доказывался ТОЛЬКО зумом (t679, где
+/// ручка меняет ступень декода) и текстом титра — то есть тем, что задевает
+/// адрес источника. Числовой параметр обычного пиксельного фильтра ходит
+/// другой дорогой (значение → `fx_chain_hash` → мемо пост-FX), и своего
+/// сторожа у него не было.
+#[test]
+fn t755_a_published_effect_knob_changes_the_instance_frame() {
+    let mut p = template();
+    {
+        let s = p.sequences.iter_mut().find(|s| s.id == SEQ).expect("лента");
+        // размытие на ТИТРЕ: подложка синтетическая и однородна, размывать
+        // в ней нечего — тест был бы зелёным ни на чём
+        let title = s.clips.iter_mut().find(|c| c.id == TITLE).expect("титр");
+        title.fx = vec![FxInstance::radial_blur()];
+        title.fx_bypass = vec![false];
+        s.published.push(PublishedParam {
+            id: AMOUNT,
+            name: "Размытие".into(),
+            target: ParamAddr::new(TITLE, ParamOwner::FxSlot { slot: 0 }, "amount"),
+            ty: ParamType::Num,
+            range: PubRange::default(),
+        });
+    }
+    p.validate().expect("проект с опубликованной ручкой размытия законен");
+
+    let mid = Tick(FRAME * 10);
+    let at_b = Tick(PART.0 + mid.0);
+
+    // два экземпляра: первый без размытия, второй — на полную
+    let mut z = p.clone();
+    set_override(&mut z, INST_A, Override::value(AMOUNT, ParamValue::Num(0.0)));
+    set_override(&mut z, INST_B, Override::value(AMOUNT, ParamValue::Num(0.9)));
+    let (a, ca) = compose(&z, mid);
+    let (b, cb) = compose(&z, at_b);
+    assert!(ca && cb, "композит неполон — заказ разошёлся с чтением");
+    assert!(a.iter().any(|&x| x != 0), "кадр чёрный — тест проверен ни на чём");
+    assert_ne!(
+        a, b,
+        "ручка `amount` радиального размытия не доехала до кадра экземпляра — \
+         ровно то, что владелец назвал «поменял его на композиции, а оно не меняется»"
+    );
+
+    // ...и это не «любые два кадра разные»: без переопределений они равны
+    let (a0, _) = compose(&p, mid);
+    let (b0, _) = compose(&p, at_b);
+    assert_eq!(a0, b0, "сцена вырождена: экземпляры различаются и без переопределений");
+
+    // редакции разные — значит разные ключи мемо и разные суб-рендереры
+    let ov_a = &z.clips.iter().find(|c| c.id == INST_A).unwrap().overrides;
+    let ov_b = &z.clips.iter().find(|c| c.id == INST_B).unwrap().overrides;
+    assert_ne!(
+        kt_engine::instance_content(&z, SEQ, ov_a),
+        kt_engine::instance_content(&z, SEQ, ov_b),
+        "две редакции с разным размытием дали один ключ — суб-композит достался бы общий"
+    );
+    assert_eq!(
+        VideoRenderer::new(&z).nest_count(),
+        2,
+        "экземпляры с разными ручками обязаны получить разные суб-рендереры"
+    );
+
+    // правка ВТОРОГО не трогает первый
+    let mut z2 = z.clone();
+    set_override(&mut z2, INST_B, Override::value(AMOUNT, ParamValue::Num(0.5)));
+    assert_eq!(compose(&z2, mid).0, a, "правка второго экземпляра изменила ПЕРВЫЙ");
+    assert_ne!(compose(&z2, at_b).0, b, "правка второго экземпляра не изменила его самого");
+}

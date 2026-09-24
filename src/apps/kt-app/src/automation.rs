@@ -310,6 +310,14 @@ pub struct AxisReq {
 }
 
 impl AxisReq {
+    /// Слить с просьбами ДРУГОЙ секции того же окна (голова полосы).
+    pub fn merge_req(self, r: &AxisReq) -> Self {
+        AxisReq {
+            set_linked: r.set_linked.or(self.set_linked),
+            set_view: r.set_view.or(self.set_view),
+        }
+    }
+
     pub fn merge(self, r: &AutoResult) -> Self {
         AxisReq {
             set_linked: r.set_linked.or(self.set_linked),

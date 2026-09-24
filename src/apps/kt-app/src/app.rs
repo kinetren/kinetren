@@ -549,7 +549,6 @@ pub struct KtApp {
     pub published_win: Option<crate::pubparam::PublishedWin>,
     /// Окна «Параметры композиции» экземпляров — сторона ПОТРЕБИТЕЛЯ.
     /// Список, а не одно: сравнить два выпуска рядом — обычная работа.
-    pub inst_params: Vec<crate::pubparam::InstParamsWin>,
     /// Путь внутрь вложений: по уровню на каждый вход (Р.50, В1).
     pub nest_path: Vec<NestStep>,
     /// Полоса, раскрытая ВНУТРИ ленты на момент выхода из неё (Р.58,
@@ -904,7 +903,6 @@ impl KtApp {
             seq_name: None,
             publish_dialog: None,
             published_win: None,
-            inst_params: Vec::new(),
             nest_path: Vec::new(),
             reel_bands: std::collections::HashMap::new(),
             shared_warned: Default::default(),
@@ -1111,7 +1109,6 @@ impl KtApp {
             seq_name: None,
             publish_dialog: None,
             published_win: None,
-            inst_params: Vec::new(),
             nest_path: Vec::new(),
             reel_bands: std::collections::HashMap::new(),
             shared_warned: Default::default(),
@@ -1676,7 +1673,6 @@ impl KtApp {
         // окно автора и окна потребителей.
         self.draw_publish_dialog(&ctx);
         self.draw_published_win(&ctx);
-        self.draw_inst_params(&ctx);
         self.draw_env_fit(&ctx);
         // заявка подписи поля забирается ПОСЛЕ отрисовки окон — внутри
         // `Window::show` до модели не дотянуться (тот же механизм, что у
@@ -2612,10 +2608,6 @@ impl KtApp {
         // Диалог имени ручки в каскад не входит намеренно: он гасит Esc
         // сам, как окно имени ленты, — пока в нём фокус, сюда вообще не
         // доходит (`egui_wants_keyboard_input`).
-        if let Some(w) = self.inst_params.iter_mut().rev().find(|w| w.open) {
-            w.open = false;
-            return;
-        }
         if let Some(w) = self.published_win.as_mut().filter(|w| w.open) {
             w.open = false;
             return;

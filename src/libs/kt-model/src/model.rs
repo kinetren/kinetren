@@ -1405,11 +1405,11 @@ impl TimelineModel {
     /// `sequences`. Раскрытая полоса содержимое в корень переносит, а
     /// набор ленты оставляет на месте (t672) — и это ровно тот случай,
     /// ради которого адрес и заведён.
-    fn published_slot<'a>(
-        p: &'a Project,
+    fn published_slot(
+        p: &Project,
         scope: Option<MediaId>,
         seq: MediaId,
-    ) -> Option<&'a Vec<PublishedParam>> {
+    ) -> Option<&Vec<PublishedParam>> {
         if scope == Some(seq) {
             Some(&p.published)
         } else {
@@ -1417,11 +1417,11 @@ impl TimelineModel {
         }
     }
 
-    fn published_slot_mut<'a>(
-        p: &'a mut Project,
+    fn published_slot_mut(
+        p: &mut Project,
         scope: Option<MediaId>,
         seq: MediaId,
-    ) -> Option<&'a mut Vec<PublishedParam>> {
+    ) -> Option<&mut Vec<PublishedParam>> {
         if scope == Some(seq) {
             Some(&mut p.published)
         } else {

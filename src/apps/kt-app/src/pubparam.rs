@@ -60,20 +60,28 @@ pub struct PublishedWin {
     pub open: bool,
 }
 
-/// Окно «Параметры композиции» экземпляра (сторона ПОТРЕБИТЕЛЯ).
-pub struct InstParamsWin {
-    pub clip: ClipId,
+/// Что голова полосы просит у окна FX (Р.63 п.12): прыжок курсора по
+/// клику в графике и просьбы про ось. Команды она применяет сама — тем же
+/// токеном жеста, что и окно.
+#[derive(Default)]
+pub(crate) struct InstHeadOut {
+    pub seek: Option<kt_time::Tick>,
+    pub axis: crate::automation::AxisReq,
+    /// Правки ручек: окно FX применяет их СВОИМ токеном жеста.
+    pub ops: Vec<Command>,
+}
+
+/// Всё, что голове нужно от программы. Отдельной структурой, потому что
+/// рисуется она ВНУТРИ окна FX, где `self` уже занят заимствованием
+/// (кэш миниатюр пикера) — а второй мутабельной ссылки на приложение
+/// взять неоткуда.
+pub(crate) struct InstHeadCtx<'a> {
+    pub doc: &'a kt_model::Project,
+    pub inst: &'a kt_model::ClipEvent,
     pub seq: MediaId,
-    pub gesture: u64,
-    pub backup: Vec<Override>,
-    /// Строка запроса пикера медиа — своя на окно.
-    pub query: String,
-    /// Состояние виджета автоматизации: активная кривая, выбранный ключ,
-    /// вид графика. Своё на окно — как у слота эффекта и у генератора
-    /// (Р.60): до этого раунда кривые переопределений вообще нечем было
-    /// показать, и окно молча писало ключи по курсору.
-    pub view: crate::automation::AutoView,
-    pub open: bool,
+    pub playhead: kt_time::Tick,
+    pub tl_view: (kt_time::Tick, kt_time::Tick),
+    pub axis_linked: bool,
 }
 
 /// Имя кривой ручки В ПРЕДЕЛАХ ОКНА.
@@ -273,34 +281,6 @@ impl KtApp {
             gesture: self.gesture_counter,
             backup: self.published_of(seq),
             confirm: None,
-            open: true,
-        });
-    }
-
-    /// Открыть окно «Параметры композиции» экземпляра.
-    ///
-    /// Лента без объявленных ручек окна не открывает, и это НЕ молчание:
-    /// строка состояния говорит, что публиковать надо внутри (правило 16).
-    pub fn open_inst_params(&mut self, clip: ClipId) {
-        let Some(c) = self.model.clip(clip).cloned() else { return };
-        if self.model.document().sequence(c.media).is_none() {
-            return;
-        }
-        if self.published_of(c.media).is_empty() {
-            self.warn(tr(k::pubp::INST_NONE));
-            return;
-        }
-        if self.inst_params.iter().any(|w| w.clip == clip) {
-            return;
-        }
-        self.gesture_counter += 1;
-        self.inst_params.push(InstParamsWin {
-            clip,
-            seq: c.media,
-            gesture: self.gesture_counter,
-            backup: c.overrides.clone(),
-            query: String::new(),
-            view: crate::automation::AutoView::default(),
             open: true,
         });
     }
@@ -618,26 +598,30 @@ impl KtApp {
     }
 
     /// Окно «Параметры композиции» экземпляра — сторона ПОТРЕБИТЕЛЯ.
-    pub(crate) fn draw_inst_params(&mut self, ctx: &egui::Context) {
-        let mut wins = std::mem::take(&mut self.inst_params);
-        for w in &mut wins {
-            self.draw_one_inst_params(ctx, w);
-        }
-        wins.retain(|w| w.open);
-        // окна, открытые за время отрисовки, не теряются
-        self.inst_params.extend(wins);
-    }
-
-    fn draw_one_inst_params(&mut self, ctx: &egui::Context, w: &mut InstParamsWin) {
-        let doc = self.model.document();
-        let Some(inst) = self.model.clip(w.clip).cloned() else {
-            w.open = false;
-            return;
-        };
-        let list = self.published_of(w.seq);
+    /// ГОЛОВА полосы цепочки: «Параметры композиции» экземпляра (Р.63
+    /// п.12).
+    ///
+    /// Владелец: «достаточно ебануто сделано то, что параметры композиции
+    /// открываются в отдельном окне, когда их можно поместить в тот же
+    /// fx-chain для удобства. Я ставлю запрет любым агентам порождать
+    /// какие-либо дополнительные окна без очевидного смысла». Форма та же
+    /// до строчки — переехал только её дом: вместо своего окна она стоит
+    /// головой полосы, рядом с генератором и ведущим узлом.
+    pub(crate) fn draw_inst_head(
+        hc: &InstHeadCtx<'_>,
+        ui: &mut egui::Ui,
+        view: &mut crate::automation::AutoView,
+        query: &mut String,
+    ) -> InstHeadOut {
+        let doc = hc.doc;
+        let (clip, seq) = (hc.inst.id, hc.seq);
+        let inst = hc.inst.clone();
+        let list: Vec<PublishedParam> =
+            doc.sequence(seq).map(|s| s.published.clone()).unwrap_or_default();
         if list.is_empty() {
-            w.open = false;
-            return;
+            // ПУСТО — но не молча (правило 16): объявляют ручки внутри
+            ui.label(egui::RichText::new(tr(k::pubp::INST_NONE)).weak().small());
+            return InstHeadOut::default();
         }
         // Домен кривой переопределения — МАТЕРИАЛ ЭКЗЕМПЛЯРА (оно же
         // время ленты): ровно то, что модель потом переводит в материал
@@ -649,7 +633,7 @@ impl KtApp {
             inst.duration,
             inst.reversed,
             frame_step,
-            self.player.transport.playhead(),
+            hc.playhead,
         );
         // Ось графика — МАТЕРИАЛ ЭКЗЕМПЛЯРА, тот же домен, в котором
         // садится ключ; у зеркального экземпляра концы меняются местами,
@@ -673,9 +657,7 @@ impl KtApp {
             );
             (kt_time::Tick(a.0.min(b.0)), kt_time::Tick(a.0.max(b.0).max(a.0.min(b.0) + 1)))
         };
-        let tl_view = self.tl_view();
-        let axis_linked = self.auto_axis_linked;
-        let playhead = self.player.transport.playhead();
+        let (tl_view, axis_linked, playhead) = (hc.tl_view, hc.axis_linked, hc.playhead);
         let media: Vec<(MediaId, String)> = doc
             .media
             .iter()
@@ -690,7 +672,7 @@ impl KtApp {
         let specs: Vec<kt_model::ParamSpec> = list
             .iter()
             .map(|p| {
-                let base = doc.addr_spec(Some(w.seq), &p.target);
+                let base = doc.addr_spec(Some(seq), &p.target);
                 let mut sp = base.unwrap_or(kt_model::ParamSpec {
                     name: Default::default(),
                     ty: p.ty.clone(),
@@ -724,11 +706,12 @@ impl KtApp {
             }
         }
         let auto_before = auto.clone();
-        let (over_n, total) = self.instance_override_counts(&inst);
+        let total = list.len();
+        let over_n = inst.overrides.iter().filter(|o| list.iter().any(|p| p.id == o.pub_id)).count();
         let title = format!(
             "{} — {}",
             tr(k::pubp::INST_TITLE),
-            doc.sequence(w.seq).map(|s| s.name.clone()).unwrap_or_default()
+            doc.sequence(seq).map(|s| s.name.clone()).unwrap_or_default()
         );
         let mut ops: Vec<Command> = Vec::new();
         // что править в модели по итогам кадра: ручки с изменённым
@@ -740,29 +723,21 @@ impl KtApp {
         let mut axis_req = crate::automation::AxisReq::default();
         let mut seek: Option<kt_time::Tick> = None;
         let mut hover_out: Option<String> = None;
-        let mut cancel = false;
-        let mut done = false;
-        let mut open = w.open;
-        let mut query = std::mem::take(&mut w.query);
-        let view = &mut w.view;
-        egui::Window::new(title)
-            .id(egui::Id::new(("inst_params", w.clip.0)))
-            .open(&mut open)
-            .resizable(true)
-            .default_width(520.0)
-            .show(ctx, |ui| {
+        let _ = &title;
+        {
+            let ui = &mut *ui;
                 ui.label(
                     egui::RichText::new(crate::tf!(k::pubp::OVERRIDDEN, over_n, total))
                         .weak()
                         .small(),
                 );
-                egui::Grid::new(("inst_params_grid", w.clip.0))
+                egui::Grid::new(("inst_params_grid", clip.0))
                     .num_columns(4)
                     .spacing([8.0, 4.0])
                     .show(ui, |ui| {
                         for (i, p) in list.iter().enumerate() {
                             let ov = inst.overrides.iter().find(|o| o.pub_id == p.id).cloned();
-                            let tmpl = doc.published_value(w.seq, p.id);
+                            let tmpl = doc.published_value(seq, p.id);
                             let cur = ov
                                 .as_ref()
                                 .map(|o| o.value.clone())
@@ -786,8 +761,8 @@ impl KtApp {
                                 &mut next,
                                 &mut bind,
                                 &media,
-                                &mut query,
-                                doc.addr_type(Some(w.seq), &p.target),
+                                query,
+                                doc.addr_type(Some(seq), &p.target),
                             );
                             // значение ШАБЛОНА рядом — читается живьём,
                             // копии в файле нет (решение владельца)
@@ -824,7 +799,7 @@ impl KtApp {
                             );
                             crate::widgets::hint(&reset, tr(k::pubp::RESET_HINT));
                             if reset.clicked() {
-                                ops.push(Command::ClearOverride { id: w.clip, pub_id: p.id });
+                                ops.push(Command::ClearOverride { id: clip, pub_id: p.id });
                                 drop_curve.push(p.id);
                             } else if changed {
                                 dirty.push(p.id);
@@ -927,7 +902,7 @@ impl KtApp {
                         let top = ui.cursor().min;
                         let res = crate::automation::draw(
                             ui,
-                            ("instauto", w.clip.0),
+                            ("instauto", clip.0),
                             &actx,
                             &mut auto,
                             view,
@@ -955,17 +930,7 @@ impl KtApp {
                     }
                 }
 
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button(tr(k::pubp::DONE)).clicked() {
-                        done = true;
-                    }
-                    if ui.button(tr(k::fx::CANCEL)).clicked() {
-                        cancel = true;
-                    }
-                });
-            });
-        w.query = query;
+        }
         // Одна команда на ручку: значение строки плюс её кривая, имя
         // которой возвращается ЦЕЛЕВЫМ — таким его ждёт `apply_overrides`.
         dirty.retain(|id| !drop_curve.contains(id));
@@ -986,42 +951,17 @@ impl KtApp {
                 .collect();
             let value = values.get(i).cloned().unwrap_or(ParamValue::Num(0.0));
             ops.push(Command::SetOverride {
-                id: w.clip,
+                id: clip,
                 ov: Box::new(Override { pub_id: p.id, value, curves }),
             });
         }
-        if let Some(t) = seek {
-            self.player.seek(t);
-        }
-        self.apply_axis_req(axis_req);
         if let Some(h) = hover_out {
             crate::widgets::hint_sink::put(&h);
         }
-        // ВСЯ сессия окна — один шаг истории: токен жеста общий на все
-        // строки и на откат
-        for c in ops {
-            self.apply_coalesced(c, w.gesture);
-        }
-        if cancel {
-            let now = self.model.clip(w.clip).map(|c| c.overrides.clone()).unwrap_or_default();
-            for o in &now {
-                if !w.backup.iter().any(|b| b.pub_id == o.pub_id) {
-                    self.apply_coalesced(
-                        Command::ClearOverride { id: w.clip, pub_id: o.pub_id },
-                        w.gesture,
-                    );
-                }
-            }
-            for b in &w.backup.clone() {
-                self.apply_coalesced(
-                    Command::SetOverride { id: w.clip, ov: Box::new(b.clone()) },
-                    w.gesture,
-                );
-            }
-            w.open = false;
-            return;
-        }
-        w.open = open && !done;
+        // Команды применяет ОКНО FX своим токеном жеста: голова живёт в
+        // нём, и правка ручки не имеет права заводить свой шаг истории
+        // рядом с правкой слота.
+        InstHeadOut { seek, axis: axis_req, ops }
     }
 }
 

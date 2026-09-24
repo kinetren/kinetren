@@ -12424,10 +12424,14 @@ fn t683_instance_params_window_draws_every_type() {
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
     let (mut h, s) = harness_news_template();
-    h.state_mut().open_inst_params(s.b);
+    h.state_mut().open_fx_editor_head(s.b);
     h.step();
     h.step();
-    assert_eq!(h.state().inst_params.len(), 1, "окно параметров композиции не открылось");
+    assert_eq!(
+        h.state().fx_editors.first().and_then(|e| e.selected.get(&s.b)),
+        Some(&crate::widgets::ChainSel::Head),
+        "голова «Параметры композиции» не выбрана в окне FX"
+    );
 
     // ИМЕНА АВТОРА видны все и в объявленном порядке
     for name in ["Заголовок", "Цвет логотипа", "Кегль", "Выключка", "Логотип", "Задом наперёд"]
@@ -12439,7 +12443,7 @@ fn t683_instance_params_window_draws_every_type() {
     }
 
     // --- ТЕКСТ: поле правит переопределение --------------------------
-    let win = h.state().inst_params[0].gesture;
+    let win = h.state().fx_editors[0].gesture;
     assert!(h.state_mut().apply_coalesced(
         Command::SetOverride {
             id: s.b,
@@ -12588,10 +12592,14 @@ fn t691_instance_curves_are_visible_and_never_hidden() {
     let t2 = kt_time::Tick(b_start.0 + b_dur.0 / 2);
 
     h.state_mut().player.seek(t1);
-    h.state_mut().open_inst_params(s.b);
+    h.state_mut().open_fx_editor_head(s.b);
     h.step();
     h.step();
-    assert_eq!(h.state().inst_params.len(), 1, "окно параметров композиции не открылось");
+    assert_eq!(
+        h.state().fx_editors.first().and_then(|e| e.selected.get(&s.b)),
+        Some(&crate::widgets::ChainSel::Head),
+        "голова «Параметры композиции» не выбрана в окне FX"
+    );
 
     // поле «Кегля» лежит между подписью-именем автора и подписью шаблона
     let field_pos = |h: &Harness<'_, KtApp>| -> egui::Pos2 {
@@ -13222,7 +13230,7 @@ fn t684_author_names_are_shown_verbatim() {
     h.state_mut().leave_nest();
     h.step();
 
-    h.state_mut().open_inst_params(s.b);
+    h.state_mut().open_fx_editor_head(s.b);
     h.step();
     h.step();
     // смотреть надо на ГАЛЛЕИ, а не на дерево доступности: доступное имя
@@ -14823,7 +14831,7 @@ fn t752c_an_instance_edits_the_published_lead_geometry() {
     h.step();
 
     // окно потребителя рисует ручку ИМЕНЕМ АВТОРА
-    h.state_mut().open_inst_params(s.b);
+    h.state_mut().open_fx_editor_head(s.b);
     h.step();
     h.step();
     assert!(
@@ -14835,7 +14843,7 @@ fn t752c_an_instance_edits_the_published_lead_geometry() {
     let keys = h.state_mut().reel_keys();
     let (ka, kb) = (*keys.get(&s.a).expect("ключ A"), *keys.get(&s.b).expect("ключ B"));
     assert_eq!(ka, kb, "сцена: до правки оба выпуска делят один ключ превью");
-    let win = h.state().inst_params[0].gesture;
+    let win = h.state().fx_editors[0].gesture;
     assert!(h.state_mut().apply_coalesced(
         Command::SetOverride { id: s.b, ov: Box::new(Override::value(zoom, ParamValue::Num(3.0))) },
         win
@@ -14931,4 +14939,178 @@ fn t753b_confirming_a_publication_keeps_you_where_you_stand() {
     );
     let set = h.state().model.document().sequence(s.seq).map(|q| q.published.len()).unwrap_or(0);
     assert_eq!(set, 7, "ручка не легла в ленту полосы: в наборе {set} вместо семи");
+}
+
+/// Тест 755b (Р.63 п.10): ручка эффекта, правленная у ЭКЗЕМПЛЯРА, меняет
+/// то, что показывает таймлайн.
+///
+/// Владелец: «накинул Radial blur, опубликовал параметр количества,
+/// поменял его на композиции — а оно не меняется». Наблюдаемое следствие,
+/// которое обязано выполняться: ключ превью ленты у этого экземпляра
+/// поехал (иначе на таймлайне он показывает кадры ШАБЛОНА), а у соседа —
+/// нет.
+#[test]
+fn t755b_an_instance_knob_moves_its_preview_key() {
+    use kt_model::*;
+    let (mut h, s) = harness_news_template();
+
+    // внутри ленты на титр — радиальное размытие, ручка «количество»
+    let amount = PubId(60);
+    h.state_mut().enter_nest(s.a);
+    h.step();
+    assert!(h.state_mut().apply(Command::SetFx {
+        id: s.inner,
+        fx: vec![FxInstance::radial_blur()],
+    }));
+    h.step();
+    assert!(
+        h.state_mut().apply(Command::PublishParam {
+            seq: s.seq,
+            param: Box::new(PublishedParam {
+                id: amount,
+                name: "Размытие".into(),
+                target: ParamAddr::new(s.inner, ParamOwner::FxSlot { slot: 0 }, "amount"),
+                ty: ParamType::Num,
+                range: PubRange::default(),
+            }),
+        }),
+        "публикация ручки размытия отвергнута"
+    );
+    h.step();
+    h.state_mut().leave_nest();
+    h.step();
+
+    let keys = h.state_mut().reel_keys();
+    let (ka, kb) = (*keys.get(&s.a).expect("ключ A"), *keys.get(&s.b).expect("ключ B"));
+    assert_eq!(ka, kb, "сцена: до правки оба выпуска делят один ключ превью");
+
+    // правим ручку У ЭКЗЕМПЛЯРА — тем же путём, каким это делает окно
+    h.state_mut().open_fx_editor_head(s.b);
+    h.step();
+    h.step();
+    let win = h.state().fx_editors[0].gesture;
+    assert!(h.state_mut().apply_coalesced(
+        Command::SetOverride {
+            id: s.b,
+            ov: Box::new(Override::value(amount, ParamValue::Num(0.9))),
+        },
+        win
+    ));
+    h.step();
+
+    // ...и это видно: редакция ленты у второго выпуска другая
+    let doc = h.state().model.document();
+    let inst = h.state().model.clip(s.b).cloned().expect("второй выпуск");
+    let r = doc.resolve_reel(Some(s.seq), &inst.overrides);
+    let got = r
+        .clips
+        .iter()
+        .find(|c| same_clip(c.id, s.inner))
+        .and_then(|c| c.fx.first().and_then(|f| f.get_value("amount")));
+    // сравнение с допуском: у слота параметр f32, и 0.9 туда не ложится точно
+    assert!(
+        matches!(got, Some(ParamValue::Num(v)) if (v - 0.9).abs() < 1e-6),
+        "переопределение не доехало до слота эффекта внутри ленты: {got:?}"
+    );
+    let keys = h.state_mut().reel_keys();
+    let (ka2, kb2) = (*keys.get(&s.a).expect("ключ A"), *keys.get(&s.b).expect("ключ B"));
+    assert_eq!(ka2, ka, "шаблонный экземпляр не трогали — его ключ обязан остаться прежним");
+    assert_ne!(
+        ka2, kb2,
+        "ключ превью не поехал: экземпляр показывал бы кадры ШАБЛОНА — ровно \
+         «поменял его на композиции, а оно не меняется»"
+    );
+}
+
+/// Тест 754 (Р.63 п.12): параметры композиции живут ГОЛОВОЙ ПОЛОСЫ, а не
+/// отдельным окном.
+///
+/// Владелец: «достаточно ебануто сделано то, что параметры композиции
+/// открываются в отдельном окне, когда их можно поместить в тот же
+/// fx-chain для удобства. Я ставлю запрет любым агентам порождать
+/// какие-либо дополнительные окна без очевидного смысла». Утверждения —
+/// наблюдаемые: голова есть в полосе, клик по ней выбирает её, форма
+/// рисуется В ОКНЕ FX (её прямоугольники внутри его прямоугольника), а
+/// правка ручки и правка слота в одной сессии дают ОДИН шаг истории.
+#[test]
+fn t754_instance_params_live_in_the_chain_head() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let (mut h, s) = harness_news_template();
+
+    // окно FX экземпляра открывается обычным путём
+    h.state_mut().open_fx_editor(s.b);
+    h.step();
+    h.step();
+    let head = format!("{} {}", crate::icons::PIN, tr(k::pubp::INST_TITLE));
+    assert!(
+        h.query_all_by_label_contains(&head).count() > 0,
+        "головы «Параметры композиции» нет в полосе цепочки экземпляра"
+    );
+
+    // клик по голове выбирает её — и появляются ручки автора
+    h.get_by_label_contains(&head).click();
+    h.step();
+    h.step();
+    assert_eq!(
+        h.state().fx_editors[0].selected.get(&s.b),
+        Some(&crate::widgets::ChainSel::Head),
+        "клик по голове её не выбрал"
+    );
+    for name in ["Заголовок", "Кегль", "Логотип"] {
+        assert!(
+            h.query_all_by_label_contains(name).count() > 0,
+            "ручки «{name}» в голове нет — форма не переехала"
+        );
+    }
+
+    // форма ВНУТРИ окна FX: отдельного окна больше нет
+    let probes = crate::widgets::field_probe::take();
+    let _ = probes;
+    let win = h
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new(("fx", h_clip(&h, s.b)))))
+        .expect("прямоугольник окна FX");
+    let row = h
+        .query_all_by_label_contains("Заголовок")
+        .map(|n| n.rect())
+        .find(|r| r.width() > 0.0)
+        .expect("строка ручки нарисована");
+    assert!(
+        win.expand(2.0).contains_rect(row),
+        "строка ручки нарисована ВНЕ окна FX ({row:?} против {win:?}) — значит \
+         рядом всё-таки живёт своё окно"
+    );
+
+    // ОДИН шаг истории на сессию: ручка и слот правятся общим токеном
+    let token = h.state().fx_editors[0].gesture;
+    let before = h.state().model.undo_depth();
+    assert!(h.state_mut().apply_coalesced(
+        Command::SetOverride {
+            id: s.b,
+            ov: Box::new(Override::value(s.headline, ParamValue::Text("ВТОРОЙ".into()))),
+        },
+        token
+    ));
+    assert!(h.state_mut().apply_coalesced(
+        Command::SetOpacity { id: s.b, opacity: 0.5 },
+        token
+    ));
+    h.step();
+    assert_eq!(
+        h.state().model.undo_depth(),
+        before + 1,
+        "правка ручки и правка события дали РАЗНЫЕ шаги истории: токен окна не общий"
+    );
+}
+
+/// Прямоугольник окна FX ищется по id его якоря — того события, вокруг
+/// которого окно собрано (у A/V-пары это один якорь на обе дорожки).
+fn h_clip(h: &Harness<'_, KtApp>, want: kt_model::ClipId) -> u64 {
+    h.state()
+        .fx_editors
+        .iter()
+        .find(|e| e.members.contains(&want))
+        .map(|e| e.clip.0)
+        .expect("окно FX экземпляра открыто")
 }

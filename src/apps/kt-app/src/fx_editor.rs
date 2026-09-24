@@ -21,6 +21,10 @@ pub struct FxEditor {
     /// можно и сразу все chain в одном окне давать»).
     pub members: Vec<ClipId>,
     pub picker_query: String,
+    /// Строка пикера МЕДИА в голове «Параметры композиции» (Р.63 п.12):
+    /// у ручки типа «медиа» свой поиск, и мешать его с поиском эффектов
+    /// нельзя — это разные списки.
+    pub inst_query: String,
     /// Состояние КАЖДОЙ цепочки на момент открытия — «Отмена» откатывает
     /// всё окно, а не только якорь.
     pub backup: Vec<ChainSnapshot>,
@@ -154,6 +158,7 @@ impl KtApp {
             clip,
             members,
             picker_query: String::new(),
+            inst_query: String::new(),
             backup,
             gen_backup,
             geo_backup,
@@ -214,9 +219,9 @@ impl KtApp {
         // отрисовку окна — `publish_ctx` зовётся на каждый носитель, и
         // клон проекта на строку был бы аллокацией в пути отрисовки.
         let pub_doc = self.model.document();
-        // окно параметров композиции открывается ПОСЛЕ отрисовки: внутри
-        // ui-замыкания `self` занят заимствованием
-        let mut open_inst_params: Option<ClipId> = None;
+        // правки ручек композиции: применяются ПОСЛЕ отрисовки токеном
+        // окна — внутри ui-замыкания `self` занят заимствованием
+        let mut inst_ops: Vec<kt_model::Command> = Vec::new();
         let Some(anchor) = self.model.clip(ed.clip).cloned() else {
             ed.open = false;
             return;
@@ -512,53 +517,49 @@ impl KtApp {
                                 *ed.selected.get(id).unwrap_or(&crate::widgets::ChainSel::Fx(0));
                             // головы нет — выбирать её нечем: у события без
                             // генератора она и не рисуется
-                            if gen_kind.is_none() && sel_slot == crate::widgets::ChainSel::Head {
+                            if gen_kind.is_none()
+                                && !pub_doc.sequence(clip.media).is_some()
+                                && sel_slot == crate::widgets::ChainSel::Head
+                            {
                                 sel_slot = crate::widgets::ChainSel::Fx(0);
                             }
                             if lead_pos0.is_none() && sel_slot == crate::widgets::ChainSel::Lead {
                                 sel_slot = crate::widgets::ChainSel::Fx(0);
                             }
-                            // КРОШКА к параметрам композиции (Р.59, стадия
-                            // 3): у события-ВЛОЖЕНИЯ головы-источника нет,
-                            // но объявленные лентой ручки правятся отсюда
-                            // же — не уходя в контекст-меню (правило 17,
-                            // та же дверь двумя путями).
-                            if pub_doc.sequence(clip.media).is_some() {
-                                let n = pub_doc
-                                    .sequence(clip.media)
-                                    .map(|s| s.published.len())
-                                    .unwrap_or(0);
-                                let r = ui.add_enabled(
-                                    n > 0,
-                                    egui::Button::new(format!(
+                            // ПАРАМЕТРЫ КОМПОЗИЦИИ — ГОЛОВА полосы (Р.63
+                            // п.12), а не своя кнопка и не своё окно:
+                            // «их можно поместить в тот же fx-chain для
+                            // удобства» (владелец). Дверь одна, и она там
+                            // же, где голова генератора.
+                            let is_nest = pub_doc.sequence(clip.media).is_some();
+                            let mut query = std::mem::take(&mut ed.picker_query);
+                            let head_slot = match (gen_kind.as_ref(), is_nest) {
+                                (Some(g), _) => Some(crate::widgets::HeadSlot {
+                                    label: crate::tf!(
+                                        k::genw::HEAD,
+                                        crate::gen_ui::kind_name(g)
+                                    ),
+                                    // выключателя у источника нет: выключенный
+                                    // он оставил бы событие без картинки вовсе
+                                    on: None,
+                                    hint: tr(k::genw::HEAD_HINT),
+                                    color: crate::theme::ACCENT,
+                                }),
+                                // у ЭКЗЕМПЛЯРА ленты источника-генератора
+                                // нет, зато есть объявленные лентой ручки —
+                                // и живут они ровно тут (Р.63 п.12)
+                                (None, true) => Some(crate::widgets::HeadSlot {
+                                    label: format!(
                                         "{} {}",
                                         crate::icons::PIN,
                                         tr(k::pubp::INST_TITLE)
-                                    )),
-                                );
-                                crate::widgets::field_probe::note("pub.fx_crumb", r.rect);
-                                crate::app::hint_into(
-                                    &mut hover_out,
-                                    r.clone(),
-                                    if n > 0 {
-                                        tr(k::pubp::INST_OPEN)
-                                    } else {
-                                        tr(k::pubp::INST_NONE)
-                                    },
-                                );
-                                if r.clicked() {
-                                    open_inst_params = Some(*id);
-                                }
-                            }
-                            let mut query = std::mem::take(&mut ed.picker_query);
-                            let head_slot = gen_kind.as_ref().map(|g| crate::widgets::HeadSlot {
-                                label: crate::tf!(k::genw::HEAD, crate::gen_ui::kind_name(g)),
-                                // выключателя у источника нет: выключенный
-                                // он оставил бы событие без картинки вовсе
-                                on: None,
-                                hint: tr(k::genw::HEAD_HINT),
-                                color: crate::theme::ACCENT,
-                            });
+                                    ),
+                                    on: None,
+                                    hint: tr(k::pubp::INST_OPEN),
+                                    color: crate::theme::ACCENT,
+                                }),
+                                (None, false) => None,
+                            };
                             // спликс ведущего узла на его позицию + перевод
                             // выбора в индексы полосы
                             let (mut fx_s, mut bypass_s, mut auto_s) =
@@ -646,6 +647,34 @@ impl KtApp {
                             auto = auto_s;
                             sel_slot = sel_s;
                             ed.selected.insert(*id, sel_slot);
+                            // ---- ГОЛОВА ЭКЗЕМПЛЯРА: параметры композиции
+                            // (Р.63 п.12) — та же форма, что жила в своём
+                            // окне, в том же окне FX
+                            if sel_slot == crate::widgets::ChainSel::Head && is_nest {
+                                let hc = crate::pubparam::InstHeadCtx {
+                                    doc: &pub_doc,
+                                    inst: &clip,
+                                    seq: clip.media,
+                                    playhead,
+                                    tl_view,
+                                    axis_linked,
+                                };
+                                // вид автоматизации у головы свой; у
+                                // экземпляра ленты генератора не бывает,
+                                // поэтому карта `gen_views` свободна
+                                let view = ed.gen_views.entry(*id).or_default();
+                                let out = crate::app::KtApp::draw_inst_head(
+                                    &hc,
+                                    ui,
+                                    view,
+                                    &mut ed.inst_query,
+                                );
+                                if let Some(t) = out.seek {
+                                    seek = Some(t);
+                                }
+                                axis_req = axis_req.merge_req(&out.axis);
+                                inst_ops.extend(out.ops);
+                            }
                             // ---- ГОЛОВА: форма источника (Р.59) --------
                             if let (crate::widgets::ChainSel::Head, Some(g)) =
                                 (sel_slot, gen_kind.as_mut())
@@ -956,8 +985,8 @@ impl KtApp {
         if let Some(t) = panel_pick {
             self.set_panel_target(t); // цели гасят друг друга (п.363)
         }
-        if let Some(id) = open_inst_params {
-            self.open_inst_params(id);
+        for c in inst_ops {
+            self.apply_coalesced(c, ed.gesture);
         }
         if let Some(h) = hover_out {
             self.hover_hint = Some(h); // подсказка едет в строку состояния

@@ -2287,7 +2287,7 @@ fn t693_every_carrier_draws_its_curves_with_the_one_widget() {
     use crate::i18n::{k, tr};
     use crate::layout_tests::harness_news_template;
     let (mut h, s) = harness_news_template();
-    h.state_mut().open_inst_params(s.b);
+    h.state_mut().open_fx_editor_head(s.b);
     h.step();
     h.step();
     let add = {
