@@ -1,18 +1,18 @@
 ---
 id: F-TL-006
 title: Выключатели дорожки — mute, solo, lock и «скрыть»
-status: кандидат
+status: в-работе
 priority: B
 cost: L
 category: timeline/structure
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: частично
 crates: [kt-model, kt-otio, kt-engine, kt-app]
 invariants: [3, 6, 7, 11]
 ui_rules: [5, 9, 13, 16, 20]
-round: null
+round: Р.62
 point: null
-tests: []
+tests: [t729, t730, t731, t732, t738, t740, t740b, t741, t742, t743, t745, t746]
 depends_on: [F-TL-001]
 trackers: [pitivi, kde-bugzilla, kde-invent, olive, shotcut]
 checked: 2026-09-08

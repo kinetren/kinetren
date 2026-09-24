@@ -33,5 +33,5 @@
 
 ## 5. Финал
 
-- [ ] 5.1 Спеки capability обновлены по делте, `openspec validate --strict`; F-TL-006, F-AUD-004, F-MPH-005, F-CMP-003 → «в-работе» с `round: Р.62`; в design.md audio-render/video-plan — «Отложено: огибающие дорожки, шины/посылы, клиповый режим наложения, пропуск декода заглушённой дорожки».
+- [x] 5.1 Спеки capability обновлены по делте, `openspec validate --strict`; F-TL-006, F-AUD-004, F-MPH-005, F-CMP-003 → «в-работе» с `round: Р.62`; в design.md audio-render/video-plan — «Отложено: огибающие дорожки, шины/посылы, клиповый режим наложения, пропуск декода заглушённой дорожки».
 - [ ] 5.2 `cargo test --workspace`, `cargo clippy --all-targets`, `./src/scripts/finish.sh` — версия в отчёте; коммит стадии.

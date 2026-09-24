@@ -1,7 +1,7 @@
 ---
 id: F-MPH-005
 title: Уровни применения видео-FX в VEGAS и Video Bus Track
-status: кандидат
+status: в-работе
 priority: B
 cost: XL
 category: morpher/analogues
@@ -10,9 +10,9 @@ we_have: частично
 crates: [kt-model, kt-engine, kt-gpu, kt-otio, kt-app]
 invariants: [7, 11]
 ui_rules: [13, 17]
-round: null
+round: Р.62
 point: null
-tests: []
+tests: [t735, t736, t737, t739]
 depends_on: []
 checked: 2026-09-07
 ---

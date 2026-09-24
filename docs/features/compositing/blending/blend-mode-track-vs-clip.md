@@ -1,18 +1,18 @@
 ---
 id: F-CMP-003
 title: Режим наложения — у дорожки или у клипа
-status: принято
+status: в-работе
 priority: B
 cost: M
 category: compositing/blending
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: частично
 crates: [kt-model, kt-engine, kt-gpu, kt-app, kt-otio]
 invariants: [7, 11]
 ui_rules: [9, 13, 17]
-round: null
+round: Р.62
 point: null
-tests: []
+tests: [t737]
 depends_on: [F-MED-004, F-MPH-007]
 trackers: []
 services: []
@@ -111,6 +111,18 @@ opacity)`, а не `blend(below, above × opacity)`: при непрозрачн
 
 CAPABILITY: openspec/specs/video-plan/
 Режим — свойство ДОРОЖКИ на композит её событий («дорожка = неявная лента»): дыра — прозрачность, а не операнд; оси «режим» и «уровень» раздельны и стоят после альфы. Решение владельца Р.62, change `track-object-and-track-fx`.
+
+Сделано в Р.62 B: `BlendMode` живёт на дорожке (`src/libs/kt-model/src/project.rs`),
+формула `out = lerp(below, blend(below, above), α × уровень)` написана ПАРОЙ —
+`blend_over` в `src/libs/kt-engine/src/video.rs` и её зеркало в
+`src/libs/kt-gpu/src/shaders/composite.wgsl` (правятся одним коммитом, как ядра
+переходов). Дорожка со стадией входит в план вложением
+(`src/libs/kt-engine/src/video.rs`, `track_stage_layer`), поэтому «дырка» в событии
+показывает нижнюю дорожку, а не чёрное. Выбор режима — окно дорожки
+(`src/apps/kt-app/src/track_window.rs`), сверка с аналитической формулой и GPU —
+t737 (`src/libs/kt-engine/tests/track_blend.rs`, `src/libs/kt-gpu/tests/parity.rs`).
+Клиповый режим наложения ОТЛОЖЕН: у события уже есть уровень и переходы, и смешивать
+две оси в одном раунде значило бы решать за владельца.
 
 ## Оценка
 

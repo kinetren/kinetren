@@ -333,7 +333,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-AUD-013 | Pitch shift — высота без смены длительности | сделано | B | L | да | `audio/processing/pitch-shift.md` |
 | F-AUT-008 | Связанные параметры: один регулятор двигает пачку | кандидат | B | L | нет | `automation/keyframes/parameter-linking.md` |
 | F-CMP-002 | Словарь переходов: инверсия, узоры, объём | сделано | B | L | да | `compositing/transitions/transition-vocabulary.md` |
-| F-CMP-003 | Режим наложения — у дорожки или у клипа | принято | B | M | нет | `compositing/blending/blend-mode-track-vs-clip.md` |
+| F-CMP-003 | Режим наложения — у дорожки или у клипа | в-работе | B | M | частично | `compositing/blending/blend-mode-track-vs-clip.md` |
 | F-COL-010 | Ручки: сколько лишнего уезжает с монтажом | кандидат | B | L | нет | `collab/handoff/handles.md` |
 | F-COL-016 | Единица занятия — библиотека, бин или секвенция | исследовано | B | L | нет | `collab/claim/lock-granularity.md` |
 | F-COL-033 | Чем адресуется правка: id, тик или родословная | исследовано | B | L | частично | `collab/merge/identity-of-an-edit.md` |
@@ -349,10 +349,10 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-MSK-003 | Track matte — один клип задаёт прозрачность другого | кандидат | B | L | нет | `masks/keying/track-matte.md` |
 | F-PRJ-004 | Пользовательское хранилище между проектами | кандидат | B | L | частично | `project/structure/user-library-outside-the-project.md` |
 | F-SPD-002 | Ретайм-кривая — время как анимируемый параметр | кандидат | B | L | частично | `time/retiming/time-remap-curve.md` |
-| F-TL-006 | Выключатели дорожки — mute, solo, lock и «скрыть» | кандидат | B | L | нет | `timeline/structure/track-solo-mute-lock.md` |
+| F-TL-006 | Выключатели дорожки — mute, solo, lock и «скрыть» | в-работе | B | L | частично | `timeline/structure/track-solo-mute-lock.md` |
 | F-TXT-004 | Дорожка субтитров, SRT/VTT и текстовый монтаж | кандидат | B | L | нет | `titles/subtitles/subtitle-track-and-srt.md` |
 | F-UI-002 | Настраиваемые клавиши и раскладки чужих редакторов | кандидат | B | L | нет | `ui/input/keymap-presets-and-editor.md` |
-| F-AUD-004 | Шины, дорожечные FX, посылы и solo/mute | кандидат | B | XL | нет | `audio/mixing/buses-and-track-fx.md` |
+| F-AUD-004 | Шины, дорожечные FX, посылы и solo/mute | в-работе | B | XL | частично | `audio/mixing/buses-and-track-fx.md` |
 | F-AUT-001 | Безье-ручки у ключевых кадров | кандидат | B | XL | частично | `automation/keyframes/bezier-handles.md` |
 | F-AUT-003 | Огибающая на дорожке | исследовано | B | XL | нет | `automation/keyframes/envelope-lane-on-track.md` |
 | F-AUT-007 | Выражения: свойство, ведомое формулой | принято | B | XL | нет | `automation/keyframes/expressions-and-drivers.md` |
@@ -363,7 +363,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-EXT-003 | Контракт плагина: что чужой код обязан объявить | принято | B | XL | нет | `plugins/hosts/plugin-abi-and-sandbox.md` |
 | F-FX-005 | Физика: движение, которого нет в ключах | исследовано | B | XL | нет | `fx/simulate/physics-and-dynamics.md` |
 | F-MPH-004 | Adjustment Layer в Adobe Premiere | исследовано | B | XL | частично | `morpher/analogues/premiere-adjustment-layer.md` |
-| F-MPH-005 | Уровни применения видео-FX в VEGAS и Video Bus Track | кандидат | B | XL | частично | `morpher/analogues/vegas-video-bus-track.md` |
+| F-MPH-005 | Уровни применения видео-FX в VEGAS и Video Bus Track | в-работе | B | XL | частично | `morpher/analogues/vegas-video-bus-track.md` |
 | F-MPH-007 | Что видит слой на входе — композит снизу или каждый клип | исследовано | B | XL | нет | `morpher/gaps/composite-below-vs-per-clip.md` |
 | F-MPH-008 | Автоматизация (кривые) у самого морфер-слоя | кандидат | B | XL | нет | `morpher/gaps/strength-automation.md` |
 | F-MSK-001 | Маски-формы: безье-контуры и примитивы | кандидат | B | XL | нет | `masks/shapes/bezier-shape-masks.md` |

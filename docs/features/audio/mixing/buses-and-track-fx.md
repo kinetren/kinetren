@@ -1,18 +1,18 @@
 ---
 id: F-AUD-004
 title: Шины, дорожечные FX, посылы и solo/mute
-status: кандидат
+status: в-работе
 priority: B
 cost: XL
 category: audio/mixing
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: частично
 crates: [kt-model, kt-engine, kt-fx, kt-otio, kt-app]
 invariants: [1, 2, 3, 6, 11]
 ui_rules: [13, 17]
-round: null
+round: Р.62
 point: null
-tests: []
+tests: [t732, t732b, t733, t733b, t734, t739, t744]
 depends_on: [F-AUD-002, F-MPH-005]
 checked: 2026-09-07
 ---
