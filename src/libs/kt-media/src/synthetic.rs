@@ -59,6 +59,10 @@ pub struct SyntheticSource {
     pub video_delay: std::time::Duration,
     /// true: кадры за пределами duration → OutOfRange (тест 27: EOF).
     pub video_eof: bool,
+    /// Аудио тоже КОНЧАЕТСЯ на `duration` (Р.63 п.2): настоящий файл за
+    /// своим концом бёрстов не отдаёт, а синтетика по умолчанию тянет
+    /// узор бесконечно — на ней край материала не воспроизвести.
+    pub audio_eof: bool,
     /// Собственная СЕТКА КАДРОВ источника (п.14 р.14). По умолчанию нет:
     /// синтетика отдаёт кадр ровно на запрошенный тик, поэтому на ней
     /// неразличимы floor и ceil и не воспроизводится конверсия частот.
@@ -86,6 +90,7 @@ impl SyntheticSource {
             stats: None,
             video_delay: std::time::Duration::ZERO,
             video_eof: false,
+            audio_eof: false,
             video_fps: None,
         }
     }
@@ -114,6 +119,14 @@ impl SyntheticSource {
     pub fn with_video_fps(mut self, fps: u32) -> Self {
         self.video_fps = Some(fps);
         self.info.fps = Some((fps, 1));
+        self
+    }
+
+    /// Источник с настоящим концом: и видео, и аудио кончаются на
+    /// `duration`, как у файла.
+    pub fn with_eof(mut self) -> SyntheticSource {
+        self.video_eof = true;
+        self.audio_eof = true;
         self
     }
 
@@ -192,8 +205,11 @@ impl MediaSource for SyntheticSource {
                 st.audio_backward_reads.fetch_add(1, Relaxed);
             }
         }
-        let mut burst = AudioBurst::silence(idx);
         let base = idx * AUDIO_BURST_FRAMES as i64;
+        if self.audio_eof && base >= self.info.duration.to_audio_frames() {
+            return Err(MediaError::OutOfRange);
+        }
+        let mut burst = AudioBurst::silence(idx);
         for f in 0..AUDIO_BURST_FRAMES {
             for ch in 0..AUDIO_CHANNELS {
                 burst.data[f * AUDIO_CHANNELS + ch] =

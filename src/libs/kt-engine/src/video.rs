@@ -130,6 +130,13 @@ struct VideoClip {
     /// клипу пол по сетке не ставится: под растяжением он обязан двигаться
     /// НЕПРЕРЫВНО, иначе замедленный титр дёргается покадрово.
     procedural: bool,
+    /// КОНЕЦ МАТЕРИАЛА источника, если он известен (Р.63 п.2). За ним
+    /// кадров не существует, и просить их бессмысленно: событие, которое
+    /// длиннее файла, обязано ДЕРЖАТЬ последний кадр — ровно так же, как
+    /// у начала файла держится первый. Заказ при этом равен чтению
+    /// (инвариант 4): мы просим последний существующий кадр, а не
+    /// несуществующий, который декодер всё равно не отдаст.
+    material_end: Option<Tick>,
 }
 
 // Карта варпа клипа переехала в kt-model (Р.39): конструктор один на
@@ -283,6 +290,12 @@ fn fx_chain_hash(
 /// время монтажа, а не индекс кадра (`clip_inner_tick`).
 fn clip_source_pts(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
     let m = clip_material_pos(c, t, grid);
+    let m = match c.material_end {
+        // за концом материала держим ПОСЛЕДНИЙ кадр (Р.63 п.2): просить
+        // несуществующий значит получить пустой слой и вечный промах
+        Some(end) if end.0 > 0 && m >= end => Tick(end.0 - 1),
+        _ => m,
+    };
     if c.procedural { m } else { grid.align_floor(m) }
 }
 
@@ -740,6 +753,10 @@ pub struct SourceFacts {
     /// Вид кадра источника (натив × пиксельное соотношение, Р.62) — вход
     /// правила приведения. Считается ТЕМ ЖЕ каналом, что нативы.
     pub views: std::collections::HashMap<MediaId, (f64, f64)>,
+    /// ДЛИНА МАТЕРИАЛА (Р.63 п.2) — тем же каналом и по той же причине:
+    /// сколько материала есть, знает только тот, кто источник открыл.
+    /// Её отсутствие — не ноль, а «края нет» (генератор, заглушка).
+    pub lengths: std::collections::HashMap<MediaId, kt_time::Tick>,
 }
 
 impl SourceFacts {
@@ -747,6 +764,11 @@ impl SourceFacts {
     /// решается «процедурный ли он»: разойдись плеер, экспорт и kt-cli в
     /// этом вопросе — заказ и чтение считали бы разные ключи (инвариант 4).
     pub fn observe(&mut self, media: MediaId, info: &kt_media::MediaInfo) {
+        if info.duration.0 > 0 {
+            self.lengths.insert(media, info.duration);
+        } else {
+            self.lengths.remove(&media);
+        }
         if info.has_video {
             self.natives.insert(media, (info.width, info.height));
             self.views.insert(media, info.view_size());
@@ -785,11 +807,7 @@ impl VideoRenderer {
     ) -> VideoRenderer {
         VideoRenderer::new_with_facts(
             project,
-            &SourceFacts {
-                natives: natives.clone(),
-                procedural: Default::default(),
-                views: Default::default(),
-            },
+            &SourceFacts { natives: natives.clone(), ..Default::default() },
         )
     }
 
@@ -979,6 +997,11 @@ impl VideoRenderer {
                     nest_scale: nest.and_then(|(id, _)| nest_scales.get(&id).copied()).unwrap_or(1),
                     nest_fps,
                     procedural,
+                    // у ленты своего материала нет (её кадры считает
+                    // суб-композит), у генератора края не бывает
+                    material_end: (nest.is_none() && !procedural)
+                        .then(|| facts.lengths.get(&addr).copied())
+                        .flatten(),
                 }
             })
             .collect();

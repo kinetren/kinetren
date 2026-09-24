@@ -55,8 +55,7 @@ fn decodes(p: &Project) -> Vec<(u64, (u32, u32))> {
     let facts = SourceFacts {
         natives: std::collections::HashMap::from([(MediaId(1), (1080, 1920))]),
         procedural: Default::default(),
-        views: std::collections::HashMap::from([(MediaId(1), (1080.0, 1920.0))]),
-    };
+        views: std::collections::HashMap::from([(MediaId(1), (1080.0, 1920.0))]), ..Default::default() };
     let vr = VideoRenderer::new_with_facts(p, &facts);
     let mut v: Vec<(u64, (u32, u32))> = vr
         .video_decode_qualities(Quality { width: 1920, height: 1080 })

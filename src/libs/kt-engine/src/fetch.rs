@@ -33,6 +33,23 @@ pub trait AudioFetcher {
     /// бёрста — чистая функция индекса. Поэтому умолчание пустое, и ни
     /// `DirectFetcher`, ни `CacheFetcher` метод не переопределяют.
     fn begin_clip(&mut self, _id: kt_model::ClipId) {}
+
+    /// КОНЕЦ МАТЕРИАЛА этого медиа в кадрах 48 кГц (Р.63 п.2), если он
+    /// существует и известен фетчеру.
+    ///
+    /// Зачем это фетчеру, а не плану. Длина файла — свойство ИСТОЧНИКА
+    /// (закон П), план знает только адрес. Без этого ответа движок не
+    /// отличает «бёрст ещё не декодирован» (настоящее голодание) от «за
+    /// этим адресом материала нет вовсе» — и честная тишина в хвосте
+    /// события, которое длиннее файла, считалась underrun'ами: у
+    /// владельца 180 480 кадров на пять секунд (Р.63 п.2).
+    ///
+    /// `None` — «края нет или он неизвестен»: генератор, заглушка, лента
+    /// (её тишину даёт собственный суб-микс), файл без длительности.
+    /// Тогда поведение прежнее, до единого кадра.
+    fn material_end_frames(&mut self, _media: MediaId) -> Option<i64> {
+        None
+    }
 }
 
 /// Владеет источниками; декодирует на месте, кладёт в кэш (если задан).
@@ -48,6 +65,12 @@ impl DirectFetcher {
 
     pub fn add_source(&mut self, media: MediaId, source: Box<dyn MediaSource>) {
         self.sources.insert(media, source);
+    }
+
+    /// Конец материала по паспорту ОТКРЫТОГО источника (Р.63).
+    fn source_end_frames(&self, media: MediaId) -> Option<i64> {
+        let d = self.sources.get(&media)?.info().duration;
+        (d.0 > 0).then(|| d.to_audio_frames())
     }
 
     pub fn source_mut(&mut self, media: MediaId) -> Option<&mut Box<dyn MediaSource>> {
@@ -69,17 +92,38 @@ impl AudioFetcher for DirectFetcher {
         }
         Some(burst)
     }
+
+    fn material_end_frames(&mut self, media: MediaId) -> Option<i64> {
+        self.source_end_frames(media)
+    }
 }
 
 /// Только кэш. Промах = None; вызывающий подставляет тишину и считает underrun.
 pub struct CacheFetcher {
     cache: Arc<BurstCache>,
     pub misses: AtomicU64,
+    /// Концы материала в КАДРАХ 48 кГц — от того, кто открыл источники
+    /// (Р.63 п.2). Пусто — прежнее поведение до единого кадра.
+    ends: std::collections::HashMap<MediaId, i64>,
 }
 
 impl CacheFetcher {
     pub fn new(cache: Arc<BurstCache>) -> CacheFetcher {
-        CacheFetcher { cache, misses: AtomicU64::new(0) }
+        CacheFetcher { cache, misses: AtomicU64::new(0), ends: Default::default() }
+    }
+
+    /// Тот же фетчер, но знающий длины материала (плеер, экспорт, probe).
+    pub fn with_lengths(
+        cache: Arc<BurstCache>,
+        lengths: &std::collections::HashMap<MediaId, kt_time::Tick>,
+    ) -> CacheFetcher {
+        let mut f = CacheFetcher::new(cache);
+        f.ends = lengths
+            .iter()
+            .filter(|(_, d)| d.0 > 0)
+            .map(|(m, d)| (*m, d.to_audio_frames()))
+            .collect();
+        f
     }
 
     pub fn miss_count(&self) -> u64 {
@@ -88,6 +132,10 @@ impl CacheFetcher {
 }
 
 impl AudioFetcher for CacheFetcher {
+    fn material_end_frames(&mut self, media: MediaId) -> Option<i64> {
+        self.ends.get(&media).copied()
+    }
+
     fn audio_burst(&mut self, media: MediaId, idx: i64) -> Option<Arc<AudioBurst>> {
         let hit = self.cache.get_audio(source_id(media), idx);
         if hit.is_none() {

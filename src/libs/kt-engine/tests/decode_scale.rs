@@ -419,8 +419,7 @@ fn t714_order_equals_read_on_every_conform_rule() {
     let facts = kt_engine::SourceFacts {
         natives: natives(1080, 1920),
         procedural: Default::default(),
-        views: std::collections::HashMap::from([(MediaId(1), (1080.0, 1920.0))]),
-    };
+        views: std::collections::HashMap::from([(MediaId(1), (1080.0, 1920.0))]), ..Default::default() };
     let mut vr = kt_engine::VideoRenderer::new_with_facts(&p, &facts);
     assert_eq!(vr.layers_at(Tick(STEP), q).len(), 4);
     let want = [(608, 1080), (1920, 3412), (1080, 1920), (1920, 1080)];

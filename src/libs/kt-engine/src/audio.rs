@@ -1027,6 +1027,9 @@ impl AudioRenderer {
             let mut f = from;
             let mut cursor: Option<(i64, Arc<AudioBurst>)> = None; // (burst idx, data)
             let clip_len = clip.end - clip.start;
+            // КОНЕЦ МАТЕРИАЛА (Р.63 п.2) — такой же край, как его начало
+            // выше: за ним источника нет, и молчание там не голодание.
+            let material_end = fetcher.material_end_frames(clip.media);
             while f < to {
                 // реверс: локальный кадр k читает источник с конца (п.16);
                 // local за телом («ручки» перехода, п.136) продолжает
@@ -1044,6 +1047,14 @@ impl AudioRenderer {
                         break; // src дальше только убывает
                     }
                     f += (-src).min(to - f);
+                    continue;
+                }
+                // и ПРАВЕЕ конца материала — ровно так же (Р.63 п.2)
+                if material_end.is_some_and(|end| src >= end) {
+                    if !clip.reversed {
+                        break; // src дальше только растёт
+                    }
+                    f += 1;
                     continue;
                 }
                 let bidx = src.div_euclid(AUDIO_BURST_FRAMES as i64);
@@ -1550,6 +1561,10 @@ fn fill_source_linear(
 ) -> bool {
     dst.fill(0.0);
     let SrcWindow { start: win_start, end: window_end, mirror_end, .. } = window;
+    // КОНЕЦ МАТЕРИАЛА (Р.63 п.2): за ним источника нет вовсе, и молчание
+    // там — не голодание, а факт. Спрашиваем ОДИН раз на вызов: у
+    // фетчера это карта, а не чтение.
+    let material_end = fetcher.material_end_frames(media);
     let frames = (dst.len() / AUDIO_CHANNELS) as i64;
     let mut f = 0i64;
     while f < frames {
@@ -1573,6 +1588,12 @@ fn fill_source_linear(
         } else {
             (AUDIO_BURST_FRAMES as i64 - within).min(frames - f).min(window_end - virt)
         };
+        // за краем материала — тишина БЕЗ underrun'а: промах есть промах
+        // ТОГО, ЧТО СУЩЕСТВУЕТ (Р.63 п.2)
+        if material_end.is_some_and(|end| src >= end) {
+            f += take;
+            continue;
+        }
         match fetcher.audio_burst(media, bidx) {
             Some(b) => {
                 let d0 = (f as usize) * AUDIO_CHANNELS;
@@ -1617,6 +1638,10 @@ fn fill_source_signed(
 ) -> bool {
     dst.fill(0.0);
     let SrcWindow { start: win_start, end: window_end, mirror_end, .. } = window;
+    // КОНЕЦ МАТЕРИАЛА (Р.63 п.2): за ним источника нет вовсе, и молчание
+    // там — не голодание, а факт. Спрашиваем ОДИН раз на вызов: у
+    // фетчера это карта, а не чтение.
+    let material_end = fetcher.material_end_frames(media);
     let frames = (dst.len() / AUDIO_CHANNELS) as i64;
     let mut f = 0i64;
     while f < frames {
@@ -1650,6 +1675,12 @@ fn fill_source_signed(
         let room = if dir < 0 { within + 1 } else { AUDIO_BURST_FRAMES as i64 - within };
         let take =
             room.min(frames - f).min(window_end - virt).min(run_end - (virt - win_start)).max(1);
+        // за краем материала — тишина БЕЗ underrun'а: промах есть промах
+        // ТОГО, ЧТО СУЩЕСТВУЕТ (Р.63 п.2)
+        if material_end.is_some_and(|end| src >= end) {
+            f += take;
+            continue;
+        }
         match fetcher.audio_burst(media, bidx) {
             Some(b) => {
                 let d0 = (f as usize) * AUDIO_CHANNELS;

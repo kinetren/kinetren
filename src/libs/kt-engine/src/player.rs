@@ -256,6 +256,7 @@ impl Player {
             let master_gain = master_gain.clone();
             let loop_region = loop_region.clone();
             let flight_r = flight.clone();
+            let natives_r = natives.clone();
             std::thread::Builder::new()
                 .name("audio-render".into())
                 .spawn(move || {
@@ -275,6 +276,7 @@ impl Player {
                         master_gain,
                         loop_region,
                         flight: flight_r,
+                        natives: natives_r,
                     })
                 })
                 .expect("spawn audio render")
@@ -913,6 +915,10 @@ struct RenderCtx {
     master_gain: Arc<AtomicU32>,
     loop_region: Arc<Mutex<Option<(i64, i64)>>>,
     flight: Arc<crate::flight::FlightRecorder>,
+    /// Факты открытых источников: из них render-поток берёт КОНЕЦ
+    /// МАТЕРИАЛА (Р.63 п.2) — без него честная тишина за концом файла
+    /// считается голоданием.
+    natives: Natives,
 }
 
 /// Карта воркеров: RwLock, чтобы add_media/remove_media добавляли декодеры
@@ -942,11 +948,13 @@ fn audio_render_loop(ctx: RenderCtx) {
         master_gain,
         loop_region,
         flight,
+        natives,
     } = ctx;
     let mut store = FxStateStore::new();
     let mut renderer = AudioRenderer::new(&project.lock().unwrap().clone());
     renderer.sync_fx(&mut store);
-    let mut fetcher = CacheFetcher::new(cache.clone());
+    let mut fetcher = CacheFetcher::with_lengths(cache.clone(), &natives.read().unwrap().lengths);
+    let mut fetcher_facts = natives.read().unwrap().lengths.len();
     // локальная позиция рендера (кадры); может опережать playhead на кольцо
     let mut render_head: i64 = transport.playhead_frames();
     let mut last_generation = transport.generation();
@@ -970,6 +978,17 @@ fn audio_render_loop(ctx: RenderCtx) {
         if dirty.swap(false, Ordering::AcqRel) {
             renderer = AudioRenderer::new(&project.lock().unwrap().clone());
             renderer.sync_fx(&mut store); // state переживает пересборку (инв. №3)
+        }
+        // Источник мог появиться ПОСЛЕ старта потока (открытие проекта,
+        // возврат пропавшего файла): концы материала у фетчера надо
+        // обновить, иначе хвост нового медиа снова считался бы
+        // голоданием. Проверка дешёвая — длина карты под RwLock.
+        {
+            let facts = natives.read().unwrap();
+            if facts.lengths.len() != fetcher_facts {
+                fetcher_facts = facts.lengths.len();
+                fetcher = CacheFetcher::with_lengths(cache.clone(), &facts.lengths);
+            }
         }
         let generation = transport.generation();
         let generation_changed = generation != last_generation;
