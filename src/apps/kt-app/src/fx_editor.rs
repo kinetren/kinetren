@@ -36,6 +36,11 @@ pub struct FxEditor {
     /// Ведущий узел «Геометрия» на момент открытия (Р.62): «Отмена»
     /// возвращает и его — он часть той же полосы.
     pub geo_backup: Vec<(ClipId, kt_model::EventGeometry, usize, Vec<kt_model::ParamCurve>)>,
+    /// Переопределения экземпляра ленты на момент открытия (Р.63 п.12):
+    /// «Параметры композиции» переехали ГОЛОВОЙ в это окно, значит и
+    /// «Отмена» обязана возвращать их — иначе окно откатывает половину
+    /// своей же сессии (тот же довод, что у генератора и геометрии).
+    pub ov_backup: Vec<(ClipId, Vec<kt_model::Override>)>,
     pub gesture: u64,
     /// Что выбрано в каждой цепочке: слот эффекта или приколотая голова.
     pub selected: std::collections::HashMap<ClipId, crate::widgets::ChainSel>,
@@ -140,6 +145,11 @@ impl KtApp {
             .filter_map(|id| self.model.clip(*id))
             .map(|m| (m.id, m.geometry, m.geometry_pos, m.geometry_auto.clone()))
             .collect();
+        let ov_backup = members
+            .iter()
+            .filter_map(|id| self.model.clip(*id))
+            .map(|m| (m.id, m.overrides.clone()))
+            .collect();
         // у события-генератора с пустой цепочкой выбирать нечего, кроме
         // головы: `Fx(0)` на пустой цепочке показал бы пустоту. У
         // ЭКЗЕМПЛЯРА ленты голова — «Параметры композиции» (Р.63 п.12), и
@@ -166,6 +176,7 @@ impl KtApp {
             backup,
             gen_backup,
             geo_backup,
+            ov_backup,
             gesture: self.gesture_counter,
             selected,
             auto_views: std::collections::HashMap::new(),
@@ -1040,6 +1051,27 @@ impl KtApp {
                     continue;
                 }
                 self.apply_coalesced(Command::SetGeometry { id, geometry, pos, auto }, ed.gesture);
+            }
+            // ...и РУЧКИ КОМПОЗИЦИИ из головы полосы (Р.63 п.12)
+            for (id, was) in ed.ov_backup.clone() {
+                let now = self.model.clip(id).map(|c| c.overrides.clone()).unwrap_or_default();
+                if now == was {
+                    continue;
+                }
+                for o in &now {
+                    if !was.iter().any(|b| b.pub_id == o.pub_id) {
+                        self.apply_coalesced(
+                            Command::ClearOverride { id, pub_id: o.pub_id },
+                            ed.gesture,
+                        );
+                    }
+                }
+                for b in was {
+                    self.apply_coalesced(
+                        Command::SetOverride { id, ov: Box::new(b) },
+                        ed.gesture,
+                    );
+                }
             }
             return;
         }
