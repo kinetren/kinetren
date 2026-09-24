@@ -38,5 +38,5 @@
 
 ## 6. Финал
 
-- [ ] 6.1 Спеки capability обновлены по делте, `openspec validate --all --strict`; в design.md compositions/automation/ui-reach снят пункт «Отложено» про публикацию перехода/камеры из полосы; в audio-render/design.md — «Пересмотр: дакинг-снимок → живой сайдчейн следующим change (решение владельца Р.63)».
+- [x] 6.1 Спеки capability обновлены по делте, `openspec validate --all --strict`; в design.md compositions/automation/ui-reach снят пункт «Отложено» про публикацию перехода/камеры из полосы; в audio-render/design.md — «Пересмотр: дакинг-снимок → живой сайдчейн следующим change (решение владельца Р.63)».
 - [ ] 6.2 `cargo test --workspace` (покрейтно при SIGBUS-флаке kt-app — см. задачу из Р.62), `cargo clippy --all-targets`, `./scripts/live-check.sh` (все сценарии, включая новые `oldfile.py`, `formula.py`, `seekjump.py`), `./src/scripts/finish.sh` — версия в отчёте; коммит стадии; открыть `untitled_v26.09.19.otio` и `paintitblack.otio` владельца собранным kt-app и сказать в отчёте, что видно.
