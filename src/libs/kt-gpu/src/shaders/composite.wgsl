@@ -4,7 +4,8 @@
 // блендингом (множитель (1−sa)·da), поэтому ping-pong двух аккумуляторов.
 // T0 = acc_in, T1 = слой A, T2 = слой B (dissolve).
 // u0 = (mode, alpha_k, a_has_alpha, b_has_alpha);
-// u1 = (first, k, 0, 0). mode: 0 direct, 1 scaled, 2 dissolve.
+// u1 = (first, k | номер режима наложения, mix_mode, clear).
+// mode: 0 direct, 1 scaled, 2 dissolve, 3 сольный фейд, 4 наложение (Р.62).
 
 fn over(dst: vec4<u32>, src: vec4<u32>) -> vec4<u32> {
     let sa = src.a;
@@ -15,6 +16,44 @@ fn over(dst: vec4<u32>, src: vec4<u32>) -> vec4<u32> {
     let rgb = min((src.rgb * sa + dst.rgb * inv * da / 255u) / 255u, vec3<u32>(255u));
     let a = min(sa + da * inv / 255u, 255u);
     return vec4<u32>(rgb, a);
+}
+
+// РЕЖИМ НАЛОЖЕНИЯ дорожки (Р.62, F-CMP-003) — ЗЕРКАЛО `blend_ch` из
+// kt-engine/src/video.rs. Правится ТЕМ ЖЕ КОММИТОМ, что CPU-ядро
+// (инвариант 7): расхождение = превью и экспорт показывают разное.
+fn blend_ch(mode: u32, b: f32, a: f32) -> f32 {
+    if (mode == 1u) { return b * a; }                       // multiply
+    if (mode == 2u) { return b + a - b * a; }               // screen
+    if (mode == 3u) { return min(b + a, 1.0); }             // add
+    if (mode == 4u) { return max(b - a, 0.0); }             // subtract
+    if (mode == 5u) { return min(b, a); }                   // darken
+    if (mode == 6u) { return max(b, a); }                   // lighten
+    if (mode == 7u) {                                       // overlay
+        if (b <= 0.5) { return 2.0 * b * a; }
+        return 1.0 - 2.0 * (1.0 - b) * (1.0 - a);
+    }
+    if (mode == 8u) { return abs(b - a); }                  // difference
+    return a;                                               // normal
+}
+
+// out = lerp(below, blend(below, above), a_above × уровень). Уровень и
+// режим — РАЗНЫЕ оси, обе после альфы; дыра (a = 0) оставляет низ как был.
+fn blend_over(dst: vec4<u32>, src: vec4<u32>, blend_mode: u32, has_alpha: u32, level_k: u32) -> vec4<u32> {
+    var sa = 1.0;
+    if (has_alpha == 1u) { sa = f32(src.a) / 255.0; }
+    let k = sa * (f32(level_k) / 4096.0);
+    if (k <= 0.0) { return dst; }
+    var rgb = vec3<f32>(0.0);
+    for (var ch = 0u; ch < 3u; ch = ch + 1u) {
+        let b = f32(dst[ch]) / 255.0;
+        let a = f32(src[ch]) / 255.0;
+        let m = clamp(blend_ch(blend_mode, b, a), 0.0, 1.0);
+        rgb[ch] = b + (m - b) * k;
+    }
+    let da = f32(dst.a) / 255.0;
+    let oa = k + da * (1.0 - k);
+    let c = clamp(floor(vec4<f32>(rgb * 255.0 + 0.5, oa * 255.0 + 0.5)), vec4<f32>(0.0), vec4<f32>(255.0));
+    return vec4<u32>(c);
 }
 
 // scale_alpha_into: копия RGB, альфа ×k/4096 с округлением (+2048>>12);
@@ -587,6 +626,11 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     }
     if (mode == 1u) {
         return over(dst, scale_into(a, alpha_k, a_has));
+    }
+    if (mode == 4u) {
+        // РЕЖИМ НАЛОЖЕНИЯ дорожки (Р.62): номер режима приезжает в u1.y —
+        // фейда при наложении не бывает, и слот свободен по построению
+        return blend_over(dst, a, P.u1.y, a_has, alpha_k);
     }
     let od = out_dims();
     let uv = (vec2<f32>(pos.xy)) / od;

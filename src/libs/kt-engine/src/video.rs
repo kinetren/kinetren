@@ -18,6 +18,25 @@ use kt_time::{FpsGrid, Tick};
 
 use crate::video_plan::{Cam3d, FramePlan, LayerSrc, PlanLayer};
 
+/// СТАДИЯ ВИДЕОДОРОЖКИ (Р.62, change B): дорожка с цепочкой, уровнем ≠ 1
+/// или режимом наложения ≠ Normal входит в план ОДНИМ слоем-вложением —
+/// композит её событий (переходы, перекрытия, фейды, уровни событий
+/// внутри), затем цепочка дорожки, затем альфа × уровень и наложение вниз
+/// выбранным режимом. Дорожка без этого расплющивается в слои как прежде,
+/// байт-в-байт (на этом стоит GOLDEN_VIDEO).
+#[derive(Debug, Clone)]
+struct VideoTrackStage {
+    id: kt_model::TrackId,
+    lane: u32,
+    fx: Vec<kt_model::FxInstance>,
+    opacity: f64,
+    blend: kt_model::BlendMode,
+    /// Редакция стадии: содержимое дорожки, её цепочка и свойства. Ключ
+    /// мемоизации суб-композита — без него правка внутри отдавала бы
+    /// стейл (та же беда, что у ленты, п.409).
+    content: u64,
+}
+
 #[derive(Debug, Clone)]
 struct VideoClip {
     /// Дорожка ЗАГЛУШЕНА (mute либо не в соло-множестве, Р.62): слой в
@@ -355,6 +374,8 @@ pub struct VideoRenderer {
     /// корнем: правка модели пересоздаёт рендерер целиком, и стейл-узлов
     /// не бывает по построению.
     nests: std::collections::HashMap<NestKey, VideoRenderer>,
+    /// Стадии видеодорожек (Р.62). Пусто — ни одной лишней ветки в плане.
+    stages: Vec<VideoTrackStage>,
 }
 
 /// Кадр(ы) источника для момента `t`: основной и, в режиме «смешивание»,
@@ -823,6 +844,31 @@ impl VideoRenderer {
             None => &project.tracks,
         };
         let solo_on = tracks.iter().any(|t| t.kind == kt_model::LaneKind::Video && t.solo);
+        // СТАДИИ ВИДЕОДОРОЖЕК (Р.62): цепочка, уровень ≠ 1 или режим ≠
+        // Normal. Условие СТРОГОЕ: без него дорожка расплющивается в слои
+        // прежним путём, и байты не двигаются.
+        let stages: Vec<VideoTrackStage> = {
+            let mut out = Vec::new();
+            let mut lane = 0u32;
+            for t in tracks.iter().filter(|t| t.kind == kt_model::LaneKind::Video) {
+                if t.needs_video_stage() {
+                    let mut h = xxhash_rust::xxh3::Xxh3::new();
+                    h.update(format!("{:?}", t.active_fx()).as_bytes());
+                    h.update(&t.opacity.to_le_bytes());
+                    h.update(&[t.blend as u8]);
+                    out.push(VideoTrackStage {
+                        id: t.id,
+                        lane,
+                        fx: t.active_fx(),
+                        opacity: t.opacity,
+                        blend: t.blend,
+                        content: h.digest(),
+                    });
+                }
+                lane += 1;
+            }
+            out
+        };
         let silent_lane = |lane: u32| -> bool {
             kt_model::track_index(tracks, kt_model::LaneKind::Video, lane)
                 .map(|i| &tracks[i])
@@ -1034,6 +1080,7 @@ impl VideoRenderer {
             cameras: resolved.cameras.to_vec(),
             project_size: (project.settings.width, project.settings.height),
             nests,
+            stages,
         }
     }
 
@@ -1301,6 +1348,7 @@ impl VideoRenderer {
             cameras: &self.cameras,
             project_size: self.project_size,
             nests: &self.nests,
+            stages: &self.stages,
             memoize: true,
             blend_footage: false,
         };
@@ -1322,6 +1370,7 @@ impl VideoRenderer {
             cameras: &self.cameras,
             project_size: self.project_size,
             nests: &self.nests,
+            stages: &self.stages,
             memoize: false,
             blend_footage: false,
         };
@@ -1388,6 +1437,7 @@ impl VideoRenderer {
             cameras: &self.cameras,
             project_size: self.project_size,
             nests: &self.nests,
+            stages: &self.stages,
             memoize: true,
             blend_footage: false,
         };
@@ -1402,6 +1452,9 @@ struct PlanCtx<'a> {
     project_size: (u32, u32),
     /// Рендереры вложенных лент — из них строятся суб-планы (Р.50).
     nests: &'a std::collections::HashMap<NestKey, VideoRenderer>,
+    /// Стадии видеодорожек (Р.62). В СУБ-плане самой стадии пусто —
+    /// иначе она собирала бы себя бесконечно.
+    stages: &'a [VideoTrackStage],
     /// Мемоизировать ли пост-FX: наследуется ВНИЗ. Иначе суб-композиты
     /// вытеснят ещё не использованные пре-кадры соседних слоёв из
     /// 192-мегабайтного бюджета экспорта — дословно регрессия Р.31 п.4.
@@ -1566,6 +1619,7 @@ fn layer_src<'a>(
                 cameras: &sub.cameras,
                 project_size: sub.project_size,
                 nests: &sub.nests,
+                stages: &sub.stages,
                 memoize: ctx.memoize,
                 blend_footage: blend,
             };
@@ -1603,8 +1657,73 @@ fn layer_src<'a>(
         u,
         cam3d,
         blend,
+        blend_mode: kt_model::BlendMode::Normal,
         lead: clip.lead,
     }
+}
+
+/// СЛОЙ-ВЛОЖЕНИЕ ДОРОЖКИ (Р.62, change B): композит её событий тем же
+/// кодом, что у ленты, затем цепочка дорожки, затем альфа × уровень и
+/// наложение вниз выбранным режимом.
+///
+/// Растр и время — РОДИТЕЛЬСКИЕ (у дорожки нет ни своих настроек, ни
+/// своего нуля), ступень — максимум по её событиям: суб-план собирается
+/// в том же Quality, в котором собрался бы плоский слой.
+fn track_stage_layer<'a>(
+    st: &'a VideoTrackStage,
+    clips: &'a [VideoClip],
+    ctx: &PlanCtx<'a>,
+    cache: &BurstCache,
+    t: Tick,
+    quality: Quality,
+    memoize: bool,
+) -> PlanLayer<'a> {
+    // суб-план СВОИХ событий: внутри — переходы, перекрытия, фейды и
+    // уровни событий, ровно как у ленты
+    let sub_ctx = PlanCtx {
+        grid: ctx.grid,
+        cameras: ctx.cameras,
+        project_size: ctx.project_size,
+        nests: ctx.nests,
+        memoize: ctx.memoize,
+        blend_footage: ctx.blend_footage,
+        // стадия НЕ собирает саму себя
+        stages: &[],
+    };
+    let plan = build_plan(clips, &sub_ctx, cache, t, quality, memoize);
+    // редакция суб-композита: свойства дорожки плюс содержимое её событий
+    let mut h = xxhash_rust::xxh3::Xxh3::new();
+    h.update(&st.content.to_le_bytes());
+    for c in clips {
+        h.update(&c.fx_hash.to_le_bytes());
+        h.update(&c.content.to_le_bytes());
+        h.update(&c.start.0.to_le_bytes());
+        h.update(&c.end.0.to_le_bytes());
+    }
+    let src = LayerSrc {
+        source: nest_source_id(kt_model::track_source_media(st.id)),
+        cache_idx: t.0,
+        content: h.digest(),
+        src_scale: 1,
+        input: crate::video_plan::LayerInput::Nest(Box::new(crate::video_plan::NestSrc {
+            seq: kt_model::track_source_media(st.id),
+            content_hash: h.digest(),
+            inner_t: t,
+            blend: ctx.blend_footage,
+            nest_scale: 1,
+            plan,
+        })),
+        fx: std::borrow::Cow::Borrowed(&st.fx),
+        fx_hash: st.content,
+        u: 0.0,
+        cam3d: None,
+        blend: None,
+        blend_mode: st.blend,
+        lead: None,
+    };
+    // уровень дорожки — альфа композита; режим — отдельная ось
+    let alpha_k = ((st.opacity.clamp(0.0, 1.0) * 4096.0).round() as u32).min(4096);
+    PlanLayer::One { src, alpha_k, scale_alpha: alpha_k < 4096, fade: None }
 }
 
 /// Построение плана кадра: какие слои, в каких ролях и с какими весами.
@@ -1619,10 +1738,28 @@ fn build_plan<'a>(
     memoize_postfx: bool,
 ) -> FramePlan<'a> {
     let mut layers = Vec::new();
+    // СТАДИИ ДОРОЖЕК (Р.62): дорожка со стадией даёт ОДИН слой на месте
+    // своей первой строки — её события в плоские слои не идут.
+    let mut staged_done: Vec<u32> = Vec::new();
     for (i, clip) in clips.iter().enumerate() {
         // заглушённая дорожка в композит не идёт; её ЗАКАЗ при этом
         // остаётся (`layers_at_into`/`wanted_frames` флага не смотрят)
         if !clip.active_at(t) || clip.silent {
+            continue;
+        }
+        if let Some(st) = ctx.stages.iter().find(|s| s.lane == clip.lane) {
+            if staged_done.contains(&st.lane) {
+                continue;
+            }
+            staged_done.push(st.lane);
+            let lane_clips: &[VideoClip] = {
+                // события дорожки лежат подряд: список отсортирован по
+                // (Reverse(lane), start)
+                let from = clips.iter().position(|c| c.lane == st.lane).unwrap_or(i);
+                let to = clips[from..].iter().position(|c| c.lane != st.lane).map(|n| from + n);
+                &clips[from..to.unwrap_or(clips.len())]
+            };
+            layers.push(track_stage_layer(st, lane_clips, ctx, cache, t, quality, memoize_postfx));
             continue;
         }
         // фейд у края/Gap: пары нет по модели, слой всегда идёт через
@@ -1726,7 +1863,14 @@ fn execute_plan_cpu(
                     &mut complete,
                 ) {
                     Some(f) if fits(&f) => {
-                        if let Some(sf) = fade {
+                        // РЕЖИМ НАЛОЖЕНИЯ ДОРОЖКИ (Р.62): уровень и режим —
+                        // разные оси, обе после альфы, поэтому уровень
+                        // отдаётся ядру, а не размазывается по альфе.
+                        // Normal сюда не заходит: у него прежний путь
+                        // байт-в-байт (GOLDEN_VIDEO).
+                        if src.blend_mode != kt_model::BlendMode::Normal {
+                            blend_over(out, &f.rgba, f.has_alpha, w * h, src.blend_mode, *alpha_k);
+                        } else if let Some(sf) = fade {
                             // сольный фейд с видом: вторая сторона — пустота
                             let (fa, fb) =
                                 if sf.incoming { (None, Some(&*f)) } else { (Some(&*f), None) };
@@ -2524,6 +2668,71 @@ fn dissolve_into(
 }
 
 /// dst = src OVER dst (straight alpha). Непрозрачный src — просто копия.
+/// ФОРМУЛА РЕЖИМА НАЛОЖЕНИЯ (Р.62, F-CMP-003) для ОДНОГО канала, в
+/// долях 0..1. Зеркало — `blend_ch` в `kt-gpu/src/shaders/composite.wgsl`;
+/// файлы правятся ОДНИМ коммитом (инвариант 7, сторож — конформанс).
+pub fn blend_ch(mode: kt_model::BlendMode, b: f64, a: f64) -> f64 {
+    use kt_model::BlendMode as M;
+    match mode {
+        M::Normal => a,
+        M::Multiply => b * a,
+        M::Screen => b + a - b * a,
+        M::Add => (b + a).min(1.0),
+        M::Subtract => (b - a).max(0.0),
+        M::Darken => b.min(a),
+        M::Lighten => b.max(a),
+        // классический overlay: тёмная половина умножает, светлая — экран
+        M::Overlay => {
+            if b <= 0.5 {
+                2.0 * b * a
+            } else {
+                1.0 - 2.0 * (1.0 - b) * (1.0 - a)
+            }
+        }
+        M::Difference => (b - a).abs(),
+    }
+}
+
+/// НАЛОЖЕНИЕ КОМПОЗИТА ДОРОЖКИ на слои ниже (Р.62):
+/// `out = lerp(below, blend(below, above), α_above × уровень)`.
+///
+/// Две оси РАЗДЕЛЬНЫ и обе стоят ПОСЛЕ альфы: уровень 0.5 даёт половину
+/// пути к результату РЕЖИМА, а не режим над полупрозрачным слоем. Дыра в
+/// композите дорожки (α = 0) — прозрачность, а не операнд: там остаётся
+/// нижний слой нетронутым (обход ловушки Vegas, F-CMP-003).
+///
+/// `Normal` сюда не заходит вовсе — он остаётся прежним `alpha_over`
+/// байт-в-байт (на нём стоит GOLDEN_VIDEO).
+fn blend_over(
+    dst: &mut [u8],
+    src: &[u8],
+    has_alpha: bool,
+    pixels: usize,
+    mode: kt_model::BlendMode,
+    level_k: u32,
+) {
+    let pixels_avail = pixels.min(src.len() / 4).min(dst.len() / 4);
+    for p in 0..pixels_avail {
+        let i = p * 4;
+        let sa = if has_alpha { src[i + 3] as f64 / 255.0 } else { 1.0 };
+        let k = sa * (level_k as f64 / 4096.0);
+        if k <= 0.0 {
+            continue;
+        }
+        for ch in 0..3 {
+            let b = dst[i + ch] as f64 / 255.0;
+            let a = src[i + ch] as f64 / 255.0;
+            let m = blend_ch(mode, b, a).clamp(0.0, 1.0);
+            let v = b + (m - b) * k;
+            dst[i + ch] = (v * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+        }
+        // альфа результата — как у «over»: дыра сверху нижний слой не трогает
+        let da = dst[i + 3] as f64 / 255.0;
+        let out_a = k + da * (1.0 - k);
+        dst[i + 3] = (out_a * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+    }
+}
+
 fn alpha_over(dst: &mut [u8], src: &[u8], has_alpha: bool, pixels: usize) {
     let n = pixels * 4;
     if !has_alpha {

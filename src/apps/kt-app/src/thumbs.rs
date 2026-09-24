@@ -291,6 +291,7 @@ impl ThumbService {
 
     /// Сколько заказов ждёт воркера — сторожу «скролл/зум не заказывает
     /// декод» (инвариант 8, t719).
+    #[cfg(test)]
     pub(crate) fn requested_total(&self) -> usize {
         self.shared.requests.load(std::sync::atomic::Ordering::Relaxed)
     }

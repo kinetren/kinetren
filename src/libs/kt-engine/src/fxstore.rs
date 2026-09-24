@@ -4,13 +4,20 @@
 //! уничтожает состояние: та же структура цепочки → тот же процессор,
 //! параметры доезжают сглаженно (дефекты b, f старого движка).
 
-use kt_fx::{ClipProcessor, chain_fingerprint};
-use kt_model::{ClipId, FxInstance};
+use kt_fx::{ClipProcessor, TrackProcessor, chain_fingerprint};
+use kt_model::{ClipId, FxInstance, TrackId};
 use std::collections::HashMap;
 
 #[derive(Default)]
 pub struct FxStateStore {
     map: HashMap<ClipId, ClipProcessor>,
+    /// Цепочки ДОРОЖЕК (Р.62, change B). Ключ — `TrackId`, а не «(вид,
+    /// номер)»: номер — это ранг строки, и вставка дорожки выше
+    /// перенумеровала бы соседей, то есть убила бы их состояние
+    /// (инвариант 3). Отдельная карта вместо составного ключа: у дорожки
+    /// и у события разные процессоры, и `HashMap` по enum-ключу стоил бы
+    /// ветки на каждом обращении ради одного и того же.
+    tracks: HashMap<TrackId, TrackProcessor>,
     /// Потоки суб-микса вложенных лент (Р.50 Б4, ключ исправлен в Р.55 С4).
     ///
     /// Ключ — адрес ЭКЗЕМПЛЯРА, а не ленты. Лента, поставленная в пяти
@@ -170,9 +177,42 @@ impl FxStateStore {
         }
     }
 
+    /// Синхронизировать процессор ДОРОЖКИ с моделью — тем же правилом,
+    /// что у события: структура цепочки та же → состояние живёт, значения
+    /// доезжают сглаженно; сменилась (в том числе окно упреждения или
+    /// движок питча) → пересборка; цепочка пуста → процессор не нужен.
+    pub fn sync_track(&mut self, id: TrackId, fx: &[FxInstance], opts: kt_fx::ChainOpts) {
+        if fx.is_empty() {
+            self.tracks.remove(&id);
+            return;
+        }
+        let fp = chain_fingerprint(fx);
+        let empty = kt_fx::AutoProfiles::default();
+        match self.tracks.get_mut(&id) {
+            Some(p) if p.fingerprint() == fp => {
+                p.apply_params(fx, false);
+                if p.lookahead_frames() != kt_fx::chain_lookahead(fx, &empty) {
+                    self.tracks.insert(id, TrackProcessor::new(fx, opts));
+                }
+            }
+            _ => {
+                self.tracks.insert(id, TrackProcessor::new(fx, opts));
+            }
+        }
+    }
+
+    pub fn track_mut(&mut self, id: TrackId) -> Option<&mut TrackProcessor> {
+        self.tracks.get_mut(&id)
+    }
+
     /// Убрать состояние клипов, которых больше нет в модели.
     pub fn retain_clips(&mut self, alive: &dyn Fn(ClipId) -> bool) {
         self.map.retain(|id, _| alive(*id));
+    }
+
+    /// Убрать состояние дорожек, которых больше нет в модели.
+    pub fn retain_tracks(&mut self, alive: &dyn Fn(TrackId) -> bool) {
+        self.tracks.retain(|id, _| alive(*id));
     }
 
     pub fn get_mut(&mut self, id: ClipId) -> Option<&mut ClipProcessor> {
@@ -225,6 +265,10 @@ impl FxStateStore {
             n.rewind();
         }
         for p in self.map.values_mut() {
+            p.reset();
+        }
+        // цепочка ДОРОЖКИ — такой же потоковый автомат (Р.62)
+        for p in self.tracks.values_mut() {
             p.reset();
         }
     }

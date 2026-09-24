@@ -201,7 +201,9 @@ pub use audio::{
     chain_fingerprint, chain_lookahead, chain_source_used, chain_source_window,
     chain_source_window_ext, chain_tail,
 };
-pub use audio::{ChainOpts, ClipProcessor, Freeverb, SmoothedParam, Warp, eq_mag_db};
+pub use audio::{
+    ChainOpts, ClipProcessor, Freeverb, SmoothedParam, TrackProcessor, Warp, eq_mag_db,
+};
 
 /// Карта растяжения времени ПЕРЕЕХАЛА В kt-model (Р.39): её обязан звать
 /// `clip_slice` — правило куска клипа, — а kt-model зависеть от kt-fx не

@@ -94,6 +94,7 @@ impl Src {
             u: self.u,
             cam3d: self.cam3d,
             blend: None,
+            blend_mode: kt_model::BlendMode::Normal,
             lead: self.lead,
         }
     }
@@ -1108,6 +1109,39 @@ fn t714b_lead_geometry_placement_parity() {
                 assert_eq!(&cpu[i..i + 4], &[0, 0, 0, 0], "cpu left field y={y}");
                 assert_eq!(&gpu[i..i + 4], &[0, 0, 0, 0], "gpu left field y={y}");
             }
+        }
+    }
+}
+
+/// Тест 737 (Р.62, change B): РЕЖИМЫ НАЛОЖЕНИЯ дорожки — конформанс GPU
+/// против CPU-эталона. Ядро `blend_over` живёт в двух файлах (CPU в
+/// kt-engine, WGSL в composite.wgsl) и правится одним коммитом — этот
+/// тест и есть сторож их согласия (инвариант 7).
+///
+/// Класс допуска — как у переходов: обе стороны считают в f32/f64 и
+/// округляют одинаково, но порядок операций у GPU свой.
+#[test]
+fn t737_blend_modes_gpu_matches_cpu() {
+    use kt_model::BlendMode;
+    let Some(engine) = test_engine() else { return };
+    // НИЖНИЙ слой — непрозрачный фон, ВЕРХНИЙ — с альфой: так видно и
+    // формулу режима, и то, что дыра оставляет низ нетронутым
+    for (i, mode) in BlendMode::ALL.into_iter().enumerate() {
+        for level_k in [4096u32, 2048] {
+            let below = Src::new(7000 + i as u64, Some(frame(W, H, false, 3)), vec![]);
+            let mut above = Src::new(7100 + i as u64, Some(frame(W, H, true, 11)), vec![]);
+            above.src_scale = 1;
+            let mut layers = vec![one(&below, 4096, false)];
+            let mut top = one(&above, level_k, level_k < 4096);
+            if let PlanLayer::One { src, .. } = &mut top {
+                src.blend_mode = mode;
+            }
+            layers.push(top);
+            let p = plan(90_000, layers);
+            let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
+            let name = format!("{mode:?}@{level_k}");
+            assert_eq!(cc, cg, "{name}: complete разошёлся");
+            assert_frames_close(&cpu, &gpu, W, H, FrameTol::THRESHOLD, &name);
         }
     }
 }

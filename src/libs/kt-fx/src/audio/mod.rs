@@ -249,6 +249,93 @@ struct MixCfg {
 }
 
 /// Стейтфул-процессор аудио-клипа. Владелец — аудио-render-поток (kt-engine,
+/// ЦЕПОЧКА ДОРОЖКИ (Р.62, change B) — те же узлы, что у события, но БЕЗ
+/// формы клипа: ни источника, ни длины, ни варпа, ни кривых.
+///
+/// Почему отдельный тип, а не `ClipProcessor` с пустым источником:
+/// половина `ClipProcessor` — это ДОБЫТЧИК материала (варп, курсор,
+/// «ручки», гейт хвоста, домен автоматизации по длине события), и у
+/// дорожки ничего этого нет — её вход уже собран сумматором. Общее у них
+/// ровно одно: ВЕКТОР УЗЛОВ, и он здесь тот же самый (`AudioNode`), так
+/// что ядра не дублируются ни строкой.
+///
+/// Кривых у дорожки нет по решению Р.62 (её ключ — тик таймлайна, это
+/// второй домен автоматизации), поэтому `set_targets` не зовётся вовсе:
+/// параметры статические и доезжают сглаживанием внутри узлов.
+pub struct TrackProcessor {
+    fingerprint: u64,
+    nodes: Vec<(usize, AudioNode)>,
+    opts: ChainOpts,
+    /// Упреждение цепочки: вход обгоняет выход на столько кадров (Р.48).
+    la: i64,
+}
+
+impl TrackProcessor {
+    pub fn new(fx: &[FxInstance], opts: ChainOpts) -> TrackProcessor {
+        let mut p =
+            TrackProcessor { fingerprint: chain_fingerprint(fx), nodes: Vec::new(), opts, la: 0 };
+        p.apply_params(fx, true);
+        p
+    }
+
+    /// Отпечаток СТРУКТУРЫ цепочки (виды слотов) — тот же, что у события:
+    /// совпал, значит процессор переиспользуется, а значения доезжают
+    /// сглаженно (инвариант 3).
+    pub fn fingerprint(&self) -> u64 {
+        self.fingerprint
+    }
+
+    pub fn lookahead_frames(&self) -> i64 {
+        self.la
+    }
+
+    pub fn tail(&self) -> Tick {
+        self.nodes.iter().map(|(_, n)| n.tail()).max().unwrap_or(Tick::ZERO)
+    }
+
+    pub fn tail_frames(&self) -> i64 {
+        self.tail().to_audio_frames()
+    }
+
+    pub fn apply_params(&mut self, fx: &[FxInstance], structural: bool) {
+        if structural {
+            self.nodes = fx
+                .iter()
+                .enumerate()
+                .filter_map(|(slot, f)| AudioNode::build(f).map(|n| (slot, n)))
+                .collect();
+            self.fingerprint = chain_fingerprint(fx);
+        }
+        for (slot, node) in &mut self.nodes {
+            if structural {
+                node.set_engine(self.opts.pitch_engine);
+            }
+            node.apply(&fx[*slot], structural);
+        }
+        // у дорожки нет ни силы слоя, ни сухой стороны: смешивать не с чем
+        self.la = self.nodes.iter().map(|(_, n)| n.lookahead()).sum();
+    }
+
+    pub fn reset(&mut self) {
+        for (_, n) in &mut self.nodes {
+            n.reset();
+        }
+    }
+
+    /// Обработать буфер, стоящий на позиции `pos` (кадры ТАЙМЛАЙНА).
+    ///
+    /// Позиция нужна узлам с абсолютной сеткой (зерно, хоп OLA): считать
+    /// её от счётчика вызовов нельзя — нарезка буферов изменила бы звук
+    /// (Р.48, t338). Упреждающие узлы «съедают» своё окно собственными
+    /// кольцами, поэтому выход выровнен со входом: вызывающий обязан
+    /// подать вход, обгоняющий выход ровно на `lookahead_frames()`.
+    pub fn process(&mut self, pos: i64, buf: &mut [f32]) {
+        for (_, node) in &mut self.nodes {
+            node.process(buf, pos);
+        }
+    }
+}
+
 /// FxStateStore). Читается строго последовательно; разрыв → reset + pre-roll.
 pub struct ClipProcessor {
     fingerprint: u64,

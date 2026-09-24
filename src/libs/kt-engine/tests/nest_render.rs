@@ -1942,3 +1942,40 @@ fn t726_generator_inside_a_square_reel_renders_at_the_reel_raster() {
     let (g, _) = render_with_facts(&p, Tick(FRAME * 3), QV);
     assert_eq!(f, g, "детерминизм");
 }
+
+/// Тест 739 (Р.62, change B): дорожки ЛЕНТЫ — объекты ЛЕНТЫ, и суб-план
+/// применяет ИХ стадии. Цепочка, поставленная на дорожку ВНУТРИ ленты,
+/// видна в экземпляре; лента без дорожечных свойств оставляет закон Э
+/// байт-в-байт (t434/t435/t447 держат его отдельно).
+#[test]
+fn t739_reel_applies_its_own_track_stages() {
+    let p = one_child_nest(FLAT, None, vec![], vec![]);
+    let (plain, complete) = render_with_facts(&p, Tick(FRAME * 3), QV);
+    assert!(complete, "сцена: кадр полон");
+
+    // цепочка на ДОРОЖКЕ ЛЕНТЫ — картинка экземпляра обязана измениться
+    let mut inner = p.clone();
+    inner.sequences[0].track_at_mut(kt_model::LaneKind::Video, 0).unwrap().fx =
+        vec![FxInstance::Posterize { levels: 3 }];
+    inner.validate().unwrap();
+    let (with_chain, complete) = render_with_facts(&inner, Tick(FRAME * 3), QV);
+    assert!(complete);
+    assert_ne!(with_chain, plain, "цепочка дорожки ЛЕНТЫ не доехала до экземпляра");
+
+    // уровень дорожки ленты — тоже её свойство
+    let mut lvl = p.clone();
+    lvl.sequences[0].track_at_mut(kt_model::LaneKind::Video, 0).unwrap().opacity = 0.5;
+    lvl.validate().unwrap();
+    let (half, _) = render_with_facts(&lvl, Tick(FRAME * 3), QV);
+    assert_ne!(half, plain, "уровень дорожки ленты не применился");
+
+    // а дорожка КОРНЯ на содержимое ленты не влияет: у ленты свои
+    let mut root = p.clone();
+    root.track_at_mut(kt_model::LaneKind::Video, 0).unwrap().opacity = 1.0;
+    root.validate().unwrap();
+    assert_eq!(
+        render_with_facts(&root, Tick(FRAME * 3), QV).0,
+        plain,
+        "дорожка без свойств изменила байты"
+    );
+}

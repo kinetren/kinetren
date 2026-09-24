@@ -18,6 +18,21 @@ use kt_model::{ClipEvent, ClipKind, Project};
 use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS};
 use std::sync::Arc;
 
+/// Стадия ДОРОЖКИ: сумма её событий → цепочка → в выход (Р.62).
+#[derive(Debug, Clone)]
+struct TrackStage {
+    id: kt_model::TrackId,
+    lane: u32,
+    fx: Vec<kt_model::FxInstance>,
+    /// Упреждение цепочки: вход обгоняет выход на столько кадров.
+    ///
+    /// Хвоста в стадии НЕТ отдельным полем и быть не должно: процессор
+    /// дорожки крутится, пока играет транспорт, и за последним событием
+    /// получает тишину — хвост выходит сам собой (t733). Поле «сколько
+    /// звучать после конца» было бы вторым источником той же правды.
+    la: i64,
+}
+
 /// Клип, подготовленный к аудио-рендеру (границы в кадрах 48 kHz).
 #[derive(Debug, Clone)]
 struct AudioClip {
@@ -151,6 +166,11 @@ pub struct AudioRenderer {
     /// питча). Донести их сглаживанием нельзя — смена пересобирает
     /// процессоры (сверка в FxStateStore).
     opts: kt_fx::ChainOpts,
+    /// СТАДИИ ДОРОЖЕК (Р.62, change B): только те дорожки, у которых
+    /// непустая цепочка. Уровень, mute и соло стадии не требуют — они
+    /// скаляры и сложены в `gain` события, поэтому проект без цепочек
+    /// дорожек идёт прежним путём байт-в-байт (GOLDEN_AUDIO).
+    stages: Vec<TrackStage>,
     /// Рендереры вложенных лент (Р.50, Б4).
     ///
     /// Вложение — ВИРТУАЛЬНОЕ МЕДИА под фетчером, а не ветка в миксере.
@@ -478,6 +498,25 @@ impl AudioRenderer {
             None => &project.tracks,
         };
         let solo_on = tracks.iter().any(|t| t.kind == kt_model::LaneKind::Audio && t.solo);
+        // СТАДИИ: дорожки с непустой цепочкой. Пусто — ни одной лишней
+        // ветки в рендере, и порядок сложения f32 прежний.
+        let empty_auto = kt_fx::AutoProfiles::default();
+        let mut stages: Vec<TrackStage> = Vec::new();
+        {
+            let mut lane = 0u32;
+            for t in tracks.iter().filter(|t| t.kind == kt_model::LaneKind::Audio) {
+                let fx = t.active_fx();
+                if !fx.is_empty() {
+                    stages.push(TrackStage {
+                        id: t.id,
+                        lane,
+                        la: kt_fx::chain_lookahead(&fx, &empty_auto),
+                        fx,
+                    });
+                }
+                lane += 1;
+            }
+        }
         let track_gain = |lane: u32| -> f32 {
             let Some(t) =
                 kt_model::track_index(tracks, kt_model::LaneKind::Audio, lane).map(|i| &tracks[i])
@@ -645,7 +684,7 @@ impl AudioRenderer {
             overlaps,
             overlap_layers,
             opts: kt_fx::ChainOpts { pitch_engine: project.settings.pitch_engine },
-
+            stages,
             nests,
         }
     }
@@ -779,6 +818,13 @@ impl AudioRenderer {
         }
         let alive: std::collections::HashSet<_> = self.clips.iter().map(|c| c.id).collect();
         store.retain_clips(&|id| alive.contains(&id));
+        // ЦЕПОЧКИ ДОРОЖЕК — тем же правилом (Р.62): та же структура → то
+        // же состояние; удалённая дорожка уносит своё
+        for st in &self.stages {
+            store.sync_track(st.id, &st.fx, self.opts);
+        }
+        let live_tracks: std::collections::HashSet<_> = self.stages.iter().map(|s| s.id).collect();
+        store.retain_tracks(&|id| live_tracks.contains(&id));
         // цепочки ВНУТРИ лент синхронизируются тем же правилом: те же
         // цепочки — те же state-объекты, хвосты ревербов живут (инвариант 3)
 
@@ -863,9 +909,23 @@ impl AudioRenderer {
 
         let active = self.active_clips(&range);
 
+        // СТАДИИ ДОРОЖЕК (Р.62): у дорожки с цепочкой сумма её событий
+        // проходит процессор и только потом ложится в выход. Считаем их
+        // ПЕРВЫМИ и отдельным буфером; всё остальное — прежним путём.
+        if !self.stages.is_empty() {
+            let st = self.render_stages(fetcher, store, &range, out);
+            stats.underruns += st.underruns;
+            stats.warmup_misses += st.warmup_misses;
+            stats.nest_warmups += st.nest_warmups;
+        }
+
         // Вклад каждого клипа считаем по-бурстово (источника), веса — по-сэмплово.
         for &ci in &active {
             let clip = &self.clips[ci];
+            // событие ДОРОЖКИ СО СТАДИЕЙ уже посчитано выше
+            if self.stage_of(clip.lane).is_some() {
+                continue;
+            }
             // КТО читает — до первого чтения (Р.55, С4): у вложения свой
             // поток суб-микса на каждый экземпляр. Один виртуальный вызов
             // на клип на бёрст, не на кадр.
@@ -875,6 +935,54 @@ impl AudioRenderer {
                 continue;
             }
             self.render_plain_clip(ci, fetcher, &range, out, &mut stats);
+        }
+        stats
+    }
+
+    /// Стадия этой дорожки, если она есть.
+    fn stage_of(&self, lane: u32) -> Option<&TrackStage> {
+        self.stages.iter().find(|s| s.lane == lane)
+    }
+
+    /// СТАДИИ ДОРОЖЕК: сумма событий дорожки → цепочка → в выход (Р.62).
+    ///
+    /// Вход цепочки обгоняет выход на её упреждение (`la`): события
+    /// суммируются на окне `[from + la, to + la)`, а процессор своими
+    /// кольцами возвращает выход на место — сдвига относительно дорожки
+    /// без цепочки нет (Р.48, п.337). Хвост честный: за последним
+    /// событием вход — тишина, а цепочка дозванивает.
+    fn render_stages(
+        &self,
+        fetcher: &mut dyn AudioFetcher,
+        store: &mut crate::fxstore::FxStateStore,
+        range: &std::ops::Range<i64>,
+        out: &mut [f32],
+    ) -> RenderStats {
+        let mut stats = RenderStats::default();
+        let frames = (range.end - range.start) as usize;
+        let mut scratch = vec![0f32; frames * AUDIO_CHANNELS];
+        for st in &self.stages {
+            let win = (range.start + st.la)..(range.end + st.la);
+            scratch.fill(0.0);
+            // события дорожки — тем же кодом, что и все остальные
+            for ci in self.active_clips(&win) {
+                let clip = &self.clips[ci];
+                if clip.lane != st.lane {
+                    continue;
+                }
+                fetcher.begin_clip(clip.id);
+                if !clip.fx.is_empty() {
+                    self.render_fx_clip(ci, fetcher, store, &win, &mut scratch, &mut stats);
+                } else {
+                    self.render_plain_clip(ci, fetcher, &win, &mut scratch, &mut stats);
+                }
+            }
+            if let Some(p) = store.track_mut(st.id) {
+                p.process(win.start, &mut scratch);
+            }
+            for (o, v) in out.iter_mut().zip(scratch.iter()) {
+                *o += *v;
+            }
         }
         stats
     }

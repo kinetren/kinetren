@@ -716,8 +716,23 @@ impl ChainSpec {
 }
 
 enum Job {
-    Single { chain: ChainSpec, alpha_k: u32, scale: bool, fade: Option<SoloFade> },
-    Dissolve { a: ChainSpec, b: ChainSpec, k: u32, alpha_k: u32, mix: TransMix },
+    Single {
+        chain: ChainSpec,
+        alpha_k: u32,
+        scale: bool,
+        fade: Option<SoloFade>,
+        /// Режим наложения слоя вниз (Р.62). `Normal` — прежний путь
+        /// байт-в-байт; остальное считает `blend_over` шейдера, зеркало
+        /// CPU-ядра `kt_engine::video::blend_ch`.
+        blend_mode: kt_model::BlendMode,
+    },
+    Dissolve {
+        a: ChainSpec,
+        b: ChainSpec,
+        k: u32,
+        alpha_k: u32,
+        mix: TransMix,
+    },
 }
 
 impl Job {
@@ -1105,9 +1120,17 @@ impl Inner {
             let first = (ji == 0) as u32;
             let target = 1 - cur;
             match job {
-                Job::Single { chain, alpha_k, scale, fade } => {
+                Job::Single { chain, alpha_k, scale, fade, blend_mode } => {
                     let (view, owned) = self.encode_chain(enc, chain);
-                    let mode = if fade.is_some() {
+                    // РЕЖИМ НАЛОЖЕНИЯ (Р.62) — свой режим пасса: уровень
+                    // уходит в ядро, а не в альфу (две оси, обе после
+                    // альфы). Normal идёт прежними ветками.
+                    let blend_id =
+                        kt_model::BlendMode::ALL.iter().position(|m| m == blend_mode).unwrap_or(0)
+                            as u32;
+                    let mode = if blend_id != 0 {
+                        4
+                    } else if fade.is_some() {
                         3
                     } else if *scale {
                         1
@@ -1130,7 +1153,11 @@ impl Inner {
                             u0z,
                             u0w,
                             first,
-                            fade.map(|f| f.k).unwrap_or(0),
+                            // при mode == 4 (наложение) фейда не бывает,
+                            // и слот `k` занимает НОМЕР РЕЖИМА: своей
+                            // ячейки в юниформе нет, а эти две вещи
+                            // взаимно исключены по построению
+                            if mode == 4 { blend_id } else { fade.map(|f| f.k).unwrap_or(0) },
                             fade.map(|f| f.mix.mode).unwrap_or(0),
                             clear,
                         ],
@@ -1230,6 +1257,7 @@ impl Inner {
                                     alpha_k: *alpha_k,
                                     scale: *scale_alpha,
                                     fade: *fade,
+                                    blend_mode: src.blend_mode,
                                 });
                             } else {
                                 // Р.58, п.459: чужой размер БОЛЬШЕ не
@@ -1261,6 +1289,9 @@ impl Inner {
                                 alpha_k: *alpha_k,
                                 scale: *alpha_k < 4096,
                                 fade: None,
+                                // половина пары перехода — обычное
+                                // наложение: режим живёт у слоя-дорожки
+                                blend_mode: kt_model::BlendMode::Normal,
                             });
                             complete = false;
                         }
