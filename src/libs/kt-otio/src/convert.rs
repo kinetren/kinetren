@@ -2505,7 +2505,7 @@ fn build_tracks(
     }
     // дорожек не меньше, чем занято содержимым
     for (i, kind) in K::ALL.into_iter().enumerate() {
-        let have = out.iter().filter(|t| t.kind == *&kind).count() as u32;
+        let have = out.iter().filter(|t| t.kind == kind).count() as u32;
         let want = need[i].max(if i < 2 { 1 } else { 0 });
         for _ in have..want {
             let at = kt_model::natural_insert_pos(&out, kind);

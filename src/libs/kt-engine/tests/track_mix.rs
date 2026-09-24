@@ -87,7 +87,7 @@ fn render(p: &Project, f: &mut dyn AudioFetcher, frames: i64) -> Vec<f32> {
 fn t732_track_level_mute_and_solo() {
     let d = AUDIO_BURST_FRAMES as i64;
     let two = || project(vec![audio_clip(1, 0, d, 1), audio_clip(2, 1, d, 2)]);
-    let mut src =
+    let src =
         || direct(&[(1, AudioPattern::Dc { value: 0.25 }), (2, AudioPattern::Dc { value: 0.5 })]);
 
     // БЕЗ СВОЙСТВ — прежняя сумма без весов (то же утверждает t2)
@@ -120,7 +120,7 @@ fn t732_track_level_mute_and_solo() {
     // SOLO — множество СВОЕГО вида: звучат только соло-дорожки
     let three =
         || project(vec![audio_clip(1, 0, d, 1), audio_clip(2, 1, d, 2), audio_clip(3, 2, d, 3)]);
-    let mut src3 = || {
+    let src3 = || {
         direct(&[
             (1, AudioPattern::Dc { value: 0.25 }),
             (2, AudioPattern::Dc { value: 0.5 }),
@@ -153,7 +153,7 @@ fn t732b_mute_keeps_the_fx_state_alive() {
     let mut clip = audio_clip(1, 0, 8 * d, 1);
     clip.fx = vec![FxInstance::slowed_reverb(1.0, 0.9, 120.0)];
     let p0 = project(vec![clip]);
-    let mut src = || direct(&[(1, AudioPattern::Dc { value: 0.5 })]);
+    let src = || direct(&[(1, AudioPattern::Dc { value: 0.5 })]);
 
     // эталон: НИ РАЗУ не глушили — хвост идёт непрерывно
     let r = AudioRenderer::new(&p0);

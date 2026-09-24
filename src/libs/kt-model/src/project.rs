@@ -3010,10 +3010,6 @@ pub fn migrate_legacy_morpher(m: &mut MorpherEvent) -> bool {
     true
 }
 
-fn default_lanes() -> u32 {
-    1
-}
-
 /// Метка на таймлайне: момент и (необязательное) имя.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Marker {

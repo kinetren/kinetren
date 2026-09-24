@@ -849,8 +849,10 @@ impl VideoRenderer {
         // прежним путём, и байты не двигаются.
         let stages: Vec<VideoTrackStage> = {
             let mut out = Vec::new();
-            let mut lane = 0u32;
-            for t in tracks.iter().filter(|t| t.kind == kt_model::LaneKind::Video) {
+            for (lane, t) in
+                tracks.iter().filter(|t| t.kind == kt_model::LaneKind::Video).enumerate()
+            {
+                let lane = lane as u32;
                 if t.needs_video_stage() {
                     let mut h = xxhash_rust::xxh3::Xxh3::new();
                     h.update(format!("{:?}", t.active_fx()).as_bytes());
@@ -865,7 +867,6 @@ impl VideoRenderer {
                         content: h.digest(),
                     });
                 }
-                lane += 1;
             }
             out
         };

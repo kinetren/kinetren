@@ -1887,7 +1887,7 @@ pub fn import_as_sequences(
             .into_iter()
             .filter(|&(k, l)| l < need.get(k))
             .filter_map(|(k, l)| {
-                from.tracks().iter().nth(track_index(from.tracks(), k, l)?).cloned()
+                from.tracks().get(track_index(from.tracks(), k, l)?).cloned()
             })
             .map(|mut t| {
                 t.id = TrackId(0);

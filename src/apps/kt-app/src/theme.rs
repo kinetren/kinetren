@@ -26,6 +26,9 @@ pub const ACCENT: Color32 = Color32::from_rgb(70, 130, 235);
 /// Ховер-заливка.
 pub const HOVER: Color32 = Color32::from_rgb(38, 42, 50);
 /// Рамка превью-кадров филмстрипа.
+/// Горящий бейдж дорожки (Р.62): M / S / замок / FX. Цвет один на все —
+/// различает их ГЛИФ, а не оттенок (иначе четыре новых цвета в теме).
+pub const BADGE_ON: egui::Color32 = egui::Color32::from_rgb(232, 196, 96);
 pub const THUMB_FRAME: Color32 = Color32::from_rgb(0, 0, 0);
 
 /// Фон полосы таймлайна (между дорожками, за руллером).

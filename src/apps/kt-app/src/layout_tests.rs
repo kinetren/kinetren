@@ -13842,3 +13842,157 @@ fn t740_render_dialog_lists_muted_and_solo_tracks() {
         .join(" | ");
     assert!(!clean.contains("Титры") && !clean.contains("Голос"));
 }
+
+/// Тест 742 (Р.62, change B, 4.1): ряд бейджей в заголовке дорожки.
+/// Утверждается то, что делает ЧЕЛОВЕК (Р.40): мышь наводится в центр
+/// бейджа, нажимается и отпускается БЕЗ движения — и меняется МОДЕЛЬ.
+/// Плюс три правила чек-листа: ширина заголовка не скачет при смене
+/// состояния (правило 3), повторное нажатие возвращает как было
+/// (правило 14), у служебной строки бейдж ровно один — замок
+/// (правило 9: мёртвых контролов не бывает).
+#[test]
+fn t742_track_badges_take_a_human_click_and_never_move() {
+    use crate::timeline::{GUTTER_W, TrackBadge};
+    use kt_model::LaneKind::{Morph, Video};
+
+    /// Клик человека: навёл, нажал, отпустил, мышь не двигал.
+    fn click_at(h: &mut Harness<'_, KtApp>, pos: egui::Pos2) {
+        h.hover_at(pos);
+        h.step();
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        h.step();
+        h.step();
+    }
+
+    let (mut h, _) = harness_three_clips_dt(None);
+    h.state_mut().model.apply(kt_model::Command::InsertTrack { kind: Morph, at: 0 }).unwrap();
+    h.step();
+
+    // ряд бейджей строки — ЧИСТАЯ функция геометрии, ровно та же, что у
+    // отрисовки и у хит-теста
+    let badges = |h: &Harness<'_, KtApp>, kind: kt_model::LaneKind, lane: u32| {
+        let g = h.state().tl_geom.clone().expect("геометрия таймлайна");
+        let row = g.rows.iter().position(|r| *r == (kind, lane)).expect("строка на экране");
+        let left = g.rect.left() - GUTTER_W;
+        TrackBadge::row_rects(kind, left, g.row_top(row), g.row_h(row))
+    };
+    let track = |h: &Harness<'_, KtApp>, kind, lane| {
+        h.state().model.project().track_at(kind, lane).cloned().expect("дорожка есть")
+    };
+
+    // хват-зона не уже 14 px (правило 1: попасть с первого раза)
+    for (b, r) in badges(&h, Video, 0) {
+        assert!(
+            r.width() >= 14.0 && r.height() >= 8.0,
+            "бейдж {b:?} мельче хват-зоны: {:?}",
+            r.size()
+        );
+    }
+
+    // ---- в каждый бейдж мышью, из точки человека ---------------------------
+    let before = badges(&h, Video, 0);
+    for (badge, r) in before.clone() {
+        click_at(&mut h, r.center());
+        let t = track(&h, Video, 0);
+        match badge {
+            TrackBadge::Mute => assert!(t.mute, "клик в M не заглушил дорожку"),
+            TrackBadge::Solo => assert!(t.solo, "клик в S не включил соло"),
+            TrackBadge::Lock => assert!(t.lock, "клик в замок не запер дорожку"),
+            TrackBadge::Fx => {
+                assert_eq!(
+                    h.state().track_win.as_ref().map(|w| w.id),
+                    Some(t.id),
+                    "клик в бейдж FX не открыл цепочку дорожки"
+                );
+                h.state_mut().track_win = None;
+                h.step();
+            }
+        }
+    }
+
+    // ---- ширина не скачет от состояния (правило 3) -------------------------
+    let after = badges(&h, Video, 0);
+    assert_eq!(
+        before, after,
+        "ряд бейджей переехал, когда дорожка сменила состояние: заголовок обязан быть \
+         зафиксирован галлеей ряда, а не шириной сегодняшних значков"
+    );
+
+    // ---- повторное нажатие (правило 14) ------------------------------------
+    let mute = before.iter().find(|(b, _)| *b == TrackBadge::Mute).unwrap().1;
+    click_at(&mut h, mute.center());
+    assert!(!track(&h, Video, 0).mute, "второе нажатие M не сняло глушение");
+    click_at(&mut h, mute.center());
+    assert!(track(&h, Video, 0).mute, "третье нажатие M не вернуло глушение");
+
+    // ---- кромка окна не ворует клики (правило 15) --------------------------
+    // Заголовки дорожек прижаты к левому краю окна, а первые 8 px там —
+    // зона ресайза: без записи бейджей в `no_resize_rects` левая половина
+    // M мертва, когда медиа-бин скрыт. Целимся сразу за полосой в
+    // `WIN_BORDER` — её владелец оставил ресайзу намеренно (п.9 р.12).
+    let edge = egui::pos2(mute.left() + crate::app::WIN_BORDER + 0.5, mute.center().y);
+    assert!(
+        edge.x < mute.left() + crate::timeline::BADGE_W / 2.0,
+        "точка кромки обязана лежать ЛЕВЕЕ центра бейджа, иначе проверять нечего"
+    );
+    let was = track(&h, Video, 0).mute;
+    click_at(&mut h, edge);
+    assert_ne!(
+        track(&h, Video, 0).mute,
+        was,
+        "левый край бейджа M мёртв: клик в {edge:?} забрала зона ресайза окна"
+    );
+
+    // ---- горячие клавиши: ТО ЖЕ ТЕЛО, что у бейджа (правило 17) ------------
+    // Голые M и S заняты меткой и разрезом по прямой просьбе владельца,
+    // поэтому глушение и соло берут ALT. Цель — дорожка ВЫДЕЛЕННОГО
+    // события; выделения нет — строка под указателем.
+    let v0 = track(&h, Video, 0).id;
+    {
+        let app = h.state_mut();
+        app.selected.clear();
+        app.selected.insert(kt_model::ClipId(1));
+        let mut props = app.model.project().track(v0).unwrap().props();
+        props.mute = false;
+        props.solo = false;
+        props.lock = false;
+        app.model.apply(kt_model::Command::SetTrackProps { id: v0, props }).unwrap();
+    }
+    h.step();
+    h.key_press_modifiers(egui::Modifiers::ALT, egui::Key::M);
+    h.step();
+    assert!(track(&h, Video, 0).mute, "Alt+M не заглушил дорожку выделенного события");
+    h.key_press_modifiers(egui::Modifiers::ALT, egui::Key::S);
+    h.step();
+    assert!(track(&h, Video, 0).solo, "Alt+S не включил соло на дорожке выделенного события");
+    // голая M остаётся МЕТКОЙ: чужую привязку клавиша дорожки не забирает
+    let marks = h.state().model.project().markers.len();
+    h.key_press(egui::Key::M);
+    h.step();
+    assert_eq!(
+        h.state().model.project().markers.len(),
+        marks + 1,
+        "голая M перестала ставить метку — привязка владельца отобрана"
+    );
+
+    // ---- служебная строка: только замок ------------------------------------
+    let serv = badges(&h, Morph, 0);
+    assert_eq!(
+        serv.iter().map(|(b, _)| *b).collect::<Vec<_>>(),
+        vec![TrackBadge::Lock],
+        "у морф-строки глушить нечего — лишний бейдж был бы мёртвым контролом"
+    );
+    // и он стоит В ПЕРВОЙ ячейке ряда: человек жмёт туда, где у видео M
+    assert_eq!(serv[0].1.min.x, before[0].1.min.x);
+    click_at(&mut h, serv[0].1.center());
+    let m = track(&h, Morph, 0);
+    assert!(m.lock, "клик в первую ячейку служебной строки не запер её");
+    assert!(!m.mute, "служебная строка не имеет права заглушиться");
+}

@@ -19,7 +19,71 @@ pub const STRIPES_H: f32 = 11.0; // 4+1+4+2: глобальные полоски
 pub const TIME_H: f32 = 22.0; // риски, цифры времени, флажки и имена меток
 pub const TIME_TOP: f32 = STRIPES_H;
 pub const RULER_H: f32 = STRIPES_H + TIME_H;
-pub const GUTTER_W: f32 = 34.0; // п.20 р.6: поуже
+/// Бейдж дорожки (Р.62): хват-зона, не рисунок. 14 px — минимум правила 1
+/// («попал мышью с первого раза»); рисунок внутри мельче.
+pub const BADGE_W: f32 = 14.0;
+
+/// Полоса заголовков. Ширина ФИКСИРОВАНА рядом бейджей (M / S / замок /
+/// FX) и не меняется от состояния — правило 3 («ничего не скачет»): до
+/// Р.62 здесь стояло 34 px под одну подпись.
+pub const GUTTER_W: f32 = 4.0 * BADGE_W + 6.0;
+
+/// Какие бейджи несёт строка этого вида: у служебных (морф, камера) из
+/// выключателей только замок — глушить и солировать там нечего, а
+/// мёртвый контрол запрещён правилом 9.
+pub fn row_badges(kind: LaneKind) -> &'static [TrackBadge] {
+    if kind.has_switches() {
+        &[TrackBadge::Mute, TrackBadge::Solo, TrackBadge::Lock, TrackBadge::Fx]
+    } else {
+        &[TrackBadge::Lock]
+    }
+}
+
+/// Бейдж в заголовке дорожки (Р.62).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackBadge {
+    Mute,
+    Solo,
+    Lock,
+    Fx,
+}
+
+impl TrackBadge {
+    pub fn glyph(self) -> &'static str {
+        match self {
+            TrackBadge::Mute => "M",
+            TrackBadge::Solo => "S",
+            TrackBadge::Lock => crate::icons::LOCK,
+            TrackBadge::Fx => crate::icons::FX,
+        }
+    }
+
+    /// Горит ли бейдж на этой дорожке.
+    pub fn on(self, t: &kt_model::Track) -> bool {
+        match self {
+            TrackBadge::Mute => t.mute,
+            TrackBadge::Solo => t.solo,
+            TrackBadge::Lock => t.lock,
+            TrackBadge::Fx => !t.fx.is_empty() && !t.fx_off,
+        }
+    }
+
+    /// Прямоугольники ряда бейджей в заголовке строки: ряд стоит ПОД
+    /// именем, в уже занятом месте (правило 13), и прижат к низу строки.
+    pub fn row_rects(kind: LaneKind, gutter_left: f32, row_top: f32, row_h: f32) -> Vec<(TrackBadge, egui::Rect)> {
+        let badges = row_badges(kind);
+        let h = BADGE_W.min(row_h - 2.0).max(8.0);
+        let y = row_top + row_h - h - 1.0;
+        badges
+            .iter()
+            .enumerate()
+            .map(|(i, b)| {
+                let x = gutter_left + 2.0 + i as f32 * BADGE_W;
+                (*b, egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(BADGE_W, h)))
+            })
+            .collect()
+    }
+}
 /// Предел ярлыка длинного имени дорожки (п.10 р.11): дальше — многоточие,
 /// полное имя показывает подсказка.
 pub const LANE_LABEL_MAX_W: f32 = 160.0;
@@ -1543,6 +1607,41 @@ impl KtApp {
                 self.lane_edit_focus = true;
                 ui.close();
             }
+            // ДОРОЖКА-ОБЪЕКТ (Р.62): те же глаголы, что у бейджей, и ТЕМ
+            // ЖЕ ТЕЛОМ (правило 17) — меню, бейдж и клавиша не имеют
+            // права разойтись
+            if let Some(id) = self.model.project().track_at(lk, lane).map(|t| t.id) {
+                let r = ui.button(tr(k::track::MENU_PROPS));
+                crate::widgets::field_probe::note("track.menu.props", r.rect);
+                if r.clicked() {
+                    self.open_track_window(id);
+                    ui.close();
+                }
+                let r = ui.button(tr(k::track::MENU_MUTE));
+                crate::widgets::field_probe::note("track.menu.mute", r.rect);
+                if r.clicked() {
+                    self.toggle_track_badge(id, TrackBadge::Mute);
+                    ui.close();
+                }
+                let r = ui.button(tr(k::track::MENU_SOLO));
+                crate::widgets::field_probe::note("track.menu.solo", r.rect);
+                if r.clicked() {
+                    self.toggle_track_badge(id, TrackBadge::Solo);
+                    ui.close();
+                }
+                let r = ui.button(tr(k::track::MENU_LOCK));
+                crate::widgets::field_probe::note("track.menu.lock", r.rect);
+                if r.clicked() {
+                    self.toggle_track_badge(id, TrackBadge::Lock);
+                    ui.close();
+                }
+                let r = ui.button(tr(k::track::MENU_FX));
+                crate::widgets::field_probe::note("track.menu.fx", r.rect);
+                if r.clicked() {
+                    self.open_track_fx(id);
+                    ui.close();
+                }
+            }
             if self.model.project().track_at(lk, lane).is_some_and(|t| t.height > 0.0)
                 && ui.button(tr(k::tl::lane::RESET_HEIGHT)).clicked()
             {
@@ -2253,8 +2352,32 @@ impl KtApp {
 
         // ---- дорожки: реордер драгом и меню (пп. 7-8; п.6 v1.4: строки) ----
         {
+            // БЕЙДЖ ДОРОЖКИ (Р.62) — раньше переименования и реордера:
+            // зона узкая и специфичная, и жест, начатый с неё, обязан
+            // достаться ей. Геометрия ряда — ЧИСТАЯ функция строки, а не
+            // список, набитый отрисовкой: заголовки рисуются ПОЗЖЕ
+            // обработки ввода, и такой список отставал бы на кадр.
+            let badge_at = |g: &TlGeom, slf: &KtApp, pos: egui::Pos2| {
+                let row = g.row_at_y(pos.y)?;
+                let (kind, lane) = g.rows.get(row).copied()?;
+                if slf.model.band_of_row(kind, lane).is_some() {
+                    return None;
+                }
+                let t = slf.model.project().track_at(kind, lane)?;
+                TrackBadge::row_rects(kind, gutter.left(), g.row_top(row), g.row_h(row))
+                    .into_iter()
+                    .find(|(_, r)| r.contains(pos))
+                    .map(|(b, _)| (t.id, b))
+            };
+            if gutter_resp.clicked()
+                && let Some(pos) = gutter_resp.interact_pointer_pos()
+                && let Some((id, badge)) = badge_at(&geom, self, pos)
+            {
+                self.toggle_track_badge(id, badge);
+                self.drag = None;
+            }
             // двойной клик по заголовку дорожки — переименование (п.2 р.10)
-            if gutter_resp.double_clicked()
+            else if gutter_resp.double_clicked()
                 && let Some(pos) = gutter_resp.interact_pointer_pos()
                 && let Some((kind, lane)) = geom.key_at_y(pos.y)
             {
@@ -2427,6 +2550,7 @@ impl KtApp {
         self.snap_line = None;
         // препятствие живёт РОВНО пока жест в него упирается (п.5)
         self.blocked = None;
+        self.blocked_track = None;
         // магнит включён всегда; Ctrl его снимает (п.2 р.11). Тот же Ctrl,
         // нажатый ДО захвата пустого места, начинает рамку выделения
         // (Р.33 п.7) — на переносе события магнит от этого не страдает
@@ -5195,6 +5319,7 @@ impl KtApp {
                 };
                 let galley = full_painter.layout_job(job);
                 let x = gutter.left() + 3.0;
+                let _ = &galley;
                 // строкой НИЖЕ имени клипа; на низкой дорожке прижимаемся к
                 // её низу, но всё равно под именем клипа (п.2 р.13)
                 let y = lane_label_y(*row_top, *row_h, galley.size().y);
@@ -5206,6 +5331,76 @@ impl KtApp {
                 full_painter.galley(egui::pos2(x, y), galley, col);
             }
         }
+
+        // ---- БЕЙДЖИ ДОРОЖКИ (Р.62): M / S / замок / FX под именем ---------------
+        //
+        // Ряд стоит в уже занятом месте (правило 13) и его ширина
+        // фиксирует полосу заголовков: при смене состояния ничего не
+        // скачет (правило 3). Хват-зона — `BADGE_W`, рисунок мельче
+        // (правило 1). Щуп на каждый бейдж: живой сценарий и харнесс
+        // жмут ровно оттуда, откуда жмёт человек (Р.40).
+        //
+        // КРОМКА ОКНА НЕ ВОРУЕТ КЛИКИ (правило 15). Заголовки дорожек
+        // прижаты к левому краю окна, а первые 8 px там — зона ресайза:
+        // без этой записи левая половина бейджа M мертва, когда медиа-бин
+        // скрыт. Копим в локальный список — `track` держит заём проекта.
+        let mut no_resize: Vec<egui::Rect> = Vec::new();
+        for (row, (kind, lane)) in geom.rows.iter().copied().enumerate() {
+            let (row_top, row_h) = (geom.row_top(row), geom.row_h(row));
+            if row_top + row_h < rect.top() || row_top > rect.bottom() {
+                continue;
+            }
+            // у строки РАСКРЫТОЙ ПОЛОСЫ свойства чужие — бейджей нет
+            if self.model.band_of_row(kind, lane).is_some() {
+                continue;
+            }
+            let Some(track) = self.model.project().track_at(kind, lane) else { continue };
+            // ПРЕПЯТСТВИЕ ЖЕСТА — замок дорожки (Р.62): подсвечиваем ту
+            // строку, в которую упёрлись, ровно как событие-препятствие
+            if self.blocked_track == Some(track.id) {
+                full_painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        egui::pos2(gutter.left(), row_top),
+                        egui::pos2(rect.right(), row_top + row_h - 2.0),
+                    ),
+                    0.0,
+                    egui::Color32::from_rgba_unmultiplied(200, 60, 60, 46),
+                );
+            }
+            for (badge, r) in TrackBadge::row_rects(kind, gutter.left(), row_top, row_h) {
+                let on = badge.on(track);
+                let (bg, fg) = if on {
+                    (crate::theme::BADGE_ON, egui::Color32::from_gray(20))
+                } else {
+                    (egui::Color32::TRANSPARENT, egui::Color32::from_gray(120))
+                };
+                let inner = r.shrink(1.5);
+                if on {
+                    full_painter.rect_filled(inner, 2.0, bg);
+                }
+                full_painter.text(
+                    r.center(),
+                    egui::Align2::CENTER_CENTER,
+                    badge.glyph(),
+                    egui::FontId::proportional((r.height() * 0.62).clamp(7.0, 11.0)),
+                    fg,
+                );
+                // Имя щупа несёт ВИД строки: V1 и A1 — разные дорожки,
+                // и без буквы вида сценарий жал бы в первую попавшуюся.
+                no_resize.push(r);
+                crate::widgets::field_probe::note(
+                    &format!(
+                        "track.{}.{:?}",
+                        kt_model::default_lane_label(kind, lane),
+                        badge
+                    )
+                    .to_lowercase(),
+                    r,
+                );
+            }
+        }
+
+        self.no_resize_rects.extend(no_resize);
 
         // ---- препятствие жеста (п.5) ----------------------------------------------
         // «я пока сам туда не промотал — не понял что оказывается там еще

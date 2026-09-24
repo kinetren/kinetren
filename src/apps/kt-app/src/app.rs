@@ -508,6 +508,9 @@ pub struct KtApp {
     /// Препятствие текущего жеста (п.5 Р.28): подсвечивается на таймлайне,
     /// подсказка идёт ОШИБОЧНЫМ стилем и говорит, куда смотреть.
     pub blocked: Option<crate::timeline::Blocked>,
+    /// ЗАПЕРТАЯ дорожка, в которую упёрся жест (Р.62): подсвечивается
+    /// красным ровно один кадр, как и любое другое препятствие.
+    pub blocked_track: Option<kt_model::TrackId>,
     /// Последняя рамка выделения в ДОМЕНЕ МОДЕЛИ (время × ключи дорожек)
     /// — из неё делается именованная область (Р.35 п.2). Сессионное:
     /// пережить перезапуск ему незачем.
@@ -523,6 +526,9 @@ pub struct KtApp {
     pub preset_save: Option<PresetSaveDialog>,
     /// Окно «Настройки проекта» (Р.62).
     pub settings_win: Option<crate::settings_window::SettingsWindow>,
+    /// Окно ДОРОЖКИ (Р.62): свойства и цепочка. Одно на программу — как
+    /// окно настроек; второе окно на ту же дорожку не заводится.
+    pub track_win: Option<crate::track_window::TrackWindow>,
     /// Окно переименования вложенной ленты (Р.50).
     pub seq_name: Option<SeqNameDialog>,
     /// Диалог имени публикуемой ручки (Р.59, стадия 3).
@@ -864,12 +870,14 @@ impl KtApp {
             hover_hint: None,
             error_status: None,
             blocked: None,
+            blocked_track: None,
             last_band: None,
             paste_names: None,
             tl_hover_row: None,
             duck: None,
             preset_save: None,
             settings_win: None,
+            track_win: None,
             seq_name: None,
             publish_dialog: None,
             published_win: None,
@@ -1068,12 +1076,14 @@ impl KtApp {
             hover_hint: None,
             error_status: None,
             blocked: None,
+            blocked_track: None,
             last_band: None,
             paste_names: None,
             tl_hover_row: None,
             duck: None,
             preset_save: None,
             settings_win: None,
+            track_win: None,
             seq_name: None,
             publish_dialog: None,
             published_win: None,
@@ -1230,6 +1240,66 @@ impl KtApp {
                 p.track_at(k, l).filter(|t| t.height > 0.0).map(|t| (k, l, t.height))
             })
             .collect()
+    }
+
+    /// ОТКАЗ КОМАНДЫ человеку (правило 16): невозможность — это ошибка с
+    /// причиной и адресом, а не блёклая подсказка.
+    ///
+    /// Замок дорожки называет ДОРОЖКУ и место, где его снять: до Р.62
+    /// такой отказ приходил бы английским текстом ошибки модели в
+    /// дежурной строке — «нажал и ничего не произошло».
+    pub(crate) fn refuse_command(&mut self, e: &kt_model::CommandError) {
+        if let kt_model::CommandError::TrackLocked(id) = e {
+            let name = self
+                .model
+                .project()
+                .rows()
+                .into_iter()
+                .find(|(k, l)| self.model.project().track_at(*k, *l).map(|t| t.id) == Some(*id))
+                .and_then(|(k, l)| {
+                    self.model.project().track_at(k, l).map(|t| t.label(l))
+                })
+                .unwrap_or_default();
+            self.blocked_track = Some(*id);
+            self.refuse(crate::tf!(k::track::LOCKED, name));
+            return;
+        }
+        self.note(e.to_string());
+    }
+
+    /// Переключить бейдж дорожки (Р.62) — ОДНО тело на бейдж, пункт меню
+    /// и горячую клавишу (правило 17). FX открывает редактор цепочки:
+    /// «включить цепочку» без цепочки бессмысленно.
+    pub fn toggle_track_badge(&mut self, id: kt_model::TrackId, badge: crate::timeline::TrackBadge) {
+        use crate::timeline::TrackBadge as B;
+        let Some(t) = self.model.project().track(id) else { return };
+        if badge == B::Fx {
+            self.open_track_fx(id);
+            return;
+        }
+        let mut props = t.props();
+        match badge {
+            B::Mute => props.mute = !props.mute,
+            B::Solo => props.solo = !props.solo,
+            B::Lock => props.lock = !props.lock,
+            B::Fx => unreachable!("FX opens the editor above"),
+        }
+        self.apply(Command::SetTrackProps { id, props });
+    }
+
+    /// Дорожка, на которую смотрит клавиша (Р.62). «Выделенной
+    /// дорожки» у нас нет — выделяются СОБЫТИЯ, поэтому целью служит
+    /// дорожка выделенного события, а без выделения — строка под
+    /// указателем (та же, что подсвечена бейджами). Тело одно с меню и
+    /// бейджем: `toggle_track_badge` (правило UI 17).
+    pub fn key_target_track(&self) -> Option<kt_model::TrackId> {
+        let (kind, lane) = self
+            .selected
+            .iter()
+            .copied()
+            .find_map(|id| self.model.clip(id).map(kt_model::lane_key))
+            .or(self.tl_hover_row)?;
+        self.model.project().track_at(kind, lane).map(|t| t.id)
     }
 
     /// Подпись строки: имя дорожки либо формула V1/A1/M1/C1.
@@ -1557,6 +1627,7 @@ impl KtApp {
         self.draw_duck_dialog(&ctx);
         self.draw_preset_save(&ctx);
         self.draw_settings_window(&ctx);
+        self.draw_track_window(&ctx);
         self.draw_seq_name(&ctx);
         // Публичные параметры композиции (Р.59, стадия 3): диалог имени,
         // окно автора и окна потребителей.
@@ -3605,7 +3676,7 @@ impl KtApp {
                 true
             }
             Err(e) => {
-                self.note(e.to_string());
+                self.refuse_command(&e);
                 false
             }
         }
@@ -3773,7 +3844,7 @@ impl KtApp {
                 true
             }
             Err(e) => {
-                self.note(e.to_string());
+                self.refuse_command(&e);
                 false
             }
         }
@@ -6929,6 +7000,8 @@ impl KtApp {
             redo: bool,
             save: bool,
             marker: bool,
+            track_mute: bool,
+            track_solo: bool,
             region_in: bool,
             region_out: bool,
             loop_toggle: bool,
@@ -6976,6 +7049,12 @@ impl KtApp {
                     || i.key_pressed(egui::Key::Y)),
             save: i.modifiers.ctrl && i.key_pressed(egui::Key::S),
             marker: i.key_pressed(egui::Key::M) && !i.modifiers.ctrl && !i.modifiers.alt,
+            // ДОРОЖКА (Р.62): голые M и S уже заняты меткой и разрезом —
+            // оба поставлены прямой просьбой владельца и не двигаются.
+            // Глушение и соло берут ALT, а действуют на дорожку
+            // ВЫДЕЛЕННОГО события (иначе «выделенной дорожки» у нас нет).
+            track_mute: i.modifiers.alt && i.key_pressed(egui::Key::M),
+            track_solo: i.modifiers.alt && i.key_pressed(egui::Key::S),
             region_in: i.key_pressed(egui::Key::I) && !i.modifiers.ctrl && !i.modifiers.alt,
             region_out: i.key_pressed(egui::Key::O) && !i.modifiers.ctrl && !i.modifiers.alt,
             loop_toggle: i.key_pressed(egui::Key::L) && !i.modifiers.ctrl && !i.modifiers.alt,
@@ -7042,6 +7121,16 @@ impl KtApp {
         }
         if k.marker {
             self.marker_toggle_at_cursor();
+        }
+        if k.track_mute
+            && let Some(id) = self.key_target_track()
+        {
+            self.toggle_track_badge(id, crate::timeline::TrackBadge::Mute);
+        }
+        if k.track_solo
+            && let Some(id) = self.key_target_track()
+        {
+            self.toggle_track_badge(id, crate::timeline::TrackBadge::Solo);
         }
         if k.region_in {
             self.set_region_edge_from_cursor(true);

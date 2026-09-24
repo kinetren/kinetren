@@ -336,6 +336,18 @@ pub enum Command {
         id: TrackId,
         props: TrackProps,
     },
+    /// Цепочка FX дорожки: слоты и bypass. Кривых у дорожки нет — её
+    /// ключ тик таймлайна, а это второй домен автоматизации (следующий
+    /// change), и команда их отвергает, а не принимает молча.
+    SetTrackFx {
+        id: TrackId,
+        fx: Vec<FxInstance>,
+        bypass: Vec<bool>,
+    },
+    SetTrackFxOff {
+        id: TrackId,
+        off: bool,
+    },
     RemoveMedia {
         id: MediaId,
     },
@@ -594,6 +606,8 @@ impl Command {
             | Command::SetMarkerDuration { .. }
             | Command::InsertTrack { .. }
             | Command::SetTrackProps { .. }
+            | Command::SetTrackFx { .. }
+            | Command::SetTrackFxOff { .. }
             | Command::SetLaneOrder { .. }
             | Command::AddArea(_)
             | Command::RemoveArea { .. }
@@ -652,6 +666,8 @@ impl Command {
             | Command::InsertTrack { .. }
             | Command::RemoveTrack { .. }
             | Command::SetTrackProps { .. }
+            | Command::SetTrackFx { .. }
+            | Command::SetTrackFxOff { .. }
             | Command::RemoveMedia { .. }
             | Command::SetSettings { .. }
             | Command::AddMorpher(_)
@@ -893,6 +909,8 @@ impl Band {
                 | Command::SetAreaRange { .. }
                 | Command::SetAreaLanes { .. }
                 | Command::SetTrackProps { .. }
+                | Command::SetTrackFx { .. }
+                | Command::SetTrackFxOff { .. }
                 | Command::AddCamera(_)
                 | Command::SetCamera(_)
                 | Command::RemoveCamera { .. }
@@ -1511,6 +1529,30 @@ impl TimelineModel {
                     return Err(CommandError::LastTrack(*kind));
                 }
             }
+            Command::SetTrackFx { id, fx, bypass } => {
+                if p.track(*id).is_none() {
+                    return Err(CommandError::TrackNotFound(*id));
+                }
+                if bypass.len() > fx.len() {
+                    return Err(CommandError::TrackPropOutOfRange(*id));
+                }
+                // цепочка дорожки — ТОЛЬКО аудио или только видео, по её
+                // виду: видео-эффект на аудиодорожке был бы мёртвым слотом
+                let kind = p.track(*id).map(|t| t.kind);
+                let wrong = fx.iter().any(|f| match kind {
+                    Some(LaneKind::Audio) => f.class() != FxClass::Audio,
+                    Some(LaneKind::Video) => f.class() == FxClass::Audio,
+                    _ => true,
+                });
+                if wrong {
+                    return Err(CommandError::TrackPropOutOfRange(*id));
+                }
+            }
+            Command::SetTrackFxOff { id, .. } => {
+                if p.track(*id).is_none() {
+                    return Err(CommandError::TrackNotFound(*id));
+                }
+            }
             Command::SetTrackProps { id, props } => {
                 if p.track(*id).is_none() {
                     return Err(CommandError::TrackNotFound(*id));
@@ -2073,6 +2115,17 @@ impl TimelineModel {
             Command::SetTrackProps { id, props } => {
                 if let Some(t) = p.track_mut(id) {
                     t.set_props(&props);
+                }
+            }
+            Command::SetTrackFx { id, fx, bypass } => {
+                if let Some(t) = p.track_mut(id) {
+                    t.fx = fx;
+                    t.fx_bypass = bypass;
+                }
+            }
+            Command::SetTrackFxOff { id, off } => {
+                if let Some(t) = p.track_mut(id) {
+                    t.fx_off = off;
                 }
             }
             Command::SetLaneOrder { order } => {

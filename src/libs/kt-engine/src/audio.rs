@@ -503,8 +503,10 @@ impl AudioRenderer {
         let empty_auto = kt_fx::AutoProfiles::default();
         let mut stages: Vec<TrackStage> = Vec::new();
         {
-            let mut lane = 0u32;
-            for t in tracks.iter().filter(|t| t.kind == kt_model::LaneKind::Audio) {
+            for (lane, t) in
+                tracks.iter().filter(|t| t.kind == kt_model::LaneKind::Audio).enumerate()
+            {
+                let lane = lane as u32;
                 let fx = t.active_fx();
                 if !fx.is_empty() {
                     stages.push(TrackStage {
@@ -514,7 +516,6 @@ impl AudioRenderer {
                         fx,
                     });
                 }
-                lane += 1;
             }
         }
         let track_gain = |lane: u32| -> f32 {
