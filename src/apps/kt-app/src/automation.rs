@@ -71,6 +71,15 @@ pub struct AutoView {
     /// Без заморозки шкала пересчитывалась бы по самим же ключам и
     /// «дышала» под курсором.
     pub drag_win: Option<(usize, f64, f64)>,
+    /// НАБИРАЕМЫЙ текст формулы: (кривая, текст). Р.63 п.3.
+    ///
+    /// Поле держит свой текст между кадрами и отдаёт его модели ТОЛЬКО по
+    /// подтверждению (Enter или уход фокуса). До этого текст читался из
+    /// модели каждый кадр и применялся по первой же законной приставке:
+    /// набор `sin(t)` умирал на `sin(` («стирает формулу»), а первая буква
+    /// `t` законна сама по себе — она немедленно применялась и обнуляла
+    /// ключи кривой («либо нихера не происходит»). Владелец, Р.63 п.3.
+    pub formula: Option<(usize, String)>,
 }
 
 impl AutoView {
@@ -427,10 +436,17 @@ fn toolbar(
         // ПРИМЕНЯЕТСЯ — иначе полустёртый текст ронял бы кривую на каждом
         // нажатии клавиши.
         if let Some(c) = curves.get_mut(view.active) {
-            let mut text = match &c.source {
+            // ТЕКСТ ЖИВЁТ В ВИДЖЕТЕ, а не перечитывается из модели каждый
+            // кадр (Р.63 п.3): иначе незаконченный ввод стирается на
+            // следующем же кадре.
+            let from_model = || match &c.source {
                 kt_model::CurveSource::Formula { expr } => expr.clone(),
                 kt_model::CurveSource::Link { expr, .. } => expr.clone().unwrap_or_default(),
                 kt_model::CurveSource::Keys => String::new(),
+            };
+            let mut text = match &view.formula {
+                Some((ci, t)) if *ci == view.active => t.clone(),
+                _ => from_model(),
             };
             ui.label(tr(k::fx::FORMULA));
             let r = ui
@@ -438,26 +454,50 @@ fn toolbar(
             crate::widgets::field_probe::note("auto.formula", r.rect);
             crate::app::hint_into(hover, r.clone(), tr(k::fx::FORMULA_HINT));
             if r.changed() {
-                match kt_model::Formula::parse(&text) {
-                    Ok(_) if text.trim().is_empty() => {}
-                    Ok(_) => {
-                        // текст ЗАКОННЫЙ — только теперь он едет в модель
-                        c.source = match &c.source {
-                            kt_model::CurveSource::Link { path, stops, .. } => {
-                                kt_model::CurveSource::Link {
-                                    path: path.clone(),
-                                    expr: Some(text.clone()),
-                                    stops: stops.clone(),
-                                }
+                view.formula = Some((view.active, text.clone()));
+                // проверка НА ЛЕТУ — но только чтобы СКАЗАТЬ об ошибке
+                if let Err(e) = kt_model::Formula::parse(&text)
+                    && !text.trim().is_empty()
+                {
+                    *hover = Some(e.to_string());
+                }
+            }
+            // ПОДТВЕРЖДЕНИЕ: Enter или уход фокуса. Только теперь текст
+            // едет в модель — до этого ключи кривой целы.
+            let entered = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if entered || (r.lost_focus() && !entered) {
+                let text = view.formula.take().filter(|(ci, _)| *ci == view.active).map(|(_, t)| t);
+                if let Some(text) = text {
+                    if text.trim().is_empty() {
+                        // пустая строка — «отвязать»: значения кривой уже
+                        // разрешены, снимаем сам источник
+                        if !c.source.is_keys() {
+                            c.source = kt_model::CurveSource::Keys;
+                            out.changed = true;
+                        }
+                    } else {
+                        match kt_model::Formula::parse(&text) {
+                            Ok(_) => {
+                                c.source = match &c.source {
+                                    kt_model::CurveSource::Link { path, stops, .. } => {
+                                        kt_model::CurveSource::Link {
+                                            path: path.clone(),
+                                            expr: Some(text.clone()),
+                                            stops: stops.clone(),
+                                        }
+                                    }
+                                    _ => {
+                                        c.keys.clear();
+                                        kt_model::CurveSource::Formula { expr: text.clone() }
+                                    }
+                                };
+                                out.changed = true;
                             }
-                            _ => {
-                                c.keys.clear();
-                                kt_model::CurveSource::Formula { expr: text.clone() }
-                            }
-                        };
-                        out.changed = true;
+                            // незаконченный текст к модели не применяется, а
+                            // молчать о нём нельзя (правило 16)
+                            Err(e) => *hover = Some(e.to_string()),
+                        }
                     }
-                    Err(e) => *hover = Some(e.to_string()),
                 }
             }
         }
@@ -743,9 +783,25 @@ fn graph(
             );
         }
         let col = curve_color(ci);
-        if c.keys.len() > 1 {
+        // ФОРМУЛЬНАЯ кривая ключей не хранит (контракт модели), поэтому
+        // рисуется РАЗРЕШЁННЫМИ значениями — тем же вычислителем, что у
+        // рендера (Р.63 п.3). Без этого верная формула давала пустой
+        // график: «прописываю, а нихера не происходит».
+        let shown: std::borrow::Cow<'_, [kt_model::AutoKey]> = if c.keys.is_empty()
+            && !c.source.is_keys()
+        {
+            std::borrow::Cow::Owned(kt_model::formula_preview(
+                c,
+                Tick(m0),
+                Tick(m1),
+                (m1 - m0).max(1) / 120,
+            ))
+        } else {
+            std::borrow::Cow::Borrowed(&c.keys[..])
+        };
+        if shown.len() > 1 {
             let pts: Vec<egui::Pos2> =
-                c.keys.iter().map(|k| egui::pos2(x_of(k.t.0), y_of(k.v))).collect();
+                shown.iter().map(|k| egui::pos2(x_of(k.t.0), y_of(k.v))).collect();
             p.add(egui::Shape::line(pts, egui::Stroke::new(1.0, col)));
         }
         // ПРОИЗВОДНАЯ кривая (связь или формула) мышкой не правится: ключей

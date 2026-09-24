@@ -340,6 +340,36 @@ pub fn resolve_derived<'a>(
     std::borrow::Cow::Owned(out)
 }
 
+/// Значения ФОРМУЛЬНОЙ кривой на окне — для показа (Р.63 п.3).
+///
+/// Тем же вычислителем и с теми же переменными, что у рендера
+/// (`resolve_one`): `t` — секунды от начала окна, `src` — значение
+/// ведущего, которого у чистой формулы нет (ноль). Формульная кривая по
+/// контракту НЕ ХРАНИТ ключей, поэтому график рисовал по пустому списку —
+/// то есть не рисовал ничего, и человек, набрав верную формулу, видел
+/// пустоту («либо нихера не происходит»).
+///
+/// Возвращает пусто, если источник не формула или текст невычислим: врать
+/// линией хуже, чем не рисовать.
+pub fn formula_preview(cur: &ParamCurve, from: Tick, to: Tick, step: i64) -> Vec<AutoKey> {
+    let Some(expr) = cur.source.expr() else { return Vec::new() };
+    let Ok(f) = crate::formula::Formula::parse(expr) else { return Vec::new() };
+    let step = step.max(1);
+    let mut out = Vec::new();
+    let mut t = from.0;
+    while t <= to.0 {
+        let mut vars = std::collections::BTreeMap::new();
+        vars.insert("src".to_string(), 0.0);
+        vars.insert("t".to_string(), (t - from.0) as f64 / 90_000.0);
+        match f.eval(&vars) {
+            Ok(v) => out.push(AutoKey::shaped(Tick(t), v, SegShape::Linear)),
+            Err(_) => return Vec::new(),
+        }
+        t += step;
+    }
+    out
+}
+
 /// Разрешить ОДНУ кривую. `true` — что-то изменилось.
 fn resolve_one(
     clips: &[ClipEvent],

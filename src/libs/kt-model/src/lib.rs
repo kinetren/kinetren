@@ -20,7 +20,7 @@ pub mod warp;
 pub use autoplan::*;
 pub use formula::{Formula, FormulaError, FormulaErrorKind};
 pub use genmedia::*;
-pub use links::{LinkCtx, LinkPath, read_link, resolve_derived, stop_value};
+pub use links::{LinkCtx, LinkPath, formula_preview, read_link, resolve_derived, stop_value};
 pub use model::*;
 pub use project::*;
 pub use published::*;

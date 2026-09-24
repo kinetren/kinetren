@@ -1127,11 +1127,16 @@ pub(crate) fn draw_auto_for(
             // менялся (это список действий, а не селектор), и заодно у
             // кнопки появляется имя для доступности — ComboBox отдавал
             // пустое, и до пункта нельзя было добраться иначе как мышью
-            ui.menu_button(tr(k::fx::AUTO_ADD), |ui| {
+            let add = ui.menu_button(tr(k::fx::AUTO_ADD), |ui| {
                 {
                     for spec in &free {
                         let n: &str = &spec.name;
-                        if ui.button(crate::widgets::param_label(n)).clicked() {
+                        let item = ui.button(crate::widgets::param_label(n));
+                        // щуп на каждый пункт: живому сценарию иначе не во
+                        // что целиться (правило Р.27 — координаты от самой
+                        // программы)
+                        crate::widgets::field_probe::note(&format!("auto.add.{n}"), item.rect);
+                        if item.clicked() {
                             // стартовая кривая — константа текущего значения
                             let v0 = f.get_param(n).unwrap_or(spec.default);
                             curves.push(kt_model::ParamCurve::constant(
@@ -1153,6 +1158,7 @@ pub(crate) fn draw_auto_for(
                     }
                 }
             });
+            crate::widgets::field_probe::note("auto.add", add.response.rect);
         }
         // выбор активной кривой и кнопки ключей — В САМОМ ВИДЖЕТЕ
         // (automation::toolbar): их получают все носители кривых разом.

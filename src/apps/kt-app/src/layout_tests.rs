@@ -14366,3 +14366,233 @@ fn t748d_tail_without_material_is_hatched() {
     let body = egui::Rect::from_min_max(r.min, r.max);
     assert_eq!(lines_in(&h, body), 0, "штриховка осталась там, где материал есть");
 }
+
+/// Тест 749 (Р.63 п.3): формула НАБИРАЕТСЯ целиком, ключи живы до
+/// подтверждения, а верная формула видна на графике.
+///
+/// Владелец: «я не понимаю как ввести формулы в кривые автоматизации — я
+/// прописываю а оно либо стирает формулу либо нихера не происходит». И то
+/// и другое было правдой: поле перечитывало текст ИЗ МОДЕЛИ каждый кадр
+/// (значит `sin(` исчезал на следующем), а первая законная приставка `t`
+/// применялась немедленно и обнуляла ключи. Плюс формульная кривая ключей
+/// не хранит по контракту — и график рисовал пустоту.
+#[test]
+fn t749_formula_is_typed_whole_and_drawn() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+        let mut c = ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
+            overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
+            id: ClipId(1),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane: 0,
+            start: kt_time::Tick(0),
+            duration: kt_time::Tick(90_000),
+            source_in: kt_time::Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx: vec![FxInstance::blur(8)],
+            fx_bypass: vec![false],
+            fx_auto: vec![vec![ParamCurve {
+                param: "radius".into(),
+                keys: vec![
+                    AutoKey::at(kt_time::Tick(0), 2.0),
+                    AutoKey::at(kt_time::Tick(45_000), 9.0),
+                    AutoKey::at(kt_time::Tick(90_000), 4.0),
+                ],
+                source: Default::default(),
+            }]],
+            opacity: 1.0,
+            fx_off: false,
+        };
+        c.fx_bypass = vec![false];
+        p.clips.push(c);
+        p.normalize();
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.open_fx_editor(ClipId(1));
+    }
+    h.step();
+    h.step();
+
+    // координата поля — из НАСТОЯЩЕЙ ВЁРСТКИ: у TextEdit нет узла
+    // доступности, зато подпись «Формула» нарисована рядом (приём t281)
+    let label = crate::i18n::tr(crate::i18n::k::fx::FORMULA).to_string();
+    let lr = crate::reach_tests::painted_texts(&h)
+        .into_iter()
+        .find(|t| t.src == label)
+        .map(|t| t.rect)
+        .expect("подпись поля формулы нарисована");
+    let field = egui::pos2(lr.right() + 60.0, lr.center().y);
+    h.hover_at(field);
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: field,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.step();
+
+    let keys_of = |h: &Harness<'_, KtApp>| -> Vec<(i64, f64)> {
+        h.state().model.project().clips[0].fx_auto[0][0]
+            .keys
+            .iter()
+            .map(|k| (k.t.0, k.v))
+            .collect()
+    };
+    let before = keys_of(&h);
+    assert_eq!(before.len(), 3, "сцена: у кривой три ключа");
+
+    // НАБИРАЕМ ПО СИМВОЛУ — и после каждого кадра ключи обязаны быть целы
+    for ch in "sin(t)*0.5".chars() {
+        h.event(egui::Event::Text(ch.to_string()));
+        h.step();
+        h.step();
+        assert_eq!(
+            keys_of(&h),
+            before,
+            "после символа {ch:?} ключи кривой изменились: текст применился до подтверждения"
+        );
+        assert!(
+            h.state().model.project().clips[0].fx_auto[0][0].source.is_keys(),
+            "после символа {ch:?} источник стал формулой без подтверждения"
+        );
+    }
+    // и сам текст не исчез из поля (на прежнем коде — исчезал)
+    let shown: Vec<String> =
+        crate::reach_tests::painted_texts(&h).into_iter().map(|t| t.src).collect();
+    assert!(
+        shown.iter().any(|s| s.contains("sin(t)*0.5")),
+        "набранный текст пропал из поля: {shown:?}"
+    );
+
+    // ПОДТВЕРЖДЕНИЕ
+    h.key_press(egui::Key::Enter);
+    h.step();
+    h.step();
+    let c = &h.state().model.project().clips[0].fx_auto[0][0];
+    assert!(
+        matches!(&c.source, kt_model::CurveSource::Formula { expr } if expr == "sin(t)*0.5"),
+        "после Enter формула не доехала до модели: {:?}",
+        c.source
+    );
+    // и она ВИДНА: разрешение даёт линию, а не пустоту
+    let pts = kt_model::formula_preview(c, kt_time::Tick(0), kt_time::Tick(90_000), 750);
+    assert!(pts.len() > 10, "формульная кривая не разрешается в точки: {}", pts.len());
+    assert!(
+        pts.iter().any(|k| (k.v - pts[0].v).abs() > 1e-6),
+        "разрешённая кривая — прямая: синус не посчитан"
+    );
+}
+
+/// Тест 750 (Р.63 п.4): клик мимо поля отдаёт фокус, и клавиши живы СРАЗУ.
+///
+/// Владелец: «если начать вводить что-то в поле формулы то фокус ввода
+/// переходит туда, и как бы я не тыкал по остальной части интерфейса —
+/// нажатие пробела не приводит к паузе… пока я не закрою окно эффекта».
+/// Проверяется СЛЕДСТВИЕ: после клика по таймлайну пробел играет, а поле
+/// снова принимает ввод, если в него кликнуть (правило 14).
+#[test]
+fn t750_click_outside_a_field_gives_the_keyboard_back() {
+    use kt_model::*;
+    let (mut h, g) = harness_three_clips_dt(None);
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.clips[0].fx = vec![FxInstance::blur(8)];
+        p.clips[0].fx_bypass = vec![false];
+        p.clips[0].fx_auto = vec![vec![ParamCurve {
+            param: "radius".into(),
+            keys: vec![
+                AutoKey::at(kt_time::Tick(0), 2.0),
+                AutoKey::at(kt_time::Tick(45_000), 9.0),
+            ],
+            source: Default::default(),
+        }]];
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.open_fx_editor(ClipId(1));
+    }
+    h.step();
+    h.step();
+
+    // 1) кликаем в поле формулы и печатаем — фокус там
+    let label = crate::i18n::tr(crate::i18n::k::fx::FORMULA).to_string();
+    let lr = crate::reach_tests::painted_texts(&h)
+        .into_iter()
+        .find(|t| t.src == label)
+        .map(|t| t.rect)
+        .expect("подпись поля формулы нарисована");
+    let field = egui::pos2(lr.right() + 60.0, lr.center().y);
+    let click = |h: &mut Harness<'_, KtApp>, pos: egui::Pos2| {
+        h.hover_at(pos);
+        h.step();
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        h.step();
+        h.step();
+    };
+    click(&mut h, field);
+    h.event(egui::Event::Text("t".into()));
+    h.step();
+    assert!(h.ctx.memory(|m| m.focused()).is_some(), "поле обязано взять фокус");
+    assert!(
+        h.ctx.egui_wants_keyboard_input(),
+        "сцена вырождена: клавиатуру никто не держит"
+    );
+
+    // 2) КЛИК ПО ТАЙМЛАЙНУ — и пробел играет
+    let was_playing = h.state().player.transport.is_playing();
+    let empty = egui::pos2(g.tick_to_x(400_000), g.row_center_y(0));
+    click(&mut h, empty);
+    assert!(
+        !h.ctx.egui_wants_keyboard_input(),
+        "после клика по таймлайну поле всё ещё держит клавиатуру"
+    );
+    h.key_press(egui::Key::Space);
+    h.step();
+    h.step();
+    assert_ne!(
+        h.state().player.transport.is_playing(),
+        was_playing,
+        "пробел не сработал после клика мимо поля (на прежнем коде — не работал, \
+         пока открыто окно эффекта)"
+    );
+    h.key_press(egui::Key::Space);
+    h.step();
+
+    // 3) поле снова принимает ввод — фича работает ПОВТОРНО (правило 14)
+    click(&mut h, field);
+    h.event(egui::Event::Text("2".into()));
+    h.step();
+    assert!(
+        h.ctx.egui_wants_keyboard_input(),
+        "поле перестало принимать ввод после того, как у него забрали фокус"
+    );
+
+    // Про КНОПКИ: в egui клик кнопке фокуса не даёт, поэтому в харнессе
+    // эта половина претензии не воспроизводится вовсе — её проверяет живой
+    // сценарий `formula.py`. Гейт горячих клавиш при этом всё равно
+    // переписан на «набор текста» вместо «что-то в фокусе»: сторожа
+    // прежнего смысла — t98 и t627 (маски таймкода и скорости).
+}
