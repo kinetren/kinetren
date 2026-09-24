@@ -14378,7 +14378,6 @@ fn t748d_tail_without_material_is_hatched() {
 /// не хранит по контракту — и график рисовал пустоту.
 #[test]
 fn t749_formula_is_typed_whole_and_drawn() {
-    use egui_kittest::kittest::Queryable;
     use kt_model::*;
     let mut h = harness();
     {
@@ -14595,4 +14594,197 @@ fn t750_click_outside_a_field_gives_the_keyboard_back() {
     // сценарий `formula.py`. Гейт горячих клавиш при этом всё равно
     // переписан на «набор текста» вместо «что-то в фокусе»: сторожа
     // прежнего смысла — t98 и t627 (маски таймкода и скорости).
+}
+
+/// Тест 751 (Р.63 п.5): цель правого клика ФИКСИРУЕТСЯ на нажатии, живёт
+/// пока меню открыто, участок подсвечен, а заголовок называет оба конца.
+///
+/// Владелец: «невозможно указать формы кривых в кривых автоматизациях —
+/// контекстное меню просто пропадает я не успеваю дотянуться до него, а
+/// еще не понятно между какими точками(и точками ли?) я установлю форму».
+/// Причина: и ключ, и участок считались от `hover_pos()` КАЖДЫЙ КАДР, а
+/// содержимое `context_menu` перерисовывается каждый кадр — указатель
+/// уходил к пунктам, попадание пропадало, и меню закрывало само себя.
+/// Утверждения теста — наблюдаемые следствия: после увода указателя меню
+/// на месте, форма применяется и ложится РОВНО на левый ключ участка.
+#[test]
+fn t751_the_menu_target_is_latched_on_press() {
+    use crate::automation::MenuTarget;
+    use kt_model::*;
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+        p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
+            overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
+            id: ClipId(1),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane: 0,
+            start: kt_time::Tick(0),
+            duration: kt_time::Tick(90_000),
+            source_in: kt_time::Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx: vec![FxInstance::blur(8)],
+            fx_bypass: vec![false],
+            fx_auto: vec![vec![ParamCurve {
+                param: "radius".into(),
+                keys: vec![
+                    AutoKey::at(kt_time::Tick(0), 2.0),
+                    AutoKey::at(kt_time::Tick(45_000), 9.0),
+                    AutoKey::at(kt_time::Tick(90_000), 4.0),
+                ],
+                source: Default::default(),
+            }]],
+            opacity: 1.0,
+            fx_off: false,
+        });
+        p.normalize();
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.open_fx_editor(ClipId(1));
+    }
+    h.step();
+    h.step();
+
+    // положения ключей — из НАСТОЯЩЕЙ отрисовки (рисунок и щуп из одного
+    // места правды, п.364)
+    let marks = |h: &Harness<'_, KtApp>| -> Vec<(usize, usize, egui::Pos2)> {
+        h.state().fx_editors[0].auto_views[&(ClipId(1), 0)].key_marks.clone()
+    };
+    let m = marks(&h);
+    assert_eq!(m.len(), 3, "сцена вырождена: график ключей не нарисован ({m:?})");
+    let target = |h: &Harness<'_, KtApp>| -> Option<MenuTarget> {
+        h.state().fx_editors[0].auto_views[&(ClipId(1), 0)].menu_target
+    };
+    let right_click = |h: &mut Harness<'_, KtApp>, pos: egui::Pos2| {
+        h.hover_at(pos);
+        h.step();
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        h.step();
+        h.step();
+    };
+    // ЗАЛИВКИ подсветки в выводе кадра (участок под меню)
+    fn fills(shape: &egui::epaint::Shape, want: egui::Color32, out: &mut Vec<egui::Rect>) {
+        use egui::epaint::Shape;
+        match shape {
+            Shape::Vec(v) => v.iter().for_each(|s| fills(s, want, out)),
+            Shape::Rect(r) if r.fill == want => out.push(r.rect),
+            _ => {}
+        }
+    }
+    let highlights = |h: &Harness<'_, KtApp>| -> Vec<egui::Rect> {
+        let want = egui::Color32::from_rgba_unmultiplied(120, 160, 255, 28);
+        let mut out = Vec::new();
+        for cs in &h.output().shapes {
+            fills(&cs.shape, want, &mut out);
+        }
+        out
+    };
+
+    // --- ПРАВЫЙ КЛИК ПО УЧАСТКУ между ключами 0 и 1 -------------------
+    let seg = egui::pos2((m[0].2.x + m[1].2.x) * 0.5, (m[0].2.y + m[1].2.y) * 0.5);
+    right_click(&mut h, seg);
+    assert_eq!(
+        target(&h),
+        Some(MenuTarget::Segment(0, 0)),
+        "цель не зафиксирована на нажатии"
+    );
+
+    // --- ТЯНЕМСЯ УКАЗАТЕЛЕМ К ПУНКТУ МЕНЮ -----------------------------
+    // (на прежнем коде именно здесь попадание пропадало, и меню закрывало
+    // себя само: «я не успеваю дотянуться до него»)
+    let hold = crate::widgets::shape_label(kt_model::SegShape::Hold).to_string();
+    let item = crate::reach_tests::painted_texts(&h)
+        .into_iter()
+        .find(|t| t.src == hold)
+        .map(|t| t.rect.center())
+        .expect("пункт формы не нарисован — меню не открылось вовсе");
+    h.hover_at(item);
+    h.step();
+    h.step();
+    assert_eq!(
+        target(&h),
+        Some(MenuTarget::Segment(0, 0)),
+        "цель потерялась, когда указатель ушёл к пунктам меню"
+    );
+
+    // заголовок называет ОБА конца участка: времена и доли события
+    let head = crate::tf!(
+        k::fx::SHAPE_SEGMENT_AT,
+        "0.000".to_string(),
+        "0.500".to_string(),
+        "0".to_string(),
+        "50".to_string()
+    );
+    let shown: Vec<String> =
+        crate::reach_tests::painted_texts(&h).into_iter().map(|t| t.src).collect();
+    assert!(
+        shown.iter().any(|s| s == &head),
+        "в меню нет заголовка участка «{head}»: {shown:?}"
+    );
+    // и сам участок подсвечен ровно между этими ключами
+    let hl = highlights(&h);
+    assert!(
+        hl.iter().any(|r| (r.left() - m[0].2.x).abs() < 1.5 && (r.right() - m[1].2.x).abs() < 1.5),
+        "участок под меню не подсвечен: {hl:?} против ключей {:?}",
+        (m[0].2.x, m[1].2.x)
+    );
+
+    // --- ФОРМА ложится на ЛЕВЫЙ ключ участка и только на него ---------
+    {
+        use egui_kittest::kittest::Queryable;
+        h.get_by_label(&hold).click();
+    }
+    h.step();
+    h.step();
+    let keys = h.state().model.project().clips[0].fx_auto[0][0].keys.clone();
+    assert_eq!(keys[0].shape, kt_model::SegShape::Hold, "форма не легла на левый ключ участка");
+    assert_eq!(
+        keys[1].shape,
+        kt_model::SegShape::DEFAULT,
+        "форма поехала на соседний участок"
+    );
+    // меню закрылось — цель забыта
+    h.step();
+    assert_eq!(target(&h), None, "после закрытия меню цель осталась висеть");
+
+    // --- ПРАВЫЙ КЛИК ПО КЛЮЧУ ведёт себя так же -----------------------
+    let m = marks(&h);
+    right_click(&mut h, m[1].2);
+    assert_eq!(target(&h), Some(MenuTarget::Key(0, 1)), "ключ не зафиксирован на нажатии");
+    let del = tr(k::tl::menu::DELETE).to_string();
+    let item = crate::reach_tests::painted_texts(&h)
+        .into_iter()
+        .find(|t| t.src == del)
+        .map(|t| t.rect.center())
+        .expect("пункта «удалить» нет — меню ключа не открылось");
+    h.hover_at(item);
+    h.step();
+    h.step();
+    assert_eq!(
+        target(&h),
+        Some(MenuTarget::Key(0, 1)),
+        "цель-ключ потерялась, когда указатель ушёл к пунктам меню"
+    );
+    let head = crate::tf!(k::fx::KEY_AT, "0.500".to_string(), "50".to_string());
+    let shown: Vec<String> =
+        crate::reach_tests::painted_texts(&h).into_iter().map(|t| t.src).collect();
+    assert!(shown.iter().any(|s| s == &head), "в меню ключа нет заголовка «{head}»: {shown:?}");
 }

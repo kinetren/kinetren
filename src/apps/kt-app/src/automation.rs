@@ -39,6 +39,16 @@ pub enum AutoMode {
 ///
 /// Замка среди полей больше нет: он один на всю программу и живёт в
 /// `UiState` (Р.40 п.15) — окно его только читает через `AutoCtx`.
+/// Во что целится правый клик по графику (Р.63 п.5).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum MenuTarget {
+    /// Ключ (кривая, индекс).
+    Key(usize, usize),
+    /// Участок между ключами `ki` и `ki+1` кривой `ci`: форма живёт на
+    /// ЛЕВОМ ключе отрезка.
+    Segment(usize, usize),
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct AutoView {
     pub mode: AutoMode,
@@ -71,6 +81,15 @@ pub struct AutoView {
     /// Без заморозки шкала пересчитывалась бы по самим же ключам и
     /// «дышала» под курсором.
     pub drag_win: Option<(usize, f64, f64)>,
+    /// ЦЕЛЬ ПРАВОГО КЛИКА, пока меню открыто (Р.63 п.5): либо ключ, либо
+    /// участок между двумя ключами.
+    ///
+    /// До этого и ключ, и участок считались от `hover_pos()` КАЖДЫЙ КАДР,
+    /// а содержимое `context_menu` перерисовывается каждый кадр: указатель
+    /// ушёл к пунктам — попадание пропало — меню закрылось само.
+    /// «Контекстное меню просто пропадает, я не успеваю дотянуться до
+    /// него» (владелец, Р.63 п.5).
+    pub menu_target: Option<MenuTarget>,
     /// НАБИРАЕМЫЙ текст формулы: (кривая, текст). Р.63 п.3.
     ///
     /// Поле держит свой текст между кадрами и отдаёт его модели ТОЛЬКО по
@@ -782,6 +801,21 @@ fn graph(
                 crate::theme::AXIS_ZERO,
             );
         }
+        // УЧАСТОК ПОД МЕНЮ подсвечен (Р.63 п.5): иначе непонятно, к чему
+        // относится форма, которую сейчас выбирают
+        if let Some(MenuTarget::Segment(mc, mk)) = view.menu_target
+            && mc == ci
+            && let (Some(a), Some(b)) = (c.keys.get(mk), c.keys.get(mk + 1))
+        {
+            p.rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(x_of(a.t.0), plot.top()),
+                    egui::pos2(x_of(b.t.0), plot.bottom()),
+                ),
+                0.0,
+                egui::Color32::from_rgba_unmultiplied(120, 160, 255, 28),
+            );
+        }
         let col = curve_color(ci);
         // ФОРМУЛЬНАЯ кривая ключей не хранит (контракт модели), поэтому
         // рисуется РАЗРЕШЁННЫМИ значениями — тем же вычислителем, что у
@@ -852,29 +886,58 @@ fn graph(
     // Меню ключа — ДО ранних `return` ниже (линейка, двойной клик): после
     // них правый клик по ключу не доходил бы до привязки вовсе.
     {
-        let menu_hit = resp.hover_pos().and_then(|pos| view.key_at(pos));
+        // ЦЕЛЬ ФИКСИРУЕТСЯ НА НАЖАТИИ (Р.63 п.5), а не пересчитывается от
+        // положения указателя каждый кадр: иначе движение к пунктам меню
+        // сбрасывало попадание, и меню закрывалось само.
+        if resp.secondary_clicked()
+            && let Some(pos) = resp.interact_pointer_pos()
+        {
+            view.menu_target = view
+                .key_at(pos)
+                .map(|(ci, ki)| MenuTarget::Key(ci, ki))
+                .or_else(|| {
+                    let ci = view.active;
+                    let t = t_of(pos.x);
+                    let keys = &curves.get(ci)?.keys;
+                    keys.windows(2)
+                        .position(|w| t >= w[0].t.0 && t < w[1].t.0)
+                        .map(|ki| MenuTarget::Segment(ci, ki))
+                });
+        }
+        let menu_hit = match view.menu_target {
+            Some(MenuTarget::Key(ci, ki)) => Some((ci, ki)),
+            _ => None,
+        };
         let mut del: Option<(usize, usize)> = None;
         let mut picked: Option<(usize, usize)> = None;
         // Правый клик по УЧАСТКУ (не по ключу) — форма этого отрезка
         // (Р.61). Соседние участки не трогаются: форма принадлежит
         // ЛЕВОМУ ключу отрезка, и меняется ровно он.
-        let seg_hit: Option<(usize, usize)> = resp.hover_pos().and_then(|pos| {
-            if menu_hit.is_some() || !plot.contains(pos) {
-                return None;
-            }
-            let ci = view.active;
-            let t = t_of(pos.x);
-            let keys = &curves.get(ci)?.keys;
-            keys.windows(2).position(|w| t >= w[0].t.0 && t < w[1].t.0).map(|ki| (ci, ki))
-        });
+        let seg_hit: Option<(usize, usize)> = match view.menu_target {
+            Some(MenuTarget::Segment(ci, ki)) => Some((ci, ki)),
+            _ => None,
+        };
         let mut set_shape: Option<(usize, usize, kt_model::SegShape)> = None;
         let mut shape_all: Option<(usize, kt_model::SegShape)> = None;
-        resp.clone().context_menu(|ui| {
+        let menu = resp.clone().context_menu(|ui| {
             let Some((ci, ki)) = menu_hit else {
                 if let Some((ci, ki)) = seg_hit {
                     let rate = curves.get(ci).is_some_and(|c| c.param == "rate");
                     let cur = curves[ci].keys[ki].shape;
-                    ui.label(egui::RichText::new(tr(k::fx::SHAPE_SEGMENT)).strong());
+                    // ЧЕЛОВЕК ВИДИТ, МЕЖДУ ЧЕМ ставит форму (Р.63 п.5):
+                    // заголовок называет оба конца участка, а сам участок
+                    // подсвечен на графике
+                    let (a, b) = (curves[ci].keys[ki].t, curves[ci].keys[ki + 1].t);
+                    ui.label(
+                        egui::RichText::new(crate::tf!(
+                            k::fx::SHAPE_SEGMENT_AT,
+                            format!("{:.3}", secs(a)),
+                            format!("{:.3}", secs(b)),
+                            format!("{:.0}", ctx.frac(a) * 100.0),
+                            format!("{:.0}", ctx.frac(b) * 100.0)
+                        ))
+                        .strong(),
+                    );
                     if rate {
                         // невозможность — ОШИБКА с причиной, а не тишина
                         ui.label(egui::RichText::new(tr(k::fx::SHAPE_RATE_LINEAR)).weak().small());
@@ -919,6 +982,11 @@ fn graph(
                 ui.close();
             }
         });
+        // меню закрылось — цель забыта (иначе следующий правый клик по
+        // пустому месту показал бы форму прошлого участка)
+        if menu.is_none() {
+            view.menu_target = None;
+        }
         out.key_menu = picked;
         if let Some((ci, ki, sh)) = set_shape
             && curves.get(ci).is_some_and(|c| ki < c.keys.len())
