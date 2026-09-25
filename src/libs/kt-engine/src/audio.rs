@@ -31,6 +31,14 @@ struct TrackStage {
     /// получает тишину — хвост выходит сам собой (t733). Поле «сколько
     /// звучать после конца» было бы вторым источником той же правды.
     la: i64,
+    /// КЛЮЧИ САЙДЧЕЙНА (Р.65): слот активной цепочки → дорожка, по которой
+    /// считает детектор. Слот — индекс в АКТИВНОЙ цепочке (bypass уже
+    /// отфильтрован), потому что по этому же индексу процессор раздаёт
+    /// узлам их кривые.
+    ///
+    /// Мёртвый ключ (дорожки нет, дорожка не аудио) сюда не попадает —
+    /// прибор тогда работает обычным компрессором, как и говорит спека.
+    keys: Vec<(usize, kt_model::TrackId, u32)>,
 }
 
 /// Клип, подготовленный к аудио-рендеру (границы в кадрах 48 kHz).
@@ -521,13 +529,62 @@ impl AudioRenderer {
                 let lane = lane as u32;
                 let fx = t.active_fx();
                 if !fx.is_empty() {
+                    // ключи ЖИВЫЕ: дорожка есть и она аудио. Номер дорожки
+                    // (lane) вычисляется по её рангу среди аудио — так же,
+                    // как его считает остальной микс.
+                    let keys: Vec<(usize, kt_model::TrackId, u32)> = fx
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(slot, f)| match f {
+                            kt_model::FxInstance::Compressor { key: Some(k), .. } => {
+                                let lane = tracks
+                                    .iter()
+                                    .filter(|t| t.kind == kt_model::LaneKind::Audio)
+                                    .position(|t| t.id == *k)?;
+                                Some((slot, *k, lane as u32))
+                            }
+                            _ => None,
+                        })
+                        .collect();
                     stages.push(TrackStage {
                         id: t.id,
                         lane,
                         la: kt_fx::chain_lookahead(&fx, &empty_auto),
                         fx,
+                        keys,
                     });
                 }
+            }
+            // ПОРЯДОК СТАДИЙ — по зависимости ключа: дорожка-ключ считается
+            // раньше цели. Сортировка СТАБИЛЬНАЯ: при равных зависимостях
+            // порядок прежний (ранг строки), иначе поехал бы порядок
+            // сложения f32 и GOLDEN_AUDIO (Р.65).
+            //
+            // Цикл модель не пропускает (t772); здесь он всё равно не
+            // зациклит — необработанные стадии дописываются в прежнем
+            // порядке, а рендер ключа рвёт рекурсию на первом уровне.
+            if stages.iter().any(|s| !s.keys.is_empty()) {
+                let mut done: Vec<TrackStage> = Vec::with_capacity(stages.len());
+                let mut rest: Vec<TrackStage> = std::mem::take(&mut stages);
+                while !rest.is_empty() {
+                    // готова стадия, ни один ключ которой не ждёт своей
+                    // очереди; забираем ВСЕ готовые разом, В ПРЕЖНЕМ
+                    // ПОРЯДКЕ — это и есть стабильность
+                    let ready = |s: &TrackStage, rest: &[TrackStage]| {
+                        s.keys.iter().all(|(_, k, _)| !rest.iter().any(|r| r.id == *k))
+                    };
+                    let any = rest.iter().any(|s| ready(s, &rest));
+                    if !any {
+                        done.append(&mut rest); // цикл: оставляем как есть
+                        break;
+                    }
+                    let snapshot = rest.clone();
+                    let (now, later): (Vec<TrackStage>, Vec<TrackStage>) =
+                        rest.into_iter().partition(|s| ready(s, &snapshot));
+                    done.extend(now);
+                    rest = later;
+                }
+                stages = done;
             }
         }
         let track_gain = |lane: u32| -> f32 {
@@ -838,6 +895,37 @@ impl AudioRenderer {
         }
         let live_tracks: std::collections::HashSet<_> = self.stages.iter().map(|s| s.id).collect();
         store.retain_tracks(&|id| live_tracks.contains(&id));
+        // КЛЮЧЕВЫЕ ВЕТКИ (Р.65): у цели свой суб-стор, и он синхронизируется
+        // ровно тем же правилом — те же цепочки, те же состояния
+        let with_keys: Vec<(kt_model::TrackId, Vec<(kt_model::TrackId, u32)>)> = self
+            .stages
+            .iter()
+            .filter(|s| !s.keys.is_empty())
+            .map(|s| (s.id, s.keys.iter().map(|(_, k, lane)| (*k, *lane)).collect()))
+            .collect();
+        for (target, keys) in &with_keys {
+            let opts = self.opts;
+            let sub = store.key_mut(*target);
+            for (key_id, key_lane) in keys {
+                for c in self.clips.iter().filter(|c| c.lane == *key_lane) {
+                    sub.sync_clip(c.id, &c.fx, &c.auto, c.source_in, c.end - c.start, opts);
+                }
+                if let Some(ks) = self.stages.iter().find(|s| s.id == *key_id) {
+                    sub.sync_track(ks.id, &ks.fx, opts);
+                }
+            }
+            let alive: std::collections::HashSet<_> = keys
+                .iter()
+                .flat_map(|(_, lane)| {
+                    self.clips.iter().filter(move |c| c.lane == *lane).map(|c| c.id)
+                })
+                .collect();
+            sub.retain_clips(&|id| alive.contains(&id));
+            let live: std::collections::HashSet<_> = keys.iter().map(|(k, _)| *k).collect();
+            sub.retain_tracks(&|id| live.contains(&id));
+        }
+        let targets: std::collections::HashSet<_> = with_keys.iter().map(|(t, _)| *t).collect();
+        store.retain_keys(&|id| targets.contains(&id));
         // цепочки ВНУТРИ лент синхронизируются тем же правилом: те же
         // цепочки — те же state-объекты, хвосты ревербов живут (инвариант 3)
 
@@ -974,30 +1062,83 @@ impl AudioRenderer {
         let mut stats = RenderStats::default();
         let frames = (range.end - range.start) as usize;
         let mut scratch = vec![0f32; frames * AUDIO_CHANNELS];
+        // буферы КЛЮЧЕЙ переиспользуются между стадиями: в рендер-пути
+        // лишних аллокаций быть не должно
+        let mut keybufs: Vec<(usize, Vec<f32>)> = Vec::new();
+        let mut pool: Vec<Vec<f32>> = Vec::new();
         for st in &self.stages {
             let win = (range.start + st.la)..(range.end + st.la);
             scratch.fill(0.0);
             // события дорожки — тем же кодом, что и все остальные
-            for ci in self.active_clips(&win) {
-                let clip = &self.clips[ci];
-                if clip.lane != st.lane {
-                    continue;
+            self.sum_lane(st.lane, fetcher, store, &win, &mut scratch, &mut stats);
+            // КЛЮЧЕВЫЕ СИГНАЛЫ (Р.65) — НА ОКНЕ ЦЕЛИ: детектор и то, что
+            // он сжимает, обязаны быть выровнены по времени, иначе дакинг
+            // срабатывает раньше или позже речи.
+            keybufs.truncate(0);
+            for (slot, key_id, key_lane) in &st.keys {
+                let mut kb = pool.pop().unwrap_or_default();
+                kb.clear();
+                kb.resize(frames * AUDIO_CHANNELS, 0.0);
+                // ОКНО КЛЮЧА — позиция ТЕХ САМЫХ сэмплов, что обрабатывает
+                // этот слот: узлы с упреждением ДО него отдают выход своими
+                // кольцами, и сигнал у слота старше входа цепочки на их
+                // сумму. Без этой поправки дакинг срабатывал на 5 мс раньше
+                // речи (t770, цепочка «лимитер + компрессор с ключом»).
+                let delay =
+                    store.track_mut(st.id).map(|p| p.slot_delay(*slot)).unwrap_or(0);
+                let win = (win.start - delay)..(win.end - delay);
+                {
+                    // СВОЯ ветка: свои состояния событий и цепочки ключа —
+                    // один процессор нельзя прокрутить дважды за кадр
+                    let sub = store.key_mut(st.id);
+                    self.sum_lane(*key_lane, fetcher, sub, &win, &mut kb, &mut stats);
+                    if let Some(p) = sub.track_mut(*key_id) {
+                        // ВНУТРИ ключевой ветки ключей нет: компрессор с
+                        // ключом работает тут обычным — так рвётся рекурсия
+                        p.process(win.start, &mut kb);
+                    }
                 }
-                fetcher.begin_clip(clip.id);
-                if !clip.fx.is_empty() {
-                    self.render_fx_clip(ci, fetcher, store, &win, &mut scratch, &mut stats);
-                } else {
-                    self.render_plain_clip(ci, fetcher, &win, &mut scratch, &mut stats);
-                }
+                keybufs.push((*slot, kb));
             }
             if let Some(p) = store.track_mut(st.id) {
-                p.process(win.start, &mut scratch);
+                p.process_keyed(win.start, &mut scratch, &|slot| {
+                    keybufs.iter().find(|(s, _)| *s == slot).map(|(_, b)| &b[..])
+                });
+            }
+            for (_, b) in keybufs.drain(..) {
+                pool.push(b);
             }
             for (o, v) in out.iter_mut().zip(scratch.iter()) {
                 *o += *v;
             }
         }
         stats
+    }
+
+    /// Сумма событий ОДНОЙ дорожки на окне — общий код собственного выхода
+    /// дорожки и её же ключевой ветки. Второй копии этого цикла быть не
+    /// должно: разойдись они, ключ слышал бы не то, что дорожка даёт.
+    fn sum_lane(
+        &self,
+        lane: u32,
+        fetcher: &mut dyn AudioFetcher,
+        store: &mut crate::fxstore::FxStateStore,
+        win: &std::ops::Range<i64>,
+        out: &mut [f32],
+        stats: &mut RenderStats,
+    ) {
+        for ci in self.active_clips(win) {
+            let clip = &self.clips[ci];
+            if clip.lane != lane {
+                continue;
+            }
+            fetcher.begin_clip(clip.id);
+            if !clip.fx.is_empty() {
+                self.render_fx_clip(ci, fetcher, store, win, out, stats);
+            } else {
+                self.render_plain_clip(ci, fetcher, win, out, stats);
+            }
+        }
     }
 
     /// Клип без FX: прямое чтение source-burst'ов с весами кроссфейда.
