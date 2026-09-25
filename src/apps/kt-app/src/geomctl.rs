@@ -282,39 +282,49 @@ impl KtApp {
         // одинаково)
         self.geom_ctl_drawn = true;
         let id = ui.id().with(("geomctl", clip.0));
-        let body = egui::Rect::from_points(&cs);
+        // прямоугольник жеста накрывает и РУЧКИ: ручка поворота висит
+        // НАД верхней стороной, и рамка из одних углов её не включает —
+        // нажатие уходило бы в play/pause превью (поймано t760b)
+        let mut pts: Vec<egui::Pos2> = cs.to_vec();
+        for h in mode.handles() {
+            pts.push(to_screen(h.point(&pl)));
+        }
+        let body = egui::Rect::from_points(&pts);
         let resp = ui.interact(body.expand(GRAB), id, egui::Sense::click_and_drag());
         let pointer = resp.interact_pointer_pos().or_else(|| ui.ctx().pointer_latest_pos());
         let alt = ui.input(|i| i.modifiers.alt);
 
-        // Жест начинается на `drag_started`, а если этот кадр не достался
-        // нам (виджет зарегистрирован в том же кадре, что и нажатие) — на
-        // первом же `dragged`. Иначе драг, начатый «мимо кадра», молча
-        // проваливался бы: у превью есть свой обработчик клика, и наш
-        // прямоугольник появляется в его же кадре.
-        if (resp.drag_started() || resp.dragged()) && self.geom_drag.is_none_or(|d| d.clip != clip)
+        // ЖЕСТ КЛЮЧУЕТСЯ ТОЧКОЙ НАЖАТИЯ (`press_origin`), а не фактом
+        // «драг идёт». Две причины, обе пойманы тестами:
+        //
+        // 1. РУЧКУ выбирать можно только по точке НАЖАТИЯ: к первому
+        //    кадру, который до нас доходит, указатель уже ушёл за хват-зону,
+        //    и жест ручки превращался в перенос тела (t760b);
+        // 2. снимок геометрии берётся ОДИН раз на нажатие: egui сообщает
+        //    stop/start посреди движения, и пересъёмка при живом
+        //    `press_origin` засчитывала пройденное дважды (t760).
+        let origin = ui.ctx().input(|i| i.pointer.press_origin()).or(pointer);
+        if resp.dragged()
+            && let Some(o) = origin
         {
-            self.gesture_counter += 1;
-            // точка НАЖАТИЯ, а не текущая: за время до первого кадра
-            // указатель уже уехал, и ручку надо выбирать по началу жеста
-            // ТОЧКА ОТСЧЁТА — указатель ЭТОГО кадра, а не `press_origin`.
-            // Причина не в пороге драга: жест может ПЕРЕЗАПУСТИТЬСЯ (egui
-            // сообщил stop/start посреди движения), и тогда `press_origin`
-            // остаётся на исходном нажатии, а снимок геометрии уже
-            // сдвинут — движение засчиталось бы дважды (поймано t760).
-            // Отсчёт от текущей точки непрерывен при любом перезапуске;
-            // порог драга при этом в значение не попадает — ровно как у
-            // драгов таймлайна.
-            let press = pointer;
-            let handle = press.and_then(|p| nearest_handle(&pl, mode, p, &to_screen, alt));
-            let start = self.model.clip(clip).map(|c| c.geometry).unwrap_or_default();
-            self.geom_drag = Some(GeomDrag {
-                clip,
-                handle,
-                gesture: self.gesture_counter,
-                start,
-                press: press.map(to_canvas).unwrap_or((0.0, 0.0)),
+            let oc = to_canvas(o);
+            let same = self.geom_drag.is_some_and(|d| {
+                d.clip == clip
+                    && (d.press.0 - oc.0).abs() < 0.01
+                    && (d.press.1 - oc.1).abs() < 0.01
             });
+            if !same {
+                self.gesture_counter += 1;
+                let handle = nearest_handle(&pl, mode, o, &to_screen, alt);
+                let start = self.model.clip(clip).map(|c| c.geometry).unwrap_or_default();
+                self.geom_drag = Some(GeomDrag {
+                    clip,
+                    handle,
+                    gesture: self.gesture_counter,
+                    start,
+                    press: oc,
+                });
+            }
         }
         if resp.hovered() {
             let over = pointer.and_then(|p| nearest_handle(&pl, mode, p, &to_screen, alt));

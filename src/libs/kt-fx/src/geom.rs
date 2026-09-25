@@ -272,12 +272,20 @@ impl Handle {
             Handle::BottomLeft => cs[3],
             Handle::Left | Handle::CropLeft => mid(cs[3], cs[0]),
             Handle::Anchor => pl.anchor,
-            // ручка поворота — над верхней стороной, на длине ROT_ARM
+            // Ручка поворота — ВНУТРИ рамки, под серединой верхней стороны.
+            //
+            // Снаружи (как в большинстве редакторов) она вылезает за кадр:
+            // по правилу «вписать» рамка занимает всю высоту холста, и
+            // ручка оказывалась ВНЕ превью — в неё невозможно попасть
+            // (поймано t760b). Внутрь — всегда видна; плечо укорачивается
+            // на мелкой рамке, чтобы не сойтись с якорем в центре.
             Handle::Rot => {
                 let top = mid(cs[0], cs[1]);
-                let (dx, dy) = (top.0 - pl.center().0, top.1 - pl.center().1);
+                let (cx, cy) = pl.center();
+                let (dx, dy) = (cx - top.0, cy - top.1);
                 let len = (dx * dx + dy * dy).sqrt().max(1e-6);
-                (top.0 + dx / len * ROT_ARM, top.1 + dy / len * ROT_ARM)
+                let arm = ROT_ARM.min(pl.dw.min(pl.dh) * 0.3);
+                (top.0 + dx / len * arm, top.1 + dy / len * arm)
             }
         }
     }

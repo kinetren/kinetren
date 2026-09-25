@@ -612,6 +612,9 @@ pub struct KtApp {
     pub glow_texture: Option<egui::TextureHandle>,
     /// Rect превью прошлого кадра (для оверлей-свечения поверх UI, п.8).
     pub preview_rect: egui::Rect,
+    /// Прямоугольник САМОЙ КАРТИНКИ внутри превью (поля letterbox уже срезаны):
+    /// масштаб «холст → экран» считается по нему, а не по панели.
+    pub preview_img_rect: egui::Rect,
     /// Прямоугольник медиа-бина прошлого кадра (Р.49, п.365): по нему
     /// ловится правый клик по свободному фону.
     pub bin_rect: egui::Rect,
@@ -875,6 +878,7 @@ impl KtApp {
             smooth_scaling: true,
             glow_texture: None,
             preview_rect: egui::Rect::NOTHING,
+            preview_img_rect: egui::Rect::NOTHING,
             bin_rect: egui::Rect::NOTHING,
             meter_glow: None,
             thumbs: crate::thumbs::ThumbService::start(&project2, None),
@@ -1083,6 +1087,7 @@ impl KtApp {
             smooth_scaling: true,
             glow_texture: None,
             preview_rect: egui::Rect::NOTHING,
+            preview_img_rect: egui::Rect::NOTHING,
             bin_rect: egui::Rect::NOTHING,
             meter_glow: None,
             thumbs: thumbs_svc,
@@ -6369,6 +6374,7 @@ impl KtApp {
             // КОНТРОЛЫ ГЕОМЕТРИИ — до драга титра: у более мелкой и
             // более специфичной цели (блок титра) приоритет, egui отдаёт
             // указатель последнему зарегистрированному интерактору
+            self.preview_img_rect = img_rect;
             self.geometry_controls(ui, &painter, img_rect, (q.width, q.height));
             self.title_drag_in_preview(ui, &painter, img_rect);
             // скрим — только если неполнота держится >180 мс (v1)

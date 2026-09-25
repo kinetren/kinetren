@@ -15281,8 +15281,11 @@ fn t760_frame_matches_the_placement_and_drag_writes_the_same_numbers() {
     // --- ПЕРЕНОС за тело: те же числа, один шаг истории ---------------
     let depth = h.state().model.undo_depth();
     let before = h.state().model.clip(clip).unwrap().geometry;
+    // масштаб «экран → холст» считается по КАРТИНКЕ, а не по панели:
+    // у панели есть поля letterbox, и по ней 48 px указателя переводятся
+    // в другое число долей (ровно этим тест краснел на верном коде)
     let img = {
-        let r = h.state().preview_rect;
+        let r = h.state().preview_img_rect;
         assert!(r.width() > 40.0, "превью в харнессе есть: {r:?}");
         r
     };
@@ -15370,4 +15373,316 @@ fn t760_frame_matches_the_placement_and_drag_writes_the_same_numbers() {
         app.selected.clear();
         assert!(matches!(app.geom_target(), Err(crate::geomctl::NoFrame::NothingSelected)));
     }
+}
+
+/// Тест 763 (Р.64): попадание в ручку с первого раза и приоритет при
+/// мелкой рамке.
+///
+/// Разведка F-UI-001: «точность жеста падает вместе с качеством превью» —
+/// на мелкой рамке хват-зоны перекрываются, и правило «кто ближе» остаётся
+/// единственным однозначным. Плюс правило 1 чек-листа: целиться в ручку
+/// размером с точку человек не должен.
+#[test]
+fn t763_handles_are_hittable_and_the_nearest_wins() {
+    use crate::geomctl::{GRAB, GeomMode, nearest_handle};
+    use kt_fx::geom::Handle;
+    let (h, clip) = harness_geom_ctl();
+    let q = h.state().player.preview_quality();
+    let canvas = (q.width as f64, q.height as f64);
+    let pl = h.state().geom_placement(clip, canvas).expect("размещение");
+    // холст → экран, как в контроле
+    let img = h.state().preview_img_rect;
+    let to_screen = |p: (f64, f64)| -> egui::Pos2 {
+        egui::pos2(
+            img.left() + (p.0 / canvas.0) as f32 * img.width(),
+            img.top() + (p.1 / canvas.1) as f32 * img.height(),
+        )
+    };
+
+    // --- КАЖДАЯ ручка ловится в своей точке и в пределах хват-зоны -----
+    for h_ in GeomMode::Transform.handles() {
+        if *h_ == Handle::Anchor {
+            continue; // якорь берётся только с Alt — проверяется ниже
+        }
+        let p = to_screen(h_.point(&pl));
+        assert_eq!(
+            nearest_handle(&pl, GeomMode::Transform, p, &to_screen, false),
+            Some(*h_),
+            "ручка {h_:?} не ловится в собственной точке"
+        );
+        // …и с края хват-зоны (правило 1: 14 px)
+        let edge = p + egui::vec2(GRAB * 0.45, GRAB * 0.45);
+        assert!(
+            nearest_handle(&pl, GeomMode::Transform, edge, &to_screen, false).is_some(),
+            "ручка {h_:?} не ловится с края хват-зоны — целиться придётся точно"
+        );
+    }
+
+    // --- ЯКОРЬ: без Alt его нет, с Alt — есть ------------------------
+    let a = to_screen(Handle::Anchor.point(&pl));
+    assert_ne!(
+        nearest_handle(&pl, GeomMode::Transform, a, &to_screen, false),
+        Some(Handle::Anchor),
+        "якорь в центре рамки забирает захват картинки без модификатора"
+    );
+    assert_eq!(
+        nearest_handle(&pl, GeomMode::Transform, a, &to_screen, true),
+        Some(Handle::Anchor),
+        "с Alt якорь обязан браться"
+    );
+
+    // --- ТЕЛО: точка внутри рамки, но не у ручки, жеста ручки не даёт --
+    let inside = img.min + egui::vec2(img.width() * 0.3, img.height() * 0.32);
+    assert_eq!(
+        nearest_handle(&pl, GeomMode::Transform, inside, &to_screen, false),
+        None,
+        "тело рамки перехватило жест ручки"
+    );
+
+    // --- МЕЛКАЯ РАМКА: выигрывает БЛИЖАЙШАЯ, а не первая попавшаяся ---
+    let tiny = kt_fx::geom::Placement {
+        ox: 100.0,
+        oy: 100.0,
+        dw: 6.0,
+        dh: 6.0,
+        rot_deg: 0.0,
+        anchor: (103.0, 103.0),
+        crop_in: (0.0, 0.0, 6.0, 6.0),
+    };
+    let ident = |p: (f64, f64)| egui::pos2(p.0 as f32, p.1 as f32);
+    for corner in [Handle::TopLeft, Handle::TopRight, Handle::BottomRight, Handle::BottomLeft] {
+        let p = ident(corner.point(&tiny));
+        assert_eq!(
+            nearest_handle(&tiny, GeomMode::Transform, p, &ident, false),
+            Some(corner),
+            "на рамке 6×6 ручка {corner:?} проиграла соседней, хотя указатель на ней"
+        );
+    }
+
+    // --- КРОП — другой набор: в режиме трансформации его ручек нет ----
+    assert_eq!(
+        nearest_handle(&pl, GeomMode::Transform, to_screen(Handle::CropLeft.point(&pl)), &to_screen, false),
+        Some(Handle::Left),
+        "в наборе трансформации середина стороны — это масштаб, а не кроп"
+    );
+    assert_eq!(
+        nearest_handle(&pl, GeomMode::Crop, to_screen(Handle::CropLeft.point(&pl)), &to_screen, false),
+        Some(Handle::CropLeft),
+        "в наборе кропа середина стороны — это кроп"
+    );
+}
+
+/// Тест 764 (Р.64): контролы гаснут при игре и не греют простой.
+///
+/// Отрасль гасит их всегда (FCP) или автоматически (AE): контрол закрывает
+/// то, ради чего человек смотрит в кадр. Наше правило стоимости кадра
+/// (инвариант 12) требует того же с другой стороны.
+#[test]
+fn t764_controls_hide_while_playing_and_cost_nothing_idle() {
+    let (mut h, _clip) = harness_geom_ctl();
+    assert!(h.state().geom_ctl_drawn, "сцена: на паузе контролы рисуются");
+
+    // --- ИГРА: контролов нет ------------------------------------------
+    h.state_mut().geom_ctl_drawn = false;
+    h.state_mut().player.play();
+    h.step();
+    h.step();
+    assert!(
+        !h.state().geom_ctl_drawn,
+        "при воспроизведении контролы остались на кадре — они закрывают то, ради чего смотрят"
+    );
+
+    // --- ПАУЗА: вернулись ---------------------------------------------
+    h.state_mut().player.pause();
+    h.state_mut().geom_ctl_drawn = false;
+    h.step();
+    h.step();
+    assert!(h.state().geom_ctl_drawn, "на паузе контролы не вернулись");
+
+    // --- ПРОСТОЙ: набор выключен — путь превью прежний ------------------
+    h.state_mut().geom_ctl = crate::geomctl::GeomMode::Off;
+    h.state_mut().geom_ctl_drawn = false;
+    h.step();
+    h.step();
+    assert!(!h.state().geom_ctl_drawn, "выключенный набор всё равно лезет в кадр");
+}
+
+/// Драг рамки в превью В ТРИ ШАГА (порог драга egui) с модификаторами.
+fn geom_drag(
+    h: &mut Harness<'_, KtApp>,
+    from: egui::Pos2,
+    to: egui::Pos2,
+    mods: egui::Modifiers,
+) {
+    // модификатор едет и отдельным событием, и В САМОЙ кнопке: `drag_at`
+    // шлёт `PointerButton { modifiers: NONE }` и этим гасит состояние кадра
+    // (родня урока `ctrl_click_at`)
+    h.event(egui::Event::ModifiersChanged(mods));
+    h.hover_at(from);
+    h.step();
+    h.event(egui::Event::PointerButton {
+        pos: from,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: mods,
+    });
+    h.step();
+    h.hover_at(from + (to - from) * 0.25);
+    h.step();
+    h.hover_at(to);
+    h.step();
+    h.event(egui::Event::PointerButton {
+        pos: to,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: mods,
+    });
+    h.event(egui::Event::PointerGone);
+    h.step();
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    h.step();
+}
+
+/// Экранная точка ручки (контрол считает её тем же `Handle::point`).
+fn handle_pos(
+    h: &Harness<'_, KtApp>,
+    clip: kt_model::ClipId,
+    which: kt_fx::geom::Handle,
+) -> egui::Pos2 {
+    let q = h.state().player.preview_quality();
+    let canvas = (q.width as f64, q.height as f64);
+    let pl = h.state().geom_placement(clip, canvas).expect("размещение");
+    let img = h.state().preview_img_rect;
+    let p = which.point(&pl);
+    egui::pos2(
+        img.left() + (p.0 / canvas.0) as f32 * img.width(),
+        img.top() + (p.1 / canvas.1) as f32 * img.height(),
+    )
+}
+
+/// Тест 760b (Р.64): поворот ручкой вращения, шаг по Shift.
+#[test]
+fn t760b_rotation_handle_turns_the_layer() {
+    use kt_fx::geom::Handle;
+    let (mut h, clip) = harness_geom_ctl();
+    assert_eq!(h.state().model.clip(clip).unwrap().geometry.rot, 0.0, "сцена: слой не повёрнут");
+
+    // ручка поворота — над верхней стороной; тянем вбок
+    let from = handle_pos(&h, clip, Handle::Rot);
+    let to = from + egui::vec2(120.0, 60.0);
+    // диагностика сцены: ручка поворота вообще внутри превью?
+    assert!(
+        h.state().preview_rect.contains(from),
+        "ручка поворота вне превью: {from:?} при {:?}",
+        h.state().preview_rect
+    );
+    let depth = h.state().model.undo_depth();
+    // какая ручка попадётся в этой точке?
+    {
+        let q = h.state().player.preview_quality();
+        let canvas = (q.width as f64, q.height as f64);
+        let pl = h.state().geom_placement(clip, canvas).unwrap();
+        let img = h.state().preview_img_rect;
+        let to_screen = |p: (f64, f64)| -> egui::Pos2 {
+            egui::pos2(
+                img.left() + (p.0 / canvas.0) as f32 * img.width(),
+                img.top() + (p.1 / canvas.1) as f32 * img.height(),
+            )
+        };
+        assert_eq!(
+            crate::geomctl::nearest_handle(
+                &pl,
+                crate::geomctl::GeomMode::Transform,
+                from,
+                &to_screen,
+                false
+            ),
+            Some(Handle::Rot),
+            "в точке ручки поворота ловится не она"
+        );
+    }
+    geom_drag(&mut h, from, to, egui::Modifiers::NONE);
+    let rot = h.state().model.clip(clip).unwrap().geometry.rot;
+    assert!(rot.abs() > 1.0, "поворот не состоялся: {rot}");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "поворот — один шаг истории");
+
+    // Shift — шаг 15°
+    let from = handle_pos(&h, clip, Handle::Rot);
+    let to = from + egui::vec2(-90.0, 70.0);
+    geom_drag(&mut h, from, to, egui::Modifiers::SHIFT);
+    let rot = h.state().model.clip(clip).unwrap().geometry.rot;
+    assert!(
+        (rot / 15.0 - (rot / 15.0).round()).abs() < 1e-6,
+        "с Shift угол обязан быть кратен 15°: {rot}"
+    );
+}
+
+/// Тест 761b (Р.64): якорь двигается — картинка стоит, и на повёрнутом
+/// слое тоже. Тот же контракт, что у чистой функции в t761, но ЧЕРЕЗ
+/// НАСТОЯЩИЙ ЖЕСТ.
+#[test]
+fn t761b_anchor_gesture_keeps_the_picture_in_place() {
+    use kt_fx::geom::Handle;
+    for rot in [0.0f64, 30.0] {
+        let (mut h, clip) = harness_geom_ctl();
+        {
+            let app = h.state_mut();
+            let g = kt_model::EventGeometry { rot, ..app.model.clip(clip).unwrap().geometry };
+            let tok = app.gesture_counter + 1;
+            app.set_geometry_coalesced(clip, g, tok);
+        }
+        h.step();
+        let q = h.state().player.preview_quality();
+        let canvas = (q.width as f64, q.height as f64);
+        let before = h.state().geom_placement(clip, canvas).unwrap().corners();
+        let a0 = h.state().model.clip(clip).unwrap().geometry;
+
+        // тянем ЯКОРЬ (только с Alt) к левому верхнему углу рамки
+        let from = handle_pos(&h, clip, Handle::Anchor);
+        let to = handle_pos(&h, clip, Handle::TopLeft);
+        geom_drag(&mut h, from, to, egui::Modifiers::ALT);
+
+        let a1 = h.state().model.clip(clip).unwrap().geometry;
+        assert!(
+            (a1.anchor_x - a0.anchor_x).abs() > 0.05 || (a1.anchor_y - a0.anchor_y).abs() > 0.05,
+            "поворот {rot}°: якорь не сдвинулся — жест ничего не сделал"
+        );
+        let after = h.state().geom_placement(clip, canvas).unwrap().corners();
+        for i in 0..4 {
+            assert!(
+                (after[i].0 - before[i].0).abs() < 1.0 && (after[i].1 - before[i].1).abs() < 1.0,
+                "поворот {rot}°: картинка уехала за якорем — угол {i}: {:?} против {:?}",
+                after[i],
+                before[i]
+            );
+        }
+    }
+}
+
+/// Тест 762 (Р.64): кроп своими ручками в своём наборе.
+#[test]
+fn t762_crop_handles_cut_their_own_side() {
+    use kt_fx::geom::Handle;
+    let (mut h, clip) = harness_geom_ctl();
+    h.state_mut().geom_ctl = crate::geomctl::GeomMode::Crop;
+    h.step();
+
+    let q = h.state().player.preview_quality();
+    let canvas = (q.width as f64, q.height as f64);
+    let w0 = h.state().geom_placement(clip, canvas).unwrap().dw;
+    let from = handle_pos(&h, clip, Handle::CropLeft);
+    let to = from + egui::vec2(h.state().preview_rect.width() * 0.15, 0.0);
+    let depth = h.state().model.undo_depth();
+    geom_drag(&mut h, from, to, egui::Modifiers::NONE);
+
+    let g = h.state().model.clip(clip).unwrap().geometry;
+    assert!(g.crop_l > 0.02, "кроп слева не поехал: {}", g.crop_l);
+    assert_eq!(
+        (g.crop_t, g.crop_r, g.crop_b),
+        (0.0, 0.0, 0.0),
+        "ручка кропа тронула чужие стороны"
+    );
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "кроп — один шаг истории");
+    let w1 = h.state().geom_placement(clip, canvas).unwrap().dw;
+    assert!(w1 < w0, "рамка не сузилась после кропа: {w1} против {w0}");
 }
