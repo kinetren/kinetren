@@ -800,6 +800,29 @@ def color_media(out_dir, name, rgb, seconds, fps=30, size="640x360"):
     return path
 
 
+def pattern_media(out_dir, name, seconds, fps=30, size="640x360"):
+    """Настоящий mp4 со СТРУКТУРОЙ (цветные полосы SMPTE). Сплошная заливка
+    (`color_media`) годится для «есть ли картинка», но не для «сдвинулась
+    ли она»: у однотонного кадра любой перенос и любой зум дают тот же
+    пиксель. Идемпотентно."""
+    path = os.path.join(out_dir, f"{name}.mp4")
+    if os.path.exists(path):
+        return path
+    subprocess.run(
+        [
+            "ffmpeg", "-v", "error", "-y",
+            "-f", "lavfi", "-i", f"smptebars=size={size}:rate={fps}:duration={seconds}",
+            "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+            "-shortest",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "96k",
+            path,
+        ],
+        check=True,
+    )
+    return path
+
+
 def geometry():
     """Границы окна kt-app в координатах экрана."""
     x, y, w, h = probe.origin(probe.window())

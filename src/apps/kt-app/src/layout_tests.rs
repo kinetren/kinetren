@@ -15592,7 +15592,7 @@ fn t763_handles_are_hittable_and_the_nearest_wins() {
     // --- КАЖДАЯ ручка ловится в своей точке и в пределах хват-зоны -----
     for h_ in GeomMode::Transform.handles() {
         if *h_ == Handle::Anchor {
-            continue; // якорь берётся только с Alt — проверяется ниже
+            continue; // у якоря своя, узкая зона — проверяется ниже
         }
         let p = to_screen(h_.point(&pl));
         assert_eq!(
@@ -15608,17 +15608,26 @@ fn t763_handles_are_hittable_and_the_nearest_wins() {
         );
     }
 
-    // --- ЯКОРЬ: без Alt его нет, с Alt — есть ------------------------
+    // --- ЯКОРЬ: за СВОЮ ТОЧКУ берётся, чуть в стороне — уже тело ------
+    // (только с Alt его оставить нельзя: Alt+перетаскивание перехватывает
+    // оконный менеджер, и до программы жест не доходит — живой `geomctl`)
     let a = to_screen(Handle::Anchor.point(&pl));
-    assert_ne!(
+    assert_eq!(
         nearest_handle(&pl, GeomMode::Transform, a, &to_screen, false),
         Some(Handle::Anchor),
-        "якорь в центре рамки забирает захват картинки без модификатора"
+        "якорь не берётся за собственную точку — жест недостижим"
+    );
+    let near_a = a + egui::vec2(crate::geomctl::ANCHOR_GRAB + 3.0, 0.0);
+    assert_ne!(
+        nearest_handle(&pl, GeomMode::Transform, near_a, &to_screen, false),
+        Some(Handle::Anchor),
+        "якорь в центре рамки забирает захват картинки вокруг себя: \
+         его зона обязана быть узкой"
     );
     assert_eq!(
-        nearest_handle(&pl, GeomMode::Transform, a, &to_screen, true),
+        nearest_handle(&pl, GeomMode::Transform, near_a, &to_screen, true),
         Some(Handle::Anchor),
-        "с Alt якорь обязан браться"
+        "с Alt зона якоря — общая: поймать его наверняка должно быть можно"
     );
 
     // --- ТЕЛО: точка внутри рамки, но не у ручки, жеста ручки не даёт --
