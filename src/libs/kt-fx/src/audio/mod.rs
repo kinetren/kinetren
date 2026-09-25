@@ -330,8 +330,22 @@ impl TrackProcessor {
     /// кольцами, поэтому выход выровнен со входом: вызывающий обязан
     /// подать вход, обгоняющий выход ровно на `lookahead_frames()`.
     pub fn process(&mut self, pos: i64, buf: &mut [f32]) {
-        for (_, node) in &mut self.nodes {
-            node.process(buf, pos);
+        self.process_keyed(pos, buf, &|_| None);
+    }
+
+    /// Обработка с КЛЮЧЕВЫМИ сигналами (сайдчейн, Р.65): `key` спрашивают
+    /// ПО СЛОТУ — в одной цепочке могут стоять два компрессора с разными
+    /// ключами, и общего «ключа цепочки» не существует. Кто ключ добыл и
+    /// на каком окне — дело вызывающего (движок): kt-fx о дорожках не
+    /// знает и знать не должен.
+    pub fn process_keyed<'k>(
+        &mut self,
+        pos: i64,
+        buf: &mut [f32],
+        key: &dyn Fn(usize) -> Option<&'k [f32]>,
+    ) {
+        for (slot, node) in &mut self.nodes {
+            node.process(buf, pos, key(*slot));
         }
     }
 }
@@ -922,7 +936,9 @@ impl ClipProcessor {
                         }
                     }
                 } else {
-                    node.process(sub, chunk_local + ahead[i]);
+                    // у события ключа не бывает: сайдчейн живёт только в
+                    // цепочке ДОРОЖКИ (решение владельца Р.65)
+                    node.process(sub, chunk_local + ahead[i], None);
                 }
             }
             done += n;

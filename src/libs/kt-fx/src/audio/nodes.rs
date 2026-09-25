@@ -374,7 +374,16 @@ impl AudioNode {
         }
     }
 
-    pub(crate) fn process(&mut self, buf: &mut [f32], _pos: i64) {
+    /// Обработка чанка. `key` — КЛЮЧЕВОЙ (сайдчейн) сигнал того же окна и
+    /// того же домена (f32 48 kHz/2ch), если вызывающий его дал; узел, у
+    /// которого второго входа нет, обязан игнорировать его дословно —
+    /// иначе ветка ключа стоила бы байтов там, где ключа не бывает.
+    ///
+    /// Своего состояния у ключа НЕТ намеренно: сеттер, живущий между
+    /// вызовами, завёл бы скрытую зависимость от порядка вызовов, а
+    /// инвариант 2 требует, чтобы состояние трогал только render-поток и
+    /// только на своём окне.
+    pub(crate) fn process(&mut self, buf: &mut [f32], _pos: i64, key: Option<&[f32]>) {
         match self {
             AudioNode::Gain(n) => n.process(buf),
             AudioNode::LayerMix => {}
@@ -391,7 +400,7 @@ impl AudioNode {
             AudioNode::Flanger(n) => n.process(buf, _pos),
             AudioNode::Phaser(n) => n.process(buf, _pos),
             AudioNode::Delay(n) => n.process(buf),
-            AudioNode::Compressor(n) => n.process(buf),
+            AudioNode::Compressor(n) => n.process(buf, key),
             AudioNode::Gate(n) => n.process(buf),
             AudioNode::Limiter(n) => n.process(buf),
             AudioNode::Pitch(n) => n.process(buf, _pos),
@@ -1484,12 +1493,22 @@ impl CompNode {
         self.env.set_times(att.clamp(0.1, 250.0), rel.clamp(5.0, 2000.0));
     }
 
-    fn process(&mut self, buf: &mut [f32]) {
-        for fr in buf.chunks_exact_mut(CH) {
+    /// `key` — сайдчейн: детектор слушает ЕГО, а сжимается всё равно свой
+    /// вход. Закон сжатия, пределы и сглаживание те же — ключ меняет
+    /// только источник огибающей (Р.65). Ключ короче буфера (последний
+    /// чанк окна) даёт для остатка пик 0 — это тише порога, то есть
+    /// «ключ молчит», а не паника.
+    fn process(&mut self, buf: &mut [f32], key: Option<&[f32]>) {
+        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
             let thr = self.threshold_db.tick();
             let ratio = self.ratio.tick().max(1.0);
             let makeup = 10f32.powf(self.makeup_db.tick() / 20.0);
-            let peak = fr.iter().fold(0f32, |m, s| m.max(s.abs()));
+            let peak = match key {
+                None => fr.iter().fold(0f32, |m, s| m.max(s.abs())),
+                Some(k) => k
+                    .get(i * CH..i * CH + CH)
+                    .map_or(0.0, |kf| kf.iter().fold(0f32, |m, s| m.max(s.abs()))),
+            };
             let env = self.env.tick(peak).max(1e-6);
             let env_db = 20.0 * env.log10();
             let over = (env_db - thr).max(0.0);
