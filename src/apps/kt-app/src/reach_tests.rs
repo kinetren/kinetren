@@ -2725,3 +2725,91 @@ fn t757_every_window_is_in_the_registry() {
         );
     }
 }
+
+/// Тест 766 (Р.64): экранные контролы ДОСТИЖИМЫ и объясняют себя.
+///
+/// Жест, которого не найти, не существует (правило 1 чек-листа), а ручка,
+/// молчащая в строке состояния, — это «угадай, что я сделаю» (правило 10).
+/// Здесь щупается ровно то, откуда действует человек: правый клик по кадру,
+/// пункт меню, наведение на ручку. Отдельным утверждением — что контролы
+/// живут в ОДНОМ месте (`draw_preview`), поэтому в отделённом окне они те
+/// же самые: своей копии рисования превью в программе нет.
+#[test]
+fn t766_on_screen_controls_are_reachable_and_speak() {
+    use egui_kittest::kittest::Queryable;
+    let (mut h, clip) = crate::layout_tests::harness_geom_ctl();
+    // сцена начинается с ВЫКЛЮЧЕННЫХ контролов — их и надо найти
+    h.state_mut().geom_ctl = crate::geomctl::GeomMode::Off;
+    h.step();
+
+    // ---- переключатель: правый клик по кадру → первый пункт ------------
+    let pos = h.state().preview_rect.center();
+    h.hover_at(pos);
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.step();
+    h.step();
+    let label = crate::tf!(
+        crate::i18n::k::geomctl::TOGGLE,
+        crate::geomctl::mode_name(crate::geomctl::GeomMode::Off.next())
+    );
+    h.get_by_label_contains(&label).click();
+    h.step();
+    h.step();
+    assert_eq!(
+        h.state().geom_ctl,
+        crate::geomctl::GeomMode::Transform,
+        "пункт меню превью не включил контролы: жест остался недостижимым"
+    );
+
+    // ---- ручка называет СЕБЯ в строке состояния ------------------------
+    let q = h.state().player.preview_quality();
+    let canvas = (q.width as f64, q.height as f64);
+    let pl = h.state().geom_placement(clip, canvas).expect("размещение");
+    let img = h.state().preview_img_rect;
+    let to_screen = |p: (f64, f64)| -> egui::Pos2 {
+        egui::pos2(
+            img.left() + (p.0 / canvas.0) as f32 * img.width(),
+            img.top() + (p.1 / canvas.1) as f32 * img.height(),
+        )
+    };
+    for (handle, key) in [
+        (kt_fx::geom::Handle::Rot, crate::i18n::k::geomctl::HINT_ROT),
+        (kt_fx::geom::Handle::TopLeft, crate::i18n::k::geomctl::HINT_SCALE),
+    ] {
+        h.hover_at(to_screen(handle.point(&pl)));
+        h.step();
+        h.step();
+        let shown = h.state().status_line_shown.0.clone();
+        assert_eq!(
+            shown,
+            crate::i18n::tr(key),
+            "над ручкой {handle:?} строка состояния говорит «{shown}» — \
+             подсказка обязана называть ЖЕСТ, который тут будет"
+        );
+    }
+
+    // ---- контролы рисуются В ОДНОМ МЕСТЕ -------------------------------
+    // (значит отделённое окно получает их тем же кодом: `draw_preview`
+    // зовут обе ветки — панель и вьюпорт)
+    let src = std::fs::read_to_string("apps/kt-app/src/app.rs")
+        .or_else(|_| std::fs::read_to_string("src/app.rs"))
+        .expect("исходник app.rs");
+    let calls = src.matches("self.geometry_controls(").count();
+    assert_eq!(
+        calls, 1,
+        "контролы геометрии зовутся из {calls} мест — вторая копия разойдётся \
+         с первой молча (правило 17)"
+    );
+    assert!(
+        src.matches("self.draw_preview(ui);").count() >= 2,
+        "превью рисуется одним вызовом — отделённое окно перестало быть тем же кодом"
+    );
+}

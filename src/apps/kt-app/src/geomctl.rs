@@ -25,7 +25,7 @@ use kt_fx::geom::{
     Handle, Placement, anchor_move, crop_for_handle, geometry_placement, pos_for_drag,
     rot_for_point, zoom_for_handle,
 };
-use kt_model::{ClipId, ClipKind, Command, EventGeometry, FxInstance};
+use kt_model::{ClipId, ClipKind, Command, EventGeometry, FxInstance, HasParams};
 
 /// Хват-зона ручки в экранных px (правило 1 чек-листа: в подпись высотой в
 /// строку целиться не должно быть нужно).
@@ -158,8 +158,46 @@ impl KtApp {
 
     /// Размещение ведущего узла события на холсте превью.
     pub(crate) fn geom_placement(&self, clip: ClipId, canvas: (f64, f64)) -> Option<Placement> {
-        let g = self.model.clip(clip)?.geometry;
+        let g = self.geom_effective(clip)?;
         self.geom_placement_of(&g, clip, canvas)
+    }
+
+    /// Позиция курсора В ДОМЕНЕ КРИВЫХ события — тик МАТЕРИАЛА (Р.37: ось
+    /// линейна, скорость её не сжимает). Тем же правилом живёт поле окна FX.
+    pub(crate) fn geom_curve_at(&self, clip: ClipId) -> kt_time::Tick {
+        let frame_step = 90_000 / self.model.project().settings.fps.max(1) as i64;
+        let playhead = self.player.transport.playhead();
+        match self.model.clip(clip) {
+            Some(c) => kt_model::clip_material_at(
+                c.source_in,
+                c.start,
+                c.duration,
+                c.reversed,
+                frame_step,
+                playhead,
+            ),
+            None => playhead,
+        }
+    }
+
+    /// Геометрия, КОТОРУЮ ВИДНО: база, поверх которой лежат значения живых
+    /// кривых под курсором. Рамка обязана показывать то же, что рендер, а
+    /// рендер сэмплирует `geometry_auto` как автоматизацию обычного слота.
+    pub(crate) fn geom_effective(&self, clip: ClipId) -> Option<EventGeometry> {
+        let c = self.model.clip(clip)?;
+        let mut g = c.geometry;
+        if c.geometry_auto.is_empty() {
+            return Some(g);
+        }
+        let at = self.geom_curve_at(clip);
+        let mut curves = c.geometry_auto.clone();
+        let bind = crate::widgets::CurveBind { curves: &mut curves, sel: None, at };
+        let names: Vec<String> = g.param_specs().iter().map(|s| s.name.to_string()).collect();
+        for n in names {
+            let v = bind.shown(&g, &n);
+            g.set_param(&n, v);
+        }
+        Some(g)
     }
 
     /// То же для ПРОИЗВОЛЬНОЙ геометрии события (жест считает от снимка
@@ -316,7 +354,7 @@ impl KtApp {
             if !same {
                 self.gesture_counter += 1;
                 let handle = nearest_handle(&pl, mode, o, &to_screen, alt);
-                let start = self.model.clip(clip).map(|c| c.geometry).unwrap_or_default();
+                let start = self.geom_effective(clip).unwrap_or_default();
                 self.geom_drag = Some(GeomDrag {
                     clip,
                     handle,
@@ -344,7 +382,7 @@ impl KtApp {
         }
         let Some(drag) = self.geom_drag.filter(|d| d.clip == clip) else { return };
         let Some(ptr) = pointer else { return };
-        let Some(g0) = self.model.clip(clip).map(|c| c.geometry) else { return };
+        let Some(g0) = self.geom_effective(clip) else { return };
         // ВСЁ считается от НАЧАЛА жеста: размещение на момент нажатия и
         // полное смещение указателя. Покадровая дельта дважды применяла
         // движение того кадра, в котором драг начался (t760).
@@ -401,8 +439,34 @@ impl KtApp {
     /// токен жеста один — значит и шаг истории один (правило 17).
     pub(crate) fn set_geometry_coalesced(&mut self, clip: ClipId, g: EventGeometry, gesture: u64) {
         let Some(c) = self.model.clip(clip) else { return };
-        let (pos, auto) = (c.geometry_pos, c.geometry_auto.clone());
-        self.apply_coalesced(Command::SetGeometry { id: clip, geometry: g, pos, auto }, gesture);
+        let pos = c.geometry_pos;
+        let mut base = c.geometry;
+        let mut auto = c.geometry_auto.clone();
+        let at = self.geom_curve_at(clip);
+        // Параметр с ЖИВОЙ КРИВОЙ правится КЛЮЧОМ по курсору — тем же
+        // правилом (`CurveBind`), что поле окна FX. Второго правила «куда
+        // писать значение» в программе быть не должно (правило 17): иначе
+        // жест стирал бы анимацию, показывая при этом её же значение.
+        {
+            let mut bind = crate::widgets::CurveBind { curves: &mut auto, sel: None, at };
+            let names: Vec<String> = base.param_specs().iter().map(|s| s.name.to_string()).collect();
+            for n in names {
+                let Some(v) = g.get_param(&n) else { continue };
+                if bind.shown(&base, &n) == v {
+                    continue; // ключей «на всякий случай» жест не сеет
+                }
+                if bind.has_curve(&base, &n) {
+                    bind.apply(&mut base, &n, v);
+                } else {
+                    base.set_param(&n, v);
+                }
+            }
+        }
+        base.rule = g.rule; // правило приведения — не число, кривой у него нет
+        for c in auto.iter_mut() {
+            c.keys.sort_by_key(|k| k.t.0); // модель требует порядок ключей
+        }
+        self.apply_coalesced(Command::SetGeometry { id: clip, geometry: base, pos, auto }, gesture);
     }
 }
 

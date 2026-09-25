@@ -15219,7 +15219,7 @@ fn t756_ducking_lives_in_the_track_window_and_remembers_its_settings() {
 
 /// Сцена для экранных контролов (Р.64): одно видео-событие выделено,
 /// курсор внутри него, набор «трансформация» включён.
-fn harness_geom_ctl() -> (Harness<'static, KtApp>, kt_model::ClipId) {
+pub(crate) fn harness_geom_ctl() -> (Harness<'static, KtApp>, kt_model::ClipId) {
     use kt_model::*;
     // сцена — ГЕНЕРАТОР: у него источник поднимается тем же путём, что в
     // программе, и превью получает НАСТОЯЩИЙ кадр (без кадра нет ни
@@ -15373,6 +15373,81 @@ fn t760_frame_matches_the_placement_and_drag_writes_the_same_numbers() {
         app.selected.clear();
         assert!(matches!(app.geom_target(), Err(crate::geomctl::NoFrame::NothingSelected)));
     }
+}
+
+/// Тест 762b (Р.64): жест над АНИМИРОВАННЫМ параметром ставит ключ.
+///
+/// Правило 17 буквально: экранная рамка и поле окна FX правят одно и то же
+/// значение ОДНИМ правилом (`CurveBind`). У параметра с живой кривой это
+/// ключ по курсору, а не константа: иначе жест стирал бы анимацию, показывая
+/// при этом её же значение. Соседний параметр БЕЗ кривой тем же жестом
+/// правит базу — обе половины правила в одном тесте.
+#[test]
+fn t762b_gesture_over_a_curve_sets_a_key() {
+    use kt_model::*;
+    let (mut h, clip) = harness_geom_ctl();
+    // кривая у pos_x: 0 → 0.2 по всему материалу события
+    let (at, keys0) = {
+        let app = h.state_mut();
+        let c = app.model.clip(clip).cloned().expect("событие");
+        let curve = ParamCurve {
+            param: "pos_x".into(),
+            keys: AutoKey::linear(vec![
+                AutoKey::at(c.source_in, 0.0),
+                AutoKey::at(kt_time::Tick(c.source_in.0 + c.duration.0), 0.2),
+            ]),
+            source: Default::default(),
+        };
+        app.apply(Command::SetGeometry {
+            id: clip,
+            geometry: c.geometry,
+            pos: c.geometry_pos,
+            auto: vec![curve],
+        });
+        (app.geom_curve_at(clip), 2usize)
+    };
+    h.step();
+    // рамка показывает то же, что рендер: значение КРИВОЙ под курсором
+    let shown = h.state().geom_effective(clip).expect("эффективная геометрия").pos_x;
+    assert!(
+        (shown - 0.1).abs() < 1e-6,
+        "рамка считает по базе, а не по кривой под курсором: {shown}"
+    );
+
+    let c0 = body_pos(&h, clip);
+    let depth = h.state().model.undo_depth();
+    geom_drag(&mut h, c0, c0 + egui::vec2(40.0, 26.0), egui::Modifiers::NONE);
+
+    let c = h.state().model.clip(clip).cloned().expect("событие");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "жест — один шаг истории");
+    // …параметр С КРИВОЙ: база цела, ключ по курсору поставлен
+    assert_eq!(c.geometry.pos_x, 0.0, "жест переписал КОНСТАНТУ анимированного параметра");
+    let curve = c
+        .geometry_auto
+        .iter()
+        .find(|cu| cu.param == "pos_x")
+        .expect("кривая pos_x жива");
+    assert!(
+        curve.keys.len() > keys0,
+        "ключ по курсору не поставлен: ключей по-прежнему {}",
+        curve.keys.len()
+    );
+    let key = curve
+        .keys
+        .iter()
+        .find(|k| k.t == at)
+        .unwrap_or_else(|| panic!("нет ключа в позиции курсора {at:?}: {:?}", curve.keys));
+    assert!(
+        key.v > 0.1 + 1e-6,
+        "ключ поставлен, но значение не от жеста: {} (кривая под курсором давала 0.1)",
+        key.v
+    );
+    // …а параметр БЕЗ кривой тем же жестом правит базу
+    assert!(c.geometry.pos_y > 1e-6, "pos_y без кривой обязан править базу: {}", c.geometry.pos_y);
+    assert!(
+        !c.geometry_auto.iter().any(|cu| cu.param == "pos_y"),
+        "жест завёл кривую там, где её не было"
+    );
 }
 
 /// Тест 763 (Р.64): попадание в ручку с первого раза и приоритет при
@@ -15544,6 +15619,22 @@ fn geom_drag(
 }
 
 /// Экранная точка ручки (контрол считает её тем же `Handle::point`).
+/// Точка ТЕЛА рамки: не центр (там якорь) и не кромка (там ручки масштаба).
+/// Брать долю панели превью нельзя — сдвинутая рамка из-под этой точки
+/// уезжает, и жест начинается мимо (t762b ловил это «нулём шагов истории»).
+fn body_pos(h: &Harness<'_, KtApp>, clip: kt_model::ClipId) -> egui::Pos2 {
+    let q = h.state().player.preview_quality();
+    let canvas = (q.width as f64, q.height as f64);
+    let pl = h.state().geom_placement(clip, canvas).expect("размещение");
+    let c = pl.center();
+    let p = (c.0 + pl.dw * 0.22, c.1 + pl.dh * 0.24);
+    let img = h.state().preview_img_rect;
+    egui::pos2(
+        img.left() + (p.0 / canvas.0) as f32 * img.width(),
+        img.top() + (p.1 / canvas.1) as f32 * img.height(),
+    )
+}
+
 fn handle_pos(
     h: &Harness<'_, KtApp>,
     clip: kt_model::ClipId,
