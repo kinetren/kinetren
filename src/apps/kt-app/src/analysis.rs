@@ -33,10 +33,6 @@ use kt_model::MediaId;
 pub enum AnalysisKind {
     /// Громкость медиа: LUFS, dBTP, LRA.
     Loudness(MediaId),
-    /// Автодакинг: огибающая ведущей дорожки. Долг Р.48 (п.376) — раньше
-    /// считался СИНХРОННО в UI-потоке, и на длинном монтаже окно замирало
-    /// на десятки секунд без единого признака жизни.
-    Duck,
 }
 
 impl AnalysisKind {
@@ -45,7 +41,6 @@ impl AnalysisKind {
     pub fn media(self) -> Vec<MediaId> {
         match self {
             AnalysisKind::Loudness(m) => vec![m],
-            AnalysisKind::Duck => Vec::new(),
         }
     }
 }
@@ -58,10 +53,6 @@ pub enum AnalysisOut {
         lufs: Option<f64>,
         dbtp: f64,
         lra: f64,
-    },
-    /// Интервалы, где ведущая дорожка звучит (тики), и число ключей.
-    Duck {
-        spans: usize,
     },
 }
 
@@ -318,5 +309,35 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         assert!(!a.is_running(), "отменённая задача продолжает считаться работающей");
+    }
+}
+
+#[cfg(test)]
+mod sidechain_tests {
+    use super::*;
+
+    /// Тест 774 (Р.65): ЗАДАЧИ ДАКИНГА БОЛЬШЕ НЕТ.
+    ///
+    /// Снимок убран по прямому решению владельца: живой сайдчейн считается
+    /// в аудио-render-потоке как обычный узел, и офлайн-анализу тут делать
+    /// нечего. Сторож держит две вещи: вида задачи «дакинг» не существует
+    /// (компайл-замок — `AnalysisKind` исчерпывается громкостью), а сам
+    /// каркас задач жив и по-прежнему обслуживает громкость.
+    #[test]
+    fn t774_no_ducking_job_in_the_queue() {
+        // компайл-замок: единственный вид офлайн-анализа — громкость
+        let k = AnalysisKind::Loudness(MediaId(1));
+        match k {
+            AnalysisKind::Loudness(m) => assert_eq!(m, MediaId(1)),
+        }
+        assert_eq!(k.media(), vec![MediaId(1)], "громкость по-прежнему называет своё медиа");
+
+        // и в исходниках не осталось заказчика снимка
+        let src = std::fs::read_to_string("apps/kt-app/src/app.rs")
+            .or_else(|_| std::fs::read_to_string("src/app.rs"))
+            .expect("исходник app.rs");
+        for dead in ["duck_spans", "duck_curve_commands", "start_ducking", "duck_pending"] {
+            assert!(!src.contains(dead), "в программе остался след снимка дакинга: {dead}");
+        }
     }
 }

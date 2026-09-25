@@ -24,17 +24,48 @@ pub struct TrackWindow {
     /// Токен жеста: вся сессия окна — ОДИН шаг истории (как у окна FX).
     pub gesture: u64,
     pub picker_query: String,
-    /// Настройки ДАКИНГА (Р.63 п.8): инструмент помнит, что в него ввели
-    /// прошлый раз, — они приезжают из `user_store` при открытии окна и
-    /// уезжают туда при вызове. «Какого хера я вынужден каждый раз
-    /// запоминать какие я параметры ввел в предыдущий раз?» (владелец).
-    pub duck: kt_engine::ducking::DuckParams,
-    /// Дорожка-ИСТОЧНИК речи (та, ПОД которую приглушаем фон этой).
-    /// Она про ЭТОТ проект, поэтому в общем хранилище ей не место.
-    pub duck_src: Option<u32>,
+    /// Снимок цепочки дорожки-КЛЮЧА на момент открытия: её компрессор
+    /// правится из этого же окна, значит «Отмена» обязана вернуть и его.
+    pub key_backup: Option<(TrackId, Vec<kt_model::FxInstance>, Vec<bool>)>,
     pub selected: crate::widgets::ChainSel,
     pub focus: bool,
     pub open: bool,
+}
+
+/// Компрессор ли это — вопрос, который в форме дакинга задаётся трижды.
+fn is_comp(f: &kt_model::FxInstance) -> bool {
+    matches!(f, kt_model::FxInstance::Compressor { .. })
+}
+
+/// Копия первого компрессора цепочки с другим ключом — нужна, чтобы
+/// СПРОСИТЬ модель про цикл, ничего ещё не меняя.
+fn comp_with_key(fx: &[kt_model::FxInstance], key: Option<TrackId>) -> kt_model::FxInstance {
+    let mut c = fx.iter().find(|f| is_comp(f)).cloned().unwrap_or_else(kt_model::FxInstance::compressor);
+    if let kt_model::FxInstance::Compressor { key: k, .. } = &mut c {
+        *k = key;
+    }
+    c
+}
+
+/// Назначить ключ ПЕРВОМУ компрессору цепочки; его нет — завести (человек
+/// выбрал ключ, значит прибор ему нужен, и искать его в каталоге он не
+/// обязан). Снятие ключа прибор НЕ удаляет: правило 20 — ничего не
+/// отрубается само.
+fn set_key(fx: &mut Vec<kt_model::FxInstance>, bypass: &mut Vec<bool>, key: Option<TrackId>) {
+    if let Some(i) = fx.iter().position(|f| is_comp(f)) {
+        if let kt_model::FxInstance::Compressor { key: k, .. } = &mut fx[i] {
+            *k = key;
+        }
+        return;
+    }
+    if key.is_some() {
+        let mut c = kt_model::FxInstance::compressor();
+        if let kt_model::FxInstance::Compressor { key: k, .. } = &mut c {
+            *k = key;
+        }
+        fx.push(c);
+        bypass.push(false);
+    }
 }
 
 impl KtApp {
@@ -45,10 +76,8 @@ impl KtApp {
             return;
         }
         let Some(t) = self.model.project().track(id) else { return };
-        let duck = self.workspace.duck.unwrap_or_default();
         self.track_win = Some(TrackWindow {
-            duck,
-            duck_src: None,
+            key_backup: None,
             id,
             backup: t.props(),
             fx_backup: (t.fx.clone(), t.fx_bypass.clone(), t.fx_off),
@@ -92,9 +121,9 @@ impl KtApp {
         let mut curves_dropped = false;
         let mut changed_fx = false;
         let mut hover: Option<String> = None;
-        // «Дакинг» жмут внутри окна, а считать его — дело `&mut self`:
-        // намерение собирается здесь и исполняется после отрисовки
-        let mut duck_go = false;
+        // правки компрессора дорожки-КЛЮЧА собираются здесь и уезжают
+        // после отрисовки — той же сессией окна и тем же шагом истории
+        let mut key_edit: Option<(TrackId, Vec<kt_model::FxInstance>, Vec<bool>)> = None;
         let title = crate::tf!(k::track::TITLE, track.label(lane));
         egui::Window::new(title)
             .id(egui::Id::new(("track_window", w.id.0)))
@@ -102,6 +131,15 @@ impl KtApp {
             .resizable(false)
             .collapsible(false)
             .show(ctx, |ui| {
+                // ТЕЛО — В ПРОКРУТКУ, кнопки НИЖЕ неё (правило 1: попасть
+                // мышью с первого раза). С двумя компрессорами дакинга окно
+                // переросло экран, и «Закрыть» с «Отменой» уехали за кромку —
+                // поймано t775.
+                let max_h = (ctx.content_rect().height() * 0.62).max(240.0);
+                egui::ScrollArea::vertical()
+                    .max_height(max_h)
+                    .auto_shrink([true, true])
+                    .show(ui, |ui| {
                 egui::Grid::new("track_props").num_columns(2).show(ui, |ui| {
                     ui.label(tr(k::track::NAME));
                     let r = ui.add(
@@ -238,117 +276,158 @@ impl KtApp {
                 ui.label(
                     egui::RichText::new(tr(k::track::NO_CURVES_HINT)).weak().small(),
                 );
-                // ДАКИНГ — ЗДЕСЬ, а не своим окном (Р.63 п.8). Владелец:
-                // «очень уёбский способ управления. это банально можно
-                // удобнее сделать через fx-аудио на весь трек». Фон — та
-                // дорожка, чьё окно открыто; речь выбирается рядом.
+                // ДАКИНГ — ЭТО ДВА КОМПРЕССОРА (Р.65). Владелец: «в
+                // качестве дакинга можно показать тот же задублированный
+                // виджет аудио-компрессора… т.е. компрессор на фоновом
+                // объекте и компрессор на переднем объекте». Слева —
+                // прибор ЭТОЙ дорожки (фон) с выбором ключа, справа —
+                // настоящий компрессор дорожки-КЛЮЧА, приглушённый.
                 if track.kind == LaneKind::Audio {
                     ui.separator();
                     ui.label(egui::RichText::new(tr(k::msg::DUCK_TITLE)).strong());
-                    let lanes: Vec<u32> = {
-                        let mut v: Vec<u32> = self
-                            .model
-                            .project()
-                            .clips
+                    // КЛЮЧ: аудиодорожки своей ленты, кроме себя и тех,
+                    // что дали бы цикл (модель их всё равно отвергнет —
+                    // правило 16: не показывать невозможного молча)
+                    let p = self.model.project();
+                    let mut cur_key = kt_model::sidechain_keys(&fx).next();
+                    let offers: Vec<(TrackId, String)> = p
+                        .tracks
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, t)| t.kind == LaneKind::Audio && t.id != w.id)
+                        .filter(|(_, t)| {
+                            let probe = vec![comp_with_key(&fx, Some(t.id))];
+                            !kt_model::sidechain_cycle(&p.tracks, w.id, &probe)
+                        })
+                        .map(|(i, t)| {
+                            let lane = p
+                                .tracks
+                                .iter()
+                                .take(i)
+                                .filter(|o| o.kind == LaneKind::Audio)
+                                .count() as u32;
+                            (t.id, t.label(lane))
+                        })
+                        .collect();
+                    let name_of = |id: TrackId| {
+                        offers
                             .iter()
-                            .filter(|c| c.kind == kt_model::ClipKind::Audio && c.lane != lane)
-                            .map(|c| c.lane)
-                            .collect();
-                        v.sort_unstable();
-                        v.dedup();
-                        v
+                            .find(|(i, _)| *i == id)
+                            .map(|(_, n)| n.clone())
+                            .unwrap_or_else(|| tr(k::msg::DUCK_KEY_NONE).to_string())
                     };
-                    let mut src = w.duck_src.or_else(|| lanes.first().copied());
                     ui.horizontal(|ui| {
-                        ui.label(tr(k::msg::DUCK_SOURCE_LANE));
-                        let cb = egui::ComboBox::from_id_salt(("duck_lane", w.id.0))
-                            .selected_text(match src {
-                                Some(l) => format!("{}", l + 1),
-                                None => "—".to_string(),
+                        ui.label(tr(k::msg::DUCK_KEY));
+                        let cb = egui::ComboBox::from_id_salt(("duck_key", w.id.0))
+                            .selected_text(match cur_key {
+                                Some(id) => name_of(id),
+                                None => tr(k::msg::DUCK_KEY_NONE).to_string(),
                             })
                             .show_ui(ui, |ui| {
-                                for l in &lanes {
-                                    let mut cur = src;
-                                    if ui
-                                        .selectable_value(&mut cur, Some(*l), format!("{}", l + 1))
-                                        .clicked()
-                                    {
-                                        src = cur;
+                                let mut pick = cur_key;
+                                if ui
+                                    .selectable_value(&mut pick, None, tr(k::msg::DUCK_KEY_NONE))
+                                    .clicked()
+                                {
+                                    cur_key = None;
+                                    changed_fx = true;
+                                }
+                                for (id, name) in &offers {
+                                    if ui.selectable_value(&mut pick, Some(*id), name).clicked() {
+                                        cur_key = Some(*id);
+                                        changed_fx = true;
                                     }
                                 }
                             });
-                        crate::widgets::field_probe::note("duck.src", cb.response.rect);
-                    });
-                    w.duck_src = src;
-                    egui::Grid::new(("duck_params", w.id.0)).num_columns(2).show(ui, |ui| {
-                        let row = |ui: &mut egui::Ui,
-                                       probe: &str,
-                                       label: &str,
-                                       v: &mut f64,
-                                       lo: f64,
-                                       hi: f64,
-                                       step: f64,
-                                       suffix: &str| {
-                            ui.label(label);
-                            let r = ui.add(
-                                egui::DragValue::new(v)
-                                    .range(lo..=hi)
-                                    .speed(step)
-                                    .suffix(suffix),
-                            );
-                            crate::widgets::field_probe::note(probe, r.rect);
-                            ui.end_row();
-                        };
-                        row(
-                            ui,
-                            "duck.threshold",
-                            tr(k::fxp::THRESHOLD_DB),
-                            &mut w.duck.threshold_db,
-                            -60.0,
-                            0.0,
-                            0.5,
-                            " dB",
-                        );
-                        row(
-                            ui,
-                            "duck.depth",
-                            tr(k::msg::DUCK_DEPTH),
-                            &mut w.duck.depth_db,
-                            0.0,
-                            24.0,
-                            0.5,
-                            " dB",
-                        );
-                        row(
-                            ui,
-                            "duck.attack",
-                            tr(k::fxp::ATTACK_MS),
-                            &mut w.duck.attack_ms,
-                            10.0,
-                            1000.0,
-                            5.0,
-                            " ms",
-                        );
-                        row(
-                            ui,
-                            "duck.release",
-                            tr(k::fxp::RELEASE_MS),
-                            &mut w.duck.release_ms,
-                            10.0,
-                            2000.0,
-                            10.0,
-                            " ms",
+                        crate::widgets::field_probe::note("duck.key", cb.response.rect);
+                        crate::app::hint_into(
+                            &mut hover,
+                            cb.response,
+                            tr(k::msg::DUCK_KEY_HINT),
                         );
                     });
-                    // правило 19: сказать, что это СНИМОК
-                    ui.label(egui::RichText::new(tr(k::msg::DUCK_NOTE)).weak().small());
-                    let r = ui.add_enabled(src.is_some(), egui::Button::new(tr(k::msg::DUCK_DO)));
-                    crate::widgets::field_probe::note("duck.do", r.rect);
-                    crate::widgets::hint(&r, tr(k::msg::DUCK_NOTE));
-                    if r.clicked() {
-                        duck_go = true;
+                    // ключ выбран — прибор обязан существовать: заводим
+                    // его ОДНИМ действием, а не просим человека найти
+                    // компрессор в каталоге
+                    if changed_fx {
+                        set_key(&mut fx, &mut bypass, cur_key);
                     }
+                    // ДВА КОМПРЕССОРА РЯДОМ, обоими правит один виджет
+                    ui.horizontal_top(|ui| {
+                        ui.vertical(|ui| {
+                            ui.label(egui::RichText::new(tr(k::msg::DUCK_BG)).small());
+                            match fx.iter_mut().position(|f| is_comp(f)) {
+                                Some(i) => {
+                                    if crate::widgets::params_grid(
+                                        ui,
+                                        ("duck_bg", w.id.0),
+                                        &mut fx[i],
+                                        &[],
+                                        None,
+                                    ) {
+                                        changed_fx = true;
+                                    }
+                                }
+                                None => {
+                                    ui.label(
+                                        egui::RichText::new(tr(k::msg::DUCK_PICK_KEY))
+                                            .weak()
+                                            .small(),
+                                    );
+                                }
+                            }
+                        });
+                        ui.separator();
+                        // КОМПРЕССОР РЕЧИ — настоящий, из цепочки ключа
+                        ui.vertical(|ui| {
+                            ui.label(egui::RichText::new(tr(k::msg::DUCK_KEY_SIDE)).small());
+                            let Some(key_id) = cur_key else {
+                                ui.label(
+                                    egui::RichText::new(tr(k::msg::DUCK_PICK_KEY))
+                                        .weak()
+                                        .small(),
+                                );
+                                return;
+                            };
+                            let Some(kt) = self.model.project().track(key_id).cloned() else {
+                                return;
+                            };
+                            let (mut kfx, mut kby) = (kt.fx.clone(), kt.fx_bypass.clone());
+                            // приглушённо — но ЖИВОЕ: владелец выбрал
+                            // «настоящий компрессор речи», а не показ
+                            ui.scope(|ui| {
+                                let v = &mut ui.style_mut().visuals;
+                                v.override_text_color = Some(v.weak_text_color());
+                                match kfx.iter_mut().position(|f| is_comp(f)) {
+                                    Some(i) => {
+                                        if crate::widgets::params_grid(
+                                            ui,
+                                            ("duck_key_fx", key_id.0),
+                                            &mut kfx[i],
+                                            &[],
+                                            None,
+                                        ) {
+                                            key_edit =
+                                                Some((key_id, kfx.clone(), kby.clone()));
+                                        }
+                                    }
+                                    None => {
+                                        let r = ui.button(tr(k::msg::DUCK_ADD_COMP));
+                                        crate::widgets::field_probe::note("duck.add", r.rect);
+                                        if r.clicked() {
+                                            kfx.push(kt_model::FxInstance::compressor());
+                                            kby.push(false);
+                                            key_edit =
+                                                Some((key_id, kfx.clone(), kby.clone()));
+                                        }
+                                    }
+                                }
+                            });
+                        });
+                    });
                 }
+                    });
+                ui.separator();
                 ui.horizontal(|ui| {
                     let r = ui.button(tr(k::track::CLOSE));
                     crate::widgets::field_probe::note("track.close", r.rect);
@@ -382,6 +461,12 @@ impl KtApp {
                 w.gesture,
             );
             self.apply_coalesced(Command::SetTrackFxOff { id: w.id, off: boff }, w.gesture);
+            if let Some((kid, kfx, kby)) = w.key_backup.clone() {
+                self.apply_coalesced(
+                    Command::SetTrackFx { id: kid, fx: kfx, bypass: kby },
+                    w.gesture,
+                );
+            }
             open = false;
         } else {
             // ВСЯ СЕССИЯ ОКНА — ОДИН шаг истории (общий токен жеста)
@@ -403,30 +488,17 @@ impl KtApp {
                 }
             }
         }
-        if duck_go && let Some(src) = w.duck_src {
-            // ЦЕЛИ — события ЭТОЙ дорожки: окно про неё и открыто, и
-            // «что приглушаем» спрашивать второй раз незачем
-            let targets: Vec<kt_model::ClipId> = self
-                .model
-                .project()
-                .clips
-                .iter()
-                .filter(|c| c.kind == kt_model::ClipKind::Audio && c.lane == lane)
-                .map(|c| c.id)
-                .collect();
-            if targets.is_empty() {
-                self.refuse(tr(k::msg::DUCK_NOTHING));
-            } else {
-                // ИНСТРУМЕНТ ПОМНИТ, что в него ввели (Р.63 п.8)
-                self.workspace.duck = Some(w.duck);
-                crate::user_store::save_workspace(&self.workspace);
-                let d = crate::app::DuckDialog {
-                    targets,
-                    src_lane: src,
-                    params: w.duck,
-                };
-                self.start_ducking(&d);
+        if let Some((kid, kfx, kby)) = key_edit.clone() {
+            // компрессор речи — ТА ЖЕ сессия окна и ТОТ ЖЕ шаг истории
+            if w.key_backup.is_none()
+                && let Some(kt) = self.model.project().track(kid)
+            {
+                w.key_backup = Some((kid, kt.fx.clone(), kt.fx_bypass.clone()));
             }
+            self.apply_coalesced(
+                Command::SetTrackFx { id: kid, fx: kfx, bypass: kby },
+                w.gesture,
+            );
         }
         if open && w.open {
             self.track_win = Some(w);

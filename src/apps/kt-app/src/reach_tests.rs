@@ -2813,3 +2813,71 @@ fn t766_on_screen_controls_are_reachable_and_speak() {
         "превью рисуется одним вызовом — отделённое окно перестало быть тем же кодом"
     );
 }
+
+/// Тест 777 (Р.65): САЙДЧЕЙН ДОСТИЖИМ и объясняет отказ.
+///
+/// Правило Р.40: щупать оттуда, откуда действует человек. К дакингу ведут
+/// два пути — окно дорожки (секция) и её же полоса цепочки (компрессор со
+/// своим полем ключа); оба обязаны вести в ОДНО тело (правило 17), а
+/// невозможный выбор — называться словами, а не отсутствовать молча.
+#[test]
+fn t777_sidechain_is_reachable_and_names_its_refusals() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::LaneKind::Audio;
+    let (mut h, _) = crate::layout_tests::harness_three_clips_dt(None);
+    let (bg, key) = {
+        let app = h.state_mut();
+        crate::layout_tests::edit_project(app, |p| p.ensure_tracks(Audio, 2));
+        let bg = app.model.project().track_at(Audio, 0).unwrap().id;
+        let key = app.model.project().track_at(Audio, 1).unwrap().id;
+        (bg, key)
+    };
+    h.step();
+
+    // ПУТЬ 1: окно дорожки — секция дакинга с выбором ключа
+    h.state_mut().open_track_window(bg);
+    h.step();
+    h.step();
+    assert!(
+        h.query_all_by_label_contains(crate::i18n::tr(crate::i18n::k::msg::DUCK_KEY)).count() > 0,
+        "в окне дорожки нет выбора ключа — сайдчейн недостижим оттуда, где человек стоит"
+    );
+
+    // ПУТЬ 2: бейдж FX дорожки ведёт в ТО ЖЕ окно (одно тело, правило 17)
+    h.state_mut().track_win = None;
+    h.step();
+    h.state_mut().open_track_fx(bg);
+    h.step();
+    assert_eq!(
+        h.state().track_win.as_ref().map(|w| w.id),
+        Some(bg),
+        "бейдж FX ведёт не в окно дорожки — путей два, а тело должно быть одно"
+    );
+
+    // ОТКАЗ НАЗВАН: цикл модель отвергает с причиной, а не молча
+    {
+        let app = h.state_mut();
+        let mut c = kt_model::FxInstance::compressor();
+        if let kt_model::FxInstance::Compressor { key: k, .. } = &mut c {
+            *k = Some(key);
+        }
+        app.apply(kt_model::Command::SetTrackFx { id: bg, fx: vec![c.clone()], bypass: vec![] });
+        // обратный ключ — цикл
+        let mut back = kt_model::FxInstance::compressor();
+        if let kt_model::FxInstance::Compressor { key: k, .. } = &mut back {
+            *k = Some(bg);
+        }
+        let e = app
+            .model
+            .apply(kt_model::Command::SetTrackFx { id: key, fx: vec![back], bypass: vec![] })
+            .unwrap_err();
+        assert!(
+            matches!(e, kt_model::CommandError::SidechainCycle(_)),
+            "цикл отвергнут без названной причины: {e:?}"
+        );
+        assert!(
+            !format!("{e}").is_empty(),
+            "у отказа нет текста — человеку нечего показать в строке состояния"
+        );
+    }
+}

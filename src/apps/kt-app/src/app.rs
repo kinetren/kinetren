@@ -132,15 +132,6 @@ pub struct SeqNameDialog {
     pub focus: bool,
 }
 
-#[derive(Clone)]
-pub struct DuckDialog {
-    /// События, к которым применится кривая (выделение на момент вызова).
-    pub targets: Vec<kt_model::ClipId>,
-    /// Дорожка-источник (та, под которую приглушаем).
-    pub src_lane: u32,
-    pub params: kt_engine::ducking::DuckParams,
-}
-
 pub struct PasteNamesDialog {
     /// Позиция вставки, замороженная на момент Ctrl+V.
     pub at: kt_time::Tick,
@@ -195,9 +186,7 @@ pub struct KtApp {
     /// Офлайн-анализ материала (п.372).
     pub analysis: crate::analysis::Analysis,
     /// Интервалы дакинга, посчитанные фоном, и число недоступных медиа.
-    pub duck_spans: Arc<Mutex<(Vec<std::ops::Range<i64>>, usize)>>,
     /// Настройки дакинга, ждущие своих интервалов.
-    pub duck_pending: Option<DuckDialog>,
     pub texture: Option<egui::TextureHandle>,
     pub view_start: f64, // тики
     pub ticks_per_px: f64,
@@ -765,8 +754,6 @@ impl KtApp {
             index_errs_said: Default::default(),
             loudness: loudness_map,
             analysis: Default::default(),
-            duck_spans: Arc::new(Mutex::new((Vec::new(), 0))),
-            duck_pending: None,
             texture: None,
             view_start: 0.0,
             ticks_per_px: 900.0,
@@ -974,8 +961,6 @@ impl KtApp {
             index_errs_said: Default::default(),
             loudness: loudness_map,
             analysis: Default::default(),
-            duck_spans: Arc::new(Mutex::new((Vec::new(), 0))),
-            duck_pending: None,
             texture: None,
             view_start: 0.0,
             ticks_per_px: 900.0,
@@ -4666,73 +4651,6 @@ impl KtApp {
         }
         self.preset_save = Some(d);
     }
-
-    /// Окно автодакинга. По кнопке считает огибающую дорожки-источника
-    /// (честным рендером — гейны, фейды и FX там уже учтены) и кладёт
-    /// кривую громкости на выделенные события ОДНИМ шагом истории.
-    /// Посчитать интервалы и применить кривую.
-    ///
-    /// Анализ читает источники НАПРЯМУЮ, своим фетчером: декодерами
-    /// владеет MediaWorker плеера (инвариант №5), и лезть к ним из
-    /// UI-потока нельзя, а кэш прогрет только вокруг курсора — для
-    /// огибающей целой дорожки этого мало.
-    /// Автодакинг — В ФОНЕ (Р.49, п.376; долг Р.48).
-    ///
-    /// Раньше считался СИНХРОННО в UI-потоке: открыть все источники, прочесть
-    /// их целиком, посчитать огибающую. На длинном монтаже окно замирало на
-    /// десятки секунд без единого признака жизни — ровно то, чего быть не
-    /// должно (чек-лист «фоновая работа не мешает»). Теперь это третий
-    /// потребитель общего каркаса задач, и им же доказывается, что каркас
-    /// общий, а не выкроен под рендер.
-    pub(crate) fn start_ducking(&mut self, d: &DuckDialog) {
-        // дакинг считает по времени ТОГО, ЧТО ПОД РУКАМИ (Р.50, В1)
-        let project = self.model.reel_document();
-        let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
-        let index = self.index_db_path();
-        let params = d.params;
-        let src_lane = d.src_lane;
-        let spans_out = self.duck_spans.clone();
-        self.duck_pending = Some(d.clone());
-        let rev = self.model_rev;
-        self.analysis.request_with(
-            crate::analysis::AnalysisKind::Duck,
-            rev,
-            true,
-            move |ctl: crate::bg::BgCtl, send: crate::bg::BgSend<f32>| {
-                let mut f = kt_engine::DirectFetcher::new(None);
-                let mut missing = 0usize;
-                let used: Vec<_> = project
-                    .media
-                    .iter()
-                    .filter(|m| {
-                        project
-                            .clips
-                            .iter()
-                            .any(|c| c.media == m.id && c.kind == kt_model::ClipKind::Audio)
-                    })
-                    .cloned()
-                    .collect();
-                for (i, m) in used.iter().enumerate() {
-                    if ctl.should_stop() {
-                        return Err("cancelled".to_string());
-                    }
-                    send.send(i as f32 / used.len().max(1) as f32 * 0.5);
-                    let resolved = resolve_media_path(base.as_deref(), &m.path);
-                    match open_source_indexed(&resolved, index.as_deref()) {
-                        Ok(src) => f.add_source(m.id, src),
-                        Err(_) => missing += 1,
-                    }
-                }
-                send.send(0.5);
-                let spans = kt_engine::ducking::duck_spans(&project, &mut f, src_lane, params);
-                let n = spans.len();
-                *spans_out.lock().unwrap() = (spans, missing);
-                send.send(1.0);
-                Ok(crate::analysis::AnalysisOut::Duck { spans: n })
-            },
-        );
-    }
-
     /// Померить громкость медиа по прямой просьбе (Р.49, п.373).
     ///
     /// Именно ПО ПРОСЬБЕ: сам показ ничего не запускает (инвариант 8), а
@@ -4797,7 +4715,6 @@ impl KtApp {
                 if e != "cancelled" {
                     self.warn(crate::tf!(k::msg::ANALYSIS_FAILED, e));
                 }
-                self.duck_pending = None;
                 return;
             }
         };
@@ -4806,16 +4723,6 @@ impl KtApp {
         let alive = |m: MediaId| self.model.project().media.iter().any(|x| x.id == m);
         let stale = self.model_rev != rev || !kind.media().into_iter().all(alive);
         match (kind, out) {
-            (K::Duck, O::Duck { .. }) => {
-                if stale {
-                    // монтаж успел измениться — кривые от старой модели легли
-                    // бы не на те события
-                    self.duck_pending = None;
-                    self.note(tr(k::msg::ANALYSIS_STALE));
-                } else {
-                    self.apply_ducking();
-                }
-            }
             (_, O::Loudness { media, lufs, dbtp, lra }) => {
                 // число по исчезнувшему или подменённому медиа относится не
                 // к этому проекту: применять его — врать о материале
@@ -4826,7 +4733,6 @@ impl KtApp {
                     self.loudness.lock().unwrap().insert(media, (l, dbtp, lra));
                 }
             }
-            (_, O::Duck { .. }) => {}
         }
     }
 
@@ -4839,30 +4745,6 @@ impl KtApp {
         res: Result<crate::analysis::AnalysisOut, String>,
     ) {
         self.on_analysis_done(kind, rev, res);
-    }
-
-    /// Применить посчитанные в фоне интервалы дакинга.
-    fn apply_ducking(&mut self) {
-        let Some(d) = self.duck_pending.take() else { return };
-        let (spans, missing) = std::mem::take(&mut *self.duck_spans.lock().unwrap());
-        if missing > 0 {
-            self.note(format!("{} {missing}", tr(k::msg::DUCK_MISSING)));
-        }
-        let cmds = kt_model::ops::duck_curve_commands(
-            self.model.project(),
-            &d.targets,
-            &spans,
-            d.params.depth_db,
-            d.params.attack_ms,
-            d.params.release_ms,
-        );
-        let keys = spans.len();
-        if cmds.is_empty() {
-            self.note(tr(k::msg::DUCK_NOTHING));
-            return;
-        }
-        self.apply_batch(cmds);
-        self.note(format!("{} {keys}", tr(k::msg::DUCK_DONE)));
     }
 
     /// Есть ли в буфере ИМЕНОВАННОЕ — только тогда спрашиваем префикс

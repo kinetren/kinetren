@@ -3732,7 +3732,7 @@ fn harness_three_clips() -> (Harness<'static, KtApp>, crate::timeline::TlGeom) {
 /// клон рабочего вида, правка, новая модель. С Р.62 так ставятся имя и
 /// высота дорожки — они живут на дорожке-объекте.
 #[cfg(test)]
-fn edit_project(app: &mut KtApp, f: impl FnOnce(&mut kt_model::Project)) {
+pub(crate) fn edit_project(app: &mut KtApp, f: impl FnOnce(&mut kt_model::Project)) {
     let mut p = app.model.project().clone();
     f(&mut p);
     p.validate().expect("фикстура законна");
@@ -5193,58 +5193,6 @@ fn t419_sync_menu_and_timeline_item_are_the_same_body() {
         1,
         "тел синхронизации больше одного — они разъедутся"
     );
-}
-
-/// Тест 420 (Р.49 Б10): автодакинг считается В ФОНЕ — долг Р.48.
-///
-/// Раньше он открывал все источники и читал их целиком прямо в UI-потоке: на
-/// длинном монтаже окно замирало на десятки секунд без единого признака
-/// жизни. Теперь это третий потребитель общего каркаса задач — им же и
-/// доказывается, что каркас общий, а не выкроен под рендер.
-#[test]
-fn t420_ducking_runs_in_the_background() {
-    use kt_model::*;
-    let (mut h, _) = harness_three_clips();
-    {
-        let app = h.state_mut();
-        let mut p = app.model.project().clone();
-        let mut a = p.clips[0].clone();
-        a.id = ClipId(50);
-        a.kind = ClipKind::Audio;
-        a.lane = 0;
-        p.clips.push(a);
-        p.ensure_tracks(kt_model::LaneKind::Audio, p.lanes(kt_model::LaneKind::Audio).max(1));
-        app.model = kt_model::TimelineModel::new(p);
-    }
-    h.step();
-
-    // жмём «Дакинг» тем же телом, что и кнопка в окне ДОРОЖКИ (Р.63 п.8):
-    // своего окна у дакинга больше нет
-    let d = crate::app::DuckDialog {
-        targets: vec![ClipId(50)],
-        src_lane: 0,
-        params: Default::default(),
-    };
-    h.state_mut().start_ducking(&d);
-    // UI-поток НЕ ЗАБЛОКИРОВАН: кадр проходит сразу, задача считается фоном
-    let t = std::time::Instant::now();
-    h.step();
-    assert!(
-        t.elapsed() < std::time::Duration::from_secs(2),
-        "кадр ждал дакинга — значит он считается в UI-потоке"
-    );
-    assert!(
-        h.state().analysis.current().is_some() || h.state().duck_pending.is_none(),
-        "задача дакинга не поставлена"
-    );
-
-    // ждём финиша и смотрим следствие: кривые появились на цели
-    let deadline = std::time::Instant::now() + WAIT_BG;
-    while h.state().duck_pending.is_some() && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        h.step();
-    }
-    assert!(h.state().duck_pending.is_none(), "задача дакинга не закончилась");
 }
 
 /// Тест 421 (Р.49 Б10): результат, посчитанный по УСТАРЕВШЕЙ модели, не
@@ -15124,101 +15072,6 @@ fn h_clip(h: &Harness<'_, KtApp>, want: kt_model::ClipId) -> u64 {
         .expect("окно FX экземпляра открыто")
 }
 
-/// Тест 756 (Р.63 п.8): ДАКИНГ живёт в окне аудиодорожки и помнит настройки.
-///
-/// Владелец, тремя замечаниями подряд: «я не понимаю что такое duck under a
-/// track… это Audio-Ducking? почему ты нормально это не назвал?»; «также
-/// очень уёбский способ управления. это банально можно удобнее сделать
-/// через fx-аудио на весь трек»; «какого хера я вынужден каждый раз
-/// запоминать какие я параметры ввел в предыдущий раз?». Отсюда три
-/// утверждения: секция стоит в окне ДОРОЖКИ-фона, отдельного окна нет,
-/// параметры приезжают из общего хранилища и уезжают туда при вызове.
-#[test]
-fn t756_ducking_lives_in_the_track_window_and_remembers_its_settings() {
-    use egui_kittest::kittest::Queryable;
-    use kt_model::*;
-    let (mut h, _) = harness_three_clips_dt(None);
-    // сцена: фон на A1 и «речь» на A2
-    {
-        let app = h.state_mut();
-        let mut p = app.model.project().clone();
-        p.ensure_tracks(LaneKind::Audio, 2);
-        let mut bed = p.clips.first().cloned().expect("в сцене есть событие");
-        bed.id = ClipId(70);
-        bed.kind = ClipKind::Audio;
-        bed.lane = 0;
-        bed.link_group = None;
-        bed.fx = Vec::new();
-        bed.fx_bypass = Vec::new();
-        bed.fx_auto = Vec::new();
-        bed.geometry = Default::default();
-        bed.geometry_auto = Vec::new();
-        let mut voice = bed.clone();
-        voice.id = ClipId(71);
-        voice.lane = 1;
-        p.clips.push(bed);
-        p.clips.push(voice);
-        p.validate().expect("сцена законна");
-        app.model = kt_model::TimelineModel::new(p);
-        // ИНСТРУМЕНТ ПОМНИТ: прошлый раз ввели вот это
-        app.workspace.duck = Some(kt_engine::ducking::DuckParams {
-            threshold_db: -28.0,
-            depth_db: 14.0,
-            attack_ms: 200.0,
-            release_ms: 600.0,
-        });
-    }
-    h.step();
-    let track = h.state().model.project().track_at(LaneKind::Audio, 0).unwrap().id;
-    h.state_mut().open_track_window(track);
-    h.step();
-    h.step();
-
-    // секция НА МЕСТЕ и названа по отрасли
-    for key in [k::msg::DUCK_TITLE, k::msg::DUCK_SOURCE_LANE, k::msg::DUCK_DO] {
-        let s = tr(key).to_string();
-        assert!(
-            h.query_all_by_label_contains(&s).count() > 0,
-            "в окне дорожки нет строки «{s}» — дакингу негде жить"
-        );
-    }
-    // ...и пришли ЗАПОМНЕННЫЕ параметры, а не умолчания
-    let w = h.state().track_win.as_ref().expect("окно дорожки открыто");
-    assert_eq!(w.duck.threshold_db, -28.0, "порог не приехал из хранилища");
-    assert_eq!(w.duck.depth_db, 14.0, "глубина не приехала из хранилища");
-    assert_eq!(w.duck.release_ms, 600.0, "отпускание не приехало из хранилища");
-    // источник по умолчанию — соседняя аудиодорожка
-    assert_eq!(
-        h.state().track_win.as_ref().and_then(|w| w.duck_src),
-        Some(1),
-        "дорожка-источник не предложена — кнопка была бы мёртвой"
-    );
-
-    // ЖМЁМ «Дакинг»: задача ставится, а настройки уезжают в хранилище
-    h.get_by_label_contains(&tr(k::msg::DUCK_DO).to_string()).click();
-    h.step();
-    let started = h.state().duck_pending.is_some() || h.state().analysis.current().is_some();
-    // цели — события ЭТОЙ дорожки: окно про неё и открыто
-    let targets: Vec<ClipId> =
-        h.state().duck_pending.as_ref().map(|d| d.targets.clone()).unwrap_or_default();
-    // задача фоновая и на синтетике считается мгновенно — ждём её конца,
-    // чтобы не оставить поток за спиной у следующего теста
-    let deadline = std::time::Instant::now() + WAIT_BG;
-    while h.state().duck_pending.is_some() && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        h.step();
-    }
-    assert!(started, "кнопка дакинга в окне дорожки ничего не запустила");
-    assert_eq!(targets, vec![ClipId(70)], "цели дакинга — не события дорожки-фона");
-    assert_eq!(
-        h.state().workspace.duck.map(|d| d.depth_db),
-        Some(14.0),
-        "настройки не записались в общее хранилище — в следующий раз их снова вводить руками"
-    );
-}
-
-/// Сцена для экранных контролов (Р.64): одно видео-событие выделено,
-/// курсор внутри него, набор «трансформация» включён.
 pub(crate) fn harness_geom_ctl() -> (Harness<'static, KtApp>, kt_model::ClipId) {
     use kt_model::*;
     // сцена — ГЕНЕРАТОР: у него источник поднимается тем же путём, что в
@@ -15900,4 +15753,147 @@ fn t762_crop_handles_cut_their_own_side() {
     assert_eq!(h.state().model.undo_depth(), depth + 1, "кроп — один шаг истории");
     let w1 = h.state().geom_placement(clip, canvas).unwrap().dw;
     assert!(w1 < w0, "рамка не сузилась после кропа: {w1} против {w0}");
+}
+
+/// Тест 775 (Р.65): ДАКИНГ — ЭТО ДВА КОМПРЕССОРА, а не своя форма.
+///
+/// Владелец (Р.63 п.8.4): «в качестве дакинга можно показать тот же
+/// задублированный виджет аудио-компрессора с затемненными полями, т.е.
+/// компрессор на фоновом объекте и компрессор на переднем объекте…
+/// повсюду копятся бессмысленные копипасты одного и того же кода».
+/// Утверждается то, что видно и делается: выбор ключа заводит прибор,
+/// компрессор РЕЧИ заводится одним действием, обе правки — одна сессия
+/// окна и один шаг истории, «Отмена» откатывает обе.
+#[test]
+fn t775_ducking_is_two_compressors_in_the_track_window() {
+    use eframe::egui::accesskit::Role;
+    use egui_kittest::kittest::{Queryable, by};
+    use kt_model::LaneKind::Audio;
+    let (mut h, _) = harness_three_clips_dt(None);
+    let (bg, key) = {
+        let app = h.state_mut();
+        edit_project(app, |p| p.ensure_tracks(Audio, 2));
+        let bg = app.model.project().track_at(Audio, 0).unwrap().id;
+        let key = app.model.project().track_at(Audio, 1).unwrap().id;
+        (bg, key)
+    };
+    h.step();
+    h.state_mut().open_track_window(bg);
+    h.step();
+    h.step();
+
+    // секция названа по отрасли и стоит В ОКНЕ ДОРОЖКИ
+    for s in [tr(k::msg::DUCK_TITLE), tr(k::msg::DUCK_KEY), tr(k::msg::DUCK_BG)] {
+        assert!(
+            h.query_all_by_label_contains(s).count() > 0,
+            "в окне дорожки нет строки «{s}» — дакингу негде жить"
+        );
+    }
+    let depth = h.state().model.undo_depth();
+
+    // ВЫБОР КЛЮЧА заводит прибор: человек не обязан искать компрессор в каталоге
+    let key_name = h.state().model.project().track(key).unwrap().label(1);
+    // комбо ищется по РОЛИ и ЗНАЧЕНИЮ: слово «нет» встречается в окне не раз
+    h.get(by().role(Role::ComboBox).value(tr(k::msg::DUCK_KEY_NONE))).click();
+    h.step();
+    h.get_by_label_contains(&key_name).click();
+    h.step();
+    h.step();
+    let keys: Vec<_> = h
+        .state()
+        .model
+        .project()
+        .track(bg)
+        .map(|t| kt_model::sidechain_keys(&t.fx).collect())
+        .unwrap_or_default();
+    assert_eq!(keys, vec![key], "выбор ключа не доехал до модели (или прибор не заведён)");
+
+    // …и ВТОРОЙ компрессор — настоящий, на дорожке-КЛЮЧЕ, одним действием
+    assert!(
+        h.query_all_by_label_contains(tr(k::msg::DUCK_ADD_COMP)).count() > 0,
+        "кнопки «завести компрессор на ключе» нет — второй прибор недостижим"
+    );
+    h.get_by_label_contains(&tr(k::msg::DUCK_ADD_COMP).to_string()).click();
+    h.step();
+    h.step();
+    assert!(
+        h.state()
+            .model
+            .project()
+            .track(key)
+            .is_some_and(|t| t.fx.iter().any(|f| matches!(f, kt_model::FxInstance::Compressor { .. }))),
+        "компрессор речи не заведён"
+    );
+
+    // ОБЕ правки — ОДНА сессия окна и ОДИН шаг истории
+    assert_eq!(
+        h.state().model.undo_depth(),
+        depth + 1,
+        "сессия окна дорожки обязана быть одним шагом истории"
+    );
+
+    // «Отмена» откатывает и ключ, и компрессор речи
+    h.get_by_label_contains(&tr(k::track::CANCEL).to_string()).click();
+    h.step();
+    h.step();
+    let app = h.state();
+    assert_eq!(
+        app.model.project().track(bg).map(|t| kt_model::sidechain_keys(&t.fx).count()),
+        Some(0),
+        "«Отмена» не сняла ключ"
+    );
+    assert!(
+        app.model
+            .project()
+            .track(key)
+            .is_some_and(|t| !t.fx.iter().any(|f| matches!(f, kt_model::FxInstance::Compressor { .. }))),
+        "«Отмена» не вернула цепочку дорожки-ключа"
+    );
+}
+
+/// Тест 776 (Р.65): список ключей не предлагает невозможного.
+#[test]
+fn t776_key_list_offers_only_possible_tracks() {
+    use eframe::egui::accesskit::Role;
+    use egui_kittest::kittest::{Queryable, by};
+    use kt_model::LaneKind::Audio;
+    let (mut h, _) = harness_three_clips_dt(None);
+    let (a, b) = {
+        let app = h.state_mut();
+        edit_project(app, |p| p.ensure_tracks(Audio, 2));
+        let a = app.model.project().track_at(Audio, 0).unwrap().id;
+        let b = app.model.project().track_at(Audio, 1).unwrap().id;
+        (a, b)
+    };
+    // A уже слушает B — значит B не может слушать A (цикл)
+    {
+        let app = h.state_mut();
+        let mut c = kt_model::FxInstance::compressor();
+        if let kt_model::FxInstance::Compressor { key, .. } = &mut c {
+            *key = Some(b);
+        }
+        app.apply(kt_model::Command::SetTrackFx { id: a, fx: vec![c], bypass: vec![] });
+    }
+    h.step();
+    h.state_mut().open_track_window(b);
+    h.step();
+    h.step();
+    h.get(by().role(Role::ComboBox).value(tr(k::msg::DUCK_KEY_NONE))).click();
+    h.step();
+    h.step();
+    // метка ищется ТОЧНО: заголовок окна содержит имя дорожки, и поиск
+    // «по вхождению» нашёл бы его, а не пункт списка
+    let a_name = h.state().model.project().track(a).unwrap().label(0);
+    let offered = h.query_all_by_label(&a_name).count();
+    assert_eq!(
+        offered, 0,
+        "дорожка, дающая ЦИКЛ, предложена в списке ключей — молчаливый тупик"
+    );
+    // и себя в списке тоже нет
+    let b_name = h.state().model.project().track(b).unwrap().label(1);
+    assert_eq!(
+        h.query_all_by_label(&b_name).count(),
+        0,
+        "дорожка предложена ключом самой себе"
+    );
 }

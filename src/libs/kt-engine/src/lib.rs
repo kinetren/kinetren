@@ -6,7 +6,6 @@
 //! Впереди: M7 (экспорт). Архитектура и владение потоками — docs/architecture.md.
 
 pub mod audio;
-pub mod ducking;
 pub mod export;
 pub mod fetch;
 pub mod flight;
