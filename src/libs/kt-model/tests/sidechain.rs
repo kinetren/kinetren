@@ -138,7 +138,7 @@ fn t772_sidechain_key_is_validated_and_refusals_are_named() {
         before,
         "удаление ключевой дорожки переписало чужой прибор — это правка за пользователя"
     );
-    m.undo();
+    let _ = m.undo();
     assert!(
         m.project().track(speech).is_some(),
         "undo обязан вернуть дорожку-ключ, и ключ снова живой"

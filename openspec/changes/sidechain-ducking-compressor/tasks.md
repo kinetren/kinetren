@@ -85,7 +85,7 @@
   ровный тон; ключ назначается руками из окна дорожки; утверждать, что при игре уровень
   музыки проседает под речью и возвращается между репликами (замер по выходу, а не по
   картинке), и что после Ctrl+S в файле стоит ключ. Прогон — `./scripts/live-check.sh sidechain`.
-- [ ] 7.2 Спеки capability обновлены по дельте, `openspec validate --all --strict`; в
+- [x] 7.2 Спеки capability обновлены по дельте, `openspec validate --all --strict`; в
   `openspec/specs/audio-render/design.md` и `audio-fx/design.md` записаны «почему» (пересмотр
   решения о снимке, окно ключа, порядок стадий, запрет циклов); в
   `docs/features/audio/processing/compressor-and-limiter.md` в «Вердикте» отмечено, что

@@ -120,7 +120,7 @@ fn ducker(key: Option<TrackId>) -> FxInstance {
 fn scene(key_on_music: bool) -> (Project, TrackId, TrackId) {
     let clips = vec![
         clip(1, 0, 0, 12 * D, 1),  // музыка: ровный тон весь прогон
-        clip(2, 1, 1 * D, 2 * D, 2), // речь: реплика 1
+        clip(2, 1, D, 2 * D, 2),   // речь: реплика 1
         clip(3, 1, 7 * D, 2 * D, 2), // речь: реплика 2
     ];
     let mut p = project(clips);
@@ -180,7 +180,7 @@ fn t769_music_ducks_under_speech_live() {
 fn t770_stage_order_alignment_and_determinism() {
     // ключ НИЖЕ цели по рангу (речь — дорожка 1, музыка — 0): порядок
     // обязан определяться зависимостью, а не рангом строки
-    let (mut p, _, speech) = scene(true);
+    let (mut p, _, _speech) = scene(true);
     // у дорожки-ключа СВОЯ цепочка — её выход слышит и микс, и детектор
     p.track_at_mut(A, 1).unwrap().fx = vec![FxInstance::gain(-2.0)];
     p.validate().unwrap();

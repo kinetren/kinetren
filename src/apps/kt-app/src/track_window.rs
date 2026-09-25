@@ -52,7 +52,7 @@ fn comp_with_key(fx: &[kt_model::FxInstance], key: Option<TrackId>) -> kt_model:
 /// обязан). Снятие ключа прибор НЕ удаляет: правило 20 — ничего не
 /// отрубается само.
 fn set_key(fx: &mut Vec<kt_model::FxInstance>, bypass: &mut Vec<bool>, key: Option<TrackId>) {
-    if let Some(i) = fx.iter().position(|f| is_comp(f)) {
+    if let Some(i) = fx.iter().position(is_comp) {
         if let kt_model::FxInstance::Compressor { key: k, .. } = &mut fx[i] {
             *k = key;
         }

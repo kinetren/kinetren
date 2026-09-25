@@ -1074,7 +1074,7 @@ impl AudioRenderer {
             // КЛЮЧЕВЫЕ СИГНАЛЫ (Р.65) — НА ОКНЕ ЦЕЛИ: детектор и то, что
             // он сжимает, обязаны быть выровнены по времени, иначе дакинг
             // срабатывает раньше или позже речи.
-            keybufs.truncate(0);
+            keybufs.clear();
             for (slot, key_id, key_lane) in &st.keys {
                 let mut kb = pool.pop().unwrap_or_default();
                 kb.clear();
