@@ -90,7 +90,7 @@
   решения о снимке, окно ключа, порядок стадий, запрет циклов); в
   `docs/features/audio/processing/compressor-and-limiter.md` в «Вердикте» отмечено, что
   прежнее «живой сайдчейн — не сейчас» отменено решением владельца, с адресом change'а.
-- [ ] 7.3 `cargo test --workspace` (kt-app покрейтно при SIGBUS-флаке), `cargo clippy
+- [x] 7.3 `cargo test --workspace` (kt-app покрейтно при SIGBUS-флаке), `cargo clippy
   --all-targets`, `./scripts/live-check.sh` (все сценарии), `./src/scripts/finish.sh` —
   версия в отчёте; коммит стадии; открыть проект владельца собранным kt-app и сказать в
   отчёте, что видно.
