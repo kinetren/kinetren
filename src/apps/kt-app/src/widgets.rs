@@ -478,6 +478,30 @@ pub fn param_value(ui: &mut egui::Ui, spec: &ParamSpec, v: &mut f64) -> egui::Re
     ui.add(dv)
 }
 
+/// Число плюс необязательный ползунок — ОДНО значение и один ответ
+/// «тронули». Порядок (сначала число, потом ползунок) фиксирован: поле
+/// стоит там же, где у параметров без ползунка, и форма не «скачет»
+/// (правило 3 чек-листа).
+fn param_edit(
+    ui: &mut egui::Ui,
+    spec: &ParamSpec,
+    v: &mut f64,
+    slider: Option<f32>,
+) -> egui::Response {
+    let r = param_value(ui, spec, v);
+    match slider {
+        None => r,
+        Some(w) => {
+            let h = r.rect.height();
+            let s = ui.add_sized(
+                [w, h],
+                egui::Slider::new(v, spec.min..=spec.max).show_value(false),
+            );
+            r | s
+        }
+    }
+}
+
 /// Связь полей параметров с кривыми (Р.38 пп.15-16).
 ///
 /// Претензии дословно: «при нажатии на ключ — чтобы значения которые
@@ -984,6 +1008,21 @@ pub fn param_row_bound<P: HasParams + ?Sized>(
     bind: Option<&mut CurveBind<'_>>,
     pubc: Option<&PublishCtx>,
 ) -> ParamsChanged {
+    param_row_bound_ex(ui, f, spec, bind, pubc, None)
+}
+
+/// Поле параметра С ПОЛЗУНКОМ рядом (Р.64): ползунок — это ТОТ ЖЕ ряд, а
+/// не второй виджет со своими границами (правило 24). Число и ползунок
+/// правят одно значение и пишут по одному правилу `CurveBind`; ширина
+/// ползунка — аргумент, потому что место у формы разное.
+pub fn param_row_bound_ex<P: HasParams + ?Sized>(
+    ui: &mut egui::Ui,
+    f: &mut P,
+    spec: &ParamSpec,
+    bind: Option<&mut CurveBind<'_>>,
+    pubc: Option<&PublishCtx>,
+    slider: Option<f32>,
+) -> ParamsChanged {
     let none = ParamsChanged::default();
     let Some(base) = f.get_param(&spec.name) else { return none };
     // подпись — СВОЕЙ области носителя (Р.53, п.414): «size» у титра это
@@ -993,7 +1032,7 @@ pub fn param_row_bound<P: HasParams + ?Sized>(
     let Some(bind) = bind else {
         let reset = param_label_widget(ui, pin, pubc, &spec.name, &label);
         let mut v = if reset { spec.default } else { base };
-        let r = param_value(ui, spec, &mut v);
+        let r = param_edit(ui, spec, &mut v, slider);
         field_probe::note(&spec.name, r.rect);
         if r.changed() || reset {
             f.set_param(&spec.name, v);
@@ -1004,7 +1043,7 @@ pub fn param_row_bound<P: HasParams + ?Sized>(
     let Some(ci) = bind.index_of(&spec.name) else {
         let reset = param_label_widget(ui, pin, pubc, &spec.name, &label);
         let mut v = if reset { spec.default } else { base };
-        let r = param_value(ui, spec, &mut v);
+        let r = param_edit(ui, spec, &mut v, slider);
         field_probe::note(&spec.name, r.rect);
         if r.changed() || reset {
             f.set_param(&spec.name, v);
@@ -1027,7 +1066,7 @@ pub fn param_row_bound<P: HasParams + ?Sized>(
     );
     let c = &mut bind.curves[ci];
     let mut v = if reset { spec.default } else { bound_value(c, key, bind.at) };
-    let r = param_value(ui, spec, &mut v);
+    let r = param_edit(ui, spec, &mut v, slider);
     field_probe::note(&spec.name, r.rect);
     if r.changed() || reset {
         bound_apply(c, key, bind.at, v);

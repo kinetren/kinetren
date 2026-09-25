@@ -542,7 +542,159 @@ pub fn mode_name(m: GeomMode) -> &'static str {
     }
 }
 
-/// Ведущий ли узел у события — только у видео, и только если он есть.
-pub fn has_lead_geometry(c: &kt_model::ClipEvent) -> bool {
-    c.kind == ClipKind::Video && matches!(c.geometry.node(), FxInstance::Geometry { .. })
+// ---- ФОРМА ПОЛЕЙ «Трансформация» (Р.64, раздел 5) -----------------------
+//
+// Претензия владельца дословно (Р.63 п.6): «fx геометрии по прежнему очень
+// скуден, сплошные скучные поля ввода, даже в Vegas и то лучше сделано».
+// Форма собрана из СУЩЕСТВУЮЩИХ кирпичей (`param_row_bound_ex`, дверь
+// публикации у подписи, `CurveBind`): новых правил «куда писать значение»
+// не заводится, добавляются группировка, единицы, ползунки и схема.
+
+/// Доля показывается ПРОЦЕНТОМ (п.415): пересчёт живёт в `param_value`, в
+/// модели и в файле значение остаётся долей.
+fn shown_spec(s: &kt_model::ParamSpec) -> kt_model::ParamSpec {
+    let mut s = s.clone();
+    if matches!(
+        &*s.name,
+        "crop_l" | "crop_t" | "crop_r" | "crop_b" | "pos_x" | "pos_y" | "anchor_x" | "anchor_y"
+    ) {
+        s.unit = kt_model::ParamUnit::Percent;
+    }
+    s
+}
+
+/// Единица, которой параметр ПОКАЗЫВАЕТСЯ в форме (для теста t759: единица
+/// живёт в паспорте, а не в тексте подписи).
+#[allow(dead_code)] // спрашивает тест t759: единица живёт в паспорте
+pub(crate) fn shown_spec_unit(name: &str) -> Option<kt_model::ParamUnit> {
+    let g = EventGeometry::default().node();
+    let s = g.param_specs().iter().find(|s| &*s.name == name)?.clone();
+    Some(shown_spec(&s).unit)
+}
+
+/// Строка формы: пара полей на одну строку (X и Y рядом, как в Pr/AE).
+fn geom_row(
+    ui: &mut egui::Ui,
+    f: &mut FxInstance,
+    specs: &[kt_model::ParamSpec],
+    names: &[&str],
+    slider: Option<f32>,
+    bind: &mut Option<&mut crate::widgets::CurveBind<'_>>,
+    pubc: Option<&crate::widgets::PublishCtx>,
+) -> crate::widgets::ParamsChanged {
+    let mut ch = crate::widgets::ParamsChanged::default();
+    ui.horizontal(|ui| {
+        for n in names {
+            let Some(s) = specs.iter().find(|s| &*s.name == *n) else { continue };
+            let s = shown_spec(s);
+            ch |= crate::widgets::param_row_bound_ex(
+                ui,
+                f,
+                &s,
+                bind.as_deref_mut(),
+                pubc,
+                slider,
+            );
+        }
+    });
+    ch
+}
+
+/// Прямоугольник схемы и точка якоря — ТОЙ ЖЕ функцией размещения, что у
+/// рендера и у экранных контролов, посчитанной на холсте размером со схему.
+/// Поэтому кроп, зум, поворот и якорь на ней — не рисунок «по мотивам», а те
+/// самые числа. Отдельно от рисования — чтобы это утверждал тест, а не глаз.
+pub(crate) type SchemaShape = ([(f64, f64); 4], (f64, f64));
+
+pub(crate) fn schema_quad(f: &FxInstance, size: egui::Vec2) -> Option<SchemaShape> {
+    let canvas = (size.x.max(4.0) as f64, size.y.max(4.0) as f64);
+    let g = EventGeometry::default().with_node(f);
+    // вид источника здесь неизвестен, поэтому вход равен холсту: схема
+    // показывает рамку ОТНОСИТЕЛЬНО кадра, а правило приведения на таком
+    // входе вырождается в тождество для любого своего значения
+    let lead = LeadCtx::new(None, kt_fx::conform::ConformRule::Fit);
+    let pl = geometry_placement(&g.node(), Some(lead), canvas, canvas)?;
+    Some((pl.corners(), pl.anchor))
+}
+
+fn frame_schema(ui: &mut egui::Ui, f: &FxInstance, size: egui::Vec2) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let p = ui.painter_at(rect);
+    let dim = egui::Color32::from_rgb(90, 92, 100);
+    p.rect_filled(rect, 2.0, egui::Color32::from_rgb(18, 18, 22));
+    p.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, dim), egui::StrokeKind::Inside);
+    let Some((quad, anchor)) = schema_quad(f, rect.size()) else { return resp };
+    let to = |q: (f64, f64)| {
+        egui::pos2(rect.left() + q.0 as f32, rect.top() + q.1 as f32)
+    };
+    let cs: Vec<egui::Pos2> = quad.iter().map(|c| to(*c)).collect();
+    p.add(egui::Shape::closed_line(cs, egui::Stroke::new(1.5, crate::theme::ACCENT)));
+    let a = to(anchor);
+    p.circle_stroke(a, 3.0, egui::Stroke::new(1.5, crate::theme::ACCENT));
+    p.line_segment([a - egui::vec2(5.0, 0.0), a + egui::vec2(5.0, 0.0)], (1.0, dim));
+    p.line_segment([a - egui::vec2(0.0, 5.0), a + egui::vec2(0.0, 5.0)], (1.0, dim));
+    resp
+}
+
+/// Раздел «Трансформация» у ведущего узла: группы, пары X/Y одной строкой,
+/// ползунки у зума и поворота, схема рамки и сброс одним шагом истории.
+pub(crate) fn transform_form(
+    ui: &mut egui::Ui,
+    f: &mut FxInstance,
+    mut bind: Option<&mut crate::widgets::CurveBind<'_>>,
+    hover: &mut Option<String>,
+    pubc: Option<&crate::widgets::PublishCtx>,
+) -> crate::widgets::ParamsChanged {
+    use crate::i18n::{k, tr};
+    let mut ch = crate::widgets::ParamsChanged::default();
+    let specs: Vec<kt_model::ParamSpec> = f.param_specs().to_vec();
+    // свёртка групп — состояние ОКНА (память egui), не проекта
+    let group = |ui: &mut egui::Ui, id: &str, title: &str, body: &mut dyn FnMut(&mut egui::Ui)| {
+        egui::CollapsingHeader::new(title)
+            .id_salt(("geoform", id))
+            .default_open(true)
+            .show(ui, |ui| body(ui));
+    };
+
+    group(ui, "frame", tr(k::geomctl::GROUP_FRAME), &mut |ui| {
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ch |= geom_row(ui, f, &specs, &["zoom"], Some(90.0), &mut bind, pubc);
+                ch |= geom_row(ui, f, &specs, &["rot"], Some(90.0), &mut bind, pubc);
+            });
+            let r = frame_schema(ui, f, egui::vec2(116.0, 66.0));
+            crate::widgets::field_probe::note("geo.schema", r.rect);
+            crate::app::hint_into(hover, r, tr(k::geomctl::SCHEMA_HINT));
+        });
+    });
+    group(ui, "pos", tr(k::geomctl::GROUP_POS), &mut |ui| {
+        ch |= geom_row(ui, f, &specs, &["pos_x", "pos_y"], None, &mut bind, pubc);
+        ch |= geom_row(ui, f, &specs, &["anchor_x", "anchor_y"], None, &mut bind, pubc);
+    });
+    group(ui, "crop", tr(k::geomctl::GROUP_CROP), &mut |ui| {
+        ch |= geom_row(ui, f, &specs, &["crop_l", "crop_r"], None, &mut bind, pubc);
+        ch |= geom_row(ui, f, &specs, &["crop_t", "crop_b"], None, &mut bind, pubc);
+    });
+
+    let r = ui.button(tr(k::geomctl::RESET));
+    crate::widgets::field_probe::note("geo.reset", r.rect);
+    let reset = r.clicked();
+    crate::app::hint_into(hover, r, tr(k::geomctl::RESET_HINT));
+    if reset {
+        // сброс идёт ТЕМ ЖЕ правилом, что поле: у анимированного параметра
+        // это ключ по курсору, а не стёртая кривая (правило 20 — ничего не
+        // отрубается само)
+        for s in &specs {
+            if let Some(b) = bind.as_deref_mut()
+                && b.has_curve(f, &s.name)
+            {
+                b.apply(f, &s.name, s.default);
+                ch.curve = true;
+                continue;
+            }
+            f.set_param(&s.name, s.default);
+            ch.base = true;
+        }
+    }
+    ch
 }

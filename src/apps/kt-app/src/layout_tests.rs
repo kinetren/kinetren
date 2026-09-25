@@ -15375,6 +15375,121 @@ fn t760_frame_matches_the_placement_and_drag_writes_the_same_numbers() {
     }
 }
 
+/// Тест 759 (Р.64): форма «Трансформация» у ведущего узла.
+///
+/// Претензия владельца (Р.63 п.6): «сплошные скучные поля ввода, даже в
+/// Vegas и то лучше сделано… в том же Pr/Ae это удобнее». Утверждается то,
+/// что человек видит и делает: группы, пара X/Y ОДНОЙ строкой, ползунки у
+/// зума и поворота, схема, считающая ТЕ ЖЕ числа, и «сбросить геометрию»
+/// одним шагом истории.
+#[test]
+fn t759_transform_form_groups_pairs_sliders_and_reset() {
+    use eframe::egui::accesskit::Role;
+    use egui_kittest::kittest::{Queryable, by};
+    use kt_model::*;
+    let (mut h, clip) = harness_geom_ctl();
+    // геометрия СДВИНУТА — иначе сброс нечего возвращать
+    {
+        let app = h.state_mut();
+        let c = app.model.clip(clip).cloned().expect("событие");
+        app.apply(Command::SetGeometry {
+            id: clip,
+            geometry: EventGeometry { pos_x: 0.2, zoom: 1.7, rot: 30.0, crop_l: 0.1, ..c.geometry },
+            pos: c.geometry_pos,
+            auto: Vec::new(),
+        });
+        app.open_fx_editor(clip);
+    }
+    h.step();
+    h.step();
+    let lead_label = crate::fx_editor::fx_display_name(&EventGeometry::default().node());
+    h.get_by_label(lead_label).click();
+    h.step();
+    h.step();
+
+    // ---- ГРУППЫ -------------------------------------------------------
+    for key in [k::geomctl::GROUP_FRAME, k::geomctl::GROUP_POS, k::geomctl::GROUP_CROP] {
+        let title = tr(key);
+        assert!(
+            h.query_all_by_label_contains(title).count() > 0,
+            "группы «{title}» в форме нет — поля остались сплошным списком"
+        );
+    }
+
+    // ---- ПАРА X/Y ОДНОЙ СТРОКОЙ ---------------------------------------
+    // подпись ищется ТОЧНО: «X:» встречается и внутри «Якорь X:»
+    let row_of = |h: &Harness<'_, KtApp>, label: &str| -> egui::Rect {
+        h.get_all_by_label(label)
+            .map(|n| n.rect())
+            .find(|r| r.width() > 0.0)
+            .unwrap_or_else(|| panic!("подписи «{label}» нет в форме"))
+    };
+    let rx = row_of(&h, tr(k::fxp::POS_X));
+    let ry = row_of(&h, tr(k::fxp::POS_Y));
+    assert!(
+        (rx.center().y - ry.center().y).abs() < 4.0 && (rx.center().x - ry.center().x).abs() > 8.0,
+        "X и Y стоят не парой на одной строке: {rx:?} против {ry:?}"
+    );
+
+    // ---- ПОЛЗУНКИ у зума и поворота -----------------------------------
+    let sliders = h.query_all(by().role(Role::Slider)).count();
+    assert!(
+        sliders >= 2,
+        "ползунков в форме {sliders}: зум и поворот обязаны иметь их оба          (тянуть число по одному пикселю — это и есть «скучные поля»)"
+    );
+
+    // ---- СХЕМА считает ТЕ ЖЕ числа ------------------------------------
+    {
+        let g = h.state().model.clip(clip).unwrap().geometry;
+        let size = egui::vec2(116.0, 66.0);
+        let (quad, anchor) = crate::geomctl::schema_quad(&g.node(), size).expect("схема считается");
+        let (q0, a0) = crate::geomctl::schema_quad(&EventGeometry::default().node(), size)
+            .expect("схема умолчаний");
+        assert_ne!(quad, q0, "схема не видит ни зума, ни поворота, ни кропа");
+        let w = |q: [(f64, f64); 4]| {
+            let (mut lo, mut hi) = (f64::MAX, f64::MIN);
+            for c in q {
+                lo = lo.min(c.0);
+                hi = hi.max(c.0);
+            }
+            hi - lo
+        };
+        assert!(w(quad) > w(q0), "зум 1.7 не расширил рамку схемы: {} против {}", w(quad), w(q0));
+        assert!(
+            (anchor.0 - a0.0).abs() > 1.0,
+            "якорь схемы не уехал вместе с положением: {anchor:?} против {a0:?}"
+        );
+    }
+
+    // ---- СБРОС одним шагом истории ------------------------------------
+    let depth = h.state().model.undo_depth();
+    h.get_by_label_contains(tr(k::geomctl::RESET)).click();
+    h.step();
+    h.step();
+    let g = h.state().model.clip(clip).unwrap().geometry;
+    assert_eq!(
+        (g.pos_x, g.zoom, g.rot, g.crop_l),
+        (0.0, 1.0, 0.0, 0.0),
+        "«Сбросить геометрию» не вернула умолчания"
+    );
+    assert_eq!(
+        h.state().model.undo_depth(),
+        depth + 1,
+        "сброс — ОДИН шаг истории (сессия окна), а не десять команд"
+    );
+    // единицы берутся из ПАСПОРТА, а не пишутся в подпись
+    assert_eq!(
+        crate::geomctl::shown_spec_unit("crop_l"),
+        Some(kt_model::ParamUnit::Percent),
+        "доля кропа обязана показываться процентом (п.415)"
+    );
+    assert_eq!(
+        crate::geomctl::shown_spec_unit("zoom"),
+        Some(kt_model::ParamUnit::Ratio),
+        "зум — отношение (×), а не процент"
+    );
+}
+
 /// Тест 762b (Р.64): жест над АНИМИРОВАННЫМ параметром ставит ключ.
 ///
 /// Правило 17 буквально: экранная рамка и поле окна FX правят одно и то же

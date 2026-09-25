@@ -330,3 +330,79 @@ fn t756c_ducking_is_named_the_way_the_industry_names_it() {
     }
     i18n::set_lang(Lang::Ru);
 }
+
+/// Тест 759b (Р.64): подписи формы «Трансформация» переведены, а единицы в
+/// них НЕ написаны.
+///
+/// Единица приезжает из паспорта параметра (`ParamSpec::unit`) и рисуется
+/// полем; написанная ещё и в подписи, она раздваивается — правило 9
+/// чек-листа («ничего лишнего») и правило одного источника правды. Заодно
+/// сторож обычного рода: у новых ключей есть пять переводов, а не пять
+/// английских копий.
+#[test]
+fn t759b_transform_form_labels_are_translated_and_carry_no_units() {
+    let keys = [
+        i18n::k::geomctl::GROUP_FRAME,
+        i18n::k::geomctl::GROUP_POS,
+        i18n::k::geomctl::GROUP_CROP,
+        i18n::k::geomctl::RESET,
+        i18n::k::geomctl::RESET_HINT,
+        i18n::k::geomctl::SCHEMA_HINT,
+    ];
+    // подписи ПАРАМЕТРОВ ведущего узла — из общей области `fxp`
+    let params = [
+        i18n::k::fxp::POS_X,
+        i18n::k::fxp::POS_Y,
+        i18n::k::fxp::ANCHOR_X,
+        i18n::k::fxp::ANCHOR_Y,
+        i18n::k::fxp::CROP_L,
+        i18n::k::fxp::CROP_T,
+        i18n::k::fxp::CROP_R,
+        i18n::k::fxp::CROP_B,
+        i18n::k::fxp::ZOOM,
+        i18n::k::fxp::ROT,
+    ];
+    let mut en: Vec<String> = Vec::new();
+    i18n::set_lang(Lang::En);
+    for k in keys {
+        en.push(i18n::tr(k).to_string());
+    }
+    for lang in Lang::ALL {
+        i18n::set_lang(lang);
+        for k in keys {
+            let s = i18n::tr(k);
+            assert!(!s.trim().is_empty(), "{}: пустая подпись формы", lang.code());
+        }
+        for k in params {
+            let s = i18n::tr(k);
+            for unit in ['%', '°', '×'] {
+                assert!(
+                    !s.contains(unit),
+                    "{}: в подписи «{s}» написана единица «{unit}» — она приезжает из \
+                     паспорта параметра и рисуется полем, второй раз её писать нельзя",
+                    lang.code()
+                );
+            }
+        }
+        // «сбросить» обязано говорить, ЧТО именно вернётся (правило 19).
+        // Мерить абсолютной длиной нельзя — иероглифика вдвое плотнее
+        // латиницы; меряем ОТНОСИТЕЛЬНО самой кнопки.
+        let hint = i18n::tr(i18n::k::geomctl::RESET_HINT);
+        let btn = i18n::tr(i18n::k::geomctl::RESET);
+        assert!(
+            hint.chars().count() > btn.chars().count() * 3,
+            "{}: подсказка сброса не длиннее собственной кнопки — она обязана \
+             перечислить, что вернётся и что останется: {hint:?}",
+            lang.code()
+        );
+        if !matches!(lang, Lang::En) {
+            let now: Vec<String> = keys.iter().map(|k| i18n::tr(*k).to_string()).collect();
+            assert!(
+                now.iter().zip(&en).any(|(a, b)| a != b),
+                "{}: подписи формы совпадают с английскими — перевода нет",
+                lang.code()
+            );
+        }
+    }
+    i18n::set_lang(Lang::Ru);
+}
