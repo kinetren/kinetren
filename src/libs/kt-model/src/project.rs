@@ -1456,6 +1456,47 @@ pub const GEN_TAG: u64 = 1 << 62;
 pub const TRACK_TAG: u64 = 1 << 61;
 
 /// Адрес суб-композита дорожки в пространстве медиа.
+/// КЛЮЧИ САЙДЧЕЙНА цепочки (Р.65): у каких приборов назначен второй вход.
+/// Один дом ответа «что такое ключ в цепочке» — его спрашивают и проверка
+/// команды, и движок, и формат.
+pub fn sidechain_keys(fx: &[FxInstance]) -> impl Iterator<Item = TrackId> + '_ {
+    fx.iter().filter_map(|f| match f {
+        FxInstance::Compressor { key, .. } => *key,
+        _ => None,
+    })
+}
+
+/// Замкнётся ли граф ключей, если у дорожки `target` встанет цепочка `fx`.
+///
+/// Цикл невозможно исполнить: кадр дорожки зависел бы сам от себя. Поэтому
+/// он отвергается ПРИ ЗАПИСИ (движок страхуется своим обрывом рекурсии).
+pub fn sidechain_cycle(tracks: &[Track], target: TrackId, fx: &[FxInstance]) -> bool {
+    // обход от каждого ключа предлагаемой цепочки: дошли до target — цикл
+    let keys_of = |id: TrackId| -> Vec<TrackId> {
+        if id == target {
+            return sidechain_keys(fx).collect();
+        }
+        tracks
+            .iter()
+            .find(|t| t.id == id)
+            .map(|t| sidechain_keys(&t.fx).collect())
+            .unwrap_or_default()
+    };
+    let mut seen: Vec<TrackId> = Vec::new();
+    let mut stack: Vec<TrackId> = keys_of(target);
+    while let Some(id) = stack.pop() {
+        if id == target {
+            return true;
+        }
+        if seen.contains(&id) {
+            continue;
+        }
+        seen.push(id);
+        stack.extend(keys_of(id));
+    }
+    false
+}
+
 pub fn track_source_media(id: TrackId) -> MediaId {
     MediaId(TRACK_TAG | id.0)
 }
@@ -5495,6 +5536,15 @@ pub enum FxInstance {
         release_ms: f32,
         #[serde(default, skip_serializing_if = "is_zero")]
         makeup_db: f32,
+        /// КЛЮЧ сайдчейна (Р.65): дорожка, по которой считает детектор.
+        /// `None` — обычный компрессор, и тогда поле не пишется вовсе:
+        /// файл без сайдчейна остаётся байт-в-байт прежним.
+        ///
+        /// Адрес — `TrackId`, а НЕ номер дорожки: номер это ранг строки, и
+        /// вставка дорожки выше перевесила бы ключ на чужой сигнал (тот же
+        /// урок, что у ключа FX-состояния в Р.62).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<TrackId>,
     },
     /// Гейт (Р.47): быстрый детектор + гистерезис −6 дБ + hold.
     Gate {
@@ -7556,6 +7606,7 @@ impl FxInstance {
             attack_ms: 10.0,
             release_ms: 150.0,
             makeup_db: 0.0,
+            key: None,
         }
     }
 

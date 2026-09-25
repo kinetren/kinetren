@@ -748,6 +748,12 @@ pub enum CommandError {
     MarkerExists(Tick),
     #[error("media {0:?} is used by clips")]
     MediaInUse(MediaId),
+    #[error("sidechain key {0:?} is not an audio track of this reel (or is the track itself)")]
+    SidechainKeyInvalid(TrackId),
+    #[error("sidechain key would make a cycle through track {0:?}")]
+    SidechainCycle(TrackId),
+    #[error("sidechain key belongs on a track chain, not on a clip")]
+    SidechainOnClip,
     #[error("lane count would orphan clips")]
     LanesTooFew,
     #[error("{0:?} track {1} does not exist")]
@@ -1477,10 +1483,18 @@ impl TimelineModel {
             | Command::SetFxOff { id, .. }
             | Command::SetReversed { id, .. }
             | Command::SetFxBypass { id, .. }
-            | Command::SetFx { id, .. }
             | Command::UnlinkClip { id }
             | Command::MoveClip { id, .. } => {
                 find(*id)?;
+            }
+            Command::SetFx { id, fx } => {
+                find(*id)?;
+                // сайдчейн живёт ТОЛЬКО в цепочке дорожки (решение
+                // владельца Р.65): у события нет ни своего окна ключа, ни
+                // места в порядке стадий
+                if crate::sidechain_keys(fx).next().is_some() {
+                    return Err(CommandError::SidechainOnClip);
+                }
             }
             Command::SetGeometry { id, pos, .. } => {
                 let c = find(*id)?;
@@ -1620,6 +1634,20 @@ impl TimelineModel {
                 });
                 if wrong {
                     return Err(CommandError::TrackPropOutOfRange(*id));
+                }
+                // КЛЮЧ САЙДЧЕЙНА (Р.65): только на СВОЮ ленту, только
+                // аудиодорожка, не сама себя и без цикла. Отказ назван —
+                // молчаливое «ключ не сработал» было бы хуже ошибки.
+                for k in crate::sidechain_keys(fx) {
+                    let ok = k != *id
+                        && p.track(k).is_some_and(|t| t.kind == LaneKind::Audio)
+                        && p.tracks.iter().any(|t| t.id == k);
+                    if !ok {
+                        return Err(CommandError::SidechainKeyInvalid(k));
+                    }
+                }
+                if crate::sidechain_cycle(&p.tracks, *id, fx) {
+                    return Err(CommandError::SidechainCycle(*id));
                 }
             }
             Command::SetTrackFxOff { id, .. } => {

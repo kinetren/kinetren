@@ -19,6 +19,7 @@ fn comp() -> FxInstance {
         attack_ms: 5.0,
         release_ms: 60.0,
         makeup_db: 0.0,
+        key: None, // ключ подаётся ПРЯМО в process_keyed: kt-fx о дорожках не знает
     }
 }
 

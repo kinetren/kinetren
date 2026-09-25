@@ -311,7 +311,7 @@ impl AudioNode {
             }
             (
                 AudioNode::Compressor(n),
-                FxInstance::Compressor { threshold_db, ratio, attack_ms, release_ms, makeup_db },
+                FxInstance::Compressor { threshold_db, ratio, attack_ms, release_ms, makeup_db, .. },
             ) => n.apply(*threshold_db, *ratio, *attack_ms, *release_ms, *makeup_db),
             (
                 AudioNode::Gate(n),

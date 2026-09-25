@@ -434,6 +434,7 @@ fn t326_delay_and_dynamics_behave() {
         attack_ms: 1.0,
         release_ms: 150.0,
         makeup_db: 0.0,
+        key: None,
     }]);
     // синус 0.5 = -6 дБFS: ожидаем -18 + ( -6 - -18 )/4 = -15 дБFS
     let expect = -18.0 + (dry_db + 18.0) / 4.0;
