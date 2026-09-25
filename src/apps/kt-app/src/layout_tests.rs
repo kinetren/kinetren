@@ -15216,3 +15216,158 @@ fn t756_ducking_lives_in_the_track_window_and_remembers_its_settings() {
         "настройки не записались в общее хранилище — в следующий раз их снова вводить руками"
     );
 }
+
+/// Сцена для экранных контролов (Р.64): одно видео-событие выделено,
+/// курсор внутри него, набор «трансформация» включён.
+fn harness_geom_ctl() -> (Harness<'static, KtApp>, kt_model::ClipId) {
+    use kt_model::*;
+    // сцена — ГЕНЕРАТОР: у него источник поднимается тем же путём, что в
+    // программе, и превью получает НАСТОЯЩИЙ кадр (без кадра нет ни
+    // картинки, ни контролов над ней — как у драга титра, t495)
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    h.state_mut().create_generator(GeneratorKind::Solid {
+        color_r: 200,
+        color_g: 40,
+        color_b: 40,
+    });
+    h.step();
+    let (_media, clip) = made_generator(&h);
+    h.state_mut().fx_editors.clear();
+    {
+        let app = h.state_mut();
+        let c = app.model.clip(clip).cloned().expect("событие");
+        app.selected.clear();
+        app.selected.insert(clip);
+        app.player.seek(kt_time::Tick(c.start.0 + c.duration.0 / 2));
+        app.geom_ctl = crate::geomctl::GeomMode::Transform;
+    }
+    h.step();
+    h.step();
+    (h, clip)
+}
+
+/// Тест 760 (Р.64): рамка над кадром равна аналитической, жест правит те
+/// же числа, что поля, и даёт ОДИН шаг истории.
+///
+/// Владелец (Р.63 п.6): «КАК МИНИМУМ у нас должно быть редактирование прям
+/// в превью удобное». Рамка обязана совпадать с прямоугольником, по
+/// которому композит кладёт слой, — иначе человек тянет одно, а получает
+/// другое.
+#[test]
+fn t760_frame_matches_the_placement_and_drag_writes_the_same_numbers() {
+    use kt_model::*;
+    let (mut h, clip) = harness_geom_ctl();
+    let q = h.state().player.preview_quality();
+    let canvas = (q.width as f64, q.height as f64);
+
+    // --- РАМКА равна аналитической -----------------------------------
+    let pl = h.state().geom_placement(clip, canvas).expect("размещение есть");
+    let g = h.state().model.clip(clip).unwrap().geometry;
+    let want = kt_fx::geom::geometry_placement(
+        &g.node(),
+        Some(kt_fx::conform::LeadCtx::new(
+            h.state().player.source_view(h.state().model.clip(clip).unwrap().media),
+            g.rule.resolve(h.state().model.project().settings.conform),
+        )),
+        h.state()
+            .player
+            .source_view(h.state().model.clip(clip).unwrap().media)
+            .unwrap_or(canvas),
+        canvas,
+    )
+    .expect("аналитическое размещение");
+    assert_eq!(pl, want, "рамка интерфейса разошлась с размещением рендера");
+
+    // --- ПЕРЕНОС за тело: те же числа, один шаг истории ---------------
+    let depth = h.state().model.undo_depth();
+    let before = h.state().model.clip(clip).unwrap().geometry;
+    let img = {
+        let r = h.state().preview_rect;
+        assert!(r.width() > 40.0, "превью в харнессе есть: {r:?}");
+        r
+    };
+    // диагностика сцены: есть ли кадр и виден ли набор
+    assert!(h.state().texture.is_some(), "в превью нет кадра — контролам не над чем рисоваться");
+    assert_eq!(h.state().geom_mode(), crate::geomctl::GeomMode::Transform, "набор не включён");
+    assert!(h.state().geom_target().is_ok(), "цель рамки не выбрана");
+    assert!(h.state().geom_ctl_drawn, "контролы не дошли до разбора жеста");
+    // берём точку ВНУТРИ рамки, но не на ручке: центр занят якорем,
+    // углы и середины сторон — ручками масштаба
+    let c = img.min + egui::vec2(img.width() * 0.3, img.height() * 0.32);
+    h.hover_at(c);
+    h.step();
+    h.drag_at(c);
+    h.step();
+    h.hover_at(c + egui::vec2(12.0, 0.0));
+    h.step();
+    assert!(h.state().geom_drag.is_some(), "жест не начался: контрол не поймал нажатие");
+    h.hover_at(c + egui::vec2(48.0, 30.0));
+    h.step();
+    h.drop_at(c + egui::vec2(48.0, 30.0));
+    h.step();
+
+    let after = h.state().model.clip(clip).unwrap().geometry;
+    assert!(
+        after.pos_x > before.pos_x + 1e-6 && after.pos_y > before.pos_y + 1e-6,
+        "перенос за тело не сдвинул позицию: {:?} → {:?}",
+        (before.pos_x, before.pos_y),
+        (after.pos_x, after.pos_y)
+    );
+    assert_eq!(
+        h.state().model.undo_depth(),
+        depth + 1,
+        "жест обязан дать РОВНО один шаг истории"
+    );
+    // …и сдвиг ПРАВДОПОДОБЕН: это то же движение указателя, переведённое
+    // в доли холста той же функцией (точность возврата доказывает t761 на
+    // чистой функции — здесь проверяется, что жест ходит через неё)
+    let img_w = img.width() as f64;
+    let img_h = img.height() as f64;
+    let full = kt_fx::geom::pos_for_drag(
+        (before.pos_x, before.pos_y),
+        canvas,
+        (48.0 / img_w * canvas.0, 30.0 / img_h * canvas.1),
+    );
+    for (got, want, ax) in [(after.pos_x, full.0, "X"), (after.pos_y, full.1, "Y")] {
+        assert!(
+            got > want * 0.6 && got <= want * 1.05,
+            "сдвиг по {ax} не похож на движение указателя: {got} против {want} \
+             (порог драга в значение не попадает, поэтому «чуть меньше» — норма)"
+        );
+    }
+    // ЧИСЛО ОДНО: модель и поле окна FX читают одно и то же значение
+    assert_eq!(
+        h.state().model.clip(clip).unwrap().geometry.pos_x,
+        after.pos_x,
+        "значение в модели разошлось с тем, что показывает форма"
+    );
+
+    // --- рамки НЕТ у аудио и при мультивыделении, причина названа ------
+    {
+        let app = h.state_mut();
+        let audio = app
+            .model
+            .project()
+            .clips
+            .iter()
+            .find(|c| c.kind == ClipKind::Audio)
+            .map(|c| c.id);
+        app.selected.clear();
+        if let Some(a) = audio {
+            app.selected.insert(a);
+            assert!(
+                matches!(app.geom_target(), Err(crate::geomctl::NoFrame::NotVideo)),
+                "у аудио-события рамка не должна рисоваться"
+            );
+        }
+        app.selected.insert(clip);
+        if audio.is_some() {
+            assert!(
+                matches!(app.geom_target(), Err(crate::geomctl::NoFrame::ManySelected)),
+                "при мультивыделении рамка не рисуется"
+            );
+        }
+        app.selected.clear();
+        assert!(matches!(app.geom_target(), Err(crate::geomctl::NoFrame::NothingSelected)));
+    }
+}

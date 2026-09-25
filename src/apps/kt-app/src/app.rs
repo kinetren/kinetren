@@ -586,6 +586,12 @@ pub struct KtApp {
     /// качество, полный ли). Текстура обновляется только при смене —
     /// раньше кадр заливался в GPU 60 раз/с даже в паузе (п.1).
     pub preview_key: Option<(i64, (u32, u32), bool)>,
+    /// Идущий жест экранных контролов геометрии (Р.64).
+    pub geom_drag: Option<crate::geomctl::GeomDrag>,
+    /// Активный набор экранных контролов (зеркало `UiState.geom_controls`).
+    pub geom_ctl: crate::geomctl::GeomMode,
+    /// Контролы дошли до разбора жеста в этом кадре (сцена не вырождена).
+    pub geom_ctl_drawn: bool,
     /// Версия СОДЕРЖИМОГО источников на момент последнего композита
     /// (Р.53, п.412): ключ превью её обязан учитывать, иначе правка
     /// параметров при неподвижном курсоре не доезжает до экрана.
@@ -917,6 +923,9 @@ impl KtApp {
             sw_render: None,
             perf: PerfState::new(),
             preview_key: None,
+            geom_drag: None,
+            geom_ctl: crate::geomctl::GeomMode::Off,
+            geom_ctl_drawn: false,
             preview_content: 0,
             preview_project: 0,
             incomplete_since: None,
@@ -1122,6 +1131,9 @@ impl KtApp {
             sw_render: None,
             perf: PerfState::new(),
             preview_key: None,
+            geom_drag: None,
+            geom_ctl: crate::geomctl::GeomMode::Off,
+            geom_ctl_drawn: false,
             preview_content: 0,
             preview_project: 0,
             incomplete_since: None,
@@ -1184,6 +1196,7 @@ impl KtApp {
             // замок оси графиков (Р.40 п.15): в файле лежит ОБРАТНОЕ, чтобы
             // serde-умолчание `false` означало включённый замок
             app.auto_axis_linked = !ui.auto_axis_unlinked;
+            app.geom_ctl = crate::geomctl::GeomMode::from_u32(ui.geom_controls);
             if ui.meters_w > 0.0 {
                 app.meters_w = ui.meters_w.clamp(METERS_W_MIN, METERS_W_MAX);
             }
@@ -1361,6 +1374,7 @@ impl KtApp {
             lane_names: Vec::new(),
             lane_heights: Vec::new(),
             auto_axis_unlinked: !self.auto_axis_linked,
+            geom_controls: self.geom_ctl.as_u32(),
         }
     }
 
@@ -6180,8 +6194,24 @@ impl KtApp {
             let detached = self.preview_detached;
             let mut toggle = false;
             let mut picked = false;
+            let mut cycle = false;
+            let mode_now = self.geom_ctl;
             resp.clone().context_menu(|ui| {
                 picked = true;
+                // КОНТРОЛЫ НАД КАДРОМ (Р.64) — первым пунктом: это то,
+                // зачем к превью правой кнопкой и приходят чаще всего.
+                // Один пункт на все три состояния: набор активен ровно
+                // один (правило Resolve), и переключатель у него один.
+                let r = ui.button(crate::tf!(
+                    k::geomctl::TOGGLE,
+                    crate::geomctl::mode_name(mode_now.next())
+                ));
+                crate::widgets::field_probe::note("geom.toggle", r.rect);
+                if r.clicked() {
+                    cycle = true;
+                    ui.close();
+                }
+                ui.separator();
                 let label = if detached {
                     tr(k::menu::view::ATTACH_PREVIEW)
                 } else {
@@ -6192,6 +6222,9 @@ impl KtApp {
                     ui.close();
                 }
             });
+            if cycle {
+                self.cycle_geom_mode();
+            }
             if picked {
                 self.set_panel_target(crate::ctx_menu::PanelTarget::Preview);
             }
@@ -6333,6 +6366,10 @@ impl KtApp {
                     );
                 }
             }
+            // КОНТРОЛЫ ГЕОМЕТРИИ — до драга титра: у более мелкой и
+            // более специфичной цели (блок титра) приоритет, egui отдаёт
+            // указатель последнему зарегистрированному интерактору
+            self.geometry_controls(ui, &painter, img_rect, (q.width, q.height));
             self.title_drag_in_preview(ui, &painter, img_rect);
             // скрим — только если неполнота держится >180 мс (v1)
             let show_overlay = self

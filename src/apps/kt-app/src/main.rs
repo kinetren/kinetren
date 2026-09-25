@@ -19,6 +19,7 @@ mod fx_editor;
 mod fx_registry;
 mod fx_thumbs;
 mod gen_ui;
+mod geomctl;
 mod graphs;
 mod i18n;
 #[cfg(test)]

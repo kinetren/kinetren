@@ -281,7 +281,7 @@ impl KtApp {
                     });
                     w.duck_src = src;
                     egui::Grid::new(("duck_params", w.id.0)).num_columns(2).show(ui, |ui| {
-                        let mut row = |ui: &mut egui::Ui,
+                        let row = |ui: &mut egui::Ui,
                                        probe: &str,
                                        label: &str,
                                        v: &mut f64,
