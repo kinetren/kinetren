@@ -2723,3 +2723,74 @@ fn t747_old_rate_curves_with_ease_open_as_linear() {
     let again = save_project(q, &bundle.retained, None);
     load_project(&again, None).expect("пересохранённый файл читается");
 }
+
+/// Тест 773 (Р.65): КЛЮЧ САЙДЧЕЙНА в файле — v12 по содержимому.
+///
+/// Файл без сайдчейна обязан остаться на прежней версии и байт-в-байт:
+/// поле, которого нет, не пишется. Файл с ключом — v12, потому что старая
+/// сборка потеряла бы его молча, и дакинг просто не звучал бы. Ключ на
+/// дорожку, которой в файле нет, читается как «ключа нет» — проект
+/// открывается, прибор работает обычным компрессором.
+#[test]
+fn t773_sidechain_key_round_trips_as_v12() {
+    use kt_model::LaneKind::Audio as A;
+
+    // 1. компрессор БЕЗ ключа версию не двигает и байты не меняет
+    let mut plain = rich_project();
+    plain.ensure_tracks(A, 2);
+    let before = save_project(&plain, &Retained::default(), None);
+    plain.track_at_mut(A, 0).unwrap().fx = vec![FxInstance::compressor()];
+    plain.validate().unwrap();
+    let text0 = save_project(&plain, &Retained::default(), None);
+    let v0 = kt_otio::kt_version(&parse_document(&text0).unwrap()).unwrap();
+    assert!(v0 < kt_otio::KT_META_V12, "компрессор без ключа не должен быть v12 (v{v0})");
+    assert!(!text0.contains("\"key\""), "поле ключа не пишется без ключа");
+    let _ = &before;
+
+    // 2. назначенный ключ — v12 и идемпотентный круг
+    let mut p = rich_project();
+    p.ensure_tracks(A, 2);
+    let speech = p.track_at(A, 1).unwrap().id;
+    p.track_at_mut(A, 0).unwrap().fx = vec![FxInstance::Compressor {
+        threshold_db: -24.0,
+        ratio: 8.0,
+        attack_ms: 5.0,
+        release_ms: 120.0,
+        makeup_db: 0.0,
+        key: Some(speech),
+    }];
+    p.validate().unwrap();
+    let text = save_project(&p, &Retained::default(), None);
+    assert_eq!(
+        kt_otio::kt_version(&parse_document(&text).unwrap()),
+        Some(kt_otio::KT_META_V12),
+        "файл с ключом обязан подняться до v12"
+    );
+    let back = load_project(&text, None).unwrap();
+    let got: Vec<_> = back
+        .project
+        .track_at(A, 0)
+        .map(|t| kt_model::sidechain_keys(&t.fx).collect())
+        .unwrap_or_default();
+    assert_eq!(got, vec![speech], "ключ не пережил круг через файл");
+    let again = save_project(&back.project, &Retained::default(), None);
+    assert_eq!(text, again, "круг не идемпотентен");
+
+    // 3. ключ на несуществующую дорожку — «ключа нет», и он не воскресает
+    // JSON пишется с отступами, поэтому подменяем по формату файла
+    let broken = text.replace(&format!("\"key\": {}", speech.0), "\"key\": 9999");
+    assert_ne!(broken, text, "подмена ключа в тексте не удалась — тест не проверяет ничего");
+    let loaded = load_project(&broken, None).unwrap();
+    assert_eq!(
+        loaded.project.track_at(A, 0).map(|t| kt_model::sidechain_keys(&t.fx).count()),
+        Some(0),
+        "мёртвый ключ обязан читаться как «ключа нет»"
+    );
+    let rewritten = save_project(&loaded.project, &Retained::default(), None);
+    // «9999» может встретиться и в тиках, поэтому смотрим на САМО ПОЛЕ
+    assert!(!rewritten.contains("\"key\""), "мёртвый ключ воскрес при записи");
+    assert!(
+        kt_otio::kt_version(&parse_document(&rewritten).unwrap()).unwrap() < kt_otio::KT_META_V12,
+        "файл без живого ключа обязан вернуться на прежнюю версию"
+    );
+}

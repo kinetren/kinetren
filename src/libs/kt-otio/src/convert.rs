@@ -407,7 +407,14 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                 || p.settings.conform != Default::default()
                 || p.settings.settings_explicit
                 || p.sequences.iter().any(|s| s.raster.is_some() || s.fps.is_some());
-            if has_v11 {
+            // v12 (Р.65): назначенный КЛЮЧ сайдчейна в цепочке дорожки
+            let track_needs_v12 =
+                |t: &kt_model::Track| kt_model::sidechain_keys(&t.fx).next().is_some();
+            let has_v12 = p.tracks.iter().any(track_needs_v12)
+                || p.sequences.iter().any(|s| s.tracks.iter().any(track_needs_v12));
+            if has_v12 {
+                crate::meta::KT_META_V12
+            } else if has_v11 {
                 crate::meta::KT_META_V11
             } else if has_v10 {
                 crate::meta::KT_META_V10
@@ -1735,6 +1742,33 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
     if p.timeline_end.is_some_and(|e| e <= material) {
         p.timeline_end = None;
     }
+    // КЛЮЧ САЙДЧЕЙНА (Р.65) читается ТЕРПИМО: ключ на дорожку, которой в
+    // файле нет, и ключ на СОБЫТИИ — это «ключа нет», а не отказ читать.
+    // Файл мог прийти из чужой руки или из будущей схемы; проект обязан
+    // открыться, а прибор — звучать обычным компрессором.
+    {
+        let known: std::collections::HashSet<kt_model::TrackId> =
+            p.tracks.iter().map(|t| t.id).collect();
+        let clean = |fx: &mut Vec<kt_model::FxInstance>, allow: bool| {
+            for f in fx.iter_mut() {
+                if let kt_model::FxInstance::Compressor { key, .. } = f
+                    && key.is_some_and(|k| !allow || !known.contains(&k))
+                {
+                    *key = None;
+                }
+            }
+        };
+        for t in p.tracks.iter_mut() {
+            let audio = t.kind == kt_model::LaneKind::Audio;
+            let mut fx = std::mem::take(&mut t.fx);
+            clean(&mut fx, audio);
+            t.fx = fx;
+        }
+        for c in p.clips.iter_mut() {
+            clean(&mut c.fx, false);
+        }
+    }
+
     // НОМЕР ДОРОЖКИ = РАНГ СТРОКИ (Р.56, п.449). Чужие треки адресуются
     // парой (вид, номер), поэтому их сырьё переставляется ТЕМ ЖЕ
     // отображением: иначе metadata чужого трека уехала бы на соседний.

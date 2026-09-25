@@ -27,7 +27,8 @@ pub use io::{
 };
 pub use legacy::import_legacy;
 pub use meta::{
-    KT_META_V6, KT_META_V8, KT_META_V9, KT_META_V10, KT_META_V11, KT_META_VERSION, KT_NS,
+    KT_META_V6, KT_META_V8, KT_META_V9, KT_META_V10, KT_META_V11, KT_META_V12, KT_META_VERSION,
+    KT_NS,
     check_kt_version, kt_entry_mut, kt_version,
 };
 pub use schema::{
