@@ -2404,7 +2404,7 @@ fn read_foreign_nest(
 /// `pan_x`/`pan_y` переезжают на `pos_x`/`pos_y` (пересчёт `pan_to_pos`
 /// при зуме базы), `zoom` остаётся. Режим прежней рамки не переносится:
 /// все три давали один кадр (F-MED-004).
-fn migrate_pan_effect(
+pub(crate) fn migrate_pan_effect(
     metadata: &Map<String, Value>,
 ) -> Option<(kt_model::FxInstance, Vec<kt_model::ParamCurve>)> {
     let kt = metadata.get(crate::meta::KT_NS)?.as_object()?;

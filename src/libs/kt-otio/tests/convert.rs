@@ -1019,6 +1019,11 @@ fn t251_broken_kt_meta_is_an_error() {
     let bad = serde_json::to_string_pretty(&v).unwrap();
     match load_project(&bad, None) {
         Err(kt_otio::Error::KtMetaBroken(_)) => {}
+        // файл версии ниже текущей с нечитаемой секцией отправляется в
+        // импорт (Р.67), и причина едет внутри — это тот же громкий отказ
+        Err(kt_otio::Error::NeedsImport { cause, .. }) => {
+            assert!(cause.contains("morph_lanes") || !cause.is_empty(), "причина пуста");
+        }
         Err(e) => panic!("не тот отказ: {e}"),
         Ok(b) => panic!(
             "битый конверт открылся молча: {} клипов, {} дорожек",
@@ -2793,4 +2798,100 @@ fn t773_sidechain_key_round_trips_as_v12() {
         kt_otio::kt_version(&parse_document(&rewritten).unwrap()).unwrap() < kt_otio::KT_META_V12,
         "файл без живого ключа обязан вернуться на прежнюю версию"
     );
+}
+
+/// Тест 783b (Р.67): файл v5 с `targets: null` у морферов ридер отвергает
+/// с версией и словом «import», импорт чинит (null → «всё, что ниже»),
+/// прочие цели не трогает, записанный файл читается ридером сам. Ридер
+/// новым старым формам не учится — таблица починок несёт версию.
+#[test]
+fn t783b_older_version_import_fixes_null_morph_targets() {
+    let base = save_project(&rich_project(), &Retained::default(), None);
+    let mut old: serde_json::Value = serde_json::from_str(&base).unwrap();
+    old["metadata"]["kt"]["v"] = serde_json::json!(5);
+    old["metadata"]["kt"]["morph_lanes"] = serde_json::json!(2);
+    let m = |id: u64, targets: serde_json::Value| {
+        let mut v = serde_json::json!({
+            "id": id, "lane": 0, "start": 0, "duration": 45000,
+            "patch": { "media": 2, "source_in_delta": 4500 },
+        });
+        v["targets"] = targets;
+        v
+    };
+    old["metadata"]["kt"]["morphers"] = serde_json::json!([
+        m(1, serde_json::Value::Null),
+        m(2, serde_json::json!({ "on": "clips", "ids": [1] })),
+        m(3, serde_json::Value::Null),
+        m(4, serde_json::json!([1])),
+        m(5, serde_json::json!({ "on": "clips", "ids": [1] })),
+        m(6, serde_json::Value::Null),
+        // патч с упразднённым `pan` (форма untitled2 владельца, морфер id=4)
+        serde_json::json!({
+            "id": 7, "lane": 0, "start": 0, "duration": 45000,
+            "patch": {
+                "video_fx": [
+                    { "kind": "pan", "mode": "fill", "pan_x": -0.92, "pan_y": -1.8, "zoom": 0.43 },
+                    { "kind": "event_grid", "cols": 2, "rows": 2, "center": true }
+                ],
+                "video_bypass": [false, false],
+                "video_auto": [[], []]
+            }
+        }),
+    ]);
+    let text = serde_json::to_string_pretty(&old).unwrap();
+
+    // --- ридер: отказ называет версию и дверь ---------------------------
+    let err = match load_project(&text, None) {
+        Ok(_) => panic!("v5 с null-целями ридер не читает"),
+        Err(e) => e,
+    };
+    let msg = err.to_string();
+    assert!(
+        matches!(err, kt_otio::Error::NeedsImport { version: 5, .. }),
+        "ошибка обязана быть NeedsImport с версией 5: {msg}"
+    );
+    assert!(msg.contains("kt.v = 5") && msg.contains("Import older"), "текст без версии/двери: {msg}");
+
+    // --- импорт: null → below, остальное цело ----------------------------
+    let b = kt_otio::import_older(&text, None).expect("импорт обязан открыть v5");
+    assert_eq!(b.project.morphers.len(), 7);
+    // pan в патче стал узлом «Геометрия» на том же слоте, второй слот цел
+    let pan = &b.project.morphers[6].patch;
+    assert_eq!(pan.video_fx.len(), 2, "число слотов патча не изменилось");
+    assert!(
+        matches!(pan.video_fx[0], kt_model::FxInstance::Geometry { .. }),
+        "pan не стал геометрией: {:?}",
+        pan.video_fx[0]
+    );
+    assert!(matches!(pan.video_fx[1], kt_model::FxInstance::EventGrid { .. }));
+    assert!(b.notices.iter().any(|n| n.contains("pan → geometry node (v6) ×1")), "{:?}", b.notices);
+    let below = |i: usize| b.project.morphers[i].targets == MorphTargets::Below;
+    assert!(below(0) && below(2) && below(5), "null не стал «всё, что ниже»");
+    assert_eq!(b.project.morphers[1].targets.clip_ids(), &[ClipId(1)]);
+    assert_eq!(b.project.morphers[3].targets.clip_ids(), &[ClipId(1)], "голый список цел");
+    assert_eq!(b.project.morphers[4].targets.clip_ids(), &[ClipId(1)]);
+    assert!(
+        b.notices.iter().any(|n| n.contains("morpher targets: null → below (v5) ×3")),
+        "починка не названа: {:?}",
+        b.notices
+    );
+    // таблица починок: у каждой — версия
+    assert!(kt_otio::FIXUPS.iter().all(|f| f.version >= 1 && !f.name.is_empty()));
+
+    // --- записанный файл читается ридером сам, версия текущая -----------
+    let out = save_project(&b.project, &b.retained, None);
+    // версия — ПО СОДЕРЖИМОМУ (правило v9–v12), но не старая с null
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    // «ниже» не сериализуется вовсе; явного null быть не должно
+    assert!(v["metadata"]["kt"]["morphers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|m| m.get("targets").is_none_or(|t| !t.is_null())));
+    let again = load_project(&out, None).expect("после импорта ридер читает сам");
+    assert_eq!(again.project.morphers, b.project.morphers);
+
+    // файл текущей версии через импорт проходит без починок
+    let fresh = kt_otio::import_older(&base, None).expect("свежий файл через импорт");
+    assert!(fresh.notices.iter().all(|n| !n.starts_with("import fixup")));
 }

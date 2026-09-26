@@ -3203,3 +3203,127 @@ fn t779_window_form_contract() {
     }
     assert!(problems.is_empty(), "контракт формы нарушен:\n  {}", problems.join("\n  "));
 }
+
+/// Тест 783 (Р.67): проект СТАРОЙ версии открывается через свою дверь —
+/// «Файл → Импортировать проект старой версии…», — а обычное «Открыть»
+/// отвергает его с версией файла и именем этой двери (правило 19: диалог
+/// говорит, где изменить решение). Импорт чинит `targets: null` у
+/// морферов v5 (форма `untitled2_v26.09.26.otio`), открывает документ с
+/// прежним путём и звёздочкой. Ридер при этом не трогается — на прежнем
+/// коде «Открыть» отвечало «metadata.kt is unreadable», а двери не было.
+#[test]
+fn t783_older_project_goes_through_import_and_open_names_the_door() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    use crate::app::KtApp;
+    use kt_model::{
+        ClipEvent, ClipId, ClipKind, MediaId, MediaRef, MorphTargets, Project, ProjectSettings,
+    };
+    use kt_time::Tick;
+
+    // --- фикстура: v5 с null-целями у морфера ----------------------------
+    let dir = std::env::temp_dir().join(format!("kt-t783-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("old_v5.otio");
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 320,
+        height: 180,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+        default_shape: Default::default(),
+        conform: Default::default(),
+        settings_explicit: false,
+    });
+    p.media.push(MediaRef::new(MediaId(1), "synth:Ramp"));
+    p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
+        overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(90_000),
+        source_in: Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.validate().unwrap();
+    let text = kt_otio::save_project(&p, &Default::default(), path.parent());
+    let mut old: serde_json::Value = serde_json::from_str(&text).unwrap();
+    old["metadata"]["kt"]["v"] = serde_json::json!(5);
+    old["metadata"]["kt"]["morph_lanes"] = serde_json::json!(1);
+    old["metadata"]["kt"]["morphers"] = serde_json::json!([{
+        "id": 1, "lane": 0, "start": 0, "duration": 45000,
+        "targets": null,
+        "patch": { "media": 1, "source_in_delta": 4500 },
+    }]);
+    std::fs::write(&path, serde_json::to_string_pretty(&old).unwrap()).unwrap();
+
+    // --- «Открыть» отвергает с версией и именем двери ---------------------
+    let err = match KtApp::open(&path) {
+        Ok(_) => panic!("v5 с null-целями обычное «Открыть» читать не должно"),
+        Err(e) => e,
+    };
+    assert!(err.contains("5"), "ошибка без версии файла: {err}");
+    assert!(
+        err.contains(tr(k::menu::file::IMPORT_OLDER)),
+        "ошибка не называет пункт импорта: {err}"
+    );
+    assert!(!err.contains("unreadable"), "прежний текст «unreadable» — не адрес: {err}");
+
+    // --- дверь есть в меню «Файл» -----------------------------------------
+    let mut h = crate::layout_tests::harness();
+    h.get_by_label(tr(k::menu::file::TITLE)).click();
+    h.step();
+    h.step();
+    let labels = crate::layout_tests::menu_labels(&mut h);
+    assert!(
+        h.query_by_label(tr(k::menu::file::IMPORT_OLDER)).is_some(),
+        "пункт импорта старой версии обязан быть в меню «Файл»; видно: {labels:?}"
+    );
+    h.get_by_label(tr(k::menu::file::TITLE)).click();
+    h.step();
+
+    // --- импорт по пути: то же тело, что у пункта (без системного диалога)
+    h.state_mut().import_older_path(&path);
+    h.step();
+    h.step();
+    let app = h.state();
+    assert_eq!(app.project_path.as_deref(), Some(path.as_path()), "путь прежний");
+    assert!(app.dirty_content, "после импорта документ помечен правками (звёздочка)");
+    let doc = app.model.project();
+    assert_eq!(doc.clips.len(), 1, "событие дошло");
+    assert_eq!(doc.morphers.len(), 1, "морфер дошёл");
+    assert_eq!(doc.morphers[0].targets, MorphTargets::Below, "null стал «всё, что ниже»");
+    let said: Vec<String> = app.notices.iter().map(|n| n.text.clone()).collect();
+    assert!(
+        said.iter().any(|t| t.contains("null → below")),
+        "починка не названа в уведомлениях: {said:?}"
+    );
+    assert!(
+        said.iter().any(|t| t.contains(&crate::tf!(k::msg::IMPORT_OLDER_DONE, 5))),
+        "импорт не сообщил о версии: {said:?}"
+    );
+
+    // --- сохранение пишет текущую форму, и «Открыть» уже читает сам -------
+    let out = kt_otio::save_project(doc, &Default::default(), path.parent());
+    let out_path = dir.join("saved.otio");
+    std::fs::write(&out_path, &out).unwrap();
+    let reopened = KtApp::open(&out_path).expect("после импорта и записи файл читается сам");
+    assert_eq!(reopened.model.project().morphers[0].targets, MorphTargets::Below);
+    drop(h);
+    let _ = std::fs::remove_dir_all(&dir);
+}

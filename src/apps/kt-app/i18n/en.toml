@@ -29,6 +29,7 @@ analysis_queued = "in queue: {0}"
 
 [menu.file]
 import_ktproj = "Import .ktproj…"
+import_older = "Import older Kinotrain project…"
 title = "File"
 new = "New"
 open = "Open…"
@@ -722,6 +723,7 @@ economy = "For weak GPUs: half the repaints while playing"
 flight = "Compact ring of transport events and counters — for diagnosing floating playback bugs"
 pitch_engine = "Pitch engine for the whole project: WSOLA keeps transients, the vocoder is smoother on harmonies"
 project_settings = "Frame size, fps, frame rule, pitch engine and key shape of this project"
+import_older = "Open a project saved by an older Kinotrain: legacy forms are fixed on import"
 
 [search]
 field = "marker, media, track…"
@@ -765,6 +767,8 @@ no_other_kind = "no event of the other kind nearby"
 already_linked = "already linked"
 av_linked = "A/V linked"
 open_failed = "could not open: {0}"
+needs_import = "project of an older Kinotrain version ({0}) — open it via File / {1}"
+import_older_done = "imported from version {0}; saving writes the current form"
 saved = "saved: {0}"
 save_failed = "save failed: {0}"
 nothing_to_cut = "nothing to cut: no clip selected"
@@ -853,6 +857,7 @@ conform_mismatch = "{0}: source {1}×{2} in a {3}×{4} project, placed by the ru
 
 [dialog]
 import_ktproj = "Import a legacy .ktproj project"
+import_older = "Import an older Kinotrain project"
 open_project = "Open project"
 save_project = "Save project"
 

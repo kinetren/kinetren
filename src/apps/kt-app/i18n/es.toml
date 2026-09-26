@@ -29,6 +29,7 @@ analysis_queued = "en cola: {0}"
 
 [menu.file]
 import_ktproj = "Importar .ktproj…"
+import_older = "Importar proyecto de una versión anterior…"
 title = "Archivo"
 new = "Nuevo"
 open = "Abrir…"
@@ -722,6 +723,7 @@ economy = "Para GPU modestas: la mitad de repintados al reproducir"
 flight = "Anillo compacto de eventos de transporte y contadores: para depurar fallos intermitentes"
 pitch_engine = "Motor de tono para todo el proyecto: WSOLA conserva los transitorios, el vocoder suaviza las armonías"
 project_settings = "Tamaño de cuadro, fps, regla de cuadro, motor de tono y forma de claves del proyecto"
+import_older = "Abrir un proyecto guardado por una versión anterior de Kinotrain: las formas antiguas se corrigen al importar"
 
 [search]
 field = "marcador, medio, pista…"
@@ -765,6 +767,8 @@ no_other_kind = "no hay un evento del otro tipo cerca"
 already_linked = "ya están vinculados"
 av_linked = "A/V vinculados"
 open_failed = "no se pudo abrir: {0}"
+needs_import = "proyecto de una versión anterior de Kinotrain ({0}): ábralo con Archivo / {1}"
+import_older_done = "importado desde la versión {0}; al guardar se escribe la forma actual"
 saved = "guardado: {0}"
 save_failed = "error al guardar: {0}"
 nothing_to_cut = "nada que cortar: no hay clip seleccionado"
@@ -853,6 +857,7 @@ conform_mismatch = "{0}: fuente {1}×{2} en un proyecto {3}×{4}, colocada por l
 
 [dialog]
 import_ktproj = "Importar un proyecto .ktproj antiguo"
+import_older = "Importar un proyecto de una versión anterior de Kinotrain"
 open_project = "Abrir proyecto"
 save_project = "Guardar proyecto"
 

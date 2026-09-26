@@ -20,13 +20,13 @@
 
 ## 1. Импорт старых версий (п.1)
 
-- [ ] 1.1 `kt-otio`: `legacy_import.rs` — таблица починок с версией, первая
+- [x] 1.1 `kt-otio`: `legacy_import.rs` — таблица починок с версией, первая
   `v5_null_morph_targets`; `import_older(text, base)`; `load_project` заворачивает ошибку
   чтения файла версии < текущей в `Error::NeedsImport { version }` с текстом, называющим
   импорт. Тест t783b (`src/libs/kt-otio/tests/convert.rs`) на форме `untitled2_v26.09.26`
   (синтетическая копия структуры: три `null`, два объекта, один список); КРАСНЫЙ до правки
   (сегодня — `untagged enum Repr`).
-- [ ] 1.2 `kt-app`: пункт `File → Import older Kinotrain project…` (реестр глаголов,
+- [x] 1.2 `kt-app`: пункт `File → Import older Kinotrain project…` (реестр глаголов,
   каталоги ×5), окно ошибки «Открыть» с версией и именем пункта, импорт открывает документ
   с прежним путём и звёздочкой. Тест t783 (`reach_tests.rs`); живой сценарий
   `src/scripts/live/import_old.py` (копия структуры v5 в фикстуре, шаги ПУТЬ со

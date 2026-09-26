@@ -536,6 +536,15 @@ class Live:
         subprocess.run(["convert", "xwd:-", path], input=xwd, check=True)
         return path
 
+    def step(self, name, what=None):
+        """ШАГ ПУТИ ПОЛЬЗОВАТЕЛЯ (Р.67): скриншот на каждый шаг `ПУТЬ` из
+        спеки, файл `NN-step-<имя>.png` в каталоге сценария; `finish.sh`
+        печатает их список, отчёт агента их несёт. Прогон — на наших
+        фикстурах, не на проектах владельца («п.1 но не на моих проектах»)."""
+        path = self.shot(f"step-{name}")
+        print(f"   шаг {self._shot_no:02d}: {what or name} → {os.path.basename(path)}")
+        return path
+
     def pixel(self, x, y):
         """Цвет пикселя экрана (r, g, b) — «что человек видит»."""
         img = self.shot(f"px-{x}-{y}")

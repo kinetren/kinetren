@@ -43,6 +43,9 @@ pub enum Pending {
     New,
     Quit,
     Open,
+    /// Импорт проекта СТАРОЙ версии (Р.67): та же дверь диалога, что у
+    /// «Открыть», но чтение идёт через починки `kt_otio::import_older`.
+    ImportOlder,
     /// Открыть ПРОЕКТ, БРОШЕННЫЙ НА ОКНО (Р.55, С6). Путь лежит отдельным
     /// полем `KtApp.pending_drop`: `Pending` — `Copy`, и `PathBuf` в него
     /// не кладётся.
@@ -735,6 +738,7 @@ impl KtApp {
     }
 
     pub(crate) fn new_empty(error: Option<String>) -> KtApp {
+        let startup_error = error;
         let project = Self::empty_project();
         let project2 = project.clone();
         let (player, audio, _, _) = Self::build_player(&project, None, None);
@@ -742,7 +746,7 @@ impl KtApp {
         let loudness_map: Arc<Mutex<crate::util::LoudnessMap>> =
             Arc::new(Mutex::new(Default::default()));
         let index = crate::util::IndexService::start(peaks.clone(), loudness_map.clone());
-        KtApp {
+        let mut app = KtApp {
             model: TimelineModel::new(project),
             project_path: None,
             dirty_content: false,
@@ -851,7 +855,7 @@ impl KtApp {
             ctx_at: None,
             live_gain: None,
             live_opacity: None,
-            status: error.map(|e| (e, std::time::Instant::now())),
+            status: None,
             placeholder_media: Default::default(),
             reopen_rx: None,
             clipboard: kt_model::ops::ClipBlock::default(),
@@ -931,12 +935,47 @@ impl KtApp {
             reel_previews: Default::default(),
             reel_textures: HashMap::new(),
             reel_hash_cache: (None, Arc::new(HashMap::new())),
+        };
+        // отказ открыть файл при запуске — ОШИБКА, а не строка на пять
+        // секунд (правило 16): человек читает её в колокольчике, когда
+        // подсказка наведения уже перекрыла строку состояния (Р.67)
+        if let Some(e) = startup_error {
+            app.refuse(e);
         }
+        app
     }
 
     pub(crate) fn open(path: &Path) -> Result<KtApp, String> {
-        let base = path.parent();
         let (project, retained, notices) = load_project_file(path)?;
+        Self::open_loaded(path, project, retained, notices)
+    }
+
+    /// Открыть проект СТАРОЙ версии через импорт (Р.67): починки старых
+    /// форм делает `kt_otio::import_older`, документ открывается с прежним
+    /// путём и поднятым флагом правок — следующая запись идёт новой формой,
+    /// исходный файл импорт не трогает.
+    pub(crate) fn open_older(path: &Path) -> Result<KtApp, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let version = kt_otio::detect(&text)
+            .ok()
+            .and_then(|_| kt_otio::parse_document(&text).ok())
+            .and_then(|tl| kt_otio::kt_version(&tl))
+            .unwrap_or(0);
+        let b = kt_otio::import_older(&text, path.parent()).map_err(|e| e.to_string())?;
+        let mut app = Self::open_loaded(path, b.project, b.retained, b.notices)?;
+        app.dirty_content = true;
+        app.note(crate::tf!(k::msg::IMPORT_OLDER_DONE, version));
+        Ok(app)
+    }
+
+    /// Общее тело `open`/`open_older`: проект уже прочитан.
+    fn open_loaded(
+        path: &Path,
+        project: Project,
+        retained: kt_otio::Retained,
+        notices: Vec<String>,
+    ) -> Result<KtApp, String> {
+        let base = path.parent();
         let (player, audio, err, media_lens) =
             Self::build_player(&project, base, Some(&path.with_extension("ktindex.db")));
         let (offline, watchdog) = spawn_media_watchdog(&project, base);
@@ -1865,7 +1904,9 @@ impl KtApp {
                         ui.add_space(6.0);
                         ui.label(tr(match p {
                             Pending::New => k::ask::UNSAVED_NEW,
-                            Pending::Open | Pending::DropOpen => k::ask::UNSAVED_OPEN,
+                            Pending::Open | Pending::DropOpen | Pending::ImportOlder => {
+                                k::ask::UNSAVED_OPEN
+                            }
                             Pending::Quit => k::ask::UNSAVED_QUIT,
                         }));
                         ui.add_space(4.0);
@@ -3519,6 +3560,7 @@ impl KtApp {
         match p {
             Pending::New => *self = Self::new_empty(None),
             Pending::Open => self.open_project_dialog_now(),
+            Pending::ImportOlder => self.import_older_dialog_now(),
             Pending::Quit => self.quit_confirmed = true,
             Pending::DropOpen => self.open_dropped_now(),
         }
@@ -5121,11 +5163,7 @@ impl KtApp {
     }
 
     fn open_project_dialog_now(&mut self) {
-        let Some(p) = rfd::FileDialog::new()
-            .set_title(tr(k::dialog::OPEN_PROJECT))
-            .add_filter("OpenTimelineIO", &["otio"])
-            .pick_file()
-        else {
+        let Some(p) = pick_file(tr(k::dialog::OPEN_PROJECT), "OpenTimelineIO", &["otio"]) else {
             return;
         };
         match Self::open(&p) {
@@ -8411,6 +8449,19 @@ pub fn write_project_atomic(path: &std::path::Path, json: &str) -> std::io::Resu
     kt_otio::write_atomic(path, json).map(|_| ())
 }
 
+/// Системный диалог выбора файла — ОДНО место (Р.67). В виртуальном
+/// экране живых сценариев переносимого диалога нет (rfd на Linux ходит в
+/// xdg-portal, которого в Xvfb нет, и молча возвращает «ничего»), поэтому
+/// `KT_FILE_PICK=<путь>` подменяет ответ диалога: пункт меню при этом
+/// нажимается по-настоящему, а сам выбор файла — единственное, что
+/// сценарий не может сделать руками человека.
+pub(crate) fn pick_file(title: &str, filter: &str, exts: &[&str]) -> Option<std::path::PathBuf> {
+    if let Some(p) = std::env::var_os("KT_FILE_PICK") {
+        return Some(std::path::PathBuf::from(p));
+    }
+    rfd::FileDialog::new().set_title(title).add_filter(filter, exts).pick_file()
+}
+
 /// Чтение .otio с диска для open() (Р.24 п.12: .ktproj — только импорт).
 pub(crate) fn load_project_file(
     path: &Path,
@@ -8427,6 +8478,11 @@ pub(crate) fn load_project_file(
     match kt_otio::load_project(&text, path.parent()) {
         Ok(b) => Ok((b.project, b.retained, b.notices)),
         Err(kt_otio::Error::NotOtio) => Err(tr(k::msg::KTPROJ_IMPORT_ONLY).to_string()),
+        // файл ПРЕЖНЕЙ версии, который ридер не читает: дверь — импорт
+        // (Р.67), и ошибка называет её по имени пункта (правило 19)
+        Err(kt_otio::Error::NeedsImport { version, .. }) => {
+            Err(crate::tf!(k::msg::NEEDS_IMPORT, version, tr(k::menu::file::IMPORT_OLDER)))
+        }
         Err(e) => Err(e.to_string()),
     }
 }
@@ -8793,6 +8849,32 @@ impl KtApp {
     /// Файл → Импортировать .ktproj… (Р.24 п.12: как проект старый формат
     /// больше не открывается — конвертация в .otio и открытие результата;
     /// исходный .ktproj не трогается никогда).
+    /// Меню Файл → Импортировать проект старой версии… (Р.67).
+    pub fn import_older_dialog(&mut self) {
+        if self.guard_unsaved(Pending::ImportOlder) {
+            self.import_older_dialog_now();
+        }
+    }
+
+    fn import_older_dialog_now(&mut self) {
+        let Some(p) = pick_file(tr(k::dialog::IMPORT_OLDER), "OpenTimelineIO", &["otio"]) else {
+            return;
+        };
+        self.import_older_path(&p);
+    }
+
+    /// Тело импорта по пути — общее для диалога и для файла, поданного при
+    /// запуске (живой сценарий и командная строка).
+    pub(crate) fn import_older_path(&mut self, p: &Path) {
+        match Self::open_older(p) {
+            Ok(mut app) => {
+                app.claim_project(p);
+                *self = app;
+            }
+            Err(e) => self.note(crate::tf!(k::msg::OPEN_FAILED, e)),
+        }
+    }
+
     pub fn import_ktproj_dialog(&mut self) {
         let Some(src) = rfd::FileDialog::new()
             .set_title(tr(k::dialog::IMPORT_KTPROJ))

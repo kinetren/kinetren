@@ -29,6 +29,7 @@ analysis_queued = "队列中：{0}"
 
 [menu.file]
 import_ktproj = "导入 .ktproj…"
+import_older = "导入旧版本 Kinotrain 项目…"
 title = "文件"
 new = "新建"
 open = "打开…"
@@ -722,6 +723,7 @@ economy = "适合较弱的 GPU：播放时重绘减半"
 flight = "紧凑的传输事件与计数器环形记录——用于排查间歇性播放问题"
 pitch_engine = "整个项目的变调引擎：WSOLA 保留瞬态，声码器在和声上更平滑"
 project_settings = "本项目的画面尺寸、帧率、适配规则、音高引擎与关键帧形状"
+import_older = "打开由旧版本 Kinotrain 保存的项目：旧格式在导入时修正"
 
 [search]
 field = "标记、媒体、轨道…"
@@ -765,6 +767,8 @@ no_other_kind = "附近没有另一种类型的事件"
 already_linked = "已经链接了"
 av_linked = "A/V 已链接"
 open_failed = "打不开：{0}"
+needs_import = "这是旧版本 Kinotrain 的项目（{0}）— 请通过 文件 / {1} 打开"
+import_older_done = "已从版本 {0} 导入；保存时将写入当前格式"
 saved = "已保存：{0}"
 save_failed = "保存出错：{0}"
 nothing_to_cut = "没有可切分的：未选中片段"
@@ -853,6 +857,7 @@ conform_mismatch = "{0}：素材 {1}×{2} 放入 {3}×{4} 项目，按规则「{
 
 [dialog]
 import_ktproj = "导入旧版 .ktproj 项目"
+import_older = "导入旧版本 Kinotrain 项目"
 open_project = "打开项目"
 save_project = "保存项目"
 

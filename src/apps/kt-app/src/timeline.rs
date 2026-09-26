@@ -1116,7 +1116,8 @@ impl KtApp {
         let json = format!(
             "{{\"playhead\":{},\"playing\":{},\"base_rate\":{:.3},\"fields\":[{}],\"clips\":[{}],\
              \"nest\":{},\"clipboard\":{},\"status\":\"{}\",\
-             \"underruns\":{},\"callback_underruns\":{},\
+             \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"morphers\":{},\
+             \"notices\":[{}],\
              \"window\":{{\"w\":{:.1},\"h\":{:.1}}},\
              \"bin\":{{\"left\":{:.1},\"right\":{:.1},\"top\":{:.1},\"bottom\":{:.1}}},\
              \"timeline\":{{\"left\":{:.1},\"right\":{:.1},\"top\":{:.1},\"bottom\":{:.1}}},\
@@ -1134,6 +1135,19 @@ impl KtApp {
             status_shown,
             self.player.underruns.load(ord),
             self.player.shared.callback_underruns.load(ord),
+            // звёздочка и число морферов — живому сценарию импорта старой
+            // версии (Р.67): «есть правки» и «морферы дошли» иначе не видны
+            self.dirty_content,
+            self.model.project().morphers.len(),
+            // последнее уведомление КАК ПОКАЗАНО (колокольчик): строка
+            // состояния его перекрывает подсказкой наведения
+            self.notices
+                .iter()
+                .rev()
+                .take(5)
+                .map(|n| format!("\"{}\"", n.text.replace('\\', "/").replace('"', "'")))
+                .collect::<Vec<_>>()
+                .join(","),
             screen.width(),
             screen.height(),
             self.bin_rect.left(),

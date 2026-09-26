@@ -339,6 +339,14 @@ impl KtApp {
                 self.import_ktproj_dialog();
                 ui.close();
             }
+            // Р.67: проект СТАРОЙ ВЕРСИИ конверта чинит импорт, не ридер
+            let r = ui.button(tr(k::menu::file::IMPORT_OLDER));
+            crate::widgets::field_probe::note("file.import_older", r.rect);
+            let r = self.hint(r, tr(k::hint::IMPORT_OLDER));
+            if r.clicked() {
+                self.import_older_dialog();
+                ui.close();
+            }
             // ТО ЖЕ ТЕЛО, что в меню пустого места бина (правило 17).
             // До Р.55 генератор создавался ТОЛЬКО оттуда, и найти этот
             // вход человек не смог — претензия 8 раунда дословно.

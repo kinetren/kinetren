@@ -13,6 +13,7 @@
 mod convert;
 mod io;
 mod legacy;
+mod legacy_import;
 mod meta;
 mod schema;
 mod url;
@@ -75,6 +76,11 @@ pub enum Error {
     /// открылся бы как чужой (Р.35 — нашлось живым сценарием).
     #[error("metadata.kt is unreadable: {0}")]
     KtMetaBroken(String),
+    /// Файл ПРЕЖНЕЙ версии конверта, который ридер не читает (Р.67):
+    /// его чинит импорт (`import_older`), а не ридер. Текст называет
+    /// версию и дверь — kt-app подставляет имя пункта меню.
+    #[error("project of an older Kinotrain version (kt.v = {version}) — use File → Import older Kinotrain project… ({cause})")]
+    NeedsImport { version: u32, cause: String },
     #[error("non-finite number in {0}")]
     NonFinite(&'static str),
     #[error(transparent)]
@@ -99,11 +105,25 @@ pub fn load_project(
     match detect(text)? {
         FileFormat::Otio => {
             let tl = parse_document(text)?;
-            timeline_to_project(&tl, base_dir)
+            match timeline_to_project(&tl, base_dir) {
+                // наша секция старой версии не читается — это работа
+                // импорта, а не ридера (Р.67): называем версию и дверь
+                Err(Error::KtMetaBroken(cause)) => match meta::kt_version(&tl) {
+                    Some(v) if v < meta::KT_META_VERSION => {
+                        Err(Error::NeedsImport { version: v, cause })
+                    }
+                    _ => Err(Error::KtMetaBroken(cause)),
+                },
+                other => other,
+            }
         }
         FileFormat::LegacyKtproj => Err(Error::NotOtio),
     }
 }
+
+/// Импорт проекта СТАРОЙ версии конверта (Р.67): починки старых форм, затем
+/// обычное чтение. См. `legacy_import`.
+pub use legacy_import::{FIXUPS, Fixup, import_older};
 
 /// Сериализация проекта в .otio (идемпотентная запись, тест 144).
 pub fn save_project(
