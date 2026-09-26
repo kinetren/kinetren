@@ -15535,7 +15535,10 @@ fn t763_handles_are_hittable_and_the_nearest_wins() {
     };
     let ident = |p: (f64, f64)| egui::pos2(p.0 as f32, p.1 as f32);
     for corner in [Handle::TopLeft, Handle::TopRight, Handle::BottomRight, Handle::BottomLeft] {
-        let p = ident(corner.point(&tiny));
+        // с Р.66 ручки мелкой рамки вынесены НАРУЖУ её кромок — щупаем
+        // там, где они теперь нарисованы (t781), а утверждение прежнее:
+        // указатель на ручке — выигрывает она
+        let p = crate::geomctl::handle_screen(&tiny, corner, &ident);
         assert_eq!(
             nearest_handle(&tiny, GeomMode::Transform, p, &ident, false),
             Some(corner),
@@ -15928,4 +15931,66 @@ fn t776_key_list_offers_only_possible_tracks() {
         0,
         "дорожка предложена ключом самой себе"
     );
+}
+
+/// Тест 781 (Р.66): МЕЛКАЯ РАМКА отдаёт ручки наружу, тело — своё.
+///
+/// На проекте владельца (`paintitblack.otio`) правило «как есть» и
+/// заглушка вместо недоступного медиа дают рамку 45×25 px: восемь ручек
+/// с хват-зоной 14 px покрывают её целиком, и ПЕРЕНОС становится
+/// недоступен — ручка выигрывает всегда. Отложенный предел Р.64.
+#[test]
+fn t781_small_frame_moves_handles_outside() {
+    use crate::geomctl::{GeomMode, handle_screen, nearest_handle, small_frame};
+    use kt_fx::geom::{Handle, Placement};
+
+    // рамка 40×24 px на экране: меньше трёх хват-зон по обеим сторонам
+    let tiny = Placement {
+        ox: 200.0,
+        oy: 120.0,
+        dw: 40.0,
+        dh: 24.0,
+        rot_deg: 0.0,
+        anchor: (220.0, 132.0),
+        crop_in: (0.0, 0.0, 1.0, 1.0),
+    };
+    // экран = холст один к одному
+    let to_screen = |p: (f64, f64)| egui::pos2(p.0 as f32, p.1 as f32);
+    assert!(small_frame(&tiny, &to_screen), "сцена: рамка обязана быть мелкой");
+
+    // ручки масштаба УЕХАЛИ наружу своих кромок
+    for h in [Handle::TopLeft, Handle::Top, Handle::Right, Handle::BottomLeft] {
+        let inside = to_screen(h.point(&tiny));
+        let shown = handle_screen(&tiny, h, &to_screen);
+        assert!(
+            (shown - inside).length() > 10.0,
+            "{h:?} не вынесена наружу: {shown:?} против кромки {inside:?}"
+        );
+        // …и ловится ТАМ ЖЕ, где нарисована
+        assert_eq!(
+            nearest_handle(&tiny, GeomMode::Transform, shown, &to_screen, false),
+            Some(h),
+            "{h:?} нарисована снаружи, а ловится не там"
+        );
+    }
+
+    // ЦЕНТР мелкой рамки — это ПЕРЕНОС, а не ручка (кроме самого якоря)
+    let c = to_screen(tiny.center());
+    let off = egui::pos2(c.x + 9.0, c.y + 5.0);
+    assert_eq!(
+        nearest_handle(&tiny, GeomMode::Transform, off, &to_screen, false),
+        None,
+        "тело мелкой рамки перехвачено ручкой — переносить её нечем"
+    );
+
+    // ОБЫЧНАЯ рамка не меняется: ручки на кромках, как прежде
+    let big = Placement { dw: 400.0, dh: 240.0, ..tiny };
+    assert!(!small_frame(&big, &to_screen), "сцена: обычная рамка не мелкая");
+    for h in [Handle::TopLeft, Handle::Right] {
+        assert_eq!(
+            handle_screen(&big, h, &to_screen),
+            to_screen(h.point(&big)),
+            "{h:?} на обычной рамке сдвинулась — прежнее поведение сломано"
+        );
+    }
 }

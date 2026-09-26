@@ -273,15 +273,15 @@ impl KtApp {
         ));
         if mode == GeomMode::Transform {
             // плечо ручки поворота — линия от верхней стороны
-            let top = to_screen(Handle::Top.point(&pl));
-            let rot = to_screen(Handle::Rot.point(&pl));
+            let top = handle_screen(&pl, Handle::Top, &to_screen);
+            let rot = handle_screen(&pl, Handle::Rot, &to_screen);
             painter.line_segment(
                 [top, rot],
                 egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(120, 190, 255, 140)),
             );
         }
         for h in mode.handles() {
-            let p = to_screen(h.point(&pl));
+            let p = handle_screen(&pl, *h, &to_screen);
             match h {
                 Handle::Anchor => {
                     painter.circle_stroke(p, DOT + 2.0, egui::Stroke::new(1.5, accent));
@@ -328,7 +328,7 @@ impl KtApp {
         // нажатие уходило бы в play/pause превью (поймано t760b)
         let mut pts: Vec<egui::Pos2> = cs.to_vec();
         for h in mode.handles() {
-            pts.push(to_screen(h.point(&pl)));
+            pts.push(handle_screen(&pl, *h, &to_screen));
         }
         let body = egui::Rect::from_points(&pts);
         let resp = ui.interact(body.expand(GRAB), id, egui::Sense::click_and_drag());
@@ -473,6 +473,57 @@ impl KtApp {
     }
 }
 
+/// ЭКРАННАЯ точка ручки — с учётом ВЫНОСА НАРУЖУ мелкой рамки (Р.66).
+///
+/// Когда сторона рамки на экране меньше трёх хват-зон, восемь ручек
+/// масштаба покрывают её целиком, и тело хватать нечем: у владельца на
+/// `paintitblack.otio` рамка вышла 45×25 px (правило «как есть» плюс
+/// заглушка вместо недоступного медиа). Тогда ручки уезжают на хват-зону
+/// НАРУЖУ вдоль нормали своей кромки, а тело остаётся под переносом.
+///
+/// Одна функция на рисунок, прямоугольники живым сценариям и хит-тест:
+/// разойдись они — ручка рисовалась бы в одном месте, а ловилась в другом.
+pub(crate) fn handle_screen(
+    pl: &Placement,
+    h: Handle,
+    to_screen: &dyn Fn((f64, f64)) -> egui::Pos2,
+) -> egui::Pos2 {
+    let p = to_screen(h.point(pl));
+    if !small_frame(pl, to_screen) {
+        return p;
+    }
+    // РУЧКА ПОВОРОТА на мелкой рамке тоже уходит наружу — над верхней
+    // кромкой: внутри она сидит у центра и съедает перенос (t781). Правило
+    // Р.64 «поворот внутри» остаётся для обычной рамки, где снаружи он
+    // вылезал бы за кадр.
+    if h == Handle::Rot {
+        let top = handle_screen(pl, Handle::Top, to_screen);
+        let Some(n) = Handle::Top.outward(pl) else { return p };
+        let a = Handle::Top.point(pl);
+        let d = to_screen((a.0 + n.0, a.1 + n.1)) - to_screen(a);
+        let len = d.length();
+        return if len < 1e-6 { p } else { top + d / len * GRAB };
+    }
+    let Some(n) = h.outward(pl) else { return p };
+    // направление берём В ЭКРАНЕ: масштаб превью может быть любым
+    let a = h.point(pl);
+    let b = (a.0 + n.0, a.1 + n.1);
+    let d = to_screen(b) - p;
+    let len = d.length();
+    if len < 1e-6 {
+        return p;
+    }
+    p + d / len * GRAB
+}
+
+/// Мелкая ли рамка НА ЭКРАНЕ: сторона меньше трёх хват-зон.
+pub(crate) fn small_frame(pl: &Placement, to_screen: &dyn Fn((f64, f64)) -> egui::Pos2) -> bool {
+    let cs = pl.corners().map(&to_screen);
+    let w = (cs[1] - cs[0]).length();
+    let hgt = (cs[3] - cs[0]).length();
+    w.min(hgt) < GRAB * 3.0
+}
+
 /// Ближайшая к указателю ручка активного набора — или `None` (тело).
 ///
 /// Приоритет ближайшей, а не «первой попавшейся»: у мелкой рамки хват-зоны
@@ -497,7 +548,7 @@ pub fn nearest_handle(
         // на перенос ОКНА — до программы жест не доходит вовсе. Поймано
         // живым сценарием `geomctl`, в харнессе такого не видно.
         let lim = if *h == Handle::Anchor && !alt { ANCHOR_GRAB } else { GRAB };
-        let d = to_screen(h.point(pl)).distance(p);
+        let d = handle_screen(pl, *h, to_screen).distance(p);
         if d <= lim && best.is_none_or(|(_, bd)| d < bd) {
             best = Some((*h, d));
         }

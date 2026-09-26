@@ -159,3 +159,50 @@ fn t761_placement_and_inverse_gestures() {
         "кроп съел вид целиком — предел не сработал"
     );
 }
+
+/// Тест 782 (Р.66): НАРУЖНАЯ НОРМАЛЬ ручки — направление выноса.
+///
+/// Мелкая рамка (правило «как есть» с мелким источником или заглушка
+/// вместо недоступного медиа) вся покрыта хват-зонами: у владельца на
+/// `paintitblack.otio` она вышла 45×25 px, и хватать тело было нечем.
+/// Ручки выносятся наружу вдоль этих нормалей — значит нормали обязаны
+/// быть перпендикулярны своим кромкам и поворачиваться ВМЕСТЕ с рамкой.
+#[test]
+fn t782_handle_outward_normals_follow_the_frame() {
+    let g0 = EventGeometry::default();
+    let pl = place(&g0);
+
+    // без поворота: стороны дают оси, углы — диагонали
+    let unit = |h: Handle| pl_outward(&pl, h);
+    near(unit(Handle::Top).1, -1.0, 1e-9, "верх смотрит вверх");
+    near(unit(Handle::Bottom).1, 1.0, 1e-9, "низ смотрит вниз");
+    near(unit(Handle::Left).0, -1.0, 1e-9, "лево смотрит влево");
+    near(unit(Handle::Right).0, 1.0, 1e-9, "право смотрит вправо");
+    for h in [Handle::TopLeft, Handle::TopRight, Handle::BottomRight, Handle::BottomLeft] {
+        let (x, y) = unit(h);
+        near((x * x + y * y).sqrt(), 1.0, 1e-9, "нормаль угла не единичная");
+    }
+
+    // ПОВОРОТ: нормали едут вместе с рамкой
+    for rot in [30.0, -137.0] {
+        let p = place(&EventGeometry { rot, ..g0 });
+        let top = pl_outward(&p, Handle::Top);
+        let want = (rot.to_radians().sin(), -rot.to_radians().cos());
+        near(top.0, want.0, 1e-6, &format!("поворот {rot}°: нормаль верха по X"));
+        near(top.1, want.1, 1e-6, &format!("поворот {rot}°: нормаль верха по Y"));
+        // и она по-прежнему перпендикулярна верхней кромке
+        let cs = p.corners();
+        let edge = (cs[1].0 - cs[0].0, cs[1].1 - cs[0].1);
+        let dot = edge.0 * top.0 + edge.1 * top.1;
+        near(dot / (edge.0 * edge.0 + edge.1 * edge.1).sqrt(), 0.0, 1e-6, "нормаль не перпендикулярна кромке");
+    }
+
+    // у ручек, которые с места не двигаются, нормали нет
+    for h in [Handle::Rot, Handle::Anchor, Handle::CropLeft, Handle::CropTop] {
+        assert!(h.outward(&pl).is_none(), "{h:?} не двигается — нормали у неё быть не должно");
+    }
+}
+
+fn pl_outward(pl: &Placement, h: Handle) -> (f64, f64) {
+    h.outward(pl).unwrap_or_else(|| panic!("у {h:?} обязана быть нормаль"))
+}
