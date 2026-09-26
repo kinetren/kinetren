@@ -15084,7 +15084,7 @@ fn t754_instance_params_live_in_the_chain_head() {
 
     // ...и «Отмена» окна возвращает ручку тоже: голова — часть той же
     // сессии, откатывать её половину было бы ложью
-    h.get_by_label_contains(&tr(k::fx::CANCEL).to_string()).click();
+    h.get_by_label_contains(tr(k::fx::CANCEL)).click();
     h.step();
     h.step();
     assert!(
@@ -15848,7 +15848,7 @@ fn t775_ducking_is_two_compressors_in_the_track_window() {
         h.query_all_by_label_contains(tr(k::msg::DUCK_ADD_COMP)).count() > 0,
         "кнопки «завести компрессор на ключе» нет — второй прибор недостижим"
     );
-    h.get_by_label_contains(&tr(k::msg::DUCK_ADD_COMP).to_string()).click();
+    h.get_by_label_contains(tr(k::msg::DUCK_ADD_COMP)).click();
     h.step();
     h.step();
     assert!(
@@ -15868,7 +15868,7 @@ fn t775_ducking_is_two_compressors_in_the_track_window() {
     );
 
     // «Отмена» откатывает и ключ, и компрессор речи
-    h.get_by_label_contains(&tr(k::track::CANCEL).to_string()).click();
+    h.get_by_label_contains(tr(k::track::CANCEL)).click();
     h.step();
     h.step();
     let app = h.state();

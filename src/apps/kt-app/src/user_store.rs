@@ -574,7 +574,7 @@ pub fn save_workspace_at(path: &std::path::Path, w: &Workspace) {
             })
         })
         .collect();
-    let mut doc = serde_json::json!({
+    let doc = serde_json::json!({
         "version": WORKSPACE_VERSION,
         "meters_w": w.meters_w,
         "views": views,
