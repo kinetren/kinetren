@@ -412,7 +412,34 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                 |t: &kt_model::Track| kt_model::sidechain_keys(&t.fx).next().is_some();
             let has_v12 = p.tracks.iter().any(track_needs_v12)
                 || p.sequences.iter().any(|s| s.tracks.iter().any(track_needs_v12));
-            if has_v12 {
+            // v13 (Р.67): формула отрезка, слой над ключами, `k` в формуле
+            let clip_needs_v13 = |c: &kt_model::ClipEvent| {
+                c.fx_auto
+                    .iter()
+                    .flatten()
+                    .chain(c.gen_auto.iter())
+                    .chain(c.geometry_auto.iter())
+                    .chain(c.overrides.iter().flat_map(|o| o.curves.iter()))
+                    .any(kt_model::ParamCurve::needs_v13)
+            };
+            let reel_needs_v13 = |reel: &dyn kt_model::Reel| {
+                reel.clips().iter().any(clip_needs_v13)
+                    || reel.transitions().iter().any(|t| t.auto.iter().any(kt_model::ParamCurve::needs_v13))
+                    || reel.cameras().iter().any(|c| c.auto.iter().any(kt_model::ParamCurve::needs_v13))
+            };
+            let has_v13 = reel_needs_v13(p)
+                || p.sequences.iter().any(|s| reel_needs_v13(s as &dyn kt_model::Reel))
+                || p.morphers.iter().any(|m| {
+                    m.patch
+                        .video_auto
+                        .iter()
+                        .chain(m.patch.audio_auto.iter())
+                        .flatten()
+                        .any(kt_model::ParamCurve::needs_v13)
+                });
+            if has_v13 {
+                crate::meta::KT_META_V13
+            } else if has_v12 {
                 crate::meta::KT_META_V12
             } else if has_v11 {
                 crate::meta::KT_META_V11

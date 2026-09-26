@@ -839,3 +839,54 @@ fn t755_a_published_effect_knob_changes_the_instance_frame() {
     assert_eq!(compose(&z2, mid).0, a, "правка второго экземпляра изменила ПЕРВЫЙ");
     assert_ne!(compose(&z2, at_b).0, b, "правка второго экземпляра не изменила его самого");
 }
+
+// ---- 792b. формула переопределения меняет кадр экземпляра --------------------
+
+/// Тест 792b (Р.67): формула у переопределения экземпляра доезжает до
+/// КАДРА — и звучит по оси экземпляра: кадр экземпляра с формулой
+/// `1 + t / 10` в момент 3 с байт-в-байт равен кадру экземпляра с
+/// постоянным переопределением 1.3, а в момент 0 с — кадру с 1.0.
+#[test]
+fn t792b_override_formula_reaches_the_frame_in_instance_time() {
+    let build = |curve: Option<ParamCurve>, value: f64| -> Project {
+        let mut p = base();
+        let mut s = Sequence::new(SEQ, "Лента");
+        let mut plate = clip(PLATE.0, ClipKind::Video, 0, Tick::ZERO, Tick(FRAME * 150), 2);
+        plate.fx = vec![FxInstance::geometry_zoom(1.0)];
+        s.clips.push(plate);
+        s.published = vec![PublishedParam {
+            id: ZOOM,
+            name: "Наезд".into(),
+            target: ParamAddr::new(PLATE, ParamOwner::FxSlot { slot: 0 }, "zoom"),
+            ty: ParamType::Num,
+            range: PubRange::default(),
+        }];
+        p.sequences.push(s);
+        let mut a = clip(INST_A.0, ClipKind::Video, 0, Tick::ZERO, Tick(FRAME * 150), SEQ.0);
+        a.overrides = vec![Override {
+            pub_id: ZOOM,
+            value: ParamValue::Num(value),
+            curves: curve.into_iter().collect(),
+        }];
+        p.clips.push(a);
+        p.validate().expect("проект законен");
+        p
+    };
+    let formula = ParamCurve {
+        param: "zoom".into(),
+        keys: vec![],
+        source: CurveSource::Formula { expr: "1 + t / 10".into() },
+    };
+    let with_formula = build(Some(formula), 1.0);
+    let const_13 = build(None, 1.3);
+    let const_10 = build(None, 1.0);
+    let t3 = Tick(3 * 90_000);
+    let (f3, ok1) = compose(&with_formula, t3);
+    let (c3, ok2) = compose(&const_13, t3);
+    assert!(ok1 && ok2, "композит не укомплектован");
+    assert_eq!(f3, c3, "формула 1 + t/10 на 3 с обязана дать тот же кадр, что постоянная 1.3");
+    let (f0, _) = compose(&with_formula, Tick::ZERO);
+    let (c0, _) = compose(&const_10, Tick::ZERO);
+    assert_eq!(f0, c0, "в нуле формула равна 1.0");
+    assert_ne!(f0, f3, "кадр экземпляра меняется по формуле");
+}

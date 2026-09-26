@@ -1024,3 +1024,103 @@ fn t753_publishing_names_the_reel_not_the_context() {
     );
     m.document().validate().expect("документ обязан остаться законным");
 }
+
+// ---- 792. кривые переопределения: формы, слой, формула — в домене ленты -------
+
+/// Тест 792 (Р.67): переопределение экземпляра принимает те же формы и
+/// источники, что кривая слота, и разрешает их В ДОМЕНЕ ЛЕНТЫ (ось
+/// экземпляра) до перевода во время цели. Структура — проект владельца:
+/// два экземпляра одной ленты друг над другом, кривая у верхнего. На
+/// прежнем коде формула отвергалась `CurveSourceUnsupported`, а окно молча
+/// стирало поле.
+#[test]
+fn t792_override_curves_take_shapes_and_sources_in_the_reel_domain() {
+    let mut p = template();
+    // второй экземпляр — НАД первым, в то же время (лента V4 над V1)
+    let b = p.clips.iter_mut().find(|c| c.id == INST_B).unwrap();
+    b.start = Tick::ZERO;
+    b.lane = 3;
+    p.ensure_tracks(LaneKind::Video, 4);
+    p.validate().expect("два экземпляра друг над другом законны");
+    let radius_at = |p: &Project, ov: &[Override], t: i64| -> f64 {
+        let r = p.resolve_reel(Some(SEQ), ov);
+        let plate = r.clips.iter().find(|c| same_clip(c.id, PLATE)).unwrap();
+        match plate.fx_auto.first().and_then(|s| s.iter().find(|c| c.param == "radius")) {
+            Some(c) => curve_value(&c.keys, Tick(t)),
+            // без кривой — значение слота (шаблон либо постоянное переопределение)
+            None => plate.fx[0].get_param("radius").expect("у размытия есть радиус"),
+        }
+    };
+    let sec = 90_000;
+    // --- горка ключами 0→16→0 (пределы ручки 2..16) ------------------------
+    let hill = |shape: SegShape| Override {
+        pub_id: BLUR,
+        value: ParamValue::Num(8.0),
+        curves: vec![ParamCurve {
+            param: "radius".into(),
+            keys: vec![
+                AutoKey::shaped(Tick(0), 2.0, shape),
+                AutoKey::shaped(Tick(sec / 2), 16.0, shape),
+                AutoKey::shaped(Tick(sec), 2.0, shape),
+            ],
+            source: CurveSource::Keys,
+        }],
+    };
+    let mut m = TimelineModel::new(p.clone());
+    m.apply_batch(vec![Command::SetOverride { id: INST_B, ov: Box::new(hill(SegShape::Linear)) }])
+        .expect("горка ключами законна");
+    let p1 = m.project().clone();
+    let ov = &p1.clips.iter().find(|c| c.id == INST_B).unwrap().overrides;
+    assert!((radius_at(&p1, ov, sec / 2) - 16.0).abs() < 1e-9, "вершина горки");
+    assert!((radius_at(&p1, ov, 0) - 2.0).abs() < 1e-9 && (radius_at(&p1, ov, sec) - 2.0).abs() < 1e-9, "края");
+    // нижний экземпляр (без набора) играет шаблон
+    let a = p1.clips.iter().find(|c| c.id == INST_A).unwrap();
+    assert!((radius_at(&p1, &a.overrides, sec / 2) - 8.0).abs() < 1e-9, "нижний — шаблон");
+
+    // --- зигзаг на участке ------------------------------------------------
+    let zig = SegShape::Zigzag { periods: 4.0, amplitude: 2.0, profile: ZigProfile::Triangle };
+    m.apply_batch(vec![Command::SetOverride { id: INST_B, ov: Box::new(hill(zig)) }])
+        .expect("форма отрезка у переопределения законна");
+    let p2 = m.project().clone();
+    let ov = &p2.clips.iter().find(|c| c.id == INST_B).unwrap().overrides;
+    let plain = 2.0 + (16.0 - 2.0) * 0.25;
+    assert!((radius_at(&p2, ov, sec / 8) - plain).abs() > 0.1, "зигзаг не звучит у цели");
+
+    // --- слой k * 0.5 над горкой ------------------------------------------
+    let mut layered = hill(SegShape::Linear);
+    layered.curves[0].source = CurveSource::Formula { expr: "k * 0.5".into() };
+    m.apply_batch(vec![Command::SetOverride { id: INST_B, ov: Box::new(layered) }])
+        .expect("слой над ключами законен (на прежнем коде — CurveSourceUnsupported)");
+    let p3 = m.project().clone();
+    let ov = &p3.clips.iter().find(|c| c.id == INST_B).unwrap().overrides;
+    assert!((radius_at(&p3, ov, sec / 2) - 8.0).abs() < 1e-6, "k*0.5 на вершине: {}", radius_at(&p3, ov, sec / 2));
+    // ключи горки в МОДЕЛИ целы
+    assert_eq!(ov[0].curves[0].keys.len(), 3, "слой не стёр ключи");
+
+    // --- формула-источник t/10 по оси экземпляра ---------------------------
+    let formula = Override {
+        pub_id: BLUR,
+        value: ParamValue::Num(8.0),
+        curves: vec![ParamCurve { param: "radius".into(), keys: vec![], source: CurveSource::Formula { expr: "2 + t * 4".into() } }],
+    };
+    m.apply_batch(vec![Command::SetOverride { id: INST_B, ov: Box::new(formula) }])
+        .expect("формула у переопределения законна");
+    let p4 = m.project().clone();
+    let ov = &p4.clips.iter().find(|c| c.id == INST_B).unwrap().overrides;
+    // 0.5 с от начала экземпляра → 2 + 0.5·4 = 4
+    assert!((radius_at(&p4, ov, sec / 2) - 4.0).abs() < 1e-6, "t считается по оси экземпляра: {}", radius_at(&p4, ov, sec / 2));
+
+    // --- связь наружу ленты — отказ с причиной ------------------------------
+    let outside = Override {
+        pub_id: BLUR,
+        value: ParamValue::Num(8.0),
+        curves: vec![ParamCurve {
+            param: "radius".into(),
+            keys: vec![],
+            source: CurveSource::Link { path: format!("{}/fx0/radius", INST_A.0), expr: None, stops: vec![] },
+        }],
+    };
+    let e = m.apply_batch(vec![Command::SetOverride { id: INST_B, ov: Box::new(outside) }]);
+    assert!(e.is_err(), "связь через границу ленты обязана быть отказом");
+    assert!(format!("{e:?}").contains("outside the reel"), "причина не названа: {e:?}");
+}

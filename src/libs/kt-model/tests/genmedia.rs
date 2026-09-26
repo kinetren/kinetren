@@ -532,17 +532,22 @@ fn t657_generator_values_are_validated_against_the_media() {
     p.clips[0].gen_auto = vec![bad];
     assert!(matches!(p.validate(), Err(ProjectError::BadFxAuto(ClipId(1)))));
 
-    // формула СЧИТАЕТСЯ с Р.61, но ключей при ней быть не может: текст
-    // задаёт кривую целиком, и ключи рядом были бы вторым источником
-    // правды о значении
+    // формула СЧИТАЕТСЯ с Р.61; с Р.67 она — СЛОЙ над ключами (решение
+    // владельца: «если ввести формулу — точки пропадут… я может быть
+    // передумал»): ключи под ней живут и читаются как `k`, отказа нет
     let mut p = mk();
     let mut formula = curve("color_r");
     formula.source = kt_model::CurveSource::Formula { expr: "t * 2".into() };
     p.clips[0].gen_auto = vec![formula.clone()];
+    assert!(p.validate().is_ok(), "формула над ключами — слой, а не отказ (Р.67): {:?}", p.validate());
+    // а вот чужое имя в тексте — отказ по-прежнему
+    formula.source = kt_model::CurveSource::Formula { expr: "t * zz".into() };
+    p.clips[0].gen_auto = vec![formula.clone()];
     assert!(
         matches!(p.validate(), Err(ProjectError::CurveSourceBroken(ClipId(1), _))),
-        "формула с ключами обязана быть отказом"
+        "неизвестное имя обязано быть отказом"
     );
+    formula.source = kt_model::CurveSource::Formula { expr: "t * 2".into() };
     formula.keys.clear();
     p.clips[0].gen_auto = vec![formula.clone()];
     p.validate().expect("формула без ключей законна");

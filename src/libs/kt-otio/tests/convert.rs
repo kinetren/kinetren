@@ -2895,3 +2895,72 @@ fn t783b_older_version_import_fixes_null_morph_targets() {
     let fresh = kt_otio::import_older(&base, None).expect("свежий файл через импорт");
     assert!(fresh.notices.iter().all(|n| !n.starts_with("import fixup")));
 }
+
+/// Тесты 787b/787d (Р.67): формула отрезка и слой над ключами едут в файл,
+/// версия поднимается до v13 ТОЛЬКО по содержимому, круг байт-в-байт;
+/// файл без них — прежней версией и прежними байтами. Невычислимая формула
+/// в файле — громкий отказ загрузки.
+#[test]
+fn t787b_segment_formula_and_layer_round_trip_as_v13_by_content() {
+    let mut p = rich_project();
+    let clip = p.clips.iter_mut().find(|c| c.kind == kt_model::ClipKind::Video).unwrap();
+    clip.fx = vec![kt_model::FxInstance::Mirror { horizontal: true, vertical: false }];
+    let seg = kt_model::ParamCurve {
+        param: "amount".into(),
+        keys: vec![
+            AutoKey::shaped(Tick(0), 0.0, kt_model::SegShape::Formula { expr: kt_model::ExprId::intern("a + (b - a) * s * s") }),
+            AutoKey::at(Tick(45_000), 1.0),
+        ],
+        source: kt_model::CurveSource::Keys,
+    };
+    clip.fx_auto = vec![vec![seg.clone()]];
+    p.validate().unwrap();
+    let text = save_project(&p, &Retained::default(), None);
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["metadata"]["kt"]["v"], 13, "формула отрезка поднимает файл до v13");
+    let b = load_project(&text, None).expect("v13 читается");
+    assert_eq!(b.project.clips.iter().find(|c| c.kind == kt_model::ClipKind::Video).unwrap().fx_auto[0][0], seg);
+    assert_eq!(text, save_project(&b.project, &b.retained, None), "круг байт-в-байт");
+
+    // слой над ключами — тоже v13
+    let mut p2 = rich_project();
+    let clip = p2.clips.iter_mut().find(|c| c.kind == kt_model::ClipKind::Video).unwrap();
+    clip.fx = vec![kt_model::FxInstance::Mirror { horizontal: true, vertical: false }];
+    let layer = kt_model::ParamCurve {
+        param: "amount".into(),
+        keys: vec![AutoKey::at(Tick(0), 0.0), AutoKey::at(Tick(45_000), 1.0)],
+        source: kt_model::CurveSource::Formula { expr: "k * 0.5".into() },
+    };
+    clip.fx_auto = vec![vec![layer.clone()]];
+    p2.validate().unwrap();
+    let text2 = save_project(&p2, &Retained::default(), None);
+    let v2: serde_json::Value = serde_json::from_str(&text2).unwrap();
+    assert_eq!(v2["metadata"]["kt"]["v"], 13, "слой над ключами поднимает файл до v13");
+    let b2 = load_project(&text2, None).expect("v13 со слоем читается");
+    assert_eq!(b2.project.clips.iter().find(|c| c.kind == kt_model::ClipKind::Video).unwrap().fx_auto[0][0], layer);
+
+    // формула-источник БЕЗ ключей и без `k` — прежняя версия, прежние байты
+    let mut p3 = rich_project();
+    let clip = p3.clips.iter_mut().find(|c| c.kind == kt_model::ClipKind::Video).unwrap();
+    clip.fx = vec![kt_model::FxInstance::Mirror { horizontal: true, vertical: false }];
+    clip.fx_auto = vec![vec![kt_model::ParamCurve {
+        param: "amount".into(),
+        keys: vec![],
+        source: kt_model::CurveSource::Formula { expr: "t * 2".into() },
+    }]];
+    p3.validate().unwrap();
+    let text3 = save_project(&p3, &Retained::default(), None);
+    let v3: serde_json::Value = serde_json::from_str(&text3).unwrap();
+    assert!(v3["metadata"]["kt"]["v"].as_u64().unwrap() < 13, "без новшеств Р.67 версия не растёт");
+    // проект без формул вовсе — прежние байты
+    let plain = save_project(&rich_project(), &Retained::default(), None);
+    assert!(!plain.contains("formula"), "файл без формул не несёт их следов");
+
+    // невычислимая формула отрезка в файле — громкий отказ
+    let broken = text.replace("a + (b - a) * s * s", "foo(s)");
+    assert_ne!(broken, text, "текст формулы обязан лежать в файле как есть");
+    match load_project(&broken, None) {
+        Ok(_) => panic!("невычислимая формула отрезка открылась молча"),
+        Err(e) => assert!(e.to_string().contains("foo"), "отказ не называет имя: {e}"),
+    }
+}

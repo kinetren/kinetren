@@ -834,6 +834,7 @@ fn graph(
         {
             std::borrow::Cow::Owned(kt_model::formula_preview(
                 c,
+                ctx.range,
                 Tick(m0),
                 Tick(m1),
                 (m1 - m0).max(1) / 120,

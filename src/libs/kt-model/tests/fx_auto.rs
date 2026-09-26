@@ -1084,3 +1084,142 @@ fn t747b_rate_curve_from_old_file_sounds_piecewise_linear() {
         "потреблённый материал разошёлся: карта варпа не та, что до Р.61"
     );
 }
+
+/// Тест 787 (Р.67): ФОРМУЛА ОТРЕЗКА — форма на левом ключе со своими
+/// переменными `s`, `a`, `b`, `t`; считается замкнуто и детерминированно,
+/// соседние участки не трогает, а невычислимый текст отвергается громко
+/// валидацией — не даёт молчаливого нуля.
+#[test]
+fn t787_segment_formula_is_a_shape_with_its_own_variables() {
+    let f = |expr: &str| SegShape::Formula { expr: ExprId::intern(expr) };
+    // ключи: 1.0 с (0) → 3.0 с (1) с формулой, соседи — зигзаг и прямая
+    let keys = vec![
+        AutoKey::shaped(Tick(0), 5.0, SegShape::Zigzag { periods: 2.0, amplitude: 1.0, profile: ZigProfile::Triangle }),
+        AutoKey::shaped(Tick(90_000), 0.0, f("a + (b - a) * s * s")),
+        AutoKey::shaped(Tick(270_000), 1.0, SegShape::Linear),
+        AutoKey::shaped(Tick(360_000), 3.0, SegShape::Linear),
+    ];
+    // --- значение на участке — по оракулу -------------------------------
+    for (frac, want) in [(0.0, 0.0), (0.25, 0.0625), (0.5, 0.25), (1.0, 1.0)] {
+        let at = Tick(90_000 + (180_000.0 * frac) as i64);
+        let got = curve_value(&keys, at);
+        assert!((got - want).abs() < 1e-9, "s={frac}: {got} против {want}");
+    }
+    // `t` — секунды от ЛЕВОГО ключа: sin(t·2π) обнуляется через секунду
+    let keys_t = vec![
+        AutoKey::shaped(Tick(90_000), 0.0, f("sin(t * 6.283185307179586)")),
+        AutoKey::shaped(Tick(270_000), 0.0, SegShape::Linear),
+    ];
+    assert!(curve_value(&keys_t, Tick(90_000 + 22_500)).abs() > 0.9, "четверть секунды — пик");
+    assert!(curve_value(&keys_t, Tick(180_000)).abs() < 1e-9, "секунда — ноль");
+    // --- соседи целы ----------------------------------------------------
+    let zig = curve_value(&keys, Tick(22_500));
+    let plain = 5.0 + (0.0 - 5.0) * 0.25;
+    assert!((zig - plain).abs() > 0.1, "зигзаг слева не звучит: {zig}");
+    let lin = curve_value(&keys, Tick(315_000));
+    assert!((lin - 2.0).abs() < 1e-9, "прямая справа сломана: {lin}");
+    // --- детерминизм ----------------------------------------------------
+    let probe = || -> Vec<u64> { (0..=64).map(|i| curve_value(&keys, Tick(i * 5625)).to_bits()).collect() };
+    assert_eq!(probe(), probe());
+    // --- невычислимое отвергается громко --------------------------------
+    let bad = |expr: &str| ParamCurve {
+        param: "amount".into(),
+        keys: vec![AutoKey::shaped(Tick(0), 0.0, f(expr)), AutoKey::at(Tick(90_000), 1.0)],
+        source: CurveSource::Keys,
+    };
+    let e = check_fx_auto(ClipId(1), &[vec![bad("foo(s)")]]).unwrap_err().to_string();
+    assert!(e.contains("foo"), "имя не названо: {e}");
+    let e = check_fx_auto(ClipId(1), &[vec![bad("s + zz")]]).unwrap_err().to_string();
+    assert!(e.contains("zz") && e.contains("s, a, b, t"), "переменная не названа: {e}");
+    let e = check_fx_auto(ClipId(1), &[vec![bad("(s")]]).unwrap_err().to_string();
+    assert!(e.contains("bracket"), "скобка не названа: {e}");
+    assert!(check_fx_auto(ClipId(1), &[vec![bad("1 / s")]]).is_ok(), "деление на ноль в точке — не отказ разбора");
+    // деление на ноль В ТОЧКЕ даёт прямую между концами, не ноль
+    let c = bad("1 / s");
+    assert_eq!(curve_value(&c.keys, Tick(0)), 0.0);
+    // одинаковый текст — одна форма
+    assert_eq!(f("s * 2"), f("s * 2"));
+    assert_ne!(f("s * 2"), f("s * 3"));
+}
+
+/// Тест 787c (Р.67): СЛОЙ-формула над ключами. Ключи и формы целы,
+/// `k` — их значение; снятие слоя возвращает ровно `k`; связь и слой
+/// сочетаются, снятие связи слой не трогает. Формула-источник прежних
+/// файлов (без ключей) звучит как раньше: `k` = 0.
+#[test]
+fn t787c_layer_formula_over_keys_and_removal() {
+    let keys = vec![
+        AutoKey::shaped(Tick(0), 0.0, SegShape::Linear),
+        AutoKey::shaped(Tick(90_000), 1.0, SegShape::Zigzag { periods: 3.0, amplitude: 0.2, profile: ZigProfile::Triangle }),
+        AutoKey::shaped(Tick(180_000), 0.5, SegShape::Linear),
+    ];
+    let clip = |curve: ParamCurve| ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
+        overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(180_000),
+        source_in: Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![FxInstance::Blur { radius: 8, radius_y: 0 }],
+        fx_bypass: vec![],
+        fx_auto: vec![vec![curve]],
+        opacity: 1.0,
+        fx_off: false,
+    };
+    let step = 3000;
+    let layered = ParamCurve {
+        param: "radius".into(),
+        keys: keys.clone(),
+        source: CurveSource::Formula { expr: "k * 0.5 + 0.1".into() },
+    };
+    assert!(check_fx_auto(ClipId(1), &[vec![layered.clone()]]).is_ok(), "слой над ключами законен");
+    let clips = [clip(layered.clone())];
+    let out = resolve_derived(&clips, step);
+    let res = &out[0].fx_auto[0][0];
+    assert!(res.source.is_keys() && !res.keys.is_empty(), "слой не развёрнут в ключи");
+    for i in (0..=60).map(|i| i * step) {
+        let k = curve_value(&keys, Tick(i));
+        let got = curve_value(&res.keys, Tick(i));
+        assert!((got - (k * 0.5 + 0.1)).abs() < 1e-9, "tick {i}: {got} против {}", k * 0.5 + 0.1);
+    }
+    // ключи и зигзаг в МОДЕЛИ целы — резолвер работал на копии
+    assert_eq!(clips[0].fx_auto[0][0].keys, keys);
+    // --- снятие слоя: ровно k --------------------------------------------
+    let plain = ParamCurve { source: CurveSource::Keys, ..layered.clone() };
+    let plain_clips = [clip(plain)];
+    let out = resolve_derived(&plain_clips, step);
+    assert!(matches!(out, std::borrow::Cow::Borrowed(_)), "без слоя резолвер ничего не делает");
+    // --- связь + слой: k + src; снятие связи оставляет слой ---------------
+    let mut leader = clip(ParamCurve::constant("radius", Tick(0), Tick(180_000), 2.0, SegShape::Linear));
+    leader.id = ClipId(2);
+    let linked = ParamCurve {
+        param: "radius".into(),
+        keys: keys.clone(),
+        source: CurveSource::Link { path: "2/fx0/radius".into(), expr: Some("k + src".into()), stops: vec![] },
+    };
+    let both = [clip(linked), leader.clone()];
+    let out = resolve_derived(&both, step);
+    let res = &out[0].fx_auto[0][0];
+    let got = curve_value(&res.keys, Tick(90_000));
+    assert!((got - (1.0 + 2.0)).abs() < 1e-9, "k + src не сложились: {got}");
+    // --- формула-источник без ключей: k = 0 — прежнее звучание -----------
+    let bare = ParamCurve { param: "radius".into(), keys: vec![], source: CurveSource::Formula { expr: "t * 2 + k".into() } };
+    let bare_clips = [clip(bare)];
+    let out = resolve_derived(&bare_clips, step);
+    let v = curve_value(&out[0].fx_auto[0][0].keys, Tick(90_000));
+    assert!((v - 2.0).abs() < 1e-9, "формула без ключей: {v}");
+    // --- слой с чужим именем — громкий отказ -----------------------------
+    let bad = ParamCurve { source: CurveSource::Formula { expr: "k + q".into() }, ..layered };
+    let e = check_fx_auto(ClipId(1), &[vec![bad]]).unwrap_err().to_string();
+    assert!(e.contains("q") && e.contains("t, src, k"), "{e}");
+}

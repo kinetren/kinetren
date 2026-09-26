@@ -27,6 +27,7 @@
 //!    цепочки, а при выключенной цепочке события чистит её целиком —
 //!    лягни мы после, `FxSlot(i)` указывал бы не туда.
 
+use kt_time::Tick;
 use serde::{Deserialize, Serialize};
 
 use crate::genmedia::GeneratorKind;
@@ -253,7 +254,27 @@ pub fn apply_overrides(
     // порядок правилом рендера быть не может.
     for p in published {
         let Some(ov) = overrides.iter().find(|o| o.pub_id == p.id) else { continue };
-        apply_one(p, ov, clips, transitions, cameras, frame_step, default_gen);
+        // Кривые с формулой, слоем или связью разрешаются В ДОМЕНЕ ЛЕНТЫ
+        // (Р.67): формула, набранная по оси экземпляра, звучит по ней же.
+        // Ноль цены без источников — набор клонируется только тогда.
+        if ov.curves.iter().any(ParamCurve::needs_resolve) {
+            let snapshot = clips.to_vec();
+            let end = clips.iter().map(|c| c.start.0 + c.duration.0).max().unwrap_or(0);
+            let me = crate::links::LinkCtx {
+                source_in: Tick::ZERO,
+                start: Tick::ZERO,
+                duration: Tick(end.max(frame_step)),
+                reversed: false,
+                frame_step,
+            };
+            let mut resolved = ov.clone();
+            for c in &mut resolved.curves {
+                crate::links::resolve_curve_in(&snapshot, c, &me, p.target.clip, frame_step);
+            }
+            apply_one(p, &resolved, clips, transitions, cameras, frame_step, default_gen);
+        } else {
+            apply_one(p, ov, clips, transitions, cameras, frame_step, default_gen);
+        }
     }
 }
 

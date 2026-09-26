@@ -306,7 +306,7 @@ pub fn resolve_derived<'a>(
 ) -> std::borrow::Cow<'a, [ClipEvent]> {
     let any = clips
         .iter()
-        .any(|c| c.fx_auto.iter().flatten().chain(c.gen_auto.iter()).any(|x| !x.source.is_keys()));
+        .any(|c| c.fx_auto.iter().flatten().chain(c.gen_auto.iter()).any(|x| x.needs_resolve()));
     if !any {
         return std::borrow::Cow::Borrowed(clips);
     }
@@ -340,27 +340,43 @@ pub fn resolve_derived<'a>(
     std::borrow::Cow::Owned(out)
 }
 
-/// Значения ФОРМУЛЬНОЙ кривой на окне — для показа (Р.63 п.3).
+/// Значения ФОРМУЛЬНОЙ кривой на окне — для показа (Р.63 п.3, Р.67).
 ///
 /// Тем же вычислителем и с теми же переменными, что у рендера
-/// (`resolve_one`): `t` — секунды от начала окна, `src` — значение
-/// ведущего, которого у чистой формулы нет (ноль). Формульная кривая по
-/// контракту НЕ ХРАНИТ ключей, поэтому график рисовал по пустому списку —
-/// то есть не рисовал ничего, и человек, набрав верную формулу, видел
-/// пустоту («либо нихера не происходит»).
+/// (`resolve_one`): `t` — секунды от НАЧАЛА МАТЕРИАЛА (`source_in`), а не
+/// от края окна — иначе линия предпросмотра расходилась бы с рендером и
+/// уезжала при прокрутке (Р.67); `k` — значение ключей с формами под
+/// слоем; `src` — значение ведущего, которого у чистой формулы нет (ноль).
+/// `material` — тело материала события (`source_in..end`): за ним рендер
+/// держит крайнее значение (кривая разрешена только внутри тела), и
+/// предпросмотр обязан держать то же. Окно `from..to` — только диапазон
+/// выборки.
 ///
 /// Возвращает пусто, если источник не формула или текст невычислим: врать
 /// линией хуже, чем не рисовать.
-pub fn formula_preview(cur: &ParamCurve, from: Tick, to: Tick, step: i64) -> Vec<AutoKey> {
+pub fn formula_preview(
+    cur: &ParamCurve,
+    material: (Tick, Tick),
+    from: Tick,
+    to: Tick,
+    step: i64,
+) -> Vec<AutoKey> {
+    let source_in = material.0;
     let Some(expr) = cur.source.expr() else { return Vec::new() };
     let Ok(f) = crate::formula::Formula::parse(expr) else { return Vec::new() };
     let step = step.max(1);
     let mut out = Vec::new();
     let mut t = from.0;
     while t <= to.0 {
+        // за телом материала — крайнее значение, как у разрешённой кривой
+        let tm = t.clamp(material.0.0, material.1.0.max(material.0.0));
         let mut vars = std::collections::BTreeMap::new();
         vars.insert("src".to_string(), 0.0);
-        vars.insert("t".to_string(), (t - from.0) as f64 / 90_000.0);
+        vars.insert(
+            "k".to_string(),
+            if cur.keys.is_empty() { 0.0 } else { crate::curve_value(&cur.keys, Tick(tm)) },
+        );
+        vars.insert("t".to_string(), (tm - source_in.0) as f64 / 90_000.0);
         match f.eval(&vars) {
             Ok(v) => out.push(AutoKey::shaped(Tick(t), v, SegShape::Linear)),
             Err(_) => return Vec::new(),
@@ -368,6 +384,20 @@ pub fn formula_preview(cur: &ParamCurve, from: Tick, to: Tick, step: i64) -> Vec
         t += step;
     }
     out
+}
+
+/// Разрешить ОДНУ кривую в ЗАДАННОМ материале (Р.67): переопределения
+/// экземпляра ленты разрешаются в домене ленты до перевода во время цели
+/// — `me` описывает ленту как материал (`source_in` 0, длина ленты), а
+/// `clips` — её содержимое, по которому читаются связи.
+pub fn resolve_curve_in(
+    clips: &[ClipEvent],
+    cur: &mut ParamCurve,
+    me: &LinkCtx,
+    me_id: ClipId,
+    frame_step: i64,
+) -> bool {
+    resolve_one(clips, cur, me, me_id, frame_step)
 }
 
 /// Разрешить ОДНУ кривую. `true` — что-то изменилось.
@@ -378,10 +408,13 @@ fn resolve_one(
     me_id: ClipId,
     frame_step: i64,
 ) -> bool {
-    if cur.source.is_keys() {
+    if !cur.needs_resolve() {
         return false;
     }
     let expr = cur.source.expr().and_then(|e| crate::formula::Formula::parse(e).ok());
+    // `k` — значение КЛЮЧЕЙ С ФОРМАМИ под слоем (Р.67); без ключей — 0,
+    // и формула-источник прежних файлов звучит как раньше
+    let base_keys = cur.keys.clone();
     let path = cur.source.link_path().and_then(LinkPath::parse);
     let step = frame_step.max(1);
     let from = me.source_in.0;
@@ -401,10 +434,12 @@ fn resolve_one(
             }
             None => 0.0,
         };
+        let k = if base_keys.is_empty() { 0.0 } else { crate::curve_value(&base_keys, at) };
         let v = match &expr {
             Some(f) => {
                 let mut vars = std::collections::BTreeMap::new();
                 vars.insert("src".to_string(), src);
+                vars.insert("k".to_string(), k);
                 vars.insert("t".to_string(), (t - from) as f64 / 90_000.0);
                 match f.eval(&vars) {
                     Ok(v) => v,
@@ -413,7 +448,15 @@ fn resolve_one(
                     Err(_) => return false,
                 }
             }
-            None => src,
+            // связь без пересчёта — ведущее; ключи с формулой отрезка —
+            // их же значение, развёрнутое на сетку
+            None => {
+                if path.is_some() {
+                    src
+                } else {
+                    k
+                }
+            }
         };
         keys.push(AutoKey::shaped(at, v, SegShape::Linear));
         t += step;

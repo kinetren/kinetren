@@ -14477,7 +14477,13 @@ fn t749_formula_is_typed_whole_and_drawn() {
         c.source
     );
     // и она ВИДНА: разрешение даёт линию, а не пустоту
-    let pts = kt_model::formula_preview(c, kt_time::Tick(0), kt_time::Tick(90_000), 750);
+    let pts = kt_model::formula_preview(
+        c,
+        (kt_time::Tick(0), kt_time::Tick(90_000)),
+        kt_time::Tick(0),
+        kt_time::Tick(90_000),
+        750,
+    );
     assert!(pts.len() > 10, "формульная кривая не разрешается в точки: {}", pts.len());
     assert!(
         pts.iter().any(|k| (k.v - pts[0].v).abs() > 1e-6),
@@ -16062,4 +16068,85 @@ fn t780_dense_forms_have_groups() {
             "в окне рендера нет группы «{t}»"
         );
     }
+}
+
+/// Тест 786 (Р.67): поле с живой кривой пишет ключ ТОЛЬКО от жеста
+/// человека. `DragValue`/`Slider` с пределами клампят значение, вышедшее
+/// за паспорт, и помечают ответ «изменено» — на прежнем коде зигзаг
+/// вокруг предела ставил ключ на каждом кадре игры (ключи-самописцы на
+/// проекте владельца: 66.1→0.20, 69.7→0.98, 69.9→0.07…).
+#[test]
+fn t786_bound_field_writes_keys_only_from_a_gesture() {
+    use kt_model::*;
+    let mut h = harness_with_fx_window();
+    // кривая радиуса: постоянная у ПОТОЛКА паспорта с зигзагом за него
+    let spec_max = {
+        let f = FxInstance::blur(8);
+        f.param_specs().iter().find(|s| s.name == "radius").map(|s| s.max).unwrap()
+    };
+    let zig = SegShape::Zigzag { periods: 6.0, amplitude: spec_max * 0.5, profile: ZigProfile::Triangle };
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.clips[0].fx_auto[0][0].keys = vec![
+            AutoKey::shaped(kt_time::Tick(30_000), spec_max, zig),
+            AutoKey::shaped(kt_time::Tick(210_000), spec_max, zig),
+        ];
+        p.validate().unwrap();
+        app.model = TimelineModel::new(p);
+    }
+    h.step();
+    h.step();
+    let keys_of = |h: &Harness<'_, KtApp>| -> Vec<(i64, f64)> {
+        h.state().model.project().clips[0].fx_auto[0][0].keys.iter().map(|k| (k.t.0, k.v)).collect()
+    };
+    let before = keys_of(&h);
+    assert_eq!(before.len(), 2);
+
+    // --- «игра»: курсор идёт по событию 120 кадров, поле не трогается ----
+    for i in 0..120i64 {
+        h.state_mut().player.seek(kt_time::Tick(i * 1500));
+        h.step();
+    }
+    assert_eq!(keys_of(&h), before, "поле поставило ключи само (кламп виджета = «изменено»)");
+    // то же с воспроизведением
+    h.state_mut().player.play();
+    for _ in 0..30 {
+        h.step();
+    }
+    h.state_mut().player.pause();
+    h.step();
+    assert_eq!(keys_of(&h), before, "при игре поле поставило ключи само");
+
+    // --- правка рукой: клик в поле, число, Enter — ровно один ключ -------
+    h.state_mut().player.seek(kt_time::Tick(90_000));
+    h.step();
+    h.step();
+    let label = tr(k::fx::RADIUS).to_string();
+    let lr = crate::reach_tests::painted_texts(&h)
+        .into_iter()
+        .find(|t| t.src == label)
+        .map(|t| t.rect)
+        .expect("подпись радиуса нарисована");
+    let field = egui::pos2(lr.right() + 40.0, lr.center().y);
+    h.hover_at(field);
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: field,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.step();
+    h.step();
+    h.event(egui::Event::Text("3".into()));
+    h.step();
+    h.key_press(egui::Key::Enter);
+    h.step();
+    h.step();
+    let after = keys_of(&h);
+    assert_eq!(after.len(), 3, "правка рукой обязана поставить ровно один ключ: {after:?}");
+    assert!(after.iter().any(|(t, _)| *t == 120_000), "ключ не на курсоре (материал 30000+90000): {after:?}");
 }

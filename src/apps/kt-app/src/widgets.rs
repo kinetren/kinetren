@@ -805,6 +805,7 @@ pub fn shape_label(s: kt_model::SegShape) -> &'static str {
         S::EaseIn { .. } => tr(k::fx::SHAPE_EASE_IN),
         S::EaseOut { .. } => tr(k::fx::SHAPE_EASE_OUT),
         S::Zigzag { .. } => tr(k::fx::SHAPE_ZIGZAG),
+        S::Formula { .. } => tr(k::fx::SHAPE_FORMULA),
     }
 }
 
@@ -899,7 +900,8 @@ pub fn shape_all_control(
                     }
                 });
         }
-        kt_model::SegShape::Linear | kt_model::SegShape::Hold => {}
+        // текст формулы отрезка правится в меню участка (Р.67), не тут
+        kt_model::SegShape::Linear | kt_model::SegShape::Hold | kt_model::SegShape::Formula { .. } => {}
     }
     if next != cur && !rate {
         for k in &mut curve.keys {
@@ -1180,10 +1182,19 @@ pub fn param_row_bound_ex<P: HasParams + ?Sized>(
         &label,
     );
     let c = &mut bind.curves[ci];
-    let mut v = if reset { spec.default } else { bound_value(c, key, bind.at) };
+    // ПОКАЗ — уже в пределах паспорта (Р.67): `DragValue`/`Slider` с
+    // пределами клампят входящее значение и помечают ответ «изменено» —
+    // зигзаг, вышедший за паспорт под курсором, ставил ключ на каждом
+    // кадре игры («ключи-самописцы» на проекте владельца)
+    let shown = if reset { spec.default } else { bound_value(c, key, bind.at) };
+    let mut v = shown.clamp(spec.min.min(spec.max), spec.max.max(spec.min));
     let r = param_edit(ui, spec, &mut v, slider);
     field_probe::note(&spec.name, r.rect);
-    if r.changed() || reset {
+    // ключ — ТОЛЬКО от жеста человека: драг, ввод с клавиатуры (фокус /
+    // подтверждение), клик по ползунку или сброс; «изменено» без жеста
+    // — не правка
+    let gesture = r.dragged() || r.has_focus() || r.lost_focus() || r.clicked();
+    if (r.changed() && gesture) || reset {
         bound_apply(c, key, bind.at, v);
         // правка ушла в КРИВУЮ — значит и команда обязана быть SetFxAuto
         return ParamsChanged::curve();

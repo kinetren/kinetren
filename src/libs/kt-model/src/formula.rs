@@ -18,6 +18,33 @@
 
 use std::collections::BTreeMap;
 
+thread_local! {
+    /// Кэш разбора по тексту (Р.67): формула ОТРЕЗКА считается из
+    /// `curve_value` в интерфейсе на каждый пиксель графика, и разбирать
+    /// текст на каждую пробу было бы аллокацией в draw-пути. Рендер формул
+    /// не считает вовсе — их разворачивает резолвер до аудио-потока.
+    static PARSED: std::cell::RefCell<std::collections::HashMap<String, std::rc::Rc<Formula>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Разобранная формула из кэша потока; невалидный текст — `None` (кэш
+/// хранит только удачи, ошибку называет `Formula::parse` там, где текст
+/// вводят).
+pub fn cached(expr: &str) -> Option<std::rc::Rc<Formula>> {
+    PARSED.with(|c| {
+        if let Some(f) = c.borrow().get(expr) {
+            return Some(f.clone());
+        }
+        let f = std::rc::Rc::new(Formula::parse(expr).ok()?);
+        let mut m = c.borrow_mut();
+        if m.len() > 256 {
+            m.clear();
+        }
+        m.insert(expr.to_string(), f.clone());
+        Some(f)
+    })
+}
+
 /// Что пошло не так — с позицией в исходной строке.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FormulaError {

@@ -4669,6 +4669,58 @@ pub enum SegShape {
     /// нужна. Кламп пределами цели делает вызывающий — паспорт свойства
     /// знает их, а форма нет.
     Zigzag { periods: f64, amplitude: f64, profile: ZigProfile },
+    /// ФОРМУЛА ОТРЕЗКА (Р.67): текст со своим вычислителем и переменными
+    /// `s` (доля пути 0..1), `a` и `b` (значения концов), `t` (секунды от
+    /// левого ключа). Концы задаёт сама формула — как у ступени, ей
+    /// разрешено не совпасть с ключом. Невычислимый текст отвергает
+    /// валидация; на отрезке ошибка вычисления (деление на ноль в одной
+    /// точке) даёт прямую между концами, а не молчаливый ноль.
+    ///
+    /// Текст живёт в интернере (`ExprId`): форма и ключ остаются `Copy`,
+    /// как весь остальной код кривых их и держит; в файл едет текст.
+    Formula { expr: ExprId },
+}
+
+/// Интернированный текст формулы отрезка (Р.67): `Copy`-ручка вместо
+/// `String`, чтобы `SegShape`/`AutoKey` не потеряли `Copy`. Одинаковый
+/// текст — одна ручка (равенство форм — равенство текстов). Таблица только
+/// растёт — на число РАЗНЫХ текстов, которые набирал человек.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ExprId(u32);
+
+static EXPRS: std::sync::OnceLock<std::sync::Mutex<Vec<String>>> = std::sync::OnceLock::new();
+
+impl ExprId {
+    /// Ручка на текст: тот же текст — та же ручка.
+    pub fn intern(text: &str) -> ExprId {
+        let m = EXPRS.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+        let mut v = m.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = v.iter().position(|s| s == text) {
+            return ExprId(i as u32);
+        }
+        v.push(text.to_string());
+        ExprId((v.len() - 1) as u32)
+    }
+
+    /// Текст формулы.
+    pub fn text(self) -> String {
+        let m = EXPRS.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+        let v = m.lock().unwrap_or_else(|e| e.into_inner());
+        v.get(self.0 as usize).cloned().unwrap_or_default()
+    }
+}
+
+impl Serialize for ExprId {
+    fn serialize<S: serde::Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        ser.serialize_str(&self.text())
+    }
+}
+
+impl<'de> Deserialize<'de> for ExprId {
+    fn deserialize<D: serde::Deserializer<'de>>(de: D) -> Result<ExprId, D::Error> {
+        let s = String::deserialize(de)?;
+        Ok(ExprId::intern(&s))
+    }
 }
 
 impl Default for SegShape {
@@ -4688,8 +4740,16 @@ impl SegShape {
     /// Значение НА ОТРЕЗКЕ: `s` — доля пути от левого ключа к правому.
     ///
     /// Концы обязаны совпадать со значениями ключей у всех форм, кроме
-    /// ступени: иначе кривая рвалась бы на каждом ключе.
-    pub fn at(self, s: f64, a: f64, b: f64) -> f64 {
+    /// ступени и формулы: иначе кривая рвалась бы на каждом ключе.
+    /// Формула отрезка без времени (`t` = 0) — для мест, где секунд от
+    /// левого ключа нет; кривая зовёт `at_t`.
+    pub fn at(&self, s: f64, a: f64, b: f64) -> f64 {
+        self.at_t(s, a, b, 0.0)
+    }
+
+    /// То же с `secs` — секундами от левого ключа (переменная `t` у
+    /// формулы отрезка). У прочих форм `secs` не читается.
+    pub fn at_t(&self, s: f64, a: f64, b: f64, secs: f64) -> f64 {
         let s = s.clamp(0.0, 1.0);
         match self {
             SegShape::Linear => a + (b - a) * s,
@@ -4704,6 +4764,7 @@ impl SegShape {
             // стоят GOLDEN_* и замороженный оракул t695b
             SegShape::Smooth { tension } => {
                 let k = tension.clamp(0.0, 4.0);
+                let k: f64 = k;
                 // концы шкалы натяжения считаются ТОЧНО, а не формулой
                 // смешивания: `s + (w − s)·1` арифметически равно `w`, но
                 // в плавающей точке — нет, и умолчание разошлось бы с
@@ -4726,7 +4787,19 @@ impl SegShape {
                 let k = tension.clamp(0.0, 4.0).max(f64::MIN_POSITIVE);
                 a + (b - a) * (1.0 - (1.0 - s).powf(1.0 + k))
             }
+            SegShape::Formula { expr } => {
+                let mut vars = std::collections::BTreeMap::new();
+                vars.insert("s".to_string(), s);
+                vars.insert("a".to_string(), a);
+                vars.insert("b".to_string(), b);
+                vars.insert("t".to_string(), secs);
+                match crate::formula::cached(&expr.text()).and_then(|f| f.eval(&vars).ok()) {
+                    Some(v) => v,
+                    None => a + (b - a) * s,
+                }
+            }
             SegShape::Zigzag { periods, amplitude, profile } => {
+                let (periods, amplitude, profile) = (*periods, *amplitude, *profile);
                 let base = a + (b - a) * s;
                 // концы обязаны совпасть с ключами: окно гасит дрожание
                 // на краях, иначе кривая рвалась бы на каждом ключе.
@@ -4773,6 +4846,12 @@ pub struct ParamCurve {
     /// двигаются ни на один символ. Сериализация кривой своя (см. ниже),
     /// поэтому атрибутов serde на полях нет.
     pub source: CurveSource,
+}
+
+/// Читает ли текст формулы имя `name` (по разбору, а не по подстроке:
+/// `k` внутри `clamp` — не переменная).
+fn expr_reads(expr: &str, name: &str) -> bool {
+    crate::formula::Formula::parse(expr).is_ok_and(|f| f.reads.iter().any(|r| r == name))
 }
 
 /// Провод кривой в файл (Р.61, D1b).
@@ -4833,6 +4912,34 @@ impl ParamCurve {
 }
 
 impl ParamCurve {
+    /// Есть ли на кривой формула ОТРЕЗКА (Р.67): такую кривую рендер не
+    /// считает сам — резолвер разворачивает её в ключи на сетке кадров.
+    pub fn has_formula_segments(&self) -> bool {
+        self.keys.iter().any(|k| matches!(k.shape, SegShape::Formula { .. }))
+    }
+
+    /// Нужна ли кривой работа резолвера: производный источник или формула
+    /// отрезка. Проект без того и другого не платит ничего.
+    pub fn needs_resolve(&self) -> bool {
+        !self.source.is_keys() || self.has_formula_segments()
+    }
+
+    /// Новшества Р.67 в ФАЙЛЕ (версия v13 по содержимому): формула отрезка,
+    /// слой над непустыми ключами или формула, читающая `k`. Старая сборка
+    /// прочла бы формулу отрезка прямой, а слой — стёрла бы ключи.
+    pub fn needs_v13(&self) -> bool {
+        if self.has_formula_segments() {
+            return true;
+        }
+        match &self.source {
+            CurveSource::Keys => false,
+            CurveSource::Formula { expr } => {
+                !self.keys.is_empty() || expr_reads(expr, "k")
+            }
+            CurveSource::Link { expr, .. } => expr.as_deref().is_some_and(|e| expr_reads(e, "k")),
+        }
+    }
+
     /// Стартовая кривая-КОНСТАНТА для параметра (Р.61).
     ///
     /// Единственное место, где решается форма НОВОЙ кривой: умолчание
@@ -5005,15 +5112,11 @@ pub fn check_clip_gen(c: &ClipEvent, media_kind_path: Option<&str>) -> Result<()
 pub fn check_curve_source(id: ClipId, c: &ParamCurve) -> Result<(), ProjectError> {
     match &c.source {
         CurveSource::Keys => {}
+        // формула — СЛОЙ над ключами (Р.67): ключи под ней живут, `k` —
+        // их значение с формами; без ключей `k` = 0 — прежняя «формула
+        // как источник» и есть слой над пустотой
         CurveSource::Formula { expr } => {
-            crate::formula::Formula::parse(expr)
-                .map_err(|e| ProjectError::CurveSourceBroken(id, e.to_string()))?;
-            if !c.keys.is_empty() {
-                return Err(ProjectError::CurveSourceBroken(
-                    id,
-                    "a formula curve carries keys: the text defines it whole".into(),
-                ));
-            }
+            check_expr(id, expr, LAYER_VARS, "layer formula")?;
         }
         CurveSource::Link { path, expr, .. } => {
             if crate::links::LinkPath::parse(path).is_none() {
@@ -5023,10 +5126,36 @@ pub fn check_curve_source(id: ClipId, c: &ParamCurve) -> Result<(), ProjectError
                 ));
             }
             if let Some(e) = expr {
-                crate::formula::Formula::parse(e)
-                    .map_err(|er| ProjectError::CurveSourceBroken(id, er.to_string()))?;
+                check_expr(id, e, LAYER_VARS, "link formula")?;
             }
         }
+    }
+    // формула ОТРЕЗКА — свои переменные (Р.67)
+    for k in &c.keys {
+        if let SegShape::Formula { expr } = k.shape {
+            check_expr(id, &expr.text(), SEGMENT_VARS, "segment formula")?;
+        }
+    }
+    Ok(())
+}
+
+/// Переменные слоя и формулы-источника: время материала, ведущее свойство,
+/// значение ключей с формами.
+pub const LAYER_VARS: &[&str] = &["t", "src", "k"];
+/// Переменные формулы отрезка: доля пути, концы, секунды от левого ключа.
+pub const SEGMENT_VARS: &[&str] = &["s", "a", "b", "t"];
+
+/// Текст формулы разбирается и читает только известные имена — иначе
+/// ГРОМКИЙ отказ с именем (правило 16): молчаливый ноль показал бы
+/// картинку, которой человек поверит.
+fn check_expr(id: ClipId, expr: &str, vars: &[&str], what: &str) -> Result<(), ProjectError> {
+    let f = crate::formula::Formula::parse(expr)
+        .map_err(|e| ProjectError::CurveSourceBroken(id, format!("{what}: {e}")))?;
+    if let Some(bad) = f.reads.iter().find(|r| !vars.contains(&r.as_str())) {
+        return Err(ProjectError::CurveSourceBroken(
+            id,
+            format!("{what}: no variable is named {bad:?} (known: {})", vars.join(", ")),
+        ));
     }
     Ok(())
 }
@@ -5072,8 +5201,9 @@ pub fn curve_value(keys: &[AutoKey], at: Tick) -> f64 {
         if at <= b.t {
             let span = (b.t.0 - a.t.0).max(1) as f64;
             let s = (((at.0 - a.t.0) as f64) / span).clamp(0.0, 1.0);
-            // форму отрезка несёт ЛЕВЫЙ ключ — он и решает (Р.61)
-            return a.shape.at(s, a.v, b.v);
+            // форму отрезка несёт ЛЕВЫЙ ключ — он и решает (Р.61);
+            // секунды от него — переменная `t` формулы отрезка (Р.67)
+            return a.shape.at_t(s, a.v, b.v, (at.0 - a.t.0) as f64 / 90_000.0);
         }
     }
     keys.last().unwrap().v
@@ -9277,8 +9407,21 @@ impl Project {
                 return Err(ProjectError::OverrideCurveNotAllowed(c.id, o.pub_id));
             }
             for cur in &o.curves {
-                if !cur.source.is_keys() {
-                    return Err(ProjectError::CurveSourceUnsupported(c.id));
+                // источники и формы — те же, что у слота (Р.67); связь —
+                // только ВНУТРИ ленты: наружу закон Э не пускает
+                check_curve_source(c.id, cur)?;
+                if let Some(path) = cur.source.link_path()
+                    && let Some(lp) = crate::links::LinkPath::parse(path)
+                    && let Some(target) = lp.clip
+                    && !s.clips.iter().any(|x| x.id == target)
+                {
+                    return Err(ProjectError::CurveSourceBroken(
+                        c.id,
+                        format!(
+                            "override link {path:?} points outside the reel: publish a \
+                             composition parameter instead"
+                        ),
+                    ));
                 }
                 let sorted = cur.keys.windows(2).all(|w| w[0].t <= w[1].t);
                 let finite = cur.keys.iter().all(|k| k.t.0 >= 0 && k.v.is_finite());
