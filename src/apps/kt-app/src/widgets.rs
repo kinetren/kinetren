@@ -470,11 +470,14 @@ pub fn group<R>(
     title: &str,
     body: impl FnOnce(&mut egui::Ui) -> R,
 ) -> Option<R> {
-    egui::CollapsingHeader::new(title)
+    let r = egui::CollapsingHeader::new(title)
         .id_salt(("form_group", id))
         .default_open(true)
-        .show(ui, body)
-        .body_returned
+        .show(ui, body);
+    // заголовок группы — цель жеста: живому сценарию `CollapsingHeader` в
+    // дереве доступности не найти, а угадывать смещения он не должен (Р.27)
+    field_probe::note(&format!("grp.{id}"), r.header_response.rect);
+    r.body_returned
 }
 
 /// Ряд ДЕЙСТВИЙ окна — ПОД прокруткой тела. Отдельным вызовом, а не

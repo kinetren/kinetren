@@ -979,10 +979,15 @@ impl KtApp {
                 });
                 crate::widgets::window_actions(ui, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button(tr(k::fx::DONE)).clicked() {
+                    // прямоугольники кнопок — наружу живым сценариям (Р.27)
+                    let r = ui.button(tr(k::fx::DONE));
+                    crate::widgets::field_probe::note("fx.done", r.rect);
+                    if r.clicked() {
                         ed.open = false;
                     }
-                    if ui.button(tr(k::fx::CANCEL)).clicked() {
+                    let r = ui.button(tr(k::fx::CANCEL));
+                    crate::widgets::field_probe::note("fx.cancel", r.rect);
+                    if r.clicked() {
                         revert = true;
                         ed.open = false;
                     }
