@@ -4711,7 +4711,7 @@ impl KtApp {
         rev: u64,
         res: Result<crate::analysis::AnalysisOut, String>,
     ) {
-        use crate::analysis::{AnalysisKind as K, AnalysisOut as O};
+        use crate::analysis::AnalysisOut as O;
         let out = match res {
             Ok(o) => o,
             Err(e) => {
