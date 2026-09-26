@@ -61,7 +61,7 @@
   `openspec/specs/ui-reach/design.md` и `ui-timeline/design.md` записаны «почему» (контракт
   формы одним местом, сторож проверяет следствие, запрет `DragValue`, вынос ручек наружу по
   экранному размеру).
-- [ ] 5.3 `cargo test --workspace` (kt-app покрейтно при SIGBUS-флаке), `cargo clippy
+- [x] 5.3 `cargo test --workspace` (kt-app покрейтно при SIGBUS-флаке), `cargo clippy
   --all-targets`, `./scripts/live-check.sh` (все сценарии), `./src/scripts/finish.sh` —
   версия в отчёте; коммит стадии; открыть проект владельца собранным kt-app и сказать в
   отчёте, что видно (в том числе мелкую рамку на его `paintitblack.otio`).
