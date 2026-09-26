@@ -138,6 +138,9 @@ impl KtApp {
             .collapsible(false)
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
+                // ГРУППЫ по образцу «Трансформации» (Р.66): кадр, звук,
+                // кривые. Свёртка — состояние окна, не проекта.
+                crate::widgets::group(ui, "settings.frame", tr(k::grp::FRAME), |ui| {
                 egui::Grid::new("project_settings_grid").num_columns(2).show(ui, |ui| {
                     ui.label(tr(k::settings::SIZE));
                     ui.horizontal(|ui| {
@@ -190,9 +193,6 @@ impl KtApp {
                     if is_reel {
                         return;
                     }
-                    ui.label(tr(k::settings::SAMPLE_RATE));
-                    ui.label(format!("{} Hz", cur.sample_rate));
-                    ui.end_row();
                     ui.label(tr(k::settings::CONFORM));
                     ui.horizontal(|ui| {
                         for r in [
@@ -205,6 +205,14 @@ impl KtApp {
                             crate::widgets::field_probe::note(rule_probe(r), resp.rect);
                         }
                     });
+                    ui.end_row();
+                    ui.end_row();
+                });
+                });
+                crate::widgets::group(ui, "settings.audio", tr(k::grp::AUDIO), |ui| {
+                egui::Grid::new("project_settings_audio").num_columns(2).show(ui, |ui| {
+                    ui.label(tr(k::settings::SAMPLE_RATE));
+                    ui.label(format!("{} Hz", cur.sample_rate));
                     ui.end_row();
                     ui.label(tr(k::settings::PITCH));
                     ui.horizontal(|ui| {
@@ -220,6 +228,11 @@ impl KtApp {
                         );
                     });
                     ui.end_row();
+                    ui.end_row();
+                });
+                });
+                crate::widgets::group(ui, "settings.curves", tr(k::grp::CURVES), |ui| {
+                egui::Grid::new("project_settings_curves").num_columns(2).show(ui, |ui| {
                     ui.label(tr(k::settings::SHAPE));
                     ui.horizontal(|ui| {
                         for s in [
@@ -237,6 +250,7 @@ impl KtApp {
                         }
                     });
                     ui.end_row();
+                });
                 });
                 if let Some(e) = &d.error {
                     ui.colored_label(crate::app::HINT_ERROR, e);

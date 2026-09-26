@@ -331,7 +331,9 @@ impl KtApp {
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
                 // --- на кого и когда действует (Р.35) ------------------------
+                // ГРУППЫ по образцу «Трансформации» (Р.66): цели, источник, патч
                 let frozen = ev.targets.clip_ids().to_vec();
+                crate::widgets::group(ui, "mrph.targets", tr(k::grp::TARGETS), |ui| {
                 ui.horizontal(|ui| {
                     ui.label(tr(k::mrph::ON));
                     let cur = match &ev.targets {
@@ -438,6 +440,7 @@ impl KtApp {
                         .weak(),
                     );
                 }
+                });
                 ui.separator();
 
                 // Р.35 п.3: ОДНА полоса цепочки, в которой первым
@@ -563,9 +566,17 @@ impl KtApp {
 
                 match ed.sel {
                     crate::widgets::ChainSel::Head | crate::widgets::ChainSel::Lead => {
-                        changed |= self.morph_source_section(ui, ed, &mut ev, &mut pick_file);
+                        if let Some(ch) =
+                            crate::widgets::group(ui, "mrph.source", tr(k::grp::SOURCE), |ui| {
+                                self.morph_source_section(ui, ed, &mut ev, &mut pick_file)
+                            })
+                        {
+                            changed |= ch;
+                        }
                     }
                     crate::widgets::ChainSel::Fx(i) => {
+                        // ПАТЧ — своя группа (Р.66): параметры слоя и их кривые
+                        crate::widgets::group(ui, "mrph.patch", tr(k::grp::PATCH), |ui| {
                         // Параметры и АВТОМАТИЗАЦИЯ — тем же кодом, что в
                         // окне события (Р.38 п.13). Домен кривых слоя —
                         // время БЛОКА: у морфера нет материала, он слой
@@ -632,6 +643,7 @@ impl KtApp {
                             split_chains(&mut ev.patch, &fx, &bypass, &auto, split);
                             changed = true;
                         }
+                        });
                     }
                 }
 

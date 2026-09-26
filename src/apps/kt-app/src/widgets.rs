@@ -460,6 +460,23 @@ pub fn window_body<R>(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui) -> R) 
         .inner
 }
 
+/// СВЁРТЫВАЕМАЯ ГРУППА формы — образец «Трансформации» (Р.64/Р.66).
+///
+/// Свёртка живёт в памяти egui по `id`, то есть это состояние ОКНА, а не
+/// проекта: в файл она не попадает и через undo не ходит.
+pub fn group<R>(
+    ui: &mut egui::Ui,
+    id: &str,
+    title: &str,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> Option<R> {
+    egui::CollapsingHeader::new(title)
+        .id_salt(("form_group", id))
+        .default_open(true)
+        .show(ui, body)
+        .body_returned
+}
+
 /// Ряд ДЕЙСТВИЙ окна — ПОД прокруткой тела. Отдельным вызовом, а не
 /// вторым замыканием: оба замыкания держали бы один и тот же заём
 /// (накопитель подсказок), и борроу-чекер прав.

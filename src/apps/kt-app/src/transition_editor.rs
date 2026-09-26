@@ -320,8 +320,12 @@ impl KtApp {
                         kt_model::ClipId(0),
                         kt_model::ParamOwner::Transition { id: ed.id },
                     );
-                    changed |=
-                        widgets::params_grid(ui, ("trp", ed.id), &mut t.kind, skip, Some(&pubc));
+                    // ГРУППА параметров вида — образец «Трансформации» (Р.66)
+                    if let Some(ch) = widgets::group(ui, "trn.params", tr(k::grp::PARAMS), |ui| {
+                        widgets::params_grid(ui, ("trp", ed.id), &mut t.kind, skip, Some(&pubc))
+                    }) {
+                        changed |= ch;
+                    }
 
                     // ---- кривые параметров вида (Р.34 К4) --------------
                     if !t.kind.param_specs().is_empty() {

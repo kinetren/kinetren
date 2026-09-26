@@ -276,6 +276,8 @@ impl KtApp {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
+                // ГРУППЫ по образцу «Трансформации» (Р.66): видео, звук, файл
+                crate::widgets::group(ui, "render.video", tr(k::grp::VIDEO), |ui| {
                 egui::Grid::new("render_setup").num_columns(2).spacing([12.0, 8.0]).show(
                     ui,
                     |ui| {
@@ -338,6 +340,14 @@ impl KtApp {
                         });
                         ui.end_row();
 
+                        ui.end_row();
+                    },
+                );
+                });
+                crate::widgets::group(ui, "render.audio", tr(k::grp::AUDIO), |ui| {
+                egui::Grid::new("render_audio").num_columns(2).spacing([12.0, 8.0]).show(
+                    ui,
+                    |ui| {
                         ui.label(tr(k::render::AUDIO_BITRATE));
                         egui::ComboBox::from_id_salt("abr")
                             .selected_text(format!(
@@ -389,11 +399,20 @@ impl KtApp {
                         ui.label(tr(k::render::AUDIO));
                         ui.weak("AAC, 48 kHz stereo");
                         ui.end_row();
+                        ui.end_row();
+                    },
+                );
+                });
+                crate::widgets::group(ui, "render.file", tr(k::grp::FILE), |ui| {
+                egui::Grid::new("render_file").num_columns(2).spacing([12.0, 8.0]).show(
+                    ui,
+                    |ui| {
                         ui.label(tr(k::render::CONTAINER));
                         ui.weak("MP4 (+faststart)");
                         ui.end_row();
                     },
                 );
+                });
                 if !self.render_setup.missing.is_empty() {
                     ui.add_space(4.0);
                     ui.colored_label(

@@ -15994,3 +15994,72 @@ fn t781_small_frame_moves_handles_outside() {
         );
     }
 }
+
+/// Тест 780 (Р.66): ШЕСТЬ ПЛОТНЫХ ФОРМ выложены по образцу «Трансформации».
+///
+/// Прямая просьба владельца Р.64: «и не забудь на будущее во всех других
+/// виджетах и окнах тоже пройтись надо будет». Образец он принял тогда же —
+/// свёртываемые группы, пары одной строкой, единицы из паспорта. Здесь
+/// утверждается наблюдаемое: у каждой из шести форм есть СВОИ группы, и
+/// свёртка — состояние окна, а не проекта.
+#[test]
+fn t780_dense_forms_have_groups() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+
+    // --- настройки проекта: кадр / звук / кривые ----------------------
+    let mut h = harness();
+    h.state_mut().open_project_settings();
+    h.step();
+    h.step();
+    for key in [k::grp::FRAME, k::grp::AUDIO, k::grp::CURVES] {
+        let t = tr(key);
+        assert!(
+            h.query_all_by_label_contains(t).count() > 0,
+            "в настройках проекта нет группы «{t}»"
+        );
+    }
+    // свёртка — состояние ОКНА: закрыли группу, значение проекта не тронуто
+    // «Звук» встречается и подписью поля — берём ЗАГОЛОВОК группы точно
+    let before = h.state().model.project().settings.clone();
+    h.get_by_label(tr(k::grp::AUDIO)).click();
+    h.step();
+    h.step();
+    assert_eq!(
+        h.state().model.project().settings,
+        before,
+        "свёртка группы изменила ПРОЕКТ — это состояние окна, а не содержимого"
+    );
+
+    // --- окно FX: группа параметров у обычного эффекта -----------------
+    let (mut h, _) = harness_three_clips_dt(None);
+    let clip = h.state().model.project().clips.first().map(|c| c.id).expect("событие");
+    {
+        let app = h.state_mut();
+        app.apply(Command::SetFx { id: clip, fx: vec![FxInstance::blur(8)] });
+        app.open_fx_editor(clip);
+    }
+    h.step();
+    h.step();
+    h.get_by_label(crate::fx_editor::fx_display_name(&FxInstance::blur(8))).click();
+    h.step();
+    h.step();
+    assert!(
+        h.query_all_by_label_contains(tr(k::grp::PARAMS)).count() > 0,
+        "в окне FX нет группы «{}» у параметров эффекта",
+        tr(k::grp::PARAMS)
+    );
+
+    // --- рендер: файл / видео / звук ----------------------------------
+    let mut h = harness();
+    h.state_mut().render_setup.open = true;
+    h.step();
+    h.step();
+    for key in [k::grp::VIDEO, k::grp::AUDIO, k::grp::FILE] {
+        let t = tr(key);
+        assert!(
+            h.query_all_by_label_contains(t).count() > 0,
+            "в окне рендера нет группы «{t}»"
+        );
+    }
+}

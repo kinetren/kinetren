@@ -824,15 +824,37 @@ impl KtApp {
                                         tr(k::fx::LEAD_HINT),
                                     );
                                 }
-                                params_changed |= draw_video_fx_params(
+                                // ГРУППА «Параметры» — образец «Трансформации»
+                                // (Р.66); у ведущего узла своя форма с
+                                // собственными группами, её не дублируем
+                                if f.is_lead_geometry() {
+                                    params_changed |= draw_video_fx_params(
+                                        ui,
+                                        f,
+                                        bind.as_mut(),
+                                        &cameras,
+                                        clip.kind == ClipKind::Video,
+                                        &mut hover_out,
+                                        pubc.as_ref(),
+                                    );
+                                } else if let Some(ch) = crate::widgets::group(
                                     ui,
-                                    f,
-                                    bind.as_mut(),
-                                    &cameras,
-                                    clip.kind == ClipKind::Video,
-                                    &mut hover_out,
-                                    pubc.as_ref(),
-                                );
+                                    "fx.params",
+                                    tr(k::grp::PARAMS),
+                                    |ui| {
+                                        draw_video_fx_params(
+                                            ui,
+                                            f,
+                                            bind.as_mut(),
+                                            &cameras,
+                                            clip.kind == ClipKind::Video,
+                                            &mut hover_out,
+                                            pubc.as_ref(),
+                                        )
+                                    },
+                                ) {
+                                    params_changed |= ch;
+                                }
                                 let mut auto_ch = false;
                                 if let Some(curves) = auto.get_mut(sel) {
                                     let view = ed.auto_views.entry((*id, view_key)).or_default();

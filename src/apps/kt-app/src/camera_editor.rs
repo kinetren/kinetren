@@ -99,7 +99,12 @@ impl KtApp {
                     kt_model::ClipId(0),
                     kt_model::ParamOwner::Camera { id: ed.id },
                 );
-                changed |= widgets::params_grid(ui, ("camp", ed.id), &mut c.cam, &[], Some(&pubc));
+                // ГРУППЫ по образцу «Трансформации» (Р.66)
+                if let Some(ch) = widgets::group(ui, "cam.params", tr(k::grp::PARAMS), |ui| {
+                    widgets::params_grid(ui, ("camp", ed.id), &mut c.cam, &[], Some(&pubc))
+                }) {
+                    changed |= ch;
+                }
                 ui.horizontal(|ui| {
                     changed |= ui.checkbox(&mut c.cam.ortho, tr(k::cam::ORTHO)).changed();
                     // точка интереса: two-node камера, как в AE
@@ -127,17 +132,26 @@ impl KtApp {
                         step: 1.0,
                         slider: None,
                     };
-                    ui.horizontal(|ui| {
-                        changed |= crate::widgets::pair_row(
-                            ui,
-                            "",
-                            (&row(tr(k::fxp::POS_X), "cam.target.x"), &mut t.0),
-                            (&row(tr(k::fxp::POS_Y), "cam.target.y"), &mut t.1),
-                        );
-                        changed |=
-                            crate::widgets::plain_row(ui, &row(tr(k::fxp::POS_Z), "cam.target.z"), &mut t.2)
-                                .changed();
-                    });
+                    if let Some(ch) = widgets::group(ui, "cam.target", tr(k::grp::TARGET), |ui| {
+                        let mut ch = false;
+                        ui.horizontal(|ui| {
+                            ch |= crate::widgets::pair_row(
+                                ui,
+                                "",
+                                (&row(tr(k::fxp::POS_X), "cam.target.x"), &mut t.0),
+                                (&row(tr(k::fxp::POS_Y), "cam.target.y"), &mut t.1),
+                            );
+                            ch |= crate::widgets::plain_row(
+                                ui,
+                                &row(tr(k::fxp::POS_Z), "cam.target.z"),
+                                &mut t.2,
+                            )
+                            .changed();
+                        });
+                        ch
+                    }) {
+                        changed |= ch;
+                    }
                 }
                 ui.separator();
 
@@ -196,6 +210,7 @@ impl KtApp {
                 // замок оси один на программу (Р.40 п.15)
                 axis_req = axis_req.merge(&res);
 
+                widgets::group(ui, "cam.length", tr(k::grp::LENGTH), |ui| {
                 ui.horizontal(|ui| {
                     // ДЛИНА ПРАВИТСЯ (Р.38 п.5): была read-only подписью,
                     // а кромок у блока не было — изменить её было нечем
@@ -223,6 +238,7 @@ impl KtApp {
                         );
                         changed = true;
                     }
+                });
                 });
                 if changed {
                     edited = Some(c);
