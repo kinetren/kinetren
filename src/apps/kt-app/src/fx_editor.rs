@@ -478,6 +478,7 @@ impl KtApp {
             .resizable(true)
             .vscroll(true)
             .show(ctx, |ui| {
+                crate::widgets::window_body(ui, |ui| {
                 for (n, id) in members.iter().enumerate() {
                     let Some(clip) = self.model.clip(*id).cloned() else { continue };
                     let mut fx = clip.fx.clone();
@@ -953,7 +954,8 @@ impl KtApp {
                         });
                     }
                 }
-                ui.separator();
+                });
+                crate::widgets::window_actions(ui, |ui| {
                 ui.horizontal(|ui| {
                     if ui.button(tr(k::fx::DONE)).clicked() {
                         ed.open = false;
@@ -962,6 +964,7 @@ impl KtApp {
                         revert = true;
                         ed.open = false;
                     }
+                });
                 });
             });
 
@@ -1403,6 +1406,57 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
 /// величины рисовались слайдером в одном окне и drag-полем в другом, а
 /// диапазоны расходились между окнами и спекой. Теперь диапазон, шаг и
 /// единица приходят из одного места.
+/// Ряды ключа Pan-камеры (Р.66). Пределы и единицы объявлены ЗДЕСЬ, рядом
+/// друг с другом: у ключа нет `ParamSpec` (это точка траектории, а не
+/// параметр эффекта), но и вписывать числа в код отрисовки нельзя — иначе
+/// у одного и того же ключа в двух местах окажутся разные границы.
+fn pan_key_rows() -> (
+    crate::widgets::NumRow<'static>,
+    crate::widgets::NumRow<'static>,
+    crate::widgets::NumRow<'static>,
+    crate::widgets::NumRow<'static>,
+) {
+    use kt_model::ParamUnit;
+    (
+        crate::widgets::NumRow {
+            label: "",
+            probe: "pan.key.t",
+            unit: ParamUnit::Norm,
+            min: 0.0,
+            max: 1.0,
+            step: 0.005,
+            slider: None,
+        },
+        crate::widgets::NumRow {
+            label: tr(k::fxp::PAN_X),
+            probe: "pan.key.x",
+            unit: ParamUnit::Norm,
+            min: -4.0,
+            max: 4.0,
+            step: 0.01,
+            slider: None,
+        },
+        crate::widgets::NumRow {
+            label: tr(k::fxp::PAN_Y),
+            probe: "pan.key.y",
+            unit: ParamUnit::Norm,
+            min: -4.0,
+            max: 4.0,
+            step: 0.01,
+            slider: None,
+        },
+        crate::widgets::NumRow {
+            label: tr(k::fxp::ZOOM),
+            probe: "pan.key.zoom",
+            unit: ParamUnit::Ratio,
+            min: 0.05,
+            max: 32.0,
+            step: 0.01,
+            slider: None,
+        },
+    )
+}
+
 pub(crate) fn draw_video_fx_params(
     ui: &mut egui::Ui,
     f: &mut FxInstance,
@@ -1675,24 +1729,21 @@ pub(crate) fn draw_video_fx_params(
                     ch.base = true;
                 }
             });
+            // ключи Pan-камеры: пределы ОБЪЯВЛЕНЫ ОДНИМ местом рядом друг с
+            // другом, а рисует их общий ряд (Р.66) — своих `DragValue` в
+            // окнах не бывает
+            let (t_row, x_row, y_row, z_row) = pan_key_rows();
             for (i, kf) in keyframes.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
                     ui.label(format!("#{i}"));
-                    ch.base |= ui
-                        .add(egui::DragValue::new(&mut kf.t).range(0.0..=1.0).speed(0.005))
-                        .changed();
-                    ui.label(tr(k::fxp::PAN_X));
-                    ch.base |= ui
-                        .add(egui::DragValue::new(&mut kf.pan_x).range(-4.0..=4.0).speed(0.01))
-                        .changed();
-                    ui.label(tr(k::fxp::PAN_Y));
-                    ch.base |= ui
-                        .add(egui::DragValue::new(&mut kf.pan_y).range(-4.0..=4.0).speed(0.01))
-                        .changed();
-                    ui.label(tr(k::fxp::ZOOM));
-                    ch.base |= ui
-                        .add(egui::DragValue::new(&mut kf.zoom).range(0.05..=32.0).speed(0.01))
-                        .changed();
+                    ch.base |= crate::widgets::plain_row(ui, &t_row, &mut kf.t).changed();
+                    ch.base |= crate::widgets::pair_row(
+                        ui,
+                        "",
+                        (&x_row, &mut kf.pan_x),
+                        (&y_row, &mut kf.pan_y),
+                    );
+                    ch.base |= crate::widgets::plain_row(ui, &z_row, &mut kf.zoom).changed();
                 });
             }
         }

@@ -12,7 +12,7 @@
 
 use crate::i18n::{k, tr};
 use eframe::egui;
-use kt_model::{FxInstance, HasParams, ParamSpec, ParamUnit};
+use kt_model::{FxInstance, HasParams, ParamKind, ParamSpec, ParamType, ParamUnit};
 
 /// Суффикс единицы: значение с единицей само себя объясняет, поэтому
 /// подпись остаётся короткой (правило «очевидных надписей не делать»).
@@ -24,6 +24,7 @@ fn unit_suffix(u: ParamUnit) -> &'static str {
         ParamUnit::Deg => "°",
         ParamUnit::Px => " px",
         ParamUnit::St => " st",
+        ParamUnit::Sec => " s",
         ParamUnit::Percent => " %",
         ParamUnit::None
         | ParamUnit::Norm
@@ -442,6 +443,100 @@ pub fn param_label(name: &str) -> String {
         other => return other.to_string(),
     };
     s.to_string()
+}
+
+/// ТЕЛО ОКНА В ПРОКРУТКЕ, кнопки — под ней (Р.66, контракт формы).
+///
+/// Окно, переросшее экран, не имеет права прятать свои действия: в Р.65
+/// именно так у окна дорожки уехали за кромку «Закрыть» и «Отмена», и
+/// поймал это тест, а не глаз. Высота прокрутки — доля экрана, чтобы на
+/// любом ноутбуке кнопки остались видны.
+pub fn window_body<R>(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let max_h = (ui.ctx().content_rect().height() * 0.62).max(240.0);
+    egui::ScrollArea::vertical()
+        .max_height(max_h)
+        .auto_shrink([true, true])
+        .show(ui, body)
+        .inner
+}
+
+/// Ряд ДЕЙСТВИЙ окна — ПОД прокруткой тела. Отдельным вызовом, а не
+/// вторым замыканием: оба замыкания держали бы один и тот же заём
+/// (накопитель подсказок), и борроу-чекер прав.
+pub fn window_actions(ui: &mut egui::Ui, actions: impl FnOnce(&mut egui::Ui)) {
+    ui.separator();
+    actions(ui);
+}
+
+/// Ряд ЧИСЛА БЕЗ ПАСПОРТА (Р.66).
+///
+/// Не у всякой величины окна есть `ParamSpec`: сдвиг морфера в мс,
+/// длительность камеры в секундах, поля таймлайна — это свойства модели и
+/// интерфейса, а не параметры эффекта, и выдумывать им паспорт значило бы
+/// врать об их природе. Но рисоваться они обязаны ТЕМ ЖЕ рядом, а пределы,
+/// шаг и единица — приходить из ОДНОГО места рядом с определением
+/// величины, а не из кода отрисовки (иначе у одного и того же числа в двух
+/// окнах окажутся разные границы — дефект Р.33 с Gain −24…24 против −48…24).
+pub struct NumRow<'a> {
+    /// Подпись слева. Пусто — ряд без подписи (например второй в паре).
+    pub label: &'a str,
+    /// Имя прямоугольника для живых сценариев (`field_probe`).
+    pub probe: &'a str,
+    pub unit: ParamUnit,
+    pub min: f64,
+    pub max: f64,
+    pub step: f64,
+    /// Ширина ползунка рядом с числом; `None` — только число.
+    pub slider: Option<f32>,
+}
+
+impl NumRow<'_> {
+    fn spec(&self) -> ParamSpec {
+        ParamSpec {
+            name: std::borrow::Cow::Borrowed(""),
+            ty: ParamType::Num,
+            min: self.min,
+            max: self.max,
+            default: self.min,
+            step: self.step,
+            unit: self.unit,
+            kind: ParamKind::Smooth,
+            label: std::borrow::Cow::Borrowed(""),
+        }
+    }
+}
+
+/// Нарисовать ряд числа без паспорта. Возвращает ОТКЛИК, а не «тронули»:
+/// вызывающему бывает нужно и «отпустили» (сортировка ключей по отпусканию,
+/// Р.33), и «ушёл фокус».
+pub fn plain_row(ui: &mut egui::Ui, row: &NumRow<'_>, v: &mut f64) -> egui::Response {
+    if !row.label.is_empty() {
+        ui.label(row.label);
+    }
+    let spec = row.spec();
+    let r = param_edit(ui, &spec, v, row.slider);
+    field_probe::note(row.probe, r.rect);
+    r
+}
+
+/// ПАРА значений одной строкой (X/Y, ширина/высота) — образец
+/// «Трансформации» (Р.64): два числа одной величины читаются вместе, и
+/// разносить их по строкам значит тратить место зря (правило 13).
+pub fn pair_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    a: (&NumRow<'_>, &mut f64),
+    b: (&NumRow<'_>, &mut f64),
+) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        if !label.is_empty() {
+            ui.label(label);
+        }
+        changed |= plain_row(ui, a.0, a.1).changed();
+        changed |= plain_row(ui, b.0, b.1).changed();
+    });
+    changed
 }
 
 /// Единый числовой контрол параметра. Диапазон, шаг и единица — из спеки.

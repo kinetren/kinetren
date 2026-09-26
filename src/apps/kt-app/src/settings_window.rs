@@ -137,6 +137,7 @@ impl KtApp {
             .resizable(false)
             .collapsible(false)
             .show(ctx, |ui| {
+                crate::widgets::window_body(ui, |ui| {
                 egui::Grid::new("project_settings_grid").num_columns(2).show(ui, |ui| {
                     ui.label(tr(k::settings::SIZE));
                     ui.horizontal(|ui| {
@@ -251,6 +252,8 @@ impl KtApp {
                     .weak()
                     .small(),
                 );
+                });
+                crate::widgets::window_actions(ui, |ui| {
                 ui.horizontal(|ui| {
                     let ra = ui.button(tr(k::settings::APPLY));
                     crate::widgets::field_probe::note("settings.apply", ra.rect);
@@ -260,6 +263,7 @@ impl KtApp {
                     if ui.button(tr(k::settings::CANCEL)).clicked() {
                         cancel = true;
                     }
+                });
                 });
             });
         if apply && let Some(id) = d.reel {

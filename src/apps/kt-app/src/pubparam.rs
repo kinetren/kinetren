@@ -393,6 +393,7 @@ impl KtApp {
             .resizable(true)
             .default_width(460.0)
             .show(ctx, |ui| {
+                crate::widgets::window_body(ui, |ui| {
                 if list.is_empty() {
                     ui.label(tr(k::pubp::LIST_EMPTY));
                     return;
@@ -454,8 +455,19 @@ impl KtApp {
                                 (tr(k::pubp::RANGE_MAX), &mut hi, false),
                             ] {
                                 ui.label(label);
-                                let rr = ui.add(
-                                    egui::DragValue::new(v).range(spec.min..=spec.max).speed(step),
+                                // пределы и единица — ИЗ ПАСПОРТА цели, ряд общий
+                                let rr = crate::widgets::plain_row(
+                                    ui,
+                                    &crate::widgets::NumRow {
+                                        label: "",
+                                        probe: "",
+                                        unit: spec.unit,
+                                        min: spec.min,
+                                        max: spec.max,
+                                        step,
+                                        slider: None,
+                                    },
+                                    v,
                                 );
                                 crate::widgets::hint(&rr, tr(k::pubp::RANGE_HINT));
                                 crate::widgets::field_probe::note(
@@ -506,7 +518,8 @@ impl KtApp {
                         }
                     });
                 }
-                ui.separator();
+                });
+                crate::widgets::window_actions(ui, |ui| {
                 ui.horizontal(|ui| {
                     if ui.button(tr(k::pubp::DONE)).clicked() {
                         done = true;
@@ -516,6 +529,7 @@ impl KtApp {
                     if ui.button(tr(k::fx::CANCEL)).clicked() {
                         cancel = true;
                     }
+                });
                 });
             });
 
@@ -1016,8 +1030,19 @@ fn draw_value_row(
             };
             // пределы ЦЕЛИ, суженные автором, — оба уже в паспорте
             let step = if spec.step > 0.0 { spec.step } else { 0.05 };
-            let r = ui.add(egui::DragValue::new(&mut shown).range(spec.min..=spec.max).speed(step));
-            crate::widgets::field_probe::note(&probe, r.rect);
+            let r = crate::widgets::plain_row(
+                ui,
+                &crate::widgets::NumRow {
+                    label: "",
+                    probe: &probe,
+                    unit: spec.unit,
+                    min: spec.min,
+                    max: spec.max,
+                    step,
+                    slider: None,
+                },
+                &mut shown,
+            );
             if r.changed() {
                 match ci {
                     // КЛЮЧ садится в домене ЭКЗЕМПЛЯРА — это и есть время

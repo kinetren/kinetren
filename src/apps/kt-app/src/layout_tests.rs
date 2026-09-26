@@ -61,6 +61,24 @@ fn harness_lang_dt(lang: crate::i18n::Lang, step_dt: Option<f32>) -> Harness<'st
     h
 }
 
+/// Харнесс ЗАДАННОГО размера (Р.66): контракт формы проверяется в НИЗКОМ
+/// окне — там, где содержимое заведомо выше экрана и окно обязано
+/// прокручиваться, а кнопки действия оставаться на виду.
+pub(crate) fn harness_sized(w: f32, h: f32) -> Harness<'static, KtApp> {
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+    let mut app = KtApp::new_empty(None);
+    app.recovery_on_drop = false;
+    app.workspace_file =
+        Some(std::env::temp_dir().join(format!("kt-ws-{}-{:p}.json", std::process::id(), &app)));
+    let mut hh = Harness::builder()
+        .with_size(egui::vec2(w, h))
+        .build_ui_state(|ui, app: &mut KtApp| app.draw_all(ui), app);
+    crate::icons::install_fonts(&hh.ctx);
+    hh.step();
+    hh.step();
+    hh
+}
+
 /// ФАКТИЧЕСКИЙ прямоугольник панели (не запрошенный размер: сепаратор
 /// egui живёт у фактической границы, и именно расхождение между ними —
 /// та самая ловушка «полоска не двигается»).
@@ -12590,15 +12608,18 @@ fn t691_instance_curves_are_visible_and_never_hidden() {
     };
 
     // --- БЕЗ КРИВОЙ: две правки в разных местах дают ОДНО значение -----
+    // Р.66: поле экземпляра рисует общий ряд, и доля вводится ПРОЦЕНТОМ —
+    // той же единицей, что внутри композиции (раньше одно и то же число
+    // писалось «0.1» в одном окне и «10 %» в другом)
     let pos = field_pos(&h);
-    type_value(&mut h, pos, "0.1");
+    type_value(&mut h, pos, "10");
     let after_first = ov_of(&h).expect("правка поля не доехала до модели");
     assert!(after_first.curves.is_empty(), "поле завело кривую само: {after_first:?}");
 
     h.state_mut().player.seek(t2);
     h.step();
     let pos = field_pos(&h);
-    type_value(&mut h, pos, "0.3");
+    type_value(&mut h, pos, "30");
     let after_second = ov_of(&h).expect("вторая правка не доехала");
     assert!(
         after_second.curves.is_empty(),
@@ -12661,17 +12682,20 @@ fn t691_instance_curves_are_visible_and_never_hidden() {
     let (m1, m2) = (mat(t1), mat(t2));
     h.state_mut().player.seek(t1);
     h.step();
+    // те же проценты, что и выше: 20 % и 40 % от кадра
     let pos = field_pos(&h);
-    type_value(&mut h, pos, "0.2");
+    type_value(&mut h, pos, "20");
     h.state_mut().player.seek(t2);
     h.step();
     let pos = field_pos(&h);
-    type_value(&mut h, pos, "0.4");
+    type_value(&mut h, pos, "40");
 
     let curve = ov_of(&h).expect("переопределение исчезло").curves.remove(0);
     let at = |t: kt_time::Tick| curve.keys.iter().find(|k| k.t == t).map(|k| k.v);
     assert_eq!(at(m1), Some(0.2), "ключ не сел в материале экземпляра: {curve:?}");
     assert_eq!(at(m2), Some(0.4), "второй ключ не сел: {curve:?}");
+    // …и в МОДЕЛИ это доли, а не проценты: пересчёт живёт в одном месте
+    assert!(at(m1).is_some_and(|v| v < 1.0), "в модель уехал процент вместо доли");
     assert!(m1 != m2, "харнесс двигал курсор в одну и ту же точку материала");
 
     // имя АВТОРА виджет рисует дословно: у ручки композиции имени в
@@ -13064,12 +13088,20 @@ fn t692b_author_window_shows_the_target_range() {
         .query_all(by().role(Role::SpinButton))
         .filter_map(|n| n.accesskit_node().value().map(|v| v.to_string()))
         .collect();
+    // Р.66: пределы автора рисует ОБЩИЙ ряд, и единица берётся из паспорта
+    // цели — доля показывается процентом ровно так же, как в самом поле
+    // параметра. Утверждение то же («автор видит пределы цели»), меняется
+    // только единица, в которой они написаны.
+    let scale = if spec.unit == kt_model::ParamUnit::Percent { 100.0 } else { 1.0 };
     let has = |x: f64| {
+        let want = x * scale;
         shown.iter().any(|t| {
             t.trim()
+                .trim_end_matches('%')
+                .trim()
                 .replace(',', ".")
                 .parse::<f64>()
-                .is_ok_and(|v| (v - x).abs() <= (spec.step.abs() * 0.5).max(1e-6))
+                .is_ok_and(|v| (v - want).abs() <= (spec.step.abs() * scale * 0.5).max(1e-6))
         })
     };
     assert!(

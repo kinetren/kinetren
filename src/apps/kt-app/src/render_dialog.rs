@@ -275,6 +275,7 @@ impl KtApp {
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
+                crate::widgets::window_body(ui, |ui| {
                 egui::Grid::new("render_setup").num_columns(2).spacing([12.0, 8.0]).show(
                     ui,
                     |ui| {
@@ -438,7 +439,8 @@ impl KtApp {
                         crate::widgets::field_probe::note("render.solo", r.rect);
                     }
                 }
-                ui.add_space(6.0);
+                });
+                crate::widgets::window_actions(ui, |ui| {
                 ui.horizontal(|ui| {
                     if ui.button(tr(k::render::START)).clicked() {
                         launch = true;
@@ -446,6 +448,7 @@ impl KtApp {
                     if ui.button(tr(k::render::CANCEL)).clicked() {
                         self.render_setup.open = false;
                     }
+                });
                 });
             });
         if !open {

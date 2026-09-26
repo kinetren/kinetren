@@ -1175,8 +1175,21 @@ fn table(
                     })
                     .map(|(_, _, s)| s);
                 let mut s = edit.unwrap_or_else(|| secs(tick));
-                let resp = ui.add(
-                    egui::DragValue::new(&mut s).speed(0.01).suffix(" s").range(0.0..=f64::MAX),
+                // время ключа — величина БЕЗ паспорта (это позиция, а не
+                // параметр): пределы и единица объявлены здесь одним местом,
+                // рисует общий ряд (Р.66)
+                let resp = crate::widgets::plain_row(
+                    ui,
+                    &crate::widgets::NumRow {
+                        label: "",
+                        probe: "auto.key.t",
+                        unit: kt_model::ParamUnit::Sec,
+                        min: 0.0,
+                        max: f64::MAX,
+                        step: 0.01,
+                        slider: None,
+                    },
+                    &mut s,
                 );
                 if resp.changed()
                     && let Some((ci, ki)) = curves.iter().enumerate().find_map(|(ci, c)| {

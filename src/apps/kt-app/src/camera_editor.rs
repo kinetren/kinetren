@@ -83,6 +83,7 @@ impl KtApp {
             .resizable(true)
             .vscroll(true)
             .show(ctx, |ui| {
+                crate::widgets::window_body(ui, |ui| {
                 let mut c = cur.clone();
                 let mut changed = false;
                 ui.horizontal(|ui| {
@@ -115,15 +116,27 @@ impl KtApp {
                     }
                 });
                 if let Some(t) = &mut c.cam.target {
+                    // точка интереса — МИРОВЫЕ px (единицы заморожены форматом
+                    // Р.29): пределы и шаг объявлены рядом, рисует общий ряд
+                    let row = |label: &'static str, probe: &'static str| crate::widgets::NumRow {
+                        label,
+                        probe,
+                        unit: kt_model::ParamUnit::Px,
+                        min: -100_000.0,
+                        max: 100_000.0,
+                        step: 1.0,
+                        slider: None,
+                    };
                     ui.horizontal(|ui| {
-                        for (label, v) in
-                            [(tr(k::fxp::POS_X), &mut t.0), (tr(k::fxp::POS_Y), &mut t.1)]
-                        {
-                            ui.label(label);
-                            changed |= ui.add(egui::DragValue::new(v).speed(1.0)).changed();
-                        }
-                        ui.label(tr(k::fxp::POS_Z));
-                        changed |= ui.add(egui::DragValue::new(&mut t.2).speed(1.0)).changed();
+                        changed |= crate::widgets::pair_row(
+                            ui,
+                            "",
+                            (&row(tr(k::fxp::POS_X), "cam.target.x"), &mut t.0),
+                            (&row(tr(k::fxp::POS_Y), "cam.target.y"), &mut t.1),
+                        );
+                        changed |=
+                            crate::widgets::plain_row(ui, &row(tr(k::fxp::POS_Z), "cam.target.z"), &mut t.2)
+                                .changed();
                     });
                 }
                 ui.separator();
@@ -183,35 +196,47 @@ impl KtApp {
                 // замок оси один на программу (Р.40 п.15)
                 axis_req = axis_req.merge(&res);
 
-                ui.separator();
                 ui.horizontal(|ui| {
                     // ДЛИНА ПРАВИТСЯ (Р.38 п.5): была read-only подписью,
                     // а кромок у блока не было — изменить её было нечем
                     ui.label(crate::tf!(k::cam::LENGTH, ""));
                     let mut secs = cur.duration.0 as f64 / 90_000.0;
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut secs)
-                                .range(0.04..=3600.0)
-                                .speed(0.05)
-                                .suffix(" s"),
-                        )
-                        .changed()
+                    // длительность — величина БЕЗ паспорта: пределы названы
+                    // здесь, одним местом, а ряд — общий (Р.66)
+                    if crate::widgets::plain_row(
+                        ui,
+                        &crate::widgets::NumRow {
+                            label: "",
+                            probe: "cam.duration",
+                            unit: kt_model::ParamUnit::Sec,
+                            min: 0.04,
+                            max: 3600.0,
+                            step: 0.05,
+                            slider: None,
+                        },
+                        &mut secs,
+                    )
+                    .changed()
                     {
                         c.duration = kt_time::Tick(
                             ((secs * 90_000.0) as i64).max(kt_model::MIN_CLIP_DURATION.0),
                         );
                         changed = true;
                     }
+                });
+                if changed {
+                    edited = Some(c);
+                }
+                });
+                crate::widgets::window_actions(ui, |ui| {
+                ui.horizontal(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button(tr(k::fx::CANCEL)).clicked() {
                             revert = true;
                         }
                     });
                 });
-                if changed {
-                    edited = Some(c);
-                }
+                });
             });
         ed.open = open;
         if let Some(c) = edited {

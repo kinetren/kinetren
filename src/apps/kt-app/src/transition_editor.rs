@@ -187,6 +187,7 @@ impl KtApp {
             .min_size([340.0, 200.0])
             .resizable(true)
             .show(ctx, |ui| {
+                crate::widgets::window_body(ui, |ui| {
                 let mut t = cur.clone();
                 let mut changed = false;
                 // ---- вид: пикер по семействам --------------------------
@@ -411,7 +412,6 @@ impl KtApp {
                     tr(k::trn::AUDIO_NOTE),
                 );
 
-                ui.separator();
                 ui.horizontal(|ui| {
                     // длина окна — величина, которую тянут мышью (у
                     // наложенного — тримом клипов); здесь она ЧИТАЕТСЯ,
@@ -421,15 +421,20 @@ impl KtApp {
                     if is_fade {
                         ui.label(tr(k::trn::IS_FADE));
                     }
+                });
+                if changed {
+                    edited = Some(t);
+                }
+                });
+                crate::widgets::window_actions(ui, |ui| {
+                ui.horizontal(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button(tr(k::fx::CANCEL)).clicked() {
                             revert = true;
                         }
                     });
                 });
-                if changed {
-                    edited = Some(t);
-                }
+                });
             });
         ed.open = open;
         if let Some(t) = edited {

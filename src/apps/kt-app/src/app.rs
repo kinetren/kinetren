@@ -1782,6 +1782,7 @@ impl KtApp {
             let mut act: Option<u8> = None;
             egui::Modal::new(egui::Id::new("kt_recovery")).show(ui.ctx(), |ui| {
                 ui.set_max_width(560.0);
+                crate::widgets::window_body(ui, |ui| {
                 ui.heading(tr(k::ask::RECOVERY_TITLE));
                 ui.add_space(6.0);
                 ui.label(tr(k::ask::RECOVERY_INTRO));
@@ -1800,7 +1801,8 @@ impl KtApp {
                 ui.add_space(8.0);
                 // правило 19: диалог говорит, что решение ничего не ломает
                 ui.weak(tr(k::ask::RECOVERY_NOTE));
-                ui.add_space(8.0);
+                });
+                crate::widgets::window_actions(ui, |ui| {
                 ui.horizontal(|ui| {
                     // координаты кнопок — наружу живым сценариям (Р.27):
                     // модальное окно egui в дереве доступности не ищется
@@ -1819,6 +1821,7 @@ impl KtApp {
                     if r.clicked() {
                         act = Some(2);
                     }
+                });
                 });
             });
             match act {

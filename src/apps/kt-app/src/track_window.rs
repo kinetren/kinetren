@@ -160,25 +160,38 @@ impl KtApp {
                     // моделью (прецедент Gain в Р.33)
                     if let Some(spec) = track.param_spec("gain_db") {
                         ui.label(tr(k::track::LEVEL));
-                        let r = ui.add(
-                            egui::DragValue::new(&mut props.gain_db)
-                                .range(spec.min..=spec.max)
-                                .speed(spec.step)
-                                .suffix(" dB"),
-                        );
-                        crate::widgets::field_probe::note("track.level", r.rect);
-                        changed_props |= r.changed();
+                        changed_props |= crate::widgets::plain_row(
+                            ui,
+                            &crate::widgets::NumRow {
+                                label: "",
+                                probe: "track.level",
+                                unit: spec.unit,
+                                min: spec.min,
+                                max: spec.max,
+                                step: spec.step,
+                                slider: None,
+                            },
+                            &mut props.gain_db,
+                        )
+                        .changed();
                         ui.end_row();
                     }
                     if let Some(spec) = track.param_spec("opacity") {
                         ui.label(tr(k::track::OPACITY));
-                        let r = ui.add(
-                            egui::DragValue::new(&mut props.opacity)
-                                .range(spec.min..=spec.max)
-                                .speed(spec.step),
-                        );
-                        crate::widgets::field_probe::note("track.level", r.rect);
-                        changed_props |= r.changed();
+                        changed_props |= crate::widgets::plain_row(
+                            ui,
+                            &crate::widgets::NumRow {
+                                label: "",
+                                probe: "track.opacity",
+                                unit: spec.unit,
+                                min: spec.min,
+                                max: spec.max,
+                                step: spec.step,
+                                slider: None,
+                            },
+                            &mut props.opacity,
+                        )
+                        .changed();
                         ui.end_row();
                     }
                 });

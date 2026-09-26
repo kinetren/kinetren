@@ -34,6 +34,23 @@ pub struct MorphEditor {
 }
 
 const MS: i64 = TICK_HZ / 1000; // тиков в мс
+/// Сутки в миллисекундах — предел сдвига входа источника: у величины нет
+/// паспорта, но и «бесконечность» пределом не бывает (правило 6 чек-листа).
+const DAY_MS: f64 = 24.0 * 60.0 * 60.0 * 1000.0;
+
+/// Ряд ВХОДА ИСТОЧНИКА морфера (мс). Пределы и единица объявлены ОДНИМ
+/// местом: абсолютный вход и сдвиг отличаются только нижней границей.
+fn source_in_row(probe: &'static str, min: f64) -> crate::widgets::NumRow<'static> {
+    crate::widgets::NumRow {
+        label: "",
+        probe,
+        unit: ParamUnit::Ms,
+        min,
+        max: DAY_MS,
+        step: 10.0,
+        slider: None,
+    }
+}
 
 impl KtApp {
     pub fn open_morph_editor(&mut self, id: MorphId) {
@@ -158,20 +175,28 @@ impl KtApp {
             changed = true;
         }
         if let Some(abs) = &mut ev.patch.absolute_source_in {
-            let mut ms = abs.0 / MS;
+            let mut ms = (abs.0 / MS) as f64;
             ui.horizontal(|ui| {
                 ui.label(tr(k::mrph::SOURCE_IN_MS));
-                if ui.add(egui::DragValue::new(&mut ms).speed(10).range(0..=i64::MAX)).changed() {
-                    *abs = Tick(ms * MS);
+                if crate::widgets::plain_row(ui, &source_in_row("mrph.source_in", 0.0), &mut ms)
+                    .changed()
+                {
+                    *abs = Tick(ms as i64 * MS);
                     changed = true;
                 }
             });
         } else {
-            let mut ms = ev.patch.source_in_delta.0 / MS;
+            let mut ms = (ev.patch.source_in_delta.0 / MS) as f64;
             ui.horizontal(|ui| {
                 ui.label(tr(k::mrph::SOURCE_IN_DELTA_MS));
-                if ui.add(egui::DragValue::new(&mut ms).speed(10)).changed() {
-                    ev.patch.source_in_delta = Tick(ms * MS);
+                if crate::widgets::plain_row(
+                    ui,
+                    &source_in_row("mrph.source_in_delta", -DAY_MS),
+                    &mut ms,
+                )
+                .changed()
+                {
+                    ev.patch.source_in_delta = Tick(ms as i64 * MS);
                     changed = true;
                 }
             });
@@ -304,6 +329,7 @@ impl KtApp {
             .resizable(true)
             .vscroll(true)
             .show(ctx, |ui| {
+                crate::widgets::window_body(ui, |ui| {
                 // --- на кого и когда действует (Р.35) ------------------------
                 let frozen = ev.targets.clip_ids().to_vec();
                 ui.horizontal(|ui| {
@@ -485,11 +511,18 @@ impl KtApp {
                     let mut s = ev.strength;
                     if crate::app::hint_into(
                         &mut hover_out,
-                        ui.add(
-                            egui::DragValue::new(&mut s)
-                                .range(0.0..=1.0)
-                                .speed(0.01)
-                                .fixed_decimals(2),
+                        crate::widgets::plain_row(
+                            ui,
+                            &crate::widgets::NumRow {
+                                label: "",
+                                probe: "mrph.strength",
+                                unit: kt_model::ParamUnit::Norm,
+                                min: 0.0,
+                                max: 1.0,
+                                step: 0.01,
+                                slider: Some(90.0),
+                            },
+                            &mut s,
                         ),
                         tr(k::mrph::STRENGTH_HINT),
                     )
@@ -505,14 +538,20 @@ impl KtApp {
                     ] {
                         ui.label(label);
                         let mut v = cur.0 as f64 / 90_000.0;
-                        if ui
-                            .add(
-                                egui::DragValue::new(&mut v)
-                                    .range(0.0..=max)
-                                    .speed(0.05)
-                                    .suffix(" s"),
-                            )
-                            .changed()
+                        if crate::widgets::plain_row(
+                            ui,
+                            &crate::widgets::NumRow {
+                                label: "",
+                                probe: "mrph.fade",
+                                unit: kt_model::ParamUnit::Sec,
+                                min: 0.0,
+                                max,
+                                step: 0.05,
+                                slider: None,
+                            },
+                            &mut v,
+                        )
+                        .changed()
                         {
                             *cur = kt_time::Tick((v * 90_000.0).round() as i64);
                             changed = true;
@@ -596,7 +635,8 @@ impl KtApp {
                     }
                 }
 
-                ui.separator();
+                });
+                crate::widgets::window_actions(ui, |ui| {
                 ui.horizontal(|ui| {
                     if ui
                         .button(if is_batch {
@@ -620,6 +660,7 @@ impl KtApp {
                     {
                         revert = true;
                     }
+                });
                 });
             });
         ed.open = open;

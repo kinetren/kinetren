@@ -174,6 +174,7 @@ impl crate::app::KtApp {
             .resizable(false)
             .collapsible(false)
             .show(ctx, |ui| {
+                crate::widgets::window_body(ui, |ui| {
                 ui.label(egui::RichText::new(tr(k::fx::FIT_HINT)).weak().small());
                 egui::Grid::new("env_fit_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
                     for (i, (c, pick)) in d.rows.iter_mut().enumerate() {
@@ -206,6 +207,8 @@ impl crate::app::KtApp {
                     }
                 });
                 ui.separator();
+                });
+                crate::widgets::window_actions(ui, |ui| {
                 ui.horizontal(|ui| {
                     let b = ui.button(tr(k::fx::FIT_DO));
                     crate::widgets::field_probe::note("envfit.ok", b.rect);
@@ -215,7 +218,8 @@ impl crate::app::KtApp {
                     if ui.button(tr(k::fx::CANCEL)).clicked() {
                         cancel = true;
                     }
-                });
+                    });
+            });
             });
         if go {
             let mut remapped = Vec::new();

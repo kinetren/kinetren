@@ -5626,17 +5626,22 @@ impl KtApp {
                         if is_audio {
                             let mut db = c.gain_db as f64;
                             ui.label(tr(k::tl::menu::LEVEL));
-                            if ui
-                                .add(
-                                    egui::DragValue::new(&mut db)
-                                        .range(
-                                            -(RAIL_DB_SPAN as f64) / 2.0
-                                                ..=RAIL_DB_SPAN as f64 / 2.0,
-                                        )
-                                        .speed(0.1)
-                                        .suffix(" dB"),
-                                )
-                                .changed()
+                            // предел — рейл громкости v1 (RAIL_DB_SPAN), он
+                            // объявлен один раз и здесь только используется
+                            if crate::widgets::plain_row(
+                                ui,
+                                &crate::widgets::NumRow {
+                                    label: "",
+                                    probe: "clip.gain",
+                                    unit: kt_model::ParamUnit::Db,
+                                    min: -(RAIL_DB_SPAN as f64) / 2.0,
+                                    max: RAIL_DB_SPAN as f64 / 2.0,
+                                    step: 0.1,
+                                    slider: None,
+                                },
+                                &mut db,
+                            )
+                            .changed()
                             {
                                 self.apply_coalesced(
                                     Command::SetGain { id, gain_db: db as f32 },
@@ -5646,9 +5651,20 @@ impl KtApp {
                         } else {
                             let mut op = c.opacity as f64;
                             ui.label(tr(k::tl::menu::LEVEL));
-                            if ui
-                                .add(egui::DragValue::new(&mut op).range(0.0..=1.0).speed(0.01))
-                                .changed()
+                            if crate::widgets::plain_row(
+                                ui,
+                                &crate::widgets::NumRow {
+                                    label: "",
+                                    probe: "clip.opacity",
+                                    unit: kt_model::ParamUnit::Norm,
+                                    min: 0.0,
+                                    max: 1.0,
+                                    step: 0.01,
+                                    slider: None,
+                                },
+                                &mut op,
+                            )
+                            .changed()
                             {
                                 self.apply_coalesced(
                                     Command::SetOpacity { id, opacity: op as f32 },
@@ -6197,9 +6213,20 @@ impl KtApp {
                     ui.horizontal(|ui| {
                         let mut v = m.strength;
                         ui.label(tr(k::tl::menu::LEVEL));
-                        if ui
-                            .add(egui::DragValue::new(&mut v).range(0.0..=1.0).speed(0.01))
-                            .changed()
+                        if crate::widgets::plain_row(
+                            ui,
+                            &crate::widgets::NumRow {
+                                label: "",
+                                probe: "morph.strength",
+                                unit: kt_model::ParamUnit::Norm,
+                                min: 0.0,
+                                max: 1.0,
+                                step: 0.01,
+                                slider: None,
+                            },
+                            &mut v,
+                        )
+                        .changed()
                         {
                             let mut ev = m.clone();
                             ev.strength = v;

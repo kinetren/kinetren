@@ -2881,3 +2881,325 @@ fn t777_sidechain_is_reachable_and_names_its_refusals() {
         );
     }
 }
+
+/// Как открыть окно реестра в харнессе — или почему это невозможно (Р.66).
+enum OpenWin {
+    /// Функция готовит сцену и открывает окно.
+    By(fn(&mut egui_kittest::Harness<'static, crate::app::KtApp>)),
+    /// Окно в харнессе не открыть; причина пишется словами, как в t253.
+    Cant(&'static str),
+}
+
+/// Чем окно закрывается: своей кнопкой действия или крестиком заголовка.
+/// Второе — законно (журнал, поиск, диагностика), но объявляется ЯВНО и с
+/// причиной: иначе «кнопок не нашлось» тихо сойдёт за норму.
+enum Closes {
+    Action,
+    /// Окно КОРОТКОЕ ПО ПОСТРОЕНИЮ (вопрос из заголовка, строки и ряда
+    /// кнопок): прокрутке там нечего скрывать. Причина пишется словами, а
+    /// «короткое» ПРОВЕРЯЕТСЯ числом строк — иначе исключение станет
+    /// дешевле проверки.
+    ActionShort { why: &'static str },
+    Titlebar { title: fn() -> String, why: &'static str },
+}
+
+/// Сколько строк окно имеет право показывать, чтобы считаться коротким.
+const SHORT_WINDOW_ROWS: usize = 25;
+
+/// Кнопки ДЕЙСТВИЯ окна: по любой из них тест жмёт. Набор общий — окна
+/// программы закрываются и отменяются одними и теми же словами.
+fn action_labels() -> Vec<String> {
+    use crate::i18n::{k, tr};
+    vec![
+        tr(k::track::CLOSE).to_string(),
+        tr(k::track::CANCEL).to_string(),
+        tr(k::fx::CANCEL).to_string(),
+        tr(k::render::CLOSE).to_string(),
+        tr(k::render::CANCEL).to_string(),
+        tr(k::settings::CANCEL).to_string(),
+        tr(k::ask::RECOVERY_RESTORE).to_string(),
+        tr(k::ask::RECOVERY_LATER).to_string(),
+    ]
+}
+
+/// Таблица окон: id из `WINDOWS` → чем его открыть.
+fn window_openers() -> Vec<(&'static str, OpenWin, Closes)> {
+    use kt_model::*;
+    vec![
+        ("fx", OpenWin::By(|h| {
+            // сцена — генератор: событие поднимается тем же путём, что в
+            // программе, и не требует файла на диске
+            h.state_mut().create_generator(GeneratorKind::Solid {
+                color_r: 200,
+                color_g: 40,
+                color_b: 40,
+            });
+            h.step();
+            let id = first_clip(h);
+            h.state_mut().open_fx_editor(id);
+        }), Closes::Action),
+        ("track_window", OpenWin::By(|h| {
+            let app = h.state_mut();
+            crate::layout_tests::edit_project(app, |p| p.ensure_tracks(LaneKind::Audio, 1));
+            let id = app.model.project().track_at(LaneKind::Audio, 0).unwrap().id;
+            app.open_track_window(id);
+        }), Closes::Action),
+        ("project_settings", OpenWin::By(|h| h.state_mut().open_project_settings()), Closes::Action),
+        ("kt_notices", OpenWin::By(|h| h.state_mut().notices_open = true), Closes::Titlebar { title: || crate::i18n::tr(crate::i18n::k::win::NOTICES_TITLE).to_string(), why: "журнал сообщений закрывается крестиком заголовка: своего действия у списка нет" }),
+        ("kt_search", OpenWin::By(|h| h.state_mut().search_open = true), Closes::Titlebar { title: || crate::i18n::tr(crate::i18n::k::win::SEARCH_TITLE).to_string(), why: "поиск закрывается крестиком заголовка: список находок живёт, пока по нему ходят" }),
+        ("kt_diag", OpenWin::By(|h| h.state_mut().perf.diag_open = true), Closes::Titlebar { title: || crate::i18n::tr(crate::i18n::k::win::DIAG_TITLE).to_string(), why: "диагностика закрывается крестиком заголовка: это окно разработчика без действий" }),
+        ("kt_recovery", OpenWin::By(|h| h.state_mut().recovery_open = true), Closes::Action),
+        ("kt_ask", OpenWin::By(|h| {
+            h.state_mut().ask = Some(crate::app::Ask::DropOtio);
+        }), Closes::ActionShort {
+            why: "вопрос при закрытии: заголовок, одна строка и ряд кнопок — содержимому расти \
+                  неоткуда, и прокрутке нечего скрывать",
+        }),
+        ("morph", OpenWin::Cant(
+            "морфер-слой нужно сперва поставить на морф-дорожку: окно открывается по его id, и \
+             сцена для него строится отдельным тестом слоя",
+        ), Closes::Action),
+        ("transition", OpenWin::Cant(
+            "окно перехода открывается по id существующего перехода, а переход появляется только \
+             из наезда двух событий — своя сцена, она есть в тестах переходов",
+        ), Closes::Action),
+        ("camera", OpenWin::Cant(
+            "камера-событие живёт на камерной дорожке и открывается по своему id — сцена с \
+             камерой строится в тестах камеры",
+        ), Closes::Action),
+        ("env_fit", OpenWin::Cant(
+            "окно сопоставления полей появляется только при вставке огибающей, которая не легла \
+             молча: его сцена — содержимое буфера обмена, она есть в тестах вставки",
+        ), Closes::Action),
+        ("kt_render_settings", OpenWin::Cant(
+            "окно параметров экспорта заводится вместе с его сессией рендера; сессия требует \
+             настоящего кодека, которого в харнессе нет",
+        ), Closes::Action),
+        ("kt_render_progress", OpenWin::Cant(
+            "окно хода экспорта живёт только при ЗАПУЩЕННОЙ задаче кодирования — в харнессе её \
+             не завести без настоящего кодека",
+        ), Closes::Action),
+        ("kt_analysis", OpenWin::Cant(
+            "окно хода анализа живёт, пока жива фоновая задача; в харнессе она не запускается без \
+             настоящего файла материала",
+        ), Closes::Action),
+        ("seq_name", OpenWin::Cant(
+            "имя новой ленты спрашивается ровно в момент сворачивания выделения — своя сцена, \
+             она есть в тестах композиций",
+        ), Closes::Action),
+        ("paste_names", OpenWin::Cant(
+            "приставка к именам спрашивается при вставке ИМЕНОВАННОГО из буфера — сцена буфера \
+             строится в тестах копипаста",
+        ), Closes::Action),
+        ("preset_save", OpenWin::Cant(
+            "имя пресета спрашивается при сохранении цепочки из полосы — сцена есть в тестах \
+             библиотеки пресетов",
+        ), Closes::Action),
+        ("pub_name", OpenWin::Cant(
+            "имя ручки спрашивается при публикации изнутри ленты — сцена есть в тестах публичных \
+             параметров",
+        ), Closes::Action),
+        ("pub_unpublish", OpenWin::Cant(
+            "подтверждение снятия ручки появляется у существующей ручки — сцена есть в тестах \
+             публичных параметров",
+        ), Closes::Action),
+        ("published_win", OpenWin::Cant(
+            "авторский список ручек открывается изнутри ленты по её адресу — сцена есть в тестах \
+             публичных параметров",
+        ), Closes::Action),
+    ]
+}
+
+fn first_clip(h: &egui_kittest::Harness<'static, crate::app::KtApp>) -> kt_model::ClipId {
+    h.state().model.project().clips.first().map(|c| c.id).expect("в сцене есть событие")
+}
+
+/// Тест 779 (Р.66): КОНТРАКТ ФОРМЫ — по всем окнам реестра.
+///
+/// Прямая просьба владельца Р.64: «и не забудь на будущее во всех других
+/// виджетах и окнах тоже пройтись надо будет». Проза этого не удержала:
+/// к Р.66 прокрутка тела была ровно у ОДНОГО окна из двадцати одного, и
+/// появилась она только потому, что t775 уронил окно со спрятанными за
+/// кромкой кнопками. Здесь два утверждения, оба машинные:
+///
+/// 1. ни одного своего `DragValue` вне общего виджета — иначе у числа
+///    заводятся вторые пределы и вторая единица (дефект Р.33: Gain был
+///    −24…24 в одном окне и −48…24 в другом);
+/// 2. у каждого окна реестра, которое можно открыть, кнопка действия
+///    ВИДНА и НАЖИМАЕТСЯ в низком окне — то есть тело прокручивается, а
+///    кнопки живут вне прокрутки.
+#[test]
+fn t779_window_form_contract() {
+    // --- 1. ни одного числа мимо общего виджета ------------------------
+    let root = workspace_root();
+    let dir = root.join("apps/kt-app/src");
+    let mut bad: Vec<String> = Vec::new();
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .expect("исходники kt-app")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "rs"))
+        .collect();
+    files.sort();
+    for path in files {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        // widgets.rs — ДОМ ряда: там он и определён; сам сторож ищет это
+        // имя строкой и считал бы себя
+        if name == "widgets.rs" || name == "reach_tests.rs" {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).expect("исходник читается");
+        // тестовый модуль не считается: текст ассертов человек не видит
+        let code = src.split("\n#[cfg(test)]").next().unwrap_or(&src);
+        for (i, line) in code.lines().enumerate() {
+            if line.contains("DragValue::new") {
+                bad.push(format!("{name}:{}", i + 1));
+            }
+        }
+    }
+    let mut problems: Vec<String> = Vec::new();
+    if !bad.is_empty() {
+        problems.push(format!(
+            "своё числовое поле мимо общего ряда виджетов (widgets::param_row / plain_row): {}. \
+             У такого числа свои пределы и своя единица — это второй источник правды о них \
+             (правило «один виджет — не копия»)",
+            bad.join(", ")
+        ));
+    }
+
+    // --- 2. кнопки действия достижимы в НИЗКОМ окне --------------------
+    let openers = window_openers();
+    let known: std::collections::HashSet<&str> = WINDOWS.iter().map(|(id, _)| *id).collect();
+    for (id, _, _) in &openers {
+        assert!(known.contains(id), "в таблице окон есть «{id}», которого нет в реестре WINDOWS");
+    }
+    for (id, _) in WINDOWS {
+        assert!(
+            openers.iter().any(|(o, _, _)| o == id),
+            "окно «{id}» есть в реестре, но в таблице t779 его нет: \
+             контракт формы обязан быть проверен у КАЖДОГО окна либо иметь причину"
+        );
+    }
+    for (id, how, closes) in openers {
+        let open = match how {
+            OpenWin::Cant(why) => {
+                assert!(
+                    why.chars().count() >= 25,
+                    "окно «{id}»: причина «{why}» короче 25 символов — так отговорка становится \
+                     дешевле проверки"
+                );
+                continue;
+            }
+            OpenWin::By(f) => f,
+        };
+        // НИЗКОЕ окно: содержимое заведомо выше экрана
+        let mut h = crate::layout_tests::harness_sized(1100.0, 420.0);
+        open(&mut h);
+        h.step();
+        h.step();
+        let screen = h.ctx.content_rect();
+        match closes {
+            Closes::Titlebar { title, why } => {
+                assert!(
+                    why.chars().count() >= 25,
+                    "окно «{id}»: причина «{why}» короче 25 символов"
+                );
+                // заголовок нарисован и виден — значит крестик достижим
+                let t = title();
+                use egui_kittest::kittest::Queryable;
+                let seen = h
+                    .query_all_by_label_contains(&t)
+                    .map(|n| n.rect())
+                    .any(|r| screen.contains_rect(r));
+                if !seen {
+                    problems.push(format!(
+                        "«{id}»: заголовок «{t}» не виден на экране — крестик, которым окно \
+                         закрывается, недостижим"
+                    ));
+                }
+            }
+            Closes::ActionShort { why } => {
+                assert!(why.chars().count() >= 25, "окно «{id}»: причина «{why}» короче 25 символов");
+                // «короткое» — это измеримо: столько строк, сколько влезает
+                // без прокрутки на любом экране
+                use egui_kittest::kittest::{NodeT, Queryable};
+                let rows = h
+                    .query_all_by_label_contains("")
+                    .filter_map(|n| n.accesskit_node().label().map(|l| l.to_string()))
+                    .count();
+                let mut bare = crate::layout_tests::harness_sized(1100.0, 420.0);
+                bare.step();
+                let base = bare
+                    .query_all_by_label_contains("")
+                    .filter_map(|n| n.accesskit_node().label().map(|l| l.to_string()))
+                    .count();
+                let own = rows.saturating_sub(base);
+                if own > SHORT_WINDOW_ROWS {
+                    problems.push(format!(
+                        "«{id}» объявлено коротким, но показывает {own} своих строк (предел \
+                         {SHORT_WINDOW_ROWS}) — значит прокрутка ему нужна"
+                    ));
+                }
+                let labels = action_labels();
+                let found = labels
+                    .iter()
+                    .flat_map(|l| h.query_all_by_label(l).map(|n| n.rect()).collect::<Vec<_>>())
+                    .collect::<Vec<_>>();
+                if !found.iter().any(|r| screen.contains_rect(*r)) {
+                    problems.push(format!("«{id}»: кнопки действия недостижимы"));
+                }
+            }
+            Closes::Action => {
+                // ТЕЛО ОКНА ЖИВЁТ В ПРОКРУТКЕ. Проверяется по состоянию
+                // самой прокрутки в памяти egui: окно зажимается экраном и
+                // рисует клипованные узлы с ОБРЕЗАННЫМИ прямоугольниками —
+                // ни «узел за кромкой», ни «спрятанные строки» в дереве
+                // доступности не видны, то есть следствие «часть формы
+                // недостижима» приборами kittest не наблюдаемо. Поэтому
+                // здесь честная структурная проверка с названной причиной:
+                // открытие окна обязано завести хотя бы одно состояние
+                // ScrollArea (а что она не вокруг пустоты — держит живой
+                // сценарий `forms.py`, который крутит колесо в настоящем
+                // окне).
+                let scrolls = |h: &egui_kittest::Harness<'static, crate::app::KtApp>| {
+                    h.ctx.memory(|m| m.data.count::<egui::scroll_area::State>())
+                };
+                let mut bare = crate::layout_tests::harness_sized(1100.0, 420.0);
+                bare.step();
+                let before = scrolls(&bare);
+                let after = scrolls(&h);
+                if after <= before {
+                    problems.push(format!(
+                        "«{id}»: тело окна не в прокрутке (состояний ScrollArea {after} против \
+                         {before} без окна) — содержимому, которое не влезло, некуда деться"
+                    ));
+                }
+                let labels = action_labels();
+                let found: Vec<(String, egui::Rect)> = labels
+                    .iter()
+                    .flat_map(|l| {
+                        use egui_kittest::kittest::Queryable;
+                        h.query_all_by_label(l)
+                            .map(move |n| (l.clone(), n.rect()))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                if found.is_empty() {
+                    problems.push(format!(
+                        "«{id}»: в окне не найдено ни одной кнопки действия, а крестик заголовка \
+                         как способ закрытия не объявлен"
+                    ));
+                    continue;
+                }
+                if !found.iter().any(|(_, r)| screen.contains_rect(*r)) {
+                    problems.push(format!(
+                        "«{id}»: кнопки действия за кромкой экрана {:?} — окно переросло экран и \
+                         спрятало свои действия (тело обязано прокручиваться, кнопки — жить вне \
+                         прокрутки)",
+                        found.iter().map(|(l, r)| format!("{l} {r:?}")).collect::<Vec<_>>()
+                    ));
+                }
+            }
+        }
+    }
+    assert!(problems.is_empty(), "контракт формы нарушен:\n  {}", problems.join("\n  "));
+}
