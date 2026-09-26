@@ -2,17 +2,17 @@
 
 ## 0. Заметки фич и правила для агентов (до кода)
 
-- [ ] 0.1 `docs/features/automation/keyframes/formula-as-segment-and-layer.md` (F-AUT-010):
+- [x] 0.1 `docs/features/automation/keyframes/formula-as-segment-and-layer.md` (F-AUT-010):
   сочетание ключей, форм отрезков, формулы на отрезке и слоя-формулы у Vegas/Premiere/
   Resolve/FCP/AE, «фишка фишки», вердикт со ссылкой `CAPABILITY: openspec/specs/automation/`.
   Проверка: `python3 src/scripts/features-index.py --check` зелёный.
-- [ ] 0.2 `docs/features/automation/keyframes/shape-parameters-by-mouse.md` (F-AUT-011):
+- [x] 0.2 `docs/features/automation/keyframes/shape-parameters-by-mouse.md` (F-AUT-011):
   ручки параметров формы на графике (натяжение/амплитуда/периоды под мышь) у пяти
   редакторов; вердикт с `CAPABILITY: openspec/specs/ui-timeline/`. Проверка: `--check`.
-- [ ] 0.3 `docs/features/help/hints/formula-input-help.md` (F-HLP-034): справка и дополнение
+- [x] 0.3 `docs/features/help/hints/formula-input-help.md` (F-HLP-034): справка и дополнение
   в поле формулы (AE expression menu, Resolve Fusion, Blender drivers) без попапов; форма
   вердикта `ТЕСТ: t789 …`; `ui_rules: [10]`. Проверка: `--check`.
-- [ ] 0.4 Правила в `CLAUDE.md` (корень, kt-otio, kt-app): «починки старых файлов — только в
+- [x] 0.4 Правила в `CLAUDE.md` (корень, kt-otio, kt-app): «починки старых файлов — только в
   импорте, с версией, отмирают с версией»; «у нового UI-сценария — строка ПУТЬ, у живого
   сценария — скриншот на шаг, список в отчёте»; «ключ только от жеста, виджет не пишет
   сам». Проверка: t799 (задача 7.2) читает порог из тех же слов; `docs/user-feedback.md`

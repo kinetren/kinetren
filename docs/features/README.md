@@ -150,13 +150,13 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | `timeline/` | TL | операции над событиями, структура монтажа | 12 / 5 |
 | `titles/` | TXT | титры, генераторы, субтитры | 6 / 4 |
 | `time/` | SPD | скорость, ретайминг, синхронизация, приведение частоты | 5 / 5 |
-| `automation/` | AUT | ключи, кривые, пресеты | 9 / 6 |
+| `automation/` | AUT | ключи, кривые, пресеты | 11 / 8 |
 | `media/` | MED | организация медиа, прокси, источники | 6 / 3 |
 | `export/` | EXP | пресеты, очередь, smart render | 4 / 3 |
 | `project/` | PRJ | секвенции, история, версии | 4 / 2 |
 | `ui/` | UI | вьюер, ввод, раскладки | 5 / 3 |
 | `plugins/` | EXT | OFX/VST-хосты, скриптинг, контракт чужого кода | 3 / 3 |
-| `help/` | HLP | подсказки, справка, обучение, документация | 33 / 33 |
+| `help/` | HLP | подсказки, справка, обучение, документация | 34 / 34 |
 | `resilience/` | RES | сохранность работы, восстановление, поведение под нагрузкой и на чужом железе | 12 / 12 |
 | `collab/` | COL | работа не в одиночку: занять, свести, сказать про кадр, отдать, раздать материал, передать счёт, зависеть от чужой стороны | 45 / 45 |
 | `compositing/` | CMP | как кадр становится кадром: конкатенация трансформов, качество ресемплинга, разрешение промежуточных стадий, словарь переходов, режимы наложения | 3 / 3 |
@@ -258,6 +258,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-HLP-031 | Пресет как форма документации — «вот как это настраивают» | исследовано | B | S | частично | `help/onboarding/presets-as-documentation.md` |
 | F-HLP-032 | Документация как код и автоматическая пересъёмка скриншотов | уже-есть | B | S | да | `help/authoring/docs-as-code-and-screenshot-pipeline.md` |
 | F-HLP-033 | Цена строки справки на пяти языках | кандидат | B | S | частично | `help/authoring/help-text-localization-cost.md` |
+| F-HLP-034 | Справка и дополнение в поле формулы — без попапов | принято | B | S | нет | `help/hints/formula-input-help.md` |
 | F-RES-002 | Атомарная запись проекта и fsync | сделано | B | S | да | `resilience/durability/atomic-write-and-fsync.md` |
 | F-RES-003 | Проект, созданный другой версией программы | кандидат | B | S | частично | `resilience/durability/project-format-migration.md` |
 | F-RES-005 | Несохранённая работа при выходе — звёздочка и вопрос при закрытии | сделано | B | S | да | `resilience/recovery/unsaved-work-guards.md` |
@@ -274,6 +275,8 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-AUT-005 | Ловушки правки ключевых кадров | кандидат | B | M | частично | `automation/keyframes/inserting-and-editing-pitfalls.md` |
 | F-AUT-006 | Галерея превью в пикере — миниатюра эффекта на своём кадре | сделано | B | M | да | `automation/presets/preset-gallery-with-previews.md` |
 | F-AUT-009 | Форма отрезка кривой: не только линейно и сглажено | кандидат | B | M | частично | `automation/keyframes/segment-shapes.md` |
+| F-AUT-010 | Формула на отрезке и формула-слой поверх ключей | принято | A | M | частично | `automation/keyframes/formula-as-segment-and-layer.md` |
+| F-AUT-011 | Форма отрезка видна на графике, её параметры — под мышью | принято | B | S | частично | `automation/keyframes/shape-parameters-by-mouse.md` |
 | F-CLR-004 | LUT 1D и 3D (.cube) — технические против творческих | кандидат | B | M | нет | `color/management/lut-1d-and-3d.md` |
 | F-CLR-005 | Приборы — waveform, parade, вектороскоп, гистограмма, false color | кандидат | B | M | нет | `color/scopes/waveform-parade-vectorscope.md` |
 | F-COL-001 | Общий диск вместо облака — сеть как файловая система | исследовано | B | M | частично | `collab/assets/shared-storage-and-the-protocol.md` |
