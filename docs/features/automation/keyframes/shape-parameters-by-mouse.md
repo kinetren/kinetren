@@ -1,17 +1,17 @@
 ---
 id: F-AUT-011
 title: Форма отрезка видна на графике, её параметры — под мышью
-status: принято
+status: сделано
 priority: B
 cost: S
 category: automation/keyframes
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, blender-5.2]
-we_have: частично
+we_have: да
 crates: [kt-app, kt-model]
 invariants: [12]
 ui_rules: [1, 3, 9, 10]
 round: Р.67
-point: null
+point: "change r67-curves-stills-import (летопись заморожена на §470)"
 tests: [t784b, t785, t785b, t790]
 depends_on: [F-AUT-009, F-AUT-001]
 trackers: []

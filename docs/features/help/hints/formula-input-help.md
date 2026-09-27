@@ -1,17 +1,17 @@
 ---
 id: F-HLP-034
 title: Справка и дополнение в поле формулы — без попапов
-status: принято
+status: сделано
 priority: B
 cost: S
 category: help/hints
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, blender-5.2, vscode-1.136]
-we_have: нет
+we_have: да
 crates: [kt-model, kt-app]
 invariants: [12]
 ui_rules: [9, 10, 16]
 round: Р.67
-point: null
+point: "change r67-curves-stills-import (летопись заморожена на §470)"
 tests: [t789, t789b]
 depends_on: [F-AUT-007, F-HLP-006, F-AUT-010]
 trackers: []

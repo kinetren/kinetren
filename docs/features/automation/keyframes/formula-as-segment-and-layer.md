@@ -1,18 +1,18 @@
 ---
 id: F-AUT-010
 title: Формула на отрезке и формула-слой поверх ключей
-status: принято
+status: сделано
 priority: A
 cost: M
 category: automation/keyframes
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, blender-5.2]
-we_have: частично
+we_have: да
 crates: [kt-model, kt-otio, kt-app]
 invariants: [11]
 ui_rules: [5, 9, 16, 20]
 round: Р.67
-point: null
-tests: [t784, t787, t787b, t787c, t787d, t787e, t792]
+point: "change r67-curves-stills-import (летопись заморожена на §470)"
+tests: [t784, t787, t787b, t787c, t787d, t787e, t792, t792b]
 depends_on: [F-AUT-007, F-AUT-008, F-AUT-009]
 trackers: []
 services: []
