@@ -60,8 +60,32 @@ class Screen:
         self.out = out
         self.procs = []
 
+    def free_display(self):
+        """Снять ЗАМОК мёртвого X-сервера на своём номере экрана.
+
+        Прерванный прогон оставляет `/tmp/.X<n>-lock`, и следующий Xvfb
+        отказывается стартовать («Server is already active for display N»).
+        Программа тогда подключается в никуда и падает внутри winit, а
+        выглядит это как «сценарий сломался». Замок снимается ТОЛЬКО если
+        за ним нет живого сервера.
+        """
+        n = self.display.lstrip(":")
+        alive = subprocess.run(
+            ["pgrep", "-f", f"Xvfb {self.display}"], capture_output=True, text=True
+        ).stdout.split()
+        if alive:
+            return
+        for path in (f"/tmp/.X{n}-lock", f"/tmp/.X11-unix/X{n}"):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
     def __enter__(self):
-        logs = open(os.path.join(self.out, "xvfb.log"), "w")
+        self.free_display()
+        # лог — СВОЙ у каждого экрана: общий файл работники затирали друг
+        # другу, и причина отказа X-сервера пропадала
+        logs = open(os.path.join(self.out, f"xvfb{self.display.lstrip(':')}.log"), "w")
         self.procs.append(
             subprocess.Popen(
                 ["Xvfb", self.display, "-screen", "0", SCREEN, "-nolisten", "tcp"],
@@ -84,8 +108,13 @@ class Screen:
                 break
             except subprocess.CalledProcessError:
                 time.sleep(0.25)
+        else:
+            raise SystemExit(
+                f"X-сервер на {self.display} не поднялся, см. "
+                f"{self.out}/xvfb{self.display.lstrip(':')}.log"
+            )
         if shutil.which("openbox"):
-            wm = open(os.path.join(self.out, "openbox.log"), "w")
+            wm = open(os.path.join(self.out, f"openbox{self.display.lstrip(':')}.log"), "w")
             self.procs.append(subprocess.Popen(["openbox"], stdout=wm, stderr=wm))
             time.sleep(0.5)
         return self
@@ -130,10 +159,35 @@ class Bench:
         e["KT_AUTOSAVE_SECS"] = "600"
         return e
 
+    def kill_stale(self):
+        """Убить ЧУЖУЮ программу, оставшуюся в этом каталоге стенда.
+
+        Прерванный прогон (Ctrl+C, убитый родитель) оставляет kt-app живым, и
+        он продолжает писать СВОЙ дамп геометрии в тот же файл: следующий
+        прогон читает кадры и проект чужого процесса и краснеет непонятно
+        почему. Каталог стенда — собственность работника, поэтому чистим его
+        перед запуском.
+        """
+        try:
+            out = subprocess.run(
+                ["pgrep", "-f", self.dir], capture_output=True, text=True
+            ).stdout.split()
+        except OSError:
+            return
+        me = str(os.getpid())
+        for pid in out:
+            if pid == me:
+                continue
+            try:
+                os.kill(int(pid), 15)
+            except (ProcessLookupError, PermissionError, ValueError):
+                pass
+
     def ensure(self):
         """Стенд жив? Иначе поднять (первый раз или после падения)."""
         if self.proc is not None and self.proc.poll() is None:
             return
+        self.kill_stale()
         os.makedirs(self.store, exist_ok=True)
         subprocess.run([KT_CLI, "new", self.blank, "--force"], check=True, capture_output=True)
         for p in (self.ctl, self.geom):

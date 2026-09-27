@@ -529,13 +529,18 @@ class Live:
         from Xlib import X, XK
 
         table = {"ctrl": "Control_L", "shift": "Shift_L", "alt": "Alt_L"}
+        mark = self.seen()
         for n in names:
             code = probe.d.keysym_to_keycode(XK.string_to_keysym(table[n]))
             probe.xtest.fake_input(
                 probe.d, X.KeyPress if pressed else X.KeyRelease, code
             )
         probe.d.sync()
-        self.wait_frame(1, what="кадр с зажатым модификатором", soft=True)
+        # МОДИФИКАТОР ОБЯЗАН БЫТЬ ПРОЧИТАН ДО ЖЕСТА: egui берёт состояние
+        # модификаторов из кадра, и клик, попавший в кадр раньше нажатия
+        # Ctrl, приезжает обычным (Ctrl+клик в `nestshare` так и терял
+        # второе событие из выделения).
+        self.wait_seen(mark, "модификатор прочитан", frames=1, soft=True)
 
     def click(self, x, y, mods=()):
         # окно поднимается ОДИН раз за сценарий (Р.68): мышь работает и без
@@ -1030,8 +1035,14 @@ class Live:
         while time.time() < deadline:
             if os.path.getmtime(self.project) != before:
                 return True
+            # ПИСАТЬ БЫЛО НЕЧЕГО — это не отказ: программа не переписывает
+            # файл, в котором уже лежит текущая редакция (звёздочки нет,
+            # `dirty` в дампе — false). Требовать записи всегда значило бы
+            # объявлять дефектом ровно то поведение, которое мы просили.
+            if not self.geom().get("dirty", False):
+                return False
             _poll(0.05)
-        raise Failure("программа не записала проект после Ctrl+S")
+        raise Failure("программа не записала проект после Ctrl+S, хотя правки есть")
 
     def saved_project(self):
         """Ctrl+S и разбор того, что программа записала на диск."""
