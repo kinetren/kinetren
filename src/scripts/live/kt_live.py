@@ -195,6 +195,10 @@ class Live:
         store = os.path.join(self.out, "store")
         os.makedirs(store, exist_ok=True)
         env["KT_USER_STORE_DIR"] = store
+        # и СВОЙ XDG_DATA_HOME: по нему живут безымянное восстановление,
+        # журнал и замки проектов — без него сценарий находит чужую
+        # несохранённую работу в домашнем каталоге разработчика
+        env["XDG_DATA_HOME"] = os.path.join(self.out, "xdg")
         if self.autoplay:
             env["KT_AUTOPLAY"] = "1"
         log = open(os.path.join(self.out, "kt-app.log"), "w")
@@ -242,10 +246,12 @@ class Live:
         # (библиотека пресетов), отдаёт стенду своё.
         store = os.environ.get("KT_USER_STORE_DIR") or os.path.join(self.out, "store")
         os.makedirs(store, exist_ok=True)
+        os.makedirs(store, exist_ok=True)
         self._ctl("store", store)
         seq = self._ctl("open", os.path.abspath(self.project))
         self._wait_ctl(seq)
         self.wait_frame(2, what="первый кадр нового проекта в стенде")
+        self.settle()
         g = self.geom()
         got = os.path.realpath(g.get("project", ""))
         self.expect(
@@ -324,6 +330,10 @@ class Live:
                 if self.proc.poll() is not None:
                     raise Failure(f"kt-app упал на старте, см. {self.out}/kt-app.log")
                 if self._frame_now() >= 2:
+                    # программа ещё доводит первый кадр (источники, тумбы,
+                    # раскладка): жест, поданный в этот момент, уезжает в
+                    # никуда. Ждём тишины, а не «ещё полсекунды сверху».
+                    self.settle()
                     return
                 _poll(0.05)
             raise Failure("программа не нарисовала ни одного кадра — окно осталось пустым")
@@ -370,7 +380,7 @@ class Live:
         сама говорит, когда успокоилась: кадры перестают идти, потому что
         перерисовка бывает ТОЛЬКО при движении (инвариант №12).
         """
-        timeout = timeout if timeout is not None else max(4.0, 30.0 * self._dt)
+        timeout = timeout if timeout is not None else max(10.0, 40.0 * self._dt)
         deadline = time.time() + timeout
         last, since = self._frame_now(), time.time()
         while time.time() < deadline:
@@ -390,7 +400,7 @@ class Live:
 
     def wait_seen(self, mark, what="жест", timeout=None, frames=1, soft=False):
         """Ждать, пока программа ПРОЧИТАЕТ события жеста и нарисует кадр."""
-        timeout = timeout if timeout is not None else max(8.0, 40.0 * self._dt)
+        timeout = timeout if timeout is not None else max(25.0, 60.0 * self._dt)
         deadline = time.time() + timeout
         while time.time() < deadline:
             if self._input_now() > mark:
@@ -413,7 +423,10 @@ class Live:
         «просто так» законно ничем не кончается.
         """
         target = self._frame_now() + n
-        timeout = timeout if timeout is not None else max(6.0, 20.0 * self._dt * n)
+        # ПОЛ ожиданий щедрый (Р.68): под работниками кадр идёт втрое
+        # дольше, а лишние секунды тратятся только там, где и правда что-то
+        # сломалось — красное всё равно перегоняется в одиночку.
+        timeout = timeout if timeout is not None else max(20.0, 30.0 * self._dt * n)
         started = time.time()
         deadline = started + timeout
         while time.time() < deadline:
@@ -589,6 +602,11 @@ class Live:
         mark = self.seen()
         probe.move(x, y, pause=0.0)
         self.wait_seen(mark, "наведение перед двойным кликом", soft=True)
+        pause(
+            0.2,
+            "время клика egui берёт из КАДРА, в который тот попал: свежей позиции "
+            "нужен свой кадр, иначе первый клик двойного теряется вместе с ним",
+        )
         for i in range(2):
             if i:
                 # МЕЖДУ кликами нужен зазор: четыре события подряд в
@@ -627,6 +645,11 @@ class Live:
         mark = self.seen()
         probe.button(True, pause=0.01)
         self.wait_seen(mark, "нажатие кнопки (начало драга)", frames=2)
+        pause(
+            0.2,
+            "egui засчитывает драг по порогу И по кадру: нажатие обязано пережить "
+            "целый кадр до первого сдвига, иначе жест начинается уже в цели",
+        )
         step = 8 if x1 >= x0 else -8
         mark = self.seen()
         probe.move(x0 + step, y0, pause=0.0)
@@ -1031,7 +1054,7 @@ class Live:
         """
         before = os.path.getmtime(self.project)
         self.key("ctrl+s")
-        deadline = time.time() + max(15.0, 60.0 * self._dt)
+        deadline = time.time() + max(40.0, 90.0 * self._dt)
         while time.time() < deadline:
             if os.path.getmtime(self.project) != before:
                 return True

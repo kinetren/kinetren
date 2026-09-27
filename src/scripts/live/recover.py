@@ -31,7 +31,7 @@ def recovery_of(project):
     return project + ".recovery.otio"
 
 
-def wait_file(path, timeout=30.0, what="файл"):
+def wait_file(path, timeout=90.0, what="файл"):
     deadline = time.time() + timeout
     while time.time() < deadline:
         if os.path.exists(path) and os.path.getsize(path) > 0:
