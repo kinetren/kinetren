@@ -250,6 +250,14 @@ def main():
                 own = wants_own_process(name)
                 scen_out = os.path.join(out, name)
                 os.makedirs(scen_out, exist_ok=True)
+                # ХРАНИЛИЩЕ СЦЕНАРИЯ — ЧИСТОЕ НА КАЖДЫЙ ПРОГОН (Р.68):
+                # упавший прогон оставляет в нём файл восстановления и
+                # рабочее место, и ПЕРЕГОН в одиночку начинается с чужого
+                # состояния — сценарий, зелёный сам по себе, краснел второй
+                # раз подряд, и механизм «красное только дважды» переставал
+                # отличать флак от дефекта.
+                for leftover in ("store", "xdg"):
+                    shutil.rmtree(os.path.join(scen_out, leftover), ignore_errors=True)
                 env = dict(os.environ)
                 if own:
                     # два окна kinotrain на одном экране — это прицел в чужое
