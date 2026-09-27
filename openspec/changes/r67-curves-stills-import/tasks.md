@@ -137,7 +137,7 @@
   (`compare`). Есть разница → причина в design.md, регрессионный тест t798 (крейт по
   причине), фикс; нет → скриншоты и слова в отчёте, вопрос владельцу о медиа. Проверка:
   файлы `target/live-out/rendereg3/*.png` и абзац в отчёте.
-- [ ] 7.2 `src/scripts/specs-user-path.py --check` (строка ПУТЬ у UI-сценариев с тестом
+- [x] 7.2 `src/scripts/specs-user-path.py --check` (строка ПУТЬ у UI-сценариев с тестом
   ≥ t783 в kt-app), тест t799 (`reach_tests.rs`) зовёт его; `kt_live.py::step(name)` —
   скриншот на шаг в `target/live-out/<сценарий>/`; `finish.sh` печатает список после
   версии; `live-check.sh` знает `curves`, `stills`, `import_old`. Проверка: t799 красный

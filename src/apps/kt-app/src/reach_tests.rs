@@ -3411,3 +3411,74 @@ fn t789b_formula_help_reachable_from_every_carrier() {
     assert!(h.query_by_label(tr(k::fx::HELP)).is_some(), "справки нет у экземпляра");
     assert!(h.query_by_label(tr(k::fx::DRIVE_BY)).is_some(), "двери связи нет у экземпляра");
 }
+
+/// Тест 799 (Р.67): сторож «ПУТИ ПОЛЬЗОВАТЕЛЯ». У каждого UI-сценария с
+/// тестом kt-app от t783 в спеке стоит строка `ПУТЬ` — что человек делает
+/// и что видит; у сценария без жеста — причина словами, не короче сорока
+/// символов. Проверяется ЗАПУСКОМ скрипта: он же стоит в `finish.sh`.
+///
+/// Владелец: «СКОЛЬКО РАЗ МНЕ ПОВТОРЯТЬ ЧТОБЫ ВСЕ АГЕНТЫ ДУМАЛИ О
+/// ПОЛЬЗОВАТЕЛЕ В ПЕРВУЮ ОЧЕРЕДЬ? … ЭТО КООРДИНАЛЬНО НАДО МЕНЯТЬ!».
+#[test]
+fn t799_ui_scenarios_describe_the_user_path() {
+    // CARGO_MANIFEST_DIR = src/apps/kt-app; корень дерева — на три выше
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let script = root.join("src/scripts/specs-user-path.py");
+    assert!(script.exists(), "сторожа нет на месте: {}", script.display());
+
+    let run = |dir: &std::path::Path| -> (bool, String) {
+        let out = std::process::Command::new("python3")
+            .arg(&script)
+            .arg("--check")
+            .current_dir(dir)
+            .output()
+            .expect("python3 для сторожа спек");
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+
+    // 1) на СЕГОДНЯШНИХ спеках — зелёный
+    let (ok, said) = run(&root);
+    assert!(ok, "сторож красен на текущих спеках: {said}");
+
+    // 2) у НОВОГО сценария удаляем строку ПУТЬ — обязан покраснеть с
+    //    адресом файла и именем сценария
+    let specs: Vec<std::path::PathBuf> = ["ui-timeline", "ui-reach"]
+        .iter()
+        .flat_map(|cap| {
+            let mut v = vec![root.join("openspec/specs").join(cap).join("spec.md")];
+            if let Ok(rd) = std::fs::read_dir(root.join("openspec/changes")) {
+                for e in rd.flatten() {
+                    v.push(e.path().join("specs").join(cap).join("spec.md"));
+                }
+            }
+            v
+        })
+        .filter(|p| p.exists())
+        .collect();
+    let victim = specs
+        .iter()
+        .find(|p| std::fs::read_to_string(p).unwrap_or_default().contains("- **ПУТЬ**"))
+        .cloned()
+        .expect("ни в одной спеке нет строки ПУТЬ — правило не действует вовсе");
+    let orig = std::fs::read_to_string(&victim).unwrap();
+    let broken = orig.replacen("- **ПУТЬ**", "- **БЫЛО**", 1);
+    std::fs::write(&victim, &broken).unwrap();
+    let (ok_after, said_after) = run(&root);
+    std::fs::write(&victim, &orig).unwrap();
+    assert!(!ok_after, "сторож НЕ заметил сценария без пути пользователя");
+    assert!(
+        said_after.contains("сценарий") && said_after.contains("spec.md"),
+        "сторож молчит об адресе: {said_after}"
+    );
+
+    // 3) сам сторож стоит в finish.sh — иначе он зелёный и забытый
+    let finish = std::fs::read_to_string(root.join("src/scripts/finish.sh")).expect("finish.sh");
+    assert!(
+        finish.contains("specs-user-path.py"),
+        "сторож не зовётся из finish.sh: правило снова держится только прозой"
+    );
+    assert!(
+        finish.contains("шаги живых сценариев"),
+        "finish.sh не печатает список шагов ПУТИ — отчёт снова без картинок"
+    );
+}
