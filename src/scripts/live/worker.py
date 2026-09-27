@@ -104,8 +104,12 @@ class Screen:
 class Bench:
     """Один kt-app работника: в нём сценарии открывают свои проекты подряд."""
 
-    def __init__(self, out):
-        self.dir = os.path.join(out, "bench")
+    def __init__(self, out, display):
+        # каталог стенда — СВОЙ У КАЖДОГО РАБОТНИКА: общий `out` один на
+        # прогон, и общий `bench/` означал общий канал команд и общий дамп
+        # геометрии — работники открывали проекты друг другу и читали чужие
+        # кадры. Это и выглядело как «параллель всё красит».
+        self.dir = os.path.join(out, "bench" + display.replace(":", ""))
         os.makedirs(self.dir, exist_ok=True)
         self.ctl = os.path.join(self.dir, "ctl")
         self.geom = os.path.join(self.dir, "geom.json")
@@ -180,7 +184,7 @@ def main():
     os.makedirs(verdicts, exist_ok=True)
     fail = 0
     with Screen(display, out):
-        bench = Bench(out)
+        bench = Bench(out, display)
         try:
             for name in names:
                 own = wants_own_process(name)

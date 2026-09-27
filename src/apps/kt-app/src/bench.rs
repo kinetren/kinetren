@@ -143,21 +143,19 @@ pub(crate) fn finished(seq: u64) {
 ///
 /// Доказательство ЧИСТОТЫ между сценариями: стенд открывает проекты
 /// подряд, и сценарий обязан начинать с программы без чужих окон. Считаем
-/// видимые слои egui поверх содержимого — окна (`Order::Middle`) и
-/// модальные окна с попапами (`Order::Foreground`); фон панелей
-/// (`Order::Background`) и подсказки наведения (`Order::Tooltip`) окнами
-/// не являются.
+/// видимые слои egui поверх содержимого — ОКНА (`Order::Middle`).
+///
+/// `Order::Foreground` сюда не годится, хотя модальные окна живут там:
+/// в нём же рисуется строка состояния (`Area(Foreground)`, правило «одна
+/// подсказка в одном месте»), и «чисто» превращалось в «одно окно
+/// открыто» на ровном месте. Модальные окна программа называет сама —
+/// `ask`/`recovery_open` дописываются к этому числу на месте вызова.
 pub(crate) fn open_windows(ctx: &eframe::egui::Context) -> usize {
     ctx.memory(|m| {
         m.areas()
             .visible_layer_ids()
             .into_iter()
-            .filter(|l| {
-                matches!(
-                    l.order,
-                    eframe::egui::Order::Middle | eframe::egui::Order::Foreground
-                )
-            })
+            .filter(|l| l.order == eframe::egui::Order::Middle)
             .count()
     })
 }

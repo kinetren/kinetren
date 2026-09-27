@@ -2244,7 +2244,10 @@ impl KtApp {
         // сценариев (Р.27): без неё скрипт вынужден УГАДЫВАТЬ, где дорожка и
         // сколько пикселей в секунде, и ломается от любой правки вёрстки.
         // Только по env, не чаще 10 Гц, атомарной заменой файла.
-        self.dump_geom(&geom, ui.ctx().content_rect(), crate::bench::open_windows(ui.ctx()));
+        // модальные окна программа называет сама: они живут в слое строки
+        // состояния, и по слоям их от неё не отличить
+        let modal = usize::from(self.ask.is_some() || self.recovery_open);
+        self.dump_geom(&geom, ui.ctx().content_rect(), crate::bench::open_windows(ui.ctx()) + modal);
         let lane_top = |kind: ClipKind, lane: u32| -> f32 { geom.lane_top(kind, lane) };
         let morph_lane_top = |lane: u32| -> f32 { geom.morph_lane_top(lane) };
         // (подпись, центр строки, верх строки) — верх нужен, чтобы длинный
