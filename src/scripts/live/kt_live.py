@@ -699,8 +699,13 @@ class Live:
         )
 
     def has_probe(self, name, tries=12):
-        """Виджет с таким именем показан прямо сейчас."""
-        for _ in range(tries):
+        """Виджет с таким именем показан прямо сейчас.
+
+        `tries` остаётся в подписи ради вызовов сценариев (у отрицательных
+        проверок он маленький намеренно), но считается СРОКОМ: дамп идёт
+        10 Гц, и «двенадцать кадров» — это чуть больше секунды."""
+        deadline = time.time() + max(0.5 * tries, 1.0)
+        while time.time() < deadline:
             if any(f["param"] == name for f in self.geom().get("fields", [])):
                 return True
             self.wait_frame(1, what=f"кадр в ожидании виджета {name}", soft=True)
@@ -720,7 +725,11 @@ class Live:
         вместо неё, пока программа перестанет перерисовывать, и читаем
         прямоугольник заново.
         """
-        for _ in range(20):
+        # СРОК, А НЕ ЧИСЛО ПРОХОДОВ: дамп геометрии пишется 10 раз в секунду,
+        # и «двадцать кадров» превращались в две секунды вместо прежних пяти —
+        # щуп сдавался раньше, чем программа успевала открыть меню.
+        deadline = time.time() + max(8.0, 40.0 * self._dt)
+        while time.time() < deadline:
             f = next((f for f in self.geom().get("fields", []) if f["param"] == name), None)
             if f:
                 self.settle()
