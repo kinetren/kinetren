@@ -15075,10 +15075,21 @@ fn t754_instance_params_live_in_the_chain_head() {
     h.state_mut().open_fx_editor(s.b);
     h.step();
     h.step();
-    let head = format!("{} {}", crate::icons::PIN, tr(k::pubp::INST_TITLE));
+    // С Р.67 голова подписана ИМЕНЕМ ЛЕНТЫ, а не «Параметры композиции»:
+    // длинная строка закрывала полосу, а акцентный цвет при выделении давал
+    // «длинный синий прямоугольник» (владелец, п.8). Утверждение прежнее —
+    // голова есть и по клику даёт ручки автора, — меняется только подпись.
+    let reel = h
+        .state()
+        .model
+        .project()
+        .sequence(s.seq)
+        .map(|x| x.name.clone())
+        .expect("лента на месте");
+    let head = format!("{} {reel}", crate::icons::PIN);
     assert!(
         h.query_all_by_label_contains(&head).count() > 0,
-        "головы «Параметры композиции» нет в полосе цепочки экземпляра"
+        "головы экземпляра (пин и имя ленты) нет в полосе цепочки"
     );
 
     // клик по голове выбирает её — и появляются ручки автора
@@ -16722,4 +16733,185 @@ fn t791_instance_head_has_the_same_curve_block() {
     );
     let shown: Vec<String> = crate::reach_tests::painted_texts(&h).into_iter().map(|t| t.src).collect();
     assert!(shown.iter().any(|t| t == "t*2"), "поле стёрлось после Enter: {shown:?}");
+}
+
+/// Тест 794 (Р.67): рамка над кадром есть СРАЗУ (полезный контрол включён
+/// по умолчанию), выключение ПОМНИТСЯ между запусками, а схема формы
+/// вписывает кадр и рамку целиком при любом зуме.
+///
+/// Владелец: «вместо управления в превью у нас только скудное управление
+/// внутри виджета-fx» — рамка стартовала выключенной, не запоминалась и
+/// включалась лишь пунктом контекстного меню; «если заскейлишь даже на 2x
+/// — у тебя просто ничего в превью нет» — схема клиповалась своим
+/// прямоугольником.
+#[test]
+fn t794_frame_is_on_by_default_remembered_and_the_schema_fits() {
+    use kt_model::*;
+    // --- умолчание: показ ВКЛЮЧЁН без единого действия -------------------
+    assert_eq!(
+        KtApp::default_geom_mode(None),
+        crate::geomctl::GeomMode::Transform,
+        "без хранилища рамка обязана быть включена (правило 4: полезное — по умолчанию)"
+    );
+    assert_eq!(KtApp::default_geom_mode(Some(false)), crate::geomctl::GeomMode::Off);
+    assert_eq!(KtApp::default_geom_mode(Some(true)), crate::geomctl::GeomMode::Transform);
+
+    // --- выключение помнится: круг через файл рабочего места -------------
+    let dir = std::env::temp_dir().join(format!("kt-t794-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let ws = dir.join("workspace.json");
+    let mut w = crate::user_store::load_workspace_at(&ws);
+    assert_eq!(w.geom_controls, None, "пустое хранилище не знает о рамке — это умолчание");
+    w.geom_controls = Some(false);
+    crate::user_store::save_workspace_at(&ws, &w);
+    let back = crate::user_store::load_workspace_at(&ws);
+    assert_eq!(back.geom_controls, Some(false), "выключение не пережило круг через файл");
+    assert_eq!(
+        KtApp::default_geom_mode(back.geom_controls),
+        crate::geomctl::GeomMode::Off,
+        "после перезапуска рамка обязана остаться выключенной"
+    );
+    // удаление хранилища возвращает умолчание «включено»
+    let _ = std::fs::remove_file(&ws);
+    assert_eq!(
+        KtApp::default_geom_mode(crate::user_store::load_workspace_at(&ws).geom_controls),
+        crate::geomctl::GeomMode::Transform
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // --- кнопка на самом кадре: есть, переключает, помнит ----------------
+    let (mut h, _clip) = harness_geom_ctl();
+    h.step();
+    let probes = crate::widgets::field_probe::take();
+    let _ = probes;
+    assert!(
+        h.state().geom_mode() != crate::geomctl::GeomMode::Off,
+        "сцена: рамка включена"
+    );
+    let img = h.state().preview_img_rect;
+    let btn = egui::pos2(img.right() - 17.0, img.top() + 17.0);
+    h.hover_at(btn);
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: btn,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.step();
+    h.step();
+    assert_eq!(
+        h.state().geom_mode(),
+        crate::geomctl::GeomMode::Off,
+        "кнопка в углу кадра не выключила рамку"
+    );
+    assert_eq!(
+        h.state().workspace.geom_controls,
+        Some(false),
+        "выключение не попало в рабочее место"
+    );
+    // при ИГРЕ кнопки нет (как и контролов)
+    h.state_mut().player.play();
+    h.step();
+    h.step();
+    let shown = crate::widgets::field_probe::take();
+    assert!(
+        !shown.iter().any(|(n, _)| n == "preview.geom_toggle"),
+        "при игре кнопка рамки осталась на кадре"
+    );
+    h.state_mut().player.pause();
+
+    // --- СХЕМА вписывает кадр и рамку при зуме 2× -----------------------
+    let size = egui::vec2(116.0, 66.0);
+    let zoomed = FxInstance::geometry_at(0.0, 0.0, 2.0);
+    let (quad, frame) = crate::geomctl::schema_points(&zoomed, size).expect("схема считается");
+    let area = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+    for c in quad {
+        assert!(area.contains(c), "угол рамки {c:?} вне схемы {area:?} (на прежнем коде — все четыре)");
+    }
+    assert!(area.contains(frame.min) && area.contains(frame.max), "кадр не влез в схему: {frame:?}");
+    // рамка при 2× ВИДНА и больше кадра — иначе схема не информативна
+    let (qw, fw) = (quad[1].x - quad[0].x, frame.width());
+    assert!(qw > fw * 1.5, "рамка при 2× не больше кадра: {qw} против {fw}");
+    // у умолчания рамка совпадает с кадром
+    let (q0, f0) = crate::geomctl::schema_points(&EventGeometry::default().node(), size).unwrap();
+    assert!((q0[1].x - q0[0].x - f0.width()).abs() < 1.5, "без зума рамка обязана лечь на кадр");
+}
+
+/// Тест 793 (Р.67): голова полосы у экземпляра ленты — короткая подпись
+/// цветом слота, а не длинная акцентная строка.
+///
+/// Владелец дословно: «нахуя пользователю загораживать fx-chain длинной
+/// надписью "Composition parameters"? Она еще и синяя... если ее выделить
+/// — то получится длинный синий прямоугольник».
+#[test]
+fn t793_instance_head_is_short_and_not_accent() {
+    let (mut h, s) = harness_news_template();
+    // длинное имя ленты: усечение обязано сработать, а не растить полосу
+    let long = "Выпуск новостей понедельника, вечерний эфир";
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.sequences.iter_mut().find(|x| x.id == s.seq).unwrap().name = long.into();
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+    }
+    h.state_mut().open_fx_editor_head(s.b);
+    h.step();
+    h.step();
+
+    // щуп пишется только под KT_GEOM_DUMP — в харнессе смотрим на
+    // НАРИСОВАННОЕ (то же правило, что у прочих утверждений о вёрстке)
+    let painted = crate::reach_tests::painted_texts(&h);
+    let label = painted
+        .iter()
+        .find(|t| t.src.starts_with(crate::icons::PIN) && t.src.contains("Выпуск"))
+        .unwrap_or_else(|| {
+            let pins: Vec<&String> = painted.iter().map(|t| &t.src).filter(|s| s.contains(crate::icons::PIN)).collect();
+            let all: Vec<&String> = painted.iter().map(|t| &t.src).filter(|s| s.contains("Выпуск")).collect();
+            panic!("подпись головы не нарисована; с пином: {pins:?}; с именем ленты: {all:?}")
+        });
+    // ширина головы — не больше слота с самым длинным именем
+    let slot_max = {
+        let fid = h.ctx.style_of(egui::Theme::Dark).text_styles[&egui::TextStyle::Button].clone();
+        h.ctx.fonts_mut(|f| f.glyph_width(&fid, 'M')) * crate::widgets::SLOT_NAME_CHARS as f32
+    };
+    assert!(
+        label.rect.width() <= slot_max + 40.0,
+        "голова шире слота: {} против {slot_max} (подпись не усечена)",
+        label.rect.width()
+    );
+    assert!(label.src.contains("Выпуск"), "голова не несёт имени ленты: {:?}", label.src);
+    assert!(label.elided, "длинное имя ленты не усечено: {:?}", label.drawn);
+    assert!(
+        !label.src.contains(tr(k::pubp::INST_TITLE)),
+        "голова по-прежнему подписана «{}»",
+        tr(k::pubp::INST_TITLE)
+    );
+    // цвет — обычный текст, НЕ акцент (синего прямоугольника не будет)
+    let accent = crate::theme::ACCENT;
+    let head_color = h
+        .output()
+        .shapes
+        .iter()
+        .filter_map(|cs| match &cs.shape {
+            egui::epaint::Shape::Text(t)
+                if t.galley.text().starts_with(crate::icons::PIN)
+                    && t.galley.text().contains("Выпуск") =>
+            {
+                t.galley.job.sections.first().map(|s| s.format.color)
+            }
+            _ => None,
+        })
+        .next()
+        .expect("цвет подписи головы");
+    assert_ne!(head_color, accent, "голова осталась акцентной");
+    assert_eq!(
+        head_color,
+        h.ctx.style_of(egui::Theme::Dark).visuals.text_color(),
+        "голова не цвета слота"
+    );
 }

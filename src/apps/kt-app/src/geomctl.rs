@@ -131,11 +131,70 @@ impl KtApp {
         self.geom_ctl
     }
 
+    /// Умолчание показа рамки: ВКЛЮЧЕНА (режим «Трансформация»), пока
+    /// человек не выключил её сам (Р.67). Владелец: «вместо управления в
+    /// превью у нас только скудное управление внутри виджета-fx» — рамка
+    /// стартовала выключенной, не помнилась и включалась только пунктом
+    /// правого клика, то есть для человека её не существовало.
+    pub(crate) fn default_geom_mode(on: Option<bool>) -> GeomMode {
+        if on.unwrap_or(true) { GeomMode::Transform } else { GeomMode::Off }
+    }
+
     /// Переключить набор по кругу. Удобство, не содержимое: `dirty_ui`.
+    ///
+    /// Состояние показа помнится рабочим местом (Р.67): человек выключил
+    /// рамку — она не возвращается при следующем запуске.
     pub(crate) fn cycle_geom_mode(&mut self) {
         self.geom_ctl = self.geom_ctl.next();
+        self.workspace.geom_controls = Some(self.geom_ctl != GeomMode::Off);
         self.dirty_ui = true;
         self.note(crate::tf!(crate::i18n::k::geomctl::TOGGLE, mode_name(self.geom_ctl)));
+    }
+
+    /// ПЕРЕКЛЮЧАТЕЛЬ показа рамки — в углу самого кадра (Р.67).
+    ///
+    /// Прежде показ переключался только пунктом контекстного меню превью:
+    /// человек его не нашёл («вместо управления в превью у нас только
+    /// скудное управление внутри виджета-fx»). Кнопка — иконка, а не
+    /// чекбокс (правило 9), рисуется ТОЛЬКО на паузе: при игре контролов
+    /// нет, и кнопка над кадром была бы единственным, что мигает.
+    pub(crate) fn geom_toggle_button(&mut self, ui: &mut egui::Ui, img: egui::Rect) {
+        if self.player.transport.is_playing() || img.width() < 60.0 {
+            return;
+        }
+        let size = egui::vec2(22.0, 22.0);
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(img.right() - size.x - 6.0, img.top() + 6.0),
+            size,
+        );
+        let on = self.geom_mode() != GeomMode::Off;
+        let text = egui::RichText::new(crate::icons::SELECTION)
+            .color(if on { crate::theme::ACCENT } else { egui::Color32::from_gray(150) });
+        let r = ui.put(rect, egui::Button::new(text).frame(on));
+        crate::widgets::field_probe::note("preview.geom_toggle", r.rect);
+        let hint = if on {
+            crate::i18n::tr(crate::i18n::k::geomctl::TOGGLE_OFF_HINT)
+        } else {
+            crate::i18n::tr(crate::i18n::k::geomctl::TOGGLE_ON_HINT)
+        };
+        // ДОСТУПНОЕ ИМЯ — словами, а не глифом (тот же приём, что у кнопок
+        // сброса Р.59): иначе кнопка неотличима от инструмента выделения,
+        // у которого та же иконка, ни для скринридера, ни для харнесса
+        {
+            let name = hint.to_string();
+            r.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name.clone())
+            });
+        }
+        crate::widgets::hint(&r, hint);
+        if r.clicked() {
+            // выключение — в Off, включение — в «Трансформацию» (полезный
+            // набор), а не по кругу: кнопка это ВЫКЛЮЧАТЕЛЬ показа
+            self.geom_ctl = if on { GeomMode::Off } else { GeomMode::Transform };
+            self.workspace.geom_controls = Some(!on);
+            self.dirty_ui = true;
+            self.note(crate::tf!(crate::i18n::k::geomctl::TOGGLE, mode_name(self.geom_ctl)));
+        }
     }
 
     /// Событие, у которого рисуется рамка, либо причина, почему её нет.
@@ -674,6 +733,33 @@ pub(crate) fn schema_quad(f: &FxInstance, size: egui::Vec2) -> Option<SchemaShap
     Some((pl.corners(), pl.anchor))
 }
 
+/// Схема ВПИСЫВАЕТ рамку и кадр в свой прямоугольник (Р.67).
+///
+/// Владелец: «если заскейлишь даже на 2x — у тебя просто ничего в превью
+/// нет». Схема рисовала рамку в координатах холста и клиповала её своим
+/// прямоугольником: при зуме больше единицы видеть было нечего. Теперь
+/// масштаб выбирается по охвату `union(кадр, рамка)`, кадр рисуется
+/// внутри той же схемы штрихом — видно и то, и другое.
+fn schema_fit(quad: &[(f64, f64); 4], anchor: (f64, f64), size: egui::Vec2) -> (f32, egui::Vec2) {
+    let (mut lo_x, mut hi_x) = (0.0f64, size.x as f64);
+    let (mut lo_y, mut hi_y) = (0.0f64, size.y as f64);
+    for c in quad.iter().chain(std::iter::once(&anchor)) {
+        lo_x = lo_x.min(c.0);
+        hi_x = hi_x.max(c.0);
+        lo_y = lo_y.min(c.1);
+        hi_y = hi_y.max(c.1);
+    }
+    let (w, h) = ((hi_x - lo_x).max(1e-6), (hi_y - lo_y).max(1e-6));
+    let pad = 3.0;
+    let k = (((size.x - 2.0 * pad) as f64 / w).min((size.y - 2.0 * pad) as f64 / h)).min(1.0) as f32;
+    // центрируем охват в прямоугольнике схемы
+    let off = egui::vec2(
+        (size.x - (w as f32) * k) * 0.5 - (lo_x as f32) * k,
+        (size.y - (h as f32) * k) * 0.5 - (lo_y as f32) * k,
+    );
+    (k, off)
+}
+
 fn frame_schema(ui: &mut egui::Ui, f: &FxInstance, size: egui::Vec2) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::hover());
     let p = ui.painter_at(rect);
@@ -681,9 +767,14 @@ fn frame_schema(ui: &mut egui::Ui, f: &FxInstance, size: egui::Vec2) -> egui::Re
     p.rect_filled(rect, 2.0, egui::Color32::from_rgb(18, 18, 22));
     p.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, dim), egui::StrokeKind::Inside);
     let Some((quad, anchor)) = schema_quad(f, rect.size()) else { return resp };
+    let (k, off) = schema_fit(&quad, anchor, rect.size());
     let to = |q: (f64, f64)| {
-        egui::pos2(rect.left() + q.0 as f32, rect.top() + q.1 as f32)
+        egui::pos2(rect.left() + q.0 as f32 * k + off.x, rect.top() + q.1 as f32 * k + off.y)
     };
+    // КАДР — внутри той же схемы: без него «рамка вдвое больше кадра» не
+    // отличить от «рамка по кадру»
+    let frame = egui::Rect::from_min_max(to((0.0, 0.0)), to((size.x as f64, size.y as f64)));
+    p.rect_stroke(frame, 0.0, egui::Stroke::new(1.0, dim), egui::StrokeKind::Middle);
     let cs: Vec<egui::Pos2> = quad.iter().map(|c| to(*c)).collect();
     p.add(egui::Shape::closed_line(cs, egui::Stroke::new(1.5, crate::theme::ACCENT)));
     let a = to(anchor);
@@ -691,6 +782,19 @@ fn frame_schema(ui: &mut egui::Ui, f: &FxInstance, size: egui::Vec2) -> egui::Re
     p.line_segment([a - egui::vec2(5.0, 0.0), a + egui::vec2(5.0, 0.0)], (1.0, dim));
     p.line_segment([a - egui::vec2(0.0, 5.0), a + egui::vec2(0.0, 5.0)], (1.0, dim));
     resp
+}
+
+/// Углы рамки и кадра схемы В КООРДИНАТАХ прямоугольника схемы — для
+/// теста: утверждение «видно при 2×» делается по нарисованному.
+pub(crate) fn schema_points(
+    f: &FxInstance,
+    size: egui::Vec2,
+) -> Option<([egui::Pos2; 4], egui::Rect)> {
+    let (quad, anchor) = schema_quad(f, size)?;
+    let (k, off) = schema_fit(&quad, anchor, size);
+    let to = |q: (f64, f64)| egui::pos2(q.0 as f32 * k + off.x, q.1 as f32 * k + off.y);
+    let cs = quad.map(to);
+    Some((cs, egui::Rect::from_min_max(to((0.0, 0.0)), to((size.x as f64, size.y as f64)))))
 }
 
 /// Раздел «Трансформация» у ведущего узла: группы, пары X/Y одной строкой,

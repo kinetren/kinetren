@@ -919,7 +919,7 @@ impl KtApp {
             perf: PerfState::new(),
             preview_key: None,
             geom_drag: None,
-            geom_ctl: crate::geomctl::GeomMode::Off,
+            geom_ctl: Self::default_geom_mode(None),
             geom_ctl_drawn: false,
             preview_content: 0,
             preview_project: 0,
@@ -1161,7 +1161,7 @@ impl KtApp {
             perf: PerfState::new(),
             preview_key: None,
             geom_drag: None,
-            geom_ctl: crate::geomctl::GeomMode::Off,
+            geom_ctl: Self::default_geom_mode(None),
             geom_ctl_drawn: false,
             preview_content: 0,
             preview_project: 0,
@@ -1240,6 +1240,9 @@ impl KtApp {
             app.model.note_media_length(id, d);
         }
         app.workspace = crate::user_store::load_workspace();
+        // показ рамки — свойство рабочего места (Р.67): умолчание включено,
+        // выключение помнится между запусками
+        app.geom_ctl = Self::default_geom_mode(app.workspace.geom_controls);
         if app.workspace.meters_w > 0.0 {
             app.meters_w = app.workspace.meters_w.clamp(METERS_W_MIN, METERS_W_MAX);
         }
@@ -6299,6 +6302,11 @@ impl KtApp {
             // указатель последнему зарегистрированному интерактору
             self.preview_img_rect = img_rect;
             self.geometry_controls(ui, &painter, img_rect, (q.width, q.height));
+            // кнопка показа — ПОСЛЕ рамки: egui отдаёт указатель последнему
+            // зарегистрированному интерактору, и тело рамки (перенос)
+            // покрывает весь кадр — зарегистрируй кнопку раньше, клик по
+            // ней уходил бы переносу (поймано живым сценарием `geomctl`)
+            self.geom_toggle_button(ui, img_rect);
             self.title_drag_in_preview(ui, &painter, img_rect);
             // скрим — только если неполнота держится >180 мс (v1)
             let show_overlay = self

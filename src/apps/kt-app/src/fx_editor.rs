@@ -568,16 +568,26 @@ impl KtApp {
                                 }),
                                 // у ЭКЗЕМПЛЯРА ленты источника-генератора
                                 // нет, зато есть объявленные лентой ручки —
-                                // и живут они ровно тут (Р.63 п.12)
+                                // и живут они ровно тут (Р.63 п.12).
+                                //
+                                // Подпись — ИМЯ ЛЕНТЫ, а не «Параметры
+                                // композиции»: длинная строка закрывала
+                                // полосу, а акцентный цвет при выделении
+                                // давал «длинный синий прямоугольник»
+                                // (владелец, Р.67 п.8). Цвет — как у слота,
+                                // полное имя — в подсказке строки.
                                 (None, true) => Some(crate::widgets::HeadSlot {
                                     label: format!(
                                         "{} {}",
                                         crate::icons::PIN,
-                                        tr(k::pubp::INST_TITLE)
+                                        pub_doc
+                                            .sequence(clip.media)
+                                            .map(|s| s.name.clone())
+                                            .unwrap_or_else(|| tr(k::pubp::INST_TITLE).to_string())
                                     ),
                                     on: None,
                                     hint: tr(k::pubp::INST_OPEN),
-                                    color: crate::theme::ACCENT,
+                                    color: ui.visuals().text_color(),
                                 }),
                                 (None, false) => None,
                             };

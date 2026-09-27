@@ -127,10 +127,21 @@ def main(out):
         time.sleep(0.5)
         cx, cy = app.preview_center()
 
-        # --- 1. включаем контролы из правого клика по кадру ---------------
-        app.right_click(cx, cy)
-        app.click_probe("geom.toggle", "пункт «Контролы над кадром» в меню превью")
-        app.expect(app.has_probe("geom.frame"), "рамка трансформации появилась над кадром")
+        # --- 1. рамка есть СРАЗУ, кнопка на кадре её выключает (Р.67) -----
+        #
+        # ПУТЬ (спека ui-timeline, «Рамка есть сразу, выключение помнится»):
+        # открыть проект → кликнуть видео-событие → на кадре сразу рамка →
+        # кнопка в углу превью выключает её → включает обратно.
+        app.expect(app.has_probe("geom.frame"), "рамка есть сразу, без единого действия")
+        app.step("frame-by-default", "рамка над кадром у выделенного события")
+        app.expect(app.has_probe("preview.geom_toggle"), "кнопка показа — в углу кадра")
+        app.click_probe("preview.geom_toggle", "кнопка показа рамки")
+        time.sleep(0.6)
+        app.expect(not app.has_probe("geom.frame", tries=4), "кнопка выключила рамку")
+        app.step("frame-off", "рамка выключена кнопкой")
+        app.click_probe("preview.geom_toggle", "кнопка показа рамки (обратно)")
+        time.sleep(0.6)
+        app.expect(app.has_probe("geom.frame"), "кнопка вернула рамку")
         app.shot("frame")
 
         # область замера — вокруг центра превью, заведомо внутри картинки

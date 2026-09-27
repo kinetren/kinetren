@@ -492,6 +492,11 @@ pub struct Workspace {
     pub meters_w: f32,
     /// Вид по проекту, свежие впереди.
     views: Vec<(String, ProjectView)>,
+    /// Показ рамки геометрии над кадром превью (Р.67). Умолчание —
+    /// ВКЛЮЧЕНО: полезный контрол включён по умолчанию (правило 4
+    /// чек-листа), а выключение — решение человека, и оно помнится.
+    /// `None` — ключа в файле нет (первый запуск): берётся умолчание.
+    pub geom_controls: Option<bool>,
     /// Файл прочитан из будущей версии — только чтение.
     readonly: bool,
 }
@@ -532,6 +537,7 @@ pub fn load_workspace_at(path: &std::path::Path) -> Workspace {
     let ver = v.get("version").and_then(|x| x.as_u64()).unwrap_or(0);
     let mut w = Workspace { readonly: ver > WORKSPACE_VERSION, ..Default::default() };
     w.meters_w = v.get("meters_w").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+    w.geom_controls = v.get("geom_controls").and_then(|x| x.as_bool());
     if let Some(arr) = v.get("views").and_then(|x| x.as_array()) {
         for e in arr.iter().take(WORKSPACE_KEEP) {
             let (Some(path), Some(vs), Some(tp)) = (
@@ -574,11 +580,16 @@ pub fn save_workspace_at(path: &std::path::Path, w: &Workspace) {
             })
         })
         .collect();
-    let doc = serde_json::json!({
+    let mut doc = serde_json::json!({
         "version": WORKSPACE_VERSION,
         "meters_w": w.meters_w,
         "views": views,
     });
+    // ключ пишется, только если человек трогал показ: файл без него —
+    // «умолчание», и оно остаётся включённым
+    if let Some(on) = w.geom_controls {
+        doc["geom_controls"] = serde_json::json!(on);
+    }
     if let Some(d) = path.parent() {
         let _ = std::fs::create_dir_all(d);
     }
