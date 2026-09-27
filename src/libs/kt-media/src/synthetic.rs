@@ -83,6 +83,7 @@ impl SyntheticSource {
                 width: 64,
                 height: 36,
                 sar: (1, 1),
+                still: false,
             },
             pattern,
             audio_reads: 0,
@@ -298,6 +299,7 @@ impl CheckerSource {
                 width: native_w.max(2),
                 height: native_h.max(2),
                 sar: (1, 1),
+                still: false,
             },
             native: (native_w.max(2), native_h.max(2)),
         }

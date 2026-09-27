@@ -57,6 +57,11 @@ macro_rules! ffmpeg_api {
             avutil::av_opt_set:
                 unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char, c_int) -> c_int,
             avutil::av_strerror: unsafe extern "C" fn(c_int, *mut c_char, usize) -> c_int,
+            // Р.67: у формата пикселей спрашивают, есть ли АЛЬФА — иначе
+            // прозрачность PNG/ProRes 4444 выбрасывалась молча, и логотип
+            // ложился на видео непрозрачным прямоугольником (F-MED-003)
+            avutil::av_pix_fmt_desc_get:
+                unsafe extern "C" fn(ffi::AVPixelFormat) -> *const ffi::AVPixFmtDescriptor,
 
             // --- avcodec ---
             avcodec::avcodec_version: unsafe extern "C" fn() -> c_uint,

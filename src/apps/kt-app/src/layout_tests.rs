@@ -13556,6 +13556,7 @@ fn t721_first_clip_sets_project_settings() {
         width: w,
         height: h,
         sar: (1, 1),
+        still: false,
     };
     let mut h = harness();
     let width_before = h.state().model.document().settings.width;
@@ -13624,6 +13625,7 @@ fn t722_aspect_mismatch_is_reported_with_an_address() {
         width: w,
         height: h,
         sar: (1, 1),
+        still: false,
     };
     let mut h = harness();
     let app = h.state_mut();
@@ -17061,5 +17063,184 @@ fn t795_reel_frames_reach_the_disk_and_cancel_is_not_a_failure() {
         "второе открытие снова отрендерило ленту: на проекте владельца превью «ОПЯТЬ не сохраняются»"
     );
     drop(h2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Сцена со СТИЛЛОМ: одно видео-событие на картинке (существующей или
+/// пропавшей) и открытый проект на диске — чтобы медиа шло обычным путём.
+fn harness_still(exists: bool) -> (Harness<'static, KtApp>, std::path::PathBuf) {
+    use kt_model::*;
+    let dir = std::env::temp_dir().join(format!(
+        "kt-still-{}-{}",
+        std::process::id(),
+        if exists { "ok" } else { "gone" }
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let img = dir.join("logo.jpg");
+    if exists {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/out/still.jpg");
+        let st = std::process::Command::new("bash")
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/gen.sh"))
+            .status()
+            .expect("gen.sh");
+        assert!(st.success());
+        std::fs::copy(&src, &img).expect("копия фикстуры");
+    }
+    let path = dir.join("still.otio");
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 320,
+        height: 180,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+        default_shape: Default::default(),
+        conform: Default::default(),
+        settings_explicit: false,
+    });
+    p.media.push(MediaRef::new(MediaId(1), img.to_string_lossy().to_string()));
+    let mut c = sample_clip(ClipId(1));
+    c.duration = kt_time::Tick(20 * 90_000); // ДЛИННЕЕ любой «длительности» картинки
+    c.media = MediaId(1);
+    p.clips.push(c);
+    p.ensure_tracks(LaneKind::Video, 1);
+    p.validate().unwrap();
+    std::fs::write(&path, kt_otio::save_project(&p, &Default::default(), path.parent())).unwrap();
+
+    let mut app = KtApp::open(&path).expect("проект со стиллом открывается");
+    app.recovery_on_drop = false;
+    app.workspace_file = Some(dir.join("ws.json"));
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(W, H))
+        .build_ui_state(|ui, app: &mut KtApp| app.draw_all(ui), app);
+    crate::icons::install_fonts(&h.ctx);
+    h.step();
+    (h, dir)
+}
+
+/// Курсор в заданную секунду события и ожидание укомплектованного кадра.
+fn wait_complete(h: &mut Harness<'_, KtApp>, at_s: f64) -> bool {
+    h.state_mut().player.seek(kt_time::Tick((at_s * 90_000.0) as i64));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        h.step();
+        if h.state().preview_key.map(|k| k.2).unwrap_or(false) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    false
+}
+
+/// Тест 796c (Р.67): событие на КАРТИНКЕ показывает её на всей своей
+/// длине, и «Loading…» над ним не висит.
+///
+/// Владелец: «статичные картинки не отображаюся, вообще.. там вечный
+/// Loading...». Событие длиной 20 с на картинке: кадр обязан быть и в
+/// нуле, и в середине, и у конца — у картинки нет ни сетки кадров, ни
+/// конца материала.
+#[test]
+fn t796c_a_still_shows_on_the_whole_event_without_loading() {
+    let (mut h, dir) = harness_still(true);
+    for at in [0.0, 9.5, 19.9] {
+        assert!(
+            wait_complete(&mut h, at),
+            "на {at} с кадра картинки нет: над событием висит «Loading…»"
+        );
+        // скрим неполноты не взводится
+        assert!(
+            h.state().incomplete_since.is_none(),
+            "на {at} с взведён скрим неполноты"
+        );
+    }
+    drop(h);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 796d (Р.67): ПРОПАВШАЯ картинка — заглушка с именем файла, а не
+/// вечное «Loading…»; вернувшийся файл подменяет её на ходу.
+#[test]
+fn t796d_a_missing_still_is_a_named_placeholder_not_loading() {
+    let (mut h, dir) = harness_still(false);
+    assert_eq!(h.state().placeholder_media.len(), 1, "пропавшая картинка не стала заглушкой");
+    assert!(
+        wait_complete(&mut h, 5.0),
+        "над пропавшей картинкой висит «Loading…» вместо заглушки с именем"
+    );
+    assert!(h.state().incomplete_since.is_none(), "скрим неполноты взведён над заглушкой");
+    // имя пропавшего файла названо человеку
+    let said: Vec<String> = h.state().notices.iter().map(|n| n.text.clone()).collect();
+    assert!(
+        said.iter().any(|t| t.contains("logo.jpg")),
+        "пропавший файл не назван в уведомлениях: {said:?}"
+    );
+    drop(h);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 797 (Р.67): путь ДОБАВЛЯЕМОГО медиа становится абсолютным, и файл
+/// не «пропадает» после сохранения проекта в подкаталог.
+///
+/// У владельца картинка записана как `sources/a3566951817_10.jpg` рядом с
+/// файлом, который сам лежит в `sources/`: путь, относительный к каталогу
+/// ЗАПУСКА, попал в модель как есть, а писатель принял его за
+/// относительный К ПРОЕКТУ. Файл искали по `sources/sources/…` — и не
+/// находили, хотя он не сдвинулся с места.
+#[test]
+fn t797_added_media_path_becomes_absolute() {
+    use kt_model::*;
+    let dir = std::env::temp_dir().join(format!("kt-t797-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("sources")).unwrap();
+    let img = dir.join("sources/x.jpg");
+    std::fs::write(&img, b"not really a jpeg").unwrap();
+
+    // относительный путь — ровно та форма, что была у владельца
+    let rel = "sources/x.jpg";
+    let abs = KtApp::absolute_media_path(rel);
+    assert!(std::path::Path::new(&abs).is_absolute(), "путь остался относительным: {abs}");
+    assert!(abs.ends_with("sources/x.jpg"), "путь искажён: {abs}");
+    // псевдо-пути не трогаются
+    assert_eq!(KtApp::absolute_media_path("synth:Ramp"), "synth:Ramp");
+    assert_eq!(KtApp::absolute_media_path("gen:solid"), "gen:solid");
+    // абсолютный остаётся собой
+    assert_eq!(KtApp::absolute_media_path(&abs), abs);
+
+    // СЛЕДСТВИЕ: запись в подкаталог и чтение обратно находят файл
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 320,
+        height: 180,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+        default_shape: Default::default(),
+        conform: Default::default(),
+        settings_explicit: false,
+    });
+    p.media.push(MediaRef::new(MediaId(1), img.to_string_lossy().to_string()));
+    let mut c = sample_clip(ClipId(1));
+    c.media = MediaId(1);
+    p.clips.push(c);
+    p.ensure_tracks(LaneKind::Video, 1);
+    p.validate().unwrap();
+    // проект ЛЕЖИТ РЯДОМ С КАРТИНКОЙ, в том же `sources/`
+    let proj = dir.join("sources/p.otio");
+    let text = kt_otio::save_project(&p, &Default::default(), proj.parent());
+    std::fs::write(&proj, &text).unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let url = doc["tracks"]["children"][0]["children"][0]["media_references"]["DEFAULT_MEDIA"]
+        ["target_url"]
+        .as_str()
+        .expect("путь медиа в файле");
+    assert_eq!(url, "x.jpg", "в файле не относительный к проекту путь: {url}");
+    let back = kt_otio::load_project(&std::fs::read_to_string(&proj).unwrap(), proj.parent())
+        .expect("проект читается");
+    let found = &back.project.media[0].path;
+    assert!(
+        std::path::Path::new(found).exists(),
+        "после круга файл не найден: {found} (ожидался {})",
+        img.display()
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

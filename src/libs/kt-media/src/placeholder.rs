@@ -50,6 +50,7 @@ impl PlaceholderSource {
                 width: DEFAULT_W,
                 height: DEFAULT_H,
                 sar: (1, 1),
+                still: true,
             },
             label: label.into(),
             cache: None,

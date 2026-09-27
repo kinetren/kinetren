@@ -35,6 +35,13 @@ gen testsrc_25fps.mp4 -f lavfi -i "testsrc=size=320x180:rate=25:duration=2" \
 gen testsrc_vp9.webm -f lavfi -i "testsrc=size=320x180:rate=30:duration=2" \
     -c:v libvpx-vp9 -cpu-used 8 -g 15 -f webm
 
+# Р.67 (t796): ОДИНОЧНАЯ КАРТИНКА — JPEG и PNG с альфой. Стиллы не были
+# покрыты ни одной фикстурой: «статичные картинки не отображаются, вообще..
+# там вечный Loading...» (владелец). Детерминированные генераторы lavfi.
+gen still.jpg -f lavfi -i "testsrc=size=320x180:rate=1:duration=1" -frames:v 1 -q:v 3 -f image2
+gen still_alpha.png -f lavfi -i "color=c=red@0.5:size=320x180:rate=1:duration=1,format=rgba" \
+    -frames:v 1 -f image2
+
 # Р.62 (t711): ОДНИ пиксели 640×480, РАЗНЫЙ SAR (1:1 и 2:1) — вид 4:3
 # против 8:3; кадры декода при равном Quality обязаны совпасть байт-в-байт,
 # различие живёт только в MediaInfo.sar. Один проход энкодера на оба

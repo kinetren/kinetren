@@ -339,3 +339,38 @@ fn t147_media_urls() {
     assert_eq!(resolve_media_path(base, &url), tricky);
     assert_eq!(resolve_media_path(base, "synth:Ramp"), Path::new("synth:Ramp"));
 }
+
+/// Тест 797b (Р.67): писатель считает относительность ОТ ФАЙЛА ПРОЕКТА, и
+/// путь, относительный к чему-то другому, он трактовать не умеет — значит
+/// в модели таких путей быть не должно (их абсолютизирует добавление
+/// медиа, t797). Здесь фиксируется само правило письма: абсолютный путь
+/// рядом с проектом становится коротким, а уже относительный уезжает в
+/// файл КАК ЕСТЬ — и именно так картинка владельца «пропадала».
+#[test]
+fn t797b_writer_relativizes_only_against_the_project_file() {
+    let dir = std::env::temp_dir().join(format!("kt-t797b-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("sources")).unwrap();
+    let proj = dir.join("sources/p.otio");
+    let img = dir.join("sources/x.jpg");
+
+    // абсолютный путь рядом с проектом — в файл уезжает короткое имя
+    let abs = kt_otio::media_target_url(proj.parent().unwrap(), &img.to_string_lossy());
+    assert_eq!(abs, "x.jpg", "абсолютный путь рядом с проектом не релятивизован: {abs}");
+    assert_eq!(
+        kt_otio::resolve_media_path(proj.parent().unwrap(), &abs),
+        img,
+        "короткое имя не разрешается обратно в тот же файл"
+    );
+
+    // путь, относительный к ЧЕМУ-ТО ДРУГОМУ, писатель принимает за
+    // относительный к проекту — и файл «пропадает», не сдвинувшись
+    let rel = "sources/x.jpg";
+    assert_eq!(kt_otio::media_target_url(proj.parent().unwrap(), rel), rel, "путь изменён");
+    assert_eq!(
+        kt_otio::resolve_media_path(proj.parent().unwrap(), rel),
+        dir.join("sources/sources/x.jpg"),
+        "относительный путь в модели обязан разрешаться от ПРОЕКТА — отсюда и пропажа"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

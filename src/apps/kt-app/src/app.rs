@@ -5723,7 +5723,30 @@ impl KtApp {
     }
 
     /// Медиа + клип(ы) в конкретную позицию (дроп в позицию мыши, п.2 v1.4).
+    /// Путь ДОБАВЛЯЕМОГО медиа — абсолютный (Р.67).
+    ///
+    /// В модели относительных путей к файлам не бывает: относительность
+    /// появляется только на ЗАПИСИ и только относительно файла проекта.
+    /// Иначе `sources/logo.jpg`, данный относительно каталога запуска,
+    /// при сохранении в `sources/p.otio` превращался в
+    /// `sources/sources/logo.jpg` — файл «пропадал», не сдвинувшись с
+    /// места (ровно это случилось с картинкой владельца). Псевдо-пути
+    /// (`synth:`, `gen:`) остаются как есть — они не файлы.
+    pub(crate) fn absolute_media_path(path: &str) -> String {
+        if kt_model::is_pseudo_path(path) {
+            return path.to_string();
+        }
+        let p = std::path::Path::new(path);
+        if p.is_absolute() {
+            return path.to_string();
+        }
+        std::path::absolute(p)
+            .map(|a| a.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| path.to_string())
+    }
+
     pub fn add_media_clip_at(&mut self, path: &str, at: Tick, lane_hint: Option<(ClipKind, u32)>) {
+        let path = &Self::absolute_media_path(path);
         let media_id = MediaId(self.next_media_id());
         // снимок синка — ДО apply: источник поднимаем сами ниже (Р.52)
         self.media_paths.insert(media_id, path.to_string());

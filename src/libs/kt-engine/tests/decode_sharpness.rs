@@ -40,6 +40,7 @@ impl MediaSource for Checker {
             width: NW,
             height: NH,
             sar: (1, 1),
+            still: false,
         })
     }
 

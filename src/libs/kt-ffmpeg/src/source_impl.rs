@@ -102,6 +102,11 @@ struct VideoPath {
     /// источника).
     pending: *mut ffi::AVFrame,
     pending_pts: i64,
+    /// ОДИНОЧНАЯ КАРТИНКА (Р.67): в файле один кадр, и seek по нему
+    /// демуксеру картинок не нужен — а попытка его сделать оставляла
+    /// поток без единого кадра («out of range» на любом тике, то самое
+    /// вечное «Loading…»).
+    still: bool,
     sws: *mut ffi::SwsContext,
     sws_key: (c_int, c_int, c_int, c_int, c_int),
     eof: bool,
@@ -227,10 +232,37 @@ impl Source {
         };
 
         let sc = unsafe { &*scan };
-        let duration = if sc.duration > 0 {
+        // ОДИНОЧНАЯ КАРТИНКА (Р.67): демуксеры картинок называются
+        // `image2`, `png_pipe`, `jpeg_pipe`, `webp_pipe`… — общий признак
+        // `_pipe` плюс `image2`. Признак берётся у ФОРМАТА, а не у длины:
+        // `image2` честно сообщает 0.04 с (один кадр при 25 fps), и по
+        // длительности картинка неотличима от очень короткого видео.
+        let still = {
+            let name = unsafe { std::ffi::CStr::from_ptr((*sc.iformat).name) }
+                .to_string_lossy()
+                .to_string();
+            let by_format = name == "image2" || name == "image2pipe" || name.ends_with("_pipe");
+            by_format && audio_idx < 0 && video_idx >= 0
+        };
+        let duration = if still {
+            // «практически бесконечная», как у заглушки: у картинки нет
+            // конца материала, и событие любой длины показывает её целиком
+            Tick(TICK_HZ * 3600 * 1000)
+        } else if sc.duration > 0 {
             Tick(sc.duration * TICK_HZ / ffi::AV_TIME_BASE as i64)
         } else {
             Tick(0)
+        };
+        // у картинки своей сетки кадров нет: `fps: None` — это и есть
+        // «спрашивай любой тик», а 25 fps демуксера — выдумка контейнера
+        // АЛЬФА исходного потока (Р.67): спрашиваем у дескриптора формата
+        let has_alpha = if video_idx >= 0 {
+            let st = unsafe { &**sc.streams.add(video_idx as usize) };
+            let par = unsafe { &*st.codecpar };
+            let d = unsafe { (api.av_pix_fmt_desc_get)(par.format) };
+            !d.is_null() && unsafe { (*d).flags } & ffi::AV_PIX_FMT_FLAG_ALPHA as u64 != 0
+        } else {
+            false
         };
         let (fps, src_w, src_h, sar) = if video_idx >= 0 {
             let st = unsafe { &**sc.streams.add(video_idx as usize) };
@@ -250,10 +282,12 @@ impl Source {
             duration,
             has_video: video_idx >= 0,
             has_audio: audio_idx >= 0,
-            fps,
+            fps: if still { None } else { fps },
             width: src_w,
             height: src_h,
             sar,
+            still,
+            has_alpha,
         };
         unsafe { (api.avformat_close_input)(&mut scan) };
 
@@ -267,7 +301,7 @@ impl Source {
             None
         };
         let video = if video_idx >= 0 {
-            Some(VideoPath::open(api, &cpath, video_idx)?)
+            Some(VideoPath::open(api, &cpath, video_idx, still)?)
         } else {
             None
         };
@@ -630,7 +664,12 @@ impl AudioPath {
 // ---------------------------------------------------------------------------
 
 impl VideoPath {
-    fn open(api: &Api, path: &CString, stream_index: c_int) -> Result<VideoPath, FfError> {
+    fn open(
+        api: &Api,
+        path: &CString,
+        stream_index: c_int,
+        still: bool,
+    ) -> Result<VideoPath, FfError> {
         let mut fmt: *mut ffi::AVFormatContext = core::ptr::null_mut();
         let r = unsafe {
             (api.avformat_open_input)(&mut fmt, path.as_ptr(), core::ptr::null(), core::ptr::null_mut())
@@ -659,6 +698,7 @@ impl VideoPath {
             held_pts: i64::MIN,
             pending: core::ptr::null_mut(),
             pending_pts: i64::MIN,
+            still,
             sws: core::ptr::null_mut(),
             sws_key: (0, 0, 0, 0, 0),
             eof: false,
@@ -827,6 +867,10 @@ impl VideoPath {
 
     /// Нужен ли seek перед запросом цели: назад или слишком далеко вперёд.
     fn prepare_for(&mut self, api: &Api, target_ts: i64) -> Result<(), FfError> {
+        // у картинки один кадр: ни seek, ни переоткрытия (Р.67)
+        if self.still {
+            return Ok(());
+        }
         // ответ уже удержан — ни seek, ни декода не требуется
         if !self.held.is_null() && self.held_pts <= target_ts && !self.pending.is_null() {
             return Ok(());

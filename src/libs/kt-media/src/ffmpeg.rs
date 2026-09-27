@@ -13,6 +13,8 @@ pub struct FfmpegSource {
     info: MediaInfo,
     /// Исходный размер кадра — используется при quality = None.
     src_size: (u32, u32),
+    /// У формата потока есть альфа (Р.67): кадр уходит в композит с ней.
+    has_alpha: bool,
 }
 
 impl From<kt_ffmpeg::FfError> for MediaError {
@@ -76,9 +78,11 @@ impl FfmpegSource {
             width: p.width,
             height: p.height,
             sar: p.sar,
+            still: p.still,
         };
         let src_size = (p.width.max(2), p.height.max(2));
-        Ok(FfmpegSource { inner, info, src_size })
+        let has_alpha = p.has_alpha;
+        Ok(FfmpegSource { inner, info, src_size, has_alpha })
     }
 }
 
@@ -112,6 +116,12 @@ impl MediaSource for FfmpegSource {
 
     fn read_audio_burst(&mut self, idx: i64) -> Result<AudioBurst, MediaError> {
         let mut burst = AudioBurst::silence(idx);
+        // У КАРТИНКИ звука нет по природе, и это не ошибка чтения (Р.67):
+        // событие со стиллом обязано играть тишину, как заглушка, а не
+        // валить микс отказом «вне диапазона».
+        if self.info.still {
+            return Ok(burst);
+        }
         self.inner.read_audio_burst(idx, &mut burst.data[..])?;
         Ok(burst)
     }
@@ -121,6 +131,10 @@ impl MediaSource for FfmpegSource {
         pts: Tick,
         quality: Option<Quality>,
     ) -> Result<VideoFrame, MediaError> {
+        // У КАРТИНКИ кадр один и тот же на любой тик (Р.67): просить у
+        // демуксера позицию, которой в файле нет, — верный способ получить
+        // «кадра нет» и вечное «Loading…» над событием.
+        let pts = if self.info.still { Tick::ZERO } else { pts };
         let (w, h) = match quality {
             Some(q) => (q.width, q.height),
             None => self.src_size, // исходное разрешение источника
@@ -131,7 +145,9 @@ impl MediaSource for FfmpegSource {
             width: f.width,
             height: f.height,
             rgba: f.rgba.into_boxed_slice(),
-            has_alpha: false,
+            // ПРАВДА об альфе (Р.67): её знает формат потока, и композит
+            // умеет её смешивать — `false` гвоздём выбрасывал прозрачность
+            has_alpha: self.has_alpha,
         })
     }
 
@@ -149,6 +165,7 @@ impl MediaSource for FfmpegSource {
             Some(q) => (q.width, q.height),
             None => self.src_size,
         };
+        let has_alpha = self.has_alpha;
         self.inner
             .read_video_span(keys, w, h, &mut |k, f| {
                 emit(
@@ -158,7 +175,7 @@ impl MediaSource for FfmpegSource {
                         width: f.width,
                         height: f.height,
                         rgba: f.rgba.into_boxed_slice(),
-                        has_alpha: false,
+                        has_alpha,
                     },
                 )
             })

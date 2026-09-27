@@ -86,6 +86,7 @@ impl GeneratorSource {
             width: GEN_NATIVE,
             height: GEN_NATIVE,
             sar: (1, 1),
+            still: false,
         }
     }
 

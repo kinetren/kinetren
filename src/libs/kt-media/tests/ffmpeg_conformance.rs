@@ -385,3 +385,57 @@ fn t711_sar_reaches_the_view_and_only_the_view() {
     assert_eq!((fa.width, fa.height), (320, 240));
     assert_eq!(fa.rgba, fb.rgba, "кадр ровно запрошенного качества; SAR не растягивает декод");
 }
+
+// ---- Р.67: одиночная картинка ------------------------------------------------
+
+/// Тест 796: ОДИНОЧНАЯ КАРТИНКА — полноправный источник. Один кадр на
+/// ЛЮБОЙ тик (своей сетки кадров нет), длительность «практически
+/// бесконечная» (событие любой длины показывает её целиком), аудио —
+/// тишина, PNG с альфой приходит с прозрачностью.
+///
+/// Владелец: «статичные картинки не отображаюся, вообще.. там вечный
+/// Loading...». Фикстур со стиллами не было ни одной — путь никогда не
+/// был под тестом.
+#[test]
+fn t796_a_single_image_is_a_source_with_one_frame_at_any_tick() {
+    for name in ["still.jpg", "still_alpha.png"] {
+        let path = fixture(name);
+        let mut src = FfmpegSource::open(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let info = src.info().clone();
+        assert!(info.has_video, "{name}: картинка без видео");
+        assert!(!info.has_audio, "{name}: у картинки взялся звук");
+        assert!(info.still, "{name}: источник не распознан как одиночная картинка");
+        assert_eq!(info.fps, None, "{name}: у картинки не бывает своей сетки кадров");
+        assert!(
+            info.duration.0 >= 90_000 * 3600 * 100,
+            "{name}: длительность {} — событие длиннее её показало бы пустоту",
+            info.duration.0
+        );
+        assert_eq!((info.width, info.height), (320, 180), "{name}: не тот размер");
+
+        // кадр приходит на ЛЮБОЙ тик и он ОДИН И ТОТ ЖЕ
+        let q = Quality { width: 320, height: 180 };
+        let a = src.read_video_frame(Tick(0), Some(q)).unwrap_or_else(|e| panic!("{name} @0: {e}"));
+        for t in [1_i64, 3 * 90_000, 9 * 90_000 + 7, 600 * 90_000] {
+            let f = src
+                .read_video_frame(Tick(t), Some(q))
+                .unwrap_or_else(|e| panic!("{name} @{t}: {e}"));
+            assert_eq!(f.rgba, a.rgba, "{name}: на тике {t} пришёл другой кадр");
+        }
+        assert!(a.rgba.iter().any(|&b| b != 0), "{name}: кадр пустой");
+
+        // аудио — тишина, а не ошибка
+        let burst = src.read_audio_burst(0).expect("у картинки обязан быть тихий burst");
+        assert!(burst.data.iter().all(|&s| s == 0.0), "{name}: в тишине картинки звук");
+    }
+
+    // PNG С АЛЬФОЙ: прозрачность доезжает до кадра
+    let mut png = FfmpegSource::open(&fixture("still_alpha.png")).unwrap();
+    let f = png.read_video_frame(Tick(0), Some(Quality { width: 320, height: 180 })).unwrap();
+    let alphas: Vec<u8> = f.rgba.chunks_exact(4).map(|p| p[3]).collect();
+    assert!(
+        alphas.iter().any(|&a| a < 250),
+        "альфа PNG выброшена: кадр непрозрачен целиком (первые: {:?})",
+        &alphas[..8.min(alphas.len())]
+    );
+}
