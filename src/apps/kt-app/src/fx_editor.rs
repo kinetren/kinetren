@@ -237,6 +237,8 @@ impl KtApp {
         // правки ручек композиции: применяются ПОСЛЕ отрисовки токеном
         // окна — внутри ui-замыкания `self` занят заимствованием
         let mut inst_ops: Vec<kt_model::Command> = Vec::new();
+        // отказ формулы — ошибкой в строку состояния (Р.67, правило 16)
+        let mut auto_error: Option<String> = None;
         let Some(anchor) = self.model.clip(ed.clip).cloned() else {
             ed.open = false;
             return;
@@ -470,13 +472,16 @@ impl KtApp {
             pv_t.0,
             pv_cam,
         );
+        // Прокрутка одна — у ТЕЛА (`window_body`): внешний `vscroll` окна
+        // прокручивал бы и кнопки действия, и «Готово» уходило за нижнюю
+        // кромку (Р.67, нашлось живым сценарием `curves`). Высота окна
+        // прежняя — тело само оставляет место кнопкам.
         egui::Window::new(title)
             .id(egui::Id::new(("fx", ed.clip)))
             .open(&mut open)
             .default_size([580.0, 520.0])
             .min_size([460.0, 320.0])
             .resizable(true)
-            .vscroll(true)
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
                 for (n, id) in members.iter().enumerate() {
@@ -700,7 +705,12 @@ impl KtApp {
                                     *id,
                                     kt_model::ParamOwner::Generator,
                                 );
+                                let gen_link_doc = &pub_doc;
+                                let gen_me = *id;
+                                let gen_links =
+                                    move || crate::automation::link_events(gen_link_doc, gen_me);
                                 let gctx = crate::gen_ui::GenCtx {
+                                    links: Some(&gen_links),
                                     default_shape: dflt_shape,
                                     clip: &clip,
                                     pubc: Some(&gen_pubc),
@@ -882,6 +892,9 @@ impl KtApp {
                                             t,
                                         )
                                     };
+                                    let link_doc = &pub_doc;
+                                    let me = *id;
+                                    let links = move || crate::automation::link_events(link_doc, me);
                                     let actx = crate::automation::clip_ctx(
                                         &clip,
                                         f,
@@ -891,6 +904,7 @@ impl KtApp {
                                         tl_view,
                                         axis_linked,
                                         dflt_shape,
+                                        Some(&links),
                                     );
                                     if paste_req && paste_target.is_none() && !lead_sel {
                                         paste_target = Some((*id, sel));
@@ -907,6 +921,9 @@ impl KtApp {
                                         &mut hover_out,
                                     );
                                     auto_ch = r.changed;
+                                    if let Some(e) = &r.error {
+                                        auto_error = Some(e.clone());
+                                    }
                                     // правый клик по ключу — тоже цель (п.364);
                                     // у ведущего узла адреса слота нет
                                     if let (Some((ci, ki)), false) = (r.key_menu, lead_sel) {
@@ -1035,6 +1052,9 @@ impl KtApp {
         }
         if let Some(h) = hover_out {
             self.hover_hint = Some(h); // подсказка едет в строку состояния
+        }
+        if let Some(e) = auto_error {
+            self.refuse(e);
         }
         if lead_refused {
             self.refuse(tr(k::fx::LEAD_LOCKED));
@@ -1264,19 +1284,9 @@ pub(crate) fn draw_auto_for(
             });
             crate::widgets::field_probe::note("auto.add", add.response.rect);
         }
-        // выбор активной кривой и кнопки ключей — В САМОМ ВИДЖЕТЕ
-        // (automation::toolbar): их получают все носители кривых разом.
-        // Здесь остаётся то, что про КРИВУЮ как параметр слота.
-        if let Some(c) = curves.get_mut(view.active) {
-            changed |= crate::widgets::shape_all_control(ui, c, hover_out);
-            if ui.button(tr(k::fx::AUTO_REMOVE)).clicked() {
-                let i = view.active;
-                curves.remove(i);
-                view.active = 0;
-                view.sel = None;
-                changed = true;
-            }
-        }
+        // выбор активной кривой, кнопки ключей и БЛОК КРИВОЙ (форма всех
+        // отрезков, формула, связь, удалить) — В САМОМ ВИДЖЕТЕ (Р.67):
+        // их получают все носители кривых разом
     });
     ui.horizontal(|ui| {
         // копипаст огибающих (модель — kt_model::ops, Р.33)

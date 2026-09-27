@@ -452,13 +452,24 @@ pub fn param_label(name: &str) -> String {
 /// поймал это тест, а не глаз. Высота прокрутки — доля экрана, чтобы на
 /// любом ноутбуке кнопки остались видны.
 pub fn window_body<R>(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    let max_h = (ui.ctx().content_rect().height() * 0.62).max(240.0);
+    // Доля экрана — потолок; у окна с ЗАДАННОЙ высотой тело вдобавок
+    // оставляет место кнопкам под собой (Р.67): иначе окно прокручивало
+    // ещё и себя, и «Готово» уходило за нижнюю кромку — блок кривой под
+    // графиком стало нечем закрыть (живой сценарий `curves`).
+    let screen = (ui.ctx().content_rect().height() * 0.62).max(240.0);
+    let in_window = ui.available_height() - ACTIONS_H;
+    let max_h = if in_window.is_finite() { screen.min(in_window).max(160.0) } else { screen };
     egui::ScrollArea::vertical()
         .max_height(max_h)
         .auto_shrink([true, true])
         .show(ui, body)
         .inner
 }
+
+/// Сколько высоты окна оставляет себе строка кнопок действия: разделитель
+/// плюс ряд кнопок. Одно число на программу — `window_body` вычитает его,
+/// `window_actions` в нём и рисуется.
+const ACTIONS_H: f32 = 34.0;
 
 /// СВЁРТЫВАЕМАЯ ГРУППА формы — образец «Трансформации» (Р.64/Р.66).
 ///
@@ -838,7 +849,23 @@ pub fn shape_all_control(
     let rate = curve.param == "rate";
     let cur = curve.keys.first().map(|k| k.shape).unwrap_or_default();
     ui.label(tr(k::fx::SHAPE_ALL));
+    // ширина — по галлее САМОГО ДЛИННОГО названия формы (правило 3): поле
+    // не растёт за окном и не скачет при смене формы
+    let widest = all_shapes()
+        .iter()
+        .map(|s| {
+            ui.painter()
+                .layout_no_wrap(
+                    shape_label(*s).to_string(),
+                    egui::TextStyle::Button.resolve(ui.style()),
+                    egui::Color32::WHITE,
+                )
+                .size()
+                .x
+        })
+        .fold(0.0_f32, f32::max);
     let r = egui::ComboBox::from_id_salt(("shape_all", curve.param.clone()))
+        .width(widest + 28.0)
         .selected_text(shape_label(cur))
         .show_ui(ui, |ui| {
             for s in all_shapes() {

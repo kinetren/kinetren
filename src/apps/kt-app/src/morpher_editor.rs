@@ -613,6 +613,7 @@ impl KtApp {
                                 &mut slot_auto,
                                 view,
                                 crate::automation::AutoCtx {
+                                    links: None,
                                     specs: f.param_specs(),
                                     range: (
                                         kt_time::Tick::ZERO,

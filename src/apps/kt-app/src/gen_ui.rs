@@ -550,6 +550,8 @@ pub struct GenCtx<'a> {
     pub axis_linked: bool,
     /// Форма отрезка у новых кривых — поле ПРОЕКТА (Р.61).
     pub default_shape: kt_model::SegShape,
+    /// Цели связи «Ведётся…» (Р.67) — от окна, у которого есть документ.
+    pub links: Option<&'a dyn Fn() -> Vec<crate::automation::LinkEvent>>,
 }
 
 /// Форма генератора: вид, значения, кривые — ОДНИМ телом на все входы.
@@ -940,16 +942,8 @@ fn draw_gen_auto(
                 }
             });
         }
-        if let Some(c) = curves.get_mut(view.active) {
-            changed |= crate::widgets::shape_all_control(ui, c, hover);
-            if ui.button(tr(k::fx::AUTO_REMOVE)).clicked() {
-                let i = view.active;
-                curves.remove(i);
-                view.active = 0;
-                view.sel = None;
-                changed = true;
-            }
-        }
+        // форма всех отрезков, формула, связь и удаление — в блоке кривой
+        // самого виджета (Р.67)
     });
     let frame_step = ctx.frame_step;
     let to_tl = |t: kt_time::Tick| {
@@ -973,6 +967,7 @@ fn draw_gen_auto(
         )
     };
     let actx = crate::automation::AutoCtx {
+        links: ctx.links,
         specs,
         range: (src_in, kt_time::Tick(mat_end)),
         view: crate::automation::view_in_curve(&to_mat, ctx.tl_view),

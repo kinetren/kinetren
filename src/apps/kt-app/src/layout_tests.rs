@@ -7718,6 +7718,7 @@ fn t265_automation_axis_and_field_bind() {
     let id = |t: Tick| t;
     // замок с Р.40 живёт в UiState (один на программу), а не в AutoView
     let mut ctx = AutoCtx {
+        links: None,
         default_shape: Default::default(),
         specs: &[],
         range: (Tick(0), Tick(90_000 * 10)),
@@ -8737,7 +8738,7 @@ fn t343_paste_chain_into_morpher_carries_curves() {
 /// Проект с одним видео-событием и открытым окном FX — общая обвязка
 /// тестов пресетов.
 #[cfg(test)]
-fn harness_with_fx_window() -> egui_kittest::Harness<'static, crate::app::KtApp> {
+pub(crate) fn harness_with_fx_window() -> egui_kittest::Harness<'static, crate::app::KtApp> {
     use kt_model::*;
     let mut h = harness();
     let app = h.state_mut();
@@ -8780,6 +8781,52 @@ fn harness_with_fx_window() -> egui_kittest::Harness<'static, crate::app::KtApp>
     h.step();
     h.step();
     h
+}
+
+/// Тот же харнесс, но у слота 0 ДВА эффекта: размытие с кривой радиуса и
+/// второе размытие — цель для двери связи (Р.67).
+pub(crate) fn harness_with_fx_window_two_slots() -> egui_kittest::Harness<'static, crate::app::KtApp> {
+    use kt_model::*;
+    let mut h = harness_with_fx_window();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.clips[0].fx.push(FxInstance::blur(4));
+        p.clips[0].fx_bypass.push(false);
+        p.validate().unwrap();
+        app.model = TimelineModel::new(p);
+    }
+    h.step();
+    h.step();
+    h
+}
+
+/// Событие-образец с одним полем на замену (Р.67, t790).
+pub(crate) fn sample_clip(id: kt_model::ClipId) -> kt_model::ClipEvent {
+    use kt_model::*;
+    ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
+        overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
+        id,
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    }
 }
 
 /// Тест 345 (Р.48, п.344): окно «сохранить пресетом» по чек-листу t250.
@@ -12771,6 +12818,7 @@ fn t706_a_driven_curve_is_visible_but_not_draggable() {
 
     let id = |t: Tick| t;
     let ctx = AutoCtx {
+        links: None,
         default_shape: Default::default(),
         specs: &[],
         range: (Tick(0), Tick(90_000)),
@@ -16149,4 +16197,529 @@ fn t786_bound_field_writes_keys_only_from_a_gesture() {
     let after = keys_of(&h);
     assert_eq!(after.len(), 3, "правка рукой обязана поставить ровно один ключ: {after:?}");
     assert!(after.iter().any(|(t, _)| *t == 120_000), "ключ не на курсоре (материал 30000+90000): {after:?}");
+}
+
+// ---- Р.67: график рисует вычислителем, ручка формы, блок кривой, справка ----
+
+/// Вид автоматизации слота 0 события 1 в первом окне FX.
+fn fx_auto_view<'a>(h: &'a Harness<'_, KtApp>) -> &'a crate::automation::AutoView {
+    h.state().fx_editors[0]
+        .auto_views
+        .get(&(kt_model::ClipId(1), 0))
+        .expect("вид автоматизации слота 0")
+}
+
+/// Прокрутить тело окна FX так, чтобы БЛОК КРИВОЙ был виден: колесо над
+/// подписью «+ кривая» (внутри прокрутки, вне графика — тот забирает
+/// колесо себе), пока заголовок блока не нарисован. Подпись за сгибом
+/// egui не рисует вовсе, а подсказку поля — рисует: по ней и виден блок.
+pub(crate) fn reveal_curve_block(h: &mut Harness<'_, KtApp>) {
+    reveal_until(h, &tr(k::fx::HELP).to_string());
+}
+
+/// Прямоугольник нарисованного текста, выбранного `pick`, ПОСЛЕ того как
+/// он перестал двигаться: `ScrollArea` egui доезжает анимацией, и
+/// координаты, снятые сразу после колеса, к моменту клика устаревают —
+/// клик уходил в пустоту (поймано на окне экземпляра, t791).
+fn settled_text_rect(
+    h: &mut Harness<'_, KtApp>,
+    pick: impl Fn(&str) -> bool,
+    what: &str,
+) -> egui::Rect {
+    let find = |h: &Harness<'_, KtApp>| {
+        crate::reach_tests::painted_texts(h).into_iter().find(|t| pick(&t.src)).map(|t| t.rect)
+    };
+    let mut prev = find(h);
+    for _ in 0..24 {
+        h.step();
+        let now = find(h);
+        if let (Some(a), Some(b)) = (prev, now)
+            && (a.min - b.min).length() < 0.5
+        {
+            return b;
+        }
+        prev = now;
+    }
+    panic!("«{what}» не устоялся на месте (прокрутка не доехала)");
+}
+
+/// Крутить тело окна FX, пока не нарисован текст `sentinel` (см.
+/// `reveal_curve_block`).
+pub(crate) fn reveal_until(h: &mut Harness<'_, KtApp>, sentinel: &str) {
+    let anchor_label = tr(k::fx::AUTO_ADD).to_string();
+    for _ in 0..16 {
+        let texts = crate::reach_tests::painted_texts(h);
+        if texts.iter().any(|t| t.src == sentinel) {
+            h.step();
+            return;
+        }
+        let anchor = texts.iter().find(|t| t.src == anchor_label).map(|t| t.rect.center());
+        let Some(a) = anchor else { break };
+        h.hover_at(a);
+        h.step();
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -240.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        h.step();
+        h.step();
+    }
+    let texts: Vec<String> = crate::reach_tests::painted_texts(h).into_iter().map(|t| t.src).collect();
+    assert!(texts.iter().any(|t| t == sentinel), "«{sentinel}» не прокрутился в окно: {texts:?}");
+}
+
+/// Линейный экран↔кривая по нарисованным ромбикам ключей: x(t), y(v).
+/// Два ключа с разными t и v дают обе оси; сами ключи известны модели.
+fn graph_axes(h: &Harness<'_, KtApp>) -> (impl Fn(i64) -> f32, impl Fn(f64) -> f32) {
+    let keys = h.state().model.project().clips[0].fx_auto[0][0].keys.clone();
+    let marks = fx_auto_view(h).key_marks.clone();
+    // ось значений — та же, что у виджета (у части паспортов она нелинейна)
+    let spec = kt_model::FxInstance::blur(8).param_specs().iter().find(|s| s.name == "radius").cloned().unwrap();
+    let ax = crate::automation::axis_of(&spec);
+    let pt = |ki: usize| marks.iter().find(|(c, k, _)| *c == 0 && *k == ki).map(|(_, _, p)| *p).unwrap();
+    let (a, b) = (0usize, keys.len() - 1);
+    let (pa, pb) = (pt(a), pt(b));
+    let (ta, tb) = (keys[a].t.0 as f64, keys[b].t.0 as f64);
+    // для оси значений — пара ключей с РАЗНЫМИ значениями
+    let (va_i, vb_i) = (0..keys.len())
+        .flat_map(|i| (0..keys.len()).map(move |j| (i, j)))
+        .find(|(i, j)| (keys[*i].v - keys[*j].v).abs() > 1e-9)
+        .expect("нужны два ключа с разными значениями");
+    let (pva, pvb) = (pt(va_i), pt(vb_i));
+    let (va, vb) = (ax.map(keys[va_i].v), ax.map(keys[vb_i].v));
+    (
+        move |t: i64| pa.x + ((t as f64 - ta) / (tb - ta)) as f32 * (pb.x - pa.x),
+        move |v: f64| pva.y + ((ax.map(v) - va) / (vb - va)) as f32 * (pvb.y - pva.y),
+    )
+}
+
+/// Тест 784b (Р.67): график рисует ЗНАЧЕНИЕ кривой тем же вычислителем,
+/// что рендер: зигзаг виден зигзагом, ступень — ступенью, формула отрезка
+/// — своей линией. На прежнем коде между ключами шла прямая (t698
+/// проверял модель, не рисунок).
+#[test]
+fn t784b_graph_draws_the_curve_as_it_sounds() {
+    use kt_model::*;
+    let mut h = harness_with_fx_window();
+    // значения и амплитуда — ВНУТРИ паспорта радиуса (1..48): за ним
+    // окно значений клампится, и линия легла бы на кромку графика
+    let zig = SegShape::Zigzag { periods: 4.0, amplitude: 4.0, profile: ZigProfile::Triangle };
+    let formula = SegShape::Formula { expr: ExprId::intern("a + (b - a) * s * s") };
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.clips[0].fx_auto[0][0].keys = vec![
+            AutoKey::shaped(kt_time::Tick(30_000), 8.0, zig),
+            AutoKey::shaped(kt_time::Tick(90_000), 40.0, SegShape::Hold),
+            AutoKey::shaped(kt_time::Tick(150_000), 16.0, formula),
+            AutoKey::shaped(kt_time::Tick(210_000), 44.0, SegShape::Linear),
+        ];
+        p.validate().unwrap();
+        app.model = TimelineModel::new(p);
+    }
+    h.step();
+    h.step();
+    let keys = h.state().model.project().clips[0].fx_auto[0][0].keys.clone();
+    let (x_of, y_of) = graph_axes(&h);
+    // линия кривой — самая длинная ломаная В ОБЛАСТИ ГРАФИКА (по ромбикам
+    // ключей): в окне есть и другие длинные линии (таймлайн)
+    let marks = fx_auto_view(&h).key_marks.clone();
+    let (mx0, mx1) = (
+        marks.iter().map(|m| m.2.x).fold(f32::MAX, f32::min) - 8.0,
+        marks.iter().map(|m| m.2.x).fold(f32::MIN, f32::max) + 8.0,
+    );
+    let (my0, my1) = (
+        marks.iter().map(|m| m.2.y).fold(f32::MAX, f32::min) - 300.0,
+        marks.iter().map(|m| m.2.y).fold(f32::MIN, f32::max) + 300.0,
+    );
+    let line = crate::reach_tests::painted_lines(&h)
+        .into_iter()
+        .filter(|l| l.iter().all(|p| p.x >= mx0 && p.x <= mx1 && p.y >= my0 && p.y <= my1))
+        .max_by_key(|l| l.len())
+        .expect("линий в области графика нет");
+    assert!(line.len() >= 40, "линия кривой слишком редкая: {} точек", line.len());
+    // КАЖДАЯ точка линии: её x → тик, нарисованный y против curve_value
+    let (x0, x1) = (x_of(keys[0].t.0), x_of(keys[keys.len() - 1].t.0));
+    let t_of = |x: f32| keys[0].t.0 + ((x - x0) / (x1 - x0) * (keys[keys.len() - 1].t.0 - keys[0].t.0) as f32) as i64;
+    let mut worst = (0.0f32, egui::Pos2::ZERO, 0.0f32, 0i64);
+    let key_xs: Vec<f32> = keys.iter().map(|k| x_of(k.t.0)).collect();
+    for p in line.iter().filter(|p| p.x >= x0 - 0.5 && p.x <= x1 + 0.5) {
+        // у самого ключа ступень рвётся: пиксель x — обе стороны разрыва
+        if key_xs.iter().any(|kx| (p.x - kx).abs() < 2.5) {
+            continue;
+        }
+        let t = t_of(p.x);
+        let want = y_of(curve_value(&keys, kt_time::Tick(t)));
+        if (p.y - want).abs() > worst.0 {
+            worst = ((p.y - want).abs(), *p, want, t);
+        }
+    }
+    assert!(
+        worst.0 <= 3.0,
+        "линия расходится с вычислителем на {} px: точка {:?}, ждали y {}, t {}",
+        worst.0, worst.1, worst.2, worst.3
+    );
+    // зигзаг: не меньше 8 экстремумов между первыми двумя ключами
+    let (xa, xb) = (x_of(keys[0].t.0), x_of(keys[1].t.0));
+    let seg: Vec<&egui::Pos2> = line.iter().filter(|p| p.x > xa + 1.0 && p.x < xb - 1.0).collect();
+    let mut extrema = 0;
+    for i in 1..seg.len().saturating_sub(1) {
+        let (a, b, c) = (seg[i - 1].y, seg[i].y, seg[i + 1].y);
+        if (b > a && b > c) || (b < a && b < c) {
+            extrema += 1;
+        }
+    }
+    // шаг выборки 2 px: на узком участке 4 периода дают 6-8 поворотов —
+    // требуем больше половины, а «не прямая» доказывает пик ниже
+    assert!(extrema >= 5, "зигзаг нарисован прямой: экстремумов {extrema}");
+    // и прямая на прежнем коде дала бы расхождение ≥ 10 px на пике зигзага
+    let mid = x_of((keys[0].t.0 + keys[1].t.0) / 2);
+    let straight = (y_of(keys[0].v) + y_of(keys[1].v)) / 2.0;
+    let peak = seg.iter().map(|p| (p.y - straight).abs()).fold(0.0f32, f32::max);
+    assert!(peak >= 10.0, "пик зигзага от прямой всего {peak} px (x середины {mid})");
+}
+
+/// Тест 785 (Р.67): «форма всех отрезков» и её параметры относятся к
+/// кривой, которую человек ВИДИТ выбранной: у слота две кривые, форма
+/// ложится на выбранную вторую, первая цела, заголовок блока называет её.
+/// На прежнем коде форма ложилась на невидимо активную первую — «меняется
+/// только одно поле, хотя я в двух полях задал зигзаги».
+#[test]
+fn t785_shape_control_belongs_to_the_visible_curve() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let mut h = harness_with_fx_window();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.clips[0].fx_auto[0].push(ParamCurve::constant(
+            "radius_y",
+            kt_time::Tick(30_000),
+            kt_time::Tick(210_000),
+            4.0,
+            SegShape::Linear,
+        ));
+        p.validate().unwrap();
+        app.model = TimelineModel::new(p);
+    }
+    h.step();
+    h.step();
+    // человек кликает по ИМЕНИ второй кривой в тулбаре виджета (подпись
+    // поля в сетке носит то же имя — тулбар рисуется позже)
+    let name2 = crate::widgets::param_label("radius_y");
+    h.query_all_by_label(&name2).last().expect("имя кривой в тулбаре").click();
+    h.step();
+    h.step();
+    assert_eq!(fx_auto_view(&h).active, 1, "клик по имени не выбрал вторую кривую");
+    reveal_curve_block(&mut h);
+    // заголовок блока называет её
+    let title = crate::tf!(k::fx::CURVE_TITLE, name2.trim_end_matches(':'));
+    assert!(
+        crate::reach_tests::painted_texts(&h).iter().any(|t| t.src == title),
+        "блок не подписан именем выбранной кривой: {title:?}"
+    );
+    // форма всех отрезков — зигзаг (комбо по роли и текущему значению)
+    pick_shape_all(&mut h, tr(k::fx::SHAPE_ZIGZAG));
+    h.step();
+    h.step();
+    let p = h.state().model.project().clone();
+    let (c0, c1) = (&p.clips[0].fx_auto[0][0], &p.clips[0].fx_auto[0][1]);
+    assert!(
+        c1.keys.iter().all(|k| matches!(k.shape, SegShape::Zigzag { .. })),
+        "зигзаг не лёг на выбранную кривую: {:?}",
+        c1.keys.iter().map(|k| k.shape).collect::<Vec<_>>()
+    );
+    assert!(
+        c0.keys.iter().all(|k| !matches!(k.shape, SegShape::Zigzag { .. })),
+        "форма легла на НЕвыбранную первую кривую"
+    );
+}
+
+/// Тест 785b (Р.67): ручка параметра формы на середине участка — драг
+/// вверх увеличивает амплитуду зигзага, число видно рядом; у прямой
+/// ручки нет.
+#[test]
+fn t785b_shape_parameter_handle_on_the_segment() {
+    use kt_model::*;
+    let mut h = harness_with_fx_window();
+    let zig = SegShape::Zigzag { periods: 4.0, amplitude: 2.0, profile: ZigProfile::Triangle };
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.clips[0].fx_auto[0][0].keys = vec![
+            AutoKey::shaped(kt_time::Tick(30_000), 20.0, zig),
+            AutoKey::shaped(kt_time::Tick(120_000), 20.0, SegShape::Linear),
+            AutoKey::shaped(kt_time::Tick(210_000), 40.0, SegShape::Linear),
+        ];
+        p.validate().unwrap();
+        app.model = TimelineModel::new(p);
+    }
+    h.step();
+    h.step();
+    let marks = fx_auto_view(&h).seg_marks.clone();
+    let handle = marks.iter().find(|(ki, _)| *ki == 0).map(|(_, p)| *p).expect("ручка у зигзага");
+    assert!(marks.iter().all(|(ki, _)| *ki != 1), "у прямой ручки быть не должно");
+    let amp0 = 2.0;
+    geom_drag(&mut h, handle, handle + egui::vec2(0.0, -20.0), egui::Modifiers::NONE);
+    let s = h.state().model.project().clips[0].fx_auto[0][0].keys[0].shape;
+    let SegShape::Zigzag { amplitude, periods, .. } = s else { panic!("форма сменилась: {s:?}") };
+    assert!(amplitude > amp0, "амплитуда не выросла: {amplitude}");
+    assert_eq!(periods, 4.0, "периоды тронуты без Shift");
+    // Shift + вправо — периоды
+    let marks = fx_auto_view(&h).seg_marks.clone();
+    let handle = marks.iter().find(|(ki, _)| *ki == 0).map(|(_, p)| *p).unwrap();
+    geom_drag(&mut h, handle, handle + egui::vec2(40.0, 0.0), egui::Modifiers::SHIFT);
+    let s = h.state().model.project().clips[0].fx_auto[0][0].keys[0].shape;
+    let SegShape::Zigzag { periods, .. } = s else { panic!("форма сменилась: {s:?}") };
+    assert!(periods > 4.0, "периоды не выросли: {periods}");
+    // Ctrl+Z возвращает шагом истории
+    h.state_mut().undo();
+    h.step();
+    let s = h.state().model.project().clips[0].fx_auto[0][0].keys[0].shape;
+    let SegShape::Zigzag { periods, .. } = s else { panic!("форма сменилась: {s:?}") };
+    assert_eq!(periods, 4.0, "undo не вернул периоды одним шагом");
+}
+
+/// Выбрать форму в комбо «форма всех отрезков» блока: комбо ищется по
+/// роли и текущему значению (у подписи egui доступного имени нет).
+fn pick_shape_all(h: &mut Harness<'_, KtApp>, shape: &str) {
+    use egui_kittest::kittest::Queryable;
+    // комбо ищется по НАРИСОВАННОМУ значению формы: в прокрученном окне
+    // accesskit отдаёт прямоугольник ДО прокрутки, и клик по нему уходил
+    // мимо (поймано на окне экземпляра, t791)
+    let labels: Vec<&'static str> =
+        crate::widgets::all_shapes().iter().map(|s| crate::widgets::shape_label(*s)).collect();
+    let crect = settled_text_rect(h, |s| labels.contains(&s), "комбо формы всех отрезков");
+    let c = crect.center();
+    h.hover_at(c);
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: c,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.step();
+    h.step();
+    h.get_by_label(shape).click();
+    h.step();
+    h.step();
+}
+
+/// Набрать текст в поле формулы блока (клик правее подписи, символы, Enter).
+fn type_layer_formula(h: &mut Harness<'_, KtApp>, text: &str) {
+    let label = tr(k::fx::FORMULA).to_string();
+    let lr = settled_text_rect(h, move |s| s == label, "подпись поля формулы");
+    let field = egui::pos2(lr.right() + 60.0, lr.center().y);
+    h.hover_at(field);
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: field,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.step();
+    // прежний текст — выделить всё и стереть (курсор клика стоит где попало)
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.key_press(egui::Key::Backspace);
+    h.step();
+    for ch in text.chars() {
+        h.event(egui::Event::Text(ch.to_string()));
+        h.step();
+    }
+}
+
+/// Тест 787e (Р.67): слой-формула поверх ключей на графике и в поле:
+/// после Enter — две линии (сплошная `k` и штрих результата), ключи и
+/// зигзаг целы; очистка поля снимает слой; каждый Enter — шаг истории.
+#[test]
+fn t787e_layer_formula_over_keys_in_the_widget() {
+    use kt_model::*;
+    let mut h = harness_with_fx_window();
+    let zig = SegShape::Zigzag { periods: 3.0, amplitude: 3.0, profile: ZigProfile::Triangle };
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.clips[0].fx_auto[0][0].keys = vec![
+            AutoKey::shaped(kt_time::Tick(30_000), 10.0, zig),
+            AutoKey::shaped(kt_time::Tick(120_000), 40.0, SegShape::Linear),
+            AutoKey::shaped(kt_time::Tick(210_000), 20.0, SegShape::Linear),
+        ];
+        p.validate().unwrap();
+        app.model = TimelineModel::new(p);
+    }
+    h.step();
+    h.step();
+    reveal_curve_block(&mut h);
+    let keys_before = h.state().model.project().clips[0].fx_auto[0][0].keys.clone();
+    let lines_before = crate::reach_tests::painted_lines(&h).len();
+    type_layer_formula(&mut h, "k * 0.5 + 0.1");
+    h.key_press(egui::Key::Enter);
+    h.step();
+    h.step();
+    let c = h.state().model.project().clips[0].fx_auto[0][0].clone();
+    assert!(
+        matches!(&c.source, CurveSource::Formula { expr } if expr == "k * 0.5 + 0.1"),
+        "слой не доехал: {:?}",
+        c.source
+    );
+    assert_eq!(c.keys, keys_before, "слой стёр ключи или форму");
+    let lines_after = crate::reach_tests::painted_lines(&h).len();
+    assert!(lines_after > lines_before, "штрих результата не нарисован ({lines_before} → {lines_after})");
+    // очистка снимает слой, ключи целы
+    type_layer_formula(&mut h, "");
+    h.key_press(egui::Key::Enter);
+    h.step();
+    h.step();
+    let c = h.state().model.project().clips[0].fx_auto[0][0].clone();
+    assert!(c.source.is_keys(), "пустое поле не сняло слой: {:?}", c.source);
+    assert_eq!(c.keys, keys_before);
+    // фокус отдан: пробел ставит паузу, а не печатает
+    assert!(!h.ctx.egui_wants_keyboard_input(), "поле не отдало фокус после Enter");
+    // правки — сессия окна FX: один шаг истории на сессию (контракт окна);
+    // «Отмена» окна откатывает и слой, и его снятие разом
+}
+
+/// Тест 789 (Р.67): справка в блоке — из реестра вычислителя; Tab
+/// дополняет имя на месте без всплывающего слоя; неизвестное имя названо с
+/// ближайшими; у поля есть подсказка в строке состояния.
+#[test]
+fn t789_formula_help_in_the_block_and_tab_completion() {
+    use egui_kittest::kittest::Queryable;
+    let mut h = harness_with_fx_window();
+    reveal_curve_block(&mut h);
+    // группа «Справка» — по клику перечисляет все функции реестра
+    h.get_by_label(tr(k::fx::HELP)).click();
+    h.step();
+    h.step();
+    reveal_until(&mut h, tr(k::fx::HELP_OPS));
+    let texts: Vec<String> = crate::reach_tests::painted_texts(&h).into_iter().map(|t| t.src).collect();
+    for (name, arity) in kt_model::formula::FUNCTIONS {
+        let args = (0..*arity).map(|i| ["x", "y", "z"][i]).collect::<Vec<_>>().join(", ");
+        let sig = format!("{name}({args})");
+        assert!(texts.iter().any(|t| t == &sig), "функция {sig} не показана в справке");
+    }
+    for key in [k::fx::HELP_VAR_T, k::fx::HELP_VAR_K, k::fx::HELP_VAR_SRC, k::fx::HELP_VAR_S] {
+        assert!(texts.iter().any(|t| t == tr(key)), "переменная не описана: {}", tr(key));
+    }
+    // Tab дополняет `cl` до `clamp(` — на месте, без слоя поверх
+    type_layer_formula(&mut h, "cl");
+    h.key_press(egui::Key::Tab);
+    h.step();
+    h.step();
+    let shown: Vec<String> = crate::reach_tests::painted_texts(&h).into_iter().map(|t| t.src).collect();
+    assert!(shown.iter().any(|s| s == "clamp("), "Tab не дополнил имя: {shown:?}");
+    let layers: Vec<egui::LayerId> = h.ctx.memory(|m| m.layer_ids().collect());
+    assert!(
+        layers.iter().all(|l| l.order <= egui::Order::Middle || l.order == egui::Order::Debug),
+        "появился слой поверх интерфейса: {layers:?}"
+    );
+    // неизвестное имя — ошибка с ближайшими
+    type_layer_formula(&mut h, "flor(t)");
+    h.key_press(egui::Key::Enter);
+    h.step();
+    h.step();
+    let err = h.state().error_status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+    assert!(err.contains("flor") && err.contains("floor"), "ошибка не названа в строке состояния: {err:?}");
+    assert!(h.state().model.project().clips[0].fx_auto[0][0].source.is_keys(), "неверный текст применился");
+}
+
+/// Тест 790 (Р.67): ширина полей блока не зависит от ширины окна.
+#[test]
+fn t790_field_widths_do_not_follow_the_window() {
+    use eframe::egui::accesskit::Role;
+    use egui_kittest::kittest::{Queryable, by};
+    let widths = |w: f32| -> Vec<(String, f32)> {
+        let mut h = harness_sized(w, 900.0);
+        {
+            use kt_model::*;
+            let app = h.state_mut();
+            let mut p = app.model.project().clone();
+            p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+            let mut c = crate::layout_tests::sample_clip(ClipId(1));
+            c.fx = vec![FxInstance::blur(8)];
+            c.fx_bypass = vec![false];
+            c.fx_auto = vec![vec![ParamCurve::constant("radius", kt_time::Tick(0), kt_time::Tick(90_000), 8.0, SegShape::Linear)]];
+            p.clips.push(c);
+            p.validate().unwrap();
+            app.model = TimelineModel::new(p);
+            app.open_fx_editor(ClipId(1));
+        }
+        h.step();
+        h.step();
+        let mut out: Vec<(String, f32)> = h
+            .query_all(by().role(Role::SpinButton))
+            .map(|n| ("spin".to_string(), n.rect().width()))
+            .chain(h.query_all(by().role(Role::TextInput)).map(|n| ("text".to_string(), n.rect().width())))
+            .chain(h.query_all(by().role(Role::ComboBox)).map(|n| ("combo".to_string(), n.rect().width())))
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.partial_cmp(&b.1).unwrap()));
+        out
+    };
+    let (narrow, wide) = (widths(900.0), widths(1800.0));
+    assert!(!narrow.is_empty(), "полей не нашлось");
+    assert_eq!(narrow.len(), wide.len(), "набор полей зависит от ширины окна");
+    for ((ka, a), (kb, b)) in narrow.iter().zip(wide.iter()) {
+        assert_eq!(ka, kb);
+        assert!((a - b).abs() < 1.0, "поле {ka} растёт с окном: {a} → {b}");
+    }
+}
+
+/// Тест 791/791b (Р.67): у экземпляра ленты блок кривой ТОТ ЖЕ — форма
+/// всех отрезков, формула-слой; `t*2` после Enter не стирается и становится
+/// источником переопределения (на прежнем коде — `CurveSourceUnsupported`
+/// и пустое поле).
+#[test]
+fn t791_instance_head_has_the_same_curve_block() {
+    use egui_kittest::kittest::Queryable;
+    let (mut h, s) = harness_news_template();
+    h.state_mut().open_fx_editor_head(s.b);
+    h.step();
+    h.step();
+    // кривая у числовой ручки «Кегль»
+    h.get_by_label(tr(k::fx::AUTO_ADD)).click();
+    h.step();
+    h.step();
+    let item = h
+        .query_all_by_label_contains("Кегль")
+        .last()
+        .expect("пункт «Кегль» в меню «+ кривая»");
+    item.click();
+    h.step();
+    h.step();
+    let inst = h.state().model.project().clips.iter().find(|c| c.id == s.b).cloned().unwrap();
+    let ov = inst.overrides.iter().find(|o| !o.curves.is_empty()).expect("кривая переопределения");
+    assert_eq!(ov.curves.len(), 1);
+    reveal_curve_block(&mut h);
+    // блок тот же: заголовок, форма всех отрезков, поле формулы
+    let texts: Vec<String> = crate::reach_tests::painted_texts(&h).into_iter().map(|t| t.src).collect();
+    assert!(texts.iter().any(|t| t.starts_with(&crate::tf!(k::fx::CURVE_TITLE, ""))), "заголовка блока нет: {texts:?}");
+    assert!(texts.iter().any(|t| t == tr(k::fx::SHAPE_ALL)), "у экземпляра нет «форма всех отрезков»");
+    assert!(texts.iter().any(|t| t == tr(k::fx::FORMULA)), "у экземпляра нет поля формулы");
+    // зигзаг на все отрезки
+    pick_shape_all(&mut h, tr(k::fx::SHAPE_ZIGZAG));
+    let inst = h.state().model.project().clips.iter().find(|c| c.id == s.b).cloned().unwrap();
+    let ov = inst.overrides.iter().find(|o| !o.curves.is_empty()).unwrap();
+    assert!(ov.curves[0].keys.iter().all(|k| matches!(k.shape, kt_model::SegShape::Zigzag { .. })), "зигзаг не лёг на переопределение");
+    // формула t*2 — не стирается, становится слоем переопределения
+    type_layer_formula(&mut h, "t*2");
+    h.key_press(egui::Key::Enter);
+    h.step();
+    h.step();
+    let inst = h.state().model.project().clips.iter().find(|c| c.id == s.b).cloned().unwrap();
+    let ov = inst.overrides.iter().find(|o| !o.curves.is_empty()).unwrap();
+    assert!(
+        matches!(&ov.curves[0].source, kt_model::CurveSource::Formula { expr } if expr == "t*2"),
+        "формула у экземпляра не доехала: {:?}",
+        ov.curves[0].source
+    );
+    let shown: Vec<String> = crate::reach_tests::painted_texts(&h).into_iter().map(|t| t.src).collect();
+    assert!(shown.iter().any(|t| t == "t*2"), "поле стёрлось после Enter: {shown:?}");
 }

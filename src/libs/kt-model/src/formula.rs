@@ -148,6 +148,24 @@ enum Fun {
     Noise,
 }
 
+/// Реестр функций вычислителя — имя и число аргументов (Р.67): справка в
+/// блоке кривой строится ОТСЮДА, а не из копии в интерфейсе.
+pub const FUNCTIONS: &[(&str, usize)] = &[
+    ("min", 2),
+    ("max", 2),
+    ("clamp", 3),
+    ("abs", 1),
+    ("floor", 1),
+    ("ceil", 1),
+    ("round", 1),
+    ("sqrt", 1),
+    ("sin", 1),
+    ("cos", 1),
+    ("lerp", 3),
+    ("noise", 1),
+    ("if", 3),
+];
+
 impl Fun {
     fn arity(self) -> usize {
         match self {

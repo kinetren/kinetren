@@ -1004,6 +1004,26 @@ fn collect_texts(shape: &egui::epaint::Shape, out: &mut Vec<PaintedText>) {
     }
 }
 
+/// Нарисованные ЛИНИИ (Р.67): ломаные и отрезки из списка форм кадра —
+/// то, что видит человек на графике; утверждения про рисунок кривой
+/// делаются по ним, а не по модели (урок t698).
+pub(crate) fn painted_lines(h: &egui_kittest::Harness<'_, crate::app::KtApp>) -> Vec<Vec<egui::Pos2>> {
+    fn walk(shape: &egui::epaint::Shape, out: &mut Vec<Vec<egui::Pos2>>) {
+        use egui::epaint::Shape;
+        match shape {
+            Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+            Shape::LineSegment { points, .. } => out.push(points.to_vec()),
+            Shape::Path(p) => out.push(p.points.clone()),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for cs in &h.output().shapes {
+        walk(&cs.shape, &mut out);
+    }
+    out
+}
+
 pub(crate) fn painted_texts(h: &egui_kittest::Harness<'_, crate::app::KtApp>) -> Vec<PaintedText> {
     let mut out = Vec::new();
     for cs in &h.output().shapes {
@@ -3326,4 +3346,68 @@ fn t783_older_project_goes_through_import_and_open_names_the_door() {
     assert_eq!(reopened.model.project().morphers[0].targets, MorphTargets::Below);
     drop(h);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 788 (Р.67): дверь связи «Ведётся…» в блоке кривой — из окна FX:
+/// «это событие» → свойство → источник-связь с адресом, имя кривой несёт
+/// адрес, «отвязать» возвращает ключи. На прежнем коде двери не было: модель
+/// и тесты связи существовали, а назначить её человеку было нечем.
+#[test]
+fn t788_link_door_assigns_a_source() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    let mut h = crate::layout_tests::harness_with_fx_window_two_slots();
+    crate::layout_tests::reveal_curve_block(&mut h);
+    h.get_by_label(tr(k::fx::DRIVE_BY)).click();
+    h.step();
+    h.step();
+    // подменю открывается кликом (наведение в харнессе его не раскрывает);
+    // у кнопки подменю egui дописывает стрелку — ищем по вхождению
+    h.query_all_by_label_contains(tr(k::fx::DRIVE_THIS)).last().expect("подменю «Это событие»").click();
+    h.step();
+    h.step();
+    // свойство второго слота — по подписи «Эффект: параметр»
+    let wanted = crate::widgets::param_label("radius_y");
+    h.query_all_by_label_contains(&wanted).last().expect("свойство соседнего слота в списке").click();
+    h.step();
+    h.step();
+    let c = h.state().model.project().clips[0].fx_auto[0][0].clone();
+    match &c.source {
+        kt_model::CurveSource::Link { path, .. } => {
+            assert_eq!(path, "self/fx1/radius_y", "адрес связи не тот");
+        }
+        other => panic!("связь не назначена: {other:?}"),
+    }
+    let texts: Vec<String> = painted_texts(&h).into_iter().map(|t| t.src).collect();
+    assert!(texts.iter().any(|t| t.contains("<- self/fx1/radius_y")), "имя кривой не несёт адрес: {texts:?}");
+    // «отвязать» — ключи
+    h.get_by_label(tr(k::fx::UNLINK)).click();
+    h.step();
+    h.step();
+    assert!(h.state().model.project().clips[0].fx_auto[0][0].source.is_keys(), "«отвязать» не вернул ключи");
+}
+
+/// Тест 789b (Р.67): справка по формуле и само поле достижимы из окна FX
+/// (слот), из формы генератора и из головы экземпляра ленты — блок один.
+#[test]
+fn t789b_formula_help_reachable_from_every_carrier() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    // слот
+    let h = crate::layout_tests::harness_with_fx_window();
+    assert!(h.query_by_label(tr(k::fx::HELP)).is_some(), "справки нет у слота");
+    assert!(h.query_by_label(tr(k::fx::DRIVE_BY)).is_some(), "двери связи нет у слота");
+    // экземпляр ленты
+    let (mut h, s) = crate::layout_tests::harness_news_template();
+    h.state_mut().open_fx_editor_head(s.b);
+    h.step();
+    h.step();
+    h.get_by_label(tr(k::fx::AUTO_ADD)).click();
+    h.step();
+    h.step();
+    h.query_all_by_label_contains("Кегль").last().expect("пункт «Кегль»").click();
+    h.step();
+    h.step();
+    assert!(h.query_by_label(tr(k::fx::HELP)).is_some(), "справки нет у экземпляра");
+    assert!(h.query_by_label(tr(k::fx::DRIVE_BY)).is_some(), "двери связи нет у экземпляра");
 }

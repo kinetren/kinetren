@@ -536,6 +536,44 @@ class Live:
         subprocess.run(["convert", "xwd:-", path], input=xwd, check=True)
         return path
 
+    def wheel(self, x, y, ticks=3):
+        """Колесо мыши над точкой (ticks > 0 — вниз). XTest: кнопки 4/5."""
+        self.focus()
+        probe.move(x, y)
+        btn = 5 if ticks > 0 else 4
+        for _ in range(abs(ticks)):
+            probe.button(True, btn)
+            probe.button(False, btn)
+            time.sleep(0.05)
+        time.sleep(0.4)
+
+    def scroll_probe_into_view(self, name, anchor, what=None, tries=12, below=None):
+        """Крутить колесо над виджетом `anchor`, пока прямоугольник `name` не
+        окажется в видимой части (низ ниже кромки — вниз, верх выше —
+        вверх). Кромка — `below`: виджет ВНЕ прокрутки у низа окна (кнопка
+        действия, Р.66); без него — низ окна программы. Окно egui с
+        телом-прокруткой иначе прячет блок за сгибом, а щуп отдаёт
+        координаты и невидимого: клик по ним уходил на таймлайн."""
+        win = geometry()
+        for _ in range(tries):
+            f = {x["param"]: x for x in self.geom().get("fields", [])}
+            r = f.get(name)
+            a = f.get(anchor)
+            if r is None or a is None:
+                time.sleep(0.3)
+                continue
+            h = self.geom()["window"]["h"]
+            if below and below in f:
+                h = min(h, f[below]["y"] - 2)
+            if r["y"] >= 0 and r["y"] + r["h"] <= h:
+                return True
+            ticks = 3 if r["y"] + r["h"] > h else -3
+            # якорь мог уехать за кромку — колесо крутится в ВИДИМОЙ точке
+            ay = min(max(a["y"] + a["h"] / 2, 4), h - 4)
+            self.wheel(win["x"] + int(a["x"] + a["w"] / 2), win["y"] + int(ay), ticks)
+        self.expect(False, what or f"«{name}» не удалось прокрутить в окно")
+        return False
+
     def step(self, name, what=None):
         """ШАГ ПУТИ ПОЛЬЗОВАТЕЛЯ (Р.67): скриншот на каждый шаг `ПУТЬ` из
         спеки, файл `NN-step-<имя>.png` в каталоге сценария; `finish.sh`

@@ -187,6 +187,7 @@ impl KtApp {
                 let to_tl = move |t: Tick| Tick(start.0 + t.0);
                 let to_cur = move |t: Tick| Tick(t.0 - start.0);
                 let actx = crate::automation::AutoCtx {
+                    links: None,
                     specs: c.cam.param_specs(),
                     range: (Tick(0), Tick(c.duration.0.max(1))),
                     view: crate::automation::view_in_curve(&to_cur, tl_view),

@@ -903,7 +903,18 @@ impl KtApp {
                                 t,
                             )
                         };
+                        // цели связи — события ВНУТРИ ленты экземпляра (Р.67)
+                        let inst_links = || -> Vec<crate::automation::LinkEvent> {
+                            doc.sequence(seq)
+                                .map(|s| {
+                                    let mut root = kt_model::Project::new(doc.settings.clone());
+                                    root.clips = s.clips.clone();
+                                    crate::automation::link_events(&root, kt_model::ClipId(u64::MAX))
+                                })
+                                .unwrap_or_default()
+                        };
                         let actx = crate::automation::AutoCtx {
+                            links: Some(&inst_links),
                             specs: &specs,
                             range: mat_range,
                             view: crate::automation::view_in_curve(&to_mat, tl_view),

@@ -21,7 +21,7 @@
 
 use crate::i18n::{k, tr};
 use eframe::egui;
-use kt_model::{ClipEvent, FxInstance, ParamCurve, ParamSpec};
+use kt_model::{ClipEvent, FxInstance, HasParams, ParamCurve, ParamSpec};
 use kt_time::Tick;
 
 /// Радиус хвата ключа. Шире рисунка (правило 1 чек-листа): в ромбик
@@ -99,9 +99,50 @@ pub struct AutoView {
     /// `t` законна сама по себе — она немедленно применялась и обнуляла
     /// ключи кривой («либо нихера не происходит»). Владелец, Р.63 п.3.
     pub formula: Option<(usize, String)>,
+    /// НАБИРАЕМЫЙ текст формулы ОТРЕЗКА: (кривая, ключ, текст) — Р.67.
+    pub seg_formula: Option<(usize, usize, String)>,
+    /// Участок, выбранный правым кликом (кривая, левый ключ): у него в
+    /// блоке показывается поле формулы отрезка.
+    pub sel_seg: Option<(usize, usize)>,
+    /// Участок под указателем — у него рисуется ручка параметра формы.
+    pub hover_seg: Option<(usize, usize)>,
+    /// Драг РУЧКИ ПАРАМЕТРА формы участка (Р.67): вертикаль — главный
+    /// параметр (натяжение/амплитуда), Shift+горизонталь — периоды.
+    pub shape_drag: Option<ShapeDrag>,
+    /// Экранные середины участков активной кривой ПОСЛЕДНЕЙ отрисовки:
+    /// (ключ, точка) — щуп ручки по нарисованному, как у ключей.
+    pub seg_marks: Vec<(usize, egui::Pos2)>,
 }
 
+/// Драг ручки параметра формы (Р.67).
+#[derive(Debug, Clone, Copy)]
+pub struct ShapeDrag {
+    pub ci: usize,
+    pub ki: usize,
+    pub from: egui::Pos2,
+    pub shape0: kt_model::SegShape,
+    /// Окно значений в момент захвата: амплитуда тянется в единицах оси.
+    pub span: f64,
+    pub plot_h: f32,
+}
+
+/// Событие ленты как цель связи (Р.67): подпись, «это моё событие» и
+/// свойства — (адрес `LinkPath`, подпись).
+pub struct LinkEvent {
+    pub label: String,
+    pub this: bool,
+    pub params: Vec<(String, String)>,
+}
+
+/// Хват ручки параметра формы — шире рисунка (правило 1).
+const SEG_GRAB_PX: f32 = 14.0;
+
 impl AutoView {
+    /// Участок под точкой — по нарисованным серединам активной кривой.
+    pub fn seg_at(&self, pos: egui::Pos2) -> Option<usize> {
+        self.seg_marks.iter().find(|(_, p)| (*p - pos).length() < SEG_GRAB_PX).map(|(ki, _)| *ki)
+    }
+
     /// Ключ под точкой. Один щуп на все каналы: нажатие, наведение и
     /// правая кнопка спрашивают ОДНО И ТО ЖЕ.
     pub fn key_at(&self, pos: egui::Pos2) -> Option<(usize, usize)> {
@@ -223,6 +264,10 @@ pub struct AutoCtx<'a> {
     pub to_curve: &'a dyn Fn(Tick) -> Tick,
     /// Шаг кадра проекта — им выравнивается позиция ключа.
     pub frame_step: i64,
+    /// Цели связи «Ведётся…» (Р.67): события ленты и их свойства. `None`
+    /// — у носителя связи не бывает (переход, камера, патч морфера), и
+    /// мёртвого пункта в блоке не будет. Строится ПО НАЖАТИЮ, не на кадр.
+    pub links: Option<&'a dyn Fn() -> Vec<LinkEvent>>,
 }
 
 impl AutoCtx<'_> {
@@ -259,6 +304,7 @@ pub fn view_in_curve(to_curve: &dyn Fn(Tick) -> Tick, tl_view: (Tick, Tick)) -> 
 
 /// Контекст для слота эффекта на событии — прежнее поведение виджета
 /// одной строкой (домен = материал клипа).
+#[allow(clippy::too_many_arguments)]
 pub fn clip_ctx<'a>(
     clip: &'a ClipEvent,
     fx: &'a FxInstance,
@@ -268,6 +314,7 @@ pub fn clip_ctx<'a>(
     tl_view: (Tick, Tick),
     linked: bool,
     default_shape: kt_model::SegShape,
+    links: Option<&'a dyn Fn() -> Vec<LinkEvent>>,
 ) -> AutoCtx<'a> {
     AutoCtx {
         default_shape,
@@ -278,12 +325,55 @@ pub fn clip_ctx<'a>(
         to_curve: to_mat,
         frame_step,
         linked,
+        links,
     }
+}
+
+/// Цели связи для события `me` в документе (Р.67): каждое событие ленты
+/// и его числовые свойства — слоты цепочки и генератор — адресами
+/// `LinkPath`. Своё событие — первым и с адресом `self/…`.
+pub fn link_events(doc: &kt_model::Project, me: kt_model::ClipId) -> Vec<LinkEvent> {
+    let mut out = Vec::new();
+    let mut clips: Vec<&ClipEvent> = doc.clips.iter().collect();
+    clips.sort_by_key(|c| (c.id != me, c.start.0, c.id.0));
+    for c in clips {
+        let this = c.id == me;
+        let who = if this { "self".to_string() } else { c.id.0.to_string() };
+        let mut params = Vec::new();
+        for (i, f) in c.fx.iter().enumerate() {
+            let fx_name = crate::fx_editor::fx_display_name(f);
+            for sp in f.auto_params() {
+                let n: &str = &sp.name;
+                params.push((format!("{who}/fx{i}/{n}"), format!("{fx_name}: {}", crate::widgets::param_label(n))));
+            }
+        }
+        if let Some(g) = &c.r#gen {
+            for sp in g.param_specs() {
+                if matches!(sp.ty, kt_model::ParamType::Num) && sp.kind == kt_model::ParamKind::Smooth {
+                    let n: &str = &sp.name;
+                    params.push((
+                        format!("{who}/gen/{n}"),
+                        format!("{}: {}", crate::gen_ui::kind_name(g), crate::widgets::param_label(n)),
+                    ));
+                }
+            }
+        }
+        if params.is_empty() {
+            continue;
+        }
+        let label = format!("#{} {:.1} s", c.id.0, c.start.0 as f64 / 90_000.0);
+        out.push(LinkEvent { label, this, params });
+    }
+    out
 }
 
 #[derive(Default)]
 pub struct AutoResult {
     pub changed: bool,
+    /// Отказ формулы (разбор, чужое имя) — ОШИБКОЙ в строку состояния
+    /// (правило 16), а не подсказкой на кадр: подсказка наведения тут же
+    /// перекрыла бы её текстом поля.
+    pub error: Option<String>,
     /// Куда двинуть ГЛАВНЫЙ курсор (жест по линейке мини-таймлайна).
     pub seek: Option<Tick>,
     /// Просьба переключить замок оси (Р.40 п.15). Пишет её ТОЛЬКО кнопка
@@ -371,7 +461,7 @@ pub fn draw(
     ui: &mut egui::Ui,
     id: impl std::hash::Hash + std::fmt::Debug + Copy,
     ctx: &AutoCtx<'_>,
-    curves: &mut [ParamCurve],
+    curves: &mut Vec<ParamCurve>,
     view: &mut AutoView,
     playhead: Tick,
     hover: &mut Option<String>,
@@ -412,6 +502,9 @@ pub fn draw(
         AutoMode::Graph => graph(ui, id, ctx, curves, view, playhead, &mut out, hover),
         AutoMode::Table => table(ui, id, ctx, curves, view, &mut out),
     }
+    // БЛОК «КРИВАЯ КАК ПАРАМЕТР» — один на всех носителей (Р.67), под
+    // графиком, у той кривой, которую человек видит выбранной
+    curve_block(ui, id, ctx, curves, view, &mut out, hover);
     out
 }
 
@@ -457,94 +550,8 @@ fn toolbar(
                 view.sel = None;
             }
         }
-        // ПОЛЕ ФОРМУЛЫ (Р.61): владелец просил «возможность задания кривой
-        // автоматизации через ввод формулы (без прокликивания мышки)».
-        // Проверка на лету: ошибка показывается С ПОЗИЦИЕЙ и К МОДЕЛИ НЕ
-        // ПРИМЕНЯЕТСЯ — иначе полустёртый текст ронял бы кривую на каждом
-        // нажатии клавиши.
-        if let Some(c) = curves.get_mut(view.active) {
-            // ТЕКСТ ЖИВЁТ В ВИДЖЕТЕ, а не перечитывается из модели каждый
-            // кадр (Р.63 п.3): иначе незаконченный ввод стирается на
-            // следующем же кадре.
-            let from_model = || match &c.source {
-                kt_model::CurveSource::Formula { expr } => expr.clone(),
-                kt_model::CurveSource::Link { expr, .. } => expr.clone().unwrap_or_default(),
-                kt_model::CurveSource::Keys => String::new(),
-            };
-            let mut text = match &view.formula {
-                Some((ci, t)) if *ci == view.active => t.clone(),
-                _ => from_model(),
-            };
-            ui.label(tr(k::fx::FORMULA));
-            let r = ui
-                .add(egui::TextEdit::singleline(&mut text).desired_width(170.0).hint_text("t * 2"));
-            crate::widgets::field_probe::note("auto.formula", r.rect);
-            crate::app::hint_into(hover, r.clone(), tr(k::fx::FORMULA_HINT));
-            if r.changed() {
-                view.formula = Some((view.active, text.clone()));
-                // проверка НА ЛЕТУ — но только чтобы СКАЗАТЬ об ошибке
-                if let Err(e) = kt_model::Formula::parse(&text)
-                    && !text.trim().is_empty()
-                {
-                    *hover = Some(e.to_string());
-                }
-            }
-            // ПОДТВЕРЖДЕНИЕ: Enter или уход фокуса. Только теперь текст
-            // едет в модель — до этого ключи кривой целы.
-            let entered = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if entered || (r.lost_focus() && !entered) {
-                let text = view.formula.take().filter(|(ci, _)| *ci == view.active).map(|(_, t)| t);
-                if let Some(text) = text {
-                    if text.trim().is_empty() {
-                        // пустая строка — «отвязать»: значения кривой уже
-                        // разрешены, снимаем сам источник
-                        if !c.source.is_keys() {
-                            c.source = kt_model::CurveSource::Keys;
-                            out.changed = true;
-                        }
-                    } else {
-                        match kt_model::Formula::parse(&text) {
-                            Ok(_) => {
-                                c.source = match &c.source {
-                                    kt_model::CurveSource::Link { path, stops, .. } => {
-                                        kt_model::CurveSource::Link {
-                                            path: path.clone(),
-                                            expr: Some(text.clone()),
-                                            stops: stops.clone(),
-                                        }
-                                    }
-                                    _ => {
-                                        c.keys.clear();
-                                        kt_model::CurveSource::Formula { expr: text.clone() }
-                                    }
-                                };
-                                out.changed = true;
-                            }
-                            // незаконченный текст к модели не применяется, а
-                            // молчать о нём нельзя (правило 16)
-                            Err(e) => *hover = Some(e.to_string()),
-                        }
-                    }
-                }
-            }
-        }
-        // «Отвязать» — производная кривая становится обычными ключами по
-        // ТЕКУЩИМ значениям. Без этого действия контрол оставался бы
-        // навсегда погашенным, а единственным выходом было бы снять
-        // кривую целиком (правило 9).
-        if let Some(c) = curves.get_mut(view.active)
-            && !c.source.is_keys()
-        {
-            let b = ui.button(tr(k::fx::UNLINK));
-            crate::app::hint_into(hover, b.clone(), tr(k::fx::UNLINK_HINT));
-            crate::widgets::field_probe::note("auto.unlink", b.rect);
-            if b.clicked() {
-                // значения уже разрешены моделью при сборке — здесь
-                // остаётся снять сам источник
-                c.source = kt_model::CurveSource::Keys;
-                out.changed = true;
-            }
-        }
+        // поле формулы, связь и «отвязать» живут в БЛОКЕ КРИВОЙ под
+        // графиком (Р.67, `curve_block`) — один на всех носителей
         ui.separator();
         // ---- ключи ----
         //
@@ -722,6 +729,9 @@ fn graph(
         egui::pos2(rect.left(), rect.top() + RULER_H),
         egui::pos2(rect.right(), rect.bottom()),
     );
+    // прямоугольник графика — живому сценарию (Р.67): клики по пустому
+    // месту ставят ключи, целиться в них надо по данным программы
+    crate::widgets::field_probe::note("auto.graph", plot);
 
     // линейка: те же лестница шагов и подписи, что на таймлайне проекта
     let (minor, label) = crate::timeline::ruler_steps(tpp);
@@ -785,9 +795,27 @@ fn graph(
     view.key_marks.clear();
     for (ci, c) in curves.iter().enumerate() {
         let Some(spec) = ctx.spec(&c.param) else { continue };
-        let (lo, hi) = win_of(c, spec, view, ci);
+        let (mut lo, mut hi) = win_of(c, spec, view, ci);
         // окно уже В КООРДИНАТАХ ОСИ (Р.57): значение переводится в них
         let ax = axis_of(spec);
+        // результат слоя/источника — тем же вычислителем, что у рендера
+        // (`t` от начала материала, край тела держится); окно значений
+        // расширяется под него, иначе штрих прибивало к кромке (Р.67)
+        let derived = !c.source.is_keys();
+        let pv: Vec<kt_model::AutoKey> = if derived {
+            kt_model::formula_preview(c, ctx.range, Tick(m0), Tick(m1), (m1 - m0).max(1) / 160)
+        } else {
+            Vec::new()
+        };
+        if view.drag_win.is_none_or(|(i, _, _)| i != ci) {
+            for k in &pv {
+                let g = ax.map(k.v);
+                if g.is_finite() {
+                    lo = lo.min(g).max(ax.map(spec.min));
+                    hi = hi.max(g).min(ax.map(spec.max));
+                }
+            }
+        }
         let y_of = |v: f64| -> f32 {
             let u = ((ax.map(v) - lo) / (hi - lo).max(1e-9)).clamp(0.0, 1.0) as f32;
             plot.bottom() - 6.0 - u * (plot.height() - 12.0)
@@ -825,33 +853,60 @@ fn graph(
             );
         }
         let col = curve_color(ci);
-        // ФОРМУЛЬНАЯ кривая ключей не хранит (контракт модели), поэтому
-        // рисуется РАЗРЕШЁННЫМИ значениями — тем же вычислителем, что у
-        // рендера (Р.63 п.3). Без этого верная формула давала пустой
-        // график: «прописываю, а нихера не происходит».
-        let shown: std::borrow::Cow<'_, [kt_model::AutoKey]> = if c.keys.is_empty()
-            && !c.source.is_keys()
-        {
-            std::borrow::Cow::Owned(kt_model::formula_preview(
-                c,
-                ctx.range,
-                Tick(m0),
-                Tick(m1),
-                (m1 - m0).max(1) / 120,
-            ))
-        } else {
-            std::borrow::Cow::Borrowed(&c.keys[..])
-        };
-        if shown.len() > 1 {
-            let pts: Vec<egui::Pos2> =
-                shown.iter().map(|k| egui::pos2(x_of(k.t.0), y_of(k.v))).collect();
-            p.add(egui::Shape::line(pts, egui::Stroke::new(1.0, col)));
+        // ЛИНИЯ ЗНАЧЕНИЯ — выборкой того же `curve_value`, что считает
+        // рендер, по пикселям (Р.67): зигзаг виден зигзагом, ступень —
+        // ступенью, формула отрезка — своей линией. До этого линия шла
+        // прямыми между ключами, и «визуально не видно, что там за
+        // кривая» (владелец). Шаг — 2 px, не крупнее кадра на пиксель.
+        if c.keys.len() > 1 {
+            let (ka, kb) = (c.keys[0].t.0, c.keys[c.keys.len() - 1].t.0);
+            let (xa, xb) = (x_of(ka).max(plot.left()), x_of(kb).min(plot.right()));
+            let mut pts: Vec<egui::Pos2> = Vec::with_capacity(((xb - xa) / 2.0).max(0.0) as usize + 2);
+            let mut x = xa;
+            while x <= xb {
+                let t = t_of(x).clamp(ka, kb);
+                pts.push(egui::pos2(x, y_of(kt_model::curve_value(&c.keys, Tick(t)))));
+                x += 2.0;
+            }
+            pts.push(egui::pos2(xb, y_of(kt_model::curve_value(&c.keys, Tick(kb)))));
+            // у кривой со слоем линия `k` — сплошная, но тише: результат
+            // (штрих) — то, что звучит
+            let stroke = egui::Stroke::new(1.0, if derived { col.gamma_multiply(0.55) } else { col });
+            p.add(egui::Shape::line(pts, stroke));
         }
-        // ПРОИЗВОДНАЯ кривая (связь или формула) мышкой не правится: ключей
-        // у неё нет, и перетаскивание точки молча создало бы третью правду о
-        // значении (Р.61). Её линия рисуется штрихом, а маркеров ключей нет
-        // вовсе — значит и щуп по ним не сработает.
-        if !c.source.is_keys() {
+        // РЕЗУЛЬТАТ слоя/источника — штрихом, тем же вычислителем, что у
+        // рендера (`t` от начала материала, край тела держится): верная
+        // формула больше не даёт пустоты, а линия не уезжает при прокрутке
+        if derived {
+            if pv.len() > 1 {
+                let pts: Vec<egui::Pos2> = pv.iter().map(|k| egui::pos2(x_of(k.t.0), y_of(k.v))).collect();
+                p.add(egui::Shape::dashed_line(&pts, egui::Stroke::new(1.5, col), 5.0, 3.0));
+            }
+        }
+        // РУЧКА ПАРАМЕТРА ФОРМЫ (Р.67) — на середине участка активной
+        // кривой, у форм с параметром: под указателем и у тянущейся
+        if ci == view.active {
+            view.seg_marks.clear();
+            for ki in 0..c.keys.len().saturating_sub(1) {
+                let (a, b) = (&c.keys[ki], &c.keys[ki + 1]);
+                let mid = Tick((a.t.0 + b.t.0) / 2);
+                let m = egui::pos2(x_of(mid.0), y_of(kt_model::curve_value(&c.keys, mid)));
+                if shape_main_param(a.shape).is_some() && m.x >= plot.left() && m.x <= plot.right() {
+                    view.seg_marks.push((ki, m));
+                    let shown = view.hover_seg == Some((ci, ki))
+                        || view.shape_drag.is_some_and(|d| d.ci == ci && d.ki == ki);
+                    if shown {
+                        let r = egui::Rect::from_center_size(m, egui::vec2(8.0, 8.0));
+                        p.rect_filled(r, 1.0, col);
+                        p.rect_stroke(r, 1.0, egui::Stroke::new(1.0, egui::Color32::WHITE), egui::StrokeKind::Outside);
+                    }
+                }
+            }
+        }
+        // ПРОИЗВОДНАЯ кривая (связь или формула) — маркеры ключей есть,
+        // если ключи есть: слой стоит НАД ними, и человек правит именно
+        // ключи; штрих результата мышкой не правится (у него нет точек).
+        if derived && c.keys.is_empty() {
             continue;
         }
         for (ki, k) in c.keys.iter().enumerate() {
@@ -927,6 +982,12 @@ fn graph(
                         .position(|w| t >= w[0].t.0 && t < w[1].t.0)
                         .map(|ki| MenuTarget::Segment(ci, ki))
                 });
+            // участок запоминается и ПОСЛЕ меню (Р.67): у него в блоке
+            // кривой показывается поле формулы отрезка
+            if let Some(MenuTarget::Segment(ci, ki)) = view.menu_target {
+                view.sel_seg = Some((ci, ki));
+                view.seg_formula = None;
+            }
         }
         let menu_hit = match view.menu_target {
             Some(MenuTarget::Key(ci, ki)) => Some((ci, ki)),
@@ -981,6 +1042,23 @@ fn graph(
                                 set_shape = Some((ci, ki, sh));
                                 ui.close();
                             }
+                        }
+                        // ФОРМУЛА ОТРЕЗКА (Р.67): форма участка со своим
+                        // текстом; текст правится в блоке кривой под графиком
+                        let is_formula = matches!(cur, kt_model::SegShape::Formula { .. });
+                        let r = ui.selectable_label(is_formula, tr(k::fx::SHAPE_FORMULA_ITEM));
+                        if crate::widgets::field_probe::on() {
+                            crate::widgets::field_probe::note("auto.shape.formula", r.rect);
+                        }
+                        if r.clicked() {
+                            set_shape = Some((
+                                ci,
+                                ki,
+                                kt_model::SegShape::Formula {
+                                    expr: kt_model::ExprId::intern("a + (b - a) * s"),
+                                },
+                            ));
+                            ui.close();
                         }
                         ui.separator();
                         ui.menu_button(tr(k::fx::SHAPE_ALL), |ui| {
@@ -1089,6 +1167,68 @@ fn graph(
         }
         return;
     }
+    // ручка параметра формы: наведение и захват — до ключей по пустоте
+    view.hover_seg = resp.hover_pos().and_then(|hp| {
+        if view.key_at(hp).is_some() {
+            None
+        } else {
+            view.seg_at(hp).map(|ki| (view.active, ki))
+        }
+    });
+    // захват — по ТОЧКЕ НАЖАТИЯ: egui объявляет драг, когда указатель уже
+    // ушёл на порог, и текущая позиция может быть дальше хвата ручки
+    let press = ui.input(|i| i.pointer.press_origin()).unwrap_or(pos);
+    if resp.drag_started()
+        && hit.is_none()
+        && let Some(ki) = view.seg_at(press)
+        && let Some(c) = curves.get(view.active)
+        && ki < c.keys.len()
+        && let Some(spec) = ctx.spec(&c.param)
+    {
+        let (lo, hi) = win_of(c, spec, view, view.active);
+        view.shape_drag = Some(ShapeDrag {
+            ci: view.active,
+            ki,
+            from: press,
+            shape0: c.keys[ki].shape,
+            span: (hi - lo).max(1e-9),
+            plot_h: (plot.height() - 12.0).max(1.0),
+        });
+    }
+    if resp.dragged()
+        && let Some(d) = view.shape_drag
+        && d.ci < curves.len()
+        && d.ki < curves[d.ci].keys.len()
+    {
+        let dy = (d.from.y - pos.y) as f64; // вверх — больше
+        let dx = (pos.x - d.from.x) as f64;
+        let shift = ui.input(|i| i.modifiers.shift);
+        let next = shape_dragged(d.shape0, dx, dy, shift, d.span / d.plot_h as f64);
+        if curves[d.ci].keys[d.ki].shape != next {
+            curves[d.ci].keys[d.ki].shape = next;
+            out.changed = true;
+        }
+        // число рядом с ручкой — на время жеста (оверлей, не попап)
+        if let Some((_, m)) = view.seg_marks.iter().find(|(ki, _)| *ki == d.ki) {
+            let (label, v) = shape_main_param(next).unwrap_or(("", 0.0));
+            let text = if shift {
+                format!("{}: {:.2}", tr(k::fx::SHAPE_PERIODS), shape_periods(next).unwrap_or(0.0))
+            } else {
+                format!("{label}: {v:.2}")
+            };
+            p.text(
+                *m + egui::vec2(10.0, -10.0),
+                egui::Align2::LEFT_BOTTOM,
+                text,
+                egui::FontId::proportional(11.0),
+                egui::Color32::WHITE,
+            );
+        }
+        return;
+    }
+    if resp.drag_stopped() && view.shape_drag.take().is_some() {
+        return;
+    }
     if resp.drag_started() || resp.clicked() {
         if let Some((ci, ki)) = hit {
             view.sel = Some((ci, ki));
@@ -1098,7 +1238,7 @@ fn graph(
                 let (lo, hi) = value_window(&curves[ci], spec);
                 view.drag_win = Some((ci, lo, hi));
             }
-        } else if resp.clicked() {
+        } else if resp.clicked() && view.seg_at(pos).is_none() {
             // клик по пустому месту — новый ключ активной кривой
             if let Some(spec) = curves.get(view.active).and_then(|c| ctx.spec(&c.param)).cloned() {
                 let (lo, hi) = win_of(&curves[view.active], &spec, view, view.active);
@@ -1256,4 +1396,434 @@ fn table(
         }
         out.changed = true;
     }
+}
+
+// ---- Р.67: ручка параметра формы, блок «кривая как параметр» -----------------
+
+/// Главный параметр формы участка под ручку: подпись и значение. У прямой,
+/// ступени и формулы отрезка ручки нет (правило 9: ничего лишнего).
+fn shape_main_param(s: kt_model::SegShape) -> Option<(&'static str, f64)> {
+    use kt_model::SegShape as S;
+    match s {
+        S::Smooth { tension } | S::EaseIn { tension } | S::EaseOut { tension } => {
+            Some((tr(k::fx::SHAPE_TENSION), tension))
+        }
+        S::Zigzag { amplitude, .. } => Some((tr(k::fx::SHAPE_AMP), amplitude)),
+        S::Linear | S::Hold | S::Formula { .. } => None,
+    }
+}
+
+fn shape_periods(s: kt_model::SegShape) -> Option<f64> {
+    match s {
+        kt_model::SegShape::Zigzag { periods, .. } => Some(periods),
+        _ => None,
+    }
+}
+
+/// Форма после драга ручки: вертикаль правит главный параметр (натяжение —
+/// 0.02 на пиксель, амплитуда — в единицах оси), Shift+горизонталь —
+/// периоды (0.05 на пиксель).
+fn shape_dragged(
+    s0: kt_model::SegShape,
+    dx: f64,
+    dy: f64,
+    shift: bool,
+    units_per_px: f64,
+) -> kt_model::SegShape {
+    use kt_model::SegShape as S;
+    match s0 {
+        S::Smooth { tension } => S::Smooth { tension: (tension + dy * 0.02).clamp(0.0, 4.0) },
+        S::EaseIn { tension } => S::EaseIn { tension: (tension + dy * 0.02).clamp(0.0, 4.0) },
+        S::EaseOut { tension } => S::EaseOut { tension: (tension + dy * 0.02).clamp(0.0, 4.0) },
+        S::Zigzag { periods, amplitude, profile } => {
+            if shift {
+                S::Zigzag { periods: (periods + dx * 0.05).clamp(0.25, 256.0), amplitude, profile }
+            } else {
+                S::Zigzag { periods, amplitude: (amplitude + dy * units_per_px).max(0.0), profile }
+            }
+        }
+        other => other,
+    }
+}
+
+/// Имена, известные формуле: переменные носителя и функции реестра.
+fn known_names(vars: &[&str]) -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = vars
+        .iter()
+        .map(|s| -> &'static str {
+            match *s {
+                "t" => "t",
+                "k" => "k",
+                "src" => "src",
+                "s" => "s",
+                "a" => "a",
+                "b" => "b",
+                _ => "",
+            }
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+    v.extend(kt_model::formula::FUNCTIONS.iter().map(|(n, _)| *n));
+    v
+}
+
+/// Ближайшие имена к неизвестному (правило 16: отказ называет, ЧТО есть):
+/// по префиксу, потом по расстоянию правки ≤ 2.
+fn nearest_names(bad: &str, vars: &[&str]) -> Vec<&'static str> {
+    let names = known_names(vars);
+    let mut out: Vec<&'static str> =
+        names.iter().copied().filter(|n| !bad.is_empty() && n.starts_with(&bad[..bad.len().min(2)])).collect();
+    if out.is_empty() {
+        out = names.iter().copied().filter(|n| edit_distance(n, bad) <= 2).collect();
+    }
+    out.truncate(4);
+    out
+}
+
+fn edit_distance(a: &str, b: &str) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for i in 1..=a.len() {
+        let mut cur = vec![i; b.len() + 1];
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        prev = cur;
+    }
+    prev[b.len()]
+}
+
+/// Дополнение по Tab (Р.67, без попапов): последнее имя в тексте
+/// дописывается до единственного кандидата либо до общего префикса;
+/// кандидаты возвращаются для строки состояния.
+fn complete_prefix(text: &str, vars: &[&str]) -> (String, Vec<&'static str>) {
+    let start = text.rfind(|c: char| !(c.is_alphanumeric() || c == '_')).map(|i| i + 1).unwrap_or(0);
+    let prefix = &text[start..];
+    if prefix.is_empty() {
+        return (text.to_string(), Vec::new());
+    }
+    let cands: Vec<&'static str> =
+        known_names(vars).into_iter().filter(|n| n.starts_with(prefix) && *n != prefix).collect();
+    let done = match cands.len() {
+        0 => text.to_string(),
+        1 => {
+            let n = cands[0];
+            let is_fn = kt_model::formula::FUNCTIONS.iter().any(|(f, _)| *f == n);
+            format!("{}{}{}", &text[..start], n, if is_fn { "(" } else { "" })
+        }
+        _ => {
+            let mut common = cands[0].to_string();
+            for c in &cands[1..] {
+                let l = common.chars().zip(c.chars()).take_while(|(x, y)| x == y).count();
+                common.truncate(l);
+            }
+            format!("{}{}", &text[..start], common)
+        }
+    };
+    (done, cands)
+}
+
+/// Поле формулы с ЖИВЫМ текстом (состояние виджета), подтверждением по
+/// Enter/уходу фокуса, ошибкой с позицией и ближайшими именами и
+/// дополнением по Tab. `Some(text)` — подтверждённый текст к применению.
+#[allow(clippy::too_many_arguments)]
+fn formula_field(
+    ui: &mut egui::Ui,
+    probe: &str,
+    live: &mut Option<String>,
+    from_model: String,
+    vars: &[&str],
+    hint: &str,
+    hover: &mut Option<String>,
+    err: &mut Option<String>,
+) -> Option<String> {
+    let mut text = live.clone().unwrap_or(from_model);
+    let r = ui.add(
+        egui::TextEdit::singleline(&mut text)
+            .desired_width(220.0)
+            .lock_focus(true)
+            .hint_text("t * 2"),
+    );
+    crate::widgets::field_probe::note(probe, r.rect);
+    crate::app::hint_into(hover, r.clone(), hint);
+    // Tab (фокус заперт — навигация его не забирает): дополняем на месте;
+    // символ табуляции, если поле его вставило, снимается
+    let tab = r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Tab));
+    let mut changed = r.changed();
+    if tab || text.contains('\t') {
+        let bare: String = text.chars().filter(|c| *c != '\t').collect();
+        let (done, cands) = complete_prefix(&bare, vars);
+        changed |= done != text;
+        text = done;
+        if cands.len() > 1 {
+            *hover = Some(crate::tf!(k::fx::FORMULA_COMPLETE_MANY, cands.join(", ")));
+        }
+    }
+    if changed {
+        *live = Some(text.clone());
+        if !text.trim().is_empty()
+            && let Err(e) = kt_model::Formula::parse(&text)
+        {
+            *hover = Some(explain_error(&e, vars));
+        }
+    }
+    let entered = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+    if entered || r.lost_focus() {
+        if let Some(t) = live.take() {
+            if t.trim().is_empty() {
+                return Some(String::new());
+            }
+            match kt_model::Formula::parse(&t) {
+                Ok(f) => {
+                    if let Some(bad) = f.reads.iter().find(|n| !vars.contains(&n.as_str())) {
+                        let msg = crate::tf!(
+                            k::fx::FORMULA_UNKNOWN,
+                            bad,
+                            nearest_names(bad, vars).join(", ")
+                        );
+                        *hover = Some(msg.clone());
+                        *err = Some(msg);
+                        *live = Some(t);
+                        return None;
+                    }
+                    return Some(t);
+                }
+                Err(e) => {
+                    let msg = explain_error(&e, vars);
+                    *hover = Some(msg.clone());
+                    *err = Some(msg);
+                    *live = Some(t);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn explain_error(e: &kt_model::FormulaError, vars: &[&str]) -> String {
+    match &e.kind {
+        kt_model::FormulaErrorKind::UnknownName(n) => {
+            crate::tf!(k::fx::FORMULA_UNKNOWN, n, nearest_names(n, vars).join(", "))
+        }
+        _ => e.to_string(),
+    }
+}
+
+/// БЛОК «КРИВАЯ КАК ПАРАМЕТР» (Р.67): один на слот, генератор и экземпляр
+/// ленты; относится к кривой, которую человек видит выбранной, и говорит
+/// об этом заголовком. Внутри: форма всех отрезков с параметрами, формула
+/// выбранного участка, формула-слой, дверь связи, «отвязать», справка и
+/// удаление кривой. До этого «форма всех отрезков» стояла в окне слота
+/// без имени кривой и правила невидимо активную — «меняется только одно
+/// поле, хотя я в двух полях задал зигзаги» (владелец).
+#[allow(clippy::too_many_arguments)]
+fn curve_block(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug + Copy,
+    ctx: &AutoCtx<'_>,
+    curves: &mut Vec<ParamCurve>,
+    view: &mut AutoView,
+    out: &mut AutoResult,
+    hover: &mut Option<String>,
+) {
+    let Some(ci) = (view.active < curves.len()).then_some(view.active) else { return };
+    let name = ctx.label(&curves[ci].param);
+    let name = name.trim_end_matches(':').trim_end().to_string();
+    ui.separator();
+    let title = crate::tf!(k::fx::CURVE_TITLE, name);
+    let r = ui.label(egui::RichText::new(title).color(curve_color(ci)).strong());
+    crate::widgets::field_probe::note("curve.title", r.rect);
+
+    // 1. форма всех отрезков и её параметры
+    ui.horizontal(|ui| {
+        out.changed |= crate::widgets::shape_all_control(ui, &mut curves[ci], hover);
+    });
+
+    // 2. формула ВЫБРАННОГО участка — только если у него форма-формула
+    if let Some((sc, sk)) = view.sel_seg
+        && sc == ci
+        && let Some(kt_model::SegShape::Formula { expr }) = curves[ci].keys.get(sk).map(|k| k.shape)
+    {
+        ui.horizontal(|ui| {
+            ui.label(tr(k::fx::SEG_FORMULA));
+            let mut live = view.seg_formula.take().filter(|(c, k, _)| (*c, *k) == (sc, sk)).map(|(_, _, t)| t);
+            let got = formula_field(
+                ui,
+                "auto.seg_formula",
+                &mut live,
+                expr.text(),
+                kt_model::SEGMENT_VARS,
+                tr(k::fx::SEG_FORMULA_HINT),
+                hover,
+                &mut out.error,
+            );
+            if let Some(t) = live {
+                view.seg_formula = Some((sc, sk, t));
+            }
+            if let Some(t) = got
+                && !t.trim().is_empty()
+            {
+                curves[ci].keys[sk].shape = kt_model::SegShape::Formula { expr: kt_model::ExprId::intern(&t) };
+                out.changed = true;
+            }
+        });
+    }
+
+    // 3. формула-слой (над ключами) / текст пересчёта связи
+    ui.horizontal(|ui| {
+        ui.label(tr(k::fx::FORMULA));
+        let from_model = match &curves[ci].source {
+            kt_model::CurveSource::Formula { expr } => expr.clone(),
+            kt_model::CurveSource::Link { expr, .. } => expr.clone().unwrap_or_default(),
+            kt_model::CurveSource::Keys => String::new(),
+        };
+        let mut live = view.formula.take().filter(|(c, _)| *c == ci).map(|(_, t)| t);
+        let got = formula_field(
+            ui,
+            "auto.formula",
+            &mut live,
+            from_model,
+            kt_model::LAYER_VARS,
+            tr(k::fx::FORMULA_HINT),
+            hover,
+            &mut out.error,
+        );
+        if let Some(t) = live {
+            view.formula = Some((ci, t));
+        }
+        if let Some(t) = got {
+            let c = &mut curves[ci];
+            if t.trim().is_empty() {
+                // пустой текст — снять слой; ключи под ним остаются
+                match &c.source {
+                    kt_model::CurveSource::Link { path, stops, .. } => {
+                        c.source = kt_model::CurveSource::Link { path: path.clone(), expr: None, stops: stops.clone() };
+                        out.changed = true;
+                    }
+                    kt_model::CurveSource::Formula { .. } => {
+                        c.source = kt_model::CurveSource::Keys;
+                        out.changed = true;
+                    }
+                    kt_model::CurveSource::Keys => {}
+                }
+            } else {
+                c.source = match &c.source {
+                    kt_model::CurveSource::Link { path, stops, .. } => kt_model::CurveSource::Link {
+                        path: path.clone(),
+                        expr: Some(t.clone()),
+                        stops: stops.clone(),
+                    },
+                    // слой НЕ стирает ключи (Р.67)
+                    _ => kt_model::CurveSource::Formula { expr: t.clone() },
+                };
+                out.changed = true;
+            }
+        }
+    });
+
+    // 4. дверь связи и «отвязать»
+    ui.horizontal(|ui| {
+        if let Some(links) = ctx.links {
+            let mb = ui.menu_button(tr(k::fx::DRIVE_BY), |ui| {
+                let events = links();
+                let mut pick: Option<String> = None;
+                let mut said_others = false;
+                for ev in &events {
+                    // чужие события — под своим подзаголовком: человек видит,
+                    // где кончается «это событие» и начинается лента
+                    if !ev.this && !said_others {
+                        said_others = true;
+                        ui.separator();
+                        ui.label(egui::RichText::new(tr(k::fx::DRIVE_OTHERS)).weak().small());
+                    }
+                    let title = if ev.this { tr(k::fx::DRIVE_THIS).to_string() } else { ev.label.clone() };
+                    ui.menu_button(title, |ui| {
+                        for (path, label) in &ev.params {
+                            let b = ui.button(label);
+                            if crate::widgets::field_probe::on() {
+                                crate::widgets::field_probe::note(&format!("auto.link.{path}"), b.rect);
+                            }
+                            if b.clicked() {
+                                pick = Some(path.clone());
+                                ui.close();
+                            }
+                        }
+                    });
+                }
+                if let Some(path) = pick {
+                    let c = &mut curves[ci];
+                    let expr = c.source.expr().map(|e| e.to_string());
+                    c.source = kt_model::CurveSource::Link { path, expr, stops: Vec::new() };
+                    out.changed = true;
+                    ui.close();
+                }
+            });
+            crate::widgets::field_probe::note("auto.drive_by", mb.response.rect);
+            crate::app::hint_into(hover, mb.response, tr(k::fx::DRIVE_BY_HINT));
+        }
+        if !curves[ci].source.is_keys() {
+            let b = ui.button(tr(k::fx::UNLINK));
+            crate::app::hint_into(hover, b.clone(), tr(k::fx::UNLINK_HINT));
+            crate::widgets::field_probe::note("auto.unlink", b.rect);
+            if b.clicked() {
+                // значения уже разрешены моделью при сборке — здесь
+                // остаётся снять сам источник
+                curves[ci].source = kt_model::CurveSource::Keys;
+                out.changed = true;
+            }
+        }
+        // удалить кривую — здесь же, у названной кривой
+        let del = ui.button(tr(k::fx::AUTO_REMOVE));
+        crate::widgets::field_probe::note("auto.remove", del.rect);
+        if del.clicked() {
+            curves.remove(ci);
+            view.active = 0;
+            view.sel = None;
+            view.sel_seg = None;
+            out.changed = true;
+        }
+    });
+    if ci >= curves.len() {
+        return;
+    }
+
+    // 5. справка — группа в блоке из реестра вычислителя; попапов нет
+    let hdr = egui::CollapsingHeader::new(tr(k::fx::HELP))
+        .id_salt(("formula_help", id))
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(tr(k::fx::HELP_VARS)).strong());
+            for key in [
+                k::fx::HELP_VAR_T,
+                k::fx::HELP_VAR_K,
+                k::fx::HELP_VAR_SRC,
+                k::fx::HELP_VAR_S,
+                k::fx::HELP_VAR_A,
+                k::fx::HELP_VAR_B,
+            ] {
+                ui.label(tr(key));
+            }
+            ui.label(egui::RichText::new(tr(k::fx::HELP_FUNCS)).strong());
+            ui.horizontal_wrapped(|ui| {
+                for (name, arity) in kt_model::formula::FUNCTIONS {
+                    let args = (0..*arity).map(|i| ["x", "y", "z"][i]).collect::<Vec<_>>().join(", ");
+                    let sig = format!("{name}({args})");
+                    let b = ui.small_button(&sig);
+                    if crate::widgets::field_probe::on() {
+                        crate::widgets::field_probe::note(&format!("auto.help.{name}"), b.rect);
+                    }
+                    // клик вставляет образец в поле формулы (форма AE —
+                    // меню вставки, но без попапа)
+                    if b.clicked() {
+                        let cur = view.formula.take().filter(|(c, _)| *c == ci).map(|(_, t)| t);
+                        let base = cur.unwrap_or_else(|| curves[ci].source.expr().unwrap_or("").to_string());
+                        view.formula = Some((ci, format!("{base}{sig}")));
+                    }
+                }
+            });
+            ui.label(tr(k::fx::HELP_OPS));
+        });
+    crate::widgets::field_probe::note("auto.help", hdr.header_response.rect);
+    crate::app::hint_into(hover, hdr.header_response, tr(k::fx::HELP_HINT));
 }
