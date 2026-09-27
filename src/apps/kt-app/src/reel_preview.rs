@@ -129,6 +129,10 @@ pub type ReelPartial = ReelStrip;
 /// Итог задачи: пики и откуда они.
 pub type ReelDone = Result<(crate::util::Peaks, ReelOrigin), String>;
 
+/// Отмена задачи — НЕ провал: этот текст служба отличает от ошибки рендера
+/// и в негативный кэш не кладёт (Р.67).
+pub const CANCELLED: &str = "cancelled";
+
 type Job = crate::bg::BgJob<ReelPartial, ReelDone>;
 
 /// Служба превью лент.
@@ -219,7 +223,11 @@ impl ReelPreviews {
         index_db: Option<std::path::PathBuf>,
         base: Option<std::path::PathBuf>,
     ) -> bool {
-        if self.ready.contains_key(&key)
+        // ПОЛНАЯ запись (кадры И огибающая) — делать нечего; полоса без
+        // пиков (задачу отменили на аудио-стадии, Р.67) заявку ПРОПУСКАЕТ:
+        // иначе огибающая не появилась бы до следующей правки ленты
+        let complete = self.ready.get(&key).is_some_and(|(e, _)| e.peaks.is_some());
+        if complete
             || self.failed.contains_key(&key)
             || self.running.as_ref().is_some_and(|(k, _)| *k == key)
             || self.queue.iter().any(|(k, _)| *k == key)
@@ -289,22 +297,7 @@ impl ReelPreviews {
                 self.put(key, e);
             }
             if let Some(done) = done {
-                match done {
-                    Ok((peaks, origin)) => {
-                        let mut e = self.get(&key).map(|a| (*a).clone()).unwrap_or_default();
-                        e.peaks = Some(peaks);
-                        self.put(key, e);
-                        if origin == ReelOrigin::Rendered {
-                            self.renders += 1;
-                        }
-                    }
-                    Err(e) => {
-                        if self.failed.len() >= MAX_FAILED {
-                            self.failed.clear();
-                        }
-                        self.failed.insert(key, e);
-                    }
-                }
+                self.finish(key, done);
                 self.running = None;
                 any = true;
             }
@@ -324,6 +317,53 @@ impl ReelPreviews {
 
     /// Положить готовое; за потолком уходит та лента, к которой дольше
     /// всех не обращались (честный LRU, а не очередь вставки).
+    /// Итог задачи — как его видит `poll` (для теста t795: настоящую
+    /// фоновую задачу в харнессе не отменить прицельно).
+    #[cfg(test)]
+    pub(crate) fn note_done_for_test(&mut self, key: ReelKey, done: ReelDone) {
+        // задача отработала: из очереди она уже ушла
+        self.queue.retain(|(k, _)| *k != key);
+        self.finish(key, done);
+    }
+
+    /// Готовая (или наполовину готовая) запись — для теста t795.
+    #[cfg(test)]
+    pub(crate) fn put_for_test(
+        &mut self,
+        key: ReelKey,
+        strip: Option<ReelStrip>,
+        peaks: Option<crate::util::Peaks>,
+    ) {
+        self.queue.retain(|(k, _)| *k != key);
+        self.put(key, ReelPreview { strip, peaks });
+    }
+
+    /// Итог задачи — ОДНО место (его же зовёт тест t795).
+    ///
+    /// ОТМЕНА — не провал (Р.67): задачу сняли паузой, правкой или
+    /// закрытием, и повторить её законно. В негативный кэш идёт только
+    /// ОШИБКА рендера — иначе ключ оставался «провальным» до следующей
+    /// правки ленты, и огибающая не появлялась никогда.
+    fn finish(&mut self, key: ReelKey, done: ReelDone) {
+        match done {
+            Ok((peaks, origin)) => {
+                let mut e = self.get(&key).map(|a| (*a).clone()).unwrap_or_default();
+                e.peaks = Some(peaks);
+                self.put(key, e);
+                if origin == ReelOrigin::Rendered {
+                    self.renders += 1;
+                }
+            }
+            Err(e) if e == CANCELLED => {}
+            Err(e) => {
+                if self.failed.len() >= MAX_FAILED {
+                    self.failed.clear();
+                }
+                self.failed.insert(key, e);
+            }
+        }
+    }
+
     pub(crate) fn put(&mut self, key: ReelKey, e: ReelPreview) {
         let stamp = Cell::new(0);
         self.touch(&stamp);
@@ -417,6 +457,8 @@ pub fn render_reel_preview(
     let seq_row = key.seq.0 as i64;
     let fp = media_fingerprint(p, base);
     let mut db = index_db.and_then(|d| kt_media::index::MediaIndexDb::open(d).ok());
+    // кадры уже пришли с диска — эту стадию пропускаем, считаем только пики
+    let mut disk_frames = false;
     if let Some(db) = &db {
         match db.reel_preview(seq_row, key.hash, fp) {
             Ok(Some(row)) => {
@@ -425,8 +467,15 @@ pub fn render_reel_preview(
                     .iter()
                     .map(|j| j.as_deref().and_then(crate::thumbs::decode_thumb_jpeg).map(Arc::new))
                     .collect();
-                send.send(ReelStrip { step: row.step, frames, end: Tick(row.end_ticks) });
-                return Ok((crate::util::pyramid_to_peaks(row.peaks), ReelOrigin::Disk));
+                let (step_disk, end_disk, has_peaks) = (row.step, row.end_ticks, row.has_peaks);
+                send.send(ReelStrip { step: step_disk, frames, end: Tick(end_disk) });
+                if has_peaks {
+                    return Ok((crate::util::pyramid_to_peaks(row.peaks), ReelOrigin::Disk));
+                }
+                // КАДРЫ с диска есть, ПИКОВ ещё нет (задачу отменили на
+                // аудио-стадии): кадры уже отданы, а огибающую досчитываем
+                // здесь же — второго рендера кадров не будет
+                disk_frames = true;
             }
             Ok(None) => {}
             Err(e) => warn_db_once("read", &e),
@@ -468,8 +517,12 @@ pub fn render_reel_preview(
     let mut jpegs: Vec<Option<Vec<u8>>> = vec![None; frames.len()];
     let mut buf = Vec::new();
     for i in 0..frames.len() {
+        // кадры уже отданы с диска — считаем только огибающую (Р.67)
+        if disk_frames {
+            break;
+        }
         if ctl.should_stop() {
-            return Err("cancelled".into());
+            return Err(CANCELLED.into());
         }
         let t = video.grid.align_floor(Tick(i as i64 * step));
         let mut per_src: HashMap<(MediaId, Quality), Vec<Tick>> = HashMap::new();
@@ -503,12 +556,34 @@ pub fn render_reel_preview(
         }
     }
     // кадры уходят СРАЗУ: аудио считается дольше, и ждать его незачем
-    send.send(ReelStrip { step, frames, end });
+    // (с диска они уже отданы выше — второй раз пустой полосой не бьём)
+    if !disk_frames {
+        send.send(ReelStrip { step, frames, end });
+    }
     drop(src);
+
+    // ...и СРАЗУ ЖЕ на диск (Р.67): полоса, дошедшая до экрана, обязана
+    // дожить до диска даже если аудио-стадию отменят. Раньше запись шла
+    // одна и только после пиков — отменённая задача не оставляла ничего,
+    // и лента рендерилась заново при каждом открытии проекта.
+    if let Some(db) = db.as_mut()
+        && !disk_frames
+    {
+        let refs: Vec<Option<&[u8]>> = jpegs.iter().map(|j| j.as_deref()).collect();
+        if let Err(e) = db.put_reel_frames(seq_row, key.hash, fp, step, end.0, &refs) {
+            warn_db_once("write frames", &e);
+        } else {
+            let keep: Vec<i64> =
+                std::iter::once(seq_row).chain(p.sequences.iter().map(|s| s.id.0 as i64)).collect();
+            if let Err(e) = db.prune_reels(&keep) {
+                warn_db_once("prune", &e);
+            }
+        }
+    }
 
     // --- огибающая ---------------------------------------------------
     if ctl.should_stop() {
-        return Err("cancelled".into());
+        return Err(CANCELLED.into());
     }
     let mut acc = kt_media::index::PeakAcc::default();
     let cancel = ctl.cancel_flag().clone();
@@ -526,22 +601,12 @@ pub fn render_reel_preview(
     .map_err(|e| e.to_string())?;
     let pyramid = acc.finish();
 
-    // --- на диск ------------------------------------------------------
-    // Одной транзакцией, ПОСЛЕ пиков: отменённая на аудио задача не
-    // оставляет полосы без огибающей. Заодно уборка лент, которых в
-    // документе больше нет: `reel_as_root` несёт все остальные ленты
-    // документа, так что список «кого оставить» у задачи уже в руках.
-    if let Some(db) = db.as_mut() {
-        let refs: Vec<Option<&[u8]>> = jpegs.iter().map(|j| j.as_deref()).collect();
-        if let Err(e) = db.put_reel_preview(seq_row, key.hash, fp, step, end.0, &refs, &pyramid) {
-            warn_db_once("write", &e);
-        } else {
-            let keep: Vec<i64> =
-                std::iter::once(seq_row).chain(p.sequences.iter().map(|s| s.id.0 as i64)).collect();
-            if let Err(e) = db.prune_reels(&keep) {
-                warn_db_once("prune", &e);
-            }
-        }
+    // --- ОГИБАЮЩАЯ на диск --------------------------------------------
+    // Своей транзакцией и к строке с тем же ключом: кадры уже лежат.
+    if let Some(db) = db.as_mut()
+        && let Err(e) = db.put_reel_peaks(seq_row, key.hash, fp, &pyramid)
+    {
+        warn_db_once("write peaks", &e);
     }
     Ok((crate::util::pyramid_to_peaks(pyramid), ReelOrigin::Rendered))
 }

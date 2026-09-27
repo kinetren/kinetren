@@ -380,7 +380,12 @@ impl MediaIndexDb {
     /// `frames[i]` — JPEG кадра `i * step`, `None` — кадра не было (строки
     /// нет). `hash`/`media_fp` кладутся как i64 побитово.
     #[allow(clippy::too_many_arguments)]
-    pub fn put_reel_preview(
+    /// КАДРЫ полосы — своей транзакцией, СРАЗУ после кадровой стадии
+    /// (Р.67). Раньше запись шла одна и только после аудио-стадии: полоса,
+    /// уже дошедшая до экрана, до диска не доживала, если задачу отменили
+    /// (пауза, правка, закрытие) — и при следующем открытии проекта лента
+    /// рендерилась заново («превью композиции ОПЯТЬ не сохраняются»).
+    pub fn put_reel_frames(
         &mut self,
         seq: i64,
         hash: u64,
@@ -388,7 +393,6 @@ impl MediaIndexDb {
         step: i64,
         end_ticks: i64,
         frames: &[Option<&[u8]>],
-        peaks: &PeakPyramid,
     ) -> Result<(), IndexError> {
         let tx = self.conn.transaction()?;
         for table in ["reel_strip", "reel_frame", "reel_peaks"] {
@@ -407,6 +411,35 @@ impl MediaIndexDb {
                 )?;
             }
         }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// ПИКИ той же полосы — отдельной транзакцией и ПОЗЖЕ. Пишутся только
+    /// к строке с тем же ключом: разошлась редакция — пики не наши.
+    /// Флага в схеме нет: «пики есть» — это непустая `reel_peaks`, и
+    /// бампать `schema_version` (он сносит пакетный индекс, пики и тумбы
+    /// ВСЕХ медиа проекта) ради одного булева нельзя.
+    pub fn put_reel_peaks(
+        &mut self,
+        seq: i64,
+        hash: u64,
+        media_fp: u64,
+        peaks: &PeakPyramid,
+    ) -> Result<(), IndexError> {
+        let same: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT n FROM reel_strip WHERE seq=?1 AND hash=?2 AND media_fp=?3",
+                params![seq, hash as i64, media_fp as i64],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if same.is_none() {
+            return Ok(()); // полосы с этим ключом нет — пики не к чему класть
+        }
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM reel_peaks WHERE seq=?1", params![seq])?;
         for (level, channels) in peaks.levels.iter().enumerate() {
             for (ch, blocks) in channels.iter().enumerate() {
                 tx.execute(
@@ -461,7 +494,16 @@ impl MediaIndexDb {
             }
             levels.push(channels);
         }
-        Ok(Some(ReelPreviewRow { step, end_ticks, frames, peaks: PeakPyramid { levels } }))
+        // ПИКОВ МОЖЕТ НЕ БЫТЬ: кадры пишутся раньше, и полоса без
+        // огибающей — законное промежуточное состояние (Р.67)
+        let has_peaks = !levels.is_empty();
+        Ok(Some(ReelPreviewRow {
+            step,
+            end_ticks,
+            frames,
+            peaks: PeakPyramid { levels },
+            has_peaks,
+        }))
     }
 
     /// Убрать превью лент, которых в проекте больше нет. Возвращает число
@@ -660,6 +702,10 @@ pub struct ReelPreviewRow {
     /// `frames[i]` — JPEG кадра `i * step`; `None` — кадра не было.
     pub frames: Vec<Option<Vec<u8>>>,
     pub peaks: PeakPyramid,
+    /// Огибающая на диске УЖЕ есть. Кадры пишутся раньше пиков (Р.67),
+    /// и полоса без них — законное состояние: кадры отдаются с диска, а
+    /// пики дописываются следующей задачей.
+    pub has_peaks: bool,
 }
 
 /// Peak-пирамида в памяти (тест 15 сравнивает её с пересчётом в лоб).

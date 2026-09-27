@@ -16915,3 +16915,151 @@ fn t793_instance_head_is_short_and_not_accent() {
         "голова не цвета слота"
     );
 }
+
+/// Тест 795 (Р.67): полоса ленты ДОЖИВАЕТ ДО ДИСКА без огибающей, отмена —
+/// не провал, а второе открытие проекта в форме файла владельца (две ленты
+/// друг над другом с переопределениями и пропавший исходник) не рендерит
+/// заново.
+///
+/// Владелец: «открываю paintitblack и превью композиции ОПЯТЬ не
+/// сохраняются, каждый раз он просчитывает превью заново, этот баг уже был
+/// раньше с другим проектом». Прежде запись шла ОДНОЙ транзакцией и только
+/// после аудио-стадии: отменённая задача (пауза, правка, закрытие) не
+/// оставляла на диске ничего, а её ключ попадал в негативный кэш как
+/// провал — и до следующей правки ленты превью не появлялось вовсе.
+#[test]
+fn t795_reel_frames_reach_the_disk_and_cancel_is_not_a_failure() {
+    use crate::reel_preview::{CANCELLED, ReelKey, ReelPreviews};
+    use kt_model::*;
+
+    // --- отмена НЕ кладётся в негативный кэш, заявка повторяется ---------
+    let mut svc = ReelPreviews::default();
+    let key = ReelKey { seq: MediaId(1), hash: 7 };
+    let p = || {
+        kt_model::Project::new(ProjectSettings {
+            fps: 30,
+            width: 320,
+            height: 180,
+            sample_rate: 48000,
+            pitch_engine: Default::default(),
+            default_shape: Default::default(),
+            conform: Default::default(),
+            settings_explicit: false,
+        })
+    };
+    assert!(svc.request(key, p(), None, None), "первая заявка обязана встать в очередь");
+    assert!(!svc.request(key, p(), None, None), "дубль заявки в очереди");
+    svc.note_done_for_test(key, Err(CANCELLED.to_string()));
+    assert_eq!(svc.failure(&key), None, "отмена попала в негативный кэш как провал");
+    assert!(svc.request(key, p(), None, None), "после отмены заявка обязана вставать заново");
+    // а ОШИБКА рендера — провал, и повторной заявки нет
+    let bad = ReelKey { seq: MediaId(2), hash: 7 };
+    svc.note_done_for_test(bad, Err("decode failed".into()));
+    assert_eq!(svc.failure(&bad), Some("decode failed"), "ошибка рендера обязана запомниться");
+    assert!(!svc.request(bad, p(), None, None), "провальный ключ не долбится заново");
+
+    // --- полоса БЕЗ пиков: заявка на неё ставится, полная — нет ----------
+    let half = ReelKey { seq: MediaId(3), hash: 7 };
+    svc.put_for_test(half, Some(crate::reel_preview::ReelStrip {
+        step: 90_000,
+        frames: vec![None],
+        end: kt_time::Tick(90_000),
+    }), None);
+    assert!(svc.request(half, p(), None, None), "полоса без огибающей обязана пускать заявку");
+    let full = ReelKey { seq: MediaId(4), hash: 7 };
+    svc.put_for_test(
+        full,
+        Some(crate::reel_preview::ReelStrip {
+            step: 90_000,
+            frames: vec![None],
+            end: kt_time::Tick(90_000),
+        }),
+        Some(Default::default()),
+    );
+    assert!(!svc.request(full, p(), None, None), "полная запись не имеет права заказываться снова");
+
+    // --- СКВОЗНОЕ: проект в форме файла владельца открывается дважды -----
+    // две ленты ДРУГ НАД ДРУГОМ с разными наборами переопределений и
+    // пропавший исходник внутри ленты (у него заглушка — тоже кадр)
+    let dir = std::env::temp_dir().join(format!("kt-t795-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("t795.otio");
+    let seq = {
+        let (h, _g, seq) = harness_with_nest();
+        let mut doc = h.state().model.document().clone();
+        // пропавший файл ВНУТРИ ленты: заглушка обязана попасть в отпечаток
+        let gone = MediaId(
+            doc.media.iter().map(|m| m.id.0).chain(doc.sequences.iter().map(|s| s.id.0)).max().unwrap() + 1,
+        );
+        doc.media.push(MediaRef::new(gone, "no-such-file.jpg"));
+        let next = doc
+            .clips
+            .iter()
+            .chain(doc.sequences.iter().flat_map(|s| s.clips.iter()))
+            .map(|c| c.id.0)
+            .max()
+            .unwrap_or(0)
+            + 500;
+        {
+            let sq = doc.sequences.iter_mut().find(|x| x.id == seq).expect("лента");
+            let mut miss = sq.clips[0].clone();
+            miss.id = ClipId(next);
+            miss.lane = 1;
+            miss.link_group = None;
+            miss.media = gone;
+            sq.clips.push(miss);
+            sq.ensure_tracks(LaneKind::Video, 2);
+        }
+        // ВТОРОЙ экземпляр той же ленты — над первым, в то же время
+        let first = doc.clips.iter().find(|c| c.media == seq).cloned().expect("экземпляр ленты");
+        let mut second = first.clone();
+        second.id = ClipId(next + 1);
+        second.lane = first.lane + 1;
+        second.link_group = None;
+        doc.clips.push(second);
+        doc.ensure_tracks(LaneKind::Video, first.lane + 2);
+        doc.validate().expect("проект в форме файла владельца законен");
+        std::fs::write(&path, kt_otio::save_project(&doc, &Default::default(), path.parent())).unwrap();
+        seq
+    };
+    let open_and_wait = || -> (Harness<'static, KtApp>, crate::reel_preview::ReelKey) {
+        let mut app = KtApp::open(&path).expect("проект открывается");
+        app.recovery_on_drop = false;
+        app.workspace_file = Some(dir.join(format!("ws-{:p}.json", &app)));
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(W, H))
+            .build_ui_state(|ui, app: &mut KtApp| app.draw_all(ui), app);
+        crate::icons::install_fonts(&h.ctx);
+        h.step();
+        let key = reel_key_of(&mut h, seq);
+        let deadline = std::time::Instant::now() + WAIT_BG;
+        while h.state().reel_previews.get(&key).map(|p| p.peaks.is_none()).unwrap_or(true)
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            h.step();
+        }
+        (h, key)
+    };
+    let (h1, k1) = open_and_wait();
+    assert!(
+        h1.state().reel_previews.get(&k1).and_then(|e| e.strip.clone()).is_some(),
+        "первое открытие не дало полосы"
+    );
+    assert!(h1.state().reel_previews.renders() >= 1, "первое открытие обязано отрендерить ленту");
+    drop(h1);
+
+    let (h2, k2) = open_and_wait();
+    assert_eq!(k2, k1, "ключ ленты изменился между открытиями — диск никогда бы не попал");
+    let prev = h2.state().reel_previews.get(&k2).expect("второе открытие без превью");
+    assert!(prev.strip.as_ref().is_some_and(|s| s.step > 0), "кадры не пришли с диска");
+    assert!(prev.peaks.as_ref().is_some_and(|p| !p.is_empty()), "огибающая не пришла с диска");
+    assert_eq!(
+        h2.state().reel_previews.renders(),
+        0,
+        "второе открытие снова отрендерило ленту: на проекте владельца превью «ОПЯТЬ не сохраняются»"
+    );
+    drop(h2);
+    let _ = std::fs::remove_dir_all(&dir);
+}

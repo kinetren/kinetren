@@ -304,7 +304,8 @@ fn t639_reel_preview_tables_round_trip_and_key_strictly() {
     {
         let mut db = MediaIndexDb::open(&path).unwrap();
         assert!(db.reel_preview(7, 0xABCD, 0x1234).unwrap().is_none(), "empty db knows a reel");
-        db.put_reel_preview(7, 0xABCD, 0x1234, 90_000, 250_000, &frames, &peaks).unwrap();
+        db.put_reel_frames(7, 0xABCD, 0x1234, 90_000, 250_000, &frames).unwrap();
+        db.put_reel_peaks(7, 0xABCD, 0x1234, &peaks).unwrap();
 
         // круг байт-в-байт: шаг, конец, дырка в кадрах, пирамида целиком
         let row = db.reel_preview(7, 0xABCD, 0x1234).unwrap().expect("stored reel is missing");
@@ -323,20 +324,23 @@ fn t639_reel_preview_tables_round_trip_and_key_strictly() {
 
         // отрицательные значения после побитового i64 — тоже ключ
         let big_hash = u64::MAX - 5;
-        db.put_reel_preview(9, big_hash, u64::MAX, 45_000, 1, &[None], &peaks).unwrap();
+        db.put_reel_frames(9, big_hash, u64::MAX, 45_000, 1, &[None]).unwrap();
+        db.put_reel_peaks(9, big_hash, u64::MAX, &peaks).unwrap();
         assert!(db.reel_preview(9, big_hash, u64::MAX).unwrap().is_some(), "high-bit key lost");
 
         // новая версия ТОЙ ЖЕ ленты вытесняет прежнюю целиком — включая
         // кадры за пределами нового n и старые уровни пиков
         let short: Vec<Option<&[u8]>> = vec![Some(b"v2")];
         let flat = PeakPyramid { levels: vec![vec![vec![(0, 0)], vec![(0, 0)]]] };
-        db.put_reel_preview(7, 0xABCD, 0x1234, 180_000, 300_000, &short, &flat).unwrap();
+        db.put_reel_frames(7, 0xABCD, 0x1234, 180_000, 300_000, &short).unwrap();
+        db.put_reel_peaks(7, 0xABCD, 0x1234, &flat).unwrap();
         let row = db.reel_preview(7, 0xABCD, 0x1234).unwrap().expect("re-put lost the reel");
         assert_eq!(row.step, 180_000, "old step survived the re-put");
         assert_eq!(row.frames, vec![Some(b"v2".to_vec())], "old frames leaked into the new strip");
         assert_eq!(row.peaks, flat, "old peak levels leaked into the new pyramid");
         // новая РЕДАКЦИЯ той же ленты — прежняя редакция больше не находится
-        db.put_reel_preview(7, 0xBEEF, 0x1234, 180_000, 300_000, &short, &flat).unwrap();
+        db.put_reel_frames(7, 0xBEEF, 0x1234, 180_000, 300_000, &short).unwrap();
+        db.put_reel_peaks(7, 0xBEEF, 0x1234, &flat).unwrap();
         assert!(db.reel_preview(7, 0xABCD, 0x1234).unwrap().is_none(), "old edition survived");
         assert!(db.reel_preview(7, 0xBEEF, 0x1234).unwrap().is_some());
     }
@@ -370,4 +374,60 @@ fn t639_reel_preview_tables_round_trip_and_key_strictly() {
             "rebuilding a media purged reel tables: they are keyed by content, not by media_id"
         );
     }
+}
+
+/// Тест 795b (Р.67): кадры и пики полосы пишутся РАЗДЕЛЬНЫМИ транзакциями.
+/// Полоса без огибающей — законное состояние: кадры читаются с диска, а
+/// `has_peaks` говорит, что огибающую ещё надо досчитать. Пики к чужому
+/// ключу не пристают; схема при этом не бампается (пакетный индекс, тумбы
+/// и пики ВСЕХ медиа проекта остаются на месте).
+#[test]
+fn t795b_reel_frames_and_peaks_are_written_separately() {
+    let dir = std::env::temp_dir().join(format!("kt-t795b-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("i.ktindex.db");
+
+    let frames: Vec<Option<&[u8]>> = vec![Some(&b"j0"[..]), None, Some(&b"j2"[..])];
+    let peaks = PeakPyramid {
+        levels: vec![vec![vec![(-100, 100)], vec![(-50, 50)]], vec![vec![(-100, 100)], vec![(-50, 50)]]],
+    };
+    {
+        let mut db = MediaIndexDb::open(&path).unwrap();
+        let before = kt_media::index::SCHEMA_VERSION;
+
+        // --- ТОЛЬКО кадры: полоса читается, огибающей ещё нет ------------
+        db.put_reel_frames(5, 0xAA, 0xBB, 90_000, 300_000, &frames).unwrap();
+        let row = db.reel_preview(5, 0xAA, 0xBB).unwrap().expect("кадры не легли на диск");
+        assert_eq!(row.frames.len(), 3);
+        assert_eq!(row.frames[0].as_deref(), Some(&b"j0"[..]));
+        assert!(!row.has_peaks, "полоса без пиков обязана говорить об этом");
+        assert!(row.peaks.levels.is_empty(), "пиков нет, а пирамида непуста");
+
+        // --- пики ДОПИСЫВАЮТСЯ к той же строке ---------------------------
+        db.put_reel_peaks(5, 0xAA, 0xBB, &peaks).unwrap();
+        let row = db.reel_preview(5, 0xAA, 0xBB).unwrap().expect("полоса пропала после пиков");
+        assert!(row.has_peaks, "пики дописаны, а флаг молчит");
+        assert_eq!(row.peaks, peaks, "пирамида не пережила круг");
+        assert_eq!(row.frames[2].as_deref(), Some(&b"j2"[..]), "кадры потерялись при записи пиков");
+
+        // --- пики к ЧУЖОМУ ключу не пристают ----------------------------
+        let other = PeakPyramid { levels: vec![vec![vec![(-1, 1)], vec![(-1, 1)]]] };
+        db.put_reel_peaks(5, 0xDEAD, 0xBB, &other).unwrap();
+        let row = db.reel_preview(5, 0xAA, 0xBB).unwrap().unwrap();
+        assert_eq!(row.peaks, peaks, "пики чужой редакции перетёрли наши");
+
+        // --- новая редакция кадров СНОСИТ старые пики --------------------
+        db.put_reel_frames(5, 0xCC, 0xBB, 90_000, 300_000, &frames).unwrap();
+        let row = db.reel_preview(5, 0xCC, 0xBB).unwrap().expect("новая редакция не легла");
+        assert!(!row.has_peaks, "пики прежней редакции остались у новой");
+        assert!(db.reel_preview(5, 0xAA, 0xBB).unwrap().is_none(), "старая редакция осталась");
+
+        assert_eq!(
+            kt_media::index::SCHEMA_VERSION,
+            before,
+            "версия схемы не имеет права двигаться: бамп сносит пакетный индекс, пики и тумбы всех медиа"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
