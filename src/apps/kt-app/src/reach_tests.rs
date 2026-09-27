@@ -3571,12 +3571,18 @@ fn live_check_available(root: &std::path::Path) -> Option<String> {
     None
 }
 
-fn run_live_check(root: &std::path::Path, workers: &str, names: &[&str]) -> (bool, String) {
+fn run_live_check(
+    root: &std::path::Path,
+    workers: &str,
+    display: &str,
+    names: &[&str],
+) -> (bool, String) {
     let out = std::process::Command::new("./scripts/live-check.sh")
         .args(names)
         .env("KT_LIVE_WORKERS", workers)
-        // свои номера экранов: рядом может идти обычный прогон живых сценариев
-        .env("KT_LIVE_DISPLAY", ":80")
+        // свои номера экранов у КАЖДОГО теста: тесты идут параллельно, и
+        // два прогона на одних экранах открывали бы окна друг другу
+        .env("KT_LIVE_DISPLAY", display)
         .current_dir(root)
         .output()
         .expect("scripts/live-check.sh");
@@ -3604,7 +3610,7 @@ fn t801_red_scenario_is_rerun_alone() {
     let mark = root.join("target/live-out/_flaky/already-ran");
     std::fs::remove_file(&mark).ok();
 
-    let (ok, said) = run_live_check(&root, "2", &["_flaky", "_red"]);
+    let (ok, said) = run_live_check(&root, "2", ":80", &["_flaky", "_red"]);
     assert!(!ok, "прогон с всегда-красным сценарием обязан быть красным:\n{said}");
     assert!(
         said.contains("ПРОШЁЛ СО ВТОРОГО РАЗА") && said.contains("_flaky"),
@@ -3620,7 +3626,7 @@ fn t801_red_scenario_is_rerun_alone() {
 
     // одиночный прогон НИЧЕГО не перегоняет: там покраснение — вердикт
     std::fs::remove_file(&mark).ok();
-    let (ok1, said1) = run_live_check(&root, "1", &["_flaky"]);
+    let (ok1, said1) = run_live_check(&root, "1", ":80", &["_flaky"]);
     assert!(!ok1, "одиночный прогон обязан отдать красное как есть:\n{said1}");
     assert!(
         said1.contains("прогон и так одиночный"),
@@ -3640,7 +3646,7 @@ fn t802_workers_are_isolated() {
         eprintln!("t802 пропущен: {why}");
         return;
     }
-    let (ok, said) = run_live_check(&root, "3", &["_env1", "_env2", "_env3"]);
+    let (ok, said) = run_live_check(&root, "3", ":84", &["_env1", "_env2", "_env3"]);
     assert!(ok, "подставные сценарии обязаны быть зелёными:\n{said}");
     let mut displays = std::collections::BTreeSet::new();
     let mut stores = std::collections::BTreeSet::new();

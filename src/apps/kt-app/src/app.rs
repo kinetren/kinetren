@@ -1414,6 +1414,14 @@ impl KtApp {
     /// мог вызывать harness-тест вёрстки (правило п.9 р.8: вёрстка и
     /// интеракции проверяются egui_kittest, не только скриншотом).
     pub(crate) fn draw_all(&mut self, ui: &mut egui::Ui) {
+        // СЧЁТЧИКИ ЖИВОГО СТЕНДА (Р.68) стоят здесь, а не в `ui()`: кадр —
+        // это отрисовка, и харнесс рисует её тем же телом, минуя
+        // `eframe::App::ui`. Считать в `ui()` значило бы «в продукте кадры
+        // есть, в тесте нет» — сторож счётчика проверял бы не то.
+        crate::bench::tick();
+        if crate::bench::enabled() {
+            crate::bench::note_inputs(ui.ctx().input(|i| i.events.len()) as u64);
+        }
         let ctx = ui.ctx().clone();
         // Потеря GPU-исполнителя видео посреди сессии (DeviceLost) —
         // превью уже на CPU-фолбэке, notice один раз (п.2 Р.29, тест 185)
@@ -8732,10 +8740,7 @@ impl eframe::App for KtApp {
             }
             crate::bench::finished(seq);
         }
-        crate::bench::tick();
-        if crate::bench::enabled() {
-            crate::bench::note_inputs(ui.ctx().input(|i| i.events.len()) as u64);
-        }
+
         // Перехват закрытия окна (п.354). `CancelClose` в eframe 0.36
         // работает и для КОРНЕВОГО окна — значит вопрос «сохранить перед
         // выходом?» делается штатно, без своей обработки системных событий.

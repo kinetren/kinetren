@@ -106,7 +106,10 @@ fi
 echo "перегон в одиночку: ${reds[*]}"
 again=()
 for name in "${reds[@]}"; do
-    run_worker 0 "$name"
+    # `|| true`: работник возвращает код сценария, а `set -e` на нём молча
+    # обрывал ВЕСЬ перегон — отчёт терял и «прошёл со второго раза», и
+    # «красные дважды» (поймано тестом t801)
+    run_worker 0 "$name" || true
     if [ "$(cat "$verdicts/$name" 2> /dev/null || echo fail)" != ok ]; then
         again+=("$name")
     fi
