@@ -3482,3 +3482,73 @@ fn t799_ui_scenarios_describe_the_user_path() {
         "finish.sh не печатает список шагов ПУТИ — отчёт снова без картинок"
     );
 }
+
+/// t800 (Р.68): КАЖДАЯ стадия `finish.sh` называет свою цену, а бюджет —
+/// пять минут — печатается и помечается при перерасходе.
+///
+/// Повод дословно (владелец): «тесты в finish.sh или что-то типо того -
+/// очень долго выполняются, нужно что-то придумать». Замер показал круг
+/// проверки в 21 минуту, и ни одна стадия не называла своей цены: говорить
+/// о том, ЧТО ускорять, было нечем. Стадию можно было бы тихо вынести из
+/// бюджета, напечатав заголовок мимо обёртки — это тот же класс, что
+/// «красное чужим именем» (Р.55) и «вердикт у tail» (Р.58), поэтому
+/// заголовок стадии печатает только обёртка, а сторож это проверяет.
+#[test]
+fn t800_finish_stages_name_their_price() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let script = root.join("src/scripts/finish-budget.py");
+    let finish_path = root.join("src/scripts/finish.sh");
+    assert!(script.exists(), "нет учёта цены: {}", script.display());
+
+    let run = |args: &[&str]| -> (bool, String) {
+        let out = std::process::Command::new("python3")
+            .arg(&script)
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .expect("python3 для учёта цены");
+        let mut said = String::from_utf8_lossy(&out.stdout).into_owned();
+        said.push_str(&String::from_utf8_lossy(&out.stderr));
+        (out.status.success(), said)
+    };
+
+    // 1) самопроверка учёта: перерасход назван, бюджет назван, красная
+    //    стадия названа красной, сломанный учёт — красное
+    let (ok, said) = run(&["--selftest"]);
+    assert!(ok, "самопроверка учёта цены красная: {said}");
+
+    // 2) все стадии скрипта идут через обёртку с замером
+    let (ok, said) = run(&["--check-script", "src/scripts/finish.sh"]);
+    assert!(ok, "стадия печатает заголовок мимо замера: {said}");
+
+    // 3) заголовок мимо обёртки ловится на НАСТОЯЩЕМ скрипте, а не только
+    //    на синтетике: без этой проверки сторож мог бы смотреть не туда
+    let finish = std::fs::read_to_string(&finish_path).expect("finish.sh");
+    let broken = format!("{finish}\necho \"== стадия мимо бюджета ==\"\n");
+    let tmp = root.join("src/target/t800-finish-probe.sh");
+    std::fs::create_dir_all(tmp.parent().unwrap()).ok();
+    std::fs::write(&tmp, &broken).unwrap();
+    let (ok_after, said_after) = run(&["--check-script", "src/target/t800-finish-probe.sh"]);
+    std::fs::remove_file(&tmp).ok();
+    assert!(!ok_after, "сторож НЕ заметил стадии вне замера");
+    assert!(
+        said_after.contains("мимо обёртки") && said_after.contains("стадия мимо бюджета"),
+        "сторож молчит об адресе стадии: {said_after}"
+    );
+
+    // 4) скрипт действительно зовёт учёт и держит стадии, названные спекой:
+    //    прогон мастерской — стадия ЭТОГО скрипта, отдельная стадия kt-gpu
+    //    снята как дубль (Р.68), SIMD остаётся своим окружением
+    for (need, why) in [
+        ("finish-budget.py --report", "скрипт не печатает таблицу цены стадий"),
+        ("тесты мастерской", "прогон мастерской не стал стадией скрипта"),
+        ("SIMD-конформанс", "стадия SIMD пропала"),
+        ("живые сценарии", "стадия живых сценариев пропала"),
+    ] {
+        assert!(finish.contains(need), "{why} (нет «{need}»)");
+    }
+    assert!(
+        !finish.contains("cargo test -p kt-gpu"),
+        "стадия kt-gpu осталась дублем прогона мастерской (Р.68)"
+    );
+}

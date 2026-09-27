@@ -7,7 +7,14 @@
 # неисправленными. Поэтому любой агент заканчивает работу этим скриптом:
 # пересобирает то, что запускают, называет версию и подчищает мусор.
 #
-#   scripts/finish.sh            # debug-сборка + версия + чистка
+# С Р.68 скрипт — ЕДИНСТВЕННАЯ точка проверки: прогон тестов мастерской
+# стал его стадией (раньше это была отдельная команда агента, и бюджет с
+# вердиктом распадались на две несвязанные половины). Каждая стадия
+# называет свою цену, а в конце печатается таблица и бюджет — пять минут,
+# поставленные владельцем. Перерасход ПОМЕЧАЕТСЯ, но не делает прогон
+# красным: правило «тесты из спек не ослабляются» сильнее бюджета.
+#
+#   scripts/finish.sh            # debug-сборка + проверки + версия + чистка
 #   scripts/finish.sh --release  # ещё и релизный тарбол в контейнере
 #   scripts/finish.sh --deep     # плюс чистка промежуточных объектов
 set -euo pipefail
@@ -29,59 +36,72 @@ FULL="kt$VER-$HASH"
 DIRTY=""
 [ -n "$(git status --porcelain 2>/dev/null)" ] && DIRTY=" (есть незакоммиченные правки)"
 
-echo "== сборка того, что запускает пользователь =="
-cargo build -p kt-app -p kt-cli
-
-if [ "$RELEASE" = 1 ]; then
-    echo "== релизный тарбол =="
-    scripts/release-build.sh
-fi
-
 # Лог одной стадии: вердикт читаем из кода возврата cargo, а короткий
 # хвост печатаем человеку (Р.58).
 STAGE_LOG="$(mktemp -t kt-finish-stage.XXXXXX)"
 trap 'rm -f "$STAGE_LOG"' EXIT
 
-# Живая проверка в виртуальном экране (Р.27): настоящий бинарь, настоящий X,
-# настоящие XTest-жесты. Без Xvfb — просто пропускаем, ничего не ломая;
-# NO_LIVE=1 выключает явно (например когда гоняешь finish.sh в цикле).
-if [ -z "${NO_LIVE:-}" ] && command -v Xvfb > /dev/null; then
-    echo "== живые сценарии =="
-    if ./scripts/live-check.sh; then
-        echo "живые сценарии: ok"
-    else
-        echo "ЖИВЫЕ СЦЕНАРИИ ПРОВАЛИЛИСЬ (скриншоты: target/live-out)" >&2
-        LIVE_FAILED=1
+# Хронометраж стадий (Р.68). Файл замеров — «имя<TAB>секунды<TAB>код»;
+# таблицу и бюджет считает scripts/finish-budget.py. ЗАГОЛОВОК СТАДИИ
+# ПЕЧАТАЕТСЯ ТОЛЬКО ОТСЮДА: иначе стадию можно тихо вынести из бюджета —
+# тот же класс, что «красное чужим именем» (Р.55) и «вердикт у tail»
+# (Р.58). Сторож `finish-budget.py --check-script` это проверяет.
+mkdir -p target
+TIMES="target/finish-times.txt"
+: > "$TIMES"
+
+stage() { # stage <имя> <команда...> — вывод команды идёт человеку как есть
+    local name="$1"; shift
+    printf '== %s ==\n' "$name"
+    local s rc=0
+    s=$(date +%s)
+    "$@" || rc=$?
+    printf '%s\t%s\t%s\n' "$name" "$(($(date +%s) - s))" "$rc" >> "$TIMES"
+    return $rc
+}
+
+stage_log() { # stage_log <имя> <команда...> — вывод в файл, вердикт у команды
+    local name="$1"; shift
+    printf '== %s ==\n' "$name"
+    local s rc=0
+    s=$(date +%s)
+    "$@" > "$STAGE_LOG" 2>&1 || rc=$?
+    printf '%s\t%s\t%s\n' "$name" "$(($(date +%s) - s))" "$rc" >> "$TIMES"
+    tail -4 "$STAGE_LOG"
+    if [ "$rc" != 0 ]; then
+        grep -E "^(test .* FAILED|failures:|error)" "$STAGE_LOG" | head -20 >&2
     fi
-elif [ -z "${NO_LIVE:-}" ]; then
-    echo "живые сценарии пропущены: нет Xvfb (sudo apt install xvfb openbox)"
+    return $rc
+}
+
+stage "сборка того, что запускает пользователь" cargo build -p kt-app -p kt-cli
+
+if [ "$RELEASE" = 1 ]; then
+    stage "релизный тарбол" scripts/release-build.sh
 fi
 
-# GPU-конформанс (Р.29): parity-тесты kt-gpu на НАСТОЯЩЕМ адаптере этой
-# машины (дискретная карта/железный драйвер, а не только lavapipe из CI).
-# Без адаптера тесты скипаются сами с печатью причины.
-echo "== GPU-конформанс (kt-gpu) =="
-# Итог стадии берётся у CARGO, а не у `tail` (Р.58): в конвейере статус
-# отдаёт ПОСЛЕДНЯЯ команда, поэтому `if cargo test | tail` был зелёным
-# ВСЕГДА — стадия не могла сообщить о красном в принципе. Тот же класс,
-# что §443 (скрипт называл красное чужим именем) и §458 (вывод не
-# фильтруется), только здесь терялся сам вердикт.
-cargo test -p kt-gpu -q > "$STAGE_LOG" 2>&1 && GPU_RC=0 || GPU_RC=$?
-tail -4 "$STAGE_LOG"
-if [ "$GPU_RC" = 0 ]; then
-    echo "kt-gpu: ok"
+# Прогон тестов мастерской — стадия ЭТОГО скрипта (Р.68). Здесь же живёт
+# GPU-конформанс kt-gpu на настоящем адаптере машины: отдельная стадия для
+# крейта kt-gpu была дублем этого прогона и снята (её десять секунд уходили
+# на то, что мастерская уже прогнала). Без адаптера тесты kt-gpu скипаются
+# сами с печатью причины.
+if stage_log "тесты мастерской" cargo test --workspace -q; then
+    echo "тесты мастерской: ok"
 else
-    grep -E "^(test .* FAILED|failures:|error)" "$STAGE_LOG" | head -20 >&2
-    cp "$STAGE_LOG" target/finish-gpu-fail.log 2>/dev/null || true
-    echo "KT-GPU ТЕСТЫ ПРОВАЛИЛИСЬ (полный лог: target/finish-gpu-fail.log)" >&2
-    GPU_FAILED=1
+    cp "$STAGE_LOG" target/finish-workspace-fail.log 2>/dev/null || true
+    echo "ТЕСТЫ МАСТЕРСКОЙ ПРОВАЛИЛИСЬ (полный лог: target/finish-workspace-fail.log)" >&2
+    WS_FAILED=1
 fi
 
 # SIMD-конформанс (Р.32): AVX2-ядра обязаны быть байт-в-байт со скаляром.
 # KT_REQUIRE_SIMD=1 запрещает вакуумный skip там, где AVX2 есть (урок
 # т.194). Плюс golden'ы на ПРИНУДИТЕЛЬНОМ скаляре: он остаётся эталоном.
-echo "== SIMD-конформанс (t198) =="
-# та же правка, что у GPU-стадии: вердикт у cargo, не у `tail`
+# Своё окружение у каждого прогона — поэтому это отдельные команды, а не
+# часть прогона мастерской; стоят они пару секунд на все четыре.
+#
+# Вердикт у cargo, не у `tail`: `if cargo test | tail` был зелёным ВСЕГДА —
+# статус в конвейере отдаёт ПОСЛЕДНЯЯ команда, и стадия не могла сообщить
+# о красном в принципе (тот же класс, что §443 и §458).
 simd_stage() {
     local name="$1"; shift
     if "$@" > "$STAGE_LOG" 2>&1; then
@@ -94,37 +114,61 @@ simd_stage() {
     echo "SIMD: красная стадия $name (полный лог: target/finish-simd-fail.log)" >&2
     return 1
 }
-if simd_stage "kt-fx simd_parity" env KT_REQUIRE_SIMD=1 cargo test -p kt-fx --test simd_parity -q \
-    && simd_stage "kt-engine simd_parity" env KT_REQUIRE_SIMD=1 cargo test -p kt-engine --test simd_parity -q \
-    && simd_stage "kt-fx video_fx (скаляр)" env KT_SIMD=0 cargo test -p kt-fx --test video_fx -q \
-    && simd_stage "kt-engine golden_export (скаляр)" env KT_SIMD=0 cargo test -p kt-engine --test golden_export -q; then
+simd_all() {
+    simd_stage "kt-fx simd_parity" env KT_REQUIRE_SIMD=1 cargo test -p kt-fx --test simd_parity -q \
+        && simd_stage "kt-engine simd_parity" env KT_REQUIRE_SIMD=1 cargo test -p kt-engine --test simd_parity -q \
+        && simd_stage "kt-fx video_fx (скаляр)" env KT_SIMD=0 cargo test -p kt-fx --test video_fx -q \
+        && simd_stage "kt-engine golden_export (скаляр)" env KT_SIMD=0 cargo test -p kt-engine --test golden_export -q
+}
+if stage "SIMD-конформанс (t198)" simd_all; then
     echo "simd: ok (AVX2 == скаляр, golden'ы зелены обоими путями)"
 else
     echo "SIMD-КОНФОРМАНС ПРОВАЛИЛСЯ" >&2
     SIMD_FAILED=1
 fi
 
-echo "== чистка =="
-# старые тарболы и распакованные каталоги: оставляем только текущий
-if [ -d target/dist-out ]; then
-    find target/dist-out -maxdepth 1 -name 'kinotrain-*' \
-        ! -name "kinotrain-${FULL#kt}-*" -exec rm -rf {} + 2>/dev/null || true
+# Живая проверка в виртуальном экране (Р.27): настоящий бинарь, настоящий X,
+# настоящие XTest-жесты. Без Xvfb — просто пропускаем, ничего не ломая;
+# NO_LIVE=1 выключает явно (например когда гоняешь finish.sh в цикле).
+if [ -z "${NO_LIVE:-}" ] && command -v Xvfb > /dev/null; then
+    if stage "живые сценарии" ./scripts/live-check.sh; then
+        echo "живые сценарии: ok"
+    else
+        echo "ЖИВЫЕ СЦЕНАРИИ ПРОВАЛИЛИСЬ (скриншоты: target/live-out)" >&2
+        LIVE_FAILED=1
+    fi
+elif [ -z "${NO_LIVE:-}" ]; then
+    echo "живые сценарии пропущены: нет Xvfb (sudo apt install xvfb openbox)"
 fi
-if [ "$DEEP" = 1 ]; then
-    # release/ и dist-container/ полностью регенерируемы и весят гигабайты;
-    # debug/ не трогаем — иначе следующая правка ждёт полную пересборку
-    rm -rf target/release target/dist-container
-fi
-du -sh target/debug target/release target/dist-container target/dist-out 2>/dev/null || true
+
+clean_targets() {
+    # старые тарболы и распакованные каталоги: оставляем только текущий
+    if [ -d target/dist-out ]; then
+        find target/dist-out -maxdepth 1 -name 'kinotrain-*' \
+            ! -name "kinotrain-${FULL#kt}-*" -exec rm -rf {} + 2>/dev/null || true
+    fi
+    if [ "$DEEP" = 1 ]; then
+        # release/ и dist-container/ полностью регенерируемы и весят гигабайты;
+        # debug/ не трогаем — иначе следующая правка ждёт полную пересборку
+        rm -rf target/release target/dist-container
+    fi
+    du -sh target/debug target/release target/dist-container target/dist-out 2>/dev/null || true
+}
+stage "чистка" clean_targets
 
 mkdir -p target/dist-out
 printf '%s\n%s\n' "$FULL" "$(pwd)/target/debug/kt-app" > target/dist-out/LATEST
 echo
+
+# Цена проверки: таблица стадий, итог и бюджет пять минут (Р.68).
+python3 scripts/finish-budget.py --report "$TIMES"
+echo
+
 # Красное называется СВОИМ ИМЕНЕМ (Р.55): один флаг стоял на трёх стадиях,
 # и падение GPU или SIMD печаталось как «живые сценарии красные» — отчёт врал
 # о том, ЧТО сломалось, и посылал искать не туда.
 [ -n "${LIVE_FAILED:-}" ] && echo "ВНИМАНИЕ: живые сценарии красные — см. target/live-out"
-[ -n "${GPU_FAILED:-}" ] && echo "ВНИМАНИЕ: GPU-конформанс красный (kt-gpu)"
+[ -n "${WS_FAILED:-}" ] && echo "ВНИМАНИЕ: тесты мастерской красные — см. target/finish-workspace-fail.log"
 [ -n "${SIMD_FAILED:-}" ] && echo "ВНИМАНИЕ: SIMD-конформанс красный (t198)"
 echo "ВЕРСИЯ: $FULL$DIRTY"
 echo "запускать: $(pwd)/target/debug/kt-app"
