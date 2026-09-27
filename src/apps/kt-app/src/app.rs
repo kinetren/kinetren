@@ -5165,6 +5165,37 @@ impl KtApp {
         }
     }
 
+    /// Открыть проект по просьбе ЖИВОГО СТЕНДА (Р.68).
+    ///
+    /// Тот же код, что у `File → Открыть`, но без диалога и без вопроса о
+    /// несохранённом: стенд открывает проекты подряд, и модальное окно
+    /// предыдущего сценария сорвало бы следующий. Своё восстановление стенд
+    /// за собой не оставляет — иначе файл восстановления сценария А всплыл
+    /// бы вопросом у сценария Б, который стартует своим процессом.
+    fn bench_open(&mut self, ctx: &egui::Context, path: &Path) {
+        // ПАМЯТЬ egui ЖИВЁТ ВНЕ KtApp. `*self = Self::open(..)` строит
+        // состояние программы заново, но состояние ВИДЖЕТОВ (прокрутки,
+        // свёртки, позиции окон, фокус и незакрытый драг) лежит в
+        // `egui::Context`, который принадлежит eframe. Без сброса сценарий
+        // получал наследство предыдущего: на третьем сценарии подряд драг
+        // события просто не начинался. Это и есть «сброшенное рабочее
+        // место» из контракта стенда.
+        ctx.memory_mut(|m| {
+            m.data.clear();
+            m.reset_areas();
+        });
+        ctx.stop_dragging();
+        match Self::open(path) {
+            Ok(mut app) => {
+                self.recovery_on_drop = false;
+                self.drop_own_recovery();
+                app.claim_project(path);
+                *self = app;
+            }
+            Err(e) => self.note(crate::tf!(k::msg::OPEN_FAILED, e)),
+        }
+    }
+
     fn open_project_dialog_now(&mut self) {
         let Some(p) = pick_file(tr(k::dialog::OPEN_PROJECT), "OpenTimelineIO", &["otio"]) else {
             return;
@@ -8688,6 +8719,23 @@ impl KtApp {
 
 impl eframe::App for KtApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // ЖИВОЙ СТЕНД (Р.68): команда стенда исполняется ДО кадра — сценарий,
+        // дождавшийся кадра, обязан видеть уже новый проект. Без
+        // KT_LIVE_CTL здесь один OnceLock-чек и ни одной системной операции.
+        if crate::bench::enabled()
+            && let Some((seq, cmd)) = crate::bench::poll()
+        {
+            match cmd {
+                crate::bench::Cmd::Open(p) => self.bench_open(ui.ctx(), &p),
+                crate::bench::Cmd::Store(dir) => crate::bench::set_store(dir),
+                crate::bench::Cmd::Noop => {}
+            }
+            crate::bench::finished(seq);
+        }
+        crate::bench::tick();
+        if crate::bench::enabled() {
+            crate::bench::note_inputs(ui.ctx().input(|i| i.events.len()) as u64);
+        }
         // Перехват закрытия окна (п.354). `CancelClose` в eframe 0.36
         // работает и для КОРНЕВОГО окна — значит вопрос «сохранить перед
         // выходом?» делается штатно, без своей обработки системных событий.

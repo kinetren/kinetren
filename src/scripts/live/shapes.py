@@ -14,7 +14,6 @@
 """
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import Live, geometry, project_with_clips, require_tools  # noqa: E402
@@ -57,11 +56,9 @@ def main(out):
         # начале наложения вес верхнего нулевой; фигуру надо смотреть
         # там, где она одна.
         app.click(app.x_at(int(8 * SEC)), app.ruler_y())
-        time.sleep(0.4)
         new_generator(app, "shapes", "rect")
         app.expect(app.has_probe("genw.color"), "окно параметров фигуры открылось")
         app.key("Escape")
-        time.sleep(0.4)
         clips = app.live_clips()
         app.expect(len(clips) == 2, f"фигура встала клипом под курсор: {clips}")
         app.shot("rect")
@@ -76,7 +73,6 @@ def main(out):
             px = app.pixel(*preview)
             if min(px) > 180:
                 break
-            time.sleep(0.3)
         app.expect(
             px is not None and min(px) > 180,
             f"в центре превью белая фигура: {px}",
@@ -98,22 +94,17 @@ def main(out):
         # наложение на одной дорожке — это кроссфейд
         app.click(app.x_at(int(10 * SEC)), app.lane_y("video", 0, 0.6))
         app.key("Delete")
-        time.sleep(0.6)
         app.expect(len(app.live_clips()) == 1, f"фигура удалена: {app.live_clips()}")
 
         # 4. титр с пресетом «Машинка»: печатается по кластерам
         app.click(app.x_at(int(8 * SEC)), app.ruler_y())
-        time.sleep(0.4)
         new_generator(app, "titles", "text")
         app.expect(app.has_probe("titlew.text"), "окно титра открылось")
         app.click_probe("titlew.text", "поле текста титра")
         for ch in ["k", "t", "9"]:
             app.key(ch)
-        time.sleep(0.5)
         app.click_probe("titlew.preset.2", "пресет «Машинка»")
-        time.sleep(0.5)
         app.key("Escape")
-        time.sleep(0.4)
         app.shot("typewriter")
 
         clips = app.live_clips()
@@ -125,10 +116,10 @@ def main(out):
         # кегль 7 % кадра даёт тонкий штрих, и попасть в него центром
         # превью — лотерея.
         app.click(app.x_at(int(t_start + SEC / 10)), app.ruler_y())
-        time.sleep(1.5)
+        app.settle()
         zero = app.ink_box(preview, half=150)
         app.click(app.x_at(int(t_start + int(1.8 * SEC))), app.ruler_y())
-        time.sleep(1.5)
+        app.settle()
         later = app.ink_box(preview, half=150)
         app.expect(
             later > zero + 40,
@@ -138,7 +129,6 @@ def main(out):
 
         # 5. один Ctrl+Z возвращает ВЕСЬ набор пресета
         app.key("ctrl+z")
-        time.sleep(0.8)
         app.saved_project()
         with open(app.project) as f:
             text = f.read()

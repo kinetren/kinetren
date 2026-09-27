@@ -25,10 +25,9 @@
 import json
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, pause, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -51,7 +50,6 @@ def main(out):
         app.click(app.x_at(3 * SEC), y, mods=("ctrl",))
         app.right_click(app.x_at(3 * SEC), y)
         app.click_probe("nest.collapse", "пункт сворачивания")
-        time.sleep(0.5)
         app.expect(
             len(app.live_clips()) == 2,
             f"свёрнуто не в одно (плюс третье событие): {app.live_clips()}",
@@ -62,7 +60,6 @@ def main(out):
         inst = min(app.live_clips())
         mid = inst[0] + inst[1] // 2
         app.double_click(app.x_at(mid), y)
-        time.sleep(0.6)
         g = app.geom()
         app.shot("expanded")
         app.expect(
@@ -85,10 +82,8 @@ def main(out):
         inner = sorted(c for c in app.live_clips() if c not in ())
         app.click(app.x_at(int(0.5 * SEC)), y_band)
         app.drag(app.x_at(int(0.5 * SEC)), y_band, app.x_at(int(1.2 * SEC)), y_band)
-        time.sleep(0.5)
         app.shot("edited")
         app.key("ctrl+s")
-        time.sleep(0.8)
         saved = app.saved_project()
         kt = saved.doc["metadata"]["kt"]
         app.expect(
@@ -133,9 +128,12 @@ def main(out):
         before = app.geom().get("underruns", 0)
         app.click(app.x_at(int(0.2 * SEC)), app.ruler_y())
         app.key("space")
-        time.sleep(1.6)
+        pause(
+            1.6,
+            "воспроизведение идёт в РЕАЛЬНОМ времени: эти секунды игры и есть "
+            "проверка голодания кольца, ускорить их нечем",
+        )
         app.key("space")
-        time.sleep(0.4)
         after = app.geom().get("underruns", 0)
         app.expect(
             app.playhead() > int(0.2 * SEC),
@@ -149,9 +147,7 @@ def main(out):
 
         # --- 5. Esc сворачивает раскрытие -------------------------------
         app.key("Escape")
-        time.sleep(0.3)
         app.key("Escape")
-        time.sleep(0.5)
         app.shot("collapsed-back")
         app.expect(
             len(app.geom()["rows"]) == rows_before,

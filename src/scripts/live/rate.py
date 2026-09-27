@@ -20,10 +20,9 @@
 """
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, geometry, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, geometry, pause, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
 PLAY_WINDOW = 3.0
@@ -41,7 +40,6 @@ def speed_box(app):
                 f["w"],
                 f["h"],
             )
-        time.sleep(0.25)
     app.expect(False, "программа отдала прямоугольник контрола скорости")
     return None
 
@@ -57,14 +55,16 @@ def travel(app, seconds=PLAY_WINDOW):
     запуск в софт-рендере уходит на прогрев (декод, первая заливка
     текстуры), и замер «от нажатия пробела» мерил бы его, а не темп."""
     app.key("Home")
-    time.sleep(0.4)
     app.key("space")
     app.wait_playhead(lambda t: t > 0, "курсор пошёл", timeout=15)
     t0 = app.playhead()
-    time.sleep(seconds)
+    pause(
+        seconds,
+        "темп воспроизведения меряется по РЕАЛЬНОМУ времени: столько программа "
+        "и должна играть, чтобы продвижение курсора было сравнимо с часами",
+    )
     t1 = app.playhead()
     app.key("space")
-    time.sleep(0.4)
     return t1 - t0
 
 
@@ -115,7 +115,6 @@ def main(out):
         app.right_click(cx, upper_y)
         type_text(app, "0.05")
         app.key("Return")
-        time.sleep(0.5)
         app.shot("typed")
         got = base_rate(app)
         app.expect(abs(got - 0.05) < 1e-3, f"напечатанные 0.05 доехали до модели: {got}")
@@ -124,7 +123,6 @@ def main(out):
         app.right_click(cx, upper_y)
         type_text(app, "2")
         app.key("Escape")
-        time.sleep(0.5)
         after = base_rate(app)
         app.expect(abs(after - 0.05) < 1e-3, f"Esc оставил скорость прежней: {after}")
 
@@ -132,10 +130,8 @@ def main(out):
         # (правило 14: фокус поля обязан вернуться, иначе хоткеи мертвы)
         was = app.playing()
         app.key("space")
-        time.sleep(0.8)
         app.expect(app.playing() != was, "пробел после закрытия поля переключает игру")
         app.key("space")
-        time.sleep(0.4)
         app.shot("done")
         return app.done()
 

@@ -26,7 +26,6 @@
 import json
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import Live, geometry, project_with_clips, require_tools  # noqa: E402
@@ -100,7 +99,6 @@ def leave_reel(app):
         if app.geom()["nest"]["depth"] == 0:
             return True
         app.key("Escape")
-        time.sleep(0.5)
     return app.geom()["nest"]["depth"] == 0
 
 
@@ -109,7 +107,6 @@ def make_generator(app, group, kind, at_ticks):
     win = geometry()
     b = app.geom()["bin"]
     app.click(app.x_at(at_ticks), app.ruler_y())
-    time.sleep(0.4)
     app.right_click(
         win["x"] + int((b["left"] + b["right"]) / 2),
         win["y"] + int(b["bottom"]) - 10,
@@ -117,11 +114,9 @@ def make_generator(app, group, kind, at_ticks):
     app.click_probe("gen.new", "пункт «Создать генератор»")
     app.hover_probe(f"gen.new.group.{group}", f"группа «{group}»")
     app.click_probe(f"gen.new.{kind}", f"вид «{kind}» в подменю")
-    time.sleep(0.6)
     # созданный генератор открывает своё окно эффектов — закрываем, иначе
     # оно перекрывает бин и таймлайн
     app.key("Escape")
-    time.sleep(0.4)
 
 
 def video_row_ys(app):
@@ -147,14 +142,11 @@ def open_window_in_rows(app, x, probe, avoid=None, limit=6):
         if avoid is not None and abs(yy - avoid) < 12:
             continue
         app.right_click(x, yy)
-        time.sleep(0.4)
         if app.has_probe("tl.fx", tries=2):
             app.click_probe("tl.fx", "пункт «Эффекты…» события")
-            time.sleep(0.8)
             if app.has_probe(probe, tries=4):
                 return True
         app.key("Escape")
-        time.sleep(0.3)
     return False
 
 
@@ -179,7 +171,6 @@ def main(out):
         app.click(app.x_at(gens[1][0] + gens[1][1] // 2), y, mods=("ctrl",))
         app.right_click(app.x_at(gens[1][0] + gens[1][1] // 2), y)
         app.click_probe("nest.collapse", "пункт сворачивания в композицию")
-        time.sleep(0.6)
         app.expect(
             len(app.live_clips()) == 2,
             f"шаблон не свернулся в одну композицию: {app.live_clips()}",
@@ -190,35 +181,26 @@ def main(out):
         inst_x = app.x_at(inst[0] + inst[1] // 2)
         app.right_click(inst_x, y)
         app.click_probe("nest.enter", "пункт «Войти в ленту»")
-        time.sleep(0.8)
         app.expect(app.geom()["nest"]["depth"] == 1, "вход внутрь композиции не состоялся")
 
         inner = sorted(app.live_clips())
         # ЗАГОЛОВОК — на самом поле текста: подписи у многострочного поля
         # нет и заводить её ради одной надписи нельзя (правило 13)
         app.double_click(app.x_at(inner[0][0] + inner[0][1] // 2), y)
-        time.sleep(0.8)
         app.expect(app.has_probe("titlew.text"), "окно титра внутри композиции открылось")
         app.right_click_probe("titlew.text", "поле текста титра")
         app.click_probe("pub.publish.text", "пункт «Опубликовать…» у заголовка")
-        time.sleep(0.5)
         app.expect(app.has_probe("pub.dialog.name"), "диалог имени ручки открылся")
         app.shot("publish-dialog")
         app.click_probe("pub.dialog.ok", "подтверждение публикации")
-        time.sleep(0.6)
         app.key("Escape")
-        time.sleep(0.4)
 
         # ШИРИНА ЛОГОТИПА — правым кликом по ПОДПИСИ числового поля
         app.double_click(app.x_at(inner[1][0] + inner[1][1] // 2), y)
-        time.sleep(0.8)
         app.right_click_probe("lbl.w", "подпись ширины плашки")
         app.click_probe("pub.publish.w", "пункт «Опубликовать…» у ширины")
-        time.sleep(0.5)
         app.click_probe("pub.dialog.ok", "подтверждение публикации ширины")
-        time.sleep(0.6)
         app.key("Escape")
-        time.sleep(0.4)
         app.shot("published")
 
         saved = app.saved_project()
@@ -233,7 +215,6 @@ def main(out):
         # --- 3. второй выпуск -------------------------------------------
         app.expect(leave_reel(app), "Esc-каскад вывел наружу")
         app.click(app.x_at(10 * SEC), app.ruler_y())
-        time.sleep(0.4)
         card = next((f for f in app.geom().get("fields", []) if f["param"] == "bin.reel"), None)
         app.expect(card is not None, "карточка композиции в бине показана")
         if card:
@@ -243,7 +224,6 @@ def main(out):
                 win["y"] + int(card["y"] + card["h"] / 2),
             )
             app.click_probe("bin.place", "пункт «Поставить» у карточки композиции")
-        time.sleep(0.8)
         places = app.live_clips()
         app.expect(len(places) == 3, f"второй выпуск не встал: {places}")
 
@@ -260,7 +240,6 @@ def main(out):
         app.click(sx, y)
         app.right_click(sx, y)
         app.click_probe("pub.inst_open", "пункт «Параметры композиции»")
-        time.sleep(0.8)
         app.shot("instance-window")
         app.expect(
             app.has_probe(f"inst.value.{ids['text']}"),
@@ -269,15 +248,12 @@ def main(out):
         app.click_probe(f"inst.value.{ids['text']}", "поле заголовка второго выпуска")
         for ch in ["v", "t", "o", "r", "o", "y"]:
             app.key(ch)
-        time.sleep(0.5)
         # ширина: клик по DragValue переводит его в ввод числом
         app.click_probe(f"inst.value.{ids['w']}", "поле ширины второго выпуска")
         for ch in ["ctrl+a", "0", "period", "9"]:
             app.key(ch)
         app.key("Return")
-        time.sleep(0.6)
         app.key("Escape")
-        time.sleep(0.5)
 
         # --- 4b. КРИВАЯ ручки: заводится названным действием и ВИДНА ----
         # Претензия Р.60: «кривых автоматизаций я нигде не вижу… ни одной
@@ -286,19 +262,15 @@ def main(out):
         # а ключи уезжают в файл.
         app.right_click(sx, y)
         app.click_probe("pub.inst_open", "окно параметров композиции ещё раз")
-        time.sleep(0.8)
         app.expect(
             not app.has_probe(f"inst.curve.{ids['w']}"),
             "в окне остался безымянный глиф записи ключей",
         )
         app.click_probe("inst.auto_add", "меню «+ кривая»")
-        time.sleep(0.6)
         app.click_probe(f"inst.auto_add.{ids['w']}", "пункт «ширина» в меню кривой")
-        time.sleep(0.8)
         app.expect(app.has_probe("inst.auto"), "виджет автоматизации появился в окне")
         app.shot("instance-curve")
         app.key("Escape")
-        time.sleep(0.5)
 
         saved = app.saved_project()
         sets = override_sets(saved.doc)
@@ -336,16 +308,12 @@ def main(out):
         fx = app.x_at(first[0] + first[1] // 2)
         app.right_click(fx, y)
         app.click_probe("nest.enter", "вход в композицию через ПЕРВЫЙ выпуск")
-        time.sleep(0.8)
         inner = sorted(app.live_clips())
         app.double_click(app.x_at(inner[0][0] + inner[0][1] // 2), y)
-        time.sleep(0.8)
         app.click_probe("titlew.text", "поле текста титра шаблона")
         for ch in ["z", "z"]:
             app.key(ch)
-        time.sleep(0.5)
         app.key("Escape")
-        time.sleep(0.4)
         app.expect(leave_reel(app), "Esc-каскад вывел наружу после правки шаблона")
 
         saved = app.saved_project()
@@ -383,7 +351,7 @@ def main(out):
         # строкой, закрыл бы полосу молча
         app.right_click(fx0, y)
         app.click_probe("nest.expand_here", "пункт «Раскрыть здесь»")
-        time.sleep(1.2)
+        app.settle()
         app.expect(
             len(video_row_ys(app)) > rows_before,
             f"полоса раскрылась: строк было {rows_before}, стало {len(video_row_ys(app))}",
@@ -398,9 +366,7 @@ def main(out):
         )
         app.right_click_probe("lbl.size", "подпись кегля титра в полосе")
         app.click_probe("pub.publish.size", "пункт «Опубликовать…» у кегля")
-        time.sleep(0.5)
         app.click_probe("pub.dialog.ok", "подтверждение публикации из полосы")
-        time.sleep(0.8)
         app.expect(
             app.geom()["nest"]["depth"] == 0,
             "подтверждение публикации утащило внутрь композиции (п.11)",
@@ -419,24 +385,18 @@ def main(out):
         app.click_probe("fxreg.add", "пикер эффектов в окне титра")
         for ch in "radial":
             app.key(ch)
-        time.sleep(0.5)
         app.click_probe("fxreg.tpl.radial_blur", "строка «Радиальное размытие» в пикере")
-        time.sleep(0.8)
         # у титра выбрана ГОЛОВА (его источник), поэтому новый слот надо
         # ещё и выбрать — полосой, как человек. Нулевой слот полосы — это
         # ВЕДУЩИЙ УЗЕЛ «Геометрия» (он вклеен в полосу на свою позицию,
         # Р.62), размытие встало следом.
         app.click_probe("fx.slot.1", "слот размытия в полосе цепочки")
-        time.sleep(0.5)
         app.shot("blur-added")
         app.expect(app.has_probe("lbl.amount"), "параметры размытия показаны")
         app.right_click_probe("lbl.amount", "подпись количества размытия")
         app.click_probe("pub.publish.amount", "пункт «Опубликовать…» у количества")
-        time.sleep(0.5)
         app.click_probe("pub.dialog.ok", "подтверждение публикации количества")
-        time.sleep(0.8)
         app.key("Escape")
-        time.sleep(0.4)
         saved = app.saved_project()
         pubs = published_of(saved.doc)
         amount = next((p["id"] for p in pubs if p["target"]["param"] == "amount"), None)
@@ -446,18 +406,17 @@ def main(out):
         # обязан работать ПОВТОРНО)
         app.right_click(fx0, y)
         app.click_probe("nest.expand_here", "пункт «Раскрыть здесь» второй раз")
-        time.sleep(1.0)
+        app.settle()
 
         # курсор — на второй выпуск, запоминаем кадр
         app.click(app.x_at(second[0] + app.seconds(1)), app.ruler_y())
-        time.sleep(1.2)
+        app.settle()
         before_px = app.pixel_settled(app.preview_center())
         app.shot("before-amount")
 
         app.click(sx, y)
         app.right_click(sx, y)
         app.click_probe("pub.inst_open", "пункт «Параметры композиции»")
-        time.sleep(0.8)
         # ГОЛОВА ПОЛОСЫ, а не своё окно (Р.63 п.12)
         app.expect(app.has_probe("fx.head"), "параметры композиции — голова полосы цепочки")
         app.expect(
@@ -468,7 +427,7 @@ def main(out):
         for ch in ["ctrl+a", "0", "period", "9"]:
             app.key(ch)
         app.key("Return")
-        time.sleep(1.2)
+        app.settle()
         app.shot("after-amount")
         after_px = app.pixel_settled(app.preview_center(), differs_from=before_px)
         app.expect(

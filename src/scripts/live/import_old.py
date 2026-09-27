@@ -21,10 +21,13 @@ import json
 import os
 import subprocess
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import KT_CLI, Live, require_tools  # noqa: E402
+
+# СВОЙ ПРОЦЕСС (Р.68): сценарий проверяет САМ СТАРТ программы, а не работу в
+# уже открытом проекте, — стенд работника ему не подходит.
+OWN_PROCESS = True
 
 SEC = 90000
 
@@ -98,7 +101,7 @@ def main(out):
     os.environ["KT_FILE_PICK"] = old
     with Live("import_old", out, project=old) as app:
         # ШАГ 1: «Открыть» отверг — событий нет, в статусе версия и дверь
-        time.sleep(1.0)
+        app.settle()
         g = app.geom()
         app.expect(len(g.get("clips", [])) == 0, "старый файл обычным путём не открылся")
         notes = g.get("notices", [])
@@ -108,18 +111,16 @@ def main(out):
 
         # ШАГ 2: Файл → Импортировать проект старой версии…
         app.click_probe("menu.file", "меню «Файл»")
-        time.sleep(0.5)
         app.step("file-menu", "меню «Файл» с пунктом импорта")
         app.click_probe("file.import_older", "пункт «Импортировать проект старой версии…»")
         # ШАГ 3: выбор файла (в Xvfb — ответ диалога подменён KT_FILE_PICK)
-        time.sleep(2.0)
+        app.settle()
         ok = False
         for _ in range(20):
             g = app.geom()
             if len(g.get("clips", [])) == 1 and g.get("morphers") == 1:
                 ok = True
                 break
-            time.sleep(0.5)
         app.expect(ok, "после импорта на таймлайне событие и морфер")
         app.expect(bool(g.get("dirty")), "документ помечен правками (звёздочка)")
         app.step("imported", "проект открыт через импорт, звёздочка в заголовке")

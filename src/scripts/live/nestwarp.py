@@ -16,10 +16,9 @@
 """
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, pause, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -39,7 +38,6 @@ def main(out):
         app.click(app.x_at(3 * SEC), y, mods=("ctrl",))
         app.right_click(app.x_at(3 * SEC), y)
         app.click_probe("nest.collapse", "пункт сворачивания")
-        time.sleep(0.5)
         app.expect(len(app.live_clips()) == 1, f"свёрнуто не в одно: {app.live_clips()}")
         app.shot("collapsed")
 
@@ -48,11 +46,9 @@ def main(out):
         mid = inst[0] + inst[1] // 2
         app.right_click(app.x_at(mid), y)
         app.click_probe("tl.reverse", "пункт «Реверс»")
-        time.sleep(0.5)
         app.shot("reversed")
         # СЛЕДСТВИЕ в модели, а не «команда не упала»
         app.key("ctrl+s")
-        time.sleep(0.8)
         saved = app.saved_project()
         kt = saved.doc["metadata"]["kt"]
         app.expect(
@@ -70,9 +66,12 @@ def main(out):
         before = app.geom().get("underruns", 0)
         app.click(app.x_at(int(0.5 * SEC)), app.ruler_y())
         app.key("space")
-        time.sleep(1.5)
+        pause(
+            1.5,
+            "воспроизведение идёт в РЕАЛЬНОМ времени: полторы секунды игры — "
+            "это сама проверка, а не ожидание реакции интерфейса",
+        )
         app.key("space")
-        time.sleep(0.4)
         after = app.geom().get("underruns", 0)
         app.expect(
             app.playhead() > int(0.5 * SEC),

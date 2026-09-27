@@ -3552,3 +3552,277 @@ fn t800_finish_stages_name_their_price() {
         "стадия kt-gpu осталась дублем прогона мастерской (Р.68)"
     );
 }
+
+/// Живая проверка есть на машине? Без Xvfb и собранной программы сценарии
+/// сторожей гонять негде — тест скипается, НАЗЫВАЯ причину (вакуумный skip
+/// без причины — это «зелено, потому что ничего не проверяли», урок т.194).
+fn live_check_available(root: &std::path::Path) -> Option<String> {
+    if std::process::Command::new("sh")
+        .args(["-c", "command -v Xvfb"])
+        .output()
+        .map(|o| !o.status.success())
+        .unwrap_or(true)
+    {
+        return Some("нет Xvfb (sudo apt install xvfb openbox)".into());
+    }
+    if !root.join("target/debug/kt-app").exists() {
+        return Some("нет target/debug/kt-app (cargo build -p kt-app)".into());
+    }
+    None
+}
+
+fn run_live_check(root: &std::path::Path, workers: &str, names: &[&str]) -> (bool, String) {
+    let out = std::process::Command::new("./scripts/live-check.sh")
+        .args(names)
+        .env("KT_LIVE_WORKERS", workers)
+        // свои номера экранов: рядом может идти обычный прогон живых сценариев
+        .env("KT_LIVE_DISPLAY", ":80")
+        .current_dir(root)
+        .output()
+        .expect("scripts/live-check.sh");
+    let mut said = String::from_utf8_lossy(&out.stdout).into_owned();
+    said.push_str(&String::from_utf8_lossy(&out.stderr));
+    (out.status.success(), said)
+}
+
+/// t801 (Р.68): красный в параллели перегоняется ОДИН в одиночку, и только
+/// второе падение — вердикт.
+///
+/// Правило «упавший под нагрузкой перезапускается отдельно» записано с Р.59
+/// (§468: второй прогон рядом покрасил зелёные сценарии), но исполняла его
+/// память агента. Владелец разрешил параллель вместе с механизмом —
+/// значит механизм обязан быть проверяемым, а перегон — ВИДИМЫМ в отчёте:
+/// молчаливый перегон превратил бы флак в невидимку.
+#[test]
+fn t801_red_scenario_is_rerun_alone() {
+    let root = workspace_root();
+    if let Some(why) = live_check_available(&root) {
+        eprintln!("t801 пропущен: {why}");
+        return;
+    }
+    // подставной «красный с первого раза» помнит прогон файлом — снимаем
+    let mark = root.join("target/live-out/_flaky/already-ran");
+    std::fs::remove_file(&mark).ok();
+
+    let (ok, said) = run_live_check(&root, "2", &["_flaky", "_red"]);
+    assert!(!ok, "прогон с всегда-красным сценарием обязан быть красным:\n{said}");
+    assert!(
+        said.contains("ПРОШЁЛ СО ВТОРОГО РАЗА") && said.contains("_flaky"),
+        "перегон в одиночку не назван в отчёте:\n{said}"
+    );
+    assert!(
+        said.contains("КРАСНЫЕ ДВАЖДЫ") && said.contains("_red"),
+        "дважды упавший сценарий не назван красным:\n{said}"
+    );
+    let verdict = std::fs::read_to_string(root.join("target/live-out/verdicts/_flaky"))
+        .unwrap_or_default();
+    assert_eq!(verdict, "ok", "перегнанный сценарий остался красным");
+
+    // одиночный прогон НИЧЕГО не перегоняет: там покраснение — вердикт
+    std::fs::remove_file(&mark).ok();
+    let (ok1, said1) = run_live_check(&root, "1", &["_flaky"]);
+    assert!(!ok1, "одиночный прогон обязан отдать красное как есть:\n{said1}");
+    assert!(
+        said1.contains("прогон и так одиночный"),
+        "одиночный прогон молча перегнал сценарий:\n{said1}"
+    );
+}
+
+/// t802 (Р.68): работники не видят друг друга — свой экран и своё хранилище.
+///
+/// Это и есть закрытая причина запрета «в два потока»: два kt-app на одном
+/// экране — прицел в чужое окно (`probe.window()` ищет по WM_CLASS), а общее
+/// хранилище смешивает рабочее место, пресеты и замки.
+#[test]
+fn t802_workers_are_isolated() {
+    let root = workspace_root();
+    if let Some(why) = live_check_available(&root) {
+        eprintln!("t802 пропущен: {why}");
+        return;
+    }
+    let (ok, said) = run_live_check(&root, "3", &["_env1", "_env2", "_env3"]);
+    assert!(ok, "подставные сценарии обязаны быть зелёными:\n{said}");
+    let mut displays = std::collections::BTreeSet::new();
+    let mut stores = std::collections::BTreeSet::new();
+    for n in ["_env1", "_env2", "_env3"] {
+        let p = root.join("target/live-out").join(n).join("env.json");
+        let text = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+        let get = |key: &str| -> String {
+            text.split(&format!("\"{key}\": \""))
+                .nth(1)
+                .and_then(|s| s.split('"').next())
+                .unwrap_or_default()
+                .to_string()
+        };
+        displays.insert(get("display"));
+        stores.insert(get("store"));
+    }
+    assert_eq!(displays.len(), 3, "работники делят экран: {displays:?}");
+    assert_eq!(stores.len(), 3, "работники делят хранилище: {stores:?}");
+    assert!(
+        said.contains("работников 3"),
+        "прогон не сказал, сколькими работниками он шёл:\n{said}"
+    );
+}
+
+/// t803 (Р.68): живые сценарии ждут ПРОГРАММУ, а не часы.
+///
+/// Замер раунда: 96 % времени живого прогона — безусловный сон (`nestparam`:
+/// 130.5 с из 135.9 в 591 вызове). Правило прозой тут держалось бы ровно до
+/// следующего сценария, поэтому его держит сторож: сырых пауз в сценариях не
+/// бывает, в каркасе они живут в `pause`/`_poll`, и у каждой `pause` причина
+/// словами не короче сорока символов (мера — та же, что у сторожа ПУТЬ).
+#[test]
+fn t803_live_scenarios_wait_for_the_program() {
+    let root = workspace_root();
+    let guard = root.join("scripts/live-sleeps.py");
+    assert!(guard.exists(), "сторожа нет на месте: {}", guard.display());
+    let run = || -> (bool, String) {
+        let out = std::process::Command::new("python3")
+            .arg(&guard)
+            .arg("--check")
+            .current_dir(&root)
+            .output()
+            .expect("python3 для сторожа пауз");
+        let mut said = String::from_utf8_lossy(&out.stdout).into_owned();
+        said.push_str(&String::from_utf8_lossy(&out.stderr));
+        (out.status.success(), said)
+    };
+
+    let (ok, said) = run();
+    assert!(ok, "сторож красен на сегодняшних сценариях: {said}");
+
+    // сырая пауза в СЦЕНАРИИ — красное с адресом
+    let probe = root.join("scripts/live/_t803_probe.py");
+    std::fs::write(&probe, "import time\n\n\ndef main(out):\n    time.sleep(0.5)\n").unwrap();
+    let (ok_raw, said_raw) = run();
+    std::fs::remove_file(&probe).ok();
+    assert!(!ok_raw, "сторож не заметил сырой паузы в сценарии");
+    assert!(
+        said_raw.contains("_t803_probe.py") && said_raw.contains("сырой `time.sleep`"),
+        "сторож молчит об адресе паузы: {said_raw}"
+    );
+
+    // пауза без внятной причины — тоже красное
+    std::fs::write(
+        &probe,
+        "from kt_live import pause\n\n\ndef main(out):\n    pause(0.1, \"так надо\")\n",
+    )
+    .unwrap();
+    let (ok_short, said_short) = run();
+    std::fs::remove_file(&probe).ok();
+    assert!(!ok_short, "сторож принял отговорку вместо причины паузы");
+    assert!(
+        said_short.contains("причина паузы короче"),
+        "сторож не назвал короткую причину: {said_short}"
+    );
+}
+
+/// t805 (Р.68): канал стенда мёртв без переменной окружения, кадры считаются
+/// по отрисовке, а «чисто» — это ноль открытых окон.
+///
+/// Стенд открывает проекты подряд в одном процессе, и доказательство чистоты
+/// обязано быть наблюдаемым ДО первого жеста: иначе утечка состояния между
+/// сценариями даёт «зелёное, потому что смотрели не туда».
+#[test]
+fn t805_bench_channel_is_dead_without_env() {
+    // 1) в продукте канала нет: переменной нет — команд нет
+    assert!(
+        !crate::bench::enabled(),
+        "канал стенда включён без KT_LIVE_CTL — в продукте он обязан быть мёртв"
+    );
+    let dir = std::env::temp_dir().join("kt-t805");
+    std::fs::create_dir_all(&dir).ok();
+    let ctl = dir.join("ctl");
+    std::fs::write(&ctl, "1 open /tmp/нет-такого.otio\n").unwrap();
+    assert!(crate::bench::poll().is_none(), "выключенный канал прочитал команду");
+    std::fs::remove_file(&ctl).ok();
+
+    // 2) номер кадра растёт ОТ ОТРИСОВКИ
+    let mut h = crate::layout_tests::harness();
+    let before = crate::bench::frames();
+    h.step();
+    h.step();
+    let after = crate::bench::frames();
+    assert!(
+        after >= before + 2,
+        "счётчик кадров не считает отрисовку: {before} → {after}"
+    );
+
+    // 3) «чисто» — это ноль окон; открытое окно видно, закрытое — нет
+    assert_eq!(
+        crate::bench::open_windows(&h.ctx),
+        0,
+        "свежая программа отдала открытые окна"
+    );
+    h.state_mut().open_project_settings();
+    h.step();
+    h.step();
+    assert!(
+        crate::bench::open_windows(&h.ctx) >= 1,
+        "открытое окно настроек не видно счётчику окон"
+    );
+}
+
+/// t804 (Р.68): отчёт живого покрытия — что человек НЕ трогал мышью ни разу.
+///
+/// Решение владельца: «прокликивать сложные моменты или те которые не
+/// прокликали ни разу». Чтобы «ни разу» не было вкусовщиной, его считает
+/// машина: программа публикует прямоугольники именованных виджетов, сценарии
+/// их кликают, отчёт называет разницу. Красным отчёт делают только ЛОЖНЫЕ
+/// вещи: сценарий целится в несуществующее место, или спека ссылается на
+/// живой сценарий, которого нет, — то есть «переезд» проверки в headless
+/// выкинул её вместо замены адреса.
+#[test]
+fn t804_live_coverage_names_untouched_places() {
+    let root = workspace_root();
+    let guard = root.join("scripts/live-coverage.py");
+    assert!(guard.exists(), "сторожа нет на месте: {}", guard.display());
+    let run = |extra: &[&str]| -> (bool, String) {
+        let out = std::process::Command::new("python3")
+            .arg(&guard)
+            .args(extra)
+            .current_dir(&root)
+            .output()
+            .expect("python3 для отчёта покрытия");
+        let mut said = String::from_utf8_lossy(&out.stdout).into_owned();
+        said.push_str(&String::from_utf8_lossy(&out.stderr));
+        (out.status.success(), said)
+    };
+
+    // 1) сегодняшнее дерево: отчёт называет число нетронутых мест
+    let (ok, said) = run(&["--check"]);
+    assert!(ok, "сторож покрытия красен на текущем дереве: {said}");
+    assert!(
+        said.contains("мышью ни разу не трогали") || said.contains("мышью НИ РАЗУ не трогали"),
+        "отчёт не назвал нетронутые места: {said}"
+    );
+
+    // 2) сценарий целится в место, которого программа не публикует
+    let probe = root.join("scripts/live/_t804_probe.py");
+    std::fs::write(
+        &probe,
+        "def main(out):\n    app.click_probe(\"нетакогощупа.вовсе\", \"место\")\n",
+    )
+    .unwrap();
+    let (ok_phantom, said_phantom) = run(&["--check"]);
+    std::fs::remove_file(&probe).ok();
+    assert!(!ok_phantom, "сторож не заметил прицела в несуществующее место");
+    assert!(
+        said_phantom.contains("нетакогощупа"),
+        "сторож не назвал несуществующее место: {said_phantom}"
+    );
+
+    // 3) живой сценарий, названный спекой, исчез с диска — красное:
+    //    переезд проверки обязан МЕНЯТЬ адрес, а не выкидывать сценарий
+    let victim = root.join("scripts/live/deadend.py");
+    let saved = std::fs::read_to_string(&victim).expect("живой сценарий deadend.py");
+    std::fs::remove_file(&victim).unwrap();
+    let (ok_gone, said_gone) = run(&["--check"]);
+    std::fs::write(&victim, saved).unwrap();
+    assert!(!ok_gone, "сторож не заметил исчезнувшего сценария спеки");
+    assert!(
+        said_gone.contains("deadend.py"),
+        "сторож не назвал исчезнувший сценарий: {said_gone}"
+    );
+}

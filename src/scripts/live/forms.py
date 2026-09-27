@@ -18,7 +18,6 @@
 import os
 import subprocess
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import KT_CLI, Live, geometry, require_tools  # noqa: E402
@@ -45,7 +44,6 @@ def main(out):
         # 2) окно эффектов двойным кликом по событию
         y = app.lane_y("video", 0, frac=0.5)
         app.double_click(app.x_at(1 * SEC), y)
-        time.sleep(0.8)
         app.expect(app.has_probe("fx.cancel"), "окно эффектов открылось")
         app.shot("fx-low")
 
@@ -65,18 +63,15 @@ def main(out):
         if grp:
             before = len(probes(app))
             app.click_probe(grp, "заголовок группы")
-            time.sleep(0.6)
             folded = len(probes(app))
             app.expect(folded < before, f"свёртка спрятала поля: было {before}, стало {folded}")
             app.click_probe(grp, "заголовок группы (обратно)")
-            time.sleep(0.6)
             back = len(probes(app))
             app.expect(back >= before - 1, f"разворот вернул поля: {back} против {before}")
         app.shot("fx-folded")
 
         # кнопка «Отмена» действительно закрывает окно
         app.click_probe("fx.cancel", "кнопка «Отмена» окна эффектов")
-        time.sleep(0.8)
         app.expect(not app.has_probe("fx.cancel", tries=4), "окно закрылось по кнопке")
 
 

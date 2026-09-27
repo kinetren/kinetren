@@ -22,7 +22,6 @@
 import os
 import subprocess
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import Live, project_with_clips, require_tools  # noqa: E402
@@ -81,7 +80,6 @@ def main(out):
         app.click(app.x_at(3 * SEC), y, mods=("ctrl",))
         app.right_click(app.x_at(3 * SEC), y)
         app.click_probe("nest.collapse", "пункт сворачивания")
-        time.sleep(0.5)
         app.expect(
             len(app.live_clips()) == 2,
             f"свёрнуто не в одно (плюс третье событие): {app.live_clips()}",
@@ -101,7 +99,6 @@ def main(out):
         for _ in range(60):
             # шевелим мышь: перерисовка идёт по ДВИЖЕНИЮ (инвариант 12)
             app.hover(app.x_at(inst[0]) + 20, y, pause=0.05)
-            time.sleep(0.4)
             m = slice_means(app, *box, "wait")
             spread = max(spread, max(m) - min(m))
             if spread > 0.08:
@@ -116,7 +113,6 @@ def main(out):
         # --- 3. и это КАДРЫ ЛЕНТЫ, а не тумбы файла: у ленты файла нет,
         # а служба индекса про неё ничего не знает --------------------
         app.key("ctrl+s")
-        time.sleep(0.8)
         kt = app.saved_project().doc["metadata"]["kt"]
         app.expect(
             len(kt.get("sequences", [])) == 1,

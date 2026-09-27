@@ -15,7 +15,6 @@
 import json
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import Live, project_with_clips, require_tools  # noqa: E402
@@ -49,7 +48,6 @@ def main(out):
         app.click(app.x_at(3 * SEC), y, mods=("ctrl",))
         app.right_click(app.x_at(3 * SEC), y)
         app.click_probe("nest.collapse", "пункт сворачивания")
-        time.sleep(0.5)
         app.expect(len(app.live_clips()) == 1, f"свёрнуто не в одно: {app.live_clips()}")
         app.shot("one")
 
@@ -61,14 +59,11 @@ def main(out):
         app.click(app.x_at(inst[0] + inst[1] // 2), y)
         app.click_probe("menu.edit", "кнопка меню «Правка»")
         app.click_probe("edit.copy", "пункт «Копировать»")
-        time.sleep(0.4)
         app.expect(app.geom().get("clipboard") == 1, "копирование не набрало буфер")
         for at in (5.0, 9.0):
             app.click(app.x_at(int(at * SEC)), app.ruler_y())
-            time.sleep(0.3)
             app.click_probe("menu.edit", "кнопка меню «Правка»")
             app.click_probe("edit.paste", "пункт «Вставить»")
-            time.sleep(0.6)
         app.shot("three")
         app.expect(
             len(app.live_clips()) == 3,
@@ -83,7 +78,6 @@ def main(out):
         # именно для того места, В КОТОРОМ СТОИШЬ
         app.right_click(app.x_at(inst[0] + inst[1] // 2), y)
         app.click_probe("nest.enter", "пункт «Войти в ленту»")
-        time.sleep(0.5)
         nest = app.geom()["nest"]
         app.expect(
             nest["uses"] == 3,
@@ -104,9 +98,7 @@ def main(out):
         # съедает его нажатие, а драг сразу после пункта меню тогда не
         # начинается вовсе (не дефект программы — повадка попапа)
         app.click(x0, y)
-        time.sleep(0.3)
         app.drag(x0, y, x0 + 70, y)
-        time.sleep(0.5)
         moved = app.live_clips()
         app.expect(
             moved != inside,
@@ -114,14 +106,11 @@ def main(out):
         )
         app.key("Escape")
         app.key("Escape")
-        time.sleep(0.4)
         app.expect(app.geom()["nest"]["depth"] == 0, "не вышли наружу")
         app.shot("edited")
 
         # --- следствие: ВСЕ ТРИ места одинаковы -----------------------
-        app.focus()
-        app.key("ctrl+s")
-        time.sleep(1.5)
+        app.save_now()
         st = stacks_of(path)
         app.expect(len(st) == 3, f"в файле не три экземпляра, а {len(st)}")
         bodies = [json.dumps(s.get("children"), sort_keys=True) for s in st]

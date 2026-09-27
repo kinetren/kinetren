@@ -17,7 +17,6 @@ import json
 import os
 import subprocess
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import KT_CLI, Live, require_tools  # noqa: E402
@@ -86,7 +85,7 @@ def main(out):
     with Live("stills", out, project=path) as app:
         y = app.lane_y("video", 0, frac=0.5)
         app.click(app.x_at(1 * SEC), y)
-        time.sleep(1.0)
+        app.settle()
         cx, cy = app.preview_center()
         box = (cx - 200, cy - 110, 400, 220)
 
@@ -97,7 +96,7 @@ def main(out):
 
         # 2) у конца события — та же картинка (конца материала у неё нет)
         app.click(app.x_at(int(19.5 * SEC)), y)
-        time.sleep(1.2)
+        app.settle()
         sd_end = looks_like_picture(app, box)
         app.expect(sd_end > 0.15, f"на 19.5 с картинка на месте (разброс {sd_end:.2f})")
         app.step("still-end", "картинка на месте у конца двадцатисекундного события")
@@ -107,7 +106,7 @@ def main(out):
     with Live("stills-gone", out, project=path) as app:
         y = app.lane_y("video", 0, frac=0.5)
         app.click(app.x_at(1 * SEC), y)
-        time.sleep(1.5)
+        app.settle()
         g = app.geom()
         notes = " ".join(g.get("notices", []))
         app.expect("logo.jpg" in notes, f"пропавший файл назван человеку: {notes[:120]}")

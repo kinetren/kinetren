@@ -28,7 +28,6 @@
 """
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import Live, project_with_clips, require_tools  # noqa: E402
@@ -54,7 +53,6 @@ def main(out):
         app.click(app.x_at(3 * SEC), y, mods=("ctrl",))
         app.right_click(app.x_at(3 * SEC), y)
         app.click_probe("nest.collapse", "пункт сворачивания")
-        time.sleep(0.5)
         app.expect(
             len(app.live_clips()) == 2,
             f"свёрнуто не в одно (плюс третье событие): {app.live_clips()}",
@@ -64,9 +62,7 @@ def main(out):
         inst = min(app.live_clips())
         mid = inst[0] + inst[1] // 2
         app.click(app.x_at(mid), y)
-        time.sleep(0.3)
         app.key("Return")
-        time.sleep(0.6)
         g = app.geom()
         app.shot("expanded")
         app.expect(
@@ -82,7 +78,6 @@ def main(out):
         # без клика мышью: ровно тут дефект и жил — выделение экземпляра
         # обязано пережить раскрытие, иначе жест бьёт в пустоту
         app.key("Return")
-        time.sleep(0.8)
         g = app.geom()
         app.shot("entered")
         app.expect(
@@ -102,16 +97,13 @@ def main(out):
         app.click(app.x_at(inner[1][0] + inner[1][1] // 2), y_in, mods=("ctrl",))
         app.right_click(app.x_at(inner[1][0] + inner[1][1] // 2), y_in)
         app.click_probe("nest.collapse", "пункт сворачивания внутри ленты")
-        time.sleep(0.5)
         app.expect(
             len(app.live_clips()) == 1,
             f"внутри ленты не свернулось в одно вложение: {app.live_clips()}",
         )
         y_inst = min(app.live_clips())
         app.click(app.x_at(y_inst[0] + y_inst[1] // 2), y_in)
-        time.sleep(0.3)
         app.key("Return")
-        time.sleep(0.6)
         g = app.geom()
         app.shot("band-inside")
         app.expect(
@@ -128,8 +120,6 @@ def main(out):
         # раскрытие, через которое входили, снова на месте (t636)
         for _ in range(3):
             app.key("Escape")
-            time.sleep(0.4)
-        time.sleep(0.4)
         g = app.geom()
         app.shot("left")
         app.expect(g["nest"]["depth"] == 0, f"Esc не вывел наружу: глубина {g['nest']['depth']}")

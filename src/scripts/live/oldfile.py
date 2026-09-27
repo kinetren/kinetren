@@ -19,10 +19,13 @@ import json
 import os
 import subprocess
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import KT_CLI, Live, color_media, require_tools  # noqa: E402
+from kt_live import KT_CLI, Live, color_media, pause, require_tools  # noqa: E402
+
+# СВОЙ ПРОЦЕСС (Р.68): сценарий проверяет САМ СТАРТ программы, а не работу в
+# уже открытом проекте, — стенд работника ему не подходит.
+OWN_PROCESS = True
 
 SEC = 90000
 
@@ -144,7 +147,11 @@ def main(out):
         app.key("l")  # включить loop
         before = app.geom().get("underruns", 0)
         app.key("space")
-        time.sleep(4.0)
+        pause(
+            4.0,
+            "луп на хвосте проверяется ЖИВОЙ игрой: четыре секунды реального "
+            "времени — это сама проверка, а не ожидание интерфейса",
+        )
         after = app.geom().get("underruns", 0)
         playing = app.playing()
         app.key("space")

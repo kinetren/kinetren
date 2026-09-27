@@ -19,7 +19,6 @@ import os
 import struct
 import subprocess
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import KT_CLI, Live, geometry, require_tools  # noqa: E402
@@ -140,7 +139,6 @@ def main(out):
         # 1) окно дорожки МУЗЫКИ — бейджем FX в её заголовке (тем же
         # телом, что пункт меню: правило 17)
         app.click_probe("track.a1.fx", "бейдж FX дорожки музыки")
-        time.sleep(0.9)
         app.expect(app.has_probe("duck.key"), "в окне дорожки есть выбор ключа")
         app.shot("track-window")
 
@@ -152,16 +150,13 @@ def main(out):
         cx = w0["x"] + int(f["x"] + f["w"] / 2)
         cy = w0["y"] + int(f["y"] + f["h"] / 2)
         app.click(cx, cy)
-        time.sleep(0.5)
         app.shot("key-popup")
         # пункты попапа идут вниз от комбо: «нет», затем дорожки
         app.click(cx, cy + int(f["h"] * 2.2))
-        time.sleep(0.8)
         app.shot("key-picked")
 
         # 3) сохраняем и смотрим в файл
-        app.key("ctrl+s")
-        time.sleep(1.2)
+        app.save_now()
         with open(path) as fh:
             saved = fh.read()
         app.expect('"key"' in saved, "ключ сайдчейна записан в файл")

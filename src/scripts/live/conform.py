@@ -18,7 +18,6 @@
 import os
 import subprocess
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import Live, color_media, project_with_clips, require_tools  # noqa: E402
@@ -61,7 +60,6 @@ def main(out):
 
         # --- 2. постановка из бина → подсказка о несовпадении ---------------
         app.click(app.x_at(7 * SEC), app.ruler_y())
-        time.sleep(0.4)
         card = next((f for f in app.geom().get("fields", []) if f["param"] == "bin.file"), None)
         app.expect(card is not None, "карточка файла показана в бине")
         if card:
@@ -78,7 +76,6 @@ def main(out):
                 status = app.geom().get("status", "")
                 if "360" in status:
                     break
-                time.sleep(0.2)
             app.shot("placed")
             app.expect(
                 "360" in status and "640" in status and "1280" in status,
@@ -99,7 +96,6 @@ def main(out):
         app.shot("settings")
         app.click_probe("settings.conform.fill", "правило «заполнить»")
         app.click_probe("settings.apply", "кнопка «Применить»")
-        time.sleep(0.4)
         app.expect(not app.has_probe("settings.apply", tries=2), "окно закрылось после применения")
         r2 = app.pixel_settled((cx, cy))
         app.expect(r2[0] > 150 and r2[1] < 90, f"после смены правила центр по-прежнему красный: {r2}")

@@ -24,10 +24,9 @@ import json
 import os
 import subprocess
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import KT_CLI, Live, project_with_clips, require_tools  # noqa: E402
+from kt_live import KT_CLI, Live, pause, project_with_clips, require_tools  # noqa: E402
 
 
 def stack_tracks(dest, copies):
@@ -80,7 +79,11 @@ def run_case(app, name, dur_s, jumps):
     ловушка, что записана в Р.37. Маска — настоящий человеческий способ
     попасть в произвольное место."""
     app.key("space")
-    time.sleep(1.5)
+    pause(
+        1.5,
+        "воспроизведение идёт в РЕАЛЬНОМ времени: полторы секунды игры нужны, "
+        "чтобы курсор реально уехал от начала",
+    )
     base = app.geom().get("underruns", 0)
     worst = 0
     for frac in jumps:
@@ -90,7 +93,11 @@ def run_case(app, name, dur_s, jumps):
             app.key(ch)
         app.key("Return")
         # звук обязан пойти БЫСТРО: даём вдвое больше кольца вывода
-        time.sleep(1.2)
+        pause(
+            1.2,
+            "кольцо вывода живёт в РЕАЛЬНОМ времени: ждём вдвое больше его "
+            "длины, чтобы отличить «пошло быстро» от «пошло вообще»",
+        )
         now = app.geom().get("underruns", 0)
         grew = now - base
         worst = max(worst, grew)

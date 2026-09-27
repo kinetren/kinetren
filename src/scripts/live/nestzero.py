@@ -19,7 +19,6 @@
 """
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import Live, project_with_clips, require_tools  # noqa: E402
@@ -43,13 +42,9 @@ def main(out):
         app.click(app.x_at(3 * SEC), y)
         app.right_click(app.x_at(3 * SEC), y)
         app.click_probe("nest.collapse", "пункт сворачивания")
-        time.sleep(0.5)
         app.click(app.x_at(3 * SEC), y)
-        time.sleep(0.3)
         app.key("Return")
-        time.sleep(0.5)
         app.key("Return")
-        time.sleep(0.8)
         g = app.geom()
         app.expect(g["nest"]["depth"] == 1, f"не вошли в ленту: глубина {g['nest']['depth']}")
         inner = min(app.live_clips())
@@ -60,7 +55,6 @@ def main(out):
         # Точка броска правее нуля — до Р.58 сюда же бросали и получали 0
         y = app.lane_y("video", 0, 0.6)
         app.drag(app.x_at(1 * SEC), y, app.x_at(int(0.3 * SEC)), y)
-        time.sleep(0.5)
         moved = min(app.live_clips())
         app.shot("crossed")
         app.expect(
@@ -78,7 +72,6 @@ def main(out):
             "зона до нуля обязана быть на экране внутри ленты",
         )
         app.click(x_before_zero, app.lane_y("video", 0, 0.8))
-        time.sleep(0.4)
         app.expect(
             app.playhead() == 0,
             f"клик левее нуля обязан ставить курсор в 0, а не в {app.playhead()}",
@@ -91,14 +84,11 @@ def main(out):
             if app.geom()["nest"]["depth"] == 0:
                 break
             app.key("Escape")
-            time.sleep(0.35)
         g = app.geom()
         app.expect(g["nest"]["depth"] == 0, f"Esc не вывел наружу: глубина {g['nest']['depth']}")
         app.click(app.x_at(3 * SEC), app.lane_y("video", 0, 0.6))
-        time.sleep(0.3)
         for _ in range(2):
             app.key("Return")
-            time.sleep(0.7)
             if app.geom()["nest"]["depth"] == 1:
                 break
         g = app.geom()

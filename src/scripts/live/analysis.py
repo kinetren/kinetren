@@ -12,7 +12,6 @@
 """
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import Live, geometry, project_with_clips, require_tools  # noqa: E402
@@ -64,7 +63,6 @@ def main(out):
         # само наличие ответа интерфейса: щёлкаем по линейке и смотрим, что
         # курсор доехал
         app.click(app.x_at(2 * SEC), app.ruler_y())
-        time.sleep(0.4)
         ph = app.playhead()
         app.expect(
             abs(ph - 2 * SEC) < 30000,

@@ -28,6 +28,11 @@ import time
 RUST = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 ROOT = os.path.dirname(RUST)
 KT_APP = os.path.join(RUST, "target", "debug", "kt-app")
+
+# СТЕНД РАБОТНИКА (Р.68): каталог с `ctl`, `geom.json` и `window.json` уже
+# запущенной программы — его ставит `scripts/live/worker.py`. Без переменной
+# каждый сценарий стартует свой процесс, как до Р.68.
+BENCH = os.environ.get("KT_LIVE_BENCH")
 KT_CLI = os.path.join(RUST, "target", "debug", "kt-cli")
 
 # ui-probe.py — уже готовый водитель мыши/клавиатуры (python3-xlib + XTest);
@@ -115,10 +120,40 @@ def _ticks(t):
     return round(t.get("value", 0.0) * 90000.0 / rate)
 
 
-class Live:
-    """Запущенное приложение с проектом. Всё внутри `with`."""
+def pause(seconds, reason):
+    """Пауза С ПРИЧИНОЙ — единственный законный способ спать (Р.68).
 
-    def __init__(self, name, out_dir, project=None, autoplay=False):
+    Замер Р.68: 96 % времени живого прогона было безусловным сном
+    (`nestparam` — 130 с из 136 в 591 вызове), потому что каркас ждал «на
+    глазок» кадра софт-рендера. Теперь ждут КАДР (`Live.wait_frame`), а
+    пауза остаётся только там, где ждать нечего: временной порог жеста у
+    egui, часы автосейва, шаг драга. Причина — словами и не короче сорока
+    символов; сторож `scripts/live-sleeps.py` падает на паузе без причины,
+    потому что правило прозой здесь уже не удержалось.
+    """
+    if len(reason) < 40:
+        raise Failure(f"пауза без внятной причины: {reason!r}")
+    time.sleep(seconds)
+
+
+def _poll(seconds=0.02):
+    """Шаг опроса ожидания: не пауза, а частота вопроса «уже?»."""
+    time.sleep(seconds)
+
+
+class Live:
+    """Запущенное приложение с проектом. Всё внутри `with`.
+
+    По умолчанию сценарий берёт СТЕНД работника (Р.68): программа уже
+    запущена, и проект открывается в ней подряд за предыдущим — вместо
+    холодного старта по 3-5 с на каждый из пятидесяти сценариев. Сценарий,
+    который проверяет САМ старт (восстановление после падения, вопрос о
+    несохранённом, замок, импорт чужой версии, автоигра с первого кадра),
+    объявляет `own_process=True` и получает свой процесс: это решение
+    сценария, а не настройка прогона.
+    """
+
+    def __init__(self, name, out_dir, project=None, autoplay=False, own_process=False):
         self.name = name
         self.out = out_dir
         self.project = project
@@ -127,9 +162,21 @@ class Live:
         self.problems = []
         self._reported = False
         self._shot_no = 0
+        self._raised = False
+        # НАБЛЮДАЕМЫЙ шаг кадра: под четырьмя работниками софт-рендер идёт
+        # заметно медленнее, чем в одиночку, и все ожидания обязаны
+        # растягиваться вместе с ним. Фиксированные пороги — это ровно та
+        # слепота, из-за которой «покраснели разом» (§468).
+        self._dt = 0.2
+        # стенд не умеет ни автоигры (KT_AUTOPLAY читается при старте
+        # процесса), ни «программы без проекта» (безымянный документ — это
+        # как раз то, что проверяют сценарии старта)
+        self.own = bool(own_process or autoplay or project is None or not BENCH)
 
     def __enter__(self):
         os.makedirs(self.out, exist_ok=True)
+        if not self.own:
+            return self._attach_bench()
         env = dict(os.environ)
         # софт-рендер: в виртуальном экране видеокарты нет
         env.setdefault("WGPU_BACKEND", "gl")
@@ -138,6 +185,16 @@ class Live:
         # а не «примерно в нижнюю треть» (Р.27)
         self.geom_path = os.path.join(self.out, "geom.json")
         env["KT_GEOM_DUMP"] = self.geom_path
+        # свой канал стенда даже у «своего процесса» (Р.68): он снимает
+        # троттлинг дампа, и ожидание кадра работает всюду одинаково
+        self.ctl_path = os.path.join(self.out, "ctl")
+        env["KT_LIVE_CTL"] = self.ctl_path
+        # у своего процесса — своё хранилище (Р.68): иначе сценарий видит
+        # рабочее место предыдущего. Прогон `nestpreview` был зелёным в
+        # одиночку и красным в полном прогоне ровно по этой причине.
+        store = os.path.join(self.out, "store")
+        os.makedirs(store, exist_ok=True)
+        env["KT_USER_STORE_DIR"] = store
         if self.autoplay:
             env["KT_AUTOPLAY"] = "1"
         log = open(os.path.join(self.out, "kt-app.log"), "w")
@@ -154,8 +211,78 @@ class Live:
             raise
         return self
 
+    def _attach_bench(self):
+        """Взять СТЕНД работника: открыть свой проект в уже живой программе.
+
+        Чистота не обещается, а получается по устройству: команда `open`
+        внутри программы идёт тем же кодом, что `File → Открыть`, то есть
+        состояние строится с нуля. Но проверяется она всё равно ДО первого
+        жеста — иначе утечка состояния между сценариями дала бы ровно тот
+        класс «зелёное, потому что смотрели не туда», которым Kinotrain уже
+        болел.
+        """
+        self.geom_path = os.path.join(BENCH, "geom.json")
+        self.ctl_path = os.path.join(BENCH, "ctl")
+        # ОКРУЖЕНИЕ, КОТОРОЕ ЧИТАЕТСЯ ПРИ СТАРТЕ ПРОЦЕССА, стенду не
+        # передать: программа уже запущена. Молча проигнорировать его
+        # нельзя — сценарий проверял бы не то, что думает; поэтому
+        # несовпадение красное и называет, что делать (Р.68).
+        for var, bench_value in (("KT_AUTOSAVE_SECS", "600"), ("KT_FILE_PICK", None)):
+            got = os.environ.get(var)
+            if got is not None and got != bench_value:
+                raise Failure(
+                    f"сценарий ставит {var}={got!r}, а стенд запущен с "
+                    f"{bench_value!r}: такому сценарию нужен свой процесс — "
+                    "объявите `OWN_PROCESS = True` в его файле"
+                )
+        # своё хранилище на СЦЕНАРИЙ, а не на работника: рабочее место,
+        # пресеты и журнал предыдущего сценария не имеют права влиять на
+        # вердикт следующего (`nestpreview`: зелёный в одиночку, красный в
+        # полном прогоне). Сценарий, который САМ подготовил хранилище
+        # (библиотека пресетов), отдаёт стенду своё.
+        store = os.environ.get("KT_USER_STORE_DIR") or os.path.join(self.out, "store")
+        os.makedirs(store, exist_ok=True)
+        self._ctl("store", store)
+        seq = self._ctl("open", os.path.abspath(self.project))
+        self._wait_ctl(seq)
+        self.wait_frame(2, what="первый кадр нового проекта в стенде")
+        g = self.geom()
+        got = os.path.realpath(g.get("project", ""))
+        self.expect(
+            got == os.path.realpath(self.project),
+            f"стенд открыл проект сценария: {os.path.basename(got)}",
+        )
+        self.expect(
+            int(g.get("windows", 0)) == 0,
+            f"программа чиста: открытых окон {g.get('windows')}",
+        )
+        # окно предыдущего сценария могло остаться низким (`resize`)
+        want = json.load(open(os.path.join(BENCH, "window.json")))
+        if abs(g["window"]["w"] - want["w"]) > 4 or abs(g["window"]["h"] - want["h"]) > 4:
+            self.resize(want["w"], want["h"])
+        return self
+
+    def _ctl(self, cmd, arg=""):
+        """Команда стенду; возвращает её номер."""
+        seq = int(time.time() * 1000)
+        with open(self.ctl_path, "w") as f:
+            f.write(f"{seq} {cmd} {arg}\n")
+        return seq
+
+    def _wait_ctl(self, seq, timeout=30.0):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                with open(self.geom_path) as f:
+                    if int(json.load(f).get("bench_done", 0)) >= seq:
+                        return
+            except (OSError, ValueError):
+                pass
+            _poll(0.05)
+        raise Failure(f"стенд не выполнил команду {seq} — программа жива? {self.out}")
+
     def __exit__(self, *exc):
-        if self.proc and self.proc.poll() is None:
+        if self.own and self.proc and self.proc.poll() is None:
             self.proc.terminate()
             try:
                 self.proc.wait(timeout=5)
@@ -175,6 +302,15 @@ class Live:
         return False
 
     def _wait_window(self, timeout=40.0):
+        """Дождаться окна и НАРИСОВАННЫХ кадров.
+
+        До Р.68 «кадр нарисован» проверялось снимком экрана: xwd плюс
+        `convert` на каждую попытку, и сверху ещё 0.5 с про запас — 3-5 с на
+        каждый из пятидесяти сценариев. Повод для той проверки был верный
+        (Р.33 п.228: чёрное окно сравнивалось с чёрным и «проходило»), но
+        спрашивать надо не картинку, а программу: она сообщает НОМЕР
+        нарисованного кадра сама (`bench.tick`, дамп геометрии).
+        """
         deadline = time.time() + timeout
         while time.time() < deadline:
             if self.proc.poll() is not None:
@@ -182,35 +318,112 @@ class Live:
             try:
                 probe.window()
             except SystemExit:
-                time.sleep(0.4)
+                _poll(0.1)
                 continue
-            # окно ЕСТЬ — но кадра в нём может ещё не быть: в софт-рендере
-            # первая отрисовка идёт секунды, а сценарий, снявший чёрный
-            # экран, сравнивает чёрное с чёрным и «проходит» (Р.33 п.228).
-            # Ждём НАСТОЯЩИЙ кадр: разброс яркости перестал быть нулевым.
             while time.time() < deadline:
-                if self._screen_painted():
-                    time.sleep(0.5)
+                if self.proc.poll() is not None:
+                    raise Failure(f"kt-app упал на старте, см. {self.out}/kt-app.log")
+                if self._frame_now() >= 2:
                     return
-                time.sleep(0.4)
-            raise Failure("окно kt-app осталось чёрным — программа не нарисовала кадр")
+                _poll(0.05)
+            raise Failure("программа не нарисовала ни одного кадра — окно осталось пустым")
         raise Failure("окно kt-app не появилось")
 
-    def _screen_painted(self):
-        """Экран уже не однотонный? (первый кадр приложения нарисован)"""
-        img = self.shot("wait")
-        out = subprocess.run(
-            ["convert", img, "-format", "%[standard-deviation]", "info:-"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-        os.unlink(img)
-        self._shot_no -= 1
+    # ---- ожидание КАДРА, а не часов (Р.68) ---------------------------------
+
+    def _counters(self):
+        """(нарисованные кадры, прочитанные события ввода) из дампа."""
         try:
-            return float(out) > 100.0
-        except ValueError:
+            with open(self.geom_path) as f:
+                g = json.load(f)
+            return int(g.get("frame", 0)), int(g.get("input", 0))
+        except (OSError, ValueError):
+            return 0, 0
+
+    def _frame_now(self):
+        """Номер нарисованного кадра из дампа; 0 — дампа ещё нет."""
+        return self._counters()[0]
+
+    def _input_now(self):
+        return self._counters()[1]
+
+    def seen(self, what="жест"):
+        """Вернуть метку «сколько событий ввода программа уже прочитала».
+
+        Кадра мало: кадр мог НАЧАТЬСЯ раньше, чем событие доехало от
+        X-сервера, и «кадр нарисован» ещё не значит «жест увиден» — именно
+        на этом живой сценарий `level` молча терял драг. Метка берётся ДО
+        жеста, `wait_seen` ждёт её роста."""
+        return self._input_now()
+
+    def _note_frame_gap(self, gap):
+        """Запомнить, сколько сейчас идёт кадр (сглаженно, с потолком)."""
+        if 0.0 < gap < 5.0:
+            self._dt = max(0.05, min(2.0, 0.5 * self._dt + 0.5 * gap))
+
+    def settle(self, timeout=None, quiet=None):
+        """Дождаться, пока программа ДОРЕАГИРУЕТ на жест.
+
+        «Прочитала ввод» — ещё не «закончила»: на отпускании драга модель
+        правится батчем, а кадр с новым состоянием идёт следующим. Ждать
+        фиксированную паузу (0.6 с в прежнем каркасе) незачем — программа
+        сама говорит, когда успокоилась: кадры перестают идти, потому что
+        перерисовка бывает ТОЛЬКО при движении (инвариант №12).
+        """
+        timeout = timeout if timeout is not None else max(4.0, 30.0 * self._dt)
+        deadline = time.time() + timeout
+        last, since = self._frame_now(), time.time()
+        while time.time() < deadline:
+            f = self._frame_now()
+            if f != last:
+                self._note_frame_gap(time.time() - since)
+                last, since = f, time.time()
+            else:
+                # «тихо» — это НЕСКОЛЬКО шагов кадра, а не 0.12 с: под
+                # нагрузкой кадр идёт секунду, и фиксированный порог
+                # объявлял бы программу успокоившейся посреди отрисовки
+                need = quiet if quiet is not None else max(0.12, 2.5 * self._dt)
+                if time.time() - since >= need:
+                    return True
+            _poll()
+        return False
+
+    def wait_seen(self, mark, what="жест", timeout=None, frames=1, soft=False):
+        """Ждать, пока программа ПРОЧИТАЕТ события жеста и нарисует кадр."""
+        timeout = timeout if timeout is not None else max(8.0, 40.0 * self._dt)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self._input_now() > mark:
+                return self.wait_frame(frames, what=what, soft=True)
+            _poll()
+        if soft:
             return False
+        raise Failure(f"программа не прочитала ввод: {what}")
+
+    def wait_frame(self, n=1, timeout=None, what="кадр после жеста", soft=False):
+        """Ждать, пока программа нарисует ещё `n` кадров.
+
+        Это замена фиксированным паузам: жест всегда рождает ввод, ввод
+        рождает перерисовку, и ждать надо именно её. Под нагрузкой ожидание
+        растягивается вместе с кадром — чего пауза «0.35 с» не умела, и
+        отсюда росли ложные покраснения (§468).
+
+        `soft=True` — там, где кадра может и не быть вовсе: программа
+        перерисовывается ТОЛЬКО при движении (инвариант №12), и ожидание
+        «просто так» законно ничем не кончается.
+        """
+        target = self._frame_now() + n
+        timeout = timeout if timeout is not None else max(6.0, 20.0 * self._dt * n)
+        started = time.time()
+        deadline = started + timeout
+        while time.time() < deadline:
+            if self._frame_now() >= target:
+                self._note_frame_gap((time.time() - started) / max(n, 1))
+                return True
+            _poll()
+        if soft:
+            return False
+        raise Failure(f"программа не нарисовала кадр: {what}")
 
     # ---- геометрия из САМОЙ программы --------------------------------------
 
@@ -220,11 +433,20 @@ class Live:
         win = probe.window()
         win.configure(width=int(w), height=int(h))
         probe.d.sync()
-        time.sleep(1.0)
+        self._raised = False
+        # НАБЛЮДАЕМЫЙ шаг кадра: под четырьмя работниками софт-рендер идёт
+        # заметно медленнее, чем в одиночку, и все ожидания обязаны
+        # растягиваться вместе с ним. Фиксированные пороги — это ровно та
+        # слепота, из-за которой «покраснели разом» (§468).
+        self._dt = 0.2
+        # после ресайза ждём НЕСКОЛЬКО кадров: перевёрстка идёт не в один
+        # проход (прокрутки и группы пересчитывают свои высоты)
+        self.wait_frame(3, what="перевёрстка после смены размера окна")
 
     def geom(self):
         """Свежий дамп геометрии: зона дорожек, зум, позиции строк."""
-        for _ in range(40):
+        deadline = time.time() + 10.0
+        while time.time() < deadline:
             try:
                 with open(self.geom_path) as f:
                     g = json.load(f)
@@ -233,7 +455,7 @@ class Live:
                     return g
             except (OSError, ValueError):
                 pass
-            time.sleep(0.25)
+            _poll(0.05)
         raise Failure("программа не отдала геометрию (KT_GEOM_DUMP)")
 
     def x_at(self, tick):
@@ -271,7 +493,7 @@ class Live:
             seen.append(t)
             if pred(t):
                 return seen
-            time.sleep(0.2)
+            _poll(0.05)
         self.expect(False, f"{what} (курсор шёл: {seen[-8:]})")
         return seen
 
@@ -313,30 +535,38 @@ class Live:
                 probe.d, X.KeyPress if pressed else X.KeyRelease, code
             )
         probe.d.sync()
-        time.sleep(0.08)
+        self.wait_frame(1, what="кадр с зажатым модификатором", soft=True)
 
     def click(self, x, y, mods=()):
-        # окно поднимается ПЕРЕД каждым жестом: сценарии идут подряд, и
-        # окно предыдущего может остаться поверх — тогда XTest-клик уходит
-        # ему, а наш сценарий видит «жест не сработал» (п.199)
-        self.focus()
+        # окно поднимается ОДИН раз за сценарий (Р.68): мышь работает и без
+        # фокуса, а поднятие стоило 0.2 с на каждый клик. Повод для прежнего
+        # «перед каждым жестом» был в том, что окно ПРЕДЫДУЩЕГО сценария
+        # могло остаться поверх (п.199) — со стендом окно одно, и поднять
+        # его достаточно единожды (после ресайза флаг сбрасывается).
+        self.raise_once()
         if mods:
             self._mods(mods, True)
-        probe.move(x, y)
-        probe.button(True)
-        probe.button(False)
-        time.sleep(0.35)
+        mark = self.seen()
+        probe.move(x, y, pause=0.0)
+        probe.button(True, pause=0.01)
+        probe.button(False, pause=0.01)
+        self.wait_seen(mark, f"клик ({x}, {y})", frames=2)
+        self.settle()
         if mods:
             self._mods(mods, False)
 
     def right_click(self, x, y):
         """ПКМ: цель контекст-меню и само меню. Отдельный метод, потому что
         `click` жмёт кнопку 1, а меню открывает третья."""
-        self.focus()
-        probe.move(x, y)
-        probe.button(True, 3)
-        probe.button(False, 3)
-        time.sleep(0.45)
+        self.raise_once()
+        mark = self.seen()
+        probe.move(x, y, pause=0.0)
+        probe.button(True, 3, pause=0.01)
+        probe.button(False, 3, pause=0.01)
+        # меню появляется НЕ в том же кадре, что нажатие: egui открывает его
+        # на следующем проходе
+        self.wait_seen(mark, f"контекст-меню ({x}, {y})", frames=2)
+        self.settle()
 
     def double_click(self, x, y):
         """Двойной клик: у egui это ВРЕМЕННОЙ жест (два клика ближе 0.3 с),
@@ -348,47 +578,72 @@ class Live:
         в который тот попал. Пауза 0.1 с превращается для egui в 0.3+ с —
         и двойной клик рассыпается на два одиночных. Проверено: 0.04 с
         открывает окно в 5 прогонах из 5, 0.10 с — в 0 из 5."""
-        self.focus()
-        # даём кадру устояться ПОСЛЕ наведения: первый клик по свежей
-        # позиции иначе теряется вместе с кадром ввода
-        probe.move(x, y, pause=0.20)
+        self.raise_once()
+        # кадр ПОСЛЕ наведения: первый клик по свежей позиции иначе
+        # теряется вместе с кадром ввода
+        mark = self.seen()
+        probe.move(x, y, pause=0.0)
+        self.wait_seen(mark, "наведение перед двойным кликом", soft=True)
         for i in range(2):
-            # МЕЖДУ кликами нужен зазор: четыре события подряд в
-            # софт-рендере попадают в ОДИН кадр ввода, и egui засчитывает
-            # один клик вместо двух (жест срабатывал через раз). 0.08 с
-            # заметно меньше порога двойного клика (0.3 с).
             if i:
-                time.sleep(0.04)
-            probe.button(True)
-            probe.button(False)
-        time.sleep(0.45)
+                # МЕЖДУ кликами нужен зазор: четыре события подряд в
+                # софт-рендере попадают в ОДИН кадр ввода, и egui
+                # засчитывает один клик вместо двух. Кадром здесь ждать
+                # НЕЛЬЗЯ: у двойного клика egui временной порог (0.3 с), а
+                # кадр в софт-рендере идёт ~0.2 с — ожидание кадра
+                # превратило бы жест в два одиночных.
+                pause(
+                    0.04,
+                    "временной порог двойного клика egui: между кликами нужен зазор "
+                    "меньше 0.3 с, а кадр в софт-рендере идёт ~0.2 с (проверено 5 из 5)",
+                )
+            probe.button(True, pause=0.01)
+            probe.button(False, pause=0.01)
+        self.wait_frame(2, what="кадр после двойного клика")
+        self.settle()
 
     def drag(self, x0, y0, x1, y1, steps=6, mods=()):
         """Драг КАК ЧЕЛОВЕК: навести → нажать → сдвинуть чуть → вести
         несколькими шагами → отпустить. Прыжок сразу в цель egui засчитывает
         как начало драга уже в конечной точке, и объект не двигается (правило
         из apps/kt-app/CLAUDE.md). Промежуточные шаги нужны ещё и потому, что
-        софт-рендер выдаёт кадры редко: между позициями обязан пройти кадр."""
-        self.focus()
+        софт-рендер выдаёт кадры редко: между позициями обязан пройти кадр.
+
+        «Между позициями обязан пройти КАДР» — это и есть условие ожидания
+        (Р.68): раньше здесь стояли паузы 0.12-0.35 с «на всякий случай», и
+        именно они составляли большую часть цены живого прогона. Ждём кадр —
+        и тогда жест не «недоезжает» даже под нагрузкой (п.199)."""
+        self.raise_once()
         if mods:
             self._mods(mods, True)
-        probe.move(x0, y0, pause=0.15)
-        probe.button(True)
-        time.sleep(0.2)
+        mark = self.seen()
+        probe.move(x0, y0, pause=0.0)
+        self.wait_seen(mark, "указатель в начале драга")
+        mark = self.seen()
+        probe.button(True, pause=0.01)
+        self.wait_seen(mark, "нажатие кнопки (начало драга)", frames=2)
         step = 8 if x1 >= x0 else -8
-        probe.move(x0 + step, y0, pause=0.15)
+        mark = self.seen()
+        probe.move(x0 + step, y0, pause=0.0)
+        self.wait_seen(mark, "первый сдвиг драга", frames=2)
         for i in range(1, steps + 1):
+            mark = self.seen()
             probe.move(
                 x0 + step + (x1 - x0 - step) * i // steps,
                 y0 + (y1 - y0) * i // steps,
-                pause=0.12,
+                pause=0.0,
             )
-        # пауза ПЕРЕД отпусканием: в софт-рендере кадры идут редко, и
-        # последняя позиция указателя иногда не успевает попасть в кадр —
-        # жест «недоезжал» на 10-20% пути (п.199, разбор в Р.33)
-        time.sleep(0.35)
-        probe.button(False)
-        time.sleep(0.6)
+            # ЖДАТЬ ОБЯЗАТЕЛЬНО, и не «мягко»: непрочитанные движения
+            # X-сервер и winit складывают в одно, драг превращается в
+            # прыжок сразу в цель, и egui начинает его уже в конечной точке
+            # — объект не двигается вовсе (правило из apps/kt-app/CLAUDE.md)
+            self.wait_seen(mark, f"шаг драга {i}/{steps}")
+        # последняя позиция указателя обязана быть ПРОЧИТАНА до отпускания,
+        # иначе жест «недоезжал» на 10-20 % пути (п.199, Р.33)
+        mark = self.seen()
+        probe.button(False, pause=0.01)
+        self.wait_seen(mark, "отпускание драга", frames=2)
+        self.settle()
         if mods:
             self._mods(mods, False)
 
@@ -404,12 +659,22 @@ class Live:
             probe.d.sync()
         except Exception:
             pass
-        time.sleep(0.2)
+        self._raised = True
+        self.wait_frame(1, what="кадр после поднятия окна", soft=True)
+
+    def raise_once(self):
+        """Поднять окно, если этого ещё не делали (Р.68)."""
+        if not self._raised:
+            self.focus()
 
     def key(self, spec):
-        self.focus()
-        probe.key(spec)
-        time.sleep(0.4)
+        # клавиатуре фокус НУЖЕН (в отличие от мыши), но поднимать окно
+        # достаточно один раз за сценарий
+        self.raise_once()
+        mark = self.seen()
+        probe.key(spec, pause=0.01, after=0.01)
+        self.wait_seen(mark, f"клавиша {spec}", frames=2)
+        self.settle()
 
     # имена клавиш X для символов, которых не набрать буквой: `key()`
     # разбирает строку по «+», поэтому знаки обязаны ехать именами
@@ -430,34 +695,52 @@ class Live:
         " ": "space",
     }
 
-    def type_text(self, text, pause=0.05):
-        """Набрать строку ПО СИМВОЛУ, как человек (Р.63)."""
+    def type_text(self, text):
+        """Набрать строку ЦЕЛИКОМ, как человек (Р.63/Р.68).
+
+        По символу с ожиданием кадра на каждый — это и была самая дорогая
+        мелочь живого прогона: 0.65 с на КАЖДЫЙ знак (поднять окно, клавиша,
+        пауза). egui читает события ввода кадром, и вся строка законно
+        приезжает в один кадр — ждём один раз в конце.
+        """
+        self.raise_once()
+        mark = self.seen()
         for ch in text:
-            self.key(self.KEYSYM.get(ch, ch))
-            time.sleep(pause)
+            probe.key(self.KEYSYM.get(ch, ch), pause=0.005, after=0.005)
+        self.wait_seen(mark, f"набранная строка {text!r}", frames=2)
+        self.settle()
 
     def close_window(self):
         """Крестик оконного менеджера. Программа его перехватывает, чтобы
         спросить про несохранённую работу (Р.49, п.354)."""
-        self.focus()
+        self.raise_once()
         probe.close_window()
-        time.sleep(0.8)
+        self.wait_frame(2, what="кадр после крестика окна")
 
     def alive(self):
-        return self.proc is not None and self.proc.poll() is None
+        if self.own:
+            return self.proc is not None and self.proc.poll() is None
+        # в стенде процесс не наш: живость видно по тому, рисует ли
+        # программа кадры
+        return self.wait_frame(1, timeout=3.0, soft=True) or self._frame_now() > 0
 
-    def hover(self, x, y, pause=0.25):
-        """Навести указатель и дать окну кадр на реакцию."""
-        self.focus()
-        probe.move(x, y, pause=pause)
-        time.sleep(pause)
+    def hover(self, x, y, pause=0.0):
+        """Навести указатель и дать окну кадр на реакцию.
+
+        `pause` остаётся в подписи ради вызовов сценариев, но ждём мы кадр:
+        реакция на наведение (подсказка, подменю) приходит кадром, а не по
+        часам."""
+        self.raise_once()
+        mark = self.seen()
+        probe.move(x, y, pause=0.0)
+        self.wait_seen(mark, f"наведение на ({x}, {y})", frames=2, soft=True)
 
     def has_probe(self, name, tries=12):
         """Виджет с таким именем показан прямо сейчас."""
         for _ in range(tries):
             if any(f["param"] == name for f in self.geom().get("fields", [])):
                 return True
-            time.sleep(0.25)
+            self.wait_frame(1, what=f"кадр в ожидании виджета {name}", soft=True)
         return False
 
     def live_clips(self):
@@ -465,51 +748,66 @@ class Live:
         сторож несохранённого: Ctrl+S проверил бы запись, а не сторож."""
         return sorted((c["start"], c["dur"]) for c in self.geom().get("clips", []))
 
-    def double_click_probe(self, name, what=None):
-        """Двойной клик по виджету из дампа геометрии."""
+    def _probe_rect(self, name):
+        """Прямоугольник виджета, когда картинка УСТОЯЛАСЬ (Р.68).
+
+        Дамп пишется каждым кадром, и первый кадр с попапом застаёт его в
+        середине анимации: клик по такому прямоугольнику уходил РЯДОМ с
+        пунктом. Прежний каркас прятал это фиксированной паузой; ждём
+        вместо неё, пока программа перестанет перерисовывать, и читаем
+        прямоугольник заново.
+        """
         for _ in range(20):
             f = next((f for f in self.geom().get("fields", []) if f["param"] == name), None)
             if f:
-                win = geometry()
-                self.double_click(
-                    win["x"] + int(f["x"] + f["w"] / 2),
-                    win["y"] + int(f["y"] + f["h"] / 2),
+                self.settle()
+                again = next(
+                    (x for x in self.geom().get("fields", []) if x["param"] == name), None
                 )
-                return True
-            time.sleep(0.25)
+                return again or f
+            self.wait_frame(1, what=f"кадр в ожидании виджета {name}", soft=True)
+        return None
+
+    def double_click_probe(self, name, what=None):
+        """Двойной клик по виджету из дампа геометрии."""
+        f = self._probe_rect(name)
+        if f:
+            win = geometry()
+            self.double_click(
+                win["x"] + int(f["x"] + f["w"] / 2),
+                win["y"] + int(f["y"] + f["h"] / 2),
+            )
+            return True
         self.expect(False, what or f"программа отдала прямоугольник «{name}»")
         return False
 
     def right_click_probe(self, name, what=None):
         """Правый клик по виджету из дампа геометрии. Нужен подписям полей:
         публикация свойства композиции живёт ровно там (Р.59, стадия 3)."""
-        for _ in range(20):
-            f = next((f for f in self.geom().get("fields", []) if f["param"] == name), None)
-            if f:
-                win = geometry()
-                self.right_click(
-                    win["x"] + int(f["x"] + f["w"] / 2),
-                    win["y"] + int(f["y"] + f["h"] / 2),
-                )
-                return True
-            time.sleep(0.25)
+        f = self._probe_rect(name)
+        if f:
+            win = geometry()
+            self.right_click(
+                win["x"] + int(f["x"] + f["w"] / 2),
+                win["y"] + int(f["y"] + f["h"] / 2),
+            )
+            return True
         self.expect(False, what or f"программа отдала прямоугольник «{name}»")
         return False
 
     def hover_probe(self, name, what=None):
         """Навести на виджет по его прямоугольнику из дампа. Подменю egui
         раскрывается НАВЕДЕНИЕМ, а клик по нему закрывает всё меню."""
-        for _ in range(20):
-            f = next((f for f in self.geom().get("fields", []) if f["param"] == name), None)
-            if f:
-                win = geometry()
-                self.hover(
-                    win["x"] + int(f["x"] + f["w"] / 2),
-                    win["y"] + int(f["y"] + f["h"] / 2),
-                    pause=0.45,
-                )
-                return True
-            time.sleep(0.25)
+        f = self._probe_rect(name)
+        if f:
+            win = geometry()
+            self.hover(
+                win["x"] + int(f["x"] + f["w"] / 2),
+                win["y"] + int(f["y"] + f["h"] / 2),
+            )
+            # подменю раскрывается НАВЕДЕНИЕМ — ждём, пока оно доедет
+            self.settle()
+            return True
         self.expect(False, what or f"программа отдала прямоугольник «{name}»")
         return False
 
@@ -517,16 +815,14 @@ class Live:
         """Кликнуть виджет, чей прямоугольник программа отдала в дампе
         геометрии (`fields`). Модальные окна egui в дереве доступности не
         ищутся, а угадывать смещения внутри окна сценарий не должен (Р.27)."""
-        for _ in range(20):
-            f = next((f for f in self.geom().get("fields", []) if f["param"] == name), None)
-            if f:
-                win = geometry()
-                self.click(
-                    win["x"] + int(f["x"] + f["w"] / 2),
-                    win["y"] + int(f["y"] + f["h"] / 2),
-                )
-                return True
-            time.sleep(0.25)
+        f = self._probe_rect(name)
+        if f:
+            win = geometry()
+            self.click(
+                win["x"] + int(f["x"] + f["w"] / 2),
+                win["y"] + int(f["y"] + f["h"] / 2),
+            )
+            return True
         self.expect(False, what or f"программа отдала прямоугольник «{name}»")
         return False
 
@@ -550,14 +846,15 @@ class Live:
 
     def wheel(self, x, y, ticks=3):
         """Колесо мыши над точкой (ticks > 0 — вниз). XTest: кнопки 4/5."""
-        self.focus()
-        probe.move(x, y)
+        self.raise_once()
+        probe.move(x, y, pause=0.0)
         btn = 5 if ticks > 0 else 4
+        mark = self.seen()
         for _ in range(abs(ticks)):
-            probe.button(True, btn)
-            probe.button(False, btn)
-            time.sleep(0.05)
-        time.sleep(0.4)
+            probe.button(True, btn, pause=0.005)
+            probe.button(False, btn, pause=0.005)
+        self.wait_seen(mark, f"колесо над ({x}, {y})", frames=2)
+        self.settle()
 
     def scroll_probe_into_view(self, name, anchor, what=None, tries=12, below=None):
         """Крутить колесо над виджетом `anchor`, пока прямоугольник `name` не
@@ -572,7 +869,7 @@ class Live:
             r = f.get(name)
             a = f.get(anchor)
             if r is None or a is None:
-                time.sleep(0.3)
+                self.wait_frame(1, what=f"кадр в ожидании виджетов {name}/{anchor}", soft=True)
                 continue
             h = self.geom()["window"]["h"]
             if below and below in f:
@@ -644,7 +941,7 @@ class Live:
         except ValueError:
             raise Failure(f"не удалось прочитать яркость области: {out!r}")
 
-    def pixel_settled(self, xy, differs_from=None, tries=20, settle=0.6):
+    def pixel_settled(self, xy, differs_from=None, tries=20):
         """Цвет пикселя ПОСЛЕ того, как картинка устоялась.
 
         `pixel` читает экран НЕМЕДЛЕННО, а после подмотки курсор двигается
@@ -658,8 +955,12 @@ class Live:
         Поэтому ждём СМЕНЫ: `differs_from` — цвет, который был на экране
         ДО жеста. Дождавшись смены, добираем ещё одно совпадение подряд —
         чтобы не поймать промежуточное состояние. Без `differs_from`
-        (кадр может и не измениться) достаточно устойчивости."""
-        time.sleep(settle)
+        (кадр может и не измениться) достаточно устойчивости.
+
+        Р.68: ожидание «устоялось» тоже привязано к кадрам программы —
+        `settle` секунд сна заменены ожиданием пары кадров, а между
+        чтениями пикселя ждётся кадр (мягко: картинка могла и замереть)."""
+        self.wait_frame(2, what="кадры перед чтением устоявшегося пикселя", soft=True)
         prev = None
         for _ in range(tries):
             px = self.pixel(*xy)
@@ -672,7 +973,7 @@ class Live:
             if fresh and px == prev and sum(px) > 24:
                 return px
             prev = px
-            time.sleep(0.3)
+            self.wait_frame(1, what="кадр между чтениями пикселя", soft=True)
         return prev or (0, 0, 0)
 
     def screen_diff(self, before):
@@ -717,14 +1018,30 @@ class Live:
         """Проект как он лежит на диске (без сохранения)."""
         return Timeline(self.project)
 
+    def save_now(self):
+        """Ctrl+S и ожидание ЗАПИСИ, а не «полторы секунды на всякий случай».
+
+        Программа пишет проект атомарной заменой файла — значит ждать надо
+        смену mtime, и ровно столько, сколько она заняла (Р.68).
+        """
+        before = os.path.getmtime(self.project)
+        self.key("ctrl+s")
+        deadline = time.time() + max(15.0, 60.0 * self._dt)
+        while time.time() < deadline:
+            if os.path.getmtime(self.project) != before:
+                return True
+            _poll(0.05)
+        raise Failure("программа не записала проект после Ctrl+S")
+
     def saved_project(self):
         """Ctrl+S и разбор того, что программа записала на диск."""
         before = os.path.getmtime(self.project)
         self.key("ctrl+s")
-        for _ in range(20):
+        deadline = time.time() + 10.0
+        while time.time() < deadline:
             if os.path.getmtime(self.project) != before:
                 break
-            time.sleep(0.25)
+            _poll(0.05)
         return Timeline(self.project)
 
     # ---- проверки ----------------------------------------------------------

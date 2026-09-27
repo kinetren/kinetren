@@ -19,10 +19,9 @@ import json
 import os
 import subprocess
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import KT_CLI, Live, geometry, require_tools  # noqa: E402
+from kt_live import KT_CLI, Live, geometry, pause, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -47,7 +46,6 @@ def main(out):
 
         # 1б) заводим кривую РУКАМИ — тем же путём, что человек
         app.click_probe("auto.add", "кнопка «+ кривая»")
-        time.sleep(0.4)
         # ВАРП В СПИСОК НЕ БЕРЁМ: у скорости форма только прямая (t698), и
         # меню участка честно показало бы отказ вместо списка форм
         added = next(
@@ -76,7 +74,6 @@ def main(out):
             "меню на месте, пока указатель тянется к пункту",
         )
         app.click_probe("auto.shape.2", "пункт «ступень»")
-        time.sleep(0.4)
         app.saved_project()
         app.expect(
             '"hold"' in open(path, encoding="utf-8").read(),
@@ -98,7 +95,6 @@ def main(out):
         app.shot("typed")
         before = json.load(open(path)) if os.path.exists(path) else None
         app.key("Return")
-        time.sleep(0.5)
         saved = app.saved_project()
         doc = json.load(open(path))
         formulas = []
@@ -142,10 +138,13 @@ def main(out):
 
         # 4) ФОКУС: клик по таймлайну — и пробел ИГРАЕТ
         app.click(app.x_at(2 * SEC), y)
-        time.sleep(0.3)
         was = app.playing()
         app.key("space")
-        time.sleep(1.0)
+        pause(
+            1.0,
+            "воспроизведение идёт в РЕАЛЬНОМ времени: секунда игры — это сама "
+            "проверка, а не ожидание реакции интерфейса",
+        )
         now = app.playing()
         app.expect(
             now != was,
@@ -153,15 +152,17 @@ def main(out):
         )
         if now:
             app.key("space")
-            time.sleep(0.3)
 
         # 5) КНОПКА окна тоже не должна забирать клавиатуру навсегда
         app.click_probe("fxreg.add", "кнопка пикера в окне эффекта")
         app.key("Escape")  # закрыть попап пикера
-        time.sleep(0.3)
         was = app.playing()
         app.key("space")
-        time.sleep(1.0)
+        pause(
+            1.0,
+            "воспроизведение идёт в РЕАЛЬНОМ времени: секунда игры — это сама "
+            "проверка, а не ожидание реакции интерфейса",
+        )
         now = app.playing()
         app.expect(
             now != was,

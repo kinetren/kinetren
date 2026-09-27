@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Живая проверка в ВИРТУАЛЬНОМ экране (Р.27).
+# Живая проверка в ВИРТУАЛЬНОМ экране (Р.27, параллель и стенд — Р.68).
 #
 # Раньше «живая проверка» была ручной: запусти окно, поводи мышью, посмотри
 # скриншот. Это не воспроизводилось, требовало свободного экрана (заблокировал
@@ -8,9 +8,17 @@
 # и настоящий wgpu (софт-рендер) — в отличие от harness-тестов, которые гоняют
 # egui без окна.
 #
+# С Р.68 сценарии раздаются РАБОТНИКАМ (решение владельца: «Да, с ограничением
+# нагрузки и авто-перезапуском красного»). У каждого работника свой Xvfb, своё
+# пользовательское хранилище и один живой kt-app — стенд, в котором проекты
+# сценариев открываются подряд (scripts/live/worker.py). Запрет Р.59 §468
+# («живые сценарии в два потока не гоняются») снят вместе с его причиной:
+# красный сценарий автоматически перегоняется ОДИН в одиночку, и только
+# второе падение считается красным.
+#
 #     ./scripts/live-check.sh                # все сценарии
 #     ./scripts/live-check.sh handles fade   # только названные
-#     KEEP=1 ./scripts/live-check.sh handles # не гасить экран после (для отладки)
+#     KT_LIVE_WORKERS=1 ./scripts/live-check.sh   # строго по одному, без перегонов
 #
 # Скриншоты и логи — target/live-out/<сценарий>/.
 set -euo pipefail
@@ -18,8 +26,8 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 out="$root/target/live-out"
 scenarios_dir="$root/scripts/live"
-display_num="${KT_LIVE_DISPLAY:-:99}"
-screen="${KT_LIVE_SCREEN:-1920x1080x24}"
+display_base="${KT_LIVE_DISPLAY:-:99}"
+display_base="${display_base#:}"
 
 if ! command -v Xvfb > /dev/null; then
     echo "нет Xvfb: sudo apt install xvfb openbox" >&2
@@ -31,63 +39,89 @@ if [ ! -x "$root/target/debug/kt-app" ]; then
 fi
 
 mkdir -p "$out"
+rm -rf "$out/verdicts"
 
 want=("$@")
 if [ ${#want[@]} -eq 0 ]; then
-    # kt_live.py — общий каркас, а не сценарий
-    mapfile -t want < <(cd "$scenarios_dir" && ls *.py | grep -v '^kt_live\.py$' | sed 's/\.py$//')
+    # kt_live.py — каркас, worker.py — работник, `_*.py` — подставные
+    # сценарии сторожей (t801/t802): в общий прогон они не входят
+    mapfile -t want < <(cd "$scenarios_dir" && ls *.py \
+        | grep -v -E '^(kt_live|worker|_.*)\.py$' | sed 's/\.py$//')
 fi
 
-pids=()
-cleanup() {
-    [ -n "${KEEP:-}" ] && return 0
-    for p in "${pids[@]:-}"; do kill "$p" 2> /dev/null || true; done
-    wait 2> /dev/null || true
+# Сколько работников. Один kt-app в софт-рендере держит нагрузку около семи
+# (замер Р.68), поэтому делим ядра на восемь: именно нагрузка ~14 на две
+# копии и красила зелёные сценарии в §468. Потолок — шесть: дальше упираемся
+# в диск и в X-серверы, а выигрыш становится шумом.
+cores=$(nproc 2> /dev/null || echo 4)
+auto=$((cores / 8))
+[ "$auto" -lt 1 ] && auto=1
+[ "$auto" -gt 6 ] && auto=6
+workers="${KT_LIVE_WORKERS:-$auto}"
+[ "${#want[@]}" -lt "$workers" ] && workers="${#want[@]}"
+[ "$workers" -lt 1 ] && workers=1
+
+run_worker() { # run_worker <номер> <сценарии...>
+    local n="$1"; shift
+    [ $# -eq 0 ] && return 0
+    local disp=":$((display_base + n))"
+    python3 "$scenarios_dir/worker.py" "$disp" "$out" "$@" 2>&1 \
+        | sed "s/^/[$n] /"
 }
-trap cleanup EXIT
 
-Xvfb "$display_num" -screen 0 "$screen" -nolisten tcp > "$out/xvfb.log" 2>&1 &
-pids+=($!)
-export DISPLAY="$display_num"
-# своё пользовательское хранилище на прогон (Р.49): журнал, замки проектов,
-# рабочее место и безымянное восстановление не должны лезть в домашний
-# каталог разработчика и не должны переезжать между прогонами
-export XDG_DATA_HOME="$out/xdg"
-export KT_USER_STORE_DIR="$out/xdg/kinotrain"
-rm -rf "$XDG_DATA_HOME"
-mkdir -p "$KT_USER_STORE_DIR"
-# ждём готовности сервера (xdpyinfo не гарантирован — пробуем через xlib)
-for _ in $(seq 40); do
-    python3 -c "import Xlib.display, os; Xlib.display.Display(os.environ['DISPLAY'])" 2> /dev/null && break
-    sleep 0.25
+echo "живые сценарии: ${#want[@]} шт., работников $workers (ядер $cores)"
+pids=()
+for ((w = 0; w < workers; w++)); do
+    bucket=()
+    for ((i = w; i < ${#want[@]}; i += workers)); do
+        bucket+=("${want[i]}")
+    done
+    run_worker "$w" "${bucket[@]}" &
+    pids+=($!)
+done
+for p in "${pids[@]}"; do wait "$p" || true; done
+
+verdicts="$out/verdicts"
+reds=()
+for name in "${want[@]}"; do
+    if [ "$(cat "$verdicts/$name" 2> /dev/null || echo fail)" != ok ]; then
+        reds+=("$name")
+    fi
 done
 
-# оконный менеджер нужен для разворачивания окна (правило «проверять в
-# РАЗВЁРНУТОМ окне», р.13) и для жестов с кромками
-if command -v openbox > /dev/null; then
-    openbox > "$out/openbox.log" 2>&1 &
-    pids+=($!)
-    sleep 0.5
-else
-    echo "openbox не найден — окно будет своего размера (maximize не проверить)" >&2
+if [ ${#reds[@]} -eq 0 ]; then
+    echo "живые сценарии: ${#want[@]} из ${#want[@]} зелёные"
+    exit 0
 fi
 
-fail=0
-for name in "${want[@]}"; do
-    script="$scenarios_dir/$name.py"
-    if [ ! -f "$script" ]; then
-        echo "нет сценария $name ($script)" >&2
-        fail=1
-        continue
-    fi
-    mkdir -p "$out/$name"
-    printf '== %s ==\n' "$name"
-    if python3 "$script" "$out/$name"; then
-        printf '   ok\n'
-    else
-        printf '   ПРОВАЛ (скриншоты: %s)\n' "$out/$name"
-        fail=1
+# ПЕРЕГОН КРАСНОГО В ОДИНОЧКУ (Р.68). Покраснение под нагрузкой — не
+# вердикт: §468 показал, что второй прогон рядом красит зелёные сценарии, и
+# ровно это правило уже записано для «упавшего на паузе или порядке фонового
+# потока». Теперь его исполняет машина, а не память агента. Молчаливым
+# перегон быть не имеет права — иначе флак становится невидимкой.
+if [ "$workers" = 1 ]; then
+    echo "КРАСНЫЕ (прогон и так одиночный): ${reds[*]}" >&2
+    exit 1
+fi
+echo "перегон в одиночку: ${reds[*]}"
+again=()
+for name in "${reds[@]}"; do
+    run_worker 0 "$name"
+    if [ "$(cat "$verdicts/$name" 2> /dev/null || echo fail)" != ok ]; then
+        again+=("$name")
     fi
 done
 
-exit $fail
+for name in "${reds[@]}"; do
+    case " ${again[*]} " in
+        *" $name "*) ;;
+        *) echo "ПРОШЁЛ СО ВТОРОГО РАЗА (в одиночку): $name — разобрать сценарий" ;;
+    esac
+done
+
+if [ ${#again[@]} -eq 0 ]; then
+    echo "живые сценарии: зелёные (часть — со второго раза)"
+    exit 0
+fi
+echo "КРАСНЫЕ ДВАЖДЫ: ${again[*]} (скриншоты: target/live-out/<сценарий>)" >&2
+exit 1

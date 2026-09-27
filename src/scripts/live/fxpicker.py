@@ -15,7 +15,6 @@ import json
 import os
 import subprocess
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import KT_CLI, Live, geometry, require_tools  # noqa: E402
@@ -87,7 +86,6 @@ def main(out):
             if f:
                 cell = f
                 break
-            time.sleep(0.25)
         app.expect(cell is not None, f"программа отдала прямоугольник ячейки «{VARIANT}»")
         if cell is None:
             return app.done()

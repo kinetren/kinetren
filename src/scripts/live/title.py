@@ -10,7 +10,6 @@ GeneratorReference.1.
 """
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import Live, geometry, project_with_clips, require_tools  # noqa: E402
@@ -34,7 +33,6 @@ def main(out):
         # нижнего клипа: создание сразу кладёт клип (п.416), а наложение
         # на одной дорожке — это кроссфейд, и титр в его начале невидим.
         app.click(app.x_at(5 * SEC), app.ruler_y())
-        time.sleep(0.4)
         app.right_click(
             win["x"] + int((b["left"] + b["right"]) / 2),
             win["y"] + int(b["bottom"]) - 10,
@@ -53,12 +51,10 @@ def main(out):
         app.click_probe("titlew.text", "поле текста титра")
         for ch in ["k", "t"]:
             app.key(ch)
-        time.sleep(0.5)
         # Esc закрывает окно титра (каскад п.11) — иначе оно ПЕРЕКРЫВАЕТ
         # бин и превью, и клики уходят в него; заодно фокус отдан
         # (правило 14): следующая горячая клавиша работает
         app.key("Escape")
-        time.sleep(0.4)
         app.expect(not app.has_probe("titlew.text", tries=2), "Esc закрыл окно титра")
 
         # 3. превью: на synth-клипе кадр цветной; ставим титр на пустое
@@ -76,7 +72,6 @@ def main(out):
         app.expect(placed, f"создание титра обязано класть клип: {app.live_clips()}")
         gen_start = app.live_clips()[-1][0] if placed else 0
         app.click(app.x_at(int(gen_start + 2 * SEC)), app.ruler_y())
-        time.sleep(0.6)
 
         # буквы есть, а фона нет: яркость ОБЛАСТИ высока (белый штрих), а
         # центральная точка кадра тёмная — титр это буквы на пустоте, а
@@ -86,7 +81,6 @@ def main(out):
             drawn = app.ink_box(preview, half=150)
             if drawn > 120:
                 break
-            time.sleep(0.4)
         app.expect(
             drawn is not None and drawn > 120,
             f"в превью буквы титра поверх пустоты: {drawn} (ramp {ramp_b:.1f})",
@@ -107,20 +101,16 @@ def main(out):
         app.click_probe("gen.params", "пункт «Параметры генератора…»")
         app.expect(app.has_probe("titlew.text"), "окно титра открылось из меню события")
         app.key("space")
-        time.sleep(0.8)
         app.expect(app.geom().get("playing") is True, "транспорт играет")
         app.click_probe("titlew.text", "поле текста при игре")
         app.key("9")
-        time.sleep(0.8)
         app.expect(
             app.geom().get("playing") is True,
             "правка титра при игре не имеет права останавливать транспорт",
         )
         # Esc СНАЧАЛА: пока фокус в поле, пробел напечатался бы в текст
         app.key("Escape")
-        time.sleep(0.4)
         app.key("space")
-        time.sleep(0.4)
         app.shot("typed-while-playing")
 
         # 5. набранный текст в файле: экранированный токен и схема

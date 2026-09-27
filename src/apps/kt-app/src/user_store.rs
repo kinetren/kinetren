@@ -29,6 +29,11 @@ const PRESETS_VERSION: u64 = 1;
 /// место для бэкапа. `KT_USER_STORE_DIR` подменяет его в тестах и живых
 /// сценариях (иначе они писали бы в домашний каталог разработчика).
 pub fn store_dir() -> PathBuf {
+    // хранилище, назначенное живым стендом (Р.68): у каждого сценария своё,
+    // а переменную окружения живого процесса снаружи не поменять
+    if let Some(dir) = crate::bench::store_dir() {
+        return dir;
+    }
     if let Some(dir) = std::env::var_os("KT_USER_STORE_DIR") {
         return PathBuf::from(dir);
     }

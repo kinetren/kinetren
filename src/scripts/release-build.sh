@@ -43,9 +43,14 @@ CACHE_ARGS=()
 if [ -d "$HOME/.cargo/registry" ]; then
     CACHE_ARGS=(-v "$HOME/.cargo/registry:/usr/local/cargo/registry")
 fi
+# RUSTFLAGS= гасит .cargo/config.toml хоста (Р.68): там стоит mold, которого
+# в контейнере Ubuntu 22.04 нет (и gcc 11 не знает `-fuse-ld=mold`). Пустая
+# переменная сильнее конфига — cargo берёт её. Ускоритель разработки не имеет
+# права стать условием сборки того, что уезжает людям.
 docker run --rm --network=host -u "$(id -u):$(id -g)" \
     -v "$PWD:/work" -w /work "${CACHE_ARGS[@]}" \
     -e CARGO_TARGET_DIR=/work/target/dist-container \
+    -e RUSTFLAGS= \
     -e KT_VERSION_FULL="$KT_VERSION_FULL" -e KT_VERSION_SHORT="$KT_VERSION_SHORT" \
     "$IMAGE" cargo build --profile dist -p kt-app -p kt-cli
 

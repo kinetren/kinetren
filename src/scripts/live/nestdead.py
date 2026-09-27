@@ -21,7 +21,6 @@
 """
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import Live, project_with_clips, require_tools  # noqa: E402
@@ -43,14 +42,12 @@ def main(out):
         app.click(app.x_at(3 * SEC), y, mods=("ctrl",))
         app.right_click(app.x_at(3 * SEC), y)
         app.click_probe("nest.collapse", "пункт сворачивания")
-        time.sleep(0.5)
         inst = app.live_clips()[0]
         mid = app.x_at(inst[0] + inst[1] // 2)
         app.shot("collapsed")
 
         # --- 1. СВОЁ меню ----------------------------------------------
         app.right_click(mid, y)
-        time.sleep(0.4)
         names = {f["param"] for f in app.geom().get("fields", [])}
         for want in ("nest.enter", "nest.expand", "nest.rename"):
             app.expect(want in names, f"в меню вложения нет «{want}»: {sorted(names)}")
@@ -65,10 +62,8 @@ def main(out):
         for i in range(2):
             app.right_click(mid, y)
             app.click_probe("nest.rename", f"пункт переименования (заход {i + 1})")
-            time.sleep(0.5)
             before = app.shot(f"rename-{i}")
             app.key("Escape")
-            time.sleep(0.4)
             after = app.shot(f"rename-{i}-closed")
             d = app.screen_diff(before)
             app.expect(
@@ -81,9 +76,7 @@ def main(out):
         app.focus()
         app.key("Escape")
         app.click(mid, y)
-        time.sleep(0.3)
-        app.key("ctrl+s")
-        time.sleep(1.2)
+        app.save_now()
         app.expect(os.path.exists(path), "Ctrl+S после окна имени не сработал — фокус не отдан")
 
         # --- 5. два пути наружу ----------------------------------------
@@ -91,11 +84,9 @@ def main(out):
         # раскрывает на месте, и наружу из раскрытия выходят иначе
         app.right_click(mid, y)
         app.click_probe("nest.enter", "пункт «Войти в ленту»")
-        time.sleep(0.5)
         app.expect(app.geom()["nest"]["depth"] == 1, "не вошли внутрь")
         # путь ПЕРВЫЙ: имя проекта — это крошка корня
         app.click_probe("nest.root", "имя проекта как крошка корня")
-        time.sleep(0.5)
         app.expect(
             app.geom()["nest"]["depth"] == 0,
             "клик по имени проекта не вывел наружу — а это единственный способ выйти "
@@ -104,11 +95,9 @@ def main(out):
         # путь ВТОРОЙ: Esc
         app.right_click(mid, y)
         app.click_probe("nest.enter", "пункт «Войти в ленту» второй раз")
-        time.sleep(0.5)
         app.expect(app.geom()["nest"]["depth"] == 1, "не вошли внутрь второй раз")
         for _ in range(3):
             app.key("Escape")
-            time.sleep(0.3)
             if app.geom()["nest"]["depth"] == 0:
                 break
         app.expect(app.geom()["nest"]["depth"] == 0, "Esc не вывел наружу")
@@ -117,7 +106,6 @@ def main(out):
         # --- 4. развернуть на дорожки ----------------------------------
         app.right_click(mid, y)
         app.click_probe("nest.expand", "пункт разворачивания")
-        time.sleep(0.6)
         app.expect(
             len(app.live_clips()) == 2,
             f"разворачивание не вернуло содержимое: {app.live_clips()}",

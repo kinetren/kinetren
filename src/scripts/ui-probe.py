@@ -78,13 +78,20 @@ def move(x, y, pause=0.05):
     time.sleep(pause)
 
 
-def button(pressed, b=1):
+def button(pressed, b=1, pause=0.09):
+    """Кнопка мыши. `pause` — сколько ждать после события.
+
+    По умолчанию как было (ручной прогон из командной строки: ждать некому).
+    Каркас живых сценариев передаёт почти ноль и ждёт КАДР сам (Р.68): его
+    ожидание точнее и под нагрузкой растягивается вместе с кадром.
+    """
     xtest.fake_input(d, X.ButtonPress if pressed else X.ButtonRelease, b)
     d.sync()
-    time.sleep(0.09)
+    time.sleep(pause)
 
 
-def key(spec):
+def key(spec, pause=0.05, after=0.12):
+    """Клавиша (с модификаторами через «+»); паузы — см. `button`."""
     *mods, name = spec.split("+")
     table = {"ctrl": "Control_L", "shift": "Shift_L", "alt": "Alt_L"}
     mcodes = [d.keysym_to_keycode(XK.string_to_keysym(table[m.lower()])) for m in mods]
@@ -93,12 +100,12 @@ def key(spec):
         xtest.fake_input(d, X.KeyPress, m)
     xtest.fake_input(d, X.KeyPress, code)
     d.sync()
-    time.sleep(0.05)
+    time.sleep(pause)
     xtest.fake_input(d, X.KeyRelease, code)
     for m in reversed(mcodes):
         xtest.fake_input(d, X.KeyRelease, m)
     d.sync()
-    time.sleep(0.12)
+    time.sleep(after)
 
 
 def hold(spec, secs):

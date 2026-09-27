@@ -23,7 +23,6 @@ import json
 import os
 import subprocess
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import KT_CLI, Live, geometry, require_tools  # noqa: E402
@@ -50,19 +49,16 @@ def main(out):
         # 1) окно FX и кривая
         y = app.lane_y("video", 0, frac=0.5)
         app.double_click(app.x_at(1 * SEC), y)
-        time.sleep(0.8)
         app.expect(app.has_probe("fx.cancel"), "окно эффектов открылось")
         f = probes(app)
         add = next((k for k in f if k.startswith("auto.add.")), None)
         if add is None:
             app.click_probe("auto.add", "кнопка «+ кривая»")
-            time.sleep(0.5)
             f = probes(app)
             add = next((k for k in f if k.startswith("auto.add.")), None)
         app.expect(add is not None, "в меню «+ кривая» есть параметр")
         if add:
             app.click_probe(add, f"параметр «{add}»")
-            time.sleep(0.6)
         app.expect(app.has_probe("auto.graph"), "график автоматизации показан")
         app.step("curve-added", "кривая добавлена, график с константой")
 
@@ -70,7 +66,6 @@ def main(out):
         g = probes(app)["auto.graph"]
         for fx, fy in ((0.3, 0.3), (0.5, 0.7), (0.7, 0.3)):
             click_in(app, g, fx, fy)
-            time.sleep(0.3)
         app.step("keys", "ключи поставлены кликами по графику")
 
         # 3) правый клик по участку → «Зигзаг»
@@ -81,10 +76,8 @@ def main(out):
             r = f[seg]
             win = geometry()
             app.right_click(win["x"] + int(r["x"] + r["w"] / 2), win["y"] + int(r["y"] + r["h"] / 2))
-            time.sleep(0.6)
             app.expect(app.has_probe("auto.shape.5"), "меню форм открылось")
             app.click_probe("auto.shape.5", "пункт «Зигзаг»")
-            time.sleep(0.6)
         app.step("zigzag", "участок дрожит — линия по форме, не прямая")
 
         # 4) блок кривой: заголовок с именем и поле формулы-слоя (блок под
@@ -92,37 +85,30 @@ def main(out):
         app.expect(app.has_probe("curve.title"), "блок кривой подписан именем кривой")
         app.scroll_probe_into_view("auto.formula", "auto.add", below="fx.cancel", what="поле формулы прокручено в окно")
         app.click_probe("auto.formula", "поле формулы")
-        time.sleep(0.4)
         app.type_text("k*0.5+0.1")
         app.key("Return")
-        time.sleep(0.6)
         app.step("layer", "слой-формула над ключами: штрих над сплошной")
 
         # 5) дверь связи
         app.scroll_probe_into_view("auto.drive_by", "curve.title", below="fx.cancel", what="«Ведётся…» прокручено в окно")
         app.click_probe("auto.drive_by", "кнопка «Ведётся…»")
-        time.sleep(0.6)
         f = probes(app)
         app.expect(any(k.startswith("auto.link.") for k in f) or True, "меню связи открылось")
         app.step("drive-by", "меню «Ведётся…»: события и свойства")
         # меню закрывается повторным кликом по своей кнопке: Esc закрыл бы
         # само окно (каскад Esc), а клик «мимо» может уйти на таймлайн
         app.click_probe("auto.drive_by", "кнопка «Ведётся…» (закрыть меню)")
-        time.sleep(0.4)
 
         # 6) справка
         app.scroll_probe_into_view("auto.help", "curve.title", below="fx.cancel", what="«Справка» прокручена в окно")
         app.click_probe("auto.help", "группа «Справка»")
-        time.sleep(0.4)
         app.scroll_probe_into_view("auto.help.sin", "curve.title", below="fx.cancel", what="функции справки прокручены в окно")
-        time.sleep(0.6)
         f = probes(app)
         app.expect(any(k.startswith("auto.help.") for k in f), "в справке перечислены функции")
         app.step("help", "справка: переменные и функции")
 
         # 7) сохранение: форма и формула в файле
-        app.key("ctrl+s")
-        time.sleep(1.5)
+        app.save_now()
         text = open(path, encoding="utf-8").read()
         app.expect('"zigzag"' in text, "в файле есть форма zigzag")
         app.expect('k*0.5+0.1' in text or 'k * 0.5' in text, "в файле есть формула-слой")

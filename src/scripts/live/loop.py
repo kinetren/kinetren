@@ -9,7 +9,6 @@
 """
 import json
 import os
-import time
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -67,7 +66,6 @@ def main(out):
         # начало в вид (Home = nav_prev) и убеждаемся, что момент правда
         # виден — иначе проверка снова будет мерить не то.
         app.key("Home")
-        time.sleep(0.6)
         geom = app.geom()
         target = 1 * SEC
         app.expect(

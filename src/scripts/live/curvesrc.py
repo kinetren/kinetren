@@ -11,7 +11,6 @@
 import os
 import subprocess
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import KT_CLI, Live, require_tools  # noqa: E402
@@ -54,7 +53,6 @@ def main(out):
         # ВНЕ линии уровня: двойной клик по ней сбрасывает громкость
         y = app.lane_y("audio", 1, frac=0.50)
         app.double_click(app.x_at(10 * SEC), y)
-        time.sleep(0.9)
         app.shot("fx-window")
 
         before = sources(app.saved_project().doc)
@@ -73,7 +71,6 @@ def main(out):
         )
         app.click_probe("auto.formula", "поле формулы")
         app.type_text("(1+")
-        time.sleep(0.6)
         app.shot("broken-formula")
         mid = sources(app.saved_project().doc)
         app.expect(
@@ -95,7 +92,6 @@ def main(out):
                 what=f"поле формулы прокручено в окно (попытка {attempt + 1})",
             )
             app.click_probe("auto.formula", f"поле формулы (попытка {attempt + 1})")
-            time.sleep(0.5)
             # чистим поле по-символьно: ctrl+a у egui выделяет не всегда
             for _ in range(24):
                 app.key("BackSpace")
@@ -105,7 +101,7 @@ def main(out):
             # сценарий винил её в том, что формула «не доехала» (Р.67)
             app.type_text("t*2")
             app.key("Return")
-            time.sleep(1.0)
+            app.settle()
             after = sources(app.saved_project().doc)
             if "formula" in after:
                 break
@@ -118,7 +114,6 @@ def main(out):
         # --- «отвязать» возвращает обычные ключи ----------------------
         if app.has_probe("auto.unlink"):
             app.click_probe("auto.unlink", "отвязать кривую")
-            time.sleep(0.8)
             back = sources(app.saved_project().doc)
             app.expect(
                 "formula" not in back,

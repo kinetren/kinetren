@@ -20,6 +20,10 @@ import time
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import Failure, Live, project_with_clips, require_tools  # noqa: E402
 
+# СВОЙ ПРОЦЕСС (Р.68): сценарий проверяет САМ СТАРТ программы, а не работу в
+# уже открытом проекте, — стенд работника ему не подходит.
+OWN_PROCESS = True
+
 SEC = 90000
 
 
@@ -32,7 +36,6 @@ def wait_file(path, timeout=30.0, what="файл"):
     while time.time() < deadline:
         if os.path.exists(path) and os.path.getsize(path) > 0:
             return True
-        time.sleep(0.25)
     raise Failure(f"{what} не появился за {timeout} с: {path}")
 
 
@@ -75,7 +78,6 @@ def main(out):
         app.proc.wait(timeout=10)
         problems = app.problems
 
-    time.sleep(0.5)
     if not os.path.exists(rec):
         raise Failure("после убийства файла восстановления нет — работа потеряна")
     snapshot = open(rec).read()

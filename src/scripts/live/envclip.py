@@ -17,7 +17,6 @@
 import os
 import subprocess
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import KT_CLI, Live, require_tools  # noqa: E402
@@ -57,7 +56,6 @@ def main(out):
         # ВНЕ линии уровня: двойной клик по ней сбрасывает громкость (п.362)
         y = app.lane_y("audio", 1, frac=0.50)
         app.double_click(app.x_at(10 * SEC), y)
-        time.sleep(0.9)
         app.shot("fx-window")
         app.expect(app.has_probe("env.copy"), "кнопка «копировать огибающую» есть в окне")
         app.expect(app.has_probe("env.paste"), "кнопка «вставить огибающую» есть в окне")
@@ -67,14 +65,13 @@ def main(out):
 
         # --- КОПИРОВАНИЕ пишет в системный буфер ----------------------
         app.click_probe("env.copy", "копирование огибающей в системный буфер")
-        time.sleep(0.8)
         app.shot("copied")
 
         # --- ВСТАВКА читает СВОЙ ЖЕ буфер и не вешает окно ------------
         # ровно тот случай, который повесил бы синхронное чтение: владелец
         # буфера — наше собственное окно
         app.click_probe("env.paste", "вставка из своего же буфера")
-        time.sleep(1.5)
+        app.settle()
         app.shot("pasted")
         app.expect(
             app.has_probe("env.paste"),
@@ -87,7 +84,6 @@ def main(out):
         app.expect(isinstance(g, dict) and bool(g), "цикл событий не заблокирован")
 
         app.key("Escape")
-        time.sleep(0.6)
         after = curve_params(app.saved_project().doc)
         app.expect(
             set(before).issubset(set(after)),

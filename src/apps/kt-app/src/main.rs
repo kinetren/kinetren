@@ -7,6 +7,7 @@ mod analysis;
 mod app;
 mod audio_out;
 mod automation;
+mod bench;
 mod bg;
 mod bin_panel;
 mod camera_editor;

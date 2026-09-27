@@ -1033,10 +1033,16 @@ impl KtApp {
     /// позиция курсора и признак игры — чтобы сценарии про воспроизведение
     /// (loop, заворот) читали правду из программы, а не гадали по картинке. Пишется не чаще 10 Гц и только при
     /// заданном env: в обычном запуске ветка стоит один `Option`-чек.
-    fn dump_geom(&mut self, geom: &TlGeom, screen: egui::Rect) {
+    fn dump_geom(&mut self, geom: &TlGeom, screen: egui::Rect, windows: usize) {
         let Some(path) = self.geom_dump_path.clone() else { return };
         let now = std::time::Instant::now();
-        if self.geom_dumped_at.is_some_and(|t| now.duration_since(t).as_millis() < 100) {
+        // Под живым СТЕНДОМ (Р.68) дамп пишется КАЖДЫЙ кадр: каркас ждёт по
+        // нему номер нарисованного кадра, и троттлинг в 10 Гц превратил бы
+        // ожидание кадра в ожидание сотни миллисекунд — то есть вернул бы
+        // ту самую паузу, от которой стенд и избавляет.
+        if !crate::bench::enabled()
+            && self.geom_dumped_at.is_some_and(|t| now.duration_since(t).as_millis() < 100)
+        {
             return;
         }
         self.geom_dumped_at = Some(now);
@@ -1113,8 +1119,18 @@ impl KtApp {
                 c => c,
             })
             .collect();
+        // ЖИВОЙ СТЕНД (Р.68): номер нарисованного кадра (по нему каркас
+        // ждёт кадр, а не часы), номер выполненной команды стенда, путь
+        // открытого проекта и число открытых окон — доказательство чистоты
+        // перед первым жестом следующего сценария.
+        let project_shown = self
+            .project_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().replace('\\', "/").replace('"', "'"))
+            .unwrap_or_default();
         let json = format!(
-            "{{\"playhead\":{},\"playing\":{},\"base_rate\":{:.3},\"fields\":[{}],\"clips\":[{}],\
+            "{{\"frame\":{},\"input\":{},\"bench_done\":{},\"windows\":{},\"project\":\"{}\",\
+             \"playhead\":{},\"playing\":{},\"base_rate\":{:.3},\"fields\":[{}],\"clips\":[{}],\
              \"nest\":{},\"clipboard\":{},\"status\":\"{}\",\
              \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"morphers\":{},\
              \"notices\":[{}],\
@@ -1122,6 +1138,11 @@ impl KtApp {
              \"bin\":{{\"left\":{:.1},\"right\":{:.1},\"top\":{:.1},\"bottom\":{:.1}}},\
              \"timeline\":{{\"left\":{:.1},\"right\":{:.1},\"top\":{:.1},\"bottom\":{:.1}}},\
              \"lane_h\":{:.1},\"ticks_per_px\":{:.3},\"view_start\":{:.1},\"rows\":[{}]}}\n",
+            crate::bench::frames(),
+            crate::bench::inputs(),
+            crate::bench::done(),
+            windows,
+            project_shown,
             self.player.video_playhead().0,
             self.player.transport.is_playing(),
             // СКОРОСТЬ — из самой программы (Р.57): по пикселям полосы её
@@ -2223,7 +2244,7 @@ impl KtApp {
         // сценариев (Р.27): без неё скрипт вынужден УГАДЫВАТЬ, где дорожка и
         // сколько пикселей в секунде, и ломается от любой правки вёрстки.
         // Только по env, не чаще 10 Гц, атомарной заменой файла.
-        self.dump_geom(&geom, ui.ctx().content_rect());
+        self.dump_geom(&geom, ui.ctx().content_rect(), crate::bench::open_windows(ui.ctx()));
         let lane_top = |kind: ClipKind, lane: u32| -> f32 { geom.lane_top(kind, lane) };
         let morph_lane_top = |lane: u32| -> f32 { geom.morph_lane_top(lane) };
         // (подпись, центр строки, верх строки) — верх нужен, чтобы длинный

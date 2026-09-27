@@ -19,7 +19,6 @@ import json
 import os
 import subprocess
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import (  # noqa: E402
@@ -75,7 +74,6 @@ def wait_change(app, box, before, what, tries=14):
     последний кадр, и немедленное чтение вернёт прежний)."""
     now, d = before, 0.0
     for _ in range(tries):
-        time.sleep(0.35)
         now = picture(app, "wait", box)
         d = frame_diff(before, now)
         if d > CHANGED:
@@ -94,7 +92,6 @@ def probe_center(app, name, what):
                 win["x"] + int(f["x"] + f["w"] / 2),
                 win["y"] + int(f["y"] + f["h"] / 2),
             )
-        time.sleep(0.25)
     app.expect(False, what)
     return None
 
@@ -124,7 +121,6 @@ def main(out):
     with Live("geomctl", out, project=path) as app:
         y = app.lane_y("video", 0, frac=0.5)
         app.click(app.x_at(2 * SEC), y)  # выделяем событие и ставим курсор в него
-        time.sleep(0.5)
         cx, cy = app.preview_center()
 
         # --- 1. рамка есть СРАЗУ, кнопка на кадре её выключает (Р.67) -----
@@ -136,11 +132,9 @@ def main(out):
         app.step("frame-by-default", "рамка над кадром у выделенного события")
         app.expect(app.has_probe("preview.geom_toggle"), "кнопка показа — в углу кадра")
         app.click_probe("preview.geom_toggle", "кнопка показа рамки")
-        time.sleep(0.6)
         app.expect(not app.has_probe("geom.frame", tries=4), "кнопка выключила рамку")
         app.step("frame-off", "рамка выключена кнопкой")
         app.click_probe("preview.geom_toggle", "кнопка показа рамки (обратно)")
-        time.sleep(0.6)
         app.expect(app.has_probe("geom.frame"), "кнопка вернула рамку")
         app.shot("frame")
 
@@ -170,7 +164,6 @@ def main(out):
             moved = wait_change(app, box, moved, "поворот сменил картинку")
         app.shot("turned")
 
-        time.sleep(0.8)
         before_anchor = picture(app, "before-anchor", box)
 
         # --- 5. ЯКОРЬ: числа меняются, картинка стоит ---------------------
@@ -180,7 +173,6 @@ def main(out):
         saved_before = dict(saved_geometry(path))
         if anchor:
             app.drag(anchor[0], anchor[1], anchor[0] - 55, anchor[1] + 35)
-            time.sleep(0.8)
             still = picture(app, "still", box)
             d = frame_diff(before_anchor, still)
             app.expect(
@@ -190,8 +182,7 @@ def main(out):
         app.shot("anchor")
 
         # --- 6. запись на диск -------------------------------------------
-        app.key("ctrl+s")
-        time.sleep(1.2)
+        app.save_now()
         g = saved_geometry(path)
         app.expect(bool(g), "геометрия события записана в файл")
         app.expect(

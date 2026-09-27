@@ -20,7 +20,6 @@
 import json
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import Live, geometry, project_with_clips, require_tools  # noqa: E402
@@ -48,7 +47,6 @@ def main(out):
         app.shot("selected")
         app.right_click(app.x_at(4 * SEC), y)
         app.click_probe("nest.collapse", "пункт «Свернуть выделение в ленту»")
-        time.sleep(0.5)
         app.shot("collapsed")
         app.expect(
             len(app.live_clips()) == 1,
@@ -64,7 +62,6 @@ def main(out):
         inst_t = app.live_clips()[0][0] + app.live_clips()[0][1] // 2
         app.right_click(app.x_at(inst_t), y)
         app.click_probe("nest.enter", "пункт «Войти в ленту»")
-        time.sleep(0.5)
         nest = app.geom()["nest"]
         app.shot("inside")
         app.expect(nest["depth"] == 1, f"пункт меню не завёл внутрь: {nest}")
@@ -79,7 +76,6 @@ def main(out):
         first = inside[0]
         x0 = app.x_at(first[0] + first[1] // 2)
         app.drag(x0, y, x0 + 60, y)
-        time.sleep(0.5)
         moved = app.live_clips()
         app.expect(
             moved != inside,
@@ -90,7 +86,6 @@ def main(out):
         # --- 4. выйти ---------------------------------------------------
         app.key("Escape")  # снять выделение
         app.key("Escape")  # выйти наружу
-        time.sleep(0.5)
         nest = app.geom()["nest"]
         app.expect(nest["depth"] == 0, f"Esc не вывел наружу: {nest}")
         app.expect(
@@ -100,9 +95,7 @@ def main(out):
         app.shot("outside")
 
         # --- 5. следствие В ФАЙЛЕ ---------------------------------------
-        app.focus()
-        app.key("ctrl+s")
-        time.sleep(1.5)
+        app.save_now()
         with open(path) as f:
             doc = json.load(f)
         seqs = doc["metadata"]["kt"].get("sequences", [])

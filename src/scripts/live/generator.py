@@ -11,7 +11,6 @@
 """
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import Live, geometry, project_with_clips, require_tools  # noqa: E402
@@ -38,7 +37,6 @@ def main(out):
         ramp_px = app.pixel_settled(preview)
         app.expect(sum(ramp_px) > 30, f"кадр synth-клипа не чёрный: {ramp_px}")
         app.click(app.x_at(0), app.ruler_y())
-        time.sleep(0.3)
 
         # 1. создать генератор из меню фона бина (Р.52)
         app.right_click(
@@ -63,7 +61,6 @@ def main(out):
             clips = app.live_clips()
             if len(clips) == 2:
                 break
-            time.sleep(0.25)
         app.expect(
             clips is not None and len(clips) == 2,
             f"создание генератора обязано класть клип: {clips}",
@@ -73,7 +70,6 @@ def main(out):
 
         # 3. курсор за конец synth-клипа — там виден кадр генератора
         app.click(app.x_at(4 * SEC), app.ruler_y())
-        time.sleep(0.5)
 
         # 4. кадр генератора доехал до превью: цветной ramp-кадр сменился
         # ЧЁРНЫМ (цвет солида по умолчанию). pixel_settled тут не годится:
@@ -83,7 +79,6 @@ def main(out):
             gen_px = app.pixel(*preview)
             if gen_px != ramp_px:
                 break
-            time.sleep(0.3)
         app.expect(
             gen_px is not None and max(gen_px) < 16,
             f"в превью кадр генератора (чёрный солид), а не {gen_px}",
@@ -123,7 +118,6 @@ def main(out):
             lit = app.pixel(*preview)
             if lit[0] > 150 and lit[2] < 80:
                 break
-            time.sleep(0.3)
         app.expect(
             lit is not None and lit[0] > 150 and lit[2] < 80,
             f"правка цвета обязана доехать до картинки: {lit}",
@@ -132,14 +126,12 @@ def main(out):
 
         # 7. undo убирает правку цвета целиком (сессия окна — один шаг)
         app.key("Escape")
-        time.sleep(0.4)
         app.key("ctrl+z")
         back = None
         for _ in range(20):
             back = app.pixel(*preview)
             if max(back) < 40:
                 break
-            time.sleep(0.3)
         app.expect(
             back is not None and max(back) < 40,
             f"undo обязан вернуть чёрный солид: {back}",
