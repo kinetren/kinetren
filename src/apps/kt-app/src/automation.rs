@@ -877,11 +877,9 @@ fn graph(
         // РЕЗУЛЬТАТ слоя/источника — штрихом, тем же вычислителем, что у
         // рендера (`t` от начала материала, край тела держится): верная
         // формула больше не даёт пустоты, а линия не уезжает при прокрутке
-        if derived {
-            if pv.len() > 1 {
-                let pts: Vec<egui::Pos2> = pv.iter().map(|k| egui::pos2(x_of(k.t.0), y_of(k.v))).collect();
-                p.add(egui::Shape::dashed_line(&pts, egui::Stroke::new(1.5, col), 5.0, 3.0));
-            }
+        if derived && pv.len() > 1 {
+            let pts: Vec<egui::Pos2> = pv.iter().map(|k| egui::pos2(x_of(k.t.0), y_of(k.v))).collect();
+            p.add(egui::Shape::dashed_line(&pts, egui::Stroke::new(1.5, col), 5.0, 3.0));
         }
         // РУЧКА ПАРАМЕТРА ФОРМЫ (Р.67) — на середине участка активной
         // кривой, у форм с параметром: под указателем и у тянущейся
@@ -1569,8 +1567,8 @@ fn formula_field(
         }
     }
     let entered = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-    if entered || r.lost_focus() {
-        if let Some(t) = live.take() {
+    if let Some(t) = (entered || r.lost_focus()).then(|| live.take()).flatten() {
+        {
             if t.trim().is_empty() {
                 return Some(String::new());
             }

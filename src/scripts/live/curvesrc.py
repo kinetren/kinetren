@@ -67,9 +67,12 @@ def main(out):
         app.expect(app.has_probe("auto.formula"), "поле формулы есть в окне автоматизации")
 
         # --- БИТЫЙ текст показывает ошибку и НЕ портит модель ---------
+        app.scroll_probe_into_view(
+            "auto.formula", "auto.add", below="fx.cancel",
+            what="поле формулы прокручено в окно",
+        )
         app.click_probe("auto.formula", "поле формулы")
-        for ch in ["parenleft", "1", "plus"]:
-            app.key(ch)
+        app.type_text("(1+")
         time.sleep(0.6)
         app.shot("broken-formula")
         mid = sources(app.saved_project().doc)
@@ -87,13 +90,20 @@ def main(out):
         # проверяется ПОСЛЕ них (§458: мигание чинится, а не игнорируется).
         after = before
         for attempt in range(3):
+            app.scroll_probe_into_view(
+                "auto.formula", "auto.add", below="fx.cancel",
+                what=f"поле формулы прокручено в окно (попытка {attempt + 1})",
+            )
             app.click_probe("auto.formula", f"поле формулы (попытка {attempt + 1})")
             time.sleep(0.5)
             # чистим поле по-символьно: ctrl+a у egui выделяет не всегда
             for _ in range(24):
                 app.key("BackSpace")
-            for ch in ["t", "asterisk", "2"]:
-                app.key(ch)
+            # набор ТЕКСТОМ, а не по именам клавиш: keysym `asterisk` на
+            # раскладке приходит как «8», и в поле оказывалось `t82` —
+            # программа честно отказывала («нет имени t82; есть t»), а
+            # сценарий винил её в том, что формула «не доехала» (Р.67)
+            app.type_text("t*2")
             app.key("Return")
             time.sleep(1.0)
             after = sources(app.saved_project().doc)
@@ -116,6 +126,8 @@ def main(out):
             )
             app.shot("unlinked")
 
+        return app.done()
+
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "target/live-out/curvesrc")
+    sys.exit(main(sys.argv[1] if len(sys.argv) > 1 else "target/live-out/curvesrc"))

@@ -786,6 +786,7 @@ fn frame_schema(ui: &mut egui::Ui, f: &FxInstance, size: egui::Vec2) -> egui::Re
 
 /// Углы рамки и кадра схемы В КООРДИНАТАХ прямоугольника схемы — для
 /// теста: утверждение «видно при 2×» делается по нарисованному.
+#[cfg_attr(not(test), allow(dead_code))] // схема считается тестом t765b
 pub(crate) fn schema_points(
     f: &FxInstance,
     size: egui::Vec2,

@@ -84,6 +84,15 @@ def main(out):
         )
 
         # 3) НАБОР ПО СИМВОЛУ: текст не должен исчезать, ключи — умирать
+        #
+        # Поле прокручивается в окно, а не берётся по старым координатам: в
+        # Р.67 блок кривой вырос (форма отрезка, слой, справка, связь), поле
+        # ушло под низ тела окна — слепой клик попадал В ДРУГОЙ контрол и
+        # сценарий «не видел» формулы, хотя программа была исправна.
+        app.scroll_probe_into_view(
+            "auto.formula", "auto.add", below="fx.cancel",
+            what="поле формулы прокручено в окно",
+        )
         app.click_probe("auto.formula", "поле формулы")
         app.type_text("sin(t)*3+5")
         app.shot("typed")
@@ -109,6 +118,25 @@ def main(out):
         app.expect(
             any("sin(t)*3+5" in str(f) for f in formulas),
             f"формула доехала до файла целиком: {formulas}",
+        )
+        # Р.67, п.6 владельца: формула — СЛОЙ поверх ключей, а не источник
+        # вместо них; «я может быть передумал и хотел бы вернуться к зигзагу»
+        keys_after = []
+
+        def walk_keys(x):
+            if isinstance(x, dict):
+                if isinstance(x.get("keys"), list):
+                    keys_after.append(len(x["keys"]))
+                for v in x.values():
+                    walk_keys(v)
+            elif isinstance(x, list):
+                for v in x:
+                    walk_keys(v)
+
+        walk_keys(doc)
+        app.expect(
+            any(n > 0 for n in keys_after),
+            f"ключи под формулой-слоем целы: {keys_after}",
         )
         _ = before, saved
 

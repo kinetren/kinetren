@@ -302,7 +302,7 @@ pub fn flags_row<P: HasParams + ?Sized>(
         for spec in specs {
             let mut v = f.get_flag(spec.name).unwrap_or(spec.default);
             let r = ui.checkbox(&mut v, flag_label(spec.name));
-            field_probe::note(&spec.name, r.rect);
+            field_probe::note(spec.name, r.rect);
             if r.changed() {
                 f.set_flag(spec.name, v);
                 changed = true;

@@ -125,6 +125,7 @@ class Live:
         self.autoplay = autoplay
         self.proc = None
         self.problems = []
+        self._reported = False
         self._shot_no = 0
 
     def __enter__(self):
@@ -160,6 +161,17 @@ class Live:
                 self.proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+        # ВЕРДИКТ НЕ ЗАВИСИТ ОТ ПАМЯТИ АВТОРА СЦЕНАРИЯ (Р.67). `expect`
+        # копит расхождения, но код возврата отдаёт `done()` — и семь
+        # сценариев из пятидесяти его не звали: `curvesrc` печатал ПРОВАЛ
+        # и выходил с НУЛЁМ, то есть красное считалось зелёным ровно тем
+        # же способом, что в §443 и §458. Теперь нерассказанное расхождение
+        # роняет сценарий отсюда: забыть вердикт больше нельзя.
+        if exc[0] is None and self.problems and not self._reported:
+            raise Failure(
+                "сценарий не доложил о расхождениях (нет `return app.done()`): "
+                + "; ".join(self.problems)
+            )
         return False
 
     def _wait_window(self, timeout=40.0):
@@ -726,6 +738,7 @@ class Live:
         self.expect(abs(got - want) <= tol, f"{what}: {got} ≈ {want} (±{tol})")
 
     def done(self):
+        self._reported = True
         if self.problems:
             for p in self.problems:
                 print(f"   расхождение: {p}", file=sys.stderr)
