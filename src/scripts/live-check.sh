@@ -46,10 +46,11 @@ rm -rf "$out/verdicts"
 
 want=("$@")
 if [ ${#want[@]} -eq 0 ]; then
-    # kt_live.py — каркас, worker.py — работник, `_*.py` — подставные
-    # сценарии сторожей (t801/t802): в общий прогон они не входят
+    # kt_live.py — каркас, worker.py — работник, balance.py — раскладка по
+    # цене, `_*.py` — подставные сценарии сторожей (t801/t802): всё это не
+    # сценарии, и в общий прогон они не входят
     mapfile -t want < <(cd "$scenarios_dir" && ls *.py \
-        | grep -v -E '^(kt_live|worker|_.*)\.py$' | sed 's/\.py$//')
+        | grep -v -E '^(kt_live|worker|balance|_.*)\.py$' | sed 's/\.py$//')
 fi
 
 # Сколько работников. Один kt-app в софт-рендере держит нагрузку около семи
