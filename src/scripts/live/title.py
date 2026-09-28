@@ -12,7 +12,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, geometry, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, geometry, poll_step, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -81,6 +81,7 @@ def main(out):
             drawn = app.ink_box(preview, half=150)
             if drawn > 120:
                 break
+            poll_step(0.4)
         app.expect(
             drawn is not None and drawn > 120,
             f"в превью буквы титра поверх пустоты: {drawn} (ramp {ramp_b:.1f})",

@@ -17,7 +17,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, poll_step, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -62,8 +62,10 @@ def main(out):
         app.expect(app.geom().get("clipboard") == 1, "копирование не набрало буфер")
         for at in (5.0, 9.0):
             app.click(app.x_at(int(at * SEC)), app.ruler_y())
+            poll_step(0.3)
             app.click_probe("menu.edit", "кнопка меню «Правка»")
             app.click_probe("edit.paste", "пункт «Вставить»")
+            poll_step(0.6)
         app.shot("three")
         app.expect(
             len(app.live_clips()) == 3,

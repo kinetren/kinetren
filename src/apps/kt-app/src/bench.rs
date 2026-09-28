@@ -41,6 +41,8 @@ static DONE: AtomicU64 = AtomicU64::new(0);
 /// раньше, чем событие доехало от X-сервера, и «кадр нарисован» ещё не значит
 /// «жест увиден». Счётчик событий отвечает ровно на этот вопрос.
 static INPUTS: AtomicU64 = AtomicU64::new(0);
+/// Метка времени файла команд: читать его каждый кадр незачем.
+static LAST_CTL: AtomicU64 = AtomicU64::new(0);
 
 fn ctl_path() -> Option<&'static PathBuf> {
     static P: OnceLock<Option<PathBuf>> = OnceLock::new();
@@ -118,6 +120,20 @@ pub(crate) fn store_dir() -> Option<PathBuf> {
 /// записи законно (следующий кадр прочитает целое).
 pub(crate) fn poll() -> Option<(u64, Cmd)> {
     let path = ctl_path()?;
+    // ЧИТАЕМ ТОЛЬКО ИЗМЕНИВШИЙСЯ ФАЙЛ: `poll` зовётся каждый кадр, а чтение
+    // файла в кадре — это ввод-вывод в драв-пути. Тем же классом (запись
+    // дампа каждым кадром) в этом раунде уже ломались тонкие жесты, так что
+    // сначала дешёвый `stat`, и только по новой метке времени — чтение.
+    let stamp = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_micros() as u64)
+        .unwrap_or(0);
+    if stamp == LAST_CTL.load(Ordering::Relaxed) {
+        return None;
+    }
+    LAST_CTL.store(stamp, Ordering::Relaxed);
     let text = std::fs::read_to_string(path).ok()?;
     let line = text.lines().next()?.trim();
     let mut it = line.splitn(3, ' ');

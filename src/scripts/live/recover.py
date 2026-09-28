@@ -18,7 +18,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Failure, Live, project_with_clips, require_tools  # noqa: E402
+from kt_live import Failure, Live, poll_step, project_with_clips, require_tools  # noqa: E402
 
 # СВОЙ ПРОЦЕСС (Р.68): сценарий проверяет САМ СТАРТ программы, а не работу в
 # уже открытом проекте, — стенд работника ему не подходит.
@@ -36,6 +36,7 @@ def wait_file(path, timeout=90.0, what="файл"):
     while time.time() < deadline:
         if os.path.exists(path) and os.path.getsize(path) > 0:
             return True
+        poll_step(0.25)
     raise Failure(f"{what} не появился за {timeout} с: {path}")
 
 

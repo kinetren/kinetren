@@ -17,7 +17,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import KT_CLI, Live, geometry, require_tools  # noqa: E402
+from kt_live import KT_CLI, Live, geometry, poll_step, require_tools  # noqa: E402
 
 SEC = 90000
 # «Плотно» — второй вариант размытия (radius 24 против шаблонных 8)
@@ -86,6 +86,7 @@ def main(out):
             if f:
                 cell = f
                 break
+            poll_step(0.25)
         app.expect(cell is not None, f"программа отдала прямоугольник ячейки «{VARIANT}»")
         if cell is None:
             return app.done()

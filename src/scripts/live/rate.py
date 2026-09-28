@@ -22,7 +22,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, geometry, pause, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, geometry, pause, poll_step, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
 PLAY_WINDOW = 3.0
@@ -40,6 +40,7 @@ def speed_box(app):
                 f["w"],
                 f["h"],
             )
+        poll_step(0.25)
     app.expect(False, "программа отдала прямоугольник контрола скорости")
     return None
 

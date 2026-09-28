@@ -21,7 +21,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, poll_step, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -84,11 +84,13 @@ def main(out):
             if app.geom()["nest"]["depth"] == 0:
                 break
             app.key("Escape")
+            poll_step(0.35)
         g = app.geom()
         app.expect(g["nest"]["depth"] == 0, f"Esc не вывел наружу: глубина {g['nest']['depth']}")
         app.click(app.x_at(3 * SEC), app.lane_y("video", 0, 0.6))
         for _ in range(2):
             app.key("Return")
+            poll_step(0.7)
             if app.geom()["nest"]["depth"] == 1:
                 break
         g = app.geom()

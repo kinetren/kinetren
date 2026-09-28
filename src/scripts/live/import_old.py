@@ -23,7 +23,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import KT_CLI, Live, require_tools  # noqa: E402
+from kt_live import KT_CLI, Live, poll_step, require_tools  # noqa: E402
 
 # СВОЙ ПРОЦЕСС (Р.68): сценарий проверяет САМ СТАРТ программы, а не работу в
 # уже открытом проекте, — стенд работника ему не подходит.
@@ -121,6 +121,7 @@ def main(out):
             if len(g.get("clips", [])) == 1 and g.get("morphers") == 1:
                 ok = True
                 break
+            poll_step(0.5)
         app.expect(ok, "после импорта на таймлайне событие и морфер")
         app.expect(bool(g.get("dirty")), "документ помечен правками (звёздочка)")
         app.step("imported", "проект открыт через импорт, звёздочка в заголовке")

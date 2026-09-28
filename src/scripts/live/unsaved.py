@@ -14,7 +14,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, poll_step, project_with_clips, require_tools  # noqa: E402
 
 # СВОЙ ПРОЦЕСС (Р.68): сценарий проверяет САМ СТАРТ программы, а не работу в
 # уже открытом проекте, — стенд работника ему не подходит.
@@ -77,6 +77,7 @@ def main(out):
         for _ in range(40):
             if not app.alive():
                 break
+            poll_step(0.25)
         app.expect(not app.alive(), "«Не сохранять» обязано закрыть программу")
         # и проект остался таким, каким был: его меняет только Ctrl+S
         app.expect(

@@ -141,6 +141,19 @@ def _poll(seconds=0.02):
     time.sleep(seconds)
 
 
+def poll_step(seconds=0.25):
+    """ШАГ ОПРОСА В ЦИКЛЕ СЦЕНАРИЯ — не пауза «на всякий случай».
+
+    Сценарий, который ждёт появления виджета, смены картинки или файла,
+    спрашивает программу в цикле; между вопросами нужен зазор, иначе цикл
+    прокручивает свои попытки за миллисекунды и сдаётся, не дождавшись
+    ничего (так после Р.68 «онемели» сразу несколько сценариев: у каждого
+    свой цикл опроса со своим шагом). Это законный сон: ждать тут нечего —
+    проверяется САМО появление.
+    """
+    time.sleep(seconds)
+
+
 class Live:
     """Запущенное приложение с проектом. Всё внутри `with`.
 
@@ -251,7 +264,7 @@ class Live:
         seq = self._ctl("open", os.path.abspath(self.project))
         self._wait_ctl(seq)
         self.wait_frame(2, what="первый кадр нового проекта в стенде")
-        self.settle()
+        self.wait_loaded()
         g = self.geom()
         got = os.path.realpath(g.get("project", ""))
         self.expect(
@@ -262,11 +275,59 @@ class Live:
             int(g.get("windows", 0)) == 0,
             f"программа чиста: открытых окон {g.get('windows')}",
         )
-        # окно предыдущего сценария могло остаться низким (`resize`)
+        # окно предыдущего сценария могло остаться низким или сдвинутым
+        # (`resize` проверяет контракт формы, Р.66): возвращаем ИМЕННО ту
+        # геометрию X-окна, с которой стенд поднялся
         want = json.load(open(os.path.join(BENCH, "window.json")))
-        if abs(g["window"]["w"] - want["w"]) > 4 or abs(g["window"]["h"] - want["h"]) > 4:
-            self.resize(want["w"], want["h"])
+        now = geometry()
+        if any(abs(now[k] - want[k]) > 4 for k in ("x", "y", "w", "h")):
+            win = probe.window()
+            win.configure(x=want["x"], y=want["y"], width=want["w"], height=want["h"])
+            probe.d.sync()
+            self._raised = False
+            self.wait_frame(3, what="перевёрстка после возврата геометрии окна", soft=True)
+            self.settle()
         return self
+
+    def wait_loaded(self, timeout=30.0):
+        """Дождаться, пока программа ПОКАЖЕТ весь проект.
+
+        «Кадр нарисован» — ещё не «проект на экране»: бин наполняется
+        асинхронно, и пока он растёт, зона таймлайна ЕЗДИТ. Сценарий,
+        посчитавший координаты по такому дампу, целится левее — так
+        двойной клик по событию попадал в подпись дорожки и открывал
+        переименование (живой `curves` в стенде). Ждём, пока в дампе
+        окажется столько же событий, сколько в файле, и пока картинка
+        успокоится.
+        """
+        want = len(Timeline(self.project).clips)
+        deadline = time.time() + timeout
+        seen = None
+        stable_since = None
+        while time.time() < deadline:
+            g = self.geom()
+            now = (
+                len(g.get("clips", [])),
+                round(g.get("view_start", 0.0), 1),
+                round(g.get("ticks_per_px", 0.0), 3),
+                round(g["timeline"]["left"], 1),
+                round(g["timeline"]["top"], 1),
+                len(g.get("rows", [])),
+            )
+            if now[0] >= want and now == seen:
+                # ВИД ОБЯЗАН УСТОЯТЬСЯ, а не только «кадр нарисован»: пока
+                # бин наполняется, зона таймлайна и зум ЕЗДЯТ, и координата,
+                # посчитанная по такому дампу, попадает в подпись дорожки —
+                # двойной клик по событию открывал переименование V1
+                # (живой `curves` в стенде).
+                if stable_since and time.time() - stable_since >= 0.4:
+                    break
+                stable_since = stable_since or time.time()
+            else:
+                seen, stable_since = now, None
+            _poll(0.05)
+        self.settle()
+        return True
 
     def _ctl(self, cmd, arg=""):
         """Команда стенду; возвращает её номер."""
@@ -332,8 +393,11 @@ class Live:
                 if self._frame_now() >= 2:
                     # программа ещё доводит первый кадр (источники, тумбы,
                     # раскладка): жест, поданный в этот момент, уезжает в
-                    # никуда. Ждём тишины, а не «ещё полсекунды сверху».
-                    self.settle()
+                    # никуда. Ждём, пока проект окажется на экране целиком.
+                    if self.project:
+                        self.wait_loaded()
+                    else:
+                        self.settle()
                     return
                 _poll(0.05)
             raise Failure("программа не нарисовала ни одного кадра — окно осталось пустым")
@@ -704,6 +768,13 @@ class Live:
         `tries` остаётся в подписи ради вызовов сценариев (у отрицательных
         проверок он маленький намеренно), но считается СРОКОМ: дамп идёт
         10 Гц, и «двенадцать кадров» — это чуть больше секунды."""
+        # СНАЧАЛА СВЕЖИЙ ДАМП: щупы КОПЯТСЯ между записями дампа (каждый
+        # кадр добавляет свои прямоугольники, а забирает их запись раз в
+        # 100 мс), поэтому первый же дамп после жеста может нести ещё и
+        # то, что было ДО него. Отрицательная проверка («рамка выключена»)
+        # на таком дампе всегда ложно красная — ровно это и прятала пауза
+        # 0.6 с в сценарии `geomctl`.
+        self.wait_frame(2, what="свежий дамп щупов", soft=True)
         deadline = time.time() + max(0.5 * tries, 1.0)
         while time.time() < deadline:
             if any(f["param"] == name for f in self.geom().get("fields", [])):
@@ -728,15 +799,12 @@ class Live:
         # СРОК, А НЕ ЧИСЛО ПРОХОДОВ: дамп геометрии пишется 10 раз в секунду,
         # и «двадцать кадров» превращались в две секунды вместо прежних пяти —
         # щуп сдавался раньше, чем программа успевала открыть меню.
+        self.wait_frame(2, what="свежий дамп щупов", soft=True)
         deadline = time.time() + max(8.0, 40.0 * self._dt)
         while time.time() < deadline:
             f = next((f for f in self.geom().get("fields", []) if f["param"] == name), None)
             if f:
-                self.settle()
-                again = next(
-                    (x for x in self.geom().get("fields", []) if x["param"] == name), None
-                )
-                return again or f
+                return f
             self.wait_frame(1, what=f"кадр в ожидании виджета {name}", soft=True)
         return None
 

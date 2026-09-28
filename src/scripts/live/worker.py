@@ -208,6 +208,13 @@ class Bench:
         if self.proc is not None and self.proc.poll() is None:
             return
         self.kill_stale()
+        # ХРАНИЛИЩЕ СТЕНДА — ЧИСТОЕ НА КАЖДЫЙ ПОДЪЁМ: eframe запоминает в нём
+        # РАЗМЕР ОКНА, и сценарий контракта формы (Р.66), который нарочно
+        # делает окно низким, оставлял этот размер всем следующим прогонам.
+        # В маленьком окне другой зум и другой вид — координаты жестов
+        # уезжали в подписи дорожек, а выглядело это как «стенд ломает всё».
+        shutil.rmtree(self.store, ignore_errors=True)
+        shutil.rmtree(os.path.join(self.dir, "xdg"), ignore_errors=True)
         os.makedirs(self.store, exist_ok=True)
         subprocess.run([KT_CLI, "new", self.blank, "--force"], check=True, capture_output=True)
         for p in (self.ctl, self.geom):
@@ -231,12 +238,36 @@ class Bench:
             time.sleep(0.05)
         else:
             raise SystemExit("стенд не нарисовал ни одного кадра")
-        # размер окна стенда — эталон для сценариев: один из них мог
-        # оставить окно низким (`resize` проверяет контракт формы)
-        with open(self.geom) as f:
-            g = json.load(f)
+        # ЭТАЛОН ОКНА — геометрия X-окна В ПИКСЕЛЯХ, а не размер холста из
+        # дампа: сценарий контракта формы (Р.66) ставит окно низким, и
+        # следующий обязан получить его обратно. Размер холста egui — это
+        # ТОЧКИ, и восстановление по нему ужимало окно на каждый заход.
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "ui_probe", os.path.join(RUST, "scripts", "ui-probe.py")
+        )
+        probe = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(probe)
+        # ГЕОМЕТРИЯ СНИМАЕТСЯ, КОГДА ОНА УСТОЯЛАСЬ: оконный менеджер
+        # разворачивает окно НЕ мгновенно, и снимок сразу после первых
+        # кадров запоминал окно ДО разворота. Каждый следующий сценарий
+        # «восстанавливал» этот маленький размер — а в нём другой зум и
+        # другой вид, и координаты жестов уезжали в подписи дорожек.
+        last, stable = None, 0.0
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            g = probe.origin(probe.window())
+            if g == last:
+                stable += 0.1
+                if stable >= 0.6:
+                    break
+            else:
+                last, stable = g, 0.0
+            time.sleep(0.1)
+        x, y, w, h = last
         with open(os.path.join(self.dir, "window.json"), "w") as f:
-            json.dump(g["window"], f)
+            json.dump({"x": x, "y": y, "w": w, "h": h}, f)
 
     def stop(self):
         if self.proc is None:

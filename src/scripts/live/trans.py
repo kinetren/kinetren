@@ -17,7 +17,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, color_media, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, color_media, poll_step, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -70,6 +70,7 @@ def main(out):
                 # окну нужно время отрисоваться в софт-рендере
                 d = 0.0
                 for _ in range(10):
+                    poll_step(0.5)
                     d = app.screen_diff(before)
                     if d > 0.01:
                         break

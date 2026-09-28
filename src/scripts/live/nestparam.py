@@ -28,7 +28,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, geometry, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, geometry, poll_step, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -99,6 +99,7 @@ def leave_reel(app):
         if app.geom()["nest"]["depth"] == 0:
             return True
         app.key("Escape")
+        poll_step(0.5)
     return app.geom()["nest"]["depth"] == 0
 
 
@@ -142,11 +143,13 @@ def open_window_in_rows(app, x, probe, avoid=None, limit=6):
         if avoid is not None and abs(yy - avoid) < 12:
             continue
         app.right_click(x, yy)
+        poll_step(0.4)
         if app.has_probe("tl.fx", tries=2):
             app.click_probe("tl.fx", "пункт «Эффекты…» события")
             if app.has_probe(probe, tries=4):
                 return True
         app.key("Escape")
+        poll_step(0.3)
     return False
 
 

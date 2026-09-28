@@ -33,7 +33,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import KT_CLI, Live, pause, project_with_clips, require_tools  # noqa: E402
+from kt_live import KT_CLI, Live, pause, poll_step, project_with_clips, require_tools  # noqa: E402
 
 
 def stack_tracks(dest, copies):
@@ -106,6 +106,7 @@ def run_case(app, name, dur_s, jumps):
             "кольцо вывода живёт в РЕАЛЬНОМ времени: ждём вдвое больше его "
             "длины, чтобы отличить «пошло быстро» от «пошло вообще»",
         )
+        poll_step(1.2)
         now = app.geom().get("underruns", 0)
         grew = now - base
         worst = max(worst, grew)

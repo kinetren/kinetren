@@ -23,7 +23,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, poll_step, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -62,8 +62,10 @@ def main(out):
         for i in range(2):
             app.right_click(mid, y)
             app.click_probe("nest.rename", f"пункт переименования (заход {i + 1})")
+            poll_step(0.5)
             before = app.shot(f"rename-{i}")
             app.key("Escape")
+            poll_step(0.4)
             after = app.shot(f"rename-{i}-closed")
             d = app.screen_diff(before)
             app.expect(
@@ -98,6 +100,7 @@ def main(out):
         app.expect(app.geom()["nest"]["depth"] == 1, "не вошли внутрь второй раз")
         for _ in range(3):
             app.key("Escape")
+            poll_step(0.3)
             if app.geom()["nest"]["depth"] == 0:
                 break
         app.expect(app.geom()["nest"]["depth"] == 0, "Esc не вывел наружу")

@@ -20,7 +20,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, color_media, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, color_media, poll_step, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -76,6 +76,7 @@ def main(out):
                 status = app.geom().get("status", "")
                 if "360" in status:
                     break
+                poll_step(0.2)
             app.shot("placed")
             app.expect(
                 "360" in status and "640" in status and "1280" in status,

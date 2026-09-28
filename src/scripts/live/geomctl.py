@@ -25,6 +25,7 @@ from kt_live import (  # noqa: E402
     Live,
     geometry,
     pattern_media,
+    poll_step,
     project_with_clips,
     require_tools,
 )
@@ -74,6 +75,7 @@ def wait_change(app, box, before, what, tries=14):
     последний кадр, и немедленное чтение вернёт прежний)."""
     now, d = before, 0.0
     for _ in range(tries):
+        poll_step(0.35)
         now = picture(app, "wait", box)
         d = frame_diff(before, now)
         if d > CHANGED:
@@ -92,6 +94,7 @@ def probe_center(app, name, what):
                 win["x"] + int(f["x"] + f["w"] / 2),
                 win["y"] + int(f["y"] + f["h"] / 2),
             )
+        poll_step(0.25)
     app.expect(False, what)
     return None
 

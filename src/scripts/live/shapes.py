@@ -16,7 +16,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, geometry, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, geometry, poll_step, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -73,6 +73,7 @@ def main(out):
             px = app.pixel(*preview)
             if min(px) > 180:
                 break
+            poll_step(0.3)
         app.expect(
             px is not None and min(px) > 180,
             f"в центре превью белая фигура: {px}",

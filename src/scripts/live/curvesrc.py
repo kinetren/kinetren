@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import KT_CLI, Live, require_tools  # noqa: E402
+from kt_live import KT_CLI, Live, poll_step, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -92,6 +92,7 @@ def main(out):
                 what=f"поле формулы прокручено в окно (попытка {attempt + 1})",
             )
             app.click_probe("auto.formula", f"поле формулы (попытка {attempt + 1})")
+            poll_step(0.5)
             # чистим поле по-символьно: ctrl+a у egui выделяет не всегда
             for _ in range(24):
                 app.key("BackSpace")
@@ -102,6 +103,7 @@ def main(out):
             app.type_text("t*2")
             app.key("Return")
             app.settle()
+            poll_step(1.0)
             after = sources(app.saved_project().doc)
             if "formula" in after:
                 break

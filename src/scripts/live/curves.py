@@ -25,7 +25,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import KT_CLI, Live, geometry, require_tools  # noqa: E402
+from kt_live import KT_CLI, Live, geometry, poll_step, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -66,6 +66,7 @@ def main(out):
         g = probes(app)["auto.graph"]
         for fx, fy in ((0.3, 0.3), (0.5, 0.7), (0.7, 0.3)):
             click_in(app, g, fx, fy)
+            poll_step(0.3)
         app.step("keys", "ключи поставлены кликами по графику")
 
         # 3) правый клик по участку → «Зигзаг»

@@ -13,7 +13,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, geometry, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, geometry, poll_step, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -61,6 +61,7 @@ def main(out):
             clips = app.live_clips()
             if len(clips) == 2:
                 break
+            poll_step(0.25)
         app.expect(
             clips is not None and len(clips) == 2,
             f"создание генератора обязано класть клип: {clips}",
@@ -79,6 +80,7 @@ def main(out):
             gen_px = app.pixel(*preview)
             if gen_px != ramp_px:
                 break
+            poll_step(0.3)
         app.expect(
             gen_px is not None and max(gen_px) < 16,
             f"в превью кадр генератора (чёрный солид), а не {gen_px}",
@@ -118,6 +120,7 @@ def main(out):
             lit = app.pixel(*preview)
             if lit[0] > 150 and lit[2] < 80:
                 break
+            poll_step(0.3)
         app.expect(
             lit is not None and lit[0] > 150 and lit[2] < 80,
             f"правка цвета обязана доехать до картинки: {lit}",
@@ -132,6 +135,7 @@ def main(out):
             back = app.pixel(*preview)
             if max(back) < 40:
                 break
+            poll_step(0.3)
         app.expect(
             back is not None and max(back) < 40,
             f"undo обязан вернуть чёрный солид: {back}",

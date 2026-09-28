@@ -24,7 +24,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, poll_step, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -99,6 +99,7 @@ def main(out):
         for _ in range(60):
             # шевелим мышь: перерисовка идёт по ДВИЖЕНИЮ (инвариант 12)
             app.hover(app.x_at(inst[0]) + 20, y, pause=0.05)
+            poll_step(0.4)
             m = slice_means(app, *box, "wait")
             spread = max(spread, max(m) - min(m))
             if spread > 0.08:
