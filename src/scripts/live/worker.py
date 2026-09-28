@@ -304,6 +304,12 @@ def main():
                 # отличать флак от дефекта.
                 for leftover in ("store", "xdg"):
                     shutil.rmtree(os.path.join(scen_out, leftover), ignore_errors=True)
+                # и отчёт о сне (Р.69): упавший сценарий не оставляет своего
+                # числа, иначе прогон сложил бы цену ПРОШЛОГО раза
+                try:
+                    os.unlink(os.path.join(scen_out, "slept.txt"))
+                except OSError:
+                    pass
                 env = dict(os.environ)
                 if own:
                     # два окна kinotrain на одном экране — это прицел в чужое

@@ -3686,10 +3686,25 @@ fn t803_live_scenarios_wait_for_the_program() {
     let root = workspace_root();
     let guard = root.join("scripts/live-sleeps.py");
     assert!(guard.exists(), "сторожа нет на месте: {}", guard.display());
-    let run = || -> (bool, String) {
+    // СВОЯ КОПИЯ ДЕРЕВА (Р.69): тест проверяет сторожа НАРУШЕНИЯМИ, а рабочее
+    // дерево в это же время читает соседний тест (t808). Подставной сценарий,
+    // положенный в рабочий `scripts/live`, делал вердикт соседа случайным —
+    // тот самый «флак по построению», который раунд и убирает.
+    let sandbox = std::env::temp_dir().join(format!("kt-t803-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&sandbox);
+    std::fs::create_dir_all(sandbox.join("live")).unwrap();
+    for entry in std::fs::read_dir(root.join("scripts/live")).unwrap().flatten() {
+        if entry.path().extension().is_some_and(|e| e == "py") {
+            std::fs::copy(entry.path(), sandbox.join("live").join(entry.file_name())).unwrap();
+        }
+    }
+    std::fs::copy(root.join("scripts/ui-probe.py"), sandbox.join("ui-probe.py")).unwrap();
+    let run = |scripts: &std::path::Path| -> (bool, String) {
         let out = std::process::Command::new("python3")
             .arg(&guard)
             .arg("--check")
+            .arg("--scripts")
+            .arg(scripts)
             .current_dir(&root)
             .output()
             .expect("python3 для сторожа пауз");
@@ -3697,14 +3712,15 @@ fn t803_live_scenarios_wait_for_the_program() {
         said.push_str(&String::from_utf8_lossy(&out.stderr));
         (out.status.success(), said)
     };
+    let real = root.join("scripts");
 
-    let (ok, said) = run();
+    let (ok, said) = run(&real);
     assert!(ok, "сторож красен на сегодняшних сценариях: {said}");
 
     // сырая пауза в СЦЕНАРИИ — красное с адресом
-    let probe = root.join("scripts/live/_t803_probe.py");
+    let probe = sandbox.join("live/_t803_probe.py");
     std::fs::write(&probe, "import time\n\n\ndef main(out):\n    time.sleep(0.5)\n").unwrap();
-    let (ok_raw, said_raw) = run();
+    let (ok_raw, said_raw) = run(&sandbox);
     std::fs::remove_file(&probe).ok();
     assert!(!ok_raw, "сторож не заметил сырой паузы в сценарии");
     assert!(
@@ -3718,13 +3734,18 @@ fn t803_live_scenarios_wait_for_the_program() {
         "from kt_live import pause\n\n\ndef main(out):\n    pause(0.1, \"так надо\")\n",
     )
     .unwrap();
-    let (ok_short, said_short) = run();
+    let (ok_short, said_short) = run(&sandbox);
     std::fs::remove_file(&probe).ok();
     assert!(!ok_short, "сторож принял отговорку вместо причины паузы");
     assert!(
         said_short.contains("причина паузы короче"),
         "сторож не назвал короткую причину: {said_short}"
     );
+
+    // рабочее дерево всё это время нетронуто
+    let (ok_real, said_real) = run(&real);
+    assert!(ok_real, "рабочее дерево покраснело от теста сторожа: {said_real}");
+    let _ = std::fs::remove_dir_all(&sandbox);
 }
 
 /// t805 (Р.68): канал стенда мёртв без переменной окружения, кадры считаются
@@ -3919,4 +3940,106 @@ fn t806_track_verbs_have_a_live_aim() {
         }
     }
     assert!(problems.is_empty(), "глаголы дорожки без живого прицела:\n  {}", problems.join("\n  "));
+}
+
+/// t808 (Р.69): сон перечислим во ВСЕЙ живой проверке и имеет предел.
+///
+/// Два дефекта правила, которые нашёл замер Р.69, и оба про то, что правило
+/// не держит обещанного:
+///
+/// * сторож пауз смотрел на каркас и сценарии и НЕ смотрел на драйвер мыши
+///   и клавиатуры (`scripts/ui-probe.py`) — 123 с из 387 с сна всего живого
+///   прогона жили вне его области. Сон, спрятанный в драйвере, ничем не
+///   отличается от сна в каркасе, и опаснее он тем, что живёт в ЗНАЧЕНИИ ПО
+///   УМОЛЧАНИЮ аргумента: на месте жеста его не видно вовсе;
+/// * «причина словами» оказалась слабой мерой: все 265 с сна в каркасе были
+///   законными, у каждой паузы стояло объяснение длиннее сорока символов.
+///   Поэтому у суммы ОБЪЯВЛЕННЫХ секунд появился предел-храповик, как у
+///   `UNTOUCHED_LIMIT` в отчёте покрытия (Р.68).
+///
+/// Предел статический не случайно: он не зависит ни от машины, ни от того,
+/// сколько раз жест позвали. Вердикт на ФАКТИЧЕСКОМ сне ловил бы загрузку
+/// вместо регрессии — фактическое число печатает прогон (`live-check.sh`).
+#[test]
+fn t808_live_sleep_is_enumerable_everywhere_and_capped() {
+    let root = workspace_root();
+    let guard = root.join("scripts/live-sleeps.py");
+    let driver = root.join("scripts/ui-probe.py");
+    assert!(guard.exists() && driver.exists(), "сторожа или драйвера нет на месте");
+    // СВОЯ КОПИЯ ДЕРЕВА: тест проверяет сторожа НАРУШЕНИЯМИ, а рабочее дерево
+    // в это же время читает соседний тест (t803) — своим процессом у nextest
+    // или своей нитью у `cargo test`. Порча общего файла сделала бы вердикт
+    // соседа случайным; это ровно тот «флак по построению», который раунд и
+    // убирает, так что на свои тесты правило распространяется тоже.
+    let sandbox = std::env::temp_dir().join(format!("kt-t808-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&sandbox);
+    std::fs::create_dir_all(sandbox.join("live")).unwrap();
+    for entry in std::fs::read_dir(root.join("scripts/live")).unwrap().flatten() {
+        if entry.path().extension().is_some_and(|e| e == "py") {
+            std::fs::copy(entry.path(), sandbox.join("live").join(entry.file_name())).unwrap();
+        }
+    }
+    let sandbox_driver = sandbox.join("ui-probe.py");
+    std::fs::copy(&driver, &sandbox_driver).unwrap();
+    let run = |scripts: &std::path::Path| -> (bool, String) {
+        let out = std::process::Command::new("python3")
+            .arg(&guard)
+            .arg("--check")
+            .arg("--scripts")
+            .arg(scripts)
+            .current_dir(&root)
+            .output()
+            .expect("python3 для сторожа пауз");
+        let mut said = String::from_utf8_lossy(&out.stdout).into_owned();
+        said.push_str(&String::from_utf8_lossy(&out.stderr));
+        (out.status.success(), said)
+    };
+    let real = root.join("scripts");
+
+    // 1) сегодняшнее дерево зелёное, и сторож НАЗЫВАЕТ бюджет и сон драйвера
+    let (ok, said) = run(&real);
+    assert!(ok, "сторож красен на текущем дереве: {said}");
+    assert!(
+        said.contains("объявленный сон живой проверки") && said.contains("при пределе"),
+        "сторож не назвал сумму объявленного сна и предел: {said}"
+    );
+    assert!(
+        said.contains("в драйвере"),
+        "сторож не назвал сон драйвера мыши и клавиатуры: {said}"
+    );
+
+    // копия чиста ровно так же, как рабочее дерево
+    let (ok_copy, said_copy) = run(&sandbox);
+    assert!(ok_copy, "копия дерева красна до всякой порчи: {said_copy}");
+
+    // 2) сырая пауза В ДРАЙВЕРЕ — красное с адресом (прежде была невидимкой)
+    let saved = std::fs::read_to_string(&sandbox_driver).expect("драйвер читается");
+    std::fs::write(
+        &sandbox_driver,
+        format!("{saved}\n\ndef _t808_probe():\n    time.sleep(0.5)\n"),
+    )
+    .unwrap();
+    let (ok_drv, said_drv) = run(&sandbox);
+    std::fs::write(&sandbox_driver, &saved).unwrap();
+    assert!(!ok_drv, "сторож не заметил сырой паузы в драйвере");
+    assert!(
+        said_drv.contains("ui-probe.py") && said_drv.contains("_t808_probe"),
+        "сторож не назвал адрес паузы в драйвере: {said_drv}"
+    );
+
+    // 3) сон сверх объявленного предела — красное с самой дорогой паузой
+    let bumped = saved.replace("def move(x, y, pause=0.05):", "def move(x, y, pause=9.5):");
+    assert_ne!(bumped, saved, "сцена: умолчание паузы драйвера найдено");
+    std::fs::write(&sandbox_driver, &bumped).unwrap();
+    let (ok_budget, said_budget) = run(&sandbox);
+    assert!(!ok_budget, "сторож пропустил сон сверх объявленного предела");
+    assert!(
+        said_budget.contains("превысил предел") && said_budget.contains("самая дорогая пауза"),
+        "сторож не назвал перерасход и его источник: {said_budget}"
+    );
+
+    // рабочее дерево всё это время нетронуто
+    let (ok_real, said_real) = run(&real);
+    assert!(ok_real, "рабочее дерево покраснело от теста сторожа: {said_real}");
+    let _ = std::fs::remove_dir_all(&sandbox);
 }

@@ -22,19 +22,48 @@
 дешевле описания.
 
     python3 scripts/live-sleeps.py --check
+    python3 scripts/live-sleeps.py --check --scripts <копия каталога scripts>
 """
 import ast
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-LIVE = ROOT / "src" / "scripts" / "live"
+# КОРЕНЬ ПРОВЕРЯЕМЫХ ИСХОДНИКОВ — ПОДМЕНЯЕМЫЙ (`--scripts <каталог>`).
+# Тесты сторожа (t803, t808) проверяют его НАРУШЕНИЯМИ: подставляют сценарий
+# с сырой паузой, ломают драйвер, поднимают константу. Делать это в рабочем
+# дереве нельзя — тесты идут одновременно (нити у `cargo test`, процессы у
+# nextest), и порча одного становится красным вердиктом другого. Ровно этот
+# класс («флак по построению») раунд и убирает, так что своих тестов правило
+# касается тоже: каждый работает на СВОЕЙ копии.
+SCRIPTS = ROOT / "src" / "scripts"
+if "--scripts" in sys.argv:
+    SCRIPTS = Path(sys.argv[sys.argv.index("--scripts") + 1]).resolve()
+LIVE = SCRIPTS / "live"
 FRAMEWORK = "kt_live.py"
+# ДРАЙВЕР МЫШИ И КЛАВИАТУРЫ (Р.69). До этого раунда сторож смотрел только на
+# каркас и сценарии, а драйвер спал внутри себя — 123 с из 387 с сна всего
+# живого прогона жили ВНЕ области действия правила «пауза только с причиной».
+# Сон, спрятанный в драйвере, ничем не отличается от сна в каркасе.
+DRIVER = SCRIPTS / "ui-probe.py"
+DRIVER_SLEEP_HOME = "_nap"
 # каркас работника поднимает Xvfb и процессы — там ожидание системное, а не
 # оконное: ждать «кадра» ещё некому, программа не запущена
 RUNNER = "worker.py"
 SLEEP_HOMES = {"pause", "_poll", "poll_step"}
 MIN_REASON = 40
+
+# БЮДЖЕТ СНА — ХРАПОВИК (Р.69, стадия 1). Причины словами оказалось мало:
+# все 265 с сна в каркасе были «законными», у каждой паузы стояло
+# объяснение длиннее сорока символов. Поэтому считается ещё и СУММА
+# ОБЪЯВЛЕННЫХ СЕКУНД: каждая константа в `pause(...)` каркаса и в сонных
+# умолчаниях драйвера. Мера статическая — она не зависит ни от машины, ни
+# от того, сколько раз жест позвали: вердикт, зависящий от загрузки, это
+# флак по построению (фактический сон прогона печатает live-check.sh).
+#
+# Предел двигают ОСОЗНАННО, одной строкой и с причиной — как
+# `UNTOUCHED_LIMIT` у отчёта живого покрытия (Р.68).
+SLEEP_BUDGET = 14.9
 
 
 def raw_sleeps(tree):
@@ -78,13 +107,54 @@ def pause_calls(tree):
     return out
 
 
+def declared_pauses(tree, rel):
+    """[(секунды, где)] у каждого вызова `pause(<число>, …)` дерева."""
+    out = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "pause"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, (int, float))
+        ):
+            out.append((float(node.args[0].value), f"{rel}:{node.lineno}"))
+    return out
+
+
+def driver_sleeps(tree):
+    """Сон драйвера X: сырые `time.sleep` вне `_nap` и сонные УМОЛЧАНИЯ.
+
+    Умолчание — это тоже пауза, и она опаснее записанной в вызове: её не
+    видно на месте жеста. До Р.69 `move(pause=0.05)`, `button(pause=0.09)` и
+    `key(pause=0.05, after=0.12)` спали за каркас именно так.
+    """
+    raw = [(line, fn) for line, fn in raw_sleeps(tree) if fn != DRIVER_SLEEP_HOME]
+    seconds = 0.0
+    defaults = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        args = node.args
+        pairs = list(zip(args.args[len(args.args) - len(args.defaults):], args.defaults))
+        for arg, default in pairs:
+            if arg.arg not in ("pause", "after"):
+                continue
+            if isinstance(default, ast.Constant) and isinstance(default.value, (int, float)):
+                seconds += float(default.value)
+                defaults.append((node.name, arg.arg, float(default.value)))
+    return raw, seconds, defaults
+
+
 def check():
     bad = []
+    declared = []
     for path in sorted(LIVE.glob("*.py")):
         if path.name == RUNNER:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        rel = f"src/scripts/live/{path.name}"
+        rel = f"{SCRIPTS.name}/live/{path.name}"
         for line, fn in raw_sleeps(tree):
             if path.name == FRAMEWORK and fn in SLEEP_HOMES:
                 continue
@@ -105,6 +175,35 @@ def check():
                 bad.append(
                     f"{rel}:{line}: причина паузы короче {MIN_REASON} символов: {reason!r}"
                 )
+        declared.extend(declared_pauses(tree, rel))
+
+    # ДРАЙВЕР X — та же область (Р.69)
+    drv = ast.parse(DRIVER.read_text(encoding="utf-8"), filename=str(DRIVER))
+    raw, drv_seconds, defaults = driver_sleeps(drv)
+    for line, fn in raw:
+        bad.append(
+            f"{DRIVER.name}:{line}: сырой `time.sleep` в драйвере вне "
+            f"`{DRIVER_SLEEP_HOME}` (функция {fn}) — сон драйвера обязан быть "
+            "виден и посчитан наравне с сном каркаса"
+        )
+    declared.extend(
+        (v, f"{DRIVER.name} ({f}.{a})") for f, a, v in defaults
+    )
+    budget = sum(v for v, _ in declared)
+
+    print(
+        f"объявленный сон живой проверки: {budget:.2f} c при пределе "
+        f"{SLEEP_BUDGET:.2f} c (в драйвере {drv_seconds:.2f} c: "
+        + ", ".join(f"{f}.{a}={v}" for f, a, v in defaults)
+        + ")"
+    )
+    if budget > SLEEP_BUDGET + 1e-9:
+        worst = max(declared, default=(0.0, "—"))
+        bad.append(
+            f"объявленный сон {budget:.2f} c превысил предел {SLEEP_BUDGET:.2f} c; "
+            f"самая дорогая пауза — {worst[1]} ({worst[0]} c). Предел двигают "
+            "осознанно, одной строкой и с причиной (SLEEP_BUDGET)"
+        )
     if bad:
         print("ОЖИДАНИЕ ПОДМЕНЕНО СНОМ:", file=sys.stderr)
         for b in bad:

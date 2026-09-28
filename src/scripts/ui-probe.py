@@ -30,6 +30,21 @@ WM_CLASS = "kinotrain"
 d = display.Display()
 root = d.screen().root
 
+# СКОЛЬКО ЗДЕСЬ ПРОСПАЛИ (Р.69). Драйвер спит внутри себя, и до Р.69 этот
+# сон был невидим: сторож `live-sleeps.py` смотрел только на каркас и
+# сценарии, а тут лежало 123 с из 387 с сна всего живого прогона. Теперь
+# весь сон драйвера идёт через `_nap`, копится и попадает в тот же отчёт,
+# что сон каркаса (`kt_live.slept()`).
+SLEPT = [0.0]
+
+
+def _nap(seconds):
+    """Единственное место, где драйвер спит."""
+    if seconds <= 0:
+        return
+    SLEPT[0] += seconds
+    time.sleep(seconds)
+
 
 def window():
     def walk(w):
@@ -75,7 +90,7 @@ def close_window():
 def move(x, y, pause=0.05):
     xtest.fake_input(d, X.MotionNotify, x=int(x), y=int(y))
     d.sync()
-    time.sleep(pause)
+    _nap(pause)
 
 
 def button(pressed, b=1, pause=0.09):
@@ -87,7 +102,7 @@ def button(pressed, b=1, pause=0.09):
     """
     xtest.fake_input(d, X.ButtonPress if pressed else X.ButtonRelease, b)
     d.sync()
-    time.sleep(pause)
+    _nap(pause)
 
 
 def key(spec, pause=0.05, after=0.12):
@@ -100,12 +115,12 @@ def key(spec, pause=0.05, after=0.12):
         xtest.fake_input(d, X.KeyPress, m)
     xtest.fake_input(d, X.KeyPress, code)
     d.sync()
-    time.sleep(pause)
+    _nap(pause)
     xtest.fake_input(d, X.KeyRelease, code)
     for m in reversed(mcodes):
         xtest.fake_input(d, X.KeyRelease, m)
     d.sync()
-    time.sleep(after)
+    _nap(after)
 
 
 def hold(spec, secs):
@@ -122,12 +137,12 @@ def hold(spec, secs):
         xtest.fake_input(d, X.KeyPress, m)
     xtest.fake_input(d, X.KeyPress, code)
     d.sync()
-    time.sleep(secs)
+    _nap(secs)
     xtest.fake_input(d, X.KeyRelease, code)
     for m in reversed(mcodes):
         xtest.fake_input(d, X.KeyRelease, m)
     d.sync()
-    time.sleep(0.2)
+    _nap(0.2)
 
 
 def main():
@@ -144,7 +159,7 @@ def main():
         for k in (0.35, 0.7, 1.0):
             move(ox + x1 + (x2 - x1) * k, oy + y1 + (y2 - y1) * k)
         button(False)
-        time.sleep(0.3)
+        _nap(0.3)
     elif cmd == "draghold":
         # тянуть и ДЕРЖАТЬ у цели: так проверяется автоскролл у кромки
         # (медиа-бин, п.1 р.16) — курсор стоит, а список обязан ползти
@@ -159,7 +174,7 @@ def main():
         while time.time() - t0 < secs:
             move(ox + x2, oy + y2, pause=0.03)
         button(False)
-        time.sleep(0.3)
+        _nap(0.3)
     elif cmd == "click" or cmd == "rclick":
         x, y = (int(v) for v in sys.argv[2:4])
         move(ox + x, oy + y)
@@ -167,7 +182,7 @@ def main():
         b = 1 if cmd == "click" else 3
         button(True, b)
         button(False, b)
-        time.sleep(0.3)
+        _nap(0.3)
     elif cmd == "wheel":
         # колесо: кнопки 4 (вверх) и 5 (вниз); n<0 — вверх
         x, y, n = (int(v) for v in sys.argv[2:5])
@@ -177,7 +192,7 @@ def main():
         for _ in range(abs(n)):
             button(True, b)
             button(False, b)
-        time.sleep(0.3)
+        _nap(0.3)
     elif cmd == "px":
         from PIL import Image
 
