@@ -23,6 +23,7 @@ live-check.sh).
 Вердикты пишутся в <каталог>/verdicts/<сценарий> («ok» или «fail»), вывод
 сценария — в общий поток работника.
 """
+import contextlib
 import json
 import os
 import re
@@ -42,12 +43,25 @@ SCREEN = os.environ.get("KT_LIVE_SCREEN", "1920x1080x24")
 LP_THREADS = os.environ.get("KT_LIVE_LP_THREADS", "4")
 
 OWN = re.compile(r"^OWN_PROCESS\s*=\s*True", re.M)
+# Подставной сценарий сторожа (t801/t802) программы не запускает вовсе —
+# поднимать ему X-сервер незачем. Это не мелочь: сторожа живут ВНУТРИ
+# прогона мастерской, и лишний Xvfb на каждый их запуск отнимал время у
+# чувствительных к нему движковых тестов (t663 стоил 60 с вместо 0.02).
+NO_DISPLAY = re.compile(r"^NO_DISPLAY\s*=\s*True", re.M)
+
+
+def _src(name):
+    return open(os.path.join(HERE, f"{name}.py"), encoding="utf-8").read()
 
 
 def wants_own_process(name):
     """Сценарий объявил, что ему нужен свой процесс?"""
-    src = open(os.path.join(HERE, f"{name}.py"), encoding="utf-8").read()
-    return bool(OWN.search(src))
+    return bool(OWN.search(_src(name)))
+
+
+def needs_display(names):
+    """Хоть одному сценарию нужен экран?"""
+    return any(not NO_DISPLAY.search(_src(n)) for n in names)
 
 
 class Screen:
@@ -243,7 +257,8 @@ def main():
     verdicts = os.path.join(out, "verdicts")
     os.makedirs(verdicts, exist_ok=True)
     fail = 0
-    with Screen(display, out):
+    screen = Screen(display, out) if needs_display(names) else contextlib.nullcontext()
+    with screen:
         bench = Bench(out, display)
         try:
             for name in names:

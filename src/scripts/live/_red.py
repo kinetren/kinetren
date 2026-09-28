@@ -4,6 +4,8 @@ import os
 import sys
 
 OWN_PROCESS = True
+# программы этот сценарий не запускает — X-сервер ему не нужен
+NO_DISPLAY = True
 
 
 def main(out):
