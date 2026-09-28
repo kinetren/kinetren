@@ -85,7 +85,20 @@ fi
 # крейта kt-gpu была дублем этого прогона и снята (её десять секунд уходили
 # на то, что мастерская уже прогнала). Без адаптера тесты kt-gpu скипаются
 # сами с печатью причины.
-if stage_log "тесты мастерской" cargo test --workspace -q; then
+#
+# ЕСТЬ NEXTEST — ГОНЯЕМ ИМ (замер Р.68): 216 с против 310 с у `cargo test`,
+# и — главное — ЗЕЛЁНО. `cargo test` запускает 96 тестовых бинарей по одному,
+# а внутри бинаря все тесты разом: t663 ждёт фоновой отрисовки ленты и под
+# такой толпой не дожидается (60 с таймаута). nextest раздаёт тесты по
+# процессам, планируя по ядрам. Доктестов в мастерской нет (проверено:
+# `cargo test --doc` — ноль), так что ничего не теряется. Нет nextest —
+# идём прежним путём, он остаётся эталоном.
+if command -v cargo-nextest > /dev/null; then
+    WS_CMD=(cargo nextest run --workspace --no-fail-fast)
+else
+    WS_CMD=(cargo test --workspace -q)
+fi
+if stage_log "тесты мастерской" "${WS_CMD[@]}"; then
     echo "тесты мастерской: ok"
 else
     cp "$STAGE_LOG" target/finish-workspace-fail.log 2>/dev/null || true
