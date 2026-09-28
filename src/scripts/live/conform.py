@@ -95,6 +95,14 @@ def main(out):
         app.click_probe("file.project_settings", "пункт «Настройки проекта…»")
         app.expect(app.has_probe("settings.conform.fill"), "окно настроек показало правила")
         app.shot("settings")
+        # ВСЕ ЧЕТЫРЕ правила жмутся мышью (Р.68, задача 5.3): до этого раунда
+        # живая проверка знала из окна ровно одно — «заполнить», а до трёх
+        # остальных человек не доходил НИ РАЗУ. Выбор — это состояние окна,
+        # в проект он уезжает только «Применить», поэтому перебор безопасен
+        # и утверждается тем же следствием, что раньше.
+        app.click_probe("settings.conform.as_is", "правило «как есть»")
+        app.click_probe("settings.conform.stretch", "правило «растянуть»")
+        app.click_probe("settings.conform.fit", "правило «вписать»")
         app.click_probe("settings.conform.fill", "правило «заполнить»")
         app.click_probe("settings.apply", "кнопка «Применить»")
         app.expect(not app.has_probe("settings.apply", tries=2), "окно закрылось после применения")
@@ -110,6 +118,52 @@ def main(out):
         if doc is not None:
             conform = doc["metadata"]["kt"].get("settings", {}).get("conform")
             app.expect(conform == "fill", f"правило проекта записано в файл: {conform}")
+
+        # --- 4. РАСТР И ЧАСТОТА КАДРОВ правятся руками (Р.68, задача 5.3) ----
+        # Поля растра и fps — второе, до чего живая проверка не доходила ни
+        # разу: окно открывалось только ради правила приведения. Здесь в них
+        # НАБИРАЮТ числа настоящей клавиатурой, и следствие ищется в файле —
+        # проект 1280×720@30 становится 640×480@25.
+        app.click_probe("menu.file", "меню «Файл» второй раз")
+        app.click_probe("file.project_settings", "пункт «Настройки проекта…» второй раз")
+        app.expect(app.has_probe("settings.width"), "окно настроек показало поля растра")
+        # группа «Кадр» сворачивается и разворачивается заголовком (контракт
+        # формы Р.66): заголовок — такая же цель жеста, как поле
+        app.click_probe("grp.settings.frame", "заголовок группы «Кадр» — свернуть")
+        # свёртка у egui АНИМИРОВАНА: пока она едет, поля ещё рисуются и
+        # честно публикуют свои прямоугольники. Отрицательную проверку
+        # спрашиваем ПОСЛЕ того, как программа перестала перерисовывать.
+        app.settle()
+        app.expect(
+            not app.has_probe("settings.width", tries=3),
+            "свёрнутая группа спрятала свои поля",
+        )
+        app.click_probe("grp.settings.frame", "заголовок группы «Кадр» — развернуть")
+        app.expect(app.has_probe("settings.width"), "развёрнутая группа вернула поля")
+        for probe, text, what in (
+            ("settings.width", "640", "поле ширины кадра"),
+            ("settings.height", "480", "поле высоты кадра"),
+            ("settings.fps", "25", "поле частоты кадров"),
+        ):
+            app.click_probe(probe, what)
+            app.key("ctrl+a")
+            app.type_text(text)
+        app.shot("settings-raster")
+        app.click_probe("settings.apply", "кнопка «Применить» после правки растра")
+        app.expect(
+            not app.has_probe("settings.apply", tries=2),
+            "окно закрылось после применения растра",
+        )
+        saved = app.saved_project()
+        st = saved.doc["metadata"]["kt"].get("settings", {})
+        app.expect(
+            (st.get("width"), st.get("height")) == (640, 480),
+            f"набранный растр доехал до файла: {st.get('width')}×{st.get('height')}",
+        )
+        app.expect(
+            abs(float(st.get("fps", 0)) - 25.0) < 1e-6,
+            f"набранная частота кадров доехала до файла: {st.get('fps')}",
+        )
         return app.done()
 
 

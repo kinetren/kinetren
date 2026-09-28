@@ -3861,3 +3861,62 @@ fn t804_live_coverage_names_untouched_places() {
         "сторож не назвал вернувшийся сценарий: {said_back}"
     );
 }
+
+/// t806 (Р.68, задача 5.3): у ГЛАГОЛОВ ДОРОЖКИ есть живой прицел.
+///
+/// Решение владельца в этом раунде: «прокликивать сложные моменты или те
+/// которые не прокликали ни разу». Отчёт живого покрытия назвал десять
+/// таких мест, и все десять — второй путь к тому, что `track.py` делает
+/// бейджами: пункты меню строки и контролы окна дорожки. Живой сценарий
+/// `trackverbs.py` их прокликал.
+///
+/// Сторож держит достигнутое с ОБЕИХ сторон, потому что разойтись они
+/// могут по-разному:
+///
+/// * программа перестала публиковать прямоугольник пункта — живому
+///   сценарию целиться нечем, и он покраснеет «программа отдала
+///   прямоугольник», не сказав, что дело в снятом щупе;
+/// * сценарий перестал жать пункт — покрытие молча уехало назад, и
+///   заметить это можно было бы только сравнив два отчёта.
+///
+/// t741 рядом проверяет ДРУГОЕ: что набор пунктов полон и что пункт с
+/// бейджем ведут в одну команду. Он смотрит на подписи и не знает, есть ли
+/// у пункта адрес для мыши.
+#[test]
+fn t806_track_verbs_have_a_live_aim() {
+    let root = workspace_root();
+    // «место программы» → где она его публикует
+    let places: [(&str, &str); 10] = [
+        ("track.menu.props", "timeline.rs"),
+        ("track.menu.mute", "timeline.rs"),
+        ("track.menu.solo", "timeline.rs"),
+        ("track.menu.lock", "timeline.rs"),
+        ("track.menu.fx", "timeline.rs"),
+        ("track.mute", "track_window.rs"),
+        ("track.solo", "track_window.rs"),
+        ("track.lock", "track_window.rs"),
+        ("track.blend.", "track_window.rs"),
+        ("track.cancel", "track_window.rs"),
+    ];
+    let scenario_path = root.join("scripts/live/trackverbs.py");
+    let scenario = std::fs::read_to_string(&scenario_path)
+        .unwrap_or_else(|e| panic!("живого сценария глаголов дорожки нет: {e}"));
+    let mut problems: Vec<String> = Vec::new();
+    for (name, file) in places {
+        let src = std::fs::read_to_string(root.join("apps/kt-app/src").join(file))
+            .unwrap_or_else(|e| panic!("не читается {file}: {e}"));
+        if !src.contains(&format!("\"{name}")) {
+            problems.push(format!(
+                "программа больше не публикует «{name}» в {file} — живому сценарию \
+                 глаголов дорожки целиться нечем"
+            ));
+        }
+        if !scenario.contains(&format!("\"{name}")) {
+            problems.push(format!(
+                "живой сценарий trackverbs.py не жмёт «{name}» — покрытие уехало назад \
+                 молча (Р.68, задача 5.3)"
+            ));
+        }
+    }
+    assert!(problems.is_empty(), "глаголы дорожки без живого прицела:\n  {}", problems.join("\n  "));
+}
