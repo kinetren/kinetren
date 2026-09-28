@@ -24,7 +24,10 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-out="$root/target/live-out"
+# КАТАЛОГ ПРОГОНА — переопределяемый (Р.68): сторожа t801/t802 гоняют
+# live-check во время прогона мастерской, а он чистит каталог вердиктов —
+# и чужой ИДУЩИЙ прогон терял свои вердикты, объявляя красным всё подряд.
+out="${KT_LIVE_OUT:-$root/target/live-out}"
 scenarios_dir="$root/scripts/live"
 display_base="${KT_LIVE_DISPLAY:-:99}"
 display_base="${display_base#:}"

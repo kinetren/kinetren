@@ -3580,6 +3580,9 @@ fn run_live_check(
     let out = std::process::Command::new("./scripts/live-check.sh")
         .args(names)
         .env("KT_LIVE_WORKERS", workers)
+        // свой каталог прогона: рядом может идти настоящий прогон живых
+        // сценариев, а `live-check.sh` чистит каталог вердиктов
+        .env("KT_LIVE_OUT", root.join("target/live-guard").to_string_lossy().as_ref())
         // свои номера экранов у КАЖДОГО теста: тесты идут параллельно, и
         // два прогона на одних экранах открывали бы окна друг другу
         .env("KT_LIVE_DISPLAY", display)
@@ -3607,7 +3610,7 @@ fn t801_red_scenario_is_rerun_alone() {
         return;
     }
     // подставной «красный с первого раза» помнит прогон файлом — снимаем
-    let mark = root.join("target/live-out/_flaky/already-ran");
+    let mark = root.join("target/live-guard/_flaky/already-ran");
     std::fs::remove_file(&mark).ok();
 
     let (ok, said) = run_live_check(&root, "2", ":80", &["_flaky", "_red"]);
@@ -3620,7 +3623,7 @@ fn t801_red_scenario_is_rerun_alone() {
         said.contains("КРАСНЫЕ ДВАЖДЫ") && said.contains("_red"),
         "дважды упавший сценарий не назван красным:\n{said}"
     );
-    let verdict = std::fs::read_to_string(root.join("target/live-out/verdicts/_flaky"))
+    let verdict = std::fs::read_to_string(root.join("target/live-guard/verdicts/_flaky"))
         .unwrap_or_default();
     assert_eq!(verdict, "ok", "перегнанный сценарий остался красным");
 
@@ -3651,7 +3654,7 @@ fn t802_workers_are_isolated() {
     let mut displays = std::collections::BTreeSet::new();
     let mut stores = std::collections::BTreeSet::new();
     for n in ["_env1", "_env2", "_env3"] {
-        let p = root.join("target/live-out").join(n).join("env.json");
+        let p = root.join("target/live-guard").join(n).join("env.json");
         let text = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
         let get = |key: &str| -> String {
             text.split(&format!("\"{key}\": \""))
