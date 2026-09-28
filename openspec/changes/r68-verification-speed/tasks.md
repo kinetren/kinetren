@@ -14,7 +14,7 @@
 ## 2. Сборка: mold
 
 - [x] 2.1 Завести `src/.cargo/config.toml` с mold для `x86_64-unknown-linux-gnu`; замерить каскад от `touch libs/kt-model/src/lib.rs` (`cargo test --workspace --no-run`) и сборку kt-app+kt-cli до/после. Проверка: числа в отчёте против 61 с и 43 с; `cargo test --workspace` зелёный.
-- [ ] 2.2 Проверить, что поставка цела: `scripts/release-build.sh` собирается в контейнере, `ldd … | grep -c libav` == 0, потолок GLIBC_ на месте. Проверка: прогон `scripts/release-build.sh` (инвариант №10, capability media-index).
+- [x] 2.2 Проверить, что поставка цела: `scripts/release-build.sh` собирается в контейнере, `ldd … | grep -c libav` == 0, потолок GLIBC_ на месте. Проверка: прогон `scripts/release-build.sh` (инвариант №10, capability media-index).
 
 ## 3. Живой стенд: канал готовности, кадр, один процесс
 
