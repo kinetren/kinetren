@@ -44,7 +44,11 @@ def main(argv):
     load = [0.0] * workers
     buckets = [[] for _ in range(workers)]
     for name in sorted(names, key=lambda n: -cost.get(n, DEFAULT_COST)):
-        i = min(range(workers), key=lambda i: load[i])
+        # При РАВНОЙ загрузке берём того, у кого меньше сценариев: иначе
+        # дешёвые сценарии (подставные стоят 0.0 с) всем скопом уезжают к
+        # работнику номер ноль — так сторож изоляции t802 увидел один экран
+        # вместо трёх.
+        i = min(range(workers), key=lambda i: (load[i], len(buckets[i]), i))
         buckets[i].append(name)
         load[i] += cost.get(name, DEFAULT_COST)
     for b in buckets:
