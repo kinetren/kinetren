@@ -63,3 +63,8 @@ def main(out):
         app.near(c1.duration, 4 * SEC, 3000, "длительность c1 цела")
         app.near(c2.duration, 4 * SEC, 3000, "длительность c2 цела")
         app.expect(not p.transitions, f"перенос пачки не заводит переходов: {p.transitions}")
+        return app.done()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1] if len(sys.argv) > 1 else "target/live-out/select"))

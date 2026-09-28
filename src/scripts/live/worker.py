@@ -318,9 +318,19 @@ def main():
                     env["KT_LIVE_BENCH"] = bench.dir
                     env["KT_AUTOSAVE_SECS"] = "600"
                 print(f"== {name} ==", flush=True)
+                started = time.time()
                 rc = subprocess.run(
                     [sys.executable, os.path.join(HERE, f"{name}.py"), scen_out], env=env
                 ).returncode
+                # ЦЕНА СЦЕНАРИЯ — В ОБЩУЮ ТАБЛИЦУ: по ней следующий прогон
+                # раскладывает сценарии по работникам (balance.py). Без неё
+                # один работник получает самый долгий сценарий и держит весь
+                # прогон, пока остальные уже закончили.
+                try:
+                    with open(os.path.join(out, "times.txt"), "a") as f:
+                        f.write(f"{name}\t{time.time() - started:.1f}\n")
+                except OSError:
+                    pass
                 ok = rc == 0
                 with open(os.path.join(verdicts, name), "w") as f:
                     f.write("ok" if ok else "fail")

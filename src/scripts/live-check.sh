@@ -73,15 +73,20 @@ run_worker() { # run_worker <номер> <сценарии...>
 }
 
 echo "живые сценарии: ${#want[@]} шт., работников $workers (ядер $cores)"
+
+# РАСКЛАДКА ПО ЦЕНЕ, а не по порядку (Р.68): работники пишут время каждого
+# сценария в `times.txt`, и следующий прогон раздаёт их «самый долгий —
+# наименее занятому» (жадный LPT). Иначе один работник получает `nestparam`
+# (136 с) и держит весь прогон, пока трое других уже закончили.
+mapfile -t order < <(python3 "$scenarios_dir/balance.py" "$out/times.txt" "$workers" "${want[@]}")
+
 pids=()
 for ((w = 0; w < workers; w++)); do
-    bucket=()
-    for ((i = w; i < ${#want[@]}; i += workers)); do
-        bucket+=("${want[i]}")
-    done
+    read -r -a bucket <<< "${order[w]:-}"
     run_worker "$w" "${bucket[@]}" &
     pids+=($!)
 done
+
 for p in "${pids[@]}"; do wait "$p" || true; done
 
 verdicts="$out/verdicts"

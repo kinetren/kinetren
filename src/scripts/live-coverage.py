@@ -24,7 +24,11 @@ headless спокойно, и прокликивать сложные момен
    сценарий проверяет воздух;
 2. спека ссылается на живой сценарий, которого нет на диске — «переезд»
    проверки в headless обязан оставлять сценарий спеки с новым адресом, а
-   не выкидывать его.
+   не выкидывать его;
+3. у сценария НЕТ ТОЧКИ ВХОДА (`if __name__ == "__main__"`). Такой файл
+   запускается и не делает НИЧЕГО, а прогон считает его зелёным: `select.py`
+   прожил так с Р.33 и был пойман только хронометражем (0.0 с на сценарий,
+   который должен идти пятнадцать секунд).
 
     python3 scripts/live-coverage.py            # отчёт
     python3 scripts/live-coverage.py --check    # отчёт и вердикт
@@ -115,16 +119,23 @@ def report(brief=False):
             by_place.setdefault(n.split(".")[0], []).append(n)
         for place, names in sorted(by_place.items()):
             print(f"  {place}: {', '.join(names)}")
+    no_entry = sorted(
+        p.stem
+        for p in LIVE.glob("*.py")
+        if p.name not in ("kt_live.py", "worker.py", "balance.py")
+        and not p.name.startswith("_")
+        and "__main__" not in p.read_text(encoding="utf-8")
+    )
     dead_specs = sorted(
         {n for f in SPECS.rglob("spec.md") if "archive" not in f.parts
          for n in SPEC_LIVE.findall(f.read_text(encoding="utf-8"))
          if not (LIVE / f"{n}.py").exists()}
     )
-    return untouched, phantom, dead_specs
+    return untouched, phantom, dead_specs, no_entry
 
 
 def main(argv):
-    untouched, phantom, dead_specs = report(brief="--brief" in argv)
+    untouched, phantom, dead_specs, no_entry = report(brief="--brief" in argv)
     if "--check" not in argv:
         return 0
     bad = []
@@ -132,6 +143,11 @@ def main(argv):
         bad.append(f"сценарий целится в «{n}», которого программа не публикует")
     for n in dead_specs:
         bad.append(f"спека ссылается на живой сценарий {n}.py, которого нет на диске")
+    for n in no_entry:
+        bad.append(
+            f"у сценария {n}.py нет точки входа (`if __name__ == \"__main__\"`) — "
+            "он запускается, не делает ничего и считается зелёным"
+        )
     if bad:
         print("ЖИВОЕ ПОКРЫТИЕ — КРАСНОЕ:", file=sys.stderr)
         for b in bad:
