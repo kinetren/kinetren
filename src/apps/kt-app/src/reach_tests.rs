@@ -4043,3 +4043,90 @@ fn t808_live_sleep_is_enumerable_everywhere_and_capped() {
     assert!(ok_real, "рабочее дерево покраснело от теста сторожа: {said_real}");
     let _ = std::fs::remove_dir_all(&sandbox);
 }
+
+/// t807 (Р.69): САМ ЖЕСТ ждёт прочитанный программой ввод, а не часы.
+///
+/// Р.68 построил ожидание по наблюдаемому событию (`wait_frame`,
+/// `wait_seen`, `settle`) и довёл его до ЩУПОВ — а сами жесты остались на
+/// часах: 539 с фактического сна из 1587 с прогона. Разница не только в
+/// минутах: фиксированная пауза не растягивается под нагрузкой, и это тот
+/// самый класс ложных покраснений, из-за которого запрет параллели прожил
+/// девять раундов (§468).
+///
+/// Сторож нужен потому, что прозой правило уже не удержалось один раз:
+/// решение «ждать событие» было записано в Р.68 и до жестов не доехало.
+/// Он же поймал и настоящую потерю в этом раунде — тело драга, случайно
+/// оставшееся прежним после бисекта, когда все прогоны были зелёными.
+#[test]
+fn t807_a_gesture_waits_for_input_the_program_has_read() {
+    let root = workspace_root();
+    let guard = root.join("scripts/live-sleeps.py");
+    let framework = root.join("scripts/live/kt_live.py");
+    assert!(guard.exists() && framework.exists(), "сторожа или каркаса нет на месте");
+    // своя копия дерева: тест ломает каркас нарочно, а рядом тот же сторож
+    // гоняют t803 и t808 (см. их разбор — общий файл делал вердикт соседа
+    // случайным)
+    let sandbox = std::env::temp_dir().join(format!("kt-t807-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&sandbox);
+    std::fs::create_dir_all(sandbox.join("live")).unwrap();
+    for entry in std::fs::read_dir(root.join("scripts/live")).unwrap().flatten() {
+        if entry.path().extension().is_some_and(|e| e == "py") {
+            std::fs::copy(entry.path(), sandbox.join("live").join(entry.file_name())).unwrap();
+        }
+    }
+    std::fs::copy(root.join("scripts/ui-probe.py"), sandbox.join("ui-probe.py")).unwrap();
+    let sandbox_fw = sandbox.join("live/kt_live.py");
+    let run = |scripts: &std::path::Path| -> (bool, String) {
+        let out = std::process::Command::new("python3")
+            .arg(&guard)
+            .arg("--check")
+            .arg("--scripts")
+            .arg(scripts)
+            .current_dir(&root)
+            .output()
+            .expect("python3 для сторожа ожиданий");
+        let mut said = String::from_utf8_lossy(&out.stdout).into_owned();
+        said.push_str(&String::from_utf8_lossy(&out.stderr));
+        (out.status.success(), said)
+    };
+
+    // 1) сегодняшний каркас зелёный: каждый жест ждёт ввод
+    let (ok, said) = run(&root.join("scripts"));
+    assert!(ok, "сторож красен на текущем каркасе: {said}");
+
+    let saved = std::fs::read_to_string(&sandbox_fw).expect("каркас читается");
+
+    // 2) жест перестал ждать ввод — красное С ИМЕНЕМ ЖЕСТА
+    let deaf = saved.replace(
+        "        self._after_gesture(mark, \"клик\")",
+        "        pass  # t807: жест оглох",
+    );
+    assert_ne!(deaf, saved, "сцена: ожидание клика найдено в каркасе");
+    std::fs::write(&sandbox_fw, &deaf).unwrap();
+    let (ok_deaf, said_deaf) = run(&sandbox);
+    assert!(!ok_deaf, "сторож не заметил жеста, который не ждёт программу");
+    assert!(
+        said_deaf.contains("`click`") && said_deaf.contains("_after_gesture"),
+        "сторож не назвал оглохший жест: {said_deaf}"
+    );
+
+    // 3) фиксированная пауза ВНУТРИ жеста — красное, даже с длинной причиной
+    let slept = saved.replace(
+        "        self._after_gesture(mark, \"клик\")",
+        "        self._after_gesture(mark, \"клик\")\n        pause(0.35, \
+         \"t807: подробная причина длиннее сорока символов, и всё равно это сон\")",
+    );
+    std::fs::write(&sandbox_fw, &slept).unwrap();
+    let (ok_slept, said_slept) = run(&sandbox);
+    std::fs::write(&sandbox_fw, &saved).unwrap();
+    assert!(!ok_slept, "сторож принял фиксированную паузу внутри жеста");
+    assert!(
+        said_slept.contains("внутри жеста `click`"),
+        "сторож не назвал место паузы: {said_slept}"
+    );
+
+    // рабочее дерево нетронуто
+    let (ok_real, said_real) = run(&root.join("scripts"));
+    assert!(ok_real, "рабочее дерево покраснело от теста сторожа: {said_real}");
+    let _ = std::fs::remove_dir_all(&sandbox);
+}

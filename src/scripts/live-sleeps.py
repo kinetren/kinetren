@@ -15,7 +15,11 @@
 * в КАРКАСЕ сырой `time.sleep` живёт ровно в трёх местах: `pause()` —
   пауза С ПРИЧИНОЙ, `_poll()` — шаг ожидания внутри каркаса и
   `poll_step()` — шаг опроса для циклов сценария;
-* у каждого вызова `pause(...)` причина словами не короче сорока символов.
+* у каждого вызова `pause(...)` причина словами не короче сорока символов;
+* КАЖДЫЙ ЖЕСТ каркаса ждёт, пока программа прочитает ввод (`_after_gesture`),
+  и фиксированных пауз внутри жеста не держит — законные места перечислены
+  поимённо (`PAUSE_OK_IN`). Это правило Р.69: ожидание по событию было
+  построено в Р.68 и до самих жестов не доехало.
 
 Мера «сорок символов» — та же, что у сторожа ПУТЬ (Р.67) и у реестра окон
 (Р.66): исключение обязано быть ИЗМЕРИМЫМ, иначе отговорка становится
@@ -52,6 +56,29 @@ DRIVER_SLEEP_HOME = "_nap"
 RUNNER = "worker.py"
 SLEEP_HOMES = {"pause", "_poll", "poll_step"}
 MIN_REASON = 40
+
+# ЖЕСТЫ КАРКАСА и правило Р.69: каждый ждёт, пока ПРОГРАММА прочитает ввод
+# (`_after_gesture`), а не столько, сколько кадр идёт «обычно». Правило
+# держится сторожем, потому что прозой оно уже не удержалось: ожидание по
+# событию было построено в Р.68 и до жестов не доехало.
+GESTURES = {
+    "click",
+    "right_click",
+    "double_click",
+    "drag",
+    "key",
+    "wheel",
+    "hover",
+    "close_window",
+    "type_text",
+}
+# Где фиксированная пауза внутри жеста ЗАКОННА, и почему ровно там:
+#   _after_gesture — фолбэк, когда события у egui законно не будет вовсе;
+#   focus          — поднятие окна делает оконный менеджер, своего события
+#                    ввода у программы тут нет;
+#   double_click   — зазор между кликами это ВРЕМЕННОЙ порог egui (Р.34);
+#   type_text      — зазор между символами, когда его просит сценарий.
+PAUSE_OK_IN = {"_after_gesture", "focus", "double_click", "type_text"}
 
 # БЮДЖЕТ СНА — ХРАПОВИК (Р.69, стадия 1). Причины словами оказалось мало:
 # все 265 с сна в каркасе были «законными», у каждой паузы стояло
@@ -147,6 +174,32 @@ def driver_sleeps(tree):
     return raw, seconds, defaults
 
 
+def gesture_faults(tree):
+    """Жест, который не ждёт программу, и пауза внутри жеста не по списку."""
+    bad = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name not in GESTURES:
+            continue
+        src = ast.dump(node)
+        if "'_after_gesture'" not in src:
+            bad.append(
+                f"жест `{node.name}` не ждёт ПРОЧИТАННЫЙ ввод (`_after_gesture`): "
+                "фиксированная пауза не растягивается под нагрузкой — это тот самый "
+                "класс ложных покраснений (§468), который Р.69 и убирает"
+            )
+        if node.name in PAUSE_OK_IN:
+            continue
+        for line, _reason in pause_calls(node):
+            bad.append(
+                f"kt_live.py:{line}: фиксированная пауза внутри жеста `{node.name}`. "
+                "Законные места перечислены (`PAUSE_OK_IN`): фолбэк ожидания, поднятие "
+                "окна, временной порог двойного клика, зазор набора по просьбе сценария"
+            )
+    return bad
+
+
 def check():
     bad = []
     declared = []
@@ -176,6 +229,8 @@ def check():
                     f"{rel}:{line}: причина паузы короче {MIN_REASON} символов: {reason!r}"
                 )
         declared.extend(declared_pauses(tree, rel))
+        if path.name == FRAMEWORK:
+            bad.extend(gesture_faults(tree))
 
     # ДРАЙВЕР X — та же область (Р.69)
     drv = ast.parse(DRIVER.read_text(encoding="utf-8"), filename=str(DRIVER))
