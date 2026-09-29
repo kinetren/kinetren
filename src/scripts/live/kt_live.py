@@ -157,6 +157,16 @@ def pause(seconds, reason):
     time.sleep(seconds)
 
 
+# РАЗНОС СОБЫТИЙ ДВОЙНОГО КЛИКА (Р.34, подтверждено Р.69).
+#
+# У двойного клика egui семантика ВРЕМЕННАЯ, и окно узкое с двух сторон:
+# четыре события, уехавшие в один кадр, засчитываются одним кликом, а
+# разнесённые больше 0.3 с — двумя одиночными. Прежние 0.09 с между
+# нажатием и отпусканием давали от первого нажатия до второго 0.22 с и
+# попадали в это окно; в Р.69 они исчезли вместе с паузами драйвера, и
+# двойной клик начал срываться под нагрузкой — `nestparam` красный дважды,
+# `formula` со второго раза. Ждать тут нечего: проверяется САМО время.
+
 def _poll(seconds=0.02):
     """Шаг опроса ожидания: не пауза, а частота вопроса «уже?»."""
     time.sleep(seconds)
@@ -197,6 +207,8 @@ class Live:
         self._reported = False
         self._shot_no = 0
         self._raised = False
+        # прямое чтение точки принимается только после сверки с эталоном
+        self._direct_px = None
         # НАБЛЮДАЕМЫЙ шаг кадра: под четырьмя работниками софт-рендер идёт
         # заметно медленнее, чем в одиночку, и все ожидания обязаны
         # растягиваться вместе с ним. Фиксированные пороги — это ровно та
@@ -472,8 +484,19 @@ class Live:
         Кадра мало: кадр мог НАЧАТЬСЯ раньше, чем событие доехало от
         X-сервера, и «кадр нарисован» ещё не значит «жест увиден» — именно
         на этом живой сценарий `level` молча терял драг. Метка берётся ДО
-        жеста, `wait_seen` ждёт её роста."""
-        return self._input_now()
+        жеста, `_wait_gesture` ждёт её роста.
+
+        Р.69: метка берётся из СВЕЖЕГО дампа. Дамп пишется 10 Гц, то есть
+        прочитанное за последние 100 мс в нём ещё не отражено — и рост
+        счётчика после жеста мог оказаться ЧУЖИМ, от хвоста предыдущего
+        жеста. Ожидание тогда кончалось раньше времени, и следующий жест
+        уходил в программу, которая ещё не перерисовалась: контекстное меню
+        не открывалось, окно эффектов не появлялось. Ловилось это только под
+        нагрузкой четырёх работников — двумя перегонами на прогон
+        (`formula`, `nestparam`). Поэтому метка ПАРНАЯ — (кадр, ввод), — и
+        ожидание требует не только роста ввода, но и дампа, написанного
+        заведомо ПОЗЖЕ метки (см. `_after_gesture`)."""
+        return self._counters()
 
     def _note_frame_gap(self, gap):
         """Запомнить, сколько сейчас идёт кадр (сглаженно, с потолком)."""
@@ -507,17 +530,26 @@ class Live:
             _poll()
         return False
 
-    def wait_seen(self, mark, what="жест", timeout=None, frames=1, soft=False):
-        """Ждать, пока программа ПРОЧИТАЕТ события жеста и нарисует кадр."""
-        timeout = timeout if timeout is not None else max(25.0, 60.0 * self._dt)
+    def _wait_gesture(self, mark, timeout):
+        """Программа прочитала ИМЕННО ЭТОТ жест (Р.69).
+
+        Двух условий мало поодиночке. «Ввод вырос» обманывает: метка снята с
+        дампа, которому может быть до 100 мс, и рост бывает чужой — от хвоста
+        предыдущего жеста. «Кадр нарисован» обманывает тоже: кадр мог
+        НАЧАТЬСЯ раньше, чем событие доехало от X-сервера (урок Р.68).
+
+        Вместе они держат: ждём дамп, написанный заведомо ПОЗЖЕ метки (номер
+        кадра вырос на два — то есть дамп писала не та отрисовка, что дала
+        метку, и не следующая за ней), И рост числа прочитанных событий.
+        """
+        frame0, input0 = mark
         deadline = time.time() + timeout
         while time.time() < deadline:
-            if self._input_now() > mark:
-                return self.wait_frame(frames, what=what, soft=True)
+            frame, seen = self._counters()
+            if seen > input0 and frame >= frame0 + 2:
+                return True
             _poll()
-        if soft:
-            return False
-        raise Failure(f"программа не прочитала ввод: {what}")
+        return False
 
     def wait_frame(self, n=1, timeout=None, what="кадр после жеста", soft=False):
         """Ждать, пока программа нарисует ещё `n` кадров.
@@ -676,9 +708,7 @@ class Live:
         ровно ту слепоту, ради снятия которой раунд заведён.
         """
         _t0 = time.time()
-        if self.wait_seen(
-            mark, what=what, timeout=max(2.0, 12.0 * self._dt), soft=True
-        ):
+        if self._wait_gesture(mark, timeout=max(2.0, 12.0 * self._dt)):
             if os.environ.get("KT_LIVE_DEBUG_WAIT"):
                 print(f"      [ждал] {what}: {time.time() - _t0:.2f} c", file=sys.stderr)
             return True
@@ -744,7 +774,9 @@ class Live:
             if i:
                 pause(0.04, "временной порог двойного клика egui: зазор между кликами меньше 0.3 с, но больше одного кадра (проверено 5 из 5)")
             probe.button(True, pause=0.0)
+            pause(0.09, "двойной клик у egui — ВРЕМЕННОЙ жест: без разноса все четыре события попадают в один кадр ввода и считаются одним кликом (замер Р.34: 0.04 с между кликами — 5 из 5, 0.10 с — 0 из 5)")
             probe.button(False, pause=0.0)
+            pause(0.09, "двойной клик у egui — ВРЕМЕННОЙ жест: без разноса все четыре события попадают в один кадр ввода и считаются одним кликом (замер Р.34: 0.04 с между кликами — 5 из 5, 0.10 с — 0 из 5)")
         mark = self.seen()
         probe.d.sync()
         self._after_gesture(mark, "двойной клик")
@@ -980,6 +1012,26 @@ class Live:
             self.wait_frame(1, what=f"кадр в ожидании виджета {name}", soft=True)
         return False
 
+    def wait_gone(self, name, timeout=None):
+        """Дождаться, что виджета `name` в дампе БОЛЬШЕ НЕТ (Р.69).
+
+        Отрицательная проверка тоньше положительной: щупы КОПЯТСЯ между
+        записями дампа, а свёртка и попапы у egui анимированы — пока
+        анимация едет, поля ещё рисуются и честно публикуют свои
+        прямоугольники. Прежде это прятала фиксированная пауза внутри
+        жеста, и `conform` мигал на «свёрнутая группа спрятала поля».
+
+        Ждём, пока СВЕЖИЙ дамп перестанет содержать имя, а не спрашиваем
+        один раз наугад.
+        """
+        timeout = timeout if timeout is not None else max(5.0, 25.0 * self._dt)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            self.wait_frame(2, what=f"свежий дамп без {name}", soft=True)
+            if not any(f["param"] == name for f in self.geom().get("fields", [])):
+                return True
+        return False
+
     def live_clips(self):
         """События ЖИВОЙ модели (без сохранения). Нужно там, где проверяется
         сторож несохранённого: Ctrl+S проверил бы запись, а не сторож."""
@@ -1130,8 +1182,21 @@ class Live:
         print(f"   шаг {self._shot_no:02d}: {what or name} → {os.path.basename(path)}")
         return path
 
-    def pixel(self, x, y):
-        """Цвет пикселя экрана (r, g, b) — «что человек видит»."""
+    # ЧТЕНИЕ ТОЧКИ ЭКРАНА: прямой путь и ЭТАЛОН (Р.69).
+    #
+    # Прямой путь — тот же XGetImage, которым пользуется `xwd`, только без
+    # файла и без разбора PNG: 0.04 мс против 84 мс, а чтений за прогон
+    # ≈341. Но принимать его на веру нельзя: у окна eframe 32-битный визуал,
+    # и ImageMagick на корневом окне уже отдавал ЧЁРНОЕ там, где картинка
+    # была (Р.33 п.228) — сценарий тогда сравнивал чёрное с чёрным и
+    # «проходил». Поэтому первое чтение прогона идёт ОБОИМИ путями на одном
+    # кадре; разошлись — весь прогон читает эталоном и ГОВОРИТ об этом.
+    PIXEL_TOL = 8
+
+    def _pixel_direct(self, x, y):
+        return probe.pixels(x, y)[0]
+
+    def _pixel_shot(self, x, y):
         img = self.shot(f"px-{x}-{y}")
         out = subprocess.run(
             ["convert", img, "-format", f"%[pixel:p{{{x},{y}}}]", "info:-"],
@@ -1139,10 +1204,41 @@ class Live:
             text=True,
             check=True,
         ).stdout
-        nums = [int(v) for v in out.replace("(", ",").replace(")", ",").split(",") if v.strip().isdigit()]
+        nums = [
+            int(v)
+            for v in out.replace("(", ",").replace(")", ",").split(",")
+            if v.strip().isdigit()
+        ]
         os.unlink(img)
         self._shot_no -= 1
         return tuple(nums[:3])
+
+    def _pixel_path(self):
+        """Сверить прямой путь с эталоном ОДИН раз за прогон."""
+        if self._direct_px is not None:
+            return self._direct_px
+        for _ in range(3):
+            # картинка могла меняться между чтениями — пробуем на устоявшейся
+            self.wait_frame(1, what="кадр перед сверкой чтения точки", soft=True)
+            x, y = self.preview_center()
+            ref = self._pixel_shot(x, y)
+            got = self._pixel_direct(x, y)
+            if all(abs(a - b) <= self.PIXEL_TOL for a, b in zip(ref, got)):
+                self._direct_px = True
+                return True
+        print(
+            "   ВНИМАНИЕ: прямое чтение точки разошлось с эталоном (xwd) — "
+            "весь прогон читает эталоном",
+            file=sys.stderr,
+        )
+        self._direct_px = False
+        return False
+
+    def pixel(self, x, y):
+        """Цвет пикселя экрана (r, g, b) — «что человек видит»."""
+        if self._pixel_path():
+            return self._pixel_direct(x, y)
+        return self._pixel_shot(x, y)
 
     def ink_box(self, xy, half=60, step=6):
         """Самый яркий пиксель КВАДРАТА вокруг точки — один снимок экрана.
@@ -1152,9 +1248,14 @@ class Live:
         штрих, и попасть в него центром превью — лотерея, а тест-лотерея
         не тест (правило «утверждать следствие»).
         """
-        img = self.shot(f"ink-{xy[0]}-{xy[1]}")
         x0, y0 = xy[0] - half, xy[1] - half
         n = 2 * half // step
+        if self._pixel_path():
+            # ПРЯМЫМ ЧТЕНИЕМ (Р.69): квадрат 120×120 читается одним запросом
+            # к X, а не снимком всего экрана плюс тремя действиями ImageMagick
+            px = probe.pixels(x0, y0, 2 * half, 2 * half)
+            return float(max(max(c) for c in px)) if px else 0.0
+        img = self.shot(f"ink-{xy[0]}-{xy[1]}")
         out = subprocess.run(
             [
                 "convert",

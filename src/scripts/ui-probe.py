@@ -38,6 +38,33 @@ root = d.screen().root
 SLEPT = [0.0]
 
 
+def pixels(x, y, w=1, h=1):
+    """Прямоугольник экрана ПРЯМЫМ запросом к X: [(r, g, b), …] (Р.69).
+
+    Прежде цвет одной точки стоил полного снимка экрана 1920×1080 через
+    `xwd` и двух процессов ImageMagick — 84 мс на чтение и ≈341 чтение за
+    прогон. Здесь тот же XGetImage, которым пользуется и `xwd`, только без
+    файла и без разбора PNG: 0.04 мс.
+
+    Формат ZPixmap отдаёт по 4 байта на точку (BGRX) при глубине 24;
+    число байт на точку считается из длины данных, а не предполагается.
+    """
+    img = root.get_image(int(x), int(y), int(w), int(h), X.ZPixmap, 0xFFFFFFFF)
+    data = img.data
+    if isinstance(data, str):  # старые python3-xlib отдают str
+        data = data.encode("latin-1")
+    n = int(w) * int(h)
+    bpp = len(data) // max(n, 1)
+    out = []
+    for i in range(n):
+        px = data[i * bpp : i * bpp + bpp]
+        if bpp >= 3:
+            out.append((px[2], px[1], px[0]))  # BGRX → RGB
+        else:
+            out.append((px[0], px[0], px[0]))
+    return out
+
+
 def _nap(seconds):
     """Единственное место, где драйвер спит."""
     if seconds <= 0:

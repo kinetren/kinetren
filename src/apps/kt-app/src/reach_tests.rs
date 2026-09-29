@@ -4130,3 +4130,100 @@ fn t807_a_gesture_waits_for_input_the_program_has_read() {
     assert!(ok_real, "рабочее дерево покраснело от теста сторожа: {said_real}");
     let _ = std::fs::remove_dir_all(&sandbox);
 }
+
+/// t809 (Р.69): точка экрана читается у X, а снимок остаётся ЭТАЛОНОМ.
+///
+/// Цвет одной точки стоил полного снимка экрана 1920×1080 через `xwd` и двух
+/// процессов ImageMagick — 84 мс на чтение при ≈341 чтении за живой прогон.
+/// Прямой `XGetImage` даёт то же за 0.04 мс.
+///
+/// Принимать прямой путь на веру нельзя, и это не осторожность: у окна
+/// eframe 32-битный визуал, и чтение корневого окна ImageMagick'ом уже
+/// отдавало ЧЁРНОЕ там, где картинка была (Р.33 п.228) — сценарий тогда
+/// сравнивал чёрное с чёрным и «проходил». Поэтому эталон остаётся в коде
+/// и остаётся мерой: расхождение возвращает чтение на него и говорит об этом.
+///
+/// Тест проверяет ОБЕ половины: что механизм сверки и фолбэк на месте
+/// (статически) и что два пути дают один цвет на одном кадре (прогоном в
+/// виртуальном экране).
+#[test]
+fn t809_a_screen_point_is_read_from_x_with_the_shot_as_reference() {
+    let root = workspace_root();
+    let driver = std::fs::read_to_string(root.join("scripts/ui-probe.py")).unwrap();
+    let fw = std::fs::read_to_string(root.join("scripts/live/kt_live.py")).unwrap();
+
+    // 1) прямой путь есть у драйвера, а эталон и сверка — у каркаса
+    assert!(
+        driver.contains("def pixels("),
+        "у драйвера нет прямого чтения точки — цвет снова стоит снимка всего экрана"
+    );
+    for (what, needle) in [
+        ("прямое чтение", "_pixel_direct"),
+        ("эталон через xwd", "_pixel_shot"),
+        ("сверка с эталоном", "_pixel_path"),
+    ] {
+        assert!(fw.contains(needle), "в каркасе нет: {what} (`{needle}`)");
+    }
+    assert!(
+        fw.contains("весь прогон читает эталоном"),
+        "расхождение с эталоном обязано быть НАЗВАНО, а не молча переключать путь"
+    );
+
+    // 2) два пути дают ОДИН цвет на одном кадре
+    if let Some(why) = live_check_available(&root) {
+        eprintln!("t809: сверка путей чтения пропущена — {why}");
+        return;
+    }
+    let script = r##"
+import subprocess, sys, time, os, importlib.util
+disp = ":%d" % (90 + os.getpid() % 8)
+xv = subprocess.Popen(["Xvfb", disp, "-screen", "0", "800x600x24", "-nolisten", "tcp"],
+                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+os.environ["DISPLAY"] = disp
+try:
+    for _ in range(40):
+        if subprocess.run(["xdpyinfo"], capture_output=True).returncode == 0:
+            break
+        time.sleep(0.25)
+    spec = importlib.util.spec_from_file_location("ui_probe", sys.argv[1])
+    probe = importlib.util.module_from_spec(spec); spec.loader.exec_module(probe)
+    # ЧТО-НИБУДЬ НЕ ЧЁРНОЕ на экране: иначе сверка «чёрное против чёрного»
+    # зелена и на сломанном чтении — ровно та ловушка, от которой этот тест
+    # и сторожит (Р.33 п.228). Рисуем сами, без внешних утилит.
+    root = probe.d.screen().root
+    gc = root.create_gc(foreground=0x3070C0, background=0)
+    root.fill_rectangle(gc, 0, 0, 800, 600)
+    probe.d.sync()
+    time.sleep(0.4)
+    direct = probe.pixels(400, 300)[0]
+    xwd = subprocess.run(["xwd", "-root", "-display", disp], capture_output=True).stdout
+    png = "/tmp/_t809_%d.png" % os.getpid()
+    subprocess.run(["convert", "xwd:-", png], input=xwd, capture_output=True, check=True)
+    out = subprocess.run(["convert", png, "-format", "%[pixel:p{400,300}]", "info:-"],
+                         capture_output=True, text=True, check=True).stdout
+    os.unlink(png)
+    nums = [int(v) for v in out.replace("(", ",").replace(")", ",").split(",")
+            if v.strip().isdigit()][:3]
+    print("direct=%s reference=%s" % (list(direct), nums))
+    if sum(direct) == 0:
+        raise SystemExit("прямое чтение отдало ЧЁРНОЕ там, где картинка есть")
+    if any(abs(a - b) > 8 for a, b in zip(direct, nums)):
+        raise SystemExit("пути разошлись: %s против %s" % (list(direct), nums))
+finally:
+    xv.terminate()
+"##;
+    let out = std::process::Command::new("python3")
+        .arg("-c")
+        .arg(script)
+        .arg(root.join("scripts/ui-probe.py"))
+        .current_dir(&root)
+        .output()
+        .expect("python3 для сверки путей чтения");
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "прямое чтение разошлось с эталоном: {said}");
+    assert!(said.contains("direct="), "сверка не назвала прочитанные цвета: {said}");
+}

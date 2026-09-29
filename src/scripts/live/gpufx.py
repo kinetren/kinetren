@@ -34,9 +34,17 @@ def main(out):
         plain = app.brightness(preview)
         app.shot("plain")
 
-        # клип с Edges: на плоском цвете градиентов нет → чёрный кадр
+        # клип с Edges: на плоском цвете градиентов нет → чёрный кадр.
+        #
+        # Читаем ПОСЛЕ СМЕНЫ картинки (`pixel_settled`), а не сразу: превью
+        # штатно держит последний кадр, пока не приедет декодированный
+        # (правило `apps/kt-app/CLAUDE.md`). Прежде это прятала цена самого
+        # чтения — снимок всего экрана через ImageMagick занимал 84 мс и
+        # давал программе фору; с прямым чтением у X (Р.69) фора исчезла, и
+        # сценарий начал читать ПРЕДЫДУЩИЙ кадр.
         app.click(app.x_at(int(5.5 * SEC)), app.ruler_y())
-        fx = app.brightness(preview)
+        r, g, b = app.pixel_settled(preview, differs_from=app.pixel(*preview))
+        fx = (r + g + b) / 3.0
         app.shot("edges")
 
         print(f"   яркость превью: без FX {plain:.1f}, с Edges {fx:.1f}")

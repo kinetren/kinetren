@@ -89,8 +89,10 @@ PAUSE_OK_IN = {"_after_gesture", "focus", "double_click", "type_text"}
 # флак по построению (фактический сон прогона печатает live-check.sh).
 #
 # Предел двигают ОСОЗНАННО, одной строкой и с причиной — как
-# `UNTOUCHED_LIMIT` у отчёта живого покрытия (Р.68).
-SLEEP_BUDGET = 14.9
+# `UNTOUCHED_LIMIT` у отчёта живого покрытия (Р.68). Р.69: 14.9 → 11.2
+# после того, как жесты перешли на ожидание прочитанного ввода; фактический
+# сон прогона при этом 539 → 41 с.
+SLEEP_BUDGET = 11.2
 
 
 def raw_sleeps(tree):
@@ -134,20 +136,60 @@ def pause_calls(tree):
     return out
 
 
+def param_defaults(tree, call):
+    """Числовые умолчания параметров функции, в теле которой стоит `call`."""
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not any(n is call for n in ast.walk(fn)):
+            continue
+        args = fn.args
+        pairs = zip(args.args[len(args.args) - len(args.defaults):], args.defaults)
+        return {
+            a.arg: float(d.value)
+            for a, d in pairs
+            if isinstance(d, ast.Constant) and isinstance(d.value, (int, float))
+        }
+    return {}
+
+
 def declared_pauses(tree, rel):
-    """[(секунды, где)] у каждого вызова `pause(<число>, …)` дерева."""
-    out = []
+    """[(секунды, где)] у каждого вызова `pause(<число>, …)` дерева.
+
+    В КАРКАСЕ длительность обязана быть ЧИСЛОМ НА МЕСТЕ ВЫЗОВА: пауза,
+    спрятанная за именем константы, в бюджет не попадала вовсе — дыра
+    нашлась сразу, как только ею воспользовались (разнос двойного клика,
+    Р.69). В СЦЕНАРИИ длительность законно бывает параметром: у `rate`
+    пауза и есть сама проверка (столько программа должна играть), а у
+    набора строки зазор приходит от сценария. Такие не считаются бюджетом и
+    названы в отчёте отдельной строкой. Вторая величина возврата — список
+    нарушений, третья — вычисляемые паузы.
+    """
+    out, bad, computed = [], [], []
     for node in ast.walk(tree):
-        if (
+        if not (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
             and node.func.id == "pause"
             and node.args
-            and isinstance(node.args[0], ast.Constant)
-            and isinstance(node.args[0].value, (int, float))
         ):
-            out.append((float(node.args[0].value), f"{rel}:{node.lineno}"))
-    return out
+            continue
+        arg = node.args[0]
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, (int, float)):
+            out.append((float(arg.value), f"{rel}:{node.lineno}"))
+        elif isinstance(arg, ast.Name) and arg.id in param_defaults(tree, node):
+            # длительность пришла ПАРАМЕТРОМ с числовым умолчанием: в бюджет
+            # идёт умолчание — столько каркас спит, когда сценарий не просил
+            # иного (`type_text(gap=0.0)`)
+            out.append((param_defaults(tree, node)[arg.id], f"{rel}:{node.lineno}"))
+        elif rel.endswith(FRAMEWORK):
+            bad.append(
+                f"{rel}:{node.lineno}: длительность паузы КАРКАСА не число на месте "
+                "вызова — такая пауза не попадает в бюджет сна и становится невидимкой"
+            )
+        else:
+            computed.append(f"{rel}:{node.lineno}")
+    return out, bad, computed
 
 
 def driver_sleeps(tree):
@@ -203,6 +245,7 @@ def gesture_faults(tree):
 def check():
     bad = []
     declared = []
+    computed = []
     for path in sorted(LIVE.glob("*.py")):
         if path.name == RUNNER:
             continue
@@ -228,7 +271,10 @@ def check():
                 bad.append(
                     f"{rel}:{line}: причина паузы короче {MIN_REASON} символов: {reason!r}"
                 )
-        declared.extend(declared_pauses(tree, rel))
+        seen_pauses, bad_pauses, computed_pauses = declared_pauses(tree, rel)
+        declared.extend(seen_pauses)
+        bad.extend(bad_pauses)
+        computed.extend(computed_pauses)
         if path.name == FRAMEWORK:
             bad.extend(gesture_faults(tree))
 
@@ -246,6 +292,11 @@ def check():
     )
     budget = sum(v for v, _ in declared)
 
+    if computed:
+        print(
+            "паузы с вычисляемой длительностью (в бюджет не входят, длительность "
+            f"приходит от сценария): {', '.join(computed)}"
+        )
     print(
         f"объявленный сон живой проверки: {budget:.2f} c при пределе "
         f"{SLEEP_BUDGET:.2f} c (в драйвере {drv_seconds:.2f} c: "
