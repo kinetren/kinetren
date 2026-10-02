@@ -25,7 +25,10 @@ pub type Metadata = Map<String, Value>;
 
 /// Сырой объект неизвестной схемы: карта verbatim, включая `OTIO_SCHEMA`
 /// на исходной позиции.
-#[derive(Debug, Clone, PartialEq)]
+// `transparent` (Р.70): сырой узел — это ровно его объект, с тегом внутри; в
+// файле проекта он едет как есть, чтобы экспорт вернул его байт-в-байт
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct RawObject(pub Map<String, Value>);
 
 impl RawObject {

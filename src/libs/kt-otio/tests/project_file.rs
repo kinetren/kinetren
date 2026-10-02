@@ -167,3 +167,91 @@ fn t813_project_write_leaves_old_or_new_never_half() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---- t816/t817. чужой passthrough переживает файл проекта -----------------
+
+/// Чужой файл обмена с незнакомым полем на Timeline, чужим неймспейсом в
+/// metadata, чужим полем у клипа и целым незнакомым узлом — ровно то, что
+/// обязано вернуться при экспорте.
+fn foreign_document() -> String {
+    serde_json::json!({
+        "OTIO_SCHEMA": "Timeline.1",
+        "name": "f",
+        "vendor_field": {"deep": [1, 2, {"x": true}]},
+        "metadata": {"resolve": {"colorVersion": 3}, "fcp_xml": "keep"},
+        "tracks": {
+            "OTIO_SCHEMA": "Stack.1",
+            "children": [{
+                "OTIO_SCHEMA": "Track.1",
+                "kind": "Video",
+                "children": [
+                    {
+                        "OTIO_SCHEMA": "Clip.2",
+                        "name": "known",
+                        "custom_clip_field": 42,
+                        "source_range": {"OTIO_SCHEMA": "TimeRange.1",
+                            "start_time": {"OTIO_SCHEMA": "RationalTime.1", "value": 0.0, "rate": 90000.0},
+                            "duration": {"OTIO_SCHEMA": "RationalTime.1", "value": 900.0, "rate": 90000.0}},
+                        "media_references": {"DEFAULT_MEDIA": {
+                            "OTIO_SCHEMA": "ExternalReference.1", "target_url": "a.mov",
+                            "available_range": null}},
+                        "active_media_reference_key": "DEFAULT_MEDIA"
+                    },
+                    {
+                        "OTIO_SCHEMA": "FancyClip.7",
+                        "zeta": 1,
+                        "alpha": 2,
+                        "source_range": {"OTIO_SCHEMA": "TimeRange.1",
+                            "start_time": {"OTIO_SCHEMA": "RationalTime.1", "value": 0.0, "rate": 24.0},
+                            "duration": {"OTIO_SCHEMA": "RationalTime.1", "value": 24.0, "rate": 24.0}}
+                    }
+                ]
+            }]
+        }
+    })
+    .to_string()
+}
+
+#[test]
+fn t816_retained_survives_json_round_trip() {
+    let bundle = kt_otio::load_project(&foreign_document(), None).expect("чужой файл читается");
+    let direct = save_project(&bundle.project, &bundle.retained, None);
+
+    let json = bundle.retained.to_json();
+    assert_eq!(json, bundle.retained.to_json(), "to_json обязан быть детерминирован");
+    let back = Retained::from_json(&json).expect("passthrough читается обратно");
+    assert_eq!(back.to_json(), json, "круг Retained → JSON → Retained обязан быть тождеством");
+
+    // настоящая мера — ЭКСПОРТ: с восстановленным passthrough файл тот же
+    let via_json = save_project(&bundle.project, &back, None);
+    assert_eq!(via_json, direct, "экспорт через восстановленный passthrough обязан быть байт-в-байт");
+    for needle in ["vendor_field", "colorVersion", "custom_clip_field", "FancyClip.7", "\"zeta\""] {
+        assert!(via_json.contains(needle), "чужое «{needle}» потеряно на круге");
+    }
+}
+
+#[test]
+fn t817_import_project_export_keeps_foreign_fields() {
+    // импорт чужого .otio → файл проекта → чтение → экспорт
+    let bundle = kt_otio::load_project(&foreign_document(), None).expect("импорт");
+    let text = to_text(&bundle.project, Some(&bundle.retained.to_json()));
+    assert!(text.contains("\"otio\""), "passthrough обязан лежать в файле проекта отдельным полем");
+
+    let file = from_text(&text).expect("файл проекта читается");
+    let retained = Retained::from_json(file.otio.as_ref().expect("поле passthrough на месте"))
+        .expect("passthrough из файла проекта читается");
+    let exported = save_project(&file.project, &retained, None);
+    assert_eq!(
+        exported,
+        save_project(&bundle.project, &bundle.retained, None),
+        "экспорт после круга через файл проекта обязан совпасть с прямым экспортом"
+    );
+    // и чужой порядок ключей пережил всё: zeta раньше alpha, как в исходнике
+    let z = exported.find("\"zeta\"").unwrap();
+    let a = exported.find("\"alpha\"").unwrap();
+    assert!(z < a, "порядок чужих ключей обязан сохраниться");
+
+    // проект без passthrough поля не несёт — файл не растёт впустую
+    let plain = to_text(&bundle.project, None);
+    assert!(!plain.contains("\"otio\""), "пустой passthrough не пишется");
+}

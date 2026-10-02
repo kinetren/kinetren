@@ -38,7 +38,7 @@ pub type ExtraMeta = (Map<String, Value>, Map<String, Value>);
 /// (transition_type, metadata, extra) чужого перехода.
 pub type TransitionExtra = (String, Map<String, Value>, Map<String, Value>);
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ClipExtra {
     pub name: String,
     pub extra: Map<String, Value>,
@@ -68,20 +68,20 @@ pub struct ClipExtra {
 /// `source_in` уходил в файл без этого часа, а при следующей загрузке час
 /// вычитался ещё раз. Медиа-уровень чинит всю эту половину разом.
 /// Чужое у метки: то, чего нет в `kt_model::Marker`.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct MarkerExtra {
     pub comment: String,
     pub metadata: Map<String, Value>,
     pub extra: Map<String, Value>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct MediaRefs {
     pub media_refs: IndexMap<String, Option<MediaRefNode>>,
     pub active_key: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TrackExtra {
     pub name_foreign: Option<String>,
     pub extra: Map<String, Value>,
@@ -114,7 +114,7 @@ impl Default for TrackExtra {
 
 /// Passthrough-остатки загруженного файла. Вне undo (нередактируемы);
 /// для нового проекта — Default.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Retained {
     pub timeline_name: String,
     pub timeline_extra: Map<String, Value>,
@@ -124,14 +124,22 @@ pub struct Retained {
     pub stack_extra: Map<String, Value>,
     pub stack_metadata: Map<String, Value>,
     pub global_start_time: Option<RationalTime>,
+    // HashMap-поля (Р.70): в файле проекта — ПАРЫ, отсортированные по ключу.
+    // JSON не умеет нестроковых ключей, а порядок обхода HashMap случаен —
+    // без сортировки каждое сохранение давало бы ложный дифф в git.
+    #[serde(with = "sorted_pairs")]
     pub tracks: HashMap<(ClipKind, u32), TrackExtra>,
+    #[serde(with = "sorted_pairs")]
     pub clips: HashMap<ClipId, ClipExtra>,
     /// Ссылки на материал по МЕДИА — общие для всех его клипов (п.356).
+    #[serde(with = "sorted_pairs")]
     pub media: HashMap<kt_model::MediaId, MediaRefs>,
     /// По паре клипов стыка.
     /// Ключ — пара концов перехода; у фейда (Р.25) один конец None.
+    #[serde(with = "sorted_pairs")]
     pub transitions: HashMap<(Option<ClipId>, Option<ClipId>), TransitionExtra>,
     /// Сырьё foreign-плейсхолдеров по ForeignEvent.key.
+    #[serde(with = "sorted_pairs")]
     pub foreign: HashMap<u64, RawObject>,
     /// Чужие маркеры корневого Stack (наши — из модели).
     pub stack_markers_foreign: Vec<MarkerNode>,
@@ -3091,4 +3099,60 @@ pub fn grid_fps(rate: f64) -> Option<u32> {
     }
     let r = r as u32;
     (r > 0 && kt_time::TICK_HZ % r as i64 == 0).then_some(r)
+}
+
+// ---- Retained ↔ JSON (Р.70) ---------------------------------------------------
+//
+// Файл проекта свой, а чужой passthrough импортированного файла обмена едет в
+// нём отдельным полем и возвращается при экспорте: потерять чужую работу
+// молча нельзя. Перевод идёт serde-мостами узлов (`node_serde!`), которые
+// уже пишут и читают OTIO-объекты, — своего слоя между `Retained` и JSON нет.
+
+/// `HashMap` в JSON — ПАРЫ `[ключ, значение]`, отсортированные по ключу.
+///
+/// Две причины, и обе обязательные: JSON-объект не умеет нестроковых ключей
+/// (`(ClipKind, u32)`, `(Option<ClipId>, Option<ClipId>)`), а порядок обхода
+/// `HashMap` случаен — без сортировки одна и та же модель давала бы разные
+/// байты, и каждое сохранение было бы ложным диффом в git. Сортировка по
+/// СЕРИАЛИЗОВАННОМУ ключу: `Ord` у ключей не требуется, а их JSON
+/// детерминирован.
+pub(crate) mod sorted_pairs {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::HashMap;
+    use std::hash::Hash;
+
+    pub fn serialize<K, V, S>(m: &HashMap<K, V>, s: S) -> Result<S::Ok, S::Error>
+    where
+        K: Serialize,
+        V: Serialize,
+        S: Serializer,
+    {
+        let mut pairs: Vec<(&K, &V)> = m.iter().collect();
+        pairs.sort_by_cached_key(|(k, _)| serde_json::to_string(k).unwrap_or_default());
+        pairs.serialize(s)
+    }
+
+    pub fn deserialize<'de, K, V, D>(d: D) -> Result<HashMap<K, V>, D::Error>
+    where
+        K: Deserialize<'de> + Eq + Hash,
+        V: Deserialize<'de>,
+        D: Deserializer<'de>,
+    {
+        Ok(Vec::<(K, V)>::deserialize(d)?.into_iter().collect())
+    }
+}
+
+impl Retained {
+    /// Passthrough как непрозрачный JSON для файла проекта. Детерминирован:
+    /// карты документа insertion-ordered (как в исходнике), `HashMap`-поля —
+    /// отсортированными парами.
+    pub fn to_json(&self) -> Value {
+        serde_json::to_value(self).expect("Retained состоит из JSON-значений и узлов схемы")
+    }
+
+    /// Обратно из файла проекта. Битое поле — ошибка, а не пустой passthrough:
+    /// молча потерять чужую работу хуже, чем отказать.
+    pub fn from_json(v: &Value) -> Result<Retained, Error> {
+        Ok(serde_json::from_value(v.clone())?)
+    }
 }

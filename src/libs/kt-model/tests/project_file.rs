@@ -285,15 +285,14 @@ fn t822_the_file_is_indexable_in_git() {
     let with = to_text(&p, Some(&fp));
     assert_eq!(with, to_text(&p.clone(), Some(&fp.clone())));
 
-    // passthrough записан по отсортированным ключам — и это видно по
-    // порядку строк, а не предполагается
+    // passthrough записан КАК ЕСТЬ: порядок чужих ключей — обещание файлу
+    // обмена (экспорт возвращает их байт-в-байт, t154), и сортировать его
+    // здесь нельзя. Детерминизм — да, перестановка — нет.
     let z = with.find("\"zeta\"").expect("passthrough в файле");
     let al = with.find("\"alpha\"").expect("passthrough в файле");
     let m = with.find("\"markers\"").expect("passthrough в файле");
-    assert!(al < m && m < z, "ключи passthrough обязаны идти по алфавиту: alpha < markers < zeta");
-    let xy = &with[with.find("\"x\"").unwrap()..];
-    assert!(xy.find("\"y\"").is_some(), "вложенные ключи тоже по алфавиту");
-    let x_pos = with.find("\"x\": 2").expect("x");
+    assert!(z < al && al < m, "порядок чужих ключей обязан сохраниться: zeta, alpha, markers");
     let y_pos = with.find("\"y\": 1").expect("y");
-    assert!(x_pos < y_pos, "вложенный объект passthrough не отсортирован");
+    let x_pos = with.find("\"x\": 2").expect("x");
+    assert!(y_pos < x_pos, "и вложенный порядок тоже: y перед x, как в исходнике");
 }

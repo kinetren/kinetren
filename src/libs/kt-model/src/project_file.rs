@@ -27,10 +27,13 @@
 //!   худший исход из трёх, F-RES-003). Ломающие изменения разрешены, каскада
 //!   совместимости с чужой схемой здесь нет;
 //! * чужой passthrough импортированного файла обмена едет отдельным полем
-//!   (`otio`) как непрозрачный JSON с отсортированными ключами. Сортировка
-//!   ЯВНАЯ: `kt-otio` включает `serde_json/preserve_order`, а фичи cargo едины
-//!   на весь workspace, так что `Map` везде insertion-ordered — положиться на
-//!   «ключи сортируются сами» нельзя.
+//!   (`otio`) как непрозрачный JSON. Его ПОРЯДОК НЕ ТРОГАЕТСЯ: порядок чужих
+//!   ключей — часть обещания файлу обмена (экспорт возвращает их байт-в-байт,
+//!   t154), а детерминированность даёт сам insertion-ordered `Map`
+//!   (`kt-otio` включает `serde_json/preserve_order`, фичи cargo едины на
+//!   workspace). Единственный источник недетерминизма — `HashMap`-поля
+//!   `Retained`, и их по ключу сортирует тот, кто этот JSON строит
+//!   (`Retained::to_json`), а не этот модуль.
 //!
 //! Чего здесь НЕТ: записи на диск. Единственный дом атомарной записи — `kt-otio`
 //! (`write_atomic`, Р.49: «второго писателя файла проекта в дереве нет»), и
@@ -124,7 +127,8 @@ struct Envelope {
 pub fn to_text(project: &Project, otio: Option<&Value>) -> String {
     let env = Envelope {
         version: PROJECT_FILE_VERSION,
-        otio: otio.map(sorted),
+        // как есть: порядок чужих ключей — обещание файлу обмена (t154)
+        otio: otio.cloned(),
         project: project.clone(),
     };
     let mut s = serde_json::to_string_pretty(&env)
@@ -178,23 +182,4 @@ pub fn is_project_file(text: &str) -> bool {
         .ok()
         .and_then(|v| v.as_object().map(|o| o.contains_key(MARKER)))
         .unwrap_or(false)
-}
-
-/// Глубокая сортировка ключей объекта: единственный источник
-/// неупорядоченности в файле — чужой passthrough, и без сортировки каждое
-/// сохранение давало бы ложный дифф.
-fn sorted(v: &Value) -> Value {
-    match v {
-        Value::Object(map) => {
-            let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort();
-            let mut out = serde_json::Map::new();
-            for k in keys {
-                out.insert(k.clone(), sorted(&map[k]));
-            }
-            Value::Object(out)
-        }
-        Value::Array(items) => Value::Array(items.iter().map(sorted).collect()),
-        other => other.clone(),
-    }
 }
