@@ -153,7 +153,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | `automation/` | AUT | ключи, кривые, пресеты | 11 / 8 |
 | `media/` | MED | организация медиа, прокси, источники | 6 / 3 |
 | `export/` | EXP | пресеты, очередь, smart render | 4 / 3 |
-| `project/` | PRJ | секвенции, история, версии | 4 / 2 |
+| `project/` | PRJ | секвенции, история, версии | 5 / 2 |
 | `ui/` | UI | вьюер, ввод, раскладки | 5 / 3 |
 | `plugins/` | EXT | OFX/VST-хосты, скриптинг, контракт чужого кода | 3 / 3 |
 | `help/` | HLP | подсказки, справка, обучение, документация | 34 / 34 |
@@ -351,6 +351,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-MSK-002 | Где живёт маска — у слоя, у эффекта или отдельным объектом | кандидат | B | L | нет | `masks/shapes/mask-scope-per-effect.md` |
 | F-MSK-003 | Track matte — один клип задаёт прозрачность другого | кандидат | B | L | нет | `masks/keying/track-matte.md` |
 | F-PRJ-004 | Пользовательское хранилище между проектами | кандидат | B | L | частично | `project/structure/user-library-outside-the-project.md` |
+| F-PRJ-005 | Формат ПРОЕКТА против формата ОБМЕНА | принято | A | L | нет | `project/structure/project-file-vs-interchange.md` |
 | F-SPD-002 | Ретайм-кривая — время как анимируемый параметр | кандидат | B | L | частично | `time/retiming/time-remap-curve.md` |
 | F-TL-006 | Выключатели дорожки — mute, solo, lock и «скрыть» | в-работе | B | L | частично | `timeline/structure/track-solo-mute-lock.md` |
 | F-TXT-004 | Дорожка субтитров, SRT/VTT и текстовый монтаж | кандидат | B | L | нет | `titles/subtitles/subtitle-track-and-srt.md` |
