@@ -14,6 +14,7 @@ pub mod links;
 pub mod model;
 pub mod ops;
 pub mod project;
+pub mod project_file;
 pub mod published;
 pub mod warp;
 
