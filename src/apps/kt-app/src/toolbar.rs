@@ -334,12 +334,8 @@ impl KtApp {
                 self.open_project_dialog();
                 ui.close();
             }
-            if ui.button(tr(k::menu::file::IMPORT_KTPROJ)).clicked() {
-                // Р.24 п.12: старый формат — только конвертация
-                self.import_ktproj_dialog();
-                ui.close();
-            }
-            // Р.67: проект СТАРОЙ ВЕРСИИ конверта чинит импорт, не ридер
+            // Р.67/Р.70: одна дверь импорта — легаси .ktproj, старый и
+            // чужой .otio; проект СТАРОЙ ВЕРСИИ конверта чинит импорт, не ридер
             let r = ui.button(tr(k::menu::file::IMPORT_OLDER));
             crate::widgets::field_probe::note("file.import_older", r.rect);
             let r = self.hint(r, tr(k::hint::IMPORT_OLDER));
@@ -367,6 +363,18 @@ impl KtApp {
                 self.offer_recovery(false);
                 ui.close();
             }
+            // Р.70: экспорт в формат обмена — ОТДЕЛЬНОЕ названное действие,
+            // а не сохранение; проект остаётся .kt
+            let export = ui.menu_button(tr(k::menu::file::EXPORT), |ui| {
+                let r = ui.button(tr(k::menu::file::EXPORT_OTIO));
+                crate::widgets::field_probe::note("file.export_otio", r.rect);
+                let r = self.hint(r, tr(k::hint::EXPORT_OTIO));
+                if r.clicked() {
+                    self.export_otio_dialog();
+                    ui.close();
+                }
+            });
+            crate::widgets::field_probe::note("file.export", export.response.rect);
             ui.separator();
             let r = ui.button(tr(k::menu::file::RENDER));
             crate::widgets::field_probe::note("file.render", r.rect);

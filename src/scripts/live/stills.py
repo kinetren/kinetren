@@ -20,12 +20,13 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import KT_CLI, Live, require_tools  # noqa: E402
+from kt_live import demo_otio, import_project, new_otio  # noqa: E402,F401
 
 SEC = 90000
 
 
 def still_project(dest, img, secs=20.0):
-    subprocess.run([KT_CLI, "new", dest, "--force"], check=True, capture_output=True)
+    new_otio(dest)
     doc = json.load(open(dest))
     doc["metadata"]["kt"]["settings"].update(fps=30, width=1280, height=720)
     track = next((t for t in doc["tracks"]["children"] if t.get("kind") == "Video"), None)

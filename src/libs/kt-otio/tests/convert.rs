@@ -1234,6 +1234,60 @@ fn nested_project() -> Project {
     p
 }
 
+/// Тест 814 (Р.70): экспорт в OTIO самодостаточен — тело ленты ИНЛАЙНОМ в
+/// каждом из трёх экземпляров, конверт прежней версии; а обычное
+/// «Открыть» (свой формат) этот файл не принимает и называет дверь
+/// импорта. Требование инлайна не отменено — переадресовано ЭКСПОРТУ.
+#[test]
+fn t814_export_is_self_contained_and_open_refuses_it() {
+    let mut p = nested_project();
+    // третий экземпляр той же ленты
+    let mut third = p.clips.iter().find(|c| c.media == MediaId(100)).cloned().unwrap();
+    third.id = ClipId(p.max_clip_id() + 1);
+    third.start = Tick(p.clips.iter().map(|c| c.start.0 + c.duration.0).max().unwrap_or(0) + 90_000);
+    p.clips.push(third);
+    p.validate().unwrap();
+    assert_eq!(p.sequence_uses(MediaId(100)), 3);
+
+    let exported = save_project(&p, &Retained::default(), None);
+    let tl = parse_document(&exported).unwrap();
+    let mut stacks = 0;
+    for c in tl.tracks.children.iter() {
+        if let kt_otio::Composable::Track(t) = c {
+            for ch in &t.children {
+                if let kt_otio::Composable::Stack(s) = ch {
+                    stacks += 1;
+                    assert!(!s.children.is_empty(), "тело ленты обязано быть инлайном в экспорте");
+                }
+            }
+        }
+    }
+    assert_eq!(stacks, 3, "три экземпляра — три Stack с телами");
+    assert_eq!(
+        kt_otio::kt_version(&tl),
+        Some(kt_otio::KT_META_V6),
+        "конверт экспорта — прежняя версия: чужой и старый читатель его понимают"
+    );
+
+    // «Открыть» своим форматом этот файл не принимает — и говорит, куда идти
+    let err = kt_model::project_file::from_text(&exported).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            kt_model::project_file::ProjectFileError::NotOurs {
+                looks_like: Some(kt_model::project_file::FileKind::Otio)
+            }
+        ),
+        "{err:?}"
+    );
+    assert!(err.to_string().contains("Import older Kinotrain project"), "дверь не названа: {err}");
+
+    // а дверь импорта его читает — одна лента, три экземпляра
+    let back = load_project(&exported, None).unwrap().project;
+    assert_eq!(back.sequences.len(), 1);
+    assert_eq!(back.sequence_uses(MediaId(100)), 3);
+}
+
 #[test]
 fn t431_nested_reel_survives_the_round_trip() {
     let p = nested_project();

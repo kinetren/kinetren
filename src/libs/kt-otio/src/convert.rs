@@ -3147,12 +3147,20 @@ impl Retained {
     /// карты документа insertion-ordered (как в исходнике), `HashMap`-поля —
     /// отсортированными парами.
     pub fn to_json(&self) -> Value {
-        serde_json::to_value(self).expect("Retained состоит из JSON-значений и узлов схемы")
+        serde_json::to_value(self).expect("Retained is made of JSON values and schema nodes")
     }
 
     /// Обратно из файла проекта. Битое поле — ошибка, а не пустой passthrough:
     /// молча потерять чужую работу хуже, чем отказать.
     pub fn from_json(v: &Value) -> Result<Retained, Error> {
         Ok(serde_json::from_value(v.clone())?)
+    }
+
+    /// Нечего возвращать: проект никогда не был файлом обмена (или чужого в
+    /// нём не было). Такой проект поля `otio` в файле не несёт — файл не
+    /// растёт впустую, и у проекта, рождённого в редакторе, диффа от
+    /// passthrough нет вовсе.
+    pub fn is_empty(&self) -> bool {
+        self.to_json() == Retained::default().to_json()
     }
 }

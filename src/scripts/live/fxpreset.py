@@ -16,6 +16,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import KT_CLI, Live, require_tools  # noqa: E402
+from kt_live import demo_otio, import_project, new_otio  # noqa: E402,F401
 
 SEC = 90000
 
@@ -66,7 +67,7 @@ def main(out):
     presets = os.path.join(store, "fx-presets.json")
 
     proj = os.path.join(out, "fxpreset.otio")
-    subprocess.run([KT_CLI, "demo", proj, "--force"], check=True, capture_output=True)
+    demo_otio(proj)
 
     # --- 1) валидная библиотека: программа её читает и не портит --------
     with open(presets, "w") as f:

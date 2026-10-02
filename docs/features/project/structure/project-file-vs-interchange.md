@@ -6,16 +6,16 @@ priority: A
 cost: L
 category: project/structure
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, kdenlive-26.08, otio-lib-0.18]
-we_have: нет
+we_have: да
 crates: [kt-otio, kt-model, kt-app, kt-cli]
 invariants: [11]
 ui_rules: [19, 20]
 round: 70
 point: null
-tests: []
+tests: [t810, t811, t812, t813, t814, t815, t816, t817, t818, t819, t820, t821, t822]
 depends_on: [F-PRJ-002, F-PRJ-003, F-RES-003]
 trackers: []
-checked: 2026-10-02
+checked: 2026-10-03
 ---
 
 # F-PRJ-005 — Формат ПРОЕКТА против формата ОБМЕНА
@@ -148,6 +148,18 @@ CAPABILITY: openspec/specs/project-format/
 он опирался на неверную посылку, будто тела лент уже лежат в конверте
 `kt.sequences`; на деле поля с клипами там нет вовсе, и усечение глубины отняло
 бы содержимое у НАШЕГО читателя.
+
+**СДЕЛАНО (Р.70, 03.10.2026).** Файл проекта `.kt` — `kt_model::project_file`
+(построчный детерминированный JSON модели, версия на корне, отказ вперёд);
+OTIO — две двери: `File → Import older Kinotrain project…` (легаси `.ktproj`,
+наш старый и чужой `.otio` — одно правило `kt_otio::import_interchange`) и
+`File → Export → OpenTimelineIO…` (самодостаточно, тело ленты в каждом
+экземпляре, чужой passthrough возвращён). Автосейв и восстановление —
+`<имя>.recovery.kt`. Замер на сцене 10/8/8: файл проекта в 234× меньше файла
+обмена (построчный против компактного стоил 2×, и это цена git). kt-cli: `new`/
+`demo` пишут `.kt`, `import`/`export-otio` — двери, `render`/`probe`/`export`
+читают только `.kt`. Живые сценарии ходят в программу через те же двери
+(`kt_live.import_project`/`export_project`).
 
 ## Источники
 

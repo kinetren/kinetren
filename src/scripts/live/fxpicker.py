@@ -18,6 +18,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import KT_CLI, Live, geometry, poll_step, require_tools  # noqa: E402
+from kt_live import demo_otio, import_project, new_otio  # noqa: E402,F401
 
 SEC = 90000
 # «Плотно» — второй вариант размытия (radius 24 против шаблонных 8)
@@ -47,7 +48,7 @@ def radius_in(path):
 def main(out):
     require_tools()
     proj = os.path.join(out, "fxpicker.otio")
-    subprocess.run([KT_CLI, "demo", proj, "--force"], check=True, capture_output=True)
+    demo_otio(proj)
 
     with Live("fxpicker", out, project=proj) as app:
         # 1) окно FX по двойному клику (зазор между кликами МАЛЕНЬКИЙ, п.232)

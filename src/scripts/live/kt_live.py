@@ -8,7 +8,7 @@
     with Live("handles", out) as app:
         app.drag(...)             # настоящей мышью через XTest
         app.key("ctrl+s")         # настоящей клавиатурой
-        p = app.saved_project()   # состояние ПОСЛЕ жеста, разобранное из .otio
+        p = app.saved_project()   # состояние ПОСЛЕ жеста, через дверь экспорта
         app.expect(len(p.transitions) == 1, "наезд создал переход")
         app.shot("after-overlap") # скриншот в каталог артефактов
 
@@ -71,13 +71,23 @@ class Clip:
 
 
 class Timeline:
-    """Разобранный .otio: то, что реально сохранила программа. Позиции
+    """Разобранный файл обмена: то, что реально сохранила программа. Позиции
     считаются по порядку детей дорожки (Gap двигает курсор, Transition —
-    нет), поэтому сценарий может целиться в СТЫК, а не в число из головы."""
+    нет), поэтому сценарий может целиться в СТЫК, а не в число из головы.
+
+    Р.70: проект на диске — СВОЙ формат `.kt`. Сценарии читают его через
+    дверь экспорта (`kt-cli export-otio`): так `doc` остаётся тем же OTIO с
+    конвертом `metadata.kt`, что и раньше, а каждый разбор заодно
+    прогоняет настоящий экспорт. `otio_path` — куда он лёг."""
 
     def __init__(self, path):
+        self.otio_path = path
         with open(path) as f:
             self.doc = json.load(f)
+        if "kinotrain" in self.doc:
+            self.otio_path = export_project(path)
+            with open(self.otio_path) as f:
+                self.doc = json.load(f)
         self.clips, self.transitions, self.gaps = [], [], []
         for track in self.doc.get("tracks", {}).get("children", []):
             if not str(track.get("OTIO_SCHEMA", "")).startswith("Track"):
@@ -197,9 +207,15 @@ class Live:
     сценария, а не настройка прогона.
     """
 
-    def __init__(self, name, out_dir, project=None, autoplay=False, own_process=False):
+    def __init__(self, name, out_dir, project=None, autoplay=False, own_process=False, raw=False):
         self.name = name
         self.out = out_dir
+        # Р.70: сценарий строит ФАЙЛ ОБМЕНА (у него есть готовые помощники
+        # и конверт kt), а программа открывает ФАЙЛ ПРОЕКТА `.kt` — его
+        # делает дверь импорта при входе (`import_project`). `raw=True` —
+        # отдать программе файл как есть: так проверяют сам отказ «Открыть».
+        self.source = project
+        self.raw = raw
         self.project = project
         self.autoplay = autoplay
         self.proc = None
@@ -221,6 +237,8 @@ class Live:
 
     def __enter__(self):
         os.makedirs(self.out, exist_ok=True)
+        if self.source and self.source.endswith(".otio") and not self.raw:
+            self.project = import_project(self.source)
         if not self.own:
             return self._attach_bench()
         env = dict(os.environ)
@@ -1413,25 +1431,71 @@ class Live:
         return 0
 
 
+def _cli(*args):
+    subprocess.run([KT_CLI, *args], check=True, capture_output=True)
+
+
+def project_kt_path(otio_path):
+    """Имя файла ПРОЕКТА рядом с файлом обмена сценария: `x.otio` → `x.kt`."""
+    return os.path.splitext(otio_path)[0] + ".kt"
+
+
+def import_project(src, dest=None):
+    """Файл обмена сценария → файл ПРОЕКТА той же дверью, что
+    `File → Import` (Р.70). Идемпотентно: `.kt`, который НОВЕЕ исходника,
+    не перезаписывается — в нём может лежать то, что программа сохранила
+    (второй `with Live` того же сценария не должен это затирать)."""
+    if src.endswith(".kt"):
+        return src
+    dest = dest or project_kt_path(src)
+    if not os.path.exists(dest) or os.path.getmtime(dest) < os.path.getmtime(src):
+        _cli("import", src, dest, "--force")
+    return dest
+
+
+def export_project(kt_path, dest=None):
+    """Файл проекта → файл обмена дверью экспорта (`kt-cli export-otio`)."""
+    dest = dest or kt_path + ".export.otio"
+    _cli("export-otio", kt_path, dest, "--force")
+    return dest
+
+
+def new_otio(dest):
+    """Пустой ФАЙЛ ОБМЕНА для правки сценарием: `kt-cli new` пишет проект,
+    экспорт даёт OTIO с конвертом kt — формат остаётся за библиотекой."""
+    tmp = dest + ".new.kt"
+    _cli("new", tmp, "--force")
+    _cli("export-otio", tmp, dest, "--force")
+    os.remove(tmp)
+    return dest
+
+
+def demo_otio(dest):
+    """Демо-проект как ФАЙЛ ОБМЕНА (см. `new_otio`)."""
+    tmp = dest + ".demo.kt"
+    _cli("demo", tmp, "--force")
+    _cli("export-otio", tmp, dest, "--force")
+    os.remove(tmp)
+    return dest
+
+
 def demo_project(dest):
     """Свежий демо-проект программой же (kt-cli demo) — один писатель формата.
 
     `--force`: сценарии перезапускаются по месту, а kt-cli с Р.49 (п.359) не
     затирает существующий файл молча. Медиа демо с того же раунда —
-    синтетические, так что сценарию нечего доставать со стороны."""
-    subprocess.run([KT_CLI, "demo", dest, "--force"], check=True, capture_output=True)
-    return dest
+    синтетические, так что сценарию нечего доставать со стороны.
+    Р.70: отдаётся файлом обмена, программе его импортирует `Live`."""
+    return demo_otio(dest)
 
 
 def project_with_clips(dest, clips, fps=30, width=1280, height=720):
     """Минимальный проект из видео-клипов: список `(start_s, dur_s)` или
     `(start_s, dur_s, "synth:Pattern")`. Разные источники дают разные цвета
     плашек — это позволяет сценарию отличать, ЧЕЙ материал нарисован.
-    Пишется через `kt-cli new` + правку .otio: формат остаётся за нашей
-    библиотекой."""
-    # --force: сценарии перезапускаются по месту, а kt-cli с Р.49
-    # не затирает существующий файл молча (п.359)
-    subprocess.run([KT_CLI, "new", dest, "--force"], check=True, capture_output=True)
+    Пишется через `kt-cli new` + экспорт + правку файла обмена: формат
+    остаётся за нашей библиотекой, программе его импортирует `Live`."""
+    new_otio(dest)
     with open(dest) as f:
         doc = json.load(f)
     doc["metadata"]["kt"]["settings"].update(fps=fps, width=width, height=height)

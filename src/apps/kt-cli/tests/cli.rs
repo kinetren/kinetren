@@ -1,8 +1,10 @@
-//! Тест 151 (п.151 porting-notes, Р.24): kt-cli на .otio.
+//! Тест 151 (п.151 porting-notes, Р.24; Р.70 — свой формат): kt-cli на
+//! файле проекта `.kt` и двух дверях обмена.
 //!
-//! new/demo пишут валидный OTIO; roundtrip байт-стабилен; convert
-//! конвертирует легаси-.ktproj; render/export отвергают .ktproj с
-//! подсказкой на convert.
+//! new/demo пишут файл проекта своего формата; export-otio даёт
+//! самодостаточный OTIO, roundtrip на нём байт-стабилен; import читает
+//! легаси-.ktproj и .otio в `.kt`; render/probe отвергают файл обмена и
+//! легаси с подсказкой на import.
 
 use std::process::Command;
 
@@ -15,49 +17,83 @@ fn t151_cli_otio_workflows() {
     let dir = std::env::temp_dir().join(format!("kt-cli-t151-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
 
-    // new → валидный .otio
-    let new_path = dir.join("empty.otio");
+    // new → файл проекта СВОЕГО формата: признак и версия первой строкой
+    let new_path = dir.join("empty.kt");
     let st = cli().args(["new", new_path.to_str().unwrap()]).output().unwrap();
     assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
     let text = std::fs::read_to_string(&new_path).unwrap();
-    assert!(text.starts_with("{\n    \"OTIO_SCHEMA\": \"Timeline.1\""));
+    assert!(text.starts_with("{\n  \"kinotrain\": 1"), "{text:.80}");
+    assert!(!text.contains("OTIO_SCHEMA"), "файл проекта — не файл обмена");
 
-    // demo → богатый .otio (переход, метки, регион, морфер)
-    let demo_path = dir.join("demo.otio");
+    // demo → богатый проект (переход, метки, регион, морфер)
+    let demo_path = dir.join("demo.kt");
     let st = cli().args(["demo", demo_path.to_str().unwrap()]).output().unwrap();
     assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
     let demo = std::fs::read_to_string(&demo_path).unwrap();
-    assert!(demo.contains("\"OTIO_SCHEMA\": \"Transition.1\""));
-    assert!(demo.contains("\"OTIO_SCHEMA\": \"Marker.2\""));
+    assert!(demo.contains("\"transitions\""));
+    assert!(demo.contains("\"markers\""));
 
-    // roundtrip: байт-стабильно
+    // export-otio → самодостаточный файл обмена
+    let otio_path = dir.join("demo.otio");
+    let st = cli()
+        .args(["export-otio", demo_path.to_str().unwrap(), otio_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+    let otio = std::fs::read_to_string(&otio_path).unwrap();
+    assert!(otio.starts_with("{\n    \"OTIO_SCHEMA\": \"Timeline.1\""));
+    assert!(otio.contains("\"OTIO_SCHEMA\": \"Transition.1\""));
+    assert!(otio.contains("\"OTIO_SCHEMA\": \"Marker.2\""));
+
+    // roundtrip двери обмена: байт-стабильно
     let rt_path = dir.join("demo-rt.otio");
     let st = cli()
-        .args(["roundtrip", demo_path.to_str().unwrap(), rt_path.to_str().unwrap()])
+        .args(["roundtrip", otio_path.to_str().unwrap(), rt_path.to_str().unwrap()])
         .output()
         .unwrap();
     assert!(st.status.success());
     let err = String::from_utf8_lossy(&st.stderr);
     assert!(err.contains("byte-stable: true"), "{err}");
-    assert_eq!(std::fs::read_to_string(&rt_path).unwrap(), demo);
+    assert_eq!(std::fs::read_to_string(&rt_path).unwrap(), otio);
 
-    // convert: легаси-фикстура → .otio
-    let legacy = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/demo.ktproj");
-    let conv_path = dir.join("converted.otio");
-    let st = cli().args(["convert", legacy, conv_path.to_str().unwrap()]).output().unwrap();
+    // import: файл обмена → файл проекта, и он поле-в-поле равен исходному
+    let back_path = dir.join("back.kt");
+    let st = cli()
+        .args(["import", otio_path.to_str().unwrap(), back_path.to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
-    assert!(
-        std::fs::read_to_string(&conv_path).unwrap().contains("\"OTIO_SCHEMA\": \"Timeline.1\"")
-    );
+    let back = kt_model::project_file::from_text(&std::fs::read_to_string(&back_path).unwrap())
+        .unwrap()
+        .project;
+    let orig = kt_model::project_file::from_text(&demo).unwrap().project;
+    assert_eq!(back.clips, orig.clips, "круг kt → otio → kt теряет события");
+    assert_eq!(back.transitions, orig.transitions);
+    assert_eq!(back.morphers, orig.morphers);
 
-    // render отвергает .ktproj с подсказкой
+    // import: легаси-фикстура → файл проекта
+    let legacy = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/demo.ktproj");
+    let conv_path = dir.join("converted.kt");
+    let st = cli().args(["import", legacy, conv_path.to_str().unwrap()]).output().unwrap();
+    assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+    assert!(std::fs::read_to_string(&conv_path).unwrap().starts_with("{\n  \"kinotrain\": "));
+
+    // render/probe отвергают легаси и файл обмена с подсказкой на import
     let wav = dir.join("out.wav");
-    let st = cli().args(["render", legacy, wav.to_str().unwrap()]).output().unwrap();
+    for (what, input) in [("legacy", legacy.to_string()), ("otio", otio_path.display().to_string())] {
+        let st = cli().args(["render", &input, wav.to_str().unwrap()]).output().unwrap();
+        assert!(!st.status.success(), "{what}: render обязан отказать");
+        let said = String::from_utf8_lossy(&st.stderr);
+        assert!(said.contains("kt-cli import"), "{what}: подсказка на import обязательна: {said}");
+        assert!(!said.contains("convert"), "{what}: прежняя подсказка «convert» мертва: {said}");
+    }
+    // import файла проекта — «уже проект», а не тихий успех
+    let st = cli()
+        .args(["import", demo_path.to_str().unwrap(), dir.join("x.kt").to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(!st.status.success());
-    assert!(
-        String::from_utf8_lossy(&st.stderr).contains("convert"),
-        "подсказка на convert обязательна"
-    );
+    assert!(String::from_utf8_lossy(&st.stderr).contains("already a Kinotrain project"));
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -75,7 +111,7 @@ fn t151_cli_otio_workflows() {
 fn t290_probe_reports_what_layers_changed() {
     let dir = std::env::temp_dir().join(format!("kt-cli-t290-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("probe.otio");
+    let path = dir.join("probe.kt");
 
     // демо-проект несёт морфер; заменяем его на слой ДАЛЕКО от события
     let st = cli().args(["demo", path.to_str().unwrap()]).output().unwrap();
@@ -110,11 +146,10 @@ fn t290_probe_reports_what_layers_changed() {
     // Тест 452b (Р.50, Б6): по вложенному монтажу «войди в N уровней,
     // чтобы понять, откуда кадр» — это наш минус. Дерево лент и ПУТЬ
     // события печатаются сразу.
-    let nested = dir.join("nested.otio");
+    let nested = dir.join("nested.kt");
     {
         let text = std::fs::read_to_string(&path).unwrap();
-        let b = kt_otio::load_project(&text, path.parent()).unwrap();
-        let mut pr = b.project;
+        let mut pr = kt_model::project_file::from_text(&text).unwrap().project;
         let mut n = kt_model::ops::NestCounters::of(&pr);
         let ids: Vec<kt_model::ClipId> =
             pr.clips.iter().filter(|c| c.start.0 < 2 * 90_000).map(|c| c.id).collect();
@@ -123,7 +158,7 @@ fn t290_probe_reports_what_layers_changed() {
         m.apply_batch(cmds).expect("сворачивание на демо-проекте");
         assert!(rep.seq.is_some());
         pr = m.project().clone();
-        std::fs::write(&nested, kt_otio::save_project(&pr, &b.retained, nested.parent())).unwrap();
+        std::fs::write(&nested, kt_model::project_file::to_text(&pr, None)).unwrap();
     }
     let out = cli().args(["probe", nested.to_str().unwrap(), "0", "2"]).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -141,11 +176,10 @@ fn t290_probe_reports_what_layers_changed() {
     // Р.56 (п.448): у РАСТЯНУТОГО экземпляра окно содержимого не равно его
     // длине на таймлайне — печатать длину значит врать ровно в том месте,
     // ради которого probe и запускают («тут кадр из другого места»).
-    let warped = dir.join("nested_warped.otio");
+    let warped = dir.join("nested_warped.kt");
     {
         let text = std::fs::read_to_string(&nested).unwrap();
-        let b = kt_otio::load_project(&text, nested.parent()).unwrap();
-        let mut pr = b.project;
+        let mut pr = kt_model::project_file::from_text(&text).unwrap().project;
         let id = pr
             .clips
             .iter()
@@ -156,7 +190,7 @@ fn t290_probe_reports_what_layers_changed() {
         c.reversed = true;
         c.fx.push(kt_model::FxInstance::slowed_reverb(0.5, 0.0, 85.0));
         pr.validate().expect("зеркальный замедленный экземпляр законен");
-        std::fs::write(&warped, kt_otio::save_project(&pr, &b.retained, warped.parent())).unwrap();
+        std::fs::write(&warped, kt_model::project_file::to_text(&pr, None)).unwrap();
     }
     let out = cli().args(["probe", warped.to_str().unwrap(), "0", "2"]).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -262,14 +296,13 @@ fn t307_relative_media_paths_resolve_once() {
         fx_off: false,
     });
     p.validate().unwrap();
-    std::fs::write(sub.join("p.otio"), kt_otio::save_project(&p, &Default::default(), None))
-        .unwrap();
+    std::fs::write(sub.join("p.kt"), kt_model::project_file::to_text(&p, None)).unwrap();
 
     // ОТНОСИТЕЛЬНЫЙ путь к проекту из каталога НАД ним — до правки медиа
     // резолвилось в sub/sub/clip.mp4 и слой молча пропадал
     let out = cli()
         .current_dir(&dir)
-        .args(["export", "sub/p.otio", "sub/out.mp4", "libx264"])
+        .args(["export", "sub/p.kt", "sub/out.mp4", "libx264"])
         .output()
         .unwrap();
     let all =
@@ -288,7 +321,7 @@ fn t387_cli_does_not_overwrite_without_force() {
     let dir = std::env::temp_dir().join(format!("kt-cli-t387-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("p.otio");
+    let path = dir.join("p.kt");
     std::fs::write(&path, "работа пользователя").unwrap();
 
     for cmd in [["new"], ["demo"]] {
@@ -307,7 +340,7 @@ fn t387_cli_does_not_overwrite_without_force() {
     // с --force пишет, и пишет АТОМАРНО: временного файла не остаётся
     let st = cli().args(["new", path.to_str().unwrap(), "--force"]).output().unwrap();
     assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
-    assert!(std::fs::read_to_string(&path).unwrap().contains("OTIO_SCHEMA"));
+    assert!(std::fs::read_to_string(&path).unwrap().contains("\"kinotrain\""));
     let leftovers: Vec<String> = std::fs::read_dir(&dir)
         .unwrap()
         .flatten()
@@ -328,7 +361,7 @@ fn t388_demo_renders_without_any_media_files() {
     let dir = std::env::temp_dir().join(format!("kt-cli-t388-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let proj = dir.join("demo.otio");
+    let proj = dir.join("demo.kt");
     let wav = dir.join("demo.wav");
 
     let st = cli().args(["demo", proj.to_str().unwrap()]).output().unwrap();
@@ -348,7 +381,7 @@ fn t388_demo_renders_without_any_media_files() {
     assert!(len > 1_000_000, "звук подозрительно короткий: {len} байт");
 
     // прежние имена файлов остаются доступны явным флагом
-    let files = dir.join("demo-files.otio");
+    let files = dir.join("demo-files.kt");
     let st = cli().args(["demo", files.to_str().unwrap(), "--files"]).output().unwrap();
     assert!(st.status.success());
     assert!(std::fs::read_to_string(&files).unwrap().contains("media/"));
@@ -362,7 +395,7 @@ fn t389_render_refuses_missing_media_unless_allowed() {
     let dir = std::env::temp_dir().join(format!("kt-cli-t389-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let proj = dir.join("p.otio");
+    let proj = dir.join("p.kt");
     let wav = dir.join("p.wav");
     let st = cli().args(["demo", proj.to_str().unwrap(), "--files"]).output().unwrap();
     assert!(st.status.success());
@@ -388,7 +421,7 @@ fn t389_render_refuses_missing_media_unless_allowed() {
 fn t727_probe_reports_conform_geometry() {
     let dir = std::env::temp_dir().join(format!("kt-cli-t727-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("probe.otio");
+    let path = dir.join("probe.kt");
     let st = cli().args(["demo", path.to_str().unwrap()]).output().unwrap();
     assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
     let out = cli().args(["probe", path.to_str().unwrap(), "0", "2"]).output().unwrap();
@@ -407,7 +440,7 @@ fn t727_probe_reports_conform_geometry() {
 fn t740b_cli_reports_muted_and_solo_before_render() {
     let dir = std::env::temp_dir().join(format!("kt-cli-t740b-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("demo.otio");
+    let path = dir.join("demo.kt");
     let st = cli().args(["demo", path.to_str().unwrap(), "--force"]).output().unwrap();
     assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
 
@@ -424,15 +457,13 @@ fn t740b_cli_reports_muted_and_solo_before_render() {
     let text = std::fs::read_to_string(&path).unwrap();
     let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
     {
-        let kt = v["metadata"]["kt"].as_object_mut().unwrap();
-        let tracks = kt.entry("tracks").or_insert(serde_json::json!([]));
-        // конверт дорожек: порядок строк сверху вниз (видео, затем аудио)
-        *tracks = serde_json::json!([
+        // дорожки-объекты модели: порядок строк сверху вниз (видео, затем аудио)
+        v["project"]["tracks"] = serde_json::json!([
             {"kind": "video", "id": 1, "solo": true},
             {"kind": "audio", "id": 2, "mute": true},
         ]);
     }
-    let muted_path = dir.join("muted.otio");
+    let muted_path = dir.join("muted.kt");
     std::fs::write(&muted_path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
 
     let out = cli()
@@ -456,7 +487,7 @@ fn t740b_cli_reports_muted_and_solo_before_render() {
 fn t746_probe_prints_tracks_with_switches_level_blend_and_stage() {
     let dir = std::env::temp_dir().join(format!("kt-cli-t746-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("demo.otio");
+    let path = dir.join("demo.kt");
     let st = cli().args(["demo", path.to_str().unwrap(), "--force"]).output().unwrap();
     assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
 
@@ -473,17 +504,13 @@ fn t746_probe_prints_tracks_with_switches_level_blend_and_stage() {
     let text = std::fs::read_to_string(&path).unwrap();
     let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
     {
-        let kt = v["metadata"]["kt"].as_object_mut().unwrap();
-        kt.insert(
-            "tracks".into(),
-            serde_json::json!([
-                {"kind": "video", "id": 1, "name": "Титры", "opacity": 0.5,
-                 "blend": "multiply", "solo": true},
-                {"kind": "audio", "id": 2, "gain_db": -6.0, "mute": true},
-            ]),
-        );
+        v["project"]["tracks"] = serde_json::json!([
+            {"kind": "video", "id": 1, "name": "Титры", "opacity": 0.5,
+             "blend": "multiply", "solo": true},
+            {"kind": "audio", "id": 2, "gain_db": -6.0, "mute": true},
+        ]);
     }
-    let p2 = dir.join("tracks.otio");
+    let p2 = dir.join("tracks.kt");
     std::fs::write(&p2, serde_json::to_string_pretty(&v).unwrap()).unwrap();
     let said = String::from_utf8_lossy(
         &cli().args(["probe", p2.to_str().unwrap(), "0", "5"]).output().unwrap().stdout,
@@ -525,7 +552,7 @@ fn t746_probe_prints_tracks_with_switches_level_blend_and_stage() {
 fn t748b_probe_names_the_material_end() {
     let dir = std::env::temp_dir().join(format!("kt-cli-t748b-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("edge.otio");
+    let path = dir.join("edge.kt");
     let st = cli().args(["demo", path.to_str().unwrap(), "--force"]).output().unwrap();
     assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
 
@@ -537,12 +564,11 @@ fn t748b_probe_names_the_material_end() {
     fn stretch(x: &mut serde_json::Value, n: &mut usize) {
         match x {
             serde_json::Value::Object(m) => {
-                if m.get("OTIO_SCHEMA").and_then(|s| s.as_str()).is_some_and(|s| s.starts_with("Clip"))
-                    && let Some(sr) = m.get_mut("source_range")
-                    && let Some(d) = sr.get_mut("duration")
-                    && let Some(val) = d.get_mut("value")
+                // событие модели: у него есть и `source_in`, и `duration`
+                if m.contains_key("source_in")
+                    && let Some(val) = m.get_mut("duration")
                 {
-                    *val = serde_json::json!(5400.0 * 90_000.0);
+                    *val = serde_json::json!(5400i64 * 90_000);
                     *n += 1;
                 }
                 for (_, val) in m.iter_mut() {
@@ -555,7 +581,7 @@ fn t748b_probe_names_the_material_end() {
     }
     stretch(&mut v, &mut patched);
     assert!(patched > 0, "сцена вырождена: событий в демо-проекте нет");
-    let long = dir.join("long.otio");
+    let long = dir.join("long.kt");
     std::fs::write(&long, serde_json::to_string_pretty(&v).unwrap()).unwrap();
 
     let out = cli().args(["probe", long.to_str().unwrap(), "0", "2"]).output().unwrap();

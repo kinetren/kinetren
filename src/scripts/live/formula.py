@@ -22,13 +22,14 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import KT_CLI, Live, geometry, pause, require_tools  # noqa: E402
+from kt_live import demo_otio, import_project, new_otio  # noqa: E402,F401
 
 SEC = 90000
 
 
 def demo(dest):
     """Обычный демо-проект: кривую заведём РУКАМИ, как человек."""
-    subprocess.run([KT_CLI, "demo", dest, "--force"], check=True, capture_output=True)
+    demo_otio(dest)
     return dest
 
 
@@ -74,9 +75,9 @@ def main(out):
             "меню на месте, пока указатель тянется к пункту",
         )
         app.click_probe("auto.shape.2", "пункт «ступень»")
-        app.saved_project()
+        saved = app.saved_project()  # .kt на диске, доступ к конверту — через дверь экспорта
         app.expect(
-            '"hold"' in open(path, encoding="utf-8").read(),
+            '"hold"' in open(saved.otio_path, encoding="utf-8").read(),
             "форма участка доехала до файла",
         )
 
@@ -93,10 +94,10 @@ def main(out):
         app.click_probe("auto.formula", "поле формулы")
         app.type_text("sin(t)*3+5")
         app.shot("typed")
-        before = json.load(open(path)) if os.path.exists(path) else None
+        before = app.project_now().doc
         app.key("Return")
         saved = app.saved_project()
-        doc = json.load(open(path))
+        doc = saved.doc
         formulas = []
 
         def walk(x):
@@ -150,11 +151,11 @@ def main(out):
             what="кнопка «отвязать» прокручена в окно",
         )
         app.click_probe("auto.unlink", "кнопка «отвязать» у формульной кривой")
-        app.saved_project()
+        saved = app.saved_project()
         # тот же обход, но в ПУСТОЙ список: `walk` складывает найденное в
         # `formulas` из объемлющей области, поэтому список подменяется здесь
         formulas = []
-        _formula_walk(json.load(open(path)))
+        _formula_walk(saved.doc)
         app.expect(
             not formulas,
             f"«отвязать» обязано вернуть обычные ключи, а формула осталась: {formulas}",

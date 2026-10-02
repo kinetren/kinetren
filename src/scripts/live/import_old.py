@@ -24,6 +24,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import KT_CLI, Live, poll_step, require_tools  # noqa: E402
+from kt_live import demo_otio, import_project, new_otio  # noqa: E402,F401
 
 # СВОЙ ПРОЦЕСС (Р.68): сценарий проверяет САМ СТАРТ программы, а не работу в
 # уже открытом проекте, — стенд работника ему не подходит.
@@ -33,7 +34,7 @@ SEC = 90000
 
 
 def old_v5_project(dest):
-    subprocess.run([KT_CLI, "new", dest, "--force"], check=True, capture_output=True)
+    new_otio(dest)
     doc = json.load(open(dest))
     doc["metadata"]["kt"]["settings"].update(fps=30, width=1280, height=720)
     track = next((t for t in doc["tracks"]["children"] if t.get("kind") == "Video"), None)
@@ -99,7 +100,7 @@ def main(out):
     # системного диалога в виртуальном экране нет (xdg-portal): пункт меню
     # нажимается по-настоящему, ответ диалога подменяет KT_FILE_PICK
     os.environ["KT_FILE_PICK"] = old
-    with Live("import_old", out, project=old) as app:
+    with Live("import_old", out, project=old, raw=True) as app:
         # ШАГ 1: «Открыть» отверг — событий нет, в статусе версия и дверь
         app.settle()
         g = app.geom()

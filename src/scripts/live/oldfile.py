@@ -22,6 +22,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import KT_CLI, Live, color_media, pause, require_tools  # noqa: E402
+from kt_live import demo_otio, import_project, new_otio, project_kt_path  # noqa: E402,F401
 
 # СВОЙ ПРОЦЕСС (Р.68): сценарий проверяет САМ СТАРТ программы, а не работу в
 # уже открытом проекте, — стенд работника ему не подходит.
@@ -33,7 +34,7 @@ SEC = 90000
 def old_project(dest, media, media_secs, clip_secs):
     """Проект ПРЕЖНЕЙ формы: кривая скорости с `ease: true` и событие,
     которое длиннее материала."""
-    subprocess.run([KT_CLI, "new", dest, "--force"], check=True, capture_output=True)
+    new_otio(dest)
     doc = json.load(open(dest))
     doc["metadata"]["kt"]["settings"].update(fps=30, width=1280, height=720)
     # пустой проект пишется без дорожек (Р.25) — заводим видео-дорожку сами,
@@ -120,11 +121,16 @@ def main(out):
     path = old_project(os.path.join(out, "oldfile.otio"), media, media_secs, clip_secs)
     os.environ["KT_AUTOSAVE_SECS"] = "600"
 
-    # 1) файл ПРЕЖНЕЙ формы обязан открыться — это и есть претензия 1
+    # 1) файл ПРЕЖНЕЙ формы обязан читаться — это и есть претензия 1.
+    # Р.70: прежние формы читает ДВЕРЬ ИМПОРТА, программа живёт в .kt
+    imp = subprocess.run(
+        [KT_CLI, "import", path, project_kt_path(path), "--force"], capture_output=True, text=True
+    )
+    path = project_kt_path(path)
     probe = subprocess.run(
         [KT_CLI, "probe", path, "0", "1"], capture_output=True, text=True
     )
-    ok = "unsupported schema" not in (probe.stdout + probe.stderr)
+    ok = imp.returncode == 0 and "unsupported schema" not in (imp.stderr + probe.stdout + probe.stderr)
     print(f"   {'ok  ' if ok else 'ПРОВАЛ'} файл с прежними кривыми скорости читается")
     if not ok:
         print(probe.stdout[-400:], probe.stderr[-400:])

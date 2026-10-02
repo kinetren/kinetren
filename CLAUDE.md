@@ -15,7 +15,7 @@ cargo test                 # conformance на реальных фикстура�
 cargo clippy --all-targets
 cargo run -p kt-app        # GUI
 cargo run -p kt-cli -- …   # headless-рендер/экспорт
-cargo run -p kt-cli -- probe <проект.otio> <от_с> <до_с> [--time]
+cargo run -p kt-cli -- probe <проект.kt> <от_с> <до_с> [--time]
                            # «что звучит в этом месте» (Р.43): эффективные события
                            # ПОСЛЕ морфер-слоёв, заказ префетча, чужое медиа в нём
                            # и стоимость сборки движка. Первое, что надо спросить
@@ -42,7 +42,8 @@ src/apps/kt-app     eframe GUI: таймлайн, превью, cpal-вывод,
 src/apps/kt-cli     headless-рендер (детерминизм, golden-тесты, CI)
 src/libs/kt-time    тики 90 kHz, диапазоны, сетки fps/аудио-burst (без зависимостей)
 src/libs/kt-model   модель таймлайна, команды, undo
-src/libs/kt-otio    формат проекта OpenTimelineIO (.otio): схемы+passthrough, metadata["kt"]
+src/libs/kt-otio    ДВЕРИ обмена OpenTimelineIO (.otio): импорт/экспорт, схемы+passthrough,
+                     metadata["kt"]; файл ПРОЕКТА — свой `.kt` (kt-model::project_file, Р.70)
 src/libs/kt-media   трейт MediaSource, мост к kt-ffmpeg, SyntheticSource, sidecar индекс-БД
 src/libs/kt-text    растеризация титров: harfrust+ab_glyph, вендоренный Noto Sans (Р.52)
 src/libs/kt-cache   кэш burst'ов + coverage (единственная правда о «прогретости»)

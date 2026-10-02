@@ -2970,7 +2970,7 @@ fn window_openers() -> Vec<(&'static str, OpenWin, Closes)> {
         ("kt_diag", OpenWin::By(|h| h.state_mut().perf.diag_open = true), Closes::Titlebar { title: || crate::i18n::tr(crate::i18n::k::win::DIAG_TITLE).to_string(), why: "диагностика закрывается крестиком заголовка: это окно разработчика без действий" }),
         ("kt_recovery", OpenWin::By(|h| h.state_mut().recovery_open = true), Closes::Action),
         ("kt_ask", OpenWin::By(|h| {
-            h.state_mut().ask = Some(crate::app::Ask::DropOtio);
+            h.state_mut().ask = Some(crate::app::Ask::DropProject);
         }), Closes::ActionShort {
             why: "вопрос при закрытии: заголовок, одна строка и ряд кнопок — содержимому расти \
                   неоткуда, и прокрутке нечего скрывать",
@@ -3322,7 +3322,14 @@ fn t783_older_project_goes_through_import_and_open_names_the_door() {
     h.step();
     h.step();
     let app = h.state();
-    assert_eq!(app.project_path.as_deref(), Some(path.as_path()), "путь прежний");
+    // Р.70: импорт даёт БЕЗЫМЯННЫЙ документ своего формата с подсказкой
+    // «сохраниться в <имя>.kt рядом»; исходный файл — не путь проекта
+    assert_eq!(app.project_path, None, "после импорта у документа нет пути: файл проекта ещё не записан");
+    assert_eq!(
+        app.save_hint.as_deref(),
+        Some(path.with_extension("kt").as_path()),
+        "подсказка сохранения — .kt рядом с исходником"
+    );
     assert!(app.dirty_content, "после импорта документ помечен правками (звёздочка)");
     let doc = app.model.project();
     assert_eq!(doc.clips.len(), 1, "событие дошло");
@@ -3338,9 +3345,9 @@ fn t783_older_project_goes_through_import_and_open_names_the_door() {
         "импорт не сообщил о версии: {said:?}"
     );
 
-    // --- сохранение пишет текущую форму, и «Открыть» уже читает сам -------
-    let out = kt_otio::save_project(doc, &Default::default(), path.parent());
-    let out_path = dir.join("saved.otio");
+    // --- сохранение пишет СВОЙ формат, и «Открыть» уже читает сам -------
+    let out = crate::app::project_text_of(doc, &Default::default(), None);
+    let out_path = dir.join("saved.kt");
     std::fs::write(&out_path, &out).unwrap();
     let reopened = KtApp::open(&out_path).expect("после импорта и записи файл читается сам");
     assert_eq!(reopened.model.project().morphers[0].targets, MorphTargets::Below);
@@ -4226,4 +4233,352 @@ finally:
     );
     assert!(out.status.success(), "прямое чтение разошлось с эталоном: {said}");
     assert!(said.contains("direct="), "сверка не назвала прочитанные цвета: {said}");
+}
+
+// ---- Р.70: двери файла проекта ----------------------------------------------
+
+/// Общая сцена дверей: проект с лентой в двух экземплярах — чтобы экспорт
+/// было чем проверить на самодостаточность.
+fn r70_project() -> kt_model::Project {
+    use kt_model::*;
+    use kt_time::Tick;
+    let clip = |id: u64, media: u64, start: i64, dur: i64| ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
+        overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
+        id: ClipId(id),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(start),
+        duration: Tick(dur),
+        source_in: Tick(0),
+        media: MediaId(media),
+        gain_db: 0.0,
+        reversed: false,
+        fx: Vec::new(),
+        fx_bypass: Vec::new(),
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    };
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 1280,
+        height: 720,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+        default_shape: Default::default(),
+        conform: Default::default(),
+        settings_explicit: false,
+    });
+    p.media.push(MediaRef::new(MediaId(1), "synth:Ramp"));
+    let mut s = Sequence::new(MediaId(100), "Заставка");
+    s.clips.push(clip(11, 1, 0, 45_000));
+    s.clips.push(clip(12, 1, 45_000, 45_000));
+    p.sequences.push(s);
+    p.clips.push(clip(1, 100, 0, 90_000));
+    p.clips.push(clip(2, 100, 90_000, 90_000));
+    p.normalize();
+    p.validate().unwrap();
+    p
+}
+
+/// Чужой файл обмена с полями, которых мы не знаем: ровно то, что обязано
+/// вернуться при экспорте.
+fn r70_foreign_otio() -> String {
+    serde_json::json!({
+        "OTIO_SCHEMA": "Timeline.1",
+        "name": "foreign",
+        "vendor_field": {"deep": [1, 2]},
+        "metadata": {"resolve": {"colorVersion": 3}},
+        "tracks": {
+            "OTIO_SCHEMA": "Stack.1",
+            "children": [{
+                "OTIO_SCHEMA": "Track.1",
+                "kind": "Video",
+                "children": [{
+                    "OTIO_SCHEMA": "Clip.2",
+                    "name": "known",
+                    "custom_clip_field": 42,
+                    "source_range": {"OTIO_SCHEMA": "TimeRange.1",
+                        "start_time": {"OTIO_SCHEMA": "RationalTime.1", "value": 0.0, "rate": 90000.0},
+                        "duration": {"OTIO_SCHEMA": "RationalTime.1", "value": 90000.0, "rate": 90000.0}},
+                    "media_references": {"DEFAULT_MEDIA": {
+                        "OTIO_SCHEMA": "ExternalReference.1", "target_url": "synth:Ramp",
+                        "available_range": null}},
+                    "active_media_reference_key": "DEFAULT_MEDIA"
+                }]
+            }]
+        }
+    })
+    .to_string()
+}
+
+fn r70_dir(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("kt-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// Тест 818 (Р.70): «Открыть» принимает ТОЛЬКО свой формат. Файл обмена и
+/// легаси отвергаются с именем пункта импорта в тексте (правило 19), файл
+/// будущей версии — с номером версии и без частичного чтения.
+#[test]
+fn t818_open_accepts_only_the_project_format_and_names_the_import_door() {
+    use crate::i18n::{k, tr};
+    let dir = r70_dir("t818");
+    let p = r70_project();
+
+    // свой формат — открывается, модель поле-в-поле
+    let ours = dir.join("film.kt");
+    std::fs::write(&ours, crate::app::project_text_of(&p, &Default::default(), None)).unwrap();
+    let app = crate::app::KtApp::open(&ours).expect("свой файл обязан открыться");
+    assert_eq!(app.model.project().clips, p.clips);
+    assert_eq!(app.model.project().sequences.len(), 1);
+    assert_eq!(app.project_path.as_deref(), Some(ours.as_path()));
+    drop(app);
+
+    // файл обмена (наш же экспорт!) — отказ с дверью, а не чтение
+    let otio = dir.join("film.otio");
+    std::fs::write(&otio, kt_otio::save_project(&p, &Default::default(), None)).unwrap();
+    let err = crate::app::KtApp::open(&otio).err().expect("файл обмена «Открыть» читать не должно");
+    assert!(err.contains(tr(k::menu::file::IMPORT_OLDER)), "ошибка не называет дверь импорта: {err}");
+    assert!(err.contains("OpenTimelineIO"), "ошибка не говорит, ЧТО это за файл: {err}");
+
+    // легаси .ktproj — отказ с той же дверью, своим текстом
+    let legacy = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/demo.ktproj"));
+    let err2 = crate::app::KtApp::open(legacy).err().expect("легаси «Открыть» читать не должно");
+    assert!(err2.contains(tr(k::menu::file::IMPORT_OLDER)), "ошибка не называет дверь импорта: {err2}");
+    assert!(err2.contains(".ktproj"), "ошибка не говорит, что это легаси: {err2}");
+    assert_ne!(err, err2, "два разных файла — два разных текста");
+
+    // будущая версия — номер версии в тексте, частичного чтения нет
+    let text = std::fs::read_to_string(&ours).unwrap();
+    let newer = text.replacen("\"kinotrain\": 1", "\"kinotrain\": 99", 1);
+    assert_ne!(newer, text);
+    let future = dir.join("future.kt");
+    std::fs::write(&future, newer).unwrap();
+    let err3 = crate::app::KtApp::open(&future).err().expect("файл будущей версии читать нельзя");
+    assert!(err3.contains("99"), "ошибка не называет версию: {err3}");
+    assert!(!err3.contains(tr(k::menu::file::IMPORT_OLDER)), "будущую версию импорт не чинит: {err3}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 819 (Р.70): ОДНА дверь импорта на три входа — легаси `.ktproj`, наш
+/// `.otio` старой версии конверта и чужой `.otio`. Результат — безымянный
+/// документ своего формата с подсказкой «сохраниться в `<имя>.kt` рядом»,
+/// звёздочкой и нетронутым исходником. Файл проекта в эту дверь не идёт.
+#[test]
+fn t819_the_import_door_takes_legacy_old_and_foreign_and_yields_a_project() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    let dir = r70_dir("t819");
+
+    // три входа
+    let legacy = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/demo.ktproj"));
+    let old = dir.join("old_v5.otio");
+    {
+        let text = kt_otio::save_project(&r70_project(), &Default::default(), None);
+        let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        v["metadata"]["kt"]["v"] = serde_json::json!(5);
+        std::fs::write(&old, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+    }
+    let foreign = dir.join("foreign.otio");
+    std::fs::write(&foreign, r70_foreign_otio()).unwrap();
+
+    let mut h = crate::layout_tests::harness();
+    // пункт в меню «Файл» есть, прежнего «Импортировать .ktproj…» нет
+    h.get_by_label(tr(k::menu::file::TITLE)).click();
+    h.step();
+    h.step();
+    let labels = crate::layout_tests::menu_labels(&mut h);
+    assert!(h.query_by_label(tr(k::menu::file::IMPORT_OLDER)).is_some(), "двери нет в меню: {labels:?}");
+    assert!(
+        !labels.iter().any(|l| l.contains(".ktproj")),
+        "второй пункт импорта — лишняя дверь, легаси идёт в общую: {labels:?}"
+    );
+    h.get_by_label(tr(k::menu::file::TITLE)).click();
+    h.step();
+
+    for (what, src) in [("легаси", legacy.to_path_buf()), ("старый .otio", old.clone()), ("чужой .otio", foreign.clone())] {
+        let before = std::fs::read(&src).unwrap();
+        h.state_mut().import_older_path(&src);
+        h.step();
+        let app = h.state();
+        assert!(!app.model.project().clips.is_empty(), "{what}: события не доехали");
+        assert_eq!(app.project_path, None, "{what}: у импортированного документа не должно быть пути");
+        assert_eq!(
+            app.save_hint.as_deref(),
+            Some(src.with_extension("kt").as_path()),
+            "{what}: подсказка сохранения — .kt рядом с исходником"
+        );
+        assert!(app.dirty_content, "{what}: звёздочка после импорта");
+        assert_eq!(std::fs::read(&src).unwrap(), before, "{what}: импорт тронул исходник");
+    }
+    // чужие поля доехали в passthrough — экспорт их вернёт (t820)
+    assert!(!h.state().retained.is_empty(), "чужой passthrough потерян на импорте");
+
+    // файл проекта в дверь импорта не идёт: ошибка называет «Открыть»
+    let ours = dir.join("ours.kt");
+    std::fs::write(&ours, crate::app::project_text_of(&r70_project(), &Default::default(), None)).unwrap();
+    let n0 = h.state().notices.len();
+    h.state_mut().import_older_path(&ours);
+    h.step();
+    let said: Vec<String> = h.state().notices.iter().skip(n0).map(|n| n.text.clone()).collect();
+    assert!(
+        said.iter().any(|t| t.contains(tr(k::menu::file::OPEN))),
+        "импорт файла проекта обязан назвать «Открыть»: {said:?}"
+    );
+    drop(h);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 820 (Р.70): экспорт в OTIO — названное действие `File → Export →
+/// OpenTimelineIO…`, достижимое из меню; файл самодостаточен (тело ленты в
+/// каждом экземпляре), чужой passthrough возвращён, проект и звёздочка не
+/// тронуты: экспорт — не сохранение.
+#[test]
+fn t820_export_otio_is_a_named_menu_action_and_leaves_the_project_alone() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    let dir = r70_dir("t820");
+
+    // достижимость: Файл → Экспорт → OpenTimelineIO…
+    let mut h = crate::layout_tests::harness();
+    h.get_by_label(tr(k::menu::file::TITLE)).click();
+    h.step();
+    h.step();
+    assert!(
+        h.query_by_label_contains(tr(k::menu::file::EXPORT)).is_some(),
+        "подменю «Экспорт» нет в меню «Файл»: {:?}",
+        crate::layout_tests::menu_labels(&mut h)
+    );
+    h.get_by_label_contains(tr(k::menu::file::EXPORT)).click();
+    h.step();
+    h.step();
+    let labels = crate::layout_tests::menu_labels(&mut h);
+    assert!(
+        h.query_by_label(tr(k::menu::file::EXPORT_OTIO)).is_some(),
+        "пункта «OpenTimelineIO…» нет в подменю экспорта: {labels:?}"
+    );
+    assert_eq!(tr(k::menu::file::EXPORT_OTIO), "OpenTimelineIO…", "пункт назван по отрасли, не по-нашему");
+    h.get_by_label(tr(k::menu::file::TITLE)).click();
+    h.step();
+
+    // чужой проект импортирован, затем сохранён своим форматом
+    let foreign = dir.join("foreign.otio");
+    std::fs::write(&foreign, r70_foreign_otio()).unwrap();
+    h.state_mut().import_older_path(&foreign);
+    h.step();
+    let kt = dir.join("film.kt");
+    {
+        let app = h.state_mut();
+        let text = app.project_text(&app.model.document(), kt.parent());
+        std::fs::write(&kt, &text).unwrap();
+        app.project_path = Some(kt.clone());
+        app.dirty_content = true; // экспорт звёздочку не трогает — проверяем это
+    }
+    let project_bytes = std::fs::read(&kt).unwrap();
+
+    let dst = dir.join("film.otio");
+    h.state_mut().export_otio_to(&dst);
+    h.step();
+    let exported = std::fs::read_to_string(&dst).expect("экспорт не написал файл");
+    assert!(exported.starts_with("{\n    \"OTIO_SCHEMA\": \"Timeline.1\""), "экспорт — не OTIO: {exported:.80}");
+    for needle in ["vendor_field", "colorVersion", "custom_clip_field"] {
+        assert!(exported.contains(needle), "чужое «{needle}» не вернулось при экспорте");
+    }
+    assert_eq!(std::fs::read(&kt).unwrap(), project_bytes, "экспорт переписал файл проекта");
+    assert!(h.state().dirty_content, "экспорт погасил звёздочку — он не сохранение");
+    assert_eq!(h.state().project_path.as_deref(), Some(kt.as_path()), "экспорт подменил путь проекта");
+    let said: Vec<String> = h.state().notices.iter().map(|n| n.text.clone()).collect();
+    assert!(
+        said.iter().any(|t| t.contains(&crate::tf!(k::msg::EXPORTED, dst.display().to_string()))),
+        "экспорт не сообщил, куда записал: {said:?}"
+    );
+
+    // самодостаточность: лента в двух экземплярах — два Stack с телами
+    {
+        let app = h.state_mut();
+        app.model = kt_model::TimelineModel::new(r70_project());
+        app.retained = Default::default();
+    }
+    let dst2 = dir.join("reels.otio");
+    h.state_mut().export_otio_to(&dst2);
+    let tl = kt_otio::parse_document(&std::fs::read_to_string(&dst2).unwrap()).unwrap();
+    let mut stacks = 0;
+    for c in tl.tracks.children.iter() {
+        if let kt_otio::Composable::Track(t) = c {
+            for ch in &t.children {
+                if let kt_otio::Composable::Stack(s) = ch {
+                    stacks += 1;
+                    assert!(!s.children.is_empty(), "тело ленты обязано быть инлайном в экспорте");
+                }
+            }
+        }
+    }
+    assert_eq!(stacks, 2, "два экземпляра — два Stack с телами");
+    // и «Открыть» этот файл не принимает
+    let err = crate::app::KtApp::open(&dst2).err().expect("экспорт — не проект");
+    assert!(err.contains(tr(k::menu::file::IMPORT_OLDER)), "{err}");
+    drop(h);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 821 (Р.70): три расширения на окно — три разных исхода, каждый
+/// назван: `.kt` — вопрос «открыть или вставить», `.otio` — подсказка про
+/// дверь импорта с именем файла обмена, `.ktproj` — та же дверь, своим
+/// текстом про легаси. Расширения не путаются и не склеиваются.
+#[test]
+fn t821_dropping_three_kinds_of_files_gives_three_named_outcomes() {
+    use crate::i18n::{k, tr};
+    let dir = r70_dir("t821");
+    let p = r70_project();
+    let kt = dir.join("film.kt");
+    std::fs::write(&kt, crate::app::project_text_of(&p, &Default::default(), None)).unwrap();
+    let otio = dir.join("film.otio");
+    std::fs::write(&otio, kt_otio::save_project(&p, &Default::default(), None)).unwrap();
+    let ktproj = dir.join("film.ktproj");
+    std::fs::write(&ktproj, "{\"format_version\": 1}").unwrap();
+
+    let mut h = crate::layout_tests::harness();
+
+    // .kt — вопрос, монтаж не тронут
+    h.state_mut().route_dropped(kt.clone(), None, None);
+    h.step();
+    assert!(matches!(h.state().ask, Some(crate::app::Ask::DropProject)), "файл проекта обязан дать вопрос");
+    assert_eq!(h.state().pending_drop.as_ref().map(|(p, _)| p.clone()), Some(kt.clone()));
+    h.state_mut().answer_ask(crate::app::Answer::Cancel);
+    h.step();
+
+    // .otio — не вопрос, а подсказка про дверь импорта с именем файла
+    let n0 = h.state().notices.len();
+    h.state_mut().route_dropped(otio.clone(), None, None);
+    h.step();
+    assert!(h.state().ask.is_none(), "файл обмена — не проект, вопроса быть не должно");
+    let said_otio: Vec<String> = h.state().notices.iter().skip(n0).map(|n| n.text.clone()).collect();
+    assert!(
+        said_otio.iter().any(|t| t.contains(tr(k::menu::file::IMPORT_OLDER)) && t.contains("OpenTimelineIO")),
+        "дроп .otio обязан назвать дверь импорта и вид файла: {said_otio:?}"
+    );
+
+    // .ktproj — та же дверь, свой текст
+    let n1 = h.state().notices.len();
+    h.state_mut().route_dropped(ktproj.clone(), None, None);
+    h.step();
+    assert!(h.state().ask.is_none());
+    let said_legacy: Vec<String> = h.state().notices.iter().skip(n1).map(|n| n.text.clone()).collect();
+    assert!(
+        said_legacy.iter().any(|t| t.contains(tr(k::menu::file::IMPORT_OLDER)) && t.contains(".ktproj")),
+        "дроп .ktproj обязан назвать дверь импорта и легаси: {said_legacy:?}"
+    );
+    assert_ne!(said_otio, said_legacy, "два вида файла — два разных текста");
+    drop(h);
+    let _ = std::fs::remove_dir_all(&dir);
 }

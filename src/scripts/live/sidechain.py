@@ -22,6 +22,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import KT_CLI, Live, geometry, require_tools  # noqa: E402
+from kt_live import demo_otio, import_project, new_otio  # noqa: E402,F401
 from kt_live import _clip, _gap  # noqa: E402
 
 SEC = 90000
@@ -94,7 +95,7 @@ def main(out):
     # Своими руками, а не `project_with_clips`: тому нужны ВИДЕО-дорожки, а
     # тут вся суть в двух АУДИО.
     path = os.path.join(out, "sidechain.otio")
-    subprocess.run([KT_CLI, "new", path, "--force"], check=True, capture_output=True)
+    new_otio(path)
     with open(path) as f:
         doc = json.load(f)
     doc["metadata"]["kt"]["settings"].update(fps=30, width=1280, height=720)
@@ -157,8 +158,8 @@ def main(out):
 
         # 3) сохраняем и смотрим в файл
         app.save_now()
-        with open(path) as fh:
-            saved = fh.read()
+        # Р.70: сохранённый проект — .kt; конверт kt виден через дверь экспорта
+        saved = open(app.project_now().otio_path).read()
         app.expect('"key"' in saved, "ключ сайдчейна записан в файл")
         app.expect('"v": 12' in saved or '"v":12' in saved, "версия конверта поднялась до v12")
 
@@ -166,12 +167,13 @@ def main(out):
     # обоих одна и та же, значит вся разница под ней — это музыка. Мерить
     # один прогон нельзя: речь в миксе громче музыки и просадку маскирует.
     def render(src, dst):
-        subprocess.run([KT_CLI, "render", src, dst], check=True, capture_output=True)
+        # kt-cli рендерит ФАЙЛ ПРОЕКТА; файл обмена сначала импортируется
+        subprocess.run([KT_CLI, "render", import_project(src), dst], check=True, capture_output=True)
         return read_wav_mono(dst)
 
-    keyed = render(path, os.path.join(out, "keyed.wav"))
+    keyed = render(app.project, os.path.join(out, "keyed.wav"))
     plain_path = os.path.join(out, "plain.otio")
-    with open(path) as fh:
+    with open(app.project_now().otio_path) as fh:
         doc = json.load(fh)
     drop_ducker(doc)
     with open(plain_path, "w") as fh:

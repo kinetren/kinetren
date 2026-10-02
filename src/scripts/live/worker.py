@@ -157,7 +157,7 @@ class Bench:
         self.ctl = os.path.join(self.dir, "ctl")
         self.geom = os.path.join(self.dir, "geom.json")
         self.store = os.path.join(self.dir, "store")
-        self.blank = os.path.join(self.dir, "blank.otio")
+        self.blank = os.path.join(self.dir, "blank.kt")
         self.proc = None
 
     def env(self):

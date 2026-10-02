@@ -292,6 +292,38 @@ fn t146_schema_versions() {
 
     // детект легаси
     assert_eq!(detect(r#"{"format_version": 1, "clips": []}"#).unwrap(), FileFormat::LegacyKtproj);
+
+    // детект СВОЕГО файла проекта (Р.70): этот крейт его опознаёт, но не
+    // читает — дверь импорта ему не нужна, и ошибка называет «Открыть»
+    let ours = kt_model::project_file::to_text(
+        &kt_model::Project::new(kt_model::ProjectSettings {
+            fps: 30,
+            width: 1280,
+            height: 720,
+            sample_rate: 48000,
+            pitch_engine: Default::default(),
+            default_shape: Default::default(),
+            conform: Default::default(),
+            settings_explicit: false,
+        }),
+        None,
+    );
+    assert_eq!(detect(&ours).unwrap(), FileFormat::Project);
+    let err = match kt_otio::load_project(&ours, None) {
+        Ok(_) => panic!("файл проекта не должен читаться как файл обмена"),
+        Err(e) => e,
+    };
+    assert!(matches!(err, Error::ProjectFile), "файл проекта как файл обмена: {err}");
+    assert!(err.to_string().contains("File → Open"), "ошибка не называет дверь: {err}");
+    // и наоборот: файл обмена как проект — отказ с дверью импорта
+    let tl = rich_timeline();
+    let s = write_document(&tl);
+    match kt_model::project_file::from_text(&s) {
+        Err(kt_model::project_file::ProjectFileError::NotOurs {
+            looks_like: Some(kt_model::project_file::FileKind::Otio),
+        }) => {}
+        other => panic!("файл обмена обязан отвергаться как «не проект», а не {other:?}"),
+    }
 }
 
 /// Тест 147: пути и file://-URL.

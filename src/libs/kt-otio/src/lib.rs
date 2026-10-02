@@ -68,6 +68,10 @@ pub enum Error {
     UnsupportedRoot(String),
     #[error("not an OpenTimelineIO file")]
     NotOtio,
+    /// Это файл ПРОЕКТА своего формата (Р.70), а не файл обмена: дверь
+    /// импорта ему не нужна — его открывает обычное «Открыть».
+    #[error("a Kinotrain project file, not an interchange file — use File → Open")]
+    ProjectFile,
     /// Файл написан более новым Kinotrain (metadata.kt.v выше нашей).
     #[error("project written by a newer Kinotrain (kt.v = {0})")]
     KtMetaTooNew(u32),
@@ -90,6 +94,9 @@ pub enum Error {
 /// Формат файла по СОДЕРЖИМОМУ (расширению не верим).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileFormat {
+    /// Файл ПРОЕКТА своего формата (Р.70): признак `kinotrain` на корне.
+    /// Читает его `kt_model::project_file`; этот крейт лишь опознаёт.
+    Project,
     Otio,
     /// Старый .ktproj: как проект не открывается (решение Р.24 п.12) —
     /// только пункт «Импортировать .ktproj…».
@@ -103,6 +110,7 @@ pub fn load_project(
     base_dir: Option<&std::path::Path>,
 ) -> Result<ProjectBundle, Error> {
     match detect(text)? {
+        FileFormat::Project => Err(Error::ProjectFile),
         FileFormat::Otio => {
             let tl = parse_document(text)?;
             match timeline_to_project(&tl, base_dir) {
@@ -125,6 +133,60 @@ pub fn load_project(
 /// обычное чтение. См. `legacy_import`.
 pub use legacy_import::{FIXUPS, Fixup, import_older};
 
+/// ДВЕРЬ ИМПОРТА (Р.70) — одна на три входа: легаси `.ktproj`, наш `.otio`
+/// любой версии конверта и чужой `.otio`. Правило выбора пути живёт ЗДЕСЬ,
+/// и приложение с kt-cli зовут его одинаково: чужой файл без нашего конверта
+/// читается обычным ридером (ему починки не нужны и `import_older` его
+/// отверг бы), наш старой версии — починками, легаси — своим ридером.
+/// Файл проекта в эту дверь не идёт: `Error::ProjectFile` называет «Открыть».
+/// Пути медиа в результате АБСОЛЮТНЫ (разрешены от `base_dir`), как у
+/// `load_project`.
+pub fn import_interchange(
+    text: &str,
+    base_dir: Option<&std::path::Path>,
+) -> Result<ProjectBundle, Error> {
+    match detect(text)? {
+        FileFormat::Project => Err(Error::ProjectFile),
+        FileFormat::LegacyKtproj => {
+            let (mut project, notices) = import_legacy(text)?;
+            resolve_project_media(&mut project, base_dir);
+            Ok(ProjectBundle { project, retained: Retained::default(), notices })
+        }
+        FileFormat::Otio => match load_project(text, base_dir) {
+            Err(Error::NeedsImport { .. }) => import_older(text, base_dir),
+            other => other,
+        },
+    }
+}
+
+/// Относительные пути медиа → абсолютные от каталога файла. Псевдо-пути
+/// (`synth:`, `gen:`) и абсолютные не трогаются. Зовётся при ЧТЕНИИ файла
+/// проекта: модель в памяти держит абсолютные пути, как после `load_project`.
+pub fn resolve_project_media(p: &mut kt_model::Project, base_dir: Option<&std::path::Path>) {
+    let Some(base) = base_dir else { return };
+    for m in &mut p.media {
+        if kt_model::is_pseudo_path(&m.path) || std::path::Path::new(&m.path).is_absolute() {
+            continue;
+        }
+        m.path = resolve_media_path(base, &m.path).to_string_lossy().into_owned();
+    }
+}
+
+/// Абсолютные пути медиа → относительные к каталогу файла, где это
+/// выразимо (иначе остаются абсолютными). Зовётся при ЗАПИСИ файла проекта:
+/// проект, переехавший вместе с материалом, обязан открыться (т797).
+pub fn relativize_project_media(p: &mut kt_model::Project, base_dir: Option<&std::path::Path>) {
+    let Some(base) = base_dir else { return };
+    for m in &mut p.media {
+        if kt_model::is_pseudo_path(&m.path) || !std::path::Path::new(&m.path).is_absolute() {
+            continue;
+        }
+        if let Some(rel) = relativize(base, std::path::Path::new(&m.path)) {
+            m.path = rel;
+        }
+    }
+}
+
 /// Сериализация проекта в .otio (идемпотентная запись, тест 144).
 pub fn save_project(
     p: &kt_model::Project,
@@ -139,6 +201,9 @@ pub fn detect(text: &str) -> Result<FileFormat, Error> {
     let serde_json::Value::Object(map) = v else {
         return Err(Error::NotAnObject);
     };
+    if map.contains_key(kt_model::project_file::MARKER) {
+        return Ok(FileFormat::Project);
+    }
     if map.get("OTIO_SCHEMA").is_some() {
         return Ok(FileFormat::Otio);
     }

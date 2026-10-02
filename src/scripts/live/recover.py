@@ -6,7 +6,7 @@
 предлагает восстановить → работа на месте.
 
 И то, что решил владелец: **в файл проекта пишет только Ctrl+S.** Пока
-пользователь не сохранился, его .otio обязан остаться нетронутым — даже после
+пользователь не сохранился, его файл проекта обязан остаться нетронутым — даже после
 того, как фоновая запись отработала.
 
 Второй круг проверяет правило 14: восстановление работает ПОВТОРНО, а не один
@@ -18,7 +18,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Failure, Live, poll_step, project_with_clips, require_tools  # noqa: E402
+from kt_live import Failure, Live, import_project, poll_step, project_with_clips, require_tools  # noqa: E402
 
 # СВОЙ ПРОЦЕСС (Р.68): сценарий проверяет САМ СТАРТ программы, а не работу в
 # уже открытом проекте, — стенд работника ему не подходит.
@@ -28,7 +28,7 @@ SEC = 90000
 
 
 def recovery_of(project):
-    return project + ".recovery.otio"
+    return project + ".recovery.kt"
 
 
 def wait_file(path, timeout=90.0, what="файл"):
@@ -42,10 +42,11 @@ def wait_file(path, timeout=90.0, what="файл"):
 
 def main(out):
     require_tools()
-    proj = project_with_clips(
+    # файл ПРОЕКТА (Р.70): сценарий строит файл обмена, программа живёт в .kt
+    proj = import_project(project_with_clips(
         os.path.join(out, "recover.otio"),
         [(0.0, 2.0, "synth:Ramp"), (3.0, 2.0, "synth:Ramp")],
-    )
+    ))
     before = open(proj).read()
     rec = recovery_of(proj)
     if os.path.exists(rec):

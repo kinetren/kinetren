@@ -16,6 +16,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import KT_CLI, Live, require_tools  # noqa: E402
+from kt_live import demo_otio, import_project, new_otio  # noqa: E402,F401
 
 SEC = 90000
 
@@ -23,7 +24,7 @@ SEC = 90000
 def main(out):
     require_tools()
     proj = os.path.join(out, "audiofx.otio")
-    subprocess.run([KT_CLI, "demo", proj, "--force"], check=True, capture_output=True)
+    demo_otio(proj)
     # первому АУДИО-событию демо-проекта дописываем слот Filter с
     # неумолчальным cutoff — по нему узнаем свой слот после сейва
     with open(proj) as f:
@@ -65,9 +66,7 @@ def main(out):
         app.expect(d > 0.01, f"двойной клик открыл окно FX (экран изменился на {d:.1%})")
 
         # round-trip через настоящую программу: слот выжил и не исказился
-        app.saved_project()  # ctrl+s — файл перезаписан программой
-        with open(proj) as f:
-            saved = json.load(f)
+        saved = app.saved_project().doc  # ctrl+s — файл перезаписан программой
         slots = [
             e
             for tr in saved["tracks"]["children"]

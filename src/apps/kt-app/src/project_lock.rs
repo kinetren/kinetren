@@ -141,8 +141,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("kt-t362-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let a = dir.join("a.otio");
-        let b = dir.join("b.otio");
+        let a = dir.join("a.kt");
+        let b = dir.join("b.kt");
         std::fs::write(&a, "{}").unwrap();
 
         let first = match acquire(&a) {
@@ -174,10 +174,10 @@ mod tests {
     /// числе записанный по-разному).
     #[test]
     fn t362b_lock_file_is_keyed_by_path() {
-        let a = lock_file_for(Path::new("/w/film.otio"));
-        let b = lock_file_for(Path::new("/w/film.mp4.otio"));
+        let a = lock_file_for(Path::new("/w/film.kt"));
+        let b = lock_file_for(Path::new("/w/film.mp4.kt"));
         assert_ne!(a, b);
-        assert_eq!(a, lock_file_for(Path::new("/w/./film.otio")));
+        assert_eq!(a, lock_file_for(Path::new("/w/./film.kt")));
         assert!(a.to_string_lossy().ends_with(".lock"));
     }
 }

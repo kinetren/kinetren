@@ -26,6 +26,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import KT_CLI, Live, geometry, poll_step, require_tools  # noqa: E402
+from kt_live import demo_otio, import_project, new_otio  # noqa: E402,F401
 
 SEC = 90000
 
@@ -42,7 +43,7 @@ def click_in(app, r, fx, fy=0.5):
 def main(out):
     require_tools()
     path = os.path.join(out, "curves.otio")
-    subprocess.run([KT_CLI, "demo", path, "--force"], check=True, capture_output=True)
+    demo_otio(path)
     os.environ["KT_AUTOSAVE_SECS"] = "600"
 
     with Live("curves", out, project=path) as app:

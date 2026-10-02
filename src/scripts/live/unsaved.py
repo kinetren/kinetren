@@ -14,7 +14,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, poll_step, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, import_project, poll_step, project_with_clips, require_tools  # noqa: E402
 
 # СВОЙ ПРОЦЕСС (Р.68): сценарий проверяет САМ СТАРТ программы, а не работу в
 # уже открытом проекте, — стенд работника ему не подходит.
@@ -25,10 +25,11 @@ SEC = 90000
 
 def main(out):
     require_tools()
-    proj = project_with_clips(
+    # файл ПРОЕКТА (Р.70): сценарий строит файл обмена, программа живёт в .kt
+    proj = import_project(project_with_clips(
         os.path.join(out, "unsaved.otio"),
         [(0.0, 2.0, "synth:Ramp"), (3.0, 2.0, "synth:Ramp")],
-    )
+    ))
     before = open(proj).read()
     # фоновая запись не должна успеть вмешаться: проверяется сторож, а не она
     os.environ["KT_AUTOSAVE_SECS"] = "600"

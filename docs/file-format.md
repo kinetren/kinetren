@@ -1,13 +1,19 @@
-# Формат проекта: OpenTimelineIO (.otio)
+# Формат ОБМЕНА: OpenTimelineIO (.otio)
 
-Родной формат — OTIO (JSON, эталон — библиотека OpenTimelineIO 0.18.x).
+**С Р.70 это описание файла ОБМЕНА, а не проекта.** Файл проекта — свой `.kt`
+(`src/libs/kt-model/src/project_file.rs`: построчный детерминированный JSON
+модели, признак `kinotrain` и версия на корне); OTIO остался двумя дверями —
+`File → Import older Kinotrain project…` и `File → Export → OpenTimelineIO…`
+(`kt-cli import` / `kt-cli export-otio`). Контракт — `openspec/specs/project-format`.
+
+Формат обмена — OTIO (JSON, эталон — библиотека OpenTimelineIO 0.18.x).
 Реализация — крейт `src/libs/kt-otio` (чистый Rust, см. его CLAUDE.md).
 Решения раунда Р.24 — docs/user-feedback.md; каталог тонкостей — пп.135–153
 в docs/porting-notes.md.
 
-Старый `.ktproj` — ТОЛЬКО импорт («Файл / Импортировать .ktproj…» или
-`kt-cli convert`): перекрытия конвертируются в переходы/развод (п.143),
-результат живёт как .otio, исходник не изменяется. Писателя ktproj в кодовой
+Старый `.ktproj` — ТОЛЬКО импорт («Файл / Import older Kinotrain project…»
+или `kt-cli import`): перекрытия конвертируются в переходы/развод (п.143),
+результат живёт как `.kt`, исходник не изменяется. Писателя ktproj в кодовой
 базе больше нет.
 
 ## Слой OTIO (совместимость с другими программами)

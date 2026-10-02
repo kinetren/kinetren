@@ -439,14 +439,14 @@ mod tests {
         let mut w = Workspace::default();
         w.meters_w = 123.0;
         w.set_view(
-            Some(std::path::Path::new("/tmp/p.otio")),
+            Some(std::path::Path::new("/tmp/p.kt")),
             ProjectView { view_start: 5.0, ticks_per_px: 700.0, cursor: 4242 },
         );
         save_workspace_at(&path, &w);
         let back = load_workspace_at(&path);
         assert_eq!(back.meters_w, 123.0, "ширина метров не пережила круг через файл");
         assert_eq!(
-            back.view_of(Some(std::path::Path::new("/tmp/p.otio")))
+            back.view_of(Some(std::path::Path::new("/tmp/p.kt")))
                 .map(|v| (v.ticks_per_px, v.cursor)),
             Some((700.0, 4242)),
             "вид проекта не пережил круг"
@@ -457,7 +457,7 @@ mod tests {
         std::fs::write(&old, "{\"version\":1,\"meters_w\":77.0,\"views\":[]}\n").unwrap();
         let back = load_workspace_at(&old);
         assert_eq!(back.meters_w, 77.0);
-        assert!(back.view_of(Some(std::path::Path::new("/tmp/p.otio"))).is_none());
+        assert!(back.view_of(Some(std::path::Path::new("/tmp/p.kt"))).is_none());
         let _ = std::fs::remove_dir_all(&d);
     }
 }
@@ -472,7 +472,7 @@ mod tests {
 // Имена и высоты дорожек, группы бина в проекте ОСТАЮТСЯ: они про ЭТОТ
 // монтаж, и коллега должен получить их вместе с ним.
 //
-// В самом .otio прежние значения остаются passthrough — что прочитали, то и
+// В самом файле проекта прежние значения остаются passthrough — что прочитали, то и
 // пишем. Байт-стабильность цела, GOLDEN не двигаются, а старая сборка,
 // открыв файл, найдёт в нём ровно то, что там было.
 

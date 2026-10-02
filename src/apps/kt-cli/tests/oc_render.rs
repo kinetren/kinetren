@@ -102,10 +102,28 @@ fn prepare(env: &Env, out: &Path) -> Result<Prep, String> {
     })
 }
 
+/// Подготовленный файл обмена — в файл проекта той же дверью, что
+/// `File → Import` (Р.70): `kt-cli export` читает только `.kt`.
+fn import_prepared(prepared: &Path) -> Result<PathBuf, String> {
+    let kt = prepared.with_extension("kt");
+    let o = Command::new(env!("CARGO_BIN_EXE_kt-cli"))
+        .arg("import")
+        .arg(prepared)
+        .arg(&kt)
+        .arg("--force")
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !o.status.success() {
+        return Err(String::from_utf8_lossy(&o.stderr).trim().to_string());
+    }
+    Ok(kt)
+}
+
 fn render_ours(prepared: &Path, out: &Path) -> Result<(), String> {
+    let project = import_prepared(prepared)?;
     let o = Command::new(env!("CARGO_BIN_EXE_kt-cli"))
         .arg("export")
-        .arg(prepared)
+        .arg(&project)
         .arg(out)
         .arg("libx264")
         .output()

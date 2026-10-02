@@ -80,7 +80,7 @@ USE_CLICK = re.compile(
     r'|scroll_probe_into_view)\(\s*f?"([^"]+)"'
 )
 SPEC_LIVE = re.compile(r"src/scripts/live/([a-z_0-9]+)\.py")
-FILE_EXT = {"otio", "png", "json", "db", "rs", "py", "toml", "wav", "mp4", "jpg", "ktproj"}
+FILE_EXT = {"otio", "kt", "png", "json", "db", "rs", "py", "toml", "wav", "mp4", "jpg", "ktproj"}
 
 # РЕЕСТР ПЕРЕЕЗДА (Р.68, задача 5.2). Критерий — в спеке `ui-reach`: живьём
 # остаётся место, не тронутое НИ РАЗУ, попадание жеста и сложный путь из

@@ -34,7 +34,9 @@ pub enum Ask {
     /// на таймлайн и открывается новый таймлайн, а я хочу чтобы оно дало
     /// мне выбор». До этого раунда выбора не было — и, что хуже, не было
     /// и вопроса о несохранённой работе: она пропадала молча.
-    DropOtio,
+    /// С Р.70 проект — `.kt`; файл обмена на окно — не проект, а подсказка
+    /// про дверь импорта.
+    DropProject,
 }
 
 /// Что программа собиралась сделать, когда спросила про несохранённое.
@@ -43,8 +45,8 @@ pub enum Pending {
     New,
     Quit,
     Open,
-    /// Импорт проекта СТАРОЙ версии (Р.67): та же дверь диалога, что у
-    /// «Открыть», но чтение идёт через починки `kt_otio::import_older`.
+    /// ДВЕРЬ ИМПОРТА (Р.67, Р.70): легаси `.ktproj`, наш старый `.otio`,
+    /// чужой `.otio` — результат открывается документом своего формата.
     ImportOlder,
     /// Открыть ПРОЕКТ, БРОШЕННЫЙ НА ОКНО (Р.55, С6). Путь лежит отдельным
     /// полем `KtApp.pending_drop`: `Pending` — `Copy`, и `PathBuf` в него
@@ -439,9 +441,15 @@ pub struct KtApp {
     pub reopen_rx: Option<std::sync::mpsc::Receiver<ReopenedMedia>>,
     /// Внутренний буфер обмена (блок клипов+переходов, ребейз к нулю).
     pub clipboard: kt_model::ops::ClipBlock,
-    /// Passthrough-остатки загруженного .otio (чужие поля/схемы/metadata):
-    /// пишутся обратно при каждом сохранении, вне undo (Р.24).
+    /// Passthrough-остатки импортированного файла обмена (чужие поля/схемы/
+    /// metadata): едут в файле проекта полем `otio` и возвращаются при
+    /// экспорте, вне undo (Р.24, Р.70).
     pub retained: kt_otio::Retained,
+    /// Куда предложить сохраниться безымянному документу (Р.70): после
+    /// импорта `film.otio` — `film.kt` рядом с исходником. Сам путь проекта
+    /// при этом пуст: писать `.kt` под чужим именем нельзя, а молча класть
+    /// файл рядом — не лучше; имя выбирает человек в диалоге.
+    pub save_hint: Option<PathBuf>,
     /// Заказанное ЧТЕНИЕ системного буфера огибающих (Р.61).
     ///
     /// Зеркала буфера внутри программы БОЛЬШЕ НЕТ: оно гасило кнопку на
@@ -837,6 +845,7 @@ impl KtApp {
             recovery_pick: 0,
             recovery_open: false,
             recovery_written: None,
+            save_hint: None,
             snap_line: None,
             preview_gen: (0, 0),
             snap_off: false,
@@ -950,22 +959,43 @@ impl KtApp {
         Self::open_loaded(path, project, retained, notices)
     }
 
-    /// Открыть проект СТАРОЙ версии через импорт (Р.67): починки старых
-    /// форм делает `kt_otio::import_older`, документ открывается с прежним
-    /// путём и поднятым флагом правок — следующая запись идёт новой формой,
-    /// исходный файл импорт не трогает.
+    /// ДВЕРЬ ИМПОРТА (Р.67, Р.70): легаси `.ktproj`, наш `.otio` любой
+    /// версии конверта (починки старых форм делает `kt_otio::import_older`)
+    /// и чужой `.otio`. Результат — документ СВОЕГО формата без имени, с
+    /// поднятым флагом правок и подсказкой «сохраниться в `<имя>.kt` рядом»;
+    /// исходный файл импорт не трогает никогда. Файл проекта сюда не идёт —
+    /// ему дверь «Открыть».
     pub(crate) fn open_older(path: &Path) -> Result<KtApp, String> {
         let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-        let version = kt_otio::detect(&text)
-            .ok()
-            .and_then(|_| kt_otio::parse_document(&text).ok())
-            .and_then(|tl| kt_otio::kt_version(&tl))
-            .unwrap_or(0);
-        let b = kt_otio::import_older(&text, path.parent()).map_err(|e| e.to_string())?;
+        // версия — для уведомления: легаси несёт свою, наш конверт — kt.v,
+        // чужой файл — 0
+        let version = match kt_otio::detect(&text) {
+            Ok(kt_otio::FileFormat::LegacyKtproj) => kt_model::FORMAT_VERSION,
+            _ => kt_otio::parse_document(&text)
+                .ok()
+                .and_then(|tl| kt_otio::kt_version(&tl))
+                .unwrap_or(0),
+        };
+        let b = match kt_otio::import_interchange(&text, path.parent()) {
+            Ok(b) => b,
+            Err(kt_otio::Error::ProjectFile) => {
+                return Err(crate::tf!(k::msg::ALREADY_PROJECT, tr(k::menu::file::OPEN)));
+            }
+            Err(e) => return Err(e.to_string()),
+        };
         let mut app = Self::open_loaded(path, b.project, b.retained, b.notices)?;
+        app.project_path = None;
+        app.save_hint = Some(path.with_extension(kt_model::project_file::EXTENSION));
         app.dirty_content = true;
         app.note(crate::tf!(k::msg::IMPORT_OLDER_DONE, version));
         Ok(app)
+    }
+
+    /// Текст файла проекта для этого документа: модель плюс чужой
+    /// passthrough, если он есть. ОДНО тело на Ctrl+S, автосейв и `Drop`.
+    /// `base_dir` — каталог файла, относительно него пишутся пути медиа.
+    pub(crate) fn project_text(&self, doc: &Project, base_dir: Option<&Path>) -> String {
+        project_text_of(doc, &self.retained, base_dir)
     }
 
     /// Общее тело `open`/`open_older`: проект уже прочитан.
@@ -1079,6 +1109,7 @@ impl KtApp {
             recovery_pick: 0,
             recovery_open: false,
             recovery_written: None,
+            save_hint: None,
             snap_line: None,
             preview_gen: (0, 0),
             snap_off: false,
@@ -1764,7 +1795,7 @@ impl KtApp {
             std::thread::Builder::new()
                 .name("autosave".into())
                 .spawn(move || {
-                    let out = kt_otio::save_project(&project, &retained, target.parent());
+                    let out = project_text_of(&project, &retained, target.parent());
                     // подмена файла — под сторожем: если пока мы
                     // сериализовали, на диск лёг БОЛЕЕ СВЕЖИЙ снимок
                     // (Ctrl+S), свой устаревший не пишем вовсе
@@ -1942,17 +1973,17 @@ impl KtApp {
                             }
                         });
                     }
-                    Ask::DropOtio => {
-                        ui.heading(tr(k::ask::DROP_OTIO_TITLE));
+                    Ask::DropProject => {
+                        ui.heading(tr(k::ask::DROP_PROJECT_TITLE));
                         ui.add_space(6.0);
                         let what = self
                             .pending_drop
                             .as_ref()
                             .map(|(p, _)| p.display().to_string())
                             .unwrap_or_default();
-                        ui.label(crate::tf!(k::ask::DROP_OTIO_BODY, what));
+                        ui.label(crate::tf!(k::ask::DROP_PROJECT_BODY, what));
                         ui.add_space(4.0);
-                        ui.weak(tr(k::ask::DROP_OTIO_WHERE));
+                        ui.weak(tr(k::ask::DROP_PROJECT_WHERE));
                         ui.add_space(10.0);
                         ui.horizontal(|ui| {
                             let r = ui.button(tr(k::ask::DROP_OPEN));
@@ -2904,11 +2935,7 @@ impl KtApp {
     /// в журнал: окна нет, показать некому.
     pub(crate) fn write_recovery_now(&mut self) {
         let target = self.recovery_target();
-        let json = kt_otio::save_project(
-            &self.model.document(),
-            &self.retained,
-            self.project_path.as_deref().and_then(|p| p.parent()),
-        );
+        let json = self.project_text(&self.model.document(), target.parent());
         match write_project_guarded(&self.recovery_rev, &target, self.model_rev, &json) {
             Ok(SaveOutcome::Wrote { dir_synced }) => {
                 self.recovery_written = Some(target);
@@ -3544,15 +3571,15 @@ impl KtApp {
             }
             // БРОШЕННЫЙ ПРОЕКТ: три ответа, и все три РАЗНЫЕ по смыслу —
             // ровно то, ради чего у `Answer` их три, а не `bool`
-            (Ask::DropOtio, Answer::Yes) => {
+            (Ask::DropProject, Answer::Yes) => {
                 // «Открыть как проект» — через ту же дверь, что пункт меню:
                 // вопрос о несохранённом и замок на файле (Р.49).
                 if self.guard_unsaved(Pending::DropOpen) {
                     self.open_dropped_now();
                 }
             }
-            (Ask::DropOtio, Answer::No) => self.insert_dropped_as_sequence(),
-            (Ask::DropOtio, Answer::Cancel) => {
+            (Ask::DropProject, Answer::No) => self.insert_dropped_as_sequence(),
+            (Ask::DropProject, Answer::Cancel) => {
                 self.pending_drop = None;
             }
             (Ask::Unsaved(p), Answer::No) => {
@@ -3693,7 +3720,11 @@ impl KtApp {
             Some(_) => {
                 let name =
                     base.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                base.with_file_name(format!("{name}.{}.otio", std::process::id()))
+                base.with_file_name(format!(
+                    "{name}.{}.{}",
+                    std::process::id(),
+                    kt_model::project_file::EXTENSION
+                ))
             }
         }
     }
@@ -5205,7 +5236,11 @@ impl KtApp {
     }
 
     fn open_project_dialog_now(&mut self) {
-        let Some(p) = pick_file(tr(k::dialog::OPEN_PROJECT), "OpenTimelineIO", &["otio"]) else {
+        let Some(p) = pick_file(
+            tr(k::dialog::OPEN_PROJECT),
+            "Kinotrain project",
+            &[kt_model::project_file::EXTENSION],
+        ) else {
             return;
         };
         match Self::open(&p) {
@@ -5233,15 +5268,20 @@ impl KtApp {
             // безымянный проект: Save-As диалог (п.12 — отказ здесь был
             // «это не должно быть проблемой»)
             None => {
-                let Some(p) = rfd::FileDialog::new()
-                    .set_title(tr(k::dialog::SAVE_PROJECT))
-                    .add_filter("OpenTimelineIO", &["otio"])
-                    .set_file_name("untitled.otio")
-                    .save_file()
-                else {
+                let Some(p) = pick_save(
+                    tr(k::dialog::SAVE_PROJECT),
+                    "Kinotrain project",
+                    &[kt_model::project_file::EXTENSION],
+                    self.save_hint.as_deref(),
+                    UNTITLED_PROJECT,
+                ) else {
                     return; // пользователь передумал
                 };
-                let p = if p.extension().is_none() { p.with_extension("otio") } else { p };
+                let p = if p.extension().is_none() {
+                    p.with_extension(kt_model::project_file::EXTENSION)
+                } else {
+                    p
+                };
                 self.project_path = Some(p.clone());
                 self.claim_project(&p);
                 // индекс-БД и тумбы теперь могут жить рядом с проектом
@@ -5268,7 +5308,7 @@ impl KtApp {
         }
         let ui = Some(self.ui_state());
         self.model.set_ui_state(ui);
-        let out = kt_otio::save_project(&self.model.document(), &self.retained, path.parent());
+        let out = self.project_text(&self.model.document(), path.parent());
         // под сторожем: фоновый автосейв не должен перетереть нашу
         // запись своим более старым снапшотом (Р.32)
         match write_project_guarded(&self.saved_rev, &path, self.model_rev, &out) {
@@ -7222,17 +7262,41 @@ impl KtApp {
             })
         };
         for path in dropped {
-            if path.extension().map(|e| e == "ktproj").unwrap_or(false) {
-                // Р.24 п.12: .ktproj как проект не открывается
-                self.note(tr(k::msg::KTPROJ_IMPORT_ONLY));
-            } else if path.extension().map(|e| e == "otio").unwrap_or(false) {
+            self.route_dropped(path, target, drop_pos);
+        }
+    }
+
+    /// Куда ведёт БРОШЕННЫЙ файл (Р.70): файл проекта — вопрос «открыть или
+    /// вставить», файл обмена и легаси — подсказка про дверь импорта (каждый
+    /// своим текстом), остальное — материал на монтаж. Отдельно от чтения
+    /// ввода, чтобы три исхода проверялись без настоящего дропа (t821).
+    pub(crate) fn route_dropped(
+        &mut self,
+        path: PathBuf,
+        target: Option<(Tick, (ClipKind, u32))>,
+        drop_pos: Option<egui::Pos2>,
+    ) {
+        {
+            let ext = path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase());
+            if ext.as_deref() == Some("ktproj") {
+                // Р.24 п.12: .ktproj как проект не открывается — дверь импорта
+                self.note(crate::tf!(k::msg::KTPROJ_IMPORT_ONLY, tr(k::menu::file::IMPORT_OLDER)));
+            } else if ext.as_deref() == Some("otio") {
+                // Р.70: файл обмена — не проект; его дверь — импорт, и
+                // уведомление называет её по имени пункта (правило 19)
+                self.note(crate::tf!(
+                    k::msg::OTIO_IMPORT_ONLY,
+                    path.display().to_string(),
+                    tr(k::menu::file::IMPORT_OLDER)
+                ));
+            } else if ext.as_deref() == Some(kt_model::project_file::EXTENSION) {
                 // БРОШЕН ПРОЕКТ — СПРАШИВАЕМ (Р.55, С6). До этого раунда
                 // здесь стояло `*self = app`: ни выбора «открыть или
                 // вставить», ни вопроса о несохранённой работе, ни замка
                 // на файле. Работа исчезала молча — в обход всего, что
                 // построено в Р.49.
                 self.pending_drop = Some((path.clone(), target));
-                self.ask = Some(Ask::DropOtio);
+                self.ask = Some(Ask::DropProject);
             } else if let Some(id) = self.morph_editors.iter().find_map(|e| {
                 let r = e.src_rect?;
                 let pos = drop_pos?;
@@ -8409,9 +8473,9 @@ pub fn recovery_candidates_at(project: Option<&Path>, anon: &Path) -> Vec<Recove
         {
             for e in rd.flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
-                // и сам `<имя>.recovery.otio`, и файлы вторых копий
-                // `<имя>.recovery.otio.<pid>.otio`
-                if !name.starts_with(&stem) || !name.ends_with(".otio") {
+                // и сам `<имя>.recovery.kt`, и файлы вторых копий
+                // `<имя>.recovery.kt.<pid>.kt`
+                if !name.starts_with(&stem) || !name.ends_with(RECOVERY_EXT) {
                     continue;
                 }
                 let path = e.path();
@@ -8431,7 +8495,7 @@ pub fn recovery_candidates_at(project: Option<&Path>, anon: &Path) -> Vec<Recove
     {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            if !name.starts_with(&stem) || !name.ends_with(".otio") {
+            if !name.starts_with(&stem) || !name.ends_with(RECOVERY_EXT) {
                 continue;
             }
             let path = e.path();
@@ -8445,17 +8509,27 @@ pub fn recovery_candidates_at(project: Option<&Path>, anon: &Path) -> Vec<Recove
     out
 }
 
-/// Файл восстановления для этого проекта: `<полное имя>.recovery.otio`
-/// РЯДОМ с проектом. Суффикс дописывается к ПОЛНОМУ имени, а не подменяет
-/// расширение (урок t150: `film.otio` и `film.mp4.otio` обязаны дать разные
-/// имена, иначе один проект затирает восстановление другого).
+/// Расширение файла проекта с точкой — им кончаются и восстановления.
+const RECOVERY_EXT: &str = ".kt";
+/// Имя по умолчанию в диалоге сохранения безымянного проекта.
+const UNTITLED_PROJECT: &str = "untitled.kt";
+const _: () = assert!(RECOVERY_EXT.len() == kt_model::project_file::EXTENSION.len() + 1);
+const _: () = assert!(UNTITLED_PROJECT.len() == "untitled".len() + RECOVERY_EXT.len());
+
+/// Файл восстановления для этого проекта: `<полное имя>.recovery.kt`
+/// РЯДОМ с проектом, ТОГО ЖЕ формата, что проект (Р.70: писать мегабайты
+/// обменного формата каждые полминуты — и задержка, и окно потери).
+/// Суффикс дописывается к ПОЛНОМУ имени, а не подменяет расширение (урок
+/// t150: `film.kt` и `film.mp4.kt` обязаны дать разные имена, иначе один
+/// проект затирает восстановление другого).
 /// Безымянный проект восстанавливается в каталоге данных: рядом с ним
 /// каталога ещё нет.
 pub fn recovery_path_for(project: Option<&Path>) -> PathBuf {
     match project {
         Some(p) => {
             let mut name = p.file_name().unwrap_or_default().to_os_string();
-            name.push(".recovery.otio");
+            name.push(".recovery");
+            name.push(RECOVERY_EXT);
             p.with_file_name(name)
         }
         None => autosave_path(),
@@ -8467,7 +8541,7 @@ pub fn autosave_path() -> PathBuf {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
         .unwrap_or_else(|| PathBuf::from("."));
-    base.join("kinotrain").join("autosave-project.otio")
+    base.join("kinotrain").join(format!("autosave-project{RECOVERY_EXT}"))
 }
 
 /// Запись проекта: сначала во временный файл рядом, потом переименование.
@@ -8532,7 +8606,53 @@ pub(crate) fn pick_file(title: &str, filter: &str, exts: &[&str]) -> Option<std:
     rfd::FileDialog::new().set_title(title).add_filter(filter, exts).pick_file()
 }
 
-/// Чтение .otio с диска для open() (Р.24 п.12: .ktproj — только импорт).
+/// Диалог СОХРАНЕНИЯ — тот же шов `KT_FILE_PICK`, что у `pick_file`:
+/// в виртуальном экране живых сценариев диалога нет, а пункт меню
+/// нажимается по-настоящему. `hint` — куда и под каким именем предложить
+/// (после импорта `film.otio` — `film.kt` рядом).
+pub(crate) fn pick_save(
+    title: &str,
+    filter: &str,
+    exts: &[&str],
+    hint: Option<&Path>,
+    default_name: &str,
+) -> Option<std::path::PathBuf> {
+    if let Some(p) = std::env::var_os("KT_FILE_PICK") {
+        return Some(std::path::PathBuf::from(p));
+    }
+    let mut d = rfd::FileDialog::new().set_title(title).add_filter(filter, exts);
+    match hint {
+        Some(h) => {
+            if let Some(dir) = h.parent() {
+                d = d.set_directory(dir);
+            }
+            d = d.set_file_name(h.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| default_name.into()));
+        }
+        None => d = d.set_file_name(default_name),
+    }
+    d.save_file()
+}
+
+/// Текст файла проекта (Р.70): модель построчным JSON плюс чужой
+/// passthrough отдельным полем, когда он есть. Единственное место, где
+/// документ превращается в байты файла проекта: Ctrl+S, автосейв и `Drop`
+/// ходят сюда, kt-cli — в ту же функцию kt-model.
+pub fn project_text_of(
+    project: &Project,
+    retained: &kt_otio::Retained,
+    base_dir: Option<&Path>,
+) -> String {
+    let otio = (!retained.is_empty()).then(|| retained.to_json());
+    // в файле пути медиа ОТНОСИТЕЛЬНЫ к нему (т797): проект переезжает
+    // вместе с материалом; в памяти они абсолютны (см. `load_project_file`)
+    let mut project = project.clone();
+    kt_otio::relativize_project_media(&mut project, base_dir);
+    kt_model::project_file::to_text(&project, otio.as_ref())
+}
+
+/// Чтение файла ПРОЕКТА с диска для open() (Р.70): только свой формат.
+/// Файл обмена и легаси отвергаются с именем пункта импорта (правило 19),
+/// файл будущей версии — с номером версии и без частичного чтения.
 pub(crate) fn load_project_file(
     path: &Path,
 ) -> Result<(Project, kt_otio::Retained, Vec<String>), String> {
@@ -8545,13 +8665,30 @@ pub(crate) fn load_project_file(
     if text.trim().is_empty() {
         return Err(crate::tf!(k::msg::PROJECT_FILE_EMPTY, path.display().to_string()));
     }
-    match kt_otio::load_project(&text, path.parent()) {
-        Ok(b) => Ok((b.project, b.retained, b.notices)),
-        Err(kt_otio::Error::NotOtio) => Err(tr(k::msg::KTPROJ_IMPORT_ONLY).to_string()),
-        // файл ПРЕЖНЕЙ версии, который ридер не читает: дверь — импорт
-        // (Р.67), и ошибка называет её по имени пункта (правило 19)
-        Err(kt_otio::Error::NeedsImport { version, .. }) => {
-            Err(crate::tf!(k::msg::NEEDS_IMPORT, version, tr(k::menu::file::IMPORT_OLDER)))
+    use kt_model::project_file::{FileKind, ProjectFileError, from_text};
+    match from_text(&text) {
+        Ok(file) => {
+            let retained = match file.otio {
+                Some(v) => kt_otio::Retained::from_json(&v).map_err(|e| e.to_string())?,
+                None => kt_otio::Retained::default(),
+            };
+            let mut project = file.project;
+            kt_otio::resolve_project_media(&mut project, path.parent());
+            Ok((project, retained, Vec::new()))
+        }
+        Err(ProjectFileError::NotOurs { looks_like: Some(FileKind::Otio) }) => {
+            // файл обмена — не проект; его дверь — импорт, по имени пункта
+            Err(crate::tf!(
+                k::msg::OTIO_IMPORT_ONLY,
+                path.display().to_string(),
+                tr(k::menu::file::IMPORT_OLDER)
+            ))
+        }
+        Err(ProjectFileError::NotOurs { looks_like: Some(FileKind::LegacyKtproj) }) => {
+            Err(crate::tf!(k::msg::KTPROJ_IMPORT_ONLY, tr(k::menu::file::IMPORT_OLDER)))
+        }
+        Err(ProjectFileError::TooNew { version }) => {
+            Err(crate::tf!(k::msg::PROJECT_TOO_NEW, version))
         }
         Err(e) => Err(e.to_string()),
     }
@@ -8930,10 +9067,9 @@ pub fn run() -> eframe::Result {
 }
 
 impl KtApp {
-    /// Файл → Импортировать .ktproj… (Р.24 п.12: как проект старый формат
-    /// больше не открывается — конвертация в .otio и открытие результата;
-    /// исходный .ktproj не трогается никогда).
-    /// Меню Файл → Импортировать проект старой версии… (Р.67).
+    /// Меню Файл → Импортировать проект старой версии… (Р.67; с Р.70 — одна
+    /// дверь на легаси `.ktproj`, наш старый `.otio` и чужой `.otio`;
+    /// прежний отдельный пункт «Импортировать .ktproj…» слит сюда).
     pub fn import_older_dialog(&mut self) {
         if self.guard_unsaved(Pending::ImportOlder) {
             self.import_older_dialog_now();
@@ -8941,74 +9077,59 @@ impl KtApp {
     }
 
     fn import_older_dialog_now(&mut self) {
-        let Some(p) = pick_file(tr(k::dialog::IMPORT_OLDER), "OpenTimelineIO", &["otio"]) else {
+        let Some(p) = pick_file(
+            tr(k::dialog::IMPORT_OLDER),
+            "OpenTimelineIO / legacy Kinotrain",
+            &["otio", "ktproj"],
+        ) else {
             return;
         };
         self.import_older_path(&p);
     }
 
     /// Тело импорта по пути — общее для диалога и для файла, поданного при
-    /// запуске (живой сценарий и командная строка).
+    /// запуске (живой сценарий и командная строка). Замок на исходник не
+    /// ставится: документ после импорта безымянный, файла проекта у него
+    /// ещё нет.
     pub(crate) fn import_older_path(&mut self, p: &Path) {
         match Self::open_older(p) {
-            Ok(mut app) => {
-                app.claim_project(p);
-                *self = app;
-            }
+            Ok(app) => *self = app,
             Err(e) => self.note(crate::tf!(k::msg::OPEN_FAILED, e)),
         }
     }
 
-    pub fn import_ktproj_dialog(&mut self) {
-        let Some(src) = rfd::FileDialog::new()
-            .set_title(tr(k::dialog::IMPORT_KTPROJ))
-            .add_filter("Kinotrain legacy project", &["ktproj"])
-            .pick_file()
-        else {
-            return;
-        };
-        let text = match std::fs::read_to_string(&src) {
-            Ok(t) => t,
-            Err(e) => {
-                self.note(crate::tf!(k::msg::OPEN_FAILED, e));
-                return;
-            }
-        };
-        let (project, notices) = match kt_otio::import_legacy(&text) {
-            Ok(v) => v,
-            Err(e) => {
-                self.note(crate::tf!(k::msg::OPEN_FAILED, e));
-                return;
-            }
-        };
-        let default_name = src
-            .file_stem()
-            .map(|s| format!("{}.otio", s.to_string_lossy()))
-            .unwrap_or_else(|| "imported.otio".into());
-        let Some(dst) = rfd::FileDialog::new()
-            .set_title(tr(k::dialog::SAVE_PROJECT))
-            .add_filter("OpenTimelineIO", &["otio"])
-            .set_file_name(&default_name)
-            .save_file()
-        else {
+    /// Файл → Экспорт → OpenTimelineIO… (Р.70): ОТДЕЛЬНОЕ названное действие,
+    /// не сохранение. Файл обмена самодостаточен — тело ленты инлайном в
+    /// каждом экземпляре, чужой passthrough возвращён на место. Проект при
+    /// этом остаётся `.kt`, звёздочка не гаснет: экспорт — не запись проекта.
+    pub fn export_otio_dialog(&mut self) {
+        let hint = self
+            .project_path
+            .as_deref()
+            .or(self.save_hint.as_deref())
+            .map(|p| p.with_extension("otio"));
+        let Some(dst) = pick_save(
+            tr(k::dialog::EXPORT_OTIO),
+            "OpenTimelineIO",
+            &["otio"],
+            hint.as_deref(),
+            "untitled.otio",
+        ) else {
             return;
         };
         let dst = if dst.extension().is_none() { dst.with_extension("otio") } else { dst };
-        let out = kt_otio::save_project(&project, &kt_otio::Retained::default(), dst.parent());
-        if let Err(e) = write_project_atomic(&dst, &out) {
-            self.note(crate::tf!(k::msg::SAVE_FAILED, e));
-            return;
-        }
-        match Self::open(&dst) {
-            Ok(app) => {
-                *self = app;
-                for n in notices {
-                    self.note(n);
-                }
-            }
-            Err(e) => self.note(crate::tf!(k::msg::OPEN_FAILED, e)),
+        self.export_otio_to(&dst);
+    }
+
+    /// Тело экспорта по пути — для пункта меню и для живого сценария.
+    pub(crate) fn export_otio_to(&mut self, dst: &Path) {
+        let out = kt_otio::save_project(&self.model.document(), &self.retained, dst.parent());
+        match write_project_atomic(dst, &out) {
+            Ok(()) => self.note(crate::tf!(k::msg::EXPORTED, dst.display().to_string())),
+            Err(e) => self.warn(crate::tf!(k::msg::SAVE_FAILED, e)),
         }
     }
+
 }
 
 /// Слить пересекающиеся/смежные диапазоны прогретости в один список

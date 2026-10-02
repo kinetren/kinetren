@@ -2667,7 +2667,7 @@ fn t142_marker_end_drag() {
     assert!((m.duration.0 - 50_000).abs() <= 1_000, "длительность ~50000: {:?}", m.duration);
 }
 
-/// Тест 150 (п.150 porting-notes, Р.24): файловый IO приложения — .otio.
+/// Тест 150 (п.150 porting-notes, Р.24): файловый IO приложения — .kt.
 #[test]
 fn t150_project_io_is_otio() {
     use std::path::{Path, PathBuf};
@@ -2676,19 +2676,19 @@ fn t150_project_io_is_otio() {
     // (п.352) в имени ещё и номер процесса — см. t363
     let pid = std::process::id();
     assert_eq!(
-        kt_otio::atomic_tmp_path(Path::new("/x/a.otio")),
-        PathBuf::from(format!("/x/a.otio.{pid}.tmp"))
+        kt_otio::atomic_tmp_path(Path::new("/x/a.kt")),
+        PathBuf::from(format!("/x/a.kt.{pid}.tmp"))
     );
     assert_eq!(
-        kt_otio::atomic_tmp_path(Path::new("/x/a.b.otio")),
-        PathBuf::from(format!("/x/a.b.otio.{pid}.tmp"))
+        kt_otio::atomic_tmp_path(Path::new("/x/a.b.kt")),
+        PathBuf::from(format!("/x/a.b.kt.{pid}.tmp"))
     );
-    // recovery безымянного проекта — тоже .otio
-    assert!(crate::app::autosave_path().to_string_lossy().ends_with("autosave-project.otio"));
+    // recovery безымянного проекта — тоже .kt
+    assert!(crate::app::autosave_path().to_string_lossy().ends_with("autosave-project.kt"));
 
     let dir = std::env::temp_dir().join(format!("kt-t150-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    // .otio читается
+    // .kt читается
     let p = kt_model::Project::new(kt_model::ProjectSettings {
         fps: 30,
         width: 640,
@@ -2702,8 +2702,8 @@ fn t150_project_io_is_otio() {
 
         settings_explicit: false,
     });
-    let otio = dir.join("ok.otio");
-    std::fs::write(&otio, kt_otio::save_project(&p, &kt_otio::Retained::default(), Some(&dir)))
+    let otio = dir.join("ok.kt");
+    std::fs::write(&otio, crate::app::project_text_of(&p, &Default::default(), None))
         .unwrap();
     let (loaded, _, _) = crate::app::load_project_file(&otio).expect("otio opens");
     assert_eq!(loaded.settings.fps, 30);
@@ -2711,7 +2711,10 @@ fn t150_project_io_is_otio() {
     let legacy = dir.join("old.ktproj");
     std::fs::write(&legacy, include_str!("../../../fixtures/demo.ktproj")).unwrap();
     let err = crate::app::load_project_file(&legacy).unwrap_err();
-    assert!(err.contains("Import .ktproj"), "подсказка на импорт: {err}");
+    assert!(
+        err.contains(crate::i18n::tr(crate::i18n::k::menu::file::IMPORT_OLDER)),
+        "подсказка на импорт: {err}"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -3686,7 +3689,7 @@ fn t194_autosave_runs_in_background() {
     use kt_model::*;
     let dir = std::env::temp_dir().join(format!("kt-t194-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let target = dir.join("t194.otio");
+    let target = dir.join("t194.kt");
 
     let mut h = harness();
     let app = h.state_mut();
@@ -3950,7 +3953,7 @@ fn t211_returned_source_replaces_its_placeholder() {
     use kt_time::Tick;
     let dir = std::env::temp_dir().join(format!("kt-t211-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("t211.otio");
+    let path = dir.join("t211.kt");
 
     let mut p = Project::new(ProjectSettings {
         fps: 30,
@@ -3992,7 +3995,7 @@ fn t211_returned_source_replaces_its_placeholder() {
         fx_off: false,
     });
     p.validate().unwrap();
-    std::fs::write(&path, kt_otio::save_project(&p, &Default::default(), path.parent())).unwrap();
+    std::fs::write(&path, crate::app::project_text_of(&p, &Default::default(), None)).unwrap();
 
     let app = KtApp::open(&path).expect("проект обязан открыться");
     assert_eq!(app.placeholder_media.len(), 1, "заглушка не подставилась");
@@ -4107,7 +4110,7 @@ fn t210_render_with_missing_sources_warns_and_runs() {
     {
         let app = h.state_mut();
         app.model = kt_model::TimelineModel::new(p);
-        app.project_path = Some(dir.join("t210.otio"));
+        app.project_path = Some(dir.join("t210.kt"));
         app.start_render();
     }
     h.step();
@@ -4130,7 +4133,7 @@ fn t209_missing_source_opens_with_placeholder_and_notices() {
     use kt_time::Tick;
     let dir = std::env::temp_dir().join(format!("kt-t209-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("t209.otio");
+    let path = dir.join("t209.kt");
 
     let mut p = Project::new(ProjectSettings {
         fps: 30,
@@ -4171,7 +4174,7 @@ fn t209_missing_source_opens_with_placeholder_and_notices() {
         fx_off: false,
     });
     p.validate().unwrap();
-    let text = kt_otio::save_project(&p, &Default::default(), path.parent());
+    let text = crate::app::project_text_of(&p, &Default::default(), None);
     std::fs::write(&path, text).unwrap();
 
     let app = KtApp::open(&path).expect("проект с пропавшим исходником обязан открыться");
@@ -4514,7 +4517,7 @@ fn t201_render_file_name_follows_template() {
     });
     p.region = Some(Region { start: kt_time::Tick(90_000), end: kt_time::Tick(90_000 * 5) });
     app.model = kt_model::TimelineModel::new(p);
-    app.project_path = Some(std::path::PathBuf::from("/tmp/kt-t201/song.otio"));
+    app.project_path = Some(std::path::PathBuf::from("/tmp/kt-t201/song.kt"));
     assert_eq!(app.default_render_name(), "kt-song-chorus-4s.mp4");
 
     // регион не совпал с меткой — сегмент региона опускается (имя не врёт)
@@ -4536,7 +4539,7 @@ fn t200_coalesced_edits_bump_revision_and_keep_dirty() {
     use kt_model::*;
     let dir = std::env::temp_dir().join(format!("kt-t200-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let target = dir.join("t200.otio");
+    let target = dir.join("t200.kt");
 
     let mut h = harness();
     let app = h.state_mut();
@@ -4599,13 +4602,13 @@ fn t200_coalesced_edits_bump_revision_and_keep_dirty() {
 /// Тест 199 (Р.32): ПРАВИЛО сторожа — запись со СТАРОЙ ревизией не
 /// трогает файл, с новой — пишет. Именно так фоновый автосейв перестаёт
 /// перетирать свежий Ctrl+S (гонку нашли живые сценарии: они читают
-/// сохранённый .otio и видели устаревшую модель — у пользователя так же
+/// сохранённый .kt и видели устаревшую модель — у пользователя так же
 /// терялись бы правки).
 #[test]
 fn t199_guarded_write_never_goes_backwards() {
     let dir = std::env::temp_dir().join(format!("kt-t199g-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let f = dir.join("p.otio");
+    let f = dir.join("p.kt");
     let guard = std::sync::Mutex::new(0u64);
 
     use crate::app::SaveOutcome;
@@ -4631,7 +4634,7 @@ fn t199_background_autosave_never_overwrites_newer_save() {
     use kt_model::*;
     let dir = std::env::temp_dir().join(format!("kt-t199-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let target = dir.join("t199.otio");
+    let target = dir.join("t199.kt");
 
     let mut h = harness();
     let app = h.state_mut();
@@ -4657,7 +4660,7 @@ fn t199_background_autosave_never_overwrites_newer_save() {
         h.step();
     }
     let text = std::fs::read_to_string(&target).unwrap();
-    let saved = kt_otio::load_project(&text, target.parent()).unwrap().project;
+    let saved = kt_model::project_file::from_text(&text).unwrap().project;
     assert_eq!(
         saved.media.len(),
         2,
@@ -4720,7 +4723,7 @@ fn t382_app_carries_extras_to_born_clips() {
 }
 
 /// Тест 390 (Р.49 А12): рабочее место не уезжает в чужой файл проекта.
-/// Ширина панели метров и вид (зум/скролл/курсор) жили в `.otio`: открыл
+/// Ширина панели метров и вид (зум/скролл/курсор) жили в `.kt`: открыл
 /// проект коллеги — потерял свою ширину, сохранил — навязал ему свою. В файле
 /// остаётся passthrough: что прочитали, то и пишем, байт-стабильность цела.
 #[test]
@@ -4729,7 +4732,7 @@ fn t390_workspace_does_not_travel_in_the_project_file() {
     let dir = std::env::temp_dir().join(format!("kt-t390-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let target = dir.join("t390.otio");
+    let target = dir.join("t390.kt");
 
     let mut h = harness();
     let app = h.state_mut();
@@ -4754,7 +4757,7 @@ fn t390_workspace_does_not_travel_in_the_project_file() {
 
     // в файле — ЧУЖИЕ значения, нетронутые
     let text = std::fs::read_to_string(&target).unwrap();
-    let saved = kt_otio::load_project(&text, target.parent()).unwrap().project;
+    let saved = kt_model::project_file::from_text(&text).unwrap().project;
     let ui = saved.ui.expect("вьюпорт обязан остаться в файле");
     assert_eq!(ui.meters_w, 123.0, "в чужой файл уехала НАША ширина метров");
     assert_eq!(ui.view_start, 4444.0, "в чужой файл уехал НАШ скролл");
@@ -4780,7 +4783,7 @@ fn t391_workspace_falls_back_to_file_and_project_keeps_its_own() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let ws = dir.join("workspace.json");
-    let proj = dir.join("p.otio");
+    let proj = dir.join("p.kt");
 
     // пустое хранилище ничего не навязывает
     let w = load_workspace_at(&ws);
@@ -4797,7 +4800,7 @@ fn t391_workspace_falls_back_to_file_and_project_keeps_its_own() {
     let v = back.view_of(Some(&proj)).expect("вид не прочитан");
     assert_eq!((v.view_start, v.ticks_per_px, v.cursor), (7.0, 13.0, 42));
     // вид другого проекта не подменяется
-    assert!(back.view_of(Some(&dir.join("other.otio"))).is_none());
+    assert!(back.view_of(Some(&dir.join("other.kt"))).is_none());
 
     // битый файл не роняет программу и не навязывает мусор
     std::fs::write(&ws, "{ это не json").unwrap();
@@ -5425,7 +5428,7 @@ fn t370_save_and_go_does_not_go_when_save_failed() {
     use kt_model::*;
     let mut h = harness();
     let app = h.state_mut();
-    app.project_path = Some(std::path::PathBuf::from("/proc/self/no-such-dir/x.otio"));
+    app.project_path = Some(std::path::PathBuf::from("/proc/self/no-such-dir/x.kt"));
     app.model.apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() }).unwrap();
     app.model_rev += 1;
     app.dirty_content = true;
@@ -5481,7 +5484,7 @@ fn t372_drop_is_the_last_line_of_defence() {
     let dir = std::env::temp_dir().join(format!("kt-t372-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let proj = dir.join("t372.otio");
+    let proj = dir.join("t372.kt");
     let rec = crate::app::recovery_path_for(Some(&proj));
 
     {
@@ -5504,7 +5507,7 @@ fn t372_drop_is_the_last_line_of_defence() {
     } // здесь Drop
 
     let text = std::fs::read_to_string(&rec).expect("Drop не записал восстановление");
-    let saved = kt_otio::load_project(&text, rec.parent()).unwrap().project;
+    let saved = kt_model::project_file::from_text(&text).unwrap().project;
     assert_eq!(saved.media.len(), 1, "в восстановлении не та работа");
     assert!(!proj.exists(), "Drop записал В ПРОЕКТ: его меняет только Ctrl+S");
 
@@ -5532,9 +5535,9 @@ fn t365_recovery_candidates_are_picked_by_time() {
     let dir = std::env::temp_dir().join(format!("kt-t365-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let proj = dir.join("film.otio");
+    let proj = dir.join("film.kt");
     let rec = crate::app::recovery_path_for(Some(&proj));
-    let anon = dir.join("anon").join("autosave-project.otio");
+    let anon = dir.join("anon").join("autosave-project.kt");
     std::fs::create_dir_all(anon.parent().unwrap()).unwrap();
 
     let touch = |p: &std::path::Path, secs_ago: u64| {
@@ -5576,9 +5579,9 @@ fn t366_unnamed_work_is_offered_even_when_project_opens() {
     let dir = std::env::temp_dir().join(format!("kt-t366-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let proj = dir.join("A.otio");
+    let proj = dir.join("A.kt");
     std::fs::write(&proj, "{}").unwrap();
-    let anon = dir.join("data").join("autosave-project.otio");
+    let anon = dir.join("data").join("autosave-project.kt");
     std::fs::create_dir_all(anon.parent().unwrap()).unwrap();
     std::fs::write(&anon, "{}").unwrap();
 
@@ -5610,7 +5613,7 @@ fn t367_restore_puts_work_in_editor_and_repeats() {
     let dir = std::env::temp_dir().join(format!("kt-t367-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let proj = dir.join("t367.otio");
+    let proj = dir.join("t367.kt");
     std::fs::write(&proj, "исходный файл пользователя").unwrap();
 
     // в файле восстановления — работа с тремя медиа
@@ -5631,7 +5634,7 @@ fn t367_restore_puts_work_in_editor_and_repeats() {
         p.media.push(MediaRef::new(MediaId(i), format!("synth:{i}")));
     }
     let rec = crate::app::recovery_path_for(Some(&proj));
-    std::fs::write(&rec, kt_otio::save_project(&p, &Default::default(), rec.parent())).unwrap();
+    std::fs::write(&rec, crate::app::project_text_of(&p, &Default::default(), None)).unwrap();
     // проект заведомо СТАРШЕ восстановления: гранулярность mtime у файловой
     // системы бывает секундной, и «записали одно за другим» её не различает.
     // Сам отбор по времени проверяет t365 — здесь он не предмет теста.
@@ -5696,8 +5699,8 @@ fn t368_forget_removes_file_and_later_keeps_it() {
     let dir = std::env::temp_dir().join(format!("kt-t368-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let a = dir.join("a.recovery.otio");
-    let b = dir.join("b.recovery.otio");
+    let a = dir.join("a.recovery.kt");
+    let b = dir.join("b.recovery.kt");
     std::fs::write(&a, "{}").unwrap();
     std::fs::write(&b, "{}").unwrap();
     let cand = |p: &std::path::Path| crate::app::RecoveryCandidate {
@@ -5735,26 +5738,26 @@ fn t368_forget_removes_file_and_later_keeps_it() {
 #[test]
 fn t363_second_copy_has_its_own_tmp_and_recovery() {
     let pid = std::process::id();
-    let tmp = kt_otio::atomic_tmp_path(std::path::Path::new("/w/film.otio"));
+    let tmp = kt_otio::atomic_tmp_path(std::path::Path::new("/w/film.kt"));
     assert!(
         tmp.to_string_lossy().contains(&pid.to_string()),
         "во временном имени нет номера процесса: {}",
         tmp.display()
     );
     assert!(tmp.to_string_lossy().ends_with(".tmp"));
-    assert!(tmp.to_string_lossy().starts_with("/w/film.otio."), "съедена часть имени проекта");
+    assert!(tmp.to_string_lossy().starts_with("/w/film.kt."), "съедена часть имени проекта");
 
     let mut h = harness();
     let app = h.state_mut();
-    app.project_path = Some(std::path::PathBuf::from("/w/film.otio"));
+    app.project_path = Some(std::path::PathBuf::from("/w/film.kt"));
     let owner = app.recovery_target();
-    assert_eq!(owner, std::path::Path::new("/w/film.otio.recovery.otio"));
+    assert_eq!(owner, std::path::Path::new("/w/film.kt.recovery.kt"));
     // та же программа, но проект занят кем-то ещё
     app.lock_holder = Some(Some(4242));
     let second = app.recovery_target();
     assert_ne!(owner, second, "вторая копия пишет в чужой файл восстановления");
     assert!(second.to_string_lossy().contains(&pid.to_string()));
-    assert!(second.to_string_lossy().ends_with(".otio"), "восстановление обязано быть .otio");
+    assert!(second.to_string_lossy().ends_with(".kt"), "восстановление обязано быть .kt");
 }
 
 /// Тест 364 (Р.49 А4): вторая копия не запрещается, а честно деградирует.
@@ -5767,7 +5770,7 @@ fn t364_locked_project_asks_before_first_save() {
     let dir = std::env::temp_dir().join(format!("kt-t364-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let target = dir.join("t364.otio");
+    let target = dir.join("t364.kt");
     std::fs::write(&target, "чужое содержимое").unwrap();
 
     let mut h = harness();
@@ -5826,16 +5829,16 @@ fn t364_locked_project_asks_before_first_save() {
 }
 
 /// Тест 357 (Р.49 А3): имя файла восстановления дописывается к ПОЛНОМУ имени
-/// проекта. Подмена расширения (`with_extension`) склеила бы `film.otio` и
-/// `film.mp4.otio` в одно восстановление — ровно тот класс, что закрывал t150.
+/// проекта. Подмена расширения (`with_extension`) склеила бы `film.kt` и
+/// `film.mp4.kt` в одно восстановление — ровно тот класс, что закрывал t150.
 /// Безымянный проект восстанавливается в каталоге данных.
 #[test]
 fn t357_recovery_path_appends_to_full_name() {
     use crate::app::recovery_path_for;
-    let a = recovery_path_for(Some(std::path::Path::new("/w/film.otio")));
-    let b = recovery_path_for(Some(std::path::Path::new("/w/film.mp4.otio")));
-    assert_eq!(a, std::path::Path::new("/w/film.otio.recovery.otio"));
-    assert_eq!(b, std::path::Path::new("/w/film.mp4.otio.recovery.otio"));
+    let a = recovery_path_for(Some(std::path::Path::new("/w/film.kt")));
+    let b = recovery_path_for(Some(std::path::Path::new("/w/film.mp4.kt")));
+    assert_eq!(a, std::path::Path::new("/w/film.kt.recovery.kt"));
+    assert_eq!(b, std::path::Path::new("/w/film.mp4.kt.recovery.kt"));
     assert_ne!(a, b, "два разных проекта делят один файл восстановления");
     assert_eq!(a.parent(), Some(std::path::Path::new("/w")), "восстановление лежит рядом");
     assert_eq!(
@@ -5854,7 +5857,7 @@ fn t358_autosave_writes_recovery_not_project() {
     let dir = std::env::temp_dir().join(format!("kt-t358-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let target = dir.join("t358.otio");
+    let target = dir.join("t358.kt");
     std::fs::write(&target, "исходный файл пользователя").unwrap();
 
     let mut h = harness();
@@ -5879,7 +5882,7 @@ fn t358_autosave_writes_recovery_not_project() {
     assert!(h.state().dirty_content, "автосейв погасил звёздочку: работа считается сохранённой");
     let rec = crate::app::recovery_path_for(Some(&target));
     let text = std::fs::read_to_string(&rec).expect("файла восстановления нет");
-    let saved = kt_otio::load_project(&text, rec.parent()).unwrap().project;
+    let saved = kt_model::project_file::from_text(&text).unwrap().project;
     assert_eq!(saved.media.len(), 1, "в восстановлении не та модель");
     assert_eq!(h.state().recovery_written.as_deref(), Some(rec.as_path()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -5894,9 +5897,9 @@ fn t359_save_drops_only_own_recovery() {
     let dir = std::env::temp_dir().join(format!("kt-t359-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let target = dir.join("t359.otio");
+    let target = dir.join("t359.kt");
     let mine = crate::app::recovery_path_for(Some(&target));
-    let alien = dir.join("other.otio.recovery.otio");
+    let alien = dir.join("other.kt.recovery.kt");
     std::fs::write(&mine, "мой снимок").unwrap();
     std::fs::write(&alien, "чужая несохранённая работа").unwrap();
 
@@ -5925,7 +5928,7 @@ fn t360_viewport_drift_does_not_write() {
     let dir = std::env::temp_dir().join(format!("kt-t360-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let target = dir.join("t360.otio");
+    let target = dir.join("t360.kt");
 
     let mut h = harness();
     let app = h.state_mut();
@@ -5964,7 +5967,7 @@ fn t361_recovery_guard_does_not_block_save() {
     let dir = std::env::temp_dir().join(format!("kt-t361-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let target = dir.join("t361.otio");
+    let target = dir.join("t361.kt");
 
     let mut h = harness();
     let app = h.state_mut();
@@ -6001,7 +6004,7 @@ fn t355_save_reports_skipped_and_keeps_dirty() {
     use kt_model::*;
     let dir = std::env::temp_dir().join(format!("kt-t355-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let target = dir.join("t355.otio");
+    let target = dir.join("t355.kt");
 
     let mut h = harness();
     let app = h.state_mut();
@@ -6071,7 +6074,7 @@ fn t356_repeated_notice_still_marks_unread() {
     // ошибка записи проекта приходит именно как предупреждение
     let app = h.state_mut();
     app.notices.clear();
-    app.project_path = Some(std::path::PathBuf::from("/proc/self/no-such-dir/x.otio"));
+    app.project_path = Some(std::path::PathBuf::from("/proc/self/no-such-dir/x.kt"));
     app.model_rev += 1;
     app.dirty_content = true;
     app.save();
@@ -10514,14 +10517,14 @@ fn t576_dropping_a_project_asks_and_keeps_the_work() {
     let (mut h, _) = harness_three_clips();
     let dir = std::env::temp_dir().join("kt-t576");
     let _ = std::fs::create_dir_all(&dir);
-    let foreign = dir.join("foreign.otio");
+    let foreign = dir.join("foreign.kt");
     {
         // чужой проект на диске — минимальный, но законный
         let mut p = kt_model::Project::new(h.state().model.project().settings.clone());
         p.media.push(kt_model::MediaRef::new(kt_model::MediaId(1), "synth:1"));
         p.clips.push(h.state().model.project().clips[0].clone());
         p.clips[0].media = kt_model::MediaId(1);
-        let text = kt_otio::save_project(&p, &kt_otio::Retained::default(), None);
+        let text = crate::app::project_text_of(&p, &Default::default(), None);
         std::fs::write(&foreign, text).unwrap();
     }
 
@@ -10531,11 +10534,11 @@ fn t576_dropping_a_project_asks_and_keeps_the_work() {
         h.state().model.project().clips.iter().map(|c| c.id).collect();
 
     h.state_mut().pending_drop = Some((foreign.clone(), None));
-    h.state_mut().ask = Some(crate::app::Ask::DropOtio);
+    h.state_mut().ask = Some(crate::app::Ask::DropProject);
     h.step();
 
     // 1) ВОПРОС задан, и монтаж пока не тронут
-    assert!(matches!(h.state().ask, Some(crate::app::Ask::DropOtio)), "вопрос не задан");
+    assert!(matches!(h.state().ask, Some(crate::app::Ask::DropProject)), "вопрос не задан");
     assert_eq!(
         h.state().model.project().clips.iter().map(|c| c.id).collect::<Vec<_>>(),
         clips_before,
@@ -10555,7 +10558,7 @@ fn t576_dropping_a_project_asks_and_keeps_the_work() {
 
     // 3) «ОТКРЫТЬ» при несохранённой работе обязано СПРОСИТЬ, а не открыть
     h.state_mut().pending_drop = Some((foreign.clone(), None));
-    h.state_mut().ask = Some(crate::app::Ask::DropOtio);
+    h.state_mut().ask = Some(crate::app::Ask::DropProject);
     h.state_mut().answer_ask(crate::app::Answer::Yes);
     h.step();
     assert!(
@@ -10577,13 +10580,13 @@ fn t577_dropping_a_project_can_insert_it_as_a_composition() {
     let (mut h, _) = harness_three_clips();
     let dir = std::env::temp_dir().join("kt-t577");
     let _ = std::fs::create_dir_all(&dir);
-    let foreign = dir.join("foreign.otio");
+    let foreign = dir.join("foreign.kt");
     {
         let mut p = kt_model::Project::new(h.state().model.project().settings.clone());
         p.media.push(kt_model::MediaRef::new(kt_model::MediaId(1), "synth:1"));
         p.clips.push(h.state().model.project().clips[0].clone());
         p.clips[0].media = kt_model::MediaId(1);
-        let text = kt_otio::save_project(&p, &kt_otio::Retained::default(), None);
+        let text = crate::app::project_text_of(&p, &Default::default(), None);
         std::fs::write(&foreign, text).unwrap();
     }
     let seqs_before = h.state().model.document().sequences.len();
@@ -10591,7 +10594,7 @@ fn t577_dropping_a_project_can_insert_it_as_a_composition() {
 
     h.state_mut().pending_drop =
         Some((foreign.clone(), Some((Tick(400_000), (kt_model::ClipKind::Video, 0)))));
-    h.state_mut().ask = Some(crate::app::Ask::DropOtio);
+    h.state_mut().ask = Some(crate::app::Ask::DropProject);
     h.state_mut().answer_ask(crate::app::Answer::No);
     h.step();
 
@@ -11123,7 +11126,7 @@ fn t640_reel_preview_survives_reopen_from_sidecar() {
     let dir = std::env::temp_dir().join(format!("kt-t640-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("t640.otio");
+    let path = dir.join("t640.kt");
     // файл-исходник, чтобы отпечатку медиа было что нюхать: содержимое
     // роли не играет (открыть его нельзя — клип честно пуст), важны путь,
     // размер и mtime
@@ -11157,7 +11160,7 @@ fn t640_reel_preview_survives_reopen_from_sidecar() {
         a.media = file_id;
         s.clips.push(a);
         p.validate().expect("document with a file clip inside the reel");
-        std::fs::write(&path, kt_otio::save_project(&p, &Default::default(), path.parent()))
+        std::fs::write(&path, crate::app::project_text_of(&p, &Default::default(), None))
             .unwrap();
         seq
     };
@@ -16002,7 +16005,7 @@ fn t776_key_list_offers_only_possible_tracks() {
 
 /// Тест 781 (Р.66): МЕЛКАЯ РАМКА отдаёт ручки наружу, тело — своё.
 ///
-/// На проекте владельца (`paintitblack.otio`) правило «как есть» и
+/// На проекте владельца (`paintitblack.kt`) правило «как есть» и
 /// заглушка вместо недоступного медиа дают рамку 45×25 px: восемь ручек
 /// с хват-зоной 14 px покрывают её целиком, и ПЕРЕНОС становится
 /// недоступен — ручка выигрывает всегда. Отложенный предел Р.64.
@@ -16986,7 +16989,7 @@ fn t795_reel_frames_reach_the_disk_and_cancel_is_not_a_failure() {
     let dir = std::env::temp_dir().join(format!("kt-t795-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("t795.otio");
+    let path = dir.join("t795.kt");
     let seq = {
         let (h, _g, seq) = harness_with_nest();
         let mut doc = h.state().model.document().clone();
@@ -17022,7 +17025,7 @@ fn t795_reel_frames_reach_the_disk_and_cancel_is_not_a_failure() {
         doc.clips.push(second);
         doc.ensure_tracks(LaneKind::Video, first.lane + 2);
         doc.validate().expect("проект в форме файла владельца законен");
-        std::fs::write(&path, kt_otio::save_project(&doc, &Default::default(), path.parent())).unwrap();
+        std::fs::write(&path, crate::app::project_text_of(&doc, &Default::default(), None)).unwrap();
         seq
     };
     let open_and_wait = || -> (Harness<'static, KtApp>, crate::reel_preview::ReelKey) {
@@ -17088,7 +17091,7 @@ fn harness_still(exists: bool) -> (Harness<'static, KtApp>, std::path::PathBuf) 
         assert!(st.success());
         std::fs::copy(&src, &img).expect("копия фикстуры");
     }
-    let path = dir.join("still.otio");
+    let path = dir.join("still.kt");
     let mut p = Project::new(ProjectSettings {
         fps: 30,
         width: 320,
@@ -17106,7 +17109,7 @@ fn harness_still(exists: bool) -> (Harness<'static, KtApp>, std::path::PathBuf) 
     p.clips.push(c);
     p.ensure_tracks(LaneKind::Video, 1);
     p.validate().unwrap();
-    std::fs::write(&path, kt_otio::save_project(&p, &Default::default(), path.parent())).unwrap();
+    std::fs::write(&path, crate::app::project_text_of(&p, &Default::default(), None)).unwrap();
 
     let mut app = KtApp::open(&path).expect("проект со стиллом открывается");
     app.recovery_on_drop = false;
@@ -17225,22 +17228,116 @@ fn t797_added_media_path_becomes_absolute() {
     p.ensure_tracks(LaneKind::Video, 1);
     p.validate().unwrap();
     // проект ЛЕЖИТ РЯДОМ С КАРТИНКОЙ, в том же `sources/`
-    let proj = dir.join("sources/p.otio");
-    let text = kt_otio::save_project(&p, &Default::default(), proj.parent());
+    let proj = dir.join("sources/p.kt");
+    let text = crate::app::project_text_of(&p, &Default::default(), proj.parent());
     std::fs::write(&proj, &text).unwrap();
     let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
-    let url = doc["tracks"]["children"][0]["children"][0]["media_references"]["DEFAULT_MEDIA"]
-        ["target_url"]
-        .as_str()
-        .expect("путь медиа в файле");
+    let url = doc["project"]["media"][0]["path"].as_str().expect("путь медиа в файле");
     assert_eq!(url, "x.jpg", "в файле не относительный к проекту путь: {url}");
-    let back = kt_otio::load_project(&std::fs::read_to_string(&proj).unwrap(), proj.parent())
-        .expect("проект читается");
-    let found = &back.project.media[0].path;
+    // читаем ТЕМ ЖЕ путём, что «Открыть»: относительный путь файла
+    // разрешается от каталога проекта при чтении
+    let (back, _, _) = crate::app::load_project_file(&proj).expect("проект читается");
+    let found = &back.media[0].path;
     assert!(
         std::path::Path::new(found).exists(),
         "после круга файл не найден: {found} (ожидался {})",
         img.display()
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 815 (Р.70): автосейв большого проекта перестал быть событием. Сцена
+/// замера владельца — лента в ленте по несколько экземпляров: в обменном
+/// формате она давала мегабайты (тело ленты в каждом экземпляре), в файле
+/// восстановления своего формата — килобайты, и запись не задерживает
+/// интерфейс.
+#[test]
+fn t815_recovery_of_a_nested_scene_is_orders_of_magnitude_smaller() {
+    use kt_model::*;
+    use kt_time::Tick;
+    let clip = |id: u64, media: u64, start: i64, dur: i64| ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
+        overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
+        id: ClipId(id),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(start),
+        duration: Tick(dur),
+        source_in: Tick(0),
+        media: MediaId(media),
+        gain_db: 0.0,
+        reversed: false,
+        fx: Vec::new(),
+        fx_bypass: Vec::new(),
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    };
+    // та самая сцена: L1 из 10 клипов, L2 из 8 экземпляров L1, корень из 8 L2
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 1280,
+        height: 720,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+        default_shape: Default::default(),
+        conform: Default::default(),
+        settings_explicit: false,
+    });
+    p.media.push(MediaRef::new(MediaId(1), "synth:Ramp"));
+    let mut next = 1000u64;
+    let mut s1 = Sequence::new(MediaId(100), "L1");
+    for i in 0..10 {
+        next += 1;
+        s1.clips.push(clip(next, 1, i * 45_000, 45_000));
+    }
+    let l1 = 10 * 45_000;
+    let mut s2 = Sequence::new(MediaId(101), "L2");
+    for i in 0..8 {
+        next += 1;
+        s2.clips.push(clip(next, 100, i * l1, l1));
+    }
+    let l2 = 8 * l1;
+    for i in 0..8 {
+        next += 1;
+        p.clips.push(clip(next, 101, i * l2, l2));
+    }
+    p.sequences.push(s1);
+    p.sequences.push(s2);
+    p.normalize();
+    p.validate().unwrap();
+
+    let dir = std::env::temp_dir().join(format!("kt-t815-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let target = dir.join("big.kt");
+    let mut h = harness();
+    let app = h.state_mut();
+    app.project_path = Some(target.clone());
+    app.model = TimelineModel::new(p.clone());
+    app.model_rev += 1;
+    app.dirty_content = true;
+
+    let t0 = std::time::Instant::now();
+    app.write_recovery_now();
+    let took = t0.elapsed();
+    let rec = crate::app::recovery_path_for(Some(&target));
+    let ours = std::fs::metadata(&rec).expect("файла восстановления нет").len() as usize;
+    let interchange = kt_otio::save_project(&p, &Default::default(), None).len();
+    let ratio = interchange / ours.max(1);
+    eprintln!("t815: восстановление {ours} байт против {interchange} в формате обмена ({ratio}×), {took:?}");
+    assert!(
+        ratio >= 100,
+        "восстановление обязано быть на порядки меньше файла обмена: {ours} против {interchange} ({ratio}×)"
+    );
+    // «не событие»: запись укладывается в доли интервала автосейва даже в
+    // отладочной сборке; порог щедрый, чтобы не мерить машину
+    assert!(took < std::time::Duration::from_secs(2), "запись восстановления заняла {took:?}");
+    assert_eq!(kt_model::project_file::from_text(&std::fs::read_to_string(&rec).unwrap()).unwrap().project, p);
     let _ = std::fs::remove_dir_all(&dir);
 }

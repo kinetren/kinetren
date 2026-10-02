@@ -1,6 +1,7 @@
 //! Генератор демо-проектов конкатенации трансформов (Р.44/Р.45, п.315):
 //! `cargo test -p kt-cli --test gen_demo -- --ignored` перезаписывает
-//! `fixtures/demo-concat/*.otio`. Медиа — `gen-media.sh` там же.
+//! `fixtures/demo-concat/*.kt` (Р.70: файл проекта — свой формат). Медиа —
+//! `gen-media.sh` там же.
 //! Что смотреть в каждом проекте — fixtures/demo-concat/README.md.
 
 use kt_model::*;
@@ -79,7 +80,7 @@ fn zoom(z: f64) -> FxInstance {
 fn save(p: &mut Project, name: &str) {
     p.validate().expect(name);
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/demo-concat");
-    let text = kt_otio::save_project(p, &Default::default(), None);
+    let text = kt_model::project_file::to_text(p, None);
     std::fs::write(dir.join(name), text).unwrap();
     println!("написан {name}");
 }
@@ -95,7 +96,7 @@ fn gen_demo_concat() {
         clip(2, 4, 4, 1, vec![grid2(), pan3d(1.0), grid2(), pan3d(4.0)]),
         clip(3, 8, 4, 1, vec![grid2(), zoom(2.0)]),
     ];
-    save(&mut p, "01-net-identity.otio");
+    save(&mut p, "01-net-identity.kt");
 
     // 02: сценарий пользователя Р.44 с кривыми — параллаксы приходят в
     // норму, зум в конце устраняет сетки; финал обязан быть резким.
@@ -122,7 +123,7 @@ fn gen_demo_concat() {
         ],
     ];
     p.clips = vec![c];
-    save(&mut p, "02-user-parallax.otio");
+    save(&mut p, "02-user-parallax.kt");
 
     // 03: K×-барьеры (Р.45) — фактура VHS/edges переживает зум.
     let mut p = project();
@@ -147,7 +148,7 @@ fn gen_demo_concat() {
             vec![FxInstance::Vhs { rgb_shift: 3, bleed: 0.35, scan_step: 4, jitter: 0.0 }],
         ),
     ];
-    save(&mut p, "03-barrier.otio");
+    save(&mut p, "03-barrier.kt");
 
     // 04: поточечные внутри серии (Р.45) — ключ и зерно сквозь зум.
     let mut p = project();
@@ -162,7 +163,7 @@ fn gen_demo_concat() {
             vec![grid2(), FxInstance::Noise { amount: 0.35, size: 2, color: true }, zoom(2.0)],
         ),
     ];
-    save(&mut p, "04-pointwise.otio");
+    save(&mut p, "04-pointwise.kt");
 
     // 05: ступень декода (Р.46). Клипы 1-2 на detail-hi.mp4 (2560x1440),
     // клип 3 — тот же зум на detail.mp4 (1280x720, запаса нет): рядом
@@ -184,7 +185,7 @@ fn gen_demo_concat() {
             ],
         ),
     ];
-    save(&mut p, "05-decode-scale.otio");
+    save(&mut p, "05-decode-scale.kt");
 
     // 06: цвет (Р.47 Кв2) — поточечные соло и ВНУТРИ гео-серии
     // (поглощение тапом: ключ и зум не ломают формулу цвета).
@@ -206,7 +207,7 @@ fn gen_demo_concat() {
         clip(3, 8, 4, 1, vec![FxInstance::Posterize { levels: 4 }]),
         clip(4, 12, 4, 1, vec![grid2(), FxInstance::vignette(), zoom(2.0)]),
     ];
-    save(&mut p, "06-color.otio");
+    save(&mut p, "06-color.kt");
 
     // 07: барьеры (Р.47 Кв3) — резкость/мозаика/аберрация/лучи/тень/растр.
     let mut p = project();
@@ -242,7 +243,7 @@ fn gen_demo_concat() {
         ),
         clip(6, 20, 4, 1, vec![FxInstance::Halftone { size: 10, angle: 45.0 }]),
     ];
-    save(&mut p, "07-fx-barriers.otio");
+    save(&mut p, "07-fx-barriers.kt");
 
     // 08: варпы (Р.47 Кв4) — нелинейные гео в конкатенации; Ripple с
     // кривой phase (волна бежит), CornerPin с кривыми углов (экран
@@ -273,5 +274,5 @@ fn gen_demo_concat() {
         clip(5, 16, 4, 1, vec![FxInstance::kaleidoscope(), zoom(1.5)]),
         clip(6, 20, 4, 1, vec![FxInstance::Cylinder3d { curvature: 0.8 }, zoom(1.3)]),
     ];
-    save(&mut p, "08-warp.otio");
+    save(&mut p, "08-warp.kt");
 }

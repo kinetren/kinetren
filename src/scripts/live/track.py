@@ -123,8 +123,7 @@ def main(out):
         app.click_probe("fxreg.tpl.vignette", "строка «Виньетка» в пикере")
         app.shot("vignette")
         app.click_probe("track.close", "кнопка закрытия окна дорожки")
-        app.saved_project()
-        doc = json.load(open(path))
+        doc = app.saved_project().doc
         # цепочка дорожки живёт в `effects` САМОЙ дорожки OTIO — там же,
         # где её ждёт любой чужой читатель формата
         on_track = [

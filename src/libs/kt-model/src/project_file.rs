@@ -132,7 +132,7 @@ pub fn to_text(project: &Project, otio: Option<&Value>) -> String {
         project: project.clone(),
     };
     let mut s = serde_json::to_string_pretty(&env)
-        .expect("модель сериализуется всегда: ни карт с нестроковыми ключами, ни NaN");
+        .expect("the model always serializes: no non-string map keys, no NaN");
     s.push('\n');
     s
 }

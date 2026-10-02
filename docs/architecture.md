@@ -17,7 +17,7 @@
 | [`generators`](../openspec/specs/generators/spec.md) · [почему](../openspec/specs/generators/design.md) | генераторы и титры |
 | [`media-index`](../openspec/specs/media-index/spec.md) · [почему](../openspec/specs/media-index/design.md) | источники, декод, очередь, sidecar, dlopen FFmpeg |
 | [`export`](../openspec/specs/export/spec.md) · [почему](../openspec/specs/export/design.md) | внутрипроцессный экспорт, golden, kt-cli |
-| [`project-format`](../openspec/specs/project-format/spec.md) · [почему](../openspec/specs/project-format/design.md) | .otio, версии, passthrough |
+| [`project-format`](../openspec/specs/project-format/spec.md) · [почему](../openspec/specs/project-format/design.md) | файл проекта `.kt` (свой формат, git), двери обмена OTIO (импорт/экспорт), версии, passthrough |
 | [`durability`](../openspec/specs/durability/spec.md) · [почему](../openspec/specs/durability/design.md) | автосейв, recovery, finish.sh, живые сценарии |
 | [`ui-timeline`](../openspec/specs/ui-timeline/spec.md) · [почему](../openspec/specs/ui-timeline/design.md) | вёрстка, repaint, i18n, жесты |
 | [`ui-reach`](../openspec/specs/ui-reach/spec.md) · [почему](../openspec/specs/ui-reach/design.md) | «тупиков не бывает», правый клик |

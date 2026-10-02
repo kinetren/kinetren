@@ -891,7 +891,7 @@ mod key_tests {
         project.media.push(kt_model::MediaRef::new(id, "gen:solid:c=ff8800"));
         // прогон дважды: без пути проекта (нет БД) и с путём (БД есть,
         // но генератору она закрыта по ключу file_identity)
-        let db_project = std::env::temp_dir().join(format!("kt-t476-{}.otio", std::process::id()));
+        let db_project = std::env::temp_dir().join(format!("kt-t476-{}.kt", std::process::id()));
         for project_path in [None, Some(db_project.clone())] {
             let with_db = project_path.is_some();
             let svc = ThumbService::start(&project, project_path);

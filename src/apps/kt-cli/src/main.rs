@@ -4,7 +4,10 @@
 //! Медиа-пути вида `synth:<pattern>` (sine:HZ, ramp, dc:V, impulse, silence)
 //! резолвятся в SyntheticSource — рендер без FFmpeg. Реальные файлы — с M3.
 //!
-//! `probe <проект.otio> <от_с> <до_с>` (Р.43) отвечает на вопрос «что
+//! Файл проекта — СВОЙ формат `.kt` (Р.70); OpenTimelineIO — дверь внутрь
+//! (`import`) и наружу (`export-otio`), `roundtrip` — проверка самой двери.
+//!
+//! `probe <проект.kt> <от_с> <до_с>` (Р.43) отвечает на вопрос «что
 //! звучит в этом месте»: эффективные события ПОСЛЕ морфер-слоёв, заказ
 //! префетча и отдельной строкой чужое медиа в нём. Считается чисто
 //! моделью — ни декода, ни FFmpeg, ни звукового железа. По жалобе «тут
@@ -698,9 +701,12 @@ fn render_wav(project: &Project, project_path: &str, output: &str, allow_missing
     0
 }
 
-/// Чтение .otio-проекта (Р.24: .ktproj как проект не открывается —
-/// только `kt-cli convert`).
-fn load_otio(input: &str) -> Result<Project, i32> {
+/// Чтение файла ПРОЕКТА (Р.70): только свой формат. Файл обмена и легаси
+/// — не проект: ошибка называет дверь (`kt-cli import`), как «Открыть» в
+/// приложении называет пункт меню. Возвращает и чужой passthrough — он
+/// нужен `export-otio`.
+fn load_project_file(input: &str) -> Result<(Project, Retained), i32> {
+    use kt_model::project_file::{FileKind, ProjectFileError, from_text};
     let text = match std::fs::read_to_string(input) {
         Ok(t) => t,
         Err(e) => {
@@ -708,16 +714,26 @@ fn load_otio(input: &str) -> Result<Project, i32> {
             return Err(1);
         }
     };
-    let base = std::path::Path::new(input).parent().map(|p| p.to_path_buf());
-    match kt_otio::load_project(&text, base.as_deref()) {
-        Ok(b) => {
-            for n in &b.notices {
-                eprintln!("note: {n}");
-            }
-            Ok(b.project)
+    match from_text(&text) {
+        Ok(f) => {
+            let retained = match f.otio {
+                Some(v) => match Retained::from_json(&v) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("{input}: passthrough field unreadable: {e}");
+                        return Err(1);
+                    }
+                },
+                None => Retained::default(),
+            };
+            Ok((f.project, retained))
         }
-        Err(kt_otio::Error::NotOtio) => {
-            eprintln!("{input}: legacy .ktproj is import-only — use `kt-cli convert`");
+        Err(ProjectFileError::NotOurs { looks_like: Some(kind) }) => {
+            let what = match kind {
+                FileKind::Otio => "an OpenTimelineIO file",
+                FileKind::LegacyKtproj => "a legacy .ktproj",
+            };
+            eprintln!("{input}: {what}, not a project — run `kt-cli import {input} <out.kt>` first");
             Err(1)
         }
         Err(e) => {
@@ -725,6 +741,24 @@ fn load_otio(input: &str) -> Result<Project, i32> {
             Err(1)
         }
     }
+}
+
+/// Проект для рендера/пробы: относительные пути медиа разрешены от
+/// каталога проекта ОДИН раз, здесь (т307: иначе `sub/p.kt` из каталога
+/// над ним искал бы `sub/sub/clip.mp4`). В файле они остаются
+/// относительными — это делает приложение при каждом обращении, а kt-cli
+/// — на входе.
+fn load_project_resolved(input: &str) -> Result<Project, i32> {
+    let (mut p, _) = load_project_file(input)?;
+    kt_otio::resolve_project_media(&mut p, std::path::Path::new(input).parent());
+    Ok(p)
+}
+
+/// Текст файла проекта: модель плюс чужой passthrough, если он есть — то
+/// же тело, что у Ctrl+S в приложении (`kt_model::project_file`).
+fn project_text(p: &Project, retained: &Retained) -> String {
+    let otio = (!retained.is_empty()).then(|| retained.to_json());
+    kt_model::project_file::to_text(p, otio.as_ref())
 }
 
 fn run(args: &[String]) -> i32 {
@@ -737,7 +771,7 @@ fn run(args: &[String]) -> i32 {
         }
         Some("new") => {
             let Some(path) = args.get(1) else {
-                eprintln!("usage: kt-cli new <out.otio> [--force]");
+                eprintln!("usage: kt-cli new <out.kt> [--force]");
                 return 2;
             };
             let p = Project::new(ProjectSettings {
@@ -753,17 +787,18 @@ fn run(args: &[String]) -> i32 {
 
                 settings_explicit: false,
             });
-            let base = std::path::Path::new(path).parent().map(|d| d.to_path_buf());
-            let out = kt_otio::save_project(&p, &Retained::default(), base.as_deref());
+            let out = project_text(&p, &Retained::default());
             if let Err(c) = write_project(path, &out, force) {
                 return c;
             }
             0
         }
-        Some("convert") => {
-            // Р.24 п.12: единственный путь для старых .ktproj
+        // ДВЕРЬ ИМПОРТА (Р.70): легаси .ktproj, наш .otio любой версии
+        // конверта (починки — `import_older`) и чужой .otio — в файл
+        // проекта своего формата. Исходник не трогается.
+        Some("import") => {
             let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
-                eprintln!("usage: kt-cli convert <in.ktproj> <out.otio> [--force]");
+                eprintln!("usage: kt-cli import <in.otio|in.ktproj> <out.kt> [--force]");
                 return 2;
             };
             let text = match std::fs::read_to_string(input) {
@@ -773,32 +808,62 @@ fn run(args: &[String]) -> i32 {
                     return 1;
                 }
             };
-            let (p, notices) = match kt_otio::import_legacy(&text) {
-                Ok(v) => v,
+            let in_base = std::path::Path::new(input).parent();
+            let b = match kt_otio::import_interchange(&text, in_base) {
+                Ok(b) => b,
+                Err(kt_otio::Error::ProjectFile) => {
+                    eprintln!("{input}: already a Kinotrain project — nothing to import");
+                    return 1;
+                }
                 Err(e) => {
                     eprintln!("{input}: {e}");
                     return 1;
                 }
             };
+            let (mut p, retained, notices) = (b.project, b.retained, b.notices);
             for n in &notices {
                 eprintln!("note: {n}");
             }
-            let base = std::path::Path::new(output).parent().map(|d| d.to_path_buf());
-            let out = kt_otio::save_project(&p, &Retained::default(), base.as_deref());
+            // пути медиа разрешены от ИСХОДНИКА (абсолютны); в файле проекта
+            // они относительны к НЕМУ
+            kt_otio::relativize_project_media(&mut p, std::path::Path::new(output).parent());
+            let out = project_text(&p, &retained);
             if let Err(c) = write_project(output, &out, force) {
                 return c;
             }
             eprintln!(
-                "ok: {} media, {} clips, {} transitions",
+                "ok: {} media, {} clips, {} transitions, {} reels",
                 p.media.len(),
                 p.clips.len(),
-                p.transitions.len()
+                p.transitions.len(),
+                p.sequences.len()
             );
+            0
+        }
+        // ДВЕРЬ ЭКСПОРТА (Р.70): самодостаточный файл обмена — тело ленты
+        // инлайном в каждом экземпляре, чужой passthrough возвращён.
+        Some("export-otio") => {
+            let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
+                eprintln!("usage: kt-cli export-otio <in.kt> <out.otio> [--force]");
+                return 2;
+            };
+            let (mut p, retained) = match load_project_file(input) {
+                Ok(v) => v,
+                Err(code) => return code,
+            };
+            // абсолютные в памяти — относительные к файлу обмена на выходе
+            // (это делает сам писатель OTIO по `out_base`)
+            kt_otio::resolve_project_media(&mut p, std::path::Path::new(input).parent());
+            let out_base = std::path::Path::new(output).parent();
+            let out = kt_otio::save_project(&p, &retained, out_base);
+            if let Err(c) = write_project(output, &out, force) {
+                return c;
+            }
             0
         }
         Some("demo") => {
             let Some(path) = args.get(1) else {
-                eprintln!("usage: kt-cli demo <out.otio> [--files] [--force]");
+                eprintln!("usage: kt-cli demo <out.kt> [--files] [--force]");
                 return 2;
             };
             // По умолчанию демо ссылается на СИНТЕТИЧЕСКИЕ источники (Р.49,
@@ -807,8 +872,7 @@ fn run(args: &[String]) -> i32 {
             // эти файлы сам. `synth:` — полноправный источник во всей
             // программе; `--files` возвращает прежние имена.
             let p = demo_project(!args.iter().any(|a| a == "--files"));
-            let base = std::path::Path::new(path).parent().map(|d| d.to_path_buf());
-            let out = kt_otio::save_project(&p, &Retained::default(), base.as_deref());
+            let out = project_text(&p, &Retained::default());
             if let Err(c) = write_project(path, &out, force) {
                 return c;
             }
@@ -816,6 +880,7 @@ fn run(args: &[String]) -> i32 {
         }
         Some("roundtrip") => {
             let Some(input) = args.get(1) else {
+                // проверка ДВЕРИ обмена: файл обмена → модель → файл обмена
                 eprintln!("usage: kt-cli roundtrip <in.otio> [out.otio] [--force]");
                 return 2;
             };
@@ -859,14 +924,14 @@ fn run(args: &[String]) -> i32 {
         Some("probe") => {
             let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3))
             else {
-                eprintln!("usage: kt-cli probe <in.otio> <from_s> <to_s> [--time]");
+                eprintln!("usage: kt-cli probe <in.kt> <from_s> <to_s> [--time]");
                 return 2;
             };
             let (Ok(from), Ok(to)) = (from.parse::<f64>(), to.parse::<f64>()) else {
                 eprintln!("from/to are seconds");
                 return 2;
             };
-            let project = match load_otio(input) {
+            let project = match load_project_resolved(input) {
                 Ok(p) => p,
                 Err(code) => return code,
             };
@@ -893,10 +958,10 @@ fn run(args: &[String]) -> i32 {
         }
         Some("render") => {
             let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
-                eprintln!("usage: kt-cli render <in.otio> <out.wav> [--allow-missing]");
+                eprintln!("usage: kt-cli render <in.kt> <out.wav> [--allow-missing]");
                 return 2;
             };
-            let project = match load_otio(input) {
+            let project = match load_project_resolved(input) {
                 Ok(p) => p,
                 Err(code) => return code,
             };
@@ -904,7 +969,7 @@ fn run(args: &[String]) -> i32 {
         }
         Some("export") => {
             let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
-                eprintln!("usage: kt-cli export <in.otio> <out.mp4> [encoder]");
+                eprintln!("usage: kt-cli export <in.kt> <out.mp4> [encoder]");
                 return 2;
             };
             // третьим аргументом можно закрепить видео-энкодер (иначе
@@ -912,7 +977,7 @@ fn run(args: &[String]) -> i32 {
             // рендер обязан быть воспроизводимым — например в кросс-рендер
             // конформансе (тест 158).
             let encoder = args.get(3).cloned();
-            let project = match load_otio(input) {
+            let project = match load_project_resolved(input) {
                 Ok(p) => p,
                 Err(code) => return code,
             };

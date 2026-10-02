@@ -167,8 +167,7 @@ def main(out):
             f"«Отмена» вернула дорожку как была: RGB {undone} против старта {top}",
         )
         app.step("window-cancel", "окно дорожки: «Отмена» — кадр снова зелёный")
-        app.saved_project()
-        doc = json.load(open(path))
+        doc = app.saved_project().doc
         blends = [
             t.get("metadata", {}).get("kt", {}).get("blend")
             for t in doc["tracks"]["children"]

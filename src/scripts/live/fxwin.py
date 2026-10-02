@@ -12,6 +12,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import KT_CLI, Live, require_tools  # noqa: E402
+from kt_live import demo_otio, import_project, new_otio  # noqa: E402,F401
 import subprocess  # noqa: E402
 
 SEC = 90000
@@ -22,7 +23,7 @@ def main(out):
     # демо-проект: у первого видео-события есть цепочка (пан/зум), значит
     # окно покажет и полосу цепочки, и сетку параметров
     proj = os.path.join(out, "fxwin.otio")
-    subprocess.run([KT_CLI, "demo", proj, "--force"], check=True, capture_output=True)
+    demo_otio(proj)
 
     with Live("fxwin", out, project=proj) as app:
         # аудио-дорожка 1 демо-проекта: на ней slowed&reverb с кривыми,

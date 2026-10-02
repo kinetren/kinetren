@@ -20,6 +20,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import KT_CLI, Live, require_tools  # noqa: E402
+from kt_live import demo_otio, import_project, new_otio  # noqa: E402,F401
 
 SEC = 90000
 
@@ -50,7 +51,7 @@ def curve_params(doc):
 def main(out):
     require_tools()
     proj = os.path.join(out, "envclip.otio")
-    subprocess.run([KT_CLI, "demo", proj, "--force"], check=True, capture_output=True)
+    demo_otio(proj)
 
     with Live("envclip", out, project=proj) as app:
         # ВНЕ линии уровня: двойной клик по ней сбрасывает громкость (п.362)
