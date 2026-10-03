@@ -10,7 +10,7 @@ we_have: да
 crates: [kt-otio, kt-model, kt-app, kt-cli]
 invariants: [11]
 ui_rules: [19, 20]
-round: 70
+round: 70  # закрыт, спеки слиты 03.10.2026
 point: null
 tests: [t810, t811, t812, t813, t814, t815, t816, t817, t818, t819, t820, t821, t822]
 depends_on: [F-PRJ-002, F-PRJ-003, F-RES-003]
