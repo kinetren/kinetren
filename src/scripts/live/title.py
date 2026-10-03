@@ -114,9 +114,10 @@ def main(out):
         app.key("space")
         app.shot("typed-while-playing")
 
-        # 5. набранный текст в файле: экранированный токен и схема
-        app.saved_project()
-        with open(app.project) as f:
+        # 5. набранный текст в файле: схема — в ЭКСПОРТЕ (Р.70), сам текст
+        # — в модели файла проекта
+        app.expect('"kt9"' in app.saved_text(), "набранный текст лежит в файле проекта")
+        with open(app.project_now().otio_path) as f:
             text = f.read()
         app.expect('"kt.text"' in text, "клип титра уехал GeneratorReference.1/kt.text")
         app.expect('"text": "kt9"' in text, "набранный при игре текст лежит в parameters")

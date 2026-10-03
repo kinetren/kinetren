@@ -87,13 +87,14 @@ def main(out):
         )
         app.shot("placed")
 
-        # 5. в сохранённом файле — первоклассная схема генератора
-        app.saved_project()
-        with open(app.project) as f:
+        # 5. в ЭКСПОРТЕ — первоклассная схема генератора (Р.70: схема OTIO
+        # живёт в файле обмена; в файле проекта вид и значения лежат моделью)
+        app.expect('"gen:solid' in app.saved_text(), "в файле проекта генератор — вид в пути медиа")
+        with open(app.project_now().otio_path) as f:
             text = f.read()
         app.expect(
             "GeneratorReference.1" in text and '"kt.solid"' in text,
-            "клип генератора уехал схемой GeneratorReference.1",
+            "клип генератора уехал схемой GeneratorReference.1 (экспорт)",
         )
         app.expect(
             "available_range" in text.split("GeneratorReference.1", 1)[1][:800],

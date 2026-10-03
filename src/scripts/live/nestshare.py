@@ -22,9 +22,10 @@ from kt_live import Live, poll_step, project_with_clips, require_tools  # noqa: 
 SEC = 90000
 
 
-def stacks_of(path):
-    with open(path) as f:
-        doc = json.load(f)
+def stacks_of(doc):
+    """Экземпляры ленты в ФАЙЛЕ ОБМЕНА: утверждение здесь именно про то, что
+    увидит чужой редактор, поэтому читается дверь экспорта (Р.70), а не файл
+    проекта — в нём лента лежит ОДИН раз и экземпляр это ссылка."""
     return [
         c
         for track in doc["tracks"]["children"]
@@ -112,8 +113,7 @@ def main(out):
         app.shot("edited")
 
         # --- следствие: ВСЕ ТРИ места одинаковы -----------------------
-        app.save_now()
-        st = stacks_of(path)
+        st = stacks_of(app.saved_project().doc)
         app.expect(len(st) == 3, f"в файле не три экземпляра, а {len(st)}")
         bodies = [json.dumps(s.get("children"), sort_keys=True) for s in st]
         app.expect(

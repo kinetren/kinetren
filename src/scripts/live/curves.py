@@ -110,8 +110,7 @@ def main(out):
         app.step("help", "справка: переменные и функции")
 
         # 7) сохранение: форма и формула в файле
-        app.save_now()
-        text = open(path, encoding="utf-8").read()
+        text = app.saved_text()
         app.expect('"zigzag"' in text, "в файле есть форма zigzag")
         app.expect('k*0.5+0.1' in text or 'k * 0.5' in text, "в файле есть формула-слой")
         app.expect('"keys"' in text, "ключи под слоем в файле целы")

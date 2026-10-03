@@ -99,15 +99,14 @@ def probe_center(app, name, what):
     return None
 
 
-def saved_geometry(path):
-    """Геометрия события из файла проекта — то, что реально записано."""
-    with open(path) as f:
-        doc = json.load(f)
-    for track in doc["tracks"]["children"]:
-        for c in track.get("children", []):
-            kt = c.get("metadata", {}).get("kt", {})
-            if "geometry" in kt:
-                return kt["geometry"]
+def saved_geometry(text):
+    """Геометрия события из файла проекта — то, что реально записано.
+    Р.70: геометрия — поле МОДЕЛИ, и читается она из файла проекта
+    (`app.project_text()`), а не из исходника сценария."""
+    doc = json.loads(text)
+    for c in doc["project"].get("clips", []):
+        if c.get("geometry"):
+            return c["geometry"]
     return {}
 
 
@@ -173,7 +172,7 @@ def main(out):
         # без модификатора: Alt+перетаскивание перехватывает ОКОННЫЙ
         # МЕНЕДЖЕР (в openbox — перенос окна), до программы жест не доходит
         anchor = probe_center(app, "geom.anchor", "точка якоря отдана программой")
-        saved_before = dict(saved_geometry(path))
+        saved_before = dict(saved_geometry(app.project_text()))
         if anchor:
             app.drag(anchor[0], anchor[1], anchor[0] - 55, anchor[1] + 35)
             still = picture(app, "still", box)
@@ -185,8 +184,7 @@ def main(out):
         app.shot("anchor")
 
         # --- 6. запись на диск -------------------------------------------
-        app.save_now()
-        g = saved_geometry(path)
+        g = saved_geometry(app.saved_text())
         app.expect(bool(g), "геометрия события записана в файл")
         app.expect(
             abs(g.get("pos_x", 0.0)) > 1e-4 or abs(g.get("pos_y", 0.0)) > 1e-4,
@@ -227,8 +225,7 @@ def main(out):
             "«Сброс» вернул картинку: отпечаток отличается от того, что дали жесты",
         )
         app.step("geo-reset", "«Сброс» формы узла вернул кадр к исходной геометрии")
-        app.save_now()
-        g = saved_geometry(path)
+        g = saved_geometry(app.saved_text())
         app.expect(
             abs(g.get("zoom", 1.0) - 1.0) < 1e-4 and abs(g.get("rot", 0.0)) < 1e-4,
             f"«Сброс» доехал до файла: {g}",

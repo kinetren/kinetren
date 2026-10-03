@@ -26,9 +26,10 @@ VARIANT = "fxreg.var.blur.1"
 WANT_RADIUS = 24
 
 
-def radius_in(path):
-    """Радиусы всех blur-эффектов в сохранённом проекте."""
-    doc = json.load(open(path))
+def radius_in(text):
+    """Радиусы всех blur-эффектов в сохранённом проекте (текст файла
+    проекта: цепочка эффектов — часть МОДЕЛИ)."""
+    doc = json.loads(text)
     found = []
 
     def walk(node):
@@ -109,14 +110,14 @@ def main(out):
         win = geometry()
         cx = win["x"] + int(cell["x"] + cell["w"] / 2)
         cy = win["y"] + int(cell["y"] + cell["h"] * 0.35)
-        before_radii = radius_in(proj)
+        before_radii = radius_in(app.project_text())
         app.drag(cx, cy, cx - int(cell["w"] / 2), cy)
         app.shot("axis")
         app.saved_project()
-        axis_radii = [r for r in radius_in(proj) if r not in before_radii]
+        axis_radii = [r for r in radius_in(app.project_text()) if r not in before_radii]
         app.expect(
             len(axis_radii) == 1,
-            f"проводка добавила ровно один blur (было {before_radii}, стало {radius_in(proj)})",
+            f"проводка добавила ровно один blur (было {before_radii}, стало {radius_in(app.project_text())})",
         )
         if axis_radii:
             app.expect(
@@ -127,7 +128,7 @@ def main(out):
         # его снять — иначе следующая проверка мерила бы сумму двух жестов
         app.key("ctrl+z")
         app.saved_project()
-        after_undo = radius_in(proj)
+        after_undo = radius_in(app.project_text())
         app.expect(
             axis_radii and axis_radii[0] not in after_undo,
             f"Ctrl+Z снял добавленное осью (осталось {after_undo})",
@@ -142,7 +143,7 @@ def main(out):
             return app.done()
         app.shot("after-pick")
         app.saved_project()
-        after_radii = radius_in(proj)
+        after_radii = radius_in(app.project_text())
         app.expect(
             len(after_radii) == len(before_radii) + 1,
             f"в проекте появился ровно один новый blur ({before_radii} → {after_radii})",
