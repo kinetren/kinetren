@@ -27,7 +27,7 @@ import time
 # scripts/live/kt_live.py → src/ на два уровня выше
 RUST = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 ROOT = os.path.dirname(RUST)
-KT_APP = os.path.join(RUST, "target", "debug", "kt-app")
+KT_APP = os.path.join(RUST, "target", "debug", "kinetren")
 
 # СТЕНД РАБОТНИКА (Р.68): каталог с `ctl`, `geom.json` и `window.json` уже
 # запущенной программы — его ставит `scripts/live/worker.py`. Без переменной

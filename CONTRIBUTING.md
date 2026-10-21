@@ -42,7 +42,7 @@ cargo clippy --all-targets
   layout; only a live scenario (`src/scripts/live/*.py`) proves a gesture works in the
   real window.
 - `cargo test` builds a separate test binary and does **not** rebuild
-  `target/debug/kt-app`. Finish every piece of work with `./scripts/finish.sh` and quote
+  `target/debug/kinetren` (the binary of the `kt-app` package). Finish every piece of work with `./scripts/finish.sh` and quote
   the version it prints.
 
 ## How changes are made

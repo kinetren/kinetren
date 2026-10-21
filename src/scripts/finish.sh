@@ -2,7 +2,7 @@
 # Финал работы над правками (правило п.7 р.12).
 #
 # `cargo test` собирает ОТДЕЛЬНЫЙ тест-бинарь и НЕ трогает
-# target/debug/kt-app — тот, который запускает человек. Из-за этого
+# target/debug/kinetren — тот, который запускает человек. Из-за этого
 # пользователь дважды запускал устаревшую программу и считал дефекты
 # неисправленными. Поэтому любой агент заканчивает работу этим скриптом:
 # пересобирает то, что запускают, называет версию и подчищает мусор.
@@ -170,7 +170,7 @@ clean_targets() {
 stage "чистка" clean_targets
 
 mkdir -p target/dist-out
-printf '%s\n%s\n' "$FULL" "$(pwd)/target/debug/kt-app" > target/dist-out/LATEST
+printf '%s\n%s\n' "$FULL" "$(pwd)/target/debug/kinetren" > target/dist-out/LATEST
 echo
 
 # Цена проверки: таблица стадий, итог и бюджет пять минут (Р.68).
@@ -184,7 +184,7 @@ echo
 [ -n "${WS_FAILED:-}" ] && echo "ВНИМАНИЕ: тесты мастерской красные — см. target/finish-workspace-fail.log"
 [ -n "${SIMD_FAILED:-}" ] && echo "ВНИМАНИЕ: SIMD-конформанс красный (t198)"
 echo "ВЕРСИЯ: $FULL$DIRTY"
-echo "запускать: $(pwd)/target/debug/kt-app"
+echo "запускать: $(pwd)/target/debug/kinetren"
 
 # Р.67: ШАГИ ПУТИ ПОЛЬЗОВАТЕЛЯ из живых сценариев — в отчёт. Правило «думай
 # о пользователе» держится двумя механизмами: строкой ПУТЬ в спеке (сторож
@@ -211,10 +211,10 @@ python3 "$(dirname "$0")/readme-check.py" --check || exit 1
 # монтаже аудио-рендер там уходит за 100 % реального времени, кольцо пустеет
 # и растут callback-underrun'ы — их слышно тишиной. Это цена профиля, а не
 # дефект, и судить о скорости по debug нельзя.
-if [ ! -x target/release/kt-app ]; then
+if [ ! -x target/release/kinetren ]; then
     echo "о СКОРОСТИ судить только по релизу: cargo build --release -p kt-app"
 else
-    echo "для замеров скорости: $(pwd)/target/release/kt-app"
+    echo "для замеров скорости: $(pwd)/target/release/kinetren"
 fi
 [ "$RELEASE" = 1 ] && echo "тарбол:   $(ls -1 target/dist-out/*.tar.gz 2>/dev/null | tail -1)"
 exit 0

@@ -3481,6 +3481,14 @@ no Xvfb; nothing uploaded but a short-lived failure log); a release is made by *
 Docker, run on the host* (`make`, `make install`, `make run`, `make test`, `make clean`).
 Change `openspec/changes/github-ci-docker-build`.
 
+> kinetren/kinetren финальный
+> еще - при билде и распространении надо называть не kt-app как сейчас а kinetren
+
+**Decisions:** the final repository is `github.com/kinetren/kinetren` (the current remote
+`kvazi-team/kinetren` is not). The GUI binary is called `kinetren` in the build output, the
+tarball, `~/.local/bin`, the `.desktop` file and `make run`; the cargo package stays `kt-app`
+internally, and `kt-cli` keeps its name (assumption, easy to change).
+
 **Fourth round (2026-10-22):**
 
 > 1. первое фото в ридми - media bin очень узкий надо хотя бы в два ряда(ну и далее в readme тоже фото нормальное вставить не узкое), а еще лучше в свободном режиме показать,

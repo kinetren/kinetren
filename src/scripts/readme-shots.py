@@ -6,7 +6,7 @@
 
 Builds the showcase project from the videos in DIR (`kt-cli showcase`),
 starts its own virtual screen (Xvfb + openbox, nothing touches your
-desktop) and shoots the English UI of the freshly built `kt-app`. The
+desktop) and shoots the English UI of the freshly built `kinetren`. The
 pipeline itself — gestures, probes, crops, the list of images — lives in
 `scripts/live/readme_shots.py`, which `live-check.sh` also runs on the
 fixture videos, so this command cannot rot unnoticed.
@@ -44,7 +44,7 @@ def main():
     if not os.path.isdir(args.sources):
         print(f"readme-shots.py: {args.sources}: not a directory", file=sys.stderr)
         return 2
-    for tool in ("kt-app", "kt-cli"):
+    for tool in ("kinetren", "kt-cli"):
         path = os.path.join(REPO, "src", "target", "debug", tool)
         if not os.path.exists(path):
             sys.exit(f"no {path} — build it: cd src && cargo build -p kt-app -p kt-cli")

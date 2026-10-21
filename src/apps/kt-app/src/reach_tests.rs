@@ -3572,8 +3572,8 @@ fn live_check_available(root: &std::path::Path) -> Option<String> {
     {
         return Some("нет Xvfb (sudo apt install xvfb openbox)".into());
     }
-    if !root.join("target/debug/kt-app").exists() {
-        return Some("нет target/debug/kt-app (cargo build -p kt-app)".into());
+    if !root.join("target/debug/kinetren").exists() {
+        return Some("нет target/debug/kinetren (cargo build -p kt-app)".into());
     }
     None
 }

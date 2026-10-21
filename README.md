@@ -133,7 +133,7 @@ sound, and any GPU driver with Vulkan or OpenGL. Without a GPU it falls back to 
 ./install.sh
 ```
 
-Kinetren then appears in your applications menu (`kt-app` from a terminal).
+Kinetren then appears in your applications menu (`kinetren` from a terminal).
 
 **From source** (Rust stable, `clang`, `pkg-config`, `libasound2-dev`):
 

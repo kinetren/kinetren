@@ -34,7 +34,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RUST = os.path.abspath(os.path.join(HERE, "..", ".."))
-KT_APP = os.path.join(RUST, "target", "debug", "kt-app")
+KT_APP = os.path.join(RUST, "target", "debug", "kinetren")
 KT_CLI = os.path.join(RUST, "target", "debug", "kt-cli")
 SCREEN = os.environ.get("KT_LIVE_SCREEN", "1920x1080x24")
 # сколько потоков софт-рендера даётся ОДНОМУ kt-app: без ограничения один

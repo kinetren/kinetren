@@ -5,11 +5,12 @@ GenericName=Video Editor
 GenericName[ru]=Видеоредактор
 Comment=Non-linear video editor
 Comment[ru]=Нелинейный видеоредактор
-Exec=kt-app %f
+Exec=kinetren %f
 Icon=kinetren
 Terminal=false
 Categories=AudioVideo;AudioVideoEditing;Video;
 MimeType=application/x-opentimelineio;application/x-kinetren-project;
-# WM_CLASS на X11 = имя бинаря (winit не выставляет app_id на X11), иначе
-# таскбар не связывает окно с этим .desktop и показывает заглушку
-StartupWMClass=kt-app
+# WM_CLASS on X11 is the binary name (winit sets no app_id there); without a
+# match the taskbar does not tie the window to this entry and shows a stub.
+# The binary has been `kinetren` since 2026-10-22 (it was kt-app).
+StartupWMClass=kinetren

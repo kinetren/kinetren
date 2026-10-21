@@ -36,8 +36,8 @@ if ! command -v Xvfb > /dev/null; then
     echo "нет Xvfb: sudo apt install xvfb openbox" >&2
     exit 2
 fi
-if [ ! -x "$root/target/debug/kt-app" ]; then
-    echo "нет target/debug/kt-app: cargo build -p kt-app" >&2
+if [ ! -x "$root/target/debug/kinetren" ]; then
+    echo "нет target/debug/kinetren: cargo build -p kt-app" >&2
     exit 2
 fi
 

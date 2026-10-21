@@ -5,6 +5,13 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+# The program people run is called `kinetren` (owner, 2026-10-22: "при билде и
+# распространении надо называть не kt-app … а kinetren"). The package keeps its
+# internal name, so `cargo run -p kt-app` and `-p kt-app` in test commands stay.
+[[bin]]
+name = "kinetren"
+path = "src/main.rs"
+
 [dependencies]
 kt-time = { workspace = true }
 kt-version = { workspace = true }
