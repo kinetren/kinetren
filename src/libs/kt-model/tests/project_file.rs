@@ -224,7 +224,7 @@ fn t812_version_refuses_forward_and_names_the_import_door() {
         other => panic!("файл обмена обязан опознаваться как OTIO, а не {other:?}"),
     }
     let said = from_text(otio).unwrap_err().to_string();
-    assert!(said.contains("Import older Kinotrain project"), "ошибка не назвала дверь: {said}");
+    assert!(said.contains("Import older Kinetren project"), "ошибка не назвала дверь: {said}");
     assert!(!is_project_file(otio) && is_project_file(&text));
 
     // легаси-проект — тоже дверь импорта, своим именем

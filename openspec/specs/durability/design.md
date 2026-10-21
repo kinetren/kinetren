@@ -304,3 +304,14 @@ t150: `film.kt` и `film.mp4.kt` не склеиваются). Механика 
 два сторожа ревизии, «своё восстановление уносит только своё», `Drop`-рубеж, замок —
 живые `recover.py` и `unsaved.py` дают прежние вердикты на `.kt`. Единственный дом
 атомарной записи остаётся в kt-otio; kt-model отвечает за ТЕКСТ.
+
+## The data directory moved from `kinotrain` to `kinetren` (2026-10-21)
+
+`journal::data_dir()` is the single resolver, and it moves the former directory once:
+rename, or copy through a staging directory and leave the former one in place. When both
+directories exist the new one wins and nothing is merged, because a merge could resurrect
+deleted presets or stale locks (t830). The move runs before eframe starts, because
+eframe's storage (app id `kinetren`) lives in the same directory. A stale binary still
+named `kinotrain` re-created the old folder during the live check — that is the "rebuild
+what you run" trap. `kt-cli` also looks at `kinotrain/locks` for an older app that has
+not migrated yet (t831).

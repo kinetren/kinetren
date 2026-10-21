@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
-  <mime-type type="application/x-kinotrain-project">
-    <comment>Kinotrain project</comment>
-    <comment xml:lang="ru">Проект Kinotrain</comment>
+  <mime-type type="application/x-kinetren-project">
+    <comment>Kinetren project</comment>
+    <comment xml:lang="ru">Проект Kinetren</comment>
+    <glob pattern="*.kt"/>
     <glob pattern="*.ktproj"/>
   </mime-type>
   <mime-type type="application/x-opentimelineio">

@@ -180,7 +180,7 @@ impl KtApp {
             .or(cur.b)
             .and_then(|id| self.model.clip(id).map(|c| c.kind == kt_model::ClipKind::Audio))
             .unwrap_or(false);
-        egui::Window::new(crate::tf!(k::trn::TITLE, ed.id.0))
+        let shown = egui::Window::new(crate::tf!(k::trn::TITLE, ed.id.0))
             .id(egui::Id::new(("transition", ed.id)))
             .open(&mut open)
             .default_size([420.0, 260.0])
@@ -441,6 +441,10 @@ impl KtApp {
                 });
                 });
             });
+        // the whole window frame — the README screenshots crop by it
+        if let Some(r) = &shown {
+            crate::widgets::field_probe::note("win.transition", r.response.rect);
+        }
         ed.open = open;
         if let Some(t) = edited {
             self.apply_coalesced(Command::SetTransition(t), ed.gesture);

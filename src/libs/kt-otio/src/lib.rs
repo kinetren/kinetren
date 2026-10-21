@@ -1,4 +1,4 @@
-//! Родной формат проекта Kinotrain — OpenTimelineIO (.otio, JSON).
+//! Родной формат проекта Kinetren — OpenTimelineIO (.otio, JSON).
 //!
 //! Чистая Rust-реализация подмножества схем OTIO (эталон — C++/Python
 //! библиотека 0.18.x) с полным passthrough непонятого: неизвестные ПОЛЯ
@@ -70,10 +70,14 @@ pub enum Error {
     NotOtio,
     /// Это файл ПРОЕКТА своего формата (Р.70), а не файл обмена: дверь
     /// импорта ему не нужна — его открывает обычное «Открыть».
-    #[error("a Kinotrain project file, not an interchange file — use File → Open")]
+    #[error("a Kinetren project file, not an interchange file — use File → Open")]
     ProjectFile,
-    /// Файл написан более новым Kinotrain (metadata.kt.v выше нашей).
-    #[error("project written by a newer Kinotrain (kt.v = {0})")]
+    /// A project of the former name (`kinotrain` root key): Open refuses it,
+    /// the import door repairs it (`kt_model::project_file::from_former_text`).
+    #[error("a project of Kinotrain (the former name of Kinetren) — use File → Import older Kinetren project…")]
+    FormerProject,
+    /// Файл написан более новым Kinetren (metadata.kt.v выше нашей).
+    #[error("project written by a newer Kinetren (kt.v = {0})")]
     KtMetaTooNew(u32),
     /// Секция metadata.kt есть, но не читается. Молчать нельзя: с ней
     /// уехали бы настройки проекта, дорожки, морферы и раскладка, а файл
@@ -83,7 +87,7 @@ pub enum Error {
     /// Файл ПРЕЖНЕЙ версии конверта, который ридер не читает (Р.67):
     /// его чинит импорт (`import_older`), а не ридер. Текст называет
     /// версию и дверь — kt-app подставляет имя пункта меню.
-    #[error("project of an older Kinotrain version (kt.v = {version}) — use File → Import older Kinotrain project… ({cause})")]
+    #[error("project of an older Kinetren version (kt.v = {version}) — use File → Import older Kinetren project… ({cause})")]
     NeedsImport { version: u32, cause: String },
     #[error("non-finite number in {0}")]
     NonFinite(&'static str),
@@ -94,9 +98,11 @@ pub enum Error {
 /// Формат файла по СОДЕРЖИМОМУ (расширению не верим).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileFormat {
-    /// Файл ПРОЕКТА своего формата (Р.70): признак `kinotrain` на корне.
+    /// Файл ПРОЕКТА своего формата (Р.70): признак `kinetren` на корне.
     /// Читает его `kt_model::project_file`; этот крейт лишь опознаёт.
     Project,
+    /// A project file of the former name (`kinotrain` at the root).
+    FormerProject,
     Otio,
     /// Старый .ktproj: как проект не открывается (решение Р.24 п.12) —
     /// только пункт «Импортировать .ktproj…».
@@ -111,6 +117,7 @@ pub fn load_project(
 ) -> Result<ProjectBundle, Error> {
     match detect(text)? {
         FileFormat::Project => Err(Error::ProjectFile),
+        FileFormat::FormerProject => Err(Error::FormerProject),
         FileFormat::Otio => {
             let tl = parse_document(text)?;
             match timeline_to_project(&tl, base_dir) {
@@ -147,6 +154,24 @@ pub fn import_interchange(
 ) -> Result<ProjectBundle, Error> {
     match detect(text)? {
         FileFormat::Project => Err(Error::ProjectFile),
+        // a project of the former name: the key is renamed, the rest is read
+        // by the normal reader (owner's rule R.67 — repairs live here)
+        FileFormat::FormerProject => {
+            let f = kt_model::project_file::from_former_text(text)
+                .map_err(|e| Error::KtMetaBroken(e.to_string()))?;
+            let retained = match f.otio {
+                Some(v) => Retained::from_json(&v)?,
+                None => Retained::default(),
+            };
+            let mut project = f.project;
+            resolve_project_media(&mut project, base_dir);
+            let notices = vec![format!(
+                "import fixup: project marker `{}` → `{}` (renamed to Kinetren)",
+                kt_model::project_file::FORMER_MARKER,
+                kt_model::project_file::MARKER
+            )];
+            Ok(ProjectBundle { project, retained, notices })
+        }
         FileFormat::LegacyKtproj => {
             let (mut project, notices) = import_legacy(text)?;
             resolve_project_media(&mut project, base_dir);
@@ -203,6 +228,9 @@ pub fn detect(text: &str) -> Result<FileFormat, Error> {
     };
     if map.contains_key(kt_model::project_file::MARKER) {
         return Ok(FileFormat::Project);
+    }
+    if map.contains_key(kt_model::project_file::FORMER_MARKER) {
+        return Ok(FileFormat::FormerProject);
     }
     if map.get("OTIO_SCHEMA").is_some() {
         return Ok(FileFormat::Otio);

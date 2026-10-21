@@ -23,14 +23,57 @@ use std::path::{Path, PathBuf};
 /// программа наговорит за сутки работы, и меньше, чем заметно на диске.
 pub const ROTATE_BYTES: u64 = 1024 * 1024;
 
-/// Каталог данных программы (`$XDG_DATA_HOME/kinotrain`). Общий с
-/// автосейвом — отдельный дом журналу заводить незачем.
+/// Name of the per-user data directory under `$XDG_DATA_HOME`.
+pub const DATA_DIR_NAME: &str = "kinetren";
+/// The directory of the program's former name (before 2026-10-21). It is
+/// moved into place once (`data_dir_in`); nothing reads it afterwards.
+pub const FORMER_DATA_DIR_NAME: &str = "kinotrain";
+
+/// Каталог данных программы (`$XDG_DATA_HOME/kinetren`). Общий с
+/// автосейвом — отдельный дом журналу заводить незачем. The single resolver:
+/// recovery, journal, locks, presets, workspace and eframe's own storage
+/// (its app id is the same name) all live here.
 pub fn data_dir() -> PathBuf {
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
         .unwrap_or_else(|| PathBuf::from("."));
-    base.join("kinotrain")
+    data_dir_in(&base)
+}
+
+/// `base/kinetren`, after moving the former `base/kinotrain` into place if
+/// only that one exists (kinetren-rename). A rename is atomic on one
+/// filesystem; if it fails, the content is copied into a staging directory
+/// that is then renamed, and the former directory is left as it was. When
+/// both exist the new one wins and nothing is merged: a merge could bring
+/// back deleted presets or stale locks.
+pub fn data_dir_in(base: &Path) -> PathBuf {
+    let new = base.join(DATA_DIR_NAME);
+    let former = base.join(FORMER_DATA_DIR_NAME);
+    if !new.exists() && former.is_dir() && std::fs::rename(&former, &new).is_err() {
+        let staging = base.join(format!("{DATA_DIR_NAME}.moving"));
+        let _ = std::fs::remove_dir_all(&staging);
+        if copy_tree(&former, &staging).is_ok() {
+            let _ = std::fs::rename(&staging, &new);
+        } else {
+            let _ = std::fs::remove_dir_all(&staging);
+        }
+    }
+    new
+}
+
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for e in std::fs::read_dir(from)? {
+        let e = e?;
+        let dst = to.join(e.file_name());
+        if e.file_type()?.is_dir() {
+            copy_tree(&e.path(), &dst)?;
+        } else {
+            std::fs::copy(e.path(), dst)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn path() -> PathBuf {
@@ -94,7 +137,7 @@ pub(crate) fn crash_report(panic_text: &str) -> String {
 
 pub(crate) fn crash_report_with(panic_text: &str, flight: Option<&str>) -> String {
     let mut out = String::with_capacity(8 * 1024);
-    out.push_str(&format!("kinotrain {}\n", kt_version::display()));
+    out.push_str(&format!("kinetren {}\n", kt_version::display()));
     out.push_str(&format!("time: {}\n", stamp()));
     let t = std::thread::current();
     out.push_str(&format!("thread: {}\n", t.name().unwrap_or("<unnamed>")));
@@ -270,5 +313,37 @@ mod tests {
         assert_eq!(civil_from_days(19_723), (2024, 1, 1)); // високосный
         assert_eq!(civil_from_days(19_782), (2024, 2, 29));
         assert_eq!(civil_from_days(20_713), (2026, 9, 17));
+    }
+
+    /// t830 (kinetren-rename): the first resolve moves the former directory
+    /// with everything in it; the next resolve changes nothing; with both
+    /// present the new one wins and the former one is not touched.
+    #[test]
+    fn t830_former_data_dir_is_moved_once() {
+        let base = std::env::temp_dir().join(format!("kt-t830-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let former = base.join(FORMER_DATA_DIR_NAME);
+        std::fs::create_dir_all(former.join("locks")).unwrap();
+        std::fs::write(former.join("fx-presets.json"), "[1]").unwrap();
+        std::fs::write(former.join("locks/0123.lock"), "4242\n").unwrap();
+
+        let dir = data_dir_in(&base);
+        assert_eq!(dir, base.join(DATA_DIR_NAME));
+        assert_eq!(std::fs::read_to_string(dir.join("fx-presets.json")).unwrap(), "[1]");
+        assert_eq!(std::fs::read_to_string(dir.join("locks/0123.lock")).unwrap(), "4242\n");
+        assert!(!former.exists(), "the former directory is moved, not duplicated");
+
+        // a second resolve changes nothing
+        std::fs::write(dir.join("workspace.json"), "{}").unwrap();
+        assert_eq!(data_dir_in(&base), dir);
+        assert!(dir.join("workspace.json").exists() && !former.exists());
+
+        // both present: the new one wins, the former one is untouched
+        std::fs::create_dir_all(&former).unwrap();
+        std::fs::write(former.join("fx-presets.json"), "[2]").unwrap();
+        assert_eq!(data_dir_in(&base), dir);
+        assert_eq!(std::fs::read_to_string(dir.join("fx-presets.json")).unwrap(), "[1]");
+        assert_eq!(std::fs::read_to_string(former.join("fx-presets.json")).unwrap(), "[2]");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

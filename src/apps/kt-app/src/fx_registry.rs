@@ -828,7 +828,7 @@ pub fn fx_picker_with_head(
     // попап явным `ui.close()`, Esc работает как раньше.
     let cfg = egui::containers::menu::MenuConfig::new()
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
-    let (btn, _) =
+    let (btn, popup) =
         egui::containers::menu::MenuButton::new(tr(k::fxreg::ADD)).config(cfg).ui(ui, |ui| {
             ui.set_min_width(if preview.is_some() { GALLERY_W } else { 230.0 });
             let edit = egui::TextEdit::singleline(query)
@@ -1109,6 +1109,16 @@ pub fn fx_picker_with_head(
     // доступности не ищутся, а угадывать смещения внутри окна сценарий не
     // должен (Р.27). Ветка стоит один OnceLock-чек без KT_GEOM_DUMP.
     crate::widgets::field_probe::note("fxreg.add", btn.rect);
+    // the window of a linked pair has two pickers and the last one drawn
+    // (audio) wins the shared name; the README shot needs the VIDEO gallery
+    if !audio {
+        crate::widgets::field_probe::note("fxreg.add.video", btn.rect);
+    }
+    // раскрытый пикер целиком: он свисает за окно FX, и скриншот лендинга
+    // режет по объединению рамок (site/screenshots.py)
+    if let Some(p) = &popup {
+        crate::widgets::field_probe::note("fxreg.popup", p.response.rect);
+    }
     picked
 }
 

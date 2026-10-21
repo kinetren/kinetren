@@ -28,7 +28,7 @@ pub fn gradient_rect(
 }
 
 /// Логотип программы (п.6 р.7.1): кадр киноплёнки с монограммой «kt» —
-/// рисуется painter'ом, тот же силуэт, что в packaging/kinotrain.svg.
+/// рисуется painter'ом, тот же силуэт, что в packaging/kinetren.svg.
 pub fn draw_logo(painter: &egui::Painter, rect: egui::Rect) {
     let a = crate::theme::ACCENT;
     let body = egui::Rect::from_center_size(rect.center(), rect.size() * 0.92);
@@ -802,7 +802,11 @@ impl KtApp {
             self.search_open = true;
             self.search_focus = true;
         }
-        if self.tb(ui, crate::icons::GAUGE, tr(k::tb::DIAG)) {
+        // the gauge button publishes its rectangle: the README screenshots
+        // (src/scripts/live/readme_shots.py) open the diagnostics through it
+        let diag = ui.add_sized([30.0, 26.0], egui::Button::new(crate::icons::GAUGE).frame(false));
+        crate::widgets::field_probe::note("tb.diag", diag.rect);
+        if self.hint(diag, tr(k::tb::DIAG)).clicked() {
             self.perf.diag_open = true;
         }
         // п.6 р.10: «●» нет ни в одном шрифте семейства Proportional —

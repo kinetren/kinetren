@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Релизная сборка Kinotrain в контейнере Ubuntu 22.04 (glibc 2.35):
+# Релизная сборка Kinetren в контейнере Ubuntu 22.04 (glibc 2.35):
 # бинарь работает на любой системе с glibc >= 2.35 и системным FFmpeg 6/7/8
 # (грузится в рантайме, инвариант №10 — линковки с libav* нет).
 #
 # Использование:  scripts/release-build.sh
-# Результат:      target/dist-out/kinotrain-<версия>-linux-x86_64.tar.gz
+# Результат:      target/dist-out/kinetren-<версия>-linux-x86_64.tar.gz
 set -euo pipefail
 cd "$(dirname "$0")/.." # src/
 
-IMAGE=kinotrain-build:ubuntu2204
+IMAGE=kinetren-build:ubuntu2204
 # Версия считается ЗДЕСЬ, на хосте (п.6 р.12): внутри контейнера нет ни
 # git, ни каталога .git — монтируется только src/. Формат vYY.MM.DD-hash
 # по дате КОММИТА; build.rs крейта kt-version возьмёт её из окружения.
@@ -19,7 +19,7 @@ export KT_VERSION_FULL KT_VERSION_SHORT
 VERSION="${KT_VERSION_FULL#kt}"
 ARCH=$(uname -m)
 OUT="target/dist-out"
-STAGE="$OUT/kinotrain-$VERSION-linux-$ARCH"
+STAGE="$OUT/kinetren-$VERSION-linux-$ARCH"
 
 # --network=host: docker-конфиг пользователя может навязывать контейнерам
 # прокси на 127.0.0.1 — в сетевом неймспейсе хоста он достижим.
@@ -82,8 +82,8 @@ done
 rm -rf "$OUT"
 mkdir -p "$STAGE"
 cp "$BIN_DIR/kt-app" "$BIN_DIR/kt-cli" "$STAGE/"
-cp packaging/kinotrain.desktop packaging/kinotrain.svg \
-    packaging/kinotrain-mime.xml packaging/install.sh "$STAGE/"
+cp packaging/kinetren.desktop packaging/kinetren.svg \
+    packaging/kinetren-mime.xml packaging/install.sh "$STAGE/"
 cp -r packaging/icons "$STAGE/"
 chmod +x "$STAGE/install.sh"
 tar -C "$OUT" -czf "$STAGE.tar.gz" "$(basename "$STAGE")"

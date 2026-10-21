@@ -37,11 +37,7 @@ pub fn store_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("KT_USER_STORE_DIR") {
         return PathBuf::from(dir);
     }
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("kinotrain")
+    crate::journal::data_dir()
 }
 
 /// Разобранный пресет: имя и готовая к вставке цепочка.

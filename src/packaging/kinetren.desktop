@@ -1,15 +1,15 @@
 [Desktop Entry]
 Type=Application
-Name=Kinotrain
+Name=Kinetren
 GenericName=Video Editor
 GenericName[ru]=Видеоредактор
 Comment=Non-linear video editor
 Comment[ru]=Нелинейный видеоредактор
 Exec=kt-app %f
-Icon=kinotrain
+Icon=kinetren
 Terminal=false
 Categories=AudioVideo;AudioVideoEditing;Video;
-MimeType=application/x-opentimelineio;application/x-kinotrain-project;
+MimeType=application/x-opentimelineio;application/x-kinetren-project;
 # WM_CLASS на X11 = имя бинаря (winit не выставляет app_id на X11), иначе
 # таскбар не связывает окно с этим .desktop и показывает заглушку
 StartupWMClass=kt-app

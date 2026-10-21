@@ -407,7 +407,7 @@ kde-специфично — обе задачи Pitivi со словом в з�
 это часть находки, а не пробел. Числа строк `СИГНАЛ:` воспроизводятся
 `python3 src/scripts/tracker-rank.py --query '<фильтр>'` на тех же дампах.
 
-**Код проверен грепом** по рабочему дереву на коммите `4a4ab1a` (ветка
+**Код проверен грепом** по рабочему дереву на коммите `ae92b89` (ветка
 `threed`): `src/apps/kt-app/src/timeline.rs` (`snap_targets`, `snap_point`,
 `snap_move`, `plan_move_block`, `snap_off`), `src/apps/kt-app/src/app.rs`
 (`blocked`, `last_band`, `save_marked_area`, привязка `M`/`A`/`D`),

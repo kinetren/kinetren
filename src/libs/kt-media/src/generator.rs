@@ -1065,7 +1065,7 @@ mod tests {
         let title = |bold: bool| {
             let mut k = GeneratorKind::default_text();
             if let GeneratorKind::Text { text, bold: b, .. } = &mut k {
-                *text = "Kinotrain\nР.52".into();
+                *text = "Kinetren\nР.52".into();
                 *b = bold;
             }
             GeneratorSource::new(k)

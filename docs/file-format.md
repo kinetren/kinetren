@@ -2,8 +2,9 @@
 
 **С Р.70 это описание файла ОБМЕНА, а не проекта.** Файл проекта — свой `.kt`
 (`src/libs/kt-model/src/project_file.rs`: построчный детерминированный JSON
-модели, признак `kinotrain` и версия на корне); OTIO остался двумя дверями —
-`File → Import older Kinotrain project…` и `File → Export → OpenTimelineIO…`
+модели, признак `kinetren` и версия на корне; файл с прежним признаком `kinotrain` —
+до переименования в Kinetren 2026-10-21 — «Открыть» отвергает, его чинит импорт); OTIO остался двумя дверями —
+`File → Import older Kinetren project…` и `File → Export → OpenTimelineIO…`
 (`kt-cli import` / `kt-cli export-otio`). Контракт — `openspec/specs/project-format`.
 
 Формат обмена — OTIO (JSON, эталон — библиотека OpenTimelineIO 0.18.x).
@@ -11,7 +12,7 @@
 Решения раунда Р.24 — docs/user-feedback.md; каталог тонкостей — пп.135–153
 в docs/porting-notes.md.
 
-Старый `.ktproj` — ТОЛЬКО импорт («Файл / Import older Kinotrain project…»
+Старый `.ktproj` — ТОЛЬКО импорт («Файл / Import older Kinetren project…»
 или `kt-cli import`): перекрытия конвертируются в переходы/развод (п.143),
 результат живёт как `.kt`, исходник не изменяется. Писателя ktproj в кодовой
 базе больше нет.

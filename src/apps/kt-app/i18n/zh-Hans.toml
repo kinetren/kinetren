@@ -1,4 +1,4 @@
-# Каталог перевода Kinotrain. Правила — i18n/README.md.
+# Каталог перевода Kinetren. Правила — i18n/README.md.
 # Формат: строгое подмножество TOML, значения только в одну строку.
 # СОБРАН автоматически на шаге массового переноса строк (Р.19);
 # дальше правится руками.
@@ -18,7 +18,7 @@ restore = "还原"
 maximize = "最大化"
 minimize = "最小化"
 untitled = "未命名"
-preview_title = "Kinotrain — 预览"
+preview_title = "Kinetren — 预览"
 notices_title = "通知"
 notices_empty = "暂无内容"
 search_title = "在项目中搜索"
@@ -28,7 +28,7 @@ analysis_cancel = "取消"
 analysis_queued = "队列中：{0}"
 
 [menu.file]
-import_older = "导入旧版本 Kinotrain 项目…"
+import_older = "导入旧版本 Kinetren 项目…"
 title = "文件"
 new = "新建"
 open = "打开…"
@@ -746,7 +746,7 @@ economy = "适合较弱的 GPU：播放时重绘减半"
 flight = "紧凑的传输事件与计数器环形记录——用于排查间歇性播放问题"
 pitch_engine = "整个项目的变调引擎：WSOLA 保留瞬态，声码器在和声上更平滑"
 project_settings = "本项目的画面尺寸、帧率、适配规则、音高引擎与关键帧形状"
-import_older = "打开旧版 .ktproj 或 OpenTimelineIO 文件（旧版本 Kinotrain 或其他编辑器）：导入后成为 .kt 项目"
+import_older = "打开旧版 .ktproj 或 OpenTimelineIO 文件（旧版本 Kinetren 或其他编辑器）：导入后成为 .kt 项目"
 export_otio = "供其他编辑器使用的独立交换文件；项目本身仍是 .kt"
 
 [search]
@@ -776,8 +776,9 @@ paste_prefix_note = "区域与命名范围会在末尾（或开头）加上该�
 paste_do = "粘贴"
 ktproj_import_only = "旧版 .ktproj 不是项目文件 — 请通过 文件 / {0} 打开"
 otio_import_only = "{0} 是 OpenTimelineIO 文件，不是项目 — 请通过 文件 / {1} 打开"
-project_too_new = "项目由更新版本的 Kinotrain 写入（格式 {0}）— 请更新程序"
-already_project = "这已经是 Kinotrain 项目 — 请通过 文件 / {0} 打开"
+former_name_import_only = "{0} 是 Kinotrain（Kinetren 的旧名称）的项目 — 请通过 文件 / {1} 打开"
+project_too_new = "项目由更新版本的 Kinetren 写入（格式 {0}）— 请更新程序"
+already_project = "这已经是 Kinetren 项目 — 请通过 文件 / {0} 打开"
 autosave_failed = "自动保存失败：{0}"
 rows_collapsed_band = "已折叠展开：轨道顺序在根时间线中更改"
 copy_one_reel = "只从一条卷轴复制：跳过了 {} 个事件"
@@ -884,7 +885,7 @@ conform_mismatch = "{0}：素材 {1}×{2} 放入 {3}×{4} 项目，按规则「{
 
 [dialog]
 export_otio = "导出为 OpenTimelineIO"
-import_older = "导入旧版本 Kinotrain 项目"
+import_older = "导入旧版本 Kinetren 项目"
 open_project = "打开项目"
 save_project = "保存项目"
 

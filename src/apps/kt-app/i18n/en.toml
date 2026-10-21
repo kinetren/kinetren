@@ -1,4 +1,4 @@
-# Каталог перевода Kinotrain. Правила — i18n/README.md.
+# Каталог перевода Kinetren. Правила — i18n/README.md.
 # Формат: строгое подмножество TOML, значения только в одну строку.
 # СОБРАН автоматически на шаге массового переноса строк (Р.19);
 # дальше правится руками.
@@ -18,7 +18,7 @@ restore = "Restore"
 maximize = "Maximize"
 minimize = "Minimize"
 untitled = "untitled"
-preview_title = "Kinotrain — Preview"
+preview_title = "Kinetren — Preview"
 notices_title = "Notices"
 notices_empty = "Nothing yet"
 search_title = "Search the project"
@@ -28,7 +28,7 @@ analysis_cancel = "Cancel"
 analysis_queued = "in queue: {0}"
 
 [menu.file]
-import_older = "Import older Kinotrain project…"
+import_older = "Import older Kinetren project…"
 title = "File"
 new = "New"
 open = "Open…"
@@ -746,7 +746,7 @@ economy = "For weak GPUs: half the repaints while playing"
 flight = "Compact ring of transport events and counters — for diagnosing floating playback bugs"
 pitch_engine = "Pitch engine for the whole project: WSOLA keeps transients, the vocoder is smoother on harmonies"
 project_settings = "Frame size, fps, frame rule, pitch engine and key shape of this project"
-import_older = "Open a legacy .ktproj or an OpenTimelineIO file (older Kinotrain or another editor): converted on import into a .kt project"
+import_older = "Open a legacy .ktproj or an OpenTimelineIO file (older Kinetren or another editor): converted on import into a .kt project"
 export_otio = "Self-contained interchange file for other editors; the project itself stays .kt"
 
 [search]
@@ -776,8 +776,9 @@ paste_prefix_note = "Areas and named ranges get this word appended (or in front)
 paste_do = "Paste"
 ktproj_import_only = "Legacy .ktproj is not a project file — open it via File / {0}"
 otio_import_only = "{0} is an OpenTimelineIO file, not a project — open it via File / {1}"
-project_too_new = "project written by a newer Kinotrain (format {0}) — update the program"
-already_project = "this is already a Kinotrain project — open it via File / {0}"
+former_name_import_only = "{0} is a project of Kinotrain, the former name of Kinetren — open it via File / {1}"
+project_too_new = "project written by a newer Kinetren (format {0}) — update the program"
+already_project = "this is already a Kinetren project — open it via File / {0}"
 autosave_failed = "autosave failed: {0}"
 rows_collapsed_band = "the expansion was collapsed: track order changes in the root"
 copy_one_reel = "copied from one reel only: {} event(s) skipped"
@@ -884,7 +885,7 @@ conform_mismatch = "{0}: source {1}×{2} in a {3}×{4} project, placed by the ru
 
 [dialog]
 export_otio = "Export to OpenTimelineIO"
-import_older = "Import an older Kinotrain project"
+import_older = "Import an older Kinetren project"
 open_project = "Open project"
 save_project = "Save project"
 

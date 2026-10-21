@@ -1152,7 +1152,7 @@ fn reel_children(
             effects,
             markers: tx.markers.clone(),
             // `enabled = !mute` (Р.62): чужой читатель видит заглушённую
-            // дорожку честно, а не «у Kinotrain нет per-track mute»
+            // дорожку честно, а не «у Kinetren нет per-track mute»
             enabled: tx.enabled && !t.is_some_and(|t| t.mute),
             metadata: tx.metadata.clone(),
             extra: tx.extra.clone(),

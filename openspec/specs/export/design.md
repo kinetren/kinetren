@@ -164,3 +164,12 @@
 - Строка «экспорт идёт на GPU/CPU» в окне рендера и сводке (данные есть, поверхности нет).
 - Рациональный fps (24000/1001) в модели, времени и экспорте — остаточный дрейф NTSC 0.1 %.
 - Звук в кросс-рендере (адаптер mlt ограничен по аудио).
+
+## `kt-cli showcase` (readme-showcase, 2026-10-21)
+
+A separate subcommand, not a `demo` flag: `demo` is synthetic by contract (t388).
+`showcase` cuts the README project from real footage, with media referenced by absolute
+path and never copied, byte-identical for the same folder (t824). Refusals (t825): a
+missing folder, no video, or no audio anywhere — the music bed needs audio. Text files
+next to the footage are skipped, because FFmpeg's text demuxer would read `CREDITS.txt`
+as a video. Background and the screenshot pipeline: `openspec/specs/showcase/design.md`.

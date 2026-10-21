@@ -13,6 +13,7 @@
 //! моделью — ни декода, ни FFmpeg, ни звукового железа. По жалобе «тут
 //! звук от другого события» запускается ПЕРВЫМ: так найден п.298.
 
+mod showcase;
 mod wav;
 
 use kt_engine::{AudioRenderer, DirectFetcher};
@@ -732,6 +733,7 @@ fn load_project_file(input: &str) -> Result<(Project, Retained), i32> {
             let what = match kind {
                 FileKind::Otio => "an OpenTimelineIO file",
                 FileKind::LegacyKtproj => "a legacy .ktproj",
+                FileKind::FormerName => "a project of Kinotrain (the former name of Kinetren)",
             };
             eprintln!("{input}: {what}, not a project — run `kt-cli import {input} <out.kt>` first");
             Err(1)
@@ -812,7 +814,7 @@ fn run(args: &[String]) -> i32 {
             let b = match kt_otio::import_interchange(&text, in_base) {
                 Ok(b) => b,
                 Err(kt_otio::Error::ProjectFile) => {
-                    eprintln!("{input}: already a Kinotrain project — nothing to import");
+                    eprintln!("{input}: already a Kinetren project — nothing to import");
                     return 1;
                 }
                 Err(e) => {
@@ -861,6 +863,9 @@ fn run(args: &[String]) -> i32 {
             }
             0
         }
+        // README showcase (readme-showcase): a dense project cut from real
+        // footage in a directory; media by absolute path, never copied
+        Some("showcase") => showcase::run(args, force),
         Some("demo") => {
             let Some(path) = args.get(1) else {
                 eprintln!("usage: kt-cli demo <out.kt> [--files] [--force]");
@@ -1067,7 +1072,7 @@ fn run(args: &[String]) -> i32 {
         }
         Some(cmd) => {
             eprintln!(
-                "unknown command: {cmd} (available: version, new, roundtrip, probe, render, export)"
+                "unknown command: {cmd} (available: version, new, import, export-otio, demo, showcase, roundtrip, probe, render, export)"
             );
             2
         }
@@ -1111,7 +1116,7 @@ fn warn_if_locked(path: &str) {
     }
     let lock = kt_lock_holder(path);
     if let Some(pid) = lock {
-        eprintln!("note: {path} is open in Kinotrain (process {pid}) — it may overwrite changes");
+        eprintln!("note: {path} is open in Kinetren (process {pid}) — it may overwrite changes");
     }
 }
 
@@ -1127,9 +1132,13 @@ fn kt_lock_holder(project: &str) -> Option<u32> {
         h ^= *b as u64;
         h = h.wrapping_mul(0x100_0000_01b3);
     }
-    let f = base.join("kinotrain").join("locks").join(format!("{h:016x}.lock"));
-    let text = std::fs::read_to_string(f).ok()?;
-    text.lines().next()?.trim().parse().ok()
+    // the app's data directory (`kinetren`); an app of the former name
+    // (the former name, Kinotrain) that has not migrated yet keeps its locks in `kinotrain`
+    ["kinetren", "kinotrain"].iter().find_map(|dir| {
+        let f = base.join(dir).join("locks").join(format!("{h:016x}.lock"));
+        let text = std::fs::read_to_string(f).ok()?;
+        text.lines().next()?.trim().parse().ok()
+    })
 }
 
 fn demo_project(synth: bool) -> Project {

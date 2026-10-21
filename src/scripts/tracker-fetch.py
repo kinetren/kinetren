@@ -47,9 +47,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 REGISTRY = ROOT / "docs" / "features" / "_trackers.md"
-CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "kinotrain" / "trackers"
+CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "kinetren" / "trackers"
 
-UA = "kinotrain-features-research (+docs/features/_trackers.md)"
+UA = "kinetren-features-research (+docs/features/_trackers.md)"
 BODY_MAX = 4000
 DEFAULT_BUDGET = 55  # ниже часовых 60 у GitHub без токена
 

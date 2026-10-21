@@ -4359,7 +4359,7 @@ fn t818_open_accepts_only_the_project_format_and_names_the_import_door() {
 
     // будущая версия — номер версии в тексте, частичного чтения нет
     let text = std::fs::read_to_string(&ours).unwrap();
-    let newer = text.replacen("\"kinotrain\": 1", "\"kinotrain\": 99", 1);
+    let newer = text.replacen("\"kinetren\": 1", "\"kinetren\": 99", 1);
     assert_ne!(newer, text);
     let future = dir.join("future.kt");
     std::fs::write(&future, newer).unwrap();
@@ -4581,4 +4581,35 @@ fn t821_dropping_three_kinds_of_files_gives_three_named_outcomes() {
     assert_ne!(said_otio, said_legacy, "два вида файла — два разных текста");
     drop(h);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// t832 (kinetren-rename): a project saved under the former name (`kinotrain`
+/// at the root) — «Open» refuses it naming the former name Kinotrain and the import door; the
+/// import door opens it as an untitled document with the star and the save
+/// hint, content equal to the file, and the file untouched.
+#[test]
+fn t832_project_of_the_former_name_comes_in_through_the_import_door() {
+    use crate::i18n::{k, tr};
+    let dir = r70_dir("t832");
+    let p = r70_project();
+    let text = crate::app::project_text_of(&p, &Default::default(), None);
+    let old = dir.join("old.kt");
+    std::fs::write(&old, text.replacen("\"kinetren\"", "\"kinotrain\"", 1)).unwrap();
+    let before = std::fs::read(&old).unwrap();
+    assert_ne!(before, text.as_bytes(), "the scene must carry the former marker");
+
+    let err = crate::app::KtApp::open(&old).err().expect("Open must refuse the former name");
+    assert!(err.contains("Kinotrain"), "the error names the former name: {err}");
+    assert!(err.contains(tr(k::menu::file::IMPORT_OLDER)), "the error names the import door: {err}");
+
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().import_older_path(&old);
+    h.step();
+    let app = h.state();
+    assert_eq!(app.model.project().clips, p.clips, "events equal to the file");
+    assert_eq!(app.model.project().sequences.len(), p.sequences.len());
+    assert_eq!(app.project_path, None, "an imported document has no path");
+    assert_eq!(app.save_hint.as_deref(), Some(old.with_extension("kt").as_path()));
+    assert!(app.dirty_content, "the star after the import");
+    assert_eq!(std::fs::read(&old).unwrap(), before, "the import touched the source");
 }

@@ -971,6 +971,7 @@ impl KtApp {
         // чужой файл — 0
         let version = match kt_otio::detect(&text) {
             Ok(kt_otio::FileFormat::LegacyKtproj) => kt_model::FORMAT_VERSION,
+            Ok(kt_otio::FileFormat::FormerProject) => kt_model::project_file::PROJECT_FILE_VERSION,
             _ => kt_otio::parse_document(&text)
                 .ok()
                 .and_then(|tl| kt_otio::kt_version(&tl))
@@ -1763,7 +1764,7 @@ impl KtApp {
         self.draw_diagnostics(&ctx);
 
         // автосейв (порт autosaveTimer): безымянный проект — в
-        // recovery-файл ~/.local/share/kinotrain/ (п.20, v1).
+        // recovery-файл ~/.local/share/kinetren/ (п.20, v1).
         // п.4 р.11: было каждые 4 с и по ЛЮБОЙ правке, включая движение
         // региона и зум — то есть постоянная запись всего проекта в
         // UI-потоке. Теперь: раз в 30 с, только от правок СОДЕРЖИМОГО и
@@ -2301,7 +2302,7 @@ impl KtApp {
         let hits = search_hits(self.model.project(), &self.bin_groups, &self.search_query);
         let mut open = true;
         let mut go: Option<Hit> = None;
-        egui::Window::new(tr(k::win::SEARCH_TITLE))
+        let shown = egui::Window::new(tr(k::win::SEARCH_TITLE))
             .id(egui::Id::new("kt_search"))
             .open(&mut open)
             .collapsible(false)
@@ -2359,6 +2360,10 @@ impl KtApp {
                     go = Some(h.clone());
                 }
             });
+        // the whole window frame — the README screenshots crop by it
+        if let Some(r) = &shown {
+            crate::widgets::field_probe::note("win.search", r.response.rect);
+        }
         if !open {
             self.search_open = false;
         }
@@ -5238,7 +5243,7 @@ impl KtApp {
     fn open_project_dialog_now(&mut self) {
         let Some(p) = pick_file(
             tr(k::dialog::OPEN_PROJECT),
-            "Kinotrain project",
+            "Kinetren project",
             &[kt_model::project_file::EXTENSION],
         ) else {
             return;
@@ -5270,7 +5275,7 @@ impl KtApp {
             None => {
                 let Some(p) = pick_save(
                     tr(k::dialog::SAVE_PROJECT),
-                    "Kinotrain project",
+                    "Kinetren project",
                     &[kt_model::project_file::EXTENSION],
                     self.save_hint.as_deref(),
                     UNTITLED_PROJECT,
@@ -6403,6 +6408,8 @@ impl KtApp {
             // более специфичной цели (блок титра) приоритет, egui отдаёт
             // указатель последнему зарегистрированному интерактору
             self.preview_img_rect = img_rect;
+            // the picture itself — the README's before/after crops use it
+            crate::widgets::field_probe::note("preview.frame", img_rect);
             self.geometry_controls(ui, &painter, img_rect, (q.width, q.height));
             // кнопка показа — ПОСЛЕ рамки: egui отдаёт указатель последнему
             // зарегистрированному интерактору, и тело рамки (перенос)
@@ -7948,7 +7955,7 @@ pub struct SpeedEntry {
 /// тот же силуэт, что рисуется в шапке и лежит в packaging/.
 fn app_icon() -> egui::IconData {
     let img = image::load_from_memory_with_format(
-        include_bytes!("../assets/kinotrain-256.png"),
+        include_bytes!("../assets/kinetren-256.png"),
         image::ImageFormat::Png,
     )
     .expect("application icon")
@@ -8431,7 +8438,7 @@ impl PerfState {
 
 /// hh:mm:ss без зависимости chrono.
 /// Файл автосохранения безымянного проекта (порт v1
-/// defaultAutosaveProjectPath: ~/.local/share/kinotrain/).
+/// defaultAutosaveProjectPath: ~/.local/share/kinetren/).
 /// Найденная несохранённая работа: файл, время и проект, к которому он
 /// относится (`None` — работа, у которой имени проекта не было).
 #[derive(Clone, Debug)]
@@ -8537,11 +8544,7 @@ pub fn recovery_path_for(project: Option<&Path>) -> PathBuf {
 }
 
 pub fn autosave_path() -> PathBuf {
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("kinotrain").join(format!("autosave-project{RECOVERY_EXT}"))
+    crate::journal::data_dir().join(format!("autosave-project{RECOVERY_EXT}"))
 }
 
 /// Запись проекта: сначала во временный файл рядом, потом переименование.
@@ -8687,6 +8690,15 @@ pub(crate) fn load_project_file(
         Err(ProjectFileError::NotOurs { looks_like: Some(FileKind::LegacyKtproj) }) => {
             Err(crate::tf!(k::msg::KTPROJ_IMPORT_ONLY, tr(k::menu::file::IMPORT_OLDER)))
         }
+        Err(ProjectFileError::NotOurs { looks_like: Some(FileKind::FormerName) }) => {
+            // saved before the rename to Kinetren: the import door renames
+            // the root key (R.67 — the reader is not taught old forms)
+            Err(crate::tf!(
+                k::msg::FORMER_NAME_IMPORT_ONLY,
+                path.display().to_string(),
+                tr(k::menu::file::IMPORT_OLDER)
+            ))
+        }
         Err(ProjectFileError::TooNew { version }) => {
             Err(crate::tf!(k::msg::PROJECT_TOO_NEW, version))
         }
@@ -8794,7 +8806,7 @@ impl KtApp {
             return;
         }
         let mut open = self.perf.diag_open;
-        egui::Window::new(tr(k::win::DIAG_TITLE))
+        let shown = egui::Window::new(tr(k::win::DIAG_TITLE))
             .id(egui::Id::new("kt_diag"))
             .open(&mut open)
             .default_size([560.0, 460.0])
@@ -8858,6 +8870,10 @@ impl KtApp {
                     }
                 });
             });
+        // the whole window frame — the README screenshots crop by it
+        if let Some(r) = &shown {
+            crate::widgets::field_probe::note("win.diag", r.response.rect);
+        }
         self.perf.diag_open = open;
     }
 }
@@ -8996,6 +9012,9 @@ pub(crate) fn export_video_gpu() -> Option<std::sync::Arc<dyn kt_engine::VideoGp
 
 pub fn run() -> eframe::Result {
     let arg = std::env::args().nth(1);
+    // the former data directory (Kinotrain) moves into place BEFORE eframe
+    // reads its storage: that storage lives in the same directory
+    let _ = crate::journal::data_dir();
     // GPU: дефолт egui-wgpu — HighPerformance, т.е. дискретная карта; на
     // гибридной графике это PRIME-копирование каждого кадра и тормоза ВСЕЙ
     // системы (п.1 v1.4). UI-нагрузка скромная — берём энергоэффективный
@@ -9015,14 +9034,14 @@ pub fn run() -> eframe::Result {
             .with_icon(app_icon())
             // app_id для Wayland и связи с .desktop (на X11 WM_CLASS
             // всё равно = имя бинаря, см. StartupWMClass в .desktop)
-            .with_app_id("kinotrain")
+            .with_app_id("kinetren")
             .with_decorations(decorations)
-            .with_title("Kinotrain"),
+            .with_title("Kinetren"),
         wgpu_options,
         ..Default::default()
     };
     eframe::run_native(
-        "kinotrain",
+        "kinetren",
         options,
         Box::new(move |cc| {
             // Язык решается ДО построения KtApp: строки ниже (восстановленный
@@ -9079,7 +9098,7 @@ impl KtApp {
     fn import_older_dialog_now(&mut self) {
         let Some(p) = pick_file(
             tr(k::dialog::IMPORT_OLDER),
-            "OpenTimelineIO / legacy Kinotrain",
+            "OpenTimelineIO / legacy .ktproj",
             &["otio", "ktproj"],
         ) else {
             return;

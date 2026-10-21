@@ -268,3 +268,13 @@ otio-формата, оставляем otio только на экспорт и
 (Resolve, FCP, Premiere); дверь экспорта названа и проверяется живьём. Живучесть формата —
 теперь наша: версия, круг поле-в-поле и байт-в-байт, атомарность и сторож ревизии не
 трогаются. Golden-фикстуры OTIO остаются и замораживают ЭКСПОРТ.
+
+## Renamed to Kinetren: the marker `kinetren`, the former `kinotrain` via the import (2026-10-21)
+
+The owner chose a full rename, including the root marker. Per the owner's rule (R.67),
+the reader is NOT taught the former key: `FileKind::FormerName` makes Open refuse the
+file and name the door, and the import (`from_former_text`) renames the key and reads the
+rest unchanged, so the result equals the same project written today (t828/t829/t832).
+Rejected: accepting both keys in the reader. It is friendlier for one release, but it
+teaches the reader an old form forever, and dropping the alias later would break files
+silently.

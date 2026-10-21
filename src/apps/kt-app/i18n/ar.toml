@@ -1,4 +1,4 @@
-# Каталог перевода Kinotrain. Правила — i18n/README.md.
+# Каталог перевода Kinetren. Правила — i18n/README.md.
 # Формат: строгое подмножество TOML, значения только в одну строку.
 # СОБРАН автоматически на шаге массового переноса строк (Р.19);
 # дальше правится руками.
@@ -18,7 +18,7 @@ restore = "استعادة"
 maximize = "تكبير"
 minimize = "تصغير"
 untitled = "بلا عنوان"
-preview_title = "Kinotrain — المعاينة"
+preview_title = "Kinetren — المعاينة"
 notices_title = "الإشعارات"
 notices_empty = "لا شيء بعد"
 search_title = "البحث في المشروع"
@@ -746,7 +746,7 @@ economy = "لبطاقات الرسوم الضعيفة: نصف عدد عمليا�
 flight = "حلقة مدمجة لأحداث التشغيل والعدادات — لتشخيص أعطال التشغيل المتقطعة"
 pitch_engine = "محرك النغمة للمشروع كله: يحافظ WSOLA على النبرات، والمرمّز أنعم مع التناغم"
 project_settings = "حجم الإطار وسرعة الكادر وقاعدة الإطار ومحرك الطبقة وشكل المفاتيح لهذا المشروع"
-import_older = "فتح ملف .ktproj قديم أو ملف OpenTimelineIO (إصدار أقدم من Kinotrain أو محرر آخر): يصبح عند الاستيراد مشروع .kt"
+import_older = "فتح ملف .ktproj قديم أو ملف OpenTimelineIO (إصدار أقدم من Kinetren أو محرر آخر): يصبح عند الاستيراد مشروع .kt"
 export_otio = "ملف تبادل مستقل للمحررات الأخرى؛ أما المشروع نفسه فيبقى .kt"
 
 [search]
@@ -776,8 +776,9 @@ paste_prefix_note = "تحصل المناطق والنطاقات المسمّاة
 paste_do = "لصق"
 ktproj_import_only = "ملف .ktproj القديم ليس ملف مشروع — افتحه عبر ملف / {0}"
 otio_import_only = "{0} ملف OpenTimelineIO وليس مشروعًا — افتحه عبر ملف / {1}"
-project_too_new = "كُتب المشروع بإصدار أحدث من Kinotrain (الصيغة {0}) — حدِّث البرنامج"
-already_project = "هذا مشروع Kinotrain بالفعل — افتحه عبر ملف / {0}"
+former_name_import_only = "{0} مشروع من Kinotrain، الاسم السابق لـ Kinetren — افتحه عبر ملف / {1}"
+project_too_new = "كُتب المشروع بإصدار أحدث من Kinetren (الصيغة {0}) — حدِّث البرنامج"
+already_project = "هذا مشروع Kinetren بالفعل — افتحه عبر ملف / {0}"
 autosave_failed = "فشل الحفظ التلقائي: {0}"
 rows_collapsed_band = "تم طي التوسيع: ترتيب المسارات يتغيّر في الجذر"
 copy_one_reel = "نُسخ من شريط واحد فقط: تم تخطي {} حدثًا"
@@ -884,7 +885,7 @@ conform_mismatch = "{0}: المصدر {1}×{2} في مشروع {3}×{4} وُضع
 
 [dialog]
 export_otio = "التصدير إلى OpenTimelineIO"
-import_older = "استيراد مشروع من إصدار أقدم من Kinotrain"
+import_older = "استيراد مشروع من إصدار أقدم من Kinetren"
 open_project = "فتح مشروع"
 save_project = "حفظ المشروع"
 

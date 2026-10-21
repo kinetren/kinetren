@@ -84,7 +84,7 @@ class Timeline:
         self.otio_path = path
         with open(path) as f:
             self.doc = json.load(f)
-        if "kinotrain" in self.doc:
+        if "kinetren" in self.doc:
             self.otio_path = export_project(path)
             with open(self.otio_path) as f:
                 self.doc = json.load(f)
@@ -286,7 +286,7 @@ class Live:
         внутри программы идёт тем же кодом, что `File → Открыть`, то есть
         состояние строится с нуля. Но проверяется она всё равно ДО первого
         жеста — иначе утечка состояния между сценариями дала бы ровно тот
-        класс «зелёное, потому что смотрели не туда», которым Kinotrain уже
+        класс «зелёное, потому что смотрели не туда», которым Kinetren уже
         болел.
         """
         self.geom_path = os.path.join(BENCH, "geom.json")

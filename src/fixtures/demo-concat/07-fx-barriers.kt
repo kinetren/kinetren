@@ -1,5 +1,5 @@
 {
-  "kinotrain": 1,
+  "kinetren": 1,
   "project": {
     "format_version": 1,
     "settings": {

@@ -21,7 +21,7 @@
 //!   единицы строк, одна модель даёт те же байты. Компактный JSON отвергнут —
 //!   одна строка на весь файл диффа не имеет; двоичный и сжатый запрещены
 //!   владельцем;
-//! * на корне свой признак (`kinotrain`) и ВЕРСИЯ; вид файла определяется по
+//! * на корне свой признак (`kinetren`; до 2026-10-21 — `kinotrain`, его чинит импорт) и ВЕРСИЯ; вид файла определяется по
 //!   содержимому, не по расширению. Версия больше нынешней — честный отказ с
 //!   номером, частичное чтение запрещено («открылось, и части монтажа нет» —
 //!   худший исход из трёх, F-RES-003). Ломающие изменения разрешены, каскада
@@ -47,7 +47,13 @@ use crate::project::{Project, ProjectError};
 
 /// Ключ-признак на корне файла. По нему файл опознаётся как наш; его
 /// значение — версия формата.
-pub const MARKER: &str = "kinotrain";
+pub const MARKER: &str = "kinetren";
+
+/// The marker of files written before the program was renamed to Kinetren
+/// (2026-10-21). The reader does NOT accept it (owner's rule, R.67: old forms
+/// are repaired in the import, never taught to the reader); the import door
+/// renames the key — `from_former_text`.
+pub const FORMER_MARKER: &str = "kinotrain";
 
 /// Версия СВОЕГО формата. Не путать с `project::FORMAT_VERSION` — это версия
 /// легаси-формата C++ (`.ktproj`, ключ `format_version`), которую читает
@@ -76,11 +82,11 @@ pub struct ProjectFile {
 pub enum ProjectFileError {
     /// Это не файл проекта. `looks_like` — на что он похож по содержимому
     /// (файл обмена, легаси), чтобы ошибка назвала дверь импорта.
-    #[error("not a Kinotrain project file{}", looks_like_suffix(.looks_like))]
+    #[error("not a Kinetren project file{}", looks_like_suffix(.looks_like))]
     NotOurs { looks_like: Option<FileKind> },
     /// Файл написан более новой программой. Частичное чтение запрещено.
     #[error(
-        "project written by a newer Kinotrain (format {version}, this build reads up to {PROJECT_FILE_VERSION})"
+        "project written by a newer Kinetren (format {version}, this build reads up to {PROJECT_FILE_VERSION})"
     )]
     TooNew { version: u32 },
     #[error("invalid json: {0}")]
@@ -97,15 +103,21 @@ pub enum FileKind {
     Otio,
     /// Легаси-проект C++ (`format_version` на корне).
     LegacyKtproj,
+    /// A project of the former name (`kinotrain` at the root): the same
+    /// format, refused by the reader, repaired by the import door.
+    FormerName,
 }
 
 fn looks_like_suffix(kind: &Option<FileKind>) -> String {
     match kind {
         Some(FileKind::Otio) => {
-            " — it is an OpenTimelineIO file; use File → Import older Kinotrain project…".into()
+            " — it is an OpenTimelineIO file; use File → Import older Kinetren project…".into()
         }
         Some(FileKind::LegacyKtproj) => {
-            " — it is a legacy .ktproj; use File → Import older Kinotrain project…".into()
+            " — it is a legacy .ktproj; use File → Import older Kinetren project…".into()
+        }
+        Some(FileKind::FormerName) => {
+            " — it is a project of Kinotrain (the former name of Kinetren); use File → Import older Kinetren project…".into()
         }
         None => String::new(),
     }
@@ -115,7 +127,7 @@ fn looks_like_suffix(kind: &Option<FileKind>) -> String {
 /// первой, чтобы незнакомую отвергнуть, не читая остального.
 #[derive(Serialize, Deserialize)]
 struct Envelope {
-    #[serde(rename = "kinotrain")]
+    #[serde(rename = "kinetren")]
     version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     otio: Option<Value>,
@@ -166,13 +178,33 @@ pub fn from_text(text: &str) -> Result<ProjectFile, ProjectFileError> {
 
 /// На что похож JSON-объект без нашего признака.
 pub fn looks_like(root: &serde_json::Map<String, Value>) -> Option<FileKind> {
-    if root.contains_key("OTIO_SCHEMA") {
+    if root.contains_key(FORMER_MARKER) {
+        Some(FileKind::FormerName)
+    } else if root.contains_key("OTIO_SCHEMA") {
         Some(FileKind::Otio)
     } else if root.contains_key("format_version") {
         Some(FileKind::LegacyKtproj)
     } else {
         None
     }
+}
+
+/// The import door for a project of the former name: the root key
+/// the former `kinotrain` is renamed to `kinetren` and the text is read by the normal
+/// reader — so the result equals reading the same project written today. A
+/// file without the former key is read as is (the door does not refuse a
+/// person who picked the wrong menu item).
+pub fn from_former_text(text: &str) -> Result<ProjectFile, ProjectFileError> {
+    let mut v: Value = serde_json::from_str(text).map_err(|e| ProjectFileError::Json(e.to_string()))?;
+    let Some(root) = v.as_object_mut() else {
+        return Err(ProjectFileError::Json("root is not an object".into()));
+    };
+    if !root.contains_key(MARKER)
+        && let Some(version) = root.remove(FORMER_MARKER)
+    {
+        root.insert(MARKER.to_string(), version);
+    }
+    from_text(&v.to_string())
 }
 
 /// Это наш файл? Только по признаку на корне — для детекта вида файла до

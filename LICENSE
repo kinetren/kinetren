@@ -1,0 +1,93 @@
+Kinetren Non-Commercial License
+Version 1.0
+
+Copyright (c) 2026 Kinetren <log@kinetren.com>. All rights reserved
+except as granted below.
+
+1. Definitions
+
+"Software" means Kinetren: the source code, binaries, documentation and
+other files in this repository, and any modified version or derivative
+work of them.
+
+"Output" means any content you create or process with the Software,
+such as videos, audio, images, titles and project files.
+
+"Extension" means a plugin, effect, script or other code that you write
+yourself and that works with the Software through its plugin or
+extension interfaces or file formats, without containing or copying any
+part of the Software.
+
+"Commercial Use" means distributing, selling, licensing, renting,
+sublicensing or otherwise providing the Software, or access to it, for
+money or any other commercial advantage. This includes bundling it with
+a paid product or service, offering it as a hosted or online service,
+and placing paid features, ads or paywalls in it or around it.
+
+2. Permissions
+
+Subject to the conditions below, you may free of charge:
+
+  a) use the Software for any purpose, personal or professional,
+     including making Output for paid work;
+  b) study and modify the Software;
+  c) share copies of the Software, modified or not, free of charge.
+
+3. Conditions
+
+  a) No Commercial Use of the Software. All commercial rights in the
+     Software are reserved exclusively to Kinetren. Nobody else may
+     make Commercial Use of it without a separate written license from
+     Kinetren.
+  b) Any copy you share, modified or not, must include this license
+     file and the copyright notice above, and must be available under
+     this same license.
+  c) You may not remove or change the copyright notice, and you may not
+     present the Software or a modified version of it as your own
+     work. Modified versions must be clearly marked as modified and
+     must not use the name "Kinetren" as if they were the original.
+
+4. What this license does NOT restrict
+
+  a) Output. You own your Output. This license puts no restrictions
+     on it, and you may use, sell and license it commercially without
+     permission or attribution.
+  b) Extensions. Extensions you write are your own work. You may
+     license and sell them on any terms you choose. This does not let
+     you distribute the Software itself together with an Extension
+     against section 3.
+
+5. Contributions
+
+If you submit a contribution to this repository (code, documentation,
+translations or other material), you grant Kinetren a perpetual,
+worldwide, non-exclusive, royalty-free, irrevocable license to use,
+modify, distribute, sublicense and commercially exploit it as part of
+the Software or otherwise. You keep the copyright in your contribution,
+and you confirm that you have the right to grant this license.
+
+6. Third-party components
+
+Parts of this repository are third-party works under their own
+licenses (for example, fonts under the SIL Open Font License, and
+sample files under the Apache License 2.0). Those licenses apply to
+those parts instead of this one. FFmpeg is not included; the Software
+loads the system FFmpeg libraries at run time.
+
+7. Termination
+
+If you break any of these terms, your rights under this license end
+automatically. They are restored if you stop the violation within 30
+days of first being notified of it.
+
+8. No warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+For commercial licensing, contact log@kinetren.com.

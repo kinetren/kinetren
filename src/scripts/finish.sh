@@ -157,8 +157,8 @@ fi
 clean_targets() {
     # старые тарболы и распакованные каталоги: оставляем только текущий
     if [ -d target/dist-out ]; then
-        find target/dist-out -maxdepth 1 -name 'kinotrain-*' \
-            ! -name "kinotrain-${FULL#kt}-*" -exec rm -rf {} + 2>/dev/null || true
+        find target/dist-out -maxdepth 1 -name 'kinetren-*' \
+            ! -name "kinetren-${FULL#kt}-*" -exec rm -rf {} + 2>/dev/null || true
     fi
     if [ "$DEEP" = 1 ]; then
         # release/ и dist-container/ полностью регенерируемы и весят гигабайты;
@@ -204,6 +204,9 @@ python3 "$(dirname "$0")/specs-user-path.py" --check || exit 1
 # сколько мест программы человек не трогал мышью НИ РАЗУ
 python3 "$(dirname "$0")/live-sleeps.py" --check || exit 1
 python3 "$(dirname "$0")/live-coverage.py" --check --brief || exit 1
+# the repository's public face (readme-showcase, t826): English README and
+# guide, links and images resolve, screenshots only from readme_shots.py
+python3 "$(dirname "$0")/readme-check.py" --check || exit 1
 # Р.43 п.301: debug-сборка честно считает, но в 9 раз медленнее. На плотном
 # монтаже аудио-рендер там уходит за 100 % реального времени, кольцо пустеет
 # и растут callback-underrun'ы — их слышно тишиной. Это цена профиля, а не

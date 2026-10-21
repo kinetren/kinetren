@@ -1,13 +1,14 @@
 schema: spec-driven
 
-# Kinotrain — нелинейный видеоредактор, cargo workspace в src/ (документы по-русски).
+# Kinetren — нелинейный видеоредактор, cargo workspace в src/ (older documents are Russian; new text is English).
 # Проектные решения живут в openspec/specs/<cap>/: spec.md — контракт (требования и
 # сценарии, каждый сценарий называет регрессионный тест tNNN), design.md — «почему»
 # (что болело, что отвергли и почему, неочевидные детали с путями src/…).
 context: |
-  Kinotrain — нелинейный видеоредактор; код — cargo workspace в `src/` (libs/kt-time,
+  Kinetren — нелинейный видеоредактор; код — cargo workspace в `src/` (libs/kt-time,
   kt-model, kt-otio, kt-media, kt-text, kt-cache, kt-fx, kt-gpu, kt-engine; apps/kt-app
-  GUI на eframe, apps/kt-cli headless). Все документы и артефакты пишутся по-русски.
+  GUI на eframe, apps/kt-cli headless). New documents, artifacts and commit messages are written
+  in English (owner, 2026-10-21); existing Russian documents stay as they are.
   Инструменты: `openspec` CLI работает только на Node ≥ 20
   (`export PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"`); работа заканчивается
   `src/scripts/finish.sh` и версией `vYY.MM.DD-hash` в отчёте.
@@ -77,9 +78,13 @@ operations:
     guidance:
       - >-
         Коммитить автоматически каждый завершённый этап (раздел tasks.md или стадия
-        раунда), не дожидаясь просьбы: сообщение по-русски, первой строкой — что сделано
+        раунда), не дожидаясь просьбы: сообщение in English, первой строкой — что сделано
         и номер стадии, в теле — какие тесты закрывают. Коммит только после зелёной
         проверки этапа; незакоммиченная работа в конце сессии — дефект процесса.
+      - >-
+        No co-authorship: never add `Co-Authored-By:` or any AI/agent attribution
+        lines to commit messages, tags or PR texts (owner, 2026-10-21). Commits use
+        the repository's configured identity `log <log@kinetren.com>`.
   archive:
     guidance:
       - >-

@@ -196,11 +196,16 @@ impl KtApp {
             return;
         }
         let default_name = self.default_render_name();
-        let Some(path) = rfd::FileDialog::new()
-            .set_file_name(&default_name)
-            .add_filter("MP4 Video", &["mp4"])
-            .save_file()
-        else {
+        // через общий шов диалога сохранения (`KT_FILE_PICK`): прямой rfd
+        // в виртуальном экране молча отдаёт «ничего», и рендер из живого
+        // сценария (скриншоты лендинга) не запускался вовсе
+        let Some(path) = crate::app::pick_save(
+            tr(k::render::SETTINGS_TITLE),
+            "MP4 Video",
+            &["mp4"],
+            None,
+            &default_name,
+        ) else {
             return;
         };
         let out_path = path.to_string_lossy().to_string();
@@ -268,7 +273,7 @@ impl KtApp {
         let mut launch = false;
         let proj = self.model.project().settings.clone();
         let max_src = self.max_source_resolution_cached();
-        egui::Window::new(tr(k::render::SETTINGS_TITLE))
+        let shown = egui::Window::new(tr(k::render::SETTINGS_TITLE))
             .id(egui::Id::new("kt_render_settings"))
             .open(&mut open)
             .collapsible(false)
@@ -461,7 +466,9 @@ impl KtApp {
                 });
                 crate::widgets::window_actions(ui, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button(tr(k::render::START)).clicked() {
+                    let start = ui.button(tr(k::render::START));
+                    crate::widgets::field_probe::note("render.start", start.rect);
+                    if start.clicked() {
                         launch = true;
                     }
                     if ui.button(tr(k::render::CANCEL)).clicked() {
@@ -470,6 +477,10 @@ impl KtApp {
                 });
                 });
             });
+        // рамка окна целиком — по ней режут скриншоты лендинга (site/screenshots.py)
+        if let Some(r) = &shown {
+            crate::widgets::field_probe::note("win.render", r.response.rect);
+        }
         if !open {
             self.render_setup.open = false;
         }
@@ -487,7 +498,7 @@ impl KtApp {
             job.progress = p;
         }
         let mut close = false;
-        egui::Window::new(tr(k::render::PROGRESS_TITLE))
+        let shown = egui::Window::new(tr(k::render::PROGRESS_TITLE))
             .id(egui::Id::new("kt_render_progress"))
             .collapsible(false)
             .resizable(true)
@@ -661,6 +672,10 @@ impl KtApp {
                     }
                 }
             });
+        // рамка окна целиком — по ней режут скриншоты лендинга (site/screenshots.py)
+        if let Some(r) = &shown {
+            crate::widgets::field_probe::note("win.render_progress", r.response.rect);
+        }
         if close {
             self.render_job = None;
         }

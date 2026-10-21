@@ -372,3 +372,11 @@
   построены, но `finish.sh` их не зовёт — производство документации без документации.
 - Обучающий слой в форме «урок проверяет выполненную команду» — только после реестра
   команд (объекта «команда» нет, сказать «шаг закрыт» некому).
+
+## The import door has a fourth input: projects of the former name (2026-10-21)
+
+After the rename to Kinetren, the menu item is "Import older Kinetren project…". A `.kt`
+file with the former `kinotrain` key is refused by Open, with the former name and the
+door named, and it opens through the import like the other old forms (t832). The one
+catalog string that names Kinotrain is `former_name_import_only`. The guard t833 keeps
+the former name out of everything that does not handle the rename.

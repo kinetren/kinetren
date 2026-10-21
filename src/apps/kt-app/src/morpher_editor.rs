@@ -321,7 +321,7 @@ impl KtApp {
             crate::fx_thumbs::REF_W,
             self.model.project().settings.width,
         );
-        egui::Window::new(title)
+        let shown = egui::Window::new(title)
             .id(egui::Id::new(("morph", ed.id.0)))
             .open(&mut open)
             .default_size(if is_batch { [560.0, 480.0] } else { [420.0, 260.0] })
@@ -676,6 +676,10 @@ impl KtApp {
                 });
                 });
             });
+        // рамка окна целиком — по ней режут скриншоты лендинга (site/screenshots.py)
+        if let Some(r) = &shown {
+            crate::widgets::field_probe::note("win.morpher", r.response.rect);
+        }
         ed.open = open;
 
         // системный диалог файла: новый источник может не быть в проекте

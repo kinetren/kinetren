@@ -476,7 +476,7 @@ impl KtApp {
         // прокручивал бы и кнопки действия, и «Готово» уходило за нижнюю
         // кромку (Р.67, нашлось живым сценарием `curves`). Высота окна
         // прежняя — тело само оставляет место кнопкам.
-        egui::Window::new(title)
+        let shown = egui::Window::new(title)
             .id(egui::Id::new(("fx", ed.clip)))
             .open(&mut open)
             .default_size([580.0, 520.0])
@@ -1021,6 +1021,10 @@ impl KtApp {
                 });
                 });
             });
+        // рамка окна целиком — по ней режут скриншоты лендинга (site/screenshots.py)
+        if let Some(r) = &shown {
+            crate::widgets::field_probe::note("win.fx", r.response.rect);
+        }
 
         // запросы полосы по пресетам (Р.48): полоса их только кладёт —
         // файл пишет окно, потому что диалог имени живёт у приложения

@@ -465,7 +465,7 @@ pub fn kt_version(t: &Timeline) -> Option<u32> {
     t.metadata.get(KT_NS)?.get("v")?.as_u64().map(|v| v as u32)
 }
 
-/// Файл из более нового Kinotrain — честный отказ вместо тихой порчи.
+/// Файл из более нового Kinetren — честный отказ вместо тихой порчи.
 pub fn check_kt_version(t: &Timeline) -> Result<(), Error> {
     match kt_version(t) {
         Some(v) if v > KT_META_VERSION => Err(Error::KtMetaTooNew(v)),

@@ -132,7 +132,17 @@ MIGRATED = {
 # (`formula.py`), предупреждение о соло в окне рендера (`track.py`).
 # Предел держит достигнутое: новое место программы либо получает живой
 # шаг, либо число двигают осознанно — одной строкой и с причиной в отчёте.
-UNTOUCHED_LIMIT = 82
+# 82 → 88 (landing screenshots, 2026-10-21): six probes added for
+# site/screenshots.py — window frames `win.fx`, `win.morpher`, `win.render`,
+# `win.render_progress`, the picker popup `fxreg.popup` and `render.start`.
+# That script drives them with the mouse but is not a live-check scenario;
+# `live/readme_shots.py` (readme-showcase, task 3.1) is to touch them and
+# bring the limit back down.
+# 88 → 84 (readme-showcase, 2026-10-21): `live/readme_shots.py` reaches the
+# window frames, the picker and four probes it added itself (`tb.diag`,
+# `win.diag`, `win.transition`, `fxreg.add.video`); `win.render_progress`
+# and `render.start` stay untouched — the README does not show a render.
+UNTOUCHED_LIMIT = 84
 
 
 def as_pattern(name):

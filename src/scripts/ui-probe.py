@@ -26,7 +26,7 @@ import time
 from Xlib import X, XK, display, protocol
 from Xlib.ext import xtest
 
-WM_CLASS = "kinotrain"
+WM_CLASS = "kinetren"
 d = display.Display()
 root = d.screen().root
 

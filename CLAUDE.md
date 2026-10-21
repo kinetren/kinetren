@@ -1,4 +1,8 @@
-# Kinotrain
+# Kinetren
+
+> Until 2026-10-21 the program was called Kinotrain (full rename — change
+> `kinetren-rename`). `.kt` files with the former root key `kinotrain` open only through
+> the import door; the `kinotrain` data directory moves to `kinetren` on the first start.
 
 Нелинейный видеоредактор. Кодовая база — cargo workspace в **`src/`**.
 
@@ -87,7 +91,7 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 - **Перед реализацией новой ФУНКЦИИ (не дефекта) — `docs/features/`**: разведка чужих редакторов (что умеет Vegas/Premiere/Resolve/FCP/AE, за счёт какой неочевидной детали это работает, какой у нас вердикт). Нет заметки на фичу — сначала завести её, потом писать код; правила ведения — в `docs/features/README.md`, проверка — `python3 src/scripts/features-index.py --check`.
 - Новый найденный дефект/тонкость → сразу документировать: сценарий с тестом — в `spec.md` capability, «почему» — в её `design.md` (или CLAUDE.md крейта, если это правило написания кода) и по возможности закрыть регрессионным тестом.
 - **Старый файл перестал читаться — починка кладётся в ИМПОРТ, не в ридер** (решение
-  владельца, Р.67): `File → Import older Kinotrain project…` → `kt-otio legacy_import.rs`,
+  владельца, Р.67): `File → Import older Kinetren project…` → `kt-otio legacy_import.rs`,
   таблица починок с версией, для которой каждая заведена; снятие поддержки версии удаляет
   её починки. Ридер новых старых форм не учит; обычное «Открыть» отвергает файл с версией
   и именем пункта импорта. Спека — `project-format`.
@@ -96,7 +100,8 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
   и `finish.sh`. Живой сценарий снимает скриншот на шаг (`kt_live.step`), `finish.sh`
   печатает их список после версии, отчёт о UI-работе их несёт. Прогон — на НАШИХ
   фикстурах, не на проектах владельца («п.1 но не на моих проектах», Р.67).
-- **Коммитить каждый сложный этап АВТОМАТИЧЕСКИ** (требование владельца, 2026-09-22): раздел tasks.md / стадия раунда закончена и проверка зелёная → коммит сразу, без просьбы; сообщение по-русски, первой строкой — стадия и что сделано. Незакоммиченная работа в конце сессии — дефект процесса.
+- **Коммитить каждый сложный этап АВТОМАТИЧЕСКИ** (требование владельца, 2026-09-22): раздел tasks.md / стадия раунда закончена и проверка зелёная → коммит сразу, без просьбы; сообщение in English (owner, 2026-10-21), первой строкой — стадия и что сделано. Незакоммиченная работа в конце сессии — дефект процесса.
+- **No co-authorship in commits** (owner, 2026-10-21): agents MUST NOT add `Co-Authored-By:` or any other AI/agent attribution lines to commit messages, tags or PR texts — "these are junk lines". Commits are authored as the repository's configured identity (`log <log@kinetren.com>`, set in the local git config); do not override it.
 - `cargo test` обязан быть зелёным на каждый коммит; все тесты, названные в `TEST`-строках спек (сквозная нумерация tNNN), — регрессионные, их нельзя ослаблять/удалять без явного решения пользователя.
 - Не добавлять зависимость от FFmpeg/аудио-железа в kt-time/kt-model/kt-fx/kt-cache/ядро kt-engine. GPU (wgpu) живёт ТОЛЬКО в kt-gpu; kt-engine знает лишь трейт `VideoGpuExec` (исполнитель инжектится из kt-app/kt-cli).
 - **Dev-профиль собирается с `opt-level = 1`, зависимости — с 2** (п.301). `[profile.dev.package."*"]` покрывает ТОЛЬКО зависимости: свои крейты собирались без оптимизации, и на плотном монтаже аудио-рендер в dev уходил за 100 % реального времени (112 % против 10 % в релизе) — кольцо пустело, росли callback-underrun'ы. С уровнем 1 то же место занимает 18 %. Проверки переполнения и `debug_assert!` от уровня НЕ зависят и остаются включёнными. **О СКОРОСТИ всё равно судить по релизу**: замер — `cargo build --release -p kt-app` и `kt-cli probe … --time`.

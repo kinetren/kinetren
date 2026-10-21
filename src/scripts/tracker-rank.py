@@ -40,7 +40,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 TRACKERS = ROOT / "docs" / "features" / "_trackers.md"
-CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "kinotrain" / "trackers"
+CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "kinetren" / "trackers"
 
 # Корпус читается из колонки «Корпус» реестра, а НЕ из кода: раньше здесь стоял
 # OUT_OF_RANK = {"ffmpeg-trac"}, и это ровно то дублирование реестра в скрипте,

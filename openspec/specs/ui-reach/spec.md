@@ -439,12 +439,14 @@ SHALL называться словами, а не гаснуть молча.
 «Открыть» (меню, запуск с файлом, дроп на окно) SHALL принимать только файл ПРОЕКТА
 (`.kt`). Файл обмена `.otio` и легаси `.ktproj` SHALL отвергаться с видом файла и именем
 пункта импорта в тексте ошибки (правило 19), каждый своим текстом; файл более новой
-версии формата — с номером версии и без частичного чтения. Пункт «Import older Kinotrain
-project…» SHALL быть ОДНОЙ дверью на три входа — легаси `.ktproj`, наш `.otio` любой
-версии конверта и чужой `.otio`; результат SHALL открываться БЕЗЫМЯННЫМ документом своего
+версии формата — с номером версии и без частичного чтения. Пункт «Import older Kinetren
+project…» SHALL быть ОДНОЙ дверью на четыре входа — легаси `.ktproj`, наш `.otio` любой
+версии конверта, чужой `.otio` и `.kt` с прежним признаком `kinotrain` (до переименования
+в Kinetren, 2026-10-21); результат SHALL открываться БЕЗЫМЯННЫМ документом своего
 формата с поднятым флагом правок и подсказкой «сохраниться в `<имя>.kt` рядом с
-исходником», исходник MUST NOT меняться; файл проекта в эту дверь не идёт — ошибка
-называет «Открыть». Экспорт в OTIO SHALL быть отдельным пунктом `File → Export →
+исходником», исходник MUST NOT меняться; файл проекта нынешнего признака в эту дверь не идёт — ошибка
+называет «Открыть»; «Открыть» файл с прежним признаком отвергает с именем Kinotrain и
+пункта импорта. Экспорт в OTIO SHALL быть отдельным пунктом `File → Export →
 OpenTimelineIO…`, названным по отрасли; он MUST NOT менять файл проекта, его путь и
 звёздочку. Брошенные на окно `.kt`, `.otio` и `.ktproj` SHALL вести в три разных исхода.
 Фильтры диалогов SHALL знать расширение `.kt`, фильтр импорта — оба чужих.
@@ -456,14 +458,20 @@ OpenTimelineIO…`, названным по отрасли; он MUST NOT мен
 #### Scenario: «Открыть» принимает только свой формат и называет дверь
 - **WHEN** «Открыть» получает файл `.kt`; отдельно — экспортированный `.otio`, легаси `.ktproj` и `.kt` с версией больше нынешней
 - **THEN** первый открывается поле-в-поле с путём проекта; второй и третий отвергаются с именем пункта импорта и видом файла (тексты разные); четвёртый — с номером версии и без имени импорта
-- **ПУТЬ** File → Open → `film.otio` → окно ошибки: «файл OpenTimelineIO, а не проект — откройте через File / Import older Kinotrain project…» → File → Open → `film.kt` → таймлайн с монтажом, имя проекта в заголовке
+- **ПУТЬ** File → Open → `film.otio` → окно ошибки: «файл OpenTimelineIO, а не проект — откройте через File / Import older Kinetren project…» → File → Open → `film.kt` → таймлайн с монтажом, имя проекта в заголовке
 - **TEST** t818 (`src/apps/kt-app/src/reach_tests.rs`)
 
 #### Scenario: Одна дверь импорта на три входа
-- **WHEN** через «Import older Kinotrain project…» по очереди подаются легаси `.ktproj`, наш `.otio` старой версии конверта и чужой `.otio` с незнакомыми полями; затем — файл `.kt`
+- **WHEN** через «Import older Kinetren project…» по очереди подаются легаси `.ktproj`, наш `.otio` старой версии конверта и чужой `.otio` с незнакомыми полями; затем — файл `.kt`
 - **THEN** каждый из трёх открывается документом без пути, с подсказкой сохранения `<имя>.kt` рядом с исходником и звёздочкой, исходник байт-в-байт прежний, чужие поля — в passthrough; в меню «Файл» дверь одна (пункта «Импортировать .ktproj…» нет); файл `.kt` отвергнут с именем «Открыть»
-- **ПУТЬ** File → Import older Kinotrain project… → `old.otio` → таймлайн с событиями, в заголовке «untitled *» → Ctrl+S → диалог предлагает `old.kt` рядом с исходником
+- **ПУТЬ** File → Import older Kinetren project… → `old.otio` → таймлайн с событиями, в заголовке «untitled *» → Ctrl+S → диалог предлагает `old.kt` рядом с исходником
 - **TEST** t819 (`src/apps/kt-app/src/reach_tests.rs`), живой сценарий `src/scripts/live/import_old.py`
+
+#### Scenario: A project saved under the former name
+- **WHEN** «Open» gets a `.kt` whose root key is the former `kinotrain`; then «Import older Kinetren project…» gets the same file
+- **THEN** «Open» refuses it with a text naming Kinotrain as the former name and the import item; the import opens it as an untitled document with the star and the `<name>.kt` save hint, events and tracks equal to the file; the file's bytes are unchanged
+- **ПУТЬ** File → Open → `old.kt` → error window: «a project of Kinotrain (the former name) — use File → Import older Kinetren project…» → File → Import older Kinetren project… → `old.kt` → timeline with the edit, title «untitled *»
+- **TEST** t832 (`src/apps/kt-app/src/reach_tests.rs`)
 
 #### Scenario: Экспорт в OTIO из меню
 - **WHEN** открывается меню «Файл» → подменю «Экспорт» → «OpenTimelineIO…» и называется файл; проект при этом с несохранёнными правками и чужим passthrough, лента в двух экземплярах
@@ -474,12 +482,12 @@ OpenTimelineIO…`, названным по отрасли; он MUST NOT мен
 #### Scenario: Три файла на окно — три исхода
 - **WHEN** на окно по очереди бросаются `film.kt`, `film.otio`, `film.ktproj`
 - **THEN** первый даёт вопрос «открыть или вставить композицией», монтаж не тронут; второй — уведомление с видом файла (OpenTimelineIO) и именем пункта импорта, без вопроса; третий — уведомление про легаси с тем же пунктом; тексты второго и третьего разные
-- **ПУТЬ** перетащить `film.otio` на окно → в колокольчике: «файл OpenTimelineIO, а не проект — откройте через File / Import older Kinotrain project…» → перетащить `film.kt` → окно «Брошен проект: открыть или вставить композицией?»
+- **ПУТЬ** перетащить `film.otio` на окно → в колокольчике: «файл OpenTimelineIO, а не проект — откройте через File / Import older Kinetren project…» → перетащить `film.kt` → окно «Брошен проект: открыть или вставить композицией?»
 - **TEST** t821 (`src/apps/kt-app/src/reach_tests.rs`)
 
 ### Requirement: Импорт проекта старой версии — своя дверь; «Открыть» отвергает с адресом
 
-В меню «File» SHALL быть пункт «Import older Kinotrain project…» (отраслевое имя —
+В меню «File» SHALL быть пункт «Import older Kinetren project…» (отраслевое имя —
 «Import project», как у Premiere/Resolve), который читает файл конверта ПРЕЖНЕЙ версии,
 применяя починки старых форм, и открывает его как БЕЗЫМЯННЫЙ документ текущей формы
 (Р.70: своего формата `.kt`) с поднятым флагом «есть правки» и подсказкой сохраниться в
@@ -494,9 +502,9 @@ OpenTimelineIO…`, названным по отрасли; он MUST NOT мен
 форматом под своим именем.
 
 #### Scenario: Старый файл через импорт, «Открыть» называет дверь
-- **WHEN** файл v5 с `targets: null` у морферов (форма `untitled2_v26.09.26.otio`) открывается через «Open»; затем через «Import older Kinotrain project…»
+- **WHEN** файл v5 с `targets: null` у морферов (форма `untitled2_v26.09.26.otio`) открывается через «Open»; затем через «Import older Kinetren project…»
 - **THEN** «Open» отвергает с текстом, в котором есть версия файла (5) и имя пункта импорта; импорт открывает проект: морферы с `null` действуют на «всё, что ниже», число событий и морферов равно файлу, документ без пути с подсказкой `<имя>.kt`, заголовок несёт звёздочку, сохранение пишет свой формат и следующий «Open» уже читает файл сам
-- **ПУТЬ** File → Open → старый файл → окно ошибки: «версия 5; используйте File → Import older Kinotrain project…» → File → Import older… → тот же файл → таймлайн с событиями и морферами, в заголовке «untitled *»
+- **ПУТЬ** File → Open → старый файл → окно ошибки: «версия 5; используйте File → Import older Kinetren project…» → File → Import older… → тот же файл → таймлайн с событиями и морферами, в заголовке «untitled *»
 - **TEST** t783 (`src/apps/kt-app/src/reach_tests.rs`), t783b (`src/libs/kt-otio/tests/convert.rs`), живой сценарий `src/scripts/live/import_old.py`
 
 ### Requirement: Путь пользователя у нового UI-сценария; скриншоты живых сценариев в отчёте

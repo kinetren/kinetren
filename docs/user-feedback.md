@@ -1134,9 +1134,9 @@ SIMD-ядра обязаны быть БИТ-ИДЕНТИЧНЫ скаляру �
 ## Раунд Р.40 (2026-09-07): вторая волна разведки — подсказки, справка, гайды
 
 > **Почему 40, а не 39.** Раздел писался как Р.39 и был закоммичен под этим номером
-> внутри чужого коммита (`029040d`). Тем временем параллельная сессия вела под тем же
-> номером свой раунд — варп, кривые, реверс (коммиты `4b59a2f`, `4c6b7dd`, `f383b6d`,
-> `0861940`, пп.270–272). Их номер уже в неизменяемых сообщениях коммитов, мой был
+> внутри чужого коммита (`af33bab`). Тем временем параллельная сессия вела под тем же
+> номером свой раунд — варп, кривые, реверс (коммиты `52be590`, `8b2cf42`, `8591348`,
+> `f2aefc1`, пп.270–272). Их номер уже в неизменяемых сообщениях коммитов, мой был
 > только текстом, поэтому переименован мой. Р.39 остаётся за варп-раундом; его запись
 > в этом файле принадлежит той сессии.
 
@@ -2864,11 +2864,11 @@ F-AUT-006, живой сценарий `fxpicker.py`.
   холодного реверба.
 * **Версия файла — v11 на весь раунд Р.62** (оба change'а), предикат по содержимому.
 
-## Раунд Р.63 (2026-09-24): версия 26.09.23-04c1133 — файл не открывается, тишина в лупе, формулы, фокус, дакинг, публикация, окна
+## Раунд Р.63 (2026-09-24): версия 26.09.23-0ba6283 — файл не открывается, тишина в лупе, формулы, фокус, дакинг, публикация, окна
 
 Претензии владельца, дословно:
 
-> Это относится к версии 26.09.23-04c11333
+> Это относится к версии 26.09.23-0ba62837
 > 1. мой проект untitled перестал открываться в новой версии
 > 2. я создал новый простой проект paintitblack и там регион-loop явно в конце ломает
 >    звук, там тишина берется. это прям регрессия. это есть у sources/The Rolling Stones -
@@ -2978,7 +2978,7 @@ review-mp4 положены в `sources/`, MCR-mp4 на этой машине н
 6. **Геометрия.** `EventGeometry` — правило, кроп 4 стороны, позиция, зум, поворот, якорь;
    форма — числовые поля `params_grid`. Экранных контролов нет (F-UI-001 — «кандидат»,
    вердикт «берём»).
-7. **Дорожки** — версия 04c1133 это архив change A, change B (дорожка-объект) в ней ещё
+7. **Дорожки** — версия 0ba6283 это архив change A, change B (дорожка-объект) в ней ещё
    не было. В kt26.09.24 бейджи M/S/замок/FX стоят под именем строки.
 8. **Дакинг** — окно `draw_duck_dialog` с четырьмя полями, снимок кривой на события,
    параметры не сохраняются (`DuckParams::default()` каждый раз), кривая не редактируется
@@ -3225,7 +3225,7 @@ Claim раунда — прямая просьба владельца, данн�
 
 > тесты в finish.sh или что-то типо того - очень долго выполняются, нужно что-то придумать
 
-Замер до начала работы (машина 32 ядра, тёплое дерево, коммит 5242c35):
+Замер до начала работы (машина 32 ядра, тёплое дерево, коммит 362f7ac):
 
 | Стадия | Время |
 |---|---|
@@ -3269,7 +3269,7 @@ Claim раунда — прямая просьба владельца, данн�
   стадия сверх бюджета помечается в отчёте.
 
 Замечено при замере (не часть претензии, но красное): `fxfield` и `fxpicker` на коммите
-5242c35 падают в одиночном прогоне — до раунда их надо разобрать отдельно.
+362f7ac падают в одиночном прогоне — до раунда их надо разобрать отдельно.
 
 ## Раунд Р.69 (2026-09-29): механика жеста в живом прогоне — выбран владельцем из очереди
 
@@ -3288,7 +3288,7 @@ Claim раунда — прямая просьба владельца, данн�
 которая ревизией набора (задачи 5.2/5.3) НЕ берётся: пол при нынешней механике ≈330 с
 (215 с мастерской плюс ≈115 с постоянных расходов живых сценариев).
 
-Замер до работы (коммит 32db194, тёплое дерево, 32 ядра; живой прогон 1582 с
+Замер до работы (коммит 814532d, тёплое дерево, 32 ядра; живой прогон 1582 с
 последовательно, 424 с по часам на четырёх работниках, 45 сценариев):
 
 | источник фиксированного сна | штук | в `kt_live.py` | в `ui-probe.py` | итого |
@@ -3399,6 +3399,104 @@ OTIO и git — Р.70), часть противоречит его же реше
 импорта), две претензии — повторы прежних тем (ресайз/зона прыжка воруют клики — р.12/р.13;
 «очевидные надписи» — чек-лист п.17 р.7). Реестр с состояниями и одиннадцать вопросов —
 в `design.md` change'а; ответы владельца будут дописаны сюда дословно.
+
+## Round readme-showcase (2026-10-21): README, screenshots, docs; English from now on
+
+From here on entries are written in English; the owner's words stay verbatim.
+
+> Прямо сейчас надо оформить readme репозитория полное, сделать фотки, накидать документации.
+> Работаем в master. Коммиты и текст всего далее на английском.
+> Сурсы используй из kt.9/sources/README_SOURCES - чтобы таймлайн был набит всяким монтажом.
+> Какие-то вещи (кривые автоматизации slowed-reverb) тоже надо натыкать и в readme показать.
+> Это все будет заливаться на github мной.
+
+Same day, about history and authorship:
+
+> Также - нужно перевести все коммиты на английский, а те которые не переводятся (типо w, ц) -
+> написать wip. Времена коммитов надо сохранить.
+
+> проставь везде авторство log@kinetren.com и убери claude co author из коммитов(и сообщений) -
+> это мусорные строки
+> на будущее агентам запрещено ставить соавторство
+
+> запушу я сам
+
+**Decisions taken:**
+- Complete README + `docs/guide/` + `CONTRIBUTING.md` in English; screenshots from the owner's
+  footage via a reproducible pipeline (`kt-cli showcase`, `readme-shots.py`), the footage is
+  never committed. Change `openspec/changes/readme-showcase`.
+- **Standing rules:** commit messages and all new text in English (existing Russian documents
+  are not translated); author `log <log@kinetren.com>`; **no `Co-Authored-By`/AI attribution
+  lines, ever** — root `CLAUDE.md` and `openspec/config.yaml`.
+- History rewritten twice (2026-10-21): messages translated (meaningless ones → `wip`), dates
+  and trees unchanged; then every commit and tag re-authored as log, co-author trailers removed.
+  Hash references in docs remapped. The owner does the push.
+
+**Second round, same day (after the first README):**
+
+> Правки:
+> 1. kinetren, не kinotren
+> 2. первые языки english, spanish, simplified chinese
+> 3. а ты showcase думаешь что у людей исходники подставятся? там бы что-то нейтральное включить
+> 4. в readme нет иконки программы, оно же для гитхаба. и
+> 5.  всяких там бейджей нет, проект будет в github.com/kinetren/kinetren
+> 6. напиши что это бесплатный редактор с открытым исходным кодом все таки..
+> 7. давай подумаем и найдем в интернете бесплатные видео для сэмплов (не bigbugbunny - это очень старое и заезженное и в нормальном качестве)
+
+**Answers (AskUserQuestion, 2026-10-21):** name — *full rename* to Kinetren (including the
+`.kt` root marker and internal names; old files then come in through the import door — a
+separate change); open source — *"free, source-available"* (the license is
+non-commercial, so the README does not claim "open source" in the OSI sense); languages —
+*list order*: English, Spanish, Simplified Chinese first, then Russian and Arabic. Free
+footage is being researched (Big Buck Bunny rejected as old and overused).
+Footage answer: the recommended mix from Wikimedia Commons (Blender open movies Charge,
+Spring, Coffee Run; 4K drone Lake Bled and Charlotte By Night; NASA vertical and square
+clips with their soundtracks removed; music "Driving to the Night" and "Far Away"), about
+0.9 GB. Download — *"Write script, I run it"*: `src/scripts/fetch-showcase-media.py` is
+committed, and the owner runs the download and the re-shoot.
+
+**Third round (2026-10-22):**
+
+> 1. логотип сверху readme.md огромный - он на github нормальный будет?
+> 2. ты еще nested reels как-то спрятал.. помоему это надо в скриншоте таймлайне сразу показать
+> 3. ты вроде скачал там футажи - а картинки все равно с старыми сэмплами - старых сэмплов быть не должно. в ридми не нужен мусор про футажи, их можно вложить в папку с футажами. писать что это переписть с c++/qt тоже не надо. про крейты тоже не надо писать - очень много мусора у тебя в ридми, ридми это про продукт, как его запустить, а не про технический мусор
+
+Rule taken from this: **the README is about the product and how to run it.** No
+architecture, crates, invariants, porting history or footage credits in it (credits go to
+`CREDITS.txt` next to the downloaded footage). Developer material lives in
+`CONTRIBUTING.md`. The footage had not been downloaded (the owner had chosen to run the
+script); asked again before downloading.
+
+## Pre-release: GitHub CI and Docker build (2026-10-22)
+
+> делаем предрелизную подготовку для github, и мне нужно чтобы было:
+>
+> 1. автосборка в github ci (там бесплатный проект - есть ограничение на место, храним только релизы пока что, если я правильно понимаю)
+> 2. сборка в докер (чтобы люди не мучались как в readme - там поменять и сделать простые make команды)
+
+**Answers (AskUserQuestion, 2026-10-22):** the repository is *public* when CI starts;
+on every push and pull request — *build + tests* (workspace tests, clippy, guards; no GPU,
+no Xvfb; nothing uploaded but a short-lived failure log); a release is made by *pushing a
+`v*` tag* (tarball + sha256 attached to a GitHub Release); make commands — *build in
+Docker, run on the host* (`make`, `make install`, `make run`, `make test`, `make clean`).
+Change `openspec/changes/github-ci-docker-build`.
+
+**Fourth round (2026-10-22):**
+
+> 1. первое фото в ридми - media bin очень узкий надо хотя бы в два ряда(ну и далее в readme тоже фото нормальное вставить не узкое), а еще лучше в свободном режиме показать,
+>
+>  и монитор звука тоже в действии показать на этом фото.
+>
+> 2. фото втаймлайна - nested reels находится в начале и не понять, что оказывается это reel, там вообще по бокам затенение должно быть, плохой ты пример привел, нужно reel по центру раскрытым показать на втором фото а на первом фото у таймлайна не надо reel раскрывать
+> 3. ctrl+f поиск показать
+> 4. публишинг параметров reel
+> 5. морфер у тебя скудно показан,не видно что он дает и замену сурсов, вообще нужно показать что до и что после него получается
+
+Taken as: the hero shows a wide media bin in free layout and the meters during playback,
+and no expanded reel; the timeline shot shows a reel expanded in the MIDDLE of the edit,
+with its veiled tails on both sides; new shots for Ctrl+F search and for published reel
+parameters; the morpher shot shows what it does — a before/after of the same frame,
+including a source swap.
 
 ## Что пользователь повторял больше одного раза
 

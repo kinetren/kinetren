@@ -1080,7 +1080,7 @@ fn t383_broken_clip_kt_section_is_an_error() {
 /// Тест 384 (Р.49 А10; пересмотрен Р.62): чужое у ДОРОЖКИ возвращается на
 /// место — ЧУЖИЕ эффекты и маркеры. Флаг «выключена» с Р.62 читается как
 /// MUTE дорожки (своё mute у нас появилось) и пишется обратно из него —
-/// notice «у Kinotrain нет per-track mute» снят по существу.
+/// notice «у Kinetren нет per-track mute» снят по существу.
 #[test]
 fn t384_track_foreign_effects_markers_and_enabled_survive() {
     let doc = r#"{"OTIO_SCHEMA":"Timeline.1","name":"t","tracks":{"OTIO_SCHEMA":"Stack.1",
@@ -1280,7 +1280,7 @@ fn t814_export_is_self_contained_and_open_refuses_it() {
         ),
         "{err:?}"
     );
-    assert!(err.to_string().contains("Import older Kinotrain project"), "дверь не названа: {err}");
+    assert!(err.to_string().contains("Import older Kinetren project"), "дверь не названа: {err}");
 
     // а дверь импорта его читает — одна лента, три экземпляра
     let back = load_project(&exported, None).unwrap().project;
@@ -3017,4 +3017,32 @@ fn t787b_segment_formula_and_layer_round_trip_as_v13_by_content() {
         Ok(_) => panic!("невычислимая формула отрезка открылась молча"),
         Err(e) => assert!(e.to_string().contains("foo"), "отказ не называет имя: {e}"),
     }
+}
+
+/// t828 (kinetren-rename): new files carry the `kinetren` marker; a file of
+/// the former name (`kinotrain`) is refused by Open with the door's name and
+/// comes in through the import door unchanged in content (owner's rule R.67:
+/// the repair lives in the import, not in the reader).
+#[test]
+fn t828_former_marker_is_refused_by_open_and_repaired_by_import() {
+    use kt_model::project_file::{FileKind, ProjectFileError, from_text, to_text};
+    let p = project_3d();
+    let text = to_text(&p, None);
+    assert!(text.starts_with("{\n  \"kinetren\": 1"), "{text:.60}");
+    let former = text.replacen("\"kinetren\"", "\"kinotrain\"", 1);
+    assert_ne!(former, text, "the scene must really carry the former marker");
+
+    // the reader refuses it and names the former name and the import door
+    let err = from_text(&former).unwrap_err();
+    assert_eq!(err, ProjectFileError::NotOurs { looks_like: Some(FileKind::FormerName) });
+    let msg = err.to_string();
+    assert!(msg.contains("Kinotrain") && msg.contains("Import older Kinetren project"), "{msg}");
+    assert!(matches!(load_project(&former, None), Err(kt_otio::Error::FormerProject)));
+
+    // the import door: the same project as reading today's file
+    let b = kt_otio::import_interchange(&former, None).expect("the import door reads it");
+    assert_eq!(b.project, from_text(&text).unwrap().project);
+    assert!(b.notices.iter().any(|n| n.contains("kinotrain")), "{:?}", b.notices);
+    // today's file is not taken by the import door's repair: Open is its door
+    assert!(matches!(kt_otio::import_interchange(&text, None), Err(kt_otio::Error::ProjectFile)));
 }

@@ -22,7 +22,7 @@ fn t151_cli_otio_workflows() {
     let st = cli().args(["new", new_path.to_str().unwrap()]).output().unwrap();
     assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
     let text = std::fs::read_to_string(&new_path).unwrap();
-    assert!(text.starts_with("{\n  \"kinotrain\": 1"), "{text:.80}");
+    assert!(text.starts_with("{\n  \"kinetren\": 1"), "{text:.80}");
     assert!(!text.contains("OTIO_SCHEMA"), "файл проекта — не файл обмена");
 
     // demo → богатый проект (переход, метки, регион, морфер)
@@ -76,11 +76,12 @@ fn t151_cli_otio_workflows() {
     let conv_path = dir.join("converted.kt");
     let st = cli().args(["import", legacy, conv_path.to_str().unwrap()]).output().unwrap();
     assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
-    assert!(std::fs::read_to_string(&conv_path).unwrap().starts_with("{\n  \"kinotrain\": "));
+    assert!(std::fs::read_to_string(&conv_path).unwrap().starts_with("{\n  \"kinetren\": "));
 
     // render/probe отвергают легаси и файл обмена с подсказкой на import
     let wav = dir.join("out.wav");
-    for (what, input) in [("legacy", legacy.to_string()), ("otio", otio_path.display().to_string())] {
+    for (what, input) in [("legacy", legacy.to_string()), ("otio", otio_path.display().to_string())]
+    {
         let st = cli().args(["render", &input, wav.to_str().unwrap()]).output().unwrap();
         assert!(!st.status.success(), "{what}: render обязан отказать");
         let said = String::from_utf8_lossy(&st.stderr);
@@ -93,7 +94,7 @@ fn t151_cli_otio_workflows() {
         .output()
         .unwrap();
     assert!(!st.status.success());
-    assert!(String::from_utf8_lossy(&st.stderr).contains("already a Kinotrain project"));
+    assert!(String::from_utf8_lossy(&st.stderr).contains("already a Kinetren project"));
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -340,7 +341,7 @@ fn t387_cli_does_not_overwrite_without_force() {
     // с --force пишет, и пишет АТОМАРНО: временного файла не остаётся
     let st = cli().args(["new", path.to_str().unwrap(), "--force"]).output().unwrap();
     assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
-    assert!(std::fs::read_to_string(&path).unwrap().contains("\"kinotrain\""));
+    assert!(std::fs::read_to_string(&path).unwrap().contains("\"kinetren\""));
     let leftovers: Vec<String> = std::fs::read_dir(&dir)
         .unwrap()
         .flatten()
@@ -525,9 +526,9 @@ fn t746_probe_prints_tracks_with_switches_level_blend_and_stage() {
         .unwrap_or("")
         .to_string();
     for want in [
-        "Титры",       // имя дорожки, а не формула
+        "Титры",        // имя дорожки, а не формула
         "opacity 0.50", // уровень видео
-        "Multiply",    // режим наложения
+        "Multiply",     // режим наложения
         "SOLO",
         "-6.0 dB", // уровень аудио
         "MUTE",
@@ -602,5 +603,250 @@ fn t748b_probe_names_the_material_end() {
         !clean.contains("material ends at"),
         "у события внутри материала строки о конце быть не должно: {clean}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Copies of the generated fixture videos in a fresh directory (gen.sh runs
+/// once per process: the tests run in parallel).
+fn showcase_sources(tag: &str) -> std::path::PathBuf {
+    static GEN: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    GEN.get_or_init(|| {
+        let st = Command::new("bash")
+            .arg(fixtures.join("gen.sh"))
+            .current_dir(&fixtures)
+            .status()
+            .expect("run fixtures/gen.sh (needs ffmpeg in PATH)");
+        assert!(st.success(), "gen.sh failed");
+    });
+    let dir = std::env::temp_dir().join(format!("kt-cli-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let src = dir.join("sources");
+    std::fs::create_dir_all(&src).unwrap();
+    for e in std::fs::read_dir(fixtures.join("out")).unwrap() {
+        let p = e.unwrap().path();
+        // the videos, and one audio-only file: music for the beds
+        if p.extension().is_some_and(|x| x == "mp4")
+            || p.file_name().is_some_and(|n| n == "sine48k_stereo.flac")
+        {
+            std::fs::copy(&p, src.join(p.file_name().unwrap())).unwrap();
+        }
+    }
+    dir
+}
+
+/// t824 (readme-showcase): `showcase` cuts a dense, valid, deterministic
+/// project from a directory of real footage — the README's timeline.
+#[test]
+fn t824_showcase_is_rich_valid_and_deterministic() {
+    use kt_model::{ClipKind, FxInstance, GeneratorKind};
+    let dir = showcase_sources("t824");
+    let src = dir.join("sources");
+    let run = |out: &std::path::Path| {
+        let st = cli()
+            .args(["showcase", out.to_str().unwrap(), "--sources", src.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+        std::fs::read_to_string(out).unwrap()
+    };
+    let a = run(&dir.join("a.kt"));
+    let b = run(&dir.join("b.kt"));
+    assert!(a == b, "two runs on the same directory must give the same bytes");
+    let p = kt_model::project_file::from_text(&a).unwrap().project;
+    p.validate().expect("the reloaded showcase validates");
+
+    let canon = std::fs::canonicalize(&src).unwrap();
+    let files: Vec<String> = std::fs::read_dir(&src)
+        .unwrap()
+        .map(|e| e.unwrap().path().file_name().unwrap().to_string_lossy().into_owned())
+        .filter(|f| f.ends_with(".mp4"))
+        .collect();
+    for m in p.media.iter().filter(|m| !kt_model::is_pseudo_path(&m.path)) {
+        let path = std::path::Path::new(&m.path);
+        assert!(
+            path.is_absolute() && path.starts_with(&canon),
+            "absolute, into the dir: {}",
+            m.path
+        );
+    }
+
+    let lane = |kind: ClipKind, lane: u32| -> Vec<&kt_model::ClipEvent> {
+        p.clips.iter().filter(|c| c.kind == kind && c.lane == lane).collect()
+    };
+    // main montage: ≥ 24 cuts drawn from every source file
+    let main = lane(ClipKind::Video, 1);
+    assert!(main.len() >= 24, "montage cuts: {}", main.len());
+    for f in &files {
+        let id = p.media.iter().find(|m| m.path.ends_with(f.as_str())).map(|m| m.id);
+        assert!(main.iter().any(|c| Some(c.media) == id), "{f} is used in the montage");
+    }
+    // linked audio partners
+    assert!(main.iter().any(|v| v.link_group.is_some()
+        && p.clips.iter().any(|a| a.kind == ClipKind::Audio && a.link_group == v.link_group)));
+    // ≥ 3 transition kinds
+    let mut kinds: Vec<std::mem::Discriminant<kt_model::TransitionKind>> =
+        p.transitions.iter().map(|t| std::mem::discriminant(&t.kind)).collect();
+    kinds.sort_by_key(|d| format!("{d:?}"));
+    kinds.dedup();
+    assert!(kinds.len() >= 3, "transition kinds: {}", kinds.len());
+    // overlay with on-screen geometry, a title generator, ≥ 3 video FX kinds
+    let videos: Vec<&kt_model::ClipEvent> =
+        p.clips.iter().filter(|c| c.kind == ClipKind::Video).collect();
+    assert!(videos.iter().any(|c| c.lane == 0 && c.geometry.zoom != 1.0));
+    assert!(videos.iter().any(|c| matches!(c.r#gen, Some(GeneratorKind::Text { .. }))));
+    let mut fx: Vec<String> = videos
+        .iter()
+        .flat_map(|c| c.fx.iter())
+        .map(|f| format!("{:?}", std::mem::discriminant(f)))
+        .collect();
+    fx.sort();
+    fx.dedup();
+    assert!(fx.len() >= 3, "video FX kinds: {fx:?}");
+    // Slowed+Reverb on the music track with `rate` and `mix` curves ≥ 4 keys
+    let music = lane(ClipKind::Audio, 1);
+    let slowed = music
+        .iter()
+        .find(|c| c.fx.iter().any(|f| matches!(f, FxInstance::SlowedReverb { .. })))
+        .expect("a Slowed+Reverb bed on the music track");
+    let slot = slowed.fx.iter().position(|f| matches!(f, FxInstance::SlowedReverb { .. })).unwrap();
+    let music_file = p.media.iter().find(|m| m.path.ends_with("sine48k_stereo.flac")).map(|m| m.id);
+    assert_eq!(Some(slowed.media), music_file, "an audio-only file is the music bed");
+    assert!(
+        !main.iter().any(|c| Some(c.media) == music_file),
+        "music never lands on the picture track"
+    );
+    let curves = &slowed.fx_auto[slot];
+    for param in ["rate", "mix"] {
+        let c = curves.iter().find(|c| c.param == param).expect(param);
+        assert!(c.keys.len() >= 4, "{param}: {} keys", c.keys.len());
+    }
+    assert_eq!(p.morphers.len(), 1, "one morpher batch");
+    // a nested reel with content, placed twice
+    assert_eq!(p.sequences.len(), 1, "one nested reel");
+    let reel = &p.sequences[0];
+    assert!(reel.clips.len() >= 2, "the reel has content");
+    assert_eq!(p.clips.iter().filter(|c| c.media == reel.id).count(), 2, "two instances");
+    // published parameters, set per instance; the reel is longer than an
+    // instance, so an expanded instance shows tails on both sides
+    assert!(reel.published.len() >= 3, "the reel publishes parameters");
+    let instances: Vec<_> = p.clips.iter().filter(|c| c.media == reel.id).collect();
+    assert!(instances.iter().any(|c| c.overrides.len() >= 3), "an instance sets its own values");
+    let content = reel.clips.iter().map(|c| (c.start + c.duration).0).max().unwrap();
+    assert!(instances.iter().all(|c| c.source_in.0 > 0 && (c.source_in + c.duration).0 < content));
+    // the morpher swaps the source of its targets and adds a look
+    assert!(p.morphers[0].patch.media.is_some(), "the morpher swaps the source");
+    assert!(!p.morphers[0].patch.video_fx.is_empty());
+    assert!(p.markers.iter().filter(|m| !m.name.is_empty()).count() >= 4);
+    assert!(p.region.is_some() && p.loop_enabled, "a looped region");
+    let names: Vec<String> = p.tracks.iter().map(|t| t.name.clone()).collect();
+    assert!(names.iter().filter(|n| !n.is_empty()).count() >= 7, "named tracks: {names:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// t825 (readme-showcase): a missing or empty sources directory and an
+/// existing output are refused; `--force` writes atomically.
+#[test]
+fn t825_showcase_refuses_missing_sources_and_existing_output() {
+    let dir = showcase_sources("t825");
+    let out = dir.join("s.kt");
+    let showcase = |src: &std::path::Path, force: bool| {
+        let mut c = cli();
+        c.args(["showcase", out.to_str().unwrap(), "--sources", src.to_str().unwrap()]);
+        if force {
+            c.arg("--force");
+        }
+        c.output().unwrap()
+    };
+    let missing = dir.join("no-such-dir");
+    let st = showcase(&missing, false);
+    assert!(!st.status.success());
+    assert!(String::from_utf8_lossy(&st.stderr).contains("no-such-dir"), "names the directory");
+    let empty = dir.join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    std::fs::write(empty.join("notes.txt"), "not a video").unwrap();
+    let st = showcase(&empty, false);
+    assert!(!st.status.success());
+    let err = String::from_utf8_lossy(&st.stderr);
+    assert!(err.contains("empty") && err.contains("no readable video"), "{err}");
+    assert!(!out.exists(), "nothing written on refusal");
+
+    std::fs::write(&out, "keep me").unwrap();
+    let st = showcase(&dir.join("sources"), false);
+    assert!(!st.status.success());
+    assert!(String::from_utf8_lossy(&st.stderr).contains("--force"));
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), "keep me");
+    let st = showcase(&dir.join("sources"), true);
+    assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+    assert!(std::fs::read_to_string(&out).unwrap().starts_with("{\n  \"kinetren\""));
+    let leftovers: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().contains(".tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "no .tmp remains");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// t829 (kinetren-rename): kt-cli refuses a project of the former name with
+/// a hint and `import` brings it in byte-equal to today's file; the source
+/// is not touched.
+#[test]
+fn t829_cli_imports_a_project_of_the_former_name() {
+    let dir = std::env::temp_dir().join(format!("kt-cli-t829-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let today = dir.join("today.kt");
+    let st = cli().args(["demo", today.to_str().unwrap()]).output().unwrap();
+    assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+    let text = std::fs::read_to_string(&today).unwrap();
+    let old = dir.join("old.kt");
+    std::fs::write(&old, text.replacen("\"kinetren\"", "\"kinotrain\"", 1)).unwrap();
+    let before = std::fs::read(&old).unwrap();
+
+    let st = cli().args(["probe", old.to_str().unwrap(), "0", "1"]).output().unwrap();
+    assert!(!st.status.success());
+    let err = String::from_utf8_lossy(&st.stderr);
+    assert!(err.contains("former name") && err.contains("kt-cli import"), "{err}");
+
+    let new = dir.join("new.kt");
+    let st = cli().args(["import", old.to_str().unwrap(), new.to_str().unwrap()]).output().unwrap();
+    assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+    assert_eq!(std::fs::read_to_string(&new).unwrap(), text, "import == today's file");
+    assert_eq!(std::fs::read(&old).unwrap(), before, "the source is untouched");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// t831 (kinetren-rename): kt-cli finds the app's project lock in the same
+/// data directory as the app (`kinetren/locks`), and still sees a lock of a
+/// not yet migrated app of the former name (`kinotrain/locks`).
+#[test]
+fn t831_cli_and_app_agree_on_the_lock_directory() {
+    let dir = std::env::temp_dir().join(format!("kt-cli-t831-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let project = dir.join("locked.kt");
+    std::fs::write(&project, "{}").unwrap();
+    // the lock name: FNV-1a of the absolute path (project_lock.rs)
+    let abs = std::path::absolute(&project).unwrap();
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in abs.to_string_lossy().as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100_0000_01b3);
+    }
+    for (data, pid) in [("kinetren", "4242"), ("kinotrain", "4343")] {
+        let xdg = dir.join(format!("xdg-{data}"));
+        let locks = xdg.join(data).join("locks");
+        std::fs::create_dir_all(&locks).unwrap();
+        std::fs::write(locks.join(format!("{h:016x}.lock")), format!("{pid}\n")).unwrap();
+        let st = cli()
+            .args(["demo", project.to_str().unwrap(), "--force"])
+            .env("XDG_DATA_HOME", &xdg)
+            .output()
+            .unwrap();
+        assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+        let err = String::from_utf8_lossy(&st.stderr);
+        assert!(err.contains(&format!("process {pid}")), "{data}: the holder is reported: {err}");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }

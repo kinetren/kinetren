@@ -4,7 +4,7 @@
 
 **С Р.70 OpenTimelineIO — формат ОБМЕНА, не проекта.** Файл проекта — свой
 `.kt` (`kt_model::project_file`), а этот крейт — две названные двери
-(`import_interchange` ← `File → Import older Kinotrain project…`,
+(`import_interchange` ← `File → Import older Kinetren project…`,
 `save_project` ← `File → Export → OpenTimelineIO…`), детект вида файла по
 содержимому (`detect`: свой / OTIO / легаси) и единственный дом атомарной
 записи (`write_atomic`). Всё ниже про идемпотентность, passthrough и версии
@@ -146,7 +146,7 @@ golden demo-3d.otio). Кросс-рендер против melt — тест 158
   через `legacy_import::import_older(text, base)`: JSON-предобработка по таблице
   `FIXUPS` (каждая починка — с версией, для которой заведена, и с notice), затем
   обычное чтение. `load_project` в этом случае возвращает `Error::NeedsImport { version }`
-  — kt-app показывает версию и пункт `File → Import older Kinotrain project…`.
+  — kt-app показывает версию и пункт `File → Import older Kinetren project…`.
 - **Ридер новым старым формам не учат.** Нашёл файл, который не читается, — починка в
   `FIXUPS`, тест на синтетической копии структуры; при снятии поддержки версии её починки
   удаляются вместе с тестами. Первая: `v5_null_morph_targets` (`targets: null` ⇒ «всё,
