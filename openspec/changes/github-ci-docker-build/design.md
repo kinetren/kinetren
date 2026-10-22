@@ -75,7 +75,9 @@ Tests need FFmpeg ≥ 6, which 22.04 doesn't have, and caching with `Swatinem/ru
 works natively. The steps are: free disk (remove the preinstalled Android/.NET/Haskell
 toolchains, about 25 GB), `apt install clang libclang-dev pkg-config libasound2-dev ffmpeg`,
 `dtolnay/rust-toolchain` with `${RUST_TOOLCHAIN}` + clippy, `taiki-e/install-action`
-nextest, `cargo clippy --all-targets -- -D warnings`, `cargo nextest run --workspace
+nextest, `cargo clippy --workspace --all-targets` (not `-D warnings`: about 25
+warnings exist across kt-model, kt-app and kt-cli, and fixing them is code churn outside
+this change; making them fatal is a follow-up), `cargo nextest run --workspace
 --no-fail-fast`, then the guards. Env: `RUSTFLAGS=""` (no mold; same as the container),
 `CARGO_PROFILE_DEV_DEBUG=0` and `CARGO_INCREMENTAL=0` to keep the target in the runner's
 disk and the cache small. These change only debuginfo, not `opt-level`, overflow checks
@@ -118,7 +120,8 @@ next to `readme-check.py`. `actionlint` is run by the apply step if it's install
 not a dependency.
 
 ### D9. README: product first, the cargo route moves to CONTRIBUTING
-Quick start becomes: (1) download the latest release tarball, `./install.sh`; (2) or
+The README's "Install" section (the README has no "Quick start" since `readme-showcase`)
+becomes: (1) download the latest release tarball, `./install.sh`; (2) or
 `git clone` + `make` + `make install`; plus the runtime requirements (FFmpeg 6/7/8,
 ALSA, GPU driver), which stay. The `apt install build-essential …` + `cargo run` block
 moves to `CONTRIBUTING.md` ("Building from source without Docker"). This follows the
@@ -162,7 +165,7 @@ with `xprop` under Xvfb rather than assuming winit's X11 class.
   committed Dockerfile, `make` end to end, the shape guard (t834), `actionlint` if
   available. The first push/tag is the real test, and its result goes in tasks.md.
 - [`readme-showcase` is mid-flight and also edits README] → this change edits only the
-  "Quick start" section and starts README work after `readme-showcase` is committed.
+  "Install" section and starts README work after `readme-showcase` is committed.
 
 ## Migration Plan
 

@@ -29,15 +29,16 @@ image a second way, would get a different result from the one the owner checks.
 - **THEN** exit 0: exactly one Dockerfile exists, the toolchain version in it is the one CI
   installs, `release-build.sh` builds from that file and has no inline recipe, the Makefile
   has the targets `all build install run test clean help`, both workflows exist with the
-  triggers and permissions required below, and the README quick start names `make` and
-  `make install`
+  triggers and permissions required below, and the README's "Install" section shows
+  `make` and `make install`
 - **TEST** t834 (`src/apps/kt-cli/tests/dist_guard.rs`)
 
 #### Scenario: The guard catches each class of drift
 - **WHEN** it runs on a temporary copy where, one at a time, the Dockerfile's toolchain
   differs from CI's, `release-build.sh` has a heredoc `FROM`, a Makefile target is missing,
   the CI workflow uploads an artifact without `retention-days`, the release workflow
-  triggers on something other than `v*` tags, or the README quick start lost `make install`
+  triggers on something other than `v*` tags, the README's install section lost `make install`, the desktop
+  entry starts `kt-app`, the tarball carries `kt-app`, or a second Dockerfile appears
 - **THEN** exit non-zero, and each violation is reported with its file
 - **TEST** t835 (`src/apps/kt-cli/tests/dist_guard.rs`)
 
@@ -106,7 +107,8 @@ container builds, the host runs.
 ### Requirement: CI on every push and pull request
 
 `.github/workflows/ci.yml` SHALL run on every push and every pull request to any branch.
-It builds the workspace, runs `cargo clippy --all-targets`, runs the workspace tests
+It builds the workspace, runs `cargo clippy --workspace --all-targets` (warnings are reported, not fatal, until
+the existing ones are fixed), runs the workspace tests
 (nextest) with the system FFmpeg and the `ffmpeg` binary for fixtures, and runs the
 repository guards (`readme-check.py`, `dist-check.py`, `specs-user-path.py`). GPU
 conformance SHALL skip itself for lack of an adapter, as it already does, and the live Xvfb

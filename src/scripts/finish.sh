@@ -207,6 +207,9 @@ python3 "$(dirname "$0")/live-coverage.py" --check --brief || exit 1
 # the repository's public face (readme-showcase, t826): English README and
 # guide, links and images resolve, screenshots only from readme_shots.py
 python3 "$(dirname "$0")/readme-check.py" --check || exit 1
+# how Kinetren reaches people (github-ci-docker-build, t834): one build
+# container and toolchain shared with CI, make targets, workflows, the name
+python3 "$(dirname "$0")/dist-check.py" --check || exit 1
 # Р.43 п.301: debug-сборка честно считает, но в 9 раз медленнее. На плотном
 # монтаже аудио-рендер там уходит за 100 % реального времени, кольцо пустеет
 # и растут callback-underrun'ы — их слышно тишиной. Это цена профиля, а не

@@ -1,0 +1,108 @@
+# Every push and pull request: build, clippy, workspace tests, repository
+# guards (capability `distribution`, change github-ci-docker-build).
+#
+# Not here, on purpose: GPU conformance (no adapter on the runner — those tests
+# skip themselves) and the live Xvfb scenarios; both stay in finish.sh on a
+# real machine. Nothing is uploaded except the test log of a failed run, kept
+# for 3 days: on GitHub only releases are kept.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # must equal ARG RUST_TOOLCHAIN in src/packaging/Dockerfile (dist-check.py)
+  RUST_TOOLCHAIN: "1.97.1"
+  # src/.cargo/config.toml links with mold, which the runner does not have;
+  # an empty RUSTFLAGS overrides it, exactly as in the build container
+  RUSTFLAGS: ""
+  # debuginfo only: the dev profile keeps opt-level, overflow checks and
+  # debug_assert!, which the tests are written against; full debuginfo would
+  # not fit the runner's disk
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - name: System packages
+        # ffmpeg: the runtime libraries (6.x) are loaded by dlopen, and the
+        # binary generates test fixtures (src/fixtures/gen.sh).
+        # xvfb/openbox/python3-xlib: the guards of the live framework (t801,
+        # t802) run its dummy scenarios; they skip without Xvfb, so install it
+        # explicitly instead of depending on what the runner image carries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang libclang-dev pkg-config libasound2-dev ffmpeg \
+            xvfb openbox python3-xlib
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src
+          # pull requests and side branches read the cache, only the default
+          # branch writes it (the Actions cache is capped at 10 GB per repo)
+          save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+      - name: Build kinetren and kt-cli
+        # what people run, as the first stage of finish.sh; the live-framework
+        # guards look for target/debug/kinetren
+        working-directory: src
+        run: cargo build -p kt-app -p kt-cli
+
+      - name: Clippy
+        working-directory: src
+        run: cargo clippy --workspace --all-targets
+
+      - name: Tests
+        working-directory: src
+        # nextest, as finish.sh: under `cargo test` t663 times out (Р.68)
+        run: |
+          set -o pipefail
+          cargo nextest run --workspace --no-fail-fast 2>&1 | tee ../nextest.log
+
+      - name: Repository guards
+        run: |
+          python3 src/scripts/readme-check.py --check
+          python3 src/scripts/dist-check.py --check
+          python3 src/scripts/specs-user-path.py --check
+
+      - name: Disk usage
+        if: always()
+        run: df -h / && du -sh src/target 2>/dev/null || true
+
+      - name: Upload the test log of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-log
+          path: nextest.log
+          retention-days: 3

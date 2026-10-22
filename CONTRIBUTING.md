@@ -8,13 +8,28 @@ in Russian; new text, code comments and commit messages are written in English.
 
 Requirements: a stable Rust toolchain (edition 2024), `clang`/`libclang` (bindgen),
 `pkg-config`, `libasound2-dev`, and the FFmpeg 6/7/8 shared libraries at runtime. The
-`ffmpeg` binary is needed only to generate test fixtures (`src/fixtures/gen.sh`).
+`ffmpeg` binary is needed only to generate test fixtures (`src/fixtures/gen.sh`). On
+Debian or Ubuntu:
+
+```bash
+sudo apt install build-essential pkg-config clang libclang-dev libasound2-dev ffmpeg
+```
 
 ```bash
 cd src
-cargo build -p kt-app -p kt-cli
+cargo build -p kt-app -p kt-cli   # target/debug/kinetren and target/debug/kt-cli
 cargo run -p kt-app
 ```
+
+The package is `kt-app`, but the binary it builds is `kinetren`: that is the name people
+install and run.
+
+The portable release archive is built in a container from `src/packaging/Dockerfile`
+(Ubuntu 22.04, so it runs on glibc 2.35 and newer, with a pinned Rust toolchain): `make` at
+the repository root, or `src/scripts/release-build.sh`, which `make` calls. The result is
+`src/target/dist-out/kinetren-<version>-linux-x86_64.tar.gz` plus its `.sha256`. Inside
+the container the build checks that neither binary links libav* and that neither needs a
+glibc newer than 2.35.
 
 The dev profile is built with `opt-level = 1` (dependencies with 2), because audio
 rendering of a dense edit does not keep up with real time unoptimised. Judge speed only
@@ -30,8 +45,8 @@ the engine knows only the `VideoGpuExec` trait.
 cd src
 cargo test --workspace          # unit, harness and conformance tests
 cargo clippy --all-targets
-./scripts/live-check.sh         # live scenarios: the real kt-app in Xvfb, real gestures
-./scripts/finish.sh             # everything above + guards, rebuilds kt-app/kt-cli, prints the version
+./scripts/live-check.sh         # live scenarios: the real kinetren in Xvfb, real gestures
+./scripts/finish.sh             # everything above + guards, rebuilds kinetren/kt-cli, prints the version
 ```
 
 - Regression tests are numbered across the workspace (`tNNN`). Every scenario in an
@@ -44,6 +59,28 @@ cargo clippy --all-targets
 - `cargo test` builds a separate test binary and does **not** rebuild
   `target/debug/kinetren` (the binary of the `kt-app` package). Finish every piece of work with `./scripts/finish.sh` and quote
   the version it prints.
+
+## CI and releases
+
+GitHub Actions runs `.github/workflows/ci.yml` on every push and pull request: clippy,
+the workspace tests through nextest (with the system FFmpeg of Ubuntu 24.04), and the
+repository guards (`readme-check.py`, `dist-check.py`, `specs-user-path.py`). The runner
+has no GPU, so GPU conformance skips itself; the live Xvfb scenarios and the SIMD
+conformance run only in `finish.sh`, on a real machine. CI uploads nothing except the test
+log of a failed run, kept for three days.
+
+A release is cut by pushing a tag on the default branch:
+
+```bash
+git tag v26.10.22
+git push origin v26.10.22
+```
+
+`.github/workflows/release.yml` builds the archive with the same container as `make` and
+creates a GitHub Release with the archive and its `.sha256`. A tag with a suffix
+(`v26.11.01-rc1`) becomes a pre-release. The Rust version is pinned in
+`src/packaging/Dockerfile` and in `ci.yml`; `src/scripts/dist-check.py` keeps them
+equal, so bump both together.
 
 ## How changes are made
 

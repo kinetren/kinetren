@@ -142,14 +142,19 @@ sound, and any GPU driver with Vulkan or OpenGL. Without a GPU it falls back to 
 
 Kinetren then appears in your applications menu (`kinetren` from a terminal).
 
-**From source** (Rust stable, `clang`, `pkg-config`, `libasound2-dev`):
+**From source:** all you need is Docker, make and git. The build runs in a container
+and produces the same archive as a release:
 
 ```bash
-sudo apt install build-essential pkg-config clang libclang-dev libasound2-dev ffmpeg
+git clone https://github.com/kinetren/kinetren.git
+cd kinetren
+make
+make install
 ```
-```bash
-cd src && cargo run --release -p kt-app
-```
+
+`make run` starts the freshly built editor without installing it, and `make help` lists
+the other commands. Building with your own Rust toolchain is described in
+[CONTRIBUTING.md](CONTRIBUTING.md#build).
 
 ## First steps
 
