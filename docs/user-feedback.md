@@ -3506,6 +3506,36 @@ with its veiled tails on both sides; new shots for Ctrl+F search and for publish
 parameters; the morpher shot shows what it does — a before/after of the same frame,
 including a source swap.
 
+## Telemetry: launches, time in the program, clean close (2026-10-22)
+
+> нужно прикрутить posthog - бесплатная версия. либо любой другой сервис телеметрии
+> бесплатный чтобы собрать первичную информацию о кол-ве запусков программы, времени в ней
+> проведенной, об успешном закрытии программы
+
+**Answers (AskUserQuestion, 2026-10-22):** consent — *on by default, can be switched off*
+(opt-out); abnormal sessions — *only the event at exit* (no crash marker on disk: a start
+without a close is the signal). Service: the owner asked
+
+> а нельзя по timezone определять us / eu? или мне два аккаунта надо создавать?
+
+— answered: two clouds mean two projects, two keys and the data split in half, so one region,
+EU. Then:
+
+> есть ли у тебя возможность написать свой супер простой клиент для posthog, либо выдрать
+> самое важное из их клиента, чтобы не было опасной безконтрольной зависимости?
+> а да на tls мне вообще пофигу - как проще так и делай, я думал там тяжелая библиотека
+> posthog будет
+
+**Decisions:** our own capture client (one POST of JSON), no PostHog SDK; TLS through
+`ureq` + `rustls` as the simplest. The owner supplied the project key and confirmed the
+project is in EU. After the Audacity finding of F-COL-046:
+
+> по audacity - надо бы нам тогда в уведомлении перечислить что конкретно мы передаем, и
+> успокаивающее что НЕ ПЕРЕДАЕМ
+
+— the first-start notice and the menu checkbox's hover text list what IS sent and what is
+NOT sent. Change `openspec/changes/telemetry-posthog`.
+
 ## Что пользователь повторял больше одного раза
 
 | Тема | Раундов | Итоговое правило |

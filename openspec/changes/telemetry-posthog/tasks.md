@@ -2,8 +2,8 @@
 
 ## 0. Records before code
 
-- [ ] 0.1 Append the owner's words and decisions of 2026-10-22 (PostHog free, opt-out, exit event only, one EU region after the time-zone question, own client not a heavy SDK, the notice lists what is sent and what is NOT sent) to `docs/user-feedback.md`; verify the entry names this change
-- [ ] 0.2 Feature note in `docs/features/` plus a `posthog` row in `docs/features/_services.md`; correct the "no HTTP crate in Cargo.lock" sentence of rule 13 in `docs/features/README.md`; verify `python3 src/scripts/features-index.py --check` is green
+- [x] 0.1 Append the owner's words and decisions of 2026-10-22 (PostHog free, opt-out, exit event only, one EU region after the time-zone question, own client not a heavy SDK, the notice lists what is sent and what is NOT sent) to `docs/user-feedback.md`; verify the entry names this change
+- [x] 0.2 Feature note in `docs/features/` plus a `posthog` row in `docs/features/_services.md`; correct the "no HTTP crate in Cargo.lock" sentence of rule 13 in `docs/features/README.md`; verify `python3 src/scripts/features-index.py --check` is green
 
 ## 1. Core module (no UI)
 
