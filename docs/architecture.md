@@ -1,100 +1,89 @@
-# Архитектура движка (src/)
+# Engine architecture (src/)
 
-Статус: обзорная карта движка «сверху». Контракты и причины решений — по capability в OpenSpec:
+Status: a high-level overview map of the engine. Contracts and the reasons behind decisions are in the OpenSpec capabilities:
 
-| capability | о чём |
+| capability | about |
 |---|---|
-| [`time-model`](../openspec/specs/time-model/spec.md) · [почему](../openspec/specs/time-model/design.md) | тики 90 kHz, burst, сетки |
-| [`transport`](../openspec/specs/transport/spec.md) · [почему](../openspec/specs/transport/design.md) | часы, скорость со знаком, loop |
-| [`audio-render`](../openspec/specs/audio-render/spec.md) · [почему](../openspec/specs/audio-render/design.md) | аудио-движок, FX-состояние, микс, PDC, LUFS |
-| [`video-plan`](../openspec/specs/video-plan/spec.md) · [почему](../openspec/specs/video-plan/design.md) | один код композиции, ступень декода, CPU-эталон/GPU |
-| [`video-fx`](../openspec/specs/video-fx/spec.md) · [почему](../openspec/specs/video-fx/design.md) | реестр видео-эффектов, план цепочки, пикер |
-| [`audio-fx`](../openspec/specs/audio-fx/spec.md) · [почему](../openspec/specs/audio-fx/design.md) | реестр аудио-узлов |
-| [`transitions`](../openspec/specs/transitions/spec.md) · [почему](../openspec/specs/transitions/design.md) | 33 вида, наложение, инверсия |
-| [`automation`](../openspec/specs/automation/spec.md) · [почему](../openspec/specs/automation/design.md) | свойства, паспорт, кривые, пресеты |
-| [`morpher`](../openspec/specs/morpher/spec.md) · [почему](../openspec/specs/morpher/design.md) | морфер-слои, резка, патчи |
-| [`compositions`](../openspec/specs/compositions/spec.md) · [почему](../openspec/specs/compositions/design.md) | вложенные ленты, законы Э/Г, публичные параметры |
-| [`generators`](../openspec/specs/generators/spec.md) · [почему](../openspec/specs/generators/design.md) | генераторы и титры |
-| [`media-index`](../openspec/specs/media-index/spec.md) · [почему](../openspec/specs/media-index/design.md) | источники, декод, очередь, sidecar, dlopen FFmpeg |
-| [`export`](../openspec/specs/export/spec.md) · [почему](../openspec/specs/export/design.md) | внутрипроцессный экспорт, golden, kt-cli |
-| [`project-format`](../openspec/specs/project-format/spec.md) · [почему](../openspec/specs/project-format/design.md) | файл проекта `.kt` (свой формат, git), двери обмена OTIO (импорт/экспорт), версии, passthrough |
-| [`durability`](../openspec/specs/durability/spec.md) · [почему](../openspec/specs/durability/design.md) | автосейв, recovery, finish.sh, живые сценарии |
-| [`ui-timeline`](../openspec/specs/ui-timeline/spec.md) · [почему](../openspec/specs/ui-timeline/design.md) | вёрстка, repaint, i18n, жесты |
-| [`ui-reach`](../openspec/specs/ui-reach/spec.md) · [почему](../openspec/specs/ui-reach/design.md) | «тупиков не бывает», правый клик |
+| [`time-model`](../openspec/specs/time-model/spec.md) · [why](../openspec/specs/time-model/design.md) | 90 kHz ticks, bursts, grids |
+| [`transport`](../openspec/specs/transport/spec.md) · [why](../openspec/specs/transport/design.md) | clock, signed speed, loop |
+| [`audio-render`](../openspec/specs/audio-render/spec.md) · [why](../openspec/specs/audio-render/design.md) | audio engine, FX state, mix, PDC, LUFS |
+| [`video-plan`](../openspec/specs/video-plan/spec.md) · [why](../openspec/specs/video-plan/design.md) | one composition code, decode scale step, CPU reference/GPU |
+| [`video-fx`](../openspec/specs/video-fx/spec.md) · [why](../openspec/specs/video-fx/design.md) | video effects registry, chain plan, picker |
+| [`audio-fx`](../openspec/specs/audio-fx/spec.md) · [why](../openspec/specs/audio-fx/design.md) | audio node registry |
+| [`transitions`](../openspec/specs/transitions/spec.md) · [why](../openspec/specs/transitions/design.md) | 33 kinds, overlap, inversion |
+| [`automation`](../openspec/specs/automation/spec.md) · [why](../openspec/specs/automation/design.md) | properties, passport, curves, presets |
+| [`morpher`](../openspec/specs/morpher/spec.md) · [why](../openspec/specs/morpher/design.md) | morpher layers, cutting, patches |
+| [`compositions`](../openspec/specs/compositions/spec.md) · [why](../openspec/specs/compositions/design.md) | nested reels, the laws E/G, public parameters |
+| [`generators`](../openspec/specs/generators/spec.md) · [why](../openspec/specs/generators/design.md) | generators and titles |
+| [`media-index`](../openspec/specs/media-index/spec.md) · [why](../openspec/specs/media-index/design.md) | sources, decode, queue, sidecar, FFmpeg dlopen |
+| [`export`](../openspec/specs/export/spec.md) · [why](../openspec/specs/export/design.md) | in-process export, golden tests, kt-cli |
+| [`project-format`](../openspec/specs/project-format/spec.md) · [why](../openspec/specs/project-format/design.md) | project file `.kt` (own format, git), OTIO interchange doors (import/export), versions, passthrough |
+| [`durability`](../openspec/specs/durability/spec.md) · [why](../openspec/specs/durability/design.md) | autosave, recovery, finish.sh, live scenarios |
+| [`ui-timeline`](../openspec/specs/ui-timeline/spec.md) · [why](../openspec/specs/ui-timeline/design.md) | layout, repaint, i18n, gestures |
+| [`ui-reach`](../openspec/specs/ui-reach/spec.md) · [why](../openspec/specs/ui-reach/design.md) | "there are no dead ends", right click |
 
-## Потоки и владение
+## Flows and ownership
 
 ```
- cpal-колбэк ◄── SPSC-кольцо (rtrb, 2–4 burst'а) ── аудио-render-поток ──► RenderGraph ──get──► BurstCache
-      │ счётчик потреблённых кадров                      ▲ владеет FxStateStore                     ▲ insert
+ cpal callback ◄── SPSC ring (rtrb, 2–4 bursts) ── audio-render thread ──► RenderGraph ──get──► BurstCache
+      │ counter of consumed frames                      ▲ owns FxStateStore                     ▲ insert
       ▼                                                  │                                          │
-  Transport (атомики: playhead, state, epoch) ◄──────────┘                     MediaWorker-поток ×N (каждый владеет своим FfmpegSource)
+  Transport (atomics: playhead, state, epoch) ◄──────────┘                     MediaWorker threads ×N (each owns its own FfmpegSource)
       ▲    ▲                                                                              ▲
- UI-поток (egui): отрисовка, видео-запросы, правки модели ──► Prefetch-поток ─────────────┘
-                                                              Index-воркер (peak-пирамида, тумбнейлы) — отдельный короткоживущий FfmpegSource
+ UI thread (egui): drawing, video requests, model edits ──► Prefetch thread ─────────────┘
+                                                              Index worker (peak pyramid, thumbnails) — a separate short-lived FfmpegSource
 ```
 
-Правила владения:
-- `FfmpegSource` эксклюзивно принадлежит своему `MediaWorker`; клиенты общаются только запросами (`DecodeRequest {key, prio, generation}`) через приоритетную очередь. Приоритеты: `Playback > NearPrefetch > FarPrefetch > Thumbnail`; при равных — вперёд по курсору декодера (исключает ping-pong seek). Seek транспорта бампает generation, устаревшие запросы дропаются.
-- `FxStateStore` (HashMap<(ClipId, FxSlot), Box<dyn AudioFx>>) — только у аудио-render-потока. Без локов.
-- `BurstCache` — общий, но это единственная разделяемая структура (внутренний мьютекс/шардинг). Ключ: `(source_id, kind{Audio | Video{quality}}, idx)`. Coverage — interval-set, поддерживаемый на insert/evict, отдаётся UI как список диапазонов.
-- `Transport` — атомики; playhead продвигает только аудио-render-поток на ровно потреблённое колбэком число кадров.
+Ownership rules:
+- `FfmpegSource` belongs exclusively to its `MediaWorker`; clients communicate only through requests (`DecodeRequest {key, prio, generation}`) via a priority queue. Priorities: `Playback > NearPrefetch > FarPrefetch > Thumbnail`; at equal priority, the request closer to the decoder cursor goes first (this excludes ping-pong seeks). A transport seek bumps the generation, and stale requests are dropped.
+- `FxStateStore` (HashMap<(ClipId, FxSlot), Box<dyn AudioFx>>) belongs only to the audio-render thread. No locks.
+- `BurstCache` is shared, but it is the only shared structure (internal mutex/sharding). Key: `(source_id, kind{Audio | Video{quality}}, idx)`. Coverage is an interval set, maintained on insert/evict, and is exposed to the UI as a list of ranges.
+- `Transport` is made of atomics; the playhead is advanced only by the audio-render thread, by exactly the number of frames consumed by the callback.
 
-## Поток данных
+## Data flow
 
-Воспроизведение: UI/транспорт → RenderGraph pull по playhead → BurstCache (hit) или MediaWorker (miss, но playback не ждёт: тишина/последний кадр + underrun-флаг) → per-clip FX (со state из FxStateStore) → микс (equal-power кроссфейд для 2 перекрывающихся клипов одной дорожки, 1/N для 3+; gain на клип) → SPSC → cpal. Видео: UI-поток по playhead запрашивает кадр по сетке fps, композитор alpha-over по z (индекс дорожки), egui-текстура (double-buffer).
+Playback: UI/transport → RenderGraph pulls by playhead → BurstCache (hit) or MediaWorker (miss, but playback does not wait: silence or last frame + underrun flag) → per-clip FX (with state from FxStateStore) → mix (equal-power crossfade for 2 overlapping clips on one track, 1/N for 3+; gain per clip) → SPSC → cpal. Video: the UI thread requests a frame by playhead on the fps grid, the compositor does alpha-over by z (track index), egui texture (double buffer).
 
-Экспорт: тот же RenderGraph, clock = «по готовности», Quality = разрешение проекта; RGBA-кадры и f32-аудио идут в `kt-ffmpeg::Muxer` (libavformat/libavcodec системного FFmpeg), который кодирует и муксит mp4 на лету. Ни внешних процессов, ни промежуточных файлов.
+Export: the same RenderGraph, clock = "as ready", Quality = project resolution; RGBA frames and f32 audio go into `kt-ffmpeg::Muxer` (libavformat/libavcodec of the system FFmpeg), which encodes and muxes mp4 on the fly. No external processes, no intermediate files.
 
-Prefetch: идемпотентный цикл — wanted-ключи (lookahead playhead ~2 c, видимый диапазон, голова loop-региона с pin в кэше) minus coverage() → submit. Состояния между тиками нет.
+Prefetch: an idempotent cycle — wanted keys (playhead lookahead ~2 s, visible range, head of the loop region pinned in the cache) minus coverage() → submit. There is no state between ticks.
 
-## Sidecar индекс-БД (`<project>.ktindex.db`, SQLite)
+## Sidecar index DB (`<project>.ktindex.db`, SQLite)
 
-По media_id (ключ идентичности: path + size + mtime + xxhash + index_version): probe-данные; audio seek-индекс (позиция пакета → индекс первого сэмпла) для sample-accurate seek; video keyframe-индекс; peak-пирамида аудио (мин/макс, блок 256 сэмплов, mip-уровни); тумбнейл-полоса (~1–2 c, keyframes, ~160px JPEG). Перестройка — только затронутого файла: несовпадение size/mtime → сверка xxhash → перестройка; бамп index_version → полная; повреждённая БД → пересоздание без падения. Схема — `media-index.md`.
+Keyed by media_id (identity key: path + size + mtime + xxhash + index_version): probe data; audio seek index (packet position → index of first sample) for sample-accurate seek; video keyframe index; audio peak pyramid (min/max, block of 256 samples, mip levels); thumbnail strip (~1–2 s, keyframes, ~160px JPEG). Rebuilding touches only the affected file: a size/mtime mismatch → xxhash check → rebuild; a bump of index_version → full rebuild; a corrupted DB → recreated without crashing. Schema — `media-index.md`.
 
-## Аудио-FX
+## Audio FX
 
-- Трейт: `set_params` (сглаживание one-pole ~20 мс, буферы не трогает), `process` (f32 48k/2ch in/out), `tail() -> Tick`, `reset()` (только при seek).
-- slowedreverb = rubato `SincFixedOut` (varispeed, дробный fixed-point курсор источника — burst'ы не пропускаются и не дублируются) + freeverb (8 comb + 4 allpass на канал).
-- Хвосты: активное аудио-окно клипа расширяется на Σ tail цепочки — реверб дозванивает за границей клипа.
-- Seek: reset всех FX + pre-roll `max(tail, 100 мс)` в мусор → детерминированный прогрев.
-- Пост-FX аудио не кэшируется (FX дешевле декода на порядки; кэш — пре-FX). Видео-пост-FX — исключение (р.7 п.2): цепочка 4 эффектов стоит десятки мс/кадр, поэтому пост-FX кадры мемоизируются отдельным kind'ом kt-cache (`PostFxVideo{quality, fx_hash}`, idx = таймлайн-тик) — полоскам прогретости, префетчу и пину этот kind невидим (запросы kind-точные), правда о coverage остаётся пре-FX.
+- Trait: `set_params` (smoothing by one-pole ~20 ms, does not touch buffers), `process` (f32 48k/2ch in/out), `tail() -> Tick`, `reset()` (only on seek).
+- slowedreverb = rubato `SincFixedOut` (varispeed, fractional fixed-point source cursor — bursts are neither skipped nor duplicated) + freeverb (8 comb + 4 allpass per channel).
+- Tails: the active audio window of a clip is extended by Σ tail of the chain — the reverb rings out past the clip's boundary.
+- Seek: reset of all FX + pre-roll `max(tail, 100 ms)` discarded → deterministic warm-up.
+- Post-FX audio is not cached (FX is cheaper than decode by orders of magnitude; the cache holds pre-FX). Video post-FX is the exception (R.7 item 2): a chain of 4 effects costs tens of ms per frame, so post-FX frames are memoized under a separate kind of kt-cache (`PostFxVideo{quality, fx_hash}`, idx = timeline tick) — this kind is invisible to coverage bars, prefetch and pinning (requests are kind-exact), and the truth about coverage remains pre-FX.
 
-## Ключевые решения и «почему так»
+## Key decisions and "why it is so"
 
-| Решение | Почему |
+| Decision | Why |
 |---|---|
-| 90 kHz тики | делятся на 24/25/30/60 fps и на шаг 1920 тиков аудио-burst; наследие старого движка, оно было удачным |
-| f32 48k/2ch везде | одна система координат для FX/микса; источники приводятся на границе декода (swr) |
-| Кэш пре-FX; видео-пост-FX — memoization-kind | аудио-FX ≪ 1 мс/burst — не кэшируем; видео-цепочка — десятки мс/кадр, кэшируется под ключом с fx_hash (инвалидация структурная: другой хэш = другой ключ), coverage по-прежнему считается ТОЛЬКО по пре-FX |
-| GPU-композитинг wgpu + CPU-эталон (Р.29, конкатенация Р.44; до этого — CPU v1) | Один код композиции до бэкенда: `VideoRenderer::frame_plan` решает слои/веса, исполнителей два. CPU — исполняемая спецификация (байт-golden'ы t11/t26/t67 нетронуты) и ПОЛНЫЙ фолбэк с notice; GPU (kt-gpu: фрагментные WGSL-пассы над Rgba8Uint, целочисленный композит байт-в-байт с CPU, билинейка в допуске t181) — по умолчанию в превью (устройство eframe, readback в прежний путь текстуры) и в экспорте (headless-девайс на джоб; ошибка GPU = ошибка экспорта, не смешение бэкендов). Подряд идущие геометрические FX (Pan/CamMotion/Mirror/EventGrid/Pan3d) сливаются в ОДИН проход обратных отображений (конкатенация трансформов, `kt-fx::geom`, пп.307-309): без промежуточных растеризаций и 8-битных квантований, суперсемплинг по якобиану при минификации; нелокальные FX и LayerMix — барьеры. Pan3d — обратная 3×3-гомография, считается на обоих бэкендах (Р.44 снял «3D только GPU» и отказ GpuRequired). llvmpipe/lavapipe = «GPU есть». `KT_VIDEO_GPU=0/1` — принудительный выбор |
-| Экспорт внутри процесса через libav* системного FFmpeg | нет зависимости от внешнего бинарника; доступны аппаратные энкодеры системы (nvenc/vaapi/qsv); ноль temp-файлов |
-| Без tokio | pull-движок на выделенных потоках с очередями; async ничего не даёт |
-| kt-ffmpeg заперт за трейтом MediaSource | смена FFmpeg-мажора или бэкенда не трогает остальной код |
+| 90 kHz ticks | divisible by 24/25/30/60 fps and by the step of 1920 ticks of an audio burst; a legacy of the old engine, which worked well |
+| f32 48k/2ch everywhere | one coordinate system for FX/mix; sources are converted at the decode boundary (swr) |
+| Cache pre-FX; video post-FX — a memoization kind | audio FX ≪ 1 ms/burst — not cached; a video chain is tens of ms/frame, so it is cached under a key with fx_hash (invalidation is structural: a different hash = a different key), coverage is still computed ONLY from pre-FX |
+| wgpu GPU compositing + CPU reference (R.29, concatenation R.44; before that — CPU in v1) | One composition code up to the backend: `VideoRenderer::frame_plan` decides layers/weights, there are two executors. CPU — the executable specification (byte goldens t11/t26/t67 untouched) and a FULL fallback with a notice; GPU (kt-gpu: fragment WGSL passes over Rgba8Uint, integer compositing byte-for-byte equal to CPU, bilinear within the t181 tolerance) — default in the preview (eframe device, readback into the old texture path) and in export (headless device per job; a GPU error = an export error, not a mix of backends). Consecutive geometric FX (Pan/CamMotion/Mirror/EventGrid/Pan3d) are fused into ONE pass of inverse mappings (transform concatenation, `kt-fx::geom`, items 307–309): no intermediate rasterizations and no 8-bit quantizations, supersampling by the Jacobian at minification; non-local FX and LayerMix are barriers. Pan3d — an inverse 3×3 homography, computed on both backends (R.44 removed "3D only on GPU" and the GpuRequired refusal). llvmpipe/lavapipe = "GPU is present". `KT_VIDEO_GPU=0/1` — forced choice |
+| Export in-process via libav* of the system FFmpeg | no dependence on an external binary; the system's hardware encoders are available (nvenc/vaapi/qsv); zero temp files |
+| No tokio | a pull engine on dedicated threads with queues; async gives nothing |
+| kt-ffmpeg is locked behind the MediaSource trait | changing the FFmpeg major or the backend does not touch the rest of the code |
 
-## Свойства, автоматизация, композиции, плагины
+## Properties, automation, compositions, plugins
 
-Модель свойств (паспорт + значение + источник), ноль цены без использования, кто разрешает кривые, публичные параметры композиции, контракт плагина и физика как функция — в `openspec/specs/automation/design.md` и `openspec/specs/compositions/design.md`.
+The property model (passport + value + source), zero cost when unused, who resolves curves, public parameters of a composition, the plugin contract, and physics as a function — are in `openspec/specs/automation/design.md` and `openspec/specs/compositions/design.md`.
 
-## Рантайм-загрузка FFmpeg (kt-ffmpeg)
+## Runtime loading of FFmpeg (kt-ffmpeg)
 
-Приложение **не линкуется** с libav* — иначе бинарь был бы привязан к мажорам
-машины сборки (исходная проблема: `libavcodec.so.60: cannot open shared object
-file` на системе с FFmpeg 7).
+The application **does not link** against libav* — otherwise the binary would be bound to the majors of the build machine (the original problem: `libavcodec.so.60: cannot open shared object
+file` on a system with FFmpeg 7).
 
-- `libs/kt-ffmpeg/vendor/ffmpeg-{6,7,8}/include` — вендоренные публичные
-  заголовки; `build.rs` генерирует из них bindgen'ом **только типы и
-  константы** (три версионных модуля). Функции не генерируются.
-- `src/loader.rs` перебирает SONAME от новых мажоров к старым
-  (`libavcodec.so.62/61/60`), сверяет `avcodec_version()` и грузит согласованный
-  набор из пяти библиотек; ld.so сам подтягивает зависимости той же версии.
-- `src/api.rs` — vtable: ~45 функций резолвятся через `dlsym`.
-- `src/source_impl.rs` — реализация декодера, включается (`include!`) в каждый
-  версионный модуль, поэтому layout структур всегда соответствует загруженной
-  библиотеке. Диспетчер `Source::V6/V7/V8`.
+- `libs/kt-ffmpeg/vendor/ffmpeg-{6,7,8}/include` — vendored public headers; `build.rs` generates from them with bindgen **only types and constants** (three version modules). Functions are not generated.
+- `src/loader.rs` iterates over the SONAMEs from newer majors to older ones (`libavcodec.so.62/61/60`), checks `avcodec_version()`, and loads a matching set of five libraries; ld.so pulls in the dependencies of the same version itself.
+- `src/api.rs` — a vtable: ~45 functions are resolved through `dlsym`.
+- `src/source_impl.rs` — the decoder implementation, included (`include!`) into each version module, so the struct layout always matches the loaded library. Dispatcher `Source::V6/V7/V8`.
 
-Следствия: один бинарь работает с системным FFmpeg 6/7/8 (со всеми его
-аппаратными ускорениями); никаких плагинов и своей сборки FFmpeg; сборка
-проекта не требует dev-пакетов libav* (нужен только libclang для bindgen).
-Ограничение: разницу glibc это не снимает — при необходимости релиз собирать
-в контейнере со старым glibc.
+Consequences: one binary works with the system FFmpeg 6/7/8 (with all its hardware acceleration); no plugins and no own build of FFmpeg; building the project does not require libav* dev packages (only libclang for bindgen). Limitation: this does not remove the glibc difference — if needed, the release is built in a container with an old glibc.

@@ -1,100 +1,94 @@
-# Sidecar индекс-БД медиа (`<project>.ktindex.db`)
+# Media index DB sidecar (`<project>.ktindex.db`)
 
-SQLite (rusqlite, bundled). Лежит рядом с файлом проекта → переносится вместе с ним. Является **кэшем**: потеря/повреждение не является ошибкой — БД пересоздаётся фоновым воркером. В git не коммитится.
+SQLite (rusqlite, bundled). It lives next to the project file → it moves together with it. It is a **cache**: loss or corruption is not an error — the DB is rebuilt by the background worker. It is not committed to git.
 
-Назначение: убрать любые декоды по требованию UI (волноформы, тумбнейлы — дефект m в `porting-notes.md`) и любое сканирование файлов при открытии проекта (probe, seek-индексы — дефект j).
+Purpose: remove any on-demand decodes for the UI (waveforms, thumbnails — defect m in `porting-notes.md`) and any scanning of files on project open (probe, seek indexes — defect j).
 
-## Схема (schema_version = 2)
+## Schema (schema_version = 2)
 
 ```sql
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);           -- schema_version
 
 CREATE TABLE media (
   media_id     INTEGER PRIMARY KEY,
-  path         TEXT NOT NULL,      -- как в проекте (относительный)
-  size         INTEGER NOT NULL,   -- байты, быстрая проверка
-  mtime_ns     INTEGER NOT NULL,   -- быстрая проверка
-  xxhash       BLOB NOT NULL,      -- xxh3-128 содержимого, точная проверка
-  probe_json   TEXT NOT NULL,      -- MediaInfo: длительность, потоки, fps, sr, кодеки
+  path         TEXT NOT NULL,      -- as in the project (relative)
+  size         INTEGER NOT NULL,   -- bytes, quick check
+  mtime_ns     INTEGER NOT NULL,   -- quick check
+  xxhash       BLOB NOT NULL,      -- xxh3-128 of the content, exact check
+  probe_json   TEXT NOT NULL,      -- MediaInfo: duration, streams, fps, sr, codecs
   built_at     INTEGER NOT NULL,
-  complete     INTEGER NOT NULL    -- 0 пока воркер не закончил все секции
+  complete     INTEGER NOT NULL    -- 0 until the worker has finished all sections
 );
 
-CREATE TABLE packet_index (        -- пакетный индекс FfmpegSource (тест 34):
-  media_id INTEGER,                -- открытие без полного скан-прохода по файлу
-  stream   TEXT,                   -- 'audio' (pts аудио-пакетов) | 'video' (pts кейфреймов)
-  data     BLOB,                   -- i64 LE, отсортированы; pts в timebase потока
+CREATE TABLE packet_index (        -- packet index of FfmpegSource (test 34):
+  media_id INTEGER,                -- opening without a full scan pass over the file
+  stream   TEXT,                   -- 'audio' (pts of audio packets) | 'video' (pts of keyframes)
+  data     BLOB,                   -- i64 LE, sorted; pts in the stream timebase
   PRIMARY KEY (media_id, stream)
 );
--- v1 имела audio_seek/video_keyframes (строка на пакет) — не писались ни разу;
--- заменены blob-таблицей в v2.
+-- v1 had audio_seek/video_keyframes (a row per packet) — never written; replaced by the blob table in v2.
 
-CREATE TABLE audio_peaks (         -- peak-пирамида: level 0 = блок 256 сэмплов, level n = ×2^n
+CREATE TABLE audio_peaks (         -- peak pyramid: level 0 = block of 256 samples, level n = ×2^n
   media_id INTEGER, level INTEGER, channel INTEGER,
-  data BLOB,                       -- interleaved (min:i16, max:i16) на блок
+  data BLOB,                       -- interleaved (min:i16, max:i16) per block
   PRIMARY KEY (media_id, level, channel)
 );
 
-CREATE TABLE thumbnails (          -- полоса по лестнице шагов THUMB_STEP_LADDER
+CREATE TABLE thumbnails (          -- strip along the THUMB_STEP_LADDER steps
   media_id INTEGER, t_ticks INTEGER,
   jpeg BLOB,                       -- 320×180, JPEG q80 (THUMB_W/THUMB_H/THUMB_JPEG_QUALITY)
   PRIMARY KEY (media_id, t_ticks)
 );
 ```
 
-### Аддитивные таблицы (создаются `IF NOT EXISTS` при каждом открытии)
+### Additive tables (created with `IF NOT EXISTS` on every open)
 
-Бамп `schema_version` сносит пакетный индекс, пики и тумбы всех медиа проекта —
-слишком дорого ради одной таблицы, поэтому новые таблицы добавляются
-аддитивно и появляются и в уже существующих БД.
+A bump of `schema_version` would wipe the packet index, peaks and thumbnails of all media in the project — too expensive for the sake of one table, so new tables are added additively and also appear in already existing DBs.
 
 ```sql
 CREATE TABLE poster (media_id INTEGER PRIMARY KEY, t_ticks INTEGER, score INTEGER);
 CREATE TABLE loudness (media_id INTEGER PRIMARY KEY, lufs_x100, dbtp_x100, lra_x100);
 CREATE TABLE sync_offset (a_media, b_media, ticks, conf_x100, PRIMARY KEY (a_media, b_media));
 
--- Превью ВЛОЖЕННОЙ ЛЕНТЫ (Р.58, п.463). У ленты нет файла, и `media` ей не
--- дом: ключ — СОДЕРЖИМОЕ. seq — id ленты (переживает save→load), hash —
--- редакция (kt_engine::content_hash), media_fp — отпечаток файлов дерева
--- ленты (путь, размер, mtime; генераторы — по строке пути). Оба u64 лежат
--- как i64 побитово. Одна версия на ленту: новая запись вытесняет прежнюю.
+-- Preview of a NESTED REEL (R.58, item 463). A reel has no file, and `media` is not
+-- its home: the key is the CONTENT. seq — id of the reel (survives save→load), hash —
+-- the revision (kt_engine::content_hash), media_fp — the fingerprint of the reel
+-- tree's files (path, size, mtime; generators — by the path string). Both u64 are stored
+-- as i64 bit-for-bit. One version per reel: a new record evicts the previous one.
 CREATE TABLE reel_strip (
   seq INTEGER PRIMARY KEY, hash INTEGER NOT NULL, media_fp INTEGER NOT NULL,
-  step INTEGER NOT NULL,           -- шаг кадров полосы (тики), ступень THUMB_STEP_LADDER
-  end_ticks INTEGER NOT NULL,      -- длина ленты
-  n INTEGER NOT NULL               -- число слотов полосы (кадры ≤ MAX_FRAMES_PER_REEL)
+  step INTEGER NOT NULL,           -- frame step of the strip (ticks), a step of THUMB_STEP_LADDER
+  end_ticks INTEGER NOT NULL,      -- length of the reel
+  n INTEGER NOT NULL               -- number of slots of the strip (frames ≤ MAX_FRAMES_PER_REEL)
 );
-CREATE TABLE reel_frame (          -- кадр i*step; отсутствующая строка = кадра не было
-  seq INTEGER, idx INTEGER, jpeg BLOB,   -- 320×180, JPEG q80 — как thumbnails
+CREATE TABLE reel_frame (          -- frame i*step; a missing row = there was no frame
+  seq INTEGER, idx INTEGER, jpeg BLOB,   -- 320×180, JPEG q80 — as thumbnails
   PRIMARY KEY (seq, idx)
 );
-CREATE TABLE reel_peaks (          -- та же пирамида и тот же блоб, что audio_peaks
+CREATE TABLE reel_peaks (          -- the same pyramid and the same blob as audio_peaks
   seq INTEGER, level INTEGER, channel INTEGER, data BLOB,
   PRIMARY KEY (seq, level, channel)
 );
 ```
 
-`purge_media` таблицы `reel_*` НЕ трогает: подмену файла ловит `media_fp`
-(строка с другим отпечатком просто не находится, `reel_preview(seq, hash,
-media_fp)` → `None`, и лента рендерится заново). Ленты, которых в документе
-больше нет, убирает `prune_reels(keep)` — задача превью зовёт её после
-записи. Тест 639.
+`purge_media` does NOT touch the `reel_*` tables: a file substitution is caught by `media_fp`
+(a row with a different fingerprint is simply not found, `reel_preview(seq, hash,
+media_fp)` → `None`, and the reel is rendered anew). Reels that are no longer in the
+document are removed by `prune_reels(keep)` — the preview task calls it after
+writing. Test 639.
 
-## Правила инвалидации (тест 16)
+## Invalidation rules (test 16)
 
-1. Открытие медиа: ищем запись по path. Совпали size+mtime → доверяем. mtime сменился → пересчитываем xxhash: совпал → обновляем mtime, переиспользуем; не совпал → перестраиваем **только** записи этого media_id.
-2. `schema_version` в БД ≠ текущей → полная перестройка БД.
-3. Ошибка открытия/чтения БД (битый файл, чужой формат) → удалить и пересоздать, не падать.
-4. Пользовательский форс («переиндексировать») → перестройка выбранного файла.
-5. `complete=0` (воркер был прерван) → достроить недостающие секции.
+1. Opening media: look up the record by path. If size+mtime match → trust it. If mtime has changed → recompute the xxhash: matches → update mtime, reuse; does not match → rebuild **only** the records of this media_id.
+2. `schema_version` in the DB ≠ current → full rebuild of the DB.
+3. An error opening/reading the DB (corrupt file, foreign format) → delete and recreate it, do not crash.
+4. A user-forced rebuild ("reindex") → rebuild of the selected file.
+5. `complete=0` (the worker was interrupted) → finish the missing sections.
 
-## Кто пишет
+## Who writes
 
-Один фоновый index-воркер на проект; декодирует собственным короткоживущим FfmpegSource (никогда — декодерами воспроизведения). Пишет секциями в транзакциях (probe → seek-индексы → peaks → thumbnails), UI показывает плейсхолдеры до готовности секции. Blob'ы — по-уровнево (peaks) и по-кадрово (thumbnails), не одним куском.
+One background index worker per project; it decodes with its own short-lived FfmpegSource (never with the playback decoders). It writes by sections in transactions (probe → seek indexes → peaks → thumbnails); the UI shows placeholders until a section is ready. Blobs are written per level (peaks) and per frame (thumbnails), not as one chunk.
 
-`reel_*` пишет задача превью ленты (`kt-app::reel_preview`, поток
-`reel-preview`) — после офлайн-рендера, одной транзакцией, ПОСЛЕ пиков (отменённая
-на аудио задача полосы без огибающей не оставляет). Читает её она же, до любого
-декода. UI-поток БД не трогает (инвариант 8/12).
+The `reel_*` tables are written by the reel preview task (`kt-app::reel_preview`, thread `reel-preview`) — after the offline render, in one transaction, AFTER the peaks (a strip task cancelled on audio leaves no envelope behind). It also reads them, before any decode. The UI thread does not touch the DB (invariants 8/12).
 
-`packet_index` дополнительно пишет **любой** `FfmpegSource::open_indexed` после свежего скана (первое открытие файла в проекте) — поэтому уже второе открытие того же файла (перезапуск, добавление в плеер, тумбы) обходится без скан-прохода. Соединения короткоживущие, WAL + busy_timeout 5 с покрывают конкуренцию потоков.
+`packet_index` is additionally written by **any** `FfmpegSource::open_indexed` after a fresh scan (the first opening of a file in the project) — therefore a second opening of the same file (restart, adding to the player, thumbnails) goes without a scan pass. The connections are short-lived; WAL + busy_timeout 5 s cover the contention of threads.

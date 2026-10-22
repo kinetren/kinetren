@@ -1,74 +1,71 @@
 # kt-text
 
-> Контракты крейта и обязательные тесты — `openspec/specs/{generators}/spec.md`, причины решений — `design.md` рядом.
+> The crate's contracts and mandatory tests — `openspec/specs/{generators}/spec.md`; the reasons for the decisions — `design.md` next to it.
 
-Растеризация титров: чистая функция (параметры, W, H) → байты RGBA.
-Без зависимостей от наших крейтов и от GUI: kt-app и kt-cli обязаны
-получать ОДИНАКОВЫЕ байты кадра (инвариант 7), поэтому рисовать титр
-внутри egui нельзя в принципе. Хранимое представление параметров — у
-kt-model (`GeneratorKind::Text`); сюда его переводит ЕДИНСТВЕННАЯ
-функция маппинга в kt-media (второго парсера не заводить).
+The rasterization of titles: a pure function (parameters, W, H) → RGBA bytes.
+With no dependencies on our crates or on the GUI: kt-app and kt-cli MUST
+get the IDENTICAL frame bytes (invariant 7), therefore drawing a title
+inside egui is impossible in principle. The stored representation of the parameters is in
+kt-model (`GeneratorKind::Text`); it is converted here by the SINGLE mapping
+function in kt-media (do not create a second parser).
 
-## Правило детерминизма титра (инвариант 11; записано ДО кода — вердикт F-TXT-001)
+## The determinism rule of a title (invariant 11; written BEFORE the code — verdict F-TXT-001)
 
-Кадр титра — детерминированная функция (параметры, W, H). Поэтому:
+A title frame is a deterministic function (parameters, W, H). Therefore:
 
-1. **Шрифт кадра — ТОЛЬКО вендоренный из `assets/`** (паспорт —
-   `assets/FONT-MANIFEST.txt`: релиз, sha256). Системные шрифты в путь
-   КАДРА не попадают никогда; выбор системной семьи (С4) — это резолв в
-   КОНКРЕТНЫЙ файл, чей путь и sha256 входят в идентичность кадра, а
-   промах на другой машине — подмена вендоренным + видимое уведомление.
-   Замена/обновление файла шрифта = осознанная перегенерация голденов
-   титра с записью в манифест.
-2. **`harfrust` и `ab_glyph` запинены `=x.y.z`** в Cargo.toml (как wgpu:
-   «ЖЁСТКО той же версии»). Их `cargo update` = перегенерация голденов,
-   а не рутина. Если апгрейд egui поднимет транзитивную версию harfrust —
-   в дереве ЗАКОННО живут две: байты титра от GUI не зависят.
-3. **Хинтинг не исполняется**: вендорится unhinted-сборка, ab_glyph
-   инструкции игнорирует. Никакого «системного» рендеринга текста.
-4. **Никакой шестой библиотеки в `kt-ffmpeg/src/loader.rs`** (libass/
-   freetype/avfilter drawtext): они умеют всё это и делают байты кадра
-   функцией машины пользователя (вердикт F-TXT-005).
-5. **Раскладка считается по ПОЛНОЙ строке**; никакой зависимости от
-   локали, времени, окружения. Дверь F-TXT-006 открыта в Р.53 (пп.423-424)
-   ровно так, как обещано: **времени в kt-text нет и не будет** — анимация
-   приходит ДВУМЯ числами, которые считает kt-media из pts материала:
-   - `reveal` / `reveal_soft` — доля раскрытых КЛАСТЕРОВ и ширина фронта.
-     Модуляция стоит одной строкой в цикле силуэта, и при полной
-     видимости (`reveal >= 1 && reveal_soft <= 0`) берётся ТОЧНО прежняя
-     ветка: голден титра не может двинуться от появления анимации.
-   - `offset` — смещение ВСЕГО блока в px. Вызывающий обязан квантовать
-     его до 1/64 px ДО передачи (кратные 1/64 представимы в f64 точно),
-     тогда взаимная геометрия глифов между кадрами бит-в-бит постоянна.
+1. **The font of a frame — ONLY the one vendored from `assets/`** (the passport —
+   `assets/FONT-MANIFEST.txt`: the release, sha256). System fonts never get into the path
+   of a FRAME; the choice of a system family (C4) is a resolve into a CONCRETE file, whose path and sha256 enter the identity of the frame, and
+   a miss on another machine is a substitution with the vendored font + a visible notice.
+   Replacing/updating a font file is a deliberate regeneration of the title goldens
+   with an entry in the manifest.
+2. **`harfrust` and `ab_glyph` are pinned as `=x.y.z`** in Cargo.toml (like wgpu:
+   "STRICTLY the same version"). Their `cargo update` = a regeneration of the goldens,
+   not a routine. If an upgrade of egui raises the transitive version of harfrust —
+   two of them LAWFULLY live in the tree: the bytes of the title do not depend on the GUI.
+3. **Hinting is not executed**: the unhinted build is vendored, ab_glyph
+   ignores the instructions. No "system" text rendering whatsoever.
+4. **No sixth library in `kt-ffmpeg/src/loader.rs`** (libass/
+   freetype/avfilter drawtext): they can do all this and make the bytes of the frame
+   a function of the user's machine (verdict F-TXT-005).
+5. **The layout is computed over the FULL line**; no dependence on the
+   locale, time, environment. The door F-TXT-006 was opened in R.53 (items 423-424)
+   exactly as promised: **there is no time in kt-text and there will not be** — the animation
+   arrives as TWO numbers, which kt-media computes from the pts of the material:
+   - `reveal` / `reveal_soft` — the fraction of the revealed CLUSTERS and the width of the front.
+     The modulation stands in one line in the loop of the silhouette, and at full
+     visibility (`reveal >= 1 && reveal_soft <= 0`) the former branch is taken EXACTLY:
+     the golden of the title cannot move from the appearance of the animation.
+   - `offset` — the shift of the WHOLE block in px. The caller MUST quantize
+     it to 1/64 px BEFORE passing (multiples of 1/64 are exactly representable in f64),
+     then the mutual geometry of the glyphs between frames is bit-for-bit constant.
 
-   Кластер, а не символ и не глиф: harfrust отдаёт грапhemные кластеры
-   даром, и лигатура `fi`, база с диакритикой и ZWJ-эмодзи приходят одной
-   единицей. Своего сегментатора в проекте нет и заводить его ради
-   анимации — отдельная подсистема, которой здесь не место.
+   A cluster, not a character and not a glyph: harfrust gives grapheme clusters
+   for free, and a `fi` ligature, a base with a diacritic and a ZWJ emoji arrive as one
+   unit. The project has no segmenter of its own, and creating one for the sake of
+   the animation is a separate subsystem that does not belong here.
 
-   Известное ограничение: при МЯГКОМ проявлении обводка «щёлкает» на
-   середине — EDT считается по бинаризованному силуэту. У печатной
-   машинки этого нет.
-6. **`GOLDEN_VIDEO` не двигается**: сцена с титром — отдельный эталон
-   `GOLDEN_TITLE_*`. Голдены и юнит-тесты — только на вендоренных
-   шрифтах; f32-растеризация — статус-кво «linux x86_64», как у прочих.
+   A known limitation: with a SOFT appearance the outline "clicks" in the middle — the EDT is computed over the binarized silhouette. A typewriter does not have this.
+6. **`GOLDEN_VIDEO` does not move**: a scene with a title is a separate reference
+   `GOLDEN_TITLE_*`. The goldens and the unit tests — only on the vendored
+   fonts; the f32 rasterization is the status quo of "linux x86_64", as for the others.
 
-## Устройство
+## Structure
 
-- **harfrust — позиции** (кернинг GPOS, лигатуры; у Noto Sans legacy
-  `kern`-таблицы НЕТ вовсе — без шейпера кернинг был бы нулевым),
-  **ab_glyph — пиксели** по GlyphId. Метрики (upem, ascent/descent/gap)
-  берутся у ab_glyph от ТЕХ ЖЕ байт. Ловушка `PxScale`: это высота
-  (ascent−descent), НЕ em — масштаб выводится через `units_per_em`
-  единственной функцией, закреплено метрическим тестом (t481).
-- Все размеры параметров ОТНОСИТЕЛЬНЫЕ (кегль — доля высоты кадра,
-  трекинг/обводка/тень — доли em): кадр рождается в любом Quality без
-  пересчёта параметров, ступень декода S×Quality бесплатна.
-- Выход — straight-альфа RGBA8 (композит движка домножает сам,
-  kt-media/src/lib.rs: «premultiplied не требуется»); внутренний
-  композит слоёв оформления (С3) — premultiplied u16 с одной
-  разпремультипликацией на выходе.
-- `render_rgba` рисует кадр РОВНО (w, h); `layout_info` отдаёт боксы
-  блока и строк (драг в превью, плашка, дверь F-TXT-006); `uncovered` —
-  кодпоинты без глифа (видимый ответ «глифа нет» в окне — правило UI 11:
-  t100 проверяет каталоги, а текст титра приходит от пользователя).
+- **harfrust — positions** (GPOS kerning, ligatures; Noto Sans legacy
+  `kern` tables are NOT present at all — without the shaper the kerning would be zero),
+  **ab_glyph — pixels** by GlyphId. The metrics (upem, ascent/descent/gap)
+  are taken from ab_glyph from the SAME bytes. The trap of `PxScale`: it is the height
+  (ascent−descent), NOT the em — the scale is derived via `units_per_em`
+  by a single function, fixed by a metric test (t481).
+- All sizes of the parameters are RELATIVE (the point size is a fraction of the frame height,
+  tracking/outline/shadow — fractions of the em): a frame is born at any Quality without
+  recomputing the parameters; the decode scale step S×Quality is free.
+- The output is straight-alpha RGBA8 (the engine's composite multiplies it itself,
+  kt-media/src/lib.rs: "premultiplied is not required"); the internal composite of the
+  decoration layers (C3) — premultiplied u16 with a single
+  un-premultiplication at the output.
+- `render_rgba` draws the frame EXACTLY (w, h); `layout_info` gives the boxes
+  of the block and of the lines (drag in the preview, the plate, the door F-TXT-006); `uncovered` —
+  codepoints without a glyph (a visible answer "there is no glyph" in the window — UI rule 11:
+  t100 checks the catalogues, and the title text comes from the user).

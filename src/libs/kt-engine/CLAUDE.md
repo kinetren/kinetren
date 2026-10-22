@@ -1,375 +1,231 @@
 # kt-engine
 
-> Контракты крейта и обязательные тесты — `openspec/specs/{transport,audio-render,video-plan,transitions,compositions,export}/spec.md`, причины решений — `design.md` рядом.
+> The crate's contracts and mandatory tests — `openspec/specs/{transport,audio-render,video-plan,transitions,compositions,export}/spec.md`; the reasons for the decisions — `design.md` next to it.
 
-Render graph, планировщик декода, transport, prefetch, экспорт. Ядро собирается без FFmpeg/аудио-железа (реальные источники приходят из kt-media по трейту).
+Render graph, decode scheduler, transport, prefetch, export. The core builds without FFmpeg/audio hardware (real sources come from kt-media through a trait).
 
-## Инварианты
-- Декодером владеет ровно один MediaWorker-поток; клиенты — только через приоритетную очередь (Playback > NearPrefetch > FarPrefetch > Thumbnail) с generation-отменой; при равном приоритете — запросы вперёд по курсору декодера (анти ping-pong seek, дефект h).
-- Playback не блокируется на декоде: промах к дедлайну → тишина/последний кадр + underrun-флаг (дефект l).
-- FxStateStore — только у аудио-render-потока; diff цепочек по clip id при правках модели (инварианты №2–3, дефекты b, f).
-- Transport: playhead продвигает аудио-render-поток ровно на потреблённые колбэком кадры; wall-clock в путях рендера запрещён (детерминизм, инвариант №10).
-- Код композиции ОДИН (ред. Р.44): `VideoRenderer` строит `FramePlan` (video_plan.rs) для превью И экспорта; исполнителей два — CPU (`compose_from_cache*`, байт-эталон, все тесты) и GPU (`dyn VideoGpuExec` из kt-gpu, инжектится `Player::set_video_gpu`/`ExportBackends` — kt-engine от kt-gpu НЕ зависит). Тестовые конструкторы = CPU; продукт передаёт GPU явно. DeviceLost «отравляет» GPU до конца сессии (CPU-фолбэк + notice, t185); в экспорте ошибка GPU = ошибка экспорта (файл не смешивает бэкенды). С Р.44 CPU-фолбэк ПОЛНЫЙ: Pan3d считается на обоих бэкендах (слитый гео-проход kt-fx::geom, п.308), отказ `GpuRequired` удалён — экспорт без GPU легален и просто медленнее (t301). Гео-серии цепочки сливаются в один проход (пп.307-309); с Р.45 ВЕСЬ план цепочки (сегментация, tap-опы поточечных, K× барьеров) строит `kt_fx::plan::plan_chain` — `apply_chain_with_mixes` подаёт цепочку ЦЕЛЬНЫМИ слайсами между снапшот-точками силы, план слайса совпадает с куском плана целого (t306), а стопы силы обнуляют аккумуляторы K (смешение всегда на 1×). **Ключ CPU-мемоизации пост-FX включает разрешённую камеру** (`postfx_key_hash`, t66d): камера анимируется и выбирается правилом активной камеры ПО-КАДРОВО — статический fx_hash её не видит, без камеры в ключе правка/перенос камеры отдаёт стейл. Автоматизация параметров (Р.30): кривые разрешаются ОДИН раз при построении плана (layer_src, Cow-цепочка) — исполнители видят готовые значения, кривые входят в fx_chain_hash (t191). Экспорт стримит в пайпы ffmpeg-процесса, ноль temp-файлов (инвариант №9, дефект o).
-- **Ядра переходов (Р.33, п.224): `transitions.rs` — CPU-эталон И упаковка
-  параметров для GPU.** Вид из модели превращается в `TransMix` (режим + 8
-  чисел) РОВНО один раз; CPU-ядро и WGSL-зеркало `kt-gpu/shaders/composite.wgsl`
-  читают одни и те же числа. Правка формулы в одном файле без другого = превью
-  и экспорт показывают разное (инвариант 7); оба файла правятся одним коммитом,
-  тест — kt-gpu t224. Кроссфейд в ядра НЕ заходит: он остаётся целочисленным
-  `dissolve_into` (GOLDEN_VIDEO). Сольный фейд у края считается тем же ядром с
-  ПУСТОЙ второй стороной (`Img::Clear` / clear-бит униформы) — вайп «из ничего»
-  работает без второго кадра.
-- SIMD-композит (Р.32): `video_simd.rs` — AVX2-близнецы alpha_over/dissolve/scale_alpha, байт-в-байт со скаляром (правила — kt-fx/CLAUDE.md, раздел SIMD). Ветка `sa == 0` у alpha_over воспроизведена select'ом: без него формула испортила бы dst. Тест — `tests/simd_parity.rs` (t198).
-- **Конец перехода ищется по `kt_model::same_clip` + сверке границы** (Р.35):
-  морфер-слой режет цель, id оригинала остаётся у куска №0, а стык достаётся
-  тому куску, чья граница на нём стоит. Сравнение `c.id == id` возвращало не
-  тот кусок, и переход МОЛЧА исчезал (t237). Это единственная правка движка
-  ради резки: `t.joint(project)` считается по СЫРЫМ клипам и остаётся верным.
-  `gpu_required_clips` схлопывает куски в оригинал (`slice_origin`).
-- **Растяжение времени ВИДЕО (Р.37 п.2)**: `Slowed+Reverb` на видео-клипе
-  меняет не пиксели, а ВЫБОР исходного кадра — `clip_material_pos` идёт по
-  интегралу скорости (`kt_fx::warp_material_ticks`, ТИКОВЫЙ вход в карту:
-  сетка 48 кГц промахивается мимо границы кадра). Точка правки одна, и от
-  неё сами следуют `layers_at`, `wanted_frames`, префетч плеера, прогрев
-  превью и экспорт — это видео-аналог инварианта kt-fx «единый источник
-  правды для prefetch и рендера»: разойдутся — вечный промах кэша и чёрный
-  кадр (t247d). С Р.46 (п.318) заказ несёт ещё и КАЧЕСТВО ДЕКОДА:
-  `layers_at(t, quality)`/`wanted_frames(range, quality)` отдают
-  `(media, pts, Quality)`, где Quality — свойство КЛИПА
-  (`clip_decode_quality` = Quality × ступень). Ступень (п.320) =
-  min(`ss_taps(head_zoom)` клипа, запас натива над Quality с округлением
-  ВВЕРХ, `MAX_INTER_DIM / max(Quality)`); натив неизвестен — ступень 1.
-  Нативы приходят из ОТКРЫТЫХ источников: `VideoRenderer::new` их не знает
-  (ступень ≡ 1), плеер и экспорт зовут `new_with_natives`. Смена состава
-  источников (`add_media`/`replace_media`) пересобирает рендерер плеера —
-  иначе вернувшийся файл не менял бы ступень до правки модели (t316).
-  Бюджеты чанка экспорта и окна лукахеда считаются по
-  `max_decode_quality`: на Quality они недооценены в S² раз (п.15).
-  **С Р.58 (п.459) «ступень» — ДВА разных числа, и путать их нельзя.**
-  `clip_decode_scale` у ленты — ступень СУБ-ПЛАНА: она ОДНА на ленту
-  (максимум по экземплярам, `nest_scales`), потому что заказ и ключи
-  внутренних листьев обязаны быть одни (t450, t312/t317).
-  `clip_chain_scale` — ВХОД ЦЕПОЧКИ этого экземпляра =
-  `min(ступень ленты, ss_taps(head_zoom экземпляра))`: пустая цепочка,
-  одна сила слоя, ведущий стоп (морфер-слой) и барьеры без ресемпла
-  ступени НЕ потребляют, и S×-кадр им никто не вернул бы в Quality.
-  Разошлись — суб-композит ВПИСЫВАЕТСЯ перед цепочкой: решение одно на оба
-  бэкенда (`NestSrc::fit_to`), CPU зовёт `kt_fx::video::fit_into`, GPU
-  ставит `Resample` во весь кадр. Равны — шага нет, байты прежние (t631b).
-  Ступень ленты входит в `postfx_key_hash` и в GPU `plan_key` (t631c).
-  **Слой чужого размера не пропускается молча**: `complete = false`, а у
-  ленты ещё и `debug_assert` — её размер наша арифметика, а не сообщение
-  декодера (t633, t182). `head_zoom` вложения считается по камерам ТОЙ
-  ленты, где стоит экземпляр, — как в `nest_scales`.
-  - Клип без варпа — `warp: None`, путь БАЙТ-В-БАЙТ прежний; на этом стоит
-    GOLDEN_VIDEO.
-  - **Реверс + растяжение — «ВАРП, потом ЗЕРКАЛО»**, якорь — фактически
-    потреблённое `used`. Зеркало ДО варпа гнало бы кривую скорости задом
-    наперёд и рассинхронило A/V (аудио зеркалит уже потреблённый прямой
-    поток). Фаза повторов при этом может отличаться от зеркала выходной оси
-    на полкадра; на rate = 1 расхождения нет (t24 и GOLDEN целы).
-  - **Процедурный источник под варпом идёт по НЕПРЕРЫВНОМУ тику** (Р.56,
-    п.448): у генератора и титра своей сетки кадров нет, и пол давал
-    замедленному титру ступеньки по два кадра — в корне так же, как в
-    ленте.
-  - `u` (прогресс события) и `burst_index` (seed шума) остаются по
-    ВЫХОДНОМУ времени: иначе движение Ken Burns вжалось бы в первую треть
-    замедленного клипа, а зерно замерло бы на повторяющихся кадрах.
-  - `fx_chain_hash` уже хэширует `fx` и `auto`, поэтому смена скорости сама
-    инвалидирует пост-FX мемо.
-- **Смешивание кадров (Р.37 С5, «Кадры: смешивание»)** делается в ОБЩЕМ
-  коде плана (`layer_src` → `blend_frames`), а не в исполнителях: оба
-  бэкенда получают уже смешанный пре-FX кадр, и одну и ту же арифметику не
-  приходится держать синхронной в CPU-ядре и в WGSL (инвариант №7 — «код
-  композиции один, бэкенд это параметр исполнения»). Ядро — готовый
-  `dissolve_into` (байт-заморожен, с AVX2-близнецом), нового не заводим.
-  - Пару решает ОДНА функция `clip_frame_keys`; `layers_at` обязан отдавать
-    ОБА pts, иначе префетч греет один кадр, а план просит два — вечный
-    промах. С Р.56 у неё есть и второй вход — `blend_footage`,
-    унаследованный от вложения сверху (п.448): у самой ленты пары не
-    бывает, смешивают её листья.
-  - Вес `k == 0` (позиция на сетке, целые скорости, rate = 1) пары не даёт:
-    путь байт-в-байт прежний, и на этом стоит GOLDEN_VIDEO.
-  - `LayerBlend` остаётся в слое как МЕТАДАННЫЕ (сосед + вес) — они нужны
-    ключу `ReadbackCache` в kt-gpu: те же два кадра с другим весом дают
-    другую картинку.
-  - `max_concurrent_layers` считает смешивающий слой за ДВА кадра: иначе
-    чанк экспорта вытесняет соседа до композиции, срабатывает ветка голода
-    и БАЙТЫ ЭКСПОРТА зависят от тайминга кэша.
-  - Голод любой стороны — имеющаяся с полным весом, как у пары `Dissolve`.
-- **Ось зеркала reversed-события = фактически потреблённое `used` (Р.43,
-  п.292).** `chain_source_window_ext(..).end` — это ГРАНИЦА «дальше тишина», и
-  в неё входит `WARP_SOURCE_MARGIN_FRAMES` = 8192 кадра запаса ресемплера;
-  осью она быть не может — зеркаля от неё, замедленное зеркальное событие
-  читает материал на 170.7 мс дальше собственного конца, а видео якорится на
-  `ClipWarp::used` без запаса, и A/V расходятся. Обе величины живут в
-  `SrcWindow` раздельно; ось считает `kt_fx::chain_source_used`, и ТА ЖЕ ось
-  обязана стоять в зеркальной ветке `wanted_audio_bursts` — иначе вечный
-  промах кэша (правило п.13). Тест 282.
-- **`FxStateStore` доносит ГЕОМЕТРИЮ, а не только параметры (Р.43, п.293).**
-  `chain_fingerprint` знает лишь ВИДЫ слотов, поэтому трим/разрез/punch-out/
-  переанкоринг морф-куска меняют `source_in` при том же id и той же структуре
-  цепочки — и процессор продолжал читать от старого якоря («звук от другого
-  события»). `set_src_in` переставляет якорь ШВОМ, а не seek'ом: выход
-  непрерывен, реверб дозванивает (инвариант №3). Тест 283.
-- **Underrun'ы считаются в КАДРАХ на обоих путях (Р.43, п.289).** До этого
-  путь без FX считал кадры, а путь с FX — промахи бёрстов: одно и то же
-  голодание давало числа, различающиеся в 1024 раза. Новый счётчик — в
-  кадрах, они сравнимы с длиной события и с задержкой вывода. Тест 280.
-- **Сырой (реверс-транспортный) путь имеет СВОЙ `wanted_audio_bursts_raw`
-  (Р.43, п.295).** `render_frames_raw` играет все события через
-  `render_plain_clip` — линейно и без варпа; префетч, считавший окно по варпу,
-  грел не те бёрсты, и промах был вечным. Тест 285.
-- **Выход аудио-FX не кэшируется и не может** (Р.43, п.302): цепочка —
-  потоковый автомат, хвост реверба зависит от всей истории, и тот же кусок
-  на втором круге лупа даёт ДРУГОЙ выход. Кэш держит декодированный
-  ИСТОЧНИК; повтор от этого не дешевеет. У видео пост-FX кадр мемоизируется
-  (`PostFxVideo`) именно потому, что он функция `(кадр, цепочка, t)` без
-  истории. Практическое следствие: цена места на лупе постоянна, и мерить
-  её надо `kt-cli probe … --time` (он ходит через `BurstCache`, как
-  программа, — диагностика обязана повторять обвязку движка).
-- **Цена места зависит от ДЛИНЫ РЕГИОНА** (Р.43, п.303): заворот — это шов,
-  а шов сбрасывает готовый буфер ресемплера (`Warp::seek_source`), и тот
-  праймится заново, ≈0.3 мс на цепочку. Короткий регион заворачивается чаще
-  и платит чаще: 300 мс по хвостам ревербов стоят 10.2 мс/с против 4.7 у
-  региона в 1700 мс (7 цепочек, release). Хуже всего регион, в котором нет
-  ТЕЛ событий — одни хвосты. Мерить это надо режимом ПОВТОРА
-  (`kt-cli probe … --time` печатает и линейный прогон, и луп): линейный
-  замер зависимости от длины не видит вовсе.
-- **Ничто в горячем пути не смеет быть O(всего монтажа)** (Р.43, п.305).
-  `overlap_weight` перебирал ВСЕ клипы НА КАЖДЫЙ КАДР, и цена МЕСТА росла
-  линейно с размером ПРОЕКТА: 7 событий — 3.6 мс/с, те же 7 плюс 2000
-  далёких — 92 мс/с. Набор накрывающих событий меняется только на границах,
-  поэтому он считается раз подметанием (`LaneCover`), а на кадр остаётся
-  двоичный поиск; карты лежат в массиве ПО НОМЕРУ ДОРОЖКИ (хэш на каждый
-  кадр стоил 40 % на малых проектах). Порядок индексов в наборе —
-  возрастающий: `overlap_weight` берёт «первые два» именно в нём, и на этом
-  стоит GOLDEN_AUDIO. Сторожат тесты 292/293.
-  Сам поиск дал 11.5× на проекте пользователя (889 → 77 мс); сверху стоит
-  флаг `overlaps` — у события, которое ни с кем не пересекается, вес
-  тождественно 1.0, и путь закрыт одним `bool`. Он бесплатен и помогает
-  там, где одновременно активно много событий; на реальном монтаже это
-  ~1 %. **Долю от общего времени между стендами не сравнивать** — у неё
-  разный знаменатель (п.305).
-- **В хвосте FX варп не считается** (Р.43, п.304): за `gate_end` сухой
-  сигнал всё равно обнуляется гейтом, поэтому чанк целиком за ним
-  пропускается — байт-идентично по построению, но без ресемплера и без
-  чтения источника. Тесты 294/295.
-- Seek: reset FX + pre-roll max(tail, 100 мс) в мусор (тест 7).
-- Prefetch идемпотентен: wanted − coverage() → submit; ключи строго по сетке воспроизведения (дефект i); голова loop-региона — pin в кэше (тест 14).
+## Invariants
+- Exactly one MediaWorker thread owns the decoder; clients go only through a priority queue (Playback > NearPrefetch > FarPrefetch > Thumbnail) with generation cancellation; at equal priority, requests go ahead of the decoder's cursor (anti ping-pong seek, defect h).
+- Playback is not blocked on decoding: a miss by the deadline → silence / the last frame + an underrun flag (defect l).
+- FxStateStore — only on the audio-render thread; a diff of chains by clip id on model edits (invariants No. 2–3, defects b, f).
+- Transport: the playhead is advanced by the audio-render thread by exactly the frames consumed by the callback; wall-clock in render paths is forbidden (determinism, invariant No. 10).
+- The composition code is ONE (rev. R.44): `VideoRenderer` builds a `FramePlan` (video_plan.rs) for the preview AND for export; there are two executors — CPU (`compose_from_cache*`, the byte reference, all tests) and GPU (`dyn VideoGpuExec` from kt-gpu, injected through `Player::set_video_gpu`/`ExportBackends` — kt-engine does NOT depend on kt-gpu). Test constructors = CPU; the product passes the GPU explicitly. DeviceLost "poisons" the GPU until the end of the session (CPU fallback + notice, t185); in export a GPU error = an export error (the file does not mix backends). With R.44 the CPU fallback is FULL: Pan3d is computed on both backends (the merged geometry pass kt-fx::geom, item 308), the `GpuRequired` refusal has been removed — export without a GPU is legal and merely slower (t301). Geometry series of a chain are merged into one pass (items 307–309); with R.45 the WHOLE chain plan (segmentation, tap ops of point-wise effects, K× barriers) is built by `kt_fx::plan::plan_chain` — `apply_chain_with_mixes` feeds the chain in WHOLE slices between the snapshot points of strength, the plan of a slice coincides with the piece of the plan of the whole (t306), and the strength stops zero the K accumulators (mixing is always at 1×). **The key of the CPU memoisation of post-FX includes the resolved camera** (`postfx_key_hash`, t66d): the camera is animated and selected by the active-camera rule PER FRAME — the static fx_hash does not see it, and without the camera in the key an edit/move of the camera gives stale output. Parameter automation (R.30): curves are resolved ONCE when the plan is built (layer_src, Cow chain) — the executors see ready values, and the curves enter fx_chain_hash (t191). Export streams into the pipes of the ffmpeg process, zero temp files (invariant No. 9, defect o).
+- **Transition kernels (R.33, item 224): `transitions.rs` — the CPU reference AND the packing of parameters for the GPU.** The kind from the model is turned into a `TransMix` (mode + 8 numbers) EXACTLY once; the CPU kernel and the WGSL mirror `kt-gpu/shaders/composite.wgsl` read the same numbers. Editing the formula in one file without the other = the preview and the export show different things (invariant 7); both files are edited in one commit, the test — kt-gpu t224. The crossfade does NOT go into the kernels: it remains the integer `dissolve_into` (GOLDEN_VIDEO). A solo fade at the edge is computed by the same kernel with an EMPTY second side (`Img::Clear` / the clear bit of the uniform) — a wipe "from nothing" works without a second frame.
+- SIMD composite (R.32): `video_simd.rs` — AVX2 twins of alpha_over/dissolve/scale_alpha, byte-for-byte with the scalar (rules — kt-fx/CLAUDE.md, the SIMD section). The `sa == 0` branch of alpha_over is reproduced by a select: without it the formula would spoil dst. Test — `tests/simd_parity.rs` (t198).
+- **The end of a transition is found by `kt_model::same_clip` + a check of the boundary** (R.35): the morpher layer cuts the target, the original's id stays on piece No. 0, and the joint goes to that piece on whose boundary it stands. The comparison `c.id == id` returned the wrong piece, and the transition SILENTLY disappeared (t237). This is the only edit of the engine for the sake of cutting: `t.joint(project)` is computed over the RAW clips and remains correct. `gpu_required_clips` collapses pieces to the original (`slice_origin`).
+- **Stretching of VIDEO time (R.37 item 2)**: `Slowed+Reverb` on a video clip changes not the pixels but the CHOICE of the source frame — `clip_material_pos` goes by the integral of the speed (`kt_fx::warp_material_ticks`, a TICK input to the map: a 48 kHz grid misses the frame boundary). The point of editing is one, and from it `layers_at`, `wanted_frames`, the player's prefetch, the preview warm-up and export follow by themselves — this is the video analogue of the kt-fx invariant "a single source of truth for prefetch and render": if they diverge — an eternal cache miss and a black frame (t247d). With R.46 (item 318) the request also carries the DECODE QUALITY: `layers_at(t, quality)`/`wanted_frames(range, quality)` return `(media, pts, Quality)`, where Quality is a property of the CLIP (`clip_decode_quality` = Quality × step). The step (item 320) = min(`ss_taps(head_zoom)` of the clip, the native's margin over Quality rounded UP, `MAX_INTER_DIM / max(Quality)`); if the native is unknown — step 1. Natives come from the OPENED sources: `VideoRenderer::new` does not know them (step ≡ 1), the player and export call `new_with_natives`. A change of the composition of sources (`add_media`/`replace_media`) rebuilds the player's renderer — otherwise a file that came back would not change the step until a model edit (t316). The budgets of the export chunk and of the look-ahead window are counted by `max_decode_quality`: at Quality they are underestimated by S² times (item 15).
+  **With R.58 (item 459) "step" is TWO different numbers, and they must not be confused.** `clip_decode_scale` of a reel is the step of the SUB-PLAN: it is ONE for the reel (the maximum over instances, `nest_scales`), because the request and the keys of the inner leaves MUST be one (t450, t312/t317). `clip_chain_scale` is the INPUT OF THE CHAIN of this instance = `min(the reel's step, ss_taps(head_zoom of the instance))`: an empty chain, a single layer strength, a leading stop (the morpher layer) and barriers without a step resample do NOT consume it, and nobody would return the S×-frame to Quality for them. If they diverge — the sub-composite is FITTED before the chain: one decision for both backends (`NestSrc::fit_to`), the CPU calls `kt_fx::video::fit_into`, the GPU puts `Resample` over the whole frame. If equal — there is no step, the bytes are as before (t631b). The step of the reel enters `postfx_key_hash` and the GPU `plan_key` (t631c).
+  **A layer of a foreign size is not skipped silently**: `complete = false`, and the reel additionally has a `debug_assert` — its size is our arithmetic, not a message of the decoder (t633, t182). The `head_zoom` of an attachment is computed by the cameras of THAT reel where the instance stands — as in `nest_scales`.
+  - A clip without a warp — `warp: None`, the path is the former BYTE-FOR-BYTE; GOLDEN_VIDEO stands on this.
+  - **Reverse + stretch — "WARP, then MIRROR"**, the anchor is the actually consumed `used`. A mirror BEFORE the warp would drive the speed curve backwards and desynchronise A/V (the audio mirrors the already consumed forward stream). The phase of repeats may then differ from the mirror of the output axis by half a frame; at rate = 1 there is no discrepancy (t24 and GOLDEN are intact).
+  - **A procedural source under a warp follows the CONTINUOUS tick** (R.56, item 448): the generator and the title have no frame grid of their own, and the floor gave the slowed title steps of two frames — at the root just as in a reel.
+  - `u` (the progress of the event) and `burst_index` (the noise seed) remain by the OUTPUT time: otherwise the Ken Burns motion would be squeezed into the first third of the slowed clip, and the grain would freeze on repeated frames.
+  - `fx_chain_hash` already hashes `fx` and `auto`, therefore a change of speed by itself invalidates the post-FX memo.
+- **Frame blending (R.37 C5, "Frames: blending")** is done in the COMMON code of the plan (`layer_src` → `blend_frames`), not in the executors: both backends receive an already blended pre-FX frame, and the same arithmetic does not have to be kept in sync in the CPU kernel and in WGSL (invariant No. 7 — "the composition code is one, the backend is a parameter of execution"). The kernel is the ready `dissolve_into` (byte-frozen, with an AVX2 twin); nothing new is introduced.
+  - A PAIR is decided by ONE function `clip_frame_keys`; `layers_at` MUST return BOTH pts, otherwise prefetch warms one frame while the plan asks for two — an eternal miss. With R.56 it also has a second entry — `blend_footage`, inherited from the attachment above (item 448): the reel itself has no pairs, its leaves blend.
+  - Weight `k == 0` (a position on the grid, integer speeds, rate = 1) gives no pair: the path is the former byte-for-byte, and GOLDEN_VIDEO stands on this.
+  - `LayerBlend` remains in the layer as METADATA (the neighbour + the weight) — they are needed by the `ReadbackCache` key in kt-gpu: the same two frames with a different weight give a different picture.
+  - `max_concurrent_layers` counts a blending layer as TWO frames: otherwise the export chunk evicts the neighbour before the composition, the starvation branch fires, and the EXPORT BYTES depend on the timing of the cache.
+  - Starvation of either side — the one available at full weight, as for a `Dissolve` pair.
+- **The axis of the mirror of a reversed event = the actually consumed `used` (R.43, item 292).** `chain_source_window_ext(..).end` is the BOUNDARY "beyond — silence", and it includes `WARP_SOURCE_MARGIN_FRAMES` = 8192 frames of resampler margin; it cannot be the axis: mirroring from it, a slowed mirrored event reads material 170.7 ms beyond its own end, while the video anchors to `ClipWarp::used` without a margin, and A/V diverge. Both quantities live separately in `SrcWindow`; the axis is computed by `kt_fx::chain_source_used`, and the SAME axis MUST stand in the mirror branch of `wanted_audio_bursts` — otherwise an eternal cache miss (rule item 13). Test 282.
+- **`FxStateStore` carries the GEOMETRY, not only the parameters (R.43, item 293).** `chain_fingerprint` knows only the KINDS of slots, therefore a trim/cut/punch-out/re-anchoring of a morph piece changes `source_in` with the same id and the same chain structure — and the processor went on reading from the old anchor ("sound from another event"). `set_src_in` moves the anchor with a SEAM, not a seek: the output stays continuous, the reverb rings out (invariant No. 3). Test 283.
+- **Underruns are counted in FRAMES on both paths (R.43, item 289).** Before this the path without FX counted frames, and the path with FX counted burst misses: the same starvation gave numbers differing by a factor of 1024. The new counter is in frames, they are comparable with the length of an event and with the output latency. Test 280.
+- **The raw (reverse-transport) path has its OWN `wanted_audio_bursts_raw`
+  (R.43, item 295).** `render_frames_raw` plays all events through `render_plain_clip` — linearly and without a warp; the prefetch, which counted the window by the warp, warmed the wrong bursts, and the miss was eternal. Test 285.
+- **The output of audio FX is not cached and cannot be** (R.43, item 302): the chain is a streaming automaton, the reverb tail depends on the whole history, and the same piece on the second lap of a loop gives a DIFFERENT output. The cache holds the decoded SOURCE; a repeat does not become cheaper because of this. In video the post-FX frame is memoised (`PostFxVideo`) precisely because it is a function `(frame, chain, t)` without history. The practical consequence: the cost of a place on a loop is constant, and it must be measured with `kt-cli probe … --time` (it goes through `BurstCache`, as the program does — the diagnostics must repeat the engine's wiring).
+- **The cost of a place depends on the LENGTH OF THE REGION** (R.43, item 303): the wrap-around is a seam, and a seam resets the ready resampler buffer (`Warp::seek_source`), and it is primed again, ≈0.3 ms per chain. A short region wraps more often and pays more often: 300 ms over the reverb tails costs 10.2 ms/s against 4.7 for a region of 1700 ms (7 chains, release). The worst is a region with NO BODIES of events — only tails. This must be measured in REPEAT mode (`kt-cli probe … --time` prints both the linear run and the loop): a linear measurement does not see the dependence on length at all.
+- **Nothing in the hot path may be O(the whole edit)** (R.43, item 305).
+  `overlap_weight` went through ALL the clips FOR EACH FRAME, and the cost of a PLACE grew linearly with the size of the PROJECT: 7 events — 3.6 ms/s, the same 7 plus 2000 distant ones — 92 ms/s. The set of covering events changes only at boundaries, therefore it is computed once by a sweep (`LaneCover`), and per frame a binary search remains; the maps lie in an array BY TRACK NUMBER (a hash per frame cost 40 % on small projects). The order of indices in the set is ascending: `overlap_weight` takes "the first two" in exactly that order, and GOLDEN_AUDIO stands on this. Tests 292/293 guard it.
+  The search itself gave 11.5× on the user's project (889 → 77 ms); on top stands the flag `overlaps` — for an event that overlaps nobody, the weight is identically 1.0, and the path is closed by one `bool`. It is free and helps where many events are active at once; on a real edit it is about 1 %. **Do not compare the share of total time between benches** — it has a different denominator (item 305).
+- **In the tail of FX the warp is not computed** (R.43, item 304): beyond `gate_end` the dry signal is zeroed by the gate anyway, so a chunk lying entirely beyond it is skipped — byte-identical by construction, but without the resampler and without reading the source. Tests 294/295.
+- Seek: reset FX + pre-roll max(tail, 100 ms) into garbage (test 7).
+- Prefetch is idempotent: wanted − coverage() → submit; keys strictly on the playback grid (defect i); the head of a loop region — a pin in the cache (test 14).
 
-## Закон П: путь медиа — свойство ИСТОЧНИКА, а не плана (Р.53, п.412)
+## Law P: the media path is a property of the SOURCE, not of the plan (R.53, item 412)
 
-Рендереры знают о медиа ровно `MediaId`; ЧТО по этому адресу лежит —
-файл, синтетика или генератор с параметрами в пути — им безразлично.
-Отсюда закон: **`Command::SetMediaPath` не имеет права клонировать
-проект, пересобирать рендереры и трогать чужие источники.** Его
-единственный адресат — воркер ЭТОГО медиа.
+The renderers know about media exactly `MediaId`; WHAT lies at that address —
+a file, synthetics, or a generator with parameters in the path — is irrelevant to them.
+Hence the law: **`Command::SetMediaPath` has no right to clone
+the project, rebuild the renderers, or touch other people's sources.** Its
+only addressee is the worker of THIS media.
 
-- `Command::touches_render_plan()` — исчерпывающий match в kt-model:
-  новая команда не соберётся, пока про неё не сказано, двигает она план
-  или нет. `SetMediaPath` — единственная, кто отвечает «нет».
-- `Player::retune_media` кладёт новый путь в `Queue.retune` — ОТДЕЛЬНОЕ
-  поле, а не `RequestKind`: seek посреди драга параметра молча отменил
-  бы заявку generation-отменой. Воркер обрабатывает её ПЕРВОЙ, до
-  `pick_next`, и там же чистит кэш источника — гонка «старый кадр
-  дописан после чистки» снята по построению.
-- `content_version` отделён от `project_version`: префетч просыпается,
-  рендереры не пересобираются. Условие пересборки в `prefetch_loop`
-  смотрит ТОЛЬКО на `project_version`.
-- Источник, не умеющий `retune` (файл — всегда), честно пересоздаётся
-  через `replace_media`; решает это предикат `kt_media::factory::
-  can_retune`, и он обязан совпадать с `MediaSource::retune` точь-в-точь
-  (сторож t499).
+- `Command::touches_render_plan()` — an exhaustive match in kt-model:
+  a new command will not compile until it is stated whether it moves the plan
+  or not. `SetMediaPath` is the only one that answers "no".
+- `Player::retune_media` puts the new path into `Queue.retune` — a SEPARATE
+  field, not a `RequestKind`: a seek in the middle of a parameter drag would silently
+  cancel the request by generation cancellation. The worker handles it FIRST, before
+  `pick_next`, and there it also clears the source's cache — the race "the old frame
+  is appended after the clearing" is removed by construction.
+- `content_version` is separated from `project_version`: prefetch wakes up,
+  the renderers are not rebuilt. The rebuild condition in `prefetch_loop`
+  looks ONLY at `project_version`.
+- A source that does not know `retune` (a file — always) is honestly recreated
+  through `replace_media`; the predicate `kt_media::factory::
+  can_retune` decides this, and it MUST match `MediaSource::retune` exactly (guard t499).
 
-Прецедент того же рода — `on_region_changed` (Р.43 п.296, сторож t286):
-`set_project` — это клон всего проекта плюс остановка аудио-render-потока,
-и платить им за правку, которой план не касается, нельзя.
+A precedent of the same kind — `on_region_changed` (R.43 item 296, guard t286):
+`set_project` is a clone of the whole project plus a stop of the audio-render thread,
+and one may not pay for an edit that the plan does not touch with them.
 
-### Генератор на СОБЫТИИ (Р.59, стадия 2)
+### A generator on the EVENT (R.59, stage 2)
 
-Значения генератора уехали с медиа на событие, и закон П от этого только
-окреп: адрес источника считается от СОБЫТИЯ (`clip_source_addr` =
-`GEN_TAG | id` у генератора, `c.media` у всех остальных), а ЗНАЧЕНИЯ живут
-в состоянии источника и доезжают полосой retune.
+The values of the generator moved from the media to the event, and law P has only
+strengthened because of this: the source's address is computed from the EVENT (`clip_source_addr` =
+`GEN_TAG | id` for a generator, `c.media` for all others), and the VALUES live
+in the source's state and arrive through the retune lane.
 
-- **Адрес — от события, а не от значений.** Он входит в план, и хэш
-  значений в нём означал бы пересборку плана на каждое нажатие клавиши.
-  Форма заказа `(адрес, тик, качество)` не изменилась, поэтому «заказ ==
-  чтение», полоски прогретости, префетч, экспорт-чанки и покрытие лент
-  работают без правок.
-- **Список источников считает ОДИН код — `gen_sources(project)`** (корень
-  плюс каждая лента через `effective_reel`). По нему их поднимают
-  `Player::sync_generators`, `render_raw_*` и kt-cli. Второго перечисления
-  быть не должно: разойдись они, экспорт отрендерил бы не то, что
-  показывало превью.
-- **Чужие мемо чистит ТОТ ЖЕ поток, что применяет перенастройку.**
-  `Retune::Gen` везёт с собой список адресов лент-предков
-  (`reel_chain_of_clip` → `nest_source_id`), и воркер инвалидирует их там
-  же, где чистит свой кэш. Инвалидируй их вызывающий — между «почистили» и
-  «применили» успевает пройти композит на СТАРОМ кадре и записать стейл
-  заново. Сторож — t663.
-- **Мемоизируется только ПОЛНЫЙ суб-композит** (`nest_frame_cpu`). Голодный
-  кадр — функция не редакции ленты, а того, что успел положить воркер;
-  записанный под ключом редакции, он давал ЧЁРНУЮ ленту навсегда: ключ от
-  прогрева не двигается, а снаружи композит объявлен полным. Живой плеер
-  попадал в это на каждом холодном старте.
+- **The address — from the event, not from the values.** It enters the plan, and a hash of
+  the values in it would mean rebuilding the plan on every keystroke. The
+  form of the request `(address, tick, quality)` has not changed, so "the request ==
+  the read", the coverage bars, prefetch, export chunks and the coverage of reels
+  work without edits.
+- **The list of sources is computed by ONE code — `gen_sources(project)`** (the root
+  plus every reel through `effective_reel`). By it they are raised by
+  `Player::sync_generators`, `render_raw_*` and kt-cli. There must be no second enumeration:
+  if they diverged, export would render something other than what the preview showed.
+- **Foreign memos are cleared by THE SAME thread that applies the reconfiguration.**
+  `Retune::Gen` carries a list of the addresses of the ancestor reels
+  (`reel_chain_of_clip` → `nest_source_id`), and the worker invalidates them
+  right where it clears its own cache. If the caller invalidated them — between "cleared" and
+  "applied" a composite on the OLD frame would manage to pass and write the stale value again. Guard — t663.
+- **Only the FULL sub-composite is memoised** (`nest_frame_cpu`). A starved
+  frame is a function not of the reel's revision but of what the worker managed to put in; written under the revision's key, it gave a BLACK reel forever: the key does not move from the warm-up, and outside the composite is declared complete. The live player
+  fell into this on every cold start.
 
-## Тесты
-1–3 (конкатенация/кроссфейд/gain), 7 (детерминизм seek), 9 (планировщик), 11 (golden-экспорт), 13 (вьюпорт-чёрн), 14 (loop).
-- Тесты 166–168: `tests/loop_fx.rs` (шов заворота, короткий регион, сложный монтаж без underrun'ов).
-- Reverse-транспорт (J4 v1.4): rate<0 — render-поток рендерит блоки НАЗАД (render_frames_raw/render_looped_raw, БЕЗ FX — dry, как Vegas) и разворачивает покадрово перед кольцом; колбэк направление не знает (|rate|), знак применяется в advance_frames_wrapped (wrap в обе стороны). Смена знака = мини-seek без бампа generation (reset FX + flush кольца). Тесты 41–45.
-- **Перекрытия (Р.28, п.162)**: при `project.overlap_layers` наложение клипов законно и звучит само — `overlap_weight` (v1: equal-power на двоих, 1/N при 3+) умножается на вес перехода в `overlap_at`. На клипах встык тождественно 1.0, поэтому GOLDEN не двигается. Видео (п.177): сверху тот, кто начался ПОЗЖЕ — правило Vegas; ключ композиции `(Reverse(lane), start)`. Полоса таймлайна в kt-app рисует тем же порядком, хит-тест — обратным.
-- Переходы (Р.24, пп.135–138): кроссфейд/dissolve — явный TransitionEvent. Аудио: fade-окна предвычисляются в AudioRenderer::new (границы флорятся в кадры той же конвертацией, что границы клипов — конверсия старых перекрытий байт-точна, GOLDEN не перегенерировался); «ручки» читают источник за краями куска, за краями материала — тишина/кламп-кадр БЕЗ underrun; у reversed-FX клипов ручки отключены (зеркальный якорь window_end). Видео: пара окна блендится линейно (k/4096) в один слой до alpha_over, недостающая половина — полный вес + complete=false. **Фейд (Р.25)** — переход с одним живым концом: окно помечено solo, слой умножается на альфу k/4096 и идёт обычным alpha_over (под ним просвечивает нижняя дорожка, нет её — чёрное), `complete` НЕ сбрасывается: пары нет по МОДЕЛИ, ждать нечего. Аудио-веса у фейда те же equal-power. Длина рендера — `project_range` = max(материал, `project.timeline_end`): хвостовой Gap чужого файла рендерится чёрным/тишиной (п.158). FX-хвост за материалом не взвешивается.
-- Loop-«вооружённость» (пп.132–134): заворот аудио/префетча согласован с ТРАНСПОРТОМ (wrap только изнутри региона; грань `p == e` инклюзивна, для реверса — `p == s`). `loop_armed` пересчитывается ТОЛЬКО на прыжках (смена generation / знака rate / значения региона) по завёрнутому playhead через `loop_arm_after_jump`; текущий `render_head` для этого НЕПРИГОДЕН — при armed-лупе он растёт линейно и фолдится на каждом бурсте. Обе fill-ветки, Playback-префетч и `advance_frames_wrapped` ходят через единый `effective_region` (None при disarm — линейная игра того, что под курсором). Флип Some↔None на лету (Loop переключили при игре, границу перетащили через playhead) = мини-seek без бампа generation, как смена знака. `video_display_frame` — двустороннее условие по завёрнутому playhead, флаг ему не нужен (внутри региона ⟹ armed по построению). Reverse-fill гейтится зеркально (`render_head <= re`): guard `> rs` гасил луп, когда render_head уходил ниже начала региона. Тесты 132–134.
-- Часы ПОКАЗА видео (п.56): playhead двигается квантами аудио-колбэка (PipeWire до 2048 сэмплов = 42.7 мс) — потребители позиции для отображения ходят через video_playhead() (display_extrapolation: wall-clock интерполирует МЕЖДУ шагами мастер-часов, кламп размером последнего кванта; сырая output_latency дрожит — читается latency_smooth, EMA). Аудио остаётся мастером (№6), офлайн-пути wall-clock не видят (№11). Тест 56.
-- **Заворот loop'а — ШОВ (Р.28, пп.166–167)**: разрыв клип-локальной позиции при НЕПРЕРЫВНОМ выходе (wrap региона, сдвиг клипа мышью при игре) не сбрасывает FX — `ClipProcessor::seam` переставляет источник, реверб дозванивает через круг. `hard_seek` с пре-роллом остаётся ровно за настоящим seek'ом: его признак — `reset()` (его делает сам player на generation/смене знака rate/флипе loop'а). Промахи пре-ролла — `RenderStats.warmup_misses`, НЕ `underruns` (их не слышно). Фоновый префетч фолдит окно упреждения в loop-регион (`lookahead_windows`) — за концом региона греть нечего, а вытесненная голова стоит промахов на каждом круге.
-- **Уровень события (Р.28, п.174)**: `VideoClip.opacity_k` (0..4096) множится на альфу слоя там же, где живут фейды — обычный слой через `scale_alpha_into`, solo-фейд домножается, у пары dissolve уровни смешиваются тем же весом, что и картинка. 1.0 — тождество, GOLDEN цел.
-- **«Чёрный ящик» (Р.28, п.175)**: `flight::FlightRecorder` — кольцо на 512 записей, пишет ТОЛЬКО render-поток (в колбэк не заходит, инвариант №6). Дедуп подряд идущих, снимок дельт раз в секунду и только если они ненулевые, отдельное событие `STALL` (играем, а playhead стоит). Дамп — `Player::flight.dump()`.
-- prefetch-поток пропускает проходы в простое (пауза + состояние не менялось); аудио-render спит 8 мс при игре (запас кольца четырёхкратный) — 2 мс были 500 пробуждений/с (п.53).
-- **Переходы Р.51 (пп.396-401)**: инверсию (`TransitionEvent.invert`)
-  исполняет ПЛАН — `apply_invert` в video.rs (swap сторон + k→4096−k до
-  ядра); ядра/WGSL/кэш-ключи не тронуты, любая сборка `Dissolve`-пары
-  обязана пройти через хелпер. Наложенный переход: окно = зона
-  перекрытия (`TransitionEvent::window`), подцепка в audio `build_reel`
-  и video по `reel.transitions()` (НЕ по корню — переход внутри
-  вложенной ленты иначе молча пропадает, дефект Р.50 закрыт в п.399);
-  окно наложения глушит зашитый equal-power через `fade_*_excl` +
-  `overlap_at` → 1.0. Объёмные виды: `trans_ext` (f64 гомографии →
-  f32) — единственный источник ext для ОБОИХ бэкендов; в кэш-ключи не
-  входит (функция уже хэшированного mode/p/k). Направленные ядра
-  сторожит closed-form t459 на рампах: t224 сверяет зеркала и слеп к
-  «оба сломались одинаково».
+## Tests
+1–3 (concatenation/crossfade/gain), 7 (seek determinism), 9 (scheduler), 11 (golden export), 13 (viewport black), 14 (loop).
+- Tests 166–168: `tests/loop_fx.rs` (the seam of the wrap-around, a short region, a complex edit without underruns).
+- Reverse transport (J4 v1.4): rate<0 — the render thread renders blocks BACKWARDS (render_frames_raw/render_looped_raw, WITHOUT FX — dry, as in Vegas) and unrolls frame by frame before the ring; the callback does not know the direction (|rate|), the sign is applied in advance_frames_wrapped (wrap in both directions). A change of sign = a mini-seek without bumping the generation (reset FX + flush of the ring). Tests 41–45.
+- **Overlaps (R.28, item 162)**: with `project.overlap_layers` the overlapping of clips is legitimate and sounds by itself — `overlap_weight` (v1: equal-power for two, 1/N for 3+) is multiplied by the transition's weight in `overlap_at`. On clips butted together it is identically 1.0, therefore GOLDEN does not move. Video (item 177): on top is the one that STARTED LATER — the Vegas rule; the composition key `(Reverse(lane), start)`. The timeline lane in kt-app draws in the same order, the hit test in the reverse.
+- Transitions (R.24, items 135–138): crossfade/dissolve — an explicit TransitionEvent. Audio: the fade windows are precomputed in AudioRenderer::new (the boundaries are floored to frames by the same conversion as the clip boundaries — the conversion of old overlaps is byte-exact, GOLDEN was not regenerated); the "handles" read the source beyond the edges of the piece, beyond the edges of the material — silence / a clamped frame WITHOUT underrun; for reversed-FX clips the handles are disabled (the mirror anchor window_end). Video: the window pair is blended linearly (k/4096) into one layer before alpha_over, and the missing half — full weight + complete=false. **The fade (R.25)** — a transition with one live end: the window is marked solo, the layer is multiplied by the alpha k/4096 and goes through the ordinary alpha_over (the lower track shows through beneath it, if there is none — black), `complete` is NOT reset: there is no pair by the MODEL, there is nothing to wait for. The audio weights of the fade are the same equal-power. The render length — `project_range` = max(material, `project.timeline_end`): a trailing Gap of a foreign file is rendered black/silence (item 158). FX tail beyond the material is not weighted.
+- Loop "armedness" (items 132–134): the wrap of audio/prefetch is consistent with the TRANSPORT (wrap only from inside the region; the edge `p == e` is inclusive, for reverse — `p == s`). `loop_armed` is recomputed ONLY on jumps (a change of generation / sign of rate / region values) from the wrapped playhead through `loop_arm_after_jump`; the current `render_head` is UNSUITABLE for this — with an armed loop it grows linearly and is folded on every burst. Both fill branches, the Playback prefetch and `advance_frames_wrapped` go through the single `effective_region` (None on disarm — the linear play of what is under the cursor). A flip Some↔None on the fly (Loop switched on during play, the boundary dragged past the playhead) = a mini-seek without a generation bump, like a change of sign. `video_display_frame` is a two-sided condition on the wrapped playhead, it needs no flag (inside the region ⟹ armed by construction). The reverse fill is gated symmetrically (`render_head <= re`): the guard `> rs` switched the loop off when render_head went below the start of the region. Tests 132–134.
+- The video DISPLAY clock (item 56): the playhead moves in quanta of the audio callback (PipeWire up to 2048 samples = 42.7 ms) — the consumers of the position for display go through video_playhead() (display_extrapolation: the wall-clock interpolates BETWEEN steps of the master clock, clamped to the size of the last quantum; the raw output_latency jitters — latency_smooth, an EMA, is read). Audio remains the master (No. 6), offline paths do not see the wall-clock (No. 11). Test 56.
+- **The wrap of the loop is a SEAM (R.28, items 166–167)**: a break of the clip-local position during CONTINUOUS output (the wrap of the region, a mouse shift of the clip during play) does not reset FX — `ClipProcessor::seam` moves the source, the reverb rings out through the circle. `hard_seek` with pre-roll stays exactly for a real seek: its sign is `reset()` (done by the player itself on generation / a sign change of rate / a flip of loop). Pre-roll misses — `RenderStats.warmup_misses`, NOT `underruns` (they are not heard). The background prefetch folds the look-ahead window into the loop region (`lookahead_windows`) — beyond the end of the region there is nothing to warm, and the evicted head costs misses on every lap.
+- **The level of the event (R.28, item 174)**: `VideoClip.opacity_k` (0..4096) is multiplied by the layer's alpha right where the fades live — an ordinary layer through `scale_alpha_into`, a solo fade is multiplied, in a dissolve pair the levels are blended by the same weight as the picture. 1.0 is an identity, GOLDEN is intact.
+- **"Black box" (R.28, item 175)**: `flight::FlightRecorder` — a ring of 512 records, written ONLY by the render thread (it does not enter the callback, invariant No. 6). Deduplication of consecutive ones, a snapshot of deltas once a second and only if they are non-zero, a separate event `STALL` (playing, but the playhead stands still). The dump — `Player::flight.dump()`.
+- The prefetch thread skips passes when idle (a pause + the state has not changed); the audio render sleeps 8 ms during play (the ring's margin is fourfold) — 2 ms gave 500 wake-ups per second (item 53).
+- **Transitions of R.51 (items 396–401)**: the inversion (`TransitionEvent.invert`) is executed by the PLAN — `apply_invert` in video.rs (swap of the sides + k→4096−k before the kernel); the kernels/WGSL/cache keys are untouched, and any assembly of a `Dissolve` pair MUST go through the helper. An overlaid transition: the window = the overlap zone (`TransitionEvent::window`), attached in audio `build_reel` and in video by `reel.transitions()` (NOT by the root — a transition inside a nested reel would otherwise silently disappear, the defect of R.50 closed in item 399); the overlap window mutes the built-in equal-power through `fade_*_excl` + `overlap_at` → 1.0. Volumetric kinds: `trans_ext` (the f64 homographies → f32) — the single source of ext for BOTH backends; it is not in the cache keys (a function of the already hashed mode/p/k). The directional kernels are guarded by the closed-form t459 on ramps: t224 checks the mirrors and is blind to "both broke in the same way".
 
-## Суб-микс вложенной ленты — продюсер с пре-роллом (Р.50 п.387, Р.55 п.440)
+## The sub-mix of a nested reel — a producer with pre-roll (R.50 item 387, R.55 item 440)
 
-Вложение в аудио — **виртуальное медиа под фетчером**, а не ветка в
-миксере: поэтому `render_plain_clip`, `render_fx_clip`, веса,
-`chain_source_window_ext`, `fill_source` и ПОРЯДОК СЛОЖЕНИЯ f32 не знают о
-лентах ни строки, и GOLDEN_AUDIO не двигается.
+An embedding in audio is **a virtual medium under the fetcher**, not a branch in the
+mixer: therefore `render_plain_clip`, `render_fx_clip`, the weights,
+`chain_source_window_ext`, `fill_source` and the ORDER OF SUMMATION of f32 know nothing
+about reels, not a line, and GOLDEN_AUDIO does not move.
 
-**Закон С4: суб-микс рендерится ТОЛЬКО ВПЕРЁД и только по возрастанию
-времени ленты.** Реверс и растяжение экземпляра действуют на СЭМПЛЫ
-готового микса — так же, как на сэмплы файла. Внутренний реверб обязан
-звучать вперёд ВНУТРИ ленты, а зеркало снаружи даёт обратный реверб; играть
-ленту назад значит посчитать третий, ничей результат.
+**Law C4: the sub-mix is rendered ONLY FORWARD and only in ascending
+reel time.** The reverse and the stretch of the instance act on the SAMPLES of the
+finished mix — just as on the samples of a file. The internal reverb must
+sound forward INSIDE the reel, and a mirror from the outside gives a reversed reverb; playing the reel backwards means computing a third result that belongs to no one.
 
-**Продюсер (`NestFetcher`) — три ветки и ни одной больше:**
+**The producer (`NestFetcher`) — three branches and not one more:**
 
-1. бёрст в кольце — отдать, состояние не трогать;
-2. впереди курсора не дальше блока — ДОГНАТЬ вперёд;
-3. иначе — **канонический переезд**: сброс, старт с ГРАНИЦЫ БЛОКА минус
-   пре-ролл, вперёд до нужного.
+1. a burst in the ring — hand it over, do not touch the state;
+2. ahead of the cursor by no more than a block — CATCH UP forward;
+3. otherwise — **the canonical move**: reset, start from the BLOCK BOUNDARY minus the pre-roll, forward to the required point.
 
-Каноничность сетки делает значение бёрста чистой функцией индекса.
-Двузначность «дошли непрерывно / переехали» остаётся ровно одна — та же
-пара `seam`/`hard_seek`, что у обычного клипа. **Четвёртая ветка — новый
-сорт недетерминизма**, которого в аудио не бывает (инвариант 11).
+The canonicity of the grid makes the value of a burst a pure function of the index.
+The two-valuedness "reached continuously / moved" remains exactly one — the same
+pair `seam`/`hard_seek` as for an ordinary clip. **The fourth branch is a new
+sort of non-determinism**, which does not occur in audio (invariant 11).
 
-**Пре-ролл и блок — функции ПРОЕКТА, не бюджета памяти.** Это единственный
-способ сломать инвариант 11 здесь: зависел бы размер кольца от бюджета —
-байты выхода зависели бы от него же. Пре-ролл = хвост самой хвостатой
-цепочки ленты (рекурсивно), блок = 4× пре-ролла. У ленты без хвостатых
-эффектов пре-ролл НУЛЕВОЙ, и реверс стоит как прямое воспроизведение.
+**Pre-roll and block are functions of the PROJECT, not of the memory budget.** This is the only
+way to break invariant 11 here: the size of the ring would depend on the budget —
+the bytes of the output would depend on it too. Pre-roll = the tail of the most tail-heavy
+chain of the reel (recursively), block = 4× the pre-roll. A reel without tail-heavy
+effects has a ZERO pre-roll, and reverse costs the same as direct playback.
 
-**Ключ состояния — ЭКЗЕМПЛЯР (`ClipId`), не лента.** Лента в пяти местах —
-пять разных потоков через её цепочки. Читатель доносится `AudioFetcher::
-begin_clip` (пустое умолчание, один вызов на клип на бёрст).
+**The state key is the INSTANCE (`ClipId`), not the reel.** The reel in five places is
+five different streams through its chains. The reader is delivered by `AudioFetcher::
+begin_clip` (an empty default, one call per clip per burst).
 
-**Суб-микс НЕ кладётся в `BurstCache`**: его производство — прогон
-FX-состояния ленты, а состояние трогает только аудио-render-поток
-(инвариант 2).
+**The sub-mix is NOT put into the `BurstCache`**: its production is a run of the reel's
+FX state, and only the audio-render thread touches the state (invariant 2).
 
-**Заказ и чтение — ОДНА функция `nest_read_window`.** Продюсер читает ленту
-шире окна потребления (переезд начинается с границы блока), и не расширь
-заказ — вечный промах на каждом переезде (п.13, t17). Гейт по РЕВЕРСУ, а не
-по варпу: варп монотонен, и на прямом пути заказ не двигается ни на бёрст.
+**The request and the read — ONE function `nest_read_window`.** The producer reads the reel
+wider than the consumption window (the move begins at the block boundary), and if you do not widen
+the request — an eternal miss on every move (item 13, t17). The gate is by REVERSE, not by the warp: the warp is monotonic, and on the direct path the request does not move by a single burst.
 
-**Адрес ленты в плане — `nest_source_id(seq)` (`NEST_TAG | id`).** Без тега
-он численно совпадает с адресом ФАЙЛА с тем же id, а `validate` это
-запрещает именно чтобы они не делили кэш.
+**The address of the reel in the plan — `nest_source_id(seq)` (`NEST_TAG | id`).** Without the tag
+it numerically coincides with the address of a FILE with the same id, and `validate` forbids
+this precisely so that they do not share the cache.
 
-## Внутреннее время ленты НЕПРЕРЫВНО (Р.56, п.448)
+## The internal time of a reel is CONTINUOUS (R.56, item 448)
 
-**Пол по сетке ставит ЛИСТ, и только ФАЙЛОВЫЙ.** У файла кадра «между
-кадрами» не существует (декодер отдаст ближайший, а два ключа на один
-кадр — двойной расход кэша), поэтому `clip_source_pts` для него не
-изменился. У ПРОЦЕДУРНОГО источника (генератор, титр, заглушка — признак
-`MediaInfo.fps == None` при `has_video`) кадр есть чистая функция тика:
-пол там только дробит движение на ступеньки. У ЛЕНТЫ пола нет вовсе —
-`clip_inner_tick == clip_material_pos`, её внутреннее время есть время
-монтажа. До Р.56 при rate 0.5 два соседних выходных кадра получали один
-`inner_t`, мемо отдавало ту же запись, и титры/автоматизация/камеры внутри
-композиции шли ступеньками по два кадра.
+**The grid floor is set by the LEAF, and only a FILE leaf.** A file has no frame "between
+frames" (the decoder gives the nearest one, and two keys for one
+frame are a double cost of the cache), therefore `clip_source_pts` for it did not
+change. For a PROCEDURAL source (a generator, a title, a placeholder — the sign `MediaInfo.fps == None` with `has_video`) a frame is a pure function of the tick:
+the floor there only splits the motion into steps. A REEL has no floor at all —
+`clip_inner_tick == clip_material_pos`, its inner time is the time of the editing. Before R.56, at rate 0.5 two adjacent output frames received one
+`inner_t`, the memo returned the same record, and titles/automation/cameras inside
+a composition went in steps of two frames.
 
-**Факты источников приходят тем же каналом, что нативы** — `SourceFacts`
-(`natives` + `procedural`), `VideoRenderer::new_with_facts`. Плану путь
-медиа по-прежнему безразличен (закон П): «что лежит по адресу» — свойство
-ИСТОЧНИКА, и рендерер узнаёт это от того, кто источник открыл. Разойдись
-плеер, экспорт и kt-cli в этом вопросе — заказ и чтение считали бы разные
-ключи (инвариант 4).
+**The facts of the sources arrive through the same channel as the natives** — `SourceFacts`
+(`natives` + `procedural`), `VideoRenderer::new_with_facts`. The plan remains indifferent
+to the media path (law P): "what lies at the address" is a property of the
+SOURCE, and the renderer learns it from whoever opened the source. If the
+player, export and kt-cli diverged on this question, the request and the read would compute different
+keys (invariant 4).
 
-**Смешивание кадров на вложении делают ЛИСТЬЯ.** Режим наследуется вниз
-(`PlanCtx.blend_footage`, `nest_blend(clip, inherited)`), суб-композит на
-кадр остаётся ОДИН, GPU получает уже смешанный пре-FX кадр обычным
-`LayerInput::Frame`. Два суб-композита были бы вдвое дороже на обоих
-бэкендах И вернули бы ступеньки процедурному (оба собирались бы на сетке).
-Флаг обязан ехать в ЧЕТЫРЁХ местах, иначе разъедется:
-`clip_frame_keys` (заказ == чтение), `max_concurrent_layers_in` (бюджет
-чанка), `reel_coverage` (прогон файлового ребёнка короче на кадр) и
-`nest_memo_key(content_hash, blend)` — при `blend == false` ключ РАВЕН
-`content_hash`, поэтому прежние записи не двигаются. Зеркало на GPU —
-`n.blend` в `plan_key`.
+**The blending of frames on an attachment is done by the LEAVES.** The mode is inherited downwards
+(`PlanCtx.blend_footage`, `nest_blend(clip, inherited)`), the sub-composite per frame
+remains ONE, and the GPU receives an already blended pre-FX frame by the ordinary
+`LayerInput::Frame`. Two sub-composites would be twice as expensive on both
+backends AND would return steps to the procedural one (both would be assembled on the grid). The flag MUST travel in FOUR places, otherwise they will diverge:
+`clip_frame_keys` (request == read), `max_concurrent_layers_in` (the chunk
+budget), `reel_coverage` (a run of the file child shorter by a frame) and
+`nest_memo_key(content_hash, blend)` — at `blend == false` the key EQUALS
+`content_hash`, therefore the former records do not move. The mirror on the GPU —
+`n.blend` in `plan_key`.
 
-**Ловушка тестов:** свежий `BurstCache` начинает нумерацию содержимого
-заново, а `UploadCache` в kt-gpu ключуется ТОЛЬКО серийным номером — два
-кэша на один движок дают ему одинаковые ключи у разных кадров. Кэш в
-тесте обязан быть один на все моменты, как в программе.
+**A test trap:** a fresh `BurstCache` starts the numbering of content
+anew, while `UploadCache` in kt-gpu is keyed ONLY by a serial number — two
+caches for one engine give it identical keys for different frames. The cache in the
+test MUST be one for all moments, as in the program.
 
-## Редакция ленты = ПАРА (лента, переопределения экземпляра) (Р.59, стадия 3)
+## A reel's revision = a PAIR (reel, instance overrides) (R.59, stage 3)
 
-Движок про публикацию не знает вовсе: `Project::resolve_reel` отдаёт ему
-готовые клипы. Меняется ровно одно — «редакция» перестала быть функцией
-одной ленты.
+The engine knows nothing about publication at all: `Project::resolve_reel` hands it
+ready clips. Exactly one thing changes — "the revision" has stopped being a function of
+a single reel.
 
-- `instance_content(project, seq, overrides)` РАВЕН `content_hash` при
-  пустом наборе. Иначе сдвинулись бы все ключи мемо, sidecar-превью и
-  GPU-планы у проектов, которые публикацией не пользуются.
-- `VideoRenderer::nests` и `AudioRenderer::nests` ключуются `NestKey =
-  (MediaId, u64)`; `VideoClip.nest`/`AudioClip.nest` несут пару. Два
-  экземпляра БЕЗ переопределений делят ОДИН суб-рендерер — в этом и был
-  выигрыш t442/t443, сторож `nest_count()` (t676).
-- `NestStream.seq` тоже пара: сменились переопределения — поток суб-микса
-  начинается заново, как при перевешивании на другую ленту.
-- `nest_scales` переписан с плоского перебора лент на ОБХОД ДЕРЕВА
-  экземпляров с их наборами. Ступень по-прежнему ОДНА на ленту (t450),
-  максимум стал честным (t679).
-- Новых кэш-адресов у ЛЕНТЫ не заведено: `content` экземпляра сам
-  попадает в `fx_chain_hash`, `nest_memo_key`, GPU `plan_key` и sidecar.
+- `instance_content(project, seq, overrides)` EQUALS `content_hash` when the set
+  is empty. Otherwise all the keys of the memo, the sidecar previews and
+  the GPU plans would move for projects that do not use publication.
+- `VideoRenderer::nests` and `AudioRenderer::nests` are keyed by `NestKey =
+  (MediaId, u64)`; `VideoClip.nest`/`AudioClip.nest` carry the pair. Two
+  instances WITHOUT overrides share ONE sub-renderer — that was the gain of t442/t443, guard `nest_count()` (t676).
+- `NestStream.seq` is also a pair: when the overrides change, the sub-mix stream
+  starts anew, as when re-hung onto another reel.
+- `nest_scales` was rewritten from a flat enumeration of reels into a WALK OF THE TREE
+  of instances with their sets. The step is still ONE per reel (t450),
+  the maximum became honest (t679).
+- No new cache addresses are introduced for the REEL: the instance's `content` itself
+  gets into `fx_chain_hash`, `nest_memo_key`, the GPU `plan_key` and the sidecar.
 
-**АДРЕС ИСТОЧНИКА ГЕНЕРАТОРА СОЛИТСЯ, и это не «ещё один ключ».** С Р.53
-адрес — `GEN_TAG | id СОБЫТИЯ`, и он однозначно определял ЗНАЧЕНИЯ:
-событие одно — значения одни. Переопределение снимает посылку: одно и то
-же событие ВНУТРИ ленты играет в двух выпусках разным заголовком. Оставь
-адрес общим — заказ и чтение сошлись бы на нём (инвариант 4 формально
-цел), а кадр пришёл бы ЧУЖОЙ. Поэтому:
+**THE ADDRESS OF A GENERATOR'S SOURCE IS SALTED, and this is not "one more key".** Since R.53
+the address is `GEN_TAG | id of the EVENT`, and it unambiguously determined the VALUES:
+one event — one set of values. An override removes the premise: the same
+event INSIDE a reel plays in two releases with a different title. Leave the
+address shared — the request and the read would meet on it (invariant 4 formally
+holds), and the frame would come back a FOREIGN one. Therefore:
 
-- `gen_salt(published, overrides)` — соль; она РАВНА НУЛЮ ровно тогда,
-  когда ни одна ручка набора не способна дотянуться до источника
-  (`kt_model::overrides_touch_sources`). Корень, лента без публикаций и
-  экземпляр без переопределений получают прежние адреса байт в байт.
-- `gen_source_addr_in(id, salt)` — при нулевой соли это прежний
-  `GEN_TAG | id`, иначе 62-битный хэш пары. Свободных битов в адресе нет
-  (клип < кусок < генератор < лента), и хэш тут законен по той же
-  причине, что `content_hash`: чистая функция, один код на всех.
-- **Соль считают ДВОЕ, и они обязаны совпадать**: `build_reel` (план) и
-  `gen_sources` (кто поднимает источники). Разойдись — вечный промах по
-  адресу. `gen_sources` поэтому обходит ДЕРЕВО экземпляров и вдобавок
-  перечисляет каждую ленту со шаблонным содержимым (лента, никуда не
-  поставленная, тоже показывается в бине и считается службой превью).
+- `gen_salt(published, overrides)` — the salt; it is EXACTLY ZERO when and only when
+  no handle of the set is able to reach the source
+  (`kt_model::overrides_touch_sources`). The root, a reel without publications and
+  an instance without overrides get the former addresses byte for byte.
+- `gen_source_addr_in(id, salt)` — with a zero salt it is the former
+  `GEN_TAG | id`, otherwise a 62-bit hash of the pair. There are no free bits in the address
+  (clip < piece < generator < reel), and the hash is legitimate here for the same
+  reason as `content_hash`: a pure function, one code for all.
+- **The salt is computed by TWO parties, and they MUST agree**: `build_reel` (the plan) and
+  `gen_sources` (who raises the sources). If they diverged — an eternal miss by
+  address. `gen_sources` therefore walks the TREE of instances and in addition
+  enumerates every reel with template content (a reel placed nowhere is also shown in the bin and counted by the preview service).
 
-**Побочный эффект, который виден один раз.** `Debug` у `ClipEvent`
-изменился (новое поле `overrides`), а `content_hash` считается
-Debug-представлением: все хэши редакций сдвинулись ОДИН раз, и
-sidecar-превью лент на старых проектах пересчитается один раз при
-открытии. Это не регрессия — ключ есть функция модели, а не файла.
+**A side effect that is seen once.** The `Debug` of `ClipEvent` changed (a new field `overrides`), and `content_hash` is computed
+from the Debug representation: all the hashes of the revisions moved ONCE, and the
+sidecar previews of reels in old projects will be recomputed once on
+opening. This is not a regression — the key is a function of the model, not of the file.

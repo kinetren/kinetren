@@ -10,17 +10,17 @@
 fn t422_invariant_5_names_the_offline_path() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let md = std::fs::read_to_string(root.join("CLAUDE.md")).expect("нет CLAUDE.md");
-    let i = md.find("5. **Экземпляром декодера").expect(
+    let i = md.find("5. **A decoder instance").expect(
         "инвариант 5 переписан обратно: «все клиенты ходят через очередь» было неправдой — \
          офлайн-путь открывает свои источники",
     );
     let rule = &md[i..md[i..].find("\n6. ").map(|n| i + n).unwrap_or(md.len())];
     for must in [
-        "Живое воспроизведение",
-        "Офлайн-путь",
-        "не делится",
-        "темпа не обещает",
-        "конечна и отменяема",
+        "Live playback",
+        "The offline path",
+        "does not share",
+        "promises no tempo",
+        "finite and cancellable",
     ] {
         assert!(
             rule.contains(must),

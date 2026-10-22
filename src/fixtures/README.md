@@ -1,8 +1,8 @@
-# Тестовые фикстуры
+# Test fixtures
 
-Мелкие реальные медиафайлы для conformance/golden-тестов (тесты 10, 11 из
-`docs/porting-notes.md`). Генерируются локально скриптом `gen.sh` (появится в M3)
-через ffmpeg: aac 44.1k mono, flac 48k stereo, h264, vp9, muxed A/V — по ~2 секунды.
+Small real media files for conformance/golden tests (tests 10, 11 from
+`docs/porting-notes.md`). They are generated locally by the script `gen.sh` (it will appear in M3)
+via ffmpeg: aac 44.1k mono, flac 48k stereo, h264, vp9, muxed A/V — about 2 seconds each.
 
-Сгенерированное кладётся в `out/` (в git не попадает, см. .gitignore) и
-проверяется по хэшу перед использованием.
+The generated files go into `out/` (they are not committed to git, see .gitignore) and
+are checked by hash before use.

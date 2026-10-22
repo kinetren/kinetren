@@ -1,135 +1,128 @@
 # kt-gpu
 
-> Контракты крейта и обязательные тесты — `openspec/specs/{video-plan,video-fx}/spec.md`, причины решений — `design.md` рядом.
+> The crate's contracts and mandatory tests — `openspec/specs/{video-plan,video-fx}/spec.md`; the reasons for the decisions — `design.md` next to it.
 
-GPU-бэкенд видео-FX и композита (Р.29): wgpu, фрагментные WGSL-пассы.
-Реализует `kt_engine::VideoGpuExec`; kt-engine от крейта НЕ зависит —
-исполнитель инжектится сверху (kt-app: устройство eframe, kt-cli/экспорт:
-headless). CPU-путь kt-fx/kt-engine остаётся байт-эталоном и фолбэком.
+The GPU backend of video FX and of the composite (R.29): wgpu, fragment WGSL passes.
+It implements `kt_engine::VideoGpuExec`; kt-engine does NOT depend on the crate —
+the executor is injected from above (kt-app: the eframe device, kt-cli/export:
+headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fallback.
 
-## Инварианты
+## Invariants
 
-- **wgpu ЖЁСТКО той же мажорной версии, что внутри eframe** (workspace-пин
-  в src/Cargo.toml): превью делит `Arc<wgpu::Device>` с egui-wgpu — другой
-  мажор = несовместимые типы. Апгрейд eframe = апгрейд wgpu ЗДЕСЬ ЖЕ.
-- **Фрагментные пассы, НЕ compute**: дефолтный device egui-wgpu на
-  GL-бэкенде создаётся с downlevel_webgl2-лимитами (compute недоступен),
-  а live-check гоняет llvmpipe через `WGPU_BACKEND=gl`. Всё, что тут есть,
-  обязано работать на llvmpipe.
-- **Все текстуры Rgba8Uint** — textureLoad отдаёт сырые байты без
-  unorm-потерь; целочисленные ядра (композит, noise, mirror, тайлинг)
-  байт-в-байт равны CPU, билинейные — в допуске (f32 против f64).
-  Сэмплеров нет вообще: субтексельная сетка фильтрации гуляет по
-  драйверам — билинейка руками (4 texelLoad, зеркало `bilinear_into`).
-- **Никаких атомиков и переменного порядка блендинга**: композит — ping-pong
-  двух аккумуляторов шейдером (CPU-формула `alpha_over` не выражается
-  fixed-function-блендом). Это условие детерминизма на устройстве (t183).
-- **Переходы (Р.33): `composite.wgsl` — зеркало `kt_engine::transitions`.**
-  Режим и 8 чисел приезжают в u1.z/f0/f1 из `TransMix`; clear-биты (u1.w)
-  помечают пустую сторону сольного фейда. Параметры вида ОБЯЗАНЫ входить в
-  `plan_key`, иначе ReadbackCache отдаст кадр другого перехода. Тест t224
-  гоняет каждый режим на нескольких фазах — и его список случаев обязан
-  содержать обе оси направления и оба состояния флагов: на умолчаниях
-  (`Dir::Left` = (−1,0)) ошибка в Y-члене формулы не видна.
-- **Общая параметрика с CPU** — из kt-fx: `pan_frame`/`cam_at`/`noise_seed`.
-  Менять формулу можно только в паре с CPU-реализацией.
-- **Слитый гео-пасс (Р.44): `geom_fused.wgsl` — зеркало `kt_fx::geom`.**
-  Программа примитивов (Affine/Clamp/Fold/Proj) строится в kt-fx:
-  коэффициенты перемножены в f64 на CPU, сюда едут ОДНОКРАТНО округлённые
-  f32 юниформой 1024 Б (свой bind group layout; `FxOp::slot_units()` = 4
-  слота арены — сумма обязана точно предсказывать потребление, как
-  passes()). Число тапов суперсемплинга у аффинных серий тоже считается
-  на CPU и едет юниформой; Proj-серии меряют якобиан по-пиксельно ТОЙ ЖЕ
-  формулой `ss_taps` (иначе на пороге бэкенды выберут разные сетки тапов,
-  и никакой FrameTol это не накроет). Tap-таблица поглощённых поточечных
-  (Р.45 п.312) — слоты 46+2i той же юниформы, счётчик в h.w битах
-  24..31; `res_scale` K×-барьеров (п.314) едет в свободные слоты юниформ
-  vhs (u[6]) и noise (u[4]), Edges.d и шаги Blur/делитель Glow приезжают
-  уже эффективными. `chain_ops` возвращает максимум ПРОМЕЖУТОЧНЫХ
-  размеров, и `resolve_chain` сверяет его с max_dim → аккуратный
-  `TooLarge` (иначе create_texture K×-буфера отравил бы device
-  валидацией). Ступень декода (Р.46) приезжает `LayerSrc.src_scale` в
-  `chain_ops` и в `plan_key` (кадр того же ключа в другом размере — другая
-  картинка); WGSL она не трогает — масштаб живёт в примитивах программы,
-  которые строит CPU (t309). У ВЛОЖЕНИЯ (Р.58, п.459) ступень ЛЕНТЫ
-  (`NestSrc.nest_scale`) и вход цепочки экземпляра (`src_scale`) — разные
-  числа: при ступени выше входа перед `chain_ops` встаёт
-  `FxOp::Resample` во весь кадр — зеркало CPU-шной `fit_into`, допуск
-  `FrameTol::BILINEAR` (t632). `nest_scale` — в `plan_key`; цепочка,
-  кончившаяся чужим размером, больше не пропускается молча
-  (`complete = false`, t182). Правки — только парой с
-  kt-fx/src/{geom,plan}.rs, тем же коммитом (t181 geo/tap/k2-кейсы,
-  t309 s2-кейсы, FrameTol::GEOM).
-- **ReadbackCache — своя мемоизация** (hash плана → кадр): пост-FX кэш
-  kt-cache (`PostFxVideo`) — механика ТОЛЬКО CPU-пути, GPU его не трогает
-  (по-слойный readback съел бы весь выигрыш).
-- Ошибки: `TooLarge` → вызывающий падает на CPU только для этого плана;
-  `DeviceLost`/`Validation` → «отравление» до конца сессии + notice
-  (превью) или ошибка экспорта (файл не смешивает бэкенды — инвариант 7).
-- Pan3d (t187, ред. Р.44): мир — px проекта × world_scale, X вправо, Y
-  вниз, Z вглубь; повороты в градусах Rz·Rx·Ry («ZXY», как orientation
-  AE); камера «50 мм» на авто-дистанции (−(H/2)·cot(fov/2)) рендерит
-  слой в z=0 1:1. Семантика заморожена форматом файла — менять нельзя.
-  ИСПОЛНЕНИЕ с Р.44 — обратная гомография Proj-примитивом слитого
-  гео-пасса (вертекс-квад vs3d удалён); математика живёт в f64 в
-  `kt_fx::geom::pan3d_forward`, GPU-only больше нет — CPU считает то же
-  (t187 сверяет каждый прогон, t301 — экспорт без GPU).
+- **wgpu is STRICTLY the same major version as the one inside eframe** (the workspace pin
+  in src/Cargo.toml): the preview shares an `Arc<wgpu::Device>` with egui-wgpu — another
+  major = incompatible types. Upgrading eframe = upgrading wgpu HERE TOO.
+- **Fragment passes, NOT compute**: the default device of egui-wgpu on the
+  GL backend is created with downlevel_webgl2 limits (compute is unavailable),
+  and the live check runs llvmpipe via `WGPU_BACKEND=gl`. Everything here
+  MUST work on llvmpipe.
+- **All textures are Rgba8Uint** — textureLoad returns raw bytes without
+  unorm losses; integer kernels (composite, noise, mirror, tiling) are
+  byte-for-byte equal to the CPU, bilinear ones — within tolerance (f32 against f64).
+  There are no samplers at all: the sub-texel filtering grid wanders between drivers —
+  bilinear done by hand (4 texelLoad, a mirror of `bilinear_into`).
+- **No atomics and no variable blending order**: the composite is a ping-pong of
+  two accumulators by the shader (the CPU formula `alpha_over` is not expressible
+  by fixed-function blending). This is the condition of determinism on the device (t183).
+- **Transitions (R.33): `composite.wgsl` is a mirror of `kt_engine::transitions`.**
+  The mode and 8 numbers arrive in u1.z/f0/f1 from `TransMix`; the clear bits (u1.w)
+  mark the empty side of a solo fade. The parameters of a kind MUST enter
+  `plan_key`, otherwise ReadbackCache will return the frame of another transition. Test t224
+  runs each mode over several phases — and its list of cases MUST contain both axes of
+  direction and both states of the flags: on the defaults
+  (`Dir::Left` = (−1,0)) an error in the Y term of the formula is not visible.
+- **Shared parametrics with the CPU** — from kt-fx: `pan_frame`/`cam_at`/`noise_seed`.
+  The formula may be changed only as a pair with the CPU implementation.
+- **The merged geo pass (R.44): `geom_fused.wgsl` is a mirror of `kt_fx::geom`.**
+  The program of primitives (Affine/Clamp/Fold/Proj) is built in kt-fx:
+  the coefficients are multiplied in f64 on the CPU, and the f32 values rounded ONCE arrive here
+  in a 1024 B uniform (its own bind group layout; `FxOp::slot_units()` = 4
+  arena slots — the sum MUST predict the consumption exactly, as
+  passes() does). The number of supersampling taps of affine series is also computed
+  on the CPU and arrives in the uniform; Proj series measure the Jacobian per pixel by the SAME
+  formula `ss_taps` (otherwise at the threshold the backends would choose different tap grids,
+  and no FrameTol would cover that). The tap table of the absorbed pointwise effects
+  (R.45 item 312) — slots 46+2i of the same uniform, the counter in the h.w bits
+  24..31; the `res_scale` of the K×-barriers (item 314) goes into the free slots of the uniforms
+  vhs (u[6]) and noise (u[4]), Edges.d and the Blur steps/Glow divisor arrive
+  already effective. `chain_ops` returns the maximum of the INTERMEDIATE
+  sizes, and `resolve_chain` checks it against max_dim → a clean
+  `TooLarge` (otherwise create_texture of the K×-buffers would poison the device
+  with validation). The decode scale step (R.46) arrives as `LayerSrc.src_scale` in
+  `chain_ops` and in `plan_key` (a frame of the same key at another size is another
+  picture); WGSL does not touch it — the scale lives in the primitives of the program,
+  which the CPU builds (t309). For a NESTED reel (R.58, item 459) the scale step of the REEL
+  (`NestSrc.nest_scale`) and the input of the instance chain (`src_scale`) are different
+  numbers: when the step is higher than the input, a `FxOp::Resample` covering the whole frame is placed before `chain_ops` — a mirror of the CPU `fit_into`, tolerance
+  `FrameTol::BILINEAR` (t632). `nest_scale` goes into `plan_key`; a chain that ended with a foreign
+  size is no longer skipped silently
+  (`complete = false`, t182). Edits — only as a pair with
+  kt-fx/src/{geom,plan}.rs, in the same commit (t181 geo/tap/k2 cases,
+  t309 s2 cases, FrameTol::GEOM).
+- **ReadbackCache is its own memoization** (hash of the plan → frame): the post-FX cache of
+  kt-cache (`PostFxVideo`) is a mechanism ONLY of the CPU path; the GPU does not touch it
+  (a per-layer readback would eat up the whole gain).
+- Errors: `TooLarge` → the caller falls back to the CPU only for this plan;
+  `DeviceLost`/`Validation` → "poisoning" until the end of the session + a notice
+  (preview) or an export error (a file does not mix backends — invariant 7).
+- Pan3d (t187, ed. R.44): the world — project px × world_scale, X to the right, Y
+  down, Z into the depth; rotations in degrees Rz·Rx·Ry ("ZXY", like the orientation
+  in AE); a "50 mm" camera at the automatic distance (−(H/2)·cot(fov/2)) renders
+  the layer at z=0 1:1. The semantics are frozen by the file format — they MUST NOT be changed.
+  The EXECUTION since R.44 — the inverse homography by the Proj primitive of the merged
+  geo pass (the vertex quad vs3d is removed); the mathematics lives in f64 in
+  `kt_fx::geom::pan3d_forward`, there is no GPU-only path any more — the CPU computes the same
+  (t187 checks every run, t301 — export without GPU).
 
-## Тесты
+## Tests
 
-- `tests/parity.rs` — t181 (каждый эффект и цепочки, допуски по виду
-  арифметики), t182 (композит байт-в-байт), t183 (детерминизм на
-  устройстве + «грязный» пул текстур).
-- `tests/gpu_render.rs` — t184 (GPU превью == GPU экспорт, cold через
-  второй движок и warm через ReadbackCache; GPU-экспорт детерминирован и
-  в допуске к CPU).
-- `tests/pan3d.rs` — t187 (тождество, сдвиг маркера, прозрачные поля при
-  scale<1, детерминизм).
-- Без адаптера тесты СКИПАЮТСЯ с печатью; `KT_REQUIRE_GPU=1` превращает
-  пропуск в провал (CI с mesa/lavapipe, finish.sh на машине пользователя).
-- Допуски — только `FrameTol`/`assert_frames_close`; ad-hoc epsilon
-  запрещены (инвариант №11). Пороги ставятся ×2 от замера; провал «на
-  грани» — расследование и запись в porting-notes, не подкрутка.
+- `tests/parity.rs` — t181 (each effect and the chains, tolerances by the kind
+  of arithmetic), t182 (the composite byte-for-byte), t183 (determinism on the
+  device + a "dirty" pool of textures).
+- `tests/gpu_render.rs` — t184 (GPU preview == GPU export, cold via
+  a second engine and warm via ReadbackCache; GPU export is deterministic and
+  within tolerance of the CPU).
+- `tests/pan3d.rs` — t187 (identity, marker shift, transparent fields at
+  scale<1, determinism).
+- Without an adapter the tests are SKIPPED with a printed message; `KT_REQUIRE_GPU=1` turns the skip into a failure (CI with mesa/lavapipe, finish.sh on the user's machine).
+- Tolerances — only `FrameTol`/`assert_frames_close`; ad-hoc epsilons
+  are forbidden (invariant 11). Thresholds are set at ×2 from the measurement; a failure "at the edge" — an investigation and a record in porting-notes, not a tweak.
 
-## Р.47 (пп.332-335): 19 пассов, Warp, барьеры
+## R.47 (items 332-335): 19 passes, Warp, barriers
 
-- PIPE_COUNT рос по раундам (Р.47 — 19, Р.50 — +unpremul, Р.53 — +premul):
-  + colorgrade/duotone/posterize/vignette (поточечные на
-  барьерной позиции, зеркала tap-функций kt-fx) + sharpen_add/pixelate/
-  chroma_ab/radial_blur/shadow_under/halftone. Sharpen и DropShadow —
-  3 пасса (Resample down/up + финал с T1); passes()/slot_units обязаны
-  это предсказывать.
-- `geom_fused.wgsl`: прим kind 4 — Warp (2 слота юниформы, [mode,p0..p2]
-  [p3..p6]); тап-арм kind 2..5 — поточечные Р.47; коды и формулы —
-  зеркала kt-fx (geom.rs::warp_map / tap_*), правка — ТЕМ ЖЕ КОММИТОМ.
-- **Премультипликация перед мипом (Р.53, п.418).** `premul.wgsl` —
-  зеркало `kt_fx::video::premultiply`, `unpremul.wgsl` — зеркало
-  `kt_fx::video::unpremultiply` (дом обеих функций в kt-fx, оттуда же их
-  берёт kt-engine). Blur ставит пару вокруг двух Resample, Glow мипит
-  премультиплицированную КОПИЮ и складывает её как есть; решение —
-  «есть ли альфа У КАДРА В ЭТОЙ ТОЧКЕ», то есть свёртка, а при молчании
-  свёртки — `src_has_alpha` (новый параметр `chain_ops`: без него GPU
-  судил бы по свёртке, а CPU — по `Frame.has_alpha`, и титры разъехались
-  бы). При `a == 255` обе конверсии тождественны, поэтому на
-  непрозрачных кадрах не эмитится НИЧЕГО и голдены целы. Сторож —
-  alpha-кейсы t181 (проверено: без Premul на GPU t181 краснеет).
-- **Edges ПРОПУСКАЕТ альфу** (Р.53, п.418): `a_out = max(a_in, сила
-  линии)` в обоих исполнителях; свёртку `has_alpha` он больше не трогает.
-- DropShadow в chain_ops: при `has_alpha_known && !has_alpha` оп НЕ
-  эмитится (CPU-passthrough); при неизвестной альфе эмитится — формула
-  на непрозрачном входе тождественна байтам (a_src=1 ⇒ out=src).
-- Конформанс новых видов — t329 (цикл по реестру + tuned-экземпляры для
-  тождественных дефолтов + warp-hard-кейсы). FrameTol::WARP НЕ введён:
-  жёсткие варпы держат GEOM на обоих бэкендах (п.335); провал
-  warp-hard — расследование и ввод WARP ×2 от замера, не подкрутка GEOM.
+- PIPE_COUNT grew by rounds (R.47 — 19, R.50 — +unpremul, R.53 — +premul):
+  + colorgrade/duotone/posterize/vignette (pointwise at the
+  barrier position, mirrors of the tap functions of kt-fx) + sharpen_add/pixelate/
+  chroma_ab/radial_blur/shadow_under/halftone. Sharpen and DropShadow —
+  3 passes (Resample down/up + the final one with T1); passes()/slot_units MUST
+  predict this.
+- `geom_fused.wgsl`: primitive kind 4 — Warp (2 uniform slots, [mode,p0..p2]
+  [p3..p6]); tap arm kind 2..5 — the pointwise effects of R.47; the codes and formulas —
+  mirrors of kt-fx (geom.rs::warp_map / tap_*), edited IN THE SAME COMMIT.
+- **Premultiplication before the mip (R.53, item 418).** `premul.wgsl` is a
+  mirror of `kt_fx::video::premultiply`, `unpremul.wgsl` is a mirror of
+  `kt_fx::video::unpremultiply` (the home of both functions is in kt-fx, from where
+  kt-engine takes them too). Blur places a pair around two Resamples, Glow mips
+  a premultiplied COPY and adds it as is; the decision is
+  "is there alpha IN THE FRAME AT THIS POINT", i.e. the fold, and when the fold is silent —
+  `src_has_alpha` (a new parameter of `chain_ops`: without it the GPU would
+  judge by the fold, and the CPU by `Frame.has_alpha`, and the titles would diverge).
+  At `a == 255` both conversions are identities, so on opaque frames NOTHING is emitted and the goldens stay intact. Guard —
+  the alpha cases of t181 (verified: without Premul on the GPU t181 turns red).
+- **Edges SKIPS the alpha** (R.53, item 418): `a_out = max(a_in, line strength)` in both executors;
+  it no longer touches `has_alpha` of the fold.
+- DropShadow in chain_ops: when `has_alpha_known && !has_alpha` the op is NOT
+  emitted (CPU passthrough); with unknown alpha it is emitted — the formula
+  on an opaque input is identical in bytes (a_src=1 ⇒ out=src).
+- Conformance of the new kinds — t329 (a loop over the registry + tuned instances for
+  identical defaults + warp-hard cases). FrameTol::WARP is NOT introduced:
+  the hard warps keep GEOM on both backends (item 335); a failure of
+  warp-hard — an investigation and the introduction of WARP at ×2 from the measurement, not a tweak of GEOM.
 
-## Р.51 (пп.396-401): переходы
+## R.51 (items 396-401): transitions
 
-- `P.m` униформы композита ЗАНЯТ: ext-скаляры объёмных переходов
-  (гомографии панелей из `kt_engine::transitions::trans_ext`, f64→f32 на
-  CPU — оба бэкенда читают одни биты). В `put_mix`/`plan_key` ext не
-  входит и не должен — детерминированная функция уже хэшированного.
-- t224: 32 режима; объёмные (flip/cube/door/peel/roll) — отдельный цикл
-  с `FrameTol::GEOM` (кромки панелей и перспективное деление). Числа
-  MODE_* — контракт только transitions.rs ↔ composite.wgsl, в файлы
-  проекта не попадают (едет tag).
+- The `P.m` uniforms of the composite are OCCUPIED: the ext scalars of volumetric transitions
+  (the homographies of the panels from `kt_engine::transitions::trans_ext`, f64→f32 on the
+  CPU — both backends read the same bits). `ext` is not and MUST NOT be part of `put_mix`/`plan_key` — it is a deterministic function of what is already hashed.
+- t224: 32 modes; the volumetric ones (flip/cube/door/peel/roll) — a separate loop
+  with `FrameTol::GEOM` (the panel edges and the perspective division). The MODE_* numbers are a contract only between transitions.rs ↔ composite.wgsl, they do not get into the project files (the tag travels).

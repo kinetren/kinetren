@@ -1,87 +1,76 @@
-# Каталоги перевода
+# Translation catalogues
 
-Текст интерфейса Kinetren живёт здесь, по файлу на язык:
-`en`, `ru`, `es`, `zh-Hans`, `ar`. **`en.toml` — эталон**: он задаёт набор и
-порядок ключей, остальные обязаны его повторять.
+The text of the Kinetren interface lives here, one file per language:
+`en`, `ru`, `es`, `zh-Hans`, `ar`. **`en.toml` is the reference**: it sets the set and
+order of keys, and the others must repeat it.
 
-## Формат
+## Format
 
-Строгое подмножество TOML: комментарий `#`, заголовок секции `[a.b]`, пара
-`key = "значение"` в ОДНУ строку. Экранирование: `\n`, `\t`, `\"`, `\\`,
-`\uXXXX`. Файл остаётся валидным TOML — его открывает любой редактор и
-проверяет `taplo`.
+A strict subset of TOML: a comment `#`, a section header `[a.b]`, and a pair
+`key = "value"` on ONE line. Escaping: `\n`, `\t`, `\"`, `\\`,
+`\uXXXX`. The file remains valid TOML — any editor opens it and
+`taplo` checks it.
 
-## Что валит сборку
+## What breaks the build
 
-`cargo build` падает (а не молча показывает пустую надпись), если:
+`cargo build` fails (rather than silently showing an empty label) if:
 
-* ключа нет в каком-то каталоге, значение пустое или ключа нет в `en.toml`;
-* набор плейсхолдеров `{0}`, `{1}` отличается от английского;
-* значение длиннее 160 символов — переупорядоченный арабский абзац нельзя
-  переносить заново, поэтому длинный текст разбивается на два ключа;
-* в значении есть символ из области частного использования (U+E000…U+F8FF) —
-  иконки Phosphor составляются в Rust, а не в каталоге;
-* в арабском значении стоит ASCII-запятая, точка с запятой или вопрос: нужны
-  арабские `،` `؛` `؟` — они внутри арабского блока и не рвут слово.
+* a key is missing in some catalogue, the value is empty, or the key is missing from `en.toml`;
+* the set of placeholders `{0}`, `{1}` differs from the English one;
+* the value is longer than 160 characters — a reordered Arabic paragraph cannot be re-wrapped, so a long text is split into two keys;
+* the value contains a character from the private use area (U+E000…U+F8FF) — Phosphor icons are assembled in Rust, not in the catalogue;
+* an Arabic value contains an ASCII comma, semicolon or question mark: the Arabic `،` `؛` `؟` are needed — they lie inside the Arabic block and do not break a word.
 
-## Правила перевода
+## Translation rules
 
-1. **Плейсхолдеры позиционные.** `{0}`, `{1}` — не `{}`. Порядок аргументов
-   можно менять: `"clip {0} of {1}"` → `"{1} 个片段中的第 {0} 个"`.
-2. **Согласования с числом НЕТ.** Пишем «существительное: N»
-   (`"Clips copied: {0}"`), а не «скопировано N клипов». Так формулировка
-   работает во всех пяти языках без таблиц множественного числа.
-3. **Горячих клавиш в меню нет.** Ярлык (`Ctrl+S`) склеивается в Rust
-   (`Toolbar::menu_btn`). Акселераторы, которые ВХОДЯТ в текст подсказки —
-   `"Copy (Ctrl+C)"` — переносить дословно.
-4. **Имена эффектов не переводятся**: `Pan`, `Blur`, `VHS`, `Slowed+Reverb`,
-   `Morpher`. По ним эффект ищут в любой локали.
-5. **Секция `[fxreg.kw]`** — ключевые слова поиска, в нижнем регистре, через
-   пробел. Оставляйте В НИХ английские слова рядом с местными: поиск идёт и по
-   текущему языку, и по английскому. Эта секция единственная, которую не
-   переупорядочивают для арабского — она сравнивается с тем, что печатает
-   пользователь.
-6. **Секция `[lang]`** — самоназвания языков, они одинаковы во ВСЕХ каталогах
-   (в списке языков каждый пункт написан на своём языке). Сборка это проверяет.
-7. **Коротко.** Длину проверяет тест 128 по настоящим бюджетам вёрстки: три
-   заголовка меню — 160 px на всех, строка перф-панели — 190 px. Пределы
-   панелей (420 px и 90 px) поставлены по прямым просьбам пользователя и не
-   двигаются — короче делают перевод.
-8. **Очевидных надписей не делать** (правило п.17 р.7): значение с единицей
-   объясняет себя само, префиксы «зум:», «FPS:» не возвращать.
+1. **Placeholders are positional.** `{0}`, `{1}` — not `{}`. The order of arguments
+   may be changed: `"clip {0} of {1}"` → `"{1} 个片段中的第 {0} 个"`.
+2. **There is NO agreement with the number.** We write "noun: N"
+   (`"Clips copied: {0}"`), not "N clips copied". This way the wording
+   works in all five languages without plural tables.
+3. **There are no hotkeys in the menu.** The shortcut (`Ctrl+S`) is glued together in Rust
+   (`Toolbar::menu_btn`). Accelerators that ARE part of the hint text —
+   `"Copy (Ctrl+C)"` — are carried over verbatim.
+4. **Effect names are not translated**: `Pan`, `Blur`, `VHS`, `Slowed+Reverb`,
+   `Morpher`. Effects are searched by them in any locale.
+5. **The section `[fxreg.kw]`** holds the search keywords, in lower case, separated by spaces. Keep English words IN THEM next to the local ones: the search runs both on the
+   current language and on English. This section is the only one that is not reordered for Arabic — it is compared with what the user types.
+6. **The section `[lang]`** — the self-names of the languages; they are the same in ALL catalogues (in the list of languages each item is written in its own language). The build checks this.
+7. **Brevity.** The length is checked by test 128 against the real layout budgets: the three menu headings — 160 px each, a line of the performance panel — 190 px. The panel limits (420 px and 90 px) were set by direct requests of the user and do not move — translations make things shorter.
+8. **Do not create obvious labels** (rule item 17 of R.7): a value with a unit explains itself; the prefixes "zoom:", "FPS:" are not to be brought back.
 
-## Непереведённое
+## Untranslated text
 
-Сборка печатает список ключей, чьё значение совпало с английским:
+The build prints a list of keys whose value matches the English one:
 
 ```
 i18n ES: 15 value(s) identical to English: fx.horizontal fx.vertical render.audio …
 ```
 
-Это предупреждение, а не ошибка: совпадение часто законно — единицы
-(«Mbit/s»), имена эффектов («Morpher»), жаргон («underruns», «no-read drops»)
-и слова, которые в языке пишутся так же («Horizontal» и «Vertical» в
-испанском). Ключи названы поимённо специально: по одному счётчику приходится
-гадать, что за ним стоит.
+This is a warning, not an error: a match is often legitimate — units
+("Mbit/s"), effect names ("Morpher"), jargon ("underruns", "no-read drops")
+and words that are spelled the same in the language ("Horizontal" and "Vertical" in
+Spanish). The keys are named one by one on purpose: from a single counter one has to
+guess what stands behind it.
 
-## После правки
+## After an edit
 
 ```bash
 cd src
-python3 scripts/subset-fonts.py     # если добавились новые иероглифы
-cargo test -p kt-app                # 100 (глифы), 125 (каталоги), 128 (длины)
+python3 scripts/subset-fonts.py     # if new ideographs were added
+cargo test -p kt-app                # 100 (glyphs), 125 (catalogues), 128 (lengths)
 ```
 
-`zh_TW` и `zh_HK` ведут на этот же упрощённый каталог: традиционного пока нет.
+`zh_TW` and `zh_HK` point to this same simplified catalogue: there is no traditional one yet.
 
-## Новый ключ в коде
+## A new key in the code
 
 ```rust
 use crate::i18n::{k, tr};
-ui.button(tr(k::menu::file::SAVE));            // без аргументов
-self.note(crate::tf!(k::msg::CLIPS_COPIED, n)); // с аргументами
+ui.button(tr(k::menu::file::SAVE));            // without arguments
+self.note(crate::tf!(k::msg::CLIPS_COPIED, n)); // with arguments
 ```
 
-Путь константы обязан быть ПОЛНЫМ (`k::секция::КОНСТАНТА`): тест 125 ищет
-использование именно по нему, сокращённый `use` спрячет ключ и он попадёт в
-список неиспользуемых.
+The constant's path MUST be FULL (`k::section::CONSTANT`): test 125 searches for the use
+precisely by it; an abbreviated `use` would hide the key and it would land in
+the list of unused ones.
