@@ -107,6 +107,10 @@ No data or format change. Rollback = remove the module and the dependency; the s
 
 ## Open Questions
 
-- The PostHog project key: the owner creates the EU project and commits the `phc_…` key to
-  `src/packaging/posthog-key`. Until then the release build carries no key and sends nothing
-  — the code path is complete and tested with a local server.
+- Resolved 2026-10-22: the owner supplied the project key
+  (`phc_uenVXmBWNHKszBJcDr6RnNvL589avrpFDjSpKGssGzMk`); it goes into
+  `src/packaging/posthog-key` in task 3.1. Region to be confirmed by the first event of the
+  live check (4.1): the project must be in EU.
+- Resolved 2026-10-22: the owner feared a heavy PostHog library; there is none — our own
+  ~100-line capture client (D1). On TLS the owner said "whatever is simpler": `ureq` + `rustls`
+  stays (D2), the dlopen-OpenSSL alternative is not taken.
