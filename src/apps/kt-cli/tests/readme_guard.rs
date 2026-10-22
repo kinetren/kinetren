@@ -89,7 +89,7 @@ fn t827_guard_catches_each_class_of_defect() {
                 let s = std::fs::read_to_string(&p).unwrap();
                 std::fs::write(p, s.replace("]\n", "    (\"morpher\", \"m\"),\n]\n")).unwrap();
             },
-            "shots: declared shot «morpher»",
+            "shots: declared shot “morpher”",
         ),
     ];
     for (tag, break_it, want) in cases {
@@ -97,7 +97,7 @@ fn t827_guard_catches_each_class_of_defect() {
         break_it(&dir);
         let (ok, text) = guard(&dir);
         assert!(!ok, "{tag}: the guard must be red:\n{text}");
-        assert!(text.contains(want), "{tag}: expected «{want}» in:\n{text}");
+        assert!(text.contains(want), "{tag}: expected “{want}” in:\n{text}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

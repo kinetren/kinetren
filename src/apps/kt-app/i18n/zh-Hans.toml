@@ -1,9 +1,9 @@
-# Каталог перевода Kinetren. Правила — i18n/README.md.
-# Формат: строгое подмножество TOML, значения только в одну строку.
-# СОБРАН автоматически на шаге массового переноса строк (Р.19);
-# дальше правится руками.
+# Kinetren translation catalog. Rules — i18n/README.md.
+# Format: a strict subset of TOML, values on one line only.
+# GENERATED automatically at the bulk line-wrap step (R.19);
+# further edits are made by hand.
 
-# Самоназвания языков. Одинаковы во ВСЕХ каталогах (сборка проверяет).
+# Language endonyms. Identical in ALL catalogs (the build checks this).
 [lang]
 en = "English"
 ru = "Русский"
@@ -11,7 +11,7 @@ es = "Español"
 zh = "中文（简体）"
 ar = "العربية"
 
-# Кнопки окна (свой титлбар, п.22 р.6).
+# Window buttons (own titlebar, item 22 round 6).
 [win]
 close = "关闭"
 restore = "还原"
@@ -62,7 +62,7 @@ lang_auto = "自动（跟随系统）"
 diagnostics = "诊断…"
 notices = "通知"
 
-# Тулбар: подсказки кнопок. Акселератор в скобках — часть подсказки.
+# Toolbar: button hints. The accelerator in parentheses is part of the hint.
 [tb]
 play_pause = "播放/暂停（空格）"
 back = "后退：标记 / 区间 / 片段边缘（A 或 Home；Shift — 拖动区间左边缘）"
@@ -98,7 +98,7 @@ search = "在项目中搜索（Ctrl+F）"
 diag = "诊断"
 save = "保存（Ctrl+S）"
 
-# Таймлайн: контекстное меню дорожки.
+# Timeline: track context menu.
 [tl.lane]
 title = "轨道 {0}"
 delete = "删除轨道"
@@ -120,7 +120,7 @@ add_camera_here = "在播放头处添加摄像机"
 add_morpher_here = "在此添加变形器"
 reset_height = "恢复默认高度"
 
-# Таймлайн: подсказки зон (правый низ статусбара).
+# Timeline: zone hints (bottom right of the status bar).
 [tl.hint]
 area = "区域：边缘改长度，右键重命名、改色、删除"
 transition = "交叉淡化：拖边缘调宽度，拖切点滚动"
@@ -148,19 +148,19 @@ morph_lane = "变形轨道：右键 — 在此添加变形器；该图层作用�
 camera_lane = "摄影机轨道：右键 — 在此添加摄影机；摄影机拍摄下方各轨道的 3D 图层"
 empty = "左键 — 播放头，拖动 — 区间，Ctrl+拖动 — 框选事件；滚轮 — 滚动，Ctrl — 缩放，Shift — 轨道"
 
-# Таймлайн: подписи на morph-событиях.
+# Timeline: labels on morph events.
 [tl.morph]
 layer = "图层"
 clips = "事件：{0}"
 
-# Таймлайн: подсказки полей ввода.
+# Timeline: input field hints.
 [tl.field]
 area_name = "区域名称"
 marker_name_new = "标记名称（可留空）"
 marker_name = "标记名称"
 lane_name = "轨道名称"
 
-# Таймлайн: контекстные меню клипа, метки, региона.
+# Timeline: context menus for clip, marker, region.
 [tl.menu]
 level = "电平"
 area_title = "区域：{0}"
@@ -205,7 +205,7 @@ duck = "自动闪避（人声下压低背景）…"
 remove_transition = "移除此转场"
 sync_audio = "按音频与另一个选中事件同步"
 
-# Медиа-бин: режимы, подсказки, пустое состояние.
+# Media bin: modes, hints, empty state.
 collapse = "将所选折叠为片段"
 nest_expand = "将片段展开到轨道"
 nest_independent = "与其他位置分离"
@@ -228,7 +228,7 @@ group_name = "分组名称"
 loudness = "{0} LUFS，峰值 {1} dBTP"
 loudness_pending = "尚未测量响度"
 
-# Медиа-бин: контекстные меню карточки и группы.
+# Media bin: context menus for card and group.
 [bin.menu]
 rename = "重命名…"
 unlock = "解除锁定"
@@ -243,13 +243,13 @@ measure_loudness = "测量响度"
 new_generator = "新建生成器…"
 new_reel = "新建合成"
 
-# Метры и мастер-фейдер превью.
+# Meters and preview master fader.
 [meter]
 mute = "静音预览主输出"
 fader = "主音量：拖动或滚轮（Shift — 微调），双击 — 0 dB"
 peak = "主输出峰值电平，dBFS"
 
-# Редактор morpher'а.
+# Morpher editor.
 [mrph]
 strength = "强度"
 strength_hint = "图层的作用程度：1.0 完全生效，0 相当于关闭"
@@ -295,8 +295,8 @@ bake_batch = "烘焙特效批次"
 bake_morph = "烘焙变形"
 remove = "删除 morpher"
 
-# Реестр FX и пикер с поиском.
-# Подписи параметров эффектов (Р.33): один источник — спека kt-model.
+# FX registry and searchable picker.
+# Effect parameter labels (R.33): one source — the kt-model spec.
 [fxp]
 cx = "中心 X："
 cy = "中心 Y："
@@ -411,7 +411,7 @@ template_hint = "添加效果，使用默认数值"
 var_hint = "添加已调好的效果——缩略图用的是你的画面"
 axis_hint = "强度：{0} … {1}，{2} %（松开即添加所见）"
 
-# Категории эффектов в пикере.
+# Effect categories in the picker.
 [fxreg.cat]
 three_d = "3D"
 motion = "运动"
@@ -431,8 +431,8 @@ dynamics = "动态"
 timestretch = "时间伸缩"
 color = "颜色"
 
-# Ключевые слова поиска. НЕ переупорядочиваются для арабского
-# (сравниваются с вводом пользователя), пишутся в нижнем регистре.
+# Search keywords. NOT reordered for Arabic
+# (compared with the user’s input), written in lowercase.
 [fxreg.kw]
 pan3d = "pan 3d 透视 摄像机 图层"
 geometry = "几何 裁切 位置 缩放 旋转 geometry crop"
@@ -479,11 +479,11 @@ cylinder3d = "圆柱 弯曲 3d cylinder"
 limiter = "限制器 峰值 上限 limiter"
 pitch_shift = "变调 音高 半音 pitch"
 
-# Имена встроенных ВАРИАНТОВ эффекта (Р.54): настроенное состояние с
-# именем по виду, а не по параметру. Словарь общий на все эффекты —
-# «Мягко» у размытия и у свечения значит одно и то же, и держать под это
-# два ключа незачем. Имя варианта ПЕРЕВОДИТСЯ (в отличие от имени
-# эффекта): «Тушь» и «Чертёж» — не отраслевые термины.
+# Names of built-in VARIANTS of an effect (R.54): a preset state with
+# a name by look, not by parameter. The vocabulary is shared by all effects —
+# “Soft” for blur and for glow means the same thing, and two keys for it are pointless.
+# A variant name IS TRANSLATED (unlike the effect name);
+# “Ink” and “Blueprint” are not industry terms.
 [fxreg.var]
 soft = "柔和"
 strong = "强烈"
@@ -539,7 +539,7 @@ grid9 = "3×3"
 grid16 = "4×4"
 strip = "条带"
 
-# Редактор FX клипа.
+# FX editor of the clip.
 [fx]
 hint_reset = "双击标签可将参数复位"
 conform = "适配规则："
@@ -670,7 +670,7 @@ columns = "列数："
 rows = "行数："
 center = "居中"
 
-# Диалог настроек рендера и окно прогресса.
+# Render settings dialog and progress window.
 chain_on = "效果链"
 chain_on_hint = "总开关：关闭整条效果链，不改动各个槽位的状态"
 shadow_color = "阴影"
@@ -721,7 +721,7 @@ done_msg = "完成：{0}"
 error_msg = "错误：{0}"
 close = "关闭"
 
-# Подсказки главного окна (правый низ статусбара).
+# Main window hints (bottom right of the status bar).
 missing_warn = "不可用素材（{0}），将以占位画面写入文件：{1}"
 muted_warn = "已静音轨道（{0}），不会写入文件：{1}"
 solo_warn = "已开启独奏（{0}），只有这些轨道会写入文件：{1}"
@@ -742,7 +742,7 @@ preview_quality = "预览质量：项目分辨率的比例（越小越快）"
 smoothing = "预览线性平滑（关闭 — 硬像素）"
 economy = "适合较弱的 GPU：播放时重绘减半"
 
-# Палитра поиска по проекту.
+# Project-wide search palette.
 flight = "紧凑的传输事件与计数器环形记录——用于排查间歇性播放问题"
 pitch_engine = "整个项目的变调引擎：WSOLA 保留瞬态，声码器在和声上更平滑"
 project_settings = "本项目的画面尺寸、帧率、适配规则、音高引擎与关键帧形状"
@@ -760,8 +760,8 @@ nothing = "没有找到"
 marker_at = "标记 {0} 秒"
 clip_at = "{0} @ {1} 秒"
 
-# Разовые сообщения note()/warn(). Согласования с числом НЕТ:
-# пишем «существительное: N» (правило Р.19, см. README).
+# One-off messages note()/warn(). There is NO agreement with the number:
+# we write “noun: N” (rule R.19, see README).
 [msg]
 area_needs_band = "请先在时间线上框选一段（或选择区域）"
 area_stem = "区域"
@@ -806,7 +806,7 @@ software_render = "没有图形加速（软件渲染）— 界面可能卡顿，
 video_fx_cpu = "视频特效在 CPU 上计算（无 GPU）：{0}"
 video_fx_gpu_lost = "GPU 视频渲染器已丢失（{0}）— 已切换到 CPU"
 
-# Заголовки системных файловых диалогов.
+# Titles of system file dialogs.
 flight_saved = "播放日志已保存：{0}"
 
 media_missing = "{0}：素材不可用，显示占位画面（{1}）"
@@ -889,7 +889,7 @@ import_older = "导入旧版本 Kinetren 项目"
 open_project = "打开项目"
 save_project = "保存项目"
 
-# Перф-панель и окно диагностики.
+# Perf panel and diagnostics window.
 [perf]
 loading = "加载中…"
 smoothing = "平滑"
@@ -919,7 +919,7 @@ log_clear = "清空"
 graph_reset = "重置图表"
 log_empty = "没有发现问题"
 
-# Пороговые предупреждения в журнале проблем.
+# Threshold warnings in the problem log.
 flight_save = "保存播放日志"
 flight_stalls = "卡住次数：{0}"
 
@@ -932,7 +932,7 @@ prefetch_thrash = "{0} 条缓存在第一次读取前就被丢弃（prefetch thr
 low_video_hit = "播放时视频 hit {0}% — 解码跟不上"
 offline_changed = "媒体可用性变了：离线 {0}"
 
-# Переходы (Р.33 С4): вид, его параметры и кривая аудио.
+# Transitions (R.33 C4): kind, its parameters and audio curve.
 [trn]
 title = "转场 {0}"
 kind = "类型："
@@ -1009,7 +1009,7 @@ circle = "圆形"
 diamond = "菱形"
 box = "矩形"
 
-# Окно камеры (Р.34 К3).
+# Camera window (R.34 K3).
 [cam]
 props = "摄像机属性…"
 title = "摄像机 {0}"
@@ -1020,7 +1020,7 @@ look_at = "注视一点"
 look_at_hint = "双节点摄像机：始终对准该点（如 After Effects）"
 length = "长度（秒）: {0}"
 
-# Вопросы, на которые программа обязана получить ответ до действия.
+# Questions the program must get answered before an action.
 [ask]
 drop_project_title = "拖入了一个项目"
 drop_project_body = "文件 {0} 是一个项目。打开它，还是作为合成插入当前剪辑？"
@@ -1049,7 +1049,7 @@ save_and_go = "保存并继续"
 discard = "不保存"
 stay = "留在此处"
 
-# Окно генератора (Р.52): вид и параметры медиа без файла.
+# Generator window (R.52): kind and media parameters without a file.
 [genw]
 hint_kind = "生成器类型；整个表单属于此事件"
 head = "来源：{0}"
@@ -1092,7 +1092,7 @@ noise = "噪点场"
 smpte = "SMPTE 彩条"
 timecode = "时间码"
 
-# Окно титра (Р.52 С3).
+# Title window (R.52 C3).
 [titlew]
 preset_roll = "片尾字幕"
 preset_crawl = "滚动字幕"
@@ -1121,8 +1121,8 @@ align_l = "左对齐"
 align_c = "居中"
 align_r = "右对齐"
 
-# Подписи параметров генераторов (Р.53 п.414): своя область — «size» у
-# титра это КЕГЛЬ, а не зерно эффекта Noise.
+# Generator parameter labels (R.53 item 414): own area — “size” in
+# a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
 text = "文本"
 reveal = "显现"
@@ -1161,7 +1161,7 @@ fps = "每秒帧数："
 mono = "灰度"
 tone = "1 kHz 测试音"
 
-# 合成的公开参数（Р.59，阶段 3）。
+# 合成的公开参数（R.59，阶段 3）。
 [pubp]
 publish = "发布…"
 unpublish = "取消发布"

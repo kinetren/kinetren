@@ -84,7 +84,7 @@ jobs:
 
       - name: Tests
         working-directory: src
-        # nextest, as finish.sh: under `cargo test` t663 times out (Р.68)
+        # nextest, as finish.sh: under `cargo test` t663 times out (R.68)
         run: |
           set -o pipefail
           cargo nextest run --workspace --no-fail-fast 2>&1 | tee ../nextest.log

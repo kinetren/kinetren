@@ -1,11 +1,11 @@
-//! Тест 149 (п.149 porting-notes, Р.24): конформанс с ЭТАЛОННОЙ
-//! python-библиотекой OpenTimelineIO (официальной JSON Schema у формата нет —
-//! норматив только реализация).
+//! Test 149 (item 149 of porting-notes, R.24): conformance with the REFERENCE
+//! Python library OpenTimelineIO (the format has no official JSON Schema —
+//! only the implementation is normative).
 //!
-//! Gated по образцу ffmpeg-конформанса: нет `python3 -c "import
-//! opentimelineio"` → тест печатает причину и выходит зелёным;
-//! KT_REQUIRE_OTIO_CONFORMANCE=1 (CI) — отсутствие эталона = провал.
-//! Сверяется СЕМАНТИКА (модель/поля), не байты python-вывода.
+//! Gated after the pattern of ffmpeg conformance: without `python3 -c "import
+//! opentimelineio"` the test prints the reason and exits green;
+//! KT_REQUIRE_OTIO_CONFORMANCE=1 (CI) — the absence of the reference = failure.
+//! The SEMANTICS (model/fields) is compared, not the bytes of the python output.
 
 use kt_model::*;
 use kt_otio::{Retained, load_project, save_project};
@@ -96,9 +96,9 @@ fn sample() -> Project {
     p
 }
 
-/// (а) Наш файл переживает круг через эталон: read_from_file → write_to_file
-/// эталоном, затем наш ридер обязан восстановить ЭКВИВАЛЕНТНУЮ модель
-/// (metadata.kt эталон обязан сохранить — это и есть контракт passthrough).
+/// (a) Our file survives a round trip through the reference: read_from_file → write_to_file
+/// by the reference, then our reader must restore an EQUIVALENT model
+/// (the reference must keep metadata.kt — this is the contract of passthrough).
 #[test]
 fn t149_our_file_survives_reference_roundtrip() {
     if !gate() {
@@ -137,8 +137,8 @@ otio.adapters.write_to_file(t, '{}')
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// (б) Таймлайн, построенный ЭТАЛОННЫМ API, читается нами; наш пересейв
-/// эталон читает обратно и сверяет числа сам (python-ассерты).
+/// (b) A timeline built by the REFERENCE API is read by us; our re-save is
+/// read back by the reference and checks the numbers itself (python asserts).
 #[test]
 fn t149_reference_built_timeline_reads_and_resaves() {
     if !gate() {

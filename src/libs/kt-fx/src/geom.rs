@@ -1,49 +1,49 @@
-//! Слияние геометрических видео-FX (Р.44, конкатенация трансформов,
-//! F-CMP-001): подряд идущие Pan/CamMotion/Mirror/EventGrid исполняются
-//! ОДНИМ проходом обратных отображений — без промежуточных растеризаций и
-//! 8-битных квантований между шагами. Нелокальные FX — барьеры.
+//! Fusion of geometric video FX (R.44, transform concatenation,
+//! F-CMP-001): consecutive Pan/CamMotion/Mirror/EventGrid run in ONE
+//! pass of inverse mappings — without intermediate rasterizations and
+//! 8-bit quantizations between steps. Non-local FX are barriers.
 //!
-//! Здесь живут ВСЕ решения (сегментация, программа, legacy-vs-fused):
-//! kt-engine (CPU) и kt-gpu — исполнители одной и той же программы
-//! (инвариант №7; прецедент — общая параметрика `pan_frame`/`cam_at`).
-//! Правишь построение или CPU-исполнитель — правь WGSL-зеркало
-//! `geom_fused.wgsl` в kt-gpu ТЕМ ЖЕ КОММИТОМ (t181).
+//! ALL decisions live here (segmentation, program, legacy-vs-fused):
+//! kt-engine (CPU) and kt-gpu are executors of one and the same program
+//! (invariant 7; precedent — the shared parametrization `pan_frame`/`cam_at`).
+//! When you edit the construction or the CPU executor — edit the WGSL mirror
+//! `geom_fused.wgsl` in kt-gpu IN THE SAME COMMIT (t181).
 //!
-//! Гарантия байтов (Р.44): серия длины 1 из Pan/CamMotion/Mirror идёт
-//! СТАРЫМИ ядрами (`GeomExec::Legacy`) — байт-в-байт как до слияния (t297);
-//! одиночный EventGrid идёт слитым проходом, но арифметика тайл-локальной
-//! фазы воспроизводит старую формулу дословно — голден t26 стоит на этом.
-//! Мульти-шаговые серии дают НОВЫЕ байты (лучше: без потерь) — это
-//! санкционировано владельцем (docs/user-feedback.md Р.44).
+//! Byte guarantee (R.44): a series of length 1 of Pan/CamMotion/Mirror goes
+//! through the OLD kernels (`GeomExec::Legacy`) — byte-for-byte as before the fusion (t297);
+//! a single EventGrid goes through the fused pass, but the arithmetic of the tile-local
+//! phase reproduces the old formula verbatim — the golden t26 stands on this.
+//! Multi-step series give NEW bytes (better: no losses) — this is
+//! sanctioned by the owner (docs/user-feedback.md R.44).
 
 use crate::conform::{ConformRule, LeadCtx, conform_dest};
 use crate::video::{Frame, FxScratch};
 use kt_model::FxInstance;
 
-/// Потолок гео-шагов в одном слитом проходе: длиннее — серия режется на
-/// два прохода по границе шага (в точке разреза качество = сегодняшнее).
-/// Ограничен ёмкостью юниформы GPU-пасса: худший случай — 6 EventGrid =
-/// 6 Fold (по 2 vec4) + 7 Affine = 13 примитивов ≤ MAX_PRIMS.
+/// The ceiling of geo steps in one fused pass: a longer series is cut into
+/// two passes at a step boundary (at the cut point the quality equals today’s).
+/// Bounded by the capacity of the GPU pass uniform: worst case — 6 EventGrid =
+/// 6 Fold (2 vec4 each) + 7 Affine = 13 primitives ≤ MAX_PRIMS.
 pub const MAX_GEO_STEPS: usize = 6;
-/// Потолок ЛОГИЧЕСКИХ примитивов программы (kinds пакуются 4 битами в два
-/// u32 заголовка юниформы — максимум 16).
+/// Ceiling of LOGICAL primitives of the program (kinds are packed 4 bits each into two
+/// u32 headers of the uniform — at most 16).
 pub const MAX_PRIMS: usize = 16;
 
-/// Разрешённая 3D-камера слоя (Р.29; с Р.44 живёт здесь — Pan3d считается
-/// обоими бэкендами): активная/прибитая камера с уже интерполированными
-/// кейфреймами. Считается при построении плана — исполнители получают
-/// готовые параметры.
+/// The resolved 3D camera of the layer (R.29; since R.44 it lives here — Pan3d is computed
+/// by both backends): the active/pinned camera with already interpolated
+/// keyframes. It is computed at plan construction — the executors receive
+/// ready parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Cam3d {
     pub cam: kt_model::CameraParams,
-    /// Мировой масштаб: quality px / project px (превью меньше проекта,
-    /// а координаты Pan3d/камер — в px ПРОЕКТА).
+    /// World scale: quality px / project px (the preview is smaller than the project,
+    /// and the Pan3d/camera coordinates are in PROJECT px).
     pub world_scale: f64,
 }
 
-/// Геометрический ли эффект (обратимое отображение «выходной пиксель →
-/// точка входа»). Pan3d — чистая 3×3-гомография (плоский квад, z_clip=0),
-/// с Р.44 он гео-шаг слитого прохода и считается на ОБОИХ бэкендах.
+/// Whether it is a geometric effect (an invertible mapping “output pixel →
+/// input entry point”). Pan3d — a pure 3×3 homography (a flat quad, z_clip=0),
+/// since R.44 it is a geo step of the fused pass and is computed on BOTH backends.
 pub fn is_geo(f: &FxInstance) -> bool {
     matches!(
         f,
@@ -61,11 +61,11 @@ pub fn is_geo(f: &FxInstance) -> bool {
     )
 }
 
-/// Тождествен ли узел «Геометрия» В КОНТЕКСТЕ (Р.62). Дополнительный узел
-/// тождествен при тождественных параметрах; ВЕДУЩИЙ — ещё и только когда
-/// рамка приведения равна холсту: иначе он обязан положить кадр чужих
-/// пропорций в рамку с прозрачными полями. Без контекста ведущий
-/// считается «растянуть» (рамка = холст).
+/// Whether the “Geometry” node IN CONTEXT is identity (R.62). An extra node is
+/// identity under identity parameters; the LEADING one is also so only when
+/// the conform frame equals the canvas: otherwise it must put the frame of foreign
+/// proportions into the frame with transparent margins. Without a context the leading
+/// node counts as “stretch” (frame = canvas).
 pub fn geometry_is_identity_in(
     f: &FxInstance,
     lead: Option<LeadCtx>,
@@ -89,15 +89,15 @@ pub fn geometry_is_identity_in(
     }
 }
 
-/// Гео-шаг, который ДЕЙСТВУЕТ: гео-вид, кроме тождественного узла
-/// «Геометрия» — тот прозрачен для сегментации, как аудио-FX, иначе
-/// одиночный Pan/Mirror рядом с ним терял бы старое ядро (t297).
+/// A geo step that ACTS: a geo effect, except the identity “Geometry” node —
+/// that is transparent for segmentation, like audio FX; otherwise a lone
+/// Pan/Mirror next to it would lose the old kernel (t297).
 pub fn is_geo_active(f: &FxInstance, lead: Option<LeadCtx>, out_w: u32, out_h: u32) -> bool {
     is_geo(f) && !geometry_is_identity_in(f, lead, out_w, out_h)
 }
 
-/// Диагональная аффинная карта index-space: `x_in = ax·x + bx` (линейная
-/// часть всех наших 2D-гео-FX осе-выровнена, поворотов нет).
+/// Diagonal affine map of index-space: `x_in = ax·x + bx` (the linear part of all
+/// our 2D geo FX is axis-aligned; there are no rotations).
 #[derive(Debug, Clone, Copy)]
 pub struct Aff {
     pub ax: f64,
@@ -111,9 +111,9 @@ impl Aff {
     fn is_identity(&self) -> bool {
         self.ax == 1.0 && self.bx == 0.0 && self.ay == 1.0 && self.by == 0.0
     }
-    /// Композиция `m ∘ self` (сначала self, потом m) — считается в f64 при
-    /// построении; GPU получает УЖЕ перемноженные коэффициенты (однократное
-    /// округление в f32, риск дрейфа f32-цепочек снят).
+    /// Composition `m ∘ self` (first self, then m) — computed in f64 at
+    /// construction; the GPU receives ALREADY multiplied coefficients (a single
+    /// rounding to f32, the risk of f32-chain drift is removed).
     fn then(&self, m: &Aff) -> Aff {
         Aff {
             ax: m.ax * self.ax,
@@ -124,35 +124,35 @@ impl Aff {
     }
 }
 
-/// РАЗМЕЩЕНИЕ узла «Геометрия» на холсте (Р.64): рамка, поворот и якорь в
-/// координатах холста (логические px выхода) плюс окно кропа во ВХОДЕ.
+/// PLACEMENT of the “Geometry” node on the canvas (R.64): the frame, rotation and anchor
+/// in canvas coordinates (logical output px) plus the crop window of the INPUT.
 ///
-/// Это ЕДИНСТВЕННАЯ арифметика размещения в программе: из неё строит свой
-/// аффин/гомографию гео-программа рендера и по ней же рисует рамку
-/// интерфейс. Вторая копия формул разошлась бы с первой молча — ровно тот
-/// класс дефектов, из-за которого правило куска в Р.39 свели к
+/// This is the ONLY placement arithmetic in the program: the geo program of the render builds its
+/// affine/homography from it, and the interface draws the frame from it too. A second copy of the
+/// formulas would silently diverge from the first — exactly the class of defects because of which the
+/// rule of the slice in R.39 was reduced to
 /// `clip_slice`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Placement {
-    /// Левый верх рамки на холсте (до поворота).
+    /// Top-left of the frame on the canvas (before rotation).
     pub ox: f64,
     pub oy: f64,
-    /// Размер рамки на холсте.
+    /// Size of the frame on the canvas.
     pub dw: f64,
     pub dh: f64,
-    /// Поворот вокруг якоря, градусы (как в модели).
+    /// Rotation around the anchor, degrees (as in the model).
     pub rot_deg: f64,
-    /// Точка якоря на холсте — центр поворота и масштаба.
+    /// Anchor point on the canvas — the center of rotation and scale.
     pub anchor: (f64, f64),
-    /// Окно кропа во ВХОДНОМ кадре: (x0, y0, w, h) в px входа.
+    /// Crop window in the INPUT frame: (x0, y0, w, h) in input px.
     pub crop_in: (f64, f64, f64, f64),
 }
 
 impl Placement {
-    /// Четыре угла рамки НА ХОЛСТЕ с учётом поворота: TL, TR, BR, BL.
-    /// Именно их рисует интерфейс и по ним же сверяются тесты якоря:
-    /// «картинка не сдвинулась» — это про повёрнутый квад, а не про
-    /// осевой прямоугольник.
+    /// The four corners of the frame ON THE CANVAS, taking rotation into account: TL, TR, BR, BL.
+    /// It is exactly these that the interface draws, and the anchor tests check against them:
+    /// “the picture did not shift” is about the rotated quad, not about the
+    /// axis-aligned rectangle.
     pub fn corners(&self) -> [(f64, f64); 4] {
         let (c, s) = (self.rot_deg.to_radians().cos(), self.rot_deg.to_radians().sin());
         let (ax, ay) = self.anchor;
@@ -168,19 +168,19 @@ impl Placement {
         })
     }
 
-    /// Центр рамки на холсте (совпадает с центром повёрнутого квада).
+    /// Center of the frame on the canvas (coincides with the center of the rotated quad).
     pub fn center(&self) -> (f64, f64) {
         let cs = self.corners();
         ((cs[0].0 + cs[2].0) / 2.0, (cs[0].1 + cs[2].1) / 2.0)
     }
 }
 
-/// Размещение узла «Геометрия» на холсте. `None` — не узел геометрии.
+/// Placement of the “Geometry” node on the canvas. `None` — not a geometry node.
 ///
-/// `in_size` — логический размер ВХОДНОГО кадра шага (px), `canvas` —
-/// логический размер выхода. Ведущий узел берёт рамку по правилу
-/// приведения от ВИДА источника (кроп режет вид ДО правила), обычный —
-/// по кропнутому входу.
+/// `in_size` — the logical size of the INPUT frame of the step (px), `canvas` —
+/// the logical output size. The leading node takes the frame by the conform rule
+/// from the VIEW of the source (the crop cuts the view BEFORE the rule), an ordinary one —
+/// by the cropped input.
 pub fn geometry_placement(
     f: &FxInstance,
     lead: Option<LeadCtx>,
@@ -236,8 +236,8 @@ pub fn geometry_placement(
     })
 }
 
-/// Ручка рамки трансформации (Р.64). Углы и стороны — масштаб, `Rot` —
-/// поворот, `Anchor` — якорь, `Crop*` — кроп своей стороны.
+/// Handle of the transform frame (R.64). Corners and sides — scale, `Rot` —
+/// rotation, `Anchor` — the anchor, `Crop*` — the crop of its own side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Handle {
     TopLeft,
@@ -257,18 +257,18 @@ pub enum Handle {
 }
 
 impl Handle {
-    /// Точка ручки НА ХОЛСТЕ (с учётом поворота) — и рисунок, и хит-тест
-    /// берут её отсюда, второго списка координат не заводится.
-    /// НАРУЖНАЯ НОРМАЛЬ ручки — единичный вектор «прочь от рамки» (Р.66).
+    /// The handle point ON THE CANVAS (with rotation taken into account) — both the drawing and the hit test
+    /// take it from here; no second list of coordinates is kept.
+    /// The OUTER NORMAL of the handle — a unit vector “away from the frame” (R.66).
     ///
-    /// Нужен мелкой рамке: когда её сторона на экране меньше трёх хват-зон,
-    /// восемь ручек масштаба покрывают её целиком и тело хватать нечем —
-    /// ручки выносятся наружу вдоль этих направлений. Считается ЗДЕСЬ, рядом
-    /// с самой рамкой, потому что направление зависит от её поворота; само
-    /// СМЕЩЕНИЕ живёт в интерфейсе — оно измеряется в пикселях экрана, а о
-    /// масштабе превью kt-fx не знает.
+    /// Needed by a small frame: when its side on screen is smaller than three grab zones,
+    /// the eight scale handles cover it entirely and there is nothing to grab for the body —
+    /// the handles are moved outward along these directions. It is computed HERE, next to
+    /// the frame itself, because the direction depends on its rotation; the OFFSET itself
+    /// lives in the interface — it is measured in screen pixels, and kt-fx does not know
+    /// the preview scale.
     ///
-    /// У ручки поворота, якоря и кропа нормали нет: они с места не двигаются.
+    /// The rotation, anchor and crop handles have no normal: they do not move from their place.
     pub fn outward(self, pl: &Placement) -> Option<(f64, f64)> {
         let c = pl.center();
         let p = self.point(pl);
@@ -304,13 +304,13 @@ impl Handle {
             Handle::BottomLeft => cs[3],
             Handle::Left | Handle::CropLeft => mid(cs[3], cs[0]),
             Handle::Anchor => pl.anchor,
-            // Ручка поворота — ВНУТРИ рамки, под серединой верхней стороны.
+            // The rotation handle is INSIDE the frame, under the midpoint of the top side.
             //
-            // Снаружи (как в большинстве редакторов) она вылезает за кадр:
-            // по правилу «вписать» рамка занимает всю высоту холста, и
-            // ручка оказывалась ВНЕ превью — в неё невозможно попасть
-            // (поймано t760b). Внутрь — всегда видна; плечо укорачивается
-            // на мелкой рамке, чтобы не сойтись с якорем в центре.
+            // Outside (as in most editors) it sticks out beyond the picture:
+            // under the “fit” rule the frame takes the whole height of the canvas, and the
+            // handle ended up OUTSIDE the preview — it was impossible to hit it
+            // (caught by t760b). Inside — always visible; the arm is shortened
+            // on a small frame so that it does not meet the anchor in the center.
             Handle::Rot => {
                 let top = mid(cs[0], cs[1]);
                 let (cx, cy) = pl.center();
@@ -322,7 +322,7 @@ impl Handle {
         }
     }
 
-    /// Противоположная точка — та, что остаётся НА МЕСТЕ при тяге за эту.
+    /// The opposite point — the one that STAYS IN PLACE when dragging this one.
     fn opposite(self, pl: &Placement) -> Option<(f64, f64)> {
         let cs = pl.corners();
         let mid = |a: (f64, f64), b: (f64, f64)| ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
@@ -340,19 +340,19 @@ impl Handle {
     }
 }
 
-/// Длина плеча ручки поворота в px ХОЛСТА (рисунок и хит-тест — одно
-/// число).
+/// Length of the arm of the rotation handle in CANVAS px (drawing and hit test —
+/// one number).
 pub const ROT_ARM: f64 = 28.0;
 
-/// Позиция узла после переноса рамки на `(dx, dy)` px холста.
+/// Position of the node after moving the frame by `(dx, dy)` canvas px.
 pub fn pos_for_drag(pos: (f64, f64), canvas: (f64, f64), d: (f64, f64)) -> (f64, f64) {
     let (fw, fh) = (canvas.0.max(2.0), canvas.1.max(2.0));
     ((pos.0 + d.0 / fw).clamp(-2.0, 2.0), (pos.1 + d.1 / fh).clamp(-2.0, 2.0))
 }
 
-/// Зум и позиция при тяге ручки масштаба в точку `p` холста: ПРОТИВО-
-/// ПОЛОЖНАЯ точка рамки остаётся на месте (правило отрасли), зум
-/// равномерный — у узла он один на обе оси.
+/// Zoom and position when dragging a scale handle to the point `p` of the canvas: the OPPOSITE
+/// point of the frame stays in place (the industry rule), the zoom
+/// is uniform — the node has one zoom for both axes.
 pub fn zoom_for_handle(
     pl: &Placement,
     h: Handle,
@@ -369,47 +369,47 @@ pub fn zoom_for_handle(
     if len0 < 1e-6 {
         return None;
     }
-    // проекция на исходное направление: тяга вбок рамку не переворачивает
+    // projection onto the original direction: dragging sideways does not flip the frame
     let k = ((d1x * d0x + d1y * d0y) / (len0 * len0)).max(0.01);
     let z = (zoom * k).clamp(0.05, 32.0);
-    // реальный коэффициент после клампа — из него и считается сдвиг
+    // the real coefficient after the clamp — the shift is computed from it
     let kk = z / zoom.max(1e-9);
     let (cx, cy) = pl.center();
     let nc = (fixed.0 + (cx - fixed.0) * kk, fixed.1 + (cy - fixed.1) * kk);
     Some((z, pos_for_drag(pos, canvas, (nc.0 - cx, nc.1 - cy))))
 }
 
-/// Угол узла, при котором ручка поворота смотрит в точку `p` холста.
-/// Шаг `step_deg` (Shift) — округление к ближайшему кратному.
+/// The angle of the node at which the rotation handle points to the point `p` of the canvas.
+/// The step `step_deg` (Shift) — rounding to the nearest multiple.
 pub fn rot_for_point(pl: &Placement, p: (f64, f64), step_deg: Option<f64>) -> f64 {
     let (ax, ay) = pl.anchor;
-    // нулевой угол ручки — «вверх» от якоря в НЕповёрнутой рамке
+    // zero angle of the handle — “up” from the anchor in the NON-rotated frame
     let base = (-std::f64::consts::FRAC_PI_2).to_degrees();
     let cur = (p.1 - ay).atan2(p.0 - ax).to_degrees();
     let mut deg = cur - base;
     if let Some(st) = step_deg.filter(|s| *s > 0.0) {
         deg = (deg / st).round() * st;
     }
-    // держим в (-360, 360], как паспорт параметра
+    // keep within (-360, 360], as the parameter passport does
     deg %= 360.0;
     deg.clamp(-360.0, 360.0)
 }
 
-/// Кроп после тяги ручки кропа в точку `p` холста. Возвращает
-/// `[l, t, r, b]` в долях ИСХОДНОГО вида.
+/// Crop after dragging a crop handle to the point `p` of the canvas. Returns
+/// `[l, t, r, b]` as fractions of the ORIGINAL view.
 pub fn crop_for_handle(
     pl: &Placement,
     h: Handle,
     p: (f64, f64),
     crop: [f64; 4],
 ) -> Option<[f64; 4]> {
-    // переводим точку в систему НЕповёрнутой рамки
+    // transform the point into the system of the NON-rotated frame
     let (c, s) = ((-pl.rot_deg).to_radians().cos(), (-pl.rot_deg).to_radians().sin());
     let (ax, ay) = pl.anchor;
     let (dx, dy) = (p.0 - ax, p.1 - ay);
     let (lx, ly) = (ax + c * dx - s * dy, ay + s * dx + c * dy);
-    // доля вдоль стороны рамки → доля ВИДА: рамка показывает уже
-    // кропнутый вид, поэтому шаг доли делится на оставшуюся часть
+    // fraction along the side of the frame → fraction of the VIEW: the frame already shows the
+    // cropped view, so the fraction step is divided by the remaining part
     let (u, v) = ((lx - pl.ox) / pl.dw.max(1e-6), (ly - pl.oy) / pl.dh.max(1e-6));
     let (kx, ky) = ((1.0 - crop[0] - crop[2]).max(0.05), (1.0 - crop[1] - crop[3]).max(0.05));
     let mut out = crop;
@@ -420,28 +420,28 @@ pub fn crop_for_handle(
         Handle::CropBottom => out[3] = (crop[3] + (1.0 - v) * ky).clamp(0.0, 0.95),
         _ => return None,
     }
-    // взаимный предел: суммарный кроп оси не съедает вид целиком
+    // mutual limit: the total crop of an axis does not eat the view entirely
     if out[0] + out[2] > 0.95 || out[1] + out[3] > 0.95 {
         return None;
     }
     Some(out)
 }
 
-/// ЯКОРЬ в точку `p` холста + КОМПЕНСАЦИЯ позиции: повёрнутый квад
-/// остаётся на месте.
+/// ANCHOR to the point `p` of the canvas + POSITION COMPENSATION: the rotated quad
+/// stays in place.
 ///
-/// Компенсация выведена из того же размещения, а не из отдельной формулы:
-/// поворот идёт вокруг якоря, значит смена якоря вращает картинку вокруг
-/// другой точки, и позицию надо подвинуть на `R⁻¹(I − R)(A − A′)`. У
-/// After Effects компенсация на повёрнутом слое врёт — сторож сверяет
-/// УГЛЫ квада, а не значения параметров.
+/// The compensation is derived from the same placement, not from a separate formula:
+/// the rotation goes around the anchor, so changing the anchor rotates the picture around
+/// another point, and the position must be shifted by `R⁻¹(I − R)(A − A′)`. In
+/// After Effects the compensation on a rotated layer is wrong — the guard checks the
+/// CORNERS of the quad, not the parameter values.
 pub fn anchor_move(
     pl: &Placement,
     p: (f64, f64),
     pos: (f64, f64),
     canvas: (f64, f64),
 ) -> ((f64, f64), (f64, f64)) {
-    // точка в системе НЕповёрнутой рамки → доли рамки
+    // point in the NON-rotated frame’s system → fractions of the frame
     let (c, s) = ((-pl.rot_deg).to_radians().cos(), (-pl.rot_deg).to_radians().sin());
     let (ax, ay) = pl.anchor;
     let (dx, dy) = (p.0 - ax, p.1 - ay);
@@ -450,72 +450,72 @@ pub fn anchor_move(
         ((lx - pl.ox) / pl.dw.max(1e-6)).clamp(0.0, 1.0),
         ((ly - pl.oy) / pl.dh.max(1e-6)).clamp(0.0, 1.0),
     );
-    // новая точка якоря при СТАРОЙ позиции
+    // new anchor point at the OLD position
     let a2 = (pl.ox + na.0 * pl.dw, pl.oy + na.1 * pl.dh);
     let (ex, ey) = (ax - a2.0, ay - a2.1);
-    // Показ точки слоя — `A + R(q − A)`. Сместив якорь на `E = A′ − A` и
-    // позицию на `Δ`, получаем `A + E + Δ + R(q − A − E)`; равенство
-    // прежнему показу даёт `Δ = (R − I)·E`, то есть ровно `(I − R)(A − A′)`
-    // — без второго поворота. Лишний `R⁻¹` здесь и был бы той самой
-    // «аналитической компенсацией, которая врёт на повороте».
+    // The display of a layer point — `A + R(q − A)`. Shifting the anchor by `E = A′ − A` and
+    // the position by `Δ`, we get `A + E + Δ + R(q − A − E)`; equality with
+    // the previous display gives `Δ = (R − I)·E`, that is exactly `(I − R)(A − A′)`
+    // — without a second rotation. An extra `R⁻¹` here would be exactly the
+    // “analytic compensation that goes wrong on rotation”.
     let (cr, sr) = (pl.rot_deg.to_radians().cos(), pl.rot_deg.to_radians().sin());
     let (ddx, ddy) = (ex - (cr * ex - sr * ey), ey - (sr * ex + cr * ey));
     (na, pos_for_drag(pos, canvas, (ddx, ddy)))
 }
 
-/// Примитив программы обратного прохода. Порядок примитивов = порядок
-/// применения (от ПОСЛЕДНЕГО эффекта серии к первому); после последнего
-/// примитива координата — в index-space входного кадра серии.
+/// A primitive of the backward pass program. The order of primitives = the order of
+/// application (from the LAST effect of the series to the first); after the last
+/// primitive the coordinate is in the index-space of the series’ input frame.
 #[derive(Debug, Clone, Copy)]
 pub enum GeomPrim {
-    /// Композиция обратных аффинных шагов (Pan/CamMotion/Mirror и
-    /// пред/пост-карты соседей).
+    /// Composition of inverse affine steps (Pan/CamMotion/Mirror and
+    /// pre/post-maps of neighbors).
     Affine(Aff),
-    /// Позиционный кламп к прямоугольнику виртуального входа шага —
-    /// СЕМАНТИЧЕСКОЕ «плато» Pan при zoom<1/Stretch (рамка шире входа).
-    /// Для влезающей рамки НЕ ставится: вылет ≤ 0.5 px у кромки — артефакт
-    /// пошаговой растеризации, а не семантика. Отключённая ось несёт
-    /// сентинел ±BIG.
+    /// Positional clamp to the rectangle of the step’s virtual input —
+    /// the SEMANTIC “plateau” of Pan at zoom<1/Stretch (the frame wider than the input).
+    /// It is NOT applied to a fitting frame: an overshoot ≤ 0.5 px at the edge is an artifact of
+    /// step-wise rasterization, not semantics. A disabled axis carries
+    /// the sentinel ±BIG.
     Clamp { x0: f64, x1: f64, y0: f64, y1: f64 },
-    /// Тайл-modulo EventGrid: вход — «d»-координата (центр-space минус
-    /// смещение сетки), вне [0,gw)×[0,gh) — чёрный непрозрачный (короткое
-    /// замыкание), внутри — тайл-локальная фаза и точная карта в index-space
-    /// входа шага: `(r / cell) * in − 0.5` — ДОСЛОВНО арифметика старого
-    /// event_grid, на ней стоит байт-идентичность одиночной сетки (t26).
+    /// Tile modulo of EventGrid: the input is the “d” coordinate (center-space minus
+    /// the grid offset); outside [0,gw)×[0,gh) — opaque black (a short
+    /// circuit), inside — the tile-local phase and the exact map into the index-space
+    /// of the step’s input: `(r / cell) * in − 0.5` — VERBATIM the arithmetic of the old
+    /// event_grid; the byte identity of the single grid (t26) rests on it.
     Fold { gw: f64, gh: f64, cw: f64, ch: f64, in_w: f64, in_h: f64 },
-    /// Обратная гомография Pan3d: вход — ЦЕНТР-space выхода шага (пред-
-    /// аффин +0.5 скомпонован построителем), `t = m·(c,1)`; `t.z ≤ 0` —
-    /// точка за камерой (клиппинг растеризатора) → прозрачно; `q = t.xy/t.z`
-    /// вне [0,1]² — вне квада → прозрачно; иначе выход = q (uv), пост-аффин
-    /// `q·in − 0.5` скомпонован построителем (дословно старый pan3d.wgsl).
+    /// Inverse homography of Pan3d: the input is the CENTER-space of the step output
+    /// (the pre-affine +0.5 is composed by the builder), `t = m·(c,1)`; `t.z ≤ 0` —
+    /// point behind the camera (rasterizer clipping) → transparent; `q = t.xy/t.z`
+    /// outside [0,1]² — outside the quad → transparent; otherwise the output is q (uv),
+    /// the post-affine `q·in − 0.5` is composed by the builder (verbatim the old pan3d.wgsl).
     Proj { m: [[f64; 3]; 3] },
-    /// Границы рамки (Р.62, узел «Геометрия»): координата вне
-    /// [x0,x1]×[y0,y1] index-space — ПРОЗРАЧНО (короткое замыкание).
-    /// В отличие от Clamp (плато) пикселей не выдумывает: поля
-    /// приведения обязаны быть прозрачными (урок Pitivi #1378).
+    /// Frame bounds (R.62, the “Geometry” node): a coordinate outside
+    /// [x0,x1]×[y0,y1] index-space is TRANSPARENT (short circuit).
+    /// Unlike Clamp (plateau), it does not invent pixels: the conform
+    /// margins must be transparent (lesson from Pitivi #1378).
     Bounds { x0: f64, x1: f64, y0: f64, y1: f64 },
-    /// Нелинейный варп (Р.47 Кв4): вход и выход — НОРМАЛИЗОВАННОЕ
-    /// центрированное пространство стадии (пред/пост-аффины строит
-    /// builder; r=1 — короткая полуось, cylinder нормируется по X на
-    /// w/2). mode: 0 lens (полином), 1 twirl, 2 ripple, 3 kaleidoscope,
-    /// 4 cylinder; предвычислимое (радианы, 2π·freq, sin a, 1/a) — f64
-    /// на CPU, в юниформу — однократно.
+    /// Nonlinear warp (R.47 Kv4): input and output are the NORMALIZED
+    /// centered space of the stage (pre/post-affines built by the
+    /// builder; r=1 is the short semi-axis, cylinder is normalized by X on
+    /// w/2). mode: 0 lens (polynomial), 1 twirl, 2 ripple, 3 kaleidoscope,
+    /// 4 cylinder; precomputable values (radians, 2π·freq, sin a, 1/a) — f64
+    /// on CPU, into the uniform — once.
     Warp { mode: u32, p: [f64; 7] },
 }
 
-/// Сентинел отключённой оси Clamp (влезает в f32 юниформы без inf).
+/// Sentinel for the disabled Clamp axis (fits f32 uniforms without inf).
 pub const CLAMP_OFF: f64 = 1.0e30;
 
-/// Потолок поточечных tap-опов в одной программе (таблица в юниформе GPU:
-/// 8 × 2 vec4-слота за примами).
+/// Ceiling on per-pixel tap ops in one program (table in the GPU uniform:
+/// 8 × 2 vec4 slots behind the prims).
 pub const MAX_TAP_OPS: usize = 8;
-/// Потолок vec4-слотов примов (за ними в юниформе живёт tap-таблица).
+/// Ceiling on vec4 slots of prims (the tap table lives behind them in the uniform).
 pub const MAX_PRIM_SLOTS: usize = 46;
 
-/// Поточечный ли эффект (цвет пикселя без соседей) — кандидат на
-/// поглощение внутрь слитого прохода (Р.45, п.312). Поглощаются только
-/// ВНУТРЕННИЕ (между гео-шагами рана): ведущие/замыкающие остаются
-/// барьерами — их байты при K=1 неотличимы от прежних.
+/// Whether the effect is per-pixel (pixel color without neighbours) — candidate for
+/// absorption into the fused pass (R.45, item 312). Only INTERNAL ones
+/// (between geo steps of the run) are absorbed: leading/trailing ones stay
+/// barriers — at K=1 their bytes are indistinguishable from the old ones.
 pub fn is_pointwise(f: &FxInstance) -> bool {
     matches!(
         f,
@@ -528,105 +528,105 @@ pub fn is_pointwise(f: &FxInstance) -> bool {
     )
 }
 
-/// Поточечный оп, применяемый к ЗНАЧЕНИЮ САБТАПА (после билинейки, до
-/// box-среднего), в цепочечном порядке (Р.45, п.312).
+/// Per-pixel op applied to the VALUE OF THE SUBTAP (after bilinear, before
+/// the box average), in chain order (R.45, item 312).
 #[derive(Debug, Clone, Copy)]
 pub enum TapKind {
-    /// Greenscreen: f64/f32-континуум целочисленной формулы ядра.
+    /// Greenscreen: f64/f32 continuum of the integer kernel formula.
     Gs { key: [f64; 3], tol: f64, hard: f64, spill: f64, kc: usize },
-    /// Noise: зерно прибито к сетке СВОЕГО шага (решение Р.45) — офсет
-    /// считается от floor координаты стадии; `special` — особая формула
-    /// пользовательского `size == 1 && !color` (у неё другое зерно).
+    /// Noise: grain is pinned to the grid of ITS OWN step (decision R.45) — the offset
+    /// is computed from floor of the stage coordinate; `special` is the special formula
+    /// for the user `size == 1 && !color` (it has a different grain).
     Noise { seed: u32, k: i64, cell: u32, color: bool, special: bool, stage_w: u32, stage_h: u32 },
-    /// ColorGrade (Р.47): cos/sin оттенка предвычислены в f64 —
-    /// GPU получает их юниформой с однократным округлением.
+    /// ColorGrade (R.47): cos/sin of the hue are precomputed in f64 —
+    /// the GPU receives them as a uniform with a single rounding.
     Grade { brightness: f64, contrast: f64, saturation: f64, hue_cos: f64, hue_sin: f64 },
-    /// Duotone (Р.47): lerp по люме между двумя красками.
+    /// Duotone (R.47): lerp by luma between two colors.
     Duo { shadow: [f64; 3], high: [f64; 3], amount: f64 },
-    /// Posterize (Р.47): квант по каналам.
+    /// Posterize (R.47): quantization per channel.
     Poster { levels: u32 },
-    /// Vignette (Р.47): координата СВОЕЙ стадии (как Noise) — затемнение
-    /// зумится с картинкой внутри цепочки.
+    /// Vignette (R.47): coordinate of ITS OWN stage (like Noise) — the darkening
+    /// zooms with the picture inside the chain.
     Vig { strength: f64, radius: f64, softness: f64, stage_w: u32, stage_h: u32 },
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct TapOp {
-    /// Координата опа записывается после применения этого числа примов
-    /// обратного прохода (построитель разрезает склейки аффин на стадиях
-    /// опов). При коротком замыкании на приме d жив оп с after_prim ≤ d.
+    /// The op coordinate is recorded after applying this number of prims of the
+    /// backward pass (the builder splits affine joins at op stages). With a short circuit
+    /// at prim d, the op with after_prim ≤ d stays alive.
     pub after_prim: usize,
     pub kind: TapKind,
 }
 
-/// Потолок тапов суперсемплинга на ось (максимум 4×4 = 16 сабтапов).
+/// Ceiling of supersampling taps per axis (maximum 4×4 = 16 subtaps).
 pub const SS_MAX: u32 = 4;
 
-/// Суперсемплинг по якобиану (Р.44, п.309): сколько сабтапов на ось.
+/// Supersampling by Jacobian (R.44, item 309): how many subtaps per axis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SsSpec {
-    /// Аффинная программа (в т.ч. с Fold): якобиан КОНСТАНТЕН по кадру —
-    /// число тапов посчитано один раз в f64 при построении и едет в
-    /// юниформу. Паритетный риск CPU/GPU нулевой по построению.
+    /// Affine program (incl. with Fold): the Jacobian is CONSTANT over the frame —
+    /// the tap count is computed once in f64 at build time and goes into the
+    /// uniform. The CPU/GPU parity risk is zero by construction.
     Const { nx: u32, ny: u32 },
-    /// В программе есть Proj (перспектива): якобиан меняется по кадру —
-    /// оба исполнителя меряют его конечными разностями (две координатные
-    /// пробы на пиксель) и считают тапы ОДНОЙ формулой `ss_taps`.
+    /// The program has Proj (perspective): the Jacobian changes over the frame — both
+    /// executors measure it by finite differences (two coordinate probes per pixel) and
+    /// compute the taps with ONE formula `ss_taps`.
     PerPixel,
 }
 
-/// Число сабтапов на ось из длины образа единичного выходного шага в
-/// пространстве источника. Квант 1/32 px гасит float-шум на тождестве:
-/// суперсемплинг включается строго при len > 1 + 1/64 (len == 1.0 —
-/// ровно один тап, прежний путь байт-в-байт; сторожит t26
-/// pan-stretch-identity и t300).
+/// Number of subtaps per axis from the length of the image of a unit output step
+/// in source space. The 1/32 px quantum suppresses float noise on identity:
+/// supersampling is enabled strictly when len > 1 + 1/64 (len == 1.0 —
+/// exactly one tap, the old path byte-for-byte; guarded by t26
+/// pan-stretch-identity and t300).
 pub fn ss_taps(len: f64) -> u32 {
     let q = (len * 32.0 + 0.5).floor() / 32.0;
     (q.ceil() as u32).clamp(1, SS_MAX)
 }
 
-/// Слитая программа гео-серии.
+/// Fused program of the geometry series.
 #[derive(Debug, Clone)]
 pub struct GeomProgram {
     pub prims: Vec<GeomPrim>,
-    /// Размер входного кадра серии (для финального тапа).
+    /// Size of the input frame of the series (for the final tap).
     pub in_w: u32,
     pub in_h: u32,
-    /// Размер выхода (= размеру выхода плана, max(2) как у старых ядер).
+    /// Output size (= the plan output size, max(2) as in the old kernels).
     pub out_w: u32,
     pub out_h: u32,
-    /// Свёртка ПРАВИЛА АЛЬФЫ по шагам серии (Р.53, п.417).
+    /// Convolution of the ALPHA RULES over the steps of the series (R.53, item 417).
     ///
-    /// Каждый шаг относится к альфе одним из трёх способов:
-    /// - **Produces** — может создать прозрачность там, где её не было
-    ///   (Pan3d вне квада, Greenscreen по ключу) ⇒ `known=true, alpha=true`;
-    /// - **Destroys** — гарантирует непрозрачный выход ⇒ `known=true,
+    /// Each step relates to alpha in one of three ways:
+    /// - **Produces** — can create transparency where there was none
+    ///   (Pan3d outside the quad, Greenscreen by key) ⇒ `known=true, alpha=true`;
+    /// - **Destroys** — guarantees an opaque output ⇒ `known=true,
     ///   alpha=false`;
-    /// - **Preserves** — альфа входа проходит насквозь (вся геометрия,
-    ///   включая EventGrid) ⇒ свёртка НЕ трогается.
+    /// - **Preserves** — the input alpha passes straight through (all geometry,
+    ///   including EventGrid) ⇒ the convolution is NOT touched.
     ///
-    /// Свёртка — «последний объявивший выигрывает» СРЕДИ Produces и
-    /// Destroys, и именно поэтому Preserves обязан молчать: шаг, молча
-    /// объявлявший себя Destroys, стирал Produces соседа выше по цепочке.
-    /// `known=false` значит «никто не высказался» — берётся альфа
-    /// ИСТОЧНИКА.
+    /// The convolution is “the last declarer wins” AMONG Produces and
+    /// Destroys, and that is exactly why Preserves must stay silent: a step that silently
+    /// declared itself Destroys would erase the Produces of a neighbour higher up the chain.
+    /// `known=false` means “nobody has spoken” — the alpha of the
+    /// SOURCE is taken.
     pub has_alpha_known: bool,
     pub has_alpha: bool,
-    /// Суперсемплинг при минификации (п.309).
+    /// Supersampling under minification (item 309).
     pub ss: SsSpec,
-    /// Поглощённые поточечные опы (Р.45, п.312) в цепочечном порядке;
-    /// их after_prim идут по УБЫВАНИЮ (ранний в цепочке — глубже в
-    /// обратном проходе).
+    /// Absorbed per-pixel ops (R.45, item 312) in chain order;
+    /// their after_prim go in DESCENDING order (the early one in the chain is deeper in
+    /// the backward pass).
     pub tap_ops: Vec<TapOp>,
-    /// Абсолютная длина образа единичного выходного шага по осям (лупа
-    /// планировщика K×-барьеров, п.314): для аффинных программ — точная
-    /// (та же, что у ss-тапов); для Proj — оценка пробами (центр + углы).
+    /// Absolute length of the image of a unit output step along the axes (the scheduler's
+    /// magnifier for K× barriers, item 314): for affine programs — exact
+    /// (the same as the ss taps); for Proj — estimated by probes (center + corners).
     pub lens: (f64, f64),
 }
 
 impl GeomProgram {
-    /// vec4-слоты примов в юниформе GPU (лимит MAX_PRIM_SLOTS; бюджет
-    /// проверяет планировщик — при превышении ран режется по гео-границе).
+    /// vec4 prim slots in the GPU uniform (limit MAX_PRIM_SLOTS; the scheduler checks
+    /// the budget — when exceeded, the run is cut at a geo boundary).
     pub fn prim_slots(&self) -> usize {
         self.prims
             .iter()
@@ -640,18 +640,18 @@ impl GeomProgram {
     }
 }
 
-/// Решение исполнения гео-рана. Принимается ЗДЕСЬ и только здесь — оба
-/// бэкенда обязаны спрашивать эту функцию, а не решать сами.
+/// Execution decision of the geo run. Made HERE and only here — both backends must
+/// ask this function rather than decide themselves.
 pub enum GeomExec {
-    /// Серия длины 1 Pan/CamMotion/Mirror: старые ядра (CPU: pan_zoom /
-    /// mirror; GPU: Resample / Mirror) — байты как до Р.44.
+    /// Series of length 1 of Pan/CamMotion/Mirror: the old kernels (CPU: pan_zoom /
+    /// mirror; GPU: Resample / Mirror) — bytes as before R.44.
     Legacy,
-    /// Слитый проход обратных отображений.
+    /// Fused pass of the inverse mappings.
     Fused(GeomProgram),
 }
 
-/// Построить решение для гео-шагов рана (`steps` — ТОЛЬКО гео, в порядке
-/// применения; прозрачные аудио уже выброшены сборщиком).
+/// Build the solution for the geo steps of the run (`steps` — ONLY geo, in application
+/// order; transparent audio has already been discarded by the collector).
 #[allow(clippy::too_many_arguments)]
 pub fn build_geom_exec(
     steps: &[&FxInstance],
@@ -668,8 +668,8 @@ pub fn build_geom_exec(
     build_geom_exec_in(steps, in_w, in_h, out_w, out_h, u, cam3d, burst_index, k_in, k_out, None)
 }
 
-/// То же с контекстом ведущего узла «Геометрия» (Р.62): вид источника и
-/// правило приведения. Продуктовые вызовы идут через планировщик.
+/// The same with the context of the leading “Geometry” node (R.62): the source view and the
+/// conform rule. Product calls go through the scheduler.
 #[allow(clippy::too_many_arguments)]
 pub fn build_geom_exec_in(
     steps: &[&FxInstance],
@@ -686,18 +686,18 @@ pub fn build_geom_exec_in(
 ) -> GeomExec {
     debug_assert!(!steps.is_empty());
     if steps.len() == 1 {
-        // одиночное зеркало ресемпла не делает — старое ядро (in-place
-        // перестановка верна на любом РАВНОМЕРНОМ физическом масштабе).
-        // Смена масштаба (ран между K×-сегментами, вход S× у Р.46) требует
-        // ресемпла — тогда слитый проход; иначе план собрал бы Legacy на
-        // K≠1-краях (латентный дефект Р.45, t308b).
+        // a single resample mirror does not need it — the old kernel (in-place
+        // permutation is correct on any UNIFORM physical scale).
+        // A change of scale (a run between K× segments, S× input for R.46) requires a
+        // resample — then the fused pass; otherwise the plan would assemble Legacy on
+        // K≠1 edges (latent defect of R.45, test t308b).
         if k_in == k_out && matches!(steps[0], FxInstance::Mirror { .. }) {
             return GeomExec::Legacy;
         }
-        // одиночный CamMotion БЕЗ минификации И БЕЗ K×-краёв — старое
-        // ядро байт-в-байт; иначе — слитый проход (суперсемплинг п.309 /
-        // конъюгация п.314; legacy pan_zoom умеет только 1×-выход). Узел
-        // «Геометрия» (Р.62) всегда слитый: у него прозрачные поля.
+        // a single CamMotion with NO minification AND NO K× edges — the old
+        // kernel byte-for-byte; otherwise the fused pass (supersampling item 309 /
+        // conjugation item 314; legacy pan_zoom can only do 1× output). The “Geometry” node
+        // (R.62) is always fused: it has transparent margins.
         if k_in == 1 && k_out == 1 && matches!(steps[0], FxInstance::CamMotion { .. }) {
             let prog =
                 build_program(steps, in_w, in_h, out_w, out_h, u, cam3d, burst_index, 1, 1, lead);
@@ -722,10 +722,10 @@ pub fn build_geom_exec_in(
     ))
 }
 
-/// Прямые параметры одного шага (собираются проходом вперёд — размеры
-/// каждого шага зависят от предыдущих).
+/// Direct parameters of one step (assembled by a forward pass — the sizes of each step
+/// depend on the previous ones).
 enum Step {
-    /// Pan/CamMotion: рамка pan_frame в координатах входа шага.
+    /// Pan/CamMotion: the pan_frame frame in the input coordinates of the step.
     Frame {
         x0: f64,
         y0: f64,
@@ -750,17 +750,17 @@ enum Step {
         iw: u32,
         ih: u32,
     },
-    /// Pan3d: ОБРАТНАЯ гомография (центр-space выхода → uv квада).
+    /// Pan3d: INVERSE homography (center-space of the output → quad uv).
     Proj {
         m: [[f64; 3]; 3],
         iw: u32,
         ih: u32,
     },
-    /// Узел «Геометрия» (Р.62): кроп источника → рамка на холсте с
-    /// зумом, положением и поворотом вокруг якоря; вне рамки — прозрачно.
-    /// Без поворота — диагональный аффин, с поворотом — Proj-аффин
-    /// (последняя строка (0,0,1)); `bounds` — границы кропа в index-space
-    /// входа, `None` — рамка накрывает холст целиком (полей нет).
+    /// “Geometry” node (R.62): crop of the source → frame on the canvas with
+    /// zoom, position and rotation around the anchor; outside the frame — transparent.
+    /// Without rotation — a diagonal affine, with rotation — a Proj-affine
+    /// (last row (0,0,1)); `bounds` — the crop bounds in the index-space of
+    /// the input, `None` — the frame covers the whole canvas (no margins).
     Place {
         aff: Aff,
         m: [[f64; 3]; 3],
@@ -769,16 +769,16 @@ enum Step {
         iw: u32,
         ih: u32,
     },
-    /// Нелинейный варп Р.47: растр не меняет, работает в нормализованном
-    /// центрированном пространстве своей стадии.
+    /// R.47 nonlinear warp: does not change the raster, works in the normalized
+    /// centered space of its own stage.
     Warp {
         mode: u32,
         p: [f64; 7],
         iw: u32,
         ih: u32,
     },
-    /// Поглощённый поточечный оп (Р.45): применяется к значению сабтапа
-    /// на координате СВОЕЙ стадии.
+    /// Absorbed per-pixel op (R.45): applied to the subtap value
+    /// at the coordinate of ITS OWN stage.
     Tap(TapKind),
 }
 
@@ -797,19 +797,19 @@ fn build_program(
     lead: Option<LeadCtx>,
 ) -> GeomProgram {
     let (mow, moh) = (out_w.max(2), out_h.max(2));
-    // Конъюгация K× (Р.45, п.314): ВСЯ арифметика шагов живёт в
-    // 1×-семантике (pan_frame, целочисленная сетка EventGrid,
-    // pan3d_forward — нетронуты); физические масштабы вносят два аффина
-    // по краям, вливаемые в существующие композиции. При K=1 оба —
-    // тождество (умножение на 1.0 и сложение с 0.0 точны в f64 — байты
-    // Р.44 нетронуты). in_w/in_h приходят ФИЗИЧЕСКИМИ (k_in×логика).
+    // Conjugation K× (R.45, item 314): ALL the arithmetic of the steps lives in
+    // 1× semantics (pan_frame, the integer EventGrid grid, pan3d_forward — untouched);
+    // the physical scales are added by two affines at the edges, merged into the
+    // existing compositions. At K=1 both are the identity (multiplication by 1.0 and
+    // addition of 0.0 are exact in f64 — the R.44 bytes are untouched).
+    // in_w/in_h arrive as PHYSICAL (k_in×logic).
     let (k_in, k_out) = (k_in.max(1), k_out.max(1));
     debug_assert!(
         in_w.is_multiple_of(k_in) && in_h.is_multiple_of(k_in),
         "physical input is k_in x logical"
     );
     let (lin_w, lin_h) = (in_w / k_in, in_h / k_in);
-    // --- вперёд: ЛОГИЧЕСКИЕ размеры и прямые параметры каждого шага ---
+    // --- forward: LOGICAL sizes and direct parameters of each step ---
     let (mut w, mut h) = (lin_w, lin_h);
     let mut fw: Vec<Step> = Vec::with_capacity(steps.len());
     let mut has_alpha_known = false;
@@ -824,17 +824,17 @@ fn build_program(
                 w = mow;
                 h = moh;
             }
-            // ВСЕ ЧИСЛА УЗЛА разбирает `geometry_placement` — здесь
-            // остаётся только поворот (он нужен обеим ветвям карты)
+            // ALL NUMBERS OF THE NODE are parsed by `geometry_placement` — here
+            // only the rotation remains (both branches of the map need it)
             FxInstance::Geometry { rot, .. } => {
-                // тождественный узел — прозрачен (планировщик его и не
-                // подаёт; здесь — для прямых вызовов и тестов)
+                // identity node — transparent (the scheduler does not pass it here;
+                // here it is for direct calls and tests)
                 if geometry_is_identity_in(f, lead, out_w, out_h) {
                     continue;
                 }
-                // РАЗМЕЩЕНИЕ СЧИТАЕТ ОДНА ФУНКЦИЯ (Р.64): та же, по которой
-                // интерфейс рисует рамку над кадром. Своих формул рамки
-                // здесь больше нет — разошлись бы молча.
+                // PLACEMENT IS COMPUTED BY ONE FUNCTION (R.64): the same one by which the interface
+                // draws the frame over the picture. There are no separate frame formulas
+                // here anymore — they would silently diverge.
                 let (iw, ih) = (w as f64, h as f64);
                 let (fw_, fh_) = (mow as f64, moh as f64);
                 let pl = match geometry_placement(f, lead, (iw, ih), (fw_, fh_)) {
@@ -848,7 +848,7 @@ fn build_program(
                 let covers = rot0 && ox <= 0.0 && oy <= 0.0 && ox + dw >= fw_ && oy + dh >= fh_;
                 let bounds =
                     (!covers).then_some((cx0 - 0.5, cx0 + cw - 0.5, cy0 - 0.5, cy0 + ch - 0.5));
-                // без поворота: index выхода → index входа (x_in = ax·x + bx)
+                // without rotation: output index → input index (x_in = ax·x + bx)
                 let (sx, sy) = (cw / dw, ch / dh);
                 let aff = Aff {
                     ax: sx,
@@ -856,7 +856,7 @@ fn build_program(
                     ay: sy,
                     by: cy0 - oy * sy + 0.5 * sy - 0.5,
                 };
-                // с поворотом: центр-space выхода p′ → uv полного входа,
+                // with rotation: output center-space p′ → uv of the full input,
                 // p = A + R(−rot)(p′ − A), q = (cx0 + (p − o)·c/d) / in
                 let (c, sn) = (rot.to_radians().cos(), rot.to_radians().sin());
                 let (kx_, ky_) = (cw / (dw * iw), ch / (dh * ih));
@@ -869,7 +869,7 @@ fn build_program(
                 w = mow;
                 h = moh;
                 if bounds.is_some() {
-                    // поля рамки прозрачны — узел ПРОИЗВОДИТ альфу
+                    // frame margins are transparent — the node PRODUCES alpha
                     has_alpha_known = true;
                     has_alpha = true;
                 }
@@ -884,7 +884,7 @@ fn build_program(
                 let rows = (*rows).clamp(1, 512);
                 let (cw, ch) = ((mow / cols).max(1), (moh / rows).max(1));
                 let (gw, gh) = (cw * cols, ch * rows);
-                // гард «сетка крупнее кадра» — общий с ядрами (п.306)
+                // guard “grid larger than the frame” — shared with the kernels (item 306)
                 let (offx, offy) = if *center && gw <= mow && gh <= moh {
                     ((mow - gw) / 2, (moh - gh) / 2)
                 } else {
@@ -893,13 +893,13 @@ fn build_program(
                 fw.push(Step::Grid { offx, offy, gw, gh, cw, ch, iw: w, ih: h });
                 w = mow;
                 h = moh;
-                // ПРАВИЛО АЛЬФЫ (Р.53, п.417): сетка альфу ПРОПУСКАЕТ.
-                // Здесь стояло «альфы больше нет», и это было неправдой:
-                // тайл — это пересемплированный вход, альфа входа живёт
-                // в нём по-прежнему; чёрным (`Mapped::Black`) заливается
-                // только поле ВНЕ сетки. Из-за ложного объявления титр
-                // или выход гринскрина под EventGrid ложились в композит
-                // непрозрачным прямоугольником.
+                // ALPHA RULE (R.53, item 417): the grid PASSES alpha through.
+                // Here it used to say “there is no alpha anymore”, and that was untrue:
+                // the tile is a resampled input, the input alpha still lives
+                // in it; black (`Mapped::Black`) is filled only in the field
+                // OUTSIDE the grid. Because of the false declaration, a title
+                // or a greenscreen output under EventGrid landed in the composite as an
+                // opaque rectangle.
             }
             FxInstance::Pan3d {
                 pos_x,
@@ -911,10 +911,10 @@ fn build_program(
                 anchor_x,
                 anchor_y,
                 scale,
-                camera: _, // камера уже разрешена движком в cam3d
+                camera: _, // the camera is already resolved by the engine in cam3d
             } => {
-                // нет камеры — нет 3D: шаг пропускается целиком, размеры
-                // не меняются (зеркало прежнего `continue` в chain_ops)
+                // no camera — no 3D: the step is skipped entirely, sizes
+                // do not change (mirror of the former `continue` in chain_ops)
                 let Some(c3) = cam3d else { continue };
                 let g = pan3d_forward(
                     &c3,
@@ -925,13 +925,13 @@ fn build_program(
                     [*anchor_x, *anchor_y],
                     (w as f64, h as f64),
                 );
-                // вырожденная гомография (|det| ≈ 0, квад ребром) —
-                // прозрачный слой: m с t.z ≡ −1
+                // degenerate homography (|det| ≈ 0, quad edge-on) —
+                // transparent layer: m with t.z ≡ −1
                 let m = invert3(&g).unwrap_or([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, -1.0]]);
                 fw.push(Step::Proj { m, iw: w, ih: h });
                 w = mow;
                 h = moh;
-                // вне квада слой прозрачен
+                // outside the quad the layer is transparent
                 has_alpha_known = true;
                 has_alpha = true;
             }
@@ -951,7 +951,7 @@ fn build_program(
             }
             FxInstance::Noise { amount, size, color } => {
                 let k = (amount.clamp(0.0, 1.0) * 32.0) as i64;
-                // k == 0 — эффект пуст (как ранний выход ядра и ветка GPU)
+                // k == 0 — the effect is empty (like the kernel's early exit and the GPU branch)
                 if k > 0 {
                     let size = (*size).clamp(1, 64);
                     fw.push(Step::Tap(TapKind::Noise {
@@ -1003,8 +1003,8 @@ fn build_program(
                 }));
             }
             FxInstance::CornerPin { x0, y0, x1, y1, x2, y2, x3, y3 } => {
-                // дефолт бит-точный: углы в углах — шаг пропускается,
-                // цепочка остаётся тождеством (identity байт-в-байт)
+                // default is bit-exact: corners at the corners — the step is skipped,
+                // the chain stays identity (identity byte-for-byte)
                 let ident = *x0 == 0.0
                     && *y0 == 0.0
                     && *x1 == 1.0
@@ -1020,7 +1020,7 @@ fn build_program(
                         moh,
                     );
                     fw.push(Step::Proj { m, iw: w, ih: h });
-                    // вне квада — прозрачно (как у Pan3d)
+                    // outside the quad — transparent (as in Pan3d)
                     has_alpha_known = true;
                     has_alpha = true;
                     w = mow;
@@ -1088,11 +1088,11 @@ fn build_program(
             _ => debug_assert!(false, "non-geo step in build_program"),
         }
     }
-    // --- назад: обратные карты, соседние аффинные ПЕРЕМНОЖЕНЫ в f64 ---
+    // --- backward: inverse maps, adjacent affines MULTIPLIED in f64 ---
     let mut prims: Vec<GeomPrim> = Vec::new();
     let mut taps_rev: Vec<TapOp> = Vec::new();
-    // S_out: физический индекс K×-выхода → логический (полутексельная
-    // конвенция, как bilinear_into); k_out=1 → тождество точно
+    // S_out: physical index of the K×-output → logical (half-texel
+    // convention, as bilinear_into); k_out=1 → identity exactly
     let ko = k_out as f64;
     let mut pending = Aff { ax: 1.0 / ko, bx: 0.5 / ko - 0.5, ay: 1.0 / ko, by: 0.5 / ko - 0.5 };
     let flush = |pending: &mut Aff, prims: &mut Vec<GeomPrim>| {
@@ -1108,8 +1108,8 @@ fn build_program(
                 let ay = ch / moh as f64;
                 pending =
                     pending.then(&Aff { ax, bx: x0 + 0.5 * ax - 0.5, ay, by: y0 + 0.5 * ay - 0.5 });
-                // рамка шире входа (zoom<1 / Stretch): «плато» из растянутой
-                // кромки — semantика старого пошагового клампа тапов
+                // frame wider than the input (zoom<1 / Stretch): a “plateau” from the stretched
+                // edge — the semantics of the old step-by-step tap clamp
                 let cx = *cw > *iw as f64;
                 let cy = *ch > *ih as f64;
                 if cx || cy {
@@ -1131,8 +1131,8 @@ fn build_program(
                 });
             }
             Step::Grid { offx, offy, gw, gh, cw, ch, iw, ih } => {
-                // индекс → «d»-координата сетки (центр-space минус смещение);
-                // для одиночной сетки composed = ox + (0.5 − offx) — точно
+                // index → “d” coordinate of the grid (center-space minus offset);
+                // for a single grid composed = ox + (0.5 − offx) — exact
                 pending = pending.then(&Aff {
                     ax: 1.0,
                     bx: 0.5 - *offx as f64,
@@ -1148,14 +1148,14 @@ fn build_program(
                     in_w: *iw as f64,
                     in_h: *ih as f64,
                 });
-                // выход Fold — уже index-space входа шага
+                // output of Fold — already the index-space of the step's input
             }
             Step::Proj { m, iw, ih } => {
-                // индекс → центр-space выхода шага
+                // index → center-space of the step output
                 pending = pending.then(&Aff { ax: 1.0, bx: 0.5, ay: 1.0, by: 0.5 });
                 flush(&mut pending, &mut prims);
                 prims.push(GeomPrim::Proj { m: *m });
-                // uv → index-space входа: sx = q·in − 0.5 (как pan3d.wgsl)
+                // uv → index-space of the input: sx = q·in − 0.5 (as pan3d.wgsl)
                 pending = Aff { ax: *iw as f64, bx: -0.5, ay: *ih as f64, by: -0.5 };
             }
             Step::Place { aff, m, rot0, bounds, iw, ih } => {
@@ -1174,9 +1174,9 @@ fn build_program(
             }
             Step::Warp { mode, p, iw, ih } => {
                 let (rw, rh) = (*iw as f64, *ih as f64);
-                // r = 1 — короткая полуось; cylinder нормируется по X
+                // r = 1 — short semi-axis; cylinder is normalized by X
                 let r = if *mode == 4 { rw / 2.0 } else { rw.min(rh) / 2.0 };
-                // индекс → нормализованное центрированное
+                // index → normalized centered
                 pending = pending.then(&Aff {
                     ax: 1.0 / r,
                     bx: (0.5 - rw / 2.0) / r,
@@ -1185,38 +1185,38 @@ fn build_program(
                 });
                 flush(&mut pending, &mut prims);
                 prims.push(GeomPrim::Warp { mode: *mode, p: *p });
-                // нормализованное → индекс того же растра
+                // normalized → index of the same raster
                 pending = Aff { ax: r, bx: rw / 2.0 - 0.5, ay: r, by: rh / 2.0 - 0.5 };
             }
             Step::Tap(kind) => {
-                // стадия опа: текущая координата обратного прохода — это
-                // растр его шага; склейка аффин разрезается здесь
+                // stage of the op: the current coordinate of the backward pass is the raster
+                // of its step; the affine join is split here
                 flush(&mut pending, &mut prims);
                 taps_rev.push(TapOp { after_prim: prims.len(), kind: *kind });
             }
         }
     }
-    // S_in⁻¹: логический входной индекс → физический K_in×-буфер;
-    // k_in=1 → тождество точно
+    // S_in⁻¹: logical input index → physical K_in×-buffer;
+    // k_in=1 → identity exactly
     let ki = k_in as f64;
     pending = pending.then(&Aff { ax: ki, bx: (ki - 1.0) / 2.0, ay: ki, by: (ki - 1.0) / 2.0 });
     flush(&mut pending, &mut prims);
-    // цепочечный порядок опов (обратный проход собрал их с конца);
-    // after_prim при этом убывают
+    // chain order of the ops (the backward pass collected them from the end);
+    // after_prim decrease in this case
     taps_rev.reverse();
     let tap_ops = taps_rev;
-    // бюджеты (MAX_PRIMS/MAX_PRIM_SLOTS/MAX_TAP_OPS) проверяет
-    // планировщик и при превышении режет ран по гео-границе
-    // Физический выход = k_out × логический (серия из одних Mirror / Pan3d
-    // без камеры логических размеров не меняет — как старый путь).
+    // the budgets (MAX_PRIMS/MAX_PRIM_SLOTS/MAX_TAP_OPS) are checked by the
+    // scheduler, and when exceeded it cuts the run at a geo boundary
+    // Physical output = k_out × logical (a series of only Mirror / Pan3d
+    // without a camera does not change logical sizes — as the old path).
     let (pout_w, pout_h) = (w * k_out, h * k_out);
-    // Суперсемплинг (п.309): у аффинной программы (в т.ч. с Fold) якобиан
-    // КОНСТАНТЕН — тапы считаются один раз здесь, в f64, и едут в юниформу
-    // (конъюгационные аффины уже в примах — лупа автоматически физическая);
-    // Proj (перспектива) делает его по-пиксельным.
+    // Supersampling (item 309): for an affine program (incl. with Fold) the Jacobian
+    // is CONSTANT — the taps are computed once here, in f64, and go into the uniform
+    // (the conjugation affines are already in the prims — the magnifier is automatically physical);
+    // Proj (perspective) makes it per-pixel.
     let (ss, lens) =
         if prims.iter().any(|p| matches!(p, GeomPrim::Proj { .. } | GeomPrim::Warp { .. })) {
-            // лупа для планировщика K× — оценка пробами обратной карты
+            // magnifier for the K× scheduler — estimate by probes of the backward map
             (SsSpec::PerPixel, probe_program_lens(&prims, pout_w, pout_h))
         } else {
             let (mut lx, mut ly) = (1.0f64, 1.0f64);
@@ -1252,10 +1252,10 @@ fn build_program(
     }
 }
 
-/// Оценка лупы Proj-программы для планировщика K× (п.314): длины образов
-/// единичных шагов в пяти точках (центр + окрестности углов), максимум по
-/// валидным пробам. Неточность даёт мягче/дороже, но ОДИНАКОВО на обоих
-/// бэкендах — K в плане один.
+/// Magnifier estimate of a Proj program for the K× scheduler (item 314): lengths of the images
+/// of unit steps at five points (center + corner neighbourhoods), the maximum over
+/// valid probes. Inaccuracy gives softer/costlier, but IDENTICALLY on both
+/// backends — K in the plan is one.
 fn probe_program_lens(prims: &[GeomPrim], out_w: u32, out_h: u32) -> (f64, f64) {
     let (ow, oh) = (out_w.max(2) as f64, out_h.max(2) as f64);
     let pts =
@@ -1278,13 +1278,13 @@ fn probe_program_lens(prims: &[GeomPrim], out_w: u32, out_h: u32) -> (f64, f64) 
     (lx, ly)
 }
 
-// ---- Pan3d: гомография (Р.44) ----------------------------------------------
-// Квад слоя планарный (z = 0) и z_clip ≡ 0, поэтому отображение
-// (q.x, q.y) → экран — чистая 3×3-гомография. Математика ДОСЛОВНО повторяет
-// прежний pan3d_mvp (glam f32) + вьюпорт растеризатора, но считается в f64;
-// семантика мира/камеры заморожена форматом файла (kt-gpu/CLAUDE.md):
-// мир — px проекта × world_scale, X вправо, Y вниз, Z вглубь, повороты
-// Rz·Rx·Ry, камера «50 мм» на авто-дистанции −(H/2)·cot(fov/2).
+// ---- Pan3d: homography (R.44) ----------------------------------------------
+// The layer quad is planar (z = 0) and z_clip ≡ 0, therefore the mapping
+// (q.x, q.y) → screen is a pure 3×3 homography. The math VERBATIM repeats the
+// former pan3d_mvp (glam f32) + the rasterizer viewport, but is computed in f64;
+// the world/camera semantics are frozen by the file format (kt-gpu/CLAUDE.md):
+// world — project px × world_scale, X right, Y down, Z into depth, rotations
+// Rz·Rx·Ry, camera “50 mm” at auto-distance −(H/2)·cot(fov/2).
 
 type V3 = [f64; 3];
 type M3 = [[f64; 3]; 3];
@@ -1322,17 +1322,17 @@ fn rot_y(a: f64) -> M3 {
     [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]]
 }
 
-/// Обращение 3×3 через adj/det. None — вырождение (квад ребром к камере).
-/// Знак t.z обратного образа при adj/det корректен: t = G⁻¹·(c,1) = q̃/w,
-/// то есть sign(t.z) = sign(w) — тест «за камерой» получается сам.
-/// ОБРАТНАЯ гомография Corner Pin (Р.47, F-FX-004): прямая карта
-/// «единичный квадрат → 4 угла в долях выхода» строится замкнутой формой
-/// (Heckbert), масштабируется в центр-space пикселей выхода и обращается.
-/// Вырождение (нулевой знаменатель/необратимая матрица) — прозрачная
-/// матрица `t.z = −1` (прецедент Pan3d за камерой).
+/// Inversion of the 3×3 via adj/det. None — degeneracy (quad edge-on to the camera).
+/// The sign of t.z of the inverse image under adj/det is correct: t = G⁻¹·(c,1) = q̃/w,
+/// i.e. sign(t.z) = sign(w) — the “behind the camera” test comes out by itself.
+/// INVERSE homography of Corner Pin (R.47, F-FX-004): the forward map
+/// “unit square → 4 corners in output fractions” is built in closed form
+/// (Heckbert), scaled into the pixel center-space of the output, and inverted.
+/// Degeneracy (zero denominator / non-invertible matrix) — a transparent
+/// matrix `t.z = −1` (precedent: Pan3d behind the camera).
 fn corner_pin_inverse(c: [(f64, f64); 4], out_w: u32, out_h: u32) -> [[f64; 3]; 3] {
     let transparent = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, -1.0]];
-    // углы: TL, TR, BL, BR (uv-пространство источника: (0,0)..(1,1))
+    // corners: TL, TR, BL, BR (uv-space of the source: (0,0)..(1,1))
     let (p0, p1, p2, p3) = (c[0], c[1], c[2], c[3]);
     let dx1 = (p1.0 - p3.0, p1.1 - p3.1);
     let dx2 = (p2.0 - p3.0, p2.1 - p3.1);
@@ -1344,14 +1344,14 @@ fn corner_pin_inverse(c: [(f64, f64); 4], out_w: u32, out_h: u32) -> [[f64; 3]; 
     }
     let g = (sx * dx2.1 - sy * dx2.0) / den;
     let hh = (dx1.0 * sy - dx1.1 * sx) / den;
-    // прямая карта uv(квадрат) -> доли выхода
+    // forward map uv(square) -> output fractions
     let fwd = [
         [p1.0 - p0.0 + g * p1.0, p2.0 - p0.0 + hh * p2.0, p0.0],
         [p1.1 - p0.1 + g * p1.1, p2.1 - p0.1 + hh * p2.1, p0.1],
         [g, hh, 1.0],
     ];
-    // доли выхода -> центр-space пикселей выхода: строки x и y умножаются
-    // на mow/moh (как хвост pan3d_forward)
+    // output fractions -> pixel center-space of the output: the x and y rows are multiplied
+    // by mow/moh (as the tail of pan3d_forward)
     let (mw, mh) = (out_w.max(2) as f64, out_h.max(2) as f64);
     let scaled = [
         [fwd[0][0] * mw, fwd[0][1] * mw, fwd[0][2] * mw],
@@ -1383,7 +1383,7 @@ fn invert3(g: &M3) -> Option<M3> {
         ],
     ];
     let det = g[0][0] * adj[0][0] + g[0][1] * adj[1][0] + g[0][2] * adj[2][0];
-    // масштаб детерминанта у наших матриц ~ (ow·oh·f)² — порог относительный
+    // the determinant scale of our matrices is ~ (ow·oh·f)² — the threshold is relative
     let scale = g.iter().flatten().fold(0.0f64, |m, v| m.max(v.abs()));
     if det.abs() <= scale * scale * scale * 1e-12 {
         return None;
@@ -1397,8 +1397,8 @@ fn invert3(g: &M3) -> Option<M3> {
     Some(m)
 }
 
-/// ПРЯМАЯ гомография Pan3d: (q.x, q.y, 1) → (c.x·w, c.y·w, w), где q — uv
-/// квада 0..1, c — ЦЕНТР-space пикселей выхода.
+/// FORWARD homography of Pan3d: (q.x, q.y, 1) → (c.x·w, c.y·w, w), where q is the uv
+/// of the quad 0..1, c is the CENTER-space of the output pixels.
 fn pan3d_forward(
     c3: &Cam3d,
     out: (u32, u32),
@@ -1413,7 +1413,7 @@ fn pan3d_forward(
     let (ow, oh) = (out.0 as f64, out.1 as f64);
     let sc = scale.max(1e-6);
 
-    // модель: мир(q) = pos·s + R·(sc·lx, sc·ly, 0), lx = (q.x − ax)·qw
+    // model: world(q) = pos·s + R·(sc·lx, sc·ly, 0), lx = (q.x − ax)·qw
     let r = m3_mul(
         &m3_mul(&rot_z(rot[2].to_radians()), &rot_x(rot[0].to_radians())),
         &rot_y(rot[1].to_radians()),
@@ -1430,13 +1430,13 @@ fn pan3d_forward(
         pos[2] * s - anchor[0] * e1[2] - anchor[1] * e2[2],
     ];
 
-    // камера: авто-дистанция «50 мм» — слой в z=0 рендерится 1:1
+    // camera: auto-distance “50 mm” — the layer at z=0 renders 1:1
     let fov = cam.fov_deg.clamp(1.0, 179.0).to_radians();
     let f = 1.0 / (fov * 0.5).tan();
     let auto_z = -(oh * 0.5) * f;
     let eye: V3 =
         [cam.pos_x * s, cam.pos_y * s, if cam.pos_z == 0.0 { auto_z } else { cam.pos_z * s }];
-    // взгляд: на target (two-node) либо вдоль +Z; up экрана в мире — −Y
+    // view: at the target (two-node) or along +Z; screen up in the world is −Y
     let dir: V3 = match cam.target {
         Some((tx, ty, tz)) => {
             let d = [tx * s - eye[0], ty * s - eye[1], tz * s - eye[2]];
@@ -1460,14 +1460,14 @@ fn pan3d_forward(
         [1.0, 0.0, 0.0]
     };
     let cdown = cross(&dir, &right);
-    // basis-строки: right / cdown / dir; orientation-доворот ПОСЛЕ target
+    // basis rows: right / cdown / dir; the orientation rotation is AFTER the target
     let basis: M3 = [right, cdown, dir];
     let orient = m3_mul(
         &m3_mul(&rot_z(-cam.rot_z.to_radians()), &rot_x(-cam.rot_x.to_radians())),
         &rot_y(-cam.rot_y.to_radians()),
     );
     let view = m3_mul(&orient, &basis);
-    // направления: v = view·e; точка: v0 = view·(e0 − eye)
+    // directions: v = view·e; point: v0 = view·(e0 − eye)
     let mv = |e: &V3| -> V3 {
         [
             view[0][0] * e[0] + view[0][1] * e[1] + view[0][2] * e[2],
@@ -1480,8 +1480,8 @@ fn pan3d_forward(
     let d0: V3 = [e0[0] - eye[0], e0[1] - eye[1], e0[2] - eye[2]];
     let v0 = mv(&d0);
 
-    // проекция: перспектива x = f/aspect·v.x, y = −f·v.y, w = v.z;
-    // ortho — аффинная (w точки = 1, направлений = 0)
+    // projection: perspective x = f/aspect·v.x, y = −f·v.y, w = v.z;
+    // ortho — affine (w of points = 1, of directions = 0)
     let aspect = ow / oh;
     let cl = |v: &V3, point: bool| -> V3 {
         if cam.ortho {
@@ -1494,7 +1494,7 @@ fn pan3d_forward(
     let p2 = cl(&v2, false);
     let p0 = cl(&v0, true);
 
-    // экран: c.x·w = ow/2·(clip.x + w); c.y·w = oh/2·(w − clip.y)
+    // screen: c.x·w = ow/2·(clip.x + w); c.y·w = oh/2·(w − clip.y)
     [
         [ow * 0.5 * (p1[0] + p1[2]), ow * 0.5 * (p2[0] + p2[2]), ow * 0.5 * (p0[0] + p0[2])],
         [oh * 0.5 * (p1[2] - p1[1]), oh * 0.5 * (p2[2] - p2[1]), oh * 0.5 * (p0[2] - p0[1])],
@@ -1502,29 +1502,29 @@ fn pan3d_forward(
     ]
 }
 
-/// Результат обратного прохода координаты.
+/// Result of the backward coordinate pass.
 enum Mapped {
     At(f64, f64),
-    /// Вне сетки EventGrid: чёрный непрозрачный холст.
+    /// Outside the EventGrid: black opaque canvas.
     Black,
-    /// Вне квада Pan3d / за камерой: прозрачно.
+    /// Outside the Pan3d quad / behind the camera: transparent.
     Transparent,
 }
 
-/// Обратная карта нелинейного варпа (Р.47): ОДИН f64-текст, читаемый
-/// обоими циклами CPU; WGSL-зеркало — geom_fused.wgsl (той же строкой).
-/// Вход/выход — нормализованное центрированное пространство стадии.
+/// Inverse map of the nonlinear warp (R.47): ONE f64 text, read by
+/// both CPU loops; the WGSL mirror is geom_fused.wgsl (the same line).
+/// Input/output — the normalized centered space of the stage.
 #[inline]
 fn warp_map(mode: u32, p: &[f64; 7], x: f64, y: f64) -> (f64, f64) {
     match mode {
         0 => {
-            // lens: полином s = 1 + k1·r² + k2·r⁴ (без тригонометрии)
+            // lens: polynomial s = 1 + k1·r² + k2·r⁴ (no trigonometry)
             let r2 = x * x + y * y;
             let s = 1.0 + p[0] * r2 + p[1] * r2 * r2;
             (x * s, y * s)
         }
         1 => {
-            // twirl: поворот на a·(1 − r/rad)² внутри радиуса
+            // twirl: rotation by a·(1 − r/rad)² inside the radius
             let r = (x * x + y * y).sqrt();
             if r >= p[1] {
                 return (x, y);
@@ -1543,8 +1543,8 @@ fn warp_map(mode: u32, p: &[f64; 7], x: f64, y: f64) -> (f64, f64) {
             (x * k, y * k)
         }
         3 => {
-            // kaleidoscope: треугольная волна по сектору (зеркальный
-            // повтор без int-модуло — floor одинаков в обоих текстах)
+            // kaleidoscope: triangle wave over the sector (mirror
+            // repetition without int modulo — floor is the same in both texts)
             let r = (x * x + y * y).sqrt();
             let q = (y.atan2(x) - p[1]) / p[0];
             let h = q / 2.0 - (q / 2.0).floor();
@@ -1553,7 +1553,7 @@ fn warp_map(mode: u32, p: &[f64; 7], x: f64, y: f64) -> (f64, f64) {
             (r * cs, r * sn)
         }
         _ => {
-            // cylinder: u' = asin(u·sin a)/a по X, края → края
+            // cylinder: u' = asin(u·sin a)/a along X, edges → edges
             let u = (x * p[0]).clamp(-1.0, 1.0).asin() * p[1];
             (u, y)
         }
@@ -1591,7 +1591,7 @@ fn map_pos(prims: &[GeomPrim], ox: f64, oy: f64) -> Mapped {
                 let tx = m[0][0] * x + m[0][1] * y + m[0][2];
                 let ty = m[1][0] * x + m[1][1] * y + m[1][2];
                 let tz = m[2][0] * x + m[2][1] * y + m[2][2];
-                // t.z ≤ 0 — за камерой (клиппинг растеризатора)
+                // t.z ≤ 0 — behind the camera (rasterizer clipping)
                 if tz <= 0.0 {
                     return Mapped::Transparent;
                 }
@@ -1613,10 +1613,10 @@ fn map_pos(prims: &[GeomPrim], ox: f64, oy: f64) -> Mapped {
     Mapped::At(x, y)
 }
 
-/// Финальный тап БЕЗ округления: та же арифметика, что внутренний цикл
-/// `bilinear_into_scalar` (f64-аккумулятор, кламп тапов к краям).
-/// Дублирование сознательное: скаляр билинейки НЕ рефакторится
-/// (kt-fx/CLAUDE.md) — оба текста и есть определение байтов.
+/// Final tap WITHOUT rounding: the same arithmetic as the inner loop of
+/// `bilinear_into_scalar` (f64 accumulator, tap clamp to the edges).
+/// The duplication is deliberate: the scalar bilinear is NOT refactored
+/// (kt-fx/CLAUDE.md) — both texts are the definition of the bytes.
 #[inline]
 pub(crate) fn sample_bilinear_f64(src: &Frame, sx: f64, sy: f64) -> [f64; 4] {
     let (sw, sh) = (src.w as i64, src.h as i64);
@@ -1639,10 +1639,10 @@ pub(crate) fn sample_bilinear_f64(src: &Frame, sx: f64, sy: f64) -> [f64; 4] {
     px
 }
 
-/// Обратный проход С ЗАПИСЬЮ координат tap-стадий (Р.45, п.312).
-/// Возвращает результат и число ПРИМЕНЁННЫХ примов: при коротком
-/// замыкании на приме d жив оп с after_prim ≤ d («noise поверх чёрного
-/// холста сетки» работает, «noise до сетки в вырезанной зоне» — нет).
+/// Backward pass WITH RECORDING of the coordinates of the tap stages (R.45, item 312).
+/// Returns the result and the number of APPLIED prims: with a short circuit
+/// at prim d the op with after_prim ≤ d stays alive (“noise over the black
+/// canvas of the grid” works, “noise before the grid in the cut zone” does not).
 #[inline]
 fn map_pos_rec(
     prims: &[GeomPrim],
@@ -1652,8 +1652,8 @@ fn map_pos_rec(
     rec: &mut [(f64, f64); MAX_TAP_OPS],
 ) -> (Mapped, usize) {
     let (mut x, mut y) = (ox, oy);
-    // tap'ы лежат в цепочечном порядке с УБЫВАЮЩИМИ after_prim — курсор
-    // идёт с конца списка (возрастание after_prim) вместе с проходом
+    // the taps are in chain order with DECREASING after_prim — the cursor walks
+    // from the end of the list (increasing after_prim) together with the pass
     let mut cursor = taps.len();
     while cursor > 0 && taps[cursor - 1].after_prim == 0 {
         rec[cursor - 1] = (x, y);
@@ -1712,8 +1712,8 @@ fn map_pos_rec(
     (Mapped::At(x, y), prims.len())
 }
 
-/// Greenscreen на значении сабтапа: f64-континуум целочисленной формулы
-/// ядра (round происходит один раз в конце пайплайна).
+/// Greenscreen on the subtap value: f64 continuum of the integer kernel formula
+/// (rounding happens once at the end of the pipeline).
 #[inline]
 fn tap_gs(v: &mut [f64; 4], key: &[f64; 3], tol: f64, hard: f64, spill: f64, kc: usize) {
     let d = ((v[0] - key[0]).powi(2) + (v[1] - key[1]).powi(2) + (v[2] - key[2]).powi(2)).sqrt();
@@ -1730,9 +1730,9 @@ fn tap_gs(v: &mut [f64; 4], key: &[f64; 3], tol: f64, hard: f64, spill: f64, kc:
     }
 }
 
-/// Noise на значении сабтапа: офсет от floor координаты СВОЕЙ стадии
-/// (зерно прибито к её сетке, решение Р.45); формулы хэша — дословно
-/// ядро noise (обе ветки).
+/// Noise on the subtap value: offset from the floor of the coordinate of ITS OWN stage
+/// (grain pinned to its grid, decision R.45); the hash formulas are verbatim
+/// the noise kernel (both branches).
 #[inline]
 #[allow(clippy::too_many_arguments)]
 fn tap_noise(
@@ -1776,10 +1776,10 @@ fn tap_noise(
     }
 }
 
-/// ColorGrade на сабтапе (Р.47): порядок — сатурация и hue ДО контраста
-/// и яркости (basic-панели пяти редакторов; иначе контраст перекрашивает
-/// оттенки). Hue — поворот вокруг серой оси (Родригес, k = (1,1,1)/√3).
-/// Значения f64-континуум, финальный clamp+round — один раз на выходе.
+/// ColorGrade on the subtap (R.47): the order is saturation and hue BEFORE contrast
+/// and brightness (the basic panels of five editors; otherwise contrast recolours the
+/// hues). Hue — a rotation around the gray axis (Rodrigues, k = (1,1,1)/√3).
+/// The values are an f64 continuum; the final clamp+round — once, at the output.
 pub(crate) fn tap_grade(v: &mut [f64; 4], br: f64, con: f64, sat: f64, hc: f64, hs: f64) {
     let l = (77.0 * v[0] + 150.0 * v[1] + 29.0 * v[2]) / 256.0;
     for c in v.iter_mut().take(3) {
@@ -1799,7 +1799,7 @@ pub(crate) fn tap_grade(v: &mut [f64; 4], br: f64, con: f64, sat: f64, hc: f64, 
     }
 }
 
-/// Duotone на сабтапе: lerp двух красок по люме; альфа нетронута.
+/// Duotone on the subtap: lerp of two colors by luma; alpha untouched.
 pub(crate) fn tap_duo(v: &mut [f64; 4], shadow: &[f64; 3], high: &[f64; 3], amount: f64) {
     let l = ((77.0 * v[0] + 150.0 * v[1] + 29.0 * v[2]) / 256.0 / 255.0).clamp(0.0, 1.0);
     for (c, (sh, hi)) in v.iter_mut().take(3).zip(shadow.iter().zip(high.iter())) {
@@ -1808,7 +1808,7 @@ pub(crate) fn tap_duo(v: &mut [f64; 4], shadow: &[f64; 3], high: &[f64; 3], amou
     }
 }
 
-/// Posterize на сабтапе: квант ПО КАНАЛАМ (стандарт — AE Posterize).
+/// Posterize on the subtap: quantization PER CHANNEL (standard — AE Posterize).
 pub(crate) fn tap_poster(v: &mut [f64; 4], levels: u32) {
     let n = levels.clamp(2, 32) as f64;
     for c in v.iter_mut().take(3) {
@@ -1817,9 +1817,9 @@ pub(crate) fn tap_poster(v: &mut [f64; 4], levels: u32) {
     }
 }
 
-/// Vignette на сабтапе: координата СВОЕЙ стадии; радиус нормирован к
-/// полудиагонали; smoothstep выписан руками (один текст в обоих
-/// исполнителях).
+/// Vignette on the subtap: coordinate of ITS OWN stage; the radius is normalized to
+/// the half-diagonal; smoothstep written out by hand (one text in both
+/// executors).
 pub(crate) fn tap_vig(
     v: &mut [f64; 4],
     coord: (f64, f64),
@@ -1840,13 +1840,13 @@ pub(crate) fn tap_vig(
     }
 }
 
-/// Один сабтап: обратная цепочка целиком + тап (кайма Fold и силуэт Proj
-/// анти-алиасятся честно — каждый сабтап решает короткие замыкания сам);
-/// затем поглощённые поточечные опы в порядке цепочки (Р.45, п.312).
+/// One subtap: the whole inverse chain + the tap (the Fold border and the Proj silhouette
+/// are anti-aliased honestly — each subtap decides the short circuits itself);
+/// then the absorbed per-pixel ops in chain order (R.45, item 312).
 #[inline]
 fn sample_at(p: &GeomProgram, src: &Frame, x: f64, y: f64) -> [f64; 4] {
     if p.tap_ops.is_empty() {
-        // быстрый путь — в точности Р.44
+        // fast path — exactly R.44
         return match map_pos(&p.prims, x, y) {
             Mapped::At(sx, sy) => sample_bilinear_f64(src, sx, sy),
             Mapped::Black => [0.0, 0.0, 0.0, 255.0],
@@ -1862,7 +1862,7 @@ fn sample_at(p: &GeomProgram, src: &Frame, x: f64, y: f64) -> [f64; 4] {
     };
     for (ti, op) in p.tap_ops.iter().enumerate() {
         if op.after_prim > applied {
-            continue; // стадия опа отрезана коротким замыканием
+            continue; // the op's stage is cut by a short circuit
         }
         match op.kind {
             TapKind::Gs { key, tol, hard, spill, kc } => tap_gs(&mut v, &key, tol, hard, spill, kc),
@@ -1882,7 +1882,7 @@ fn sample_at(p: &GeomProgram, src: &Frame, x: f64, y: f64) -> [f64; 4] {
     v
 }
 
-/// Координатная проба (без тапа) для по-пиксельного якобиана Proj-серий.
+/// Coordinate probe (no tap) for the per-pixel Jacobian of Proj series.
 #[inline]
 fn coords_at(p: &GeomProgram, x: f64, y: f64) -> Option<(f64, f64)> {
     match map_pos(&p.prims, x, y) {
@@ -1891,11 +1891,11 @@ fn coords_at(p: &GeomProgram, x: f64, y: f64) -> Option<(f64, f64)> {
     }
 }
 
-/// Тапы по-пиксельно: конечные разности (координатные пробы). Мёртвая
-/// прямая проба (сосед за силуэтом/краем) заменяется ОБРАТНОЙ — иначе
-/// последний живой столбец тождественной карты получал бы лишние тапы и
-/// терял байт-точность (t298). Обе пробы мертвы или мёртв центр — один
-/// тап: цвет там всё равно решают короткие замыкания сабтапов.
+/// Per-pixel taps: finite differences (coordinate probes). A dead forward probe
+/// (a neighbour beyond the silhouette/edge) is replaced by a BACKWARD one — otherwise
+/// the last live column of the identity map would get extra taps and
+/// lose byte-exactness (t298). If both probes are dead, or the centre is dead — one
+/// tap: the colour there is decided by the subtap short circuits anyway.
 #[inline]
 fn probe_taps(p: &GeomProgram, ox: f64, oy: f64) -> (u32, u32) {
     let c0 = coords_at(p, ox, oy);
@@ -1913,11 +1913,11 @@ fn probe_taps(p: &GeomProgram, ox: f64, oy: f64) -> (u32, u32) {
     (ss_taps(axis(1.0, 0.0)), ss_taps(axis(0.0, 1.0)))
 }
 
-/// CPU-исполнитель слитой программы: скалярный f64-эталон (инвариант №11).
-/// SIMD у слитого прохода в этом раунде НЕТ (замер и порог 1.3× — отдельная
-/// работа, kt-fx/CLAUDE.md). Один тап (нет минификации) — прежние байты;
-/// суперсемплинг — box-среднее сабтапов без промежуточных округлений,
-/// round один раз (п.309).
+/// CPU executor of the fused program: scalar f64 reference (invariant No. 11).
+/// The fused pass has NO SIMD in this round (measurement and the 1.3× threshold are separate
+/// work, kt-fx/CLAUDE.md). One tap (no minification) — the former bytes;
+/// supersampling — box average of the subtaps without intermediate roundings,
+/// round once (item 309).
 pub fn exec_geom_cpu(p: &GeomProgram, src: &Frame, scratch: &mut FxScratch) -> Frame {
     let (ow, oh) = (p.out_w, p.out_h);
     let mut out = scratch.take((ow * oh * 4) as usize);
@@ -1954,5 +1954,5 @@ pub fn exec_geom_cpu(p: &GeomProgram, src: &Frame, scratch: &mut FxScratch) -> F
     Frame { w: ow, h: oh, rgba: out, has_alpha }
 }
 
-// Исполнение гео-рана живёт в исполнителях плана (video.rs / kt-gpu):
-// решение legacy/fused уже принято `plan_chain` (Р.45, п.311).
+// Execution of the geo run lives in the plan executors (video.rs / kt-gpu):
+// the legacy/fused decision is already made by `plan_chain` (R.45, item 311).

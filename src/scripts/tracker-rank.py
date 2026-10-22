@@ -1,32 +1,32 @@
 #!/usr/bin/env python3
-"""Анализ выгруженных багтрекеров (Р.41, третья волна разведки).
+"""Analysis of exported bug trackers (R.41, third reconnaissance wave).
 
-    python3 src/scripts/tracker-rank.py                    ранжирование тем
-    python3 src/scripts/tracker-rank.py --theme прокси     топ задач темы
-    python3 src/scripts/tracker-rank.py --wishes           только запросы (wishlist)
-    python3 src/scripts/tracker-rank.py --rejected         что отказались делать
-    python3 src/scripts/tracker-rank.py --neglect          открыто годами и весомо
-    python3 src/scripts/tracker-rank.py --unmatched        чего лексикон не покрыл
+    python3 src/scripts/tracker-rank.py                    rank the topics
+    python3 src/scripts/tracker-rank.py --theme proxy      top issues of the topic
+    python3 src/scripts/tracker-rank.py --wishes           requests only (wishlist)
+    python3 src/scripts/tracker-rank.py --rejected         what was declined to do
+    python3 src/scripts/tracker-rank.py --neglect          open for years and significant
+    python3 src/scripts/tracker-rank.py --unmatched        what the lexicon did not cover
     python3 src/scripts/tracker-rank.py --query 'regex' [--tracker K]
-    python3 src/scripts/tracker-rank.py --table            markdown для _trackers.md
-    python3 src/scripts/tracker-rank.py --check            дампы на месте и целы
+    python3 src/scripts/tracker-rank.py --table            markdown for _trackers.md
+    python3 src/scripts/tracker-rank.py --check            dumps in place and intact
 
-Лексикон тем и реестр читаются из `docs/features/_trackers.md` и НЕ дублируются здесь —
-тот же приём, что чтение категорий из README в features-index.py.
+The topic lexicon and the registry are read from `docs/features/_trackers.md` and are NOT duplicated here —
+the same technique as reading categories from README in features-index.py.
 
-Почему считается именно так:
+Why it is counted this way:
 
-* **Доли, а не штуки.** Трекеры разного размера и культуры: у Blender комментируют втрое
-  активнее, чем у Flowblade. Вес задачи делится на МЕДИАНУ своего трекера (не на среднее —
-  распределения тяжелохвостые), а темы сравниваются долей внутри своего трекера.
-* **Дубль весит больше всего** (×5): человек напоролся независимо, а триажёр подтвердил,
-  что это то же самое. Комментарий дёшев и часто триажный шум, поэтому ×1.
-* **«Закрыто» ≠ «починено».** У Kdenlive `WORKSFORME` — 24.4 % всех задач. Поэтому везде
-  считается `fixed` = доля НАСТОЯЩИХ фиксов среди закрытых, а не доля закрытых.
-* **FFmpeg trac вне общего рейтинга**: у Trac нет ни голосов, ни счётчика комментариев, и
-  выборка только открытая — знаменатель несравним.
+* **Shares, not counts.** Trackers differ in size and culture: Blender comments three times as
+  actively as Flowblade. An issue’s weight is divided by the MEDIAN of its own tracker (not the mean —
+  the distributions are heavy-tailed), and topics are compared by share within their own tracker.
+* **A duplicate weighs the most** (×5): a person hit it independently, and the triager confirmed
+  it is the same thing. A comment is cheap and often triage noise, so ×1.
+* **“Closed” ≠ “fixed”.** In Kdenlive `WORKSFORME` is 24.4 % of all issues. Therefore everywhere
+  `fixed` is computed as the share of REAL fixes among closed issues, not the share of closed ones.
+* **FFmpeg trac is outside the shared ranking**: Trac has no votes and no comment counter, and the
+  sample is open only — the denominator is not comparable.
 
-Коды возврата: 0 — успех, 1 — проверка не прошла, 2 — неизвестный аргумент.
+Exit codes: 0 — success, 1 — check failed, 2 — unknown argument.
 """
 
 import hashlib
@@ -42,10 +42,10 @@ ROOT = Path(__file__).resolve().parents[2]
 TRACKERS = ROOT / "docs" / "features" / "_trackers.md"
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "kinetren" / "trackers"
 
-# Корпус читается из колонки «Корпус» реестра, а НЕ из кода: раньше здесь стоял
-# OUT_OF_RANK = {"ffmpeg-trac"}, и это ровно то дублирование реестра в скрипте,
-# которое _trackers.md сам себе запрещает. Корпуса между собой не сравниваются —
-# у них разные знаменатели (Р.42).
+# The corpus is read from the “Corpus” column of the registry, NOT from the code: before, this held
+# OUT_OF_RANK = {"ffmpeg-trac"}, which is exactly the duplication of the registry in the script
+# that _trackers.md forbids itself. The corpora are not compared with each other —
+# they have different denominators (R.42).
 DEFAULT_CORPUS = "nle"
 
 WISH_LABELS = re.compile(r"enhancement|feature|idea|rfe|type/design|type/to do", re.I)
@@ -55,28 +55,28 @@ BUG_TITLE = re.compile(r"crash|freeze|hang|broken|not work|corrupt|error|fail", 
 
 
 def read_lexicon():
-    """[(тема, скомпилированный регексп)] из таблицы «## Лексикон тем»."""
+    """[(topic, compiled regexp)] from the “## Lexicon of topics” table."""
     text = TRACKERS.read_text(encoding="utf-8")
-    m = re.search(r"## Лексикон тем(.*?)(?=\n## )", text, re.S)
+    m = re.search(r"## Lexicon of topics(.*?)(?=\n## )", text, re.S)
     if not m:
-        sys.exit("в _trackers.md нет раздела «## Лексикон тем»")
+        sys.exit("_trackers.md has no “## Lexicon of topics” section")
     out = []
     for row in re.finditer(r"^\|\s*([^|`]+?)\s*\|\s*`([^`]+)`\s*\|", m.group(1), re.M):
         name = row.group(1).strip()
-        if name.lower() in ("тема",) or set(name) <= set("-: "):
+        if name.lower() in ("topic",) or set(name) <= set("-: "):
             continue
-        # В markdown-таблице пайп экранирован (\|), а в регэкспе это ЛИТЕРАЛЬНЫЙ
-        # пайп, а не альтернатива. Снимаем экранирование при чтении.
+        # In the markdown table the pipe is escaped (\|), while in the regex it is a LITERAL
+        # pipe, not an alternative. We remove the escaping when reading.
         out.append((name, re.compile(row.group(2).replace(r"\|", "|"), re.I)))
     return out
 
 
 def read_corpora():
-    """{ключ: корпус} из колонки «Корпус» реестра.
+    """{key: corpus} from the “Corpus” column of the registry.
 
-    Разбор по ЗАГОЛОВКУ, а не по позиции: колонка дописана последней, и
-    read_registry()/read_tracker_keys() якорятся на первые три — их порядок
-    трогать нельзя.
+    Parsed by the HEADER, not by position: the column was appended last, and
+    read_registry()/read_tracker_keys() anchor on the first three — their order
+    must not be changed.
     """
     out, idx = {}, None
     for line in TRACKERS.read_text(encoding="utf-8").splitlines():
@@ -84,8 +84,8 @@ def read_corpora():
             idx = None
             continue
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if "Ключ" in cells and "Корпус" in cells:
-            idx = cells.index("Корпус")
+        if "Key" in cells and "Corpus" in cells:
+            idx = cells.index("Corpus")
             continue
         if idx is None or len(cells) <= idx:
             continue
@@ -96,7 +96,7 @@ def read_corpora():
 
 
 def load(corpus=None):
-    """{ключ: [записи]} из кэша; corpus=None — все дампы без разбора."""
+    """{key: [records]} from the cache; corpus=None — all dumps without parsing."""
     data = {}
     if not CACHE.exists():
         return data
@@ -116,7 +116,7 @@ def load(corpus=None):
 
 
 def kind(r):
-    """'wish' | 'bug' | '?' — по объявленному полю, эвристика только как крайний случай."""
+    """'wish' | 'bug' | '?' — by the declared field; the heuristic only as a last resort."""
     sev = (r.get("severity_raw") or "").lower()
     if sev == "wishlist":
         return "wish"
@@ -143,7 +143,7 @@ def is_open(r):
 
 
 def is_fixed(r):
-    """Закрыта НАСТОЯЩИМ фиксом (а не WORKSFORME/not_planned/дублем)."""
+    """Closed by a REAL fix (not WORKSFORME/not_planned/duplicate)."""
     if is_open(r):
         return False
     cr = (r.get("closed_reason") or "").upper()
@@ -152,7 +152,7 @@ def is_fixed(r):
     if cr in ("WORKSFORME", "WONTFIX", "INVALID", "DUPLICATE", "UPSTREAM",
               "MOVED", "NOT_PLANNED", "UNMAINTAINED", "REPORTED_UPSTREAM"):
         return False
-    return cr == ""  # github/gitea/gitlab: закрыта без пометки «не будем» → считаем фиксом
+    return cr == ""  # github/gitea/gitlab: closed without a “won't do” mark → counted as a fix
 
 
 def rejected(r):
@@ -161,7 +161,7 @@ def rejected(r):
 
 
 def weights(data):
-    """Нормировка веса на медиану своего трекера + подсчёт входящих дублей."""
+    """Weight normalization by the median of its own tracker + count of incoming duplicates."""
     dupes = {}
     for k, rows in data.items():
         cnt = {}
@@ -204,7 +204,7 @@ def match(r, rx):
 
 
 def themes_table(data, lex, only_wish=False):
-    rank = list(data)  # корпус уже отфильтрован в load()
+    rank = list(data)  # the corpus is already filtered in load()
     rows = []
     for name, rx in lex:
         per, tot, wish, bug, opn, fixed, closed, dup, w = {}, 0, 0, 0, 0, 0, 0, 0, 0.0
@@ -238,7 +238,7 @@ def themes_table(data, lex, only_wish=False):
 
 
 def coverage(data, lex):
-    rank = list(data)  # корпус уже отфильтрован в load()
+    rank = list(data)  # the corpus is already filtered in load()
     tot = sum(len(data[k]) for k in rank)
     hit = 0
     for k in rank:
@@ -250,8 +250,8 @@ def coverage(data, lex):
 
 def main():
     args = sys.argv[1:]
-    # --corpus вынимается ДО выбора режима: иначе, поставленный первым, он сам
-    # принимается за режим и печатается справка (Р.42).
+    # --corpus is taken out BEFORE the mode is chosen: otherwise, put first, it would itself
+    # be taken for a mode and the help would be printed (R.42).
     corpus = DEFAULT_CORPUS
     if "--corpus" in args:
         i = args.index("--corpus")
@@ -262,13 +262,13 @@ def main():
     raw_all = load(None)
     data = weights(load(None if mode == "--check" else corpus))
     if not data:
-        known = sorted(set(read_corpora().values())) or ["(колонки «Корпус» в реестре нет)"]
-        sys.exit(f"в корпусе «{corpus}» дампов нет; есть корпуса: {', '.join(known)}")
+        known = sorted(set(read_corpora().values())) or ["(there is no “Corpus” column in the registry)"]
+        sys.exit(f"in corpus “{corpus}” has no dumps; corpora present: {', '.join(known)}")
 
     if mode == "--check":
         cor = read_corpora()
-        print(f"{len(data)} дампов, {sum(len(v) for v in data.values())} записей, "
-              f"{len(lex)} тем в лексиконе")
+        print(f"{len(data)} dumps, {sum(len(v) for v in data.values())} records, "
+              f"{len(lex)} topics in the lexicon")
         bad = 0
         for k in sorted(data):
             p = CACHE / f"{k}.jsonl"
@@ -277,27 +277,27 @@ def main():
             empty = sum(1 for r in rows if not (r.get("title") or "").strip())
             dup = len(rows) - len({r.get("id") for r in rows})
             flag = ""
-            # Дамп ffmpeg-trac был 3095 записями с id=None и пустым title и прошёл
-            # молча. Проверка, которой нет, — не проверка (Р.42).
+            # The ffmpeg-trac dump was 3095 records with id=None and an empty title and passed
+            # silently. A check that does not exist is not a check (R.42).
             if rows and empty / len(rows) > 0.05:
-                flag += f"  ПУСТЫХ {100*empty/len(rows):.0f}%"; bad += 1
+                flag += f"  EMPTY {100*empty/len(rows):.0f}%"; bad += 1
             if dup:
-                flag += f"  ПОВТОРОВ {dup}"; bad += 1
-            print(f"  {k:<14} {len(rows):>6} записей  {cor.get(k,'?'):<8}"
+                flag += f"  DUPLICATES {dup}"; bad += 1
+            print(f"  {k:<14} {len(rows):>6} records  {cor.get(k,'?'):<8}"
                   f"sha256:{h}{flag}")
         if bad:
-            print(f"\nдампов с браком: {bad} — перевыгрузить "
-                  "(tracker-fetch.py удалит state и начнёт заново)")
+            print(f"\ndumps with defects: {bad} — re-export "
+                  "(tracker-fetch.py will delete state and start over)")
         return 1 if bad else 0
 
     if mode in ("--themes", "--wishes", "--table"):
         rows, rank = themes_table(data, lex, only_wish=(mode == "--wishes"))
         hit, tot = coverage(data, lex)
-        print(f"# корпус «{corpus}»: {len(rank)} трекеров ({', '.join(rank)})")
-        print(f"# покрытие лексикона: {hit}/{tot} = {100*hit/max(1,tot):.1f}%"
-              + ("  (только запросы)" if mode == "--wishes" else ""))
+        print(f"# corpus “{corpus}”: {len(rank)} trackers ({', '.join(rank)})")
+        print(f"# lexicon coverage: {hit}/{tot} = {100*hit/max(1,tot):.1f}%"
+              + ("  (requests only)" if mode == "--wishes" else ""))
         print()
-        print("| Тема | n | запросы | жалобы | откр. | фиксы | дубли | вес | universal | gap |")
+        print("| Topic | n | requests | complaints | open | fixes | dups | weight | universal | gap |")
         print("|---|---|---|---|---|---|---|---|---|---|")
         for d in rows:
             print(f"| {d['theme']} | {d['n']} | {d['wish']} | {d['bug']} | {d['open']} "
@@ -308,13 +308,13 @@ def main():
     if mode == "--theme":
         rx = dict(lex).get(args[1]) if len(args) > 1 else None
         if rx is None:
-            sys.exit(f"нет темы «{args[1] if len(args)>1 else ''}»; есть: "
+            sys.exit(f"no topic “{args[1] if len(args)>1 else ''}”; present: "
                      + ", ".join(n for n, _ in lex))
         hit = [r for rows in data.values() for r in rows if match(r, rx)]
         hit.sort(key=lambda r: -r["_e"])
         for r in hit[:40]:
             print(f"{r['_e']:6.1f}  {r['tracker']:<13} {kind(r):<6} "
-                  f"{'откр' if is_open(r) else 'закр':<5} {(r.get('created') or '')[:10]}  "
+                  f"{'open' if is_open(r) else 'closed':<5} {(r.get('created') or '')[:10]}  "
                   f"{(r.get('title') or '')[:80]}")
             print(f"        {r.get('url')}")
         return 0
@@ -322,7 +322,7 @@ def main():
     if mode == "--rejected":
         hit = [r for rows in data.values() for r in rows if rejected(r)]
         hit.sort(key=lambda r: -r["_e"])
-        print(f"отклонено сопровождающими: {len(hit)}")
+        print(f"rejected by maintainers: {len(hit)}")
         for r in hit[:40]:
             print(f"{r['_e']:6.1f}  {r['tracker']:<13} {(r.get('closed_reason') or ''):<12} "
                   f"{(r.get('title') or '')[:70]}\n        {r.get('url')}")
@@ -334,7 +334,7 @@ def main():
             r["_n"] = years_open(r) * r["_e"]
         hit.sort(key=lambda r: -r["_n"])
         for r in hit[:40]:
-            print(f"{r['_n']:7.1f}  {years_open(r):4.1f} лет  {r['tracker']:<13} "
+            print(f"{r['_n']:7.1f}  {years_open(r):4.1f} years  {r['tracker']:<13} "
                   f"{kind(r):<6} {(r.get('title') or '')[:66]}\n        {r.get('url')}")
         return 0
 
@@ -343,7 +343,7 @@ def main():
         un = [r for k in rank for r in data[k]
               if not any(match(r, rx) for _, rx in lex)]
         hit, tot = coverage(data, lex)
-        print(f"покрытие {100*hit/max(1,tot):.1f}%, непокрыто {len(un)}")
+        print(f"coverage {100*hit/max(1,tot):.1f}%, uncovered {len(un)}")
         big = {}
         for r in un:
             ws = re.findall(r"[a-z]{4,}", (r.get("title") or "").lower())
@@ -361,12 +361,12 @@ def main():
                 continue
             hit = [r for r in data[k] if match(r, rx)]
             if hit:
-                print(f"{k:<14} {len(hit):>5} из {len(data[k]):>5} = "
+                print(f"{k:<14} {len(hit):>5} of {len(data[k]):>5} = "
                       f"{100*len(hit)/len(data[k]):.1f}%")
         allhit = [r for k, rows in data.items() if not only or k == only
                   for r in rows if match(r, rx)]
         allhit.sort(key=lambda r: -r["_e"])
-        print("  примеры:")
+        print("  examples:")
         for r in allhit[:5]:
             print(f"    {r['tracker']} #{r['id']} {(r.get('title') or '')[:66]}\n"
                   f"      {r.get('url')}")

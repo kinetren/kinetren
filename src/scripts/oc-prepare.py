@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Подготовка НАСТОЯЩЕГО фильма к кросс-рендеру (тест 179).
+"""Preparation of a REAL film for the cross-render (test 179).
 
-Вход  — .otio из fixtures/otio-oc и лежащий рядом исходник.
-Выход — <out>/prepared.otio (ссылка на медиа абсолютная), <out>/prepared.mlt
-        (для melt) и <out>/manifest.json с частотой, длительностью и
-        позициями склеек.
+Input  — .otio from fixtures/otio-oc and the source lying next to it.
+Output — <out>/prepared.otio (the media reference is absolute), <out>/prepared.mlt
+        (for melt) and <out>/manifest.json with the frame rate, duration and
+        the positions of the joins.
 
-Отличие от otio-cross-prepare.py: там синтетика вместо медиа, здесь медиа
-настоящее — трогать его нельзя, можно только переписать ссылку и при
-необходимости отрезать хвост монтажа (чтобы тест не кодировал три минуты
-1080p ради проверки склеек).
+Difference from otio-cross-prepare.py: there the media is synthetic, here the media is
+real — it must not be touched, one may only rewrite the reference and, if needed, cut off the tail
+of the montage (so that the test does not encode three minutes of
+1080p just to check the joins).
 """
 import json
 import os
@@ -32,7 +32,7 @@ def main(src, outdir, window_s):
             dur = item.duration().to_seconds()
             if rate is None and isinstance(item, otio.schema.Clip):
                 rate = item.duration().rate
-            # окно: берём целые клипы, пока не набрали window_s
+            # window: we take whole clips until we have collected window_s
             if window_s and cursor >= window_s:
                 break
             keep.append(item)
@@ -40,24 +40,24 @@ def main(src, outdir, window_s):
             cuts.append(round(cursor, 6))
             kept += 1
         del track[len(keep):]
-        # ссылки на медиа — абсолютные: prepared.otio живёт во временном
-        # каталоге, а исходник остаётся на своём месте
+        # media references are absolute: prepared.otio lives in a temporary
+        # directory, while the source stays in its own place
         for item in track:
             mr = getattr(item, "media_reference", None)
             url = getattr(mr, "target_url", None)
             if url and not os.path.isabs(url):
                 mr.target_url = os.path.join(base, url)
 
-    # НАМ файл отдаётся КАК ЕСТЬ — со вшитым стартовым таймкодом материала
-    # (у фильма available_range начинается с часа). Это часть проверки:
-    # ридер обязан вычесть таймкод сам (п.180).
+    # WE get the file AS IS — with the material's start timecode baked in
+    # (the film's available_range starts at an hour). This is part of the check:
+    # the reader must subtract the timecode itself (item 180).
     prepared = os.path.join(outdir, "prepared.otio")
     otio.adapters.write_to_file(tl, prepared)
 
-    # А вот MLT-адаптеру таймкод не по зубам: он пишет available_range
-    # прямо в producer in/out, для MLT это «отмотай файл на 86160-й кадр»,
-    # а кадров в нём 3890 — melt рендерит ЧЁРНОЕ. Поэтому ДЛЯ НЕГО сносим
-    # таймкод к нулю: сравнивать надо рендеры, а не чужие конвенции.
+    # But the MLT adapter cannot handle the timecode: it writes available_range
+    # straight into the producer in/out; for MLT this means “rewind the file to frame 86160,”
+    # yet there are only 3890 frames in it — melt renders BLACK. So FOR IT we strip
+    # the timecode to zero: we must compare renders, not other people's conventions.
     for track in tl.tracks:
         for item in track:
             mr = getattr(item, "media_reference", None)
@@ -76,7 +76,7 @@ def main(src, outdir, window_s):
     mlt, mlt_error = os.path.join(outdir, "prepared.mlt"), None
     try:
         otio.adapters.write_to_file(tl, mlt, adapter_name="mlt_xml")
-    except Exception as e:  # адаптера может не быть — тест скажет причину
+    except Exception as e:  # the adapter may be absent — the test will say why
         mlt, mlt_error = None, f"{type(e).__name__}: {e}"
 
     json.dump(

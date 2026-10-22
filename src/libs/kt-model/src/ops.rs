@@ -1,40 +1,40 @@
-//! Чистые операции редактирования (без UI): буфер обмена, регион, трим групп.
-//! Семантика перенесена из старого timelineeditor.cpp (copy/paste/punch-out).
-//! Все функции возвращают команды для `TimelineModel::apply_batch` —
-//! один undo-снапшот на жест, атомарность бесплатно.
+//! Pure editing operations (no UI): clipboard, region, group trims.
+//! The semantics are carried over from the old timelineeditor.cpp (copy/paste/punch-out).
+//! All functions return commands for `TimelineModel::apply_batch` —
+//! one undo snapshot per gesture, atomicity for free.
 
 use crate::model::{Command, MIN_CLIP_DURATION};
 use crate::project::*;
 use crate::published as kt_published;
 use kt_time::{Tick, TickRange};
 
-/// Блок обмена (Р.24): клипы + переходы, у которых ОБА конца попали в блок
-/// и стык пережил кроп. Времена клипов ребейзнуты к нулю блока.
+/// The exchange block (R.24): clips + transitions whose BOTH ends fell into the block
+/// and whose joint survived the crop. The clip times are rebased to the zero of the block.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ClipBlock {
     pub clips: Vec<ClipEvent>,
     pub transitions: Vec<TransitionEvent>,
-    /// Морферы, чьи цели попали в блок (Р.35 п.4). Цели за пределами
-    /// блока выброшены ещё при захвате.
+    /// Morphers whose targets fell into the block (R.35 item 4). Targets outside
+    /// the block are discarded already at capture.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub morphers: Vec<MorpherEvent>,
-    /// Именованные области, пересёкшие окно блока (кроп + ребейз).
+    /// Named regions that crossed the window of the block (crop + rebase).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub areas: Vec<MarkedArea>,
-    /// Метки: диапазонные — по пересечению с кропом, точечные — если
-    /// внутри окна.
+    /// Markers: range ones — by intersection with the crop, point ones — if
+    /// they are inside the window.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub markers: Vec<Marker>,
-    /// Камеры, чьё окно пересекло окно блока (Р.55, С3). Правило то же,
-    /// что у морфер-слоя в режиме «всё, что ниже»: камера — тоже строка
-    /// над монтажом, и без неё свёрнутый кусок теряет движение, которое
-    /// человек ему поставил.
+    /// Cameras whose window crossed the window of the block (R.55, C3). The rule is the same
+    /// as for the morpher layer in the “everything below” mode: a camera is also a row
+    /// above the edit, and without it a collapsed piece loses the movement that
+    /// the person set for it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cameras: Vec<CameraEvent>,
 }
 
 impl ClipBlock {
-    /// Наименьший и наибольший номер дорожки этого вида в блоке.
+    /// The smallest and the largest track number of this kind in the block.
     pub fn lane_span(&self, k: LaneKind) -> Option<(u32, u32)> {
         let lanes = self
             .clips
@@ -48,13 +48,13 @@ impl ClipBlock {
         })
     }
 
-    /// Сдвинуть ВСЕ виды на одну дельту, клампя КАЖДЫЙ вид так, чтобы его
-    /// нижний номер не ушёл за ноль (Р.56, п.450).
+    /// Shift ALL kinds by one delta, clamping EACH kind so that its
+    /// lower number does not go below zero (R.56, item 450).
     ///
-    /// Кламп именно по виду, а не по событию: клампуй мы каждое событие,
-    /// два события разных дорожек слиплись бы на нулевой — форма блока
-    /// важнее попадания в точку. Возвращает виды, которым сдвиг урезали:
-    /// об этом говорят человеку, а не доправляют молча (правило 16).
+    /// The clamp is per kind, not per event: were we to clamp each event, the
+    /// events of different tracks would stick together at zero — the shape of the block
+    /// matters more than hitting the point. Returns the kinds whose shift was cut:
+    /// the person is told about it, rather than being silently patched up (rule 16).
     pub fn shift_lanes(&mut self, delta: i64) -> Vec<LaneKind> {
         let mut clamped = Vec::new();
         let mut d = [0i64; 4];
@@ -89,12 +89,12 @@ impl ClipBlock {
         clamped
     }
 
-    /// Привести блок к СТРОКЕ, по которой кликнули (Р.56, п.450).
+    /// Bring the block to the ROW that was clicked (R.56, item 450).
     ///
-    /// Вид строки есть в блоке — совмещаем его верхнее событие с этой
-    /// строкой, остальные виды едут на ту же дельту (пара видео+аудио
-    /// сохраняет взаимное положение). Вида нет (кликнули по камерной
-    /// строке блоком без камер) — не двигаем вовсе: угадывать нечего.
+    /// The kind of the row is present in the block — we align its top event with this
+    /// row, and the other kinds move by the same delta (the video+audio pair
+    /// keeps its mutual position). If the kind is absent (a block clicked on the camera
+    /// row without cameras) — we do not move it at all: there is nothing to guess.
     pub fn shifted_to_row(mut self, row: Option<(LaneKind, u32)>) -> (ClipBlock, Vec<LaneKind>) {
         let Some((k, lane)) = row else { return (self, Vec::new()) };
         let Some((lo, _)) = self.lane_span(k) else { return (self, Vec::new()) };
@@ -102,14 +102,14 @@ impl ClipBlock {
         (self, clamped)
     }
 
-    /// Перевести блок из РАБОЧЕГО ВИДА в координаты ленты полосы: номера
-    /// дорожек полосы лежат со смещением `base[вид]` (Р.55, п.441), и
-    /// смещения у видов РАЗНЫЕ. Чужие события выбрасываются со счётом.
+    /// Translate the block from the WORKING VIEW into the coordinates of the band’s reel: the track numbers
+    /// of the band lie with an offset `base[kind]` (R.55, item 441), and
+    /// the offsets of the kinds are DIFFERENT. Foreign events are thrown out and counted.
     ///
-    /// Без этого клипборд хранил номера с тремя разными базами, а вставка
-    /// повторяла их как есть: видео оказывалось у потолка, аудио внизу, а
-    /// морфер — в самом низу, где под него заводилась новая строка
-    /// (претензия владельца п.4 Р.56).
+    /// Without this the clipboard kept the numbers with three different bases, and the paste
+    /// repeated them as they were: video ended up at the ceiling, audio at the bottom, and
+    /// the morpher at the very bottom, where a new row was laid out for it
+    /// (the owner’s claim, item 4 of R.56).
     pub fn localize(&mut self, base: LaneBases, len: LaneBases) -> usize {
         let owns =
             |k: LaneKind, lane: u32| lane >= base.get(k) && lane < base.get(k) + len.get(k).max(1);
@@ -133,7 +133,7 @@ impl ClipBlock {
         before - (self.clips.len() + self.morphers.len() + self.cameras.len())
     }
 
-    /// Обратный перевод: в координаты полосы рабочего вида.
+    /// The reverse translation: into the coordinates of the band in the working view.
     pub fn offset_lanes(&mut self, base: LaneBases) {
         for c in &mut self.clips {
             c.lane += base.get(lane_key(c).0);
@@ -146,7 +146,7 @@ impl ClipBlock {
         }
     }
 
-    /// Сколько дорожек каждого вида нужно, чтобы блок поместился.
+    /// How many tracks of each kind are needed for the block to fit.
     pub fn lanes_needed(&self) -> LaneBases {
         let mut n = LaneBases::default();
         for k in [LaneKind::Video, LaneKind::Audio, LaneKind::Morph, LaneKind::Camera] {
@@ -158,8 +158,8 @@ impl ClipBlock {
     }
 }
 
-/// Свежие id для вставки — растущий список аргументов `paste_block`
-/// перестал читаться уже на четвёртом.
+/// Fresh ids for the paste — the growing list of arguments of `paste_block`
+/// stopped being readable already at the fourth one.
 pub struct PasteIds<'a> {
     pub clip: &'a mut u64,
     pub group: &'a mut u64,
@@ -168,49 +168,49 @@ pub struct PasteIds<'a> {
     pub camera: &'a mut u64,
 }
 
-/// Как называть вставленное именованное (Р.35 п.4: «Имена — уникальные,
-/// и можно попросить пользователя ввести префикс, а можно и сгенерировать
-/// в поле его»; Р.38 п.19 — умолчание стало СУФФИКСОМ). `taken` — занятые
-/// имена ПРОЕКТА.
+/// How to name the pasted named item (R.35 item 4: “Names are unique,
+/// and the user can be asked to enter a prefix, or it can be generated
+/// in the field for him”; R.38 item 19 — the default became a SUFFIX). `taken` is the
+/// set of names taken in the PROJECT.
 #[derive(Default)]
 pub struct PasteNames {
-    /// Слово, которым помечается копия.
+    /// The word with which a copy is marked.
     pub affix: String,
-    /// Ставить его СПЕРЕДИ. Умолчание — сзади (Р.38 п.19, дословно: «при
-    /// копировании элементов - надо по дефолту проставлять не префикс а
-    /// суффикс»): так копии сортируются рядом с оригиналом, а не
-    /// собираются в отдельную кучу по первой букве.
+    /// Put it IN FRONT. The default is at the back (R.38 item 19, verbatim:
+    /// “when copying items — the default should be a suffix, not a prefix”):
+    /// this way copies sort next to the original,
+    /// rather than gathering into a separate heap by the first letter.
     pub before: bool,
     pub taken: Vec<String>,
 }
 
-/// Что вставка пропустила. Батч атомарен, поэтому один плохой элемент
-/// уронил бы ВСЮ вставку — а выглядело бы это как «копипаст не работает».
-/// Пропущенное считается и уходит в сообщение, а не «доправляется»
-/// (правило 20).
+/// What the paste skipped. The batch is atomic, so one bad item
+/// would bring down the WHOLE paste — and it would look like “copy-paste does not work”.
+/// What was skipped is counted and goes into the message, rather than being “patched up”
+/// (rule 20).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct PasteSkipped {
-    /// Морферы, у которых не уцелело ни одной цели.
+    /// Morphers that kept not a single target.
     pub morphers: usize,
-    /// Метки на уже занятый тик.
+    /// Markers on an already occupied tick.
     pub markers: usize,
 }
 
-/// Длина блока по клипам (окно, в котором ловятся области и метки).
+/// The length of the block by clips (the window in which regions and markers are caught).
 fn block_len(clips: &[ClipEvent]) -> Tick {
     clips.iter().map(|c| c.start + c.duration).max().unwrap_or(Tick::ZERO)
 }
 
-/// Морферы, области и метки, попавшие в блок (Р.35 п.4, дословно: «При
-/// выделении на таймлайне всего подряд и ctrl+c ctrl+v я хочу чтобы у
-/// меня проставлялись связи и для морферов тоже… и marked_area-ы тоже
-/// при выделении и копировании копируются, и marked_region тоже вместе с
-/// теми что внутри него»).
+/// Morphers, regions and markers that fell into the block (R.35 item 4, verbatim: “When selecting
+/// everything in a row on the timeline and ctrl+c ctrl+v, I want the links to be set for
+/// morphers too… and marked_area too
+/// are copied when selecting and copying, and marked_region together with
+/// those inside it”).
 ///
-/// `base` — начало окна на таймлайне (для ребейза), `len` — его длина.
-/// Морфер едет, если в блоке ХОТЯ БЫ ОДНА его цель; цели снаружи
-/// выбрасываются. Область и метка-диапазон — по пересечению, с кропом;
-/// точечная метка — если внутри окна.
+/// `base` is the start of the window on the timeline (for the rebase), `len` is its length.
+/// A morpher moves if the block contains AT LEAST ONE of its targets; the targets outside
+/// are discarded. A region and a range marker — by intersection, with the crop;
+/// a point marker — if it is inside the window.
 fn block_extras(p: &Project, clips: &[ClipEvent], base: Option<Tick>, len: Tick) -> ClipBlock {
     let base = base.unwrap_or(Tick::ZERO);
     let win = kt_time::TickRange::new(base, base + len);
@@ -223,8 +223,8 @@ fn block_extras(p: &Project, clips: &[ClipEvent], base: Option<Tick>, len: Tick)
                 MorphTargets::Clips { ids: t } => {
                     t.iter().copied().filter(|i| ids.contains(i)).collect()
                 }
-                // слой и ссылки целей не морозят: они едут, если сам блок
-                // морфера попал в окно
+                // the layer and the target references are not frozen: they move if the block itself
+                // of the morpher fell into the window
                 _ => {
                     return m.window().overlaps(&win).then(|| rebase_morpher(m, base));
                 }
@@ -236,8 +236,8 @@ fn block_extras(p: &Project, clips: &[ClipEvent], base: Option<Tick>, len: Tick)
             })
         })
         .collect();
-    // камеры — по ПЕРЕСЕЧЕНИЮ окна с окном блока, с ребейзом: у камеры
-    // нет «целей», она действует на то, что под ней по времени
+    // cameras — by INTERSECTION of the window with the window of the block, with a rebase: a camera
+    // has no “targets”, it acts on what lies under it in time
     let cameras = p
         .cameras
         .iter()
@@ -279,9 +279,9 @@ fn rebase_morpher(m: &MorpherEvent, base: Tick) -> MorpherEvent {
     MorpherEvent { start: m.start - base, ..m.clone() }
 }
 
-/// Переходы, пережившие копирование: живые концы в блоке, стык цел (кропы
-/// региона могли съесть край), офсеты клампятся новыми телами. Фейд (Р.25)
-/// переезжает вместе со своим единственным клипом.
+/// Transitions that survived the copy: live ends in the block, the joint intact (the crops
+/// of a region could have eaten an edge), the offsets are clamped by the new bodies. A fade (R.25)
+/// moves together with its only clip.
 fn surviving_transitions(p: &Project, block_clips: &[ClipEvent]) -> Vec<TransitionEvent> {
     let find = |id: ClipId| block_clips.iter().find(|c| c.id == id);
     let side = |id: Option<ClipId>| match id {
@@ -295,9 +295,9 @@ fn surviving_transitions(p: &Project, block_clips: &[ClipEvent]) -> Vec<Transiti
             if let (Some(a), Some(b)) = (a, b) {
                 let (a_end, b_end) = (a.start + a.duration, b.start + b.duration);
                 if a_end != b.start {
-                    // наложенный переход (Р.51) выживает, если оба клипа в
-                    // блоке лежат той же «лесенкой»; окно проверит
-                    // check_transition_full при вставке
+                    // an overlapped transition (R.51) survives if both clips in the
+                    // block lie in the same “staircase”; the window is checked by
+                    // check_transition_full on insertion
                     let stag = a.start < b.start && b.start < a_end && a_end < b_end;
                     return (stag && a_end - b.start >= MIN_TRANSITION_DURATION).then(|| t.clone());
                 }
@@ -314,8 +314,8 @@ fn surviving_transitions(p: &Project, block_clips: &[ClipEvent]) -> Vec<Transiti
         .collect()
 }
 
-/// Copy с регионом: пересекающиеся клипы кропаются по региону и ребейзятся
-/// к нулю (source_in сдвигается на срез слева). Блок готов для paste_block.
+/// Copy with a region: the crossing clips are cropped to the region and rebased
+/// to zero (source_in shifts by the slice on the left). The block is ready for paste_block.
 pub fn copy_region_block(p: &Project, r: Region) -> ClipBlock {
     let mut clips = Vec::new();
     for c in &p.clips {
@@ -327,10 +327,10 @@ pub fn copy_region_block(p: &Project, r: Region) -> ClipBlock {
         if t1 - t0 < MIN_CLIP_DURATION {
             continue;
         }
-        // кроп — тот же кусок, что у Split и punch-out (Р.39): реверс,
-        // материальный якорь и сдвиг ключей считает `clip_slice`
+        // the crop is the same piece as in Split and punch-out (R.39): reverse,
+        // the material anchor and the shift of keys are computed by `clip_slice`
         let mut copy = clip_slice(c, TickRange::new(t0, t1), c.id);
-        copy.start = t0 - r.start; // rebase к нулю региона
+        copy.start = t0 - r.start; // rebase to the zero of the region
         clips.push(copy);
     }
     let transitions = surviving_transitions(p, &clips);
@@ -338,8 +338,8 @@ pub fn copy_region_block(p: &Project, r: Region) -> ClipBlock {
     ClipBlock { clips, transitions, ..extras }
 }
 
-/// Copy без региона: выбранный клип со всей его link-группой,
-/// ребейз к старту самого раннего.
+/// Copy without a region: the selected clip with its whole link group,
+/// rebased to the start of the earliest one.
 pub fn copy_group(p: &Project, id: ClipId) -> ClipBlock {
     let Some(sel) = p.clips.iter().find(|c| c.id == id) else { return ClipBlock::default() };
     let group = sel.link_group;
@@ -362,10 +362,10 @@ pub fn copy_group(p: &Project, id: ClipId) -> ClipBlock {
     ClipBlock { clips, transitions, ..extras }
 }
 
-/// Copy множества выделенных событий (Р.33): каждое тянет за собой свою
-/// link-группу, ребейз к старту самого раннего. `copy_group` — частный
-/// случай с одним id; отдельная функция нужна, чтобы блок из нескольких
-/// событий сохранял их взаимные СДВИГИ (вставка кладёт их той же фигурой).
+/// Copy of a set of selected events (R.33): each drags its own
+/// link group along, rebased to the start of the earliest one. `copy_group` is a
+/// special case with one id; a separate function is needed so that a block of several
+/// events keeps their mutual SHIFTS (the paste puts them in the same shape).
 pub fn copy_clips(p: &Project, ids: &[ClipId]) -> ClipBlock {
     let groups: Vec<GroupId> =
         p.clips.iter().filter(|c| ids.contains(&c.id)).filter_map(|c| c.link_group).collect();
@@ -391,10 +391,10 @@ pub fn copy_clips(p: &Project, ids: &[ClipId]) -> ClipBlock {
     ClipBlock { clips, transitions, ..extras }
 }
 
-/// Paste блока в позицию `at`: свежие id, каждая старая группа → одна новая,
-/// переходы ретаргетятся на новые id. Возвращает (команды, конец блока) —
-/// курсор прыгает в конец для chain-paste. Вставка с коллизией на дорожке
-/// теперь честно проваливается жёсткой валидацией apply_batch (п.139).
+/// Paste of a block at position `at`: fresh ids, each old group → one new one,
+/// transitions are retargeted to the new ids. Returns (commands, end of the block) —
+/// the cursor jumps to the end for chain-paste. A paste with a collision on a track
+/// now honestly fails by the hard validation of apply_batch (item 139).
 pub fn paste_block(
     block: &ClipBlock,
     at: Tick,
@@ -410,8 +410,8 @@ pub fn paste_block(
     } = ids;
     let mut skipped = PasteSkipped::default();
     let mut taken = names.taken.clone();
-    // имена вставленного: приставка + уникализация ТОЙ ЖЕ функцией, что у
-    // команд — разойдись они, батч упал бы на собственных суффиксах
+    // names of the pasted items: a prefix + uniqueness by THE SAME function as
+    // the commands — were they to diverge, the batch would fall over its own suffixes
     let mut name_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut rename = |old: &str| -> String {
         if let Some(n) = name_map.get(old) {
@@ -439,8 +439,8 @@ pub fn paste_block(
         let mut copy = c.clone();
         copy.id = ClipId(*next_clip);
         clip_map.insert(c.id, copy.id);
-        // родство — для конверта (п.357): вставленная копия обязана унести
-        // имя, чужие эффекты и metadata оригинала
+        // kinship — for the envelope (item 357): the pasted copy must carry
+        // the name, the foreign effects and the metadata of the original
         cmds.push(Command::NoteBirth { child: copy.id, parent: c.id });
         *next_clip += 1;
         copy.link_group = c.link_group.map(|g| {
@@ -467,8 +467,8 @@ pub fn paste_block(
         copy.b = b;
         cmds.push(Command::AddTransition(copy));
     }
-    // области и метки: имена переименовываются ПЕРВЫМИ — ссылки морферов
-    // ниже смотрят в уже готовую карту
+    // regions and markers: the names are renamed FIRST — the morpher references
+    // below look into the already finished map
     for a in &block.areas {
         let mut copy = a.clone();
         copy.name = rename(&a.name);
@@ -492,8 +492,8 @@ pub fn paste_block(
         copy.start = at + m.start;
         match &mut copy.targets {
             MorphTargets::Clips { ids } => {
-                // цель, не пережившая копирование, тянет за собой весь
-                // морфер: батч атомарен, а морфер без целей бессмыслен
+                // a target that did not survive the copy drags the whole
+                // morpher along: the batch is atomic, and a morpher without targets is meaningless
                 ids.retain(|i| clip_map.contains_key(i));
                 if ids.is_empty() {
                     skipped.morphers += 1;
@@ -503,8 +503,8 @@ pub fn paste_block(
                     *i = clip_map[i];
                 }
             }
-            // ссылка на СКОПИРОВАННОЕ имя переезжает на копию, на
-            // нескопированное — остаётся на оригинале (он никуда не делся)
+            // a reference to a COPIED name moves to the copy, to a non-copied one —
+            // it stays on the original (it went nowhere)
             MorphTargets::Areas { names } | MorphTargets::Marks { names } => {
                 for n in names.iter_mut() {
                     if let Some(new) = name_map.get(n.as_str()) {
@@ -518,25 +518,25 @@ pub fn paste_block(
         end = end.max(copy.start + copy.duration);
         cmds.push(Command::AddMorpher(copy));
     }
-    // камеры — то же правило, что у морферов: свежий адрес, ребейз на
-    // точку вставки. Целей у камеры нет, поэтому и пропускать нечего.
+    // cameras — the same rule as for morphers: a fresh address, a rebase to the
+    // insertion point. A camera has no targets, so there is nothing to skip.
     for c in &block.cameras {
         let mut copy = c.clone();
         copy.id = CameraId(*next_camera);
         *next_camera += 1;
         copy.start = at + c.start;
-        // имя камеры НЕ уникализируется: оно подпись, а не адрес —
-        // ссылок на него нет (в отличие от области и метки, на которые
-        // смотрит морфер по ссылке)
+        // the camera name is NOT made unique: it is a label, not an address —
+        // there are no references to it (unlike a region and a marker, which
+        // the morpher looks at by reference)
         end = end.max(copy.start + copy.duration);
         cmds.push(Command::AddCamera(copy));
     }
     (cmds, end, skipped)
 }
 
-/// Punch-out (старый splitDeleteRegionInterior): у каждого пересекающего
-/// клипа вырезается интерьер региона; остатки получают новые id и ТЕРЯЮТ
-/// link-группу; правый остаток сохраняет выравнивание источника. Без ripple.
+/// Punch-out (the old splitDeleteRegionInterior): from each crossing
+/// clip the interior of the region is cut out; the remainders get new ids and LOSE
+/// their link group; the right remainder keeps the alignment of the source. Without ripple.
 pub fn punch_out_region(p: &Project, r: Region, next_clip: &mut u64) -> Vec<Command> {
     let mut cmds = Vec::new();
     for c in &p.clips {
@@ -545,10 +545,10 @@ pub fn punch_out_region(p: &Project, r: Region, next_clip: &mut u64) -> Vec<Comm
         }
         cmds.push(Command::RemoveClip { id: c.id });
         let end = c.start + c.duration;
-        // Оба остатка — через ОДНО правило куска (Р.39). Раньше здесь была
-        // своя копия линейной формулы (по ветке на каждый остаток), и на
-        // растянутом клипе она уезжала так же, как уезжал `Split`.
-        // Реверс, `source_in` и сдвиг ключей — забота `clip_slice`.
+        // Both remainders go through ONE rule of the piece (R.39). Previously there was
+        // its own copy of the linear formula here (a branch per remainder), and on
+        // a stretched clip it drifted the same way `Split` drifted.
+        // Reverse, `source_in` and the shift of keys are the business of `clip_slice`.
         if r.start - c.start >= MIN_CLIP_DURATION {
             let mut left = clip_slice(c, TickRange::new(c.start, r.start), ClipId(*next_clip));
             *next_clip += 1;
@@ -567,7 +567,7 @@ pub fn punch_out_region(p: &Project, r: Region, next_clip: &mut u64) -> Vec<Comm
     cmds
 }
 
-/// Del с регионом: пересекающиеся клипы И их linked-партнёры.
+/// Del with a region: the crossing clips AND their linked partners.
 pub fn delete_region(p: &Project, r: Region) -> Vec<Command> {
     let mut doomed: std::collections::HashSet<ClipId> = std::collections::HashSet::new();
     let mut groups: std::collections::HashSet<GroupId> = std::collections::HashSet::new();
@@ -591,14 +591,14 @@ pub fn delete_region(p: &Project, r: Region) -> Vec<Command> {
     ids.into_iter().map(|id| Command::RemoveClip { id }).collect()
 }
 
-/// Trim-to-cursor для всей link-группы (как в старом редакторе: партнёры
-/// получают тот же срез). Пустой результат = курсор вне клипа.
+/// Trim-to-cursor for the whole link group (as in the old editor: the partners
+/// get the same slice). An empty result = the cursor is outside the clip.
 pub fn trim_group_start_to(p: &Project, sel: ClipId, at: Tick) -> Vec<Command> {
     group_members(p, sel)
         .into_iter()
         .filter(|c| c.start < at && at < c.start + c.duration - MIN_CLIP_DURATION + Tick(1))
-        // предел трима считает та же функция, что и команда: разойдись
-        // они — жест то падал бы, то молча не доезжал (Р.39)
+        // the trim limit is computed by the same function as the command: were
+        // they to diverge — the gesture would sometimes fail, and sometimes silently not reach (R.39)
         .filter(|c| slice_fits_source(c, TickRange::new(at, c.start + c.duration)))
         .map(|c| Command::TrimStart { id: c.id, new_start: at })
         .collect()
@@ -612,29 +612,29 @@ pub fn trim_group_end_to(p: &Project, sel: ClipId, at: Tick) -> Vec<Command> {
         .collect()
 }
 
-/// Возврат «ручек» умерших кроссфейдов (Р.26, решение пользователя: «в sony
-/// vegas если растащить перекрывающиеся события — остаётся то, что
-/// перекрывалось, без обрезки»).
+/// Return of the “handles” of dead crossfades (R.26, the user’s decision: “in Sony
+/// Vegas, if you drag overlapping events apart, what overlapped remains without trimming”).
 ///
-/// При создании кроссфейда клипы режутся до стыка, и офсеты перехода
-/// ЧИСЛЕННО РАВНЫ срезанному: outgoing потерял справа `out_offset`, incoming
-/// слева — `in_offset` (так считает и plan_move в UI, и upgrade_legacy при
-/// импорте .ktproj). Поэтому разрыв перехода восстановим точно, без хранения
-/// лишнего состояния.
+/// When a crossfade is created, the clips are cut to the joint,
+/// and the offsets of the transition
+/// are NUMERICALLY EQUAL to what was cut: outgoing lost `out_offset` on the right,
+/// incoming lost `in_offset` on the left (this is how plan_move in the UI counts it, and
+/// upgrade_legacy on import of .ktproj). Therefore the break of a transition can be restored exactly,
+/// without storing extra state.
 ///
-/// `before` — проект до жеста (там переходы ещё живы), `after` — его
-/// результат (`TimelineModel::preview`). Возврат клампится освободившимся
-/// местом, поэтому батч не может провалиться на перекрытии.
+/// `before` is the project before the gesture (the transitions are still alive there),
+/// `after` is its result (`TimelineModel::preview`). The return is clamped by the freed space,
+/// so the batch cannot fall over an overlap.
 ///
-/// Фейды пропускаются: у них ничего не срезалось (заводятся явной командой).
+/// Fades are skipped: nothing was cut from them (they are set by an explicit command).
 pub fn restore_handles(before: &Project, after: &Project) -> Vec<Command> {
     let mut cmds = Vec::new();
     for t in &before.transitions {
         if t.is_fade() || after.transitions.iter().any(|x| x.id == t.id) {
             continue;
         }
-        // наложенный переход (Р.51): у него ничего не срезалось при
-        // наезде — «возврат ручек» дал бы ложные тримы
+        // an overlapped transition (R.51): nothing was cut from it when
+        // overlapping — the “return of handles” would give false trims
         if t.overlap_pair(before).is_some() {
             continue;
         }
@@ -643,16 +643,16 @@ pub fn restore_handles(before: &Project, after: &Project) -> Vec<Command> {
         let b = after.clips.iter().find(|c| c.id == b_id);
         let mut want_a = if a.is_some() { t.out_offset.0 } else { 0 };
         let mut want_b = if b.is_some() { t.in_offset.0 } else { 0 };
-        // место до ближайшего препятствия, с учётом ВСЕХ членов link-группы:
-        // трим двигает группу целиком, и упереться может любой её член
+        // the space up to the nearest obstacle, taking into account ALL members of the link group:
+        // a trim moves the group as a whole, and any of its members may run into something
         let room_a = a.map_or(0, |c| room_right(after, c));
         let room_b = b.map_or(0, |c| room_left(after, c));
         want_a = want_a.min(room_a);
         want_b = want_b.min(room_b);
-        // материал за краем не бесконечен: у reversed TrimEnd тянет source_in
-        // вниз, у обычного TrimStart — тоже, и check_on отвергает уход ниже
-        // нуля. Кламп ОБЯЗАН быть здесь: иначе подарок уронит весь жест
-        // (перенос/удаление откатится вместе с ним).
+        // the material beyond the edge is not infinite: for reversed, TrimEnd pulls source_in
+        // down, and for a normal one, TrimStart does too, and check_on rejects going below
+        // zero. The clamp MUST be here: otherwise a gift would bring down the whole gesture
+        // (the move/delete would be rolled back together with it).
         if let Some(a) = a
             && a.reversed
         {
@@ -663,8 +663,8 @@ pub fn restore_handles(before: &Project, after: &Project) -> Vec<Command> {
         {
             want_b = want_b.min(b.source_in.0);
         }
-        // клипы пары могли остаться соседями (растащили чуть-чуть): тогда
-        // общий зазор делится пропорционально тому, кто сколько потерял
+        // the clips of a pair could have remained neighbors (they were dragged apart a little): then
+        // the common gap is divided in proportion to who lost how much
         if let (Some(a), Some(b)) = (a, b)
             && a.kind == b.kind
             && a.lane == b.lane
@@ -691,8 +691,8 @@ pub fn restore_handles(before: &Project, after: &Project) -> Vec<Command> {
     cmds
 }
 
-/// Сколько тиков клип (со всей link-группой) может вырасти вправо, не задев
-/// соседей и чужие плейсхолдеры. Край таймлайна справа не ограничивает.
+/// How many ticks the clip (with its whole link group) can grow to the right without touching
+/// the neighbors and foreign placeholders. The right edge of the timeline does not limit it.
 fn room_right(p: &Project, c: &ClipEvent) -> i64 {
     group_members(p, c.id)
         .iter()
@@ -709,7 +709,7 @@ fn room_right(p: &Project, c: &ClipEvent) -> i64 {
         .max(0)
 }
 
-/// То же влево; слева таймлайн ограничен нулём.
+/// The same to the left; on the left the timeline is limited by zero.
 fn room_left(p: &Project, c: &ClipEvent) -> i64 {
     group_members(p, c.id)
         .iter()
@@ -727,8 +727,8 @@ fn room_left(p: &Project, c: &ClipEvent) -> i64 {
         .max(0)
 }
 
-/// Занятые интервалы на дорожке клипа: чужие клипы (вне его link-группы) и
-/// плейсхолдеры чужих конструкций — инвариант «без перекрытий» включает их.
+/// The occupied intervals on the clip’s track: foreign clips (outside its link group) and
+/// the placeholders of foreign constructions — the “no overlaps” invariant includes them.
 fn obstacles<'a>(p: &'a Project, c: &'a ClipEvent) -> impl Iterator<Item = (i64, i64)> + 'a {
     let group = c.link_group;
     p.clips
@@ -758,11 +758,11 @@ fn group_members(p: &Project, sel: ClipId) -> Vec<ClipEvent> {
         .collect()
 }
 
-/// Магнетизация A/V-пары (п.6): партнёр противоположного типа с ближайшим
-/// стартом подтягивается к выделенному и линкуется. None — партнёра нет;
-/// Some(vec![]) — уже слинкованы и выровнены (no-op). Партнёр
-/// предварительно отвязывается — иначе MoveClip двигал ВСЮ его группу
-/// (включая сам выделенный) и пара никогда не сходилась.
+/// Magnetization of an A/V pair (item 6): the partner of the opposite type with the nearest
+/// start is pulled to the selected one and linked. None — there is no partner;
+/// Some(vec![]) — already linked and aligned (no-op). The partner is unlinked beforehand —
+/// otherwise MoveClip would move its WHOLE group (including the selected one itself),
+/// and the pair would never converge.
 pub fn magnetize_commands(
     p: &Project,
     sel: ClipId,
@@ -781,7 +781,7 @@ pub fn magnetize_commands(
     let aligned = partner.start == c.start && partner.duration == c.duration;
     let linked = c.link_group.is_some() && partner.link_group == c.link_group;
     if aligned && linked {
-        return Some(Vec::new()); // уже намагничены
+        return Some(Vec::new()); // already magnetized
     }
     let group = c.link_group.unwrap_or_else(|| {
         let g = GroupId(*next_group);
@@ -798,19 +798,19 @@ pub fn magnetize_commands(
     Some(cmds)
 }
 
-// ---- импорт легаси-ktproj: перекрытия → переходы/развод (Р.24, п.143) ------
+// ---- import of a legacy .ktproj: overlaps → transitions/split (R.24, item 143) ------
 
-/// Отчёт конвертации старых перекрытий. Показывается пользователю note'ом.
+/// The report of the conversion of old overlaps. It is shown to the user as a note.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct UpgradeReport {
-    /// Аудио-пары, ставшие стыком с переходом (звук байт-идентичен, т.136).
+    /// Audio pairs that became a joint with a transition (the sound is byte-identical, test 136).
     pub transitions_created: usize,
-    /// Аудио-клипы, разведённые по дорожкам (3+/FX-перекрытия: точной
-    /// компенсации 1/N не существует — решение пользователя п.9 Р.24,
-    /// громкость в зоне бывшего 1/N становится суммой).
+    /// Audio clips spread across tracks (3+/FX overlaps: an exact
+    /// compensation 1/N does not exist — the user’s decision, item 9 of R.24,
+    /// the loudness in the zone of the former 1/N becomes the sum).
     pub audio_moved: usize,
-    /// Видео-клипы, демоцированные на вставленную дорожку ниже (старое
-    /// видео перекрытия не смешивало — композит байт-идентичен тайбрейку).
+    /// Video clips demoted onto the inserted track below (the old video of the overlap did not mix —
+    /// the composite is byte-identical to the tiebreak).
     pub video_moved: usize,
 }
 
@@ -820,8 +820,8 @@ impl UpgradeReport {
     }
 }
 
-/// Зеркала мутаций тримов (model.rs) для прямого применения к клипу:
-/// у reversed TrimEnd сдвигает source_in, TrimStart — не трогает (п.16).
+/// Mirrors of trim mutations (model.rs) for direct application to a clip:
+/// for reversed, TrimEnd shifts source_in, TrimStart does not touch it (item 16).
 fn raw_trim_end(c: &mut ClipEvent, new_end: Tick) {
     *c = clip_slice(c, TickRange::new(c.start, new_end), c.id);
 }
@@ -830,38 +830,38 @@ fn raw_trim_start(c: &mut ClipEvent, new_start: Tick) {
     *c = clip_slice(c, TickRange::new(new_start, c.start + c.duration), c.id);
 }
 
-/// Конвертация legacy-проекта с перекрытиями в Transition-модель (этап 9).
-/// Идемпотентна: на проекте без перекрытий отчёт пуст. После вызова
-/// проект обязан проходить validate().
+/// Conversion of a legacy project with overlaps into the Transition model (stage 9).
+/// It is idempotent: on a project without overlaps the report is empty. After the call
+/// the project MUST pass validate().
 pub fn upgrade_legacy(p: &mut Project) -> UpgradeReport {
     let mut report = UpgradeReport::default();
 
-    // кейфреймы slowed&reverb старого образца — в общий механизм (Р.33):
-    // легаси-проект их точно несёт в собственном домене
+    // keyframes of slowed&reverb of the old kind — into the common mechanism (R.33):
+    // the legacy project certainly carries them in its own domain
     for c in &mut p.clips {
         crate::project::migrate_legacy_slowed(c);
         crate::project::migrate_legacy_cammotion(c);
     }
 
-    // морферы старого образца — прежняя семантика (патч на цели целиком,
-    // вне времени): слоем они не становятся сами (Р.35)
+    // morphers of the old kind — the former semantics (a patch on the whole target,
+    // outside time): they do not become a layer by themselves (R.35)
     for m in &mut p.morphers {
         crate::project::migrate_legacy_morpher(m);
     }
 
-    // Переслаивание (Р.28): старый проект открывается КАК БЫЛ — перекрытия
-    // остаются перекрытиями, дорожки не плодятся, ничего не режется.
-    // Решение пользователя после того, как его настоящий проект (1952 клипа,
-    // 76 перекрытий) разворачивало в ~40 видео-дорожек: «как было, с
-    // перекрытиями». Конверсия в переходы/развод по дорожкам осталась для
-    // режима БЕЗ переслаивания.
+    // Re-layering (R.28): an old project opens AS IT WAS — overlaps
+    // remain overlaps, tracks do not multiply, nothing is cut.
+    // The user’s decision after his real project (1952 clips,
+    // 76 overlaps) was unfolded into ~40 video tracks: “as it was, with
+    // overlaps”. The conversion into transitions/split by tracks remained for
+    // the mode WITHOUT re-layering.
     if p.overlap_layers {
         p.normalize();
         return report;
     }
 
-    // 1) аудио-пары: ровно два клипа в зоне наезда, оба без активных FX —
-    //    трим до середины наезда + переход тем же окном (байт-идентично)
+    // 1) audio pairs: exactly two clips in the overlap zone, both without active FX —
+    //    a trim to the middle of the overlap + a transition in the same window (byte-identical)
     while let Some((a_id, b_id)) = find_audio_pair(p) {
         let a0 = p.clips.iter().find(|c| c.id == a_id).unwrap().clone();
         let b0 = p.clips.iter().find(|c| c.id == b_id).unwrap().clone();
@@ -892,13 +892,13 @@ pub fn upgrade_legacy(p: &mut Project) -> UpgradeReport {
         report.transitions_created += 1;
     }
 
-    // 2) оставшиеся аудио-перекрытия (3+, FX, невозможная пара) — развод:
-    //    ранний остаётся, конфликтующий уезжает на свободную дорожку ниже
-    //    (новая в конце при нехватке)
+    // 2) the remaining audio overlaps (3+, FX, an impossible pair) — split:
+    //    the early one stays, the conflicting one moves to a free track below
+    //    (a new one at the end if there is a shortage)
     while let Some(mover) = find_overlap_mover(p, ClipKind::Audio) {
         let lane = free_audio_lane_below(p, mover);
-        // счётчик дорожек бампается СРАЗУ: иначе следующий mover считает
-        // добавленную дорожку несуществующей и летит на неё же (вечный цикл)
+        // the track counter is bumped AT ONCE: otherwise the next mover counts
+        // the added track as nonexistent and flies onto it too (an endless loop)
         p.ensure_tracks(LaneKind::Audio, lane + 1);
         if let Some(c) = p.clips.iter_mut().find(|c| c.id == mover) {
             c.lane = lane;
@@ -906,9 +906,9 @@ pub fn upgrade_legacy(p: &mut Project) -> UpgradeReport {
         report.audio_moved += 1;
     }
 
-    // 3) видео-перекрытия: демоция позднего на ВСТАВЛЕННУЮ дорожку сразу
-    //    ниже раннего — старый тайбрейк (сверху тот, у кого start меньше)
-    //    сохраняется байт-в-байт
+    // 3) video overlaps: demotion of the later one onto the INSERTED track right
+    //    below the early one — the old tiebreak (on top is the one whose start is smaller)
+    //    is kept byte for byte
     while let Some(mover) = find_overlap_mover(p, ClipKind::Video) {
         let keeper_lane = p.clips.iter().find(|c| c.id == mover).map(|c| c.lane).unwrap_or(0);
         for c in p.clips.iter_mut() {
@@ -926,8 +926,8 @@ pub fn upgrade_legacy(p: &mut Project) -> UpgradeReport {
     report
 }
 
-/// Пара для перехода: B — ближайший наезжающий на A, зона наезда покрыта
-/// РОВНО ими двумя, наезд частичный, оба без активных FX, стык умещается.
+/// A pair for a transition: B is the nearest one overlapping A, the overlap zone is covered
+/// EXACTLY by the two of them, the overlap is partial, both without active FX, the joint fits.
 fn find_audio_pair(p: &Project) -> Option<(ClipId, ClipId)> {
     for a in p.clips.iter().filter(|c| c.kind == ClipKind::Audio) {
         for b in p.clips.iter().filter(|c| c.kind == ClipKind::Audio) {
@@ -935,14 +935,14 @@ fn find_audio_pair(p: &Project) -> Option<(ClipId, ClipId)> {
                 continue;
             }
             let (a1, b1) = (a.start + a.duration, b.start + b.duration);
-            // частичный наезд B на хвост A
+            // a partial overlap of B onto the tail of A
             if !(b.start > a.start && b.start < a1 && b1 > a1) {
                 continue;
             }
             if !a.active_fx().is_empty() || !b.active_fx().is_empty() {
                 continue;
             }
-            // никто третий не задевает зону наезда
+            // no third one touches the overlap zone
             let zone = (b.start, a1);
             let third = p.clips.iter().any(|c| {
                 c.id != a.id
@@ -955,7 +955,7 @@ fn find_audio_pair(p: &Project) -> Option<(ClipId, ClipId)> {
             if third {
                 continue;
             }
-            // окно и стык умещаются в тела
+            // the window and the joint fit into the bodies
             if (a1 - b.start) < MIN_TRANSITION_DURATION
                 || a.start + MIN_CLIP_DURATION > b1 - MIN_CLIP_DURATION
             {
@@ -967,8 +967,8 @@ fn find_audio_pair(p: &Project) -> Option<(ClipId, ClipId)> {
     None
 }
 
-/// Первый конфликтующий клип вида `kind`: в каждой зоне перекрытия остаётся
-/// самый ранний (по (start, id)), следующий — кандидат на переезд.
+/// The first conflicting clip of the kind `kind`: in each overlap zone the
+/// earliest one (by (start, id)) stays, the next is a candidate for moving.
 fn find_overlap_mover(p: &Project, kind: ClipKind) -> Option<ClipId> {
     let mut spans: Vec<(&ClipEvent, Tick)> =
         p.clips.iter().filter(|c| c.kind == kind).map(|c| (c, c.start + c.duration)).collect();
@@ -1000,13 +1000,13 @@ fn free_audio_lane_below(p: &Project, mover: ClipId) -> u32 {
     p.lanes(LaneKind::Audio)
 }
 
-// ---- буфер обмена FX (Р.33) --------------------------------------------
-// Требование пользователя: «Не хватает копипастинга — как отдельных
-// эффектов так и fx-chain. так и автоматизации». Блоки живут в модели, а
-// не в UI: их же формой пользуется системный буфер (JSON), поэтому копия
-// переживает перезапуск и переезжает между окнами программы.
+// ---- FX clipboard (R.33) --------------------------------------------
+// The user’s request: “Copy-paste is missing — for individual
+// effects, for the fx-chain, and for automation.” The blocks live in the model,
+// not in the UI: the system clipboard uses their very shape (JSON), so the copy
+// survives a restart and moves between windows of the program.
 
-/// Один слот цепочки со всем, что к нему относится.
+/// One chain slot with everything that belongs to it.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FxSlotBlock {
     pub fx: FxInstance,
@@ -1016,10 +1016,10 @@ pub struct FxSlotBlock {
     pub curves: Vec<ParamCurve>,
 }
 
-/// Цепочка целиком либо её огибающие. `src_in` — точка входа события, из
-/// которого копировали: ключи лежат в тиках МАТЕРИАЛА, и при вставке в
-/// другое событие их надо перевесить относительно его собственной точки
-/// входа («точка входа к точке входа», как в Premiere).
+/// The whole chain or its envelopes. `src_in` is the entry point of the event from
+/// which it was copied: the keys lie in the ticks of the MATERIAL, and on insertion into
+/// another event they must be re-hung relative to its own entry point
+/// (“entry point to entry point”, as in Premiere).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FxChainBlock {
     pub slots: Vec<FxSlotBlock>,
@@ -1028,18 +1028,18 @@ pub struct FxChainBlock {
     pub fx_off: bool,
 }
 
-/// Огибающие одного слота (кривые без самого эффекта).
+/// The envelopes of one slot (the curves without the effect itself).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EnvelopeBlock {
-    /// Тег варианта эффекта-источника: вставка в чужой вид эффекта
-    /// бессмысленна (кривые адресуются именами его полей).
+    /// The tag of the variant of the source effect: a paste into a foreign kind of effect
+    /// is meaningless (the curves are addressed by the names of its fields).
     pub fx_tag: String,
     pub curves: Vec<ParamCurve>,
     pub src_in: Tick,
 }
 
-/// Тег варианта (`kind` в файле) — по нему проверяется совместимость
-/// огибающих при вставке.
+/// The variant tag (`kind` in the file) — by it the compatibility
+/// of the envelopes on insertion is checked.
 pub fn fx_tag(f: &FxInstance) -> String {
     serde_json::to_value(f)
         .ok()
@@ -1047,16 +1047,16 @@ pub fn fx_tag(f: &FxInstance) -> String {
         .unwrap_or_default()
 }
 
-/// Сдвиг ключей при переносе в другое событие: материал адресуется от
-/// точки входа, поэтому кривая встаёт «на то же место куска».
+/// The shift of keys when moved to another event: the material is addressed from
+/// the entry point, so the curve lands “at the same place of the piece”.
 pub fn rebase_curves(curves: &[ParamCurve], from: Tick, to: Tick) -> Vec<ParamCurve> {
     let d = to.0 - from.0;
     curves
         .iter()
         .map(|c| ParamCurve {
             param: c.param.clone(),
-            // форма отрезка едет с ключом: перенос кривой в другое
-            // событие не вправе менять её вид
+            // the shape of the segment travels with the key: moving a curve to another
+            // event has no right to change its kind
             keys: c
                 .keys
                 .iter()
@@ -1067,18 +1067,18 @@ pub fn rebase_curves(curves: &[ParamCurve], from: Tick, to: Tick) -> Vec<ParamCu
         .collect()
 }
 
-/// Дописать блок цепочки в конец приёмника (Р.48): ЕДИНСТВЕННАЯ правда
-/// вставки — её зовут и копипаст полосы, и вставка пресета.
+/// Append the chain block to the end of the receiver (R.48):
+/// the ONLY truth of insertion —
+/// both the lane copy-paste and the preset insertion call it.
 ///
-/// Ключи переезжают «вход к входу»: `d = dst_src_in − block.src_in`. У
-/// события точка входа — `source_in` (тики материала), у морфера — ноль
-/// (время блока), поэтому одна формула обслуживает оба носителя и оба
-/// направления переноса. Ключи, ушедшие левее входа, клампятся в ноль —
-/// как и в `rebase_curves`.
+/// Keys move “entry to entry”: `d = dst_src_in − block.src_in`. For an event the entry point is
+/// `source_in` (ticks of the material), for a morpher it is zero (the time of the block),
+/// so one formula serves both carriers and both directions of the transfer. Keys that went
+/// to the left of the entry are clamped to zero — as in `rebase_curves`.
 ///
-/// `fx_off` блока НЕ применяется намеренно: дописывание не должно
-/// выключать цепочку приёмника (мастер-выключатель — свойство события, а
-/// не переносимого куска).
+/// `fx_off` of the block is NOT applied on purpose: appending must not switch off
+/// the receiver’s chain (the master switch is a property of the event,
+/// not of the transferred piece).
 pub fn append_chain_block(
     fx: &mut Vec<FxInstance>,
     bypass: &mut Vec<bool>,
@@ -1095,28 +1095,28 @@ pub fn append_chain_block(
     }
 }
 
-/// Совместить событие `b` с событием `a` по найденному сдвигу звука
-/// (Р.49, п.375).
+/// Align event `b` with event `a` by the found audio offset
+/// (R.49, item 375).
 ///
-/// `offset_ticks` — «материал B отстаёт от материала A на столько тиков».
+/// `offset_ticks` — “material B lags behind material A by this many ticks”.
 ///
-/// **Не тримит и не линкует.** Синхронизация отвечает на вопрос «где», а не
-/// «как долго» и не «вместе ли»: магнит подрезает соседа — это его свойство,
-/// а link-группа это отдельное решение монтажёра. Сдвинуть и остановиться —
-/// ровно то, о чём просили.
+/// **It does not trim and does not link.** Synchronization answers the question “where”, not
+/// “how long” and not “together or not”: a magnet trims the neighbor — that is its property,
+/// and a link group is a separate decision of the editor. To shift and stop is
+/// exactly what was asked.
 ///
-/// **Перевод «материал → таймлайн» — только через `clip_timeline_at`**
-/// (правило единственного дома, t273): своя арифметика по `source_in` здесь
-/// уехала бы на реверсе и на подрезанном начале.
+/// **The translation “material → timeline” — only through `clip_timeline_at`**
+/// (the rule of the single home, t273): its own arithmetic on `source_in` here
+/// would drift on reverse and on a trimmed start.
 pub fn sync_by_audio_commands(p: &Project, a: ClipId, b: ClipId, offset_ticks: Tick) -> SyncPlan {
     let Some(ca) = p.clips.iter().find(|c| c.id == a) else { return SyncPlan::AlreadyAligned };
     let Some(cb) = p.clips.iter().find(|c| c.id == b) else { return SyncPlan::AlreadyAligned };
     let step = kt_time::FpsGrid::new(p.settings.fps).frame_step();
-    // точка материала A, которая сейчас стоит в начале события A
+    // the point of material A that now stands at the start of event A
     let mat_a = clip_material_at(ca.source_in, ca.start, ca.duration, ca.reversed, step, ca.start);
-    // тот же момент реального мира в материале B
+    // the same moment of the real world in material B
     let mat_b = Tick(mat_a.0 + offset_ticks.0);
-    // где он сейчас на таймлайне у события B
+    // where it now is on the timeline of event B
     let now = clip_timeline_at(cb.source_in, cb.start, cb.duration, cb.reversed, step, mat_b);
     let delta = ca.start.0 - now.0;
     if delta == 0 {
@@ -1124,29 +1124,29 @@ pub fn sync_by_audio_commands(p: &Project, a: ClipId, b: ClipId, offset_ticks: T
     }
     let want = cb.start.0 + delta;
     if want < 0 {
-        // КЛАМПИТЬ НЕЛЬЗЯ: событие, упёршееся в ноль, окажется НЕ совмещено,
-        // а выглядеть будет как успешная синхронизация. Отказ честнее.
+        // CLAMPING IS NOT ALLOWED: an event that runs into zero would end up NOT aligned,
+        // and would look like a successful synchronization. A refusal is more honest.
         return SyncPlan::OutOfRange;
     }
     SyncPlan::Move(vec![Command::MoveClip { id: b, new_start: Tick(want), new_lane: cb.lane }])
 }
 
-/// Чем кончилось планирование синхронизации.
+/// How the sync planning ended.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SyncPlan {
-    /// Двигаем.
+    /// We move it.
     Move(Vec<Command>),
-    /// Уже совмещено — работы нет.
+    /// Already aligned — no work to do.
     AlreadyAligned,
-    /// Совмещение уводит событие ЗА НАЧАЛО проекта. Кламп к нулю тут
-    /// недопустим: он выглядит как успех, а материалы остаются вразнобой.
+    /// Alignment would move the event BEFORE THE START of the project. Clamping to zero here
+    /// is not allowed: it looks like a success, while the materials remain out of step.
     OutOfRange,
 }
 
-// ---- вложенные секвенции (Р.50, п.380) --------------------------------------
+// ---- nested sequences (R.50, item 380) --------------------------------------
 
-/// Свежие адреса для операций над лентами. Тот же приём, что `PasteIds`:
-/// растущий список аргументов перестаёт читаться на четвёртом.
+/// Fresh addresses for operations on reels. The same technique as `PasteIds`:
+/// the growing list of arguments stops being readable at the fourth one.
 pub struct NestIds<'a> {
     pub media: &'a mut u64,
     pub clip: &'a mut u64,
@@ -1156,13 +1156,13 @@ pub struct NestIds<'a> {
     pub camera: &'a mut u64,
 }
 
-/// Счётчики свежих адресов, посчитанные ОТ ПРОЕКТА.
+/// Counters of fresh addresses, computed FROM THE PROJECT.
 ///
-/// Заведены отдельной структурой, потому что операции над лентами раздают
-/// адреса пяти видов сразу, и call-site, который выпишет их руками, рано или
-/// поздно выпишет их по дереву не целиком: `ClipId` уникален по ВСЕМУ
-/// документу, и «максимум по `p.clips`» мимо лент — это молчаливое
-/// столкновение адресов.
+/// Introduced as a separate structure, because operations on reels hand out
+/// addresses of five kinds at once, and a call site that would write them by hand
+/// sooner or later would write them not for the whole tree: `ClipId` is unique across the WHOLE
+/// document, and “the maximum over `p.clips`” that skips reels is a silent
+/// collision of addresses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NestCounters {
     pub media: u64,
@@ -1211,41 +1211,41 @@ impl NestCounters {
     }
 }
 
-/// Что сворачивание изменило, кроме монтажа. Возвращается, а не
-/// «доправляется»: человеку надо сказать (правило 16), а не догадываться.
+/// What the folding changed, besides the edit. It is returned, rather than
+/// “patched up”: the person must be told (rule 16), not left to guess.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct CollapseReport {
-    /// Адрес заведённой ленты.
+    /// The address of the created reel.
     pub seq: Option<MediaId>,
-    /// Переходы, у которых один конец остался СНАРУЖИ: они перевешены на
-    /// экземпляр (кроссфейд со свёрнутым куском остаётся кроссфейдом).
+    /// Transitions with one end left OUTSIDE: they are re-hung onto
+    /// the instance (a crossfade with a folded piece remains a crossfade).
     pub rehung: usize,
-    /// Морфер-слои, накрывавшие свёрнутое СНАРУЖИ. Они остаются снаружи и
-    /// теперь бьют по СОБРАННОЙ картинке, а не по каждому куску: картинка
-    /// законно меняется, и об этом обязано быть сказано.
+    /// Morpher layers that covered the folded content from OUTSIDE. They remain outside and
+    /// now act on the ASSEMBLED picture, not on each piece: the picture
+    /// legitimately changes, and this must be said.
     pub outer_layers: usize,
-    /// Слои, уехавшие ВНУТРЬ ленты (и убранные из корня).
+    /// Layers that moved INSIDE the reel (and were removed from the root).
     pub moved_layers: usize,
-    /// Камеры, уехавшие внутрь.
+    /// Cameras that moved inside.
     pub moved_cameras: usize,
-    /// Слои по ОБЛАСТИ/МЕТКЕ, оставленные снаружи. Ссылочные режимы
-    /// внутри ленты запрещены (`MorphRefInsideSequence`): область и метка
-    /// — навигация ПО ПРОЕКТУ, они живут в корне. Утащи такой слой
-    /// внутрь — и `validate` отвергнет ВЕСЬ батч, то есть свернуть
-    /// выделение под ним стало бы нельзя вообще.
+    /// Layers by REGION/MARKER, left outside. Reference modes
+    /// inside a reel are forbidden (`MorphRefInsideSequence`): a region and a marker
+    /// are navigation BY PROJECT, they live in the root. Drag such a layer
+    /// inside — and `validate` would reject the WHOLE batch, that is, folding
+    /// the selection under it would become impossible altogether.
     pub kept_ref_layers: usize,
 }
 
-/// Свернуть выделение в ленту и поставить на его место экземпляр.
+/// Fold the selection into a reel and put an instance in its place.
 ///
-/// Тело набирает `copy_clips` — второго правила «что едет с выделением»
-/// заводить нельзя: разойдись они, копипаст и сворачивание брали бы разное,
-/// и объяснить это было бы нечем.
+/// The body is gathered by `copy_clips` — a second rule of “what travels with the selection”
+/// must not be introduced: were they to diverge, copy-paste and folding would take different things,
+/// and there would be no way to explain it.
 ///
-/// **`ClipId` сохраняются.** Те же события переехали в другой контейнер, а не
-/// родились заново: поэтому переходы, link-группы и замороженные цели
-/// морферов переезжают verbatim, а FX-состояние движка (ключ — `ClipId`)
-/// живёт дальше и хвосты ревербов не обрываются (инвариант 3).
+/// **`ClipId`s are preserved.** The same events moved into another container, rather than
+/// being born again: therefore transitions, link groups and the frozen targets
+/// of morphers move verbatim, and the engine’s FX state (key — `ClipId`)
+/// lives on and the tails of reverbs are not cut (invariant 3).
 pub fn collapse_into_sequence(
     p: &Project,
     ids: &[ClipId],
@@ -1268,27 +1268,27 @@ pub fn collapse_into_sequence(
     let seq_id = MediaId(*n.media);
     *n.media += 1;
 
-    // Содержимое ленты: события, переходы и морферы блока. Области и метки
-    // ОСТАЮТСЯ В КОРНЕ: это навигация по проекту, человек поставил их там, и
-    // утащить их внутрь значило бы «отрубить само» (правило 20).
+    // The content of the reel: events, transitions and morphers of the block. Regions and markers
+    // STAY IN THE ROOT: this is navigation through the project, the person placed them there, and
+    // dragging them inside would mean “cutting off the very thing” (rule 20).
     let mut content = Sequence::new(seq_id, name);
     content.clips = block.clips.clone();
     content.transitions = block.transitions.clone();
-    // Слой по ОБЛАСТИ или МЕТКЕ внутрь не едет: `validate_reel` такие
-    // внутри ленты запрещает (`MorphRefInsideSequence`), и утащенный
-    // слой уронил бы ВЕСЬ батч — свернуть выделение под ссылочным слоем
-    // стало бы нельзя вообще, с английской ошибкой в статусбаре.
+    // A layer by REGION or MARKER does not move inside: `validate_reel` forbids such
+    // inside a reel (`MorphRefInsideSequence`), and a dragged
+    // layer would bring down the WHOLE batch — folding the selection under a reference layer
+    // would become impossible altogether, with an English error in the status bar.
     let refs_stay = |m: &MorpherEvent| {
         matches!(m.targets, MorphTargets::Areas { .. } | MorphTargets::Marks { .. })
     };
     content.morphers = block.morphers.iter().filter(|m| !refs_stay(m)).cloned().collect();
     content.cameras = block.cameras.clone();
-    // ДОРОЖКИ ленты — те дорожки корня, что нужны содержимому, В ПОРЯДКЕ
-    // СТРОК корня (Р.55, С3; Р.62 — объекты). Без порядка у ленты
-    // морф-строки шли бы последними, и слой «всё, что ниже» уезжал внутрь
-    // и там умирал («морфер не попадает туда»). Свойства дорожки
-    // (имя, замок, уровень) едут копией; id назначаются заново — у корня
-    // остаются свои.
+    // The TRACKS of the reel — those root tracks that the content needs, IN THE ORDER
+    // OF THE ROWS of the root (R.55, C3; R.62 — objects). Without the order the reel’s
+    // morph rows would go last, and the layer “everything below” would drift inside
+    // and die there (“the morpher does not reach there”). The track properties
+    // (name, lock, level) travel as a copy; the ids are assigned anew — the root
+    // keeps its own.
     let need = LaneBases {
         video: lanes_needed(&content.clips, ClipKind::Video).max(1),
         audio: lanes_needed(&content.clips, ClipKind::Audio).max(1),
@@ -1330,10 +1330,10 @@ pub fn collapse_into_sequence(
     for id in &members {
         cmds.push(Command::RemoveClip { id: *id });
     }
-    // Уехавшее ВНУТРЬ убирается из КОРНЯ. Без этого слой и камера жили бы
-    // в двух местах сразу: внутри — на каждом куске, снаружи — на
-    // собранной картинке. Одно и то же наложилось бы дважды, и объяснить
-    // это было бы нечем.
+    // What moved INSIDE is removed from the ROOT. Without this the layer and the camera would live
+    // in two places at once: inside — on each piece, outside — on the
+    // assembled picture. The same thing would be applied twice, and there would be no way
+    // to explain it.
     let moved_morphs: Vec<MorphId> = p
         .morphers
         .iter()
@@ -1353,9 +1353,9 @@ pub fn collapse_into_sequence(
         cmds.push(Command::RemoveCamera { id });
     }
 
-    // Экземпляр — ОБЫЧНЫЙ клип, и он ПАРА (видео + аудио) в одной
-    // link-группе: тогда «смонтируй, потом замедли целиком» получается даром
-    // через существующий `sync_warp_to_link_group`.
+    // The instance is an ORDINARY clip, and it is a PAIR (video + audio) in one
+    // link group: then “edit, then slow down as a whole” comes for free
+    // through the existing `sync_warp_to_link_group`.
     let kinds: Vec<ClipKind> = [ClipKind::Video, ClipKind::Audio]
         .into_iter()
         .filter(|k| block.clips.iter().any(|c| c.kind == *k))
@@ -1367,8 +1367,8 @@ pub fn collapse_into_sequence(
     });
     let mut instances: Vec<(ClipKind, ClipId)> = Vec::new();
     for k in kinds {
-        // самое верхнее из свёрнутого: экземпляр встаёт туда, куда человек
-        // смотрел, а не на нулевую дорожку
+        // the topmost of the folded: the instance lands where the person
+        // was looking, not on the zero track
         let lane = p
             .clips
             .iter()
@@ -1386,7 +1386,7 @@ pub fn collapse_into_sequence(
             .min_by_key(|c| (c.start, c.id))
             .map(|c| c.id);
         if let Some(parent) = first {
-            // конверт экземпляра — от первого свёрнутого события его вида
+            // the instance’s envelope — from the first folded event of its kind
             cmds.push(Command::NoteBirth { child: id, parent });
         }
         cmds.push(Command::AddClip(ClipEvent {
@@ -1414,14 +1414,14 @@ pub fn collapse_into_sequence(
         }));
     }
 
-    // Переход, у которого ОДИН конец остался снаружи, перевешивается на
-    // экземпляр: кроссфейд со свёрнутым куском обязан остаться кроссфейдом,
-    // а не умереть от `reconcile_transitions` вместе с исчезнувшим концом.
+    // A transition with ONE end left outside is re-hung onto
+    // the instance: a crossfade with a folded piece must remain a crossfade,
+    // rather than die from `reconcile_transitions` together with the vanished end.
     for t in &p.transitions {
         let inside = |id: Option<ClipId>| id.is_some_and(|i| members.contains(&i));
         let (ia, ib) = (inside(t.a), inside(t.b));
         if ia == ib {
-            continue; // оба внутри (уехал в ленту) или оба снаружи (цел)
+            continue; // both inside (moved into the reel) or both outside (intact)
         }
         let outer = if ia { t.b } else { t.a };
         let kind =
@@ -1448,43 +1448,43 @@ fn lanes_needed(clips: &[ClipEvent], k: ClipKind) -> u32 {
     clips.iter().filter(|c| c.kind == k).map(|c| c.lane + 1).max().unwrap_or(1)
 }
 
-/// Что разворачивание сделало сверх переноса событий.
+/// What the unfolding did beyond moving the events.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ExpandReport {
-    /// Экземпляр нёс цепочку эффектов, и она СНЯТА: снаружи она
-    /// применялась к собранной картинке, внутри такого места нет. Молча
-    /// раскидать её по кускам — значит посчитать другое (правило 16).
+    /// The instance carried an effect chain, and it is REMOVED: outside it
+    /// applied to the assembled picture, inside there is no such place. Silently
+    /// scattering it over the pieces would mean computing something else (rule 16).
     pub chain_dropped: bool,
-    /// Экземпляр нёс уровень (непрозрачность или громкость) — снят.
+    /// The instance carried a level (opacity or volume) — removed.
     pub level_dropped: bool,
-    /// Экземпляр был ЗЕРКАЛЬНЫМ, и реверс снят (Р.55, С4).
+    /// The instance was MIRRORED, and the reverse is removed (R.55, C4).
     ///
-    /// Назван отдельно, потому что это РЕВЕРС-АНАЛОГ ЗАКОНА Г: «реверс
-    /// собранного куска ≠ реверс каждого куска». Перевернуть порядок
-    /// кусков и выставить каждому `reversed` эквивалентно только там, где
-    /// внутри нет ни перекрытий, ни переходов, ни потоковых цепочек, — то
-    /// есть в частном случае. Тихо раскидать реверс по кускам значит
-    /// посчитать другое.
+    /// Named separately, because this is the REVERSE ANALOGUE OF LAW G: “reverse of the
+    /// assembled piece ≠ reverse of each piece”. Reversing the order of
+    /// the pieces and setting `reversed` on each is equivalent only where
+    /// there are no overlaps, no transitions and no streaming chains inside — that is,
+    /// in the special case. Silently scattering the reverse over the pieces would mean
+    /// computing something else.
     pub reverse_dropped: bool,
-    /// Экземпляр играл со СКОРОСТЬЮ, и она снята — по той же причине:
-    /// ресемплируется СОБРАННЫЙ микс со сшитыми хвостами, а не каждый
-    /// кусок со своим оборванным.
+    /// The instance played at a SPEED, and it is removed — for the same reason:
+    /// the ASSEMBLED mix with stitched tails is resampled, not each
+    /// piece with its own cut-off one.
     pub warp_dropped: bool,
-    /// Сколько дорожек пришлось вставить под содержимое.
+    /// How many tracks had to be inserted under the content.
     pub lanes_inserted: usize,
-    /// Сколько переопределений ВПЕЧЕНО в развёрнутое содержимое (Р.59,
-    /// стадия 3). «Что видел, то и получил»: снаружи экземпляр рисовался
-    /// со своими значениями, и развёрнутые куски обязаны рисоваться так
-    /// же. Ссылки на ленту после разворачивания нет, значит и ручке жить
-    /// негде — поэтому число называется вслух.
+    /// How many overrides were BAKED into the unfolded content (R.59,
+    /// stage 3). “What you saw is what you got”: outside, the instance was drawn
+    /// with its own values, and the unfolded pieces must be drawn
+    /// the same way. There is no reference to the reel after unfolding, so the handle has
+    /// nowhere to live — that is why the number is named aloud.
     pub overrides_baked: usize,
 }
 
-/// Развернуть экземпляр обратно на дорожки.
+/// Unfold the instance back onto the tracks.
 ///
-/// Содержимое подрезается окном экземпляра ОДНИМ правилом куска
-/// (`clip_slice`) и переносится на свежие id через `paste_block`: тело ленты
-/// остаётся на месте — та же лента может стоять ещё в пяти местах.
+/// The content is cut by the window of the instance by ONE rule of the piece
+/// (`clip_slice`) and moved to fresh ids via `paste_block`: the body of the reel
+/// stays in place — the same reel may still stand in five other places.
 pub fn expand_instance(p: &Project, id: ClipId, n: NestIds<'_>) -> (Vec<Command>, ExpandReport) {
     let Some(inst) = p.clips.iter().find(|c| c.id == id) else {
         return (Vec::new(), ExpandReport::default());
@@ -1502,10 +1502,10 @@ pub fn expand_instance(p: &Project, id: ClipId, n: NestIds<'_>) -> (Vec<Command>
             .filter(|o| seq.published.iter().any(|x| x.id == o.pub_id))
             .count(),
     };
-    // ПЕРЕОПРЕДЕЛЕНИЯ ВПЕКАЮТСЯ (Р.59, стадия 3): полоса раскрытия
-    // показывает ШАБЛОН (она ссылка, а не копия), а разворачивание —
-    // необратимое действие, после которого ленты под этими кусками нет.
-    // Значит значения обязаны уехать в сами куски.
+    // OVERRIDES ARE BAKED IN (R.59, stage 3): the expanded band
+    // shows the TEMPLATE (it is a reference, not a copy), and unfolding is
+    // an irreversible action after which there is no reel under these pieces.
+    // So the values must move into the pieces themselves.
     let mut patched;
     let seq = if report.overrides_baked == 0 {
         seq
@@ -1526,7 +1526,7 @@ pub fn expand_instance(p: &Project, id: ClipId, n: NestIds<'_>) -> (Vec<Command>
         );
         &patched
     };
-    // окно экземпляра в координатах содержимого
+    // the window of the instance in the coordinates of the content
     let win = TickRange::new(inst.source_in, inst.source_in + inst.duration);
     let mut block = ClipBlock::default();
     for c in &seq.clips {
@@ -1535,9 +1535,9 @@ pub fn expand_instance(p: &Project, id: ClipId, n: NestIds<'_>) -> (Vec<Command>
         if cut.is_empty() || cut.len() < MIN_CLIP_DURATION {
             continue;
         }
-        // id тут временный: `paste_block` ниже выдаст свежие и ретаргетит
-        // переходы на них. Важно, что материальная точка входа куска
-        // считается ЕДИНСТВЕННЫМ правилом проекта.
+        // the ids here are temporary: `paste_block` below will issue fresh ones and retarget
+        // the transitions to them. It is important that the material entry point of the piece
+        // is computed by the ONLY rule of the project.
         let mut s = clip_slice(c, cut, c.id);
         s.start = cut.start - win.start;
         block.clips.push(s);
@@ -1555,8 +1555,8 @@ pub fn expand_instance(p: &Project, id: ClipId, n: NestIds<'_>) -> (Vec<Command>
         .cloned()
         .collect();
 
-    // Дорожки ВСТАВЛЯЮТСЯ под содержимое, а не занимаются чужие: иначе
-    // разворачивание молча меняет z-order соседей — «отросло само».
+    // Tracks are INSERTED under the content, rather than taking over foreign ones: otherwise
+    // unfolding silently changes the z-order of the neighbors — “it grew on its own”.
     let mut cmds = Vec::new();
     let partners: Vec<&ClipEvent> = p
         .clips
@@ -1597,11 +1597,11 @@ pub fn expand_instance(p: &Project, id: ClipId, n: NestIds<'_>) -> (Vec<Command>
     (cmds, report)
 }
 
-/// Отвязать экземпляр от остальных мест: содержимое копируется в СВОЮ ленту.
+/// Detach the instance from the other places: the content is copied into ITS OWN reel.
 ///
-/// Нужно ровно тогда, когда «правка внутри меняет все места» перестаёт быть
-/// тем, чего человек хочет. Названо не «Unlink» — рядом уже есть разрыв
-/// A/V-связи, и одно слово на два разных действия врало бы (правило 18).
+/// It is needed exactly when “an edit inside changes all places” ceases to be
+/// what the person wants. It is not named “Unlink” — next to it there is already the break of the
+/// A/V link, and one word for two different actions would be a lie (rule 18).
 pub fn make_independent(p: &Project, id: ClipId, name: &str, n: NestIds<'_>) -> Vec<Command> {
     let Some(inst) = p.clips.iter().find(|c| c.id == id) else { return Vec::new() };
     let Some(seq) = p.sequence(inst.media) else { return Vec::new() };
@@ -1610,9 +1610,9 @@ pub fn make_independent(p: &Project, id: ClipId, name: &str, n: NestIds<'_>) -> 
     let mut copy = seq.clone();
     copy.id = new_id;
     copy.name = name.to_string();
-    // id содержимого обязаны быть СВЕЖИМИ: `ClipId` уникален по всему
-    // документу, иначе карты `Retained` в kt-otio обменяют материал между
-    // лентами молча
+    // the ids of the content MUST be FRESH: `ClipId` is unique across the whole
+    // document, otherwise the `Retained` maps in kt-otio would silently exchange material between
+    // reels.
     let mut map: std::collections::HashMap<ClipId, ClipId> = std::collections::HashMap::new();
     for c in &mut copy.clips {
         let fresh = ClipId(*n.clip);
@@ -1636,8 +1636,8 @@ pub fn make_independent(p: &Project, id: ClipId, name: &str, n: NestIds<'_>) -> 
             }
         }
     }
-    // link-группы внутри ленты остаются как есть: они адресуются только
-    // внутри своей ленты и с чужими не сталкиваются
+    // the link groups inside the reel remain as they are: they are addressed only
+    // within their own reel and do not collide with foreign ones
     vec![
         Command::AddSequence { id: new_id, name: name.to_string() },
         Command::SetSequenceContent { id: new_id, content: Box::new(copy) },
@@ -1645,8 +1645,8 @@ pub fn make_independent(p: &Project, id: ClipId, name: &str, n: NestIds<'_>) -> 
     ]
 }
 
-/// Ленты, на которые больше никто не смотрит. Возвращает команды, а не
-/// чистит сам: удаление — это шаг истории, его должно быть можно отменить.
+/// Reels that nobody looks at any more. Returns the commands, rather than
+/// cleaning up itself: deletion is a history step, it must be possible to undo it.
 pub fn remove_unused_sequences(p: &Project) -> Vec<Command> {
     p.sequences
         .iter()
@@ -1655,42 +1655,42 @@ pub fn remove_unused_sequences(p: &Project) -> Vec<Command> {
         .collect()
 }
 
-/// Что вставка чужого проекта изменила сверх появления ленты (Р.55, С6).
+/// What the insertion of a foreign project changed beyond the appearance of the reel (R.55, C6).
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ImportReport {
-    /// Заведённая лента-корень чужого проекта.
+    /// The created root reel of the foreign project.
     pub seq: Option<MediaId>,
-    /// Сколько его вложенных лент приехало вместе с ним.
+    /// How many of its nested reels came along with it.
     pub inner_seqs: usize,
-    /// Сколько медиа заведено заново.
+    /// How many media were created anew.
     pub media_added: usize,
-    /// Сколько медиа УЗНАНО среди своих по пути и переиспользовано: тот же
-    /// файл не обязан приезжать вторым экземпляром.
+    /// How many media were RECOGNIZED among one’s own on the way and reused: the same
+    /// file is not obliged to arrive as a second instance.
     pub media_reused: usize,
-    /// Что НЕ приехало и почему — области, метки и настройки чужого
-    /// проекта. Они принадлежат ДОКУМЕНТУ, а не монтажу, и класть их в
-    /// свой проект значит подменить человеку его собственные (правило 20).
+    /// What did NOT arrive, and why — the regions, markers and settings of the foreign
+    /// project. They belong to the DOCUMENT, not to the edit, and putting them into
+    /// one’s own project would mean replacing the person’s own ones (rule 20).
     pub dropped_extras: usize,
 }
 
-/// Вставить ЧУЖОЙ ПРОЕКТ как композицию (Р.55, С6).
+/// Insert a FOREIGN PROJECT as a composition (R.55, C6).
 ///
-/// Претензия владельца дословно: «я переношу файл проекта на таймлайн и
-/// открывается новый таймлайн, а я хочу чтобы оно дало мне выбор — открыть
-/// как проект или вставить как композицию».
+/// The owner’s claim, verbatim: “I drag a project file onto the timeline and
+/// a new timeline opens, while I want it to give me a choice — open
+/// as a project or insert as a composition”.
 ///
-/// Корень чужого проекта становится ЛЕНТОЙ, его вложенные ленты приезжают
-/// вместе с ним, а на `at` встаёт экземпляр. Все адреса перенумеровываются:
-/// `ClipId` уникален по ВСЕМУ документу (Р.50, t425), и столкновение
-/// адресов молча обменяло бы материал между лентами через карты `Retained`.
+/// The root of the foreign project becomes a REEL, its nested reels arrive
+/// along with it, and an instance stands at `at`. All addresses are renumbered:
+/// `ClipId` is unique across the WHOLE document (R.50, t425), and a collision
+/// of addresses would silently exchange material between reels through the `Retained` maps.
 ///
-/// **Медиа дедуплицируются по пути.** Тот же файл, уже стоящий в проекте,
-/// не обязан приезжать вторым экземпляром: у него был бы свой воркер, своя
-/// строка в кэше и свои тумбы — то есть двойная цена за одно и то же.
+/// **Media are deduplicated by path.** The same file, already standing in the project,
+/// need not arrive as a second instance: it would have its own worker, its own
+/// cache row and its own thumbnails — that is, a double price for the same thing.
 ///
-/// Области, метки и настройки чужого проекта НЕ едут: это навигация и
-/// свойства ДОКУМЕНТА, а не монтажа. То же правило, что у сворачивания
-/// (`collapse_into_sequence`): «утащить их внутрь значило бы отрубить само».
+/// The regions, markers and settings of the foreign project do NOT come along: they are navigation and
+/// properties of the DOCUMENT, not of the edit. The same rule as for folding
+/// (`collapse_into_sequence`): “dragging them inside would mean cutting off the very thing”.
 pub fn import_as_sequences(
     dst: &Project,
     src: &Project,
@@ -1704,7 +1704,7 @@ pub fn import_as_sequences(
         return (Vec::new(), rep);
     }
     let mut cmds = Vec::new();
-    // ---- медиа: свои узнаём по пути, чужие заводим -------------------
+    // ---- media: our own are recognized by path, foreign ones are created -------------------
     let mut media: std::collections::HashMap<MediaId, MediaId> = std::collections::HashMap::new();
     for m in &src.media {
         match dst.media.iter().find(|x| x.path == m.path) {
@@ -1721,7 +1721,7 @@ pub fn import_as_sequences(
             }
         }
     }
-    // ---- ленты: адреса вперёд, чтобы вложения нашли друг друга -------
+    // ---- reels: addresses first, so that the attachments find each other --------
     let mut seqs: std::collections::HashMap<MediaId, MediaId> = std::collections::HashMap::new();
     for s in &src.sequences {
         let fresh = MediaId(*n.media);
@@ -1732,7 +1732,7 @@ pub fn import_as_sequences(
     let root_id = MediaId(*n.media);
     *n.media += 1;
     rep.seq = Some(root_id);
-    // адрес медиа события: либо файл, либо вложенная лента
+    // the address of the media of the event: either a file or a nested reel
     let remap_media = |m: MediaId| -> Option<MediaId> {
         media.get(&m).copied().or_else(|| seqs.get(&m).copied())
     };
@@ -1766,8 +1766,8 @@ pub fn import_as_sequences(
             out.transitions.push(copy);
         }
         for m in from.morphers() {
-            // ССЫЛОЧНЫЕ слои внутрь ленты не пускает `validate_reel`
-            // (область и метка живут в корне), а областей мы и не везём
+            // REFERENCE layers are not let inside the reel by `validate_reel`
+            // (the region and the marker live in the root), and we do not carry regions at all
             if matches!(m.targets, MorphTargets::Areas { .. } | MorphTargets::Marks { .. }) {
                 continue;
             }
@@ -1791,7 +1791,7 @@ pub fn import_as_sequences(
             *n.camera += 1;
             out.cameras.push(copy);
         }
-        // дорожки — в порядке строк источника, свойства копией, id заново
+        // tracks — in the order of the source rows, the properties by copy, the ids anew
         let need = LaneBases {
             video: lanes_needed(&out.clips, ClipKind::Video).max(1),
             audio: lanes_needed(&out.clips, ClipKind::Audio).max(1),
@@ -1834,8 +1834,8 @@ pub fn import_as_sequences(
     cmds.push(Command::SetSequenceContent { id: root_id, content: Box::new(root) });
     rep.dropped_extras = src.areas.len() + src.markers.len();
 
-    // экземпляр — ОБЫЧНЫЙ клип, пара видео+аудио в одной link-группе, как
-    // у сворачивания: «вставил, потом замедли целиком» получается даром
+    // the instance — an ORDINARY clip, a video+audio pair in one link group, as in
+    // folding: “insert, then slow down as a whole” comes for free
     let kinds: Vec<ClipKind> = [ClipKind::Video, ClipKind::Audio]
         .into_iter()
         .filter(|k| src.clips.iter().any(|c| c.kind == *k))
@@ -1875,32 +1875,32 @@ pub fn import_as_sequences(
     (cmds, rep)
 }
 
-// ---- сопоставление полей при вставке огибающей (Р.61) -----------------------
+// ---- matching of fields on insertion of an envelope (R.61) -----------------------
 
-/// Итог сопоставления кривых буфера с параметрами ЦЕЛИ.
+/// The outcome of matching the buffer’s curves to the parameters of the TARGET.
 ///
-/// Владелец: «когда я копипасчу кривую с одного эффекта — я хочу её вставить
-/// в другой, пусть хотя бы ремаппинг предложит полей». До Р.61 кнопка вставки
-/// просто гасла на чужом виде эффекта: ремаппинг не отсутствовал, а был
-/// ЗАПРЕЩЁН.
+/// The owner: “when I copy a curve from one effect, I want to paste it
+/// into another, let the remapping at least suggest the fields”. Before R.61 the paste button
+/// simply went out on a foreign kind of effect: the remapping was not absent, it was
+/// FORBIDDEN.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct EnvelopeFit {
-    /// Легли молча: имя И тип совпали.
+    /// Placed silently: the name AND the type matched.
     pub matched: Vec<ParamCurve>,
-    /// Не совпало ничем — их судьбу решает человек в окне сопоставления.
-    /// Пустой остаток означает, что окна показывать НЕ НАДО.
+    /// Matched by nothing — their fate is decided by the person in the matching window.
+    /// An empty remainder means the window must NOT be shown.
     pub leftover: Vec<ParamCurve>,
-    /// Свободные параметры цели, куда остаток можно положить.
+    /// The free parameters of the target onto which the remainder can be placed.
     pub free: Vec<String>,
 }
 
-/// Разложить кривые буфера по параметрам ЦЕЛИ.
+/// Distribute the buffer’s curves over the parameters of the TARGET.
 ///
-/// Правило одно: совпали имя И тип — кладём молча; не совпало — в остаток,
-/// и НИ ОДНА кривая не теряется молча. Совпадение по одному имени, без типа,
-/// в молчаливую ветку не идёт: `radius` у Blur — целое число пикселей, а
-/// `radius` у другого вида мог бы оказаться долей, и «тихо легло» дало бы
-/// анимацию не того масштаба.
+/// The rule is one: name AND type matched — we place it silently; not matched — into the remainder,
+/// and NOT ONE curve is silently lost. A match by name alone, without the type,
+/// does not go into the silent branch: `radius` of Blur is an integer number of pixels, while
+/// `radius` of another kind could turn out to be a fraction, and “quietly placed” would give
+/// an animation of the wrong scale.
 pub fn fit_envelope<P: HasParams + ?Sized>(curves: &[ParamCurve], target: &P) -> EnvelopeFit {
     let specs = target.param_specs();
     let mut out = EnvelopeFit::default();
@@ -1922,10 +1922,10 @@ pub fn fit_envelope<P: HasParams + ?Sized>(curves: &[ParamCurve], target: &P) ->
     out
 }
 
-/// Переименовать кривую под выбранный человеком параметр цели.
+/// Rename the curve to the target parameter chosen by the person.
 ///
-/// Форма отрезков и ключи едут КАК ЕСТЬ: сопоставление меняет адрес, а не
-/// содержимое анимации.
+/// The segment shape and the keys travel AS THEY ARE: the matching changes the address, not
+/// the content of the animation.
 pub fn remap_curve(mut c: ParamCurve, to: &str) -> ParamCurve {
     c.param = to.to_string();
     c

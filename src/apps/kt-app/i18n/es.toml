@@ -1,9 +1,9 @@
-# Каталог перевода Kinetren. Правила — i18n/README.md.
-# Формат: строгое подмножество TOML, значения только в одну строку.
-# СОБРАН автоматически на шаге массового переноса строк (Р.19);
-# дальше правится руками.
+# Kinetren translation catalog. Rules — i18n/README.md.
+# Format: a strict subset of TOML, values on one line only.
+# GENERATED automatically at the bulk line-wrap step (R.19);
+# further edits are made by hand.
 
-# Самоназвания языков. Одинаковы во ВСЕХ каталогах (сборка проверяет).
+# Language endonyms. Identical in ALL catalogs (the build checks this).
 [lang]
 en = "English"
 ru = "Русский"
@@ -11,7 +11,7 @@ es = "Español"
 zh = "中文（简体）"
 ar = "العربية"
 
-# Кнопки окна (свой титлбар, п.22 р.6).
+# Window buttons (own titlebar, item 22 round 6).
 [win]
 close = "Cerrar"
 restore = "Restaurar"
@@ -62,7 +62,7 @@ lang_auto = "Automático (sistema)"
 diagnostics = "Diagnóstico…"
 notices = "Avisos"
 
-# Тулбар: подсказки кнопок. Акселератор в скобках — часть подсказки.
+# Toolbar: button hints. The accelerator in parentheses is part of the hint.
 [tb]
 play_pause = "Reproducir/Pausa (Espacio)"
 back = "Atrás: marcador / región / borde de clip (A o Inicio; Mayús — arrastra el borde izquierdo)"
@@ -98,7 +98,7 @@ search = "Buscar en el proyecto (Ctrl+F)"
 diag = "Diagnóstico"
 save = "Guardar (Ctrl+S)"
 
-# Таймлайн: контекстное меню дорожки.
+# Timeline: track context menu.
 [tl.lane]
 title = "Pista {0}"
 delete = "Eliminar pista"
@@ -120,7 +120,7 @@ add_camera_here = "Añadir cámara en el cursor"
 add_morpher_here = "Añadir mórfer aquí"
 reset_height = "Restablecer altura"
 
-# Таймлайн: подсказки зон (правый низ статусбара).
+# Timeline: zone hints (bottom right of the status bar).
 [tl.hint]
 area = "Área: los bordes cambian la duración, clic derecho — menú"
 transition = "Fundido: bordes — ancho, centro — mover el corte"
@@ -148,19 +148,19 @@ morph_lane = "Pista de morfismo: clic derecho — añadir un mórfer aquí; la c
 camera_lane = "Pista de cámara: clic derecho — añadir una cámara aquí; la cámara mira las capas 3D de las pistas de abajo"
 empty = "Clic izq. — cursor, arrastrar — región, Ctrl+arrastrar — seleccionar eventos; rueda — desplazar, Ctrl — zoom, Shift — pistas"
 
-# Таймлайн: подписи на morph-событиях.
+# Timeline: labels on morph events.
 [tl.morph]
 layer = "Capa"
 clips = "Eventos: {0}"
 
-# Таймлайн: подсказки полей ввода.
+# Timeline: input field hints.
 [tl.field]
 area_name = "Nombre del área"
 marker_name_new = "nombre del marcador (opcional)"
 marker_name = "nombre del marcador"
 lane_name = "nombre de la pista"
 
-# Таймлайн: контекстные меню клипа, метки, региона.
+# Timeline: context menus for clip, marker, region.
 [tl.menu]
 level = "Nivel"
 area_title = "Área: {0}"
@@ -205,7 +205,7 @@ duck = "Ducking de audio (atenuar el fondo bajo la voz)…"
 remove_transition = "Quitar esta transición"
 sync_audio = "Sincronizar por audio con el otro clip seleccionado"
 
-# Медиа-бин: режимы, подсказки, пустое состояние.
+# Media bin: modes, hints, empty state.
 collapse = "Plegar la selección en una bobina"
 nest_expand = "Desplegar la bobina en pistas"
 nest_independent = "Separar de los demás lugares"
@@ -228,7 +228,7 @@ group_name = "nombre del grupo"
 loudness = "{0} LUFS, pico {1} dBTP"
 loudness_pending = "sonoridad aún no medida"
 
-# Медиа-бин: контекстные меню карточки и группы.
+# Media bin: context menus for card and group.
 [bin.menu]
 rename = "Renombrar…"
 unlock = "Quitar el bloqueo"
@@ -243,13 +243,13 @@ measure_loudness = "Medir la sonoridad"
 new_generator = "Crear un generador…"
 new_reel = "Crear composición"
 
-# Метры и мастер-фейдер превью.
+# Meters and preview master fader.
 [meter]
 mute = "Silenciar el máster de previsualización"
 fader = "Volumen máster: arrastra o rueda (Mayús — fino), doble clic — 0 dB"
 peak = "Nivel de pico del máster, dBFS"
 
-# Редактор morpher'а.
+# Morpher editor.
 [mrph]
 strength = "Fuerza"
 strength_hint = "Cuánto se aplica la capa: 1.0 — del todo, 0 — como si no existiera"
@@ -295,8 +295,8 @@ bake_batch = "Aplicar el lote FX"
 bake_morph = "Aplicar el morph"
 remove = "Eliminar morpher"
 
-# Реестр FX и пикер с поиском.
-# Подписи параметров эффектов (Р.33): один источник — спека kt-model.
+# FX registry and searchable picker.
+# Effect parameter labels (R.33): one source — the kt-model spec.
 [fxp]
 cx = "Centro X:"
 cy = "Centro Y:"
@@ -411,7 +411,7 @@ template_hint = "Añade el efecto con sus valores por defecto"
 var_hint = "Añade el efecto ya ajustado — la miniatura es tu fotograma"
 axis_hint = "Intensidad: {0} … {1}, {2} %  (suelta y se añade lo que ves)"
 
-# Категории эффектов в пикере.
+# Effect categories in the picker.
 [fxreg.cat]
 three_d = "3D"
 motion = "Movimiento"
@@ -431,8 +431,8 @@ dynamics = "Dinámica"
 timestretch = "Estiramiento de tiempo"
 color = "Color"
 
-# Ключевые слова поиска. НЕ переупорядочиваются для арабского
-# (сравниваются с вводом пользователя), пишутся в нижнем регистре.
+# Search keywords. NOT reordered for Arabic
+# (compared with the user’s input), written in lowercase.
 [fxreg.kw]
 pan3d = "pan 3d perspectiva cámara capa"
 geometry = "geometría recorte posición zoom rotar geometry crop"
@@ -479,11 +479,11 @@ cylinder3d = "cilindro curva 3d cylinder"
 limiter = "limitador techo pico limiter"
 pitch_shift = "tono altura semitonos transponer pitch"
 
-# Имена встроенных ВАРИАНТОВ эффекта (Р.54): настроенное состояние с
-# именем по виду, а не по параметру. Словарь общий на все эффекты —
-# «Мягко» у размытия и у свечения значит одно и то же, и держать под это
-# два ключа незачем. Имя варианта ПЕРЕВОДИТСЯ (в отличие от имени
-# эффекта): «Тушь» и «Чертёж» — не отраслевые термины.
+# Names of built-in VARIANTS of an effect (R.54): a preset state with
+# a name by look, not by parameter. The vocabulary is shared by all effects —
+# “Soft” for blur and for glow means the same thing, and two keys for it are pointless.
+# A variant name IS TRANSLATED (unlike the effect name);
+# “Ink” and “Blueprint” are not industry terms.
 [fxreg.var]
 soft = "Suave"
 strong = "Fuerte"
@@ -539,7 +539,7 @@ grid9 = "3×3"
 grid16 = "4×4"
 strip = "Tira"
 
-# Редактор FX клипа.
+# FX editor of the clip.
 [fx]
 hint_reset = "Doble clic en la etiqueta para restablecer el parámetro"
 conform = "Regla de cuadro:"
@@ -670,7 +670,7 @@ columns = "Columnas:"
 rows = "Filas:"
 center = "Centrar"
 
-# Диалог настроек рендера и окно прогресса.
+# Render settings dialog and progress window.
 chain_on = "Cadena"
 chain_on_hint = "Interruptor maestro: apaga toda la cadena sin tocar los slots"
 shadow_color = "Sombras"
@@ -721,7 +721,7 @@ done_msg = "Hecho: {0}"
 error_msg = "Error: {0}"
 close = "Cerrar"
 
-# Подсказки главного окна (правый низ статусбара).
+# Main window hints (bottom right of the status bar).
 missing_warn = "fuentes no disponibles ({0}), se renderizan como marcadores: {1}"
 muted_warn = "pistas silenciadas ({0}), no estarán en el archivo: {1}"
 solo_warn = "solo activado ({0}), solo estas pistas estarán en el archivo: {1}"
@@ -742,7 +742,7 @@ preview_quality = "Calidad de previsualización: fracción de la resolución (me
 smoothing = "Suavizado lineal de la previsualización (off — píxeles duros)"
 economy = "Para GPU modestas: la mitad de repintados al reproducir"
 
-# Палитра поиска по проекту.
+# Project-wide search palette.
 flight = "Anillo compacto de eventos de transporte y contadores: para depurar fallos intermitentes"
 pitch_engine = "Motor de tono para todo el proyecto: WSOLA conserva los transitorios, el vocoder suaviza las armonías"
 project_settings = "Tamaño de cuadro, fps, regla de cuadro, motor de tono y forma de claves del proyecto"
@@ -760,8 +760,8 @@ nothing = "no se encontró nada"
 marker_at = "marcador {0}s"
 clip_at = "{0} @ {1}s"
 
-# Разовые сообщения note()/warn(). Согласования с числом НЕТ:
-# пишем «существительное: N» (правило Р.19, см. README).
+# One-off messages note()/warn(). There is NO agreement with the number:
+# we write “noun: N” (rule R.19, see README).
 [msg]
 area_needs_band = "Selecciona antes una banda en la línea de tiempo (o una región)"
 area_stem = "área"
@@ -806,7 +806,7 @@ software_render = "Sin aceleración gráfica (render por software) — la interf
 video_fx_cpu = "Los efectos de vídeo se calculan en la CPU (sin GPU): {0}"
 video_fx_gpu_lost = "Se perdió el renderizador de vídeo en GPU ({0}) — cambiado a la CPU"
 
-# Заголовки системных файловых диалогов.
+# Titles of system file dialogs.
 flight_saved = "Registro de reproducción guardado: {0}"
 
 media_missing = "{0}: fuente no disponible, se muestra un marcador ({1})"
@@ -889,7 +889,7 @@ import_older = "Importar un proyecto de una versión anterior de Kinetren"
 open_project = "Abrir proyecto"
 save_project = "Guardar proyecto"
 
-# Перф-панель и окно диагностики.
+# Perf panel and diagnostics window.
 [perf]
 loading = "Cargando…"
 smoothing = "Suavizado"
@@ -919,7 +919,7 @@ log_clear = "Limpiar"
 graph_reset = "Reiniciar las gráficas"
 log_empty = "no se han detectado problemas"
 
-# Пороговые предупреждения в журнале проблем.
+# Threshold warnings in the problem log.
 flight_save = "Guardar el registro de reproducción"
 flight_stalls = "congelaciones: {0}"
 
@@ -932,7 +932,7 @@ prefetch_thrash = "{0} entradas de caché descartadas antes de la primera lectur
 low_video_hit = "hit de vídeo {0}% al reproducir — la decodificación no llega"
 offline_changed = "cambió la disponibilidad de medios: offline {0}"
 
-# Переходы (Р.33 С4): вид, его параметры и кривая аудио.
+# Transitions (R.33 C4): kind, its parameters and audio curve.
 [trn]
 title = "Transición {0}"
 kind = "Tipo:"
@@ -1009,7 +1009,7 @@ circle = "Círculo"
 diamond = "Rombo"
 box = "Rectángulo"
 
-# Окно камеры (Р.34 К3).
+# Camera window (R.34 K3).
 [cam]
 props = "Propiedades de la cámara…"
 title = "Cámara {0}"
@@ -1020,7 +1020,7 @@ look_at = "Mirar a un punto"
 look_at_hint = "Cámara de dos nodos: siempre apunta al punto (como en After Effects)"
 length = "Duración, s: {0}"
 
-# Вопросы, на которые программа обязана получить ответ до действия.
+# Questions the program must get answered before an action.
 [ask]
 drop_project_title = "Se soltó un proyecto"
 drop_project_body = "El archivo {0} es un proyecto. ¿Abrirlo o insertarlo en este montaje como composición?"
@@ -1049,7 +1049,7 @@ save_and_go = "Guardar y continuar"
 discard = "Descartar"
 stay = "Quedarse"
 
-# Окно генератора (Р.52): вид и параметры медиа без файла.
+# Generator window (R.52): kind and media parameters without a file.
 [genw]
 hint_kind = "Tipo de generador; todo el formulario vive en este evento"
 head = "Fuente: {0}"
@@ -1092,7 +1092,7 @@ noise = "Campo de ruido"
 smpte = "Barras SMPTE"
 timecode = "Código de tiempo"
 
-# Окно титра (Р.52 С3).
+# Title window (R.52 C3).
 [titlew]
 preset_roll = "Créditos finales"
 preset_crawl = "Rótulo deslizante"
@@ -1121,8 +1121,8 @@ align_l = "Izquierda"
 align_c = "Centrado"
 align_r = "Derecha"
 
-# Подписи параметров генераторов (Р.53 п.414): своя область — «size» у
-# титра это КЕГЛЬ, а не зерно эффекта Noise.
+# Generator parameter labels (R.53 item 414): own area — “size” in
+# a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
 text = "Texto"
 reveal = "Aparición"
@@ -1161,7 +1161,7 @@ fps = "Cuadros por segundo:"
 mono = "Gris"
 tone = "Tono de 1 kHz"
 
-# Parámetros públicos de la composición (Р.59, etapa 3).
+# Parámetros públicos de la composición (R.59, etapa 3).
 [pubp]
 publish = "Publicar…"
 unpublish = "Retirar la publicación"

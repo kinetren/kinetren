@@ -1,35 +1,35 @@
-//! Мини-формула: разбор и вычисление (Р.61).
+//! Mini-formula: parsing and evaluation (R.61).
 //!
-//! **Решение владельца (Р.59, дословно):** «Выражения — своя мини-формула,
-//! считается вживую на каждом кадре; внешних интерпретаторов нет.» Разведка
-//! (F-AUT-007) подтвердила его с трёх сторон: смена чужого движка у After
-//! Effects поменяла результат готовых проектов, Blender показал, чем платит
-//! документ с исполняемым кодом, а Nuke — что цена фичи определяется не
-//! языком, а наличием единого паспорта свойства.
+//! **Owner's decision (R.59, verbatim):** “Expressions are their own mini-formula,
+//! evaluated live on every frame; there are no external interpreters.” Reconnaissance
+//! (F-AUT-007) confirmed it from three sides: the switch of someone else's engine in After
+//! Effects changed the result of finished projects, Blender showed what a document with
+//! executable code costs, and Nuke showed that the price of a feature is set not by the
+//! language but by the presence of a single property passport.
 //!
-//! **Набор операций ЗАКРЫТ.** Ни циклов, ни определений, ни обращения к
-//! файловой системе, часам и случайности из окружения: одинаковый текст при
-//! одинаковых входах обязан давать одинаковые байты всегда и везде
-//! (инвариант 11). Отсюда же запрет на `rand` и `now`.
+//! **The set of operations is CLOSED.** No loops, no definitions, no access to the
+//! file system, clock or randomness from the environment: the same text with the same
+//! inputs must give the same bytes always and everywhere
+//! (invariant 11). Hence also the ban on `rand` and `now`.
 //!
-//! **Ошибка НАЗЫВАЕТСЯ.** Неизвестное имя, деление на ноль, незакрытая
-//! скобка — каждая со своим текстом и позицией в строке. Молчаливый ноль
-//! показал бы человеку картинку, которой он поверит.
+//! **The error is NAMED.** An unknown name, division by zero, an unclosed
+//! bracket — each with its own text and position in the string. A silent zero
+//! would show a person a picture they would believe.
 
 use std::collections::BTreeMap;
 
 thread_local! {
-    /// Кэш разбора по тексту (Р.67): формула ОТРЕЗКА считается из
-    /// `curve_value` в интерфейсе на каждый пиксель графика, и разбирать
-    /// текст на каждую пробу было бы аллокацией в draw-пути. Рендер формул
-    /// не считает вовсе — их разворачивает резолвер до аудио-потока.
+    /// Parse cache by text (R.67): the CURVE formula is computed from
+    /// `curve_value` in the interface on every pixel of the graph, and parsing
+    /// the text on every probe would be an allocation in the draw path. Formula rendering
+    /// does not compute them at all — the resolver expands them before the audio stream.
     static PARSED: std::cell::RefCell<std::collections::HashMap<String, std::rc::Rc<Formula>>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
-/// Разобранная формула из кэша потока; невалидный текст — `None` (кэш
-/// хранит только удачи, ошибку называет `Formula::parse` там, где текст
-/// вводят).
+/// A parsed formula from the stream's cache; invalid text — `None` (the cache
+/// stores only successes, the error is named by `Formula::parse` where the text is
+/// entered).
 pub fn cached(expr: &str) -> Option<std::rc::Rc<Formula>> {
     PARSED.with(|c| {
         if let Some(f) = c.borrow().get(expr) {
@@ -45,7 +45,7 @@ pub fn cached(expr: &str) -> Option<std::rc::Rc<Formula>> {
     })
 }
 
-/// Что пошло не так — с позицией в исходной строке.
+/// What went wrong — with a position in the source string.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FormulaError {
     pub at: usize,
@@ -54,23 +54,23 @@ pub struct FormulaError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormulaErrorKind {
-    /// Символ, которого в языке нет.
+    /// A symbol that does not exist in the language.
     BadChar(char),
-    /// Скобка не закрыта.
+    /// A bracket is not closed.
     Unclosed,
-    /// Лишняя закрывающая скобка или мусор в хвосте.
+    /// An extra closing bracket or junk at the tail.
     Trailing,
-    /// Ожидалось число, имя или «(».
+    /// A number, a name or “(” was expected.
     ExpectedValue,
-    /// Имя, которого нет ни среди переменных, ни среди функций. Сюда же
-    /// попадают `now` и `rand`: их в языке нет СОЗНАТЕЛЬНО.
+    /// A name that is neither among the variables nor among the functions. Here also
+    /// fall `now` and `rand`: they are DELIBERATELY absent from the language.
     UnknownName(String),
-    /// Функции нужно другое число аргументов.
+    /// The function needs a different number of arguments.
     Arity { name: String, want: usize, got: usize },
-    /// Деление на ноль — ОШИБКА, а не бесконечность: молчаливая
-    /// бесконечность уехала бы в кадр и стала бы чёрным экраном.
+    /// Division by zero is an ERROR, not infinity: a silent infinity would travel
+    /// into the frame and become a black screen.
     DivZero,
-    /// Результат не конечен (переполнение, `0/0`, корень из минуса).
+    /// The result is not finite (overflow, `0/0`, a root of a negative).
     NotFinite,
 }
 
@@ -95,13 +95,13 @@ impl std::fmt::Display for FormulaError {
 
 impl std::error::Error for FormulaError {}
 
-/// Разобранное выражение. Разбирается ОДИН раз (при сборке рендерера),
-/// считается на каждом кадре: текст в горячем пути не парсится.
+/// A parsed expression. It is parsed ONCE (when the renderer is built) and
+/// evaluated on every frame: text is not parsed in the hot path.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Formula {
     root: Node,
-    /// Имена, которые выражение читает. Нужны тому, кто строит граф
-    /// зависимостей: спрашивать у дерева на каждом кадре — дорого.
+    /// Names that the expression reads. They are needed by whoever builds the
+    /// dependency graph: asking the tree on every frame is expensive.
     pub reads: Vec<String>,
 }
 
@@ -112,7 +112,7 @@ enum Node {
     Neg(Box<Node>),
     Bin(Op, Box<Node>, Box<Node>),
     Call(Fun, Vec<Node>),
-    /// `if(cond, a, b)` — ветвление БЕЗ инструкций: это выражение.
+    /// `if(cond, a, b)` — branching WITHOUT statements: this is an expression.
     If(Box<Node>, Box<Node>, Box<Node>),
 }
 
@@ -144,12 +144,12 @@ enum Fun {
     Sin,
     Cos,
     Lerp,
-    /// Детерминированный шум от ЦЕЛОГО зерна — не из окружения.
+    /// Deterministic noise from an INTEGER seed — not from the environment.
     Noise,
 }
 
-/// Реестр функций вычислителя — имя и число аргументов (Р.67): справка в
-/// блоке кривой строится ОТСЮДА, а не из копии в интерфейсе.
+/// The evaluator's function registry — name and number of arguments (R.67): the help in
+/// the curve block is built FROM HERE, not from a copy in the interface.
 pub const FUNCTIONS: &[(&str, usize)] = &[
     ("min", 2),
     ("max", 2),
@@ -201,7 +201,7 @@ impl Fun {
 }
 
 impl Formula {
-    /// Разобрать текст. Ошибка несёт позицию — поле ввода подсветит её.
+    /// Parse the text. The error carries a position — the input field will highlight it.
     pub fn parse(src: &str) -> Result<Formula, FormulaError> {
         let mut p = Parser { s: src.as_bytes(), i: 0, reads: Vec::new() };
         p.ws();
@@ -216,7 +216,7 @@ impl Formula {
         Ok(Formula { root, reads })
     }
 
-    /// Посчитать при данных переменных.
+    /// Evaluate with the given variables.
     pub fn eval(&self, vars: &BTreeMap<String, f64>) -> Result<f64, FormulaError> {
         let v = eval(&self.root, vars)?;
         if v.is_finite() {
@@ -276,9 +276,9 @@ fn eval(n: &Node, vars: &BTreeMap<String, f64>) -> Result<f64, FormulaError> {
                 Fun::Sin => a[0].sin(),
                 Fun::Cos => a[0].cos(),
                 Fun::Lerp => a[0] + (a[1] - a[0]) * a[2],
-                // ДЕТЕРМИНИРОВАННЫЙ шум: целое зерно в хэш, ничего из
-                // окружения. Тот же алгоритм, что у counter-based шума
-                // генератора, — второй «случайности» в программе нет.
+                // DETERMINISTIC noise: an integer seed into a hash, nothing from the
+                // environment. The same algorithm as the counter-based noise of the
+                // generator — there is no second “randomness” in the program.
                 Fun::Noise => {
                     let mut h = (a[0].floor() as i64 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
                     h ^= h >> 29;
@@ -312,7 +312,7 @@ impl Parser<'_> {
             false
         }
     }
-    /// Сравнения — самый слабый уровень: `a < b` даёт 0 или 1.
+    /// Comparisons are the weakest level: `a < b` gives 0 or 1.
     fn expr(&mut self) -> Result<Node, FormulaError> {
         let mut a = self.sum()?;
         loop {

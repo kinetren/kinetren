@@ -1,8 +1,8 @@
-//! FxStateStore: состояние FX-цепочек по clip id, ВНЕ render graph
-//! (инварианты №2–3). Владелец — аудио-render-поток; сюда не заходит ни
-//! prefetch, ни UI. Пересборка AudioRenderer (любая правка модели) НЕ
-//! уничтожает состояние: та же структура цепочки → тот же процессор,
-//! параметры доезжают сглаженно (дефекты b, f старого движка).
+//! FxStateStore: the state of FX chains by clip id, OUTSIDE the render graph
+//! (invariants 2–3). Owner — the audio render thread; neither prefetch nor the UI
+//! enter here. Rebuilding AudioRenderer (any model edit) does NOT
+//! destroy the state: the same chain structure → the same processor,
+//! parameters arrive smoothly (defects b, f of the old engine).
 
 use kt_fx::{ClipProcessor, TrackProcessor, chain_fingerprint};
 use kt_model::{ClipId, FxInstance, TrackId};
@@ -11,75 +11,75 @@ use std::collections::HashMap;
 #[derive(Default)]
 pub struct FxStateStore {
     map: HashMap<ClipId, ClipProcessor>,
-    /// Цепочки ДОРОЖЕК (Р.62, change B). Ключ — `TrackId`, а не «(вид,
-    /// номер)»: номер — это ранг строки, и вставка дорожки выше
-    /// перенумеровала бы соседей, то есть убила бы их состояние
-    /// (инвариант 3). Отдельная карта вместо составного ключа: у дорожки
-    /// и у события разные процессоры, и `HashMap` по enum-ключу стоил бы
-    /// ветки на каждом обращении ради одного и того же.
+    /// TRACK chains (R.62, change B). The key is `TrackId`, not “(kind,
+    /// number)”: the number is the row's rank, and inserting a track higher would
+    /// renumber the neighbours, i.e. kill their state
+    /// (invariant 3). A separate map instead of a composite key: a track and an event have
+    /// different processors, and a `HashMap` keyed by enum would cost a
+    /// branch on every access for one and the same thing.
     tracks: HashMap<TrackId, TrackProcessor>,
-    /// Потоки суб-микса вложенных лент (Р.50 Б4, ключ исправлен в Р.55 С4).
+    /// Sub-mix streams of nested reels (R.50 B4, key corrected in R.55 C4).
     ///
-    /// Ключ — адрес ЭКЗЕМПЛЯРА, а не ленты. Лента, поставленная в пяти
-    /// местах, — это ПЯТЬ разных потоков через её цепочки, и делить между
-    /// ними один реверб было бы слышно; до Р.55 ключ стоял по ленте, и
-    /// комментарий на этом же месте сам себе противоречил. Под реверсом и
-    /// растяжением (С4) экземпляры читают ленту ещё и в РАЗНОМ порядке,
-    /// то есть дерутся бы за один курсор продюсера.
+    /// The key is the address of the INSTANCE, not of the reel. A reel placed in five
+    /// places is FIVE different streams through its chains, and sharing one reverb
+    /// between them would be audible; up to R.55 the key was per reel, and the
+    /// comment on that same spot contradicted itself. Under reverse and
+    /// stretching (C4) the instances also read the reel in a DIFFERENT order,
+    /// i.e. they would fight over one producer cursor.
     ///
-    /// `ClipId` уникален по всему документу и переживает трим, разрез и
-    /// перенос (инвариант 3) — ровно тот же ключ, что у `map`.
+    /// `ClipId` is unique across the whole document and survives trim, cut and
+    /// move (invariant 3) — exactly the same key as `map`.
     nests: HashMap<ClipId, NestStream>,
-    /// КЛЮЧЕВЫЕ ВЕТКИ сайдчейна (Р.65): у каждой дорожки-ЦЕЛИ свой
-    /// суб-стор, в котором живёт поток её ключа — состояния событий
-    /// ключевой дорожки и её цепочки.
+    /// SIDECHAIN KEY BRANCHES (R.65): each TARGET track has its own
+    /// sub-store in which its key stream lives — the states of the events of the
+    /// key track and its chain.
     ///
-    /// Второй набор состояний нужен по той же причине, по какой у ленты
-    /// свой `NestStream`: один и тот же процессор нельзя прокрутить дважды
-    /// за кадр (ключевая ветка и собственный выход ключевой дорожки — это
-    /// ДВА потока через одни и те же цепочки), а окна у них вдобавок
-    /// разные, когда у цели есть упреждение.
+    /// A second set of states is needed for the same reason that a reel has its own
+    /// `NestStream`: the same processor cannot be run twice per frame
+    /// (the key branch and the key track's own output are TWO streams through the same
+    /// chains), and their windows also differ
+    /// when the target has lookahead.
     keys: HashMap<TrackId, Box<FxStateStore>>,
 }
 
-/// Поток суб-микса ОДНОГО экземпляра вложенной ленты.
+/// Sub-mix stream of ONE instance of a nested reel.
 ///
-/// Суб-микс — ПОТОКОВЫЙ АВТОМАТ: внутри ленты живут ревербы и дилеи со
-/// своим состоянием, и пересчёт со случайного места даёт другой выход.
-/// Поэтому лента рендерится ТОЛЬКО ВПЕРЁД и только по возрастанию своего
-/// времени, а реверс и растяжение экземпляра действуют на СЭМПЛЫ готового
-/// микса — так же, как на сэмплы файла. Обратное («рендерить ленту назад»)
-/// дало бы третий, ничей результат: внутренний реверб обязан звучать
-/// вперёд ВНУТРИ ленты, а зеркало снаружи даёт обратный реверб.
+/// The sub-mix is a STREAMING AUTOMATON: inside the reel live reverbs and delays with
+/// their own state, and recomputing from a random position gives a different output.
+/// Therefore the reel is rendered ONLY FORWARD and only in increasing order of its own
+/// time, while the reverse and stretching of the instance act on the SAMPLES of the finished
+/// mix — just as on the samples of a file. The reverse (“render the reel backwards”)
+/// would give a third, nobody's result: the internal reverb must sound
+/// forward INSIDE the reel, and a mirror from outside gives a reversed reverb.
 pub struct NestStream {
-    /// Какая лента И какая её РЕДАКЦИЯ (Р.59, стадия 3). Экземпляр могли
-    /// перевесить на другую ленту (`SetClipMedia`) или сменить ему
-    /// переопределения — в обоих случаях поток начинается заново, а не
-    /// наследует чужое состояние.
+    /// Which reel AND which of its REVISIONS (R.59, stage 3). The instance could have been
+    /// re-pointed to another reel (`SetClipMedia`) or had its overrides changed —
+    /// in both cases the stream starts anew
+    /// rather than inheriting someone else's state.
     pub seq: crate::video::NestKey,
     pub store: FxStateStore,
-    /// Непрерывный отрезок уже посчитанных бёрстов, свежие в конце.
-    /// Повторный запрос того же бёрста — обычное дело (`render_plain_clip`
-    /// держит на нём курсор, а зеркало реверса читает его многократно), и
-    /// пересчитывать потоковую цепочку второй раз нельзя.
+    /// A continuous segment of already computed bursts, fresh ones at the end.
+    /// A repeated request for the same burst is a common thing (`render_plain_clip`
+    /// keeps its cursor on it, and the reverse mirror reads it many times), and the
+    /// streaming chain must not be recomputed a second time.
     pub ring: std::collections::VecDeque<(i64, std::sync::Arc<kt_media::AudioBurst>)>,
-    /// Следующий бёрст, который выдаст продюсер. Он идёт СТРОГО ВПЕРЁД.
+    /// The next burst the producer will deliver. It goes STRICTLY FORWARD.
     pub next: Option<i64>,
-    /// Пре-ролл переезда в бёрстах — та же дисциплина, что у настоящего
-    /// источника (инвариант 11: seek с pre-roll `max(хвост, 100 мс)`).
-    /// У ленты БЕЗ хвостатых эффектов он нулевой, и реверс стоит ровно
-    /// столько же, сколько прямое воспроизведение.
+    /// Pre-roll of a reposition in bursts — the same discipline as for a real
+    /// source (invariant 11: seek with pre-roll `max(tail, 100 ms)`).
+    /// A reel WITHOUT tail effects has zero pre-roll, and reverse costs exactly
+    /// the same as forward playback.
     pub preroll: u32,
-    /// Размер блока канонической сетки. Переезд начинается с ГРАНИЦЫ
-    /// блока, а не «от i назад на P»: тогда значение бёрста — чистая
-    /// функция индекса, и байты не зависят ни от истории чтения, ни от
-    /// того, каким куском его спросили.
+    /// Block size of the canonical grid. The reposition starts from the BLOCK
+    /// BOUNDARY, not “from i back by P”: then a burst's value is a pure
+    /// function of the index, and the bytes depend neither on the read history nor on
+    /// the chunk in which it was requested.
     pub block: u32,
 }
 
 impl NestStream {
-    /// Свежий поток. `pub`, потому что заводит его и продюсер в `audio.rs`:
-    /// там читатель становится известен только в момент чтения.
+    /// A fresh stream. `pub` because the producer in `audio.rs` also creates it:
+    /// there the reader becomes known only at the moment of reading.
     pub fn new_for(seq: crate::video::NestKey, preroll: u32, block: u32) -> NestStream {
         NestStream::new(seq, preroll, block)
     }
@@ -95,7 +95,7 @@ impl NestStream {
         }
     }
 
-    /// Начало блока, в котором лежит бёрст `i`.
+    /// Start of the block containing burst `i`.
     pub fn block_start(&self, i: i64) -> i64 {
         let w = self.block.max(1) as i64;
         i.div_euclid(w) * w
@@ -106,9 +106,9 @@ impl NestStream {
     }
 
     pub fn push(&mut self, i: i64, b: std::sync::Arc<kt_media::AudioBurst>) {
-        // Потолок кольца — ФУНКЦИЯ ПРОЕКТА (блок плюс пре-ролл), а не
-        // бюджет памяти: зависели бы байты выхода от бюджета — рухнул бы
-        // инвариант 11 («аудио байт-в-байт всегда и везде»).
+        // The ring ceiling is a FUNCTION OF THE PROJECT (block plus pre-roll), not
+        // a memory budget: if the output bytes depended on the budget, invariant 11
+        // (“audio byte-for-byte always and everywhere”) would collapse.
         let cap = (self.block as usize + self.preroll as usize).max(2);
         self.ring.push_back((i, b));
         while self.ring.len() > cap {
@@ -128,10 +128,10 @@ impl FxStateStore {
         FxStateStore::default()
     }
 
-    /// Синхронизировать процессор клипа с моделью:
-    /// - структура цепочки та же → переиспользуем state, доносим параметры;
-    /// - структура сменилась → пересоздаём ТОЛЬКО этот клип;
-    /// - цепочка пуста → процессор не нужен.
+    /// Synchronize the clip processor with the model:
+    /// - the chain structure is the same → reuse the state, carry the parameters;
+    /// - the structure changed → recreate ONLY this clip;
+    /// - the chain is empty → no processor needed.
     pub fn sync_clip(
         &mut self,
         id: ClipId,
@@ -149,22 +149,22 @@ impl FxStateStore {
         match self.map.get_mut(&id) {
             Some(p) if p.fingerprint() == fp => {
                 p.set_clip_len(clip_len_frames);
-                // ГЕОМЕТРИЯ доносится тоже (Р.43, п.293): `chain_fingerprint`
-                // хэширует только ВИДЫ слотов, поэтому трим/разрез/punch-out/
-                // переанкоринг морф-куска меняли `source_in` при том же id и
-                // той же структуре цепочки — и процессор читал от старого
-                // якоря, то есть «звук от другого события».
+                // GEOMETRY is carried too (R.43, item 293): `chain_fingerprint`
+                // hashes only the KINDS of slots, so trim/cut/punch-out/
+                // re-anchoring of a morph piece changed `source_in` with the same id and the
+                // same chain structure — and the processor read from the old
+                // anchor, i.e. “sound from another event”.
                 p.set_src_in(src_in_frames);
-                // кривые доносятся ДО параметров: apply_params смотрит,
-                // у каких слотов есть кривая (громкость, скорость)
+                // curves are carried BEFORE the parameters: apply_params checks
+                // which slots have a curve (volume, speed)
                 p.set_auto(auto);
                 p.apply_params(fx, false);
-                // Упреждение — часть УСТРОЙСТВА цепочки, а не значение
-                // параметра (Р.48, п.337): длина колец меняет выравнивание
-                // потока, и донести её сглаживанием нельзя. Расхождение
-                // (правка окна лимитера, нейтраль питча ↔ актив) —
-                // пересборка процессора: следующий read сделает hard_seek
-                // с прогревом, как настоящий seek.
+                // Lookahead is part of the chain's DEVICE, not the value of a
+                // parameter (R.48, item 337): the length of the rings changes the alignment of the
+                // stream, and it cannot be carried by smoothing. A mismatch
+                // (an edit of the limiter's window, pitch neutral ↔ active) —
+                // a processor rebuild: the next read will do hard_seek
+                // with warm-up, like a real seek.
                 if p.lookahead_frames() != kt_fx::chain_lookahead(fx, auto) || p.opts() != opts {
                     self.map.insert(
                         id,
@@ -187,10 +187,10 @@ impl FxStateStore {
         }
     }
 
-    /// Синхронизировать процессор ДОРОЖКИ с моделью — тем же правилом,
-    /// что у события: структура цепочки та же → состояние живёт, значения
-    /// доезжают сглаженно; сменилась (в том числе окно упреждения или
-    /// движок питча) → пересборка; цепочка пуста → процессор не нужен.
+    /// Synchronize the TRACK's processor with the model — by the same rule
+    /// as for an event: the chain structure is the same → the state lives on, values
+    /// arrive smoothly; changed (including the lookahead window or the
+    /// pitch engine) → rebuild; the chain is empty → no processor needed.
     pub fn sync_track(&mut self, id: TrackId, fx: &[FxInstance], opts: kt_fx::ChainOpts) {
         if fx.is_empty() {
             self.tracks.remove(&id);
@@ -215,25 +215,25 @@ impl FxStateStore {
         self.tracks.get_mut(&id)
     }
 
-    /// Суб-стор КЛЮЧЕВОЙ ВЕТКИ дорожки-цели (заводится по первому
-    /// обращению). Внутри — обычный стор: события ключевой дорожки и её
-    /// цепочка живут там своими состояниями.
+    /// The KEY BRANCH sub-store of the target track (created on first
+    /// access). Inside — a regular store: the events of the key track and its
+    /// chain live there with their own states.
     pub fn key_mut(&mut self, target: TrackId) -> &mut FxStateStore {
         self.keys.entry(target).or_default()
     }
 
-    /// Убрать ключевые ветки целей, которых больше нет (или которые
-    /// перестали слушать чужой сигнал).
+    /// Remove key branches of targets that no longer exist (or that
+    /// stopped listening to someone else's signal).
     pub fn retain_keys(&mut self, alive: &dyn Fn(TrackId) -> bool) {
         self.keys.retain(|id, _| alive(*id));
     }
 
-    /// Убрать состояние клипов, которых больше нет в модели.
+    /// Remove the state of clips that no longer exist in the model.
     pub fn retain_clips(&mut self, alive: &dyn Fn(ClipId) -> bool) {
         self.map.retain(|id, _| alive(*id));
     }
 
-    /// Убрать состояние дорожек, которых больше нет в модели.
+    /// Remove the state of tracks that no longer exist in the model.
     pub fn retain_tracks(&mut self, alive: &dyn Fn(TrackId) -> bool) {
         self.tracks.retain(|id, _| alive(*id));
     }
@@ -242,10 +242,10 @@ impl FxStateStore {
         self.map.get_mut(&id)
     }
 
-    /// Полный сброс (seek транспорта): каждый процессор сделает pre-roll
-    /// при следующем чтении.
-    /// Поток суб-микса экземпляра (заводится по первому обращению).
-    /// Перевесили экземпляр на другую ленту — поток начинается заново.
+    /// A full reset (transport seek): each processor will do a pre-roll
+    /// at the next read.
+    /// The instance's sub-mix stream (created on first access).
+    /// The instance was re-pointed to another reel — the stream starts over.
     pub fn nest_mut(
         &mut self,
         id: ClipId,
@@ -263,12 +263,12 @@ impl FxStateStore {
         e
     }
 
-    /// Забрать состояния лент НАРУЖУ на время рендера.
+    /// Take the reel states OUT for the duration of the render.
     ///
-    /// Нужно ровно для одного: суб-рендер зовётся ИЗ фетчера, а фетчер
-    /// живёт рядом со стором — взять и то и другое мутабельно одновременно
-    /// нечем. Вынутая карта развязывает заимствования, и `put_nests`
-    /// возвращает её на место в том же вызове.
+    /// Needed for exactly one thing: the sub-render is called FROM the fetcher, and the fetcher
+    /// lives next to the store — there is no way to take both and mutate them at the same time.
+    /// The extracted map unties the borrows, and `put_nests`
+    /// returns it back in place within the same call.
     pub fn take_nests(&mut self) -> HashMap<ClipId, NestStream> {
         std::mem::take(&mut self.nests)
     }
@@ -282,15 +282,15 @@ impl FxStateStore {
     }
 
     pub fn reset_all(&mut self) {
-        // seek уходит ВГЛУБЬ: цепочки внутри ленты — такие же потоковые
-        // автоматы, и хвост реверба из другого места звучал бы «из прошлого»
+        // seek goes DEEP: the chains inside a reel are the same streaming
+        // automata, and a reverb tail from another place would sound “from the past”
         for n in self.nests.values_mut() {
             n.rewind();
         }
         for p in self.map.values_mut() {
             p.reset();
         }
-        // цепочка ДОРОЖКИ — такой же потоковый автомат (Р.62)
+        // a TRACK's chain — the same streaming automaton (R.62)
         for p in self.tracks.values_mut() {
             p.reset();
         }

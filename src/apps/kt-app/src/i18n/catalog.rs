@@ -1,16 +1,16 @@
-//! Разбор каталогов перевода `i18n/*.toml`.
+//! Parsing of translation catalogs `i18n/*.toml`.
 //!
-//! Формат — СТРОГОЕ подмножество TOML: комментарий `#`, заголовок секции
-//! `[a.b]`, пара `key = "value"`. Этого хватает для каталога, а взамен файл
-//! остаётся валидным TOML (переводчику работают редакторы и `taplo`), и при
-//! этом парсер не тянет ни `toml`, ни `serde` в build-зависимости — тот же
-//! приём, что в `libs/kt-version/build.rs`.
+//! Format — a STRICT subset of TOML: a comment `#`, a section header
+//! `[a.b]`, a pair `key = "value"`. This is enough for a catalog, and in return the file stays
+//! valid TOML (translators get editors and `taplo` to work), and
+//! the parser does not pull in either `toml` or `serde` as build dependencies — the same
+//! trick as in `libs/kt-version/build.rs`.
 //!
-//! Модуль подключается ДВАЖДЫ: как модуль крейта и через `#[path]` в
-//! `build.rs`. Поэтому он не должен зависеть ни от чего, кроме std.
+//! The module is included TWICE: as a module of the crate and via `#[path]` in
+//! `build.rs`. Therefore it must not depend on anything but std.
 
-/// Одна запись каталога: полный ключ (`section.path.key`), значение, номер
-/// строки в файле — номер нужен, чтобы ошибка указывала на место.
+/// One catalog entry: the full key (`section.path.key`), the value, and the line
+/// number in the file — the number is needed so that an error points to the place.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     pub key: String,
@@ -24,8 +24,8 @@ fn bare_key_ok(s: &str) -> bool {
         && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
-/// Разобрать содержимое каталога. Ошибка — человекочитаемая строка с номером
-/// строки; вызывающий добавляет к ней имя файла.
+/// Parse the contents of a catalog. An error is a human-readable string with the line
+/// number; the caller appends the file name to it.
 pub fn parse(src: &str) -> Result<Vec<Entry>, String> {
     let mut out: Vec<Entry> = Vec::new();
     let mut section = String::new();
@@ -84,8 +84,8 @@ pub fn parse(src: &str) -> Result<Vec<Entry>, String> {
     Ok(out)
 }
 
-/// Basic-строка TOML в одну строку. Возвращает значение и число съеденных
-/// байт вместе с кавычками.
+/// A TOML basic string on one line. Returns the value and the number of consumed
+/// bytes together with the quotes.
 fn parse_string(s: &str, line: usize) -> Result<(String, usize), String> {
     let bytes = s.as_bytes();
     if bytes.first() != Some(&b'"') {
@@ -132,8 +132,8 @@ fn parse_string(s: &str, line: usize) -> Result<(String, usize), String> {
     Err(format!("line {line}: unterminated string"))
 }
 
-/// Индексы плейсхолдеров `{0}`, `{1}`, … в значении. `{{` и `}}` — литералы.
-/// Используется и сборкой (сверка наборов между языками), и тестом 125.
+/// Indices of the placeholders `{0}`, `{1}`, … in the value. `{{` and `}}` are literals.
+/// Used both by the build (cross-checking sets between languages) and by test 125.
 pub fn placeholders(s: &str) -> Vec<usize> {
     let mut out = Vec::new();
     let mut it = s.chars().peekable();

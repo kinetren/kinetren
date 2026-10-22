@@ -1,9 +1,9 @@
-//! Тесты 144-147 (пп.144-147 porting-notes, Р.24): формат-слой kt-otio.
+//! Tests 144-147 (items 144-147 of porting-notes, R.24): the format layer of kt-otio.
 //!
-//! 144 — типизированный round-trip и ИДЕМПОТЕНТНОСТЬ записи;
-//! 145 — passthrough чужого (поля, схемы, metadata-неймспейсы);
-//! 146 — версии схем (upgrade Clip.1, отказы хребта, kt.v);
-//! 147 — пути/URL (relativize, file://, synth:).
+//! 144 — typed round-trip and IDEMPOTENCY of writing;
+//! 145 — passthrough of foreign data (fields, schemas, metadata namespaces);
+//! 146 — schema versions (Clip.1 upgrade, spine refusals, kt.v);
+//! 147 — paths/URLs (relativize, file://, synth:).
 
 use kt_otio::{
     Clip, Composable, EffectNode, Error, FileFormat, Gap, LinearTimeWarp, Marker, MarkerNode,
@@ -60,8 +60,8 @@ fn gap(dur: i64) -> Composable {
     })
 }
 
-/// Богатый документ: дорожки обоих видов, gap, переход, метка-диапазон,
-/// эффекты (в т.ч. LinearTimeWarp −1), metadata.kt.
+/// A rich document: tracks of both kinds, gap, transition, a range marker,
+/// effects (incl. LinearTimeWarp −1), metadata.kt.
 fn rich_timeline() -> Timeline {
     let mut video = Track {
         name: "MAIN".into(),
@@ -140,7 +140,7 @@ fn rich_timeline() -> Timeline {
     }
 }
 
-/// Тест 144: round-trip типов и идемпотентность записи.
+/// Test 144: round-trip of types and idempotency of writing.
 #[test]
 fn t144_roundtrip_is_typed_and_idempotent() {
     let tl = rich_timeline();
@@ -150,15 +150,15 @@ fn t144_roundtrip_is_typed_and_idempotent() {
     let s2 = write_document(&parsed);
     assert_eq!(s1, s2, "write(parse(write(x))) must equal write(x)");
 
-    // детект по содержимому + базовые свойства формата
+    // content detection + basic properties of the format
     assert_eq!(detect(&s1).unwrap(), FileFormat::Otio);
     assert!(s1.starts_with("{\n    \"OTIO_SCHEMA\": \"Timeline.1\","), "tag first, 4-space indent");
     assert!(s1.ends_with('\n'));
-    // тики пишутся как f64 с точным целым значением
+    // ticks are written as f64 with an exact integer value
     assert!(s1.contains("\"rate\": 90000.0"), "rate must be 90000.0");
     assert!(s1.contains("\"value\": 90000.0"));
 
-    // чужой документ с иным форматированием: после первой записи — идемпотентно
+    // a foreign document with other formatting: after the first write — idempotent
     let foreign = r#"{"OTIO_SCHEMA":"Timeline.1","name":"x","tracks":{"OTIO_SCHEMA":"Stack.1","children":[{"OTIO_SCHEMA":"Track.1","kind":"Video","children":[{"OTIO_SCHEMA":"Gap.1","source_range":{"OTIO_SCHEMA":"TimeRange.1","start_time":{"OTIO_SCHEMA":"RationalTime.1","value":0,"rate":24},"duration":{"OTIO_SCHEMA":"RationalTime.1","value":48.00,"rate":24}}}]}]}}"#;
     let d1 = parse_document(foreign).expect("foreign minimal file parses");
     let w1 = write_document(&d1);
@@ -166,7 +166,7 @@ fn t144_roundtrip_is_typed_and_idempotent() {
     assert_eq!(w1, w2, "idempotency after first normalization");
 }
 
-/// Тест 145: passthrough — неизвестные поля, схемы и metadata-неймспейсы.
+/// Test 145: passthrough — unknown fields, schemas and metadata namespaces.
 #[test]
 fn t145_passthrough_preserves_foreign_data() {
     let text = json!({
@@ -211,33 +211,33 @@ fn t145_passthrough_preserves_foreign_data() {
     let reparsed = parse_document(&out).unwrap();
     assert_eq!(tl, reparsed);
 
-    // неизвестное поле Timeline пережило round-trip
+    // an unknown field of Timeline survived the round trip
     assert_eq!(tl.extra.get("vendor_field").unwrap()["deep"][2]["x"], Value::Bool(true));
-    // чужие metadata-неймспейсы verbatim
+    // foreign metadata namespaces verbatim
     assert_eq!(tl.metadata.get("resolve").unwrap()["colorVersion"], json!(3));
     assert!(out.contains("\"fcp_xml\": \"keep\""));
 
-    // неизвестная схема — сырьё verbatim, порядок ЕЁ ключей исходный
+    // an unknown schema — raw data verbatim, the order of ITS keys is the original
     let Composable::Track(track) = &tl.tracks.children[0] else { panic!("track expected") };
     let Composable::Unknown(raw) = &track.children[1] else { panic!("unknown expected") };
     assert_eq!(raw.schema_tag(), Some("FancyClip.7"));
     let keys: Vec<&str> = raw.0.keys().map(String::as_str).collect();
     assert_eq!(keys, ["OTIO_SCHEMA", "zeta", "alpha", "source_range"], "raw key order kept");
-    // и в выводе zeta стоит раньше alpha (как в источнике)
+    // and in the output zeta stands before alpha (as in the source)
     let zeta = out.find("\"zeta\"").unwrap();
     let alpha = out.find("\"alpha\"").unwrap();
     assert!(zeta < alpha);
 
-    // неизвестное поле известного Clip
+    // an unknown field of a known Clip
     let Composable::Clip(known) = &track.children[0] else { panic!("clip expected") };
     assert_eq!(known.extra.get("custom_clip_field"), Some(&json!(42)));
     assert!(out.contains("\"custom_clip_field\": 42"));
 }
 
-/// Тест 146: политика версий схем.
+/// Test 146: the policy of schema versions.
 #[test]
 fn t146_schema_versions() {
-    // Clip.1 → upgrade до Clip.2 (media_reference → media_references)
+    // Clip.1 → upgrade to Clip.2 (media_reference → media_references)
     let text = json!({
         "OTIO_SCHEMA": "Timeline.1",
         "tracks": {"OTIO_SCHEMA": "Stack.1", "children": [{
@@ -261,10 +261,10 @@ fn t146_schema_versions() {
     assert_eq!(c.active_media_reference_key, "DEFAULT_MEDIA");
     let Some(MediaRefNode::External(er)) = c.active_media() else { panic!() };
     assert_eq!(er.target_url, "x.mov");
-    // и пишется уже как Clip.2
+    // and it is written already as Clip.2
     assert!(write_document(&tl).contains("\"OTIO_SCHEMA\": \"Clip.2\""));
 
-    // лист новее нашей версии → passthrough
+    // a leaf schema newer than our version → passthrough
     let leaf = text.replace("Clip.1", "Clip.99").replace("media_reference", "media_referencesX");
     let tl2 = parse_document(&leaf).unwrap();
     let Composable::Track(track2) = &tl2.tracks.children[0] else { panic!() };
@@ -272,7 +272,7 @@ fn t146_schema_versions() {
         matches!(&track2.children[0], Composable::Unknown(r) if r.schema_tag() == Some("Clip.99"))
     );
 
-    // хребет новее — отказ
+    // the spine newer — refusal
     let bad_track = text.replace("Track.1", "Track.2");
     assert!(
         matches!(parse_document(&bad_track), Err(Error::UnsupportedSchema(s)) if s == "Track.2")
@@ -280,21 +280,21 @@ fn t146_schema_versions() {
     let bad_tl = text.replace("Timeline.1", "Timeline.3");
     assert!(matches!(parse_document(&bad_tl), Err(Error::UnsupportedSchema(_))));
 
-    // корень не Timeline — отказ
+    // the root is not a Timeline — refusal
     let coll = r#"{"OTIO_SCHEMA": "SerializableCollection.1", "children": []}"#;
     assert!(matches!(parse_document(coll), Err(Error::UnsupportedRoot(_))));
 
-    // kt.v новее нашей — гейт
+    // kt.v newer than ours — a gate
     let mut tl3 = rich_timeline();
     tl3.metadata.insert("kt".into(), json!({"v": 999}));
     assert!(matches!(kt_otio::check_kt_version(&tl3), Err(Error::KtMetaTooNew(999))));
     assert_eq!(kt_otio::kt_version(&rich_timeline()), Some(1));
 
-    // детект легаси
+    // detection of legacy
     assert_eq!(detect(r#"{"format_version": 1, "clips": []}"#).unwrap(), FileFormat::LegacyKtproj);
 
-    // детект СВОЕГО файла проекта (Р.70): этот крейт его опознаёт, но не
-    // читает — дверь импорта ему не нужна, и ошибка называет «Открыть»
+    // detection of OUR OWN project file (R.70): this crate recognizes it but does not
+    // read it — the import door is not needed for it, and the error names “Open”
     let ours = kt_model::project_file::to_text(
         &kt_model::Project::new(kt_model::ProjectSettings {
             fps: 30,
@@ -310,23 +310,23 @@ fn t146_schema_versions() {
     );
     assert_eq!(detect(&ours).unwrap(), FileFormat::Project);
     let err = match kt_otio::load_project(&ours, None) {
-        Ok(_) => panic!("файл проекта не должен читаться как файл обмена"),
+        Ok(_) => panic!("project file must not be read as an exchange file"),
         Err(e) => e,
     };
-    assert!(matches!(err, Error::ProjectFile), "файл проекта как файл обмена: {err}");
-    assert!(err.to_string().contains("File → Open"), "ошибка не называет дверь: {err}");
-    // и наоборот: файл обмена как проект — отказ с дверью импорта
+    assert!(matches!(err, Error::ProjectFile), "project file as exchange file: {err}");
+    assert!(err.to_string().contains("File → Open"), "error does not name the door: {err}");
+    // and vice versa: an exchange file as a project — a refusal with the import door
     let tl = rich_timeline();
     let s = write_document(&tl);
     match kt_model::project_file::from_text(&s) {
         Err(kt_model::project_file::ProjectFileError::NotOurs {
             looks_like: Some(kt_model::project_file::FileKind::Otio),
         }) => {}
-        other => panic!("файл обмена обязан отвергаться как «не проект», а не {other:?}"),
+        other => panic!("exchange file must be rejected as “not a project”, not {other:?}"),
     }
 }
 
-/// Тест 147: пути и file://-URL.
+/// Test 147: paths and file://-URLs.
 #[test]
 fn t147_media_urls() {
     use kt_otio::{
@@ -334,7 +334,7 @@ fn t147_media_urls() {
     };
     let base = Path::new("/home/user/projects/film");
 
-    // relativize: рядом, глубже, выше
+    // relativize: nearby, deeper, higher
     assert_eq!(
         relativize(base, Path::new("/home/user/projects/film/media/a.mp4")).unwrap(),
         "media/a.mp4"
@@ -344,19 +344,19 @@ fn t147_media_urls() {
         "../other/b.mp4"
     );
     assert_eq!(relativize(base, Path::new("/home/user/projects/film")).unwrap(), ".");
-    // общего только корень — не релятивизуем (фолбэк на file://)
+    // only the root in common — not relativized (fallback to file://)
     assert_eq!(relativize(base, Path::new("/mnt/disk/c.mp4")), None);
 
-    // file:// с пробелами/процентами/UTF-8
+    // file:// with spaces/percent-signs/UTF-8
     let tricky = Path::new("/mnt/видео архив/100% cut.mp4");
     let url = encode_file_url(tricky);
     assert!(url.starts_with("file:///mnt/"));
-    assert!(!url.contains(' ') && !url.contains("видео"), "non-ASCII and spaces are escaped");
+    assert!(!url.contains(' ') && !url.contains("video"), "non-ASCII and spaces are escaped");
     assert_eq!(decode_file_url(&url).unwrap(), tricky);
     assert_eq!(decode_file_url("file://localhost/a%20b").unwrap(), Path::new("/a b"));
     assert_eq!(decode_file_url("relative/path"), None);
 
-    // media_target_url: относительный / фолбэк / synth
+    // media_target_url: relative / fallback / synth
     assert_eq!(media_target_url(base, "/home/user/projects/film/media/a.mp4"), "media/a.mp4");
     assert_eq!(
         media_target_url(base, "/mnt/disk/c.mp4"),
@@ -365,19 +365,19 @@ fn t147_media_urls() {
     assert_eq!(media_target_url(base, "synth:Ramp"), "synth:Ramp");
     assert_eq!(media_target_url(base, "already/relative.mp4"), "already/relative.mp4");
 
-    // resolve: все три вида на входе
+    // resolve: all three kinds on input
     assert_eq!(resolve_media_path(base, "media/a.mp4"), base.join("media/a.mp4"));
     assert_eq!(resolve_media_path(base, "/abs/x.mp4"), Path::new("/abs/x.mp4"));
     assert_eq!(resolve_media_path(base, &url), tricky);
     assert_eq!(resolve_media_path(base, "synth:Ramp"), Path::new("synth:Ramp"));
 }
 
-/// Тест 797b (Р.67): писатель считает относительность ОТ ФАЙЛА ПРОЕКТА, и
-/// путь, относительный к чему-то другому, он трактовать не умеет — значит
-/// в модели таких путей быть не должно (их абсолютизирует добавление
-/// медиа, t797). Здесь фиксируется само правило письма: абсолютный путь
-/// рядом с проектом становится коротким, а уже относительный уезжает в
-/// файл КАК ЕСТЬ — и именно так картинка владельца «пропадала».
+/// Test 797b (R.67): the writer computes relativity FROM THE PROJECT FILE, and
+/// a path relative to something else it does not know how to interpret — so
+/// such paths must not exist in the model (media addition makes them absolute, t797).
+/// Here the rule of writing itself is fixed: an absolute path
+/// next to the project becomes short, while an already relative one travels into the
+/// file AS IS — and that is exactly how the owner's picture “disappeared”.
 #[test]
 fn t797b_writer_relativizes_only_against_the_project_file() {
     let dir = std::env::temp_dir().join(format!("kt-t797b-{}", std::process::id()));
@@ -386,23 +386,23 @@ fn t797b_writer_relativizes_only_against_the_project_file() {
     let proj = dir.join("sources/p.otio");
     let img = dir.join("sources/x.jpg");
 
-    // абсолютный путь рядом с проектом — в файл уезжает короткое имя
+    // an absolute path next to the project — a short name travels into the file
     let abs = kt_otio::media_target_url(proj.parent().unwrap(), &img.to_string_lossy());
-    assert_eq!(abs, "x.jpg", "абсолютный путь рядом с проектом не релятивизован: {abs}");
+    assert_eq!(abs, "x.jpg", "absolute path next to the project was not made relative: {abs}");
     assert_eq!(
         kt_otio::resolve_media_path(proj.parent().unwrap(), &abs),
         img,
-        "короткое имя не разрешается обратно в тот же файл"
+        "short name does not resolve back to the same file"
     );
 
-    // путь, относительный к ЧЕМУ-ТО ДРУГОМУ, писатель принимает за
-    // относительный к проекту — и файл «пропадает», не сдвинувшись
+    // a path relative to SOMETHING ELSE the writer takes for
+    // relative to the project — and the file “disappears” without having moved
     let rel = "sources/x.jpg";
-    assert_eq!(kt_otio::media_target_url(proj.parent().unwrap(), rel), rel, "путь изменён");
+    assert_eq!(kt_otio::media_target_url(proj.parent().unwrap(), rel), rel, "path changed");
     assert_eq!(
         kt_otio::resolve_media_path(proj.parent().unwrap(), rel),
         dir.join("sources/sources/x.jpg"),
-        "относительный путь в модели обязан разрешаться от ПРОЕКТА — отсюда и пропажа"
+        "relative path in the model must resolve from the PROJECT — hence the loss"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

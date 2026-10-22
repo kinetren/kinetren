@@ -1,7 +1,7 @@
-//! Тест 24 (docs/porting-notes.md, п.16): реверс событий.
-//! Аудио: выход == зеркальный срез источника (exact, Ramp-паттерн).
-//! Видео: кадр момента t == кадр зеркального pts (синтетика кодирует pts
-//! в цвете). FX+реверс: детерминирован и не тишина.
+//! Test 24 (docs/porting-notes.md, item 16): reversal of events.
+//! Audio: the output == a mirrored slice of the source (exact, Ramp pattern).
+//! Video: the frame at moment t == the frame of the mirrored pts (the synthetics encode pts
+//! in the color). FX+reverse: deterministic and not silence.
 
 use kt_engine::{AudioRenderer, DirectFetcher, VideoRenderer};
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
@@ -9,7 +9,7 @@ use kt_model::*;
 use kt_time::{AUDIO_CHANNELS, TICK_HZ, Tick};
 
 const CH: usize = AUDIO_CHANNELS;
-/// Качество превью тестов: ступень декода (Р.46) на нём — 1.
+/// the preview quality of the tests: decode scale step (R.46) on it — 1.
 const Q: kt_media::Quality = kt_media::Quality { width: 64, height: 36 };
 
 fn clip(reversed: bool, fx: Vec<FxInstance>, kind: ClipKind) -> Project {
@@ -38,9 +38,9 @@ fn clip(reversed: bool, fx: Vec<FxInstance>, kind: ClipKind) -> Project {
         link_group: None,
         kind,
         lane: 0,
-        start: Tick::from_audio_frames(48_000), // клип не с нуля таймлайна
+        start: Tick::from_audio_frames(48_000), // the clip is not from the start of the timeline
         duration: Tick::from_audio_frames(48_000 * 2),
-        source_in: Tick::from_audio_frames(9_600), // и не с нуля источника
+        source_in: Tick::from_audio_frames(9_600), // and not from the start of the source
         media: MediaId(1),
         gain_db: 0.0,
         reversed,
@@ -70,17 +70,17 @@ fn t24_reversed_audio_is_exact_mirror() {
     let mut b = vec![0f32; n * CH];
     AudioRenderer::new(&rev).render_frames(&mut direct(), 48_000, &mut b);
 
-    // b[k] == a[n-1-k] по кадрам, exact
+    // b[k] == a[n-1-k] per frame, exact
     for k in [0usize, 1, 1023, 1024, 4097, n / 2, n - 2, n - 1] {
         for ch in 0..CH {
             assert_eq!(
                 b[k * CH + ch],
                 a[(n - 1 - k) * CH + ch],
-                "кадр {k} канал {ch}: реверс должен быть зеркальным срезом"
+                "frame {k} channel {ch}: the reverse must be a mirrored slice"
             );
         }
     }
-    assert!(b.iter().any(|s| *s != 0.0), "не тишина");
+    assert!(b.iter().any(|s| *s != 0.0), "not silence");
 }
 
 #[test]
@@ -96,11 +96,11 @@ fn t24_reversed_video_maps_to_mirrored_pts() {
         let t = Tick(start + i * step);
         let f = vf.layers_at(t, Q)[0].1;
         let r = vr.layers_at(t, Q)[0].1;
-        // зеркало: f и r симметричны внутри куска источника
+        // mirror: f and r are symmetric inside the source piece
         let mirrored = vf.layers_at(Tick(start + span - step - i * step), Q)[0].1;
         assert_eq!(
             r, mirrored,
-            "кадр {i}: реверс обязан показывать зеркальный pts (fwd {f:?}, rev {r:?})"
+            "frame {i}: the reverse must show a mirrored pts (fwd {f:?}, rev {r:?})"
         );
     }
 }
@@ -126,13 +126,13 @@ fn t24_reversed_with_slowed_fx_is_deterministic_and_not_silent() {
     renderer.render_frames(&mut direct(), 48_000 + 9_600, &mut a);
     let mut b = vec![0f32; n * CH];
     renderer.render_frames(&mut direct(), 48_000 + 9_600, &mut b);
-    assert_eq!(a, b, "реверс+slowed детерминирован");
+    assert_eq!(a, b, "reverse+slowed is deterministic");
     let rms = (a.iter().map(|s| (*s as f64).powi(2)).sum::<f64>() / a.len() as f64).sqrt();
-    assert!(rms > 1e-4, "реверс+slowed не должен быть тишиной, rms={rms}");
+    assert!(rms > 1e-4, "reverse+slowed must not be silence, rms={rms}");
 }
 
-/// Тест 26 (интеграция, п.25): видео-FX применяются в ЕДИНОМ пути композита
-/// (превью == экспорт), кэш хранит пре-FX кадры.
+/// Test 26 (integration, item 25): video FX are applied in the SINGLE composite path
+/// (preview == export), the cache holds pre-FX frames.
 #[test]
 fn t26_video_fx_applied_in_compose_and_deterministic() {
     let mut p = clip(false, vec![], ClipKind::Video);
@@ -142,7 +142,7 @@ fn t26_video_fx_applied_in_compose_and_deterministic() {
 
     let cache = std::sync::Arc::new(kt_cache::BurstCache::new(kt_cache::CacheConfig::default()));
     let q = kt_media::Quality { width: 64, height: 36 };
-    // прогреть кадр клипа в кэш напрямую (пре-FX)
+    // warm the clip's frame into the cache directly (pre-FX)
     let t = Tick(90_000);
     let src_pts = vr.layers_at(t, Q)[0].1;
     let mut synth = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence);
@@ -158,15 +158,15 @@ fn t26_video_fx_applied_in_compose_and_deterministic() {
     let (a, complete) = vr.compose_from_cache(&cache, t, q);
     assert!(complete);
     let (b, _) = vr.compose_from_cache(&cache, t, q);
-    assert_eq!(a, b, "FX-композит детерминирован");
-    // кэш не тронут FX'ом: кадр в кэше остался пре-FX (сплошной цвет),
-    // а выход — зеркален, но у сплошного цвета зеркало == оригинал; проверим
-    // хотя бы что выход не пуст и альфа непрозрачна
+    assert_eq!(a, b, "the FX composite is deterministic");
+    // the cache is not touched by the FX: the frame in the cache stayed pre-FX (solid color),
+    // and the output is mirrored, but for a solid color the mirror == the original; we check
+    // at least that the output is not empty and the alpha is opaque
     assert!(a.chunks_exact(4).all(|p| p[3] == 255));
     assert!(a.iter().any(|v| *v != 0));
 }
 
-/// Тест 29 (п.16): у reversed клипа содержимое НЕ зависит от правого края.
+/// Test 29 (item 16): for a reversed clip the content does NOT depend on the right edge.
 #[test]
 fn t29_reversed_trim_end_preserves_left_edge_frames() {
     let p = clip(true, vec![], ClipKind::Video);
@@ -175,7 +175,7 @@ fn t29_reversed_trim_end_preserves_left_edge_frames() {
     let probes: Vec<Tick> = (0..10).map(|i| Tick(90_000 + i * step)).collect();
     let before: Vec<Tick> = probes.iter().map(|&t| vr_before.layers_at(t, Q)[0].1).collect();
 
-    // TrimEnd: укоротить на 0.5 c справа
+    // TrimEnd: shorten by 0.5 s from the right
     let mut m = kt_model::TimelineModel::new(p);
     let id = m.project().clips[0].id;
     let old_end = m.project().clips[0].start + m.project().clips[0].duration;
@@ -183,7 +183,7 @@ fn t29_reversed_trim_end_preserves_left_edge_frames() {
     let vr_after = VideoRenderer::new(m.project());
     let after: Vec<Tick> = probes.iter().map(|&t| vr_after.layers_at(t, Q)[0].1).collect();
 
-    assert_eq!(before, after, "кадры у ЛЕВОГО края reversed клипа не должны меняться при TrimEnd");
+    assert_eq!(before, after, "frames at the LEFT edge of a reversed clip must not change on TrimEnd");
 }
 
 #[test]
@@ -191,7 +191,7 @@ fn t29_reversed_trim_start_preserves_surviving_frames() {
     let p = clip(true, vec![], ClipKind::Video);
     let vr_before = VideoRenderer::new(&p);
     let step = TICK_HZ / 30;
-    // пробы в интервале, который переживёт трим
+    // samples in the interval that will survive the trim
     let probes: Vec<Tick> = (0..8).map(|i| Tick(90_000 + 45_000 + i * step)).collect();
     let before: Vec<Tick> = probes.iter().map(|&t| vr_before.layers_at(t, Q)[0].1).collect();
 
@@ -202,7 +202,7 @@ fn t29_reversed_trim_start_preserves_surviving_frames() {
     let vr_after = VideoRenderer::new(m.project());
     let after: Vec<Tick> = probes.iter().map(|&t| vr_after.layers_at(t, Q)[0].1).collect();
 
-    assert_eq!(before, after, "выжившие кадры reversed клипа не должны меняться при TrimStart");
+    assert_eq!(before, after, "surviving frames of a reversed clip must not change on TrimStart");
 }
 
 #[test]
@@ -215,15 +215,15 @@ fn t29_reversed_split_is_visually_seamless() {
 
     let mut m = kt_model::TimelineModel::new(p);
     let id = m.project().clips[0].id;
-    let at = Tick(90_000 + 90_000); // середина
+    let at = Tick(90_000 + 90_000); // the middle
     m.apply(Command::Split { id, at, new_id: ClipId(99), new_group: None }).unwrap();
     let vr_after = VideoRenderer::new(m.project());
     let after: Vec<Tick> = probes.iter().map(|&t| vr_after.layers_at(t, Q)[0].1).collect();
 
-    assert_eq!(before, after, "сплит reversed клипа обязан быть бесшовным по содержимому");
+    assert_eq!(before, after, "a split of a reversed clip must be seamless in content");
 }
 
-/// Тест 29 (аудио-половина): реверс + TrimEnd — сэмплы у левого края exact.
+/// Test 29 (audio half): reverse + TrimEnd — samples at the left edge are exact.
 #[test]
 fn t29_reversed_audio_trim_end_left_edge_exact() {
     let p = clip(true, vec![], ClipKind::Audio);
@@ -238,12 +238,12 @@ fn t29_reversed_audio_trim_end_left_edge_exact() {
     let mut after = vec![0f32; n * CH];
     AudioRenderer::new(m.project()).render_frames(&mut direct(), 48_000, &mut after);
 
-    assert_eq!(before, after, "начало reversed аудио-события не должно сдвигаться при TrimEnd");
+    assert_eq!(before, after, "the start of a reversed audio event must not shift on TrimEnd");
 }
 
-/// Ramp-паттерн кодирует НОМЕР КАДРА ИСТОЧНИКА в самом сэмпле
-/// (`n * 1e-6`, левый канал). Средний номер кадра по куску выхода —
-/// прямой ответ на вопрос «какой материал сейчас звучит».
+/// The Ramp pattern encodes the SOURCE FRAME NUMBER in the sample itself
+/// (`n * 1e-6`, left channel). The average frame number over the output piece is the
+/// direct answer to “which material is sounding right now”.
 fn mean_source_frame(out: &[f32], from: usize, n: usize) -> f64 {
     let mut sum = 0f64;
     for k in from..from + n {
@@ -267,21 +267,21 @@ fn slowed_dry(rate: f64) -> FxInstance {
     }
 }
 
-/// Тест 282 (Р.43 п.2/п.292): зеркальное событие с варпом читает РОВНО свой
-/// материал.
+/// Test 282 (R.43 item 2/item 292): a mirrored event with a warp reads EXACTLY its own
+/// material.
 ///
-/// Претензия дословно: «в problems1 есть тройка событий с реверсами, и там
-/// вообще звук от другого события откуда-то взялся», «а еще там из-за slowd
-/// картинка поломанная».
+/// The claim, verbatim: “in problems1 there is a trio of events with reverses, and there
+/// some sound from another event somehow got in”, “and also there the picture is broken
+/// because of slowd”.
 ///
-/// Причина: осью зеркала служил КОНЕЦ ОКНА источника, а туда входит запас
-/// ресемплера `WARP_SOURCE_MARGIN_FRAMES` = 8192 кадра (170.7 мс). Видео на
-/// том же событии якорится на фактически потреблённом `ClipWarp::used` без
-/// запаса — то есть A и V честно показывали РАЗНЫЙ материал. На событии
-/// пользователя длиной 0.36 с сдвиг составлял 63 % его длины.
+/// The cause: the mirror's axis was the END OF THE SOURCE WINDOW, and that window includes the
+/// resampler margin `WARP_SOURCE_MARGIN_FRAMES` = 8192 frames (170.7 ms). Video on the
+/// same event is anchored to the actually consumed `ClipWarp::used` without
+/// the margin — that is, A and V honestly showed DIFFERENT material. On a user's event
+/// 0.36 s long the shift was 63 % of its length.
 ///
-/// Ни один тест репозитория не сочетал `reversed` с варпом и не проверял
-/// ПОЗИЦИЮ материала: t24 требует лишь детерминизма и «не тишины».
+/// Not one test in the repository combined `reversed` with a warp and checked
+/// the POSITION of the material: t24 requires only determinism and “not silence”.
 #[test]
 fn t282_reversed_warped_clip_reads_its_own_material() {
     let src_in = 9_600i64;
@@ -296,29 +296,29 @@ fn t282_reversed_warped_clip_reads_its_own_material() {
     let mut out = vec![0f32; n * CH];
     AudioRenderer::new(&rev).render_frames(&mut direct(), 48_000, &mut out);
 
-    // при rate = 1 потреблённый пролёт равен длине события, значит первый
-    // выходной кадр обязан читать ПОСЛЕДНИЙ кадр этого пролёта
+    // at rate = 1 the consumed span equals the event length, so the first output frame must read
+    // the LAST frame of this span
     let axis = (src_in + len) as f64;
     let got = mean_source_frame(&out, 0, n);
     let want = axis - n as f64 / 2.0;
     assert!(
         (got - want).abs() < 1_000.0,
-        "зеркало обязано считаться от потреблённого конца {axis}: \
-         звучит кадр ≈{got:.0}, ожидался ≈{want:.0} \
-         (до Р.43 ось включала запас ресемплера 8192 кадра и звучало ≈{:.0})",
+        "the mirror must be computed from the consumed end of {axis}: \
+         the frame sounding is ≈{got:.0}, expected ≈{want:.0} \
+         (before R.43 the axis included the resampler headroom of 8192 frames and sounded ≈{:.0})",
         want + 8_192.0
     );
 }
 
-/// Тест 283 (Р.43 п.293): смена `source_in` при ТОЙ ЖЕ структуре цепочки
-/// слышна.
+/// Test 283 (R.43 item 293): changing `source_in` with the SAME chain structure is audible.
 ///
-/// `chain_fingerprint` хэширует только ВИДЫ слотов, а `FxStateStore` на
-/// ветке переиспользования доносил в процессор параметры и кривые, но не
-/// ГЕОМЕТРИЮ. Поэтому трим, разрез, punch-out и переанкоринг морф-куска
-/// оставляли процессор со старым материальным якорем: событие продолжало
-/// звучать материалом с прежнего места файла. `reset()` не помогал —
-/// `hard_seek`/`seam` считают позицию от того же поля.
+/// `chain_fingerprint` hashes only the KINDS of slots, while `FxStateStore` on the
+/// reuse branch passed the parameters and curves to the processor, but not the
+/// GEOMETRY. Therefore a trim, a cut, a punch-out
+/// and a re-anchoring of a morph piece
+/// left the processor with the old material anchor: the event kept sounding the material
+/// from the file's old place.
+/// `reset()` did not help — `hard_seek`/`seam` compute the position from the same field.
 #[test]
 fn t283_source_in_change_is_heard_with_the_same_chain() {
     let mut p = clip(false, vec![slowed_dry(1.0)], ClipKind::Audio);
@@ -332,13 +332,13 @@ fn t283_source_in_change_is_heard_with_the_same_chain() {
     let mut before = vec![0f32; n * CH];
     r.render_frames_with(&mut direct(), &mut store, 48_000, &mut before);
 
-    // «трим слева»: точка входа уехала, структура цепочки та же
+    // “trim on the left”: the entry point moved, the chain structure is the same
     let delta = 24_000i64;
     let mut p2 = p.clone();
     p2.clips[0].source_in = p2.clips[0].source_in + Tick::from_audio_frames(delta);
     p2.validate().unwrap();
     let r2 = AudioRenderer::new(&p2);
-    r2.sync_fx(&mut store); // ТОТ ЖЕ store — состояние FX не пересоздаётся
+    r2.sync_fx(&mut store); // the SAME store — the FX state is not re-created
     let mut after = vec![0f32; n * CH];
     r2.render_frames_with(&mut direct(), &mut store, 48_000, &mut after);
 
@@ -346,15 +346,15 @@ fn t283_source_in_change_is_heard_with_the_same_chain() {
     let b = mean_source_frame(&after, 0, n);
     assert!(
         (b - a - delta as f64).abs() < 1_000.0,
-        "правка source_in на {delta} кадров обязана двигать ЗВУЧАЩИЙ материал: \
-         было ≈{a:.0}, стало ≈{b:.0} (до Р.43 процессор держал старый якорь \
-         и разница была ≈0)"
+        "an edit of source_in by {delta} frames must move the SOUNDING material: \
+         it was ≈{a:.0}, became ≈{b:.0} (before R.43 the processor held the old anchor \
+         and the difference was ≈0)"
     );
 }
 
-// ---- Р.57: знаковая скорость в аудио ------------------------------------------
+// ---- R.57: signed speed in audio ------------------------------------------
 
-/// Клип с произвольной точкой входа и знаковой скоростью.
+/// A clip with an arbitrary entry point and a signed speed.
 fn signed_clip(rate: f64, source_in_frames: i64, reversed: bool) -> Project {
     let mut p = Project::new(ProjectSettings {
         fps: 30,
@@ -403,34 +403,34 @@ fn render(p: &Project, frames: usize) -> Vec<f32> {
     buf
 }
 
-/// Тест 616 (Р.57): скорость −1 — ТО ЖЕ САМОЕ, что флаг «Реверс» при +1,
-/// со сдвинутой на длину события точкой входа. Байт-в-байт.
+/// Test 616 (R.57): speed −1 is EXACTLY the same as the “Reverse” flag at +1,
+/// with the entry point shifted by the event length. Byte-for-byte.
 ///
-/// Это ОПРЕДЕЛЕНИЕ, а не приближение, и заодно — следствие, о котором надо
-/// помнить: постоянная −1 идёт в материал ДО точки входа (семантика
-/// velocity-огибающей Vegas). Совпадать с «Реверсом» она может только со
-/// сдвигом.
+/// This is a DEFINITION, not an approximation, and also a consequence to remember: a constant −1
+/// goes into the material BEFORE the entry point (the semantics of the Vegas
+/// velocity envelope). It can coincide with “Reverse” only with a
+/// shift.
 #[test]
 fn t616_negative_one_equals_reverse_with_a_shifted_in_point() {
     let n = 48_000usize;
-    // «Реверс» на +1 от точки входа 9600: играет [9600, 57600) задом наперёд
+    // “Reverse” at +1 from entry point 9600: plays [9600, 57600) backwards
     let rev = render(&signed_clip(1.0, 9_600, true), n);
-    // скорость −1 от точки входа 57600: идёт назад по тому же материалу
+    // speed −1 from entry point 57600: goes backward over the same material
     let neg = render(&signed_clip(-1.0, 9_600 + 48_000, false), n);
     for k in [0usize, 1, 1023, 1024, 4097, n / 2, n - 2, n - 1] {
         for ch in 0..CH {
             assert_eq!(
                 neg[k * CH + ch],
                 rev[k * CH + ch],
-                "кадр {k} канал {ch}: −1 обязана быть тем же зеркалом"
+                "frame {k} channel {ch}: −1 must be the same mirror"
             );
         }
     }
-    assert!(neg.iter().any(|s| *s != 0.0), "не тишина");
+    assert!(neg.iter().any(|s| *s != 0.0), "not silence");
 }
 
-/// Тест 617 (Р.57): реверб при знаковой скорости звучит ВПЕРЁД по своему
-/// времени — цепочка видит обычный форвард-поток и о направлении не знает.
+/// Test 617 (R.57): reverb at a signed speed sounds FORWARD in its own
+/// time — the chain sees the ordinary forward stream and does not know the direction.
 #[test]
 fn t617_reverb_runs_forward_over_a_backward_read() {
     let n = 48_000usize;
@@ -443,19 +443,19 @@ fn t617_reverb_runs_forward_over_a_backward_read() {
     };
     let neg = with_fx(-1.0, 9_600 + 48_000, false);
     let rev = with_fx(1.0, 9_600, true);
-    // с ревербом обе стороны читают материал одинаково, значит и звучат
-    // одинаково: состояние цепочки зависит от ВХОДА, а не от того, чем
-    // вход развернули
+    // with reverb both sides read the material the same way, so they also sound
+    // the same: the chain's state depends on the INPUT, not on what the
+    // input was reversed by
     for k in [0usize, 1024, n / 2, n - 1] {
         for ch in 0..CH {
             assert!(
                 (neg[k * CH + ch] - rev[k * CH + ch]).abs() < 1e-6,
-                "кадр {k}: цепочка увидела разный вход"
+                "frame {k}: the chain saw a different input"
             );
         }
     }
-    // и это НЕ то же самое, что развернуть готовый прямой рендер: реверб
-    // тогда звучал бы задом наперёд
+    // and this is NOT the same as reversing a finished forward render: the reverb
+    // would then sound backwards
     let fwd = with_fx(1.0, 9_600, false);
     let mut mirrored = vec![0f32; n * CH];
     for k in 0..n {
@@ -464,16 +464,16 @@ fn t617_reverb_runs_forward_over_a_backward_read() {
         }
     }
     let diff = (0..n * CH).map(|i| (neg[i] - mirrored[i]).abs()).fold(0.0f32, f32::max);
-    assert!(diff > 1e-4, "зеркало готового рендера совпало — реверба не слышно");
+    assert!(diff > 1e-4, "the mirror of the finished render matched — the reverb is not audible");
 }
 
-/// Тест 618 (Р.57): вокруг точки разворота выход — ПАЛИНДРОМ, без
-/// пропущенного и без сдвоенного кадра.
+/// Test 618 (R.57): around the turning point the output is a PALINDROME, with no
+/// skipped and no doubled frame.
 #[test]
 fn t618_turning_point_is_a_palindrome() {
     let n = 48_000usize;
     let mut p = signed_clip(1.0, 9_600, false);
-    // 1 → −1: разворот ровно посередине события
+    // 1 → −1: the reversal exactly in the middle of the event
     p.clips[0].fx_auto = vec![vec![ParamCurve {
         param: "rate".into(),
 
@@ -484,12 +484,12 @@ fn t618_turning_point_is_a_palindrome() {
         source: Default::default(),
     }]];
     let out = render(&p, n);
-    // вершина: материал дальше всего от точки входа. Ищем её по выходу —
-    // Ramp кодирует позицию в амплитуде, значит максимум и есть разворот
+    // the apex: the material is furthest from the entry point. We look for it in the output —
+    // Ramp encodes the position in the amplitude, so the maximum is the reversal itself
     let top = (0..n).max_by(|a, b| out[a * CH].partial_cmp(&out[b * CH]).unwrap()).unwrap();
     assert!(
         (n / 4..3 * n / 4).contains(&top),
-        "сцена выродилась: разворот не посередине ({top} из {n})"
+        "the scene degenerated: the flip is not in the middle ({top} of {n})"
     );
     for j in [1usize, 2, 16, 1023] {
         if top + j >= n || top < j {
@@ -497,14 +497,14 @@ fn t618_turning_point_is_a_palindrome() {
         }
         assert!(
             (out[(top + j) * CH] - out[(top + 1 - j.min(top + 1)) * CH]).abs() < 0.2,
-            "кадр {j} от вершины: палиндром разошёлся"
+            "frame {j} from the apex: the palindrome diverged"
         );
     }
-    assert!(out.iter().any(|s| *s != 0.0), "не тишина");
+    assert!(out.iter().any(|s| *s != 0.0), "not silence");
 }
 
-/// Тест 619 (Р.57): нулевая скорость — ТИШИНА, а хвост реверба при этом
-/// дозванивает (решение владельца: «тишина только в нуле»).
+/// Test 619 (R.57): zero speed — SILENCE, while the reverb tail rings out
+/// (owner's decision: “silence only at zero”).
 #[test]
 fn t619_zero_rate_is_silence_with_a_ringing_tail() {
     let n = 48_000usize;
@@ -513,10 +513,10 @@ fn t619_zero_rate_is_silence_with_a_ringing_tail() {
     let dry = render(&p, n);
     assert!(
         dry.iter().all(|s| s.abs() < 1e-6),
-        "на нулевой скорости обязана быть тишина: max {}",
+        "at zero speed there must be silence: max {}",
         dry.iter().fold(0.0f32, |m, s| m.max(s.abs()))
     );
-    // а с ревербом: сначала материал звучал (кривая 1 → 0), потом хвост
+    // and with reverb: first the material sounded (curve 1 → 0), then the tail
     let mut q = signed_clip(1.0, 9_600, false);
     q.clips[0].fx = vec![FxInstance::slowed_reverb(1.0, 0.6, 85.0)];
     q.clips[0].fx_auto = vec![vec![ParamCurve {
@@ -533,5 +533,5 @@ fn t619_zero_rate_is_silence_with_a_ringing_tail() {
         let tail = &out[(n - 4096) * CH..];
         (tail.iter().map(|s| (*s as f64) * (*s as f64)).sum::<f64>() / tail.len() as f64).sqrt()
     };
-    assert!(tail_rms > 1e-5, "на удержании реверб обязан дозванивать: rms {tail_rms}");
+    assert!(tail_rms > 1e-5, "on a hold the reverb must ring out: rms {tail_rms}");
 }

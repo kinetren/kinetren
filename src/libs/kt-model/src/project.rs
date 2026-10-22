@@ -1,4 +1,4 @@
-//! Типы формата проекта. Источник правды по схеме `.ktproj` v1.
+//! Types of the project format. The source of truth for the schema of `.ktproj` v1.
 
 use kt_time::{Tick, TickRange};
 use serde::{Deserialize, Serialize};
@@ -22,8 +22,8 @@ pub struct GroupId(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct MorphId(pub u64);
 
-/// Идентификатор камеры-события (Р.29). serde(transparent) — в файле
-/// просто число, как MediaId.
+/// Identifier of the camera-event (R.29). serde(transparent) — in the file
+/// simply a number, as MediaId.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct CameraId(pub u64);
@@ -39,11 +39,11 @@ pub enum ClipKind {
 #[serde(transparent)]
 pub struct TransitionId(pub u64);
 
-/// Минимальная суммарная ширина окна перехода (1 мс, как crate::MIN_CLIP_DURATION).
+/// The minimal total width of the transition window (1 ms, as crate::MIN_CLIP_DURATION).
 pub const MIN_TRANSITION_DURATION: Tick = Tick(90);
 
-/// Направление жеста перехода. Одно поле вместо четырёх видов: ядро у
-/// «влево/вправо/вверх/вниз» одно, а пресеты в UI разные.
+/// The direction of the transition gesture. One field instead of four kinds: the core for
+/// “left/right/up/down” is one, while the presets in the UI are different.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Dir {
@@ -55,7 +55,7 @@ pub enum Dir {
 }
 
 impl Dir {
-    /// Единичный вектор направления в координатах кадра (X вправо, Y вниз).
+    /// The unit direction vector in the coordinates of the frame (X right, Y down).
     pub fn vec(self) -> (f64, f64) {
         match self {
             Dir::Left => (-1.0, 0.0),
@@ -66,21 +66,21 @@ impl Dir {
     }
 }
 
-/// Вид перехода (Р.33 п.1: «переходы хотелось бы разные сделать, накидай
-/// там разных 10-20 современных, управление ими надо унифицировать как
-/// fx-chain»). Устроен как `FxInstance`: тег + поля-параметры, спеки
-/// параметров общие с эффектами — поэтому переход получает и единый UI
-/// полей, и, когда дойдут руки, автоматизацию тем же механизмом.
+/// The kind of transition (R.33 item 1: “it would be nice to make the transitions different, toss in
+/// 10-20 modern ones, their control should be unified like the
+/// fx-chain”). Built like `FxInstance`: a tag + parameter fields, the parameter specs
+/// are shared with the effects — therefore a transition gets both a unified UI
+/// of fields and, when the hands get to it, automation by the same mechanism.
 ///
-/// `Crossfade` — умолчание и ровно прежний путь рендера: файлы без
-/// параметров байт-стабильны, а GOLDEN не двигается.
+/// `Crossfade` is the default and exactly the former render path: files without
+/// parameters are byte-stable, and GOLDEN does not move.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TransitionKind {
-    /// Линейный dissolve (видео) + кроссфейд (аудио).
+    /// Linear dissolve (video) + crossfade (audio).
     #[default]
     Crossfade,
-    /// Край едет по кадру: линейный вайп, `angle` даёт диагональ.
+    /// The edge moves across the frame: a linear wipe, `angle` gives a diagonal.
     Wipe {
         #[serde(default)]
         dir: Dir,
@@ -89,8 +89,8 @@ pub enum TransitionKind {
         #[serde(default = "default_soft")]
         softness: f64,
     },
-    /// Раскрытие из центра: круг/ромб/прямоугольник. Центр (Р.51) —
-    /// доли кадра, умолчание середина; при 0.5/0.5 картинка байт-та же.
+    /// Opening from the center: circle/diamond/rectangle. The center (R.51) —
+    /// fractions of the frame, the default is the middle; at 0.5/0.5 the picture is byte-identical.
     Iris {
         #[serde(default)]
         shape: IrisShape,
@@ -101,7 +101,7 @@ pub enum TransitionKind {
         #[serde(default = "default_soft")]
         softness: f64,
     },
-    /// Стрелка часов вокруг центра.
+    /// A clock hand around the center.
     Clock {
         #[serde(default)]
         reverse: bool,
@@ -112,31 +112,31 @@ pub enum TransitionKind {
         #[serde(default = "default_soft")]
         softness: f64,
     },
-    /// Шторки: две створки расходятся от центра.
+    /// Shutters: two leaves diverge from the center.
     Barn {
         #[serde(default)]
         vertical: bool,
         #[serde(default = "default_soft")]
         softness: f64,
     },
-    /// Вайп по ЯРКОСТИ уходящего кадра — «проявление» по картинке.
+    /// A wipe by the BRIGHTNESS of the outgoing frame — a “reveal” by the picture.
     Luma {
         #[serde(default)]
         invert: bool,
         #[serde(default = "default_soft")]
         softness: f64,
     },
-    /// Входящий выталкивает уходящий за край.
+    /// The incoming one pushes the outgoing one off the edge.
     Push {
         #[serde(default)]
         dir: Dir,
     },
-    /// Входящий наезжает поверх, уходящий стоит.
+    /// The incoming one zooms over the top, the outgoing one stays.
     Slide {
         #[serde(default)]
         dir: Dir,
     },
-    /// Наплыв с приближением: уходящий разъезжается, входящий налетает.
+    /// A surge with approach: the outgoing one flies apart, the incoming one rushes in.
     Zoom {
         #[serde(default = "default_zoom_amount")]
         amount: f64,
@@ -145,7 +145,7 @@ pub enum TransitionKind {
         #[serde(default = "default_center", skip_serializing_if = "is_center")]
         cy: f64,
     },
-    /// Поворот с наплывом.
+    /// A rotation with a surge.
     Spin {
         #[serde(default = "default_one")]
         turns: f64,
@@ -156,29 +156,29 @@ pub enum TransitionKind {
         #[serde(default = "default_center", skip_serializing_if = "is_center")]
         cy: f64,
     },
-    /// Резкий пролёт камерой со смазом.
+    /// A sharp camera pass with a smear.
     Whip {
         #[serde(default)]
         dir: Dir,
         #[serde(default = "default_whip_blur")]
         blur: f64,
     },
-    /// Растворение через размытие обоих кадров.
+    /// Dissolve through the blur of both frames.
     BlurDissolve {
         #[serde(default = "default_blur_amount")]
         amount: f64,
     },
-    /// Растворение через укрупнение пикселей.
+    /// Dissolve through enlarging the pixels.
     Pixelate {
         #[serde(default = "default_pixelate")]
         amount: f64,
     },
-    /// Цифровой сбой: сдвиги строк и разъезд каналов.
+    /// A digital glitch: row shifts and channel divergence.
     Glitch {
         #[serde(default = "default_glitch")]
         amount: f64,
     },
-    /// Засветка: кадр уходит в цвет и возвращается.
+    /// Flash: the frame goes into the color and comes back.
     Flash {
         #[serde(default = "default_255")]
         color_r: u8,
@@ -189,7 +189,7 @@ pub enum TransitionKind {
         #[serde(default = "default_one")]
         strength: f64,
     },
-    /// Через цвет: уходящий гаснет в цвет, из него проявляется входящий.
+    /// Through the color: the outgoing one fades into the color, the incoming one emerges from it.
     Dip {
         #[serde(default)]
         color_r: u8,
@@ -198,8 +198,8 @@ pub enum TransitionKind {
         #[serde(default)]
         color_b: u8,
     },
-    // ---- узоры (Р.51, п.400) -------------------------------------------
-    /// Жалюзи: полосы открываются веером, угол даёт диагональ.
+    // ---- patterns (R.51, item 400) -------------------------------------
+    /// Blinds: the strips open in a fan, the angle gives a diagonal.
     Blinds {
         #[serde(default = "default_count8")]
         count: u32,
@@ -208,7 +208,7 @@ pub enum TransitionKind {
         #[serde(default = "default_soft_thin")]
         softness: f64,
     },
-    /// Шахматы: клетки открываются двумя встречными волнами.
+    /// Checkers: the cells open in two opposing waves.
     Checker {
         #[serde(default = "default_count8")]
         cols: u32,
@@ -217,7 +217,7 @@ pub enum TransitionKind {
         #[serde(default = "default_soft_thin")]
         softness: f64,
     },
-    /// Случайные блоки: клетки вспыхивают в псевдослучайном порядке.
+    /// Random blocks: the cells flash up in a pseudo-random order.
     Blocks {
         #[serde(default = "default_count16")]
         cols: u32,
@@ -226,7 +226,7 @@ pub enum TransitionKind {
         #[serde(default = "default_blocks_soft")]
         softness: f64,
     },
-    /// Спираль: архимедов фронт закручивается вокруг центра.
+    /// Spiral: an Archimedean front spirals around the center.
     Spiral {
         #[serde(default = "default_spiral_turns")]
         turns: f64,
@@ -237,39 +237,39 @@ pub enum TransitionKind {
         #[serde(default = "default_soft_thin")]
         softness: f64,
     },
-    // ---- сдвиг (симбиоз: движутся ОБА кадра) ----------------------------
-    /// Разделение: половинки уходящего разъезжаются, входящий открывается.
+    // ---- shift (symbiosis: BOTH frames move) ----------------------------
+    /// Split: the halves of the outgoing one diverge, the incoming one opens.
     Split {
         #[serde(default)]
         vertical: bool,
     },
-    /// Сжатие: уходящий сжимается к дальнему краю, входящий расправляется.
+    /// Squeeze: the outgoing one is compressed toward the far edge, the incoming one unfolds.
     Squeeze {
         #[serde(default)]
         dir: Dir,
     },
-    /// Растяжение: входящий растягивается из центральной линии.
+    /// Stretch: the incoming one stretches out from the central line.
     Stretch {
         #[serde(default)]
         vertical: bool,
     },
-    /// Обмен: кадры меняются местами по дуге, порядок сторон
-    /// переключается на середине (2.5D без глубины).
+    /// Exchange: the frames swap places along an arc, the order of the sides
+    /// switches in the middle (2.5D without depth).
     Swap {
         #[serde(default)]
         vertical: bool,
         #[serde(default = "default_swap_depth")]
         depth: f64,
     },
-    // ---- стилизованные --------------------------------------------------
-    /// Тряска: рывки кадра, смена стороны на середине.
+    // ---- stylized --------------------------------------------------
+    /// Shake: jerks of the frame, a change of side in the middle.
     Shake {
         #[serde(default = "default_glitch")]
         amount: f64,
         #[serde(default = "default_shake_steps")]
         steps: u32,
     },
-    /// Прожог плёнки: фронт по крупному шуму с горячей кромкой.
+    /// Film burn: a front by large noise with a hot edge.
     FilmBurn {
         #[serde(default = "default_burn_scale")]
         scale: f64,
@@ -282,7 +282,7 @@ pub enum TransitionKind {
         #[serde(default)]
         tint_b: u8,
     },
-    /// Блики света: цветные пятна пролетают по кадру поверх растворения.
+    /// Light flares: colored spots fly across the frame over the dissolve.
     LightLeaks {
         #[serde(default = "default_leaks_strength")]
         strength: f64,
@@ -293,7 +293,7 @@ pub enum TransitionKind {
         #[serde(default = "default_leaks_tint_b")]
         tint_b: u8,
     },
-    /// Радиальный смаз: лучи от центра, смена стороны на середине.
+    /// Radial smear: rays from the center, a change of side in the middle.
     ZoomBlur {
         #[serde(default = "default_whip_blur")]
         amount: f64,
@@ -302,10 +302,10 @@ pub enum TransitionKind {
         #[serde(default = "default_center", skip_serializing_if = "is_center")]
         cy: f64,
     },
-    // ---- объёмные (Р.51, п.401): панели и цилиндры, окклюзия
-    // аналитическая — глубинного буфера в композите нет и не надо -------
-    /// Переворот: панель крутится вокруг своей середины, на обороте
-    /// видна изнанка с входящим кадром.
+    // ---- volumetric (R.51, item 401): panels and cylinders, occlusion
+    // analytic — there is no depth buffer in the composite and none is needed -------
+    /// Flip: the panel turns around its middle, on the back
+    /// the reverse side is visible with the incoming frame.
     Flip {
         #[serde(default)]
         vertical: bool,
@@ -314,7 +314,7 @@ pub enum TransitionKind {
         #[serde(default = "default_shade")]
         shade: f64,
     },
-    /// Куб: уходящий и входящий — две грани, куб поворачивается.
+    /// Cube: the outgoing and the incoming — two faces, the cube turns.
     Cube {
         #[serde(default)]
         dir: Dir,
@@ -323,7 +323,7 @@ pub enum TransitionKind {
         #[serde(default = "default_shade")]
         shade: f64,
     },
-    /// Двери: две створки уходящего распахиваются вглубь, за ними входящий.
+    /// Doors: two leaves of the outgoing one swing open inward, behind them the incoming one.
     Door {
         #[serde(default)]
         vertical: bool,
@@ -332,8 +332,8 @@ pub enum TransitionKind {
         #[serde(default = "default_shade")]
         shade: f64,
     },
-    /// Перелистывание: лист заворачивается назад цилиндром, виден его
-    /// изнаночный хвост; под листом открывается входящий.
+    /// Page turn: the sheet wraps back around a cylinder, its back-side tail is visible;
+    /// under the sheet the incoming one opens.
     PagePeel {
         #[serde(default)]
         dir: Dir,
@@ -342,7 +342,7 @@ pub enum TransitionKind {
         #[serde(default = "default_shade")]
         shadow: f64,
     },
-    /// Свиток: лист наматывается на рулон, виден верхний виток.
+    /// Scroll: the sheet winds onto a roll, the top coil is visible.
     PageRoll {
         #[serde(default)]
         dir: Dir,
@@ -353,7 +353,7 @@ pub enum TransitionKind {
     },
 }
 
-/// Форма раскрытия у Iris.
+/// The opening shape of Iris.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IrisShape {
@@ -468,28 +468,28 @@ fn default_glitch() -> f64 {
     0.5
 }
 
-/// Общий интерфейс «числовые параметры со спеками». Его реализуют и
-/// эффекты, и виды переходов — поэтому UI полей у них ОДИН (требование
-/// Р.33 п.1: «управление ими надо унифицировать как fx-chain»), и любой
-/// новый носитель параметров получает готовую сетку полей даром.
-/// Паспорт ФЛАГА — параметра, у которого нет диапазона (Р.53, п.414).
+/// The common interface “numeric parameters with specs”. Both effects and
+/// kinds of transitions implement it — therefore their field UI is ONE (requirement
+/// R.33 item 1: “their control should be unified like the fx-chain”), and any
+/// new carrier of parameters gets a ready grid of fields for free.
+/// The passport of a FLAG — a parameter that has no range (R.53, item 414).
 ///
-/// Числа описывает `ParamSpec`, а «да/нет» не число: его нельзя тянуть
-/// ползунком и нельзя автоматизировать кривой. До этого пункта такие
-/// поля рисовались рукописными строками в каждом окне — и ровно поэтому
-/// забывались: тон 1 кГц у SMPTE и цветной режим шума существовали в
-/// формате, но включить их было НЕЧЕМ (класс t252 «осиротевшая фича»).
+/// Numbers are described by `ParamSpec`, and “yes/no” is not a number: it cannot be dragged
+/// by a slider and cannot be automated by a curve. Before this item such
+/// fields were drawn as hand-written rows in each window — and for exactly that reason
+/// they were forgotten: the 1 kHz tone of SMPTE and the color mode of the noise existed in
+/// the format, but there was NOTHING with which to turn them on (class t252 “orphaned feature”).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FlagSpec {
-    /// Имя поля snake_case — оно же ключ в файле.
+    /// The name of the field, snake_case — it is also the key in the file.
     pub name: &'static str,
     pub default: bool,
 }
 
-/// Кому принадлежит параметр (Р.53, п.414). Одно и то же ИМЯ значит у
-/// разных носителей разное: `size` — зерно у эффекта Noise и КЕГЛЬ у
-/// титра, `amount` — сила у полудюжины эффектов. Глобальная карта «имя →
-/// подпись» на этом и врала: кегль титра был подписан «Зерно:».
+/// Who owns the parameter (R.53, item 414). One and the same NAME means something different for
+/// different carriers: `size` — grain in the Noise effect and the FONT SIZE of a title,
+/// `amount` — strength for half a dozen effects. A global map “name → label” lied about this:
+/// the title’s font size was labeled “Grain:”.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParamScope {
     Fx,
@@ -497,16 +497,16 @@ pub enum ParamScope {
 }
 
 pub trait HasParams {
-    /// Паспорт свойств. Заимствуется у `self` (а не `&'static`), потому
-    /// что у динамических владельцев — публичного параметра композиции и
-    /// плагина — он строится в рантайме (Р.59, п.466).
+    /// The passport of properties. Borrowed from `self` (rather than `&'static`), because
+    /// for dynamic owners — the public parameter of a composition and
+    /// a plugin — it is built at runtime (R.59, item 466).
     fn param_specs(&self) -> &[ParamSpec];
     fn get_param(&self, name: &str) -> Option<f64>;
     fn set_param(&mut self, name: &str, v: f64) -> bool;
 
-    /// Чтение по ИНДЕКСУ ряда паспорта. Умолчание — через имя (медленно,
-    /// зато верно для любого владельца); встроенные виды генерят прямой
-    /// доступ макросом.
+    /// Reading by the INDEX of the passport row. The default is through the name (slow,
+    /// but correct for any owner); the built-in kinds generate direct
+    /// access by a macro.
     fn get_param_idx(&self, idx: usize) -> Option<f64> {
         let name = self.param_specs().get(idx)?.name.clone();
         self.get_param(&name)
@@ -518,14 +518,14 @@ pub trait HasParams {
         self.set_param(&name, v)
     }
 
-    /// Чьи это параметры — подпись ищется сперва в своей области
-    /// (Р.53, п.414).
+    /// Whose parameters these are — the label is looked up first in its own area
+    /// (R.53, item 414).
     fn params_scope(&self) -> ParamScope {
         ParamScope::Fx
     }
 
-    /// Флаги вида (Р.53, п.414). Пусто — их нет; тогда окно не рисует
-    /// ни одного чекбокса, и это законно.
+    /// The flags of the kind (R.53, item 414). Empty — there are none; then the window draws
+    /// not a single checkbox, and this is legitimate.
     fn flag_specs(&self) -> &'static [FlagSpec] {
         &[]
     }
@@ -536,33 +536,33 @@ pub trait HasParams {
         false
     }
 
-    /// Спека параметра по имени (кривая-сирота видна сразу).
+    /// The spec of a parameter by name (an orphaned curve is visible at once).
     fn param_spec(&self, name: &str) -> Option<&ParamSpec> {
         self.param_specs().iter().find(|s| s.name == name)
     }
 
-    /// Индекс ряда по имени — дверь из именного мира (файл, UI) в
-    /// индексный (компилированный план автоматизации).
+    /// Index of a row by name — a door from the named world (file, UI) into the
+    /// index one (the compiled automation plan).
     fn param_idx(&self, name: &str) -> Option<usize> {
         self.param_specs().iter().position(|s| s.name == name)
     }
 
-    /// Свойства, которых НЕТ среди числовых рядов и флагов: текст, выбор,
-    /// ссылка на медиа. Пусто у подавляющего большинства владельцев —
-    /// объявляет их только тот, у кого они есть (титр — свой текст и
-    /// семью шрифта).
+    /// Properties that are NOT among the numeric rows and flags: text, choice,
+    /// a reference to media. Empty for the vast majority of owners —
+    /// only the one who has them declares them (a title — its own text and
+    /// the font family).
     fn extra_specs(&self) -> Vec<ParamSpec> {
         Vec::new()
     }
 
-    /// Цветовые группы — ВЫВОДЯТСЯ из паспорта (Р.59, стадия 3), а не
-    /// объявляются: ручной список был бы вторым источником того же факта.
+    /// Color groups are DERIVED from the passport (R.59, stage 3), rather than
+    /// declared: a manual list would be a second source of the same fact.
     fn color_groups(&self) -> Vec<ColorGroup> {
         derive_color_groups(self.param_specs())
     }
 
-    /// Тип свойства по имени. `None` — такого свойства у владельца нет,
-    /// и это ровно то, чем валидация ловит публикацию на исчезнувшую цель.
+    /// The type of a property by name. `None` — the owner has no such property,
+    /// and this is exactly what validation uses to catch a publication pointing at a vanished target.
     fn value_type(&self, name: &str) -> Option<ParamType> {
         if self.color_groups().iter().any(|g| g.stem == name) {
             return Some(ParamType::Color);
@@ -576,18 +576,18 @@ pub trait HasParams {
         self.extra_specs().into_iter().find(|s| s.name == name).map(|s| s.ty)
     }
 
-    /// ПАСПОРТ свойства по имени — зеркало `value_type` (Р.60).
+    /// The PASSPORT of a property by name — a mirror of `value_type` (R.60).
     ///
-    /// Единственный источник пределов, шага и умолчания для публикации и
-    /// для окна потребителя. Копии паспорта в публикации не будет по той
-    /// же причине, по которой не хранится значение шаблона: она
-    /// разошлась бы с целью при первой правке внутри ленты. Порядок
-    /// веток обязан совпадать с `value_type` — разойдутся, и у цвета
-    /// паспорт окажется от компоненты, а тип от группы.
+    /// The single source of limits, step and default for the publication and
+    /// for the consumer’s window. There will be no copy of the passport in the publication, for the same
+    /// reason that the value of the template is not stored: it would
+    /// diverge from the target at the first edit inside the reel. The order
+    /// of the branches must coincide with `value_type` — they would diverge, and for color
+    /// the passport would come from the component while the type would come from the group.
     fn value_spec(&self, name: &str) -> Option<ParamSpec> {
         if self.color_groups().iter().any(|g| g.stem == name) {
-            // пределы цвета берутся у компоненты `_r`: она и есть шкала
-            // хранения (Rgb8), а не выдумка интерфейса
+            // the limits of color are taken from the component `_r`: it is the storage scale
+            // (Rgb8), not an invention of the interface
             let comp = self.param_spec(&format!("{name}_r")).cloned();
             return Some(ParamSpec {
                 name: std::borrow::Cow::Owned(name.to_string()),
@@ -620,23 +620,23 @@ pub trait HasParams {
         self.extra_specs().into_iter().find(|s| s.name == name)
     }
 
-    /// ТИПИЗИРОВАННОЕ чтение. Умолчание разводит имя по трём существующим
-    /// путям (число, флаг, компоненты цвета); владельцы с текстом и
-    /// выбором переопределяют.
+    /// TYPED reading. The default splits the name over three existing paths
+    /// (number, flag, color components); owners with text and
+    /// choice override it.
     fn get_value(&self, name: &str) -> Option<ParamValue> {
         default_get_value(self, name)
     }
 
-    /// ТИПИЗИРОВАННАЯ запись. Возвращает false, если такого свойства нет
-    /// или тип не тот: молчаливая подмена типа была бы порчей.
+    /// TYPED writing. Returns false if there is no such property or the type is wrong:
+    /// a silent substitution of the type would be corruption.
     fn set_value(&mut self, name: &str, v: &ParamValue) -> bool {
         default_set_value(self, name, v)
     }
 }
 
-/// Тело умолчания `HasParams::get_value` СВОБОДНОЙ функцией: переопределяя
-/// метод, владелец обязан уметь позвать умолчание, а из перекрытого метода
-/// трейта оно недоступно.
+/// The body of the default `HasParams::get_value` as a FREE function: overriding
+/// the method, the owner must be able to call the default, and from an overridden
+/// trait method it is unavailable.
 pub fn default_get_value<T: HasParams + ?Sized>(o: &T, name: &str) -> Option<ParamValue> {
     if let Some(g) = o.color_groups().into_iter().find(|g| g.stem == name) {
         let ch = |sfx: &str| {
@@ -654,7 +654,7 @@ pub fn default_get_value<T: HasParams + ?Sized>(o: &T, name: &str) -> Option<Par
     None
 }
 
-/// Тело умолчания `HasParams::set_value`.
+/// The body of the default `HasParams::set_value`.
 pub fn default_set_value<T: HasParams + ?Sized>(o: &mut T, name: &str, v: &ParamValue) -> bool {
     match v {
         ParamValue::Color(rgba) => {
@@ -676,7 +676,7 @@ pub fn default_set_value<T: HasParams + ?Sized>(o: &mut T, name: &str, v: &Param
     }
 }
 
-/// Спека текстового свойства (паспорт строится в рантайме — Р.59).
+/// The spec of a text property (the passport is built at runtime — R.59).
 pub fn text_spec(name: &'static str, multiline: bool) -> ParamSpec {
     ParamSpec {
         name: std::borrow::Cow::Borrowed(name),
@@ -691,7 +691,7 @@ pub fn text_spec(name: &'static str, multiline: bool) -> ParamSpec {
     }
 }
 
-/// Спека свойства-выбора; варианты — КЛЮЧИ, а не номера.
+/// The spec of a choice property; the variants are KEYS, not numbers.
 pub fn choice_spec(name: &'static str, variants: &'static [&'static str]) -> ParamSpec {
     ParamSpec {
         name: std::borrow::Cow::Borrowed(name),
@@ -737,9 +737,9 @@ impl HasParams for TransitionKind {
 }
 
 impl TransitionKind {
-    /// Все виды с УМОЛЧАНИЯМИ параметров — единственный реестр: по нему
-    /// строится меню выбора в UI и по нему же тесты проверяют полноту
-    /// спек. Новый вид, не попавший сюда, тестом виден сразу.
+    /// All kinds with the DEFAULTS of parameters are the single registry: the selection menu
+    /// in the UI is built from it, and the tests also check the completeness of the specs
+    /// against it. A new kind that is not listed here shows up in a test at once.
     pub const ALL: &'static [TransitionKind] = &[
         TransitionKind::Crossfade,
         TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.15 },
@@ -776,7 +776,7 @@ impl TransitionKind {
         TransitionKind::PageRoll { dir: Dir::Left, curl: 0.18, shadow: 0.5 },
     ];
 
-    /// Тег вида, как он лежит в файле (для UI и сравнения).
+    /// The tag of the kind, as it is in the file (for the UI and comparison).
     pub fn tag(&self) -> &'static str {
         match self {
             TransitionKind::Crossfade => "crossfade",
@@ -815,16 +815,16 @@ impl TransitionKind {
         }
     }
 
-    /// Симметричные виды: `kernel(b, a, 1−k)` для них тождественен
-    /// `kernel(a, b, k)`, инверсия ничего не меняет — UI прячет галку
-    /// (правило 16: неработающий контрол не показывается). Match
-    /// исчерпывающий намеренно: новый вид обязан решить, симметричен ли.
+    /// Symmetric kinds: `kernel(b, a, 1−k)` for them is identical to
+    /// `kernel(a, b, k)`, the inversion changes nothing — the UI hides the checkbox
+    /// (rule 16: a non-working control is not shown). The match
+    /// is exhaustive on purpose: a new kind must decide whether it is symmetric.
     pub fn symmetric(&self) -> bool {
         match self {
-            // у zoom обе стороны считаются той же формулой от своей роли,
-            // и mix-тождество `mix(y, x, 1−t) == mix(x, y, t)` делает
-            // инверсию точным тождеством (у spin — нет: знак поворота
-            // при инверсии меняется, и это осмысленно)
+            // for zoom both sides are computed by the same formula from their own role, and the
+            // mix identity `mix(y, x, 1−t) == mix(x, y, t)` makes
+            // the inversion an exact identity (spin does not: the sign of the rotation
+            // changes on inversion, and this is meaningful).
             TransitionKind::Crossfade
             | TransitionKind::Zoom { .. }
             | TransitionKind::BlurDissolve { .. }
@@ -832,7 +832,7 @@ impl TransitionKind {
             | TransitionKind::Glitch { .. }
             | TransitionKind::Flash { .. }
             | TransitionKind::Dip { .. }
-            // сила лучей sin(πk) и смена стороны на середине симметричны
+            // the strength of the rays sin(πk) and the change of side in the middle are symmetric
             | TransitionKind::ZoomBlur { .. } => true,
             TransitionKind::Wipe { .. }
             | TransitionKind::Iris { .. }
@@ -862,8 +862,8 @@ impl TransitionKind {
         }
     }
 
-    /// Числовые параметры вида — та же спека, что у эффектов, поэтому UI
-    /// рисует их тем же кодом.
+    /// The numeric parameters of the kind — the same spec as for effects, so the UI
+    /// draws them with the same code.
     pub fn param_specs(&self) -> &'static [ParamSpec] {
         transition_specs(self)
     }
@@ -882,10 +882,10 @@ impl TransitionKind {
     }
 }
 
-/// Кривая аудио-кроссфейда (Р.33 п.1, решение пользователя: у
-/// «вайпов/глитчей» звукового смысла нет, поэтому звук всегда
-/// кроссфейдится, но кривую можно выбрать). Умолчание — equal-power:
-/// ровно прежняя формула, GOLDEN_AUDIO не двигается.
+/// The curve of the audio crossfade (R.33 item 1, the user’s decision: “wipes/glitches” have
+/// no sound meaning, so the sound always crossfades, but the curve can be chosen).
+/// The default is equal-power:
+/// exactly the former formula; GOLDEN_AUDIO does not move.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AudioCurve {
@@ -897,58 +897,58 @@ pub enum AudioCurve {
 }
 
 impl AudioCurve {
-    /// Вес НАРАСТАЮЩЕЙ стороны в позиции t ∈ [0,1]. Затухающая сторона
-    /// считается тем же кодом от (1 − t) — иначе половинки разъезжаются.
+    /// The weight of the RISING side at position t ∈ [0,1]. The falling side is
+    /// computed by the same code from (1 − t) — otherwise the halves diverge.
     pub fn rise(self, t: f64) -> f64 {
         let t = t.clamp(0.0, 1.0);
         match self {
             AudioCurve::EqualPower => t.sqrt(),
             AudioCurve::Linear => t,
-            // S-кривая: мягкий старт и мягкий конец, сумма мощностей ровнее
+            // S-curve: a soft start and a soft end, the sum of powers is smoother
             AudioCurve::SCurve => (t * t * (3.0 - 2.0 * t)).sqrt(),
-            // экспонента: долгий тихий вход, резкий подъём в конце
+            // exponential: a long quiet entry, a sharp rise at the end
             AudioCurve::Exponential => t * t,
         }
     }
 }
 
-/// Переход на стыке двух СОСЕДНИХ клипов одной дорожки (Р.24, OTIO
-/// Transition). Позиция НЕ хранится — выводится из клипов: стык == конец `a`
-/// == начало `b`; идентичность по паре ClipId переживает групповые переносы
-/// (стык уехал у обоих — переход жив). Окно: [стык − in_offset,
-/// стык + out_offset); in_offset лежит в теле A (incoming играет левую
-/// «ручку» источника), out_offset — в теле B (outgoing играет правую).
-/// Материал ручек — чтение источника за пределами использованного куска;
-/// за краями материала движок отдаёт тишину/кламп-кадр (существующая
-/// политика, ничего не сериализуется).
+/// A transition at the joint of two ADJACENT clips of one track (R.24, OTIO
+/// Transition). The position is NOT stored — it is derived from the clips: the joint == the end of `a`
+/// == the start of `b`; the identity by the pair of ClipIds survives group moves
+/// (the joint moved for both — the transition lives). Window: [joint − in_offset,
+/// joint + out_offset); in_offset lies in the body of A (incoming plays the left
+/// “handle” of the source), out_offset is in the body of B (outgoing plays the right one).
+/// The material of the handles is reading of the source beyond the used piece;
+/// beyond the edges of the material the engine gives silence/a clamped frame (the existing
+/// policy, nothing is serialized).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TransitionEvent {
     pub id: TransitionId,
-    /// Уходящий клип (его конец — стык). `None` — фейд-ин: слева пустота
-    /// (край дорожки или Gap).
+    /// The outgoing clip (its end is the joint). `None` — a fade-in: on the left there is
+    /// emptiness (the track edge or a Gap).
     pub a: Option<ClipId>,
-    /// Входящий клип (его начало — стык). `None` — фейд-аут: справа пустота.
+    /// The incoming clip (its start is the joint). `None` — a fade-out: on the right there is emptiness.
     pub b: Option<ClipId>,
     pub in_offset: Tick,
     pub out_offset: Tick,
     #[serde(default)]
     pub kind: TransitionKind,
-    /// Кривая аудио-кроссфейда (Р.33). Умолчание equal-power не
-    /// сериализуется — файлы прежних версий байт-стабильны.
+    /// The curve of the audio crossfade (R.33). The equal-power default is not
+    /// serialized — files of earlier versions are byte-stable.
     #[serde(default, skip_serializing_if = "is_default_curve")]
     pub audio: AudioCurve,
-    /// Кривые ПАРАМЕТРОВ вида (Р.34 К4) — тот же механизм, что у
-    /// эффектов и камер. Позиция ключа — тик от НАЧАЛА окна перехода
-    /// (`joint − in_offset`): правка края окна открывает/прячет ключи,
-    /// как обрезка клипа, а не растягивает анимацию.
+    /// The curves of the PARAMETERS of the kind (R.34 K4) — the same mechanism as for
+    /// effects and cameras. The key position is a tick from the START of the transition window
+    /// (`joint − in_offset`): editing the edge of the window opens or hides keys,
+    /// as with a clip trim, rather than stretching the animation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub auto: Vec<ParamCurve>,
-    /// Инверсия перехода (Р.51, п.398): жест играется задом наперёд —
-    /// исполнители меняют стороны местами и обращают прогресс
-    /// (`kernel(b, a, 1−k)`), сам переход по-прежнему идёт из A в B.
-    /// Частные флаги видов (`Clock.reverse` — направление стрелки,
-    /// `Luma.invert` — порог яркости) — ДРУГИЕ оси, они остаются.
-    /// Умолчание не сериализуется — файлы прежних версий байт-стабильны.
+    /// The inversion of a transition (R.51, item 398): the gesture is played backward —
+    /// the executors swap the sides and reverse the progress
+    /// (`kernel(b, a, 1−k)`), the transition itself still goes from A to B.
+    /// The private flags of the kinds (`Clock.reverse` — the direction of the hand,
+    /// `Luma.invert` — the brightness threshold) are OTHER axes, they remain.
+    /// The default is not serialized — files of earlier versions are byte-stable.
     #[serde(default, skip_serializing_if = "is_false")]
     pub invert: bool,
 }
@@ -958,8 +958,8 @@ fn is_default_curve(c: &AudioCurve) -> bool {
 }
 
 impl TransitionEvent {
-    /// Вид с УЧЁТОМ кривых в позиции `local` (тик от начала окна).
-    /// Единственная точка разрешения — её зовут оба исполнителя рендера.
+    /// The kind WITH the curves taken into account at position `local` (a tick from the start of the window).
+    /// The only point of resolution — both render executors call it.
     pub fn kind_at(&self, local: Tick) -> TransitionKind {
         if self.auto.is_empty() {
             return self.kind.clone();
@@ -973,8 +973,8 @@ impl TransitionEvent {
         k
     }
 
-    /// Стык: конец `a`, а для фейд-ина — начало `b` (Р.25). None — оба конца
-    /// пропали; такое состояние живёт только внутри мутации до
+    /// The joint: the end of `a`, and for a fade-in — the start of `b` (R.25). None — both ends
+    /// have vanished; such a state lives only inside a mutation before
     /// reconcile_transitions.
     pub fn joint(&self, p: &dyn Reel) -> Option<Tick> {
         if let Some(a) = self.a.and_then(|id| p.clips().iter().find(|c| c.id == id)) {
@@ -984,22 +984,22 @@ impl TransitionEvent {
         Some(b.start)
     }
 
-    /// Фейд — переход с ОДНИМ живым концом: с той стороны, где `None`,
-    /// пустота (край дорожки или Gap), и слой уходит в прозрачность/тишину.
-    /// Эталонная библиотека трактует такой переход так же (dissolve с Gap).
+    /// A fade — a transition with ONE live end: on the side where `None` is, there is
+    /// emptiness (the track edge or a Gap), and the layer goes to transparency/silence.
+    /// The reference library treats such a transition the same way (dissolve with a Gap).
     pub fn is_fade(&self) -> bool {
         self.a.is_none() || self.b.is_none()
     }
 
-    /// Клип, к телу которого прилегает переход с обеих сторон окна.
+    /// A clip to whose body a transition is adjacent on both sides of the window.
     pub fn touches(&self, id: ClipId) -> bool {
         self.a == Some(id) || self.b == Some(id)
     }
 
-    /// Пара НАЛОЖЕННОГО перехода (Р.51, п.399): оба конца живы, одна
-    /// (kind, lane) и перекрытие «лесенкой» — a начался раньше и кончился
-    /// внутри b. Полное вложение и равные старты парой не считаются:
-    /// у такого расположения нет ни направления, ни осмысленного окна.
+    /// The pair of an OVERLAPPED transition (R.51, item 399): both ends are live, one
+    /// (kind, lane) and an overlap in a “staircase” — a started earlier and ended
+    /// inside b. A full nesting and equal starts are not counted as a pair:
+    /// such an arrangement has neither a direction nor a meaningful window.
     pub fn overlap_pair<'a>(&self, p: &'a dyn Reel) -> Option<(&'a ClipEvent, &'a ClipEvent)> {
         let a = p.clips().iter().find(|c| Some(c.id) == self.a)?;
         let b = p.clips().iter().find(|c| Some(c.id) == self.b)?;
@@ -1012,12 +1012,12 @@ impl TransitionEvent {
             .then_some((a, b))
     }
 
-    /// Полуоткрытое окно перехода на таймлайне. У стыкового — офсеты от
-    /// стыка; у наложенного (Р.51) окно — САМА зона перекрытия: режим не
-    /// хранится, окно следует за тримом клипов, собственных ручек у него
-    /// нет (урок Kdenlive из F-TL-010 — второй подсистемы окна не заводим).
-    /// `in/out_offset` в режиме наложения не используются (лежат мёртвым
-    /// грузом и оживают при возврате пары встык).
+    /// The half-open window of the transition on the timeline. For a joint one — the offsets from the
+    /// joint; for an overlapped one (R.51) the window is the overlap zone ITSELF: the mode is not
+    /// stored, the window follows the trim of the clips, it has no handles of its own
+    /// (the Kdenlive lesson from F-TL-010 — we do not introduce a second window subsystem).
+    /// `in/out_offset` are not used in the overlap mode (they lie as dead weight
+    /// and come back to life when the pair is joined again).
     pub fn window(&self, p: &dyn Reel) -> Option<TickRange> {
         if let Some((a, b)) = self.overlap_pair(p) {
             return Some(TickRange::new(b.start, a.start + a.duration));
@@ -1027,28 +1027,28 @@ impl TransitionEvent {
     }
 }
 
-/// ЛЕНТА МОНТАЖА: события и переходы между ними (Р.50, п.378).
+/// THE EDIT REEL: events and the transitions between them (R.50, item 378).
 ///
-/// Реализуют и корень проекта, и вложенная секвенция. Трейт существует
-/// ради одной вещи: вся геометрия переходов (`joint`, `window`,
-/// `check_transition_full`, `forbidden_zones`) обязана спрашивать ТУ
-/// ленту, на которой переход стоит. Переход, чьи концы лежат в секвенции,
-/// а сам он ищется среди корневых клипов, вернул бы `None` — и
-/// `reconcile_transitions` убил бы его на первой же команде.
+/// Both the project root and a nested sequence implement it. The trait exists
+/// for one thing: the whole geometry of transitions (`joint`, `window`,
+/// `check_transition_full`, `forbidden_zones`) must ask THE
+/// reel on which the transition stands. A transition whose ends lie in a sequence,
+/// while it itself is looked up among the root clips, would return `None` — and
+/// `reconcile_transitions` would kill it on the very first command.
 ///
-/// Взят трейт, а не структура-вид: тогда 29 существующих вызовов вида
-/// `t.joint(project)` продолжают компилироваться дословно, а новый путь
-/// просто передаёт `&Sequence`.
+/// A trait was taken, not a view structure: then the 29 existing calls of the kind
+/// `t.joint(project)` continue to compile verbatim, while the new path
+/// simply passes `&Sequence`.
 pub trait Reel {
     fn clips(&self) -> &[ClipEvent];
     fn transitions(&self) -> &[TransitionEvent];
-    /// Строки сверху вниз. Единственный способ узнать, что «ниже», и —
-    /// с Р.56 — то, чему обязан соответствовать НОМЕР дорожки.
+    /// Rows top to bottom. The only way to know what is “below”, and —
+    /// since R.56 — what the NUMBER of the track must correspond to.
     fn rows(&self) -> Vec<(LaneKind, u32)>;
-    /// Дорожки-объекты (Р.62).
+    /// Object tracks (R.62).
     fn tracks(&self) -> &[Track];
-    /// Остальное содержимое ленты. Умолчания — пустота: реализующий
-    /// обязан переопределить только то, что у него есть.
+    /// The rest of the content of the reel. The defaults are empty: the implementer
+    /// must override only what it has.
     fn morphers(&self) -> &[MorpherEvent] {
         &[]
     }
@@ -1061,20 +1061,20 @@ pub trait Reel {
     fn overlaps_allowed(&self) -> bool {
         true
     }
-    /// Объявленные наружу ручки (Р.59, стадия 3). У корня пусто по
-    /// смыслу: корень никому не экземпляр.
+    /// Handles declared outward (R.59, stage 3). The root is empty by
+    /// its meaning: the root is no one’s instance.
     fn published(&self) -> &[PublishedParam] {
         &[]
     }
 }
 
-/// Зоны, куда не встаёт граница морфер-слоя: окна переходов этого клипа
-/// и наезды соседей по дорожке. Резка там ломает не цель, а ОКРУЖЕНИЕ (Р.37).
+/// The zones where the boundary of a morpher layer does not stand: the transition windows of this clip
+/// and the overlaps of neighbors on the track. A cut there breaks not the target but the SURROUNDINGS (R.37).
 ///
-/// Свободная функция, а не метод трейта: `Reel` обязан оставаться
-/// объектно-безопасным (обход дерева лент ходит по `&dyn Reel`), а тело
-/// зовёт `t.joint(reel)` — коэрцию `&Self -> &dyn Reel` внутри
-/// провайд-метода сделать нечем.
+/// A free function, not a trait method: `Reel` must remain
+/// object-safe (the walk of the reel tree goes through `&dyn Reel`), while the body
+/// calls `t.joint(reel)` — there is no way to do the coercion `&Self -> &dyn Reel` inside
+/// a provided method.
 pub fn forbidden_zones(reel: &dyn Reel, c: &ClipEvent) -> Vec<TickRange> {
     let body = TickRange::new(c.start, c.start + c.duration);
     let mut out = Vec::new();
@@ -1082,7 +1082,7 @@ pub fn forbidden_zones(reel: &dyn Reel, c: &ClipEvent) -> Vec<TickRange> {
         if t.a != Some(c.id) && t.b != Some(c.id) {
             continue;
         }
-        // у наложенного перехода (Р.51) окно — зона перекрытия
+        // for an overlapped transition (R.51) the window is the overlap zone
         let Some(w) = t.window(reel) else { continue };
         let z = w.intersect(&body);
         if !z.is_empty() {
@@ -1101,10 +1101,10 @@ pub fn forbidden_zones(reel: &dyn Reel, c: &ClipEvent) -> Vec<TickRange> {
     out
 }
 
-// ---- РАСКРЫТИЕ ЛЕНТЫ НА МЕСТЕ (Р.55, С5) -----------------------------------
+// ---- EXPANDING A REEL IN PLACE (R.55, C5) -----------------------------------
 
-/// Сколько дорожек каждого вида. Служит и «где начинается полоса», и
-/// «сколько её».
+/// How many tracks of each kind. It serves both as “where the band starts” and
+/// “how big it is”.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct LaneBases {
     pub video: u32,
@@ -1149,60 +1149,60 @@ impl LaneBases {
     }
 }
 
-/// ПОЛОСА РАСКРЫТИЯ: лента, разложенная на дорожки корня ПРЯМО ПОД своим
-/// экземпляром (Р.55, С5).
+/// THE BAND OF EXPANSION: a reel laid out onto the root tracks RIGHT BELOW its own
+/// instance (R.55, C5).
 ///
-/// Приём тот же, что у `swap_reel` (п.392), и по той же причине: контекст
-/// правки делается ПЕРЕКЛАДЫВАНИЕМ СОДЕРЖИМОГО, а не параметром у
-/// шестидесяти рук. Только здесь перекладывание идёт СО СМЕЩЕНИЕМ — по
-/// времени и по номеру дорожки:
+/// The technique is the same as in `swap_reel` (item 392), and for the same reason: the context
+/// of an edit is made by SWAPPING THE CONTENT, rather than by a parameter in
+/// sixty hands. Only here the swap goes WITH AN OFFSET — in
+/// time and in track number:
 ///
 /// ```text
-/// t_корня = t_ленты + dt,   dt = inst.start − inst.source_in
-/// дорожка = своя + base[вид], base[вид] = сколько дорожек этого вида у корня
+/// t_root = t_reel + dt,   dt = inst.start − inst.source_in
+/// track = its own + base[kind], base[kind] = how many tracks of this kind the root has
 /// ```
 ///
-/// Что из этого следует и ради чего всё затевалось: **отрисовка, хит-тест,
-/// снап, магнит, рамка, выделение, `rows()`, `MovePlan`, `forbidden_zones`
-/// и `reconcile_transitions` не меняются ни на строку**. События полосы
-/// физически лежат в корневых векторах, поэтому `TrimStart{id}` приходит
-/// на них обычным путём, и «пропустил одно место — правка молча уехала в
-/// корень» стать не может: уехать физически нечем, а нарушение ловит
-/// `unmerge_reel` и отвергает весь батч.
+/// What follows from this and why it was all undertaken: **drawing, hit testing,
+/// snapping, magnet, frame, selection, `rows()`, `MovePlan`, `forbidden_zones`
+/// and `reconcile_transitions` do not change by a single line**. The events of the band
+/// physically lie in the root vectors, therefore `TrimStart{id}` reaches
+/// them by the ordinary path, and “we missed one place — the edit silently drifted into
+/// the root” cannot happen: there is nothing to drift physically with, and the violation is caught by
+/// `unmerge_reel`, which rejects the whole batch.
 ///
-/// Полоса занимает ХВОСТ числового пространства дорожек, а видимое место
-/// под экземпляром задаётся только через `lane_order`. Тогда корневые
-/// номера все `< base`, номера полосы все `>= base`, и вставка/удаление
-/// дорожки в корне не трогает полосу — по построению, а не по проверке.
+/// The band occupies the TAIL of the numeric space of the tracks, while the visible place
+/// under the instance is set only through `lane_order`. Then the root
+/// numbers are all `< base`, the band numbers are all `>= base`, and an insertion/deletion
+/// of a track in the root does not touch the band — by construction, not by a check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Band {
-    /// Через какой экземпляр раскрыто.
+    /// Through which instance it is expanded.
     pub inst: ClipId,
-    /// Какая лента разложена.
+    /// Which reel is laid out.
     pub seq: MediaId,
-    /// Сдвиг по времени: `t_корня = t_ленты + dt`.
+    /// The time shift: `t_root = t_reel + dt`.
     pub dt: Tick,
-    /// С какого номера начинаются дорожки полосы.
+    /// From which number the tracks of the band start.
     pub base: LaneBases,
-    /// Сколько их.
+    /// How many of them.
     pub len: LaneBases,
 }
 
 impl Band {
-    /// Полоса для экземпляра `inst`. `None` — это не вложение.
+    /// The band for the instance `inst`. `None` — this is not an attachment.
     ///
-    /// `dt` инвариантен под тримом: `TrimStart`/`TrimEnd` двигают `start` и
-    /// `source_in` на ОДНУ дельту (`clip_slice`), поэтому при перетаскивании
-    /// края экземпляра содержимое полосы не едет по экрану — окно
-    /// открывается над неподвижным материалом. Ровно этот жест владелец и
-    /// просил: «тянуть край можно прямо здесь».
+    /// `dt` is invariant under a trim: `TrimStart`/`TrimEnd` move `start` and
+    /// `source_in` by ONE delta (`clip_slice`), so when the edge of the instance is dragged
+    /// the content of the band does not move on screen — the window
+    /// opens over motionless material. Exactly this gesture the owner
+    /// asked for: “the edge can be pulled right here”.
     pub fn of(p: &Project, inst: ClipId) -> Option<Band> {
         let c = p.clips.iter().find(|c| c.id == inst)?;
         let s = p.sequence(c.media)?;
-        // Блок дорожек ленты встаёт СРАЗУ ПОД строкой экземпляра (Р.62,
-        // change B: дорожки — объекты, номер = ранг вектора). Значит
-        // первая дорожка полосы каждого вида получает ранг «сколько
-        // строк этого вида стоит не ниже экземпляра».
+        // The block of the reel’s tracks lands RIGHT BELOW the instance row (R.62,
+        // change B: tracks are objects, number = rank of the vector). Therefore
+        // the first track of the band of each kind gets the rank “how many
+        // rows of this kind stand not below the instance”.
         let rows = p.rows();
         let at = rows.iter().position(|&k| k == lane_key(c)).map(|i| i + 1).unwrap_or(rows.len());
         let mut base = LaneBases::default();
@@ -1218,20 +1218,20 @@ impl Band {
         })
     }
 
-    /// Окно экземпляра в координатах КОРНЯ: что из полосы видно, а что —
-    /// хвост за обрезкой.
+    /// The window of the instance in the coordinates of the ROOT: what of the band is visible, and what —
+    /// the tail beyond the crop.
     pub fn window(&self, p: &Project) -> Option<TickRange> {
         let c = p.clips.iter().find(|c| c.id == self.inst)?;
         Some(TickRange::new(c.start, c.start + c.duration))
     }
 
-    /// Принадлежит ли дорожка полосе.
+    /// Whether the track belongs to the band.
     pub fn owns(&self, kind: LaneKind, lane: u32) -> bool {
         let b = self.base.get(kind);
         lane >= b && lane < b + self.len.get(kind)
     }
 
-    /// Строки полосы в номерах КОРНЯ, сверху вниз по видам.
+    /// The rows of the band in the ROOT numbers, top to bottom by kind.
     pub fn rows(&self) -> Vec<(LaneKind, u32)> {
         let mut out = Vec::new();
         for k in [LaneKind::Video, LaneKind::Audio, LaneKind::Morph, LaneKind::Camera] {
@@ -1245,11 +1245,11 @@ impl Band {
 }
 
 impl Project {
-    /// Разложить ленту экземпляра на дорожки корня СО СМЕЩЕНИЕМ (Р.55, С5).
+    /// Lay out the instance’s reel onto the root tracks WITH AN OFFSET (R.55, C5).
     ///
-    /// Тело ленты ОПУСТОШАЕТСЯ: события переехали, а не скопировались —
-    /// поэтому `max_clip_id` и родня продолжают видеть каждый адрес ровно
-    /// один раз (п.394), и `unmerge_reel` возвращает всё на место.
+    /// The body of the reel is EMPTIED: the events moved rather than were copied —
+    /// therefore `max_clip_id` and its kin continue to see each address exactly
+    /// once (item 394), and `unmerge_reel` puts everything back in place.
     pub fn merge_reel(&mut self, b: &Band) {
         let Some(i) = self.sequences.iter().position(|s| s.id == b.seq) else { return };
         let (mut clips, mut trans, mut morphs, mut cams, tracks) = {
@@ -1262,8 +1262,8 @@ impl Project {
                 std::mem::take(&mut s.tracks),
             )
         };
-        // корневое содержимое ниже блока полосы сдвигается на его длину:
-        // номер = ранг, а блок встаёт между
+        // the root content below the band block is shifted by its length:
+        // number = rank, and the block lands between
         let shift =
             |k: LaneKind, lane: u32| if lane >= b.base.get(k) { lane + b.len.get(k) } else { lane };
         for c in &mut self.clips {
@@ -1299,8 +1299,8 @@ impl Project {
         self.transitions.append(&mut trans);
         self.morphers.append(&mut morphs);
         self.cameras.append(&mut cams);
-        // СТРОКИ ПОЛОСЫ встают неразрывным блоком СРАЗУ ПОД строкой
-        // экземпляра
+        // THE ROWS OF THE BAND land as an unbroken block RIGHT BELOW the row
+        // of the instance
         let rows = self.rows();
         let at = self
             .clips
@@ -1314,23 +1314,23 @@ impl Project {
         }
     }
 
-    /// Собрать ленту обратно — С ДОКАЗАТЕЛЬСТВОМ, что никто не сменил полосу.
+    /// Assemble the reel back — WITH PROOF that no one changed the band.
     ///
-    /// Ошибка здесь — не мелочь, а сторож всей конструкции: она означает,
-    /// что жест вынес событие через границу лент, и батч обязан быть
-    /// отвергнут ЦЕЛИКОМ, а не «доправлен». Именно поэтому адресация
-    /// правок не нужна: уехать физически нечем, а попытку ловит вот это
-    /// место.
+    /// An error here is not a trifle but the guard of the whole construction: it means
+    /// that a gesture carried an event across the boundary of reels, and the batch must be
+    /// rejected ENTIRELY, rather than “patched up”. That is exactly why
+    /// addressing of edits is not needed: there is nothing to drift away physically with,
+    /// and the attempt is caught by exactly this place.
     pub fn unmerge_reel(&mut self, b: &Band) -> Result<(), ProjectError> {
         if !self.sequences.iter().any(|s| s.id == b.seq) {
-            return Ok(()); // ленты уже нет (undo) — разбирать нечего
+            return Ok(()); // the reel no longer exists (undo) — there is nothing to unmerge
         }
         let mine_clip = |c: &ClipEvent| b.owns(lane_key(c).0, c.lane);
         let (mut inner, root): (Vec<ClipEvent>, Vec<ClipEvent>) =
             std::mem::take(&mut self.clips).into_iter().partition(mine_clip);
         self.clips = root;
-        // ЭКЗЕМПЛЯР обязан остаться в корне: утащи его внутрь — лента
-        // стала бы содержать саму себя
+        // The INSTANCE must remain in the root: drag it inside — the reel
+        // would come to contain itself
         if inner.iter().any(|c| c.id == b.inst) {
             return Err(ProjectError::BandEscape(b.inst));
         }
@@ -1344,9 +1344,9 @@ impl Project {
                 .into_iter()
                 .partition(|c| b.owns(LaneKind::Camera, c.lane));
         self.cameras = root_c;
-        // ПЕРЕХОД целиком либо в полосе, либо в корне: конец по одну
-        // сторону границы — это переход через границу лент, которого в
-        // модели не бывает (Р.50, t425)
+        // A TRANSITION is either entirely in the band or in the root: an end on one side of
+        // the boundary is a transition across the boundary of reels, which does not occur in the
+        // model (R.50, t425)
         let inner_ids: std::collections::HashSet<ClipId> = inner.iter().map(|c| c.id).collect();
         let mut trans = Vec::new();
         let mut root_t = Vec::new();
@@ -1373,7 +1373,7 @@ impl Project {
             c.start = c.start - b.dt;
             c.lane -= b.base.camera;
         }
-        // корневое содержимое ниже блока возвращается на свои номера
+        // the root content below the block returns to its numbers
         let unshift = |k: LaneKind, lane: u32| {
             if lane >= b.base.get(k) + b.len.get(k) { lane - b.len.get(k) } else { lane }
         };
@@ -1394,8 +1394,8 @@ impl Project {
                 e.1 = unshift(e.0, e.1);
             }
         }
-        // ДОРОЖКИ полосы возвращаются ленте в порядке строк; у корня
-        // остаётся его вектор без блока
+        // the TRACKS of the band are returned to the reel in the order of the rows; the root
+        // keeps its vector without the block
         let rows = self.rows();
         let mut band_tracks = Vec::new();
         let mut root_tracks = Vec::new();
@@ -1421,44 +1421,44 @@ impl Project {
     }
 }
 
-/// Старший бит адреса медиа отдан вложенным лентам (Р.50).
+/// The high bit of the media address is given to nested reels (R.50).
 ///
-/// Движку нужен ОДИН `SourceId` на ленту — ключ кэша, ключ мемоизации
-/// пост-FX, адрес в перф-панели. Он берётся как `NEST_TAG | seq`, поэтому
-/// адрес настоящего файла обязан лежать ниже: иначе файл и секвенция
-/// молча поделили бы кэш. Проверяется в `validate`.
+/// The engine needs ONE `SourceId` per reel — the cache key, the post-FX memoization key,
+/// the address in the perf panel. It is taken as `NEST_TAG | seq`, therefore
+/// the address of a real file must lie below: otherwise the file and the sequence would
+/// silently share the cache. Checked in `validate`.
 pub const NEST_TAG: u64 = 1 << 63;
 
-/// Следующий бит адреса медиа отдан ГЕНЕРАТОРУ НА СОБЫТИИ (Р.59, стадия 2).
+/// The next bit of the media address is given to the GENERATOR ON THE EVENT (R.59, stage 2).
 ///
-/// Значения генератора живут на клипе, значит и источник у каждого клипа
-/// СВОЙ: адрес берётся как `GEN_TAG | id` события. Адрес считается от
-/// СОБЫТИЯ, а не от значений — он входит в план, и хэш значений в нём
-/// означал бы пересборку плана на каждое нажатие клавиши (ровно то, что
-/// владелец назвал «ужасно» в Р.53). Форма заказа `(адрес, тик,
-/// качество)` не меняется, поэтому «заказ == чтение», полоски
-/// прогретости, префетч и экспорт-чанки работают без правок.
+/// The values of the generator live on the clip, so the source of each clip is ITS OWN:
+/// the address is taken as `GEN_TAG | id` of the event. The address is computed from the
+/// EVENT, not from the values — it enters the plan, and a hash of the values in it would
+/// mean rebuilding the plan on every keystroke (exactly what the owner called “terrible” in R.53).
+/// The shape of the order `(address, tick, quality)` does not change,
+/// therefore
+/// “order == read”, the coverage bars, prefetch and export chunks work without edits.
 ///
-/// Тег обязан лежать НИЖЕ `NEST_TAG` и ВЫШЕ любого id клипа — включая
-/// синтетические id кусков морфер-слоя (`slice_id`). Это и держит
-/// `const _` ниже.
+/// The tag must lie BELOW `NEST_TAG` and ABOVE any clip id — including the
+/// synthetic ids of the pieces of the morpher layer (`slice_id`). This is what keeps
+/// the `const _` below.
 pub const GEN_TAG: u64 = 1 << 62;
 
-/// Следующий бит адреса медиа отдан СУБ-КОМПОЗИТУ ДОРОЖКИ (Р.62, change
-/// B). Дорожка с цепочкой, уровнем ≠ 1 или режимом наложения ≠ Normal
-/// входит в план ОДНИМ слоем-вложением, и её суб-композиту нужен свой
-/// `SourceId` — ключ мемоизации и ключ GPU-плана. Настоящей ленты у неё
-/// нет, поэтому адрес синтетический: `NEST_TAG | TRACK_TAG | id дорожки`.
+/// The next bit of the media address is given to the SUB-COMPOSITE OF A TRACK (R.62, change
+/// B). A track with a chain, a level ≠ 1 or a blend mode ≠ Normal
+/// enters the plan as ONE nesting layer, and its sub-composite needs its own
+/// `SourceId` — the memoization key and the GPU plan key. It has no real reel,
+/// so the address is synthetic: `NEST_TAG | TRACK_TAG | id of the track`.
 ///
-/// Бит лежит НИЖЕ `NEST_TAG` и выше любого адреса ленты: адреса лент —
-/// это `MediaId` документа, они меньше `TRACK_TAG` по построению
-/// (`validate` отвергает `MediaId >= NEST_TAG`, а id дорожек растут с 1).
+/// The bit lies BELOW `NEST_TAG` and above any reel address: the reel addresses are
+/// the `MediaId`s of the document, they are smaller than `TRACK_TAG` by construction
+/// (`validate` rejects `MediaId >= NEST_TAG`, and track ids grow from 1).
 pub const TRACK_TAG: u64 = 1 << 61;
 
-/// Адрес суб-композита дорожки в пространстве медиа.
-/// КЛЮЧИ САЙДЧЕЙНА цепочки (Р.65): у каких приборов назначен второй вход.
-/// Один дом ответа «что такое ключ в цепочке» — его спрашивают и проверка
-/// команды, и движок, и формат.
+/// The address of the track’s sub-composite in the media space.
+/// SIDECHAIN KEYS of the chain (R.65): which devices have a second input assigned.
+/// One home for the answer to “what is a key in the chain” — it is asked by both the check
+/// of the command, and the engine, and the format.
 pub fn sidechain_keys(fx: &[FxInstance]) -> impl Iterator<Item = TrackId> + '_ {
     fx.iter().filter_map(|f| match f {
         FxInstance::Compressor { key, .. } => *key,
@@ -1466,12 +1466,12 @@ pub fn sidechain_keys(fx: &[FxInstance]) -> impl Iterator<Item = TrackId> + '_ {
     })
 }
 
-/// Замкнётся ли граф ключей, если у дорожки `target` встанет цепочка `fx`.
+/// Whether the key graph closes if the track `target` gets the chain `fx`.
 ///
-/// Цикл невозможно исполнить: кадр дорожки зависел бы сам от себя. Поэтому
-/// он отвергается ПРИ ЗАПИСИ (движок страхуется своим обрывом рекурсии).
+/// A cycle cannot be executed: the frame of the track would depend on itself. Therefore
+/// it is rejected AT WRITE TIME (the engine insures itself with its own recursion break).
 pub fn sidechain_cycle(tracks: &[Track], target: TrackId, fx: &[FxInstance]) -> bool {
-    // обход от каждого ключа предлагаемой цепочки: дошли до target — цикл
+    // a walk from each key of the proposed chain: if it reaches target — a cycle
     let keys_of = |id: TrackId| -> Vec<TrackId> {
         if id == target {
             return sidechain_keys(fx).collect();
@@ -1501,41 +1501,41 @@ pub fn track_source_media(id: TrackId) -> MediaId {
     MediaId(TRACK_TAG | id.0)
 }
 
-/// Предел глубины вложенности (Р.50, п.378).
+/// The depth limit of nesting (R.50, item 378).
 ///
-/// Число ПОСЧИТАНО, а не выбрано круглым: в момент композита уровня в
-/// памяти видеокарты живы два аккумулятора этого уровня плюс по
-/// аккумулятору и результату на каждого предка — около 25 МиБ на уровень
-/// при 1080p, при бюджете временных текстур 128 МиБ (kt-gpu). Предел
-/// стоит и здесь (жёстко, с именами лент в тексте ошибки), и в
-/// исполнителе (аккуратный `TooLarge` с откатом на CPU).
+/// The number is COMPUTED, not picked as a round one: at the moment of the composite of a level, two
+/// accumulators of this level are alive in the video card’s memory, plus one
+/// accumulator and one result per ancestor — about 25 MiB per level
+/// at 1080p, against a temporary texture budget of 128 MiB (kt-gpu). The limit
+/// stands here too (hard, with the reel names in the error text), and in
+/// the executor (a graceful `TooLarge` with a fallback to the CPU).
 pub const MAX_NEST_DEPTH: usize = 4;
 
-/// Вложенная секвенция — лента, на которую ССЫЛАЮТСЯ (Р.50, п.378).
+/// Nested sequence — a reel that is REFERENCED (R.50, item 378).
 ///
-/// Своих настроек у неё НЕТ — ни fps, ни растра, ни частоты: вложение
-/// наследует родителя (прямое решение владельца). Из этого следует
-/// главное техническое свойство раунда: промежуточного растра не
-/// возникает, поэтому **вложение с пустой цепочкой тождественно своему
-/// развёрнутому содержимому**, и раскрытие в `effective_clips` служит
-/// эталоном-оракулом для настоящего поддерева плана.
+/// It has NO settings of its own — no fps, no raster, no rate: a nested clip
+/// inherits from its parent (a direct decision of the owner). It follows that
+/// the round's main technical property is this: no intermediate raster arises,
+/// so **a nested clip with an empty chain is identical to its expanded content**,
+/// and the expansion in `effective_clips` serves as the reference
+/// oracle for the real subtree of the plan.
 ///
-/// Адрес — `MediaId` в ОДНОМ пространстве с медиа: `ClipEvent.media`
-/// указывает либо на файл (`Project.media`), либо на ленту
-/// (`Project.sequences`). `MediaRef`-а у секвенции НЕТ намеренно — иначе
-/// `build_player` поднял бы на неё `MediaWorker`, watchdog покрасил бы её
-/// тинтом офлайна, а служба индекса полезла бы строить пики ffmpeg'ом.
-/// Перечисленные пути перебирают `project.media`, где секвенций нет, и
-/// остаются правильными ПО ПОСТРОЕНИЮ.
+/// The address is a `MediaId` in ONE space together with media: `ClipEvent.media`
+/// points either to a file (`Project.media`) or to a reel
+/// (`Project.sequences`). The sequence has NO `MediaRef` on purpose — otherwise
+/// `build_player` would raise a `MediaWorker` for it, the watchdog would tint it
+/// with the offline tint, and the index service would start building ffmpeg peaks for it.
+/// The listed paths iterate `project.media`, where there are no sequences, and
+/// remain correct BY CONSTRUCTION.
 ///
-/// Имя — подпись, а НЕ адрес (в отличие от `MarkedArea`): переименование
-/// не имеет шанса порвать ссылку, а дедупликация тел при записи в .otio
-/// опирается на устойчивый ключ, переживающий переименование.
+/// The name is a label, NOT an address (unlike `MarkedArea`): renaming
+/// has no chance to break the link, and deduplication of bodies when writing to .otio
+/// relies on a stable key that survives renaming.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Sequence {
     pub id: MediaId,
-    /// Подпись в бине и `Stack.name` в файле. Непустая (иначе в бине
-    /// карточка без подписи), но НЕ обязана быть уникальной.
+    /// Label in the bin and `Stack.name` in the file. Non-empty (otherwise a card in the bin would have no label),
+    /// but NOT required to be unique.
     pub name: String,
     pub clips: Vec<ClipEvent>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1544,7 +1544,7 @@ pub struct Sequence {
     pub morphers: Vec<MorpherEvent>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cameras: Vec<CameraEvent>,
-    /// Дорожки ленты — те же объекты, что у корня (Р.62).
+    /// The reel's tracks are the same objects as the root's (R.62).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tracks: Vec<Track>,
     #[serde(default, rename = "video_lanes", skip_serializing)]
@@ -1559,18 +1559,18 @@ pub struct Sequence {
     pub legacy_lane_order: Vec<(LaneKind, u32)>,
     #[serde(default = "default_true")]
     pub overlap_layers: bool,
-    /// Объявленные наружу ручки ленты (Р.59, стадия 3). Пустой список не
-    /// сериализуется — лента без публикаций ведёт себя и пишется как
-    /// сегодня, байт в байт.
+    /// Externally declared handles of the reel (R.59, stage 3). An empty list is not
+    /// serialized — a reel without publications behaves and is written as it is today,
+    /// byte for byte.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub published: Vec<PublishedParam>,
-    /// СВОЙ растр ленты (Р.62, пересмотр Р.50 по просьбе владельца).
-    /// `None` — проект. Экземпляр приводится в кадр родителя тем же
-    /// правилом, что файл, с видом = растр ленты.
+    /// The reel's OWN raster (R.62, a revision of R.50 at the owner's request).
+    /// `None` — the project. The instance is conformed to the parent frame by the same
+    /// rule as a file, with view = the reel's raster.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raster: Option<(u32, u32)>,
-    /// СВОЙ fps ленты: квантование её непрерывного времени к своей сетке
-    /// (кадр держится, без смешения). `None` — проект. На звук не влияет.
+    /// The reel's OWN fps: quantization of its continuous time to its own grid
+    /// (a frame is held, no blending). `None` — the project. Does not affect sound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fps: Option<u32>,
 }
@@ -1584,8 +1584,8 @@ impl Sequence {
             transitions: Vec::new(),
             morphers: Vec::new(),
             cameras: Vec::new(),
-            // id назначает `Project::assign_track_ids`: у ленты нет доступа к
-            // пространству id документа
+            // ids are assigned by `Project::assign_track_ids`: a reel has no access to
+            // the document's id space
             tracks: vec![
                 Track::new(TrackId(0), LaneKind::Video),
                 Track::new(TrackId(0), LaneKind::Audio),
@@ -1620,7 +1620,7 @@ impl Sequence {
             .unwrap_or_else(|| default_lane_label(kind, lane))
     }
 
-    /// Дописать дорожки вида до `n` штук (в конец строк).
+    /// Append tracks of the kind up to `n` items (at the end of the rows).
     pub fn ensure_tracks(&mut self, kind: LaneKind, n: u32) {
         while self.lanes(kind) < n {
             let at = natural_insert_pos(&self.tracks, kind);
@@ -1628,7 +1628,7 @@ impl Sequence {
         }
     }
 
-    /// Легаси-счётчики и порядок ленты → вектор дорожек (односторонне).
+    /// Legacy counters and reel order → track vector (one-way).
     fn legacy(&self) -> LegacyLanes {
         LegacyLanes {
             video_lanes: self.legacy_video_lanes,
@@ -1647,7 +1647,7 @@ impl Sequence {
         self.legacy_lane_order = Vec::new();
     }
 
-    /// Сколько дорожек каждого вида ТРЕБУЕТ содержимое.
+    /// How many tracks of each kind the content REQUIRES.
     fn needed(&self) -> LaneBases {
         let mut n = LaneBases::default();
         for c in &self.clips {
@@ -1663,8 +1663,8 @@ impl Sequence {
         n
     }
 
-    /// Свои настройки законны? Растр — чётный в пределах 16…8192, fps —
-    /// делитель 90 000 в пределах 1…120 (та же проверка, что у проекта).
+    /// Are its own settings legal? Raster — even, within 16…8192; fps —
+    /// a divisor of 90 000 within 1…120 (the same check as for the project).
     pub fn settings_ok(&self) -> bool {
         let raster_ok = self.raster.is_none_or(|(w, h)| {
             [w, h].iter().all(|v| (16..=8192).contains(v) && v.is_multiple_of(2))
@@ -1674,19 +1674,19 @@ impl Sequence {
         raster_ok && fps_ok
     }
 
-    /// Строки ленты сверху вниз — то же правило, что у корня.
+    /// Reel rows top to bottom — the same rule as for the root.
     pub fn rows(&self) -> Vec<(LaneKind, u32)> {
         rows_of_tracks(&self.tracks)
     }
 
-    /// Конец содержимого ленты.
+    /// End of the reel's content.
     pub fn end(&self) -> Tick {
         self.clips.iter().map(|c| c.start + c.duration).max().unwrap_or(Tick::ZERO)
     }
 
-    /// Дорожки ленты из легаси-полей (счётчики, `lane_order`) — на ЧТЕНИИ,
-    /// односторонне; затем дописать до содержимого. Имена служебных строк
-    /// ленты старый формат не хранил.
+    /// Reel tracks from legacy fields (counters, `lane_order`) — on READ,
+    /// one-way; then append up to the content. Names of service rows
+    /// were not stored by the old format.
     pub fn canonicalize_lanes(&mut self) -> LanePerm {
         let need = self.needed();
         let perm = if self.tracks.is_empty() {
@@ -1705,7 +1705,7 @@ impl Sequence {
         perm
     }
 
-    /// Единственная дверь перестановки строк ленты — см. `Project::set_lane_order`.
+    /// The only door for reordering reel rows — see `Project::set_lane_order`.
     pub fn reorder_rows(&mut self, order: &[(LaneKind, u32)]) -> LanePerm {
         let n = LaneBases::of_seq(self);
         let norm = normalize_lane_order(order, n.video, n.audio, n.morph, n.camera);
@@ -1787,19 +1787,19 @@ impl Reel for Sequence {
     }
 }
 
-/// На что смотрит `ClipEvent.media` — ЕДИНСТВЕННЫЙ ответ на вопрос
-/// «файл это или лента» (Р.50, п.378). Заведён по образцу `lane_key`:
-/// отображение, выписанное в шести местах, рано или поздно разъезжается.
+/// What `ClipEvent.media` points to — the ONLY answer to the question
+/// “file or reel” (R.50, item 378). Introduced after the pattern of `lane_key`:
+/// a mapping written out in six places sooner or later drifts apart.
 pub enum Source<'a> {
     File(&'a MediaRef),
     Seq(&'a Sequence),
 }
 
-/// Чужая OTIO-конструкция, которую мы не рендерим (неизвестная схема,
-/// вложенный Stack, выключенный клип) — серый плейсхолдер (Р.24 п.5).
-/// Занимает место на дорожке (участвует в проверке перекрытий), удалять
-/// можно (undo работает), двигать нельзя: сырьё пишется обратно нетронутым.
-/// `key` — ключ сырого JSON в Retained (kt-otio).
+/// A foreign OTIO construct that we do not render (unknown schema,
+/// nested Stack, disabled clip) — a grey placeholder (R.24 item 5).
+/// It takes a place on the track (takes part in the overlap check); it can be deleted
+/// (undo works), but cannot be moved: the raw data is written back untouched.
+/// `key` — the key of the raw JSON in Retained (kt-otio).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ForeignEvent {
     pub key: u64,
@@ -1815,22 +1815,22 @@ pub struct Project {
     pub settings: ProjectSettings,
     pub media: Vec<MediaRef>,
     pub clips: Vec<ClipEvent>,
-    /// Маркеры (сортированы по времени, без дублей). У метки может быть
-    /// имя (п.1 р.10); старые проекты с массивом чисел читаются как есть.
+    /// Markers (sorted by time, no duplicates). A marker may have a
+    /// name (item 1 of round 10); old projects with an array of numbers are read as they are.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub markers: Vec<Marker>,
-    /// Выделенный регион таймлайна (вне undo-истории, как в старом редакторе).
+    /// The selected timeline region (outside the undo history, as in the old editor).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<Region>,
-    /// Loop по региону (вне undo).
+    /// Loop over the region (outside undo).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub loop_enabled: bool,
-    /// ДОРОЖКИ — объекты сверху вниз (Р.62, change B): порядок вектора =
-    /// порядок строк, номер события = ранг среди дорожек своего вида.
-    /// Пустые дорожки полноценны. На загрузке дописывается вверх до
-    /// max(lane содержимого)+1 и не меньше одной видео и одной аудио.
-    /// Счётчики и `lane_order` прежних раундов — `legacy_*`, только на
-    /// чтение.
+    /// TRACKS — objects top to bottom (R.62, change B): the vector order =
+    /// row order; the event number = rank among the tracks of its kind.
+    /// Empty tracks are full-fledged. On load they are appended upward up to
+    /// max(lane of the content)+1 and not fewer than one video and one audio.
+    /// Counters and `lane_order` of earlier rounds are `legacy_*`, read-only
+    /// access.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tracks: Vec<Track>,
     #[serde(default, rename = "video_lanes", skip_serializing)]
@@ -1841,70 +1841,70 @@ pub struct Project {
     pub legacy_morph_lanes: u32,
     #[serde(default, rename = "lane_order", skip_serializing)]
     pub legacy_lane_order: Vec<(LaneKind, u32)>,
-    /// Morph-события. Применяются к клипам в `effective_clips()`.
+    /// Morph events. Applied to clips in `effective_clips()`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub morphers: Vec<MorpherEvent>,
-    /// Переходы на стыках клипов (Р.24: кроссфейд — явный объект, не
-    /// перекрытие).
+    /// Transitions at clip joins (R.24: a crossfade is an explicit object, not an
+    /// overlap).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub transitions: Vec<TransitionEvent>,
-    /// Плейсхолдеры чужих OTIO-конструкций (появляются только из импорта).
+    /// Placeholders for foreign OTIO constructs (they appear only from import).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub foreign: Vec<ForeignEvent>,
-    /// Вложенные ленты (Р.50, п.378). Пусто — проект плоский, и ВСЕ
-    /// быстрые пути (validate, effective_clips, писатель формата)
-    /// остаются в точности прежними: на этом стоят GOLDEN и байтовая
-    /// стабильность файлов без вложений.
+    /// Nested reels (R.50, item 378). Empty — the project is flat, and ALL
+    /// fast paths (validate, effective_clips, the format writer)
+    /// remain exactly as before: GOLDEN and byte-level stability
+    /// of files without nesting rest on this.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sequences: Vec<Sequence>,
-    /// Состояние вьюпорта редактора (п.13, порт v1: timelineViewStartMs/
-    /// zoomLevel/cursorMs). Вне undo-истории (как region); старые файлы
-    /// без секции читаются как None.
+    /// Editor viewport state (item 13, v1 port: timelineViewStartMs/
+    /// zoomLevel/cursorMs). Outside the undo history (like region); old files
+    /// without the section are read as None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ui: Option<UiState>,
-    /// Переслаивание клипов на одной дорожке (Р.28, решение пользователя:
-    /// «опция проекта, которая позволит переслаивать несколько событий одной
-    /// дорожки одновременно… включи её по умолчанию»). Включено — перекрытия
-    /// законны и звучат как в v1 (equal-power на двоих, 1/N при 3+), наезд
-    /// драгом НИЧЕГО не режет. Выключено — прежний инвариант Р.24: клипы
-    /// одной (kind, lane) не перекрываются.
+    /// Layering clips on one track (R.28, the user's decision:
+    /// “a project option that allows several events of one
+    /// track to be layered at the same time… turn it on by default”). When on, overlaps
+    /// are legal and sound as in v1 (equal-power for two, 1/N for 3+); dragging over
+    /// cuts NOTHING. When off — the former R.24 invariant: clips
+    /// of one (kind, lane) do not overlap.
     #[serde(default = "default_true")]
     pub overlap_layers: bool,
-    /// Трим РАСТЯГИВАЕТ анимацию вместе с событием (Р.40, решение
-    /// пользователя: «Ну можно НЕ по умолчанию сделать такое поведение
-    /// да»). ВЫКЛЮЧЕНО по умолчанию, и это главное: ключ стоит на своём
-    /// кадре материала, куда бы ни ехал край события — ровно то, что
-    /// пользователь и просил («вот как сделать так чтобы он НЕ съезжал
-    /// никуда хоть я левый край двигаю влево хоть в право»).
+    /// A trim STRETCHES the animation together with the event (R.40, the user's
+    /// decision: “Well, it could be made NOT the default behaviour
+    /// yes”). OFF by default, and that is the main point: the keyframe stays on its own
+    /// frame of the material, wherever the event edge travels — exactly what
+    /// the user asked for (“how to make it NOT slide
+    /// anywhere, even if I move the left edge left or right”).
     ///
-    /// Включённая опция нужна для другой манеры работы — «анимация от
-    /// начала события»: тогда доля ключа внутри события сохраняется, а
-    /// кадр материала под ним меняется.
+    /// The enabled option is needed for another way of working — “animation from
+    /// the start of the event”: then the keyframe's share within the event is preserved, and
+    /// the material frame under it changes.
     #[serde(default, skip_serializing_if = "is_false")]
     pub trim_stretches_auto: bool,
-    /// Монтажная длина таймлайна, когда она БОЛЬШЕ материала: чужие файлы
-    /// задают её хвостовым Gap'ом после последнего клипа (решение
-    /// пользователя Р.25 — «хранить длину, рендерить до конца», иначе
-    /// сохранение молча укорачивало чужой монтаж). None — длина по клипам.
+    /// Editing length of the timeline when it is LONGER than the material: foreign files
+    /// set it with a trailing Gap after the last clip (the user's decision
+    /// of R.25 — “keep the length, render to the end”, otherwise
+    /// saving silently shortened someone else's edit). None — length by clips.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeline_end: Option<Tick>,
     #[serde(default, rename = "camera_lanes", skip_serializing)]
     pub legacy_camera_lanes: u32,
-    /// Камеры-события. Активную в момент t выбирает `active_camera_at`.
+    /// Camera events. The active one at time t is chosen by `active_camera_at`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cameras: Vec<CameraEvent>,
-    /// Именованные области «время × дорожки» (Р.35 п.2): рамка выделения,
-    /// сохранённая под именем. Морфер ссылается на них ПО ИМЕНИ.
+    /// Named areas “time × tracks” (R.35 item 2): a selection frame
+    /// saved under a name. The morpher refers to them BY NAME.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub areas: Vec<MarkedArea>,
-    /// Публичные параметры ЛЕНТЫ, содержимое которой сейчас стоит на
-    /// месте корня (Р.59, стадия 3).
+    /// PUBLIC parameters of the REEL whose content is currently standing in
+    /// the root's place (R.59, stage 3).
     ///
-    /// Поле есть и здесь, и у `Sequence`, ровно по той же причине, по
-    /// которой здесь лежат `morphers`, `cameras` и `lane_order`: вход
-    /// внутрь ленты сделан ОБМЕНОМ содержимого (`swap_reel`), и команда
-    /// правит ту ленту, в которой стоишь, не зная о вложениях вовсе.
-    /// У настоящего корня набор всегда пуст: корень никому не экземпляр.
+    /// The field is here and on `Sequence` alike, for the same reason as
+    /// why `morphers`, `cameras` and `lane_order` live here: entering
+    /// a reel is done by SWAPPING its content (`swap_reel`), and the command
+    /// edits the reel you are standing in, without knowing about nesting at all.
+    /// The real root's set is always empty: the root is an instance of nothing.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub published: Vec<PublishedParam>,
 }
@@ -1941,27 +1941,27 @@ fn is_zero_u32(v: &u32) -> bool {
     *v == 0
 }
 
-/// Морфер (Р.35): непрозрачный «патч» на фиолетовой morph-дорожке —
-/// СЛОЙ, а не пометка. Действует там, где его блок накрывает цель
-/// (`timed`), и по умолчанию — на всё, что НИЖЕ его строки.
+/// Morpher (R.35): an opaque “patch” on the purple morph track —
+/// a LAYER, not a mark. It acts where its block covers the target
+/// (`timed`), and by default — on everything BELOW its row.
 ///
-/// До Р.35 это был «патч на замороженный список целей, целиком и вне
-/// времени»: `start`/`duration` только позиционировали блок. Файлы того
-/// времени читаются с `timed = false` и рендерятся в точности как
-/// раньше (`migrate_legacy_morpher`).
+/// Before R.35 it was a “patch on a frozen list of targets, entirely and outside
+/// time”: `start`/`duration` only positioned the block. Files of that
+/// era are read with `timed = false` and rendered exactly as
+/// before (`migrate_legacy_morpher`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MorpherEvent {
     pub id: MorphId,
-    /// Индекс morph-дорожки (0..morph_lanes).
+    /// Index of the morph track (0..morph_lanes).
     pub lane: u32,
     pub start: Tick,
     pub duration: Tick,
-    /// Кого накрывает. Умолчание — «всё, что ниже строки морфера».
+    /// What it covers. Default — “everything below the morpher row”.
     #[serde(default, skip_serializing_if = "MorphTargets::is_default")]
     pub targets: MorphTargets,
-    /// Что делает: подмена источника И цепочки эффектов — одно событие
-    /// несёт оба (до Р.35 это были взаимоисключающие `MorphKind`).
-    /// `alias = "kind"` — вход старых файлов.
+    /// What it does: replaces the source AND the effect chain — one event
+    /// carries both (before R.35 these were mutually exclusive `MorphKind`).
+    /// `alias = "kind"` — input of old files.
     #[serde(
         rename = "patch",
         alias = "kind",
@@ -1969,21 +1969,21 @@ pub struct MorpherEvent {
         skip_serializing_if = "MorphPatch::is_empty"
     )]
     pub patch: MorphPatch,
-    /// Выключатель события целиком (Р.33). Выключенный морфер не
-    /// применяется к целям, но живёт на дорожке и включается как был.
+    /// Switch for the whole event (R.33). A disabled morpher does not
+    /// apply to targets, but lives on the track and is switched on as it was.
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub enabled: bool,
-    /// Действие ограничено ОКНОМ блока (умолчание, Р.35 п.1: «если их
-    /// проигрываем — то и морфируем»). `false` — прежняя семантика:
-    /// патч на цели целиком, время блока ни на что не влияет.
+    /// The action is limited to the block's WINDOW (default, R.35 item 1: “if we play them —
+    /// then we morph them too”). `false` — the former semantics:
+    /// the patch applies to the targets entirely, the block's time affects nothing.
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub timed: bool,
-    /// Сила наложения слоя 0..1 (Р.38 п.12: «у морфера нет возможности
-    /// применить fade и opacity»). 1.0 — слой действует полностью, и это
-    /// прежний путь БАЙТ-В-БАЙТ: слот смешения не появляется вовсе.
+    /// Layer blend strength 0..1 (R.38 item 12: “the morpher has no way to
+    /// apply fade and opacity”). 1.0 — the layer acts fully, and this is
+    /// the former path BYTE-FOR-BYTE: the blend slot does not appear at all.
     #[serde(default = "default_one", skip_serializing_if = "is_one")]
     pub strength: f64,
-    /// Нарастание и затухание силы у краёв блока. Ноль — жёсткие края.
+    /// Ramp-in and ramp-out of the strength at the block edges. Zero — hard edges.
     #[serde(default, skip_serializing_if = "tick_is_zero")]
     pub fade_in: Tick,
     #[serde(default, skip_serializing_if = "tick_is_zero")]
@@ -1994,20 +1994,20 @@ fn is_true(v: &bool) -> bool {
     *v
 }
 
-/// Кого накрывает морфер (Р.35). Пространство и время разведены:
-/// `Below`/`Clips` выбирают ПРОСТРАНСТВО (окно берётся из блока),
-/// `Marks`/`Areas` — именованные диапазоны и области (Р.35 п.2).
+/// What the morpher covers (R.35). Space and time are separated:
+/// `Below`/`Clips` choose the SPACE (the window is taken from the block),
+/// `Marks`/`Areas` — named ranges and areas (R.35 item 2).
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(tag = "on", rename_all = "snake_case")]
 pub enum MorphTargets {
-    /// Всё, что НИЖЕ строки морфера в порядке дорожек (adjustment layer).
+    /// Everything BELOW the morpher row in track order (adjustment layer).
     #[default]
     Below,
-    /// Замороженный при создании список — прежнее поведение.
+    /// A list frozen at creation — the former behaviour.
     Clips { ids: Vec<ClipId> },
-    /// Именованные метки-диапазоны: окна берутся из них.
+    /// Named range markers: the windows are taken from them.
     Marks { names: Vec<String> },
-    /// Именованные области (время × дорожки).
+    /// Named areas (time × tracks).
     Areas { names: Vec<String> },
 }
 
@@ -2016,7 +2016,7 @@ impl MorphTargets {
         matches!(self, MorphTargets::Below)
     }
 
-    /// Замороженные id — пусто у всех режимов, кроме `Clips`.
+    /// Frozen ids — empty for all modes except `Clips`.
     pub fn clip_ids(&self) -> &[ClipId] {
         match self {
             MorphTargets::Clips { ids } => ids,
@@ -2024,7 +2024,7 @@ impl MorphTargets {
         }
     }
 
-    /// Замороженные id для правки (RemoveClip/Split держат их живыми).
+    /// Frozen ids for editing (RemoveClip/Split keep them alive).
     pub fn clip_ids_mut(&mut self) -> Option<&mut Vec<ClipId>> {
         match self {
             MorphTargets::Clips { ids } => Some(ids),
@@ -2033,8 +2033,8 @@ impl MorphTargets {
     }
 }
 
-/// Ручной `Deserialize`: файлы до Р.35 несут ГОЛЫЙ массив id
-/// (`"targets": [1, 2]`) — он читается как `Clips`. Прецедент — `Marker`.
+/// A manual `Deserialize`: files before R.35 carry a BARE array of ids
+/// (`"targets": [1, 2]`) — it is read as `Clips`. Precedent — `Marker`.
 impl<'de> Deserialize<'de> for MorphTargets {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         #[derive(Deserialize)]
@@ -2061,54 +2061,54 @@ impl<'de> Deserialize<'de> for MorphTargets {
     }
 }
 
-/// Что морфер делает с целью. Все поля — «ничего не делать» по
-/// умолчанию, поэтому пустой патч не сериализуется вовсе.
+/// What the morpher does to a target. All fields — “do nothing” by
+/// default, so an empty patch is not serialized at all.
 ///
-/// Подмена источника и цепочки эффектов живут ВМЕСТЕ (Р.35 п.3: «в ui
-/// морфера их объединить») — в интерфейсе это одна fx-полоса, где
-/// подмена нарисована фиолетовым слотом первой.
+/// Source replacement and the effect chain live TOGETHER (R.35 item 3: “in the ui
+/// of the morpher, merge them”) — in the interface this is one fx strip, where
+/// the replacement is drawn as the first purple slot.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct MorphPatch {
-    /// `None` = источник не менять (только сдвиг точки входа).
+    /// `None` = do not change the source (only shift the entry point).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media: Option<MediaId>,
-    /// Сдвиг source_in (тики); применяется, если `absolute` не задан.
+    /// Shift of source_in (ticks); applied if `absolute` is not set.
     #[serde(default, skip_serializing_if = "tick_is_zero")]
     pub source_in_delta: Tick,
-    /// Абсолютный source_in — приоритетнее delta.
+    /// Absolute source_in — takes priority over delta.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub absolute_source_in: Option<Tick>,
-    /// Выключатель морф-слота: настройки подмены целы, но она не
-    /// действует (галка у фиолетового слота).
+    /// Switch of the morph slot: the replacement settings are intact, but it does not
+    /// act (the checkbox of the purple slot).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub src_off: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub video_fx: Vec<FxInstance>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub audio_fx: Vec<FxInstance>,
-    /// Выключатели слотов, параллельны своим цепочкам.
+    /// Slot switches, parallel to their chains.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub video_bypass: Vec<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub audio_bypass: Vec<bool>,
-    /// Кривые параметров слоя (Р.38 п.13: «у морфера я не могу задавать
-    /// автоматизацию эффектов»). Параллельны своим цепочкам, как и
-    /// выключатели.
+    /// Parameter curves of the layer (R.38 item 13: “for the morpher I cannot set
+    /// effect automation”). Parallel to their chains, as are the
+    /// switches.
     ///
-    /// **Домен — время БЛОКА морфера, 0..duration.** У морфера нет
-    /// материала: он слой правок, а не событие с исходником. Тот же
-    /// домен, что у камеры и у перехода, и то же правило, что Р.37 задал
-    /// событиям: «временной промежуток, вырезанный этим элементом».
-    /// В `apply_to` ключи пересчитываются в материал ЦЕЛИ.
+    /// **Domain — the morpher BLOCK's time, 0..duration.** A morpher has no
+    /// material: it is a layer of edits, not an event with a source. The same
+    /// domain as the camera and the transition, and the same rule that R.37 set
+    /// for events: “the time span cut out by this element”.
+    /// In `apply_to` the keys are recalculated into the TARGET's material.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub video_auto: Vec<Vec<ParamCurve>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub audio_auto: Vec<Vec<ParamCurve>>,
 }
 
-/// Ручной `Deserialize`: принимает три формы — плоскую (Р.35) и обе
-/// старых (`{"Replace": …}` / `{"EffectBatch": …}`), потому что до Р.35
-/// это был внешне-тегированный enum `MorphKind`.
+/// Manual `Deserialize`: accepts three forms — the flat one (R.35) and both
+/// old ones (`{"Replace": …}` / `{"EffectBatch": …}`), because before R.35
+/// it was an externally tagged enum `MorphKind`.
 impl<'de> Deserialize<'de> for MorphPatch {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         #[derive(Deserialize)]
@@ -2190,36 +2190,36 @@ impl<'de> Deserialize<'de> for MorphPatch {
 }
 
 impl MorphPatch {
-    /// Пустой патч ничего не делает — такой не сериализуется.
+    /// An empty patch does nothing — such a one is not serialized.
     pub fn is_empty(&self) -> bool {
         self.media.is_none()
             && self.source_in_delta.0 == 0
             && self.absolute_source_in.is_none()
             && self.video_fx.is_empty()
             && self.audio_fx.is_empty()
-            // кривые без слотов невозможны, но «пустой» патч НЕ
-            // сериализуется — молча потерять их нельзя (Р.38)
+            // curves without slots are impossible, but an “empty” patch is NOT
+            // serialized — they cannot be silently lost (R.38)
             && self.video_auto.iter().all(|a| a.is_empty())
             && self.audio_auto.iter().all(|a| a.is_empty())
     }
 
-    /// Меняет ли патч ЭТОТ клип. Ответ «нет» — причина не резать его
-    /// вовсе: слой с одними видео-эффектами не должен трогать аудио под
-    /// собой (и уж тем более оставлять на нём шов).
+    /// Does the patch change THIS clip. The answer “no” is a reason not to cut it
+    /// at all: a layer with video effects alone must not touch the audio under
+    /// it (let alone leave a seam on it).
     pub fn affects(&self, c: &ClipEvent) -> bool {
         self.replaces_source() || !self.chain_for(c.kind).is_empty()
     }
 
-    /// Тянет ли ВРЕМЯ цепочка патча для клипа этого вида.
+    /// Does the patch chain pull TIME for a clip of this kind.
     ///
-    /// Спрашивается там, где решают, РЕЗАТЬ ли цель: варп нельзя «смешать
-    /// обратно» слотом силы — он меняет не значение, а сколько материала
-    /// съедено, и действует на весь клип, чем его ни гаси.
+    /// It is asked where it is decided whether to CUT the target: a warp cannot be “blended
+    /// back” by a strength slot — it changes not a value but how much material
+    /// is consumed, and acts on the whole clip, no matter how you dim it.
     pub fn warps_time_for(&self, kind: ClipKind) -> bool {
         self.chain_for(kind).iter().any(|f| f.warps_time())
     }
 
-    /// Подменяет ли патч источник (с учётом выключателя морф-слота).
+    /// Does the patch replace the source (taking the morph-slot switch into account).
     pub fn replaces_source(&self) -> bool {
         !self.src_off
             && (self.media.is_some()
@@ -2227,9 +2227,9 @@ impl MorphPatch {
                 || self.source_in_delta.0 != 0)
     }
 
-    /// ВКЛЮЧЁННЫЕ эффекты патча для клипа этого вида. Выключенный слот
-    /// просто не дописывается: у клипа своя нумерация bypass, и
-    /// смешивать их нельзя.
+    /// ENABLED effects of the patch for a clip of this kind. A disabled slot
+    /// is simply not appended: the clip has its own bypass numbering, and
+    /// they must not be mixed.
     pub fn chain_for(&self, kind: ClipKind) -> Vec<FxInstance> {
         let (fx, off) = match kind {
             ClipKind::Video => (&self.video_fx, &self.video_bypass),
@@ -2241,11 +2241,11 @@ impl MorphPatch {
             .filter(|(i, _)| !off.get(*i).copied().unwrap_or(false))
             .map(|(_, f)| f.clone())
             .collect();
-        // ВАРП ВРЕМЕНИ достаётся ОБОИМ видам (Р.37 п.2). Он живёт в
-        // `audio_fx` — там его канонический дом, `merge_chains`/
-        // `split_chains` в UI на этом стоят, — но он не пиксельный фильтр,
-        // а правило выбора исходного кадра. Без этого слой замедлял бы
-        // звук и не замедлял картинку: рассинхрон, которого никто не просил.
+        // The TIME WARP goes to BOTH kinds (R.37 item 2). It lives in
+        // `audio_fx` — its canonical home there, `merge_chains`/
+        // `split_chains` in the UI rest on this — but it is not a pixel filter,
+        // but a rule for choosing the source frame. Without this the layer would slow
+        // the sound and not the picture: a desync that nobody asked for.
         if kind == ClipKind::Video {
             out.extend(
                 self.audio_fx
@@ -2257,9 +2257,9 @@ impl MorphPatch {
                     .map(|(_, f)| f.clone()),
             );
         } else {
-            // СИЛА СЛОЯ достаётся и звуку (Р.38 п.12, решение «видео и
-            // аудио сразу»). Живёт она в `video_fx` — там её канонический
-            // дом, — но приглушать обязана оба вида.
+            // The LAYER STRENGTH goes to the sound too (R.38 item 12, the decision “video and
+            // audio at once”). It lives in `video_fx` — its canonical
+            // home there — but it must attenuate both kinds.
             out.extend(
                 self.video_fx
                     .iter()
@@ -2273,9 +2273,9 @@ impl MorphPatch {
         out
     }
 
-    /// Кривые в том же порядке, в каком `chain_for` отдаёт слоты:
-    /// выключенные пропущены, у видео в хвосте — варп-слоты из аудио.
-    /// Разойдись порядок — кривая уехала бы на чужой эффект.
+    /// The curves in the same order in which `chain_for` hands out the slots:
+    /// disabled ones skipped, for video at the tail — the warp slots from audio.
+    /// If the order diverged, the curve would shift onto another effect.
     pub fn auto_for(&self, kind: ClipKind) -> Vec<Vec<ParamCurve>> {
         let (fx, off, auto) = match kind {
             ClipKind::Video => (&self.video_fx, &self.video_bypass, &self.video_auto),
@@ -2312,29 +2312,29 @@ impl MorphPatch {
         out
     }
 
-    /// Все медиа, которые держит патч (гард `RemoveMedia`).
+    /// All media held by the patch (guard `RemoveMedia`).
     pub fn media_refs(&self) -> impl Iterator<Item = MediaId> + '_ {
         self.media.into_iter()
     }
 
-    /// Применить патч к копии клипа (v1 applyMorpherPatchToClipCopy).
-    /// Верхнего клампа source_in по длительности источника нет намеренно:
-    /// модель не знает длительностей медиа (никакого FFmpeg в kt-model);
-    /// чтение за концом источника движок отдаёт тишиной/последним кадром.
-    /// `anchor` — начало блока морфера на таймлайне, `frame_step` — шаг
-    /// кадра проекта: по ним ключи слоя переводятся из времени БЛОКА в
-    /// материал цели тем же отображением, что и всё остальное
-    /// (`clip_material_at` учитывает реверс).
+    /// Apply the patch to a copy of the clip (v1 applyMorpherPatchToClipCopy).
+    /// There is deliberately no upper clamp of source_in by the source duration:
+    /// the model does not know media durations (no FFmpeg in kt-model);
+    /// reading past the source end, the engine returns silence / the last frame.
+    /// `anchor` — the start of the morpher block on the timeline, `frame_step` — the step
+    /// of a project frame: by them the layer's keys are converted from BLOCK time into
+    /// the target's material by the same mapping as everything else
+    /// (`clip_material_at` accounts for reverse).
     pub fn apply_to(&self, c: &mut ClipEvent, anchor: Tick, frame_step: i64) {
         if self.replaces_source() {
             if let Some(m) = self.media {
-                // Подмена источника меняет МЕДИА, а значения генератора —
-                // свойство события на КОНКРЕТНОМ медиа (Р.59, стадия 2).
-                // Патч их не несёт и придумать не может, поэтому цель
-                // остаётся без них: адрес источника вырождается в `media`,
-                // и кадр берётся у общего источника вида — того же, что
-                // рисует бин. Придумай мы значения — слой рисовал бы
-                // «чей-то чужой титр», а это молчаливая порча.
+                // A source replacement changes the MEDIA, while generator values are
+                // a property of the event on a SPECIFIC medium (R.59, stage 2).
+                // The patch does not carry them and cannot invent them, so the target
+                // stays without them: the source address degenerates to `media`,
+                // and the frame is taken from the shared source of the kind — the same one that
+                // the bin draws. Had we invented values, the layer would draw
+                // “someone else's title”, and that is silent corruption.
                 if c.media != m {
                     c.r#gen = None;
                     c.gen_auto.clear();
@@ -2346,17 +2346,17 @@ impl MorphPatch {
                 Some(abs) => Tick(abs.0.max(0)),
                 None => Tick((c.source_in + self.source_in_delta).0.max(0)),
             };
-            // ЯКОРЬ И КЛЮЧИ ЕДУТ ОДНОЙ ДЕЛЬТОЙ (Р.43, п.300) — то же
-            // правило, что у `clip_slice`.
+            // THE ANCHOR AND THE KEYS MOVE BY ONE DELTA (R.43, item 300) — the same
+            // rule as for `clip_slice`.
             //
-            // Ключ приклеен к материалу (t212), и это верно, пока материал
-            // ТОТ ЖЕ: обрезка прячет и открывает ключи, разрез делит кривую.
-            // Подмена источника меняет саму систему координат, и кривая,
-            // оставшаяся в старой, уезжает из окна события целиком: она
-            // зажимается последним ключом и выглядит как «эффект перестал
-            // применяться». У пользователя `source_in` уезжал с 47.0 с на
-            // 99.0 с при ключах на 47.0..59.6 с — pan3d становился
-            // тождественным (rot_y = rot_z = 0).
+            // A keyframe is glued to the material (t212), and this holds while the material
+            // is the SAME: trimming hides and reveals keys, a cut splits the curve.
+            // A source replacement changes the coordinate system itself, and the curve
+            // left in the old one slides out of the event window entirely: it
+            // is clamped by the last key and looks like “the effect stopped
+            // applying”. For the user `source_in` moved from 47.0 s to
+            // 99.0 s with keys at 47.0..59.6 s — pan3d became
+            // identical (rot_y = rot_z = 0).
             let shift = c.source_in - was;
             if shift.0 != 0 {
                 for slot in &mut c.fx_auto {
@@ -2372,23 +2372,23 @@ impl MorphPatch {
         if add.is_empty() {
             return;
         }
-        // Мастер-выключатель гасит цепочку СОБЫТИЯ, а не слой над ним
-        // (Р.35): своя цепочка уезжает целиком, эффекты слоя действуют.
-        // Иначе выключенная цепочка события молча убивала бы слой,
-        // который к ней никакого отношения не имеет.
+        // The master switch turns off the EVENT's chain, not the layer above it
+        // (R.35): its own chain slides out entirely, the layer's effects apply.
+        // Otherwise a disabled event chain would silently kill a layer
+        // that has no relation to it at all.
         if c.fx_off {
             c.fx.clear();
             c.fx_bypass.clear();
             c.fx_auto.clear();
             c.fx_off = false;
         }
-        // fx_bypass короче цепочки = дописанные слоты включены
-        // (active_fx трактует отсутствующий флаг как false)
+        // fx_bypass shorter than the chain = the appended slots are enabled
+        // (active_fx treats a missing flag as false)
         let auto = self.auto_for(c.kind);
         c.fx.extend(add);
-        // кривые слоя (Р.38 п.13) — в домен МАТЕРИАЛА цели: у слоя своё
-        // время (0..duration блока), у события — материал, и движок
-        // сэмплирует именно материал
+        // layer curves (R.38 item 13) — in the target's MATERIAL domain: the layer has its own
+        // time (0..duration of the block), the event has the material, and the engine
+        // samples exactly the material
         if auto.iter().any(|a| !a.is_empty()) {
             c.fx_auto.resize(c.fx.len(), Vec::new());
             let base = c.fx.len() - auto.len();
@@ -2416,35 +2416,35 @@ impl MorphPatch {
 }
 
 impl MorpherEvent {
-    /// Нужен ли слот смешения: сила меньше единицы или есть фейды.
-    /// На умолчаниях (1.0 и нули) слота НЕТ — путь байт-в-байт прежний, и
-    /// на этом стоят GOLDEN_VIDEO и GOLDEN_AUDIO.
+    /// Is a blend slot needed: the strength is below one or there are fades.
+    /// At the defaults (1.0 and zeros) there is NO slot — the path is byte-for-byte the former one, and
+    /// GOLDEN_VIDEO and GOLDEN_AUDIO rest on this.
     pub fn mixes(&self) -> bool {
         self.strength < 1.0 || self.fade_in.0 > 0 || self.fade_out.0 > 0
     }
 
-    /// Нужен ли слот смешения С УЧЁТОМ ВОРОТ (Р.55, С2).
+    /// Is a blend slot needed TAKING THE GATE INTO ACCOUNT (R.55, C2).
     ///
-    /// `gate` — окна, в которых слой ДЕЙСТВУЕТ, в координатах таймлайна,
-    /// уже пересечённые с телом цели. Если ворота покрывают тело целиком,
-    /// ответ прежний (`mixes`) и путь остаётся байт-в-байт: на умолчаниях
-    /// слота нет, и на этом стоят GOLDEN_VIDEO и GOLDEN_AUDIO.
+    /// `gate` — the windows in which the layer ACTS, in timeline coordinates,
+    /// already intersected with the target's body. If the gate covers the body entirely,
+    /// the answer is the former one (`mixes`) and the path stays byte-for-byte: at the defaults
+    /// there is no slot, and GOLDEN_VIDEO and GOLDEN_AUDIO rest on this.
     pub fn mixes_on(&self, gate: &[TickRange], body: TickRange) -> bool {
         self.mixes() || !covers_whole(gate, body)
     }
 
-    /// Кривая силы в домене БЛОКА с ВОРОТАМИ (Р.55, С2).
+    /// Strength curve in the BLOCK domain with GATES (R.55, C2).
     ///
-    /// Ворота — это и есть «по времени» для слоя, который НЕ РЕЖЕТ цель:
-    /// вне окна сила равна нулю, внутри — обычной силе с фейдами. Ступень
-    /// строится двумя ключами на СОСЕДНИХ тиках: на одном тике
-    /// `dedup_by_key` схлопнул бы их в один, и вместо ступени вышла бы
-    /// рампа во всё тело.
+    /// The gate is the “by time” for a layer that does NOT CUT the target:
+    /// outside the window the strength is zero, inside it is the ordinary strength with fades. The step
+    /// is built from two keys on ADJACENT ticks: on one tick
+    /// `dedup_by_key` would collapse them into one, and instead of a step we would get
+    /// a ramp over the whole body.
     ///
-    /// Ключ за краем тела не ставится: `clip_material_at` клампит края, и
-    /// два ключа схлопнулись бы в один тик с РАЗНЫМИ значениями. Там, где
-    /// ворота упираются в край тела, гасить нечего — слой действует от
-    /// самого края.
+    /// A key beyond the edge of the body is not placed: `clip_material_at` clamps the edges, and
+    /// two keys would collapse into one tick with DIFFERENT values. Where
+    /// the gate runs up against the edge of the body there is nothing to fade — the layer acts
+    /// right from the edge.
     pub fn mix_curve_on(&self, gate: &[TickRange], body: TickRange) -> Option<ParamCurve> {
         if covers_whole(gate, body) {
             return self.mix_curve();
@@ -2453,7 +2453,7 @@ impl MorpherEvent {
         let fi = self.fade_in.0.clamp(0, d);
         let fo = self.fade_out.0.clamp(0, d - fi);
         let s = self.strength;
-        // сила в точке ТАЙМЛАЙНА по фейдам блока (без ворот)
+        // strength at a TIMELINE point from the block's fades (without gates)
         let fade_at = |t: i64| -> f64 {
             let x = t - self.start.0;
             if fi > 0 && x < fi {
@@ -2471,7 +2471,7 @@ impl MorpherEvent {
                 push(w.start.0 - 1, 0.0);
             }
             push(w.start.0, fade_at(w.start.0));
-            // переломы фейдов, попавшие ВНУТРЬ окна
+            // fade breakpoints falling INSIDE the window
             for brk in [self.start.0 + fi, self.start.0 + d - fo] {
                 if brk > w.start.0 && brk < w.end.0 {
                     push(brk, fade_at(brk));
@@ -2491,14 +2491,14 @@ impl MorpherEvent {
         })
     }
 
-    /// Кривая силы в домене БЛОКА: 0 на самом краю, `strength` на плато.
-    /// `None` — фейдов нет, хватает базового значения слота.
+    /// Strength curve in the BLOCK domain: 0 at the very edge, `strength` on the plateau.
+    /// `None` — there are no fades; the base slot value is enough.
     pub fn mix_curve(&self) -> Option<ParamCurve> {
         if self.fade_in.0 <= 0 && self.fade_out.0 <= 0 {
             return None;
         }
         let d = self.duration.0.max(1);
-        // фейды не налезают друг на друга: сумма клампится длиной блока
+        // fades do not overlap each other: the sum is clamped to the block's length
         let fi = self.fade_in.0.clamp(0, d);
         let fo = self.fade_out.0.clamp(0, d - fi);
         let s = self.strength;
@@ -2519,17 +2519,17 @@ impl MorpherEvent {
         })
     }
 
-    /// Наложить слой на кусок цели: патч плюс слот СИЛЫ (Р.38 п.12).
+    /// Apply the layer to a piece of the target: the patch plus the STRENGTH slot (R.38 item 12).
     ///
-    /// Сила — последний слот цепочки: она смешивает ВХОД цепочки с её
-    /// результатом, поэтому обязана стоять после всего, что слой делает.
+    /// Strength is the last slot of the chain: it mixes the chain's INPUT with its
+    /// result, so it must come after everything the layer does.
     pub fn apply_to(&self, c: &mut ClipEvent, frame_step: i64, gate: &[TickRange]) {
         let body = TickRange::new(c.start, c.start + c.duration);
         self.patch.apply_to(c, self.start, frame_step);
         if !self.mixes_on(gate, body) {
             return;
         }
-        // с какого слота начинается вклад ИМЕННО этого слоя
+        // from which slot the contribution of THIS layer exactly starts
         let from = c.fx.len().saturating_sub(self.patch.chain_for(c.kind).len()) as u32;
         let mut mix = FxInstance::LayerMix { amount: self.strength, from };
         mix.set_param("amount", self.strength);
@@ -2555,19 +2555,19 @@ impl MorpherEvent {
         }
     }
 
-    /// Все медиа, которые держит морфер.
+    /// All media held by the morpher.
     pub fn media_refs(&self) -> impl Iterator<Item = MediaId> + '_ {
         self.patch.media_refs()
     }
 
-    /// Окно блока на таймлайне.
+    /// The block's window on the timeline.
     pub fn window(&self) -> TickRange {
         TickRange::new(self.start, self.start + self.duration)
     }
 
-    /// Цель ли этот клип. `Below` — умолчание: всё, что НИЖЕ строки
-    /// морфера в порядке дорожек (adjustment layer); `Marks`/`Areas` —
-    /// именованные диапазоны и области (Р.35 п.2), они же задают ОКНА.
+    /// Is this clip a target. `Below` is the default: everything BELOW the row
+    /// of the morpher in track order (adjustment layer); `Marks`/`Areas` —
+    /// named ranges and areas (R.35 item 2), which also define the WINDOWS.
     pub fn covers(&self, c: &ClipEvent, rows: &[(LaneKind, u32)]) -> bool {
         match &self.targets {
             MorphTargets::Clips { ids } => ids.contains(&c.id),
@@ -2576,14 +2576,14 @@ impl MorpherEvent {
                 let his = rows.iter().position(|&k| k == lane_key(c));
                 matches!((mine, his), (Some(a), Some(b)) if b > a)
             }
-            // ссылку резолвит `ref_windows`: мёртвая ссылка = пустое
-            // множество, а не ошибка (файл её не теряет)
+            // the reference is resolved by `ref_windows`: a dead reference = an empty
+            // set, not an error (the file does not lose it)
             MorphTargets::Marks { .. } | MorphTargets::Areas { .. } => true,
         }
     }
 
-    /// Окна именованных ссылок, ограниченные телом клипа. Пусто — режим
-    /// не ссылочный либо ссылки никуда не ведут.
+    /// Windows of named references, bounded by the clip's body. Empty — the mode
+    /// is not reference-based or the references lead nowhere.
     pub fn ref_windows(&self, c: &ClipEvent, p: &Project) -> Vec<TickRange> {
         let body = TickRange::new(c.start, c.start + c.duration);
         let key = lane_key(c);
@@ -2602,29 +2602,29 @@ impl MorpherEvent {
         merge_ranges(ranges.into_iter().map(|r| r.intersect(&body)).filter(|r| !r.is_empty()))
     }
 
-    /// Индекс строки морфера — ключ порядка наложения слоёв.
+    /// Index of the morpher row — the key of the layer stacking order.
     pub fn row_in(&self, rows: &[(LaneKind, u32)]) -> usize {
         rows.iter().position(|&k| k == (LaneKind::Morph, self.lane)).unwrap_or(0)
     }
 
-    /// Окна, в которых морфер РЕАЛЬНО меняет ЭТОТ клип. Пусто — клип не
-    /// трогается и (важно!) не режется. Порядок проверок объясняет всю
-    /// стоимость решения:
+    /// Windows in which the morpher ACTUALLY changes THIS clip. Empty — the clip is not
+    /// touched and (important!) not cut. The order of the checks explains all of
+    /// the cost of the decision:
     ///
-    /// 1. цель ли клип;
-    /// 2. **меняет ли патч клип ЭТОГО вида** — слой с одними видео-FX не
-    ///    должен оставлять шов на аудио под собой;
-    /// 3. `timed = false` (файлы до v4) — патч на всё тело, как в v1;
-    /// 4. клип, который резать НЕЛЬЗЯ (варп потребления источника —
-    ///    находка 2 Р.35), патчится целиком;
-    /// 5. запретные зоны (окна переходов и наезды соседей) выталкивают
-    ///    границу наружу: слой «липнет» к краю кроссфейда, зато соседи по
-    ///    дорожке не переслаиваются от резки (находка 1 Р.35);
-    /// 6. огрызок короче `crate::MIN_CLIP_DURATION` схлопывается к краю тела.
+    /// 1. is the clip a target;
+    /// 2. **does the patch change a clip of THIS kind** — a layer with video FX alone must not
+    ///    leave a seam on the audio beneath it;
+    /// 3. `timed = false` (files before v4) — the patch covers the whole body, as in v1;
+    /// 4. a clip that must NOT be cut (a source-consumption warp —
+    ///    finding 2 of R.35), is patched entirely;
+    /// 5. forbidden zones (transition windows and neighbours' overlaps) push
+    ///    the boundary outward: the layer “sticks” to the crossfade edge, but neighbours on
+    ///    the track are not layered over by the cut (finding 1 of R.35);
+    /// 6. a stub shorter than `crate::MIN_CLIP_DURATION` collapses to the body's edge.
     ///
-    /// Запретные зоны считаются по ЛЕНТЕ `reel`, а не по корню (Р.50):
-    /// слой может лежать внутри вложения. `p` остаётся ради настроек
-    /// проекта — вложение их наследует, своих у него нет.
+    /// Forbidden zones are computed over the `reel` REEL, not over the root (R.50):
+    /// the layer may lie inside a nested clip. `p` remains for the sake of the project
+    /// settings — the nested clip inherits them, it has none of its own.
     pub fn windows_on(
         &self,
         c: &ClipEvent,
@@ -2636,59 +2636,59 @@ impl MorpherEvent {
         if !self.enabled || !self.covers(c, rows) || !self.patch.affects(c) {
             return Vec::new();
         }
-        // ВАРП ВРЕМЕНИ — вето на РЕЗКУ (Р.37): линейно посчитанный
-        // `source_in` куска у растянутого клипа указывает не туда, поэтому
-        // такой клип патчится ЦЕЛИКОМ. Но «целиком» — это про ГРАНИЦЫ, а
-        // не про ДОСЯГАЕМОСТЬ: вето стояло ПЕРВЫМ и возвращало всё тело,
-        // ни разу не спросив, дотягивается ли блок до клипа ПО ВРЕМЕНИ.
+        // WARP OF TIME — a VETO on CUTTING (R.37): the `source_in` of a piece computed linearly
+        // for a stretched clip points to the wrong place, so
+        // such a clip is patched ENTIRELY. But “entirely” is about the BOUNDARIES, not about
+        // REACH: the veto came FIRST and returned the whole body,
+        // never asking whether the block reaches the clip IN TIME.
         //
-        // Цена ошибки (Р.43, п.298): морф-блок длиной 0.6 с на 5020-й
-        // секунде патчил КАЖДОЕ событие проекта, у которого есть
-        // slowed&reverb, — в реальном проекте пользователя это подменило
-        // источник у аудио на 148-й секунде («звук от другого события»),
-        // а морфер со slowed&reverb в патче раздал варп ВСЕМ событиям
-        // ниже своей строки (`chain_for` отдаёт варп обоим видам).
-        // Поэтому сначала считаем ДОСЯГАЕМОСТЬ, и только потом вето.
-        // РЕЖЕТ ли слой цель (Р.55, С2). Патч из одних эффектов не режет
-        // вовсе: он ложится на ВСЁ ТЕЛО, а «по времени» задают ВОРОТА
-        // силы. Тогда граница точна до тика, соседей и переходов она не
-        // касается, а шва на материале не возникает совсем.
+        // Cost of the error (R.43, item 298): a morph block 0.6 s long at the 5020th
+        // second patched EVERY event of the project that had
+        // slowed&reverb — in the user's real project this swapped
+        // the source of the audio at the 148th second (“sound from another event”),
+        // and a morpher with slowed&reverb in its patch handed the warp to ALL events
+        // below its row (`chain_for` hands the warp out to both kinds).
+        // Therefore we first compute REACH, and only then the veto.
+        // Whether the layer CUTS the target (R.55, C2). A patch of effects alone does not cut
+        // at all: it lies over the WHOLE BODY, and “by time” is set by the GATES
+        // of the strength. Then the boundary is exact to the tick, does not touch
+        // neighbours or transitions, and no seam arises on the material at all.
         let cuts = self.cuts_target(c);
         let warps = |fx: &[FxInstance]| fx.iter().any(|f| f.warps_time());
-        // Вето по варпу имеет смысл ТОЛЬКО там, где режут: линейно
-        // посчитанный `source_in` куска у растянутого клипа указывает не
-        // туда. Ворота ничего не режут, поэтому вето к ним не относится —
-        // и «по времени» начинает работать и на растянутых событиях.
+        // The warp veto makes sense ONLY where cutting happens: a linearly
+        // computed `source_in` of a piece of a stretched clip points not
+        // there. Gates cut nothing, so the veto does not apply to them —
+        // and “by time” starts working on stretched events too.
         let no_cut = cuts && (warps(&c.active_fx()) || warps(&self.patch.chain_for(c.kind)));
-        // ссылочные режимы: ВРЕМЯ задаёт сама ссылка, блок его не
-        // ограничивает — иначе пользователь ткнул бы в дальний диапазон и
-        // не понял, почему ничего не произошло. Галка «по времени» в этих
-        // режимах гаснет (окно и так пришло из ссылки).
+        // reference modes: the TIME is set by the reference itself, the block does not
+        // limit it — otherwise the user would point at a distant range and
+        // would not understand why nothing happened. The “by time” checkbox in these
+        // modes is greyed out (the window already comes from the reference).
         if matches!(self.targets, MorphTargets::Marks { .. } | MorphTargets::Areas { .. }) {
             let refs = self.ref_windows(c, p);
             if refs.is_empty() {
-                return Vec::new(); // ссылки сюда не дотянулись
+                return Vec::new(); // the references did not reach here
             }
             if no_cut {
                 return vec![body];
             }
             if !cuts {
-                return refs; // ворота: окна ссылок как есть, до тика
+                return refs; // gates: the reference windows as they are, to the tick
             }
             return refs.into_iter().filter_map(|w| self.fit_window(w, c, p, reel, body)).collect();
         }
         if !self.timed {
-            return vec![body]; // v1: время блока не действует
+            return vec![body]; // v1: block time does not apply
         }
         let w = self.window().intersect(&body);
         if w.len() < crate::MIN_CLIP_DURATION {
-            return Vec::new(); // блок сюда не дотянулся
+            return Vec::new(); // the block did not reach here
         }
         if no_cut {
             return vec![body];
         }
         if !cuts {
-            return vec![w]; // ворота: окно блока как есть, до тика
+            return vec![w]; // gates: the block window as it is, to the tick
         }
         match self.fit_window(w, c, p, reel, body) {
             Some(w) => vec![w],
@@ -2696,27 +2696,27 @@ impl MorpherEvent {
         }
     }
 
-    /// Режет ли слой цель на куски, или ложится на всё тело с воротами
-    /// силы (Р.55, С2).
+    /// Does the layer cut the target into pieces, or lie over the whole body with the gates
+    /// of strength (R.55, C2).
     ///
-    /// Режут ровно два вида патча, и оба — потому что слотом силы их не
-    /// выключить:
+    /// Exactly two kinds of patch cut, and both — because a strength slot cannot
+    /// switch them off:
     ///
-    /// * **подмена источника** — «взять кадр из другого файла» не
-    ///   выражается значением параметра вовсе;
-    /// * **варп времени в патче** — он меняет не значение, а сколько
-    ///   материала съедено, и действует на весь клип, чем его ни гаси.
+    /// * **source replacement** — “take the frame from another file” is not
+    ///   expressed by a parameter value at all;
+    /// * **time warp in the patch** — it changes not a value but how much
+    ///   material is consumed, and acts on the whole clip, however it is dimmed.
     ///
-    /// Всё остальное (а это почти всё) — цепочка эффектов, и её вклад
-    /// гасится кривой силы до нуля. Так «по времени» перестаёт зависеть от
-    /// того, есть ли у события переход: резать внутри окна кроссфейда
-    /// нельзя, а ГАСИТЬ — можно где угодно.
+    /// All the rest (and that is almost all) — the effect chain, whose contribution
+    /// is damped to zero by the strength curve. So “by time” stops depending on
+    /// whether the event has a transition: cutting inside a crossfade window is
+    /// forbidden, but DAMPING is allowed anywhere.
     pub fn cuts_target(&self, c: &ClipEvent) -> bool {
         self.patch.replaces_source() || self.patch.warps_time_for(c.kind)
     }
 
-    /// Посадить окно на сетку материала, вытолкнуть из запретных зон и
-    /// схлопнуть огрызки к краям тела. `None` — окна не осталось.
+    /// Snap the window to the material grid, push it out of the forbidden zones and
+    /// collapse the stubs to the body's edges. `None` — no window remains.
     fn fit_window(
         &self,
         w: TickRange,
@@ -2728,11 +2728,11 @@ impl MorpherEvent {
         if w.len() < crate::MIN_CLIP_DURATION {
             return None;
         }
-        // Граница садится на сетку МАТЕРИАЛА клипа: кадр — у видео, 8
-        // сэмплов (15 тиков) — у аудио. Иначе точка входа куска пришлась
-        // бы на дробный кадр: у прямого клипа это стоило бы сэмпла на
-        // шве, у reversed — кадра (кламп зеркального якоря). Отсчёт от
-        // начала тела, а у reversed — от КОНЦА: там якорь материала.
+        // The boundary snaps to the clip's MATERIAL grid: a frame for video, 8
+        // samples (15 ticks) for audio. Otherwise the entry point of the piece would fall
+        // on a fractional frame: for a forward clip this would cost a sample at the
+        // seam, for a reversed one — a frame (clamp of the mirrored anchor). Counting from the
+        // start of the body, but for reversed from the END: there is the material anchor.
         let step = match c.kind {
             ClipKind::Video => kt_time::TICK_HZ / p.settings.fps.max(1) as i64,
             ClipKind::Audio => kt_time::TICK_HZ * 8 / kt_time::AUDIO_SAMPLE_RATE as i64,
@@ -2744,25 +2744,25 @@ impl MorpherEvent {
                 Tick(body.start.0 + (t.0 - body.start.0) / step * step)
             }
         };
-        // ПОРЯДОК ВАЖЕН: сетка сначала, зоны после. Край зоны бывает не
-        // на сетке (клип соседа начался между кадрами), и тогда выбор
-        // один: либо кадр материала, либо неразрезанное окружение. Дороже
-        // стоит окружение — кусок с бо́льшим `start` вылезает над соседом
-        // и меняет веса кроссфейда, а сетка стоит одного кадра на шве.
-        // ВЫТАЛКИВАЕМ ТОЛЬКО ВНУТРЬ (Р.55, С2). До этого граница уходила
-        // к БЛИЖАЙШЕМУ краю зоны — в том числе НАРУЖУ, и у события с
-        // фейдом слева и фейдом справа левая граница уезжала в начало
-        // тела, правая в конец: «по времени» превращалось в «на всё
-        // событие». Окно теперь только СОКРАЩАЕТСЯ; не осталось окна —
-        // слой сюда не дотянулся, и это честный ответ, а не молчаливое
-        // расширение.
+        // THE ORDER MATTERS: grid first, zones after. A zone edge may fall not
+        // on the grid (a neighbour clip started between frames), and then the choice
+        // is one: either a frame of material, or an uncut surrounding. More costly
+        // is the surrounding — a piece with a larger `start` sticks out over the neighbour
+        // and changes the crossfade weights, while the grid costs one frame at the seam.
+        // WE PUSH ONLY INWARD (R.55, C2). Before this, the boundary moved
+        // to the NEAREST edge of the zone — including OUTWARD, and for an event with
+        // a fade on the left and a fade on the right the left boundary slid to the start
+        // of the body and the right one to the end: “by time” turned into “on the whole
+        // event”. The window now only SHRINKS; if no window is left —
+        // the layer did not reach here, and that is an honest answer, not a silent
+        // widening.
         let zones = forbidden_zones(reel, c);
         let mut s = snap_out_of(grid(w.start), &zones, true);
         let mut e = snap_out_of(grid(w.end), &zones, false);
         s = Tick(s.0.clamp(body.start.0, body.end.0));
         e = Tick(e.0.clamp(body.start.0, body.end.0));
-        // огрызок, который всё равно нельзя было бы получить командой
-        // (Split запрещает куски короче минимума), липнет к краю тела
+        // a stub that could not be obtained by a command anyway
+        // (Split forbids pieces shorter than the minimum) sticks to the body's edge
         if (s - body.start) < crate::MIN_CLIP_DURATION {
             s = body.start;
         }
@@ -2773,8 +2773,8 @@ impl MorpherEvent {
     }
 }
 
-/// Слить пересекающиеся и примыкающие диапазоны в непересекающийся набор
-/// (ссылок у морфера может быть несколько, и они могут накладываться).
+/// Merge overlapping and adjacent ranges into a non-overlapping set
+/// (a morpher may have several references, and they may overlap).
 fn merge_ranges(it: impl Iterator<Item = TickRange>) -> Vec<TickRange> {
     let mut v: Vec<TickRange> = it.collect();
     v.sort_by_key(|r| r.start.0);
@@ -2790,15 +2790,15 @@ fn merge_ranges(it: impl Iterator<Item = TickRange>) -> Vec<TickRange> {
     out
 }
 
-/// Вытолкнуть точку из запретных зон В ЗАДАННУЮ СТОРОНУ. Зоны могут
-/// перекрываться и примыкать, поэтому проход повторяется до сходимости
-/// (не более чем по числу зон — каждый шаг выводит точку из очередной).
+/// Push the point out of the forbidden zones IN THE GIVEN DIRECTION. Zones may
+/// overlap and abut, so the pass repeats until convergence
+/// (no more than the number of zones — each step moves the point out of the next one).
 ///
-/// `forward` — куда двигать: начало окна вперёд (к концу зоны), конец окна
-/// назад (к её началу). Сторона задана, а не выбрана по близости, и это
-/// принципиально: «к ближайшему краю» расширяет окно там, где граница
-/// попала в зону чуть дальше её середины, и слой начинает действовать
-/// ШИРЕ, чем человек просил (Р.55, С2).
+/// `forward` — where to move: the window start forward (to the zone's end), the window end
+/// backward (to its start). The side is given, not chosen by proximity, and this is
+/// essential: “to the nearest edge” widens the window where the boundary
+/// fell in the zone a little beyond its middle, and the layer starts acting
+/// WIDER than the person asked (R.55, C2).
 fn snap_out_of(t: Tick, zones: &[TickRange], forward: bool) -> Tick {
     let mut t = t;
     for _ in 0..=zones.len() {
@@ -2808,13 +2808,13 @@ fn snap_out_of(t: Tick, zones: &[TickRange], forward: bool) -> Tick {
     t
 }
 
-/// Покрывают ли ворота тело целиком (тогда их как бы и нет).
+/// Whether the gates cover the whole body (in which case they are, in a sense, absent).
 fn covers_whole(gate: &[TickRange], body: TickRange) -> bool {
     gate.iter().any(|w| w.start <= body.start && body.end <= w.end)
 }
 
-/// Ключ строки события: вид дорожки и её номер. Отображение было
-/// продублировано четырежды в `timeline.rs` и дважды в `convert.rs`.
+/// Key of an event row: track kind and its number. The mapping was
+/// duplicated four times in `timeline.rs` and twice in `convert.rs`.
 pub fn lane_key_of(k: ClipKind) -> LaneKind {
     match k {
         ClipKind::Video => LaneKind::Video,
@@ -2829,64 +2829,64 @@ pub fn lane_key(c: &ClipEvent) -> (LaneKind, u32) {
     }
 }
 
-/// Старший бит id — признак КУСКА клипа, порождённого морфер-слоем.
-/// Настоящие клипы в этот диапазон не попадают (проверяет `validate`),
-/// поэтому оригинал восстанавливается из самого id и побочные таблицы не
-/// нужны.
+/// The top bit of the id is the marker of a PIECE of a clip produced by a morpher layer.
+/// Real clips do not fall into this range (checked by `validate`),
+/// so the original is recovered from the id itself and side tables are not
+/// needed.
 ///
-/// **Бит понижен с 63-го до 61-го в Р.59 (стадия 2).** Адрес источника
-/// генератора берётся как `GEN_TAG | id` СОБЫТИЯ, а событием бывает и
-/// кусок слоя: останься тег наверху, `GEN_TAG | slice_id` залез бы в
-/// диапазон `NEST_TAG`, и кусок титра молча поделил бы кэш с лентой.
-/// Ниже — `const _`-сторож, который не даст развести эти три числа.
+/// **The bit was lowered from 63 to 61 in R.59 (stage 2).** The source address
+/// of a generator is taken as `GEN_TAG | id` of the EVENT, and an event can also be
+/// a piece of a layer: had the tag stayed at the top, `GEN_TAG | slice_id` would have spilled into
+/// the `NEST_TAG` range, and a title piece would silently share the cache with a reel.
+/// Below is a `const _` guard that prevents these three numbers from drifting apart.
 pub const SLICE_TAG: u64 = 1 << 61;
-/// Столько младших бит id отдано номеру куска.
+/// This many low bits of the id are given to the piece number.
 const SLICE_IDX_BITS: u32 = 16;
-/// Потолок id настоящего клипа (всё выше зарезервировано под куски).
+/// Ceiling of a real clip's id (everything above is reserved for pieces).
 pub const MAX_REAL_CLIP_ID: u64 = 1 << (61 - SLICE_IDX_BITS);
 
-/// Адресное пространство целиком: настоящий клип < кусок < генератор <
-/// лента. Нарушение любого неравенства — это два разных объекта с одним
-/// ключом кэша, и заметно это стало бы стейл-картинкой, а не падением.
+/// The address space as a whole: real clip < piece < generator <
+/// reel. Violating any inequality means two different objects with one
+/// cache key, and it would show up as a stale picture, not as a crash.
 const _: () = {
-    // куски помещаются под своим тегом…
+    // pieces fit under their own tag…
     assert!(MAX_REAL_CLIP_ID << SLICE_IDX_BITS <= SLICE_TAG);
-    // …а САМЫЙ СТАРШИЙ кусок — строго ниже тега генератора
+    // …and the HIGHEST piece lies strictly below the generator tag
     assert!(SLICE_TAG + (MAX_REAL_CLIP_ID << SLICE_IDX_BITS) <= GEN_TAG);
     assert!(GEN_TAG < NEST_TAG);
 };
 
-/// Id куска — чистая функция от (оригинал, номер). Ни счётчиков, ни
-/// хэшей: id не должен двигаться от правки соседнего клипа или переноса
-/// блока морфера мышью, иначе аудио-FX сбрасывались бы на каждый чих
-/// (инвариант №3).
+/// A piece's id is a pure function of (original, number). Neither counters nor
+/// hashes: the id must not move because of an edit of a neighbouring clip or a drag of
+/// a morpher block with the mouse, otherwise audio FX would be reset on every sneeze
+/// (invariant No. 3).
 pub fn slice_id(origin: ClipId, idx: u32) -> ClipId {
     ClipId(SLICE_TAG | (origin.0 << SLICE_IDX_BITS) | idx as u64)
 }
 
-/// Оригинал куска — ИЗ САМОГО id. `None` — это не кусок.
+/// A piece's original — FROM the id itself. `None` — this is not a piece.
 pub fn slice_origin(id: ClipId) -> Option<ClipId> {
     (id.0 & SLICE_TAG != 0).then_some(ClipId((id.0 & !SLICE_TAG) >> SLICE_IDX_BITS))
 }
 
-/// Тот же клип или его кусок. Всё, что адресует клип по id СРЕДИ
-/// effective (концы переходов в движке), обязано спрашивать это.
+/// The same clip or its piece. Everything that addresses a clip by id AMONG
+/// the effective clips (transition ends in the engine) must ask this.
 pub fn same_clip(eff_id: ClipId, origin: ClipId) -> bool {
     eff_id == origin || slice_origin(eff_id) == Some(origin)
 }
 
-/// Кусок клипа на окне `w`. Правило source_in — ТО ЖЕ, что у
-/// `Command::Split` (который с Р.35 сам зовёт эту функцию): у прямого
-/// клипа точка входа едет с началом куска, у reversed — с его концом,
-/// потому что материал у него зеркальный (п.16).
-/// Пара якорей куска: ЛИНЕЙНЫЙ и МАТЕРИАЛЬНЫЙ (Р.39).
+/// A piece of a clip over window `w`. The source_in rule is the SAME as for
+/// `Command::Split` (which since R.35 calls this function itself): for a forward
+/// clip the entry point travels with the start of the piece; for reversed — with its end,
+/// because its material is mirrored (item 16).
+/// The piece's pair of anchors: LINEAR and MATERIAL (R.39).
 ///
-/// У `source_in` две работы сразу: он якорь ЧТЕНИЯ МАТЕРИАЛА и начало ОСИ
-/// АВТОМАТИЗАЦИИ — время события ключа есть ровно `start + (k.t −
-/// source_in)` (это и считает `clip_timeline_at`). При линейной карте обе
-/// совпадают; под варпом расходятся, и якорь обязан ехать по интегралу
-/// скорости, а ось — остаться линейной (решение Р.37: «БЕЗ учёта
-/// замедления-ускорения»).
+/// `source_in` has two jobs at once: it is the anchor of READING the MATERIAL and the start of the AUTOMATION AXIS
+/// — the event time of a key is exactly `start + (k.t −
+/// source_in)` (this is what `clip_timeline_at` computes). With a linear map both
+/// coincide; under a warp they diverge, and the anchor must travel by the integral of
+/// the speed, while the axis stays linear (R.37 decision: “WITHOUT accounting for
+/// slowing-speeding-up”).
 fn slice_anchors(c: &ClipEvent, w: TickRange) -> (Tick, Tick) {
     let linear = if c.reversed {
         c.source_in + ((c.start + c.duration) - w.end)
@@ -2894,33 +2894,33 @@ fn slice_anchors(c: &ClipEvent, w: TickRange) -> (Tick, Tick) {
         c.source_in + (w.start - c.start)
     };
     let Some(warp) = crate::clip_warp(c) else { return (linear, linear) };
-    // ВАРП, ПОТОМ ЗЕРКАЛО (Р.37 п.247) — тем же выражением, каким кадр
-    // выбирает рендер: у прямого клипа якорь на НАЧАЛЕ окна, у зеркального
-    // на его КОНЦЕ, отсчитанном от фактически потреблённого `used`, а не
-    // от длины события.
+    // WARP, THEN MIRROR (R.37 item 247) — by the same expression by which the frame
+    // is chosen by the renderer: for a forward clip the anchor is at the START of the window, for a mirrored one
+    // at its END, counted from the actually consumed `used`, not
+    // from the length of the event.
     let tl = if c.reversed { w.end - c.start } else { w.start - c.start };
     (linear, c.source_in + Tick(warp.material_off(c.duration, c.reversed, tl.0)))
 }
 
-/// Насколько влево можно утащить НАЧАЛО клипа: дальше кончается материал.
+/// How far to the left the START of the clip can be dragged: beyond that the material ends.
 ///
-/// У растянутого клипа это НЕ `start − source_in`: расширение влево на δ
-/// съедает `rate·δ` материала, поэтому у ускоренного клипа предел ближе,
-/// а у замедленного дальше. Инверсия карты — `output_time_for_source`.
+/// For a stretched clip this is NOT `start − source_in`: widening to the left by δ
+/// consumes `rate·δ` of material, so for a sped-up clip the limit is closer,
+/// and for a slowed one it is further. The inverse of the map is `output_time_for_source`.
 pub fn trim_min_start(c: &ClipEvent) -> Tick {
     if c.reversed {
-        // у зеркального клипа левый трим source_in не трогает (п.16)
+        // for a mirrored clip the left trim does not touch source_in (item 16)
         return Tick(0);
     }
     let Some(warp) = crate::clip_warp(c) else {
         return Tick((c.start - c.source_in).0.max(0));
     };
-    // сколько ВЫХОДНОГО времени соответствует материалу, лежащему левее
-    // точки входа: s < 0, карта экстраполирует скоростью в нуле
+    // how much OUTPUT time corresponds to material lying to the left of
+    // the entry point: s < 0, the map extrapolates with the speed at zero
     let span = c.duration.0.max(1) as f64;
-    // Скорость в нуле ≤ 0 (Р.57): материал слева НЕ потребляется этим
-    // событием вовсе — ни назад, ни на удержании. Экстраполяция делила бы
-    // на ноль и давала `i64::MIN` (переполнение в debug).
+    // Speed at zero ≤ 0 (R.57): the material on the left is NOT consumed by this
+    // event at all — neither backward nor on a hold. Extrapolation would divide
+    // by zero and give `i64::MIN` (overflow in debug).
     if crate::eff_rate(warp.base(), warp.prof(), 0.0) <= 0.0 {
         return Tick(0);
     }
@@ -2929,41 +2929,41 @@ pub fn trim_min_start(c: &ClipEvent) -> Tick {
     Tick((c.start.0 + dt.round() as i64).max(0))
 }
 
-/// Где ВО ВРЕМЕНИ СОБЫТИЯ кончается материал (Р.63 п.2), если он вообще
-/// кончается внутри него. `None` — длина неизвестна или материала хватает
-/// на всё событие.
+/// Where IN THE EVENT'S TIME the material ends (R.63 item 2), if it ends at all
+/// inside it. `None` — the length is unknown or the material is enough
+/// for the whole event.
 ///
-/// Одна функция на всех: полоса таймлайна рисует отсюда штриховку хвоста,
-/// `kt-cli probe` печатает отсюда же момент, а предел трима — это она же
-/// плюс «не меньше нынешнего конца». Разойдись они — картинка, диагностика
-/// и жест говорили бы о разном крае.
+/// One function for all: the timeline strip draws the tail hatching from here,
+/// `kt-cli probe` prints the moment from here too, and the trim limit is this very function
+/// plus “not less than the current end”. If they diverged — the picture, the diagnostics
+/// and the gesture would speak of different edges.
 pub fn material_end_on_timeline(c: &ClipEvent, media_len: Option<Tick>) -> Option<i64> {
     let len = media_len.filter(|l| l.0 > 0)?;
     let left = (len.0 - c.source_in.0).max(0);
     let used = crate::clip_warp(c).map(|w| w.used()).unwrap_or(c.duration.0);
     if used <= left {
-        return None; // материала хватает на всё событие
+        return None; // the material is enough for the whole event
     }
     let end = trim_max_end_in(c, Some(len)).0;
     (end < (c.start + c.duration).0).then_some(end)
 }
 
-/// Насколько вправо можно утащить КОНЕЦ клипа, ЗНАЯ длину материала
-/// (Р.63 п.2). `None` — длина неизвестна (генератор, лента, ещё не
-/// открытый файл), и предела нет, как было всегда.
+/// How far to the right the END of the clip can be dragged, KNOWING the material length
+/// (R.63 item 2). `None` — the length is unknown (generator, reel, a file not yet
+/// opened), and there is no limit, as there always was.
 ///
-/// Прямое событие упирается концом в конец материала ровно так же, как
-/// началом — в его начало: край справа такой же край, как слева. Предел
-/// считается ПО МАТЕРИАЛУ, поэтому замедленное событие упирается позже
-/// (при rate 0.5 секунда материала — две секунды на таймлайне), а
-/// ускоренное раньше — карта варпа спрашивается той же функцией, что у
-/// левого края.
+/// A forward event hits the material's end with its end exactly as it hits
+/// the start with its start: the right edge is the same kind of edge as the left. The limit
+/// is computed BY THE MATERIAL, so a slowed event hits it later
+/// (at rate 0.5 a second of material is two seconds on the timeline), and
+/// a sped-up one earlier — the warp map is queried by the same function as for
+/// the left edge.
 pub fn trim_max_end_in(c: &ClipEvent, media_len: Option<Tick>) -> Tick {
     let by_material = || -> Tick {
         let Some(len) = media_len.filter(|l| l.0 > 0) else {
             return Tick(i64::MAX / 4);
         };
-        // сколько материала осталось справа от точки входа
+        // how much material is left to the right of the entry point
         let left = (len.0 - c.source_in.0).max(0);
         let Some(warp) = crate::clip_warp(c) else {
             return Tick(c.start.0 + left);
@@ -2972,7 +2972,7 @@ pub fn trim_max_end_in(c: &ClipEvent, media_len: Option<Tick>) -> Tick {
         if crate::eff_rate(warp.base(), warp.prof(), 0.0) <= 0.0 {
             return Tick(i64::MAX / 4);
         }
-        // выходное время, за которое съедается `left` материала
+        // the output time over which `left` of material is consumed
         let s = left as f64 / span;
         let dt = crate::output_time_for_source(warp.base(), warp.prof(), s) * span;
         if !dt.is_finite() {
@@ -2983,13 +2983,13 @@ pub fn trim_max_end_in(c: &ClipEvent, media_len: Option<Tick>) -> Tick {
     if !c.reversed {
         return by_material();
     }
-    // у зеркального предел ставит материал СЛЕВА (он уезжает вниз), и он
-    // жёстче правого — берём оба
+    // for a mirrored one the limit is set by the material on the LEFT (it moves down), and it is
+    // stricter than the right one — we take both
     Tick(trim_max_end(c).0.min(by_material().0))
 }
 
-/// Насколько вправо можно утащить КОНЕЦ клипа. Симметрично: у зеркального
-/// клипа расширение вправо тянет `source_in` вниз, и предел ставит материал.
+/// How far to the right the END of the clip can be dragged. Symmetrically: for a mirrored
+/// clip, widening to the right pulls `source_in` down, and the limit is set by the material.
 pub fn trim_max_end(c: &ClipEvent) -> Tick {
     if !c.reversed {
         return Tick(i64::MAX / 4);
@@ -3006,14 +3006,14 @@ pub fn trim_max_end(c: &ClipEvent) -> Tick {
     Tick(c.start.0 + c.duration.0 - dt.round() as i64)
 }
 
-/// Материальная точка входа куска — ЕДИНСТВЕННОЕ правило проекта.
+/// The material entry point of a piece is the ONLY rule of the project.
 pub fn slice_source_in(c: &ClipEvent, w: TickRange) -> Tick {
     slice_anchors(c, w).1
 }
 
-/// Хватает ли материала слева от окна. ОДНА функция на команду, её
-/// `check_on` и предфильтры в `ops`: разойдись они — жест то падал бы, то
-/// молча не доезжал.
+/// Is there enough material to the left of the window. ONE function per command, its
+/// `check_on` and the pre-filters in `ops`: if they diverged, the gesture would sometimes fail and sometimes
+/// silently stop short.
 pub fn slice_fits_source(c: &ClipEvent, w: TickRange) -> bool {
     slice_source_in(c, w).0 >= 0
 }
@@ -3025,16 +3025,16 @@ pub fn clip_slice(c: &ClipEvent, w: TickRange, id: ClipId) -> ClipEvent {
     s.duration = w.len();
     let (linear, material) = slice_anchors(c, w);
     s.source_in = material;
-    // Ключи едут на ТУ ЖЕ дельту: разность `(k.t − source_in)` обязана
-    // остаться прежней, иначе за якорем уедет вся кривая. Проверка на
-    // числах: клип 4 с, рампа 1.0→2.0, разрез на 2 с — без компенсации
-    // первая точка профиля правого куска встаёт в −1.25 вместо −1.0, и
-    // его скорость в начале читается 1.625 вместо 1.5: стык без скачка
-    // МАТЕРИАЛА, но со скачком СКОРОСТИ. Меняется только материал.
+    // Keys travel by the SAME delta: the difference `(k.t − source_in)` must
+    // stay the same, otherwise the whole curve would move off with the anchor. A check on
+    // numbers: a 4 s clip, a ramp 1.0→2.0, a cut at 2 s — without compensation
+    // the first point of the profile of the right piece lands at −1.25 instead of −1.0, and
+    // its speed at the start reads 1.625 instead of 1.5: a joint without a jump in
+    // the MATERIAL, but with a jump in SPEED. Only the material changes.
     //
-    // Р.33 обещал, что команды ключей не трогают вовсе. Обещание держалось
-    // тем, что при линейной карте дельта РОВНО НОЛЬ — так и осталось:
-    // на клипе без варпа этот блок не исполняется.
+    // R.33 promised that keyframe commands do not touch it at all. The promise held
+    // because with a linear map the delta is EXACTLY ZERO — and so it remained:
+    // on a clip without a warp this block is not executed.
     let shift = material - linear;
     if shift.0 != 0 {
         for slot in &mut s.fx_auto {
@@ -3044,9 +3044,9 @@ pub fn clip_slice(c: &ClipEvent, w: TickRange, id: ClipId) -> ClipEvent {
                 }
             }
         }
-        // кривые генератора живут в том же домене (тик материала) и
-        // обязаны ехать той же дельтой — иначе у куска титра «печатная
-        // машинка» начинается не там, где у соседнего куска
+        // generator curves live in the same domain (material tick) and
+        // must travel by the same delta — otherwise for a title piece the “typewriter”
+        // starts not where it does for the neighbouring piece
         for cur in &mut s.gen_auto {
             for k in &mut cur.keys {
                 k.t = k.t + shift;
@@ -3056,21 +3056,21 @@ pub fn clip_slice(c: &ClipEvent, w: TickRange, id: ClipId) -> ClipEvent {
     s
 }
 
-/// Растянуть кривые события под НОВЫЙ материальный пролёт (Р.40, опция
+/// Stretch the event's curves under the NEW material span (R.40, option
 /// `Project.trim_stretches_auto`).
 ///
-/// Зовётся ТОЛЬКО из тримов и ТОЛЬКО при включённой опции: разрез и резка
-/// морфер-слоем делят одну анимацию на части, растягивать там нечего.
+/// It is called ONLY from trims and ONLY with the option on: a cut and a slice
+/// by a morpher layer split one animation into parts; there is nothing to stretch there.
 ///
-/// Доля ключа считается от ПОТРЕБЛЁННОГО материала (`ClipWarp::used`), а не
-/// от длины события: у растянутого клипа это разные величины, и мерить
-/// долю длиной события значило бы завести третье правило рядом с двумя
-/// существующими.
-/// Доля ключа считается ОТ СТАРОГО якоря и переносится на новый: смысл
-/// опции — «анимация приколота к событию», значит ключ, стоявший на
-/// половине прежнего события, встаёт на половину нового. Мерить смещение
-/// от НОВОГО якоря было бы другой операцией: у левого трима смещение уже
-/// уменьшено на величину самого трима, и ключи съезжали бы дважды.
+/// A key's share is computed from the CONSUMED material (`ClipWarp::used`), not
+/// from the length of the event: for a stretched clip these are different quantities, and measuring
+/// the share by the event length would mean adding a third rule next to the two
+/// existing ones.
+/// A key's share is computed FROM THE OLD ANCHOR and carried over to the new one: the meaning
+/// of the option is “the animation is pinned to the event”, so a key that stood at
+/// the half of the former event stands at the half of the new one. Measuring the offset
+/// from the NEW anchor would be a different operation: for a left trim the offset is already
+/// reduced by the trim's own amount, and the keys would slide twice.
 pub fn stretch_auto_span(s: &mut ClipEvent, old_anchor: Tick, span_old: i64, span_new: i64) {
     if span_old <= 0 || span_new <= 0 || span_old == span_new {
         return;
@@ -3088,20 +3088,20 @@ pub fn stretch_auto_span(s: &mut ClipEvent, old_anchor: Tick, span_old: i64, spa
     }
 }
 
-/// Сколько МАТЕРИАЛА событие реально занимает: у растянутого — ПРОЛЁТ
-/// позиции (Р.57), у обычного — своя длина.
+/// How much MATERIAL the event actually occupies: for a stretched one — the SPAN
+/// of position (R.57); for an ordinary one — its own length.
 ///
-/// Именно пролёт, а не «сколько съедено»: кривая со знаком может уйти
-/// назад и вернуться, съев вдвое больше, чем заняла. На положительных
-/// кривых пролёт равен прежнему `used`.
+/// Precisely the span, not “how much is consumed”: a signed curve can go
+/// backward and come back, having consumed twice as much as it occupied. On positive
+/// curves the span equals the former `used`.
 pub fn clip_material_span(c: &ClipEvent) -> i64 {
     crate::clip_warp(c).map(|w| w.span_len()).unwrap_or(c.duration.0).max(1)
 }
 
-/// Морфер из файла ДО Р.35: прежняя семантика — патч действует на цели
-/// целиком, время блока ни на что не влияет. Зовут ридер OTIO и
-/// `ops::upgrade_legacy`; тот же приём, что `migrate_legacy_cammotion`
-/// (п.230) — односторонний апгрейд, а не «совместимость».
+/// A morpher from a file BEFORE R.35: the former semantics — the patch acts on targets
+/// entirely, the block's time affects nothing. Called by the OTIO reader and
+/// `ops::upgrade_legacy`; the same device as `migrate_legacy_cammotion`
+/// (item 230) — a one-way upgrade, not “compatibility”.
 pub fn migrate_legacy_morpher(m: &mut MorpherEvent) -> bool {
     if !m.timed {
         return false;
@@ -3110,17 +3110,17 @@ pub fn migrate_legacy_morpher(m: &mut MorpherEvent) -> bool {
     true
 }
 
-/// Метка на таймлайне: момент и (необязательное) имя.
+/// Marker on the timeline: a moment and an (optional) name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Marker {
-    /// Начало метки. Идентичность метки — по нему (как раньше по `t`).
+    /// The start of the marker. A marker's identity is by it (as before, by `t`).
     pub t: Tick,
-    /// Диапазонная метка (Р.24, OTIO marked_range): 0 = точечная.
+    /// Range marker (R.24, OTIO marked_range): 0 = point marker.
     #[serde(default, skip_serializing_if = "tick_is_zero")]
     pub duration: Tick,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
-    /// Цвет OTIO Marker.2 — round-trip чужих файлов; UI рисует своим стилем.
+    /// Color of OTIO Marker.2 — round-trip of foreign files; the UI draws in its own style.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
 }
@@ -3129,23 +3129,23 @@ fn tick_is_zero(t: &Tick) -> bool {
     t.0 == 0
 }
 
-/// Именованная область таймлайна: время × набор дорожек (Р.35 п.2,
-/// дословно: «area-selection сделать сохраняемой как marked_region в
-/// виде marked_area, и тоже на неё ссылаться»).
+/// A named timeline area: time × a set of tracks (R.35 item 2,
+/// verbatim: “make the area-selection persistent as marked_region in
+/// the form of marked_area, and also refer to it”).
 ///
-/// Имя — это АДРЕС: непустое и уникальное в одном пространстве имён с
-/// метками-диапазонами («область „финал“ и метка „финал“» в одном пикере
-/// — ловушка). Переименование правит ссылки морферов.
+/// The name is an ADDRESS: non-empty and unique in one namespace with
+/// range markers (“area ‘final’ and marker ‘final’” in one picker
+/// — a trap). Renaming updates the morpher references.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MarkedArea {
     pub name: String,
     pub start: Tick,
     pub duration: Tick,
-    /// СЕМАНТИЧЕСКИЕ ключи дорожек, не номера строк: перестановка строк
-    /// область не двигает. Пусто = все дорожки.
+    /// SEMANTIC track keys, not row numbers: reordering rows
+    /// does not move the area. Empty = all tracks.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lanes: Vec<(LaneKind, u32)>,
-    /// Цвет OTIO-совместимых меток; UI рисует своим стилем.
+    /// Color of OTIO-compatible markers; the UI draws in its own style.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
 }
@@ -3155,15 +3155,15 @@ impl MarkedArea {
         TickRange::new(self.start, self.start + self.duration)
     }
 
-    /// Накрывает ли область эту дорожку (пустой список = все).
+    /// Whether the area covers this track (empty list = all).
     pub fn covers_lane(&self, key: (LaneKind, u32)) -> bool {
         self.lanes.is_empty() || self.lanes.contains(&key)
     }
 }
 
-/// Уникальное имя в занятом пространстве: `wanted`, если свободно, иначе
-/// «wanted 2», «wanted 3»… ОДНА функция на проверку команд и на вставку —
-/// разойдись они, батч вставки падал бы на собственных суффиксах.
+/// A unique name in the occupied space: `wanted` if it is free, otherwise
+/// “wanted 2”, “wanted 3”… ONE function for checking commands and for insertion —
+/// if they diverged, an insert batch would fail on its own suffixes.
 pub fn unique_name(taken: &[String], wanted: &str, stem: &str) -> String {
     let base = if wanted.trim().is_empty() { stem } else { wanted.trim() };
     if !taken.iter().any(|t| t == base) {
@@ -3185,7 +3185,7 @@ impl Marker {
     pub fn named(t: Tick, name: impl Into<String>) -> Marker {
         Marker { t, duration: Tick::ZERO, name: name.into(), color: None }
     }
-    /// Конец диапазона (== началу у точечной).
+    /// End of the range (== the start for a point marker).
     pub fn end(&self) -> Tick {
         self.t + self.duration
     }
@@ -3195,8 +3195,8 @@ impl Marker {
 }
 
 impl<'de> Deserialize<'de> for Marker {
-    /// Принимает старую форму (число тиков), объект {t, name} и диапазонную
-    /// {t, duration, name, color}: старые проекты продолжают открываться.
+    /// Accepts the old form (a number of ticks), the object {t, name} and the range
+    /// {t, duration, name, color}: old projects keep opening.
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Marker, D::Error> {
         #[derive(Deserialize)]
         #[serde(untagged)]
@@ -3221,78 +3221,78 @@ impl<'de> Deserialize<'de> for Marker {
     }
 }
 
-/// Вьюпорт таймлайна, сохраняемый в проекте.
+/// Timeline viewport, saved in the project.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UiState {
-    /// Левый край вью (тики).
+    /// Left edge of the view (ticks).
     pub view_start: f64,
-    /// Зум (тиков на пиксель).
+    /// Zoom (ticks per pixel).
     pub ticks_per_px: f64,
-    /// Позиция курсора (тики).
+    /// Cursor position (ticks).
     pub cursor: i64,
-    /// ЛЕГАСИ-вход (до Р.35 порядок строк был чисто визуальным и жил
-    /// здесь). Теперь он в модели (`Project.lane_order`) и ходит через
-    /// undo — морфер-слой действует «на всё, что ниже», значит порядок
-    /// влияет на картинку. Ридер переносит это поле в модель; писатель
-    /// сюда больше не пишет.
+    /// LEGACY input (before R.35 the row order was purely visual and lived
+    /// here). Now it is in the model (`Project.lane_order`) and goes through
+    /// undo — the morpher layer acts “on everything below”, so the order
+    /// affects the picture. The reader moves this field into the model; the writer
+    /// no longer writes here.
     #[serde(default, skip_serializing)]
     pub lane_order: Vec<(LaneKind, u32)>,
-    /// Медиа-бин: режим свободной раскладки (п.7 р.8). По умолчанию
-    /// включён — пользователь сам группирует карточки.
+    /// Media bin: free-layout mode (item 7 of round 8). By default
+    /// it is on — the user groups the cards themselves.
     #[serde(default, skip_serializing_if = "is_false")]
     pub bin_free: bool,
-    /// Позиции карточек в свободном режиме (медиа, x, y в точках от
-    /// левого-верхнего угла бина). Переключение режимов раскладку НЕ
-    /// трогает — она просто не используется в режиме сетки.
+    /// Card positions in free mode (media, x, y in points from the
+    /// top-left corner of the bin). Switching modes does NOT touch the layout —
+    /// it is simply not used in grid mode.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bin_layout: Vec<(MediaId, f32, f32)>,
-    /// Ширина панели метров (п.6 р.13): её тянет собственная полоса,
-    /// поэтому egui её не помнит — храним сами. 0 = по умолчанию.
+    /// Width of the meter panel (item 6 of round 13): it is dragged by its own strip,
+    /// so egui does not remember it — we store it ourselves. 0 = default.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub meters_w: f32,
-    /// Индивидуальная высота строк в пикселях (Р.38 п.11: «разреши менять
-    /// высоту каждого трека индивидуально»). УДОБСТВО, а не содержимое:
-    /// высота не влияет на картинку — в отличие от ПОРЯДКА строк, который
-    /// в Р.35 стал содержимым, потому что морфер действует «на всё, что
-    /// ниже». Абсолютные пиксели: вертикальный зум переопределение не
-    /// трогает, иначе «поставил дорожке высоту» не держалось бы.
-    /// ЛЕГАСИ-вход (до Р.62 высота жила здесь): переносится на дорожку
-    /// при чтении (`normalize`), писатель сюда больше не пишет.
+    /// Individual row height in pixels (R.38 item 11: “allow changing
+    /// the height of each track individually”). A CONVENIENCE, not content:
+    /// height does not affect the picture — unlike the ORDER of rows, which
+    /// in R.35 became content, because the morpher acts “on everything
+    /// below”. Absolute pixels: vertical zoom does not touch the override,
+    /// otherwise “set a track's height” would not stick.
+    /// LEGACY input (before R.62 the height lived here): moved onto the track
+    /// on read (`normalize`); the writer no longer writes here.
     #[serde(default, skip_serializing)]
     pub lane_heights: Vec<(LaneKind, u32, f32)>,
-    /// Группы карточек бина (п.13 р.11): рамка + имя + замок. Одиночный
-    /// «замок» — это группа из одного члена без имени, отдельного поля
-    /// нет намеренно (иначе появляется класс дефектов «карточка заперта,
-    /// а группа нет»). Вне undo, как весь UiState.
+    /// Bin card groups (item 13 of round 11): frame + name + lock. A single
+    /// “lock” is a group of one member without a name; a separate field
+    /// is deliberately absent (otherwise a class of defects appears: “a card is locked,
+    /// but the group is not”). Outside undo, like the whole UiState.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bin_groups: Vec<BinGroup>,
-    /// Имена дорожек (п.2 р.10). Пусто → подпись по формуле V1/A1/M1.
-    /// Вне undo, как весь UiState; имя привязано к (вид, индекс) и едет
-    /// вместе с содержимым при перестановке дорожек.
-    /// ЛЕГАСИ-вход (до Р.62 имя жило здесь): переносится на дорожку при
-    /// чтении (`normalize`), писатель сюда больше не пишет.
+    /// Track names (item 2 of round 10). Empty → label by the formula V1/A1/M1.
+    /// Outside undo, like the whole UiState; the name is bound to (kind, index) and travels
+    /// together with the content when tracks are reordered.
+    /// LEGACY input (before R.62 the name lived here): moved onto the track on
+    /// read (`normalize`); the writer no longer writes here.
     #[serde(default, skip_serializing)]
     pub lane_names: Vec<(LaneKind, u32, String)>,
-    /// Замок оси графика автоматизации (Р.40 п.15). ОДИН НА ВСЮ ПРОГРАММУ
-    /// и помнится в проекте — решение пользователя дословно: «Один на всю
-    /// программу, помнится в проекте». До этого он жил в `AutoView`
-    /// каждого окна и умирал вместе с окном.
+    /// Lock of the automation graph axis (R.40 item 15). ONE FOR THE WHOLE PROGRAM
+    /// and it is remembered in the project — the user's decision verbatim: “One for the whole
+    /// program, remembered in the project”. Before this it lived in `AutoView`
+    /// of each window and died together with the window.
     ///
-    /// Умолчание — ВКЛЮЧЁН (правило 4: полезный режим по умолчанию), а
-    /// serde-умолчание у `bool` — `false`, поэтому поле хранит ОБРАТНОЕ
-    /// («замок снят»): файлы без него читаются со включённым замком и
-    /// остаются байт-стабильными.
+    /// The default is ON (rule 4: a useful mode by default), and
+    /// the serde default for `bool` is `false`, so the field stores the INVERSE
+    /// (“lock released”): files without it are read with the lock on and
+    /// remain byte-stable.
     #[serde(default, skip_serializing_if = "is_false")]
     pub auto_axis_unlinked: bool,
-    /// Набор экранных контролов над кадром (Р.64): 0 — выключены,
-    /// 1 — трансформация (рамка, ручки масштаба, поворот, якорь),
-    /// 2 — кроп (четыре ручки своей стороны).
+    /// A set of on-screen controls over the frame (R.64): 0 — off,
+    /// 1 — transform (frame, scale handles, rotation, anchor),
+    /// 2 — crop (four handles of its side).
     ///
-    /// АКТИВЕН РОВНО ОДИН НАБОР — правило Resolve (`View > Viewer
-    /// Overlay`): два набора над одним кадром дерутся за ту же мышь, и
-    /// «где мои ручки» становится стабильным источником жалоб (разведка
-    /// F-UI-001). Удобство, не содержимое: живёт вне undo, как весь
-    /// `UiState`, и умолчание «выключены» держит файлы байт-стабильными.
+    /// EXACTLY ONE SET IS ACTIVE — the Resolve rule (`View > Viewer
+    /// Overlay`): two sets over one frame fight for the same mouse, and
+    /// “where are my handles” becomes a steady source of complaints (reconnaissance
+    /// F-UI-001). A convenience, not content: it lives outside undo, like the whole
+    /// `UiState`, and the default “off” keeps files byte-stable.
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub geom_controls: u32,
 }
@@ -3305,20 +3305,20 @@ fn is_zero(v: &f32) -> bool {
     *v == 0.0
 }
 
-/// Группа карточек медиа-бина (п.13 р.11).
+/// Group of media-bin cards (item 13 of round 11).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct BinGroup {
-    /// Имя в разрыве верхней линии рамки; пустое — рамка без подписи.
+    /// Name in the gap of the frame's top line; empty — a frame without a label.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
     pub members: Vec<MediaId>,
-    /// Замок: карточки группы не двигаются мышью.
+    /// Lock: the group's cards are not moved by the mouse.
     #[serde(default, skip_serializing_if = "is_false")]
     pub locked: bool,
 }
 
-/// Выбросить из групп исчезнувшие медиа и сами опустевшие группы
-/// (медиа удаляют из проекта, а раскладка/группы жили отдельно и текли).
+/// Drop vanished media from the groups, and the groups that have become empty themselves
+/// (media are removed from the project, while the layout/groups lived separately and drifted).
 pub fn prune_bin_groups(groups: &mut Vec<BinGroup>, alive: &[MediaId]) {
     for g in groups.iter_mut() {
         g.members.retain(|m| alive.contains(m));
@@ -3326,7 +3326,7 @@ pub fn prune_bin_groups(groups: &mut Vec<BinGroup>, alive: &[MediaId]) {
     groups.retain(|g| !g.members.is_empty());
 }
 
-/// Вид дорожки в display-порядке (ClipKind не годится: нет Morph/Camera).
+/// Track kind in display order (ClipKind does not fit: there is no Morph/Camera).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LaneKind {
@@ -3334,7 +3334,7 @@ pub enum LaneKind {
     Video,
     Audio,
     Morph,
-    /// Камерные дорожки (Р.29): живут только камеры-события.
+    /// Camera tracks (R.29): only camera events live here.
     Camera,
 }
 
@@ -3342,26 +3342,26 @@ impl LaneKind {
     pub const ALL: [LaneKind; 4] =
         [LaneKind::Video, LaneKind::Audio, LaneKind::Morph, LaneKind::Camera];
 
-    /// Есть ли у строки этого вида mute и solo: у служебных (морф,
-    /// камера) их нет — глушить там нечего (правило UI 9).
+    /// Whether a row of this kind has mute and solo: service ones (morph,
+    /// camera) do not have them — there is nothing to mute there (UI rule 9).
     pub fn has_switches(self) -> bool {
         matches!(self, LaneKind::Video | LaneKind::Audio)
     }
 }
 
-/// Стабильный адрес ДОРОЖКИ (Р.62, change B). Номер дорожки — ранг строки
-/// (Р.56) и меняется при вставке соседа; id — нет. На нём держится
-/// FX-состояние цепочки дорожки (инвариант 3) и адресация свойств.
-/// `0` — «ещё не назначен» (`Sequence::new`, содержимое сворачивания);
-/// назначает `Project::assign_track_ids` — на чтении и после команды.
+/// The stable address of a TRACK (R.62, change B). The track number is the rank of the row
+/// (R.56) and changes when a neighbour is inserted; the id does not. The track's
+/// FX chain state (invariant 3) and property addressing rest on it.
+/// `0` — “not yet assigned” (`Sequence::new`, the content of a collapse);
+/// assigned by `Project::assign_track_ids` — on read and after a command.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default, Serialize, Deserialize,
 )]
 pub struct TrackId(pub u64);
 
-/// Режим наложения композита ВИДЕОДОРОЖКИ на слои ниже (Р.62, F-CMP-003).
-/// `out = lerp(below, blend(below, above), α_above × уровень)`; Normal —
-/// прежний alpha_over байт-в-байт.
+/// Blend mode of the VIDEO TRACK composite over the layers below (R.62, F-CMP-003).
+/// `out = lerp(below, blend(below, above), α_above × level)`; Normal —
+/// the former alpha_over byte-for-byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BlendMode {
@@ -3404,7 +3404,7 @@ impl BlendMode {
     }
 }
 
-/// Пределы уровня аудиодорожки в дБ (паспорт свойств дорожки, Р.62).
+/// Level limits of an audio track in dB (the track properties passport, R.62).
 pub const TRACK_GAIN_MIN_DB: f64 = -60.0;
 pub const TRACK_GAIN_MAX_DB: f64 = 24.0;
 
@@ -3416,16 +3416,16 @@ fn is_zero_track_id(id: &TrackId) -> bool {
     id.0 == 0
 }
 
-/// ДОРОЖКА — объект модели (Р.62, change B). Порядок вектора дорожек =
-/// порядок строк сверху вниз; номер дорожки у события — её ранг среди
-/// дорожек своего вида (инвариант Р.56 не менялся). Имя и высота живут
-/// ЗДЕСЬ и ходят через undo; выключатели, уровень, цепочка и режим
-/// наложения — содержимое проекта (решение владельца: mute и solo
-/// действуют на экспорт).
+/// A TRACK is a model object (R.62, change B). The order of the track vector =
+/// the row order top to bottom; an event's track number is its rank among
+/// the tracks of its kind (the R.56 invariant did not change). Name and height live
+/// HERE and go through undo; switches, level, chain and blend mode —
+/// are project content (the owner's decision: mute and solo
+/// affect the export).
 ///
-/// Уровень — по виду: у аудио `gain_db` (дБ, 0 — как было), у видео
-/// `opacity` (доля, 1 — как было); неродное поле остаётся умолчанием.
-/// Служебные строки (морф, камера) несут только имя, высоту и замок.
+/// The level depends on the kind: for audio `gain_db` (dB, 0 — as it was), for video
+/// `opacity` (fraction, 1 — as it was); a field that does not belong to the kind stays at its default.
+/// Service rows (morph, camera) carry only a name, height and lock.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Track {
@@ -3434,7 +3434,7 @@ pub struct Track {
     pub kind: LaneKind,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub name: String,
-    /// Высота строки в пикселях; 0 — расчётная.
+    /// Row height in pixels; 0 — computed.
     #[serde(skip_serializing_if = "is_zero")]
     pub height: f32,
     #[serde(skip_serializing_if = "is_false")]
@@ -3465,8 +3465,8 @@ impl Default for Track {
     }
 }
 
-/// Свойства дорожки одним куском — то, что правит окно «Свойства
-/// дорожки» и команда `SetTrackProps` (цепочка — отдельной командой).
+/// Track properties as one piece — what the window “Track
+/// Properties” and the `SetTrackProps` command edit (the chain — a separate command).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TrackProps {
     pub name: String,
@@ -3499,7 +3499,7 @@ impl Track {
         }
     }
 
-    /// Подпись строки: имя пользователя либо формула V1/A1/M1/C1 по рангу.
+    /// Row label: the user's name or the formula V1/A1/M1/C1 by rank.
     pub fn label(&self, lane: u32) -> String {
         if self.name.is_empty() { default_lane_label(self.kind, lane) } else { self.name.clone() }
     }
@@ -3528,7 +3528,7 @@ impl Track {
         self.blend = p.blend;
     }
 
-    /// Активные слоты цепочки (bypass отфильтрован), как у события.
+    /// Active chain slots (bypass filtered out), as for an event.
     pub fn active_fx(&self) -> Vec<FxInstance> {
         if self.fx_off {
             return Vec::new();
@@ -3541,17 +3541,17 @@ impl Track {
             .collect()
     }
 
-    /// Нужна ли дорожке СТАДИЯ в аудио-миксе (сумма → цепочка → уровень →
-    /// гашение): без неё события складываются в выход прежним порядком —
-    /// байт-в-байт (GOLDEN_AUDIO). Соло решает вызывающий (множество по виду).
+    /// Does the track need a STAGE in the audio mix (sum → chain → level →
+    /// muting): without it events are summed into the output in the former order —
+    /// byte-for-byte (GOLDEN_AUDIO). Solo is decided by the caller (a set by kind).
     pub fn needs_audio_stage(&self) -> bool {
         self.kind == LaneKind::Audio
             && (self.mute || self.gain_db != 0.0 || !self.active_fx().is_empty())
     }
 
-    /// Нужна ли видеодорожке стадия (неявная лента в плане): цепочка,
-    /// уровень ≠ 1 или режим ≠ Normal. Mute/solo видео — исключение из
-    /// композита, стадии не требует.
+    /// Does a video track need a stage (an implicit reel in the plan): chain,
+    /// level ≠ 1 or mode ≠ Normal. Video mute/solo is an exception from the
+    /// composite and does not require a stage.
     pub fn needs_video_stage(&self) -> bool {
         self.kind == LaneKind::Video
             && (self.opacity != 1.0
@@ -3559,11 +3559,11 @@ impl Track {
                 || !self.active_fx().is_empty())
     }
 
-    /// НОВШЕСТВО Р.62 на дорожке: то, чего прежние сборки не знали вовсе и
-    /// молча потеряли бы (выключатели, уровень, режим наложения, цепочка).
-    /// Имя и высота сюда НЕ входят: имя и до Р.62 жило в `Track.name`
-    /// файла, высота — в `ui`, и старый читатель терял бы разве что
-    /// удобство. От этого предиката зависит версия файла.
+    /// R.62 NOVELTY on the track: what earlier builds did not know at all and
+    /// would silently lose (switches, level, blend mode, chain).
+    /// Name and height are NOT included here: the name even before R.62 lived in `Track.name`
+    /// of the file, the height in `ui`, and an old reader would lose at most
+    /// a convenience. The file version depends on this predicate.
     pub fn has_novelty(&self) -> bool {
         self.mute
             || self.solo
@@ -3575,7 +3575,7 @@ impl Track {
             || self.fx_off
     }
 
-    /// Ничего, кроме вида и id, не задано — в файл пишется только конверт.
+    /// Nothing except kind and id is set — only the envelope is written to the file.
     pub fn is_plain(&self) -> bool {
         self.name.is_empty()
             && self.height == 0.0
@@ -3591,8 +3591,8 @@ impl Track {
     }
 }
 
-/// Ключи режимов наложения для паспорта свойств (Р.62): `Choice` хранит
-/// КЛЮЧ варианта, а не номер — номер поехал бы при вставке в середину.
+/// Blend-mode keys for the properties passport (R.62): `Choice` stores
+/// the KEY of the variant, not a number — a number would shift on insertion in the middle.
 pub const BLEND_KEYS: &[&str] = &[
     "normal",
     "multiply",
@@ -3605,7 +3605,7 @@ pub const BLEND_KEYS: &[&str] = &[
     "difference",
 ];
 
-/// Предел высоты строки в паспорте: 0 — «расчётная».
+/// Row height limit in the passport: 0 — “computed”.
 pub const TRACK_HEIGHT_MAX: f64 = 400.0;
 
 const TRACK_FLAGS: &[FlagSpec] = &[
@@ -3617,14 +3617,14 @@ const TRACK_FLAGS: &[FlagSpec] = &[
 const TRACK_HEIGHT_SPEC: ParamSpec =
     ParamSpec::num("height", 0.0, TRACK_HEIGHT_MAX, 0.0, 1.0, ParamUnit::Px, ParamKind::Structural);
 
-/// ПАСПОРТ СВОЙСТВ ДОРОЖКИ (Р.62, change B). Уровень, непрозрачность,
-/// высота, выключатели и режим наложения — типизированные свойства с
-/// клампом: окно свойств и редактор читают пределы отсюда, а не из своих
-/// литералов (прецедент Р.33 — Gain был −24…24 в одном окне и −48…24 в
-/// другом). Кривых у дорожки НЕТ: её ключ — тик таймлайна, а это второй
-/// домен автоматизации (следующий change), поэтому ряды объявлены
-/// `ParamKind::Structural` — `auto_params()` их не отдаёт, и повесить
-/// кривую нечем ни команде, ни интерфейсу.
+/// TRACK PROPERTIES PASSPORT (R.62, change B). Level, opacity,
+/// height, switches and blend mode — typed properties with
+/// clamping: the properties window and the editor read the limits from here, not from their own
+/// literals (precedent R.33 — Gain was −24…24 in one window and −48…24 in
+/// another). A track has NO curves: its key is a timeline tick, and this is the second
+/// automation domain (the next change), so the rows are declared
+/// `ParamKind::Structural` — `auto_params()` does not return them, and there is nothing to hang
+/// a curve on, neither for the command nor for the interface.
 impl HasParams for Track {
     fn param_specs(&self) -> &[ParamSpec] {
         const A: &[ParamSpec] = &[
@@ -3644,9 +3644,9 @@ impl HasParams for Track {
             TRACK_HEIGHT_SPEC,
         ];
         const S: &[ParamSpec] = &[TRACK_HEIGHT_SPEC];
-        // уровень — ПО ВИДУ: у аудио дБ, у видео непрозрачность; чужого
-        // ряда у дорожки нет, иначе в окне свойств висел бы мёртвый
-        // контрол (правило UI 9)
+        // level — BY KIND: for audio dB, for video opacity; there is no foreign
+        // row on the track, otherwise a dead
+        // control would hang in the properties window (UI rule 9)
         match self.kind {
             LaneKind::Audio => A,
             LaneKind::Video => V,
@@ -3686,8 +3686,8 @@ impl HasParams for Track {
     }
 
     fn flag_specs(&self) -> &'static [FlagSpec] {
-        // у служебных строк из выключателей только замок: глушить и
-        // солировать морф-слой нечего (правило UI 9)
+        // for service rows only the lock of the switches: there is nothing to mute and
+        // solo for a morph layer (UI rule 9)
         if self.kind.has_switches() { TRACK_FLAGS } else { &TRACK_FLAGS[2..] }
     }
 
@@ -3737,14 +3737,14 @@ impl HasParams for Track {
     }
 }
 
-/// ЧТО НЕ ПОПАДЁТ В ФАЙЛ (Р.62): имена заглушённых дорожек и активное
-/// соло по видам. Mute и solo — содержимое проекта и действуют на
-/// экспорт (решение владельца), значит программа ОБЯЗАНА сказать об этом
-/// до старта — и окно рендера, и kt-cli одной формулировкой.
+/// WHAT DOES NOT GO INTO THE FILE (R.62): the names of muted tracks and the active
+/// solo by kind. Mute and solo are project content and act on the
+/// export (the owner's decision), so the program MUST say so
+/// before starting — both the render window and kt-cli, in one wording.
 pub struct SilencedTracks {
-    /// Имена заглушённых (mute) дорожек сверху вниз.
+    /// Names of muted (mute) tracks, top to bottom.
     pub muted: Vec<String>,
-    /// Имена дорожек в СОЛО (пусто — соло не включено).
+    /// Names of tracks in SOLO (empty — solo is not on).
     pub solo: Vec<String>,
 }
 
@@ -3754,7 +3754,7 @@ impl SilencedTracks {
     }
 }
 
-/// Собрать список по ленте (корню или вложенной).
+/// Collect the list over a reel (the root or a nested one).
 pub fn silenced_tracks(reel: &dyn Reel) -> SilencedTracks {
     let rows = reel.rows();
     let solo_on = |k: LaneKind| reel.tracks().iter().any(|t| t.kind == k && t.solo);
@@ -3775,7 +3775,7 @@ pub fn silenced_tracks(reel: &dyn Reel) -> SilencedTracks {
     SilencedTracks { muted, solo }
 }
 
-/// Формула подписи дорожки без имени: V1/A1/M1/C1 по рангу.
+/// Formula of the label of a track without a name: V1/A1/M1/C1 by rank.
 pub fn default_lane_label(kind: LaneKind, lane: u32) -> String {
     let p = match kind {
         LaneKind::Video => "V",
@@ -3786,8 +3786,8 @@ pub fn default_lane_label(kind: LaneKind, lane: u32) -> String {
     format!("{p}{}", lane + 1)
 }
 
-/// Строки по вектору дорожек: `(вид, ранг внутри вида)` — определение
-/// номера дорожки (Р.56 через Р.62).
+/// Rows by the track vector: `(kind, rank within the kind)` — the definition
+/// of a track number (R.56 via R.62).
 pub fn rows_of_tracks(tracks: &[Track]) -> Vec<(LaneKind, u32)> {
     let mut n = LaneBases::default();
     tracks
@@ -3801,10 +3801,10 @@ pub fn rows_of_tracks(tracks: &[Track]) -> Vec<(LaneKind, u32)> {
         .collect()
 }
 
-/// Куда встаёт НОВАЯ дорожка вида `kind` без явного места: после последней
-/// своего вида, иначе после блока предшествующих видов (V..A..M..C) —
-/// естественный блочный порядок прежних счётчиков, на котором стоят
-/// сцены тестов и умолчание «морф-строки под аудио».
+/// Where a NEW track of kind `kind` goes without an explicit place: after the last
+/// of its kind, otherwise after the block of preceding kinds (V..A..M..C) —
+/// the natural block order of the former counters, on which the
+/// test scenes and the default “morph rows under audio” rest.
 pub fn natural_insert_pos(tracks: &[Track], kind: LaneKind) -> usize {
     let rank = |k: LaneKind| LaneKind::ALL.iter().position(|&x| x == k).unwrap_or(0);
     let mine = rank(kind);
@@ -3817,7 +3817,7 @@ pub fn natural_insert_pos(tracks: &[Track], kind: LaneKind) -> usize {
     pos
 }
 
-/// Индекс дорожки вида `kind` с рангом `lane` в векторе.
+/// Index of the track of kind `kind` with rank `lane` in the vector.
 pub fn track_index(tracks: &[Track], kind: LaneKind, lane: u32) -> Option<usize> {
     let mut rank = 0u32;
     for (i, t) in tracks.iter().enumerate() {
@@ -3831,9 +3831,9 @@ pub fn track_index(tracks: &[Track], kind: LaneKind, lane: u32) -> Option<usize>
     None
 }
 
-/// Дорожки старого файла: счётчики, `lane_order`, имена и высоты в `ui`.
-/// Только ЧИТАЮТСЯ (миграция односторонняя, Р.62): писатель этих полей
-/// больше не знает, а `normalize` превращает их в вектор дорожек.
+/// Tracks of an old file: counters, `lane_order`, names and heights in `ui`.
+/// They are only READ (the migration is one-way, R.62): the writer no longer knows
+/// these fields, and `normalize` turns them into the track vector.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct LegacyLanes {
     #[serde(default)]
@@ -3854,11 +3854,11 @@ impl LegacyLanes {
     }
 }
 
-/// Развернуть легаси-счётчики в вектор дорожек: натуральный порядок
-/// V..A..M..C, затем перестановка по `lane_order` (содержимое
-/// перенумеровывается ТЕМ ЖЕ отображением, что вернётся вызывающему).
-/// Имена и высоты (`ui`) ключуются СТАРЫМИ номерами — вешаются до
-/// перестановки, дальше едут вместе с объектом.
+/// Expand legacy counters into the track vector: natural order
+/// V..A..M..C, then a permutation by `lane_order` (the content
+/// is renumbered by the SAME mapping that is returned to the caller).
+/// Names and heights (`ui`) are keyed by the OLD numbers — attached before
+/// the permutation, then travel together with the object.
 fn tracks_from_legacy(
     legacy: &LegacyLanes,
     need: LaneBases,
@@ -3887,10 +3887,10 @@ fn tracks_from_legacy(
     out
 }
 
-/// Нормализация display-порядка дорожек к фактическим счётчикам (тест 49):
-/// дубли и несуществующие (kind, lane) выбрасываются, недостающие
-/// дописываются в конец в блочном порядке V..A..M..C. Пустой вход даёт
-/// дефолтный блочный порядок.
+/// Normalization of the display order of tracks to the actual counters (Test 49):
+/// duplicates and non-existent (kind, lane) are dropped, missing ones
+/// are appended at the end in the block order V..A..M..C. An empty input gives
+/// the default block order.
 pub fn normalize_lane_order(
     order: &[(LaneKind, u32)],
     video: u32,
@@ -3926,9 +3926,9 @@ pub fn normalize_lane_order(
     out
 }
 
-/// Строки идут по возрастанию номера ВНУТРИ КАЖДОГО ВИДА — инвариант
-/// Р.56 (п.449). Порядок видов между собой произволен: `lane_order`
-/// кодирует только чередование.
+/// Rows go in ascending order of number WITHIN EACH KIND — the invariant
+/// of R.56 (item 449). The order of the kinds among themselves is arbitrary: `lane_order`
+/// encodes only the interleaving.
 pub fn rows_are_canonical(rows: &[(LaneKind, u32)]) -> bool {
     for kind in [LaneKind::Video, LaneKind::Audio, LaneKind::Morph, LaneKind::Camera] {
         let mut prev: Option<u32> = None;
@@ -3942,16 +3942,16 @@ pub fn rows_are_canonical(rows: &[(LaneKind, u32)]) -> bool {
     true
 }
 
-/// Перенумерация дорожек по видам: `map(вид, старый) = новый` (Р.56, п.449).
+/// Renumbering of tracks by kind: `map(kind, old) = new` (R.56, item 449).
 ///
-/// **Номер дорожки внутри вида = ЕЁ РАНГ среди строк этого вида.** До Р.56
-/// номер и строка жили отдельно: движок складывал видео по НОМЕРУ
-/// (`(Reverse(lane), start)` в `VideoRenderer::build_reel`), а экран
-/// показывал по `lane_order`. Дорожка, добавленная из меню морф-строки,
-/// получала самый большой номер — то есть НИЖНИЙ слой, — и рисовалась
-/// третьей сверху: «положил видео под потолок, а его не видно» (претензия
-/// владельца п.2 Р.56). Правило снимает расхождение в модели, не трогая
-/// движок; п.50 обещал «z-order == экран» и был нарушен в двух местах UI.
+/// **The track number within a kind = ITS RANK among the rows of that kind.** Before R.56
+/// the number and the row lived separately: the engine stacked video by NUMBER
+/// (`(Reverse(lane), start)` in `VideoRenderer::build_reel`), while the screen
+/// showed by `lane_order`. A track added from the morph-row menu
+/// got the largest number — that is, the BOTTOM layer — and was drawn
+/// third from the top: “put the video under the ceiling and it is not visible” (the complaint
+/// of the owner, R.56 item 2). The rule removes the discrepancy in the model without touching
+/// the engine; item 50 promised “z-order == screen” and was broken in two places of the UI.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LanePerm {
     pub video: Vec<u32>,
@@ -3961,8 +3961,8 @@ pub struct LanePerm {
 }
 
 impl LanePerm {
-    /// Ранг каждой дорожки среди строк своего вида. `rows` обязан быть
-    /// НОРМАЛИЗОВАННЫМ (каждая дорожка ровно раз) — иначе ранги врут.
+    /// The rank of each track among the rows of its kind. `rows` must be
+    /// NORMALIZED (each track exactly once) — otherwise the ranks lie.
     pub fn from_rows(rows: &[(LaneKind, u32)], n: LaneBases) -> LanePerm {
         let mut p = LanePerm::identity(n);
         for kind in [LaneKind::Video, LaneKind::Audio, LaneKind::Morph, LaneKind::Camera] {
@@ -4010,27 +4010,27 @@ impl LanePerm {
         }
     }
 
-    /// Новый номер дорожки. Номер вне счётчика остаётся собой: перенумеровать
-    /// нечего, а паниковать на чужом мусоре читатель формата не должен.
+    /// New track number. A number outside the counter stays as it is: there is nothing to
+    /// renumber, and the format reader must not panic on someone else's garbage.
     pub fn map(&self, k: LaneKind, lane: u32) -> u32 {
         self.of(k).get(lane as usize).copied().unwrap_or(lane)
     }
 
-    /// Переставить ключи `(вид, дорожка)` — области, строки порядка.
+    /// Reorder the `(kind, track)` keys — areas, order rows.
     pub fn remap_keys(&self, keys: &mut [(LaneKind, u32)]) {
         for e in keys.iter_mut() {
             e.1 = self.map(e.0, e.1);
         }
     }
 
-    /// Переставить таблицы с нагрузкой: имена и высоты дорожек.
+    /// Reorder the tables that carry payload: track names and heights.
     pub fn remap_keyed<T>(&self, items: &mut [(LaneKind, u32, T)]) {
         for e in items.iter_mut() {
             e.1 = self.map(e.0, e.1);
         }
     }
 
-    /// Ключ `(ClipKind, lane)` — так адресуются чужие OTIO-треки.
+    /// Key `(ClipKind, lane)` — this is how foreign OTIO tracks are addressed.
     pub fn map_clip(&self, k: ClipKind, lane: u32) -> u32 {
         self.map(
             match k {
@@ -4042,9 +4042,9 @@ impl LanePerm {
     }
 }
 
-/// Синхронизация display-вектора при ВСТАВКЕ дорожки (lane >= at у этого
-/// вида сдвинулись на +1): новая строка встаёт прямо над бывшей `at`
-/// (теперь at+1), при её отсутствии — в конец (тест 49).
+/// Synchronization of the display vector on track INSERTION (lane >= at of this
+/// kind shifted by +1): the new row goes right above the former `at`
+/// (now at+1); if there is none, at the end (Test 49).
 pub fn lane_order_insert(rows: &mut Vec<(LaneKind, u32)>, kind: LaneKind, at: u32) {
     for e in rows.iter_mut() {
         if e.0 == kind && e.1 >= at {
@@ -4055,7 +4055,7 @@ pub fn lane_order_insert(rows: &mut Vec<(LaneKind, u32)>, kind: LaneKind, at: u3
     rows.insert(pos, (kind, at));
 }
 
-/// Синхронизация display-вектора при УДАЛЕНИИ дорожки (тест 49).
+/// Synchronization of the display vector on track DELETION (Test 49).
 pub fn lane_order_remove(rows: &mut Vec<(LaneKind, u32)>, kind: LaneKind, at: u32) {
     rows.retain(|&(k, l)| !(k == kind && l == at));
     for e in rows.iter_mut() {
@@ -4065,13 +4065,13 @@ pub fn lane_order_remove(rows: &mut Vec<(LaneKind, u32)>, kind: LaneKind, at: u3
     }
 }
 
-/// Подпись дорожки по формуле — см. `Project::track_label` для имени
-/// пользователя (Р.62: имена живут на дорожке-объекте).
+/// The track label by the formula — see `Project::track_label` for the user's
+/// name (R.62: names live on the track object).
 pub fn lane_label(kind: LaneKind, lane: u32) -> String {
     default_lane_label(kind, lane)
 }
 
-/// Полуоткрытый регион [start, end), start < end.
+/// Half-open region [start, end), start < end.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Region {
     pub start: Tick,
@@ -4094,12 +4094,12 @@ impl Region {
     }
 }
 
-/// Движок смены высоты (Р.48, F-AUD-013). Выбор один на весь монтаж:
-/// алгоритм — это ВЫБОР ПОД МАТЕРИАЛ, и слышен он на транзиентах.
-/// `Wsola` — время-домен: удар остаётся ударом, плотная полифония даёт
-/// лёгкий «шелест» на стыках зёрен. `Vocoder` — спектральный: подклад и
-/// синты едут чисто, удар размазывается. Дефолт — Wsola: он дешевле и
-/// безопаснее на речи, с которой чаще работают.
+/// The pitch-shift engine (R.48, F-AUD-013). The choice is one for the whole edit:
+/// the algorithm is a CHOICE FOR THE MATERIAL, and it is heard on transients.
+/// `Wsola` — time domain: a hit stays a hit, dense polyphony gives
+/// a light “rustle” at the grain joins. `Vocoder` — spectral: the backing parts and
+/// the synths travel cleanly, a hit smears. Default — Wsola: it is cheaper and
+/// safer on speech, which is what is worked with more often.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PitchEngine {
@@ -4114,29 +4114,29 @@ pub struct ProjectSettings {
     pub width: u32,
     pub height: u32,
     pub sample_rate: u32,
-    /// Движок питча (Р.48): дефолт в файл не пишется — старые проекты
-    /// байт-стабильны.
+    /// The pitch engine (R.48): the default is not written to the file — old projects
+    /// are byte-stable.
     #[serde(default, skip_serializing_if = "is_default_pitch_engine")]
     pub pitch_engine: PitchEngine,
 
-    /// Форма отрезка у НОВЫХ ключей (Р.61).
+    /// The segment shape of NEW keys (R.61).
     ///
-    /// Живёт в ПРОЕКТЕ, а не в настройках программы: настройка машины
-    /// дала бы «один файл — два поведения» (урок `Lock Envelopes to
-    /// Events` у Vegas), и проект перестал бы описывать сам себя.
-    /// Смена умолчания НЕ трогает уже поставленные ключи — для этого
-    /// есть команда «применить форму ко всем отрезкам».
-    /// Умолчание в файл не пишется: прежние проекты байт-стабильны.
+    /// It lives in the PROJECT, not in the program settings: a machine setting
+    /// would give “one file — two behaviours” (the lesson of `Lock Envelopes to
+    /// Events` in Vegas), and the project would stop describing itself.
+    /// Changing the default does NOT touch keys already placed — for this there is
+    /// the command “apply the shape to all segments”.
+    /// The default is not written to the file: former projects are byte-stable.
     #[serde(default, skip_serializing_if = "SegShape::is_default")]
     pub default_shape: SegShape,
-    /// Правило приведения кадра ПО УМОЛЧАНИЮ (Р.62): действует на все
-    /// события с `Conform::Project`, задним числом. Умолчание «вписать»
-    /// не пишется — прежние файлы байт-стабильны.
+    /// The frame-conform rule BY DEFAULT (R.62): applies to all
+    /// events with `Conform::Project`, retroactively. The default “fit”
+    /// is not written — former files are byte-stable.
     #[serde(default, skip_serializing_if = "is_default_rule")]
     pub conform: ConformRule,
-    /// Настройки выставлены ЯВНО (окно настроек применено). Пока `false`,
-    /// первый клип в пустой проект задаёт растр и fps (правило 20: явное
-    /// решение постановкой не трогается). `false` не пишется.
+    /// Settings have been set EXPLICITLY (the settings window applied). While `false`,
+    /// the first clip into an empty project sets the raster and fps (rule 20: an explicit
+    /// decision is not touched by placement). `false` is not written.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub settings_explicit: bool,
 }
@@ -4152,44 +4152,44 @@ fn is_default_pitch_engine(e: &PitchEngine) -> bool {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MediaRef {
     pub id: MediaId,
-    /// Путь относительно файла проекта.
+    /// Path relative to the project file.
     pub path: String,
-    /// Длительность материала, ЕСЛИ ОНА ИЗВЕСТНА (Р.63 п.2).
+    /// Material duration, IF IT IS KNOWN (R.63 item 2).
     ///
-    /// Модель сама её не добывает и добывать не может (закон П: что лежит
-    /// по адресу — свойство ИСТОЧНИКА). Её записывает тот, кто источник
-    /// ОТКРЫЛ: kt-app при постановке и синке медиа, kt-cli при probe,
-    /// читатель файла — из конверта. Отсюда `Option`: у генератора и
-    /// ленты своей длительности нет, у не открытого ещё файла её пока
-    /// никто не измерил, и в этих случаях предела у трима нет — как было
-    /// всегда.
+    /// The model does not obtain it itself and cannot (law P: what lies
+    /// at an address is a property of the SOURCE). It is written by whoever OPENED
+    /// the source: kt-app on placing and syncing media, kt-cli on probe,
+    /// the file reader — from the envelope. Hence `Option`: a generator and
+    /// a reel have no duration of their own, and a file not yet opened has had it
+    /// measured by nobody yet, and in these cases there is no trim limit — as it
+    /// always was.
     ///
-    /// Зачем модели это знать. До Р.63 `trim_max_end` у незеркального
-    /// события отдавал `i64::MAX / 4`: правый край можно было утащить
-    /// сколько угодно вправо, за конец материала, и никто об этом не
-    /// говорил. Ровно так у владельца событие стало длиной 316.967 с при
-    /// файле 226.268 с — последние 11.5 с материала «звучали» тишиной и
-    /// считались underrun'ами (Р.63 п.2).
+    /// Why the model needs to know this. Before R.63 `trim_max_end` of a non-mirrored
+    /// event returned `i64::MAX / 4`: the right edge could be dragged
+    /// as far to the right as you like, past the end of the material, and nobody said
+    /// anything about it. Exactly so for the owner, the event became 316.967 s long with a
+    /// file of 226.268 s — the last 11.5 s of material “sounded” as silence and
+    /// were counted as underruns (R.63 item 2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration: Option<Tick>,
 }
 
 impl Project {
-    /// Длина материала этого медиа, если её кто-то измерил (Р.63).
-    /// Единственная дверь: у ленты своей длительности нет (её содержимое
-    /// кончается само), у генератора её не бывает вовсе.
+    /// Length of the material of this media, if someone has measured it (R.63).
+    /// The only door: a reel has no duration of its own (its content
+    /// ends by itself); a generator never has one at all.
     pub fn media_duration(&self, id: MediaId) -> Option<Tick> {
         self.media.iter().find(|m| m.id == id).and_then(|m| m.duration).filter(|d| d.0 > 0)
     }
 }
 
 impl MediaRef {
-    /// Медиа без известной длительности — обычный случай на создании.
+    /// Media without a known duration — the usual case on creation.
     pub fn new(id: MediaId, path: impl Into<String>) -> MediaRef {
         MediaRef { id, path: path.into(), duration: None }
     }
 
-    /// То же, но длительность уже измерена открывшим источник.
+    /// The same, but the duration has already been measured by the one who opened the source.
     pub fn with_duration(id: MediaId, path: impl Into<String>, duration: Tick) -> MediaRef {
         MediaRef { id, path: path.into(), duration: Some(duration) }
     }
@@ -4201,7 +4201,7 @@ pub struct ClipEvent {
     #[serde(default)]
     pub link_group: Option<GroupId>,
     pub kind: ClipKind,
-    /// z-order для видео (меньше = выше), микс-дорожка для аудио.
+    /// z-order for video (lower = higher), mix track for audio.
     pub lane: u32,
     pub start: Tick,
     pub duration: Tick,
@@ -4209,73 +4209,73 @@ pub struct ClipEvent {
     pub media: MediaId,
     #[serde(default)]
     pub gain_db: f32,
-    /// Реверс источника (аудио и видео читаются задом наперёд; FX-цепочка
-    /// применяется ПОСЛЕ реверса). serde-default — старые файлы стабильны.
+    /// Reverse of the source (audio and video are read backwards; the FX chain
+    /// is applied AFTER the reverse). serde default — old files are stable.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reversed: bool,
     #[serde(default)]
     pub fx: Vec<FxInstance>,
-    /// Bypass-флаги слотов (п.2 v1.3): true = слот ВЫКЛЮЧЕН. Параллелен
-    /// fx (индексы); короче fx = хвост включён. Пустой не сериализуется.
+    /// Bypass flags of the slots (item 2 of v1.3): true = the slot is OFF. Parallel to
+    /// fx (indices); shorter than fx = the tail is on. An empty one is not serialized.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fx_bypass: Vec<bool>,
-    /// Непрозрачность видео 0..1 (Р.28, п.12 — «уровень» события как в
-    /// Vegas: линия по верху клипа, тянется мышью). Для аудио роль уровня
-    /// играет `gain_db`. Умолчание 1.0 не сериализуется — старые файлы
-    /// байт-стабильны.
+    /// Video opacity 0..1 (R.28, item 12 — the event's “level” as in
+    /// Vegas: a line along the top of the clip, dragged with the mouse). For audio the role of level
+    /// is played by `gain_db`. The default 1.0 is not serialized — old files
+    /// are byte-stable.
     #[serde(default = "one_f32", skip_serializing_if = "is_one_f32")]
     pub opacity: f32,
-    /// Автоматизация параметров видео-FX (Р.30): кривые по слотам,
-    /// параллельно `fx` (как fx_bypass; короче fx = хвост без кривых).
-    /// Домен t — прогресс клипа 0..1 (как CamMotion и камеры). Пустой
-    /// вектор не сериализуется — старые файлы байт-стабильны; в .otio
-    /// кривые едут внутри kt-конверта эффекта и поднимают файл до v2
-    /// (старый ридер потерял бы их молча — правило Р.29).
+    /// Automation of video-FX parameters (R.30): curves per slot,
+    /// parallel to `fx` (like fx_bypass; shorter than fx = the tail without curves).
+    /// Domain t — clip progress 0..1 (like CamMotion and cameras). An empty
+    /// vector is not serialized — old files are byte-stable; in .otio
+    /// the curves travel inside the effect's kt envelope and raise the file to v2
+    /// (an old reader would silently lose them — the R.29 rule).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fx_auto: Vec<Vec<ParamCurve>>,
-    /// Мастер-выключатель ВСЕЙ цепочки события (Р.33, требование
-    /// пользователя: «не хватает мастер-галки отключить текущий
-    /// fx-chain»). Отличается от bypass слотов тем, что не трогает их
-    /// состояние: включил обратно — цепочка та же. Умолчание (включено)
-    /// не сериализуется, файлы байт-стабильны.
+    /// The master switch of the WHOLE event chain (R.33, the user's
+    /// request: “there is no master checkbox to switch off the current
+    /// fx-chain”). It differs from slot bypass in that it does not touch their
+    /// state: switch it back on — the chain is the same. The default (on)
+    /// is not serialized, files are byte-stable.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fx_off: bool,
-    /// Вид генератора СО ЗНАЧЕНИЯМИ (Р.59, стадия 2).
+    /// Generator kind WITH VALUES (R.59, stage 2).
     ///
-    /// `Some` тогда и только тогда, когда `media` — генератор; сам вид
-    /// обязан совпадать с видом в пути медиа (`gen_kind_path`), это
-    /// проверяет `validate`. До этого раунда значения лежали в пути
-    /// медиа, то есть были общими на все места использования, и «второй
-    /// выпуск с другим заголовком» записать было физически некуда.
+    /// `Some` if and only if `media` is a generator; the kind itself
+    /// must match the kind in the media path (`gen_kind_path`); this is
+    /// checked by `validate`. Before this round the values lay in the media
+    /// path, that is, they were shared by all places of use, and “a second
+    /// release with a different title” had physically nowhere to be written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub r#gen: Option<crate::GeneratorKind>,
-    /// Кривые параметров генератора. Домен `t` — ТИК МАТЕРИАЛА, как у
-    /// `fx_auto`: ключ приклеен к материалу, а не к длине события.
-    /// Разрешает их ИСТОЧНИК по своему `pts`, а не план кадра.
+    /// Parameter curves of the generator. Domain `t` — the MATERIAL TICK, as in
+    /// `fx_auto`: the key is glued to the material, not to the length of the event.
+    /// They are resolved by the SOURCE through its own `pts`, not by the frame plan.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gen_auto: Vec<ParamCurve>,
-    /// Переопределения публичных параметров ЛЕНТЫ, на которую смотрит это
-    /// событие (Р.59, стадия 3).
+    /// Overrides of the PUBLIC parameters of the REEL this event points to
+    /// (R.59, stage 3).
     ///
-    /// Законны только у экземпляра вложения и только на ОПУБЛИКОВАННОЕ
-    /// (решение владельца: «экземпляр переопределяет только
-    /// опубликованное»). Это единственное место, куда можно положить
-    /// отличие экземпляра от ленты: вложение у нас — ССЫЛКА, и правка
-    /// ленты доезжает до всех мест сама.
+    /// They are legal only on an instance of a nested clip and only for the PUBLISHED
+    /// (the owner's decision: “an instance overrides only the
+    /// published”). This is the only place where one can put the
+    /// difference of an instance from the reel: a nested clip for us is a REFERENCE, and an edit
+    /// of the reel reaches all places by itself.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub overrides: Vec<Override>,
-    /// Ведущий узел «Геометрия» (Р.62). У аудио-события не участвует.
-    /// Умолчание не сериализуется — прежние файлы байт-стабильны;
-    /// событие без узла тождественно узлу «следовать проекту».
+    /// The leading “Geometry” node (R.62). Does not take part in an audio event.
+    /// The default is not serialized — former files are byte-stable;
+    /// an event without the node is identical to the node “follow the project”.
     #[serde(default, skip_serializing_if = "EventGeometry::is_default")]
     pub geometry: EventGeometry,
-    /// Позиция ведущего узла в цепочке: перед слотом `fx[geometry_pos]`
-    /// (0 — первым, `fx.len()` — последним). Эффекты ДО него работают в
-    /// пространстве источника, ПОСЛЕ — на холсте.
+    /// Position of the leading node in the chain: before the slot `fx[geometry_pos]`
+    /// (0 — first, `fx.len()` — last). Effects BEFORE it work in
+    /// the source space, AFTER it — on the canvas.
     #[serde(default, skip_serializing_if = "is_zero_usize")]
     pub geometry_pos: usize,
-    /// Кривые параметров ведущего узла (домен — тик материала, как у
-    /// `fx_auto`). Движок кладёт их в слот узла при материализации.
+    /// Parameter curves of the leading node (domain — the material tick, as in
+    /// `fx_auto`). The engine puts them into the node's slot on materialization.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub geometry_auto: Vec<ParamCurve>,
 }
@@ -4519,8 +4519,8 @@ fn is_one_f32(v: &f32) -> bool {
 }
 
 impl ClipEvent {
-    /// Активная FX-цепочка (без bypass-слотов) — единственный вид цепочки,
-    /// который видят движок и рендереры.
+    /// The active FX chain (without bypass slots) — the only kind of chain
+    /// that the engine and the renderers see.
     pub fn active_fx(&self) -> Vec<FxInstance> {
         if self.fx_off {
             return Vec::new();
@@ -4533,9 +4533,9 @@ impl ClipEvent {
             .collect()
     }
 
-    /// Кривые автоматизации, выровненные с active_fx(): bypass-слоты
-    /// выпадают ВМЕСТЕ со своими кривыми (Р.30) — иначе кривая приклеилась
-    /// бы к чужому слоту.
+    /// Automation curves aligned with active_fx(): bypass slots
+    /// drop out TOGETHER with their curves (R.30) — otherwise a curve would stick
+    /// to someone else's slot.
     pub fn active_fx_auto(&self) -> Vec<Vec<ParamCurve>> {
         if self.fx_off {
             return Vec::new();
@@ -4549,49 +4549,49 @@ impl ClipEvent {
     }
 }
 
-/// Кейфрейм автоматизации параметра.
+/// Automation keyframe of a parameter.
 ///
-/// `t` — позиция В МАТЕРИАЛЕ источника (тики в системе координат
-/// `source_in`), а не прогресс клипа (Р.33, решение пользователя «ключи
-/// приклеены к материалу, как в Premiere/AE»). Из этого следует всё
-/// остальное поведение: обрезка прячет и открывает ключи, не искажая
-/// анимацию; разрез отдаёт каждой половине её кусок кривой; реверс
-/// зеркалит анимацию вместе с материалом; смена скорости у аудио тянет
-/// ключи за собой. Ни одна геометрическая команда ключи не трогает —
-/// приклеенность обеспечена ПРЕДСТАВЛЕНИЕМ, а не кодом команд.
+/// `t` — the position IN THE SOURCE MATERIAL (ticks in the coordinate system of
+/// `source_in`), not the clip progress (R.33, the user's decision “keys
+/// are glued to the material, as in Premiere/AE”). All the rest of the behaviour follows from this:
+/// trimming hides and reveals keys without distorting the
+/// animation; a cut gives each half its piece of the curve; a reverse
+/// mirrors the animation together with the material; a change of speed in audio pulls the
+/// keys along. No geometric command touches keys —
+/// the gluing is ensured by the REPRESENTATION, not by the command code.
 ///
-/// До Р.33 здесь была доля 0..1 от длины события: обрезка растягивала
-/// анимацию, а `Split` копировал кривую целиком в обе половины.
+/// Before R.33 here was a 0..1 share of the event's length: trimming stretched the
+/// animation, and `Split` copied the curve entirely into both halves.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct AutoKey {
     pub t: Tick,
     pub v: f64,
-    /// Форма отрезка ПОСЛЕ этого ключа (Р.61). До Р.61 форма была одна на
-    /// всю кривую — булево `ParamCurve::ease`, — и ни «этот участок
-    /// ступенькой», ни зигзаг им не выражались.
+    /// The segment shape AFTER this key (R.61). Before R.61 the shape was one for
+    /// the whole curve — the boolean `ParamCurve::ease` — and neither “this section as a step”
+    /// nor a zigzag could be expressed by it.
     ///
-    /// У последнего ключа поле не действует: справа отрезка нет.
-    /// Умолчание (`Smooth { tension: 1.0 }`) считает РОВНО прежний
-    /// `smoothstep01` и не сериализуется — байты прежних файлов и
-    /// `GOLDEN_*` не двигаются.
+    /// For the last key the field has no effect: there is no segment to its right.
+    /// The default (`Smooth { tension: 1.0 }`) computes EXACTLY the former
+    /// `smoothstep01` and is not serialized — the bytes of old files and
+    /// `GOLDEN_*` do not move.
     #[serde(default, skip_serializing_if = "SegShape::is_default")]
     pub shape: SegShape,
 }
 
 impl AutoKey {
-    /// Ключ с формой по умолчанию. Конструктор, а не литерал: поле формы
-    /// добавлено позже, и сто двадцать литералов по дереву переписывать
-    /// на каждое новое поле — второй способ забыть про одно из них.
+    /// A key with the default shape. A constructor, not a literal: the shape field was
+    /// added later, and rewriting a hundred and twenty literals across the tree
+    /// for each new field is a second way to forget one of them.
     pub const fn at(t: Tick, v: f64) -> AutoKey {
         AutoKey { t, v, shape: SegShape::DEFAULT }
     }
 
-    /// Ключ с явной формой отрезка после него.
+    /// A key with an explicit segment shape after it.
     pub const fn shaped(t: Tick, v: f64, shape: SegShape) -> AutoKey {
         AutoKey { t, v, shape }
     }
 
-    /// Проставить всем ключам одну форму — «применить ко всем отрезкам».
+    /// Set one shape on all keys — “apply to all segments”.
     pub fn all_shaped(mut keys: Vec<AutoKey>, shape: SegShape) -> Vec<AutoKey> {
         for k in &mut keys {
             k.shape = shape;
@@ -4599,25 +4599,25 @@ impl AutoKey {
         keys
     }
 
-    /// Кусочно-линейная кривая одной строкой (частый случай в тестах и в
-    /// путях, где сглаживание запрещено, — например у скорости варпа).
+    /// A piecewise-linear curve in one line (a frequent case in tests and in
+    /// paths where smoothing is forbidden — for example for the speed of a warp).
     pub fn linear(keys: Vec<AutoKey>) -> Vec<AutoKey> {
         AutoKey::all_shaped(keys, SegShape::Linear)
     }
 }
 
-/// Вставить ключ, сохранив ФОРМУ ОТРЕЗКА, который он делит (Р.61).
+/// Insert a key, preserving the SHAPE OF THE SEGMENT it divides (R.61).
 ///
-/// Единственное правило вставки на всю программу. Ключ, поставленный
-/// посреди зигзага, обязан оставить зигзаг с обеих сторон: иначе клик по
-/// графику молча превращал бы кривую в сглаживание. У скорости варпа то
-/// же правило спасает от отказа валидации — там все отрезки прямые, и
-/// новый ключ прямой по наследству, а не по счастливой случайности.
+/// The only insertion rule for the whole program. A key placed
+/// in the middle of a zigzag must leave the zigzag on both sides: otherwise a click on the
+/// graph would silently turn the curve into a smoothing. For the speed of a warp the
+/// same rule saves from a validation failure — there all segments are straight, and
+/// the new key is straight by inheritance, not by lucky chance.
 ///
-/// `keys` остаётся отсортированным; ключ в ту же позицию заменяется.
+/// `keys` stays sorted; a key at the same position is replaced.
 pub fn insert_key(keys: &mut Vec<AutoKey>, at: Tick, v: f64, default: SegShape) {
-    // форма делимого отрезка = форма ближайшего ключа СЛЕВА; слева нет —
-    // форма первого; ключей нет вовсе — умолчание проекта
+    // shape of the divided segment = the shape of the nearest key on the LEFT; if none on the left —
+    // the shape of the first; if there are no keys at all — the project default
     let shape =
         keys.iter().rev().find(|k| k.t <= at).or_else(|| keys.first()).map_or(default, |k| k.shape);
     keys.retain(|k| k.t != at);
@@ -4625,73 +4625,73 @@ pub fn insert_key(keys: &mut Vec<AutoKey>, at: Tick, v: f64, default: SegShape) 
     keys.sort_by_key(|k| k.t.0);
 }
 
-/// Профиль зигзага: чем именно дрожит отрезок.
+/// Zigzag profile: what exactly the segment jitters with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ZigProfile {
-    /// Треугольник — самый дешёвый и самый «ручной» на вид.
+    /// Triangle — the cheapest and the most “hand-made” looking.
     #[default]
     Triangle,
-    /// Прямоугольник: значение прыгает между двумя уровнями.
+    /// Square: the value jumps between two levels.
     Square,
-    /// Синус — единственный гладкий из трёх.
+    /// Sine — the only smooth one of the three.
     Sine,
 }
 
-/// Форма отрезка между двумя соседними ключами (Р.61).
+/// Shape of the segment between two adjacent keys (R.61).
 ///
-/// Набор ЗАКРЫТ, и у каждого вида СВОИ параметры — не одно общее число
-/// «жёсткости». Так решено потому, что зигзаг признан формой отрезка
-/// (решение владельца, пересмотр вердикта F-AUT-009 п.3), а ему одного
-/// числа мало: нужны и периоды, и амплитуда, и профиль.
+/// The set is CLOSED, and each kind has ITS OWN parameters — not one common
+/// “stiffness” number. This is because the zigzag is recognized as a segment shape
+/// (the owner's decision, a revision of verdict F-AUT-009 item 3), and one number is too little for it:
+/// periods, amplitude and profile are needed as well.
 ///
-/// Каждая форма — ЗАМКНУТАЯ функция `(s ∈ [0,1], a, b, параметры)` без
-/// состояния: на этом стоят и мемоизация пост-FX, и детерминизм.
+/// Each shape is a CLOSED function `(s ∈ [0,1], a, b, parameters)` without
+/// state: both post-FX memoization and determinism rest on this.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "s", rename_all = "snake_case")]
 pub enum SegShape {
-    /// Прямая: значение идёт от `a` к `b` линейно.
+    /// Straight: the value goes linearly from `a` to `b`.
     Linear,
-    /// Третий порядок. `tension = 1` — ровно прежний `smoothstep01`;
-    /// 0 вырождается в прямую, больше единицы — резче у концов.
+    /// Third order. `tension = 1` — exactly the former `smoothstep01`;
+    /// 0 degenerates into a straight line, above one — sharper at the ends.
     Smooth { tension: f64 },
-    /// Ступень: до следующего ключа держится значение левого.
+    /// Step: until the next key the left one's value is held.
     Hold,
-    /// Мягкий старт, резкий приход.
+    /// Soft start, sharp arrival.
     EaseIn { tension: f64 },
-    /// Резкий старт, мягкий приход.
+    /// Sharp start, soft arrival.
     EaseOut { tension: f64 },
-    /// Дрожание вокруг линии `a → b`.
+    /// Jitter around the line `a → b`.
     ///
-    /// **Амплитуда — в ЕДИНИЦАХ ПАРАМЕТРА, а не долей перепада `b − a`**:
-    /// самый частый зигзаг есть дрожание вокруг ПОСТОЯННОГО значения, где
-    /// перепад равен нулю, и доля схлопнула бы фичу ровно там, где она
-    /// нужна. Кламп пределами цели делает вызывающий — паспорт свойства
-    /// знает их, а форма нет.
+    /// **The amplitude is in UNITS OF THE PARAMETER, not as a share of the difference `b − a`**:
+    /// the most frequent zigzag is jitter around a CONSTANT value, where
+    /// the difference is zero, and a share would collapse the feature exactly where it
+    /// is needed. Clamping to the target limits is done by the caller — the property passport
+    /// knows them, the shape does not.
     Zigzag { periods: f64, amplitude: f64, profile: ZigProfile },
-    /// ФОРМУЛА ОТРЕЗКА (Р.67): текст со своим вычислителем и переменными
-    /// `s` (доля пути 0..1), `a` и `b` (значения концов), `t` (секунды от
-    /// левого ключа). Концы задаёт сама формула — как у ступени, ей
-    /// разрешено не совпасть с ключом. Невычислимый текст отвергает
-    /// валидация; на отрезке ошибка вычисления (деление на ноль в одной
-    /// точке) даёт прямую между концами, а не молчаливый ноль.
+    /// SEGMENT FORMULA (R.67): a text with its own evaluator and variables
+    /// `s` (share of the path 0..1), `a` and `b` (end values), `t` (seconds from the
+    /// left key). The ends are set by the formula itself — as for a step, it is allowed
+    /// not to coincide with the key. An uncomputable text is rejected by
+    /// validation; on a segment an evaluation error (division by zero at one
+    /// point) gives a straight line between the ends, not a silent zero.
     ///
-    /// Текст живёт в интернере (`ExprId`): форма и ключ остаются `Copy`,
-    /// как весь остальной код кривых их и держит; в файл едет текст.
+    /// The text lives in the interner (`ExprId`): the shape and the key stay `Copy`,
+    /// as all the rest of the curve code holds them; the text travels to the file.
     Formula { expr: ExprId },
 }
 
-/// Интернированный текст формулы отрезка (Р.67): `Copy`-ручка вместо
-/// `String`, чтобы `SegShape`/`AutoKey` не потеряли `Copy`. Одинаковый
-/// текст — одна ручка (равенство форм — равенство текстов). Таблица только
-/// растёт — на число РАЗНЫХ текстов, которые набирал человек.
+/// Interned text of the segment formula (R.67): a `Copy` handle instead of a
+/// `String`, so that `SegShape`/`AutoKey` do not lose `Copy`. Identical text —
+/// one handle (equality of shapes = equality of texts). The table only
+/// grows — by the number of DIFFERENT texts a person has typed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ExprId(u32);
 
 static EXPRS: std::sync::OnceLock<std::sync::Mutex<Vec<String>>> = std::sync::OnceLock::new();
 
 impl ExprId {
-    /// Ручка на текст: тот же текст — та же ручка.
+    /// Handle to the text: the same text — the same handle.
     pub fn intern(text: &str) -> ExprId {
         let m = EXPRS.get_or_init(|| std::sync::Mutex::new(Vec::new()));
         let mut v = m.lock().unwrap_or_else(|e| e.into_inner());
@@ -4702,7 +4702,7 @@ impl ExprId {
         ExprId((v.len() - 1) as u32)
     }
 
-    /// Текст формулы.
+    /// The formula text.
     pub fn text(self) -> String {
         let m = EXPRS.get_or_init(|| std::sync::Mutex::new(Vec::new()));
         let v = m.lock().unwrap_or_else(|e| e.into_inner());
@@ -4730,25 +4730,25 @@ impl Default for SegShape {
 }
 
 impl SegShape {
-    /// Умолчание — прежнее сглаживание кривой (`ease = true`).
+    /// The default — the former smoothing of the curve (`ease = true`).
     pub const DEFAULT: SegShape = SegShape::Smooth { tension: 1.0 };
 
     pub fn is_default(&self) -> bool {
         *self == SegShape::DEFAULT
     }
 
-    /// Значение НА ОТРЕЗКЕ: `s` — доля пути от левого ключа к правому.
+    /// Value ON THE SEGMENT: `s` — the share of the path from the left key to the right one.
     ///
-    /// Концы обязаны совпадать со значениями ключей у всех форм, кроме
-    /// ступени и формулы: иначе кривая рвалась бы на каждом ключе.
-    /// Формула отрезка без времени (`t` = 0) — для мест, где секунд от
-    /// левого ключа нет; кривая зовёт `at_t`.
+    /// The ends must coincide with the key values for all shapes except
+    /// the step and the formula: otherwise the curve would tear at every key.
+    /// A segment formula without time (`t` = 0) — for places where there are no seconds from
+    /// the left key; the curve calls `at_t`.
     pub fn at(&self, s: f64, a: f64, b: f64) -> f64 {
         self.at_t(s, a, b, 0.0)
     }
 
-    /// То же с `secs` — секундами от левого ключа (переменная `t` у
-    /// формулы отрезка). У прочих форм `secs` не читается.
+    /// The same with `secs` — seconds from the left key (the variable `t` in
+    /// the segment formula). For other shapes `secs` is not read.
     pub fn at_t(&self, s: f64, a: f64, b: f64, secs: f64) -> f64 {
         let s = s.clamp(0.0, 1.0);
         match self {
@@ -4760,15 +4760,15 @@ impl SegShape {
                     a
                 }
             }
-            // `tension = 1` обязано давать РОВНО `s*s*(3-2s)`: на этом
-            // стоят GOLDEN_* и замороженный оракул t695b
+            // `tension = 1` must give EXACTLY `s*s*(3-2s)`: on this
+            // rest GOLDEN_* and the frozen oracle t695b.
             SegShape::Smooth { tension } => {
                 let k = tension.clamp(0.0, 4.0);
                 let k: f64 = k;
-                // концы шкалы натяжения считаются ТОЧНО, а не формулой
-                // смешивания: `s + (w − s)·1` арифметически равно `w`, но
-                // в плавающей точке — нет, и умолчание разошлось бы с
-                // прежним сглаживанием в последнем бите, сдвинув GOLDEN_*
+                // the ends of the tension scale are computed EXACTLY, not by the
+                // blending formula: `s + (w − s)·1` is arithmetically equal to `w`, but
+                // in floating point it is not, and the default would diverge from the
+                // former smoothing in the last bit, shifting GOLDEN_*
                 let f = if k == 1.0 {
                     s * s * (3.0 - 2.0 * s)
                 } else if k == 0.0 {
@@ -4801,10 +4801,10 @@ impl SegShape {
             SegShape::Zigzag { periods, amplitude, profile } => {
                 let (periods, amplitude, profile) = (*periods, *amplitude, *profile);
                 let base = a + (b - a) * s;
-                // концы обязаны совпасть с ключами: окно гасит дрожание
-                // на краях, иначе кривая рвалась бы на каждом ключе.
-                // Парабола, а не синус: `sin(pi)` в плавающей точке равен
-                // 1.2e-16, и правый конец не сходился с ключом ТОЧНО.
+                // the ends must coincide with the keys: the window damps the jitter
+                // at the edges, otherwise the curve would tear at every key.
+                // A parabola, not a sine: `sin(pi)` in floating point equals
+                // 1.2e-16, and the right end would not converge with the key EXACTLY.
                 let win = 4.0 * s * (1.0 - s);
                 let ph = s * periods.abs().min(1024.0);
                 let w = match profile {
@@ -4827,44 +4827,44 @@ impl SegShape {
     }
 }
 
-/// Кривая одного параметра одного FX-слота. Форма КАЖДОГО отрезка живёт
-/// на его левом ключе (`AutoKey::shape`, Р.61); за краями — крайние
-/// значения. Имя параметра — snake_case поля варианта (как в файле);
-/// кривая-сирота (имя не подходит варианту) молча не действует —
-/// валидация ловит её при загрузке/командах.
+/// A curve of one parameter of one FX slot. The shape of EACH segment lives
+/// on its left key (`AutoKey::shape`, R.61); beyond the edges — the end
+/// values. The parameter name is the snake_case of the variant's field (as in the file);
+/// an orphan curve (the name does not fit the variant) silently does not act —
+/// validation catches it on load/commands.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParamCurve {
     pub param: String,
     pub keys: Vec<AutoKey>,
-    /// ОТКУДА берутся значения (Р.59, п.466). Сегодня — только ключи;
-    /// формула и связь с другим свойством занимают место в схеме, но
-    /// отвергаются валидацией: место под них заведено ЗАРАНЕЕ, чтобы
-    /// будущий вычислитель не потребовал ломать формат, а файл с
-    /// невычислимой кривой падал громко, а не рисовал не то.
+    /// WHERE the values come from (R.59, item 466). Today — keys only;
+    /// a formula and a link to another property take up a place in the schema, but
+    /// are rejected by validation: the place for them was introduced IN ADVANCE, so that
+    /// a future evaluator would not require breaking the format, and a file with
+    /// an uncomputable curve fails loudly rather than drawing the wrong thing.
     ///
-    /// Поле не пишется, пока источник — ключи: байты прежних файлов не
-    /// двигаются ни на один символ. Сериализация кривой своя (см. ниже),
-    /// поэтому атрибутов serde на полях нет.
+    /// The field is not written while the source is keys: the bytes of old files do not
+    /// move by a single character. The serialization of the curve is its own (see below),
+    /// so there are no serde attributes on the fields.
     pub source: CurveSource,
 }
 
-/// Читает ли текст формулы имя `name` (по разбору, а не по подстроке:
-/// `k` внутри `clamp` — не переменная).
+/// Whether the formula text reads the name `name` (by parsing, not by substring:
+/// `k` inside `clamp` is not a variable).
 fn expr_reads(expr: &str, name: &str) -> bool {
     crate::formula::Formula::parse(expr).is_ok_and(|f| f.reads.iter().any(|r| r == name))
 }
 
-/// Провод кривой в файл (Р.61, D1b).
+/// The curve's wire format in the file (R.61, D1b).
 ///
-/// В МОДЕЛИ форма живёт на ключе; в ФАЙЛЕ она пишется ПО СОДЕРЖИМОМУ —
-/// тем же правилом, что и версия конверта. Кривая, все ключи которой
-/// несут одну выразимую форму, пишется ПРЕЖНИМ полем `ease` и ни одного
-/// байта не двигает; форма, от неё отличная, едет на своём ключе и
-/// поднимает файл до v10.
+/// In the MODEL the shape lives on the key; in the FILE it is written BY CONTENT —
+/// by the same rule as the envelope version. A curve whose keys all
+/// carry one expressible shape is written with the FORMER `ease` field, and not a single
+/// byte moves; a shape different from it travels on its own key and
+/// raises the file to v10.
 ///
-/// Без этого простое удаление `ease` сдвинуло бы байты КАЖДОГО файла с
-/// кривыми — то есть сломало бы «файл без новшеств остаётся прежним»
-/// (t433b по всем фикстурам и golden `demo-3d.otio`, t189b).
+/// Without this, a simple removal of `ease` would shift the bytes of EVERY file with
+/// curves — that is, it would break “a file without novelties stays the same”
+/// (t433b across all fixtures and the golden `demo-3d.otio`, t189b).
 #[derive(Serialize, Deserialize)]
 struct KeyWire {
     t: Tick,
@@ -4884,22 +4884,22 @@ struct CurveWire {
 }
 
 impl ParamCurve {
-    /// Форма, которую выражает прежнее булево поле `ease`, С УЧЁТОМ ИМЕНИ
-    /// параметра (Р.63): `true` — третий порядок с прежним сглаживанием,
-    /// `false` — прямая, а у СКОРОСТИ варпа — прямая всегда.
+    /// The shape that the former boolean field `ease` expresses, TAKING INTO ACCOUNT THE NAME
+    /// of the parameter (R.63): `true` — third order with the former smoothing,
+    /// `false` — a straight line, and for the SPEED of a warp — always a straight line.
     ///
-    /// Про скорость это не поблажка валидатору, а верный перевод. До Р.61
-    /// карта варпа поля `ease` не читала ВОВСЕ (его читал только `cam_at`
-    /// камеры): кривая скорости всегда звучала кусочно-линейной, каким бы
-    /// ни было булево. Развернув `ease: true` в «плавно», читатель Р.61
-    /// придумывал форму, которой в звуке никогда не было, — и файл
-    /// владельца (14 кривых `rate`) перестал открываться вовсе
-    /// (`RateShapeMustBeLinear`, Р.63 п.1). Читатель знает имя параметра,
-    /// значит знает и единственно верную форму.
+    /// About speed this is not a concession to the validator but a correct translation. Before R.61
+    /// the warp map did not read the `ease` field AT ALL (only `cam_at` of the camera read it):
+    /// the speed curve always sounded piecewise-linear, whatever the boolean was.
+    /// By expanding `ease: true` into “smooth”, the R.61 reader
+    /// invented a shape that had never existed in the sound — and the owner's file
+    /// (14 `rate` curves) stopped opening at all
+    /// (`RateShapeMustBeLinear`, R.63 item 1). The reader knows the parameter name,
+    /// so it knows the one and only correct shape too.
     ///
-    /// ЯВНАЯ форма на ключе (поле `shape`, файлы с v10) тут не трогается:
-    /// её наш писатель у скорости не производит, а пришедшую снаружи
-    /// валидация по-прежнему отвергает громко.
+    /// An EXPLICIT shape on a key (the `shape` field, files with v10) is not touched here:
+    /// our writer does not produce it for speed, and one that comes from outside
+    /// is still rejected loudly by validation.
     pub fn implied_shape_of(param: &str, ease: bool) -> SegShape {
         if param == "rate" {
             SegShape::Linear
@@ -4912,21 +4912,21 @@ impl ParamCurve {
 }
 
 impl ParamCurve {
-    /// Есть ли на кривой формула ОТРЕЗКА (Р.67): такую кривую рендер не
-    /// считает сам — резолвер разворачивает её в ключи на сетке кадров.
+    /// Whether the curve has a SEGMENT formula (R.67): such a curve the renderer
+    /// does not evaluate itself — the resolver expands it into keys on the frame grid.
     pub fn has_formula_segments(&self) -> bool {
         self.keys.iter().any(|k| matches!(k.shape, SegShape::Formula { .. }))
     }
 
-    /// Нужна ли кривой работа резолвера: производный источник или формула
-    /// отрезка. Проект без того и другого не платит ничего.
+    /// Whether the curve needs the resolver's work: a derived source or a segment
+    /// formula. A project without either pays nothing.
     pub fn needs_resolve(&self) -> bool {
         !self.source.is_keys() || self.has_formula_segments()
     }
 
-    /// Новшества Р.67 в ФАЙЛЕ (версия v13 по содержимому): формула отрезка,
-    /// слой над непустыми ключами или формула, читающая `k`. Старая сборка
-    /// прочла бы формулу отрезка прямой, а слой — стёрла бы ключи.
+    /// R.67 novelties in the FILE (version v13 by content): a segment formula, a layer
+    /// over non-empty keys, or a formula reading `k`. An old build would read a segment
+    /// formula as a straight line, and a layer would erase the keys.
     pub fn needs_v13(&self) -> bool {
         if self.has_formula_segments() {
             return true;
@@ -4940,12 +4940,12 @@ impl ParamCurve {
         }
     }
 
-    /// Стартовая кривая-КОНСТАНТА для параметра (Р.61).
+    /// Start curve — a CONSTANT for the parameter (R.61).
     ///
-    /// Единственное место, где решается форма НОВОЙ кривой: умолчание
-    /// проекта, но у скорости варпа ВСЕГДА прямая — на кусочно-линейном
-    /// профиле стоит замкнутая карта растяжения, и сглаженная стартовая
-    /// кривая была бы отказом валидации в ту же секунду.
+    /// The only place where the shape of a NEW curve is decided: the project's default,
+    /// but for the speed of a warp it is ALWAYS a straight line — on the piecewise-linear profile
+    /// a closed stretch map stands,
+    /// and a smoothed start curve would be a validation failure in the very same second.
     pub fn constant(param: &str, from: Tick, to: Tick, v: f64, default: SegShape) -> ParamCurve {
         let shape = if param == "rate" { SegShape::Linear } else { default };
         ParamCurve {
@@ -4959,8 +4959,8 @@ impl ParamCurve {
 impl Serialize for ParamCurve {
     fn serialize<S: serde::Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        // `ease = false` ровно тогда, когда ВСЯ кривая прямая: так файл
-        // прежнего вида пишется прежними байтами
+        // `ease = false` exactly when the WHOLE curve is straight: so a file of the
+        // former kind is written with the former bytes.
         let ease = !self.keys.iter().all(|k| k.shape == SegShape::Linear);
         let implied = ParamCurve::implied_shape_of(&self.param, ease);
         let keys: Vec<KeyWire> = self
@@ -4998,45 +4998,45 @@ impl<'de> Deserialize<'de> for ParamCurve {
     }
 }
 
-/// Источник значений кривой (Р.59, п.466).
+/// Source of the curve's values (R.59, item 466).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CurveSource {
-    /// Ключи, расставленные человеком, — единственный работающий сегодня.
+    /// Keys placed by a person — the only one working today.
     #[default]
     Keys,
-    /// Своя детерминированная мини-формула от времени и адресуемых
-    /// свойств (Р.61). Ключей у такой кривой нет.
+    /// Its own deterministic mini-formula of time and addressable
+    /// properties (R.61). Such a curve has no keys.
     Formula { expr: String },
-    /// Значение ведёт ДРУГОЕ свойство (Р.61).
+    /// The value is led by ANOTHER property (R.61).
     ///
-    /// `path` — адрес источника (см. `LinkPath`). Необязательное
-    /// выражение `expr` пересчитывает прочитанное значение; в нём
-    /// ведущее свойство доступно под именем `src`, а время материала —
-    /// под именем `t` (в секундах).
+    /// `path` — the address of the source (see `LinkPath`). The optional
+    /// expression `expr` recalculates the read value; in it
+    /// the leading property is available under the name `src`, and the material time —
+    /// under the name `t` (in seconds).
     Link {
         path: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         expr: Option<String>,
-        /// Пороги и снимки для НЕЧИСЛОВОЙ цели (Р.61): флаг переключается
-        /// порогом, выбор/текст/медиа/цвет — снимками на отметках оси
-        /// ЗНАЧЕНИЯ ведущего свойства. Ось у риги — значение, а не время,
-        /// и путать их нельзя.
+        /// Thresholds and snapshots for a NON-NUMERIC target (R.61): a flag switches
+        /// by a threshold, choice/text/media/colour — by snapshots at the marks of the axis
+        /// of the VALUE of the leading property. A rig's axis is a value, not a time,
+        /// and they must not be confused.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         stops: Vec<LinkStop>,
     },
 }
 
-/// Отметка на оси ЗНАЧЕНИЯ ведущего свойства (Р.61).
+/// A mark on the axis of the VALUE of the leading property (R.61).
 ///
-/// От ключа отличается осью: у ключа она ВРЕМЯ, здесь — значение ведущего.
-/// Между отметками держится предыдущий снимок: рига переключает шрифт и
-/// вариант ступенькой, «половины» между вариантами не существует.
+/// It differs from a key by its axis: for a key the axis is TIME, here it is the leader's value.
+/// Between marks the previous snapshot is held: the rig switches the font and
+/// the variant as a step, there is no “half” between variants.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LinkStop {
-    /// Значение ведущего свойства, начиная с которого действует снимок.
+    /// The value of the leading property, from which the snapshot applies.
     pub at: f64,
-    /// Что подставить. Тип обязан совпасть с типом цели — иначе валидация.
+    /// What to substitute. The type must match the target's type — otherwise validation.
     pub value: ParamValue,
 }
 
@@ -5045,7 +5045,7 @@ impl CurveSource {
         matches!(self, CurveSource::Keys)
     }
 
-    /// Адрес ведущего свойства, если источник производный.
+    /// The address of the leading property, if the source is derived.
     pub fn link_path(&self) -> Option<&str> {
         match self {
             CurveSource::Link { path, .. } => Some(path),
@@ -5053,7 +5053,7 @@ impl CurveSource {
         }
     }
 
-    /// Текст выражения, если он есть (у связи — необязательный).
+    /// The text of the expression, if there is one (for a link — optional).
     pub fn expr(&self) -> Option<&str> {
         match self {
             CurveSource::Formula { expr } => Some(expr),
@@ -5063,20 +5063,20 @@ impl CurveSource {
     }
 }
 
-/// Структурная проверка кривых автоматизации клипа: ключи отсортированы
-/// по материальной позиции, позиция неотрицательна, значения конечны.
-/// Ключ ВНЕ куска, используемого клипом, законен — это спрятанный
-/// обрезкой ключ, он вернётся, если событие снова растянуть. Имя
-/// параметра НЕ проверяется жёстко: кривая-сирота (переименованный/чужой
-/// параметр) молча не действует — правки схемы не валят загрузку файла.
-/// Генератор на событии и его кривые (Р.59, стадия 2).
+/// Structural check of the clip's automation curves: keys are sorted
+/// by material position, the position is non-negative, the values are finite.
+/// A key OUTSIDE the piece used by the clip is legal — it is a key hidden by
+/// a trim; it will return if the event is stretched again. The parameter
+/// name is NOT checked strictly: an orphan curve (a renamed/foreign
+/// parameter) silently does not act — schema edits do not break the file's loading.
+/// The generator on the event and its curves (R.59, stage 2).
 ///
-/// Строго, без легаси: значения есть тогда и только тогда, когда медиа —
-/// генератор, вид совпадает с видом в пути, кривая-сирота ОТВЕРГАЕТСЯ.
-/// У `fx_auto` сирота законна (слот мог сменить вид, а кривая — спрятанная
-/// работа человека), здесь — нет: вид генератора у события ровно один и
-/// меняется он вместе с медиа, так что сироте взяться неоткуда, а молча
-/// не действующая кривая выглядела бы как «анимация пропала».
+/// Strict, no legacy: values exist if and only if the media is a
+/// generator, the kind matches the kind in the path, an orphan curve is REJECTED.
+/// `fx_auto` tolerates an orphan (a slot could change its kind, and the curve is
+/// a hidden piece of a person's work); here there is none: the generator kind of an event is exactly one, and it
+/// changes together with the media, so an orphan has nowhere to come from, while a silently
+/// non-acting curve would look like “the animation disappeared”.
 pub fn check_clip_gen(c: &ClipEvent, media_kind_path: Option<&str>) -> Result<(), ProjectError> {
     let Some(g) = &c.r#gen else {
         return match media_kind_path {
@@ -5102,19 +5102,19 @@ pub fn check_clip_gen(c: &ClipEvent, media_kind_path: Option<&str>) -> Result<()
     Ok(())
 }
 
-/// Источник кривой обязан РАЗРЕШАТЬСЯ (Р.61).
+/// The source of a curve MUST be RESOLVABLE (R.61).
 ///
-/// Формула — разбираться; у неё ключей быть не может: кривая задана текстом
-/// целиком, и ключи рядом были бы вторым источником правды о значении.
-/// Связь — иметь адрес по форме и, если есть, разбираемое выражение;
-/// достижимость адреса проверяет `links::check_links`, потому что она
-/// зависит от ленты, а не от одной кривой.
+/// A formula is to be parsed; it can have no keys: the curve is set by text
+/// entirely, and keys beside it would be a second source of truth about the value.
+/// A link — must have an address of the right form and, if present, a parseable expression;
+/// the reachability of the address is checked by `links::check_links`, because it
+/// depends on the reel, not on a single curve.
 pub fn check_curve_source(id: ClipId, c: &ParamCurve) -> Result<(), ProjectError> {
     match &c.source {
         CurveSource::Keys => {}
-        // формула — СЛОЙ над ключами (Р.67): ключи под ней живут, `k` —
-        // их значение с формами; без ключей `k` = 0 — прежняя «формула
-        // как источник» и есть слой над пустотой
+        // a formula — a LAYER over keys (R.67): the keys beneath it live, `k` is
+        // their value with the shapes; without keys `k` = 0 — the former “formula
+        // as a source” is precisely a layer over emptiness
         CurveSource::Formula { expr } => {
             check_expr(id, expr, LAYER_VARS, "layer formula")?;
         }
@@ -5130,7 +5130,7 @@ pub fn check_curve_source(id: ClipId, c: &ParamCurve) -> Result<(), ProjectError
             }
         }
     }
-    // формула ОТРЕЗКА — свои переменные (Р.67)
+    // a SEGMENT formula — its own variables (R.67)
     for k in &c.keys {
         if let SegShape::Formula { expr } = k.shape {
             check_expr(id, &expr.text(), SEGMENT_VARS, "segment formula")?;
@@ -5139,15 +5139,15 @@ pub fn check_curve_source(id: ClipId, c: &ParamCurve) -> Result<(), ProjectError
     Ok(())
 }
 
-/// Переменные слоя и формулы-источника: время материала, ведущее свойство,
-/// значение ключей с формами.
+/// Variables of the layer and of the source formula: the material time, the leading property,
+/// the value of the keys with shapes.
 pub const LAYER_VARS: &[&str] = &["t", "src", "k"];
-/// Переменные формулы отрезка: доля пути, концы, секунды от левого ключа.
+/// Variables of the segment formula: the share of the path, the ends, the seconds from the left key.
 pub const SEGMENT_VARS: &[&str] = &["s", "a", "b", "t"];
 
-/// Текст формулы разбирается и читает только известные имена — иначе
-/// ГРОМКИЙ отказ с именем (правило 16): молчаливый ноль показал бы
-/// картинку, которой человек поверит.
+/// The formula text is parsed and reads only known names — otherwise
+/// a LOUD rejection with a name (rule 16): a silent zero would show
+/// a picture that the person would believe.
 fn check_expr(id: ClipId, expr: &str, vars: &[&str], what: &str) -> Result<(), ProjectError> {
     let f = crate::formula::Formula::parse(expr)
         .map_err(|e| ProjectError::CurveSourceBroken(id, format!("{what}: {e}")))?;
@@ -5163,22 +5163,22 @@ fn check_expr(id: ClipId, expr: &str, vars: &[&str], what: &str) -> Result<(), P
 pub fn check_fx_auto(id: ClipId, auto: &[Vec<ParamCurve>]) -> Result<(), ProjectError> {
     for curves in auto {
         for c in curves {
-            // Источник, который НЕ РАЗРЕШАЕТСЯ, — ГРОМКИЙ отказ (Р.59,
-            // п.466; Р.61). Молчаливое «нарисуем по ключам» показало бы
-            // не то, что записано в файле, а это худший сорт
-            // расхождения: человек видит картинку и верит ей.
+            // A source that does NOT RESOLVE is a LOUD rejection (R.59,
+            // item 466; R.61). A silent “draw from the keys” would show
+            // something other than what is written in the file, and this is the worst kind of
+            // discrepancy: the person sees the picture and believes it.
             check_curve_source(id, c)?;
             let sorted = c.keys.windows(2).all(|w| w[0].t <= w[1].t);
             let ok = c.keys.iter().all(|k| k.t.0 >= 0 && k.v.is_finite());
             if !sorted || !ok {
                 return Err(ProjectError::BadFxAuto(id));
             }
-            // СКОРОСТЬ принимает только прямую (Р.61). Замкнутая форма
-            // обратной карты варпа стоит на кусочно-линейном профиле:
-            // интеграл от третьего порядка был бы четвёртой степени, а
-            // от зигзага не выражается вовсе. Отказ ГРОМКИЙ — тихое
-            // выбрасывание формы показало бы в редакторе одно, а в
-            // звуке другое.
+            // SPEED accepts only a straight line (R.61). The closed form
+            // of the inverse warp map stands on a piecewise-linear profile:
+            // the integral of the third order would be of the fourth degree, and from
+            // a zigzag it is not expressible at all. The rejection is LOUD — a quiet
+            // dropping of the shape would show one thing in the editor and another in the
+            // sound.
             if c.param == "rate" && c.keys.iter().any(|k| k.shape != SegShape::Linear) {
                 return Err(ProjectError::RateShapeMustBeLinear(id));
             }
@@ -5187,10 +5187,10 @@ pub fn check_fx_auto(id: ClipId, auto: &[Vec<ParamCurve>]) -> Result<(), Project
     Ok(())
 }
 
-/// Значение кривой в материальной позиции `at`. За крайними ключами —
-/// их значения (кламп краёв, как cam_at). Домен НЕ клампится: позиция за
-/// телом клипа (ручка перехода, пре-ролл) законна и честно продолжает
-/// кривую её крайним значением.
+/// The value of the curve at the material position `at`. Beyond the end keys —
+/// their values (clamping of the edges, as cam_at). The domain is NOT clamped: a position beyond
+/// the body of the clip (a transition handle, pre-roll) is legal and honestly continues
+/// the curve with its end value.
 pub fn curve_value(keys: &[AutoKey], at: Tick) -> f64 {
     let Some(first) = keys.first() else { return 0.0 };
     if at <= first.t {
@@ -5201,24 +5201,24 @@ pub fn curve_value(keys: &[AutoKey], at: Tick) -> f64 {
         if at <= b.t {
             let span = (b.t.0 - a.t.0).max(1) as f64;
             let s = (((at.0 - a.t.0) as f64) / span).clamp(0.0, 1.0);
-            // форму отрезка несёт ЛЕВЫЙ ключ — он и решает (Р.61);
-            // секунды от него — переменная `t` формулы отрезка (Р.67)
+            // the segment's shape is carried by the LEFT key — it decides (R.61);
+            // the seconds from it — the variable `t` of the segment formula (R.67)
             return a.shape.at_t(s, a.v, b.v, (at.0 - a.t.0) as f64 / 90_000.0);
         }
     }
     keys.last().unwrap().v
 }
 
-/// Применить кривые слота к эффекту в материальной позиции `at`.
-/// Возвращает число сработавших кривых (сироты не считаются).
+/// Apply the slot's curves to an effect at the material position `at`.
+/// Returns the number of curves that acted (orphans are not counted).
 pub fn apply_fx_auto(fx: &mut FxInstance, curves: &[ParamCurve], at: Tick) -> usize {
     apply_curves(fx, curves, at)
 }
 
-/// То же для ЛЮБОГО владельца свойств (Р.59): вид генератора, переход,
-/// камера. Одно правило разрешения кривой на все носители — второго
-/// заводить нельзя, разойдись они, «эффект» и «генератор» показывали бы
-/// разные значения на одном и том же тике.
+/// The same for ANY owner of properties (R.59): the generator kind, transition,
+/// camera. One resolution rule for a curve for all carriers — a second one must not be
+/// introduced; if they diverged, the “effect” and the “generator” would show
+/// different values at the same tick.
 pub fn apply_curves<T: HasParams + ?Sized>(t: &mut T, curves: &[ParamCurve], at: Tick) -> usize {
     let mut applied = 0;
     for c in curves {
@@ -5232,11 +5232,11 @@ pub fn apply_curves<T: HasParams + ?Sized>(t: &mut T, curves: &[ParamCurve], at:
     applied
 }
 
-/// Материальная позиция момента таймлайна внутри клипа — ЕДИНОЕ правило
-/// для рендера, автоматизации и UI (движок потом ещё выравнивает её по
-/// сетке кадров, `frame_step` нужен зеркалу реверса). За телом клипа
-/// значение продолжается линейно и клампится нижней границей материала:
-/// ручка перехода «держит кадр», как и раньше.
+/// The material position of a timeline moment inside a clip — the SINGLE rule
+/// for render, automation and UI (the engine then further aligns it to the
+/// frame grid; `frame_step` is needed for the reverse mirror). Beyond the body of the clip
+/// the value continues linearly and is clamped by the lower bound of the material:
+/// the transition handle “holds the frame”, as before.
 pub fn clip_material_at(
     source_in: Tick,
     start: Tick,
@@ -5246,22 +5246,22 @@ pub fn clip_material_at(
     t: Tick,
 ) -> Tick {
     if reversed {
-        // зеркало: последний кадр клипа показывает source_in, первый —
-        // конец использованного куска источника (минус шаг кадра)
+        // mirror: the last frame of the clip shows source_in, the first —
+        // the end of the used piece of the source (minus one frame step)
         Tick((source_in.0 + duration.0 - frame_step - (t.0 - start.0)).max(source_in.0))
     } else {
         Tick((source_in.0 + (t.0 - start.0)).max(0))
     }
 }
 
-/// Обратная к `clip_material_at`: момент таймлайна, в который событие
-/// играет материальную позицию `mat`. Пара обязана жить РЯДОМ — они верны
-/// только вместе, а `clip_material_at` ещё и клампит края.
+/// The inverse of `clip_material_at`: the timeline moment at which the event
+/// plays the material position `mat`. The pair must live NEXT TO each other — they are correct
+/// only together, and `clip_material_at` also clamps the edges.
 ///
-/// Р.37: раньше обратная была открыта в kt-engine и умела варп скорости
-/// (`material_at`/`timeline_at_material`). Теперь перевод «материал ↔
-/// таймлайн» НЕ ЗАВИСИТ от цепочки эффектов: скорость сжимает материал, но
-/// не ось автоматизации (решение пользователя, п.1 Р.37).
+/// R.37: previously the inverse was open in kt-engine and knew the speed warp
+/// (`material_at`/`timeline_at_material`). Now the translation “material ↔
+/// timeline” DOES NOT DEPEND on the effect chain: speed compresses the material, but
+/// not the automation axis (the user's decision, item 1 of R.37).
 pub fn clip_timeline_at(
     source_in: Tick,
     start: Tick,
@@ -5277,11 +5277,11 @@ pub fn clip_timeline_at(
     }
 }
 
-/// Кейфреймы slowed&reverb СТАРОГО образца (`SlowedReverb.automation`,
-/// доли материала) → обычные кривые `rate`/`mix` в тиках материала.
-/// Возвращает true, если клип менялся. Зовётся ридерами формата: с Р.33
-/// автоматизация у всех эффектов одна, и собственного домена у slowed
-/// больше нет.
+/// Keyframes of the OLD-style slowed&reverb (`SlowedReverb.automation`,
+/// shares of material) → ordinary curves `rate`/`mix` in material ticks.
+/// Returns true if the clip changed. Called by the format readers: since R.33
+/// the automation of all effects is one, and slowed has no own domain
+/// any more.
 pub fn migrate_legacy_slowed(c: &mut ClipEvent) -> bool {
     let mut touched = false;
     for (i, f) in c.fx.iter_mut().enumerate() {
@@ -5293,8 +5293,8 @@ pub fn migrate_legacy_slowed(c: &mut ClipEvent) -> bool {
         if c.fx_auto.len() <= i {
             c.fx_auto.resize(i + 1, Vec::new());
         }
-        // доля материала у slowed считалась ОТ source_in — зеркало реверса
-        // ей не нужно (в отличие от видео-кривых прежнего домена)
+        // the share of material for slowed was counted FROM source_in — the reverse mirror
+        // is not needed for it (unlike the video curves of the former domain)
         let key = |u: f64, v: f64| {
             AutoKey::at(material_from_progress(u, c.source_in, c.duration, false), v)
         };
@@ -5303,7 +5303,7 @@ pub fn migrate_legacy_slowed(c: &mut ClipEvent) -> bool {
             ("mix", Box::new(|k: &SlowedKeyframe| k.mix as f64)),
         ] {
             if c.fx_auto[i].iter().any(|c| c.param == param) {
-                continue; // кривая нового домена уже есть — она главнее
+                continue; // a curve of the new domain already exists — it takes precedence
             }
             c.fx_auto[i].push(ParamCurve {
                 param: param.into(),
@@ -5317,12 +5317,12 @@ pub fn migrate_legacy_slowed(c: &mut ClipEvent) -> bool {
     touched
 }
 
-/// Кейфреймы камеры → общие кривые (Р.34 К3). Домен меняется с доли
-/// события на тики ОТ ЕГО НАЧАЛА, форма — с «строка со всеми полями» на
-/// «кривая на параметр»; `ease` переезжает с события на каждую кривую.
-/// Конверсия односторонняя (у независимых кривых ключи стоят в разное
-/// время, обратно в строки они не собираются) — поэтому `keyframes`
-/// становится read-only легаси-входом, как `SlowedReverb.automation`.
+/// Camera keyframes → common curves (R.34 K3). The domain changes from the share of the
+/// event to ticks FROM ITS START, the shape — from “a row with all the fields” to
+/// “a curve per parameter”; `ease` moves from the event to each curve.
+/// The conversion is one-way (for independent curves the keys stand at different
+/// times, they are not assembled back into rows) — therefore `keyframes`
+/// becomes a read-only legacy input, like `SlowedReverb.automation`.
 pub fn migrate_legacy_camera(c: &mut CameraEvent) -> bool {
     if c.keyframes.is_empty() || !c.auto.is_empty() {
         return false;
@@ -5330,7 +5330,7 @@ pub fn migrate_legacy_camera(c: &mut CameraEvent) -> bool {
     let keys = std::mem::take(&mut c.keyframes);
     let dur = c.duration.0.max(1) as f64;
     let ease = c.ease;
-    /// (имя параметра, как достать его из снимка камеры)
+    /// (the parameter name, how to get it from the camera snapshot)
     type Pick = (&'static str, fn(&CameraParams) -> f64);
     let params: &[Pick] = &[
         ("pos_x", |p| p.pos_x),
@@ -5341,19 +5341,19 @@ pub fn migrate_legacy_camera(c: &mut CameraEvent) -> bool {
         ("rot_z", |p| p.rot_z),
         ("fov_deg", |p| p.fov_deg),
     ];
-    // базовые параметры берутся у ПЕРВОГО ключа: кривая перекрывает их
-    // целиком, но неавтоматизируемые поля (target/ortho) должны остаться
-    // теми, что были в анимации
+    // the base parameters are taken from the FIRST key: the curve overrides them
+    // entirely, but the non-automatable fields (target/ortho) must remain
+    // those that were in the animation
     c.cam = keys[0].cam;
     for (name, pick) in params {
-        // ровные кривые не заводим: у камеры семь параметров, и семь
-        // прямых линий в редакторе — мусор
+        // flat curves are not created: a camera has seven parameters, and seven
+        // straight lines in the editor are junk
         let vals: Vec<f64> = keys.iter().map(|k| pick(&k.cam)).collect();
         if vals.windows(2).all(|w| (w[0] - w[1]).abs() < 1e-12) {
             continue;
         }
-        // прежнее булево сглаживание камеры становится ОДНОЙ формой на
-        // все отрезки: значения после конверсии обязаны совпасть побитово
+        // the former boolean smoothing of the camera becomes ONE shape for
+        // all segments: the values after the conversion must coincide bit for bit
         let shape = if ease { SegShape::DEFAULT } else { SegShape::Linear };
         c.auto.push(ParamCurve {
             param: (*name).into(),
@@ -5370,21 +5370,21 @@ pub fn migrate_legacy_camera(c: &mut CameraEvent) -> bool {
     true
 }
 
-/// CamMotion → узел «Геометрия» + кривые (Р.34 К2, с Р.62 — вместо Pan).
-/// У узла те же три параметра (положение и зум), то есть «CamMotion с
-/// кейфреймами» — это «Геометрия с кривыми»; конверсия убирает
-/// дублирующий механизм анимации, а не портирует его. Пан прежней рамки
-/// (−1..1 в пределах свободного места) переводится в положение (доли
-/// холста): `pos = −pan·(1 − 1/zoom)/2` при зуме ключа.
+/// CamMotion → “Geometry” node + curves (R.34 K2, since R.62 — instead of Pan).
+/// The node has the same three parameters (position and zoom), so “CamMotion with
+/// keyframes” is “Geometry with curves”; the conversion removes the
+/// duplicate animation mechanism rather than porting it. The pan of the former frame
+/// (−1..1 within the free space) is converted into the position (fractions of the
+/// canvas): `pos = −pan·(1 − 1/zoom)/2` at the zoom of the key.
 ///
-/// Тонкости, которые легко потерять: (1) пустые кейфреймы у CamMotion
-/// означали НЕ статику, а v1-пресет «наезд 1.0 → 1.35» — он
-/// материализуется явно, иначе старые проекты потеряли бы движение;
-/// (2) `time_scale` разгонял чтение кейфреймов (`u_eff = u · scale`),
-/// поэтому позиция ключа делится на него; (3) `ease` жил на эффекте, а в
-/// новом домене он у каждой кривой свой.
-/// Пан прежней рамки (−1..1 в пределах свободного места при зуме z) →
-/// положение узла «Геометрия» в долях холста.
+/// Subtleties that are easy to lose: (1) empty keyframes of CamMotion
+/// meant NOT static, but the v1 preset “zoom-in 1.0 → 1.35” — it is
+/// materialized explicitly, otherwise old projects would lose the motion; (2)
+/// `time_scale` sped up the reading of keyframes (`u_eff = u · scale`),
+/// so the key's position is divided by it; (3) `ease` lived on the effect, and in
+/// the new domain each curve has its own.
+/// The pan of the former frame (−1..1 within the free space at zoom z) →
+/// the position of the “Geometry” node in canvas fractions.
 pub fn pan_to_pos(pan: f64, zoom: f64) -> f64 {
     let z = zoom.clamp(0.05, 32.0);
     -pan.clamp(-4.0, 4.0) * (1.0 - 1.0 / z) / 2.0
@@ -5406,7 +5406,7 @@ pub fn migrate_legacy_cammotion(c: &mut ClipEvent) -> bool {
             keyframes.clone()
         };
         let first = keys[0];
-        let _ = mode; // режим прежней рамки: все три давали один кадр (F-MED-004)
+        let _ = mode; // the mode of the former frame: all three gave one frame (F-MED-004)
         c.fx[i] = FxInstance::geometry_at(
             pan_to_pos(first.pan_x, first.zoom),
             pan_to_pos(first.pan_y, first.zoom),
@@ -5425,17 +5425,17 @@ pub fn migrate_legacy_cammotion(c: &mut ClipEvent) -> bool {
             ("zoom", Box::new(|k: &CamKeyframe| k.zoom)),
         ] {
             if c.fx_auto[i].iter().any(|c| c.param == param) {
-                continue; // кривая нового домена уже есть — она главнее
+                continue; // a curve of the new domain already exists — it takes precedence
             }
-            // то же правило, что у камеры: булево сглаживание легаси
-            // становится одной формой на все отрезки
+            // the same rule as for the camera: the boolean smoothing of the legacy
+            // becomes one shape for all segments
             let shape = if ease { SegShape::DEFAULT } else { SegShape::Linear };
             c.fx_auto[i].push(ParamCurve {
                 param: param.into(),
                 keys: keys
                     .iter()
                     .map(|k| {
-                        // u_eff = u·scale ⇒ ключ достигается при u = t/scale
+                        // u_eff = u·scale ⇒ the key is reached at u = t/scale
                         AutoKey::shaped(
                             material_from_progress(k.t / scale, c.source_in, c.duration, false),
                             pick(k),
@@ -5451,89 +5451,89 @@ pub fn migrate_legacy_cammotion(c: &mut ClipEvent) -> bool {
     touched
 }
 
-/// Позиция ключа из СТАРОГО домена (доля 0..1 от длины события) в
-/// материальные тики. Домен сменился в Р.33; ридер формата зовёт это
-/// для файлов до v3, иначе анимация старых проектов уехала бы.
+/// The key position from the OLD domain (a share 0..1 of the event length) into
+/// material ticks. The domain changed in R.33; the format reader calls this
+/// for files before v3, otherwise the animation of old projects would move away.
 ///
-/// `mirror` = true для кривых, чья доля считалась по прогрессу ТАЙМЛАЙНА
-/// (видео-`ParamCurve` до Р.33): у реверсированного клипа она зеркальна
-/// материалу. У кейфреймов slowed&reverb доля с самого начала считалась
-/// ПО МАТЕРИАЛУ, им зеркало не нужно.
+/// `mirror` = true for curves whose share was counted by the TIMELINE progress
+/// (video `ParamCurve` before R.33): for a reversed clip it is mirrored relative to the
+/// material. For slowed&reverb keyframes the share from the start was counted
+/// BY THE MATERIAL, they do not need a mirror.
 pub fn material_from_progress(u: f64, source_in: Tick, duration: Tick, mirror: bool) -> Tick {
     let u = u.clamp(0.0, 1.0);
     let u = if mirror { 1.0 - u } else { u };
     Tick(source_in.0 + (u * duration.0 as f64).round() as i64)
 }
 
-/// Типизированные FX (не opaque JSON — валидация на загрузке, тест 12).
+/// Typed FX (not opaque JSON — validation on load, test 12).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FxInstance {
     Gain {
         db: f32,
-        /// Баланс каналов −1…+1 (Р.33 С5). 0 — прежний путь байт-в-байт:
-        /// множители обоих каналов ровно 1.0.
+        /// Channel balance −1…+1 (R.33 C5). 0 — the former path byte-for-byte:
+        /// the multipliers of both channels exactly 1.0.
         #[serde(default, skip_serializing_if = "is_zero")]
         pan: f32,
     },
-    /// Сила наложения СЛОЯ (Р.38 п.12): смешение входа цепочки с её
-    /// результатом. Не пользовательский эффект — его нет в реестре и не
-    /// выбрать в пикере; его дописывает `MorphPatch::apply_to`, когда у
-    /// морфера сила < 1 или заданы фейды.
+    /// The blend strength of the LAYER (R.38 item 12): mixing of the chain's input with its
+    /// result. Not a user effect — it is absent from the registry and cannot be
+    /// picked in the picker; `MorphPatch::apply_to` appends it when the
+    /// morpher's strength < 1 or fades are set.
     ///
-    /// Почему операция ЦЕПОЧКИ, а не поле клипа: «непрозрачность слоя
-    /// бесплатно работает как ползунок силы эффекта — 60 % это кроссфейд
-    /// обработанной картинки с необработанной» (разведка Р.36,
+    /// Why a CHAIN operation and not a clip field: “the layer's opacity works for free as a slider
+    /// of the effect's strength — 60 % is a crossfade of the processed picture with the unprocessed one”
+    /// (reconnaissance of R.36,
     /// `docs/features/morpher/analogues/premiere-adjustment-layer.md`).
-    /// Как слот цепочки она бесплатно получает автоматизацию (фейды — это
-    /// её кривая), входит в `fx_chain_hash` (иначе 60 % и 100 %
-    /// схлопнулись бы в один кадр пост-FX кэша) и едет через копипаст.
+    /// As a chain slot it gets automation for free (fades are its curve),
+    /// it enters `fx_chain_hash` (otherwise 60 % and 100 % would collapse
+    /// into one frame of the post-FX cache) and travels through copy-paste.
     LayerMix {
         amount: f64,
-        /// Индекс слота, С КОТОРОГО начинается вклад этого слоя. Смешение
-        /// идёт с состоянием ДО него, а не со входом всей цепочки: иначе
-        /// сила слоя откатывала бы заодно СОБСТВЕННЫЕ эффекты события,
-        /// к которым слой отношения не имеет.
+        /// The index of the slot FROM WHICH this layer's contribution starts. Mixing goes
+        /// with the state BEFORE it, not with the input of the whole chain: otherwise
+        /// the strength of the layer would also roll back the event's OWN effects,
+        /// to which the layer has no relation.
         #[serde(default)]
         from: u32,
     },
     SlowedReverb {
-        /// Базовая скорость (0.25–32); автоматизация её перекрывает.
+        /// Base speed (0.25–32); automation overrides it.
         rate: f64,
-        /// Доля wet-сигнала 0..1.
+        /// Wet-signal share 0..1.
         mix: f32,
         reverb_delay_ms: f32,
-        /// Демпфирование ВЧ в comb-линиях 0..1 (старый reverbDamp).
+        /// High-frequency damping in the comb lines 0..1 (the old reverbDamp).
         #[serde(default = "default_damp")]
         damp: f32,
-        /// Обратная связь comb-линий 0..0.98 (старый reverbDecay).
+        /// Feedback of the comb lines 0..0.98 (the old reverbDecay).
         #[serde(default = "default_decay")]
         decay: f32,
-        /// Множитель wet-выхода (старый reverbGain).
+        /// Wet-output multiplier (the old reverbGain).
         #[serde(default = "default_wet_gain")]
         wet_gain: f32,
-        /// Пред-задержка входа реверба, мс (Р.33 С5): хвост отстаёт от
-        /// звука. 0 — прежнее поведение байт-в-байт; структурная (меняет
-        /// длину линии), поэтому автоматизации не подлежит.
+        /// Pre-delay of the reverb input, ms (R.33 C5): the tail lags behind the
+        /// sound. 0 — the former behaviour byte-for-byte; structural (changes the
+        /// line length), therefore not subject to automation.
         #[serde(default, skip_serializing_if = "is_zero")]
         predelay_ms: f32,
-        /// Как добывать промежуточный кадр, когда эффект стоит на ВИДЕО
-        /// (Р.37 п.2). У аудио-экземпляра поля не видно — оно ему не
-        /// значит ничего. Умолчание не сериализуется: файлы байт-стабильны.
+        /// How to obtain an intermediate frame when the effect stands on VIDEO
+        /// (R.37 item 2). For an audio instance the field is not visible — it means
+        /// nothing to it. The default is not serialized: files are byte-stable.
         #[serde(default, skip_serializing_if = "is_default_frame_mode")]
         frames: FrameMode,
-        /// Ширина стерео-хвоста 0..1. 1 — прежний стереореверб.
+        /// Width of the stereo tail 0..1. 1 — the former stereo reverb.
         #[serde(default = "default_one_f32", skip_serializing_if = "is_one_f32")]
         width: f32,
-        /// Keyframe-автоматизация: t — позиция В МАТЕРИАЛЕ ИСТОЧНИКА
-        /// (кадры от source_in, нормированные длительностью клипа), НЕ
-        /// выходное время. Кейфрейм приклеен к материалу: ранние правки
-        /// не сдвигают материал поздних точек (п.1 v1.3, тест 31).
-        /// Между точками линейная интерполяция, за краями — крайние.
+        /// Keyframe automation: t — the position IN THE SOURCE MATERIAL
+        /// (frames from source_in, normalized by the clip duration), NOT
+        /// the output time. A keyframe is glued to the material: early edits
+        /// do not shift the material of later points (item 1 of v1.3, test 31).
+        /// Between points linear interpolation, beyond the edges — the end ones.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         automation: Vec<SlowedKeyframe>,
     },
-    /// Резонансный срез (Р.47): LP/HP/BP, RBJ-биквад.
+    /// Resonant filter (R.47): LP/HP/BP, RBJ biquad.
     Filter {
         #[serde(default)]
         mode: FilterMode,
@@ -5542,7 +5542,7 @@ pub enum FxInstance {
         #[serde(default = "default_resonance")]
         resonance: f32,
     },
-    /// Трёхполосный эквалайзер (Р.47): полка + пик + полка.
+    /// Three-band equaliser (R.47): shelf + peak + shelf.
     Eq {
         #[serde(default, skip_serializing_if = "is_zero")]
         low_gain_db: f32,
@@ -5559,7 +5559,7 @@ pub enum FxInstance {
         #[serde(default = "default_high_freq")]
         high_freq_hz: f32,
     },
-    /// Мягкое насыщение (Р.47): softclip с компенсацией уровня.
+    /// Soft saturation (R.47): softclip with level compensation.
     Distortion {
         #[serde(default = "default_drive_db")]
         drive_db: f32,
@@ -5568,7 +5568,7 @@ pub enum FxInstance {
         #[serde(default = "default_one_f32", skip_serializing_if = "is_one_f32")]
         mix: f32,
     },
-    /// Lo-fi деградация (Р.47): битовая глубина + удержание сэмпла.
+    /// Lo-fi degradation (R.47): bit depth + sample hold.
     Bitcrusher {
         #[serde(default = "default_bits")]
         bits: f32,
@@ -5577,36 +5577,36 @@ pub enum FxInstance {
         #[serde(default = "default_one_f32", skip_serializing_if = "is_one_f32")]
         mix: f32,
     },
-    /// Ширина стерео m/s (Р.47): 0 — моно, 1 — как записано, 2 — шире.
+    /// Stereo width m/s (R.47): 0 — mono, 1 — as recorded, 2 — wider.
     StereoWidth {
         #[serde(default = "default_one_f32")]
         width: f32,
     },
-    /// Тремоло (Р.47): LFO громкости; фаза — интеграл кривой частоты по
-    /// позиции клипа (детерминизм без прогрева).
+    /// Tremolo (R.47): volume LFO; the phase is the integral of the frequency curve over
+    /// the position of the clip (determinism without warm-up).
     Tremolo {
         #[serde(default = "default_trem_rate")]
         rate_hz: f32,
         #[serde(default = "default_trem_depth")]
         depth: f32,
     },
-    /// Автопан (Р.47): LFO баланса, закон панорамы — как у Gain.pan.
+    /// Autopan (R.47): balance LFO, the pan law — as for Gain.pan.
     AutoPan {
         #[serde(default = "default_one_f32")]
         rate_hz: f32,
         #[serde(default = "default_autopan_depth")]
         depth: f32,
     },
-    /// Вибрато (Р.47): модулируемая задержка, 100 % wet (с сухим это был
-    /// бы chorus) — параметра mix нет осознанно.
+    /// Vibrato (R.47): a modulated delay, 100 % wet (with dry it would be
+    /// a chorus) — the mix parameter is deliberately absent.
     Vibrato {
         #[serde(default = "default_vib_rate")]
         rate_hz: f32,
         #[serde(default = "default_vib_depth")]
         depth_ms: f32,
     },
-    /// Хорус (Р.47): 1-3 голоса на модулируемых задержках, стерео —
-    /// сдвиг фазы LFO на 90° в правом канале.
+    /// Chorus (R.47): 1-3 voices on modulated delays, stereo —
+    /// a phase shift of the LFO by 90° in the right channel.
     Chorus {
         #[serde(default = "default_chorus_rate")]
         rate_hz: f32,
@@ -5617,8 +5617,8 @@ pub enum FxInstance {
         #[serde(default = "default_voices")]
         voices: u32,
     },
-    /// Флэнжер (Р.47): короткая модулируемая задержка с обратной связью
-    /// (отрицательная — инверсия фазы).
+    /// Flanger (R.47): a short modulated delay with feedback
+    /// (negative — phase inversion).
     Flanger {
         #[serde(default = "default_flanger_rate")]
         rate_hz: f32,
@@ -5629,7 +5629,7 @@ pub enum FxInstance {
         #[serde(default = "default_half_f32")]
         mix: f32,
     },
-    /// Фейзер (Р.47): каскад 1-полюсных allpass со свипом 200..2000 Гц.
+    /// Phaser (R.47): a cascade of 1-pole allpass with a sweep 200..2000 Hz.
     Phaser {
         #[serde(default = "default_phaser_rate")]
         rate_hz: f32,
@@ -5642,8 +5642,8 @@ pub enum FxInstance {
         #[serde(default = "default_half_f32")]
         mix: f32,
     },
-    /// Эхо (Р.47): кольцо на максимум, время — дробное чтение с
-    /// тейп-глайдом (не структурное), фильтр в петле — хвост темнеет.
+    /// Echo (R.47): a ring at maximum, the time — fractional reading with
+    /// tape glide (not structural), a filter in the loop — the tail darkens.
     Delay {
         #[serde(default = "default_delay_time")]
         time_ms: f32,
@@ -5654,7 +5654,7 @@ pub enum FxInstance {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         pingpong: bool,
     },
-    /// Компрессор (Р.47): peak-детектор со стерео-линком.
+    /// Compressor (R.47): peak detector with stereo link.
     Compressor {
         #[serde(default = "default_comp_thr")]
         threshold_db: f32,
@@ -5666,17 +5666,17 @@ pub enum FxInstance {
         release_ms: f32,
         #[serde(default, skip_serializing_if = "is_zero")]
         makeup_db: f32,
-        /// КЛЮЧ сайдчейна (Р.65): дорожка, по которой считает детектор.
-        /// `None` — обычный компрессор, и тогда поле не пишется вовсе:
-        /// файл без сайдчейна остаётся байт-в-байт прежним.
+        /// The SIDECHAIN KEY (R.65): the track along which the detector computes.
+        /// `None` — an ordinary compressor, and then the field is not written at all:
+        /// a file without a sidechain stays byte-for-byte the same.
         ///
-        /// Адрес — `TrackId`, а НЕ номер дорожки: номер это ранг строки, и
-        /// вставка дорожки выше перевесила бы ключ на чужой сигнал (тот же
-        /// урок, что у ключа FX-состояния в Р.62).
+        /// The address is a `TrackId`, NOT a track number: the number is the rank of the row, and
+        /// inserting a track above would move the key onto someone else's signal (the same
+        /// lesson as the FX-state key in R.62).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<TrackId>,
     },
-    /// Гейт (Р.47): быстрый детектор + гистерезис −6 дБ + hold.
+    /// Gate (R.47): a fast detector + −6 dB hysteresis + hold.
     Gate {
         #[serde(default = "default_gate_thr")]
         threshold_db: f32,
@@ -5687,9 +5687,9 @@ pub enum FxInstance {
         #[serde(default = "default_gate_rel")]
         release_ms: f32,
     },
-    // ---- видео-FX (порт bc_fx.cpp, п.25; параметры и дефолты v1) ----------
-    /// Базовая цветокоррекция (Р.47, F-CLR-007): яркость/контраст/
-    /// насыщенность/оттенок. Поточечный — поглощается в слитый гео-проход.
+    // ---- video FX (port of bc_fx.cpp, item 25; parameters and defaults of v1) ----------
+    /// Basic colour correction (R.47, F-CLR-007): brightness/contrast/
+    /// saturation/hue. Point-wise — absorbed into the merged geometry pass.
     ColorGrade {
         #[serde(default, skip_serializing_if = "is_zero")]
         brightness: f32,
@@ -5700,8 +5700,8 @@ pub enum FxInstance {
         #[serde(default, skip_serializing_if = "is_zero")]
         hue: f32,
     },
-    /// Две краски по люме (Р.47): сепия/тонировка/инверсия — точки этого
-    /// пространства. Поточечный.
+    /// Two paints by luma (R.47): sepia/tint/invert — points of this
+    /// space. Point-wise.
     Duotone {
         #[serde(default = "default_duo_sr")]
         shadow_r: u8,
@@ -5718,14 +5718,14 @@ pub enum FxInstance {
         #[serde(default = "default_one_f32")]
         amount: f32,
     },
-    /// Постеризация по каналам (Р.47). Поточечный (внутри гео-серии
-    /// суперсемплинг смягчает ступени — принято, THRESHOLD).
+    /// Posterize by channels (R.47). Point-wise (inside a geometry series
+    /// supersampling softens the steps — accepted, THRESHOLD).
     Posterize {
         #[serde(default = "default_levels")]
         levels: u32,
     },
-    /// Виньетка (Р.47): затемнение к краям, координата своей стадии —
-    /// внутри цепочки зумится вместе с картинкой. Поточечный.
+    /// Vignette (R.47): darkening towards the edges, the coordinate of its own stage —
+    /// inside the chain it is zoomed together with the picture. Point-wise.
     Vignette {
         #[serde(default = "default_half_f32")]
         strength: f32,
@@ -5734,8 +5734,8 @@ pub enum FxInstance {
         #[serde(default = "default_vig_soft")]
         softness: f32,
     },
-    /// Посадка за четыре угла (Р.47, F-FX-004): гомография quad→quad,
-    /// главный инструмент «экрана в кадре». Гео — конкатенируется.
+    /// Four-corner fit (R.47, F-FX-004): homography quad→quad,
+    /// the main tool of “the screen in the frame”. Geometry — concatenated.
     CornerPin {
         #[serde(default, skip_serializing_if = "is_zero_f64")]
         x0: f64,
@@ -5754,28 +5754,28 @@ pub enum FxInstance {
         #[serde(default = "default_one_f64", skip_serializing_if = "is_one_f64")]
         y3: f64,
     },
-    /// Нерезкое маскирование по мипу (Р.47, F-FX-001): источник +
-    /// (источник − размытая база)·amount. Барьер.
+    /// Unsharp masking by mip (R.47, F-FX-001): source +
+    /// (source − blurred base)·amount. Barrier.
     Sharpen {
         #[serde(default = "default_one_f32")]
         amount: f32,
         #[serde(default = "default_two_u32")]
         radius: u32,
     },
-    /// Мозаика (Р.47, F-FX-001): целочисленная копия центра ячейки.
-    /// Барьер.
+    /// Mosaic (R.47, F-FX-001): an integer copy of the cell's centre.
+    /// Barrier.
     Pixelate {
         #[serde(default = "default_twelve_u32")]
         size: u32,
     },
-    /// Хроматическая аберрация (Р.47, F-FX-002): радиальный масштаб
-    /// каналов — R к центру, B от центра, G на месте. Барьер.
+    /// Chromatic aberration (R.47, F-FX-002): radial scale of
+    /// channels — R towards the centre, B from the centre, G in place. Barrier.
     ChromaticAberration {
         #[serde(default = "default_chroma_amount")]
         amount: f32,
     },
-    /// Радиальное размытие (Р.47, F-FX-003): зум-стрик или вращение
-    /// вокруг центра, константные 16 тапов на обоих бэкендах. Барьер.
+    /// Radial blur (R.47, F-FX-003): zoom streak or rotation
+    /// around the centre, constant 16 taps on both backends. Barrier.
     RadialBlur {
         #[serde(default = "default_quarter_f32")]
         amount: f32,
@@ -5786,8 +5786,8 @@ pub enum FxInstance {
         #[serde(default, skip_serializing_if = "is_false")]
         spin: bool,
     },
-    /// Тень под слоем (Р.47, F-FX-003): размытая альфа со сдвигом,
-    /// источник OVER тень. Барьер; вход без альфы — passthrough.
+    /// Shadow under the layer (R.47, F-FX-003): a blurred alpha with an offset,
+    /// the source OVER the shadow. Barrier; an input without alpha — passthrough.
     DropShadow {
         #[serde(default = "default_eight_i32")]
         offset_x: i32,
@@ -5804,57 +5804,57 @@ pub enum FxInstance {
         #[serde(default, skip_serializing_if = "is_zero_u8")]
         tint_b: u8,
     },
-    /// Полутоновый растр (Р.47, F-FX-001): точки по люме на повёрнутой
-    /// сетке; узор живёт в логических координатах. Барьер.
+    /// Halftone raster (R.47, F-FX-001): dots by luma on a rotated
+    /// grid; the pattern lives in logical coordinates. Barrier.
     Halftone {
         #[serde(default = "default_eight_u32")]
         size: u32,
         #[serde(default = "default_halftone_angle")]
         angle: f32,
     },
-    /// Look-ahead лимитер (Р.48, F-AUD-002): потолок гарантирован окном
-    /// упреждения — пик виден заранее, поэтому атака мгновенная и без
-    /// искажений. Для остального движка задержка НУЛЕВАЯ: цепочка читает
-    /// источник вперёд, выход остаётся выровненным.
+    /// Look-ahead limiter (R.48, F-AUD-002): the ceiling is guaranteed by the look-ahead
+    /// window — the peak is seen in advance, so the attack is instant and without
+    /// distortion. For the rest of the engine the delay is ZERO: the chain reads the
+    /// source ahead, the output stays aligned.
     Limiter {
         #[serde(default = "default_limiter_threshold")]
         threshold_db: f32,
         #[serde(default = "default_limiter_ceiling")]
         ceiling_db: f32,
-        /// Окно упреждения. СТРУКТУРНЫЙ параметр: длина кольца — часть
-        /// устройства узла, смена пересобирает процессор (Р.48, п.337).
+        /// The look-ahead window. A STRUCTURAL parameter: the length of the ring is part of
+        /// the node's device, a change rebuilds the processor (R.48, item 337).
         #[serde(default = "default_limiter_lookahead")]
         lookahead_ms: f32,
         #[serde(default = "default_limiter_release")]
         release_ms: f32,
     },
-    /// Смена высоты без смены длительности (Р.48, F-AUD-013). Движок
-    /// (WSOLA или фазовый вокодер) — НАСТРОЙКА ПРОЕКТА: выбор один на
-    /// весь монтаж. Нейтраль (ноль полутонов и центов, без кривых) —
-    /// байт-в-байт прежний звук.
+    /// Pitch change without changing duration (R.48, F-AUD-013). The engine
+    /// (WSOLA or phase vocoder) is a PROJECT SETTING: one choice for the
+    /// whole edit. Neutral (zero semitones and cents, no curves) gives the
+    /// previous sound, byte for byte.
     PitchShift {
         #[serde(default, skip_serializing_if = "is_zero")]
         semitones: f32,
         #[serde(default, skip_serializing_if = "is_zero")]
         cents: f32,
     },
-    /// Линзовая дисторсия (Р.47, F-FX-002): полином k1·r²+k2·r⁴ —
-    /// бочка/подушка. Гео (Warp-прим), конкатенируется.
+    /// Lens distortion (R.47, F-FX-002): polynomial k1·r²+k2·r⁴ —
+    /// barrel/pincushion. Geo (Warp prim), concatenated.
     LensDistort {
         #[serde(default = "default_lens_k1")]
         k1: f32,
         #[serde(default, skip_serializing_if = "is_zero")]
         k2: f32,
     },
-    /// Водоворот (Р.47): поворот, затухающий к радиусу. Гео.
+    /// Swirl (R.47): rotation that fades toward the radius. Geo.
     Twirl {
         #[serde(default = "default_twirl_angle")]
         angle: f32,
         #[serde(default = "default_twirl_radius")]
         radius: f32,
     },
-    /// Круговая волна (Р.47): r += amp·sin(k·r − φ), phase анимируема.
-    /// Гео.
+    /// Circular wave (R.47): r += amp·sin(k·r − φ), phase animatable.
+    /// Geo.
     Ripple {
         #[serde(default = "default_ripple_amount")]
         amount: f32,
@@ -5863,28 +5863,28 @@ pub enum FxInstance {
         #[serde(default, skip_serializing_if = "is_zero")]
         phase: f32,
     },
-    /// Калейдоскоп (Р.47): зеркальный повтор сектора. Гео.
+    /// Kaleidoscope (R.47): mirror repeat of a sector. Geo.
     Kaleidoscope {
         #[serde(default = "default_kaleido_segments")]
         segments: u32,
         #[serde(default, skip_serializing_if = "is_zero")]
         angle: f32,
     },
-    /// Цилиндр (Р.47, F-FX-004): изгиб по X, края остаются краями. Гео,
-    /// категория 3D.
+    /// Cylinder (R.47, F-FX-004): bend along X, edges remain edges. Geo,
+    /// category 3D.
     Cylinder3d {
         #[serde(default = "default_half_f32")]
         curvature: f32,
     },
-    /// Узел «Геометрия» (Р.62): кроп (доли входа), положение (доли холста),
-    /// зум, поворот вокруг якоря; вне рамки — ПРОЗРАЧНО. Ведущий узел
-    /// события живёт в `ClipEvent.geometry` и несёт ещё правило
-    /// приведения; этот вариант — дополнительные узлы из каталога и форма,
-    /// в которой ведущий доезжает до kt-fx.
+    /// Node “Geometry” (R.62): crop (input fractions), position (canvas fractions),
+    /// zoom, rotation around the anchor; outside the frame — TRANSPARENT. The leading
+    /// node of an event lives in `ClipEvent.geometry` and also carries a conform
+    /// rule; this variant is the extra nodes from the catalog and the form in which
+    /// the leading node reaches kt-fx.
     Geometry {
-        /// Ведущий узел события (Р.62): материализован движком из
-        /// `ClipEvent.geometry`, несёт правило приведения через контекст
-        /// kt-fx. В цепочке модели (`fx`) не хранится — там всегда `false`.
+        /// Leading node of an event (R.62): materialized by the engine from
+        /// `ClipEvent.geometry`, carries the conform rule via the kt-fx context.
+        /// Not stored in the model chain (`fx`) — there it is always `false`.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         lead: bool,
         #[serde(default, skip_serializing_if = "is_zero_f64")]
@@ -5908,7 +5908,7 @@ pub enum FxInstance {
         #[serde(default = "default_half", skip_serializing_if = "is_half")]
         anchor_y: f64,
     },
-    /// Пан/зум по кейфреймам прогресса клипа (smoothstep при ease).
+    /// Pan/zoom by keyframes of clip progress (smoothstep when eased).
     CamMotion {
         #[serde(default)]
         mode: PanMode,
@@ -5928,9 +5928,9 @@ pub enum FxInstance {
     Blur {
         #[serde(default = "default_blur_radius")]
         radius: u32,
-        /// Вертикальный радиус (Р.33 С5). `0` — «как горизонтальный»:
-        /// умолчание не пишется в файл и даёт прежнее размытие
-        /// байт-в-байт. Раздельные оси дают «смаз» по одной оси.
+        /// Vertical radius (R.33 stage 5). `0` means “same as horizontal”: the default is not written
+        /// to the file and gives the previous blur byte for byte. Separate axes give
+        /// a smear along one axis.
         #[serde(default, skip_serializing_if = "is_zero_u32")]
         radius_y: u32,
     },
@@ -5945,20 +5945,20 @@ pub enum FxInstance {
         tolerance: u32,
         #[serde(default = "default_softness")]
         softness: u32,
-        /// Подавление засветки ключевым цветом (Р.33 С5): доминирующий
-        /// канал ключа притягивается к соседним. 0 — прежнее поведение.
+        /// Key-colour spill suppression (R.33, stage 5): the dominant channel of the key
+        /// is pulled toward its neighbours. 0 — previous behaviour.
         #[serde(default, skip_serializing_if = "is_zero_f64")]
         spill: f64,
     },
     Edges {
         #[serde(default = "default_edges_threshold")]
         threshold: u32,
-        /// Толщина линии = шаг выборки Собеля (Р.33 С5). 1 — прежнее
-        /// ядро 3×3 байт-в-байт.
+        /// Line thickness = Sobel sampling step (R.33, stage 5). 1 — the previous
+        /// 3×3 kernel, byte for byte.
         #[serde(default = "default_one_u32", skip_serializing_if = "is_one_u32_v")]
         thickness: u32,
-        /// Цвет линий: серый выход домножается на него. 255,255,255 —
-        /// прежний белый.
+        /// Line colour: the grey output is multiplied by it. 255,255,255 — the
+        /// previous white.
         #[serde(default = "default_255", skip_serializing_if = "is_255")]
         color_r: u8,
         #[serde(default = "default_255", skip_serializing_if = "is_255")]
@@ -5969,12 +5969,12 @@ pub enum FxInstance {
     Noise {
         #[serde(default = "default_noise_amount")]
         amount: f64,
-        /// Размер зерна в пикселях (Р.33 С5). 1 — прежнее пиксельное
-        /// зерно байт-в-байт; больше — крупная «плёночная» крупа.
+        /// Grain size in pixels (R.33, stage 5). 1 — the previous pixel grain,
+        /// byte for byte; larger values give coarse “film” grain.
         #[serde(default = "default_one_u32", skip_serializing_if = "is_one_u32_v")]
         size: u32,
-        /// Цветной шум: у каждого канала своё смещение. `false` —
-        /// прежний монохромный (один сдвиг на все три канала).
+        /// Coloured noise: each channel has its own offset. `false` — the previous
+        /// monochrome one (a single shift for all three channels).
         #[serde(default, skip_serializing_if = "is_false")]
         color: bool,
     },
@@ -5983,26 +5983,26 @@ pub enum FxInstance {
         rgb_shift: u32,
         #[serde(default = "default_bleed")]
         bleed: f64,
-        /// Шаг скан-линий (Р.33 С5): каждая N-я строка гасится. 4 —
-        /// прежнее поведение байт-в-байт, 0 — скан-линий нет вовсе.
+        /// Scan-line step (R.33, stage 5): every N-th row is darkened. 4 —
+        /// previous behaviour byte for byte, 0 — no scan lines at all.
         #[serde(default = "default_scan_step", skip_serializing_if = "is_four_u32")]
         scan_step: u32,
-        /// Дрожание строк по горизонтали, доля кадра. 0 — прежний
-        /// ровный кадр.
+        /// Horizontal row jitter, fraction of the frame. 0 — the previous
+        /// steady frame.
         #[serde(default, skip_serializing_if = "is_zero_f64")]
         jitter: f64,
     },
     Glow {
         #[serde(default = "default_glow_strength")]
         strength: f64,
-        /// Радиус свечения = делитель мипа (Р.33 С5). 4 — прежний.
+        /// Glow radius = mip divisor (R.33, stage 5). 4 — the previous one.
         #[serde(default = "default_glow_radius", skip_serializing_if = "is_four_u32")]
         radius: u32,
-        /// Порог яркости РАЗМЫТОГО кадра: ниже него свечения нет. 0 —
-        /// порога нет (прежнее поведение байт-в-байт).
+        /// Brightness threshold of the BLURRED frame: below it there is no glow. 0 —
+        /// no threshold (previous behaviour byte for byte).
         #[serde(default, skip_serializing_if = "is_zero_u32")]
         threshold: u32,
-        /// Оттенок свечения; 255,255,255 — прежний нейтральный.
+        /// Glow tint; 255,255,255 — the previous neutral one.
         #[serde(default = "default_255", skip_serializing_if = "is_255")]
         tint_r: u8,
         #[serde(default = "default_255", skip_serializing_if = "is_255")]
@@ -6018,14 +6018,14 @@ pub enum FxInstance {
         #[serde(default = "default_true")]
         center: bool,
     },
-    // ---- 3D-эффекты (Р.29: категория Video3d; с Р.44 считаются на обоих бэкендах) ----
-    /// Слой в перспективе: кадр клипа — квад в 3D-сцене, рендерится
-    /// активной (или прибитой) камерой в размер проекта. Все дефолты —
-    /// тождество: без камеры и с нулевыми параметрами кадр совпадает с
-    /// кадром без эффекта. Единицы заморожены форматом: позиция в мировых
-    /// px (X вправо, Y вниз, Z вглубь, начало — центр кадра проекта),
-    /// повороты в градусах (порядок ZXY, как orientation в AE), якорь в
-    /// долях слоя (0.5, 0.5 — центр).
+    // ---- 3D effects (R.29: category Video3d; since R.44 both backends compute them) ----
+    /// Perspective layer: the clip frame is a quad in the 3D scene, rendered by the
+    /// active (or pinned) camera to the project size. All defaults are identity:
+    /// without a camera and with zero parameters the frame matches the frame without
+    /// the effect. The units are frozen by the format: position in world px (X right,
+    /// Y down, Z into depth, origin at the centre of the project frame), rotations in
+    /// degrees (ZXY order, as orientation in AE), anchor in layer fractions (0.5, 0.5
+    /// is the centre).
     Pan3d {
         #[serde(default)]
         pos_x: f64,
@@ -6045,17 +6045,17 @@ pub enum FxInstance {
         anchor_y: f64,
         #[serde(default = "default_one")]
         scale: f64,
-        /// None — активная по времени камера (умолчание, как в AE);
-        /// Some(id) — прибитая камера (камер может быть несколько — Р.29).
+        /// None — the camera active at the time (default, as in AE);
+        /// Some(id) — a pinned camera (there may be several cameras — R.29).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         camera: Option<CameraId>,
     },
 }
 
-/// Класс эффекта (Р.29): свойство КОДА варианта, не данных — в формат
-/// не сериализуется. Video3d — КАТЕГОРИЯ (пикер FX, «3D»), а не признак
-/// бэкенда: с Р.44 Pan3d считается и на CPU (обратная гомография в слитом
-/// гео-проходе, kt-fx::geom), отказ экспорта GpuRequired снят.
+/// Effect class (R.29): a property of the variant's CODE, not of the data —
+/// not serialized to the format. Video3d is a CATEGORY (FX picker, “3D”), not a backend flag:
+/// since R.44 Pan3d is computed on CPU too (inverse homography in the merged geo pass,
+/// kt-fx::geom), and the GpuRequired export refusal is removed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FxClass {
     Audio,
@@ -6089,24 +6089,24 @@ impl FxInstance {
         }
     }
 
-    /// Аудио-эффект? (видео-FX живут в той же цепочке клипа, но
-    /// обрабатываются VideoRenderer'ом)
+    /// Audio effect? (video FX live in the same clip chain but are handled by the
+    /// VideoRenderer).
     pub fn is_audio(&self) -> bool {
         self.class() == FxClass::Audio
     }
 
-    /// Сила наложения слоя — не фильтр, а правило СМЕШЕНИЯ входа цепочки
-    /// с её выходом. Как и варп, достаётся ОБОИМ видам: слой на 30 %
-    /// обязан одинаково приглушать и картинку, и звук («видео и аудио
-    /// сразу» — решение пользователя по п.12).
+    /// Layer blend strength — not a filter but a rule for MIXING the chain input
+    /// with its output. Like the warp, it applies to BOTH kinds: a layer at 30 %
+    /// must equally attenuate both the picture and the sound (“video and audio
+    /// at once” — the user's decision on item 12).
     pub fn is_layer_mix(&self) -> bool {
         matches!(self, FxInstance::LayerMix { .. })
     }
 
-    /// Стабильный тег варианта (совпадает с serde-`kind`). ИСЧЕРПЫВАЮЩИЙ
-    /// match — единственный компайл-замок реестра (Р.47, п.326): новый
-    /// вариант не соберётся, пока не назван, а тест `all()` сверяет реестр
-    /// с множеством тегов.
+    /// Stable variant tag (matches the serde `kind`). An EXHAUSTIVE
+    /// match is the only compile-time lock of the registry (R.47, item 326): a new
+    /// variant will not build until it is named, and the `all()` test checks the registry
+    /// against the set of tags.
     pub fn tag(&self) -> &'static str {
         match self {
             FxInstance::Gain { .. } => "gain",
@@ -6158,11 +6158,11 @@ impl FxInstance {
         }
     }
 
-    /// Реестр ВСЕХ видов эффектов с дефолтными параметрами (аналог
-    /// `TransitionKind::ALL`, Р.47 п.326). Константой не выразить —
-    /// варианты несут Vec (keyframes, automation), — поэтому OnceLock.
-    /// По нему строятся параметризованные тесты (полнота спек, golden- и
-    /// конформанс-циклы): вид, не попавший сюда, виден сразу.
+    /// Registry of ALL effect kinds with default parameters (analogue of
+    /// `TransitionKind::ALL`, R.47 item 326). It cannot be expressed as a constant —
+    /// variants carry a Vec (keyframes, automation), so OnceLock is used.
+    /// Parameterized tests (spec completeness, golden and conformance loops) are built
+    /// on it: a kind not listed here is visible at once.
     pub fn all() -> &'static [FxInstance] {
         static ALL: std::sync::OnceLock<Vec<FxInstance>> = std::sync::OnceLock::new();
         ALL.get_or_init(|| {
@@ -6217,25 +6217,25 @@ impl FxInstance {
         })
     }
 
-    /// Эффект ВАРПИТ время: потребление источника перестаёт быть равным
-    /// длине события. Такой клип морфер-слой не режет вовсе (находка 2
-    /// Р.35) — линейно посчитанный `source_in` куска указал бы не туда.
+    /// The effect WARPS time: source consumption stops being equal to the event
+    /// length. Such a clip is not cut by the morpher layer at all (finding 2 of
+    /// R.35) — a linearly computed `source_in` of the piece would point to the wrong place.
     pub fn warps_time(&self) -> bool {
         matches!(self, FxInstance::SlowedReverb { .. })
     }
 
-    /// Параметры варианта (Р.33): ОДИН источник правды для автоматизации,
-    /// клампа и UI. Раньше их описывали три ручные таблицы (`param_specs`,
-    /// `set_param`, `get_param`), которые надо было править синхронно;
-    /// теперь все три генерятся из одной декларации `fx_params!`.
+    /// Variant parameters (R.33): ONE source of truth for automation, clamping and
+    /// UI. Previously three hand-written tables (`param_specs`, `set_param`, `get_param`)
+    /// had to be edited in sync; now all three are generated from one `fx_params!`
+    /// declaration.
     pub fn param_specs(&self) -> &'static [ParamSpec] {
         fx_specs(self)
     }
 
-    /// Только автоматизируемые параметры (`ParamKind::Smooth`). Кривая на
-    /// структурном параметре бессмысленна: его смена пересобирает DSP
-    /// (реверб пересоздаёт comb-линии), а автоматизация обязана быть
-    /// плавной — поэтому UI такие параметры не предлагает.
+    /// Only automatable parameters (`ParamKind::Smooth`). A curve on a structural
+    /// parameter makes no sense: changing it rebuilds the DSP (the reverb recreates the
+    /// comb lines), while automation must be smooth — so the UI does not offer such
+    /// parameters.
     pub fn auto_params(&self) -> impl Iterator<Item = &'static ParamSpec> {
         self.param_specs().iter().filter(|s| s.kind == ParamKind::Smooth)
     }
@@ -6244,38 +6244,38 @@ impl FxInstance {
         self.param_specs().iter().find(|s| s.name == name)
     }
 
-    /// Установить параметр по имени. Значение клампится диапазоном спеки;
-    /// целочисленные поля округляются. false — имя не подходит варианту
-    /// (кривая-сирота).
+    /// Set a parameter by name. The value is clamped to the spec range; integer
+    /// fields are rounded. false — the name does not fit the variant (an orphan
+    /// curve).
     pub fn set_param(&mut self, name: &str, v: f64) -> bool {
         let Some(spec) = self.param_spec(name) else { return false };
         fx_set_param(self, name, v.clamp(spec.min, spec.max))
     }
 
-    /// Текущее значение параметра по имени (для UI автоматизации).
+    /// Current value of a parameter by name (for the automation UI).
     pub fn get_param(&self, name: &str) -> Option<f64> {
         fx_get_param(self, name)
     }
 
-    /// Смешать два состояния ОДНОГО вида: числовые параметры линейно, всё
-    /// остальное — от ближайшего конца (Р.54, п.433).
+    /// Blend two states of ONE kind: numeric parameters linearly, everything else
+    /// from the nearer end (R.54, item 433).
     ///
-    /// Зачем это модели, а не UI: ось силы в пикере ведёт курсор МЕЖДУ
-    /// соседними вариантами, и «сколько тут ставят» показывается
-    /// промежуточными кадрами. Объявлять у каждого вида «главный
-    /// параметр» (как `Option`-скимминг у FCP) для этого не нужно и
-    /// вредно — у `VHS` и `Color Grade` таких параметров четыре, и любой
-    /// выбор одного был бы спорным; смешивание двух КУРИРОВАННЫХ точек
-    /// даёт осмысленный ход по всем ручкам сразу.
+    /// Why this belongs to the model, not the UI: the force axis in the picker moves the cursor
+    /// BETWEEN neighbouring variants, and “how much is set here” is shown by intermediate frames.
+    /// Declaring a “main parameter” for each kind (like the `Option` skimming in FCP) is neither
+    /// needed nor harmful for this: `VHS` and `Color Grade` have four such parameters each,
+    /// so choosing one would be arbitrary; mixing two CURATED points
+    /// gives a meaningful move
+    /// across all the knobs at once.
     ///
-    /// Нечисловое (галки, режимы, камера, кейфреймы) интерполировать
-    /// нельзя, поэтому основой берётся БЛИЖАЙШИЙ конец: до середины —
-    /// `self`, дальше — `other`. Значит и переключается оно ровно в
-    /// середине, а не «когда-нибудь».
+    /// Non-numeric values (checkboxes, modes, camera, keyframes) cannot be interpolated,
+    /// so the NEAREST end is the basis: up to the midpoint — `self`, beyond it — `other`.
+    /// So it switches exactly at the midpoint,
+    /// not “sometime”.
     ///
-    /// Разные виды не смешиваются: возвращается ближайший конец как есть.
-    /// `t` зажимается в 0..1, `t == 0`/`t == 1` дают КОНЦЫ БАЙТ-В-БАЙТ —
-    /// на этом стоит правило «клик по ячейке даёт именно её вариант».
+    /// Different kinds are not mixed: the nearer end is returned as is.
+    /// `t` is clamped to 0..1; `t == 0` and `t == 1` give the ENDS BYTE FOR BYTE —
+    /// the rule “a click on a cell gives exactly its variant” rests on this.
     pub fn lerp(&self, other: &FxInstance, t: f64) -> FxInstance {
         let t = t.clamp(0.0, 1.0);
         let near = if t < 0.5 { self } else { other };
@@ -6296,67 +6296,67 @@ impl FxInstance {
     }
 }
 
-/// Как параметр ведёт себя при автоматизации.
+/// How the parameter behaves under automation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParamKind {
-    /// Меняется плавно на ходу — автоматизируется.
+    /// Changes smoothly on the fly — automatable.
     Smooth,
-    /// Смена пересобирает состояние DSP (геометрия линий задержки) —
-    /// автоматизации не подлежит, руками менять можно.
+    /// A change rebuilds the DSP state (the delay line geometry) — it is not
+    /// automatable, can be changed by hand.
     Structural,
 }
 
-/// Единица измерения — для подписи и шага в UI (перевод подписи живёт в
-/// каталогах kt-app: kt-model про язык интерфейса ничего не знает).
+/// Unit of measure — for the label and the UI step (the label translation lives
+/// in the kt-app catalogs: kt-model knows nothing about the interface language).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParamUnit {
     None,
     Db,
-    /// Доля 0..1.
+    /// Fraction 0..1.
     Norm,
-    /// Множитель (скорость, зум).
+    /// Multiplier (speed, zoom).
     Ratio,
     Px,
     Deg,
     Ms,
-    /// Частота, герцы (Р.47: фильтры/EQ/LFO).
+    /// Frequency, hertz (R.47: filters/EQ/LFO).
     Hz,
-    /// Полутон (Р.48: питч).
+    /// Semitone (R.48: pitch).
     St,
-    /// Секунда (Р.66): время ключа, длительность камеры — величины окна,
-    /// у которых единица есть, а паспорта эффекта нет.
+    /// Second (R.66): key time, camera duration — window values that have a unit
+    /// but no effect passport.
     Sec,
-    /// Компонента цвета 0..255.
+    /// Colour component 0..255.
     Rgb8,
-    /// Счётное число (колонки, строки).
+    /// Countable number (columns, rows).
     Count,
-    /// Доля 0..1, ПОКАЗЫВАЕМАЯ процентами (Р.53, п.415). Хранится и
-    /// сериализуется по-прежнему долей — меняется только показ: «кегль
-    /// 0.070» пользователю ничего не говорит, «7.0 %» говорит всё.
-    /// Пересчёт живёт в ОДНОМ месте (`widgets::param_value`).
+    /// Fraction 0..1, DISPLAYED as a percentage (R.53, item 415). It is still stored and
+    /// serialized as a fraction — only the display changes: “font size 0.070” says nothing
+    /// to the user, “7.0 %” says everything.
+    /// The conversion lives in ONE place (`widgets::param_value`).
     Percent,
 }
 
-/// ТИП свойства (Р.59, п.466). До этого раунда свойством было только
-/// ЧИСЛО, а всё остальное — флаги, списки, цвет (лежит тройкой чисел),
-/// текст, ссылка на медиа — рисовалось руками в своём окне и не
-/// участвовало ни в автоматизации, ни в копипасте, ни в пресетах.
+/// TYPE of a property (R.59, item 466). Until this round the only property was a
+/// NUMBER, while everything else — flags, lists, colour (stored as a triple of numbers),
+/// text, a media reference — was drawn by hand in its own window and took no part in
+/// automation, copy-paste or presets.
 ///
-/// Кривыми анимируются `Num` и `Color` (поканально); остальное меняется
-/// СТУПЕНЬКОЙ — промежуточных значений у выбора и у текста не бывает.
+/// Curves animate `Num` and `Color` (per channel); the rest changes in a
+/// STEP — choices and text have no intermediate values.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(from = "ParamTypeRepr", into = "ParamTypeRepr")]
 pub enum ParamType {
     #[default]
     Num,
     Flag,
-    /// Цвет rgba8. Каналы — обычные числовые ряды владельца
-    /// (`<stem>_r/_g/_b/_a`), поэтому кривая цвета это четыре обычные
-    /// кривые, а не новый вид ключа (см. `color_groups`).
+    /// Colour rgba8. The channels are the owner's ordinary numeric rows
+    /// (`<stem>_r/_g/_b/_a`), so a colour curve is four ordinary
+    /// curves, not a new kind of key (see `color_groups`).
     Color,
-    /// Выбор из вариантов. Хранится КЛЮЧОМ варианта, а не номером:
-    /// номер поехал бы при добавлении варианта в середину, а ключи у нас
-    /// уже несут перечисления в файле.
+    /// Choice from variants. Stored by the variant KEY, not by number:
+    /// a number would shift when a variant is inserted in the middle, while our keys
+    /// already carry the enumerations in the file.
     Choice {
         variants: std::borrow::Cow<'static, [&'static str]>,
     },
@@ -6367,28 +6367,28 @@ pub enum ParamType {
 }
 
 impl ParamType {
-    /// Можно ли вешать кривую. Ступенчатым типам нельзя: между «Слева» и
-    /// «Справа» нет половины.
+    /// Whether a curve can be attached. Step types cannot have one: there is no half
+    /// between “Left” and “Right”.
     pub fn curvable(&self) -> bool {
         matches!(self, ParamType::Num | ParamType::Color)
     }
 
-    /// Список вариантов `Choice` В ФАЙЛ НЕ ЕДЕТ (Р.59, стадия 3): он
-    /// принадлежит ЦЕЛИ и читается у неё живьём — по той же причине, по
-    /// которой не хранится значение шаблона. Сохранённая копия разошлась
-    /// бы с целью молча, как только в меню добавится пункт.
+    /// The list of `Choice` variants DOES NOT GO TO THE FILE (R.59, stage 3): it
+    /// belongs to the TARGET and is read from it live — for the same reason
+    /// a template value is not stored. A saved copy would silently drift from the target
+    /// as soon as a menu item is added.
     ///
-    /// Тот же ЛИ это тип, безотносительно набора вариантов у `Choice`.
+    /// Likewise, this is the same TYPE regardless of the set of variants of `Choice`.
     ///
-    /// Публикация запоминает тип цели, а список вариантов у цели может
-    /// пополниться новой сборкой — сравнивай мы `==`, публикация умирала
-    /// бы от добавления пункта в меню.
+    /// Publication remembers the target's type, and the variant list of the target may grow
+    /// with a new build — if we compared with `==`, publication would die
+    /// from adding an item to the menu.
     pub fn same_family(&self, other: &ParamType) -> bool {
         std::mem::discriminant(self) == std::mem::discriminant(other)
     }
 }
 
-/// Представление `ParamType` в файле: только СЕМЕЙСТВО.
+/// Representation of `ParamType` in the file: only the FAMILY.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "k", rename_all = "snake_case")]
 enum ParamTypeRepr {
@@ -6431,26 +6431,26 @@ impl From<ParamType> for ParamTypeRepr {
     }
 }
 
-/// ЗНАЧЕНИЕ свойства (Р.59, стадия 3).
+/// VALUE of a property (R.59, stage 3).
 ///
-/// До этого раунда значением было только число: флаг, выбор, цвет (лежит
-/// тройкой чисел), текст и ссылка на медиа рисовались руками в своих
-/// окнах и свойствами не были. Публичный параметр композиции обязан
-/// уметь нести любое из шести — иначе «заголовок выпуска» и «логотип»
-/// выразить нечем.
+/// Until this round the only value was a number: a flag, a choice, a colour (stored
+/// as a triple of numbers), text and a media reference were drawn by hand in their own
+/// windows and were not properties. A public parameter of a composition must be able
+/// to carry any of the six kinds — otherwise a “release title” or a “logo” could not be
+/// expressed at all.
 ///
-/// Теги serde СТАБИЛЬНЫ: значение уезжает в файл (переопределение у
-/// экземпляра), и переименование варианта сломало бы чужие проекты.
+/// The serde tags are STABLE: the value goes into the file (an override on the instance),
+/// and renaming a variant would break other people's projects.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "t", content = "v", rename_all = "snake_case")]
 pub enum ParamValue {
     Num(f64),
     Text(String),
-    /// rgba8. Каналы в цели — обычные числовые ряды `<stem>_r/_g/_b/_a`.
+    /// rgba8. The channels in the target are ordinary numeric rows `<stem>_r/_g/_b/_a`.
     Color([u8; 4]),
     Flag(bool),
-    /// КЛЮЧ варианта, а не номер: номер поехал бы при добавлении
-    /// варианта в середину.
+    /// KEY of a variant, not a number: a number would shift when a variant is inserted
+    /// in the middle.
     Choice(String),
     Media(MediaId),
 }
@@ -6484,22 +6484,22 @@ impl ParamValue {
     }
 }
 
-/// Цветовое свойство, ВЫВЕДЕННОЕ из числовых рядов владельца (Р.59).
+/// A colour property DERIVED from the owner's numeric rows (R.59).
 ///
-/// Цвет не объявляется отдельным рядом и не поедет в формат: все 69
-/// компонент уже названы `<stem>_{r,g,b}` с единицей `Rgb8`, и группа
-/// выводится из них. Поэтому ручные списки цветов в интерфейсе — второй
-/// источник того же факта, и они удаляются.
+/// A colour is not declared as a separate row and does not go into the format: all 69
+/// components are already named `<stem>_{r,g,b}` with unit `Rgb8`, and the group
+/// is derived from them. So hand-written colour lists in the interface are a second
+/// source of the same fact, and they are removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColorGroup {
-    /// Основа имени: `color`, `a`, `tl`, `tint`, …
+    /// Name base: `color`, `a`, `tl`, `tint`, …
     pub stem: String,
-    /// Есть ли у группы четвёртая компонента `<stem>_a`.
+    /// Whether the group has a fourth component `<stem>_a`.
     pub alpha: bool,
 }
 
-/// Вывести цветовые группы из паспорта. Ряд `<stem>_r` с единицей `Rgb8`
-/// и парой `_g`/`_b` рядом — это цвет; `_a` добавляет альфу.
+/// Derive colour groups from the passport. A row `<stem>_r` with unit `Rgb8`
+/// and a `_g`/`_b` pair next to it is a colour; `_a` adds alpha.
 pub fn derive_color_groups(specs: &[ParamSpec]) -> Vec<ColorGroup> {
     let has = |n: &str| specs.iter().any(|s| s.name == n && s.unit == ParamUnit::Rgb8);
     let mut out = Vec::new();
@@ -6516,39 +6516,39 @@ pub fn derive_color_groups(specs: &[ParamSpec]) -> Vec<ColorGroup> {
     out
 }
 
-/// Имя свойства: у встроенных видов — статическая строка из объявления,
-/// у публичных параметров композиции и у плагинов — текст, придуманный
-/// АВТОРОМ в рантайме (Р.59).
+/// Property name: for built-in kinds — a static string from the declaration;
+/// for public composition parameters and for plugins — text invented by the
+/// AUTHOR at runtime (R.59).
 pub type ParamName = std::borrow::Cow<'static, str>;
 
-/// Описание одного параметра эффекта.
+/// Description of one effect parameter.
 ///
-/// `Copy` снят в Р.59: имя стало `Cow` — паспорт обязан строиться в
-/// РАНТАЙМЕ, иначе ни публичный параметр композиции (имя придумывает
-/// автор и переименовывает его), ни плагин (паспорт известен только при
-/// загрузке) выразить нечем. Все места читают спеку по ссылке.
+/// `Copy` was removed in R.59: the name became `Cow` — the passport must be built at
+/// RUNTIME, otherwise neither a public composition parameter (the author invents its name
+/// and renames it) nor a plugin (its passport is known only when loaded) could be expressed.
+/// All places read the spec by reference.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParamSpec {
-    /// Имя поля snake_case — оно же ключ в файле и в `ParamCurve.param`.
+    /// Field name in snake_case — also the key in the file and in `ParamCurve.param`.
     pub name: ParamName,
-    /// Тип значения. У встроенных рядов — `Num` (их объявляет макрос).
+    /// Value type. For built-in rows — `Num` (declared by the macro).
     pub ty: ParamType,
     pub min: f64,
     pub max: f64,
     pub default: f64,
-    /// Шаг для колеса/драга в UI.
+    /// Step for the wheel/drag in the UI.
     pub step: f64,
     pub unit: ParamUnit,
     pub kind: ParamKind,
-    /// Готовая подпись. ПУСТО у встроенных — их подпись берётся из
-    /// каталога переводов по имени; НЕПУСТО у динамических владельцев,
-    /// чьё имя придумал человек и в каталог попасть не может.
+    /// Ready-made label. EMPTY for built-ins — their label comes from the translation
+    /// catalog by name; NON-EMPTY for dynamic owners, whose name a person invented and
+    /// which cannot be in the catalog.
     pub label: ParamName,
 }
 
 impl ParamSpec {
-    /// Числовая спека — форма, которую генерит макрос и которой описаны
-    /// все встроенные ряды.
+    /// Numeric spec — the shape that the macro generates and that describes all
+    /// built-in rows.
     pub const fn num(
         name: &'static str,
         min: f64,
@@ -6572,7 +6572,7 @@ impl ParamSpec {
     }
 }
 
-/// Приведение f64 к типу поля варианта.
+/// Conversion of f64 to the field type of the variant.
 macro_rules! fx_cast {
     (f64, $v:expr) => {
         $v
@@ -6592,11 +6592,11 @@ macro_rules! fx_cast {
 }
 pub(crate) use fx_cast;
 
-/// ЕДИНСТВЕННАЯ декларация параметров эффектов: спеки, запись и чтение
-/// генерятся из неё, поэтому рассинхрон трёх таблиц невозможен.
-/// Тот же паспорт параметров, но для СТРУКТУРЫ (Р.34 К3: камере нужны
-/// спеки, чтобы попасть в общую сетку полей и в общий виджет кривых).
-/// Одна декларация — спеки, чтение и запись с клампом.
+/// The ONLY declaration of effect parameters: specs, reading and writing are generated from it,
+/// so the three tables cannot drift apart.
+/// The same parameter passport, but for a STRUCTURE (R.34 K3: the camera needs
+/// specs to get into the shared field grid and the shared curve widget).
+/// One declaration — specs, reading and writing with clamping.
 macro_rules! params_for_struct {
     ($ty:ident { $( $field:ident : $t:ident, $lo:expr, $hi:expr, $def:expr, $step:expr, $unit:ident, $kind:ident );+ $(;)? }
      $( choice $cname:ident : $ckeys:expr, $cty:ty );* $(;)?) => {
@@ -6634,9 +6634,9 @@ macro_rules! params_for_struct {
                 let _ = i;
                 false
             }
-            // Свойства-ВЫБОРЫ структуры (Р.63). Без них ветки пусты, и
-            // поведение побайтово равно прежнему: `extra_specs` отдаёт
-            // пустой вектор, а значение идёт умолчаниями трейта.
+            // Choice properties of a structure (R.63). Without them the branches are empty, and
+            // behaviour is byte-for-byte the same as before: `extra_specs` returns an
+            // empty vector, and the value takes the trait defaults.
             fn extra_specs(&self) -> Vec<ParamSpec> {
                 vec![ $( choice_spec(stringify!($cname), $ckeys) ),* ]
             }
@@ -6679,11 +6679,11 @@ macro_rules! params_for {
             }
         }
 
-        /// Запись по ИНДЕКСУ ряда (Р.59): порядок рядов — порядок
-        /// объявления, он же порядок `param_specs()`, поэтому индекс
-        /// стабилен по построению. Нужен компилированному плану
-        /// автоматизации: он не ищет параметр сравнением строк на каждый
-        /// кадр.
+        /// Write by ROW INDEX (R.59): the order of rows is the declaration order, which is also
+        /// the order of `param_specs()`, so the index is stable by construction.
+        /// It is needed by the compiled automation plan: it does not look up a parameter
+        /// by comparing strings on every
+        /// frame.
         fn $set_idx(fx: &mut $enum, idx: usize, v: f64) -> bool {
             match fx {
                 $( $enum::$variant { $($field,)+ .. } => {
@@ -6713,12 +6713,12 @@ macro_rules! params_for {
             }
         }
 
-        /// Запись по имени. КЛАМП ЖИВЁТ ЗДЕСЬ (Р.59): до этого раунда
-        /// он стоял в обёртках `FxInstance::set_param` и
-        /// `TransitionKind::set_param`, а у генераторов обёртки не было
-        /// вовсе — кегль титра принимал любое число из файла и из
-        /// команды. Теперь предел один на всех владельцев и на оба пути
-        /// адресации, именной и индексный (t642).
+        /// Write by NAME. THE CLAMP LIVES HERE (R.59): until this round it sat in the
+        /// wrappers `FxInstance::set_param` and `TransitionKind::set_param`, and generators had no
+        /// wrapper at all — a title’s font size accepted any number from the file or from a
+        /// command. Now one limit applies to all owners and to both addressing paths,
+        /// named and indexed,
+        /// (t642).
         fn $set(fx: &mut $enum, name: &str, v: f64) -> bool {
             match fx {
                 $( $enum::$variant { $($field,)+ .. } => {
@@ -6749,10 +6749,10 @@ macro_rules! params_for {
 }
 pub(crate) use params_for;
 
-/// Паспорт ФЛАГОВ вида — из ОДНОЙ декларации, рядом с `params_for!`
-/// (Р.53, п.414). Генерит спеки, чтение и запись: рассинхрона трёх
-/// таблиц не бывает, а полноту (не забыт ли bool-поле) сторожит тест,
-/// который сверяет флаги с serde-представлением вида.
+/// The passport of the kind's FLAGS — from ONE declaration, next to `params_for!`
+/// (R.53, item 414). It generates specs, reading and writing: the three tables cannot drift
+/// apart, and completeness (whether a bool field was forgotten) is guarded by a test that
+/// checks the flags against the kind’s serde representation.
 macro_rules! flags_for {
     ($enum:ident, $specs:ident, $set:ident, $get:ident, {$(
         $variant:ident { $( $field:ident : $def:expr );+ $(;)? }
@@ -6798,7 +6798,7 @@ macro_rules! flags_for {
 pub(crate) use flags_for;
 
 params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_get_idx, {
-    // ---- аудио (Р.33: автоматизируются общим механизмом) ----------------
+    // ---- audio (R.33: automated by the shared mechanism) ----------------
     Gain {
         db: f32, -60.0, 12.0, 0.0, 0.1, Db, Smooth;
         pan: f32, -1.0, 1.0, 0.0, 0.01, Norm, Smooth;
@@ -6807,18 +6807,18 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
         amount: f64, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
     },
     SlowedReverb {
-        // диапазон скорости — RATE_CLAMP карты варпа (warp.rs, Р.39:
-        // раньше он жил в kt-fx и был обещанием через границу крейта).
-        // Со знаком и с нулём (Р.57, решение владельца): минус идёт по
-        // материалу НАЗАД, ноль — стоп-кадр.
+        // speed range — RATE_CLAMP of the warp map (warp.rs, R.39:
+        // previously it lived in kt-fx and was a promise across the crate boundary).
+        // Signed and including zero (R.57, the owner’s decision): minus runs BACKWARD
+        // through the material, zero — a freeze frame.
         rate: f64, -32.0, 32.0, 1.0, 0.01, Ratio, Smooth;
         mix: f32, 0.0, 1.0, 0.0, 0.01, Norm, Smooth;
-        // смена длины comb-линий пересоздаёт реверб — не автоматизируется
+        // changing the length of comb lines rebuilds the reverb — not automatable
         reverb_delay_ms: f32, 1.0, 500.0, 60.0, 1.0, Ms, Structural;
         damp: f32, 0.0, 0.99, 0.2, 0.01, Norm, Smooth;
         decay: f32, 0.0, 0.98, 0.84, 0.01, Norm, Smooth;
         wet_gain: f32, 0.0, 2.0, 1.0, 0.01, Ratio, Smooth;
-        // длина линии пред-задержки — та же геометрия, что reverb_delay_ms
+        // length of the pre-delay line — the same geometry as reverb_delay_ms
         predelay_ms: f32, 0.0, 200.0, 0.0, 1.0, Ms, Structural;
         width: f32, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
     },
@@ -6864,7 +6864,7 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
         rate_hz: f32, 0.05, 8.0, 0.8, 0.01, Hz, Smooth;
         depth_ms: f32, 0.0, 12.0, 3.5, 0.1, Ms, Smooth;
         mix: f32, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
-        // число голосов пересоздаёт линии — кривой не подлежит
+        // number of voices rebuilds the lines — not subject to a curve
         voices: u32, 1.0, 3.0, 2.0, 1.0, Count, Structural;
     },
     Flanger {
@@ -6877,7 +6877,7 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
         rate_hz: f32, 0.05, 4.0, 0.4, 0.01, Hz, Smooth;
         depth: f32, 0.0, 1.0, 0.7, 0.01, Norm, Smooth;
         feedback: f32, 0.0, 0.9, 0.3, 0.01, Norm, Smooth;
-        // число каскадов пересоздаёт состояние — кривой не подлежит
+        // number of cascades rebuilds the state — not subject to a curve
         stages: u32, 2.0, 8.0, 4.0, 1.0, Count, Structural;
         mix: f32, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
     },
@@ -6899,7 +6899,7 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
         hold_ms: f32, 0.0, 500.0, 40.0, 1.0, Ms, Smooth;
         release_ms: f32, 5.0, 1000.0, 100.0, 1.0, Ms, Smooth;
     },
-    // ---- видео 2D --------------------------------------------------------
+    // ---- video 2D --------------------------------------------------------
     ColorGrade {
         brightness: f32, -1.0, 1.0, 0.0, 0.01, Norm, Smooth;
         contrast: f32, -1.0, 1.0, 0.0, 0.01, Norm, Smooth;
@@ -7047,7 +7047,7 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
         cols: u32, 1.0, 512.0, 1.0, 1.0, Count, Smooth;
         rows: u32, 1.0, 512.0, 1.0, 1.0, Count, Smooth;
     },
-    // ---- видео 3D (Р.29) -------------------------------------------------
+    // ---- video 3D (R.29) -------------------------------------------------
     Pan3d {
         pos_x: f64, -100_000.0, 100_000.0, 0.0, 1.0, Px, Smooth;
         pos_y: f64, -100_000.0, 100_000.0, 0.0, 1.0, Px, Smooth;
@@ -7061,9 +7061,9 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
     },
 }}
 
-// Параметры переходов — та же декларация, что у эффектов: UI полей,
-// кламп и (в будущем) автоматизация приходят к ним бесплатно.
-// Единицы камеры заморожены форматом (Р.29): мировые px и градусы ZXY.
+// Transition parameters — the same declaration as for effects: the field UI,
+// clamping and (in future) automation come to them for free.
+// Camera units are frozen by the format (R.29): world px and ZXY degrees.
 params_for_struct! { CameraParams {
     pos_x: f64, -100_000.0, 100_000.0, 0.0, 1.0, Px, Smooth;
     pos_y: f64, -100_000.0, 100_000.0, 0.0, 1.0, Px, Smooth;
@@ -7197,7 +7197,7 @@ params_for! { TransitionKind, transition_specs, transition_set_param, transition
     },
 }}
 
-/// Режим кроп-рамки пан/зума (v1: fit/fill/stretch).
+/// Crop-frame mode for pan/zoom (v1: fit/fill/stretch).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PanMode {
@@ -7207,9 +7207,9 @@ pub enum PanMode {
     Stretch,
 }
 
-/// Правило приведения кадра источника к холсту (Р.62, F-MED-004):
-/// вписать с ПРОЗРАЧНЫМИ полями / заполнить с обрезкой / растянуть /
-/// как есть (1:1 пиксель по центру, крупнее холста — за край).
+/// Rule for fitting the source frame to the canvas (R.62, F-MED-004):
+/// fit with TRANSPARENT margins / fill with cropping / stretch /
+/// as is (1:1 pixel, centred; larger than the canvas — overflows the edge).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConformRule {
@@ -7220,9 +7220,9 @@ pub enum ConformRule {
     AsIs,
 }
 
-/// Правило у СОБЫТИЯ: следовать проекту либо своё. Уровень «проект +
-/// исключение у события» — решение владельца Р.62: смена умолчания проекта
-/// переписывает всех, кто ему следует, и не трогает явные.
+/// Rule at the EVENT level: follow the project or its own. The level “project +
+/// exception at the event” is the owner’s decision for R.62: changing the project’s default
+/// rewrites everyone who follows it and leaves the explicit ones untouched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Conform {
@@ -7235,7 +7235,7 @@ pub enum Conform {
 }
 
 impl Conform {
-    /// Разрешить правило события правилом проекта.
+    /// Resolve the event rule to the project rule.
     pub fn resolve(self, project: ConformRule) -> ConformRule {
         match self {
             Conform::Project => project,
@@ -7246,9 +7246,9 @@ impl Conform {
         }
     }
 
-    /// КЛЮЧ варианта для паспорта свойства (`Choice` хранит ключ, а не
-    /// номер). Совпадает с тем, что пишет serde, — второго написания у
-    /// одного факта быть не должно.
+    /// KEY of a variant for the property passport (`Choice` stores the key, not
+    /// the number). It matches what serde writes — one fact must not
+    /// have a second spelling.
     pub fn tag(self) -> &'static str {
         match self {
             Conform::Project => "project",
@@ -7273,18 +7273,18 @@ impl Conform {
     }
 }
 
-/// ВЕДУЩИЙ узел «Геометрия» видео-события (Р.62): правило приведения +
-/// кроп (доли источника), положение (доли холста, 0 — по центру), зум,
-/// поворот (градусы) вокруг якоря (доли рамки). Стоит в цепочке ПЕРВЫМ
-/// (`ClipEvent.geometry_pos`), перетаскивается, не удаляется — как
-/// Pan/Crop в Vegas.
+/// LEADING node “Geometry” of a video event (R.62): conform rule +
+/// crop (source fractions), position (canvas fractions, 0 — centred), zoom,
+/// rotation (degrees) around the anchor (frame fractions). It sits FIRST in the chain
+/// (`ClipEvent.geometry_pos`), is dragged, cannot be deleted — like
+/// Pan/Crop in Vegas.
 ///
-/// Поле события, а НЕ слот `fx`: так индексы слотов и адреса кривых/связей
-/// не сдвигаются от того, что у события появился узел; движок
-/// материализует его в цепочку на позиции `geometry_pos` при сборке.
-/// Дополнительные узлы того же вида — `FxInstance::Geometry` (без правила).
-/// Место под маску (отдельный change): соседнее поле, порядок внутри узла —
-/// кроп → маска → размещение.
+/// An event field, NOT an `fx` slot: this way slot indices and curve/link addresses
+/// do not shift because the event gained a node; the engine
+/// materializes it into the chain at position `geometry_pos` when building.
+/// Additional nodes of the same kind — `FxInstance::Geometry` (without a rule).
+/// Place reserved for a mask (a separate change): an adjacent field, order inside the node —
+/// crop → mask → placement.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct EventGeometry {
     #[serde(default, skip_serializing_if = "is_default_conform")]
@@ -7341,15 +7341,15 @@ impl EventGeometry {
         *self == EventGeometry::default()
     }
 
-    /// Параметры тождественны (правило не в счёт): узел ничего не
-    /// двигает, только приводит кадр по правилу.
+    /// Parameters are identity (the rule does not count): the node moves nothing,
+    /// it only conforms the frame by the rule.
     pub fn params_identity(&self) -> bool {
         self.node().geometry_is_identity()
     }
 
-    /// Тот же узел как слот цепочки (без правила) — форма, которую видит
-    /// kt-fx. Ведущий узел материализуется движком в цепочку на позиции
-    /// `geometry_pos`.
+    /// The same node as a chain slot (without the rule) — the form that
+    /// kt-fx sees. The leading node is materialized by the engine into the chain at
+    /// position `geometry_pos`.
     pub fn node(&self) -> FxInstance {
         FxInstance::Geometry {
             lead: true,
@@ -7366,7 +7366,7 @@ impl EventGeometry {
         }
     }
 
-    /// Обратно из слота (правило остаётся своё).
+    /// Back from a slot (the rule stays its own).
     pub fn with_node(mut self, n: &FxInstance) -> EventGeometry {
         if let FxInstance::Geometry {
             crop_l,
@@ -7397,8 +7397,8 @@ impl EventGeometry {
     }
 }
 
-/// Ключи правила приведения для паспорта свойства (Р.63): правило —
-/// такое же публикуемое свойство ведущего узла, как зум.
+/// Keys of the conform rule for the property passport (R.63): the rule is
+/// a published property of the leading node, just like zoom.
 pub const CONFORM_KEYS: &[&str] = &["project", "fit", "fill", "stretch", "as_is"];
 const CONFORM_ALL: [Conform; 5] =
     [Conform::Project, Conform::Fit, Conform::Fill, Conform::Stretch, Conform::AsIs];
@@ -7416,7 +7416,7 @@ params_for_struct! { EventGeometry {
     anchor_y: f64, 0.0, 1.0, 0.5, 0.005, Norm, Smooth;
 } choice rule: CONFORM_KEYS, Conform}
 
-/// Тип аудио-фильтра (Р.47): срез сверху/снизу/полоса.
+/// Audio filter type (R.47): low-pass / high-pass / band.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FilterMode {
@@ -7426,10 +7426,10 @@ pub enum FilterMode {
     Bandpass,
 }
 
-/// Как добывать кадр, которого в источнике нет (Р.37 п.2): растянутое
-/// видео просит материал между кадрами. `Nearest` — держим ближайший
-/// (детерминизм, ноль лишнего декода); `Blend` — линейно смешиваем два
-/// соседних. Третьим сюда встанет fruc_vulkan.
+/// How to get a frame that is absent in the source (R.37 item 2): a stretched
+/// video asks for material between frames. `Nearest` — keep the nearest one
+/// (determinism, zero extra decode); `Blend` — linearly mix two adjacent
+/// ones. A third option will go here: fruc_vulkan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FrameMode {
@@ -7438,7 +7438,7 @@ pub enum FrameMode {
     Blend,
 }
 
-/// Кейфрейм CamMotion по прогрессу клипа t∈[0,1].
+/// CamMotion keyframe by clip progress t∈[0,1].
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CamKeyframe {
     pub t: f64,
@@ -7450,61 +7450,61 @@ pub struct CamKeyframe {
     pub zoom: f64,
 }
 
-/// Камера-событие на камерной дорожке (Р.29, образец — морф-дорожка):
-/// событие само является и камерой, и её «включением по времени» (как
-/// camera layer в AE). Камер может быть несколько — активную в момент t
-/// выбирает `Project::active_camera_at` детерминированным правилом.
+/// Camera event on a camera track (R.29, pattern — the morph track): the event is
+/// both a camera and its “time switch on” (like a
+/// camera layer in AE). There may be several cameras — the one active at moment t
+/// is chosen by `Project::active_camera_at` by a deterministic rule.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CameraEvent {
     pub id: CameraId,
-    /// Индекс камерной дорожки (0..camera_lanes).
+    /// Index of a camera track (0..camera_lanes).
     pub lane: u32,
     pub start: Tick,
     pub duration: Tick,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
-    /// Базовые параметры (кейфреймы их перекрывают).
+    /// Base parameters (keyframes override them).
     pub cam: CameraParams,
-    /// ЛЕГАСИ-вход (Р.34 К3): анимация по прогрессу события t∈[0,1].
-    /// Читается из старых файлов и переводится в `auto`; новые кривые
-    /// сюда не пишутся.
+    /// LEGACY input (R.34 K3): animation by event progress t∈[0,1].
+    /// Read from old files and converted to `auto`; new curves
+    /// are not written here.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keyframes: Vec<CameraKeyframe>,
-    /// Кривые параметров камеры — ТОТ ЖЕ механизм, что у эффектов
-    /// (Р.34 К3). Позиция ключа — тик ОТ НАЧАЛА события: перенос камеры
-    /// везёт анимацию с собой, а правка длины открывает/прячет ключи,
-    /// как обрезка клипа («ничего не отрастает само», п.20 р.28).
+    /// Camera parameter curves — the SAME mechanism as for effects
+    /// (R.34 K3). The key position is a tick FROM THE START of the event: moving the camera
+    /// carries its animation along, and changing the length opens/hides keys
+    /// like clip trimming (“nothing grows back by itself”, item 20 of round 28).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub auto: Vec<ParamCurve>,
     #[serde(default = "default_true")]
     pub ease: bool,
 }
 
-/// Параметры камеры. Дефолт — «50 мм»: перспектива с fov ≈ 39.6°, авто-
-/// дистанция (pos_z = 0 трактуется движком как −(H/2)/tan(fov/2)) — слой
-/// в z=0 с тождественным Pan3d рендерится 1:1, 2D-проекты не меняются
-/// ни на пиксель. Единицы — мировые px и градусы (ZXY), как у Pan3d.
+/// Camera parameters. Default — “50 mm”: perspective with fov ≈ 39.6°, auto-
+/// distance (pos_z = 0 is treated by the engine as −(H/2)/tan(fov/2)) — a layer
+/// at z=0 with identity Pan3d renders 1:1, 2D projects do not change
+/// by a single pixel. Units — world px and degrees (ZXY), as in Pan3d.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CameraParams {
     #[serde(default)]
     pub pos_x: f64,
     #[serde(default)]
     pub pos_y: f64,
-    /// 0 = «авто» (дефолтная дистанция 50 мм).
+    /// 0 = “auto” (default distance 50 mm).
     #[serde(default)]
     pub pos_z: f64,
-    /// Точка интереса (two-node camera, как в AE). None — one-node:
-    /// смотрит вдоль +Z.
+    /// Point of interest (two-node camera, as in AE). None — one-node:
+    /// looks along +Z.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<(f64, f64, f64)>,
-    /// Доворот ПОСЛЕ target (AE orientation), градусы, ZXY.
+    /// Extra rotation AFTER target (AE orientation), degrees, ZXY.
     #[serde(default)]
     pub rot_x: f64,
     #[serde(default)]
     pub rot_y: f64,
     #[serde(default)]
     pub rot_z: f64,
-    /// Вертикальный FOV в градусах.
+    /// Vertical FOV in degrees.
     #[serde(default = "default_fov")]
     pub fov_deg: f64,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -7527,7 +7527,7 @@ impl Default for CameraParams {
     }
 }
 
-/// Кейфрейм камеры по прогрессу события t∈[0,1].
+/// Camera keyframe by event progress t∈[0,1].
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CameraKeyframe {
     pub t: f64,
@@ -7535,15 +7535,15 @@ pub struct CameraKeyframe {
 }
 
 impl CameraEvent {
-    /// Параметры камеры в момент таймлайна t (образец cam_at из kt-fx):
-    /// прогресс события 0..1, линейная интерполяция скалярных полей между
-    /// кейфреймами, smoothstep при ease, за краями — крайние. `target`
-    /// интерполируется, только когда задан у обеих точек сегмента (иначе
-    /// держится значение левой); `ortho` — от левой точки.
+    /// Camera parameters at timeline moment t (pattern: cam_at from kt-fx):
+    /// event progress 0..1, linear interpolation of scalar fields between
+    /// keyframes, smoothstep when eased, beyond the edges — the edge values. `target`
+    /// is interpolated only when set at both points of the segment (otherwise
+    /// the left value is kept); `ortho` — from the left point.
     pub fn params_at(&self, t: Tick) -> CameraParams {
         if !self.auto.is_empty() {
-            // общий механизм (Р.34 К3): кривая на параметр, позиция —
-            // тик от начала события
+            // general mechanism (R.34 K3): a curve per parameter, position —
+            // tick from the start of the event
             let local = Tick(t.0 - self.start.0);
             let mut cam = self.cam;
             for c in &self.auto {
@@ -7592,8 +7592,8 @@ impl CameraEvent {
     }
 }
 
-/// Активная камера из списка (правило Р.29 — см. Project::active_camera_at;
-/// pub-функция, чтобы движок применял ТО ЖЕ правило к своему снапшоту).
+/// Active camera from the list (R.29 rule — see Project::active_camera_at;
+/// pub function, so that the engine applies THE SAME rule to its snapshot).
 pub fn active_camera_in(cameras: &[CameraEvent], t: Tick) -> Option<&CameraEvent> {
     cameras
         .iter()
@@ -7601,9 +7601,9 @@ pub fn active_camera_in(cameras: &[CameraEvent], t: Tick) -> Option<&CameraEvent
         .max_by_key(|c| (std::cmp::Reverse(c.lane), c.start.0, c.id.0))
 }
 
-/// Вертикальный FOV умолчания — умеренная перспектива в духе 50-мм
-/// камеры AE; точная эквивалентность миллиметрам не обещается (киношную
-/// арифметику в модель не тащим).
+/// Default vertical FOV — a moderate perspective in the spirit of the 50-mm
+/// AE camera; exact equivalence to millimetres is not promised (we do not drag
+/// cinema arithmetic into the model).
 fn default_fov() -> f64 {
     39.6
 }
@@ -7670,12 +7670,12 @@ pub struct SlowedKeyframe {
 }
 
 impl FxInstance {
-    /// Конструктор с дефолтными параметрами реверба (для тестов/простых случаев).
-    /// Конструкторы эффектов с УМОЛЧАНИЯМИ добавленных полей (Р.33 С5).
-    /// Струкурные литералы в вызывающем коде заменены на них, чтобы
-    /// следующий параметр не требовал править полсотни мест.
-    /// Дефолтные конструкторы видов без своего конструктора (Р.47,
-    /// п.326): нужны реестру `all()`; литералы в тестах идут через них.
+    /// Constructor with default reverb parameters (for tests/simple cases).
+    /// Effect constructors with DEFAULTS for added fields (R.33, stage 5).
+    /// Struct literals in calling code were replaced with them, so that
+    /// the next parameter does not require editing fifty places.
+    /// Default constructors for kinds without their own constructor (R.47,
+    /// item 326): needed by the registry `all()`; literals in tests go through them.
     pub fn filter() -> FxInstance {
         FxInstance::Filter { mode: FilterMode::Lowpass, cutoff_hz: 800.0, resonance: 0.707 }
     }
@@ -7849,8 +7849,8 @@ impl FxInstance {
         FxInstance::Cylinder3d { curvature: 0.5 }
     }
 
-    /// Дополнительный узел «Геометрия» с зумом вокруг центра (замена
-    /// прежнего «Pan: растянуть, зум z»).
+    /// Additional “Geometry” node with zoom around the centre (replacing the
+    /// former “Pan: stretch, zoom z”).
     pub fn geometry_zoom(zoom: f64) -> FxInstance {
         let mut g = EventGeometry { zoom, ..Default::default() }.node();
         if let FxInstance::Geometry { lead, .. } = &mut g {
@@ -7859,7 +7859,7 @@ impl FxInstance {
         g
     }
 
-    /// Дополнительный узел «Геометрия» с положением (доли холста) и зумом.
+    /// Additional “Geometry” node with position (canvas fractions) and zoom.
     pub fn geometry_at(pos_x: f64, pos_y: f64, zoom: f64) -> FxInstance {
         let mut g = EventGeometry { pos_x, pos_y, zoom, ..Default::default() }.node();
         if let FxInstance::Geometry { lead, .. } = &mut g {
@@ -7872,7 +7872,7 @@ impl FxInstance {
         EventGeometry::default().node()
     }
 
-    /// Дополнительный (не ведущий) узел «Геометрия» из каталога.
+    /// Additional (non-leading) “Geometry” node from the catalog.
     pub fn geometry_node() -> FxInstance {
         let mut g = EventGeometry::default().node();
         if let FxInstance::Geometry { lead, .. } = &mut g {
@@ -7881,14 +7881,14 @@ impl FxInstance {
         g
     }
 
-    /// Ведущий ли это узел «Геометрия» (материализованный движком).
+    /// Whether this is a leading “Geometry” node (materialized by the engine).
     pub fn is_lead_geometry(&self) -> bool {
         matches!(self, FxInstance::Geometry { lead: true, .. })
     }
 
-    /// Узел «Геометрия» с тождественными параметрами. Правило приведения
-    /// сюда не входит: тождествен ли ВЕДУЩИЙ узел, решает kt-fx по виду
-    /// источника и холсту (`geometry_is_identity_in`).
+    /// “Geometry” node with identity parameters. The conform rule is not part of it:
+    /// whether the LEADING node is identity is decided by kt-fx from the source kind
+    /// and the canvas (`geometry_is_identity_in`).
     pub fn geometry_is_identity(&self) -> bool {
         match self {
             FxInstance::Geometry {
@@ -8026,7 +8026,7 @@ pub enum ProjectError {
     DuplicateMediaId(MediaId),
     #[error("settings: fps must divide {tick_hz}", tick_hz = kt_time::TICK_HZ)]
     BadFps,
-    #[error("project conform rule must be a rule, not «follow project»")]
+    #[error("project conform rule must be a rule, not “follow project”")]
     BadConform,
     #[error("clip {0:?}: geometry position beyond the chain")]
     BadGeometryPos(ClipId),
@@ -8076,7 +8076,7 @@ pub enum ProjectError {
     BadFxAuto(ClipId),
     #[error("transition {0:?}: parameter curves must be finite, sorted and known")]
     BadTransitionAuto(TransitionId),
-    // --- вложенные секвенции (Р.50) ---
+    // --- nested sequences (R.50) ---
     #[error("sequence {0:?} would contain itself: {1}")]
     SequenceCycle(MediaId, String),
     #[error("sequence {0:?} ({1}) nests deeper than {MAX_NEST_DEPTH} levels")]
@@ -8087,31 +8087,31 @@ pub enum ProjectError {
     MorphRefInsideSequence(MorphId),
     #[error("media id {0:?} is out of range (top bit is reserved for nested sequences)")]
     MediaIdTooLarge(MediaId),
-    // --- раскрытие ленты на месте (Р.55, С5) ---
+    // --- in-place reel expansion (R.55, stage 5) ---
     #[error("clip {0:?} crossed the expanded band boundary: an event cannot change reels")]
     BandEscape(ClipId),
-    // --- дорожки-объекты (Р.62, change B) ---
+    // --- object tracks (R.62, change B) ---
     #[error("reel {0:?}: {1:?} track {2} does not exist")]
     TrackMissing(Option<MediaId>, LaneKind, u32),
     #[error("track {0:?}: curves on a track are not supported yet (timeline-time domain)")]
     TrackCurvesUnsupported(TrackId),
-    // --- источник значений кривой (Р.59, п.466) ---
+    // --- source of curve values (R.59, item 466) ---
     #[error(
         "clip {0:?}: this curve is driven by a formula or a link, and nothing evaluates those yet"
     )]
     CurveSourceUnsupported(ClipId),
     #[error("clip {0:?}: the curve source cannot be resolved: {1}")]
     CurveSourceBroken(ClipId, String),
-    // --- связь свойств (Р.61) ---
+    // --- property link (R.61) ---
     #[error("{0}")]
     BadLink(#[from] crate::links::LinkError),
-    // --- форма отрезка (Р.61) ---
+    // --- segment shape (R.61) ---
     #[error(
         "clip {0:?}: the speed curve takes the linear shape only — the closed-form warp map \
          stands on a piecewise-linear profile"
     )]
     RateShapeMustBeLinear(ClipId),
-    // --- параметры генератора на событии (Р.59, стадия 2) ---
+    // --- generator parameters on an event (R.59, stage 2) ---
     #[error("clip {0:?} sits on a generator but carries no generator values")]
     GenMissing(ClipId),
     #[error("clip {0:?} carries generator values but its media is a file")]
@@ -8120,7 +8120,7 @@ pub enum ProjectError {
     GenKindMismatch(ClipId),
     #[error("clip {0:?}: generator curve '{1}' names no parameter of this kind")]
     GenAutoOrphan(ClipId, String),
-    // --- публичные параметры композиции (Р.59, стадия 3) ---
+    // --- public composition parameters (R.59, stage 3) ---
     #[error("reel {0:?}: duplicate published parameter id {1:?}")]
     PublishedDuplicateId(Option<MediaId>, PubId),
     #[error("reel {0:?}: published parameter {1:?} has an empty name")]
@@ -8143,11 +8143,11 @@ pub enum ProjectError {
     OverrideDuplicate(ClipId, PubId),
 }
 
-/// Полная проверка перехода против проекта: стык, умещаемость, минимум,
-/// уникальность стыка и непересечение окон на дорожке. `ignore` — id самого
-/// перехода при SetTransition (не сравнивать с собой; Add передаёт None,
-/// но self-id тоже пропускается). Используется и validate(), и check_on
-/// команд (тест 135).
+/// Full check of a transition against the project: junction, fit, minimum,
+/// uniqueness of the junction and non-overlap of windows on the track. `ignore` — the id of the
+/// transition itself during SetTransition (do not compare with itself; Add passes None,
+/// but the self-id is skipped too). Used by both validate() and the check_on
+/// of commands (test 135).
 pub fn check_transition_full(
     p: &dyn Reel,
     t: &TransitionEvent,
@@ -8162,10 +8162,10 @@ pub fn check_transition_full(
     };
     let a = find(t.a)?;
     let b = find(t.b)?;
-    // фейд (Р.25): один конец — пустота; офсет в её сторону телом не
-    // ограничен, стык берётся у живого клипа. С Р.51 (п.399) пара может
-    // быть и НАЛОЖЕННОЙ «лесенкой» — тогда окно = зона перекрытия, а
-    // офсеты не используются вовсе (мёртвый груз до возврата встык).
+    // fade (R.25): one end is empty; the offset toward it by the body is not
+    // limited, the junction is taken from the live clip. Since R.51 (item 399) a pair can
+    // also be OVERLAPPED “staircase” — then the window is the overlap zone, and the
+    // offsets are not used at all (dead weight until it goes back to a butt joint).
     let mut staggered = false;
     let (kind, lane, joint) = match (a, b) {
         (Some(a), Some(b)) => {
@@ -8179,8 +8179,8 @@ pub fn check_transition_full(
                 staggered = true;
                 (a.kind, a.lane, a_end)
             } else {
-                // полное вложение, равные старты, обратный порядок или
-                // разрыв — у такой пары нет ни направления, ни окна
+                // full containment, equal starts, reverse order or a gap — such a pair has
+                // neither direction nor a window
                 return Err(ProjectError::TransitionNotAtJoint(t.id));
             }
         }
@@ -8189,9 +8189,9 @@ pub fn check_transition_full(
         (None, None) => return Err(ProjectError::TransitionWithoutClips(t.id)),
     };
     if staggered {
-        // окно задают ТЕЛА пары; третий клип в нём ломает не переход, а
-        // окружение (1/N-зоны остаются без переходов — как и трое без
-        // перехода дают 1/N, п.162)
+        // the window is set by the BODIES of the pair; a third clip in it breaks not the transition but
+        // the surroundings (1/N zones remain without transitions — just as three without a
+        // transition give 1/N, item 162).
         let (a, b) = (a.unwrap(), b.unwrap());
         let w = TickRange::new(b.start, a.start + a.duration);
         if w.end - w.start < MIN_TRANSITION_DURATION {
@@ -8220,7 +8220,7 @@ pub fn check_transition_full(
             return Err(ProjectError::TransitionTooShort(t.id));
         }
     }
-    // кривые параметров вида — те же правила, что у кривых эффектов
+    // curves of the kind's parameters — the same rules as for effect curves
     for c in &t.auto {
         let sorted = c.keys.windows(2).all(|w| w[0].t <= w[1].t);
         let ok = c.keys.iter().all(|k| k.t.0 >= 0 && k.v.is_finite());
@@ -8294,7 +8294,7 @@ impl Project {
         track_index(&self.tracks, kind, lane).map(move |i| &mut self.tracks[i])
     }
 
-    /// Дорожка КОРНЯ по id (рабочий вид: содержимое текущей ленты стоит корнем).
+    /// ROOT track by id (working view: the contents of the current reel stand as the root).
     pub fn track(&self, id: TrackId) -> Option<&Track> {
         self.tracks.iter().find(|t| t.id == id)
     }
@@ -8303,7 +8303,7 @@ impl Project {
         self.tracks.iter_mut().find(|t| t.id == id)
     }
 
-    /// Дорожка в любом месте документа (корень или лента).
+    /// Track anywhere in the document (root or reel).
     pub fn find_track(&self, id: TrackId) -> Option<&Track> {
         self.track(id)
             .or_else(|| self.sequences.iter().find_map(|s| s.tracks.iter().find(|t| t.id == id)))
@@ -8315,7 +8315,7 @@ impl Project {
             .unwrap_or_else(|| default_lane_label(kind, lane))
     }
 
-    /// Дописать дорожки вида до `n` штук (в конец строк).
+    /// Append kind tracks up to `n` in number (at the end of the rows).
     pub fn ensure_tracks(&mut self, kind: LaneKind, n: u32) {
         while self.lanes(kind) < n {
             let at = natural_insert_pos(&self.tracks, kind);
@@ -8324,7 +8324,7 @@ impl Project {
         self.assign_track_ids();
     }
 
-    /// Первый свободный id дорожки во ВСЁМ документе.
+    /// First free track id in the WHOLE document.
     pub fn next_track_id(&self) -> TrackId {
         let m = self
             .tracks
@@ -8336,8 +8336,8 @@ impl Project {
         TrackId(m + 1)
     }
 
-    /// Назначить id всем дорожкам без него (и разрешить дубли): корень,
-    /// затем ленты, по порядку строк — детерминированно. Идемпотентно.
+    /// Assign an id to all tracks without one (and resolve duplicates): the root,
+    /// then reels, in row order — deterministic. Idempotent.
     pub fn assign_track_ids(&mut self) {
         let mut seen = std::collections::HashSet::new();
         let mut next = self.next_track_id().0;
@@ -8358,9 +8358,9 @@ impl Project {
         }
     }
 
-    /// Вставить дорожку вида `kind` с рангом `at` (строка встаёт прямо над
-    /// бывшей `at`, при её отсутствии — в конец); содержимое вида с
-    /// номером ≥ at сдвигается на +1. Возвращает id новой дорожки.
+    /// Insert a track of kind `kind` with rank `at` (the row goes right above the former
+    /// `at`; if there is no `at`, at the end); content of the kind with
+    /// number ≥ at shifts by +1. Returns the id of the new track.
     pub fn insert_track(&mut self, kind: LaneKind, at: u32) -> TrackId {
         let at = at.min(self.lanes(kind));
         for c in &mut self.clips {
@@ -8391,16 +8391,16 @@ impl Project {
             }
         }
         let id = self.next_track_id();
-        // строка встаёт над бывшей `at`; ранга `at` нет — в конец блока
-        // своего вида (естественный порядок), а не в конец списка
+        // the row goes above the former `at`; if rank `at` is absent — at the end of the block
+        // of its own kind (natural order), not at the end of the list
         let pos = track_index(&self.tracks, kind, at)
             .unwrap_or_else(|| natural_insert_pos(&self.tracks, kind));
         self.tracks.insert(pos, Track::new(id, kind));
         id
     }
 
-    /// Удалить дорожку вида `kind` с рангом `at` вместе с её содержимым;
-    /// номера выше съезжают на −1.
+    /// Delete the track of kind `kind` with rank `at` together with its content;
+    /// higher numbers shift by −1.
     pub fn remove_track(&mut self, kind: LaneKind, at: u32) {
         let Some(pos) = track_index(&self.tracks, kind, at) else { return };
         self.tracks.remove(pos);
@@ -8460,7 +8460,7 @@ impl Project {
         self.legacy_lane_order = Vec::new();
     }
 
-    /// Сколько дорожек каждого вида ТРЕБУЕТ содержимое корня.
+    /// How many tracks of each kind the root content REQUIRES.
     fn needed(&self) -> LaneBases {
         let mut n = LaneBases::default();
         for c in &self.clips {
@@ -8480,24 +8480,24 @@ impl Project {
         n
     }
 
-    /// Активная камера в момент t: событие, чьё [start, start+duration)
-    /// накрывает t; приоритет — меньшая lane (как z-order видео), при
-    /// равной — больший start («сверху тот, кто позже», правило Vegas
-    /// Р.28/п.177), затем больший id. Правило детерминировано — рендер
-    /// от него зависит (тест 188). None — камер нет, движок берёт
-    /// дефолтную «50 мм» (тождество для Pan3d с дефолтами).
+    /// Active camera at moment t: the event whose [start, start+duration)
+    /// covers t; priority — the smaller lane (like video z-order); if equal,
+    /// the larger start (“the one that comes later is on top”, the Vegas rule
+    /// R.28/item 177), then the larger id. The rule is deterministic — the render
+    /// depends on it (test 188). None — there are no cameras; the engine takes
+    /// the default “50 mm” (identity for Pan3d with defaults).
     pub fn active_camera_at(&self, t: Tick) -> Option<&CameraEvent> {
         active_camera_in(&self.cameras, t)
     }
 
-    /// Порядок строк сверху вниз, нормализованный к фактическим
-    /// счётчикам дорожек. Единственный способ узнать, что «ниже».
+    /// Order of rows from top to bottom, normalized to the actual track counts.
+    /// The only way to know what is “lower”.
     pub fn rows(&self) -> Vec<(LaneKind, u32)> {
         rows_of_tracks(&self.tracks)
     }
 
-    /// Все занятые имена ОДНОГО пространства: области и метки-диапазоны.
-    /// Пустые имена меток законны и в пространство не входят.
+    /// All occupied names of ONE space: areas and range markers.
+    /// Empty marker names are legal and are not part of the space.
     pub fn taken_names(&self) -> Vec<String> {
         self.areas
             .iter()
@@ -8506,12 +8506,12 @@ impl Project {
             .collect()
     }
 
-    /// Область по имени.
+    /// Area by name.
     pub fn area(&self, name: &str) -> Option<&MarkedArea> {
         self.areas.iter().find(|a| a.name == name)
     }
 
-    /// Метка-диапазон по имени (точечные метки окна не задают).
+    /// Range marker by name (point markers do not define a window).
     pub fn named_range(&self, name: &str) -> Option<TickRange> {
         self.markers
             .iter()
@@ -8519,18 +8519,18 @@ impl Project {
             .map(|m| TickRange::new(m.t, m.t + m.duration))
     }
 
-    /// Индекс строки в порядке дорожек; None — такой дорожки нет.
+    /// Row index in track order; None — there is no such track.
     pub fn row_of(&self, key: (LaneKind, u32)) -> Option<usize> {
         self.rows().iter().position(|&k| k == key)
     }
 
-    /// Переставить строки — ЕДИНСТВЕННАЯ дверь перестановки (Р.56, п.449;
-    /// Р.62: строки — вектор дорожек).
+    /// Reorder rows — the ONLY door for permutation (R.56, item 449;
+    /// R.62: rows are the vector of tracks).
     ///
-    /// `order` называет строки ТЕКУЩИМИ номерами; дорожки-объекты
-    /// переставляются в этот порядок, содержимое перенумеровано так, что
-    /// номер внутри вида равен рангу. Дубли и небылицы выбрасываются,
-    /// недостающие дописываются в конец. Возвращает перестановку номеров.
+    /// `order` names the rows by CURRENT numbers; object tracks are
+    /// reordered into this order, and the content is renumbered so that the number inside the kind
+    /// equals the rank. Duplicates and nonsense are discarded, missing ones are appended to the end.
+    /// Returns the permutation of numbers.
     pub fn set_lane_order(&mut self, order: &[(LaneKind, u32)]) -> LanePerm {
         let n = LaneBases::of_root(self);
         let norm = normalize_lane_order(order, n.video, n.audio, n.morph, n.camera);
@@ -8553,8 +8553,8 @@ impl Project {
             for f in &mut self.foreign {
                 f.lane = perm.map_clip(f.kind, f.lane);
             }
-            // область адресуется СЕМАНТИЧЕСКИМИ ключами дорожек — значит едет
-            // с перенумерацией, иначе «слой на этих дорожках» уехал бы на чужие
+            // a region is addressed by SEMANTIC track keys — so it travels with the renumbering,
+            // otherwise “the layer on these tracks” would move onto someone else's tracks
             for a in &mut self.areas {
                 perm.remap_keys(&mut a.lanes);
             }
@@ -8562,11 +8562,11 @@ impl Project {
         perm
     }
 
-    /// Дорожки из легаси-полей КОРНЯ и всех лент (счётчики, `lane_order`,
-    /// `ui.lane_names/lane_heights`) — на ЧТЕНИИ, односторонне (Р.62);
-    /// затем дописать дорожки до содержимого. Возвращает перестановку
-    /// КОРНЯ: читателю формата она нужна, чтобы переставить свои
-    /// побочные таблицы (чужие OTIO-треки в kt-otio).
+    /// Tracks from the legacy fields of the ROOT and all reels (counters, `lane_order`,
+    /// `ui.lane_names/lane_heights`) — on READ, one-way (R.62);
+    /// then append tracks up to the content. Returns the permutation of the
+    /// ROOT: the format reader needs it to reorder its own
+    /// side tables (foreign OTIO tracks in kt-otio).
     pub fn canonicalize_lanes(&mut self) -> LanePerm {
         for s in &mut self.sequences {
             s.canonicalize_lanes();
@@ -8599,14 +8599,14 @@ impl Project {
         perm
     }
 
-    /// Клипы после применения morpher'ов — ЕДИНСТВЕННАЯ точка выдачи клипов
-    /// движку, экспорту и отрисовке (v1 effectiveClipForRender/renderClips):
-    /// движок про morpher не знает. Порядок применения детерминирован —
-    /// по возрастанию MorphId (порядок создания; в v1 порядок вектора был
-    /// негласным — дефект D11 разведки). Несколько morpher'ов на клип
-    /// применяются кумулятивно.
+    /// Clips after the morphers are applied are the ONLY exit point of clips to the
+    /// engine, export and drawing (v1 effectiveClipForRender/renderClips):
+    /// the engine knows nothing about morphers. The order of application is deterministic —
+    /// by ascending MorphId (creation order; in v1 the order of the vector was
+    /// implicit — defect D11 of the reconnaissance). Several morphers on one clip
+    /// are applied cumulatively.
     pub fn effective_clips(&self) -> Vec<ClipEvent> {
-        // быстрый путь: GOLDEN держится на нём
+        // fast path: GOLDEN relies on it
         if self.morphers.is_empty() && self.sequences.is_empty() {
             return self.clips.clone();
         }
@@ -8617,37 +8617,37 @@ impl Project {
         self.inline_pass(out)
     }
 
-    /// Морфер-слои ОДНОЙ ленты. Вынесено из `effective_clips` (Р.50):
-    /// внутрь вложения можно класть всё, включая слои, — значит и этот
-    /// проход обязан уметь работать по ленте, а не только по корню.
+    /// Morpher layers of ONE reel. Moved out of `effective_clips` (R.50):
+    /// one can put everything inside a nested reel, including layers, — so this pass too
+    /// must be able to work on a reel, not only on the root.
     fn morph_pass(&self, reel: &dyn Reel, rows: &[(LaneKind, u32)]) -> Vec<ClipEvent> {
-        // Производные источники разрешаются ЗДЕСЬ — в единственной двери,
-        // через которую содержимое ленты выходит к движку (Р.61). Лента без
-        // связей и формул проходит ЗАИМСТВОВАННОЙ: графа не строится вовсе,
-        // байты прежние.
+        // Derived sources are resolved HERE — at the only door through which the reel's content
+        // exits to the engine (R.61). A reel without links and formulas passes BORROWED:
+        // no graph is built at all,
+        // the bytes stay as before.
         let step = 90_000 / self.settings.fps.max(1) as i64;
         let resolved = crate::links::resolve_derived(reel.clips(), step);
         let ms_all = reel.morphers();
         if ms_all.is_empty() {
             return resolved.into_owned();
         }
-        // шаг кадра нужен для перевода ключей слоя в материал цели
+        // frame step is needed to convert the layer's keys into the target's material
         let frame_step = 90_000 / self.settings.fps.max(1) as i64;
         let mut ms: Vec<&MorpherEvent> = ms_all.iter().filter(|m| m.enabled).collect();
-        // Порядок наложения — СНИЗУ ВВЕРХ (нижний слой первым, как
-        // adjustment layer в AE); внутри строки прежнее правило по id.
+        // Composition order is BOTTOM TO TOP (the lowest layer first, like an
+        // adjustment layer in AE); within a row, the former rule by id applies.
         ms.sort_by_key(|m| (std::cmp::Reverse(m.row_in(rows)), m.id));
         let mut out = Vec::with_capacity(resolved.len());
         for c in resolved.iter() {
             let wins: Vec<Vec<TickRange>> =
                 ms.iter().map(|m| m.windows_on(c, self, reel, rows)).collect();
             let body = TickRange::new(c.start, c.start + c.duration);
-            // ТОЧКИ РЕЗА ДАЮТ НЕ ВСЕ СЛОИ (Р.55, С2). Режут только те, чей
-            // вклад нельзя выключить кривой силы: подмена источника и варп
-            // времени в патче. Слой из одних эффектов кусков не порождает —
-            // он ложится на всё тело, а время задают ВОРОТА. Набор реза
-            // по-прежнему ОБЩИЙ на всех режущих: иначе они резали бы куски
-            // друг друга.
+            // CUT POINTS ARE NOT GIVEN BY ALL LAYERS (R.55, stage 2). Only those whose
+            // contribution cannot be switched off by a strength curve cut: source substitution and
+            // time warp in the patch. A layer of effects alone does not produce pieces —
+            // it lies over the whole body, and the time is set by the GATES. The cut set
+            // is still COMMON to all cutting layers: otherwise they would cut
+            // each other’s pieces.
             let mut cuts: Vec<i64> = ms
                 .iter()
                 .zip(&wins)
@@ -8664,22 +8664,22 @@ impl Project {
             bounds.push(body.end.0);
             for (idx, pair) in bounds.windows(2).enumerate() {
                 let w = TickRange::new(Tick(pair[0]), Tick(pair[1]));
-                // кусок №0 держит id оригинала — правило `Split`; при
-                // отсутствии резки это тождественная копия клипа
+                // piece no. 0 keeps the id of the original — rule `Split`; if there is
+                // no cutting, it is an identity copy of the clip
                 let id = if idx == 0 { c.id } else { slice_id(c.id, idx as u32) };
                 let mut piece = clip_slice(c, w, id);
                 for (m, ws) in ms.iter().zip(&wins) {
                     if m.cuts_target(c) {
-                        // режущий слой ложится на кусок ЦЕЛИКОМ и только
-                        // если кусок целиком внутри его окна (как было)
+                        // a cutting layer lies over a piece WHOLE, and only if the piece is entirely
+                        // inside its window (as before)
                         if ws.iter().any(|x| x.start <= w.start && w.end <= x.end) {
                             m.apply_to(&mut piece, frame_step, &[w]);
                         }
                         continue;
                     }
-                    // ВОРОТА считаются ПО КУСКУ, а не по исходному клипу:
-                    // куски породили ДРУГИЕ слои, и окно, посчитанное от
-                    // начала тела, уехало бы на длину отрезанного.
+                    // GATES are computed PER PIECE, not from the source clip:
+                    // the pieces were produced by OTHER layers, and a window computed from the start of
+                    // the body would have shifted by the length of the cut-off part.
                     let gate: Vec<TickRange> =
                         ws.iter().map(|x| x.intersect(&w)).filter(|x| !x.is_empty()).collect();
                     if !gate.is_empty() {
@@ -8692,20 +8692,20 @@ impl Project {
         out
     }
 
-    /// Поменять местами содержимое корня и содержимое ленты `seq`
-    /// (Р.50, В1). Повторный вызов с тем же адресом возвращает как было.
+    /// Swap the contents of the root and the contents of the reel `seq`
+    /// (R.50, B1). A repeated call with the same address restores the original.
     ///
-    /// Этим и сделан ВХОД ВНУТРЬ. Альтернатива — провести «текущую ленту»
-    /// через все шестьдесят рук команд (`p.clips`, `p.transitions`,
-    /// `p.video_lanes`, …): пропусти одну — и правка молча уедет в корень,
-    /// пока человек смотрит внутрь. Здесь же ни одна команда о вложениях
-    /// не знает вовсе, и знать не должна: она правит ЛЕНТУ, а какая лента
-    /// под руками — вопрос контекста.
+    /// This is how ENTRY INSIDE is done. The alternative — carry the “current reel”
+    /// through all sixty command handlers (`p.clips`, `p.transitions`,
+    /// `p.video_lanes`, …): skip one — and the edit silently goes to the root
+    /// while the person is looking inside. Here not a single command knows
+    /// anything about nesting, and it should not: it edits the REEL, and which reel is
+    /// at hand is a question of context.
     ///
-    /// Обмен держит СОЮЗ содержимого неизменным: все события документа
-    /// по-прежнему видны, просто в других контейнерах. Поэтому проверки
-    /// вида «этот файл ещё кем-то используется» остаются верными во время
-    /// правки внутри ленты.
+    /// The exchange keeps the UNION of the contents unchanged: all events of the document
+    /// are still visible, just in other containers. Therefore checks
+    /// of the kind “is this file still used by someone” remain correct during
+    /// editing inside the reel.
     pub fn swap_reel(&mut self, seq: MediaId) {
         let Some(i) = self.sequences.iter().position(|s| s.id == seq) else { return };
         let s = &mut self.sequences[i];
@@ -8715,24 +8715,24 @@ impl Project {
         std::mem::swap(&mut self.cameras, &mut s.cameras);
         std::mem::swap(&mut self.tracks, &mut s.tracks);
         std::mem::swap(&mut self.overlap_layers, &mut s.overlap_layers);
-        // Публичный набор — СОДЕРЖИМОЕ ленты: его цели это её клипы, а
-        // они сейчас переезжают на место корня. Не поменяй мы и его —
-        // публикация указывала бы на клипы, которых в этой ленте больше
-        // нет, и `reconcile_published` снёс бы её на первой же команде.
+        // The public set is the CONTENT of the reel: its targets are its clips, and
+        // they now move to the root's place. If we did not swap it too, the publication
+        // would point at clips that are no longer in this reel, and `reconcile_published`
+        // would wipe it at the first command.
         std::mem::swap(&mut self.published, &mut s.published);
     }
 
-    /// Документ, в котором ЛЕНТА `seq` стоит КОРНЕМ (Р.56, п.452).
+    /// A document in which the REEL `seq` stands as the ROOT (R.56, item 452).
     ///
-    /// Нужен офлайн-счёту по ленте: превью её содержимого считается тем же
-    /// кодом композиции, что и всё остальное (инвариант 7), а этому коду
-    /// нужен проект с лентой на месте корня. Приём тот же, что у
-    /// `reel_document`, только лента называется явно, а не берётся из
-    /// «где стоит человек»: службе превью человек не указ.
+    /// It is needed by the offline count for the reel: the preview of its content is computed by the same
+    /// composition code as everything else (invariant 7), and this code
+    /// needs a project with the reel in place of the root. The trick is the same as in
+    /// `reel_document`, only the reel is named explicitly rather than taken from
+    /// “where the person stands”: the preview service does not take orders from a person.
     ///
-    /// Сама лента из списка убирается — иначе она ссылалась бы на себя и
-    /// `validate` увидел бы цикл. Остальные ленты остаются: внутри могут
-    /// стоять их экземпляры.
+    /// The reel itself is removed from the list — otherwise it would refer to itself and
+    /// `validate` would see a cycle. The other reels remain: their instances may
+    /// sit inside.
     pub fn reel_as_root(&self, seq: MediaId) -> Option<Project> {
         self.sequences.iter().find(|s| s.id == seq)?;
         let mut p = self.clone();
@@ -8741,27 +8741,27 @@ impl Project {
         Some(p)
     }
 
-    /// Клипы ОДНОЙ ленты после морфер-слоёв, БЕЗ раскрытия вложений
-    /// (Р.50, волна Б). `None` — корень.
+    /// The clips of ONE reel after morpher layers, WITHOUT expanding nested items
+    /// (R.50, wave B). `None` — the root.
     ///
-    /// Этим движок строит ДЕРЕВО рендереров: вложение доходит до него
-    /// одним событием и получает собственный узел плана — только так
-    /// «эффект на РЕЗУЛЬТАТ» и становится выразимым. Раскрытие
-    /// (`effective_clips`) остаётся эталоном-оракулом: с ним готовое
-    /// поддерево сверяется байт-в-байт (закон Э).
+    /// This is how the engine builds the TREE of renderers: a nested item reaches it
+    /// as one event and gets its own plan node — only this way does “an effect on the RESULT”
+    /// become expressible. The expansion
+    /// (`effective_clips`) remains the reference oracle: with it, the finished subtree
+    /// is checked byte for byte (the law E).
     pub fn effective_reel(&self, seq: Option<MediaId>) -> Vec<ClipEvent> {
         self.resolve_reel(seq, &[]).clips
     }
 
-    /// То же, но под НАБОРОМ ПЕРЕОПРЕДЕЛЕНИЙ экземпляра (Р.59, стадия 3).
+    /// The same, but UNDER THE SET OF OVERRIDES of the instance (R.59, stage 3).
     ///
-    /// Пустой набор обязан идти путём, побайтово равным прежнему: ни
-    /// клона ленты, ни клона переходов и камер (`Cow::Borrowed`). На этом
-    /// стоят GOLDEN_VIDEO/GOLDEN_AUDIO и «ноль цены без использования»
+    /// An empty set must take the path byte-for-byte equal to the previous one: neither a clone
+    /// of the reel nor a clone of the transitions and cameras (`Cow::Borrowed`). Resting on this
+    /// are GOLDEN_VIDEO/GOLDEN_AUDIO and “zero cost without use”
     /// (t673/t676).
     ///
-    /// Переопределения ложатся **ДО** морфер-слоёв — см. модуль
-    /// `published`: адрес автора это структура ленты, какой он её видит.
+    /// Overrides are placed **BEFORE** the morpher layers — see the module
+    /// `published`: the author's address is the structure of the reel as the author sees it.
     pub fn resolve_reel(&self, seq: Option<MediaId>, overrides: &[Override]) -> ResolvedReel<'_> {
         let reel: &dyn Reel = match seq {
             None => self,
@@ -8787,8 +8787,8 @@ impl Project {
             };
         }
         let Some(id) = seq else {
-            // у корня публичных параметров не бывает (он никому не
-            // экземпляр), и попасть сюда можно только ошибкой вызывающего
+            // The root has no public parameters (it belongs to no instance), and it can
+            // be reached here only by a caller's mistake
             debug_assert!(false, "the root reel is nobody's instance and takes no overrides");
             return ResolvedReel {
                 clips: self.morph_pass(reel, &rows),
@@ -8816,12 +8816,12 @@ impl Project {
         }
     }
 
-    /// ЖИВОЕ значение цели публикации — то самое «значение шаблона»,
-    /// которое мы НЕ ХРАНИМ (Р.59, стадия 3).
+    /// The LIVE value of the publication target — that very “template value”
+    /// which we do NOT STORE (R.59, stage 3).
     ///
-    /// `seq` — лента, внутри которой живёт адрес. `None` — корень (у него
-    /// публикаций не бывает, но чтение адреса законно: так окно
-    /// публикации спрашивает цель до того, как ручка заведена).
+    /// `seq` — the reel inside which the address lives. `None` — the root (it has no
+    /// publications, but reading the address is legal: this is how the publication
+    /// window asks the target before the handle is set up).
     pub fn addr_value(&self, seq: Option<MediaId>, addr: &ParamAddr) -> Option<ParamValue> {
         let reel: &dyn Reel = match seq {
             None => self,
@@ -8841,12 +8841,12 @@ impl Project {
                     ParamOwner::FxSlot { slot } => c.fx.get(*slot)?.get_value(name),
                     ParamOwner::Generator => c.r#gen.as_ref()?.get_value(name),
                     ParamOwner::ClipAttr => crate::published::clip_attr_value(c, name),
-                    // шаблон в шаблоне: значение внутреннего экземпляра —
-                    // его переопределение, а нет его — значение шаблона
-                    // ЕГО ленты, тем же кодом этажом ниже
+                    // template within a template: the value of an inner instance is
+                    // its override, and if there is none — the template value of ITS reel,
+                    // by the same code one level down
                     ParamOwner::Nested { pub_id } => self.instance_value(c, *pub_id),
-                    // у аудио-события узла геометрии нет вовсе: адрес
-                    // «не существует», и валидация скажет это словом
+                    // an audio event has no geometry node at all: the address
+                    // “does not exist”, and validation will say so in words
                     ParamOwner::Geometry => {
                         (c.kind == ClipKind::Video).then(|| c.geometry.get_value(name))?
                     }
@@ -8856,7 +8856,7 @@ impl Project {
         }
     }
 
-    /// Тип цели вживую — им валидация ловит «цель сменила вид».
+    /// Type of the target live — validation catches “the target changed kind” by it.
     pub fn addr_type(&self, seq: Option<MediaId>, addr: &ParamAddr) -> Option<ParamType> {
         let reel: &dyn Reel = match seq {
             None => self,
@@ -8889,13 +8889,13 @@ impl Project {
         }
     }
 
-    /// ПАСПОРТ свойства по адресу — зеркало `addr_type` (Р.60).
+    /// The PASSPORT of the property at the address — a mirror of `addr_type` (R.60).
     ///
-    /// Пределы, шаг и умолчание публичной ручки берутся ОТСЮДА, а не из
-    /// нуля: «значения min max всегда в 0 проставляются по умолчанию» —
-    /// пустое сужение рисовалось нулём, хотя паспорт цели свои пределы
-    /// знает. `match` по владельцу исчерпывающий — новый владелец не
-    /// соберётся, пока сюда не дописана ветка.
+    /// The limits, step and default of the public handle are taken FROM HERE, not from
+    /// zero: “the min/max values are always filled in as 0 by default” —
+    /// an empty narrowing was drawn as zero, although the target's passport knows its own limits.
+    /// The `match` on the owner is exhaustive — a new owner will not
+    /// build until a branch is added here.
     pub fn addr_spec(&self, seq: Option<MediaId>, addr: &ParamAddr) -> Option<ParamSpec> {
         let reel: &dyn Reel = match seq {
             None => self,
@@ -8916,10 +8916,10 @@ impl Project {
                     ParamOwner::Generator => c.r#gen.as_ref()?.value_spec(name),
                     ParamOwner::ClipAttr => crate::published::clip_attr_spec(name),
                     ParamOwner::Nested { pub_id } => {
-                        // Наружу едет паспорт ЦЕЛИ внутренней ручки,
-                        // СУЖЕННЫЙ её же пределами: потребитель внешней
-                        // ленты не вправе получить больше, чем разрешил
-                        // автор внутренней.
+                        // Outward goes the passport of the TARGET of the inner handle,
+                        // NARROWED by its own limits: the consumer of the external
+                        // reel may not get more than
+                        // the author of the inner one allowed.
                         let inner = self.sequence(c.media)?;
                         let p = inner.published.iter().find(|p| p.id == *pub_id)?;
                         let mut s = self.addr_spec(Some(c.media), &p.target)?;
@@ -8941,15 +8941,15 @@ impl Project {
         }
     }
 
-    /// Значение ШАБЛОНА объявленной ручки: читается у цели живьём.
+    /// The TEMPLATE value of the declared handle: read from the target live.
     pub fn published_value(&self, seq: MediaId, id: PubId) -> Option<ParamValue> {
         let p = self.sequence(seq)?.published.iter().find(|p| p.id == id)?;
         self.addr_value(Some(seq), &p.target)
     }
 
-    /// ДЕЙСТВУЮЩЕЕ значение ручки у экземпляра: переопределение, а нет
-    /// его — значение шаблона. Ровно это показывает окно параметров
-    /// композиции и ровно это едет в картинку.
+    /// The EFFECTIVE value of the handle at the instance: the override, and if there is
+    /// none — the template value. Exactly this is shown by the composition parameters window
+    /// and exactly this goes into the picture.
     pub fn instance_value(&self, inst: &ClipEvent, id: PubId) -> Option<ParamValue> {
         if let Some(o) = inst.overrides.iter().find(|o| o.pub_id == id) {
             return Some(o.value.clone());
@@ -8957,24 +8957,24 @@ impl Project {
         self.published_value(inst.media, id)
     }
 
-    /// Раскрытие вложений (Р.50, п.383).
+    /// Expansion of nested items (R.50, item 383).
     ///
-    /// Вложение с ПУСТОЙ цепочкой семантически ТОЖДЕСТВЕННО своему
-    /// развёрнутому содержимому: настройки наследуются, промежуточного
-    /// растра не возникает. Поэтому картинка и звук получаются здесь, без
-    /// единой правки плана, воркеров, кэша и GPU — а сам инлайн становится
-    /// ЭТАЛОНОМ-ОРАКУЛОМ для настоящего поддерева (закон Э, тесты t434-t436).
+    /// A nested item with an EMPTY chain is semantically IDENTICAL to its expanded
+    /// content: the settings are inherited, and no intermediate raster arises.
+    /// So the picture and sound come out here without a single edit of the plan,
+    /// workers, cache or GPU — and the inline itself becomes the REFERENCE ORACLE
+    /// for the real subtree (law E, tests t434-t436).
     ///
-    /// Чего он НЕ делает и не притворяется, что делает: цепочка, варп и
-    /// реверс на самом экземпляре применялись бы к каждому куску отдельно,
-    /// а не к собранной картинке, — это другой результат, поэтому команды
-    /// их на вложение просто НЕ ПУСКАЮТ (правило 16). Уровень и усиление
-    /// домножаются: на неперекрывающемся содержимом это то же самое, а
-    /// перекрытие — уже дело настоящего поддерева.
+    /// What it does NOT do, and does not pretend to do: a chain, warp and
+    /// reverse on the instance itself would apply to each piece separately,
+    /// not to the assembled picture — that is a different result, so the commands simply do NOT
+    /// allow them on a nested item (rule 16). The level and gain
+    /// are multiplied: on non-overlapping content this is the same thing, and
+    /// overlap is already the business of the real subtree.
     fn inline_pass(&self, clips: Vec<ClipEvent>) -> Vec<ClipEvent> {
-        // Свободные номера кусков: морфер-проход уже мог порезать сам
-        // экземпляр, и новые куски обязаны встать ВЫШЕ его номеров —
-        // иначе два разных куска получили бы один адрес.
+        // Free piece numbers: the morpher pass may already have cut the instance itself,
+        // and new pieces must take numbers ABOVE its numbers —
+        // otherwise two different pieces would get one address.
         let mut next: std::collections::HashMap<ClipId, u32> = std::collections::HashMap::new();
         for c in &clips {
             if let Some(o) = slice_origin(c.id) {
@@ -9001,30 +9001,30 @@ impl Project {
             out.push(inst.clone());
             return;
         };
-        // РЕВЕРС И СКОРОСТЬ НЕ РАСКРЫВАЮТСЯ (Р.55, С4). Раскрытие —
-        // эталон-оракул закона Э и то, что печатает `kt-cli probe`, и оно
-        // законно ровно там, где вложение ТОЖДЕСТВЕННО своему содержимому.
-        // Зеркало и ресемплер применяются к СОБРАННОМУ материалу: развернув
-        // их по кускам, мы посчитали бы другое — это тот же аргумент, что у
-        // закона Г для уровня (t438). Такое вложение остаётся событием.
+        // REVERSE AND SPEED ARE NOT EXPANDED (R.55, stage 4). Expansion is
+        // the reference oracle of law E, and what `kt-cli probe` prints, and it is
+        // legal exactly where the nested item is IDENTICAL to its content.
+        // Mirror and resampler are applied to the ASSEMBLED material: expanding them
+        // by pieces we would compute something else — the same argument as for
+        // law G for the level (t438). Such a nested item remains an event.
         if inst.reversed || crate::chain_warps_time(&inst.active_fx(), &inst.active_fx_auto()) {
             out.push(inst.clone());
             return;
         }
         if depth >= MAX_NEST_DEPTH {
-            return; // validate такого не пропустит; здесь — страховка
+            return; // validate would not let such a thing through; here — a safety net
         }
-        // окно экземпляра в координатах содержимого
+        // instance window in content coordinates
         let win = TickRange::new(inst.source_in, inst.source_in + inst.duration);
-        // ПЕРЕОПРЕДЕЛЕНИЯ ЭКЗЕМПЛЯРА (Р.59, стадия 3) применяются и здесь.
-        // Раскрытие — эталон-оракул закона Э и то, что печатает `kt-cli
-        // probe`: покажи оно ШАБЛОН, оракул сверял бы поддерево не с тем,
-        // а probe отвечал бы на жалобу «тут другой заголовок» чужим
-        // текстом.
+        // INSTANCE OVERRIDES (R.59, stage 3) apply here too.
+        // Expansion is the reference oracle of law E and what `kt-cli
+        // probe` prints: if it showed the TEMPLATE, the oracle would check the subtree against the wrong
+        // thing, and probe would answer the complaint “here is another title” with someone else's
+        // text.
         let inner = self.resolve_reel(Some(seq.id), &inst.overrides).clips;
-        // Адреса кусков считаются от НАСТОЯЩЕГО клипа-экземпляра: так
-        // `same_clip` доводит кусок обратно до события, по которому человек
-        // кликнул, а `slice_id` не переполняется поверх собственного тега.
+        // Piece addresses are computed from the REAL instance clip: this way
+        // `same_clip` leads the piece back to the event the person clicked,
+        // and `slice_id` does not overflow onto its own tag.
         let base = slice_origin(inst.id).unwrap_or(inst.id);
         for child in &inner {
             let body = TickRange::new(child.start, child.start + child.duration);
@@ -9037,10 +9037,10 @@ impl Project {
             *n += 1;
             let mut piece = clip_slice(child, cut, id);
             piece.start = inst.start + (cut.start - win.start);
-            // Дорожка содержимого ложится ПОД дорожку экземпляра — ровно
-            // так же, как её кладёт `expand_instance`: два пути обязаны
-            // давать одну картинку, иначе «свернул — развернул» перестаёт
-            // быть тождеством.
+            // The content track is placed UNDER the instance track — exactly
+            // as `expand_instance` places it: the two paths must give one
+            // picture, otherwise “collapse, then expand” would stop being
+            // an identity.
             piece.lane = inst.lane + child.lane;
             piece.opacity *= inst.opacity;
             piece.gain_db += inst.gain_db;
@@ -9049,19 +9049,19 @@ impl Project {
         }
     }
 
-    /// Перенос параметров генератора из ПУТИ МЕДИА на СОБЫТИЕ (Р.59,
-    /// стадия 2) — ЕДИНСТВЕННОЕ место миграции.
+    /// Moving generator parameters from the MEDIA PATH to the EVENT (R.59,
+    /// stage 2) — the ONLY place of migration.
     ///
-    /// Файлы Р.52..Р.58 держали значения строкой `gen:text:t=…`, то есть
-    /// делили их между всеми местами использования. Здесь путь
-    /// укорачивается до ВИДА, а значения раздаются событиям — каждому своя
-    /// копия, ровно та, что была. Прежний режим анимации титра
-    /// (`am=`/`ams=`) превращается в кривые тем же кодом, что и пресет в
-    /// окне (`text_anim_curves`): разойдись они, старый проект поехал бы
-    /// не так, как та же кнопка, нажатая руками.
+    /// Files of R.52..R.58 kept values as a string `gen:text:t=…`, that is, they shared
+    /// them between all places of use. Here the path
+    /// is shortened to the KIND, and the values are handed out to events — each its own
+    /// copy, exactly the one that was. The former animation mode of a title
+    /// (`am=`/`ams=`) turns into curves by the same code as the preset in the
+    /// window (`text_anim_curves`): if they diverged, an old project would move
+    /// differently from the same button pressed by hand.
     ///
-    /// Событие, у которого значения уже есть, не трогается: это файл
-    /// нового формата, и путь у него уже короткий.
+    /// An event that already has values is not touched: this is a file of the
+    /// new format, and its path is already short.
     pub fn migrate_gen_to_events(&mut self) {
         use crate::genmedia::{
             gen_kind_path, parse_gen_path_full, text_anim_curves, text_anim_values,
@@ -9073,9 +9073,9 @@ impl Project {
         for m in &mut self.media {
             let Some((mut kind, anim)) = parse_gen_path_full(&m.path) else { continue };
             if let Some(a) = anim {
-                // «блок не шире кадра»: точный пролёт знает только
-                // раскладка, а её здесь нет — и это ровно тот случай,
-                // когда приблизиться честнее, чем тянуть в модель kt-text.
+                // “a block no wider than the frame”: only the layout knows the exact
+                // span, and it is not here — and this is exactly the case where
+                // approximating is more honest than dragging kt-text into the model.
                 legacy.insert(m.id, text_anim_curves(a.anim, a.secs, 2.0));
                 text_anim_values(&mut kind, a.anim);
             }
@@ -9105,32 +9105,32 @@ impl Project {
         }
     }
 
-    /// Зоны клипа, внутри которых граница морфер-слоя ставиться не может
-    /// (находка 1 Р.35): окна переходов и наезды соседей по дорожке. Резка
-    /// там сломала бы НЕ цель, а окружение — у видео порядок композиции
-    /// `(Reverse(lane), start)`, и кусок с бо́льшим start вылез бы над
-    /// соседом; у аудио `overlap_weight` считает рампу из геометрии клипов.
-    /// Нормализация после загрузки: число дорожек подтягивается вверх до
-    /// фактических lane клипов (файлы, писанные до появления полей).
+    /// Zones of a clip inside which the morpher layer boundary cannot be placed
+    /// (finding 1 of R.35): the transition windows and the overlaps of neighbours on the track. A cut
+    /// there would break NOT the target but the surroundings — for video the composition order is
+    /// `(Reverse(lane), start)`, and a piece with a larger start would pop out above its
+    /// neighbour; for audio, `overlap_weight` computes the ramp from the geometry of the clips.
+    /// Normalization after loading: the number of tracks is pulled up to the
+    /// actual lane of the clips (files written before the fields appeared).
     pub fn normalize(&mut self) -> LanePerm {
-        // ВАЖНО: stable-сортировка и дедуп по времени — при двух метках на
-        // один тик с разными именами unstable дал бы недетерминированный
-        // порядок и сломал байт-стабильность проекта (тест 12)
+        // IMPORTANT: stable sort and dedup by time — with two markers on
+        // one tick with different names an unstable sort would give a non-deterministic
+        // order and break the byte stability of the project (test 12).
         self.markers.sort_by_key(|m| m.t);
         self.markers.dedup_by_key(|m| m.t);
-        // параметры генератора переехали на событие (Р.59, стадия 2):
-        // чинится на ЧТЕНИИ, потому что файлы Р.52..Р.58 держали их в
-        // пути медиа
+        // generator parameters moved to the event (R.59, stage 2):
+        // fixed on READ, because files of R.52..R.58 kept them in the media
+        // path.
         self.migrate_gen_to_events();
-        // номер дорожки = ранг строки (Р.56, п.449): чинится на ЧТЕНИИ,
-        // потому что старые файлы (и чужие импорты) знают только номера.
-        // Перестановка отдаётся наружу — читателю формата она нужна для
-        // своих побочных карт (чужие треки в kt-otio).
+        // track number = row rank (R.56, item 449): fixed on READ, because
+        // old files (and foreign imports) know only numbers. The permutation is handed
+        // outward — the format reader needs it for its own side maps
+        // (foreign tracks in kt-otio).
         self.canonicalize_lanes()
     }
 
-    /// Полная проверка инвариантов. Ошибки загрузки ЯВНЫЕ — никаких
-    /// молчаливых выбрасываний битых клипов (дефект p старого формата).
+    /// Full check of the invariants. Load errors are EXPLICIT — no silent discarding
+    /// of broken clips (defect p of the old format).
     pub fn validate(&self) -> Result<(), ProjectError> {
         if self.format_version != FORMAT_VERSION {
             return Err(ProjectError::UnsupportedVersion(self.format_version));
@@ -9150,9 +9150,9 @@ impl Project {
         }
         let mut media_ids = std::collections::HashSet::new();
         for m in &self.media {
-            // старший бит адреса отдан вложенным лентам (Р.50): движок
-            // кладёт `SourceId(NEST_TAG | seq)` в ключ кэша, и файл с таким
-            // id молча делил бы кэш с секвенцией
+            // the high bit of the address is given to nested reels (R.50): the engine
+            // puts `SourceId(NEST_TAG | seq)` into the cache key, and a file with such an
+            // id would silently share the cache with a sequence.
             if m.id.0 >= NEST_TAG {
                 return Err(ProjectError::MediaIdTooLarge(m.id));
             }
@@ -9160,9 +9160,9 @@ impl Project {
                 return Err(ProjectError::DuplicateMediaId(m.id));
             }
         }
-        // область: имя — это АДРЕС, поэтому непустое и уникальное в
-        // ОДНОМ пространстве с метками-диапазонами (иначе «область финал»
-        // и «метка финал» в одном пикере — ловушка)
+        // Area: the name is an ADDRESS, so it must be non-empty and unique in ONE space
+        // together with the range markers (otherwise “area Finale” and “marker Finale” in one picker
+        // would be a trap).
         let mut names = std::collections::HashSet::new();
         for a in &self.areas {
             if a.name.trim().is_empty() {
@@ -9185,26 +9185,26 @@ impl Project {
         {
             return Err(ProjectError::BadRegion);
         }
-        // Дерево лент. Быстрый путь первой строкой: плоский проект —
-        // подавляющее большинство — платит одну проверку `is_empty`, и
-        // живой драг (`apply_coalesced` зовёт validate на каждый кадр
-        // жеста) не становится дороже ни на такт.
+        // Tree of reels. Fast path on the first line: a flat project —
+        // the vast majority — pays one `is_empty` check, and a live drag
+        // (`apply_coalesced` calls validate on every frame of the gesture)
+        // does not get more expensive by a single beat.
         let sources = if self.sequences.is_empty() {
             media_ids.clone()
         } else {
             self.validate_tree(&media_ids)?;
             media_ids.iter().copied().chain(self.sequences.iter().map(|s| s.id)).collect()
         };
-        // Содержимое каждой ленты — одним кодом. `ClipId` уникален во ВСЁМ
-        // документе, а не внутри ленты: `Retained.clips`/`.transitions`
-        // (kt-otio) — глобальные карты по id, и совпавшие id из разных лент
-        // МОЛЧА обменялись бы материалом, стартовым таймкодом и эффектами.
+        // The content of each reel — by one code path. `ClipId` is unique across the WHOLE
+        // document, not within a reel: `Retained.clips`/`.transitions`
+        // (kt-otio) are global maps by id, and coinciding ids from different reels
+        // would SILENTLY exchange material, start timecode and effects.
         let mut clip_ids = std::collections::HashSet::new();
         for (seq, reel) in self.reels() {
-            // ДОРОЖКА СУЩЕСТВУЕТ (Р.62): номер события — ранг среди дорожек
-            // своего вида, и событие на несуществующей дорожке не имеет
-            // строки на экране — «создать можно, управлять нельзя».
-            // Чтение дописывает дорожки (`normalize`); валидация отвергает.
+            // TRACK EXISTS (R.62): the event's number is its rank among the tracks of
+            // its kind, and an event on a non-existent track has no row on the screen —
+            // “it can be created, it cannot be controlled”.
+            // Reading appends tracks (`normalize`); validation rejects.
             let n = LaneBases::of_tracks(reel.tracks());
             for c in reel.clips() {
                 let k = lane_key(c).0;
@@ -9229,23 +9229,23 @@ impl Project {
                     0,
                 ));
             }
-            // кривые на дорожке — следующий change (домен времени
-            // таймлайна): принимать их молча в домене материала нельзя
+            // curves on a track — the next change (the time domain of the
+            // timeline): they cannot be accepted silently in the material domain
             for t in reel.tracks() {
                 if t.fx_auto.iter().any(|a| !a.is_empty()) {
                     return Err(ProjectError::TrackCurvesUnsupported(t.id));
                 }
             }
             self.validate_reel(reel, seq, &sources, &media_ids, &mut clip_ids)?;
-            // Связи ОДНОЙ ленты (Р.61): адрес разрешим, границу ленты не
-            // пересекает, циклов нет. Проверка на ленту, а не на проект,
-            // ровно потому, что адресное пространство замкнуто лентой.
+            // Links of ONE reel (R.61): the address is resolvable, does not cross the reel boundary,
+            // there are no cycles. The check is per reel, not per project —
+            // precisely because the address space is closed by the reel.
             crate::links::check_links(reel).map_err(ProjectError::BadLink)?;
         }
         Ok(())
     }
 
-    /// Ленты как ДОКУМЕНТ: адреса, имена, циклы, глубина.
+    /// Reels as a DOCUMENT: addresses, names, cycles, depth.
     fn validate_tree(
         &self,
         media_ids: &std::collections::HashSet<MediaId>,
@@ -9258,8 +9258,8 @@ impl Project {
             if s.name.trim().is_empty() {
                 return Err(ProjectError::SequenceUnnamed(s.id));
             }
-            // адреса файлов и лент — ОДНО пространство: `clip.media`
-            // смотрит и туда, и туда
+            // addresses of files and reels — ONE space: `clip.media`
+            // looks into both there and there.
             if !seq_ids.insert(s.id) || media_ids.contains(&s.id) {
                 return Err(ProjectError::DuplicateMediaId(s.id));
             }
@@ -9277,10 +9277,10 @@ impl Project {
                 v
             })
             .collect();
-        // Итеративный DFS СО ВСЕХ вершин, а не только от корня: пара лент
-        // A ↔ B, не использованная в монтаже нигде, всё равно цикл — файл с
-        // ней сохранился бы и не открылся. Итеративный — потому что
-        // рекурсия по вражескому файлу это переполнение стека, а не ошибка.
+        // Iterative DFS FROM ALL vertices, not only from the root: a pair of reels
+        // A ↔ B that is not used in the edit anywhere is still a cycle — a file with
+        // it would be saved and would not open. Iterative — because
+        // recursion over a hostile file is a stack overflow, not an error.
         const WHITE: u8 = 0;
         const GRAY: u8 = 1;
         const BLACK: u8 = 2;
@@ -9299,9 +9299,9 @@ impl Project {
                     let k = kids[node][ci];
                     match mark[k] {
                         GRAY => {
-                            // Текст ошибки называет ИМЕНА, а не адреса:
-                            // «Заставка -> Титры -> Заставка» человек
-                            // разматывает сам, «seq 7 -> seq 3» — нет.
+                            // The error text names the NAMES, not the addresses:
+                            // “Opening -> Titles -> Opening” the person
+                            // unwinds themselves; “seq 7 -> seq 3” — no.
                             let from =
                                 stack.iter().position(|&(v, _)| v == k).unwrap_or(stack.len() - 1);
                             let mut path: Vec<&str> = stack[from..]
@@ -9327,10 +9327,10 @@ impl Project {
                 }
             }
         }
-        // Глубина считается у КАЖДОЙ ленты, а не только у использованных:
-        // лента, лежащая в бине и не поставленная никуда, при первой же
-        // постановке дала бы недопустимое дерево — ругаться надо там, где
-        // её собрали, а не через неделю на драге.
+        // Depth is counted for EACH reel, not only for used ones:
+        // a reel lying in the bin and not placed anywhere, at the first
+        // placement would produce an invalid tree — one must complain where
+        // it was assembled, not a week later on the drag.
         if let Some(i) = (0..n).find(|&i| depth[i] > MAX_NEST_DEPTH) {
             return Err(ProjectError::SequenceTooDeep(
                 self.sequences[i].id,
@@ -9340,16 +9340,16 @@ impl Project {
         Ok(())
     }
 
-    /// Содержимое ОДНОЙ ленты. `sources` — всё, на что имеет право смотреть
-    /// `clip.media` (файлы и ленты), `media_ids` — только файлы (морфер-слой
-    /// берёт материал из файла: вложение под слоем — отдельное решение, и
-    /// молча считать его файлом нельзя).
-    /// Объявленные наружу ручки ленты (Р.59, стадия 3).
+    /// Contents of ONE reel. `sources` — everything `clip.media` is allowed to look at
+    /// (files and reels), `media_ids` — only files (a morpher layer
+    /// takes its material from a file: a nested item under the layer is a separate decision, and
+    /// it cannot be silently counted as a file).
+    /// Handles of the reel declared outward (R.59, stage 3).
     ///
-    /// Тип цели сверяется ЖИВЬЁМ, а не с хранимой копией: копия — второй
-    /// источник того же факта, и «ручка, которая ни на что не действует»
-    /// (минус разведки F-TL-012) обязана быть ошибкой загрузки, а не
-    /// сюрпризом потребителя.
+    /// The target type is checked LIVE, not against a stored copy: the copy is a second
+    /// source of the same fact, and a “handle that does nothing” (the minus of the reconnaissance,
+    /// F-TL-012) must be a load error,
+    /// not a surprise for the consumer.
     fn validate_published(
         &self,
         reel: &dyn Reel,
@@ -9376,8 +9376,8 @@ impl Project {
         Ok(())
     }
 
-    /// Переопределения экземпляра: только на вложении и только на
-    /// ОПУБЛИКОВАННОЕ (решение владельца).
+    /// Instance overrides: only on a nested item, and only on the PUBLISHED
+    /// ones (the owner's decision).
     pub fn validate_overrides_for(&self, c: &ClipEvent) -> Result<(), ProjectError> {
         self.validate_overrides(c)
     }
@@ -9407,8 +9407,8 @@ impl Project {
                 return Err(ProjectError::OverrideCurveNotAllowed(c.id, o.pub_id));
             }
             for cur in &o.curves {
-                // источники и формы — те же, что у слота (Р.67); связь —
-                // только ВНУТРИ ленты: наружу закон Э не пускает
+                // sources and forms — the same as for a slot (R.67); a link is
+                // only INSIDE the reel: law E does not let it out
                 check_curve_source(c.id, cur)?;
                 if let Some(path) = cur.source.link_path()
                     && let Some(lp) = crate::links::LinkPath::parse(path)
@@ -9449,8 +9449,8 @@ impl Project {
                 return Err(ProjectError::DuplicateClipId(c.id));
             }
             clip_ids.insert(c.id);
-            // старший диапазон отдан кускам морфер-слоя (Р.35): настоящий
-            // клип с таким id столкнулся бы с синтетическим
+            // the high range is given to the pieces of a morpher layer (R.35): a real
+            // clip with such an id would collide with a synthetic one
             if c.id.0 >= MAX_REAL_CLIP_ID {
                 return Err(ProjectError::ReservedClipId(c.id));
             }
@@ -9466,20 +9466,20 @@ impl Project {
             check_fx_auto(c.id, &c.fx_auto)?;
             check_clip_gen(c, self.gen_media_path(c.media))?;
             self.validate_overrides(c)?;
-            // ЦЕПОЧКА, РЕВЕРС И ВАРП на вложении законны (Р.55, С4).
-            // До этого раунда реверс и растяжение отвергались: суб-микс
-            // читался строго по порядку, а обоим нужно читать иначе.
-            // Теперь у суб-микса есть продюсер с пре-роллом, и реверс с
-            // варпом действуют на СЭМПЛЫ собранного микса — ровно так же,
-            // как на сэмплы файла.
+            // CHAIN, REVERSE AND WARP on a nested item are legal (R.55, stage 4).
+            // Until this round, reverse and stretch were rejected: the sub-mix
+            // was read strictly in order, while both need to read differently.
+            // Now the sub-mix has a producer with a pre-roll, and reverse with
+            // warp act on the SAMPLES of the assembled mix — exactly the same way
+            // as on the samples of a file.
         }
         let mut morph_ids = std::collections::HashSet::new();
         for m in reel.morphers() {
             if !morph_ids.insert(m.id) {
                 return Err(ProjectError::DuplicateMorphId(m.id));
             }
-            // цель — клип ЭТОЙ ленты: ссылка через границу вернула бы
-            // `None` из `joint()`, и слой молча перестал бы действовать
+            // the target is a clip of THIS reel: a reference across the boundary would return
+            // `None` from `joint()`, and the layer would silently stop working
             for t in m.targets.clip_ids() {
                 if !clip_ids.contains(t) {
                     return Err(ProjectError::MorphUnknownTarget(m.id, *t));
@@ -9490,19 +9490,19 @@ impl Project {
                     return Err(ProjectError::MorphUnknownMedia(m.id, mid));
                 }
             }
-            // Области и метки — навигация ПО ПРОЕКТУ, они живут в корне и
-            // их время — корневое. Слой внутри ленты, сославшийся на них,
-            // накрыл бы не то место, и понять это было бы нечем.
+            // Areas and markers — navigation ACROSS THE PROJECT; they live in the root and
+            // their time is the root's time. A layer inside a reel that referred to them
+            // would cover the wrong place, and there would be no way to tell.
             if !is_root
                 && matches!(m.targets, MorphTargets::Areas { .. } | MorphTargets::Marks { .. })
             {
                 return Err(ProjectError::MorphRefInsideSequence(m.id));
             }
         }
-        // Камеры (Р.29): дубли id, длительность, fov, отсортированные
-        // кейфреймы в [0,1]. Перекрытия камер-событий на одной дорожке
-        // ЗАКОННЫ (разруливает active_camera_at) — к ClipOverlap не
-        // подключаются.
+        // Cameras (R.29): duplicate ids, duration, fov, keyframes sorted
+        // in [0,1]. Overlaps of camera events on one track are LEGAL
+        // (active_camera_at resolves them) — they are not
+        // connected to ClipOverlap.
         let mut cam_ids = std::collections::HashSet::new();
         for c in reel.cameras() {
             if !cam_ids.insert(c.id) {
@@ -9523,7 +9523,7 @@ impl Project {
                     return Err(ProjectError::CameraBadKeyframes(c.id));
                 }
             }
-            // кривые камеры — те же правила, что у кривых эффектов
+            // camera curves — the same rules as for effect curves
             for cur in &c.auto {
                 let sorted = cur.keys.windows(2).all(|w| w[0].t <= w[1].t);
                 let ok = cur.keys.iter().all(|k| k.t.0 >= 0 && k.v.is_finite());
@@ -9549,11 +9549,11 @@ impl Project {
                 return Err(ProjectError::DuplicateForeignKey(f.key));
             }
         }
-        // Клипы одной (kind, lane) не перекрываются — инвариант Р.24, но
-        // ТОЛЬКО при выключенном переслаивании (Р.28): с включённым перекрытия
-        // законны и звучат кроссфейдом, как в v1. Foreign-плейсхолдеры
-        // занимают место всегда: их сырьё пишется обратно в OTIO, где дорожка
-        // — строгая последовательность, и наложить на них нечего.
+        // Clips of one (kind, lane) do not overlap — invariant R.24, but
+        // ONLY with overlap-stacking switched off (R.28): with it on, overlaps
+        // are legal and sound as a crossfade, as in v1. Foreign placeholders
+        // always take up space: their raw data is written back to OTIO, where a track
+        // is a strict sequence, and there is nothing to overlay on them.
         enum SpanId {
             Clip(ClipId),
             Foreign(u64),
@@ -9571,8 +9571,8 @@ impl Project {
             let (ka, la, _, end_a, ida) = &w[0];
             let (kb, lb, start_b, _, idb) = &w[1];
             if ka == kb && la == lb && *end_a > *start_b {
-                // переслаивание разрешает наложение КЛИПОВ, но не чужих
-                // плейсхолдеров
+                // overlap-stacking allows overlapping of CLIPS, but not of foreign
+                // placeholders
                 if reel.overlaps_allowed()
                     && matches!((ida, idb), (SpanId::Clip(_), SpanId::Clip(_)))
                 {
@@ -9591,7 +9591,7 @@ impl Project {
         Ok(())
     }
 
-    /// На что смотрит `clip.media` — файл или вложенная лента.
+    /// What `clip.media` looks at — a file or a nested reel.
     pub fn source(&self, id: MediaId) -> Option<Source<'_>> {
         if let Some(m) = self.media.iter().find(|m| m.id == id) {
             return Some(Source::File(m));
@@ -9611,10 +9611,10 @@ impl Project {
         self.sequences.iter().any(|s| s.id == c.media)
     }
 
-    /// Клип на генераторе (`gen:`-медиа, Р.52): источник считает кадр
-    /// сам. Строго по РАЗБИРАЕМОМУ пути: непарсящийся `gen:` от будущей
-    /// сборки — заглушка отсутствующего файла, окно генератора ему не
-    /// предлагается.
+    /// A clip on a generator (`gen:` media, R.52): the source computes the frame
+    /// itself. Strictly by the PARSEABLE path: an unparseable `gen:` from a future
+    /// build is a stub for a missing file — the generator window is not
+    /// offered for it.
     pub fn is_gen(&self, c: &ClipEvent) -> bool {
         self.is_gen_media(c.media)
     }
@@ -9623,41 +9623,41 @@ impl Project {
         self.gen_media_path(id).is_some()
     }
 
-    /// Путь-ВИД генератора по адресу медиа. `None` — это не генератор
-    /// (файл, лента, битый `gen:` из будущей сборки). Единственная дверь:
-    /// и валидация, и команды, и сборка источников спрашивают её.
+    /// Generator kind path by media address. `None` — this is not a generator
+    /// (a file, a reel, a broken `gen:` from a future build). The single door:
+    /// validation, the commands and source assembly all ask it.
     pub fn gen_media_path(&self, id: MediaId) -> Option<&str> {
         let m = self.media.iter().find(|m| m.id == id)?;
         crate::genmedia::parse_gen_path(&m.path).map(|_| m.path.as_str())
     }
 
-    /// Вид генератора по УМОЛЧАНИЮ для медиа-адреса: тем его заполняют
-    /// команды, создающие событие на генераторе (`AddClip`,
-    /// `SetClipMedia`). Значения приходят из пути, поэтому старый полный
-    /// путь мигрирует сам собой — и это ЕДИНСТВЕННОЕ место, где такое
-    /// заполнение происходит.
+    /// The DEFAULT generator kind for a media address: the commands that create an event
+    /// on a generator (`AddClip`,
+    /// `SetClipMedia`) fill it in with this. The values come from the path, so an old full
+    /// path migrates by itself — and this is the ONLY place where such filling
+    /// happens.
     pub fn default_gen_for(&self, id: MediaId) -> Option<crate::GeneratorKind> {
         let m = self.media.iter().find(|m| m.id == id)?;
         crate::genmedia::parse_gen_path(&m.path)
     }
 
-    /// Сколько мест в ДЕРЕВЕ ссылается на эту ленту.
+    /// How many places in the TREE refer to this reel.
     ///
-    /// Закрывает то, что разведка назвала общей бедой Premiere, FCP и
-    /// VEGAS: «по клипу на таймлайне НЕ ВИДНО, сколько ещё мест изменится
-    /// вместе с ним». Считается пересчётом, своей бухгалтерии нет.
+    /// It closes what the reconnaissance called the common trouble of Premiere, FCP and
+    /// VEGAS: “on a timeline clip you cannot SEE how many more places will change
+    /// together with it”. It is counted by recomputation; there is no separate bookkeeping.
     pub fn sequence_uses(&self, id: MediaId) -> usize {
         let count = |cs: &[ClipEvent]| cs.iter().filter(|c| c.media == id).count();
         count(&self.clips) + self.sequences.iter().map(|s| count(&s.clips)).sum::<usize>()
     }
 
-    /// Наибольшие занятые адреса ВО ВСЁМ ДОКУМЕНТЕ (Р.50).
+    /// The largest occupied addresses ACROSS THE WHOLE DOCUMENT (R.50).
     ///
-    /// Счёт «по корню» — дыра: события внутри лент для него невидимы, и
-    /// свежий адрес, выданный по корню, СТОЛКНУЛСЯ БЫ с адресом внутри
-    /// ленты. Батч тогда отвергается целиком, и жест (вставка, разрез)
-    /// просто МОЛЧА не происходит. Обмен содержимого при входе внутрь
-    /// союза не меняет, поэтому считать можно по любому виду проекта.
+    /// A count “by the root” is a hole: events inside reels are invisible to it, and a
+    /// fresh address issued from the root would COLLIDE with an address inside a reel.
+    /// A batch is then rejected as a whole, and the gesture (insert, cut) simply does
+    /// NOT happen, SILENTLY. The exchange of contents on entering inside does not change
+    /// this union, so one can count on any kind of project.
     pub fn max_clip_id(&self) -> u64 {
         self.clips
             .iter()
@@ -9694,9 +9694,9 @@ impl Project {
             .unwrap_or(0)
     }
 
-    /// Наибольший занятый адрес камеры ВО ВСЁМ ДОКУМЕНТЕ (Р.55, С3).
-    /// Счёт «по корню» — та же дыра, что была у остальных четырёх (п.394):
-    /// камеры внутри лент для него невидимы.
+    /// The largest occupied camera address ACROSS THE WHOLE DOCUMENT (R.55, stage 3).
+    /// A count “by the root” is the same hole as the other four had (item 394):
+    /// cameras inside reels are invisible to it.
     pub fn max_camera_id(&self) -> u64 {
         self.cameras
             .iter()
@@ -9706,18 +9706,18 @@ impl Project {
             .unwrap_or(0)
     }
 
-    /// Все ленты документа: корень первым, затем вложенные.
+    /// All reels of the document: the root first, then nested ones.
     fn reels(&self) -> impl Iterator<Item = (Option<MediaId>, &dyn Reel)> {
         std::iter::once((None, self as &dyn Reel))
             .chain(self.sequences.iter().map(|s| (Some(s.id), s as &dyn Reel)))
     }
 
-    /// Парс без validate() — для легаси-импорта (Р.24): старые .ktproj
-    /// законно содержат перекрытия, их конвертирует ops::upgrade_legacy,
-    /// и только ПОСЛЕ него проект обязан проходить validate.
+    /// Parse without validate() — for the legacy import (R.24): old .ktproj files
+    /// legitimately contain overlaps, which ops::upgrade_legacy converts,
+    /// and only AFTER it must the project pass validate.
     pub fn from_json_unvalidated(s: &str) -> Result<Project, ProjectError> {
-        // format_version проверяем до полного парсинга, чтобы отдавать
-        // осмысленную ошибку на файлах будущих версий.
+        // format_version is checked before full parsing, so as to give a meaningful
+        // error on files of future versions.
         #[derive(Deserialize)]
         struct VersionOnly {
             format_version: u32,

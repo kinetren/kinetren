@@ -1,7 +1,7 @@
-//! Тест 21 (docs/porting-notes.md, пп.14/15): видео-путь без decode-штормов —
-//! последовательный прогон декодирует каждый кадр один раз и никогда назад;
-//! повторный прогон по тёплому кэшу — ноль декодов; смешанная аудио+видео
-//! очередь не гоняет декодер зигзагом (раздельные курсоры).
+//! Test 21 (docs/porting-notes.md, items 14/15): the video path without decode storms —
+//! a sequential run decodes each frame once and never backwards;
+//! a repeated run over a warm cache — zero decodes; a mixed audio+video
+//! queue does not zigzag the decoder (separate cursors).
 
 use kt_cache::{BurstCache, CacheConfig};
 use kt_engine::{DecodeRequest, MediaWorker, Priority, RequestKind, source_id};
@@ -18,7 +18,7 @@ const Q: Quality = Quality { width: 64, height: 36 };
 fn wait_idle(w: &MediaWorker) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while !w.is_idle() {
-        assert!(std::time::Instant::now() < deadline, "воркер не докрутил очередь");
+        assert!(std::time::Instant::now() < deadline, "the worker did not finish the queue");
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
@@ -38,7 +38,7 @@ fn setup() -> (Arc<BurstCache>, Arc<SyntheticStats>, MediaWorker) {
 #[test]
 fn t21_sequential_grid_decodes_each_frame_once_and_never_backward() {
     let (cache, stats, worker) = setup();
-    let n: i64 = 90; // 3 секунды сетки 30 fps
+    let n: i64 = 90; // 3 seconds of a 30 fps grid
     for i in 0..n {
         worker.submit(DecodeRequest {
             kind: RequestKind::video(Tick(i * FRAME_STEP), Some(Q)),
@@ -51,18 +51,18 @@ fn t21_sequential_grid_decodes_each_frame_once_and_never_backward() {
     assert_eq!(
         stats.video_backward_reads.load(Relaxed),
         0,
-        "последовательная сетка не должна дёргать декодер назад"
+        "a sequential grid must not pull the decoder backward"
     );
     let reads = stats.video_reads.load(Relaxed);
-    assert!(reads <= n as u64, "каждый кадр декодируется не более одного раза: {reads} > {n}");
+    assert!(reads <= n as u64, "each frame is decoded at most once: {reads} > {n}");
     for i in 0..n {
         assert!(
             cache.get_video(source_id(MediaId(1)), Some(Q), i * FRAME_STEP).is_some(),
-            "кадр {i} не попал в кэш"
+            "frame {i} did not get into the cache"
         );
     }
 
-    // повторный прогон по тёплому кэшу — ноль новых декодов
+    // a repeated run over the warm cache — zero new decodes
     for i in 0..n {
         worker.submit(DecodeRequest {
             kind: RequestKind::video(Tick(i * FRAME_STEP), Some(Q)),
@@ -71,14 +71,14 @@ fn t21_sequential_grid_decodes_each_frame_once_and_never_backward() {
         });
     }
     wait_idle(&worker);
-    assert_eq!(stats.video_reads.load(Relaxed), reads, "тёплый кэш не должен декодировать");
+    assert_eq!(stats.video_reads.load(Relaxed), reads, "a warm cache must not decode");
     worker.shutdown();
 }
 
 #[test]
 fn t21_mixed_audio_video_same_priority_no_zigzag() {
     let (_cache, stats, worker) = setup();
-    // перемешанный сабмит: аудио и видео возрастают, но чередуются
+    // a mixed submit: audio and video grow, but alternate
     for i in 0..60i64 {
         worker.submit(DecodeRequest {
             kind: RequestKind::video(Tick(i * FRAME_STEP), Some(Q)),
@@ -95,12 +95,12 @@ fn t21_mixed_audio_video_same_priority_no_zigzag() {
     assert_eq!(
         stats.video_backward_reads.load(Relaxed),
         0,
-        "видео-курсор не должен зигзагом следовать за аудио"
+        "the video cursor must not zigzag following the audio"
     );
     assert_eq!(
         stats.audio_backward_reads.load(Relaxed),
         0,
-        "аудио-курсор не должен зигзагом следовать за видео"
+        "the audio cursor must not zigzag following the video"
     );
     worker.shutdown();
 }

@@ -1,31 +1,31 @@
-//! Публичные параметры композиции: авторская сторона и потребительская
-//! (Р.59, стадия 3, пункт 5 плана).
+//! Public parameters of a composition: the author’s side and the consumer’s side
+//! (R.59, stage 3, item 5 of the plan).
 //!
-//! Претензия владельца дословно: «кто-то создал проект-шаблон для
-//! новостного выпуска… очевидно не будут же люди каждый раз лезть в
-//! композицию и менять там текст логотипы». Отсюда ровно две стороны и
-//! два окна:
+//! The owner’s complaint, verbatim: “someone created a template project for
+//! a news broadcast… surely people won’t climb into the composition every time
+//! and change the text and logos there”. Hence exactly two sides and
+//! two windows:
 //!
-//! * **АВТОР** объявляет ручки. Дверь одна — правый клик по ПОДПИСИ поля
-//!   внутри ленты (`widgets::PublishCtx`), а окно «Публичные параметры»
-//!   держит уже объявленное: имя, порядок, сужение пределов, снятие.
-//! * **ПОТРЕБИТЕЛЬ** заполняет объявленное. Окно «Параметры композиции»
-//!   у экземпляра — самое важное окно этого раунда: оно и есть ответ на
-//!   «не лезть внутрь».
+//! * **AUTHOR** declares the handles. There is one door — right-click on the LABEL of a field
+//!   inside the strip (`widgets::PublishCtx`), and the “Public parameters” window
+//!   holds what is already declared: name, order, narrowing of limits, removal.
+//! * **CONSUMER** fills in what is declared. The “Composition parameters” window
+//!   of the instance is the most important window of this round: it is the answer to
+//!   “do not climb inside”.
 //!
-//! Три решения, которые легко потерять:
+//! Three decisions that are easy to lose:
 //!
-//! 1. **Имя ручки — ТЕКСТ АВТОРА** (решение владельца). Оно рисуется как
-//!    есть, мимо `tr()`, как имя события или ленты: это содержимое
-//!    документа, а не текст программы (t131/t684).
-//! 2. **Значение шаблона не хранится** — окно читает его у цели живьём
-//!    (`Project::published_value`) и показывает рядом со строкой. Строка
-//!    без переопределения рисуется приглушённо: видно, что экземпляр от
-//!    ленты пока ничем не отличается.
-//! 3. **Окна правят ТЕКУЩУЮ ленту.** Команды публикации ленту не
-//!    называют (как `AddClip` и остальные шестьдесят рук), поэтому
-//!    авторское окно открывается ВНУТРИ ленты, и вход — часть открытия:
-//!    то же тело, что у глагола «войти» (правило 17).
+//! 1. **The handle name is the AUTHOR’S TEXT** (the owner’s decision). It is drawn as is,
+//!    bypassing `tr()`, like the name of an event or a strip: it is document content,
+//!    not program text (t131/t684).
+//! 2. **The template value is not stored** — the window reads it live from the target
+//!    (`Project::published_value`) and shows it next to the row. A row
+//!    without an override is drawn muted: it is visible that the instance comes from
+//!    the strip and so far differs from it in nothing.
+//! 3. **The windows edit the CURRENT strip.** Publish commands do not name
+//!    the strip (like `AddClip` and the other sixty hands), so the author’s
+//!    window opens INSIDE the strip, and entering is part of opening:
+//!    the same body as the verb “enter” (rule 17).
 
 use crate::app::KtApp;
 use crate::i18n::{k, tr};
@@ -35,46 +35,46 @@ use kt_model::{
     PublishedParam,
 };
 
-/// Диалог имени публикуемой ручки. Форма — окна имени ленты (t345):
-/// живой предпросмотр значения цели, Enter/Esc, фокус отдаётся при
-/// закрытии (правило 14).
+/// Dialog for the name of the published handle. The form is that of the strip-name window (t345):
+/// live preview of the target’s value, Enter/Esc, focus returns on
+/// close (rule 14).
 pub struct PublishDialog {
     pub seq: MediaId,
     pub addr: ParamAddr,
     pub ty: ParamType,
-    /// Умолчание — ПОДПИСЬ поля на языке интерфейса; после подтверждения
-    /// это уже текст автора и в каталог не возвращается никогда.
+    /// The default is the field’s LABEL in the interface language; after confirmation
+    /// it is already the author’s text and never returns to the catalog.
     pub name: String,
     pub focus: bool,
 }
 
-/// Окно «Публичные параметры» ленты (сторона АВТОРА).
+/// The strip’s “Public parameters” window (the AUTHOR’s side).
 pub struct PublishedWin {
     pub seq: MediaId,
-    /// Вся сессия окна — ОДИН шаг истории (тот же приём, что у окна FX).
+    /// The whole session of the window is ONE history step (the same trick as in the FX window).
     pub gesture: u64,
-    /// Набор на момент открытия: «Отмена» возвращает его тем же токеном.
+    /// The set at the moment of opening: “Cancel” returns it under the same token.
     pub backup: Vec<PublishedParam>,
-    /// Подтверждение снятия: ручка и сколько переопределений умрёт.
+    /// Removal confirmation: the handle and how many overrides will die.
     pub confirm: Option<(PubId, usize)>,
     pub open: bool,
 }
 
-/// Что голова полосы просит у окна FX (Р.63 п.12): прыжок курсора по
-/// клику в графике и просьбы про ось. Команды она применяет сама — тем же
-/// токеном жеста, что и окно.
+/// What the strip head asks of the FX window (R.63 item 12): the cursor jump on
+/// a click in the graph and the requests about the axis. It applies the commands itself —
+/// under the same gesture token as the window.
 #[derive(Default)]
 pub(crate) struct InstHeadOut {
     pub seek: Option<kt_time::Tick>,
     pub axis: crate::automation::AxisReq,
-    /// Правки ручек: окно FX применяет их СВОИМ токеном жеста.
+    /// Edits of the handles: the FX window applies them under ITS OWN gesture token.
     pub ops: Vec<Command>,
 }
 
-/// Всё, что голове нужно от программы. Отдельной структурой, потому что
-/// рисуется она ВНУТРИ окна FX, где `self` уже занят заимствованием
-/// (кэш миниатюр пикера) — а второй мутабельной ссылки на приложение
-/// взять неоткуда.
+/// Everything the head needs from the program. A separate structure, because it is drawn
+/// INSIDE the FX window, where `self` is already borrowed
+/// (the thumbnail picker cache) — and a second mutable reference to the app
+/// cannot be had from anywhere.
 pub(crate) struct InstHeadCtx<'a> {
     pub doc: &'a kt_model::Project,
     pub inst: &'a kt_model::ClipEvent,
@@ -84,20 +84,20 @@ pub(crate) struct InstHeadCtx<'a> {
     pub axis_linked: bool,
 }
 
-/// Имя кривой ручки В ПРЕДЕЛАХ ОКНА.
+/// Curve name of the handle WITHIN THE WINDOW.
 ///
-/// Виджет автоматизации рисует кривые ОДНОГО носителя и различает их по
-/// `ParamCurve::param`. У переопределений имя цели (`radius`, `text`) не
-/// годится: две ручки ленты вправе целиться в одноимённые параметры
-/// разных событий, и в окне они слиплись бы в одну линию. Поэтому внутри
-/// окна кривая зовётся по НОМЕРУ РУЧКИ, а при записи в модель имя
-/// возвращается целевое — то самое, которое ждёт `apply_overrides`.
+/// The automation widget draws curves of ONE carrier and tells them apart by
+/// `ParamCurve::param`. For overrides the target name (`radius`, `text`) does not
+/// fit: two handles of a strip may aim at identically named parameters
+/// of different events, and in the window they would merge into one line. So inside the
+/// window the curve is called by the HANDLE NUMBER, and when written to the model the name
+/// is returned as the target one — the one that `apply_overrides` expects.
 fn pub_key(id: PubId) -> String {
     format!("pub{}", id.0)
 }
 
-/// Человекочитаемое значение ручки — одной строкой рядом со строкой.
-/// Своей формы у него быть не должно: это ТОТ ЖЕ текст, что в поле.
+/// The human-readable value of the handle — one line next to the row.
+/// It must not have its own form: it is the SAME text as in the field.
 fn value_text(v: &ParamValue, media_name: &dyn Fn(MediaId) -> String) -> String {
     match v {
         ParamValue::Num(x) => {
@@ -116,18 +116,18 @@ fn value_text(v: &ParamValue, media_name: &dyn Fn(MediaId) -> String) -> String 
 }
 
 impl KtApp {
-    /// Объявленные ручки ленты — из ДОКУМЕНТА, а не из рабочего вида:
-    /// стоя внутри ленты, её запись в `project.sequences` держит
-    /// содержимое корня.
+    /// Declared handles of the strip — from the DOCUMENT, not from the working view:
+    /// standing inside the strip, its record in `project.sequences` holds
+    /// the contents of the root.
     pub fn published_of(&self, seq: MediaId) -> Vec<PublishedParam> {
         self.model.document().sequence(seq).map(|s| s.published.clone()).unwrap_or_default()
     }
 
-    /// Сколько переопределений этой ручки живёт ВО ВСЁМ документе.
+    /// How many overrides of this handle live in the WHOLE document.
     ///
-    /// Считается по всему дереву, а не по видимому виду: снятие ручки
-    /// убивает их везде одним шагом истории (`reconcile_published`), и
-    /// обещать надо ровно это число.
+    /// It is counted over the whole tree, not over the visible view: removing the handle
+    /// kills them everywhere in one history step (`reconcile_published`), and
+    /// it is exactly this number that must be promised.
     pub fn override_uses(&self, seq: MediaId, id: PubId) -> usize {
         let doc = self.model.document();
         let hit =
@@ -136,15 +136,15 @@ impl KtApp {
             + doc.sequences.iter().flat_map(|s| s.clips.iter()).filter(|c| hit(c)).count()
     }
 
-    /// Лента-ВЛАДЕЛЕЦ события в рабочем виде (Р.59, стадия 3).
+    /// The OWNER strip of an event in the working view (R.59, stage 3).
     ///
-    /// Публикация адресует цель по `ClipId`, а адрес обязан лежать в той
-    /// ленте, ЧЬЁ это содержимое. Событие раскрытой полосы физически
-    /// стоит в рабочем виде рядом с корневыми, но принадлежит ленте
-    /// полосы: опубликуй мы его в текущей, `reconcile_published` снял бы
-    /// ручку тем же батчем, которым её завели, — молча и без следа.
-    /// `None` — корень: у него публикаций не бывает (он никому не
-    /// экземпляр), и пункта меню там нет вовсе (правило 9).
+    /// Publishing addresses the target by `ClipId`, and the address must lie in the
+    /// strip WHOSE contents it is. An event of an expanded strip physically
+    /// stands in the working view next to the root ones, but belongs to the strip
+    /// of the strip: if we published it in the current one, `reconcile_published` would remove
+    /// the handle in the same batch that created it — silently and without a trace.
+    /// `None` — the root: it never has publications (it is nobody’s instance),
+    /// and there is no menu item there at all (rule 9).
     pub fn owner_reel_of(&self, doc: &kt_model::Project, id: ClipId) -> Option<MediaId> {
         for b in self.model.bands() {
             if doc
@@ -157,12 +157,12 @@ impl KtApp {
         self.model.editing()
     }
 
-    /// Готовый контекст публикации для носителя свойств.
+    /// A ready publishing context for the property carrier.
     ///
-    /// Документ приходит СНАРУЖИ и клонируется один раз на отрисовку
-    /// окна, а не на строку: `document()` — клон всего проекта, и звать
-    /// его на каждый параметр значило бы аллоцировать в пути отрисовки
-    /// (инвариант 12).
+    /// The document comes IN FROM OUTSIDE and is cloned once per drawing of the
+    /// window, not per row: `document()` is a clone of the whole project, and calling
+    /// it for each parameter would mean allocating on the drawing path
+    /// (invariant 12).
     pub fn publish_ctx(
         &self,
         doc: &kt_model::Project,
@@ -196,23 +196,23 @@ impl KtApp {
         }
     }
 
-    /// Свободный номер ручки в этой ленте. Номера живут внутри ленты
-    /// (`Nested` адресует ручку СВОЕЙ ленты), поэтому и максимум берётся
-    /// по ней.
+    /// A free handle number in this strip. Numbers live inside the strip
+    /// (`Nested` addresses a handle of ITS OWN strip), so the maximum is taken
+    /// over it too.
     fn next_pub_id(&self, seq: MediaId) -> PubId {
         PubId(self.published_of(seq).iter().map(|p| p.id.0).max().unwrap_or(0) + 1)
     }
 
-    /// Сколько ручек экземпляр переопределил и сколько их всего — текст
-    /// подсказки под булавкой (правило 13: место уже занято подписью).
+    /// How many handles the instance overrode and how many there are in all — the text
+    /// of the hint under the pin (rule 13: the place is already taken by the label).
     ///
-    /// Спрашивает РАБОЧИЙ ВИД, а не документ, и это не лень: зовётся из
-    /// пути наведения, то есть на каждый кадр, а `document()` — клон
-    /// всего проекта (инвариант 12, «ни аллокаций в draw-путях на
-    /// кадр»). Ответ при этом верный: стоя внутри ленты X, её запись в
-    /// `project.sequences` держит набор КОРНЯ — но экземпляра X внутри
-    /// самой X не бывает по циклам, так что у настоящего экземпляра
-    /// рабочий вид отвечает тем же, чем документ.
+    /// It asks the WORKING VIEW, not the document, and this is not laziness: it is called from
+    /// the hover path, that is per frame, while `document()` is a clone of
+    /// the whole project (invariant 12, “no allocations in draw paths per
+    /// frame”). The answer is correct regardless: standing inside strip X, its record in
+    /// `project.sequences` holds the ROOT’s set — but an instance of X cannot be inside
+    /// X itself because of cycles, so for a real instance the working view answers the same
+    /// as the document does.
     pub fn instance_override_counts(&self, c: &kt_model::ClipEvent) -> (usize, usize) {
         let Some(all) = self.model.project().sequence(c.media).map(|s| &s.published) else {
             return (0, 0);
@@ -221,7 +221,7 @@ impl KtApp {
         (n, all.len())
     }
 
-    /// Забрать заявку подписи поля и исполнить её (конец кадра).
+    /// Take the field-label request and execute it (end of frame).
     pub(crate) fn drain_publish_req(&mut self) {
         let Some(req) = crate::widgets::publish_sink::take() else { return };
         match req {
@@ -230,9 +230,9 @@ impl KtApp {
                     Some(PublishDialog { seq, addr, ty, name: label, focus: true });
             }
             crate::widgets::PublishReq::Unpublish { seq, id } => {
-                // Снятие ИЗ ПОДПИСИ — там же, где публикация: путь один
-                // и тот же (правило 17). Спрашивать подтверждение здесь
-                // тоже обязательно — переопределения умрут во всех местах.
+                // Removal FROM THE LABEL — in the same place as publishing: the path is one
+                // and the same (rule 17). Asking for confirmation here
+                // is also mandatory — the overrides will die in all places.
                 let n = self.override_uses(seq, id);
                 if n == 0 {
                     self.apply(Command::UnpublishParam { seq, id });
@@ -246,14 +246,14 @@ impl KtApp {
         }
     }
 
-    /// Встать ВНУТРЬ ленты ради авторской работы. Тело входа — то же, что
-    /// у глагола «войти» (правило 17): второго способа оказаться внутри
-    /// заводить нельзя. `false` — войти не через что, и об этом сказано.
+    /// Stand INSIDE the strip for the author’s work. The entry body is the same as
+    /// the verb “enter” (rule 17): a second way of getting inside must not
+    /// be created. `false` — there is nothing to enter through, and this is said.
     fn enter_reel_for_authoring(&mut self, seq: MediaId) -> bool {
         match self.model.project().clips.iter().find(|c| c.media == seq).map(|c| c.id) {
             Some(inst) => self.enter_nest(inst),
-            // ленты нет на монтаже: войти не через что, и молчать об
-            // этом нельзя (правило 16)
+            // the strip is not in the edit: there is nothing to enter through, and staying silent
+            // about this is not allowed (rule 16)
             None => {
                 self.warn(tr(k::msg::NEST_NOT_PLACED));
                 return false;
@@ -262,12 +262,12 @@ impl KtApp {
         self.model.editing() == Some(seq)
     }
 
-    /// Открыть окно «Публичные параметры» ленты.
+    /// Open the strip’s “Public parameters” window.
     ///
-    /// Вход внутрь — ЧАСТЬ открытия: команды публикации правят ту ленту,
-    /// в которой стоишь, и окно, правящее не ту, было бы ловушкой хуже
-    /// отсутствующего окна. Тело входа — то же, что у глагола «войти»
-    /// (правило 17).
+    /// Entering is PART of opening: publish commands edit the strip
+    /// you are standing in, and a window editing the wrong one would be a trap worse than
+    /// a missing window. The entry body is the same as that of the verb “enter”
+    /// (rule 17).
     pub fn open_published_win(&mut self, seq: MediaId) {
         if self.model.editing() != Some(seq) && !self.enter_reel_for_authoring(seq) {
             return;
@@ -285,13 +285,13 @@ impl KtApp {
         });
     }
 
-    /// Диалог имени публикуемой ручки.
+    /// Dialog for the name of the published handle.
     pub(crate) fn draw_publish_dialog(&mut self, ctx: &egui::Context) {
         let Some(mut d) = self.publish_dialog.take() else { return };
         let mut go = false;
         let mut cancel = false;
         let mut open = true;
-        // ЖИВОЙ предпросмотр: что именно уедет наружу под этим именем
+        // LIVE preview: what exactly will go outside under this name
         let doc = self.model.document();
         let media: Vec<(MediaId, String)> =
             doc.media.iter().map(|m| (m.id, m.path.clone())).collect();
@@ -334,12 +334,12 @@ impl KtApp {
         }
         if go && !d.name.trim().is_empty() {
             ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("pub_name")));
-            // Команда НАЗЫВАЕТ ленту (Р.63 п.11), поэтому входить в неё
-            // подтверждение больше не обязано: «если опубликовать
-            // параметр не входя полностью в композицию — то зачем-то мы
-            // автоматически полностью входим в композицию» (владелец).
-            // Человек остаётся там, где стоял, — в корне с раскрытой
-            // полосой или в соседней ленте.
+            // The command NAMES the strip (R.63 item 11), so entering it is no longer
+            // required for confirmation: “if we publish a parameter without entering the
+            // composition fully — why would we automatically enter the composition fully”
+            // (the owner).
+            // The person stays where they were — at the root with an expanded
+            // strip, or in a neighboring strip.
             let param = PublishedParam {
                 id: self.next_pub_id(d.seq),
                 name: d.name.trim().to_string(),
@@ -357,14 +357,14 @@ impl KtApp {
         self.publish_dialog = Some(d);
     }
 
-    /// Окно «Публичные параметры» ленты.
+    /// The strip’s “Public parameters” window.
     pub(crate) fn draw_published_win(&mut self, ctx: &egui::Context) {
         let Some(mut w) = self.published_win.take() else { return };
-        // лента исчезла под undo — окну не о чем говорить
+        // the strip vanished under undo — the window has nothing to talk about
         if self.model.document().sequence(w.seq).is_none() {
             return;
         }
-        // лента у окна ОДНА и названа — команды несут её адрес (Р.63 п.11)
+        // the window has ONE strip and it is named — the commands carry its address (R.63 item 11)
         let seq = w.seq;
         let mut list = self.published_of(seq);
         let mut cmds: Vec<Command> = Vec::new();
@@ -378,10 +378,10 @@ impl KtApp {
             tr(k::pubp::LIST_TITLE),
             self.model.document().sequence(w.seq).map(|s| s.name.clone()).unwrap_or_default()
         );
-        // Паспорт цели — единственный источник пределов (Р.60). Снимаем
-        // его ДО окна: `self` внутри замыкания окна уже занят. Ряд идёт
-        // ПАРАЛЛЕЛЬНО `list` — порядок строк меняется командой, то есть
-        // со следующего кадра, и разъехаться они внутри кадра не могут.
+        // The target’s passport is the single source of limits (R.60). We take it
+        // BEFORE the window: `self` is already borrowed inside the window closure. The row runs
+        // IN PARALLEL with `list` — the order of rows changes by a command, that is,
+        // from the next frame, and they cannot diverge within a frame.
         let specs: Vec<Option<kt_model::ParamSpec>> = {
             let doc = self.model.document();
             list.iter().map(|p| doc.addr_spec(Some(w.seq), &p.target)).collect()
@@ -402,8 +402,8 @@ impl KtApp {
                 for i in 0..n {
                     let id = list[i].id;
                     ui.horizontal(|ui| {
-                        // порядок строк — часть авторского интерфейса
-                        // (Resolve 21 завёл его отдельно, F-TL-012)
+                        // the order of rows is part of the author’s interface
+                        // (Resolve 21 introduced it separately, F-TL-012)
                         let up =
                             ui.add_enabled(i > 0, egui::Button::new(crate::icons::LANE_UP).small());
                         crate::widgets::hint(&up, tr(k::pubp::LIST_HINT_ORDER));
@@ -417,8 +417,8 @@ impl KtApp {
                             o.swap(i, j);
                             order = Some(o);
                         }
-                        // ИМЯ — текст автора: рисуется как есть, мимо
-                        // каталога (t684)
+                        // NAME — the author’s text: drawn as is, bypassing
+                        // the catalog (t684)
                         let r = ui.add(
                             egui::TextEdit::singleline(&mut list[i].name).desired_width(180.0),
                         );
@@ -432,17 +432,17 @@ impl KtApp {
                                 param: Box::new(list[i].clone()),
                             });
                         }
-                        // сужение пределов — только у числа: у остальных
-                        // типов «между вариантами» ничего нет, и мёртвое
-                        // поле было бы нарушением правила 9.
+                        // narrowing of limits — only for a number: for the other
+                        // types “between variants” there is nothing, and a dead
+                        // field would be a violation of rule 9.
                         //
-                        // Умолчание — ПАСПОРТ ЦЕЛИ (Р.60): пустое сужение
-                        // рисовалось нулём («значения min max всегда в 0
-                        // проставляются по умолчанию»), хотя у цели свои
-                        // пределы есть. Копии паспорта в публикации нет —
-                        // она разошлась бы с целью при первой правке
-                        // внутри ленты, как разошлась бы копия значения
-                        // шаблона.
+                        // The default is the TARGET’S PASSPORT (R.60): an empty narrowing
+                        // was drawn as zero (“min and max values always default to 0”),
+                        // although the target has its own
+                        // limits. There is no copy of the passport in the publication —
+                        // it would diverge from the target at the first edit
+                        // inside the strip, just as a copy of the template value would have
+                        // diverged.
                         if list[i].ty == ParamType::Num
                             && let Some(spec) = specs.get(i).cloned().flatten()
                         {
@@ -455,7 +455,7 @@ impl KtApp {
                                 (tr(k::pubp::RANGE_MAX), &mut hi, false),
                             ] {
                                 ui.label(label);
-                                // пределы и единица — ИЗ ПАСПОРТА цели, ряд общий
+                                // limits and unit — FROM THE TARGET’S PASSPORT, the row is shared
                                 let rr = crate::widgets::plain_row(
                                     ui,
                                     &crate::widgets::NumRow {
@@ -482,10 +482,10 @@ impl KtApp {
                                     edited = true;
                                 }
                             }
-                            // «к пределам цели» — снять сужение целиком.
-                            // Без этой кнопки суженную ручку нельзя было
-                            // бы вернуть в исходное состояние иначе как
-                            // сняв и объявив заново (правило 9).
+                            // “To the target’s limits” — remove the narrowing entirely.
+                            // Without this button a narrowed handle could not be
+                            // returned to its original state other than by
+                            // removing it and declaring it anew (rule 9).
                             let narrowed = !list[i].range.is_empty();
                             let rst = ui
                                 .add_enabled(narrowed, egui::Button::new(tr(k::pubp::RANGE_RESET)));
@@ -524,8 +524,8 @@ impl KtApp {
                     if ui.button(tr(k::pubp::DONE)).clicked() {
                         done = true;
                     }
-                    // «Отмена» возвращает набор ТЕМ ЖЕ токеном жеста —
-                    // вся сессия окна остаётся одним шагом истории
+                    // “Cancel” returns the set under the SAME gesture token —
+                    // the whole session of the window remains one history step
                     if ui.button(tr(k::fx::CANCEL)).clicked() {
                         cancel = true;
                     }
@@ -533,7 +533,7 @@ impl KtApp {
                 });
             });
 
-        // --- подтверждение снятия -----------------------------------------
+        // --- removal confirmation -----------------------------------------
         if let Some((id, _)) = confirm_now {
             w.confirm = Some((id, self.override_uses(w.seq, id)));
         }
@@ -545,9 +545,9 @@ impl KtApp {
                 .resizable(false)
                 .collapsible(false)
                 .show(ctx, |ui| {
-                    // ЧИСЛО НАЗЫВАЕТСЯ ВСЛУХ: снятие убивает переопределения
-                    // во всех местах дерева, и узнать об этом постфактум
-                    // было бы потерей работы
+                    // THE NUMBER IS NAMED ALOUD: removal kills the overrides
+                    // in all places of the tree, and learning about it after the fact
+                    // would be a loss of work.
                     ui.label(crate::tf!(k::pubp::UNPUBLISH_ASK, &name, n));
                     ui.horizontal(|ui| {
                         let r = ui.button(tr(k::pubp::UNPUBLISH));
@@ -576,9 +576,9 @@ impl KtApp {
             self.apply_coalesced(Command::UnpublishParam { seq, id }, w.gesture);
         }
         if cancel {
-            // тем же токеном: возврат не заводит второго шага истории.
-            // Переопределения снятых ручек этим не воскресают — о них
-            // подтверждение сказало прямо, а полный возврат — Ctrl+Z.
+            // under the same token: the return does not create a second history step.
+            // Overrides of removed handles are not revived by this — the confirmation
+            // said so plainly, and full restoration is Ctrl+Z.
             let now = self.published_of(w.seq);
             for p in &w.backup {
                 if now.iter().any(|x| x.id == p.id) {
@@ -611,16 +611,16 @@ impl KtApp {
         self.published_win = Some(w);
     }
 
-    /// Окно «Параметры композиции» экземпляра — сторона ПОТРЕБИТЕЛЯ.
-    /// ГОЛОВА полосы цепочки: «Параметры композиции» экземпляра (Р.63
-    /// п.12).
+    /// The instance’s “Composition parameters” window — the CONSUMER’s side.
+    /// The HEAD of the chain strip: the instance’s “Composition parameters” (R.63
+    /// item 12).
     ///
-    /// Владелец: «достаточно ебануто сделано то, что параметры композиции
-    /// открываются в отдельном окне, когда их можно поместить в тот же
-    /// fx-chain для удобства. Я ставлю запрет любым агентам порождать
-    /// какие-либо дополнительные окна без очевидного смысла». Форма та же
-    /// до строчки — переехал только её дом: вместо своего окна она стоит
-    /// головой полосы, рядом с генератором и ведущим узлом.
+    /// The owner: “it is pretty damn stupidly done that composition parameters
+    /// open in a separate window, when they could be placed in the same
+    /// fx-chain for convenience. I am banning any agents from spawning
+    /// any extra windows without an obvious purpose.” The form is the same
+    /// down to the line — only its home has moved: instead of its own window it stands
+    /// as the head of the strip, next to the generator and the leading node.
     pub(crate) fn draw_inst_head(
         hc: &InstHeadCtx<'_>,
         ui: &mut egui::Ui,
@@ -633,13 +633,13 @@ impl KtApp {
         let list: Vec<PublishedParam> =
             doc.sequence(seq).map(|s| s.published.clone()).unwrap_or_default();
         if list.is_empty() {
-            // ПУСТО — но не молча (правило 16): объявляют ручки внутри
+            // EMPTY — but not silently (rule 16): handles are declared inside
             ui.label(egui::RichText::new(tr(k::pubp::INST_NONE)).weak().small());
             return InstHeadOut::default();
         }
-        // Домен кривой переопределения — МАТЕРИАЛ ЭКЗЕМПЛЯРА (оно же
-        // время ленты): ровно то, что модель потом переводит в материал
-        // цели тем же `clip_material_at` (§469).
+        // The domain of the override curve is the INSTANCE’S MATERIAL (the same as
+        // the strip time): exactly what the model later converts to the material of
+        // the target by the same `clip_material_at` (§469).
         let frame_step = 90_000 / doc.settings.fps.max(1) as i64;
         let at = kt_model::clip_material_at(
             inst.source_in,
@@ -649,9 +649,9 @@ impl KtApp {
             frame_step,
             hc.playhead,
         );
-        // Ось графика — МАТЕРИАЛ ЭКЗЕМПЛЯРА, тот же домен, в котором
-        // садится ключ; у зеркального экземпляра концы меняются местами,
-        // поэтому min/max, а не «первый-последний».
+        // The graph axis is the INSTANCE’S MATERIAL, the same domain in which
+        // the key sits; for a mirrored instance the ends swap places, so
+        // min/max, not “first-last”.
         let mat_range = {
             let a = kt_model::clip_material_at(
                 inst.source_in,
@@ -675,14 +675,14 @@ impl KtApp {
         let media: Vec<(MediaId, String)> = doc
             .media
             .iter()
-            // ЛЕНТА значением не предлагается: у секвенции нет `MediaRef`,
-            // и подмена источника лентой — это другой механизм (Р.50)
+            // A STRIP is not offered as a value: a sequence has no `MediaRef`,
+            // and substituting a source with a strip is a different mechanism (R.50)
             .filter(|m| doc.sequence(m.id).is_none())
             .map(|m| (m.id, m.path.clone()))
             .collect();
-        // Паспорта ручек: пределы ЦЕЛИ, суженные автором, и ГОТОВАЯ
-        // подпись — имя автора (Р.59: непустой `label` у динамического
-        // владельца рисуется дословно, мимо каталога, t684).
+        // Handle passports: the target’s LIMITS, narrowed by the author, and the READY
+        // label — the author’s name (R.59: a non-empty `label` of a dynamic
+        // owner is drawn verbatim, bypassing the catalog, t684).
         let specs: Vec<kt_model::ParamSpec> = list
             .iter()
             .map(|p| {
@@ -705,10 +705,10 @@ impl KtApp {
                 sp
             })
             .collect();
-        // Кривые ВСЕХ ручек — одним рядом: виджет рисует кривые одного
-        // носителя, а носитель здесь — экземпляр. В модели они лежат по
-        // переопределениям, поэтому имя на время окна подменяется на
-        // номер ручки и возвращается при записи.
+        // Curves of ALL handles — in one row: the widget draws curves of one
+        // carrier, and the carrier here is the instance. In the model they lie by
+        // override, so for the window’s duration the name is replaced with
+        // the handle number and returned on write.
         let mut auto: Vec<kt_model::ParamCurve> = Vec::new();
         for p in &list {
             if let Some(o) = inst.overrides.iter().find(|o| o.pub_id == p.id)
@@ -728,9 +728,9 @@ impl KtApp {
             doc.sequence(seq).map(|s| s.name.clone()).unwrap_or_default()
         );
         let mut ops: Vec<Command> = Vec::new();
-        // что править в модели по итогам кадра: ручки с изменённым
-        // значением, ручки со сброшенным переопределением и действующие
-        // значения всех строк (кривой нужна база, если её заводят)
+        // what to edit in the model at the end of the frame: handles with a changed
+        // value, handles with a reset override, and the effective
+        // values of all rows (a curve needs a base if one is created)
         let mut dirty: Vec<PubId> = Vec::new();
         let mut drop_curve: Vec<PubId> = Vec::new();
         let mut values: Vec<ParamValue> = Vec::new();
@@ -757,11 +757,11 @@ impl KtApp {
                                 .map(|o| o.value.clone())
                                 .or_else(|| tmpl.clone())
                                 .unwrap_or(ParamValue::Num(0.0));
-                            // СТРОКА БЕЗ ПЕРЕОПРЕДЕЛЕНИЯ — приглушённая:
-                            // видно, что экземпляр от ленты пока ничем не
-                            // отличается (правило 13: цвет вместо колонки)
+                            // A ROW WITHOUT AN OVERRIDE — muted:
+                            // it is visible that the instance so far differs from the strip in
+                            // nothing (rule 13: colour instead of a column)
                             let dim = ov.is_none();
-                            // ИМЯ АВТОРА — как есть, мимо каталога (t684)
+                            // AUTHOR’S NAME — as is, bypassing the catalog (t684)
                             let name = egui::RichText::new(&p.name);
                             let name = if dim { name.weak() } else { name };
                             ui.label(name);
@@ -778,8 +778,8 @@ impl KtApp {
                                 query,
                                 doc.addr_type(Some(seq), &p.target),
                             );
-                            // значение ШАБЛОНА рядом — читается живьём,
-                            // копии в файле нет (решение владельца)
+                            // the TEMPLATE value beside it — read live,
+                            // there is no copy in the file (the owner’s decision)
                             let t = tmpl
                                 .as_ref()
                                 .map(|v| value_text(v, &|m| media_name(&media, m)))
@@ -791,11 +791,11 @@ impl KtApp {
                             );
                             let reset =
                                 ui.add_enabled(ov.is_some(), egui::Button::new(tr(k::pubp::RESET)));
-                            // ДОСТУПНОЕ ИМЯ СОСТАВНОЕ, видимая подпись
-                            // короткая (тот же приём, что у ячеек пикера
-                            // Р.54): кнопок сброса в окне столько же,
-                            // сколько ручек, и «Сбросить» их не различает
-                            // ни для скринридера, ни для харнесса.
+                            // The ACCESSIBLE NAME is compound, the visible label
+                            // is short (the same trick as the picker cells in
+                            // R.54): there are as many reset buttons in the window
+                            // as there are handles, and “Reset” does not tell them apart
+                            // either for a screen reader or for the harness.
                             {
                                 let name = format!("{} {}", tr(k::pubp::RESET), p.name);
                                 let on = ov.is_some();
@@ -823,20 +823,20 @@ impl KtApp {
                         }
                     });
 
-                // ---- АВТОМАТИЗАЦИЯ ------------------------------------
+                // ---- AUTOMATION ------------------------------------
                 //
-                // Тот же виджет, что у слота эффекта и у генератора
-                // (решение Р.34 «один механизм анимации на всё»). До
-                // Р.60 окно правило кривые ВСЛЕПУЮ: безымянный глиф
-                // заводил кривую, и каждая правка поля клала ключ по
-                // курсору, а посмотреть на кривую было негде.
+                // The same widget as the effect slot and the generator
+                // (the R.34 decision “one animation mechanism for everything”). Before
+                // R.60 the window drew curves BLIND: a nameless glyph
+                // created a curve, and every edit of a field put a key at the
+                // cursor, and there was nowhere to look at the curve.
                 let curvable: Vec<usize> =
                     (0..list.len()).filter(|&i| list[i].ty.curvable()).collect();
                 if !curvable.is_empty() {
                     ui.separator();
                     ui.horizontal(|ui| {
-                        // заголовок секции объясняет, ЧЬИ это кривые:
-                        // ось у них — время экземпляра, а не ленты
+                        // the section header says WHOSE curves these are:
+                        // their axis is the instance’s time, not the strip’s
                         let ttl = ui.label(tr(k::pubp::AUTO_TITLE));
                         crate::widgets::hint(&ttl, tr(k::pubp::AUTO_HINT));
                         let free: Vec<usize> = curvable
@@ -845,20 +845,20 @@ impl KtApp {
                             .filter(|&i| !auto.iter().any(|c| c.param == pub_key(list[i].id)))
                             .collect();
                         if !free.is_empty() {
-                            // МЕНЮ, а не глиф: у действия обязано быть
-                            // имя — и в интерфейсе, и для харнесса
+                            // a MENU, not a glyph: the action must have a
+                            // name — both in the interface and for the harness
                             let mb = ui.menu_button(tr(k::fx::AUTO_ADD), |ui| {
                                 for &i in &free {
-                                    // пункт — ИМЯ АВТОРА дословно (t684)
+                                    // the item — the AUTHOR’S NAME verbatim (t684)
                                     let item = ui.button(&list[i].name);
                                     crate::widgets::field_probe::note(
                                         &format!("inst.auto_add.{}", list[i].id.0),
                                         item.rect,
                                     );
                                     if item.clicked() {
-                                        // стартовая кривая — константа
-                                        // действующего значения на весь
-                                        // материал экземпляра, как у слота
+                                        // the starting curve is a constant
+                                        // of the effective value over the whole
+                                        // material of the instance, as for the slot
                                         let v0 = values
                                             .get(i)
                                             .and_then(|v| v.as_num())
@@ -903,7 +903,7 @@ impl KtApp {
                                 t,
                             )
                         };
-                        // цели связи — события ВНУТРИ ленты экземпляра (Р.67)
+                        // link targets — events INSIDE the instance’s strip (R.67)
                         let inst_links = || -> Vec<crate::automation::LinkEvent> {
                             doc.sequence(seq)
                                 .map(|s| {
@@ -939,8 +939,8 @@ impl KtApp {
                             egui::Rect::from_min_max(top, ui.cursor().min),
                         );
                         if res.changed {
-                            // какая ручка поехала, виджет не сообщает —
-                            // сверяем со снимком начала кадра
+                            // the widget does not report which handle moved —
+                            // we compare against the snapshot taken at the start of the frame.
                             for p in &list {
                                 let k = pub_key(p.id);
                                 let now = auto.iter().find(|c| c.param == k);
@@ -956,8 +956,8 @@ impl KtApp {
                 }
 
         }
-        // Одна команда на ручку: значение строки плюс её кривая, имя
-        // которой возвращается ЦЕЛЕВЫМ — таким его ждёт `apply_overrides`.
+        // One command per handle: the row’s value plus its curve, the name
+        // of which is returned as the TARGET one — the one `apply_overrides` expects.
         dirty.retain(|id| !drop_curve.contains(id));
         dirty.dedup();
         for (i, p) in list.iter().enumerate() {
@@ -983,9 +983,9 @@ impl KtApp {
         if let Some(h) = hover_out {
             crate::widgets::hint_sink::put(&h);
         }
-        // Команды применяет ОКНО FX своим токеном жеста: голова живёт в
-        // нём, и правка ручки не имеет права заводить свой шаг истории
-        // рядом с правкой слота.
+        // Commands are applied by the FX WINDOW under its own gesture token: the head lives in
+        // it, and an edit of a handle has no right to start its own history step
+        // next to an edit of the slot.
         InstHeadOut { seek, axis: axis_req, ops }
     }
 }
@@ -1003,11 +1003,11 @@ fn media_name(media: &[(MediaId, String)], id: MediaId) -> String {
         .unwrap_or_else(|| format!("#{}", id.0))
 }
 
-/// Одна строка окна потребителя — виджет по ТИПУ ручки.
+/// One row of the consumer window — a widget by the handle’s TYPE.
 ///
-/// Поле правит ровно то, что показывает (то же правило, что у
-/// `param_row_bound`): есть кривая — правится её ключ в домене
-/// экземпляра, нет — само значение.
+/// The field edits exactly what it shows (the same rule as for
+/// `param_row_bound`): if there is a curve, its key is edited in the domain of the
+/// instance; if not — the value itself.
 #[allow(clippy::too_many_arguments)]
 fn draw_value_row(
     ui: &mut egui::Ui,
@@ -1024,10 +1024,10 @@ fn draw_value_row(
     let mut changed = false;
     match v {
         ParamValue::Num(x) => {
-            // ЕДИНСТВЕННОЕ место, где решается «ключ или константа»:
-            // ключ по курсору пишется, только когда кривая ЗАВЕДЕНА и
-            // НАРИСОВАНА (правило Р.60). Раньше кривую заводил безымянный
-            // глиф, и окно превращалось в скрытый режим записи.
+            // The ONLY place where “key or constant” is decided:
+            // a key is written at the cursor only when the curve is CREATED and
+            // DRAWN (rule R.60). Previously a nameless glyph created the curve, and the window
+            // turned into a hidden write mode.
             let ci = bind.curves.iter().position(|c| c.param == key);
             let mut shown = match ci {
                 Some(i) => {
@@ -1039,7 +1039,7 @@ fn draw_value_row(
                 }
                 None => *x,
             };
-            // пределы ЦЕЛИ, суженные автором, — оба уже в паспорте
+            // the target’s LIMITS, narrowed by the author — both already in the passport
             let step = if spec.step > 0.0 { spec.step } else { 0.05 };
             let r = crate::widgets::plain_row(
                 ui,
@@ -1056,8 +1056,8 @@ fn draw_value_row(
             );
             if r.changed() {
                 match ci {
-                    // КЛЮЧ садится в домене ЭКЗЕМПЛЯРА — это и есть время
-                    // ленты, модель переведёт его в материал цели сама
+                    // The KEY sits in the domain of the INSTANCE — that is the strip
+                    // time; the model will convert it to the target’s material itself.
                     Some(i) => {
                         let sel = match bind.sel {
                             Some((c, k)) if c == i && k < bind.curves[i].keys.len() => Some(k),
@@ -1091,8 +1091,8 @@ fn draw_value_row(
             changed = r.changed();
         }
         ParamValue::Choice(sel) => {
-            // Варианты принадлежат ЦЕЛИ и читаются у неё живьём: копия в
-            // файле молча разошлась бы с новой сборкой (§469).
+            // The variants belong to the TARGET and are read from it live: a copy in the
+            // file would silently diverge from a new build (§469).
             let variants: Vec<String> = match live_ty {
                 Some(ParamType::Choice { variants }) => {
                     variants.iter().map(|s| s.to_string()).collect()

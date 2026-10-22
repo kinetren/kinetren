@@ -1,13 +1,13 @@
-//! Тест 113 (п.14 р.14): кадры в ОФЛАЙН-рендере (тот же путь, что экспорт)
-//! идут строго вперёд, равномерно и без чёрных дыр — включая случай, когда
-//! fps проекта не совпадает с fps источника.
+//! Test 113 (item 14, round 14): frames in the OFFLINE render (the same path as export)
+//! go strictly forward, evenly, and without black holes — including the case where the
+//! project fps does not match the source fps.
 //!
-//! Пользователь: «подлагивание есть и в отрендеренных видео всегда». Одна
-//! причина была в декодере (тест 112 на реальном файле), вторая проверяется
-//! здесь: маппинг «тик проекта → кадр источника» и покадровая выдача
-//! экспорта. Синтетика включена в режим собственной сетки кадров — цвет
-//! кадра кодирует НОМЕР кадра источника, поэтому из готового RGBA видно,
-//! какой именно кадр попал в вывод.
+//! The user: “there is stutter in rendered videos always.” One cause
+//! was in the decoder (test 112 on a real file); the second is checked here:
+//! the mapping “project tick → source frame” and the frame-by-frame output of the export.
+//! The synthetic source is switched to its own frame-grid mode — the colour of each frame
+//! encodes the source frame NUMBER, so the finished RGBA shows exactly
+//! which frame reached the output.
 
 use kt_engine::export::render_raw_video;
 use kt_media::MediaSource;
@@ -15,7 +15,7 @@ use kt_media::synthetic::{AudioPattern, SyntheticSource};
 use kt_model::*;
 use kt_time::Tick;
 
-const DUR: Tick = Tick(90_000 * 3); // 3 с
+const DUR: Tick = Tick(90_000 * 3); // 3 s
 
 fn project(fps: u32, reversed: bool) -> Project {
     let mut p = Project::new(ProjectSettings {
@@ -67,7 +67,7 @@ fn sources(src_fps: u32) -> Vec<(MediaId, Box<dyn MediaSource>)> {
     )]
 }
 
-/// Номера кадров источника, попавшие в вывод (цвет кодирует номер).
+/// Source frame numbers that reached the output (colour encodes the number).
 fn rendered_indices(project_fps: u32, src_fps: u32, reversed: bool) -> Vec<i64> {
     let p = project(project_fps, reversed);
     let q = kt_media::Quality { width: 64, height: 36 };
@@ -77,25 +77,25 @@ fn rendered_indices(project_fps: u32, src_fps: u32, reversed: bool) -> Vec<i64> 
         out.push(idx);
         Ok(())
     })
-    .expect("офлайн-рендер");
+    .expect("offline render");
     out
 }
 
 #[test]
 fn t113_export_frames_are_monotonic_and_uniform() {
-    // --- сетки НЕ совпадают: проект 60, источник 25
+    // --- grids do NOT match: project 60, source 25
     let idx = rendered_indices(60, 25, false);
-    assert_eq!(idx.len(), 180, "3 с при 60 fps = 180 кадров, получили {}", idx.len());
-    assert!(idx.iter().all(|&i| i >= 0), "чёрный кадр (индекс не прочитан)");
-    // 1) НИКОГДА не назад
+    assert_eq!(idx.len(), 180, "3 s at 60 fps = 180 frames, got {}", idx.len());
+    assert!(idx.iter().all(|&i| i >= 0), "black frame (index not read)");
+    // 1) NEVER backwards
     for w in idx.windows(2) {
-        assert!(w[1] >= w[0], "кадр откатился назад: {} → {}", w[0], w[1]);
+        assert!(w[1] >= w[0], "frame went back: {} → {}", w[0], w[1]);
     }
-    // 2) без пропусков: соседние кадры либо тот же, либо следующий
+    // 2) no gaps: neighbouring frames are either the same, or the next one
     for w in idx.windows(2) {
-        assert!(w[1] - w[0] <= 1, "пропущен кадр источника: {} → {}", w[0], w[1]);
+        assert!(w[1] - w[0] <= 1, "source frame skipped: {} → {}", w[0], w[1]);
     }
-    // 3) равномерность: длины серий одинаковых кадров отличаются ≤ 1
+    // 3) evenness: the lengths of runs of identical frames differ by ≤ 1
     let mut runs: Vec<usize> = Vec::new();
     let mut cur = idx[0];
     let mut len = 0usize;
@@ -109,31 +109,31 @@ fn t113_export_frames_are_monotonic_and_uniform() {
         }
     }
     runs.push(len);
-    // крайние серии могут быть обрезаны границами диапазона — их не судим
+    // the edge runs may be cut by the range boundaries — we do not judge them
     let mid = &runs[1..runs.len() - 1];
     let lo = mid.iter().min().copied().unwrap();
     let hi = mid.iter().max().copied().unwrap();
-    assert!(hi - lo <= 1, "неравномерные дубли: серии от {lo} до {hi} ({runs:?})");
+    assert!(hi - lo <= 1, "uneven duplicates: runs from {lo} to {hi} ({runs:?})");
 
-    // --- сетки совпадают: строго 1:1
+    // --- grids match: strictly 1:1
     let same = rendered_indices(30, 30, false);
     assert_eq!(same.len(), 90);
     for (n, &i) in same.iter().enumerate() {
-        assert_eq!(i, n as i64, "при равных сетках кадр {n} обязан быть 1:1, получили {i}");
+        assert_eq!(i, n as i64, "with equal grids frame {n} must be 1:1, got {i}");
     }
 
-    // --- реверс: строго назад, тоже без дыр
+    // --- reverse: strictly backwards, also without gaps
     let rev = rendered_indices(30, 30, true);
     assert_eq!(rev.len(), 90);
     for w in rev.windows(2) {
-        assert!(w[1] <= w[0], "реверс: кадр ушёл вперёд {} → {}", w[0], w[1]);
-        assert!(w[0] - w[1] <= 1, "реверс: пропущен кадр {} → {}", w[0], w[1]);
+        assert!(w[1] <= w[0], "reverse: frame went forward {} → {}", w[0], w[1]);
+        assert!(w[0] - w[1] <= 1, "reverse: frame {} → {} skipped", w[0], w[1]);
     }
 }
 
-/// Тест 115 (п.14 р.14): при МЕДЛЕННОМ воспроизведении (0.25×) ключ
-/// показанного кадра не откатывается назад — интеграционно, через живой
-/// `Player` с фейковым аудио-колбэком (звуковое железо не нужно).
+/// Test 115 (item 14, round 14): during SLOW playback (0.25×) the key
+/// of the shown frame does not roll back — an integration test, through a live
+/// `Player` with a fake audio callback (no sound hardware is needed).
 #[test]
 fn t115_preview_keys_are_monotonic_at_quarter_rate() {
     use kt_engine::Player;
@@ -157,8 +157,8 @@ fn t115_preview_keys_are_monotonic_at_quarter_rate() {
     let mut rollbacks = 0u64;
     let start = std::time::Instant::now();
     let mut consumed = 0usize;
-    // ~1.5 с реального времени: колбэк по 1024 кадра, между ними
-    // несколько «UI-кадров» с чтением позиции показа
+    // ~1.5 s of real time: the callback at 1024 frames each, between them
+    // several “UI frames” reading the display position
     while start.elapsed().as_millis() < 1500 {
         for _ in 0..1024 {
             if ring.pop().is_err() {
@@ -175,49 +175,49 @@ fn t115_preview_keys_are_monotonic_at_quarter_rate() {
                 rollbacks += 1;
             }
             if let Some(pv) = prev {
-                assert!(key >= pv, "ключ показа уехал назад: {pv} → {key}");
+                assert!(key >= pv, "display key moved back: {pv} → {key}");
             }
             prev = Some(key);
             std::thread::sleep(std::time::Duration::from_millis(4));
         }
     }
-    assert!(consumed > 10, "колбэк не крутился: {consumed}");
-    // ратчет — страховка, а не рабочий режим: при исправных часах он
-    // срабатывает единицами раз, при дрожащих — постоянно
-    assert!(rollbacks < 20, "часы показа дрожат при 0.25×: {rollbacks} откатов");
+    assert!(consumed > 10, "callback did not turn: {consumed}");
+    // the ratchet is a safeguard, not a working mode: with healthy clocks it
+    // fires a few times, with jittering clocks — constantly
+    assert!(rollbacks < 20, "display clock jitters at 0.25×: {rollbacks} rollbacks");
 }
 
-/// Тест 116 (п.1 р.15): рендер не выдаёт ЧЁРНЫЕ кадры на большом
-/// разрешении.
+/// Test 116 (item 1, round 15): the render does not output BLACK frames at a
+/// large resolution.
 ///
-/// Регрессия: экспорт декодировал пачками по 120 кадров в кэш на 64 МБ.
-/// При 640×360 пачка весит 111 МБ, при 1080p — 995 МБ: LRU выбрасывал
-/// кадры ДО композиции, и рендер выходил чёрным с редкими уцелевшими
-/// кадрами. На 320×180 пачка влезала — поэтому живая проверка прошлого
-/// раунда дефект не увидела.
+/// Regression: export decoded in batches of 120 frames into a 64 MB cache.
+/// At 640×360 a batch weighs 111 MB, at 1080p — 995 MB: the LRU evicted
+/// frames BEFORE the composite, and the render came out black with a few surviving
+/// frames. At 320×180 the batch fit — which is why last round's live check
+/// did not see the defect.
 #[test]
 fn t116_export_has_no_black_frames_at_large_quality() {
     use kt_engine::export::{EXPORT_VIDEO_CACHE_BYTES, export_chunk_frames};
 
-    // чистая функция: пачка не должна превышать половину бюджета —
-    // с учётом ЧИСЛА СЛОЁВ (Р.31 п.4: кадр на каждый слой момента)
+    // a pure function: a batch must not exceed half the budget —
+    // taking into account the NUMBER OF LAYERS (R.31 item 4: a frame per layer of the moment)
     for layers in [1usize, 2, 3, 5] {
         for (w, h) in [(320u32, 180u32), (640, 360), (1280, 720), (1920, 1080)] {
             let n = export_chunk_frames(EXPORT_VIDEO_CACHE_BYTES, w, h, layers);
-            assert!(n >= 1, "{w}×{h}×{layers}: пачка выродилась в 0 кадров");
+            assert!(n >= 1, "{w}×{h}×{layers}: the batch degenerated into 0 frames");
             let bytes = n as usize * w as usize * h as usize * 4 * layers;
             assert!(
                 bytes * 2 <= EXPORT_VIDEO_CACHE_BYTES || n == 1,
-                "{w}×{h}×{layers}: пачка {n} кадров = {} МБ не влезает в бюджет кэша",
+                "{w}×{h}×{layers}: a batch of {n} frames = {} MB does not fit the cache budget",
                 bytes / 1_000_000
             );
         }
     }
 
-    // живой рендер на разрешении, где старый чанк гарантированно не влезал
-    // в кэш (640×360 × 120 кадров = 111 МБ). Признак выброшенного кадра —
-    // не «чернота» (индекс 0 сам по себе чёрный), а НЕДОСТАЮЩИЙ СЛОЙ и
-    // разрыв в последовательности индексов.
+    // a live render at a resolution where the old chunk certainly did not fit
+    // into the cache (640×360 × 120 frames = 111 MB). The sign of an evicted frame is
+    // not “blackness” (index 0 is black by itself), but a MISSING LAYER and
+    // a gap in the sequence of indices.
     let p = project(30, false);
     let q = kt_media::Quality { width: 640, height: 360 };
     let mut idx: Vec<i64> = Vec::new();
@@ -225,57 +225,57 @@ fn t116_export_has_no_black_frames_at_large_quality() {
         idx.push(rgba[0] as i64 | (rgba[1] as i64) << 8 | (rgba[2] as i64) << 16);
         Ok(())
     })
-    .expect("рендер");
-    assert_eq!(idx.len(), 90, "3 с при 30 fps");
+    .expect("render");
+    assert_eq!(idx.len(), 90, "3 s at 30 fps");
     assert_eq!(
         stats.missing_video_layers, 0,
-        "кадры выброшены из кэша ДО композиции: недостающих слоёв {}",
+        "frames were evicted from the cache BEFORE the composite: missing layers {}",
         stats.missing_video_layers
     );
     for w in idx.windows(2) {
-        assert!(w[1] >= w[0], "индекс кадра откатился: {} → {}", w[0], w[1]);
-        assert!(w[1] - w[0] <= 1, "пропущен кадр источника: {} → {}", w[0], w[1]);
+        assert!(w[1] >= w[0], "frame index went back: {} → {}", w[0], w[1]);
+        assert!(w[1] - w[0] <= 1, "source frame skipped: {} → {}", w[0], w[1]);
     }
-    assert!(*idx.last().unwrap() >= 70, "рендер не дошёл до конца: {:?}", idx.last());
+    assert!(*idx.last().unwrap() >= 70, "render did not reach the end: {:?}", idx.last());
 }
 
-/// Тест 117 (п.2 р.15): на ВТОРОМ круге loop'а видео не зависает.
+/// Test 117 (item 2, round 15): on the SECOND loop cycle the video does not freeze.
 ///
-/// Регрессия: анти-откатный ратчет ключа показа разрешал уехать назад
-/// только при смене generation, а loop-wrap его намеренно не бампает
-/// (звук и FX-хвосты продолжаются) — картинка замерзала на конце региона,
-/// пока звук играл дальше.
+/// Regression: the anti-rollback ratchet of the display key allowed jumping back
+/// only on a generation change, and loop-wrap deliberately does not bump it
+/// (sound and FX tails continue) — the picture froze at the end of the region
+/// while the sound kept playing.
 #[test]
 fn t117_loop_wrap_unfreezes_video() {
     use kt_engine::player::preview_key_step;
     use kt_engine::transport::Transport;
 
-    // 1) транспорт считает перескоки, но НЕ трогает generation
+    // 1) the transport counts the jumps, but does NOT touch the generation
     let tr = Transport::new();
     let (s, e) = (48_000i64, 96_000i64);
     tr.seek_frames(s);
     let gen0 = tr.generation();
     assert_eq!(tr.wraps(), 0);
     tr.advance_frames_wrapped(40_000, Some((s, e)));
-    assert_eq!(tr.wraps(), 0, "внутри региона перескока нет");
+    assert_eq!(tr.wraps(), 0, "there is no jump inside the region");
     tr.advance_frames_wrapped(40_000, Some((s, e)));
-    assert_eq!(tr.wraps(), 1, "перескок через конец региона не посчитан");
-    assert_eq!(tr.generation(), gen0, "wrap не должен бампать generation");
+    assert_eq!(tr.wraps(), 1, "a jump across the end of the region was not counted");
+    assert_eq!(tr.generation(), gen0, "wrap must not bump the generation");
     assert!(tr.playhead_frames() >= s && tr.playhead_frames() < e);
-    // реверс через начало региона — тоже перескок
+    // a reverse across the start of the region is also a jump
     tr.advance_frames_wrapped(-40_000, Some((s, e)));
-    assert_eq!(tr.wraps(), 2, "перескок назад не посчитан");
+    assert_eq!(tr.wraps(), 2, "a jump backward was not counted");
 
-    // 2) ратчет: без переанкора ключ замерзает (это и была регрессия),
-    //    с переанкором по wrap'у — уезжает в начало региона
+    // 2) ratchet: without re-anchoring the key freezes (that was the regression),
+    //    with re-anchoring on wrap — it moves to the start of the region
     let step = 3000;
     let (frozen, _, rolled) = preview_key_step(Some(90_000), 48_000, step, 1, false);
-    assert_eq!((frozen, rolled), (90_000, true), "без переанкора ключ обязан замереть");
+    assert_eq!((frozen, rolled), (90_000, true), "without re-anchoring the key must freeze");
     let (jumped, _, rolled) = preview_key_step(Some(90_000), 48_000, step, 1, true);
-    assert_eq!((jumped, rolled), (48_000, false), "по wrap'у ключ обязан прыгнуть в регион");
+    assert_eq!((jumped, rolled), (48_000, false), "on wrap the key must jump into the region");
 
-    // 3) ЖИВОЙ плеер: два круга loop'а — ключ показа обязан вернуться к
-    //    началу региона, а не замереть на его конце (звук-то идёт)
+    // 3) LIVE player: two loop cycles — the display key must return to
+    //    the start of the region, not freeze at its end (the sound does keep going)
     use kt_engine::Player;
     let proj = project(30, false);
     let (player, mut ring) = Player::new(
@@ -285,7 +285,7 @@ fn t117_loop_wrap_unfreezes_video() {
             Box::new(SyntheticSource::new(DUR, AudioPattern::Ramp).with_video_fps(30)) as _,
         )],
     );
-    let r0 = Tick(90_000 / 2); // регион 0.5 c … 1.0 c
+    let r0 = Tick(90_000 / 2); // region 0.5 s … 1.0 s
     let r1 = Tick(90_000);
     player.set_loop_region(Some(kt_time::TickRange::new(r0, r1)));
     player.seek(r0);
@@ -313,24 +313,24 @@ fn t117_loop_wrap_unfreezes_video() {
         keys.push(key);
         std::thread::sleep(std::time::Duration::from_millis(4));
     }
-    assert!(player.transport.wraps() >= 1, "loop не перескочил ни разу: {keys:?}");
-    // после перескока ключ обязан оказаться СНОВА в начале региона
+    assert!(player.transport.wraps() >= 1, "loop did not jump once: {keys:?}");
+    // after the jump the key must be AGAIN at the start of the region
     let wrap_at = keys
         .windows(2)
         .position(|w| w[1] < w[0])
-        .expect("ключ показа ни разу не вернулся к началу региона — видео зависло");
+        .expect("the display key never returned to the start of the region — the video froze");
     assert!(
         keys[wrap_at + 1] < r0.0 + 6 * step,
-        "после перескока ключ не у начала региона: {}",
+        "after the jump the key is not at the start of the region: {}",
         keys[wrap_at + 1]
     );
-    // и дальше он снова движется вперёд. Сравниваем с МАКСИМУМОМ, а не с
-    // последним: за 2.5 с окна успевает случиться и второй заворот, и если
-    // он попадает на последнюю выборку, `last` законно меньше `first`
-    // (ловилось как редкий флак под нагрузкой).
+    // and then it moves forward again. Compare with the MAXIMUM, not the last one:
+    // within the 2.5 s window a second wrap-around can also happen, and if it falls on the last sample,
+    // `last` is legitimately smaller than `first`
+    // (this was caught as a rare flake under load).
     let after: Vec<i64> = keys[wrap_at + 1..].to_vec();
     assert!(
         after.iter().max().unwrap() > after.first().unwrap(),
-        "после перескока видео не поехало дальше: {after:?}"
+        "after the jump the video did not move on: {after:?}"
     );
 }

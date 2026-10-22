@@ -1,6 +1,6 @@
-//! Конверт `metadata["kt"]` — наш неймспейс в OTIO (решение Р.24: коротко
-//! "kt", не "kinotrain"). Версия одна на ФАЙЛ: `Timeline.metadata.kt.v`;
-//! вложенные kt-конверты (клипы, эффекты, переходы) версии не несут.
+//! The `metadata["kt"]` envelope — our namespace in OTIO (decision of R.24: short
+//! "kt", not "kinotrain"). One version per FILE: `Timeline.metadata.kt.v`;
+//! nested kt envelopes (clips, effects, transitions) carry no version.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -8,86 +8,86 @@ use serde_json::{Map, Value};
 use crate::{Error, Timeline};
 
 pub const KT_NS: &str = "kt";
-/// Максимальная ПОНИМАЕМАЯ версия конверта. Писатель ставит версию ПО
-/// СОДЕРЖИМОМУ (Р.29): v=2 ⇔ файл несёт камеры/камерные дорожки (старый
-/// ридер молча потерял бы их при перезаписи → штатный отказ KtMetaTooNew,
-/// правило р.24 «наше чтобы никто не ломал»); иначе v=1 — файлы без 3D
-/// байт-стабильны и открываются старыми сборками. Один Pan3d версию НЕ
-/// бампает: неизвестный эффект деградирует в foreign-passthrough.
+/// The maximum UNDERSTOOD envelope version. The writer sets the version BY CONTENT (R.29): v=2 ⇔ the file carries cameras/camera tracks
+/// (an old reader would silently lose them on rewrite → the regular refusal KtMetaTooNew,
+/// round 24 rule “ours so nobody breaks it”); otherwise v=1 — files without 3D
+/// are byte-stable and open in old builds.
+/// One Pan3d does NOT bump the version: an unknown effect
+/// degrades into foreign-passthrough.
 pub const KT_META_VERSION: u32 = 13;
 pub const KT_META_V1: u32 = 1;
-/// Камеры и камерные дорожки (Р.29).
+/// Cameras and camera tracks (R.29).
 pub const KT_META_V2: u32 = 2;
-/// Кривые автоматизации в тиках МАТЕРИАЛА (Р.33): старая сборка прочла бы
-/// их как доли 0..1 и уронила бы валидацию — отказ честнее тихой порчи.
+/// Automation curves in MATERIAL ticks (R.33): an old build would read them as fractions 0..1
+/// and fail validation — a refusal is more honest than silent corruption.
 pub const KT_META_V3: u32 = 3;
-/// Морфер-СЛОЙ (Р.35): действует по времени блока и по умолчанию на всё,
-/// что ниже его строки; порядок дорожек переехал в модель. Старая сборка
-/// прочла бы слой как патч на пустой список целей и молча отрендерила бы
-/// не то — отказ честнее тихой порчи.
+/// Morpher LAYER (R.35): acts by the block's time and by default on everything below its row;
+/// track order moved into the model. An old build would read the layer as a patch onto an empty
+/// target list and would silently render the wrong thing —
+/// a refusal is more honest than silent corruption.
 pub const KT_META_V4: u32 = 4;
-/// Автоматизация и сила морфер-слоя (Р.38, пп.12-13). Кривые слоя живут
-/// в его патче, сила и фейды — на самом событии; старая сборка потеряла
-/// бы и то и другое молча, а «слой на 30%» превратился бы в «слой
-/// целиком» — испорченный монтаж, а не потерянная мелочь.
+/// Automation and morpher-layer strength (R.38, items 12-13). Layer curves live in its patch,
+/// strength and fades sit on the event itself; an old build would silently lose both, and
+/// “a layer at 30%” would become “a layer in full” — a spoiled edit,
+/// not a minor loss.
 pub const KT_META_V5: u32 = 5;
-/// Вложенные секвенции (Р.50). Тело ленты инлайнится в каждый экземпляр
-/// `Stack`-ом, поэтому ЧУЖОЙ редактор увидит правильный монтаж и без
-/// нашего конверта; а вот СТАРАЯ НАША сборка прочла бы вложение серым
-/// плейсхолдером `ForeignEvent` (п.158) и при первой же перезаписи вернула
-/// бы его в файл сырьём — то есть превратила бы живой монтаж в мёртвый
-/// кусок JSON. Отказ честнее.
+/// Nested sequences (R.50). The reel body is inlined into each instance as a `Stack`,
+/// so a FOREIGN editor sees the correct edit even without our envelope;
+/// but an OLD build of ours would read the nesting as a grey placeholder `ForeignEvent` (item 158)
+/// and on the first rewrite would write it back to the file as raw data —
+/// that is, turn a live edit into a dead chunk of JSON.
+/// A refusal is more honest.
 pub const KT_META_V6: u32 = 6;
-/// Переходы Р.51: инверсия (`invert` в конверте перехода). Старая сборка
-/// сыграла бы переход НЕинвертированным — направление жеста в кадре
-/// противоположное, то есть молча испорченный монтаж; сам ключ она бы
-/// даже сохранила (passthrough непрочитанного конверта), что делает
-/// порчу ещё незаметнее. Отказ честнее.
+/// Transitions R.51: invert (`invert` in the transition envelope). An old build would play the transition NOT inverted —
+/// the gesture's direction on screen is the opposite, that is a silently spoiled edit;
+/// it would even keep the key (passthrough of an unread envelope), which makes the damage
+/// still less visible.
+/// A refusal is more honest.
 pub const KT_META_V7: u32 = 7;
-/// Событие ЛЕВЕЕ НУЛЯ внутри ленты (Р.58, п.462): `start` в конверте клипа
-/// (`kt.start`) там, где позицией в последовательном треке его не выразить.
-/// Старая сборка положила бы такое событие в ноль и сдвинула бы всё
-/// содержимое ленты за ним — молча; отказ честнее.
+/// An event LEFT OF ZERO inside a reel (R.58, item 462): `start` in the clip envelope (`kt.start`)
+/// where it cannot be expressed by position on a sequential track.
+/// An old build would put such an event at zero and shift all the reel's content after it —
+/// silently; a refusal is more honest.
 pub const KT_META_V8: u32 = 8;
-/// Параметры генератора НА СОБЫТИИ (Р.59, стадия 2). Старая сборка
-/// прочла бы значения из пути медиа — а их там больше нет, — и показала
-/// бы пустой титр вместо заголовка, причём во всех местах сразу. Отказ
-/// честнее.
-/// Той же версией (решение раунда: версия ОДНА, поднимается ПО
-/// СОДЕРЖИМОМУ) — публичные параметры композиции и переопределения у
-/// экземпляра (Р.59, стадия 3). Старый ридер сыграл бы все экземпляры
-/// шаблонными значениями: десять выпусков новостей с одним заголовком,
-/// и ни одного видимого признака. Отказ честнее.
+/// Generator parameters ON THE EVENT (R.59, stage 2). An old build would read the values from the media path —
+/// but they are no longer there — and would show an empty title instead of the heading,
+/// in every place at once. A refusal
+/// is more honest.
+/// The same version (round decision: ONE version, raised BY CONTENT) — public composition parameters
+/// and per-instance overrides (R.59, stage 3). An old reader would play all instances with the
+/// template values: ten news releases with one heading,
+/// and not one visible sign.
+/// A refusal is more honest.
 pub const KT_META_V9: u32 = 9;
 
-/// Форма отрезка на ключе и рабочие источники кривой (Р.61).
+/// Segment shape on a keyframe and working sources of the curve (R.61).
 ///
-/// Поднимается ТОЛЬКО когда в файле есть форма, не выразимая прежним
-/// булевым полем `ease`, — то есть когда у кривой разные формы у разных
-/// отрезков либо форма не из пары «третий порядок / прямая». Старая
-/// сборка прочла бы такую кривую однородной: зигзаг стал бы прямой
-/// линией, ступень — плавным переездом, и ни одного признака порчи.
-/// Кривая с однородной выразимой формой версию НЕ двигает и пишется
-/// прежними байтами (D1b).
+/// Raised ONLY when the file contains a shape that the earlier boolean field `ease` cannot express —
+/// that is, when a curve has different shapes on different segments, or a shape
+/// not from the pair “third order / straight”. An old build would read such a curve as uniform:
+/// a zigzag would become a straight line, a step a smooth glide,
+/// and not one sign of damage.
+/// A curve with a uniform expressible shape does NOT bump the version and is written
+/// with the same bytes as before (D1b).
 pub const KT_META_V10: u32 = 10;
-/// Р.62: правило приведения, ведущий узел «Геометрия», настройки ленты.
+/// R.62: conform rule, the leading “Geometry” node, reel settings.
 pub const KT_META_V11: u32 = 11;
-/// Р.65: КЛЮЧ САЙДЧЕЙНА у компрессора дорожки. Старая сборка потеряла бы
-/// поле молча — и дакинг просто не звучал бы; версия говорит ей об этом.
+/// R.65: SIDECHAIN KEY on the track compressor. An old build would silently lose the field —
+/// and ducking would simply not sound; the version tells it so.
 pub const KT_META_V12: u32 = 12;
-/// Р.67: ФОРМУЛА ОТРЕЗКА на ключе и СЛОЙ-формула над непустыми ключами
-/// (формула, читающая `k`). Старая сборка прочла бы формулу отрезка
-/// прямой, а слой стёрла бы вместе с ключами («формула без ключей») —
-/// молча. Поднимается ТОЛЬКО по содержимому.
+/// R.67: SEGMENT FORMULA on the key and a LAYER formula over non-empty keys
+/// (a formula that reads `k`). An old build would read a segment formula as a straight line,
+/// and would erase the layer together with its keys (“formula without keys”) — silently.
+/// Raised ONLY by content.
 pub const KT_META_V13: u32 = 13;
 
-// ---- типизированные конверты metadata.kt (приём otio-types) -----------------
-// Структурно-мелкое — СВОИ типы (эволюция модели не двигает схему файла
-// молча); тяжёлое и стабильное (FxInstance, MorpherEvent, BinGroup, LaneKind)
-// переиспользует serde-derive живых типов kt-model — дрейф ловит байт-golden
-// фикстуры (тест 148).
+// ---- typed metadata.kt envelopes (otio-types approach) -----------------
+// Structurally small things get OWN types (model evolution does not silently move the file schema);
+// heavy and stable ones (FxInstance, MorpherEvent, BinGroup, LaneKind) reuse the serde-derive
+// of the live kt-model types — drift is caught by the byte-golden
+// fixtures (test 148).
 
-/// Конверт Timeline.metadata.kt — всё, чему нет стандартного места в OTIO.
+/// The Timeline.metadata.kt envelope — everything that has no standard place in OTIO.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct KtTimelineMeta {
     pub v: u32,
@@ -104,83 +104,83 @@ pub struct KtTimelineMeta {
     pub bin_layout: Vec<(kt_model::MediaId, f32, f32)>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bin_free: bool,
-    /// СЧЁТЧИКИ дорожек: пустая строка невыразима содержимым, и файлы всех
-    /// прежних раундов держат её здесь. С Р.62 это ПРОИЗВОДНОЕ от вектора
-    /// дорожек — пишется по-прежнему (байт-стабильность, t433b), читается
-    /// как основа, если `tracks` нет.
+    /// TRACK COUNTERS: an empty line cannot be expressed by content, and files
+    /// of all earlier rounds keep it here. From R.62 this is DERIVED from the vector of tracks —
+    /// still written (byte stability, t433b),
+    /// read as the basis if `tracks` is absent.
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub morph_lanes: u32,
-    /// ЛЕГАСИ (до Р.62): порядок строк отдельным полем. Теперь порядок —
-    /// это порядок `tracks`; поле только читается.
+    /// LEGACY (before R.62): row order in a separate field. Now the order
+    /// is the order of `tracks`; the field is only read.
     #[serde(default, skip_serializing)]
     pub lane_order: Vec<(kt_model::LaneKind, u32)>,
-    /// ДОРОЖКИ-ОБЪЕКТЫ сверху вниз (Р.62, change B) — порядок строк,
-    /// выключатели, уровень, режим наложения, высота и цепочка служебных
-    /// строк. Пишется, только когда есть что сказать: у проекта с
-    /// естественным порядком и пустыми свойствами файл байт-в-байт прежний
-    /// (t433b). Имя, `enabled` и цепочка дорожек ВИДЕО и АУДИО живут на
-    /// самих `Track` файла — чужой редактор обязан их видеть; сюда они
-    /// не дублируются.
+    /// TRACK OBJECTS top to bottom (R.62, change B) — row order,
+    /// switches, level, blend mode, height and the chain of service rows.
+    /// Written only when there is something to say: for a project with natural order and empty properties
+    /// the file is byte-for-byte as before (t433b).
+    /// The name, `enabled` and the chain of VIDEO and AUDIO tracks live on the file’s own `Track`s —
+    /// a foreign editor must see them; they are
+    /// not duplicated here.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tracks: Vec<KtTrack>,
-    /// Именованные области «время × дорожки» (Р.35 п.2). Своих сущностей
-    /// в OTIO у них нет (Marker описывает только время), поэтому едут в
-    /// нашей секции целиком.
+    /// Named regions “time × tracks” (R.35 item 2). They have no entities
+    /// of their own in OTIO (Marker describes only time), so they travel
+    /// in our section as a whole.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub areas: Vec<kt_model::MarkedArea>,
-    /// Монтажная длина таймлайна в тиках, когда она БОЛЬШЕ материала
-    /// (хвостовой Gap чужого файла; решение пользователя Р.25). Пустые
-    /// дорожки, которых не было в файле, мы не пишем — их число едет здесь.
+    /// The edit length of the timeline in ticks, when it is LONGER than the material
+    /// (the trailing Gap of a foreign file; the user’s decision, R.25). Empty
+    /// tracks that were not in the file we do not write — their count travels here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lanes: Option<(u32, u32)>,
-    /// Переслаивание (Р.28): сколько подряд идущих Track'ов занимает каждая
-    /// наша дорожка. В OTIO перекрытие внутри одного Track невыразимо
-    /// (позиция клипа = порядок детей), поэтому слои пишутся соседними
-    /// треками — а по этой карте мы собираем дорожку обратно. Пишется,
-    /// только когда слой не один: файлы без перекрытий байт-в-байт прежние.
+    /// Layer overlap (R.28): how many consecutive Tracks each of our tracks occupies.
+    /// In OTIO an overlap inside one Track cannot be expressed (clip position = order of children),
+    /// so layers are written as adjacent tracks — and by this map we
+    /// reassemble the track. It is written only when there is more than one layer;
+    /// files without overlaps are byte-for-byte as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layers: Option<KtLayers>,
-    /// Сериализуются отсортированными по MorphId (детерминизм применения).
+    /// Serialized sorted by MorphId (deterministic application).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub morphers: Vec<kt_model::MorpherEvent>,
-    /// Камерные дорожки и камеры (Р.29, 3D-композитинг). Наличие любого
-    /// из них поднимает версию файла до v2 (см. KT_META_VERSION).
-    /// Камеры сортируются по CameraId (детерминизм, тест 144).
+    /// Camera tracks and cameras (R.29, 3D compositing). The presence of any of them
+    /// raises the file version to v2 (see KT_META_VERSION).
+    /// Cameras are sorted by CameraId (determinism, test 144).
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub camera_lanes: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cameras: Vec<kt_model::CameraEvent>,
-    /// Вложенные ленты (Р.50) — то, чего OTIO не выражает: число дорожек,
-    /// порядок строк, морфер-слои и камеры ВНУТРИ ленты.
+    /// Nested reels (R.50) — what OTIO does not express: the number of tracks,
+    /// row order, morpher layers and cameras INSIDE the reel.
     ///
-    /// Сам МОНТАЖ ленты сюда не едет: он инлайнится `Stack`-ом в каждый
-    /// экземпляр, и чужой редактор читает его штатно. Здесь — сайдкар по
-    /// образцу `KtLayers`: не сошёлся с файлом — notice и чтение как есть,
-    /// а не порча. Сортируются по адресу (детерминизм, т.144).
+    /// The reel's EDIT itself does not travel here: it is inlined as a `Stack` into each
+    /// instance, and a foreign editor reads it normally. Here is a sidecar, modelled on
+    /// `KtLayers`: if it does not match the file — a notice and reading as-is, not corruption.
+    /// Sorted by address (determinism, test 144).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sequences: Vec<KtSequence>,
-    /// Наложенные переходы КОРНЕВОЙ ленты (Р.51, п.399); у вложенных —
-    /// то же поле в их `KtSequence`.
+    /// Overlapping transitions of the ROOT reel (R.51, item 399); for nested ones —
+    /// the same field in their `KtSequence`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub overlap_transitions: Vec<KtOverlapTransition>,
-    /// Публичные параметры ленты, стоящей на месте КОРНЯ (Р.59, стадия
-    /// 3). В сохранённом документе это всегда пусто — корень никому не
-    /// экземпляр, — но молча терять содержимое модели нельзя.
+    /// Public parameters of the reel standing in the ROOT's place (R.59, stage
+    /// 3). In the saved document this is always empty — the root is no one's
+    /// instance — but the model's content must not be silently lost.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub published: Vec<kt_model::PublishedParam>,
-    /// Форвард-милосердие к будущим версиям (Р.29): неизвестные kt-поля
-    /// v3+ возятся passthrough'ом — следующие добавки не потребуют
-    /// жёсткого отказа, если старый ридер ничего из них не теряет.
+    /// Forward mercy toward future versions (R.29): unknown kt fields
+    /// of v3+ are carried through passthrough — the next additions will not require
+    /// a hard refusal, if the old reader loses none of them.
     #[serde(default, flatten)]
     pub extra: Map<String, Value>,
 }
 
-/// ДОРОЖКА в конверте (Р.62). Для видео и аудио несёт только то, чего
-/// в OTIO-треке нет (id, уровень, режим наложения, соло, замок, высота);
-/// для служебных строк (морф, камера) — всё, включая имя и цепочку:
-/// OTIO-трека у них не бывает.
+/// TRACK in the envelope (R.62). For video and audio it carries only what is
+/// not in the OTIO track (id, level, blend mode, solo, lock, height);
+/// for service rows (morph, camera) — everything, including the name and the chain:
+/// they have no OTIO track at all.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct KtTrack {
     pub kind: kt_model::LaneKind,
@@ -226,7 +226,7 @@ fn is_normal_blend(b: &kt_model::BlendMode) -> bool {
     *b == kt_model::BlendMode::Normal
 }
 
-/// Сайдкар вложенной ленты (Р.50): всё, чему в OTIO места нет.
+/// Sidecar of a nested reel (R.50): everything that has no place in OTIO.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct KtSequence {
     pub id: u64,
@@ -241,36 +241,36 @@ pub struct KtSequence {
     pub camera_lanes: u32,
     #[serde(default, skip_serializing)]
     pub lane_order: Vec<(kt_model::LaneKind, u32)>,
-    /// Дорожки ленты (Р.62) — как у корня.
+    /// Tracks of the reel (R.62) — as for the root.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tracks: Vec<KtTrack>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub morphers: Vec<kt_model::MorpherEvent>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cameras: Vec<kt_model::CameraEvent>,
-    /// Переслаивание внутри ленты. По умолчанию включено, как у корня.
+    /// Layer overlap inside a reel. Enabled by default, as for the root.
     #[serde(default = "yes_bool", skip_serializing_if = "is_true")]
     pub overlap_layers: bool,
-    /// Наложенные переходы ленты (Р.51, п.399).
+    /// Overlapping transitions of the reel (R.51, item 399).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub overlap_transitions: Vec<KtOverlapTransition>,
-    /// Публичные параметры ЛЕНТЫ (Р.59, стадия 3): объявленные автором
-    /// ручки со ссылками внутрь неё. Пусто — лента без публикаций, и
-    /// файл байт-в-байт прежний.
+    /// Public parameters of a REEL (R.59, stage 3): handles declared by the author
+    /// with references inward into it. Empty — a reel without publications, and
+    /// the file is byte-for-byte as before.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub published: Vec<kt_model::PublishedParam>,
-    /// Карта слоёв ЛЕНТЫ (Р.28 этажом ниже): перекрытые события одной её
-    /// дорожки лежат соседними треками внутри её `Stack`. Без карты они
-    /// разъехались бы по разным дорожкам — тот же дефект, что был у корня.
+    /// Layer map of a REEL (R.28 one floor down): overlapping events of its one
+    /// track lie as adjacent tracks inside its `Stack`. Without the map they
+    /// would scatter across different tracks — the same defect as the root had.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layers: Option<KtLayers>,
 }
 
-/// Наложенный переход (Р.51, п.399): его пара лежит в РАЗНЫХ соседних
-/// `Track` (карта слоёв), поэтому ребёнком последовательного трека он
-/// невыразим — едет списком в конверте СВОЕЙ ленты. Офсетов нет: окно —
-/// сама зона перекрытия. Id не хранится: идентичность — пара, номер
-/// назначается на чтении (как у стыковых позиция — порядком детей).
+/// Overlapping transition (R.51, item 399): its pair lies in DIFFERENT adjacent
+/// `Track`s (layer map), so it cannot be expressed as a child of a sequential track —
+/// it travels as a list in the envelope of its OWN reel. No offsets: the window is
+/// the overlap zone itself. The id is not stored: identity is the pair; the number is
+/// assigned on read (as for junction positions — by the order of children).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct KtOverlapTransition {
     pub a: u64,
@@ -305,13 +305,13 @@ fn is_true(v: &bool) -> bool {
     *v
 }
 
-/// Карта слоёв дорожек (Р.28) + политика переслаивания проекта.
+/// Layer map of tracks (R.28) + the project's layering policy.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct KtLayers {
-    /// Переслаивание выключено для этого проекта (ответ «нет» на плашке).
+    /// Layering is off for this project (the answer “no” on the banner).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub off: bool,
-    /// video[lane] = число Track'ов этой видео-дорожки.
+    /// video[lane] = the number of Tracks of this video track.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub video: Vec<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -332,27 +332,27 @@ pub struct KtSettings {
     pub width: u32,
     pub height: u32,
     pub sample_rate: u32,
-    /// Движок питча (Р.48). Дефолт не пишется — файлы до Р.48
-    /// байт-стабильны, а старая сборка прочтёт файл, просто не зная
-    /// про выбор.
+    /// Pitch engine (R.48). The default is not written — files before R.48
+    /// are byte-stable, and an old build will read the file, simply not knowing
+    /// about the choice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pitch_engine: Option<kt_model::PitchEngine>,
-    /// Форма отрезка у НОВЫХ ключей (Р.61). Живёт в ПРОЕКТЕ, а не в
-    /// настройках программы: иначе один файл вёл бы себя на двух машинах
-    /// по-разному. Умолчание не пишется — прежние файлы байт-стабильны.
+    /// Segment shape of NEW keys (R.61). Lives in the PROJECT, not in the
+    /// program settings: otherwise one file would behave differently on two machines.
+    /// The default is not written — earlier files stay byte-stable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_shape: Option<kt_model::SegShape>,
-    /// Правило приведения кадра по умолчанию (Р.62). «Вписать» не
-    /// пишется — прежние файлы байт-стабильны.
+    /// Default frame conform rule (R.62). “Fit” is not
+    /// written — earlier files stay byte-stable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conform: Option<kt_model::ConformRule>,
-    /// Настройки выставлены явно (Р.62): пока нет — первый клип задаёт
-    /// растр и fps. `false` не пишется.
+    /// Settings set explicitly (R.62): until then — the first clip sets
+    /// the raster and fps. `false` is not written.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub settings_explicit: bool,
 }
 
-/// Регион/loop — транспорт-удобство вне OTIO-семантики (тики).
+/// Region/loop — transport convenience outside OTIO semantics (ticks).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct KtTransport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -361,15 +361,15 @@ pub struct KtTransport {
     pub loop_enabled: bool,
 }
 
-/// Медиа, не задействованное на таймлайне (бин): путь в том же формате,
-/// что target_url.
+/// Media not used on the timeline (bin): a path in the same format
+/// as target_url.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KtBinMedia {
     pub id: u64,
     pub path: String,
 }
 
-/// Конверт клипа: наши идентификаторы и громкость.
+/// Clip envelope: our identifiers and volume.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KtClipMeta {
     pub id: u64,
@@ -378,44 +378,44 @@ pub struct KtClipMeta {
     pub link_group: Option<u64>,
     #[serde(default, skip_serializing_if = "is_zero_f32")]
     pub gain: f32,
-    /// Непрозрачность видео (Р.28, п.12). 1.0 не пишется — файлы без неё
-    /// байт-стабильны.
+    /// Video opacity (R.28, item 12). 1.0 is not written — files without it
+    /// are byte-stable.
     #[serde(default = "one_f32", skip_serializing_if = "is_one_f32")]
     pub opacity: f32,
-    /// Мастер-выключатель FX-цепочки события (Р.33). Умолчание
-    /// (включено) не пишется — файлы без него байт-стабильны.
+    /// Master switch of the event's FX chain (R.33). The default
+    /// (enabled) is not written — files without it are byte-stable.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fx_off: bool,
-    /// Истинный `start` в тиках — ТОЛЬКО когда его нельзя выразить
-    /// позицией в последовательном треке (Р.58, п.462): событие левее нуля
-    /// внутри ленты и всё, что после него легло бы на курсор трека.
-    /// Обычный монтаж поля не несёт — файлы без него байт-стабильны.
+    /// The true `start` in ticks — ONLY when it cannot be expressed by
+    /// position on a sequential track (R.58, item 462): an event left of zero
+    /// inside a reel, and everything that would otherwise land on the track's cursor after it.
+    /// A regular edit does not carry the field — files without it are byte-stable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start: Option<i64>,
-    /// Значения генератора ЭТОГО события (Р.59, стадия 2).
+    /// Generator values of THIS event (R.59, stage 2).
     ///
-    /// В `GeneratorReference.parameters` они тоже уезжают — но там это
-    /// СНИМОК для чужого читателя, который про наши кривые ничего не
-    /// знает. Свой ридер читает отсюда: здесь значения лежат рядом со
-    /// своими кривыми и не зависят от того, что чужой редактор сделал с
-    /// первоклассной схемой.
+    /// They also travel in `GeneratorReference.parameters` — but there this is
+    /// a SNAPSHOT for a foreign reader that knows nothing about our curves.
+    /// Our own reader reads from here: the values lie next to their own curves
+    /// and do not depend on what a foreign editor did
+    /// with the first-class schema.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub r#gen: Option<kt_model::GeneratorKind>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gen_auto: Vec<kt_model::ParamCurve>,
-    /// Переопределения публичных параметров ЛЕНТЫ у ЭТОГО экземпляра
-    /// (Р.59, стадия 3). Пусто — экземпляр играет шаблон.
+    /// Overrides of the public parameters of the REEL for THIS instance
+    /// (R.59, stage 3). Empty — the instance plays the template.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub overrides: Vec<kt_model::Override>,
-    /// Ведущий узел «Геометрия» (Р.62). Умолчание (следовать проекту,
-    /// тождественные параметры) не пишется — файлы байт-стабильны.
+    /// The leading “Geometry” node (R.62). The default (follow the project,
+    /// identical parameters) is not written — files stay byte-stable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub geometry: Option<kt_model::EventGeometry>,
     #[serde(default, skip_serializing_if = "is_zero_usize")]
     pub geometry_pos: usize,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub geometry_auto: Vec<kt_model::ParamCurve>,
-    /// Форвард-милосердие (Р.29): неизвестные kt-поля будущих версий.
+    /// Forward mercy (R.29): unknown kt fields of future versions.
     #[serde(default, flatten)]
     pub extra: Map<String, Value>,
 }
@@ -436,11 +436,11 @@ pub(crate) fn kt_get<T: for<'de> Deserialize<'de>>(metadata: &Map<String, Value>
     serde_json::from_value(metadata.get(KT_NS)?.clone()).ok()
 }
 
-/// То же, но с РАЗЛИЧЕНИЕМ «секции нет» и «секция битая». Первое —
-/// нормальный чужой файл, второе — ошибка: `.ok()` там выбрасывал ВЕСЬ
-/// конверт молча, и проект открывался как чужой — без настроек, дорожек,
-/// морферов и раскладки. Ровно тот класс дефектов, что запрещён
-/// инвариантом «ошибки загрузки ЯВНЫЕ» (дефект p старого формата).
+/// The same, but DISTINGUISHING “section absent” from “section corrupt”. The first is
+/// a normal foreign file, the second is an error: `.ok()` there silently discarded the WHOLE
+/// envelope, and the project opened as a foreign one — without settings, tracks,
+/// morphers and layout. Exactly the class of defect forbidden by the invariant
+/// “load errors are EXPLICIT” (defect p of the old format).
 pub(crate) fn kt_get_checked<T: for<'de> Deserialize<'de>>(
     metadata: &Map<String, Value>,
 ) -> Result<Option<T>, serde_json::Error> {
@@ -460,12 +460,12 @@ pub(crate) fn kt_set<T: Serialize>(metadata: &mut Map<String, Value>, v: &T) {
     }
 }
 
-/// Версия kt-конверта файла (None — чужой файл без наших данных).
+/// Version of the file's kt envelope (None — a foreign file without our data).
 pub fn kt_version(t: &Timeline) -> Option<u32> {
     t.metadata.get(KT_NS)?.get("v")?.as_u64().map(|v| v as u32)
 }
 
-/// Файл из более нового Kinetren — честный отказ вместо тихой порчи.
+/// A file from a newer Kinetren — an honest refusal instead of silent corruption.
 pub fn check_kt_version(t: &Timeline) -> Result<(), Error> {
     match kt_version(t) {
         Some(v) if v > KT_META_VERSION => Err(Error::KtMetaTooNew(v)),
@@ -473,17 +473,17 @@ pub fn check_kt_version(t: &Timeline) -> Result<(), Error> {
     }
 }
 
-/// Адрес ленты у вложения (Р.50): `metadata.kt.seq`.
+/// Reel address of an attachment (R.50): `metadata.kt.seq`.
 ///
-/// Именно по нему экземпляры схлопываются в ОДНУ ленту при чтении: тело
-/// инлайнится в каждый экземпляр, потому что объектной идентичности в
-/// JSON OTIO нет. Нет ключа — вложение ЧУЖОЕ, и читается как новая лента.
+/// It is by this that instances collapse into ONE reel on read: the body is inlined
+/// into each instance, because there is no object identity in OTIO's JSON. No key —
+/// the attachment is FOREIGN and is read as a new reel.
 pub fn nest_seq_id(metadata: &Map<String, Value>) -> Option<u64> {
     metadata.get(KT_NS)?.as_object()?.get("seq")?.as_u64()
 }
 
-/// Наш конверт в metadata: чужие неймспейсы не трогаются, `kt` при первом
-/// появлении дописывается В КОНЕЦ (порядок чужих ключей — passthrough).
+/// Our envelope in metadata: foreign namespaces are not touched; `kt` is
+/// appended AT THE END on first appearance (the order of foreign keys — passthrough).
 pub fn kt_entry_mut(metadata: &mut Map<String, Value>) -> &mut Map<String, Value> {
     if !metadata.contains_key(KT_NS) {
         metadata.insert(KT_NS.into(), Value::Object(Map::new()));
@@ -491,8 +491,8 @@ pub fn kt_entry_mut(metadata: &mut Map<String, Value>) -> &mut Map<String, Value
     match metadata.get_mut(KT_NS) {
         Some(Value::Object(m)) => m,
         Some(other) => {
-            // чужое не-объектное "kt" — перезаписываем своим (коллизия
-            // неймспейса, наш приоритет в наших файлах)
+            // a foreign non-object “kt” — we overwrite it with ours (a namespace
+            // collision; our priority in our files)
             *other = Value::Object(Map::new());
             match other {
                 Value::Object(m) => m,

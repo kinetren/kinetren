@@ -7,15 +7,15 @@ publish.workspace = true
 
 [features]
 default = ["ffmpeg"]
-# Без фичи крейт собирается без FFmpeg (синтетика, индекс-БД, тесты движка).
+# Without the feature the crate builds without FFmpeg (synthetics, index DB, engine tests).
 ffmpeg = ["dep:kt-ffmpeg"]
 
 [dependencies]
 kt-time = { workspace = true }
-# Словарь генераторов (GeneratorKind, разбор gen:-пути) — Р.52. Ребро
-# ациклично: kt-model зависит только от kt-time и serde.
+# The generator vocabulary (GeneratorKind, parsing of the gen: path): R.52. The edge
+# is acyclic: kt-model depends only on kt-time and serde.
 kt-model = { workspace = true }
-# Растеризация титров (правило детерминизма — kt-text/CLAUDE.md).
+# Rasterization of titles (the determinism rule: kt-text/CLAUDE.md).
 kt-text = { workspace = true }
 thiserror = { workspace = true }
 rusqlite = { workspace = true }

@@ -1,18 +1,18 @@
-//! MediaWorker: поток, ЭКСКЛЮЗИВНО владеющий одним MediaSource (инвариант №5).
+//! MediaWorker: a thread that EXCLUSIVELY owns one MediaSource (invariant No. 5).
 //!
-//! Клиенты (playback / prefetch / тумбнейлы) не трогают декодер — они кладут
-//! запросы в приоритетную очередь; результат воркер вставляет в BurstCache.
-//! Это устраняет главный источник тормозов старого движка: prefetch и playback
-//! дрались за один декодер через mutex, гоняя его seek'ами (дефект h).
+//! Clients (playback / prefetch / thumbnails) do not touch the decoder — they put
+//! requests into the priority queue; the worker inserts the result into the BurstCache.
+//! This removes the main source of the old engine's slowdowns: prefetch and playback
+//! fought over one decoder through a mutex, thrashing it with seeks (defect h).
 //!
-//! Правила очереди:
-//! - меньший Priority строго первее (Playback > NearPrefetch > ...);
-//! - при равном приоритете — запросы ВПЕРЁД по курсору декодера, ближайший
-//!   первым (анти ping-pong: не скакать назад, пока есть работа вперёд);
-//!   назад — только когда вперёд пусто;
-//! - каждый ключ обслуживается не более одного раза за постановку (dedup);
-//! - уже лежащее в кэше не декодируется повторно;
-//! - seek транспорта бампает generation: запросы старых поколений дропаются.
+//! Queue rules:
+//! - a smaller Priority is strictly first (Playback > NearPrefetch > ...);
+//! - at equal priority — requests FORWARD from the decoder cursor, the nearest
+//!   first (anti ping-pong: do not jump back while there is work ahead);
+//!   backward only when forward is empty;
+//! - each key is served at most once per submission (dedup);
+//! - what is already in the cache is not decoded again;
+//! - a transport seek bumps the generation: requests of old generations are dropped.
 
 use crate::Priority;
 use kt_cache::{BurstCache, SourceId};
@@ -23,22 +23,22 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
-/// Счётчики реальных обращений к декодерам (для перф-панели и тестов 21).
+/// Counters of real accesses to the decoders (for the perf panel and tests 21).
 #[derive(Default)]
 pub struct DecodeStats {
     pub audio_decodes: AtomicU64,
     pub video_decodes: AtomicU64,
-    /// Спанов видео-декода (батчей) и кадров, декодированных спанами.
+    /// Video decode spans (batches) and the frames decoded by spans.
     pub video_span_batches: AtomicU64,
     pub video_span_frames: AtomicU64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum RequestKind {
-    /// Аудио-burst источника.
+    /// Audio burst of the source.
     Audio { idx: i64 },
-    /// Видеокадр по pts источника (в тиках), выровненный вызывающим.
-    /// `step` — шаг сетки кадров (тики): ширина покрытия в coverage (п.20).
+    /// Video frame by the source pts (in ticks), aligned by the caller.
+    /// `step` — the frame grid step (ticks): the width of the coverage (item 20).
     Video { pts: Tick, quality: Option<(u32, u32)>, step: i64 },
 }
 
@@ -47,8 +47,8 @@ impl RequestKind {
         RequestKind::Video { pts, quality: quality.map(|q| (q.width, q.height)), step: 1 }
     }
 
-    /// Видео-запрос по сетке проекта: coverage закроется полосой [pts,
-    /// pts+step) — полоска кэша честная (п.20).
+    /// Video request on the project grid: the coverage will be closed by the band [pts,
+    /// pts+step) — the cache bar is honest (item 20).
     pub fn video_on_grid(pts: Tick, quality: Option<Quality>, frame_step: i64) -> RequestKind {
         RequestKind::Video {
             pts,
@@ -65,35 +65,35 @@ pub struct DecodeRequest {
     pub generation: u64,
 }
 
-/// (prio, pts-тики, quality) — ключ видео-очереди.
+/// (prio, pts-ticks, quality) — the key of the video queue.
 type VideoQueueKey = (Priority, i64, Option<(u32, u32)>);
 
 #[derive(Default)]
 struct Queue {
-    // Раздельные карты по типу: у аудио и видео СВОИ курсоры декодера —
-    // общий курсор заставлял видео-выбор зигзагом следовать за аудио
-    // (п.14/15: постоянные backward seek → полный reopen на каждый кадр).
-    // BTreeMap даёт и порядок, и dedup.
+    // Separate maps by type: audio and video have THEIR OWN decoder cursors —
+    // a shared cursor would make the video choice zigzag following the audio
+    // (items 14/15: constant backward seeks → a full reopen on every frame).
+    // A BTreeMap gives both the order and the dedup.
     audio: BTreeMap<(Priority, i64), u64>, // pos = burst idx
-    video: BTreeMap<VideoQueueKey, (u64, i64)>, // pos = pts тики; (gen, step)
-    /// Перенастройка источника (Р.53, п.411): НЕ запрос. Поколением не
-    /// отменяется (иначе seek посреди драга пипетки молча выбросил бы её,
-    /// и источник навсегда остался бы со старыми параметрами),
-    /// приоритетом не задерживается, последняя выигрывает.
-    /// Вместе с грузом едет список ЧУЖИХ адресов, которые протухают от
-    /// этой перенастройки (Р.59, стадия 2): мемо суб-композитов лент, в
-    /// которых лежит это событие. Чистит их ТОТ ЖЕ поток и ровно там же,
-    /// где чистит свой кэш, — иначе между «инвалидировали» и «применили»
-    /// успевает пройти композит на СТАРОМ кадре и заново записать стейл.
+    video: BTreeMap<VideoQueueKey, (u64, i64)>, // pos = pts in ticks; (gen, step)
+    /// Reconfiguration of the source (R.53, item 411): NOT a request. It is not
+    /// cancelled by the generation (otherwise a seek in the middle of an eyedropper drag would silently discard it,
+    /// and the source would stay with the old parameters forever),
+    /// is not delayed by priority; the last one wins.
+    /// Along with the payload comes a list of FOREIGN addresses that go stale because of
+    /// this reconfiguration (R.59, stage 2): the memos of sub-composites of the reels in
+    /// which this event lies. They are cleared by THE SAME thread, exactly where it clears its own cache —
+    /// otherwise a composite on the OLD frame could run between “invalidated” and “applied”
+    /// and write the stale result again.
     retune: Option<(Retune, Vec<SourceId>)>,
     closed: bool,
 }
 
-/// Чем перенастраивают живой источник (Р.59, стадия 2).
+/// What reconfigures a live source (R.59, stage 2).
 ///
-/// Полоса та же и правило то же («не запрос, последняя выигрывает»),
-/// изменился только груз: у генератора на событии значения в путь не
-/// укладываются — там кривые, — поэтому они едут состоянием.
+/// The channel is the same and the rule is the same (“not a request, the last one wins”);
+/// only the payload changed: for a generator on an event the values do not fit into the path —
+/// there are curves — so they travel as STATE.
 #[derive(Debug, Clone)]
 pub enum Retune {
     Path(String),
@@ -113,7 +113,7 @@ struct Shared {
     idle: AtomicBool,
 }
 
-/// Хэндл воркера. Drop НЕ останавливает поток — вызвать `shutdown()`.
+/// The worker's handle. Drop does NOT stop the thread — call `shutdown()`.
 pub struct MediaWorker {
     shared: Arc<Shared>,
     join: Option<std::thread::JoinHandle<()>>,
@@ -155,7 +155,7 @@ impl MediaWorker {
         if req.generation < self.shared.min_generation.load(Ordering::Acquire) {
             return;
         }
-        // dedup: тот же ключ обновляет generation, но не дублирует работу
+        // dedup: the same key updates the generation but does not duplicate the work
         match req.kind {
             RequestKind::Audio { idx } => {
                 q.audio.insert((req.prio, idx), req.generation);
@@ -169,18 +169,18 @@ impl MediaWorker {
         self.shared.cond.notify_one();
     }
 
-    /// Перенастроить ЖИВОЙ источник под новый путь (Р.53, п.411): у
-    /// генератора это правка параметров, поток декодера при этом не
-    /// гасится и рендереры не пересобираются. Кадры старых параметров
-    /// выбрасывает САМ воркер — тот же поток, который их вставляет,
-    /// поэтому гонки «старый кадр дописан после чистки» не бывает.
+    /// Reconfigure a LIVE source under a new path (R.53, item 411): for a
+    /// generator this is an edit of parameters; the decoder thread is NOT
+    /// stopped and the renderers are NOT rebuilt. The frames of the old parameters
+    /// are discarded by the WORKER ITSELF — the same thread that inserts them,
+    /// so a race “old frame appended after the cleanup” cannot happen.
     pub fn retune(&self, path: &str) {
         self.retune_with(Retune::Path(path.to_string()), Vec::new());
     }
 
-    /// Перенастроить на новые ЗНАЧЕНИЯ генератора (Р.59, стадия 2).
-    /// `stale` — адреса, чьи мемоизированные результаты зависят от этого
-    /// источника (ленты-предки события).
+    /// Reconfigure to new generator VALUES (R.59, stage 2).
+    /// `stale` — addresses whose memoized results depend on this
+    /// source (the reels that are ancestors of the event).
     pub fn retune_gen(&self, state: kt_model::GenState, stale: Vec<SourceId>) {
         self.retune_with(Retune::Gen(state), stale);
     }
@@ -193,7 +193,7 @@ impl MediaWorker {
         self.shared.cond.notify_one();
     }
 
-    /// Отменить все запросы поколений < `min_generation` (seek транспорта).
+    /// Cancel all requests of generations < `min_generation` (transport seek).
     pub fn cancel_generations_below(&self, min_generation: u64) {
         self.shared.min_generation.store(min_generation, Ordering::Release);
         let mut q = self.shared.queue.lock().unwrap();
@@ -203,7 +203,7 @@ impl MediaWorker {
         self.shared.cond.notify_one();
     }
 
-    /// true, когда очередь пуста и воркер не занят декодом.
+    /// true when the queue is empty and the worker is not busy decoding.
     pub fn is_idle(&self) -> bool {
         self.shared.idle.load(Ordering::Acquire) && self.shared.queue.lock().unwrap().is_empty()
     }
@@ -227,15 +227,15 @@ fn worker_loop(
     cache: &BurstCache,
     stats: &DecodeStats,
 ) {
-    /// Насколько далеко вперёд от первого ключа расширяем спан.
+    /// How far forward from the first key we extend the span.
     const SPAN_MAX_AHEAD_TICKS: i64 = 2 * kt_time::TICK_HZ;
 
-    // Курсоры «где был декодер» — СВОИ у аудио и видео (см. Queue).
+    // The cursors “where the decoder was” — SEPARATE for audio and video (see Queue).
     let mut cursor_audio: i64 = 0;
     let mut cursor_video: i64 = 0;
-    // Negative-кэш (п.19г): ключи, по которым декодер ничего не отдал
-    // (за EOF) — не декодируем повторно, иначе prefetch каждые 100 мс
-    // гонял декодер в вечные seek'и.
+    // Negative cache (item 19g): keys for which the decoder returned nothing
+    // (past EOF) — are not decoded again, otherwise prefetch would
+    // drive the decoder into endless seeks every 100 ms.
     let mut failed_video: std::collections::HashSet<(i64, Option<(u32, u32)>)> =
         std::collections::HashSet::new();
     let mut failed_audio: std::collections::HashSet<i64> = std::collections::HashSet::new();
@@ -244,17 +244,17 @@ fn worker_loop(
             Audio {
                 idx: i64,
             },
-            /// Первый ключ + добранный вперёд хвост (любых приоритетов).
+            /// The first key + the tail added forward (any priorities).
             VideoSpan {
-                keys: Vec<(Tick, i64)>, // (pts, step покрытия)
+                keys: Vec<(Tick, i64)>, // (pts, coverage step)
                 quality: Option<(u32, u32)>,
-                /// Поколение первого ключа: с ним недоделанный хвост
-                /// возвращается в очередь и честно отменяется seek'ом.
+                /// The generation of the first key: with it an unfinished tail
+                /// returns to the queue and is honestly cancelled by a seek.
                 generation_of_span: u64,
-                /// Приоритет первого ключа: спан прерывается только ради
-                /// СТРОГО более срочного звука. При равном приоритете
-                /// прерывать нельзя — видео-курсор пошёл бы зигзагом за
-                /// аудио, а это ping-pong seek (дефект h, сторож t21).
+                /// Priority of the first key: the span is interrupted only for the sake of
+                /// STRICTLY more urgent audio. At equal priority
+                /// interrupting is not allowed — the video cursor would zigzag behind the
+                /// audio, and that is a ping-pong seek (defect h, guard t21).
                 prio_of_span: crate::Priority,
             },
         }
@@ -264,9 +264,9 @@ fn worker_loop(
                 if q.closed {
                     return;
                 }
-                // ПЕРЕНАСТРОЙКА — первой, до выбора задания (п.411):
-                // дальше пойдут ключи, которые обязаны считаться уже
-                // новыми параметрами.
+                // RECONFIGURATION — first, before the task is chosen (item 411):
+                // the keys that must be computed with the already
+                // new parameters come after.
                 if let Some((r, stale)) = q.retune.take() {
                     drop(q);
                     let applied = match &r {
@@ -278,8 +278,8 @@ fn worker_loop(
                         "source rejected retune: the caller must ask factory::can_retune first"
                     );
                     if applied {
-                        // кадры старых параметров выбрасывает ТОТ ЖЕ поток,
-                        // что их вставляет: гонки нет по построению
+                        // frames of the old parameters are discarded by THE SAME thread
+                        // that inserts them: there is no race by construction
                         cache.invalidate_source(source_id);
                         for s in stale {
                             cache.invalidate_source(s);
@@ -298,12 +298,12 @@ fn worker_loop(
                     Some(Pick::Video(key)) => {
                         let (_prio, first_pts, quality) = key;
                         let (first_gen, first_step) = q.video.remove(&key).unwrap_or((0, 1));
-                        // Добор спана ПОВЕРХ приоритетов (п.19а): Playback-ключ
-                        // становится НАЧАЛОМ спана, а NearPrefetch-хвост едет
-                        // тем же декод-проходом. Раньше добор брал только свой
-                        // приоритет: пока жив хоть один Playback-ключ (кадр
-                        // неполный), спаны вырождались в «один кадр за раз с
-                        // seek'ами» — кэш переставал расти.
+                        // Span top-up ABOVE priorities (item 19a): the Playback key
+                        // becomes the START of the span, and the NearPrefetch tail rides along on
+                        // the same decode pass. Before, the top-up took only its own
+                        // priority: while even one Playback key was alive (the frame incomplete),
+                        // the spans degenerated into “one frame at a time with seeks” —
+                        // the cache stopped growing.
                         let mut keys = vec![(Tick(first_pts), first_step)];
                         let horizon = first_pts + SPAN_MAX_AHEAD_TICKS;
                         let budget = span_key_budget(quality, cache.max_video_bytes());
@@ -384,20 +384,20 @@ fn worker_loop(
                     missing.iter().map(|(k, s)| (k.0, *s)).collect();
                 let pts_only: Vec<Tick> = missing.iter().map(|(k, _)| *k).collect();
                 let mut emitted: std::collections::HashSet<i64> = std::collections::HashSet::new();
-                // СПАН ДЕКОДИРУЕТСЯ ЧАНКАМИ, и между ними воркер смотрит в
-                // очередь (Р.63 п.13).
+                // A SPAN IS DECODED IN CHUNKS, and between them the worker looks into
+                // the queue (R.63 item 13).
                 //
-                // Почему это не оптимизация, а дефект. Спан добирает до 64
-                // ключей и отдаёт их декодеру ОДНИМ вызовом: на 1080p это
-                // 22-61 мс на кадр, то есть до 4 секунд, в которые воркер
-                // не смотрит в очередь ВООБЩЕ. Прилетевший в это время
-                // Playback-бёрст аудио ждёт весь спан, каким бы высоким ни
-                // был его приоритет — и плеер молчит. Именно это видно во
-                // флайт-логе владельца: после каждого прыжка 1-6 с полной
-                // тишины при цене самого рендера 2 % реального времени, а
-                // сам аудио-бёрст декодируется за 14 мкс против 22-61 мс у
-                // кадра. Брошенный хвост спана ничего не теряет: проход
-                // префетча идемпотентен и переспросит недостающее (t9).
+                // Why this is not an optimization but a defect. A span tops up to 64
+                // keys and hands them to the decoder in ONE call: at 1080p this is
+                // 22–61 ms per frame, i.e. up to 4 seconds during which the worker
+                // does NOT look into the queue AT ALL. A Playback audio burst arriving at this time
+                // waits for the whole span, however high its priority is —
+                // and the player goes silent. This is exactly what is visible in the
+                // owner's flight log: after each jump, 1–6 s of complete
+                // silence, at a render cost of 2% of real time, while
+                // the audio burst itself decodes in 14 µs against 22–61 ms for
+                // a frame. An abandoned span tail loses nothing: the prefetch pass
+                // is idempotent and will re-ask for what is missing (t9).
                 const SPAN_CHUNK: usize = 4;
                 let mut res = Ok(());
                 let mut done_keys = 0usize;
@@ -411,19 +411,19 @@ fn worker_loop(
                     if res.is_err() {
                         break;
                     }
-                    // звук СРОЧНЕЕ этого спана ждать не может — отдаём поток
+                    // audio is MORE URGENT than this span and cannot wait — we give up the stream
                     let audio_waits = {
                         let q = shared.queue.lock().unwrap();
                         q.audio.keys().next().is_some_and(|(p, _)| *p < prio_of_span)
                     };
                     if audio_waits {
-                        // НЕДОДЕЛАННОЕ ВОЗВРАЩАЕМ В ОЧЕРЕДЬ, а не бросаем:
-                        // ключи уже сняты с неё при сборке спана, и молча
-                        // потерять их значило бы понадеяться, что кто-то
-                        // переспросит. Префетч — переспросит, а вот
-                        // тумбнейл и разовая заявка — нет. Кладём как
-                        // ближний префетч: Playback-ключ у спана всегда
-                        // ПЕРВЫЙ и уже посчитан.
+                        // UNFINISHED WORK IS RETURNED TO THE QUEUE, not dropped:
+                        // the keys were already taken off it when the span was assembled, and
+                        // silently losing them would mean hoping someone re-asks. Prefetch will re-ask,
+                        // but a thumbnail or a one-off request will not. We put them back
+                        // as a near prefetch:
+                        // the span's Playback key is always
+                        // FIRST and already computed.
                         let mut q = shared.queue.lock().unwrap();
                         for k in pts_only.iter().skip(done_keys) {
                             let step = steps.get(&k.0).copied().unwrap_or(1).max(1);
@@ -435,10 +435,10 @@ fn worker_loop(
                     }
                 }
                 if res.is_ok() {
-                    // Ключи, не закрытые декодером (EOF) — в negative-кэш,
-                    // но ТОЛЬКО те, до которых мы дошли: брошенный хвост
-                    // спана не декодировался вовсе, и пометить его
-                    // «мёртвым» значило бы не показать эти кадры НИКОГДА.
+                    // Keys not closed by the decoder (EOF) go into the negative cache,
+                    // but ONLY those we actually reached: the abandoned span tail was not decoded at all,
+                    // and marking it “dead” would mean those frames would
+                    // NEVER be shown.
                     for k in pts_only.iter().take(done_keys) {
                         if !emitted.contains(&k.0) {
                             failed_video.insert((k.0, quality));
@@ -454,8 +454,8 @@ fn into_q((width, height): (u32, u32)) -> Quality {
     Quality { width, height }
 }
 
-/// Спан не должен уметь выселить сам себя: не больше половины видео-бюджета
-/// за один проход (п.19в). Для превью 640×360 это прежние 64 ключа.
+/// A span must not be able to evict itself: no more than half the video budget
+/// per pass (item 19v). For a 640×360 preview this is the former 64 keys.
 fn span_key_budget(quality: Option<(u32, u32)>, max_video_bytes: usize) -> usize {
     const SPAN_MAX_KEYS: usize = 64;
     match quality {
@@ -472,10 +472,10 @@ enum Pick {
     Video(VideoQueueKey),
 }
 
-/// Выбор следующего запроса: минимальный приоритет по ОБЕИМ картам; внутри
-/// него у каждого вида — кандидат вперёд от СВОЕГО курсора (ближайший);
-/// если вперёд есть у обоих — меньшая forward-дистанция (ничья → аудио);
-/// вперёд пусто у обоих — ближайший назад аналогично.
+/// Choosing the next request: the minimum priority across BOTH maps; within
+/// it, for each kind — the candidate forward from ITS OWN cursor (the nearest);
+/// if both have a forward candidate — the smaller forward distance (tie → audio);
+/// if both have nothing forward — the nearest backward likewise.
 fn pick_next(q: &Queue, cursor_audio: i64, cursor_video: i64) -> Option<Pick> {
     let top_a = q.audio.keys().next().map(|k| k.0);
     let top_v = q.video.keys().next().map(|k| k.0);
@@ -485,7 +485,7 @@ fn pick_next(q: &Queue, cursor_audio: i64, cursor_video: i64) -> Option<Pick> {
         (None, Some(v)) => v,
         (None, None) => return None,
     };
-    // burst idx → тики для сравнения дистанций в одном домене
+    // burst idx → ticks, for comparing distances in one domain
     let a_cursor_idx = cursor_audio / kt_time::AUDIO_BURST_TICKS;
     let a_fwd = q.audio.range((top, a_cursor_idx)..).next().map(|(&k, _)| k).filter(|k| k.0 == top);
     let v_fwd =
@@ -499,7 +499,7 @@ fn pick_next(q: &Queue, cursor_audio: i64, cursor_video: i64) -> Option<Pick> {
         (Some(a), None) => Some(Pick::Audio(a)),
         (None, Some(v)) => Some(Pick::Video(v)),
         (None, None) => {
-            // назад: ближайший к своему курсору
+            // backward: the nearest to its own cursor
             let a_back = q
                 .audio
                 .range(..(top, a_cursor_idx))
@@ -521,7 +521,7 @@ fn pick_next(q: &Queue, cursor_audio: i64, cursor_video: i64) -> Option<Pick> {
                 (Some(a), None) => Some(Pick::Audio(a)),
                 (None, Some(v)) => Some(Pick::Video(v)),
                 (None, None) => {
-                    // остались только записи другого приоритета/края — любой
+                    // only entries of another priority/edge remain — any
                     q.audio
                         .keys()
                         .next()

@@ -1,4 +1,4 @@
-// Зеркало — чистая перестановка индексов, байт-в-байт с CPU (mirror в
+// A mirror is a pure permutation of indices, byte for byte with the CPU (mirror in
 // kt-fx/src/video.rs). u0 = (w, h, horizontal, vertical).
 
 @fragment

@@ -1,9 +1,9 @@
-# Каталог перевода Kinetren. Правила — i18n/README.md.
-# Формат: строгое подмножество TOML, значения только в одну строку.
-# СОБРАН автоматически на шаге массового переноса строк (Р.19);
-# дальше правится руками.
+# Kinetren translation catalog. Rules — i18n/README.md.
+# Format: a strict subset of TOML, values on one line only.
+# GENERATED automatically at the bulk line-wrap step (R.19);
+# further edits are made by hand.
 
-# Самоназвания языков. Одинаковы во ВСЕХ каталогах (сборка проверяет).
+# Language endonyms. Identical in ALL catalogs (the build checks this).
 [lang]
 en = "English"
 ru = "Русский"
@@ -11,7 +11,7 @@ es = "Español"
 zh = "中文（简体）"
 ar = "العربية"
 
-# Кнопки окна (свой титлбар, п.22 р.6).
+# Window buttons (own titlebar, item 22 round 6).
 [win]
 close = "إغلاق"
 restore = "استعادة"
@@ -62,7 +62,7 @@ lang_auto = "تلقائي (النظام)"
 diagnostics = "التشخيص…"
 notices = "الإشعارات"
 
-# Тулбар: подсказки кнопок. Акселератор в скобках — часть подсказки.
+# Toolbar: button hints. The accelerator in parentheses is part of the hint.
 [tb]
 play_pause = "تشغيل/إيقاف (المسافة)"
 back = "للخلف: علامة / منطقة / حافة مقطع (A أو Home؛ Shift — سحب الحافة اليسرى)"
@@ -98,7 +98,7 @@ search = "البحث في المشروع (Ctrl+F)"
 diag = "التشخيص"
 save = "حفظ (Ctrl+S)"
 
-# Таймлайн: контекстное меню дорожки.
+# Timeline: track context menu.
 [tl.lane]
 title = "مسار {0}"
 delete = "حذف المسار"
@@ -120,7 +120,7 @@ add_camera_here = "إضافة كاميرا عند المؤشر"
 add_morpher_here = "إضافة مُحوّل هنا"
 reset_height = "إعادة الارتفاع"
 
-# Таймлайн: подсказки зон (правый низ статусбара).
+# Timeline: zone hints (bottom right of the status bar).
 [tl.hint]
 area = "المنطقة: الحواف تغيّر المدة، زر الفأرة الأيمن — القائمة"
 transition = "تلاش متقاطع: الحواف — العرض، الوسط — نقطة القطع"
@@ -148,19 +148,19 @@ morph_lane = "مسار التحويل: زر الفأرة الأيمن — أضف
 camera_lane = "مسار الكاميرا: زر الفأرة الأيمن — أضف كاميرا هنا؛ الكاميرا تصوّر الطبقات ثلاثية الأبعاد في المسارات الأسفل"
 empty = "زر أيسر — المؤشر، السحب — منطقة، Ctrl+السحب — تحديد الأحداث؛ العجلة — تمرير، Ctrl — تكبير، Shift — المسارات"
 
-# Таймлайн: подписи на morph-событиях.
+# Timeline: labels on morph events.
 [tl.morph]
 layer = "طبقة"
 clips = "الأحداث: {0}"
 
-# Таймлайн: подсказки полей ввода.
+# Timeline: input field hints.
 [tl.field]
 area_name = "اسم المنطقة"
 marker_name_new = "اسم العلامة (اختياري)"
 marker_name = "اسم العلامة"
 lane_name = "اسم المسار"
 
-# Таймлайн: контекстные меню клипа, метки, региона.
+# Timeline: context menus for clip, marker, region.
 [tl.menu]
 level = "المستوى"
 area_title = "المنطقة: {0}"
@@ -205,7 +205,7 @@ duck = "خفض تلقائي (خفض الخلفية تحت الكلام)…"
 remove_transition = "إزالة هذا الانتقال"
 sync_audio = "مزامنة بالصوت مع الحدث المحدد الآخر"
 
-# Медиа-бин: режимы, подсказки, пустое состояние.
+# Media bin: modes, hints, empty state.
 collapse = "طي التحديد في بكرة"
 nest_expand = "نشر البكرة على المسارات"
 nest_independent = "فصل عن الأماكن الأخرى"
@@ -228,7 +228,7 @@ group_name = "اسم المجموعة"
 loudness = "{0} LUFS، الذروة {1} dBTP"
 loudness_pending = "لم تُقَس الجهارة بعد"
 
-# Медиа-бин: контекстные меню карточки и группы.
+# Media bin: context menus for card and group.
 [bin.menu]
 rename = "إعادة تسمية…"
 unlock = "إزالة القفل"
@@ -243,13 +243,13 @@ measure_loudness = "قياس الجهارة"
 new_generator = "إنشاء مولّد…"
 new_reel = "أنشئ تركيبًا"
 
-# Метры и мастер-фейдер превью.
+# Meters and preview master fader.
 [meter]
 mute = "كتم مخرج المعاينة الرئيسي"
 fader = "مستوى المخرج الرئيسي: اسحب أو استخدم العجلة (Shift — دقيق)، نقر مزدوج — 0 dB"
 peak = "مستوى الذروة للمخرج الرئيسي، dBFS"
 
-# Редактор morpher'а.
+# Morpher editor.
 [mrph]
 strength = "القوة"
 strength_hint = "مقدار تطبيق الطبقة: 1.0 كاملًا، 0 كأنها مُطفأة"
@@ -295,8 +295,8 @@ bake_batch = "دمج دفعة المؤثرات"
 bake_morph = "دمج التحويل"
 remove = "حذف morpher"
 
-# Реестр FX и пикер с поиском.
-# Подписи параметров эффектов (Р.33): один источник — спека kt-model.
+# FX registry and searchable picker.
+# Effect parameter labels (R.33): one source — the kt-model spec.
 [fxp]
 cx = "المركز س:"
 cy = "المركز ص:"
@@ -411,7 +411,7 @@ template_hint = "يضيف التأثير بقيمه الافتراضية"
 var_hint = "يضيف التأثير مضبوطًا مسبقًا — الصورة المصغرة من إطارك"
 axis_hint = "الشدة: {0} … {1}، {2} %  (أفلت ليُضاف ما تراه)"
 
-# Категории эффектов в пикере.
+# Effect categories in the picker.
 [fxreg.cat]
 three_d = "3D"
 motion = "حركة"
@@ -431,8 +431,8 @@ dynamics = "ديناميكا"
 timestretch = "تمديد زمني"
 color = "اللون"
 
-# Ключевые слова поиска. НЕ переупорядочиваются для арабского
-# (сравниваются с вводом пользователя), пишутся в нижнем регистре.
+# Search keywords. NOT reordered for Arabic
+# (compared with the user’s input), written in lowercase.
 [fxreg.kw]
 pan3d = "pan 3d منظور كاميرا طبقة"
 geometry = "هندسة قص موضع تكبير دوران geometry crop"
@@ -479,11 +479,11 @@ cylinder3d = "أسطوانة انحناء cylinder"
 limiter = "محدد ذروة سقف limiter"
 pitch_shift = "تغيير النغمة درجة الصوت pitch"
 
-# Имена встроенных ВАРИАНТОВ эффекта (Р.54): настроенное состояние с
-# именем по виду, а не по параметру. Словарь общий на все эффекты —
-# «Мягко» у размытия и у свечения значит одно и то же, и держать под это
-# два ключа незачем. Имя варианта ПЕРЕВОДИТСЯ (в отличие от имени
-# эффекта): «Тушь» и «Чертёж» — не отраслевые термины.
+# Names of built-in VARIANTS of an effect (R.54): a preset state with
+# a name by look, not by parameter. The vocabulary is shared by all effects —
+# “Soft” for blur and for glow means the same thing, and two keys for it are pointless.
+# A variant name IS TRANSLATED (unlike the effect name);
+# “Ink” and “Blueprint” are not industry terms.
 [fxreg.var]
 soft = "ناعم"
 strong = "قوي"
@@ -539,7 +539,7 @@ grid9 = "3×3"
 grid16 = "4×4"
 strip = "شريط"
 
-# Редактор FX клипа.
+# FX editor of the clip.
 [fx]
 hint_reset = "انقر نقرًا مزدوجًا على التسمية لإعادة ضبط المعامل"
 conform = "قاعدة الإطار:"
@@ -670,7 +670,7 @@ columns = "الأعمدة:"
 rows = "الصفوف:"
 center = "توسيط"
 
-# Диалог настроек рендера и окно прогресса.
+# Render settings dialog and progress window.
 chain_on = "السلسلة"
 chain_on_hint = "مفتاح رئيسي: يوقف السلسلة كاملة دون المساس بالخانات"
 shadow_color = "الظلال"
@@ -721,7 +721,7 @@ done_msg = "تم: {0}"
 error_msg = "خطأ: {0}"
 close = "إغلاق"
 
-# Подсказки главного окна (правый низ статусбара).
+# Main window hints (bottom right of the status bar).
 missing_warn = "مصادر غير متاحة ({0})، ستُكتب كبدائل مؤقتة: {1}"
 muted_warn = "مسارات مكتومة ({0}) لن تدخل الملف: {1}"
 solo_warn = "الانفراد مفعّل ({0}) ولن يدخل الملف سوى هذه المسارات: {1}"
@@ -742,7 +742,7 @@ preview_quality = "جودة المعاينة: نسبة من دقة المشرو�
 smoothing = "تنعيم خطي للمعاينة (معطّل — بكسلات حادة)"
 economy = "لبطاقات الرسوم الضعيفة: نصف عدد عمليات الرسم أثناء التشغيل"
 
-# Палитра поиска по проекту.
+# Project-wide search palette.
 flight = "حلقة مدمجة لأحداث التشغيل والعدادات — لتشخيص أعطال التشغيل المتقطعة"
 pitch_engine = "محرك النغمة للمشروع كله: يحافظ WSOLA على النبرات، والمرمّز أنعم مع التناغم"
 project_settings = "حجم الإطار وسرعة الكادر وقاعدة الإطار ومحرك الطبقة وشكل المفاتيح لهذا المشروع"
@@ -760,8 +760,8 @@ nothing = "لا نتائج"
 marker_at = "علامة {0} ثانية"
 clip_at = "{0} @ {1} ثانية"
 
-# Разовые сообщения note()/warn(). Согласования с числом НЕТ:
-# пишем «существительное: N» (правило Р.19, см. README).
+# One-off messages note()/warn(). There is NO agreement with the number:
+# we write “noun: N” (rule R.19, see README).
 [msg]
 area_needs_band = "حدّد أولًا نطاقًا على الخط الزمني (أو منطقة)"
 area_stem = "منطقة"
@@ -806,7 +806,7 @@ software_render = "لا تسريع رسومي (معالجة برمجية) — ق
 video_fx_cpu = "تُحسب مؤثرات الفيديو على المعالج (لا GPU): {0}"
 video_fx_gpu_lost = "فُقد مُصيِّر الفيديو على GPU ({0}) — تم التحويل إلى المعالج"
 
-# Заголовки системных файловых диалогов.
+# Titles of system file dialogs.
 flight_saved = "تم حفظ سجل التشغيل: {0}"
 
 media_missing = "{0}: المصدر غير متاح، يُعرض بديل مؤقت ({1})"
@@ -889,7 +889,7 @@ import_older = "استيراد مشروع من إصدار أقدم من Kinetren
 open_project = "فتح مشروع"
 save_project = "حفظ المشروع"
 
-# Перф-панель и окно диагностики.
+# Perf panel and diagnostics window.
 [perf]
 loading = "جارٍ التحميل…"
 smoothing = "تنعيم"
@@ -919,7 +919,7 @@ log_clear = "مسح"
 graph_reset = "تصفير الرسوم"
 log_empty = "لم تُلاحظ مشكلات"
 
-# Пороговые предупреждения в журнале проблем.
+# Threshold warnings in the problem log.
 flight_save = "حفظ سجل التشغيل"
 flight_stalls = "حالات التجمد: {0}"
 
@@ -932,7 +932,7 @@ prefetch_thrash = "{0} مدخلات ذاكرة أُسقطت قبل أول قرا
 low_video_hit = "إصابة الفيديو {0}% أثناء التشغيل — فك الترميز لا يلحق"
 offline_changed = "تغيّر توفر الوسائط: غير متصل {0}"
 
-# Переходы (Р.33 С4): вид, его параметры и кривая аудио.
+# Transitions (R.33 C4): kind, its parameters and audio curve.
 [trn]
 title = "انتقال {0}"
 kind = "النوع:"
@@ -1009,7 +1009,7 @@ circle = "دائرة"
 diamond = "معين"
 box = "مستطيل"
 
-# Окно камеры (Р.34 К3).
+# Camera window (R.34 K3).
 [cam]
 props = "خصائص الكاميرا…"
 title = "كاميرا {0}"
@@ -1020,7 +1020,7 @@ look_at = "النظر إلى نقطة"
 look_at_hint = "كاميرا بعقدتين: تصوّب دائما نحو النقطة (كما في After Effects)"
 length = "المدة، ث: {0}"
 
-# Вопросы, на которые программа обязана получить ответ до действия.
+# Questions the program must get answered before an action.
 [ask]
 drop_project_title = "أُسقط مشروع"
 drop_project_body = "الملف {0} مشروع. أتفتحه أم تُدرجه في هذا المونتاج كتركيب؟"
@@ -1049,7 +1049,7 @@ save_and_go = "احفظ وتابع"
 discard = "لا تحفظ"
 stay = "ابقَ هنا"
 
-# Окно генератора (Р.52): вид и параметры медиа без файла.
+# Generator window (R.52): kind and media parameters without a file.
 [genw]
 hint_kind = "نوع المولّد؛ النموذج كله يخصّ هذا الحدث"
 head = "المصدر: {0}"
@@ -1092,7 +1092,7 @@ noise = "حقل ضجيج"
 smpte = "أعمدة SMPTE"
 timecode = "رمز زمني"
 
-# Окно титра (Р.52 С3).
+# Title window (R.52 C3).
 [titlew]
 preset_roll = "تترات النهاية"
 preset_crawl = "شريط متحرك"
@@ -1121,8 +1121,8 @@ align_l = "يسار"
 align_c = "وسط"
 align_r = "يمين"
 
-# Подписи параметров генераторов (Р.53 п.414): своя область — «size» у
-# титра это КЕГЛЬ, а не зерно эффекта Noise.
+# Generator parameter labels (R.53 item 414): own area — “size” in
+# a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
 text = "نص"
 reveal = "الظهور"
@@ -1161,7 +1161,7 @@ fps = "إطارات في الثانية:"
 mono = "رمادي"
 tone = "نغمة 1 كيلوهرتز"
 
-# المعاملات العامة للتركيب (Р.59، المرحلة 3).
+# المعاملات العامة للتركيب (R.59، المرحلة 3).
 [pubp]
 publish = "نشر…"
 unpublish = "إلغاء النشر"

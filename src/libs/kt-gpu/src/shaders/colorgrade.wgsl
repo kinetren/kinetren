@@ -1,4 +1,4 @@
-// ColorGrade (Р.47): зеркало kt_fx::geom::tap_grade на f32.
+// ColorGrade (R.47): a mirror of kt_fx::geom::tap_grade on f32.
 // f0 = (brightness, contrast, saturation, hue_cos), f1.x = hue_sin.
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {

@@ -1,4 +1,4 @@
-//! Р.62, change B: дорожка — объект модели со стабильным id.
+//! R.62, change B: the track is a model object with a stable id.
 
 use kt_model::HasParams;
 use kt_model::LaneKind::{Audio as A, Morph as M, Video as V};
@@ -54,57 +54,57 @@ fn project() -> Project {
     p
 }
 
-/// Тест 729 (Р.62): id дорожки стабилен при вставке сверху, перестановке
-/// и удалении соседа; имя и высота — содержимое дорожки и ходят через
-/// undo; свойства едут с объектом, а не с номером.
+/// Test 729 (R.62): the track id is stable across insertion above, reordering
+/// and deletion of a neighbour; the name and height are track content and go through
+/// undo; properties travel with the object, not with the number.
 #[test]
 fn t729_track_id_is_stable_and_name_height_are_undoable() {
     let mut m = TimelineModel::new(project());
     let bottom = m.project().track_at(V, 1).unwrap().id;
-    assert_ne!(bottom.0, 0, "id назначен");
+    assert_ne!(bottom.0, 0, "id assigned");
 
-    // имя и высота — ОДНА команда свойств, и она откатывается
+    // name and height — ONE property command, and it is rolled back
     let mut props = m.project().track(bottom).unwrap().props();
-    props.name = "Титры".into();
+    props.name = "Titles".into();
     props.height = 48.0;
     m.apply(Command::SetTrackProps { id: bottom, props }).unwrap();
-    assert_eq!(m.project().track_label(V, 1), "Титры");
+    assert_eq!(m.project().track_label(V, 1), "Titles");
     assert_eq!(m.project().track(bottom).unwrap().height, 48.0);
     m.undo().unwrap();
-    assert_eq!(m.project().track_label(V, 1), "V2", "имя не откатилось");
-    assert_eq!(m.project().track(bottom).unwrap().height, 0.0, "высота не откатилась");
+    assert_eq!(m.project().track_label(V, 1), "V2", "name did not roll back");
+    assert_eq!(m.project().track(bottom).unwrap().height, 0.0, "height did not roll back");
     m.redo().unwrap();
 
-    // вставка дорожки СВЕРХУ: номер вырос, id тот же, свойства при нём
+    // inserting a track ABOVE: the number grew, the id is the same, properties with it
     m.apply(Command::InsertTrack { kind: V, at: 0 }).unwrap();
     let p = m.project();
     assert_eq!(p.lanes(V), 3);
-    assert_eq!(p.track_at(V, 2).unwrap().id, bottom, "id уехал при вставке соседа");
-    assert_eq!(p.track_label(V, 2), "Титры");
+    assert_eq!(p.track_at(V, 2).unwrap().id, bottom, "id moved when inserting a neighbor");
+    assert_eq!(p.track_label(V, 2), "Titles");
     assert_eq!(p.clips.iter().find(|c| c.id == ClipId(2)).unwrap().lane, 2);
     let inserted = p.track_at(V, 0).unwrap().id;
-    assert!(inserted != bottom && inserted.0 != 0, "новая дорожка получила свой id");
+    assert!(inserted != bottom && inserted.0 != 0, "the new track got its own id");
 
-    // перестановка: нижняя наверх — id и свойства едут с объектом
+    // reordering: the bottom one moved to the top — the id and properties travel with the object
     m.apply(Command::SetLaneOrder { order: vec![(V, 2), (V, 0), (V, 1), (A, 0)] }).unwrap();
     let p = m.project();
     assert_eq!(p.track_at(V, 0).unwrap().id, bottom);
-    assert_eq!(p.track_label(V, 0), "Титры");
+    assert_eq!(p.track_label(V, 0), "Titles");
     assert_eq!(p.clips.iter().find(|c| c.id == ClipId(2)).unwrap().lane, 0);
 
-    // удаление соседа: id остаётся, содержимое соседа уходит. После
-    // перестановки строки идут «Титры» (бывшая нижняя), пустая вставленная,
-    // дорожка события 1 — значит содержимое уносит удаление РАНГА 2
+    // deleting a neighbour: the id stays, the neighbour’s content goes. After
+    // the reordering the rows read “Titles” (the former bottom one), the empty inserted one,
+    // event track 1 — so the deletion of RANK 2 takes the content away
     m.apply(Command::RemoveTrack { kind: V, at: 2 }).unwrap();
     let p = m.project();
     assert_eq!(p.lanes(V), 2);
     assert_eq!(p.track_at(V, 0).unwrap().id, bottom);
-    assert!(p.clips.iter().all(|c| c.id != ClipId(1)), "события удалённой дорожки остались");
+    assert!(p.clips.iter().all(|c| c.id != ClipId(1)), "events of the deleted track remained");
     m.undo().unwrap();
-    assert_eq!(m.project().lanes(V), 3, "undo не вернул дорожку");
-    assert!(m.project().clips.iter().any(|c| c.id == ClipId(1)), "undo не вернул события");
+    assert_eq!(m.project().lanes(V), 3, "undo did not restore the track");
+    assert!(m.project().clips.iter().any(|c| c.id == ClipId(1)), "undo did not restore the events");
 
-    // последнюю дорожку вида убрать нельзя; служебные — можно все
+    // the last track of a view cannot be removed; service ones — all of them can
     assert!(matches!(
         m.apply(Command::RemoveTrack { kind: A, at: 0 }),
         Err(CommandError::LastTrack(A))
@@ -113,9 +113,9 @@ fn t729_track_id_is_stable_and_name_height_are_undoable() {
     m.apply(Command::RemoveTrack { kind: M, at: 0 }).unwrap();
     assert_eq!(m.project().lanes(M), 0);
 
-    // id уникальны по документу, включая ленты
+    // ids are unique per document, including reels
     let mut p = m.project().clone();
-    p.sequences.push(Sequence::new(MediaId(100), "Кусок"));
+    p.sequences.push(Sequence::new(MediaId(100), "Piece"));
     p.assign_track_ids();
     let ids: Vec<TrackId> =
         p.tracks.iter().chain(p.sequences[0].tracks.iter()).map(|t| t.id).collect();
@@ -123,60 +123,60 @@ fn t729_track_id_is_stable_and_name_height_are_undoable() {
     assert_eq!(ids.len(), uniq.len());
 }
 
-/// Тест 730 (Р.62): паспорт свойств дорожки. Пределы и типы — оттуда, а
-/// не из литералов интерфейса; уровень объявлен ПО ВИДУ (дБ у аудио,
-/// непрозрачность у видео), у служебных строк из выключателей только
-/// замок. Кривой на свойстве дорожки нет и быть не может: её ключ — тик
-/// таймлайна, а это второй домен автоматизации (следующий change),
-/// поэтому ряды структурные и `auto_params()` пуст.
+/// Test 730 (R.62): the track property spec sheet. Limits and types come from there, and
+/// not from interface literals; the level is declared PER VIEW (dB for audio,
+/// opacity for video); for service rows the only toggle is
+/// the lock. A track property has no curve and cannot have one: its key is a timeline
+/// tick, and that is a second automation domain (the next change),
+/// so the rows are structural and `auto_params()` is empty.
 #[test]
 fn t730_track_property_passport_and_no_curves() {
     let p = project();
     let audio = p.track_at(A, 0).unwrap();
     let video = p.track_at(V, 0).unwrap();
 
-    // уровень — по виду; чужого ряда у дорожки нет (мёртвых контролов не бывает)
-    let spec = audio.param_spec("gain_db").expect("у аудиодорожки уровень в дБ");
+    // level — by view; the track has no foreign row (dead controls do not exist)
+    let spec = audio.param_spec("gain_db").expect("an audio track has level in dB");
     assert_eq!((spec.min, spec.max, spec.default), (TRACK_GAIN_MIN_DB, TRACK_GAIN_MAX_DB, 0.0));
     assert_eq!(spec.unit, ParamUnit::Db);
-    assert!(audio.param_spec("opacity").is_none(), "у аудио непрозрачности нет");
-    let spec = video.param_spec("opacity").expect("у видеодорожки непрозрачность");
+    assert!(audio.param_spec("opacity").is_none(), "audio has no opacity");
+    let spec = video.param_spec("opacity").expect("a video track has opacity");
     assert_eq!((spec.min, spec.max, spec.default), (0.0, 1.0, 1.0));
-    assert!(video.param_spec("gain_db").is_none(), "у видео уровня в дБ нет");
+    assert!(video.param_spec("gain_db").is_none(), "video has no level in dB");
 
-    // кламп идёт ЧЕРЕЗ паспорт
+    // the clamp goes THROUGH the spec sheet
     let mut t = audio.clone();
     assert!(t.set_param("gain_db", 999.0));
-    assert_eq!(t.gain_db, TRACK_GAIN_MAX_DB, "уровень не зажат пределом паспорта");
+    assert_eq!(t.gain_db, TRACK_GAIN_MAX_DB, "level is not clamped by the passport limit");
     let mut t = video.clone();
     assert!(t.set_param("opacity", -5.0));
     assert_eq!(t.opacity, 0.0);
 
-    // выключатели: у клипных строк три, у служебных только замок
+    // toggles: clip rows have three, service rows only the lock
     let names = |t: &Track| t.flag_specs().iter().map(|f| f.name).collect::<Vec<_>>();
     assert_eq!(names(audio), vec!["mute", "solo", "lock"]);
     let mut q = project();
     q.ensure_tracks(M, 1);
     let morph = q.track_at(M, 0).unwrap();
-    assert_eq!(names(morph), vec!["lock"], "у морф-строки нет mute и solo");
+    assert_eq!(names(morph), vec!["lock"], "a morph row has no mute and solo");
     assert_eq!(morph.get_flag("mute"), None);
 
-    // режим наложения — типизированный выбор У ВИДЕО, ключом варианта
+    // blend mode — a typed choice FOR VIDEO, keyed by the variant
     assert_eq!(video.get_value("blend"), Some(ParamValue::Choice("normal".into())));
     let mut t = video.clone();
     assert!(t.set_value("blend", &ParamValue::Choice("screen".into())));
     assert_eq!(t.blend, BlendMode::Screen);
-    assert!(!t.set_value("blend", &ParamValue::Choice("нет такого".into())), "чужой ключ не молча");
-    assert_eq!(audio.value_type("blend"), None, "у аудиодорожки режима наложения нет");
+    assert!(!t.set_value("blend", &ParamValue::Choice("no such".into())), "a foreign key not silently");
+    assert_eq!(audio.value_type("blend"), None, "an audio track has no overlay mode");
 
-    // КРИВЫХ У ДОРОЖКИ НЕТ: ни одного анимируемого ряда
+    // TRACKS HAVE NO CURVES: not a single animatable row
     for t in [audio, video] {
         assert!(
             t.param_specs().iter().all(|s| s.kind != ParamKind::Smooth),
-            "домен времени дорожки — следующая работа: анимируемых рядов быть не должно"
+            "the track time domain is the next task: there must be no animatable series"
         );
     }
-    // и модель отвергает их громко, если они всё же появились в файле
+    // and the model rejects them loudly if they nonetheless appeared in the file
     let mut bad = project();
     bad.track_at_mut(A, 0).unwrap().fx_auto = vec![vec![ParamCurve {
         param: "gain_db".into(),
@@ -185,17 +185,17 @@ fn t730_track_property_passport_and_no_curves() {
     }]];
     assert!(
         matches!(bad.validate(), Err(ProjectError::TrackCurvesUnsupported(_))),
-        "кривая на дорожке обязана валить загрузку с причиной: {:?}",
+        "a curve on a track must fail loading with a reason: {:?}",
         bad.validate()
     );
 }
 
-/// Тест 738 (Р.62): ЗАМОК — один гейт на весь реестр команд. Каждая
-/// команда либо называет строки, которые правит (`target_rows`), либо
-/// объявлена «содержимого строк не трогает»; сам match исчерпывающий,
-/// поэтому новая команда не соберётся, пока её не отнесли к половине.
-/// Здесь проверяется СЛЕДСТВИЕ: жест по запертой дорожке отвергается с
-/// причиной, а свойства самой дорожки правятся.
+/// Test 738 (R.62): the LOCK is one gate for the whole command registry. Each
+/// command either names the rows it edits (`target_rows`) or is declared “does not touch row content”;
+/// the match itself is exhaustive, so a new command will not compile until it is
+/// assigned to one half.
+/// Here the CONSEQUENCE is checked: a gesture on a locked track is rejected with
+/// a reason, while the track’s own properties can be edited.
 #[test]
 fn t738_locked_track_refuses_edits_but_stays_editable_itself() {
     let mut m = TimelineModel::new(project());
@@ -204,7 +204,7 @@ fn t738_locked_track_refuses_edits_but_stays_editable_itself() {
     props.lock = true;
     m.apply(Command::SetTrackProps { id: locked, props }).unwrap();
 
-    // жесты по СОБЫТИЯМ запертой дорожки — отказ с причиной
+    // gestures on EVENTS of a locked track — rejection with a reason
     let moved = Command::MoveClip { id: ClipId(1), new_start: Tick(5_000), new_lane: 0 };
     for cmd in [
         moved.clone(),
@@ -216,38 +216,38 @@ fn t738_locked_track_refuses_edits_but_stays_editable_itself() {
     ] {
         assert!(
             matches!(m.apply(cmd.clone()), Err(CommandError::TrackLocked(t)) if t == locked),
-            "жест по запертой дорожке обязан быть отказом: {cmd:?}"
+            "a gesture on a locked track must be a rejection: {cmd:?}"
         );
     }
-    // модель не тронута
+    // the model is untouched
     assert_eq!(m.project().clips.iter().find(|c| c.id == ClipId(1)).unwrap().start, Tick(0));
 
-    // ПЕРЕЕЗД НА запертую дорожку — тоже отказ (замок про строку, а не
-    // про событие): событие с соседней дорожки внутрь не заезжает
+    // a MOVE ONTO a locked track is also a rejection (the lock applies to the row,
+    // not the event): an event from a neighbouring track does not slide in
     assert!(matches!(
         m.apply(Command::MoveClip { id: ClipId(2), new_start: Tick(0), new_lane: 0 }),
         Err(CommandError::TrackLocked(_))
     ));
 
-    // удаление запертой дорожки уносит её события — тоже отказ
+    // deleting a locked track takes its events with it — also a rejection
     assert!(matches!(
         m.apply(Command::RemoveTrack { kind: V, at: 0 }),
         Err(CommandError::TrackLocked(_))
     ));
 
-    // а СВОЙСТВА самой дорожки правятся — иначе её нечем отпереть
+    // but the track’s OWN properties are edited — otherwise there would be no way to unlock it
     let mut props = m.project().track(locked).unwrap().props();
     props.mute = true;
-    m.apply(Command::SetTrackProps { id: locked, props }).expect("mute запертой дорожки");
+    m.apply(Command::SetTrackProps { id: locked, props }).expect("mute of a locked track");
     assert!(m.project().track(locked).unwrap().mute);
     let mut props = m.project().track(locked).unwrap().props();
     props.lock = false;
-    m.apply(Command::SetTrackProps { id: locked, props }).expect("замок снимается");
-    m.apply(moved).expect("после снятия замка жест проходит");
+    m.apply(Command::SetTrackProps { id: locked, props }).expect("the lock is released");
+    m.apply(moved).expect("after releasing the lock the gesture passes");
 
-    // соседняя НЕзапертая дорожка всё это время работает
+    // the neighbouring UNlocked track keeps working all this time
     let free = m.project().track_at(V, 1).map(|t| t.id);
     assert!(free.is_some());
     m.apply(Command::MoveClip { id: ClipId(2), new_start: Tick(7_000), new_lane: 1 })
-        .expect("соседняя дорожка не заперта");
+        .expect("the neighboring track is not locked");
 }

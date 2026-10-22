@@ -1,4 +1,4 @@
-// Duotone (Р.47): зеркало kt_fx::geom::tap_duo.
+// Duotone (R.47): a mirror of kt_fx::geom::tap_duo.
 // f0.xyz = shadow, f1.xyz = high, f1.w = amount.
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {

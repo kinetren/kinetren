@@ -1,17 +1,17 @@
-//! Растеризация титров (Р.52, F-TXT-001): чистая функция
-//! (параметры, W, H) → straight-RGBA байты. Правила — CLAUDE.md крейта:
-//! вендоренный шрифт, запиненные harfrust/ab_glyph, никакого GUI.
+//! Rasterization of titles (R.52, F-TXT-001): a pure function
+//! (parameters, W, H) → straight-RGBA bytes. The rules — the crate's CLAUDE.md:
+//! a vendored font, pinned harfrust/ab_glyph, no GUI whatsoever.
 //!
-//! harfrust даёт ПОЗИЦИИ (кернинг GPOS, лигатуры, вязь), ab_glyph —
-//! ПИКСЕЛИ по GlyphId; метрики — от тех же байт шрифта. В С2 рисуется
-//! только заливка; обводка/тень/плашка (F-TXT-005) — С3, поля под них
-//! уже в структуре: формат не догоняет код.
+//! harfrust gives the POSITIONS (GPOS kerning, ligatures, shaping), ab_glyph —
+//! the PIXELS by GlyphId; the metrics come from the same font bytes. In C2 only
+//! the fill is drawn; outline/shadow/plate (F-TXT-005) are C3 — the fields for them
+//! already sit in the structure: the format does not catch up with the code.
 
 use ab_glyph::{Font as _, FontRef as AbFont, Glyph, PxScale, point};
 use harfrust::{FontRef as HrFont, ShapeOptions, ShaperData, UnicodeBuffer};
 use std::sync::OnceLock;
 
-/// Единственная вендоренная семья v1 (С4 добавит системные).
+/// The only vendored family in v1 (C4 will add the system ones).
 pub const VENDORED_FAMILY: &str = "Noto Sans";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -29,7 +29,7 @@ pub enum Align {
     Right,
 }
 
-/// Якорь 3×3: какой точкой блок текста сидит в `pos`.
+/// 3×3 anchor: which point of the text block sits at `pos`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Anchor {
     TopLeft,
@@ -44,9 +44,9 @@ pub enum Anchor {
     BottomRight,
 }
 
-/// Слой оформления (порядок отрисовки СНИЗУ ВВЕРХ — сохраняемое поле с
-/// первого дня: урок Kdenlive из F-TXT-005). Рендер слоёв, кроме
-/// заливки, — С3.
+/// Decoration layer (drawing order BOTTOM TO TOP — a saved field from day one:
+/// a lesson of Kdenlive from F-TXT-005). Rendering of the layers, other than
+/// the fill, is C3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Layer {
     Plate,
@@ -55,56 +55,56 @@ pub enum Layer {
     Fill,
 }
 
-/// Параметры титра — вход растеризатора. Всё ОТНОСИТЕЛЬНОЕ: кегль — доля
-/// высоты кадра, трекинг/обводка/тень/паддинги — доли em; кадр рождается
-/// в любом Quality без пересчёта параметров.
+/// Title parameters — the input of the rasterizer. Everything is RELATIVE: the size — a fraction of
+/// the frame height, tracking/outline/shadow/padding — fractions of em; the frame is born
+/// in any Quality without recomputing the parameters.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextParams {
-    /// Многострочный текст, явные '\n'. Пустая строка = прозрачный кадр.
+    /// Multi-line text, explicit `\n`. An empty line = a transparent frame.
     pub text: String,
-    /// Семья шрифта. v1: не-вендоренная семья тихо падает в вендоренную
-    /// (С4 добавит системные и видимое уведомление о подмене).
+    /// Font family. v1: a non-vendored family silently falls back to the vendored one
+    /// (C4 will add the system ones and a visible notice of substitution).
     pub family: String,
     pub style: FaceStyle,
-    /// Кегль: доля ВЫСОТЫ кадра (0.07 ≈ нижняя треть).
+    /// Size: a fraction of the frame HEIGHT (0.07 ≈ the lower third).
     pub size: f64,
-    /// Множитель межстрочного интервала.
+    /// Line spacing multiplier.
     pub line_spacing: f64,
-    /// Трекинг, доля em.
+    /// Tracking, a fraction of em.
     pub tracking: f64,
     pub align: Align,
     pub anchor: Anchor,
-    /// Нормированные координаты якоря (0..1 от ширины/высоты кадра).
+    /// Normalized anchor coordinates (0..1 of the frame width/height).
     pub pos: (f64, f64),
-    /// Заливка RGBA (straight).
+    /// RGBA fill (straight).
     pub fill: [u8; 4],
-    /// Обводка: ширина в долях em (0 = выкл) + цвет. Рендер — С3.
+    /// Outline: width in fractions of em (0 = off) + colour. Rendering — C3.
     pub stroke_w: f64,
     pub stroke: [u8; 4],
-    /// Тень: сдвиг и размытие в долях em, цвет (альфа 0 = выкл). С3.
+    /// Shadow: offset and blur in fractions of em, colour (alpha 0 = off). C3.
     pub shadow_dx: f64,
     pub shadow_dy: f64,
     pub shadow_blur: f64,
     pub shadow: [u8; 4],
-    /// Плашка: паддинги в долях em, цвет (альфа 0 = выкл). С3.
+    /// Plate: paddings in fractions of em, colour (alpha 0 = off). C3.
     pub plate_pad: (f64, f64),
     pub plate: [u8; 4],
-    /// Порядок слоёв снизу вверх.
+    /// Layer order, bottom to top.
     pub order: [Layer; 4],
-    /// Доля РАСКРЫТЫХ кластеров, 0..1 (Р.53, п.423). 1.0 — всё видно, и
-    /// это ТОЧНО прежняя ветка кода: голден титра не двигается.
+    /// Fraction of REVEALED clusters, 0..1 (R.53, item 423). 1.0 — everything is visible, and
+    /// this is EXACTLY the former code branch: the title golden does not move.
     ///
-    /// Времени в kt-text нет и не будет: число считает kt-media из pts
-    /// материала. Раскладка по-прежнему считается ОДИН раз по ПОЛНОЙ
-    /// строке — иначе буквы дёргались бы при каждом появлении соседа.
+    /// There is no time in kt-text and there never will be: the number is computed by kt-media from the
+    /// pts of the material. The layout is still computed ONCE over the FULL
+    /// line — otherwise the letters would jitter at every appearance of a neighbour.
     pub reveal: f64,
-    /// Ширина мягкого фронта раскрытия, В КЛАСТЕРАХ (0 — жёсткий срез,
-    /// «печатная машинка»).
+    /// Width of the soft reveal front, IN CLUSTERS (0 — a hard cut,
+    /// “typewriter”).
     pub reveal_soft: f64,
-    /// Смещение ВСЕГО блока в пикселях кадра (Р.53, п.424). Бегущая
-    /// строка и ползок — это смещение, а не видимость. Вызывающий обязан
-    /// квантовать его до 1/64 px ДО передачи: тогда взаимная геометрия
-    /// глифов между кадрами бит-в-бит постоянна.
+    /// Offset of the WHOLE block in frame pixels (R.53, item 424). A scrolling
+    /// line and a crawl are an offset, not visibility. The caller must
+    /// quantize it to 1/64 px BEFORE passing: then the mutual geometry of the
+    /// glyphs between frames is bit-for-bit constant.
     pub offset: (f64, f64),
 }
 
@@ -137,7 +137,7 @@ impl Default for TextParams {
     }
 }
 
-/// Бокс в пикселях кадра.
+/// Box in frame pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PxBox {
     pub x: f64,
@@ -146,17 +146,17 @@ pub struct PxBox {
     pub h: f64,
 }
 
-/// Геометрия раскладки: бокс блока и боксы строк — для драга в превью,
-/// плашки и посимвольной анимации будущего (F-TXT-006).
+/// Layout geometry: the block box and the line boxes — for dragging in the preview,
+/// plates and per-character animation of the future (F-TXT-006).
 #[derive(Debug, Clone, PartialEq)]
 pub struct LayoutInfo {
     pub block: PxBox,
     pub lines: Vec<PxBox>,
-    /// Боксы КЛАСТЕРОВ в порядке текста (Р.53, п.423). Кластер, а не
-    /// символ и не глиф: harfrust отдаёт грапhemные кластеры даром, и
-    /// лигатура `fi`, база с диакритикой и ZWJ-эмодзи приходят ОДНОЙ
-    /// единицей. Своего сегментатора в проекте нет и заводить его ради
-    /// анимации было бы отдельной подсистемой.
+    /// Boxes of CLUSTERS in text order (R.53, item 423). A cluster, not a
+    /// symbol nor a glyph: harfrust gives grapheme clusters for free, and
+    /// the `fi` ligature, a base with a diacritic and a ZWJ emoji arrive as ONE
+    /// unit. There is no segmenter of our own in the project, and creating one for the
+    /// sake of animation would be a separate subsystem.
     pub clusters: Vec<PxBox>,
 }
 
@@ -165,7 +165,7 @@ pub struct FaceInfo {
     pub style: FaceStyle,
 }
 
-/// Вендоренные начертания — для комбо в окне титра.
+/// Vendored faces — for the combo in the title window.
 pub fn faces() -> &'static [FaceInfo] {
     &[
         FaceInfo { family: VENDORED_FAMILY, style: FaceStyle::Regular },
@@ -173,7 +173,7 @@ pub fn faces() -> &'static [FaceInfo] {
     ]
 }
 
-// ---- шрифт -----------------------------------------------------------------
+// ---- font -----------------------------------------------------------------
 
 static REGULAR_BYTES: &[u8] = include_bytes!("../assets/NotoSans-Regular.ttf");
 static BOLD_BYTES: &[u8] = include_bytes!("../assets/NotoSans-Bold.ttf");
@@ -182,13 +182,13 @@ struct Face {
     ab: AbFont<'static>,
     hr: HrFont<'static>,
     shaper: ShaperData,
-    /// px на font unit при кегле в 1 px: 1/units_per_em.
+    /// px per font unit at a size of 1 px: 1/units_per_em.
     unit: f64,
     ascent_u: f64,
     descent_u: f64,
     gap_u: f64,
-    /// Ловушка ab_glyph: `PxScale` — это ВЫСОТА (ascent−descent), не em.
-    /// Масштаб для «кегль = size_px» выводится только отсюда (t481).
+    /// The ab_glyph trap: `PxScale` is the HEIGHT (ascent−descent), not em.
+    /// The scale for “size = size_px” is derived only from here (t481).
     height_per_em: f64,
 }
 
@@ -202,15 +202,15 @@ fn face(style: FaceStyle) -> &'static Face {
     cell.get_or_init(|| build_face(bytes, 0).expect("vendored font parses"))
 }
 
-/// Конструктор начертания из байт (вендоренных или системных; `index` —
-/// номер шрифта в ttc-коллекции).
+/// Face constructor from bytes (vendored or system; `index` —
+/// the font number in the ttc collection).
 fn build_face(bytes: &'static [u8], index: u32) -> Option<Face> {
     let ab = AbFont::try_from_slice_and_index(bytes, index).ok()?;
     let hr = HrFont::from_index(bytes, index).ok()?;
     let shaper = ShaperData::new(&hr);
     let upem = ab.units_per_em()? as f64;
     let ascent_u = ab.ascent_unscaled() as f64;
-    let descent_u = ab.descent_unscaled() as f64; // отрицательный
+    let descent_u = ab.descent_unscaled() as f64; // negative
     let gap_u = ab.line_gap_unscaled() as f64;
     Some(Face {
         ab,
@@ -224,10 +224,10 @@ fn build_face(bytes: &'static [u8], index: u32) -> Option<Face> {
     })
 }
 
-/// Итог резолва семьи шрифта (С4): чем рисуем и почему. `System` несёт
-/// путь файла — вместе с байтами он входит в идентичность кадра
-/// (kt-text/CLAUDE.md, правило 1); `MissingFallback` обязан дать видимое
-/// уведомление в UI.
+/// The result of resolving the font family (C4): what we draw with and why. `System` carries
+/// the file path — together with the bytes it enters the identity of the frame
+/// (kt-text/CLAUDE.md, rule 1); `MissingFallback` must give a visible
+/// notice in the UI.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FontResolve {
     Vendored,
@@ -244,12 +244,12 @@ fn font_db() -> &'static fontdb::Database {
     })
 }
 
-/// Системные семьи для комбо окна титра: отсортированы, без дублей.
-/// Вендоренная семья в список не входит — она отдельная первая строка.
+/// System families for the title window's combo: sorted, without duplicates.
+/// The vendored family is not in the list — it is a separate first line.
 ///
-/// Считается ОДИН раз (Р.53, п.413): список зовётся на каждом кадре, пока
-/// открыт попап комбо, а обход всех начертаний с сортировкой и дедупом —
-/// это аллокации в пути кадра (инвариант 12).
+/// Computed ONCE (R.53, item 413): the list is called on every frame while the combo
+/// popup is open, and a walk over all faces with sorting and dedup would be
+/// allocations in the frame path (invariant 12).
 pub fn system_families() -> &'static [String] {
     static FAMILIES: OnceLock<Vec<String>> = OnceLock::new();
     FAMILIES.get_or_init(|| {
@@ -264,7 +264,7 @@ pub fn system_families() -> &'static [String] {
     })
 }
 
-/// Чем реально рисуется данная семья на ЭТОЙ машине.
+/// What is actually drawn with the given family on THIS machine.
 pub fn resolve_family(family: &str, bold: bool) -> FontResolve {
     if family.is_empty() || family == VENDORED_FAMILY {
         return FontResolve::Vendored;
@@ -275,8 +275,8 @@ pub fn resolve_family(family: &str, bold: bool) -> FontResolve {
     }
 }
 
-/// Загруженные системные начертания. Байты утекают ОДИН раз на
-/// (семья, стиль): шрифтов в проекте единицы, а `Face` держит
+/// Loaded system faces. The bytes leak ONCE per
+/// (family, style): there are a few fonts in the project, and `Face` holds a
 /// `FontRef<'static>`.
 #[allow(clippy::type_complexity)]
 fn system_face(family: &str, bold: bool) -> Option<(&'static Face, std::path::PathBuf)> {
@@ -318,37 +318,37 @@ fn resolve_face(p: &TextParams) -> &'static Face {
     if p.family.is_empty() || p.family == VENDORED_FAMILY {
         return face(p.style);
     }
-    // семья не найдена — подмена вендоренной (уведомление — забота окна,
-    // `resolve_family`); найдена — рисуем ею
+    // family not found — substitution by the vendored one (the notice is the window's concern,
+    // `resolve_family`); found — we draw with it
     match system_face(&p.family, matches!(p.style, FaceStyle::Bold)) {
         Some((f, _)) => f,
         None => face(p.style),
     }
 }
 
-// ---- раскладка -------------------------------------------------------------
+// ---- layout -------------------------------------------------------------
 
 struct PlacedGlyph {
     id: u16,
-    /// Начало пера в px кадра (baseline).
+    /// The pen's start in frame px (baseline).
     x: f64,
     y: f64,
-    /// Номер кластера СКВОЗЬ весь текст (Р.53, п.423): по нему считается
-    /// раскрытие. Глифы одного кластера несут один номер и появляются
-    /// вместе.
+    /// The cluster number THROUGH the whole text (R.53, item 423): the reveal is computed
+    /// by it. The glyphs of one cluster carry one number and appear
+    /// together.
     cluster: usize,
 }
 
 struct Laid {
     glyphs: Vec<PlacedGlyph>,
     info: LayoutInfo,
-    /// ab_glyph-масштаб для растеризации при этом кегле.
+    /// ab_glyph scale for rasterization at this size.
     scale: PxScale,
 }
 
-/// Глиф строки после шейпинга: id, x/y в font units, БАЙТОВЫЙ адрес
-/// кластера (у harfrust это смещение в исходной строке) и продвижение —
-/// по ним считается бокс кластера.
+/// A glyph of the line after shaping: id, x/y in font units, the BYTE address of the
+/// cluster (in harfrust this is the offset in the source line) and the advance —
+/// the cluster box is computed from them.
 struct ShapedGlyph {
     id: u16,
     x: f64,
@@ -357,10 +357,10 @@ struct ShapedGlyph {
     adv: f64,
 }
 
-/// Строка после шейпинга: глифы и ширина в units.
+/// A line after shaping: glyphs and width in units.
 type ShapedLine = (Vec<ShapedGlyph>, f64);
 
-/// Шейпинг одной строки.
+/// Shaping of one line.
 fn shape_line(face: &Face, text: &str, tracking_u: f64) -> ShapedLine {
     let mut buf = UnicodeBuffer::new();
     buf.push_str(text);
@@ -371,7 +371,7 @@ fn shape_line(face: &Face, text: &str, tracking_u: f64) -> ShapedLine {
     let mut cursor = 0.0f64;
     for (info, pos) in out.glyph_infos().iter().zip(out.glyph_positions()) {
         let id = u16::try_from(info.glyph_id).unwrap_or(0);
-        // harfrust: Y+ вверх; кадр: Y+ вниз
+        // harfrust: Y+ up; frame: Y+ down
         glyphs.push(ShapedGlyph {
             id,
             x: cursor + pos.x_offset as f64,
@@ -382,7 +382,7 @@ fn shape_line(face: &Face, text: &str, tracking_u: f64) -> ShapedLine {
         cursor += pos.x_advance as f64 + tracking_u;
     }
     if !glyphs.is_empty() {
-        cursor -= tracking_u; // трекинг — МЕЖДУ глифами
+        cursor -= tracking_u; // tracking — BETWEEN glyphs
     }
     (glyphs, cursor.max(0.0))
 }
@@ -390,7 +390,7 @@ fn shape_line(face: &Face, text: &str, tracking_u: f64) -> ShapedLine {
 fn layout(p: &TextParams, w: u32, h: u32) -> Laid {
     let face = resolve_face(p);
     let size_px = (p.size * h as f64).max(0.0);
-    let k = size_px * face.unit; // px на font unit
+    let k = size_px * face.unit; // px per font unit
     let tracking_u = if size_px > 0.0 { p.tracking / face.unit } else { 0.0 };
 
     let lines: Vec<&str> = p.text.split('\n').collect();
@@ -400,7 +400,7 @@ fn layout(p: &TextParams, w: u32, h: u32) -> Laid {
     let block_w = shaped.iter().map(|(_, w)| *w * k).fold(0.0f64, f64::max);
     let block_h = line_h * shaped.len() as f64;
 
-    // якорь: какой точкой блок сидит в pos
+    // anchor: which point of the block sits at pos
     let (ax, ay) = (p.pos.0 * w as f64, p.pos.1 * h as f64);
     let bx = match p.anchor {
         Anchor::TopLeft | Anchor::CenterLeft | Anchor::BottomLeft => ax,
@@ -413,16 +413,16 @@ fn layout(p: &TextParams, w: u32, h: u32) -> Laid {
         Anchor::BottomLeft | Anchor::BottomCenter | Anchor::BottomRight => ay - block_h,
     };
 
-    // Смещение всего блока (Р.53, п.424) — квант 1/64 px ДО сложения:
-    // кратные 1/64 представимы в f64 точно, поэтому взаимная геометрия
-    // глифов между кадрами бит-в-бит постоянна, а не «почти».
+    // The offset of the whole block (R.53, item 424) — quantized to 1/64 px BEFORE addition:
+    // multiples of 1/64 are exactly representable in f64, so the mutual geometry of the
+    // glyphs between frames is bit-for-bit constant, not “almost”.
     let (bx, by) = (bx + q64(p.offset.0), by + q64(p.offset.1));
 
     let mut glyphs = Vec::new();
     let mut line_boxes = Vec::with_capacity(shaped.len());
     let mut clusters: Vec<PxBox> = Vec::new();
-    // номер кластера СКВОЗНОЙ по всему тексту: байтовые адреса harfrust
-    // уникальны только внутри своей строки
+    // cluster number THROUGH the whole text: harfrust's byte addresses are
+    // unique only within their own line
     let mut cluster_no = 0usize;
     for (i, (line, line_w_u)) in shaped.iter().enumerate() {
         let line_w = line_w_u * k;
@@ -432,13 +432,13 @@ fn layout(p: &TextParams, w: u32, h: u32) -> Laid {
             Align::Right => bx + (block_w - line_w),
         };
         let top = by + i as f64 * line_h;
-        // базовая линия = верх строки + ascent·k; межстрочный множитель
-        // растягивает ШАГ строк, а не сам глиф
+        // baseline = top of the line + ascent·k; the line-spacing multiplier
+        // stretches the STEP of lines, not the glyph itself
         let baseline = top + face.ascent_u * k;
         let mut prev_cluster: Option<u32> = None;
         for g in line {
-            // новый байтовый адрес — новый кластер; глифы одного кластера
-            // (лигатура, база с диакритикой) идут подряд и делят номер
+            // a new byte address — a new cluster; the glyphs of one cluster
+            // (a ligature, a base with a diacritic) go in a row and share the number
             if prev_cluster != Some(g.cluster) {
                 if prev_cluster.is_some() {
                     cluster_no += 1;
@@ -446,7 +446,7 @@ fn layout(p: &TextParams, w: u32, h: u32) -> Laid {
                 prev_cluster = Some(g.cluster);
                 clusters.push(PxBox { x: lx + g.x * k, y: top, w: g.adv * k, h: line_h });
             } else if let Some(b) = clusters.last_mut() {
-                // второй глиф того же кластера расширяет его бокс
+                // a second glyph of the same cluster widens its box
                 let right = (lx + g.x * k + g.adv * k).max(b.x + b.w);
                 b.w = right - b.x;
             }
@@ -474,21 +474,21 @@ fn layout(p: &TextParams, w: u32, h: u32) -> Laid {
     }
 }
 
-/// Квант 1/64 px: позиции глифов детерминированы и не дрожат от порядка
-/// арифметики.
+/// The 1/64 px quantum: glyph positions are deterministic and do not jitter from the
+/// order of arithmetic.
 fn q64(v: f64) -> f64 {
     (v * 64.0).round() / 64.0
 }
 
-// ---- публичное API ---------------------------------------------------------
+// ---- public API ---------------------------------------------------------
 
-/// Геометрия раскладки при данном размере кадра (без растеризации).
+/// Layout geometry at the given frame size (without rasterization).
 pub fn layout_info(p: &TextParams, w: u32, h: u32) -> LayoutInfo {
     layout(p, w, h).info
 }
 
-/// Кодпоинты текста, для которых в начертании НЕТ глифа (ответ «глифа
-/// нет» в окне титра — правило UI 11). Пустой список = всё покрыто.
+/// Codepoints of the text for which the face has NO glyph (the answer “no glyph”
+/// in the title window — UI rule 11). An empty list = everything is covered.
 pub fn uncovered(text: &str, family: &str, style: FaceStyle) -> Vec<char> {
     let face =
         resolve_face(&TextParams { family: family.to_string(), style, ..TextParams::default() });
@@ -499,9 +499,9 @@ pub fn uncovered(text: &str, family: &str, style: FaceStyle) -> Vec<char> {
     out
 }
 
-/// Кадр титра РОВНО `w`×`h`: straight-RGBA8. Слои оформления (плашка,
-/// тень, обводка, заливка) компонуются по `order` в premultiplied u16 и
-/// разпремультиплицируются один раз на выходе.
+/// The title frame EXACTLY `w`×`h`: straight-RGBA8. The decoration layers (plate,
+/// shadow, outline, fill) are composed by `order` in premultiplied u16 and
+/// un-premultiplied once on output.
 pub fn render_rgba(p: &TextParams, w: u32, h: u32) -> Box<[u8]> {
     let n = (w as usize) * (h as usize);
     let mut out = vec![0u8; n * 4];
@@ -512,16 +512,16 @@ pub fn render_rgba(p: &TextParams, w: u32, h: u32) -> Box<[u8]> {
     let laid = layout(p, w, h);
     let size_px = p.size * h as f64;
 
-    // Раскрытие (Р.53, п.423): вес кластера, 0..255. Полная видимость —
-    // ТОЧНО прежняя ветка (вес не считается вовсе), поэтому голден титра
-    // не может двинуться от появления анимации.
+    // Reveal (R.53, item 423): the weight of a cluster, 0..255. Full visibility is
+    // EXACTLY the former branch (the weight is not computed at all), so the title golden
+    // cannot move from the appearance of the animation.
     let full = p.reveal >= 1.0 && p.reveal_soft <= 0.0;
     let ncl = laid.info.clusters.len().max(1) as f64;
     let cluster_w = |c: usize| -> u32 {
         if full {
             return 255;
         }
-        // фронт идёт по кластерам; мягкость — ширина фронта в кластерах
+        // the front moves across clusters; softness — the width of the front in clusters
         let front = p.reveal.clamp(0.0, 1.0) * (ncl + p.reveal_soft.max(0.0));
         let d = front - c as f64;
         if p.reveal_soft <= 0.0 {
@@ -530,7 +530,7 @@ pub fn render_rgba(p: &TextParams, w: u32, h: u32) -> Box<[u8]> {
         ((d / p.reveal_soft).clamp(0.0, 1.0) * 255.0).round() as u32
     };
 
-    // силуэт (A8): покрытие всех глифов, перекрытия — максимумом
+    // silhouette (A8): the coverage of all glyphs, overlaps — by maximum
     let mut cov = vec![0u8; n];
     for g in &laid.glyphs {
         let wgt = cluster_w(g.cluster);
@@ -552,13 +552,13 @@ pub fn render_rgba(p: &TextParams, w: u32, h: u32) -> Box<[u8]> {
             }
             let i = (py * w as i64 + px) as usize;
             let raw = (c * 255.0).round().clamp(0.0, 255.0) as u8;
-            // модуляция ОДНОЙ строкой; при full она тождественна (255/255)
+            // modulation by ONE row; at full it is identical (255/255)
             let v = if full { raw } else { ((raw as u32 * wgt + 127) / 255) as u8 };
             cov[i] = cov[i].max(v);
         });
     }
 
-    // premultiplied-аккумулятор u16 на канал
+    // premultiplied u16 accumulator per channel
     let mut acc = vec![0u16; n * 4];
     let mut over = |alpha: &[u8], color: [u8; 4]| {
         let ca = color[3] as u32;
@@ -569,7 +569,7 @@ pub fn render_rgba(p: &TextParams, w: u32, h: u32) -> Box<[u8]> {
             if m == 0 {
                 continue;
             }
-            let sa = (m as u32 * ca + 127) / 255; // альфа слоя в пикселе
+            let sa = (m as u32 * ca + 127) / 255; // layer alpha in a pixel
             let inv = 255 - sa;
             let o = i * 4;
             for ch in 0..3 {
@@ -589,7 +589,7 @@ pub fn render_rgba(p: &TextParams, w: u32, h: u32) -> Box<[u8]> {
                 if p.plate[3] == 0 {
                     continue;
                 }
-                // прозрачность плашки вшита в её альфа-карту
+                // the plate's transparency is built into its alpha map
                 let alpha = plate_alpha(&laid.info, p, size_px, w, h);
                 over(&alpha, [p.plate[0], p.plate[1], p.plate[2], 255]);
             }
@@ -610,7 +610,7 @@ pub fn render_rgba(p: &TextParams, w: u32, h: u32) -> Box<[u8]> {
         }
     }
 
-    // разпремультипликация → straight
+    // un-premultiplication → straight
     for i in 0..n {
         let o = i * 4;
         let a = acc[o + 3].min(255) as u32;
@@ -626,16 +626,16 @@ pub fn render_rgba(p: &TextParams, w: u32, h: u32) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
-/// Плашка: прямоугольник ПО СТРОКЕ (честная геометрия — из метрик глифов
-/// её не вывести, F-TXT-005) + паддинги в долях em; прозрачность плашки
-/// вшита в альфу.
+/// Plate: a rectangle PER LINE (honest geometry — it cannot be derived from glyph metrics,
+/// F-TXT-005) + paddings in fractions of em; the plate's transparency
+/// is built into the alpha.
 fn plate_alpha(info: &LayoutInfo, p: &TextParams, size_px: f64, w: u32, h: u32) -> Vec<u8> {
     let mut out = vec![0u8; (w as usize) * (h as usize)];
     let (px, py) = (p.plate_pad.0 * size_px, p.plate_pad.1 * size_px);
     let a = p.plate[3];
     for l in &info.lines {
         if l.w <= 0.0 {
-            continue; // пустая строка плашку не рисует
+            continue; // an empty line does not draw a plate
         }
         let x0 = (l.x - px).floor().max(0.0) as usize;
         let y0 = (l.y - py).floor().max(0.0) as usize;
@@ -651,10 +651,10 @@ fn plate_alpha(info: &LayoutInfo, p: &TextParams, size_px: f64, w: u32, h: u32) 
     out
 }
 
-/// Тень: силуэт, сдвинутый на ЦЕЛЫЕ px (доли em; округление до пикселя —
-/// осознанное, документировано), размытый трёхкратным box-blur ОДНОГО
-/// канала — размывается альфа при постоянном цвете, «зелёного ореола»
-/// (ловушка flowblade #937) не бывает по построению.
+/// Shadow: the silhouette, offset by WHOLE px (fractions of em; rounding to a pixel is
+/// deliberate, documented), blurred by a triple box-blur of ONE
+/// channel — the alpha is blurred at a constant colour, so a “green halo”
+/// (flowblade trap #937) cannot occur by construction.
 fn shadow_alpha(cov: &[u8], p: &TextParams, size_px: f64, w: u32, h: u32) -> Vec<u8> {
     let dx = (p.shadow_dx * size_px).round() as i64;
     let dy = (p.shadow_dy * size_px).round() as i64;
@@ -680,15 +680,15 @@ fn shadow_alpha(cov: &[u8], p: &TextParams, size_px: f64, w: u32, h: u32) -> Vec
     out
 }
 
-/// Однократный box-blur канала A8 радиусом r (окно 2r+1), горизонталь +
-/// вертикаль, целочисленное скользящее окно.
+/// A single box-blur of the A8 channel with radius r (window 2r+1), horizontal +
+/// vertical, an integer sliding window.
 fn box_blur_a8(buf: &mut [u8], w: usize, h: usize, r: usize) {
     if r == 0 || w == 0 || h == 0 {
         return;
     }
     let win = (2 * r + 1) as u32;
     let mut tmp = vec![0u8; buf.len()];
-    // горизонталь: скользящее окно, края читаются как ноль
+    // horizontal: sliding window, the edges read as zero
     for y in 0..h {
         let row = y * w;
         let mut sum: u32 = 0;
@@ -707,7 +707,7 @@ fn box_blur_a8(buf: &mut [u8], w: usize, h: usize, r: usize) {
             tmp[row + x] = ((sum + win / 2) / win) as u8;
         }
     }
-    // вертикаль
+    // vertical
     for x in 0..w {
         let mut sum: u32 = 0;
         for y in 0..h {
@@ -727,11 +727,11 @@ fn box_blur_a8(buf: &mut [u8], w: usize, h: usize, r: usize) {
     }
 }
 
-/// Обводка: точная евклидова дистанс-трансформа (Felzenszwalb) по
-/// бинаризованному силуэту (α ≥ 128), рамп ±0.5 px на границе радиуса.
-/// «Наружность» получается ПОРЯДКОМ слоёв: заливка сверху перекрывает
-/// внутреннюю половину — двойная ширина не нужна, а штрих глифа обводка
-/// не съедает (t486).
+/// Outline: an exact Euclidean distance transform (Felzenszwalb) over the
+/// binarized silhouette (α ≥ 128), a ramp of ±0.5 px at the boundary of the radius.
+/// The “outside” is obtained by the ORDER of layers: the fill on top covers the
+/// inner half — a double width is not needed, and the glyph's stroke the outline
+/// does not eat (t486).
 fn stroke_alpha(cov: &[u8], radius_px: f64, w: u32, h: u32) -> Vec<u8> {
     let dist2 = edt_sq(cov, w as usize, h as usize);
     let r = radius_px.max(0.0);
@@ -745,9 +745,9 @@ fn stroke_alpha(cov: &[u8], radius_px: f64, w: u32, h: u32) -> Vec<u8> {
         .collect()
 }
 
-/// Квадраты евклидовых расстояний до ближайшего пикселя силуэта
-/// (α ≥ 128). Классический двухпроходный Felzenszwalb: параболы по
-/// столбцам, затем по строкам; целые квадраты в i64.
+/// Squares of Euclidean distances to the nearest pixel of the silhouette
+/// (α ≥ 128). The classic two-pass Felzenszwalb: parabolas along
+/// columns, then along rows; integer squares in i64.
 fn edt_sq(cov: &[u8], w: usize, h: usize) -> Vec<i64> {
     const INF: i64 = i64::MAX / 4;
     let mut d = vec![INF; w * h];
@@ -760,7 +760,7 @@ fn edt_sq(cov: &[u8], w: usize, h: usize) -> Vec<i64> {
     let mut dd = vec![0i64; w.max(h)];
     let mut v = vec![0usize; w.max(h)];
     let mut z = vec![0f64; w.max(h) + 1];
-    // столбцы
+    // columns
     for x in 0..w {
         for y in 0..h {
             f[y] = d[y * w + x];
@@ -770,7 +770,7 @@ fn edt_sq(cov: &[u8], w: usize, h: usize) -> Vec<i64> {
             d[y * w + x] = dd[y];
         }
     }
-    // строки
+    // rows
     for y in 0..h {
         let row = y * w;
         f[..w].copy_from_slice(&d[row..row + w]);
@@ -780,7 +780,7 @@ fn edt_sq(cov: &[u8], w: usize, h: usize) -> Vec<i64> {
     d
 }
 
-/// 1D-дистанс-трансформа параболами (Felzenszwalb–Huttenlocher).
+/// 1D distance transform by parabolas (Felzenszwalb–Huttenlocher).
 fn dt_1d(f: &[i64], out: &mut [i64], v: &mut [usize], z: &mut [f64]) {
     const INF: i64 = i64::MAX / 4;
     let n = f.len();
@@ -791,7 +791,7 @@ fn dt_1d(f: &[i64], out: &mut [i64], v: &mut [usize], z: &mut [f64]) {
     let sq = |q: usize| (q * q) as i64;
     for q in 1..n {
         if f[q] >= INF && f[v[k]] >= INF {
-            // оба «бесконечны»: парабола не нужна
+            // both “infinite”: no parabola is needed
             continue;
         }
         loop {
@@ -849,37 +849,37 @@ mod tests {
         }
     }
 
-    /// t480: тот же вход → те же байты; якорный хэш — сторож пинов
-    /// шрифта и крейтов (краснеет при их смене — и это его работа).
+    /// t480: the same input → the same bytes; the anchor hash is the guard of the pins
+    /// of the font and the crates (it turns red when they change — and that is its job).
     #[test]
     fn t480_render_is_deterministic_with_anchor_hash() {
         let p = sample();
         let a = render_rgba(&p, 320, 180);
         let b = render_rgba(&p, 320, 180);
-        assert_eq!(a, b, "повтор обязан быть байт-в-байт");
-        // непустой и с настоящей надписью
+        assert_eq!(a, b, "repeat must be byte for byte");
+        // non-empty and with a real inscription
         let ink = a.chunks_exact(4).filter(|px| px[3] > 0).count();
-        assert!(ink > 300, "надписи на кадре нет: {ink} пикселей");
-        // straight-альфа: цвет пикселя — ровно цвет заливки
+        assert!(ink > 300, "there is no text in the frame: {ink} pixels");
+        // straight alpha: the colour of a pixel is exactly the fill colour
         assert!(a.chunks_exact(4).filter(|px| px[3] > 0).all(|px| px[..3] == [255, 255, 255]));
         assert_eq!(
             fnv(&a),
             0x5a04dd9723ca145b,
-            "якорь растеризации: обновил шрифт/крейты — перегенерируй осознанно \
+            "rasterization anchor: after updating the font/crates, regenerate deliberately \
              (cargo test -p kt-text -- t480_print)"
         );
     }
 
-    /// Печать якоря для t480 (см. CLAUDE.md: обновление = событие).
+    /// Anchor stamp for t480 (see CLAUDE.md: an update = an event).
     #[test]
-    #[ignore = "генератор якоря: cargo test -p kt-text -- --ignored t480_print"]
+    #[ignore = "anchor generator: cargo test -p kt-text -- --ignored t480_print"]
     fn t480_print_anchor() {
         let a = render_rgba(&sample(), 320, 180);
         println!("t480 anchor = 0x{:016x}", fnv(&a));
     }
 
-    /// t481: масштабная инвариантность — раскладка в ×2 кадре ровно ×2
-    /// (ловушка PxScale ≠ em поймалась бы здесь).
+    /// t481: scale invariance — the layout in a ×2 frame is exactly ×2
+    /// (the PxScale ≠ em trap would be caught here).
     #[test]
     fn t481_layout_scales_with_frame() {
         let p = sample();
@@ -890,27 +890,27 @@ mod tests {
         assert!(close(b.block.h, a.block.h * 2.0));
         assert!(close(b.block.x, a.block.x * 2.0) && close(b.block.y, a.block.y * 2.0));
         assert_eq!(a.lines.len(), b.lines.len());
-        // и глифы реально в этих боксах: рендер в ×2 непуст в тех же долях
+        // and the glyphs really are in these boxes: the render at ×2 is non-empty in the same fractions
         let big = render_rgba(&p, 1280, 720);
         assert!(big.chunks_exact(4).any(|px| px[3] > 0));
     }
 
-    /// t482: кернинг ПРИМЕНЯЕТСЯ — у Noto Sans нет legacy `kern`, так что
-    /// без шейпера (GPOS) ширина пары равнялась бы сумме одиночных.
+    /// t482: kerning is APPLIED — Noto Sans has no legacy `kern`, so
+    /// without the shaper (GPOS) the width of a pair would equal the sum of the single ones.
     #[test]
     fn t482_gpos_kerning_is_applied() {
         let f = face(FaceStyle::Regular);
         let wid = |s: &str| shape_line(f, s, 0.0).1;
         let pair = wid("AV");
         let solo = wid("A") + wid("V");
-        assert!(pair < solo - 1.0, "кернинг не применился: AV={pair}, A+V={solo} (font units)");
-        // лигатуры тоже живут: fi короче или равна f+i, но ОДНИМ глифом
+        assert!(pair < solo - 1.0, "kerning was not applied: AV={pair}, A+V={solo} (font units)");
+        // ligatures live too: fi is shorter than or equal to f+i, but as ONE glyph
         let (fi, _) = shape_line(f, "fi", 0.0);
-        assert_eq!(fi.len(), 1, "лигатура fi не собралась: {} глифов", fi.len());
+        assert_eq!(fi.len(), 1, "fi ligature did not form: {} glyphs", fi.len());
     }
 
-    /// t483: «глифа нет» — честный список; кириллица/латиница покрыты
-    /// полным вендоренным шрифтом.
+    /// t483: “no glyph” — an honest list; Cyrillic/Latin are covered by
+    /// the full vendored font.
     #[test]
     fn t483_uncovered_codepoints() {
         assert!(
@@ -921,14 +921,14 @@ mod tests {
             )
             .is_empty()
         );
-        assert_eq!(uncovered("до 漢字 после", VENDORED_FAMILY, FaceStyle::Bold), vec!['字', '漢']);
-        // управляющие не считаются «непокрытыми»
+        assert_eq!(uncovered("before 漢字 after", VENDORED_FAMILY, FaceStyle::Bold), vec!['字', '漢']);
+        // control characters are not counted as “uncovered”
         assert!(uncovered("a\nb\t", VENDORED_FAMILY, FaceStyle::Regular).is_empty());
     }
 
-    /// t490 (Р.52 С4): системные семьи. Несуществующая — подмена
-    /// вендоренной БАЙТ-В-БАЙТ (+ `MissingFallback` для уведомления);
-    /// найденная системная резолвится в файл и рисует сама.
+    /// t490 (R.52 C4): system families. A non-existent one — substitution by the
+    /// vendored one BYTE-FOR-BYTE (+ `MissingFallback` for the notice);
+    /// a found system one resolves to a file and draws itself.
     #[test]
     fn t490_system_family_resolve_and_fallback() {
         assert_eq!(resolve_family("__kt_no_such_family__", false), FontResolve::MissingFallback);
@@ -941,11 +941,11 @@ mod tests {
         assert_eq!(
             sub,
             render_rgba(&sample(), 320, 180),
-            "подмена обязана быть вендоренной байт-в-байт"
+            "the substitute must be vendored byte for byte"
         );
 
-        // если на машине есть системные шрифты — первый резолвящийся
-        // обязан дать существующий файл и собственный рендер
+        // if the machine has system fonts — the first resolving one
+        // must give an existing file and its own render
         if let Some(fam) = system_families()
             .iter()
             .find(|f| matches!(resolve_family(f, false), FontResolve::System(_)))
@@ -955,25 +955,25 @@ mod tests {
             let mut sp = sample();
             sp.family = fam.clone();
             let frame = render_rgba(&sp, 320, 180);
-            assert!(frame.chunks_exact(4).any(|px| px[3] > 0), "{fam}: кадр пуст");
+            assert!(frame.chunks_exact(4).any(|px| px[3] > 0), "{fam}: frame is empty");
         }
     }
 
-    /// t506 (Р.53, п.413): список системных семей строится ОДИН раз.
-    /// Он зовётся на каждом кадре, пока открыт попап комбо в окне титра,
-    /// а обход всех начертаний с сортировкой и дедупом — аллокации в
-    /// пути кадра (инвариант 12).
+    /// t506 (R.53, item 413): the list of system families is built ONCE.
+    /// It is called on every frame while the combo popup in the title window is open,
+    /// and a walk over all faces with sorting and dedup — allocations in the
+    /// frame path (invariant 12).
     #[test]
     fn t506_system_families_are_built_once() {
         let a = system_families();
         let b = system_families();
-        assert!(std::ptr::eq(a, b), "список пересобирается на каждый вызов");
+        assert!(std::ptr::eq(a, b), "list is rebuilt on every call");
     }
 
-    /// t486 (Р.52 С3): оформление. Порядок слоёв меняет байты
-    /// предсказуемо; обводка НЕ съедает штрих глифа (заливка сверху —
-    /// прямая проверка ловушки kde-invent #1550); тень лежит вне
-    /// силуэта своим цветом; плашка следует за строками.
+    /// t486 (R.52 C3): decoration. The order of layers changes the bytes
+    /// predictably; the outline does NOT eat the glyph's stroke (the fill on top is a
+    /// direct check of the kde-invent #1550 trap); the shadow lies outside the
+    /// silhouette in its own colour; the plate follows the lines.
     #[test]
     fn t486_ornament_layers() {
         let mut p = sample();
@@ -983,13 +983,13 @@ mod tests {
         let count = |buf: &[u8], pred: &dyn Fn(&[u8]) -> bool| {
             buf.chunks_exact(4).filter(|px| pred(px)).count()
         };
-        // интерьер штриха — пиксели с ПОЛНОЙ альфой: антиалиасный край
-        // законно смешивается с нижними слоями, интерьер — никогда
+        // the interior of the stroke — pixels with FULL alpha: the antialiased edge
+        // legitimately blends with the lower layers, the interior — never
         let is_fill = |px: &[u8]| px[3] == 255 && px[..3] == [255, 255, 255];
         let fill_plain = count(&plain, &is_fill);
-        assert!(fill_plain > 500, "заливки нет: {fill_plain}");
+        assert!(fill_plain > 500, "no fill: {fill_plain}");
 
-        // обводка: интерьер штриха цел, вокруг появился цвет обводки
+        // outline: the interior of the stroke is intact, around it the outline colour appeared
         let mut st = p.clone();
         st.stroke_w = 0.06;
         st.stroke = [255, 0, 0, 255];
@@ -997,19 +997,19 @@ mod tests {
         let fill_kept = count(&stroked, &is_fill);
         assert!(
             fill_kept as f64 > fill_plain as f64 * 0.98,
-            "обводка съела штрих: {fill_kept} из {fill_plain}"
+            "the stroke ate the fill: {fill_kept} of {fill_plain}"
         );
         let red = count(&stroked, &|px| px[3] > 200 && px[0] > 200 && px[1] < 60);
-        assert!(red > 400, "обводки не видно: {red}");
+        assert!(red > 400, "stroke is not visible: {red}");
 
-        // порядок решает: заливка ПОД обводкой — обводка накрывает штрих
+        // the order decides: the fill UNDER the outline — the outline covers the stroke
         let mut inv = st.clone();
         inv.order = [Layer::Plate, Layer::Shadow, Layer::Fill, Layer::Stroke];
         let inverted = render_rgba(&inv, 320, 180);
-        assert_ne!(inverted, stroked, "порядок слоёв обязан менять байты");
-        assert!(count(&inverted, &is_fill) < fill_plain / 2, "fill под stroke обязан быть накрыт");
+        assert_ne!(inverted, stroked, "layer order must change the bytes");
+        assert!(count(&inverted, &is_fill) < fill_plain / 2, "fill under stroke must be covered");
 
-        // тень: пиксели цвета тени ВНЕ силуэта, сдвинутые вправо-вниз
+        // shadow: pixels of the shadow colour OUTSIDE the silhouette, offset right-down
         let mut sh = p.clone();
         sh.shadow = [0, 0, 0, 255];
         sh.shadow_dx = 0.15;
@@ -1017,28 +1017,28 @@ mod tests {
         sh.shadow_blur = 0.0;
         let shadowed = render_rgba(&sh, 320, 180);
         let dark = count(&shadowed, &|px| px[3] > 200 && px[0] < 40 && px[1] < 40);
-        assert!(dark > 300, "тени не видно: {dark}");
-        // с размытием тень мягче: полупрозрачных пикселей больше
+        assert!(dark > 300, "shadow is not visible: {dark}");
+        // with blur the shadow is softer: there are more semi-transparent pixels
         sh.shadow_blur = 0.12;
         let soft = render_rgba(&sh, 320, 180);
         let half = |buf: &[u8]| count(buf, &|px| px[3] > 10 && px[3] < 200);
-        assert!(half(&soft) > half(&shadowed), "размытие не смягчило тень");
+        assert!(half(&soft) > half(&shadowed), "blur did not soften the shadow");
 
-        // плашка: прямоугольник строки своим цветом, растёт с текстом
+        // plate: the rectangle of the line in its own colour, grows with the text
         let mut pl = p.clone();
         pl.plate = [0, 60, 0, 255];
         let plated = render_rgba(&pl, 320, 180);
         let green = count(&plated, &|px| px[3] > 200 && px[1] > 40 && px[0] < 30);
-        assert!(green > 2000, "плашки не видно: {green}");
+        assert!(green > 2000, "plate is not visible: {green}");
         pl.text = "IHKWWWW".into();
         let wider = render_rgba(&pl, 320, 180);
         assert!(
             count(&wider, &|px| px[3] > 0) > count(&plated, &|px| px[3] > 0),
-            "плашка обязана расти за текстом"
+            "plate must grow with the text"
         );
     }
 
-    /// Пустой текст и нулевой кадр — прозрачно и без паники.
+    /// Empty text and a zero frame — transparent and without a panic.
     #[test]
     fn t480b_empty_edges() {
         let mut p = TextParams::default();
@@ -1049,7 +1049,7 @@ mod tests {
         assert_eq!(f.len(), 64 * 36 * 4);
     }
 
-    // ---- Р.53 (пп.423-424): кластеры, раскрытие, движение ------------
+    // ---- R.53 (items 423-424): clusters, reveal, motion ------------
 
     fn rows(p: &TextParams, w: u32, h: u32) -> Vec<u8> {
         render_rgba(p, w, h).to_vec()
@@ -1059,52 +1059,52 @@ mod tests {
         rgba.chunks_exact(4).map(|p| p[3] as u64).sum()
     }
 
-    /// t534: боксы КЛАСТЕРОВ есть у каждой раскладки, их столько же,
-    /// сколько единиц текста, и они идут слева направо внутри строки.
-    /// Кластер, а не символ: лигатура приходит одной единицей даром.
+    /// t534: CLUSTER boxes exist for every layout, there are as many of them as there are
+    /// units of text, and they go left to right inside a line.
+    /// A cluster, not a symbol: a ligature arrives as one unit for free.
     #[test]
     fn t534_layout_reports_cluster_boxes() {
         let p = TextParams { text: "ABC".into(), size: 0.2, ..TextParams::default() };
         let li = layout_info(&p, 400, 200);
-        assert_eq!(li.clusters.len(), 3, "три буквы — три кластера");
-        assert!(li.clusters[0].x < li.clusters[1].x, "кластеры идут по тексту");
+        assert_eq!(li.clusters.len(), 3, "three letters — three clusters");
+        assert!(li.clusters[0].x < li.clusters[1].x, "clusters run along the text");
         assert!(li.clusters[1].x < li.clusters[2].x);
         for c in &li.clusters {
-            assert!(c.w > 0.0 && c.h > 0.0, "пустой бокс кластера");
+            assert!(c.w > 0.0 && c.h > 0.0, "empty cluster box");
         }
-        // многострочный текст: нумерация СКВОЗНАЯ
+        // multi-line text: the numbering is THROUGH
         let p2 = TextParams { text: "AB\nCD".into(), ..p.clone() };
         let li2 = layout_info(&p2, 400, 200);
-        assert_eq!(li2.clusters.len(), 4, "перевод строки не кластер");
-        assert!(li2.clusters[2].y > li2.clusters[0].y, "вторая строка ниже первой");
+        assert_eq!(li2.clusters.len(), 4, "line break is not a cluster");
+        assert!(li2.clusters[2].y > li2.clusters[0].y, "second line is below the first");
     }
 
-    /// t535: раскрытие открывает кластеры ПО ОЧЕРЕДИ, и при полной
-    /// видимости кадр БАЙТ В БАЙТ равен кадру без анимации — на этом
-    /// стоит обещание «голден титра не двинулся».
+    /// t535: the reveal opens clusters IN TURN, and at full
+    /// visibility the frame is BYTE FOR BYTE equal to the frame without animation — the promise
+    /// “the title golden did not move” rests on this.
     #[test]
     fn t535_reveal_opens_clusters_in_order() {
         let base = TextParams { text: "ABCD".into(), size: 0.3, ..TextParams::default() };
         let full = rows(&base, 400, 200);
         let mut p = base.clone();
         p.reveal = 1.0;
-        assert_eq!(rows(&p, 400, 200), full, "полная видимость обязана быть прежней веткой");
+        assert_eq!(rows(&p, 400, 200), full, "full visibility must stay on the old branch");
 
         p.reveal = 0.0;
-        assert_eq!(ink(&rows(&p, 400, 200)), 0, "в нуле не видно ничего");
-        // растёт монотонно и доходит до полного кадра
+        assert_eq!(ink(&rows(&p, 400, 200)), 0, "nothing is visible at zero");
+        // grows monotonically and reaches the full frame
         let mut prev = 0u64;
         for i in 1..=4 {
             p.reveal = i as f64 / 4.0;
             let v = ink(&rows(&p, 400, 200));
-            assert!(v > prev, "раскрытие {i}/4 не добавило чернил: {v} после {prev}");
+            assert!(v > prev, "reveal {i}/4 added no ink: {v} after {prev}");
             prev = v;
         }
-        assert_eq!(prev, ink(&full), "полное раскрытие обязано дать полный кадр");
+        assert_eq!(prev, ink(&full), "full reveal must give the full frame");
     }
 
-    /// t536: мягкий фронт даёт ПРОМЕЖУТОЧНЫЕ значения там, где жёсткий
-    /// даёт только 0 и 255 — иначе «проявление» было бы той же машинкой.
+    /// t536: the soft front gives INTERMEDIATE values where the hard one
+    /// gives only 0 and 255 — otherwise the “reveal” would be the same typewriter.
     #[test]
     fn t536_soft_reveal_is_not_a_hard_cut() {
         let base = TextParams { text: "ABCD".into(), size: 0.3, ..TextParams::default() };
@@ -1112,55 +1112,55 @@ mod tests {
         let soft = TextParams { reveal: 0.5, reveal_soft: 1.0, ..base.clone() };
         let h = rows(&hard, 400, 200);
         let s = rows(&soft, 400, 200);
-        assert_ne!(h, s, "мягкий фронт обязан отличаться от жёсткого");
+        assert_ne!(h, s, "soft edge must differ from hard edge");
         assert!(ink(&s) > 0);
-        // у мягкого есть кластер с частичной непрозрачностью
+        // the soft one has a cluster with partial opacity
         let max_a = |v: &[u8]| v.chunks_exact(4).map(|p| p[3]).max().unwrap_or(0);
         assert_eq!(max_a(&h), 255);
-        assert!(ink(&s) != ink(&h), "мягкий фронт даёт другую сумму чернил");
+        assert!(ink(&s) != ink(&h), "soft edge gives a different total of ink");
     }
 
-    /// t537: смещение — это ПЕРЕНОС блока, и взаимная геометрия глифов от
-    /// него бит-в-бит постоянна. Квант 1/64 px (кратные ему представимы в
-    /// f64 точно) — то, ради чего смещение квантуется ДО сложения.
+    /// t537: the offset is a TRANSFER of the block, and the mutual geometry of the glyphs from
+    /// it is bit-for-bit constant. The 1/64 px quantum (its multiples are exactly representable in
+    /// f64) — the reason the offset is quantized BEFORE addition.
     #[test]
     fn t537_offset_translates_without_reshaping() {
         let base = TextParams { text: "ABC".into(), size: 0.25, ..TextParams::default() };
         let a = layout_info(&base, 400, 200);
-        let shift = 8.0; // целое число пикселей — точный перенос
+        let shift = 8.0; // a whole number of pixels — an exact shift
         let moved = TextParams { offset: (shift, 0.0), ..base.clone() };
         let b = layout_info(&moved, 400, 200);
-        assert_eq!(b.block.x, a.block.x + shift, "блок не переехал ровно на смещение");
-        assert_eq!(b.block.w, a.block.w, "перенос изменил ширину блока");
+        assert_eq!(b.block.x, a.block.x + shift, "block did not move by exactly the offset");
+        assert_eq!(b.block.w, a.block.w, "wrap changed the block width");
         for (x, y) in a.clusters.iter().zip(&b.clusters) {
-            assert_eq!(y.x - x.x, shift, "кластер уехал не на то же расстояние");
-            assert_eq!(y.w, x.w, "перенос переформовал кластер");
+            assert_eq!(y.x - x.x, shift, "cluster moved by a different distance");
+            assert_eq!(y.w, x.w, "wrap reshaped the cluster");
         }
-        // и пиксели: сдвиг на целые px даёт ровно сдвинутый кадр
+        // and the pixels: a shift by whole px gives exactly the shifted frame
         let fa = render_rgba(&base, 400, 200);
         let fb = render_rgba(&moved, 400, 200);
         let at = |f: &[u8], x: usize, y: usize| f[((y * 400 + x) * 4) + 3];
         let sh = shift as usize;
         for y in 0..200 {
             for x in 0..(400 - sh) {
-                assert_eq!(at(&fa, x, y), at(&fb, x + sh, y), "пиксель ({x},{y}) не перенёсся");
+                assert_eq!(at(&fa, x, y), at(&fb, x + sh, y), "pixel ({x},{y}) did not carry over");
             }
         }
     }
 
-    /// t538: дробное смещение КВАНТУЕТСЯ до 1/64 px, поэтому соседние
-    /// кадры движения отличаются переносом, а не пересчётом раскладки.
+    /// t538: a fractional offset is QUANTIZED to 1/64 px, so neighbouring
+    /// frames of motion differ by a transfer, not by a recalculation of the layout.
     #[test]
     fn t538_offset_is_quantised_to_one_sixty_fourth() {
         let base = TextParams { text: "AB".into(), size: 0.25, ..TextParams::default() };
         let mk = |dx: f64| layout_info(&TextParams { offset: (dx, 0.0), ..base.clone() }, 400, 200);
-        // меньше ПОЛОВИНЫ кванта — раскладка обязана быть той же
-        // (округление к ближайшему: 1/128 это ровно половина и уедет вверх)
-        assert_eq!(mk(0.0).block.x, mk(1.0 / 256.0).block.x, "дробь мельче кванта что-то сдвинула");
-        // 1/64 px — уже квант
-        assert_ne!(mk(0.0).block.x, mk(1.0 / 64.0).block.x, "квант 1/64 px не сработал");
-        // и кванты складываются точно: 64 шага по 1/64 дают ровно 1 px
+        // less than HALF a quantum — the layout must be the same
+        // (rounding to nearest: 1/128 is exactly half and would go up)
+        assert_eq!(mk(0.0).block.x, mk(1.0 / 256.0).block.x, "a fraction finer than the quantum shifted something");
+        // 1/64 px — already a quantum
+        assert_ne!(mk(0.0).block.x, mk(1.0 / 64.0).block.x, "1/64 px quantum did not take effect");
+        // and the quanta add up exactly: 64 steps of 1/64 give exactly 1 px
         let step = mk(1.0 / 64.0).block.x - mk(0.0).block.x;
-        assert_eq!(step * 64.0, 1.0, "квант не точен в f64");
+        assert_eq!(step * 64.0, 1.0, "quantum is not exact in f64");
     }
 }

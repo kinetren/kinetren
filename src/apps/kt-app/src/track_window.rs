@@ -1,15 +1,15 @@
-//! Окно ДОРОЖКИ (Р.62, change B): свойства и цепочка в одном месте.
+//! TRACK WINDOW (R.62, change B): properties and the chain in one place.
 //!
-//! Почему одно окно, а не два: у дорожки правится ровно шесть вещей —
-//! имя, уровень, режим наложения, три выключателя — и цепочка. Разводить
-//! их по двум окнам значило бы заставлять человека открывать второе ради
-//! соседнего поля (правило 13 — место дорого, и внимание тоже).
+//! Why one window and not two: a track has exactly six things to edit —
+//! name, level, blend mode, three switches — and the chain. To split
+//! them over two windows would mean making the person open a second one for a neighbouring
+//! field (rule 13 — space is dear, and so is attention).
 //!
-//! Полоса цепочки — ТА ЖЕ `widgets::chain_strip`, что у события и у
-//! морфера (правило 17): расходись они, эффект на дорожке вёл бы себя
-//! иначе, чем на событии. Виджета автоматизации тут нет намеренно:
-//! кривых у дорожки нет (её ключ — тик таймлайна, это следующий change),
-//! и попытка поставить ключ отвергается с причиной, а не молчанием.
+//! The chain strip is THE SAME `widgets::chain_strip` as for an event and
+//! for the morpher (rule 17): if they diverged, an effect on a track would behave
+//! differently from one on an event. There is deliberately no automation widget here:
+//! a track has no curves (its key is the timeline tick — that is the next change),
+//! and an attempt to set a key is rejected with a reason, not silently.
 
 use crate::app::KtApp;
 use crate::i18n::{k, tr};
@@ -18,27 +18,27 @@ use kt_model::{BlendMode, Command, HasParams, LaneKind, TrackId, TrackProps};
 
 pub struct TrackWindow {
     pub id: TrackId,
-    /// Снимок на момент открытия: «Отмена» откатывает ВСЮ сессию.
+    /// a snapshot at opening: “Cancel” rolls back the WHOLE session.
     pub backup: TrackProps,
     pub fx_backup: (Vec<kt_model::FxInstance>, Vec<bool>, bool),
-    /// Токен жеста: вся сессия окна — ОДИН шаг истории (как у окна FX).
+    /// gesture token: the whole session of the window is ONE history step (as for the FX window).
     pub gesture: u64,
     pub picker_query: String,
-    /// Снимок цепочки дорожки-КЛЮЧА на момент открытия: её компрессор
-    /// правится из этого же окна, значит «Отмена» обязана вернуть и его.
+    /// a snapshot of the KEY track’s chain at the moment of opening: its compressor
+    /// is edited from this same window, so “Cancel” must restore it too.
     pub key_backup: Option<(TrackId, Vec<kt_model::FxInstance>, Vec<bool>)>,
     pub selected: crate::widgets::ChainSel,
     pub focus: bool,
     pub open: bool,
 }
 
-/// Компрессор ли это — вопрос, который в форме дакинга задаётся трижды.
+/// whether it is a compressor is a question asked three times in the ducking form.
 fn is_comp(f: &kt_model::FxInstance) -> bool {
     matches!(f, kt_model::FxInstance::Compressor { .. })
 }
 
-/// Копия первого компрессора цепочки с другим ключом — нужна, чтобы
-/// СПРОСИТЬ модель про цикл, ничего ещё не меняя.
+/// a copy of the chain’s first compressor with another key — needed to
+/// ASK the model about a cycle without changing anything yet.
 fn comp_with_key(fx: &[kt_model::FxInstance], key: Option<TrackId>) -> kt_model::FxInstance {
     let mut c = fx.iter().find(|f| is_comp(f)).cloned().unwrap_or_else(kt_model::FxInstance::compressor);
     if let kt_model::FxInstance::Compressor { key: k, .. } = &mut c {
@@ -47,10 +47,10 @@ fn comp_with_key(fx: &[kt_model::FxInstance], key: Option<TrackId>) -> kt_model:
     c
 }
 
-/// Назначить ключ ПЕРВОМУ компрессору цепочки; его нет — завести (человек
-/// выбрал ключ, значит прибор ему нужен, и искать его в каталоге он не
-/// обязан). Снятие ключа прибор НЕ удаляет: правило 20 — ничего не
-/// отрубается само.
+/// Assign the key to the FIRST compressor of the chain; if there is none — create one (the person
+/// chose a key, so the device is needed for it, and it is not
+/// obliged to search for it in the catalogue). Removing the key does NOT delete the device: rule 20 —
+/// nothing is switched off by itself.
 fn set_key(fx: &mut Vec<kt_model::FxInstance>, bypass: &mut Vec<bool>, key: Option<TrackId>) {
     if let Some(i) = fx.iter().position(is_comp) {
         if let kt_model::FxInstance::Compressor { key: k, .. } = &mut fx[i] {
@@ -69,8 +69,8 @@ fn set_key(fx: &mut Vec<kt_model::FxInstance>, bypass: &mut Vec<bool>, key: Opti
 }
 
 impl KtApp {
-    /// Открыть окно дорожки. Второго окна на ту же дорожку не заводим —
-    /// как у окна FX (оно ведёт всю link-группу одной сессией).
+    /// Open the track window. We do not make a second window for the same track —
+    /// as with the FX window (it drives the whole link group in one session).
     pub fn open_track_window(&mut self, id: TrackId) {
         if self.track_win.as_ref().is_some_and(|w| w.id == id) {
             return;
@@ -89,8 +89,8 @@ impl KtApp {
         });
     }
 
-    /// Бейдж FX открывает то же окно — правило 17 (парные пути ведут в
-    /// одно тело).
+    /// The FX badge opens the same window — rule 17 (paired paths lead to
+    /// one body).
     pub fn open_track_fx(&mut self, id: TrackId) {
         self.open_track_window(id);
     }
@@ -116,13 +116,13 @@ impl KtApp {
         let (mut fx, mut bypass) = (track.fx.clone(), track.fx_bypass.clone());
         let mut fx_off = track.fx_off;
         let mut changed_props = false;
-        // вставка цепочки может привезти огибающие; у дорожки их некуда
-        // положить — говорим об этом ВСЛУХ (правило 16)
+        // pasting a chain may bring envelopes; a track has nowhere to put them —
+        // we say so ALOUD (rule 16)
         let mut curves_dropped = false;
         let mut changed_fx = false;
         let mut hover: Option<String> = None;
-        // правки компрессора дорожки-КЛЮЧА собираются здесь и уезжают
-        // после отрисовки — той же сессией окна и тем же шагом истории
+        // edits of the KEY track’s compressor are collected here and sent
+        // after drawing — in the same window session and the same history step
         let mut key_edit: Option<(TrackId, Vec<kt_model::FxInstance>, Vec<bool>)> = None;
         let title = crate::tf!(k::track::TITLE, track.label(lane));
         egui::Window::new(title)
@@ -131,10 +131,10 @@ impl KtApp {
             .resizable(false)
             .collapsible(false)
             .show(ctx, |ui| {
-                // ТЕЛО — В ПРОКРУТКУ, кнопки НИЖЕ неё (правило 1: попасть
-                // мышью с первого раза). С двумя компрессорами дакинга окно
-                // переросло экран, и «Закрыть» с «Отменой» уехали за кромку —
-                // поймано t775.
+                // THE BODY — IN A SCROLL, the buttons BELOW it (rule 1: to hit
+                // with a mouse on the first try). With two ducking compressors the window
+                // outgrew the screen, and “Close” with “Cancel” went past the edge —
+                // caught by t775.
                 let max_h = (ctx.content_rect().height() * 0.62).max(240.0);
                 egui::ScrollArea::vertical()
                     .max_height(max_h)
@@ -155,9 +155,9 @@ impl KtApp {
                     changed_props |= r.changed();
                     ui.end_row();
 
-                    // УРОВЕНЬ — по виду и с пределами ИЗ ПАСПОРТА (Р.62):
-                    // своих литералов у окна нет, иначе они разъедутся с
-                    // моделью (прецедент Gain в Р.33)
+                    // LEVEL — by kind and with limits FROM THE PASSPORT (R.62):
+                    // the window has no literals of its own, otherwise they would diverge from the
+                    // model (the Gain precedent in R.33)
                     if let Some(spec) = track.param_spec("gain_db") {
                         ui.label(tr(k::track::LEVEL));
                         changed_props |= crate::widgets::plain_row(
@@ -195,11 +195,11 @@ impl KtApp {
                         ui.end_row();
                     }
                 });
-                // РЕЖИМ НАЛОЖЕНИЯ И ВЫКЛЮЧАТЕЛИ — СВОИМИ строками, а не
-                // ячейками сетки. Девять кнопок режима переносятся на
-                // вторую строку, а `Grid` высоту ПЕРЕНОСА не меряет: в
-                // живом окне вторая строка кнопок наезжала на
-                // «Выключатели» (правило 7, поймано сценарием track.py).
+                // BLEND MODE AND SWITCHES — with THEIR OWN rows, not
+                // grid cells. The nine blend-mode buttons wrap onto a
+                // second row, and `Grid` does not measure the height of the WRAP: in the
+                // live window the second row of buttons ran into
+                // “Switches” (rule 7, caught by the track.py scenario).
                 if track.kind == LaneKind::Video {
                     ui.label(tr(k::track::BLEND));
                     ui.horizontal_wrapped(|ui| {
@@ -227,8 +227,8 @@ impl KtApp {
                     crate::widgets::field_probe::note("track.lock", r.rect);
                     changed_props |= r.changed();
                 });
-                // ЦЕПОЧКА — та же полоса, что у события (правило 17).
-                // Служебным строкам её не даём: эффектов у них нет.
+                // THE CHAIN — the same strip as for an event (rule 17).
+                // Service rows are not given it: they have no effects.
                 if track.kind.has_switches() {
                     ui.separator();
                     let mut auto: Vec<Vec<kt_model::ParamCurve>> = Vec::new();
@@ -237,7 +237,7 @@ impl KtApp {
                     let mut picked = None;
                     let audio = track.kind == LaneKind::Audio;
                     let mut chain_on = !fx_off;
-                    // пресеты — только законные для этого вида цепочки
+                    // presets — only those legitimate for this kind of chain
                     let rows: Vec<crate::user_store::PresetRow> = self
                         .presets
                         .rows()
@@ -267,8 +267,8 @@ impl KtApp {
                         kt_time::Tick::ZERO,
                         &mut hover,
                         &mut crate::widgets::ChainCtx {
-                            // полоса адресует цепочку своим id; у дорожки
-                            // события нет, и «ноль» здесь значит «не клип»
+                            // the strip addresses the chain by its id; a track has no event,
+                            // and “zero” here means “not a clip”
                             chain: kt_model::ClipId(0),
                             picked: &mut picked,
                         },
@@ -276,11 +276,11 @@ impl KtApp {
                     );
                     changed_fx |= ch.any();
                     fx_off = !chain_on;
-                    // КРИВАЯ НА ДОРОЖКЕ — ОТКАЗ С ПРИЧИНОЙ, а не молчание.
-                    // Полоса общая с событием (правило 17), и вставить в
-                    // неё цепочку с автоматизацией человек может в любой
-                    // момент. Уроним её молча — он увидит «эффект тот же,
-                    // а звучит иначе» и будет искать дефект в движке.
+                    // A CURVE ON A TRACK — A REFUSAL WITH A REASON, not silence.
+                    // The strip is shared with the event (rule 17), and the person can at any moment
+                    // insert into it a chain with automation. If we dropped it silently, he would see
+                    // “the effect is the same but sounds different” and would look for a defect in the engine.
+                    // @@@ C006734 lines=6
                     if auto.iter().any(|c| !c.is_empty()) {
                         curves_dropped = true;
                         auto.clear();
@@ -289,18 +289,18 @@ impl KtApp {
                 ui.label(
                     egui::RichText::new(tr(k::track::NO_CURVES_HINT)).weak().small(),
                 );
-                // ДАКИНГ — ЭТО ДВА КОМПРЕССОРА (Р.65). Владелец: «в
-                // качестве дакинга можно показать тот же задублированный
-                // виджет аудио-компрессора… т.е. компрессор на фоновом
-                // объекте и компрессор на переднем объекте». Слева —
-                // прибор ЭТОЙ дорожки (фон) с выбором ключа, справа —
-                // настоящий компрессор дорожки-КЛЮЧА, приглушённый.
+                // DUCKING IS TWO COMPRESSORS (R.65). The owner: “as ducking one can show the same
+                // duplicated audio compressor widget… i.e. a compressor on the background
+                // object and a compressor on the foreground object”. On the left —
+                // the device of THIS track (background) with the key choice;
+                // on the right — the real compressor of the KEY track,
+                // muted.
                 if track.kind == LaneKind::Audio {
                     ui.separator();
                     ui.label(egui::RichText::new(tr(k::msg::DUCK_TITLE)).strong());
-                    // КЛЮЧ: аудиодорожки своей ленты, кроме себя и тех,
-                    // что дали бы цикл (модель их всё равно отвергнет —
-                    // правило 16: не показывать невозможного молча)
+                    // KEY: the audio tracks of its own reel, except itself and those
+                    // that would make a cycle (the model would reject them anyway —
+                    // rule 16: do not silently show the impossible)
                     let p = self.model.project();
                     let mut cur_key = kt_model::sidechain_keys(&fx).next();
                     let offers: Vec<(TrackId, String)> = p
@@ -359,13 +359,13 @@ impl KtApp {
                             tr(k::msg::DUCK_KEY_HINT),
                         );
                     });
-                    // ключ выбран — прибор обязан существовать: заводим
-                    // его ОДНИМ действием, а не просим человека найти
-                    // компрессор в каталоге
+                    // a key is chosen — the device must exist: it is created with ONE
+                    // action, rather than asking the person to find
+                    // a compressor in the catalogue
                     if changed_fx {
                         set_key(&mut fx, &mut bypass, cur_key);
                     }
-                    // ДВА КОМПРЕССОРА РЯДОМ, обоими правит один виджет
+                    // TWO COMPRESSORS SIDE BY SIDE, one widget edits both
                     ui.horizontal_top(|ui| {
                         ui.vertical(|ui| {
                             ui.label(egui::RichText::new(tr(k::msg::DUCK_BG)).small());
@@ -391,7 +391,7 @@ impl KtApp {
                             }
                         });
                         ui.separator();
-                        // КОМПРЕССОР РЕЧИ — настоящий, из цепочки ключа
+                        // SPEECH COMPRESSOR — the real one, from the key's chain
                         ui.vertical(|ui| {
                             ui.label(egui::RichText::new(tr(k::msg::DUCK_KEY_SIDE)).small());
                             let Some(key_id) = cur_key else {
@@ -406,8 +406,8 @@ impl KtApp {
                                 return;
                             };
                             let (mut kfx, mut kby) = (kt.fx.clone(), kt.fx_bypass.clone());
-                            // приглушённо — но ЖИВОЕ: владелец выбрал
-                            // «настоящий компрессор речи», а не показ
+                            // muted — but LIVE: the owner chose
+                            // “the real speech compressor”, not a demonstration
                             ui.scope(|ui| {
                                 let v = &mut ui.style_mut().visuals;
                                 v.override_text_color = Some(v.weak_text_color());
@@ -454,11 +454,11 @@ impl KtApp {
                     }
                 });
             });
-        // Esc закрывает окно КАСКАДОМ (`escape_action`), правки оставляя,
-        // — как у окна FX: они применяются на лету, а вернуть их целиком
-        // умеет «Отмена». Своего обработчика окну не нужно: фокус в поле
-        // имени Esc снимает сам egui в начале кадра, поэтому до каскада
-        // клавиша доходит тем же нажатием.
+        // Esc closes the window by CASCADE (`escape_action`), keeping the edits —
+        // as with the FX window: they apply on the fly, and “Cancel” can roll them back as a whole.
+        // The window needs no handler of its own: with focus in the
+        // name field, egui itself releases Esc at the start of the frame, so before the cascade
+        // the key reaches it with the same press.
         if curves_dropped {
             self.refuse(tr(k::track::CURVES_DROPPED));
         }
@@ -482,7 +482,7 @@ impl KtApp {
             }
             open = false;
         } else {
-            // ВСЯ СЕССИЯ ОКНА — ОДИН шаг истории (общий токен жеста)
+            // the WHOLE SESSION OF THE WINDOW — ONE history step (a shared gesture token)
             if changed_props && props != track.props() {
                 self.apply_coalesced(Command::SetTrackProps { id: w.id, props }, w.gesture);
             }
@@ -502,7 +502,7 @@ impl KtApp {
             }
         }
         if let Some((kid, kfx, kby)) = key_edit.clone() {
-            // компрессор речи — ТА ЖЕ сессия окна и ТОТ ЖЕ шаг истории
+            // the speech compressor — the SAME window session and the SAME history step
             if w.key_backup.is_none()
                 && let Some(kt) = self.model.project().track(kid)
             {
@@ -516,7 +516,7 @@ impl KtApp {
         if open && w.open {
             self.track_win = Some(w);
         } else {
-            // всё, что берёт фокус, обязано его ОТДАВАТЬ (правило 14)
+            // anything that takes focus must RELEASE it (rule 14)
             ctx.memory_mut(|m| m.surrender_focus(name_id));
         }
     }

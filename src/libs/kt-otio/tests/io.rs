@@ -1,11 +1,11 @@
-//! Тесты 351-353 (Р.49, п.349): атомарная запись честна к отключению
-//! питания.
+//! Tests 351-353 (R.49, item 349): atomic writing is honest about
+//! power loss.
 //!
-//! `write + rename` защищает от падения процесса, но не от потери
-//! питания: переименование может лечь в журнал раньше данных, и на месте
-//! проекта окажется файл нулевой длины. Порядок операций и есть всё, ради
-//! чего функция написана, — поэтому он проверяется наблюдением, а не
-//! фолт-инжекцией ядра (на ext4 её результат прячет `auto_da_alloc`).
+//! `write + rename` protects against a process crash, but not against a loss of
+//! power: the rename may reach the journal before the data, and in place of the project
+//! there will be a zero-length file. The order of operations is everything the function is
+//! written for — so it is checked by observation, not by kernel fault injection
+//! (on ext4 its result is hidden by `auto_da_alloc`).
 
 use std::cell::RefCell;
 use std::io;
@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use kt_otio::{AtomicFs, write_atomic, write_atomic_with};
 
-/// Записывает порядок обращений к файловой системе.
+/// Records the order of calls to the file system.
 #[derive(Default)]
 struct Recorder {
     log: RefCell<Vec<String>>,
@@ -34,7 +34,7 @@ impl AtomicFs for Recorder {
     fn sync_dir(&self, _dir: &Path) -> io::Result<()> {
         self.log.borrow_mut().push("sync dir".into());
         if self.dir_sync_fails {
-            // ровно то, что отдают exFAT и сетевые шары
+            // exactly what exFAT and network shares return
             return Err(io::Error::new(io::ErrorKind::Unsupported, "no directory sync here"));
         }
         Ok(())
@@ -52,52 +52,52 @@ fn tmp_dir(tag: &str) -> PathBuf {
     d
 }
 
-/// Тест 351: данные на диске ДО переименования, каталог — после.
+/// Test 351: data on disk BEFORE the rename, the directory — after.
 #[test]
 fn t351_atomic_write_syncs_file_then_renames_then_syncs_dir() {
     let dir = tmp_dir("order");
     let path = dir.join("a.b.otio");
     let rec = Recorder::default();
     let w = write_atomic_with(&rec, &path, "hello").expect("write");
-    assert!(w.dir_synced, "на обычной ФС каталог обязан сброситься");
+    assert!(w.dir_synced, "on an ordinary FS the directory must be flushed");
 
     let log = rec.log.borrow().clone();
-    // имя временного файла несёт номер процесса (п.352) — в ожиданиях он
-    // подставляется, а не захардкожен
+    // the temporary file's name carries the process number (item 352) — in expectations it
+    // is substituted, not hard-coded
     let pid = std::process::id();
     assert_eq!(
         log,
         vec![
-            // tmp дописан к ПОЛНОМУ имени — «a.b.otio» не теряет «.b» (t150)
+            // tmp appended to the FULL name — “a.b.otio” does not lose “.b” (t150)
             format!("write+sync a.b.otio.{pid}.tmp (5 bytes)"),
             format!("rename a.b.otio.{pid}.tmp -> a.b.otio"),
             "sync dir".to_string(),
         ],
-        "порядок обязан быть: записать и сбросить ФАЙЛ → переименовать → сбросить КАТАЛОГ"
+        "the order must be: write and flush the FILE → rename → flush the DIRECTORY"
     );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello");
-    assert!(!kt_otio::atomic_tmp_path(&path).exists(), "временный файл не остаётся");
+    assert!(!kt_otio::atomic_tmp_path(&path).exists(), "temporary file does not remain");
 
-    // и то же настоящей файловой системой — обёртка не разошлась с трейтом
+    // and the same with a real file system — the wrapper did not diverge from the trait
     let path2 = dir.join("real.otio");
     write_atomic(&path2, "{}").expect("real write");
     assert_eq!(std::fs::read_to_string(&path2).unwrap(), "{}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 353: отказ синка КАТАЛОГА — не отказ записи.
+/// Test 353: a failure of the DIRECTORY sync is not a write failure.
 ///
-/// На exFAT и сетевых шарах каталог так не сбросить, и превращать это в
-/// ошибку значило бы врать пользователю, что сохранения не было: файл на
-/// месте и цел. Вызывающий узнаёт о деградации из `dir_synced` и говорит
-/// об этом один раз за сессию.
+/// On exFAT and network shares the directory cannot be flushed that way, and turning this into an
+/// error would mean lying to the user that the save did not happen: the file is in
+/// place and intact. The caller learns of the degradation from `dir_synced` and says
+/// so once per session.
 #[test]
 fn t353_dir_sync_failure_is_not_a_write_failure() {
     let dir = tmp_dir("nodirsync");
     let path = dir.join("p.otio");
     let rec = Recorder { dir_sync_fails: true, ..Default::default() };
-    let w = write_atomic_with(&rec, &path, "payload").expect("запись обязана считаться успешной");
-    assert!(!w.dir_synced, "но о деградации обязана сказать");
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), "payload", "файл на месте и цел");
+    let w = write_atomic_with(&rec, &path, "payload").expect("the write must count as successful");
+    assert!(!w.dir_synced, "but must report the degradation");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "payload", "file is in place and intact");
     let _ = std::fs::remove_dir_all(&dir);
 }

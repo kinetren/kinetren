@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.52: генератор создаётся из бина и живёт как медиа.
+"""Live scenario R.52: a generator is created from the bin and lives as media.
 
-Настоящее окно, настоящие клики: ПКМ по фону бина → «Создать генератор» →
-«Сплошной цвет» (пункты меню кликаются по прямоугольникам, которые отдаёт
-сама программа — угадывать смещения меню сценарий не должен, Р.27/Р.49);
-окно параметров открылось; клик по карточке ставит клип на курсор, и в
-превью приезжает КАДР ГЕНЕРАТОРА (смена цветного ramp-кадра на чёрный
-солид — это и есть доказательство, что кадр без файла доехал); Ctrl+S —
-в файле канонический gen:-путь и первоклассный GeneratorReference.1.
+A real window, real clicks: RMB on the bin background → “Create generator” →
+“Solid color” (menu items are clicked by the rectangles that the program
+itself gives — the scenario must not guess menu offsets, R.27/R.49);
+the parameter window opened; a click on the card puts the clip on the cursor, and in the
+preview a FRAME OF THE GENERATOR arrives (switching the colored ramp frame to a black
+solid — this is the proof that the frame without a file arrived); Ctrl+S —
+the file has the canonical gen: path and a first-class GeneratorReference.1.
 """
 import os
 import sys
@@ -30,32 +30,32 @@ def main(out):
         b = app.geom()["bin"]
         app.shot("open")
 
-        # кадр synth-клипа читаем ДО создания генератора: с Р.53 клип
-        # генератора встаёт под курсор сразу и накрывает эту дорожку
+        # we read the synth clip’s frame BEFORE creating the generator: since R.53 the clip
+        # of the generator lands under the cursor at once and covers this track
         preview = app.preview_center()
         app.click(app.x_at(int(1.5 * SEC)), app.ruler_y())
         ramp_px = app.pixel_settled(preview)
-        app.expect(sum(ramp_px) > 30, f"кадр synth-клипа не чёрный: {ramp_px}")
+        app.expect(sum(ramp_px) > 30, f"frame of the synth clip is not black: {ramp_px}")
         app.click(app.x_at(0), app.ruler_y())
 
-        # 1. создать генератор из меню фона бина (Р.52)
+        # 1. create a generator from the bin background menu (R.52)
         app.right_click(
             win["x"] + int((b["left"] + b["right"]) / 2),
             win["y"] + int(b["bottom"]) - 10,
         )
-        app.click_probe("gen.new", "пункт «Создать генератор» в меню бина")
-        # Р.53: видов девятнадцать, они разложены по группам; подменю egui
-        # раскрывается НАВЕДЕНИЕМ, клик по нему закрыл бы всё меню
-        app.hover_probe("gen.new.group.bg", "группа «Фон» в подменю")
-        app.click_probe("gen.new.solid", "вид «Сплошной цвет» в подменю")
+        app.click_probe("gen.new", "“Create generator” item in the bin menu")
+        # R.53: there are nineteen kinds, laid out by groups; an egui submenu
+        # opens by HOVERING, a click on it would close the whole menu
+        app.hover_probe("gen.new.group.bg", "“Background” group in the submenu")
+        app.click_probe("gen.new.solid", "kind “Solid color” in the submenu")
         app.expect(
             app.has_probe("genw.color"),
-            "окно параметров генератора открылось сразу после создания",
+            "the generator parameter window opened right after creation",
         )
         app.shot("created")
 
-        # 2. Р.53 (п.416): создание СРАЗУ кладёт клип под курсор — в бин
-        # за карточкой ходить не надо, титр не набирается вслепую
+        # 2. R.53 (item 416): creation puts the clip under the cursor AT ONCE — in the bin
+        # there is no need to walk behind the card; the title is not typed blindly
         clips = None
         for _ in range(20):
             clips = app.live_clips()
@@ -64,17 +64,17 @@ def main(out):
             poll_step(0.25)
         app.expect(
             clips is not None and len(clips) == 2,
-            f"создание генератора обязано класть клип: {clips}",
+            f"creating a generator must place a clip: {clips}",
         )
         if clips and len(clips) == 2:
-            app.near(clips[-1][1], 5 * SEC, 3000, "длительность по умолчанию 5 с")
+            app.near(clips[-1][1], 5 * SEC, 3000, "default duration 5 s")
 
-        # 3. курсор за конец synth-клипа — там виден кадр генератора
+        # 3. the cursor goes past the end of the synth clip — the generator frame is visible there
         app.click(app.x_at(4 * SEC), app.ruler_y())
 
-        # 4. кадр генератора доехал до превью: цветной ramp-кадр сменился
-        # ЧЁРНЫМ (цвет солида по умолчанию). pixel_settled тут не годится:
-        # он законно не верит чёрному, а чёрный — ЭТО кадр генератора.
+        # 4. the generator frame has reached the preview: the coloured ramp frame has changed
+        # to BLACK (the default solid colour). pixel_settled is not suitable here:
+        # it legitimately does not trust black, and black is THE generator frame.
         gen_px = None
         for _ in range(30):
             gen_px = app.pixel(*preview)
@@ -83,34 +83,34 @@ def main(out):
             poll_step(0.3)
         app.expect(
             gen_px is not None and max(gen_px) < 16,
-            f"в превью кадр генератора (чёрный солид), а не {gen_px}",
+            f"the generator frame (black solid) in the preview, not {gen_px}",
         )
         app.shot("placed")
 
-        # 5. в ЭКСПОРТЕ — первоклассная схема генератора (Р.70: схема OTIO
-        # живёт в файле обмена; в файле проекта вид и значения лежат моделью)
-        app.expect('"gen:solid' in app.saved_text(), "в файле проекта генератор — вид в пути медиа")
+        # 5. in the EXPORT — a first-class generator scheme (R.70: the OTIO scheme
+        # lives in the exchange file; in the project file the view and values are kept by the model)
+        app.expect('"gen:solid' in app.saved_text(), "in the project file the generator is a kind in the media path")
         with open(app.project_now().otio_path) as f:
             text = f.read()
         app.expect(
             "GeneratorReference.1" in text and '"kt.solid"' in text,
-            "клип генератора уехал схемой GeneratorReference.1 (экспорт)",
+            "the generator clip went out with the GeneratorReference.1 schema (export)",
         )
         app.expect(
             "available_range" in text.split("GeneratorReference.1", 1)[1][:800],
-            "у GeneratorReference есть available_range",
+            "GeneratorReference has available_range",
         )
 
-        # 6. ПРАВКА ЦВЕТА доезжает до картинки (Р.53, п.412): hex-поле
-        # окна параметров, Enter — и пиксель превью меняется; поток
-        # декодера при этом не пересоздаётся (это утверждает t502)
-        # окно открываем ДВОЙНЫМ кликом по карточке (Р.53, п.416): один
-        # клип он не плодит, а окно открывает
-        app.double_click_probe("bin.gen", "карточка генератора в бине")
-        app.expect(app.has_probe("genw.color.hex"), "hex-поле цвета в окне генератора")
-        app.click_probe("genw.color.hex", "hex-поле цвета")
-        # поле чистим BackSpace'ами: Ctrl+A в окне может перехватить
-        # само приложение, и тогда напечатанное просто допишется
+        # 6. COLOUR EDIT reaches the picture (R.53, item 412): the hex field of the
+        # parameter window, Enter — and the preview pixel changes; the decoder
+        # stream is not recreated meanwhile (this is asserted by t502)
+        # the window is opened by a DOUBLE click on the card (R.53, item 416): it does not
+        # multiply one clip, it opens the window.
+        app.double_click_probe("bin.gen", "generator card in the bin")
+        app.expect(app.has_probe("genw.color.hex"), "hex color field in the generator window")
+        app.click_probe("genw.color.hex", "hex color field")
+        # the field is cleared with BackSpace: Ctrl+A in the window may be intercepted by
+        # the application itself, and then the typed text just gets appended
         for _ in range(10):
             app.key("BackSpace")
         for ch in "ff8800":
@@ -124,11 +124,11 @@ def main(out):
             poll_step(0.3)
         app.expect(
             lit is not None and lit[0] > 150 and lit[2] < 80,
-            f"правка цвета обязана доехать до картинки: {lit}",
+            f"a color edit must reach the picture: {lit}",
         )
         app.shot("recolored")
 
-        # 7. undo убирает правку цвета целиком (сессия окна — один шаг)
+        # 7. undo removes the colour edit entirely (the window session is one step)
         app.key("Escape")
         app.key("ctrl+z")
         back = None
@@ -139,9 +139,9 @@ def main(out):
             poll_step(0.3)
         app.expect(
             back is not None and max(back) < 40,
-            f"undo обязан вернуть чёрный солид: {back}",
+            f"undo must bring back the black solid: {back}",
         )
-        app.expect(app.has_probe("bin.gen"), "карточка генератора жива после undo")
+        app.expect(app.has_probe("bin.gen"), "generator card is alive after undo")
         app.shot("undone")
         return app.done()
 

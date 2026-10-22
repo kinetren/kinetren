@@ -1,13 +1,13 @@
-//! Timeline (OTIO) ↔ kt_model::Project + Retained (passthrough-остатки).
+//! Timeline (OTIO) ↔ kt_model::Project + Retained (passthrough remainders).
 //!
-//! Маппинг (Р.24, тест 152): видео-lane инвертируется в порядок треков
-//! (OTIO композитит поздние треки ПОВЕРХ ранних, у нас lane 0 — верхний);
-//! зазоры → Gap; FX → стандартные Effect.1 с effect_name "kt:<kind>" и
-//! параметрами в metadata.kt; reversed → LinearTimeWarp{-1} первым;
-//! переходы → Transition.1 (SMPTE_Dissolve); метки → Marker.2 корневого
-//! Stack; всё внемодельное — конверт metadata.kt (meta.rs). Чужое хранится
-//! в Retained и пишется обратно: клипы — по ClipId, дорожки/gap'ы/переходы —
-//! по позиции на момент загрузки (документированное ограничение v1).
+//! Mapping (R.24, test 152): the video lane is inverted into the track order
+//! (OTIO composites later tracks ON TOP of earlier ones, while our lane 0 is the top);
+//! gaps → Gap; FX → standard Effect.1 with effect_name “kt:<kind>” and
+//! parameters in metadata.kt; reversed → LinearTimeWarp{-1} first;
+//! transitions → Transition.1 (SMPTE_Dissolve); markers → Marker.2 of the root
+//! Stack; everything outside the model — the metadata.kt envelope (meta.rs). Foreign data is kept
+//! in Retained and written back: clips — by ClipId, tracks/gaps/transitions —
+//! by position at load time (a documented v1 limitation).
 
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
@@ -30,12 +30,12 @@ use kt_model::{
 };
 use kt_time::Tick;
 
-/// Замечание импорта — показывается пользователю note'ом.
+/// Import remark — shown to the user as a note
 pub type Notice = String;
 
-/// (extra, metadata) объекта — passthrough-пара.
+/// (extra, metadata) of an object — a passthrough pair
 pub type ExtraMeta = (Map<String, Value>, Map<String, Value>);
-/// (transition_type, metadata, extra) чужого перехода.
+/// (transition_type, metadata, extra) of a foreign transition
 pub type TransitionExtra = (String, Map<String, Value>, Map<String, Value>);
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -43,31 +43,31 @@ pub struct ClipExtra {
     pub name: String,
     pub extra: Map<String, Value>,
     pub meta_foreign: Map<String, Value>,
-    /// Чужие эффекты (включая непонятые тайм-варпы) с исходным индексом —
-    /// на записи реинтерливятся в цепочку.
+    /// Foreign effects (including the not-understood time warps) with their original index —
+    /// are re-interleaved into the chain on writing
     pub effects_foreign: Vec<(usize, EffectNode)>,
-    /// Маркеры, висящие на клипе (мы своих не создаём — passthrough).
+    /// Markers hanging on a clip (we do not create our own — passthrough)
     pub markers: Vec<MarkerNode>,
-    /// ВСЕ media_references клипа как в файле (включая активный и `null`:
-    /// клип без привязки к материалу законен). На записи активный ключ
-    /// подменяется нашим target_url — но только если материал есть; иначе
-    /// карта пишется нетронутой (чужой `null` не превращается в ссылку).
+    /// ALL media_references of the clip as in the file (including the active one and `null`:
+    /// a clip without a media binding is legal). On writing the active key
+    /// is replaced with our target_url — but only if the material exists; otherwise
+    /// the map is written untouched (a foreign `null` does not turn into a reference).
     pub media_refs: IndexMap<String, Option<MediaRefNode>>,
     pub active_key: String,
-    /// Неизвестные поля НАШЕГО клип-конверта kt (будущие версии, Р.29).
+    /// Unknown fields of OUR clip envelope kt (future versions, R.29).
     pub kt_extra: Map<String, Value>,
 }
 
-/// Ссылки на материал — свойство МЕДИА, а не клипа. Ключ `Retained.media`.
+/// Media references are a property of the MEDIA, not the clip. Key `Retained.media`.
 ///
-/// Зачем отдельно от `ClipExtra` (Р.49, п.356). `available_range` описывает
-/// файл: где у него начало в его собственных координатах. У вещательных и
-/// киношных файлов оно не в нуле, а во вшитом таймкоде (у Sol Levante — ровно
-/// час). Клип, РОЖДЁННЫЙ в редакторе (правая половина разреза, кусок bake,
-/// вставка, событие из бина), своего `ClipExtra` не имеет — и на записи его
-/// `source_in` уходил в файл без этого часа, а при следующей загрузке час
-/// вычитался ещё раз. Медиа-уровень чинит всю эту половину разом.
-/// Чужое у метки: то, чего нет в `kt_model::Marker`.
+/// Why separate from `ClipExtra` (R.49, item 356). `available_range` describes
+/// the file: where its start is in its own coordinates. For broadcast and
+/// cinema files it is not at zero but in the burned-in timecode (for Sol Levante — exactly
+/// one hour). A clip BORN in the editor (the right half of a split, a bake piece,
+/// a paste, an event from the bin) has no `ClipExtra` of its own — and on writing its
+/// `source_in` went to the file without this hour, and on the next load the hour
+/// was subtracted once more. The media level fixes this whole half at once.
+/// Foreign data on a marker: what is absent from `kt_model::Marker`.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct MarkerExtra {
     pub comment: String,
@@ -86,15 +86,15 @@ pub struct TrackExtra {
     pub name_foreign: Option<String>,
     pub extra: Map<String, Value>,
     pub metadata: Map<String, Value>,
-    /// extra/metadata gap'ов по порядковому номеру в дорожке.
+    /// extra/metadata of gaps by their ordinal number in the track.
     pub gaps: Vec<(usize, ExtraMeta)>,
-    /// Чужое, что висит на САМОЙ дорожке (Р.49, п.358). Своих дорожечных
-    /// эффектов и маркеров у нас нет, а у соседей есть — и круг их терял.
+    /// Foreign data hanging on the TRACK itself (R.49, item 358). We have no track effects
+    /// or markers of our own, but the neighbours do — and the round trip lost them.
     pub effects: Vec<EffectNode>,
     pub markers: Vec<MarkerNode>,
-    /// Выключенная дорожка. Мы такого не умеем и не выдумываем: значение
-    /// возвращается в файл как есть, а пользователь получает notice —
-    /// иначе он смотрит на дорожку, которой в чужом редакторе не слышно.
+    /// A disabled track. We do not support this and do not invent it: the value
+    /// goes back to the file as it is, and the user gets a notice —
+    /// otherwise they look at a track that cannot be heard in the foreign editor.
     pub enabled: bool,
 }
 
@@ -112,61 +112,61 @@ impl Default for TrackExtra {
     }
 }
 
-/// Passthrough-остатки загруженного файла. Вне undo (нередактируемы);
-/// для нового проекта — Default.
+/// Passthrough remainders of the loaded file. Outside undo (not editable);
+/// for a new project — Default.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Retained {
     pub timeline_name: String,
     pub timeline_extra: Map<String, Value>,
-    /// Чужие неймспейсы metadata Timeline (порядок сохранён, kt исключён).
+    /// Foreign metadata namespaces of the Timeline (order preserved, kt excluded).
     pub timeline_meta_foreign: Map<String, Value>,
     pub stack_name: String,
     pub stack_extra: Map<String, Value>,
     pub stack_metadata: Map<String, Value>,
     pub global_start_time: Option<RationalTime>,
-    // HashMap-поля (Р.70): в файле проекта — ПАРЫ, отсортированные по ключу.
-    // JSON не умеет нестроковых ключей, а порядок обхода HashMap случаен —
-    // без сортировки каждое сохранение давало бы ложный дифф в git.
+    // HashMap fields (R.70): in the project file — PAIRS, sorted by key.
+    // JSON cannot have non-string keys, and HashMap iteration order is random —
+    // without sorting every save would give a spurious diff in git.
     #[serde(with = "sorted_pairs")]
     pub tracks: HashMap<(ClipKind, u32), TrackExtra>,
     #[serde(with = "sorted_pairs")]
     pub clips: HashMap<ClipId, ClipExtra>,
-    /// Ссылки на материал по МЕДИА — общие для всех его клипов (п.356).
+    /// Media references by MEDIA are shared by all its clips (item 356).
     #[serde(with = "sorted_pairs")]
     pub media: HashMap<kt_model::MediaId, MediaRefs>,
-    /// По паре клипов стыка.
-    /// Ключ — пара концов перехода; у фейда (Р.25) один конец None.
+    /// For a pair of clips at a joint.
+    /// The key is the pair of transition ends; for a fade (R.25) one end is None.
     #[serde(with = "sorted_pairs")]
     pub transitions: HashMap<(Option<ClipId>, Option<ClipId>), TransitionExtra>,
-    /// Сырьё foreign-плейсхолдеров по ForeignEvent.key.
+    /// Raw data of foreign placeholders by ForeignEvent.key.
     #[serde(with = "sorted_pairs")]
     pub foreign: HashMap<u64, RawObject>,
-    /// Чужие маркеры корневого Stack (наши — из модели).
+    /// Foreign markers of the root Stack (ours come from the model).
     pub stack_markers_foreign: Vec<MarkerNode>,
-    /// Чужое у НАШИХ меток корневого Stack: комментарий, metadata, extra
-    /// (Р.49, п.358). Модель их не знает — метка у нас это время, имя и
-    /// цвет, — а круг их терял: чужой редактор клал комментарий и
-    /// собственный неймспейс, и после нашего сохранения они исчезали.
-    /// Ключ — порядковый номер метки в НАШЕМ списке на момент чтения.
+    /// Foreign data on OUR markers of the root Stack: comment, metadata, extra
+    /// (R.49, item 358). The model does not know them — for us a marker is time, name and
+    /// colour — and the round trip lost them: a foreign editor put a comment
+    /// and its own namespace there, and after our save they disappeared.
+    /// The key is the ordinal number of the marker in OUR list at read time.
     pub stack_marker_extras: Vec<(usize, MarkerExtra)>,
-    /// Чужие объекты на уровне ДЕТЕЙ корневого Stack — не `Track`.
+    /// Foreign objects at the level of the CHILDREN of the root Stack — not `Track`.
     ///
-    /// До Р.50 они попадали в `foreign` по ключу, но писателем не
-    /// доставались ОТТУДА никогда: сырьё возвращают только
-    /// `ForeignEvent`-плейсхолдеры, живущие НА дорожках, а у корневого
-    /// ребёнка дорожки нет. Круг терял такой объект молча. Храним его с
-    /// ПОЗИЦИЕЙ среди детей и возвращаем на неё.
+    /// Before R.50 they went into `foreign` by key, but the writer never
+    /// retrieved them FROM THERE: raw data is returned only by
+    /// `ForeignEvent` placeholders living ON tracks, while the root
+    /// child has no track. The round trip lost such an object silently. We store it with
+    /// its POSITION among the children and return it to that position.
     pub root_foreign: Vec<(usize, RawObject)>,
-    /// Неизвестные поля НАШЕГО конверта kt (будущие версии, Р.29):
-    /// passthrough — v2-сборка не теряет добавки v3.
+    /// Unknown fields of OUR kt envelope (future versions, R.29):
+    /// passthrough — a v2 build does not lose the additions of v3.
     pub timeline_kt_extra: Map<String, Value>,
 }
 
 impl Retained {
-    /// Переставить сырьё чужих ТРЕКОВ вслед за перенумерацией дорожек
-    /// (Р.56, п.449). Ключ — семантическая пара (вид, номер), и при
-    /// «номер = ранг строки» она меняется на чтении: не переставь мы
-    /// карту, metadata чужого трека уехала бы на соседний трек МОЛЧА.
+    /// Reorder the raw data of foreign TRACKS after the renumbering of tracks
+    /// (R.56, item 449). The key is a semantic pair (view, number), and with
+    /// “number = row rank” it changes on reading: had we not reordered
+    /// the map, the metadata of a foreign track would silently move to a neighbouring track.
     pub fn remap_tracks(&mut self, perm: &kt_model::LanePerm) {
         if perm.is_identity() {
             return;
@@ -204,9 +204,9 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             None => path.replace('\\', "/"),
         }
     };
-    // Содержимое корня пишется ТЕМ ЖЕ кодом, что содержимое вложенной
-    // ленты (Р.50, п.382): раньше это были три замыкания, намертво
-    // привязанные к `p`.
+    // The content of the root is written by the SAME code as the content of a nested
+    // reel (R.50, item 382): previously these were three closures, hard-wired
+    // to `p`.
     let timeline_end = p.timeline_end.unwrap_or(Tick::ZERO);
     let children = reel_children(
         &ReelWrite {
@@ -221,21 +221,21 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
         base_dir,
         0,
     );
-    // чужие корневые дети возвращаются на СВОИ позиции (Р.50): раньше они
-    // уезжали в `foreign` по ключу, который писателю не достаётся
+    // foreign root children return to THEIR positions (R.50): previously they
+    // went to `foreign` by a key that the writer never gets
     let mut children = children;
     for (pos, raw) in &retained.root_foreign {
         let at = (*pos).min(children.len());
         children.insert(at, Composable::Unknown(raw.clone()));
     }
 
-    // метки — на корневом Stack (наши + чужие passthrough)
+    // markers — on the root Stack (ours + foreign passthrough)
     let mut markers: Vec<MarkerNode> = p
         .markers
         .iter()
         .enumerate()
         .map(|(i, m)| {
-            // чужое у метки возвращается на своё место (п.358)
+            // foreign data on a marker returns to its place (item 358)
             let ex = retained
                 .stack_marker_extras
                 .iter()
@@ -254,15 +254,15 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
         .collect();
     markers.extend(retained.stack_markers_foreign.iter().cloned());
 
-    // metadata.kt таймлайна
+    // the timeline’s metadata.kt
     let mut meta = retained.timeline_meta_foreign.clone();
     let mut morphers = p.morphers.clone();
     morphers.sort_by_key(|m| m.id);
     let mut cameras = p.cameras.clone();
     cameras.sort_by_key(|c| c.id);
-    // «использовано» считается ПО ВСЕМУ ДЕРЕВУ (Р.50): файл, стоящий лишь
-    // внутри ленты, попал бы и в bin_media, и в клипы этой ленты — на
-    // чтении получился бы дубль адреса и отказ загрузки.
+    // “used” is counted over the WHOLE TREE (R.50): a file sitting only inside a reel
+    // would get into both bin_media and the clips of that reel — on reading this would give
+    // a duplicate address and a load rejection.
     let used: std::collections::HashSet<MediaId> = p
         .clips
         .iter()
@@ -270,39 +270,39 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
         .map(|c| c.media)
         .collect();
     let kt = KtTimelineMeta {
-        // версия ПО СОДЕРЖИМОМУ (Р.29/Р.30): камеры и автоматизация
-        // параметров поднимают до v2 (старый ридер молча потерял бы их
-        // при перезаписи), без них — v1
+        // version BY CONTENT (R.29/R.30): cameras and parameter automation raise it to v2
+        // (an old reader would silently lose them on rewrite),
+        // without them — v1
         v: {
             let has_auto = p
                 .clips
                 .iter()
                 .any(|c| c.fx_auto.iter().any(|v| v.iter().any(|c| !c.keys.is_empty())))
-                // кривые камер — тот же механизм и та же версия
+                // camera curves — the same mechanism and the same version
                 || cameras.iter().any(|c| !c.auto.is_empty());
-            // выключатели тоже v3: старая сборка не знает про них и
-            // сыграла бы выключенное (правило «молчаливой потери», Р.29)
+            // the toggles are v3 too: an old build does not know about them and
+            // would play the disabled one (the “silent loss” rule, R.29)
             let has_off = p.clips.iter().any(|c| c.fx_off) || p.morphers.iter().any(|m| !m.enabled);
-            // вид перехода и кривая аудио — тоже v3: старая сборка
-            // прочитала бы вайп как кроссфейд и молча испортила бы монтаж
+            // the transition kind and the audio curve are v3 too: an old build
+            // would read a wipe as a crossfade and silently spoil the edit
             let has_tr = p.transitions.iter().any(|t| {
                 t.kind != TransitionKind::Crossfade
                     || t.audio != AudioCurve::default()
                     || !t.auto.is_empty()
             });
             let has_cams = !cameras.is_empty() || p.lanes(kt_model::LaneKind::Camera) > 0;
-            // версия ПО СОДЕРЖИМОМУ: кривые нового домена — v3, камеры —
-            // v2, иначе v1 (файл без наших новшеств открывается старыми
-            // сборками и остаётся байт-стабильным)
-            // морфер-слой (Р.35): действует по времени или целится не
-            // замороженным списком — старая сборка сыграла бы не то
+            // version BY CONTENT: the curves of the new domain are v3, cameras —
+            // v2, otherwise v1 (a file without our novelties opens in old
+            // builds and stays byte-stable)
+            // morpher layer (R.35): acts by time or aims at
+            // not a frozen list — an old build would play the wrong thing
             let has_layer = !p.areas.is_empty()
                 || p.morphers
                     .iter()
                     .any(|m| m.timed || !matches!(m.targets, kt_model::MorphTargets::Clips { .. }));
-            // кривые слоя (Р.38 п.13) и его сила с фейдами (п.12): старая
-            // сборка отрендерила бы слой с постоянными параметрами вместо
-            // анимированных, а «слой на 30 %» — целиком
+            // reel curves (R.38 item 13) and its strength with fades (item 12): an old
+            // build would render the layer with constant parameters instead of the
+            // animated ones, and a “layer at 30%” as a whole
             let has_morph_v5 = p.morphers.iter().any(|m| {
                 m.mixes()
                     || m.patch
@@ -311,35 +311,35 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                         .chain(m.patch.audio_auto.iter())
                         .any(|a| !a.is_empty())
             });
-            // переходы Р.51 (инверсия, наложенные) — по ВСЕМ лентам
-            // документа: старая сборка сыграла бы переход неинвертированным
-            // (а наложенный — жёстким срезом) и сохранила бы конверт
-            // нетронутым — порча незаметнее некуда
+            // R.51 transitions (inversion, overlapping) — across ALL reels
+            // of the document: an old build would play the transition uninverted
+            // (and the overlapping one as a hard cut) and would keep the envelope
+            // untouched — the corruption could not be less noticeable
             let v7_reel = |reel: &dyn kt_model::Reel| {
                 reel.transitions().iter().any(|t| t.invert || t.overlap_pair(reel).is_some())
             };
             let has_v7 =
                 v7_reel(p) || p.sequences.iter().any(|s| v7_reel(s as &dyn kt_model::Reel));
-            // событие левее нуля (Р.58, п.462): старая сборка положила бы
-            // его в ноль и сдвинула бы за ним всё содержимое ленты — молча
+            // an event left of zero (R.58, item 462): an old build would put it
+            // at zero and shift all the reel’s content after it — silently
             let has_v8 = p
                 .clips
                 .iter()
                 .chain(p.sequences.iter().flat_map(|s| s.clips.iter()))
                 .any(|c| c.start < Tick::ZERO);
-            // вложенные ленты (Р.50): старая сборка прочла бы вложение
-            // серым плейсхолдером (п.158) и при первой перезаписи вернула
-            // бы живой монтаж в файл мёртвым сырьём
-            // параметры генератора на СОБЫТИИ (Р.59, стадия 2): старая
-            // сборка полезла бы за ними в путь медиа, где их больше нет,
-            // и показала бы пустой титр — причём во всех местах разом
+            // nested reels (R.50): an old build would read an attachment
+            // as a grey placeholder (item 158) and on the first rewrite would return
+            // the live edit to the file as dead raw data
+            // generator parameters on an EVENT (R.59, stage 2): an old
+            // build would look for them in the media path, where they no longer exist,
+            // and would show an empty title — and in all places at once
             //
-            // Публичные параметры композиции и переопределения у
-            // экземпляра (Р.59, стадия 3) — ТА ЖЕ версия: решение раунда
-            // «одна версия на раунд, поднимается ПО СОДЕРЖИМОМУ», и
-            // предикат обязан быть ОДНИМ местом. Старая сборка сыграла бы
-            // все экземпляры шаблонными значениями — десять выпусков
-            // новостей с одним заголовком и ни одного видимого признака.
+            // Public composition parameters and per-instance overrides (R.59, stage 3):
+            // the SAME version — the round’s decision “one version per round, raised BY CONTENT” —
+            // and the predicate must be ONE place. An old build would play
+            // every instance with template values: ten news editions
+            // with one headline
+            // and not a single visible sign.
             let has_v9 = p
                 .clips
                 .iter()
@@ -347,12 +347,12 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                 .any(|c| c.r#gen.is_some() || !c.overrides.is_empty())
                 || !p.published.is_empty()
                 || p.sequences.iter().any(|s| !s.published.is_empty());
-            // форма отрезка, не выразимая прежним булевым полем (Р.61):
-            // однородная «третий порядок» или «прямая» версию НЕ двигают —
-            // они пишутся тем же `ease`, что и раньше, байт в байт (D1b).
-            // Всё остальное старая сборка прочла бы однородным: зигзаг
-            // стал бы прямой, ступень — плавным переездом, и ни одного
-            // признака порчи.
+            // a segment shape not expressible by the former boolean field (R.61):
+            // a uniform “third order” or “straight” does NOT move the version —
+            // they are written with the same `ease` as before, byte for byte (D1b).
+            // Everything else an old build would read as uniform: a zigzag
+            // would become straight, a step a smooth move, and not a single
+            // sign of corruption.
             let curve_needs_v10 = |c: &kt_model::ParamCurve| {
                 let ease = !c.keys.iter().all(|k| k.shape == kt_model::SegShape::Linear);
                 let implied =
@@ -378,19 +378,19 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                         .any(curve_needs_v10)
                 })
                 || p.settings.default_shape != kt_model::SegShape::DEFAULT;
-            // v11 (Р.62): правило проекта не «вписать», явные настройки,
-            // ведущий узел с не-умолчанием или не первым, узел «Геометрия»
-            // в цепочке — старая сборка потеряла бы или не прочла
+            // v11 (R.62): the project rule is not “fit”, explicit settings,
+            // a leading node with a non-default value or not the first one, a “Geometry” node
+            // in the chain — an old build would lose or fail to read them
             let clip_needs_v11 = |c: &kt_model::ClipEvent| {
                 !c.geometry.is_default()
                     || c.geometry_pos != 0
                     || !c.geometry_auto.is_empty()
                     || c.fx.iter().any(|f| matches!(f, kt_model::FxInstance::Geometry { .. }))
             };
-            // опубликованная ручка ВЕДУЩЕЙ ГЕОМЕТРИИ (Р.63) — то же
-            // новшество Р.62: адрес `owner: "geometry"` старая сборка не
-            // разберёт вовсе, и сказать об этом обязана версия, а не
-            // ошибка разбора
+            // a published control of the LEADING GEOMETRY (R.63) — the same
+            // novelty as R.62: the address `owner: "geometry"` an old build
+            // would not parse at all, and the version must say so, not a
+            // parse error
             let reel_needs_v11 = |reel: &dyn kt_model::Reel| {
                 reel.clips().iter().any(clip_needs_v11)
                     || reel
@@ -398,9 +398,9 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                         .iter()
                         .any(|p| matches!(p.target.owner, kt_model::ParamOwner::Geometry))
             };
-            // дорожка-объект с любым не-умолчанием — тоже новшество (Р.62,
-            // change B): старая сборка потеряла бы mute, уровень, режим и
-            // цепочку дорожки молча
+            // a track-object with any non-default value — also a novelty (R.62,
+            // change B): an old build would silently lose the mute, level, mode and
+            // the track chain
             let track_needs_v11 = |t: &kt_model::Track| t.has_novelty();
             let has_v11 = reel_needs_v11(p)
                 || p.tracks.iter().any(track_needs_v11)
@@ -415,12 +415,12 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                 || p.settings.conform != Default::default()
                 || p.settings.settings_explicit
                 || p.sequences.iter().any(|s| s.raster.is_some() || s.fps.is_some());
-            // v12 (Р.65): назначенный КЛЮЧ сайдчейна в цепочке дорожки
+            // v12 (R.65): the assigned sidechain KEY in the track chain
             let track_needs_v12 =
                 |t: &kt_model::Track| kt_model::sidechain_keys(&t.fx).next().is_some();
             let has_v12 = p.tracks.iter().any(track_needs_v12)
                 || p.sequences.iter().any(|s| s.tracks.iter().any(track_needs_v12));
-            // v13 (Р.67): формула отрезка, слой над ключами, `k` в формуле
+            // v13 (R.67): segment formula, layer over the keys, `k` in the formula
             let clip_needs_v13 = |c: &kt_model::ClipEvent| {
                 c.fx_auto
                     .iter()
@@ -478,7 +478,7 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             width: p.settings.width,
             height: p.settings.height,
             sample_rate: p.settings.sample_rate,
-            // дефолт в файл не пишется (skip_serializing_if)
+            // a default is not written to the file (skip_serializing_if)
             pitch_engine: (p.settings.pitch_engine != Default::default())
                 .then_some(p.settings.pitch_engine),
             default_shape: (p.settings.default_shape != Default::default())
@@ -490,9 +490,9 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             region: p.region.map(|r| (r.start.0, r.end.0)),
             loop_enabled: p.loop_enabled,
         }),
-        // имена дорожек с Р.62 живут на самих дорожках (`Track.name` файла
-        // и `kt.tracks` у служебных строк), в `ui` их больше нет; bin-поля
-        // тоже отдельно (kt.bin_*) — один дом у каждого факта
+        // track names since R.62 live on the tracks themselves (the file’s `Track.name`
+        // and `kt.tracks` for service rows), they are no longer in `ui`; bin fields
+        // too, separately (kt.bin_*) — one home for each fact
         ui: p.ui.clone().map(|mut u| {
             u.lane_names = Vec::new();
             u.lane_heights = Vec::new();
@@ -514,7 +514,7 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
         lane_order: Vec::new(),
         tracks: track_list(&p.tracks),
         areas: p.areas.clone(),
-        // длина сверх материала (пустые дорожки в файл не пишем)
+        // length beyond the material (empty tracks are not written to the file)
         end: p.timeline_end.map(|t| t.0),
         lanes: Some((p.lanes(kt_model::LaneKind::Video), p.lanes(kt_model::LaneKind::Audio))),
         layers: {
@@ -525,8 +525,8 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                 (0..p.lanes(kt_model::LaneKind::Video)).map(|l| lo(ClipKind::Video, l)).collect();
             let a: Vec<u32> =
                 (0..p.lanes(kt_model::LaneKind::Audio)).map(|l| lo(ClipKind::Audio, l)).collect();
-            // пишем, только когда есть что сказать: без перекрытий и с
-            // включённой опцией файл остаётся байт-в-байт прежним
+            // we write only when there is something to say: without overlaps and with the
+            // option enabled the file stays byte-for-byte as before
             let multi = v.iter().chain(a.iter()).any(|n| *n > 1);
             (multi || !p.overlap_layers).then(|| crate::meta::KtLayers {
                 off: !p.overlap_layers,
@@ -566,7 +566,7 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                             let a: Vec<u32> = (0..s.lanes(kt_model::LaneKind::Audio))
                                 .map(|l| lo(ClipKind::Audio, l))
                                 .collect();
-                            // как у корня: пишем, только когда слой не один
+                            // as for the root: we write only when the layer is not single
                             let multi = v.iter().chain(a.iter()).any(|n| *n > 1);
                             (multi || !s.overlap_layers).then(|| crate::meta::KtLayers {
                                 off: !s.overlap_layers,
@@ -606,11 +606,11 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
     }
 }
 
-/// Сколько OTIO-треков занимает одна НАША дорожка (Р.28, расслоение).
+/// How many OTIO tracks ONE of OUR tracks occupies (R.28, layering).
 ///
-/// Дорожка без содержимого, которой не было в исходном файле, не пишется
-/// вовсе (Р.25) — иначе карта слоёв не сойдётся с файлом и при чтении будет
-/// отброшена целиком.
+/// A track without content, which was not in the source file, is not written
+/// at all (R.25) — otherwise the layer map would not match the file and on reading
+/// would be discarded as a whole.
 fn layers_of(
     clips: &[ClipEvent],
     foreign: &[ForeignEvent],
@@ -639,9 +639,9 @@ fn layers_of(
     ends.len().max(1)
 }
 
-/// Эффекты события наружу: реверс — LTW(-1) первым, затем наша цепочка с
-/// кривыми в своём конверте, чужие — по исходным индексам. ОДИН код на
-/// обычное событие и на вложение (у вложения чужих эффектов не бывает).
+/// Event effects outward: reverse — LTW(-1) first, then our chain with
+/// curves in its own envelope, foreign ones — by their original indices. ONE code for a
+/// regular event and for an attachment (an attachment has no foreign effects).
 fn clip_effects(c: &ClipEvent, foreign: &[(usize, EffectNode)]) -> Vec<EffectNode> {
     let mut effects: Vec<EffectNode> = Vec::new();
     if c.reversed {
@@ -657,9 +657,9 @@ fn clip_effects(c: &ClipEvent, foreign: &[(usize, EffectNode)]) -> Vec<EffectNod
     for (i, fx) in c.fx.iter().enumerate() {
         let mut md = Map::new();
         kt_set(&mut md, fx);
-        // автоматизация (Р.30): кривые слота едут ключом "auto" внутри
-        // kt-конверта эффекта; FxInstance незнакомые поля игнорирует,
-        // старый ридер потерял бы их молча → файл поднимается до v2
+        // automation (R.30): slot curves travel under the key "auto" inside the
+        // effect’s kt envelope; FxInstance ignores unknown fields, an old reader
+        // would lose them silently → the file rises to v2
         if let Some(curves) = c.fx_auto.get(i).filter(|v| !v.is_empty()) {
             crate::meta::kt_entry_mut(&mut md).insert(
                 "auto".into(),
@@ -681,17 +681,17 @@ fn clip_effects(c: &ClipEvent, foreign: &[(usize, EffectNode)]) -> Vec<EffectNod
     effects
 }
 
-/// Содержимое ОДНОЙ ленты (Р.50, п.382): корень проекта и вложенная
-/// секвенция пишутся ТЕМ ЖЕ кодом.
+/// The content of ONE reel (R.50, item 382): the project root and a nested
+/// sequence are written by the SAME code.
 ///
-/// До Р.50 это были три замыкания внутри `project_to_timeline`, намертво
-/// привязанные к `&Project`. Ленты у нас две разновидности, а правило
-/// расслоения, гэпов, переходов и имён дорожек — одно; выписать его второй
-/// раз значило бы завести вторую правду о формате.
-/// Чтение наложенных переходов ленты из её конверта (Р.51, п.399):
-/// возвращает события и замечания. Запись с неизвестным клипом — notice
-/// и пропуск (паттерн KtLayers: не сошлось — чтение как есть, не порча);
-/// геометрию пары дальше проверит validate.
+/// Before R.50 these were three closures inside `project_to_timeline`, hard-wired
+/// to `&Project`. Our reels come in two kinds, while the rule of
+/// layering, gaps, transitions and track names is one; writing it out a second
+/// time would mean a second truth about the format.
+/// Reading the overlapping transitions of a reel from its envelope (R.51, item 399):
+/// returns the events and remarks. Writing with an unknown clip — a notice
+/// and a skip (the KtLayers pattern: no match — read as is, not corruption);
+/// the pair’s geometry is checked further by validate.
 fn read_overlap_transitions(
     list: &[crate::meta::KtOverlapTransition],
     clips: &[ClipEvent],
@@ -724,9 +724,9 @@ fn read_overlap_transitions(
     (out, notices)
 }
 
-/// Наложенные переходы ленты — в её конверт (Р.51, п.399): пара живёт в
-/// разных соседних Track и ребёнком последовательного трека невыразима.
-/// Сортировка по паре — детерминизм записи (т.144).
+/// Overlapping transitions of a reel — into its envelope (R.51, item 399): the pair lives in
+/// different neighbouring Tracks and cannot be expressed by a child of a sequential track.
+/// Sorting by pair — write determinism (t144).
 fn overlap_transition_list(reel: &dyn kt_model::Reel) -> Vec<crate::meta::KtOverlapTransition> {
     let mut v: Vec<crate::meta::KtOverlapTransition> = reel
         .transitions()
@@ -749,11 +749,11 @@ struct ReelWrite<'a> {
     clips: &'a [ClipEvent],
     foreign: &'a [ForeignEvent],
     transitions: &'a [TransitionEvent],
-    /// Дорожки-объекты ленты (Р.62): имя, выключатели и цепочка едут на
-    /// сам OTIO-трек, порядок и остальное — в конверт.
+    /// Track-objects of a reel (R.62): name, toggles and chain travel to
+    /// the OTIO track itself, the order and the rest — into the envelope.
     tracks: &'a [kt_model::Track],
     timeline_end: Tick,
-    /// Чужое сырьё. У наших лент его не бывает — пустой `Retained`.
+    /// Foreign raw data. Our reels have none of it — an empty `Retained`.
     retained: &'a Retained,
 }
 
@@ -767,8 +767,8 @@ impl ReelWrite<'_> {
     }
 }
 
-/// Цепочка FX в стандартные `Effect.1` — ОДИН код для события, вложения и
-/// ДОРОЖКИ (Р.62): расходись они, дорожечная цепочка читалась бы иначе.
+/// The FX chain into standard `Effect.1` — ONE code for an event, an attachment and
+/// a TRACK (R.62): if they diverged, the track chain would be read differently.
 fn chain_effects(
     fx: &[kt_model::FxInstance],
     bypass: &[bool],
@@ -795,8 +795,8 @@ fn chain_effects(
     out
 }
 
-/// Разобрать `Effect.1` дорожки: наши `kt:`-эффекты в цепочку, чужие —
-/// обратно вызывающему (они возвращаются в файл нетронутыми, п.358).
+/// Parse the track’s `Effect.1`: our `kt:` effects into the chain, foreign ones —
+/// back to the caller (they return to the file untouched, item 358).
 fn read_chain_effects(
     effects: &[EffectNode],
 ) -> (Vec<kt_model::FxInstance>, Vec<bool>, Vec<Vec<kt_model::ParamCurve>>, Vec<EffectNode>) {
@@ -834,8 +834,8 @@ fn read_chain_effects(
     (fx, bypass, auto, rest)
 }
 
-/// Конверт дорожек ленты (Р.62). Пусто — писать нечего: порядок
-/// естественный и все дорожки без свойств, файл байт-в-байт прежний.
+/// The envelope of a reel’s tracks (R.62). Empty — nothing to write: the order
+/// is natural and all tracks have no properties, so the file stays byte-for-byte as before.
 fn track_list(tracks: &[kt_model::Track]) -> Vec<crate::meta::KtTrack> {
     let natural = {
         let mut v: Vec<kt_model::LaneKind> = Vec::new();
@@ -845,10 +845,10 @@ fn track_list(tracks: &[kt_model::Track]) -> Vec<crate::meta::KtTrack> {
         v
     };
     let order_natural = tracks.iter().map(|t| t.kind).eq(natural.iter().copied());
-    // имя и цепочка ВИДЕО/АУДИО живут на самих треках файла; служебные
-    // строки своего трека не имеют, поэтому их имя — здесь
-    // писать конверт незачем, если порядок естественный и сказать о
-    // дорожках нечего: имя видео/аудио живёт на самом треке файла
+    // the name and chain of VIDEO/AUDIO live on the file’s own tracks; service
+    // rows have no track of their own, so their name is here —
+    // there is no need to write the envelope if the order is natural and there is
+    // nothing to say about tracks: the video/audio name lives on the file’s own track
     let own_fact = |t: &kt_model::Track| {
         t.has_novelty()
             || t.height != 0.0
@@ -868,7 +868,7 @@ fn track_list(tracks: &[kt_model::Track]) -> Vec<crate::meta::KtTrack> {
             crate::meta::KtTrack {
                 kind: t.kind,
                 id: t.id.0,
-                // имя видео/аудио — в `Track.name` файла (один дом факта)
+                // video/audio name — in the file’s `Track.name` (one home for the fact)
                 name: if on_track { String::new() } else { t.name.clone() },
                 height: t.height,
                 mute: t.mute,
@@ -898,10 +898,10 @@ fn reel_children(
     let media_path = |id: MediaId| {
         p.media.iter().find(|m| m.id == id).map(|m| m.path.clone()).unwrap_or_default()
     };
-    // переход пишется ПЕРЕД своим incoming-клипом; фейд-аут (правого клипа
-    // нет) — ПОСЛЕ своего outgoing (Р.25). НАЛОЖЕННЫЙ переход (Р.51) в
-    // детей трека не пишется вовсе: его пара лежит в разных Track — он
-    // едет в конверте ленты (`overlap_transitions`).
+    // a transition is written BEFORE its incoming clip; a fade-out (the right clip
+    // is absent) — AFTER its outgoing one (R.25). An OVERLAPPING transition (R.51) is not
+    // written into the track’s children at all: its pair lies in different Tracks — it
+    // travels in the reel’s envelope (`overlap_transitions`).
     let staggered = |t: &TransitionEvent| -> bool {
         let find = |id: Option<ClipId>| id.and_then(|i| r.clips.iter().find(|c| c.id == i));
         let (Some(a), Some(b)) = (find(t.a), find(t.b)) else { return false };
@@ -917,13 +917,13 @@ fn reel_children(
         .filter_map(|t| Some((t.a?, t)))
         .collect();
 
-    // Переслаивание (Р.28): в OTIO позиция клипа определяется ПОРЯДКОМ детей
-    // трека, поэтому перекрытые клипы одной нашей дорожки невыразимы в одном
-    // Track — их пришлось бы писать подряд, и чужой редактор увидел бы
-    // разъехавшийся монтаж. Раскладываем жадно по слоям: клип идёт в первый
-    // слой, где ни с кем не пересекается; каждый слой пишется отдельным
-    // Track, а номер НАШЕЙ дорожки едет в `metadata.kt.lane` трека — по нему
-    // мы собираем дорожку обратно (решение пользователя Р.28).
+    // Layering (R.28): in OTIO a clip’s position is set by the ORDER of the track’s
+    // children, so overlapping clips of one of our tracks cannot be expressed in one
+    // Track — they would have to be written in a row, and a foreign editor would see
+    // a scrambled edit. We distribute greedily by layers: a clip goes into the first
+    // layer where it intersects no one; each layer is written as a separate
+    // Track, and the number of OUR track travels in `metadata.kt.lane` of the track — by it
+    // we assemble the track back (the owner’s decision, R.28).
     let layers_of = |kind: ClipKind, lane: u32| -> usize {
         layers_of(r.clips, r.foreign, r.retained.tracks.contains_key(&(kind, lane)), kind, lane)
     };
@@ -955,8 +955,8 @@ fn reel_children(
         mine
     };
     let emit_track = |children: &mut Vec<Composable>, kind: ClipKind, lane: u32, layer: usize| {
-        // чужие extra/metadata/gap'ы принадлежат ИСХОДНОМУ треку — их несёт
-        // слой 0, иначе расслоение продублировало бы их на каждый слой
+        // foreign extra/metadata/gaps belong to the SOURCE track — they are carried by
+        // layer 0, otherwise layering would duplicate them onto every layer
         let tx = if layer == 0 {
             r.retained.tracks.get(&(kind, lane)).cloned().unwrap_or_default()
         } else {
@@ -966,7 +966,7 @@ fn reel_children(
         let has_content = r.clips.iter().any(|c| c.kind == kind && c.lane == lane)
             || r.foreign.iter().any(|f| f.kind == kind && f.lane == lane);
         if !known && !has_content {
-            return; // пустая дорожка, которой не было в исходном файле
+            return; // an empty track which was not in the source file
         }
         let mut items: Vec<(Tick, Tick, Result<&ClipEvent, &ForeignEvent>)> = r
             .clips
@@ -982,12 +982,12 @@ fn reel_children(
             .collect();
         items.sort_by_key(|(s, e, _)| (s.0, e.0));
         let mut kids: Vec<Composable> = Vec::new();
-        // `cursor` — позиция В ТРЕКЕ OTIO (последовательном), а не время
-        // модели. Обычно они совпадают: зазор дописывается ровно до
-        // `start`. Расходятся они у события ЛЕВЕЕ НУЛЯ внутри ленты (Р.58,
-        // п.462) и у всего, что идёт за ним и легло бы на курсор трека:
-        // такое событие пишется НА курсоре, а истинный `start` уезжает в
-        // конверт (`kt.start`), откуда его берёт наш ридер.
+        // `cursor` — the position IN THE OTIO TRACK (sequential), not the model time.
+        // Usually they coincide: a gap is appended exactly up to
+        // `start`. They diverge for an event LEFT OF ZERO inside a reel (R.58,
+        // item 462) and for everything that follows it and would land on the track cursor:
+        // such an event is written AT the cursor, while the true `start` travels into the
+        // envelope (`kt.start`), from which our reader takes it.
         let mut cursor = Tick::ZERO;
         let mut gap_ordinal = 0usize;
         for (start, end, item) in items {
@@ -1018,11 +1018,11 @@ fn reel_children(
                             .get(&(t.a, t.b))
                             .cloned()
                             .unwrap_or_else(|| (String::new(), Map::new(), Map::new()));
-                        // Тип перехода наружу (Р.33): кроссфейд — стандартный
-                        // SMPTE_Dissolve, вайпы — SMPTE_Wipe, остальное —
-                        // Custom. Чужой тип, приехавший в Retained, не
-                        // трогаем: правило «не понимаем — возвращаем как
-                        // было» (т.152).
+                        // The transition kind outward (R.33): a crossfade is the standard
+                        // SMPTE_Dissolve, wipes are SMPTE_Wipe, the rest —
+                        // Custom. A foreign kind that arrived in Retained is not
+                        // touched: the rule “what we do not understand we return as
+                        // it was” (t152).
                         let ttype = if !ttype.is_empty() {
                             ttype
                         } else {
@@ -1036,8 +1036,8 @@ fn reel_children(
                                 _ => "Custom".to_string(),
                             }
                         };
-                        // наши параметры — в свой конверт; умолчания не
-                        // пишутся, поэтому обычный кроссфейд байт-стабилен
+                        // our parameters — into their own envelope; defaults are not
+                        // written, so a plain crossfade is byte-stable
                         if t.kind != TransitionKind::Crossfade
                             || t.audio != AudioCurve::EqualPower
                             || !t.auto.is_empty()
@@ -1060,7 +1060,7 @@ fn reel_children(
                                     serde_json::to_value(&t.auto).unwrap_or(Value::Null),
                                 );
                             }
-                            // умолчание false не пишется (байт-стабильность)
+                            // a default of false is not written (byte stability)
                             if t.invert {
                                 e.insert("invert".into(), Value::Bool(true));
                             }
@@ -1079,11 +1079,11 @@ fn reel_children(
                     {
                         emit_transition(&mut kids, t);
                     }
-                    // Вложение пишется `Stack`-ом ребёнком `Track` с
-                    // `source_range` — точно тем же приёмом, каким это
-                    // делают Premiere и FCP. Тело инлайнится в КАЖДЫЙ
-                    // экземпляр: объектной идентичности в JSON OTIO нет,
-                    // и чужой редактор обязан увидеть монтаж, а не ссылку.
+                    // An attachment is written by a `Stack` as a child of a `Track` with a
+                    // `source_range` — exactly the same technique as
+                    // Premiere and FCP do. The body is inlined into EVERY
+                    // instance: there is no object identity in OTIO JSON,
+                    // and a foreign editor must see the edit, not a reference.
                     let at = cursor.max(start);
                     match p.sequence(c.media) {
                         Some(seq) => kids
@@ -1106,8 +1106,8 @@ fn reel_children(
                     }
                 }
             }
-            // трек OTIO продвигается на ДЛИНУ элемента от его места в
-            // треке; при совпадении с моделью это прежнее `cursor = end`
+            // the OTIO track advances by the LENGTH of the element from its place in the
+            // track; when it matches the model, this is the former `cursor = end`
             cursor = cursor.max(start) + (end - start);
         }
         if r.timeline_end > cursor {
@@ -1121,14 +1121,14 @@ fn reel_children(
                 extra: Map::new(),
             }));
         }
-        // только ЯВНОЕ имя дорожки (дефолтные ярлыки V1/A1 в файл не пишем —
-        // иначе чужой/новый проект после круга обрастает фиктивными именами)
+        // only an EXPLICIT track name (the default V1/A1 labels are not written to the file —
+        // otherwise a foreign/new project would grow fictitious names after a round trip)
         let lk = kt_model::lane_key_of(kind);
         let t = r.track(lk, lane);
         let name = t.map(|t| t.name.clone()).unwrap_or_default();
-        // ЦЕПОЧКА дорожки — стандартными `Effect.1` тем же кодом, что у
-        // клипа (Р.62); чужие эффекты возвращаются на место (п.358).
-        // Слой расслоения несёт только чужое: цепочка принадлежит слою 0.
+        // THE CHAIN of a track — as standard `Effect.1` by the same code as for
+        // a clip (R.62); foreign effects return to their place (item 358).
+        // A layering layer carries only foreign data: the chain belongs to layer 0.
         let mut effects = tx.effects.clone();
         if layer == 0
             && let Some(t) = t
@@ -1137,7 +1137,7 @@ fn reel_children(
         }
         children.push(Composable::Track(Track {
             name: if layer > 0 {
-                String::new() // имя дорожки несёт слой 0
+                String::new() // the track name is carried by layer 0
             } else if name.is_empty() {
                 tx.name_foreign.clone().unwrap_or_default()
             } else {
@@ -1151,18 +1151,18 @@ fn reel_children(
             source_range: None,
             effects,
             markers: tx.markers.clone(),
-            // `enabled = !mute` (Р.62): чужой читатель видит заглушённую
-            // дорожку честно, а не «у Kinetren нет per-track mute»
+            // `enabled = !mute` (R.62): a foreign reader sees a muted
+            // track honestly, rather than “Kinetren has no per-track mute”
             enabled: tx.enabled && !t.is_some_and(|t| t.mute),
             metadata: tx.metadata.clone(),
             extra: tx.extra.clone(),
         }));
     };
-    // Монтажная длина (Р.25): дорожка короче конца ленты дописывается
-    // хвостовым Gap'ом — так чужой файл задаёт длину и так его прочтут
-    // обратно. Дорожку, которой в файле не было и в которой ничего нет,
-    // не пишем вовсе (число дорожек живёт в metadata.kt).
-    // Видео снизу вверх (OTIO: поздний трек поверх), затем аудио по порядку.
+    // Edit length (R.25): a track shorter than the end of the reel is padded
+    // with a trailing Gap — so a foreign file sets the length and so it is read
+    // back. A track that was not in the file and in which there is nothing
+    // is not written at all (the number of tracks lives in metadata.kt).
+    // Video bottom to top (OTIO: a later track on top), then audio in order.
     let mut children: Vec<Composable> = Vec::new();
     for lane in (0..r.lanes(kt_model::LaneKind::Video)).rev() {
         for layer in 0..layers_of(ClipKind::Video, lane) {
@@ -1177,11 +1177,11 @@ fn reel_children(
     children
 }
 
-/// Вложение как `Stack` ребёнком `Track` (Р.50).
+/// An attachment as a `Stack`, a child of a `Track` (R.50).
 ///
-/// Окно экземпляра — `source_range` стека, ровно как у клипа: OTIO трактует
-/// его одинаково, и чужой редактор покажет подрезанное вложение правильно
-/// без единой нашей строки.
+/// The instance window is the stack’s `source_range`, exactly as for a clip: OTIO treats
+/// it the same way, and a foreign editor shows the trimmed attachment correctly
+/// without a single line of ours.
 fn nest_to_otio(
     c: &ClipEvent,
     seq: &Sequence,
@@ -1192,10 +1192,10 @@ fn nest_to_otio(
 ) -> Stack {
     let empty = Retained::default();
     let children = if depth + 1 > kt_model::MAX_NEST_DEPTH {
-        // глубже предела не пишем ВОВСЕ: файл, который мы не сможем
-        // прочитать обратно, хуже отсутствующего вложения. Модель такого
-        // проекта не пропустит (validate), так что сюда попасть нечем —
-        // это страховка на случай ручной правки .otio.
+        // deeper than the limit we do not write AT ALL: a file we could not
+        // read back is worse than a missing attachment. The model would not pass
+        // such a project (validate), so there is no way to get here —
+        // this is a safety net for manual edits of the .otio.
         Vec::new()
     } else {
         reel_children(
@@ -1232,9 +1232,9 @@ fn nest_to_otio(
             extra: Map::new(),
         },
     );
-    // адрес ленты — вот по этому ключу экземпляры схлопываются на чтении
+    // the reel’s address — this is the key by which instances collapse on reading
     crate::meta::kt_entry_mut(&mut meta).insert("seq".into(), Value::from(seq.id.0));
-    // свои растр и fps ленты (Р.62) — только когда заданы
+    // the reel’s own raster and fps (R.62) — only when they are set
     if let Some((w, h)) = seq.raster {
         crate::meta::kt_entry_mut(&mut meta).insert("raster".into(), serde_json::json!([w, h]));
     }
@@ -1253,9 +1253,9 @@ fn nest_to_otio(
     }
 }
 
-/// `GeneratorReference` (наш, `kt.<тег>`) → канонический `gen:`-путь.
-/// Незнакомый тег или битые параметры — `None` (совместимость только
-/// вперёд: заглушка вместо генератора из будущей сборки).
+/// `GeneratorReference` (ours, `kt.<tag>`) → the canonical `gen:` path.
+/// An unknown tag or broken parameters — `None` (compatibility
+/// is forward-only: a stub instead of a generator from a future build).
 fn generator_ref_path(gr: &GeneratorReference) -> Option<String> {
     let tag = gr
         .generator_kind
@@ -1263,11 +1263,11 @@ fn generator_ref_path(gr: &GeneratorReference) -> Option<String> {
         .or_else(|| crate::generator_alias(&gr.generator_kind))?;
     let mut fields = gr.parameters.clone();
     fields.insert("kind".into(), Value::String(tag.to_string()));
-    // ЛЕГАСИ-режим анимации титра (Р.53) — полями `anim`/`anim_secs`.
-    // Вид их больше не несёт, и serde их просто проигнорировал бы, поэтому
-    // они переезжают в путь токенами `am`/`ams`: дальше их подберёт
-    // ЕДИНСТВЕННАЯ миграция (`Project::migrate_gen_to_events`), которая и
-    // превращает режим в кривые. Второй копии этих формул не бывает.
+    // LEGACY title-animation mode (R.53) — via the fields `anim`/`anim_secs`.
+    // The kind no longer carries them, and serde would simply ignore them, so
+    // they move into the path as the tokens `am`/`ams`: from there the
+    // SINGLE migration (`Project::migrate_gen_to_events`) picks them up, and
+    // turns the mode into curves. There is never a second copy of these formulas.
     let anim = fields.shift_remove("anim").and_then(|v| v.as_str().map(str::to_string));
     let anim_secs = fields.shift_remove("anim_secs").and_then(|v| v.as_f64());
     let kind: kt_model::GeneratorKind = serde_json::from_value(Value::Object(fields)).ok()?;
@@ -1283,7 +1283,7 @@ fn generator_ref_path(gr: &GeneratorReference) -> Option<String> {
     Some(path)
 }
 
-/// Имя легаси-режима из файла (`typewriter`) → токен пути (`tw`).
+/// The legacy mode’s name from the file (`typewriter`) → path token (`tw`).
 fn legacy_anim_token(name: &str) -> Option<&'static str> {
     kt_model::TextAnim::ALL
         .into_iter()
@@ -1291,9 +1291,9 @@ fn legacy_anim_token(name: &str) -> Option<&'static str> {
         .map(|a| a.token())
 }
 
-/// Поля `GeneratorKind` словарём `parameters` (без служебного `kind` —
-/// он едет строкой `generator_kind`). Порядок ключей детерминирован
-/// порядком полей структуры.
+/// The `GeneratorKind` fields as a `parameters` dictionary (without the service `kind` —
+/// it travels as the `generator_kind` string). The key order is deterministic,
+/// by the order of the struct’s fields.
 fn generator_parameters(kind: &kt_model::GeneratorKind) -> Map<String, Value> {
     let Ok(Value::Object(mut fields)) = serde_json::to_value(kind) else {
         unreachable!("GeneratorKind serializes to an object");
@@ -1302,9 +1302,9 @@ fn generator_parameters(kind: &kt_model::GeneratorKind) -> Map<String, Value> {
     fields
 }
 
-/// `kt.start` пишется ТОЛЬКО когда место в треке (`at`) не равно времени
-/// модели (Р.58, п.462). Обычный монтаж — `None`, и файлы без поля
-/// байт-стабильны; сторож — t638 и golden-фикстуры.
+/// `kt.start` is written ONLY when the place in the track (`at`) does not equal the model
+/// time (R.58, item 462). An ordinary edit — `None`, and files without the field
+/// are byte-stable; the guard — t638 and the golden fixtures.
 fn displaced_start(c: &ClipEvent, at: Tick) -> Option<i64> {
     (c.start != at).then_some(c.start.0)
 }
@@ -1317,9 +1317,9 @@ fn clip_to_otio(
     media_len: Option<Tick>,
 ) -> Clip {
     let mut ex = retained.clips.get(&c.id).cloned().unwrap_or_default();
-    // Клип, рождённый в редакторе, конверта не имеет — ссылки на материал
-    // берём у МЕДИА (п.356). Иначе потерялся бы `available_range`, а вместе
-    // с ним стартовый таймкод файла: `source_in` уезжал бы на час.
+    // A clip born in the editor has no envelope — its media references
+    // are taken from the MEDIA (item 356). Otherwise `available_range` would be lost, and along
+    // with it the file’s starting timecode: `source_in` would drift by an hour.
     if ex.media_refs.is_empty()
         && let Some(m) = retained.media.get(&c.media)
     {
@@ -1332,16 +1332,16 @@ fn clip_to_otio(
     let active_key =
         if ex.active_key.is_empty() { DEFAULT_MEDIA_KEY.to_string() } else { ex.active_key };
     if !target_url.is_empty() {
-        // Значения — С СОБЫТИЯ (Р.59, стадия 2); путь несёт только вид,
-        // и разбирать его приходится лишь у клипа без значений (чужой
-        // импорт, битая kt-секция).
+        // The values come FROM THE EVENT (R.59, stage 2); the path carries only the kind,
+        // and it is parsed only for a clip without values (a foreign
+        // import, a broken kt section).
         if let Some(kind) = c.r#gen.clone().or_else(|| kt_model::parse_gen_path(target_url)) {
-            // генератор пишется ПЕРВОКЛАССНОЙ схемой OTIO (Р.52):
-            // name/metadata/extra прежнего узла сохраняются, вид и
-            // параметры перезаписываются каноном. `available_range`
-            // ОБЯЗАТЕЛЕН (контракт схемы — фикстура SMPTE несёт 50 кадров
-            // при том, что длительности у генератора не существует):
-            // пишем ровно потреблённое ЭТИМ клипом — идемпотентно.
+            // a generator is written by the FIRST-CLASS OTIO schema (R.52):
+            // the name/metadata/extra of the former node are kept, the kind and
+            // parameters are overwritten by the canon. `available_range`
+            // is MANDATORY (the schema contract — the SMPTE fixture carries 50 frames
+            // although a generator has no duration): we write exactly what THIS clip
+            // consumes — idempotently.
             let mut active = match media_refs.get(&active_key) {
                 Some(Some(MediaRefNode::Generator(gr))) => gr.clone(),
                 _ => GeneratorReference {
@@ -1359,8 +1359,8 @@ fn clip_to_otio(
             active.available_range = Some(range(Tick(0), c.source_in + c.duration));
             media_refs.insert(active_key.clone(), Some(MediaRefNode::Generator(active)));
         } else {
-            // available_range/metadata/extra прежней ссылки сохраняются,
-            // подменяется только адрес материала
+            // available_range/metadata/extra of the former reference are kept,
+            // only the media address is replaced
             let mut active = match media_refs.get(&active_key) {
                 Some(Some(MediaRefNode::External(er))) => er.clone(),
                 _ => ExternalReference {
@@ -1373,12 +1373,12 @@ fn clip_to_otio(
                 },
             };
             active.target_url = target_url.to_string();
-            // ДЛИНА МАТЕРИАЛА — в стандартное поле OTIO (Р.63 п.2), а не в
-            // наш конверт: `available_range` ровно про это и есть, и чужой
-            // читатель понимает его без нас. Пишем ТОЛЬКО когда поля не
-            // было: пришедшее из чужого файла — passthrough (его начало
-            // мы и так читаем как таймкод материала), и переписывать его
-            // своим замером значило бы «понимать наполовину».
+            // The MEDIA LENGTH — into the standard OTIO field (R.63 item 2), not into
+            // our envelope: `available_range` is exactly about this, and a foreign
+            // reader understands it without us. We write ONLY when the field
+            // was absent: what came from a foreign file is passthrough (we already read its start
+            // as the material’s timecode), and rewriting it with our own measurement
+            // would mean “understanding half-way”.
             if active.available_range.is_none()
                 && let Some(len) = media_len.filter(|l| l.0 > 0)
             {
@@ -1388,15 +1388,15 @@ fn clip_to_otio(
         }
     }
 
-    // начало available_range активной ссылки — тот самый таймкод, который
-    // был вычтен на чтении (п.180)
+    // the start of the active reference’s available_range — the very timecode
+    // that was subtracted on reading (item 180)
     let media_origin = media_refs
         .get(&active_key)
         .and_then(|n| n.as_ref())
         .and_then(|n| match n {
             MediaRefNode::External(er) => er.available_range,
             MediaRefNode::Missing(mr) => mr.available_range,
-            // у генератора начало материала всегда 0 — таймкода файла нет
+            // a generator’s material start is always 0 — there is no file timecode
             MediaRefNode::Generator(_) => None,
             MediaRefNode::Unknown(raw) => {
                 raw.0.get("available_range").and_then(|v| serde_json::from_value(v.clone()).ok())
@@ -1426,12 +1426,12 @@ fn clip_to_otio(
         },
     );
 
-    // Маркеры раскладываются по ОКНУ МАТЕРИАЛА (Р.49, п.357). Производное
-    // событие наследует конверт родителя ЦЕЛИКОМ — иначе undo вернул бы
-    // родителя без маркеров, уехавших к детям. Значит выбирает писатель: в
-    // файл идут только те, что пересекают окно этого события. Чужие маркеры
-    // неизвестной схемы пропускаются как есть: их диапазон нам не прочесть,
-    // а выбрасывать чужое нельзя.
+    // Markers are laid out by the WINDOW OF THE MATERIAL (R.49, item 357). A derived
+    // event inherits the parent’s envelope WHOLESALE — otherwise undo would return the
+    // parent without the markers that moved to the children. So the writer chooses: only those
+    // that intersect the window of this event go into the file. Foreign markers of an
+    // unknown schema are passed through as they are: we cannot read their range,
+    // and foreign data must not be discarded.
     let win_start = c.source_in.0 + media_origin;
     let win_end = win_start + c.duration.0;
     let markers: Vec<MarkerNode> = ex
@@ -1441,7 +1441,7 @@ fn clip_to_otio(
             MarkerNode::Marker(mk) => {
                 let a = mk.marked_range.start_time.to_ticks().0;
                 let b = a + mk.marked_range.duration.to_ticks().0.max(0);
-                // полуинтервал: точечный маркер ровно на конце — уже следующий
+                // half-open interval: a point marker exactly at the end is already the next one
                 a < win_end && b >= win_start
             }
             MarkerNode::Unknown(_) => true,
@@ -1450,8 +1450,8 @@ fn clip_to_otio(
 
     Clip {
         name: ex.name,
-        // таймкод материала возвращается на место (п.180): чужой файл
-        // обязан прочитаться другим редактором так же, как пришёл
+        // the material timecode returns to its place (item 180): a foreign file
+        // must be read by another editor exactly as it arrived
         source_range: Some(range(Tick(win_start), c.duration)),
         media_references: media_refs,
         active_media_reference_key: active_key,
@@ -1468,17 +1468,17 @@ fn clip_to_otio(
 pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<ProjectBundle, Error> {
     crate::meta::check_kt_version(tl)?;
     let mut notices: Vec<Notice> = Vec::new();
-    // нечитаемые кривые автоматизации: копим и валим загрузку в конце
+    // unreadable automation curves: we collect them and fail the load at the end
     let mut bad_auto: Vec<String> = Vec::new();
-    // адреса клипов с испорченной НАШЕЙ секцией (п.358)
+    // the addresses of clips with a broken OUR section (item 358)
     let mut bad_kt: Vec<String> = Vec::new();
-    // битая kt-секция — ОШИБКА, а не «чужой файл»: молчаливое выбрасывание
-    // конверта уносило с собой настройки, дорожки, морферы и раскладку
+    // a broken kt section — an ERROR, not a “foreign file”: silently discarding
+    // the envelope carried away the settings, tracks, morphers and layout
     let kt: Option<KtTimelineMeta> =
         kt_get_checked(&tl.metadata).map_err(|e| Error::KtMetaBroken(e.to_string()))?;
     let is_ours = kt.is_some();
-    // версия конверта файла: до v3 кривые автоматизации лежали в долях
-    // длины события, теперь — в тиках материала (Р.33)
+    // the file’s envelope version: up to v3 the automation curves lay in fractions
+    // of the event length, now in material ticks (R.33)
     let file_v = crate::meta::kt_version(tl).unwrap_or(crate::meta::KT_META_V1);
     let settings = kt
         .as_ref()
@@ -1522,7 +1522,7 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
         ..Default::default()
     };
 
-    // маркеры корневого Stack
+    // markers of the root Stack
     for m in &tl.tracks.markers {
         match m {
             MarkerNode::Marker(mk) => {
@@ -1547,10 +1547,10 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
         }
     }
 
-    // Карта слоёв (Р.28): перекрытые клипы одной НАШЕЙ дорожки лежат в
-    // соседних Track'ах — здесь они собираются обратно. Карта берётся из
-    // нашего конверта; если она не сходится с файлом (чужой редактор
-    // пересобрал треки), она игнорируется и дорожки читаются один к одному.
+    // Layer map (R.28): overlapping clips of one OUR track lie in
+    // neighbouring Tracks — here they are assembled back. The map is taken from
+    // our envelope; if it does not match the file (a foreign editor
+    // rebuilt the tracks), it is ignored and the tracks are read one to one.
     let root_layers = kt.as_ref().and_then(|k| k.layers.clone());
     let mut next_clip_id = 1u64;
     let mut next_foreign_key = 1u64;
@@ -1585,14 +1585,14 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
                 .unwrap_or_default(),
         };
         read_reel(&tl.tracks.children, root_layers.as_ref(), &mut root, &mut cx, 0)?;
-        // аудио-половины чужих вложений, встреченных на видео-дорожках
-        // (и наоборот) — они рождаются вне обхода своей дорожки
+        // the audio halves of foreign attachments met on video tracks
+        // (and vice versa) — they are born outside the walk of their own track
         root.clips.extend(std::mem::take(&mut cx.pending));
         let mut seq_facts = std::mem::take(&mut cx.seq_facts);
         for (id, mut seq) in std::mem::take(&mut cx.seqs) {
-            // сайдкар (Р.50): дорожки, порядок строк, морферы и камеры
-            // ленты — то, чего OTIO не выражает. Не сошлось с файлом —
-            // notice и чтение как есть, а не порча (паттерн KtLayers).
+            // Sidecar (R.50): the tracks, the row order, the morphers and cameras of the
+            // reel — what OTIO does not express. If it does not match the file —
+            // a notice and reading as is, not corruption (the KtLayers pattern).
             match kt.as_ref().and_then(|k| k.sequences.iter().find(|s| s.id == id.0)) {
                 Some(meta) => {
                     seq.name = meta.name.clone();
@@ -1632,17 +1632,17 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
     }
     retained.tracks = track_extras;
 
-    // конверт kt: транспорт/ui/бин/морферы/камеры
+    // kt envelope: transport/ui/bin/morphers/cameras
     let mut kt_tracks: Vec<crate::meta::KtTrack> = Vec::new();
     let mut kt_legacy: (u32, u32, u32, u32, Vec<(kt_model::LaneKind, u32)>) =
         (0, 0, 0, 0, Vec::new());
     let mut kt_names: Vec<(kt_model::LaneKind, u32, String)> = Vec::new();
     let mut kt_heights: Vec<(kt_model::LaneKind, u32, f32)> = Vec::new();
     if let Some(kt) = kt {
-        // неизвестные kt-поля будущих версий — passthrough (Р.29)
+        // unknown kt fields of future versions — passthrough (R.29)
         retained.timeline_kt_extra = kt.extra.clone();
-        // наложенные переходы (Р.51, п.399): id назначаются заново —
-        // идентичность задаёт пара, номера сквозные по документу (п.394)
+        // overlapping transitions (R.51, item 399): ids are assigned anew —
+        // identity is set by the pair, the numbers are continuous across the document (item 394)
         let mut next_tid = p.max_transition_id();
         let read = read_overlap_transitions(&kt.overlap_transitions, &p.clips, &mut next_tid);
         p.transitions.extend(read.0);
@@ -1658,8 +1658,8 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
             p.loop_enabled = tr.loop_enabled;
         }
         p.areas = kt.areas;
-        // ЛЕГАСИ-порядок строк: своё поле, а из `ui.lane_order` — апгрейд
-        // ещё более старого файла (оба только на чтение, Р.62)
+        // LEGACY row order: its own field, and from `ui.lane_order` — the upgrade
+        // of an even older file (both read-only, R.62)
         let mut legacy_order = kt.lane_order.clone();
         if legacy_order.is_empty()
             && let Some(u) = &kt.ui
@@ -1669,7 +1669,7 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
         let legacy_names = kt.ui.as_ref().map(|u| u.lane_names.clone()).unwrap_or_default();
         let legacy_heights = kt.ui.as_ref().map(|u| u.lane_heights.clone()).unwrap_or_default();
         if let Some(mut ui) = kt.ui {
-            // имена и высоты дорожек с Р.62 живут на дорожках-объектах
+            // track names and heights since R.62 live on the track-objects
             ui.lane_names = Vec::new();
             ui.lane_heights = Vec::new();
             ui.bin_groups = kt.bin_groups;
@@ -1679,22 +1679,22 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
         }
         for bm in kt.bin_media {
             let path = resolve_url(base_dir, &bm.path);
-            // адрес мог уже приехать с событием ленты — дубля быть не должно
+            // the address could have already arrived with a reel event — there must be no duplicate
             if !p.media.iter().any(|m| m.id == MediaId(bm.id)) {
                 p.media.push(MediaRef::new(MediaId(bm.id), path));
             }
         }
         p.published = kt.published;
         p.morphers = kt.morphers;
-        // морферы файла ДО v4 — прежняя семантика: патч на цели целиком,
-        // время блока не действует (Р.35, односторонний апгрейд)
+        // the morphers of a file BEFORE v4 — the former semantics: the patch on the whole target,
+        // block time does not act (R.35, one-way upgrade)
         if file_v < crate::meta::KT_META_V4 {
             for m in &mut p.morphers {
                 kt_model::migrate_legacy_morpher(m);
             }
         }
         p.cameras = kt.cameras;
-        // кейфреймы камер старого домена → общие кривые (Р.34 К3)
+        // camera keyframes of the old domain → shared curves (R.34 K3)
         for c in &mut p.cameras {
             kt_model::migrate_legacy_camera(c);
         }
@@ -1704,9 +1704,9 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
         if let Some(l) = &kt.layers {
             p.overlap_layers = !l.off;
         }
-        // ДОРОЖКИ КОРНЯ (Р.62): конверт (порядок, свойства, служебные
-        // строки) + факты самих треков файла (имя, `enabled`, цепочка);
-        // ни того, ни другого нет — легаси-счётчики и `lane_order`.
+        // ROOT TRACKS (R.62): the envelope (order, properties, service
+        // rows) + the facts of the file’s own tracks (name, `enabled`, chain);
+        // neither one nor the other is there — the legacy counters and `lane_order`.
         let (lv, la) = kt.lanes.unwrap_or((0, 0));
         kt_tracks = kt.tracks.clone();
         kt_legacy = (lv, la, kt.morph_lanes, kt.camera_lanes, legacy_order.clone());
@@ -1714,8 +1714,8 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
         kt_heights = legacy_heights;
     }
 
-    // ДОРОЖКИ (Р.62) — ВНЕ конверта: чужой файл конверта не имеет вовсе,
-    // а дорожки у него есть (имя, `enabled`, чужие эффекты на треке).
+    // TRACKS (R.62) — OUTSIDE the envelope: a foreign file has no envelope at all,
+    // but it does have tracks (name, `enabled`, foreign effects on the track).
     let mut need = [0u32; 4];
     let kind_idx = |k: ClipKind| match k {
         ClipKind::Video => 0usize,
@@ -1741,14 +1741,14 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
         &root.track_facts,
         need,
     );
-    // ЛЕГАСИ-ПОРЯДОК строк (до Р.62 — своё поле либо `ui.lane_order`):
-    // применяется ЕДИНСТВЕННОЙ дверью перестановки, и её перестановка
-    // нужна чужому сырью треков (оно адресовано парой «вид, номер»)
+    // LEGACY ROW ORDER (before R.62 — its own field or `ui.lane_order`):
+    // applied by the SINGLE reorder door, and its reordering is
+    // needed by the foreign raw track data (it is addressed by the pair “view, number”)
     if kt_tracks.is_empty() && !kt_legacy.4.is_empty() {
         let perm = p.set_lane_order(&kt_legacy.4.clone());
         retained.remap_tracks(&perm);
     }
-    // имена и высоты старого файла (`ui`) — на дорожки, односторонне
+    // names and heights of the old file (`ui`) — onto the tracks, one-way
     for (k, l, name) in kt_names {
         if let Some(t) = p.track_at_mut(k, l)
             && t.name.is_empty()
@@ -1762,25 +1762,25 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
         }
     }
 
-    // детерминированный порядок независимо от порядка обхода дорожек
-    // (низ-вверх для видео): save→load→save стабилен, PartialEq честен
+    // a deterministic order regardless of the track walk order
+    // (bottom-up for video): save→load→save is stable, PartialEq is honest
     p.clips.sort_by_key(|c| c.id);
     p.foreign.sort_by_key(|f| f.key);
     p.media.sort_by_key(|m| m.id);
     if let Some(u) = &mut p.ui {
-        // порядок независим от обхода дорожек (видео идёт низ-вверх)
+        // the order is independent of the track walk (video runs bottom-up)
         u.lane_names.sort_by_key(|(k, l, _)| (*k as u8, *l));
     }
-    // монтажная длина хранится, ТОЛЬКО когда она больше материала: иначе
-    // наш же файл после круга обрастал бы полем end (t151 байт-стабильность)
+    // the edit length is stored ONLY when it is longer than the material: otherwise
+    // our own file would grow an end field after each round trip (t151 byte stability)
     let material = p.clips.iter().map(|c| c.start + c.duration).max().unwrap_or(Tick::ZERO);
     if p.timeline_end.is_some_and(|e| e <= material) {
         p.timeline_end = None;
     }
-    // КЛЮЧ САЙДЧЕЙНА (Р.65) читается ТЕРПИМО: ключ на дорожку, которой в
-    // файле нет, и ключ на СОБЫТИИ — это «ключа нет», а не отказ читать.
-    // Файл мог прийти из чужой руки или из будущей схемы; проект обязан
-    // открыться, а прибор — звучать обычным компрессором.
+    // The SIDECHAIN KEY (R.65) is read TOLERANTLY: a key on a track that is absent
+    // from the file, and a key on an EVENT — is “no key”, not a refusal to read.
+    // The file could have come from a foreign hand or from a future schema; the project must
+    // open, and the device sounds as an ordinary compressor.
     {
         let known: std::collections::HashSet<kt_model::TrackId> =
             p.tracks.iter().map(|t| t.id).collect();
@@ -1804,27 +1804,27 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
         }
     }
 
-    // НОМЕР ДОРОЖКИ = РАНГ СТРОКИ (Р.56, п.449). Чужие треки адресуются
-    // парой (вид, номер), поэтому их сырьё переставляется ТЕМ ЖЕ
-    // отображением: иначе metadata чужого трека уехала бы на соседний.
+    // TRACK NUMBER = ROW RANK (R.56, item 449). Foreign tracks are addressed by
+    // the pair (view, number), so their raw data is permuted by the SAME
+    // mapping: otherwise the metadata of a foreign track would move to a neighbour.
     let perm = p.normalize();
     retained.remap_tracks(&perm);
     p.validate().map_err(|e| Error::UnsupportedSchema(format!("invalid timeline: {e}")))?;
     if let Some(first) = bad_auto.first() {
         return Err(Error::UnsupportedSchema(first.clone()));
     }
-    // адрес КАЖДОГО битого клипа: чинить файл вслепую нечем, а исходник мы
-    // не трогаем — отказ читать безопаснее молчаливой порчи связей
+    // the address of EVERY broken clip: there is no way to repair the file blindly, and the source we
+    // do not touch — refusing to read is safer than silent corruption of links
     if !bad_kt.is_empty() {
         return Err(Error::KtMetaBroken(bad_kt.join("; ")));
     }
     Ok(ProjectBundle { project: p, retained, notices })
 }
 
-/// Наши поля перехода из его metadata: вид и кривая аудио. Из конверта они
-/// ВЫРЕЗАЮТСЯ — обратно их пишет писатель из модели, иначе при смене вида
-/// в файл уехало бы устаревшее значение. Пустой конверт «kt» убирается
-/// целиком: чужой файл без наших ключей обязан остаться байт-стабильным.
+/// Our transition fields from its metadata: kind and audio curve. From the envelope they
+/// are CUT OUT — the writer writes them back from the model, otherwise after a change of kind
+/// a stale value would travel into the file. An empty “kt” envelope is removed
+/// entirely: a foreign file without our keys must stay byte-stable.
 fn take_transition_kt(
     meta: &mut Map<String, Value>,
     notices: &mut Vec<Notice>,
@@ -1841,7 +1841,7 @@ fn take_transition_kt(
     };
     let audio =
         kt.shift_remove("audio").and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
-    // кривые параметров вида (Р.34 К4) — тот же конверт
+    // parameter curves of the kind (R.34 K4) — the same envelope
     let auto: Vec<kt_model::ParamCurve> = match kt.shift_remove("auto") {
         Some(v) => serde_json::from_value(v).unwrap_or_else(|e| {
             notices.push(format!("unreadable transition curves ({e})"));
@@ -1849,7 +1849,7 @@ fn take_transition_kt(
         }),
         None => Vec::new(),
     };
-    // инверсия (Р.51, п.398); не-булево — notice + false, файл не валится
+    // inversion (R.51, item 398); non-boolean — notice + false, the file does not fail
     let invert = match kt.shift_remove("invert") {
         Some(Value::Bool(b)) => b,
         Some(_) => {
@@ -1864,10 +1864,10 @@ fn take_transition_kt(
     (kind, audio, auto, invert)
 }
 
-/// Кривые файла ДО v3: ключи лежат в долях длины события (домен Р.30),
-/// переводим их в тики материала по геометрии клипа. Дробное значение в
-/// новую схему не парсится вовсе, поэтому разбираем старую форму явной
-/// структурой — так же, как читаются прочие легаси-формы (метки).
+/// Curves of a file BEFORE v3: the keys lie in fractions of the event length (the R.30 domain),
+/// we convert them into material ticks by the clip’s geometry. A fractional value does not
+/// parse into the new schema at all, so we parse the old form with an explicit
+/// structure — the same way the other legacy forms are read (markers).
 fn curves_from_progress(
     v: &serde_json::Value,
     source_in: Tick,
@@ -1893,11 +1893,11 @@ fn curves_from_progress(
     legacy
         .into_iter()
         .map(|c| {
-            // прежнее булево сглаживание разворачивается в ОДНУ форму на
-            // все отрезки (Р.61, D1b): значения после чтения обязаны
-            // совпасть с прежними побитово. Правило ОДНО на оба читателя
-            // (этот и `Deserialize for ParamCurve`) и знает про скорость
-            // варпа — Р.63, см. `implied_shape_of`.
+            // the former boolean smoothing is expanded into ONE form for
+            // all segments (R.61, D1b): the values after reading must
+            // match the former ones bit for bit. The rule is ONE for both readers
+            // (this one and `Deserialize for ParamCurve`) and knows about the speed
+            // of a warp — R.63, see `implied_shape_of`.
             let shape = kt_model::ParamCurve::implied_shape_of(&c.param, c.ease);
             kt_model::ParamCurve {
                 param: c.param,
@@ -1905,9 +1905,9 @@ fn curves_from_progress(
                     .keys
                     .into_iter()
                     .map(|k| {
-                        // старый домен видео-кривых считался по прогрессу
-                        // ТАЙМЛАЙНА — у реверсированного клипа он зеркален
-                        // материалу
+                        // the old domain of video curves was computed by the progress of the
+                        // TIMELINE — for a reversed clip it is mirrored relative to the
+                        // material
                         kt_model::AutoKey::shaped(
                             kt_model::material_from_progress(k.t, source_in, duration, reversed),
                             k.v,
@@ -1922,22 +1922,22 @@ fn curves_from_progress(
 }
 
 #[allow(clippy::too_many_arguments)]
-/// Куда читается ОДНА лента.
+/// Where ONE reel is read into.
 #[derive(Default)]
 struct ReelRead {
     clips: Vec<ClipEvent>,
     transitions: Vec<TransitionEvent>,
     foreign: Vec<ForeignEvent>,
-    /// Конец содержимого: у корня из него получается `timeline_end`.
+    /// The end of the content: for the root it gives `timeline_end`.
     end: Tick,
-    /// Что сказали сами треки файла: имя, `enabled`, цепочка (Р.62).
+    /// What the file’s own tracks said: name, `enabled`, chain (R.62).
     track_facts: Vec<(kt_model::LaneKind, u32, TrackFacts)>,
 }
 
-/// Общее на весь документ при чтении: счётчики адресов, накопитель чужого
-/// сырья, замечания. Вынесено в структуру, потому что читатель стал
-/// рекурсивным (Р.50) и тащить полтора десятка `&mut` через рекурсию —
-/// это не читается.
+/// Shared across the whole document on reading: address counters, the accumulator of foreign
+/// raw data, remarks. Moved into a structure because the reader became
+/// recursive (R.50), and dragging a dozen and a half `&mut` through the recursion —
+/// is unreadable.
 struct ReadCtx<'a> {
     base_dir: Option<&'a Path>,
     is_ours: bool,
@@ -1951,29 +1951,29 @@ struct ReadCtx<'a> {
     notices: &'a mut Vec<Notice>,
     bad_auto: &'a mut Vec<String>,
     bad_kt: &'a mut Vec<String>,
-    /// Чужое у ДОРОЖЕК возвращается на место только у корня: внутри ленты
-    /// ключ `(kind, lane)` столкнулся бы с корневым. Наши ленты чужого
-    /// сырья не несут вовсе, у чужих вложений оно теряется — цена,
-    /// принятая вместе с решением «читать чужие Stack настоящими лентами».
+    /// Foreign data of TRACKS returns to its place only at the root: inside a reel the
+    /// key `(kind, lane)` would collide with the root’s. Our reels carry no foreign
+    /// raw data at all, and foreign attachments lose it — the price accepted together with the decision
+    /// “read foreign Stacks as real reels”.
     track_extras: Option<&'a mut HashMap<(ClipKind, u32), TrackExtra>>,
-    /// Прочитанные ленты: адрес → содержимое.
+    /// Read reels: address → content.
     seqs: Vec<(MediaId, Sequence)>,
-    /// Что сказали треки файла о дорожках КАЖДОЙ вложенной ленты (Р.62):
-    /// сайдкар ленты приезжает позже, а факты рождаются при обходе.
+    /// What the file’s tracks said about the tracks of EACH nested reel (R.62):
+    /// the reel’s sidecar arrives later, while the facts are born during the walk.
     seq_facts: HashMap<MediaId, Vec<(kt_model::LaneKind, u32, TrackFacts)>>,
-    /// Карты слоёв вложенных лент из сайдкара `kt.sequences`.
+    /// Layer maps of nested reels from the sidecar `kt.sequences`.
     seq_layers: HashMap<u64, crate::meta::KtLayers>,
-    /// События, рождённые ВНЕ обхода своей дорожки: аудио-половина чужого
-    /// вложения, встреченного на видео-дорожке (и наоборот).
+    /// Events born OUTSIDE the walk of their own track: the audio half of a foreign
+    /// attachment met on a video track (and vice versa).
     pending: Vec<ClipEvent>,
 }
 
-/// Прочитать детей одного `Stack` — треки одной ленты.
+/// Read the children of one `Stack` — the tracks of one reel.
 ///
-/// `layers` — карта слоёв (Р.28): перекрытые клипы одной НАШЕЙ дорожки
-/// лежат соседними треками, и без карты они разъехались бы по разным
-/// дорожкам. Карта, не сошедшаяся с файлом (чужой редактор пересобрал
-/// треки), ИГНОРИРУЕТСЯ с замечанием — читаем один к одному.
+/// `layers` — the layer map (R.28): overlapping clips of one OUR track
+/// lie in neighbouring tracks, and without the map they would drift onto different
+/// tracks. A map that did not match the file (a foreign editor rebuilt the
+/// tracks) is IGNORED with a remark — we read one to one.
 fn read_reel(
     children: &[Composable],
     layers: Option<&crate::meta::KtLayers>,
@@ -1994,7 +1994,7 @@ fn read_reel(
         if counts.is_empty() || counts.iter().sum::<u32>() != total {
             return None;
         }
-        // видео пишется от НИЖНЕЙ дорожки к верхней — карта разворачивается
+        // video is written from the BOTTOM track to the top — the map is unfolded
         let order: Vec<u32> = match kind {
             ClipKind::Video => (0..counts.len() as u32).rev().collect(),
             ClipKind::Audio => (0..counts.len() as u32).collect(),
@@ -2019,10 +2019,10 @@ fn read_reel(
                 "unsupported track-level object was kept untouched: {}",
                 composable_tag(child)
             ));
-            // хребет типизирован — перекодируем в сырьё для Retained.
-            // У КОРНЯ сырьё хранится с позицией и возвращается на неё: до
-            // Р.50 оно уезжало в `foreign` по ключу, который писателю не
-            // достаётся никогда, и круг терял объект молча.
+            // the spine is typed — we re-encode it into raw data for Retained.
+            // At the ROOT the raw data is stored with its position and returns to it: before
+            // R.50 it went to `foreign` by a key that the writer
+            // never gets, and the round trip lost the object silently.
             let raw = to_raw(child);
             if depth == 0 {
                 cx.retained.root_foreign.push((pos, raw));
@@ -2060,9 +2060,9 @@ fn read_reel(
             markers: track.markers.clone(),
             enabled: track.enabled,
         };
-        // Р.62: `enabled: false` — это MUTE дорожки, а не «мы такого не
-        // умеем»; цепочка дорожки читается тем же кодом, что у клипа, а
-        // чужие эффекты остаются в `Retained` и вернутся в файл.
+        // R.62: `enabled: false` is the track’s MUTE, not “we cannot do this”; the track chain is
+        // read by the same code as for a clip, and
+        // foreign effects stay in `Retained` and return to the file.
         let (fx, bypass, auto, foreign_fx) = read_chain_effects(&track.effects);
         tx.effects = foreign_fx;
         out.track_facts.push((
@@ -2080,8 +2080,8 @@ fn read_reel(
                     let dur = item_duration(&g.source_range).ok_or_else(|| {
                         Error::UnsupportedSchema("Gap without source_range".into())
                     })?;
-                    // переход перед Gap — фейд-аут предыдущего клипа (Gap =
-                    // пустота; эталон трактует край дорожки так же)
+                    // a transition before a Gap — a fade-out of the previous clip (Gap =
+                    // emptiness; the reference treats the track edge the same way)
                     if let Some((in_off, out_off, (ttype, mut meta, extra))) =
                         pending_transition.take()
                         && let Some(a) = prev_clip
@@ -2138,9 +2138,9 @@ fn read_reel(
                         cx.bad_auto,
                         cx.bad_kt,
                     );
-                    // переход перед клипом: с живым соседом слева —
-                    // кроссфейд, без него (край дорожки или Gap) — фейд-ин
-                    // (Р.25; эталон трактует так же — dissolve с Gap)
+                    // a transition before a clip: with a live neighbour on the left —
+                    // a crossfade; without one (the track edge or a Gap) — a fade-in
+                    // (R.25; the reference treats it the same way — a dissolve with a Gap)
                     if let Some((in_off, out_off, (ttype, mut meta, extra))) =
                         pending_transition.take()
                     {
@@ -2165,8 +2165,8 @@ fn read_reel(
                         });
                     }
                     prev_clip = Some(ev.id);
-                    // ссылки на материал — и на уровне медиа: ими будут
-                    // пользоваться клипы, рождённые в редакторе (п.356)
+                    // media references — and at the media level: they will be
+                    // used by clips born in the editor (item 356)
                     if !ex.media_refs.is_empty() {
                         cx.retained.media.entry(ev.media).or_insert_with(|| MediaRefs {
                             media_refs: ex.media_refs.clone(),
@@ -2177,10 +2177,10 @@ fn read_reel(
                     out.clips.push(ev);
                     cursor = cursor + dur;
                 }
-                // Вложение: наше (`kt.seq`) — схлопывается по адресу; чужое
-                // (`Stack` или `Track` внутри `Track`) — становится НОВОЙ
-                // лентой тем же кодом. Глубже предела — старый путь
-                // плейсхолдера ниже: он милосерднее отказа, круг цел.
+                // An attachment: ours (`kt.seq`) — collapses by address; foreign
+                // (a `Stack` or a `Track` inside a `Track`) — becomes a NEW
+                // reel by the same code. Deeper than the limit — the old path of the
+                // placeholder below: it is more merciful than a refusal, the round trip intact.
                 Composable::Stack(_) | Composable::Track(_) if depth < kt_model::MAX_NEST_DEPTH => {
                     let dur = composable_duration(item).ok_or_else(|| {
                         Error::UnsupportedSchema(format!(
@@ -2221,16 +2221,16 @@ fn read_reel(
                     cursor = cursor + dur;
                 }
                 other => {
-                    // выключенный клип / неизвестная схема / вложенный
-                    // Stack|Track → серый плейсхолдер (Р.24 п.5)
+                    // a disabled clip / unknown schema / a nested
+                    // Stack|Track → grey placeholder (R.24 item 5)
                     let dur = composable_duration(other).ok_or_else(|| {
                         Error::UnsupportedSchema(format!(
                             "{} without readable duration",
                             composable_tag(other)
                         ))
                     })?;
-                    // переход перед чужим плейсхолдером: рендерить его пару
-                    // мы не можем, но фейд-аут предыдущего клипа честен
+                    // a transition before a foreign placeholder: we cannot render its pair,
+                    // but the fade-out of the previous clip is honest
                     if let Some((in_off, out_off, (ttype, mut meta, extra))) =
                         pending_transition.take()
                     {
@@ -2269,7 +2269,7 @@ fn read_reel(
                 }
             }
         }
-        // переход последним ребёнком дорожки — фейд-аут последнего клипа
+        // a transition as the last child of a track — the fade-out of the last clip
         if let Some((in_off, out_off, (ttype, mut meta, extra))) = pending_transition.take() {
             if let Some(a) = prev_clip {
                 let id = out.transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1;
@@ -2290,8 +2290,8 @@ fn read_reel(
                 cx.notices.push("transition on an empty track was dropped".into());
             }
         }
-        // монтажная длина: хвостовой Gap чужого файла (Р.25) — конец
-        // дорожки правее последнего клипа задаёт длину таймлайна
+        // edit length: a foreign file’s trailing Gap (R.25) — the end of the
+        // track to the right of the last clip sets the timeline length
         out.end = out.end.max(cursor);
         if let Some(tracks) = cx.track_extras.as_deref_mut() {
             tracks.insert((kind, lane), tx);
@@ -2300,20 +2300,20 @@ fn read_reel(
     Ok(())
 }
 
-/// Прочитать ЧУЖОЕ вложение — `Stack` или `Track` внутри `Track` (Р.50, А5).
+/// Read a FOREIGN attachment — a `Stack` or a `Track` inside a `Track` (R.50, A5).
 ///
-/// До этого раунда оно становилось серым плейсхолдером: «melt раскрывает
-/// вложенные композиции и рисует их содержимое, а у нас там пустота»
-/// (п.158). Теперь — настоящая лента, прочитанная ТЕМ ЖЕ `read_reel`.
-/// Цена принята владельцем вместе с решением: импорт чужих файлов даёт
-/// другую модель, чем давал раньше.
+/// Until this round it became a grey placeholder: “melt expands
+/// nested compositions and draws their content, while for us there is emptiness”
+/// (item 158). Now it is a real reel, read by the SAME `read_reel`.
+/// The price was accepted by the owner together with the decision: importing foreign
+/// files gives a different model from what it gave before.
 ///
-/// Два случая, и оба есть в `nested_example.otio`:
+/// Two cases, and both are in `nested_example.otio`:
 ///
-/// - дети — `Track`'и: обычная многодорожечная лента;
-/// - дети — сразу клипы (`Stack` без треков, либо `Track` внутри `Track`):
-///   лента из ОДНОЙ дорожки, и вид у неё — вид РОДИТЕЛЬСКОГО трека, потому
-///   что своего у неё нет.
+/// - children are `Track`s: an ordinary multi-track reel;
+/// - children are clips right away (a `Stack` without tracks, or a `Track` inside a `Track`):
+///   a reel of ONE track, and its kind is that of the PARENT track, because
+///   it has none of its own.
 fn read_foreign_nest(
     item: &Composable,
     kind: ClipKind,
@@ -2333,9 +2333,9 @@ fn read_foreign_nest(
     if has_tracks {
         read_reel(children, None, &mut body, cx, depth + 1)?;
     } else {
-        // Оборачиваем содержимое в ОДИН трек своего вида: `read_reel` умеет
-        // читать только треки, а правило «клип за клипом с гэпами» у нас
-        // одно и второй раз его выписывать нельзя.
+        // We wrap the content into ONE track of its kind: `read_reel` can
+        // read only tracks, and the rule “clip after clip with gaps” is ours,
+        // and writing it out a second time is not allowed.
         let synth = Composable::Track(Track {
             name: String::new(),
             kind: match item {
@@ -2382,10 +2382,10 @@ fn read_foreign_nest(
     let id = ClipId(*cx.next_clip_id);
     *cx.next_clip_id += 1;
     let source_in = source_range.map(|r| r.start_time.to_ticks()).unwrap_or(Tick::ZERO);
-    // Чужое вложение со звуком И картинкой внутри: у нас это ДВА события в
-    // одной link-группе — своей «дорожки обоих видов» у нас нет. Молчать
-    // тут нельзя: человек увидит на таймлайне на одно событие больше, чем
-    // было в чужом файле.
+    // A foreign attachment with sound AND a picture inside: for us this is TWO events in
+    // one link group — we have no “track of both kinds” of our own. Silence
+    // here is not allowed: a person would see one more event on the timeline than
+    // there was in the foreign file.
     let group = if both {
         let seq_name = cx.seqs.last().map(|(_, s)| s.name.clone()).unwrap_or_default();
         cx.notices.push(format!(
@@ -2425,8 +2425,8 @@ fn read_foreign_nest(
             ClipKind::Video => ClipKind::Audio,
             ClipKind::Audio => ClipKind::Video,
         };
-        // партнёр встаёт на НУЛЕВУЮ дорожку своего вида: переслаивание
-        // включено, наложение законно, а угадывать свободную нечем
+        // the partner stands on the ZERO track of its kind: layering
+        // is on, overlap is legal, and there is nothing to guess a free one with
         let pid = ClipId(*cx.next_clip_id);
         *cx.next_clip_id += 1;
         cx.pending.push(make(pid, other, 0));
@@ -2434,11 +2434,11 @@ fn read_foreign_nest(
     Ok(make(id, kind, lane))
 }
 
-/// Прежний эффект `kt:pan` (упразднён Р.62) → дополнительный узел
-/// «Геометрия» на том же слоте: индексы слотов не двигаются, кривые
-/// `pan_x`/`pan_y` переезжают на `pos_x`/`pos_y` (пересчёт `pan_to_pos`
-/// при зуме базы), `zoom` остаётся. Режим прежней рамки не переносится:
-/// все три давали один кадр (F-MED-004).
+/// The former effect `kt:pan` (abolished R.62) → an additional “Geometry” node
+/// on the same slot: slot indices do not move, the curves
+/// `pan_x`/`pan_y` move onto `pos_x`/`pos_y` (recomputation `pan_to_pos`
+/// at the base zoom), `zoom` remains. The mode of the former frame is not carried over:
+/// all three gave one frame (F-MED-004).
 pub(crate) fn migrate_pan_effect(
     metadata: &Map<String, Value>,
 ) -> Option<(kt_model::FxInstance, Vec<kt_model::ParamCurve>)> {
@@ -2468,16 +2468,16 @@ pub(crate) fn migrate_pan_effect(
     Some((inst, auto))
 }
 
-/// Прочитать вложение: `Stack` ребёнком `Track` (Р.50).
+/// Read the attachment: a `Stack` as a child of a `Track` (R.50).
 ///
-/// Тело инлайнится в КАЖДЫЙ экземпляр (объектной идентичности в JSON OTIO
-/// нет), поэтому экземпляры схлопываются по `kt.seq`. Если тела разошлись —
-/// чужой редактор правил один экземпляр и не правил другой — второе тело
-/// становится ОТДЕЛЬНОЙ лентой с notice: тихий выбор одного из двух есть
-/// потеря чужой работы.
-/// Эффекты вложения: та же раскладка, что у клипа, но чужого у нас тут не
-/// бывает — вложение мы пишем сами. Кривые читаются в домене v3+ (тики
-/// материала): файл с вложением не может быть старше v6.
+/// The body is inlined into EVERY instance (there is no object identity in OTIO JSON),
+/// so the instances collapse by `kt.seq`. If the bodies diverged —
+/// a foreign editor edited one instance and did not edit the other — the second body
+/// becomes a SEPARATE reel with a notice: silently picking one of the two is
+/// the loss of someone else’s work.
+/// The attachment’s effects: the same layout as for a clip, but we have no foreign ones
+/// here — we write attachments ourselves. The curves are read in the v3+ domain (material
+/// ticks): a file with an attachment cannot be older than v6.
 fn nest_effects(
     st: &Stack,
     cx: &mut ReadCtx<'_>,
@@ -2534,13 +2534,13 @@ fn nest_effects(
     (fx, bypass, auto, reversed)
 }
 
-/// ДОРОЖКИ ленты из конверта и из самих треков файла (Р.62).
+/// TRACKS of a reel from the envelope and from the file’s own tracks (R.62).
 ///
-/// Конверт авторитетен для НАШИХ файлов: он несёт порядок строк, служебные
-/// строки и свойства, которых в OTIO нет. Чужой файл конверта не имеет —
-/// тогда дорожки строятся из легаси-счётчиков, а имя и `enabled` берутся с
-/// треков (`enabled: false` читается как mute: чужая выключенная дорожка
-/// обязана остаться выключенной, а не «включиться» молча).
+/// The envelope is authoritative for OUR files: it carries the row order, service
+/// rows and properties that OTIO does not have. A foreign file has no envelope —
+/// then the tracks are built from the legacy counters, while the name and `enabled` are taken from
+/// the tracks (`enabled: false` is read as mute: a foreign disabled track
+/// must stay disabled, not “switch on” silently).
 fn build_tracks(
     list: &[crate::meta::KtTrack],
     legacy: (u32, u32, u32, u32, &[(kt_model::LaneKind, u32)]),
@@ -2549,7 +2549,7 @@ fn build_tracks(
 ) -> Vec<kt_model::Track> {
     use kt_model::LaneKind as K;
     let mut out: Vec<kt_model::Track> = if list.is_empty() {
-        // чужой или старый файл: натуральный порядок из счётчиков
+        // a foreign or old file: the natural order from the counters
         let n = [
             legacy.0.max(need[0]).max(1),
             legacy.1.max(need[1]).max(1),
@@ -2580,7 +2580,7 @@ fn build_tracks(
             })
             .collect()
     };
-    // факты с самих треков файла: имя, `enabled` и цепочка видео/аудио
+    // facts from the file’s own tracks: name, `enabled`, and the video/audio chain
     for (kind, lane, facts) in per_track {
         let mut rank = 0u32;
         for t in out.iter_mut() {
@@ -2600,7 +2600,7 @@ fn build_tracks(
             rank += 1;
         }
     }
-    // дорожек не меньше, чем занято содержимым
+    // tracks no fewer than the content occupies
     for (i, kind) in K::ALL.into_iter().enumerate() {
         let have = out.iter().filter(|t| t.kind == kind).count() as u32;
         let want = need[i].max(if i < 2 { 1 } else { 0 });
@@ -2612,7 +2612,7 @@ fn build_tracks(
     out
 }
 
-/// Сколько дорожек каждого вида требует содержимое ленты.
+/// How many tracks of each kind the reel’s content requires.
 fn reel_need(seq: &Sequence) -> [u32; 4] {
     let mut n = [0u32; 4];
     for c in &seq.clips {
@@ -2631,7 +2631,7 @@ fn reel_need(seq: &Sequence) -> [u32; 4] {
     n
 }
 
-/// Что о дорожке сказал сам OTIO-трек.
+/// What the OTIO track itself said about the track.
 #[derive(Default, Clone)]
 struct TrackFacts {
     name: String,
@@ -2641,7 +2641,7 @@ struct TrackFacts {
     auto: Vec<Vec<kt_model::ParamCurve>>,
 }
 
-/// Свои растр и fps ленты из конверта `kt` (Р.62); нет ключей — проект.
+/// The reel’s own raster and fps from the `kt` envelope (R.62); no keys — the project.
 fn read_reel_settings(metadata: &Map<String, Value>, seq: &mut Sequence) {
     let Some(kt) = metadata.get(crate::meta::KT_NS).and_then(|v| v.as_object()) else {
         return;
@@ -2680,17 +2680,17 @@ fn read_nest(
             kt_model::MAX_NEST_DEPTH
         ));
     }
-    // тот же адрес уже читался — сверяем тела
+    // the same address was already read — we compare the bodies
     let mut addr = seq_id;
     match cx.seqs.iter().find(|(id, _)| *id == seq_id) {
         Some((_, prev)) if prev.clips == body.clips && prev.transitions == body.transitions => {}
         Some(_) => {
-            // тела разошлись: вторая версия живёт своей лентой, и её
-            // содержимое получает СВЕЖИЕ адреса (ClipId уникален по
-            // документу)
-            // свободный адрес ищется по ВСЕМУ уже прочитанному: счётчик
-            // `next_media_id` раздаёт адреса только файлам, найденным по
-            // URL, а адреса из нашего конверта приезжают готовыми
+            // the bodies diverged: the second version lives as its own reel, and its
+            // content gets FRESH addresses (ClipId is unique across the
+            // document)
+            // a free address is searched across EVERYTHING already read: the counter
+            // `next_media_id` hands out addresses only to files found by
+            // URL, while addresses from our envelope arrive ready-made
             let free = (*cx.next_media_id)
                 .max(cx.media.iter().map(|m| m.id.0 + 1).max().unwrap_or(0))
                 .max(cx.seqs.iter().map(|(id, _)| id.0 + 1).max().unwrap_or(0));
@@ -2737,12 +2737,12 @@ fn read_nest(
     };
     *cx.next_clip_id = (*cx.next_clip_id).max(id.0 + 1);
     let (fx, fx_bypass, fx_auto, reversed) = nest_effects(st, cx);
-    // истинное время — из конверта, если трек его выразить не смог (Р.58)
+    // the true time — from the envelope, if the track could not express it (R.58)
     let start = meta.as_ref().and_then(|m| m.start).map(Tick).unwrap_or(start);
     Ok(ClipEvent {
         r#gen: None,
-        // Переопределения ЭКЗЕМПЛЯРА ленты — из нашего конверта (Р.59,
-        // стадия 3). Чужой файл их не несёт и нести не может.
+        // Overrides of the reel’s INSTANCE — from our envelope (R.59,
+        // stage 3). A foreign file does not carry them and cannot.
         overrides: meta.as_ref().map(|m| m.overrides.clone()).unwrap_or_default(),
         gen_auto: Vec::new(),
         id,
@@ -2784,11 +2784,11 @@ fn clip_from_otio(
     bad_auto: &mut Vec<String>,
     bad_kt: &mut Vec<String>,
 ) -> (ClipEvent, ClipExtra) {
-    // Битая НАША секция у клипа — ОШИБКА, а не «чужой файл» (Р.49, п.358;
-    // близнец t251 у Timeline). `kt_get` с `.ok()` выбрасывал конверт молча:
-    // клип получал НОВЫЙ номер, а с ним рвались link-группы A/V и ссылки
-    // морферов, терялись громкость, прозрачность и выключенная цепочка.
-    // Notice тут не спасает: переприсвоенный номер необратим.
+    // A broken OUR section of a clip — an ERROR, not a “foreign file” (R.49, item 358;
+    // a twin of t251 in Timeline). `kt_get` with `.ok()` silently discarded the envelope:
+    // the clip got a NEW number, and with it the A/V link groups and the morpher references
+    // were torn, the volume, opacity and the disabled chain were lost.
+    // A notice does not help here: the reassigned number is irreversible.
     let meta: Option<KtClipMeta> = match kt_get_checked(&c.metadata) {
         Ok(v) => v,
         Err(e) => {
@@ -2801,17 +2801,17 @@ fn clip_from_otio(
     };
     let url = match c.active_media() {
         Some(MediaRefNode::External(er)) => er.target_url.clone(),
-        // наш генератор: канонический gen:-путь из generator_kind +
-        // parameters; непрочитавшийся (kt-вид новее сборки) — пустой url,
-        // то есть заметная заглушка, а узел уезжает обратно без потерь
+        // our generator: the canonical gen: path from generator_kind +
+        // parameters; one that could not be read (a kt kind newer than the build) — an empty url,
+        // that is, a visible stub, while the node travels back without loss
         Some(MediaRefNode::Generator(gr)) => generator_ref_path(gr).unwrap_or_default(),
         _ => String::new(),
     };
     let media = match &meta {
         Some(m) if is_ours => MediaId(m.media),
-        // клип без ссылки (Missing/null) не делит источник с другими такими
-        // же: общего материала у них нет, дедуп по пустому URL склеил бы
-        // независимые клипы в одну запись бина
+        // a clip without a reference (Missing/null) does not share a source with other such
+        // ones: they have no common material, and deduplication by an empty URL would glue
+        // independent clips into one bin record
         _ if url.is_empty() => {
             let id = MediaId(*next_media_id);
             *next_media_id += 1;
@@ -2824,11 +2824,11 @@ fn clip_from_otio(
         }),
     };
     if !media_list.iter().any(|m| m.id == media) {
-        // ДЛИНА МАТЕРИАЛА — из стандартного `available_range` внешней
-        // ссылки (Р.63 п.2). У генератора её нет и быть не может: там
-        // `available_range` пишется потреблённым куском, а не длиной
-        // источника, и принять его за длину значило бы поставить
-        // генератору упор трима из ниоткуда.
+        // The MATERIAL LENGTH — from the standard `available_range` of the external
+        // reference (R.63 item 2). A generator has none and cannot have one: there
+        // `available_range` is written as the consumed piece, not as the length of the
+        // source, and taking it for the length would mean setting a trim limit for the
+        // generator out of nowhere.
         let len = match c.active_media() {
             Some(MediaRefNode::External(er)) => {
                 er.available_range.map(|r| r.duration.to_ticks()).filter(|d| d.0 > 0)
@@ -2849,7 +2849,7 @@ fn clip_from_otio(
         }
     };
 
-    // эффекты: kt:* → цепочка, LTW ±1 → reversed/no-op, прочее → foreign
+    // effects: kt:* → chain, LTW ±1 → reversed/no-op, other → foreign
     let mut fx = Vec::new();
     let mut fx_auto: Vec<Option<serde_json::Value>> = Vec::new();
     let mut bypass = Vec::new();
@@ -2871,7 +2871,7 @@ fn clip_from_otio(
     for (i, e) in c.effects.iter().enumerate() {
         match e {
             EffectNode::Effect(eff) if eff.effect_name == "kt:pan" => {
-                // прежний Pan (Р.62) — узел «Геометрия» на том же слоте
+                // the former Pan (R.62) — a “Geometry” node on the same slot
                 if let Some((inst, curves)) = migrate_pan_effect(&eff.metadata) {
                     fx.push(inst);
                     fx_auto.push(serde_json::to_value(curves).ok());
@@ -2881,10 +2881,10 @@ fn clip_from_otio(
             EffectNode::Effect(eff) if eff.effect_name.starts_with("kt:") => {
                 match kt_get::<kt_model::FxInstance>(&eff.metadata) {
                     Some(inst) => {
-                        // автоматизация: ключ "auto" рядом с параметрами.
-                        // Разбираем ПОСЛЕ цикла: домен ключей у файлов до
-                        // v3 зависит от source_in и reversed, а реверс
-                        // приезжает отдельным эффектом ниже
+                        // automation: the key "auto" next to the parameters.
+                        // We parse AFTER the loop: the key domain for files before
+                        // v3 depends on source_in and reversed, and the reverse
+                        // arrives as a separate effect below
                         fx.push(inst);
                         fx_auto.push(
                             eff.metadata
@@ -2912,34 +2912,34 @@ fn clip_from_otio(
         }
     }
     while bypass.last() == Some(&false) {
-        bypass.pop(); // хвост «включено» не сериализуем (форма модели)
+        bypass.pop(); // the “enabled” tail is not serializable (the model’s form)
     }
 
-    // СТАРТОВЫЙ ТАЙМКОД МАТЕРИАЛА (п.180). В OTIO `source_range` живёт в
-    // системе координат самого материала — той же, что `available_range`.
-    // У вещательных и киношных файлов та начинается не с нуля, а со
-    // вшитого таймкода (у Sol Levante — ровно час, 86160 кадров). Наш
-    // `source_in` — смещение от НУЛЕВОГО кадра файла, поэтому начало
-    // available_range надо вычесть; иначе движок уезжает на час в
-    // 162-секундный файл и рендерит пустоту.
+    // MATERIAL START TIMECODE (item 180). In OTIO `source_range` lives in
+    // the coordinate system of the material itself — the same as `available_range`.
+    // For broadcast and cinema files it starts not at zero but from the
+    // burned-in timecode (for Sol Levante — exactly one hour, 86160 frames). Our
+    // `source_in` is an offset from the file’s ZERO frame, so the start of
+    // available_range has to be subtracted; otherwise the engine drifts by an hour into a
+    // 162-second file and renders emptiness.
     let origin = c.active_available_range().map(|r| r.start_time.to_ticks().0).unwrap_or(0);
     let src_in = c
         .source_range
         .as_ref()
         .map(|r| r.start_time.to_ticks().0 - origin)
-        // без source_range клип берёт материал целиком — от его начала
+        // without a source_range the clip takes the material whole — from its start
         .unwrap_or(0);
     let src_in = Tick(src_in.max(0));
-    // домен ключей: v3+ — тики материала как есть, старее — доли длины
-    // события, которые переводим по геометрии ЭТОГО клипа (Р.33)
+    // the key domain: v3+ — material ticks as they are, older — fractions of the
+    // event length, which we convert by the geometry of THIS clip (R.33)
     let mut fx_auto: Vec<Vec<kt_model::ParamCurve>> = fx_auto
         .iter()
         .map(|raw| match raw {
             None => Vec::new(),
             Some(v) if file_v >= crate::meta::KT_META_V3 => {
-                // битые кривые НЕ проглатываем: молча потерять анимацию
-                // хуже, чем отказать (правило Р.24 «не ломать чужое и не
-                // терять своё»)
+                // broken curves are NOT swallowed: silently losing animation is
+                // worse than a refusal (the R.24 rule “do not break others’ work and
+                // do not lose your own”)
                 serde_json::from_value(v.clone()).unwrap_or_else(|e| {
                     bad_auto.push(format!("clip {}: unreadable automation ({e})", id.0));
                     Vec::new()
@@ -2949,22 +2949,22 @@ fn clip_from_otio(
         })
         .collect();
     while fx_auto.last().is_some_and(|v| v.is_empty()) {
-        fx_auto.pop(); // хвост без кривых не сериализуем (форма модели)
+        fx_auto.pop(); // a tail without curves is not serializable (the model’s form)
     }
-    // истинное время события — из конверта, если трек его выразить не смог
-    // (Р.58, п.462); чужому файлу верим только позиции в треке
+    // the true time of the event — from the envelope, if the track could not express it
+    // (R.58, item 462); to a foreign file we trust only the position in the track
     let start = match &meta {
         Some(m) if is_ours => m.start.map(Tick).unwrap_or(start),
         _ => start,
     };
     let mut ev = ClipEvent {
-        // Обычное событие переопределять нечего (`validate` это и
-        // требует): набор пуст по построению.
+        // There is nothing to override on an ordinary event (`validate` requires this
+        // too): the set is empty by construction.
         overrides: Vec::new(),
-        // Значения генератора — из НАШЕГО конверта, если он есть (Р.59,
-        // стадия 2). Нет его — клип остаётся пустым, и `normalize()`
-        // достаёт значения из пути медиа: файлы Р.52..Р.58 держали их
-        // именно там, и миграция живёт в ОДНОМ месте.
+        // The generator’s values — from OUR envelope, if there is one (R.59,
+        // stage 2). If there is none, the clip stays empty, and `normalize()`
+        // takes the values from the media path: the R.52..R.58 files kept them
+        // exactly there, and the migration lives in ONE place.
         r#gen: meta
             .as_ref()
             .filter(|_| is_ours && kt_model::parse_gen_path(&url).is_some())
@@ -2993,8 +2993,8 @@ fn clip_from_otio(
         fx_auto,
         fx_bypass: bypass,
     };
-    // кейфреймы slowed&reverb старого образца — в общий механизм (Р.33):
-    // собственного домена у них больше нет
+    // slowed&reverb keyframes of the old pattern — into the shared mechanism (R.33):
+    // they no longer have their own domain
     kt_model::migrate_legacy_slowed(&mut ev);
     kt_model::migrate_legacy_cammotion(&mut ev);
     (ev, ex)
@@ -3023,9 +3023,9 @@ fn item_duration(r: &Option<TimeRange>) -> Option<Tick> {
     r.as_ref().map(|r| Tick(r.duration.to_ticks().0.max(0)))
 }
 
-/// Длительность клипа: `source_range`, а без него — весь `available_range`
-/// активной ссылки (спека OTIO; так живёт Clip-004 в simple_cut.otio
-/// апстрима). Соответствующий `source_in` берётся в `clip_from_otio`.
+/// Clip duration: `source_range`, and without it — the whole `available_range`
+/// of the active reference (OTIO spec; this is how Clip-004 lives in the upstream simple_cut.otio).
+/// The corresponding `source_in` is taken in `clip_from_otio`.
 fn clip_duration(c: &Clip) -> Option<Tick> {
     item_duration(&c.source_range).or_else(|| item_duration(&c.active_available_range()))
 }
@@ -3059,16 +3059,16 @@ fn resolve_url(base_dir: Option<&Path>, url: &str) -> String {
     }
 }
 
-/// Эвристика fps чужого файла: самый частый rate среди source_range,
-/// приведённый к сетке 90 кГц; иначе 30.
+/// Heuristic for the fps of a foreign file: the most frequent rate among the source_ranges,
+/// brought to the 90 kHz grid; otherwise 30.
 ///
-/// **NTSC-ряд** (п.178): 23.976/29.97/59.94 на сетку 90 кГц не ложатся
-/// (90000/23.976 = 3753.75), и раньше такой файл молча становился
-/// проектом на 30 fps — при том что настоящая частота ближе к 24.
-/// Теперь дробная частота округляется до ближайшей целой, которая делит
-/// 90000: 23.976→24, 29.97→30, 59.94→60. Остаточный дрейф 0.1 % (pulldown)
-/// никуда не девается — позиции склеек хранятся в ТИКАХ и точны, «плывёт»
-/// только сетка кадров.
+/// **NTSC series** (item 178): 23.976/29.97/59.94 do not fit the 90 kHz grid
+/// (90000/23.976 = 3753.75), and before, such a file silently became
+/// a 30 fps project — even though the real rate is closer to 24.
+/// Now a fractional rate is rounded to the nearest whole one that divides
+/// 90000: 23.976→24, 29.97→30, 59.94→60. The residual drift of 0.1 % (pulldown)
+/// goes nowhere — the splice positions are stored in TICKS and are exact, only
+/// the frame grid “drifts”.
 fn guess_fps(tl: &Timeline) -> u32 {
     let mut counts: HashMap<u32, usize> = HashMap::new();
     for child in &tl.tracks.children {
@@ -3086,14 +3086,14 @@ fn guess_fps(tl: &Timeline) -> u32 {
     counts.into_iter().max_by_key(|(_, n)| *n).map(|(r, _)| r).unwrap_or(30)
 }
 
-/// Частота кадров, ложащаяся на сетку 90 кГц, ближайшая к `rate`.
-/// None — если не нашлось (слишком большая/нулевая или далеко от целой).
+/// The frame rate that fits the 90 kHz grid, nearest to `rate`.
+/// None — if none was found (too large/zero, or far from a whole one).
 pub fn grid_fps(rate: f64) -> Option<u32> {
     if !(rate.is_finite() && rate > 0.0 && rate <= 240.0) {
         return None;
     }
     let r = rate.round();
-    // дальше половины кадра от целой — это не «NTSC-версия» целой частоты
+    // further than half a frame from a whole one — this is not the “NTSC version” of a whole rate
     if (rate - r).abs() > 0.5 {
         return None;
     }
@@ -3101,21 +3101,21 @@ pub fn grid_fps(rate: f64) -> Option<u32> {
     (r > 0 && kt_time::TICK_HZ % r as i64 == 0).then_some(r)
 }
 
-// ---- Retained ↔ JSON (Р.70) ---------------------------------------------------
+// ---- Retained ↔ JSON (R.70) ---------------------------------------------------
 //
-// Файл проекта свой, а чужой passthrough импортированного файла обмена едет в
-// нём отдельным полем и возвращается при экспорте: потерять чужую работу
-// молча нельзя. Перевод идёт serde-мостами узлов (`node_serde!`), которые
-// уже пишут и читают OTIO-объекты, — своего слоя между `Retained` и JSON нет.
+// The project file is its own, and the foreign passthrough of an imported exchange file travels in
+// it as a separate field and returns on export: foreign work cannot be lost
+// silently. The conversion goes through the serde bridges of the nodes (`node_serde!`), which
+// already write and read OTIO objects — there is no layer of its own between `Retained` and JSON.
 
-/// `HashMap` в JSON — ПАРЫ `[ключ, значение]`, отсортированные по ключу.
+/// `HashMap` in JSON — PAIRS `[key, value]`, sorted by key.
 ///
-/// Две причины, и обе обязательные: JSON-объект не умеет нестроковых ключей
-/// (`(ClipKind, u32)`, `(Option<ClipId>, Option<ClipId>)`), а порядок обхода
-/// `HashMap` случаен — без сортировки одна и та же модель давала бы разные
-/// байты, и каждое сохранение было бы ложным диффом в git. Сортировка по
-/// СЕРИАЛИЗОВАННОМУ ключу: `Ord` у ключей не требуется, а их JSON
-/// детерминирован.
+/// Two reasons, and both are mandatory: a JSON object cannot have non-string keys
+/// (`(ClipKind, u32)`, `(Option<ClipId>, Option<ClipId>)`), and the iteration order of a
+/// `HashMap` is random — without sorting the same model would give different
+/// bytes, and every save would be a spurious diff in git. Sorting by the
+/// SERIALIZED key: `Ord` is not required of the keys, and their JSON
+/// is deterministic.
 pub(crate) mod sorted_pairs {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::collections::HashMap;
@@ -3143,23 +3143,23 @@ pub(crate) mod sorted_pairs {
 }
 
 impl Retained {
-    /// Passthrough как непрозрачный JSON для файла проекта. Детерминирован:
-    /// карты документа insertion-ordered (как в исходнике), `HashMap`-поля —
-    /// отсортированными парами.
+    /// Passthrough as an opaque JSON for the project file. Deterministic: the
+    /// document maps are insertion-ordered (as in the source), and `HashMap` fields —
+    /// as sorted pairs.
     pub fn to_json(&self) -> Value {
         serde_json::to_value(self).expect("Retained is made of JSON values and schema nodes")
     }
 
-    /// Обратно из файла проекта. Битое поле — ошибка, а не пустой passthrough:
-    /// молча потерять чужую работу хуже, чем отказать.
+    /// Back from the project file. A broken field is an error, not an empty passthrough:
+    /// silently losing foreign work is worse than refusing.
     pub fn from_json(v: &Value) -> Result<Retained, Error> {
         Ok(serde_json::from_value(v.clone())?)
     }
 
-    /// Нечего возвращать: проект никогда не был файлом обмена (или чужого в
-    /// нём не было). Такой проект поля `otio` в файле не несёт — файл не
-    /// растёт впустую, и у проекта, рождённого в редакторе, диффа от
-    /// passthrough нет вовсе.
+    /// There is nothing to return: the project was never an exchange file (or there was no
+    /// foreign data in it). Such a project carries no `otio` field in the file — the file
+    /// does not grow for nothing, and a project born in the editor has no diff
+    /// from the passthrough at all.
     pub fn is_empty(&self) -> bool {
         self.to_json() == Retained::default().to_json()
     }

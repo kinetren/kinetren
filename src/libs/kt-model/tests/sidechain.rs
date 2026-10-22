@@ -1,8 +1,8 @@
-//! Тест 772 (Р.65): КЛЮЧ сайдчейна в модели — адрес, отказ, цикл.
+//! Test 772 (R.65): the sidechain KEY in the model — address, rejection, cycle.
 //!
-//! Решение владельца: прибор живёт только в цепочке ДОРОЖКИ. Значит модель
-//! обязана называть отказ, а не принимать невозможное молча: ключ на
-//! событии, ключ на видеодорожку, ключ на себя, ключ по кругу.
+//! The owner’s decision: the device lives only in the TRACK’s chain. So the model
+//! must name a rejection rather than silently accept the impossible: a key on
+//! an event, a key on a video track, a key on itself, a key in a loop.
 
 use kt_model::LaneKind::{Audio as A, Video as V};
 use kt_model::*;
@@ -47,7 +47,7 @@ fn aclip(id: u64, lane: u32) -> ClipEvent {
     }
 }
 
-/// Сцена: две аудиодорожки (музыка — 0, речь — 1) и одна видео.
+/// Scene: two audio tracks (music — 0, speech — 1) and one video.
 fn scene() -> (TimelineModel, TrackId, TrackId, TrackId) {
     let mut p = Project::new(settings30());
     p.media.push(MediaRef::new(MediaId(1), "synth:sine:440"));
@@ -77,70 +77,70 @@ fn set_track_fx(m: &mut TimelineModel, id: TrackId, fx: Vec<FxInstance>) -> Resu
     m.apply(Command::SetTrackFx { id, fx, bypass: vec![] })
 }
 
-/// Тест 772 (Р.65): ключ проверяется, отказ назван, модель не тронута.
+/// Test 772 (R.65): the key is checked, the rejection is named, the model is untouched.
 #[test]
 fn t772_sidechain_key_is_validated_and_refusals_are_named() {
     let (mut m, music, speech, video) = scene();
 
-    // --- нормальный случай: музыка слушает речь ------------------------
-    set_track_fx(&mut m, music, vec![comp_keyed(Some(speech))]).expect("ключ на речь законен");
+    // --- the normal case: music listens to speech ------------------------
+    set_track_fx(&mut m, music, vec![comp_keyed(Some(speech))]).expect("a keyframe on speech is legal");
     assert_eq!(
         m.project().track(music).map(|t| kt_model::sidechain_keys(&t.fx).count()),
         Some(1),
-        "ключ не доехал до модели"
+        "the keyframe did not reach the model"
     );
 
-    // --- отказы: сам себя, видео, несуществующая -----------------------
+    // --- rejections: itself, video, non-existent -----------------------
     let depth = m.undo_depth();
     for (key, what) in [
-        (music, "ключ на самого себя"),
-        (video, "ключ на ВИДЕО-дорожку"),
-        (TrackId(9999), "ключ на несуществующую дорожку"),
+        (music, "a keyframe on itself"),
+        (video, "a keyframe on a VIDEO track"),
+        (TrackId(9999), "a keyframe on a nonexistent track"),
     ] {
         let e = set_track_fx(&mut m, music, vec![comp_keyed(Some(key))]).unwrap_err();
         assert!(
             matches!(e, CommandError::SidechainKeyInvalid(_)),
-            "{what}: ожидалась названная ошибка, получено {e:?}"
+            "{what}: expected a named error, got {e:?}"
         );
     }
-    assert_eq!(m.undo_depth(), depth, "отвергнутая команда не имеет права трогать историю");
+    assert_eq!(m.undo_depth(), depth, "a rejected command has no right to touch history");
 
-    // --- ЦИКЛ: речь слушает музыку, которая слушает речь ---------------
+    // --- CYCLE: speech listens to music, which listens to speech ---------------
     let e = set_track_fx(&mut m, speech, vec![comp_keyed(Some(music))]).unwrap_err();
-    assert!(matches!(e, CommandError::SidechainCycle(_)), "цикл обязан быть отвергнут: {e:?}");
-    // …и цикл длиннее двух шагов — тоже
+    assert!(matches!(e, CommandError::SidechainCycle(_)), "the cycle must be rejected: {e:?}");
+    // …and a cycle longer than two steps — too
     let (mut m3, a, b, _) = scene();
     let mut p = m3.project().clone();
     p.ensure_tracks(A, 3);
     let c = track_index(&p.tracks, A, 2).map(|i| p.tracks[i].id).unwrap();
     m3 = TimelineModel::new(p);
-    set_track_fx(&mut m3, a, vec![comp_keyed(Some(b))]).expect("a слушает b");
-    set_track_fx(&mut m3, b, vec![comp_keyed(Some(c))]).expect("b слушает c");
+    set_track_fx(&mut m3, a, vec![comp_keyed(Some(b))]).expect("a listens to b");
+    set_track_fx(&mut m3, b, vec![comp_keyed(Some(c))]).expect("b listens to c");
     let e = set_track_fx(&mut m3, c, vec![comp_keyed(Some(a))]).unwrap_err();
-    assert!(matches!(e, CommandError::SidechainCycle(_)), "цикл из трёх звеньев: {e:?}");
+    assert!(matches!(e, CommandError::SidechainCycle(_)), "a cycle of three links: {e:?}");
 
-    // --- ключ на СОБЫТИИ невозможен ------------------------------------
+    // --- a key on an EVENT is impossible ------------------------------------
     let e = m
         .apply(Command::SetFx { id: ClipId(1), fx: vec![comp_keyed(Some(speech))] })
         .unwrap_err();
     assert!(
         matches!(e, CommandError::SidechainOnClip),
-        "ключ на событии обязан быть отвергнут названной ошибкой: {e:?}"
+        "a keyframe on an event must be rejected with a named error: {e:?}"
     );
 
-    // --- удаление дорожки-ключа НЕ правит чужие приборы (правило 20) ---
+    // --- deleting a key track does NOT edit other devices’ (rule 20) ---
     let before = m.project().track(music).map(|t| t.fx.clone());
     let lane = m.project().tracks.iter().position(|t| t.id == speech).unwrap();
     let _ = lane;
-    m.apply(Command::RemoveTrack { kind: A, at: 1 }).expect("дорожка речи удалена");
+    m.apply(Command::RemoveTrack { kind: A, at: 1 }).expect("speech track deleted");
     assert_eq!(
         m.project().track(music).map(|t| t.fx.clone()),
         before,
-        "удаление ключевой дорожки переписало чужой прибор — это правка за пользователя"
+        "deleting the keyframe track rewrote a foreign instrument — that is an edit made on behalf of the user"
     );
     let _ = m.undo();
     assert!(
         m.project().track(speech).is_some(),
-        "undo обязан вернуть дорожку-ключ, и ключ снова живой"
+        "undo must restore the keyframe track, and the keyframe is live again"
     );
 }

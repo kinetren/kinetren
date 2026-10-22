@@ -1,9 +1,9 @@
-//! Р.62 (change B): ЦЕПОЧКА ДОРОЖКИ — на сумме её событий.
+//! R.62 (change B): the TRACK CHAIN — on the sum of its events.
 //!
-//! Утверждения, ради которых раунд затевался: цепочка звучит на сумме (а
-//! не дописана в каждое событие), её хвост тянется ЗА последним событием,
-//! выход выровнен со входом (упреждение съедено кольцами), а состояние
-//! живёт по СТАБИЛЬНОМУ id — вставка дорожки выше соседей не глушит.
+//! The claims the round was started for: the chain sounds on the sum
+//! (not written into each event), its tail stretches BEYOND the last event,
+//! the output is aligned with the input (lookahead consumed by the rings), and the state
+//! lives under a STABLE id — inserting a track above its neighbors does not mute them.
 
 use kt_engine::{AudioFetcher, AudioRenderer, DirectFetcher, FxStateStore};
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
@@ -75,7 +75,7 @@ fn direct(sources: &[(u64, AudioPattern)]) -> DirectFetcher {
     f
 }
 
-/// Отрендерить `bursts` бёрстов подряд ОДНИМ потоком (состояние живёт).
+/// Render `bursts` bursts in a row with ONE stream (the state lives).
 fn stream(p: &Project, f: &mut dyn AudioFetcher, bursts: i64) -> Vec<f32> {
     let r = AudioRenderer::new(p);
     let mut store = FxStateStore::default();
@@ -93,11 +93,11 @@ fn peak(v: &[f32]) -> f32 {
     v.iter().fold(0f32, |a, b| a.max(b.abs()))
 }
 
-/// Тест 733 (Р.62): цепочка дорожки звучит НА СУММЕ, хвост тянется за
-/// последним событием, выход выровнен со входом.
+/// Test 733 (R.62): the track chain sounds ON THE SUM, the tail stretches beyond the
+/// last event, the output is aligned with the input.
 #[test]
 fn t733_track_chain_runs_on_the_sum_and_keeps_its_tail() {
-    // две реплики встык на ОДНОЙ дорожке; реверб — на ДОРОЖКЕ
+    // two lines back to back on ONE track; the reverb — on the TRACK
     let clips = vec![clip(1, 0, 0, D, 1), clip(2, 0, D, D, 1)];
     let mut p = project(clips);
     p.track_at_mut(A, 0).unwrap().fx = vec![FxInstance::slowed_reverb(1.0, 0.9, 120.0)];
@@ -107,22 +107,22 @@ fn t733_track_chain_runs_on_the_sum_and_keeps_its_tail() {
     let out = stream(&p, &mut f, 24);
     let burst = |i: usize| &out[(i * D as usize) * CH..((i + 1) * D as usize) * CH];
 
-    // ХВОСТ ЗА ПОСЛЕДНИМ СОБЫТИЕМ: материал кончился на 2·D, а дорожка
-    // ещё звучит — цепочка дозванивает на тишине
-    assert!(peak(burst(3)) > 1e-4, "хвост цепочки дорожки не тянется за последним событием");
+    // THE TAIL BEYOND THE LAST EVENT: the material ended at 2·D, while the track
+    // still sounds — the chain rings out over silence
+    assert!(peak(burst(3)) > 1e-4, "the tail of the track chain does not extend past the last event");
 
-    // …и он ЗАТУХАЕТ, а не тянется бесконечно (реверб 120 мс = ~5.6
-    // бёрстов на линию, поэтому сравниваем с ДАЛЁКИМ концом)
+    // …and it DECAYS rather than stretching forever (a 120 ms reverb = ~5.6
+    // bursts per line, so we compare against the DISTANT end)
     assert!(
         peak(burst(23)) < peak(burst(3)),
-        "хвост не затухает: {} против {}",
+        "the tail does not decay: {} against {}",
         peak(burst(23)),
         peak(burst(3))
     );
 
-    // ЦЕПОЧКА НА СУММЕ, а не в каждом событии: та же цепочка, дописанная
-    // каждому событию, даёт ДРУГОЙ звук (у каждого свой реверб со своим
-    // состоянием, и на шве хвост первого обрывается)
+    // THE CHAIN ON THE SUM, not in each event: the same chain, appended to
+    // each event, gives a DIFFERENT sound (each has its own reverb with its own
+    // state, and at the seam the first one's tail is cut off)
     let mut per_clip = project(vec![clip(1, 0, 0, D, 1), clip(2, 0, D, D, 1)]);
     for c in per_clip.clips.iter_mut() {
         c.fx = vec![FxInstance::slowed_reverb(1.0, 0.9, 120.0)];
@@ -130,19 +130,19 @@ fn t733_track_chain_runs_on_the_sum_and_keeps_its_tail() {
     per_clip.validate().unwrap();
     let mut f2 = direct(&[(1, AudioPattern::Dc { value: 0.5 })]);
     let other = stream(&per_clip, &mut f2, 6);
-    assert_ne!(out, other, "цепочка дорожки звучит как дописанная в каждое событие");
+    assert_ne!(out, other, "the track chain sounds as if appended to every event");
 }
 
-/// Тест 733b: УПРЕЖДЕНИЕ цепочки дорожки не сдвигает выход. Лимитер с
-/// окном анализа читает вперёд, а кольца возвращают выход на место:
-/// относительно дорожки без цепочки сдвига нет.
+/// Test 733b: the LOOKAHEAD of the track chain does not shift the output. A limiter with an
+/// analysis window reads ahead, and the rings return the output to its place:
+/// relative to a track without a chain there is no shift.
 #[test]
 fn t733b_track_chain_lookahead_keeps_the_output_aligned() {
-    // событие начинается НЕ в нуле: сдвиг был бы виден как смещение фронта
+    // the event does NOT start at zero: a shift would be visible as a front offset
     let at = D / 2;
     let mut p = project(vec![clip(1, 0, at, D, 1)]);
-    // нейтральный лимитер: окно анализа есть, а усиления нет
-    // порог 0 дБ — усиления нет, а окно анализа (упреждение) есть
+    // a neutral limiter: the analysis window exists, but there is no gain
+    // threshold 0 dB — no gain, but the analysis window (lookahead) exists
     p.track_at_mut(A, 0).unwrap().fx = vec![FxInstance::Limiter {
         threshold_db: 0.0,
         ceiling_db: 0.0,
@@ -162,13 +162,13 @@ fn t733b_track_chain_lookahead_keeps_the_output_aligned() {
     assert_eq!(
         front(&with),
         front(&without),
-        "цепочка дорожки сдвинула выход — упреждение не съедено кольцами"
+        "the track chain shifted the output — the lookahead was not consumed by the rings"
     );
 }
 
-/// Тест 734 (Р.62): ключ состояния — СТАБИЛЬНЫЙ id дорожки. Вставка
-/// дорожки выше перенумеровывает соседей, но состояние их цепочек не
-/// трогает (инвариант 3); удаление дорожки своё состояние уносит.
+/// Test 734 (R.62): the state key is the STABLE track id. Inserting a
+/// track above renumbers the neighbors, but does not touch the state of their chains
+/// (invariant 3); deleting a track takes its state away.
 #[test]
 fn t734_track_state_survives_insertion_above_and_dies_with_the_track() {
     let mut p = project(vec![clip(1, 0, 0, 4 * D, 1)]);
@@ -176,12 +176,12 @@ fn t734_track_state_survives_insertion_above_and_dies_with_the_track() {
     p.validate().unwrap();
     let id = p.track_at(A, 0).unwrap().id;
 
-    // эталон: четыре бёрста одним потоком
+    // reference: four bursts in one stream
     let mut f = direct(&[(1, AudioPattern::Dc { value: 0.5 })]);
     let want = stream(&p, &mut f, 4);
 
-    // а теперь посреди потока ВСТАВЛЯЕМ дорожку ВЫШЕ: номер соседа стал
-    // другим, id — нет, значит состояние обязано продолжиться
+    // and now in the middle of the stream we INSERT a track ABOVE: the neighbor's number became
+    // another, the id did not — so the state must continue
     let mut m = TimelineModel::new(p.clone());
     let mut f = direct(&[(1, AudioPattern::Dc { value: 0.5 })]);
     let mut store = FxStateStore::default();
@@ -193,7 +193,7 @@ fn t734_track_state_survives_insertion_above_and_dies_with_the_track() {
             assert_eq!(
                 m.project().track_at(A, 1).unwrap().id,
                 id,
-                "сцена: дорожка с цепочкой переехала на номер 1, id прежний"
+                "scene: the track with the chain moved to number 1, id unchanged"
             );
         }
         let r = AudioRenderer::new(m.project());
@@ -201,15 +201,15 @@ fn t734_track_state_survives_insertion_above_and_dies_with_the_track() {
         r.render_frames_with(&mut f, &mut store, i * D, &mut buf);
         got.extend_from_slice(&buf);
     }
-    assert_eq!(got, want, "вставка дорожки выше убила состояние цепочки ниже");
+    assert_eq!(got, want, "inserting a track above killed the state of the chain below");
 
-    // состояние дорожки с цепочкой живо, пока она жива
-    assert!(store.track_mut(id).is_some(), "живая дорожка обязана сохранить состояние");
+    // the state of a track with a chain is alive while it is alive
+    assert!(store.track_mut(id).is_some(), "a live track must keep its state");
 
-    // а УДАЛЕНИЕ самой дорожки с цепочкой уносит её состояние (пустая
-    // вставленная остаётся — последнюю аудиодорожку убрать нельзя)
+    // and DELETING the track itself with a chain takes its state away (the empty
+    // inserted one remains — the last audio track cannot be removed)
     m.apply(Command::RemoveTrack { kind: A, at: 1 }).unwrap();
     let r = AudioRenderer::new(m.project());
     r.sync_fx(&mut store);
-    assert!(store.track_mut(id).is_none(), "удалённая дорожка не убрала своё состояние");
+    assert!(store.track_mut(id).is_none(), "a deleted track did not remove its state");
 }

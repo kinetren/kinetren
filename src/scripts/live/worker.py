@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
-"""РАБОТНИК живого прогона (Р.68): свой экран, свой стенд, свой список сценариев.
+"""WORKER of the live run (R.68): its own screen, its own stand, its own list of scenarios.
 
-Прежде живая проверка была строго последовательной: 50 сценариев, 1012 с, и
-каждый платил 3-5 с за холодный старт kt-app. Запрет на параллель («живые
-сценарии в два потока не гоняются») появился в Р.59 §468 после того, как
-второй прогон под нагрузкой ~14 покрасил зелёные сценарии; владелец снял его
-в Р.68 вместе с механизмом, который закрывает причину: у каждого работника
-СВОЙ виртуальный экран, СВОЁ пользовательское хранилище и урезанный
-софт-рендер, а красный сценарий перегоняется один в одиночку (это делает
-live-check.sh).
+Previously the live check was strictly sequential: 50 scenarios, 1012 s, and each
+paid 3-5 s for a cold start of kt-app. The ban on parallel runs (“live scenarios in two
+threads are not run”) appeared in R.59 §468 after a second run under load of ~14 turned green
+scenarios red; the owner lifted it in R.68 together with the mechanism that removes the cause:
+each worker has ITS OWN virtual screen,
+ITS OWN user storage, and a restricted software renderer;
+a red scenario is rerun alone
+(this is done by live-check.sh).
 
-Работник:
-  * поднимает Xvfb и openbox на своём номере экрана;
-  * держит ОДИН kt-app (стенд) и открывает в нём проекты сценариев подряд;
-  * сценарию, который проверяет САМ старт программы, стенд не даёт: такой
-    сценарий объявляет `OWN_PROCESS = True` у себя в файле и запускается со
-    остановленным стендом — иначе на экране оказались бы два окна kinetren,
-    и `probe.window()` целился бы в чужое.
+Worker:
+  * brings up Xvfb and openbox on its screen number;
+  * keeps ONE kt-app (the stand) and opens the scenarios’ projects in it one after another;
+  * a scenario that checks the program’s own START itself is not given the stand: such a
+    scenario declares `OWN_PROCESS = True` in its file and runs with the stand stopped —
+    otherwise there would be two kinetren windows on the screen,
+    and `probe.window()` would aim at the other one.
 
-    usage: worker.py <номер экрана> <каталог> <сценарий> [<сценарий> ...]
+    usage: worker.py <screen number> <directory> <scenario> [<scenario> ...]
 
-Вердикты пишутся в <каталог>/verdicts/<сценарий> («ok» или «fail»), вывод
-сценария — в общий поток работника.
+Verdicts are written to <directory>/verdicts/<scenario> (“ok” or “fail”), the output of the
+scenario — to the common stream of the worker.
 """
 import contextlib
 import json
@@ -37,16 +37,16 @@ RUST = os.path.abspath(os.path.join(HERE, "..", ".."))
 KT_APP = os.path.join(RUST, "target", "debug", "kinetren")
 KT_CLI = os.path.join(RUST, "target", "debug", "kt-cli")
 SCREEN = os.environ.get("KT_LIVE_SCREEN", "1920x1080x24")
-# сколько потоков софт-рендера даётся ОДНОМУ kt-app: без ограничения один
-# llvmpipe занимает около семи ядер, и работники отбирали ядра друг у друга —
-# ровно та нагрузка, из-за которой запрет на параллель и появился
+# how many threads of software rendering are given to ONE kt-app: without a limit one
+# llvmpipe takes about seven cores, and the workers took cores from each other —
+# exactly the load because of which the ban on parallelism appeared
 LP_THREADS = os.environ.get("KT_LIVE_LP_THREADS", "4")
 
 OWN = re.compile(r"^OWN_PROCESS\s*=\s*True", re.M)
-# Подставной сценарий сторожа (t801/t802) программы не запускает вовсе —
-# поднимать ему X-сервер незачем. Это не мелочь: сторожа живут ВНУТРИ
-# прогона мастерской, и лишний Xvfb на каждый их запуск отнимал время у
-# чувствительных к нему движковых тестов (t663 стоил 60 с вместо 0.02).
+# The stand-in scenario of the guard (t801/t802) does not launch the program at all —
+# there is no point raising an X server for it. This is not a trifle: the guards live INSIDE
+# a workshop run, and an extra Xvfb for each of their launches took time from
+# the engine tests sensitive to it (t663 cost 60 s instead of 0.02).
 NO_DISPLAY = re.compile(r"^NO_DISPLAY\s*=\s*True", re.M)
 
 
@@ -55,19 +55,19 @@ def _src(name):
 
 
 def wants_own_process(name):
-    """Сценарий объявил, что ему нужен свой процесс?"""
+    """Did the scenario declare that it needs its own process?"""
     return bool(OWN.search(_src(name)))
 
 
 def needs_display(names):
-    """Хоть одному сценарию нужен экран?"""
+    """Does at least one scenario need the screen?"""
     return any(not NO_DISPLAY.search(_src(n)) for n in names)
 
 
 class Screen:
-    """Свой Xvfb и свой openbox. Оконный менеджер нужен для разворачивания
-    окна (правило «проверять в РАЗВЁРНУТОМ окне», р.13) и для жестов с
-    кромками."""
+    """Its own Xvfb and its own openbox. The window manager is needed to maximize the
+    window (the rule “check in the MAXIMIZED window”, R.13) and for gestures with
+    the edges."""
 
     def __init__(self, display, out):
         self.display = display
@@ -75,13 +75,13 @@ class Screen:
         self.procs = []
 
     def free_display(self):
-        """Снять ЗАМОК мёртвого X-сервера на своём номере экрана.
+        """Remove the LOCK of a dead X server on its screen number.
 
-        Прерванный прогон оставляет `/tmp/.X<n>-lock`, и следующий Xvfb
-        отказывается стартовать («Server is already active for display N»).
-        Программа тогда подключается в никуда и падает внутри winit, а
-        выглядит это как «сценарий сломался». Замок снимается ТОЛЬКО если
-        за ним нет живого сервера.
+        An interrupted run leaves `/tmp/.X<n>-lock`, and the next Xvfb
+        refuses to start (“Server is already active for display N”).
+        The program then connects to nowhere and crashes inside winit, and
+        this looks like “the scenario broke”. The lock is removed ONLY if
+        there is no live server behind it.
         """
         n = self.display.lstrip(":")
         alive = subprocess.run(
@@ -97,8 +97,8 @@ class Screen:
 
     def __enter__(self):
         self.free_display()
-        # лог — СВОЙ у каждого экрана: общий файл работники затирали друг
-        # другу, и причина отказа X-сервера пропадала
+        # the log is ITS OWN for each screen: the workers overwrote one shared file for
+        # each other, and the reason for the X server’s refusal disappeared
         logs = open(os.path.join(self.out, f"xvfb{self.display.lstrip(':')}.log"), "w")
         self.procs.append(
             subprocess.Popen(
@@ -124,7 +124,7 @@ class Screen:
                 time.sleep(0.25)
         else:
             raise SystemExit(
-                f"X-сервер на {self.display} не поднялся, см. "
+                f"X server on {self.display} did not come up, see "
                 f"{self.out}/xvfb{self.display.lstrip(':')}.log"
             )
         if shutil.which("openbox"):
@@ -145,13 +145,13 @@ class Screen:
 
 
 class Bench:
-    """Один kt-app работника: в нём сценарии открывают свои проекты подряд."""
+    """One kt-app of the worker: in it the scenarios open their projects one after another."""
 
     def __init__(self, out, display):
-        # каталог стенда — СВОЙ У КАЖДОГО РАБОТНИКА: общий `out` один на
-        # прогон, и общий `bench/` означал общий канал команд и общий дамп
-        # геометрии — работники открывали проекты друг другу и читали чужие
-        # кадры. Это и выглядело как «параллель всё красит».
+        # the stand directory is ITS OWN FOR EACH WORKER: a shared `out` was one for the
+        # run, and a shared `bench/` meant a shared command channel and a shared geometry
+        # dump — the workers opened projects in each other’s places and read others’
+        # frames. This is what looked like “parallelism paints everything”.
         self.dir = os.path.join(out, "bench" + display.replace(":", ""))
         os.makedirs(self.dir, exist_ok=True)
         self.ctl = os.path.join(self.dir, "ctl")
@@ -168,25 +168,25 @@ class Bench:
         e["KT_GEOM_DUMP"] = self.geom
         e["KT_LIVE_CTL"] = self.ctl
         e["KT_USER_STORE_DIR"] = self.store
-        # XDG_DATA_HOME — ТОЖЕ свой: по нему программа ищет безымянное
-        # восстановление, журнал и замки проектов. Без него прогон лезет в
-        # домашний каталог разработчика и находит там ЧУЖУЮ несохранённую
-        # работу — сценарий «несохранённое» получал модальное окно ещё до
-        # первого жеста и молча проверял не то.
+        # XDG_DATA_HOME — ALSO its own: the program looks up by it the unnamed
+        # recovery, the journal and the project locks. Without it the run climbs into the
+        # developer’s home directory and finds someone else’s unsaved work there —
+        # the “unsaved” scenario got a modal window before the first
+        # gesture and silently checked the wrong thing.
         e["XDG_DATA_HOME"] = os.path.join(self.dir, "xdg")
-        # периодический автосейв в стенде выключен: сценарии, которым он
-        # нужен по секундам (проверка восстановления), берут свой процесс
+        # the periodic autosave is switched off in the stand: scenarios that need it
+        # by the second (the recovery check) take a process of their own
         e["KT_AUTOSAVE_SECS"] = "600"
         return e
 
     def kill_stale(self):
-        """Убить ЧУЖУЮ программу, оставшуюся в этом каталоге стенда.
+        """Kill a FOREIGN program left in this stand directory.
 
-        Прерванный прогон (Ctrl+C, убитый родитель) оставляет kt-app живым, и
-        он продолжает писать СВОЙ дамп геометрии в тот же файл: следующий
-        прогон читает кадры и проект чужого процесса и краснеет непонятно
-        почему. Каталог стенда — собственность работника, поэтому чистим его
-        перед запуском.
+        An interrupted run (Ctrl+C, a killed parent) leaves kt-app alive, and
+        it keeps writing ITS OWN geometry dump to the same file: the next
+        run reads frames and the project of a foreign process and turns red for no clear
+        reason. The stand directory is the worker’s property, so we clean it
+        before the start.
         """
         try:
             out = subprocess.run(
@@ -204,15 +204,15 @@ class Bench:
                 pass
 
     def ensure(self):
-        """Стенд жив? Иначе поднять (первый раз или после падения)."""
+        """Is the stand alive? Otherwise bring it up (first time or after a crash)."""
         if self.proc is not None and self.proc.poll() is None:
             return
         self.kill_stale()
-        # ХРАНИЛИЩЕ СТЕНДА — ЧИСТОЕ НА КАЖДЫЙ ПОДЪЁМ: eframe запоминает в нём
-        # РАЗМЕР ОКНА, и сценарий контракта формы (Р.66), который нарочно
-        # делает окно низким, оставлял этот размер всем следующим прогонам.
-        # В маленьком окне другой зум и другой вид — координаты жестов
-        # уезжали в подписи дорожек, а выглядело это как «стенд ломает всё».
+        # RIG STORAGE — CLEAN ON EACH LAUNCH: eframe remembers in it
+        # the WINDOW SIZE, and the form-contract scenario (R.66), which deliberately
+        # makes the window low, left this size for all following runs.
+        # In a small window the zoom and view differ — gesture coordinates
+        # drifted into track labels, and it looked like “the rig breaks everything”.
         shutil.rmtree(self.store, ignore_errors=True)
         shutil.rmtree(os.path.join(self.dir, "xdg"), ignore_errors=True)
         os.makedirs(self.store, exist_ok=True)
@@ -224,11 +224,11 @@ class Bench:
         self.proc = subprocess.Popen(
             [KT_APP, self.blank], stdout=log, stderr=log, env=self.env()
         )
-        # ждём НАРИСОВАННЫХ кадров: программа сообщает их номер сама
+        # we wait for DRAWN frames: the program reports their number itself
         deadline = time.time() + 60
         while time.time() < deadline:
             if self.proc.poll() is not None:
-                raise SystemExit(f"стенд не поднялся, см. {self.dir}/kt-app.log")
+                raise SystemExit(f"stand did not come up, see {self.dir}/kt-app.log")
             try:
                 with open(self.geom) as f:
                     if int(json.load(f).get("frame", 0)) >= 2:
@@ -237,11 +237,11 @@ class Bench:
                 pass
             time.sleep(0.05)
         else:
-            raise SystemExit("стенд не нарисовал ни одного кадра")
-        # ЭТАЛОН ОКНА — геометрия X-окна В ПИКСЕЛЯХ, а не размер холста из
-        # дампа: сценарий контракта формы (Р.66) ставит окно низким, и
-        # следующий обязан получить его обратно. Размер холста egui — это
-        # ТОЧКИ, и восстановление по нему ужимало окно на каждый заход.
+            raise SystemExit("the stand drew not a single frame")
+        # WINDOW REFERENCE — X-window geometry IN PIXELS, not the canvas size from
+        # the dump: the form-contract scenario (R.66) sets the window low, and the
+        # next one must get it back. The egui canvas size is in POINTS, and restoring
+        # from it shrank the window on every run.
         import importlib.util
 
         spec = importlib.util.spec_from_file_location(
@@ -249,11 +249,11 @@ class Bench:
         )
         probe = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(probe)
-        # ГЕОМЕТРИЯ СНИМАЕТСЯ, КОГДА ОНА УСТОЯЛАСЬ: оконный менеджер
-        # разворачивает окно НЕ мгновенно, и снимок сразу после первых
-        # кадров запоминал окно ДО разворота. Каждый следующий сценарий
-        # «восстанавливал» этот маленький размер — а в нём другой зум и
-        # другой вид, и координаты жестов уезжали в подписи дорожек.
+        # GEOMETRY IS CAPTURED WHEN IT HAS SETTLED: the window manager
+        # maximizes the window NOT instantly, and a snapshot right after the first
+        # frames recorded the window BEFORE it was maximized. Every next scenario
+        # “restored” that small size — and at it the zoom and view differ,
+        # and gesture coordinates drifted into track labels.
         last, stable = None, 0.0
         deadline = time.time() + 20
         while time.time() < deadline:
@@ -296,27 +296,27 @@ def main():
                 own = wants_own_process(name)
                 scen_out = os.path.join(out, name)
                 os.makedirs(scen_out, exist_ok=True)
-                # ХРАНИЛИЩЕ СЦЕНАРИЯ — ЧИСТОЕ НА КАЖДЫЙ ПРОГОН (Р.68):
-                # упавший прогон оставляет в нём файл восстановления и
-                # рабочее место, и ПЕРЕГОН в одиночку начинается с чужого
-                # состояния — сценарий, зелёный сам по себе, краснел второй
-                # раз подряд, и механизм «красное только дважды» переставал
-                # отличать флак от дефекта.
+                # RUN STORAGE — CLEAN ON EACH RUN (R.68):
+                # a failed run leaves a recovery file and a working place in it, and a
+                # RERUN on its own starts from another run's state: a scenario that is
+                # green by itself turned red a second time in a row, and the
+                # “red only twice” mechanism stopped telling a flake
+                # from a defect.
                 for leftover in ("store", "xdg"):
                     shutil.rmtree(os.path.join(scen_out, leftover), ignore_errors=True)
-                # и отчёт о сне (Р.69): упавший сценарий не оставляет своего
-                # числа, иначе прогон сложил бы цену ПРОШЛОГО раза
+                # and the sleep report (R.69): a failed scenario leaves no
+                # number of its own, or the run would add the cost of the PREVIOUS time
                 try:
                     os.unlink(os.path.join(scen_out, "slept.txt"))
                 except OSError:
                     pass
                 env = dict(os.environ)
                 if own:
-                    # два окна kinetren на одном экране — это прицел в чужое
+                    # two kinetren windows on one screen — that is aiming at someone else's
                     bench.stop()
                     env.pop("KT_LIVE_BENCH", None)
-                    # хранилище — своё и у сценария со своим процессом:
-                    # рабочее место соседа не имеет права менять вердикт
+                    # storage — its own, and of a scenario with its own process:
+                    # a neighbor's working place has no right to change the verdict
                     env["KT_USER_STORE_DIR"] = os.path.join(scen_out, "store")
                     env["XDG_DATA_HOME"] = os.path.join(scen_out, "xdg")
                 else:
@@ -328,10 +328,10 @@ def main():
                 rc = subprocess.run(
                     [sys.executable, os.path.join(HERE, f"{name}.py"), scen_out], env=env
                 ).returncode
-                # ЦЕНА СЦЕНАРИЯ — В ОБЩУЮ ТАБЛИЦУ: по ней следующий прогон
-                # раскладывает сценарии по работникам (balance.py). Без неё
-                # один работник получает самый долгий сценарий и держит весь
-                # прогон, пока остальные уже закончили.
+                # SCENARIO COST — INTO THE SHARED TABLE: the next run uses it to
+                # spread scenarios across workers (balance.py). Without it
+                # one worker gets the longest scenario and holds the whole
+                # run while the others have already finished.
                 try:
                     with open(os.path.join(out, "times.txt"), "a") as f:
                         f.write(f"{name}\t{time.time() - started:.1f}\n")
@@ -343,7 +343,7 @@ def main():
                 if ok:
                     print("   ok", flush=True)
                 else:
-                    print(f"   ПРОВАЛ (скриншоты: {scen_out})", flush=True)
+                    print(f"   FAILURE (screenshots: {scen_out})", flush=True)
                     fail = 1
         finally:
             bench.stop()

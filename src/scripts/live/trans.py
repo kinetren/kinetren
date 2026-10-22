@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.33 С4: переход — не всегда растворение.
+"""Live scenario R.33 C4: a transition is not always a dissolve.
 
-Проверяется то, что видит человек. Два клипа сплошного цвета (красный и
-синий) с переходом посередине; курсор ставится в СЕРЕДИНУ окна перехода и
-читаются пиксели превью слева и справа:
+What a person sees is checked. Two clips of solid color (red and
+blue) with a transition in the middle; the cursor is put in the MIDDLE of the transition window and
+the pixels of the preview to the left and right are read:
 
-  - у растворения обе точки одинаковы (смесь красного с синим);
-  - у вайпа влево слева ещё красный, справа уже синий — разные цвета.
+  - for a dissolve both points are the same (a mix of red with blue);
+  - for a wipe to the left, on the left there is still red, on the right already blue — different colors.
 
-Это end-to-end через настоящий wgpu приложения: harness-тесты гоняют
-CPU-эталон и о том, что показывает GPU в живом окне, не говорят ничего.
-Дополнительно: двойной клик по окну перехода обязан открыть его свойства.
+This is end-to-end through the app’s real wgpu: the harness tests run the
+CPU reference, and say nothing about what the GPU shows in a live window.
+Additionally: a double click on the transition window must open its properties.
 """
 import json
 import os
@@ -26,7 +26,7 @@ def main(out):
     require_tools()
     red = color_media(out, "red", "C81E1E", seconds=10)
     blue = color_media(out, "blue", "1E3CC8", seconds=10)
-    # клипы встык: стык на 4 c, окно перехода [3, 5)
+    # clips end to end: the joint at 4 s, the transition window [3, 5)
     path = project_with_clips(
         os.path.join(out, "trans.otio"), [(0.0, 4.0, red), (4.0, 4.0, blue)]
     )
@@ -36,38 +36,38 @@ def main(out):
         add_transition(path, seconds=1.0, kind=kind)
         with Live(f"trans-{tag}", out, project=path) as app:
             p = app.project_now()
-            app.expect(len(p.transitions) == 1, f"переход прочитан из файла: {p.transitions}")
+            app.expect(len(p.transitions) == 1, f"transition read from the file: {p.transitions}")
             cx, cy = app.preview_center()
             g = app.geom()
-            # точки слева и справа от центра превью, внутри картинки
+            # points to the left and right of the centre of the preview, inside the picture
             dx = int(g["window"]["w"] * 0.15)
-            # опорный цвет ДО подмотки: смены ждём именно от него (после
-            # правки шейдера llvmpipe компилирует первый композит-кадр
-            # секунды — сырое чтение возвращало кадр ПРЕЖНЕЙ позиции)
+            # the reference colour BEFORE the scrub: we wait for the change exactly from it (after
+            # an edit of the llvmpipe shader the first composite frame compiles for seconds —
+            # a raw read returned the frame of the PREVIOUS position)
             base = app.pixel(cx + dx, cy)
-            # курсор в середину окна перехода
+            # the cursor in the middle of the transition window
             app.click(app.x_at(4 * SEC), app.ruler_y())
-            app.near(app.playhead(), 4 * SEC, 6000, "курсор встал в середину перехода")
+            app.near(app.playhead(), 4 * SEC, 6000, "cursor placed in the middle of the transition")
             right = app.pixel_settled((cx + dx, cy), differs_from=base)
             left = app.pixel_settled((cx - dx, cy))
             app.shot(f"mid-{tag}")
-            print(f"   {tag}: слева {left}, справа {right}")
+            print(f"   {tag}: on the left {left}, on the right {right}")
             results.append((tag, left, right))
             if tag == "wipe":
-                # вайп влево: синий приходит СПРАВА
+                # wipe to the left: the blue arrives from the RIGHT
                 app.expect(
                     right[2] > right[0] + 30,
-                    f"справа обязан быть входящий синий: {right}",
+                    f"on the right the incoming blue must be: {right}",
                 )
                 app.expect(
                     left[0] > left[2] + 30,
-                    f"слева обязан остаться уходящий красный: {left}",
+                    f"on the left the outgoing red must remain: {left}",
                 )
-                # свойства перехода двойным кликом по его окну
+                # transition properties by a double click on its window
                 before = app.shot("before-dblclick")
                 y = app.lane_y("video", 0, frac=0.8)
                 app.double_click(app.x_at(int(4 * SEC)), y)
-                # окну нужно время отрисоваться в софт-рендере
+                # the window needs time to draw in the software render
                 d = 0.0
                 for _ in range(10):
                     poll_step(0.5)
@@ -76,21 +76,21 @@ def main(out):
                         break
                 app.expect(
                     d > 0.01,
-                    f"двойной клик открыл окно перехода (экран изменился на {d:.1%})",
+                    f"double click opened the transition window (the screen changed by {d:.1%})",
                 )
                 app.shot("props")
             code = app.done()
             if code:
                 return code
 
-    # растворение и вайп обязаны различаться КАРТИНКОЙ, а не только моделью
+    # dissolve and wipe must be told apart by the PICTURE, not only by the model
     (_, cl, cr), (_, wl, wr) = results
     cross_uniform = abs(cl[0] - cr[0]) < 25 and abs(cl[2] - cr[2]) < 25
     if not cross_uniform:
-        print(f"!! растворение обязано быть однородным по кадру: {cl} vs {cr}")
+        print(f"!! a dissolve must be uniform across the frame: {cl} vs {cr}")
         return 1
 
-    # Р.51: инверсия — те же стороны наоборот (v7)
+    # R.51: inversion — the same sides the other way round (v7)
     add_transition(path, seconds=1.0, kind={"kind": "wipe", "dir": "left"}, invert=True)
     with Live("trans-invert", out, project=path) as app:
         cx, cy = app.preview_center()
@@ -98,24 +98,24 @@ def main(out):
         dx = int(g["window"]["w"] * 0.15)
         base = app.pixel(cx - dx, cy)
         app.click(app.x_at(4 * SEC), app.ruler_y())
-        # при инверсии синий приходит СЛЕВА — смены ждём там
+        # with inversion the blue arrives from the LEFT — we wait for the change there
         left = app.pixel_settled((cx - dx, cy), differs_from=base)
         right = app.pixel_settled((cx + dx, cy))
         app.shot("mid-invert")
-        print(f"   invert: слева {left}, справа {right}")
-        app.expect(left[2] > left[0] + 30, f"инверсия: слева уже входящий синий: {left}")
-        app.expect(right[0] > right[2] + 30, f"инверсия: справа ещё красный: {right}")
+        print(f"   invert: on the left {left}, on the right {right}")
+        app.expect(left[2] > left[0] + 30, f"invert: on the left already the incoming blue: {left}")
+        app.expect(right[0] > right[2] + 30, f"invert: on the right still red: {right}")
         code = app.done()
         if code:
             return code
 
-    # Р.51: переход НА НАЛОЖЕНИИ — вайп режет зону перекрытия, а не
-    # жёсткий срез Vegas
+    # R.51: a transition ON AN OVERLAP — the wipe cuts the overlap zone, not
+    # a hard Vegas cut
     opath = project_with_overlap(os.path.join(out, "trans-ov.otio"), red, blue)
     with Live("trans-overlap", out, project=opath) as app:
-        # наложенный переход — не ребёнок трека, а конверт ленты
+        # an overlapped transition is not a child of the track, but the envelope of the reel
         ot = app.project_now().doc["metadata"]["kt"].get("overlap_transitions", [])
-        app.expect(len(ot) == 1, f"наложенный переход в конверте: {ot}")
+        app.expect(len(ot) == 1, f"overlapping transition in the envelope: {ot}")
         cx, cy = app.preview_center()
         g = app.geom()
         dx = int(g["window"]["w"] * 0.15)
@@ -124,19 +124,19 @@ def main(out):
         right = app.pixel_settled((cx + dx, cy), differs_from=base)
         left = app.pixel_settled((cx - dx, cy))
         app.shot("mid-overlap")
-        print(f"   overlap: слева {left}, справа {right}")
-        app.expect(left[0] > left[2] + 30, f"наложение: слева уходящий красный: {left}")
-        app.expect(right[2] > right[0] + 30, f"наложение: справа входящий синий: {right}")
+        print(f"   overlap: on the left {left}, on the right {right}")
+        app.expect(left[0] > left[2] + 30, f"overlap: on the left the outgoing red: {left}")
+        app.expect(right[2] > right[0] + 30, f"overlap: on the right the incoming blue: {right}")
         code = app.done()
         if code:
             return code
 
-    print("== переходы: растворение однородно, вайп режет кадр, инверсия и наложение живут ==")
+    print("== transitions: the dissolve is uniform, the wipe cuts the frame, invert and overlap are alive ==")
     return 0
 
 
 def add_transition(path, seconds, kind=None, invert=False):
-    """Переход между первым и вторым клипом; `kind` — наш конверт kt."""
+    """Transition between the first and the second clip; `kind` is our kt envelope."""
     with open(path) as f:
         doc = json.load(f)
     track = next(t for t in doc["tracks"]["children"] if t.get("kind") == "Video")
@@ -155,7 +155,7 @@ def add_transition(path, seconds, kind=None, invert=False):
         "out_offset": off,
         "metadata": {"kt": kt} if kt else {},
     }
-    # переход пишется ПЕРЕД своим входящим клипом
+    # the transition is written BEFORE its incoming clip
     track["children"].insert(1, node)
     if invert:
         doc["metadata"]["kt"]["v"] = 7
@@ -166,8 +166,8 @@ def add_transition(path, seconds, kind=None, invert=False):
 
 
 def project_with_overlap(dest, red, blue):
-    """Пара «лесенкой» на одной дорожке (второй слой — соседний Track с
-    картой слоёв, п.165) + наложенный переход в конверте ленты (Р.51)."""
+    """A “staircase” pair on one track (the second layer is an adjacent Track with
+    a layer map, item 165) + an overlapping transition in the reel envelope (R.51)."""
     import copy
 
     from kt_live import _clip, _gap

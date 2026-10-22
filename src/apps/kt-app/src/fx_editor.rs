@@ -1,78 +1,78 @@
-//! Окно FX-цепочки клипа (порт ClipFxChainWindow + FxChainEditorWidget):
-//! полоса карточек «Media → fx → fx», форма параметров, полоса автоматизации
-//! (ромбы: клик = выбор, драг = перенос t, double-click = удалить),
-//! live-применение через apply_coalesced (вся сессия окна = 1 undo),
-//! Отмена = откат к состоянию на момент открытия.
+//! The FX chain window of a clip (a port of ClipFxChainWindow + FxChainEditorWidget):
+//! a strip of cards “Media → fx → fx”, a parameter form, an automation
+//! strip (diamonds: click = select, drag = move t, double-click = delete),
+//! live application via apply_coalesced (the whole session of the window = 1 undo),
+//! Cancel = rollback to the state at the moment of opening.
 
 use crate::app::KtApp;
 use crate::i18n::{k, tr};
 use eframe::egui;
 use kt_model::*;
 
-/// Снимок одной цепочки на момент открытия окна: сама цепочка, кривые,
-/// выключатели слотов и мастер-выключатель.
+/// Snapshot of one chain at the moment the window was opened: the chain itself, the curves,
+/// the slot switches and the master switch.
 pub type ChainSnapshot = (ClipId, Vec<FxInstance>, Vec<Vec<kt_model::ParamCurve>>, Vec<bool>, bool);
 
 pub struct FxEditor {
-    /// Якорь окна: событие, по которому его открыли (его id — id окна).
+    /// Anchor of the window: the event by which it was opened (its id is the window id).
     pub clip: ClipId,
-    /// Все цепочки, которые показывает окно: якорь и его link-партнёры
-    /// (Р.33 п.2 — «для одного и того же события с примагниченными треками
-    /// можно и сразу все chain в одном окне давать»).
+    /// All chains the window shows: the anchor and its link partners
+    /// (R.33 item 2 — “for one and the same event with magnetized
+    /// tracks you can give all chains at once in one window”).
     pub members: Vec<ClipId>,
     pub picker_query: String,
-    /// Строка пикера МЕДИА в голове «Параметры композиции» (Р.63 п.12):
-    /// у ручки типа «медиа» свой поиск, и мешать его с поиском эффектов
-    /// нельзя — это разные списки.
+    /// The MEDIA picker row in the head of “Composition parameters” (R.63 item 12):
+    /// the media-type handle has its own search, and it must not be mixed with the effects search —
+    /// these are different lists.
     pub inst_query: String,
-    /// Состояние КАЖДОЙ цепочки на момент открытия — «Отмена» откатывает
-    /// всё окно, а не только якорь.
+    /// The state of EACH chain at the moment of opening — “Cancel” rolls back
+    /// the whole window, not just the anchor.
     pub backup: Vec<ChainSnapshot>,
-    /// Значения генератора на момент открытия (Р.59, стадия 2): у
-    /// события-генератора голова полосы — его ИСТОЧНИК, и «Отмена»
-    /// обязана возвращать и его, иначе окно откатывало бы половину своей
-    /// же сессии.
+    /// Generator values at the moment of opening (R.59, stage 2): for
+    /// an event-generator the head of the strip is its SOURCE, and “Cancel”
+    /// must return it too, otherwise the window would roll back half of its own
+    /// session.
     pub gen_backup: Vec<(ClipId, Option<GeneratorKind>, Vec<kt_model::ParamCurve>)>,
-    /// Ведущий узел «Геометрия» на момент открытия (Р.62): «Отмена»
-    /// возвращает и его — он часть той же полосы.
+    /// The leading “Geometry” node at the moment of opening (R.62): “Cancel”
+    /// returns it too — it is part of the same strip.
     pub geo_backup: Vec<(ClipId, kt_model::EventGeometry, usize, Vec<kt_model::ParamCurve>)>,
-    /// Переопределения экземпляра ленты на момент открытия (Р.63 п.12):
-    /// «Параметры композиции» переехали ГОЛОВОЙ в это окно, значит и
-    /// «Отмена» обязана возвращать их — иначе окно откатывает половину
-    /// своей же сессии (тот же довод, что у генератора и геометрии).
+    /// Overrides of the reel instance at the moment of opening (R.63 item 12):
+    /// “Composition parameters” moved as the HEAD into this window, so
+    /// “Cancel” must return them too — otherwise the window would roll back half
+    /// of its own session (the same argument as for the generator and the geometry).
     pub ov_backup: Vec<(ClipId, Vec<kt_model::Override>)>,
     pub gesture: u64,
-    /// Что выбрано в каждой цепочке: слот эффекта или приколотая голова.
+    /// What is selected in each chain: an effect slot or the pinned head.
     pub selected: std::collections::HashMap<ClipId, crate::widgets::ChainSel>,
-    /// Состояние виджета автоматизации на каждую (цепочку, слот):
-    /// вид, выбранный ключ, незакоммиченный ввод времени.
+    /// The state of the automation widget for each (chain, slot):
+    /// the view, the selected key, the uncommitted time input.
     pub auto_views: std::collections::HashMap<(ClipId, usize), crate::automation::AutoView>,
-    /// То же для кривых ГЕНЕРАТОРА: у головы своего индекса слота нет.
+    /// The same for the curves of the GENERATOR: the head has no slot index of its own.
     pub gen_views: std::collections::HashMap<ClipId, crate::automation::AutoView>,
-    /// Кэш предупреждений титра на кадр (п.413).
+    /// Cache of title warnings per frame (item 413).
     pub gen_warn: std::collections::HashMap<ClipId, crate::gen_ui::GenWarn>,
-    /// Момент, на кадре которого считаются миниатюры пикера (Р.54).
-    /// Пока НЕ играем — следует за курсором (он неподвижен, картинка
-    /// стабильна); при игре остаётся на последнем значении: пересчитывать
-    /// десятки ячеек на каждый квант часов незачем, а мерцающая полоска
-    /// хуже слегка устаревшей.
+    /// The moment at which the thumbnails of the picker are computed (R.54).
+    /// While NOT playing it follows the cursor (it is motionless,
+    /// so the picture is stable); during playback it stays
+    /// at the last value: recomputing dozens of cells on every clock tick is pointless, and a flickering strip is
+    /// worse than a slightly stale one.
     pub preview_t: Option<kt_time::Tick>,
-    /// Когда окно открыли — мисклик-гард ЗАКАЗОВ декода (п.430).
+    /// When the window was opened — the misclick guard for decode ORDERS (item 430).
     pub opened_at: std::time::Instant,
     pub open: bool,
 }
 
 impl KtApp {
-    /// Открыть окно FX. Окно, которое уже показывает эту цепочку (своим
-    /// якорем или как партнёра), второй раз не открывается: у A/V-пары
-    /// одно окно на обе дорожки.
-    /// Открыть окно эффектов события НА ГОЛОВЕ — то есть на форме его
-    /// источника (Р.59, стадия 2).
+    /// Open the FX window. A window that already shows this chain (through its anchor
+    /// or as a partner) is not opened a second time: an A/V pair
+    /// has one window for both tracks.
+    /// Open the event’s effects window ON THE HEAD, that is, on the form of its
+    /// source (R.59, stage 2).
     ///
-    /// Прежние окна генератора и титра исчезли: владелец просил видеть
-    /// генератор крошкой ПЕРЕД эффектами, в том же окне. Все входы
-    /// («Параметры генератора…» у события, у карточки бина, создание из
-    /// меню) ведут сюда — второго тела у этого действия нет (правило 17).
+    /// The former generator and title windows have disappeared: the owner asked to see
+    /// the generator as a crumb BEFORE the effects, in the same window. All entry points
+    /// (“Generator parameters…” of the event, of the bin card, creation from the
+    /// menu) lead here — this action has no second body (rule 17).
     pub fn open_fx_editor_head(&mut self, clip: ClipId) {
         self.open_fx_editor(clip);
         if let Some(ed) = self.fx_editors.iter_mut().find(|e| e.members.contains(&clip)) {
@@ -81,24 +81,24 @@ impl KtApp {
         }
     }
 
-    /// Окно эффектов МЕДИА-генератора: его правит первое событие на этом
-    /// медиа. Значения живут на СОБЫТИИ, поэтому «параметры медиа» без
-    /// события больше не существуют — и молчать об этом нельзя (правило
-    /// 16): вид меняется из карточки бина, а править нечего, пока
-    /// генератор не поставлен на монтаж.
+    /// Effects window of a MEDIA generator: the first event on this
+    /// media edits it. Values live on the EVENT, so “media parameters” without an
+    /// event no longer exist — and one must not stay silent about it (rule
+    /// 16): the kind is changed from the bin card, and there is nothing to edit until
+    /// the generator is placed on the timeline.
     pub fn open_generator_editor(&mut self, media: MediaId) {
         let Some(kt_model::Source::File(m)) = self.model.project().source(media) else {
             return;
         };
         let path = m.path.clone();
-        // не генератор (или вид новее сборки — заглушка): МОЛЧАТЬ нельзя
+        // not a generator (or a kind newer than this build — a stub): we must NOT stay silent
         if kt_model::parse_gen_path(&path).is_none() {
             self.note(crate::tf!(k::genw::UNKNOWN_KIND, path));
             return;
         }
-        // ищем в РАБОЧЕМ ВИДЕ: окно правит то, что человек видит на
-        // таймлайне, а события чужой (не раскрытой) ленты ему отсюда
-        // недоступны — к ним он идёт через саму ленту
+        // we search in the WORKING VIEW: the window edits what the person sees on
+        // the timeline, and events of a foreign (unexpanded) reel are unavailable from here —
+        // he reaches them through the reel itself
         let first = self
             .model
             .project()
@@ -123,7 +123,7 @@ impl KtApp {
             .clips
             .iter()
             .filter(|m| m.id == clip || (c.link_group.is_some() && m.link_group == c.link_group))
-            // якорь первым, дальше по виду и id — порядок стабилен
+            // the anchor first, then by view and id — the order is stable
             .map(|m| (m.id != clip, m.kind == ClipKind::Audio, m.id.0, m.id))
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
@@ -150,10 +150,10 @@ impl KtApp {
             .filter_map(|id| self.model.clip(*id))
             .map(|m| (m.id, m.overrides.clone()))
             .collect();
-        // у события-генератора с пустой цепочкой выбирать нечего, кроме
-        // головы: `Fx(0)` на пустой цепочке показал бы пустоту. У
-        // ЭКЗЕМПЛЯРА ленты голова — «Параметры композиции» (Р.63 п.12), и
-        // правило то же.
+        // an event-generator with an empty chain has nothing to choose but
+        // the head: `Fx(0)` on an empty chain would show emptiness. For a reel
+        // INSTANCE the head is “Composition parameters” (R.63 item 12), and
+        // the rule is the same.
         let doc = self.model.document();
         let selected = members
             .iter()
@@ -192,8 +192,8 @@ impl KtApp {
         self.apply_coalesced(Command::SetFx { id: clip, fx }, gesture);
     }
 
-    /// Кривые автоматизации: тот же gesture, что у SetFx — один undo-шаг
-    /// на сессию окна.
+    /// Automation curves: the same gesture as SetFx — one undo step
+    /// per window session.
     pub(crate) fn set_fx_auto_coalesced(
         &mut self,
         clip: ClipId,
@@ -201,7 +201,7 @@ impl KtApp {
         gesture: u64,
     ) {
         while auto.last().is_some_and(|v| v.is_empty()) {
-            auto.pop(); // хвост без кривых не сериализуется зря
+            auto.pop(); // the tail without curves is not serialized needlessly
         }
         self.apply_coalesced(Command::SetFxAuto { id: clip, auto }, gesture);
     }
@@ -211,8 +211,8 @@ impl KtApp {
         for ed in &mut editors {
             self.draw_one_fx_editor(ctx, ed);
         }
-        // закрыли окно — считать его ячейки больше незачем (Р.54): всё,
-        // что осталось в очереди миниатюр, выбрасывается сменой поколения
+        // the window is closed — counting its cells is no longer needed (R.54): everything
+        // still in the thumbnail queue is dropped by a generation change
         if editors.iter().any(|e| !e.open) {
             self.fx_thumbs.bump_generation();
         }
@@ -222,29 +222,29 @@ impl KtApp {
 
     #[allow(clippy::too_many_lines)]
     fn draw_one_fx_editor(&mut self, ctx: &egui::Context, ed: &mut FxEditor) {
-        // подсказки из ui-замыканий (там `self` занят) — в накопитель
-        // кадра, потом в hover_hint: попапов нет (п.14 р.8)
+        // hints from the ui closures (there `self` is busy) go to the frame accumulator,
+        // then into hover_hint: there are no popups (item 14 of round 8)
         let mut hover_out: Option<String> = None;
-        // цель правого клика в полосе цепочки (п.363): полоса — виджет,
-        // про KtApp она не знает, и цель отдаёт наружу
+        // the right-click target in the chain strip (item 363): the strip is a widget,
+        // it knows nothing about KtApp, and it hands the target outward
         let mut panel_pick: Option<crate::ctx_menu::PanelTarget> = None;
-        // окно живёт, пока жива хоть одна его цепочка
+        // the window lives as long as at least one of its chains is alive
         ed.members.retain(|id| self.model.clip(*id).is_some());
-        // Публикация (Р.59, стадия 3): документ клонируется ОДИН раз на
-        // отрисовку окна — `publish_ctx` зовётся на каждый носитель, и
-        // клон проекта на строку был бы аллокацией в пути отрисовки.
+        // Publication (R.59, stage 3): the document is cloned ONCE per
+        // drawing of the window — `publish_ctx` is called for each carrier, and
+        // cloning the project per row would be an allocation in the drawing path.
         let pub_doc = self.model.document();
-        // правки ручек композиции: применяются ПОСЛЕ отрисовки токеном
-        // окна — внутри ui-замыкания `self` занят заимствованием
+        // edits to the composition handles are applied AFTER the drawing, by the window’s
+        // token — inside the ui closure `self` is busy with a borrow
         let mut inst_ops: Vec<kt_model::Command> = Vec::new();
-        // отказ формулы — ошибкой в строку состояния (Р.67, правило 16)
+        // formula rejection — an error in the status line (R.67, rule 16)
         let mut auto_error: Option<String> = None;
         let Some(anchor) = self.model.clip(ed.clip).cloned() else {
             ed.open = false;
             return;
         };
-        // пресеты: показываем только те, что законны для ЭТОГО вида
-        // события (совместимость считается по реестру эффектов)
+        // presets: we show only those that are legal for THIS kind
+        // of event (compatibility is computed from the effects registry)
         let is_audio_anchor = anchor.kind == ClipKind::Audio;
         let preset_rows: Vec<crate::user_store::PresetRow> = self
             .presets
@@ -253,8 +253,8 @@ impl KtApp {
             .filter(|r| if is_audio_anchor { r.audio_ok } else { r.video_ok })
             .cloned()
             .collect();
-        // состояние библиотеки сообщается ОДИН раз за сессию окна: файл
-        // битый, файл новее нас, часть записей не разобралась
+        // the state of the library is reported ONCE per window session: the file
+        // is broken, the file is newer than us, some entries did not parse
         if !self.presets_reported {
             self.presets_reported = true;
             if self.presets.is_broken() {
@@ -270,7 +270,7 @@ impl KtApp {
         }
         let mut preset_save: Option<kt_model::ops::FxChainBlock> = None;
         let mut preset_action: Option<crate::widgets::PresetAction> = None;
-        // камеры для комбо Pan3d (Р.29): id + подпись
+        // cameras for the Pan3d combo (R.29): id + caption
         let cameras: Vec<(u64, String)> = self
             .model
             .project()
@@ -294,49 +294,49 @@ impl KtApp {
             )
         };
         let playhead = self.player.transport.playhead();
-        // буферы живут в приложении; в окно отдаём их на время кадра,
-        // чтобы не держать &mut self внутри ui-замыкания
-        // нажатие «вставить огибающую»: сюда кладётся адрес цели
+        // the buffers live in the application; we hand them to the window for the duration of the frame,
+        // so as not to hold &mut self inside the ui closure
+        // a press of “paste envelope”: the target address is put here
         let mut paste_req = false;
         let mut paste_target: Option<(ClipId, usize)> = None;
         let mut fx_clip = self.fx_clipboard.clone();
-        // что окно наредактировало за кадр: применяем ПОСЛЕ отрисовки
+        // what the window edited during the frame: applied AFTER the drawing
         struct Edited {
             clip: ClipId,
             fx: Option<Vec<FxInstance>>,
             auto: Option<Vec<Vec<kt_model::ParamCurve>>>,
             bypass: Option<Vec<bool>>,
             off: Option<bool>,
-            /// Значения генератора события (Р.59, стадия 2) — `SetClipGen`.
+            /// Generator values of the event (R.59, stage 2) — `SetClipGen`.
             r#gen: Option<GeneratorKind>,
-            /// Его кривые — `SetClipGenAuto`.
+            /// Its curves — `SetClipGenAuto`.
             gen_auto: Option<Vec<kt_model::ParamCurve>>,
-            /// Пресет титра ставит ВСЁ разом — и это СВОЙ шаг истории.
+            /// A title preset sets EVERYTHING at once — and this is its OWN history step.
             own_step: bool,
-            /// «Применить ко всем»: `ApplyGenToAll`, один шаг истории.
+            /// “Apply to all”: `ApplyGenToAll`, one history step.
             apply_all: bool,
-            /// Смена ВИДА генератора: свойство медиа, свой шаг истории.
+            /// Change of the generator KIND: a property of the media, its own history step.
             switch_kind: Option<GeneratorKind>,
-            /// Ведущий узел «Геометрия», его позиция и кривые (Р.62) —
-            /// `SetGeometry`, тот же шаг истории, что и цепочка.
+            /// The leading “Geometry” node, its position and curves (R.62) —
+            /// `SetGeometry`, the same history step as the chain.
             geometry: Option<(kt_model::EventGeometry, usize, Vec<kt_model::ParamCurve>)>,
         }
         let mut edits: Vec<Edited> = Vec::new();
         let mut revert = false;
         let mut lead_refused = false;
-        // мини-таймлайн виджета автоматизации двигает ГЛАВНЫЙ курсор
+        // the mini-timeline of the automation widget moves the MAIN cursor
         let mut seek: Option<kt_time::Tick> = None;
         let frame_step = 90_000 / self.model.project().settings.fps.max(1) as i64;
-        // окно главного таймлайна: график автоматизации показывает то же
-        // самое, пока не сняли замок (Р.38 п.14)
+        // the window of the main timeline: the automation graph shows the same
+        // thing until the lock is released (R.38 item 14)
         let tl_view = self.tl_view();
-        // замок оси один на программу (Р.40 п.15)
+        // the axis lock is one for the whole program (R.40 item 15)
         let axis_linked = self.auto_axis_linked;
         let dflt_shape = self.model.document().settings.default_shape;
         let mut axis_req = crate::automation::AxisReq::default();
-        // «мест: N» у генератора и путь бегущей строки — считаются ДО
-        // отрисовки: внутри ui-замыкания `&mut self` уже занят, а счётчик
-        // мест линейно обходит дерево и на кадр его считать незачем
+        // “places: N” of the generator and the path of the scrolling text are computed BEFORE
+        // drawing: inside the ui closure `&mut self` is already busy, and the places counter
+        // walks the tree linearly, so there is no point computing it per frame
         let uses_of = self.media_uses();
         let frame_size = {
             let st = &self.model.project().settings;
@@ -344,13 +344,13 @@ impl KtApp {
         };
         let mut open = ed.open;
         let members = ed.members.clone();
-        // ---- контекст миниатюр пикера (Р.54, п.432) -------------------
-        // WYSIWYG: ячейка показывает ЦЕПОЧКУ СОБЫТИЯ плюс кандидата в
-        // хвосте, то есть ровно то, что получится после клика. Кадр —
-        // ближайшая готовая тумба к позиции курсора: формула перевода
-        // «тик события → кадр источника» ОДНА с филмстрипом
-        // (`thumbs::material_key_t`), поэтому ключи общие и нового декода
-        // полоска не порождает (инвариант №8).
+        // ---- context of picker thumbnails (R.54, item 432) -------------------
+        // WYSIWYG: the cell shows the EVENT’S CHAIN plus the candidate in
+        // the tail, that is, exactly what will result after the click. The frame is
+        // the nearest ready thumbnail to the cursor position: the conversion formula
+        // “event tick → source frame” is ONE with the filmstrip
+        // (`thumbs::material_key_t`), so the keys are shared and the strip does not produce
+        // a new decode (invariant No. 8).
         let pv_t = {
             let want = anchor
                 .start
@@ -367,10 +367,10 @@ impl KtApp {
         };
         let pv_span = anchor.duration.0.max(1);
         let pv_u = (pv_t.0 - anchor.start.0) as f64 / pv_span as f64;
-        // камера разрешается ПО ЯКОРЮ, но как если бы Pan3d в цепочке был:
-        // вариант «Pan 3D» в полоске обязан показать перспективу и на
-        // клипе, где 3D ещё не стоит. Правило разрешения — одно с движком
-        // (kt_engine::resolve_cam3d, п.429).
+        // the camera is resolved BY THE ANCHOR, but as if Pan3d were in the chain:
+        // the “Pan 3D” variant in the strip must show perspective also on
+        // a clip where 3D is not yet set. The resolution rule is one with the engine
+        // (kt_engine::resolve_cam3d, item 429).
         let pv_cam = kt_engine::resolve_cam3d(
             &[kt_model::FxInstance::Pan3d {
                 pos_x: 0.0,
@@ -389,8 +389,8 @@ impl KtApp {
             crate::fx_thumbs::REF_W,
             self.model.project().settings.width,
         );
-        // цепочка ЯКОРЯ с разрешёнными кривыми: значения на момент
-        // курсора, домен — материал события (Р.37: скорость ось не жмёт)
+        // the ANCHOR’s chain with resolved curves: values at the moment of the
+        // cursor, the domain is the event’s material (R.37: speed does not squeeze the axis)
         let pv_chain: Vec<FxInstance> = {
             let mat = kt_model::clip_material_at(
                 anchor.source_in,
@@ -416,21 +416,21 @@ impl KtApp {
                 })
                 .collect()
         };
-        // кадр-основа: точная тумба → постер медиа → встроенный образец.
-        // Пустых полосок не бывает, а ЗАКАЗЫ декода ставятся только после
-        // мисклик-гарда (п.430).
+        // base frame: exact thumbnail → media poster → built-in sample.
+        // Empty strips do not occur, and decode ORDERS are placed only after
+        // the misclick guard (item 430).
         let decode_ok = crate::fx_thumbs::decode_orders_allowed(ed.opened_at.elapsed());
         let is_nest = self.model.project().sequence(anchor.media).is_some();
         let pv_step = crate::thumbs::THUMB_STEP_LADDER[1];
         let (pv_base, pv_img) = if is_nest {
-            // у ленты своего файла нет, и тумб у неё не бывает (п.395) —
-            // показываем образец, а не пустоту
+            // a reel has no file of its own, and it has no thumbnails (item 395) —
+            // we show the sample, not emptiness
             (crate::fx_thumbs::FxThumbBase::Pattern, None)
         } else {
             let warps = self.warp_maps();
-            // адрес ИСТОЧНИКА события, а не его медиа (Р.59, стадия 2):
-            // у генератора значения живут на событии, и кадр у каждого
-            // свой. Правило одно на программу — `clip_source_addr`.
+            // the address of the event’s SOURCE, not its media (R.59, stage 2):
+            // for a generator the values live on the event, and the frame is different for each
+            // one. The rule is one for the whole program — `clip_source_addr`.
             let pv_src = kt_engine::clip_source_addr(&anchor);
             let key = crate::thumbs::ThumbKey {
                 media: pv_src,
@@ -447,8 +447,8 @@ impl KtApp {
                 Some(img) => (crate::fx_thumbs::FxThumbBase::Thumb(key), Some(img)),
                 None => {
                     if decode_ok {
-                        // ближайшая готовая тумба из sidecar-БД вместо
-                        // декода (механизм скраба бина, п.14 р.7)
+                        // the nearest ready thumbnail from the sidecar DB instead of
+                        // decoding (the bin scrub mechanism, item 14 of round 7)
                         self.thumbs.request_near(key, pv_step * 2);
                     }
                     let poster =
@@ -472,10 +472,10 @@ impl KtApp {
             pv_t.0,
             pv_cam,
         );
-        // Прокрутка одна — у ТЕЛА (`window_body`): внешний `vscroll` окна
-        // прокручивал бы и кнопки действия, и «Готово» уходило за нижнюю
-        // кромку (Р.67, нашлось живым сценарием `curves`). Высота окна
-        // прежняя — тело само оставляет место кнопкам.
+        // There is one scroll — of the BODY (`window_body`): the outer `vscroll` of the window
+        // would scroll the action buttons too, and “Done” went past the bottom
+        // edge (R.67, found by the live scenario `curves`). The window height
+        // is the same as before — the body itself leaves room for the buttons.
         let shown = egui::Window::new(title)
             .id(egui::Id::new(("fx", ed.clip)))
             .open(&mut open)
@@ -491,15 +491,15 @@ impl KtApp {
                     bypass.resize(fx.len(), false);
                     let mut auto = clip.fx_auto.clone();
                     auto.resize(fx.len(), Vec::new());
-                    // ВЕДУЩИЙ узел «Геометрия» (Р.62) — вклеивается в полосу
-                    // на свою позицию, как Pan/Crop в Vegas: перетаскивается,
-                    // не удаляется, такой же узел добавляется из каталога.
-                    // В модели он — поле события, не слот: индексы слотов и
-                    // адреса кривых от него не двигаются.
-                    // Вклейка живёт ТОЛЬКО внутри вызова полосы: наружу
-                    // индексы слотов остаются сырыми (по ним адресуются
-                    // кривые, публикация и контекст-меню), а выбор узла —
-                    // свой вариант `ChainSel::Lead`.
+                    // The LEADING “Geometry” node (R.62) is
+                    // spliced into the strip at its own position,
+                    // like Pan/Crop in Vegas: it is dragged, not deleted, and the same node
+                    // is added from the catalog. In the model it is a field of the event,
+                    // not a slot: slot indices and curve addresses do not move because of it.
+                    // The splice lives ONLY inside the strip call: outward,
+                    // slot indices stay raw (curve addresses, publication and the context
+                    // menu are addressed by them), and choosing the node is its own variant
+                    // `ChainSel::Lead`.
                     let lead_pos0 =
                         (clip.kind == ClipKind::Video).then(|| clip.geometry_pos.min(fx.len()));
                     let mut lead_pos = lead_pos0.unwrap_or(0);
@@ -507,10 +507,10 @@ impl KtApp {
                     let mut lead_auto = clip.geometry_auto.clone();
                     let mut lead_rule = clip.geometry.rule;
                     let mut chain_on = !clip.fx_off;
-                    // ГОЛОВА полосы (Р.59, стадия 2): у события-генератора
-                    // это его ИСТОЧНИК, первой крошкой перед эффектами —
-                    // ровно как просил владелец. Значения правятся тут же,
-                    // в этом же окне; своего окна у генератора больше нет.
+                    // HEAD of the strip (R.59, stage 2): for an event-generator
+                    // it is its SOURCE, the first crumb before the effects —
+                    // exactly as the owner asked. The values are edited right here,
+                    // in this same window; the generator has no window of its own any more.
                     let mut gen_kind = clip.r#gen.clone();
                     let mut gen_auto = clip.gen_auto.clone();
                     let mut gen_edit = crate::gen_ui::GenEdit::default();
@@ -525,19 +525,19 @@ impl KtApp {
                         },
                         id.0
                     );
-                    // свёртка на цепочку: у пары видно обе, лишнюю можно
-                    // свернуть («можно дать возможность скрытия-переключения»)
+                    // collapsing per chain: a pair shows both, and the extra one can be
+                    // collapsed (“one can give the option of hide/toggle”)
                     egui::CollapsingHeader::new(head)
                         .id_salt(("fxgrp", id.0))
                         .default_open(n == 0 || members.len() <= 2)
                         .show(ui, |ui| {
-                            // выбранный слот и строку поиска берём в
-                            // локальные переменные: иначе два поля одного
-                            // и того же `ed` одолжены одновременно
+                            // the selected slot and the search row are taken into
+                            // local variables: otherwise two fields of the same
+                            // `ed` would be borrowed at the same time
                             let mut sel_slot =
                                 *ed.selected.get(id).unwrap_or(&crate::widgets::ChainSel::Fx(0));
-                            // головы нет — выбирать её нечем: у события без
-                            // генератора она и не рисуется
+                            // there is no head — nothing to choose it with: for an event without
+                            // a generator it is not drawn at all
                             if gen_kind.is_none()
                                 && !pub_doc.sequence(clip.media).is_some()
                                 && sel_slot == crate::widgets::ChainSel::Head
@@ -547,11 +547,11 @@ impl KtApp {
                             if lead_pos0.is_none() && sel_slot == crate::widgets::ChainSel::Lead {
                                 sel_slot = crate::widgets::ChainSel::Fx(0);
                             }
-                            // ПАРАМЕТРЫ КОМПОЗИЦИИ — ГОЛОВА полосы (Р.63
-                            // п.12), а не своя кнопка и не своё окно:
-                            // «их можно поместить в тот же fx-chain для
-                            // удобства» (владелец). Дверь одна, и она там
-                            // же, где голова генератора.
+                            // COMPOSITION PARAMETERS — the HEAD of the strip (R.63
+                            // item 12), not a button of its own and not a window of its own:
+                            // “they can be placed in the same fx-chain for
+                            // convenience” (the owner). There is one door, and it is there,
+                            // where the generator’s head is.
                             let is_nest = pub_doc.sequence(clip.media).is_some();
                             let mut query = std::mem::take(&mut ed.picker_query);
                             let head_slot = match (gen_kind.as_ref(), is_nest) {
@@ -560,22 +560,22 @@ impl KtApp {
                                         k::genw::HEAD,
                                         crate::gen_ui::kind_name(g)
                                     ),
-                                    // выключателя у источника нет: выключенный
-                                    // он оставил бы событие без картинки вовсе
+                                    // the source has no switch: switched off, it
+                                    // would leave the event with no picture at all
                                     on: None,
                                     hint: tr(k::genw::HEAD_HINT),
                                     color: crate::theme::ACCENT,
                                 }),
-                                // у ЭКЗЕМПЛЯРА ленты источника-генератора
-                                // нет, зато есть объявленные лентой ручки —
-                                // и живут они ровно тут (Р.63 п.12).
+                                // a reel INSTANCE of a generator source has none,
+                                // but the handles declared by the reel are there —
+                                // and they live exactly here (R.63 item 12).
                                 //
-                                // Подпись — ИМЯ ЛЕНТЫ, а не «Параметры
-                                // композиции»: длинная строка закрывала
-                                // полосу, а акцентный цвет при выделении
-                                // давал «длинный синий прямоугольник»
-                                // (владелец, Р.67 п.8). Цвет — как у слота,
-                                // полное имя — в подсказке строки.
+                                // The caption is the NAME OF THE REEL, not
+                                // “Composition parameters”: a long string covered
+                                // the strip, and the accent color on
+                                // selection gave a “long blue rectangle”
+                                // (the owner, R.67 item 8). The color is as for a slot;
+                                // the full name is in the status-line hint.
                                 (None, true) => Some(crate::widgets::HeadSlot {
                                     label: format!(
                                         "{} {}",
@@ -591,8 +591,8 @@ impl KtApp {
                                 }),
                                 (None, false) => None,
                             };
-                            // спликс ведущего узла на его позицию + перевод
-                            // выбора в индексы полосы
+                            // splice of the leading node at its position + conversion of the choice
+                            // into strip indices
                             let (mut fx_s, mut bypass_s, mut auto_s) =
                                 (fx.clone(), bypass.clone(), auto.clone());
                             let mut sel_s = sel_slot;
@@ -640,15 +640,15 @@ impl KtApp {
                                     chain: *id,
                                     picked: &mut panel_pick,
                                 },
-                                // у аудио-цепочки картинок нет: миниатюру
-                                // звука не нарисовать (решение владельца)
+                                // an audio chain has no pictures: an audio thumbnail cannot be drawn
+                                // (the owner’s decision)
                                 if clip.kind == ClipKind::Audio { None } else { Some(&mut pv) },
                             );
                             ed.picker_query = query;
-                            // ведущий узел ВЫКЛЕИВАЕТСЯ обратно: в модель
-                            // уходят сырая цепочка и отдельно узел с позицией
-                            // и кривыми. Крестик на нём — отказ (правило 16):
-                            // узел в модели остаётся, человеку — ошибка.
+                            // the leading node is UNSTUCK back: the
+                            // model gets the raw chain and, separately,
+                            // the node with its position and curves. The cross on it is a refusal (rule 16):
+                            // the node stays in the model, the person gets an error.
                             if lead_pos0.is_some() {
                                 match fx_s.iter().position(|f| f.is_lead_geometry()) {
                                     Some(li) => {
@@ -678,9 +678,9 @@ impl KtApp {
                             auto = auto_s;
                             sel_slot = sel_s;
                             ed.selected.insert(*id, sel_slot);
-                            // ---- ГОЛОВА ЭКЗЕМПЛЯРА: параметры композиции
-                            // (Р.63 п.12) — та же форма, что жила в своём
-                            // окне, в том же окне FX
+                            // ---- HEAD OF THE INSTANCE: composition
+                            // parameters (R.63 item 12) — the same form
+                            // that lived in its own window, now in the same FX window
                             if sel_slot == crate::widgets::ChainSel::Head && is_nest {
                                 let hc = crate::pubparam::InstHeadCtx {
                                     doc: &pub_doc,
@@ -690,9 +690,9 @@ impl KtApp {
                                     tl_view,
                                     axis_linked,
                                 };
-                                // вид автоматизации у головы свой; у
-                                // экземпляра ленты генератора не бывает,
-                                // поэтому карта `gen_views` свободна
+                                // the automation view of the head is its own;
+                                // a generator reel instance does not have one,
+                                // so the map `gen_views` is free
                                 let view = ed.gen_views.entry(*id).or_default();
                                 let out = crate::app::KtApp::draw_inst_head(
                                     &hc,
@@ -706,7 +706,7 @@ impl KtApp {
                                 axis_req = axis_req.merge_req(&out.axis);
                                 inst_ops.extend(out.ops);
                             }
-                            // ---- ГОЛОВА: форма источника (Р.59) --------
+                            // ---- HEAD: source form (R.59) --------
                             if let (crate::widgets::ChainSel::Head, Some(g)) =
                                 (sel_slot, gen_kind.as_mut())
                             {
@@ -745,16 +745,16 @@ impl KtApp {
                                 if let Some(t) = gen_edit.seek {
                                     seek = Some(t);
                                 }
-                                // просьбы про ОСЬ собираются с ВСЕХ графиков
-                                // окна и применяются один раз (Р.40 п.15)
+                                // requests about the AXIS are collected from ALL
+                                // graphs of the window and applied once (R.40 item 15)
                                 axis_req.set_linked =
                                     gen_edit.axis.set_linked.or(axis_req.set_linked);
                                 axis_req.set_view = gen_edit.axis.set_view.or(axis_req.set_view);
                             }
-                            // ВЕДУЩИЙ узел правится тем же кодом, что слот:
-                            // на время секции он кладётся в хвост локальной
-                            // цепочки и снимается обратно (адрес кривых у
-                            // него свой — `usize::MAX`)
+                            // the LEADING node is edited by the same code as a slot: for the duration of the section
+                            // it is put into the tail of a local chain and
+                            // taken back out (its curves’ address is its own —
+                            // `usize::MAX`)
                             let lead_sel =
                                 sel_slot == crate::widgets::ChainSel::Lead && lead_pos0.is_some();
                             if lead_sel {
@@ -768,10 +768,10 @@ impl KtApp {
                             };
                             let view_key = if lead_sel { usize::MAX } else { sel };
                             if let Some(f) = fx.get_mut(sel) {
-                                // параметры — ОДНИМ кодом по спекам модели
-                                // позиция курсора в домене кривой слота —
-                                // материал события (Р.37: скорость ось не
-                                // сжимает)
+                                // parameters — by ONE code, by the model specs;
+                                // the cursor position in the domain of the
+                                // slot curve is the event’s material
+                                // (R.37: speed does not squeeze the axis)
                                 let at = kt_model::clip_material_at(
                                     clip.source_in,
                                     clip.start,
@@ -785,19 +785,19 @@ impl KtApp {
                                 let mut bind = auto.get_mut(sel).map(|curves| {
                                     crate::widgets::CurveBind { curves, sel: view_sel, at }
                                 });
-                                // Р.43 п.291: правка ключа ЧИСЛОМ уходит в
-                                // `auto`, а не в `fx` — и коммититься обязана
-                                // командой SetFxAuto. Пока флаг был один,
-                                // локальный клон `auto` умирал вместе с
-                                // кадром, и поле «скидывалось на предыдущее
-                                // значение».
-                                // ДВЕРЬ ПУБЛИКАЦИИ ЕСТЬ И У ВЕДУЩЕГО УЗЛА
-                                // (Р.63 п.9): «по какой причине у первого
-                                // geometry нет возможности опубликовать
-                                // параметры а у второго есть?» — разница
-                                // была только в том, что у узла не было
-                                // адреса. Теперь он есть, и подписи полей
-                                // ведут в ту же дверь тем же кодом.
+                                // R.43 item 291: a key edit by NUMBER goes into
+                                // `auto`, not into `fx` — and it must be committed
+                                // by the SetFxAuto command. While there was one flag,
+                                // the local clone of `auto` died together with the
+                                // frame, and the field “snapped
+                                // back to the previous value”.
+                                // THE PUBLICATION DOOR ALSO EXISTS FOR THE
+                                // LEADING NODE (R.63 item 9): “why does the first
+                                // geometry have no way to publish its parameters
+                                // while the second one does?” — the difference
+                                // was only that the node had no address.
+                                // Now it does, and the field captions lead to
+                                // the same door by the same code.
                                 let pubc = Some(self.publish_ctx(
                                     &pub_doc,
                                     *id,
@@ -807,8 +807,8 @@ impl KtApp {
                                         kt_model::ParamOwner::FxSlot { slot: sel }
                                     },
                                 ));
-                                // правило приведения — только у ВЕДУЩЕГО
-                                // узла: «следовать проекту» либо своё
+                                // the conform rule — only on the LEADING
+                                // node: “follow the project” or its own
                                 if f.is_lead_geometry() {
                                     let label = |c: kt_model::Conform| match c {
                                         kt_model::Conform::Project => tr(k::fx::CONFORM_PROJECT),
@@ -817,9 +817,9 @@ impl KtApp {
                                         kt_model::Conform::Stretch => tr(k::fx::CONFORM_STRETCH),
                                         kt_model::Conform::AsIs => tr(k::fx::CONFORM_AS_IS),
                                     };
-                                    // ряд из пяти слов, а не выпадающий список:
-                                    // один клик, всё видно (правило 9 — режим
-                                    // виден, а не спрятан)
+                                    // a row of five words, not a drop-down
+                                    // list: one click, everything is visible
+                                    // (rule 9 — the mode is visible, not hidden)
                                     let r = ui.horizontal(|ui| {
                                         ui.label(tr(k::fx::CONFORM));
                                         for c in [
@@ -844,9 +844,9 @@ impl KtApp {
                                         tr(k::fx::LEAD_HINT),
                                     );
                                 }
-                                // ГРУППА «Параметры» — образец «Трансформации»
-                                // (Р.66); у ведущего узла своя форма с
-                                // собственными группами, её не дублируем
+                                // the “Parameters” GROUP is the model of “Transform”
+                                // (R.66); the leading node has its own form
+                                // with its own groups, which we do not duplicate
                                 if f.is_lead_geometry() {
                                     params_changed |= draw_video_fx_params(
                                         ui,
@@ -878,10 +878,10 @@ impl KtApp {
                                 let mut auto_ch = false;
                                 if let Some(curves) = auto.get_mut(sel) {
                                     let view = ed.auto_views.entry((*id, view_key)).or_default();
-                                    // домен слота события — материал;
-                                    // перевод учитывает РЕВЕРС и больше
-                                    // ничего (Р.37: скорость ось не
-                                    // сжимает)
+                                    // the domain of the event’s slot is the
+                                    // material; the conversion accounts for REVERSE
+                                    // and nothing else (R.37: speed
+                                    // does not squeeze the axis)
                                     let to_tl = |t: kt_time::Tick| {
                                         kt_model::clip_timeline_at(
                                             clip.source_in,
@@ -934,8 +934,8 @@ impl KtApp {
                                     if let Some(e) = &r.error {
                                         auto_error = Some(e.clone());
                                     }
-                                    // правый клик по ключу — тоже цель (п.364);
-                                    // у ведущего узла адреса слота нет
+                                    // a right click on a key is also a target (item
+                                    // 364); the leading node has no slot address
                                     if let (Some((ci, ki)), false) = (r.key_menu, lead_sel) {
                                         panel_pick = Some(crate::ctx_menu::PanelTarget::CurveKey {
                                             chain: *id,
@@ -944,14 +944,14 @@ impl KtApp {
                                             key: ki,
                                         });
                                     }
-                                    // Поле параметра читает выбранный ключ
-                                    // ДО отрисовки графика, поэтому смена
-                                    // выбора видна ему только следующим
-                                    // кадром. В простое следующего кадра
-                                    // может не быть (repaint = движение,
-                                    // п.38), и поле застревало на значении
-                                    // прошлого ключа — просим кадр явно
-                                    // (Р.43 п.291).
+                                    // The parameter field reads the selected key
+                                    // BEFORE the graph is drawn, so a change of
+                                    // selection is visible to it only on the next
+                                    // frame. In idle there may be no next frame
+                                    // (repaint = motion, item 38), and the field
+                                    // got stuck on the value of the previous key —
+                                    // we request the frame
+                                    // explicitly (R.43 item 291).
                                     if view.sel != view_sel {
                                         ui.ctx().request_repaint();
                                     }
@@ -966,13 +966,13 @@ impl KtApp {
                                 lead_auto = auto.pop().unwrap_or_default();
                                 lead_node = fx.pop().unwrap_or_else(FxInstance::geometry);
                             }
-                            // про пустую цепочку говорит сама полоса —
-                            // второй раз повторять не надо
+                            // the strip itself says that the chain
+                            // is empty — there is no need to repeat it
                         });
-                    // ведущий узел ВЫКЛЕИВАЕТСЯ обратно: в модель уходят
-                    // сырая цепочка и отдельно узел с позицией и кривыми.
-                    // Крестик на нём — отказ (правило 16): узел в модели
-                    // остаётся, человеку — ошибка в строке состояния.
+                    // the leading node is UNSTUCK back: the model
+                    // gets the raw chain and, separately, the node
+                    // with its position and curves. The cross on it is a refusal (rule 16): the node stays in
+                    // the model, the person gets an error in the status line.
                     let geometry_edit = lead_pos0.map(|_| {
                         let g = kt_model::EventGeometry { rule: lead_rule, ..Default::default() }
                             .with_node(&lead_node);
@@ -1006,7 +1006,7 @@ impl KtApp {
                 });
                 crate::widgets::window_actions(ui, |ui| {
                 ui.horizontal(|ui| {
-                    // прямоугольники кнопок — наружу живым сценариям (Р.27)
+                    // button rectangles are exposed to live scenarios (R.27)
                     let r = ui.button(tr(k::fx::DONE));
                     crate::widgets::field_probe::note("fx.done", r.rect);
                     if r.clicked() {
@@ -1021,15 +1021,15 @@ impl KtApp {
                 });
                 });
             });
-        // рамка окна целиком — по ней режут скриншоты лендинга (site/screenshots.py)
+        // the whole window frame — the landing-page screenshots are cropped by it (site/screenshots.py)
         if let Some(r) = &shown {
             crate::widgets::field_probe::note("win.fx", r.response.rect);
         }
 
-        // запросы полосы по пресетам (Р.48): полоса их только кладёт —
-        // файл пишет окно, потому что диалог имени живёт у приложения
+        // the strip’s requests about presets (R.48): the strip only puts them — the window writes
+        // the file, because the name dialog lives in the application
         if let Some(mut block) = preset_save.take() {
-            // ведущий узел — свойство события, в пресет цепочки не идёт
+            // the leading node is a property of the event and does not go into a chain preset
             block.slots.retain(|s| !s.fx.is_lead_geometry());
             self.preset_save = Some(crate::app::PresetSaveDialog {
                 block,
@@ -1041,7 +1041,7 @@ impl KtApp {
         match preset_action.take() {
             Some(crate::widgets::PresetAction::Rename(old)) => {
                 self.preset_save = Some(crate::app::PresetSaveDialog {
-                    // переименование блок не использует
+                    // rename does not use the block
                     block: kt_model::ops::FxChainBlock {
                         slots: vec![],
                         src_in: kt_time::Tick(0),
@@ -1059,13 +1059,13 @@ impl KtApp {
             None => {}
         }
         if let Some(t) = panel_pick {
-            self.set_panel_target(t); // цели гасят друг друга (п.363)
+            self.set_panel_target(t); // targets cancel each other out (item 363)
         }
         for c in inst_ops {
             self.apply_coalesced(c, ed.gesture);
         }
         if let Some(h) = hover_out {
-            self.hover_hint = Some(h); // подсказка едет в строку состояния
+            self.hover_hint = Some(h); // the hint goes to the status line
         }
         if let Some(e) = auto_error {
             self.refuse(e);
@@ -1073,33 +1073,33 @@ impl KtApp {
         if lead_refused {
             self.refuse(tr(k::fx::LEAD_LOCKED));
         }
-        // просьбы графика про ОСЬ применяет одно место (Р.40 п.15)
+        // the requests of the graph about the AXIS are applied in one place (R.40 item 15)
         self.apply_axis_req(axis_req);
         if let Some(t) = seek {
-            // «курсор внутри мини-таймлайна двигает курсор в основном
-            // таймлайне, чтобы сразу видеть к чему относится» (Р.33 п.5)
+            // “the cursor inside the mini-timeline moves the cursor on the main timeline, so that one
+            // immediately sees what it refers to” (R.33 item 5)
             self.player.seek(kt_time::Tick(t.0.max(0)));
         }
         if !open {
             ed.open = false;
         }
         self.fx_clipboard = fx_clip;
-        // Заказ чтения буфера — ПОСЛЕ отрисовки и в ФОНЕ (Р.61): читать
-        // синхронно нельзя, владелец буфера на X11 — наше же окно.
+        // The clipboard read order — AFTER the drawing and in the BACKGROUND (R.61): one cannot read
+        // synchronously; the clipboard owner on X11 is our own window.
         if paste_req && self.env_read.is_none() {
             let t = paste_target.unwrap_or((ed.clip, 0));
             self.env_read = Some(crate::envclip::spawn_read(t));
         }
         if revert {
-            // «Отмена» откатывает ВСЁ окно: у пары обе цепочки
+            // “Cancel” rolls back the WHOLE window: for a pair, both chains
             for (id, fx, auto, bypass, off) in ed.backup.clone() {
                 self.set_fx_coalesced(id, fx, ed.gesture);
                 self.set_fx_auto_coalesced(id, auto, ed.gesture);
                 self.apply_coalesced(Command::SetFxBypass { id, bypass }, ed.gesture);
                 self.apply_coalesced(Command::SetFxOff { id, off }, ed.gesture);
             }
-            // ...и ЗНАЧЕНИЯ ИСТОЧНИКА тоже: голова полосы — часть той же
-            // сессии окна, и откатывать половину её было бы ложью
+            // ...and the SOURCE VALUES too: the head of the strip is part of the same
+            // window session, and rolling back half of it would be a lie
             for (id, kind, auto) in ed.gen_backup.clone() {
                 if self.model.clip(id).is_none_or(|c| c.r#gen == kind && c.gen_auto == auto) {
                     continue;
@@ -1107,7 +1107,7 @@ impl KtApp {
                 self.apply_coalesced(Command::SetClipGen { id, kind: kind.clone() }, ed.gesture);
                 self.apply_coalesced(Command::SetClipGenAuto { id, auto }, ed.gesture);
             }
-            // ...и ведущий узел «Геометрия» (Р.62) — та же полоса
+            // ...and the leading “Geometry” node (R.62) — the same strip
             for (id, geometry, pos, auto) in ed.geo_backup.clone() {
                 if self.model.clip(id).is_none_or(|c| {
                     c.geometry == geometry && c.geometry_pos == pos && c.geometry_auto == auto
@@ -1116,7 +1116,7 @@ impl KtApp {
                 }
                 self.apply_coalesced(Command::SetGeometry { id, geometry, pos, auto }, ed.gesture);
             }
-            // ...и РУЧКИ КОМПОЗИЦИИ из головы полосы (Р.63 п.12)
+            // ...and the COMPOSITION HANDLES from the head of the strip (R.63 item 12)
             for (id, was) in ed.ov_backup.clone() {
                 let now = self.model.clip(id).map(|c| c.overrides.clone()).unwrap_or_default();
                 if now == was {
@@ -1140,10 +1140,10 @@ impl KtApp {
             return;
         }
         for e in edits {
-            // Смена ВИДА — свойство МЕДИА и СВОЙ шаг истории (правило 20):
-            // один Ctrl+Z обязан отменять «случайно ткнул другой вид», а
-            // не всю работу в окне. Значения событий переодевает сама
-            // модель (`fit_gen_to_media`), поэтому команда одна.
+            // Changing the KIND is a property of the MEDIA and its OWN history step (rule 20): one Ctrl+Z
+            // must undo “accidentally clicked another kind”,
+            // and not all the work in the window. The model
+            // itself re-dresses the event values (`fit_gen_to_media`), so the command is one.
             if let Some(kind) = e.switch_kind {
                 let Some(media) = self.model.clip(e.clip).map(|c| c.media) else { continue };
                 self.gesture_counter += 1;
@@ -1154,8 +1154,8 @@ impl KtApp {
                 );
                 continue;
             }
-            // Пресет ставит ВСЁ (значения и кривые) — тоже свой шаг
-            // истории: нажал, не понравилось, один Ctrl+Z вернул набор.
+            // A preset sets EVERYTHING (values and curves) — also its own history step: pressed it,
+            // did not like it, one Ctrl+Z restored the set.
             let gesture = if e.own_step {
                 self.gesture_counter += 1;
                 self.gesture_counter
@@ -1166,7 +1166,7 @@ impl KtApp {
                 self.set_fx_coalesced(e.clip, fx, gesture);
             }
             if let Some(mut auto) = e.auto {
-                // ключи держим отсортированными (модель это валидирует)
+                // keys are kept sorted (the model validates this)
                 for curves in &mut auto {
                     for c in curves.iter_mut() {
                         c.keys.sort_by_key(|k| k.t.0);
@@ -1176,7 +1176,7 @@ impl KtApp {
             }
             if let Some(mut b) = e.bypass {
                 while b.last() == Some(&false) {
-                    b.pop(); // хвостовые false не сериализуются зря
+                    b.pop(); // trailing false values are not serialized needlessly
                 }
                 self.apply_coalesced(Command::SetFxBypass { id: e.clip, bypass: b }, gesture);
             }
@@ -1192,8 +1192,8 @@ impl KtApp {
                     gesture,
                 );
             }
-            // Значения генератора: команда ТОЛЬКО при реально изменившемся
-            // значении (п.200) — иначе ревизия росла бы каждый кадр жеста.
+            // Generator values: the command ONLY on a really changed value (item 200) — otherwise the
+            // revision would grow on every frame of the gesture.
             if let Some(kind) = e.r#gen
                 && self.model.clip(e.clip).is_some_and(|c| c.r#gen.as_ref() != Some(&kind))
             {
@@ -1207,9 +1207,9 @@ impl KtApp {
                     self.apply_coalesced(Command::SetClipGenAuto { id: e.clip, auto }, gesture);
                 }
             }
-            // «Применить ко всем» — ОТДЕЛЬНАЯ команда и отдельный шаг
-            // истории: правка одного события соседей не трогает, а этот
-            // жест трогает все и говорит об этом подписью.
+            // “Apply to all” is a SEPARATE command and a separate history step: editing one event
+            // does not touch its neighbours, while this gesture
+            // touches all of them and says so in its caption.
             if e.apply_all
                 && let Some(c) = self.model.clip(e.clip).cloned()
                 && let Some(kind) = c.r#gen.clone()
@@ -1225,14 +1225,14 @@ impl KtApp {
     }
 }
 
-/// Секция автоматизации слота: выбор кривых, копипаст огибающих, ключ по
-/// курсору — и сам виджет (`automation::draw`: график ↔ таблица).
-/// У слота без автоматизируемых параметров (Mirror) не рисуется вовсе.
+/// Automation section of the slot: choice of curves, copy-paste of envelopes, key at the cursor —
+/// and the widget itself (`automation::draw`: graph ↔ table). A slot without automatable
+/// parameters (Mirror) is not drawn at all.
 ///
-/// Возвращает `AutoResult` целиком (Р.40 п.15): кроме «изменилось» и «куда
-/// двинуть курсор» в нём едут просьбы про ось — переключить замок и
-/// подвинуть окно ГЛАВНОГО таймлайна. Пара `(bool, Option<Tick>)` их
-/// молча теряла бы, а замок теперь один на всю программу.
+/// Returns the whole `AutoResult` (R.40 item 15): besides “changed” and “where to move the cursor”
+/// it carries requests about the axis — to toggle the lock and move the window of the MAIN timeline.
+/// The pair `(bool, Option<Tick>)` would silently lose
+/// them, while the lock is now one for the whole program.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_auto_for(
     ui: &mut egui::Ui,
@@ -1241,15 +1241,15 @@ pub(crate) fn draw_auto_for(
     view: &mut crate::automation::AutoView,
     ctx: crate::automation::AutoCtx<'_>,
     playhead: kt_time::Tick,
-    // Нажата ли «вставить огибающую»: сам буфер читается ПОЗЖЕ и в ФОНЕ
-    // — см. `crate::envclip` (Р.61).
+    // Whether “paste envelope” is pressed: the buffer itself is read LATER and in the BACKGROUND
+    // — see `crate::envclip` (R.61).
     paste_req: &mut bool,
     id: impl std::hash::Hash + std::fmt::Debug + Copy,
     hover_out: &mut Option<String>,
 ) -> crate::automation::AutoResult {
     let (src_in, mat_end) = (ctx.range.0, ctx.range.1.0);
-    // только Smooth-параметры: структурные (длина линий реверба) кривой
-    // не подлежат — их смена пересобирает DSP (Р.33)
+    // only Smooth parameters: structural ones (the reverb line length) are not subject to a
+    // curve — changing them rebuilds the DSP (R.33)
     let specs: Vec<&kt_model::ParamSpec> = f.auto_params().collect();
     if specs.is_empty() {
         return crate::automation::AutoResult::default();
@@ -1257,25 +1257,25 @@ pub(crate) fn draw_auto_for(
     let mut changed = false;
     ui.separator();
     ui.horizontal(|ui| {
-        // параметры без кривой — кандидаты на добавление
+        // parameters without a curve are candidates for adding
         let free: Vec<&kt_model::ParamSpec> =
             specs.iter().copied().filter(|s| !curves.iter().any(|c| c.param == s.name)).collect();
         if !free.is_empty() {
-            // МЕНЮ, а не ComboBox: выбранный текст у него никогда не
-            // менялся (это список действий, а не селектор), и заодно у
-            // кнопки появляется имя для доступности — ComboBox отдавал
-            // пустое, и до пункта нельзя было добраться иначе как мышью
+            // a MENU, not a ComboBox: its selected text never
+            // changed (it is a list of actions, not a selector),
+            // and at the same time the button gets a name for accessibility — the ComboBox gave empty,
+            // and the item could not be reached other than with the mouse
             let add = ui.menu_button(tr(k::fx::AUTO_ADD), |ui| {
                 {
                     for spec in &free {
                         let n: &str = &spec.name;
                         let item = ui.button(crate::widgets::param_label(n));
-                        // щуп на каждый пункт: живому сценарию иначе не во
-                        // что целиться (правило Р.27 — координаты от самой
-                        // программы)
+                        // a probe on each item: otherwise a live
+                        // scenario has nothing to aim at (the R.27 rule —
+                        // coordinates come from the program itself)
                         crate::widgets::field_probe::note(&format!("auto.add.{n}"), item.rect);
                         if item.clicked() {
-                            // стартовая кривая — константа текущего значения
+                            // the starting curve is a constant of the current value
                             let v0 = f.get_param(n).unwrap_or(spec.default);
                             curves.push(kt_model::ParamCurve::constant(
                                 n,
@@ -1284,11 +1284,11 @@ pub(crate) fn draw_auto_for(
                                 v0,
                                 ctx.default_shape,
                             ));
-                            // новый параметр становится АКТИВНЫМ (Р.38
-                            // п.17: «добавил второй параметр — но
-                            // редактируется только первый»): раньше клик
-                            // по графику продолжал класть ключи в первую
-                            // кривую, и вторая выглядела мёртвой
+                            // a new parameter becomes ACTIVE (R.38 item 17:
+                            // “added a second parameter — but only the first
+                            // one is edited”): previously a click on the
+                            // graph kept putting keys into the first curve,
+                            // and the second looked dead
                             view.active = curves.len() - 1;
                             view.sel = None;
                             changed = true;
@@ -1298,12 +1298,12 @@ pub(crate) fn draw_auto_for(
             });
             crate::widgets::field_probe::note("auto.add", add.response.rect);
         }
-        // выбор активной кривой, кнопки ключей и БЛОК КРИВОЙ (форма всех
-        // отрезков, формула, связь, удалить) — В САМОМ ВИДЖЕТЕ (Р.67):
-        // их получают все носители кривых разом
+        // the choice of the active curve, the key buttons and the CURVE BLOCK (the form of all segments,
+        // formula, link, delete) — IN THE WIDGET ITSELF
+        // (R.67): all carriers of curves receive them at once
     });
     ui.horizontal(|ui| {
-        // копипаст огибающих (модель — kt_model::ops, Р.33)
+        // copy-paste of envelopes (model — kt_model::ops, R.33)
         let cp = ui.add_enabled(!curves.is_empty(), egui::Button::new(tr(k::fx::COPY_ENV)));
         crate::widgets::field_probe::note("env.copy", cp.rect);
         if cp.clicked() {
@@ -1316,24 +1316,24 @@ pub(crate) fn draw_auto_for(
                 ui.ctx().copy_text(json);
             }
         }
-        // Кнопка НИКОГДА не гаснет: содержимое буфера читается ПО
-        // НАЖАТИЮ, а не хранится зеркалом внутри программы (Р.61).
-        // Чтение — конечной фоновой задачей: на X11 буфером владеет окно, и
-        // синхронный запрос к САМИМ СЕБЕ повис бы в цикле событий, который
-        // в этот момент рисует.
+        // The button NEVER goes dark: the buffer contents are read ON PRESS, not kept as a mirror
+        // inside the program (R.61). The read is a finite
+        // background task: on X11 the window owns the
+        // buffer, and a synchronous request to ITSELF would hang
+        // in the event loop, which is drawing at that moment.
         let pb = ui.button(tr(k::fx::PASTE_ENV));
         crate::widgets::field_probe::note("env.paste", pb.rect);
         if crate::app::hint_into(hover_out, pb, tr(k::fx::PASTE_ENV_HINT)).clicked() {
             *paste_req = true;
         }
-        // Кнопка «+ keyframe at playhead» отсюда УБРАНА (Р.40 п.18,
-        // дословно: «а еще получается "+keyframe at playhead" кнопка
-        // лишняя т.к. есть в таймлайне автоматизации "+"»). Её
-        // единственное отличие от «+» — она писала во ВСЕ кривые слота, о
-        // чём подпись не говорила ни слова. Это поведение переехало на
-        // «+» модификатором Ctrl, и подсказка о нём говорит (правило 18).
+        // The “+ keyframe at playhead” button has been REMOVED here (R.40 item 18, verbatim:
+        // “and also “+keyframe at playhead” is a superfluous button, because there
+        // is a “+” in the automation timeline”). Its only difference from “+” was that
+        // it wrote to ALL curves of the slot, which the caption never
+        // said. This behaviour moved to “+” with the Ctrl modifier,
+        // and the hint says so (rule 18).
     });
-    // единый виджет: график ↔ таблица (Р.33 С3)
+    // a single widget: graph ↔ table (R.33 S3)
     let mut res =
         crate::automation::draw(ui, ("auto", id), &ctx, curves, view, playhead, hover_out);
     res.changed |= changed;
@@ -1342,11 +1342,11 @@ pub(crate) fn draw_auto_for(
 pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
     match f {
         FxInstance::Gain { .. } => "Gain",
-        // сила слоя не пользовательский эффект: в пикере её нет, а в
-        // полосе морфера она подписана как «Сила» (Р.38 п.12)
+        // layer strength is not a user effect: it is absent from the picker, while in the morpher strip
+        // it is captioned “Strength” (R.38 item 12)
         FxInstance::LayerMix { .. } => "Layer mix",
         FxInstance::SlowedReverb { .. } => "Slowed+Reverb",
-        // ведущий узел помечен точкой: он один, неудаляем и не из каталога
+        // the leading node is marked with a dot: it is single, cannot be deleted and is not from the catalog
         FxInstance::Geometry { lead: true, .. } => "• Geometry",
         FxInstance::Geometry { .. } => "Geometry",
         FxInstance::CamMotion { .. } => "CamMotion",
@@ -1394,13 +1394,13 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
     }
 }
 
-/// Шаблоны видео-FX с дефолтами v1 (кнопка «+ видео-FX…»).
+/// Video FX templates with the v1 defaults (the “+ video FX…” button).
 pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
     vec![
-        // CamMotion из списка убран (Р.34 К2): его кейфреймы — это Pan
-        // с кривыми, и старые проекты конвертируются при чтении.
-        // Р.62: узел «Геометрия» из каталога — дополнительный (ведущий у
-        // события есть всегда и в каталоге не живёт); прежний Pan упразднён
+        // CamMotion is removed from the list (R.34 K2): its keyframes are Pan with curves, and old projects
+        // are converted on reading. R.62: the “Geometry” node from the catalog is an additional
+        // one (the leading one is always present on an event and does not live in the catalog);
+        // the former Pan is abolished
         ("Geometry", FxInstance::geometry_node()),
         ("Mirror", FxInstance::Mirror { horizontal: true, vertical: false }),
         ("Blur", FxInstance::blur(8)),
@@ -1410,7 +1410,7 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
         ("VHS", FxInstance::vhs(4, 0.4)),
         ("Glow", FxInstance::glow(0.65)),
         (
-            // Р.29: первый 3D-эффект; дефолты — тождество (слой 1:1)
+            // R.29: the first 3D effect; defaults are identity (layer 1:1)
             "Pan 3D",
             FxInstance::Pan3d {
                 pos_x: 0.0,
@@ -1426,20 +1426,20 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
             },
         ),
         ("EventGrid", FxInstance::EventGrid { cols: 2, rows: 2, center: true }),
-        // Р.47: поточечные цвет/стиль + первая честная перспектива
+        // R.47: per-point color/style + the first honest perspective
         ("Color Grade", FxInstance::color_grade()),
         ("Duotone", FxInstance::duotone()),
         ("Posterize", FxInstance::posterize()),
         ("Vignette", FxInstance::vignette()),
         ("Corner Pin", FxInstance::corner_pin()),
-        // Р.47 Кв3: барьеры
+        // R.47 Q3: barriers
         ("Sharpen", FxInstance::sharpen()),
         ("Pixelate", FxInstance::pixelate()),
         ("Chromatic Aberration", FxInstance::chromatic_aberration()),
         ("Radial Blur", FxInstance::radial_blur()),
         ("Drop Shadow", FxInstance::drop_shadow()),
         ("Halftone", FxInstance::halftone()),
-        // Р.47 Кв4: нелинейные гео (Warp-прим) + цилиндр
+        // R.47 Q4: non-linear geometry (Warp primitives) + cylinder
         ("Lens Distort", FxInstance::lens_distort()),
         ("Twirl", FxInstance::twirl()),
         ("Ripple", FxInstance::ripple()),
@@ -1448,19 +1448,19 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
     ]
 }
 
-/// Параметры эффекта: числовые — ЕДИНОЙ сеткой по спекам модели
-/// (`widgets::params_grid`), а рядом — то, что числом не выражается:
-/// режим кроп-рамки, флаги зеркала, пипетка ключевого цвета, выбор
-/// камеры, кейфреймы CamMotion. `cameras` — (id, подпись) для комбо Pan3d.
+/// Effect parameters: numeric ones — in ONE grid by the model specs (`widgets::params_grid`),
+/// and next to it — what cannot be expressed by a number: the crop-frame mode, mirror flags,
+/// the key color eyedropper, the camera choice, CamMotion
+/// keyframes. `cameras` — (id, caption) for the Pan3d combo.
 ///
-/// До Р.33 у каждого варианта была своя ручная форма: одни и те же
-/// величины рисовались слайдером в одном окне и drag-полем в другом, а
-/// диапазоны расходились между окнами и спекой. Теперь диапазон, шаг и
-/// единица приходят из одного места.
-/// Ряды ключа Pan-камеры (Р.66). Пределы и единицы объявлены ЗДЕСЬ, рядом
-/// друг с другом: у ключа нет `ParamSpec` (это точка траектории, а не
-/// параметр эффекта), но и вписывать числа в код отрисовки нельзя — иначе
-/// у одного и того же ключа в двух местах окажутся разные границы.
+/// Before R.33 each variant had its own manual form: the same values were drawn as a slider in one window
+/// and as a drag field in another, and the ranges diverged between
+/// windows and the spec. Now the range, step and unit come from one place.
+/// Rows of the Pan-camera key (R.66). Limits and units are
+/// declared HERE, next to each other: a key has no `ParamSpec`
+/// (it is a trajectory point, not an effect parameter), yet
+/// numbers cannot be written into the drawing code — otherwise
+/// the same key would have different bounds in two places.
 fn pan_key_rows() -> (
     crate::widgets::NumRow<'static>,
     crate::widgets::NumRow<'static>,
@@ -1514,36 +1514,36 @@ pub(crate) fn draw_video_fx_params(
     mut bind: Option<&mut crate::widgets::CurveBind<'_>>,
     cameras: &[(u64, String)],
     on_video: bool,
-    // накопитель подсказок кадра (Р.48: у графика АЧХ своя подсказка)
+    // frame hint accumulator (R.48: the frequency response graph has its own hint)
     hover: &mut Option<String>,
-    // контекст ПУБЛИКАЦИИ подписи (Р.59, стадия 3). `None` у носителя,
-    // адреса которому не существует, — морфер-патча.
+    // the PUBLICATION context of the caption (R.59, stage 3). `None` for a carrier whose address
+    // does not exist — the morpher patch.
     pubc: Option<&crate::widgets::PublishCtx>,
 ) -> crate::widgets::ParamsChanged {
     use kt_model::PanMode;
-    // Р.43 п.291: правка БАЗЫ и правка КРИВОЙ — разные команды. Всё
-    // нечисловое (галки, режимы, пипетки, выбор камеры) — всегда база.
+    // R.43 item 291: editing the BASE and editing the CURVE are different commands. Everything
+    // non-numeric (checkboxes, modes, eyedroppers, camera choice) is always the base.
     let mut ch = crate::widgets::ParamsChanged::default();
-    // ключевой цвет удобнее пипеткой, чем тремя числами
+    // a key color is more convenient with an eyedropper than with three numbers
     let skip: &[&str] = match f {
         FxInstance::Greenscreen { .. } => &["key_r", "key_g", "key_b"],
-        // цвет линий контура и оттенок свечения — тоже пипеткой (Р.33 С5)
+        // the outline line color and the glow tint — also with an eyedropper (R.33 S5)
         FxInstance::Edges { .. } => &["color_r", "color_g", "color_b"],
         FxInstance::Glow { .. } => &["tint_r", "tint_g", "tint_b"],
         FxInstance::DropShadow { .. } => &["tint_r", "tint_g", "tint_b"],
-        // обе краски дуотона — пипетками (Р.47 Кв2)
+        // both duotone colors — with eyedroppers (R.47 Q2)
         FxInstance::Duotone { .. } => {
             &["shadow_r", "shadow_g", "shadow_b", "high_r", "high_g", "high_b"]
         }
-        // на ВИДЕО-экземпляре у варпа значит только скорость: реверб там
-        // не звучит, и показывать его ручки — врать пользователю (Р.37)
+        // on a VIDEO instance the warp means only speed: the reverb does not sound there,
+        // and showing its handles would lie to the user (R.37)
         FxInstance::SlowedReverb { .. } if on_video => {
             &["mix", "reverb_delay_ms", "damp", "decay", "wet_gain", "predelay_ms", "width"]
         }
         _ => &[],
     };
 
-    // --- нечисловые контролы варианта ------------------------------------
+    // --- non-numeric controls of the variant ------------------------------------
     let mode_row =
         |ui: &mut egui::Ui, mode: &mut PanMode, ch: &mut crate::widgets::ParamsChanged| {
             ui.horizontal(|ui| {
@@ -1564,7 +1564,7 @@ pub(crate) fn draw_video_fx_params(
                 ch.base |= ui.checkbox(pingpong, tr(k::fx::PINGPONG)).changed();
             });
         }
-        // вид среза (Р.47): подписи из каталога, значения — serde-виды
+        // the cut kind (R.47): captions from the catalog, values are serde kinds
         FxInstance::Filter { mode, .. } => {
             let label = |m: kt_model::FilterMode| match m {
                 kt_model::FilterMode::Lowpass => tr(k::fx::FILTER_LP),
@@ -1608,9 +1608,9 @@ pub(crate) fn draw_video_fx_params(
                         kt_model::FrameMode::Blend => k::fx::FRAMES_BLEND,
                     }))
                     .show_ui(ui, |ui| {
-                        // Р.56 (п.448): «смешивание» законно и на ВЛОЖЕНИИ —
-                        // режим наследуется содержимому, и пару смешивают
-                        // его листья. Гасить тут больше нечего.
+                        // R.56 (item 448): “blend” is legal also on a
+                        // NESTED reel — the mode is inherited by the content,
+                        // and the pair is blended by its leaves. There is nothing left to disable here.
                         for (m, key) in [
                             (kt_model::FrameMode::Nearest, k::fx::FRAMES_NEAREST),
                             (kt_model::FrameMode::Blend, k::fx::FRAMES_BLEND),
@@ -1711,8 +1711,8 @@ pub(crate) fn draw_video_fx_params(
             });
         }
         FxInstance::PitchShift { .. } => {
-            // правило 19: диалог обязан сказать, ГДЕ менять то, чего в нём
-            // нет — движок питча живёт в настройках проекта
+            // rule 19: the dialog must say WHERE to change what is not
+            // in it — the pitch engine lives in the project settings
             ui.label(tr(k::fx::PITCH_ENGINE_NOTE));
         }
         FxInstance::Noise { color, .. } => {
@@ -1723,27 +1723,27 @@ pub(crate) fn draw_video_fx_params(
         _ => {}
     }
 
-    // --- график АЧХ эквалайзера (Р.48, п.347) ------------------------------
-    // Рисуется ПЕРЕД сеткой: драг правит значения до того, как поля их
-    // покажут, — и в одном кадре они уже синхронны. Поля при этом
-    // остаются: график их дополняет, а не заменяет.
+    // --- frequency response graph of the equalizer (R.48, item 347) ------------------------------
+    // Drawn BEFORE the grid: the drag edits the values
+    // before the fields show them, and in one frame they are
+    // already in sync. The fields remain: the graph complements them, it does not replace them.
     if matches!(f, FxInstance::Eq { .. }) {
         ch |= crate::eq_graph::draw(ui, f, bind.as_deref_mut(), hover);
     }
 
-    // --- числовые параметры: одна сетка на все варианты -------------------
-    // связанная с кривыми (Р.38 пп.15-16): у параметра с живой кривой поле
-    // правит ВЫБРАННЫЙ КЛЮЧ, а не невидимую базу
-    // ВЕДУЩИЙ УЗЕЛ — своя форма (Р.64, раздел 5): группы, пары X/Y одной
-    // строкой, единицы, ползунки и схема рамки. Кирпичи те же, правило
-    // записи значения то же — меняется только раскладка.
+    // --- numeric parameters: one grid for all variants -------------------
+    // linked to curves (R.38 items 15–16): for a parameter with a live curve the field edits the SELECTED KEY,
+    // not the invisible base
+    // LEADING NODE — its own form (R.64, section 5): groups,
+    // X/Y pairs in one row, units, sliders and the frame scheme.
+    // The bricks are the same, the value-writing rule is the same — only the layout changes.
     if f.is_lead_geometry() {
         ch |= crate::geomctl::transform_form(ui, f, bind, hover, pubc);
         return ch;
     }
     ch |= crate::widgets::params_grid_bound(ui, ("fxp", fx_display_name(f)), f, skip, bind, pubc);
 
-    // --- хвост: камера Pan3d и кейфреймы CamMotion ------------------------
+    // --- tail: Pan3d camera and CamMotion keyframes ------------------------
     match f {
         FxInstance::Pan3d { camera, .. } => {
             ui.horizontal(|ui| {
@@ -1780,9 +1780,9 @@ pub(crate) fn draw_video_fx_params(
                     ch.base = true;
                 }
             });
-            // ключи Pan-камеры: пределы ОБЪЯВЛЕНЫ ОДНИМ местом рядом друг с
-            // другом, а рисует их общий ряд (Р.66) — своих `DragValue` в
-            // окнах не бывает
+            // Pan-camera keys: the limits are DECLARED in
+            // ONE place next to each other, and they are drawn
+            // by the common row (R.66) — there are no `DragValue`s of their own in the windows
             let (t_row, x_row, y_row, z_row) = pan_key_rows();
             for (i, kf) in keyframes.iter_mut().enumerate() {
                 ui.horizontal(|ui| {

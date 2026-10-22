@@ -1,31 +1,31 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.37: замедленное ВИДЕО.
+"""Live scenario R.37: slowed VIDEO.
 
-Слова пользователя: «slowed&reverb для видео (отдельная галочка по
-умолчанию…)» и «slowed&reverb должен учитываться в превью аудио/видео в
-событиях».
+The user’s words: “slowed&reverb for video (a separate checkbox by
+default…)” and “slowed&reverb must be taken into account in the audio/video preview of
+events”.
 
-Синтетический кадр — сплошной цвет от pts, поэтому «какой кадр на экране»
-читается прямо с пикселя превью. Проверяем то, чего харнесс не покажет:
-в НАСТОЯЩЕМ окне картинка замедленного события действительно идёт
-медленнее, а снятая галка слота возвращает обычную скорость.
+A synthetic frame — a solid color from the pts, so “which frame is on screen”
+is read straight from the pixel of the preview. We check what the harness would not show:
+in a REAL window the picture of the slowed event really goes
+more slowly, and removing the slot checkbox returns the normal speed.
 
-Мерим ПРЯМО: какой кадр показан. Разностной метрикой тут пользоваться
-нельзя — цвет ramp'а по каналам не монотонен и заворачивается, поэтому
-«кадры разошлись сильнее» не значит «материала прошло больше».
+We measure DIRECTLY: which frame is shown. A difference metric cannot be used here — the
+ramp color is not monotonic across channels and wraps around, so
+“the frames diverged more” does not mean “more material has passed”.
 
-Смешивание кадров тут НЕ проверяется намеренно: у 30 fps соседние кадры
-ramp'а отличаются на ~2/255, и смесь неотличима от ближайшего на глаз и
-в пикселе. Байт-в-байт это закрыто тестом 250, где смесь сверяется с
-`dissolve_into` напрямую.
+Frame blending is deliberately NOT checked here: at 30 fps the neighboring frames of the
+ramp differ by ~2/255, and the blend is indistinguishable by eye from the nearest one and
+in the pixel. Byte for byte this is covered by test 250, where the blend is checked against
+`dissolve_into` directly.
 
-События (все с одного источника, чтобы цвета были сравнимы):
-  0–4 c   обычный клип
-  4–8 c   0.5×
-  8–12 c  0.5×, слот ВЫКЛЮЧЕН (это и есть «отдельная галочка»)
+Events (all from one source, so that the colors are comparable):
+  0–4 s   ordinary clip
+  4–8 s   0.5×
+  8–12 s  0.5×, slot OFF (this is the “separate checkbox”)
 
-Все 12 с обязаны помещаться в вид на стартовом зуме: `x_at` умеет только
-то, что на экране, а клик мимо видимого диапазона уходит в край.
+All 12 s must fit into the view at the starting zoom: `x_at` only handles
+what is on screen, and a click outside the visible range goes to the edge.
 """
 import json
 import os
@@ -47,9 +47,9 @@ def build(dest):
     doc["metadata"]["kt"]["v"] = 4
 
     def node(enabled):
-        # эффект клипа живёт в OTIO-массиве `effects`, а не в metadata.kt:
-        # ридер берёт `kt` из метаданных САМОГО ЭФФЕКТА, а bypass — это
-        # снятый `enabled`
+        # the clip effect lives in the OTIO `effects` array, not in metadata.kt:
+        # the reader takes `kt` from the metadata of the EFFECT itself, and bypass is the
+        # removed `enabled`
         return {
             "OTIO_SCHEMA": "Effect.1",
             "name": "",
@@ -83,11 +83,11 @@ def build(dest):
 
 
 def frame_at(app, seconds, prev=None):
-    """Цвет превью в момент `seconds` — он же номер исходного кадра.
+    """Color of the preview at the moment `seconds` — which is also the number of the source frame.
 
-    Чтение — через `pixel_settled`: после подмотки курсор двигается
-    раньше, чем композитор рисует новый кадр, и голый `pixel` вернул бы
-    картинку ПРЕДЫДУЩЕЙ подмотки."""
+    Read via `pixel_settled`: after a seek the cursor moves
+    before the compositor draws the new frame, and a bare `pixel` would return
+    the picture of the PREVIOUS seek."""
     was = prev if prev is not None else app.pixel(*app.preview_center())
     app.click(app.x_at(int(seconds * SEC)), app.ruler_y())
     return app.pixel_settled(app.preview_center(), differs_from=was)
@@ -104,42 +104,42 @@ def main(out):
 
     with Live("slowed", out, project=proj) as app:
         app.shot("open")
-        app.expect(len(app.project_now().clips) == 3, "три события в проекте")
+        app.expect(len(app.project_now().clips) == 3, "three events in the project")
 
-        # эталон: кадры обычного события на 0.5 c и 1.5 c материала
+        # reference: frames of an ordinary event at 0.5 s and 1.5 s of material
         a = frame_at(app, 0.5)
         b = frame_at(app, 1.5)
         app.shot("plain")
-        app.expect(a != b, f"обычный клип: кадры разные, {a} vs {b}")
+        app.expect(a != b, f"ordinary clip: frames differ, {a} vs {b}")
 
-        # 0.5×: тот же материал приходит ВДВОЕ ПОЗЖЕ от начала события
-        near_px(app, frame_at(app, 4.0 + 1.0), a, "0.5×: +1 c внутри события = кадр 0.5 c")
-        near_px(app, frame_at(app, 4.0 + 3.0), b, "и +3 c = кадр 1.5 c")
+        # 0.5×: the same material arrives TWICE LATER from the start of the event
+        near_px(app, frame_at(app, 4.0 + 1.0), a, "0.5×: +1 s inside the event = frame 0.5 s")
+        near_px(app, frame_at(app, 4.0 + 3.0), b, "and +3 s = frame 1.5 s")
         app.shot("slow")
 
-        # снятая галка слота возвращает обычную скорость
-        near_px(app, frame_at(app, 8.0 + 0.5), a, "выключенный слот: +0.5 c = кадр 0.5 c")
-        near_px(app, frame_at(app, 8.0 + 1.5), b, "и +1.5 c = кадр 1.5 c")
+        # the unticked slot checkbox returns the normal speed
+        near_px(app, frame_at(app, 8.0 + 0.5), a, "slot off: +0.5 s = frame 0.5 s")
+        near_px(app, frame_at(app, 8.0 + 1.5), b, "and +1.5 s = frame 1.5 s")
         app.shot("bypass")
 
-        # --- РАЗРЕЗ замедленного события (Р.39) --------------------------
-        # До Р.39 `clip_slice` считал source_in линейно, и правая половина
-        # начиналась не с того материала: на 0.5× ошибка равна половине
-        # отрезанного. Проверяем на КАРТИНКЕ: кадр в одной и той же точке
-        # обязан остаться тем же, что и до разреза.
-        probe = 4.0 + 3.0  # внутри замедленного события, правее будущего реза
+        # --- SLICE of a slowed event (R.39) -----------------------------
+        # Until R.39 `clip_slice` computed source_in linearly, and the right half
+        # started not from the right material: at 0.5× the error equals half of
+        # the cut-off part. We check it on the PICTURE: the frame at the same point
+        # must remain the same as before the cut.
+        probe = 4.0 + 3.0  # inside the slowed event, to the right of the future cut
         before = frame_at(app, probe)
         app.click(app.x_at(int(6.0 * SEC)), app.ruler_y())
         app.key("s")
         saved = app.saved_project()
         n = len([c for c in saved.clips])
-        app.expect(n == 4, f"событие разрезано: клипов стало {n}")
+        app.expect(n == 4, f"event cut: the number of clips became {n}")
         after = frame_at(app, probe, prev=before)
         near_px(
             app,
             after,
             before,
-            "после разреза замедленного события кадр на том же месте — ТОТ ЖЕ",
+            "after cutting the slowed event the frame at the same spot — THE SAME",
         )
         app.shot("split")
         return app.done()

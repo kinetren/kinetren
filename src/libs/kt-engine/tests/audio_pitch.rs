@@ -1,10 +1,10 @@
-//! Тесты 337-340 (Р.48, пп.339-340): смена высоты без смены длительности.
+//! Tests 337-340 (R.48, items 339-340): pitch change without a change of duration.
 //!
-//! Что доказывается: нейтральный питч не трогает байты вовсе; результат
-//! не зависит от нарезки буферов (гриды зёрен и хопов абсолютны);
-//! высота действительно едет на заданное число полутонов ОБОИМИ
-//! движками; движок — настройка проекта, он меняет звук, переживает
-//! сохранение и откатывается undo.
+//! What is proven: a neutral pitch does not touch the bytes at all; the result
+//! does not depend on buffer slicing (grain and hop grids are absolute);
+//! the pitch really moves by the given number of semitones with BOTH
+//! engines; the engine is a project setting, it changes the sound, survives
+//! saving, and is rolled back by undo.
 
 use kt_engine::{AudioRenderer, DirectFetcher, FxStateStore};
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
@@ -78,11 +78,11 @@ fn render_auto(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, engine: PitchEng
     r.sync_fx(&mut store);
     let mut out = vec![0f32; DUR as usize * CH];
     let stats = r.render_frames_with(&mut f, &mut store, 0, &mut out);
-    assert_eq!(stats.underruns, 0, "источник доступен целиком");
+    assert_eq!(stats.underruns, 0, "source fully available");
     out
 }
 
-/// Тот же рендер несколькими кусками подряд (нарезка не должна влиять).
+/// The same render in several consecutive pieces (slicing must not affect it).
 fn render_chunked(fx: Vec<FxInstance>, engine: PitchEngine, chunks: &[i64]) -> Vec<f32> {
     let p = project(fx, vec![], engine);
     let r = AudioRenderer::new(&p);
@@ -100,8 +100,8 @@ fn render_chunked(fx: Vec<FxInstance>, engine: PitchEngine, chunks: &[i64]) -> V
     out
 }
 
-/// Доминирующая частота левого канала в окне [from, from+N) — пик
-/// спектра по Ханну.
+/// Dominant frequency of the left channel in the window [from, from+N) — the peak
+/// of the Hann spectrum.
 fn dominant_hz(buf: &[f32], from: usize) -> f64 {
     use realfft::RealFftPlanner;
     const N: usize = 16384;
@@ -126,7 +126,7 @@ fn dominant_hz(buf: &[f32], from: usize) -> f64 {
     best as f64 * 48_000.0 / N as f64
 }
 
-/// Энергия полосы ±20 Гц вокруг частоты (для сравнения доминирования).
+/// Energy of the ±20 Hz band around the frequency (to compare dominance).
 fn band_energy(buf: &[f32], from: usize, hz: f64) -> f64 {
     use realfft::RealFftPlanner;
     const N: usize = 16384;
@@ -145,23 +145,23 @@ fn band_energy(buf: &[f32], from: usize, hz: f64) -> f64 {
     spec[a..=b].iter().map(|c| (c.re * c.re + c.im * c.im) as f64).sum()
 }
 
-/// Тест 337: НЕЙТРАЛЬ — БАЙТ-В-БАЙТ.
+/// Test 337: NEUTRAL — BYTE FOR BYTE.
 ///
-/// Ноль полутонов и центов без кривых: узел не трогает буфер вовсе, и
-/// упреждения у цепочки нет. Эффект, добавленный «на попробовать», не
-/// смеет менять экспорт молча. (Red-proof: убрать ранний выход по
-/// `la == 0` в `PitchNode::process`.)
+/// Zero semitones and cents without curves: the node does not touch the buffer at all, and
+/// the chain has no lookahead. An effect added “just to try” must not
+/// silently change the export. (Red-proof: remove the early exit on
+/// `la == 0` in `PitchNode::process`.)
 #[test]
 fn t337_neutral_pitch_is_byte_passthrough() {
     let dry = render(vec![], PitchEngine::Wsola);
     for engine in [PitchEngine::Wsola, PitchEngine::Vocoder] {
         let neutral = render(vec![FxInstance::pitch_shift()], engine);
-        assert_eq!(dry, neutral, "нейтральный питч обязан быть тождеством ({engine:?})");
+        assert_eq!(dry, neutral, "neutral pitch must be an identity ({engine:?})");
     }
-    // и упреждения нейтраль не требует
+    // and the neutral setting needs no lookahead
     let auto = kt_fx::AutoProfiles::from_curves_rev(&[vec![]], 0, DUR, false);
     assert_eq!(kt_fx::chain_lookahead(&[FxInstance::pitch_shift()], &auto), 0);
-    // а живая кривая нейтралью НЕ является, даже при нулевой базе
+    // but a live curve is NOT neutral, even with a zero base
     let curve = vec![vec![ParamCurve {
         param: "semitones".into(),
 
@@ -174,15 +174,15 @@ fn t337_neutral_pitch_is_byte_passthrough() {
     let auto_c = kt_fx::AutoProfiles::from_curves_rev(&curve, 0, DUR, false);
     assert!(
         kt_fx::chain_lookahead(&[FxInstance::pitch_shift()], &auto_c) > 0,
-        "кривая поверх нулевой базы — не нейтраль"
+        "a curve over a zero base is not neutral"
     );
 }
 
-/// Тест 338: НАРЕЗКА НЕ ВЛИЯЕТ.
+/// Test 338: SLICING DOES NOT AFFECT.
 ///
-/// Гриды зёрен (WSOLA) и хопов (вокодер) абсолютны по позиции клипа,
-/// поэтому рендер одним куском обязан совпасть с рендером кусками
-/// произвольной длины — иначе экспорт и playback звучали бы по-разному.
+/// The grain grids (WSOLA) and hops (vocoder) are absolute in clip position,
+/// so a render in one piece must match a render in pieces of arbitrary length —
+/// otherwise export and playback would sound different.
 #[test]
 fn t338_pitch_is_independent_of_chunking() {
     for engine in [PitchEngine::Wsola, PitchEngine::Vocoder] {
@@ -190,15 +190,15 @@ fn t338_pitch_is_independent_of_chunking() {
         let one = render(fx.clone(), engine);
         let many = render_chunked(fx, engine, &[1000, 17, 48_000, DUR - 49_017]);
         assert_eq!(one.len(), many.len());
-        assert_eq!(one, many, "{engine:?}: нарезка буферов изменила результат");
+        assert_eq!(one, many, "{engine:?}: buffer slicing changed the result");
     }
 }
 
-/// Тест 339: ВЫСОТА ЕДЕТ НА ЗАДАННЫЙ ИНТЕРВАЛ.
+/// Test 339: PITCH MOVES BY THE GIVEN INTERVAL.
 ///
-/// Синус 440 Гц, подъём на 7 полутонов: пик обязан встать на
-/// 440·2^(7/12) ≈ 659.3 Гц у обоих движков, и он обязан доминировать
-/// над исходной частотой (а не просто присутствовать).
+/// A 440 Hz sine, raised by 7 semitones: the peak must land at
+/// 440·2^(7/12) ≈ 659.3 Hz with both engines, and it must dominate
+/// over the original frequency (not merely be present).
 #[test]
 fn t339_pitch_shifts_the_frequency() {
     let from = 48_000usize / 2;
@@ -207,40 +207,40 @@ fn t339_pitch_shifts_the_frequency() {
             let out = render(vec![FxInstance::PitchShift { semitones: st, cents: 0.0 }], engine);
             let want = TONE * 2f64.powf(st as f64 / 12.0);
             let got = dominant_hz(&out, from);
-            println!("t339 {engine:?} {st:+} st: пик {got:.1} Гц (ждём {want:.1})");
+            println!("t339 {engine:?} {st:+} st: peak {got:.1} Hz (expected {want:.1})");
             assert!(
                 (got - want).abs() / want < 0.02,
-                "{engine:?} {st:+} st: пик {got:.1} Гц вместо {want:.1}"
+                "{engine:?} {st:+} st: peak {got:.1} Hz instead of {want:.1}"
             );
             let moved = band_energy(&out, from, want);
             let stayed = band_energy(&out, from, TONE);
             assert!(
                 moved > stayed * 100.0,
-                "{engine:?} {st:+} st: исходная частота не ушла ({moved:.3e} против {stayed:.3e})"
+                "{engine:?} {st:+} st: original frequency did not leave ({moved:.3e} against {stayed:.3e})"
             );
         }
-        // детерминизм между прогонами
+        // determinism between runs
         let a = render(vec![FxInstance::PitchShift { semitones: 3.0, cents: 20.0 }], engine);
         let b = render(vec![FxInstance::PitchShift { semitones: 3.0, cents: 20.0 }], engine);
-        assert_eq!(a, b, "{engine:?}: рендер обязан быть детерминирован");
+        assert_eq!(a, b, "{engine:?}: render must be deterministic");
     }
 }
 
-/// Тест 340: ДВИЖОК — НАСТРОЙКА ПРОЕКТА.
+/// Test 340: THE ENGINE IS A PROJECT SETTING.
 ///
-/// Два движка звучат по-разному (иначе выбор бессмысленен), выбор
-/// переживает сохранение и чтение файла, а смена откатывается undo —
-/// это обычная правка модели, а не скрытая настройка приложения.
+/// The two engines sound different (otherwise the choice is meaningless), the choice
+/// survives saving and reading the file, and a change is rolled back by undo —
+/// this is an ordinary model edit, not a hidden application setting.
 #[test]
 fn t340_pitch_engine_is_a_project_setting() {
     let fx = vec![FxInstance::PitchShift { semitones: 7.0, cents: 0.0 }];
     let w = render(fx.clone(), PitchEngine::Wsola);
     let v = render(fx.clone(), PitchEngine::Vocoder);
-    assert_ne!(w, v, "движки обязаны звучать по-разному");
+    assert_ne!(w, v, "engines must sound different");
 
-    // смена — обычная команда модели: undo возвращает как было
-    // (round-trip файла сторожит kt-otio t144/t147: поле едет секцией
-    // настроек и по дефолту в файл не пишется)
+    // the change is an ordinary model command: undo restores it as it was
+    // (the file round-trip is guarded by kt-otio t144/t147: the field travels in the
+    // settings section and is not written to the file by default)
     let mut m = TimelineModel::new(project(vec![], vec![], PitchEngine::Wsola));
     let mut settings = m.project().settings.clone();
     settings.pitch_engine = PitchEngine::Vocoder;
@@ -250,6 +250,6 @@ fn t340_pitch_engine_is_a_project_setting() {
     assert_eq!(
         m.project().settings.pitch_engine,
         PitchEngine::Wsola,
-        "undo обязан вернуть прежний движок"
+        "undo must restore the previous engine"
     );
 }

@@ -1,14 +1,14 @@
-//! Тесты системы мультиязычности (Р.19): 125 — целостность каталогов,
-//! 126 — порядок арабского текста.
+//! Tests of the multilingual system (R.19): 125 — catalog integrity,
+//! 126 — order of Arabic text.
 
 use crate::i18n::{self, Lang, catalog, tables};
 
-/// Секции, которые расходуются не через `k::…`, а иначе: самоназвания попадают
-/// в сгенерированный `ENDONYM` и читаются через `Lang::endonym()`.
+/// Sections that are consumed not through `k::…` but otherwise: self-names end up
+/// in the generated `ENDONYM` and are read through `Lang::endonym()`.
 const NOT_REFERENCED_BY_PATH: [&str; 1] = ["lang."];
 
-/// Полный ключ `menu.file.save` → хвост пути константы `menu::file::SAVE`,
-/// по которому ключ ищется в исходниках.
+/// The full key `menu.file.save` → the tail of the path of the constant `menu::file::SAVE`,
+/// by which the key is looked up in the sources.
 fn const_path(key: &str) -> String {
     let mut parts: Vec<String> = key.split('.').map(str::to_string).collect();
     if let Some(last) = parts.last_mut() {
@@ -17,12 +17,12 @@ fn const_path(key: &str) -> String {
     parts.join("::")
 }
 
-/// t125 (Р.19): каталоги перевода полны и согласованы.
+/// t125 (R.19): the translation catalogs are complete and consistent.
 ///
-/// Проверяется СГЕНЕРИРОВАННЫЙ результат, а не сами файлы: пропуск ключа валит
-/// сборку в `build.rs`, и без этого теста регресс самого `build.rs` прошёл бы
-/// незамеченным. Плюс обратная сторона — ключ, который больше никто не зовёт:
-/// без такой проверки каталог гниёт и переводчик работает вхолостую.
+/// The GENERATED result is checked, not the files themselves: a missing key fails
+/// the build in `build.rs`, and without this test a regression of `build.rs` itself would pass
+/// unnoticed. Plus the reverse side — a key that nobody calls any more:
+/// without such a check the catalog rots and the translator works in vain.
 #[test]
 fn t125_catalogs_are_complete_and_used() {
     assert_eq!(tables::KEY_NAMES.len(), i18n::N_KEYS);
@@ -45,8 +45,8 @@ fn t125_catalogs_are_complete_and_used() {
         assert!(!lang.endonym().is_empty(), "{}: endonym is empty", lang.code());
     }
 
-    // самоназвания одинаковы во всех каталогах — иначе выбравшему китайский
-    // нечего искать в русском списке
+    // self-names are the same in all catalogs — otherwise someone who picked Chinese
+    // would have nothing to find in the Russian list
     for li in 1..Lang::ALL.len() {
         for (i, name) in tables::KEY_NAMES.iter().enumerate() {
             if name.starts_with("lang.") {
@@ -76,32 +76,32 @@ fn t125_catalogs_are_complete_and_used() {
     );
 }
 
-/// t126 (Р.19), часть «а»: переупорядочивание — по СЛОВАМ, а не по буквам.
+/// t126 (R.19), part “a”: reordering is by WORDS, not by letters.
 ///
-/// egui 0.36 режет строку на прогоны по шрифтовому начертанию и отдаёт каждый
-/// harfrust'у с `guess_segment_properties()` — тот сам разворачивает глифы
-/// внутри прогона. Поэтому символы внутри арабского атома обязаны остаться в
-/// ЛОГИЧЕСКОМ порядке, а меняться местами должны атомы. Разбор — в `bidi.rs`.
+/// egui 0.36 cuts the string into runs by font glyph set and hands each one to
+/// harfrust with `guess_segment_properties()` — it reverses the glyphs itself
+/// inside the run. Therefore the characters inside an Arabic atom must stay in
+/// LOGICAL order, and it is the atoms that must swap places. Analysis — in `bidi.rs`.
 #[test]
 fn t126_bidi_reorders_words_not_letters() {
     use crate::i18n::bidi;
 
-    // без арабского строка не трогается вовсе
+    // without Arabic the string is not touched at all
     for s in ["", "Save", "1280x720", "00:01:30", "Ctrl+S"] {
         assert_eq!(bidi::visual(s), s, "LTR text must pass through untouched");
     }
 
-    let one = "\u{0645}\u{0644}\u{0641}"; // «файл»
-    let two = "\u{062D}\u{0641}\u{0638}"; // «сохранить»
+    let one = "\u{0645}\u{0644}\u{0641}"; // “file”
+    let two = "\u{062D}\u{0641}\u{0638}"; // “save”
 
-    // одно слово: порядок символов внутри слова НЕ меняется
+    // one word: the order of characters inside the word is NOT changed
     assert_eq!(bidi::visual(one), one, "letters inside a word must stay logical");
 
-    // два слова меняются местами, буквы внутри каждого — нет
+    // two words are swapped, the letters inside each are not
     let phrase = format!("{two} {one}");
     assert_eq!(bidi::visual(&phrase), format!("{one} {two}"), "words must swap, letters must not");
 
-    // латиница/цифры внутри арабской фразы уезжают на свою визуальную позицию
+    // Latin/digits inside an Arabic phrase move to their visual position
     let mixed = format!("{one}: 42");
     let vis = bidi::visual(&mixed);
     assert!(
@@ -110,7 +110,7 @@ fn t126_bidi_reorders_words_not_letters() {
     );
     assert!(vis.contains(one), "the word itself must survive: {vis:?}");
 
-    // скобки на RTL-уровне зеркалятся
+    // brackets at the RTL level are mirrored
     let paren = format!("({one})");
     let vis = bidi::visual(&paren);
     assert!(
@@ -118,7 +118,7 @@ fn t126_bidi_reorders_words_not_letters() {
         "mirrored brackets must still read as a pair, got {vis:?}"
     );
 
-    // табуляция и перенос — жёсткие разделители, они не уезжают внутрь фразы
+    // tab and line break are hard separators, they do not drift inside the phrase
     let tabbed = format!("{one}\tCtrl+S");
     assert_eq!(
         bidi::visual(&tabbed),
@@ -127,8 +127,8 @@ fn t126_bidi_reorders_words_not_letters() {
     );
 }
 
-/// t126, часть «в»: секции, которые сравниваются с вводом пользователя, в
-/// арабской таблице лежат в ЛОГИЧЕСКОМ порядке.
+/// t126, part “b”: sections compared with user input lie in the
+/// Arabic table in LOGICAL order.
 #[test]
 fn t126_search_sections_are_not_reordered() {
     for (i, name) in tables::KEY_NAMES.iter().enumerate() {
@@ -142,8 +142,8 @@ fn t126_search_sections_are_not_reordered() {
     }
 }
 
-/// Разбор каталога: формат строгий намеренно — молча съеденная строка хуже,
-/// чем упавшая сборка.
+/// Parsing of a catalog: the format is strict on purpose — a silently swallowed line is worse
+/// than a failed build.
 #[test]
 fn t125_catalog_parser_is_strict() {
     let ok = catalog::parse("[a.b]\nkey = \"value\" # note\n").expect("valid catalog");
@@ -155,13 +155,13 @@ fn t125_catalog_parser_is_strict() {
     assert_eq!(esc[0].value, "a\tb\nc\"d\\e\u{00ab}");
 
     for bad in [
-        "key = value",          // без кавычек
-        "Key = \"v\"",          // ключ не в нижнем регистре
-        "[a b]\nk = \"v\"",     // пробел в секции
-        "k = \"unterminated",   // не закрыта строка
-        "k = \"v\" junk",       // мусор после значения
-        "k = \"v\"\nk = \"w\"", // дубликат
-        "k = \"\\q\"",          // неизвестный эскейп
+        "key = value",          // without quotes
+        "Key = \"v\"",          // key not in lower case
+        "[a b]\nk = \"v\"",     // space in a section
+        "k = \"unterminated",   // string not closed
+        "k = \"v\" junk",       // garbage after a value
+        "k = \"v\"\nk = \"w\"", // duplicate
+        "k = \"\\q\"",          // unknown escape
     ] {
         assert!(catalog::parse(bad).is_err(), "must be rejected: {bad:?}");
     }
@@ -170,7 +170,7 @@ fn t125_catalog_parser_is_strict() {
     assert_eq!(catalog::placeholders("{{0}} literal"), Vec::<usize>::new());
 }
 
-/// t130 (Р.19): язык при первом запуске берётся из локали ОС.
+/// t130 (R.19): the language on first launch is taken from the OS locale.
 #[test]
 fn t130_locale_detection() {
     use crate::i18n::detect::from_locale;
@@ -190,22 +190,22 @@ fn t130_locale_detection() {
     }
 }
 
-/// t131 (Р.19): исходный язык кодовой базы — английский.
+/// t131 (R.19): the source language of the codebase is English.
 ///
-/// Пользователь потребовал: «если что-то остается на русском — то надо
-/// перевести на английский и далее все агенты по дефолту все строки пишут на
-/// английском». Без теста это памятка, а не правило: следующий агент напишет
-/// `note("не открылось")`, оно пройдёт ревью и уедет мимо каталога — то есть
-/// не переведётся никогда.
+/// The owner demanded: “if anything remains in Russian, it must be
+/// translated into English, and from then on all agents by default write all strings in
+/// English”. Without a test this is a memo, not a rule: the next agent will write
+/// `note("not opened")`, it will pass review and go past the catalog — that is, it will never
+/// be translated.
 ///
-/// Русский текст интерфейса живёт ТОЛЬКО в `i18n/ru.toml`. Комментарии и
-/// `docs/*.md` остаются русскими — это конвенция репозитория, правило про
-/// строковые ЛИТЕРАЛЫ. Тестовый код исключается по той же логике, что в t100:
-/// текст ассертов пользователь не видит.
+/// The Russian UI text lives ONLY in `i18n/ru.toml`. Comments and
+/// `docs/*.md` remain in Russian — this is the repository convention; the rule is about
+/// string LITERALS. Test code is excluded by the same logic as in t100:
+/// the user does not see the text of the assertions.
 #[test]
 fn t131_source_language_is_english() {
     fn is_cyrillic(c: char) -> bool {
-        // кириллица + кириллица-дополнение
+        // Cyrillic + Cyrillic supplement
         matches!(c as u32, 0x0400..=0x052F)
     }
 
@@ -221,8 +221,8 @@ fn t131_source_language_is_english() {
             let p = e.expect("bad directory entry").path();
             let name = p.file_name().unwrap_or_default().to_string_lossy().into_owned();
             if p.is_dir() {
-                // target/ — сборка, vendor/ — чужие заголовки FFmpeg,
-                // tests/ — интеграционные тесты (текст ассертов не виден)
+                // target/ — build output, vendor/ — third-party FFmpeg headers,
+                // tests/ — integration tests (the text of assertions is not visible)
                 if !matches!(name.as_str(), "target" | "vendor" | "tests" | "fixtures") {
                     stack.push(p);
                 }
@@ -254,13 +254,13 @@ fn t131_source_language_is_english() {
     );
 }
 
-/// Тест 171 (п.4 Р.28): пункт меню говорит, ЧТО и ГДЕ произойдёт.
+/// Test 171 (item 4 of R.28): the menu item says WHAT and WHERE it will happen.
 ///
-/// Жалоба дословно: «fade out — вообще не понятно по названию пункта куда он
-/// добавит этот out… И надпись "Remove crossfade" тоже не очевидно,
-/// оказывается она fadeout с конца убирает». Одна надпись на четыре разных
-/// действия — дефект; тест держит их РАЗЛИЧИМЫМИ в каждом языке, иначе
-/// перевод «в одно слово» вернёт ту же неоднозначность.
+/// The complaint verbatim: “fade out — it is not clear at all from the name of the item where it
+/// will add this out… And the label “Remove crossfade” is not obvious either:
+/// it turns out it removes the fadeout from the end.” One label for four different
+/// actions is a defect; the test keeps them DISTINCT in every language, otherwise a
+/// translation “into one word” would bring back the same ambiguity.
 #[test]
 fn t171_transition_menu_labels_say_what_and_where() {
     use crate::i18n::k;
@@ -276,69 +276,69 @@ fn t171_transition_menu_labels_say_what_and_where() {
                 keys.iter().map(|k| tables::TABLES[lang as usize][k.0 as usize]).collect();
             for (i, a) in vals.iter().enumerate() {
                 for b in vals.iter().skip(i + 1) {
-                    assert_ne!(a, b, "{}: пункты снятия перехода неразличимы", lang.code());
+                    assert_ne!(a, b, "{}: the transition removal items are indistinguishable", lang.code());
                 }
             }
         }
-        // начало и конец события различимы и у пунктов ДОБАВЛЕНИЯ
+        // the start and the end of an event are distinguishable also in the ADD items
         assert_ne!(
             tables::TABLES[lang as usize][k::tl::menu::FADE_IN.0 as usize],
             tables::TABLES[lang as usize][k::tl::menu::FADE_OUT.0 as usize],
-            "{}: появление и затухание неразличимы",
+            "{}: fade in and fade out are indistinguishable",
             lang.code()
         );
-        // «Marker here» и «Marker over the region» — разные действия
+        // “Marker here” and “Marker over the region” are different actions
         assert_ne!(
             tables::TABLES[lang as usize][k::tl::menu::MARKER_HERE.0 as usize],
             tables::TABLES[lang as usize][k::tl::menu::MARKER_REGION.0 as usize],
-            "{}: точечная метка и метка-диапазон неразличимы",
+            "{}: a point marker and a range marker are indistinguishable",
             lang.code()
         );
     }
 }
 
-/// Тест 756c (Р.63 п.8.1): дакинг НАЗВАН ПО ОТРАСЛИ.
+/// Test 756c (R.63 item 8.1): ducking is NAMED AFTER THE INDUSTRY.
 ///
-/// Владелец: «я не понимаю что такое duck under a track "приглушить под
-/// дорожкой"??? что??? что находится под дорожкой что надо приглушить??
-/// это Audio-Ducking? почему ты нормально это не назвал? замечание будущим
-/// агентам». Правило из этого: у функции, у которой есть отраслевое имя,
-/// в интерфейсе стоит ОНО — иначе человек не может связать нашу кнопку с
-/// тем, что знает из Vegas/Premiere/Resolve.
+/// The owner: “I do not understand what duck under a track “mute under
+/// the track”??? what??? what is under a track that needs to be muted??
+/// is this Audio-Ducking? why did you not name it normally? a note to future
+/// agents”. The rule from this: a function that has an industry name
+/// has THAT name in the interface — otherwise the person cannot link our button to
+/// what they know from Vegas/Premiere/Resolve.
 #[test]
 fn t756c_ducking_is_named_the_way_the_industry_names_it() {
     for lang in Lang::ALL {
         i18n::set_lang(lang);
         let menu = i18n::tr(i18n::k::tl::menu::DUCK).to_lowercase();
         let title = i18n::tr(i18n::k::msg::DUCK_TITLE).to_lowercase();
-        for (what, s) in [("пункт меню", &menu), ("заголовок", &title)] {
-            // прежнее имя было ОПИСАНИЕМ МЕСТА («под дорожкой»), а не
-            // названием функции — и объяснить его было нечем
+        for (what, s) in [("menu item", &menu), ("title", &title)] {
+            // the former name was a DESCRIPTION OF THE PLACE (“under a track”), not the
+            // name of the function — and there was nothing to explain it with
             assert!(
                 !s.contains("под дорожкой") && !s.contains("under a track"),
-                "{}: {what} всё ещё называет место, а не функцию: {s:?}",
+                "{}: {what} still names a place, not a function: {s:?}",
                 lang.code()
             );
         }
-        // отраслевое имя: «дакинг» / «ducking» / 闪避 / خفض
+        // industry name: “ducking” / “ducking” / 闪避 / خفض
         let known = ["дакинг", "ducking", "闪避", "خفض"];
         assert!(
             known.iter().any(|k| menu.contains(k)) && known.iter().any(|k| title.contains(k)),
-            "{}: отраслевого имени нет ни в пункте меню ({menu:?}), ни в заголовке ({title:?})",
+            "{}: the industry name is neither in the menu item ({menu:?}) nor in the title ({title:?})",
             lang.code()
         );
     }
     i18n::set_lang(Lang::Ru);
 }
 
-/// Тест 759b (Р.64): подписи формы «Трансформация» переведены, а единицы в
-/// них НЕ написаны.
+/// Test 759b (R.64): the labels of the “Transform” form are translated, and the units in
+/// them are NOT written.
 ///
-/// Единица приезжает из паспорта параметра (`ParamSpec::unit`) и рисуется
-/// полем; написанная ещё и в подписи, она раздваивается — правило 9
-/// чек-листа («ничего лишнего») и правило одного источника правды. Заодно
-/// сторож обычного рода: у новых ключей есть пять переводов, а не пять
-/// английских копий.
+/// The unit comes from the parameter's descriptor (`ParamSpec::unit`) and is drawn by the
+/// field; written also into the label, it would split in two — rule 9 of the checklist
+/// (“nothing superfluous”) and the rule of one source of truth. In addition, a guard of
+/// the usual kind: the new keys have five translations, not five
+/// English copies.
 #[test]
 fn t759b_transform_form_labels_are_translated_and_carry_no_units() {
     let keys = [
@@ -349,7 +349,7 @@ fn t759b_transform_form_labels_are_translated_and_carry_no_units() {
         i18n::k::geomctl::RESET_HINT,
         i18n::k::geomctl::SCHEMA_HINT,
     ];
-    // подписи ПАРАМЕТРОВ ведущего узла — из общей области `fxp`
+    // the labels of the PARAMETERS of the leading node — from the shared `fxp` area
     let params = [
         i18n::k::fxp::POS_X,
         i18n::k::fxp::POS_Y,
@@ -371,35 +371,35 @@ fn t759b_transform_form_labels_are_translated_and_carry_no_units() {
         i18n::set_lang(lang);
         for k in keys {
             let s = i18n::tr(k);
-            assert!(!s.trim().is_empty(), "{}: пустая подпись формы", lang.code());
+            assert!(!s.trim().is_empty(), "{}: an empty form label", lang.code());
         }
         for k in params {
             let s = i18n::tr(k);
             for unit in ['%', '°', '×'] {
                 assert!(
                     !s.contains(unit),
-                    "{}: в подписи «{s}» написана единица «{unit}» — она приезжает из \
-                     паспорта параметра и рисуется полем, второй раз её писать нельзя",
+                    "{}: the label “{s}” spells out the unit “{unit}” — it comes from the \
+                     parameter passport and is drawn by the field, it must not be written twice",
                     lang.code()
                 );
             }
         }
-        // «сбросить» обязано говорить, ЧТО именно вернётся (правило 19).
-        // Мерить абсолютной длиной нельзя — иероглифика вдвое плотнее
-        // латиницы; меряем ОТНОСИТЕЛЬНО самой кнопки.
+        // “Reset” must say WHAT exactly will come back (rule 19).
+        // Measuring by absolute length is not allowed — CJK is twice as dense as
+        // Latin; we measure RELATIVE to the button itself.
         let hint = i18n::tr(i18n::k::geomctl::RESET_HINT);
         let btn = i18n::tr(i18n::k::geomctl::RESET);
         assert!(
             hint.chars().count() > btn.chars().count() * 3,
-            "{}: подсказка сброса не длиннее собственной кнопки — она обязана \
-             перечислить, что вернётся и что останется: {hint:?}",
+            "{}: the reset hint is no longer than its own button — it must \
+             list what comes back and what stays: {hint:?}",
             lang.code()
         );
         if !matches!(lang, Lang::En) {
             let now: Vec<String> = keys.iter().map(|k| i18n::tr(*k).to_string()).collect();
             assert!(
                 now.iter().zip(&en).any(|(a, b)| a != b),
-                "{}: подписи формы совпадают с английскими — перевода нет",
+                "{}: the form labels match the English ones — no translation",
                 lang.code()
             );
         }

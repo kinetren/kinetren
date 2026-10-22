@@ -1,51 +1,51 @@
-//! «Чёрный ящик» воспроизведения (Р.28, п.10).
+//! “Black box” of playback (R.28, item 10).
 //!
-//! Просьба пользователя дословно: «нужно продумать хитрую систему
-//! логирования, которая поможет будущим агентам с плавающими багами
-//! воспроизведения, нужно компактно это делать, т.к. я могу взять и
-//! попрыгать по нескольким супер-мелким loop-регионам что могло бы
-//! породить тонны логов».
+//! The user's request, verbatim: “we need to think through a clever logging system
+//! that will help future agents with floating playback bugs; it has to be compact,
+//! because I could just jump around several super-small loop regions, which
+//! could generate
+//! tons of logs.”
 //!
-//! Отсюда три правила:
-//! 1. **Кольцо фиксированного размера.** Сколько ни прыгай — памяти ровно
-//!    `CAP` записей, самые старые вытесняются. Ни файла на диске во время
-//!    игры, ни роста RAM.
-//! 2. **Дедупликация подряд идущих.** Одинаковое событие (тот же вид и те
-//!    же поля) не плодит записи, а наращивает счётчик `n` и время
-//!    последнего повтора: сто заворотов одного и того же лупа — ОДНА
-//!    строка `WRAP … ×100`.
-//! 3. **Снимок счётчиков раз в секунду, и только если что-то изменилось.**
-//!    В тишине журнал не растёт вообще.
+//! Hence three rules:
+//! 1. **A fixed-size ring.** No matter how much you jump — exactly
+//!    `CAP` records of memory, the oldest ones are evicted. Not a file on disk during
+//!    play, no RAM growth.
+//! 2. **Deduplication of consecutive repeats.** An identical event (the same kind and the
+//!    same fields) does not multiply records: it increments the counter `n` and the time of
+//!    the last repeat: a hundred wraps of the same loop — ONE
+//!    line `WRAP … ×100`.
+//! 3. **A counter snapshot once a second, and only if something changed.**
+//!    In silence the log does not grow at all.
 //!
-//! Пишет ТОЛЬКО render/prefetch-поток. В cpal-колбэк рекордер не заходит
-//! (инвариант №6: ни аллокаций, ни локов) — счётчики колбэка снимаются из
-//! атомиков при очередном снимке.
+//! Written ONLY by the render/prefetch thread. The recorder does not enter the cpal callback
+//! (invariant 6: no allocations, no locks) — the callback's counters are taken from
+//! atomics at the next snapshot.
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::time::Instant;
 
-/// Ёмкость кольца. 512 записей — это десятки секунд самой бурной работы
-/// (прыжки + снимки), в дампе ~40 КБ текста.
+/// Ring capacity. 512 records — this is tens of seconds of the most turbulent work
+/// (jumps + snapshots), about 40 KB of text in a dump.
 pub const CAP: usize = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ev {
     Play,
     Pause,
-    /// Прыжок транспорта (generation): a = кадр назначения.
+    /// Transport jump (generation): a = the destination frame.
     Seek,
-    /// Смена loop-региона: a..b в кадрах (a<0 — регион снят).
+    /// Loop region change: a..b in frames (a<0 — region removed).
     Region,
-    /// Заворот региона: a = кадр, с которого начался круг.
+    /// Region wrap: a = the frame from which the cycle started.
     Wrap,
-    /// Смена направления: a = знак.
+    /// Direction change: a = sign.
     Dir,
-    /// Мини-seek без бампа generation (флип armed/дизарм, смена знака).
+    /// Mini-seek without a generation bump (armed/disarmed flip, sign change).
     Reset,
-    /// Снимок счётчиков (см. `Snap`).
+    /// Counters snapshot (see `Snap`).
     Snap,
-    /// Замирание: playhead не двигался, хотя игра идёт. a = мс простоя.
+    /// Stall: the playhead did not move although playback is running. a = ms of idleness.
     Stall,
 }
 
@@ -65,8 +65,8 @@ impl Ev {
     }
 }
 
-/// Счётчики снимка — дельты за секунду, а не абсолютные значения: именно
-/// дельта показывает «левое число подрастает каждый повтор».
+/// The snapshot counters are deltas per second, not absolute values: exactly the
+/// delta shows “the left number grows on every repeat”.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Snap {
     pub render_underruns: u64,
@@ -77,13 +77,13 @@ pub struct Snap {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rec {
-    /// Мс от старта записи (монотонно).
+    /// Ms since the start of recording (monotonic).
     pub at_ms: u64,
     pub kind: Ev,
     pub a: i64,
     pub b: i64,
     pub snap: Snap,
-    /// Сколько раз подряд повторилось (дедуп).
+    /// How many times in a row it repeated (dedup).
     pub n: u32,
 }
 
@@ -107,13 +107,13 @@ impl FlightRecorder {
         self.t0.elapsed().as_millis() as u64
     }
 
-    /// Событие без счётчиков.
+    /// An event without counters.
     pub fn push(&self, kind: Ev, a: i64, b: i64) {
         self.push_at(self.now_ms(), kind, a, b, Snap::default());
     }
 
-    /// Снимок счётчиков. Пустой (все дельты нулевые и голова не двигалась)
-    /// не пишется — в тишине журнал не растёт.
+    /// A counters snapshot. An empty one (all deltas zero and the head did not move)
+    /// is not written — in silence the log does not grow.
     pub fn push_snap(&self, s: Snap) {
         if s.render_underruns == 0 && s.callback_underruns == 0 && s.warmup_misses == 0 {
             return;
@@ -123,7 +123,7 @@ impl FlightRecorder {
 
     pub fn push_at(&self, at_ms: u64, kind: Ev, a: i64, b: i64, snap: Snap) {
         let mut ring = self.lock();
-        // дедуп подряд идущих: «×N» вместо N строк (правило 2)
+        // consecutive dedup: “×N” instead of N lines (rule 2)
         if let Some(last) = ring.back_mut()
             && last.kind == kind
             && last.a == a
@@ -148,19 +148,19 @@ impl FlightRecorder {
         self.lock().clear();
     }
 
-    /// Замок, терпимый к отравлению (Р.49, п.355). «Чёрный ящик» читает
-    /// ПАНИЧЕСКИЙ ХУК — то есть ровно тогда, когда кто-то уже паниковал, в
-    /// том числе, возможно, под этим замком. `unwrap()` дал бы вторую панику
-    /// внутри хука, а это немедленный `abort` без всякого отчёта: прибор,
-    /// ломающийся от той самой аварии, ради которой поставлен. Содержимое
-    /// кольца при отравлении по-прежнему осмысленно: это журнал прошедших
-    /// событий, а не полуготовая структура.
+    /// A poison-tolerant lock (R.49, item 355). The “black box” reads from
+    /// the PANIC HOOK — that is, exactly when someone has already panicked, including,
+    /// possibly, under this lock. `unwrap()` would give a second panic
+    /// inside the hook, and that is an immediate `abort` with no report at all: an instrument
+    /// that breaks from the very accident it is installed for. The content of the
+    /// ring on poisoning is still meaningful: it is a log of past events,
+    /// not a half-finished structure.
     fn lock(&self) -> std::sync::MutexGuard<'_, VecDeque<Rec>> {
         self.ring.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Текстовый дамп: одна строка на запись, время в секундах от старта,
-    /// кадры — в секундах (48 кГц), чтобы читалось без калькулятора.
+    /// Text dump: one line per record, time in seconds since start,
+    /// frames in seconds (48 kHz), so it reads without a calculator.
     pub fn dump(&self) -> String {
         let sec = |f: i64| f as f64 / kt_time::AUDIO_SAMPLE_RATE as f64;
         let mut out = String::new();
@@ -200,31 +200,31 @@ impl FlightRecorder {
 mod tests {
     use super::*;
 
-    /// t373 (Р.49, п.355): отравленное кольцо ЧИТАЕТСЯ. «Чёрный ящик» зовёт
-    /// панический хук — то есть ровно тогда, когда кто-то уже паниковал, в
-    /// том числе под этим замком. `unwrap()` дал бы вторую панику внутри
-    /// хука, а это немедленный `abort` без всякого отчёта.
+    /// t373 (R.49, item 355): a poisoned ring IS READ. The “black box” calls the
+    /// panic hook — that is, exactly when someone has already panicked,
+    /// including under this lock. `unwrap()` would give a second panic inside the
+    /// hook, and that is an immediate `abort` with no report at all.
     #[test]
     fn t373_poisoned_flight_ring_still_reads() {
         let f = std::sync::Arc::new(FlightRecorder::new());
         f.push(Ev::Play, 48_000, 0);
 
-        // паника ПОД замком — так его и отравляют по-настоящему
+        // panic UNDER the lock — that is how it is really poisoned
         let g = f.clone();
         let res = std::thread::spawn(move || {
             let _held = g.ring.lock().unwrap();
             panic!("under the flight lock");
         })
         .join();
-        assert!(res.is_err(), "поток обязан был паниковать");
-        assert!(f.ring.is_poisoned(), "мьютекс не отравлен — тест ничего не проверяет");
+        assert!(res.is_err(), "the thread was required to panic");
+        assert!(f.ring.is_poisoned(), "the mutex is not poisoned — the test checks nothing");
 
-        // и запись, и чтение, и дамп продолжают работать
+        // both writing, reading and dumping keep working
         f.push(Ev::Pause, 96_000, 0);
         let recs = f.records();
-        assert_eq!(recs.len(), 2, "после отравления кольцо потеряно");
+        assert_eq!(recs.len(), 2, "after poisoning the ring is lost");
         let dump = f.dump();
-        assert!(dump.to_lowercase().contains("play"), "дамп пуст: {dump:?}");
+        assert!(dump.to_lowercase().contains("play"), "dump is empty: {dump:?}");
         f.clear();
         assert!(f.records().is_empty());
     }

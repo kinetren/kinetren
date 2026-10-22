@@ -1,14 +1,14 @@
-// VHS — зеркало vhs (kt-fx/src/video.rs): RGB-сдвиг + скан-линии, шаг
-// которых задаётся (Р.33 С5), и дрожание строк. Читается только исходная
-// строка (у CPU — её копия) — GPU не in-place по построению.
+// VHS: a mirror of vhs (kt-fx/src/video.rs): the RGB shift plus scan lines, whose step is set
+// (R.33 S5), and row jitter. Only the source row is read (on the CPU it is a copy of it),
+// so the GPU is not in-place by construction.
 // u0 = (w, shift, line_off, scan_step); u1 = (seed, jq, res_scale, 0);
-// Р.45 (п.313): shift приезжает уже ×K, а скан-линии и хэш дрожания
-// считаются от ЛОГИЧЕСКОЙ строки y/K (блок из K строк). K=1 — прежний
-// кадр байт-в-байт (y/1).
-// f0 = (bleed, 0, 0, 0). scan_step = 4 и jq = 0 — прежний кадр
-// байт-в-байт. jq — КВАНТ дрожания (jitter×1024): смещение строки
-// считается целыми числами, потому что round() у WGSL округляет
-// половины к чётному, а у Rust — от нуля (расхождение в t181).
+// R.45 (item 313): shift arrives already ×K, and the scan lines and the jitter hash
+// are computed from the LOGICAL row y/K (a block of K rows). K=1 is the former
+// frame, byte for byte (y/1).
+// f0 = (bleed, 0, 0, 0). scan_step = 4 and jq = 0 give the former frame
+// byte for byte. jq is the jitter QUANTUM (jitter×1024): the row offset
+// is computed in integers, because WGSL round() rounds
+// halves to even, while Rust rounds away from zero (a divergence in t181).
 
 fn nh(v: u32) -> u32 {
     var x = v;
@@ -27,10 +27,10 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     let shift = i32(P.u0.y);
     let step = i32(P.u0.w);
     let rs = max(i32(P.u1.z), 1);
-    let yl = p.y / rs; // логическая строка (Р.45)
+    let yl = p.y / rs; // logical row (R.45)
     var scan = 0;
     if (step > 0 && (yl + i32(P.u0.z)) % step == 0) { scan = 1; }
-    // дрожание строки: та же формула, что у CPU (хэш строки от seed)
+    // row jitter: the same formula as on the CPU (the row hash from the seed)
     var jx = 0;
     let jq = i32(P.u1.y);
     if (jq != 0) {
@@ -51,7 +51,7 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     if (scan == 1) {
         g = select(0u, g - 18u, g >= 18u); // saturating_sub(18)
     }
-    // альфа берётся из НЕсдвинутого пикселя — как у CPU (он пишет in-place)
+    // alpha is taken from the NON-shifted pixel, as on the CPU (it writes in-place)
     let a = textureLoad(T0, p, 0).a;
     return vec4<u32>(r, g, b, a);
 }

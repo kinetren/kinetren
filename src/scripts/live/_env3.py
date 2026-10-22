@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""ПОДСТАВНОЙ сценарий для t802 (копия 3): печатает экран и хранилище своего работника.
+"""STUB scenario for t802 (copy 3): prints the screen and the storage of its worker.
 
-Изоляция работников — это не «мы так написали», а наблюдаемый факт: у каждого
-свой номер экрана и свой каталог хранилища. Сценарий записывает их в файл,
-тест сверяет, что они различны (см. `_flaky.py` про имя с подчёркивания).
+Worker isolation is not “we wrote it so”, but an observed fact: each
+has its own screen number and its own storage directory. The scenario writes them to a file,
+the test checks that they differ (see `_flaky.py` about the name with an underscore).
 """
 import json
 import os
@@ -23,7 +23,7 @@ def main(out):
             },
             f,
         )
-    print(f"   ok   работник: DISPLAY={os.environ.get('DISPLAY')}")
+    print(f"   ok   worker: DISPLAY={os.environ.get('DISPLAY')}")
     return 0
 
 

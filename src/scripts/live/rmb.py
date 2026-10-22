@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.49 В (пп.361-366): правая кнопка не молчит, а обещания
-подсказок сбываются.
+"""Live scenario R.49 B (items 361-366): the right button does not stay silent, and the promises
+of the hints come true.
 
-Три вещи проверяются на НАСТОЯЩИХ жестах в настоящем окне:
+Three things are checked on REAL gestures in a real window:
 
-1. ПКМ по окну перехода открывает меню САМОГО перехода (до Р.49 у него меню
-   не было вовсе — всё лежало в меню соседнего клипа);
-2. двойной клик по линии уровня сбрасывает уровень — подсказка обещала это с
-   самого начала, а жест открывал окно FX;
-3. ПКМ по фону медиа-бина и по панели метров показывает меню, а не молчит.
+1. RMB on the transition window opens the menu of the TRANSITION itself (before R.49 it had no
+   menu at all — everything lay in the menu of the neighboring clip);
+2. a double click on the level line resets the level — the hint promised this from the start,
+   while the gesture was opening the FX window;
+3. RMB on the background of the media bin and on the meter panel shows a menu, instead of staying silent.
 
-Следствие каждого пункта проверяется тем, что доехало до СОХРАНЁННОГО .otio,
-или изменением экрана — не состоянием в памяти.
+The consequence of each item is checked by what reached the SAVED .otio,
+or by a change of the screen — not by the state in memory.
 """
 import json
 import os
@@ -24,7 +24,7 @@ SEC = 90000
 
 
 def clip_kt(tl, index):
-    """kt-метаданные index-го клипа в .otio (там живут громкость и уровень)."""
+    """kt metadata of the index-th clip in the .otio (where volume and level live)"""
     items = []
     for track in tl.doc.get("tracks", {}).get("children", []):
         for item in track.get("children", []):
@@ -35,7 +35,7 @@ def clip_kt(tl, index):
 
 def main(out):
     require_tools()
-    # два события встык: между ними можно повесить переход
+    # two events end to end: a transition can be hung between them
     proj = project_with_clips(
         os.path.join(out, "rmb.otio"),
         [(0.0, 4.0, "synth:Ramp"), (4.0, 4.0, "synth:Ramp")],
@@ -46,17 +46,17 @@ def main(out):
     with Live("rmb", out, project=proj) as app:
         app.shot("open")
         p = app.project_now()
-        app.expect(len(p.clips) == 2, f"старт: два события, {p.clips}")
+        app.expect(len(p.clips) == 2, f"start: two events, {p.clips}")
 
         y = app.lane_y("video", 0)
-        # ---- 1. ПКМ по окну перехода ------------------------------------
+        # ---- 1. RMB on the transition window ------------------------------------
         tl = app.project_now()
         app.expect(
             len(tl.transitions) == 1,
-            f"переход прочитан из файла: {tl.transitions}",
+            f"transition read from the file: {tl.transitions}",
         )
         t = tl.transitions[0]
-        # середина левой половины окна: подальше от стыка, где живут ручки
+        # the middle of the left half of the window: away from the joint, where the handles live
         x_mid = app.x_at(t["at"] - t["in"] // 2)
         before = app.shot("before-trans-menu")
         app.right_click(x_mid, y)
@@ -64,12 +64,12 @@ def main(out):
         d = app.screen_diff(before)
         app.expect(
             d > 0.005,
-            f"ПКМ по окну перехода обязан открыть меню (экран изменился на {d:.1%})",
+            f"RMB on the transition window must open the menu (the screen changed by {d:.1%})",
         )
         app.key("Escape")
 
-        # ---- 2. линия уровня: двойной клик сбрасывает --------------------
-        # опускаем уровень второго события жестом, потом сбрасываем двойным
+        # ---- 2. level line: double click resets --------------------
+        # we lower the level of the second event by a gesture, then reset it by a double click
         tl = app.saved_project()
         second = tl.clips[1]
         x2 = app.x_at(second.mid())
@@ -78,23 +78,23 @@ def main(out):
         app.drag(x2, ly, x2, ly + lane_h * 0.45)
         app.shot("level-down")
         lowered = clip_kt(app.saved_project(), 1).get("opacity", 1.0)
-        app.expect(lowered < 0.9, f"жест обязан опустить уровень, получено {lowered}")
+        app.expect(lowered < 0.9, f"the gesture must lower the level, got {lowered}")
 
-        # линия уехала вниз вместе со значением — целимся туда, где она сейчас
+        # the line has moved down together with the value — we aim where it is now
         ly2 = app.lane_y("video", 0, frac=0.0) + 3.0 + (1.0 - lowered) * (lane_h - 8.0)
         app.double_click(x2, ly2)
         app.shot("level-reset")
         back = clip_kt(app.saved_project(), 1).get("opacity", 1.0)
         app.expect(
             back >= 0.999,
-            f"двойной клик по линии уровня обязан сбросить её (подсказка это обещает), "
-            f"получено {back}",
+            f"a double click on the level line must reset it (the hint promises this), "
+            f"got {back}",
         )
 
-        # ---- 3. фон бина и метры не молчат -------------------------------
+        # ---- 3. the bin background and meters do not stay silent -------------------------------
         win = geometry()
-        # прямоугольник бина программа сообщает сама (Р.27): ниже него в
-        # колонке живёт перф-панель, и «примерно слева» щупало бы её
+        # the program reports the bin rectangle itself (R.27): below it in the
+        # column lives the perf panel, and “roughly on the left” would probe it
         b = app.geom()["bin"]
         before = app.shot("before-bin-menu")
         app.right_click(
@@ -103,24 +103,24 @@ def main(out):
         )
         app.shot("bin-menu")
         d = app.screen_diff(before)
-        app.expect(d > 0.002, f"ПКМ по фону медиа-бина обязан открыть меню (экран на {d:.1%})")
+        app.expect(d > 0.002, f"RMB on the media bin background must open the menu (the screen on {d:.1%})")
         app.key("Escape")
 
         before = app.shot("before-meter-menu")
         app.right_click(win["x"] + win["w"] - 40, win["y"] + int(win["h"] * 0.35))
         app.shot("meter-menu")
         d = app.screen_diff(before)
-        app.expect(d > 0.002, f"ПКМ по панели метров обязан открыть меню (экран на {d:.1%})")
+        app.expect(d > 0.002, f"RMB on the meters panel must open the menu (the screen on {d:.1%})")
         app.key("Escape")
 
         return app.done()
 
 
 def add_crossfade(path, seconds):
-    """Кроссфейд МЕЖДУ двумя событиями видео-дорожки.
+    """A crossfade BETWEEN two events of a video track.
 
-    Строится прямо в файле: жест уголка проверяет t173, а этому сценарию
-    нужен готовый переход, чтобы щупать его правой кнопкой."""
+    It is built directly in the file: the corner gesture is checked by t173, and this scenario
+    needs a ready transition, so it can probe it with the right button."""
     with open(path) as f:
         doc = json.load(f)
     track = next(t for t in doc["tracks"]["children"] if t.get("kind") == "Video")

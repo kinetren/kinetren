@@ -1,14 +1,14 @@
-//! Кодогенерация каталогов перевода (Р.19).
+//! Code generation for translation catalogs (R.19).
 //!
-//! Читает `i18n/*.toml`, проверяет их и пишет в `$OUT_DIR` две вставки:
-//! `i18n_keys.rs` (константы-ключи деревом секций) и `i18n_tables.rs`
-//! (по массиву `&'static str` на язык). Такой способ выбран ради трёх вещей
-//! сразу: `t()` отдаёт `&'static str` без аллокаций, переводчик правит обычный
-//! TOML, а пропущенный ключ валит СБОРКУ, а не показывает пустую надпись.
+//! Reads `i18n/*.toml`, validates them and writes two inserts to `$OUT_DIR`:
+//! `i18n_keys.rs` (key constants as a tree of sections) and `i18n_tables.rs`
+//! (one `&'static str` array per language). This approach was chosen for three things
+//! at once: `t()` returns `&'static str` without allocations, the translator edits a plain
+//! TOML file, and a missing key fails the BUILD instead of showing an empty label.
 //!
-//! Арабская таблица переупорядочивается ЗДЕСЬ (`bidi::visual`): в рантайме от
-//! этого не остаётся ни цены, ни кэша — галлея-кэш egui ключуется по уже
-//! готовой строке.
+//! The Arabic table is reordered HERE (`bidi::visual`): at runtime this costs
+//! neither time nor cache — egui’s galley cache is keyed by the already
+//! finished string.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -19,7 +19,7 @@ mod bidi;
 #[path = "src/i18n/catalog.rs"]
 mod catalog;
 
-/// Порядок = порядок вариантов `Lang` и таблиц в `tables.rs`.
+/// Order = order of the `Lang` variants and the tables in `tables.rs`.
 const LANG_FILES: [(&str, &str); 5] = [
     ("EN", "en.toml"),
     ("RU", "ru.toml"),
@@ -28,17 +28,17 @@ const LANG_FILES: [(&str, &str); 5] = [
     ("AR", "ar.toml"),
 ];
 
-/// Ключи самоназваний языков в порядке `Lang::ALL`.
+/// Endonym keys for languages in the order of `Lang::ALL`.
 const ENDONYM_KEYS: [&str; 5] = ["lang.en", "lang.ru", "lang.es", "lang.zh", "lang.ar"];
 
-/// Секции, которые НЕ переупорядочиваются для арабского: их значения
-/// сравниваются с тем, что печатает пользователь (поиск по FX), либо это
-/// самоназвания, одинаковые во всех каталогах.
+/// Sections that are NOT reordered for Arabic: their values
+/// are compared with what the user types (FX search), or they are
+/// endonyms identical in all catalogs.
 const NO_BIDI_SECTIONS: [&str; 2] = ["fxreg.kw.", "lang."];
 
-/// Потолок длины значения. Переупорядоченный арабский абзац нельзя переносить
-/// заново (каждая визуальная строка требовала бы своего порядка), поэтому в
-/// каталоге не должно быть текста, который захочется перенести.
+/// Length ceiling for a value. A reordered Arabic paragraph cannot be wrapped
+/// again (each visual line would need its own order), so the
+/// catalog must not contain text that someone would want to wrap.
 const MAX_VALUE_CHARS: usize = 160;
 
 fn fail(msg: String) -> ! {
@@ -59,7 +59,7 @@ fn main() {
         cats.push(entries);
     }
 
-    // en.toml задаёт набор и ПОРЯДОК ключей; индекс в нём и есть Key.
+    // en.toml defines the set and the ORDER of keys; the index in it is the Key.
     let reference: Vec<catalog::Entry> = cats[0].clone();
     let index: BTreeMap<&str, usize> =
         reference.iter().enumerate().map(|(i, e)| (e.key.as_str(), i)).collect();
@@ -103,9 +103,9 @@ fn main() {
         values.push(row);
     }
 
-    // Что ещё не переведено. Совпадение бывает законным («Mbit/s», «Vertical»,
-    // имена эффектов), поэтому это предупреждение, а не ошибка — но КЛЮЧИ
-    // называются поимённо: голый счётчик заставляет гадать, что за ним стоит.
+    // What is not yet translated. A match can be legitimate (“Mbit/s”, “Vertical”,
+    // effect names), so this is a warning, not an error — but the KEYS
+    // are named one by one: a bare counter forces guessing what stands behind it.
     for (li, (name, _)) in LANG_FILES.iter().enumerate().skip(1) {
         let same: Vec<&str> = (0..reference.len())
             .filter(|&i| !reference[i].key.starts_with("lang.") && values[li][i] == values[0][i])
@@ -156,8 +156,8 @@ fn check_value(file: &str, name: &str, e: &catalog::Entry) {
             e.line, e.key, c as u32
         ));
     }
-    // ASCII-пунктуация в арабском разрывает слово на атомы и ломает вязь:
-    // нужны арабские знаки, они внутри арабского блока.
+    // ASCII punctuation in Arabic splits the word into atoms and breaks the cursive script:
+    // Arabic signs are needed; they are inside the Arabic block.
     if name == "AR"
         && let Some(c) = e.value.chars().find(|c| matches!(c, ',' | ';' | '?'))
         && e.value.chars().any(bidi::is_arabic)
@@ -169,14 +169,14 @@ fn check_value(file: &str, name: &str, e: &catalog::Entry) {
     }
 }
 
-/// Ключевые слова Rust, которые нельзя взять именем модуля даже как `r#`.
+/// Rust keywords that cannot be used as a module name even as `r#`.
 const HARD_RESERVED: [&str; 4] = ["crate", "self", "super", "Self"];
 
 fn seg_ident(seg: &str) -> String {
     if HARD_RESERVED.contains(&seg) {
         fail(format!("i18n: section segment {seg:?} cannot be a Rust module"));
     }
-    // `r#` безопасен для любого прочего ключевого слова (loop, type, move, …)
+    // `r#` is safe for any other keyword (loop, type, move, …)
     let kw = [
         "as", "break", "const", "continue", "dyn", "else", "enum", "extern", "false", "fn", "for",
         "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return",
@@ -208,8 +208,8 @@ fn gen_keys(reference: &[catalog::Entry]) -> String {
     let mut s = String::new();
     s.push_str("// Generated by build.rs from i18n/en.toml - do not edit by hand.\n");
     let _ = writeln!(s, "#[allow(dead_code)]\npub const N_KEYS: usize = {};", reference.len());
-    // часть ключей расходуется не по пути `k::…` (самоназвания едут в ENDONYM),
-    // а таблицы читают только аксессоры i18n — dead_code тут ложный
+    // some keys are used not via the `k::…` path (endonyms go into ENDONYM),
+    // and the tables are read only by the i18n accessors — dead_code here is a false positive
     s.push_str("#[allow(dead_code)]\npub mod k {\n");
     emit_node(&mut s, &root, 1);
     s.push_str("}\n");

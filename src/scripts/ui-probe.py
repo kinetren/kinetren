@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""Живая проверка UI в НАСТОЯЩЕМ окне kt-app (X11, XTest).
+"""Live UI check in a REAL kt-app window (X11, XTest).
 
-Заведено после раунда 11: harness-тест показывал предел ширины панели
-метров, а в живом окне пользователь спокойно растягивал её дальше —
-проверялась не программа, а её симуляция. Харнесс ловит вёрстку, этот
-скрипт ловит «а что видит человек». Одно другое не заменяет.
+Added after round 11: a harness test showed the width limit of the meter panel,
+yet in the live window the user stretched it further without trouble —
+the program was not checked, only its simulation. The harness catches layout, this
+script catches “what the person sees”. One does not replace the other.
 
-Требуется python3-xlib и ImageMagick (`import`, `convert`).
+Requires python3-xlib and ImageMagick (`import`, `convert`).
 
-    python3 scripts/ui-probe.py geom                  # где окно
-    python3 scripts/ui-probe.py drag 1370 430 200 430 # тянуть (коорд. окна)
-    python3 scripts/ui-probe.py key ctrl+l            # клавиша с модификатором
+    python3 scripts/ui-probe.py geom                  # where the window is
+    python3 scripts/ui-probe.py drag 1370 430 200 430 # drag (window coords)
+    python3 scripts/ui-probe.py key ctrl+l            # key with a modifier
     python3 scripts/ui-probe.py type 130
     python3 scripts/ui-probe.py shot /tmp/ui.png
-    python3 scripts/ui-probe.py edges 400             # границы панелей по строке
+    python3 scripts/ui-probe.py edges 400             # panel edges along the row
 
-Драг делается КАК ЧЕЛОВЕК: нажать → сдвинуть на несколько пикселей →
-вести дальше. Прыжок «сразу в цель» egui засчитывает как начало драга уже
-в конечной точке, и объект не двигается вовсе (см. apps/kt-app/CLAUDE.md).
+The drag is done THE WAY A PERSON DOES: press → move a few pixels →
+keep going. A “jump straight to the target” is counted by egui as the start of a drag already
+at the end point, and the object does not move at all (see apps/kt-app/CLAUDE.md).
 """
 import subprocess
 import sys
@@ -30,28 +30,28 @@ WM_CLASS = "kinetren"
 d = display.Display()
 root = d.screen().root
 
-# СКОЛЬКО ЗДЕСЬ ПРОСПАЛИ (Р.69). Драйвер спит внутри себя, и до Р.69 этот
-# сон был невидим: сторож `live-sleeps.py` смотрел только на каркас и
-# сценарии, а тут лежало 123 с из 387 с сна всего живого прогона. Теперь
-# весь сон драйвера идёт через `_nap`, копится и попадает в тот же отчёт,
-# что сон каркаса (`kt_live.slept()`).
+# HOW MUCH TIME WAS SLEPT HERE (R.69). The driver sleeps inside itself, and until R.69 that
+# sleep was invisible: the guard `live-sleeps.py` looked only at the rig and
+# the scenarios, while 123 s out of 387 s of sleep of the whole live run lay here. Now
+# all the driver's sleep goes through `_nap`, accumulates, and lands in the same report
+# as the rig's sleep (`kt_live.slept()`).
 SLEPT = [0.0]
 
 
 def pixels(x, y, w=1, h=1):
-    """Прямоугольник экрана ПРЯМЫМ запросом к X: [(r, g, b), …] (Р.69).
+    """Rectangle of the screen by a DIRECT X request: [(r, g, b), …] (R.69).
 
-    Прежде цвет одной точки стоил полного снимка экрана 1920×1080 через
-    `xwd` и двух процессов ImageMagick — 84 мс на чтение и ≈341 чтение за
-    прогон. Здесь тот же XGetImage, которым пользуется и `xwd`, только без
-    файла и без разбора PNG: 0.04 мс.
+    Before, the colour of one point cost a full 1920×1080 screenshot through
+    `xwd` and two ImageMagick processes — 84 ms per read, ≈341 reads per run.
+    Here it is the same XGetImage that `xwd` uses, only without a file and
+    without PNG parsing: 0.04 ms.
 
-    Формат ZPixmap отдаёт по 4 байта на точку (BGRX) при глубине 24;
-    число байт на точку считается из длины данных, а не предполагается.
+    The ZPixmap format gives 4 bytes per point (BGRX) at depth 24;
+    the number of bytes per point is computed from the data length, not assumed.
     """
     img = root.get_image(int(x), int(y), int(w), int(h), X.ZPixmap, 0xFFFFFFFF)
     data = img.data
-    if isinstance(data, str):  # старые python3-xlib отдают str
+    if isinstance(data, str):  # old python3-xlib returns str
         data = data.encode("latin-1")
     n = int(w) * int(h)
     bpp = len(data) // max(n, 1)
@@ -66,7 +66,7 @@ def pixels(x, y, w=1, h=1):
 
 
 def _nap(seconds):
-    """Единственное место, где драйвер спит."""
+    """The only place where the driver sleeps."""
     if seconds <= 0:
         return
     SLEPT[0] += seconds
@@ -89,7 +89,7 @@ def window():
 
     w = walk(root)
     if not w:
-        sys.exit("окно kt-app не найдено (запущено ли приложение?)")
+        sys.exit("kt-app window not found (is the application running?)")
     return w
 
 
@@ -100,11 +100,11 @@ def origin(w):
 
 
 def close_window():
-    """Попросить окно закрыться, как это делает крестик оконного менеджера
-    (WM_DELETE_WINDOW). Именно этот путь перехватывает программа, чтобы
-    спросить про несохранённую работу (Р.49, п.354)."""
+    """Ask the window to close, as the window manager’s close button does
+    (WM_DELETE_WINDOW). This is exactly the path the program intercepts to
+    ask about unsaved work (R.49, item 354)."""
     w = window()
-    # окно eframe лежит внутри рамки openbox — протокол висит на нём самом
+    # the eframe window lies inside the openbox frame — the protocol hangs on it itself
     wm_protocols = d.intern_atom("WM_PROTOCOLS")
     wm_delete = d.intern_atom("WM_DELETE_WINDOW")
     ev = protocol.event.ClientMessage(
@@ -121,11 +121,11 @@ def move(x, y, pause=0.05):
 
 
 def button(pressed, b=1, pause=0.09):
-    """Кнопка мыши. `pause` — сколько ждать после события.
+    """Mouse button. `pause` — how long to wait after the event.
 
-    По умолчанию как было (ручной прогон из командной строки: ждать некому).
-    Каркас живых сценариев передаёт почти ноль и ждёт КАДР сам (Р.68): его
-    ожидание точнее и под нагрузкой растягивается вместе с кадром.
+    Default as before (a manual run from the command line: there is no one to wait for).
+    The live-scenario harness passes almost zero and waits for the FRAME itself (R.68): its wait
+    is more precise, and under load it stretches along with the frame.
     """
     xtest.fake_input(d, X.ButtonPress if pressed else X.ButtonRelease, b)
     d.sync()
@@ -133,7 +133,7 @@ def button(pressed, b=1, pause=0.09):
 
 
 def key(spec, pause=0.05, after=0.12):
-    """Клавиша (с модификаторами через «+»); паузы — см. `button`."""
+    """Key (with modifiers joined by “+”); pauses — see `button`."""
     *mods, name = spec.split("+")
     table = {"ctrl": "Control_L", "shift": "Shift_L", "alt": "Alt_L"}
     mcodes = [d.keysym_to_keycode(XK.string_to_keysym(table[m.lower()])) for m in mods]
@@ -151,10 +151,10 @@ def key(spec, pause=0.05, after=0.12):
 
 
 def hold(spec, secs):
-    """Зажать клавишу на время (разгон пробелом, п.3 р.16).
+    """Hold a key for a while (speed-up with Space, item 3 of round 16).
 
-    Автоповтор X11 при этом шлёт серию KeyPress с repeat — ровно то, на
-    чём ломался прежний обработчик Space.
+    X11 auto-repeat then sends a series of KeyPress events with repeat — exactly
+    what the earlier Space handler broke on.
     """
     *mods, name = spec.split("+")
     table = {"ctrl": "Control_L", "shift": "Shift_L", "alt": "Alt_L"}
@@ -176,20 +176,20 @@ def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "geom"
     ox, oy, w, h = origin(window())
     if cmd == "geom":
-        print(f"окно: экран({ox},{oy}) размер {w}x{h}")
+        print(f"window: screen({ox},{oy}) size {w}x{h}")
     elif cmd == "drag":
         x1, y1, x2, y2 = (int(v) for v in sys.argv[2:6])
         move(ox + x1, oy + y1)
         move(ox + x1, oy + y1)
         button(True)
-        move(ox + x1 + (8 if x2 > x1 else -8), oy + y1)  # порог драга
+        move(ox + x1 + (8 if x2 > x1 else -8), oy + y1)  # drag threshold
         for k in (0.35, 0.7, 1.0):
             move(ox + x1 + (x2 - x1) * k, oy + y1 + (y2 - y1) * k)
         button(False)
         _nap(0.3)
     elif cmd == "draghold":
-        # тянуть и ДЕРЖАТЬ у цели: так проверяется автоскролл у кромки
-        # (медиа-бин, п.1 р.16) — курсор стоит, а список обязан ползти
+        # hold and DRAG to the target: this is how auto-scroll at the edge is verified
+        # (media bin, item 1 round 16) — the cursor stands still, and the list must keep crawling
         x1, y1, x2, y2, secs = (float(v) for v in sys.argv[2:7])
         move(ox + x1, oy + y1)
         move(ox + x1, oy + y1)
@@ -211,7 +211,7 @@ def main():
         button(False, b)
         _nap(0.3)
     elif cmd == "wheel":
-        # колесо: кнопки 4 (вверх) и 5 (вниз); n<0 — вверх
+        # wheel: buttons 4 (up) and 5 (down); n<0 — up
         x, y, n = (int(v) for v in sys.argv[2:5])
         move(ox + x, oy + y)
         move(ox + x, oy + y)
@@ -254,7 +254,7 @@ def main():
             if prev and sum(abs(a - b) for a, b in zip(c, prev)) > 14:
                 out.append(x)
             prev = c
-        print("вертикальные границы по строке", row, ":", out)
+        print("vertical borders along the row", row, ":", out)
     else:
         sys.exit(__doc__)
 

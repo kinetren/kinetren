@@ -9,7 +9,7 @@ publish.workspace = true
 kt-time = { workspace = true }
 kt-model = { workspace = true }
 rubato = { workspace = true }
-# фазовый вокодер питча (Р.48); ту же версию тянет rubato внутри
+# phase vocoder for pitch (R.48); the same version is pulled in by rubato internally
 realfft = { workspace = true }
 
 [dev-dependencies]

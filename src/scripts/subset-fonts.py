@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Сабсеты шрифтов для мультиязычного интерфейса (Р.19, решение п.2).
+"""Font subsets for the multilingual interface (R.19, decision item 2).
 
-Дефолтные шрифты egui (Ubuntu-Light, NotoEmoji, emoji-icon-font, Hack) и
-вендоренный Phosphor не содержат НИ ОДНОГО арабского или иероглифического
-кодпоинта — без своих шрифтов пользователь увидит квадраты-заглушки. Целиком
-Noto Sans CJK весит ~19 МБ, поэтому режем его ровно по символам каталогов
-перевода: получается ~200 КБ, и результат коммитится в assets/.
+The egui default fonts (Ubuntu-Light, NotoEmoji, emoji-icon-font, Hack) and the
+vendored Phosphor contain NOT A SINGLE Arabic or ideographic codepoint — without their own
+fonts the user would see placeholder boxes. Whole Noto Sans CJK weighs ~19 MB, so we cut it
+exactly by the characters of the translation catalogs: the result is ~200 KB,
+and it is committed to assets/.
 
-    python3 scripts/subset-fonts.py            # собрать сабсеты
-    python3 scripts/subset-fonts.py --check    # только проверить покрытие
+    python3 scripts/subset-fonts.py            # build the subsets
+    python3 scripts/subset-fonts.py --check    # only check coverage
 
-Требуется fontTools (pyftsubset). Исходные шрифты в репозиторий НЕ кладутся:
-берутся системные Noto, путь можно задать через --cjk/--arabic.
+Requires fontTools (pyftsubset). The source fonts are NOT put in the repository:
+the system Noto fonts are taken, the path can be set via --cjk/--arabic.
 """
 
 import argparse
@@ -39,21 +39,21 @@ AR_SOURCES = [
     ("/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf", 0),
 ]
 
-# Что рисует какой шрифт. Диапазоны обязаны совпадать с предикатом
-# `bidi::is_arabic` в apps/kt-app/src/i18n/bidi.rs — на их точности держится
-# переупорядочивание арабского.
+# Which font draws what. The ranges must match the predicate
+# `bidi::is_arabic` in apps/kt-app/src/i18n/bidi.rs — the reordering of Arabic
+# depends on their accuracy.
 CJK_RANGES = [(0x2E80, 0x9FFF), (0x3000, 0x303F), (0x3400, 0x4DBF), (0xFF00, 0xFFEF)]
 AR_RANGES = [(0x0600, 0x06FF), (0x0750, 0x077F), (0x08A0, 0x08FF),
              (0xFB50, 0xFDFF), (0xFE70, 0xFEFF)]
 
-# Арабский режем блоком целиком, а не по факту использования: разница ~20 КБ,
-# зато сабсет не приходится пересобирать после каждой правки перевода.
+# Arabic is cut as a whole block, not by actual use: the difference is ~20 KB,
+# but the subset does not have to be rebuilt after every translation edit.
 AR_SUBSET_RANGE = (0x0600, 0x06FF)
 
-# Соединение вязи живёт в этих фичах: без init/medi/fina/isol буквы рассыплются
-# на отдельные формы, и это будет ВИДНО.
+# Cursive joining lives in these features: without init/medi/fina/isol the letters fall apart
+# into separate forms, and that would be VISIBLE.
 AR_FEATURES = "ccmp,locl,init,medi,fina,isol,rlig,liga,calt,mark,mkmk,kern"
-# Упрощённому китайскому шейпинг не нужен вовсе.
+# Simplified Chinese does not need shaping at all.
 CJK_FEATURES = ""
 
 
@@ -62,7 +62,7 @@ def in_ranges(cp, ranges):
 
 
 def catalog_chars():
-    """Все символы всех значений всех каталогов."""
+    """All characters of all values of all catalogs."""
     chars = set()
     value = re.compile(r'^\s*[a-z][a-z0-9_]*\s*=\s*"((?:[^"\\]|\\.)*)"')
     for path in sorted(I18N.glob("*.toml")):
@@ -84,7 +84,7 @@ def split(chars):
 
 
 def ubuntu_light_cmap():
-    """Кодпоинты дефолтного шрифта egui — всё остальное обязано быть в нём."""
+    """Codepoints of the egui default font — everything else must be in it."""
     from fontTools.ttLib import TTFont
     import glob
     hits = glob.glob(str(pathlib.Path.home()
@@ -132,9 +132,9 @@ def main():
     chars = catalog_chars()
     cjk, ar, rest = split(chars)
 
-    # Всё, что не иероглиф и не арабица, обязано покрываться дефолтом egui:
-    # турецкая g с бревисом или типографская кавычка у переводчика должны
-    # ронять сабсет, а не уезжать квадратом к пользователю.
+    # Everything that is neither a CJK ideograph nor Arabic must be covered by the egui default:
+    # a Turkish g with breve or a typographic quote in a translation must
+    # break the subset, not reach the user as a box.
     base = ubuntu_light_cmap()
     if base is not None:
         missing = sorted(c for c in rest if ord(c) > 0x7F and ord(c) not in base)

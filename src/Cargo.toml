@@ -42,8 +42,8 @@ thiserror = "2"
 crossbeam-channel = "0.5"
 rtrb = "0.3"
 eframe = { version = "0.36", features = ["persistence"] }
-# ЖЁСТКО синхронно с wgpu внутри eframe (kt-gpu делит Arc<wgpu::Device>
-# с egui-wgpu — другой мажор = несовместимые типы). Апгрейд только парой.
+# STRICTLY in sync with wgpu inside eframe (kt-gpu shares Arc<wgpu::Device>
+# with egui-wgpu — a different major = incompatible types). Upgrade only as a pair.
 wgpu = "30"
 pollster = "0.4"
 glam = "0.30"
@@ -54,40 +54,40 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 realfft = "3"
 
 [profile.release]
-# line tables вместо полных символов: полный debug раздувал target/release
-# до 3+ ГБ, а для профайлинга достаточно строк (п.7 р.12)
+# line tables instead of full symbols: full debug bloated target/release
+# to 3+ GB, while line tables are enough for profiling (item 7 round 12)
 debug = 1
 
-# Релизная поставка: без debug-инфы (release с debug=true — 500+МБ),
-# со strip и LTO. Собирается scripts/release-build.sh в контейнере со
-# старым glibc — см. packaging/. panic=abort не ставим — семантика
-# паник остаётся той же, что в тестируемых профилях.
+# Release shipment: without debug info (release with debug=true — 500+ MB),
+# with strip and LTO. Built by scripts/release-build.sh in a container with
+# an old glibc — see packaging/. We do not set panic=abort — the semantics
+# of panics stays the same as in the tested profiles.
 [profile.dist]
 inherits = "release"
-# Р.49 п.355: имена функций в поставке ОСТАЮТСЯ. Панический хук пишет
-# бэктрейс, и отчёт из голых адресов — театр: разобрать его нельзя ни
-# пользователю, ни нам (сборка у каждого своя). `strip = "debuginfo"`
-# снимает тяжёлую отладочную информацию (номера строк, типы), но таблицу
-# символов оставляет; `debug = 1` кормит её содержимым.
-# Цена измерена на этой ветке: бинарь 28.5 → 33.6 МиБ (+5.1 МиБ, +18 %),
-# в тарболе (gzip -9) 12.1 → 12.8 МиБ, то есть +0.77 МиБ (+6 %).
-# Без символов бэктрейс теряет 634 имени и становится столбиком адресов.
+# R.49 item 355: function names in the shipment STAY. The panic hook writes
+# a backtrace, and a report of bare addresses is theater: it cannot be parsed by
+# the user, nor by us (each build is its own). `strip = "debuginfo"`
+# removes heavy debug information (line numbers, types), but keeps the
+# symbol table; `debug = 1` fills it with content.
+# The cost was measured on this branch: binary 28.5 → 33.6 MiB (+5.1 MiB, +18 %),
+# in the tarball (gzip -9) 12.1 → 12.8 MiB, i.e. +0.77 MiB (+6 %).
+# Without symbols the backtrace loses 634 names and turns into a column of addresses.
 debug = 1
 strip = "debuginfo"
 lto = "thin"
 codegen-units = 1
 
-# Аудио-DSP и композитинг должны быть быстрыми и в dev-сборке.
+# Audio DSP and compositing must be fast in the dev build too.
 #
-# `package."*"` — это только ЗАВИСИМОСТИ; свои крейты он не покрывает, и до
-# Р.43 они собирались с opt-level 0. На плотном монтаже пользователя
-# аудио-рендер в dev уходил за 100 % реального времени (кольцо пустеет,
-# растут callback-underrun'ы), в релизе то же место занимало 13 %.
-# Замер `kt-cli probe … --time` на problems1 его проекта:
-#   opt-level 0 — 119 %, 1 — 21 %, 2 — 15 % реального времени.
-# Взят 1: задача решена, сборка остаётся быстрой, отладка живой. Проверки
-# переполнения и debug_assert! от уровня оптимизации НЕ зависят и остаются
-# включёнными — сеть безопасности dev-профиля цела (п.301).
+# `package."*"` covers ONLY DEPENDENCIES; it does not cover our own crates, and before
+# R.43 they were built with opt-level 0. On a dense edit of the user’s
+# project, audio render in dev went over 100 % of real time (the ring empties,
+# callback underruns grow), in release the same spot took 13 %.
+# Measurement `kt-cli probe … --time` on problems1 of the owner’s project:
+#   opt-level 0 — 119 %, 1 — 21 %, 2 — 15 % of real time.
+# Level 1 was chosen: the task is solved, the build stays fast, debugging stays live. Checks
+# for overflow and debug_assert! do NOT depend on the optimization level and remain
+# enabled — the dev profile’s safety net is intact (item 301).
 [profile.dev]
 opt-level = 1
 

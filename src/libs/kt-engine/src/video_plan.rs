@@ -1,10 +1,10 @@
-//! План кадра (Р.29): СТРУКТУРА композиции момента t, построенная до
-//! выбора бэкенда. Порядок Vegas, пары dissolve, соло-фейды, уровни —
-//! решаются один раз в `VideoRenderer` (video.rs, build_plan); исполнителей
-//! два: CPU (`compose_from_cache*` — байт-эталон и фолбэк, инвариант №11)
-//! и GPU (крейт kt-gpu, wgpu f32 — инжектится сверху, kt-engine от него
-//! не зависит). «Путь рендеринга один» (инвариант №7) = один построитель
-//! плана; бэкенд — параметр исполнения, не второй путь.
+//! Frame plan (R.29): the STRUCTURE of the composition at moment t, built before
+//! the choice of backend. The Vegas order, dissolve pairs, solo fades, levels —
+//! are decided once in `VideoRenderer` (video.rs, build_plan); there are
+//! two executors: CPU (`compose_from_cache*` — the byte reference and fallback, invariant No. 11)
+//! and GPU (crate kt-gpu, wgpu f32 — injected from above, kt-engine does not
+//! depend on it). “One rendering path” (invariant No. 7) = one plan builder;
+//! the backend is an execution parameter, not a second path.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -14,89 +14,89 @@ use kt_media::VideoFrame;
 use kt_model::FxInstance;
 use kt_time::Tick;
 
-/// Разрешённая 3D-камера слоя: с Р.44 живёт в kt-fx (`kt_fx::geom::Cam3d`)
-/// — Pan3d считается ОБОИМИ бэкендами, и общая математика гомографии
-/// лежит рядом с остальной общей параметрикой (`pan_frame`/`cam_at`).
+/// The layer's resolved 3D camera: since R.44 it lives in kt-fx (`kt_fx::geom::Cam3d`)
+/// — Pan3d is computed by BOTH backends, and the shared homography math
+/// sits alongside the rest of the shared parametrics (`pan_frame`/`cam_at`).
 pub use kt_fx::geom::Cam3d;
 
-/// Источник одного слоя: пре-FX кадр (уже прочитан из кэша при построении
-/// плана — recency бампнут ВСЕГДА, полоски прогретости не «остывают») +
-/// цепочка FX клипа.
+/// The source of one layer: the pre-FX frame (already read from the cache when the
+/// plan is built — recency is ALWAYS bumped, the coverage bars do not “cool down”) +
+/// the clip's FX chain.
 pub struct LayerSrc<'a> {
     pub source: SourceId,
-    /// Индекс пре-FX кадра в кэше (pts источника в тиках).
+    /// Index of the pre-FX frame in the cache (source pts in ticks).
     pub cache_idx: i64,
-    /// СЕРИЙНЫЙ НОМЕР содержимого кадра (Р.53, п.409). Адреса
-    /// `(source, cache_idx, размер)` мало: у генератора с новыми
-    /// параметрами и у вернувшегося вместо заглушки файла адрес ТОТ ЖЕ,
-    /// а байты другие — по адресу GPU отдавал бы старую текстуру и
-    /// старый мемоизированный композит (t496, t211).
+    /// The CONTENT SERIAL NUMBER of the frame (R.53, item 409). The addresses
+    /// `(source, cache_idx, size)` are not enough: for a generator with new
+    /// parameters, and for a file that came back in place of a placeholder, the address is THE SAME,
+    /// while the bytes differ — by address the GPU would return the old texture and the
+    /// old memoized composite (t496, t211).
     pub content: u64,
-    /// ВХОД ЦЕПОЧКИ слоя (Р.46, п.318; уточнено Р.58, п.459): кадр,
-    /// который получает цепочка, в `src_scale` раз крупнее Quality. 1 —
-    /// ровно Quality, как было всегда. У ЛИСТА это ступень декода; у
-    /// ЛЕНТЫ — `min(ступень ленты, сколько просит цепочка ЭТОГО
-    /// экземпляра)`: ступень ленты одна на всех её экземпляров, а
-    /// потребить её может не всякая цепочка (`NestSrc::fit_to`).
+    /// The layer's CHAIN INPUT (R.46, item 318; refined in R.58, item 459): the frame
+    /// that the chain receives is `src_scale` times larger than Quality. 1 —
+    /// exactly Quality, as it always was. For a LEAF this is the decode scale step;
+    /// for a REEL it is `min(the reel's step, how much this instance's chain asks for)`:
+    /// the reel's step is one for all its instances, but
+    /// not every chain can consume it (`NestSrc::fit_to`).
     pub src_scale: u32,
-    /// Вход слоя: готовый пре-FX кадр или ПОДДЕРЕВО (Р.50).
+    /// Layer input: a ready pre-FX frame or a SUBTREE (R.50).
     pub input: LayerInput<'a>,
-    /// Цепочка С УЖЕ применённой автоматизацией (Р.30): кривые разрешаются
-    /// один раз при построении плана — оба исполнителя видят готовые
-    /// параметры. Без кривых — заём из VideoClip (ноль клонов).
+    /// The chain WITH automation already applied (R.30): curves are resolved
+    /// once when the plan is built — both executors see the ready
+    /// parameters. Without curves — a borrow from VideoClip (zero clones).
     pub fx: Cow<'a, [FxInstance]>,
-    /// Ключ пост-FX мемоизации CPU-пути.
+    /// Post-FX memoization key of the CPU path.
     pub fx_hash: u64,
-    /// Прогресс клипа 0..1 (CamMotion).
+    /// Clip progress 0..1 (CamMotion).
     pub u: f64,
-    /// Some — в цепочке есть 3D-эффект (камера разрешена по t). С Р.44
-    /// Pan3d считают ОБА бэкенда (обратная гомография в слитом проходе);
-    /// None при 3D в цепочке — эффект пропускается, как раньше без камеры.
+    /// Some — the chain has a 3D effect (the camera is resolved by t). Since R.44
+    /// Pan3d is computed by BOTH backends (inverse homography in the fused pass);
+    /// None when there is 3D in the chain — the effect is skipped, as before without a camera.
     pub cam3d: Option<Cam3d>,
-    /// Смешивание кадров (Р.37 С5, режим «Кадры: смешивание»): ЧЕМ и с
-    /// каким весом смешан `frame`. `None` — «ближайший» или варпа нет,
-    /// путь байт-в-байт прежний.
+    /// Frame blending (R.37 C5, the mode “Frames: blending”): WHAT and with what
+    /// weight `frame` is blended. `None` — “nearest” or there is no warp,
+    /// the path stays byte-for-byte as before.
     ///
-    /// Сам БЛЕНД сделан ЗДЕСЬ, в общем коде плана, а не в исполнителях:
-    /// инвариант №7 — «код композиции один, бэкенд это параметр
-    /// исполнения». Иначе одну и ту же арифметику пришлось бы держать
-    /// синхронной в CPU-ядре и в WGSL, а это ровно тот класс расхождений,
-    /// на котором превью и экспорт показывают разное.
+    /// The BLEND itself is done HERE, in the plan's common code, not in the executors:
+    /// invariant No. 7 — “the composition code is one, the backend is an execution
+    /// parameter”. Otherwise the same arithmetic would have to be kept
+    /// in sync in the CPU kernel and in WGSL, and that is exactly the class of divergence
+    /// on which preview and export show different things.
     ///
-    /// Поле живёт в слое, а НЕ отдельной веткой `PlanLayer`: смешивание —
-    /// свойство источника ОДНОГО клипа, а такой клип может стоять под
-    /// любой из веток, включая обе половины `Dissolve`.
+    /// The field lives in the layer, NOT as a separate `PlanLayer` branch: blending is a
+    /// property of the source of ONE clip, and such a clip may stand under
+    /// any of the branches, including both halves of a `Dissolve`.
     pub blend: Option<LayerBlend>,
-    /// РЕЖИМ НАЛОЖЕНИЯ этого слоя на слои НИЖЕ (Р.62, change B).
-    /// `Normal` — прежний `alpha_over` байт-в-байт, и на нём стоит
-    /// GOLDEN_VIDEO; остальные считаются ядром `blend_over` (CPU) и его
-    /// WGSL-зеркалом. Поле живёт в слое, а не отдельной веткой
-    /// `PlanLayer`: наложение — свойство ЛЮБОГО слоя, а не особого вида.
+    /// BLEND MODE of this layer onto the layers BELOW (R.62, change B).
+    /// `Normal` — the previous `alpha_over` byte for byte, and GOLDEN_VIDEO rests on it;
+    /// the others are computed by the `blend_over` kernel (CPU) and its
+    /// WGSL mirror. The field lives in the layer, not as a separate
+    /// `PlanLayer` branch: overlay is a property of ANY layer, not of a special kind.
     pub blend_mode: kt_model::BlendMode,
-    /// Контекст ведущего узла «Геометрия» (Р.62): вид источника и
-    /// разрешённое правило приведения. Оба исполнителя подают его в
-    /// планировщик цепочки — рамка считается одним кодом.
+    /// Context of the leading “Geometry” node (R.62): the source kind and the
+    /// allowed conform rule. Both executors pass it to
+    /// the chain planner — the frame is computed by one code.
     pub lead: Option<kt_fx::conform::LeadCtx>,
 }
 
-/// Вход слоя: кадр или суб-композит вложенной ленты (Р.50, волна Б).
+/// Layer input: a frame or a sub-composite of a nested reel (R.50, wave B).
 ///
-/// Вложение НЕ получает своей ветки `PlanLayer` намеренно: это клип, у него
-/// есть уровень, сольный фейд, `u`, камера, и оно может быть половиной
-/// `Dissolve`. Отдельная ветка продублировала бы логику уровня и фейдов в
-/// ОБОИХ исполнителях — ровно то, против чего стоит инвариант 7. Меняется
-/// только то, ОТКУДА берётся пре-FX кадр слоя.
+/// A nesting does NOT get a `PlanLayer` branch of its own, on purpose: it is a clip, it has
+/// a level, a solo fade, `u`, a camera, and it may be a half of a
+/// `Dissolve`. A separate branch would duplicate the logic of level and fades in
+/// BOTH executors — exactly what invariant 7 is against. Only the
+/// SOURCE of the layer's pre-FX frame changes.
 pub enum LayerInput<'a> {
-    /// Пре-FX кадр; None — голод. Исполнители решают сами: CPU может
-    /// вернуть мемоизированный пост-FX кадр и без него, GPU — нет.
+    /// Pre-FX frame; None — starvation. The executors decide for themselves: the CPU may
+    /// return a memoized post-FX frame even without it, the GPU cannot.
     Frame(Option<Arc<VideoFrame>>),
-    /// Поддерево: план ленты, собранный на ВНУТРЕННЕМ времени экземпляра.
+    /// Subtree: the reel's plan, assembled on the instance's INNER time.
     Nest(Box<NestSrc<'a>>),
 }
 
 impl<'a> LayerInput<'a> {
-    /// Готовый кадр, если вход — кадр. Для поддерева всегда `None`:
-    /// его ещё надо исполнить.
+    /// A ready frame, if the input is a frame. For a subtree it is always `None`:
+    /// it still has to be executed.
     pub fn frame(&self) -> Option<&Arc<VideoFrame>> {
         match self {
             LayerInput::Frame(f) => f.as_ref(),
@@ -112,43 +112,43 @@ impl<'a> LayerInput<'a> {
     }
 }
 
-/// Поддерево вложения.
+/// Subtree of the nesting.
 pub struct NestSrc<'a> {
-    /// Адрес ленты — он же `SourceId` суб-композита в кэше.
+    /// The reel's address — it is also the `SourceId` of the sub-composite in the cache.
     pub seq: kt_model::MediaId,
-    /// Хэш РЕДАКЦИИ ленты: правка внутри не трогает ни одного поля
-    /// экземпляра, и без него мемо отдавало бы стейл.
+    /// The hash of the reel's REVISION: an edit inside touches no field of the
+    /// instance, and without it the memo would return stale data.
     pub content_hash: u64,
-    /// Внутреннее время, на котором собран план (ключ мемоизации).
-    /// НЕПРЕРЫВНО (Р.56, п.448): у ленты нет кадров, к которым можно
-    /// прижаться, а округление превращало анимацию внутри замедленной
-    /// композиции в ступеньки по два кадра.
+    /// The inner time at which the plan was assembled (the memoization key).
+    /// CONTINUOUS (R.56, item 448): a reel has no frames to
+    /// snap to, and rounding turned the animation inside a slowed
+    /// composition into two-frame steps.
     pub inner_t: Tick,
-    /// Смешивание кадров унаследовано на содержимое (Р.56, п.448): листья
-    /// внутри читают ПАРУ. Флаг — часть ключа мемоизации (`nest_memo_key`)
-    /// и ключа GPU-плана: те же лента и время в двух режимах дают разные
-    /// байты.
+    /// Frame blending is inherited onto the content (R.56, item 448): the leaves
+    /// inside read the PAIR. The flag is part of the memoization key (`nest_memo_key`)
+    /// and of the GPU plan key: the same reel and time in two modes give different
+    /// bytes.
     pub blend: bool,
-    /// Ступень ЛЕНТЫ (Р.50 Б5): `plan.out_w == nest_scale × Quality`
-    /// родителя. Она ОДНА на ленту (максимум по всем экземплярам,
-    /// `nest_scales`) — иначе у внутреннего листа было бы два ключа кэша,
-    /// две полоски и два заказа (t450, t312/t317).
+    /// The reel's STEP (R.50 B5): `plan.out_w == nest_scale × Quality`
+    /// of the parent. It is ONE per reel (the maximum over all instances,
+    /// `nest_scales`) — otherwise the inner leaf would have two cache keys,
+    /// two coverage bars and two orders (t450, t312/t317).
     ///
-    /// ВХОД ЦЕПОЧКИ этого экземпляра — другое число (`LayerSrc.src_scale`):
-    /// цепочка без ресемпла (пустая, одна сила слоя, ведущий стоп, только
-    /// барьеры) ступени не потребляет, и S×-кадр никто не вернул бы в
-    /// Quality. Разошлись — исполнитель ВПИСЫВАЕТ суб-композит перед
-    /// цепочкой (`fit_to`), Р.58 п.459.
+    /// The CHAIN INPUT of this instance is a different number (`LayerSrc.src_scale`):
+    /// a chain without resample (empty, a single layer strength, a leading stop, only
+    /// barriers) does not consume the step, and an S× frame would never be returned to
+    /// Quality. If they diverge, the executor FITS the sub-composite before the
+    /// chain (`fit_to`), R.58 item 459.
     pub nest_scale: u32,
     pub plan: FramePlan<'a>,
 }
 
 impl NestSrc<'_> {
-    /// Куда вписать суб-композит ПЕРЕД цепочкой слоя. `None` — ступень
-    /// ленты равна входу цепочки, шага нет и байты прежние.
+    /// Where to fit the sub-composite BEFORE the layer's chain. `None` — the reel's step
+    /// equals the chain input, there is no step and the bytes are as before.
     ///
-    /// Решение ОДНО на оба бэкенда (инвариант 7): CPU зовёт `fit_into`,
-    /// GPU ставит `Resample` во весь кадр — это её зеркало.
+    /// The decision is ONE for both backends (invariant 7): the CPU calls `fit_into`,
+    /// the GPU places a `Resample` to the full frame — its mirror.
     pub fn fit_to(&self, src_scale: u32, out_w: u32, out_h: u32) -> Option<(u32, u32)> {
         if self.nest_scale == src_scale {
             return None;
@@ -158,8 +158,8 @@ impl NestSrc<'_> {
             "chain input {src_scale}x is above the reel stage {}x",
             self.nest_scale
         );
-        // суб-план собран в БАЗЕ ленты × ступень: база — холст родителя
-        // либо, у ленты со своим растром (Р.62), рамка правила приведения
+        // the sub-plan is assembled in the reel's BASE × step: the base is the parent's canvas
+        // or, for a reel with its own raster (R.62), the conform rule's frame
         let s = self.nest_scale.max(1);
         let (bw, bh) = (self.plan.out_w / s, self.plan.out_h / s);
         let _ = (out_w, out_h);
@@ -167,19 +167,19 @@ impl NestSrc<'_> {
     }
 }
 
-/// Чем и как смешан кадр слоя: сосед (для ключей кэша) и вес в 4096-х.
+/// What and how the layer's frame is blended with: the neighbour (for cache keys) and the weight in 4096ths.
 #[derive(Debug, Clone, Copy)]
 pub struct LayerBlend {
     pub cache_idx: i64,
     pub k: u32,
-    /// Серийный номер содержимого СОСЕДА (п.409): смешанный кадр —
-    /// функция обоих, значит в ключ идут оба.
+    /// The content serial number of the NEIGHBOUR (item 409): the blended frame is a
+    /// function of both, so both go into the key.
     pub content: u64,
 }
 
-/// Сольный фейд С ВИДОМ (Р.33 С4): вторая сторона — прозрачность, поэтому
-/// кадр один, а форму даёт то же ядро перехода. `incoming` — клип
-/// ПОЯВЛЯЕТСЯ (a = пустота, b = кадр); иначе уходит.
+/// A solo fade WITH a KIND (R.33 C4): the second side is transparency, so
+/// there is one frame, and the shape is given by the same transition kernel. `incoming` — the clip
+/// APPEARS (a = emptiness, b = frame); otherwise it leaves.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SoloFade {
     pub k: u32,
@@ -189,36 +189,36 @@ pub struct SoloFade {
 
 #[allow(clippy::large_enum_variant)]
 pub enum PlanLayer<'a> {
-    /// Обычный слой или соло-фейд. `alpha_k` (0..4096) — уровень × вес
-    /// фейда; `scale_alpha` — прогонять через масштабирование альфы даже
-    /// при 4096 (v1-семантика соло-фейда: кадр без альфы получает A=255,
-    /// а не копию сырых байт альфы). `fade` — сольный фейд НЕ-кроссфейдом
-    /// (Р.33): вес тогда не в alpha_k, а в ядре.
+    /// An ordinary layer or a solo fade. `alpha_k` (0..4096) — level × the fade
+    /// weight; `scale_alpha` — run through alpha scaling even
+    /// at 4096 (v1 semantics of the solo fade: a frame without alpha gets A=255,
+    /// not a copy of the raw alpha bytes). `fade` — a solo fade that is NOT a crossfade
+    /// (R.33): the weight then is not in alpha_k, but in the kernel.
     One { src: LayerSrc<'a>, alpha_k: u32, scale_alpha: bool, fade: Option<SoloFade> },
-    /// Пара перехода: при кроссфейде dst = a·(1−k) + b·k (k из 4096
-    /// долей), иначе форму задаёт `mix`; затем альфа × alpha_k (уровни
-    /// соседей уже смешаны тем же весом при построении).
+    /// Transition pair: for a crossfade dst = a·(1−k) + b·k (k out of 4096
+    /// parts), otherwise the shape is given by `mix`; then alpha × alpha_k (the levels
+    /// of the neighbours are already blended with the same weight at build time).
     Dissolve { a: LayerSrc<'a>, b: LayerSrc<'a>, k: u32, alpha_k: u32, mix: crate::TransMix },
 }
 
-/// План композиции кадра момента t: слои back-to-front (порядок Vegas
-/// уже применён), размер — Quality вызывающего.
+/// Composition plan of the frame at moment t: layers back-to-front (the Vegas order
+/// is already applied), size — the caller's Quality.
 pub struct FramePlan<'a> {
     pub t: Tick,
     pub out_w: u32,
     pub out_h: u32,
     pub layers: Vec<PlanLayer<'a>>,
-    /// Мемоизировать пост-FX кадры в kt-cache (только превью). В экспорте
-    /// каждый t композится РОВНО один раз — мемоизация там не даёт хитов,
-    /// зато полноразмерные пост-FX кадры вытесняли ещё не использованные
-    /// пре-кадры соседних слоёв из экспортного кэша (Р.31 п.4: «рендер
-    /// поломан» — missing layers на многослойном монтаже с FX).
+    /// Memoize post-FX frames in kt-cache (preview only). In export
+    /// each t is composited EXACTLY once — memoization gives no hits there,
+    /// but full-size post-FX frames were evicting the not-yet-used
+    /// pre-frames of neighbouring layers from the export cache (R.31 item 4: “the render
+    /// is broken” — missing layers on a multi-layer edit with FX).
     pub memoize_postfx: bool,
 }
 
-/// Ошибка GPU-исполнителя. `DeviceLost` — вызывающий «отравляет» GPU до
-/// конца сессии (CPU-фолбэк + notice); `TooLarge` — фолбэк только для
-/// этого плана (источник больше лимита текстур устройства).
+/// GPU executor error. `DeviceLost` — the caller “poisons” the GPU until the end
+/// of the session (CPU fallback + notice); `TooLarge` — a fallback only for
+/// this plan (the source is larger than the device's texture limit).
 #[derive(Debug)]
 pub enum GpuExecError {
     DeviceLost,
@@ -227,29 +227,29 @@ pub enum GpuExecError {
         w: u32,
         h: u32,
     },
-    /// Плана такого вида GPU-исполнитель ещё не умеет — фолбэк на CPU
-    /// ТОЛЬКО для этого плана, как `TooLarge`. Не «отравление»: устройство
-    /// живо, и следующий кадр может снова пойти на GPU.
+    /// The GPU executor cannot yet handle a plan of this kind — a fallback to the CPU
+    /// ONLY for this plan, like `TooLarge`. Not “poisoning”: the device
+    /// is alive, and the next frame may go to the GPU again.
     Unsupported(&'static str),
 }
 
-/// Паспорт бэкенда (notice и строка перф-панели).
+/// Backend passport (notice and perf-panel line).
 #[derive(Debug, Clone)]
 pub struct GpuBackendInfo {
     pub name: String,
     pub backend: String,
-    /// Софт-растеризатор (llvmpipe/lavapipe) — корректен, считается «GPU
-    /// есть» (Р.29); флаг только для диагностики.
+    /// A software rasterizer (llvmpipe/lavapipe) is correct and counts as “GPU
+    /// present” (R.29); the flag is for diagnostics only.
     pub software: bool,
 }
 
-/// GPU-исполнитель плана (реализация — крейт kt-gpu; kt-engine знает
-/// только трейт и получает исполнителя инжекцией сверху).
+/// The GPU executor of the plan (implementation — the kt-gpu crate; kt-engine knows
+/// only the trait and receives the executor by injection from above).
 pub trait VideoGpuExec: Send + Sync {
-    /// План → RGBA8 straight в `out` (readback). Ok(complete) — те же
-    /// правила «playback не ждёт» (инвариант №5), что у CPU-исполнителя;
-    /// отличие одно: мемоизированный пост-FX кадр CPU-пути GPU не видит,
-    /// слой без пре-FX кадра для него всегда голод.
+    /// Plan → straight RGBA8 into `out` (readback). Ok(complete) — the same
+    /// “playback does not wait” rules (invariant No. 5) as the CPU executor;
+    /// there is one difference: the GPU does not see the memoized post-FX frame of the CPU path,
+    /// so a layer without a pre-FX frame is always starvation for it.
     fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError>;
     fn info(&self) -> &GpuBackendInfo;
 }

@@ -1,5 +1,5 @@
-//! Аудио-узлы цепочки (Р.47): Freeverb (дословный переезд из lib.rs) и —
-//! со следующего шага Ка1 — enum AudioNode со всеми эффектами.
+//! Audio nodes of the chain (R.47): Freeverb (a verbatim move from lib.rs) and —
+//! from the next step of Ka1 — enum AudioNode with all the effects.
 
 use super::primitives::{
     ALLPASS_TUNINGS, Allpass, COMB_TUNINGS, Comb, STEREO_SPREAD, SmoothedParam, tail_frames_for,
@@ -7,8 +7,8 @@ use super::primitives::{
 use crate::CH;
 use kt_time::{AUDIO_SAMPLE_RATE, Tick};
 
-/// Стерео-freeverb. Смена delay пересоздаёт линии (это структурная смена
-/// геометрии — неизбежно), но wet/dry сглажены и НЕ трогают буферы.
+/// Stereo freeverb. Changing delay re-creates the lines (this is a structural change of
+/// the geometry — unavoidable), but wet/dry are smoothed and do NOT touch the buffers.
 pub struct Freeverb {
     combs: [Vec<Comb>; CH],
     allpasses: [Vec<Allpass>; CH],
@@ -17,13 +17,13 @@ pub struct Freeverb {
     damp: f32,
     feedback: f32,
     wet_gain: f32,
-    /// Пред-задержка входа реверба (Р.33 С5): кольцо на канал. Пустое —
-    /// прежний путь байт-в-байт.
+    /// Pre-delay of the reverb input (R.33 C5): a ring per channel. Empty —
+    /// the previous path byte-for-byte.
     predelay: [Vec<f32>; CH],
     pre_pos: usize,
     predelay_ms: f32,
-    /// Ширина стерео-хвоста 0..1: 1 — прежний «настоящий» стереореверб,
-    /// 0 — общий моно-хвост на оба канала.
+    /// Stereo tail width 0..1: 1 — the previous “real” stereo reverb,
+    /// 0 — a common mono tail for both channels.
     width: f32,
 }
 
@@ -86,9 +86,9 @@ impl Freeverb {
         self.feedback = decay.clamp(0.0, 0.98);
         self.wet_gain = wet_gain.max(0.0);
         self.width = width.clamp(0.0, 1.0);
-        // структурная смена геометрии: пересоздание допускается только при
-        // реально другом delay (порог 0.5 мс, как в старом коде, но wet/dry
-        // это не трогает); пред-задержка — такая же геометрия
+        // structural change of geometry: re-creation is allowed only for a
+        // really different delay (threshold 0.5 ms, as in the old code, but wet/dry
+        // does not touch this); pre-delay — the same geometry
         if (delay_ms - self.delay_ms).abs() > 0.5 || (predelay_ms - self.predelay_ms).abs() > 0.5 {
             let keep_wet = self.wet;
             *self =
@@ -97,20 +97,20 @@ impl Freeverb {
         }
     }
 
-    /// Только цель wet-mix (автоматизация) — сглаженно, буферы не трогаются.
+    /// Only the wet-mix target (automation) — smoothed, buffers not touched.
     pub fn set_mix(&mut self, mix: f32) {
         self.wet.set_target(mix.clamp(0.0, 1.0));
     }
 
-    /// Хвост: время затухания до −60 dB (t60) по максимальной comb-линии.
+    /// Tail: decay time to −60 dB (t60) along the longest comb line.
     pub fn tail(&self) -> Tick {
         let max_len = self.combs[CH - 1].iter().map(|c| c.buf.len()).max().unwrap_or(1);
         tail_frames_for(max_len as f32, self.feedback)
     }
 
     pub fn process(&mut self, samples: &mut [f32]) {
-        // прежний путь (без пред-задержки, полная ширина) остаётся
-        // ДОСЛОВНЫМ: на нём стоит GOLDEN_AUDIO
+        // the previous path (without pre-delay, full width) remains
+        // VERBATIM: GOLDEN_AUDIO relies on it
         let plain = self.predelay[0].is_empty() && self.width >= 1.0;
         for frame in samples.chunks_exact_mut(CH) {
             let wet_gain = self.wet.tick();
@@ -147,7 +147,7 @@ impl Freeverb {
                 wets[ch] = wet;
             }
             self.pre_pos = self.pre_pos.wrapping_add(1);
-            // ширина: 1 — каналы как есть, 0 — общий моно-хвост
+            // width: 1 — channels as they are, 0 — a common mono tail
             let (a, b) = (0.5 + 0.5 * self.width, 0.5 - 0.5 * self.width);
             for ch in 0..CH {
                 let other = wets[(ch + 1) % CH];
@@ -167,8 +167,8 @@ impl Freeverb {
             for a in &mut self.allpasses[ch] {
                 a.buf.fill(0.0);
             }
-            // predelay тоже держит материал (до 200 мс) — без зачистки он
-            // протекал в хвост после seek (t319, Р.47 п.324)
+            // predelay also holds material (up to 200 ms) — without clearing it
+            // it leaked into the tail after a seek (t319, R.47 item 324)
             self.predelay[ch].fill(0.0);
         }
         self.pre_pos = 0;
@@ -185,25 +185,25 @@ pub(crate) fn reverb_tail_for_delay(delay_ms: f32, decay: f32) -> Tick {
 }
 
 // ---------------------------------------------------------------------------
-// Узловая цепочка (Р.47, п.325): обработка идёт В ПОРЯДКЕ СЛОТОВ
+// Node chain (R.47, item 325): processing goes IN SLOT ORDER
 // ---------------------------------------------------------------------------
 
 use kt_model::{AutoProfiles, FxInstance};
 
-/// Правила узла:
-/// - `process(buf, pos)` — pos = клип-локальный кадр начала буфера
-///   (детерминизм LFO/сеток: значение — функция позиции, не счётчика);
-/// - `apply(fx, structural)` ставит БАЗЫ параметров (и пересоздаёт буферы
-///   только при structural или реальной смене геометрии);
-/// - `set_targets(auto, slot, s)` зовётся раз в чанк ТОЛЬКО при непустом
-///   `auto` (гейт produce, байты старых цепочек) — узел ставит цели
-///   сглаживания по своим кривым;
-/// - узел обязан переживать `seam` (состояние живёт) и дозванивать на
-///   нулевом входе в хвосте (`tail()` > 0 ⇒ хвост честный).
+/// Node rules:
+/// - `process(buf, pos)` — pos = clip-local frame of the buffer start
+///   (LFO/grid determinism: the value is a function of the position, not of a counter);
+/// - `apply(fx, structural)` sets the parameter BASES (and re-creates the buffers
+///   only on structural or a real geometry change);
+/// - `set_targets(auto, slot, s)` is called once per chunk ONLY for a non-empty
+///   `auto` (produce gate, bytes of old chains) — the node sets the smoothing
+///   targets along its curves;
+/// - a node must survive `seam` (the state lives on) and ring out on zero input
+///   in the tail (`tail()` > 0 ⇒ the tail is honest).
 pub enum AudioNode {
     Gain(GainNode),
-    /// Маркер силы слоя: снапшот сухой стороны и бленд исполняет
-    /// `produce()` — узлу нужен межузловой буфер, которым он не владеет.
+    /// Layer-strength marker: the dry-side snapshot and the blend are executed by
+    /// `produce()` — the node needs an inter-node buffer, which it does not own.
     LayerMix,
     Reverb(ReverbNode),
     Filter(Box<FilterNode>),
@@ -225,8 +225,8 @@ pub enum AudioNode {
 }
 
 impl AudioNode {
-    /// Построить узел под слот. Не-аудио виды узла не получают (цепочка
-    /// их не видит — они прозрачны).
+    /// Build the node for a slot. Non-audio node kinds do not get one (the chain
+    /// does not see them — they are transparent).
     pub(crate) fn build(fx: &FxInstance) -> Option<AudioNode> {
         match fx {
             FxInstance::Gain { .. } => Some(AudioNode::Gain(GainNode::new())),
@@ -321,14 +321,14 @@ impl AudioNode {
                 AudioNode::Limiter(n),
                 FxInstance::Limiter { threshold_db, ceiling_db, lookahead_ms, release_ms },
             ) => n.apply(*threshold_db, *ceiling_db, *lookahead_ms, *release_ms, structural),
-            // движок питча — настройка ПРОЕКТА: он приезжает не из слота,
-            // а из ChainOpts (см. ClipProcessor::new_with_opts)
+            // the pitch engine — a PROJECT setting: it does not come from the slot,
+            // but from ChainOpts (see ClipProcessor::new_with_opts)
             (AudioNode::Pitch(n), FxInstance::PitchShift { semitones, cents }) => {
                 let engine = n.engine;
                 n.apply(*semitones, *cents, engine);
             }
-            // отпечаток цепочки совпал — виды по слотам совпадают по
-            // построению; сюда можно попасть только ошибкой сопоставления
+            // the chain fingerprint matched — the kinds by slots match by
+            // construction; one can get here only through a matching error
             _ => debug_assert!(false, "node/slot kind mismatch"),
         }
     }
@@ -346,7 +346,7 @@ impl AudioNode {
             AudioNode::Tremolo(n) => n.set_targets(auto, slot, s),
             AudioNode::AutoPan(n) => n.set_targets(auto, slot, s),
             AudioNode::Limiter(n) => n.set_targets(auto, slot, s),
-            // питч читает кривые ПО ПОЗИЦИИ ЗЕРНА (bind), цели ему не нужны
+            // pitch reads curves BY GRAIN POSITION (bind), it does not need targets
             AudioNode::Pitch(_) => {}
             AudioNode::Vibrato(n) => n.set_targets(auto, slot, s),
             AudioNode::Chorus(n) => n.set_targets(auto, slot, s),
@@ -358,9 +358,9 @@ impl AudioNode {
         }
     }
 
-    /// Привязать LFO-узлы к их кривым частоты и длине клипа (копия точек —
-    /// в process модель не читается). Зовётся из apply_params/set_auto/
-    /// set_clip_len процессора.
+    /// Bind the LFO nodes to their frequency and clip-length curves (a copy of the points —
+    /// the model is not read in process). Called from apply_params/set_auto/
+    /// set_clip_len of the processor.
     pub(crate) fn bind_lfo(&mut self, auto: &AutoProfiles, slot: usize, clip_len: i64) {
         match self {
             AudioNode::Tremolo(n) => n.lfo.bind(auto, slot, clip_len),
@@ -374,15 +374,15 @@ impl AudioNode {
         }
     }
 
-    /// Обработка чанка. `key` — КЛЮЧЕВОЙ (сайдчейн) сигнал того же окна и
-    /// того же домена (f32 48 kHz/2ch), если вызывающий его дал; узел, у
-    /// которого второго входа нет, обязан игнорировать его дословно —
-    /// иначе ветка ключа стоила бы байтов там, где ключа не бывает.
+    /// Chunk processing. `key` — the KEY (sidechain) signal of the same window and
+    /// the same domain (f32 48 kHz/2ch), if the caller provided it; a node that
+    /// has no second input must ignore it verbatim —
+    /// otherwise the key branch would cost bytes where no key exists.
     ///
-    /// Своего состояния у ключа НЕТ намеренно: сеттер, живущий между
-    /// вызовами, завёл бы скрытую зависимость от порядка вызовов, а
-    /// инвариант 2 требует, чтобы состояние трогал только render-поток и
-    /// только на своём окне.
+    /// The key has NO state of its own, deliberately: a setter living between
+    /// calls would introduce a hidden dependence on the call order, while
+    /// invariant 2 requires that only the render thread touch the state, and only
+    /// within its own window.
     pub(crate) fn process(&mut self, buf: &mut [f32], _pos: i64, key: Option<&[f32]>) {
         match self {
             AudioNode::Gain(n) => n.process(buf),
@@ -407,18 +407,18 @@ impl AudioNode {
         }
     }
 
-    /// Упреждение узла в кадрах (Р.48, п.337): сколько СОДЕРЖИМОГО
-    /// впереди выходной позиции узлу нужно, чтобы отдать выход БЕЗ
-    /// задержки. Узел с ненулевым упреждением обязан сам выравнивать
-    /// выход своим кольцом и жить в ОБЕИХ формулах — здесь и в
-    /// статической `chain_lookahead` (их согласие сторожит t322ж).
+    /// Lookahead of the node in frames (R.48, item 337): how much CONTENT
+    /// ahead of the output position the node needs in order to give its output WITHOUT
+    /// delay. A node with a non-zero lookahead must itself align
+    /// the output with its own ring and live in BOTH formulas — here and in
+    /// the static `chain_lookahead` (their agreement is guarded by t322g).
     ///
-    /// Упреждение — НЕ хвост: оно входит в прогрев seek и в окно
-    /// источника, но НЕ продлевает `ext_end` (иначе клип звучал бы
-    /// после собственного конца).
-    /// Донести движок питча (настройка ПРОЕКТА, а не слота): узел
-    /// получает его при создании процессора; смена движка — пересборка
-    /// процессора целиком (сторожит сверка opts в FxStateStore).
+    /// The lookahead is NOT the tail: it enters the seek warm-up and the source window, but
+    /// does NOT extend `ext_end` (otherwise the clip would sound
+    /// after its own end).
+    /// Pass the pitch engine (a PROJECT setting, not a slot’s) to the node:
+    /// it receives it when the processor is created; a change of engine — a rebuild
+    /// of the whole processor (guarded by the opts check in FxStateStore).
     pub(crate) fn set_engine(&mut self, engine: kt_model::PitchEngine) {
         if let AudioNode::Pitch(n) = self {
             n.engine = engine;
@@ -475,10 +475,10 @@ impl AudioNode {
     }
 }
 
-/// Громкость/баланс слота. Константный путь — дословные множители старого
-/// кода (на них стоит GOLDEN_AUDIO); с кривыми — SmoothedParam с целями на
-/// середину чанка, tick на каждый кадр (тот же порядок циклов: сперва
-/// громкость по кадрам, затем баланс по кадрам).
+/// Slot volume/balance. The constant path — the verbatim multipliers of the old
+/// code (GOLDEN_AUDIO relies on them); with curves — a SmoothedParam with targets at the
+/// chunk midpoint, a tick on every frame (the same loop order: first
+/// volume per frame, then balance per frame).
 pub struct GainNode {
     static_gain: f32,
     static_pan_l: f32,
@@ -512,15 +512,15 @@ impl GainNode {
         self.base_db = db as f64;
         self.base_pan = pan as f64;
         self.static_gain = 10f32.powf(db / 20.0);
-        // баланс: линейный закон, на нуле оба множителя ровно 1.0 —
-        // прежний путь байт-в-байт
+        // balance: linear law, at zero both multipliers are exactly 1.0 —
+        // the previous path byte-for-byte
         let p = pan.clamp(-1.0, 1.0);
         self.static_pan_l = (1.0 - p).min(1.0);
         self.static_pan_r = (1.0 + p).min(1.0);
     }
 
-    /// Есть ли кривые у слота — по факту профилей (как раньше собирались
-    /// gain_slots/pan_slots по непустым точкам).
+    /// Whether the slot has curves — by the fact of the profiles (as gain_slots/pan_slots
+    /// were previously collected from non-empty points).
     pub(crate) fn bind_curves(&mut self, auto: &AutoProfiles, slot: usize) {
         self.gain_auto = !auto.points(slot, "db").is_empty();
         self.pan_auto = !auto.points(slot, "pan").is_empty();
@@ -576,8 +576,8 @@ impl GainNode {
     }
 }
 
-/// Реверб-половина слота Slowed+Reverb (варп-половина живёт отдельным
-/// полем процессора — у варпа монополия на потребление источника).
+/// The reverb half of the Slowed+Reverb slot (the warp half lives in a separate
+/// processor field — the warp holds the monopoly on consuming the source).
 pub struct ReverbNode {
     pub(crate) rv: Freeverb,
     base_mix: f64,
@@ -627,24 +627,24 @@ impl ReverbNode {
     }
 
     fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
-        // mix сглаживается one-pole внутри реверба (тот же вызов, что до
-        // Р.47 — байты одно-слотовой цепочки не двигаются)
+        // mix is smoothed by a one-pole inside the reverb (the same call as before
+        // R.47 — the bytes of a single-slot chain do not move)
         self.rv.set_mix(auto.value(slot, "mix", self.base_mix, s) as f32);
     }
 }
 
 // ---------------------------------------------------------------------------
-// Узлы Ка2 (Р.47, п.327): фильтры, EQ, дисторшн, биткрашер, ширина
+// Ka2 nodes (R.47, item 327): filters, EQ, distortion, bitcrusher, width
 // ---------------------------------------------------------------------------
 
 use super::primitives::{Biquad, BiquadKind, apply_width, softclip};
 use kt_model::FilterMode;
 
-/// Пересчёт коэффициентов — суб-блоками: чанк 1024 (21 мс) на свипах
-/// частоты слышен как zipper, 128 кадров — нет.
+/// Coefficient recalculation — in sub-blocks: a chunk of 1024 (21 ms) on frequency
+/// sweeps is audible as zipper; 128 frames — not.
 const TUNE_STEP: usize = 128;
 
-/// Резонансный срез LP/HP/BP: RBJ-биквад на канал.
+/// Resonant cut LP/HP/BP: RBJ biquad per channel.
 pub struct FilterNode {
     mode: FilterMode,
     cutoff: SmoothedParam,
@@ -671,8 +671,8 @@ impl FilterNode {
     }
 
     fn apply(&mut self, mode: FilterMode, cutoff_hz: f32, resonance: f32) {
-        // смена вида НЕ пересоздаёт состояние (2 f32 на канал): транзиент
-        // от смены формы допустим и короче любого клика пересоздания
+        // changing the kind does NOT re-create the state (2 f32 per channel): the transient
+        // from changing the shape is allowed and shorter than any re-creation click
         self.mode = mode;
         self.cutoff.set_target(cutoff_hz.clamp(20.0, 20_000.0));
         self.q.set_target(resonance.clamp(0.5, 10.0));
@@ -706,7 +706,7 @@ impl FilterNode {
     }
 
     fn tail(&self) -> Tick {
-        // звон резонанса: t60 = 6.9·Q/(π·f0)
+        // resonance ringing: t60 = 6.9·Q/(π·f0)
         let f0 = self.cutoff.value().max(20.0);
         let q = self.q.value().max(0.5);
         let secs = 6.9 * q / (std::f32::consts::PI * f0);
@@ -722,16 +722,16 @@ impl FilterNode {
     }
 }
 
-/// Трёхполосный EQ: полка + пик + полка, каждый — биквад на канал.
-/// Добротность полок EQ и пол добротности середины — ОДНИ числа для
-/// звука и для графика АЧХ (Р.48, п.347).
+/// Three-band EQ: shelf + peak + shelf, each — a biquad per channel.
+/// The Q of the EQ shelves and the mid-band Q floor — the SAME numbers for the
+/// sound and for the frequency response graph (R.48, item 347).
 pub(crate) const EQ_SHELF_Q: f32 = 0.707;
 pub(crate) const EQ_MID_Q_FLOOR: f32 = 0.3;
 
-/// АЧХ всего эквалайзера на частоте `at_hz`, дБ. Значения — в порядке
+/// Frequency response of the whole equalizer at frequency `at_hz`, dB. Values — in the order
 /// `EqNode::NAMES`: low_gain, low_freq, mid_gain, mid_freq, mid_q,
-/// high_gain, high_freq. Каскад = сумма дБ; фильтры настраиваются тем же
-/// `tune`, что звучит, поэтому кривая в UI равна тому, что слышно.
+/// high_gain, high_freq. The cascade = the sum of dB; the filters are tuned by the same
+/// `tune` that sounds, so the curve in the UI equals what is heard.
 pub fn eq_mag_db(v: &[f32; 7], at_hz: f32) -> f64 {
     let mut b = Biquad::default();
     let mut db = 0.0;
@@ -749,7 +749,7 @@ pub struct EqNode {
     bands: [[Biquad; 3]; CH],
 }
 
-/// Семь сглаженных параметров EQ одним блоком (low_g, low_f, mid_g,
+/// The seven smoothed EQ parameters in one block (low_g, low_f, mid_g,
 /// mid_f, mid_q, high_g, high_f).
 struct SmoothedParam7([SmoothedParam; 7]);
 
@@ -796,12 +796,12 @@ impl EqNode {
                     *dst = p.tick();
                 }
             }
-            // все гейны в нуле — plain-пропуск: EQ прозрачен байт-в-байт
+            // all gains at zero — plain pass-through: the EQ is transparent byte-for-byte
             if v[0] == 0.0 && v[2] == 0.0 && v[5] == 0.0 {
                 continue;
             }
             for ch in 0..CH {
-                // те же числа, что у графика АЧХ (Р.48): одни константы
+                // the same numbers as the frequency response graph (R.48): the same constants
                 self.bands[ch][0].tune(&BiquadKind::LowShelf, v[1], EQ_SHELF_Q, v[0]);
                 self.bands[ch][1].tune(&BiquadKind::Peak, v[3], v[4].max(EQ_MID_Q_FLOOR), v[2]);
                 self.bands[ch][2].tune(&BiquadKind::HighShelf, v[6], EQ_SHELF_Q, v[5]);
@@ -830,7 +830,7 @@ impl EqNode {
     }
 }
 
-/// Мягкое насыщение с компенсацией уровня и тоном.
+/// Soft saturation with level compensation and tone.
 pub struct DistNode {
     drive_db: SmoothedParam,
     tone: SmoothedParam,
@@ -866,7 +866,7 @@ impl DistNode {
             let g = 10f32.powf(self.drive_db.tick() / 20.0);
             let comp = 1.0 / g.sqrt();
             let tone = self.tone.tick().clamp(0.0, 1.0);
-            // тон: one-pole LP 500..12000 Гц (exp-map)
+            // tone: one-pole LP 500..12000 Hz (exp-map)
             let f = 500.0 * (12_000.0f32 / 500.0).powf(tone);
             let alpha = 1.0 - (-2.0 * std::f32::consts::PI * f / AUDIO_SAMPLE_RATE as f32).exp();
             let k = self.mix.tick().clamp(0.0, 1.0);
@@ -888,9 +888,9 @@ impl DistNode {
     }
 }
 
-/// Lo-fi: квант битовой глубины + удержание сэмпла по СЕТКЕ ПОЗИЦИИ
-/// (floor(pos·rate/sr) — детерминизм: два рендера одного клипа дают одни
-/// артефакты, прецедент seed шума видео).
+/// Lo-fi: bit-depth quantization + sample hold on the POSITION GRID
+/// (floor(pos·rate/sr) — determinism: two renders of one clip give the same
+/// artifacts, precedent — the seed of video noise).
 pub struct CrushNode {
     bits: SmoothedParam,
     rate_hz: SmoothedParam,
@@ -929,7 +929,7 @@ impl CrushNode {
             let k = self.mix.tick().clamp(0.0, 1.0);
             let q = (2f32).powf(bits - 1.0);
             let p = pos + i as i64;
-            // сетка удержания привязана к ПОЗИЦИИ клипа, не к счётчику
+            // the hold grid is tied to the clip’s POSITION, not to a counter
             let cell = ((p as f64) * rate / AUDIO_SAMPLE_RATE as f64).floor() as i64;
             if cell != self.held_cell {
                 self.held_cell = cell;
@@ -952,8 +952,8 @@ impl CrushNode {
     }
 }
 
-/// Ширина стерео m/s. width == 1.0 — ЯВНЫЙ пропуск (m/s-переупаковка не
-/// байт-тождественна).
+/// Stereo m/s width. width == 1.0 — an EXPLICIT pass-through (m/s repacking is
+/// not byte-identical).
 pub struct WidthNode {
     width: SmoothedParam,
 }
@@ -987,16 +987,16 @@ impl WidthNode {
 }
 
 // ---------------------------------------------------------------------------
-// Узлы Ка3 (Р.47, п.328): LFO-семейство
+// Ka3 nodes (R.47, item 328): the LFO family
 // ---------------------------------------------------------------------------
 
 use super::primitives::{DelayLine, lfo_phase};
 
-/// Общая LFO-половина модуляционных узлов: фаза — интеграл кривой частоты
-/// по позиции клипа (`lfo_phase`), НЕ счётчик — seek/шов/заворот дают ту
-/// же фазу, что холодный рендер (инвариант №11). Узел держит КОПИЮ точек
-/// кривой rate_hz (bind при apply_params/set_auto): в process модель не
-/// читается (инвариант №2).
+/// The common LFO half of the modulation nodes: the phase is the integral of the frequency curve
+/// over the clip position (`lfo_phase`), NOT a counter — seek/seam/wrap give the
+/// same phase as a cold render (invariant 11). The node holds a COPY of the points of the
+/// rate_hz curve (bind on apply_params/set_auto): the model is not
+/// read in process (invariant 2).
 struct LfoDrive {
     base_hz: f64,
     points: Vec<(f64, f64)>,
@@ -1013,7 +1013,7 @@ impl LfoDrive {
         self.clip_len = clip_len.max(1);
     }
 
-    /// Фаза в радианах на кадре `p` (клип-локально).
+    /// Phase in radians at frame `p` (clip-local).
     #[inline]
     fn phase(&self, p: i64) -> f64 {
         let tau = p as f64 / self.clip_len as f64;
@@ -1021,7 +1021,7 @@ impl LfoDrive {
     }
 }
 
-/// Тремоло: g = 1 − depth·(0.5 + 0.5·sin φ).
+/// Tremolo: g = 1 − depth·(0.5 + 0.5·sin φ).
 pub struct TremoloNode {
     lfo: LfoDrive,
     depth: SmoothedParam,
@@ -1056,7 +1056,7 @@ impl TremoloNode {
     }
 }
 
-/// Автопан: p = depth·sin φ, закон панорамы — как у Gain.
+/// Autopan: p = depth·sin φ, the pan law — as in Gain.
 pub struct AutoPanNode {
     lfo: LfoDrive,
     depth: SmoothedParam,
@@ -1092,14 +1092,14 @@ impl AutoPanNode {
     }
 }
 
-/// Вибрато: 100 % wet, delay = 1 мс + depth·(0.5+0.5·sin φ).
+/// Vibrato: 100 % wet, delay = 1 ms + depth·(0.5+0.5·sin φ).
 pub struct VibratoNode {
     lfo: LfoDrive,
     depth_ms: SmoothedParam,
     lines: [DelayLine; CH],
 }
 
-/// Максимум задержки вибрато: 1 мс базы + 5 мс глубины + запас.
+/// Maximum vibrato delay: 1 ms base + 5 ms depth + margin.
 const VIB_MAX_FRAMES: usize = (48_000.0 * 0.008) as usize;
 
 impl VibratoNode {
@@ -1146,7 +1146,7 @@ impl VibratoNode {
     }
 }
 
-/// Хорус: base 15 мс, голос k — фаза +k·2π/voices, правый канал +90°.
+/// Chorus: base 15 ms, voice k — phase +k·2π/voices, right channel +90°.
 pub struct ChorusNode {
     lfo: LfoDrive,
     depth_ms: SmoothedParam,
@@ -1219,7 +1219,7 @@ impl ChorusNode {
     }
 }
 
-/// Флэнжер: base 0.5 мс, обратная связь в кольцо (знак = инверсия фазы).
+/// Flanger: base 0.5 ms, feedback into the ring (sign = phase inversion).
 pub struct FlangerNode {
     lfo: LfoDrive,
     depth_ms: SmoothedParam,
@@ -1288,7 +1288,7 @@ impl FlangerNode {
     }
 }
 
-/// Фейзер: каскад 1-полюсных allpass, свип центра 200..2000 Гц (exp).
+/// Phaser: a cascade of 1-pole allpass filters, center sweep 200..2000 Hz (exp).
 pub struct PhaserNode {
     lfo: LfoDrive,
     depth: SmoothedParam,
@@ -1335,7 +1335,7 @@ impl PhaserNode {
             let fb = self.feedback.tick().clamp(0.0, 0.9);
             let k = self.mix.tick().clamp(0.0, 1.0);
             let ph = 0.5 + 0.5 * self.lfo.phase(pos + i as i64).sin() as f32;
-            // свип центра: 200..2000 Гц exp, глубина сжимает диапазон
+            // center sweep: 200..2000 Hz exp, depth compresses the range
             let f = 200.0 * (10.0f32).powf(ph * d);
             let t = (std::f32::consts::PI * f / sr).tan();
             let ap = (t - 1.0) / (t + 1.0);
@@ -1343,7 +1343,7 @@ impl PhaserNode {
                 let dry = *s;
                 let mut x = dry + self.fb_state[ch] * fb;
                 for st in 0..n {
-                    // 1-полюсный allpass: y = a·x + z; z = x − a·y
+                    // 1-pole allpass: y = a·x + z; z = x − a·y
                     let y = ap * x + self.z[ch][st];
                     self.z[ch][st] = x - ap * y;
                     x = y;
@@ -1364,7 +1364,7 @@ impl PhaserNode {
 }
 
 // ---------------------------------------------------------------------------
-// Узлы Ка4 (Р.47, п.329): эхо и динамика
+// Ka4 nodes (R.47, item 329): echo and dynamics
 // ---------------------------------------------------------------------------
 
 use super::primitives::EnvFollower;
@@ -1372,10 +1372,10 @@ use super::primitives::EnvFollower;
 const DELAY_MAX_MS: f32 = 1500.0;
 const DELAY_MAX_FRAMES: usize = (48_000.0 * (DELAY_MAX_MS / 1000.0)) as usize + 8;
 
-/// Эхо: кольцо аллоцировано на максимум (смена времени — дробное чтение,
-/// НЕ структурная); время сглаживается 100 мс — тейп-глайд без щелчков;
-/// фильтр в петле — one-pole LP (хвост темнеет с каждым повтором,
-/// наследие фишки F-AUD-009); pingpong — перекрёстная обратная связь.
+/// Echo: the ring is allocated to the maximum (a time change is a fractional read,
+/// NOT structural); time is smoothed over 100 ms — tape glide without clicks;
+/// the filter in the loop — one-pole LP (the tail darkens with each repeat,
+/// a legacy of the F-AUD-009 feature); pingpong — cross feedback.
 pub struct DelayNode {
     time_ms: SmoothedParam,
     feedback: SmoothedParam,
@@ -1413,7 +1413,7 @@ impl DelayNode {
 
     fn process(&mut self, buf: &mut [f32]) {
         let sr = AUDIO_SAMPLE_RATE as f32;
-        // фильтр петли ~4 кГц: повторы темнеют
+        // loop filter ~4 kHz: the repeats darken
         let alpha = 1.0 - (-2.0 * std::f32::consts::PI * 4000.0 / sr).exp();
         for fr in buf.chunks_exact_mut(CH) {
             let d = self.time_ms.tick().clamp(1.0, DELAY_MAX_MS) * sr / 1000.0;
@@ -1425,7 +1425,7 @@ impl DelayNode {
             }
             for ch in 0..CH {
                 let dry = fr[ch];
-                // ping-pong: обратная связь уходит в ПРОТИВОПОЛОЖНЫЙ канал
+                // ping-pong: the feedback goes to the OPPOSITE channel
                 let fb_src = if self.pingpong { wet[(ch + 1) % CH] } else { wet[ch] };
                 self.loop_lp[ch] += (fb_src - self.loop_lp[ch]) * alpha;
                 self.lines[ch].write(dry + self.loop_lp[ch] * fb);
@@ -1453,7 +1453,7 @@ impl DelayNode {
     }
 }
 
-/// Компрессор: peak-огибающая, стерео-линк max(|l|,|r|), gr в дБ.
+/// Compressor: peak envelope, stereo link max(|l|,|r|), gr in dB.
 pub struct CompNode {
     threshold_db: SmoothedParam,
     ratio: SmoothedParam,
@@ -1493,11 +1493,11 @@ impl CompNode {
         self.env.set_times(att.clamp(0.1, 250.0), rel.clamp(5.0, 2000.0));
     }
 
-    /// `key` — сайдчейн: детектор слушает ЕГО, а сжимается всё равно свой
-    /// вход. Закон сжатия, пределы и сглаживание те же — ключ меняет
-    /// только источник огибающей (Р.65). Ключ короче буфера (последний
-    /// чанк окна) даёт для остатка пик 0 — это тише порога, то есть
-    /// «ключ молчит», а не паника.
+    /// `key` — sidechain: the detector listens to IT, while compression still acts on its own
+    /// input. The compression law, limits and smoothing are the same — the key changes
+    /// only the envelope source (R.65). A key shorter than the buffer (the last
+    /// chunk of the window) gives a peak of 0 for the remainder — that is quieter than the threshold, i.e.
+    /// “the key is silent”, not a panic.
     fn process(&mut self, buf: &mut [f32], key: Option<&[f32]>) {
         for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
             let thr = self.threshold_db.tick();
@@ -1528,32 +1528,32 @@ impl CompNode {
     }
 }
 
-/// Длина окна упреждения лимитера в кадрах (Р.48, п.338). ОДИН дом
-/// формулы: её зовут и узел (геометрия кольца), и статическая
-/// `chain_lookahead` — разойтись они не могут по построению.
+/// The length of the limiter’s lookahead window in frames (R.48, item 338). ONE home of the
+/// formula: both the node (the ring geometry) and the static
+/// `chain_lookahead` call it — they cannot diverge by construction.
 pub(crate) fn limiter_la_frames(lookahead_ms: f32) -> i64 {
     (lookahead_ms.clamp(1.0, 20.0) as f64 / 1000.0 * 48_000.0).ceil() as i64
 }
 
-/// Look-ahead лимитер (Р.48, п.338). Потолок гарантирован АЛГЕБРАИЧЕСКИ:
-/// окно скользящего максимума покрывает материал [t, t+La], включая сам
-/// выходной кадр, поэтому редукция успевает до пика и атака мгновенна —
-/// платы искажениями нет. Выход выровнен со входом цепочки: кольцо
-/// задерживает сигнал ровно на La, которое процессор вычитал из позиции.
+/// Look-ahead limiter (R.48, item 338). The ceiling is guaranteed ALGEBRAICALLY:
+/// the sliding-maximum window covers the material [t, t+La], including the output
+/// frame itself, so the reduction gets ahead of the peak and the attack is instant —
+/// there is no distortion artifact. The output is aligned with the chain input: the ring
+/// delays the signal by exactly La, which the processor subtracted from the position.
 pub struct LimiterNode {
     threshold_db: SmoothedParam,
     ceiling_db: SmoothedParam,
     release_ms: f32,
-    /// Геометрия окна: меняется ТОЛЬКО при structural — расхождение с
-    /// цепочкой ловит FxStateStore и пересобирает процессор целиком.
+    /// Window geometry: changes ONLY on structural — a divergence from the
+    /// chain is caught by FxStateStore, which rebuilds the processor entirely.
     la: i64,
-    /// Кольцо выравнивания (la кадров × CH).
+    /// Alignment ring (la frames × CH).
     ring: Vec<f32>,
     pos: usize,
-    /// Моноочередь скользящего максимума |x|: значения убывают, спереди
-    /// максимум окна. O(1) на кадр амортизированно.
+    /// Monotone queue of the sliding maximum of |x|: values decrease, at the front
+    /// the window maximum. O(1) per frame, amortized.
     win: std::collections::VecDeque<(i64, f32)>,
-    /// Сколько кадров подано в окно (возраст элементов).
+    /// How many frames have been fed into the window (the age of the elements).
     fed: i64,
     gain: f32,
 }
@@ -1608,7 +1608,7 @@ impl LimiterNode {
         for fr in buf.chunks_exact_mut(CH) {
             let thr = 10f32.powf(self.threshold_db.tick() / 20.0);
             let ceil = 10f32.powf(self.ceiling_db.tick() / 20.0);
-            // в окно кладётся ВХОДЯЩИЙ кадр (позиция t + La)
+            // the INCOMING frame goes into the window (position t + La)
             let peak = fr.iter().fold(0f32, |m, v| m.max(v.abs()));
             while let Some(&(_, v)) = self.win.back() {
                 if v <= peak {
@@ -1627,7 +1627,7 @@ impl LimiterNode {
                 }
             }
             self.fed += 1;
-            // выход — кадр, задержанный на La (позиция t)
+            // the output — the frame delayed by La (position t)
             for v in fr.iter_mut() {
                 std::mem::swap(&mut self.ring[self.pos], v);
                 self.pos += 1;
@@ -1635,8 +1635,8 @@ impl LimiterNode {
             if self.pos >= self.ring.len() {
                 self.pos = 0;
             }
-            // максимум по [t, t+La] — включая сам выходной кадр, поэтому
-            // out = wmax * g ≤ ceiling строго
+            // the maximum over [t, t+La] — including the output frame itself, therefore
+            // out = wmax * g ≤ ceiling strictly
             let wmax = self.win.front().map(|&(_, v)| v).unwrap_or(0.0);
             let target = (thr / wmax.max(thr)) * (ceil / thr);
             if target < self.gain {
@@ -1661,35 +1661,35 @@ impl LimiterNode {
     }
 }
 
-/// Упреждение питча (Р.48, п.339): грейн повышения на две октавы читает
-/// вход вчетверо быстрее выхода, и к концу грейна ему нужен материал на
-/// `LG·4` кадров вперёд плюс окно WSOLA-поиска. Константа ОДНА на оба
-/// движка: вокодеру хватает меньшего, лишнее для него — просто история.
-/// Меньше `MIN_PREROLL_FRAMES` (4800) — прогрев seek'а всегда заполняет
-/// кольцо настоящим материалом.
+/// Pitch lookahead (R.48, item 339): a grain of a two-octave upshift reads the
+/// input four times faster than the output, and by the end of the grain it needs material
+/// `LG·4` frames ahead plus the WSOLA search window. The constant is ONE for both
+/// engines: the vocoder needs less, the excess is simply history for it.
+/// Less than `MIN_PREROLL_FRAMES` (4800) — the seek warm-up always fills
+/// the ring with real material.
 pub(crate) const PITCH_LOOKAHEAD_FRAMES: i64 = 4608;
 
-/// Шаг синтез-грида WSOLA и хоп вокодера (абсолютный, от нуля клипа —
-/// поэтому нарезка буферов на результат не влияет).
+/// The WSOLA synthesis grid step and the vocoder hop (absolute, from the clip zero —
+/// therefore slicing the buffers does not affect the result).
 const PITCH_HOP: i64 = 512;
-/// Длина зерна WSOLA (окно Ханна, перекрытие 50 %: сумма окон ≡ 1).
+/// WSOLA grain length (Hann window, 50 % overlap: the sum of windows ≡ 1).
 const PITCH_GRAIN: usize = 1024;
-/// Полуширина WSOLA-поиска и его шаг (кандидаты перебираются по
-/// возрастанию |off| — тай-брейк детерминирован).
+/// Half-width of the WSOLA search and its step (candidates are enumerated in
+/// ascending |off| — the tie-break is deterministic).
 const PITCH_SEARCH: i64 = 256;
 const PITCH_SEARCH_STEP: i64 = 8;
-/// Размер кадра фазового вокодера.
+/// Frame size of the phase vocoder.
 const PV_N: usize = 2048;
-/// Кольца: вход обязан покрывать [выход − поиск, вход + чанк].
+/// Rings: the input must cover [output − search, input + chunk].
 const PITCH_RING: usize = 8192;
-/// Аккумулятор OLA: обязан вмещать чанк процессора (1024) ПЛЮС полное
-/// окно синтеза (2048 у вокодера) — иначе зерно, синтезированное
-/// вперёд, затирало бы ещё не отданные кадры, и результат зависел бы от
-/// нарезки буферов (ровно это поймал t338 на кольце 2048).
+/// OLA accumulator: must hold the processor chunk (1024) PLUS the full
+/// synthesis window (2048 for the vocoder) — otherwise a grain synthesized
+/// ahead would overwrite frames not yet handed out, and the result would depend on the
+/// slicing of the buffers (exactly what t338 caught on the 2048 ring).
 const PITCH_ACC: usize = 4096;
 
-/// Нейтраль питча: и база, и кривые на нуле. Нейтральный узел не трогает
-/// буфер вовсе (байт-в-байт прежний звук) и не требует упреждения.
+/// Pitch neutral: both the base and the curves at zero. A neutral node does not touch
+/// the buffer at all (byte-for-byte the previous sound) and requires no lookahead.
 pub(crate) fn pitch_is_neutral(
     semitones: f32,
     cents: f32,
@@ -1702,11 +1702,11 @@ pub(crate) fn pitch_is_neutral(
         && ct_points.iter().all(|(_, v)| *v == 0.0)
 }
 
-/// Состояние фазового вокодера: планы FFT и фазовые аккумуляторы.
+/// Phase vocoder state: FFT plans and phase accumulators.
 struct PvState {
     fwd: std::sync::Arc<dyn realfft::RealToComplex<f32>>,
     inv: std::sync::Arc<dyn realfft::ComplexToReal<f32>>,
-    /// Фазы по КАНАЛАМ: стерео-стороны не должны интерферировать.
+    /// Phases per CHANNEL: the stereo sides must not interfere.
     prev_phase: [Vec<f32>; CH],
     synth_phase: [Vec<f32>; CH],
     window: Vec<f32>,
@@ -1752,34 +1752,34 @@ impl PvState {
     }
 }
 
-/// Смена высоты без смены длительности (Р.48, п.339). Узел УПРЕЖДАЮЩИЙ:
-/// читает вход с опережением `PITCH_LOOKAHEAD_FRAMES` и отдаёт выход
-/// выровненным — задержки для движка нет (п.337).
+/// Pitch change without a change of duration (R.48, item 339). A LOOKAHEAD node:
+/// it reads the input with a lookahead of `PITCH_LOOKAHEAD_FRAMES` and gives its output
+/// aligned — there is no delay for the engine (item 337).
 ///
-/// Оба движка синтезируют на АБСОЛЮТНОМ гриде позиции клипа: зерно
-/// номер g всегда покрывает выходные кадры [g·HOP, g·HOP + GRAIN), а
-/// коэффициент высоты берётся по позиции ЗЕРНА — поэтому результат не
-/// зависит ни от нарезки буферов, ни от числа вызовов (класс t325а).
+/// Both engines synthesize on the ABSOLUTE grid of the clip position: grain
+/// number g always covers the output frames [g·HOP, g·HOP + GRAIN), and the
+/// pitch coefficient is taken by the GRAIN position — therefore the result depends
+/// neither on the slicing of the buffers nor on the number of calls (class t325a).
 pub struct PitchNode {
     engine: kt_model::PitchEngine,
     semitones: f32,
     cents: f32,
     st_points: Vec<(f64, f64)>,
     ct_points: Vec<(f64, f64)>,
-    /// Формы отрезков кривых (Р.61): узел, читающий значение ПО ПОЗИЦИИ,
-    /// обязан видеть тот же ряд форм, что и остальная программа.
+    /// Segment shapes of the curves (R.61): a node reading the value BY POSITION
+    /// must see the same row of shapes as the rest of the program.
     st_shapes: Vec<kt_model::SegShape>,
     ct_shapes: Vec<kt_model::SegShape>,
     clip_len: i64,
-    /// 0 — нейтраль (узел прозрачен).
+    /// 0 — neutral (the node is transparent).
     la: i64,
-    /// Входное кольцо по абсолютным позициям клипа.
+    /// Input ring by absolute clip positions.
     ring: Vec<f32>,
-    /// Позиция следующего кадра записи; `i64::MIN` — потока ещё не было.
+    /// Position of the next recording frame; `i64::MIN` — the stream has not yet existed.
     written: i64,
-    /// OLA-аккумулятор выхода (тоже по абсолютным позициям).
+    /// The output OLA accumulator (also by absolute positions).
     acc: Vec<f32>,
-    /// Номер следующего зерна к синтезу.
+    /// Number of the next grain to synthesize.
     next_grain: i64,
     pv: Option<Box<PvState>>,
 }
@@ -1811,9 +1811,9 @@ impl PitchNode {
         self.refresh_la();
     }
 
-    /// Кривые питча (тот же паттерн, что у LFO-узлов): значение берётся
-    /// по позиции ЗЕРНА, а не тиками сглаживания — иначе результат зависел
-    /// бы от числа вызовов.
+    /// Pitch curves (the same pattern as the LFO nodes): the value is taken
+    /// by the GRAIN position, not by the smoothing ticks — otherwise the result would depend
+    /// on the number of calls.
     fn bind(&mut self, auto: &AutoProfiles, slot: usize, clip_len: i64) {
         self.st_points = auto.points(slot, "semitones").to_vec();
         self.ct_points = auto.points(slot, "cents").to_vec();
@@ -1836,7 +1836,7 @@ impl PitchNode {
         }
     }
 
-    /// Коэффициент высоты на позиции `p` (клип-локальный кадр).
+    /// Pitch coefficient at position `p` (clip-local frame).
     fn ratio_at(&self, p: i64) -> f64 {
         let tau = p as f64 / self.clip_len as f64;
         let st = kt_model::param_at(self.semitones as f64, &self.st_points, tau, &self.st_shapes);
@@ -1850,7 +1850,7 @@ impl PitchNode {
         self.ring[i * CH + ch]
     }
 
-    /// Линейная интерполяция входа на дробной позиции.
+    /// Linear interpolation of the input at a fractional position.
     #[inline]
     fn ring_frac(&self, pos: f64, ch: usize) -> f32 {
         let i = pos.floor();
@@ -1866,8 +1866,8 @@ impl PitchNode {
         &mut self.acc[i * CH + ch]
     }
 
-    /// Разрыв потока (шов, seek): кольца и грид переинициализируются от
-    /// новой позиции — узел переживает шов, как реверб, просто без хвоста.
+    /// Stream break (seam, seek): the rings and the grid are re-initialized from the
+    /// new position — the node survives the seam like reverb, just without a tail.
     fn restart(&mut self, in_pos: i64) {
         self.ring.fill(0.0);
         self.acc.fill(0.0);
@@ -1880,13 +1880,13 @@ impl PitchNode {
 
     fn process(&mut self, buf: &mut [f32], in_pos: i64) {
         if self.la == 0 {
-            return; // нейтраль: буфер не трогаем вовсе
+            return; // neutral: do not touch the buffer at all
         }
         let n = (buf.len() / CH) as i64;
         if self.written != in_pos {
             self.restart(in_pos);
         }
-        // 1) вход в кольцо
+        // 1) input into the ring
         for (i, fr) in buf.chunks_exact(CH).enumerate() {
             let idx = (in_pos + i as i64).rem_euclid(PITCH_RING as i64) as usize;
             for (ch, v) in fr.iter().enumerate() {
@@ -1894,7 +1894,7 @@ impl PitchNode {
             }
         }
         self.written = in_pos + n;
-        // 2) синтез зёрен, покрывающих нужный выход
+        // 2) synthesis of the grains covering the needed output
         let out_pos = in_pos - self.la;
         let out_end = out_pos + n;
         while self.next_grain * PITCH_HOP < out_end {
@@ -1905,8 +1905,8 @@ impl PitchNode {
             }
             self.next_grain += 1;
         }
-        // 3) выход из аккумулятора (прочитанное обнуляется — кольцо
-        //    переиспользуется следующими зёрнами)
+        // 3) output from the accumulator (what was read is zeroed — the ring
+        //    is reused by the next grains)
         for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
             let t = out_pos + i as i64;
             for (ch, v) in fr.iter_mut().enumerate() {
@@ -1917,10 +1917,10 @@ impl PitchNode {
         }
     }
 
-    /// Зерно WSOLA: читает вход со скоростью `r` от позиции зерна и
-    /// подмешивает в аккумулятор с окном Ханна. Сдвиг чтения выбирается
-    /// кросс-корреляцией с уже синтезированным перекрытием — это и
-    /// сохраняет форму удара (в отличие от вокодера).
+    /// WSOLA grain: reads the input at speed `r` from the grain position and
+    /// mixes into the accumulator with a Hann window. The read offset is chosen
+    /// by cross-correlation with the already synthesized overlap — this is what
+    /// preserves the shape of the strike (unlike the vocoder).
     fn grain_wsola(&mut self, g: i64) {
         let start = g * PITCH_HOP;
         let r = self.ratio_at(start);
@@ -1936,9 +1936,9 @@ impl PitchNode {
         }
     }
 
-    /// WSOLA-поиск: кандидаты перебираются по возрастанию |off|, побеждает
-    /// строго больший счёт — значит при равенстве остаётся меньший сдвиг
-    /// (детерминизм без зависимости от порядка обхода).
+    /// WSOLA search: candidates are enumerated in ascending |off|, the strictly
+    /// greater score wins — so on a tie the smaller shift remains
+    /// (determinism without dependence on the traversal order).
     fn best_offset(&self, start: i64, r: f64) -> i64 {
         let mut cands: Vec<i64> = vec![0];
         let mut d = PITCH_SEARCH_STEP;
@@ -1970,9 +1970,9 @@ impl PitchNode {
         best
     }
 
-    /// Зерно фазового вокодера: спектр кадра переносится в бины `k·r` с
-    /// пересчётом фазы по мгновенной частоте. Гармоники едут чисто,
-    /// транзиент размазывается — цена спектрального метода.
+    /// Phase vocoder grain: the frame spectrum is carried into the bins `k·r` with a
+    /// recomputation of the phase from the instantaneous frequency. Harmonics travel cleanly;
+    /// the transient is smeared — the price of the spectral method.
     fn grain_vocoder(&mut self, g: i64) {
         let start = g * PITCH_HOP;
         let r = self.ratio_at(start) as f32;
@@ -1986,7 +1986,7 @@ impl PitchNode {
                     pv.time[i] = 0.0;
                 }
             }
-            // анализ: окно из кольца
+            // analysis: the window from the ring
             for i in 0..PV_N {
                 let v = self.ring_at(start + i as i64, ch);
                 let pv = self.pv.as_deref_mut().expect("vocoder state");
@@ -1994,8 +1994,8 @@ impl PitchNode {
             }
             let pv = self.pv.as_deref_mut().expect("vocoder state");
             pv.fwd.process(&mut pv.time, &mut pv.spec).expect("fft");
-            // Анализ: магнитуда и МГНОВЕННАЯ частота каждого бина
-            // (принципальная девиация фазы против ожидаемой за хоп).
+            // Analysis: the magnitude and the INSTANTANEOUS frequency of each bin
+            // (the principal deviation of the phase against the expected one per hop).
             for k in 0..bins {
                 let c = pv.spec[k];
                 let m = (c.re * c.re + c.im * c.im).sqrt();
@@ -2006,11 +2006,11 @@ impl PitchNode {
                 pv.mag[k] = m;
                 pv.freq[k] = k as f32 * expected + dp;
             }
-            // Синтез ОБРАТНЫМ отображением (как в геометрии видео):
-            // целевой бин j спрашивает источник в позиции j/r и получает
-            // единственную частоту — при прямом переносе k → round(k·r)
-            // несколько источников делили бы один бин, и высота уезжала
-            // (замер: 612 Гц вместо 659 на +7 полутонах).
+            // Synthesis by the INVERSE mapping (as in video geometry):
+            // the target bin j asks the source at position j/r and gets the
+            // single frequency — with a direct carry k → round(k·r) several sources would
+            // share one bin, and the pitch drifted
+            // (measured: 612 Hz instead of 659 at +7 semitones).
             for j in 0..bins {
                 let src = j as f32 / r;
                 let k0 = src.floor() as usize;
@@ -2025,8 +2025,8 @@ impl PitchNode {
                 let (sn, cs) = pv.synth_phase[ch][j].sin_cos();
                 pv.out_spec[j] = realfft::num_complex::Complex::new(m * cs, m * sn);
             }
-            // DC и Найквист у вещественного сигнала вещественны —
-            // realfft это проверяет и иначе отказывается считать
+            // DC and Nyquist of a real signal are real — realfft checks this and otherwise
+            // refuses to compute
             pv.out_spec[0].im = 0.0;
             let last = bins - 1;
             pv.out_spec[last].im = 0.0;
@@ -2053,15 +2053,15 @@ impl PitchNode {
     }
 }
 
-/// Окно Ханна с перекрытием 50 %: сумма двух соседних окон ≡ 1.
+/// Hann window with 50 % overlap: the sum of two adjacent windows ≡ 1.
 #[inline]
 fn hann(i: usize, n: usize) -> f32 {
     let x = std::f32::consts::TAU * i as f32 / n as f32;
     0.5 - 0.5 * x.cos()
 }
 
-/// Гейт: быстрый детектор (~0.5 мс) + гистерезис −6 дБ + hold-счётчик
-/// (кадры — переживает шов) + рампы attack/release.
+/// Gate: a fast detector (~0.5 ms) + hysteresis −6 dB + hold counter
+/// (frames — survives the seam) + attack/release ramps.
 pub struct GateNode {
     threshold_db: SmoothedParam,
     attack_ms: f32,
@@ -2116,7 +2116,7 @@ impl GateNode {
         for fr in buf.chunks_exact_mut(CH) {
             let thr_db = self.threshold_db.tick();
             let open_thr = 10f32.powf(thr_db / 20.0);
-            // гистерезис: закрытие на 6 дБ ниже открытия
+            // hysteresis: closing at 6 dB below opening
             let close_thr = 10f32.powf((thr_db - 6.0) / 20.0);
             let peak = fr.iter().fold(0f32, |m, s| m.max(s.abs()));
             let env = self.env.tick(peak);

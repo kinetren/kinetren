@@ -1,9 +1,9 @@
-//! Движок: render graph (выбор событий, микс, композит), MediaWorker-планировщик
-//! декода, transport (часы = аудио-колбэк), prefetch, Player-ядро.
+//! Engine: render graph (event selection, mix, composite), MediaWorker scheduler
+//! for decode, transport (the clock = the audio callback), prefetch, the Player core.
 //!
-//! Реализовано: M2 (аудио-граф + transport + фетчеры), M3 (воркеры/prefetch),
-//! M6-аудио (FX в графе), M4-ядро (Player + видео-композит).
-//! Впереди: M7 (экспорт). Архитектура и владение потоками — docs/architecture.md.
+//! Implemented: M2 (audio graph + transport + fetchers), M3 (workers/prefetch),
+//! M6-audio (FX in the graph), M4-core (Player + video composite).
+//! Ahead: M7 (export). Architecture and thread ownership — docs/architecture.md.
 
 pub mod audio;
 pub mod export;
@@ -18,8 +18,8 @@ pub mod video;
 pub mod video_plan;
 mod video_simd;
 
-/// Явный доступ к обоим путям ядер композита для parity-тестов
-/// (Р.32, t198): тесты зовут скаляр и AVX2 напрямую и сверяют байты.
+/// Explicit access to both composite kernel paths for parity tests
+/// (R.32, t198): the tests call the scalar and AVX2 directly and compare bytes.
 #[doc(hidden)]
 #[cfg(target_arch = "x86_64")]
 pub mod simd_testing {
@@ -27,10 +27,10 @@ pub mod simd_testing {
         assert!(std::is_x86_feature_detected!("avx2"), "AVX2 is required");
     }
 
-    /// `x / 255` восемью лейнами — микро-доказательство домена.
+    /// `x / 255` with eight lanes — a micro-proof of the domain.
     pub fn div255_avx2(v: [u32; 8]) -> [u32; 8] {
         need_avx2();
-        // SAFETY: фича проверена
+        // SAFETY: feature checked
         unsafe {
             use std::arch::x86_64::*;
             let x = _mm256_loadu_si256(v.as_ptr().cast());
@@ -43,7 +43,7 @@ pub mod simd_testing {
 
     pub fn alpha_over_avx2(dst: &mut [u8], src: &[u8], pixels: usize) {
         need_avx2();
-        // SAFETY: фича проверена; длины — на ответственности теста
+        // SAFETY: feature checked; lengths are the responsibility of the test
         unsafe { crate::video_simd::alpha_over_avx2(dst, src, pixels) };
     }
 
@@ -57,18 +57,18 @@ pub mod simd_testing {
         pixels: usize,
     ) {
         need_avx2();
-        // SAFETY: фича проверена
+        // SAFETY: feature checked
         unsafe { crate::video_simd::dissolve_avx2(dst, a, b, a_has_alpha, b_has_alpha, k, pixels) };
     }
 
     pub fn scale_alpha_avx2(dst: &mut [u8], src: &[u8], has_alpha: bool, k: u32, pixels: usize) {
         need_avx2();
-        // SAFETY: фича проверена
+        // SAFETY: feature checked
         unsafe { crate::video_simd::scale_alpha_avx2(dst, src, has_alpha, k, pixels) };
     }
 
-    // --- скалярные эталоны (копии тел из video.rs; расхождение с ними
-    // и есть регрессия, которую ловит t198) ---
+    // --- scalar references (copies of the bodies from video.rs; a divergence from them
+    // is exactly the regression that t198 catches) ---
 
     pub fn alpha_over_scalar(dst: &mut [u8], src: &[u8], pixels: usize) {
         for p in 0..pixels {
@@ -148,18 +148,18 @@ pub use video_plan::{
 };
 pub use worker::{DecodeRequest, MediaWorker, RequestKind, Retune};
 
-/// Приоритеты запросов к MediaWorker. Порядок значим (инвариант №5).
-/// Растяжение времени клипа для ЧУЖИХ потребителей (Р.37 п.3).
+/// Priorities of requests to the MediaWorker. The order matters (invariant 5).
+/// Time stretching of the clip for FOREIGN consumers (R.37 item 3).
 ///
-/// Превью таймлайна — волноформа и филмстрип — обязано считать позицию
-/// материала ТОЙ ЖЕ картой, что рендер: иначе замедленный клип рисует не
-/// то, что играет. Формула живёт здесь, а не в kt-app, по тому же правилу,
-/// что и остальная геометрия: своей формулы в UI не заводить.
+/// The timeline preview — waveform and filmstrip — must compute the position of
+/// the material with THE SAME map as the render: otherwise a slowed clip draws
+/// not what it plays. The formula lives here, not in kt-app, by the same rule
+/// as the rest of the geometry: do not create a formula in the UI.
 ///
-/// Строить это на каждый пиксельный столбец нельзя — вызывающий обязан
-/// кэшировать (в kt-app это `warp_maps()` по `model_rev`).
-/// Карта переехала в kt-model (Р.39): конструктор ОДИН на рендер, превью
-/// и правило куска клипа. Здесь реэкспорт — вызовы в kt-app не тронуты.
+/// This cannot be built for every pixel column — the caller must
+/// cache it (in kt-app this is `warp_maps()` by `model_rev`).
+/// The map moved to kt-model (R.39): the constructor is ONE per render, preview
+/// and the clip's chunk rule. Here is a re-export — the calls in kt-app are untouched.
 pub use kt_model::{ClipWarp, clip_warp as clip_warp_map};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

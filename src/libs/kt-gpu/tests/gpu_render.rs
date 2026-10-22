@@ -1,9 +1,9 @@
-//! Тест 184 (Р.29): GPU-твин теста 67 — «превью == экспорт» на GPU-пути.
-//! Кадр экспортного потока (render_raw_video_range_with + GPU-бэкенд)
-//! байт-в-байт равен превью-композиту того же момента: и «холодному»
-//! (свежий движок — второй GpuFxEngine на том же адаптере), и «прогретому»
-//! (тот же движок, ReadbackCache). Плюс: детерминизм экспорта между
-//! прогонами на одном устройстве и допуск-сверка GPU-экспорта с CPU.
+//! Test 184 (R.29): the GPU twin of test 67: “preview == export” on the GPU path.
+//! A frame of the export stream (render_raw_video_range_with + GPU backend)
+//! is byte for byte equal to the preview composite of the same moment: both the “cold”
+//! (a fresh engine: a second GpuFxEngine on the same adapter) and the “warm”
+//! (the same engine, ReadbackCache). Plus: determinism of the export between
+//! runs on one device, and a tolerance check of the GPU export against the CPU.
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -62,9 +62,9 @@ fn project() -> Project {
     };
     p.clips = vec![
         clip(1, 0, 0, 2 * sec, 1, 1.0),
-        clip(2, 1, sec / 2, sec, 2, 0.75), // верхний слой с уровнем
+        clip(2, 1, sec / 2, sec, 2, 0.75), // the top layer with a level
     ];
-    p.normalize(); // дорожки под содержимое (Р.62)
+    p.normalize(); // tracks for the content (R.62)
     p.validate().unwrap();
     p
 }
@@ -115,7 +115,7 @@ fn t184_gpu_preview_equals_gpu_export_cold_and_warm() {
     let backends = ExportBackends { video_gpu: Some(e1.clone()) };
     let export_frame = gpu_export_frames(&backends, q, &[target]).remove(0);
 
-    // «превью»: независимый кэш, прямой декод слоёв, тот же план кадра
+    // “preview”: an independent cache, direct decoding of the layers, the same frame plan
     let p = project();
     let video = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
@@ -132,16 +132,16 @@ fn t184_gpu_preview_equals_gpu_export_cold_and_warm() {
         );
     }
     use kt_engine::VideoGpuExec;
-    // холодный: СВЕЖИЙ движок на том же адаптере
+    // cold: a FRESH engine on the same adapter
     let plan = video.frame_plan(&cache, t, q);
     let mut cold = Vec::new();
     let complete = e2.execute_into(&plan, &mut cold).unwrap();
     assert!(complete);
-    assert_eq!(cold, export_frame, "холодный GPU-композит == GPU-экспорт");
-    // прогретый: движок экспорта, план уже в его ReadbackCache
+    assert_eq!(cold, export_frame, "cold GPU composite == GPU export");
+    // warm: the export engine, the plan is already in its ReadbackCache
     let mut warm = Vec::new();
     e1.execute_into(&plan, &mut warm).unwrap();
-    assert_eq!(warm, export_frame, "прогретый (ReadbackCache) == GPU-экспорт");
+    assert_eq!(warm, export_frame, "warm (ReadbackCache) == GPU export");
 }
 
 #[test]
@@ -152,9 +152,9 @@ fn t184b_gpu_export_deterministic_and_close_to_cpu() {
     let backends = ExportBackends { video_gpu: Some(e1) };
     let a = gpu_export_frames(&backends, q, &grab);
     let b = gpu_export_frames(&backends, q, &grab);
-    assert_eq!(a, b, "GPU-экспорт обязан быть детерминирован на устройстве");
+    assert_eq!(a, b, "GPU export must be deterministic on the device");
 
-    // CPU-эталон тех же кадров — в допуске билинейной арифметики
+    // the CPU reference of the same frames, within the tolerance of bilinear arithmetic
     let p = project();
     let mut cpu: Vec<Vec<u8>> = Vec::new();
     let mut n = 0usize;
@@ -171,10 +171,10 @@ fn t184b_gpu_export_deterministic_and_close_to_cpu() {
     }
 }
 
-/// Тест 301 (Р.44; бывший t187c наоборот): экспорт-рендер БЕЗ GPU больше
-/// НЕ отказывает — Pan3d считается на CPU (обратная гомография в слитом
-/// гео-проходе), отказ GpuRequired удалён. Кадры реально несут эффект, а
-/// при живом адаптере CPU и GPU сходятся в допуске GEOM.
+/// Test 301 (R.44; formerly t187c, the opposite): export rendering WITHOUT the GPU no longer
+/// refuses: Pan3d is computed on the CPU (the inverse homography in the merged
+/// geometry pass), and the GpuRequired refusal is removed. The frames really carry the effect, and
+/// with a live adapter the CPU and GPU agree within the GEOM tolerance.
 #[test]
 fn t301_export_without_gpu_renders_3d() {
     let with_fx = |fx: Vec<FxInstance>| {
@@ -216,13 +216,13 @@ fn t301_export_without_gpu_renders_3d() {
                 Ok(())
             },
         )
-        .expect("экспорт-рендер без GPU обязан работать с 3D");
+        .expect("export render without GPU must work with 3D");
         got
     };
     let cpu_only = ExportBackends::default();
     let cpu3d = render(&with_fx(vec![pan3d.clone()]), &cpu_only);
     let cpu_plain = render(&with_fx(vec![]), &cpu_only);
-    assert_ne!(cpu3d, cpu_plain, "Pan3d на CPU обязан менять картинку");
+    assert_ne!(cpu3d, cpu_plain, "Pan3d on CPU must change the picture");
     if let Some(e) = test_engine() {
         let gpu = ExportBackends { video_gpu: Some(e) };
         let gpu3d = render(&with_fx(vec![pan3d]), &gpu);
@@ -230,11 +230,11 @@ fn t301_export_without_gpu_renders_3d() {
     }
 }
 
-// ---- 444-446 (Р.50, Б3): поддерево вложения на GPU ---------------------------
+// ---- 444-446 (R.50, B3): the subtree of an embedding on the GPU ----------------------------
 
-/// Проект со вложением: два перекрывающихся события внутри ленты, уровень и
-/// цепочка — на ЭКЗЕМПЛЯРЕ. Именно эта конфигурация отличает «границу
-/// порядка обработки» от её отсутствия.
+/// A project with an embedding: two overlapping events inside the reel, a level and
+/// a chain ON THE INSTANCE. It is exactly this configuration that distinguishes the “processing-order
+/// boundary” from its absence.
 fn nested_project(outer_fx: Vec<FxInstance>, outer_opacity: f32) -> Project {
     let sec = 90_000i64;
     let mut p = Project::new(ProjectSettings {
@@ -276,7 +276,7 @@ fn nested_project(outer_fx: Vec<FxInstance>, outer_opacity: f32) -> Project {
         opacity,
         fx_off: false,
     };
-    let mut s = Sequence::new(MediaId(100), "Кусок");
+    let mut s = Sequence::new(MediaId(100), "Piece");
     s.clips = vec![ev(2, 1, 0, 2 * sec, 1, 1.0), ev(3, 0, sec / 2, sec, 2, 0.5)];
     s.ensure_tracks(kt_model::LaneKind::Video, 2);
     p.sequences.push(s);
@@ -310,15 +310,15 @@ fn t444_nested_reel_conforms_gpu_to_cpu() {
     let Some(e) = test_engine() else { return };
     let q = Quality { width: 128, height: 72 };
     let t = Tick(20 * 3000);
-    // и с цепочкой на вложении, и без: цепочка меняет путь (границу
-    // проходит суб-композит, а не кадр), и оба обязаны сходиться
+    // both with a chain on the embedding and without one: the chain changes the path (it is the
+    // sub-composite, not the frame, that crosses the boundary), and both MUST converge
     for fx in [vec![], vec![FxInstance::Mirror { horizontal: true, vertical: false }]] {
         let p = nested_project(fx.clone(), 0.5);
         let (mut video, cache) = warm_cache(&p, q, t);
         let plan = video.frame_plan(&cache, t, q);
         let mut gpu = Vec::new();
-        let complete = e.execute_into(&plan, &mut gpu).expect("GPU обязан УМЕТЬ поддерево");
-        assert!(complete, "прогретый композит с вложением обязан быть полным");
+        let complete = e.execute_into(&plan, &mut gpu).expect("the GPU must be ABLE to handle the subtree");
+        assert!(complete, "a warm composite with a nested item must be complete");
         drop(plan);
         let (cpu, cpu_complete) = video.compose_from_cache(&cache, t, q);
         assert!(cpu_complete);
@@ -328,10 +328,10 @@ fn t444_nested_reel_conforms_gpu_to_cpu() {
             q.width,
             q.height,
             FrameTol::BILINEAR,
-            &format!("вложение, цепочка {}", fx.len()),
+            &format!("nested item, chain {}", fx.len()),
         );
-        // ...и это не «оба чёрные»
-        assert!(gpu.iter().any(|&x| x != 0), "GPU-композит вложения чёрный");
+        // ...and this is not “both black”
+        assert!(gpu.iter().any(|&x| x != 0), "the GPU composite of the nested item is black");
     }
 }
 
@@ -341,9 +341,9 @@ fn t445_nest_boundary_is_not_twice_as_dark_on_gpu() {
     let Some(e) = test_engine() else { return };
     let q = Quality { width: 128, height: 72 };
     let t = Tick(20 * 3000);
-    // Полупрозрачное содержимое: ровно там, где премультипликация на
-    // границе даёт «вдвое темнее». WGSL-зеркало `unpremultiply` обязано
-    // совпадать с CPU до разряда — все текстуры движка Rgba8Uint.
+    // Semi-transparent content: exactly where the premultiplication at the
+    // boundary gives “twice as dark”. The WGSL mirror of `unpremultiply` MUST
+    // match the CPU to the last digit: all the engine’s textures are Rgba8Uint.
     let p = nested_project(vec![], 1.0);
     let (mut video, cache) = warm_cache(&p, q, t);
     let plan = video.frame_plan(&cache, t, q);
@@ -351,7 +351,7 @@ fn t445_nest_boundary_is_not_twice_as_dark_on_gpu() {
     e.execute_into(&plan, &mut gpu).unwrap();
     drop(plan);
     let (cpu, _) = video.compose_from_cache(&cache, t, q);
-    assert_frames_close(&cpu, &gpu, q.width, q.height, FrameTol::EXACT, "граница вложения");
+    assert_frames_close(&cpu, &gpu, q.width, q.height, FrameTol::EXACT, "boundary of the nested item");
 }
 
 #[test]
@@ -366,17 +366,17 @@ fn t446_nested_gpu_is_deterministic_on_device() {
     let plan = video.frame_plan(&cache, t, q);
     let (mut a, mut b, mut c) = (Vec::new(), Vec::new(), Vec::new());
     e1.execute_into(&plan, &mut a).unwrap();
-    // второй прогон ТОГО ЖЕ движка — через ReadbackCache: ключ обязан
-    // различать поддеревья, иначе вернётся чужой суб-композит
+    // a second run of THE SAME engine, through the ReadbackCache: the key MUST
+    // tell the subtrees apart, otherwise a foreign sub-composite would come back
     e1.execute_into(&plan, &mut b).unwrap();
-    // и СВЕЖИЙ движок на том же адаптере — пул отдаёт грязные текстуры,
-    // и незачищенный аккумулятор поддерева виден именно здесь
+    // and a FRESH engine on the same adapter: the pool gives back dirty textures,
+    // and the uncleared accumulator of the subtree shows up exactly here
     e2.execute_into(&plan, &mut c).unwrap();
-    assert_eq!(a, b, "повторный прогон дал другой кадр (ReadbackCache)");
-    assert_eq!(a, c, "свежий движок дал другой кадр (грязный пул поддерева)");
+    assert_eq!(a, b, "a repeated run gave another frame (ReadbackCache)");
+    assert_eq!(a, c, "a fresh engine gave another frame (dirty pool of the subtree)");
 
-    // ключ плана обязан РАЗЛИЧАТЬ редакции ленты: правим содержимое и
-    // требуем другой кадр от ТОГО ЖЕ движка
+    // the plan key MUST DISTINGUISH the revisions of the reel: we edit the content and
+    // require a different frame from the SAME engine
     let mut p2 = nested_project(vec![FxInstance::glow(1.0)], 0.75);
     p2.sequences[0].clips[1].opacity = 0.9;
     p2.validate().unwrap();
@@ -384,27 +384,27 @@ fn t446_nested_gpu_is_deterministic_on_device() {
     let plan2 = video2.frame_plan(&cache2, t, q);
     let mut d = Vec::new();
     e1.execute_into(&plan2, &mut d).unwrap();
-    assert_ne!(a, d, "правка ВНУТРИ ленты не изменила ключ плана — ReadbackCache отдал стейл");
+    assert_ne!(a, d, "an edit INSIDE the reel did not change the plan key — ReadbackCache returned stale data");
 
-    // ГОЛОД ВНУТРИ ленты меняет картинку, не меняя НИ ОДНОГО поля
-    // экземпляра: без плана поддерева в ключе движок вернул бы прогретый
-    // кадр на пустом кэше — и никогда не перезапросил бы содержимое.
+    // A HUNGER INSIDE the reel changes the picture without changing ANY FIELD
+    // of the instance: without the subtree plan in the key the engine would return the warm
+    // frame on an empty cache, and would never re-request the content.
     let cold = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let plan_cold = video.frame_plan(&cold, t, q);
     let mut e = Vec::new();
     let complete = e1.execute_into(&plan_cold, &mut e).unwrap();
-    assert!(!complete, "голод внутри ленты не дошёл до внешнего композита");
-    assert_ne!(a, e, "на ПУСТОМ кэше вернулся прогретый кадр — план поддерева не в ключе");
+    assert!(!complete, "starvation inside the reel did not reach the outer composite");
+    assert_ne!(a, e, "on an EMPTY cache a warm frame came back — the subtree plan is not in the key");
 }
 
-/// Тест 496 (Р.53, п.409): кадр опознаётся по СОДЕРЖИМОМУ, а не по
-/// адресу. Правка параметров генератора при НЕПОДВИЖНОМ курсоре даёт тот
-/// же `(source, cache_idx, размер)` — и до этого пункта GPU отдавал
-/// СТАРУЮ картинку: `UploadCache` переиспользовал текстуру, а
-/// `ReadbackCache` — готовый композит. Тот же дефект у возврата
-/// пропавшего файла вместо заглушки (t211).
+/// Test 496 (R.53, item 409): a frame is recognised by its CONTENT, not by its
+/// address. Editing the generator’s parameters with a STILL cursor gives the
+/// same `(source, cache_idx, size)`, and up to this item the GPU returned
+/// the OLD picture: `UploadCache` reused the texture, and
+/// `ReadbackCache` the ready composite. The same defect comes with the return
+/// of a missing file in place of a stub (t211).
 ///
-/// В харнессе это невидимо (он весь CPU), поэтому тест живёт здесь.
+/// The harness is blind to this (it is all CPU), so this test lives here.
 #[test]
 fn t496_gpu_frame_identity_follows_content() {
     use kt_engine::VideoGpuExec;
@@ -412,7 +412,7 @@ fn t496_gpu_frame_identity_follows_content() {
     let q = Quality { width: 64, height: 36 };
     let t = Tick(0);
 
-    // проект из одного клипа-генератора; цвет меняем «под курсором»
+    // a project of a single generator clip; we change the colour “under the cursor”
     let mut p = Project::new(ProjectSettings {
         fps: 30,
         width: 64,
@@ -429,7 +429,7 @@ fn t496_gpu_frame_identity_follows_content() {
     let solid = |r: u8| GeneratorKind::Solid { color_r: r, color_g: 0, color_b: 0 };
     p.media.push(MediaRef::new(MediaId(1), kt_model::gen_kind_path(&solid(32))));
     p.clips.push(ClipEvent {
-        // Р.59, стадия 2: значения — на СОБЫТИИ
+        // R.59, stage 2: the values are ON THE EVENT
         r#gen: Some(solid(32)),
         gen_auto: Vec::new(),
         overrides: Vec::new(),
@@ -457,7 +457,7 @@ fn t496_gpu_frame_identity_follows_content() {
     let shot = |red: u8, cache: &kt_cache::BurstCache| -> Vec<u8> {
         let mut src = kt_media::generator::GeneratorSource::new(solid(red));
         let frame = src.read_video_frame(Tick(0), Some(q)).unwrap();
-        // ТОТ ЖЕ адрес: источник, индекс и размер не меняются
+        // THE SAME address: the source, the index and the size do not change
         cache.insert_video(
             kt_engine::source_id(kt_engine::gen_source_addr(ClipId(1))),
             Some(q),
@@ -474,17 +474,17 @@ fn t496_gpu_frame_identity_follows_content() {
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let dark = shot(32, &cache);
     let bright = shot(220, &cache);
-    assert_eq!(dark[0], 32, "первый кадр — заданный цвет");
+    assert_eq!(dark[0], 32, "the first frame — the set colour");
     assert_ne!(
         dark, bright,
-        "правка параметров при неподвижном курсоре обязана менять картинку на GPU"
+        "an edit of parameters with a stationary cursor must change the picture on GPU"
     );
-    assert_eq!(bright[0], 220, "второй кадр — НОВЫЙ цвет, а не старая текстура");
+    assert_eq!(bright[0], 220, "the second frame — a NEW colour, not the old texture");
 }
 
-// ---- 586-587 (Р.56, п.448): непрерывное время ленты и смешивание на GPU ---
+// ---- 586-587 (R.56, item 448): continuous reel time and blending on the GPU ---
 
-/// Варп-эффект на ВИДЕО-экземпляре: значимы только скорость и режим кадров.
+/// A warp effect on a VIDEO instance: only the speed and the frame mode matter.
 fn warp_fx(rate: f64, frames: FrameMode) -> FxInstance {
     FxInstance::SlowedReverb {
         rate,
@@ -500,9 +500,9 @@ fn warp_fx(rate: f64, frames: FrameMode) -> FxInstance {
     }
 }
 
-/// Та же сцена, что `nested_project`, но у нижнего ребёнка ЖИВАЯ кривая
-/// яркости: без чего-нибудь процедурного внутри полукадр неотличим от
-/// кадра — футаж-то прибит к кадрам файла (п.448).
+/// The same scene as `nested_project`, but the lower child has a LIVE
+/// brightness curve: without something procedural inside, a half-frame is indistinguishable from
+/// a frame: the footage is pinned to the frames of the file (item 448).
 fn animated_nested_project(outer_fx: Vec<FxInstance>) -> Project {
     let mut p = nested_project(outer_fx, 1.0);
     let child = &mut p.sequences[0].clips[0];
@@ -518,13 +518,13 @@ fn animated_nested_project(outer_fx: Vec<FxInstance>) -> Project {
     p
 }
 
-/// Прогреть ОДИН кэш под момент `t` (ключи — ровно те, что заказал план).
+/// Warm ONE cache at the moment `t` (the keys are exactly those the plan asked for).
 ///
-/// Кэш обязан быть ОБЩИМ на все моменты одного движка: `UploadCache`
-/// ключуется СЕРИЙНЫМ НОМЕРОМ содержимого (п.409), а свежий `BurstCache`
-/// начинает нумерацию заново — два кэша на один движок дают ему одинаковые
-/// ключи у РАЗНЫХ кадров, и текстура возвращается чужая. В программе кэш
-/// один на сессию; тест обязан повторять обвязку движка.
+/// The cache MUST be SHARED across all moments of one engine: `UploadCache`
+/// is keyed by the SERIAL NUMBER of the content (item 409), while a fresh `BurstCache`
+/// starts its numbering again. Two caches for one engine give it the same
+/// keys for DIFFERENT frames, and a foreign texture comes back. In the program the cache is
+/// one per session; the test MUST repeat the engine’s wiring.
 fn warm_into(video: &VideoRenderer, cache: &kt_cache::BurstCache, q: Quality, t: Tick) {
     let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         sources().into_iter().collect();
@@ -539,7 +539,7 @@ fn warm_into(video: &VideoRenderer, cache: &kt_cache::BurstCache, q: Quality, t:
     }
 }
 
-/// CPU- и GPU-исполнение ОДНОГО плана момента `t` на общем кэше.
+/// CPU and GPU execution of ONE plan of the moment `t` on a shared cache.
 fn cpu_and_gpu(
     e: &kt_gpu::GpuFxEngine,
     video: &mut VideoRenderer,
@@ -552,19 +552,19 @@ fn cpu_and_gpu(
     let mut gpu = Vec::new();
     {
         let plan = video.frame_plan(cache, t, q);
-        let complete = e.execute_into(&plan, &mut gpu).expect("GPU обязан уметь поддерево");
-        assert!(complete, "прогретый композит с вложением обязан быть полным");
+        let complete = e.execute_into(&plan, &mut gpu).expect("the GPU must be ABLE to handle the subtree");
+        assert!(complete, "a warm composite with a nested item must be complete");
     }
     let (cpu, complete) = video.compose_from_cache(cache, t, q);
-    assert!(complete, "CPU-композит с вложением обязан быть полным");
+    assert!(complete, "the CPU composite with a nested item must be complete");
     (cpu, gpu)
 }
 
-/// Тест 586 (Р.56, п.448): ЗАМЕДЛЕННАЯ лента на GPU.
+/// Test 586 (R.56, item 448): a SLOWED reel on the GPU.
 ///
-/// Красный на старом коде: внутреннее время ленты флорилось к сетке, и
-/// соседние выходные кадры выходили одинаковыми на ОБОИХ бэкендах — вместе
-/// с анимацией внутри композиции.
+/// Red on the old code: the internal reel time was floored to the grid, and
+/// neighbouring output frames came out identical on BOTH backends, together
+/// with the animation inside the composition.
 #[test]
 fn t586_slowed_nest_conforms_and_is_deterministic_on_gpu() {
     let Some(e) = test_engine() else { return };
@@ -573,7 +573,7 @@ fn t586_slowed_nest_conforms_and_is_deterministic_on_gpu() {
     let mut video = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
 
-    // ЧЁТНЫЙ кадр стоит на целом шаге материала, НЕЧЁТНЫЙ — на полушаге
+    // an EVEN frame sits on a whole step of the material, an ODD one on a half step
     let (even, odd) = (Tick(20 * 3000), Tick(21 * 3000));
     let (cpu_e, gpu_e) = cpu_and_gpu(&e, &mut video, &cache, q, even);
     let (cpu_o, gpu_o) = cpu_and_gpu(&e, &mut video, &cache, q, odd);
@@ -581,28 +581,28 @@ fn t586_slowed_nest_conforms_and_is_deterministic_on_gpu() {
     assert_frames_close(&cpu_o, &gpu_o, q.width, q.height, FrameTol::EXACT, "t586-odd");
     assert_ne!(
         gpu_e, gpu_o,
-        "полукадр замедленной ленты совпал с кадром: внутреннее время округляется \
-         к сетке, и анимация внутри композиции идёт ступеньками"
+        "the half-frame of the slowed reel matched the frame: internal time rounds \
+         to the grid, and the animation inside the composition steps"
     );
-    assert!(gpu_o.iter().any(|&x| x != 0), "кадр чёрный — сверять нечего");
+    assert!(gpu_o.iter().any(|&x| x != 0), "the frame is black — nothing to compare");
 
-    // детерминизм НА ОДНОМ движке: второй прогон идёт через ReadbackCache,
-    // и ключ плана обязан различать полукадры
+    // determinism on ONE engine: the second run goes through the ReadbackCache,
+    // and the plan key MUST tell the half-frames apart
     let (_, again) = cpu_and_gpu(&e, &mut video, &cache, q, odd);
-    assert_eq!(gpu_o, again, "повторный прогон того же плана дал другой кадр");
+    assert_eq!(gpu_o, again, "a repeated run of the same plan gave another frame");
 }
 
-/// Тест 587 (Р.56, п.448): СМЕШИВАНИЕ на вложении — на GPU.
+/// Test 587 (R.56, item 448): BLENDING on an embedding, on the GPU.
 ///
-/// Смешивают ЛИСТЬЯ, а не два суб-композита: GPU получает уже смешанный
-/// пре-FX кадр обычным `LayerInput::Frame`, и второго dissolve-пасса не
-/// появляется. План при этом обязан отличаться от «ближайшего» — иначе
-/// ReadbackCache отдаст чужую картинку.
+/// The LEAVES are blended, not two sub-composites: the GPU gets the already blended
+/// pre-FX frame as an ordinary `LayerInput::Frame`, and no second dissolve pass
+/// appears. The plan must nonetheless differ from “nearest”, otherwise
+/// ReadbackCache would return someone else’s picture.
 #[test]
 fn t587_blend_on_a_nest_differs_from_nearest_on_gpu() {
     let Some(e) = test_engine() else { return };
     let q = Quality { width: 128, height: 72 };
-    let t = Tick(21 * 3000); // полукадр: у листьев есть пара
+    let t = Tick(21 * 3000); // a half-frame: the leaves have a pair
     let blend = nested_project(vec![warp_fx(0.5, FrameMode::Blend)], 1.0);
     let near = nested_project(vec![warp_fx(0.5, FrameMode::Nearest)], 1.0);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
@@ -615,23 +615,23 @@ fn t587_blend_on_a_nest_differs_from_nearest_on_gpu() {
     assert_frames_close(&cpu_n, &gpu_n, q.width, q.height, FrameTol::EXACT, "t587-nearest");
     assert_ne!(
         gpu_b, gpu_n,
-        "«смешивание» на вложении не отличается от «ближайшего»: режим не \
-         доехал до листьев"
+        "“mixing” on the nested item does not differ from “nearest”: the mode \
+         did not reach the leaves"
     );
-    // и это не «одно из них чёрное»
+    // and it is not “one of them is black”
     assert!(gpu_b.iter().any(|&x| x != 0) && gpu_n.iter().any(|&x| x != 0));
 
-    // детерминизм на одном движке (ReadbackCache)
+    // determinism on one engine (ReadbackCache)
     let (_, again) = cpu_and_gpu(&e, &mut vb, &cache, q, t);
-    assert_eq!(gpu_b, again, "повторный прогон смешанного плана дал другой кадр");
+    assert_eq!(gpu_b, again, "a repeated run of a mixed plan gave another frame");
 }
 
-// ---- 632 (Р.58, п.459): ступень ЛЕНТЫ ≠ вход цепочки экземпляра --------------
+// ---- 632 (R.58, item 459): the REEL tier ≠ the chain input of the instance --------------
 
-/// Тот же проект, но у ленты ДВА экземпляра: зумящий (он и поднимает
-/// ступень ленты) и близнец со своей цепочкой. Ступень одна на ленту, а
-/// потребить её умеет не всякая цепочка — второму экземпляру суб-композит
-/// ВПИСЫВАЕТСЯ (`NestSrc::fit_to`, на GPU это `Resample` во весь кадр).
+/// The same project, but the reel has TWO instances: a zooming one (it raises
+/// the reel tier) and a twin with its own chain. The tier is one per reel, and not every
+/// chain can consume it: the sub-composite is FITTED for the second instance
+/// (`NestSrc::fit_to`; on the GPU this is a `Resample` to the whole frame).
 fn twin_nest_project(twin_fx: Vec<FxInstance>) -> Project {
     let sec = 90_000i64;
     let mut p = nested_project(vec![FxInstance::geometry_zoom(3.0)], 1.0);
@@ -652,14 +652,14 @@ fn t632_reel_stage_and_chain_input_conform_gpu_to_cpu() {
     let sec = 90_000i64;
     let t_twin = Tick(10 * sec + 20 * 3000);
     let cases: Vec<(&str, Vec<FxInstance>)> = vec![
-        // вписывание: цепочка ступени не потребляет
+        // fitting: the chain of the tier does not consume it
         ("empty", vec![]),
         ("glow", vec![FxInstance::glow(1.0)]),
         (
             "leading mix",
             vec![FxInstance::geometry_zoom(2.0), FxInstance::LayerMix { amount: 0.5, from: 0 }],
         ),
-        // без вписывания: экземпляр сам просит ступень ленты
+        // without fitting: the instance itself requests the reel’s tier
         ("same zoom", vec![FxInstance::geometry_zoom(3.0)]),
     ];
     for (name, fx) in cases {
@@ -667,27 +667,27 @@ fn t632_reel_stage_and_chain_input_conform_gpu_to_cpu() {
         let (mut video, cache) = warm_cache(&p, q, t_twin);
         let plan = video.frame_plan(&cache, t_twin, q);
         let mut gpu = Vec::new();
-        let complete = e.execute_into(&plan, &mut gpu).expect("GPU обязан УМЕТЬ поддерево");
-        assert!(complete, "{name}: прогретый композит объявлен неполным");
+        let complete = e.execute_into(&plan, &mut gpu).expect("the GPU must be ABLE to handle the subtree");
+        assert!(complete, "{name}: the warm composite is declared incomplete");
         drop(plan);
         let (cpu, cpu_complete) = video.compose_from_cache(&cache, t_twin, q);
-        assert!(cpu_complete, "{name}: CPU-композит объявлен неполным");
-        // допуск BILINEAR: вписывание — ресемпл, а `resample.wgsl` считает
-        // в f32 и округляет к чётному, `fit_into` — в f64 и от нуля
+        assert!(cpu_complete, "{name}: the CPU composite is declared incomplete");
+        // BILINEAR tolerance: fitting is a resample, and `resample.wgsl` computes
+        // in f32 and rounds to even, while `fit_into` works in f64 and rounds away from zero
         assert_frames_close(&cpu, &gpu, q.width, q.height, FrameTol::BILINEAR, name);
-        assert!(gpu.iter().any(|&x| x != 0), "{name}: GPU-композит чёрный — вложение выпало");
-        assert!(cpu.iter().any(|&x| x != 0), "{name}: CPU-композит чёрный — вложение выпало");
+        assert!(gpu.iter().any(|&x| x != 0), "{name}: the GPU composite is black — the nested item dropped out");
+        assert!(cpu.iter().any(|&x| x != 0), "{name}: the CPU composite is black — the nested item dropped out");
     }
 }
 
-/// Тест 687 (Р.59, стадия 3): два ПО-РАЗНОМУ переопределённых экземпляра
-/// одной ленты сходятся на обоих бэкендах.
+/// Test 687 (R.59, stage 3): two DIFFERENTLY overridden instances
+/// of one reel converge on both backends.
 ///
-/// Инвариант 7 читается тут буквально: «превью подставляет одно, экспорт
-/// другое» — это второй путь композиции. Публичные значения разрешает
-/// МОДЕЛЬ, до плана, поэтому у исполнителей и шанса разойтись быть не
-/// должно; тест сторожит, что план у экземпляров и правда РАЗНЫЙ (иначе
-/// он был бы зелёным ни на чём).
+/// Invariant 7 is read literally here: “the preview substitutes one thing, the export
+/// another” is a second composition path. The public values are resolved by the
+/// MODEL, before the plan, so the executors MUST have no chance to diverge;
+/// the test guards that the plan of the instances really IS DIFFERENT (otherwise
+/// it would be green for nothing).
 #[test]
 fn t687_two_differently_overridden_instances_conform_gpu_to_cpu() {
     use kt_engine::VideoGpuExec;
@@ -696,23 +696,23 @@ fn t687_two_differently_overridden_instances_conform_gpu_to_cpu() {
     let q = Quality { width: 128, height: 72 };
 
     let mut p = nested_project(vec![], 1.0);
-    // ручка: уровень ВЕРХНЕГО события внутри ленты
+    // a handle: the level of the TOP event inside the reel
     let s = p.sequences.iter_mut().find(|s| s.id == MediaId(100)).unwrap();
     s.published = vec![kt_model::PublishedParam {
         id: kt_model::PubId(1),
-        name: "Уровень плашки".into(),
+        name: "Plate level".into(),
         target: kt_model::ParamAddr::new(ClipId(3), kt_model::ParamOwner::ClipAttr, "opacity"),
         ty: kt_model::ParamType::Num,
         range: kt_model::PubRange { min: None, max: None },
     }];
-    // второй экземпляр той же ленты — со своим значением
+    // a second instance of the same reel, with its own value
     let mut twin = p.clips[0].clone();
     twin.id = ClipId(11);
     twin.start = Tick(4 * sec);
     twin.overrides =
         vec![kt_model::Override::value(kt_model::PubId(1), kt_model::ParamValue::Num(1.0))];
     p.clips.push(twin);
-    p.validate().expect("две по-разному переопределённые постановки законны");
+    p.validate().expect("two differently overridden placements are legal");
 
     let at = |k: i64| Tick(k + 20 * 3000);
     let mut frames = Vec::new();
@@ -720,8 +720,8 @@ fn t687_two_differently_overridden_instances_conform_gpu_to_cpu() {
         let (mut video, cache) = warm_cache(&p, q, t);
         let plan = video.frame_plan(&cache, t, q);
         let mut gpu = Vec::new();
-        let complete = e.execute_into(&plan, &mut gpu).expect("GPU обязан УМЕТЬ поддерево");
-        assert!(complete, "прогретый композит с вложением обязан быть полным");
+        let complete = e.execute_into(&plan, &mut gpu).expect("the GPU must be ABLE to handle the subtree");
+        assert!(complete, "a warm composite with a nested item must be complete");
         drop(plan);
         let (cpu, cpu_complete) = video.compose_from_cache(&cache, t, q);
         assert!(cpu_complete);
@@ -731,20 +731,20 @@ fn t687_two_differently_overridden_instances_conform_gpu_to_cpu() {
             q.width,
             q.height,
             FrameTol::EXACT,
-            "экземпляр с переопределением",
+            "instance with an override",
         );
-        assert!(gpu.iter().any(|&x| x != 0), "GPU-композит экземпляра чёрный");
+        assert!(gpu.iter().any(|&x| x != 0), "the GPU composite of the instance is black");
         frames.push(cpu);
     }
     assert_ne!(
         frames[0], frames[1],
-        "экземпляры нарисовали ОДНО: переопределение не доехало до плана, и \
-         конформанс проверен ни на чём"
+        "the instances drew ONE thing: the override did not reach the plan, and \
+         conformance was verified on nothing"
     );
 }
 
-/// Тест 724b (Р.62): свой fps ленты — на GPU конформанс EXACT с CPU, и
-/// кадр держится (чётный и нечётный кадры проекта равны).
+/// Test 724b (R.62): the reel’s own fps on the GPU: conformance EXACT with the CPU,
+/// and the frame holds (the even and odd frames of the project are equal).
 #[test]
 fn t724b_reel_fps_holds_frames_on_gpu() {
     let Some(e) = test_engine() else { return };
@@ -760,7 +760,7 @@ fn t724b_reel_fps_holds_frames_on_gpu() {
     let (_, gpu_n) = cpu_and_gpu(&e, &mut video, &cache, q, next);
     assert_frames_close(&cpu_e, &gpu_e, q.width, q.height, FrameTol::EXACT, "t724b-even");
     assert_frames_close(&cpu_o, &gpu_o, q.width, q.height, FrameTol::EXACT, "t724b-odd");
-    assert_eq!(gpu_e, gpu_o, "лента 15 fps в проекте 30: нечётный кадр держит чётный");
-    assert_ne!(gpu_e, gpu_n, "следующий кадр ленты — другой");
-    assert!(gpu_e.iter().any(|&x| x != 0), "кадр чёрный — сверять нечего");
+    assert_eq!(gpu_e, gpu_o, "reel at 15 fps in a 30 project: an odd frame holds an even one");
+    assert_ne!(gpu_e, gpu_n, "the next reel frame is different");
+    assert!(gpu_e.iter().any(|&x| x != 0), "the frame is black — nothing to compare");
 }

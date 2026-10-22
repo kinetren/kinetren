@@ -1,34 +1,34 @@
-//! Карта растяжения времени: «сколько материала съедено к моменту τ».
+//! Time-stretch map: “how much material has been consumed by moment τ”.
 //!
-//! ПЕРЕЕХАЛА СЮДА ИЗ kt-fx (Р.39) — **тело не трогать, на нём стоят
-//! GOLDEN_AUDIO и GOLDEN_VIDEO**: перенос был дословным, те же операции f64
-//! в том же порядке. Правила SIMD-раздела kt-fx/CLAUDE.md действуют здесь
-//! слово в слово: ни FMA, ни переассоциации, ни f32, ни «causal» правок от
-//! clippy внутри этого файла.
+//! MOVED HERE FROM kt-fx (R.39) — **do not touch the body: GOLDEN_AUDIO and
+//! GOLDEN_VIDEO rest on it**: the move was verbatim, the same f64 operations
+//! in the same order. The SIMD-section rules of kt-fx/CLAUDE.md apply here word
+//! for word: no FMA, no re-association, no f32, and no “causal” edits from
+//! clippy inside this file.
 //!
-//! Почему в модели, а не в kt-fx: карту обязан звать `clip_slice`
-//! (`project.rs`) — правило куска клипа, — а kt-model зависеть от kt-fx не
-//! может (направление зависимости обратное). Арифметика при этом чистая:
-//! `f64`/`i64` над `[(f64, f64)]`, ни медиа, ни DSP. kt-fx и kt-engine
-//! зовут её отсюда, публичные имена сохранены реэкспортом.
+//! Why it is in the model and not in kt-fx: the map must be called by `clip_slice`
+//! (`project.rs`) — the rule of a clip piece — and kt-model cannot depend on kt-fx
+//! (the dependency direction is the other way). The arithmetic is pure:
+//! `f64`/`i64` over `[(f64, f64)]`, no media, no DSP. kt-fx and kt-engine
+//! call it from here, the public names kept by re-export.
 
 use crate::{FxInstance, ParamCurve};
 use kt_time::Tick;
 
-/// Профиль одного параметра в ДОМЕНЕ СОБЫТИЯ: (доля выходного времени
-/// 0..1, значение). Строится из кривых клипа (`ParamCurve`, ключи в тиках
-/// материала) один раз при сборке процессора — дальше аудио-поток работает
-/// только с числами и ничего не аллоцирует.
+/// The profile of one parameter in the EVENT DOMAIN: (fraction of output time
+/// 0..1, value). Built from the clip curves (`ParamCurve`, keys in material ticks)
+/// once at processor construction — after that the audio thread works only
+/// with numbers and allocates nothing.
 ///
-/// Р.37: доля считается ЛИНЕЙНО от начала события, скорость её не сжимает
-/// (требование пользователя: «t — временной промежуток, вырезанный текущим
-/// событием, БЕЗ учёта замедления-ускорения»). Арифметика построения та же,
-/// изменилась ТРАКТОВКА числа.
+/// R.37: the fraction is computed LINEARLY from the start of the event, and the speed does not
+/// compress it (the user's requirement: “t — the time span cut out by the current event,
+/// WITHOUT accounting for slowing or speeding up”). The construction arithmetic is the same;
+/// only the INTERPRETATION of the number changed.
 pub type ParamPoints = [(f64, f64)];
 
-/// Значение профиля в позиции tau (линейная интерполяция, края зажаты).
-/// `base` возвращается только у ПУСТОГО профиля: непустой перекрывает
-/// параметр целиком (семантика v1 — кривая главнее ручки).
+/// Value of the profile at position tau (linear interpolation, edges clamped).
+/// `base` is returned only for an EMPTY profile: a non-empty one overrides the
+/// parameter entirely (v1 semantics — the curve outranks the handle).
 pub fn param_at(base: f64, points: &ParamPoints, tau: f64, shapes: &[crate::SegShape]) -> f64 {
     let s = tau;
     if points.is_empty() {
@@ -41,9 +41,9 @@ pub fn param_at(base: f64, points: &ParamPoints, tau: f64, shapes: &[crate::SegS
         if s <= w[1].0 {
             let span = (w[1].0 - w[0].0).max(1e-12);
             let a = (s - w[0].0) / span;
-            // форму несёт ЛЕВЫЙ ключ отрезка — и звук, и график зовут
-            // ОДНУ функцию `SegShape::at` (Р.61); короткий ряд форм
-            // значит «прямая», как у `rate`
+            // the segment's LEFT key carries the shape — both the sound and the graph call
+            // ONE function `SegShape::at` (R.61); a short series of shapes
+            // means “a straight line”, as for `rate`
             let shape = shapes.get(i).copied().unwrap_or(crate::SegShape::Linear);
             return shape.at(a, w[0].1, w[1].1);
         }
@@ -51,35 +51,35 @@ pub fn param_at(base: f64, points: &ParamPoints, tau: f64, shapes: &[crate::SegS
     points[points.len() - 1].1
 }
 
-/// Значение rate в выходной позиции tau. Профиль rate ВСЕГДА кусочно
-/// линеен: на этом стоит аналитическая форма карты варпа (S — парабола,
-/// T — корень квадратного), и сглаживание (`ease`) на нём игнорируется —
-/// интеграл от smoothstep был бы четвёртой степени. Р.37 сделал ease
-/// принципиально считаемым, но выигрыша в нём нет.
+/// The rate value at output position tau. The rate profile is ALWAYS piecewise
+/// linear: the analytic form of the warp map rests on this (S — a parabola,
+/// T — a square root), and smoothing (`ease`) is ignored on it — the integral of
+/// smoothstep would be of the fourth degree. R.37 made ease
+/// in principle computable, but there is no gain from it.
 pub fn rate_at(base: f64, points: &ParamPoints, tau: f64) -> f64 {
     param_at(base, points, tau, &[])
 }
 
 // ---------------------------------------------------------------------------
-// ДОМЕН СОБЫТИЯ (Р.37, решение пользователя): кривая rate — функция
-// ВЫХОДНОГО прогресса tau (доли длины события), а не потреблённого
-// материала. Ключ приклеен к материалу по-прежнему (обрезка/Split/реверс
-// работают как с Р.33), но ось ЛИНЕЙНА: скорость её не сжимает.
+// EVENT DOMAIN (R.37, the user's decision): the rate curve is a function of the
+// OUTPUT progress tau (the fraction of the event length), not of the consumed
+// material. The key is still glued to the material (trim/Split/reverse
+// work as in R.33), but the axis is LINEAR: the speed does not compress it.
 //
-// Зачем: домен по материалу делал ось кривой rate зависящей ОТ САМОЙ
-// кривой rate (подвинул значение — точка уехала по экрану), заставлял
-// ранний ключ скорости сдвигать момент срабатывания поздних ключей ДРУГИХ
-// параметров и оставлял недостижимой правую часть графика (доехать можно
-// было лишь до duration·avg_rate).
+// Why: a material-based domain made the rate curve's axis depend ON
+// THE RATE CURVE ITSELF (move a value — the point moves across the screen),
+// made an early speed key shift the moment of the later keys of OTHER parameters,
+// and left the right part of the graph unreachable
+// (one could reach only as far as duration·avg_rate).
 //
-// Карта: rate(tau) кусочно-линеен; S(tau) = ∫₀^tau rate(u)du — доля
-// материала, потреблённая к выходному прогрессу tau; T(s) = S⁻¹.
-// S кусочно-КВАДРАТИЧНА (трапеция), T — корень квадратного уравнения.
-// Ни ln, ни expm1: только + − × ÷ √, все корректно округлены по IEEE-754,
-// то есть карта бит-переносима между платформами (golden всё ещё пришпилен
-// к linux x86_64 синк-ресемплером, но уже не картой).
-// Rate внутри карты зажат тем же клампом, что и Warp — иначе карта
-// разошлась бы с фактическим потреблением.
+// Map: rate(tau) is piecewise linear; S(tau) = ∫₀^tau rate(u)du — the fraction of
+// material consumed by output progress tau; T(s) = S⁻¹.
+// S is piecewise QUADRATIC (trapezoid), T — the root of a quadratic equation.
+// Neither ln nor expm1: only + − × ÷ √, all correctly rounded per IEEE-754,
+// that is, the map is bit-portable across platforms (the golden is still pinned to
+// linux x86_64 by the sync resampler, but no longer by the map).
+// The rate inside the map is clamped by the same clamp as Warp — otherwise the map would
+// diverge from the actual consumption.
 // ---------------------------------------------------------------------------
 
 pub const RATE_CLAMP: (f64, f64) = (-32.0, 32.0);
@@ -88,32 +88,32 @@ pub fn eff_rate(base: f64, points: &ParamPoints, s: f64) -> f64 {
     rate_at(base, points, s).clamp(RATE_CLAMP.0, RATE_CLAMP.1)
 }
 
-/// Δτ, за которое сегмент со стартовым rate r0 и наклоном b = dr/dτ
-/// съедает Δs материала — корень (b/2)·dt² + r0·dt − ds = 0.
+/// Δτ over which a segment with starting rate r0 and slope b = dr/dτ
+/// consumes Δs of material — the root of (b/2)·dt² + r0·dt − ds = 0.
 ///
-/// Форма citardauq (умноженная на сопряжённое), а НЕ школьная
-/// (−r0+√…)/b: она устойчива численно И не требует ветки b ≈ 0 —
-/// при b = 0 сама сворачивается в ds/r0. Знаменатель ≥ r0 ≥ RATE_CLAMP.0,
-/// нулём не бывает; дискриминант в точке решения равен rate(τ)², то есть
-/// неотрицателен по построению (max(0) — только от арифметики).
+/// The citardauq form (multiplied by the conjugate), and NOT the schoolbook
+/// (−r0+√…)/b: it is numerically stable AND does not require a branch b ≈ 0 —
+/// at b = 0 it collapses by itself to ds/r0. The denominator is ≥ r0 ≥ RATE_CLAMP.0,
+/// it is never zero; the discriminant at the solution point equals rate(τ)², that is,
+/// is non-negative by construction (max(0) — only from arithmetic rounding).
 fn seg_dt(ds: f64, r0: f64, b: f64) -> f64 {
     2.0 * ds / (r0 + (r0 * r0 + 2.0 * b * ds).max(0.0).sqrt())
 }
 
-/// Δs, потребляемая за Δτ на сегменте со стартовым rate r0 и наклоном
-/// b = dr/dτ: трапеция ∫(r0 + b·u)du = r0·dt + b·dt²/2. Точно, без веток.
+/// Δs consumed over Δτ on a segment with starting rate r0 and slope
+/// b = dr/dτ: the trapezoid ∫(r0 + b·u)du = r0·dt + b·dt²/2. Exact, without branches.
 fn seg_ds(dt: f64, r0: f64, b: f64) -> f64 {
     r0 * dt + 0.5 * b * dt * dt
 }
 
-/// Сегменты (t0, t1, r0, r1) профиля по домену СОБЫТИЯ; последний — хвост
-/// с константным rate до бесконечности (t1 = f64::INFINITY). Тело
-/// доменно-нейтрально: оно просто идёт по массиву точек.
+/// Segments (t0, t1, r0, r1) of the profile in the EVENT domain; the last one — a tail
+/// with a constant rate to infinity (t1 = f64::INFINITY). The body is
+/// domain-neutral: it simply walks the array of points.
 ///
-/// ВАЖНО: концы клампятся ДО интерполяции, а `eff_rate` клампит ПОСЛЕ —
-/// значения расходятся, если ключ лежит вне RATE_CLAMP. Из UI такой ключ
-/// не поставить (`set_param` клампит по спеке), но `migrate_legacy_slowed`
-/// копирует легаси-значение как есть, поэтому клампим и на входе профиля
+/// IMPORTANT: the ends are clamped BEFORE interpolation, while `eff_rate` clamps AFTER —
+/// the values diverge if a key lies outside RATE_CLAMP. Such a key cannot be set from the UI
+/// (`set_param` clamps by the spec), but `migrate_legacy_slowed` copies the legacy value as is,
+/// so we clamp at the profile input as well
 /// (`AutoProfiles::from_curves`).
 fn segments(base: f64, points: &ParamPoints) -> Vec<(f64, f64, f64, f64)> {
     let cl = |r: f64| r.clamp(RATE_CLAMP.0, RATE_CLAMP.1);
@@ -132,22 +132,22 @@ fn segments(base: f64, points: &ParamPoints) -> Vec<(f64, f64, f64, f64)> {
     }
     let last = cl(points[points.len() - 1].1);
     out.push((points[points.len() - 1].0, f64::INFINITY, last, last));
-    // Профиль начинается в tau = 0 ВСЕГДА (Р.39). Ключ левее `source_in`
-    // законен — его прячет обрезка или разрез, — и его нормированная
-    // позиция ОТРИЦАТЕЛЬНА. Плоский сегмент от нуля выше добавляется лишь
-    // при `points[0].0 > 0.0`, поэтому без подрезки `source_progress`
-    // интегрировала бы ОТ ЭТОЙ ТОЧКИ: `S(0) != 0`, и клип читал бы
-    // материал со сдвигом. Отрицательную точку создаёт КАЖДЫЙ TrimStart и
-    // правая половина КАЖДОГО Split.
+    // The profile ALWAYS starts at tau = 0 (R.39). A key to the left of `source_in`
+    // is legal — it is hidden by a trim or a cut — and its normalized
+    // position is NEGATIVE. The flat segment from zero above is added only
+    // when `points[0].0 > 0.0`, so without the trim `source_progress`
+    // would integrate FROM THIS POINT: `S(0) != 0`, and the clip would read
+    // the material with a shift. A negative point is created by EVERY TrimStart and
+    // the right half of EVERY Split.
     //
-    // Подрезка живёт здесь, а не в `source_progress`: тогда она и
-    // `output_time_for_source` остаются взаимно обратными даром, а ветки
-    // «за краями» (`segments(...)[0].2`, п.138) экстраполируют скоростью
-    // В НУЛЕ, а не скоростью спрятанного ключа — что и значит «за
-    // краями — крайние».
+    // The trim lives here, not in `source_progress`: then it and
+    // `output_time_for_source` remain mutually inverse for free, and the branches
+    // “beyond the edges” (`segments(...)[0].2`, item 138) extrapolate with the speed
+    // AT ZERO, not with the speed of the hidden key — which is what “beyond the edges
+    // — the edge values” means.
     //
-    // При `points[0].0 >= 0.0` ни одна ветка ниже не исполняется, поэтому
-    // прежний путь байт-в-байт цел (на нём стоят GOLDEN_*).
+    // With `points[0].0 >= 0.0` none of the branches below is executed, so the previous
+    // path stays byte-for-byte intact (GOLDEN_* rest on it).
     while out.len() > 1 && out[0].1 <= 0.0 {
         out.remove(0);
     }
@@ -159,10 +159,10 @@ fn segments(base: f64, points: &ParamPoints) -> Vec<(f64, f64, f64, f64)> {
     out
 }
 
-/// T(s) = S⁻¹: выходной прогресс (доли длины события), при котором
-/// потреблена source-доля s. Строго возрастает (rate ≥ RATE_CLAMP.0 > 0).
-/// s < 0 — левая «ручка» перехода (п.138): линейная экстраполяция
-/// скоростью первого сегмента.
+/// T(s) = S⁻¹: the output progress (fractions of the event length) at which
+/// the source fraction s is consumed. Strictly increasing (rate ≥ RATE_CLAMP.0 > 0).
+/// s < 0 — the left “handle” of the transition (item 138): linear extrapolation
+/// at the speed of the first segment.
 pub fn output_time_for_source(base: f64, points: &ParamPoints, s: f64) -> f64 {
     if s < 0.0 {
         return s / segments(base, points)[0].2;
@@ -184,11 +184,11 @@ pub fn output_time_for_source(base: f64, points: &ParamPoints, s: f64) -> f64 {
     acc_t
 }
 
-/// S(t) = ∫₀ᵗ rate(u)du: source-доля, потреблённая к выходному прогрессу
-/// t (t может быть > 1 — хвост за клипом; rate за последним kf константен;
-/// t < 0 — левая «ручка» перехода, п.138: линейно скоростью первого
-/// сегмента, «за краями — крайние»). Материал ручек НЕ сдвигает
-/// нормировку автоматизации — знаменатель остаётся clip_len.
+/// S(t) = ∫₀ᵗ rate(u)du: the source fraction consumed by output progress
+/// t (t may be > 1 — the tail beyond the clip; rate beyond the last kf is constant;
+/// t < 0 — the left “handle” of the transition, item 138: linearly at the speed of the first
+/// segment, “beyond the edges — the edge values”). The handles' material does NOT shift
+/// the normalization of automation — the denominator remains clip_len.
 pub fn source_progress(base: f64, points: &ParamPoints, t: f64) -> f64 {
     if t < 0.0 {
         return t * segments(base, points)[0].2;
@@ -209,45 +209,45 @@ pub fn source_progress(base: f64, points: &ParamPoints, t: f64) -> f64 {
 }
 
 // ---------------------------------------------------------------------------
-// ЗНАКОВАЯ СКОРОСТЬ (Р.57, решение владельца): rate живёт в −32…32, ноль
-// разрешён. Семантика — velocity-огибающая Vegas: ПОЗИЦИЯ в материале
-// P(τ) = ∫₀^τ rate, минус идёт по материалу НАЗАД внутри события, ноль —
-// стоп-кадр.
+// SIGNED SPEED (R.57, the owner's decision): rate lives in −32…32, zero
+// is allowed. The semantics are Vegas's velocity envelope: the POSITION in the material
+// P(τ) = ∫₀^τ rate, minus runs BACKWARD through the material inside the event, zero —
+// a freeze frame.
 //
-// Из этого следуют ДВЕ ОСИ, и путать их нельзя:
+// Two AXES follow from this, and they must not be confused:
 //
-// * **P(τ) = ∫rate** — знаковая ПОЗИЦИЯ (адрес чтения). Немонотонна, и
-//   обращать её нечем: у точки материала может быть несколько моментов
-//   выхода. Это и есть `source_progress` — её тело НЕ ТРОНУТО, потому что
-//   `seg_ds` знаконезависима.
-// * **A(τ) = ∫|rate|** — накопленное ПОТРЕБЛЕНИЕ. Монотонна по построению,
-//   и обращается (`output_time_for_consumption`). По ней живёт курсор
-//   ресемплера: рубато ест поток со скоростью |rate| и знака не знает.
+// * **P(τ) = ∫rate** — the signed POSITION (the read address). Non-monotonic, and
+//   there is nothing to invert it with: a point of the material may have several exit moments.
+//   This is `source_progress` itself — its body is NOT TOUCHED, because
+//   `seg_ds` is sign-independent.
+// * **A(τ) = ∫|rate|** — the accumulated CONSUMPTION. Monotonic by construction,
+//   and invertible (`output_time_for_consumption`). The resampler's cursor lives on it:
+//   rubato eats the stream at the speed |rate| and does not know the sign.
 //
-// На кривых, целиком лежащих в 0.25…32, A ≡ P ≡ прежняя S БИТ-В-БИТ:
-// `fabs` положительного f64 — тождество, а разбиение сегмента в нуле
-// скорости включается строго при `r0*r1 < 0`, чего на таких кривых не
-// бывает. На этом стоят GOLDEN_AUDIO и GOLDEN_VIDEO (сторож — t603d).
+// On curves lying entirely within 0.25…32, A ≡ P ≡ the former S BIT FOR BIT:
+// `fabs` of a positive f64 is the identity, and splitting a segment at zero
+// speed is enabled strictly when `r0*r1 < 0`, which never happens on such curves.
+// GOLDEN_AUDIO and GOLDEN_VIDEO rest on this (guard — t603d).
 // ---------------------------------------------------------------------------
 
-/// Пол скорости для АУДИО: |rate| ниже — это удержание (hold), а не очень
-/// медленное чтение. Одна константа на карту и на процессор: разойдись
-/// они, потребление разъехалось бы с тем, что реально съел ресемплер.
+/// Speed floor for AUDIO: |rate| below it is a hold, not a very slow reading.
+/// One constant for the map and for the processor: if they diverged,
+/// the consumption would drift from what the resampler actually ate.
 ///
-/// Решение владельца: «тянуть до 0.01, тишина только в нуле».
+/// The owner's decision: “pull down to 0.01, silence only at zero”.
 pub const RATE_AUDIO_FLOOR: f64 = 0.01;
 
-/// Модуль скорости с полом: ниже пола — ноль (удержание).
+/// Speed magnitude with a floor: below the floor — zero (hold).
 fn mag_floor(r: f64) -> f64 {
     let a = r.abs();
     if a < RATE_AUDIO_FLOOR { 0.0 } else { a }
 }
 
-/// Сегменты профиля, разбитые в НУЛЕ СКОРОСТИ, с |rate| на концах.
+/// Profile segments split AT SPEED ZERO, with |rate| at the ends.
 ///
-/// Разбиение включается строго при `r0*r1 < 0.0` — не `<=`. Сегмент,
-/// КОНЧАЮЩИЙСЯ нулём, остаётся линейным по модулю, и лишнее слагаемое
-/// `acc += 0.0` сдвинуло бы округление там, где ничего не меняется.
+/// The split is enabled strictly when `r0*r1 < 0.0` — not `<=`. A segment
+/// ENDING at zero stays linear modulo, and an extra term
+/// `acc += 0.0` would shift the rounding where nothing changes.
 fn abs_segments(base: f64, points: &ParamPoints) -> Vec<(f64, f64, f64, f64)> {
     let segs = segments(base, points);
     let mut out = Vec::with_capacity(segs.len() + 2);
@@ -264,13 +264,13 @@ fn abs_segments(base: f64, points: &ParamPoints) -> Vec<(f64, f64, f64, f64)> {
     out
 }
 
-/// A(t) = ∫₀ᵗ |rate(u)|du — сколько материала цепочка СЪЕЛА к выходному
-/// прогрессу t. Монотонно не убывает; растёт строго везде, кроме плато
-/// нулевой скорости.
+/// A(t) = ∫₀ᵗ |rate(u)|du — how much material the chain has EATEN by output
+/// progress t. Monotonically non-decreasing; it grows strictly everywhere except on
+/// a plateau of zero speed.
 ///
-/// Тело повторяет `source_progress` шаг в шаг (тот же цикл, тот же
-/// `seg_ds`, тот же порядок сложения) — иначе бит-тождество на
-/// положительных кривых не удержать.
+/// The body repeats `source_progress` step by step (the same loop, the same
+/// `seg_ds`, the same order of addition) — otherwise bit-identity on
+/// positive curves cannot be held.
 pub fn consumed_abs(base: f64, points: &ParamPoints, t: f64) -> f64 {
     if t < 0.0 {
         return t * mag_floor(segments(base, points)[0].2);
@@ -290,12 +290,12 @@ pub fn consumed_abs(base: f64, points: &ParamPoints, t: f64) -> f64 {
     acc_s
 }
 
-/// A⁻¹: выходной прогресс, при котором СЪЕДЕНО `a` материала.
+/// A⁻¹: the output progress at which `a` of the material has been EATEN.
 ///
-/// Правило плато: на нулевой скорости потребление стоит, и ответом
-/// берётся ЛЕВЫЙ край плато — первый момент, когда счётчик достиг `a`.
-/// Ответ `+∞` значит «столько не съедается никогда» (хвост профиля —
-/// нулевая скорость).
+/// Plateau rule: at zero speed the consumption stands still, and the answer
+/// is taken as the LEFT edge of the plateau — the first moment when the counter reached `a`.
+/// The answer `+∞` means “this much is never eaten” (the tail of the profile —
+/// zero speed).
 pub fn output_time_for_consumption(base: f64, points: &ParamPoints, a: f64) -> f64 {
     if a < 0.0 {
         let r = mag_floor(segments(base, points)[0].2);
@@ -317,26 +317,26 @@ pub fn output_time_for_consumption(base: f64, points: &ParamPoints, a: f64) -> f
         };
         if acc_a + seg_a >= a {
             let need = a - acc_a;
-            // ровно на границе (и на плато) — ЛЕВЫЙ край: `seg_dt` при
-            // нулевом `need` и нулевой скорости дал бы 0/0
+            // exactly at the boundary (and on a plateau) — the LEFT edge: `seg_dt` with
+            // a zero `need` and zero speed would give 0/0
             return if need <= 0.0 { acc_t } else { acc_t + seg_dt(need, r0, b) };
         }
         acc_t += seg_t;
         acc_a += seg_a;
     }
-    // хвост нулевой скорости: `acc_t` уже бесконечен, если хвост был
-    // ненулевым; иначе столько материала не съедается никогда
+    // zero-speed tail: `acc_t` is already infinite if the tail was
+    // non-zero; otherwise this much material is never eaten
     if acc_a >= a { acc_t } else { f64::INFINITY }
 }
 
-/// Пролёт ПОЗИЦИИ на [t0, t1]: (минимум P, максимум P).
+/// The SPAN of POSITION over [t0, t1]: (minimum P, maximum P).
 ///
-/// Для монотонного профиля возвращает РОВНО `(P(t0), P(t1))` — на этом
-/// стоит бит-тождество окон префетча и оси зеркала.
+/// For a monotonic profile it returns EXACTLY `(P(t0), P(t1))` — the bit-identity of the
+/// prefetch windows and of the mirror axis rests on this.
 pub fn span_over(base: f64, points: &ParamPoints, t0: f64, t1: f64) -> (f64, f64) {
     let (a, b) = (source_progress(base, points, t0), source_progress(base, points, t1));
     let (mut lo, mut hi) = (a.min(b), a.max(b));
-    // экстремумы P — только в нулях скорости: между ними знак постоянен
+    // the extrema of P — only at speed zeros: between them the sign is constant
     for (s0, s1, r0, r1) in segments(base, points) {
         if !(s1.is_finite() && s1 > s0) || r0 * r1 >= 0.0 {
             continue;
@@ -351,20 +351,20 @@ pub fn span_over(base: f64, points: &ParamPoints, t0: f64, t1: f64) -> (f64, f64
     (lo, hi)
 }
 
-/// Пролёт позиции за ВСЁ событие, в тиках. `span_ticks` — длина события.
+/// Span of position over the WHOLE event, in ticks. `span_ticks` — the length of the event.
 pub fn warp_span_ticks(base: f64, points: &ParamPoints, span_ticks: i64) -> (i64, i64) {
     let (lo, hi) = span_over(base, points, 0.0, 1.0);
     ((span_ticks as f64 * lo).round() as i64, (span_ticks as f64 * hi).round() as i64)
 }
 
-/// Пределы МОДУЛЯ скорости по всему профилю (для ресемплера: он должен
-/// знать, какой разброс отношений его ждёт, ещё до первого чанка).
-/// Ноль поднимается до пола: на удержании ресемплер не работает вовсе.
+/// Limits of the MAGNITUDE of speed over the whole profile (for the resampler: it must
+/// know what spread of ratios to expect, before the first chunk).
+/// Zero is raised to the floor: on a hold the resampler does not work at all.
 pub fn rate_reach(base: f64, points: &ParamPoints) -> (f64, f64) {
     let (mut lo, mut hi) = (f64::INFINITY, 0.0f64);
-    // по РАЗБИТЫМ сегментам: кривая, меняющая знак, проходит через ноль
-    // ВНУТРИ сегмента, и по одним концам минимум вышел бы завышенным — а
-    // ресемплер потом отверг бы смену отношения (Р.57).
+    // over the SPLIT segments: a curve that changes sign passes through zero
+    // INSIDE a segment, and over the ends alone the minimum would come out overstated —
+    // and the resampler would then reject the change of ratio (R.57).
     for (_, _, r0, r1) in abs_segments(base, points) {
         for r in [r0.abs(), r1.abs()] {
             lo = lo.min(r);
@@ -378,16 +378,16 @@ pub fn rate_reach(base: f64, points: &ParamPoints) -> (f64, f64) {
     (lo.max(RATE_AUDIO_FLOOR), hi.max(RATE_AUDIO_FLOOR))
 }
 
-/// Ходит ли профиль НАЗАД по материалу хоть где-нибудь.
+/// Does the profile go BACKWARD through the material anywhere at all?
 ///
-/// Это и есть предикат «карта немонотонна»: он гейтит всё, что построено
-/// на чтении вперёд (раны адреса, окна префетча, блочная схема суб-микса).
+/// This is the predicate “the map is non-monotonic”: it gates everything built on
+/// reading forward (address runs, prefetch windows, the block scheme of the sub-mix).
 pub fn rate_signed(base: f64, points: &ParamPoints) -> bool {
     segments(base, points).iter().any(|&(_, _, r0, r1)| r0 < 0.0 || r1 < 0.0)
 }
 
-/// Узел смены направления: момент, накопленное потребление, позиция и
-/// направление ПОСЛЕ узла (+1 вперёд, −1 назад, 0 удержание).
+/// A direction-change node: the moment, accumulated consumption, position and
+/// direction AFTER the node (+1 forward, −1 backward, 0 hold).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SignKnot {
     pub tau: f64,
@@ -396,9 +396,9 @@ pub struct SignKnot {
     pub dir_after: i8,
 }
 
-/// Узлы смены направления профиля на [0, ∞). Первый всегда в нуле.
-/// Соседние узлы с одинаковым направлением схлопнуты: раны должны быть
-/// как можно длиннее — по ним аудио копирует память кусками.
+/// Direction-change nodes of the profile on [0, ∞). The first is always at zero.
+/// Neighbouring nodes with the same direction are collapsed: runs must be
+/// as long as possible — audio copies memory in chunks along them.
 pub fn sign_knots(base: f64, points: &ParamPoints) -> Vec<SignKnot> {
     let dir_of = |r: f64| -> i8 {
         if r.abs() < RATE_AUDIO_FLOOR {
@@ -424,9 +424,9 @@ pub fn sign_knots(base: f64, points: &ParamPoints) -> Vec<SignKnot> {
     taus.dedup();
     let mut out: Vec<SignKnot> = Vec::with_capacity(taus.len());
     for tau in taus {
-        // направление СРАЗУ ПОСЛЕ узла: скорость в середине следующего
-        // микро-шага, а не в самой точке (в точке она может быть нулём
-        // ровно на смене знака)
+        // the direction RIGHT AFTER the node: the speed in the middle of the next
+        // micro-step, not at the point itself (at the point it may be zero
+        // exactly at the sign change)
         let dir = dir_after(base, points, tau);
         let k = SignKnot {
             tau,
@@ -445,14 +445,14 @@ pub fn sign_knots(base: f64, points: &ParamPoints) -> Vec<SignKnot> {
     out
 }
 
-/// Направление сразу ПОСЛЕ момента `tau` (ноль в самой точке смены знака
-/// направлением не считается).
+/// The direction right AFTER the moment `tau` (zero at the very point of a sign change
+/// is not counted as a direction).
 fn dir_after(base: f64, points: &ParamPoints, tau: f64) -> i8 {
     for (t0, t1, r0, r1) in abs_segments(base, points) {
         if tau >= t1 {
             continue;
         }
-        // на этом сегменте модуль линеен; знак берём у ИСХОДНОГО профиля
+        // on this segment the magnitude is linear; the sign is taken from the SOURCE profile
         let mid = if t1.is_finite() { (tau.max(t0) + t1) * 0.5 } else { tau.max(t0) + 0.5 };
         let r = eff_rate(base, points, mid);
         let _ = (r0, r1);
@@ -467,27 +467,27 @@ fn dir_after(base: f64, points: &ParamPoints, tau: f64) -> i8 {
     0
 }
 
-/// Потреблённый материал В ТИКАХ к выходному прогрессу `tau` (Р.37 п.2).
-/// Единственный вход в карту для ВИДЕО: считать через `to_audio_frames`
-/// нельзя — 1 кадр 48 кГц = 1.875 тика, и округление промахивается мимо
-/// границы КАДРА; у аудио это невидимо, у видео — сразу не тот кадр.
+/// Material CONSUMED, in TICKS, by output progress `tau` (R.37 item 2).
+/// The only entry into the map for VIDEO: computing through `to_audio_frames`
+/// is not allowed — 1 frame at 48 kHz = 1.875 ticks, and rounding misses the boundary
+/// of a FRAME; for audio this is invisible, for video it is immediately the wrong frame.
 pub fn warp_material_ticks(base: f64, points: &ParamPoints, span_ticks: i64, tau: f64) -> i64 {
     (span_ticks as f64 * source_progress(base, points, tau)).round() as i64
 }
 
-/// ∫₀ᵗ p(u)du для ПРОИЗВОЛЬНОГО параметра БЕЗ клампа значений (Р.47,
-/// п.324): фаза LFO аудио-модуляций = интеграл кривой rate_hz по позиции
-/// клипа. `source_progress` для этого не годится — она пришивает значения
-/// к RATE_CLAMP (0.25..32), а частота LFO живёт в своих пределах спеки.
-/// Кусочно-линейный профиль, трапеция точная; за последней точкой —
-/// константа; t < 0 — линейно значением первого сегмента.
+/// ∫₀ᵗ p(u)du for an ARBITRARY parameter WITHOUT clamping the values (R.47,
+/// item 324): the LFO phase of audio modulations is the integral of the rate_hz curve
+/// over the clip position. `source_progress` is not suitable for this — it stitches the values
+/// to RATE_CLAMP (0.25..32), while the LFO frequency lives within its own spec limits.
+/// A piecewise-linear profile, the trapezoid exact; beyond the last point
+/// a constant; t < 0 — linearly at the value of the first segment.
 pub fn param_integral(base: f64, points: &ParamPoints, t: f64) -> f64 {
     if points.is_empty() {
         return base * t;
     }
     let first = points[0].1;
     if t <= points[0].0 {
-        // до первого ключа профиль плоский его значением (как segments)
+        // before the first key the profile is flat at its value (as in segments)
         return first * t;
     }
     let mut acc = first * points[0].0;
@@ -510,38 +510,38 @@ pub fn param_integral(base: f64, points: &ParamPoints, t: f64) -> f64 {
     acc + vl * (t - tl)
 }
 
-/// Средняя скорость = потреблённая доля источника за весь клип: S(1).
+/// Average speed = the consumed fraction of the source over the whole clip: S(1).
 pub fn avg_rate(base: f64, points: &ParamPoints) -> f64 {
     source_progress(base, points, 1.0)
 }
 
-/// Кривые автоматизации КЛИПА, переведённые в SOURCE-домен (Р.33).
+/// Automation curves of the CLIP, translated into the SOURCE domain (R.33).
 ///
-/// Ключи в модели живут в тиках материала; аудио-путь считает в долях
-/// материала (`s`), потому что на них построена карта варпа. Перевод
-/// делается ОДИН раз при сборке процессора, дальше аудио-поток видит
-/// только числа: ни аллокаций, ни обращений к модели в render-потоке.
-/// Кривая одного параметра слота: имя, сглаживание, точки (s, значение).
+/// Keys in the model live in material ticks; the audio path counts in material
+/// fractions (`s`), because the warp map is built on them. The translation
+/// is done ONCE at processor construction; after that the audio thread sees
+/// only numbers: no allocations, no access to the model in the render thread.
+/// A curve of one slot parameter: name, smoothing, points (s, value).
 #[derive(Debug, Clone, PartialEq)]
 struct SlotCurve {
     param: String,
-    /// Форма отрезка ПОСЛЕ каждой точки (Р.61); у `rate` всегда пусто —
-    /// профиль скорости кусочно-линеен по закону.
+    /// Segment shape AFTER each point (R.61); for `rate` it is always empty —
+    /// the speed profile is piecewise linear by law.
     shapes: Vec<crate::SegShape>,
     points: Vec<(f64, f64)>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AutoProfiles {
-    /// По слоту цепочки — его кривые.
+    /// For the chain slot — its curves.
     slots: Vec<Vec<SlotCurve>>,
 }
 
 impl AutoProfiles {
-    /// Из кривых клипа (`ClipEvent::active_fx_auto`) в доли материала.
-    /// `src_in_frames`/`clip_len_frames` — те же величины, которыми
-    /// нормировалась автоматизация slowed&reverb до Р.33, поэтому
-    /// профиль старых проектов численно совпадает с прежним.
+    /// From the clip's curves (`ClipEvent::active_fx_auto`) into fractions of the material.
+    /// `src_in_frames`/`clip_len_frames` — the same quantities by which
+    /// the automation of slowed&reverb was normalized before R.33, so the
+    /// profile of old projects numerically matches the former one.
     pub fn from_curves(
         auto: &[Vec<ParamCurve>],
         src_in_frames: i64,
@@ -550,14 +550,14 @@ impl AutoProfiles {
         Self::from_curves_rev(auto, src_in_frames, clip_len_frames, false)
     }
 
-    /// То же с учётом РЕВЕРСА (Р.39).
+    /// The same, taking the REVERSE into account (R.39).
     ///
-    /// Нормировка `(k.t − src_in)/len` равна выходной доле ключа только
-    /// потому, что UI пишет ключ в `src_in + p·duration`. У зеркального
-    /// клипа UI пишет его ЗЕРКАЛЬНО (`clip_material_at` учитывает реверс),
-    /// и равенство ломается: ключ, поставленный в начале события, DSP
-    /// отрабатывал в конце. Дожило до Р.39 потому, что ни один тест во
-    /// всём репозитории не сочетал `reversed` с непустым `fx_auto`.
+    /// The normalization `(k.t − src_in)/len` equals the output fraction of the key only
+    /// because the UI writes the key at `src_in + p·duration`. For a mirrored
+    /// clip the UI writes it MIRRORED (`clip_material_at` accounts for the reverse),
+    /// and the equality breaks: a key placed at the start of the event was played by the DSP
+    /// at the end. It survived until R.39 because not a single test in the whole repository
+    /// combined `reversed` with a non-empty `fx_auto`.
     pub fn from_curves_rev(
         auto: &[Vec<ParamCurve>],
         src_in_frames: i64,
@@ -573,22 +573,22 @@ impl AutoProfiles {
                         .iter()
                         .filter(|c| !c.keys.is_empty())
                         .map(|c| {
-                            // rate обязан остаться кусочно-линейным: на нём
-                            // стоят аналитические формулы карты варпа, и
-                            // любая другая форма на нём отвергается ещё
-                            // командой (Р.61) — здесь страховка
+                            // rate must remain piecewise linear: the analytic formulas of the warp map rest on it,
+                            // and any other shape on it is rejected
+                            // already by the command (R.61)
+                            // — here is the safety net
                             let shapes: Vec<crate::SegShape> = if c.param == "rate" {
                                 Vec::new()
                             } else {
                                 c.keys.iter().map(|k| k.shape).collect()
                             };
-                            // значение клампится ЗДЕСЬ: `segments` клампит
-                            // концы до интерполяции, а `eff_rate` — после,
-                            // и на ключе вне RATE_CLAMP они разъезжались.
-                            // Из UI такой ключ не поставить, но
-                            // `migrate_legacy_slowed` копирует легаси-число
-                            // как есть, а расхождение карты с DSP — это
-                            // промахи префетча и тишина (п.13/t17).
+                            // the value is clamped HERE: `segments` clamps the ends before interpolation,
+                            // and `eff_rate` — after, and on a key outside RATE_CLAMP they diverged.
+                            // Such a key cannot be set from the UI, but
+                            // `migrate_legacy_slowed` copies a legacy number
+                            // as is, and a mismatch of the map with the DSP means
+                            // prefetch misses and silence
+                            // (item 13/t17).
                             let clamp = c.param == "rate";
                             let pts: Vec<(f64, f64)> = c
                                 .keys
@@ -604,8 +604,8 @@ impl AutoProfiles {
                                     (if reversed { 1.0 - u } else { u }, v)
                                 })
                                 .collect();
-                            // зеркало переворачивает порядок точек, а
-                            // карта идёт по массиву слева направо
+                            // the mirror reverses the order of the points, while
+                            // the map walks the array from left to right
                             let pts: Vec<(f64, f64)> = if reversed {
                                 let mut v = pts;
                                 v.reverse();
@@ -625,7 +625,7 @@ impl AutoProfiles {
         self.slots.iter().all(|s| s.is_empty())
     }
 
-    /// Профиль параметра слота (пустой срез — кривой нет).
+    /// Profile of a slot parameter (an empty slice — there is no curve).
     pub fn points(&self, slot: usize, param: &str) -> &ParamPoints {
         self.slots
             .get(slot)
@@ -633,8 +633,8 @@ impl AutoProfiles {
             .map_or(&[], |c| c.points.as_slice())
     }
 
-    /// Формы отрезков кривой параметра: узлам, читающим значение ПО
-    /// ПОЗИЦИИ (LFO, питч), нужен тот же ряд, что и `value`.
+    /// Shapes of the segments of a parameter curve: nodes that read the value BY
+    /// POSITION (LFO, pitch) need the same series as `value`.
     pub fn shapes_of(&self, slot: usize, param: &str) -> &[crate::SegShape] {
         self.slots
             .get(slot)
@@ -642,29 +642,29 @@ impl AutoProfiles {
             .map_or(&[], |c| &c.shapes)
     }
 
-    /// Значение параметра слота в позиции материала s.
+    /// Value of the slot parameter at material position s.
     pub fn value(&self, slot: usize, param: &str, base: f64, s: f64) -> f64 {
         param_at(base, self.points(slot, param), s, self.shapes_of(slot, param))
     }
 
-    /// Индекс слота с варпом и его профиль скорости — на нём стоит вся
-    /// аналитика источника (сколько материала съест клип).
+    /// Index of the slot with the warp and its speed profile — the whole analytics of the
+    /// source rests on it (how much material the clip will eat).
     fn warp_slot(fx: &[FxInstance]) -> Option<usize> {
         fx.iter().position(|f| matches!(f, FxInstance::SlowedReverb { .. }))
     }
 
-    /// Профиль скорости цепочки (пустой — варпа нет или он без кривой).
+    /// Speed profile of the chain (empty — there is no warp or it has no curve).
     pub fn rate_points(&self, fx: &[FxInstance]) -> &ParamPoints {
         Self::warp_slot(fx).map_or(&[], |i| self.points(i, "rate"))
     }
 
-    /// Профиль mix цепочки — нужен, чтобы знать, звенит ли реверб.
+    /// Mix profile of the chain — needed to know whether the reverb rings.
     pub fn mix_points(&self, fx: &[FxInstance]) -> &ParamPoints {
         Self::warp_slot(fx).map_or(&[], |i| self.points(i, "mix"))
     }
 }
 
-/// Скорость воспроизведения цепочки (1.0 = без варпа).
+/// Playback speed of the chain (1.0 = no warp).
 pub fn chain_rate(fx: &[FxInstance]) -> f64 {
     fx.iter()
         .find_map(|f| match f {
@@ -674,8 +674,8 @@ pub fn chain_rate(fx: &[FxInstance]) -> f64 {
         .unwrap_or(1.0)
 }
 
-/// Средняя скорость цепочки с учётом автоматизации: определяет, сколько
-/// источника съедает клип (для source-окна и длительности).
+/// Average speed of the chain with automation: determines how much of the
+/// source the clip eats (for the source window and the duration).
 pub fn chain_avg_rate(fx: &[FxInstance], auto: &AutoProfiles) -> f64 {
     fx.iter()
         .find_map(|f| match f {
@@ -689,7 +689,7 @@ pub fn chain_avg_rate(fx: &[FxInstance], auto: &AutoProfiles) -> f64 {
 mod automation_tests {
     use super::*;
 
-    /// Точка профиля скорости: (доля материала, rate).
+    /// Point of the speed profile: (fraction of material, rate).
     fn kf(t: f64, rate: f64) -> (f64, f64) {
         (t, rate)
     }
@@ -697,13 +697,13 @@ mod automation_tests {
     #[test]
     fn rate_interp_clamps_ends_and_is_linear() {
         let a = vec![kf(0.2, 1.0), kf(0.4, 0.5)];
-        assert_eq!(rate_at(9.0, &a, 0.0), 1.0, "до первой точки — её значение (base игнорируется)");
+        assert_eq!(rate_at(9.0, &a, 0.0), 1.0, "before the first point — its value (base is ignored)");
         assert_eq!(rate_at(9.0, &a, 0.3), 0.75);
         assert_eq!(rate_at(9.0, &a, 1.0), 0.5);
     }
 
-    /// Source-карта: round-trip T∘S = id, монотонность, сверка с
-    /// независимым численным интегратором (профиль song1).
+    /// Source map: round-trip T∘S = id, monotonicity, a check against an
+    /// independent numerical integrator (the song1 profile).
     #[test]
     fn source_map_roundtrip_and_matches_numeric() {
         let a = vec![
@@ -718,15 +718,15 @@ mod automation_tests {
         for i in 0..=100 {
             let t = i as f64 / 100.0;
             let s = source_progress(1.0, &a, t);
-            assert!(s >= prev, "S(t) обязана быть неубывающей");
+            assert!(s >= prev, "S(t) must be non-decreasing");
             prev = s;
             // round-trip
             let back = output_time_for_source(1.0, &a, s);
             assert!((back - t).abs() < 1e-9, "T(S({t})) = {back}");
         }
-        // независимый численный интегратор: S(τ) трапециями ПО rate
-        // (Р.37: интегрируем скорость по выходному времени, а не 1/rate
-        // по материалу)
+        // an independent numerical integrator: S(τ) by trapezoids OVER rate
+        // (R.37: we integrate the speed over OUTPUT time, not 1/rate over the
+        // material)
         let numeric_s_of_t = |t_target: f64| -> f64 {
             let n = 200_000;
             let mut acc = 0.0;
@@ -744,12 +744,12 @@ mod automation_tests {
             let numeric = numeric_s_of_t(t);
             assert!(
                 (analytic - numeric).abs() < 1e-6,
-                "S({t}): аналитика {analytic} vs численно {numeric}"
+                "S({t}): analytic {analytic} vs numeric {numeric}"
             );
         }
-        // S — ПАРАБОЛА, а не экспонента: на линейном разгоне 1→2 за всё
-        // событие интеграл равен ровно средней скорости. Без ln это
-        // считается точно, поэтому и сверяем точно.
+        // S is a PARABOLA, not an exponential: on a linear ramp 1→2 over the whole
+        // event the integral equals exactly the average speed. Without ln this is
+        // computed exactly, and so we check it exactly.
         let ramp = vec![kf(0.0, 1.0), kf(1.0, 2.0)];
         assert!((source_progress(1.0, &ramp, 1.0) - 1.5).abs() < 1e-15);
         assert!((source_progress(1.0, &ramp, 0.5) - 0.625).abs() < 1e-15);
@@ -763,9 +763,9 @@ mod automation_tests {
         assert!((output_time_for_source(0.5, &[], 0.25) - 0.5).abs() < 1e-12);
     }
 
-    /// Якорь к ВЫХОДНОМУ ВРЕМЕНИ (Р.37, зеркало прежнего теста): ранний
-    /// бамп скорости меняет МАТЕРИАЛ, играющий в поздний момент, но не
-    /// момент, в который срабатывают поздние ключи.
+    /// An anchor to the OUTPUT TIME (R.37, a mirror of the former test): an early
+    /// speed bump changes the MATERIAL that plays at a late moment, but not the
+    /// moment at which the late keys fire.
     #[test]
     fn early_keyframe_shifts_material_not_time() {
         let a = vec![kf(0.4, 1.0), kf(0.5, 0.5), kf(0.7, 0.5), kf(0.75, 1.0)];
@@ -775,13 +775,13 @@ mod automation_tests {
             assert_eq!(
                 rate_at(1.0, &a, t),
                 rate_at(1.0, &b, t),
-                "rate в момент t={t} не должен зависеть от раннего бампа"
+                "rate at time t={t} must not depend on an early bump"
             );
         }
-        // а МАТЕРИАЛ, доигранный к t=0.5, при бампе больше
+        // and the MATERIAL finished by t=0.5 is larger under the bump
         let sa = source_progress(1.0, &a, 0.5);
         let sb = source_progress(1.0, &b, 0.5);
-        assert!(sb > sa, "ускорение раньше = материала съедено больше: {sb} vs {sa}");
+        assert!(sb > sa, "speeding up earlier = more material consumed: {sb} vs {sa}");
     }
 }
 
@@ -789,73 +789,73 @@ mod automation_tests {
 mod zero_start_tests {
     use super::*;
 
-    /// Тест 269 (Р.39, Д0): профиль ВСЕГДА начинается в нуле.
+    /// Test 269 (R.39, D0): the profile ALWAYS starts at zero.
     ///
-    /// Ключ левее `source_in` законен — его прячет обрезка. Его точка
-    /// отрицательна, и без подрезки `source_progress` интегрировала бы
-    /// от неё: клип читал бы материал со сдвигом. Дефект живой и до Р.39:
-    /// отрицательную точку создаёт КАЖДЫЙ TrimStart и правая половина
-    /// КАЖДОГО Split.
+    /// A key to the left of `source_in` is legal — a trim hides it. Its point
+    /// is negative, and without the trim `source_progress` would integrate
+    /// from it: the clip would read the material with a shift. The defect is alive and was there before R.39:
+    /// a negative point is created by EVERY TrimStart and the right half
+    /// of EVERY Split.
     #[test]
     fn t269_profile_starts_at_zero_with_a_hidden_key() {
-        // рампа 1.0 → 2.0, ключ на -1 «спрятан» слева от начала куска
+        // ramp 1.0 → 2.0, the key at -1 is “hidden” to the left of the piece's start
         let hidden = [(-1.0, 1.0), (1.0, 2.0)];
 
         assert_eq!(
             source_progress(1.0, &hidden, 0.0),
             0.0,
-            "в начале события материал ещё не съеден: S(0) обязан быть РОВНО ноль"
+            "at the start of an event no material is consumed yet: S(0) must be EXACTLY zero"
         );
         assert_eq!(
             warp_material_ticks(1.0, &hidden, 90_000, 0.0),
             0,
-            "и в тиках тоже ноль — иначе кусок начинается не с того кадра"
+            "and in ticks too zero — otherwise the piece starts at the wrong frame"
         );
-        // на [0,1] скорость идёт 1.5 → 2.0, интеграл трапеции = 1.75
+        // over [0,1] the speed goes 1.5 → 2.0, the trapezoid integral = 1.75
         let s1 = source_progress(1.0, &hidden, 1.0);
         assert!(
             (s1 - 1.75).abs() < 1e-12,
-            "S(1) обязана быть аналитической трапецией 1.75, а не {s1}"
+            "S(1) must be the analytic trapezoid 1.75, not {s1}"
         );
 
-        // T = S⁻¹ осталась обратной: подрезка сделана в `segments`, поэтому
-        // обе функции видят один и тот же профиль
+        // T = S⁻¹ remained the inverse: the trim is done in `segments`, so
+        // both functions see the same profile
         for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
             let back = output_time_for_source(1.0, &hidden, source_progress(1.0, &hidden, t));
             assert!((back - t).abs() < 1e-9, "T(S({t})) = {back}");
         }
 
-        // профиль с НЕОТРИЦАТЕЛЬНОЙ первой точкой не тронут ни на бит:
-        // на этом пути стоят GOLDEN_AUDIO и GOLDEN_VIDEO
+        // a profile with a NON-NEGATIVE first point is not touched by a single bit:
+        // GOLDEN_AUDIO and GOLDEN_VIDEO rest on this path
         let plain = [(0.3, 1.0), (0.7, 0.5)];
         assert_eq!(source_progress(1.0, &plain, 0.0), 0.0);
         let s = source_progress(1.0, &plain, 1.0);
-        assert!((s - 0.75).abs() < 1e-12, "0.3·1 + 0.4·0.75 + 0.3·0.5 = 0.75, а не {s}");
+        assert!((s - 0.75).abs() < 1e-12, "0.3·1 + 0.4·0.75 + 0.3·0.5 = 0.75, not {s}");
     }
 }
 
 // ---------------------------------------------------------------------------
-// Карта КОНКРЕТНОГО клипа (Р.39). Раньше жила в kt-engine тремя почти
-// одинаковыми структурами (`VideoWarp`, `ClipWarp` и неявная внутри
-// `clip_material_pos`); теперь конструктор один, а движок берёт его отсюда.
+// The map of a SPECIFIC clip (R.39). It used to live in kt-engine as three nearly
+// identical structures (`VideoWarp`, `ClipWarp`, and an implicit one inside
+// `clip_material_pos`); now there is one constructor, and the engine takes it from here.
 // ---------------------------------------------------------------------------
 
-/// Растяжение времени клипа: база, профиль скорости и фактически
-/// потреблённый материал.
+/// Time stretch of the clip: the base, the speed profile and the
+/// actually consumed material.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClipWarp {
     base: f64,
     prof: Vec<(f64, f64)>,
-    /// Материал в тиках, который событие реально СЪЕДАЕТ: A(1)·span.
-    /// Со знаковой скоростью (Р.57) это уже не «докуда дошли»: кривая
-    /// может уйти назад и вернуться, съев вдвое больше, чем прошла.
+    /// Material in ticks that the event ACTUALLY EATS: A(1)·span.
+    /// With signed speed (R.57) this is no longer “how far we got”: the curve
+    /// may go back and return, having eaten twice what it passed.
     used: i64,
-    /// ПРОЛЁТ позиции (мин, макс) в тиках от `source_in` (Р.57). Это и
-    /// есть окно материала события: по нему считаются прогретость,
-    /// префетч и ось зеркала. На положительных кривых — (0, used).
+    /// the SPAN of position (min, max) in ticks from `source_in` (R.57). This is
+    /// the material window of the event: by it the warmth, prefetch and the mirror axis
+    /// are computed. On positive curves — (0, used).
     span_min: i64,
     span_max: i64,
-    /// Режим «смешивание» (Р.37 С5): читается исполнителем слоя.
+    /// “Mix” mode (R.37 stage 5): read by the layer's executor.
     blend: bool,
 }
 
@@ -869,11 +869,11 @@ impl ClipWarp {
     pub fn used(&self) -> i64 {
         self.used
     }
-    /// Окно материала (мин, макс) в тиках от `source_in` (Р.57).
+    /// Material window (min, max) in ticks from `source_in` (R.57).
     pub fn span(&self) -> (i64, i64) {
         (self.span_min, self.span_max)
     }
-    /// Длина окна материала — ею меряют ступень филмстрипа и прогретость.
+    /// Length of the material window — the filmstrip step and the warmth are measured by it.
     pub fn span_len(&self) -> i64 {
         (self.span_max - self.span_min).max(1)
     }
@@ -881,16 +881,16 @@ impl ClipWarp {
         self.blend
     }
 
-    /// Сколько материала съедено к моменту `tl` тиков от начала события.
-    /// Реверс — «ВАРП, ПОТОМ ЗЕРКАЛО» (Р.37 п.247): зеркало ДО варпа гнало
-    /// бы кривую скорости задом наперёд и рассинхронило A/V.
+    /// How much material is eaten by the moment `tl` ticks from the start of the event.
+    /// Reverse — “WARP, THEN MIRROR” (R.37 item 247): a mirror BEFORE the warp would drive
+    /// the speed curve backwards and desynchronize A/V.
     pub fn material_off(&self, duration: Tick, reversed: bool, tl: i64) -> i64 {
         let dur = duration.0.max(1);
         let consumed = warp_material_ticks(self.base, &self.prof, dur, tl as f64 / dur as f64);
-        // Ось зеркала — ПРОЛЁТ позиции, а не «сколько съедено» (Р.57).
-        // На положительных кривых пролёт равен (0, used), и выражение
-        // сворачивается в прежнее `(used − consumed).max(0)` — то же
-        // целое, те же биты.
+        // The mirror axis is the SPAN of position, not “how much is eaten” (R.57).
+        // On positive curves the span equals (0, used), and the expression
+        // collapses to the former `(used − consumed).max(0)` — the same
+        // integer, the same bits.
         if reversed {
             (self.span_min + self.span_max - consumed).max(self.span_min)
         } else {
@@ -899,12 +899,12 @@ impl ClipWarp {
     }
 }
 
-/// Карта по ЦЕПОЧКЕ И КРИВЫМ. `None` — варпа нет, отображение линейно.
+/// Map from the CHAIN AND ITS CURVES. `None` — there is no warp, the mapping is linear.
 ///
-/// Вход обязан быть АКТИВНЫМ (`active_fx`/`active_fx_auto`): выключенные
-/// слоты и мастер-выключатель уже отброшены. `AutoProfiles::warp_slot`
-/// ищет слот ПО ВИДУ, поэтому на неотфильтрованных кривых профиль скорости
-/// считался бы с чужого слота.
+/// The input must be ACTIVE (`active_fx`/`active_fx_auto`): disabled slots and the master switch
+/// have already been discarded. `AutoProfiles::warp_slot` looks for the slot BY KIND,
+/// so on unfiltered curves the speed profile would be computed
+/// from someone else's slot.
 pub fn clip_warp_of(
     fx: &[FxInstance],
     auto: &[Vec<ParamCurve>],
@@ -919,12 +919,12 @@ pub fn clip_warp_of(
         }
         _ => None,
     })?;
-    // Профиль строится ТОЙ ЖЕ функцией, что у аудио: домен один на оба
-    // вида, иначе картинка и звук разъехались бы на кривой скорости.
-    // Позиция ключа нормируется в АУДИО-КАДРАХ (как у аудио) — доля
-    // безразмерна, и обе стороны получают одно число. В ТИКАХ считается
-    // только ВЫХОД карты (`warp_material_ticks`): там сетка 48 кГц
-    // промахнулась бы мимо границы кадра.
+    // The profile is built by THE SAME function as for audio: one domain for both
+    // kinds, otherwise picture and sound would drift apart on the speed curve.
+    // The key position is normalized in AUDIO FRAMES (as for audio) — the fraction
+    // is dimensionless, and both sides get one number. In TICKS only the OUTPUT of the map is
+    // computed (`warp_material_ticks`): there the 48 kHz grid
+    // would miss the frame boundary.
     let prof = AutoProfiles::from_curves_rev(
         auto,
         source_in.to_audio_frames(),
@@ -938,13 +938,13 @@ pub fn clip_warp_of(
     Some(ClipWarp { base, prof, used, span_min, span_max, blend })
 }
 
-/// Растягивает ли цепочка ВРЕМЯ на самом деле.
+/// Does the chain actually stretch TIME.
 ///
-/// Наличие слота и растяжение — разные вещи: `SlowedReverb` со скоростью 1×
-/// даёт хвост, но материал потребляет 1:1. `warps_time()` отвечает на
-/// вопрос «умеет ли этот ВИД», и для вето на резку куска этого достаточно;
-/// там, где спрашивают «поедет ли время» (вложение, Р.50), нужен ответ про
-/// ЗНАЧЕНИЯ.
+/// Having a slot and stretching are different things: `SlowedReverb` at speed 1×
+/// gives a tail, but the material is consumed 1:1. `warps_time()` answers the
+/// question “does this KIND warp”, and for the veto on cutting a piece this is enough;
+/// where one asks “will the time move” (a nested item, R.50), an answer about the
+/// VALUES is needed.
 pub fn chain_warps_time(fx: &[FxInstance], auto: &[Vec<ParamCurve>]) -> bool {
     fx.iter().enumerate().any(|(i, f)| match f {
         FxInstance::SlowedReverb { rate, .. } => {
@@ -957,10 +957,10 @@ pub fn chain_warps_time(fx: &[FxInstance], auto: &[Vec<ParamCurve>]) -> bool {
     })
 }
 
-/// Карта клипа из его активной цепочки.
+/// Map of the clip from its active chain.
 pub fn clip_warp(c: &crate::ClipEvent) -> Option<ClipWarp> {
-    // дешёвый отсев ДО аллокаций `active_fx`/`active_fx_auto`:
-    // `effective_clips` зовёт это на каждый кусок каждого клипа
+    // a cheap filter BEFORE the allocations of `active_fx`/`active_fx_auto`:
+    // `effective_clips` calls this for each piece of each clip
     if c.fx_off
         || !c
             .fx
@@ -978,19 +978,19 @@ mod reversed_tests {
     use super::*;
     use crate::{AutoKey, ParamCurve};
 
-    /// Тест 271 (Р.39, Д2): у зеркального клипа кривая не переворачивается.
+    /// Test 271 (R.39, D2): on a mirrored clip the curve is not reversed.
     ///
-    /// Нормировка `(k.t − src_in)/len` равна выходной доле ключа только
-    /// потому, что UI пишет ключ в `src_in + p·duration`. У реверснутого
-    /// клипа UI пишет зеркально — и без зеркала ЗДЕСЬ ключ, поставленный
-    /// в начале события, отрабатывался в конце.
+    /// The normalization `(k.t − src_in)/len` equals the output fraction of the key only
+    /// because the UI writes the key at `src_in + p·duration`. For a reversed
+    /// clip the UI writes it MIRRORED — and without the mirror HERE, a key placed
+    /// at the start of the event was played at the end.
     ///
-    /// Ни один тест в репозитории не сочетал `reversed` с непустым
-    /// `fx_auto` — поэтому дефект и дожил.
+    /// Not a single test in the repository combined `reversed` with a non-empty
+    /// `fx_auto` — which is why the defect survived.
     #[test]
     fn t271_reversed_curve_is_not_played_backwards() {
-        // клип: source_in 0, длина 1 с; ключ на 0.25 материала = 0.75
-        // выходной доли у зеркального клипа
+        // clip: source_in 0, length 1 s; a key at 0.25 of material = 0.75
+        // of the output fraction for a mirrored clip
         let len = kt_time::Tick(90_000).to_audio_frames();
         let curves = vec![vec![ParamCurve {
             param: "db".into(),
@@ -1006,20 +1006,20 @@ mod reversed_tests {
         let fwd = AutoProfiles::from_curves_rev(&curves, 0, len, false);
         let rev = AutoProfiles::from_curves_rev(&curves, 0, len, true);
 
-        // прямой клип: пик на выходной доле 0.25
+        // direct clip: the peak at output fraction 0.25
         assert!((fwd.value(0, "db", 0.0, 0.25) - 10.0).abs() < 1e-9);
-        // зеркальный: ТОТ ЖЕ материал проигрывается в 0.75 выхода
+        // mirrored: the SAME material plays at 0.75 of the output
         assert!(
             (rev.value(0, "db", 0.0, 0.75) - 10.0).abs() < 1e-9,
-            "пик обязан прийтись на зеркальную долю: {}",
+            "the peak must fall on the mirrored share: {}",
             rev.value(0, "db", 0.0, 0.75)
         );
         assert!(
             rev.value(0, "db", 0.0, 0.25) < 5.0,
-            "и НЕ на прямую: {}",
+            "and NOT on the direct share: {}",
             rev.value(0, "db", 0.0, 0.25)
         );
-        // прямой путь не тронут: from_curves == from_curves_rev(false)
+        // direct path untouched: from_curves == from_curves_rev(false)
         assert_eq!(AutoProfiles::from_curves(&curves, 0, len), fwd);
     }
 }
@@ -1028,12 +1028,12 @@ mod reversed_tests {
 mod signed_tests {
     use super::*;
 
-    /// ЗАМОРОЖЕННАЯ копия карты ДО Р.57 — оракул бит-тождества.
+    /// A FROZEN copy of the map BEFORE R.57 — the oracle of bit-identity.
     ///
-    /// Не «похожая функция»: дословный старый текст с прежним клампом.
-    /// Любая лишняя операция на положительном пути (abs, ветка, второе
-    /// сложение) немедленно разойдётся в последнем бите — и t603d покажет
-    /// это раньше, чем покраснеет GOLDEN.
+    /// Not a “similar function”: the verbatim old text with the former clamp.
+    /// Any extra operation on the positive path (abs, a branch, a second addition)
+    /// would immediately diverge in the last bit — and t603d will show
+    /// this before GOLDEN turns red.
     mod frozen {
         pub fn segments(base: f64, points: &[(f64, f64)]) -> Vec<(f64, f64, f64, f64)> {
             let cl = |r: f64| r.clamp(0.25, 32.0);
@@ -1087,30 +1087,30 @@ mod signed_tests {
         }
     }
 
-    /// Тест 603a (Р.57): знаковая карта ходит НАЗАД и возвращается, а
-    /// потребление при этом только растёт.
+    /// Test 603a (R.57): the signed map goes BACKWARD and returns, while
+    /// consumption keeps only growing.
     #[test]
     fn t603a_signed_map_walks_back_and_consumption_only_grows() {
-        // 1 → −1 линейно: позиция поднимается до середины и возвращается
+        // 1 → −1 linearly: the position rises to the middle and comes back
         let a = vec![(0.0, 1.0), (1.0, -1.0)];
-        assert!((source_progress(1.0, &a, 1.0) - 0.0).abs() < 1e-12, "кривая обязана вернуться");
-        assert!((source_progress(1.0, &a, 0.5) - 0.25).abs() < 1e-12, "вершина не там");
-        // потребление — 0.5 (два треугольника по 0.25) и монотонно
+        assert!((source_progress(1.0, &a, 1.0) - 0.0).abs() < 1e-12, "the curve must return");
+        assert!((source_progress(1.0, &a, 0.5) - 0.25).abs() < 1e-12, "peak is not there");
+        // consumption is 0.5 (two triangles of 0.25) and monotonic
         assert!((consumed_abs(1.0, &a, 1.0) - 0.5).abs() < 1e-12);
         let mut prev = 0.0;
         for i in 0..=200 {
             let t = i as f64 / 200.0;
             let c = consumed_abs(1.0, &a, t);
-            assert!(c >= prev - 1e-15, "A(t) обязана быть неубывающей: {c} < {prev}");
+            assert!(c >= prev - 1e-15, "A(t) must be non-decreasing: {c} < {prev}");
             prev = c;
-            // A⁻¹ возвращает момент, а не «какой-нибудь корень»
+            // A⁻¹ returns a moment, not “some root”
             let back = output_time_for_consumption(1.0, &a, c);
             assert!((back - t).abs() < 1e-6, "A⁻¹(A({t})) = {back}");
         }
     }
 
-    /// Тест 603b (Р.57): разбиение в нуле скорости ТОЧНО, а не примерно —
-    /// сверка с независимым численным ∫|rate|.
+    /// Test 603b (R.57): splitting at zero speed is EXACT, not approximate —
+    /// cross-checked against an independent numeric ∫|rate|.
     #[test]
     fn t603b_zero_crossing_split_is_exact() {
         let a = vec![(0.0, 2.0), (0.4, 2.0), (0.8, -2.0), (1.0, -1.0)];
@@ -1128,32 +1128,32 @@ mod signed_tests {
         for t in [0.2, 0.5, 0.6, 0.75, 1.0] {
             let exact = consumed_abs(1.0, &a, t);
             let num = numeric(t);
-            assert!((exact - num).abs() < 1e-5, "A({t}): точно {exact}, численно {num}");
+            assert!((exact - num).abs() < 1e-5, "A({t}): exact {exact}, numeric {num}");
         }
-        // а ПОЗИЦИЯ в тот же момент меньше потребления — она ходила назад
+        // but the POSITION at the same moment is less than the consumption — it went backward
         assert!(source_progress(1.0, &a, 1.0) < consumed_abs(1.0, &a, 1.0));
     }
 
-    /// Тест 603c (Р.57): на плато нулевой скорости потребление стоит, а
-    /// A⁻¹ отдаёт ЛЕВЫЙ край плато — первый момент, когда счётчик дошёл.
+    /// Test 603c (R.57): on a plateau of zero speed consumption holds, while
+    /// A⁻¹ returns the LEFT edge of the plateau — the first moment the counter reached it.
     #[test]
     fn t603c_zero_plateau_holds_consumption() {
         let a = vec![(0.0, 1.0), (0.25, 1.0), (0.25, 0.0), (0.5, 0.0), (0.5, 1.0), (1.0, 1.0)];
         let at = |t: f64| consumed_abs(1.0, &a, t);
         assert!((at(0.25) - 0.25).abs() < 1e-12);
-        assert!((at(0.5) - 0.25).abs() < 1e-12, "на плато потребление обязано стоять");
+        assert!((at(0.5) - 0.25).abs() < 1e-12, "on the plateau consumption must hold");
         assert!((at(1.0) - 0.75).abs() < 1e-12);
-        // позиция на плато тоже стоит — это и есть стоп-кадр
+        // the position on the plateau also holds — that is the freeze frame
         assert!((source_progress(1.0, &a, 0.4) - 0.25).abs() < 1e-12);
-        assert!((output_time_for_consumption(1.0, &a, 0.25) - 0.25).abs() < 1e-9, "левый край");
+        assert!((output_time_for_consumption(1.0, &a, 0.25) - 0.25).abs() < 1e-9, "left edge");
         assert!(output_time_for_consumption(1.0, &a, 0.2500001) > 0.5 - 1e-6);
     }
 
-    /// Тест 603d (Р.57): на кривых, целиком лежащих в 0.25…32, новая карта
-    /// БИТ-В-БИТ равна замороженной старой.
+    /// Test 603d (R.57): on curves lying entirely within 0.25…32, the new map
+    /// is BIT-FOR-BIT equal to the frozen old one.
     ///
-    /// Это сторож GOLDEN_AUDIO и GOLDEN_VIDEO: они молчат, пока байты не
-    /// поехали, но узнать об этом лучше здесь — тут видно, ЧТО поехало.
+    /// This is the guard for GOLDEN_AUDIO and GOLDEN_VIDEO: they stay silent until the bytes
+    /// shift, but it is better to learn about it here — here one can see WHAT shifted.
     #[test]
     fn t603d_positive_curves_are_bit_identical_to_the_old_map() {
         let profiles: Vec<Vec<(f64, f64)>> = vec![
@@ -1178,40 +1178,40 @@ mod signed_tests {
                     assert_eq!(
                         got.to_bits(),
                         want.to_bits(),
-                        "P разошлась с оракулом: base={base} prof={prof:?} t={t}"
+                        "P diverged from the oracle: base={base} prof={prof:?} t={t}"
                     );
                     let cons = consumed_abs(base, prof, t);
                     assert_eq!(
                         cons.to_bits(),
                         want.to_bits(),
-                        "A разошлась с оракулом (на положительных они одно и то же)"
+                        "A diverged from the oracle (on positive values they are the same)"
                     );
                 }
-                // пролёт: минимум в нуле, максимум — прежнее `used`
+                // span: minimum at zero, maximum — the previous `used`
                 let span = 360_000i64;
                 let (lo, hi) = warp_span_ticks(base, prof, span);
-                assert_eq!(lo, 0, "у положительной кривой пролёт начинается в нуле");
+                assert_eq!(lo, 0, "on a positive curve the span starts at zero");
                 let old_used =
                     (span as f64 * frozen::source_progress(base, prof, 1.0)).round() as i64;
-                assert_eq!(hi, old_used, "максимум пролёта обязан равняться прежнему used");
+                assert_eq!(hi, old_used, "the span maximum must equal the previous used");
             }
         }
     }
 
-    /// Тест 603e (Р.57): экстремумы пролёта ищутся В НУЛЯХ СКОРОСТИ, а не
-    /// только по концам окна.
+    /// Test 603e (R.57): span extremes are searched AT THE ZERO-SPEED POINTS, not only
+    /// at the ends of the window.
     #[test]
     fn t603e_span_finds_extrema_inside_segments() {
-        // вверх и назад: максимум посреди события
+        // up and back: the maximum in the middle of the event
         let up_down = vec![(0.0, 1.0), (1.0, -1.0)];
         let (lo, hi) = span_over(1.0, &up_down, 0.0, 1.0);
         assert!((lo - 0.0).abs() < 1e-12 && (hi - 0.25).abs() < 1e-12, "({lo}, {hi})");
-        // назад и вверх: минимум посреди
+        // back and up: the minimum in the middle
         let down_up = vec![(0.0, -1.0), (1.0, 1.0)];
         let (lo, hi) = span_over(1.0, &down_up, 0.0, 1.0);
         assert!((lo + 0.25).abs() < 1e-12 && (hi - 0.0).abs() < 1e-12, "({lo}, {hi})");
-        // МОНОТОННАЯ кривая обязана давать РОВНО концы — на этом стоит
-        // бит-тождество окон префетча
+        // A MONOTONIC curve must give EXACTLY the ends — the bit-identity of the
+        // prefetch windows rests on this
         let mono = vec![(0.0, 0.5), (1.0, 2.0)];
         for (t0, t1) in [(0.0, 1.0), (0.2, 0.8), (-0.3, 1.4)] {
             let (lo, hi) = span_over(1.0, &mono, t0, t1);
@@ -1221,9 +1221,9 @@ mod signed_tests {
         }
     }
 
-    /// Тест 603f (Р.57): зеркало «Реверс» сочетается со знаковой картой —
-    /// оно берётся вокруг ПРОЛЁТА, и на положительных кривых формула
-    /// сворачивается в прежнюю.
+    /// Test 603f (R.57): the “Reverse” mirror combines with the signed map —
+    /// it is taken around the SPAN, and on positive curves the formula
+    /// collapses back into the previous one.
     #[test]
     fn t603f_mirror_axis_is_the_span() {
         use crate::{ClipEvent, ClipId, ClipKind, FrameMode, FxInstance, MediaId};
@@ -1262,40 +1262,40 @@ mod signed_tests {
             opacity: 1.0,
             fx_off: false,
         };
-        // положительная 0.5: пролёт (0, used) — прежняя формула дословно
+        // positive 0.5: span (0, used) — the previous formula verbatim
         let w = crate::clip_warp(&mk(0.5, true)).unwrap();
         assert_eq!(w.span(), (0, w.used()));
         for tl in [0, 90_000, 180_000, 360_000] {
             let want = (w.used() - w.material_off(dur, false, tl)).max(0);
-            assert_eq!(w.material_off(dur, true, tl), want, "прежняя формула на tl={tl}");
+            assert_eq!(w.material_off(dur, true, tl), want, "previous formula at tl={tl}");
         }
-        // ОТРИЦАТЕЛЬНАЯ −0.5: событие идёт по материалу назад, пролёт
-        // целиком в минусе, а зеркало разворачивает его вперёд
+        // NEGATIVE −0.5: the event runs backward through the material, the span
+        // lies entirely in the negative, and the mirror turns it forward
         let n = crate::clip_warp(&mk(-0.5, false)).unwrap();
-        assert_eq!(n.span(), (-180_000, 0), "пролёт минусовой кривой");
+        assert_eq!(n.span(), (-180_000, 0), "span of a negative curve");
         assert_eq!(n.material_off(dur, false, 0), 0);
-        assert_eq!(n.material_off(dur, false, dur.0), -180_000, "ушли назад по материалу");
+        assert_eq!(n.material_off(dur, false, dur.0), -180_000, "went back through the material");
         let nr = crate::clip_warp(&mk(-0.5, true)).unwrap();
-        assert_eq!(nr.material_off(dur, true, 0), -180_000, "зеркало — вокруг ПРОЛЁТА");
+        assert_eq!(nr.material_off(dur, true, 0), -180_000, "mirror — around the SPAN");
         assert_eq!(nr.material_off(dur, true, dur.0), 0);
     }
 
-    /// Тест 603g (Р.57): клампы стали симметричными, ноль проходит.
+    /// Test 603g (R.57): the clamps became symmetric, zero passes through.
     #[test]
     fn t603g_clamp_is_symmetric_and_zero_passes() {
         assert_eq!(RATE_CLAMP, (-32.0, 32.0));
         let a = vec![(0.0, -40.0), (1.0, 40.0)];
         assert_eq!(eff_rate(1.0, &a, 0.0), -32.0);
         assert_eq!(eff_rate(1.0, &a, 1.0), 32.0);
-        // ноль остаётся нулём: пол — свойство АУДИО, а не карты позиции
+        // zero stays zero: the floor is a property of AUDIO, not of the position map
         let z = vec![(0.0, 0.0), (1.0, 0.0)];
         assert_eq!(eff_rate(1.0, &z, 0.5), 0.0);
         assert_eq!(source_progress(1.0, &z, 1.0), 0.0);
-        assert!(rate_signed(1.0, &a), "кривая с минусом обязана называться знаковой");
-        assert!(!rate_signed(1.0, &[(0.0, 0.5), (1.0, 2.0)]), "положительная — нет");
-        // охват модуля видит НОЛЬ ВНУТРИ сегмента, а не только концы
+        assert!(rate_signed(1.0, &a), "a curve with a minus must be called signed");
+        assert!(!rate_signed(1.0, &[(0.0, 0.5), (1.0, 2.0)]), "positive one — no");
+        // the module’s coverage check sees ZERO INSIDE a segment, not only the ends
         let reach = rate_reach(1.0, &a);
-        assert!(reach.0 <= RATE_AUDIO_FLOOR + 1e-12, "минимум охвата: {reach:?}");
+        assert!(reach.0 <= RATE_AUDIO_FLOOR + 1e-12, "minimum reach: {reach:?}");
         assert!((reach.1 - 32.0).abs() < 1e-12);
     }
 }

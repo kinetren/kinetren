@@ -1,10 +1,10 @@
-//! ThumbService: филмстрип-тумбнейлы для видео-клипов.
+//! ThumbService: filmstrip thumbnails for video clips.
 //!
-//! НЕ трогает декодеры воспроизведения (поправка к инварианту №8: paint
-//! может только ЕНКЬЮИТЬ запросы этому выделенному воркеру). Свой
-//! короткоживущий FfmpegSource на медиа; jpeg персистится в sidecar
-//! индекс-БД (таблица thumbnails) — повторное открытие проекта рисует
-//! полосу без декода.
+//! Does NOT touch the playback decoders (a correction to invariant No. 8: paint
+//! may only ENQUEUE requests to this dedicated worker). Its own
+//! short-lived FfmpegSource per media; the jpeg is persisted to the sidecar
+//! index DB (table thumbnails) — reopening the project draws
+//! the strip without decode.
 
 use crate::util::{open_source, resolve_media_path};
 use eframe::egui;
@@ -18,11 +18,11 @@ use std::sync::{Arc, Mutex};
 pub const THUMB_W: u32 = 320;
 pub const THUMB_H: u32 = 180;
 
-/// Размер тумбы ПО ВИДУ источника (Р.62, t719): вид (ширина × SAR,
-/// высота) вписывается в рамку `THUMB_W × THUMB_H`, стороны чётные. До
-/// Р.62 заказ был ровно 320×180, а декодер отдаёт кадр ровно запрошенного
-/// качества — вертикальный клип приезжал раздавленным, и филмстрип был
-/// первым местом, где человек видел дефект приведения.
+/// Thumb size BY THE SOURCE'S LOOK (R.62, t719): the look (width × SAR,
+/// height) fits into the frame `THUMB_W × THUMB_H`, sides even. Before
+/// R.62 the order was exactly 320×180, and the decoder returns a frame of exactly the requested
+/// quality — a vertical clip came out squashed, and the filmstrip was
+/// the first place where the person saw a conform defect.
 pub fn thumb_quality(view: (f64, f64)) -> Quality {
     let (vw, vh) = (view.0.max(1.0), view.1.max(1.0));
     let k = (THUMB_W as f64 / vw).min(THUMB_H as f64 / vh);
@@ -30,22 +30,22 @@ pub fn thumb_quality(view: (f64, f64)) -> Quality {
     Quality { width: even(vw * k), height: even(vh * k) }
 }
 
-/// Размещение тумбы в ячейке филмстрипа: картинка вписывается по ВЫСОТЕ
-/// ячейки; узкая — центрируется, поля по бокам — тело события (цвет
-/// строки); широкая (шире ячейки — край события) остаётся в своём масштабе
-/// и режется справа, как прежде. Отдаёт (смещение от левого края ячейки,
-/// полная ширина картинки); видимая ширина = `min(fit_w, cell_w − off)`.
+/// Placement of a thumb in a filmstrip cell: the picture fits by the cell's HEIGHT;
+/// a narrow one is centered, with margins at the sides — the event's body (the row color);
+/// a wide one (wider than the cell — the event's edge) keeps its scale
+/// and is cut on the right, as before. Returns (offset from the cell's left edge,
+/// full width of the picture); visible width = `min(fit_w, cell_w − off)`.
 pub fn thumb_cell_fit(cell_w: f32, cell_h: f32, tex_w: f32, tex_h: f32) -> (f32, f32) {
     let aspect = if tex_h > 0.0 { tex_w / tex_h } else { 16.0 / 9.0 };
     let fit_w = (cell_h * aspect).max(1.0);
     (((cell_w - fit_w) * 0.5).max(0.0), fit_w)
 }
-/// Качество JPEG в sidecar — одно на тумбы файлов и кадры полос лент
-/// (`reel_frame`, Р.58): рисуются они рядом и одним кодом.
+/// JPEG quality in the sidecar — one for the file thumbs and the reel strip frames
+/// (`reel_frame`, R.58): they are drawn side by side, by one code path.
 pub const THUMB_JPEG_QUALITY: u8 = 80;
 
-/// RGBA → JPEG sidecar-качества. `None` — размер не сходится с буфером
-/// или энкодер отказал.
+/// RGBA → JPEG at sidecar quality. `None` — the size does not match the buffer
+/// or the encoder refused.
 pub(crate) fn encode_thumb_jpeg(width: u32, height: u32, rgba: Vec<u8>) -> Option<Vec<u8>> {
     let mut buf = Vec::new();
     let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, THUMB_JPEG_QUALITY);
@@ -54,9 +54,9 @@ pub(crate) fn encode_thumb_jpeg(width: u32, height: u32, rgba: Vec<u8>) -> Optio
     Some(buf)
 }
 
-/// JPEG из sidecar → картинка для текстуры. Тумбы и кадры лент проходят
-/// через это и на СВЕЖЕМ рендере тоже: показ не зависит от того, откуда
-/// кадр пришёл — с диска или из-под энкодера.
+/// JPEG from the sidecar → picture for a texture. Thumbs and reel frames go
+/// through this on a FRESH render too: display does not depend on where the
+/// frame came from — from disk or from under the encoder.
 pub(crate) fn decode_thumb_jpeg(jpeg: &[u8]) -> Option<egui::ColorImage> {
     let img = image::load_from_memory_with_format(jpeg, image::ImageFormat::Jpeg).ok()?;
     let rgba = img.to_rgba8();
@@ -65,43 +65,43 @@ pub(crate) fn decode_thumb_jpeg(jpeg: &[u8]) -> Option<egui::ColorImage> {
         rgba.as_raw(),
     ))
 }
-/// LRU готовых текстур (порт kMaxPreviewCacheEntries=384).
+/// LRU of ready textures (port of kMaxPreviewCacheEntries=384).
 pub const MAX_READY: usize = 384;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ThumbKey {
     pub media: MediaId,
-    /// Момент в тиках, выровненный вызывающим по сетке шага.
+    /// A moment in ticks, aligned by the caller to the step grid.
     pub t: i64,
 }
 
-/// Шаг источника для тумбнейлов (порт videoClipThumbnailSourceStepMs):
-/// один тумб при клипе ≤5 c, иначе dur/slots, зажатый в 1..15 c.
-/// Шаг тумбов КВАНТУЕТСЯ к фиксированной лестнице (п.2): непрерывная
-/// зависимость от зума давала новый набор ключей на каждый щелчок колеса —
-/// филмстрип перегружался целиком. Соседние ступени переиспользуют кэш
-/// (ключи крупной ступени — подмножество мелкой).
+/// Source step for thumbnails (port of videoClipThumbnailSourceStepMs):
+/// one thumb for a clip ≤5 s, otherwise dur/slots, clamped to 1..15 s.
+/// The thumb step is QUANTIZED to a fixed ladder (item 2): a continuous
+/// dependence on zoom produced a new set of keys on every wheel click —
+/// the filmstrip was reloaded entirely. Adjacent rungs reuse the cache
+/// (the keys of the coarse rung are a subset of the fine one's).
 pub const THUMB_STEP_LADDER: [i64; 7] =
-    [45_000, 90_000, 180_000, 450_000, 1_350_000, 4_050_000, 10_800_000]; // 0.5/1/2/5/15/45 c/2 м
+    [45_000, 90_000, 180_000, 450_000, 1_350_000, 4_050_000, 10_800_000]; // 0.5/1/2/5/15/45 s/2 min
 
-/// Ключ тумбы: момент источника, квантованный к сетке шага ОТ НУЛЯ ФАЙЛА
-/// (п.11 р.6, тест 62). Раньше таймлайн квантовал от source_in — при
-/// source_in, не кратном шагу, бин и таймлайн плодили РАЗНЫЕ ключи на один
-/// момент файла (двойной декод + раздутая sidecar-БД).
+/// Thumb key: the source moment, quantized to the step grid FROM THE FILE'S ZERO
+/// (item 11 round 6, test 62). Previously the timeline quantized from source_in — with a
+/// source_in not a multiple of the step, the bin and the timeline produced DIFFERENT keys for one
+/// moment of the file (double decode + a swollen sidecar DB).
 pub fn thumb_key_t(source_in: i64, timeline_local: i64, step: i64) -> i64 {
     (((source_in + timeline_local).max(0)) / step.max(1)) * step.max(1)
 }
 
-/// Ключ тумбы для момента `tl` тиков ОТ НАЧАЛА события — ОДНА формула
-/// «пиксель → кадр источника» на филмстрип и на миниатюры пикера (Р.54).
+/// Thumb key for the moment `tl` in ticks FROM THE START OF THE EVENT — ONE formula
+/// “pixel → source frame” for the filmstrip and for the picker's thumbnails (R.54).
 ///
-/// Р.37 п.3 уже требовал, чтобы превью события считало ТУ ЖЕ карту, что
-/// рендер, и вынес растяжение в `ClipWarp::material_off`. Дыра осталась
-/// ровно одна и нашлась при сборке пикера: у реверсивного события БЕЗ
-/// варпа карты нет (`clip_warp` отдаёт `None` — реверс это не варп), и
-/// прежний `map_or(tl, …)` показывал материал ПРЯМО. То есть филмстрип
-/// перевёрнутого события рисовал не то, что играет: первая колонка — не
-/// последний кадр куска, а первый.
+/// R.37 item 3 already required that the event's preview compute the SAME map
+/// as the render, and moved the stretch into `ClipWarp::material_off`. One hole remained,
+/// and it was found while assembling the picker: a reversed event WITHOUT a
+/// warp has no map (`clip_warp` returns `None` — reverse is not a warp), and
+/// the old `map_or(tl, …)` showed the material DIRECTLY. That is, the filmstrip of
+/// a reversed event drew not what plays: the first column is not
+/// the last frame of the piece, but the first.
 pub fn material_at(
     warp: Option<&kt_model::ClipWarp>,
     duration: Tick,
@@ -109,15 +109,15 @@ pub fn material_at(
     tl: i64,
 ) -> i64 {
     match warp {
-        // варп сам знает про реверс (ось — фактически потреблённое)
+        // the warp itself knows about reverse (the axis — the actually consumed one)
         Some(w) => w.material_off(duration, reversed, tl),
         None if reversed => (duration.0 - 1 - tl).max(0),
         None => tl,
     }
 }
 
-/// Тот же перевод, квантованный к сетке шага ОТ НУЛЯ ФАЙЛА, — готовый
-/// ключ тумбы (общий кэш бин↔таймлайн↔пикер, тест 62).
+/// The same translation, quantized to the step grid FROM THE FILE'S ZERO — the ready
+/// thumb key (shared cache bin↔timeline↔picker, test 62).
 pub fn material_key_t(
     source_in: i64,
     warp: Option<&kt_model::ClipWarp>,
@@ -131,20 +131,20 @@ pub fn material_key_t(
 
 pub fn thumb_source_step(clip_dur: Tick, inner_width_px: f32, thumb_w_px: f32) -> i64 {
     if clip_dur.0 <= 5 * 90_000 {
-        // короткий клип: один тумб, ключ стабилен (кратен 0.5 c)
+        // short clip: one thumb, the key is stable (a multiple of 0.5 s)
         return THUMB_STEP_LADDER[0].max(clip_dur.0 / 2).max(45_000);
     }
     let slots = (inner_width_px / thumb_w_px).max(1.0) as i64;
     let rough = clip_dur.0 / slots.max(1);
-    // ближайшая ступень СВЕРХУ (реже — дешевле)
+    // the nearest rung ABOVE (rarer — cheaper)
     *THUMB_STEP_LADDER
         .iter()
         .find(|&&s| s >= rough)
         .unwrap_or(&THUMB_STEP_LADDER[THUMB_STEP_LADDER.len() - 1])
 }
 
-/// Состояние тумбы для UI: Failed НЕ перезаказывается (п.1 р.7 — вечный
-/// цикл «запрос → seek+reopen → ошибка» раскручивал счётчик FFmpeg-open).
+/// Thumb state for the UI: Failed is NOT re-requested (item 1 round 7 — the eternal
+/// cycle “request → seek+reopen → error” was spinning the FFmpeg-open counter).
 #[derive(Debug, PartialEq)]
 pub enum ThumbState {
     Ready(Arc<egui::ColorImage>),
@@ -152,9 +152,9 @@ pub enum ThumbState {
     Missing,
 }
 
-/// Кэш открытых источников воркера: LRU с вытеснением СТАРЕЙШЕГО (п.1 р.7:
-/// прежний `clear()` при >2 означал полное переоткрытие каждого файла при
-/// ≥4 активных медиа — шторм FFmpeg-open). Generic для юнит-теста без FFmpeg.
+/// The worker's cache of open sources: LRU evicting the OLDEST (item 1 round 7:
+/// the previous `clear()` at >2 meant a full reopening of every file at
+/// ≥4 active media — an FFmpeg-open storm). Generic for the unit test without FFmpeg.
 pub(crate) struct SourceLru<V> {
     cap: usize,
     map: HashMap<MediaId, V>,
@@ -175,8 +175,8 @@ impl<V> SourceLru<V> {
         }
         self.map.get_mut(&id)
     }
-    /// Выбросить источник (Р.53, п.412): его параметры перенастроены, и
-    /// держать открытым старый — значит рисовать старые тумбы.
+    /// Discard a source (R.53, item 412): its parameters were reconfigured, and
+    /// keeping the old one open would mean drawing old thumbs.
     pub fn remove(&mut self, id: MediaId) {
         self.map.remove(&id);
         self.order.retain(|k| *k != id);
@@ -197,52 +197,52 @@ impl<V> SourceLru<V> {
     }
 }
 
-/// Очередь воркера: LIFO пар (ключ, near-допуск) + dedup-множество ключей.
+/// Worker queue: LIFO of pairs (key, near-tolerance) + a dedup set of keys.
 type ThumbQueue = (VecDeque<(ThumbKey, i64)>, HashSet<ThumbKey>);
 
-/// Лимит одновременно открытых источников тумб-воркера.
+/// Limit on simultaneously open sources of the thumb worker.
 const MAX_OPEN_SOURCES: usize = 4;
-/// Потолок негативного кэша тумб (переполнение — полный clear, дёшево).
+/// Cap of the thumb negative cache (overflow means a full clear, cheap).
 const MAX_FAILED: usize = 4096;
 
 struct Shared {
-    /// Длительности медиа. `None` = «пробовали открыть, не вышло» —
-    /// повторная заявка НЕ ставится (п.1 р.7: вечный probe-цикл открывал
-    /// файл на каждом UI-кадре).
+    /// Media durations. `None` = “tried to open, did not work” —
+    /// a repeat request is NOT queued (item 1 round 7: the eternal probe cycle was opening
+    /// the file on every UI frame).
     durations: Mutex<HashMap<MediaId, Option<Tick>>>,
-    /// Явные PENDING-заявки на длительность (снимает воркер, публикуя
-    /// результат — успех или неудачу).
+    /// Explicit PENDING requests for a duration (the worker removes them by publishing
+    /// the result — success or failure).
     probe: Mutex<std::collections::HashSet<MediaId>>,
     cond: std::sync::Condvar,
-    /// LIFO + dedup по ключу; второй элемент пары — допуск near-поиска в БД
-    /// (тики): 0 = только точный ключ (таймлайн), >0 — скраб бина может
-    /// показать ближайшую готовую тумбу (п.14 р.7). ThumbKey не расширяем —
-    /// общий кэш бин↔таймлайн (тест 62).
+    /// LIFO + dedup by key; the second element of the pair is the near-search tolerance in the DB
+    /// (ticks): 0 = only the exact key (timeline), >0 — scrubbing the bin may
+    /// show the nearest ready thumb (item 14 round 7). ThumbKey is not extended —
+    /// the shared cache bin↔timeline (test 62).
     queue: Mutex<ThumbQueue>,
     ready: Mutex<HashMap<ThumbKey, Arc<egui::ColorImage>>>,
-    order: Mutex<VecDeque<ThumbKey>>, // для LRU-выселения ready
-    /// Негативный кэш: ключи, по которым открытие/декод/энкод упали.
+    order: Mutex<VecDeque<ThumbKey>>, // for LRU eviction of ready
+    /// Negative cache: keys for which opening/decoding/encoding failed.
     failed: Mutex<HashSet<ThumbKey>>,
-    /// Постеры: момент самого информативного кадра медиа (п.4 р.9).
-    /// `None` внутри — «искали, информативного кадра нет» (аудио/битое).
+    /// Posters: the moment of the most informative frame of the media (item 4 round 9).
+    /// `None` inside — “searched, no informative frame” (audio/broken).
     posters: Mutex<HashMap<MediaId, Option<i64>>>,
-    /// Заявки на поиск постера (обслуживаются после тумб).
+    /// Requests for a poster search (served after the thumbs).
     poster_jobs: Mutex<std::collections::VecDeque<MediaId>>,
-    /// Есть ли у медиа видео/аудио (публикует probe-ветка воркера).
+    /// Whether the media has video/audio (published by the worker's probe branch).
     kinds: Mutex<HashMap<MediaId, (bool, bool)>>,
-    /// ЖИВАЯ карта медиа: пополняется при добавлении файлов (п.3 — раньше
-    /// карта замораживалась при старте и новые медиа не получали тумбы).
+    /// The LIVE media map: it is filled when files are added (item 3 — previously the
+    /// map was frozen at start and new media got no thumbs).
     media: Mutex<HashMap<MediaId, String>>,
-    /// Медиа, чей ОТКРЫТЫЙ источник воркер обязан выбросить (Р.53,
-    /// п.412): после перенастройки параметров генератора его `SourceLru`
-    /// держал бы источник со старыми параметрами и рисовал старые тумбы.
+    /// Media whose OPEN source the worker must discard (R.53,
+    /// item 412): after reconfiguring the generator's parameters its `SourceLru`
+    /// would keep the source with the old parameters and draw old thumbs.
     drop_sources: Mutex<HashSet<MediaId>>,
-    /// Сколько НОВЫХ заказов встало в очередь за всё время — сторожу
-    /// «скролл/зум не заказывает декод» (инвариант 8, t719): очередь
-    /// воркер опустошает сам, и её длина ничего не доказывает.
+    /// How many NEW requests were queued over the whole time — for the guard
+    /// “scroll/zoom does not request decode” (invariant 8, t719): the queue
+    /// is emptied by the worker itself, so its length proves nothing.
     requests: std::sync::atomic::AtomicUsize,
-    /// Журнал заказанных ключей — только под `cfg!(test)`: харнесс узнаёт,
-    /// какие ключи спросил филмстрип, не повторяя его арифметику.
+    /// Journal of requested keys — only under `cfg!(test)`: the harness learns
+    /// which keys the filmstrip asked for, without repeating its arithmetic.
     request_log: Mutex<Vec<ThumbKey>>,
 }
 
@@ -273,8 +273,8 @@ impl ThumbService {
             project
                 .media
                 .iter()
-                // синтетика (тестовая схема) тумб не имеет; генераторы
-                // (`gen:`) — ИМЕЮТ: их кадр рисует та же фабрика (Р.52)
+                // synthetic (test schema) has no thumbs; generators
+                // (`gen:`) DO: their frame is drawn by the same factory (R.52)
                 .filter(|m| kt_media::factory::synth_pattern(&m.path).is_none())
                 .map(|m| (m.id, resolve_media_path(base.as_deref(), &m.path)))
                 .collect()
@@ -289,8 +289,8 @@ impl ThumbService {
         ThumbService { shared }
     }
 
-    /// Сколько заказов ждёт воркера — сторожу «скролл/зум не заказывает
-    /// декод» (инвариант 8, t719).
+    /// How many requests are waiting for the worker — for the guard “scroll/zoom does not request
+    /// decode” (invariant 8, t719).
     #[cfg(test)]
     pub(crate) fn requested_total(&self) -> usize {
         self.shared.requests.load(std::sync::atomic::Ordering::Relaxed)
@@ -301,28 +301,28 @@ impl ThumbService {
         self.shared.request_log.lock().unwrap().clone()
     }
 
-    /// Поставить в очередь (dedup); отрисовка никогда не блокируется.
-    /// Зарегистрировать новое медиа (добавление файла в проект) — тумбы
-    /// начинают строиться сразу, без перезапуска сервиса.
+    /// Enqueue (dedup); drawing is never blocked.
+    /// Register new media (adding a file to the project) — thumbs
+    /// start building at once, without restarting the service.
     pub fn add_media(&self, id: MediaId, resolved_path: String) {
         if kt_media::factory::synth_pattern(&resolved_path).is_none() {
             self.shared.media.lock().unwrap().insert(id, resolved_path);
-            // новое/переустановленное медиа: негативные кэши устарели
+            // new/reinstalled media: the negative caches are stale
             self.invalidate_media(id);
         }
     }
 
-    /// Сброс негативных кэшей медиа (файл снова онлайн / переустановлен).
+    /// Reset the media negative caches (file is online again / reinstalled).
     pub fn invalidate_media(&self, id: MediaId) {
         self.shared.durations.lock().unwrap().remove(&id);
         self.shared.failed.lock().unwrap().retain(|k| k.media != id);
     }
 
-    /// Медиа осталось тем же, а КАРТИНКА изменилась (Р.53, п.412:
-    /// перенастроены параметры генератора). Негативных кэшей мало —
-    /// протухли и ГОТОВЫЕ тумбы, и постер, и вид медиа, и открытый
-    /// источник в воркере: ключ `ThumbKey{media,t}` от параметров не
-    /// зависит, поэтому карточка показывала бы старый кадр (Б5).
+    /// The media stayed the same, but the PICTURE changed (R.53, item 412:
+    /// the generator's parameters were reconfigured). Negative caches are not enough —
+    /// the READY thumbs, the poster, the media's look, and the open
+    /// source in the worker went stale too: the key `ThumbKey{media,t}` does not depend
+    /// on the parameters, so the card would show the old frame (B5).
     pub fn retune_media(&self, id: MediaId, resolved_path: String) {
         self.shared.media.lock().unwrap().insert(id, resolved_path);
         self.shared.ready.lock().unwrap().retain(|k, _| k.media != id);
@@ -338,12 +338,12 @@ impl ThumbService {
         self.request_near(key, 0);
     }
 
-    /// Заявка с допуском near-поиска в sidecar-БД: воркер может показать
-    /// БЛИЖАЙШУЮ готовую тумбу в пределах tol тиков вместо декода (скраб
-    /// бина, п.14 р.7 — тумбы филмстрипа с шагом 0.5-2 c переиспользуются).
+    /// A request with near-search tolerance in the sidecar DB: the worker may show the
+    /// NEAREST ready thumb within tol ticks instead of decoding (bin scrubbing,
+    /// item 14 round 7 — filmstrip thumbs with a 0.5–2 s step are reused).
     pub fn request_near(&self, key: ThumbKey, tol: i64) {
         if self.shared.failed.lock().unwrap().contains(&key) {
-            return; // негативный кэш: не раскручивать декод заново
+            return; // negative cache: do not spin up the decode again
         }
         let mut q = self.shared.queue.lock().unwrap();
         if q.1.insert(key) {
@@ -351,7 +351,7 @@ impl ThumbService {
             if cfg!(test) {
                 self.shared.request_log.lock().unwrap().push(key);
             }
-            q.0.push_back((key, tol)); // pop_back = LIFO: свежие первыми
+            q.0.push_back((key, tol)); // pop_back = LIFO: the fresh ones first
             drop(q);
             self.shared.cond.notify_one();
         }
@@ -361,8 +361,8 @@ impl ThumbService {
         self.shared.ready.lock().unwrap().get(key).cloned()
     }
 
-    /// Состояние ключа: Failed НЕ стоит перезаказывать (бин не должен
-    /// держать вечный repaint-цикл по нему).
+    /// Key state: Failed should NOT be re-requested (the bin must not
+    /// hold an eternal repaint cycle on it).
     pub fn state(&self, key: &ThumbKey) -> ThumbState {
         if let Some(img) = self.get(key) {
             return ThumbState::Ready(img);
@@ -373,8 +373,8 @@ impl ThumbService {
         ThumbState::Missing
     }
 
-    /// Момент постера (информативного кадра) либо ЗАЯВКА на его поиск —
-    /// ровно одна на медиа за сессию (п.4 р.9).
+    /// The poster moment (informative frame) or a REQUEST for its search —
+    /// exactly one per media per session (item 4 round 9).
     pub fn poster_t_or_request(&self, id: MediaId) -> Option<i64> {
         if let Some(p) = self.shared.posters.lock().unwrap().get(&id) {
             return *p;
@@ -387,20 +387,20 @@ impl ThumbService {
         None
     }
 
-    /// Есть ли у медиа видео и аудио (для карточки бина: аудио рисуем
-    /// волноформой, а не гоняем тумб-путь впустую).
+    /// Whether the media has video and audio (for the bin card: audio is drawn as
+    /// a waveform, rather than running the thumb path in vain).
     pub fn kinds(&self, id: MediaId) -> Option<(bool, bool)> {
         self.shared.kinds.lock().unwrap().get(&id).copied()
     }
 
-    /// Длительность медиа, если воркер уже открывал источник (п.11 р.6).
+    /// Media duration, if the worker has already opened the source (item 11 round 6).
     pub fn duration(&self, id: MediaId) -> Option<Tick> {
         self.shared.durations.lock().unwrap().get(&id).copied().flatten()
     }
 
-    /// Длительность либо ОДНОРАЗОВАЯ заявка на неё: повторная заявка не
-    /// ставится ни при pending (probe), ни после неудачи (durations=None) —
-    /// п.1 р.7: прежний вариант открывал файл на каждом UI-кадре.
+    /// The duration or a ONE-TIME request for it: a repeat request is not queued
+    /// either while pending (probe) or after a failure (durations=None) —
+    /// item 1 round 7: the previous variant opened the file on every UI frame.
     pub fn duration_or_probe(&self, id: MediaId) -> Option<Tick> {
         if let Some(d) = self.shared.durations.lock().unwrap().get(&id) {
             return *d;
@@ -414,12 +414,12 @@ impl ThumbService {
 
 fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
     let mut db = db_path.and_then(|p| kt_media::index::MediaIndexDb::open(&p).ok());
-    // LRU открытых источников (п.1 р.7: раньше clear() при >2)
+    // LRU of open sources (item 1 round 7: previously clear() at >2)
     let mut sources: SourceLru<Box<dyn kt_media::MediaSource>> = SourceLru::new(MAX_OPEN_SOURCES);
     let mut db_ids: HashMap<MediaId, i64> = HashMap::new();
     loop {
-        // выбросить источники, чьи параметры перенастроены (п.412):
-        // иначе воркер продолжит рисовать старым GeneratorSource
+        // discard sources whose parameters were reconfigured (item 412):
+        // otherwise the worker would keep drawing with the old GeneratorSource
         {
             let dropped: Vec<MediaId> = shared.drop_sources.lock().unwrap().drain().collect();
             for id in dropped {
@@ -427,9 +427,9 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                 db_ids.remove(&id);
             }
         }
-        // condvar вместо 33 пробуждений/с на пустой очереди (п.1);
-        // probe-заявки будят цикл и БЕЗ ключей в очереди (п.1 р.7 —
-        // иначе они голодают, когда failed-фильтр опустошает очередь)
+        // condvar instead of 33 wakeups/s on an empty queue (item 1);
+        // probe requests wake the loop even WITHOUT keys in the queue (item 1 round 7 —
+        // otherwise they starve when the failed filter empties the queue)
         let next = {
             let mut q = shared.queue.lock().unwrap();
             loop {
@@ -447,9 +447,9 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                 q = guard;
             }
         };
-        // заявки на длительность (скраб бина): пакетный индекс делает
-        // открытие дешёвым, декода нет. Результат публикуется ВСЕГДА —
-        // и неудача тоже (None), чтобы UI не заказывал заново (п.1 р.7).
+        // duration requests (bin scrubbing): the packet index makes
+        // opening cheap, no decode. The result is ALWAYS published —
+        // failure too (None), so the UI does not re-request (item 1 round 7).
         let probes: Vec<MediaId> = shared.probe.lock().unwrap().drain().collect();
         for pid in probes {
             if shared.durations.lock().unwrap().contains_key(&pid) {
@@ -466,17 +466,17 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                     };
                 opened.map(|src| {
                     let info = src.info();
-                    // вид медиа достаётся бесплатно: источник уже открыт
+                    // media look is obtained for free: the source is already open
                     shared.kinds.lock().unwrap().insert(pid, (info.has_video, info.has_audio));
                     info.duration
                 })
             });
             shared.durations.lock().unwrap().insert(pid, dur);
         }
-        // заявки на постер (п.4 р.9): ищем информативный кадр — сначала по
-        // готовым тумбам в БД (без единого декода), потом декодом
-        // нескольких кандидатов. Ровно одна попытка на медиа: результат
-        // (в т.ч. «нет кадра») пишется в БД и в память.
+        // poster requests (item 4 round 9): we look for the informative frame — first among
+        // ready thumbs in the DB (no decode at all), then by decoding
+        // several candidates. Exactly one attempt per media: the result
+        // (incl. “no frame”) is written to the DB and to memory.
         let poster_job = shared.poster_jobs.lock().unwrap().pop_front();
         if let Some(pid) = poster_job
             && !shared.posters.lock().unwrap().contains_key(&pid)
@@ -498,15 +498,15 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
             continue;
         }
         let Some(path) = shared.media.lock().unwrap().get(&key.media).cloned() else {
-            fail(&shared, key); // неизвестное медиа: не заказывать вечно
+            fail(&shared, key); // unknown media: do not request forever
             continue;
         };
         let path = &path;
 
-        // 1) пробуем БД: точный ключ, затем ближайший в допуске (п.14 р.7).
-        // Псевдо-источники (`gen:`, `synth:`) в БД не ходят вовсе (Р.53,
-        // п.413): её ключ — размер и mtime ФАЙЛА, которого у них нет, и
-        // `ensure_media` на каждую тумбу впустую дёргал бы sqlite.
+        // 1) try the DB: exact key, then the nearest within tolerance (item 14 round 7).
+        // Pseudo-sources (`gen:`, `synth:`) do not go to the DB at all (R.53,
+        // item 413): its key is the FILE's size and mtime, which they do not have, and
+        // `ensure_media` on every thumb would needlessly hit sqlite.
         let mut jpeg: Option<Vec<u8>> = None;
         let use_db = !kt_model::is_pseudo_path(path);
         if let Some(db) = &mut db
@@ -515,23 +515,23 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
             let db_id = *db_ids.entry(key.media).or_insert_with(|| {
                 db.ensure_media(std::path::Path::new(path)).map(|(id, _)| id).unwrap_or(-1)
             });
-            // тумбы, записанные ДО приведения к виду источника, раздавлены:
-            // без строки thumb_meta сайдкар не читается, а перестраивается
+            // thumbs written BEFORE the conform to the source's look are squashed:
+            // without a thumb_meta row the sidecar is not read, but rebuilt
             if db_id >= 0 && db.thumb_size(db_id).ok().flatten().is_some() {
                 jpeg = db.thumbnail(db_id, key.t).ok().flatten();
                 if jpeg.is_none() && near_tol > 0 {
-                    // ближайшая готовая тумба вместо декода; публикуется под
-                    // ЗАПРОШЕННЫМ ключом, в БД не пишется
+                    // the nearest ready thumb instead of decoding; published under the
+                    // REQUESTED key, not written to the DB
                     jpeg =
                         db.thumbnail_near(db_id, key.t, near_tol).ok().flatten().map(|(_t, j)| j);
                 }
             }
         }
-        // 2) декод при промахе (+ запись в БД точного ключа)
+        // 2) decode on a miss (+ write of the exact key to the DB)
         if jpeg.is_none() {
             if !sources.contains(key.media) {
-                // синтетика — через open_source; файлы — через open_indexed
-                // с уже открытой БД (переиспользуем пакетный индекс, тест 34)
+                // synthetic — via open_source; files — via open_indexed
+                // with the DB already open (reusing the packet index, test 34)
                 let opened: Option<Box<dyn kt_media::MediaSource>> =
                     if kt_model::is_pseudo_path(path) || db.is_none() {
                         open_source(path).ok()
@@ -543,7 +543,7 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                 match opened {
                     Some(src) => sources.insert(key.media, src),
                     None => {
-                        // НЕ dummy-источник (п.1 р.7): честная неудача
+                        // NOT a dummy source (item 1 round 7): an honest failure
                         shared.durations.lock().unwrap().entry(key.media).or_insert(None);
                         fail(&shared, key);
                         continue;
@@ -551,13 +551,13 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                 }
             }
             let src = sources.get_mut(key.media).expect("source just inserted");
-            // длительность И ВИД медиа: источник открыт, оба достаются
-            // даром. Вид публиковала только ветка probe, а она себя
-            // пропускает, когда длительность уже известна («continue» по
-            // `durations.contains_key`) — медиа, у которого сначала
-            // попросили ТУМБУ, вид не получало НИКОГДА (Р.53, п.416).
-            // Видно это было как чёрный квадрат вместо волноформы у
-            // аудио-карточки, попавшей в кадр раньше своего probe.
+            // Duration AND LOOK of the media: the source is open, both come
+            // for free. Only the probe branch published the look, and it skips itself
+            // when the duration is already known (“continue” on
+            // `durations.contains_key`) — a media for which a THUMB was asked for first
+            // never got its look (R.53, item 416).
+            // This showed as a black square instead of a waveform on an
+            // audio card that entered the frame before its probe.
             shared.durations.lock().unwrap().insert(key.media, Some(src.info().duration));
             shared
                 .kinds
@@ -579,11 +579,11 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                 ok = true;
             }
             if !ok {
-                fail(&shared, key); // негативный кэш: без вечного seek+reopen
+                fail(&shared, key); // negative cache: without an eternal seek+reopen
                 continue;
             }
         }
-        // 3) jpeg -> ColorImage в ready (+LRU)
+        // 3) jpeg -> ColorImage into ready (+LRU)
         if let Some(j) = jpeg
             && let Some(ci) = decode_thumb_jpeg(&j)
         {
@@ -600,9 +600,9 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
     }
 }
 
-/// «Информативность» кадра: разброс средней яркости по блокам 16×9.
-/// Чёрный/одноцветный/пересвеченный кадр даёт ~0 — именно такие кадры
-/// стоят в начале роликов и превращали карточку бина в чёрный квадрат.
+/// “Informativeness” of a frame: the spread of average brightness across 16×9 blocks.
+/// A black/single-color/blown-out frame gives ~0 — exactly such frames
+/// sit at the start of clips and turned the bin card into a black square.
 fn frame_score(rgba: &[u8], w: u32, h: u32) -> i64 {
     if w == 0 || h == 0 || rgba.len() < (w as usize * h as usize * 4) {
         return 0;
@@ -617,7 +617,7 @@ fn frame_score(rgba: &[u8], w: u32, h: u32) -> i64 {
             let (y0, y1) = (by * h / BY, ((by + 1) * h / BY).max(by * h / BY + 1));
             let mut sum = 0f32;
             let mut n = 0f32;
-            // выборка каждого 2-го пикселя по обеим осям — хватает с запасом
+            // sampling every 2nd pixel along both axes — enough with margin
             let mut y = y0;
             while y < y1.min(h) {
                 let mut x = x0;
@@ -639,7 +639,7 @@ fn frame_score(rgba: &[u8], w: u32, h: u32) -> i64 {
     }
     let cnt = (BX * BY) as f32;
     let mean = global / cnt;
-    // сплошная чернота/пересвет — неинформативно независимо от разброса
+    // solid black/blown-out — uninformative regardless of spread
     if !(8.0..=247.0).contains(&mean) {
         return 0;
     }
@@ -647,9 +647,9 @@ fn frame_score(rgba: &[u8], w: u32, h: u32) -> i64 {
     var.sqrt() as i64
 }
 
-/// Кандидаты в постер: доли длительности (лениво, до 5 попыток —
-/// решение пользователя). Квантуются тем же шагом, что и филмстрип, —
-/// ключи попадают в общий кэш (тест 62).
+/// Poster candidates: fractions of the duration (lazily, up to 5 attempts —
+/// the user's decision). Quantized with the same step as the filmstrip —
+/// the keys land in the shared cache (test 62).
 fn poster_candidates(dur: Tick) -> Vec<i64> {
     let step = THUMB_STEP_LADDER[0];
     let mut v: Vec<i64> = [0.02, 0.10, 0.25, 0.50]
@@ -662,11 +662,11 @@ fn poster_candidates(dur: Tick) -> Vec<i64> {
     v
 }
 
-/// Минимальный разброс яркости, при котором кадр считается информативным.
+/// Minimum brightness spread at which a frame counts as informative.
 const POSTER_MIN_SCORE: i64 = 6;
 
-/// Момент постера у медиа БЕЗ длительности (генераторы): середина
-/// пятисекундного клипа, который UI ставит при броске.
+/// The poster moment for media WITHOUT a duration (generators): the middle of a
+/// five-second clip, which the UI sets on drop.
 pub const GEN_POSTER_T: i64 = 90_000 * 5 / 2;
 
 fn find_poster(
@@ -680,32 +680,32 @@ fn find_poster(
         .as_mut()
         .and_then(|d| d.ensure_media(std::path::Path::new(&path)).ok())
         .map(|(id, _)| id);
-    // уже искали в прошлой сессии — берём из БД
+    // already searched in a previous session — take it from the DB
     if let (Some(d), Some(id)) = (db.as_ref(), db_id)
         && let Ok(Some(t)) = d.poster(id)
     {
         return (t >= 0).then_some(t);
     }
     let dur = shared.durations.lock().unwrap().get(&media).copied().flatten();
-    // «ДЛИТЕЛЬНОСТИ НЕТ» ≠ «ещё не измерили» (Р.53, п.424). У генератора
-    // она честно нулевая, и постер с t = 0 у анимированного титра пуст:
-    // машинка в нуле не напечатала ни буквы. Берём представительный
-    // момент — середину той длины, которую UI подставляет при броске.
+    // “NO DURATION” ≠ “not measured yet” (R.53, item 424). A generator's is honestly zero,
+    // and the poster at t = 0 of an animated title is empty:
+    // the typewriter at zero has not printed a single letter. We take a representative
+    // moment — the middle of the length that the UI substitutes on drop.
     if dur == Some(Tick(0)) {
         return Some(GEN_POSTER_T);
     }
     let Some(dur) = dur.filter(|d| d.0 > 0) else {
-        return None; // длительности ещё нет — заявка вернётся позже
+        return None; // duration not yet known — the request will return later
     };
     let mut best: Option<(i64, i64)> = None; // (score, t)
     for t in poster_candidates(dur) {
-        // 1) кадр уже мог построить филмстрип — оценим без декода
+        // 1) the frame could already have been built by the filmstrip — let's estimate without decode
         let ready = shared.ready.lock().unwrap().get(&ThumbKey { media, t }).cloned();
         let score = if let Some(img) = ready {
             let px: Vec<u8> = img.as_raw().to_vec();
             frame_score(&px, img.width() as u32, img.height() as u32)
         } else {
-            // 2) декод кандидата
+            // 2) decode of the candidate
             if !sources.contains(media) {
                 let opened: Option<Box<dyn kt_media::MediaSource>> =
                     if kt_model::is_pseudo_path(&path) || db.is_none() {
@@ -730,7 +730,7 @@ fn find_poster(
         if best.as_ref().is_none_or(|(bs, _)| score > *bs) {
             best = Some((score, t));
         }
-        // лениво: первый же достаточно «жирный» кадр — наш
+        // lazily: the first sufficiently “rich” frame is ours
         if score >= POSTER_MIN_SCORE {
             break;
         }
@@ -746,10 +746,10 @@ fn find_poster(
 mod key_tests {
     use super::*;
 
-    /// Тест 719 (Р.62): тумба — в пропорциях ВИДА источника, а не рамки.
-    /// Вертикальный 1080×1920 → 100×180 (чётно), анаморф 720×576 с SAR
-    /// 16:15 → вид 768×576 → 240×180, широкий 16:9 — прежние 320×180
-    /// (кэш и голдены не двигаются). Размещение в ячейке центрирует.
+    /// Test 719 (R.62): the thumb is in the proportions of the source's LOOK, not the frame.
+    /// A vertical 1080×1920 → 100×180 (even), anamorphic 720×576 with SAR
+    /// 16:15 → look 768×576 → 240×180, wide 16:9 — the former 320×180
+    /// (cache and goldens do not move). Placement in the cell centers it.
     #[test]
     fn t719_thumb_quality_follows_the_view_and_cell_fit_centres() {
         assert_eq!(thumb_quality((1920.0, 1080.0)), Quality { width: 320, height: 180 });
@@ -759,34 +759,34 @@ mod key_tests {
         assert_eq!(thumb_quality((4000.0, 3000.0)), Quality { width: 240, height: 180 });
         let q = thumb_quality((1.0, 1.0));
         assert!(q.width % 2 == 0 && q.height % 2 == 0 && q.width >= 2 && q.height >= 2);
-        // ячейка 16:9 высотой 36: широкая тумба заполняет её целиком…
+        // a 16:9 cell of height 36: the wide thumb fills it entirely…
         assert_eq!(thumb_cell_fit(64.0, 36.0, 320.0, 180.0), (0.0, 64.0));
-        // …вертикальная вписана по высоте и стоит по центру
+        // …a vertical one fits by height and stands centered
         let (off, w) = thumb_cell_fit(64.0, 36.0, 100.0, 180.0);
-        assert!((w - 20.0).abs() < 1e-3, "ширина по высоте ячейки: {w}");
-        assert!((off - 22.0).abs() < 1e-3, "центрирование: {off}");
-        // ячейка уже картинки (край события): смещение ноль, масштаб
-        // прежний — картинка режется справа, а не сжимается
+        assert!((w - 20.0).abs() < 1e-3, "width by cell height: {w}");
+        assert!((off - 22.0).abs() < 1e-3, "centering: {off}");
+        // a cell already past the picture (the event's edge): offset zero, scale
+        // as before — the picture is cut on the right, not squeezed
         let (off, w) = thumb_cell_fit(10.0, 36.0, 320.0, 180.0);
         assert_eq!((off, w), (0.0, 64.0));
-        // узкая картинка в ячейке, обрезанной краем события, центрируется
-        // в том, что осталось
+        // a narrow picture in a cell cut by the event's edge is centered
+        // within what remains
         let (off, w) = thumb_cell_fit(30.0, 36.0, 100.0, 180.0);
         assert!((w - 20.0).abs() < 1e-3 && (off - 5.0).abs() < 1e-3, "{off} {w}");
     }
 
-    /// Тест 87 (п.4 р.9): метрика информативности кадра — чёрный,
-    /// белый и одноцветный кадры дают 0, картинка со структурой — больше
-    /// порога. Из-за жёсткого t=0 карточки бина были чёрными квадратами.
+    /// Test 87 (item 4 round 9): the informativeness metric of a frame — black,
+    /// white and single-color frames give 0, a picture with structure gives more
+    /// than the threshold. Because of the hard t=0, bin cards were black squares.
     #[test]
     fn t87_frame_score_rejects_flat_frames() {
         use super::{POSTER_MIN_SCORE, frame_score, poster_candidates};
         let (w, h) = (64u32, 36u32);
         let flat = |v: u8| [v, v, v, 255].repeat((w * h) as usize);
-        assert_eq!(frame_score(&flat(0), w, h), 0, "чёрный кадр");
-        assert_eq!(frame_score(&flat(255), w, h), 0, "белый кадр");
-        assert_eq!(frame_score(&flat(128), w, h), 0, "одноцветный кадр");
-        // «шахматка» крупными блоками — заведомо информативна
+        assert_eq!(frame_score(&flat(0), w, h), 0, "black frame");
+        assert_eq!(frame_score(&flat(255), w, h), 0, "white frame");
+        assert_eq!(frame_score(&flat(128), w, h), 0, "single-color frame");
+        // “checkerboard” with large blocks — informative by definition
         let mut img = vec![0u8; (w * h * 4) as usize];
         for y in 0..h {
             for x in 0..w {
@@ -800,24 +800,24 @@ mod key_tests {
         }
         assert!(
             frame_score(&img, w, h) >= POSTER_MIN_SCORE,
-            "структурный кадр должен пройти порог: {}",
+            "a structural frame must pass the threshold: {}",
             frame_score(&img, w, h)
         );
-        // кандидаты: не больше пяти, кратны шагу филмстрипа, без дублей
+        // candidates: no more than five, multiples of the filmstrip step, no duplicates
         let c = poster_candidates(Tick(90_000 * 600));
-        assert!(c.len() <= 5, "кандидатов больше пяти: {c:?}");
-        assert!(c.iter().all(|t| t % THUMB_STEP_LADDER[0] == 0), "не кратно шагу: {c:?}");
+        assert!(c.len() <= 5, "more than five candidates: {c:?}");
+        assert!(c.iter().all(|t| t % THUMB_STEP_LADDER[0] == 0), "not a multiple of the step: {c:?}");
         let mut sorted = c.clone();
         sorted.dedup();
-        assert_eq!(sorted, c, "дубли среди кандидатов");
-        // короткий файл не должен давать отрицательных/дублирующих позиций
+        assert_eq!(sorted, c, "duplicates among the candidates");
+        // a short file must not give negative/duplicate positions
         let short = poster_candidates(Tick(1000));
         assert!(short.iter().all(|t| *t >= 0));
     }
 
-    /// Тест 69 (п.1 р.7): негативные кэши — probe/тумба неизвестного медиа
-    /// публикуют неудачу РОВНО ОДИН РАЗ, повторные вызовы не порождают
-    /// новых заявок (раньше — полное открытие файла на каждом UI-кадре).
+    /// Test 69 (item 1 round 7): negative caches — probe/thumb of an unknown media
+    /// publishes failure EXACTLY ONCE; repeated calls do not spawn
+    /// new requests (previously — a full file open on every UI frame).
     #[test]
     fn t69_negative_caches_stop_retries() {
         let project = kt_model::Project::new(kt_model::ProjectSettings {
@@ -834,44 +834,44 @@ mod key_tests {
             settings_explicit: false,
         });
         let svc = ThumbService::start(&project, None);
-        let id = MediaId(99); // медиа НЕТ в карте сервиса
+        let id = MediaId(99); // media is NOT in the service's map
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        // длительность: заявка ставится, воркер публикует None
+        // duration: request is queued, the worker publishes None
         assert_eq!(svc.duration_or_probe(id), None);
         loop {
             if svc.shared.durations.lock().unwrap().contains_key(&id) {
                 break;
             }
-            assert!(std::time::Instant::now() < deadline, "воркер не опубликовал неудачу");
+            assert!(std::time::Instant::now() < deadline, "worker did not publish the failure");
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert_eq!(svc.duration(id), None);
-        // повторный вызов НЕ ставит заявку заново
+        // a repeat call does NOT queue the request again
         assert_eq!(svc.duration_or_probe(id), None);
-        assert!(svc.shared.probe.lock().unwrap().is_empty(), "повторная probe-заявка");
-        // тумба неизвестного медиа → Failed, повторный request — no-op
+        assert!(svc.shared.probe.lock().unwrap().is_empty(), "repeated probe request");
+        // thumb of unknown media → Failed, a repeat request — no-op
         let key = ThumbKey { media: id, t: 0 };
         svc.request(key);
         loop {
             if svc.state(&key) == ThumbState::Failed {
                 break;
             }
-            assert!(std::time::Instant::now() < deadline, "ключ не помечен failed");
+            assert!(std::time::Instant::now() < deadline, "key is not marked failed");
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         svc.request(key);
-        assert!(svc.shared.queue.lock().unwrap().0.is_empty(), "failed-ключ переочередился");
-        // invalidate сбрасывает оба негативных кэша
+        assert!(svc.shared.queue.lock().unwrap().0.is_empty(), "failed key was re-queued");
+        // invalidate resets both negative caches
         svc.invalidate_media(id);
         assert!(!svc.shared.durations.lock().unwrap().contains_key(&id));
         assert_eq!(svc.state(&key), ThumbState::Missing);
     }
 
-    /// Тест 476 (Р.52, родня t69): тумба и probe ГЕНЕРАТОРА строятся без
-    /// файла на диске — и без sidecar-БД, и с ней (ключ БД — метаданные
-    /// файла, у `gen:` их нет: воркер идёт фабричным источником напрямую).
-    /// Сервис отдаёт вид (видео без аудио), «длительности нет» (0) и
-    /// настоящую тумбу заданного цвета.
+    /// Test 476 (R.52, kin of t69): the thumb and probe of a GENERATOR are built without
+    /// a file on disk — both without the sidecar DB and with it (the DB key is file metadata,
+    /// which `gen:` does not have: the worker goes straight to the factory source).
+    /// The service gives the look (video without audio), “no duration” (0) and
+    /// a real thumb of the given color.
     #[test]
     fn t476_generator_thumbs_without_a_file() {
         let mut project = kt_model::Project::new(kt_model::ProjectSettings {
@@ -889,39 +889,39 @@ mod key_tests {
         });
         let id = MediaId(1);
         project.media.push(kt_model::MediaRef::new(id, "gen:solid:c=ff8800"));
-        // прогон дважды: без пути проекта (нет БД) и с путём (БД есть,
-        // но генератору она закрыта по ключу file_identity)
+        // run twice: without a project path (no DB) and with a path (DB exists,
+        // but the generator is closed to it by the file_identity key)
         let db_project = std::env::temp_dir().join(format!("kt-t476-{}.kt", std::process::id()));
         for project_path in [None, Some(db_project.clone())] {
             let with_db = project_path.is_some();
             let svc = ThumbService::start(&project, project_path);
-            // щедрый дедлайн: под полным параллельным прогоном диск занят
+            // a generous deadline: under a full parallel run the disk is busy
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
-            assert_eq!(svc.duration_or_probe(id), None, "первый вызов — заявка");
+            assert_eq!(svc.duration_or_probe(id), None, "the first call is a request");
             while !svc.shared.durations.lock().unwrap().contains_key(&id) {
                 assert!(
                     std::time::Instant::now() < deadline,
-                    "probe не опубликован (db={with_db})"
+                    "probe not published (db={with_db})"
                 );
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
             assert_eq!(
                 svc.duration(id),
                 Some(Tick(0)),
-                "у генератора длительности нет (db={with_db})"
+                "the generator has no duration (db={with_db})"
             );
-            assert_eq!(svc.kinds(id), Some((true, false)), "видео без аудио (db={with_db})");
+            assert_eq!(svc.kinds(id), Some((true, false)), "video without audio (db={with_db})");
             let key = ThumbKey { media: id, t: 0 };
             svc.request(key);
             let img = loop {
                 match svc.state(&key) {
                     ThumbState::Ready(img) => break img,
-                    ThumbState::Failed => panic!("тумба генератора упала (db={with_db})"),
+                    ThumbState::Failed => panic!("generator thumbnail failed (db={with_db})"),
                     _ => {}
                 }
                 assert!(
                     std::time::Instant::now() < deadline,
-                    "тумба не построилась (db={with_db})"
+                    "thumbnail not built (db={with_db})"
                 );
                 std::thread::sleep(std::time::Duration::from_millis(10));
             };
@@ -929,14 +929,14 @@ mod key_tests {
             let close = |a: u8, b: u8| a.abs_diff(b) <= 2;
             assert!(
                 close(c.r(), 255) && close(c.g(), 136) && close(c.b(), 0),
-                "цвет тумбы не совпал с параметрами генератора: {c:?} (db={with_db})"
+                "thumbnail color did not match the generator parameters: {c:?} (db={with_db})"
             );
         }
         let _ = std::fs::remove_file(db_project.with_extension("ktindex.db"));
     }
 
-    /// Тест 71 (п.1 р.7): LRU источников — вытеснение старейшего, без
-    /// полного сброса (прежний clear() при >2 переоткрывал каждый файл).
+    /// Test 71 (item 1 round 7): LRU of sources — eviction of the oldest, without a
+    /// full reset (the previous clear() at >2 reopened every file).
     #[test]
     fn t71_source_lru() {
         let mut lru: SourceLru<u32> = SourceLru::new(4);
@@ -944,85 +944,85 @@ mod key_tests {
             lru.insert(MediaId(i), i as u32);
         }
         assert_eq!(lru.len(), 4);
-        // обращение к старейшему двигает его в хвост
+        // access to the oldest moves it to the tail
         assert_eq!(lru.get_mut(MediaId(0)), Some(&mut 0));
         lru.insert(MediaId(9), 9);
-        assert_eq!(lru.len(), 4, "вытеснился ровно один");
-        assert!(!lru.contains(MediaId(1)), "старейший после touch(0) — это 1");
+        assert_eq!(lru.len(), 4, "exactly one was evicted");
+        assert!(!lru.contains(MediaId(1)), "the oldest after touch(0) is 1");
         assert!(lru.contains(MediaId(0)) && lru.contains(MediaId(9)));
         lru.insert(MediaId(10), 10);
         assert!(!lru.contains(MediaId(2)));
-        assert!(lru.contains(MediaId(0)), "недавно использованный жив");
+        assert!(lru.contains(MediaId(0)), "the recently used one is alive");
     }
 
-    /// Тест 62 (п.11 р.6): квантование ключей тумб ОТ НУЛЯ ФАЙЛА — бин и
-    /// таймлайн (с ненулевым source_in) дают ОДИН ключ на один момент
-    /// Тест 549 (Р.54, п.432): карта «тик события → кадр источника» —
-    /// ОДНА на филмстрип и на миниатюры пикера, и она знает про реверс.
+    /// Test 62 (item 11 round 6): quantization of thumb keys FROM THE FILE'S ZERO — the bin and
+    /// the timeline (with a nonzero source_in) give ONE key for one moment
+    /// Test 549 (R.54, item 432): the map “event tick → source frame” —
+    /// ONE for the filmstrip and for the picker's thumbnails, and it knows about reverse.
     ///
-    /// Р.37 п.3 уже требовал считать превью события той же картой, что
-    /// рендер, и вынес растяжение в `ClipWarp::material_off`. Дыра
-    /// осталась одна и нашлась при сборке пикера: у реверсивного события
-    /// БЕЗ варпа карты нет вовсе (`clip_warp` отдаёт `None` — реверс это
-    /// не варп), и прежний `map_or(tl, …)` брал материал ПРЯМО. Тест
-    /// красный на старой формуле: она давала на первом пикселе 0 вместо
-    /// последнего кадра куска.
+    /// R.37 item 3 already required computing the event's preview with the same map as the
+    /// render, and moved the stretch into `ClipWarp::material_off`. One hole
+    /// remained and was found while assembling the picker: a reversed event
+    /// WITHOUT a warp has no map at all (`clip_warp` returns `None` — reverse is
+    /// not a warp), and the old `map_or(tl, …)` took the material DIRECTLY. The test
+    /// is red on the old formula: it gave 0 at the first pixel instead of the
+    /// last frame of the piece.
     #[test]
     fn t549_material_map_is_one_and_knows_reverse() {
         let dur = kt_time::Tick(4 * 90_000);
         let step = THUMB_STEP_LADDER[1]; // 1 c
-        // прямое событие: пиксель = материал
+        // a forward event: pixel = material
         assert_eq!(material_at(None, dur, false, 0), 0);
         assert_eq!(material_at(None, dur, false, 90_000), 90_000);
-        // реверсивное БЕЗ варпа: первый пиксель — ПОСЛЕДНИЙ кадр куска
+        // reversed WITHOUT a warp: the first pixel is the LAST frame of the piece
         assert_eq!(material_at(None, dur, true, 0), dur.0 - 1);
         assert_eq!(material_at(None, dur, true, dur.0 - 1), 0);
-        // монотонность: у реверса материал убывает
+        // monotonicity: in reverse the material decreases
         let mut prev = i64::MAX;
         for i in 0..=8 {
             let tl = i * dur.0 / 8;
             let m = material_at(None, dur, true, tl);
-            assert!(m <= prev, "реверс обязан идти назад: {m} после {prev}");
+            assert!(m <= prev, "reverse must go backward: {m} after {prev}");
             prev = m;
         }
-        // ключ — тот же квант, что у прямого события (общий кэш, t62)
+        // the key is the same quantum as for a forward event (shared cache, t62)
         let k = material_key_t(0, None, dur, true, 0, step);
-        assert_eq!(k % step, 0, "ключ вне сетки шага");
+        assert_eq!(k % step, 0, "key off the step grid");
         assert_eq!(k, ((dur.0 - 1) / step) * step);
-        // source_in прибавляется ДО квантования (от нуля файла)
+        // source_in is added BEFORE quantization (from the file's zero)
         assert_eq!(
             material_key_t(30_000, None, dur, false, 90_000, step),
             material_key_t(0, None, dur, false, 120_000, step),
-            "квантование обязано идти от нуля файла"
+            "quantization must run from the file’s zero"
         );
-        // за краями события ключ не уходит в минус
+        // beyond the event's edges the key does not go negative
         assert_eq!(material_key_t(0, None, dur, false, -10, step), 0);
     }
 
-    /// файла; ключ кратен шагу и стабилен внутри бакета; скраб монотонен.
+    /// file; the key is a multiple of the step and stable within a bucket; scrubbing is monotonic.
     #[test]
     fn t62_thumb_keys_unified_from_file_zero() {
         let step = 90_000i64;
-        // кратность и стабильность внутри бакета
+        // multiplicity and stability within a bucket
         for tl in [0i64, 1, 44_999, 89_999] {
             assert_eq!(thumb_key_t(0, tl, step), 0);
         }
         assert_eq!(thumb_key_t(0, 90_000, step), 90_000);
-        // таймлайн с source_in=30_000 (не кратен шагу) и бин на тот же
-        // момент файла 120_000 → одинаковый ключ
-        let timeline_key = thumb_key_t(30_000, 90_000, step); // файл: 120_000
+        // timeline with source_in=30_000 (not a multiple of the step) and bin at the same
+        // file moment 120_000 → the same key
+        let timeline_key = thumb_key_t(30_000, 90_000, step); // file: 120_000
         let bin_key = thumb_key_t(0, 120_000, step);
-        assert_eq!(timeline_key, bin_key, "общий кэш бин↔таймлайн");
-        assert_eq!(timeline_key, 90_000, "бакет floor");
-        // отрицательное не бывает
+        assert_eq!(timeline_key, bin_key, "shared bin↔timeline cache");
+        assert_eq!(timeline_key, 90_000, "floor bucket");
+        // a negative value does not occur
         assert_eq!(thumb_key_t(0, -5, step), 0);
-        // скраб: монотонен по доле, края в [0, dur)
+        // scrub: monotonic by fraction, edges in [0, dur)
         let dur = 10 * 90_000i64;
         let mut prev = -1i64;
         for i in 0..=20 {
             let frac = i as f64 / 20.0 * 0.999;
             let t = thumb_key_t(0, (frac * dur as f64) as i64, step);
-            assert!(t >= prev, "монотонность скраба");
+            assert!(t >= prev, "scrub monotonicity");
             assert!((0..dur).contains(&t));
             prev = t;
         }

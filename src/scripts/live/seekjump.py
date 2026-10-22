@@ -1,31 +1,31 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.63 (п.13): прыжок в длинный файл не глушит звук.
+"""Live scenario R.63 (item 13): a jump into a long file does not mute the sound.
 
-Жалоба владельца дословно: «я просто прыгнул на участок с одним длинным
-событием (да над ним есть другие, и да у этого есть эффекты) но это не
-повод так долго подгружать видео с такими underruns». По флайт-логу каждый
-прыжок давал 1-6 с полной тишины при цене самого рендера 2 % реального
-времени.
+The owner’s complaint verbatim: “I simply jumped to a section with one long
+event (there are others above it, and this one has effects), but that is no
+reason to load the video so slowly with such underruns”. By the flight log, each
+jump gave 1-6 s of complete silence at the cost of the render itself at 2 % of real
+time.
 
-Здесь это проверяется в настоящем окне: прыжки по длинному H.264 при игре,
-а счётчик underrun'ов читается ИЗ САМОЙ ПРОГРАММЫ (дамп геометрии), а не с
-картинки.
+Here this is checked in a real window: jumps across a long H.264 during playback,
+and the underrun counter is read FROM THE PROGRAM ITSELF (the geometry dump), not from the
+picture.
 
-ФАЙЛ ВЛАДЕЛЬЦА — ТОЛЬКО ПО ПРОСЬБЕ (Р.68). Сценарий заведён в Р.63 и
-подхватывал `sources/kt-untitled-review-870s.mp4` молча, просто потому что
-тот лежал на машине. В Р.67 владелец сказал прямо: «п.1 но не на моих
-проектах» — прогон идёт на НАШИХ фикстурах. Второй заход остаётся
-диагностикой и включается явно:
+THE OWNER’S FILE — ONLY ON REQUEST (R.68). The scenario was set up in R.63 and
+silently picked up `sources/kt-untitled-review-870s.mp4`, simply because
+it lay on the machine. In R.67 the owner said directly: “item 1 but not on my
+projects” — the run goes on OUR fixtures. The second run remains a
+diagnostic and is enabled explicitly:
 
-    KT_OWNER_MEDIA=/путь/к/длинному.mp4 ./scripts/live-check.sh seekjump
+    KT_OWNER_MEDIA=/path/to/long.mp4 ./scripts/live-check.sh seekjump
 
-ЧЕСТНАЯ ОГОВОРКА (Р.63): на ЭТОЙ машине сценарий зелёный и на коде ДО
-починки — воспроизвести голодание им не удалось даже тремя слоями поверх
-длинного события. Значит он сторож от регрессии, а не доказательство
-починки: доказательство — движковый тест t758 (на прежнем коде 0 из 8
-бёрстов за 250 мс) и замеры стоимости декода у владельца (бёрст аудио
-14 мкс против 22-61 мс на кадр 1080p). Сцена владельца была тяжелее:
-шесть видеодорожек с эффектами, четыре медиа, GPU-композит.
+HONEST CAVEAT (R.63): on THIS machine the scenario is green even on the code BEFORE
+the fix — it was not possible to reproduce the starvation even with three layers on top of
+a long event. So it is a guard against regression, not proof of the
+fix: the proof is the engine test t758 (on the previous code 0 of 8
+bursts in 250 ms) and the owner’s decode cost measurements (audio burst
+14 µs versus 22-61 ms per 1080p frame). The owner’s scene was heavier:
+six video tracks with effects, four media, GPU composite.
 """
 import json
 import os
@@ -37,9 +37,9 @@ from kt_live import KT_CLI, Live, pause, poll_step, project_with_clips, require_
 
 
 def stack_tracks(dest, copies):
-    """Сложить ЕЩЁ N видеодорожек тем же медиа: у владельца над длинным
-    событием лежали другие, и именно так спан набирает длину — заказ идёт
-    сразу по нескольким слоям."""
+    """Stack ANOTHER N video tracks with the same media: the owner had others lying above the long
+    event, and that is exactly how the span gains its length — the order goes
+    across several layers at once."""
     doc = json.load(open(dest))
     vid = [t for t in doc["tracks"]["children"] if t.get("kind") == "Video"]
     base = vid[0]
@@ -55,12 +55,12 @@ def stack_tracks(dest, copies):
     return dest
 
 SEC = 90000
-# путь НЕ зашит: чужое (пусть и владельца) видео в обычный прогон не входит
+# the path is NOT hardcoded: someone else’s (even the owner’s) video does not enter the normal run
 OWNER_FILE = os.environ.get("KT_OWNER_MEDIA", "")
 
 
 def long_media(out, seconds):
-    """Длинный H.264 1080p: кадр дорогой, как у владельца."""
+    """Long H.264 1080p: the frame is expensive, as the owner’s is."""
     path = os.path.join(out, f"long{seconds}.mp4")
     if os.path.exists(path):
         return path
@@ -80,17 +80,17 @@ def long_media(out, seconds):
 
 
 def run_case(app, name, dur_s, jumps):
-    """Прыжки при игре: после каждого звук обязан пойти без голодания.
+    """Jumps during playback: after each one the sound must go on without starvation.
 
-    Прыгаем МАСКОЙ ТАЙМКОДА (Ctrl+L), а не кликом по линейке: монтаж в
-    320 с шире окна, и `x_at` отдал бы координату за экраном — ровно та
-    ловушка, что записана в Р.37. Маска — настоящий человеческий способ
-    попасть в произвольное место."""
+    We jump with the TIMECODE MASK (Ctrl+L), not by clicking the ruler: the montage is
+    320 s wider than the window, and `x_at` would return a coordinate off the screen — exactly
+    the trap recorded in R.37. The mask is the real human way
+    to get to an arbitrary place."""
     app.key("space")
     pause(
         1.5,
-        "воспроизведение идёт в РЕАЛЬНОМ времени: полторы секунды игры нужны, "
-        "чтобы курсор реально уехал от начала",
+        "playback runs in REAL time: one and a half seconds of play are needed "
+        "for the cursor to really move away from the start",
     )
     base = app.geom().get("underruns", 0)
     worst = 0
@@ -100,24 +100,24 @@ def run_case(app, name, dur_s, jumps):
         for ch in str(secs):
             app.key(ch)
         app.key("Return")
-        # звук обязан пойти БЫСТРО: даём вдвое больше кольца вывода
+        # the sound must go FAST: we give twice as much output ring
         pause(
             1.2,
-            "кольцо вывода живёт в РЕАЛЬНОМ времени: ждём вдвое больше его "
-            "длины, чтобы отличить «пошло быстро» от «пошло вообще»",
+            "the output ring lives in REAL time: we wait twice its "
+            "length to tell “went fast” from “went at all”",
         )
         poll_step(1.2)
         now = app.geom().get("underruns", 0)
         grew = now - base
         worst = max(worst, grew)
         base = now
-        print(f"      {name}: прыжок на {frac:.0%} — underrun'ов прибавилось {grew}")
+        print(f"      {name}: jump of {frac:.0%} — underruns increased by {grew}")
     app.key("space")
-    # порог: полсекунды тишины (24 000 кадров) — это уже слышно; до Р.63
-    # каждый прыжок давал 48 000 кадров в секунду и так по нескольку секунд
+    # threshold: half a second of silence (24 000 frames) — this is already audible; before R.63
+    # each jump gave 48 000 frames per second, and so on for several seconds
     app.expect(
         worst < 24_000,
-        f"{name}: прыжок не глушит звук (худший прирост underrun'ов {worst})",
+        f"{name}: the jump does not mute the sound (worst underrun increase {worst})",
     )
 
 
@@ -126,29 +126,29 @@ def main(out):
     dur = 320
     media = long_media(out, dur)
     path = project_with_clips(os.path.join(out, "seekjump.otio"), [(0.0, float(dur), media)])
-    stack_tracks(path, 2)  # три слоя одного медиа: заказ шире, спан длиннее
+    stack_tracks(path, 2)  # three layers of one media: the order is wider, the span is longer
     os.environ["KT_AUTOSAVE_SECS"] = "600"
 
     with Live("seekjump", out, project=path) as app:
-        app.expect(len(app.live_clips()) >= 1, f"событие на монтаже: {app.live_clips()}")
-        run_case(app, "синтетика 320 с", dur, [0.9, 0.5, 0.75])
+        app.expect(len(app.live_clips()) >= 1, f"event on the montage: {app.live_clips()}")
+        run_case(app, "synthetic 320 s", dur, [0.9, 0.5, 0.75])
         app.shot("after-jumps")
-        # вердикт ПЕРВОГО захода берётся здесь: до Р.68 он терялся вовсе —
-        # при пропуске второго захода сценарий возвращал ноль независимо от
-        # того, что нашёл (тот же класс, что «нет return app.done()», Р.67)
+        # the verdict of the FIRST pass is taken here: before R.68 it was lost entirely —
+        # when the second pass was skipped the scenario returned zero regardless of
+        # what it had found (the same class as “no return app.done()”, R.67)
         rc = app.done()
     if rc:
         return rc
 
     if not OWNER_FILE or not os.path.exists(OWNER_FILE):
-        print("   (второй заход — по просьбе: KT_OWNER_MEDIA=<длинный файл>)")
+        print("   (the second run — on request: KT_OWNER_MEDIA=<long file>)")
         return 0
 
-    # ТОТ САМЫЙ файл, на котором дефект и наблюдался
+    # THE VERY file on which the defect was observed
     path2 = project_with_clips(os.path.join(out, "owner.otio"), [(0.0, 870.0, OWNER_FILE)])
     stack_tracks(path2, 2)
     with Live("seekjump-owner", out, project=path2) as app:
-        run_case(app, "review 870 с", 870, [0.94, 0.6, 0.2])
+        run_case(app, "review 870 s", 870, [0.94, 0.6, 0.2])
         app.shot("owner-after-jumps")
         return app.done()
 

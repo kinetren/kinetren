@@ -1,11 +1,11 @@
-//! Тесты 310-317 (Р.46, пп.320-322): СТУПЕНЬ ДЕКОДА — пре-FX кадр берётся
-//! крупнее Quality, когда цепочка увеличивает и у файла есть запас натива.
+//! Tests 310-317 (R.46, items 320-322): DECODE SCALE — the pre-FX frame is taken
+//! larger than Quality when the chain enlarges and the file has native headroom.
 //!
-//! Три множителя ступени проверяются порознь (t310: формула), сэмплер
-//! максимума зума по клипу — отдельно (t311), а главное следствие — заказ
-//! префетча и чтение композита обязаны сойтись ВМЕСТЕ С РАЗМЕРОМ (t312):
-//! разойдутся — вечный промах кэша, та же болезнь, что t247d лечил по оси
-//! кадров.
+//! The three multipliers of the scale are checked separately (t310: the formula), the
+//! zoom-maximum sampler over the clip — separately (t311), and the main consequence —
+//! the prefetch order and the composite read must converge TOGETHER WITH THE SIZE (t312):
+//! if they diverge — a permanent cache miss, the same disease that t247d cured along the
+//! frame axis.
 
 use kt_engine::{VideoRenderer, video_cache_idx};
 use kt_media::synthetic::CheckerSource;
@@ -66,69 +66,69 @@ fn zoom(z: f64) -> FxInstance {
     FxInstance::geometry_zoom(z)
 }
 
-/// Качество декода клипа (единственный слой проекта) при данном Quality.
+/// Decode quality of the clip (the only project layer) at the given Quality.
 fn dq(p: &Project, nat: Option<(u32, u32)>, q: Quality) -> Quality {
     let vr = match nat {
         Some((w, h)) => VideoRenderer::new_with_natives(p, &natives(w, h)),
         None => VideoRenderer::new(p),
     };
-    vr.layers_at(Tick(STEP), q).first().expect("слой есть").2
+    vr.layers_at(Tick(STEP), q).first().expect("layer is present").2
 }
 
-/// Тест 310 (п.320): формула ступени. Сколько просит цепочка (квант тапов),
-/// сколько может дать файл (запас натива, округление ВВЕРХ — решение
-/// владельца) и потолок промежуточных буферов.
+/// Test 310 (item 320): the formula of the scale. How much the chain asks for (tap quantum),
+/// how much the file can give (native headroom, rounding UP — the owner's decision)
+/// and the ceiling of intermediate buffers.
 #[test]
 fn t310_decode_stage_formula() {
     let q720 = Quality { width: 1280, height: 720 };
     let p2 = project(1280, 720, vec![zoom(2.0)], vec![]);
-    // ДРОБНЫЙ запас: 1920/1280 = 1.5 → ступень 2, остаток дотянет sws
+    // a FRACTIONAL headroom: 1920/1280 = 1.5 → scale 2, the remainder is covered by sws
     assert_eq!(dq(&p2, Some((1920, 1080)), q720), Quality { width: 2560, height: 1440 });
-    // полного запаса хватает ровно
+    // the full headroom is exactly enough
     assert_eq!(dq(&p2, Some((2560, 1440)), q720), Quality { width: 2560, height: 1440 });
-    // запаса нет: файл не крупнее Quality — декодируем как раньше
+    // no headroom: the file is not larger than Quality — decode as before
     assert_eq!(dq(&p2, Some((1280, 720)), q720), q720);
-    assert_eq!(dq(&p2, Some((640, 360)), q720), q720, "мельче Quality не декодируем НИКОГДА");
-    // натив неизвестен (заглушка, синтетика) — ступени нет
+    assert_eq!(dq(&p2, Some((640, 360)), q720), q720, "finer than Quality is NEVER decoded");
+    // native unknown (stub, synthetic) — no scale
     assert_eq!(dq(&p2, None, q720), q720);
-    // потолок промежуточных буферов: 4K-выход ступени не получает
+    // ceiling of intermediate buffers: the 4K output does not get a scale
     let q4k = Quality { width: 3840, height: 2160 };
     let p4 = project(3840, 2160, vec![zoom(2.0)], vec![]);
-    assert_eq!(dq(&p4, Some((7680, 4320)), q4k), q4k, "MAX_INTER_DIM режет ступень");
-    // цепочка не увеличивает — ступени нет ни при каком нативе
+    assert_eq!(dq(&p4, Some((7680, 4320)), q4k), q4k, "MAX_INTER_DIM cuts the step");
+    // the chain does not enlarge — no scale at any native
     for fx in [
         vec![],
         vec![zoom(1.0)],
         vec![zoom(0.5)],
         vec![FxInstance::Mirror { horizontal: true, vertical: false }],
         vec![FxInstance::EventGrid { cols: 2, rows: 2, center: true }],
-        // нетто-единица (сценарий Р.44): сетка сжала, зум вернул
+        // net unit (R.44 scenario): the grid compressed, the zoom restored it
         vec![FxInstance::EventGrid { cols: 2, rows: 2, center: true }, zoom(2.0)],
     ] {
         let p = project(1280, 720, fx.clone(), vec![]);
-        assert_eq!(dq(&p, Some((3840, 2160)), q720), q720, "нетто-зум <= 1: {fx:?}");
+        assert_eq!(dq(&p, Some((3840, 2160)), q720), q720, "net zoom <= 1: {fx:?}");
     }
-    // зум чуть выше единицы гасится квантом, крупный — упирается в потолок тапов
+    // a zoom just above unity is damped by the quantum, a large one runs into the tap ceiling
     let p_small = project(1280, 720, vec![zoom(1.01)], vec![]);
-    assert_eq!(dq(&p_small, Some((3840, 2160)), q720), q720, "квант 1/32 гасит дрожь");
+    assert_eq!(dq(&p_small, Some((3840, 2160)), q720), q720, "1/32 quantum damps jitter");
     let q180 = Quality { width: 320, height: 180 };
     let p_big = project(1280, 720, vec![zoom(8.0)], vec![]);
     assert_eq!(
         dq(&p_big, Some((5120, 2880)), q180),
         Quality { width: 1280, height: 720 },
-        "потолок ступени — 4"
+        "step ceiling is 4"
     );
 }
 
-/// Тест 311 (п.320): сэмплер максимума зума по клипу. Ступень — по КЛИПУ
-/// целиком (решение владельца), поэтому анимированный зум обязан ловиться
-/// в своём максимуме, а не в момент первого кадра.
+/// Test 311 (item 320): the sampler of the zoom maximum over the clip. The scale is taken over the WHOLE
+/// clip (the owner's decision), so an animated zoom must be caught
+/// at its maximum, not at the moment of the first frame.
 #[test]
 fn t311_head_zoom_samples_the_whole_clip() {
     let q = Quality { width: 320, height: 180 };
     let nat = Some((1280, 720));
     let key = |t_s: f64, v: f64| AutoKey::at(Tick((t_s * SEC as f64) as i64), v);
-    // зум 1 → 4 к концу клипа: на первом кадре цепочка ещё тождественна
+    // zoom 1 → 4 by the end of the clip: at the first frame the chain is still identity
     let curve = ParamCurve {
         param: "zoom".into(),
         keys: vec![key(0.0, 1.0), key(2.0, 4.0)],
@@ -138,9 +138,9 @@ fn t311_head_zoom_samples_the_whole_clip() {
     assert_eq!(
         dq(&p, nat, q),
         Quality { width: 1280, height: 720 },
-        "ступень берётся по максимуму кривой, а не по первому кадру"
+        "the step is taken from the curve maximum, not from the first frame"
     );
-    // обратная кривая (зум в начале) — тот же максимум
+    // reverse curve (zoom at the start) — the same maximum
     let back = ParamCurve {
         param: "zoom".into(),
         keys: vec![key(0.0, 4.0), key(2.0, 1.0)],
@@ -148,11 +148,11 @@ fn t311_head_zoom_samples_the_whole_clip() {
     };
     let pb = project(320, 180, vec![zoom(1.0)], vec![vec![back]]);
     assert_eq!(dq(&pb, nat, q), Quality { width: 1280, height: 720 });
-    // стоп силы слоя в нуле обнуляет зум префикса: ступени нет
+    // a layer strength stop at zero zeroes the zoom of the prefix: no scale
     let mixed =
         project(320, 180, vec![zoom(2.0), FxInstance::LayerMix { amount: 0.5, from: 0 }], vec![]);
-    assert_eq!(dq(&mixed, nat, q), q, "смешение в нуле — цепочка префикса пуста");
-    // реверс клипа не ломает ось: максимум тот же
+    assert_eq!(dq(&mixed, nat, q), q, "mix at zero — prefix chain is empty");
+    // reversing the clip does not break the axis: the maximum is the same
     let mut pr = project(
         320,
         180,
@@ -167,10 +167,10 @@ fn t311_head_zoom_samples_the_whole_clip() {
     assert_eq!(dq(&pr, nat, q), Quality { width: 1280, height: 720 });
 }
 
-/// Тест 312 (п.321): ЗАКАЗ == ЧТЕНИЕ вместе с размером. Прогрев строго по
-/// `wanted_frames` даёт полный композит; прогрев «как раньше», в Quality,
-/// не даёт ничего — слой не находит своего кадра. Это t247d по оси
-/// размера: разойдутся — вечный промах кэша.
+/// Test 312 (item 321): ORDER == READ together with the size. Warming strictly by
+/// `wanted_frames` gives a full composite; warming “as before”, at Quality,
+/// gives nothing — the layer does not find its frame. This is t247d along the size
+/// axis: if they diverge — a permanent cache miss.
 #[test]
 fn t312_order_equals_read_with_quality() {
     let q = Quality { width: 128, height: 72 };
@@ -181,10 +181,10 @@ fn t312_order_equals_read_with_quality() {
     assert!(!wanted.is_empty());
     assert!(
         wanted.iter().all(|(_, _, dq)| *dq == Quality { width: 256, height: 144 }),
-        "заказ обязан нести качество декода клипа"
+        "the order must carry decode quality of the clip"
     );
 
-    // прогрев РОВНО по заказу
+    // warming EXACTLY by the order
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let mut src = CheckerSource::new(Tick(10 * SEC), 512, 288);
     for (media, pts, dq) in &wanted {
@@ -198,10 +198,10 @@ fn t312_order_equals_read_with_quality() {
     }
     for i in 0..10 {
         let (_, complete) = vr.compose_from_cache(&cache, Tick(i * STEP), q);
-        assert!(complete, "кадр {i}: композит читает то же, что грел префетч");
+        assert!(complete, "frame {i}: composite reads what prefetch warmed");
     }
 
-    // прогрев в Quality (как до Р.46) — слой своего кадра не находит
+    // warming at Quality (as before R.46) — the layer does not find its frame
     let cache_q = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     for (media, pts, _) in &wanted {
         let f = src.read_video_frame(*pts, Some(q)).unwrap();
@@ -213,12 +213,12 @@ fn t312_order_equals_read_with_quality() {
         );
     }
     let (_, complete) = vr.compose_from_cache(&cache_q, Tick(0), q);
-    assert!(!complete, "кадр чужого качества не считается прогретым");
+    assert!(!complete, "a frame of another quality does not count as warm");
 }
 
-/// Тест 313 (п.321): ступень В КЛЮЧЕ пост-FX мемоизации. Один и тот же
-/// клип на одном Quality из входа 1× и входа 2× даёт РАЗНЫЕ байты — без
-/// ступени в ключе кэш отдал бы стейл.
+/// Test 313 (item 321): the scale IN THE KEY of post-FX memoization. The same
+/// clip at the same Quality from input 1× and input 2× gives DIFFERENT bytes — without
+/// the scale in the key the cache would return a stale one.
 #[test]
 fn t313_postfx_key_includes_the_stage() {
     let q = Quality { width: 128, height: 72 };
@@ -227,8 +227,8 @@ fn t313_postfx_key_includes_the_stage() {
     let mut src = CheckerSource::new(Tick(10 * SEC), 512, 288);
     let t = Tick(0);
 
-    // кадры обоих качеств лежат в кэше одновременно (ключи разные)
-    let mut vr1 = VideoRenderer::new(&p); // нативов нет → ступень 1
+    // frames of both qualities are in the cache at once (the keys differ)
+    let mut vr1 = VideoRenderer::new(&p); // no natives → scale 1
     let mut vr2 = VideoRenderer::new_with_natives(&p, &natives(512, 288));
     for vr in [&vr1, &vr2] {
         for (media, pts, dq) in vr.layers_at(t, q) {
@@ -243,22 +243,22 @@ fn t313_postfx_key_includes_the_stage() {
     }
     let (a, ca) = vr1.compose_from_cache(&cache, t, q);
     let (b, cb) = vr2.compose_from_cache(&cache, t, q);
-    assert!(ca && cb, "оба композита полные");
-    assert_ne!(a, b, "крупный вход обязан дать другую картинку, а не стейл из кэша");
+    assert!(ca && cb, "both composites full");
+    assert_ne!(a, b, "a large input must give a different picture, not a stale one from the cache");
 
-    // повторный compose каждого — из мемоизации, байт-в-байт свой
+    // a repeated compose of each — from memoization, byte for byte its own
     assert_eq!(vr1.compose_from_cache(&cache, t, q).0, a);
     assert_eq!(vr2.compose_from_cache(&cache, t, q).0, b);
 }
 
-/// Тест 314 (п.321): бюджет чанка экспорта считается по качеству ДЕКОДА.
-/// Кадр ступени S занимает в кэше в S² раз больше, и чанк, посчитанный по
-/// Quality, не дожил бы до композиции: LRU вытеснил бы пачку раньше, чем
-/// её собрали, — ровно регрессия п.15 («чёрный рендер»).
+/// Test 314 (item 321): the export chunk budget is computed from the DECODE quality.
+/// A frame of scale S takes S² times more space in the cache, and a chunk computed by
+/// Quality would not survive to the composite: LRU would evict the batch before
+/// it was assembled — exactly the regression of item 15 (“black render”).
 #[test]
 fn t314_export_chunk_respects_the_decode_stage() {
-    // размеры подобраны так, что по Quality чанк влезает в бюджет, а по
-    // качеству декода (×2 по стороне = ×4 памяти) — уже нет
+    // the sizes are chosen so that by Quality the chunk fits the budget, but by the
+    // decode quality (×2 per side = ×4 memory) it no longer does
     let q = Quality { width: 960, height: 540 };
     let dq = Quality { width: 1920, height: 1080 };
     let by_quality = kt_engine::export::export_chunk_frames(
@@ -273,9 +273,9 @@ fn t314_export_chunk_respects_the_decode_stage() {
         dq.height,
         1,
     );
-    assert!(by_decode * 4 <= by_quality, "чанк обязан падать вчетверо при ступени 2");
+    assert!(by_decode * 4 <= by_quality, "a chunk must shrink fourfold at step 2");
 
-    // и живой рендер со ступенью доходит без пропавших слоёв
+    // and the live render with a scale gets through without missing layers
     let p = project(128, 72, vec![zoom(2.0)], vec![]);
     let sources: Vec<(MediaId, Box<dyn MediaSource>)> =
         vec![(MediaId(1), Box::new(CheckerSource::new(Tick(10 * SEC), 512, 288)))];
@@ -295,14 +295,14 @@ fn t314_export_chunk_respects_the_decode_stage() {
         },
     )
     .expect("render");
-    assert_eq!(frames, 30, "все кадры диапазона отрендерены");
-    assert_eq!(stats.missing_video_layers, 0, "ни один слой не потерялся на ступени");
+    assert_eq!(frames, 30, "all frames of the range are rendered");
+    assert_eq!(stats.missing_video_layers, 0, "no layer was lost at the step");
 }
 
-/// Тест 317 (п.322): ПОЛОСКИ прогретости спрашивают качество ДЕКОДА.
-/// Кэш качество-точный (t8), поэтому клип со ступенью, прогретый как
-/// надо, при опросе по Quality выглядел бы полностью холодным —
-/// нарушение инварианта №4 в глазах пользователя.
+/// Test 317 (item 322): the coverage BARS ask for the DECODE quality.
+/// The cache is quality-exact (t8), so a clip with a scale, warmed
+/// properly, would look entirely cold when polled by Quality —
+/// a violation of invariant No. 4 in the user's eyes.
 #[test]
 fn t317_coverage_is_queried_at_the_decode_quality() {
     let q = Quality { width: 128, height: 72 };
@@ -311,7 +311,7 @@ fn t317_coverage_is_queried_at_the_decode_quality() {
     let dq_clip = vr.video_decode_qualities(q);
     assert_eq!(dq_clip, vec![(ClipId(1), Quality { width: 256, height: 144 })]);
 
-    // префетч кладёт кадры строго по заказу
+    // the prefetch puts frames strictly by the order
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let mut src = CheckerSource::new(Tick(10 * SEC), 512, 288);
     for (media, pts, dq) in vr.wanted_frames(TickRange::new(Tick(0), Tick(10 * STEP)), q) {
@@ -322,14 +322,14 @@ fn t317_coverage_is_queried_at_the_decode_quality() {
     let range = 0..(10 * STEP);
     let warm = cache.coverage(sid, kt_cache::BurstKind::video(Some(dq_clip[0].1)), range.clone());
     let cold = cache.coverage(sid, kt_cache::BurstKind::video(Some(q)), range);
-    assert!(!warm.is_empty(), "по качеству декода клип прогрет");
-    assert!(cold.is_empty(), "по Quality того же клипа кадров нет — полоска соврала бы");
+    assert!(!warm.is_empty(), "the clip is warm for its decode quality");
+    assert!(cold.is_empty(), "there are no frames at the Quality of the same clip — the bar would lie");
 }
 
-/// Тест 484b (Р.52): натив генератора (`GEN_NATIVE` = 4096) — честный
-/// «запас деталей» векторного источника: клип-титр с зумящей цепочкой
-/// заказывает S×Quality (резкий зум), голый генератор — ровно Quality,
-/// а без натива ступень 1 даже под зумом.
+/// Test 484b (R.52): the generator's native (`GEN_NATIVE` = 4096) is the honest
+/// “detail headroom” of the vector source: a title clip with a zooming chain
+/// orders S×Quality (a sharp zoom), a bare generator — exactly Quality,
+/// and without a native, scale 1 even under zoom.
 #[test]
 fn t484b_generator_native_feeds_decode_stage() {
     use kt_media::generator::GEN_NATIVE;
@@ -338,49 +338,49 @@ fn t484b_generator_native_feeds_decode_stage() {
     assert_eq!(
         dq(&zoomed, Some((GEN_NATIVE, GEN_NATIVE)), q),
         Quality { width: 1280, height: 720 },
-        "зум титра обязан заказывать кадр крупнее"
+        "title zoom must order a frame at a larger size"
     );
     let plain = project(640, 360, vec![], vec![]);
-    assert_eq!(dq(&plain, Some((GEN_NATIVE, GEN_NATIVE)), q), q, "без FX ступени не бывает");
-    assert_eq!(dq(&zoomed, None, q), q, "натив неизвестен — ступень 1");
+    assert_eq!(dq(&plain, Some((GEN_NATIVE, GEN_NATIVE)), q), q, "there is no step without FX");
+    assert_eq!(dq(&zoomed, None, q), q, "native size unknown — step 1");
 }
 
-/// Тест 633 (Р.58, п.459): слой ЧУЖОГО РАЗМЕРА никогда не проходит молча.
+/// Test 633 (R.58, item 459): a layer of a FOREIGN SIZE never passes silently.
 ///
-/// До Р.58 композит, встретив кадр не того размера, просто пропускал слой —
-/// и объявлял кадр ПОЛНЫМ. Экспорт писал такой кадр как годный, а вложение
-/// из него исчезало. Правило: не сошёлся размер — кадр не полон, и его
-/// пере-закажут.
+/// Before R.58 the composite, meeting a frame of the wrong size, simply skipped the layer —
+/// and declared the frame COMPLETE. The export wrote such a frame as good, and an
+/// attachment from it disappeared. Rule: if the size does not match — the frame is not complete,
+/// and it is re-ordered.
 #[test]
 fn t633_a_layer_of_a_foreign_size_is_never_silent() {
     let q = Quality { width: 128, height: 72 };
     let p = project(128, 72, vec![], vec![]);
     let mut vr = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
-    // кладём кадр ПОЛОВИННОГО размера под ключ полного качества: ровно то,
-    // что делает рассогласование ступени внутри программы
+    // we put a frame of HALF size under the key of full quality: exactly what
+    // the scale mismatch inside the program does
     let mut src = CheckerSource::new(Tick(10 * SEC), 512, 288);
     let half = Quality { width: q.width / 2, height: q.height / 2 };
     for (media, pts, dq) in vr.layers_at(Tick(0), q) {
-        assert_eq!(dq, q, "фикстура: у клипа без цепочки ступень 1");
+        assert_eq!(dq, q, "fixture: a clip without a chain has step 1");
         let f = src.read_video_frame(pts, Some(half)).unwrap();
         cache.insert_video(kt_engine::source_id(media), Some(dq), video_cache_idx(pts), f.into());
     }
     let (out, complete) = vr.compose_from_cache(&cache, Tick(0), q);
     assert!(
         !complete,
-        "композит объявил кадр полным, выбросив слой чужого размера: такой кадр \
-         уходит в экспорт как годный, и события в нём просто нет"
+        "the composite declared the frame complete by dropping a layer of a foreign size: such a frame \
+         goes into the export as good, and the event is simply absent from it"
     );
-    assert!(out.chunks(4).all(|px| px[3] == 0), "слой чужого размера всё-таки попал в кадр");
+    assert!(out.chunks(4).all(|px| px[3] == 0), "a layer of a foreign size still got into the frame");
 }
 
-/// Тест 714 (Р.62): заказ равен чтению на КАЖДОМ правиле приведения.
-/// Вертикальный источник 1080×1920 четырьмя событиями с четырьмя
-/// правилами в проекте 1920×1080: размер декода — рамка правила
-/// («вписать» 608×1080, «заполнить» 1920×3414, «как есть» 1080×1920,
-/// «растянуть» 1920×1080), ступень считана от размера приведения, и
-/// композит, прогретый строго по `wanted_frames`, полон.
+/// Test 714 (R.62): the order equals the read for EVERY conform rule.
+/// A vertical source 1080×1920 with four events with four
+/// rules in a 1920×1080 project: the decode size is the rule's frame
+/// (“fit” 608×1080, “fill” 1920×3414, “as is” 1080×1920,
+/// “stretch” 1920×1080), the scale is read from the conform size, and the
+/// composite warmed strictly by `wanted_frames` is complete.
 #[test]
 fn t714_order_equals_read_on_every_conform_rule() {
     let q = Quality { width: 1920, height: 1080 };
@@ -414,7 +414,7 @@ fn t714_order_equals_read_on_every_conform_rule() {
         c.geometry.rule = *r;
         p.clips.push(c);
     }
-    p.normalize(); // дорожки под содержимое (Р.62)
+    p.normalize(); // tracks fitted to the content (R.62)
     p.validate().unwrap();
     let facts = kt_engine::SourceFacts {
         natives: natives(1080, 1920),
@@ -427,7 +427,7 @@ fn t714_order_equals_read_on_every_conform_rule() {
         let i = (id.0 - 10) as usize;
         assert_eq!((dq.width, dq.height), want[i], "rule {:?}", rules[i]);
     }
-    // заказ == чтение: греем строго по wanted_frames и композим
+    // order == read: warm strictly by wanted_frames and composite
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let mut src = CheckerSource::new(Tick(2 * SEC), 1080, 1920);
     for (media, pts, dq) in vr.wanted_frames(TickRange::new(Tick(0), Tick(2 * STEP)), q) {

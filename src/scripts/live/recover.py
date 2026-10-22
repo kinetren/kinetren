@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.49 А (пп.351, 353): работа переживает УБИЙСТВО программы.
+"""Live scenario R.49 A (items 351, 353): the work survives the KILLING of the program.
 
-Проверяется ровно то, ради чего вся волна: правка → SIGKILL (ни `on_exit`, ни
-`Drop` не зовутся — ядро просто гасит процесс) → перезапуск → программа сама
-предлагает восстановить → работа на месте.
+It checks exactly what the whole wave was for: edit → SIGKILL (neither `on_exit` nor
+`Drop` is called — the kernel simply terminates the process) → restart → the program itself
+offers to restore → the work is in place.
 
-И то, что решил владелец: **в файл проекта пишет только Ctrl+S.** Пока
-пользователь не сохранился, его файл проекта обязан остаться нетронутым — даже после
-того, как фоновая запись отработала.
+And what the owner decided: **only Ctrl+S writes to the project file.** Until the
+user has saved, his project file must stay untouched — even after
+the background write has completed.
 
-Второй круг проверяет правило 14: восстановление работает ПОВТОРНО, а не один
-раз, и не съедает свой источник.
+The second round checks rule 14: restoration works AGAIN, not just
+once, and does not consume its own source.
 """
 import os
 import subprocess
@@ -20,8 +20,8 @@ import time
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import Failure, Live, import_project, poll_step, project_with_clips, require_tools  # noqa: E402
 
-# СВОЙ ПРОЦЕСС (Р.68): сценарий проверяет САМ СТАРТ программы, а не работу в
-# уже открытом проекте, — стенд работника ему не подходит.
+# ITS OWN PROCESS (R.68): the scenario checks the program START ITSELF, not the work in an
+# already open project — the worker stand does not suit it.
 OWN_PROCESS = True
 
 SEC = 90000
@@ -31,18 +31,18 @@ def recovery_of(project):
     return project + ".recovery.kt"
 
 
-def wait_file(path, timeout=90.0, what="файл"):
+def wait_file(path, timeout=90.0, what="file"):
     deadline = time.time() + timeout
     while time.time() < deadline:
         if os.path.exists(path) and os.path.getsize(path) > 0:
             return True
         poll_step(0.25)
-    raise Failure(f"{what} не появился за {timeout} с: {path}")
+    raise Failure(f"{what} did not appear within {timeout} s: {path}")
 
 
 def main(out):
     require_tools()
-    # файл ПРОЕКТА (Р.70): сценарий строит файл обмена, программа живёт в .kt
+    # a PROJECT file (R.70): the scenario builds an exchange file, the program lives in .kt
     proj = import_project(project_with_clips(
         os.path.join(out, "recover.otio"),
         [(0.0, 2.0, "synth:Ramp"), (3.0, 2.0, "synth:Ramp")],
@@ -52,42 +52,42 @@ def main(out):
     if os.path.exists(rec):
         os.remove(rec)
 
-    # фоновая запись раз в 2 секунды: ждать полминуты в каждом прогоне
-    # нечестно по отношению к проверке
+    # background save every 2 seconds: waiting half a minute in each run
+    # is dishonest with respect to the check
     os.environ["KT_AUTOSAVE_SECS"] = "2"
 
     problems = []
     with Live("recover", out, project=proj) as app:
         app.shot("open")
         p = app.project_now()
-        app.expect(len(p.clips) == 2, f"старт: два события, {p.clips}")
+        app.expect(len(p.clips) == 2, f"start: two events, {p.clips}")
 
-        # правка настоящим жестом: тянем второе событие вправо
+        # an edit by a real gesture: we drag the second event to the right
         src = p.clips[1]
         y = app.lane_y("video", 0)
         x0 = app.x_at(src.mid())
         app.drag(x0, y, x0 + 160.0, y)
         app.shot("moved")
 
-        wait_file(rec, what="файл восстановления")
+        wait_file(rec, what="recovery file")
         app.expect(
             open(proj).read() == before,
-            "файл проекта НЕ тронут фоновой записью (его меняет только Ctrl+S)",
+            "the project file was NOT touched by the background write (only Ctrl+S changes it)",
         )
 
-        # SIGKILL: ни on_exit, ни Drop не успевают — как при падении
+        # SIGKILL: neither on_exit nor Drop has time to run — as in a fall
         app.proc.kill()
         app.proc.wait(timeout=10)
         problems = app.problems
 
     if not os.path.exists(rec):
-        raise Failure("после убийства файла восстановления нет — работа потеряна")
+        raise Failure("after the killing there is no recovery file — the work is lost")
     snapshot = open(rec).read()
 
     moved_start = None
-    for round_no in ("первый", "второй"):
-        # одинаковая стартовая обстановка на оба круга: проект как был,
-        # восстановление — тот самый снимок и заведомо СВЕЖЕЕ проекта
+    for round_no in ("first", "second"):
+        # an identical starting setup for both rounds: the project as it was,
+        # the recovery — that very snapshot, and certainly FRESHER than the project
         open(proj, "w").write(before)
         open(rec, "w").write(snapshot)
         old_t = time.time() - 600
@@ -95,13 +95,13 @@ def main(out):
 
         with Live(f"recover-{round_no}", out, project=proj) as app:
             app.shot(f"restart-{round_no}")
-            # окно восстановления открылось само — жмём «восстановить»
-            if not app.click_probe("ask.restore", f"{round_no} круг: работа предложена"):
-                raise Failure("окна восстановления нет — работа не предложена")
+            # the recovery window opened by itself — we press “recover”
+            if not app.click_probe("ask.restore", f"{round_no} round: the work was offered"):
+                raise Failure("no recovery window — the work was not offered")
             app.shot(f"restored-{round_no}")
             app.expect(
                 os.path.exists(rec),
-                f"{round_no} круг: восстановление не съело свой источник",
+                f"{round_no} round: the restoration did not consume its own source",
             )
 
             tl = app.saved_project()
@@ -110,13 +110,13 @@ def main(out):
                 moved_start = max(got)
             app.expect(
                 max(got) == moved_start and moved_start > 270000,
-                f"{round_no} круг: восстановленная позиция на месте ({got})",
+                f"{round_no} round: the restored position is in place ({got})",
             )
             problems += app.problems
 
     if problems:
         for p in problems:
-            print(f"   расхождение: {p}", file=sys.stderr)
+            print(f"   mismatch: {p}", file=sys.stderr)
         return 1
     return 0
 

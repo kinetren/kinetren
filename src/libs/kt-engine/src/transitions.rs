@@ -1,20 +1,20 @@
-//! Ядра переходов (Р.33 С4): CPU-эталон и упаковка параметров для GPU.
+//! Transition cores (R.33 C4): the CPU reference and packing of parameters for the GPU.
 //!
-//! Инвариант 7 требует ОДНОГО кода композиции на превью и экспорт, а
-//! бэкенд считает исполнением. Поэтому вид перехода превращается в
-//! `TransMix` — плоскую пару (режим, 8 чисел) — РОВНО один раз, здесь; и
-//! CPU-ядро ниже, и WGSL-зеркало (`kt-gpu/src/shaders/composite.wgsl`)
-//! читают одни и те же числа и повторяют одни и те же формулы. Любая
-//! правка формулы обязана идти в оба файла одним коммитом (t181/t182).
+//! Invariant 7 requires ONE composition code for the preview and export, and the backend
+//! counts as execution. Therefore the kind of transition is turned into a `TransMix`
+//! — a flat pair (mode, 8 numbers) — EXACTLY once, here; the CPU core below and the
+//! WGSL mirror (`kt-gpu/src/shaders/composite.wgsl`) read the same numbers and repeat the same formulas. Any
+//! edit of a formula must go into both files in one commit (t181/t182).
 //!
-//! Кроссфейд (`mode == 0`) сюда НЕ заходит: он остаётся целочисленным
-//! путём `dissolve_into`, байт-в-байт прежним (GOLDEN_VIDEO не двигается).
+//! The crossfade (`mode == 0`) does NOT enter here: it stays
+//! on the integer path `dissolve_into`, byte-for-byte as before
+//! (GOLDEN_VIDEO does not move).
 
 use kt_media::VideoFrame;
 use kt_model::{Dir, IrisShape, TransitionKind};
 
-/// Режимы, общие для CPU и WGSL. Значение уезжает в униформу, поэтому
-/// числа заморожены: вставлять новый режим только В КОНЕЦ.
+/// Modes shared by CPU and WGSL. The value goes into the uniform, so the
+/// numbers are frozen: add a new mode ONLY AT THE END.
 pub const MODE_CROSSFADE: u32 = 0;
 pub const MODE_WIPE: u32 = 1;
 pub const MODE_IRIS: u32 = 2;
@@ -31,9 +31,9 @@ pub const MODE_PIXELATE: u32 = 12;
 pub const MODE_GLITCH: u32 = 13;
 pub const MODE_FLASH: u32 = 14;
 pub const MODE_DIP: u32 = 15;
-// Р.51 (п.400): узоры, сдвиги-симбиозы, стилизованные. Числа — контракт
-// ТОЛЬКО между transitions.rs и composite.wgsl (правятся одним коммитом):
-// в файл проекта едет tag(), в кэш-ключи — уже готовый TransMix.
+// R.51 (item 400): patterns, shift-symbioses, stylized ones. The numbers are a contract
+// ONLY between transitions.rs and composite.wgsl (edited in one commit):
+// the project file receives tag(), the cache keys receive the ready-made TransMix.
 pub const MODE_BLINDS: u32 = 16;
 pub const MODE_CHECKER: u32 = 17;
 pub const MODE_BLOCKS: u32 = 18;
@@ -46,16 +46,16 @@ pub const MODE_SHAKE: u32 = 24;
 pub const MODE_BURN: u32 = 25;
 pub const MODE_LEAKS: u32 = 26;
 pub const MODE_ZOOMBLUR: u32 = 27;
-// Объёмные (п.401): панели через обратные гомографии в ext (см. trans_ext),
-// цилиндры peel/roll — аналитика прямо в ядре.
+// Volumetric (item 401): panels via inverse homographies in ext (see trans_ext),
+// peel/roll cylinders — analytics right in the core.
 pub const MODE_FLIP: u32 = 28;
 pub const MODE_CUBE: u32 = 29;
 pub const MODE_DOOR: u32 = 30;
 pub const MODE_PEEL: u32 = 31;
 pub const MODE_ROLL: u32 = 32;
 
-/// Разрешённый переход для исполнителей: режим + 8 чисел (ровно f0/f1
-/// униформы GPU). Своей семантики у полей нет — её задают ядра ниже.
+/// The resolved transition for the executors: mode + 8 numbers (exactly the f0/f1
+/// uniforms of the GPU). The fields have no semantics of their own — the cores below define it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TransMix {
     pub mode: u32,
@@ -75,7 +75,7 @@ impl TransMix {
         self.mode == MODE_CROSSFADE
     }
 
-    /// Единственный перевод «вид из модели → числа для ядер».
+    /// The only translation “kind from the model → numbers for the cores”.
     pub fn of(kind: &TransitionKind) -> TransMix {
         let d = |dir: Dir| {
             let (x, y) = dir.vec();
@@ -88,7 +88,7 @@ impl TransMix {
                 let (dx, dy) = d(*dir);
                 let a = (*angle as f32).to_radians();
                 let (s, c) = (a.sin(), a.cos());
-                // угол доворачивает направление — диагональ получается им
+                // the angle turns the direction — the diagonal is obtained by it
                 p[0] = dx * c - dy * s;
                 p[1] = dx * s + dy * c;
                 p[2] = *softness as f32;
@@ -174,7 +174,7 @@ impl TransMix {
                 MODE_DIP
             }
             TransitionKind::Blinds { count, angle, softness } => {
-                // угол поворачивает ось полос — та же схема, что у wipe
+                // the angle rotates the axis of the stripes — the same scheme as wipe
                 let a = (*angle as f32).to_radians();
                 let (sn, cs) = (a.sin(), a.cos());
                 p[0] = cs;
@@ -280,13 +280,13 @@ impl TransMix {
     }
 }
 
-/// Предвычисленные скаляры кадра для ОБЪЁМНЫХ видов (Р.51, п.401):
-/// обратные гомографии панелей, посчитанные в f64 и ОДНОКРАТНО
-/// округлённые в f32. CPU-ядро и WGSL читают одни и те же биты — паритет
-/// по построению, отдельный f64-эталон не нужен. Едут в поле `m`
-/// униформы композита (свободно с Р.44). Для остальных режимов — нули;
-/// в кэш-ключи не входят и не должны: ext — детерминированная функция
-/// уже хэшированного (mode, p, k) — см. комментарий у `put_mix` kt-gpu.
+/// Precomputed frame scalars for VOLUMETRIC kinds (R.51, item 401):
+/// inverse homographies of the panels, computed in f64 and rounded ONCE
+/// to f32. The CPU core and WGSL read the same bits — parity
+/// by construction, a separate f64 reference is not needed. They go into the field `m`
+/// of the composite's uniform (free since R.44). For the other modes — zeros;
+/// they are not and must not be in the cache keys: ext is a deterministic function of the
+/// already hashed (mode, p, k) — see the comment at `put_mix` in kt-gpu.
 pub fn trans_ext(m: &TransMix, k: u32) -> [f32; 16] {
     let mut e = [0.0f32; 16];
     let kf = k as f64 / 4096.0;
@@ -295,8 +295,8 @@ pub fn trans_ext(m: &TransMix, k: u32) -> [f32; 16] {
     match m.mode {
         MODE_FLIP => {
             let mut th = kf * std::f64::consts::PI;
-            // ребро (θ=π/2) вырождает панель в линию — детерминированный
-            // ε-сдвиг, одинаковый на обоих бэкендах по построению
+            // the edge (θ=π/2) degenerates the panel into a line — a deterministic
+            // ε-shift, identical on both backends by construction
             if (th - std::f64::consts::FRAC_PI_2).abs() < 1e-4 {
                 th += 1e-3;
             }
@@ -309,7 +309,7 @@ pub fn trans_ext(m: &TransMix, k: u32) -> [f32; 16] {
             e[9] = (1.0 - p[2] as f64 * sn.abs()) as f32;
         }
         MODE_CUBE => {
-            // знак вращения по направлению: содержимое уезжает В сторону dir
+            // sign of the rotation by direction: the content moves TOWARD dir
             let sgn = if p[0].abs() > 0.5 { -p[0] as f64 } else { -p[1] as f64 };
             let d = dist(p[2]);
             let face = |phi: f64| {
@@ -329,8 +329,8 @@ pub fn trans_ext(m: &TransMix, k: u32) -> [f32; 16] {
             let th = kf * (std::f64::consts::FRAC_PI_2 - 1e-3);
             let (sn, cs) = th.sin_cos();
             let d = dist(p[1]);
-            // левая створка: шарнир на краю, распахивается вглубь;
-            // правая — её зеркало, считается в ядре
+            // left leaf: hinge at the edge, it swings open inward;
+            // the right one — its mirror, computed in the core
             if let Some(h) = face_h_inv(0.0, cs, 0.0, sn, d) {
                 e[..8].copy_from_slice(&h);
             }
@@ -341,12 +341,12 @@ pub fn trans_ext(m: &TransMix, k: u32) -> [f32; 16] {
     e
 }
 
-/// Обратная гомография панели: точка панели (s, t) лежит в мире как
-/// `x(s) = x0 + s·xs`, `z(s) = z0 + s·zs`, `y = t − 0.5`; камера в
-/// (0.5, 0.5, −d). Возвращает 8 чисел (нормировка h22 = 1) отображения
-/// «экран (X, Y) → панель (s·w, t·w, w)».
+/// Inverse homography of the panel: the panel point (s, t) lies in the world as
+/// `x(s) = x0 + s·xs`, `z(s) = z0 + s·zs`, `y = t − 0.5`; the camera at
+/// (0.5, 0.5, −d). Returns 8 numbers (normalization h22 = 1) of the mapping
+/// “screen (X, Y) → panel (s·w, t·w, w)”.
 fn face_h_inv(x0: f64, xs: f64, z0: f64, zs: f64, d: f64) -> Option<[f32; 8]> {
-    // прямая матрица (s, t, 1) → (X·w, Y·w, w)
+    // forward matrix (s, t, 1) → (X·w, Y·w, w)
     let m = [
         xs * d + 0.5 * zs,
         0.0,
@@ -390,10 +390,10 @@ fn inv3(m: [f64; 9]) -> Option<[f64; 9]> {
     ])
 }
 
-/// Кадр как источник выборки. Кадр без альфы читается как непрозрачный —
-/// та же политика, что у `dissolve_into`. `Clear` — ПУСТАЯ сторона
-/// сольного фейда (прозрачность): благодаря ей фейд у края дорожки
-/// считается тем же ядром, что и пара, и вайп «из ничего» работает.
+/// A frame as a sampling source. A frame without alpha is read as opaque —
+/// the same policy as `dissolve_into`. `Clear` — the EMPTY side of a
+/// solo fade (transparency): thanks to it, a fade at the track's edge is
+/// computed by the same core as a pair, and a wipe “from nothing” works.
 enum Img<'a> {
     Frame { px: &'a [u8], w: i32, h: i32, has_alpha: bool },
     Clear,
@@ -425,8 +425,8 @@ impl Img<'_> {
         ]
     }
 
-    /// Билинейная выборка по нормированным координатам (кламп по краям) —
-    /// та же схема координат, что у `bilinear_into_scalar`.
+    /// Bilinear sampling over normalized coordinates (clamp at the edges) —
+    /// the same coordinate scheme as `bilinear_into_scalar`.
     fn sample(&self, u: f32, v: f32) -> [f32; 4] {
         let Img::Frame { w, h, .. } = self else { return [0.0; 4] };
         let sx = u * *w as f32 - 0.5;
@@ -466,27 +466,27 @@ fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// Фронт «маскирующих» переходов: 1 — уже показан B, 0 — ещё A.
-/// `s` — координата фронта 0..1, `k` — прогресс 0..1.
+/// The front of “masking” transitions: 1 — B is already shown, 0 — still A.
+/// `s` — the front coordinate 0..1, `k` — the progress 0..1.
 fn front_mask(s: f32, k: f32, soft: f32) -> f32 {
     let soft = soft.clamp(0.0, 1.0);
     if soft < 1e-4 {
         return if s < k { 1.0 } else { 0.0 };
     }
-    // фронт выезжает за оба края на ширину размытия — иначе на k=0 и k=1
-    // оставалась бы видимая кромка
+    // the front moves out beyond both edges by the blur width — otherwise at k=0 and k=1
+    // a visible edge would remain
     let front = k * (1.0 + soft) - soft;
     1.0 - smoothstep(front, front + soft, s)
 }
 
-/// Целочисленный вес k (0..4096) в доли.
+/// Integer weight k (0..4096) in fractions.
 fn kf(k: u32) -> f32 {
     k as f32 / 4096.0
 }
 
-/// Хэш для «цифрового сбоя»: тот же целочисленный хэш, что у шума
-/// kt-fx (и он же повторён в WGSL) — иначе сбой на CPU и GPU лёг бы
-/// в разных местах и parity-тест ловил бы шум вместо ошибки.
+/// Hash for the “digital glitch”: the same integer hash as the noise of
+/// kt-fx (and it is repeated in WGSL) — otherwise the glitch on CPU and GPU would land
+/// in different places and the parity test would catch noise instead of an error.
 fn hash_u32(mut x: u32) -> u32 {
     x ^= x >> 16;
     x = x.wrapping_mul(0x7feb_352d);
@@ -500,9 +500,9 @@ fn hash01(x: u32) -> f32 {
     (hash_u32(x) >> 8) as f32 / 16_777_216.0
 }
 
-/// Ядро перехода: `dst = mix(a, b)` по виду `m` с прогрессом `k`
-/// (0..4096). Возвращает «в результате есть альфа». Кроссфейд сюда не
-/// приходит — его считает целочисленный `dissolve_into`.
+/// Transition core: `dst = mix(a, b)` by the kind `m` with progress `k`
+/// (0..4096). Returns “the result has alpha”. The crossfade does not come
+/// here — it is computed by the integer `dissolve_into`.
 pub fn mix_into(
     dst: &mut Vec<u8>,
     a: Option<&VideoFrame>,
@@ -535,7 +535,7 @@ pub fn mix_into(
     true
 }
 
-/// Один пиксель перехода. Точное зеркало `trans()` из composite.wgsl.
+/// One transition pixel. An exact mirror of `trans()` from composite.wgsl.
 #[allow(clippy::too_many_arguments)]
 fn kernel(
     a: &Img<'_>,
@@ -552,16 +552,16 @@ fn kernel(
     let p = m.p;
     match m.mode {
         MODE_WIPE => {
-            // проекция на направление, нормированная охватом квадрата
+            // projection onto the direction, normalized by the square's span
             let (dx, dy) = (p[0], p[1]);
             let ext = (dx.abs() + dy.abs()).max(1e-6);
             let s = ((u - 0.5) * dx + (v - 0.5) * dy + ext * 0.5) / ext;
             mix4(a.sample(u, v), b.sample(u, v), front_mask(s, k, p[2]))
         }
         MODE_IRIS => {
-            // центр (p2, p3) произвольный (Р.51); rmax — расстояние до
-            // САМОГО ДАЛЬНЕГО угла кадра в той же метрике, чтобы фронт
-            // всегда накрывал кадр целиком
+            // the centre (p2, p3) is arbitrary (R.51); rmax — the distance to the
+            // FARTHEST corner of the frame in the same metric, so that the front
+            // always covers the frame entirely.
             let (cx, cy) = ((u - p[2]) * aspect, v - p[3]);
             let metric = |dx: f32, dy: f32| match p[0] as i32 {
                 1 => dx.abs() + dy.abs(),
@@ -576,7 +576,7 @@ fn kernel(
         }
         MODE_CLOCK => {
             let (cx, cy) = (u - p[2], v - p[3]);
-            // 0 наверху, по часовой; reverse — против
+            // 0 at the top, clockwise; reverse — counter-clockwise
             let mut ang = cx.atan2(-cy);
             if ang < 0.0 {
                 ang += std::f32::consts::TAU;
@@ -589,7 +589,7 @@ fn kernel(
         }
         MODE_BARN => {
             let s = if p[0] > 0.5 { (u - 0.5).abs() * 2.0 } else { (v - 0.5).abs() * 2.0 };
-            // створки идут ОТ центра: фронт считается от него наружу
+            // the leaves go OUT FROM the centre: the front is computed from it outward
             mix4(a.sample(u, v), b.sample(u, v), front_mask(s, k, p[1]))
         }
         MODE_LUMA => {
@@ -601,11 +601,11 @@ fn kernel(
             mix4(c, b.sample(u, v), front_mask(l, k, p[1]))
         }
         MODE_PUSH => {
-            // содержимое ЕДЕТ в сторону dir, поэтому пиксель экрана
-            // показывает источник ПОЗАДИ себя на dir·k; B стоит вплотную
-            // ЗА уходящим A — на целый экран дальше ПО направлению
-            // движения (`+dir`, п.396: с `−dir` координата уходила за
-            // [0,1) и кламп рисовал размазанную кромку вместо B)
+            // the content MOVES toward dir, so the screen pixel
+            // shows the source BEHIND itself at dir·k; B stands right
+            // BEHIND the outgoing A — a full screen further ALONG the direction
+            // of motion (`+dir`, item 396: with `−dir` the coordinate went past
+            // [0,1) and the clamp drew a smeared edge instead of B).
             let (dx, dy) = (p[0], p[1]);
             let (au, av) = (u - dx * k, v - dy * k);
             if (0.0..1.0).contains(&au) && (0.0..1.0).contains(&av) {
@@ -625,8 +625,8 @@ fn kernel(
         MODE_ZOOM => {
             let amt = p[0];
             let (ox, oy) = (p[1], p[2]);
-            let za = 1.0 + amt * k; // уходящий разъезжается
-            let zb = 1.0 + amt * (1.0 - k); // входящий налетает
+            let za = 1.0 + amt * k; // the outgoing one spreads apart
+            let zb = 1.0 + amt * (1.0 - k); // the incoming one rushes in
             let sa = a.sample((u - ox) / za + ox, (v - oy) / za + oy);
             let sb = b.sample((u - ox) / zb + ox, (v - oy) / zb + oy);
             mix4(sa, sb, k)
@@ -657,8 +657,8 @@ fn kernel(
             mix4(sa, sb, k)
         }
         MODE_WHIP => {
-            // пролёт как push, но со смазом вдоль движения; сила смаза
-            // максимальна в середине жеста
+            // a flyover like push, but with blur along the motion; the blur strength is
+            // maximal in the middle of the gesture
             let (dx, dy) = (p[0], p[1]);
             let blur = p[2] * (std::f32::consts::PI * k).sin();
             let mut acc = [0.0f32; 4];
@@ -669,7 +669,7 @@ fn kernel(
                 let c = if (0.0..1.0).contains(&au) && (0.0..1.0).contains(&av) {
                     a.sample(au, av)
                 } else {
-                    // B за уходящим A — `+dir`, как у push (п.396)
+                    // B behind the outgoing A — `+dir`, as with push (item 396)
                     b.sample(au + dx, av + dy)
                 };
                 for ch in 0..4 {
@@ -682,7 +682,7 @@ fn kernel(
             acc
         }
         MODE_BLUR => {
-            // радиус растёт к середине перехода и там же гаснет
+            // the radius grows toward the middle of the transition and goes out there
             let r = p[0] * (std::f32::consts::PI * k).sin();
             let sa = box9(a, u, v, r / fw, r / fh);
             let sb = box9(b, u, v, r / fw, r / fh);
@@ -695,7 +695,7 @@ fn kernel(
         }
         MODE_GLITCH => {
             let amt = p[0] * (std::f32::consts::PI * k).sin();
-            // полосы строк едут по горизонтали, каналы расходятся
+            // the bands of rows travel horizontally, the channels diverge
             let band = (v * 24.0).floor() as u32;
             let shift = (hash01(band.wrapping_mul(1973)) - 0.5) * amt * 0.25;
             let ch = amt * 8.0 / fw;
@@ -719,7 +719,7 @@ fn kernel(
             ]
         }
         MODE_DIP => {
-            // две фазы: A → цвет, цвет → B (классический dip-to-color)
+            // two phases: A → colour, colour → B (classic dip-to-colour)
             let col = [p[0], p[1], p[2]];
             let (src, t) =
                 if k < 0.5 { (a.sample(u, v), k * 2.0) } else { (b.sample(u, v), 2.0 - k * 2.0) };
@@ -731,8 +731,8 @@ fn kernel(
             ]
         }
         MODE_BLINDS => {
-            // проекция на повёрнутую ось (как wipe), фракция ВНУТРИ полосы:
-            // все полосы открываются одновременно
+            // projection onto the rotated axis (as wipe), the fraction INSIDE the band:
+            // all bands open simultaneously
             let (dx, dy) = (p[0], p[1]);
             let ext = (dx.abs() + dy.abs()).max(1e-6);
             let c = ((u - 0.5) * dx + (v - 0.5) * dy + ext * 0.5) / ext;
@@ -740,7 +740,7 @@ fn kernel(
             mix4(a.sample(u, v), b.sample(u, v), front_mask(f, k, p[3]))
         }
         MODE_CHECKER => {
-            // локальный вайп в клетке, чётные и нечётные — навстречу
+            // local wipe in a cell, even and odd ones — toward each other
             let (cols, rows) = (p[0].max(1.0), p[1].max(1.0));
             let (i, j) = ((u * cols).floor(), (v * rows).floor());
             let fx = fracf(u * cols);
@@ -748,15 +748,15 @@ fn kernel(
             mix4(a.sample(u, v), b.sample(u, v), front_mask(s, k, p[2]))
         }
         MODE_BLOCKS => {
-            // порядок клеток — хэш клетки: детерминизм без seed, тот же
-            // приём, что у glitch. softness — пер-клеточный кроссфейд
+            // the order of cells — the hash of the cell: determinism without a seed, the same
+            // trick as glitch. softness — a per-cell crossfade
             let (cols, rows) = (p[0].max(1.0), p[1].max(1.0));
             let (i, j) = ((u * cols).floor() as u32, (v * rows).floor() as u32);
             let s = hash01(hash_u32(i.wrapping_mul(1973)) ^ hash_u32(j.wrapping_mul(9277)));
             mix4(a.sample(u, v), b.sample(u, v), front_mask(s, k, p[2]))
         }
         MODE_SPIRAL => {
-            // архимедов фронт: угол (как clock) + обороты по радиусу
+            // Archimedean front: the angle (as clock) + turns along the radius
             let (cx, cy) = (u - p[2], v - p[3]);
             let mut ang = cx.atan2(-cy);
             if ang < 0.0 {
@@ -772,7 +772,7 @@ fn kernel(
             mix4(a.sample(u, v), b.sample(u, v), front_mask(sfrac, k, p[1]))
         }
         MODE_SPLIT => {
-            // симбиоз: половинки A разъезжаются, B открывается в щели
+            // symbiosis: the halves of A part, B opens in the gap
             let c = if p[0] > 0.5 { v - 0.5 } else { u - 0.5 };
             let h = k * 0.5;
             if c.abs() >= h {
@@ -783,8 +783,8 @@ fn kernel(
             }
         }
         MODE_SQUEEZE => {
-            // симбиоз: A сжимается к дальнему краю, B расправляется от
-            // ближнего; движение вдоль dir
+            // symbiosis: A compresses toward the far edge, B straightens out from the
+            // near one; movement along dir
             let (dx, dy) = (p[0], p[1]);
             let c = if dx > 0.5 {
                 u
@@ -815,7 +815,7 @@ fn kernel(
             }
         }
         MODE_STRETCH => {
-            // симбиоз: B растягивается из центральной линии поверх A
+            // symbiosis: B stretches out from the central line over A
             let c = if p[0] > 0.5 { v - 0.5 } else { u - 0.5 };
             let h = k * 0.5;
             if c.abs() < h {
@@ -826,9 +826,9 @@ fn kernel(
             }
         }
         MODE_SWAP => {
-            // 2.5D-обмен: стороны едут по дуге, сжимаясь вглубь; порядок
-            // переключается на середине — окклюзия аналитическая, без
-            // глубины (depth-буфера в пайплайне нет и не надо)
+            // 2.5D exchange: the sides travel along an arc, compressing inward; the order
+            // switches at the midpoint — occlusion is analytic, without
+            // depth (there is no depth buffer in the pipeline and none is needed)
             let vert = p[0] > 0.5;
             let wave = (std::f32::consts::PI * k).sin();
             let off = 0.3 * wave;
@@ -839,7 +839,7 @@ fn kernel(
                 let sv = (v - qy) / scale + 0.5;
                 if (0.0..1.0).contains(&su) && (0.0..1.0).contains(&sv) {
                     let mut c = img.sample(su, sv);
-                    // дальняя сторона чуть темнее — глубина читается
+                    // the far side is slightly darker — the depth is read
                     let shade = 1.0 - 0.25 * wave;
                     c[0] *= shade;
                     c[1] *= shade;
@@ -851,12 +851,12 @@ fn kernel(
             };
             let sa = quad(a, 1.0);
             let sb = quad(b, -1.0);
-            // k < 0.5 — уходящий ещё СВЕРХУ, дальше — входящий
+            // k < 0.5 — the outgoing one is still ON TOP, further on — the incoming one
             let (top, bot) = if k < 0.5 { (sa, sb) } else { (sb, sa) };
             over_straight(top, bot)
         }
         MODE_SHAKE => {
-            // рывки кадра: индекс шага по прогрессу, кадр — катом на 0.5
+            // frame jerks: the step index by progress, the frame is a cut at 0.5
             let steps = p[1].max(1.0);
             let i = ((k * steps) as u32).min(steps as u32 - 1);
             let amp = p[0] * 0.2 * (std::f32::consts::PI * k).sin();
@@ -866,8 +866,8 @@ fn kernel(
             img.sample(u + ox, v + oy)
         }
         MODE_BURN => {
-            // фронт по крупному шуму, на кромке — горячая примесь цвета;
-            // вклад гейтится альфой (иначе соло-фейд подсветил бы пустоту)
+            // the front by coarse noise, at the edge — a hot admixture of colour;
+            // the contribution is gated by alpha (otherwise a solo fade would light up emptiness)
             let n = value_noise(u * p[0] * aspect, v * p[0]);
             let mask = front_mask(n, k, p[1].max(0.02));
             let base = mix4(a.sample(u, v), b.sample(u, v), mask);
@@ -881,7 +881,7 @@ fn kernel(
             ]
         }
         MODE_LEAKS => {
-            // два цветных пятна пролетают по диагоналям поверх растворения
+            // two coloured spots fly along the diagonals over the dissolve
             let base = mix4(a.sample(u, v), b.sample(u, v), k);
             let wave = (std::f32::consts::PI * k).sin();
             let blob = |bx: f32, by: f32| -> f32 {
@@ -903,7 +903,7 @@ fn kernel(
             ]
         }
         MODE_ZOOMBLUR => {
-            // лучи от центра: 7 тапов вдоль луча, сторона — катом на 0.5
+            // rays from the centre: 7 taps along the ray, the side — a cut at 0.5
             let (ox, oy) = (p[1], p[2]);
             let amt = p[0] * (std::f32::consts::PI * k).sin();
             let img = if k < 0.5 { a } else { b };
@@ -921,8 +921,8 @@ fn kernel(
             acc
         }
         MODE_FLIP => {
-            // панель по обратной гомографии из ext; на обороте — изнанка
-            // с входящим (зеркало по оси движения)
+            // panel by the inverse homography from ext; on the back — the reverse side
+            // with the incoming one (mirrored along the movement axis)
             let vert = p[0] > 0.5;
             let (sx, sy) = if vert { (v, u) } else { (u, v) };
             match hpanel(&ext[0..8], sx, sy) {
@@ -949,7 +949,7 @@ fn kernel(
                     _ => None,
                 }
             };
-            // грани куба не пересекаются интерьером — порядок фиксирован
+            // the faces of the cube do not intersect the interior — the order is fixed
             pick(&ext[8..16], b).or_else(|| pick(&ext[0..8], a)).unwrap_or([0.0; 4])
         }
         MODE_DOOR => {
@@ -969,20 +969,20 @@ fn kernel(
             door(sx, false).or_else(|| door(1.0 - sx, true)).unwrap_or_else(|| b.sample(u, v))
         }
         MODE_PEEL => {
-            // лист заворачивается назад цилиндром радиуса r: хвост-изнанка
-            // летит над ещё лежащей частью, под снятой — входящий
+            // the sheet curls back around a cylinder of radius r: the reverse-side tail
+            // flies over the part still lying, under the lifted one — the incoming
             let (dx, dy) = (p[0], p[1]);
             let r = p[2].max(0.01);
             let shadow = p[3];
             let c = axis_c(u, v, dx, dy);
             let f = 1.0 - k * (1.0 + std::f32::consts::PI * r);
             let back = 1.0 - shadow * 0.35;
-            // 1. плоский хвост изнанки (θ > π): x = 2f + πr − c
+            // 1. flat tail of the reverse side (θ > π): x = 2f + πr − c
             let m_tail = 2.0 * f + std::f32::consts::PI * r - c;
             if c <= f && m_tail >= f + std::f32::consts::PI * r && m_tail <= 1.0 {
                 return shade3(axis_sample(a, u, v, dx, dy, m_tail), back);
             }
-            // 2. цилиндр над [f, f+r]
+            // 2. the cylinder over [f, f+r]
             let dc = c - f;
             if (0.0..=r).contains(&dc) {
                 let th1 = dc.atan2((r * r - dc * dc).max(0.0).sqrt());
@@ -997,7 +997,7 @@ fn kernel(
                     return shade3(axis_sample(a, u, v, dx, dy, m1), sh);
                 }
             }
-            // 3. база: лежащий лист или открытый входящий с тенью у фронта
+            // 3. base: the lying sheet or an open incoming with a shadow at the front
             if c <= f {
                 a.sample(u, v)
             } else {
@@ -1006,7 +1006,7 @@ fn kernel(
             }
         }
         MODE_ROLL => {
-            // рулон радиуса r катится, снаружи виден верхний виток изнанки
+            // a roll of radius r rolls, the upper turn of the reverse side is visible outside
             let (dx, dy) = (p[0], p[1]);
             let r = p[2].max(0.01);
             let shadow = p[3];
@@ -1015,8 +1015,8 @@ fn kernel(
             let back = 1.0 - shadow * 0.35;
             let dc = f - c;
             if dc.abs() <= r {
-                // передняя (c < f): верхняя точка витка θ₂ = π − asin;
-                // задняя (c > f): продолжение витка θ₃ = π + asin
+                // front (c < f): the top point of the turn θ₂ = π − asin;
+                // back (c > f): continuation of the turn θ₃ = π + asin
                 let ad = dc.abs();
                 let th1 = ad.atan2((r * r - ad * ad).max(0.0).sqrt());
                 let th =
@@ -1044,8 +1044,8 @@ fn kernel(
 
 const WHIP_TAPS: usize = 7;
 
-/// Панель по обратной гомографии (8 чисел из `trans_ext`): экран → (s, t).
-/// None — за камерой (знаменатель ≤ 0).
+/// Panel by the inverse homography (8 numbers from `trans_ext`): screen → (s, t).
+/// None — behind the camera (denominator ≤ 0).
 fn hpanel(h: &[f32], x: f32, y: f32) -> Option<(f32, f32)> {
     let den = h[6] * x + h[7] * y + 1.0;
     if den <= 1e-6 {
@@ -1061,7 +1061,7 @@ fn shade3(mut c: [f32; 4], sh: f32) -> [f32; 4] {
     c
 }
 
-/// Координата вдоль оси заворота: фронт (c = 0) движется В СТОРОНУ dir.
+/// Coordinate along the curl axis: the front (c = 0) moves TOWARD dir.
 fn axis_c(u: f32, v: f32, dx: f32, dy: f32) -> f32 {
     if dx > 0.5 {
         1.0 - u
@@ -1074,7 +1074,7 @@ fn axis_c(u: f32, v: f32, dx: f32, dy: f32) -> f32 {
     }
 }
 
-/// Сэмпл с подменённой ОСЕВОЙ координатой (поперечная не тронута).
+/// Sample with the AXIAL coordinate substituted (the transverse one is untouched).
 fn axis_sample(img: &Img<'_>, u: f32, v: f32, dx: f32, dy: f32, m: f32) -> [f32; 4] {
     if dx > 0.5 {
         img.sample(1.0 - m, v)
@@ -1087,14 +1087,14 @@ fn axis_sample(img: &Img<'_>, u: f32, v: f32, dx: f32, dy: f32, m: f32) -> [f32;
     }
 }
 
-/// Дробная часть «как в WGSL»: x − floor(x) (у f32::fract другой знак
-/// на отрицательных — зеркала разъехались бы).
+/// The fractional part “as in WGSL”: x − floor(x) (f32::fract has a different sign
+/// on negatives — the mirrors would drift apart).
 fn fracf(x: f32) -> f32 {
     x - x.floor()
 }
 
-/// Straight-alpha «top поверх bottom» в f32 — для 2.5D-обмена, где
-/// стороны движутся раздельно и появляется настоящая прозрачность.
+/// Straight-alpha “top over bottom” in f32 — for the 2.5D exchange, where the
+/// sides move separately and real transparency appears.
 fn over_straight(top: [f32; 4], bot: [f32; 4]) -> [f32; 4] {
     let ta = (top[3] / 255.0).clamp(0.0, 1.0);
     let ba = (bot[3] / 255.0).clamp(0.0, 1.0);
@@ -1110,8 +1110,8 @@ fn over_straight(top: [f32; 4], bot: [f32; 4]) -> [f32; 4] {
     o
 }
 
-/// Клеточный value-noise на общем целочисленном хэше (тот же, что у
-/// glitch/blocks) — WGSL повторяет дословно.
+/// Cellular value-noise on the shared integer hash (the same as glitch/blocks)
+/// — WGSL repeats it verbatim.
 fn value_noise(x: f32, y: f32) -> f32 {
     let (xi, yi) = (x.floor(), y.floor());
     let (fx, fy) = (x - xi, y - yi);
@@ -1151,8 +1151,8 @@ fn rot_sample(
     img.sample(rx / aspect + ox, ry + oy)
 }
 
-/// Дешёвое размытие 9 отсчётами (3×3 с шагом r) — форма выбрана так,
-/// чтобы точно повторяться в WGSL.
+/// A cheap blur with 9 taps (3×3 with step r) — the form is chosen so that
+/// it repeats exactly in WGSL.
 fn box9(img: &Img<'_>, u: f32, v: f32, rx: f32, ry: f32) -> [f32; 4] {
     if rx <= 0.0 && ry <= 0.0 {
         return img.sample(u, v);

@@ -1,6 +1,6 @@
-//! Аудио-процессор клипа: цепочка FX поверх (возможно варпнутого)
-//! источника. Публичная поверхность крейта реэкспортируется из lib.rs —
-//! пути вызывающих (`kt_fx::ClipProcessor` и т.д.) не изменились.
+//! Audio processor of a clip: an FX chain over the (possibly warped)
+//! source. The public surface of the crate is re-exported from lib.rs —
+//! the paths of callers (`kt_fx::ClipProcessor` etc.) have not changed.
 
 pub mod loudness;
 mod nodes;
@@ -18,19 +18,19 @@ use nodes::reverb_tail_for_delay;
 
 use kt_model::{AutoProfiles, ParamPoints, eff_rate, rate_at, source_progress};
 
-/// Длина хвоста цепочки БЕЗ создания state (для расширения окна клипа
-/// в графе до того, как процессор построен).
-/// Запас источника на прайминг rubato (sinc_len 128 × oversampling) и
-/// чанк-квантование варпа: реальный курсор источника может обгонять
-/// rate_integral на групповую задержку ресемплера (~3к кадров).
+/// Length of the chain tail WITHOUT creating state (to extend the clip window
+/// in the graph before the processor is built).
+/// The source margin for rubato priming (sinc_len 128 × oversampling) and
+/// chunk quantization of the warp: the real source cursor may run ahead of
+/// rate_integral by the resampler’s group delay (~3k frames).
 pub const WARP_SOURCE_MARGIN_FRAMES: i64 = 8192;
 
-/// Окно источника (кадры ОТНОСИТЕЛЬНО source_in), которое ClipProcessor
-/// реально потребит, выдавая клип-локальные кадры `local`, включая pre-roll
-/// перед local.start и прайминг варпа. Для цепочки без варпа — линейно и
-/// без запаса. ЕДИНЫЙ источник правды для prefetch (wanted) и рендера
-/// (window_end): расхождение этих двух расчётов = вечный промах кэша и
-/// тишина (регрессия п.13, тест 17).
+/// The source window (frames RELATIVE to source_in) that ClipProcessor will
+/// actually consume, producing clip-local frames `local`, including the pre-roll
+/// before local.start and the warp priming. For a chain without a warp — linear and
+/// without margin. A SINGLE source of truth for prefetch (wanted) and render
+/// (window_end): a divergence of these two calculations = a permanent cache miss and
+/// silence (regression of item 13, test 17).
 pub fn chain_source_window(
     fx: &[FxInstance],
     auto: &AutoProfiles,
@@ -40,10 +40,10 @@ pub fn chain_source_window(
     chain_source_window_ext(fx, auto, clip_len_frames, 0..clip_len_frames.max(1), local)
 }
 
-/// То же, но для клипа с «ручками» перехода (п.138): material — допустимый
-/// клип-локальный диапазон [−head_ext, clip_len + tail_ext); нормировка
-/// автоматизации остаётся по clip_len. Для material = 0..len поведение
-/// байт-идентично chain_source_window (тест 17 не двигается).
+/// The same, but for a clip with transition “handles” (item 138): material — the permitted
+/// clip-local range [−head_ext, clip_len + tail_ext); the normalization of
+/// automation stays along clip_len. For material = 0..len the behavior is
+/// byte-identical to chain_source_window (test 17 does not move).
 pub fn chain_source_window_ext(
     fx: &[FxInstance],
     auto: &AutoProfiles,
@@ -54,10 +54,10 @@ pub fn chain_source_window_ext(
     let len = clip_len_frames.max(1);
     let preroll = chain_tail(fx, auto).to_audio_frames().max(MIN_PREROLL_FRAMES);
     let l0 = (local.start - preroll).max(material.start).min(material.end);
-    // ВПЕРЁД — на упреждение цепочки (Р.48, п.337): столько источника
-    // цепочка реально прочитает, отдавая тот же выход. Правка живёт в
-    // ОДНОЙ функции, поэтому рендер и префетч расширяются одинаково
-    // (разойдутся — вечный промах кэша, п.13/t17).
+    // FORWARD — for the chain’s lookahead (R.48, item 337): exactly how much of the source
+    // the chain actually reads while giving the same output. The fix lives in
+    // ONE function, so render and prefetch expand the same way
+    // (if they diverge — a permanent cache miss, item 13/t17).
     let l1 = (local.end + chain_lookahead(fx, auto)).clamp(material.start, material.end);
     let has_warp = fx.iter().any(|f| matches!(f, FxInstance::SlowedReverb { .. }));
     if !has_warp {
@@ -71,15 +71,15 @@ pub fn chain_source_window_ext(
         })
         .unwrap_or(1.0);
     let automation = auto.rate_points(fx);
-    // окно источника не уходит ниже нуля только когда материал начинается
-    // с тела клипа (старое поведение); левая ручка легально отрицательна
+    // the source window does not go below zero only when the material starts
+    // with the body of the clip (old behavior); the left handle is legally negative
     let s_floor = if material.start >= 0 { 0 } else { i64::MIN };
     let t0 = l0 as f64 / len as f64;
     let t1 = l1 as f64 / len as f64;
-    // ЗНАКОВАЯ кривая (Р.57) уходит за пределы своих концов: окно по двум
-    // точкам пропустило бы экскурсию, и префетч грел бы не то (класс
-    // п.13/t17). У монотонной `span_over` возвращает РОВНО концы, поэтому
-    // ветка ниже байт-в-байт прежняя.
+    // The SIGNED curve (R.57) goes beyond its own ends: a window over two
+    // points would miss the excursion, and prefetch would warm the wrong thing (class
+    // item 13/t17). For a monotone `span_over` returns EXACTLY the ends, so the
+    // branch below is byte-for-byte the same as before.
     let (p0, p1) = if kt_model::rate_signed(rate, automation) {
         kt_model::span_over(rate, automation, t0, t1)
     } else {
@@ -91,10 +91,10 @@ pub fn chain_source_window_ext(
     s0..s1.max(s0)
 }
 
-/// Окно ПОТРЕБЛЕНИЯ: сколько материала цепочка съест на этом куске
-/// выхода (Р.57). Монотонно по построению — им ограничивается курсор
-/// ресемплера (`SrcWindow.end`), тогда как окно АДРЕСОВ выше задаёт, что
-/// греть в кэше.
+/// The CONSUMPTION window: how much material the chain will eat on this piece
+/// of output (R.57). Monotone by construction — it bounds the resampler cursor
+/// (`SrcWindow.end`), whereas the ADDRESS window above sets what to warm in the
+/// cache.
 pub fn chain_consumption_window_ext(
     fx: &[FxInstance],
     auto: &AutoProfiles,
@@ -123,16 +123,16 @@ pub fn chain_consumption_window_ext(
     a0..a1.max(a0)
 }
 
-/// Сколько кадров источника событие потребляет ЦЕЛИКОМ: S(1)·len, без
-/// запаса ресемплера и без пре-ролла.
+/// How many source frames the event consumes ENTIRELY: S(1)·len, without
+/// the resampler margin and without pre-roll.
 ///
-/// Это **ОСЬ ЗЕРКАЛА** у reversed-клипа (Р.43, п.292) — ровно та же
-/// величина, что `ClipWarp::used` у видео. До Р.43 аудио зеркалило от
-/// `chain_source_window_ext(..).end`, а туда входит
-/// `WARP_SOURCE_MARGIN_FRAMES` = 8192 кадра (170.7 мс): зеркальный
-/// замедленный клип играл материал, сдвинутый на эти 170 мс, и звучал
-/// «звуком от другого события» (претензия Р.43 п.3), а картинка на том же
-/// событии оставалась на месте — A/V расходились.
+/// This is the **MIRROR AXIS** of a reversed clip (R.43, item 292) — exactly the same
+/// quantity as `ClipWarp::used` for video. Before R.43, audio mirrored from
+/// `chain_source_window_ext(..).end`, and it includes
+/// `WARP_SOURCE_MARGIN_FRAMES` = 8192 frames (170.7 ms): the mirrored
+/// slowed clip played material shifted by these 170 ms, and sounded
+/// like “sound from another event” (R.43 item 3 complaint), while the picture on the same
+/// event stayed in place — A/V diverged.
 pub fn chain_source_used(fx: &[FxInstance], auto: &AutoProfiles, clip_len_frames: i64) -> i64 {
     let len = clip_len_frames.max(1);
     let Some(rate) = fx.iter().find_map(|f| match f {
@@ -141,31 +141,31 @@ pub fn chain_source_used(fx: &[FxInstance], auto: &AutoProfiles, clip_len_frames
     }) else {
         return len;
     };
-    // ОСЬ ЗЕРКАЛА — максимум ПРОЛЁТА позиции (Р.57): у знаковой кривой
-    // «сколько съедено» больше пройденного, и зеркало от него уехало бы.
-    // У монотонной это ровно S(1) — прежнее число.
+    // MIRROR AXIS — the maximum of the position’s SPAN (R.57): for a signed curve
+    // “how much is eaten” is larger than what was traversed, and the mirror would have drifted away from it.
+    // For a monotone one it is exactly S(1) — the previous number.
     (len as f64 * kt_model::span_over(rate, auto.rate_points(fx), 0.0, 1.0).1).ceil() as i64
 }
 
-/// Упреждение цепочки в кадрах (Р.48, п.337): на сколько ВХОД цепочки
-/// обгоняет её выход. Эффект с окном анализа (лимитер, питч) читает
-/// источник ВПЕРЁД, а выход отдаёт выровненным — для остального движка
-/// задержка нулевая (playhead, фейды и A/V-синхрон не двигаются).
+/// Lookahead of the chain in frames (R.48, item 337): by how much the chain’s INPUT
+/// runs ahead of its OUTPUT. An effect with an analysis window (limiter, pitch) reads
+/// the source FORWARD and gives its output aligned — for the rest of the engine the
+/// delay is zero (playhead, fades and A/V sync do not move).
 ///
-/// Величина входит в прогрев `hard_seek` и в окно источника
-/// (`chain_source_window_ext` — одна функция кормит и рендер, и префетч),
-/// но НЕ входит в `chain_tail`: «сколько греть» и «сколько звучать»
-/// разведены (иначе клип звучал бы после собственного конца).
+/// The value enters the warm-up of `hard_seek` and the source window
+/// (`chain_source_window_ext` — one function feeds both render and prefetch),
+/// but does NOT enter `chain_tail`: “how much to warm” and “how much to sound”
+/// are kept apart (otherwise the clip would sound after its own end).
 ///
-/// Формула вида обязана совпадать с `AudioNode::lookahead` того же вида —
-/// согласие сторожит t322ж.
+/// A formula of this kind must match `AudioNode::lookahead` of the same kind —
+/// the agreement is guarded by t322g.
 pub fn chain_lookahead(fx: &[FxInstance], auto: &AutoProfiles) -> i64 {
     fx.iter()
         .enumerate()
         .map(|(slot, f)| match f {
             FxInstance::Limiter { lookahead_ms, .. } => nodes::limiter_la_frames(*lookahead_ms),
-            // у питча нейтраль зависит от КРИВЫХ: база «ноль» при живой
-            // кривой нейтралью не является
+            // for pitch, the neutral depends on the CURVES: a “zero” base is not
+            // neutral while a live curve is present
             FxInstance::PitchShift { semitones, cents } => {
                 let neutral = nodes::pitch_is_neutral(
                     *semitones,
@@ -180,9 +180,9 @@ pub fn chain_lookahead(fx: &[FxInstance], auto: &AutoProfiles) -> i64 {
         .sum()
 }
 
-/// Настройки ПРОЕКТА, влияющие на исполнение цепочки (Р.48): движок
-/// питча один на весь монтаж. Не значение параметра, а устройство узла —
-/// смена пересобирает процессор (сверка в `FxStateStore`).
+/// PROJECT settings that affect the execution of the chain (R.48): the pitch
+/// engine is one for the whole edit. Not a parameter value but the device of the node —
+/// a change rebuilds the processor (checked in `FxStateStore`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ChainOpts {
     pub pitch_engine: kt_model::PitchEngine,
@@ -197,12 +197,12 @@ pub fn chain_tail(fx: &[FxInstance], auto: &AutoProfiles) -> Tick {
             {
                 reverb_tail_for_delay(*reverb_delay_ms, *decay)
             }
-            // звон резонансного среза: t60 = 6.9*Q/(pi*f0) — та же
-            // формула, что у FilterNode::tail (согласие сторожит t322е)
-            // модуляции с памятью: максимум их задержек (те же константы,
-            // что в узлах — согласие сторожит t322е)
-            // эхо: t60 затухающих повторов (гейт по mix — вкл. кривую,
-            // как у реверба); формула та же, что в узле (t322е)
+            // ringing of a resonant cut: t60 = 6.9*Q/(pi*f0) — the same
+            // formula as FilterNode::tail (guarded by agreement t322f)
+            // modulations with memory: the maximum of their delays (the same constants
+            // as in the nodes — agreement is guarded by t322f)
+            // echo: t60 of the decaying repeats (gate by mix — including the curve,
+            // as for reverb); the formula is the same as in the node (t322f)
             FxInstance::Delay { time_ms, feedback, mix, .. }
                 if *mix > 0.0 || wet.iter().any(|(_, v)| *v > 0.0) =>
             {
@@ -227,8 +227,8 @@ pub fn chain_tail(fx: &[FxInstance], auto: &AutoProfiles) -> Tick {
         .unwrap_or(Tick::ZERO)
 }
 
-/// Отпечаток СТРУКТУРЫ цепочки (виды FX по порядку). Совпадает → state
-/// переиспользуется, параметры доезжают через set_params (сглаженно).
+/// Fingerprint of the chain’s STRUCTURE (FX kinds in order). Matches → state
+/// is reused, parameters arrive via set_params (smoothed).
 pub fn chain_fingerprint(fx: &[FxInstance]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -238,35 +238,35 @@ pub fn chain_fingerprint(fx: &[FxInstance]) -> u64 {
     h.finish()
 }
 
-/// Конфиг силы слоя (Р.38 п.12) в узловой цепочке.
+/// Config of the layer strength (R.38 item 12) in the node chain.
 struct MixCfg {
-    /// Слот узла-маркера LayerMix (по нему — кривая amount).
+    /// Slot of the LayerMix marker node (the amount curve goes by it).
     slot: usize,
-    /// Слот начала вклада слоя: снапшот сухой стороны берётся перед
-    /// первым узлом со слотом >= from.
+    /// Slot of the start of a layer’s contribution: the dry-side snapshot is taken before the
+    /// first node with a slot >= from.
     from: usize,
     base_amount: f64,
 }
 
-/// Стейтфул-процессор аудио-клипа. Владелец — аудио-render-поток (kt-engine,
-/// ЦЕПОЧКА ДОРОЖКИ (Р.62, change B) — те же узлы, что у события, но БЕЗ
-/// формы клипа: ни источника, ни длины, ни варпа, ни кривых.
+/// Stateful processor of the audio clip. Owner — the audio-render thread (kt-engine,
+/// TRACK CHAIN (R.62, change B) — the same nodes as the event, but WITHOUT the
+/// clip’s shape: no source, no length, no warp, no curves.
 ///
-/// Почему отдельный тип, а не `ClipProcessor` с пустым источником:
-/// половина `ClipProcessor` — это ДОБЫТЧИК материала (варп, курсор,
-/// «ручки», гейт хвоста, домен автоматизации по длине события), и у
-/// дорожки ничего этого нет — её вход уже собран сумматором. Общее у них
-/// ровно одно: ВЕКТОР УЗЛОВ, и он здесь тот же самый (`AudioNode`), так
-/// что ядра не дублируются ни строкой.
+/// Why a separate type rather than a `ClipProcessor` with an empty source:
+/// half of `ClipProcessor` is the material EXTRACTOR (warp, cursor,
+/// “handles”, tail gate, the automation domain by event length), and the track
+/// has none of this — its input is already assembled by the summer. What they share is
+/// exactly one thing: the VECTOR OF NODES, and here it is the same one (`AudioNode`), so
+/// that the cores are not duplicated by a single line.
 ///
-/// Кривых у дорожки нет по решению Р.62 (её ключ — тик таймлайна, это
-/// второй домен автоматизации), поэтому `set_targets` не зовётся вовсе:
-/// параметры статические и доезжают сглаживанием внутри узлов.
+/// The track has no curves by the decision of R.62 (its key is the timeline tick, which is
+/// the second automation domain), so `set_targets` is not called at all:
+/// the parameters are static and arrive via smoothing inside the nodes.
 pub struct TrackProcessor {
     fingerprint: u64,
     nodes: Vec<(usize, AudioNode)>,
     opts: ChainOpts,
-    /// Упреждение цепочки: вход обгоняет выход на столько кадров (Р.48).
+    /// Lookahead of the chain: the input runs ahead of the output by this many frames (R.48).
     la: i64,
 }
 
@@ -278,9 +278,9 @@ impl TrackProcessor {
         p
     }
 
-    /// Отпечаток СТРУКТУРЫ цепочки (виды слотов) — тот же, что у события:
-    /// совпал, значит процессор переиспользуется, а значения доезжают
-    /// сглаженно (инвариант 3).
+    /// Fingerprint of the chain’s STRUCTURE (kinds of slots) — the same as the event’s:
+    /// if it matches, the processor is reused, and the values arrive
+    /// smoothed (invariant 3).
     pub fn fingerprint(&self) -> u64 {
         self.fingerprint
     }
@@ -289,15 +289,15 @@ impl TrackProcessor {
         self.la
     }
 
-    /// НА СКОЛЬКО ЗАДЕРЖАН сигнал, доходящий до слота `slot`: сумма окон
-    /// упреждения узлов ДО него. Узел с окном анализа (лимитер, питч)
-    /// отдаёт выход своим кольцом, то есть всё, что стоит за ним, видит
-    /// сэмплы старше входа цепочки ровно на это число кадров.
+    /// BY HOW MUCH the signal reaching slot `slot` is delayed: the sum of the lookahead
+    /// windows of the nodes BEFORE it. A node with an analysis window (limiter, pitch)
+    /// gives its output via its ring, so everything behind it sees
+    /// samples older than the chain input by exactly that many frames.
     ///
-    /// Нужно сайдчейну (Р.65): ключ обязан приехать на позицию тех
-    /// сэмплов, которые узел СЕЙЧАС обрабатывает, иначе дакинг
-    /// срабатывает раньше речи (поймано t770 на цепочке «лимитер +
-    /// компрессор с ключом»).
+    /// Needed by sidechain (R.65): the key must arrive at the position of those
+    /// samples that the node is processing NOW, otherwise ducking
+    /// fires before the speech (caught by t770 on the chain “limiter +
+    /// compressor with a key”).
     pub fn slot_delay(&self, slot: usize) -> i64 {
         self.nodes.iter().take_while(|(s, _)| *s < slot).map(|(_, n)| n.lookahead()).sum()
     }
@@ -325,7 +325,7 @@ impl TrackProcessor {
             }
             node.apply(&fx[*slot], structural);
         }
-        // у дорожки нет ни силы слоя, ни сухой стороны: смешивать не с чем
+        // the track has neither a layer strength nor a dry side: there is nothing to mix with
         self.la = self.nodes.iter().map(|(_, n)| n.lookahead()).sum();
     }
 
@@ -335,22 +335,22 @@ impl TrackProcessor {
         }
     }
 
-    /// Обработать буфер, стоящий на позиции `pos` (кадры ТАЙМЛАЙНА).
+    /// Process the buffer standing at position `pos` (TIMELINE frames).
     ///
-    /// Позиция нужна узлам с абсолютной сеткой (зерно, хоп OLA): считать
-    /// её от счётчика вызовов нельзя — нарезка буферов изменила бы звук
-    /// (Р.48, t338). Упреждающие узлы «съедают» своё окно собственными
-    /// кольцами, поэтому выход выровнен со входом: вызывающий обязан
-    /// подать вход, обгоняющий выход ровно на `lookahead_frames()`.
+    /// The position is needed by nodes with an absolute grid (grain, OLA hop): computing it
+    /// from the call counter is impossible — slicing the buffers would change the sound
+    /// (R.48, t338). Lookahead nodes “eat” their window with their own rings, so the output
+    /// is aligned with the input: the caller must feed an input that runs ahead of the output
+    /// by exactly `lookahead_frames()`.
     pub fn process(&mut self, pos: i64, buf: &mut [f32]) {
         self.process_keyed(pos, buf, &|_| None);
     }
 
-    /// Обработка с КЛЮЧЕВЫМИ сигналами (сайдчейн, Р.65): `key` спрашивают
-    /// ПО СЛОТУ — в одной цепочке могут стоять два компрессора с разными
-    /// ключами, и общего «ключа цепочки» не существует. Кто ключ добыл и
-    /// на каком окне — дело вызывающего (движок): kt-fx о дорожках не
-    /// знает и знать не должен.
+    /// Processing with KEY signals (sidechain, R.65): `key` is asked for
+    /// BY SLOT — a chain may hold two compressors with different keys,
+    /// and there is no shared “chain key”. Who obtained the key and
+    /// over which window is the caller’s business (the engine): kt-fx knows nothing about
+    /// tracks and must not.
     pub fn process_keyed<'k>(
         &mut self,
         pos: i64,
@@ -363,61 +363,61 @@ impl TrackProcessor {
     }
 }
 
-/// FxStateStore). Читается строго последовательно; разрыв → reset + pre-roll.
+/// FxStateStore). Read strictly sequentially; a gap → reset + pre-roll.
 pub struct ClipProcessor {
     fingerprint: u64,
-    /// Клип-локальный кадр, который выйдет следующим (маркер непрерывности).
+    /// Clip-local frame that will come out next (continuity marker).
     next_local: i64,
     src_in: i64,
     warp: Option<Warp>,
-    /// Узлы цепочки В ПОРЯДКЕ СЛОТОВ (Р.47, п.325): обработка идёт по
-    /// порядку, как у видео и в DAW. Слот хранится рядом — по нему узел
-    /// берёт свои кривые из AutoProfiles.
+    /// Chain nodes IN SLOT ORDER (R.47, item 325): processing goes in
+    /// order, as in video and in DAWs. The slot is stored alongside — by it the node
+    /// takes its curves from AutoProfiles.
     nodes: Vec<(usize, AudioNode)>,
-    /// Сила слоя: узел-маркер стоит В цепочке, а снапшот сухой стороны
-    /// берётся перед ПЕРВЫМ узлом со слотом >= from (честная позиционная
-    /// семантика — прежний флаг reverb_is_layer стал её следствием).
+    /// Layer strength: the marker node stands IN the chain, and the snapshot of the dry side
+    /// is taken before the FIRST node with a slot >= from (an honest positional
+    /// semantics — the former reverb_is_layer flag became its consequence).
     mix: Option<MixCfg>,
-    /// ЗНАКОВАЯ скорость (Р.57): минус — ход по материалу назад. В
-    /// ресемплер уходит только МОДУЛЬ, знак живёт в адресе чтения.
+    /// SIGNED speed (R.57): minus — motion backward through the material.
+    /// Only the MODULE goes into the resampler; the sign lives in the read address.
     rate: f64,
-    /// (мин, макс) модуля скорости по всему профилю: ресемплеру нужен
-    /// разброс отношений ДО первого чанка, иначе смена будет отвергнута.
+    /// (min, max) of the speed module over the whole profile: the resampler needs the
+    /// spread of ratios BEFORE the first chunk, otherwise the change would be rejected.
     reach: (f64, f64),
-    /// Кривые клипа в SOURCE-домене. Владеет ими аудио-render-поток
-    /// (инвариант №2): ни локов, ни обращений к модели на кадре.
+    /// Clip curves in the SOURCE domain. Owned by the audio-render thread
+    /// (invariant 2): no locks, no model access per frame.
     auto: AutoProfiles,
-    /// Индекс слота с варпом — по нему берутся профили rate/mix.
+    /// Slot index with a warp — by it the rate/mix profiles are taken.
     warp_slot: usize,
-    /// Длина клипа в кадрах — знаменатель прогресса автоматизации.
+    /// Clip length in frames — the denominator of the automation progress.
     clip_len: i64,
-    /// «Ручки» перехода (п.138): материал клип-локально расширен до
-    /// [−head_ext, clip_len + tail_ext). Нормировку автоматизации НЕ
-    /// двигают — знаменатель остаётся clip_len.
+    /// Transition “handles” (item 138): the material is clip-locally extended to
+    /// [−head_ext, clip_len + tail_ext). The automation normalization is NOT
+    /// moved — the denominator stays clip_len.
     head_ext: i64,
     tail_ext: i64,
-    /// Курсор источника для пути без варпа (rate == 1, без автоматизации).
+    /// Source cursor for the path without a warp (rate == 1, no automation).
     plain_cursor: i64,
-    /// Настройки проекта, влияющие на устройство узлов (движок питча).
+    /// Project settings affecting the node implementation (the pitch engine).
     opts: ChainOpts,
-    /// Упреждение цепочки (Р.48, п.337): вход обгоняет выход на столько
-    /// кадров. 0 — путь арифметически тождествен доpdc-версии.
+    /// Chain lookahead (R.48, item 337): the input runs ahead of the output by this many
+    /// frames. 0 — the path is arithmetically identical to the pre-PDC version.
     la: i64,
-    /// Опережение содержимого, которое видит узел i: сумма упреждений
-    /// узлов, стоящих НЕ РАНЬШЕ него (каждый упреждающий узел «съедает»
-    /// своё окно собственным кольцом, и к концу цепочки остаётся 0).
+    /// The lookahead of the content seen by node i: the sum of the lookaheads of
+    /// nodes NOT EARLIER than it (each lookahead node “eats” its window with its own ring,
+    /// and by the end of the chain 0 remains).
     ahead: Vec<i64>,
-    /// Опережение на позиции узла-маркера LayerMix (для кривой amount).
+    /// Lookahead at the position of the LayerMix marker node (for the amount curve).
     mix_ahead: i64,
-    /// Кольцо выравнивания сухой стороны LayerMix: сколько кадров
-    /// «съедено» упреждающими узлами между снимком и смешением.
+    /// Dry-side alignment ring of LayerMix: how many frames were
+    /// “eaten” by lookahead nodes between the snapshot and the mix.
     dry_ring: Option<DryRing>,
 }
 
-/// Задержка сухой стороны на целое число кадров (Р.48): между снимком
-/// сухой стороны и узлом-маркером LayerMix может стоять упреждающий узел,
-/// «съевший» часть опережения — без выравнивания бленд смешал бы разные
-/// моменты материала. При нулевой дельте кольцо не создаётся вовсе.
+/// Delay of the dry side by a whole number of frames (R.48): between the snapshot of the dry
+/// side and the LayerMix marker node a lookahead node may stand,
+/// having “eaten” part of the lookahead — without alignment the blend would mix different
+/// moments of the material. With a zero delta the ring is not created at all.
 struct DryRing {
     buf: Vec<f32>,
     pos: usize,
@@ -428,8 +428,8 @@ impl DryRing {
         DryRing { buf: vec![0.0; frames.max(1) as usize * CH], pos: 0 }
     }
 
-    /// Пропустить буфер через задержку НА МЕСТЕ (вход → кольцо, выход из
-    /// кольца → буфер).
+    /// Pass the buffer through the delay IN PLACE (input → ring, output from the
+    /// ring → buffer).
     fn run(&mut self, buf: &mut [f32]) {
         let len = self.buf.len();
         for v in buf.iter_mut() {
@@ -454,8 +454,8 @@ impl ClipProcessor {
         Self::new_with_opts(fx, auto, src_in_frames, clip_len_frames, ChainOpts::default())
     }
 
-    /// То же, но с настройками проекта (движок питча). Продукт зовёт
-    /// именно её; короткая `new` остаётся для тестов и офлайн-путей.
+    /// The same, but with the project settings (the pitch engine). The product calls
+    /// exactly this one; the short `new` remains for tests and offline paths.
     pub fn new_with_opts(
         fx: &[FxInstance],
         auto: &AutoProfiles,
@@ -491,13 +491,13 @@ impl ClipProcessor {
         p
     }
 
-    /// Профиль скорости этого клипа (пустой — варпа/кривой нет).
+    /// Speed profile of this clip (empty — no warp/curve).
     fn rate_points(&self) -> &ParamPoints {
         self.auto.points(self.warp_slot, "rate")
     }
 
-    /// Обновить кривые БЕЗ сброса состояния: правка кейфрейма не должна
-    /// глушить хвост реверба (инвариант №3).
+    /// Update the curves WITHOUT resetting the state: editing a keyframe must not
+    /// silence the reverb tail (invariant 3).
     pub fn set_auto(&mut self, auto: &AutoProfiles) {
         if &self.auto != auto {
             self.auto = auto.clone();
@@ -507,15 +507,15 @@ impl ClipProcessor {
                 }
                 node.bind_lfo(&self.auto, *slot, self.clip_len);
             }
-            // нейтраль упреждающего узла может зависеть от кривых
+            // the neutral of a lookahead node may depend on the curves
             self.recompute_lookahead();
         }
     }
 
-    /// Пересчитать упреждение цепочки и опережения узлов (Р.48, п.337).
-    /// `ahead[i] = Σ lookahead узлов, стоящих не раньше i` — узел видит
-    /// содержимое, обгоняющее выход ровно на столько; к концу цепочки
-    /// сумма обнуляется, поэтому выход выровнен со входом.
+    /// Recompute the chain lookahead and the node lookaheads (R.48, item 337).
+    /// `ahead[i] = Σ lookahead of nodes standing not earlier than i` — the node sees
+    /// content running ahead of the output by exactly that much; by the end of the chain the
+    /// sum goes to zero, so the output is aligned with the input.
     fn recompute_lookahead(&mut self) {
         let n = self.nodes.len();
         self.ahead.clear();
@@ -526,7 +526,7 @@ impl ClipProcessor {
             self.ahead[i] = acc;
         }
         self.la = acc;
-        // опережение на позиции маркера силы слоя и дельта сухой стороны
+        // lookahead at the layer-strength marker position and the dry-side delta
         let (mix_ahead, dry_delta) = match &self.mix {
             Some(m) => {
                 let at = |slot: usize| {
@@ -550,20 +550,20 @@ impl ClipProcessor {
         self.dry_ring = (dry_delta > 0).then(|| DryRing::new(dry_delta));
     }
 
-    /// Упреждение цепочки в кадрах — та же величина, что отдаёт
-    /// статическая `chain_lookahead` (сторожит t322ж). По ней
-    /// `FxStateStore` понимает, что процессор пора пересобрать.
+    /// Chain lookahead in frames — the same value as given by the
+    /// static `chain_lookahead` (guarded by t322g). By it
+    /// `FxStateStore` understands that the processor needs rebuilding.
     pub fn lookahead_frames(&self) -> i64 {
         self.la
     }
 
-    /// Настройки проекта, с которыми процессор построен: разошлись с
-    /// моделью — процессор пересобирается (`FxStateStore`).
+    /// Project settings the processor was built with: if they diverged from the
+    /// model — the processor is rebuilt (`FxStateStore`).
     pub fn opts(&self) -> ChainOpts {
         self.opts
     }
 
-    /// Обновить длину клипа (trim) без сброса состояния.
+    /// Update the clip length (trim) without resetting the state.
     pub fn set_clip_len(&mut self, clip_len_frames: i64) {
         self.clip_len = clip_len_frames.max(1);
         for (slot, node) in &mut self.nodes {
@@ -571,9 +571,9 @@ impl ClipProcessor {
         }
     }
 
-    /// «Ручки» перехода (п.138): разрешить чтение [−head_ext,
-    /// clip_len + tail_ext). Без сброса состояния (структура цепочки та же);
-    /// dry-гейт сдвигается на tail_ext, нормировка автоматизации — нет.
+    /// Transition “handles” (item 138): allow reading [−head_ext,
+    /// clip_len + tail_ext). Without a state reset (the chain structure is the same);
+    /// the dry gate shifts by tail_ext, the automation normalization does not.
     pub fn set_material_ext(&mut self, head_ext: i64, tail_ext: i64) {
         self.head_ext = head_ext.max(0);
         self.tail_ext = tail_ext.max(0);
@@ -583,10 +583,10 @@ impl ClipProcessor {
         self.fingerprint
     }
 
-    /// Донести параметры. `structural` = первый раз (создание объектов).
-    /// Отпечаток цепочки совпал ⇒ последовательность видов по слотам та же
-    /// ⇒ узлы сопоставляются со слотами 1:1 (инвариант №3: состояние
-    /// живёт, параметры доезжают сглаженно).
+    /// Deliver parameters. `structural` = the first time (object creation).
+    /// The chain fingerprint matched ⇒ the sequence of kinds by slots is the same
+    /// ⇒ nodes are matched to slots 1:1 (invariant 3: the state
+    /// lives on, parameters arrive smoothed).
     pub fn apply_params(&mut self, fx: &[FxInstance], structural: bool) {
         if structural {
             self.nodes = fx
@@ -617,7 +617,7 @@ impl ClipProcessor {
             node.bind_lfo(&self.auto, *slot, self.clip_len);
         }
         self.recompute_lookahead();
-        // варп-половина Slowed+Reverb (потребление источника)
+        // warp half of Slowed+Reverb (source consumption)
         for f in fx {
             if let FxInstance::SlowedReverb { rate, .. } = f {
                 self.rate = rate.clamp(kt_model::RATE_CLAMP.0, kt_model::RATE_CLAMP.1);
@@ -626,29 +626,29 @@ impl ClipProcessor {
                 if let Some(w) = &mut self.warp
                     && !has_rate_curve
                 {
-                    // с автоматизацией produce() выставит по позиции сам
+                    // with automation produce() will set it itself by position
                     w.set_rate(self.rate.abs());
                 }
             }
         }
     }
 
-    /// УДЕРЖАНИЕ на этом чанке: скорость ниже аудио-пола (Р.57).
+    /// HOLD on this chunk: the speed is below the audio floor (R.57).
     ///
-    /// Решение на чанк, а не на сэмпл — тем же правилом середины, что и
-    /// остальные цели автоматизации: подынтегральная функция линейна, и
-    /// середина трапеции — её точное среднее. Иначе решение пришлось бы
-    /// принимать на каждый кадр, а курсор ресемплера этого не переживёт.
+    /// The decision is per chunk, not per sample — by the same midpoint rule as
+    /// the other automation targets: the integrand is linear, and the midpoint of the trapezoid is its
+    /// exact mean. Otherwise the decision would have to be made for every frame, and the resampler cursor
+    /// would not survive that.
     fn hold_at(&self, chunk_in: i64, n: usize) -> bool {
         let tau = (chunk_in as f64 + n as f64 * 0.5) / self.clip_len as f64;
         eff_rate(self.rate, self.rate_points(), tau).abs() < kt_model::RATE_AUDIO_FLOOR
     }
 
-    /// Растягивает ли цепочка время ПО МОДУЛЮ (Р.57).
+    /// Whether the chain stretches time BY MODULE (R.57).
     ///
-    /// Именно по модулю: постоянная −1 материал не растягивает, значит
-    /// ресемплер ей не нужен — она остаётся на ПЛОСКОМ пути, и «минус
-    /// один» оказывается точным зеркалом, а не приближением.
+    /// Precisely by module: a constant −1 does not stretch the material, so the
+    /// resampler is not needed for it — it stays on the FLAT path, and “minus
+    /// one” is an exact mirror, not an approximation.
     fn has_warp(&self) -> bool {
         (self.rate.abs() - 1.0).abs() > 1e-9
             || self.rate_points().iter().any(|(_, r)| (r.abs() - 1.0).abs() > 1e-9)
@@ -662,7 +662,7 @@ impl ClipProcessor {
         self.tail().to_audio_frames()
     }
 
-    /// Полный сброс состояния и permission на новый seek.
+    /// Full state reset and permission for a new seek.
     pub fn reset(&mut self) {
         self.warp = None;
         for (_, n) in &mut self.nodes {
@@ -674,22 +674,22 @@ impl ClipProcessor {
         self.next_local = i64::MIN;
     }
 
-    /// Материальный якорь события (кадры от нуля файла).
+    /// Material anchor of the event (frames from file zero).
     pub fn src_in(&self) -> i64 {
         self.src_in
     }
 
-    /// Переставить материальный якорь, СОХРАНИВ состояние FX (Р.43, п.293).
+    /// Reposition the material anchor, KEEPING the FX state (R.43, item 293).
     ///
-    /// `chain_fingerprint` знает только ВИДЫ слотов, поэтому трим, разрез,
-    /// punch-out и переанкоринг морф-куска меняли `source_in` при том же
-    /// `ClipId` и той же структуре цепочки — и процессор продолжал читать
-    /// от СТАРОГО якоря. `reset()` не помогал: `hard_seek`/`seam` считают
-    /// позицию как `self.src_in + source_offset(local)`. Симптом —
-    /// «звук от другого события откуда-то взялся».
+    /// `chain_fingerprint` knows only the KINDS of slots, so trim, split,
+    /// punch-out and re-anchoring of a morph piece changed `source_in` with the same
+    /// `ClipId` and the same chain structure — and the processor kept reading
+    /// from the OLD anchor. `reset()` did not help: `hard_seek`/`seam` compute
+    /// the position as `self.src_in + source_offset(local)`. Symptom —
+    /// “sound from another event came from somewhere”.
     ///
-    /// Это ШОВ, а не seek: выход непрерывен, реверб обязан дозвонить
-    /// (инвариант №3).
+    /// This is a SEAM, not a seek: the output is continuous, and the reverb must ring on
+    /// (invariant 3).
     pub fn set_src_in(&mut self, src_in: i64) {
         if self.src_in == src_in {
             return;
@@ -701,9 +701,9 @@ impl ClipProcessor {
         }
     }
 
-    /// Прочитать кадры [local, local + out/CH) клип-локального потока.
-    /// `pull(src_frame, buf)` — источник (false = underrun).
-    /// Возвращает счётчик underrun'ов warp-пути.
+    /// Read the frames [local, local + out/CH) of the clip-local stream.
+    /// `pull(src_frame, buf)` — the source (false = underrun).
+    /// Returns the underrun counter of the warp path.
     pub fn read(
         &mut self,
         local: i64,
@@ -712,16 +712,16 @@ impl ClipProcessor {
     ) -> u64 {
         if self.next_local != local {
             if self.next_local == i64::MIN {
-                // Холодный старт или seek (`reset`): reset + pre-roll,
-                // чтобы реверб и ресемплер были прогреты детерминированно.
+                // Cold start or seek (`reset`): reset + pre-roll,
+                // so that the reverb and the resampler are warmed up deterministically.
                 self.hard_seek(local, pull);
             } else {
-                // ШОВ: позиция прыгнула, а ВЫХОД непрерывен (заворот
-                // loop-региона, сдвиг клипа мышью при игре). Реверб
-                // дозванивает через шов — как в v1; пре-ролла нет, греть
-                // нечего. Это же снимает пересоздание sinc-ресемплера на
-                // каждом круге (при регионе короче бёрста их было
-                // несколько за один callback — «шумит компьютер», п.166).
+                // SEAM: the position jumped, but the OUTPUT is continuous (wrap of a
+                // loop region, a clip shifted by the mouse during playback). The reverb
+                // rings on through the seam — as in v1; there is no pre-roll, and nothing
+                // to warm. This also removes the sinc-resampler re-creation on
+                // each lap (with a region shorter than a burst there were
+                // several in one callback — “the computer hums”, item 166).
                 self.seam(local);
             }
         }
@@ -731,24 +731,24 @@ impl ClipProcessor {
         self.warp.as_ref().map(|w| w.underruns()).unwrap_or(0) - before
     }
 
-    /// Сколько материала ЦЕПОЧКА СЪЕЛА к клип-локальной позиции — курсор
-    /// ресемплера (Р.57).
+    /// How much material the CHAIN has EATEN up to the clip-local position — the
+    /// resampler cursor (R.57).
     ///
-    /// Именно потребление A(t) = ∫|rate|, а не позиция: рубато ест поток
-    /// со скоростью |rate| и о направлении не знает. На положительных
-    /// кривых A ≡ S бит-в-бит, и прежний путь цел.
+    /// Precisely the consumption A(t) = ∫|rate|, not the position: the rubato eats the stream
+    /// at speed |rate| and does not know the direction. On positive
+    /// curves A ≡ S bit for bit, and the previous path is intact.
     fn source_offset(&self, local: i64) -> i64 {
         let t = local as f64 / self.clip_len as f64;
         (self.clip_len as f64 * kt_model::consumed_abs(self.rate, self.rate_points(), t)).round()
             as i64
     }
 
-    /// Разрыв ПОЗИЦИИ при непрерывном ВЫХОДЕ: источник переставляется,
-    /// состояние FX живёт. Ни reset'а, ни пре-ролла (см. `read`).
+    /// A POSITION jump with a continuous OUTPUT: the source is repositioned,
+    /// the FX state lives on. No reset, no pre-roll (see `read`).
     fn seam(&mut self, local: i64) {
-        // источник встаёт под ВХОДНУЮ позицию: цепочка читает вперёд на
-        // упреждение (Р.48, п.337). Кольца упреждающих узлов при этом
-        // живут — шов дозванивает, как реверб (инвариант №3).
+        // the source stands at the INPUT position: the chain reads ahead by the
+        // lookahead (R.48, item 337). The lookahead nodes’ rings live on in this case —
+        // the seam rings out, like reverb (invariant 3).
         let local = local + self.la;
         let src_start = self.src_in + self.source_offset(local);
         if self.has_warp() {
@@ -771,14 +771,14 @@ impl ClipProcessor {
         for (_, n) in &mut self.nodes {
             n.reset();
         }
-        // pre-roll может заходить в левую «ручку», но не раньше начала
-        // материала (−head_ext)
+        // pre-roll may reach into the left “handle”, but not before the start of the
+        // material (−head_ext)
         let preroll =
             self.tail_frames().max(MIN_PREROLL_FRAMES).min((local + self.head_ext).max(0));
         let start = local - preroll;
-        // позиция источника для local=start (интеграл автоматизации).
-        // Формула НЕ меняется: `start` — первая ВХОДНАЯ позиция прогрева,
-        // а выходной цикл стартует на упреждение раньше (Р.48, п.337).
+        // source position for local=start (the integral of the automation).
+        // The formula does NOT change: `start` is the first INPUT position of the warm-up,
+        // while the output cycle starts ahead of it by the lookahead (R.48, item 337).
         let src_start = self.src_in + self.source_offset(start);
         if self.has_warp() {
             let t = start as f64 / self.clip_len as f64;
@@ -793,11 +793,11 @@ impl ClipProcessor {
         if let Some(r) = &mut self.dry_ring {
             r.reset();
         }
-        // Прогрев: рендерим в мусор. Выходной цикл начинается на
-        // упреждение РАНЬШЕ (его первый чанк читает вход ровно с
-        // `start`), а длина растёт на ту же величину — к моменту `local`
-        // кольца упреждающих узлов заполнены настоящим материалом
-        // [local, local + la). При la = 0 — прежний цикл дословно.
+        // Warm-up: render into garbage. The output cycle starts EARLIER by the lookahead
+        // (its first chunk reads the input exactly from `start`), and its length grows by the same
+        // amount — by the moment `local` the rings of the lookahead nodes
+        // are filled with real material [local, local + la).
+        // With la = 0 — the previous cycle verbatim.
         let warm = preroll + self.la;
         let start_out = start - self.la;
         let mut scratch = vec![0f32; 1024 * CH];
@@ -809,12 +809,12 @@ impl ClipProcessor {
         }
     }
 
-    /// Максимальный шаг оценки автоматизации: буфер режется на чанки этого
-    /// размера НЕЗАВИСИМО от размера запроса — офлайн-рендер, отдающий клип
-    /// одним куском, обязан следовать профилю так же, как playback
-    /// по-burst'ово. (Регрессия: оценка один раз на весь буфер давала
-    /// константное замедление по значению в середине клипа и оборванный
-    /// конец источника; поймано на слух, закрыто тестами
+    /// Maximum step of the automation evaluation: the buffer is cut into chunks of this
+    /// size REGARDLESS of the request size — an offline render that gives the clip
+    /// in one piece must follow the profile just as playback does
+    /// burst by burst. (Regression: evaluating once for the whole buffer gave a
+    /// constant slowdown by the value in the middle of the clip and a truncated
+    /// end of the source; caught by ear, closed by the tests
     /// t4_automation_changes_rate_over_time / _consumes_source_by_integral.)
     const AUTOMATION_STEP_FRAMES: usize = 1024;
 
@@ -829,42 +829,42 @@ impl ClipProcessor {
         let mut done = 0usize;
         while done < total {
             let n = (total - done).min(Self::AUTOMATION_STEP_FRAMES);
-            // ВЫХОДНАЯ позиция чанка (что услышит слушатель) и ВХОДНАЯ
-            // (что цепочка сейчас читает). Они разъезжаются ровно на
-            // упреждение цепочки (Р.48, п.337); при la = 0 всё ниже
-            // арифметически тождественно доpdc-версии.
+            // The OUTPUT position of the chunk (what the listener hears) and the INPUT position
+            // (what the chain reads now).
+            // They diverge by exactly the chain’s lookahead (R.48, item 337); with la = 0 everything below
+            // is arithmetically identical to the pre-PDC version.
             let chunk_local = local + done as i64;
             let chunk_in = chunk_local + self.la;
-            // автоматизация: цели на середину чанка; rubato/one-pole сглаживают
+            // automation: targets at the chunk midpoint; rubato/one-pole smooth
             if !self.auto.is_empty() {
-                // ДОМЕН СОБЫТИЯ (Р.37): цель чанка — по ВЫХОДНОМУ времени,
-                // а не по позиции в материале. Ранний кейфрейм скорости
-                // больше не сдвигает МОМЕНТ срабатывания поздних ключей —
-                // ни своих, ни чужих (mix/gain/pan индексировались тем же
-                // `s`). Правило середины чанка при этом стало ТОЧНЫМ:
-                // подынтегральная функция линейна, а середина трапеции —
-                // её точное среднее.
-                // варп ведёт ВХОД цепочки: он и есть потребитель источника
+                // EVENT DOMAIN (R.37): the chunk’s target is by OUTPUT time,
+                // not by the position in the material. An early speed keyframe
+                // no longer shifts the MOMENT of firing of later keys —
+                // neither its own nor others’ (mix/gain/pan were indexed by the same
+                // `s`). The midpoint rule of the chunk has thereby become EXACT:
+                // the integrand is linear, and the midpoint of the trapezoid is
+                // its exact mean.
+                // the warp drives the chain’s INPUT: it is the consumer of the source
                 let tau = (chunk_in as f64 + n as f64 * 0.5) / self.clip_len as f64;
-                // в ресемплер — МОДУЛЬ (Р.57); удержание (|rate| ниже пола)
-                // отношения не меняет: там читать нечего
+                // into the resampler — the MODULE (R.57); the hold (|rate| below the floor)
+                // does not change the ratio: there is nothing to read there
                 let target_rate = eff_rate(self.rate, self.rate_points(), tau).abs();
                 if let Some(w) = &mut self.warp
                     && target_rate >= kt_model::RATE_AUDIO_FLOOR
                 {
                     w.set_rate(target_rate);
                 }
-                // цели узлов — тем же правилом середины чанка, но по
-                // позиции СОДЕРЖИМОГО, которое узел сейчас видит: кривая
-                // остаётся приклеенной к материалу, а не к выходу
+                // node targets — by the same chunk-midpoint rule, but by the
+                // position of the CONTENT that the node now sees: the curve
+                // stays glued to the material, not to the output
                 let ahead = &self.ahead;
                 for (i, (slot, node)) in self.nodes.iter_mut().enumerate() {
                     let s = (chunk_local + ahead[i]) as f64 + n as f64 * 0.5;
                     node.set_targets(&self.auto, *slot, s / self.clip_len as f64);
                 }
             }
-            // цель силы слоя на середину чанка — тем же правилом, что и
-            // остальные параметры (Р.38 п.12: фейды это её кривая)
+            // layer-strength target at the chunk midpoint — by the same rule as the
+            // other parameters (R.38 item 12: the fades are its curve)
             let mix_ahead = self.mix_ahead;
             let mix_k = self.mix.as_ref().map(|m| {
                 let tau =
@@ -872,36 +872,36 @@ impl ClipProcessor {
                 self.auto.value(m.slot, "amount", m.base_amount, tau).clamp(0.0, 1.0) as f32
             });
             let sub = &mut out[done * CH..(done + n) * CH];
-            // Гейт dry-выхода в OUTPUT-домене: за концом МАТЕРИАЛА (тело +
-            // правая «ручка» перехода, п.138) сухой сигнал обязан быть нулём
-            // (в хвосте дозванивает только реверб). Благодаря этому окно
-            // ИСТОЧНИКА можно расширять с запасом на прайминг rubato, не
-            // боясь утечки dry в хвост (дефект «тихий хвост»: sinc-ресемплер
-            // видел нули за жёстко обрезанным окном и рано глушил конец).
-            // Гейт — во ВХОДНОМ домене: за концом материала цепочка
-            // получает детерминированную тишину ВПЕРЁД, и кольца
-            // упреждающих узлов дожимают тело ровно к концу события.
+            // The dry-output gate is in the OUTPUT domain: beyond the end of the MATERIAL (body +
+            // the right transition “handle”, item 138) the dry signal must be zero
+            // (only the reverb rings on in the tail). Thanks to this the SOURCE
+            // window can be widened with a margin for the rubato priming without
+            // fear of leaking dry into the tail (defect “quiet tail”: the sinc resampler
+            // saw zeros beyond a hard-cut window and cut the end too early).
+            // The gate — in the INPUT domain: beyond the end of the material the chain
+            // gets deterministic silence FORWARD, and the rings of the lookahead nodes
+            // push the body out exactly to the end of the event.
             let gate_end = self.clip_len + self.tail_ext;
             if chunk_in >= gate_end {
-                // ЧАНК ЦЕЛИКОМ В ХВОСТЕ (Р.43, п.304): что бы ни выдал
-                // варп, гейт ниже обнулит это ПОЛНОСТЬЮ — значит считать
-                // нечего. Пропуск байт-идентичен ПО ПОСТРОЕНИЮ: результат
-                // тот же `fill(0.0)`, только без sinc-ресемплера и без
-                // чтения источника. В хвосте живёт один реверб, а он
-                // получает те же нули.
+                // A WHOLE CHUNK IN THE TAIL (R.43, item 304): whatever the warp produces,
+                // the gate below zeroes it COMPLETELY — so there is nothing to compute.
+                // Skipping is byte-identical BY CONSTRUCTION: the result is the same
+                // `fill(0.0)`, only without the sinc resampler
+                // and without reading the source.
+                // In the tail lives only one reverb, and it gets the same zeros.
                 //
-                // Состояние варпа при этом «отстаёт», и это безопасно:
-                // вернуться в материал можно только прыжком `local`, а его
-                // ловит `read` и переставляет источник через `seam`/
-                // `hard_seek`. Непрерывное чтение `local` только растёт.
+                // The warp state “lags behind” in this case, and that is safe:
+                // returning to the material is possible only by a jump of `local`, and it is
+                // caught by `read`, which repositions the source via `seam`/
+                // `hard_seek`. Continuous reading of `local` only grows.
                 sub.fill(0.0);
                 self.plain_cursor += n as i64;
             } else if self.hold_at(chunk_in, n) {
-                // УДЕРЖАНИЕ (Р.57, решение владельца «тишина только в
-                // нуле»): скорость ниже пола — материал не потребляется
-                // ВООБЩЕ, выход нулевой, курсор стоит. Узлы при этом
-                // работают: реверб дозванивает хвост на нулях, ровно как в
-                // паузе между событиями.
+                // HOLD (R.57, the owner’s decision “silence only at
+                // zero”): speed below the floor — the material is not consumed
+                // AT ALL, the output is zero, the cursor stands still. The nodes meanwhile
+                // keep working: the reverb rings out the tail on zeros, just as in
+                // the pause between events.
                 sub.fill(0.0);
             } else {
                 match &mut self.warp {
@@ -918,12 +918,12 @@ impl ClipProcessor {
                     sub[cut * CH..].fill(0.0);
                 }
             }
-            // ЧЕСТНЫЙ ПОРЯДОК СЛОТОВ (Р.47, п.325): узлы исполняются по
-            // позиции в цепочке. Сухая сторона силы слоя — снимок ПЕРЕД
-            // первым узлом со слотом >= from (реверб/громкость события
-            // стоят раньше — попадают в сухую; узлы слоя — только в
-            // мокрую: прежние reverb_is_layer/layer_gain стали следствием
-            // позиции, а не флагами).
+            // HONEST SLOT ORDER (R.47, item 325): the nodes are executed by their
+            // position in the chain. The dry side of the layer strength — the snapshot BEFORE the
+            // first node with a slot >= from (reverb/volume of the event
+            // stand earlier — they fall into the dry; the layer’s nodes — only into the
+            // wet: the former reverb_is_layer/layer_gain became consequences of
+            // position, not flags).
             let mut dry: Option<Vec<f32>> = None;
             let ahead = &self.ahead;
             let dry_ring = &mut self.dry_ring;
@@ -933,9 +933,9 @@ impl ClipProcessor {
                     && dry.is_none()
                 {
                     let mut d = sub.to_vec();
-                    // между снимком и маркером стоит упреждающий узел:
-                    // сухую сторону надо задержать на съеденное им окно,
-                    // иначе бленд смешал бы разные моменты материала
+                    // between the snapshot and the marker stands a lookahead node:
+                    // the dry side must be delayed by the window it has eaten,
+                    // otherwise the blend would mix different moments of the material
                     if let Some(r) = dry_ring.as_mut() {
                         r.run(&mut d);
                     }
@@ -949,8 +949,8 @@ impl ClipProcessor {
                         }
                     }
                 } else {
-                    // у события ключа не бывает: сайдчейн живёт только в
-                    // цепочке ДОРОЖКИ (решение владельца Р.65)
+                    // an event has no key: the sidechain lives only in the TRACK chain
+                    // (the owner’s decision, R.65)
                     node.process(sub, chunk_local + ahead[i], None);
                 }
             }
@@ -959,9 +959,9 @@ impl ClipProcessor {
     }
 }
 
-/// Узел АДРЕСНОЙ карты знаковой скорости (Р.57): накопленное потребление
-/// `a`, позиция в материале `p` (оба — кадры от `source_in`) и направление
-/// после узла (+1 вперёд, −1 назад, 0 удержание).
+/// Node of the ADDRESS map of the signed speed (R.57): the accumulated consumption
+/// `a`, the position in the material `p` (both — frames from `source_in`) and the direction
+/// after the node (+1 forward, −1 backward, 0 hold).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AddrKnot {
     pub a: i64,
@@ -969,13 +969,13 @@ pub struct AddrKnot {
     pub dir: i8,
 }
 
-/// Адресная карта цепочки: по какому адресу лежит материал, съеденный
-/// к моменту `a`. `None` — карта монотонна, адрес равен потреблению, и
-/// весь прежний путь остаётся дословным.
+/// The address map of the chain: at which address the material eaten by the moment
+/// `a` lies. `None` — the map is monotone, the address equals the consumption, and
+/// the whole previous path remains verbatim.
 ///
-/// Позиции накапливаются ЦЕЛЫМИ (`p_{k+1} = p_k ± (a_{k+1} − a_k)`), а не
-/// округляются по отдельности: иначе на стыке рана появился бы пропуск
-/// или сдвоенный кадр — щелчок ровно в точке разворота.
+/// Positions accumulate in WHOLE numbers (`p_{k+1} = p_k ± (a_{k+1} − a_k)`), not
+/// rounded separately: otherwise at the junction of a turn there would be a skipped or
+/// doubled frame — a click exactly at the turning point.
 pub fn chain_addr_knots(
     fx: &[FxInstance],
     auto: &AutoProfiles,

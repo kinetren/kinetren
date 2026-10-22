@@ -1,9 +1,9 @@
-//! Тест 136 (п.136 porting-notes, Р.24): аудио-кроссфейд по ПЕРЕХОДАМ.
+//! Test 136 (item 136 of porting-notes, R.24): audio crossfade by TRANSITIONS.
 //!
-//! Веса equal-power приходят из TransitionEvent (fade-окна), «ручки» читают
-//! источник за краями использованного куска. Краеугольный ассерт: конверсия
-//! старого перекрытия (трим до C + переход тем же окном) даёт БАЙТ-в-байт
-//! тот же рендер — на этом держится неизменность GOLDEN_AUDIO на этапе 6.
+//! The equal-power weights come from the TransitionEvent (the fade windows), and the “handles” read
+//! the source beyond the edges of the used piece. The cornerstone assert: converting an old overlap
+//! (trim to C + a transition with the same window) gives a BYTE-for-BYTE the same render —
+//! the immutability of GOLDEN_AUDIO at stage 6 rests on this.
 
 use kt_engine::AudioRenderer;
 use kt_engine::DirectFetcher;
@@ -83,14 +83,14 @@ fn render(p: &Project, medias: &[u64], total: usize) -> (Vec<f32>, u64) {
     (out, stats.underruns)
 }
 
-/// Конверсия перекрытия по формуле upgrade_legacy: перекрытие [b0, a1) →
-/// стык C = середина, тримы, переход с тем же окном. Эталон — аналитическая
-/// формула старого weight_at (сам старый рендер-путь снесён, реш. 8 Р.24;
-/// рендер-против-рендера проверяет неизменность GOLDEN_AUDIO в t11).
+/// Conversion of the overlap by the upgrade_legacy formula: overlap [b0, a1) →
+/// the joint C = the midpoint, trims, the transition with the same window. The reference is the analytic
+/// formula of the old weight_at (the old render path itself is removed, decision 8 R.24;
+/// render-against-render is checked by the immutability of GOLDEN_AUDIO in t11).
 #[test]
 fn t136_converted_overlap_matches_old_crossfade_math() {
-    // старый мир: A[0,12288) src 0, B[8192,20480) src 0 — перекрытие [8192,12288);
-    // новый мир: C = 10240, A тримится до C, B: source_in += C − b0
+    // old world: A[0,12288) src 0, B[8192,20480) src 0 — overlap [8192,12288);
+    // new world: C = 10240, A is trimmed to C, B: source_in += C − b0
     let mut p = project(vec![clip(1, 0, 10_240, 0, 1), clip(2, 10_240, 10_240, 2_048, 2)]);
     p.transitions.push(TransitionEvent {
         id: TransitionId(1),
@@ -110,8 +110,8 @@ fn t136_converted_overlap_matches_old_crossfade_math() {
     assert_eq!(underruns, 0, "handles must not underrun");
     let (w0, w1) = (8_192i64, 12_288i64);
     for f in 0..total as i64 {
-        // старая семантика: A читает src=f, B читает src=f−8192; веса
-        // equal-power по прогрессу перекрытия — дословно формулы weight_at
+        // old semantics: A reads src=f, B reads src=f−8192; equal-power weights by the
+        // progress of the overlap — literally the weight_at formulas
         let a_val = SyntheticSource::sample_at(AudioPattern::Ramp, f, 0);
         let b_val = SyntheticSource::sample_at(AudioPattern::Ramp, f - w0, 0);
         let expect = if f < w0 {
@@ -126,10 +126,10 @@ fn t136_converted_overlap_matches_old_crossfade_math() {
     }
 }
 
-/// Веса и материал ручек — точная математика по кадрам.
+/// The weights and the handle material — exact per-frame math.
 #[test]
 fn t136_fade_math_and_handle_material() {
-    // стык на 10240, окно [8192, 12288); источники различимы source_in'ами
+    // the joint at 10240, window [8192, 12288); the sources are distinguishable by their source_in's
     let mut p = project(vec![clip(1, 0, 10_240, 0, 1), clip(2, 10_240, 10_240, 50_000, 2)]);
     p.transitions.push(TransitionEvent {
         id: TransitionId(1),
@@ -147,8 +147,8 @@ fn t136_fade_math_and_handle_material() {
     assert_eq!(underruns, 0);
     let (w0, w1) = (8_192i64, 12_288i64);
     for f in [0i64, 4_000, 8_191, 8_192, 9_000, 10_239, 10_240, 11_000, 12_287, 12_288, 14_000] {
-        let a_src = f; // clip 1: source_in 0, тело [0,10240), ручка [10240,12288)
-        let b_src = 50_000 + (f - 10_240); // clip 2: ручка слева от source_in
+        let a_src = f; // clip 1: source_in 0, body [0,10240), handle [10240,12288)
+        let b_src = 50_000 + (f - 10_240); // clip 2: the handle to the left of source_in
         let a_val = SyntheticSource::sample_at(AudioPattern::Ramp, a_src, 0);
         let b_val = SyntheticSource::sample_at(AudioPattern::Ramp, b_src, 0);
         let t = ((f - w0) as f64 / (w1 - w0) as f64).clamp(0.0, 1.0);
@@ -159,7 +159,7 @@ fn t136_fade_math_and_handle_material() {
         } else {
             (0.0, 1.0)
         };
-        // порядок суммирования рендера: клип 1 (ранний) потом клип 2
+        // the render summation order: clip 1 (early) then clip 2
         let expect = if f < w0 {
             a_val * wa
         } else if f < w1 {
@@ -171,7 +171,7 @@ fn t136_fade_math_and_handle_material() {
     }
 }
 
-/// Ручка длиннее материала: source_in = 0 у incoming — тишина без underrun.
+/// A handle longer than the material: source_in = 0 for the incoming — silence without an underrun.
 #[test]
 fn t136_missing_left_handle_is_silent_without_underruns() {
     let mut p = project(vec![clip(1, 0, 10_240, 0, 1), clip(2, 10_240, 10_240, 0, 2)]);
@@ -189,7 +189,7 @@ fn t136_missing_left_handle_is_silent_without_underruns() {
     p.validate().unwrap();
     let (out, underruns) = render(&p, &[1, 2], 12_288);
     assert_eq!(underruns, 0, "missing handle material is silence, not underrun");
-    // в [w0, стык): звучит только затухающий A (у B материала нет)
+    // in [w0, joint): only the decaying A sounds (B has no material)
     let (w0, w1) = (8_192i64, 12_288i64);
     for f in [8_192i64, 9_000, 10_000] {
         let t = (f - w0) as f64 / (w1 - w0) as f64;
@@ -199,7 +199,7 @@ fn t136_missing_left_handle_is_silent_without_underruns() {
     }
 }
 
-/// FX-путь (цепочка без варпа) обязан читать ручки так же, как plain-путь.
+/// the FX path (a chain without warp) must read the handles the same way as the plain path.
 #[test]
 fn t136_fx_path_handles_match_plain() {
     let mk = |fx: Vec<FxInstance>| {
@@ -228,7 +228,7 @@ fn t136_fx_path_handles_match_plain() {
     }
 }
 
-/// Реверс-сосед (plain): ручки продолжают зеркальную формулу источника.
+/// A reversed neighbor (plain): the handles continue the source's mirrored formula.
 #[test]
 fn t136_reversed_incoming_handle_mirrors_source() {
     let mut c2 = clip(2, 10_240, 10_240, 4_096, 2);
@@ -249,8 +249,8 @@ fn t136_reversed_incoming_handle_mirrors_source() {
     let (out, underruns) = render(&p, &[1, 2], 14_336);
     assert_eq!(underruns, 0);
     let (w0, w1) = (8_192i64, 12_288i64);
-    // reversed: src = source_in + (len − 1 − local); в левой ручке local < 0
-    // → материал ПРАВЕЕ использованного куска
+    // reversed: src = source_in + (len − 1 − local); in the left handle local < 0
+    // → material to the RIGHT of the used piece
     for f in [8_500i64, 10_239, 10_240, 11_000] {
         let local = f - 10_240;
         let b_src = 4_096 + (10_240 - 1 - local);
@@ -263,7 +263,7 @@ fn t136_reversed_incoming_handle_mirrors_source() {
     }
 }
 
-/// Префетч греет ручки: wanted покрывает материал за краями тел.
+/// Prefetch warms the handles: wanted covers the material beyond the body edges.
 #[test]
 fn t136_wanted_covers_handles() {
     let mut p = project(vec![clip(1, 0, 10_240, 0, 1), clip(2, 10_240, 10_240, 2_048, 2)]);
@@ -281,18 +281,18 @@ fn t136_wanted_covers_handles() {
     p.validate().unwrap();
     let r = AudioRenderer::new(&p);
     let wanted = r.wanted_audio_bursts(8_192..12_288);
-    // A: тело [8192,10240) + правая ручка [10240,12288) → src до 12288
+    // A: body [8192,10240) + right handle [10240,12288) → src up to 12288
     let a = wanted.iter().find(|(m, _)| *m == MediaId(1)).unwrap();
     assert!(a.1.end * 1024 >= 12_288, "outgoing handle must be prefetched: {:?}", a.1);
-    // B: левая ручка src от 2048−2048 = 0
+    // B: left handle src from 2048−2048 = 0
     let b = wanted.iter().find(|(m, _)| *m == MediaId(2)).unwrap();
     assert_eq!(b.1.start, 0, "incoming handle must be prefetched: {:?}", b.1);
 }
 
-// ---- тест 156: аудио-фейд у края (Р.25) --------------------------------------
+// ---- test 156: audio fade at the edge (R.25) --------------------------------------
 
-/// Фейд-ин звука: тот же equal-power вес, что у кроссфейда, только напротив
-/// окна пустота — звук поднимается из тишины (и симметрично гаснет в неё).
+/// Audio fade-in: the same equal-power weight as the crossfade, only facing the
+/// empty space outside the window — the sound rises from silence (and symmetrically fades into it).
 #[test]
 fn t156_audio_fade_ramps_from_silence() {
     let mut p = project(vec![clip(1, 0, 4800, 0, 1)]);
@@ -301,7 +301,7 @@ fn t156_audio_fade_ramps_from_silence() {
         a: None,
         b: Some(ClipId(1)),
         in_offset: Tick::ZERO,
-        out_offset: Tick::from_audio_frames(2400), // фейд-ин на 2400 кадров
+        out_offset: Tick::from_audio_frames(2400), // fade-in over 2400 frames
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
         auto: vec![],
@@ -311,24 +311,24 @@ fn t156_audio_fade_ramps_from_silence() {
     let (out, underruns) = render(&p, &[1], 4800);
     assert_eq!(underruns, 0);
 
-    // dry-эталон того же клипа без перехода
+    // dry reference of the same clip without a transition
     let dry = render(&project(vec![clip(1, 0, 4800, 0, 1)]), &[1], 4800).0;
-    assert_eq!(out[0], 0.0, "в начале окна — тишина");
+    assert_eq!(out[0], 0.0, "at the start of the window — silence");
     for f in [600usize, 1200, 2399] {
-        let w = (f as f64 / 2400.0).sqrt() as f32; // equal-power, как у кроссфейда
+        let w = (f as f64 / 2400.0).sqrt() as f32; // equal-power, as in the crossfade
         let expect = dry[f * CH] * w;
         assert!(
             (out[f * CH] - expect).abs() < 1e-6,
-            "кадр {f}: ожидался вес {w}, вышло {} против {expect}",
+            "frame {f}: expected weight {w}, got {} against {expect}",
             out[f * CH]
         );
     }
     for f in [2400usize, 4000] {
-        assert_eq!(out[f * CH], dry[f * CH], "за окном фейда клип звучит как есть");
+        assert_eq!(out[f * CH], dry[f * CH], "outside the fade window the clip sounds as is");
     }
 }
 
-/// Фейд-аут: к концу клипа звук уходит в тишину.
+/// Fade-out: toward the end of the clip the sound goes to silence.
 #[test]
 fn t156_audio_fade_out_ends_in_silence() {
     let mut p = project(vec![clip(1, 0, 4800, 0, 1)]);
@@ -346,16 +346,16 @@ fn t156_audio_fade_out_ends_in_silence() {
     p.validate().unwrap();
     let (out, _) = render(&p, &[1], 4800);
     let dry = render(&project(vec![clip(1, 0, 4800, 0, 1)]), &[1], 4800).0;
-    assert_eq!(out[100 * CH], dry[100 * CH], "до окна — без изменений");
-    let f = 3600usize; // середина окна [2400, 4800)
+    assert_eq!(out[100 * CH], dry[100 * CH], "before the window — no changes");
+    let f = 3600usize; // the middle of the window [2400, 4800)
     let w = (1.0 - (f - 2400) as f64 / 2400.0).sqrt() as f32;
     assert!((out[f * CH] - dry[f * CH] * w).abs() < 1e-6);
-    assert!(out[4799 * CH].abs() < 1e-3, "к концу окна почти тишина");
+    assert!(out[4799 * CH].abs() < 1e-3, "near the end of the window — almost silence");
 }
 
-/// Тест 226 (Р.33 С4): кривая аудио-кроссфейда выбирается пользователем и
-/// доезжает до сэмплов. Equal-power обязан остаться ПРЕЖНЕЙ формулой
-/// (GOLDEN_AUDIO), остальные три — считаться своей.
+/// Test 226 (R.33 C4): the curve of the audio crossfade is chosen by the user and
+/// reaches the samples. Equal-power must stay the OLD formula
+/// (GOLDEN_AUDIO), the other three are computed by their own.
 #[test]
 fn t226_audio_crossfade_curve_is_applied() {
     let (w0, w1) = (8_192i64, 12_288i64);
@@ -374,7 +374,7 @@ fn t226_audio_crossfade_curve_is_applied() {
         });
         p.validate().unwrap();
         let (out, underruns) = render(&p, &[1, 2], 14_336);
-        assert_eq!(underruns, 0, "{curve:?}: ручки не должны голодать");
+        assert_eq!(underruns, 0, "{curve:?}: the handles must not starve");
         out
     };
     let expect = |curve: AudioCurve, f: i64| {
@@ -394,7 +394,7 @@ fn t226_audio_crossfade_curve_is_applied() {
             assert!((got - want).abs() < 1e-6, "{curve:?} @{f}: {got} vs {want}");
         }
     }
-    // equal-power — прежняя формула БАЙТ-в-байт: иначе поехал бы GOLDEN
+    // equal-power — the old formula BYTE-for-BYTE: otherwise GOLDEN would shift
     let eq = render_with(AudioCurve::EqualPower);
     let mut old = eq.clone();
     for (f, s) in old.chunks_exact_mut(CH).enumerate() {
@@ -408,33 +408,33 @@ fn t226_audio_crossfade_curve_is_applied() {
         s[0] = a_val * (((1.0 - t).max(0.0)).sqrt() as f32) + b_val * ((t.max(0.0)).sqrt() as f32);
     }
     for (i, (g, w)) in eq.chunks_exact(CH).zip(old.chunks_exact(CH)).enumerate() {
-        assert_eq!(g[0].to_bits(), w[0].to_bits(), "equal-power сдвинулся на кадре {i}");
+        assert_eq!(g[0].to_bits(), w[0].to_bits(), "equal-power shifted at frame {i}");
     }
-    // кривые обязаны РАЗЛИЧАТЬСЯ: одинаковый выход = поле не доехало
+    // the curves must DIFFER: an identical output = the field did not arrive
     let lin = render_with(AudioCurve::Linear);
     let mid = 10_240usize * CH;
     assert!(
         (eq[mid] - lin[mid]).abs() > 1e-4,
-        "линейная кривая обязана звучать иначе equal-power: {} vs {}",
+        "a linear curve must sound different from equal-power: {} vs {}",
         eq[mid],
         lin[mid]
     );
 }
 
-/// Тест 463 (п.399, Р.51): явный переход на НАЛОЖЕНИИ применяет свою
-/// кривую вместо зашитого equal-power перекрытия; двойного затухания нет;
-/// без перехода путь байт-в-байт прежний (GOLDEN цел — см. golden_export).
+/// Test 463 (item 399, R.51): an explicit transition on an OVERLAP applies its own
+/// curve instead of the built-in equal-power overlap; there is no double attenuation;
+/// without a transition the path is byte-for-byte the old one (GOLDEN intact — see golden_export).
 #[test]
 fn t463_overlap_transition_applies_its_curve() {
-    // два клипа внахлёст «лесенкой»: [0..2с) и [1с..3с), перекрытие 1с
+    // two clips overlapping in a “staircase”: [0..2s) and [1s..3s), overlap 1s
     let sec = 48_000i64;
     let clips = || vec![clip(1, 0, 2 * sec, 0, 1), clip(2, sec, 2 * sec, 0, 2)];
     let total = (3 * sec) as usize;
 
-    // без перехода — старый √-закон перекрытия
+    // without a transition — the old √-law of the overlap
     let plain = render(&project(clips()), &[1, 2], total).0;
 
-    // c переходом Linear — в середине окна вес каждой стороны 0.5
+    // with a Linear transition — in the middle of the window the weight of each side is 0.5
     let mut p = project(clips());
     p.transitions.push(TransitionEvent {
         id: TransitionId(1),
@@ -449,10 +449,10 @@ fn t463_overlap_transition_applies_its_curve() {
     });
     p.validate().unwrap();
     let linear = render(&p, &[1, 2], total).0;
-    assert_ne!(plain, linear, "линейная кривая обязана звучать иначе √-перекрытия");
+    assert_ne!(plain, linear, "a linear curve must sound different from the √ overlap");
 
-    // середина окна (1.5 с): рампа обоих источников детерминирована,
-    // прямой расчёт весов: linear = 0.5·a + 0.5·b, √-закон = 0.707·(a+b)
+    // the middle of the window (1.5 s): the ramp of both sources is deterministic,
+    // direct weight computation: linear = 0.5·a + 0.5·b, √-law = 0.707·(a+b)
     let mid = (3 * sec / 2) as usize;
     let sample = |buf: &[f32]| buf[mid * CH];
     let (a_alone, _) = render(&project(vec![clips()[0].clone()]), &[1], total);
@@ -460,19 +460,19 @@ fn t463_overlap_transition_applies_its_curve() {
     let (sa, sb) = (sample(&a_alone), sample(&b_alone));
     assert!(
         (sample(&linear) - (0.5 * sa + 0.5 * sb)).abs() < 1e-6,
-        "середина Linear-окна — ровно полусумма сторон: {} vs {}",
+        "the middle of a Linear window is exactly the half-sum of the sides: {} vs {}",
         sample(&linear),
         0.5 * sa + 0.5 * sb
     );
     let ep = 0.5f32.sqrt();
     assert!(
         (sample(&plain) - (ep * sa + ep * sb)).abs() < 1e-6,
-        "перекрытие без перехода — прежний √-закон"
+        "an overlap without a transition — the prior √ law"
     );
 
-    // equal-power переход на наложении совпадает с ним же БЕЗ перехода:
-    // формулы одни (√t / √(1−t) на том же окне) — добавление перехода с
-    // кривой по умолчанию не меняет звук
+    // an equal-power transition on an overlap coincides with the same WITHOUT a transition:
+    // the formulas are the same (√t / √(1−t) on the same window) — adding a transition
+    // with the default curve does not change the sound
     let mut p = project(clips());
     p.transitions.push(TransitionEvent {
         id: TransitionId(1),
@@ -487,5 +487,5 @@ fn t463_overlap_transition_applies_its_curve() {
     });
     p.validate().unwrap();
     let ep_render = render(&p, &[1, 2], total).0;
-    assert_eq!(plain, ep_render, "equal-power переход на наложении звучит как перекрытие");
+    assert_eq!(plain, ep_render, "an equal-power transition on an overlay sounds like an overlap");
 }

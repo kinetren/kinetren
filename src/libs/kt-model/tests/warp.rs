@@ -1,11 +1,11 @@
-//! Тест 696 (Р.61): у скорости варпа форма отрезка только ПРЯМАЯ.
+//! Test 696 (R.61): the segment shape of a warp speed is ONLY STRAIGHT.
 //!
-//! Замкнутая форма обратной карты растяжения стоит на кусочно-линейном
-//! профиле: интеграл от третьего порядка был бы четвёртой степени, а от
-//! зигзага не выражается вовсе. Правило существовало и до Р.61 (прежнее
-//! булево сглаживание у `rate` молча выбрасывалось) — новая форма обязана
-//! не выбрасываться молча, а ОТКАЗЫВАТЬ: тихое выбрасывание показало бы в
-//! редакторе одно, а в звуке другое.
+//! The closed form of the inverse stretch map sits on a piecewise-linear
+//! profile: the integral of the third order would be of the fourth degree, and a
+//! zigzag is not expressible at all. The rule existed even before R.61 (the former
+//! boolean smoothing on `rate` was dropped silently) — the new shape must not
+//! be dropped silently but REJECTED: a silent drop would show one thing in the
+//! editor and another in the sound.
 
 use kt_model::*;
 use kt_time::Tick;
@@ -49,13 +49,13 @@ fn t696_speed_curve_takes_the_linear_shape_only() {
         AutoKey::shaped(LEN, 2.0, SegShape::Linear),
     ];
 
-    // прямая законна
+    // a straight line is legal
     assert!(
         check_fx_auto(ClipId(1), &clip_with(straight.clone()).fx_auto).is_ok(),
-        "кусочно-линейная скорость обязана проходить"
+        "piecewise-linear speed must pass"
     );
 
-    // любая другая форма — ОТКАЗ, и он назван своим именем
+    // any other shape — REJECTION, and it is named as such
     for shape in [
         SegShape::DEFAULT,
         SegShape::Hold,
@@ -67,18 +67,18 @@ fn t696_speed_curve_takes_the_linear_shape_only() {
         let err = check_fx_auto(ClipId(1), &clip_with(keys).fx_auto).unwrap_err();
         assert!(
             matches!(err, ProjectError::RateShapeMustBeLinear(_)),
-            "форма {shape:?} на скорости прошла молча или отвергнута не тем: {err:?}"
+            "shape {shape:?} on speed passed silently or was rejected for the wrong reason: {err:?}"
         );
-        // текст отказа называет ПРИЧИНУ, а не «bad curve»
+        // the rejection text names the REASON, not “bad curve”
         let text = err.to_string();
         assert!(
             text.contains("linear") && text.contains("warp"),
-            "отказ не объясняет, почему именно прямая: {text}"
+            "the rejection does not explain why exactly straight: {text}"
         );
     }
 
-    // форма ДРУГОГО параметра того же слота законна: правило про скорость,
-    // а не про слот целиком
+    // a shape of a DIFFERENT parameter of the same slot is legal: the rule is about speed,
+    // not about the whole slot
     let mut c = clip_with(straight);
     c.fx_auto[0].push(ParamCurve {
         param: "mix".into(),
@@ -94,19 +94,19 @@ fn t696_speed_curve_takes_the_linear_shape_only() {
     });
     assert!(
         check_fx_auto(ClipId(1), &c.fx_auto).is_ok(),
-        "зигзаг на mix отвергнут — правило уехало со скорости на весь слот"
+        "zigzag on mix rejected — the rule drifted from speed to the whole slot"
     );
 
-    // и КАРТА варпа считает по прямой те же числа, что и прежде:
-    // профиль скорости формы не видит
+    // and the warp MAP computes the same numbers along a straight line as before:
+    // the speed profile does not see the shape
     let len = LEN.to_audio_frames();
     let prof = AutoProfiles::from_curves(&c.fx_auto, 0, len);
     let at = |s: f64| prof.value(0, "rate", 0.8, s);
-    assert!((at(0.0) - 0.5).abs() < 1e-9, "начало профиля уехало: {}", at(0.0));
-    assert!((at(1.0) - 2.0).abs() < 1e-9, "конец профиля уехал: {}", at(1.0));
+    assert!((at(0.0) - 0.5).abs() < 1e-9, "the start of the profile drifted: {}", at(0.0));
+    assert!((at(1.0) - 2.0).abs() < 1e-9, "the end of the profile drifted: {}", at(1.0));
     assert!(
         (at(0.5) - 1.25).abs() < 1e-9,
-        "середина профиля скорости обязана быть ЛИНЕЙНОЙ: {}",
+        "the middle of the speed profile must be LINEAR: {}",
         at(0.5)
     );
 }

@@ -1,14 +1,14 @@
-// Прямая альфа из премультиплицированной (Р.50): граница вложения.
+// Straight alpha from premultiplied (R.50): the embedding boundary.
 //
-// ЗЕРКАЛО `kt_engine::video::unpremultiply` — байт-в-байт, потому что
-// аккумулятор композита хранит премультиплицированный RGB при ПРЯМОЙ альфе
-// (`alpha_over`: при da == 0 выходит dst.rgb = s·sa/255, dst.a = sa), а
-// наложение ждёт прямой. Без конверсии суб-композит ложится вдвое темнее
-// ровно в полупрозрачных местах.
+// A MIRROR of `kt_engine::video::unpremultiply`, byte for byte, because
+// the composite accumulator stores premultiplied RGB under STRAIGHT alpha
+// (`alpha_over`: at da == 0 it yields dst.rgb = s·sa/255, dst.a = sa), while
+// the blend expects straight alpha. Without the conversion the sub-composite lands twice as dark
+// exactly in the semi-transparent places.
 //
-// Арифметика ЦЕЛОЧИСЛЕННАЯ и совпадает с CPU до разряда: все текстуры
-// движка `Rgba8Uint`, деление с округлением к ближайшему (`+ a/2`).
-// Правится ТЕМ ЖЕ коммитом, что и функция в kt-engine.
+// The arithmetic is INTEGER and matches the CPU to the last digit: all the engine’s
+// textures are `Rgba8Uint`, division with rounding to the nearest (`+ a/2`).
+// Edited in the SAME commit as the function in kt-engine.
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     let p = vec2<i32>(pos.xy);

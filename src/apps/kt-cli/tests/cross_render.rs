@@ -1,16 +1,16 @@
-//! Тест 158 (п.158 porting-notes, Р.25): КРОСС-РЕНДЕР конформанс — чужие
-//! .otio рендерятся нами и melt (MLT, движок Kdenlive/Shotcut), результаты
-//! сравниваются покадрово.
+//! Test 158 (item 158 of porting-notes, R.25): CROSS-RENDER conformance — foreign
+//! .otio files are rendered by us and by melt (MLT, the engine of Kdenlive/Shotcut), and the results
+//! are compared frame by frame.
 //!
-//! Совпадение JSON (тест 149) ещё не значит совпадение МОНТАЖА: уехавшая
-//! склейка, потерянная дорожка или дырка на месте непонятой конструкции
-//! видны только в картинке. Синтетика — сплошные цвета из разнесённой
-//! палитры, поэтому «что играет в момент t» превращается в классификацию,
-//! устойчивую к разнице кодеков и конвенций BT.601/709 × limited/full.
+//! A match of the JSON (test 149) does not yet mean a match of the EDIT: a shifted
+//! splice, a lost track or a hole in place of a misunderstood construct
+//! are visible only in the picture. The synthetics are solid colors from a spaced-apart
+//! palette, so “what plays at the moment t” turns into a classification
+//! that is stable to the difference of codecs and BT.601/709 × limited/full conventions.
 //!
-//! Гейт по образцу t149: нет melt или venv с адаптером — тест зелёный со
-//! внятной причиной; KT_REQUIRE_CROSS_RENDER=1 (CI) — отсутствие = провал.
-//! Подготовка окружения: `src/scripts/otio-mlt-venv.sh`.
+//! The gate follows the pattern of t149: no melt or a venv with the adapter — the test is green
+//! with a clear reason; KT_REQUIRE_CROSS_RENDER=1 (CI) — absence = failure.
+//! Environment setup: `src/scripts/otio-mlt-venv.sh`.
 
 use kt_media::MediaSource;
 use kt_time::Tick;
@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-/// Ярус сверки. Строгий — попиксельно; smoke — «оба отрендерили и сошлись
-/// длительности» для файлов с конструкциями, которые рендерят не оба.
+/// The comparison tier. Strict — pixel by pixel; smoke — “both rendered and the
+/// durations matched” for files with constructs that not both render.
 enum Tier {
     Strict,
     Smoke,
@@ -30,30 +30,30 @@ const SAMPLES: &[(&str, Tier)] = &[
     ("multiple_track.otio", Tier::Strict),
     ("preflattened.otio", Tier::Strict),
     ("multitrack.otio", Tier::Strict),
-    // переходы: MLT-адаптер раскрывает их в отдельные сегменты и удлиняет
-    // таймлайн — сверка по общей шкале времени невозможна (см. п.158)
+    // transitions: the MLT adapter expands them into separate segments and lengthens
+    // the timeline — comparison on a common time scale is impossible (see item 158)
     ("transition_test.otio", Tier::Smoke),
-    // Вложенные Stack. Дыра п.158 закрыта (Р.50): мы читаем их настоящими
-    // лентами и рисуем содержимое — плейсхолдеров в этом сэмпле больше
-    // НЕТ (t437). Но строгим ярус всё равно не стал, и причина ПРОТИВО-
-    // ПОЛОЖНА прежней: строгий прогон показал, что вложенные Stack
-    // ВЫБРАСЫВАЕТ эталон. Его рендер короче нашего ровно на сумму их
-    // длительностей (31 + 29 + 4 кадра), и всё после первого вложения
-    // уезжает на 31 кадр — картинка сходится только при этом сдвиге.
-    // Сверять по общей шкале времени нечего: расходимся не мы.
+    // Nested Stacks. The hole of item 158 is closed (R.50): we read them as real
+    // reels and draw the content — there are no more placeholders in this sample
+    // (t437). But the strict tier still did not become one, and the reason is the OPPOSITE of the
+    // former: a strict run showed that nested Stacks
+    // DROP the reference. Its render is shorter than ours by exactly the sum of their
+    // lengths (31 + 29 + 4 frames), and everything after the first nested one
+    // shifts by 31 frames — the picture matches only with this shift.
+    // There is nothing to compare on a common time scale: it is not we who diverge.
     ("nested_example.otio", Tier::Smoke),
     ("generator_reference_test.otio", Tier::Smoke),
-    // экспорт Premiere и EDL-монтаж — самые «настоящие» из сэмплов; их
-    // маркеры (Marker.3) не читает сама эталонная библиотека, поэтому для
-    // рендера prepare срезает маркеры — на картинку они не влияют
+    // The Premiere export and the EDL edit — the most “real” of the samples; their
+    // markers (Marker.3) are not read by the reference library itself, so for
+    // the render prepare strips the markers — they do not affect the picture
     ("premiere_example.otio", Tier::Strict),
     ("screening_example.otio", Tier::Strict),
 ];
 
-/// Порог принятия при классификации (евклид в RGB): квантование ±2/канал,
-/// шум x264 crf15 на плоской заливке ±3, округления двойной конверсии ≤6 —
-/// пятикратный запас. Палитра разнесена на 96 > 2·32, поэтому ближайший
-/// вариант гарантированно «свой».
+/// Acceptance threshold in classification (Euclidean in RGB): quantization ±2 per channel,
+/// x264 crf15 noise on a flat fill ±3, rounding of a double conversion ≤6 —
+/// a fivefold margin. The palette is spaced by 96 > 2·32, so the nearest
+/// variant is guaranteed to be “its own”.
 const ACCEPT: f64 = 32.0;
 
 struct Env {
@@ -105,8 +105,8 @@ struct Prep {
     duration_s: f64,
 }
 
-/// Синтетика + подмена ссылок + .mlt: делает эталонный python (он же
-/// апгрейдит древние схемы сэмплов до современных).
+/// Synthetics + replacement of references + .mlt: made by the reference python (which
+/// also upgrades ancient sample schemas to the modern ones).
 fn prepare(env: &Env, sample: &str, out: &Path) -> Result<Prep, String> {
     let script = env.scripts.join("otio-cross-prepare.py");
     let o = Command::new(&env.python)
@@ -152,10 +152,10 @@ fn prepare(env: &Env, sample: &str, out: &Path) -> Result<Prep, String> {
     })
 }
 
-/// Наш рендер. Энкодер форсируется: автовыбор мог бы уйти в nvenc, и разница
-/// диапазонов добавила бы шума на ровном месте.
-/// Подготовленный файл обмена — в файл проекта той же дверью, что
-/// `File → Import` (Р.70): `kt-cli export` читает только `.kt`.
+/// Our render. The encoder is forced: auto-selection could go to nvenc, and the difference
+/// of ranges would add noise out of nowhere.
+/// The prepared exchange file — into a project file by the same door as
+/// `File → Import` (R.70): `kt-cli export` reads only `.kt`.
 fn import_prepared(prepared: &Path) -> Result<PathBuf, String> {
     let kt = prepared.with_extension("kt");
     let o = Command::new(env!("CARGO_BIN_EXE_kt-cli"))
@@ -184,17 +184,17 @@ fn render_ours(prepared: &Path, out: &Path) -> Result<u64, String> {
     if !o.status.success() {
         return Err(err.trim().to_string());
     }
-    // «ok: N video frames, …» — точный счётчик наших кадров (длительность
-    // контейнера портит AAC-прайминг). Перед ним могут идти notice'ы импорта.
+    // “ok: N video frames, …” — the exact counter of our frames (the container’s duration is spoiled
+    // by AAC priming). Import notices may precede it.
     err.lines()
         .find(|l| l.starts_with("ok: "))
         .and_then(|l| l.split_whitespace().nth(1))
         .and_then(|n| n.parse::<u64>().ok())
-        .ok_or_else(|| format!("не разобрал вывод kt-cli: {err}"))
+        .ok_or_else(|| format!("could not parse the kt-cli output: {err}"))
 }
 
-/// Чужой рендер: melt по нашему профилю. `real_time=0` обязателен — иначе
-/// melt играет «в реальном времени» и ДРОПАЕТ кадры (тест стал бы гадать).
+/// Foreign render: melt on our profile. `real_time=0` is mandatory — otherwise
+/// melt plays “in real time” and DROPS frames (the test would start guessing).
 fn render_theirs(mlt: &Path, p: &Prep, dir: &Path, out: &Path) -> Result<(), String> {
     let profile = dir.join("kt-profile");
     let (w, h) = (p.width, p.height);
@@ -239,12 +239,12 @@ fn gcd(a: u32, b: u32) -> u32 {
     if b == 0 { a } else { gcd(b, a % b) }
 }
 
-// ---- классификация цвета ----------------------------------------------------
+// ---- color classification ----------------------------------------------------
 
-/// Все значения, в которые сплошной цвет может превратиться при ОДНОЙ
-/// путанице конвенций (матрица 601/709 × диапазон limited/full на кодировании
-/// и на декодировании). Классификатор ищет ближайший ВАРИАНТ, поэтому чужая
-/// конвенция не даёт ложного расхождения.
+/// All values into which a solid color can turn under ONE
+/// confusion of conventions (matrix 601/709 × range limited/full on encoding
+/// and on decoding). The classifier looks for the nearest VARIANT, so a foreign
+/// convention does not give a false divergence.
 fn variants(rgb: [u8; 3]) -> Vec<[f64; 3]> {
     const M: [(f64, f64); 2] = [(0.299, 0.114), (0.2126, 0.0722)];
     let mut out: Vec<[f64; 3]> = Vec::new();
@@ -306,8 +306,8 @@ fn dist(a: [f64; 3], b: [f64; 3]) -> f64 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
 }
 
-/// Класс цвета: индекс палитры (`None` — пустота/чёрное, `Err` — ни на что
-/// не похоже: это тоже расхождение, если у второй стороны класс есть).
+/// Color class: palette index (`None` — emptiness/black, `Err` — resembles nothing:
+/// this is also a divergence, if the other side has a class).
 fn classify(obs: [f64; 3], table: &[Vec<[f64; 3]>]) -> Result<Option<usize>, String> {
     if dist(obs, [0.0, 0.0, 0.0]) <= ACCEPT {
         return Ok(None);
@@ -324,15 +324,15 @@ fn classify(obs: [f64; 3], table: &[Vec<[f64; 3]>]) -> Result<Option<usize>, Str
     match best {
         Some((i, d)) if d <= ACCEPT => Ok(Some(i)),
         Some((_, d)) => Err(format!(
-            "#{:02X}{:02X}{:02X} (ближайший на {d:.1})",
+            "#{:02X}{:02X}{:02X} (nearest at {d:.1})",
             obs[0] as u8, obs[1] as u8, obs[2] as u8
         )),
-        None => Err("палитра пуста".into()),
+        None => Err("palette is empty".into()),
     }
 }
 
-/// Средний цвет ЦЕНТРАЛЬНОЙ половины кадра: леттербокс и краевые артефакты
-/// масштабирования в неё не попадают.
+/// The average color of the CENTRAL half of the frame: letterboxing and edge artifacts
+/// of scaling do not fall into it.
 fn center_mean(f: &kt_media::VideoFrame) -> [f64; 3] {
     let (w, h) = (f.width as usize, f.height as usize);
     let (x0, x1) = (w / 4, w * 3 / 4);
@@ -354,9 +354,9 @@ fn center_mean(f: &kt_media::VideoFrame) -> [f64; 3] {
     if n == 0.0 { [0.0; 3] } else { [acc[0] / n, acc[1] / n, acc[2] / n] }
 }
 
-/// Моменты сверки: середины «спокойных» отрезков между склейками, вне окон
-/// переходов (кривые фейдов у нас и у melt разные по определению) и с
-/// зазором ±1 кадр от любой границы.
+/// The comparison moments: the middles of “calm” segments between splices, outside the windows
+/// of transitions (fade curves differ by definition between us and melt)
+/// and with a gap of ±1 frame from any boundary.
 fn probes(project: &kt_model::Project, p: &Prep) -> (Vec<i64>, usize) {
     let fd = (90_000.0 / p.rate).round() as i64;
     let mut bounds: Vec<i64> = vec![0];
@@ -378,16 +378,16 @@ fn probes(project: &kt_model::Project, p: &Prep) -> (Vec<i64>, usize) {
         .iter()
         .map(|(a, b)| ((a * 90_000.0).round() as i64 - fd, (b * 90_000.0).round() as i64 + fd))
         .collect();
-    // зоны чужих конструкций, которые мы показываем плейсхолдером (решение
-    // Р.24 п.5): там сравнивать нечего — у нас пусто по определению. Число
-    // пропущенных точек печатается, тихой потери покрытия нет.
+    // zones of foreign constructs that we show with a placeholder (decision
+    // R.24 item 5): there is nothing to compare there — we are empty by definition. The number of
+    // skipped points is printed, there is no silent loss of coverage.
     skip.extend(project.foreign.iter().map(|f| (f.start.0 - fd, (f.start + f.duration).0 + fd)));
 
     let mut out = Vec::new();
     for w in bounds.windows(2) {
         let (a, b) = (w[0] + fd, w[1] - fd);
         if b - a < fd {
-            continue; // отрезок короче трёх кадров — зазор от склеек важнее
+            continue; // a segment shorter than three frames — the gap from splices matters more
         }
         for num in [1i64, 2, 3] {
             let t = a + (b - a) * num / 4;
@@ -402,7 +402,7 @@ fn probes(project: &kt_model::Project, p: &Prep) -> (Vec<i64>, usize) {
     }
     out.sort_unstable();
     let total = out.len();
-    // кап на длинных таймлайнах — прореживание детерминированное
+    // a cap on long timelines — deterministic thinning
     if total > 96 {
         let step = total.div_ceil(96);
         out = out.into_iter().step_by(step).collect();
@@ -424,17 +424,17 @@ fn t158_cross_render_conformance() {
         let prep = match prepare(env, sample, &dir) {
             Ok(p) => p,
             Err(e) => {
-                problems.push(format!("{sample}: подготовка провалилась: {e}"));
+                problems.push(format!("{sample}: preparation failed: {e}"));
                 continue;
             }
         };
         let Some(mlt) = prep.mlt.clone() else {
             let why = prep.mlt_error.clone().unwrap_or_default();
             if matches!(tier, Tier::Smoke) {
-                eprintln!("{sample}: MLT-адаптер отказался ({why}) — пропуск");
+                eprintln!("{sample}: MLT adapter refused ({why}) — skipped");
                 continue;
             }
-            problems.push(format!("{sample}: MLT-адаптер отказался: {why}"));
+            problems.push(format!("{sample}: MLT adapter refused: {why}"));
             continue;
         };
 
@@ -443,12 +443,12 @@ fn t158_cross_render_conformance() {
         let frames_ours = match render_ours(&prep.prepared, &ours_path) {
             Ok(n) => n,
             Err(e) => {
-                problems.push(format!("{sample}: наш рендер упал: {e}"));
+                problems.push(format!("{sample}: our render crashed: {e}"));
                 continue;
             }
         };
         if let Err(e) = render_theirs(&mlt, &prep, &dir, &theirs_path) {
-            problems.push(format!("{sample}: чужой рендер упал: {e}"));
+            problems.push(format!("{sample}: the foreign render crashed: {e}"));
             continue;
         }
 
@@ -458,7 +458,7 @@ fn t158_cross_render_conformance() {
         let ti = theirs.info().clone();
         if (ti.width, ti.height) != (prep.width, prep.height) {
             problems.push(format!(
-                "{sample}: melt отрендерил {}×{} вместо {}×{}",
+                "{sample}: melt rendered {}×{} instead of {}×{}",
                 ti.width, ti.height, prep.width, prep.height
             ));
             continue;
@@ -469,7 +469,7 @@ fn t158_cross_render_conformance() {
         let expect = (prep.duration_s * prep.rate).round() as u64;
         if frames_ours.abs_diff(expect) > 1 {
             problems.push(format!(
-                "{sample}: наш рендер {frames_ours} кадров против эталонных {expect}"
+                "{sample}: our render {frames_ours} frames versus the reference {expect}"
             ));
         }
 
@@ -479,8 +479,8 @@ fn t158_cross_render_conformance() {
         match tier {
             Tier::Smoke => {
                 eprintln!(
-                    "{sample}: smoke — наш {frames_ours} кадров, melt {frames_theirs}, \
-                     плейсхолдеров {}",
+                    "{sample}: smoke — ours {frames_ours} frames, melt {frames_theirs}, \
+                     placeholders {}",
                     bundle.project.foreign.len()
                 );
                 continue;
@@ -488,7 +488,7 @@ fn t158_cross_render_conformance() {
             Tier::Strict => {
                 if frames_ours.abs_diff(frames_theirs) > 1 {
                     problems.push(format!(
-                        "{sample}: длительности разошлись — наш {frames_ours}, melt {frames_theirs}"
+                        "{sample}: durations diverged — ours {frames_ours}, melt {frames_theirs}"
                     ));
                 }
             }
@@ -496,19 +496,19 @@ fn t158_cross_render_conformance() {
 
         let table: Vec<Vec<[f64; 3]>> = prep.palette.iter().map(|c| variants(*c)).collect();
         let (frames, dropped) = probes(&bundle.project, &prep);
-        assert!(!frames.is_empty(), "{sample}: не из чего строить probe-сетку");
+        assert!(!frames.is_empty(), "{sample}: nothing to build the probe grid from");
         eprintln!(
-            "{sample}: strict — {} кадров, {} probe-точек, плейсхолдеров {}{}",
+            "{sample}: strict — {} frames, {} probe points, placeholders {}{}",
             frames_ours,
             frames.len(),
             bundle.project.foreign.len(),
-            if dropped > 0 { format!(", прорежено {dropped}") } else { String::new() }
+            if dropped > 0 { format!(", thinned {dropped}") } else { String::new() }
         );
         for f in frames {
             let t = Tick(f * fd);
             let (Ok(a), Ok(b)) = (ours.read_video_frame(t, None), theirs.read_video_frame(t, None))
             else {
-                problems.push(format!("{sample}: кадр {f} не читается"));
+                problems.push(format!("{sample}: frame {f} cannot be read"));
                 continue;
             };
             let (ma, mb) = (center_mean(&a), center_mean(&b));
@@ -519,7 +519,7 @@ fn t158_cross_render_conformance() {
             };
             if !same {
                 problems.push(format!(
-                    "{sample} t={:.3}s кадр {f}: наш {} (RGB {:.0},{:.0},{:.0}), melt {} (RGB {:.0},{:.0},{:.0})",
+                    "{sample} t={:.3}s frame {f}: ours {} (RGB {:.0},{:.0},{:.0}), melt {} (RGB {:.0},{:.0},{:.0})",
                     f as f64 / prep.rate,
                     show(&ca, &prep.palette),
                     ma[0], ma[1], ma[2],
@@ -530,16 +530,16 @@ fn t158_cross_render_conformance() {
         }
     }
 
-    assert!(problems.is_empty(), "кросс-рендер разошёлся:\n{}", problems.join("\n"));
+    assert!(problems.is_empty(), "cross-render diverged:\n{}", problems.join("\n"));
     std::fs::remove_dir_all(&root).ok();
 }
 
 fn show(c: &Result<Option<usize>, String>, palette: &[[u8; 3]]) -> String {
     match c {
-        Ok(None) => "пусто".into(),
+        Ok(None) => "empty".into(),
         Ok(Some(i)) => {
             format!("#{:02X}{:02X}{:02X}", palette[*i][0], palette[*i][1], palette[*i][2])
         }
-        Err(e) => format!("не опознан {e}"),
+        Err(e) => format!("not recognized {e}"),
     }
 }

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.49 А6 (п.354): несохранённую работу не выбрасывают молча.
+"""Live scenario R.49 A6 (item 354): unsaved work is not thrown away silently.
 
-До Р.49 программа не спрашивала ничего, и это был законный выбор: фоновая
-запись шла ПРЯМО в файл пользователя, терять было нечего. Владелец это убрал —
-вместе с правом не спрашивать.
+Before R.49 the program asked nothing, and that was a legitimate choice: the background
+write went DIRECTLY into the user’s file, so there was nothing to lose. The owner removed this —
+together with the right not to ask.
 
-Здесь настоящее меню «Файл → Новый» при несохранённой правке: «Остаться»
-оставляет работу на месте, «Не сохранять» её отпускает. Ответов три, а не два,
-именно потому, что «отмена» и «не сохранять» — РАЗНЫЕ вещи, и спутать их
-значит потерять монтаж по кнопке «Отмена».
+Here is the real “File → New” menu with unsaved edits: “Stay” leaves the work
+in place, “Do not save” releases it. There are three answers, not two,
+precisely because “cancel” and “do not save” are DIFFERENT things, and confusing them
+means losing the montage by pressing “Cancel”.
 """
 import os
 import sys
@@ -16,8 +16,8 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import Live, import_project, poll_step, project_with_clips, require_tools  # noqa: E402
 
-# СВОЙ ПРОЦЕСС (Р.68): сценарий проверяет САМ СТАРТ программы, а не работу в
-# уже открытом проекте, — стенд работника ему не подходит.
+# ITS OWN PROCESS (R.68): the scenario checks the program START ITSELF, not the work in an
+# already open project — the worker stand does not suit it.
 OWN_PROCESS = True
 
 SEC = 90000
@@ -25,21 +25,21 @@ SEC = 90000
 
 def main(out):
     require_tools()
-    # файл ПРОЕКТА (Р.70): сценарий строит файл обмена, программа живёт в .kt
+    # a PROJECT file (R.70): the scenario builds an exchange file, the program lives in .kt
     proj = import_project(project_with_clips(
         os.path.join(out, "unsaved.otio"),
         [(0.0, 2.0, "synth:Ramp"), (3.0, 2.0, "synth:Ramp")],
     ))
     before = open(proj).read()
-    # фоновая запись не должна успеть вмешаться: проверяется сторож, а не она
+    # the background save must not manage to interfere: the guard is checked, not it
     os.environ["KT_AUTOSAVE_SECS"] = "600"
 
     with Live("unsaved", out, project=proj) as app:
         app.shot("open")
         p = app.project_now()
-        app.expect(len(p.clips) == 2, f"старт: два события, {p.clips}")
+        app.expect(len(p.clips) == 2, f"start: two events, {p.clips}")
 
-        # правка настоящим жестом
+        # an edit by a real gesture
         src = p.clips[1]
         y = app.lane_y("video", 0)
         x0 = app.x_at(src.mid())
@@ -48,42 +48,42 @@ def main(out):
         moved = app.live_clips()
         app.expect(
             moved and max(s for s, _ in moved) > src.start,
-            f"событие сдвинулось жестом: {moved}",
+            f"the event moved by gesture: {moved}",
         )
 
-        # крестик окна: программа обязана СПРОСИТЬ, а не закрыться
+        # the window’s cross: the program MUST ASK, not close
         app.close_window()
         app.shot("asked")
-        app.expect(app.alive(), "окно не закрылось, не спросив")
+        app.expect(app.alive(), "the window did not close without asking")
         app.expect(
             app.has_probe("ask.stay"),
-            "закрытие при несохранённой работе СПРАШИВАЕТ, а не выбрасывает молча",
+            "closing with unsaved work ASKS, and does not throw away silently",
         )
 
-        # «Остаться» — программа жива, работа на месте
+        # “Stay” — the program is alive, the work is in place
         app.click_probe("ask.stay")
         app.shot("stayed")
-        app.expect(app.alive(), "«Остаться» всё равно закрыло программу")
+        app.expect(app.alive(), "“Stay” closed the program anyway")
         after = app.live_clips()
         app.expect(
             after == moved,
-            f"«Остаться» сохранило работу на месте: было {moved}, стало {after}",
+            f"“Stay” kept the work in place: was {moved}, became {after}",
         )
 
-        # тот же вопрос ПОВТОРНО (правило 14), теперь «Не сохранять»
+        # the same question REPEATED (rule 14), now “Don’t save”
         app.close_window()
         app.shot("asked-again")
-        app.expect(app.has_probe("ask.discard"), "вопрос задаётся повторно")
+        app.expect(app.has_probe("ask.discard"), "the question is asked again")
         app.click_probe("ask.discard")
         for _ in range(40):
             if not app.alive():
                 break
             poll_step(0.25)
-        app.expect(not app.alive(), "«Не сохранять» обязано закрыть программу")
-        # и проект остался таким, каким был: его меняет только Ctrl+S
+        app.expect(not app.alive(), "“Do not save” must close the program")
+        # and the project stayed as it was: only Ctrl+S changes it
         app.expect(
             open(proj).read() == before,
-            "файл проекта не тронут отказом сохранять",
+            "the project file is not touched by refusing to save",
         )
 
         return app.done()

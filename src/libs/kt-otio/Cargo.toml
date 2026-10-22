@@ -9,8 +9,8 @@ publish.workspace = true
 kt-time = { workspace = true }
 kt-model = { workspace = true }
 serde = { workspace = true }
-# preserve_order обязателен: passthrough чужих полей/metadata сохраняет
-# порядок ключей документа, на этом стоит идемпотентность записи
+# preserve_order is required: passthrough of foreign fields/metadata keeps
+# the key order of the document, and idempotent writing rests on this
 serde_json = { workspace = true, features = ["preserve_order"] }
 indexmap = { workspace = true }
 thiserror = { workspace = true }

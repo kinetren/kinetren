@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.38: «тупиков не бывает».
+"""Live scenario R.38: “there are no dead ends”.
 
-Претензии пользователя дословно: «я не понимаю как удалить saved area
-region, я его сохранил и он теперь висит, не понимаю как его
-переименовать - пкм ничего не дает», «я не понимаю как менять длинну у
-морфер события», «разреши менять высоту каждого трека индивидуально».
+Claims of the user verbatim: “I do not understand how to delete a saved area
+region, I saved it and now it hangs there, I do not understand how to
+rename it - RMB gives nothing”, “I do not understand how to change the length of
+a morph of the event”, “allow changing the height of each track individually”.
 
-Харнесс-тесты 253/259/262 это уже проверяют, но в СИНТЕТИЧЕСКОЙ сцене без
-окна. Здесь настоящая мышь в настоящем окне отвечает на другой вопрос:
-дотягивается ли до этих зон рука. Ровно так нашлось, что первые 16 px
-gutter'а — зона ресайза окна и нажатие там уходит window-менеджеру.
+The harness tests 253/259/262 already check this, but in a SYNTHETIC scene without a
+window. Here a real mouse in a real window answers another question:
+can a hand reach these zones at all. This is exactly how it turned out that the first 16 px
+of the gutter are the window resize zone, and a press there goes to the window manager.
 
-Проверяются три жеста, каждый — своим наблюдаемым следствием:
+Three gestures are checked, each by its own observable consequence:
 
-1. кромка морф-блока тянется, и новая длина доезжает ДО ФАЙЛА;
-2. нижняя кромка строки в gutter'е меняет высоту дорожки, и она тоже
-   доезжает до файла;
-3. ПКМ по контуру именованной области открывает меню — экран после него
-   обязан ИЗМЕНИТЬСЯ (до Р.38 не происходило ничего).
+1. the edge of the morph block is dragged, and the new length reaches the FILE;
+2. the bottom edge of a row in the gutter changes the track height, and that also
+   reaches the file;
+3. RMB on the outline of a named area opens a menu — the screen after it
+   must CHANGE (before R.38 nothing happened).
 """
 import json
 import os
@@ -30,7 +30,7 @@ SEC = 90000
 
 
 def build(dest):
-    """Клип, морфер-слой над ним и именованная область по его дорожке."""
+    """A clip, a morpher layer above it, and a named area on its track."""
     project_with_clips(dest, [(0.0, 8.0, "synth:Ramp")])
     with open(dest) as f:
         doc = json.load(f)
@@ -43,7 +43,7 @@ def build(dest):
     ]
     kt["areas"] = [
         {
-            "name": "финал",
+            "name": "final",
             "start": 5 * SEC,
             "duration": 2 * SEC,
             "lanes": [["video", 0]],
@@ -61,14 +61,14 @@ def main(out):
     with Live("deadend", out, project=proj) as app:
         app.shot("open")
         p = app.project_now()
-        app.expect(len(p.clips) == 1, f"старт: один клип, {p.clips}")
+        app.expect(len(p.clips) == 1, f"start: one clip, {p.clips}")
 
         g = app.geom()
         rows = {(r["kind"], r["lane"]): r for r in g["rows"]}
         morph = rows[("morph", 0)]
         video = rows[("video", 0)]
 
-        # --- 1. кромка морф-блока тянется ---------------------------------
+        # --- 1. the edge of the morph block is dragged ---------------------------------
         y = app.lane_y("morph", 0, frac=0.5)
         end_x = app.x_at(4 * SEC)
         app.drag(end_x, y, app.x_at(6 * SEC), y)
@@ -78,22 +78,22 @@ def main(out):
             m["duration"],
             4 * SEC,
             SEC // 2,
-            "кромка морф-блока удлинила его (длина доехала до файла)",
+            "the edge of the morph block lengthened it (the length reached the file)",
         )
-        app.expect(m["start"] == 2 * SEC, f"а начало осталось на месте: {m['start']}")
+        app.expect(m["start"] == 2 * SEC, f"and the start stayed in place: {m['start']}")
         app.shot("morph-edge")
 
-        # --- 2. высота дорожки тянется в gutter'е -------------------------
-        # Координаты — В ЭКРАННЫХ, как их считают `x_at`/`lane_y`: дамп
-        # геометрии даёт их ОТНОСИТЕЛЬНО ОКНА, и забыть начало окна значит
-        # кликать мимо. Именно так этот шаг сначала «не работал».
+        # --- 2. track height is dragged in the gutter -------------------------
+        # Coordinates are ON-SCREEN, as `x_at`/`lane_y` count them: the geometry
+        # dump gives them RELATIVE TO THE WINDOW, and forgetting the window origin means
+        # clicking aside. This is exactly how this step first “did not work”.
         win = geometry()
-        # x — у ПРАВОГО края gutter'а: слева WIN_EDGE забирает зона ресайза
-        # окна, и нажатие там уходит window-менеджеру (правило 15)
+        # x — at the RIGHT edge of the gutter: on the left the window’s resize zone takes WIN_EDGE,
+        # and the press there goes to the window manager (rule 15)
         gx = win["x"] + g["timeline"]["left"] - 8.0
         app.expect(
             g["timeline"]["left"] - 8.0 > 8.0,
-            f"жест ставится вне зоны ресайза окна: {g['timeline']['left'] - 8.0:.0f} px от края",
+            f"the gesture is placed outside the window resize zone: {g['timeline']['left'] - 8.0:.0f} px from the edge",
         )
         edge_y = app.lane_y("video", 0, frac=1.0)
         want = video["h"] + 40
@@ -104,30 +104,30 @@ def main(out):
             rows2[("video", 0)]["h"],
             want,
             12,
-            "высота видео-дорожки выросла ровно на столько, на сколько тянули",
+            "the height of the video track grew by exactly as much as was dragged",
         )
         app.near(
             rows2[("morph", 0)]["h"],
             morph["h"],
             2,
-            "и СОСЕДНЯЯ строка не тронута (правило 20)",
+            "and the NEIGHBORING row is untouched (rule 20)",
         )
         app.shot("row-height")
 
-        # --- 3. ПКМ по контуру области открывает меню ---------------------
-        # контур области рисуется по её дорожке; целимся в ВЕРХНЮЮ линию
+        # --- 3. RMB on the outline of the area opens the menu ---------------------
+        # the area outline is drawn along its track; we aim at the TOP line
         area_y = app.lane_y("video", 0, frac=0.02)
         area_x = app.x_at(6 * SEC)
         before = app.shot("before-menu")
         app.right_click(area_x, area_y)
         app.shot("area-menu")
         d = app.screen_diff(before)
-        # порог низкий намеренно: меню области короткое и занимает малую
-        # долю экрана. СОДЕРЖИМОЕ меню проверяет харнесс-тест 253 — здесь
-        # вопрос ровно один: доходит ли ПКМ до контура в живом окне
+        # the threshold is low on purpose: the area’s menu is short and takes a small
+        # share of the screen. The CONTENT of the menu is checked by harness test 253 — here
+        # the question is exactly one: does the RMB reach the outline in the live window
         app.expect(
             d > 0.001,
-            f"ПКМ по контуру области обязан открыть меню (экран изменился на {d:.1%})",
+            f"RMB on the outline of the area must open a menu (the screen changed by {d:.1%})",
         )
         app.key("Escape")
         return app.done()

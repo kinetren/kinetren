@@ -1,12 +1,12 @@
-//! Тест 748c (Р.63 п.2): правый край события упирается в КОНЕЦ МАТЕРИАЛА.
+//! Test 748c (R.63 item 2): the right edge of an event runs into the END OF THE MATERIAL.
 //!
-//! До Р.63 `trim_max_end` у незеркального события отдавал `i64::MAX / 4`:
-//! край можно было утащить сколько угодно вправо. Ровно так у владельца
-//! событие стало длиной 316.967 с при файле 226.268 с — последние 11.5 с
-//! материала «звучали» тишиной и считались underrun'ами. Предел ставится
-//! ПО МАТЕРИАЛУ: замедленное событие упирается позже, ускоренное раньше.
-//! Уже существующие события длиннее материала не укорачиваются сами
-//! (правило 20) — они законны, а честную тишину им даёт движок.
+//! Before R.63 `trim_max_end` for a non-mirrored event gave `i64::MAX / 4`:
+//! the edge could be dragged arbitrarily far to the right. That is exactly how the owner’s
+//! event became 316.967 s long for a 226.268 s file — the last 11.5 s of
+//! material “sounded” as silence and counted as underruns. The limit is set
+//! BY THE MATERIAL: a slowed event runs into it later, a sped-up one earlier.
+//! Events already longer than their material are not shortened by themselves
+//! (rule 20) — they are legal, and the engine gives them honest silence.
 
 use kt_model::*;
 use kt_time::Tick;
@@ -68,58 +68,58 @@ fn end_of(m: &TimelineModel) -> i64 {
 
 #[test]
 fn t748c_trim_end_stops_at_the_material_end() {
-    // 1) материал 10 с, скорость 1 — дальше 10 с не пускает
+    // 1) material 10 s, speed 1 — nothing past 10 s
     let mut m = scene(Some(Tick(10 * SEC)), None);
     m.apply(Command::TrimEnd { id: ClipId(1), new_end: Tick(30 * SEC) }).unwrap();
     assert_eq!(
         end_of(&m),
         10 * SEC,
-        "край не упёрся в конец материала (на прежнем коде — 30 с)"
+        "the edge did not hit the end of the material (on the previous code — 30 s)"
     );
-    // внутри материала трим по-прежнему свободен
+    // inside the material, trimming is still free
     m.apply(Command::TrimEnd { id: ClipId(1), new_end: Tick(6 * SEC) }).unwrap();
-    assert_eq!(end_of(&m), 6 * SEC, "трим внутри материала обязан работать");
+    assert_eq!(end_of(&m), 6 * SEC, "trim within the material must work");
 
-    // 2) ЗАМЕДЛЕНИЕ: 10 с материала при rate 0.5 — это 20 с на таймлайне
+    // 2) SLOWDOWN: 10 s of material at rate 0.5 is 20 s on the timeline
     let mut m = scene(Some(Tick(10 * SEC)), Some(0.5));
     m.apply(Command::TrimEnd { id: ClipId(1), new_end: Tick(60 * SEC) }).unwrap();
     let got = end_of(&m);
     assert!(
         (got - 20 * SEC).abs() <= SEC / 30,
-        "у замедленного события предел считается по МАТЕРИАЛУ: ждали ≈20 с, вышло {} с",
+        "for a slowed event the limit is computed from the MATERIAL: expected ≈20 s, got {} s",
         got as f64 / SEC as f64
     );
 
-    // 3) УСКОРЕНИЕ: те же 10 с материала при rate 2 — это 5 с
+    // 3) SPEED-UP: the same 10 s of material at rate 2 is 5 s
     let mut m = scene(Some(Tick(10 * SEC)), Some(2.0));
     m.apply(Command::TrimEnd { id: ClipId(1), new_end: Tick(60 * SEC) }).unwrap();
     let got = end_of(&m);
     assert!(
         (got - 5 * SEC).abs() <= SEC / 30,
-        "у ускоренного события предел ближе: ждали ≈5 с, вышло {} с",
+        "for a sped-up event the limit is closer: expected ≈5 s, got {} s",
         got as f64 / SEC as f64
     );
 
-    // 4) длина НЕИЗВЕСТНА (генератор, лента, файл ещё не открывали) —
-    //    предела нет, как было всегда
+    // 4) length UNKNOWN (generator, reel, file not yet opened) —
+    //    no limit, as it always was
     let mut m = scene(None, None);
     m.apply(Command::TrimEnd { id: ClipId(1), new_end: Tick(30 * SEC) }).unwrap();
-    assert_eq!(end_of(&m), 30 * SEC, "без известной длины предела быть не должно");
+    assert_eq!(end_of(&m), 30 * SEC, "without a known length there must be no limit");
 
-    // 5) событие УЖЕ длиннее материала (файл владельца) — законно и
-    //    само не укорачивается (правило 20)
+    // 5) the event is ALREADY longer than its material (the owner’s file) — legal and
+    //    not shortened by itself (rule 20)
     let mut m = scene(Some(Tick(10 * SEC)), None);
     {
         let mut p = m.project().clone();
         p.clips[0].duration = Tick(30 * SEC);
-        p.validate().expect("событие длиннее материала — законно");
+        p.validate().expect("an event longer than the material is legal");
         m = TimelineModel::new(p);
     }
     assert_eq!(end_of(&m), 30 * SEC);
-    // его можно ПОДРЕЗАТЬ (предел не тянет край назад скачком)
+    // it can be TRIMMED (the limit does not drag the edge back in a jump)
     m.apply(Command::TrimEnd { id: ClipId(1), new_end: Tick(25 * SEC) }).unwrap();
-    assert_eq!(end_of(&m), 25 * SEC, "подрезка события за материалом обязана работать");
-    // но растить ДАЛЬШЕ уже нельзя
+    assert_eq!(end_of(&m), 25 * SEC, "trimming an event past the material must work");
+    // but growing it FURTHER is no longer possible
     m.apply(Command::TrimEnd { id: ClipId(1), new_end: Tick(40 * SEC) }).unwrap();
-    assert_eq!(end_of(&m), 25 * SEC, "событие за материалом не имеет права расти дальше");
+    assert_eq!(end_of(&m), 25 * SEC, "an event past the material has no right to grow further");
 }

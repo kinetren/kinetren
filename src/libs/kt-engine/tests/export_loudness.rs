@@ -1,4 +1,4 @@
-//! Тесты 406-407 (Р.49 Б5): громкость считается на проходе экспорта.
+//! Tests 406-407 (R.49 B5): loudness is computed on the export pass.
 
 use kt_engine::export::render_raw_audio;
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
@@ -56,8 +56,8 @@ fn sources() -> Vec<(MediaId, Box<dyn kt_media::MediaSource>)> {
     )]
 }
 
-/// Тест 406 (Р.49 Б5): экспорт сообщает громкость, и она слышит громкость
-/// СОБЫТИЯ. Метр кормится готовым буфером чанка — ни одного нового декода.
+/// Test 406 (R.49 B5): the export reports the loudness, and it hears the loudness of
+/// the EVENT. The meter is fed by the ready chunk buffer — not a single new decode.
 #[test]
 fn t406_export_reports_loudness_of_the_mix() {
     let mut frames = 0u64;
@@ -66,49 +66,49 @@ fn t406_export_reports_loudness_of_the_mix() {
         Ok(())
     })
     .unwrap();
-    let a = loud.loudness.expect("экспорт обязан сообщить громкость").lufs.expect("не тишина");
-    assert!(frames > 0, "аудио вообще не рендерилось");
+    let a = loud.loudness.expect("the export must report loudness").lufs.expect("not silence");
+    assert!(frames > 0, "audio was not rendered at all");
 
-    // то же событие на 10 dB тише — ровно на 10 LU тише
+    // the same event 10 dB quieter — exactly 10 LU quieter
     let quiet = render_raw_audio(&project_with(-10.0, 12.0), sources(), |_| Ok(())).unwrap();
     let b = quiet.loudness.unwrap().lufs.unwrap();
     assert!(
         ((a - b) - 10.0).abs() <= 0.15,
-        "громкость экспорта не слышит уровень события: {a:.2} против {b:.2} LUFS"
+        "export loudness does not hear the event level: {a:.2} against {b:.2} LUFS"
     );
 
-    // истинный пик — про тот же материал: у `synth:sine` амплитуда 0.5,
-    // то есть −6.02 dBFS, и истинный пик обязан лечь рядом
+    // the true peak is for the same material: `synth:sine` has amplitude 0.5,
+    // that is −6.02 dBFS, and the true peak must land next to it
     let dbtp = loud.loudness.unwrap().dbtp;
     assert!(
         (dbtp + 6.02).abs() < 0.5,
-        "истинный пик разошёлся с амплитудой источника: {dbtp:.2} dBTP при −6.02 dBFS"
+        "true peak diverged from the source amplitude: {dbtp:.2} dBTP at −6.02 dBFS"
     );
 }
 
-/// Тест 407 (Р.49 Б5): мастер-гейн в измерении НЕ участвует — и не может.
+/// Test 407 (R.49 B5): the master gain does NOT take part in the measurement — and cannot.
 ///
-/// Он живёт только в `Player`, его нет ни в `Project`, ни в .otio, экспорт его
-/// не применяет, а ставит его фейдер панели метров: это громкость КОНТРОЛЯ.
-/// Следствие, которое и проверяется: число в превью и число в файле совпадают
-/// ПО ПОСТРОЕНИЮ, потому что считает их один и тот же код по одному и тому же
-/// материалу.
+/// It lives only in `Player`, it is in neither `Project` nor the .otio, export does not
+/// apply it, and it is set by the meters panel's fader: this is the CONTROL loudness.
+/// The consequence that is checked: the number in the preview and the number in the file match
+/// BY CONSTRUCTION, because the same code counts both over the same
+/// material.
 #[test]
 fn t407_master_gain_is_not_part_of_the_measurement() {
     let p = project_with(0.0, 12.0);
     let a = render_raw_audio(&p, sources(), |_| Ok(())).unwrap().loudness.unwrap().lufs.unwrap();
 
-    // мастер-гейн — свойство плеера; в модели проекта его нет вовсе, и
-    // записать его туда нечем. Сторож: поле с таким смыслом не должно
-    // появиться в настройках проекта незаметно.
+    // the master gain is a property of the player; there is no such thing in the project model
+    // and nowhere to write it. Guard: a field with this meaning must not
+    // appear in the project settings unnoticed.
     let settings = format!("{:?}", p.settings);
     assert!(
         !settings.contains("master"),
-        "мастер-гейн просочился в настройки проекта ({settings}) — тогда экспорт обязан \
-         его применять, и «громкость контроля» перестанет быть громкостью контроля"
+        "the master gain leaked into the project settings ({settings}) — then the export must apply \
+         it, and “monitor volume” would stop being monitor volume"
     );
 
-    // повтор того же экспорта даёт то же число: измерение детерминировано
+    // a repeat of the same export gives the same number: the measurement is deterministic
     let b = render_raw_audio(&p, sources(), |_| Ok(())).unwrap().loudness.unwrap().lufs.unwrap();
-    assert_eq!(a, b, "измерение громкости недетерминировано");
+    assert_eq!(a, b, "loudness measurement is non-deterministic");
 }

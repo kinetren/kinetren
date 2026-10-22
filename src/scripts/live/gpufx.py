@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.29: видео-FX на GPU-пути реально применяются в превью.
+"""Live scenario R.29: video FX on the GPU path are really applied in the preview.
 
-Живой kt-app в Xvfb идёт по НАСТОЯЩЕМУ GPU-коду (софт-рендер llvmpipe —
-тоже «GPU есть»). Два клипа одного светло-серого медиа: без эффектов и с
-цепочкой Edges — на плоском цвете Собель гасит кадр в чёрный. Проверяется
-то, что видит человек: превью без FX светлое, с FX — тёмное. Заодно ловит
-«молчаливый CPU-фолбэк со сломанным нотисом»: цепочка обязана работать в
-обоих случаях, а бэкенд печатается в лог сценария из stderr программы.
+The live kt-app in Xvfb runs on the REAL GPU code (software rendering llvmpipe —
+also counts as “GPU present”). Two clips of the same light-gray media: without effects and with
+an Edges chain — on a flat color the Sobel filter darkens the frame to black. Checked is
+what a person sees: the preview without FX is light, with FX — dark. In passing it catches
+a “silent CPU fallback with a broken notice”: the chain must work in
+both cases, and the backend is printed to the scenario log from the stderr of the program.
 """
 import json
 import os
@@ -29,32 +29,32 @@ def main(out):
         preview = app.preview_center()
         app.shot("open")
 
-        # клип без FX: плоский светлый кадр
+        # a clip without FX: a flat light frame
         app.click(app.x_at(int(1.5 * SEC)), app.ruler_y())
         plain = app.brightness(preview)
         app.shot("plain")
 
-        # клип с Edges: на плоском цвете градиентов нет → чёрный кадр.
+        # clip with Edges: a flat colour has no gradients → black frame.
         #
-        # Читаем ПОСЛЕ СМЕНЫ картинки (`pixel_settled`), а не сразу: превью
-        # штатно держит последний кадр, пока не приедет декодированный
-        # (правило `apps/kt-app/CLAUDE.md`). Прежде это прятала цена самого
-        # чтения — снимок всего экрана через ImageMagick занимал 84 мс и
-        # давал программе фору; с прямым чтением у X (Р.69) фора исчезла, и
-        # сценарий начал читать ПРЕДЫДУЩИЙ кадр.
+        # We read AFTER the picture CHANGES (`pixel_settled`), not at once: the preview
+        # normally keeps the last frame until the decoded one arrives
+        # (rule in `apps/kt-app/CLAUDE.md`). Previously the cost of the read itself hid this —
+        # a snapshot of the whole screen via ImageMagick took 84 ms and gave the program a head start;
+        # with a direct read from X (R.69) the head start disappeared, and the
+        # scenario started reading the PREVIOUS frame.
         app.click(app.x_at(int(5.5 * SEC)), app.ruler_y())
         r, g, b = app.pixel_settled(preview, differs_from=app.pixel(*preview))
         fx = (r + g + b) / 3.0
         app.shot("edges")
 
-        print(f"   яркость превью: без FX {plain:.1f}, с Edges {fx:.1f}")
-        app.expect(plain > 120.0, f"кадр без FX светлый: {plain:.1f}")
-        app.expect(fx < plain * 0.2, f"Edges погасил плоский кадр: {fx:.1f} vs {plain:.1f}")
+        print(f"   preview brightness: without FX {plain:.1f}, with Edges {fx:.1f}")
+        app.expect(plain > 120.0, f"frame without FX is light: {plain:.1f}")
+        app.expect(fx < plain * 0.2, f"Edges darkened the flat frame: {fx:.1f} vs {plain:.1f}")
         return app.done()
 
 
 def add_edges_to_second_clip(path):
-    """Цепочка kt:edges на второй клип видео-дорожки (формат convert.rs)."""
+    """Chain kt:edges on the second clip of the video track (convert.rs format)."""
     with open(path) as f:
         doc = json.load(f)
     track = next(t for t in doc["tracks"]["children"] if t.get("kind") == "Video")

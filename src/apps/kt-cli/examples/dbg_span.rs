@@ -1,4 +1,4 @@
-// debug: какой ключ падает
+// debug: which key falls
 fn main() {
     let path = std::env::args().nth(1).unwrap();
     let mut src = kt_media::ffmpeg::FfmpegSource::open(&path).unwrap();

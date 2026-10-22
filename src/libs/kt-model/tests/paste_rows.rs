@@ -1,12 +1,12 @@
-//! Тест 595 (docs/porting-notes.md, п.450, Р.56): координаты дорожек у
-//! блока обмена.
+//! Test 595 (docs/porting-notes.md, item 450, R.56):
+//! track coordinates at the paste block.
 //!
-//! Претензия владельца дословно: «я копирую ZEF последний в длинной
-//! композиции… а он берет и вставляет одну часть сверху а другую
-//! часть(аудио) уносит вниз, ну и в самом низу морфер т.к. для него
-//! действительно места не было». Причина — клипборд хранил номера
-//! РАБОЧЕГО ВИДА, где полоса раскрытия смещена на `base[вид]`, а
-//! смещения у видов разные.
+//! The owner’s claim, verbatim: “I copy ZEF last in a long
+//! composition… and it takes one part above and another
+//! part (audio) drops down, and at the very bottom the morpher, because there was really no room for it.” The cause:
+//! the clipboard stored the numbers of the WORKING VIEW, where the expansion strip is
+//! shifted by `base[view]`, and the offsets
+//! differ between views.
 
 use kt_model::*;
 use kt_time::Tick;
@@ -53,7 +53,7 @@ fn clip(id: u64, kind: ClipKind, lane: u32) -> ClipEvent {
     }
 }
 
-/// Пара видео+аудио, морфер и камера — ровно то, что копировал владелец.
+/// A video+audio pair, a morpher and a camera: exactly what the owner copied.
 fn block() -> ops::ClipBlock {
     ops::ClipBlock {
         clips: vec![clip(1, ClipKind::Video, 1), clip(2, ClipKind::Audio, 3)],
@@ -98,66 +98,66 @@ fn lanes(b: &ops::ClipBlock) -> (u32, u32, u32, u32) {
 fn t595_block_is_shifted_to_the_clicked_row() {
     use LaneKind::*;
 
-    // клик по ВЕРХНЕЙ видео-строке: все виды едут на −1, но у морфера и
-    // камеры ниже нуля места нет — их сдвиг УРЕЗАН, и это названо
+    // click on the TOP video row: all views shift by −1, but the morpher and
+    // camera have no room below zero — their shift is CLAMPED, and this is named
     let (b, clamped) = block().shifted_to_row(Some((Video, 0)));
-    assert_eq!(lanes(&b), (0, 2, 0, 0), "видео не совмещено с кликнутой строкой");
-    assert_eq!(clamped, vec![Morph], "урезание сдвига не названо");
+    assert_eq!(lanes(&b), (0, 2, 0, 0), "video not aligned with the clicked row");
+    assert_eq!(clamped, vec![Morph], "clipping of the shift is not named");
 
-    // клик по ВЕРХНЕЙ аудио-строке: дельта −3, урезаны три вида
+    // click on the TOP audio row: delta −3, three views clamped
     let (b, clamped) = block().shifted_to_row(Some((Audio, 0)));
     assert_eq!(lanes(&b), (0, 0, 0, 0));
     assert_eq!(clamped, vec![Video, Morph, Camera]);
 
-    // клик по камерной строке: дельта +3, пара сохраняет расстояние
+    // click on the camera row: delta +3, the pair keeps its distance
     let (b, clamped) = block().shifted_to_row(Some((Camera, 4)));
-    assert_eq!(lanes(&b), (4, 6, 3, 4), "взаимное положение видов поехало");
+    assert_eq!(lanes(&b), (4, 6, 3, 4), "the relative position of the views shifted");
     assert!(clamped.is_empty());
 
-    // вида в блоке нет — не двигаем вовсе: угадывать нечего
+    // no view in the block — do not move at all: nothing to guess
     let mut only_video = block();
     only_video.cameras.clear();
     let (b, clamped) = only_video.shifted_to_row(Some((Camera, 4)));
-    assert_eq!(b.clips[0].lane, 1, "блок без камер поехал от клика по камерной строке");
+    assert_eq!(b.clips[0].lane, 1, "a block without cameras moved from a click on a camera row");
     assert!(clamped.is_empty());
 
-    // строки нет (Ctrl+V мимо таймлайна) — блок как есть
+    // no row (Ctrl+V outside the timeline) — the block as is
     let (b, _) = block().shifted_to_row(None);
     assert_eq!(lanes(&b), (1, 3, 0, 1));
 }
 
 #[test]
 fn t595b_localize_converts_a_band_block_into_reel_coordinates() {
-    // полоса раскрытия: у видов РАЗНЫЕ базы — ровно то, из-за чего пара
-    // разъезжалась при вставке
+    // expansion strip: the views have DIFFERENT bases —
+    // exactly what made the pair drift apart on paste
     let base = LaneBases { video: 3, audio: 2, morph: 1, camera: 0 };
     let len = LaneBases { video: 2, audio: 2, morph: 1, camera: 2 };
     let mut b = ops::ClipBlock {
         clips: vec![
-            clip(1, ClipKind::Video, 4), // полоса: локально 1
-            clip(2, ClipKind::Audio, 2), // полоса: локально 0
-            clip(3, ClipKind::Video, 0), // КОРЕНЬ — чужое
+            clip(1, ClipKind::Video, 4), // strip: locally 1
+            clip(2, ClipKind::Audio, 2), // strip: locally 0
+            clip(3, ClipKind::Video, 0), // ROOT — the foreign one
         ],
         morphers: block().morphers,
         cameras: block().cameras,
         ..Default::default()
     };
-    b.morphers[0].lane = 1; // полоса: локально 0
-    b.cameras[0].lane = 1; // полоса: локально 1
+    b.morphers[0].lane = 1; // strip: locally 0
+    b.cameras[0].lane = 1; // strip: locally 1
     let dropped = b.localize(base, len);
-    assert_eq!(dropped, 1, "корневое событие не выброшено из блока ленты");
-    assert_eq!(lanes(&b), (1, 0, 0, 1), "перевод в координаты ленты неверен");
+    assert_eq!(dropped, 1, "a root event was not thrown out of the reel block");
+    assert_eq!(lanes(&b), (1, 0, 0, 1), "conversion to reel coordinates is wrong");
 
-    // и обратно — тождество
+    // and back — identity
     b.offset_lanes(base);
-    assert_eq!(lanes(&b), (4, 2, 1, 1), "обратный перевод не совпал");
+    assert_eq!(lanes(&b), (4, 2, 1, 1), "the reverse conversion did not match");
 
-    // сколько дорожек нужно под блок
+    // how many tracks the block needs
     let need = b.lanes_needed();
     assert_eq!((need.video, need.audio, need.morph, need.camera), (5, 3, 2, 2));
 }
 
-/// Вставка в пустой проект заводит дорожки ЯВНО и одним шагом истории.
+/// Paste into an empty project creates tracks EXPLICITLY and in one history step.
 #[test]
 fn t595c_paste_grows_lanes_in_one_step() {
     let mut p = Project::new(settings());
@@ -193,8 +193,8 @@ fn t595c_paste_grows_lanes_in_one_step() {
     );
     cmds.extend(paste);
     let depth = m.undo_depth();
-    m.apply_batch(cmds).expect("вставка с ростом дорожек");
-    assert_eq!(m.undo_depth(), depth + 1, "вставка стоила больше одного шага истории");
+    m.apply_batch(cmds).expect("insertion with growing tracks");
+    assert_eq!(m.undo_depth(), depth + 1, "insertion cost more than one history step");
 
     let p = m.project();
     assert_eq!(
@@ -208,8 +208,8 @@ fn t595c_paste_grows_lanes_in_one_step() {
     );
     let v = p.clips.iter().find(|c| c.kind == ClipKind::Video).unwrap();
     let a = p.clips.iter().find(|c| c.kind == ClipKind::Audio).unwrap();
-    assert_eq!((v.lane, a.lane), (4, 6), "пара приехала не на свои дорожки");
-    assert_eq!(v.link_group, a.link_group, "link-группа пары распалась");
+    assert_eq!((v.lane, a.lane), (4, 6), "the pair arrived on the wrong tracks");
+    assert_eq!(v.link_group, a.link_group, "the link group of the pair fell apart");
     assert_eq!(p.morphers[0].lane, 3);
     assert_eq!(p.cameras[0].lane, 4);
 }

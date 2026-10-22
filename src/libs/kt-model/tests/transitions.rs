@@ -1,8 +1,8 @@
-//! Тест 135 (п.135 porting-notes, Р.24): переходы в модели.
+//! Test 135 (item 135 porting-notes, R.24): transitions in the model.
 //!
-//! Кроссфейд — явный TransitionEvent на стыке двух соседних клипов (OTIO),
-//! а не перекрытие. Здесь: команды/undo, инварианты валидации, судьба
-//! перехода при правках соседей (reconcile), ретаргет при Split.
+//! A crossfade is an explicit TransitionEvent at the joint of two neighbouring clips (OTIO),
+//! not an overlap. Here: commands/undo, validation invariants, the fate
+//! of the transition on neighbour edits (reconcile), retargeting on Split.
 
 use kt_model::*;
 use kt_time::Tick;
@@ -78,54 +78,54 @@ fn t135_commands_undo_and_window() {
     m.apply(Command::RemoveTransition { id: TransitionId(1) }).unwrap();
     assert!(m.project().transitions.is_empty());
 
-    m.undo().unwrap(); // remove откатился
+    m.undo().unwrap(); // remove rolled back
     assert_eq!(m.project().transitions[0].in_offset, Tick(1_000));
-    m.undo().unwrap(); // set откатился
+    m.undo().unwrap(); // set rolled back
     assert_eq!(m.project().transitions[0].in_offset, Tick(9_000));
-    m.undo().unwrap(); // add откатился
+    m.undo().unwrap(); // add rolled back
     assert!(m.project().transitions.is_empty());
 }
 
 #[test]
 fn t135_validation_rejects_bad_transitions() {
     let mut m = TimelineModel::new(base_project());
-    // не соседи (1 и 3 не встык)
+    // not neighbours (1 and 3 are not butted together)
     assert!(matches!(
         m.apply(Command::AddTransition(tr(1, 1, 3, 900, 900))),
         Err(CommandError::InvalidTransition(ProjectError::TransitionNotAtJoint(_)))
     ));
-    // окно шире тела клипа
+    // window wider than the clip body
     assert!(matches!(
         m.apply(Command::AddTransition(tr(1, 1, 2, 48_001, 0))),
         Err(CommandError::InvalidTransition(ProjectError::TransitionTooWide(_)))
     ));
-    // уже минимума
+    // already at the minimum
     assert!(matches!(
         m.apply(Command::AddTransition(tr(1, 1, 2, 44, 45))),
         Err(CommandError::InvalidTransition(ProjectError::TransitionTooShort(_)))
     ));
-    // отрицательный офсет
+    // negative offset
     assert!(matches!(
         m.apply(Command::AddTransition(tr(1, 1, 2, -10, 900))),
         Err(CommandError::InvalidTransition(ProjectError::TransitionTooWide(_)))
     ));
 
     m.apply(Command::AddTransition(tr(1, 1, 2, 9_000, 9_000))).unwrap();
-    // второй переход на тот же стык
+    // a second transition at the same joint
     assert!(matches!(
         m.apply(Command::AddTransition(tr(2, 1, 2, 900, 900))),
         Err(CommandError::InvalidTransition(ProjectError::DuplicateTransitionJoint(_, _)))
     ));
-    // окна соседних переходов одной дорожки пересекаются:
-    // окно (1|2) = [39000, 57000), окно (2|3) с in=9000 начинается на 87000 — ок,
-    // а с in=48000/out=0 стартует на 48000 < 57000 — конфликт
+    // the windows of neighbouring transitions on one track overlap:
+    // window (1|2) = [39000, 57000), window (2|3) with in=9000 starts at 87000 — ok,
+    // but with in=48000/out=0 it starts at 48000 < 57000 — a conflict
     assert!(matches!(
         m.apply(Command::AddTransition(tr(2, 2, 3, 48_000, 0))),
         Err(CommandError::InvalidTransition(ProjectError::TransitionWindowsOverlap(_, _)))
     ));
     m.apply(Command::AddTransition(tr(2, 2, 3, 9_000, 9_000))).unwrap();
 
-    // занятый id и несуществующий id
+    // a busy id and a non-existent id
     assert!(matches!(
         m.apply(Command::AddTransition(tr(2, 1, 2, 900, 900))),
         Err(CommandError::IdInUse(2))
@@ -139,17 +139,17 @@ fn t135_validation_rejects_bad_transitions() {
         Err(CommandError::TransitionNotFound(TransitionId(99)))
     ));
 
-    // validate() проекта ловит то же самое напрямую (для конвертеров)
+    // project validate() catches the same thing directly (for converters)
     let mut p = base_project();
     p.transitions.push(tr(7, 1, 3, 900, 900));
     assert!(matches!(p.validate(), Err(ProjectError::TransitionNotAtJoint(TransitionId(7)))));
 
-    // Инвариант этапа 6 (реш. 8 Р.24) действует, когда переслаивание
-    // ВЫКЛЮЧЕНО (Р.28): тогда перекрытие клипов одной дорожки незаконно — и в
-    // validate(), и через жёсткую проверку apply_batch
+    // The invariant of stage 6 (decision 8 of R.24) applies when the layering
+    // is OFF (R.28): then overlapping clips on one track is illegal — both in
+    // validate(), and through the strict check in apply_batch
     let mut p = base_project();
     p.overlap_layers = false;
-    p.clips[1].start = Tick(40_000); // наезд на клип 1
+    p.clips[1].start = Tick(40_000); // overlap onto clip 1
     assert!(matches!(p.validate(), Err(ProjectError::ClipOverlap(ClipId(1), ClipId(2)))));
     let mut base = base_project();
     base.overlap_layers = false;
@@ -158,7 +158,7 @@ fn t135_validation_rejects_bad_transitions() {
         m.apply(Command::MoveClip { id: ClipId(2), new_start: Tick(40_000), new_lane: 0 }),
         Err(CommandError::InvalidLayout(ProjectError::ClipOverlap(_, _)))
     ));
-    // и с foreign-плейсхолдером
+    // and with a foreign placeholder
     let mut p = base_project();
     p.foreign.push(ForeignEvent {
         key: 1,
@@ -172,8 +172,8 @@ fn t135_validation_rejects_bad_transitions() {
 
 #[test]
 fn t135_reconcile_on_neighbor_edits() {
-    // Move одного соседа рвёт стык — переход умирает (уводим на другую
-    // дорожку: сдвиг по времени теперь честно ловил бы ClipOverlap)
+    // Moving one neighbour tears the joint — the transition dies (moving it to another
+    // track: a time shift would now honestly catch ClipOverlap)
     let mut m = TimelineModel::new(base_project());
     m.apply(Command::AddTransition(tr(1, 1, 2, 9_000, 9_000))).unwrap();
     m.apply(Command::MoveClip { id: ClipId(2), new_start: Tick(48_000), new_lane: 1 }).unwrap();
@@ -181,8 +181,8 @@ fn t135_reconcile_on_neighbor_edits() {
     m.undo().unwrap();
     assert_eq!(m.project().transitions.len(), 1, "undo brings it back");
 
-    // Групповой перенос обоих соседей стык сохраняет — переход живёт
-    // (клип 3 убираем: сдвиг вправо теперь честно ловил бы коллизию)
+    // Group move of both neighbours keeps the joint — the transition lives
+    // (clip 3 removed: a shift to the right would now honestly catch a collision)
     let mut m = TimelineModel::new(base_project());
     m.apply(Command::RemoveClip { id: ClipId(3) }).unwrap();
     m.apply(Command::LinkClips { ids: vec![ClipId(1), ClipId(2)], group: GroupId(10) }).unwrap();
@@ -191,22 +191,22 @@ fn t135_reconcile_on_neighbor_edits() {
     assert_eq!(m.project().transitions.len(), 1, "group move keeps the joint");
     assert_eq!(m.project().transitions[0].joint(m.project()), Some(Tick(54_000)));
 
-    // Трим укорачивает тело — офсет клампится; ниже минимума — умирает
+    // Trim shortens the body — the offset is clamped; below the minimum — it dies
     let mut m = TimelineModel::new(base_project());
     m.apply(Command::AddTransition(tr(1, 2, 3, 9_000, 0))).unwrap();
-    // конец клипа 3 не трогаем; тримим ВЕСЬ клип 2 справа нельзя (стык!),
-    // поэтому клампим через укорочение клипа 2 слева: тело 2 стало 3000
+    // the end of clip 3 is not touched; trimming ALL of clip 2 from the right is impossible (the joint!),
+    // so we clamp through shortening clip 2 from the left: body 2 became 3000
     m.apply(Command::TrimStart { id: ClipId(2), new_start: Tick(93_000) }).unwrap();
     assert_eq!(m.project().transitions.len(), 1);
     assert_eq!(m.project().transitions[0].in_offset, Tick(3_000), "clamped by body");
-    // тело не может стать меньше MIN_CLIP_DURATION, поэтому кламп упирается
-    // в 90 и переход остаётся жив (ветка «окно < минимума» в reconcile —
-    // защитная: через тримы недостижима, т.к. минимумы клипа и окна равны)
+    // the body cannot become shorter than MIN_CLIP_DURATION, so the clamp hits
+    // 90 and the transition stays alive (the “window < minimum” branch in reconcile —
+    // a defensive one: unreachable through trims, since the minimums of the clip and of the window are equal)
     m.apply(Command::TrimStart { id: ClipId(2), new_start: Tick(95_910) }).unwrap();
     assert_eq!(m.project().transitions.len(), 1);
     assert_eq!(m.project().transitions[0].in_offset, Tick(90), "clamped to minimal body");
 
-    // Удаление соседа — переход умирает
+    // Deleting the neighbour — the transition dies
     let mut m = TimelineModel::new(base_project());
     m.apply(Command::AddTransition(tr(1, 1, 2, 9_000, 9_000))).unwrap();
     m.apply(Command::RemoveClip { id: ClipId(2) }).unwrap();
@@ -215,7 +215,7 @@ fn t135_reconcile_on_neighbor_edits() {
 
 #[test]
 fn t135_split_retargets_outgoing() {
-    // Split OUTGOING-соседа: стык (его конец) уезжает к правой половине
+    // Split of the OUTGOING neighbour: the joint (its end) moves to the right half
     let mut m = TimelineModel::new(base_project());
     m.apply(Command::AddTransition(tr(1, 1, 2, 9_000, 9_000))).unwrap();
     m.apply(Command::Split {
@@ -230,7 +230,7 @@ fn t135_split_retargets_outgoing() {
     assert_eq!((t.a, t.b), (Some(ClipId(50)), Some(ClipId(2))));
     assert_eq!(t.joint(m.project()), Some(Tick(48_000)));
 
-    // Split INCOMING-соседа: стык (его начало) остаётся за левой половиной
+    // Split of the INCOMING neighbour: the joint (its start) stays with the left half
     let mut m = TimelineModel::new(base_project());
     m.apply(Command::AddTransition(tr(1, 1, 2, 9_000, 9_000))).unwrap();
     m.apply(Command::Split {
@@ -242,11 +242,11 @@ fn t135_split_retargets_outgoing() {
     .unwrap();
     let t = &m.project().transitions[0];
     assert_eq!((t.a, t.b), (Some(ClipId(1)), Some(ClipId(2))), "incoming split keeps ids");
-    // тело incoming укоротилось до 24000 — out_offset клампнулся
+    // the body of incoming shortened to 24000 — out_offset got clamped
     assert_eq!(t.out_offset, Tick(9_000).min(Tick(24_000)));
 }
 
-// ---- тест 155: фейды у края дорожки (Р.25) -----------------------------------
+// ---- test 155: fades at the track edge (R.25) -----------------------------------
 
 fn fade(id: u64, a: Option<u64>, b: Option<u64>, in_off: i64, out_off: i64) -> TransitionEvent {
     TransitionEvent {
@@ -262,62 +262,62 @@ fn fade(id: u64, a: Option<u64>, b: Option<u64>, in_off: i64, out_off: i64) -> T
     }
 }
 
-/// Переход с ОДНИМ живым концом законен: слева/справа от него пустота
-/// (край дорожки или Gap). Стык — граница живого клипа, окно считается
-/// от неё, офсет в сторону пустоты телом не ограничен.
+/// A transition with ONE live end is legal: there is emptiness to its left/right
+/// (the track edge or a Gap). The joint is the boundary of a live clip, the window is counted
+/// from it; the offset TOWARD the emptiness is not limited by the body.
 #[test]
 fn t155_fade_is_a_transition_with_one_side() {
     let mut p = base_project();
-    // фейд-ин первого клипа и фейд-аут последнего
+    // fade-in of the first clip and fade-out of the last
     p.transitions.push(fade(1, None, Some(1), 9_000, 9_000));
     p.transitions.push(fade(2, Some(3), None, 9_000, 9_000));
-    p.validate().expect("фейды у краёв дорожки законны");
+    p.validate().expect("fades at the track edges are legal");
 
     let fi = &p.transitions[0];
     assert!(fi.is_fade());
-    assert_eq!(fi.joint(&p), Some(Tick(0)), "стык фейд-ина — начало его клипа");
-    assert_eq!(fi.window(&p).unwrap().start, Tick(-9_000), "часть окна висит в пустоте");
+    assert_eq!(fi.joint(&p), Some(Tick(0)), "the fade-in seam is the start of its clip");
+    assert_eq!(fi.window(&p).unwrap().start, Tick(-9_000), "part of the window hangs in the void");
 
     let fo = &p.transitions[1];
-    assert_eq!(fo.joint(&p), Some(Tick(144_000)), "стык фейд-аута — конец его клипа");
+    assert_eq!(fo.joint(&p), Some(Tick(144_000)), "the fade-out seam is the end of its clip");
 
-    // офсет В СТОРОНУ КЛИПА по-прежнему ограничен телом
+    // the offset TOWARD THE CLIP is still limited by the body
     let mut bad = p.clone();
     bad.transitions[0].out_offset = Tick(48_001);
-    assert!(bad.validate().is_err(), "фейд не может быть шире тела своего клипа");
-    // а в сторону пустоты — нет
+    assert!(bad.validate().is_err(), "a fade cannot be wider than the body of its clip");
+    // and toward the emptiness — no
     let mut wide = p.clone();
     wide.transitions[0].in_offset = Tick(500_000);
-    wide.validate().expect("в пустоту фейд тянется свободно");
+    wide.validate().expect("a fade extends freely into the void");
 
-    // переход без клипов вообще — ошибка
+    // a transition with no clips at all — an error
     let mut orphan = base_project();
     orphan.transitions.push(fade(9, None, None, 9_000, 9_000));
     assert!(orphan.validate().is_err());
 }
 
-/// Фейд живёт по тем же правилам, что кроссфейд: трим клампит окно, удаление
-/// клипа уносит переход, копипаст переносит фейд вместе с его клипом.
+/// A fade lives by the same rules as a crossfade: a trim clamps the window, deleting a
+/// clip takes the transition with it, copy-paste carries the fade together with its clip.
 #[test]
 fn t155_fade_survives_edits_and_clipboard() {
     let mut m = TimelineModel::new(base_project());
     m.apply(Command::AddTransition(fade(1, None, Some(1), 9_000, 9_000))).unwrap();
 
-    // трим клипа укорачивает офсет в его сторону
+    // a clip trim shortens the offset on its side
     m.apply(Command::TrimEnd { id: ClipId(1), new_end: Tick(4_000) }).unwrap();
     let t = &m.project().transitions[0];
-    assert_eq!(t.out_offset, Tick(4_000), "офсет в тело клампится тримом");
-    assert_eq!(t.in_offset, Tick(9_000), "офсет в пустоту трим не трогает");
+    assert_eq!(t.out_offset, Tick(4_000), "an offset into the body is clamped by trim");
+    assert_eq!(t.in_offset, Tick(9_000), "an offset into the void is not touched by trim");
 
-    // удаление клипа уносит и фейд
+    // deleting the clip takes the fade with it too
     m.apply(Command::RemoveClip { id: ClipId(1) }).unwrap();
     assert!(m.project().transitions.is_empty());
 
-    // копипаст: фейд едет вместе со своим клипом
+    // copy-paste: the fade travels with its own clip
     let mut m = TimelineModel::new(base_project());
     m.apply(Command::AddTransition(fade(1, None, Some(2), 9_000, 9_000))).unwrap();
     let block = kt_model::ops::copy_group(m.project(), ClipId(2));
-    assert_eq!(block.transitions.len(), 1, "фейд в блоке");
+    assert_eq!(block.transitions.len(), 1, "fade in a block");
     let (mut next_clip, mut next_group, mut next_tr, mut next_morph) =
         (100u64, 100u64, 100u64, 1u64);
     let mut next_cam = 1u64;
@@ -335,19 +335,19 @@ fn t155_fade_survives_edits_and_clipboard() {
     );
     m.apply_batch(cmds).unwrap();
     let pasted = m.project().transitions.iter().find(|t| t.id == TransitionId(100)).unwrap();
-    assert!(pasted.a.is_none() && pasted.b == Some(ClipId(100)), "вставленный фейд остался фейдом");
+    assert!(pasted.a.is_none() && pasted.b == Some(ClipId(100)), "the inserted fade stayed a fade");
 }
 
-// ---- тест 159: возврат «ручек» при разрыве кроссфейда (Р.26) ------------------
+// ---- test 159: restoring the “handles” when a crossfade is broken (R.26) ------------------
 
-/// Наезд режет клипы до стыка; растаскивание обязано вернуть срезанное —
-/// как в Vegas, где перекрытие просто перестаёт быть перекрытием.
+/// An overlap cuts clips up to the joint; pulling them apart must restore what was cut —
+/// as in Vegas, where an overlap simply stops being an overlap.
 #[test]
 fn t159_restore_handles_after_pulling_apart() {
-    // готовим состояние «после наезда»: клипы встык + переход
+    // we prepare the state “after the overlap”: clips butted together + transition
     let mut m = TimelineModel::new(base_project());
     let before_trim = m.project().clone();
-    // наезд: клип 2 съехал на 20_000 влево, стык — середина наезда
+    // overlap: clip 2 slid 20_000 to the left, the joint is the middle of the overlap
     m.apply_batch(vec![
         Command::MoveClip { id: ClipId(2), new_start: Tick(28_000), new_lane: 0 },
         Command::TrimEnd { id: ClipId(1), new_end: Tick(38_000) },
@@ -356,12 +356,12 @@ fn t159_restore_handles_after_pulling_apart() {
     ])
     .unwrap();
 
-    // растаскиваем: клип 2 уезжает далеко вправо
+    // we pull apart: clip 2 moves far to the right
     let cmds = vec![Command::MoveClip { id: ClipId(2), new_start: Tick(300_000), new_lane: 0 }];
     let after = m.preview(&cmds).unwrap();
-    assert!(after.transitions.is_empty(), "разорванный стык убивает переход");
+    assert!(after.transitions.is_empty(), "a broken seam kills the transition");
     let restore = kt_model::ops::restore_handles(m.project(), &after);
-    assert_eq!(restore.len(), 2, "по команде на каждый конец: {restore:?}");
+    assert_eq!(restore.len(), 2, "per command for each end: {restore:?}");
 
     let mut all = cmds;
     all.extend(restore);
@@ -372,18 +372,18 @@ fn t159_restore_handles_after_pulling_apart() {
     let b = p.clips.iter().find(|c| c.id == ClipId(2)).unwrap();
     let a0 = before_trim.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
     let b0 = before_trim.clips.iter().find(|c| c.id == ClipId(2)).unwrap();
-    assert_eq!(a.duration, a0.duration, "уходящему вернули хвост");
-    assert_eq!(b.duration, b0.duration, "входящему вернули голову");
-    assert_eq!(b.source_in, b0.source_in, "точка входа тоже вернулась");
-    assert_eq!(b.start, Tick(300_000) - Tick(10_000), "голова растёт влево от нового места");
+    assert_eq!(a.duration, a0.duration, "the outgoing one got its tail back");
+    assert_eq!(b.duration, b0.duration, "the incoming one got its head back");
+    assert_eq!(b.source_in, b0.source_in, "the entry point came back too");
+    assert_eq!(b.start, Tick(300_000) - Tick(10_000), "the head grows left from the new position");
 }
 
-/// Растащили НЕ полностью — вернётся столько, сколько влезло, и зазор
-/// делится между обоими концами.
+/// Pulled apart NOT fully — as much returns as fits, and the gap
+/// is split between both ends.
 #[test]
 fn t159_restore_is_clamped_by_free_space() {
     let mut m = TimelineModel::new(base_project());
-    // наезд: клип 2 съехал на 20_000 влево, стык — середина наезда
+    // overlap: clip 2 slid 20_000 to the left, the joint is the middle of the overlap
     m.apply_batch(vec![
         Command::MoveClip { id: ClipId(2), new_start: Tick(28_000), new_lane: 0 },
         Command::TrimEnd { id: ClipId(1), new_end: Tick(38_000) },
@@ -392,7 +392,7 @@ fn t159_restore_is_clamped_by_free_space() {
     ])
     .unwrap();
 
-    // зазор всего 6000 тиков против 20000 «хотелок»
+    // the gap is only 6000 ticks against 20000 “wishes”
     let cmds = vec![Command::MoveClip { id: ClipId(2), new_start: Tick(44_000), new_lane: 0 }];
     let after = m.preview(&cmds).unwrap();
     let mut all = cmds;
@@ -402,17 +402,17 @@ fn t159_restore_is_clamped_by_free_space() {
     let p = m.project();
     let a = p.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
     let b = p.clips.iter().find(|c| c.id == ClipId(2)).unwrap();
-    assert_eq!((a.start + a.duration).0, 41_000, "уходящему досталась половина зазора");
-    assert_eq!(b.start.0, 41_000, "входящему — вторая половина, клипы сомкнулись");
-    p.validate().expect("перекрытия не появилось");
+    assert_eq!((a.start + a.duration).0, 41_000, "the outgoing one got half of the gap");
+    assert_eq!(b.start.0, 41_000, "the incoming one got the other half, the clips closed up");
+    p.validate().expect("no overlap appeared");
 }
 
-/// Удалили соседа — выживший клип получает свой кусок обратно (решение
-/// пользователя Р.26 п.1).
+/// We deleted the neighbour — the surviving clip gets its piece back (the owner’s
+/// decision, R.26 item 1).
 #[test]
 fn t159_restore_after_neighbour_removed() {
     let mut m = TimelineModel::new(base_project());
-    // наезд: клип 2 съехал на 20_000 влево, стык — середина наезда
+    // overlap: clip 2 slid 20_000 to the left, the joint is the middle of the overlap
     m.apply_batch(vec![
         Command::MoveClip { id: ClipId(2), new_start: Tick(28_000), new_lane: 0 },
         Command::TrimEnd { id: ClipId(1), new_end: Tick(38_000) },
@@ -424,15 +424,15 @@ fn t159_restore_after_neighbour_removed() {
     let cmds = vec![Command::RemoveClip { id: ClipId(2) }];
     let after = m.preview(&cmds).unwrap();
     let restore = kt_model::ops::restore_handles(m.project(), &after);
-    assert_eq!(restore.len(), 1, "восстанавливается только выживший конец");
+    assert_eq!(restore.len(), 1, "only the surviving end is restored");
     let mut all = cmds;
     all.extend(restore);
     m.apply_batch(all).unwrap();
     let a = m.project().clips.iter().find(|c| c.id == ClipId(1)).unwrap();
-    assert_eq!((a.start + a.duration), Tick(48_000), "хвост вернулся целиком");
+    assert_eq!((a.start + a.duration), Tick(48_000), "the tail came back whole");
 }
 
-/// Фейду возвращать нечего: он заводится явной командой, ничего не срезая.
+/// there is nothing for a fade to return: it is created by an explicit command, cutting nothing
 #[test]
 fn t159_fade_has_nothing_to_restore() {
     let mut m = TimelineModel::new(base_project());
@@ -442,12 +442,12 @@ fn t159_fade_has_nothing_to_restore() {
     assert!(kt_model::ops::restore_handles(m.project(), &after).is_empty());
 }
 
-/// Возврат упирается в препятствия дорожки — включая чужие плейсхолдеры
-/// (инвариант «без перекрытий» считает и их).
+/// The return runs into the track’s obstacles — including foreign placeholders
+/// (the “no overlaps” invariant counts them too).
 #[test]
 fn t159_restore_stops_at_obstacles() {
-    // состояние «после наезда» собираем сразу: клипы встык + переход,
-    // а в четырёх тысячах тиков за стыком стоит чужая конструкция
+    // we assemble the state “after the overlap” at once: clips butted together + transition,
+    // and four thousand ticks past the joint stands a foreign construct
     let mut p = base_project();
     p.clips.retain(|c| c.id != ClipId(3));
     let (a, b) = (Tick(0), Tick(38_000));
@@ -469,9 +469,9 @@ fn t159_restore_stops_at_obstacles() {
     p.validate().unwrap();
     let mut m = TimelineModel::new(p);
 
-    // клип 2 уезжает за плейсхолдер; клип 1 хочет вернуть 10_000, но
-    // упирается в него уже через 4_000 — впрочем, места до плейсхолдера
-    // хватает: проверяем, что рост остановился ровно на препятствии
+    // clip 2 moves past the placeholder; clip 1 wants to return 10_000, but
+    // it hits it already after 4_000 — still, there is enough room up to the placeholder:
+    // we check that the growth stopped exactly at the obstacle
     let cmds = vec![Command::MoveClip { id: ClipId(2), new_start: Tick(90_000), new_lane: 0 }];
     let after = m.preview(&cmds).unwrap();
     let mut all = cmds;
@@ -479,17 +479,17 @@ fn t159_restore_stops_at_obstacles() {
     m.apply_batch(all).unwrap();
 
     let p = m.project();
-    p.validate().expect("итог валиден");
+    p.validate().expect("result is valid");
     let c2 = p.clips.iter().find(|c| c.id == ClipId(2)).unwrap();
-    assert_eq!(c2.start, Tick(84_000), "голова выросла только до плейсхолдера");
+    assert_eq!(c2.start, Tick(84_000), "the head grew only up to the placeholder");
     let c1 = p.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
-    assert_eq!(c1.start + c1.duration, Tick(48_000), "хвост вернулся целиком");
+    assert_eq!(c1.start + c1.duration, Tick(48_000), "the tail came back whole");
 }
 
-/// Возврат не имеет права уронить сам жест: у reversed-клипа TrimEnd
-/// ограничен source_in, а у обычного TrimStart — нулём материала. Без
-/// клампа check_on вернёт TooShort и откатит ВЕСЬ батч (перенос вместе с
-/// подарком) — поэтому кламп делает сам restore_handles.
+/// The return must not break the gesture itself: for a reversed clip TrimEnd
+/// is limited by source_in, and for an ordinary TrimStart — by zero material. Without
+/// a clamp check_on would return TooShort and roll back the WHOLE batch (the move together with
+/// the gift) — so the clamp is done by restore_handles itself.
 #[test]
 fn t159_restore_never_breaks_the_gesture() {
     for reversed in [false, true] {
@@ -497,10 +497,10 @@ fn t159_restore_never_breaks_the_gesture() {
         p.clips.retain(|c| c.id != ClipId(3));
         for c in &mut p.clips {
             c.reversed = reversed;
-            // материала за краем почти нет: вернуть можно лишь 2000 тиков
+            // almost no material beyond the edge: only 2000 ticks can be returned
             c.source_in = Tick(2_000);
         }
-        // состояние «после наезда»: встык + переход
+        // the state “after the overlap”: butted together + transition
         p.clips[0].duration = Tick(38_000);
         p.clips[1].start = Tick(38_000);
         p.clips[1].duration = Tick(38_000);
@@ -512,35 +512,35 @@ fn t159_restore_never_breaks_the_gesture() {
         let after = m.preview(&cmds).unwrap();
         let mut all = cmds;
         all.extend(kt_model::ops::restore_handles(m.project(), &after));
-        m.apply_batch(all).unwrap_or_else(|e| panic!("reversed={reversed}: жест провалился: {e}"));
+        m.apply_batch(all).unwrap_or_else(|e| panic!("reversed={reversed}: gesture failed: {e}"));
         let p = m.project();
         p.validate().unwrap();
         assert_eq!(
             p.clips.iter().find(|c| c.id == ClipId(2)).unwrap().start,
             Tick(300_000 - if reversed { 10_000 } else { 2_000 }),
-            "reversed={reversed}: вернулось столько, сколько есть материала"
+            "reversed={reversed}: returned as much as there is material"
         );
     }
 }
 
-/// Р.33 С4: у каждого вида перехода — полная спека параметров (та же, что
-/// у эффектов), значения ставятся/читаются/клампятся, теги уникальны, а
-/// умолчания конструктора совпадают с умолчаниями спеки. Без этого UI
-/// перехода пришлось бы писать руками — ровно тот разнобой, на который
-/// жаловался пользователь.
+/// R.33 S4: every transition kind has a full parameter spec (the same as
+/// for effects), values are set/read/clamped, tags are unique, and
+/// constructor defaults match the spec defaults. Without this the transition UI
+/// would have to be written by hand — exactly the inconsistency
+/// the user complained about.
 #[test]
 fn t223_transition_kind_specs() {
     let all = TransitionKind::ALL;
     assert_eq!(
         all.len(),
         33,
-        "33 вида: 16 прежних + 17 Р.51 (якорь «16» снят решением владельца, docs/user-feedback.md Р.51)"
+        "33 kinds: 16 previous + 17 R.51 (the anchor “16” was removed by decision of the owner, docs/user-feedback.md R.51)"
     );
     let mut tags: Vec<&str> = all.iter().map(|k| k.tag()).collect();
     tags.sort_unstable();
     let uniq = tags.len();
     tags.dedup();
-    assert_eq!(tags.len(), uniq, "теги видов уникальны: {tags:?}");
+    assert_eq!(tags.len(), uniq, "kind tags are unique: {tags:?}");
 
     let mut with_params = 0;
     for k in TransitionKind::ALL {
@@ -550,67 +550,67 @@ fn t223_transition_kind_specs() {
             let (name, lo, hi) = (spec.name.clone(), spec.min, spec.max);
             assert!(
                 (lo..=hi).contains(&spec.default),
-                "{}.{name}: дефолт {} вне [{lo}, {hi}]",
+                "{}.{name}: default {} outside [{lo}, {hi}]",
                 k.tag(),
                 spec.default
             );
-            assert!(spec.step > 0.0, "{}.{name}: шаг обязан быть положительным", k.tag());
-            // умолчание вида == умолчание спеки: иначе «сбросить» в UI
-            // даёт не то, что даёт создание перехода
+            assert!(spec.step > 0.0, "{}.{name}: step must be positive", k.tag());
+            // kind default == spec default: otherwise “reset” in the UI
+            // gives something other than what creating the transition gives
             let fresh = TransitionKind::ALL.iter().find(|x| x.tag() == k.tag()).unwrap().clone();
             let got = fresh.get_param(&name).unwrap();
             assert!(
                 (got - spec.default).abs() <= 1e-9,
-                "{}.{name}: конструктор даёт {got}, спека — {}",
+                "{}.{name}: constructor gives {got}, spec is {}",
                 k.tag(),
                 spec.default
             );
             let mid = (lo + hi) / 2.0;
-            assert!(k.set_param(&name, mid), "{}.{name} не установился", k.tag());
+            assert!(k.set_param(&name, mid), "{}.{name} did not set", k.tag());
             let got = k.get_param(&name).unwrap();
             assert!((got - mid).abs() <= 0.5, "{}.{name}: {got} vs {mid}", k.tag());
             assert!(k.set_param(&name, hi + 1e6));
-            assert!(k.get_param(&name).unwrap() <= hi + 1e-9, "{}.{name} не клампится", k.tag());
+            assert!(k.get_param(&name).unwrap() <= hi + 1e-9, "{}.{name} does not clamp", k.tag());
             assert!(k.set_param(&name, lo - 1e6));
             assert!(k.get_param(&name).unwrap() >= lo - 1e-9);
         }
-        assert!(!k.set_param("no_such_param", 1.0), "{}: чужое имя — отказ", k.tag());
+        assert!(!k.set_param("no_such_param", 1.0), "{}: foreign name — rejection", k.tag());
     }
-    assert!(with_params >= 20, "параметров у видов: {with_params}");
+    assert!(with_params >= 20, "parameters of the kinds: {with_params}");
     assert!(
         TransitionKind::Crossfade.param_specs().is_empty(),
-        "у кроссфейда числовых параметров нет — он остаётся прежним"
+        "a crossfade has no numeric parameters — it stays as before"
     );
 
-    // кривые аудио: монотонны, края точные, сумма мощностей не проваливается
+    // audio curves: monotonic, exact ends, the power sum does not dip
     for c in
         [AudioCurve::EqualPower, AudioCurve::Linear, AudioCurve::SCurve, AudioCurve::Exponential]
     {
-        assert!((c.rise(0.0)).abs() < 1e-12, "{c:?}: старт с нуля");
-        assert!((c.rise(1.0) - 1.0).abs() < 1e-12, "{c:?}: конец в единице");
+        assert!((c.rise(0.0)).abs() < 1e-12, "{c:?}: start from zero");
+        assert!((c.rise(1.0) - 1.0).abs() < 1e-12, "{c:?}: end at one");
         let mut prev = -1.0;
         for i in 0..=100 {
             let v = c.rise(i as f64 / 100.0);
-            assert!(v >= prev - 1e-12, "{c:?}: не монотонна в {i}");
+            assert!(v >= prev - 1e-12, "{c:?}: not monotonic at {i}");
             prev = v;
         }
     }
-    // характер кривых по сумме МОЩНОСТЕЙ в середине стыка (обе половины
-    // считаются одной формулой, поэтому вклад каждой — rise(0.5)^2)
+    // the character of the curves by the sum of POWERS in the middle of the joint (both halves
+    // are computed by one formula, so each one’s contribution is rise(0.5)^2)
     let mid = |c: AudioCurve| 2.0 * c.rise(0.5) * c.rise(0.5);
-    assert!((mid(AudioCurve::EqualPower) - 1.0).abs() < 1e-12, "equal-power держит мощность");
-    assert!((mid(AudioCurve::SCurve) - 1.0).abs() < 1e-12, "S-кривая тоже держит мощность");
-    assert!((mid(AudioCurve::Linear) - 0.5).abs() < 1e-12, "линейная даёт классический −3 dB");
-    assert!(mid(AudioCurve::Exponential) < 0.5, "экспонента — намеренно глубокий провал");
-    assert_eq!(AudioCurve::default(), AudioCurve::EqualPower, "умолчание — прежняя формула");
+    assert!((mid(AudioCurve::EqualPower) - 1.0).abs() < 1e-12, "equal-power holds power");
+    assert!((mid(AudioCurve::SCurve) - 1.0).abs() < 1e-12, "the S-curve also holds power");
+    assert!((mid(AudioCurve::Linear) - 0.5).abs() < 1e-12, "linear gives the classic −3 dB");
+    assert!(mid(AudioCurve::Exponential) < 0.5, "exponential — a deliberately deep dip");
+    assert_eq!(AudioCurve::default(), AudioCurve::EqualPower, "the default is the previous formula");
 }
 
-/// Тест 462 (п.399, Р.51): переход на НАЛОЖЕНИИ — пара «лесенкой», окно =
-/// зона перекрытия, режим не хранится. Валидация, судьба при правках
-/// (reconcile), возврат ручек и копипаст.
+/// Test 462 (item 399, R.51): a transition on an OVERLAP — a “staircase” pair, window =
+/// the overlap zone, mode is not stored. Validation, fate on edits
+/// (reconcile), return of handles and copy-paste.
 #[test]
 fn t462_overlap_transition_model() {
-    // клипы 1 и 2 внахлёст «лесенкой»: [0..60к) и [30к..90к)
+    // clips 1 and 2 overlapping in a “staircase”: [0..60k) and [30k..90k)
     let overlap_project = || {
         let mut p = base_project();
         p.clips.retain(|c| c.id.0 <= 2);
@@ -632,27 +632,27 @@ fn t462_overlap_transition_model() {
         invert: false,
     };
 
-    // 1. валидация: лесенка законна, окно — сама зона перекрытия
+    // 1. validation: the staircase is legal, the window is the overlap zone itself
     let mut p = overlap_project();
     p.transitions.push(ov(1, 1, 2));
-    p.validate().expect("наложенный переход законен");
+    p.validate().expect("an overlapping transition is legal");
     let w = p.transitions[0].window(&p).unwrap();
-    assert_eq!((w.start, w.end), (Tick(30_000), Tick(60_000)), "окно = зона перекрытия");
+    assert_eq!((w.start, w.end), (Tick(30_000), Tick(60_000)), "window = overlap zone");
     assert!(p.transitions[0].overlap_pair(&p).is_some());
 
-    // 2. обратный порядок ролей — отказ (канонизацию делает reconcile)
+    // 2. reversed role order — rejection (canonicalization is done by reconcile)
     let mut p = overlap_project();
     p.transitions.push(ov(1, 2, 1));
-    assert!(p.validate().is_err(), "перевёрнутая пара — не лесенка");
+    assert!(p.validate().is_err(), "a reversed pair is not a staircase");
 
-    // 3. полное вложение — отказ
+    // 3. full containment — rejection
     let mut p = overlap_project();
     p.clips[1].start = Tick(10_000);
-    p.clips[1].duration = Tick(20_000); // клип 2 целиком внутри клипа 1
+    p.clips[1].duration = Tick(20_000); // clip 2 entirely inside clip 1
     p.transitions.push(ov(1, 1, 2));
-    assert!(p.validate().is_err(), "вложение — не лесенка");
+    assert!(p.validate().is_err(), "nesting is not a staircase");
 
-    // 4. третий клип в окне — отказ с именем виновника
+    // 4. a third clip in the window — rejection with the culprit’s name
     let mut p = overlap_project();
     p.clips.push(ClipEvent {
         r#gen: None,
@@ -680,58 +680,58 @@ fn t462_overlap_transition_model() {
     p.transitions.push(ov(1, 1, 2));
     match p.validate() {
         Err(ProjectError::TransitionOverlapBusy(_, c)) => assert_eq!(c, ClipId(3)),
-        other => panic!("ожидался TransitionOverlapBusy, получено {other:?}"),
+        other => panic!("TransitionOverlapBusy was expected, got {other:?}"),
     }
 
-    // 5. reconcile: стыковой переход выживает НАЛОЖЕННЫМ при наезде пары
+    // 5. reconcile: a joint transition survives as an OVERLAP when the pair overlaps
     let mut m = TimelineModel::new(base_project());
     m.apply(Command::AddTransition(tr(1, 1, 2, 9_000, 9_000))).unwrap();
     m.project().transitions[0].window(m.project()).unwrap();
-    // наезд: клип 2 съехал влево на 18к — теперь лесенка
+    // overlap: clip 2 slid 18k to the left — now a staircase
     m.apply(Command::MoveClip { id: ClipId(2), new_start: Tick(30_000), new_lane: 0 }).unwrap();
     let p = m.project();
-    assert_eq!(p.transitions.len(), 1, "переход пережил наезд наложением");
+    assert_eq!(p.transitions.len(), 1, "the transition survived the overlap by overlapping");
     let t = &p.transitions[0];
-    assert!(t.overlap_pair(p).is_some(), "теперь это наложенный переход");
+    assert!(t.overlap_pair(p).is_some(), "now it is an overlapping transition");
     assert_eq!(
         t.kind,
         TransitionKind::Crossfade,
-        "вид не тронут (см. t460 про сохранение настроек)"
+        "kind untouched (see t460 on preserving settings)"
     );
     let w = t.window(p).unwrap();
-    assert_eq!((w.start, w.end), (Tick(30_000), Tick(48_000)), "окно = новое перекрытие");
-    // офсеты — мёртвый груз, не тронуты
+    assert_eq!((w.start, w.end), (Tick(30_000), Tick(48_000)), "window = new overlap");
+    // offsets — dead weight, untouched
     assert_eq!((t.in_offset, t.out_offset), (Tick(9_000), Tick(9_000)));
 
-    // ...и возвращение встык оживляет прежние офсеты
+    // ...and returning to the joint revives the old offsets
     m.apply(Command::MoveClip { id: ClipId(2), new_start: Tick(48_000), new_lane: 0 }).unwrap();
     let p = m.project();
     assert_eq!(p.transitions.len(), 1);
-    assert!(p.transitions[0].overlap_pair(p).is_none(), "пара снова встык");
+    assert!(p.transitions[0].overlap_pair(p).is_none(), "the pair is butt-joined again");
     let w = p.transitions[0].window(p).unwrap();
-    assert_eq!((w.start, w.end), (Tick(39_000), Tick(57_000)), "окно снова от офсетов");
+    assert_eq!((w.start, w.end), (Tick(39_000), Tick(57_000)), "window again from offsets");
 
-    // 6. reconcile: разрыв (растащили далеко) убивает наложенный переход
+    // 6. reconcile: a break (pulled far apart) kills the overlapping transition
     let mut m = TimelineModel::new(overlap_project());
     m.apply(Command::AddTransition(ov(1, 1, 2))).unwrap();
     m.apply(Command::MoveClip { id: ClipId(2), new_start: Tick(90_000), new_lane: 0 }).unwrap();
-    assert!(m.project().transitions.is_empty(), "перекрытие исчезло — переход умер");
+    assert!(m.project().transitions.is_empty(), "overlap disappeared — the transition died");
 
-    // 7. reconcile: канонизация ролей — клип b уехал ЛЕВЕЕ a, роли
-    // зеркалятся, переход жив
+    // 7. reconcile: canonicalization of roles — clip b moved LEFT of a, the roles
+    // mirror, the transition is alive
     let mut m = TimelineModel::new(overlap_project());
     m.apply(Command::AddTransition(ov(1, 1, 2))).unwrap();
-    // клип 2 (был поздним) уезжает в 0, клип 1 начинается там же... нет:
-    // сдвинем клип 1 вправо, чтобы прежний b стал ранним
+    // clip 2 (was the late one) moves to 0, clip 1 starts there too... no:
+    // we shift clip 1 to the right so that the former b becomes the early one
     m.apply(Command::MoveClip { id: ClipId(1), new_start: Tick(45_000), new_lane: 0 }).unwrap();
     let p = m.project();
-    assert_eq!(p.transitions.len(), 1, "переход жив после смены порядка");
+    assert_eq!(p.transitions.len(), 1, "the transition is alive after changing the order");
     let t = &p.transitions[0];
-    assert_eq!((t.a, t.b), (Some(ClipId(2)), Some(ClipId(1))), "роли канонизированы: a ранний");
+    assert_eq!((t.a, t.b), (Some(ClipId(2)), Some(ClipId(1))), "roles canonicalized: a is early");
     assert!(t.overlap_pair(p).is_some());
 
-    // 8. restore_handles: разрыв наложенного НЕ дарит тримы (ничего не
-    // срезалось при наезде)
+    // 8. restore_handles: a break of an overlapping transition does NOT grant trims
+    // (nothing was cut during the overlap)
     let before = {
         let mut p = overlap_project();
         p.transitions.push(ov(1, 1, 2));
@@ -741,16 +741,16 @@ fn t462_overlap_transition_model() {
     let after = {
         let mut p = before.clone();
         p.transitions.clear();
-        p.clips[1].start = Tick(90_000); // растащили
+        p.clips[1].start = Tick(90_000); // pulled apart
         p.validate().unwrap();
         p
     };
     assert!(
         ops::restore_handles(&before, &after).is_empty(),
-        "у наложенного перехода нет срезанных ручек"
+        "an overlapping transition has no cut handles"
     );
 
-    // 9. копипаст: наложенный переход выживает в блоке целиком
+    // 9. copy-paste: an overlapping transition survives in the block as a whole
     let p = {
         let mut p = overlap_project();
         p.transitions.push(ov(1, 1, 2));
@@ -758,7 +758,7 @@ fn t462_overlap_transition_model() {
         p
     };
     let block = ops::copy_clips(&p, &[ClipId(1), ClipId(2)]);
-    assert_eq!(block.transitions.len(), 1, "наложенный переход скопирован");
+    assert_eq!(block.transitions.len(), 1, "overlapping transition copied");
     let block1 = ops::copy_clips(&p, &[ClipId(1)]);
-    assert!(block1.transitions.is_empty(), "без пары переход не едет");
+    assert!(block1.transitions.is_empty(), "without a pair the transition does not move");
 }

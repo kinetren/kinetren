@@ -1,9 +1,9 @@
-//! Редактируемая модель: команды + undo.
+//! An editable model: commands + undo.
 //!
-//! Undo — снапшоты всего `Project` (просто и надёжно; глубина ограничена).
-//! Команда ВАЛИДИРУЕТСЯ ДО снапшота: невозможная команда возвращает Err и не
-//! оставляет no-op записей в истории (дефект q старого TimelineEditor, где
-//! push шёл до проверок).
+//! Undo — snapshots of the whole `Project` (simple and reliable; the depth is limited).
+//! A command is VALIDATED BEFORE the snapshot: an impossible command returns Err
+//! and does not leave no-op entries in the history (defect q of the old
+//! TimelineEditor, where push went before the checks).
 
 use crate::genmedia::GeneratorKind;
 use crate::project::*;
@@ -12,34 +12,34 @@ use kt_time::{Tick, TickRange};
 
 pub const MAX_UNDO: usize = 80;
 
-/// Минимальная длительность клипа. 1 мс, как в старом редакторе.
-/// Выровнять СКОРОСТЬ варпа у link-партнёров (Р.37 п.2, решение
-/// пользователя: «эффект для аудио/видео можно объединять сразу»).
+/// Minimum clip duration. 1 ms, as in the old editor.
+/// Align the warp SPEED of link partners (R.37 item 2, the user's decision:
+/// “an effect for audio/video can be combined right away”).
 ///
-/// Правило живёт в МОДЕЛИ, а не в окне FX, потому что `SetFx` прилетает
-/// ещё из вставки цепочки из буфера, из bake морфера, из ридера формата и
-/// из kt-cli. «Пара A/V потребляет источник с одной скоростью» — это
-/// инвариант монтажа: разъедутся скорости, разъедутся картинка и звук.
-/// Прецедент — `reconcile_transitions` после каждой геометрической
-/// мутации. Внутри `mutate_on` зеркалирование попадает в ТОТ ЖЕ undo-шаг
-/// по построению, даже под `apply_coalesced`.
+/// The rule lives in the MODEL, not in the FX window, because `SetFx` also arrives
+/// from pasting a chain from the buffer, from a morpher bake, from the format reader and
+/// from kt-cli. “The A/V pair consumes the source at one speed” is an invariant of the
+/// edit: if the speeds diverge, the picture and the sound diverge.
+/// The precedent is `reconcile_transitions` after each geometric mutation. Inside
+/// `mutate_on` the mirroring lands in the SAME undo step by construction, even under
+/// `apply_coalesced`.
 ///
-/// Синхронно: наличие слота, `rate` и его кривая. Своё у каждого:
-/// параметры реверба, режим кадров, bypass слота (галка на видео-слоте —
-/// это и есть «отключить замедление картинки»).
-/// Значения генератора — общие у link-пары A/V НА ОДНОМ МЕДИА (Р.59,
-/// стадия 2).
+/// Synchronous: the presence of the slot, `rate` and its curve. Each one's own:
+/// reverb parameters, frame mode, slot bypass (the checkbox on the video slot —
+/// that is exactly “disable the picture slowdown”).
+/// Generator values — shared by a link pair A/V ON ONE MEDIA (R.59,
+/// stage 2).
 ///
-/// Прецедент и обоснование те же, что у `sync_warp_to_link_group`:
-/// звучащий генератор (SMPTE с тоном, отсчёт с биипом) кладёт на
-/// таймлайн ПАРУ событий на одно медиа, и у них один вид. Разойдись
-/// значения — картинка показывала бы полосы одного уровня, а тон звучал
-/// бы от другого, и объяснить это было бы нечем. Правило живёт В МОДЕЛИ,
-/// потому что команды прилетают не только из окна: их шлют вставка
-/// цепочки, «применить ко всем» и ридер формата.
+/// The precedent and the rationale are the same as for `sync_warp_to_link_group`:
+/// a sounding generator (SMPTE with tone, countdown with beep) puts on the
+/// timeline a PAIR of events on one media, and they have one kind. If the
+/// values diverged, the picture would show bars of one level while the tone sounded
+/// from another, and there would be nothing to explain it with. The rule lives IN THE MODEL,
+/// because commands come not only from the window: they are sent by chain pasting,
+/// “apply to all” and the format reader.
 ///
-/// Разные медиа не синхронизируются: у них разные виды и разные адреса
-/// источника — это уже не пара, а два независимых генератора.
+/// Different media are not synchronized: they have different kinds and different source
+/// addresses — this is no longer a pair, but two independent generators.
 fn sync_gen_to_link_group(p: &mut Project, id: ClipId) {
     let Some(src) = p.clips.iter().find(|c| c.id == id) else { return };
     let Some(group) = src.link_group else { return };
@@ -52,12 +52,12 @@ fn sync_gen_to_link_group(p: &mut Project, id: ClipId) {
     }
 }
 
-/// Привести значения генератора в согласие с МЕДИА события (Р.59).
+/// Bring the generator's values into agreement with the event's MEDIA (R.59).
 ///
-/// Единственное место, где значения появляются или исчезают сами: клип
-/// лёг на генератор — берём вид из пути медиа (там же и живут значения
-/// старых файлов, так что миграция выходит бесплатной); клип уехал на
-/// файл — значений у него быть не может.
+/// The only place where values appear or vanish on their own: a clip has landed on
+/// a generator — take the kind from the media path (the values of older files live there too,
+/// so migration is free).
+/// A clip that has moved to a file cannot have values.
 fn fit_gen_to_media(p: &Project, c: &mut ClipEvent) {
     match p.default_gen_for(c.media) {
         Some(k) => {
@@ -74,8 +74,8 @@ fn fit_gen_to_media(p: &Project, c: &mut ClipEvent) {
     }
 }
 
-/// Проверка согласованности значений генератора для команды — ТЕМ ЖЕ
-/// кодом, что и валидация файла.
+/// A consistency check of the generator's values for a command — with THE SAME
+/// code as the file validation.
 fn kt_check(p: &Project, c: &ClipEvent) -> Result<(), CommandError> {
     check_clip_gen(c, p.gen_media_path(c.media)).map_err(CommandError::InvalidClip)
 }
@@ -83,8 +83,8 @@ fn kt_check(p: &Project, c: &ClipEvent) -> Result<(), CommandError> {
 fn sync_warp_to_link_group(p: &mut Project, id: ClipId) {
     let Some(src) = p.clips.iter().find(|c| c.id == id) else { return };
     let Some(group) = src.link_group else { return };
-    // слот ищется ПО ВИДУ, а не по индексу: у аудио может быть
-    // [Gain, Slowed], у видео [Blur, Slowed, Mirror]
+    // the slot is looked up BY KIND, not by index: audio may have
+    // [Gain, Slowed], video [Blur, Slowed, Mirror]
     let warp_slot = |c: &ClipEvent| c.fx.iter().position(|f| f.warps_time());
     let mine = warp_slot(src);
     let (tmpl, rate_curve) = match mine {
@@ -103,7 +103,7 @@ fn sync_warp_to_link_group(p: &mut Project, id: ClipId) {
     for pid in partners {
         let Some(c) = p.clips.iter_mut().find(|c| c.id == pid) else { continue };
         match (warp_slot(c), &tmpl) {
-            // у обоих есть — переносим ТОЛЬКО скорость и её кривую
+            // both have it — we carry over ONLY the speed and its curve
             (Some(j), Some(t)) => {
                 if let (
                     FxInstance::SlowedReverb { rate, .. },
@@ -120,8 +120,8 @@ fn sync_warp_to_link_group(p: &mut Project, id: ClipId) {
                     c.fx_auto[j].push(rc.clone());
                 }
             }
-            // появился у одного — заводим у партнёра (одна добавка кладёт
-            // экземпляр на ОБА события пары)
+            // it appeared on one — we create it on the partner (one addition puts the
+            // instance on BOTH events of the pair)
             (None, Some(t)) => {
                 c.fx.push(t.clone());
                 let mut curves = Vec::new();
@@ -129,12 +129,12 @@ fn sync_warp_to_link_group(p: &mut Project, id: ClipId) {
                     curves.push(rc.clone());
                 }
                 c.fx_auto.resize(c.fx.len(), Vec::new());
-                // слот только что добавлен — last_mut есть по построению
+                // the slot has just been added — last_mut exists by construction
                 if let Some(slot) = c.fx_auto.last_mut() {
                     *slot = curves;
                 }
             }
-            // исчез у одного — убираем у партнёра вместе с его кривыми
+            // it disappeared from one — we remove it from the partner along with its curves
             (Some(j), None) => {
                 c.fx.remove(j);
                 if j < c.fx_auto.len() {
@@ -157,12 +157,12 @@ pub enum Command {
         id: MediaId,
         path: String,
     },
-    /// Смена пути медиа (Р.52): правка параметров генератора — это смена
-    /// его `gen:`-пути, и все клипы этого медиа обновляются (семантика
-    /// Vegas: два клипа на один генератор делят вид). Путь для модели
-    /// непрозрачен, как в `AddMedia`, — команда годится и будущему
-    /// relink. Пересоздание источника у плеера — забота call-site
-    /// (`KtApp::sync_media_sources`), как и у `AddMedia`.
+    /// A change of media path (R.52): editing the generator's parameters is a change of its
+    /// `gen:`-path, and all clips of this media are updated (Vegas semantics: two clips of
+    /// one generator share the kind). The path is opaque to the model, as in `AddMedia`,
+    /// so the command also suits a future relink. Re-creating the source in the player
+    /// is the concern of the call site
+    /// (`KtApp::sync_media_sources`), as it is for `AddMedia`.
     SetMediaPath {
         id: MediaId,
         path: String,
@@ -171,13 +171,13 @@ pub enum Command {
     RemoveClip {
         id: ClipId,
     },
-    /// Двигает клип (и всю его link-группу — тем же смещением).
+    /// Moves the clip (and its whole link group — by the same offset).
     MoveClip {
         id: ClipId,
         new_start: Tick,
         new_lane: u32,
     },
-    /// Триммит начало: start/duration/source_in двигаются согласованно.
+    /// Trims the start: start/duration/source_in move consistently.
     TrimStart {
         id: ClipId,
         new_start: Tick,
@@ -186,30 +186,30 @@ pub enum Command {
         id: ClipId,
         new_end: Tick,
     },
-    /// Заметка о РОДСТВЕ: `child` — событие, рождённое от `parent` в этом же
-    /// пакете (Р.49, п.357). Состояние проекта не меняет вовсе.
+    /// A note on KINSHIP: `child` — an event born of `parent` in this same
+    /// packet (R.49, item 357). It does not change the project state at all.
     ///
-    /// Зачем командой. Производные события — правая половина разреза, остатки
-    /// кропа и punch-out, вставленная копия, куски bake — рождаются ВНУТРИ
-    /// `ops::*`, и снаружи их родителя уже не вычислить: после перенумерации
-    /// это была бы догадка по совпадению материала и окна. Тот, кто режет,
-    /// родителя знает точно — пусть он его и назовёт. Носитель родства должен
-    /// пережить undo вместе с самой правкой, а значит жить в пакете команд.
+    /// Why as a command. Derived events — the right half of a cut, the leftovers of a crop and
+    /// punch-out, an inserted copy, pieces of a bake — are born INSIDE `ops::*`, and from outside
+    /// their parent can no longer be computed: after renumbering it would be a guess by matching
+    /// material and window. Whoever cuts knows the parent exactly — let him name it.
+    /// The kinship carrier must survive undo together with the edit itself,
+    /// and therefore must live in the command packet.
     NoteBirth {
         child: ClipId,
         parent: ClipId,
     },
-    /// Разрез в точке `at` (абсолютный тик). Правая половина получает новый id
-    /// и новую link-группу (правые половины A/V-пары остаются связаны).
+    /// A cut at point `at` (absolute tick). The right half gets a new id
+    /// and a new link group (the right halves of an A/V pair remain linked).
     Split {
         id: ClipId,
         at: Tick,
         new_id: ClipId,
         new_group: Option<GroupId>,
     },
-    /// Опция «трим растягивает анимацию вместе с событием» (Р.40).
-    /// Выключена по умолчанию: ключ остаётся на своём кадре материала,
-    /// куда бы ни ехал край события.
+    /// The option “trim stretches the animation together with the event” (R.40).
+    /// Off by default: the key stays on its frame of the material,
+    /// wherever the event's edge goes.
     SetTrimStretchesAuto {
         on: bool,
     },
@@ -217,30 +217,30 @@ pub enum Command {
         id: ClipId,
         gain_db: f32,
     },
-    /// Уровень (непрозрачность) видео-события 0..1 — Р.28, п.12.
+    /// Level (opacity) of a video event 0..1 — R.28, item 12.
     SetOpacity {
         id: ClipId,
         opacity: f32,
     },
-    /// Ведущий узел «Геометрия» события и его позиция в цепочке (Р.62).
+    /// The leading “Geometry” node of the event and its position in the chain (R.62).
     SetGeometry {
         id: ClipId,
         geometry: crate::EventGeometry,
         pos: usize,
         auto: Vec<ParamCurve>,
     },
-    /// Мастер-выключатель FX-цепочки события (Р.33). Состояние слотов не
-    /// трогает: включил обратно — цепочка та же.
+    /// The master switch of the event's FX chain (R.33). It does not touch the slot
+    /// state: switch it back on and the chain is the same.
     SetFxOff {
         id: ClipId,
         off: bool,
     },
-    /// Реверс события (п.16). Undo-able.
+    /// Reverse of the event (item 16). Undo-able.
     SetReversed {
         id: ClipId,
         reversed: bool,
     },
-    /// Bypass-флаги FX-слотов (п.2 v1.3). Undo-able.
+    /// Bypass flags of the FX slots (item 2, v1.3). Undo-able.
     SetFxBypass {
         id: ClipId,
         bypass: Vec<bool>,
@@ -249,31 +249,31 @@ pub enum Command {
         id: ClipId,
         fx: Vec<FxInstance>,
     },
-    /// Автоматизация параметров видео-FX (Р.30): полная замена кривых
-    /// клипа (параллельно fx, как fx_bypass). UI шлёт coalesced-жестом.
+    /// Automation of video-FX parameters (R.30): a full replacement of the clip's curves
+    /// (in parallel with fx, like fx_bypass). The UI sends it as a coalesced gesture.
     SetFxAuto {
         id: ClipId,
         auto: Vec<Vec<ParamCurve>>,
     },
-    /// Значения генератора НА СОБЫТИИ (Р.59, стадия 2).
+    /// Generator values ON THE EVENT (R.59, stage 2).
     ///
-    /// Плана кадра не трогает (`touches_render_plan() == false`): адрес
-    /// источника считается от события, а не от значений, и они доезжают
-    /// до ЖИВОГО источника полосой `retune` — ровно то, ради чего эта
-    /// полоса заводилась в Р.53. Иначе каждое нажатие клавиши в титре
-    /// останавливало бы аудио-render-поток.
+    /// Does not touch the frame plan (`touches_render_plan() == false`): the source's address
+    /// is computed from the event, not from the values, and the values reach the LIVE source
+    /// through the `retune` strip — exactly the purpose for which that strip
+    /// was introduced in R.53.
+    /// Otherwise every keystroke in a title would stop the audio render stream.
     SetClipGen {
         id: ClipId,
         kind: Option<GeneratorKind>,
     },
-    /// Кривые параметров генератора (домен — тик материала, как fx_auto).
+    /// Curves of the generator's parameters (domain — the material tick, like fx_auto).
     SetClipGenAuto {
         id: ClipId,
         auto: Vec<ParamCurve>,
     },
-    /// «Править во всех местах разом» — ОТДЕЛЬНАЯ команда (решение
-    /// владельца Р.59): правка одного события соседей больше не трогает,
-    /// а «мест: N» остаётся доступно и умещается в один шаг истории.
+    /// “Edit in all places at once” is a SEPARATE command (the owner's decision in R.59):
+    /// editing one event no longer touches its neighbors, while “places: N” remains available
+    /// and fits into one history step.
     ApplyGenToAll {
         media: MediaId,
         kind: GeneratorKind,
@@ -286,14 +286,14 @@ pub enum Command {
     UnlinkClip {
         id: ClipId,
     },
-    /// Переход на стыке двух соседних клипов одной дорожки (Р.24). Undo-able.
+    /// A transition at the junction of two adjacent clips on one track (R.24). Undo-able.
     AddTransition(TransitionEvent),
     RemoveTransition {
         id: TransitionId,
     },
-    /// Полная замена перехода (драг краёв/тела — батчи и apply_coalesced).
+    /// A full replacement of a transition (dragging edges/body — batches and apply_coalesced).
     SetTransition(TransitionEvent),
-    /// Метка; duration > 0 = диапазонная (Р.24, marked_range).
+    /// A marker; duration > 0 = a range marker (R.24, marked_range).
     AddMarker {
         at: Tick,
         duration: Tick,
@@ -301,9 +301,9 @@ pub enum Command {
     RemoveMarker {
         at: Tick,
     },
-    /// Задать/сменить имя метки (п.1 р.10). Отдельная команда: создание
-    /// с именем = батч [AddMarker, SetMarkerName] (один undo-шаг), живой
-    /// ввод — apply_coalesced по токену жеста.
+    /// Set/change the marker's name (item 1, round 10). A separate command: creation
+    /// with a name = batch [AddMarker, SetMarkerName] (one undo step), live
+    /// typing — apply_coalesced by the gesture token.
     SetMarkerName {
         at: Tick,
         name: String,
@@ -312,33 +312,33 @@ pub enum Command {
         from: Tick,
         to: Tick,
     },
-    /// Длительность метки (0 = схлопнуть в точечную). Края ленты — жестами.
+    /// The marker's duration (0 = collapse to a point marker). The reel edges — by gestures.
     SetMarkerDuration {
         at: Tick,
         duration: Tick,
     },
-    /// Вставить пустую дорожку вида `kind` с рангом `at` (Р.62: одна
-    /// команда на все четыре вида); номера содержимого вида ≥ at сдвигаются
-    /// на +1, строка встаёт прямо над бывшей `at` (в конец, если её нет).
+    /// Insert an empty track of the kind `kind` with rank `at` (R.62: one
+    /// command for all four kinds); the content numbers of the kind ≥ at shift
+    /// by +1, the row is placed right above the former `at` (at the end, if there is none).
     InsertTrack {
         kind: LaneKind,
         at: u32,
     },
-    /// Удалить дорожку вместе с её содержимым; номера выше съезжают на −1.
-    /// Последняя видео- или аудио-дорожка не удаляется (`LastTrack`).
+    /// Delete a track together with its content; the numbers above shift by −1.
+    /// The last video or audio track is not deleted (`LastTrack`).
     RemoveTrack {
         kind: LaneKind,
         at: u32,
     },
-    /// Свойства дорожки одним куском: имя, высота, выключатели, уровень,
-    /// режим наложения (Р.62). Цепочка — `SetTrackFx`.
+    /// Track properties in one piece: name, height, switches, level,
+    /// overlay mode (R.62). The chain — `SetTrackFx`.
     SetTrackProps {
         id: TrackId,
         props: TrackProps,
     },
-    /// Цепочка FX дорожки: слоты и bypass. Кривых у дорожки нет — её
-    /// ключ тик таймлайна, а это второй домен автоматизации (следующий
-    /// change), и команда их отвергает, а не принимает молча.
+    /// The track's FX chain: slots and bypass. A track has no curves — its
+    /// key is the timeline tick, and that is a second automation domain (the next
+    /// change), and the command rejects them rather than accepting them silently.
     SetTrackFx {
         id: TrackId,
         fx: Vec<FxInstance>,
@@ -354,32 +354,32 @@ pub enum Command {
     SetSettings {
         settings: ProjectSettings,
     },
-    /// Morpher (порт v1). В отличие от v1 ВСЕ операции undo-able (дефект D6).
+    /// Morpher (v1 port). Unlike v1, ALL operations are undo-able (defect D6).
     AddMorpher(MorpherEvent),
     RemoveMorpher {
         id: MorphId,
     },
-    /// Полная замена события (окно редактора; в UI — coalesced-жест).
+    /// A full replacement of the event (editor window; in the UI — a coalesced gesture).
     SetMorpher(MorpherEvent),
-    /// Bake: деструктивно вписать патч в целевые клипы и удалить событие.
-    /// Результат рендера не меняется: effective_clips уже применял то же.
+    /// Bake: destructively write the patch into the target clips and delete the event.
+    /// The render result does not change: effective_clips already applied the same.
     BakeMorpher {
         id: MorphId,
     },
-    /// Порядок строк дорожек сверху вниз (Р.35). С переездом морфера в
-    /// слой он влияет на КАРТИНКУ, поэтому живёт в модели и ходит через
-    /// undo: перетащил дорожку — изменил монтаж. Полная замена; вектор
-    /// нормализуется мутацией, проверять его не нужно.
+    /// The order of track rows from top to bottom (R.35). With the morpher's move into the
+    /// layer it affects the PICTURE, so it lives in the model and goes through
+    /// undo: drag a track — you changed the edit. A full replacement; the vector is
+    /// normalized by the mutation, there is no need to check it.
     SetLaneOrder {
         order: Vec<(LaneKind, u32)>,
     },
-    /// Именованные области (Р.35 п.2). Адресация ПО ИМЕНИ: индексы
-    /// разъезжаются под undo/redo, а имя — это адрес.
+    /// Named regions (R.35 item 2). Addressing BY NAME: indices
+    /// shift under undo/redo, while the name is the address.
     AddArea(MarkedArea),
     RemoveArea {
         name: String,
     },
-    /// Переименование правит и ССЫЛКИ морферов — одним шагом истории.
+    /// Renaming also fixes the morpher REFERENCES — in one history step.
     RenameArea {
         from: String,
         to: String,
@@ -393,23 +393,23 @@ pub enum Command {
         name: String,
         lanes: Vec<(LaneKind, u32)>,
     },
-    /// Камеры (Р.29, 3D-композитинг) — по образцу морферных команд.
+    /// Cameras (R.29, 3D compositing) — modeled on the morpher commands.
     AddCamera(CameraEvent),
-    /// Полная замена события (окно параметров; в UI — coalesced-жест).
+    /// A full replacement of the event (parameters window; in the UI — a coalesced gesture).
     SetCamera(CameraEvent),
     RemoveCamera {
         id: CameraId,
     },
-    // --- вложенные секвенции (Р.50) ---
-    /// Завести пустую ленту. Содержимое приезжает отдельной командой:
-    /// сворачивание — это пакет «завести, наполнить, убрать оригиналы,
-    /// поставить экземпляр», и он обязан быть ОДНИМ шагом истории.
+    // --- nested sequences (R.50) ---
+    /// Create an empty reel. The content arrives in a separate command:
+    /// folding is the package “create, fill, remove the originals,
+    /// place an instance”, and it must be ONE history step.
     AddSequence {
         id: MediaId,
         name: String,
     },
-    /// Убрать ленту. Отказ, пока на неё смотрит хоть одно событие дерева:
-    /// молча осиротить клипы дороже, чем сказать «занята».
+    /// Remove a reel. Refused while any event of the tree still points at it:
+    /// silently orphaning clips costs more than saying “busy”.
     RemoveSequence {
         id: MediaId,
     },
@@ -417,57 +417,57 @@ pub enum Command {
         id: MediaId,
         name: String,
     },
-    /// Свои растр и fps ленты (Р.62); `None` — как у проекта.
+    /// The reel’s own raster and fps (R.62); `None` means the same as the project.
     SetSequenceSettings {
         id: MediaId,
         raster: Option<(u32, u32)>,
         fps: Option<u32>,
     },
-    /// Полная замена СОДЕРЖИМОГО ленты (Box — чтобы `Command` не разнесло
-    /// по размеру ради одного варианта).
+    /// Full replacement of the reel’s CONTENT (Box, so that `Command` does not
+    /// grow by size for the sake of one variant).
     SetSequenceContent {
         id: MediaId,
         content: Box<Sequence>,
     },
-    /// Сменить источник события — файл или ленту. Несущая команда и
-    /// сворачивания, и «сделать независимым».
+    /// Change the source of an event: a file or a reel. The carrying command of
+    /// both folding and “make independent”.
     SetClipMedia {
         id: ClipId,
         media: MediaId,
     },
-    // --- публичные параметры композиции (Р.59, стадия 3) ---
-    /// Объявить свойство НАЗВАННОЙ ленты наружу.
+    // --- public parameters of a composition (R.59, stage 3) ---
+    /// Declare a property of a NAMED reel outward.
     ///
-    /// **Лента называется ЯВНО (Р.63 п.11), и это не украшение.** До
-    /// этого раунда команда правила «ту ленту, в которой стоишь», и
-    /// публикация из раскрытой полосы требовала СНАЧАЛА войти в ленту:
-    /// «если опубликовать параметр не входя полностью в композицию — то
-    /// зачем-то мы автоматически полностью входим в композицию»
-    /// (владелец). Адрес в самой команде снимает и вход, и зависимость
-    /// от контекста: ручка ложится в названную ленту, где бы человек ни
-    /// стоял, а несуществующая лента — честный отказ.
+    /// **The reel is named EXPLICITLY (R.63 item 11), and this is not decoration.** Before
+    /// this round the command followed the rule “the reel you are standing in”, and
+    /// publishing from an expanded band required entering the reel FIRST:
+    /// “if we publish a parameter without entering the composition fully, then why
+    /// do we automatically enter the composition fully” (the owner). The address in the
+    /// command itself removes both the entry and the dependence on context: the handle
+    /// lands in the named reel wherever the person stands, and a nonexistent reel is an
+    /// honest refusal.
     PublishParam {
         seq: MediaId,
         param: Box<PublishedParam>,
     },
-    /// Снять ручку. Переопределения на неё исчезают тем же шагом истории
-    /// (`reconcile_published`) — мёртвой ручки снаружи не остаётся.
+    /// Remove the handle. Overrides pointing at it disappear in the same history step
+    /// (`reconcile_published`), so no dead handle is left outside.
     UnpublishParam {
         seq: MediaId,
         id: PubId,
     },
-    /// Переименование и сужение пределов — полная замена объявления.
+    /// Renaming and narrowing the limits is a full replacement of the declaration.
     SetPublished {
         seq: MediaId,
         param: Box<PublishedParam>,
     },
-    /// Порядок ручек в окне потребителя — часть авторского интерфейса
-    /// (Resolve 21 завёл его отдельно, разведка F-TL-012).
+    /// The order of handles in the consumer’s window is part of the author’s interface
+    /// (Resolve 21 had it as a separate feature, reconnaissance F-TL-012).
     ReorderPublished {
         seq: MediaId,
         order: Vec<PubId>,
     },
-    /// Переопределение у ЭКЗЕМПЛЯРА. Полная замена одной ручки.
+    /// Override on an INSTANCE. A full replacement of one handle.
     SetOverride {
         id: ClipId,
         ov: Box<Override>,
@@ -479,22 +479,22 @@ pub enum Command {
 }
 
 impl Command {
-    /// Меняет ли команда то, что СЧИТАЮТ рендереры (Р.53, п.412).
+    /// Does the command change what the renderers COUNT (R.53, item 412).
     ///
-    /// Закон П: путь медиа — свойство ИСТОЧНИКА, а не плана. Рендереры
-    /// знают только `MediaId`, поэтому `SetMediaPath` не имеет права
-    /// клонировать проект и пересобирать графы: его адресат — воркер
-    /// этого медиа (`Player::retune_media`). До этого пункта каждое
-    /// нажатие клавиши в поле титра останавливало аудио-render-поток.
+    /// Law P: the media path is a property of the SOURCE, not of the plan. The renderers
+    /// know only `MediaId`, so `SetMediaPath` has no right to clone the project
+    /// and rebuild the graphs: its addressee is the worker of this media
+    /// (`Player::retune_media`). Before this item, every keystroke in a title’s text
+    /// field stopped the audio render thread.
     ///
-    /// Match ИСЧЕРПЫВАЮЩИЙ и без `_ =>`: новая команда не соберётся,
-    /// пока не ответили, трогает ли она план. Прецедент того же рода —
-    /// `on_region_changed` без `set_project` (Р.43 п.296, сторож t286).
-    /// Событие, которое команда правит, — если оно у неё одно и ЕСТЬ.
+    /// The match is EXHAUSTIVE and without `_ =>`: a new command will not compile until
+    /// it is answered whether it touches the plan. A precedent of the same kind is
+    /// `on_region_changed` without `set_project` (R.43 item 296, guard t286).
+    /// The event that the command edits, if it has one and it EXISTS.
     ///
-    /// Заведено ради одного вопроса: «в какой ЛЕНТЕ эта правка» (Р.55, С5).
-    /// Перебирать варианты в вызывающем нельзя — это второе место, где
-    /// знают устройство команд, и оно разошлось бы с первым.
+    /// Introduced for the sake of one question: “in which REEL is this edit” (R.55, C5).
+    /// Enumerating the variants in the caller is not allowed: that would be a second place
+    /// that knows how commands are built, and it would drift apart from the first.
     pub fn target_clip(&self) -> Option<ClipId> {
         match self {
             Command::AddClip(c) => Some(c.id),
@@ -521,17 +521,17 @@ impl Command {
         }
     }
 
-    /// СТРОКИ, содержимое которых команда правит (Р.62, change B) —
-    /// ЕДИНСТВЕННАЯ функция, по которой проверяется замок дорожки.
+    /// ROWS whose content the command edits (R.62, change B) is the ONLY function
+    /// by which the track lock is checked.
     ///
-    /// Match ИСЧЕРПЫВАЮЩИЙ и без `_ =>`: новая команда не соберётся, пока
-    /// её не отнесли к одной из двух половин — «трогает события» (тогда
-    /// назови строки) или «не трогает» (пустой список). Это тот же приём,
-    /// что у `Band::after_batch`, и по той же причине: пропущенная строка
-    /// здесь означает жест, прошедший сквозь замок молча.
+    /// The match is EXHAUSTIVE and without `_ =>`: a new command will not compile until
+    /// it is assigned to one of the two halves, “touches events” (then name the rows) or
+    /// “does not touch” (an empty list). This is the same technique as `Band::after_batch`,
+    /// and for the same reason: a missing row here means a gesture that passed through the
+    /// lock silently.
     ///
-    /// Свойства САМОЙ дорожки (`SetTrackProps`) под замок не попадают —
-    /// иначе запертую дорожку нельзя было бы отпереть.
+    /// The properties of the track ITSELF (`SetTrackProps`) do not fall under the lock,
+    /// otherwise a locked track could not be unlocked.
     pub fn target_rows(&self, p: &Project) -> Vec<(LaneKind, u32)> {
         let of_clip =
             |id: ClipId| p.clips.iter().find(|c| c.id == id).map(|c| (lane_key_of(c.kind), c.lane));
@@ -544,7 +544,7 @@ impl Command {
             }
         };
         match self {
-            // события клипов: и откуда берут, и куда кладут
+            // clip events: both where they are taken from and where they are put
             Command::AddClip(c) => add(Some((lane_key_of(c.kind), c.lane))),
             Command::MoveClip { id, new_lane, .. } => {
                 add(of_clip(*id));
@@ -573,13 +573,13 @@ impl Command {
                     add(of_clip(*id));
                 }
             }
-            // «во всех местах разом»: строки ВСЕХ событий этого медиа
+            // “in all places at once”: the rows of ALL events of this media
             Command::ApplyGenToAll { media, .. } => {
                 for c in p.clips.iter().filter(|c| c.media == *media) {
                     add(Some((lane_key_of(c.kind), c.lane)));
                 }
             }
-            // переходы живут НА СТЫКЕ двух событий — запирается любая из строк
+            // transitions live AT the joint of two events; locking either of the rows locks it
             Command::AddTransition(t) | Command::SetTransition(t) => {
                 add(t.a.and_then(of_clip));
                 add(t.b.and_then(of_clip));
@@ -590,7 +590,7 @@ impl Command {
                     add(t.b.and_then(of_clip));
                 }
             }
-            // морферы и камеры — события своих служебных строк
+            // morphers and cameras are events of their own service rows
             Command::AddMorpher(m) | Command::SetMorpher(m) => add(Some((LaneKind::Morph, m.lane))),
             Command::RemoveMorpher { id } | Command::BakeMorpher { id } => {
                 add(p.morphers.iter().find(|m| m.id == *id).map(|m| (LaneKind::Morph, m.lane)));
@@ -599,9 +599,9 @@ impl Command {
             Command::RemoveCamera { id } => {
                 add(p.cameras.iter().find(|c| c.id == *id).map(|c| (LaneKind::Camera, c.lane)));
             }
-            // удаление дорожки уносит её события — это тоже правка содержимого
+            // deleting a track takes its events with it; this is also an edit of the content
             Command::RemoveTrack { kind, at } => add(Some((*kind, *at))),
-            // СОДЕРЖИМОГО СТРОК НЕ ТРОГАЮТ — перечислено поимённо
+            // the CONTENT OF ROWS IS NOT TOUCHED — listed by name
             Command::NoteBirth { .. }
             | Command::AddMedia { .. }
             | Command::SetMediaPath { .. }
@@ -638,9 +638,9 @@ impl Command {
 
     pub fn touches_render_plan(&self) -> bool {
         match self {
-            // Значения генератора — свойство ИСТОЧНИКА, а не плана (тот
-            // же закон П, что у пути медиа). Их адресат — воркер этого
-            // события, `Player::update_gen`.
+            // Generator values are a property of the SOURCE, not of the plan (the same
+            // law P as the media path). Their addressee is the worker of this event,
+            // `Player::update_gen`.
             Command::SetMediaPath { .. }
             | Command::SetClipGen { .. }
             | Command::SetClipGenAuto { .. } => false,
@@ -697,10 +697,10 @@ impl Command {
             | Command::RenameSequence { .. }
             | Command::SetSequenceSettings { .. }
             | Command::SetSequenceContent { .. }
-            // Переопределение и публикация меняют СОДЕРЖИМОЕ ленты,
-            // какой её видит движок: редакция становится другой, план
-            // обязан пересобраться. Закон П сюда не распространяется —
-            // полосой `retune` такое не довезёшь.
+            // Override and publication change the CONTENT of the reel as the engine sees it:
+            // the edit becomes a different one, and the plan must be rebuilt.
+            // Law P does not extend here:
+            // a `retune` band cannot carry such a change.
             | Command::PublishParam { .. }
             | Command::UnpublishParam { .. }
             | Command::SetPublished { .. }
@@ -792,95 +792,95 @@ pub enum CommandError {
     NothingToRedo,
 }
 
-/// Модель с историей. Движок читает `project()` (снапшот-клон при rebuild).
+/// A model with history. The engine reads `project()` (a snapshot clone on rebuild).
 #[derive(Debug, Clone)]
 pub struct TimelineModel {
-    /// КАНОН: настоящая раскладка без раскрытых полос. Он уходит в файл,
-    /// в плеер и в экспорт, и только он существует по-настоящему.
+    /// CANON: the real layout without expanded bands. It goes into the file,
+    /// the player and the export, and only it exists in actual fact.
     project: Project,
-    /// ПРОИЗВОДНОЕ: канон плюс раскрытые на месте ленты (Р.55, С5).
+    /// DERIVED: the canon plus the reels expanded in place (R.55, C5).
     ///
-    /// Его отдаёт `project()`, то есть с ним работает весь интерфейс —
-    /// отрисовка, хит-тест, снап, выделение, окна. Ни одна из этих рук не
-    /// знает, что часть событий на экране живёт в другой ленте: они
-    /// физически лежат в корневых векторах, только со смещением.
-    /// При пустом `bands` это побайтовая копия канона, то есть прежнее
-    /// поведение без единой лишней ветки.
+    /// It is returned by `project()`, that is, the whole interface works with it —
+    /// drawing, hit testing, snapping, selection, windows. None of these hands
+    /// knows that part of the events on screen lives in another reel: they physically
+    /// lie in the root vectors, only with an offset.
+    /// With empty `bands` this is a byte-for-byte copy of the canon, that is, the former
+    /// behavior without a single extra branch.
     bench: Project,
-    /// Раскрытые полосы. Рабочее место, а не работа: в файл не пишется
-    /// (правило t390-t391), но КАЖДЫЙ undo-снимок помнит свои — иначе
-    /// Ctrl+Z внутри раскрытия выглядел бы как «нажал, и всё пропало».
+    /// Expanded bands. A working place, not work: it is not written to the file
+    /// (rule t390-t391), but EVERY undo snapshot remembers its own — otherwise Ctrl+Z
+    /// inside an expansion would look like “pressed, and everything vanished”.
     bands: Vec<Band>,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
-    /// Токен последнего coalesced-жеста (см. apply_coalesced).
+    /// The token of the last coalesced gesture (see apply_coalesced).
     last_gesture: Option<u64>,
-    /// Лента, которую сейчас редактируют (Р.50, В1). `None` — корень.
+    /// The reel that is being edited now (R.50, B1). `None` is the root.
     ///
-    /// Живёт В МОДЕЛИ, а не в проекте: это не монтаж, а место, где стоит
-    /// человек. В файл не пишется (вид внутри ленты — рабочее место, а не
-    /// работа) и в undo-снимок не входит — но КАЖДЫЙ снимок помнит, в
-    /// каком контексте правка делалась.
+    /// It lives IN THE MODEL, not in the project: this is not editing but the place where the
+    /// person stands. It is not written to the file (the view inside a reel is a working place,
+    /// not work) and is not part of the undo snapshot — but EVERY snapshot remembers
+    /// in what context the edit was made.
     editing: Option<MediaId>,
 }
 
-/// Снимок истории: проект и контекст, в котором правка делалась (Р.50, В1).
+/// History snapshot: the project and the context in which the edit was made (R.50, B1).
 ///
-/// Без контекста Ctrl+Z внутри ленты выглядел бы как «нажал — ничего не
-/// произошло»: отменилась бы правка в другом месте, которого не видно.
+/// Without the context, Ctrl+Z inside a reel would look like “pressed — nothing
+/// happened”: the edit in some other place, which is not visible, would be undone.
 #[derive(Debug, Clone)]
 struct Snapshot {
     project: Project,
     scope: Option<MediaId>,
-    /// Какие полосы были раскрыты в момент правки (Р.55, С5).
+    /// Which bands were expanded at the moment of the edit (R.55, C5).
     bands: Vec<Band>,
 }
 
 impl Band {
-    /// Пересчитать полосу после пакета команд (Р.55, С5).
+    /// Recalculate the band after a batch of commands (R.55, C5).
     ///
-    /// **Единственное место конструкции, где правильность держится на
-    /// человеке, а не на построении.** Поэтому `match` ИСЧЕРПЫВАЮЩИЙ, без
-    /// `_ =>`: новая команда не соберётся, пока строку не заполнили — тот
-    /// же приём, что у `Command::touches_render_plain` и таблицы t253.
+    /// **The single place of the construction where correctness rests on the person,
+    /// not on the build.** That is why the `match` is EXHAUSTIVE, without `_ =>`: a new
+    /// command will not compile until its row is filled in — the same technique as
+    /// `Command::touches_render_plain` and the table of t253.
     ///
-    /// Нумерацию дорожек меняют ровно шесть команд. Полоса лежит в ХВОСТЕ
-    /// числового пространства, поэтому правило простое: дорожка вставлена
-    /// или убрана НИЖЕ начала полосы — едет вся полоса (`base`); внутри
-    /// полосы — меняется её размер (`len`).
+    /// Exactly six commands change the track numbering. The band lies at the TAIL
+    /// of the numeric space, so the rule is simple: a track inserted or removed
+    /// BELOW the start of the band — the whole band moves (`base`); inside the band
+    /// — its size changes (`len`).
     ///
-    /// Ошибка здесь не падает ни одним ассертом сама: полоса «съезжает», и
-    /// `unmerge_reel` начинает отвергать батчи — либо, при симметричной
-    /// ошибке, молча кладёт событие не в ту ленту. Сторож — t568.
+    /// The error here does not fire any assert by itself: the band “drifts”, and
+    /// `unmerge_reel` starts rejecting batches — or, with a symmetric error, silently puts
+    /// an event into the wrong reel. Guard — t568.
     pub fn after_batch(&mut self, cmds: &[Command]) {
         for cmd in cmds {
             match cmd {
                 Command::InsertTrack { kind, at } => self.lane_inserted(*kind, *at),
-                // `SetLanes` ПОЛОСУ НЕ ДВИГАЕТ, и это решение, а не
-                // недосмотр. Команда задаёт число дорожек целиком, а клипы
-                // при этом не перенумеровываются — значит граница полосы
-                // (`base`) обязана остаться там, где события и лежат.
+                // `SetLanes` does NOT MOVE THE BAND.
+                // This is a decision, not an oversight.
+                // The command sets the number of tracks as a whole, and the clips are not
+                // renumbered at the same time — so the band boundary (`base`) must remain
+                // where the events lie.
                 //
-                // Единственный, кто её шлёт, — удаление дорожки, и оно
-                // сопровождается `MoveClip` для всех, кто выше. Поэтому
-                // удалять дорожку при раскрытой полосе приложение не даёт:
-                // сначала сворачивает раскрытие и говорит об этом.
+                // The only sender of it is track deletion, and it is accompanied by `MoveClip`
+                // for everyone above. That is why the application does not allow deleting a track
+                // while a band is expanded: first it folds the expansion and says so.
                 //
-                // `SetLaneOrder` с Р.56 перенумеровывает содержимое (номер
-                // дорожки = ранг строки, п.449) — на бенче это переставило
-                // бы события полосы из ХВОСТА числового пространства, и
-                // `unmerge_reel` разобрал бы их не по тем лентам. Обе
-                // команды отвергает `simulate` при открытой полосе
-                // (`CommandError::BandsOpen`), сюда они не доходят.
+                // `SetLaneOrder` from R.56 renumbers the content (track number = rank of the row,
+                // item 449) — on the bench this would move the events of the band
+                // out of the TAIL of the numeric space, and `unmerge_reel` would sort them
+                // into the wrong reels. Both commands are rejected by `simulate` while a band
+                // is open (`CommandError::BandsOpen`),
+                // so they do not reach here.
                 Command::RemoveTrack { .. } | Command::SetLaneOrder { .. } => {
                     debug_assert!(
                         false,
                         "RemoveTrack/SetLaneOrder are refused while a band is open"
                     )
                 }
-                // Всё остальное номеров дорожек не двигает. Перечислено
-                // поимённо НАРОЧНО: `_ =>` спрятал бы следующую команду,
-                // которая начнёт их двигать.
+                // Everything else does not move track numbers. They are listed
+                // by name ON PURPOSE: `_ =>` would hide the next command
+                // that starts moving them.
                 Command::NoteBirth { .. }
                 | Command::AddMedia { .. }
                 | Command::SetMediaPath { .. }
@@ -950,25 +950,25 @@ impl Band {
         if at <= base {
             *self.base.get_mut(kind) += 1;
         } else if at <= base + self.len.get(kind) {
-            // ХВОСТ полосы принадлежит ПОЛОСЕ (Р.56): за ней ничего не
-            // лежит по построению, а вставка ровно в `base + len` —
-            // это «ленте нужна ещё одна дорожка» (вставка в раскрытии).
-            // До Р.56 такая дорожка не доставалась никому, и событие на
-            // ней молча уезжало в корень.
+            // The TAIL of the band belongs to the BAND (R.56): by construction nothing
+            // lies behind it, and an insertion exactly at `base + len` is
+            // “the reel needs one more track” (an insertion in the expansion).
+            // Before R.56 such a track belonged to nobody,
+            // and an event on it silently drifted into the root.
             *self.len.get_mut(kind) += 1;
         }
     }
 }
 
-/// Кто от кого родился в пакете команд (Р.49, п.357). Родство сообщает
-/// МОДЕЛЬ, а не догадывается вызывающий: у `Split` оно прямо в аргументах, у
-/// остальных производных — в заметке `NoteBirth`, которую оставляет тот, кто
-/// резал. Догадка по совпадению материала и окна была бы именно догадкой:
-/// после перенумерации отличить «половину разреза» от «соседнего события того
-/// же файла» нечем.
+/// Who was born from whom within a batch of commands (R.49, item 357). The kinship is
+/// reported by the MODEL, it is not guessed by the caller: for `Split` it is directly in
+/// the arguments, for the other derived ones it is in the note `NoteBirth` that the one who
+/// cut leaves behind. A guess by matching material and window would be exactly a guess:
+/// after renumbering there is no way to tell “the half of a cut” from “a neighboring event of
+/// the same file”.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Births {
-    /// Пары «новое событие ← родитель», в порядке рождения.
+    /// Pairs “new event ← parent”, in the order of birth.
     pub pairs: Vec<(ClipId, ClipId)>,
 }
 
@@ -1007,8 +1007,8 @@ impl TimelineModel {
         }
     }
 
-    /// Пересобрать рабочий вид из канона. Зовётся ПОСЛЕ каждой правки
-    /// канона — включая правки полей вне истории (регион, loop, ui).
+    /// Rebuild the working view from the canon. Called AFTER every edit of the canon —
+    /// including edits of fields outside history (region, loop, ui).
     fn rebuild_bench(&mut self) {
         self.bench = self.project.clone();
         for b in &self.bands {
@@ -1016,24 +1016,24 @@ impl TimelineModel {
         }
     }
 
-    /// Раскрытые полосы.
+    /// Expanded bands.
     pub fn bands(&self) -> &[Band] {
         &self.bands
     }
 
-    /// Раскрыть ленту экземпляра НА МЕСТЕ (Р.55, С5). `false` — это не
-    /// вложение, либо оно уже раскрыто.
+    /// Expand an instance’s reel IN PLACE (R.55, C5). `false` means it is not
+    /// an attachment, or it is already expanded.
     pub fn expand_band(&mut self, inst: ClipId) -> bool {
         if self.bands.iter().any(|b| b.inst == inst) {
             return false;
         }
-        // полоса считается от КАНОНА: `base` обязан быть числом корневых
-        // дорожек, а не «сколько их сейчас на экране вместе с чужой полосой».
-        // ВНУТРИ полного входа (Р.58, п.460) канон — это текущая лента
-        // корнем (`swap_reel`), и `Band::of` считает базы от неё же; ни
-        // одной особой ветки не нужно. Раскрыть саму ленту, в которой
-        // стоим, невозможно по циклам (`validate`), сторож — на случай
-        // ручной сборки проекта в обход валидации.
+        // the band is counted from the CANON: `base` must be the number of root
+        // tracks, not “how many there are now on screen together with someone else’s band”.
+        // INSIDE a full entry (R.58, item 460) the canon is the current reel as the root
+        // (`swap_reel`), and `Band::of` counts the bases from it too; no
+        // special branch is needed. Expanding the very reel in which we stand is impossible by
+        // cycles (`validate`); the guard is for the case of a manual build of the project
+        // bypassing validation.
         let Some(b) = Band::of(&self.project, inst) else { return false };
         debug_assert!(
             Some(b.seq) != self.editing,
@@ -1044,7 +1044,7 @@ impl TimelineModel {
         true
     }
 
-    /// Свернуть раскрытие обратно.
+    /// Fold the expansion back.
     pub fn collapse_band(&mut self, inst: ClipId) -> bool {
         let Some(i) = self.bands.iter().position(|b| b.inst == inst) else { return false };
         self.bands.remove(i);
@@ -1060,31 +1060,31 @@ impl TimelineModel {
         self.rebuild_bench();
     }
 
-    /// Чья это строка: корневая или раскрытой полосы.
+    /// Whose row this is: the root’s or the expanded band’s.
     pub fn band_of_row(&self, kind: LaneKind, lane: u32) -> Option<&Band> {
         self.bands.iter().find(|b| b.owns(kind, lane))
     }
 
-    /// Лента, которую сейчас редактируют. `None` — корень.
+    /// The reel that is being edited now. `None` is the root.
     pub fn editing(&self) -> Option<MediaId> {
         self.editing
     }
 
-    /// Войти в ленту (или выйти в корень). Несуществующий адрес —
-    /// молчаливый выход в корень: лента могла исчезнуть под undo.
+    /// Enter the reel (or exit to the root). A nonexistent address is a
+    /// silent exit to the root: the reel could have disappeared under undo.
     pub fn set_editing(&mut self, seq: Option<MediaId>) {
         let want = seq.filter(|id| {
-            // адрес ищем в ДОКУМЕНТЕ: стоя внутри X, сам X в
-            // `project.sequences` держит содержимое корня, но id у него
-            // прежний — этого и достаточно
+            // the address is looked up in the DOCUMENT: standing inside X, X itself in
+            // `project.sequences` holds the content of the root, but its id is the former one —
+            // and that is enough
             self.project.sequence(*id).is_some()
         });
         if want == self.editing {
             return;
         }
-        // Полный вход и раскрытие на месте — ДВА способа смотреть внутрь,
-        // и одновременно они бессмысленны: полоса считалась от корня, а
-        // корнем станет другая лента.
+        // A full entry and an in-place expansion are TWO ways of looking inside, and together
+        // they are meaningless: the band was counted from the root, and the root
+        // would become a different reel.
         self.bands.clear();
         if let Some(cur) = self.editing {
             self.project.swap_reel(cur);
@@ -1097,12 +1097,12 @@ impl TimelineModel {
         self.rebuild_bench();
     }
 
-    /// Документ, в котором ТЕКУЩАЯ лента стоит КОРНЕМ (Р.50, В1).
+    /// The document in which the CURRENT reel stands as the ROOT (R.50, B1).
     ///
-    /// Нужен офлайн-путям, считающим по времени того, что под руками:
-    /// громкость, дакинг, превью материала. Рабочий вид им отдавать
-    /// нельзя — в нём лента, внутри которой стоим, держит содержимое
-    /// корня и выглядит вложенной в саму себя.
+    /// It is needed by offline paths that count by the time of what is at hand:
+    /// loudness, ducking, material preview. The working view must not be given to them —
+    /// in it the reel inside which we stand holds the content of the root and looks
+    /// nested inside itself.
     pub fn reel_document(&self) -> Project {
         let mut p = self.project.clone();
         if let Some(cur) = self.editing {
@@ -1111,30 +1111,30 @@ impl TimelineModel {
         p
     }
 
-    /// Проект КАК ЕГО ВИДИТ ЧЕЛОВЕК: содержимое ленты, в которой он сейчас
-    /// стоит, лежит на месте корня (Р.50, В1), а раскрытые на месте ленты
-    /// разложены на дорожки со смещением (Р.55, С5).
+    /// The project AS THE PERSON SEES IT: the content of the reel in which he now
+    /// stands lies in place of the root (R.50, B1), and the reels expanded in place are laid out
+    /// on tracks with an offset (R.55, C5).
     ///
-    /// Весь интерфейс — отрисовка, хит-тест, планирование жестов, снап,
-    /// выделение, окна FX и морфера — работает с этим видом и о вложениях
-    /// не знает вовсе. Тому, кому нужен ДОКУМЕНТ (движок, сохранение,
-    /// экспорт), нужен `document()`; сторож — сканирующий тест t456b.
+    /// The whole interface — drawing, hit testing, gesture planning, snapping,
+    /// selection, the FX and morpher windows — works with this view and knows nothing
+    /// about attachments. Whoever needs the DOCUMENT (engine, saving, export)
+    /// needs `document()`; the guard is the scanning test t456b.
     ///
-    /// Имя НЕ переименовывается в `bench` намеренно: `project()` зовут
-    /// 182 раза, и все эти вызовы правильны — им нужен именно рабочий вид.
-    /// Переименование ничего не прояснило бы, а различие «канон против
-    /// вида» живёт в доке полей и в t456b.
+    /// The name is NOT renamed to `bench` on purpose: `project()` is called
+    /// 182 times, and all these calls are correct — they need precisely the working view.
+    /// A renaming would clarify nothing, and the difference “canon versus view” lives in the
+    /// doc of the fields and in t456b.
     #[allow(clippy::misnamed_getters)]
     pub fn project(&self) -> &Project {
         &self.bench
     }
 
-    /// ДОКУМЕНТ в настоящей раскладке: корень корнем, ленты лентами.
+    /// The DOCUMENT in its real layout: the root as the root, reels as reels.
     ///
-    /// Именно он уходит в плеер, в файл и в экспорт. Отдать туда рабочий
-    /// вид значило бы записать на диск проект, у которого содержимое
-    /// корня и ленты поменялись местами — потеря работы, которую человек
-    /// заметил бы только при следующем открытии.
+    /// It is exactly this that goes into the player, into the file and into the export. Handing
+    /// the working view there would mean writing to disk a project whose root and reel
+    /// contents have swapped places — a loss of work that the person would notice
+    /// only at the next opening.
     pub fn document(&self) -> Project {
         let mut p = self.project.clone();
         if let Some(seq) = self.editing {
@@ -1143,17 +1143,17 @@ impl TimelineModel {
         p
     }
 
-    /// Событие ПО ТОМУ, ЧТО ВИДИТ ЧЕЛОВЕК (Р.55, С5).
+    /// The event BY WHAT THE PERSON SEES (R.55, C5).
     ///
-    /// Ищет в рабочем виде, а не в каноне: интерфейс спрашивает про то, по
-    /// чему щёлкнул, а событие раскрытой полосы в каноне лежит внутри
-    /// ленты. Искал бы здесь канон — каждый жест по полосе отвечал бы
-    /// «такого события нет», причём молча.
+    /// It searches in the working view, not in the canon: the interface asks about what
+    /// was clicked, and an event of an expanded band lies inside the reel in the canon.
+    /// If it searched the canon here, every gesture on the band would answer
+    /// “there is no such event”, and silently so.
     pub fn clip(&self, id: ClipId) -> Option<&ClipEvent> {
         self.bench.clips.iter().find(|c| c.id == id)
     }
 
-    /// Полуоткрытый интервал клипа на таймлайне.
+    /// Half-open interval of a clip on the timeline.
     pub fn clip_range(c: &ClipEvent) -> TickRange {
         TickRange::new(c.start, c.start + c.duration)
     }
@@ -1162,9 +1162,9 @@ impl TimelineModel {
         self.apply_batch(vec![cmd]).map(|_| ())
     }
 
-    /// Пакет команд = ОДИН undo-снапшот на жест (сплит A/V-пары, удаление
-    /// группы, paste, punch-out). Атомарно: валидация всей серии на клоне,
-    /// провал любой команды = ноль изменений и ноль записей в истории.
+    /// A batch of commands = ONE undo snapshot per gesture (split of an A/V
+    /// pair, deletion of a group, paste, punch-out). Atomic: validation of the whole series on a clone,
+    /// a failure of any command = zero changes and zero entries in history.
     pub fn apply_batch(&mut self, cmds: Vec<Command>) -> Result<Births, CommandError> {
         if cmds.is_empty() {
             return Ok(Births::default());
@@ -1173,9 +1173,9 @@ impl TimelineModel {
         let births = Births::of(&cmds);
         self.push_undo();
         self.project = scratch;
-        // ПОЛОСЫ могли пережить правку с другими номерами дорожек
-        // (`InsertLane` в корне двигает всю полосу вниз): пересчёт — там
-        // же, где применяется результат, и только один раз.
+        // BANDS could have survived an edit with other track numbers
+        // (`InsertLane` at the root moves the whole band down): the recalculation is in
+        // the same place where the result is applied, and only once.
         for b in &mut self.bands {
             b.after_batch(&cmds);
         }
@@ -1185,15 +1185,15 @@ impl TimelineModel {
         Ok(births)
     }
 
-    /// Проект, каким он СТАНЕТ после батча — без записи в undo (Р.26).
-    /// Нужен call-site'ам, которым надо посчитать что-то по будущему
-    /// состоянию: возврат «ручек» кроссфейда считает свободное место уже
-    /// после того, как клип уехал (ops::restore_handles).
+    /// The project as it WILL BE after the batch — without writing to undo (R.26).
+    /// It is needed by call sites that must count something by the future
+    /// state: the return of the crossfade “handles” counts the free space already
+    /// after the clip has moved (ops::restore_handles).
     pub fn preview(&self, cmds: &[Command]) -> Result<Project, CommandError> {
-        // РАБОЧИЙ ВИД будущего, а не канон: вызывающий сравнивает его с
-        // `project()` (возврат «ручек» кроссфейда, Р.26). Сравни он канон
-        // с бенчем — и материал начал бы срезаться у чужих событий тихо и
-        // с undo.
+        // The WORKING VIEW of the future, not the canon: the caller compares it with
+        // `project()` (the return of the crossfade “handles”, R.26). Were it to compare the canon
+        // with the bench, material would be quietly and undoably trimmed off other people’s events,
+        // and with undo.
         let canon = self.simulate(cmds)?;
         let mut bench = canon;
         for b in &self.bands {
@@ -1203,12 +1203,12 @@ impl TimelineModel {
     }
 
     fn simulate(&self, cmds: &[Command]) -> Result<Project, CommandError> {
-        // ПОРЯДОК И ЧИСЛО СТРОК при открытой полосе не меняются (Р.56,
-        // п.449). С Р.56 `SetLaneOrder` перенумеровывает содержимое, а
-        // полоса раскрытия намеренно живёт в ХВОСТЕ числового
-        // пространства: перенумеруй мы бенч — `unmerge_reel` разложил бы
-        // события не по тем лентам, причём МОЛЧА. Приложение сворачивает
-        // раскрытие само и говорит об этом.
+        // THE ORDER AND THE NUMBER OF ROWS do not change while a band is open (R.56,
+        // item 449). Since R.56 `SetLaneOrder` renumbers the content, and the expansion band
+        // deliberately lives at the TAIL of the numeric space:
+        // if we renumbered the bench, `unmerge_reel` would sort the events
+        // into the wrong reels, and SILENTLY so.
+        // The application folds the expansion itself and says so.
         if !self.bands.is_empty()
             && cmds
                 .iter()
@@ -1216,13 +1216,13 @@ impl TimelineModel {
         {
             return Err(CommandError::BandsOpen);
         }
-        // Скретч уже в РАБОЧЕМ виде: содержимое текущей ленты стоит на
-        // месте корня (Р.50, В1), и команда правит его, не зная о
-        // вложениях вовсе.
+        // A scratch is already in the WORKING view: the content of the current reel stands in
+        // place of the root (R.50, B1), and the command edits it without knowing
+        // about attachments at all.
         let mut scratch = self.bench.clone();
-        // ГДЕ СТОИМ: нужно только адресным командам публикации — набор
-        // ленты, в которой стоишь, лежит в корне рабочего вида, а
-        // остальных — в `sequences` (Р.63 п.11)
+        // WHERE WE STAND: needed only by the address-based publication commands — the set
+        // of the reel in which we stand lies in the root of the working view, and the
+        // others lie in `sequences` (R.63 item 11)
         let scope = self.editing;
         let run = |scratch: &mut Project| -> Result<(), CommandError> {
             for cmd in cmds {
@@ -1232,16 +1232,16 @@ impl TimelineModel {
             Ok(())
         };
         let res = run(&mut scratch);
-        // reconcile — ОДИН раз на весь батч: жест атомарен, и переход не
-        // должен умирать в переходном состоянии между командами (roll стыка
-        // = TrimEnd+TrimStart: между ними стык формально разорван)
+        // reconcile — ONCE for the whole batch: the gesture is atomic, and a transition
+        // must not die in a transitional state between commands (the roll of a joint =
+        // TrimEnd+TrimStart: between them the joint is formally broken)
         Self::reconcile_transitions(&mut scratch);
         res?;
-        // РАСКРЫТЫЕ ПОЛОСЫ собираются обратно в свои ленты (Р.55, С5) —
-        // в обратном порядке, потому что каждая следующая раскрывалась
-        // поверх уже раскрытых. Ошибка здесь значит, что жест вынес
-        // событие через границу лент: батч отвергается ЦЕЛИКОМ, а не
-        // «доправляется».
+        // EXPANDED BANDS are collected back into their reels (R.55, C5) —
+        // in reverse order, because each next one was expanded
+        // over the already expanded ones. An error here means
+        // that the gesture carried an event across the boundary of reels: the batch is rejected
+        // ENTIRELY, rather than “patched up”.
         let mut bands = self.bands.clone();
         for b in &mut bands {
             b.after_batch(cmds);
@@ -1249,25 +1249,25 @@ impl TimelineModel {
         for b in bands.iter().rev() {
             scratch.unmerge_reel(b).map_err(CommandError::InvalidLayout)?;
         }
-        // Судьба публикаций — ТЕМ ЖЕ шагом истории и по тому же образцу,
-        // что у переходов: цель исчезла — исчезает и ручка, и все её
-        // переопределения во всех экземплярах дерева. Иначе снаружи
-        // остаётся ручка, которая ни на что не действует, и узнаёт об
-        // этом потребитель (минус разведки F-TL-012).
+        // The fate of publications — by the SAME history step and on the same pattern
+        // as for transitions: the target has disappeared — the handle disappears too,
+        // and all its overrides in all instances of the tree. Otherwise a handle remains
+        // outside that does nothing, and the consumer finds out about it
+        // (minus reconnaissance F-TL-012).
         //
-        // ПОСЛЕ сборки полос, и это не порядок ради порядка: пока полоса
-        // раскрыта, содержимое ленты физически лежит в корне, а её
-        // публикации остаются в `sequences` — каждая цель выглядела бы
-        // пропавшей, и раскрытие тихо сносило бы весь публичный набор.
+        // AFTER the assembly of bands, and this is not order for the sake of order:
+        // while a band is expanded, the content of the reel physically lies in the root,
+        // and its publications remain in `sequences` — each target would look missing,
+        // and expanding would quietly wipe out the entire public set.
         Self::reconcile_published(&mut scratch, self.editing);
-        // Валидация — ПО ДОКУМЕНТУ: в рабочем виде экземпляр ленты, в
-        // которой стоим, лежит внутри неё самой и выглядит циклом.
+        // Validation — BY DOCUMENT: in the working view the instance of the reel in which we stand
+        // lies inside itself and looks like a cycle.
         if let Some(seq) = self.editing {
             scratch.swap_reel(seq);
         }
-        // Жёсткая валидация результата (Р.24, этап 6): перекрытия после
-        // групповых мувов/тримов/вставок дешевле отловить одной проверкой,
-        // чем дублировать их логику в check_on. Провал = ноль изменений.
+        // Hard validation of the result (R.24, stage 6): overlaps after group moves/trims/inserts
+        // are cheaper to catch with one check than to duplicate their logic
+        // in check_on. A failure = zero changes.
         let ok = scratch.validate().map_err(CommandError::InvalidLayout);
         if let Some(seq) = self.editing {
             scratch.swap_reel(seq);
@@ -1276,8 +1276,8 @@ impl TimelineModel {
         Ok(scratch)
     }
 
-    /// Как apply, но серия вызовов с одним `gesture`-токеном сливается в
-    /// одну undo-запись (live-редактирование параметров FX из окна).
+    /// Like apply, but a series of calls with one `gesture` token is merged into
+    /// one undo entry (live editing of FX parameters from the window).
     pub fn apply_coalesced(&mut self, cmd: Command, gesture: u64) -> Result<(), CommandError> {
         let scratch = self.simulate(std::slice::from_ref(&cmd))?;
         if self.last_gesture != Some(gesture) {
@@ -1305,7 +1305,7 @@ impl TimelineModel {
         self.redo.clear();
     }
 
-    /// Регион ВНЕ undo-истории (семантика старого редактора).
+    /// The region is OUTSIDE the undo history (the semantics of the old editor).
     pub fn set_region(&mut self, r: Option<Region>) {
         self.project.region = r;
         self.bench.region = r;
@@ -1316,19 +1316,19 @@ impl TimelineModel {
         self.bench.loop_enabled = on;
     }
 
-    /// ИЗМЕРЕННАЯ длина материала — вне undo (Р.63 п.2).
+    /// The MEASURED length of the material — outside undo (R.63 item 2).
     ///
-    /// Это не правка, а ФАКТ о файле: его приносит тот, кто источник
-    /// открыл, и приносит асинхронно (фоновый синк медиа, возврат
-    /// пропавшего файла). Командой это быть не может по двум причинам:
-    /// откатывать «мы узнали, что файл длится 226 с» нечего, а звёздочка
-    /// «проект изменён» от открытия источника — прямое нарушение правила
-    /// «правки удобства не делают вид, что пользователь что-то изменил»
-    /// (п.5 р.11). Соседи по этой полке — регион, loop и вьюпорт.
+    /// This is not an edit but a FACT about the file: whoever opened the source brings it,
+    /// and brings it asynchronously (background media sync, return of a vanished
+    /// file). It cannot be a command, for two reasons: there is nothing to roll back in
+    /// “we learned that the file lasts 226 s”, and the asterisk “project changed” from
+    /// opening a source is a direct violation of the rule that “conveniences do not pretend
+    /// the user changed something” (item 5 of round 11).
+    /// The neighbors on this shelf are the region, loop and viewport.
     ///
-    /// Возвращает `true`, если значение ДЕЙСТВИТЕЛЬНО изменилось: синк
-    /// зовут на каждом кадре, и молчаливое «то же самое» не должно
-    /// двигать ни ревизию, ни автосейв.
+    /// Returns `true` if the value has REALLY changed: the sync is called on every
+    /// frame, and a silent “the same” must not move
+    /// either the revision or the autosave.
     pub fn note_media_length(&mut self, id: crate::MediaId, duration: kt_time::Tick) -> bool {
         let set = |p: &mut crate::Project| -> bool {
             match p.media.iter_mut().find(|m| m.id == id) {
@@ -1339,14 +1339,14 @@ impl TimelineModel {
                 _ => false,
             }
         };
-        // длина живёт у медиа ПРОЕКТА (список медиа один на документ), а
-        // рабочий вид и канон — разные проекты: правим оба, как регион
+        // the length lives with the media of the PROJECT (the media list is one per document), and the
+        // working view and the canon are different projects: we edit both, the same as the region
         let a = set(&mut self.project);
         let b = set(&mut self.bench);
         a || b
     }
 
-    /// Вьюпорт (вне undo, как регион) — сохраняется в файл проекта.
+    /// The viewport (outside undo, like the region) — saved to the project file.
     pub fn set_ui_state(&mut self, ui: Option<crate::UiState>) {
         self.project.ui = ui.clone();
         self.bench.ui = ui;
@@ -1354,25 +1354,25 @@ impl TimelineModel {
 
     pub fn undo(&mut self) -> Result<(), CommandError> {
         let mut prev = self.undo.pop().ok_or(CommandError::NothingToUndo)?;
-        // регион/loop не откатываются — переносим текущие значения
+        // region/loop are not rolled back — we carry over the current values
         prev.project.region = self.project.region;
         prev.project.loop_enabled = self.project.loop_enabled;
-        // КОНТЕКСТ едет вместе с ПРАВКОЙ, а не с тем, где человек стоял в
-        // момент отмены (Р.50, В1): отменяется то, что он сделал ТАМ —
-        // значит и показать надо то место. И redo-запись помнит ТОТ ЖЕ
-        // контекст, иначе обратный ход уводил бы не туда.
+        // The CONTEXT travels together with the EDIT, not with the place where the person
+        // stood at the moment of undo (R.50, B1): what he did THERE is undone,
+        // so that place must be shown too. And the redo entry remembers the SAME context,
+        // otherwise the reverse step would lead to the wrong place.
         let here = Snapshot {
             project: self.project.clone(),
             scope: prev.scope,
             bands: self.bands.clone(),
         };
         self.project = prev.project;
-        // Снимок уже несёт раскладку СВОЕГО контекста — обмен тут был бы
-        // вторым, и содержимое уехало бы не туда.
+        // The snapshot already carries the layout of ITS OWN context — an exchange here would be a
+        // second one, and the content would move to the wrong place.
         self.editing = prev.scope.filter(|id| self.project.sequence(*id).is_some());
-        // ПОЛОСЫ едут вместе с контекстом по той же причине, что и он:
-        // отменяется правка, сделанная В РАСКРЫТИИ, — значит и показать
-        // надо раскрытие, иначе Ctrl+Z выглядит как «нажал, и всё пропало».
+        // BANDS travel together with the context for the same reason: an edit made IN THE EXPANSION
+        // is undone, so the expansion must be shown too,
+        // otherwise Ctrl+Z looks like “pressed, and everything vanished”.
         self.bands = prev.bands;
         self.bands.retain(|b| self.project.clips.iter().any(|c| c.id == b.inst));
         self.rebuild_bench();
@@ -1404,13 +1404,13 @@ impl TimelineModel {
         self.undo.len()
     }
 
-    /// Набор публикаций НАЗВАННОЙ ленты в РАБОЧЕМ виде (Р.63 п.11).
+    /// The set of publications of a NAMED reel in the WORKING view (R.63 item 11).
     ///
-    /// Вход внутрь ленты сделан ОБМЕНОМ содержимого, поэтому набор той
-    /// ленты, в которой стоишь, лежит в корне, а всех прочих — в
-    /// `sequences`. Раскрытая полоса содержимое в корень переносит, а
-    /// набор ленты оставляет на месте (t672) — и это ровно тот случай,
-    /// ради которого адрес и заведён.
+    /// Entering a reel is done by EXCHANGING the content, so the set of the reel
+    /// in which you stand lies in the root, and the set of all the others lies
+    /// in `sequences`. An expanded band moves the content into the root
+    /// and leaves the reel’s set in place (t672) — and this is exactly the case
+    /// for which the address was introduced.
     fn published_slot(
         p: &Project,
         scope: Option<MediaId>,
@@ -1436,9 +1436,9 @@ impl TimelineModel {
     }
 
     fn check_on(p: &Project, scope: Option<MediaId>, cmd: &Command) -> Result<(), CommandError> {
-        // ЗАМОК ДОРОЖКИ (Р.62): одна проверка на весь реестр команд.
-        // Свойства самой дорожки сюда не попадают — запертую дорожку
-        // надо чем-то отпирать.
+        // TRACK LOCK (R.62): one check for the whole registry of commands.
+        // The properties of the track itself do not fall here — a locked track
+        // must be unlockable by something.
         for (k, l) in cmd.target_rows(p) {
             if p.track_at(k, l).is_some_and(|t| t.lock) {
                 return Err(CommandError::TrackLocked(
@@ -1449,7 +1449,7 @@ impl TimelineModel {
         let find =
             |id: ClipId| p.clips.iter().find(|c| c.id == id).ok_or(CommandError::ClipNotFound(id));
         match cmd {
-            // заметка о родстве ничего не требует от проекта: она про пакет
+            // the note about kinship requires nothing of the project: it is about the batch
             Command::NoteBirth { .. } => {}
             Command::AddMedia { id, .. } => {
                 if p.media.iter().any(|m| m.id == *id) {
@@ -1465,8 +1465,8 @@ impl TimelineModel {
                 if p.clips.iter().any(|x| x.id == c.id) {
                     return Err(CommandError::IdInUse(c.id.0));
                 }
-                // от КЛИПА к источнику — только через `Project::source()`:
-                // он смотрит и в файлы, и во вложенные ленты (Р.50)
+                // from a CLIP to the source — only through `Project::source()`:
+                // it looks both into the files and into the nested reels (R.50)
                 if p.source(c.media).is_none() {
                     return Err(CommandError::MediaNotFound(c.media));
                 }
@@ -1489,9 +1489,9 @@ impl TimelineModel {
             }
             Command::SetFx { id, fx } => {
                 find(*id)?;
-                // сайдчейн живёт ТОЛЬКО в цепочке дорожки (решение
-                // владельца Р.65): у события нет ни своего окна ключа, ни
-                // места в порядке стадий
+                // the sidechain lives ONLY in the track’s chain (the owner’s decision,
+                // R.65): an event has neither its own key window nor
+                // a place in the order of stages
                 if crate::sidechain_keys(fx).next().is_some() {
                     return Err(CommandError::SidechainOnClip);
                 }
@@ -1512,10 +1512,10 @@ impl TimelineModel {
                 if end - *new_start < MIN_CLIP_DURATION {
                     return Err(CommandError::TooShort);
                 }
-                // source_in не может уйти в минус (у reversed левый трим
-                // source_in не трогает — п.16). Считает ТА ЖЕ функция, что
-                // и мутация: иначе валидация и правка разойдутся на
-                // растянутом клипе (Р.39).
+                // source_in cannot go negative (for reversed, the left trim
+                // does not touch source_in — item 16). The SAME function computes it as the mutation:
+                // otherwise validation and the edit would diverge on a stretched
+                // clip (R.39).
                 if !slice_fits_source(c, TickRange::new(*new_start, end)) {
                     return Err(CommandError::TooShort);
                 }
@@ -1525,7 +1525,7 @@ impl TimelineModel {
                 if *new_end - c.start < MIN_CLIP_DURATION {
                     return Err(CommandError::TooShort);
                 }
-                // у reversed расширение вправо тянет source_in вниз (п.16)
+                // for reversed, extending to the right pulls source_in down (item 16)
                 if c.reversed && (c.source_in + (c.start + c.duration - *new_end)).0 < 0 {
                     return Err(CommandError::TooShort);
                 }
@@ -1587,7 +1587,7 @@ impl TimelineModel {
                 }
             }
             Command::SetMarkerName { at, name } => {
-                // одно пространство имён с областями (Р.35 п.2)
+                // one namespace with the areas (R.35 item 2)
                 if !name.is_empty()
                     && p.markers.iter().any(|m| m.t == *at && m.duration.0 > 0)
                     && p.taken_names().iter().any(|t| t == name)
@@ -1624,8 +1624,8 @@ impl TimelineModel {
                 if bypass.len() > fx.len() {
                     return Err(CommandError::TrackPropOutOfRange(*id));
                 }
-                // цепочка дорожки — ТОЛЬКО аудио или только видео, по её
-                // виду: видео-эффект на аудиодорожке был бы мёртвым слотом
+                // the track’s chain is ONLY audio or only video, by its kind: a video effect on an
+                // audio track would be a dead slot
                 let kind = p.track(*id).map(|t| t.kind);
                 let wrong = fx.iter().any(|f| match kind {
                     Some(LaneKind::Audio) => f.class() != FxClass::Audio,
@@ -1635,9 +1635,9 @@ impl TimelineModel {
                 if wrong {
                     return Err(CommandError::TrackPropOutOfRange(*id));
                 }
-                // КЛЮЧ САЙДЧЕЙНА (Р.65): только на СВОЮ ленту, только
-                // аудиодорожка, не сама себя и без цикла. Отказ назван —
-                // молчаливое «ключ не сработал» было бы хуже ошибки.
+                // SIDECHAIN KEY (R.65): only to ITS OWN reel, only an audio track,
+                // not to itself and without a cycle. The refusal is named:
+                // a silent “the key did not work” would be worse than an error.
                 for k in crate::sidechain_keys(fx) {
                     let ok = k != *id
                         && p.track(k).is_some_and(|t| t.kind == LaneKind::Audio)
@@ -1674,13 +1674,13 @@ impl TimelineModel {
                 if !p.media.iter().any(|m| m.id == *id) {
                     return Err(CommandError::MediaNotFound(*id));
                 }
-                // ПО ВСЕМУ ДЕРЕВУ, а не только по корню (Р.50): файл, стоящий
-                // лишь внутри ленты, удалился бы молча, и события повисли бы
-                // на несуществующем адресе — всплыло бы это через неделю
+                // ACROSS THE WHOLE TREE, not only the root (R.50): a file that stands
+                // only inside a reel would be deleted silently, and the events would hang
+                // on a nonexistent address — it would surface a week later
                 if p.sequence_uses(*id) > 0 {
                     return Err(CommandError::MediaInUse(*id));
                 }
-                // morpher с подменой на это медиа тоже держит его
+                // a morpher with a substitution on this media also holds it
                 if p.morphers
                     .iter()
                     .chain(p.sequences.iter().flat_map(|s| s.morphers.iter()))
@@ -1732,8 +1732,8 @@ impl TimelineModel {
                 if content.id != *id {
                     return Err(CommandError::SequenceNotFound(content.id));
                 }
-                // дорожек в ленте не меньше, чем занято её событиями:
-                // «SetLanes не осиротит клипы» обязано выполняться и здесь
+                // the number of tracks in a reel is not less than what its events occupy:
+                // “SetLanes will not orphan clips” must hold here too
                 let need = |k: ClipKind| {
                     content.clips.iter().filter(|c| c.kind == k).map(|c| c.lane + 1).max()
                 };
@@ -1751,8 +1751,8 @@ impl TimelineModel {
                     return Err(CommandError::MediaNotFound(*media));
                 }
             }
-            // Публикация проверяется ТЕМ ЖЕ кодом, что и валидация файла:
-            // второго правила «что считать живой целью» быть не может.
+            // Publication is checked by the SAME code as the validation of the file:
+            // there cannot be a second rule for “what counts as a live target”.
             Command::PublishParam { seq, param } => {
                 let set = Self::published_slot(p, scope, *seq)
                     .ok_or(CommandError::SequenceNotFound(*seq))?;
@@ -1777,9 +1777,9 @@ impl TimelineModel {
                 }
             }
             Command::ReorderPublished { seq, order } => {
-                // ПЕРЕСТАНОВКА, а не правка набора: порядок обязан быть
-                // перестановкой ровно того, что объявлено, иначе команда
-                // молча теряла бы или дублировала ручки.
+                // A PERMUTATION, not an edit of the set: the order must be a permutation of exactly
+                // what is declared, otherwise the command would silently lose or duplicate
+                // handles.
                 let set = Self::published_slot(p, scope, *seq)
                     .ok_or(CommandError::SequenceNotFound(*seq))?;
                 let mut a: Vec<u64> = order.iter().map(|x| x.0).collect();
@@ -1800,11 +1800,11 @@ impl TimelineModel {
             Command::ClearOverride { id, .. } => {
                 find(*id)?;
             }
-            // Значения генератора проверяются ТЕМ ЖЕ кодом, что и
-            // валидация файла (`check_clip_gen`): второго правила «что
-            // считать согласованным» быть не может, разойдись они — окно
-            // ставило бы состояние, которое проект потом отказался бы
-            // сохранить.
+            // The generator values are checked by the SAME code as the validation
+            // of the file (`check_clip_gen`): there cannot be a second rule for “what
+            // counts as consistent”; were they to diverge, the window
+            // would set a state that the project
+            // would then refuse to save.
             Command::SetClipGen { id, kind } => {
                 let c = find(*id)?;
                 let mut probe = c.clone();
@@ -1917,9 +1917,9 @@ impl TimelineModel {
     }
 
     fn check_morpher_on(p: &Project, m: &MorpherEvent) -> Result<(), CommandError> {
-        // пустой список запрещён ТОЛЬКО в режиме замороженных целей: у
-        // слоя («всё, что ниже») и у ссылок пустое множество законно —
-        // просто сейчас под морфером ничего нет
+        // an empty list is forbidden ONLY in the mode of frozen targets: for a
+        // layer (“everything below”) and for references an empty set is legal —
+        // it is simply that right now there is nothing under the morpher
         if let MorphTargets::Clips { ids } = &m.targets {
             if ids.is_empty() {
                 return Err(CommandError::MorpherNoTargets);
@@ -1938,15 +1938,15 @@ impl TimelineModel {
         Ok(())
     }
 
-    /// Проверка ОБЪЯВЛЕНИЯ публичного параметра тем же кодом, что и
-    /// валидация файла (Р.59, стадия 3).
+    /// The check of the DECLARATION of a public parameter by the same code as
+    /// the validation of the file (R.59, stage 3).
     ///
-    /// Лента НАЗЫВАЕТСЯ (Р.63 п.11), и цель ищется в ней. Содержимое
-    /// той ленты, в которой стоишь, лежит в корне рабочего вида — как и
-    /// содержимое ленты, РАСКРЫТОЙ ПОЛОСОЙ, хотя набор её публикаций
-    /// остался в `sequences`. Поэтому поиск цели падает обратно в корень:
-    /// ошибиться этим нельзя — итоговый документ всё равно проходит
-    /// `validate`, и чужая цель там отвергается.
+    /// The reel is NAMED (R.63 item 11), and the target is searched for in it. The content of
+    /// the reel in which you stand lies in the root of the working view — as does the content of the reel
+    /// EXPANDED as a BAND, although its set of publications remained in `sequences`. Therefore the search
+    /// for the target falls back to the root:
+    /// one cannot get this wrong — the resulting document still passes
+    /// `validate`, and a foreign target is rejected there.
     fn check_published_on(
         p: &Project,
         scope: Option<MediaId>,
@@ -1971,8 +1971,8 @@ impl TimelineModel {
         Ok(())
     }
 
-    /// Проверка камеры-события теми же правилами, что validate() (Р.29):
-    /// команда не имеет права провести в проект то, что он потом отвергнет.
+    /// The check of a camera event by the same rules as validate() (R.29):
+    /// the command has no right to put into the project what the project would then reject.
     fn check_camera_on(c: &CameraEvent) -> Result<(), CommandError> {
         if c.duration.0 <= 0 {
             return Err(CommandError::InvalidCamera(ProjectError::CameraBadDuration(c.id)));
@@ -1994,11 +1994,11 @@ impl TimelineModel {
         match cmd {
             Command::NoteBirth { .. } => {}
             Command::AddMedia { id, path } => {
-                // Путь генератора несёт ТОЛЬКО ВИД (Р.59, стадия 2) — и
-                // приводится к канону в тех же двух местах, что и у
-                // `SetMediaPath`. Значения приезжают отдельно, на СОБЫТИИ:
-                // иначе первая же проверка споткнулась бы о «вид значений
-                // не тот, что в пути».
+                // The generator path carries ONLY the KIND (R.59, stage 2) — and
+                // is brought to the canon in the same two places as in
+                // `SetMediaPath`. The values arrive separately, on the EVENT:
+                // otherwise the very first check would stumble on “the kind of values
+                // is not the one in the path”.
                 let path = match crate::genmedia::parse_gen_path(&path) {
                     Some(k) => crate::genmedia::gen_kind_path(&k),
                     None => path,
@@ -2006,12 +2006,12 @@ impl TimelineModel {
                 p.media.push(MediaRef::new(id, path));
             }
             Command::SetMediaPath { id, path } => {
-                // Путь генератора несёт ТОЛЬКО ВИД (Р.59, стадия 2), и
-                // приводит его к канону это место: команда осталась
-                // дверью relink'а, а путь для неё по-прежнему непрозрачен,
-                // поэтому окно может прислать и полный старый путь.
-                // События на этом медиа обязаны остаться согласованными —
-                // иначе первая же правка упёрлась бы в `GenKindMismatch`.
+                // The generator path carries ONLY the KIND (R.59, stage 2), and this place brings it
+                // to the canon: the command remained the door of relink,
+                // and for it the path is still opaque,
+                // therefore the window may send the full old path as well.
+                // The events on this media must remain consistent —
+                // otherwise the very first edit would run into `GenKindMismatch`.
                 let canon = match crate::genmedia::parse_gen_path(&path) {
                     Some(k) => crate::genmedia::gen_kind_path(&k),
                     None => path,
@@ -2039,7 +2039,7 @@ impl TimelineModel {
             }
             Command::RemoveClip { id } => {
                 p.clips.retain(|c| c.id != id);
-                // D5 (v1): вычищаем id из замороженных целей morpher'ов
+                // D5 (v1): we clean the ids out of the frozen targets of the morphers
                 for m in &mut p.morphers {
                     if let Some(ids) = m.targets.clip_ids_mut() {
                         ids.retain(|t| *t != id);
@@ -2057,19 +2057,19 @@ impl TimelineModel {
                         c.start = new_start;
                         c.lane = new_lane;
                     } else if group.is_some() && c.link_group == group {
-                        // партнёры по A/V-линку двигаются тем же смещением
+                        // A/V link partners move by the same offset
                         c.start = c.start + delta;
                     }
                 }
             }
-            // Тримы применяются ко ВСЕЙ link-группе (v1; п.6 «магнит
-            // распадается»: трим края видео оставлял аудио-партнёра прежней
-            // длины). Партнёры клампятся к своим ограничениям.
-            // Реверс (п.16): у reversed клипа source_in живёт «с другого
-            // конца» — TrimStart его НЕ трогает, TrimEnd сдвигает.
+            // Trims are applied to the WHOLE link group (v1; item 6 “the magnet falls apart”: a trim of a video edge
+            // left the audio partner at its former length).
+            // The partners are clamped to their own limits.
+            // Reverse (item 16): for a reversed clip source_in lives “from the other end” — TrimStart does
+            // NOT touch it, TrimEnd shifts it.
             Command::TrimStart { id, new_start } => {
-                // опция «растягивать анимацию вместе с событием» (Р.40):
-                // ВЫКЛЮЧЕНА по умолчанию — ключ остаётся на своём кадре
+                // the option “stretch the animation together with the event” (R.40):
+                // OFF by default — the key stays on its frame
                 let stretch = p.trim_stretches_auto;
                 let group = p.clips.iter().find(|c| c.id == id).and_then(|c| c.link_group);
                 for c in &mut p.clips {
@@ -2078,9 +2078,9 @@ impl TimelineModel {
                     }
                     let max_start = c.start + c.duration - MIN_CLIP_DURATION;
                     let ns = Tick(new_start.0.clamp(trim_min_start(c).0, max_start.0));
-                    // геометрия и материал — ОДНИМ правилом (Р.39):
-                    // у растянутого клипа `source_in` едет по интегралу
-                    // скорости, а не на длину куска
+                    // geometry and material — by ONE rule (R.39):
+                    // for a stretched clip, `source_in` moves along the integral
+                    // of the speed, not by the length of the piece
                     let (span_old, anchor_old) = (crate::clip_material_span(c), c.source_in);
                     *c = clip_slice(c, TickRange::new(ns, c.start + c.duration), c.id);
                     if stretch {
@@ -2092,8 +2092,8 @@ impl TimelineModel {
             Command::TrimEnd { id, new_end } => {
                 let stretch = p.trim_stretches_auto;
                 let group = p.clips.iter().find(|c| c.id == id).and_then(|c| c.link_group);
-                // длины медиа берём ДО цикла: внутри `p.clips` занят
-                // мутабельно, а `media_duration` смотрит в тот же проект
+                // we take media lengths BEFORE the loop: inside `p.clips` is borrowed
+                // mutably, and `media_duration` looks into the same project
                 let lens: Vec<(ClipId, Option<Tick>)> = p
                     .clips
                     .iter()
@@ -2107,12 +2107,12 @@ impl TimelineModel {
                     let media_len =
                         lens.iter().find(|(cid, _)| *cid == c.id).and_then(|(_, l)| *l);
                     let min_end = c.start + MIN_CLIP_DURATION;
-                    // Край материала — такой же упор, как его начало (Р.63).
-                    // Предел НЕ МЕНЬШЕ нынешнего конца: событие, которое
-                    // уже длиннее материала (файлы до Р.63), двигается в
-                    // пределах сделанного и подрезается свободно — само
-                    // оно не укорачивается (правило 20), только расти
-                    // дальше ему больше не дают.
+                    // The edge of the material is the same stop as its start (R.63).
+                    // The limit is NOT LESS than the current end:
+                    // an event that is already longer than the material
+                    // (files before R.63) is moved within what has been
+                    // made and is trimmed freely — the event itself is not shortened (rule 20); only
+                    // it is no longer allowed to grow further.
                     let was_end = (c.start + c.duration).0;
                     let limit = trim_max_end_in(c, media_len).0.max(was_end);
                     let ne = Tick(new_end.0.max(min_end.0).min(limit));
@@ -2125,15 +2125,15 @@ impl TimelineModel {
                 }
             }
             Command::Split { id, at, new_id, new_group } => {
-                // правило кусков ОДНО на весь проект — `clip_slice`
-                // (реверс, п.16: левая половина играет ХВОСТ источника)
+                // the pieces rule is ONE for the whole project — `clip_slice`
+                // (reverse, item 16: the left half plays the TAIL of the source)
                 let c = Self::clip_mut_on(p, id).clone();
                 let body = TickRange::new(c.start, c.start + c.duration);
                 *Self::clip_mut_on(p, id) = clip_slice(&c, TickRange::new(body.start, at), id);
                 let mut right = clip_slice(&c, TickRange::new(at, body.end), new_id);
                 right.link_group = new_group;
                 p.clips.push(right);
-                // D5 (v1): правая половина наследует таргетинг morpher'ов
+                // D5 (v1): the right half inherits the targeting of the morphers
                 for m in &mut p.morphers {
                     if let Some(ids) = m.targets.clip_ids_mut()
                         && ids.contains(&id)
@@ -2141,9 +2141,9 @@ impl TimelineModel {
                         ids.push(new_id);
                     }
                 }
-                // переход, где клип был OUTGOING (стык на прежнем КОНЦЕ),
-                // уезжает к правой половине; incoming-стык (начало) остаётся
-                // за левой — она сохранила id
+                // the transition where the clip was OUTGOING (the joint at the former END) moves
+                // to the right half; the incoming joint (the start) stays
+                // with the left one — it kept the id
                 for t in &mut p.transitions {
                     if t.a == Some(id) {
                         t.a = Some(new_id);
@@ -2169,12 +2169,12 @@ impl TimelineModel {
             }
             Command::SetFx { id, fx } => {
                 let c = Self::clip_mut_on(p, id);
-                // цепочка сменилась — кривые лишних слотов отпадают (Р.30);
-                // перестановку слотов редактор ведёт сам и шлёт SetFxAuto
-                // тем же жестом
+                // the chain has changed — the curves of the extra slots drop out (R.30);
+                // the editor itself handles the reordering of slots and sends SetFxAuto
+                // within the same gesture
                 c.fx_auto.truncate(fx.len());
-                // ведущий узел «Геометрия» (Р.62) стоял за концом
-                // укоротившейся цепочки — прижимается к её концу
+                // the leading “Geometry” node (R.62) stood behind the end of
+                // the shortened chain — it is pressed against its end
                 c.geometry_pos = c.geometry_pos.min(fx.len());
                 c.fx = fx;
                 sync_warp_to_link_group(p, id);
@@ -2235,7 +2235,7 @@ impl TimelineModel {
                 }
             }
             Command::MoveMarker { from, to } => {
-                // имя, длительность и цвет переезжают ВМЕСТЕ с меткой
+                // name, duration and color move TOGETHER with the marker
                 let moved =
                     p.markers.iter().find(|m| m.t == from).cloned().unwrap_or(Marker::at(from));
                 p.markers.retain(|m| m.t != from);
@@ -2296,8 +2296,8 @@ impl TimelineModel {
                 let mut c = Self::clip_mut_on(p, id).clone();
                 c.media = media;
                 fit_gen_to_media(p, &mut c);
-                // Экземпляр переехал на ДРУГУЮ ленту — чужие
-                // переопределения на ней не значат ничего.
+                // The instance moved to ANOTHER reel — someone else’s
+                // overrides on it mean nothing.
                 c.overrides.clear();
                 *Self::clip_mut_on(p, id) = c;
             }
@@ -2314,9 +2314,9 @@ impl TimelineModel {
                 }
             }
             Command::UnpublishParam { seq, id } => {
-                // Переопределения снятой ручки убирает `reconcile_published`
-                // ТЕМ ЖЕ шагом истории — по всему документу сразу, а не
-                // только там, куда дотянулась эта команда.
+                // The overrides of a removed handle are deleted by `reconcile_published`
+                // in the SAME history step — across the whole document at once,
+                // not only where this command reached.
                 if let Some(set) = Self::published_slot_mut(p, scope, seq) {
                     set.retain(|x| x.id != id);
                 }
@@ -2354,25 +2354,25 @@ impl TimelineModel {
             Command::RemoveMorpher { id } => p.morphers.retain(|m| m.id != id),
             Command::BakeMorpher { id } => {
                 let Some(pos) = p.morphers.iter().position(|m| m.id == id) else { return };
-                // «bake == то, что рисовалось» — значит РЕЗКА тоже
-                // материализуется. Считаем ровно этот морфер: остальные
-                // остаются жить и режут по-прежнему.
+                // “bake == what was drawn” — so the CUT is materialized too. We count exactly
+                // this morpher: the others
+                // remain alive and keep cutting as before.
                 let baked = {
                     let mut q = p.clone();
-                    // Вложения при bake НЕ раскрываются (Р.50): морфер
-                    // материализует свою резку по клипам ЭТОЙ ленты, а
-                    // экземпляр вложения — такой же клип. Раскрытие
-                    // подменило бы его содержимым и потеряло бы само
-                    // событие.
+                    // Attachments are NOT expanded on bake (R.50): the morpher
+                    // materializes its cut over the clips of THIS reel, and
+                    // the attachment instance is the same kind of clip. Expanding
+                    // would replace it with its content and lose the
+                    // event itself.
                     q.sequences.clear();
                     q.morphers.retain(|m| m.id == id);
                     q.effective_clips()
                 };
                 p.morphers.remove(pos);
-                // синтетические id кусков → настоящие; кусок №0 держит id
-                // оригинала (правило `Split`), остальные получают max+1…
+                // synthetic ids of the pieces → real ones; piece No. 0 keeps the id
+                // of the original (the `Split` rule), the rest get max+1…
                 let mut next = p.clips.iter().map(|c| c.id.0).max().unwrap_or(0) + 1;
-                // (оригинал, новый id, конец куска) — для перевешивания
+                // (original, new id, end of the piece) — for re-hanging
                 let mut born: Vec<(ClipId, ClipId, Tick)> = Vec::new();
                 let mut clips = Vec::with_capacity(baked.len());
                 for mut c in baked {
@@ -2389,8 +2389,8 @@ impl TimelineModel {
                 if born.is_empty() {
                     return;
                 }
-                // переход, где разрезанный клип был OUTGOING, уезжает к
-                // куску, которому достался стык (прежний КОНЕЦ тела)
+                // a transition where the cut clip was OUTGOING moves to the
+                // piece that got the joint (the former END of the body)
                 for t in &mut p.transitions {
                     let Some(a) = t.a else { continue };
                     let Some(&(_, end)) = ends.iter().find(|(i, _)| *i == a) else { continue };
@@ -2398,7 +2398,7 @@ impl TimelineModel {
                         t.a = Some(new);
                     }
                 }
-                // куски наследуют таргетинг ОСТАЛЬНЫХ морферов (D5 v1)
+                // the pieces inherit the targeting of the OTHER morphers (D5 v1)
                 for m in &mut p.morphers {
                     if let Some(ids) = m.targets.clip_ids_mut() {
                         for (origin, new, _) in &born {
@@ -2412,9 +2412,9 @@ impl TimelineModel {
             Command::AddArea(a) => p.areas.push(a),
             Command::RemoveArea { name } => {
                 p.areas.retain(|a| a.name != name);
-                // ссылка на удалённую область остаётся в файле и
-                // резолвится в ничто: молча выкидывать её нельзя —
-                // пользователь вернёт область тем же именем (правило 20)
+                // a reference to a deleted region stays in the file and
+                // resolves to nothing: it cannot be silently dropped —
+                // the user will restore the region under the same name (rule 20)
             }
             Command::RenameArea { from, to } => {
                 if let Some(a) = p.areas.iter_mut().find(|a| a.name == from) {
@@ -2440,9 +2440,9 @@ impl TimelineModel {
                 }
             }
             Command::AddCamera(c) => {
-                // строка обязана СУЩЕСТВОВАТЬ, иначе камера легла бы на
-                // невидимую дорожку: создать можно, управлять нельзя.
-                // То же правило, что у `MoveClip` для видео и аудио.
+                // the row MUST exist, otherwise the camera would land on
+                // an invisible track: it can be created, it cannot be controlled.
+                // The same rule as for `MoveClip` of video and audio.
                 p.ensure_tracks(LaneKind::Camera, c.lane + 1);
                 p.cameras.push(c);
             }
@@ -2455,15 +2455,15 @@ impl TimelineModel {
         }
     }
 
-    /// Судьба переходов после правок геометрии клипов (Р.24, п.135):
-    /// клип пропал или стык разорван (конец `a` != начало `b`, дорожка/вид
-    /// разошлись) — переход умирает; трим укоротил соседа — офсеты клампятся
-    /// телами, схлопнувшееся ниже минимума окно умирает. Групповой перенос
-    /// обоих соседей стык сохраняет — переход живёт (идентичность по ClipId,
-    /// позиция не хранится).
-    /// Переходы сверяются с содержимым КАЖДОЙ ленты (Р.50): переход живёт
-    /// на той ленте, где лежат его концы, и сверять его с чужими клипами —
-    /// значит убить его на первой же команде.
+    /// The fate of transitions after edits of clip geometry (R.24, item 135):
+    /// the clip has vanished or the joint is broken (end of `a` != start of `b`, track/view
+    /// diverged) — the transition dies; a trim shortened the neighbor — the offsets are clamped
+    /// by the bodies, and a window that collapsed below the minimum dies. A group move
+    /// of both neighbors keeps the joint — the transition lives (identity by ClipId,
+    /// the position is not stored).
+    /// Transitions are checked against the content of EACH reel (R.50): a transition lives
+    /// on the reel where its ends lie, and checking it against foreign clips
+    /// would mean killing it on the very first command.
     fn reconcile_transitions(p: &mut Project) {
         let Project { clips, transitions, sequences, .. } = p;
         reconcile_reel(clips, transitions);
@@ -2472,20 +2472,20 @@ impl TimelineModel {
         }
     }
 
-    /// Судьба публикаций и переопределений после пакета команд (Р.59,
-    /// стадия 3) — образец `reconcile_transitions`.
+    /// The fate of publications and overrides after a batch of commands (R.59,
+    /// stage 3) — the pattern of `reconcile_transitions`.
     ///
-    /// `root_is` — чья лента стоит СЕЙЧАС на месте корня (вход внутрь
-    /// сделан обменом содержимого). Без этого адреса нельзя понять, чьи
-    /// переопределения осиротели, когда ручку сняли изнутри ленты.
+    /// `root_is` is whose reel stands NOW in the place of the root (the entry inside
+    /// is done by exchanging the content). Without this address it is impossible to tell whose
+    /// overrides became orphaned when the handle was removed from inside the reel.
     ///
-    /// Цель, сменившая ТИП, считается исчезнувшей: слот, которому
-    /// подменили вид эффекта, — это другой слот, и ручка на нём уже ни на
-    /// что не действует.
+    /// A target that changed its TYPE counts as vanished: a slot whose effect kind
+    /// was substituted is a different slot, and a handle on it does
+    /// nothing anymore.
     fn reconcile_published(p: &mut Project, root_is: Option<MediaId>) {
-        // Быстрый путь первой строкой: проект без публикаций и без
-        // переопределений — подавляющее большинство — платит один обход
-        // и ни одной аллокации.
+        // Fast path, first line: a project without publications and without
+        // overrides — the vast majority — pays one walk
+        // and not a single allocation.
         let none = p.published.is_empty()
             && p.sequences.iter().all(|s| s.published.is_empty())
             && p.clips
@@ -2495,11 +2495,11 @@ impl TimelineModel {
         if none {
             return;
         }
-        // ДО НЕПОДВИЖНОЙ ТОЧКИ. Снятие ручки внутренней ленты убивает
-        // ручку внешней, которая на неё ссылалась (`Nested`), — а та
-        // могла быть целью ещё одной этажом выше. Один проход оставил бы
-        // мёртвую ссылку до конца батча, и `validate` отверг бы ВЕСЬ
-        // жест: правка была бы законной, а не проходила бы.
+        // UP TO A FIXED POINT. Removing a handle of an inner reel kills
+        // the handle of the outer one that referred to it (`Nested`) — and that one
+        // could be the target of yet another one a floor higher. A single pass would leave
+        // a dead reference until the end of the batch, and `validate` would reject the WHOLE
+        // gesture: the edit would be legal, but would not go through.
         for _ in 0..=max_publish_cascade() {
             if !Self::reconcile_published_once(p, root_is) {
                 break;
@@ -2507,8 +2507,8 @@ impl TimelineModel {
         }
     }
 
-    /// Один проход согласования. Возвращает `true`, если что-то сняли, —
-    /// значит надо пройти ещё раз.
+    /// One pass of reconciliation. Returns `true` if something was removed —
+    /// which means it must be run once more.
     fn reconcile_published_once(p: &mut Project, root_is: Option<MediaId>) -> bool {
         let root_keep: Vec<bool> = {
             let alive = |seq: Option<MediaId>, prm: &PublishedParam| {
@@ -2535,9 +2535,9 @@ impl TimelineModel {
             let mut it = keeps.into_iter();
             s.published.retain(|_| it.next().unwrap_or(true));
         }
-        // Живые ручки по адресу ленты. Порядок важен: лента, стоящая на
-        // месте корня, держит свой набор в `p.published`, а её запись в
-        // `sequences` — чужое содержимое.
+        // Live handles by the reel address. The order matters: the reel that stands
+        // in place of the root holds its own set in `p.published`, while its record in
+        // `sequences` is someone else’s content.
         let mut sets: std::collections::HashMap<MediaId, std::collections::HashSet<PubId>> =
             std::collections::HashMap::new();
         if let Some(rid) = root_is {
@@ -2552,7 +2552,7 @@ impl TimelineModel {
             }
             match sets.get(&c.media) {
                 Some(ids) => c.overrides.retain(|o| ids.contains(&o.pub_id)),
-                // событие уехало на файл — переопределять больше нечего
+                // the event moved to a file — there is nothing left to override
                 None => c.overrides.clear(),
             }
         };
@@ -2572,8 +2572,8 @@ impl TimelineModel {
     }
 }
 
-/// Сколько раз максимум может каскадировать снятие публикации: цепочка
-/// ссылок `Nested` не длиннее дерева лент.
+/// The maximum number of cascading removals of a publication: a chain
+/// of `Nested` references is no longer than the tree of reels.
 fn max_publish_cascade() -> usize {
     crate::MAX_NEST_DEPTH
 }
@@ -2581,18 +2581,18 @@ fn max_publish_cascade() -> usize {
 fn reconcile_reel(clips: &[ClipEvent], transitions: &mut Vec<TransitionEvent>) {
     transitions.retain_mut(|t| {
         let side = |id: Option<ClipId>| match id {
-            // сторона-пустота у фейда (Р.25) — законна и остаётся пустой
+            // the empty side of a fade (R.25) is legal and stays empty
             None => Some(None),
-            // клип стороны пропал: переход умирает целиком (фейды
-            // заводятся явно, а не остатками от удаления)
+            // the clip of a side has vanished: the transition dies entirely (fades
+            // are set explicitly, not left over from a deletion)
             Some(id) => clips.iter().find(|c| c.id == id).map(Some),
         };
         let (Some(mut a), Some(mut b)) = (side(t.a), side(t.b)) else { return false };
         if let (Some(ca), Some(cb)) = (a, b) {
-            // канонизация ролей (Р.51, п.399): Split и мувы могли поменять
-            // порядок пары — «a» всегда ранний. Направленный вид при этом
-            // зеркалится вместе с ролями; смерть перехода была бы хуже
-            // (правило 20)
+            // canonicalization of roles (R.51, item 399): Split and moves could have changed
+            // the order of the pair — “a” is always the earlier one. The directed view is
+            // mirrored together with the roles; the death of the transition would be worse
+            // (rule 20)
             if cb.start < ca.start {
                 std::mem::swap(&mut t.a, &mut t.b);
                 std::mem::swap(&mut a, &mut b);
@@ -2603,10 +2603,10 @@ fn reconcile_reel(clips: &[ClipEvent], transitions: &mut Vec<TransitionEvent>) {
                 return false;
             }
             if a_end != cb.start {
-                // не встык: жив только как НАЛОЖЕННЫЙ переход (Р.51) —
-                // чистая «лесенка» с окном не короче минимума и без
-                // третьего клипа в нём (третий вполз мувом → переход
-                // умирает, батч не валится — прецедент разорванного стыка)
+                // not joined: it lives only as an OVERLAPPED transition (R.51) —
+                // a plain “staircase” with a window not shorter than the minimum and without
+                // a third clip in it (a third one crept in by a move →
+                // the transition dies, the batch does not fall — the precedent of a broken joint)
                 let stag = ca.start < cb.start && cb.start < a_end && a_end < b_end;
                 if !stag || a_end - cb.start < MIN_TRANSITION_DURATION {
                     return false;
@@ -2619,8 +2619,8 @@ fn reconcile_reel(clips: &[ClipEvent], transitions: &mut Vec<TransitionEvent>) {
                         && c.start < a_end
                         && cb.start < c.start + c.duration
                 });
-                // офсеты у наложенного не клампятся — они мёртвый груз и
-                // оживают при возврате пары встык
+                // the offsets of an overlapped one are not clamped — they are dead weight and
+                // come back to life when the pair is joined again
                 return !busy;
             }
         }

@@ -1,7 +1,7 @@
-//! cpal-вывод. Инвариант №6: колбэк — мастер-часы. В колбэке ни аллокаций,
-//! ни локов: только чтение SPSC-кольца, атомарный счётчик потреблённых
-//! кадров (по нему аудио-render-поток продвигает playhead) и flush-флаг
-//! (после seek выбрасываем хвост старой позиции).
+//! cpal output. Invariant No. 6: the callback is the master clock. In the callback there are no allocations,
+//! no locks: only reading the SPSC ring, an atomic counter of consumed
+//! frames (the audio-render thread advances the playhead by it) and a flush flag
+//! (after a seek we discard the tail of the old position).
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use kt_engine::{AudioShared, Transport};
@@ -23,7 +23,7 @@ pub fn start(
     let host = cpal::default_host();
     let device = host.default_output_device().ok_or("no audio output device")?;
 
-    // предпочитаем 48k stereo f32 — тогда колбэк вообще без преобразований
+    // we prefer 48k stereo f32 — then the callback needs no conversions at all
     let mut chosen: Option<cpal::SupportedStreamConfig> = None;
     if let Ok(configs) = device.supported_output_configs() {
         for c in configs {
@@ -49,11 +49,11 @@ pub fn start(
             config.sample_format()
         ));
     }
-    // Наивная подгонка под чужой rate (позиционный повтор/пропуск кадров).
-    // На 48k-устройствах (норма для PipeWire) путь тождественный.
+    // A naive adjustment to someone else's rate (positional repeat/skip of frames).
+    // On 48k devices (the norm for PipeWire) the path is identity.
     let step = AUDIO_SAMPLE_RATE as f64 / device_rate as f64;
 
-    // состояние varispeed-интерполятора между колбэками
+    // state of the varispeed interpolator between callbacks
     let mut vs_prev = (0.0f32, 0.0f32);
     let mut vs_cur = (0.0f32, 0.0f32);
     let mut vs_primed = false;
@@ -62,7 +62,7 @@ pub fn start(
         .build_output_stream(
             &config.config(),
             move |data: &mut [f32], info: &cpal::OutputCallbackInfo| {
-                // задержка вывода: когда прозвучит то, что забираем сейчас
+                // output latency: when what we take now will sound
                 let ts = info.timestamp();
                 if let Some(d) = ts.playback.duration_since(&ts.callback) {
                     let frames = (d.as_secs_f64() * 48_000.0) as i64;
@@ -78,20 +78,20 @@ pub fn start(
                     data.fill(0.0);
                     return;
                 }
-                // Единый varispeed-путь (п.4): шаг = device_step × |rate|,
-                // линейная интерполяция (ядро kt_engine::varispeed_fill,
-                // тест 32). Направление колбэк НЕ знает (J4): при реверсе
-                // материал в кольце уже развёрнут render-потоком, знак
-                // применяется при продвижении playhead. rate≈0 → тишина,
-                // ноль потребления (playhead стоит). Тест 45.
+                // A single varispeed path (item 4): step = device_step × |rate|,
+                // linear interpolation (the kt_engine::varispeed_fill kernel,
+                // test 32). The callback does NOT know the direction (J4): on reverse
+                // the material in the ring is already reversed by the render thread, the sign
+                // is applied when the playhead advances. rate≈0 → silence,
+                // zero consumption (the playhead stands still). Test 45.
                 let rate = f32::from_bits(shared.playback_rate.load(Ordering::Acquire));
                 let Some(eff_step) = kt_engine::callback_step(step, rate) else {
                     data.fill(0.0);
                     return;
                 };
-                // пара L/R атомарно: полкадра из кольца не забираем — иначе
-                // перманентный swap каналов (латентный дефект прежнего кода,
-                // тест 45); underrun честно считается
+                // the L/R pair atomically: we do not take half a frame from the ring — otherwise
+                // a permanent channel swap (a latent defect of the former code,
+                // test 45); the underrun is counted honestly
                 let mut next = || -> Option<(f32, f32)> {
                     if ring.slots() < 2 {
                         shared.callback_underruns.fetch_add(1, Ordering::Relaxed);

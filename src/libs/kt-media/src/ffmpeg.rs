@@ -1,9 +1,9 @@
-//! Мост к системному FFmpeg через kt-ffmpeg (рантайм-загрузка, dlopen).
+//! A bridge to the system FFmpeg through kt-ffmpeg (runtime loading, dlopen).
 //!
-//! Здесь только адаптация к трейту `MediaSource`; вся работа с libav*
-//! (включая выбор мажорной версии 6/7/8) — в крейте kt-ffmpeg.
-//! ИНВАРИАНТ: бинарь не линкуется с libav*, поэтому один и тот же
-//! исполняемый файл работает на системах с разными версиями FFmpeg.
+//! Only the adaptation to the `MediaSource` trait is here; all the work with libav*
+//! (including the choice of the major version 6/7/8) is in the kt-ffmpeg crate.
+//! INVARIANT: the binary is not linked against libav*, so the same executable
+//! works on systems with different FFmpeg versions.
 
 use crate::{AudioBurst, MediaError, MediaInfo, MediaSource, Quality, VideoFrame};
 use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS, Tick};
@@ -11,9 +11,9 @@ use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS, Tick};
 pub struct FfmpegSource {
     inner: kt_ffmpeg::Source,
     info: MediaInfo,
-    /// Исходный размер кадра — используется при quality = None.
+    /// The source frame size: used when quality = None.
     src_size: (u32, u32),
-    /// У формата потока есть альфа (Р.67): кадр уходит в композит с ней.
+    /// The stream format has alpha (R.67): the frame goes into the composite with it.
     has_alpha: bool,
 }
 
@@ -31,11 +31,11 @@ impl FfmpegSource {
         Self::from_inner(kt_ffmpeg::Source::open(path)?)
     }
 
-    /// Открытие через sidecar индекс-БД: пакетный индекс (pts аудио-пакетов
-    /// и видео-кейфреймов) берётся из БД, если файл не менялся — полный
-    /// скан-проход по файлу пропадает (быстрое открытие больших файлов).
-    /// После свежего скана индекс сохраняется в БД. Любая ошибка БД — это
-    /// ошибка КЭША: молча откатываемся к обычному open со сканом.
+    /// Opening through the sidecar index DB: the packet index (the pts of audio packets
+    /// and video keyframes) is taken from the DB if the file has not changed, and the full
+    /// scan pass over the file disappears (a fast opening of large files).
+    /// After a fresh scan the index is saved into the DB. Any DB error is a
+    /// CACHE error: we silently fall back to the ordinary open with a scan.
     pub fn open_indexed(
         path: &str,
         db: Option<&mut crate::index::MediaIndexDb>,
@@ -58,12 +58,12 @@ impl FfmpegSource {
         Ok(src)
     }
 
-    /// Индекс пришёл из БД (скан не выполнялся) — диагностика/тест 34.
+    /// The index came from the DB (no scan was performed): diagnostics/test 34.
     pub fn index_was_prebuilt(&self) -> bool {
         self.inner.index_was_prebuilt()
     }
 
-    /// (pts аудио-пакетов, pts видео-кейфреймов) — сверка в тесте 34.
+    /// (pts of audio packets, pts of video keyframes): a check in test 34.
     pub fn packet_index(&self) -> (&[i64], &[i64]) {
         self.inner.packet_index()
     }
@@ -87,24 +87,24 @@ impl FfmpegSource {
 }
 
 impl FfmpegSource {
-    /// (backward_reopens, frames_decoded) — диагностика теста 21.
+    /// (backward_reopens, frames_decoded): diagnostics of test 21.
     pub fn decode_debug_stats(&self) -> (u64, u64) {
         self.inner.video_debug_stats()
     }
 }
 
-/// Версия загруженного FFmpeg (для перф-панели/диагностики).
+/// The version of the loaded FFmpeg (for the perf panel/diagnostics).
 pub fn backend_info() -> Option<kt_ffmpeg::BackendInfo> {
     kt_ffmpeg::backend_info()
 }
 
-/// Причина, по которой FFmpeg не загрузился (для сообщения пользователю).
+/// The reason FFmpeg did not load (for the message to the user).
 pub fn backend_error() -> Option<String> {
     kt_ffmpeg::backend_error()
 }
 
-/// Кумулятивные (opens, packet_reads) FFmpeg-слоя — перф-панель
-/// дифференцирует по времени (порт avcpp-метрик v1).
+/// The cumulative (opens, packet_reads) of the FFmpeg layer: the perf panel
+/// differentiates them by time (a port of the v1 avcpp metrics).
 pub fn io_stats() -> (u64, u64) {
     kt_ffmpeg::iostats::snapshot()
 }
@@ -116,9 +116,9 @@ impl MediaSource for FfmpegSource {
 
     fn read_audio_burst(&mut self, idx: i64) -> Result<AudioBurst, MediaError> {
         let mut burst = AudioBurst::silence(idx);
-        // У КАРТИНКИ звука нет по природе, и это не ошибка чтения (Р.67):
-        // событие со стиллом обязано играть тишину, как заглушка, а не
-        // валить микс отказом «вне диапазона».
+        // A PICTURE has no sound by nature, and this is not a read error (R.67):
+        // an event with a still MUST play silence, like a placeholder, and not
+        // bring down the mix with an “out of range” refusal.
         if self.info.still {
             return Ok(burst);
         }
@@ -131,13 +131,13 @@ impl MediaSource for FfmpegSource {
         pts: Tick,
         quality: Option<Quality>,
     ) -> Result<VideoFrame, MediaError> {
-        // У КАРТИНКИ кадр один и тот же на любой тик (Р.67): просить у
-        // демуксера позицию, которой в файле нет, — верный способ получить
-        // «кадра нет» и вечное «Loading…» над событием.
+        // A PICTURE has the same frame at any tick (R.67): asking the demuxer for a
+        // position that is not in the file is a sure way to get
+        // “no frame” and an eternal “Loading…” over the event.
         let pts = if self.info.still { Tick::ZERO } else { pts };
         let (w, h) = match quality {
             Some(q) => (q.width, q.height),
-            None => self.src_size, // исходное разрешение источника
+            None => self.src_size, // the source’s native resolution
         };
         let f = self.inner.read_video_frame(pts, w, h)?;
         Ok(VideoFrame {
@@ -145,8 +145,8 @@ impl MediaSource for FfmpegSource {
             width: f.width,
             height: f.height,
             rgba: f.rgba.into_boxed_slice(),
-            // ПРАВДА об альфе (Р.67): её знает формат потока, и композит
-            // умеет её смешивать — `false` гвоздём выбрасывал прозрачность
+            // The TRUTH about alpha (R.67): the stream format knows it, and the composite
+            // can mix it: a hard-coded `false` discarded the transparency
             has_alpha: self.has_alpha,
         })
     }

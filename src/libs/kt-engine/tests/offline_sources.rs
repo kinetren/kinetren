@@ -1,18 +1,18 @@
-//! Тест 422 (Р.49 Б11): новая редакция инварианта 5 — сторож формулировки.
+//! Test 422 (R.49 B11): the new wording of invariant 5 — a guard of the phrasing.
 
-/// Инвариант 5 переписан: «все клиенты ходят через очередь MediaWorker» было
-/// неправдой — своих короткоживущих источников в дереве четыре. Тест сторожит
-/// ТЕКСТ правила и его условия: если формулировку вернут к прежней, он
-/// покраснеет, а не промолчит.
+/// Invariant 5 was rewritten: “all clients go through the MediaWorker queue” was
+/// untrue — there are four of its own short-lived sources in the tree. The test guards
+/// the TEXT of the rule and its conditions: if the wording is reverted to the old one, it
+/// turns red rather than staying silent.
 ///
-/// Родня «catalog keys nobody uses»: сторожится утверждение, а не код.
+/// Kin to “catalog keys nobody uses”: the assertion is guarded, not the code.
 #[test]
 fn t422_invariant_5_names_the_offline_path() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let md = std::fs::read_to_string(root.join("CLAUDE.md")).expect("нет CLAUDE.md");
+    let md = std::fs::read_to_string(root.join("CLAUDE.md")).expect("there is no CLAUDE.md");
     let i = md.find("5. **A decoder instance").expect(
-        "инвариант 5 переписан обратно: «все клиенты ходят через очередь» было неправдой — \
-         офлайн-путь открывает свои источники",
+        "invariant 5 was rewritten back: “all clients go through the queue” was untrue — \
+         the offline path opens its own sources",
     );
     let rule = &md[i..md[i..].find("\n6. ").map(|n| i + n).unwrap_or(md.len())];
     for must in [
@@ -24,15 +24,15 @@ fn t422_invariant_5_names_the_offline_path() {
     ] {
         assert!(
             rule.contains(must),
-            "в инварианте 5 нет условия «{must}» — офлайн-путь снова описан неточно"
+            "there is no condition “{must}” in invariant 5 — the offline path is described imprecisely again"
         );
     }
 
-    // и сами условия обязаны быть выполнимы: каркас конечной отменяемой
-    // задачи существует, а служба индекса умирает вместе с владельцем
-    let bg = std::fs::read_to_string(root.join("src/apps/kt-app/src/bg.rs")).expect("нет bg.rs");
-    assert!(bg.contains("impl<P, R> Drop for BgJob"), "у задачи нет гашения по Drop");
+    // and the conditions themselves must be feasible: the frame of a finite cancelable
+    // task exists, while the index service dies together with its owner
+    let bg = std::fs::read_to_string(root.join("src/apps/kt-app/src/bg.rs")).expect("there is no bg.rs");
+    assert!(bg.contains("impl<P, R> Drop for BgJob"), "the task has no cancellation on Drop");
     let util =
-        std::fs::read_to_string(root.join("src/apps/kt-app/src/util.rs")).expect("нет util.rs");
-    assert!(util.contains("impl Drop for IndexService"), "служба индекса не умирает с владельцем");
+        std::fs::read_to_string(root.join("src/apps/kt-app/src/util.rs")).expect("there is no util.rs");
+    assert!(util.contains("impl Drop for IndexService"), "the index service does not die with its owner");
 }

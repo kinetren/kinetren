@@ -1,10 +1,10 @@
-//! Тест 11 (docs/porting-notes.md): golden-экспорт.
-//! - сырые потоки (RGBA + f32) детерминированы от прогона к прогону;
-//! - хэши совпадают с закоммиченными эталонами (платформенная привязка:
-//!   linux x86_64 — на другой платформе libm/sinc-коэффициенты могут дать
-//!   другие биты, тогда эталон пересматривается осознанно);
-//! - «превью == экспорт»: кадр из экспортного потока байт-в-байт равен
-//!   кадру превью-композита при том же Quality (единый путь — инвариант №7).
+//! Test 11 (docs/porting-notes.md): golden export.
+//! - raw streams (RGBA + f32) are deterministic from run to run;
+//! - the hashes match the committed references (platform binding:
+//!   linux x86_64 — on another platform libm/sinc coefficients may give
+//!   other bits, then the reference is revised consciously);
+//! - “preview == export”: a frame from the export stream is byte for byte equal to the
+//!   frame of the preview composite at the same Quality (a single path — invariant No. 7).
 
 use kt_engine::{VideoRenderer, render_raw_audio, render_raw_video};
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
@@ -12,7 +12,7 @@ use kt_media::{MediaSource, Quality};
 use kt_model::*;
 use kt_time::Tick;
 
-/// FNV-1a: без зависимостей, стабильный.
+/// FNV-1a: no dependencies, stable.
 fn fnv(bytes: &[u8]) -> u64 {
     let mut h = 0xcbf29ce484222325u64;
     for &b in bytes {
@@ -26,7 +26,7 @@ fn f32s_as_bytes(s: &[f32]) -> Vec<u8> {
     s.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
 
-/// Проект теста 11: конкатенация + кроссфейд + slowed с автоматизацией.
+/// Test 11 project: concatenation + crossfade + slowed with automation.
 fn golden_project() -> Project {
     let mut p = Project::new(ProjectSettings {
         fps: 30,
@@ -48,7 +48,7 @@ fn golden_project() -> Project {
     }
     let sec = 90_000i64;
     p.clips = vec![
-        // конкатенация встык (ramp продолжает источник)
+        // concatenation end-to-end (the ramp continues the source)
         ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
@@ -72,9 +72,9 @@ fn golden_project() -> Project {
             opacity: 1.0,
             fx_off: false,
         },
-        // Р.24: бывший нахлёст [1.5c, 2c) конвертирован в стык C = 1.75c +
-        // переход (окно то же) — байты рендера обязаны совпасть со старым
-        // GOLDEN (краеугольная проверка конверсии, т.136)
+        // R.24: the former overlap [1.5 s, 2 s) is converted to an end-to-end join C = 1.75 s +
+        // a transition (the window is the same) — the render bytes must match the old
+        // GOLDEN (the cornerstone check of the conversion, t136)
         ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
@@ -98,7 +98,7 @@ fn golden_project() -> Project {
             opacity: 1.0,
             fx_off: false,
         },
-        // кроссфейд: DC через переход со вторым ramp-клипом
+        // crossfade: DC through the transition with the second ramp clip
         ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
@@ -122,7 +122,7 @@ fn golden_project() -> Project {
             opacity: 1.0,
             fx_off: false,
         },
-        // slowed с автоматизацией + реверб на отдельной дорожке
+        // slowed with automation + reverb on a separate track
         ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
@@ -141,10 +141,10 @@ fn golden_project() -> Project {
             gain_db: 0.0,
             reversed: false,
             fx_bypass: vec![],
-            // автоматизация slowed — общими кривыми (Р.33): ключи в тиках
-            // МАТЕРИАЛА. Доли 0.3/0.7 прежнего домена при source_in = 0 и
-            // длине 2 с дают ровно эти тики, поэтому звук байт-в-байт
-            // прежний и GOLDEN_AUDIO не перегенерировался
+            // slowed automation — through the common curves (R.33): keys in the
+            // MATERIAL ticks. The 0.3/0.7 fractions of the former domain at source_in = 0 and
+            // a length of 2 s give exactly these ticks, so the sound is byte for byte
+            // as before and GOLDEN_AUDIO was not regenerated.
             fx_auto: vec![vec![
                 ParamCurve {
                     param: "rate".into(),
@@ -180,7 +180,7 @@ fn golden_project() -> Project {
             opacity: 1.0,
             fx_off: false,
         },
-        // видео: два слоя с перекрытием (z-композит)
+        // video: two layers with overlap (z-composite)
         ClipEvent {
             r#gen: None,
             gen_auto: Vec::new(),
@@ -239,7 +239,7 @@ fn golden_project() -> Project {
         auto: vec![],
         invert: false,
     });
-    p.normalize(); // дорожки под содержимое (Р.62)
+    p.normalize(); // tracks fitted to the content (R.62)
     p.validate().unwrap();
     p
 }
@@ -293,9 +293,9 @@ fn run_export_hashes() -> (u64, u64, u64, u64) {
 fn t11_streams_are_deterministic_across_runs() {
     let a = run_export_hashes();
     let b = run_export_hashes();
-    assert_eq!(a, b, "экспорт обязан быть байт-в-байт воспроизводим");
-    // 2.5 секунды таймлайна (конец кроссфейд-клипа): 120000 аудио-кадров,
-    // 75 видео-кадров
+    assert_eq!(a, b, "export must be reproducible byte for byte");
+    // 2.5 seconds of the timeline (the end of the crossfade clip): 120000 audio frames,
+    // 75 video frames
     assert_eq!(a.2, 120_000);
     assert_eq!(a.3, 75);
 }
@@ -304,29 +304,29 @@ fn t11_streams_are_deterministic_across_runs() {
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn t11_streams_match_committed_golden() {
     let (audio, video, _, _) = run_export_hashes();
-    // Эталоны зафиксированы на linux x86_64. Осознанная смена алгоритмов
-    // рендера = осознанное обновление эталонов (с прослушиванием!).
-    assert_eq!(audio, GOLDEN_AUDIO, "аудио-поток разошёлся с эталоном: 0x{audio:016x}");
-    assert_eq!(video, GOLDEN_VIDEO, "видео-поток разошёлся с эталоном: 0x{video:016x}");
+    // The references are fixed on linux x86_64. A deliberate change of the render
+    // algorithms = a deliberate update of the references (with listening!).
+    assert_eq!(audio, GOLDEN_AUDIO, "audio stream diverged from the reference: 0x{audio:016x}");
+    assert_eq!(video, GOLDEN_VIDEO, "video stream diverged from the reference: 0x{video:016x}");
 }
 
-// ПЕРЕГЕНЕРИРОВАН 2026-09-07 (второй и последний раз): ось автоматизации
-// переведена из SOURCE-домена в домен СОБЫТИЯ по явному решению
-// пользователя (п.1 Р.37, тест 31) — звучание клипа с автоматизацией
-// изменилось осознанно. Прежнее значение — 0x469c89aa2adc3b14.
+// REGENERATED 2026-09-07 (the second and last time): the automation axis was
+// moved from the SOURCE domain to the EVENT domain by the user's explicit decision
+// (item 1 of R.37, test 31) — the clip's sound with automation changed deliberately.
+// The former value was 0x469c89aa2adc3b14.
 //
-// Сдвиг посчитан руками ДО прогона и совпал: у клипа 4 кривая rate
-// 1.0 → 0.5 на долях 0.3/0.7, поэтому S(1) ушла с ≈0.7728 (решение ОДУ по
-// материалу) на ровно 0.75 (трапеция по времени: 0.3·1 + 0.4·0.75 + 0.3·0.5)
-// — около 2200 кадров источника, плюс перетаймилась кривая mix.
+// The shift was computed by hand BEFORE the run and matched: clip 4 has a rate curve
+// 1.0 → 0.5 on the 0.3/0.7 fractions, so S(1) went from ≈0.7728 (the ODE solution over the
+// material) to exactly 0.75 (the time trapezoid: 0.3·1 + 0.4·0.75 + 0.3·0.5)
+// — about 2200 source frames, plus the mix curve was re-timed.
 //
-// Видео-эталон НЕ менялся и не должен: у видео-клипов проекта `fx: vec![]`,
-// а варп-ветка включается только при slowed в цепочке.
+// The video reference did NOT change and must not: the project's video clips have `fx: vec![]`,
+// and the warp branch is enabled only with slowed in the chain.
 const GOLDEN_AUDIO: u64 = 0x5a83eef245ab43f0;
 const GOLDEN_VIDEO: u64 = 0x95b790352d74f586;
 
 #[test]
-#[ignore = "генератор эталонов: cargo test -- --ignored t11_print"]
+#[ignore = "reference generator: cargo test -- --ignored t11_print"]
 fn t11_print_golden() {
     let (a, v, af, vf) = run_export_hashes();
     println!("GOLDEN_AUDIO = 0x{a:016x}; GOLDEN_VIDEO = 0x{v:016x}; frames a={af} v={vf}");
@@ -334,8 +334,8 @@ fn t11_print_golden() {
 
 #[test]
 fn t11_preview_equals_export_frame() {
-    // Кадр №17 экспортного потока == превью-композит того же момента
-    // тем же Quality (единый render-путь).
+    // Frame No. 17 of the export stream == the preview composite of the same moment
+    // at the same Quality (a single render path).
     let p = golden_project();
     let q = Quality { width: 128, height: 72 };
     let target = 17usize;
@@ -351,7 +351,7 @@ fn t11_preview_equals_export_frame() {
     .unwrap();
     let export_frame = captured.unwrap();
 
-    // «превью»: независимый кэш, прямой декод слоёв, тот же композит
+    // “preview”: an independent cache, direct decode of the layers, the same composite
     let mut video = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let t = Tick(target as i64 * 3000);
@@ -368,17 +368,17 @@ fn t11_preview_equals_export_frame() {
     }
     let (preview_frame, complete) = video.compose_from_cache(&cache, t, q);
     assert!(complete);
-    assert_eq!(preview_frame, export_frame, "превью и экспорт обязаны совпадать байт-в-байт");
+    assert_eq!(preview_frame, export_frame, "preview and export must match byte for byte");
 }
 
-/// Тест 67 (п.2 р.7): превью == экспорт с ВИДЕО-FX-цепочкой — и холодный
-/// compose (цепочка применяется), и прогретый (кадр из пост-FX кэша)
-/// байт-в-байт равны кадру экспортного потока. Пост-FX мемоизация не
-/// нарушает инвариант №7.
+/// Test 67 (item 2, round 7): preview == export with a VIDEO-FX chain — both a cold
+/// compose (the chain is applied) and a warm one (the frame from the post-FX cache) are
+/// byte for byte equal to the frame of the export stream. Post-FX memoization does not
+/// break invariant No. 7.
 #[test]
 fn t67_preview_equals_export_with_fx_cold_and_warm() {
     let mut p = golden_project();
-    // цепочка из жалобы пользователя на видео-клип
+    // the chain from the user's complaint about the video clip
     for c in p.clips.iter_mut().filter(|c| c.kind == ClipKind::Video) {
         c.fx = vec![
             FxInstance::Mirror { horizontal: true, vertical: false },
@@ -417,16 +417,16 @@ fn t67_preview_equals_export_with_fx_cold_and_warm() {
     }
     let (cold, complete) = video.compose_from_cache(&cache, t, q);
     assert!(complete);
-    assert_eq!(cold, export_frame, "холодный FX-композит == экспорт");
+    assert_eq!(cold, export_frame, "cold FX composite == export");
     let (warm, _) = video.compose_from_cache(&cache, t, q);
-    assert_eq!(warm, export_frame, "прогретый (пост-FX кэш) == экспорт");
+    assert_eq!(warm, export_frame, "warm (post-FX cache) == export");
 }
 
-// ---- Р.52: генератор в рендере ------------------------------------------
+// ---- R.52: generator in the render ------------------------------------------
 
 type Sources = Vec<(MediaId, Box<dyn MediaSource>)>;
 
-/// Проект t479: solid-генератор поверх синтетического фона.
+/// Project t479: a solid generator over a synthetic background.
 fn generator_project() -> (Project, Sources) {
     let mut p = Project::new(ProjectSettings {
         fps: 30,
@@ -442,7 +442,7 @@ fn generator_project() -> (Project, Sources) {
         settings_explicit: false,
     });
     p.media.push(MediaRef::new(MediaId(1), "synth:dc:0.25"));
-    // Р.59, стадия 2: в пути медиа — ВИД, значения на событии
+    // R.59, stage 2: the media path holds the KIND, the values are on the event
     p.media.push(MediaRef::new(MediaId(2), "gen:solid"));
     let clip = |id: u64, lane: u32, start: i64, dur: i64, media: u64| ClipEvent {
         r#gen: None,
@@ -467,28 +467,28 @@ fn generator_project() -> (Project, Sources) {
         opacity: 1.0,
         fx_off: false,
     };
-    // фон — вся сцена; solid входит на 30_000 (кадр №10) верхним слоем
+    // the background — the whole scene; the solid enters at 30_000 (frame No. 10) as the upper layer
     let mut g2 = clip(2, 0, 30_000, 60_000, 2);
     g2.r#gen = Some(kt_model::GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 });
     p.clips = vec![clip(1, 1, 0, 90_000, 1), g2];
-    p.normalize(); // дорожки под содержимое (Р.62)
+    p.normalize(); // tracks fitted to the content (R.62)
     p.validate().unwrap();
-    // источник генератора открывает САМ экспорт (Р.59, стадия 2): его
-    // адрес производен от события, и вызывающему его взять неоткуда
+    // the generator's source is opened by export ITSELF (R.59, stage 2): its
+    // address is derived from the event, and the caller has nowhere to get it
     let sources: Sources =
         vec![(MediaId(1), Box::new(SyntheticSource::new(Tick(90_000), AudioPattern::Silence)))];
     (p, sources)
 }
 
-/// Тест 479 (Р.52, родня t11): генератор в рендер-пути. Экспорт
-/// детерминирован между прогонами; кадр в зоне генератора — ровно
-/// заданный цвет; превью == экспорт байт-в-байт (инвариант 7).
-/// GOLDEN_AUDIO/GOLDEN_VIDEO этой сценой НЕ трогаются: у них свой
-/// проект без генераторов.
+/// Test 479 (R.52, sibling of t11): the generator in the render path. Export
+/// is deterministic between runs; a frame in the generator's zone is exactly
+/// the given colour; preview == export byte for byte (invariant 7).
+/// GOLDEN_AUDIO/GOLDEN_VIDEO are NOT touched by this scene: they have their own
+/// project without generators.
 #[test]
 fn t479_generator_preview_equals_export() {
     let q = Quality { width: 128, height: 72 };
-    let target = 17usize; // кадр внутри зоны solid (t >= 30_000)
+    let target = 17usize; // a frame inside the solid's zone (t >= 30_000)
     let run = || {
         let (p, sources) = generator_project();
         let mut captured: Option<Vec<u8>> = None;
@@ -507,22 +507,22 @@ fn t479_generator_preview_equals_export() {
     };
     let (frame_a, hash_a) = run();
     let (_, hash_b) = run();
-    assert_eq!(hash_a, hash_b, "экспорт с генератором обязан быть детерминирован");
+    assert_eq!(hash_a, hash_b, "export with a generator must be deterministic");
 
-    // верхний слой — solid: каждый пиксель кадра ровно заданного цвета
+    // the upper layer is solid: every pixel of the frame is exactly the given colour
     assert!(
         frame_a.chunks_exact(4).all(|px| px == [255, 136, 0, 255]),
-        "кадр генератора обязан быть ровно заданного цвета"
+        "a generator frame must be exactly the set colour"
     );
 
-    // превью тем же путём, что t11: независимый кэш + layers_at
+    // preview by the same path as t11: an independent cache + layers_at
     let (p, sources) = generator_project();
     let mut video = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let t = Tick(target as i64 * 3000);
     let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         sources.into_iter().collect();
-    // превью поднимает источники генераторов тем же списком, что экспорт
+    // preview raises the generator sources with the same list as export
     for (addr, state) in kt_engine::gen_sources(&p) {
         srcs.insert(addr, kt_media::factory::open_gen(&state));
     }
@@ -536,18 +536,18 @@ fn t479_generator_preview_equals_export() {
         );
     }
     let (preview_frame, complete) = video.compose_from_cache(&cache, t, q);
-    assert!(complete, "композит с генератором обязан быть полон");
-    assert_eq!(preview_frame, frame_a, "превью и экспорт обязаны совпадать байт-в-байт");
+    assert!(complete, "a composite with a generator must be complete");
+    assert_eq!(preview_frame, frame_a, "preview and export must match byte for byte");
 }
 
-/// Тест 715 (Р.62): golden не двигаются (t11/t67 выше зелёные без
-/// перегенерации — на совпадающих пропорциях ведущий узел тождествен), а
-/// вертикальный источник в 16:9 даёт кадр с ПОЛЯМИ: замер геометрии
-/// заливки по готовому кадру экспорта, как в F-MED-004.
+/// Test 715 (R.62): the golden files do not move (t11/t67 above stay green without
+/// regeneration — at matching proportions the leading node is identical), and a
+/// vertical source in 16:9 gives a frame with MARGINS: a measurement of the fill's geometry
+/// on the finished export frame, as in F-MED-004.
 #[test]
 fn t715_vertical_source_gets_fields_in_export() {
     let mut p = golden_project();
-    // один видео-клип (id 5) на медиа 1; аудио и второй слой не нужны
+    // one video clip (id 5) on media 1; no audio and no second layer needed
     p.clips.retain(|c| c.id == ClipId(5));
     p.transitions.clear();
     p.morphers.clear();
@@ -572,18 +572,18 @@ fn t715_vertical_source_gets_fields_in_export() {
     let px =
         |x: u32, y: u32| &f[((y * q.width + x) * 4) as usize..((y * q.width + x) * 4 + 3) as usize];
     let dark = |x: u32, y: u32| px(x, y).iter().all(|&v| v < 8);
-    // поля слева и справа — фон, середина — заливка источника
+    // margins left and right — background, the middle — the source's fill
     assert!(dark(0, 36) && dark(127, 36), "fields are background");
     assert!(!dark(64, 36), "centre is the source");
     let lit = (0..q.width).filter(|&x| !dark(x, 36)).count();
-    // рамка «вписать» вертикального 36×64 в 128×72: 72·36/64 = 40.5 px
+    // the “fit” frame of the vertical 36×64 in 128×72: 72·36/64 = 40.5 px
     assert!((39..=42).contains(&lit), "fitted width ≈ 40.5 px, got {lit}");
 }
 
-/// Тест 728b (Р.62): экспорт в разрешении ≠ проекта приводит ТЕМИ ЖЕ
-/// долями. Вертикальный источник в проекте 1920×1080: кадр экспорта
-/// 1280×720 подобен кадру 1920×1080 — доля ширины заливки и её центр
-/// совпадают в допуске ресемплинга; правило и узел не пересчитываются.
+/// Test 728b (R.62): export at a resolution ≠ the project's conforms by the SAME
+/// proportions. A vertical source in a 1920×1080 project: an export frame
+/// 1280×720 is similar to the 1920×1080 frame — the fill's width fraction and its centre
+/// coincide within the resampling tolerance; the rule and the node are not recomputed.
 #[test]
 fn t728b_export_in_another_resolution_is_similar_to_preview() {
     let mut p = golden_project();
@@ -621,16 +621,16 @@ fn t728b_export_in_another_resolution_is_similar_to_preview() {
                 f[i..i + 3].iter().any(|&v| v >= 8)
             })
             .collect();
-        assert!(!lit.is_empty(), "{}×{}: пустой кадр", q.width, q.height);
+        assert!(!lit.is_empty(), "{}×{}: empty frame", q.width, q.height);
         let w = q.width as f64;
         (lit.len() as f64 / w, (lit[0] + lit[lit.len() - 1]) as f64 / 2.0 / w)
     };
     let (frac_a, mid_a) = profile(Quality { width: 1920, height: 1080 });
     let (frac_b, mid_b) = profile(Quality { width: 1280, height: 720 });
-    // «вписать» 36×64 в 16:9: ширина заливки = 36/64 · 9/16 = 0.3164 холста
+    // “fit” 36×64 in 16:9: fill width = 36/64 · 9/16 = 0.3164 of the canvas
     let want = 36.0 / 64.0 * 9.0 / 16.0;
-    assert!((frac_a - want).abs() < 2.0 / 1080.0, "1080p: доля {frac_a} ≠ {want}");
-    assert!((frac_b - want).abs() < 2.0 / 720.0, "720p: доля {frac_b} ≠ {want}");
-    assert!((frac_a - frac_b).abs() < 2.0 / 720.0, "доли разошлись: {frac_a} / {frac_b}");
+    assert!((frac_a - want).abs() < 2.0 / 1080.0, "1080p: share {frac_a} ≠ {want}");
+    assert!((frac_b - want).abs() < 2.0 / 720.0, "720p: share {frac_b} ≠ {want}");
+    assert!((frac_a - frac_b).abs() < 2.0 / 720.0, "shares diverged: {frac_a} / {frac_b}");
     assert!((mid_a - 0.5).abs() < 1.0 / 720.0 && (mid_b - 0.5).abs() < 1.0 / 720.0);
 }

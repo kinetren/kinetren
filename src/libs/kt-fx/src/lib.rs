@@ -1,28 +1,28 @@
-//! Аудио-FX: slowed (rubato-варispeed) + reverb (freeverb) + gain.
+//! Audio FX: slowed (rubato-varispeed) + reverb (freeverb) + gain.
 //!
-//! Архитектурные решения, закрывающие хрипы старого движка
-//! (дефекты a–f, docs/porting-notes.md):
-//! - весь звук — f32 48kHz/2ch; FX не видят sample-rate источника (a);
-//! - состояние живёт в одном объекте на клип, владелец — аудио-render-поток
-//!   через FxStateStore в kt-engine, без шаринга с prefetch (b);
-//! - варispeed — rubato SincFixedOut с непрерывным потреблением источника:
-//!   дробный курсор, ни один сэмпл не пропускается и не дублируется (a, c, d);
-//! - параметры сглаживаются one-pole (~20 мс) и НИКОГДА не сбрасывают
-//!   буферы; полный сброс — только reset() при разрыве непрерывности (e);
-//! - tail() сообщает хвост реверба — граф продлевает окно клипа (f).
+//! Architectural decisions that close the crackles of the old engine
+//! (defects a–f, docs/porting-notes.md):
+//! - all sound is f32 48kHz/2ch; FX do not see the source sample rate (a);
+//! - the state lives in one object per clip, owned by the audio-render thread
+//!   via FxStateStore in kt-engine, not shared with prefetch (b);
+//! - varispeed is rubato SincFixedOut with continuous consumption of the source:
+//!   a fractional cursor, no sample is skipped or duplicated (a, c, d);
+//! - parameters are smoothed by one-pole (~20 ms) and NEVER reset
+//!   the buffers; a full reset — only reset() at a continuity break (e);
+//! - tail() reports the reverb tail — the graph extends the clip window (f).
 
 use kt_time::{AUDIO_CHANNELS, AUDIO_SAMPLE_RATE};
 
 pub const CH: usize = AUDIO_CHANNELS;
 
-/// Пре-ролл при разрыве непрерывности: max(tail, 100 мс) рендерится в мусор,
-/// чтобы состояние (реверб, ресемплер) было прогрето детерминированно.
+/// Pre-roll at a continuity break: max(tail, 100 ms) is rendered into garbage,
+/// so that the state (reverb, resampler) is warmed up deterministically.
 pub const MIN_PREROLL_FRAMES: i64 = (AUDIO_SAMPLE_RATE as i64) / 10;
 
-/// Роль обращения к источнику. `Warmup` — пре-ролл после seek: эти кадры
-/// рендерятся в мусор и на выход не идут, поэтому их промах кэша НЕ
-/// underrun. Раньше он им был, и счётчик рос на каждом старте
-/// воспроизведения и на каждом завороте лупа (п.166).
+/// The role of an access to the source. `Warmup` — the pre-roll after a seek: these frames
+/// are rendered into garbage and do not go to the output, so their cache miss is NOT an
+/// underrun. It used to be one, and the counter grew at each playback start
+/// and at each loop wrap-around (item 166).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PullKind {
     Output,
@@ -36,14 +36,14 @@ pub mod simd;
 pub mod video;
 mod video_simd;
 
-/// Явный доступ к ОБОИМ путям ядер для parity-тестов (Р.32, t198).
-/// Тесты не трогают env (KT_SIMD читается раз на процесс) — они зовут
-/// скаляр и AVX2 напрямую и сравнивают байты.
+/// Explicit access to BOTH kernel paths for the parity tests (R.32, t198).
+/// The tests do not touch the env (KT_SIMD is read once per process) — they call
+/// the scalar and AVX2 directly and compare the bytes.
 #[doc(hidden)]
 pub mod simd_testing {
     use crate::video::Frame;
 
-    /// Скалярный эталон билинейки.
+    /// Scalar reference of the bilinear.
     #[allow(clippy::too_many_arguments)]
     pub fn bilinear_scalar(
         src: &Frame,
@@ -58,8 +58,8 @@ pub mod simd_testing {
         crate::video::bilinear_into_scalar(src, x0, y0, cw, ch, ow, oh, out);
     }
 
-    /// AVX2-ядро билинейки. Паникует, если фичи нет — вызывающий тест
-    /// обязан сам проверить наличие (skip/KT_REQUIRE_SIMD).
+    /// AVX2 kernel of the bilinear. Panics if the feature is absent — the calling test
+    /// must check its presence itself (skip/KT_REQUIRE_SIMD).
     #[cfg(target_arch = "x86_64")]
     #[allow(clippy::too_many_arguments)]
     pub fn bilinear_avx2(
@@ -73,29 +73,29 @@ pub mod simd_testing {
         out: &mut [u8],
     ) {
         assert!(std::is_x86_feature_detected!("avx2"), "AVX2 is required");
-        // SAFETY: фича проверена строкой выше, длины буферов — на
-        // ответственности теста (он их и создаёт)
+        // SAFETY: the feature is checked by the line above; the buffer lengths are the
+        // responsibility of the test (it creates them itself)
         unsafe { crate::video_simd::bilinear_into_avx2(src, x0, y0, cw, ch, ow, oh, out) };
     }
 
-    /// AVX2-ядро noise (in-place по всему кадру, хвост столбцов не
-    /// трогается — тест дорисовывает его скаляром).
+    /// AVX2 kernel of noise (in-place over the whole frame, the column tail is
+    /// not touched — the test finishes it with the scalar path).
     #[cfg(target_arch = "x86_64")]
     pub fn noise_avx2(rgba: &mut [u8], w: u32, h: u32, seed: u32, k: i64) {
         assert!(std::is_x86_feature_detected!("avx2"), "AVX2 is required");
-        // SAFETY: фича проверена; длины — на ответственности теста
+        // SAFETY: the feature is checked; lengths are the responsibility of the test
         unsafe { crate::video_simd::noise_avx2(rgba, w, h, seed, k) };
     }
 
-    /// AVX2-ядро аддитива glow.
+    /// AVX2 kernel of the glow additive.
     #[cfg(target_arch = "x86_64")]
     pub fn glow_add_avx2(dst: &mut [u8], up: &[u8], s: f64, pixels: usize) {
         assert!(std::is_x86_feature_detected!("avx2"), "AVX2 is required");
-        // SAFETY: фича проверена
+        // SAFETY: the feature is checked
         unsafe { crate::video_simd::glow_add_avx2(dst, up, s, pixels) };
     }
 
-    /// Скалярные эталоны noise/glow (копии тел из video.rs).
+    /// Scalar references of noise/glow (copies of the bodies from video.rs).
     pub fn noise_scalar(rgba: &mut [u8], w: u32, seed: u32, k: i64) {
         for (p, px) in rgba.chunks_exact_mut(4).enumerate() {
             let (x, y) = (p as u32 % w, p as u32 / w);
@@ -108,8 +108,8 @@ pub mod simd_testing {
         }
     }
 
-    /// Скалярный эталон edges целиком (копия тела из video.rs) — t198
-    /// сверяет с ним результат ПУБЛИЧНОЙ цепочки, идущей SIMD-путём.
+    /// Scalar reference of the whole edges effect (a copy of the body from video.rs) — t198
+    /// checks against it the result of the PUBLIC chain that goes through the SIMD path.
     pub fn edges_scalar(rgba: &[u8], w: usize, h: usize, threshold: u32) -> Vec<u8> {
         let th = threshold.clamp(1, 255) as i32;
         let luma: Vec<i32> = rgba
@@ -138,7 +138,7 @@ pub mod simd_testing {
         out
     }
 
-    /// Скалярный эталон vhs целиком (копия тела из video.rs).
+    /// Scalar reference of the whole vhs effect (a copy of the body from video.rs).
     pub fn vhs_scalar(
         rgba: &mut [u8],
         w: usize,
@@ -178,12 +178,12 @@ pub mod simd_testing {
         }
     }
 
-    /// Округление half-away-from-zero: 4 значения через AVX2-эмуляцию
-    /// (микро-доказательство против `f64::round`).
+    /// Rounding half-away-from-zero: 4 values via AVX2 emulation
+    /// (a micro-proof against `f64::round`).
     #[cfg(target_arch = "x86_64")]
     pub fn round_half_away_avx2(v: [f64; 4]) -> [f64; 4] {
         assert!(std::is_x86_feature_detected!("avx2"), "AVX2 is required");
-        // SAFETY: фича проверена
+        // SAFETY: the feature is checked
         unsafe {
             use std::arch::x86_64::*;
             let x = _mm256_loadu_pd(v.as_ptr());
@@ -205,10 +205,10 @@ pub use audio::{
     ChainOpts, ClipProcessor, Freeverb, SmoothedParam, TrackProcessor, Warp, eq_mag_db,
 };
 
-/// Карта растяжения времени ПЕРЕЕХАЛА В kt-model (Р.39): её обязан звать
-/// `clip_slice` — правило куска клипа, — а kt-model зависеть от kt-fx не
-/// может. Здесь только реэкспорт: у формулы по-прежнему ОДИН дом, а движок
-/// и тесты продолжают звать `kt_fx::…`, и ни один вызов не тронут.
+/// The time-stretch map MOVED TO kt-model (R.39): it must be called by
+/// `clip_slice` — the clip-slice rule — and kt-model cannot depend on kt-fx.
+/// Here there is only a re-export: the formula still has ONE home, and the engine
+/// and the tests keep calling `kt_fx::…`; not a single call has been touched.
 pub use kt_model::{
     AutoProfiles, ParamPoints, RATE_AUDIO_FLOOR, RATE_CLAMP, SignKnot, avg_rate, chain_avg_rate,
     chain_rate, consumed_abs, eff_rate, output_time_for_consumption, output_time_for_source,

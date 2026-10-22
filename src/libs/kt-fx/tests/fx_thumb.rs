@@ -1,19 +1,19 @@
-//! Тест 544 (docs/porting-notes.md, п.428, Р.54): миниатюра эффекта.
+//! Test 544 (docs/porting-notes.md, item 428, R.54): the effect thumbnail.
 //!
-//! Миниатюра — то, по чему человек ВЫБИРАЕТ эффект, поэтому у неё две
-//! обязанности, и обе проверяются здесь: быть детерминированной (иконка
-//! не имеет права мигать от прогона к прогону) и что-то ПОКАЗЫВАТЬ —
-//! образец обязан давать каждому виду эффекта материал, на котором тот
-//! виден. Эталон образца заморожен хэшем: правка `test_pattern` меняет
-//! все иконки программы сразу, и делать это можно только осознанно.
+//! The thumbnail is what a person CHOOSES an effect by, so it has two duties,
+//! and both are checked here: to be deterministic (the icon has no right to flicker
+//! from run to run) and to SHOW something — the sample must give each kind of effect
+//! material on which that kind is visible. The reference of the sample is frozen by a hash:
+//! an edit to `test_pattern` changes all the program's icons at once, and it may be
+//! done only deliberately.
 
 use kt_fx::video::{Frame, apply_video_chain, fit_into, render_fx_thumb, test_pattern};
 use kt_fx::video::{FxScratch, VideoFxCtx};
 use kt_model::FxInstance;
 use xxhash_rust::xxh3::xxh3_64;
 
-/// Опорный размер — размер тумбы источника (kt-app: 320×180): именно на
-/// нём сервис считает цепочку, прежде чем ужать результат в ячейку.
+/// The reference size — the size of the source's thumb (kt-app: 320×180): it is on
+/// this size that the service computes the chain before shrinking the result into the cell.
 const RW: u32 = 320;
 const RH: u32 = 180;
 
@@ -26,8 +26,8 @@ fn thumb(base: &Frame, fx: &[FxInstance]) -> Frame {
     render_fx_thumb(base, fx, RW, RH, 0.5, 90_000, None, &mut scratch)
 }
 
-/// Голдены образца. Меняются ТОЛЬКО вместе с осознанной правкой
-/// `test_pattern` — это эталон, по которому выглядят иконки всех видов.
+/// Goldens of the sample. They change ONLY together with a deliberate edit to
+/// `test_pattern` — this is the reference by which the icons of all kinds look.
 const GOLDEN_PATTERN: [(&str, u32, u32, bool, u64); 3] = [
     ("ref", RW, RH, false, 0x923630d77778ab3f),
     ("ref-alpha", RW, RH, true, 0x36a58a5ecdcc259a),
@@ -48,43 +48,43 @@ fn t544_thumb_pattern_is_frozen_and_deterministic() {
     }
 }
 
-/// Образец обязан давать КАЖДОМУ классу эффектов материал: иначе иконка
-/// честно покажет «ничего не изменилось» и соврёт про эффект.
+/// The sample must give EVERY effect class material: otherwise the icon would honestly
+/// show “nothing changed” and lie about the effect.
 #[test]
 fn t544b_pattern_feeds_every_class_of_effect() {
     let p = test_pattern(RW, RH, false);
     let base = hash(&p);
 
-    // асимметрия: зеркало по ЛЮБОЙ оси видно
+    // asymmetry: a mirror on ANY axis is visible
     for (h, v) in [(true, false), (false, true), (true, true)] {
         let m = thumb(&p, &[FxInstance::Mirror { horizontal: h, vertical: v }]);
         assert_ne!(hash(&m), base, "mirror {h}/{v}: pattern is symmetric");
     }
-    // кеинг: зелёная плашка даёт прозрачность
+    // keying: the green plate gives transparency
     let g = thumb(&p, &[FxInstance::greenscreen([0, 255, 0], 70, 25)]);
     assert!(g.has_alpha, "greenscreen: no alpha in the result");
     assert!(
         g.rgba.chunks_exact(4).any(|px| px[3] == 0),
         "greenscreen: nothing was keyed out (pattern has no green patch?)"
     );
-    // высокие частоты: размытие и контур меняют кадр
+    // high frequencies: blur and outline change the frame
     for fx in [FxInstance::blur(8), FxInstance::edges(48), FxInstance::sharpen()] {
         let f = thumb(&p, std::slice::from_ref(&fx));
         assert_ne!(hash(&f), base, "{}: pattern has no detail to work on", fx.tag());
     }
-    // цвет: рампа и полосы
+    // colour: the ramp and the bars
     for fx in [FxInstance::posterize(), FxInstance::duotone(), FxInstance::vhs(4, 0.4)] {
         let f = thumb(&p, std::slice::from_ref(&fx));
         assert_ne!(hash(&f), base, "{}: pattern has no colour to work on", fx.tag());
     }
 }
 
-/// Тождественная цепочка не трогает байты, а ВАРИАНТ трогает. Это условие
-/// иконки: у Pan/Pan 3D/Color Grade/Corner Pin/Drop Shadow шаблон —
-/// тождество, и иконкой такому виду служит первый вариант (kt-app,
-/// t543). Если бы вариант оказался копией шаблона, иконка показала бы
-/// исходный кадр — и тест на стороне kt-app этого бы не увидел, он
-/// сравнивает ДАННЫЕ, а не картинку.
+/// An identity chain does not touch the bytes, but a VARIANT does. This is the condition for the
+/// icon: for Pan/Pan 3D/Color Grade/Corner Pin/Drop Shadow the template is
+/// identity, and the first variant serves such a kind as its icon (kt-app,
+/// t543). If the variant turned out to be a copy of the template, the icon would show
+/// the source frame — and the test on the kt-app side would not see this, since it
+/// compares DATA, not the picture.
 #[test]
 fn t544c_identity_is_identity_and_a_variant_is_not() {
     let p = test_pattern(RW, RH, false);
@@ -96,15 +96,15 @@ fn t544c_identity_is_identity_and_a_variant_is_not() {
     let zoomed = FxInstance::geometry_zoom(1.25);
     assert_ne!(hash(&thumb(&p, &[zoomed])), base, "a zoom variant shows nothing");
 
-    // Color Grade и Corner Pin — те же тождества по шаблону
+    // Color Grade and Corner Pin — the same identities by template
     assert_eq!(hash(&thumb(&p, &[FxInstance::color_grade()])), base);
     assert_eq!(hash(&thumb(&p, &[FxInstance::corner_pin()])), base);
 }
 
-/// Тень существует только там, где есть прозрачность: на непрозрачном
-/// кадре `DropShadow` тождествен ПО ПОСТРОЕНИЮ (тень падает из-под
-/// альфы). Поэтому у образца два вида, и иконке теневых эффектов нужен
-/// именно альфа-вариант.
+/// A shadow exists only where there is transparency: on an opaque
+/// frame `DropShadow` is identical BY CONSTRUCTION (the shadow falls from under the
+/// alpha). Therefore the sample has two kinds, and the icon of the shadow effects needs
+/// precisely the alpha variant.
 #[test]
 fn t544d_drop_shadow_needs_the_alpha_pattern() {
     let opaque = test_pattern(RW, RH, false);
@@ -122,10 +122,10 @@ fn t544d_drop_shadow_needs_the_alpha_pattern() {
     );
 }
 
-/// Миниатюра — та же цепочка, что у движка: `render_fx_thumb` обязан быть
-/// ровно «вписать + применить», без своей арифметики. Иначе картинка в
-/// пикере разойдётся с тем, что получится после клика (инвариант №7 по
-/// духу: код композиции один, размер — параметр исполнения).
+/// The thumbnail is the same chain as the engine's: `render_fx_thumb` must be
+/// exactly “fit + apply”, with no arithmetic of its own. Otherwise the picture in the
+/// picker would diverge from what results after a click (invariant No. 7 in
+/// spirit: one composition code, the size is an execution parameter).
 #[test]
 fn t544e_thumb_is_fit_plus_chain_and_nothing_else() {
     let p = test_pattern(RW, RH, false);
@@ -153,14 +153,14 @@ fn t544e_thumb_is_fit_plus_chain_and_nothing_else() {
     let got = render_fx_thumb(&p, &fx, w, h, 0.5, 90_000, None, &mut scratch);
     assert_eq!(hash(&got), hash(&want), "render_fx_thumb is not fit_into + apply_video_chain");
 
-    // тот же пул, второй прогон: «грязный» пул байты не меняет (t68)
+    // the same pool, second run: a “dirty” pool does not change the bytes (t68)
     let again = render_fx_thumb(&p, &fx, w, h, 0.5, 90_000, None, &mut scratch);
     assert_eq!(hash(&again), hash(&want), "a reused scratch pool changed the bytes");
 }
 
-/// Зерно шума прибито к `burst_index`: при неподвижном курсоре ячейка
-/// обязана быть одной и той же картинкой, иначе полоска мерцает на каждом
-/// перерисованном кадре интерфейса.
+/// The noise grain is pinned to `burst_index`: with a still cursor the cell
+/// must be one and the same picture, otherwise the strip flickers on every
+/// redrawn frame of the interface.
 #[test]
 fn t544f_noise_is_pinned_to_the_tick() {
     let p = test_pattern(RW, RH, false);

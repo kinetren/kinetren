@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Настоящий фильм для кросс-рендера (тест 179, предложение пользователя:
-# «взять какой-то фильм у которого исходники поменьше весят и тоже
-# прорендерить двумя программами»).
+# Real film for cross-render (test 179, the user’s suggestion:
+# “take some film whose source files are smaller and also render it
+# with two programs”).
 #
-# Netflix Open Content «Sol Levante», аниматик: 63 склейки на одной
-# дорожке, 23.976 fps, старт таймкода с часа, 162 с, один исходник H.264.
-# Ровно тот случай, которого не было в синтетике: NTSC-частота, настоящий
-# декод, реальные длины планов (7…347 кадров).
+# Netflix Open Content “Sol Levante”, an animatic: 63 cuts on one
+# track, 23.976 fps, timecode starts at the hour, 162 s, one H.264 source.
+# Exactly the case that was missing in synthetic data: NTSC rate, real
+# decode, real shot lengths (7…347 frames).
 #
-# НИЧЕГО НЕ КОММИТИТСЯ: медиа 320 МБ, а у репозитория с .otio нет лицензии
-# (проверено через GitHub API). Поэтому оба файла качаются сюда, каталог в
-# .gitignore, а тест без них молча пропускается.
+# NOTHING IS COMMITTED: the media is 320 MB, and the repository with .otio has no license
+# (checked via the GitHub API). So both files are downloaded here, the directory is in
+# .gitignore, and the test silently skips without them.
 #
-# Лицензии:
-#   видео  — Netflix Open Content, CC BY 4.0 (https://opencontent.netflix.com/)
-#   .otio  — darbyjohnston/otio-oc-examples, лицензия не указана; файл
-#            используется локально как вход теста и в репозиторий не попадает.
+# Licenses:
+#   video  — Netflix Open Content, CC BY 4.0 (https://opencontent.netflix.com/)
+#   .otio  — darbyjohnston/otio-oc-examples, no license stated; the file is
+#   used locally as test input and does not go into the repository.
 set -euo pipefail
 
 dir="$(cd "$(dirname "$0")/.." && pwd)/fixtures/otio-oc"
@@ -27,22 +27,22 @@ otio="$dir/SolLevante_Animatics_ver1_H264.otio"
 mov="$dir/SolLevante_Animatics_ver1_H264.mov"
 
 if [ ! -s "$otio" ]; then
-    echo "качаю монтаж (~105 КБ)…"
+    echo "downloading the edit (~105 KB)…"
     curl -fL --progress-bar "$OTIO_URL" -o "$otio.tmp" && mv "$otio.tmp" "$otio"
 fi
 
-# уже скачанный файл можно просто указать аргументом — 320 МБ не копируем,
-# кладём симлинк (тест читает его как обычный файл)
+# an already downloaded file can simply be passed as an argument — 320 MB is not copied,
+# we put a symlink (the test reads it as a regular file)
 if [ $# -ge 1 ] && [ -s "$1" ] && [ ! -e "$mov" ]; then
     ln -s "$(cd "$(dirname "$1")" && pwd)/$(basename "$1")" "$mov"
-    echo "исходник взят по ссылке: $1"
+    echo "source taken from link: $1"
 fi
 
 if [ ! -s "$mov" ]; then
-    echo "качаю исходник (~320 МБ)…"
+    echo "downloading the source (~320 MB)…"
     if ! curl -fL --progress-bar "$MOV_URL" -o "$mov.tmp"; then
         rm -f "$mov.tmp"
-        echo "прямая ссылка недоступна; пробую aws cli…" >&2
+        echo "direct link unavailable; trying aws cli…" >&2
         aws s3 cp --no-sign-request \
             "s3://download.opencontent.netflix.com/SolLevante/working_assets/SolLevante_Animatics_ver1_H264.mov" \
             "$mov.tmp"
@@ -53,4 +53,4 @@ fi
 ls -lh "$otio" "$mov"
 echo
 echo "Sol Levante © Netflix, CC BY 4.0 — https://opencontent.netflix.com/"
-echo "готово: cargo test -p kt-cli --test oc_render"
+echo "done: cargo test -p kt-cli --test oc_render"

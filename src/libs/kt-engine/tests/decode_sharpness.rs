@@ -1,10 +1,10 @@
-//! Тест 315 (Р.46, п.321): РЕЗКОСТЬ. Смысл всего раунда одной метрикой —
-//! зум больше 100 % на файле с запасом натива обязан показывать детали
-//! файла, а не мыло из кадра, ужатого в Quality ещё при декоде.
+//! Test 315 (R.46, item 321): SHARPNESS. The meaning of the whole round in one metric —
+//! a zoom above 100% on a file with native headroom must show the details
+//! of the file, not the blur of a frame compressed to Quality already at decode.
 //!
-//! Файл самодостаточен НАМЕРЕННО (свой источник, только стабильные API):
-//! его копируют в worktree на предыдущем коммите и убеждаются, что там он
-//! красный — иначе тест ничего не доказывает.
+//! The file is self-contained ON PURPOSE (its own source, only stable APIs):
+//! it is copied into a worktree at the previous commit, and it is confirmed to be
+//! red there — otherwise the test proves nothing.
 
 use kt_media::{MediaError, MediaInfo, MediaSource, Quality, VideoFrame};
 use kt_model::*;
@@ -13,14 +13,14 @@ use kt_time::Tick;
 const SEC: i64 = 90_000;
 const W: u32 = 128;
 const H: u32 = 72;
-/// Натив вчетверо крупнее проекта: запас для ступени 2 есть с избытком.
+/// The native is four times larger than the project: headroom for scale 2 is more than enough.
 const NW: u32 = 512;
 const NH: u32 = 288;
 
-/// Источник с настоящей фактурой: полосы шириной 2 px В НАТИВЕ и честная
-/// box-минификация. Ужатие вдвое их сохраняет, вчетверо — гасит в серый.
-/// (Копия `kt_media::synthetic::CheckerSource`: тест обязан компилироваться
-/// на коммите ДО раунда, где её ещё нет.)
+/// A source with real texture: stripes 2 px wide AT NATIVE and honest
+/// box minification. Halving keeps them, quartering blurs them to grey.
+/// (A copy of `kt_media::synthetic::CheckerSource`: the test must compile
+/// on the commit BEFORE the round where it does not yet exist.)
 struct Checker;
 
 impl Checker {
@@ -80,8 +80,8 @@ impl MediaSource for Checker {
     }
 }
 
-/// Средний горизонтальный контраст красного канала (0..255): мера того,
-/// что фактура вообще дожила до выхода.
+/// Mean horizontal contrast of the red channel (0..255): a measure of
+/// whether the texture survived to the output at all.
 fn contrast(rgba: &[u8], w: u32, h: u32) -> f64 {
     let mut sum = 0u64;
     let mut n = 0u64;
@@ -138,7 +138,7 @@ fn project(fx: Vec<FxInstance>) -> Project {
     p
 }
 
-/// Первый кадр экспорта проекта (тот же путь, что у превью).
+/// First frame of the project's export (the same path as the preview).
 fn first_frame(p: &Project) -> Vec<u8> {
     let sources: Vec<(MediaId, Box<dyn MediaSource>)> = vec![(MediaId(1), Box::new(Checker))];
     let mut out = Vec::new();
@@ -162,26 +162,26 @@ fn first_frame(p: &Project) -> Vec<u8> {
     out
 }
 
-/// Тест 315: зум ×2 на файле с запасом натива обязан быть РЕЗКИМ.
+/// Test 315: a ×2 zoom on a file with native headroom must be SHARP.
 ///
-/// Проект 128×72, файл 512×288. До Р.46 декодер отдавал кадр сразу в
-/// 128×72 — фактура файла (полосы по 2 px натива) усреднялась в ровный
-/// серый ещё ДО цепочки, и зумить было уже нечего. Со ступенью декода
-/// кадр приходит в 256×144, где полосы живы, и зум ×2 кладёт их на выход
-/// один в один.
+/// Project 128×72, file 512×288. Before R.46 the decoder gave the frame straight
+/// at 128×72 — the file's texture (2 px native stripes) was averaged into an even
+/// grey BEFORE the chain, so there was nothing left to zoom. With the decode scale
+/// the frame arrives at 256×144, where the stripes are alive, and the ×2 zoom puts
+/// them on the output one to one.
 #[test]
 fn t315_zoom_beyond_quality_is_sharp() {
     let zoomed = first_frame(&project(vec![FxInstance::geometry_zoom(2.0)]));
     let c = contrast(&zoomed, W, H);
     println!("t315 contrast: {c:.1}");
-    // до Р.46 здесь ровно 0.0 (серый); порог — с большим запасом ниже
-    // измеренного (полный контраст полос ≈ 223)
-    assert!(c >= 100.0, "зум за 100 % обязан показать фактуру файла, контраст {c:.1}");
+    // before R.46 it is exactly 0.0 (grey); the threshold has a wide margin below the
+    // measured value (full stripe contrast ≈ 223)
+    assert!(c >= 100.0, "zoom past 100 % must show the texture of the file, contrast {c:.1}");
 
-    // контроль: без зума ступени нет, и кадр честно мыльный — фичу нельзя
-    // «выиграть», раздувая декод всем подряд
+    // a control: without zoom there is no scale, and the frame is honestly blurry — the feature
+    // cannot be “won” by inflating the decode for everything
     let plain = first_frame(&project(vec![]));
     let cp = contrast(&plain, W, H);
     println!("t315 plain contrast: {cp:.1}");
-    assert!(cp < 1.0, "без нетто-зума декод остаётся в Quality, контраст {cp:.1}");
+    assert!(cp < 1.0, "without net zoom the decode stays at Quality, contrast {cp:.1}");
 }

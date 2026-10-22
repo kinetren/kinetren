@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Подготовка чужого .otio к кросс-рендеру (тест 158, Р.25).
+"""Preparation of a foreign .otio for the cross-render (test 158, R.25).
 
-Запускается python'ом из target/otio-venv (эталонная библиотека OTIO +
-адаптер mlt_xml). На вход — сэмпл из fixtures/otio-samples, на выходе:
+Run with python from target/otio-venv (the reference OTIO library +
+the mlt_xml adapter). Input — a sample from fixtures/otio-samples, output:
 
-    <out>/media/mNN.mp4   синтетика: сплошной цвет из палитры + тишина
-    <out>/prepared.otio   тот же монтаж, все ссылки → на синтетику
-    <out>/prepared.mlt    он же для melt (может отсутствовать: см. mlt_error)
-    <out>/manifest.json   палитра, окна переходов, длительность
+    <out>/media/mNN.mp4   synthetic: solid color from the palette + silence
+    <out>/prepared.otio   the same montage, all references → to the synthetic media
+    <out>/prepared.mlt    the same for melt (may be absent: see mlt_error)
+    <out>/manifest.json   palette, transition windows, duration
 
-Почему сплошные цвета: «что играет в момент t» превращается в цвет пикселя,
-и сравнение двух рендеров становится классификацией, устойчивой к разнице
-кодеков. Палитра разносится так, чтобы её пережила любая одиночная путаница
-BT.601/709 и limited/full range (см. классификатор в cross_render.rs).
+Why solid colors: “what plays at moment t” turns into the pixel color,
+and comparing two renders becomes a classification that is stable against the difference
+of codecs. The palette is spread so that any single confusion of
+BT.601/709 and limited/full range survives (see the classifier in cross_render.rs).
 
-Использование:
+Usage:
     otio-cross-prepare.py <sample.otio> <out_dir> [--ffmpeg ffmpeg]
 """
 import json
@@ -26,14 +26,14 @@ import sys
 import opentimelineio as otio
 from opentimelineio.opentime import RationalTime, TimeRange
 
-# Кадр синтетики. 720p: у MLT эвристика colorspace по высоте кадра (< 720 —
-# BT.601, иначе BT.709), и мы не хотим, чтобы она сработала неожиданно.
+# A synthetic frame. 720p: MLT's colorspace heuristic by frame height (< 720 —
+# BT.601, otherwise BT.709), and we do not want it to fire unexpectedly.
 W, H = 1280, 720
-# Минимальное расстояние между вариантами цветов палитры (евклид в RGB).
-# Классификатор принимает точку при расстоянии <= 32, поэтому 96 > 2*32
-# даёт доказуемую разделимость даже при неверно угаданной конвенции.
+# Minimum distance between palette color variants (Euclidean in RGB).
+# The classifier accepts a point at distance <= 32, so 96 > 2*32
+# gives provable separability even when the convention is guessed wrongly.
 MIN_DIST = 96.0
-# Длина источника, выше которой клипы ребейзятся к нулю (см. ниже).
+# Source length above which clips are rebased to zero (see below).
 LONG_SOURCE_S = 60.0
 
 
@@ -46,9 +46,9 @@ def hsv_rgb(h, s, v):
 
 
 def yuv_variants(rgb):
-    """Все значения, в которые цвет может превратиться при ОДНОЙ путанице
-    конвенций: матрица (601/709) и диапазон (limited/full) на кодировании и
-    на декодировании — 16 комбинаций, после дедупа меньше."""
+    """All values into which the color can turn under ONE confusion of
+    conventions: matrix (601/709) and range (limited/full) on encoding and
+    on decoding — 16 combinations, fewer after dedup."""
     out = []
     for kr1, kb1 in ((0.299, 0.114), (0.2126, 0.0722)):
         for lim1 in (True, False):
@@ -101,9 +101,9 @@ def dist(a, b):
 
 
 def build_palette(n):
-    """Жадный отбор цветов, разнесённых с запасом ПО ВСЕМ конвенционным
-    вариантам (и от чёрного — он занят под пустоту/леттербокс/фон melt)."""
-    taken = []  # [(rgb, [варианты])]
+    """Greedy selection of colors spread with a margin ACROSS ALL the convention
+    variants (and away from black — it is taken by emptiness/letterbox/melt background)."""
+    taken = []  # [(rgb, [variants])]
     black = [(0, 0, 0)]
     candidates = []
     for i in range(12):
@@ -119,19 +119,19 @@ def build_palette(n):
             break
     if len(taken) < n:
         sys.exit(
-            f"палитра вмещает {len(taken)} цветов, а источников {n}: "
-            "нужен другой сэмпл или менее строгий MIN_DIST"
+            f"the palette holds {len(taken)} colors, and the sources {n}: "
+            "another sample is needed or a less strict MIN_DIST"
         )
     return [rgb for rgb, _ in taken]
 
 
 def walk(comp, offset, out, transitions, rate_holder):
-    """Рекурсивный обход дорожек/стеков: собирает клипы и окна переходов."""
+    """Recursive walk of the tracks/stacks: collects clips and transition windows."""
     prev_end = offset
     cursor = offset
     for item in comp:
         if isinstance(item, otio.schema.Transition):
-            # окно перехода вокруг ТЕКУЩЕГО стыка
+            # transition window around the CURRENT junction
             cut = cursor
             transitions.append(
                 (
@@ -159,8 +159,8 @@ def to_sec(x):
 
 
 def media_key(clip):
-    """Идентичность источника: URL, а без него — имя клипа (EDL-семантика:
-    одноимённые события ссылаются на одну катушку)."""
+    """Identity of the source: URL, and without it the clip name (EDL semantics:
+    same-named events refer to one reel)."""
     mr = clip.media_reference
     for attr in ("target_url", "target_url_base", "generator_kind"):
         v = getattr(mr, attr, None) if mr is not None else None
@@ -170,11 +170,11 @@ def media_key(clip):
 
 
 def read_timeline(src):
-    """Читает сэмпл эталоном. Апстримовские файлы бывают новее релиза
-    библиотеки (Marker.3 в premiere_example/screening_example — её же
-    сэмплы!), и тогда она отказывается читать файл целиком. На картинку
-    маркеры не влияют, поэтому для рендера читаем копию без них и
-    отмечаем это в манифесте."""
+    """Reads the sample with the reference library. Upstream files are sometimes newer than the library
+    release (Marker.3 in premiere_example/screening_example — the very same samples!), and then
+    it refuses to read the file whole. Markers do not affect the picture, so for the render we read
+    a copy without them and
+    note this in the manifest."""
     try:
         return otio.adapters.read_from_file(src), False
     except Exception:
@@ -214,17 +214,17 @@ def main():
         pass
     clips, transitions = [], []
     rate_holder = [rate]
-    # ВНИМАНИЕ: tl.duration() эталона суммирует и Transition'ы, хотя времени
-    # на дорожке они не занимают (у transition_test 170 кадров вместо 150).
-    # Монтажную длину считаем сами — по концам реальных элементов.
+    # WARNING: the reference tl.duration() also sums Transitions, although they take
+    # no time on the track (transition_test has 170 frames instead of 150).
+    # We compute the edit length ourselves — from the ends of the real items.
     timeline_end = 0.0
     for track in tl.tracks:
         end = walk(track, 0.0, clips, transitions, rate_holder)
         timeline_end = max(timeline_end, end)
     if not clips:
-        sys.exit(f"{src}: клипов не найдено")
+        sys.exit(f"{src}: no clips found")
 
-    # уникальные источники и требуемая длина каждого
+    # unique sources and the required length of each
     need = {}
     for clip, _start, _dur in clips:
         k = media_key(clip)
@@ -238,10 +238,10 @@ def main():
             end = max(end, (av.start_time.value + av.duration.value) / av.start_time.rate)
         need[k] = max(need.get(k, 0.0), end)
 
-    # EDL-монтажи берут куски с 60-й минуты катушки (screening_example:
-    # start_time 86438 кадров) — генерировать час сплошного цвета незачем:
-    # у одноцветного материала точка входа на картинку не влияет, поэтому
-    # такие клипы ребейзятся к нулю. Отмечается в манифесте.
+    # EDL edits take pieces from the 60th minute of the reel (screening_example:
+    # start_time 86438 frames) — there is no point generating an hour of solid color:
+    # for single-color material the entry point into the picture makes no difference, so
+    # such clips are rebased to zero. It is noted in the manifest.
     rebased = 0
     for clip, _start, _dur in clips:
         k = media_key(clip)
@@ -269,16 +269,16 @@ def main():
             gen(ffmpeg, path, rgb, dur, rate)
         media.append({"key": k, "path": path, "rgb": list(rgb)})
 
-    # подмена ВСЕХ ссылок на синтетику; клипу без source_range он проставляется
-    # из available_range (иначе адаптер MLT не знает, что резать)
+    # replacement of ALL references to the synthetic media; a clip without source_range gets it set
+    # from available_range (otherwise the MLT adapter does not know what to cut)
     by_key = {m["key"]: m for m in media}
     for clip, _start, _dur in clips:
         m = by_key[media_key(clip)]
         av_dur = need[m["key"]] + 1.0
         if clip.source_range is None:
-            # клип берёт материал целиком: длина — из ЕГО ИСХОДНОГО
-            # available_range, а не из длины нашей синтетики (иначе монтаж
-            # растянется и сравнивать будет нечего)
+            # the clip takes the whole material: the length comes from ITS ORIGINAL
+            # available_range, not from the length of our synthetic media (otherwise the edit
+            # would stretch and there would be nothing to compare)
             orig = getattr(clip.media_reference, "available_range", None)
             clip.source_range = (
                 orig
@@ -304,7 +304,7 @@ def main():
             frame_rate_num=int(round(rate)),
             frame_rate_den=1,
         )
-    except Exception as e:  # адаптер не всё умеет — это валидный исход
+    except Exception as e:  # the adapter does not support everything — that is a valid outcome
         mlt_error = f"{type(e).__name__}: {e}"
         mlt_path = None
 

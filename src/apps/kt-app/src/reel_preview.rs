@@ -1,48 +1,48 @@
-//! Превью ВЛОЖЕННОЙ ЛЕНТЫ: кадры и огибающая (Р.56, п.452).
+//! Preview of a NESTED REEL: frames and envelope (R.56, item 452).
 //!
-//! **Претензия владельца дословно:** «у композиций нет превью почему-то» —
-//! и, уточняя, «на таймлайне нет превью как у обычных событий - кадров и
-//! аудио-пиков».
+//! **Owner's claim, verbatim:** “there are no previews for compositions for some reason” —
+//! and, to be precise, “there is no preview on the timeline as for ordinary events - frames and
+//! audio peaks.”
 //!
-//! До Р.56 у события-вложения на таймлайне была мини-карта вместо
-//! филмстрипа, а аудио-половина не рисовала НИЧЕГО: пики ищутся по
-//! `MediaId` ФАЙЛА, а `MediaRef`-а у ленты нет намеренно (п.378) — заведи
-//! ей путь, и watchdog покрасил бы её офлайном, а служба индекса полезла бы
-//! строить пики ffmpeg'ом. Это записывалось как «филмстрипа у ленты нет и
-//! быть не может», но невозможным было только ОДНО решение — тумба по
-//! файлу. У ленты есть другое: её содержимое можно ОТРЕНДЕРИТЬ тем же
-//! кодом композиции, что и всё остальное (инвариант 7).
+//! Before R.56, an event-attachment on the timeline had a mini-map instead of
+//! a filmstrip, and its audio half drew NOTHING: peaks are looked up by
+//! the FILE's `MediaId`, while the reel has no `MediaRef` on purpose (item 378) — give it
+//! a path, and the watchdog would paint it offline, and the index service would start
+//! building peaks with ffmpeg. This was recorded as “a reel has no filmstrip and
+//! cannot have one”, but only ONE solution was impossible — a thumbnail by
+//! file. The reel has another option: its content can be RENDERED by the same
+//! composition code as everything else (invariant 7).
 //!
-//! **Форма — СЕРВИС по образцу `analysis`**, а не задача: очередь, дедуп,
-//! негативный кэш, одна работа за раз.
+//! **Shape: a SERVICE modeled on `analysis`**, not a task: queue, dedup,
+//! negative cache, one job at a time.
 //!
-//! **Ключ — (лента, `content_hash`)**, а не путь. Хэш редакции ленты уже
-//! считает движок (`kt_engine::content_hash`), и он же инвалидирует:
-//! правка внутри ленты меняет хэш, и старая полоса просто перестаёт
-//! спрашиваться. В памяти — LRU по этому ключу.
+//! **Key — (reel, `content_hash`)**, not a path. The reel's edit hash already
+//! is computed by the engine (`kt_engine::content_hash`), and it also invalidates:
+//! an edit inside the reel changes the hash, and the old strip simply stops
+//! being requested. In memory — LRU by this key.
 //!
-//! **Дисковый ярус — в sidecar `<project>.ktindex.db` (Р.58, п.463).**
-//! Претензия владельца: «У композиций превью на таймлайне, кажется, не
-//! кешируется и каждое открытие проекта строится заново». Запись Р.56 «в
-//! sidecar нельзя — он ключуется идентичностью файла» была свойством API
-//! `ensure_media`, а не схемы: внешних ключей в БД нет, и таблицы `reel_*`
-//! ключуются СОДЕРЖИМЕМ — (лента, редакция, отпечаток медиа). Редакция
-//! подмену файла не видит (`content_hash` хэширует события, не байты
-//! исходников), поэтому третья часть ключа — `media_fingerprint`: путь,
-//! размер и mtime каждого файла дерева ленты. Считается В ПОТОКЕ ЗАДАЧИ
-//! (там же, где открывается БД), UI-поток ни `fs::metadata`, ни sqlite не
-//! трогает (инварианты 8/12). Попадание — полоса и пики с диска без
-//! единого декода; промах — рендер и запись одной транзакцией. Ошибка БД —
-//! ошибка кэша: превью всё равно приходит. Проект без пути — только RAM.
+//! **Disk tier — in the sidecar `<project>.ktindex.db` (R.58, item 463).**
+//! Owner's claim: “Composition previews on the timeline, it seems, are not
+//! cached, and every project open rebuilds them anew.” The R.56 note “not in the
+//! sidecar — it is keyed by file identity” was a property of the
+//! `ensure_media` API, not of the schema: there are no foreign keys in the DB, and the `reel_*`
+//! tables are keyed by CONTENT — (reel, edit, media fingerprint). The edit
+//! does not see a file swap (`content_hash` hashes events, not source
+//! bytes), so the third part of the key is `media_fingerprint`: path,
+//! size and mtime of each file in the reel's tree. It is computed ON THE TASK THREAD
+//! (where the DB is opened too); the UI thread touches neither `fs::metadata` nor sqlite
+//! (invariants 8/12). A hit — the strip and peaks come from disk without
+//! a single decode; a miss — render and write in one transaction. A DB error —
+//! a cache error: the preview still arrives. A project without a path — RAM only.
 //!
-//! **Инвариант 5 соблюдается формой офлайн-пути:** свои короткоживущие
-//! источники, никому не отданные, задача конечна и отменяема, реального
-//! времени никто не ждёт. **Инвариант 8 — тем, что отрисовка только СТАВИТ
-//! ЗАЯВКУ по ключу**, а ключ не зависит ни от зума, ни от прокрутки.
+//! **Invariant 5 is respected by the shape of the offline path:** its own short-lived
+//! sources, not shared with anyone; the job is finite and cancelable; and no one
+//! waits for real time. **Invariant 8 — drawing only POSTS A REQUEST
+//! by key**, and the key depends on neither zoom nor scrolling.
 //!
-//! **Пауза обязательна, а не желательна:** аудио ленты рендерится офлайн и
-//! на длинной ленте занимает секунды процессора; работай он во время
-//! воспроизведения — отнимал бы его у реального времени (инвариант 6).
+//! **A pause is mandatory, not merely desirable:** the reel's audio is rendered offline and
+//! on a long reel it takes seconds of CPU; if it ran during playback it would take
+//! that time from real time (invariant 6).
 
 use eframe::egui;
 use kt_media::Quality;
@@ -52,24 +52,24 @@ use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-/// Размер кадра полосы — тот же, что у обычной тумбы: рисуются они рядом и
-/// одним кодом.
+/// The frame size of the strip is the same as for an ordinary thumbnail: they are drawn side by side
+/// by one piece of code.
 pub const REEL_THUMB_W: u32 = crate::thumbs::THUMB_W;
 pub const REEL_THUMB_H: u32 = crate::thumbs::THUMB_H;
 
-/// Потолок кадров на ленту. Это не «бюджет памяти», а обещание цены: у
-/// часовой ленты шаг просто станет крупнее, и заказ останется конечным.
+/// Frame cap per reel. This is not a “memory budget” but a promise about cost: for
+/// an hour-long reel the step simply becomes larger, and the job stays finite.
 pub const MAX_FRAMES_PER_REEL: usize = 48;
 
-/// Сколько лент держим готовыми (LRU). Кадр 320×180 RGBA — 230 КиБ.
+/// How many reels we keep ready (LRU). A 320×180 RGBA frame is 230 KiB.
 pub const MAX_REELS_READY: usize = 6;
 
-/// Потолок негативного кэша (переполнение — полный clear, как у тумб).
+/// Negative cache cap (overflow means a full clear, as with thumbnails).
 pub const MAX_FAILED: usize = 64;
 
-/// Откуда пришло готовое превью: считалось или лежало в sidecar. По нему
-/// служба ведёт счёт настоящих рендеров — t640 требует нуля на втором
-/// открытии проекта.
+/// Where the ready preview came from: computed, or read from the sidecar.
+/// The service counts real renders by this — test t640 requires zero on the second
+/// project open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReelOrigin {
     Rendered,
@@ -79,27 +79,27 @@ pub enum ReelOrigin {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ReelKey {
     pub seq: MediaId,
-    /// Редакция содержимого ленты (`kt_engine::content_hash`).
+    /// Edit of the reel content (`kt_engine::content_hash`).
     pub hash: u64,
 }
 
-/// Кадры ленты по её СОБСТВЕННОМУ времени: `frames[i]` — момент `i * step`.
+/// Reel frames by the reel's OWN time: `frames[i]` is the moment `i * step`.
 #[derive(Debug, Clone)]
 pub struct ReelStrip {
     pub step: i64,
     pub frames: Vec<Option<Arc<egui::ColorImage>>>,
-    /// Конец содержимого ленты на момент рендера. Отрисовка им не
-    /// пользуется НАМЕРЕННО: кадр за концом гасить нельзя — у экземпляра
-    /// окно бывает длиннее содержимого, и там рисуется последний кадр,
-    /// как у файла (t600). Поле хранится потому, что его пишет и читает
-    /// дисковый ярус (`reel_strip.end_ticks`, Р.58 п.463): по нему видно,
-    /// на какую длину полоса была посчитана.
+    /// The end of the reel content at render time. Drawing does NOT use it ON PURPOSE:
+    /// a frame past the end must not be blanked — an instance's window can be longer
+    /// than the content, and there the last frame is drawn, as for a file (t600).
+    /// The field is stored because the disk tier writes and reads it
+    /// (`reel_strip.end_ticks`, R.58 item 463): it shows the length the strip was
+    /// computed for.
     #[allow(dead_code)]
     pub end: Tick,
 }
 
 impl ReelStrip {
-    /// Кадр в момент ленты `t` — ближайший СЛЕВА, как у филмстрипа файла.
+    /// The frame at reel time `t` is the nearest one to the LEFT, as for a file's filmstrip.
     pub fn at(&self, t: i64) -> Option<&Arc<egui::ColorImage>> {
         if self.step <= 0 {
             return None;
@@ -108,54 +108,54 @@ impl ReelStrip {
         self.frames.get(i)?.as_ref()
     }
 
-    /// Индекс кадра — им же ключуется текстура.
+    /// Frame index — the texture is keyed by it too.
     pub fn index(&self, t: i64) -> usize {
         if self.step <= 0 { 0 } else { (t.max(0) / self.step) as usize }
     }
 }
 
-/// Готовое превью ленты. Пики приходят ПОЗЖЕ кадров: кадры дёшевы и видны
-/// сразу, аудио ленты считается офлайн-рендером и на длинной ленте идёт
-/// секунды. До тех пор волноформа — честно пустая, а не выдуманная.
+/// Ready reel preview. Peaks arrive LATER than frames: frames are cheap and visible
+/// immediately, while the reel's audio is computed by offline rendering and takes seconds on a long reel.
+/// Until then the waveform is honestly empty, not made up.
 #[derive(Debug, Clone, Default)]
 pub struct ReelPreview {
     pub strip: Option<ReelStrip>,
     pub peaks: Option<crate::util::Peaks>,
 }
 
-/// Что задача присылает по ходу: сначала кадры, потом итог.
+/// What the task sends along the way: first frames, then the result.
 pub type ReelPartial = ReelStrip;
 
-/// Итог задачи: пики и откуда они.
+/// Task result: the peaks and where they came from.
 pub type ReelDone = Result<(crate::util::Peaks, ReelOrigin), String>;
 
-/// Отмена задачи — НЕ провал: этот текст служба отличает от ошибки рендера
-/// и в негативный кэш не кладёт (Р.67).
+/// Cancelling a task is NOT a failure: the service distinguishes this from a render error
+/// and does not put it into the negative cache (R.67).
 pub const CANCELLED: &str = "cancelled";
 
 type Job = crate::bg::BgJob<ReelPartial, ReelDone>;
 
-/// Служба превью лент.
+/// Reel preview service.
 #[derive(Default)]
 pub struct ReelPreviews {
     running: Option<(ReelKey, Job)>,
     queue: VecDeque<(ReelKey, Box<ReelBody>)>,
-    /// Готовое + метка последнего обращения: `get` зовётся из отрисовки
-    /// по `&self`, поэтому LRU ведётся через `Cell`, а не через `&mut`.
+    /// Ready + a last-access mark: `get` is called from drawing via `&self`, so the LRU is kept via
+    /// `Cell`, not via `&mut`.
     ready: HashMap<ReelKey, (Arc<ReelPreview>, Cell<u64>)>,
     clock: Cell<u64>,
     failed: HashMap<ReelKey, String>,
     paused: bool,
-    /// Сколько превью ДЕЙСТВИТЕЛЬНО отрендерено (не взято с диска).
+    /// How many previews were ACTUALLY rendered (not taken from disk).
     renders: usize,
 }
 
 type ReelBody = dyn FnOnce(crate::bg::BgCtl, crate::bg::BgSend<ReelPartial>) -> ReelDone + Send;
 
 impl ReelPreviews {
-    /// Шаг полосы: наименьшая ступень лестницы тумб, при которой кадров не
-    /// больше потолка. Лестница та же, что у филмстрипа файла, — и ключи
-    /// тогда стоят на тех же местах.
+    /// Strip step: the smallest rung of the thumbnail ladder at which the frame count
+    /// does not exceed the cap. The ladder is the same as the file's filmstrip ladder — so the keys
+    /// sit in the same places.
     pub fn strip_step(len: Tick) -> i64 {
         let n = MAX_FRAMES_PER_REEL as i64;
         *crate::thumbs::THUMB_STEP_LADDER
@@ -170,7 +170,7 @@ impl ReelPreviews {
         stamp.set(c);
     }
 
-    /// Готовое превью; обращение освежает запись в LRU.
+    /// Ready preview; access refreshes the LRU entry.
     pub fn get(&self, key: &ReelKey) -> Option<Arc<ReelPreview>> {
         let (e, stamp) = self.ready.get(key)?;
         self.touch(stamp);
@@ -183,8 +183,8 @@ impl ReelPreviews {
         e.peaks.as_ref()
     }
 
-    /// Число настоящих рендеров за жизнь службы (дисковые попадания не
-    /// считаются).
+    /// Number of real renders over the service's lifetime (disk hits
+    /// are not counted).
     pub fn renders(&self) -> usize {
         self.renders
     }
@@ -211,11 +211,11 @@ impl ReelPreviews {
         self.queue.len() + usize::from(self.running.is_some())
     }
 
-    /// Заявка на ленту. Возвращает `false`, если делать нечего: уже
-    /// готово, уже считается, уже стоит в очереди или уже не вышло.
+    /// Reel request. Returns `false` if there is nothing to do: already
+    /// ready, already being computed, already queued, or already failed.
     ///
-    /// Зовётся ИЗ ОТРИСОВКИ, поэтому обязана быть дешёвой и идемпотентной:
-    /// ключ не зависит ни от зума, ни от прокрутки (инвариант 8).
+    /// It is called FROM DRAWING, so it must be cheap and idempotent:
+    /// the key depends on neither zoom nor scrolling (invariant 8).
     pub fn request(
         &mut self,
         key: ReelKey,
@@ -223,9 +223,9 @@ impl ReelPreviews {
         index_db: Option<std::path::PathBuf>,
         base: Option<std::path::PathBuf>,
     ) -> bool {
-        // ПОЛНАЯ запись (кадры И огибающая) — делать нечего; полоса без
-        // пиков (задачу отменили на аудио-стадии, Р.67) заявку ПРОПУСКАЕТ:
-        // иначе огибающая не появилась бы до следующей правки ленты
+        // A FULL entry (frames AND envelope) — nothing to do; a strip without
+        // peaks (the job was cancelled at the audio stage, R.67) is SKIPPED by the request;
+        // otherwise the envelope would not appear until the next edit of the reel
         let complete = self.ready.get(&key).is_some_and(|(e, _)| e.peaks.is_some());
         if complete
             || self.failed.contains_key(&key)
@@ -241,14 +241,14 @@ impl ReelPreviews {
         true
     }
 
-    /// Правка внутри ленты: старые редакции больше не нужны, и незаконченная
-    /// работа по ним — тем более. Негативный кэш ленты чистится ЦЕЛИКОМ:
-    /// инвалидация — единственный повод попробовать снова (t69 у тумб).
+    /// An edit inside the reel: old editions are no longer needed, and unfinished
+    /// work on them even less so. The reel's negative cache is cleared ENTIRELY:
+    /// invalidation is the only reason to try again (t69 for thumbnails).
     ///
-    /// `keep` — ЖИВЫЕ редакции этой ленты, а не одна (Р.59, стадия 3):
-    /// с переопределениями у одной ленты столько редакций, сколько
-    /// различающихся экземпляров, и «оставить одну» означало бы, что два
-    /// выпуска вечно выбрасывают работу друг друга.
+    /// `keep` — the LIVE editions of this reel, not just one (R.59, stage 3):
+    /// with overrides, one reel has as many editions as there are differing instances,
+    /// and “keep one” would mean that two
+    /// cuts would forever throw out each other's work.
     pub fn invalidate_seq(&mut self, seq: MediaId, keep: &std::collections::HashSet<u64>) {
         let stale = |k: &ReelKey| k.seq == seq && !keep.contains(&k.hash);
         self.ready.retain(|k, _| !stale(k));
@@ -270,8 +270,8 @@ impl ReelPreviews {
         self.running = None;
     }
 
-    /// Пауза на время воспроизведения и рендера: реальное время важнее
-    /// картинки на полосе (инвариант 6).
+    /// Pause for the time of playback and rendering: real time matters more
+    /// than the picture on the strip (invariant 6).
     pub fn set_paused(&mut self, on: bool) {
         self.paused = on;
         if let Some((_, j)) = &self.running {
@@ -279,12 +279,12 @@ impl ReelPreviews {
         }
     }
 
-    /// Двинуть службу: забрать готовое, запустить следующую. `true` — что-то
-    /// изменилось (повод перерисовать).
+    /// Advance the service: take the ready result, start the next one. `true` means something
+    /// changed (a reason to redraw).
     pub fn poll(&mut self) -> bool {
         let mut any = false;
-        // забираем из джоба ВСЁ и отпускаем заём: класть в кэш — уже
-        // работа со `self`
+        // take EVERYTHING from the job and release the borrow: putting it into the cache is already
+        // work with `self`
         let taken = self.running.as_mut().map(|(key, job)| {
             let changed = job.poll();
             (*key, changed, job.progress.take(), job.done.take())
@@ -302,8 +302,8 @@ impl ReelPreviews {
                 any = true;
             }
         }
-        // одна работа за раз: офлайн-рендер ленты декодирует файлы, и три
-        // сразу отняли бы диск у воспроизведения
+        // one job at a time: offline reel rendering decodes files, and three
+        // at once would take the disk away from playback.
         if self.running.is_none()
             && let Some((key, body)) = self.queue.pop_front()
         {
@@ -315,18 +315,18 @@ impl ReelPreviews {
         any
     }
 
-    /// Положить готовое; за потолком уходит та лента, к которой дольше
-    /// всех не обращались (честный LRU, а не очередь вставки).
-    /// Итог задачи — как его видит `poll` (для теста t795: настоящую
-    /// фоновую задачу в харнессе не отменить прицельно).
+    /// Put the ready result; over the cap, the reel that has gone longest without access is evicted
+    /// (honest LRU, not an insertion queue).
+    /// The task result as `poll` sees it (for test t795: a real background task
+    /// cannot be cancelled precisely in the harness).
     #[cfg(test)]
     pub(crate) fn note_done_for_test(&mut self, key: ReelKey, done: ReelDone) {
-        // задача отработала: из очереди она уже ушла
+        // the task has finished: it has already left the queue
         self.queue.retain(|(k, _)| *k != key);
         self.finish(key, done);
     }
 
-    /// Готовая (или наполовину готовая) запись — для теста t795.
+    /// Ready (or half-ready) record — for test t795.
     #[cfg(test)]
     pub(crate) fn put_for_test(
         &mut self,
@@ -338,12 +338,12 @@ impl ReelPreviews {
         self.put(key, ReelPreview { strip, peaks });
     }
 
-    /// Итог задачи — ОДНО место (его же зовёт тест t795).
+    /// Task result — ONE place (it is also called by test t795).
     ///
-    /// ОТМЕНА — не провал (Р.67): задачу сняли паузой, правкой или
-    /// закрытием, и повторить её законно. В негативный кэш идёт только
-    /// ОШИБКА рендера — иначе ключ оставался «провальным» до следующей
-    /// правки ленты, и огибающая не появлялась никогда.
+    /// CANCEL is not a failure (R.67): the task was cancelled by a pause, an edit or
+    /// closing, and retrying it is legitimate. Only a render ERROR goes into the
+    /// negative cache — otherwise the key would stay “failed” until the next
+    /// edit of the reel, and the envelope would never appear.
     fn finish(&mut self, key: ReelKey, done: ReelDone) {
         match done {
             Ok((peaks, origin)) => {
@@ -378,7 +378,7 @@ impl ReelPreviews {
     }
 }
 
-/// Медиа, которые лента читает — включая вложенные в неё ленты.
+/// Media the reel reads — including the reels nested within it.
 fn used_media(p: &Project) -> Vec<MediaId> {
     let mut out: Vec<MediaId> = p
         .clips
@@ -392,11 +392,11 @@ fn used_media(p: &Project) -> Vec<MediaId> {
     out
 }
 
-/// Отпечаток МЕДИА дерева ленты (Р.58): для каждого файла — путь, размер и
-/// mtime; для псевдо-пути — только строка. Редакция ленты (`content_hash`)
-/// подмену файла не видит, и без этого числа подменённый исходник показывал
-/// бы полосу от прежнего. Один `fs::metadata` на медиа — зовётся из потока
-/// задачи, не из UI (инвариант 8).
+/// Fingerprint of the reel tree's MEDIA (R.58): for each file — path, size and
+/// mtime; for a pseudo-path — just a string. The reel's edit (`content_hash`)
+/// does not see a file swap, and without this number a swapped source would show
+/// the strip from before. One `fs::metadata` per media — called from the task
+/// thread, not from the UI (invariant 8).
 pub fn media_fingerprint(p: &Project, base: Option<&std::path::Path>) -> u64 {
     use xxhash_rust::xxh3::Xxh3;
     let mut h = Xxh3::new();
@@ -426,8 +426,8 @@ pub fn media_fingerprint(p: &Project, base: Option<&std::path::Path>) -> u64 {
     h.digest()
 }
 
-/// Ошибка записи в sidecar — ошибка КЭША: превью всё равно приходит, а в
-/// журнал уходит одна строка, не по строке на ленту.
+/// A write error to the sidecar is a CACHE error: the preview still arrives, and the
+/// log gets one line, not one line per reel.
 fn warn_db_once(what: &str, e: &dyn std::fmt::Display) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static WARNED: AtomicBool = AtomicBool::new(false);
@@ -436,16 +436,16 @@ fn warn_db_once(what: &str, e: &dyn std::fmt::Display) {
     }
 }
 
-/// Тело задачи: сначала КАДРЫ (дёшево и сразу видно), потом огибающая.
+/// Job body: FRAMES first (cheap and visible at once), then the envelope.
 ///
-/// Свои короткоживущие источники — ровно те три условия инварианта 5: ни с
-/// кем не делятся, темпа не обещают, задача конечна и отменяема.
+/// Its own short-lived sources — exactly the three conditions of invariant 5: not
+/// shared with anyone, no promised pace, the job is finite and cancelable.
 ///
-/// Дисковый ярус (Р.58): до любого декода спрашивается sidecar по ключу
-/// (лента, редакция, отпечаток медиа); попадание отдаёт полосу и пики с
-/// диска, промах рендерит и кладёт результат одной транзакцией. Кадры и
-/// там и там проходят через JPEG sidecar-качества — показ не зависит от
-/// того, откуда кадр пришёл.
+/// Disk tier (R.58): before any decode the sidecar is asked by key
+/// (reel, edit, media fingerprint); a hit returns the strip and peaks from
+/// disk, a miss renders and stores the result in one transaction. Frames in both
+/// cases pass through the JPEG sidecar quality — display does not depend on
+/// where the frame came from.
 pub fn render_reel_preview(
     ctl: crate::bg::BgCtl,
     send: crate::bg::BgSend<ReelPartial>,
@@ -457,7 +457,7 @@ pub fn render_reel_preview(
     let seq_row = key.seq.0 as i64;
     let fp = media_fingerprint(p, base);
     let mut db = index_db.and_then(|d| kt_media::index::MediaIndexDb::open(d).ok());
-    // кадры уже пришли с диска — эту стадию пропускаем, считаем только пики
+    // frames have already come from disk — we skip this stage, computing only the peaks
     let mut disk_frames = false;
     if let Some(db) = &db {
         match db.reel_preview(seq_row, key.hash, fp) {
@@ -472,9 +472,9 @@ pub fn render_reel_preview(
                 if has_peaks {
                     return Ok((crate::util::pyramid_to_peaks(row.peaks), ReelOrigin::Disk));
                 }
-                // КАДРЫ с диска есть, ПИКОВ ещё нет (задачу отменили на
-                // аудио-стадии): кадры уже отданы, а огибающую досчитываем
-                // здесь же — второго рендера кадров не будет
+                // FRAMES are on disk, PEAKS are not yet (the job was cancelled at the
+                // audio stage): the frames have already been delivered, and we finish the envelope
+                // here — there will be no second render of the frames.
                 disk_frames = true;
             }
             Ok(None) => {}
@@ -482,9 +482,9 @@ pub fn render_reel_preview(
         }
     }
 
-    // источники открываются ДВАЖДЫ — по разу на проход: видео и аудио
-    // читают их по-разному, а делить один источник между проходами значит
-    // делить и позицию чтения (инвариант 5: владелец ровно один)
+    // sources are opened TWICE — once per pass: video and audio
+    // read them differently, and sharing one source between passes would mean
+    // sharing the read position too (invariant 5: exactly one owner).
     let open = || -> Vec<(MediaId, Box<dyn kt_media::MediaSource>)> {
         used_media(p)
             .into_iter()
@@ -500,7 +500,7 @@ pub fn render_reel_preview(
     let step = ReelPreviews::strip_step(end);
     let q = Quality { width: REEL_THUMB_W, height: REEL_THUMB_H };
 
-    // --- кадры -------------------------------------------------------
+    // --- frames -------------------------------------------------------
     let mut facts = kt_engine::video::SourceFacts::default();
     let mut src: HashMap<MediaId, Box<dyn kt_media::MediaSource>> = HashMap::new();
     for (m, s) in open() {
@@ -517,7 +517,7 @@ pub fn render_reel_preview(
     let mut jpegs: Vec<Option<Vec<u8>>> = vec![None; frames.len()];
     let mut buf = Vec::new();
     for i in 0..frames.len() {
-        // кадры уже отданы с диска — считаем только огибающую (Р.67)
+        // frames have already been delivered from disk — we compute only the envelope (R.67)
         if disk_frames {
             break;
         }
@@ -555,17 +555,17 @@ pub fn render_reel_preview(
             jpegs[i] = Some(j);
         }
     }
-    // кадры уходят СРАЗУ: аудио считается дольше, и ждать его незачем
-    // (с диска они уже отданы выше — второй раз пустой полосой не бьём)
+    // frames go out IMMEDIATELY: audio takes longer, and there is no point waiting for it
+    // (they were already delivered from disk above — we do not hit the screen with an empty strip a second time)
     if !disk_frames {
         send.send(ReelStrip { step, frames, end });
     }
     drop(src);
 
-    // ...и СРАЗУ ЖЕ на диск (Р.67): полоса, дошедшая до экрана, обязана
-    // дожить до диска даже если аудио-стадию отменят. Раньше запись шла
-    // одна и только после пиков — отменённая задача не оставляла ничего,
-    // и лента рендерилась заново при каждом открытии проекта.
+    // ...and IMMEDIATELY to disk (R.67): a strip that has reached the screen must
+    // survive to disk even if the audio stage is cancelled. Previously the write went
+    // as one piece and only after the peaks — a cancelled task left nothing behind,
+    // and the reel was re-rendered on every project open.
     if let Some(db) = db.as_mut()
         && !disk_frames
     {
@@ -581,7 +581,7 @@ pub fn render_reel_preview(
         }
     }
 
-    // --- огибающая ---------------------------------------------------
+    // --- envelope ---------------------------------------------------
     if ctl.should_stop() {
         return Err(CANCELLED.into());
     }
@@ -601,8 +601,8 @@ pub fn render_reel_preview(
     .map_err(|e| e.to_string())?;
     let pyramid = acc.finish();
 
-    // --- ОГИБАЮЩАЯ на диск --------------------------------------------
-    // Своей транзакцией и к строке с тем же ключом: кадры уже лежат.
+    // --- ENVELOPE to disk --------------------------------------------
+    // In its own transaction, to the row with the same key: the frames are already there.
     if let Some(db) = db.as_mut()
         && let Err(e) = db.put_reel_peaks(seq_row, key.hash, fp, &pyramid)
     {

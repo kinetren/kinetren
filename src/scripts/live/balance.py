@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Раскладка живых сценариев по работникам ПО ЦЕНЕ, а не по порядку (Р.68).
+"""Distribution of live scenarios across workers BY COST, not by order (R.68).
 
-Круговая раздача («первый — первому, второй — второму») выглядит честной и
-не является ею: цена сценариев разнится в тридцать раз (`nestparam` — 136 с,
-`audiofx` — 4 с). Работник, которому достался самый долгий, держит весь
-прогон, пока остальные уже закончили: при четырёх работниках прогон стоил
-594 с вместо возможных ~300.
+Round-robin dealing (“the first to the first, the second to the second”) looks fair and
+is not: the cost of scenarios differs thirty-fold (`nestparam` — 136 s,
+`audiofx` — 4 s). The worker who got the longest one holds the whole
+run while the others have already finished: with four workers the run cost
+594 s instead of a possible ~300.
 
-Поэтому раздача жадная и «самый дорогой — наименее занятому» (LPT): цену
-берём из `times.txt`, который работники дописывают после каждого сценария,
-а незнакомому сценарию назначаем среднюю (двадцать секунд) — иначе новый
-сценарий всегда уезжал бы в конец.
+So dealing is greedy: “the most expensive — to the least busy” (LPT): the cost
+is taken from `times.txt`, which the workers append to after each scenario,
+and an unknown scenario is assigned the average (twenty seconds) — otherwise a new
+scenario would always go to the end.
 
-    balance.py <файл времён> <число работников> <сценарий> [<сценарий> ...]
+    balance.py <file of times> <number of workers> <scenario> [<scenario> ...]
 
-Печатает по строке на работника: имена через пробел.
+Prints one line per worker: names separated by spaces.
 """
 import sys
 
@@ -28,8 +28,8 @@ def costs(path):
             for line in f:
                 name, _, secs = line.partition("\t")
                 try:
-                    # берём ХУДШЕЕ из виденного: раскладка должна выдерживать
-                    # медленный прогон, а не только удачный
+                    # we take the WORST of what was seen: the distribution must hold up
+                    # a slow run, not only a lucky one
                     out[name] = max(out.get(name, 0.0), float(secs))
                 except ValueError:
                     continue
@@ -44,10 +44,10 @@ def main(argv):
     load = [0.0] * workers
     buckets = [[] for _ in range(workers)]
     for name in sorted(names, key=lambda n: -cost.get(n, DEFAULT_COST)):
-        # При РАВНОЙ загрузке берём того, у кого меньше сценариев: иначе
-        # дешёвые сценарии (подставные стоят 0.0 с) всем скопом уезжают к
-        # работнику номер ноль — так сторож изоляции t802 увидел один экран
-        # вместо трёх.
+        # At EQUAL load we take the one with fewer scenarios: otherwise
+        # the cheap scenarios (the stand-ins cost 0.0 s) all flock together to
+        # worker number zero — so the isolation guard t802 saw one screen
+        # instead of three.
         i = min(range(workers), key=lambda i: (load[i], len(buckets[i]), i))
         buckets[i].append(name)
         load[i] += cost.get(name, DEFAULT_COST)

@@ -1,6 +1,6 @@
-// Хроматическая аберрация (Р.47): зеркало kt_fx::video::chroma_ab —
-// R с масштаба (1−a) к центру, B с (1+a), G и альфа на месте; билинейка
-// руками с клампом краёв (как resample). u0 = (w, h); f0.x = amount.
+// Chromatic aberration (R.47): a mirror of kt_fx::video::chroma_ab:
+// R from the scale (1−a) to the centre, B from (1+a), G and alpha in place;
+// bilinear by hand with edge clamping (as resample). u0 = (w, h); f0.x = amount.
 fn bilin(sx: f32, sy: f32) -> vec4<f32> {
     let sw = i32(P.u0.x);
     let sh = i32(P.u0.y);

@@ -1,17 +1,17 @@
-//! Встроенный пиксельный шрифт 3×5 и холст для процедурных кадров.
+//! Built-in 3×5 pixel font and a canvas for procedural frames.
 //!
-//! Вынесен из placeholder.rs (Р.52): те же примитивы нужны генераторам
-//! (тайм-код рисует цифры). Шрифт не зависит ни от системных шрифтов, ни
-//! от рендерера egui — кадр детерминирован и одинаков в превью, экспорте
-//! и тестах (t208). Символы вне таблицы показываются как «?». Это НЕ
-//! растеризация пользовательского текста титров — та живёт в kt-text со
-//! своей дисциплиной детерминизма.
+//! Factored out of placeholder.rs (R.52): the same primitives are needed by generators
+//! (the timecode draws digits). The font depends neither on system fonts nor on the
+//! egui renderer — the frame is deterministic and the same in preview, export and
+//! tests (t208). Characters outside the table are shown as “?”. This is NOT the
+//! rasterization of user title text — that lives in kt-text with its own
+//! determinism discipline.
 
 pub(crate) const GLYPH_W: usize = 3;
 pub(crate) const GLYPH_H: usize = 5;
 
-/// Шрифт 3×5: строки глифа разделены '/', '#' — пиксель. Строчные буквы
-/// приводятся к заглавным при отрисовке.
+/// 3×5 font: glyph rows are separated by '/', '#' — a pixel. Lowercase letters
+/// are converted to uppercase on drawing.
 static FONT: &[(char, &str)] = &[
     (' ', ".../.../.../.../..."),
     ('0', "###/#.#/#.#/#.#/###"),
@@ -93,8 +93,8 @@ fn glyph(c: char) -> &'static str {
         .unwrap_or(".../.../.../.../...")
 }
 
-/// Холст кадра: буфер RGBA и его размеры. Отдельный тип вместо пачки
-/// параметров в каждой рисовалке — иначе у них по восемь аргументов.
+/// Frame canvas: an RGBA buffer and its dimensions. A separate type instead of a
+/// bundle of parameters in each drawing routine — otherwise they would take eight arguments each.
 pub(crate) struct Canvas {
     pub(crate) buf: Vec<u8>,
     pub(crate) w: i64,
@@ -119,7 +119,7 @@ impl Canvas {
         }
     }
 
-    /// Строка встроенным шрифтом с масштабом `s`, левый верхний угол (x, y).
+    /// A string in the built-in font at scale `s`, top-left corner (x, y).
     pub(crate) fn text(&mut self, x: i64, y: i64, s: i64, text: &str, c: [u8; 4]) {
         let mut cx = x;
         for ch in text.chars() {
@@ -134,7 +134,7 @@ impl Canvas {
         }
     }
 
-    /// Значок плёнки: рамка кадра с перфорацией по краям.
+    /// Film icon: a frame border with perforations along the edges.
     pub(crate) fn film(&mut self, x: i64, y: i64, s: i64, c: [u8; 4]) {
         let (fw, fh) = (14 * s, 10 * s);
         self.rect(x, y, fw, s, c);

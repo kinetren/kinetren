@@ -1,50 +1,50 @@
-//! Буфер обмена огибающих: СИСТЕМНЫЙ, без зеркала внутри программы (Р.61).
+//! Envelope clipboard: the SYSTEM one, with no mirror inside the program (R.61).
 //!
-//! **Претензия владельца, из которой всё следует.** «Судя по тому что кнопка
-//! может быть "disabled" — в коде есть какое-то состояние буфера обмена —
-//! что плохо, нужно по нажатию кнопки брать значение из реального буфера и
-//! уже потом проверять можно вставить или нет, и предложить действия.»
+//! **The owner’s claim from which everything follows.** “Judging by the fact that
+//! the button can be “disabled” — there is some state of the clipboard in the code —
+//! that is bad; on a button press you need to take the value from the real
+//! clipboard and only then check whether it can be pasted, and offer actions.”
 //!
-//! Он прав дважды. Копирование писало И в системный буфер, И в зеркало
-//! `KtApp::env_clipboard`, а доступность кнопки решалась ПО ЗЕРКАЛУ — значит
-//! скопированное во втором окне программы вставить было нельзя. Второй
-//! половиной того же места кнопка гасла на чужом виде эффекта, то есть
-//! сопоставление полей не отсутствовало, а было запрещено.
+//! He is right twice. Copying wrote BOTH to the system clipboard AND to the mirror
+//! `KtApp::env_clipboard`, and the availability of the button was decided BY THE
+//! MIRROR — so what was copied in the second window of the program could not be pasted.
+//! The second half of the same spot: the button went dark on someone else’s
+//! effect kind, which means field matching was not absent but forbidden.
 //!
-//! **Почему чтение — В ФОНЕ, а не прямо в обработчике нажатия.** На X11
-//! буфером ВЛАДЕЕТ окно. Если владелец — наше же окно (а это самый частый
-//! случай: человек только что скопировал огибающую здесь), синхронное чтение
-//! шлёт запрос выделения в наш собственный цикл событий — который в этот
-//! момент выполняет отрисовку и ответить не может. Получилось бы зависание
-//! ровно в том сценарии, ради которого фича и делается. Поэтому нажатие
-//! ЗАКАЗЫВАЕТ чтение конечной отменяемой задачей (`BgJob`, инвариант 5), а
-//! ответ приходит следующим кадром.
+//! **Why the read is IN THE BACKGROUND, not right in the press handler.** On X11
+//! the clipboard is OWNED by a window. If the owner is our own window (and that is the most frequent
+//! case: the person has just copied an envelope here), a synchronous
+//! read sends a selection request to our own event loop — which at this
+//! moment is running the drawing and cannot answer. That would hang
+//! exactly in the scenario the feature exists for. So the press SCHEDULES the
+//! read as a finite, cancellable task (`BgJob`, invariant 5), and the answer
+//! arrives on the next frame.
 
 use crate::bg::BgJob;
 
-/// Чем кончилось чтение буфера. Ошибка НАЗВАНА: «невозможность действия —
-/// это ошибка, а не тишина» (правило 16 чек-листа).
+/// How the clipboard read ended. The error is NAMED: “an impossible
+/// action is an error, not silence” (rule 16 of the checklist).
 pub enum ClipRead {
-    /// Разобранный блок огибающей.
+    /// A parsed envelope block.
     Envelope(Box<kt_model::ops::EnvelopeBlock>),
-    /// В буфере текст, но не наш блок.
+    /// The buffer holds text, but not our block.
     Foreign,
-    /// Буфер пуст или недоступен (нет менеджера буфера, нет X-сервера).
+    /// The buffer is empty or unavailable (no clipboard manager, no X server).
     Empty,
 }
 
-/// Заказ на чтение: кому положить результат и сама задача.
+/// Read order: who should receive the result, and the task itself.
 pub struct ClipJob {
-    /// Куда вставлять, когда придёт ответ: событие и слот цепочки.
+    /// Where to paste when the answer arrives: the event and the chain slot.
     pub target: (kt_model::ClipId, usize),
     pub job: BgJob<(), ClipRead>,
 }
 
-/// Прочитать системный буфер и разобрать его.
+/// Read the system clipboard and parse it.
 ///
-/// Живёт отдельной функцией, потому что её зовут ДВА входа (окно эффектов и
-/// окно морфера) и потому что её тело — единственное место, где программа
-/// вообще трогает системный буфер на чтение.
+/// It lives in a separate function because TWO entry points
+/// call it (the effects window and the morpher window),
+/// and because its body is the only place where the program touches the system clipboard for reading at all.
 pub fn read_clipboard() -> ClipRead {
     let text = match arboard::Clipboard::new().and_then(|mut c| c.get_text()) {
         Ok(t) => t,
@@ -59,34 +59,34 @@ pub fn read_clipboard() -> ClipRead {
     }
 }
 
-/// Заказать чтение буфера в фоне.
+/// Order a clipboard read in the background.
 pub fn spawn_read(target: (kt_model::ClipId, usize)) -> ClipJob {
     ClipJob { target, job: BgJob::spawn("envclip", |_ctl, _send| read_clipboard()) }
 }
 
-/// Окно сопоставления «кривая → параметр цели» (Р.61).
+/// Matching window “curve → target parameter” (R.61).
 ///
-/// Показывается ТОЛЬКО когда остаток непуст: у своего вида эффекта имена
-/// совпадают целиком, и лишний шаг в самом частом случае был бы налогом.
+/// It is shown ONLY when the remainder is non-empty: for one’s own effect kind the names match
+/// entirely, and an extra step in the most frequent case would be a tax.
 pub struct FitDialog {
     pub target: (kt_model::ClipId, usize),
-    /// Сдвиг ключей «вход к входу» — тот же, что у обычной вставки.
+    /// Key shift “entry to entry” — the same as in an ordinary paste.
     pub delta: i64,
-    /// Кривые, которым адрес выбирает человек; `None` — «не класть».
+    /// Curves whose address the person chooses; `None` means “do not put”.
     pub rows: Vec<(kt_model::ParamCurve, Option<String>)>,
-    /// Свободные параметры цели.
+    /// Free parameters of the target.
     pub free: Vec<String>,
-    /// Что уже легло молча — применяется вместе с выбором, одним шагом.
+    /// What has already been placed silently — applied together with the choice, in one step.
     pub matched: Vec<kt_model::ParamCurve>,
     pub open: bool,
 }
 
 impl crate::app::KtApp {
-    /// Забрать прочитанный буфер и решить его судьбу (Р.61).
+    /// Take the read clipboard and decide its fate (R.61).
     ///
-    /// Три исхода, и ни одного молчаливого: наш блок — кладём (при чужом
-    /// виде эффекта сперва спросив про остаток), чужой текст и пустой буфер
-    /// — НАЗВАННАЯ ошибка в строке состояния.
+    /// Three outcomes, and not one silent: our block — put it (with a different
+    /// effect kind, first asking about the remainder); foreign text or an empty buffer
+    /// — a NAMED error in the status line.
     pub(crate) fn poll_env_clipboard(&mut self) {
         let Some(req) = self.env_read.as_mut() else { return };
         if !req.job.poll() {
@@ -109,15 +109,15 @@ impl crate::app::KtApp {
         let (id, slot) = target;
         let Some(clip) = self.model.clip(id).cloned() else { return };
         let Some(fx) = clip.fx.get(slot).cloned() else { return };
-        // ключи живут в тиках МАТЕРИАЛА: переносим их на точку входа
-        // этого события, иначе кривая уехала бы на чужой кусок
+        // keys live in MATERIAL ticks: move them to the entry point of this event,
+        // otherwise the curve would drift onto another piece
         let delta = clip.source_in.0 - block.src_in.0;
         let fit = kt_model::ops::fit_envelope(&block.curves, &fx);
         if fit.leftover.is_empty() {
             self.apply_env_fit(target, delta, fit.matched, Vec::new());
             return;
         }
-        // остаток есть — спрашиваем; окно показывается ТОЛЬКО в этом случае
+        // the remainder exists — we ask; the window is shown ONLY in this case
         self.env_fit = Some(FitDialog {
             target,
             delta,
@@ -128,7 +128,7 @@ impl crate::app::KtApp {
         });
     }
 
-    /// Положить кривые в слот одним шагом истории.
+    /// Put the curves into the slot in one history step.
     pub(crate) fn apply_env_fit(
         &mut self,
         target: (kt_model::ClipId, usize),
@@ -156,11 +156,11 @@ impl crate::app::KtApp {
 }
 
 impl crate::app::KtApp {
-    /// Окно сопоставления «кривая → параметр цели».
+    /// Matching window “curve → target parameter”.
     ///
-    /// Показывается ТОЛЬКО при непустом остатке: у своего вида эффекта имена
-    /// совпадают целиком, и лишний шаг в самом частом случае был бы налогом.
-    /// Отказ от выбора кривую НЕ теряет молча — их число называется.
+    /// It is shown ONLY when the remainder is non-empty: for one’s own effect kind the names match
+    /// entirely, and an extra step in the most frequent case would be a tax.
+    /// Declining the choice does NOT lose the curves silently — their number is named.
     pub(crate) fn draw_env_fit(&mut self, ctx: &eframe::egui::Context) {
         use crate::i18n::{k, tr};
         use eframe::egui;
@@ -232,7 +232,7 @@ impl crate::app::KtApp {
             }
             let matched = std::mem::take(&mut d.matched);
             self.apply_env_fit(d.target, d.delta, matched, remapped);
-            // пропущенное НАЗЫВАЕТСЯ: кривая не вправе исчезнуть молча
+            // what was skipped is NAMED: a curve may not vanish silently
             if skipped > 0 {
                 self.warn(&crate::tf!(k::fx::FIT_LOST, skipped));
             }

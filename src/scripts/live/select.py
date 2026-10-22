@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.33: рамка выделения и перенос пачки.
+"""Live scenario R.33: the selection frame and moving a batch.
 
-Слова пользователя (п.7): «на основном таймлайне не хватает area-selection…
-можно по зажатию ctrl выделять через area… ну и это естественно везде
-учесть». Харнесс-тесты t202-t205 проверяют это в симуляции, а здесь —
-НАСТОЯЩЕЕ окно: мышь водит XTest с зажатым Ctrl, а результат читается из
-сохранённого программой .otio.
+The user’s words (item 7): “the main timeline lacks area-selection…
+one can select via area by holding ctrl… and this must naturally be
+taken into account everywhere”. The harness tests t202-t205 check this in simulation, but here —
+a REAL window: the mouse is driven by XTest with Ctrl held, and the result is read from the
+.otio saved by the program.
 
-Проверяется цепочка, которой пользуется человек: рамкой взял событие →
-Ctrl+кликом добавил второе → потянул одно, уехали ОБА, каждое на один и
-тот же сдвиг, длительности целы.
+The chain the person uses is checked: a marquee took an event →
+a Ctrl+click added a second → one was dragged, BOTH moved, each by the same
+shift, the durations intact.
 """
 import os
 import sys
@@ -34,11 +34,11 @@ def main(out):
         p = app.project_now()
         c1, c2 = p.clip("c1"), p.clip("c2")
         app.expect(
-            c1.start == 0 and c2.start == 6 * SEC, f"стартовый монтаж: {p.clips}"
+            c1.start == 0 and c2.start == 6 * SEC, f"starting montage: {p.clips}"
         )
 
-        # 1. Ctrl+драг с ПУСТОГО места (зазор 4..6 с) вправо за конец c2:
-        # рамка обязана забрать c2 и НЕ создать регион
+        # 1. Ctrl+drag from an EMPTY place (gap 4..6 s) to the right past the end of c2:
+        # the frame must take c2 and NOT create a region
         app.drag(
             app.x_at(5 * SEC), y, app.x_at(11 * SEC), y, mods=("ctrl",)
         )
@@ -47,22 +47,22 @@ def main(out):
         region = (
             p.doc.get("metadata", {}).get("kt", {}).get("transport", {}).get("region")
         )
-        app.expect(not region, f"Ctrl+драг создал регион вместо рамки: {region}")
+        app.expect(not region, f"Ctrl+drag created a region instead of a frame: {region}")
 
-        # 2. Ctrl+клик по первому событию добавляет его к выделению
+        # 2. Ctrl+click on the first event adds it to the selection
         app.click(app.x_at(2 * SEC), y, mods=("ctrl",))
         app.shot("after-ctrl-click")
 
-        # 3. тянем ПЕРВОЕ событие вправо на 2 с — уехать обязаны оба
+        # 3. drag the FIRST event to the right by 2 s — both must move
         app.drag(app.x_at(2 * SEC), y, app.x_at(4 * SEC), y)
         app.shot("after-block-move")
         p = app.saved_project()
         c1, c2 = p.clip("c1"), p.clip("c2")
-        app.near(c1.start, 2 * SEC, 27000, "первое событие уехало на 2 с")
-        app.near(c2.start, 8 * SEC, 27000, "второе событие пачки уехало на столько же")
-        app.near(c1.duration, 4 * SEC, 3000, "длительность c1 цела")
-        app.near(c2.duration, 4 * SEC, 3000, "длительность c2 цела")
-        app.expect(not p.transitions, f"перенос пачки не заводит переходов: {p.transitions}")
+        app.near(c1.start, 2 * SEC, 27000, "the first event moved by 2 s")
+        app.near(c2.start, 8 * SEC, 27000, "the second event of the batch moved by the same amount")
+        app.near(c1.duration, 4 * SEC, 3000, "duration c1 intact")
+        app.near(c2.duration, 4 * SEC, 3000, "duration c2 intact")
+        app.expect(not p.transitions, f"moving the batch does not create transitions: {p.transitions}")
         return app.done()
 
 

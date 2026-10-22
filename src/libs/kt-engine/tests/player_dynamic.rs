@@ -1,6 +1,6 @@
-//! Тест 18 (docs/porting-notes.md): добавление медиа НЕ сбрасывает кэш
-//! (регрессия п.27: rebuild_player пересоздавал Player целиком — прогретый
-//! кэш, транспорт и кольцо выбрасывались при каждом дропе файла).
+//! Test 18 (docs/porting-notes.md): adding media does NOT reset the cache
+//! (regression of item 27: rebuild_player re-created the Player whole — the warmed
+//! cache, transport and ring were thrown away on every file drop).
 
 use kt_engine::Player;
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
@@ -58,7 +58,7 @@ fn t18_add_media_preserves_cache_coverage_and_transport() {
     let project = base_project();
     let (player, _consumer) = Player::new(project.clone(), vec![(MediaId(1), synth())]);
 
-    // прогрев: prefetch-поток наполняет кэш вокруг playhead
+    // warm-up: the prefetch thread fills the cache around the playhead
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         let cov = player.cache.coverage(
@@ -70,7 +70,7 @@ fn t18_add_media_preserves_cache_coverage_and_transport() {
         if covered >= 40 {
             break;
         }
-        assert!(std::time::Instant::now() < deadline, "кэш не прогрелся за 10 с");
+        assert!(std::time::Instant::now() < deadline, "the cache did not warm up in 10 s");
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 
@@ -85,7 +85,7 @@ fn t18_add_media_preserves_cache_coverage_and_transport() {
     let gen_before = player.transport.generation();
     assert!(bytes_before > 0);
 
-    // добавление второго медиа — инкрементально
+    // adding a second media — incremental
     player.add_media(MediaId(2), synth());
     let mut p2 = project.clone();
     p2.media.push(MediaRef::new(MediaId(2), "synth:2"));
@@ -112,31 +112,31 @@ fn t18_add_media_preserves_cache_coverage_and_transport() {
         opacity: 1.0,
         fx_off: false,
     });
-    p2.normalize(); // дорожки под содержимое (Р.62)
+    p2.normalize(); // tracks for the content (R.62)
     p2.validate().unwrap();
     player.set_project(p2);
 
-    // кэш и транспорт пережили добавление
-    assert_eq!(player.transport.playhead(), pos, "playhead не должен сбрасываться");
-    assert_eq!(player.transport.generation(), gen_before, "generation не должен бампаться");
+    // the cache and transport survived the addition
+    assert_eq!(player.transport.playhead(), pos, "the playhead must not be reset");
+    assert_eq!(player.transport.generation(), gen_before, "the generation must not be bumped");
     let cov_after = player.cache.coverage(
         kt_engine::source_id(MediaId(1)),
         kt_cache::BurstKind::Audio,
         0..1_000_000,
     );
-    // prefetch живой и мог ДОГРЕТЬ ещё — проверяем, что покрытие не сжалось
+    // prefetch is alive and could still WARM more — we check that coverage did not shrink
     let covered = |cov: &[std::ops::Range<i64>], x: i64| cov.iter().any(|r| r.contains(&x));
     for r in &cov_before {
         for x in [r.start, (r.start + r.end) / 2, r.end - 1] {
             assert!(
                 covered(&cov_after, x),
-                "burst {x} был в кэше до add_media и пропал: до {cov_before:?}, после {cov_after:?}"
+                "burst {x} was in the cache before add_media and vanished: before {cov_before:?}, after {cov_after:?}"
             );
         }
     }
-    assert!(player.cache.audio_bytes() >= bytes_before, "кэш не должен сжаться");
+    assert!(player.cache.audio_bytes() >= bytes_before, "the cache must not shrink");
 
-    // новый воркер живой: prefetch наполняет медиа 2
+    // the new worker is alive: prefetch fills media 2
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         let cov = player.cache.coverage(
@@ -147,20 +147,20 @@ fn t18_add_media_preserves_cache_coverage_and_transport() {
         if !cov.is_empty() {
             break;
         }
-        assert!(std::time::Instant::now() < deadline, "новое медиа не декодируется — воркер мёртв");
+        assert!(std::time::Instant::now() < deadline, "new media does not decode — the worker is dead");
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
 
-/// Тест 20 (п.1): в паузе фоновые потоки НЕ жгут ресурсы.
-/// Раньше: audio-render крутился 500 раз/с, prefetch клонировал весь
-/// Project и пересобирал рендереры каждые 100 мс — система лагала даже
-/// с пустым проектом.
+/// Test 20 (item 1): while paused, background threads do NOT burn resources.
+/// Before: audio-render spun 500 times per second, prefetch cloned the whole
+/// Project and rebuilt the renderers every 100 ms — the system lagged even
+/// with an empty project.
 #[test]
 fn t20_paused_player_is_quiescent() {
     let project = base_project();
     let (player, _consumer) = Player::new(project.clone(), vec![(MediaId(1), synth())]);
-    std::thread::sleep(std::time::Duration::from_millis(400)); // прогрев/стабилизация
+    std::thread::sleep(std::time::Duration::from_millis(400)); // warm-up / stabilization
 
     use std::sync::atomic::Ordering::Relaxed;
     let r0 = player.loop_stats.render_passes.load(Relaxed);
@@ -171,25 +171,25 @@ fn t20_paused_player_is_quiescent() {
 
     assert!(
         render_delta <= 8,
-        "в паузе render-поток должен парковаться (страховочный таймаут 250мс), \
-         а не крутиться: {render_delta} проходов за 1 с (раньше ~500)"
+        "when paused the render thread must park (safety timeout 250 ms), \
+         and not spin: {render_delta} passes in 1 s (previously ~500)"
     );
-    assert_eq!(rebuild_delta, 0, "prefetch не должен пересобирать рендереры без правок модели");
+    assert_eq!(rebuild_delta, 0, "prefetch must not rebuild renderers without model edits");
 
-    // правка модели будит и пересобирает ровно один раз
+    // a model edit wakes and rebuilds exactly once
     player.set_project(project);
     std::thread::sleep(std::time::Duration::from_millis(300));
     let rebuilds = player.loop_stats.prefetch_rebuilds.load(Relaxed) - rb0;
-    assert!(rebuilds >= 1, "после set_project prefetch обязан пересобрать графы");
+    assert!(rebuilds >= 1, "after set_project prefetch must rebuild the graphs");
 }
 
-/// Пауза → продолжение: рендер просыпается и кольцо снова наполняется
-/// (защита от дедлока на condvar; страхует t14).
+/// Pause → resume: the render wakes up and the ring fills again
+/// (guard against a deadlock on the condvar; t14 covers it).
 #[test]
 fn t20_pause_resume_still_streams() {
     let project = base_project();
     let (player, mut consumer) = Player::new(project, vec![(MediaId(1), synth())]);
-    // дождаться прогрева кэша, чтобы рендер не молчал из-за промахов
+    // wait for the cache warm-up, so that the render is not silent due to misses
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while player
         .cache
@@ -210,7 +210,7 @@ fn t20_pause_resume_still_streams() {
 
     player.play();
     std::thread::sleep(std::time::Duration::from_millis(300));
-    assert!(drain(&mut consumer) > 0, "после play кольцо должно наполняться");
+    assert!(drain(&mut consumer) > 0, "after play the ring must fill");
 
     player.pause();
     std::thread::sleep(std::time::Duration::from_millis(200));
@@ -218,12 +218,12 @@ fn t20_pause_resume_still_streams() {
 
     player.play();
     std::thread::sleep(std::time::Duration::from_millis(300));
-    assert!(drain(&mut consumer) > 0, "после resume рендер обязан проснуться (condvar)");
+    assert!(drain(&mut consumer) > 0, "after resume the render must wake up (condvar)");
 }
 
-/// Тест 211 (Р.33 п.10): вернувшийся на диск исходник подменяет свою
-/// заглушку НА ХОДУ. Кадры старого источника обязаны уйти из кэша —
-/// иначе после возврата файла в превью ещё долго висела бы плашка.
+/// Test 211 (R.33 item 10): a source returned to disk swaps its
+/// placeholder ON THE FLY. Frames of the old source must leave the cache —
+/// otherwise after the file came back a badge would hang in the preview for a long time.
 #[test]
 fn t211_replace_media_swaps_source_and_drops_its_cache() {
     let project = base_project();
@@ -232,7 +232,7 @@ fn t211_replace_media_swaps_source_and_drops_its_cache() {
     };
     let (player, _consumer) = Player::new(project, vec![(MediaId(1), dc(1.0))]);
 
-    // прогрев кэша первого источника
+    // warming the cache of the first source
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         let cov = player.cache.coverage(
@@ -244,39 +244,39 @@ fn t211_replace_media_swaps_source_and_drops_its_cache() {
         if covered >= 40 {
             break;
         }
-        assert!(std::time::Instant::now() < deadline, "кэш не прогрелся за 10 с");
+        assert!(std::time::Instant::now() < deadline, "the cache did not warm up in 10 s");
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     let old = player
         .cache
         .get_audio(kt_engine::source_id(MediaId(1)), 0)
-        .expect("burst источника обязан лежать в кэше");
-    assert!((old.data[0] - 1.0).abs() < 1e-6, "прогрели не тот сигнал");
+        .expect("the burst of the source must lie in the cache");
+    assert!((old.data[0] - 1.0).abs() < 1e-6, "the wrong signal was warmed");
 
-    // подмена источника: кэш ЭТОГО медиа выброшен
+    // source swap: the cache of THIS media is discarded
     player.replace_media(MediaId(1), dc(0.25));
     assert!(
         player.cache.get_audio(kt_engine::source_id(MediaId(1)), 0).is_none(),
-        "кадры прежнего источника остались в кэше — превью показывало бы заглушку"
+        "frames of the previous source remained in the cache — the preview would show a placeholder"
     );
 
-    // новый источник наполняет кэш своими значениями
+    // the new source fills the cache with its own values
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         if let Some(b) = player.cache.get_audio(kt_engine::source_id(MediaId(1)), 0) {
-            assert!((b.data[0] - 0.25).abs() < 1e-6, "в кэше значения старого источника");
+            assert!((b.data[0] - 0.25).abs() < 1e-6, "the cache holds values of the old source");
             break;
         }
-        assert!(std::time::Instant::now() < deadline, "новый источник не наполнил кэш");
+        assert!(std::time::Instant::now() < deadline, "the new source did not fill the cache");
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
 
-/// Тест 316 (Р.46, п.321): вернувшийся файл приносит СВОЙ натив, и ступень
-/// декода пересчитывается на ходу. Пока на месте заглушка (натив мельче
-/// Quality) клип с зумом декодируется как обычно; подменили источником с
-/// запасом — качество декода клипа выросло, и полоски/префетч обязаны
-/// спрашивать уже его.
+/// Test 316 (R.46, item 321): a returned file brings ITS OWN native, and the decode
+/// step is recomputed on the fly. While the placeholder is in place (native smaller
+/// than Quality) a clip with zoom decodes as usual; once it was swapped for a source
+/// with headroom, the clip's decode quality went up, and the strips/prefetch
+/// must now ask for it.
 #[test]
 fn t316_replace_media_updates_the_decode_stage() {
     let mut p = Project::new(ProjectSettings {
@@ -324,14 +324,14 @@ fn t316_replace_media_updates_the_decode_stage() {
     assert_eq!(
         player.video_decode_qualities(),
         vec![(ClipId(1), kt_media::Quality { width: 128, height: 72 })],
-        "у источника 64x36 запаса над Quality нет — ступени быть не может"
+        "a 64x36 source has no headroom above Quality — there cannot be a step"
     );
 
     player.replace_media(
         MediaId(1),
         Box::new(kt_media::synthetic::CheckerSource::new(Tick(90_000 * 60), 512, 288)),
     );
-    // пересборка рендерера идёт по версии проекта (её бампает replace_media)
+    // the renderer rebuild follows the project version (bumped by replace_media)
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         if player.video_decode_qualities()
@@ -339,24 +339,24 @@ fn t316_replace_media_updates_the_decode_stage() {
         {
             break;
         }
-        assert!(std::time::Instant::now() < deadline, "ступень не пересчиталась после подмены");
+        assert!(std::time::Instant::now() < deadline, "the step was not recomputed after the substitution");
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
 
-/// Тест 500 (Р.53, п.411): перенастройка источника НЕ пересоздаёт его.
-/// Поток декодера жив (счётчик спавнов не растёт), рендереры не
-/// пересобираются (версия проекта не растёт), а картинка при этом новая
-/// — кадры старых параметров выброшены. До этого пункта каждое нажатие
-/// клавиши в поле титра гасило и поднимало поток и дважды пересобирало
-/// рендереры (претензия владельца Р.53).
+/// Test 500 (R.53, item 411): reconfiguring a source does NOT re-create it.
+/// The decoder thread is alive (the spawn counter does not grow), the renderers are not
+/// rebuilt (the project version does not grow), while the picture is new
+/// — frames of the old parameters are discarded. Before this item every keypress
+/// in a title field killed and raised the thread and rebuilt the renderers twice
+/// (the owner's claim, R.53).
 #[test]
 fn t500_retune_keeps_worker_and_renderer() {
     let mut project = base_project();
-    // клип-генератор поверх аудио-клипа базового проекта
+    // a generator clip over an audio clip of the base project
     project.media.push(MediaRef::new(MediaId(2), "gen:solid"));
     project.clips.push(ClipEvent {
-        // Р.59, стадия 2: значения — на СОБЫТИИ, источник стоит по его адресу
+        // R.59, stage 2: values are on the EVENT, the source sits at its address
         r#gen: Some(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
         gen_auto: Vec::new(),
         overrides: Vec::new(),
@@ -381,8 +381,8 @@ fn t500_retune_keeps_worker_and_renderer() {
     });
     project.validate().unwrap();
 
-    // источник генератора поднимает САМ плеер (`sync_generators`): его
-    // адрес производен от события, и вызывающему его взять неоткуда
+    // the generator source is raised by the player ITSELF (`sync_generators`): its
+    // address is derived from the event, and the caller has nowhere to take it from
     let (player, _consumer) = Player::new(
         project,
         vec![(
@@ -395,7 +395,7 @@ fn t500_retune_keeps_worker_and_renderer() {
     let sid = kt_engine::source_id(kt_engine::gen_source_addr(ClipId(2)));
     let idx = kt_engine::video::video_cache_idx(Tick(0));
 
-    // прогреваем кадр чёрного генератора
+    // we warm up a frame of the black generator
     player.cache.insert_video(
         sid,
         Some(q),
@@ -409,10 +409,10 @@ fn t500_retune_keeps_worker_and_renderer() {
         }
         .into(),
     );
-    // серийник прогретой записи: по нему видно, что кадр старых
-    // параметров именно ВЫБРОСИЛИ, а не пережил перенастройку
+    // serial of the warmed record: it shows that the frame of the old
+    // parameters was really DISCARDED, not surviving the reconfiguration
     let (_, warm_serial) =
-        player.cache.get_video_stamped(sid, Some(q), idx).expect("прогретый кадр");
+        player.cache.get_video_stamped(sid, Some(q), idx).expect("warm frame");
     let spawns = player.worker_spawns();
     let pver = player.project_version();
     let cver = player.content_version();
@@ -423,66 +423,66 @@ fn t500_retune_keeps_worker_and_renderer() {
             &kt_model::GenState::new(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
             &kt_model::GenState::new(orange.clone())
         ),
-        "цвет меняется без смены паспорта"
+        "the colour changes without a change of passport"
     );
     assert!(player.update_gen(ClipId(2), orange, Vec::new()));
 
-    assert_eq!(player.worker_spawns(), spawns, "поток декодера обязан остаться живым");
-    assert_eq!(player.project_version(), pver, "рендереры пересобирать незачем: план тот же");
-    assert!(player.content_version() > cver, "содержимое источника изменилось — префетч будит");
+    assert_eq!(player.worker_spawns(), spawns, "the decoder stream must stay alive");
+    assert_eq!(player.project_version(), pver, "there is no need to rebuild the renderers: the plan is the same");
+    assert!(player.content_version() > cver, "the source content changed — prefetch wakes up");
 
-    // кадр старых параметров выброшен, новый приходит с НОВЫМ цветом.
-    // Дедлайн щедрый: утверждение — «перенастройка доезжает», а не «она
-    // быстрая», и под параллельным прогоном всего workspace поток
-    // воркера ждёт своей очереди на CPU (тот же урок, что у t399/t476).
+    // the frame of the old parameters is discarded, the new one arrives with the NEW color.
+    // The deadline is generous: the claim is “the reconfiguration arrives”, not “it is
+    // fast”, and under a parallel run of the whole workspace the worker thread waits its turn
+    // for the CPU (the same lesson as t399/t476).
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     let got = loop {
-        // «Пусто видели» ловить нельзя: воркер успевает и выбросить, и
-        // заполнить между двумя опросами, и под нагрузкой тест краснел на
-        // исправном коде. Утверждение то же, но детерминированное —
-        // ЗАПИСЬ ДРУГАЯ (серийник монотонен и не переиспользуется, п.409),
-        // значит кадр старых параметров выброшен, а не пережил правку.
+        // “Seen empty” cannot be caught: the worker manages both to discard and
+        // to fill between two polls, and under load the test turned red on correct
+        // code. The assertion is the same, but deterministic —
+        // the RECORD IS DIFFERENT (the serial is monotonic and is not reused, item 409),
+        // so the frame of the old parameters was discarded, not surviving the edit.
         if let Some((f, serial)) = player.cache.get_video_stamped(sid, Some(q), idx)
             && serial != warm_serial
         {
             break f;
         }
-        assert!(std::time::Instant::now() < deadline, "кадр новых параметров не приехал");
-        // превью-композит сам заказывает недостающие кадры у воркера —
-        // это и есть продуктовый путь заказа
+        assert!(std::time::Instant::now() < deadline, "the frame of the new parameters did not arrive");
+        // the preview composite itself requests the missing frames from the worker —
+        // this is the product path of requesting
         let mut buf = Vec::new();
         let _ = player.compose_preview_into(Tick(0), &mut buf);
         std::thread::sleep(std::time::Duration::from_millis(20));
     };
-    assert_eq!(&got.rgba[..3], &[255, 136, 0], "новая запись несёт СТАРЫЙ цвет");
-    // и поток за всё это время так и не пересоздавался
+    assert_eq!(&got.rgba[..3], &[255, 136, 0], "the new entry carries the OLD colour");
+    // and throughout all this the thread was never re-created
     assert_eq!(player.worker_spawns(), spawns);
     assert_eq!(player.project_version(), pver);
 }
 
-/// Тест 661 (Р.59, стадия 2): правка ЗНАЧЕНИЯ генератора не пересобирает
-/// рендереры и не растит версию проекта.
+/// Test 661 (R.59, stage 2): editing the VALUE of a generator does not rebuild
+/// the renderers and does not grow the project version.
 ///
-/// Это и есть смысл всей стадии: адрес источника считается от СОБЫТИЯ, а
-/// не от значений, поэтому план от них не зависит — а `set_project` это
-/// клон всего проекта плюс остановка аудио-render-потока. До Р.53 такую
-/// цену платило каждое нажатие клавиши в поле титра; здесь то же правило
-/// закрепляется за новым носителем значений.
+/// This is the whole point of the stage: the source address is computed from the EVENT, not
+/// from the values, so the plan does not depend on them — while `set_project` is a clone
+/// of the whole project plus a stop of the audio-render thread. Until R.53 every keypress
+/// in a title field paid this price; here the same rule is pinned to the new carrier
+/// of the values.
 #[test]
 fn t661_a_value_edit_does_not_rebuild_the_renderer() {
     use kt_model::{Command, GeneratorKind, ParamCurve};
 
-    // закон П на уровне КОМАНД: исчерпывающий match в kt-model не даст
-    // забыть про новую команду, а здесь зафиксирован её ответ
+    // the law P at the level of COMMANDS: the exhaustive match in kt-model will not let
+    // a new command be forgotten, while its answer is pinned here
     let set = Command::SetClipGen {
         id: ClipId(2),
         kind: Some(GeneratorKind::Solid { color_r: 1, color_g: 1, color_b: 1 }),
     };
     let auto = Command::SetClipGenAuto { id: ClipId(2), auto: Vec::<ParamCurve>::new() };
-    assert!(!set.touches_render_plan(), "значения генератора плана не касаются");
-    assert!(!auto.touches_render_plan(), "кривые генератора разрешает ИСТОЧНИК, не план");
-    // а вот «применить ко всем» правит ДОКУМЕНТ — состав источников мог
-    // измениться, и звать её как правку значения нельзя
+    assert!(!set.touches_render_plan(), "the generator’s values of the plan do not touch it");
+    assert!(!auto.touches_render_plan(), "the generator’s curves are resolved by the SOURCE, not by the plan");
+    // but “apply to all” edits the DOCUMENT — the set of sources could have
+    // changed, so it cannot be called like a value edit
     assert!(
         Command::ApplyGenToAll {
             media: MediaId(2),
@@ -492,7 +492,7 @@ fn t661_a_value_edit_does_not_rebuild_the_renderer() {
         .touches_render_plan()
     );
 
-    // и то же самое у плеера: поток жив, версия проекта стоит
+    // and the same goes for the player: the thread is alive, the project version holds
     let mut project = base_project();
     project.media.push(MediaRef::new(MediaId(2), "gen:solid"));
     project.clips.push(ClipEvent {
@@ -534,12 +534,12 @@ fn t661_a_value_edit_does_not_rebuild_the_renderer() {
         GeneratorKind::Solid { color_r: 9, color_g: 9, color_b: 9 },
         kt_model::text_anim_curves(kt_model::TextAnim::Typewriter, 1.0, 2.0),
     ));
-    assert_eq!(player.worker_spawns(), spawns, "поток декодера пересоздавать незачем");
-    assert_eq!(player.project_version(), pver, "рендереры пересобирать незачем: план тот же");
-    assert!(player.content_version() > cver, "префетч обязан проснуться");
-    // хранимый проект остаётся правдивым: его читают экспорт и диагностика
+    assert_eq!(player.worker_spawns(), spawns, "there is no need to recreate the decoder stream");
+    assert_eq!(player.project_version(), pver, "there is no need to rebuild the renderers: the plan is the same");
+    assert!(player.content_version() > cver, "prefetch must wake up");
+    // the stored project stays truthful: it is read by export and diagnostics
     let p = player.project();
     let c = p.clips.iter().find(|c| c.id == ClipId(2)).unwrap();
     assert!(matches!(c.r#gen, Some(GeneratorKind::Solid { color_r: 9, .. })));
-    assert!(!c.gen_auto.is_empty(), "кривые обязаны доехать до хранимого проекта");
+    assert!(!c.gen_auto.is_empty(), "the curves must reach the stored project");
 }

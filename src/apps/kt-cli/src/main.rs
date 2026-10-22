@@ -1,17 +1,17 @@
-//! Headless-интерфейс движка: round-trip проектов (M1), офлайн-рендер в
-//! wav/ppm (M2–M3), потоковый экспорт (M7). Основа golden-тестов и CI.
+//! Headless interface of the engine: project round-trip (M1), offline rendering to
+//! wav/ppm (M2–M3), streaming export (M7). The basis of golden tests and CI.
 //!
-//! Медиа-пути вида `synth:<pattern>` (sine:HZ, ramp, dc:V, impulse, silence)
-//! резолвятся в SyntheticSource — рендер без FFmpeg. Реальные файлы — с M3.
+//! Media paths of the form `synth:<pattern>` (sine:HZ, ramp, dc:V, impulse, silence)
+//! resolve to SyntheticSource — rendering without FFmpeg. Real files — from M3.
 //!
-//! Файл проекта — СВОЙ формат `.kt` (Р.70); OpenTimelineIO — дверь внутрь
-//! (`import`) и наружу (`export-otio`), `roundtrip` — проверка самой двери.
+//! The project file is its OWN `.kt` format (R.70); OpenTimelineIO is a door in
+//! (`import`) and out (`export-otio`), and `roundtrip` checks the door itself.
 //!
-//! `probe <проект.kt> <от_с> <до_с>` (Р.43) отвечает на вопрос «что
-//! звучит в этом месте»: эффективные события ПОСЛЕ морфер-слоёв, заказ
-//! префетча и отдельной строкой чужое медиа в нём. Считается чисто
-//! моделью — ни декода, ни FFmpeg, ни звукового железа. По жалобе «тут
-//! звук от другого события» запускается ПЕРВЫМ: так найден п.298.
+//! `probe <project.kt> <from_s> <to_s>` (R.43) answers the question “what
+//! sounds at this place”: the effective events AFTER the morpher layers, the prefetch
+//! order and, on a separate line, the foreign media in it. It is computed purely
+//! by the model — no decode, no FFmpeg, no audio hardware. For a complaint “here
+//! the sound comes from another event” it is run FIRST: that is how item 298 was found.
 
 mod showcase;
 mod wav;
@@ -27,15 +27,15 @@ fn main() {
     std::process::exit(code);
 }
 
-// Разбор псевдо-путей (`synth:`, `gen:`) — ЕДИНАЯ фабрика kt-media
-// (Р.52). Здесь жила вторая, регистроЗАВИСИМАЯ копия `synth_pattern`, и
-// копии уже разъезжались (сноска п.211).
+// Parsing of pseudo-paths (`synth:`, `gen:`) — the SINGLE factory of kt-media
+// (R.52). A second, case-SENSITIVE copy of `synth_pattern` lived here, and
+// the copies were already drifting apart (footnote of item 211).
 
-/// Что движок читает в диапазоне [from, to) секунд таймлайна.
+/// What the engine reads in the range [from, to) seconds of the timeline.
 ///
-/// Печатает ДВЕ вещи, и расхождение между ними само по себе диагноз:
-/// эффективные события (после морфер-слоёв) и заказ префетча — тот самый
-/// список `(медиа, бёрсты)`, по которому греется кэш и читается источник.
+/// It prints TWO things, and a mismatch between them is by itself a diagnosis:
+/// the effective events (after the morpher layers) and the prefetch order — that very
+/// list of `(media, bursts)` by which the cache warms and the source is read.
 fn probe_range(
     project: &Project,
     project_path: Option<&str>,
@@ -61,10 +61,10 @@ fn probe_range(
     );
     println!("range {from:.3}..{to:.3} s");
 
-    // ДОРОЖКИ (Р.62): первое, что надо спросить по жалобе «дорожки не
-    // слышно» и «картинка светлее, чем в превью». Печатаются ВСЕ строки,
-    // а не только особенные: «дорожка на месте и ничем не тронута» —
-    // такой же ответ, как «заглушена».
+    // TRACKS (R.62): the first thing to ask about a complaint “the track can’t be
+    // heard” and “the picture is lighter than in the preview”. ALL rows are printed,
+    // not only the special ones: “the track is in place and untouched by anything” is
+    // the same answer as “muted”.
     println!("\n-- tracks --");
     let sil = kt_model::silenced_tracks(project);
     for (kind, lane) in project.rows() {
@@ -79,9 +79,9 @@ fn probe_range(
         if t.lock {
             flags.push("LOCK".into());
         }
-        // «стадия» — цена и место: у аудио это своя цепочка на СУММЕ
-        // событий, у видео — неявная лента в плане (композит дорожки
-        // целиком). Её наличие объясняет и звук, и расход.
+        // “stage” — the cost and the place: for audio this is its own chain on the SUM of
+        // events, for video an implicit reel in the plan (the composite of the track
+        // as a whole). Its presence explains both the sound and the cost.
         let stage = match kind {
             kt_model::LaneKind::Audio if t.needs_audio_stage() => " stage:audio",
             kt_model::LaneKind::Video if t.needs_video_stage() => " stage:video",
@@ -108,8 +108,8 @@ fn probe_range(
             stage
         );
     }
-    // СОЛО — отдельной строкой: «слышно одну дорожку» разбирается им, а
-    // не перечислением выключателей у каждой строки.
+    // SOLO — on a separate line: “one track is audible” is worked out by it, and not
+    // by listing the switches on every row.
     if !sil.solo.is_empty() {
         println!("  solo active: {} — other tracks of these kinds are silent", sil.solo.join(", "));
     }
@@ -117,8 +117,8 @@ fn probe_range(
         println!("  muted: {} — they will not be in the file either", sil.muted.join(", "));
     }
 
-    // ВЛОЖЕНИЯ (Р.50): «чтобы понять, откуда кадр, войди в N уровней» —
-    // это наш минус, а не фича. Дерево печатается сразу и целиком.
+    // NESTING (R.50): “to understand where the frame comes from, enter N levels” —
+    // that is our minus, not a feature. The tree is printed at once and in full.
     if !project.sequences.is_empty() {
         println!("\n-- nested reels --");
         fn print_reel(p: &kt_model::Project, id: kt_model::MediaId, depth: usize, path: &str) {
@@ -135,8 +135,8 @@ fn probe_range(
                 s.end().as_secs_f64(),
                 indent = depth * 2
             );
-            // ПУБЛИЧНЫЕ ПАРАМЕТРЫ (Р.59, стадия 3): первое, что надо
-            // спросить по жалобе «два выпуска играют один заголовок».
+            // PUBLIC PARAMETERS (R.59, stage 3): the first thing to ask about a complaint
+            // “two releases play the same title”.
             for pp in &s.published {
                 println!(
                     "  {:indent$}  published {:?} '{}' -> clip {:?} {}",
@@ -155,7 +155,7 @@ fn probe_range(
             }
         }
         for s in &project.sequences {
-            // корневые ленты — те, что стоят прямо в монтаже
+            // root reels — those that stand directly in the edit
             if project.clips.iter().any(|c| c.media == s.id) {
                 print_reel(project, s.id, 0, "");
             }
@@ -193,9 +193,9 @@ fn probe_range(
             if c.reversed { "  REVERSED" } else { "" },
             if c.fx.is_empty() { String::new() } else { format!("  fx {}", c.fx.len()) }
         );
-        // СКОРОСТЬ СО ЗНАКОМ (Р.57): по одному «warped» не видно ни
-        // направления, ни того, какой кусок материала событие занимает, —
-        // а жалоба «играет не то» разбирается именно этими числами.
+        // SIGNED SPEED (R.57): from a single “warped” one cannot see either the
+        // direction, or which piece of material the event occupies —
+        // and a complaint “it plays the wrong thing” is worked out precisely by these numbers.
         if let Some(w) = kt_model::clip_warp(c) {
             let (lo, hi) = w.span();
             let rates: Vec<f64> =
@@ -209,9 +209,9 @@ fn probe_range(
                 kt_time::Tick(w.used()).as_secs_f64(),
             );
         }
-        // ХВОСТ ЗА МАТЕРИАЛОМ (Р.63 п.2): первое, что надо спросить по
-        // жалобе «в конце тишина». Длина известна не всегда (генератор,
-        // лента, не открытый файл) — молчим только тогда.
+        // TAIL BEYOND THE MATERIAL (R.63 item 2): the first thing to ask about a
+        // complaint “silence at the end”. The length is not always known (a generator,
+        // a reel, a file that is not open) — we stay silent only then.
         if let Some(at) =
             kt_model::material_end_on_timeline(c, project.media_duration(c.media))
         {
@@ -226,21 +226,21 @@ fn probe_range(
     if shown == 0 {
         println!("  (none)");
     }
-    // ПУТЬ каждого события вложения: без него «звук от другого события»
-    // на вложенном монтаже нечем разбирать (Р.50, Б6).
+    // PATH of each event of an attachment: without it, “sound from another event”
+    // in a nested edit cannot be parsed (R.50, B6).
     for c in &project.clips {
         let end = c.start + c.duration;
         if c.start >= t1 || end <= t0 {
             continue;
         }
         let Some(s) = project.sequence(c.media) else { continue };
-        // ФАКТИЧЕСКОЕ окно, а не длина на таймлайне (Р.56, п.448): у
-        // растянутого экземпляра лента съедается не с той же скоростью, и
-        // «жалоба про другое место» разбирается именно по этим числам.
-        // Зеркальный играет то же окно НАВСТРЕЧУ — границы те же.
-        // Границы — ПРОЛЁТ материала (Р.57): со знаковой скоростью
-        // «съедено» больше пройденного, и по нему окно было бы шире
-        // настоящего.
+        // The ACTUAL window, not the length on the timeline (R.56, item 448): for a
+        // stretched instance the reel is consumed not at the same speed, and
+        // a “complaint about another place” is parsed precisely by these numbers.
+        // The mirrored one plays the same window IN THE OPPOSITE direction — the bounds are the same.
+        // The bounds are the material’s TRAVEL (R.57): with a signed speed
+        // “consumed” is more than what has passed, and by it the window would be wider than the
+        // real one.
         let warp = kt_model::clip_warp(c);
         let (lo, hi) = match &warp {
             Some(w) => w.span(),
@@ -259,8 +259,8 @@ fn probe_range(
             },
             if c.reversed { "  REVERSED" } else { "" }
         );
-        // Переопределения ЭТОГО экземпляра — тем же списком: «почему
-        // здесь другой текст» отвечается одной строкой.
+        // Overrides of THIS instance — in the same list: “why is there
+        // a different text here” is answered by one line.
         for o in &c.overrides {
             let name = s
                 .published
@@ -272,10 +272,10 @@ fn probe_range(
         }
     }
 
-    // Что морфер-слои ИЗМЕНИЛИ против файла (Р.43, п.298): подменённый
-    // источник и чужой варп — ровно те две беды, которые пользователь
-    // слышал как «звук от другого события» и видел как «кривые не
-    // работают». Сверяем кусок с его оригиналом по `slice_origin`.
+    // What the morpher layers CHANGED against the file (R.43, item 298): a substituted
+    // source and a foreign warp — exactly the two troubles that the user
+    // heard as “sound from another event” and saw as “the curves don’t
+    // work”. We compare the piece with its original by `slice_origin`.
     let orig: std::collections::HashMap<u64, &kt_model::ClipEvent> =
         project.clips.iter().map(|c| (c.id.0, c)).collect();
     let mut changed = Vec::new();
@@ -286,9 +286,9 @@ fn probe_range(
         }
         let key = kt_model::slice_origin(c.id).unwrap_or(c.id);
         let Some(o) = orig.get(&key.0) else { continue };
-        // сравниваем с НЕПРОПАТЧЕННЫМ куском того же окна, а не с целым
-        // событием: резка сама по себе двигает `source_in`, и без этого
-        // каждый кусок выглядел бы «изменённым»
+        // we compare against the UNPATCHED piece of the same window, not against the whole
+        // event: the cut itself moves `source_in`, and without this
+        // every piece would look “changed”
         let plain = kt_model::slice_source_in(o, kt_time::TickRange::new(c.start, end));
         let mut what = Vec::new();
         if c.media != o.media {
@@ -321,10 +321,10 @@ fn probe_range(
         }
     }
 
-    // Стоимость сборки движка и число событий с ВАРПОМ (Р.43, п.298):
-    // слой со slowed&reverb, дотянувшийся до всего проекта, раздаёт варп
-    // каждому событию ниже своей строки — а варп у аудио это ресемплер и
-    // пре-ролл на КАЖДОМ событии. Именно так render-поток и вставал.
+    // The cost of building the engine and the number of events with a WARP (R.43, item 298):
+    // a slowed&reverb layer that reaches the whole project hands the warp to
+    // every event below its line — and warp on audio is a resampler and
+    // a pre-roll on EVERY event. That is exactly where the render thread used to stall.
     let t = std::time::Instant::now();
     let eff_all = project.effective_clips();
     let eff_ms = t.elapsed().as_secs_f64() * 1e3;
@@ -333,8 +333,8 @@ fn probe_range(
     let t = std::time::Instant::now();
     let built = AudioRenderer::new(project);
     let new_ms = t.elapsed().as_secs_f64() * 1e3;
-    // `sync_fx` заводит по процессору на КАЖДОЕ событие с цепочкой, а у
-    // варпа внутри sinc-ресемплер: именно на этом вставал render-поток.
+    // `sync_fx` creates a processor for EVERY event with a chain, and a
+    // warp inside has a sinc resampler: exactly there the render thread stalled.
     let mut store = kt_engine::FxStateStore::new();
     let t = std::time::Instant::now();
     built.sync_fx(&mut store);
@@ -348,8 +348,8 @@ fn probe_range(
     println!("\n-- prefetch order (what is actually read) --");
     let r = AudioRenderer::new(project);
     let frames = t0.to_audio_frames()..t1.to_audio_frames();
-    // это считается на КАЖДОМ проходе префетча, то есть постоянно во
-    // время игры — а не один раз при открытии
+    // this is counted on EVERY prefetch pass, that is, constantly during
+    // playback — and not once when opening
     let t = std::time::Instant::now();
     let want = r.wanted_audio_bursts(frames.clone());
     let want_ms = t.elapsed().as_secs_f64() * 1e3;
@@ -371,9 +371,9 @@ fn probe_range(
         );
     }
 
-    // ЧТО И В КАКОМ РАЗМЕРЕ будет декодировано (Р.46, п.322): ступень
-    // декода клипа — функция от цепочки, натива файла и Quality, и когда
-    // «зум всё равно мылит», первым делом смотреть сюда
+    // WHAT AND AT WHAT SIZE will be decoded (R.46, item 322): the decode scale step
+    // of a clip is a function of the chain, the native size of the file and Quality, and when
+    // “zoom still smears” — look here first
     println!("\n-- video decode order --");
     let q = kt_media::Quality {
         width: project.settings.width.max(2) & !1,
@@ -398,9 +398,9 @@ fn probe_range(
             dq.height
         );
     }
-    // ПРАВИЛО ПРИВЕДЕНИЯ (Р.62): по жалобе «картинка растянута/обрезана/с
-    // полями» смотреть сюда — правило события (разрешённое проектом), вид
-    // источника (натив × SAR), рамка на холсте и размер декода
+    // CONFORM RULE (R.62): for a complaint “the picture is stretched/cropped/with
+    // margins” look here — the event rule (allowed by the project), the kind of
+    // source (native × SAR), the frame on the canvas and the decode size
     println!("\n-- conform (frame rule) --");
     println!("  project rule: {:?}", project.settings.conform);
     for c in eff_all.iter().filter(|c| c.kind == kt_model::ClipKind::Video) {
@@ -442,8 +442,8 @@ fn probe_range(
         println!("  media {} ({}): {n} frames at {w}x{h}", media, short(media));
     }
 
-    // главный вопрос жалобы: не заказано ли медиа, которого в этом месте
-    // нет ни у одного события
+    // the main question of the complaint: is there not a media ordered here that
+    // is absent at this place for every event
     let placed: std::collections::BTreeSet<u64> = eff
         .iter()
         .filter(|c| c.start < t1 && c.start + c.duration > t0)
@@ -458,16 +458,16 @@ fn probe_range(
         }
     }
 
-    // --time: УСПЕВАЕТ ЛИ движок отрендерить это место (Р.43, п.301).
-    // После п.294 голодание кольца («правый underrun») больше не тормозит
-    // часы — оно слышно тишиной, и без числа его не с чем сравнить. Здесь
-    // это число: доля реального времени, которую съедает ОДИН аудио-рендер
-    // этого места, на прогретом кэше и без UI.
+    // --time: DOES THE ENGINE KEEP UP rendering this place (R.43, item 301).
+    // After item 294 the starvation of the ring (“right underrun”) no longer stalls
+    // the clock — it is heard as silence, and without a number there is nothing to compare it with. Here
+    // this is the number: the share of real time eaten by ONE audio render
+    // of this place, on a warm cache and without the UI.
     if let Some(path) = time_with {
-        // ЧЕРЕЗ КЭШ, как в программе: без него замер считал бы декод
-        // заново на каждый бёрст, а у реверса чтение идёт НАЗАД по файлу —
-        // это совсем другой порядок цены и совсем не то, что переживает
-        // пользователь на повторе (Р.43, п.302).
+        // THROUGH THE CACHE, as in the program: without it the measurement would count
+        // decoding anew for every burst, and for reverse the reading goes BACK along the file —
+        // that is a completely different cost order and not what the user experiences
+        // on repeat (R.43, item 302).
         let cache =
             std::sync::Arc::new(kt_cache::BurstCache::new(kt_cache::CacheConfig::default()));
         let mut fetcher = match open_sources(project, path, false, Some(cache)) {
@@ -482,7 +482,7 @@ fn probe_range(
         r.sync_fx(&mut store);
         let mut out = vec![0f32; kt_time::AUDIO_BURST_FRAMES * AUDIO_CHANNELS];
         let step = kt_time::AUDIO_BURST_FRAMES as i64;
-        // первый круг греет кэш и заводит состояния FX
+        // the first lap warms the cache and sets up the FX states
         let mut pos = fa;
         while pos < fb {
             r.render_frames_with(&mut fetcher, &mut store, pos, &mut out);
@@ -506,11 +506,11 @@ fn probe_range(
             to - from,
             ms / span_ms * 100.0
         );
-        // ЦЕНА СУБ-МИКСА (Р.55, С4): бёрсты, посчитанные впустую на
-        // пре-ролле переезда продюсера вложенной ленты. Их не слышно, но
-        // по ним видно цену реверса и растяжения на вложении — и то, не
-        // разошлось ли окно заказа с тем, что читает продюсер (тогда они
-        // растут систематически).
+        // THE COST OF THE SUB-MIX (R.55, C4): bursts computed for nothing during
+        // the pre-roll of the nested reel producer’s move. They are not heard, but
+        // by them one sees the cost of reverse and stretch on an attachment — and whether
+        // the order window has diverged from what the producer reads (then they
+        // grow systematically).
         if warm > 0 {
             println!(
                 "  nest submix warmups: {warm} bursts ({:.0} ms of reel time)",
@@ -518,12 +518,12 @@ fn probe_range(
             );
         }
 
-        // ТО ЖЕ МЕСТО НА ПОВТОРЕ: регион играется через `render_looped_with`,
-        // и заворот стоит своего (Р.43). Короткий регион заворачивается чаще,
-        // поэтому «сколько стоит секунда» у него может отличаться от
-        // линейного прогона — именно на это жаловался пользователь
-        // («регион больше реверсов — как по маслу, регион внутри события —
-        // растут underruns»).
+        // THE SAME PLACE ON REPEAT: a region is played through `render_looped_with`,
+        // and the wrap-around has its own cost (R.43). A short region wraps more often,
+        // so “how much a second costs” there may differ from
+        // a linear run — it is exactly this that the user complained about
+        // (“a region with more reverses — smooth as butter, a region inside an event —
+        // the underruns grow”).
         let laps = 4i64;
         let mut store = kt_engine::FxStateStore::new();
         r.sync_fx(&mut store);
@@ -558,16 +558,16 @@ fn probe_range(
     0
 }
 
-/// Факты об источниках проекта: натив (Р.46, п.322) и процедурность
-/// (Р.56, п.448). Открывается только КОНТЕЙНЕР (probe), кадры не
-/// декодируются. Недоступный файл — не ошибка: его ступень просто
-/// неизвестна, и в отчёте это видно.
+/// Facts about the project’s sources: native (R.46, item 322) and proceduralness
+/// (R.56, item 448). Only the CONTAINER is opened (probe), the frames are not
+/// decoded. An unavailable file is not an error: its step is simply
+/// unknown, and the report shows this.
 fn media_facts(project: &Project, project_path: &str) -> kt_engine::SourceFacts {
     let mut out = kt_engine::SourceFacts::default();
     for m in &project.media {
-        // синтетика пропускается: её info().width/height фиктивны;
-        // генераторы (`gen:`) проходят — их натив это честный «запас
-        // деталей» для ступени (GEN_NATIVE, Р.52)
+        // synthetics are skipped: their info().width/height are fictitious;
+        // generators (`gen:`) pass — their native is an honest “reserve of
+        // detail” for the step (GEN_NATIVE, R.52)
         if kt_media::factory::synth_pattern(&m.path).is_some() {
             continue;
         }
@@ -579,10 +579,10 @@ fn media_facts(project: &Project, project_path: &str) -> kt_engine::SourceFacts 
             out.observe(m.id, kt_media::MediaSource::info(&*src));
         }
     }
-    // генераторы стоят по адресам СОБЫТИЙ (Р.59, стадия 2), и факты у них
-    // спрашиваются по тем же адресам — иначе ступень декода у титра
-    // считалась бы «натив неизвестен», а замедленный титр опять стал бы
-    // ступенчатым
+    // generators stand at the addresses of EVENTS (R.59, stage 2), and their facts are
+    // asked at the same addresses — otherwise the decode step of a title would be
+    // counted as “native unknown”, and a slowed title would again become
+    // stepped
     for (addr, state) in kt_engine::gen_sources(project) {
         let src = kt_media::factory::open_gen(&state);
         out.observe(addr, kt_media::MediaSource::info(&*src));
@@ -590,12 +590,12 @@ fn media_facts(project: &Project, project_path: &str) -> kt_engine::SourceFacts 
     out
 }
 
-/// Открыть все источники проекта. Общее у офлайн-рендера и `probe --time`.
+/// Open all sources of the project. Common to the offline render and `probe --time`.
 ///
-/// `strict` — недоступный файл это ошибка (рендер: молчаливая тишина в
-/// выходном файле хуже отказа). Диагностика ходит сюда с `false`: в бине
-/// проекта могут лежать медиа, которых на этой машине нет, а замеряемый
-/// диапазон их не касается.
+/// `strict` — an unavailable file is an error (render: silent silence in the
+/// output file is worse than a refusal). The diagnostic goes here with `false`: the project’s
+/// bin may hold media that are absent on this machine, and the measured
+/// range does not touch them.
 fn open_sources(
     project: &Project,
     project_path: &str,
@@ -612,9 +612,9 @@ fn open_sources(
             }
             continue;
         }
-        // путь УЖЕ разрешён при загрузке (kt_otio::load_project резолвит
-        // относительные target_url от каталога проекта, п.316) — второй
-        // join удваивал префикс и «терял» файл при относительном вызове
+        // the path is ALREADY resolved on load (kt_otio::load_project resolves relative
+        // target_url from the project directory, item 316) — a second
+        // join doubled the prefix and “lost” the file on a relative call
         let resolved = m.path.clone();
         let mut idx_db = kt_media::index::MediaIndexDb::open(
             &std::path::Path::new(project_path).with_extension("ktindex.db"),
@@ -626,17 +626,17 @@ fn open_sources(
             Err(e) => eprintln!("  skipped (not on this machine): {resolved}: {e}"),
         }
     }
-    // см. `media_facts`: источники генераторов адресуются событиями
+    // see `media_facts`: the sources of generators are addressed by events
     for (addr, state) in kt_engine::gen_sources(project) {
         fetcher.add_source(addr, kt_media::factory::open_gen(&state));
     }
     Ok(fetcher)
 }
 
-/// Сказать, ЧТО НЕ ПОПАДЁТ В ФАЙЛ (Р.62): заглушённые дорожки и активное
-/// соло — до рендера, той же формулировкой, что окно рендера. Отказа нет:
-/// mute и solo — содержимое проекта (решение владельца), но молчать о них
-/// нельзя (правило 16).
+/// Say WHAT WILL NOT GET INTO THE FILE (R.62): muted tracks and an active
+/// solo — before the render, with the same wording as the render window. There is no refusal:
+/// mute and solo are the content of the project (the owner’s decision), but staying silent about them
+/// is not allowed (rule 16).
 fn report_silenced(project: &Project) {
     let s = kt_model::silenced_tracks(project);
     if !s.muted.is_empty() {
@@ -657,10 +657,10 @@ fn report_silenced(project: &Project) {
 
 fn render_wav(project: &Project, project_path: &str, output: &str, allow_missing: bool) -> i32 {
     report_silenced(project);
-    // Открытие источников — ОДНО на рендер и диагностику (Р.49, п.359):
-    // тут лежала вторая копия того же цикла, и разъехалась она бы молча.
-    // `--allow-missing` рендерит тишиной вместо отказа: иногда это ровно
-    // то, что нужно (проверить монтаж без чужих медиа), но НЕ по умолчанию.
+    // Opening of sources — ONE for render and diagnostics (R.49, item 359):
+    // a second copy of the same loop lived here, and it would have drifted apart silently.
+    // `--allow-missing` renders silence instead of a refusal: sometimes that is exactly
+    // what is needed (to check the edit without foreign media), but NOT by default.
     let mut fetcher = match open_sources(project, project_path, !allow_missing, None) {
         Ok(f) => f,
         Err(e) => {
@@ -702,10 +702,10 @@ fn render_wav(project: &Project, project_path: &str, output: &str, allow_missing
     0
 }
 
-/// Чтение файла ПРОЕКТА (Р.70): только свой формат. Файл обмена и легаси
-/// — не проект: ошибка называет дверь (`kt-cli import`), как «Открыть» в
-/// приложении называет пункт меню. Возвращает и чужой passthrough — он
-/// нужен `export-otio`.
+/// Reading the PROJECT file (R.70): only its own format. An exchange file and a legacy one
+/// are not a project — the error names the door (`kt-cli import`), just as “Open” in the
+/// app names the menu item. It also returns a foreign passthrough — it is
+/// needed by `export-otio`.
 fn load_project_file(input: &str) -> Result<(Project, Retained), i32> {
     use kt_model::project_file::{FileKind, ProjectFileError, from_text};
     let text = match std::fs::read_to_string(input) {
@@ -745,26 +745,26 @@ fn load_project_file(input: &str) -> Result<(Project, Retained), i32> {
     }
 }
 
-/// Проект для рендера/пробы: относительные пути медиа разрешены от
-/// каталога проекта ОДИН раз, здесь (т307: иначе `sub/p.kt` из каталога
-/// над ним искал бы `sub/sub/clip.mp4`). В файле они остаются
-/// относительными — это делает приложение при каждом обращении, а kt-cli
-/// — на входе.
+/// The project for render/probe: relative media paths are resolved from the
+/// project directory ONCE, here (t307: otherwise `sub/p.kt` looked for `sub/sub/clip.mp4`
+/// from the directory above it). In the file they stay
+/// relative — the app does this on every access, and kt-cli
+/// — on input.
 fn load_project_resolved(input: &str) -> Result<Project, i32> {
     let (mut p, _) = load_project_file(input)?;
     kt_otio::resolve_project_media(&mut p, std::path::Path::new(input).parent());
     Ok(p)
 }
 
-/// Текст файла проекта: модель плюс чужой passthrough, если он есть — то
-/// же тело, что у Ctrl+S в приложении (`kt_model::project_file`).
+/// The text of the project file: the model plus a foreign passthrough, if there is one — the
+/// same body as Ctrl+S in the app (`kt_model::project_file`).
 fn project_text(p: &Project, retained: &Retained) -> String {
     let otio = (!retained.is_empty()).then(|| retained.to_json());
     kt_model::project_file::to_text(p, otio.as_ref())
 }
 
 fn run(args: &[String]) -> i32 {
-    // разрешение перезаписать существующий файл — одно на все подкоманды
+    // permission to overwrite an existing file — one for all subcommands
     let force = args.iter().any(|a| a == "--force");
     match args.first().map(String::as_str) {
         Some("version") | None => {
@@ -795,9 +795,9 @@ fn run(args: &[String]) -> i32 {
             }
             0
         }
-        // ДВЕРЬ ИМПОРТА (Р.70): легаси .ktproj, наш .otio любой версии
-        // конверта (починки — `import_older`) и чужой .otio — в файл
-        // проекта своего формата. Исходник не трогается.
+        // THE IMPORT DOOR (R.70): a legacy .ktproj, our .otio of any version of the
+        // envelope (fixes — `import_older`) and a foreign .otio — into a file
+        // of the project in its own format. The source is not touched.
         Some("import") => {
             let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
                 eprintln!("usage: kt-cli import <in.otio|in.ktproj> <out.kt> [--force]");
@@ -826,8 +826,8 @@ fn run(args: &[String]) -> i32 {
             for n in &notices {
                 eprintln!("note: {n}");
             }
-            // пути медиа разрешены от ИСХОДНИКА (абсолютны); в файле проекта
-            // они относительны к НЕМУ
+            // media paths are resolved from the SOURCE (they are absolute); in the project file
+            // they are relative to IT
             kt_otio::relativize_project_media(&mut p, std::path::Path::new(output).parent());
             let out = project_text(&p, &retained);
             if let Err(c) = write_project(output, &out, force) {
@@ -842,8 +842,8 @@ fn run(args: &[String]) -> i32 {
             );
             0
         }
-        // ДВЕРЬ ЭКСПОРТА (Р.70): самодостаточный файл обмена — тело ленты
-        // инлайном в каждом экземпляре, чужой passthrough возвращён.
+        // EXPORT DOOR (R.70): a self-contained exchange file — the body of the reel
+        // inline in each instance, the foreign passthrough is returned.
         Some("export-otio") => {
             let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
                 eprintln!("usage: kt-cli export-otio <in.kt> <out.otio> [--force]");
@@ -853,8 +853,8 @@ fn run(args: &[String]) -> i32 {
                 Ok(v) => v,
                 Err(code) => return code,
             };
-            // абсолютные в памяти — относительные к файлу обмена на выходе
-            // (это делает сам писатель OTIO по `out_base`)
+            // absolute in memory — relative to the exchange file on output
+            // (the OTIO writer itself does this by `out_base`)
             kt_otio::resolve_project_media(&mut p, std::path::Path::new(input).parent());
             let out_base = std::path::Path::new(output).parent();
             let out = kt_otio::save_project(&p, &retained, out_base);
@@ -871,11 +871,11 @@ fn run(args: &[String]) -> i32 {
                 eprintln!("usage: kt-cli demo <out.kt> [--files] [--force]");
                 return 2;
             };
-            // По умолчанию демо ссылается на СИНТЕТИЧЕСКИЕ источники (Р.49,
-            // п.359). Восемь путей `media/*` не существуют нигде в поставке —
-            // `demo` и `render` подряд не работали ни у кого, кто не собрал
-            // эти файлы сам. `synth:` — полноправный источник во всей
-            // программе; `--files` возвращает прежние имена.
+            // By default the demo refers to SYNTHETIC sources (R.49,
+            // item 359). Eight paths `media/*` do not exist anywhere in the distribution —
+            // `demo` and `render` in a row did not work for anyone who had not assembled
+            // these files themselves. `synth:` is a full-fledged source across the whole
+            // program; `--files` brings back the old names.
             let p = demo_project(!args.iter().any(|a| a == "--files"));
             let out = project_text(&p, &Retained::default());
             if let Err(c) = write_project(path, &out, force) {
@@ -885,7 +885,7 @@ fn run(args: &[String]) -> i32 {
         }
         Some("roundtrip") => {
             let Some(input) = args.get(1) else {
-                // проверка ДВЕРИ обмена: файл обмена → модель → файл обмена
+                // check of the exchange DOOR: exchange file → model → exchange file
                 eprintln!("usage: kt-cli roundtrip <in.otio> [out.otio] [--force]");
                 return 2;
             };
@@ -922,10 +922,10 @@ fn run(args: &[String]) -> i32 {
             );
             0
         }
-        // Диагностика «что звучит в этом месте» (Р.43): по жалобе вида
-        // «тут звук от другого события» первым делом надо узнать, какое
-        // МЕДИА движок вообще собирается читать в этом диапазоне. Ответ
-        // чисто модельный — ни декода, ни FFmpeg, ни звукового железа.
+        // Diagnostics of “what sounds at this place” (R.43): for a complaint of the kind
+        // “here the sound comes from another event” the first thing is to find out which
+        // MEDIA the engine is going to read at all in this range. The answer is
+        // purely model-based — no decode, no FFmpeg, no audio hardware.
         Some("probe") => {
             let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3))
             else {
@@ -941,10 +941,10 @@ fn run(args: &[String]) -> i32 {
                 Err(code) => return code,
             };
             let timed = args.iter().any(|a| a == "--time");
-            // ДЛИНЫ МАТЕРИАЛА меряем сами (Р.63 п.2): в проектах до этого
-            // раунда их в файле нет, а именно по ним probe отвечает на
-            // жалобу «в конце тишина». Открываем те же источники, что и
-            // для заказа; недоступные просто молчат.
+            // We measure the MATERIAL LENGTHS ourselves (R.63 item 2): in projects prior to this
+            // round they are not in the file, and it is precisely by them that probe answers the
+            // complaint “silence at the end”. We open the same sources as for
+            // the order; unavailable ones simply stay silent.
             let mut project = project;
             if let Ok(mut f) = open_sources(&project, input.as_str(), false, None) {
                 let ids: Vec<kt_model::MediaId> = project.media.iter().map(|m| m.id).collect();
@@ -977,10 +977,10 @@ fn run(args: &[String]) -> i32 {
                 eprintln!("usage: kt-cli export <in.kt> <out.mp4> [encoder]");
                 return 2;
             };
-            // третьим аргументом можно закрепить видео-энкодер (иначе
-            // автовыбор: nvenc → vaapi → qsv → libx264). Нужен там, где
-            // рендер обязан быть воспроизводимым — например в кросс-рендер
-            // конформансе (тест 158).
+            // a third argument can pin the video encoder (otherwise
+            // auto-selection: nvenc → vaapi → qsv → libx264). It is needed where
+            // the render MUST be reproducible — for example in the cross-render
+            // conformance (test 158).
             let encoder = args.get(3).cloned();
             let project = match load_project_resolved(input) {
                 Ok(p) => p,
@@ -994,7 +994,7 @@ fn run(args: &[String]) -> i32 {
                         if let Some(pseudo) = kt_media::factory::open_pseudo(&m.path) {
                             pseudo?
                         } else {
-                            // путь уже разрешён при загрузке (п.316)
+                            // the path is already resolved on load (item 316)
                             let resolved = m.path.clone();
                             {
                                 let mut idx_db = kt_media::index::MediaIndexDb::open(
@@ -1023,9 +1023,9 @@ fn run(args: &[String]) -> i32 {
                 }
             };
             let opts = kt_engine::ExportOptions { force_encoder: encoder, ..Default::default() };
-            // Р.29: рендер на GPU по умолчанию (headless-девайс, тот же
-            // код композиции); адаптера нет → CPU с пометкой в stderr,
-            // KT_VIDEO_GPU=0 — принудительный CPU
+            // R.29: rendering on the GPU by default (headless device, the same
+            // composition code); no adapter → CPU with a note in stderr,
+            // KT_VIDEO_GPU=0 — forced CPU
             let video_gpu = if std::env::var("KT_VIDEO_GPU").as_deref() == Ok("0") {
                 None
             } else {
@@ -1079,14 +1079,14 @@ fn run(args: &[String]) -> i32 {
     }
 }
 
-/// Демо-монтаж для скриншотов сайта (порт gen_project из site/screenshots.py —
-/// убирает второго писателя формата, Р.24 этап 11): шесть именованных
-/// дорожек, метки, регион с loop, FX-цепочки, морфер.
-/// Записать проект атомарно, тем же кодом, что и GUI (Р.49, п.359).
-/// Голый `fs::write` оставлял обрубок прямо на месте файла, если запись
-/// прервалась. Существующий файл не перезаписывается без `--force`: у kt-cli
-/// нет ни звёздочки, ни диалога — молча затереть чужой проект тут нечему
-/// помешать.
+/// A demo edit for the site screenshots (port of gen_project from site/screenshots.py —
+/// it removes a second writer of the format, R.24 stage 11): six named
+/// tracks, markers, a region with loop, FX chains, a morpher.
+/// Write the project atomically, with the same code as the GUI (R.49, item 359).
+/// A bare `fs::write` left a stub right at the file’s place if the write
+/// was interrupted. An existing file is not overwritten without `--force`: kt-cli
+/// has neither an asterisk nor a dialog — there is nothing to stop a silent overwrite
+/// of someone else’s project.
 fn write_project(path: &str, text: &str, force: bool) -> Result<(), i32> {
     let p = std::path::Path::new(path);
     warn_if_locked(path);
@@ -1108,8 +1108,8 @@ fn write_project(path: &str, text: &str, force: bool) -> Result<(), i32> {
     }
 }
 
-/// Проект занят другой копией программы — предупредить (Р.49, п.359).
-/// Запрещать нечего: kt-cli читает, а пишет по явной просьбе.
+/// The project is busy with another copy of the program — warn (R.49, item 359).
+/// Nothing to forbid: kt-cli reads, and writes on an explicit request.
 fn warn_if_locked(path: &str) {
     if !std::path::Path::new(path).exists() {
         return;
@@ -1120,8 +1120,8 @@ fn warn_if_locked(path: &str) {
     }
 }
 
-/// Номер процесса-держателя замка на проект, если он есть. Формат файла
-/// замка — тот же, что кладёт kt-app (`project_lock.rs`): первая строка pid.
+/// The process number of the lock holder for the project, if there is one. The format of the
+/// lock file is the same as kt-app writes (`project_lock.rs`): the first line is the pid.
 fn kt_lock_holder(project: &str) -> Option<u32> {
     let base = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from).or_else(|| {
         std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))
@@ -1176,8 +1176,8 @@ fn demo_project(synth: bool) -> Project {
         fx_off: false,
     };
     let pan = FxInstance::geometry_at(-0.002, 0.002, 1.18);
-    // тот же ход камеры, что был кейфреймами CamMotion, — теперь кривыми
-    // на Pan (Р.34 К2: механизм анимации в программе один)
+    // the same camera move that used to be CamMotion keyframes — now curves
+    // on Pan (R.34 K2: the animation mechanism is one in the program)
     let cam = FxInstance::geometry_at(0.003, -0.001, 1.05);
     let slowed = FxInstance::SlowedReverb {
         rate: 0.86,
@@ -1191,8 +1191,8 @@ fn demo_project(synth: bool) -> Project {
         frames: Default::default(),
         automation: vec![],
     };
-    // автоматизация slowed — общими кривыми (Р.33): ключи в тиках
-    // МАТЕРИАЛА клипа 25 (source_in = 0, длина 74 с)
+    // slowed automation — with shared curves (R.33): keys in the ticks of the
+    // MATERIAL of clip 25 (source_in = 0, length 74 s)
     let slowed_auto = |dur: f64| -> Vec<Vec<ParamCurve>> {
         let key = |u: f64, v: f64| AutoKey::at(t(u * dur), v);
         vec![vec![
@@ -1245,8 +1245,8 @@ fn demo_project(synth: bool) -> Project {
         (7, "media/voiceover_take3.wav"),
         (8, "media/room_tone.wav"),
     ];
-    // синтетика подобрана по роли: разные ноты у музыки и голоса слышны
-    // по отдельности, комнатный тон — тихая постоянная составляющая
+    // synthetics chosen by role: different notes for music and voice are heard
+    // separately, room tone — a quiet constant component
     let synths = [
         (1u64, "synth:ramp"),
         (2, "synth:impulse"),
@@ -1312,8 +1312,8 @@ fn demo_project(synth: bool) -> Project {
         clip(29, ClipKind::Audio, 2, 0.0, 30.0, 0.0, 8, -18.0, vec![]),
         clip(31, ClipKind::Audio, 2, 45.0, 30.0, 0.0, 8, -18.0, vec![]),
     ];
-    // ход камеры демо-клипа — кривыми Pan (было тремя кейфреймами
-    // CamMotion; Р.34 К2: механизм анимации один на программу)
+    // the camera move of the demo clip — by Pan curves (it was three keyframes
+    // of CamMotion; R.34 K2: one animation mechanism per program)
     if let Some(c) = p.clips.iter_mut().find(|c| c.id == ClipId(5)) {
         let key = |u: f64, v: f64| AutoKey::at(t(20.0 + u * 14.0), v);
         c.fx_auto = vec![vec![
@@ -1344,7 +1344,7 @@ fn demo_project(synth: bool) -> Project {
     ] {
         p.markers.push(Marker::named(t(at), name));
     }
-    // бывший нахлёст music-клипов — теперь честный кроссфейд-переход
+    // the former overlap of the music clips — now an honest crossfade transition
     p.transitions.push(TransitionEvent {
         id: TransitionId(1),
         a: Some(ClipId(25)),

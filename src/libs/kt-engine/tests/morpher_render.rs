@@ -1,19 +1,19 @@
-//! Тест 36 (docs/porting-notes.md): morpher в рендере.
-//! Движок видит только effective_clips: рендер с morpher'ом sample-exact
-//! равен (а) рендеру после BakeMorpher и (б) рендеру эквивалентного проекта
-//! без morpher'а. FX batch действует live (исправление дефекта D1 v1).
+//! Test 36 (docs/porting-notes.md): morpher in the render.
+//! The engine sees only effective_clips: a render with a morpher is sample-exact
+//! equal to (a) a render after BakeMorpher and (b) a render of an equivalent project
+//! without a morpher. The FX batch acts live (fix of defect D1 of v1).
 
 use kt_engine::{AudioRenderer, DirectFetcher};
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
 use kt_model::*;
 use kt_time::{AUDIO_CHANNELS, Tick};
 
-/// п.8.1 (Р.28): рендер с ПОЛНОСТЬЮ доступным источником обязан идти без
-/// единого underrun'а — иначе рендер спрашивает материал за пределами
-/// собственного окна, а на живом кэше это тишина и растущий счётчик.
+/// item 8.1 (R.28): a render with a FULLY available source must run without a
+/// single underrun — otherwise the render asks for material beyond its own window,
+/// and on a live cache that is silence plus a growing counter.
 #[track_caller]
 fn no_underruns(s: kt_engine::RenderStats) {
-    assert_eq!(s.underruns, 0, "underrun при полностью доступном источнике");
+    assert_eq!(s.underruns, 0, "underrun with a fully available source");
 }
 
 const CH: usize = AUDIO_CHANNELS;
@@ -80,8 +80,8 @@ fn render(p: &Project) -> Vec<f32> {
     out
 }
 
-/// Replace-morpher: рендер == рендеру проекта, где клип с самого начала
-/// указывает на новый источник со сдвинутым source_in; bake ничего не меняет.
+/// Replace-morpher: a render == a render of a project where the clip points from the very start
+/// to the new source with a shifted source_in; bake changes nothing.
 #[test]
 fn t36_replace_renders_as_new_source_and_bake_is_noop_for_render() {
     let mut p = project_with_clip(MediaId(1), Tick(9_000), vec![]);
@@ -108,16 +108,16 @@ fn t36_replace_renders_as_new_source_and_bake_is_noop_for_render() {
 
     let with_morph = render(&p);
     let expected = render(&project_with_clip(MediaId(2), Tick(13_500), vec![]));
-    assert_eq!(with_morph, expected, "morpher == прямой клип на новый источник");
+    assert_eq!(with_morph, expected, "morpher == a direct clip on the new source");
     assert_ne!(with_morph, render(&project_with_clip(MediaId(1), Tick(9_000), vec![])));
 
     let mut model = TimelineModel::new(p);
     model.apply(Command::BakeMorpher { id: MorphId(1) }).unwrap();
-    assert_eq!(render(model.project()), expected, "bake не меняет рендер");
+    assert_eq!(render(model.project()), expected, "bake does not change the render");
 }
 
-/// EffectBatch действует live: рендер с morpher'ом == рендеру клипа с FX,
-/// дописанным прямо в цепочку (в v1 batch без bake не звучал — дефект D1).
+/// The EffectBatch acts live: a render with a morpher == a render of a clip with the FX
+/// appended directly into the chain (in v1 a batch without a bake did not sound — defect D1).
 #[test]
 fn t36_effect_batch_is_live() {
     let gain = FxInstance::gain(6.0);
@@ -146,9 +146,9 @@ fn t36_effect_batch_is_live() {
 
     let with_morph = render(&p);
     let expected = render(&project_with_clip(MediaId(1), Tick(0), vec![gain]));
-    assert_eq!(with_morph, expected, "FX batch звучит без bake");
+    assert_eq!(with_morph, expected, "the FX batch sounds without bake");
 
     let mut model = TimelineModel::new(p);
     model.apply(Command::BakeMorpher { id: MorphId(1) }).unwrap();
-    assert_eq!(render(model.project()), expected, "bake материализует то же самое");
+    assert_eq!(render(model.project()), expected, "bake materializes the same thing");
 }

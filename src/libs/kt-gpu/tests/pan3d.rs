@@ -1,11 +1,11 @@
-//! Тест 187 (Р.29, ред. Р.44): Pan 3D. Свойства:
-//! - тождество: дефолтные параметры + дефолтная камера «50 мм» на
-//!   авто-дистанции дают кадр 1:1 (в допуске f32-матрицы);
-//! - геометрия: сдвиг pos_x перемещает маркер ровно на столько px;
-//! - масштаб < 1 открывает прозрачные поля — снизу просвечивает фон;
-//! - детерминизм на устройстве (два движка байт-в-байт);
-//! - с Р.44 CPU — снова ЭТАЛОН и для Pan3d (обратная гомография в слитом
-//!   гео-проходе): каждый GPU-кадр сверяется с compose_plan_cpu в GEOM.
+//! Test 187 (R.29, ed. R.44): Pan 3D. Properties:
+//! - identity: default parameters + the default “50 mm” camera at auto distance
+//!   give a 1:1 frame (within the f32 matrix tolerance);
+//! - geometry: a pos_x shift moves the marker by exactly that many px;
+//! - scale < 1 opens transparent margins; the background shows through below;
+//! - determinism on the device (two engines byte for byte);
+//! - with R.44 the CPU is the REFERENCE again, also for Pan3d (the inverse homography in
+//!   the merged geometry pass): each GPU frame is checked against compose_plan_cpu in GEOM.
 
 use std::sync::Arc;
 
@@ -82,8 +82,8 @@ fn run(engine: &dyn VideoGpuExec, layers: Vec<PlanLayer<'_>>) -> Vec<u8> {
     let mut out = Vec::new();
     let complete = engine.execute_into(&plan, &mut out).expect("GPU execute");
     assert!(complete);
-    // Р.44: CPU-эталон считает ТОТ ЖЕ план (Pan3d — обратная гомография);
-    // сверка на каждом прогоне — GPU-кадры pan3d больше не бесхозные
+    // R.44: the CPU reference computes THE SAME plan (Pan3d is the inverse homography);
+    // checked on every run, so the GPU frames of pan3d are no longer orphaned
     let cache = BurstCache::new(CacheConfig::default());
     let mut cpu = Vec::new();
     let complete_cpu = compose_plan_cpu(&plan, &cache, &mut cpu);
@@ -110,41 +110,41 @@ fn t187_pan3d_identity_shift_scale() {
     let Some(e) = test_engine() else { return };
     let f = frame_with_marker(20, 12);
 
-    // тождество: дефолтный Pan3d == кадр без эффекта
+    // identity: default Pan3d == a frame without the effect
     let fx_id = [pan3d(0.0, 1.0)];
     let ident = run(e.as_ref(), vec![layer(&fx_id, &f, 1)]);
     let none: [FxInstance; 0] = [];
     let plain = run(e.as_ref(), vec![layer(&none, &f, 2)]);
     assert_frames_close(&plain, &ident, W, H, FrameTol::BILINEAR, "pan3d-identity");
 
-    // сдвиг: маркер уехал ровно на pos_x (±1 px растеризации)
+    // shift: the marker moved by exactly pos_x (±1 px of rasterization)
     let fx_shift = [pan3d(8.0, 1.0)];
     let shifted = run(e.as_ref(), vec![layer(&fx_shift, &f, 3)]);
     let (mx, my) = brightest(&shifted);
     assert!(
         (mx as i64 - 28).abs() <= 1 && (my as i64 - 12).abs() <= 1,
-        "маркер (20,12) при pos_x=8 обязан оказаться у (28,12), а он у ({mx},{my})"
+        "marker (20,12) at pos_x=8 must end up at (28,12), but it is at ({mx},{my})"
     );
 
-    // масштаб 0.5: углы кадра прозрачны (виден фон), центр — контент
+    // scale 0.5: the corners of the frame are transparent (the background shows), the centre is the content
     let fx_half = [pan3d(0.0, 0.5)];
-    let bg = frame_with_marker(999, 999); // без маркера, серый
+    let bg = frame_with_marker(999, 999); // without a marker, grey
     let out = run(e.as_ref(), vec![layer(&none, &bg, 4), layer(&fx_half, &f, 5)]);
     let px = |x: u32, y: u32| {
         let i = ((y * W + x) * 4) as usize;
         (out[i], out[i + 3])
     };
-    // центр: слой поверх (маркер тут не в центре — просто контент слоя)
+    // centre: the layer on top (the marker is not in the centre here, just the layer’s content)
     let (_, ca) = px(W / 2, H / 2);
-    assert_eq!(ca, 255, "центр непрозрачен");
-    // угол: квад ужат вдвое — угол прозрачен, виден нижний слой (~24+)
+    assert_eq!(ca, 255, "the centre is opaque");
+    // corner: the quad is squeezed twice, so the corner is transparent and the lower layer is visible (~24+)
     let (cr, _) = px(1, 1);
-    assert!(cr >= 24, "в углу просвечивает фон, а не чёрная пустота: {cr}");
-    // и маркер слоя стоит в ужатой позиции: (20-32)*0.5+32 = 26, (12-18)*0.5+18 = 15
+    assert!(cr >= 24, "the background shows through in the corner, not black emptiness: {cr}");
+    // and the layer’s marker stands in the squeezed position: (20-32)*0.5+32 = 26, (12-18)*0.5+18 = 15
     let (mx2, my2) = brightest(&out);
     assert!(
         (mx2 as i64 - 26).abs() <= 1 && (my2 as i64 - 15).abs() <= 1,
-        "маркер при scale 0.5 у (26,15), а он у ({mx2},{my2})"
+        "the marker at scale 0.5 is at (26,15), but it is at ({mx2},{my2})"
     );
 }
 
@@ -156,5 +156,5 @@ fn t187b_pan3d_deterministic_on_device() {
     let fx = [pan3d(3.0, 0.8)];
     let a = run(e1.as_ref(), vec![layer(&fx, &f, 1)]);
     let b = run(e2.as_ref(), vec![layer(&fx, &f, 1)]);
-    assert_eq!(a, b, "Pan3d недетерминирован на одном устройстве");
+    assert_eq!(a, b, "Pan3d is non-deterministic on one device");
 }

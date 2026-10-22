@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.50: у вложения тупиков не бывает.
+"""Live scenario R.50: an attachment has no dead ends.
 
-Претензия, из-за которой появился весь механизм Р.38, звучала так: «я не
-понимаю как удалить saved area region, я его сохранил и он теперь висит».
-Вложение — новая сущность, и у неё тот же риск: создать можно, а управлять
-нечем. Харнесс-тесты t253/t457 это проверяют, но в синтетической сцене; тут
-настоящая рука в настоящем окне.
+The complaint that gave rise to the whole R.38 mechanism sounded like this: “I do not
+understand how to delete a saved area region, I saved it and now it hangs there”.
+An attachment is a new entity, and it has the same risk: it can be created, but there is
+nothing to manage it with. The harness tests t253/t457 check this, but in a synthetic scene;
+here a real hand in a real window.
 
-Проверяется:
+Checked:
 
-1. правый клик по вложению открывает ЕГО меню — с входом, разворачиванием
-   и переименованием (а не меню обычного события);
-2. переименование работает ДВАЖДЫ ПОДРЯД (правило 14: фича обязана
-   работать повторно, а не один раз — именно так умирали горячие клавиши
-   после первого Ctrl+L);
-3. «отвязать от других мест» НЕ предлагается, когда место одно: обещание,
-   которое ничего не изменит, хуже его отсутствия;
-4. «развернуть на дорожки» возвращает содержимое наружу;
-5. наружу ведут ДВА пути: Esc и крошка пути.
+1. a right click on an attachment opens ITS menu — with entry, expanding
+   and renaming (not the menu of an ordinary event);
+2. renaming works TWICE IN A ROW (rule 14: a feature must work
+   again, not just once — this is exactly how hotkeys died
+   after the first Ctrl+L);
+3. “detach from other places” is NOT offered when there is only one place: a promise
+   that changes nothing is worse than its absence;
+4. “expand to tracks” brings the content back out;
+5. two ways lead out: Esc and the path breadcrumb.
 """
 import os
 import sys
@@ -41,27 +41,27 @@ def main(out):
         app.click(app.x_at(1 * SEC), y)
         app.click(app.x_at(3 * SEC), y, mods=("ctrl",))
         app.right_click(app.x_at(3 * SEC), y)
-        app.click_probe("nest.collapse", "пункт сворачивания")
+        app.click_probe("nest.collapse", "collapse item")
         inst = app.live_clips()[0]
         mid = app.x_at(inst[0] + inst[1] // 2)
         app.shot("collapsed")
 
-        # --- 1. СВОЁ меню ----------------------------------------------
+        # --- 1. OWN menu ----------------------------------------------
         app.right_click(mid, y)
         names = {f["param"] for f in app.geom().get("fields", [])}
         for want in ("nest.enter", "nest.expand", "nest.rename"):
-            app.expect(want in names, f"в меню вложения нет «{want}»: {sorted(names)}")
-        # --- 3. «отвязать» не обещается при одном месте ----------------
+            app.expect(want in names, f"the attachment menu has no “{want}”: {sorted(names)}")
+        # --- 3. “unbind” is not promised for a single place ----------------
         app.expect(
             app.geom()["nest"]["uses"] in (0, 1),
-            "сцена: лента стоит в одном месте",
+            "scene: the reel stands in one place",
         )
         app.key("Escape")
 
-        # --- 2. переименовать ДВАЖДЫ ПОДРЯД ---------------------------
+        # --- 2. rename TWICE IN A ROW ---------------------------------------
         for i in range(2):
             app.right_click(mid, y)
-            app.click_probe("nest.rename", f"пункт переименования (заход {i + 1})")
+            app.click_probe("nest.rename", f"rename item (entry {i + 1})")
             poll_step(0.5)
             before = app.shot(f"rename-{i}")
             app.key("Escape")
@@ -70,48 +70,48 @@ def main(out):
             d = app.screen_diff(before)
             app.expect(
                 d > 0.001,
-                f"окно имени ленты не закрылось по Esc на заходе {i + 1} — или не "
-                f"открылось вовсе (экран изменился на {d:.3%})",
+                f"the reel name window did not close on Esc on entry {i + 1} — or did not "
+                f"open at all (the screen changed by {d:.3%})",
             )
             _ = after
-        # ...и после двух заходов горячие клавиши ЖИВЫ (фокус отдан)
+        # ...and after two entries the hotkeys are ALIVE (focus is handed back)
         app.focus()
         app.key("Escape")
         app.click(mid, y)
         app.save_now()
-        app.expect(os.path.exists(path), "Ctrl+S после окна имени не сработал — фокус не отдан")
+        app.expect(os.path.exists(path), "Ctrl+S after the name window did not work — focus was not handed over")
 
-        # --- 5. два пути наружу ----------------------------------------
-        # ПОЛНЫЙ вход — пункт меню (Р.55, С5): двойной клик с этого раунда
-        # раскрывает на месте, и наружу из раскрытия выходят иначе
+        # --- 5. two ways out ----------------------------------------
+        # the FULL entry — a menu item (R.55, C5): from this round a double click
+        # expands in place, and the exits from the expansion go differently
         app.right_click(mid, y)
-        app.click_probe("nest.enter", "пункт «Войти в ленту»")
-        app.expect(app.geom()["nest"]["depth"] == 1, "не вошли внутрь")
-        # путь ПЕРВЫЙ: имя проекта — это крошка корня
-        app.click_probe("nest.root", "имя проекта как крошка корня")
+        app.click_probe("nest.enter", "item “Enter the reel”")
+        app.expect(app.geom()["nest"]["depth"] == 1, "did not get inside")
+        # path ONE: the project name is the root’s crumb
+        app.click_probe("nest.root", "project name as the root breadcrumb")
         app.expect(
             app.geom()["nest"]["depth"] == 0,
-            "клик по имени проекта не вывел наружу — а это единственный способ выйти "
-            "сразу на нужный уровень",
+            "a click on the project name did not lead out — and that is the only way to exit "
+            "straight to the needed level",
         )
-        # путь ВТОРОЙ: Esc
+        # path TWO: Esc
         app.right_click(mid, y)
-        app.click_probe("nest.enter", "пункт «Войти в ленту» второй раз")
-        app.expect(app.geom()["nest"]["depth"] == 1, "не вошли внутрь второй раз")
+        app.click_probe("nest.enter", "item “Enter the reel” a second time")
+        app.expect(app.geom()["nest"]["depth"] == 1, "did not get inside a second time")
         for _ in range(3):
             app.key("Escape")
             poll_step(0.3)
             if app.geom()["nest"]["depth"] == 0:
                 break
-        app.expect(app.geom()["nest"]["depth"] == 0, "Esc не вывел наружу")
+        app.expect(app.geom()["nest"]["depth"] == 0, "Esc did not lead outward")
         app.shot("out")
 
-        # --- 4. развернуть на дорожки ----------------------------------
+        # --- 4. expand into tracks ----------------------------------
         app.right_click(mid, y)
-        app.click_probe("nest.expand", "пункт разворачивания")
+        app.click_probe("nest.expand", "expand item")
         app.expect(
             len(app.live_clips()) == 2,
-            f"разворачивание не вернуло содержимое: {app.live_clips()}",
+            f"expanding did not return the content: {app.live_clips()}",
         )
         app.shot("expanded")
 

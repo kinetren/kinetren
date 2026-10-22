@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""ПОДСТАВНОЙ сценарий для t801: красный с первого раза, зелёный со второго.
+"""STUB scenario for t801: red the first time, green the second.
 
-Живой прогон не может доказать «перегон красного в одиночку» на настоящем
-сценарии: настоящий либо зелёный, либо сломан. Нужен сценарий с ИЗВЕСТНЫМ
-поведением — он и лежит здесь. Имя с подчёркивания: `live-check.sh` такие в
-общий прогон не берёт.
+A live run cannot prove “rerunning the red alone” on a real
+scenario: a real one is either green or broken. A scenario with KNOWN
+behavior is needed — and that is what lies here. Names with an underscore: `live-check.sh` does not take such into
+the common run.
 
-OWN_PROCESS нужен, чтобы работник не поднимал ради него kt-app: программа
-этому сценарию не нужна вовсе.
+OWN_PROCESS is needed so that the worker does not start kt-app for its sake: the program
+is not needed by this scenario at all.
 """
 import os
 import sys
 
 OWN_PROCESS = True
-# программы этот сценарий не запускает — X-сервер ему не нужен
+# this scenario does not launch the program — it does not need an X server
 NO_DISPLAY = True
 
 
@@ -21,10 +21,10 @@ def main(out):
     os.makedirs(out, exist_ok=True)
     mark = os.path.join(out, "already-ran")
     if os.path.exists(mark):
-        print("   ok   подставной сценарий зелёный со второго раза")
+        print("   ok   stub scenario green the second time")
         return 0
     open(mark, "w").close()
-    print("   ПРОВАЛ подставной сценарий красный с первого раза")
+    print("   FAIL stub scenario red the first time")
     return 1
 
 

@@ -1,11 +1,11 @@
-//! Тест 550 (docs/porting-notes.md, п.433, Р.54): смешивание двух
-//! состояний одного вида — операция под ОСЬ СИЛЫ в пикере.
+//! Test 550 (docs/porting-notes.md, item 433, R.54): blending two states of one kind —
+//! an operation under the FORCE AXIS in the picker.
 //!
-//! Главное свойство, ради которого она вообще есть: концы отдаются
-//! БАЙТ-В-БАЙТ. На этом стоит правило «клик по ячейке даёт именно её
-//! вариант»: если бы `t == 1` возвращал пересобранное значение, клик по
-//! «Плотно» после проводки мог бы дать что-то на пол-единицы другое, и
-//! никакой тест вёрстки этого бы не увидел.
+//! Its main property, the reason it exists at all: the ends are returned BYTE-FOR-BYTE.
+//! This is what the rule “a click on a cell gives exactly its variant” rests on: if `t == 1`
+//! returned a rebuilt value, a click on “Tight” after dragging could give something
+//! half a unit different,
+//! and no layout test would ever notice.
 
 use kt_model::{FxInstance, PanMode};
 
@@ -18,31 +18,31 @@ fn t550_lerp_keeps_the_ends_and_moves_the_numbers() {
     let a = FxInstance::blur(4);
     let b = FxInstance::blur(24);
 
-    // концы — байт-в-байт, без пересборки
+    // the ends — byte-for-byte, without rebuilding
     assert_eq!(dbg(&a.lerp(&b, 0.0)), dbg(&a));
     assert_eq!(dbg(&a.lerp(&b, 1.0)), dbg(&b));
-    // и за границами 0..1 тоже (значение зажимается)
+    // and beyond 0..1 as well (the value is clamped)
     assert_eq!(dbg(&a.lerp(&b, -5.0)), dbg(&a));
     assert_eq!(dbg(&a.lerp(&b, 17.0)), dbg(&b));
 
-    // середина — посередине; целое поле округляется, а не усекается
+    // the middle — halfway; an integer field is rounded, not truncated
     assert_eq!(a.lerp(&b, 0.5).get_param("radius"), Some(14.0));
     assert_eq!(a.lerp(&b, 0.25).get_param("radius"), Some(9.0));
-    // ход монотонный
+    // the progression is monotonic
     let mut prev = 0.0;
     for i in 0..=10 {
         let v = a.lerp(&b, i as f64 / 10.0).get_param("radius").unwrap();
-        assert!(v >= prev, "ход не монотонен: {v} после {prev}");
+        assert!(v >= prev, "the move is not monotonic: {v} after {prev}");
         prev = v;
     }
 }
 
-/// Нечисловое интерполировать нельзя — оно берётся от БЛИЖАЙШЕГО конца и
-/// переключается ровно в середине. Иначе «режим кадрирования» или «галка
-/// вращения» меняли бы значение в случайной точке проводки.
+/// A non-numeric value cannot be interpolated — it is taken from the NEAREST end and switches
+/// exactly at the midpoint. Otherwise a “cropping mode” or a “rotation checkbox” would change
+/// its value at some random point of the drag.
 #[test]
 fn t550b_non_numeric_comes_from_the_nearer_end() {
-    // Р.62: Pan упразднён — нечисловой режим живёт у CamMotion
+    // R.62: Pan is abolished — the non-numeric mode lives on CamMotion
     let fit = FxInstance::CamMotion {
         mode: PanMode::Fit,
         ease: true,
@@ -58,13 +58,13 @@ fn t550b_non_numeric_comes_from_the_nearer_end() {
     for (t, want) in [(0.1, PanMode::Fit), (0.49, PanMode::Fit), (0.5, PanMode::Fill)] {
         match fit.lerp(&fill, t) {
             FxInstance::CamMotion { mode, .. } => assert_eq!(mode, want, "t = {t}"),
-            other => panic!("вид подменился: {other:?}"),
+            other => panic!("view was swapped: {other:?}"),
         }
     }
 }
 
-/// Разные виды не смешиваются: получится ближайший конец как есть, а не
-/// химера с чужими полями.
+/// Different kinds do not mix: one gets the nearest end as it is, not a chimera
+/// with foreign fields.
 #[test]
 fn t550c_different_kinds_do_not_blend() {
     let blur = FxInstance::blur(8);
@@ -73,10 +73,10 @@ fn t550c_different_kinds_do_not_blend() {
     assert_eq!(dbg(&blur.lerp(&glow, 0.8)), dbg(&glow));
 }
 
-/// Смесь остаётся В ГРАНИЦАХ СПЕК по всем видам реестра: `set_param`
-/// клампит, но проверка нужна отдельная — она же ловит параметр, у
-/// которого `get_param` молчит (тогда поле осталось бы от ближайшего
-/// конца, и ход по оси был бы рваным).
+/// The mix stays WITHIN THE SPEC BOUNDS for all kinds of the registry: `set_param`
+/// clamps, but a check is needed separately — it also catches a parameter whose `get_param`
+/// stays silent (then the field would stay at the nearest end, and the motion along the
+/// axis would be jerky).
 #[test]
 fn t550d_blend_stays_in_spec_for_every_kind() {
     for f in FxInstance::all() {
@@ -84,11 +84,11 @@ fn t550d_blend_stays_in_spec_for_every_kind() {
         if specs.is_empty() {
             continue;
         }
-        // Второй конец — 99 % диапазона, а НЕ ровный максимум: у f32-поля
-        // ровный потолок после `set_param` читается обратно чуть выше
-        // потолка (кламп считается в f64, запись в f32 округляет вверх —
-        // п.427). Это свойство модели, а не смешивания, и подсовывать его
-        // сюда значило бы проверять не то.
+        // The second end is 99 % of the range, NOT the flat maximum:
+        // for an f32 field the flat ceiling
+        // after `set_param` reads back slightly above the ceiling (the clamp is computed in f64,
+        // the write into f32 rounds upward — item 427). This is a property of the model, not of
+        // the blending, and feeding it in here would mean testing the wrong thing.
         let mut hi = f.clone();
         for s in specs {
             hi.set_param(&s.name, s.min + (s.max - s.min) * 0.99);
@@ -99,14 +99,14 @@ fn t550d_blend_stays_in_spec_for_every_kind() {
             assert_eq!(
                 std::mem::discriminant(&mid),
                 std::mem::discriminant(f),
-                "{}: вид подменился на t = {t}",
+                "{}: kind changed at t = {t}",
                 f.tag()
             );
             for s in specs {
                 let v = mid.get_param(&s.name).unwrap_or(f64::NAN);
                 assert!(
                     v.is_finite() && v >= s.min && v <= s.max,
-                    "{} / {}: {v} вне [{}, {}] на t = {t}",
+                    "{} / {}: {v} outside [{}, {}] at t = {t}",
                     f.tag(),
                     s.name,
                     s.min,

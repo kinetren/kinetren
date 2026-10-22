@@ -1,9 +1,9 @@
-//! Генерация ТОЛЬКО типов и констант FFmpeg для мажоров 6/7/8 из
-//! вендоренных заголовков (vendor/ffmpeg-N/include).
+//! Generates ONLY the types and constants of FFmpeg for majors 6/7/8 from the
+//! vendored headers (vendor/ffmpeg-N/include).
 //!
-//! Функции НЕ генерируем: их адреса резолвятся в рантайме через dlsym
-//! (см. src/api.rs) — поэтому бинарь не линкуется с libav* и работает
-//! с той версией FFmpeg, что стоит в системе.
+//! Functions are NOT generated: their addresses are resolved at runtime via dlsym
+//! (see src/api.rs) — therefore the binary does not link to libav* and works
+//! with the FFmpeg version installed on the system.
 
 use std::path::PathBuf;
 
@@ -30,7 +30,7 @@ fn main() {
 
         let mut builder = bindgen::Builder::default()
             .clang_arg(format!("-I{}", inc.display()))
-            // типы и константы: всё из libav*/libsw*, без системного мусора
+            // types and constants: everything from libav*/libsw*, without system clutter
             .allowlist_type("AV.*")
             .allowlist_type("Sws.*")
             .allowlist_type("Swr.*")
@@ -40,7 +40,7 @@ fn main() {
             .allowlist_var("SWR_.*")
             .allowlist_var("FF_.*")
             .allowlist_var("LIB.*_VERSION_MAJOR")
-            // функции не нужны — вызываем через vtable
+            // functions are not needed — we call them through a vtable
             .ignore_functions()
             .layout_tests(false)
             .derive_default(false)

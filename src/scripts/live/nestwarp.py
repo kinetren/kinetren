@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.55 (С4): РЕВЕРС и ЗАМЕДЛЕНИЕ на композиции.
+"""Live scenario R.55 (C4): REVERSE and SLOW-DOWN on a composition.
 
-Претензии владельца дословно: «А slowedandreverb не срабатывает на
-прекомпозициях» и «на композицию не работает реверсы».
+The owner’s complaints verbatim: “slowedandreverb does not work on
+precompositions” and “reverse does not work on a composition”.
 
-Не «не срабатывало» — было ЗАПРЕЩЕНО: `validate` отвергал зеркальный или
-растягивающий время экземпляр ленты, потому что суб-микс читался строго по
-порядку. Команда падала, и в статусбар уходил английский технический
-текст. Теперь у суб-микса есть продюсер с пре-роллом, и оба жеста проходят.
+Not “did not work” — it was FORBIDDEN: `validate` rejected a mirrored or
+time-stretching instance of the reel, because the sub-mix was read strictly in
+order. The command failed, and English technical text went to the status bar.
+Now the sub-mix has a producer with a pre-roll, and both gestures pass.
 
-Харнесс-тесты это уже проверяют на синтетических сценах (t428, t561-t565).
-Здесь другой вопрос: доходит ли ЖЕСТ РУКОЙ до модели и переживает ли это
-сохранение — то есть работает ли путь целиком, из точки, откуда действует
-человек.
+The harness tests already check this on synthetic scenes (t428, t561-t565).
+Here the question is different: does the GESTURE by hand reach the model, and does it survive
+saving — that is, does the path work end to end, from the point where
+the person acts.
 """
 import os
 import sys
@@ -33,53 +33,53 @@ def main(out):
 
     with Live("nestwarp", out, project=proj) as app:
         y = app.lane_y("video", 0, 0.6)
-        # --- свернуть оба события в ленту -------------------------------
+        # --- collapse both events into a reel -------------------------------
         app.click(app.x_at(1 * SEC), y)
         app.click(app.x_at(3 * SEC), y, mods=("ctrl",))
         app.right_click(app.x_at(3 * SEC), y)
-        app.click_probe("nest.collapse", "пункт сворачивания")
-        app.expect(len(app.live_clips()) == 1, f"свёрнуто не в одно: {app.live_clips()}")
+        app.click_probe("nest.collapse", "collapse item")
+        app.expect(len(app.live_clips()) == 1, f"collapsed not into one: {app.live_clips()}")
         app.shot("collapsed")
 
-        # --- РЕВЕРС ВЛОЖЕНИЯ рукой, через меню события ------------------
+        # --- REVERSE OF NESTING by hand, via the event menu ------------------
         inst = app.live_clips()[0]
         mid = inst[0] + inst[1] // 2
         app.right_click(app.x_at(mid), y)
-        app.click_probe("tl.reverse", "пункт «Реверс»")
+        app.click_probe("tl.reverse", "item “Reverse”")
         app.shot("reversed")
-        # СЛЕДСТВИЕ в модели, а не «команда не упала»
+        # CONSEQUENCE in the model, not “the command did not fall”
         app.key("ctrl+s")
         saved = app.saved_project()
         kt = saved.doc["metadata"]["kt"]
         app.expect(
             len(kt.get("sequences", [])) == 1,
-            f"лента не записалась: {list(kt.keys())}",
+            f"reel not recorded: {list(kt.keys())}",
         )
-        # реверс экземпляра лежит в эффектах Stack'а конверта
+        # the reverse of the instance lies in the effects of the envelope’s Stack
         dump = str(saved.doc)
         app.expect(
             "LinearTimeWarp" in dump,
-            "реверс вложения не доехал до файла — команда упала молча",
+            "the attachment’s reverse did not reach the file — the command failed silently",
         )
 
-        # --- ИГРАЕТ, и без голодания ------------------------------------
+        # --- PLAYS, and without starvation ------------------------------------
         before = app.geom().get("underruns", 0)
         app.click(app.x_at(int(0.5 * SEC)), app.ruler_y())
         app.key("space")
         pause(
             1.5,
-            "воспроизведение идёт в РЕАЛЬНОМ времени: полторы секунды игры — "
-            "это сама проверка, а не ожидание реакции интерфейса",
+            "playback runs in REAL time: one and a half seconds of play — "
+            "this is the check itself, not a wait for the interface reaction",
         )
         app.key("space")
         after = app.geom().get("underruns", 0)
         app.expect(
             app.playhead() > int(0.5 * SEC),
-            f"курсор не поехал: {app.playhead()}",
+            f"cursor did not move: {app.playhead()}",
         )
         app.expect(
             after - before < 200,
-            f"зеркальное вложение голодает: underrun'ов прибавилось {after - before}",
+            f"the mirrored attachment starves: underruns increased by {after - before}",
         )
         app.shot("played")
         return app.done()

@@ -1,53 +1,53 @@
-//! Палитра и тема (п.23 р.6, v2: решение пользователя «брутальнее» —
-//! темнее + моноширинные цифры + нулевые скругления виджетов + контурные
-//! кнопки, но НЕ плоско: глубина, акценты и glow-эффекты остаются).
-//! Ключевые цвета собраны здесь; таймлайн (самая большая площадь экрана)
-//! красится ТОЛЬКО из этих констант.
+//! Palette and theme (item 23 round 6, v2: the user's decision “more brutal” —
+//! darker + monospaced digits + zero corner radii for widgets + outlined
+//! buttons, but NOT flat: depth, accents and glow effects remain).
+//! The key colors are collected here; the timeline (the largest area on screen)
+//! is painted ONLY from these constants.
 
 use eframe::egui::{self, Color32};
 
-/// Фон панелей — почти чёрный.
+/// Panel background — almost black.
 pub const PANEL: Color32 = Color32::from_rgb(9, 10, 12);
-/// Фон окон/попапов/групп.
+/// Background of windows/popups/groups.
 pub const WINDOW: Color32 = Color32::from_rgb(16, 17, 20);
-/// Самый тёмный (поля ввода, «колодцы»).
+/// The darkest (input fields, “wells”).
 pub const EXTREME: Color32 = Color32::from_rgb(4, 5, 7);
-/// 1px швы между панелями — заметные, «сварные».
+/// 1px seams between panels — visible, “welded”.
 pub const SEAM: Color32 = Color32::from_rgb(48, 52, 60);
-/// Нулевая линия оси значений на графике автоматизации (Р.57, п.456).
-/// Нужна ЛЮБОМУ параметру, чья шкала пересекает ноль — скорости, панораме,
-/// громкости в dB: без неё «выше нуля» и «ниже нуля» отличаются только
-/// подписью по краю.
+/// Zero line of the value axis on the automation graph (R.57, item 456).
+/// It is NEEDED by ANY parameter whose scale crosses zero — speed, pan,
+/// loudness in dB: without it, “above zero” and “below zero” differ only
+/// by the label on the edge.
 pub const AXIS_ZERO: Color32 = Color32::from_rgb(88, 94, 106);
-/// Контур виджетов (кнопки очерчены, не «таблетки»).
+/// Widget outline (buttons are outlined, not “pills”).
 pub const OUTLINE: Color32 = Color32::from_rgb(42, 46, 54);
-/// Акцент (выделение, активные элементы).
+/// Accent (selection, active elements).
 pub const ACCENT: Color32 = Color32::from_rgb(70, 130, 235);
-/// Ховер-заливка.
+/// Hover fill.
 pub const HOVER: Color32 = Color32::from_rgb(38, 42, 50);
-/// Рамка превью-кадров филмстрипа.
-/// Горящий бейдж дорожки (Р.62): M / S / замок / FX. Цвет один на все —
-/// различает их ГЛИФ, а не оттенок (иначе четыре новых цвета в теме).
+/// Frame of the filmstrip's preview frames.
+/// Lit track badge (R.62): M / S / lock / FX. One color for all —
+/// it is the GLYPH that tells them apart, not the shade (otherwise four new colors in the theme).
 pub const BADGE_ON: egui::Color32 = egui::Color32::from_rgb(232, 196, 96);
 pub const THUMB_FRAME: Color32 = Color32::from_rgb(0, 0, 0);
 
-/// Фон полосы таймлайна (между дорожками, за руллером).
+/// Background of the timeline strip (between tracks, behind the ruler).
 pub const TL_BG: Color32 = Color32::from_rgb(11, 12, 14);
-/// Фоны дорожек: тона старого редактора, but darker (п.23 р.6).
+/// Track backgrounds: tones of the old editor, but darker (item 23 round 6).
 pub const LANE_VIDEO: Color32 = Color32::from_rgb(19, 24, 32);
 pub const LANE_AUDIO: Color32 = Color32::from_rgb(26, 20, 20);
 pub const LANE_MORPH: Color32 = Color32::from_rgb(28, 20, 42);
-/// Фиолетовый морф-слота в полосе цепочки (Р.35 п.3: «его пункты
-/// пометить фиолетовым и поднять в списке fx») — тот же тон, что у
-/// блока морфера на таймлайне, только светлее для читаемости на фоне.
+/// Purple morph slot in the chain strip (R.35 item 3: “mark its items purple and raise them in the fx list”) —
+/// the same tone as the morpher block on the timeline,
+/// only lighter for legibility against the background.
 pub const MORPH_SLOT: Color32 = Color32::from_rgb(190, 150, 255);
-/// Контур именованной области (Р.35 п.2): своей полосы у неё нет,
-/// поэтому цвет обязан читаться поверх ЛЮБОГО фона дорожки.
+/// Outline of a named area (R.35 item 2): it has no strip of its own,
+/// so its color must read over ANY track background.
 pub const AREA: Color32 = Color32::from_rgb(120, 210, 190);
-/// Палитра пользовательского цвета области (Р.38 п.1): поле
-/// `MarkedArea.color` жило в формате с Р.35, но UI ему не было — цвет
-/// нельзя было ни выбрать, ни увидеть. Хранится строкой `#rrggbb`,
-/// поэтому и палитра, и разбор живут здесь.
+/// User color palette for an area (R.38 item 1): the field
+/// `MarkedArea.color` lived in the format from R.35, but the UI had none of it — the color
+/// could be neither chosen nor seen. It is stored as a `#rrggbb` string,
+/// so both the palette and the parser live here.
 pub const AREA_PALETTE: [(&str, Color32); 5] = [
     ("#78d2be", AREA),
     ("#e0b060", Color32::from_rgb(224, 176, 96)),
@@ -56,8 +56,8 @@ pub const AREA_PALETTE: [(&str, Color32); 5] = [
     ("#a8d878", Color32::from_rgb(168, 216, 120)),
 ];
 
-/// `#rrggbb` → цвет. Чужой файл может принести что угодно, поэтому
-/// разбор строгий, а `None` означает «рисуй как обычно».
+/// `#rrggbb` → color. A foreign file may carry anything, so the parsing is
+/// strict, and `None` means “draw as usual”.
 pub fn parse_hex(s: &str) -> Option<Color32> {
     let h = s.strip_prefix('#')?;
     if h.len() != 6 {
@@ -67,32 +67,32 @@ pub fn parse_hex(s: &str) -> Option<Color32> {
     Some(Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8))
 }
 
-/// Камерные дорожки (Р.29): тёмный бирюзовый — отличим и от видео, и от morph.
+/// Camera tracks (R.29): dark turquoise — distinguishable from both video and morph.
 pub const LANE_CAMERA: Color32 = Color32::from_rgb(16, 34, 38);
 
-/// Тон строк РАСКРЫТОЙ ПОЛОСЫ (Р.55, С5). Кладётся ПОВЕРХ обычного фона
-/// дорожки, поэтому альфа маленькая: вид дорожки обязан остаться узнаваемым
-/// (видео синеватое, аудио тёплое), а тон — лишь сказать «это другая лента».
-/// Две системы координат на одном экране без этого неразличимы.
+/// Tone of the rows of an EXPANDED STRIP (R.55, C5). Laid OVER the ordinary track background,
+/// so the alpha is small: the track's look must remain recognizable
+/// (video bluish, audio warm), and the tone only says “this is another reel”.
+/// Two coordinate systems on one screen are indistinguishable without this.
 pub const BAND_TINT: Color32 = Color32::from_rgba_premultiplied(30, 18, 44, 70);
 
-/// Вуаль на материале ленты ЗА окном экземпляра. Он есть, его видно и его
-/// можно править — но играть он не будет, пока край не потянут.
+/// A veil over the reel material BEYOND the instance window. It is there, it is visible, and
+/// it can be edited — but it will not play until the edge is pulled.
 pub const BAND_TAIL_VEIL: Color32 = Color32::from_black_alpha(150);
 
-/// Граница окна экземпляра внутри полосы: до неё материал звучит, за ней —
-/// нет. Хват края — та же вертикаль.
+/// The boundary of the instance window inside the strip: up to it the material sounds, beyond it —
+/// not. The grip of the edge is the same vertical.
 pub const BAND_EDGE: Color32 = Color32::from_rgb(196, 152, 240);
-/// Левый (непрозрачный) конец градиента gutter'а (п.20 р.6).
+/// Left (opaque) end of the gutter gradient (item 20 round 6).
 pub const GUTTER: Color32 = Color32::from_rgb(22, 24, 28);
 
-/// Общая настройка визуала egui (вызов из run()).
+/// Common egui visual setup (called from run()).
 pub fn apply(ctx: &egui::Context) {
     let mut v = egui::Visuals::dark();
     v.panel_fill = PANEL;
     v.window_fill = WINDOW;
     v.extreme_bg_color = EXTREME;
-    // минимальные скругления 1px (уточнение р.6.1); окна чуть смягчены
+    // minimal corner radii 1px (refinement of round 6.1); windows slightly softened
     v.widgets.noninteractive.corner_radius = 1.into();
     v.widgets.inactive.corner_radius = 1.into();
     v.widgets.hovered.corner_radius = 1.into();
@@ -100,7 +100,7 @@ pub fn apply(ctx: &egui::Context) {
     v.window_corner_radius = 2.into();
     v.selection.bg_fill = ACCENT;
     v.selection.stroke = egui::Stroke::new(1.0, Color32::from_rgb(150, 190, 255));
-    // кнопки: тёмная плита + жёсткий 1px контур; ховер подсвечивает контур
+    // buttons: dark slab + hard 1px outline; hover highlights the outline
     v.widgets.inactive.bg_fill = Color32::from_rgb(21, 23, 27);
     v.widgets.inactive.weak_bg_fill = Color32::from_rgb(21, 23, 27);
     v.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, OUTLINE);
@@ -111,13 +111,13 @@ pub fn apply(ctx: &egui::Context) {
     v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, SEAM);
     ctx.set_visuals(v);
     ctx.all_styles_mut(|st| {
-        // п.14 р.8: всплывающих подсказок НЕТ вообще — единственное место
-        // подсказки это правый низ строки состояния. Заградительная
-        // задержка глушит и чужие on_hover_text из виджетов egui.
+        // item 14 round 8: there are NO tooltips at all — the only place for a hint
+        // is the bottom right of the status line. The blocking delay also mutes
+        // foreign on_hover_text from egui widgets.
         st.interaction.tooltip_delay = 1.0e6;
         st.interaction.tooltip_grace_time = 0.0;
-        // п.9/п.12 р.8: 3 px (дефолт) означали 6-пиксельную хват-зону
-        // сепаратора — промах на пиксель попадал в превью
+        // item 9/item 12 round 8: 3 px (the default) meant a 6-pixel grab zone for the separator —
+        // a one-pixel miss landed on the preview
         st.interaction.resize_grab_radius_side = 8.0;
         st.interaction.resize_grab_radius_corner = 14.0;
         st.spacing.item_spacing = egui::vec2(6.0, 3.0);
@@ -127,11 +127,11 @@ pub fn apply(ctx: &egui::Context) {
     });
 }
 
-/// KT_DEBUG_HITS=1 — штатная подсветка egui «кто ловит клик под курсором»
-/// (п.9 р.8: так разбираются жалобы «кнопка/полоска не нажимается»).
+/// KT_DEBUG_HITS=1 — the built-in egui highlight of “who catches the click under the cursor”
+/// (item 9 round 8: this is how complaints “button/strip does not click” are diagnosed).
 pub fn apply_debug_flags(ctx: &egui::Context) {
-    // Style::debug существует только в debug-сборке egui — в релизном
-    // профиле поля нет вовсе (ловится ТОЛЬКО релизной сборкой).
+    // Style::debug exists only in the debug build of egui — in the release
+    // profile the field is absent entirely (caught ONLY by the release build).
     #[cfg(debug_assertions)]
     if std::env::var_os("KT_DEBUG_HITS").is_some() {
         ctx.all_styles_mut(|st| {
@@ -143,12 +143,12 @@ pub fn apply_debug_flags(ctx: &egui::Context) {
     let _ = ctx;
 }
 
-/// Фрейм панелей без воздуха по краям (п.22 р.6) + 1px шов.
+/// Panel frame without air at the edges (item 22 round 6) + 1px seam.
 pub fn panel_frame() -> egui::Frame {
     egui::Frame::new().fill(PANEL).inner_margin(2)
 }
 
-/// Горизонтальный градиент (один меш): left-цвет слева → right-цвет справа.
+/// Horizontal gradient (one mesh): left color on the left → right color on the right.
 pub fn hgrad(painter: &egui::Painter, rect: egui::Rect, left: Color32, right: Color32) {
     let mut mesh = egui::Mesh::default();
     for (pos, col) in [

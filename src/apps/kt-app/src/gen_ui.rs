@@ -1,45 +1,45 @@
-//! Форма ГЕНЕРАТОРА события (Р.59, стадия 2).
+//! Form of the event GENERATOR (R.59, stage 2).
 //!
-//! До этого раунда у генератора и у титра были СВОИ окна, а параметры
-//! лежали в пути медиа. Владелец назвал это дословно: генератор «запрятан
-//! в жопу», а его форма обязана быть первой крошкой цепочки эффектов
-//! ТОГО ЖЕ события — рядом со всем остальным, что у события правится.
-//! Поэтому окон больше нет: здесь живёт одна форма, которую рисует
-//! `fx_editor` в приколотой голове полосы (`widgets::HeadSlot`), и
-//! переиспользуемые куски прежних двух окон — меню создания, имена видов,
-//! цветовые группы, предупреждения о шрифте и глифах, пресеты титра.
+//! Before this round the generator and the title had THEIR OWN windows, and the parameters lived in the media path.
+//! The owner put it verbatim: the generator was “stuffed in the
+//! ass”, and its form must be the first crumb of the effects chain
+//! of THE SAME event — next to everything else that is edited on the event. That is why there are no windows any more:
+//! here lives one form, drawn by `fx_editor` in the pinned head
+//! of the strip (`widgets::HeadSlot`), and the reusable pieces
+//! of the former two windows — the creation menu, kind names, colour groups, font and glyph warnings, title presets.
 //!
-//! Значения едут на СОБЫТИЕ (`Command::SetClipGen`), кривые —
-//! `SetClipGenAuto`, «править во всех местах разом» — отдельная команда
-//! `ApplyGenToAll` (решение владельца: правка одного события соседей
-//! больше не трогает). Вид генератора остаётся свойством МЕДИА: это его
-//! адрес и его кэш-полоска (решение Р.53 в силе), поэтому смена вида —
-//! `SetMediaPath`, и модель сама переодевает события (`fit_gen_to_media`).
+//! Values travel to the EVENT (`Command::SetClipGen`), curves —
+//! `SetClipGenAuto`; “edit everywhere at once” is a separate command
+//! `ApplyGenToAll` (the owner’s decision: editing one event no
+//! longer touches its neighbours). The generator kind remains
+//! a property of the MEDIA: this is its address and its cache
+//! strip (the R.53 decision stands), so changing the kind is
+//! `SetMediaPath`, and the model itself re-dresses the events (`fit_gen_to_media`).
 
 use crate::i18n::{k, tr};
 use crate::widgets;
 use eframe::egui;
 use kt_model::{GeneratorKind, HasParams, TextAlign, TextAnchor};
 
-/// Локализованное имя вида. Полные пути — тест 125 ищет ключ по ним.
-/// Подменю «Создать генератор…» — ОДНО ТЕЛО на все входы (правило 17).
+/// The localized name of the kind. Full paths — test 125 looks up the key by them.
+/// The “Create generator…” submenu — ONE BODY for all entries (rule 17).
 ///
-/// Р.53: видов девятнадцать, плоский список из них — свалка. Группа —
-/// ФУНКЦИЯ вида (`GenGroup::of`), второго списка нет: новый вид попадает
-/// в меню сам. Прямоугольники пунктов и групп — наружу для живых
-/// сценариев (Р.49): подменю в дереве доступности не ищется.
+/// R.53: there are nineteen kinds, and a flat list of them is a mess. A group is a FUNCTION of the kind (`GenGroup::of`),
+/// there is no second list: a new kind gets into the menu by itself. The rectangles of items and groups are exposed
+/// for live scenarios (R.49): a submenu is not searched in the accessibility tree.
 ///
-/// Р.55 (С4 претензии 8): вход перестал быть единственным. Раньше
-/// генератор создавался ТОЛЬКО правым кликом по пустому фону бина — «я не
-/// знаю как создать генератор медиа, у нас код есть а как создавать в ui
-/// не понятно». Теперь тот же самый список висит и в главном меню, и
-/// второго списка видов при этом не завелось.
+/// R.55 (C4 claim 8): the entry point is no longer the only one.
+/// Previously the generator was created ONLY by a right click
+/// on the empty background of the bin — “I don’t know how to
+/// create a media generator; the code exists, but how to create
+/// it in the UI is unclear”. Now the same list hangs in the
+/// main menu too, and no second list of kinds was created for it.
 pub fn generator_menu(ui: &mut egui::Ui) -> Option<GeneratorKind> {
     generator_kind_menu(ui, tr(k::bin::menu::NEW_GENERATOR))
 }
 
-/// То же меню под другой подписью: «создать» и «сменить вид» — ОДИН
-/// список видов (правило 17), и новый вид попадает в оба входа сам.
+/// The same menu under another caption: “create” and “change kind” — ONE list of kinds (rule 17),
+/// and a new kind reaches both entries by itself.
 pub fn generator_kind_menu(ui: &mut egui::Ui, label: &str) -> Option<GeneratorKind> {
     let mut picked = None;
     let mr = ui.menu_button(label, |ui| {
@@ -53,8 +53,8 @@ pub fn generator_kind_menu(ui: &mut egui::Ui, label: &str) -> Option<GeneratorKi
                 for kd in kinds {
                     let r = ui.button(kind_name(&kd));
                     let probe = match &kd {
-                        // у таблиц тег один на пять видов — различаем
-                        // разновидностью (живые сценарии)
+                        // the tables have one tag for five kinds — we
+                        // tell them apart by variety (live scenarios)
                         GeneratorKind::TestPattern { table } => {
                             format!("gen.new.table.{}", table.token())
                         }
@@ -92,8 +92,8 @@ pub fn kind_name(kind: &GeneratorKind) -> &'static str {
         GeneratorKind::Ellipse { .. } => tr(k::genkind::ELLIPSE),
         GeneratorKind::Line { .. } => tr(k::genkind::LINE),
         GeneratorKind::Leader { .. } => tr(k::genkind::LEADER),
-        // разновидность таблицы — часть ИМЕНИ: в меню их пять, и «просто
-        // таблица» не сказала бы, какая именно (правило UI 18)
+        // the table variety is part of the NAME: there are five of them in the menu, and “just a table”
+        // would not say which one (UI rule 18)
         GeneratorKind::TestPattern { table } => match table {
             kt_model::TestTable::Ebu75 => tr(k::genkind::EBU75),
             kt_model::TestTable::Ebu100 => tr(k::genkind::EBU100),
@@ -105,12 +105,12 @@ pub fn kind_name(kind: &GeneratorKind) -> &'static str {
     }
 }
 
-/// Даёт ли вид С УМОЛЧАНИЯМИ пустой кадр (Р.59, стадия 2).
+/// Whether the kind WITH DEFAULTS gives an empty frame (R.59, stage 2).
 ///
-/// Значения переехали на событие, и карточка бина показывает теперь вид с
-/// умолчаниями. У титра умолчание — пустая строка, у прозрачной подложки
-/// пусто по смыслу: вместо чёрного прямоугольника карточка пишет ИМЯ
-/// ВИДА (правило 16 — невозможность показать картинку видна, а не молчит).
+/// The values have moved to the event, and the bin card now shows the kind with its defaults.
+/// For a title the default is an empty string; for a transparent backdrop it is empty by meaning:
+/// instead of a black rectangle the card writes the KIND’S NAME (rule
+/// 16 — the impossibility of showing a picture is visible, not silent).
 pub fn blank_default(kind: &GeneratorKind) -> bool {
     match kind {
         GeneratorKind::Text { text, .. } => text.trim().is_empty(),
@@ -119,9 +119,9 @@ pub fn blank_default(kind: &GeneratorKind) -> bool {
     }
 }
 
-/// Группа меню создания (Р.53, п.422): видов стало девятнадцать, и
-/// плоский список из них — свалка. Группы — функция ВИДА, второго
-/// списка не заводим.
+/// Creation-menu group (R.53, item 422): the kinds have
+/// become nineteen, and a flat list of them is a mess.
+/// Groups are a function of the KIND; we do not make a second list.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GenGroup {
     Background,
@@ -143,8 +143,8 @@ impl GenGroup {
         }
     }
 
-    /// Стабильный ключ группы для живых сценариев (имя локализовано и
-    /// щупать по нему нельзя).
+    /// Stable group key for live scenarios (the
+    /// name is localized and cannot be probed by it).
     pub(crate) fn probe(self) -> &'static str {
         match self {
             GenGroup::Background => "bg",
@@ -175,9 +175,9 @@ impl GenGroup {
     }
 }
 
-/// Цветовые группы вида для пипеток формы (подпись, [имена R,G,B]).
-/// Публична для t508: параметр либо подписан, либо закрыт пипеткой —
-/// третьего не бывает (Р.53, п.414).
+/// The kind’s colour groups for the form’s eyedroppers (caption, [names R,G,B]).
+/// Public for t508: a parameter is either captioned or closed
+/// by an eyedropper — there is no third option (R.53, item 414).
 pub(crate) fn color_groups(
     kind: &GeneratorKind,
 ) -> &'static [(crate::i18n::Key, [&'static str; 3])] {
@@ -195,7 +195,7 @@ pub(crate) fn color_groups(
         GeneratorKind::Checker { .. } => {
             &[(k::genw::COLOR_A, ["a_r", "a_g", "a_b"]), (k::genw::COLOR_B, ["b_r", "b_g", "b_b"])]
         }
-        // у фигур цвет с АЛЬФОЙ (Р.53, п.419)
+        // shapes have a colour WITH ALPHA (R.53, item 419)
         GeneratorKind::Rect { .. } | GeneratorKind::Ellipse { .. } | GeneratorKind::Line { .. } => {
             &[(k::trn::COLOR, ["color_r", "color_g", "color_b"])]
         }
@@ -210,8 +210,8 @@ pub(crate) fn color_groups(
     }
 }
 
-/// Имя альфа-компоненты цветовой группы вида, если она есть (Р.53,
-/// п.419). У фигур цвет четырёхкомпонентный, у остальных видов — нет.
+/// The name of the alpha component of the kind’s colour group, if there is one (R.53, item 419).
+/// Shapes have a four-component colour; the other kinds do not.
 pub(crate) fn color_alpha(kind: &GeneratorKind) -> Option<&'static str> {
     matches!(
         kind,
@@ -220,9 +220,9 @@ pub(crate) fn color_alpha(kind: &GeneratorKind) -> Option<&'static str> {
     .then_some("color_a")
 }
 
-/// Предупреждение о ПОДМЕНЕ шрифта (Р.52 С4): выбранной семьи на этой
-/// машине нет — кадр рисуется вендоренной (решение владельца: «промах =
-/// подмена вендоренным + видимое уведомление»).
+/// Warning about a FONT SUBSTITUTION (R.52 S4): the chosen family is not on this machine — the frame is drawn
+/// with the vendored one (the owner’s decision: “a miss =
+/// substitution by the vendored one + a visible notice”).
 pub fn font_warning(kind: &GeneratorKind) -> Option<String> {
     let GeneratorKind::Text { family, bold, .. } = kind else { return None };
     match kt_text::resolve_family(family, *bold) {
@@ -233,9 +233,9 @@ pub fn font_warning(kind: &GeneratorKind) -> Option<String> {
     }
 }
 
-/// Предупреждение «глифа нет» для текущего текста (правило UI 11: t100
-/// проверяет каталоги, а текст титра приходит от пользователя — ответ
-/// обязан быть видимым, тофу в кадре — допустимым, молчание — нет).
+/// Warning “glyph missing” for the current text (UI
+/// rule 11: t100 checks the catalogs, but the title text
+/// comes from the user — the answer must be visible, tofu in the frame is acceptable, silence is not).
 pub fn title_warning(kind: &GeneratorKind) -> Option<String> {
     let GeneratorKind::Text { text, family, bold, .. } = kind else { return None };
     let style = if *bold { kt_text::FaceStyle::Bold } else { kt_text::FaceStyle::Regular };
@@ -243,15 +243,15 @@ pub fn title_warning(kind: &GeneratorKind) -> Option<String> {
     let first = *missing.first()?;
     Some(crate::tf!(
         k::titlew::MISSING,
-        format!("«{first}» U+{:04X}", first as u32),
+        format!("“{first}” U+{:04X}", first as u32),
         missing.len().saturating_sub(1)
     ))
 }
 
-/// Кэш предупреждений формы на кадр (Р.53, п.413): «глифа нет»
-/// перебирает символы через резолв начертания, «шрифта нет» — карту
-/// семей, и оба считались НА КАЖДЫЙ КАДР окна. Ключ — канонический путь
-/// вида со значениями: другого входа у них нет.
+/// Cache of the form’s warnings per frame (R.53, item
+/// 413): “glyph missing” iterates the characters through the
+/// style resolution, “font missing” — the family map, and both were computed ON EVERY FRAME of the window.
+/// The key is the canonical path of the kind with its values: they have no other entry.
 #[derive(Default)]
 pub struct GenWarn {
     key: Option<String>,
@@ -271,20 +271,20 @@ impl GenWarn {
     }
 }
 
-/// Пресеты титра (Р.53, п.424). Решение владельца: **пресет ставит ВСЁ**
-/// — кегль, позицию, якорь, выравнивание, цвета и анимацию, — и это один
-/// шаг истории: нажал, не понравилось, один Ctrl+Z вернул как было.
+/// Title presets (R.53, item 424). The owner’s decision: **a preset sets EVERYTHING** — the size, position, anchor,
+/// alignment, colours and animation — and this is one history step: pressed it, did not like it, one Ctrl+Z
+/// restored it as it was.
 ///
-/// Активный пресет определяется ОБРАТНОЙ функцией — сравнением с тем,
-/// что пресет произвёл бы из текущего текста. Поэтому ручная подкрутка
-/// честно показывает «не совпадает ни с одним», а не подсвечивает
-/// кнопку, к которой титр уже не имеет отношения.
+/// The active preset is determined by the INVERSE function — by
+/// comparison with what the preset would produce from the current text.
+/// That is why a manual tweak honestly shows “matches none”, rather than highlighting a button
+/// to which the title no longer has any relation.
 pub struct TitlePreset {
     pub key: crate::i18n::Key,
     apply: fn(&mut GeneratorKind),
-    /// Анимация пресета (Р.59, стадия 2): ставится КРИВЫМИ на событие, а
-    /// не полем вида. Формулы — `kt_model::text_anim_curves`, и это
-    /// единственное их место: теми же читаются старые файлы.
+    /// The preset’s animation (R.59, stage 2): it is set by CURVES on the event, and not by a field of the kind.
+    /// The formulas are `kt_model::text_anim_curves`, and this
+    /// is their only place: old files are read with the same ones.
     pub anim: kt_model::TextAnim,
     pub anim_secs: f64,
 }
@@ -403,11 +403,11 @@ pub fn title_presets() -> &'static [TitlePreset] {
 }
 
 impl TitlePreset {
-    /// Что пресет сделал бы с ЭТИМ титром (текст и семья не трогаются).
+    /// What the preset would do to THIS title (the text and the family are not touched).
     ///
-    /// Значения, которые ставит анимация (`reveal`, смещения), входят
-    /// сюда же: иначе «активный пресет» переставал бы узнавать свой
-    /// собственный результат, как только кривые лягут на событие.
+    /// The values that the animation sets (`reveal`, offsets)
+    /// are included here too: otherwise the “active preset”
+    /// would stop recognizing its own result as soon as the curves landed on the event.
     pub fn applied(&self, base: &GeneratorKind) -> GeneratorKind {
         let mut g = base.clone();
         (self.apply)(&mut g);
@@ -415,10 +415,10 @@ impl TitlePreset {
         g
     }
 
-    /// Кривые пресета в домене МАТЕРИАЛА события: формулы живут в
-    /// `kt_model::text_anim_curves` (ими же читаются старые файлы —
-    /// разойдись миграция с пресетом, проект прошлой сборки поехал бы не
-    /// так), а якорь `source_in` дописывает вызывающий.
+    /// The preset’s curves in the domain of the event’s MATERIAL: the formulas live in `kt_model::text_anim_curves`
+    /// (old files are read with them too — if the migration diverged
+    /// from the preset, a project of a past build would go wrong),
+    /// and the caller appends the anchor `source_in`.
     pub fn curves(
         &self,
         applied: &GeneratorKind,
@@ -439,9 +439,9 @@ impl TitlePreset {
     }
 }
 
-/// Полный путь блока в долях кадра: `1 + размер_блока/размер_кадра`.
-/// Раскладку считает ТА ЖЕ функция, что рисует кадр и рамку драга —
-/// второго измерителя текста в программе нет (kt-text/CLAUDE.md).
+/// The full path of the block in fractions of the frame: `1 + block_size/frame_size`.
+/// The layout is computed by the SAME function that draws the frame and the
+/// drag frame — there is no second text meter in the program (kt-text/CLAUDE.md).
 fn anim_span(kind: &GeneratorKind, anim: kt_model::TextAnim, (w, h): (u32, u32)) -> f64 {
     let (w, h) = (w.max(1), h.max(1));
     let Some(info) = kt_media::generator::title_layout(kind, w, h) else { return 2.0 };
@@ -452,23 +452,23 @@ fn anim_span(kind: &GeneratorKind, anim: kt_model::TextAnim, (w, h): (u32, u32))
     }
 }
 
-/// Номер пресета, которому титр СОВПАДАЕТ целиком, или `None` («не
-/// совпадает ни с одним»). Обратная функция — сравнение результата, а не
-/// отдельный флаг «какой пресет нажимали»: флаг врал бы после первой же
-/// ручной правки.
+/// The number of the preset with which the title matches EXACTLY, or `None` (“matches none”).
+/// The inverse function is a comparison of the result, not a separate flag “which preset was pressed”:
+/// the flag would lie after the first manual edit.
 ///
-/// С Р.59 пресет ставит ещё и КРИВЫЕ, поэтому сравниваются оба:
-/// умолчание титра по значениям совпадает с «печатной машинкой» (тот же
-/// кегль и та же середина кадра), и без второй половины сравнения новый
-/// пустой титр объявлялся бы напечатанным.
+/// Since R.59 a preset sets the CURVES too, so both are compared:
+/// the title’s default by values matches the “typewriter”
+/// (the same size and the same middle of the frame), and
+/// without the second half of the comparison a new empty title
+/// would be declared typed.
 pub fn active_preset(kind: &GeneratorKind, curves: &[kt_model::ParamCurve]) -> Option<usize> {
     title_presets().iter().position(|p| p.applied(kind) == *kind && anim_matches(p.anim, curves))
 }
 
-/// Тот ли НАБОР рядов анимирован, что ставит пресет. Значения ключей не
-/// сравниваются намеренно: путь бегущей строки считается по раскладке
-/// текста, а текст человек меняет — иначе пресет «отваливался» бы от
-/// собственного результата на первой же букве.
+/// Whether the SET of animated rows is the one the preset sets. The key values are deliberately not compared:
+/// the scrolling-text path is computed from the text layout,
+/// and the person changes the text — otherwise the preset
+/// would “fall off” its own result at the first letter.
 fn anim_matches(anim: kt_model::TextAnim, curves: &[kt_model::ParamCurve]) -> bool {
     use kt_model::TextAnim as A;
     let want: &[&str] = match anim {
@@ -482,11 +482,11 @@ fn anim_matches(anim: kt_model::TextAnim, curves: &[kt_model::ParamCurve]) -> bo
     have == want
 }
 
-/// Порядок слоёв титра (Р.53, п.415). Поле `order` живёт в формате с
-/// Р.52 — урок Kdenlive, где порядок был константой и перерисовал чужие
-/// проекты, — но редактора у него не было: поменять местами заливку и
-/// обводку было нечем. Четыре кнопки-слота, клик меняет местами с
-/// соседом; подпись говорит, что верх списка рисуется ПОСЛЕДНИМ.
+/// The order of the title’s layers (R.53, item 415). The `order`
+/// field lives in the format since R.52 — a lesson from Kdenlive,
+/// where the order was a constant and redrew other people’s projects — but there was no editor for it: there was nothing
+/// to swap the fill and the outline with. Four slot buttons: a click swaps places with the neighbour; the caption says
+/// that the top of the list is drawn LAST.
 fn order_row(ui: &mut egui::Ui, g: &mut GeneratorKind) -> bool {
     let GeneratorKind::Text { order, .. } = g else { return false };
     let name = |l: kt_model::TextLayer| match l {
@@ -501,8 +501,8 @@ fn order_row(ui: &mut egui::Ui, g: &mut GeneratorKind) -> bool {
         for i in 0..order.len() {
             let r = ui.small_button(name(order[i]));
             crate::widgets::field_probe::note(&format!("titlew.order.{i}"), r.rect);
-            // клик — «поднять выше соседа»: перестановка без драга, как у
-            // слотов цепочки (правило 1: попасть мышью с первого раза)
+            // a click — “raise above the neighbour”: a swap without a drag, as with the chain slots
+            // (rule 1: hit it with the mouse the first time)
             if r.clicked() && i + 1 < order.len() {
                 order.swap(i, i + 1);
                 changed = true;
@@ -512,53 +512,53 @@ fn order_row(ui: &mut egui::Ui, g: &mut GeneratorKind) -> bool {
     changed
 }
 
-/// Что форма генератора наредактировала за кадр.
+/// What the generator form edited during the frame.
 ///
-/// Разделение то же, что у `widgets::ParamsChanged`: база едет
-/// `SetClipGen`, кривая — `SetClipGenAuto`. Остальное — жесты, у которых
-/// СВОЙ шаг истории (правило 20): смена вида и пресет.
+/// The split is the same as in `widgets::ParamsChanged`: the
+/// base goes by `SetClipGen`, the curve — `SetClipGenAuto`.
+/// The rest are gestures, each with its OWN history step (rule 20): the kind change and the preset.
 #[derive(Default)]
 pub struct GenEdit {
     pub changed: widgets::ParamsChanged,
-    /// Сменить ВИД генератора (свойство медиа, свой шаг истории).
+    /// Change the generator KIND (a property of the media, its own history step).
     pub switch_kind: Option<GeneratorKind>,
-    /// Нажат пресет: и значения, и кривые, одним своим шагом истории.
+    /// A preset was pressed: both values and curves, in one history step of its own.
     pub preset: bool,
-    /// «Применить ко всем (×N)».
+    /// “Apply to all (×N)”.
     pub apply_all: bool,
-    /// Куда двинуть главный курсор (жест по мини-таймлайну графика).
+    /// Where to move the main cursor (a gesture on the graph’s mini-timeline).
     pub seek: Option<kt_time::Tick>,
     pub axis: crate::automation::AxisReq,
 }
 
-/// Что форме нужно знать о месте, где она нарисована.
+/// What the form needs to know about the place where it is drawn.
 pub struct GenCtx<'a> {
-    /// Событие-владелец: домен кривых — его материал.
+    /// The owner event: the curve domain is its material.
     pub clip: &'a kt_model::ClipEvent,
-    /// Контекст ПУБЛИКАЦИИ (Р.59, стадия 3): подписи полей генератора —
-    /// та же дверь наружу, что у параметров эффекта. Именно здесь живёт
-    /// «заголовок новости» из претензии владельца.
+    /// The PUBLICATION context (R.59, stage 3): the generator field captions are the same door outward
+    /// as the effect parameters. This is exactly where
+    /// the “news headline” from the owner’s claim lives.
     pub pubc: Option<&'a crate::widgets::PublishCtx>,
-    /// Сколько мест на монтаже у этого генератора («применить ко всем»).
+    /// How many places on the timeline this generator has (“apply to all”).
     pub uses: usize,
-    /// Размер кадра проекта — по нему считается путь бегущей строки.
+    /// The project frame size — the scrolling-text path is computed from it.
     pub frame: (u32, u32),
     pub frame_step: i64,
     pub playhead: kt_time::Tick,
-    /// Окно ГЛАВНОГО таймлайна (замок оси графика).
+    /// The window of the MAIN timeline (the graph axis lock).
     pub tl_view: (kt_time::Tick, kt_time::Tick),
     pub axis_linked: bool,
-    /// Форма отрезка у новых кривых — поле ПРОЕКТА (Р.61).
+    /// The segment shape of new curves — a PROJECT field (R.61).
     pub default_shape: kt_model::SegShape,
-    /// Цели связи «Ведётся…» (Р.67) — от окна, у которого есть документ.
+    /// The link targets “Is driven…” (R.67) — from a window that has a document.
     pub links: Option<&'a dyn Fn() -> Vec<crate::automation::LinkEvent>>,
 }
 
-/// Форма генератора: вид, значения, кривые — ОДНИМ телом на все входы.
+/// The generator form: kind, values, curves — in ONE body for all entries.
 ///
-/// Рисуется в окне эффектов события, когда выбрана приколотая голова
-/// полосы. Своего окна у генератора и титра больше нет: владелец просил
-/// видеть источник крошкой ПЕРЕД эффектами, в том же окне.
+/// It is drawn in the event’s effects window when the pinned head of the strip is selected. The generator and the title
+/// no longer have a window of their own: the owner asked to see
+/// the source as a crumb BEFORE the effects, in the same window.
 #[allow(clippy::too_many_lines)]
 pub fn draw_gen_section(
     ui: &mut egui::Ui,
@@ -572,7 +572,7 @@ pub fn draw_gen_section(
     let mut out = GenEdit::default();
     let clip = ctx.clip;
 
-    // ---- вид: тот же пикер, что был в обоих прежних окнах -------------
+    // ---- kind: the same picker that was in both former windows -------------
     ui.horizontal(|ui| {
         widgets::hint(&ui.label(tr(k::trn::KIND)), tr(k::genw::HINT_KIND));
         egui::ComboBox::from_id_salt(("genkind", clip.id.0))
@@ -583,19 +583,19 @@ pub fn draw_gen_section(
                     let r = ui.selectable_label(same, kind_name(&kd));
                     crate::widgets::field_probe::note(&format!("genw.kind.{}", kd.tag()), r.rect);
                     if r.clicked() && !same {
-                        // смена вида = его умолчания: параметры у видов
-                        // разные, переносить нечего
+                        // changing the kind = its defaults: the parameters of
+                        // the kinds differ, so there is nothing to carry over
                         out.switch_kind = Some(kd);
                     }
                 }
             });
     });
     if out.switch_kind.is_some() {
-        // вид уезжает целиком — рисовать старую форму дальше незачем
+        // the kind goes away entirely — there is no point drawing the old form any further
         return out;
     }
 
-    // ---- титр: строка, предупреждения, пресеты -------------------------
+    // ---- title: row, warnings, presets -------------------------
     if matches!(kind, GeneratorKind::Text { .. }) {
         {
             let GeneratorKind::Text { text, .. } = kind else { unreachable!() };
@@ -606,18 +606,18 @@ pub fn draw_gen_section(
             let r = ui.add(te);
             crate::widgets::field_probe::note("titlew.text", r.rect);
             widgets::hint(&r, tr(k::titlew::HINT_TEXT));
-            // ПУБЛИКАЦИЯ ЗАГОЛОВКА — то, ради чего затеян весь раунд
-            // («не будут же люди каждый раз лезть в композицию и менять
-            // там текст»). У многострочного поля титра подписи нет и
-            // заводить её ради одной надписи нельзя (правило 13),
-            // поэтому дверь висит на самом поле — там же, где жест.
+            // PUBLISHING THE HEADLINE — the very reason the whole round
+            // was started (“people will not climb into the composition
+            // every time and change the text there”). A multi-line title
+            // field has no caption, and one must not add one for a single
+            // label (rule 13), so the door hangs on the field itself — right where the gesture is.
             widgets::publish_on_field(
                 &r,
                 ctx.pubc,
                 "text",
-                // имя ручки ПО УМОЛЧАНИЮ — короткая подпись свойства, а не
-                // фраза подсказки: дальше его правит автор, но начинать
-                // ему с предложения не следует
+                // the handle’s DEFAULT name — a short property caption,
+                // not a hint phrase: the author edits it further on,
+                // but it should not start with a sentence
                 tr(k::genp::TEXT),
                 kt_model::ParamType::Text { multiline: true },
             );
@@ -629,7 +629,7 @@ pub fn draw_gen_section(
         for w in [&warn.missing, &warn.font].into_iter().flatten() {
             ui.colored_label(egui::Color32::from_rgb(255, 105, 97), w);
         }
-        // пресеты живут НАД остальной формой: за ними тянутся первыми
+        // presets live ABOVE the rest of the form: they are reached for first
         let active = active_preset(kind, auto);
         let mut pick: Option<usize> = None;
         ui.horizontal_wrapped(|ui| {
@@ -643,8 +643,8 @@ pub fn draw_gen_section(
                 }
             }
             if active.is_none() {
-                // честный ответ вместо подсветки кнопки, к которой титр
-                // уже не имеет отношения (решение владельца)
+                // an honest answer instead of highlighting a button to which the title no longer has any relation
+                // (the owner’s decision)
                 ui.weak(tr(k::titlew::PRESET_NONE));
             }
         });
@@ -656,13 +656,13 @@ pub fn draw_gen_section(
             out.preset = true;
             out.changed.base = true;
             out.changed.curve = true;
-            // выбор ключа на графике стал бессмысленным: кривые другие
+            // choosing a key on the graph became meaningless: the curves are different
             view.sel = None;
             view.active = 0;
         }
     }
 
-    // ---- цвета: Rgb8-тройки — пипетками (правило 13) -------------------
+    // ---- colours: Rgb8 triples — with eyedroppers (rule 13) -------------------
     let groups = color_groups(kind);
     let alpha = color_alpha(kind);
     let mut skip: Vec<&str> = Vec::new();
@@ -683,22 +683,22 @@ pub fn draw_gen_section(
         }
     }
 
-    // ---- титр: семья, начертание, якорь, цвета слоёв, порядок ----------
+    // ---- title: family, style, anchor, layer colours, order ----------
     if matches!(kind, GeneratorKind::Text { .. }) {
         out.changed.base |= draw_title_extras(ui, clip.id, kind);
     }
 
-    // тайм-код показывает время МАТЕРИАЛА — сказать прямо
+    // the timecode shows the time of the MATERIAL — say so directly
     if matches!(kind, GeneratorKind::Timecode { .. }) {
         ui.weak(tr(k::genw::TC_NOTE));
     }
-    // ФЛАГИ вида — один виджет на все формы (Р.53, п.414)
+    // the kind’s FLAGS — one widget for all forms (R.53, item 414)
     if widgets::flags_row(ui, ("genf", clip.id.0), kind) {
         out.changed.base = true;
     }
 
-    // ---- числа: ТА ЖЕ сетка, что у эффектов, и со связью с кривыми -----
-    // (Р.59: каждый числовой ряд генератора получает и поле, и кривую)
+    // ---- numbers: the SAME grid as the effects, and with the link to curves -----
+    // (R.59: each numeric row of the generator gets both a field and a curve)
     let at = kt_model::clip_material_at(
         clip.source_in,
         clip.start,
@@ -719,10 +719,10 @@ pub fn draw_gen_section(
         );
     }
 
-    // ---- «применить ко всем»: отдельная команда, один шаг истории ------
-    // Счётчик мест — В САМОЙ КНОПКЕ, отдельной строки под него не
-    // заводим (правило 13): «мест: N» рядом с «применить ко всем (×N)»
-    // было бы одним и тем же числом дважды.
+    // ---- “apply to all”: a separate command, one history step ------
+    // The places counter is IN THE BUTTON ITSELF; we
+    // do not make a separate line under it (rule 13):
+    // “places: N” next to “apply to all (×N)” would be the same number twice.
     ui.horizontal(|ui| {
         let r = crate::app::hint_into(
             hover,
@@ -738,7 +738,7 @@ pub fn draw_gen_section(
         }
     });
 
-    // ---- кривые: ТОТ ЖЕ виджет, что у слотов эффектов ------------------
+    // ---- curves: the SAME widget as the effect slots have ------------------
     let r = draw_gen_auto(ui, ctx, kind, auto, view, hover);
     out.changed.curve |= r.changed;
     out.seek = r.seek;
@@ -746,9 +746,9 @@ pub fn draw_gen_section(
     out
 }
 
-/// Части формы титра, которые числом не выражаются («первое законное
-/// исключение» F-TXT-001): семья, начертание, выравнивание, якорь, цвета
-/// слоёв и порядок отрисовки.
+/// The parts of the title form that are not expressed by
+/// a number (“the first legitimate exception” F-TXT-001):
+/// family, style, alignment, anchor, layer colours and the drawing order.
 fn draw_title_extras(ui: &mut egui::Ui, id: kt_model::ClipId, g: &mut GeneratorKind) -> bool {
     let mut changed = false;
     {
@@ -784,8 +784,8 @@ fn draw_title_extras(ui: &mut egui::Ui, id: kt_model::ClipId, g: &mut GeneratorK
     {
         let GeneratorKind::Text { bold, align, anchor, .. } = g else { unreachable!() };
         ui.horizontal(|ui| {
-            // «жирный» — флаг паспорта (Р.53, п.414), но рисуется тут же,
-            // рядом с выравниванием
+            // “bold” — a passport flag (R.53, item 414), but
+            // it is drawn right here, next to the alignment
             changed |= ui.checkbox(bold, tr(k::titlew::BOLD)).changed();
             ui.separator();
             for (a, label) in [
@@ -820,7 +820,7 @@ fn draw_title_extras(ui: &mut egui::Ui, id: kt_model::ClipId, g: &mut GeneratorK
                     ui.end_row();
                 }
             });
-            // «по центру» — один жест вместо трёх полей (п.415)
+            // “centre” — one gesture instead of three fields (item 415)
             let r = ui.button(tr(k::titlew::CENTER));
             widgets::hint(&r, tr(k::titlew::HINT_CENTER));
             crate::widgets::field_probe::note("titlew.center", r.rect);
@@ -836,9 +836,9 @@ fn draw_title_extras(ui: &mut egui::Ui, id: kt_model::ClipId, g: &mut GeneratorK
         g.set_param("pos_y", 0.5);
     }
 
-    // цвета слоёв: RGBA-пипетка + HEX. Цвета титра — ПРЯМЫЕ поля, а не
-    // `ParamSpec`, поэтому и виджет свой: путь через `get_param` молча
-    // вернул бы ноль, и заливка стала бы прозрачно-чёрной (п.415).
+    // layer colours: RGBA eyedropper + HEX. The title colours are DIRECT fields, not a `ParamSpec`,
+    // so the widget is its own too: a path through `get_param` would silently return zero, and the fill
+    // would become transparent black (item 415).
     {
         let GeneratorKind::Text {
             fill_r,
@@ -891,16 +891,16 @@ fn draw_title_extras(ui: &mut egui::Ui, id: kt_model::ClipId, g: &mut GeneratorK
     changed
 }
 
-/// Секция автоматизации ГЕНЕРАТОРА — зеркало `fx_editor::draw_auto_for`
-/// для второго носителя кривых.
+/// The generator’s automation section — a mirror of
+/// `fx_editor::draw_auto_for` for the second carrier of curves.
 ///
-/// Сам виджет один (`automation::draw`, правило «своего редактора
-/// кейфреймов ни у кого быть не должно»), здесь только то, что про
-/// кривую как свойство источника: список свободных параметров, форма всех
-/// отрезков и
-/// снятие кривой. Домен — материал события, ровно тот `pts`, по которому
-/// кривые разрешает ИСТОЧНИК (`GenState::kind_at`): разойдись они, ключ
-/// кэша перестал бы определять кадр.
+/// The widget itself is one (`automation::draw`, the rule
+/// “no one should have their own keyframe editor”); here
+/// only what concerns the curve as a property of the source:
+/// the list of free parameters, the form of all segments and
+/// removing the curve. The domain is the event’s material —
+/// exactly the `pts` by which the curves are resolved by the
+/// SOURCE (`GenState::kind_at`): if they diverged, the cache key would stop determining the frame.
 fn draw_gen_auto(
     ui: &mut egui::Ui,
     ctx: &GenCtx<'_>,
@@ -942,8 +942,8 @@ fn draw_gen_auto(
                 }
             });
         }
-        // форма всех отрезков, формула, связь и удаление — в блоке кривой
-        // самого виджета (Р.67)
+        // the form of all segments, the formula, link and
+        // delete — in the curve block of the widget itself (R.67)
     });
     let frame_step = ctx.frame_step;
     let to_tl = |t: kt_time::Tick| {

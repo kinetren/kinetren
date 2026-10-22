@@ -1,6 +1,6 @@
-// Тень под слоем (Р.47): зеркало хвоста kt_fx::video::drop_shadow —
-// источник OVER тень из размытой альфы со сдвигом (straight alpha).
-// T0 = оригинал, T1 = размытая копия. u0 = (w, h, ox, oy — bitcast i32);
+// Shadow under a layer (R.47): a mirror of the tail of kt_fx::video::drop_shadow:
+// the source OVER the shadow from the blurred alpha with an offset (straight alpha).
+// T0 = original, T1 = blurred copy. u0 = (w, h, ox, oy — bitcast i32);
 // f0 = (opacity, tint_r, tint_g, tint_b).
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {

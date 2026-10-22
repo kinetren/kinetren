@@ -1,6 +1,6 @@
-// Sharpen (Р.47): зеркало хвоста kt_fx::video::sharpen — src +
-// (src − мип-база)·amount, альфа исходника. T0 = оригинал, T1 = база
-// (down/up ресемплами). f0.x = amount.
+// Sharpen (R.47): a mirror of the tail of kt_fx::video::sharpen: src +
+// (src − mip base)·amount, the source’s alpha. T0 = original, T1 = base
+// (down/up resamples). f0.x = amount.
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     let p = vec2<i32>(floor(pos.xy));

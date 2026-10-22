@@ -1,11 +1,11 @@
-//! Тесты 674-679, 686 и 688 (docs/porting-notes.md): переопределения
-//! публичных параметров доезжают до КАРТИНКИ и до ЗВУКА (Р.59, стадия 3).
+//! Tests 674-679, 686 and 688 (docs/porting-notes.md): overrides of the
+//! public parameters reach the PICTURE and the SOUND (R.59, stage 3).
 //!
-//! Движок про публикацию не знает: ему достаются готовые клипы из
-//! `Project::resolve_reel`. Меняется ровно одно — РЕДАКЦИЯ ленты стала
-//! функцией пары (лента, набор переопределений экземпляра), и всё, что
-//! на редакции стоит (ключи мемо, дерево суб-рендереров, ступень декода,
-//! адрес источника генератора), обязано это выдержать.
+//! The engine knows nothing about publication: it is handed ready clips from
+//! `Project::resolve_reel`. Exactly one thing changes — the EDITION of the reel has become a
+//! function of the pair (reel, set of instance overrides), and everything that
+//! rests on the edition (memo keys, the sub-renderer tree, the decode scale step,
+//! the generator's source address) must hold this.
 
 use kt_engine::{AudioRenderer, DirectFetcher, VideoRenderer};
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
@@ -81,7 +81,7 @@ fn clip(id: u64, kind: ClipKind, lane: u32, start: Tick, dur: Tick, media: u64) 
 }
 
 fn solid(r: u8, g: u8, b: u8) -> GeneratorKind {
-    let mut k = GeneratorKind::default_for_tag("solid").expect("вид «заливка» есть в реестре");
+    let mut k = GeneratorKind::default_for_tag("solid").expect("the “fill” kind is in the registry");
     k.set_value("color", &ParamValue::Color([r, g, b, 255]));
     k
 }
@@ -90,9 +90,9 @@ fn base() -> Project {
     let mut p = Project::new(settings());
     p.media.push(MediaRef::new(MediaId(1), gen_kind_path(&title(""))));
     p.media.push(MediaRef::new(MediaId(2), "synth:2"));
-    // «логотип»: заливка своего цвета. Синтетика для подмены не годится —
-    // её кадр есть функция ТИКА, и два разных синтетических медиа в один
-    // момент дают один цвет: тест был бы зелёным ни на чём.
+    // “logo”: a fill of its own colour. Synthetic media is no good for the substitution —
+    // its frame is a function of the TICK, and two different synthetic media at one
+    // moment give one colour: the test would be green on nothing.
     p.media.push(MediaRef::new(MediaId(3), gen_kind_path(&solid(220, 20, 20))));
     p
 }
@@ -105,8 +105,8 @@ fn file_sources() -> Vec<(MediaId, Box<dyn MediaSource>)> {
     )]
 }
 
-/// Все источники ДОКУМЕНТА: файлы и генераторы по тем адресам, которые
-/// назовёт `gen_sources`. Второго перечисления быть не должно.
+/// All sources of the DOCUMENT: the files and generators at the addresses that
+/// `gen_sources` names. There must be no second enumeration.
 fn sources(p: &Project) -> std::collections::HashMap<MediaId, Box<dyn MediaSource>> {
     let mut out: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         file_sources().into_iter().collect();
@@ -116,9 +116,9 @@ fn sources(p: &Project) -> std::collections::HashMap<MediaId, Box<dyn MediaSourc
     out
 }
 
-/// Композит момента `t`, прогретый РОВНО тем, что заказал `layers_at`.
-/// Возвращает (байты, полнота): полнота false значит, что заказ и чтение
-/// разошлись — это и есть вечный промах кэша.
+/// The composite of the moment `t`, warmed EXACTLY by what `layers_at` ordered.
+/// Returns (bytes, completeness): completeness false means that the order and the read
+/// diverged — and that is exactly the permanent cache miss.
 fn compose(p: &Project, t: Tick) -> (Vec<u8>, bool) {
     let mut video = VideoRenderer::new(p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
@@ -126,7 +126,7 @@ fn compose(p: &Project, t: Tick) -> (Vec<u8>, bool) {
     for (addr, pts, dq) in video.layers_at(t, Q) {
         let f = srcs
             .get_mut(&addr)
-            .unwrap_or_else(|| panic!("заказан адрес {addr:?}, а источника по нему нет"))
+            .unwrap_or_else(|| panic!("address {addr:?} was requested, but there is no source under it"))
             .read_video_frame(pts, Some(dq))
             .unwrap();
         cache.insert_video(
@@ -153,26 +153,26 @@ fn render_audio(p: &Project, frames: usize) -> Vec<f32> {
     out
 }
 
-/// Шаблон: титр над подложкой, две постановки встык.
+/// Template: a title over a backdrop, two placements end-to-end.
 fn template() -> Project {
     let mut p = base();
-    let mut s = Sequence::new(SEQ, "Выпуск");
+    let mut s = Sequence::new(SEQ, "Issue");
     let mut t = clip(TITLE.0, ClipKind::Video, 0, Tick::ZERO, PART, 1);
-    t.r#gen = Some(title("ПЕРВЫЙ"));
+    t.r#gen = Some(title("FIRST"));
     s.clips.push(t);
     s.clips.push(clip(PLATE.0, ClipKind::Video, 1, Tick::ZERO, PART, 2));
     s.ensure_tracks(kt_model::LaneKind::Video, 2);
     s.published = vec![
         PublishedParam {
             id: HEADLINE,
-            name: "Заголовок".into(),
+            name: "Heading".into(),
             target: ParamAddr::new(TITLE, ParamOwner::Generator, "text"),
             ty: ParamType::Text { multiline: false },
             range: PubRange::default(),
         },
         PublishedParam {
             id: LOGO,
-            name: "Подложка".into(),
+            name: "Backing".into(),
             target: ParamAddr::new(PLATE, ParamOwner::ClipAttr, "media"),
             ty: ParamType::Media,
             range: PubRange::default(),
@@ -185,59 +185,59 @@ fn template() -> Project {
     let mut b = clip(INST_B.0, ClipKind::Video, 0, PART, PART, SEQ.0);
     b.source_in = Tick::ZERO;
     p.clips.push(b);
-    p.validate().expect("шаблон законен");
+    p.validate().expect("a template is legal");
     p
 }
 
 fn set_override(p: &mut Project, id: ClipId, ov: Override) {
-    let c = p.clips.iter_mut().find(|c| c.id == id).expect("экземпляр на месте");
+    let c = p.clips.iter_mut().find(|c| c.id == id).expect("the instance is in place");
     c.overrides.retain(|x| x.pub_id != ov.pub_id);
     c.overrides.push(ov);
-    p.validate().expect("проект с переопределением законен");
+    p.validate().expect("a project with an override is legal");
 }
 
-// ---- 675. два экземпляра, разные кадры ----------------------------------------
+// ---- 675. two instances, different frames ----------------------------------------
 
-/// Тест 675 (Р.59, стадия 3): два экземпляра одной ленты с разным
-/// заголовком дают РАЗНЫЕ кадры.
+/// Test 675 (R.59, stage 3): two instances of one reel with a different
+/// title give DIFFERENT frames.
 ///
-/// Это и есть постановка владельца целиком: «десять выпусков одной
-/// заставки». До Р.59 текст был частью адреса медиа, то есть общим на все
-/// места; с Р.59 он на событии, а «событие внутри ленты» перестало
-/// однозначно определять значения — их задаёт ЭКЗЕМПЛЯР.
+/// This is exactly the owner's setup as a whole: “ten episodes of one
+/// intro”. Before R.59 the text was part of the media address, i.e. shared across all
+/// places; with R.59 it is on the event, and “an event inside a reel” stopped
+/// uniquely determining the values — they are set by the INSTANCE.
 #[test]
 fn t675_two_instances_with_different_headlines_render_differently() {
     let mut p = template();
-    set_override(&mut p, INST_B, Override::value(HEADLINE, ParamValue::Text("ВТОРОЙ".into())));
+    set_override(&mut p, INST_B, Override::value(HEADLINE, ParamValue::Text("SECOND".into())));
 
     let mid = Tick(FRAME * 10);
     let (a, ca) = compose(&p, mid);
     let (b, cb) = compose(&p, Tick(PART.0 + mid.0));
-    assert!(ca && cb, "композит неполон — заказ разошёлся с чтением");
+    assert!(ca && cb, "the composite is incomplete — the order and the read diverged");
     assert_ne!(
         a, b,
-        "два экземпляра сыграли ОДИН заголовок: значения экземпляра не доехали \
-         до кадра. Именно это владелец и назвал «не будут же люди каждый раз \
-         лезть в композицию»"
+        "two instances played ONE heading: the instance’s values did not reach \
+         the frame. This is exactly what the owner called “people will not climb into the composition \
+         every time”"
     );
-    assert!(a.iter().any(|&x| x != 0), "кадр чёрный — тест проверен ни на чём");
+    assert!(a.iter().any(|&x| x != 0), "the frame is black — the test was verified on nothing");
 
-    // ...и это не «любые два кадра разные»: без переопределения они равны
+    // ...and this is not “any two frames differ”: without an override they are equal
     let plain = template();
     let (a0, _) = compose(&plain, mid);
     let (b0, _) = compose(&plain, Tick(PART.0 + mid.0));
-    assert_eq!(a0, b0, "без переопределений экземпляры обязаны быть неотличимы");
-    assert_eq!(a, a0, "переопределение второго экземпляра изменило ПЕРВЫЙ");
+    assert_eq!(a0, b0, "without overrides the instances must be indistinguishable");
+    assert_eq!(a, a0, "the override of the second instance changed the FIRST");
 }
 
-// ---- 676. ноль цены -----------------------------------------------------------
+// ---- 676. zero cost -----------------------------------------------------------
 
-/// Тест 676 (Р.59, стадия 3): без переопределений — ОДИН суб-рендерер и
-/// прежние байты.
+/// Test 676 (R.59, stage 3): without overrides — ONE sub-renderer and
+/// the former bytes.
 ///
-/// Требование владельца: «если проект простой без выкрутасов — то и лагать
-/// он не должен вовсе». Ключ дерева стал парой (лента, редакция), и это
-/// сторож того, что пара с пустым набором — та же самая запись.
+/// The owner's requirement: “if the project is simple with no tricks — it must not lag
+/// at all.” The tree key has become a pair (reel, edition), and this is
+/// a guard that the pair with an empty set is the very same entry.
 #[test]
 fn t676_without_overrides_there_is_one_subrenderer_and_the_old_bytes() {
     let plain = template();
@@ -245,57 +245,57 @@ fn t676_without_overrides_there_is_one_subrenderer_and_the_old_bytes() {
     assert_eq!(
         v.nest_count(),
         1,
-        "две постановки одной ленты без переопределений завели ДВА суб-рендерера — \
-         ровно тот выигрыш, ради которого дерево и строилось (t442/t443)"
+        "two placements of one reel without overrides created TWO sub-renderers — \
+         exactly the gain for which the tree was built (t442/t443)"
     );
 
-    // лента без единой публикации — эталон «как было до раунда»
+    // a reel without a single publication — the reference “as it was before the round”
     let mut bare = template();
     bare.sequence_mut(SEQ).unwrap().published.clear();
     assert_eq!(
         kt_engine::content_hash(&bare, SEQ),
         kt_engine::instance_content(&bare, SEQ, &[]),
-        "пустой набор обязан давать РОВНО content_hash: иначе сдвинулись бы все \
-         ключи мемо и sidecar-превью у проектов, которые публикацией не пользуются"
+        "an empty set must give EXACTLY content_hash: otherwise all memo keys and the sidecar previews \
+         would shift for projects that do not use publishing"
     );
     for i in 0..20 {
         let t = Tick(i * FRAME * 3);
         assert_eq!(
             compose(&bare, t).0,
             compose(&plain, t).0,
-            "объявление ручки изменило кадр на {i}: публикация обязана быть бесплатной"
+            "declaring a handle changed the frame at {i}: publishing must be free"
         );
     }
 
-    // ...а как только набор появился — записей становится две
+    // ...and as soon as a set appears there are two entries
     let mut two = template();
-    set_override(&mut two, INST_B, Override::value(HEADLINE, ParamValue::Text("ВТОРОЙ".into())));
+    set_override(&mut two, INST_B, Override::value(HEADLINE, ParamValue::Text("SECOND".into())));
     assert_eq!(
         VideoRenderer::new(&two).nest_count(),
         2,
-        "экземпляр с переопределением обязан получить СВОЙ суб-рендерер: иначе \
-         два выпуска делят один суб-композит и один заголовок"
+        "an instance with an override must get ITS OWN sub-renderer: otherwise \
+         two releases share one sub-composite and one heading"
     );
 }
 
-// ---- 674. кривая переопределения ---------------------------------------------
+// ---- 674. the override curve ---------------------------------------------
 
-/// Тест 674 (Р.59, стадия 3): кривая переопределения живёт в материальном
-/// времени ЭКЗЕМПЛЯРА (оно же время ленты) и приземляется на тот же кадр
-/// материала цели — под тримом и реверсом экземпляра.
+/// Test 674 (R.59, stage 3): the override curve lives in the material time of the
+/// INSTANCE (which is also the reel's time) and lands on the same frame of the target's
+/// material — under the instance's trim and reverse.
 #[test]
 fn t674_an_override_curve_lands_on_the_same_material_frame() {
     let mut p = base();
-    let mut s = Sequence::new(SEQ, "Лента");
-    // цель СДВИНУТА и по таймлайну ленты, и по материалу: на нулях
-    // перевод домена вырождался бы в тождество и ничего не проверял
+    let mut s = Sequence::new(SEQ, "Reel");
+    // the target is SHIFTED both along the reel's timeline and in its material: at zeros the
+    // domain mapping would degenerate into the identity and check nothing
     let mut plate = clip(PLATE.0, ClipKind::Video, 0, Tick(FRAME * 5), PART, 2);
     plate.source_in = Tick(FRAME * 40);
     plate.fx = vec![FxInstance::geometry_zoom(1.0)];
     s.clips.push(plate);
     s.published = vec![PublishedParam {
         id: ZOOM,
-        name: "Наезд".into(),
+        name: "Push-in".into(),
         target: ParamAddr::new(PLATE, ParamOwner::FxSlot { slot: 0 }, "zoom"),
         ty: ParamType::Num,
         range: PubRange::default(),
@@ -310,7 +310,7 @@ fn t674_an_override_curve_lands_on_the_same_material_frame() {
     b.reversed = true;
     p.clips.push(b);
 
-    // ключи — в тиках ЛЕНТЫ
+    // keys — in REEL ticks
     let key = |t: i64, v: f64| AutoKey::at(Tick(t), v);
     let ov = Override {
         pub_id: ZOOM,
@@ -325,9 +325,9 @@ fn t674_an_override_curve_lands_on_the_same_material_frame() {
     for id in [INST_A, INST_B] {
         p.clips.iter_mut().find(|c| c.id == id).unwrap().overrides = vec![ov.clone()];
     }
-    p.validate().expect("проект с кривой переопределения законен");
+    p.validate().expect("a project with an override curve is legal");
 
-    // перевод домена: тик ленты τ → материал цели source_in + (τ − start)
+    // domain mapping: reel tick τ → target material source_in + (τ − start)
     let want: Vec<i64> = vec![FRAME * 40, FRAME * 60];
     for id in [INST_A, INST_B] {
         let inst = p.clips.iter().find(|c| c.id == id).unwrap();
@@ -336,66 +336,66 @@ fn t674_an_override_curve_lands_on_the_same_material_frame() {
         let got: Vec<i64> = target.fx_auto[0]
             .iter()
             .find(|c| c.param == "zoom")
-            .expect("кривая не доехала до цели")
+            .expect("the override curve did not reach the target")
             .keys
             .iter()
             .map(|k| k.t.0)
             .collect();
         assert_eq!(
             got, want,
-            "ключи переопределения у экземпляра {id:?} приземлились не на тот кадр \
-             материала: кривая живёт в ВРЕМЕНИ ЛЕНТЫ, и трим с реверсом экземпляра \
-             её не двигают"
+            "the override keys of instance {id:?} landed on the wrong frame of the material: \
+             the curve lives in REEL TIME, and the instance’s trim and reverse \
+             do not move it"
         );
     }
 
-    // и это видно в кадре: тот же тик ленты у прямого и у зеркального
-    // экземпляра даёт ОДИН кадр
+    // and this is visible in the frame: the same reel tick of a direct and of a mirrored
+    // instance gives ONE frame
     let reel_tick = FRAME * 20;
     let at_a = Tick(reel_tick - FRAME * 5);
-    // зеркальный играет ленту навстречу: последний кадр показывает source_in
+    // the mirrored one plays the reel against the direction: the last frame shows source_in
     let at_b = Tick(PART.0 + (PART.0 - FRAME - (reel_tick - FRAME * 5)));
     let (fa, ca) = compose(&p, at_a);
     let (fb, cb) = compose(&p, at_b);
-    assert!(ca && cb, "композит неполон");
+    assert!(ca && cb, "the composite is incomplete");
     assert_eq!(
         fa, fb,
-        "один тик ленты у прямого и у зеркального экземпляра дал РАЗНЫЕ кадры — \
-         значит кривая переопределения приклеена не к ленте, а к экрану"
+        "one reel tick gave DIFFERENT frames for the direct and the mirrored instance — \
+         so the override curve is attached not to the reel but to the screen"
     );
-    // и кривая действительно работает: начало и конец различаются
+    // and the curve really works: the start and the end differ
     let (f0, _) = compose(&p, Tick(0));
-    assert_ne!(f0, fa, "кривая переопределения не двигает байты — тест ни о чём");
+    assert_ne!(f0, fa, "the override curve does not move the bytes — the test is about nothing");
 }
 
-// ---- 677. подмена логотипа ----------------------------------------------------
+// ---- 677. logo substitution ----------------------------------------------------
 
-/// Тест 677 (Р.59, стадия 3): подмена МЕДИА у экземпляра — «логотип».
-/// Заказ уходит вглубь по НОВОМУ адресу, чтение идёт по нему же.
+/// Test 677 (R.59, stage 3): substituting the MEDIA of an instance — a “logo”.
+/// The order goes deeper along the NEW address, and the read goes along the same one.
 #[test]
 fn t677_a_media_override_swaps_the_logo_and_order_equals_read() {
     let mut p = template();
     set_override(&mut p, INST_B, Override::value(LOGO, ParamValue::Media(MediaId(3))));
 
-    // СНАЧАЛА — сама подмена в содержимом. Без этой строки тест был
-    // зелёным при выключенном `c.media = *m`: подогнанные под новое медиа
-    // значения генератора (`fit_gen_to_media`) сами уводили событие на
-    // адрес генератора, заказ менялся, кадр менялся — и «переопределение
-    // работает» оказывалось совпадением. Красный тест обязан быть красным
-    // по ТОЙ ЖЕ причине, по которой зелёный зелёный.
+    // FIRST — the substitution itself in the content. Without this line the test was
+    // green with `c.media = *m` switched off: the generator values fitted to the new media
+    // (`fit_gen_to_media`) themselves steered the event to the generator's address, the order
+    // changed, the frame changed — and “the override works”
+    // turned out to be a coincidence. A red test must be red for the SAME reason
+    // for which the green one is green.
     {
         let b = p.clips.iter().find(|c| c.id == INST_B).unwrap();
         let r = p.resolve_reel(Some(SEQ), &b.overrides);
-        let plate = r.clips.iter().find(|c| same_clip(c.id, PLATE)).expect("подложка на месте");
+        let plate = r.clips.iter().find(|c| same_clip(c.id, PLATE)).expect("the backing is in place");
         assert_eq!(
             plate.media,
             MediaId(3),
-            "переопределение не переписало `media` цели — логотип остался прежним"
+            "the override did not rewrite the `media` of the target — the logo stayed the same"
         );
         let a = p.clips.iter().find(|c| c.id == INST_A).unwrap();
         let r0 = p.resolve_reel(Some(SEQ), &a.overrides);
         let plate0 = r0.clips.iter().find(|c| same_clip(c.id, PLATE)).unwrap();
-        assert_eq!(plate0.media, MediaId(2), "подмена у второго экземпляра задела первый");
+        assert_eq!(plate0.media, MediaId(2), "the substitution in the second instance touched the first");
     }
 
     let v = VideoRenderer::new(&p);
@@ -403,30 +403,30 @@ fn t677_a_media_override_swaps_the_logo_and_order_equals_read() {
     let ord_a: Vec<MediaId> = v.layers_at(mid, Q).into_iter().map(|(m, _, _)| m).collect();
     let ord_b: Vec<MediaId> =
         v.layers_at(Tick(PART.0 + mid.0), Q).into_iter().map(|(m, _, _)| m).collect();
-    assert!(ord_a.contains(&MediaId(2)), "первый экземпляр обязан заказывать ПОДЛОЖКУ ленты");
+    assert!(ord_a.contains(&MediaId(2)), "the first instance must order the reel’s BACKING");
     assert!(
         !ord_b.contains(&MediaId(2)),
-        "подмена медиа не доехала до ЗАКАЗА: префетч грел бы не то, что читает композит"
+        "the media substitution did not reach the ORDER: prefetch would warm something other than what the composite reads"
     );
-    assert_ne!(ord_a, ord_b, "заказы двух экземпляров совпали — подмены не было");
+    assert_ne!(ord_a, ord_b, "the orders of two instances matched — there was no substitution");
 
     let (a, ca) = compose(&p, mid);
     let (b, cb) = compose(&p, Tick(PART.0 + mid.0));
-    assert!(ca && cb, "композит неполон — заказ разошёлся с чтением");
-    assert_ne!(a, b, "подмена логотипа не изменила кадр");
+    assert!(ca && cb, "the composite is incomplete — the order and the read diverged");
+    assert_ne!(a, b, "the logo substitution did not change the frame");
 }
 
-// ---- 678. звук ----------------------------------------------------------------
+// ---- 678. sound ----------------------------------------------------------------
 
-/// Тест 678 (Р.59, стадия 3): переопределение слышно.
+/// Test 678 (R.59, stage 3): the override is audible.
 #[test]
 fn t678_an_override_reaches_the_sound() {
     let mut p = base();
-    let mut s = Sequence::new(SEQ, "Реплика");
+    let mut s = Sequence::new(SEQ, "Voice line");
     s.clips.push(clip(PLATE.0, ClipKind::Audio, 0, Tick::ZERO, PART, 2));
     s.published = vec![PublishedParam {
         id: LEVEL,
-        name: "Громкость реплики".into(),
+        name: "Voice line volume".into(),
         target: ParamAddr::new(PLATE, ParamOwner::ClipAttr, "gain_db"),
         ty: ParamType::Num,
         range: PubRange::default(),
@@ -435,54 +435,54 @@ fn t678_an_override_reaches_the_sound() {
     let mut a = clip(INST_A.0, ClipKind::Audio, 0, Tick::ZERO, PART, SEQ.0);
     a.source_in = Tick::ZERO;
     p.clips.push(a);
-    p.validate().expect("аудио-шаблон законен");
+    p.validate().expect("an audio template is legal");
 
     let frames = PART.to_audio_frames() as usize;
     let before = render_audio(&p, frames);
-    assert!(before.iter().any(|x| x.abs() > 1e-6), "фикстура молчит");
-    assert_eq!(AudioRenderer::new(&p).nest_count(), 1, "один экземпляр — один суб-микс");
+    assert!(before.iter().any(|x| x.abs() > 1e-6), "the fixture is silent");
+    assert_eq!(AudioRenderer::new(&p).nest_count(), 1, "one instance — one sub-mix");
 
     let mut q = p.clone();
     set_override(&mut q, INST_A, Override::value(LEVEL, ParamValue::Num(-12.0)));
     let after = render_audio(&q, frames);
-    assert_ne!(before, after, "переопределение громкости внутри ленты не слышно");
+    assert_ne!(before, after, "the volume override inside a reel is not audible");
     let peak = |v: &[f32]| v.iter().fold(0f32, |m, x| m.max(x.abs()));
     assert!(
         peak(&after) < peak(&before) * 0.5,
-        "−12 дБ обязаны быть слышны как падение уровня: было {}, стало {}",
+        "−12 dB must be audible as a drop in level: was {}, became {}",
         peak(&before),
         peak(&after)
     );
 }
 
-// ---- 679. опубликованный зум и ступень ленты ---------------------------------
+// ---- 679. published zoom and the reel's step ---------------------------------
 
-/// Тест 679 (Р.59, стадия 3): ступень ленты считается ПО ДЕРЕВУ
-/// ЭКЗЕМПЛЯРОВ и остаётся ОДНОЙ на ленту (t450).
+/// Test 679 (R.59, stage 3): the reel's scale is computed OVER THE TREE OF
+/// INSTANCES and remains ONE per reel (t450).
 ///
-/// До раунда `nest_scales` перебирал ленты плоско, со ШАБЛОННЫМИ
-/// значениями: экземпляр, у которого опубликованный наезд выкручен
-/// наружу, получил бы мягкую картинку — вход цепочки взяли бы в Quality,
-/// хотя она зумит в восемь раз. Ступень при этом обязана остаться общей:
-/// разные ступени дали бы внутреннему листу два ключа кэша, две полоски
-/// прогретости и два заказа (инвариант 4).
+/// Before the round, `nest_scales` walked the reels flatly, with TEMPLATE values:
+/// an instance whose published zoom was turned outward would get a soft picture —
+/// the chain input would be taken at Quality, although it zooms eightfold.
+/// The scale must nevertheless remain common: different scales would give the
+/// inner sheet two cache keys, two coverage bars,
+/// and two orders (invariant 4).
 #[test]
 fn t679_a_published_zoom_raises_the_reel_stage_and_keeps_it_single() {
-    // внутренняя лента — та, чью ступень мы меряем
+    // the inner reel — the one whose scale we measure
     let mut p = base();
-    let mut inner = Sequence::new(MediaId(101), "Кадр");
+    let mut inner = Sequence::new(MediaId(101), "Frame");
     inner.clips.push(clip(PLATE.0, ClipKind::Video, 0, Tick::ZERO, PART, 2));
     p.sequences.push(inner);
 
-    // внешняя: экземпляр внутренней с цепочкой НАЕЗДА, зум объявлен наружу
-    let mut outer = Sequence::new(SEQ, "Выпуск");
+    // the outer: an instance of the inner one with a ZOOM chain, the zoom declared outward
+    let mut outer = Sequence::new(SEQ, "Issue");
     let mut mid = clip(20, ClipKind::Video, 0, Tick::ZERO, PART, 101);
     mid.source_in = Tick::ZERO;
     mid.fx = vec![FxInstance::geometry_zoom(1.0)];
     outer.clips.push(mid);
     outer.published = vec![PublishedParam {
         id: ZOOM,
-        name: "Наезд".into(),
+        name: "Push-in".into(),
         target: ParamAddr::new(ClipId(20), ParamOwner::FxSlot { slot: 0 }, "zoom"),
         ty: ParamType::Num,
         range: PubRange::default(),
@@ -495,12 +495,12 @@ fn t679_a_published_zoom_raises_the_reel_stage_and_keeps_it_single() {
     let mut b = clip(INST_B.0, ClipKind::Video, 0, PART, PART, SEQ.0);
     b.source_in = Tick::ZERO;
     p.clips.push(b);
-    p.validate().expect("проект с опубликованным зумом законен");
+    p.validate().expect("a project with a published zoom is legal");
 
-    // качество, в котором заказывается САМЫЙ ГЛУБОКИЙ лист
+    // the quality at which the DEEPEST sheet is ordered
     let leaf_q = |p: &Project, t: Tick| -> Quality {
         let ord = VideoRenderer::new(p).layers_at(t, Q);
-        assert_eq!(ord.len(), 1, "внутри ленты ровно один лист");
+        assert_eq!(ord.len(), 1, "inside the reel there is exactly one leaf");
         ord[0].2
     };
     let mid_t = Tick(FRAME * 10);
@@ -512,49 +512,49 @@ fn t679_a_published_zoom_raises_the_reel_stage_and_keeps_it_single() {
     let qb = leaf_q(&zoomed, Tick(PART.0 + mid_t.0));
     assert!(
         qb.width > flat.width,
-        "опубликованный наезд не поднял ступень ленты: {flat:?} → {qb:?}. \
-         `nest_scales` обязан обходить ДЕРЕВО экземпляров с их \
-         переопределениями, а не перебирать ленты плоско со шаблонными \
-         значениями"
+        "the published push-in did not raise the reel’s step: {flat:?} → {qb:?}. \
+         `nest_scales` must walk the TREE of instances with their \
+         overrides, not iterate over reels flatly with template \
+         values"
     );
     assert_eq!(
         qa, qb,
-        "ступень разошлась между экземплярами: она свойство ЛЕНТЫ (t450), иначе у \
-         внутреннего листа два ключа кэша, две полоски прогретости и два заказа"
+        "the step diverged between instances: it is a property of the REEL (t450), otherwise the inner \
+         leaf would have two cache keys, two coverage bars and two orders"
     );
-    // заказ == чтение на обоих
+    // order == read on both
     assert!(
         compose(&zoomed, mid_t).1 && compose(&zoomed, Tick(PART.0 + mid_t.0)).1,
-        "композит неполон — заказ разошёлся с чтением"
+        "the composite is incomplete — the order and the read diverged"
     );
 }
 
-// ---- 686. шаблон в шаблоне ----------------------------------------------------
+// ---- 686. a template inside a template ----------------------------------------
 
-/// Тест 686 (Р.59, стадия 3): `Nested` даёт шаблон в шаблоне бесплатно.
+/// Test 686 (R.59, stage 3): `Nested` gives a template inside a template for free.
 ///
-/// Внешняя лента объявляет наружу ручку ВНУТРЕННЕГО экземпляра; её
-/// переопределение патчит его набор, а дальше он разбирается сам — тем же
-/// кодом этажом ниже.
+/// The outer reel declares outward the handle of the INNER instance; its override
+/// patches that instance's set, and from there it is resolved by itself — by the same
+/// code one floor down.
 #[test]
 fn t686_a_template_inside_a_template_resolves_recursively() {
     let mut p = base();
-    // внутренняя лента с титром
-    let mut inner = Sequence::new(MediaId(101), "Титр");
+    // the inner reel with a title
+    let mut inner = Sequence::new(MediaId(101), "Title");
     let mut t = clip(TITLE.0, ClipKind::Video, 0, Tick::ZERO, PART, 1);
-    t.r#gen = Some(title("ПЕРВЫЙ"));
+    t.r#gen = Some(title("FIRST"));
     inner.clips.push(t);
     inner.published = vec![PublishedParam {
         id: HEADLINE,
-        name: "Заголовок".into(),
+        name: "Heading".into(),
         target: ParamAddr::new(TITLE, ParamOwner::Generator, "text"),
         ty: ParamType::Text { multiline: false },
         range: PubRange::default(),
     }];
     p.sequences.push(inner);
 
-    // внешняя: экземпляр внутренней плюс подложка, наружу торчит ЧУЖАЯ ручка
-    let mut outer = Sequence::new(SEQ, "Выпуск");
+    // the outer: the inner instance plus a backdrop, a FOREIGN handle sticks out
+    let mut outer = Sequence::new(SEQ, "Issue");
     let mut mid = clip(20, ClipKind::Video, 0, Tick::ZERO, PART, 101);
     mid.source_in = Tick::ZERO;
     outer.clips.push(mid);
@@ -562,7 +562,7 @@ fn t686_a_template_inside_a_template_resolves_recursively() {
     outer.ensure_tracks(kt_model::LaneKind::Video, 2);
     outer.published = vec![PublishedParam {
         id: PubId(50),
-        name: "Заголовок выпуска".into(),
+        name: "Release heading".into(),
         target: ParamAddr::new(ClipId(20), ParamOwner::Nested { pub_id: HEADLINE }, "text"),
         ty: ParamType::Text { multiline: false },
         range: PubRange::default(),
@@ -575,90 +575,90 @@ fn t686_a_template_inside_a_template_resolves_recursively() {
     let mut b = clip(INST_B.0, ClipKind::Video, 0, PART, PART, SEQ.0);
     b.source_in = Tick::ZERO;
     p.clips.push(b);
-    p.validate().expect("шаблон в шаблоне законен");
+    p.validate().expect("a template inside a template is legal");
 
-    // значение шаблона внешней ручки читается ЧЕРЕЗ два этажа
+    // the template value of the outer handle is read THROUGH two floors
     assert_eq!(
         p.published_value(SEQ, PubId(50)),
-        Some(ParamValue::Text("ПЕРВЫЙ".into())),
-        "значение шаблона через `Nested` не прочиталось"
+        Some(ParamValue::Text("FIRST".into())),
+        "a template value through `Nested` was not read"
     );
 
     let mut q = p.clone();
-    set_override(&mut q, INST_B, Override::value(PubId(50), ParamValue::Text("ВТОРОЙ".into())));
-    // внешняя ручка доехала до НАБОРА внутреннего экземпляра
+    set_override(&mut q, INST_B, Override::value(PubId(50), ParamValue::Text("SECOND".into())));
+    // the outer handle reached the SET of the inner instance
     let r = q.resolve_reel(Some(SEQ), &q.clips.iter().find(|c| c.id == INST_B).unwrap().overrides);
     let inner_inst = r.clips.iter().find(|c| same_clip(c.id, ClipId(20))).unwrap();
     assert_eq!(
         q.instance_value(inner_inst, HEADLINE),
-        Some(ParamValue::Text("ВТОРОЙ".into())),
-        "переопределение внешней ручки не доехало до набора внутреннего экземпляра"
+        Some(ParamValue::Text("SECOND".into())),
+        "an override of the outer handle did not reach the set of the inner instance"
     );
 
     let mid_t = Tick(FRAME * 10);
     let (fa, ca) = compose(&q, mid_t);
     let (fb, cb) = compose(&q, Tick(PART.0 + mid_t.0));
-    assert!(ca && cb, "композит неполон");
-    assert_ne!(fa, fb, "шаблон в шаблоне не дал разных кадров");
+    assert!(ca && cb, "the composite is incomplete");
+    assert_ne!(fa, fb, "a template inside a template gave no different frames");
 }
 
-// ---- 688. закон Э с впечёнными переопределениями ------------------------------
+// ---- 688. law E with baked-in overrides ------------------------------------
 
-/// Тест 688 (Р.59, стадия 3): ЗАКОН Э жив.
+/// Test 688 (R.59, stage 3): LAW E is alive.
 ///
-/// Вложение с пустой цепочкой равно своему развёрнутому содержимому — и
-/// это обязано оставаться правдой ПОД ПЕРЕОПРЕДЕЛЕНИЯМИ: раскрытие
-/// (`effective_clips`, оракул закона и то, что печатает `kt-cli probe`)
-/// показывает значения ЭКЗЕМПЛЯРА, а не шаблона.
+/// A nesting with an empty chain equals its expanded content — and this must remain
+/// true UNDER OVERRIDES: the expansion
+/// (`effective_clips`, the law's oracle, and what `kt-cli probe` prints)
+/// shows the values of the INSTANCE, not of the template.
 #[test]
 fn t688_law_e_holds_with_overrides_baked_in() {
     let mut p = template();
-    // одна постановка: закон Э про тождество вложения содержимому
+    // one setting: law E is about the identity of the nesting with its content
     p.clips.retain(|c| c.id != INST_B);
-    set_override(&mut p, INST_A, Override::value(HEADLINE, ParamValue::Text("ВТОРОЙ".into())));
+    set_override(&mut p, INST_A, Override::value(HEADLINE, ParamValue::Text("SECOND".into())));
 
-    // ОРАКУЛ: раскрытие обязано нести значения экземпляра
+    // ORACLE: the expansion must carry the values of the instance
     let flat = p.effective_clips();
     let baked = flat
         .iter()
         .find_map(|c| c.r#gen.as_ref().and_then(|g| g.get_value("text")))
-        .expect("в раскрытии нет титра");
+        .expect("there is no title in the expansion");
     assert_eq!(
         baked,
-        ParamValue::Text("ВТОРОЙ".into()),
-        "раскрытие показало ШАБЛОН: оракул закона Э сверял бы поддерево не с тем, \
-         а `kt-cli probe` отвечал бы на жалобу «тут другой заголовок» чужим текстом"
+        ParamValue::Text("SECOND".into()),
+        "the expansion showed the TEMPLATE: the oracle of LAW E would compare the subtree with the wrong one, \
+         and `kt-cli probe` would answer the complaint “here is a different heading” with someone else’s text"
     );
 
-    // ...и развёрнутый проект рисует то же, что поддерево
+    // ...and the expanded project draws the same as the subtree
     let mut n = ops::NestCounters::of(&p);
     let (cmds, rep) = ops::expand_instance(&p, INST_A, n.ids());
-    assert_eq!(rep.overrides_baked, 1, "разворачивание не впекло переопределение");
+    assert_eq!(rep.overrides_baked, 1, "the expansion did not bake in the override");
     let mut m = TimelineModel::new(p.clone());
-    m.apply_batch(cmds).expect("разворачивание законно");
+    m.apply_batch(cmds).expect("the expansion is legal");
     let spread = m.project().clone();
 
     for i in 0..20 {
         let t = Tick(i * FRAME);
         let (a, ca) = compose(&p, t);
         let (b, cb) = compose(&spread, t);
-        assert_eq!(ca, cb, "полнота композита разошлась на кадре {i}");
+        assert_eq!(ca, cb, "completeness of the composite diverged on frame {i}");
         assert_eq!(
             a, b,
-            "ЗАКОН Э под переопределениями: кадр {i} у вложения и у развёрнутого \
-             содержимого обязан совпадать БАЙТ-В-БАЙТ"
+            "LAW E under overrides: frame {i} of the nested item and of the expanded content must match \
+             BYTE FOR BYTE"
         );
     }
 }
 
-/// Тест 675b (Р.59, стадия 3): у экземпляра с переопределением генератора
-/// СВОЙ источник — и он попадает в список `gen_sources`.
+/// Test 675b (R.59, stage 3): an instance with an override of a generator has its
+/// OWN source — and it gets into the `gen_sources` list.
 ///
-/// От этого зависят два разных механизма, и оба молчаливы при поломке:
-/// «заказ == чтение» (адрес, который заказал план, обязан существовать) и
-/// закон П — перенастройка значений едет полосой `retune` ПО АДРЕСАМ, и
-/// ретюн одного адреса оставил бы второй выпуск со старым кеглем до
-/// первой пересборки плана (тот же стейл, против которого стоит t663).
+/// Two different mechanisms depend on this, and both are silent when broken:
+/// “order == read” (the address the plan ordered must exist) and
+/// law P — the reconfiguration of values travels by the `retune` band BY ADDRESS, and
+/// a retune of one address would leave the second edition with the old size until the
+/// first rebuild of the plan (the same stale state that t663 guards against).
 #[test]
 fn t675b_an_overridden_instance_gets_its_own_generator_source() {
     let plain = template();
@@ -671,15 +671,15 @@ fn t675b_an_overridden_instance_gets_its_own_generator_source() {
     let before = addrs(&plain);
 
     let mut p = template();
-    set_override(&mut p, INST_B, Override::value(HEADLINE, ParamValue::Text("ВТОРОЙ".into())));
+    set_override(&mut p, INST_B, Override::value(HEADLINE, ParamValue::Text("SECOND".into())));
     let after = addrs(&p);
     assert_eq!(
         after.len(),
         before.len() + 1,
-        "у экземпляра с переопределением обязан быть СВОЙ адрес источника: \
-         иначе два выпуска читают один кадр, и «второй» молча показывает первый"
+        "an instance with an override must have ITS OWN source address: \
+         otherwise two releases read one frame, and the “second” silently shows the first"
     );
-    // ...и состояния по этим адресам ДЕЙСТВИТЕЛЬНО разные
+    // ...and the states at these addresses are REALLY different
     let texts: std::collections::BTreeSet<String> = kt_engine::gen_sources(&p)
         .into_iter()
         .filter_map(|(_, st)| match st.kind.get_value("text") {
@@ -688,175 +688,175 @@ fn t675b_an_overridden_instance_gets_its_own_generator_source() {
         })
         .collect();
     assert!(
-        texts.contains("ПЕРВЫЙ") && texts.contains("ВТОРОЙ"),
-        "список источников не несёт обоих заголовков: {texts:?}"
+        texts.contains("FIRST") && texts.contains("SECOND"),
+        "the list of sources does not carry both headings: {texts:?}"
     );
 
-    // без переопределений список адресов НЕ РАСТЁТ ни на один: соль равна
-    // нулю, и проект без публикаций платит ноль
+    // without overrides the list of addresses does NOT grow by a single one: the salt is
+    // zero, and a project without publications pays nothing
     let mut bare = template();
     bare.sequence_mut(SEQ).unwrap().published.clear();
-    assert_eq!(addrs(&bare), before, "публикация сама по себе завела лишние источники");
+    assert_eq!(addrs(&bare), before, "publishing by itself created extra sources");
 }
 
-// ---- 752a. ведущая геометрия доезжает до кадра --------------------------------
+// ---- 752a. the leading geometry reaches the frame ----------------------------------
 
 const GEO: PubId = PubId(5);
 
-/// Тест 752a (Р.63 п.9): опубликованный зум ВЕДУЩЕЙ ГЕОМЕТРИИ меняет кадр
-/// экземпляра — так же, как опубликованный текст титра.
+/// Test 752a (R.63 item 9): the published zoom of the LEADING GEOMETRY changes the frame
+/// of the instance — the same way as a published title text.
 ///
-/// Владелец: «по какой причине у первого geometry нет возможности
-/// опубликовать параметры а у второго есть?». Ведущий узел живёт своим
-/// полем события, а не слотом `fx`, — и это ровно та разница, которая
-/// НЕ ДОЛЖНА быть видна снаружи: паспорт, `set_value` и кривые у него те
-/// же. Утверждение здесь — наблюдаемое: кадры двух экземпляров разные,
-/// заказ сошёлся с чтением, редакция ленты у них разная.
+/// The owner: “for what reason does the first geometry have no way to
+/// publish parameters, while the second has one?”. The leading node lives with its own
+/// event field, not an `fx` slot — and this is exactly the difference that
+/// MUST NOT be visible from outside: the passport, `set_value` and the curves are the same
+/// for it. The assertion here is observable: the frames of the two instances differ,
+/// the order matched the read, and the reel's edition differs between them.
 #[test]
 fn t752a_a_published_lead_geometry_changes_the_instance_frame() {
     let mut p = template();
     {
-        let s = p.sequences.iter_mut().find(|s| s.id == SEQ).expect("лента");
-        // ЦЕЛЬ — титр, а не подложка: подложка синтетическая и в кадре
-        // однородна, а зум однородного пятна ничего не меняет — тест был
-        // бы зелёным ни на чём
-        let title = s.clips.iter_mut().find(|c| c.id == TITLE).expect("титр");
+        let s = p.sequences.iter_mut().find(|s| s.id == SEQ).expect("reel");
+        // The TARGET is the title, not the backdrop: the backdrop is synthetic and uniform in the frame,
+        // and the zoom of a uniform spot changes nothing — the test would be
+        // green on nothing
+        let title = s.clips.iter_mut().find(|c| c.id == TITLE).expect("title");
         title.geometry.zoom = 1.0;
         s.published.push(PublishedParam {
             id: GEO,
-            name: "Крупность заголовка".into(),
+            name: "Heading size".into(),
             target: ParamAddr::new(TITLE, ParamOwner::Geometry, "zoom"),
             ty: ParamType::Num,
             range: PubRange::default(),
         });
     }
-    p.validate().expect("проект с ручкой на ведущей геометрии законен");
+    p.validate().expect("a project with a handle on the leading geometry is legal");
 
-    // объявление САМО ПО СЕБЕ бесплатно: кадры экземпляров совпадают
+    // the declaration ITSELF is free of cost: the frames of the instances coincide
     let mid = Tick(FRAME * 10);
     let (a0, ca) = compose(&p, mid);
     let (b0, cb) = compose(&p, Tick(PART.0 + mid.0));
-    assert!(ca && cb, "композит неполон — заказ разошёлся с чтением");
-    assert_eq!(a0, b0, "объявление ручки изменило кадр: публикация обязана быть бесплатной");
+    assert!(ca && cb, "the composite is incomplete — the order and the read diverged");
+    assert_eq!(a0, b0, "declaring the handle changed the frame: publishing must be free");
 
-    // ...а переопределение у ВТОРОГО экземпляра меняет только его
+    // ...and an override on the SECOND instance changes only it
     let mut z = p.clone();
     set_override(&mut z, INST_B, Override::value(GEO, ParamValue::Num(3.0)));
     let (a, ca) = compose(&z, mid);
     let (b, cb) = compose(&z, Tick(PART.0 + mid.0));
-    assert!(ca && cb, "композит неполон под переопределением геометрии");
+    assert!(ca && cb, "the composite is incomplete under a geometry override");
     assert_ne!(
         a, b,
-        "зум ведущей геометрии не доехал до кадра экземпляра: узел живёт полем \
-         события, но снаружи обязан быть таким же носителем, как слот"
+        "the zoom of the leading geometry did not reach the frame of the instance: the node lives as an \
+         event field, but outside it must be the same carrier as the slot"
     );
-    assert_eq!(a, a0, "переопределение второго экземпляра изменило ПЕРВЫЙ");
-    assert!(b.iter().any(|&x| x != 0), "кадр чёрный — тест проверен ни на чём");
+    assert_eq!(a, a0, "the override of the second instance changed the FIRST");
+    assert!(b.iter().any(|&x| x != 0), "the frame is black — the test was verified on nothing");
 
-    // редакция ленты у них разная — значит и ключи мемо разные
+    // the reel's editions differ — so the memo keys differ too
     let ov = &z.clips.iter().find(|c| c.id == INST_B).unwrap().overrides;
     assert_ne!(
         kt_engine::instance_content(&z, SEQ, ov),
         kt_engine::instance_content(&z, SEQ, &[]),
-        "редакция с переопределением геометрии равна шаблонной: суб-композит \
-         достался бы обоим экземплярам один"
+        "a revision with a geometry override equals the template one: the sub-composite would be shared \
+         by both instances"
     );
 }
 
-// ---- 755. ручка СЛОТА ЭФФЕКТА действует у экземпляра --------------------------
+// ---- 755. the EFFECT SLOT handle acts on the instance ------------------------
 
 const AMOUNT: PubId = PubId(6);
 
-/// Тест 755 (Р.63 п.10): опубликованная ручка СЛОТА ЭФФЕКТА меняет кадр
-/// экземпляра — проверено на своём параметре, а не на зуме.
+/// Test 755 (R.63 item 10): a published handle of an EFFECT SLOT changes the frame
+/// of the instance — checked on its own parameter, not on the zoom.
 ///
-/// Владелец: «Я взял MCR, закинул его в композицию, накинул Radial blur,
-/// опубликовал параметр количества, поменял его на композиции — а оно не
-/// меняется». Путь слота до этого доказывался ТОЛЬКО зумом (t679, где
-/// ручка меняет ступень декода) и текстом титра — то есть тем, что задевает
-/// адрес источника. Числовой параметр обычного пиксельного фильтра ходит
-/// другой дорогой (значение → `fx_chain_hash` → мемо пост-FX), и своего
-/// сторожа у него не было.
+/// The owner: “I took MCR, put it into the composition, added Radial blur,
+/// published the amount parameter, changed it in the composition — and it does not
+/// change”. Until now the slot path was proven ONLY by the zoom (t679, where the
+/// handle changes the decode scale) and by the title text — that is, by what touches the
+/// source address. A numeric parameter of an ordinary pixel filter takes a
+/// different route (value → `fx_chain_hash` → post-FX memo), and it had
+/// no guard of its own.
 #[test]
 fn t755_a_published_effect_knob_changes_the_instance_frame() {
     let mut p = template();
     {
-        let s = p.sequences.iter_mut().find(|s| s.id == SEQ).expect("лента");
-        // размытие на ТИТРЕ: подложка синтетическая и однородна, размывать
-        // в ней нечего — тест был бы зелёным ни на чём
-        let title = s.clips.iter_mut().find(|c| c.id == TITLE).expect("титр");
+        let s = p.sequences.iter_mut().find(|s| s.id == SEQ).expect("reel");
+        // a blur on the TITLE: the backdrop is synthetic and uniform, there is nothing to blur
+        // in it — the test would be green on nothing
+        let title = s.clips.iter_mut().find(|c| c.id == TITLE).expect("title");
         title.fx = vec![FxInstance::radial_blur()];
         title.fx_bypass = vec![false];
         s.published.push(PublishedParam {
             id: AMOUNT,
-            name: "Размытие".into(),
+            name: "Blur".into(),
             target: ParamAddr::new(TITLE, ParamOwner::FxSlot { slot: 0 }, "amount"),
             ty: ParamType::Num,
             range: PubRange::default(),
         });
     }
-    p.validate().expect("проект с опубликованной ручкой размытия законен");
+    p.validate().expect("a project with a published blur handle is legal");
 
     let mid = Tick(FRAME * 10);
     let at_b = Tick(PART.0 + mid.0);
 
-    // два экземпляра: первый без размытия, второй — на полную
+    // two instances: the first without blur, the second at full strength
     let mut z = p.clone();
     set_override(&mut z, INST_A, Override::value(AMOUNT, ParamValue::Num(0.0)));
     set_override(&mut z, INST_B, Override::value(AMOUNT, ParamValue::Num(0.9)));
     let (a, ca) = compose(&z, mid);
     let (b, cb) = compose(&z, at_b);
-    assert!(ca && cb, "композит неполон — заказ разошёлся с чтением");
-    assert!(a.iter().any(|&x| x != 0), "кадр чёрный — тест проверен ни на чём");
+    assert!(ca && cb, "the composite is incomplete — the order and the read diverged");
+    assert!(a.iter().any(|&x| x != 0), "the frame is black — the test was verified on nothing");
     assert_ne!(
         a, b,
-        "ручка `amount` радиального размытия не доехала до кадра экземпляра — \
-         ровно то, что владелец назвал «поменял его на композиции, а оно не меняется»"
+        "the `amount` handle of the radial blur did not reach the frame of the instance — exactly what the \
+         owner called “changed it in the composition, and it does not change”"
     );
 
-    // ...и это не «любые два кадра разные»: без переопределений они равны
+    // ...and this is not “any two frames differ”: without overrides they are equal
     let (a0, _) = compose(&p, mid);
     let (b0, _) = compose(&p, at_b);
-    assert_eq!(a0, b0, "сцена вырождена: экземпляры различаются и без переопределений");
+    assert_eq!(a0, b0, "the scene is degenerate: instances differ even without overrides");
 
-    // редакции разные — значит разные ключи мемо и разные суб-рендереры
+    // the editions differ — so the memo keys and the sub-renderers differ
     let ov_a = &z.clips.iter().find(|c| c.id == INST_A).unwrap().overrides;
     let ov_b = &z.clips.iter().find(|c| c.id == INST_B).unwrap().overrides;
     assert_ne!(
         kt_engine::instance_content(&z, SEQ, ov_a),
         kt_engine::instance_content(&z, SEQ, ov_b),
-        "две редакции с разным размытием дали один ключ — суб-композит достался бы общий"
+        "two revisions with different blur gave one key — the sub-composite would be shared"
     );
     assert_eq!(
         VideoRenderer::new(&z).nest_count(),
         2,
-        "экземпляры с разными ручками обязаны получить разные суб-рендереры"
+        "instances with different handles must get different sub-renderers"
     );
 
-    // правка ВТОРОГО не трогает первый
+    // an edit of the SECOND does not touch the first
     let mut z2 = z.clone();
     set_override(&mut z2, INST_B, Override::value(AMOUNT, ParamValue::Num(0.5)));
-    assert_eq!(compose(&z2, mid).0, a, "правка второго экземпляра изменила ПЕРВЫЙ");
-    assert_ne!(compose(&z2, at_b).0, b, "правка второго экземпляра не изменила его самого");
+    assert_eq!(compose(&z2, mid).0, a, "an edit of the second instance changed the FIRST");
+    assert_ne!(compose(&z2, at_b).0, b, "an edit of the second instance did not change itself");
 }
 
-// ---- 792b. формула переопределения меняет кадр экземпляра --------------------
+// ---- 792b. the override formula changes the frame of the instance --------------------
 
-/// Тест 792b (Р.67): формула у переопределения экземпляра доезжает до
-/// КАДРА — и звучит по оси экземпляра: кадр экземпляра с формулой
-/// `1 + t / 10` в момент 3 с байт-в-байт равен кадру экземпляра с
-/// постоянным переопределением 1.3, а в момент 0 с — кадру с 1.0.
+/// Test 792b (R.67): the formula of an instance's override reaches the FRAME —
+/// and sounds along the instance's axis: the frame of an instance with the formula
+/// `1 + t / 10` at moment 3 s is byte for byte equal to the frame of an instance with a
+/// constant override 1.3, and at moment 0 s — to the frame with 1.0.
 #[test]
 fn t792b_override_formula_reaches_the_frame_in_instance_time() {
     let build = |curve: Option<ParamCurve>, value: f64| -> Project {
         let mut p = base();
-        let mut s = Sequence::new(SEQ, "Лента");
+        let mut s = Sequence::new(SEQ, "Reel");
         let mut plate = clip(PLATE.0, ClipKind::Video, 0, Tick::ZERO, Tick(FRAME * 150), 2);
         plate.fx = vec![FxInstance::geometry_zoom(1.0)];
         s.clips.push(plate);
         s.published = vec![PublishedParam {
             id: ZOOM,
-            name: "Наезд".into(),
+            name: "Push-in".into(),
             target: ParamAddr::new(PLATE, ParamOwner::FxSlot { slot: 0 }, "zoom"),
             ty: ParamType::Num,
             range: PubRange::default(),
@@ -869,7 +869,7 @@ fn t792b_override_formula_reaches_the_frame_in_instance_time() {
             curves: curve.into_iter().collect(),
         }];
         p.clips.push(a);
-        p.validate().expect("проект законен");
+        p.validate().expect("the project is legal");
         p
     };
     let formula = ParamCurve {
@@ -883,10 +883,10 @@ fn t792b_override_formula_reaches_the_frame_in_instance_time() {
     let t3 = Tick(3 * 90_000);
     let (f3, ok1) = compose(&with_formula, t3);
     let (c3, ok2) = compose(&const_13, t3);
-    assert!(ok1 && ok2, "композит не укомплектован");
-    assert_eq!(f3, c3, "формула 1 + t/10 на 3 с обязана дать тот же кадр, что постоянная 1.3");
+    assert!(ok1 && ok2, "the composite is not fully populated");
+    assert_eq!(f3, c3, "the formula 1 + t/10 over 3 s must give the same frame as the constant 1.3");
     let (f0, _) = compose(&with_formula, Tick::ZERO);
     let (c0, _) = compose(&const_10, Tick::ZERO);
-    assert_eq!(f0, c0, "в нуле формула равна 1.0");
-    assert_ne!(f0, f3, "кадр экземпляра меняется по формуле");
+    assert_eq!(f0, c0, "at zero the formula equals 1.0");
+    assert_ne!(f0, f3, "the frame of the instance changes by the formula");
 }

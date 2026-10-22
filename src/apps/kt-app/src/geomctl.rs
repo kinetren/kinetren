@@ -1,22 +1,22 @@
-//! Экранные контролы геометрии над кадром превью (Р.64).
+//! On-screen geometry controls over the preview frame (R.64).
 //!
-//! Владелец (Р.63 п.6): «fx геометрии по прежнему очень скуден, сплошные
-//! скучные поля ввода… КАК МИНИМУМ у нас должно быть редактирование прям в
-//! превью удобное». Уточнение того же раунда — контролы В ДОПОЛНЕНИЕ к
-//! полям, а не вместо них.
+//! The owner (R.63 item 6): “the fx geometry is still very poor, solid dull input fields… AT A MINIMUM we should have
+//! editing right in a convenient preview”. A clarification of the same round — the controls are IN ADDITION to the fields,
+//! not instead of them.
 //!
-//! Три правила, на которых здесь всё держится:
+//! Three rules on which everything here holds:
 //!
-//! 1. **Арифметика размещения ОДНА** — `kt_fx::geom::geometry_placement` и
-//!    её обратная пара. Рамка рисуется тем же прямоугольником, по которому
-//!    композит кладёт слой; жест возвращает значения теми же функциями,
-//!    которыми рендер их читает. Второй формулы здесь нет ни одной.
-//! 2. **Жест идёт СУЩЕСТВУЮЩЕЙ командой** `SetGeometry` через
-//!    `apply_coalesced` с токеном, выданным на нажатии: живая картинка и
-//!    один шаг истории на жест получаются сами (тот же приём, что у драга
-//!    титра в превью и у линии уровня на таймлайне).
-//! 3. **Активен ровно ОДИН набор** (трансформация ИЛИ кроп) — правило
-//!    Resolve: два набора над одним кадром дерутся за ту же мышь.
+//! 1. **The placement arithmetic is ONE** — `kt_fx::geom::geometry_placement`
+//!    and its inverse pair. The frame is drawn with the
+//!    same rectangle by which the composite places the layer; a
+//!    gesture returns values by the same functions by which the render
+//!    reads them. There is not a single second formula here.
+//! 2. **The gesture goes through the EXISTING command** `SetGeometry`
+//!    via `apply_coalesced` with the token issued on the press:
+//!    the live picture and one history step per gesture come by themselves (the same trick as the title drag in the preview
+//!    and the level line on the timeline).
+//! 3. **Exactly ONE set is active** (transform OR crop) — the
+//!    Resolve rule: two sets over one frame fight for the same mouse.
 
 use crate::app::KtApp;
 use eframe::egui;
@@ -27,16 +27,16 @@ use kt_fx::geom::{
 };
 use kt_model::{ClipId, ClipKind, Command, EventGeometry, FxInstance, HasParams};
 
-/// Хват-зона ручки в экранных px (правило 1 чек-листа: в подпись высотой в
-/// строку целиться не должно быть нужно).
+/// The grab zone of a handle in screen px (rule 1 of the checklist:
+/// one should not need to aim at a caption the height of a line).
 pub const GRAB: f32 = 14.0;
-/// Хват-зона ЯКОРЯ без модификатора: он стоит в центре рамки, и полная
-/// зона забирала бы перенос картинки себе.
+/// The grab zone of the ANCHOR without a modifier: it stands in the centre of the frame, and a full zone
+/// would take the picture’s move for itself.
 pub const ANCHOR_GRAB: f32 = 8.0;
-/// Рисуемый радиус ручки.
+/// The drawn radius of the handle.
 const DOT: f32 = 4.0;
 
-/// Набор контролов. Активен ровно один.
+/// The set of controls. Exactly one is active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeomMode {
     Off,
@@ -59,7 +59,7 @@ impl GeomMode {
             GeomMode::Crop => 2,
         }
     }
-    /// Следующий набор по кругу — один переключатель на все состояния.
+    /// The next set in a cycle — one switch for all states.
     pub fn next(self) -> GeomMode {
         match self {
             GeomMode::Off => GeomMode::Transform,
@@ -89,24 +89,24 @@ impl GeomMode {
     }
 }
 
-/// Идущий жест: что тянут, откуда и каким токеном истории.
+/// The gesture in progress: what is pulled, from where and with which history token.
 ///
-/// Жест АБСОЛЮТНЫЙ: считается от точки нажатия и геометрии НА МОМЕНТ
-/// нажатия, а не от покадровой дельты. Инкрементальный вариант дважды
-/// применял дельту того кадра, в котором драг начался (поймано t760), и
-/// вдобавок накапливал бы ошибку на каждом кадре.
+/// The gesture is ABSOLUTE: it is computed from the press point and the geometry AT THE MOMENT of the press,
+/// not from the per-frame delta. The incremental variant
+/// applied twice the delta of the frame in which the drag started
+/// (caught by t760), and in addition would accumulate an error on every frame.
 #[derive(Debug, Clone, Copy)]
 pub struct GeomDrag {
     pub clip: ClipId,
     pub handle: Option<Handle>,
     pub gesture: u64,
-    /// Геометрия на момент нажатия — от неё считается ВЕСЬ жест.
+    /// The geometry at the moment of the press — the WHOLE gesture is computed from it.
     pub start: EventGeometry,
-    /// Точка нажатия в координатах ХОЛСТА.
+    /// The press point in the CANVAS coordinates.
     pub press: (f64, f64),
 }
 
-/// Почему рамки нет — причина называется словом (правило 16).
+/// Why there is no frame — the reason is named in a word (rule 16).
 pub enum NoFrame {
     NothingSelected,
     ManySelected,
@@ -131,19 +131,19 @@ impl KtApp {
         self.geom_ctl
     }
 
-    /// Умолчание показа рамки: ВКЛЮЧЕНА (режим «Трансформация»), пока
-    /// человек не выключил её сам (Р.67). Владелец: «вместо управления в
-    /// превью у нас только скудное управление внутри виджета-fx» — рамка
-    /// стартовала выключенной, не помнилась и включалась только пунктом
-    /// правого клика, то есть для человека её не существовало.
+    /// The default for showing the frame: ON (the “Transform” mode), until the person switches it off himself (R.67).
+    /// The owner: “instead of control in the preview we have only poor
+    /// control inside the fx widget” — the frame started switched off,
+    /// was not remembered, and was switched on only by a right-click
+    /// menu item, that is, for the person it did not exist.
     pub(crate) fn default_geom_mode(on: Option<bool>) -> GeomMode {
         if on.unwrap_or(true) { GeomMode::Transform } else { GeomMode::Off }
     }
 
-    /// Переключить набор по кругу. Удобство, не содержимое: `dirty_ui`.
+    /// Cycle the set. Convenience, not content: `dirty_ui`.
     ///
-    /// Состояние показа помнится рабочим местом (Р.67): человек выключил
-    /// рамку — она не возвращается при следующем запуске.
+    /// The display state is remembered by the workspace (R.67): the person
+    /// switched the frame off — it does not come back on the next launch.
     pub(crate) fn cycle_geom_mode(&mut self) {
         self.geom_ctl = self.geom_ctl.next();
         self.workspace.geom_controls = Some(self.geom_ctl != GeomMode::Off);
@@ -151,13 +151,13 @@ impl KtApp {
         self.note(crate::tf!(crate::i18n::k::geomctl::TOGGLE, mode_name(self.geom_ctl)));
     }
 
-    /// ПЕРЕКЛЮЧАТЕЛЬ показа рамки — в углу самого кадра (Р.67).
+    /// SWITCH to show the frame outline, placed in the corner of the frame itself (R.67).
     ///
-    /// Прежде показ переключался только пунктом контекстного меню превью:
-    /// человек его не нашёл («вместо управления в превью у нас только
-    /// скудное управление внутри виджета-fx»). Кнопка — иконка, а не
-    /// чекбокс (правило 9), рисуется ТОЛЬКО на паузе: при игре контролов
-    /// нет, и кнопка над кадром была бы единственным, что мигает.
+    /// Previously the outline was toggled only by an item in the preview's context menu:
+    /// the owner did not find it (“instead of controls in the preview, we have only
+    /// meager controls inside the fx widget”). The button is an icon, not a checkbox (rule 9),
+    /// and is drawn ONLY while paused: during playback there are no controls, and a button
+    /// over the frame would be the only thing that blinks.
     pub(crate) fn geom_toggle_button(&mut self, ui: &mut egui::Ui, img: egui::Rect) {
         if self.player.transport.is_playing() || img.width() < 60.0 {
             return;
@@ -177,9 +177,9 @@ impl KtApp {
         } else {
             crate::i18n::tr(crate::i18n::k::geomctl::TOGGLE_ON_HINT)
         };
-        // ДОСТУПНОЕ ИМЯ — словами, а не глифом (тот же приём, что у кнопок
-        // сброса Р.59): иначе кнопка неотличима от инструмента выделения,
-        // у которого та же иконка, ни для скринридера, ни для харнесса
+        // ACCESSIBLE NAME — in words, not a glyph (the same trick as the R.59 reset buttons):
+        // otherwise the button is indistinguishable from the selection tool, which has
+        // the same icon, neither for a screen reader nor for the harness.
         {
             let name = hint.to_string();
             r.widget_info(|| {
@@ -188,8 +188,8 @@ impl KtApp {
         }
         crate::widgets::hint(&r, hint);
         if r.clicked() {
-            // выключение — в Off, включение — в «Трансформацию» (полезный
-            // набор), а не по кругу: кнопка это ВЫКЛЮЧАТЕЛЬ показа
+            // Turning off goes to Off, turning on goes to “Transform” (the useful
+            // set), not cycling: the button is a display SWITCH.
             self.geom_ctl = if on { GeomMode::Off } else { GeomMode::Transform };
             self.workspace.geom_controls = Some(!on);
             self.dirty_ui = true;
@@ -197,7 +197,7 @@ impl KtApp {
         }
     }
 
-    /// Событие, у которого рисуется рамка, либо причина, почему её нет.
+    /// The event whose outline is drawn, or the reason why it is not.
     pub(crate) fn geom_target(&self) -> Result<ClipId, NoFrame> {
         let sel: Vec<ClipId> = self.selected.iter().copied().collect();
         if sel.is_empty() {
@@ -218,14 +218,14 @@ impl KtApp {
         Ok(id)
     }
 
-    /// Размещение ведущего узла события на холсте превью.
+    /// Placement of the leading node of the event on the preview canvas.
     pub(crate) fn geom_placement(&self, clip: ClipId, canvas: (f64, f64)) -> Option<Placement> {
         let g = self.geom_effective(clip)?;
         self.geom_placement_of(&g, clip, canvas)
     }
 
-    /// Позиция курсора В ДОМЕНЕ КРИВЫХ события — тик МАТЕРИАЛА (Р.37: ось
-    /// линейна, скорость её не сжимает). Тем же правилом живёт поле окна FX.
+    /// Cursor position in the event's CURVE DOMAIN — a MATERIAL tick (R.37: the axis
+    /// is linear, speed does not compress it). The same rule governs the FX window field.
     pub(crate) fn geom_curve_at(&self, clip: ClipId) -> kt_time::Tick {
         let frame_step = 90_000 / self.model.project().settings.fps.max(1) as i64;
         let playhead = self.player.transport.playhead();
@@ -242,9 +242,9 @@ impl KtApp {
         }
     }
 
-    /// Геометрия, КОТОРУЮ ВИДНО: база, поверх которой лежат значения живых
-    /// кривых под курсором. Рамка обязана показывать то же, что рендер, а
-    /// рендер сэмплирует `geometry_auto` как автоматизацию обычного слота.
+    /// Geometry THAT IS VISIBLE: the base over which the values of the live
+    /// curves under the cursor lie. The outline must show the same thing as the render, and
+    /// the render samples `geometry_auto` as the automation of a regular slot.
     pub(crate) fn geom_effective(&self, clip: ClipId) -> Option<EventGeometry> {
         let c = self.model.clip(clip)?;
         let mut g = c.geometry;
@@ -262,8 +262,8 @@ impl KtApp {
         Some(g)
     }
 
-    /// То же для ПРОИЗВОЛЬНОЙ геометрии события (жест считает от снимка
-    /// на момент нажатия).
+    /// The same for an ARBITRARY event geometry (the gesture computes from the snapshot
+    /// taken at the moment of press).
     pub(crate) fn geom_placement_of(
         &self,
         g_of: &EventGeometry,
@@ -274,14 +274,14 @@ impl KtApp {
         let rule = g_of.rule.resolve(self.model.project().settings.conform);
         let view = self.player.source_view(c.media);
         let lead = LeadCtx::new(view, rule);
-        // вход узла — вид источника (ведущий узел стоит первым в цепочке);
-        // неизвестен — холст, правило вырождается в «растянуть»
+        // input of the node — the source view (the leading node stands first in the chain);
+        // unknown — the canvas, and the rule degenerates into “stretch”
         let in_size = view.unwrap_or(canvas);
         geometry_placement(&g_of.node(), Some(lead), in_size, canvas)
     }
 
-    /// Контролы над кадром: рисунок и жесты. Зовётся из `draw_preview`
-    /// ДО драга титра — у более мелкой и более специфичной цели приоритет.
+    /// Controls over the frame: drawing and gestures. Called from `draw_preview`
+    /// BEFORE the title drag — the smaller and more specific target has priority.
     pub(crate) fn geometry_controls(
         &mut self,
         ui: &mut egui::Ui,
@@ -293,8 +293,8 @@ impl KtApp {
         if mode == GeomMode::Off {
             return;
         }
-        // при ИГРЕ контролов нет: они закрывают то, ради чего человек
-        // смотрит в кадр (правило отрасли — FCP гасит всегда)
+        // during PLAYBACK there are no controls: they cover what the person
+        // is watching the frame for (industry rule — FCP always hides them)
         if self.player.transport.is_playing() {
             return;
         }
@@ -302,7 +302,7 @@ impl KtApp {
         let clip = match self.geom_target() {
             Ok(id) => id,
             Err(why) => {
-                // причина — только когда человек смотрит на кадр
+                // reason — only when the person is looking at the frame
                 if ui.rect_contains_pointer(img) {
                     crate::widgets::hint_sink::put(why.key());
                 }
@@ -323,7 +323,7 @@ impl KtApp {
             )
         };
 
-        // ---- РИСУНОК ---------------------------------------------------
+        // ---- DRAWING ---------------------------------------------------
         let accent = crate::theme::ACCENT;
         let cs = pl.corners().map(to_screen);
         painter.add(egui::Shape::closed_line(
@@ -331,7 +331,7 @@ impl KtApp {
             egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(120, 190, 255, 200)),
         ));
         if mode == GeomMode::Transform {
-            // плечо ручки поворота — линия от верхней стороны
+            // shoulder of the rotation handle — a line from the top side
             let top = handle_screen(&pl, Handle::Top, &to_screen);
             let rot = handle_screen(&pl, Handle::Rot, &to_screen);
             painter.line_segment(
@@ -364,7 +364,7 @@ impl KtApp {
                     );
                 }
             }
-            // прямоугольник ручки — живым сценариям (Р.27)
+            // the rectangle of the handle — for live scenarios (R.27)
             if crate::widgets::field_probe::on() {
                 crate::widgets::field_probe::note(
                     &format!("geom.{}", handle_tag(*h)),
@@ -376,15 +376,15 @@ impl KtApp {
             crate::widgets::field_probe::note("geom.frame", egui::Rect::from_points(&cs));
         }
 
-        // ---- ЖЕСТ ------------------------------------------------------
-        // ДИАГНОСТИКА сцены живым сценариям и тестам: контрол дошёл до
-        // разбора жеста (иначе «рамки нет» и «жест не поймали» выглядят
-        // одинаково)
+        // ---- GESTURE ------------------------------------------------------
+        // DIAGNOSTICS for the scene, for live scenarios and tests: the control reached
+        // gesture parsing (otherwise “no outline” and “gesture not caught” look
+        // the same)
         self.geom_ctl_drawn = true;
         let id = ui.id().with(("geomctl", clip.0));
-        // прямоугольник жеста накрывает и РУЧКИ: ручка поворота висит
-        // НАД верхней стороной, и рамка из одних углов её не включает —
-        // нажатие уходило бы в play/pause превью (поймано t760b)
+        // the gesture rectangle covers the HANDLES too: the rotation handle hangs
+        // ABOVE the top side, and an outline made only of corners does not include it —
+        // a press would go to play/pause of the preview (caught by t760b).
         let mut pts: Vec<egui::Pos2> = cs.to_vec();
         for h in mode.handles() {
             pts.push(handle_screen(&pl, *h, &to_screen));
@@ -394,15 +394,15 @@ impl KtApp {
         let pointer = resp.interact_pointer_pos().or_else(|| ui.ctx().pointer_latest_pos());
         let alt = ui.input(|i| i.modifiers.alt);
 
-        // ЖЕСТ КЛЮЧУЕТСЯ ТОЧКОЙ НАЖАТИЯ (`press_origin`), а не фактом
-        // «драг идёт». Две причины, обе пойманы тестами:
+        // The GESTURE is keyed by the PRESS POINT (`press_origin`), not by the fact
+        // that a “drag is going on”. Two reasons, both caught by tests:
         //
-        // 1. РУЧКУ выбирать можно только по точке НАЖАТИЯ: к первому
-        //    кадру, который до нас доходит, указатель уже ушёл за хват-зону,
-        //    и жест ручки превращался в перенос тела (t760b);
-        // 2. снимок геометрии берётся ОДИН раз на нажатие: egui сообщает
-        //    stop/start посреди движения, и пересъёмка при живом
-        //    `press_origin` засчитывала пройденное дважды (t760).
+        // 1. a HANDLE can be selected only by the PRESS point: by the first
+        //    frame that reaches us, the pointer has already left the grab zone,
+        //    and the handle gesture turned into moving the body (t760b);
+        // 2. the geometry snapshot is taken ONCE per press: egui reports
+        //    stop/start in the middle of a movement, and re-taking it while
+        //    `press_origin` is alive counted the distance traveled twice (t760).
         let origin = ui.ctx().input(|i| i.pointer.press_origin()).or(pointer);
         if resp.dragged()
             && let Some(o) = origin
@@ -445,9 +445,9 @@ impl KtApp {
         let Some(drag) = self.geom_drag.filter(|d| d.clip == clip) else { return };
         let Some(ptr) = pointer else { return };
         let Some(g0) = self.geom_effective(clip) else { return };
-        // ВСЁ считается от НАЧАЛА жеста: размещение на момент нажатия и
-        // полное смещение указателя. Покадровая дельта дважды применяла
-        // движение того кадра, в котором драг начался (t760).
+        // EVERYTHING is computed from the START of the gesture: the placement at the moment of press and
+        // the full pointer offset. A per-frame delta applied the movement
+        // of the frame in which the drag started twice (t760).
         let start = drag.start;
         let Some(pl0) = self.geom_placement_of(&start, clip, canvas_f) else { return };
         let mut g = start;
@@ -497,25 +497,25 @@ impl KtApp {
         }
     }
 
-    /// Записать геометрию события тем же путём, что окно FX: команда одна,
-    /// токен жеста один — значит и шаг истории один (правило 17).
+    /// Record the event geometry by the same path as the FX window: one command, one
+    /// gesture token — so also one history step (rule 17).
     pub(crate) fn set_geometry_coalesced(&mut self, clip: ClipId, g: EventGeometry, gesture: u64) {
         let Some(c) = self.model.clip(clip) else { return };
         let pos = c.geometry_pos;
         let mut base = c.geometry;
         let mut auto = c.geometry_auto.clone();
         let at = self.geom_curve_at(clip);
-        // Параметр с ЖИВОЙ КРИВОЙ правится КЛЮЧОМ по курсору — тем же
-        // правилом (`CurveBind`), что поле окна FX. Второго правила «куда
-        // писать значение» в программе быть не должно (правило 17): иначе
-        // жест стирал бы анимацию, показывая при этом её же значение.
+        // A parameter with a LIVE CURVE is edited by a KEYFRAME at the cursor — by the same
+        // rule (`CurveBind`) as the FX window field. There must be no second rule in the program
+        // for “where to write the value” (rule 17): otherwise the gesture
+        // would erase the animation while showing its own value.
         {
             let mut bind = crate::widgets::CurveBind { curves: &mut auto, sel: None, at };
             let names: Vec<String> = base.param_specs().iter().map(|s| s.name.to_string()).collect();
             for n in names {
                 let Some(v) = g.get_param(&n) else { continue };
                 if bind.shown(&base, &n) == v {
-                    continue; // ключей «на всякий случай» жест не сеет
+                    continue; // keyframes are not seeded “just in case” by the gesture
                 }
                 if bind.has_curve(&base, &n) {
                     bind.apply(&mut base, &n, v);
@@ -524,24 +524,24 @@ impl KtApp {
                 }
             }
         }
-        base.rule = g.rule; // правило приведения — не число, кривой у него нет
+        base.rule = g.rule; // the snap rule — not a number, it has no curve
         for c in auto.iter_mut() {
-            c.keys.sort_by_key(|k| k.t.0); // модель требует порядок ключей
+            c.keys.sort_by_key(|k| k.t.0); // the model requires key order
         }
         self.apply_coalesced(Command::SetGeometry { id: clip, geometry: base, pos, auto }, gesture);
     }
 }
 
-/// ЭКРАННАЯ точка ручки — с учётом ВЫНОСА НАРУЖУ мелкой рамки (Р.66).
+/// The SCREEN point of the handle — taking into account the OUTWARD push of a small outline (R.66).
 ///
-/// Когда сторона рамки на экране меньше трёх хват-зон, восемь ручек
-/// масштаба покрывают её целиком, и тело хватать нечем: у владельца на
-/// `paintitblack.otio` рамка вышла 45×25 px (правило «как есть» плюс
-/// заглушка вместо недоступного медиа). Тогда ручки уезжают на хват-зону
-/// НАРУЖУ вдоль нормали своей кромки, а тело остаётся под переносом.
+/// When a side of the outline on screen is less than three grab zones, the eight scale handles
+/// cover it entirely, leaving no room to grab the body: for the owner, on
+/// `paintitblack.otio` the outline came out 45×25 px (the “as is” rule plus a
+/// placeholder instead of unavailable media). Then the handles move out to the grab zone
+/// OUTWARD along the normal of their edge, and the body stays under the move.
 ///
-/// Одна функция на рисунок, прямоугольники живым сценариям и хит-тест:
-/// разойдись они — ручка рисовалась бы в одном месте, а ловилась в другом.
+/// One function for the drawing, the rectangles for live scenarios, and the hit test:
+/// if they diverged, a handle would be drawn in one place and caught in another.
 pub(crate) fn handle_screen(
     pl: &Placement,
     h: Handle,
@@ -551,10 +551,10 @@ pub(crate) fn handle_screen(
     if !small_frame(pl, to_screen) {
         return p;
     }
-    // РУЧКА ПОВОРОТА на мелкой рамке тоже уходит наружу — над верхней
-    // кромкой: внутри она сидит у центра и съедает перенос (t781). Правило
-    // Р.64 «поворот внутри» остаётся для обычной рамки, где снаружи он
-    // вылезал бы за кадр.
+    // The ROTATION HANDLE on a small outline also moves outward — above the top
+    // edge: inside, it sits at the center and eats the move (t781). The rule
+    // R.64 “rotation inside” stays for a regular outline, where outside it
+    // would stick out past the frame.
     if h == Handle::Rot {
         let top = handle_screen(pl, Handle::Top, to_screen);
         let Some(n) = Handle::Top.outward(pl) else { return p };
@@ -564,7 +564,7 @@ pub(crate) fn handle_screen(
         return if len < 1e-6 { p } else { top + d / len * GRAB };
     }
     let Some(n) = h.outward(pl) else { return p };
-    // направление берём В ЭКРАНЕ: масштаб превью может быть любым
+    // the direction is taken ON SCREEN: the preview scale can be anything
     let a = h.point(pl);
     let b = (a.0 + n.0, a.1 + n.1);
     let d = to_screen(b) - p;
@@ -575,7 +575,7 @@ pub(crate) fn handle_screen(
     p + d / len * GRAB
 }
 
-/// Мелкая ли рамка НА ЭКРАНЕ: сторона меньше трёх хват-зон.
+/// Is the outline small ON SCREEN: a side less than three grab zones.
 pub(crate) fn small_frame(pl: &Placement, to_screen: &dyn Fn((f64, f64)) -> egui::Pos2) -> bool {
     let cs = pl.corners().map(&to_screen);
     let w = (cs[1] - cs[0]).length();
@@ -583,10 +583,10 @@ pub(crate) fn small_frame(pl: &Placement, to_screen: &dyn Fn((f64, f64)) -> egui
     w.min(hgt) < GRAB * 3.0
 }
 
-/// Ближайшая к указателю ручка активного набора — или `None` (тело).
+/// The handle of the active set nearest to the pointer — or `None` (the body).
 ///
-/// Приоритет ближайшей, а не «первой попавшейся»: у мелкой рамки хват-зоны
-/// перекрываются, и правило «кто ближе» — единственное однозначное.
+/// Priority goes to the nearest, not to the “first one found”: on a small outline the grab zones
+/// overlap, and the rule “whoever is closer” is the only unambiguous one.
 pub fn nearest_handle(
     pl: &Placement,
     mode: GeomMode,
@@ -596,16 +596,16 @@ pub fn nearest_handle(
 ) -> Option<Handle> {
     let mut best: Option<(Handle, f32)> = None;
     for h in mode.handles() {
-        // ЯКОРЬ берётся за САМУ ТОЧКУ (узкая зона), остальные ручки — в
-        // полную хват-зону. Причина узости: по умолчанию якорь стоит в
-        // ЦЕНТРЕ рамки, а это самое естественное место захвата картинки —
-        // с полной зоной он забирал бы перенос себе. Alt расширяет зону до
-        // общей (так удобнее, когда якорь надо поймать наверняка).
+        // The ANCHOR takes the POINT ITSELF (a narrow zone), the other handles take the
+        // full grab zone. The reason for the narrowness: by default the anchor sits at the
+        // CENTER of the outline, which is the most natural place to grab the picture —
+        // with a full zone it would take the move for itself. Alt widens the zone to the
+        // common one (more convenient when the anchor must be caught for sure).
         //
-        // ТОЛЬКО Alt здесь стоять не может: Alt+перетаскивание почти у
-        // каждого оконного менеджера (openbox, GNOME, KDE) перехватывается
-        // на перенос ОКНА — до программы жест не доходит вовсе. Поймано
-        // живым сценарием `geomctl`, в харнессе такого не видно.
+        // ONLY Alt cannot be used here: Alt+drag is intercepted by almost every window manager
+        // (openbox, GNOME, KDE) for moving the WINDOW — the gesture never reaches
+        // the program at all.
+        // Caught by the live scenario `geomctl`; the harness does not show this.
         let lim = if *h == Handle::Anchor && !alt { ANCHOR_GRAB } else { GRAB };
         let d = handle_screen(pl, *h, to_screen).distance(p);
         if d <= lim && best.is_none_or(|(_, bd)| d < bd) {
@@ -634,7 +634,7 @@ fn handle_tag(h: Handle) -> &'static str {
     }
 }
 
-/// Подсказка — в строку состояния (правило 10: без всплывающих).
+/// Hint — into the status line (rule 10: no pop-ups).
 fn hint_for(h: Option<Handle>) -> &'static str {
     use crate::i18n::{k, tr};
     match h {
@@ -648,7 +648,7 @@ fn hint_for(h: Option<Handle>) -> &'static str {
     }
 }
 
-/// Человекочитаемое имя набора — для строки состояния и меню.
+/// The human-readable name of the set — for the status line and the menu.
 pub fn mode_name(m: GeomMode) -> &'static str {
     use crate::i18n::{k, tr};
     match m {
@@ -658,16 +658,16 @@ pub fn mode_name(m: GeomMode) -> &'static str {
     }
 }
 
-// ---- ФОРМА ПОЛЕЙ «Трансформация» (Р.64, раздел 5) -----------------------
+// ---- FIELD FORM “Transform” (R.64, section 5) -----------------------
 //
-// Претензия владельца дословно (Р.63 п.6): «fx геометрии по прежнему очень
-// скуден, сплошные скучные поля ввода, даже в Vegas и то лучше сделано».
-// Форма собрана из СУЩЕСТВУЮЩИХ кирпичей (`param_row_bound_ex`, дверь
-// публикации у подписи, `CurveBind`): новых правил «куда писать значение»
-// не заводится, добавляются группировка, единицы, ползунки и схема.
+// The owner's claim, verbatim (R.63 item 6): “the geometry fx is still very meager,
+// plain boring input fields, even Vegas does it better”.
+// The form is assembled from EXISTING bricks (`param_row_bound_ex`, the publish door
+// at the label, `CurveBind`): no new rules for “where to write the value”
+// are introduced; grouping, units, sliders and a scheme are added.
 
-/// Доля показывается ПРОЦЕНТОМ (п.415): пересчёт живёт в `param_value`, в
-/// модели и в файле значение остаётся долей.
+/// The share is shown as a PERCENT (item 415): the recalculation lives in `param_value`,
+/// in the model and in the file the value stays a share.
 fn shown_spec(s: &kt_model::ParamSpec) -> kt_model::ParamSpec {
     let mut s = s.clone();
     if matches!(
@@ -679,16 +679,16 @@ fn shown_spec(s: &kt_model::ParamSpec) -> kt_model::ParamSpec {
     s
 }
 
-/// Единица, которой параметр ПОКАЗЫВАЕТСЯ в форме (для теста t759: единица
-/// живёт в паспорте, а не в тексте подписи).
-#[allow(dead_code)] // спрашивает тест t759: единица живёт в паспорте
+/// The unit in which the parameter is SHOWN in the form (for test t759: the unit
+/// lives in the descriptor, not in the label text).
+#[allow(dead_code)] // test t759 checks: the unit lives in the descriptor
 pub(crate) fn shown_spec_unit(name: &str) -> Option<kt_model::ParamUnit> {
     let g = EventGeometry::default().node();
     let s = g.param_specs().iter().find(|s| &*s.name == name)?.clone();
     Some(shown_spec(&s).unit)
 }
 
-/// Строка формы: пара полей на одну строку (X и Y рядом, как в Pr/AE).
+/// A form row: a pair of fields on one line (X and Y side by side, as in Pr/AE).
 fn geom_row(
     ui: &mut egui::Ui,
     f: &mut FxInstance,
@@ -716,30 +716,30 @@ fn geom_row(
     ch
 }
 
-/// Прямоугольник схемы и точка якоря — ТОЙ ЖЕ функцией размещения, что у
-/// рендера и у экранных контролов, посчитанной на холсте размером со схему.
-/// Поэтому кроп, зум, поворот и якорь на ней — не рисунок «по мотивам», а те
-/// самые числа. Отдельно от рисования — чтобы это утверждал тест, а не глаз.
+/// The scheme rectangle and the anchor point — by the SAME placement function as the render
+/// and the on-screen controls, computed on a canvas the size of the scheme.
+/// So the crop, zoom, rotation and anchor on it are not a drawing “in the spirit of”, but the
+/// very same numbers. Kept apart from drawing, so that a test, not the eye, confirms it.
 pub(crate) type SchemaShape = ([(f64, f64); 4], (f64, f64));
 
 pub(crate) fn schema_quad(f: &FxInstance, size: egui::Vec2) -> Option<SchemaShape> {
     let canvas = (size.x.max(4.0) as f64, size.y.max(4.0) as f64);
     let g = EventGeometry::default().with_node(f);
-    // вид источника здесь неизвестен, поэтому вход равен холсту: схема
-    // показывает рамку ОТНОСИТЕЛЬНО кадра, а правило приведения на таком
-    // входе вырождается в тождество для любого своего значения
+    // the source view is unknown here, so the input equals the canvas: the scheme
+    // shows the outline RELATIVE to the frame, and the conform rule on such
+    // an input degenerates into the identity for any of its own values.
     let lead = LeadCtx::new(None, kt_fx::conform::ConformRule::Fit);
     let pl = geometry_placement(&g.node(), Some(lead), canvas, canvas)?;
     Some((pl.corners(), pl.anchor))
 }
 
-/// Схема ВПИСЫВАЕТ рамку и кадр в свой прямоугольник (Р.67).
+/// The SCHEME FITS the outline and the frame into its rectangle (R.67).
 ///
-/// Владелец: «если заскейлишь даже на 2x — у тебя просто ничего в превью
-/// нет». Схема рисовала рамку в координатах холста и клиповала её своим
-/// прямоугольником: при зуме больше единицы видеть было нечего. Теперь
-/// масштаб выбирается по охвату `union(кадр, рамка)`, кадр рисуется
-/// внутри той же схемы штрихом — видно и то, и другое.
+/// Owner: “if you scale even 2x, you simply have nothing in the preview”. The scheme drew the outline
+/// in canvas coordinates and clipped it by its own rectangle: at a zoom above one there was nothing to see.
+/// Now the scale is chosen by the bounds of `union(frame, outline)`,
+/// and the frame is drawn inside the same scheme as a stroke:
+/// both are visible.
 fn schema_fit(quad: &[(f64, f64); 4], anchor: (f64, f64), size: egui::Vec2) -> (f32, egui::Vec2) {
     let (mut lo_x, mut hi_x) = (0.0f64, size.x as f64);
     let (mut lo_y, mut hi_y) = (0.0f64, size.y as f64);
@@ -752,7 +752,7 @@ fn schema_fit(quad: &[(f64, f64); 4], anchor: (f64, f64), size: egui::Vec2) -> (
     let (w, h) = ((hi_x - lo_x).max(1e-6), (hi_y - lo_y).max(1e-6));
     let pad = 3.0;
     let k = (((size.x - 2.0 * pad) as f64 / w).min((size.y - 2.0 * pad) as f64 / h)).min(1.0) as f32;
-    // центрируем охват в прямоугольнике схемы
+    // center the bounds inside the scheme rectangle
     let off = egui::vec2(
         (size.x - (w as f32) * k) * 0.5 - (lo_x as f32) * k,
         (size.y - (h as f32) * k) * 0.5 - (lo_y as f32) * k,
@@ -771,8 +771,8 @@ fn frame_schema(ui: &mut egui::Ui, f: &FxInstance, size: egui::Vec2) -> egui::Re
     let to = |q: (f64, f64)| {
         egui::pos2(rect.left() + q.0 as f32 * k + off.x, rect.top() + q.1 as f32 * k + off.y)
     };
-    // КАДР — внутри той же схемы: без него «рамка вдвое больше кадра» не
-    // отличить от «рамка по кадру»
+    // the FRAME — inside the same scheme: without it “an outline twice the frame” cannot be
+    // told apart from “the outline fitted to the frame”
     let frame = egui::Rect::from_min_max(to((0.0, 0.0)), to((size.x as f64, size.y as f64)));
     p.rect_stroke(frame, 0.0, egui::Stroke::new(1.0, dim), egui::StrokeKind::Middle);
     let cs: Vec<egui::Pos2> = quad.iter().map(|c| to(*c)).collect();
@@ -784,9 +784,9 @@ fn frame_schema(ui: &mut egui::Ui, f: &FxInstance, size: egui::Vec2) -> egui::Re
     resp
 }
 
-/// Углы рамки и кадра схемы В КООРДИНАТАХ прямоугольника схемы — для
-/// теста: утверждение «видно при 2×» делается по нарисованному.
-#[cfg_attr(not(test), allow(dead_code))] // схема считается тестом t765b
+/// The corners of the outline and of the frame in the SCHEME's coordinates — for the
+/// test: the assertion “visible at 2×” is made on what is drawn.
+#[cfg_attr(not(test), allow(dead_code))] // the scheme is checked by test t765b
 pub(crate) fn schema_points(
     f: &FxInstance,
     size: egui::Vec2,
@@ -798,8 +798,8 @@ pub(crate) fn schema_points(
     Some((cs, egui::Rect::from_min_max(to((0.0, 0.0)), to((size.x as f64, size.y as f64)))))
 }
 
-/// Раздел «Трансформация» у ведущего узла: группы, пары X/Y одной строкой,
-/// ползунки у зума и поворота, схема рамки и сброс одним шагом истории.
+/// The “Transform” section of the leading node: groups, X/Y pairs on one line,
+/// sliders for zoom and rotation, the outline scheme, and a reset in one history step.
 pub(crate) fn transform_form(
     ui: &mut egui::Ui,
     f: &mut FxInstance,
@@ -810,7 +810,7 @@ pub(crate) fn transform_form(
     use crate::i18n::{k, tr};
     let mut ch = crate::widgets::ParamsChanged::default();
     let specs: Vec<kt_model::ParamSpec> = f.param_specs().to_vec();
-    // свёртка групп — состояние ОКНА (память egui), не проекта
+    // collapsing of groups is the WINDOW state (egui memory), not the project's
     let group = |ui: &mut egui::Ui, id: &str, title: &str, body: &mut dyn FnMut(&mut egui::Ui)| {
         egui::CollapsingHeader::new(title)
             .id_salt(("geoform", id))
@@ -843,9 +843,9 @@ pub(crate) fn transform_form(
     let reset = r.clicked();
     crate::app::hint_into(hover, r, tr(k::geomctl::RESET_HINT));
     if reset {
-        // сброс идёт ТЕМ ЖЕ правилом, что поле: у анимированного параметра
-        // это ключ по курсору, а не стёртая кривая (правило 20 — ничего не
-        // отрубается само)
+        // the reset goes by the SAME rule as the field: for an animated parameter
+        // it is a keyframe at the cursor, not an erased curve (rule 20 — nothing
+        // switches itself off)
         for s in &specs {
             if let Some(b) = bind.as_deref_mut()
                 && b.has_curve(f, &s.name)

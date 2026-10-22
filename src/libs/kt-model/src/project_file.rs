@@ -1,52 +1,52 @@
-//! ФАЙЛ ПРОЕКТА — свой формат (Р.70).
+//! FILE OF THE PROJECT — its own format (R.70).
 //!
-//! Решение владельца (02.10.2026): «мы уходим от otio-формата, оставляем
-//! otio только на экспорт и делаем breaking changes чтобы наш формат стал в
-//! сто раз лучше» и «я против бинарщины — у нас файл должен быть
-//! индексируемым в git».
+//! Decision of the owner (02.10.2026): “we are moving away from the otio format, keeping
+//! otio only for export, and making breaking changes so that our format becomes a
+//! hundred times better” and “I am against binary blobs — our file must be
+//! indexable in git”.
 //!
-//! Повод. В JSON OpenTimelineIO нет ОБЪЕКТНОЙ ИДЕНТИЧНОСТИ: сказать «это
-//! та же лента, что выше» нечем, выражается только вложенное содержимое,
-//! поэтому тело ленты писалось заново в каждый её экземпляр. У владельца три
-//! ленты дали 15 220 клипов и 115 МБ, которые автосейв писал регулярно.
-//! Замер против сериализации модели: 17× на плоском проекте, 501× и 929×
-//! на вложенных сценах.
+//! Reason. JSON of OpenTimelineIO has no OBJECT IDENTITY: there is no way to say “this is the
+//! same reel as above”; only nested content is expressed, so the body of a reel was written
+//! again into each of its instances. The owner's three reels gave 15 220 clips and 115 MB, which
+//! autosave wrote regularly.
+//! Measured against the serialization of the model: 17× on a flat project,
+//! 501× and 929× on nested scenes.
 //!
-//! Что здесь:
+//! What is here:
 //!
-//! * файл — сериализация МОДЕЛИ. «Каждая сущность один раз» — свойство самой
-//!   модели (`Project.sequences` держит тело ленты, экземпляр ссылается
-//!   адресом), и формат его просто не портит;
-//! * текст, ПОСТРОЧНЫЙ и детерминированный: правка одного события меняет
-//!   единицы строк, одна модель даёт те же байты. Компактный JSON отвергнут —
-//!   одна строка на весь файл диффа не имеет; двоичный и сжатый запрещены
-//!   владельцем;
-//! * на корне свой признак (`kinetren`; до 2026-10-21 — `kinotrain`, его чинит импорт) и ВЕРСИЯ; вид файла определяется по
-//!   содержимому, не по расширению. Версия больше нынешней — честный отказ с
-//!   номером, частичное чтение запрещено («открылось, и части монтажа нет» —
-//!   худший исход из трёх, F-RES-003). Ломающие изменения разрешены, каскада
-//!   совместимости с чужой схемой здесь нет;
-//! * чужой passthrough импортированного файла обмена едет отдельным полем
-//!   (`otio`) как непрозрачный JSON. Его ПОРЯДОК НЕ ТРОГАЕТСЯ: порядок чужих
-//!   ключей — часть обещания файлу обмена (экспорт возвращает их байт-в-байт,
-//!   t154), а детерминированность даёт сам insertion-ordered `Map`
-//!   (`kt-otio` включает `serde_json/preserve_order`, фичи cargo едины на
-//!   workspace). Единственный источник недетерминизма — `HashMap`-поля
-//!   `Retained`, и их по ключу сортирует тот, кто этот JSON строит
-//!   (`Retained::to_json`), а не этот модуль.
+//! * the file is a serialization of the MODEL. “Each entity once” is a property of the model
+//!   itself (`Project.sequences` holds the body of a reel, an instance refers by address),
+//!   and the format simply does not spoil it;
+//! * text, LINE-BASED and deterministic: editing one event changes a few lines,
+//!   and one model gives the same bytes. Compact JSON was rejected —
+//!   a single line for the whole file has no useful diff; binary and compressed formats are forbidden
+//!   by the owner;
+//! * the root carries its own marker (`kinetren`; before 2026-10-21 — `kinotrain`, which the import
+//!   repairs) and a VERSION; the kind of file is determined by its content, not by its extension.
+//!   A version newer than the current one is an honest refusal with its number; a partial read is
+//!   forbidden (“it opened, and part of the edit is missing” is the worst of the three outcomes,
+//!   F-RES-003). Breaking changes are allowed; there is no compatibility cascade with a foreign schema here;
+//! * the foreign passthrough of an imported exchange file travels as a separate field
+//!   (`otio`) as an opaque JSON. Its ORDER IS NOT TOUCHED: the order of foreign
+//!   keys is part of the promise to the exchange file (export returns them byte for byte,
+//!   t154), and determinism is provided by the insertion-ordered `Map` itself
+//!   (`kt-otio` enables `serde_json/preserve_order`; cargo features are unified across the
+//!   workspace). The only source of non-determinism is the `HashMap` fields of
+//!   `Retained`, and they are sorted by key by whoever builds this JSON
+//!   (`Retained::to_json`), not by this module.
 //!
-//! Чего здесь НЕТ: записи на диск. Единственный дом атомарной записи — `kt-otio`
-//! (`write_atomic`, Р.49: «второго писателя файла проекта в дереве нет»), и
-//! сторож ревизии приложения (`write_project_guarded`) зовёт его с текстом
-//! отсюда. Этот модуль отвечает за ТЕКСТ.
+//! What is NOT here: writing to disk. The only home of atomic writing is `kt-otio`
+//! (`write_atomic`, R.49: “there is no second writer of the project file in the tree”),
+//! and the revision guard of the application (`write_project_guarded`) calls it with the text
+//! from here. This module is responsible for the TEXT.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::project::{Project, ProjectError};
 
-/// Ключ-признак на корне файла. По нему файл опознаётся как наш; его
-/// значение — версия формата.
+/// Marker key at the root of the file. By it the file is recognised as ours;
+/// its value is the format version.
 pub const MARKER: &str = "kinetren";
 
 /// The marker of files written before the program was renamed to Kinetren
@@ -55,36 +55,36 @@ pub const MARKER: &str = "kinetren";
 /// renames the key — `from_former_text`.
 pub const FORMER_MARKER: &str = "kinotrain";
 
-/// Версия СВОЕГО формата. Не путать с `project::FORMAT_VERSION` — это версия
-/// легаси-формата C++ (`.ktproj`, ключ `format_version`), которую читает
-/// только импорт.
+/// Version of ITS OWN format. Not to be confused with `project::FORMAT_VERSION` — that is the
+/// version of the legacy C++ format (`.ktproj`, key `format_version`), which is read
+/// only by the import.
 pub const PROJECT_FILE_VERSION: u32 = 1;
 
-/// Расширение файла проекта. `.ktproj` НЕ переиспользуется: два разных
-/// формата под одним суффиксом — ловушка для человека и скриптов, а
-/// легаси-`.ktproj` жив в импорте.
+/// Extension of the project file. `.ktproj` is NOT reused: two different
+/// formats under one suffix is a trap for people and scripts, and the
+/// legacy `.ktproj` lives on in the import.
 pub const EXTENSION: &str = "kt";
 
-/// Содержимое файла проекта: модель и непрозрачные остатки чужого файла
-/// обмена, если проект был из него импортирован.
+/// Contents of the project file: the model and the opaque remnants of a foreign
+/// exchange file, if the project was imported from one.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProjectFile {
     pub project: Project,
-    /// Passthrough импортированного `.otio` (чужие неймспейсы, маркеры,
-    /// эффекты) — чтобы экспорт вернул их на место. `None` у проекта, который
-    /// никогда не был файлом обмена. Содержимое непрозрачно для модели.
+    /// Passthrough of an imported `.otio` (foreign namespaces, markers,
+    /// effects) — so that export puts them back in place. `None` for a project that
+    /// has never been an exchange file. The contents are opaque to the model.
     pub otio: Option<Value>,
 }
 
-/// Почему файл не прочитался. Каждый исход назван: читатель обязан сказать
-/// человеку, что это за файл и какой дверью его открыть (правило 19).
+/// Why the file did not read. Every outcome is named: the reader must tell
+/// the person what this file is and which door to open it through (rule 19).
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum ProjectFileError {
-    /// Это не файл проекта. `looks_like` — на что он похож по содержимому
-    /// (файл обмена, легаси), чтобы ошибка назвала дверь импорта.
+    /// This is not a project file. `looks_like` — what it resembles by its contents
+    /// (an exchange file, legacy), so that the error names the import door.
     #[error("not a Kinetren project file{}", looks_like_suffix(.looks_like))]
     NotOurs { looks_like: Option<FileKind> },
-    /// Файл написан более новой программой. Частичное чтение запрещено.
+    /// The file was written by a newer program. A partial read is forbidden.
     #[error(
         "project written by a newer Kinetren (format {version}, this build reads up to {PROJECT_FILE_VERSION})"
     )]
@@ -95,13 +95,13 @@ pub enum ProjectFileError {
     Model(#[from] ProjectError),
 }
 
-/// На что похож файл, который не наш. Различается по СОДЕРЖИМОМУ: расширению
-/// верить нельзя, recovery- и tmp-файлы носят чужие суффиксы.
+/// What the file resembles if it is not ours. It is distinguished by CONTENTS: the extension
+/// cannot be trusted, recovery and tmp files carry foreign suffixes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileKind {
-    /// Файл обмена OpenTimelineIO (`OTIO_SCHEMA` на корне).
+    /// OpenTimelineIO exchange file (`OTIO_SCHEMA` at the root).
     Otio,
-    /// Легаси-проект C++ (`format_version` на корне).
+    /// Legacy C++ project (`format_version` at the root).
     LegacyKtproj,
     /// A project of the former name (`kinotrain` at the root): the same
     /// format, refused by the reader, repaired by the import door.
@@ -123,8 +123,8 @@ fn looks_like_suffix(kind: &Option<FileKind>) -> String {
     }
 }
 
-/// Корневой конверт файла. Порядок полей — порядок строк в файле: версия
-/// первой, чтобы незнакомую отвергнуть, не читая остального.
+/// Root envelope of the file. The field order is the line order in the file: the version
+/// first, so that an unknown one is rejected without reading the rest.
 #[derive(Serialize, Deserialize)]
 struct Envelope {
     #[serde(rename = "kinetren")]
@@ -134,12 +134,12 @@ struct Envelope {
     project: Project,
 }
 
-/// Текст файла проекта: построчный, детерминированный, с завершающим
-/// переводом строки (так файл дружит с `git diff` и `cat`).
+/// Text of the project file: line-based, deterministic, with a trailing
+/// newline (so the file plays well with `git diff` and `cat`).
 pub fn to_text(project: &Project, otio: Option<&Value>) -> String {
     let env = Envelope {
         version: PROJECT_FILE_VERSION,
-        // как есть: порядок чужих ключей — обещание файлу обмена (t154)
+        // as is: the order of foreign keys is a promise to the exchange file (t154)
         otio: otio.cloned(),
         project: project.clone(),
     };
@@ -149,9 +149,9 @@ pub fn to_text(project: &Project, otio: Option<&Value>) -> String {
     s
 }
 
-/// Прочитать файл проекта. Чужой файл и файл будущей версии — названный
-/// отказ; прочитанная модель нормализована и проверена, как при любом
-/// чтении с диска.
+/// Read the project file. A foreign file and a file of a future version — a named
+/// refusal; the model read is normalized and checked, as with any
+/// read from disk.
 pub fn from_text(text: &str) -> Result<ProjectFile, ProjectFileError> {
     let peek: Value = serde_json::from_str(text).map_err(|e| ProjectFileError::Json(e.to_string()))?;
     let Some(root) = peek.as_object() else {
@@ -166,8 +166,8 @@ pub fn from_text(text: &str) -> Result<ProjectFile, ProjectFileError> {
     if version > u64::from(PROJECT_FILE_VERSION) {
         return Err(ProjectFileError::TooNew { version: version as u32 });
     }
-    // версии НИЖЕ нынешней читаются миграцией на чтении, односторонне; пока
-    // версия одна, мигрировать нечего — место для будущих починок здесь
+    // versions BELOW the current one are read by migration on read, one-way; while
+    // there is one version, there is nothing to migrate — the place for future repairs is here
     let env: Envelope =
         serde_json::from_value(peek).map_err(|e| ProjectFileError::Json(e.to_string()))?;
     let mut project = env.project;
@@ -176,7 +176,7 @@ pub fn from_text(text: &str) -> Result<ProjectFile, ProjectFileError> {
     Ok(ProjectFile { project, otio: env.otio })
 }
 
-/// На что похож JSON-объект без нашего признака.
+/// What a JSON object without our marker resembles.
 pub fn looks_like(root: &serde_json::Map<String, Value>) -> Option<FileKind> {
     if root.contains_key(FORMER_MARKER) {
         Some(FileKind::FormerName)
@@ -207,8 +207,8 @@ pub fn from_former_text(text: &str) -> Result<ProjectFile, ProjectFileError> {
     from_text(&v.to_string())
 }
 
-/// Это наш файл? Только по признаку на корне — для детекта вида файла до
-/// полного чтения.
+/// Is this our file? Only by the marker at the root — for detecting the file kind
+/// before a full read.
 pub fn is_project_file(text: &str) -> bool {
     serde_json::from_str::<Value>(text)
         .ok()

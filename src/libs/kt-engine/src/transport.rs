@@ -1,23 +1,23 @@
-//! Transport: авторитетный playhead и состояние воспроизведения.
+//! Transport: the authoritative playhead and the playback state.
 //!
-//! Инвариант №6: мастер-часы — потребление аудио. `advance_frames` вызывает
-//! ТОЛЬКО аудио-render-поток, ровно на число кадров, потреблённых
-//! аудио-колбэком (M4). Wall-clock здесь запрещён (детерминизм, инвариант №10).
-//! В M2 «колбэком» выступает офлайн-драйвер/тест — семантика та же.
+//! Invariant 6: the master clock is the audio consumption. `advance_frames` is called
+//! ONLY by the audio render thread, exactly by the number of frames consumed by the
+//! audio callback (M4). Wall-clock is forbidden here (determinism, invariant 10).
+//! In M2 the “callback” is an offline driver/test — the semantics are the same.
 
 use kt_time::Tick;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 
 #[derive(Default)]
 pub struct Transport {
-    /// Позиция в аудио-кадрах 48 kHz (не в тиках: продвижение — целые кадры).
+    /// Position in 48 kHz audio frames (not in ticks: advancement is whole frames).
     playhead_frames: AtomicI64,
     playing: AtomicBool,
-    /// Растёт при каждом seek: MediaWorker'ы дропают запросы устаревших
-    /// поколений (инвариант №5), FX делают reset (инвариант №3).
+    /// Grows at every seek: MediaWorkers drop requests of stale
+    /// generations (invariant 5), FX reset (invariant 3).
     generation: AtomicU64,
-    /// Перескоки через край loop-региона (р.15 п.2): нужны видео-части,
-    /// которой иначе неоткуда узнать о переходе на новый круг.
+    /// Jumps across the edge of the loop region (R.15 item 2): the video part needs them,
+    /// since otherwise it has no way to learn about the transition to the new lap.
     wraps: AtomicU64,
 }
 
@@ -46,27 +46,27 @@ impl Transport {
         self.generation.load(Ordering::Acquire)
     }
 
-    /// Сколько раз позиция ПЕРЕПРЫГИВАЛА через край loop-региона.
-    /// Generation при wrap'е намеренно не бампается (это не seek, звук и
-    /// FX-хвосты продолжаются), поэтому видео-часть узнаёт о перескоке
-    /// только отсюда. Без этого счётчика анти-откатный ратчет ключа
-    /// показа замораживал картинку на втором круге loop'а, пока звук
-    /// продолжал играть (р.15 п.2).
+    /// How many times the position JUMPED across the edge of the loop region.
+    /// Generation is deliberately NOT bumped on wrap (it is not a seek, the sound and the
+    /// FX tails continue), so the video part learns about the jump only
+    /// from here. Without this counter the anti-rollback ratchet of the key
+    /// froze the picture on the second lap of the loop, while the sound
+    /// kept playing (R.15 item 2).
     pub fn wraps(&self) -> u64 {
         self.wraps.load(Ordering::Acquire)
     }
 
-    /// Продвинуть на потреблённые аудио-кадры. Только аудио-render-поток.
+    /// Advance by the consumed audio frames. Only the audio render thread.
     pub fn advance_frames(&self, frames: i64) {
         self.playhead_frames.fetch_add(frames, Ordering::AcqRel);
     }
 
-    /// Продвижение с wrap'ом по loop-региону [start, end) в кадрах.
-    /// Generation НЕ бампается: wrap — не seek, FX-состояние и кольцо живут
-    /// (иначе слышимый разрыв). `frames` может быть отрицательным
-    /// (reverse-транспорт, J4 v1.4): wrap работает в обе стороны —
-    /// rem_euclid корректен для отрицательных смещений (тест 43); вне
-    /// региона позиция клампится в 0 (реверс не уводит playhead в минус).
+    /// Advancement with a wrap over the loop region [start, end) in frames.
+    /// Generation is NOT bumped: a wrap is not a seek, the FX state and the ring live on
+    /// (otherwise an audible gap). `frames` may be negative
+    /// (reverse transport, J4 v1.4): the wrap works both ways —
+    /// rem_euclid is correct for negative offsets (test 43); outside the
+    /// region the position is clamped to 0 (reverse does not drive the playhead into minus).
     pub fn advance_frames_wrapped(&self, frames: i64, region: Option<(i64, i64)>) {
         match region {
             Some((s, e)) if e > s => {
@@ -79,9 +79,9 @@ impl Transport {
                             np.max(0)
                         })
                     });
-                // счётчик бампаем ПОСЛЕ обмена и по возвращённому старому
-                // значению: замыкание fetch_update может выполниться
-                // несколько раз при гонке, внутри считать нельзя
+                // the counter is bumped AFTER the swap, using the returned old
+                // value: the fetch_update closure may run several times on a race,
+                // so it must not count inside
                 if let Ok(p) = prev {
                     let np = p + frames;
                     if p >= s && p <= e && (np >= e || np < s) {
@@ -98,7 +98,7 @@ impl Transport {
         }
     }
 
-    /// Прыжок. Бампает generation.
+    /// Jump. Bumps generation.
     pub fn seek_frames(&self, frame: i64) {
         self.playhead_frames.store(frame, Ordering::Release);
         self.generation.fetch_add(1, Ordering::AcqRel);
@@ -113,32 +113,32 @@ impl Transport {
 mod reverse_wrap_tests {
     use super::*;
 
-    /// Тест 43 (J4): loop-wrap работает в обе стороны; вне региона
-    /// отрицательное продвижение клампится в 0.
+    /// Test 43 (J4): loop wrap works in both directions; outside the region
+    /// a negative advance is clamped to 0.
     #[test]
     fn t43_wrap_backwards_and_clamp() {
         let t = Transport::new();
-        // вперёд через границу (регресс не сломан)
+        // forward across the boundary (regression not broken)
         t.seek_frames(9_800);
         t.advance_frames_wrapped(400, Some((5_000, 10_000)));
         assert_eq!(t.playhead_frames(), 5_200);
-        // назад через начало региона → к концу
+        // backward across the region start → to the end
         t.seek_frames(5_100);
         t.advance_frames_wrapped(-400, Some((5_000, 10_000)));
         assert_eq!(t.playhead_frames(), 9_700);
-        // ровно в start: без движения не wrap'ится
+        // exactly at start: without movement, no wrap
         t.seek_frames(5_000);
         t.advance_frames_wrapped(0, Some((5_000, 10_000)));
         assert_eq!(t.playhead_frames(), 5_000);
-        // назад ровно на span → та же позиция
+        // backward exactly by span → same position
         t.seek_frames(7_000);
         t.advance_frames_wrapped(-5_000, Some((5_000, 10_000)));
         assert_eq!(t.playhead_frames(), 7_000);
-        // вне региона (левее): обычное движение, без wrap
+        // outside the region (to the left): normal movement, no wrap
         t.seek_frames(1_000);
         t.advance_frames_wrapped(-300, Some((5_000, 10_000)));
         assert_eq!(t.playhead_frames(), 700);
-        // без региона: кламп в 0
+        // no region: clamp to 0
         t.seek_frames(100);
         t.advance_frames_wrapped(-500, None);
         assert_eq!(t.playhead_frames(), 0);

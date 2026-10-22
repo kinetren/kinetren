@@ -1,8 +1,8 @@
-//! Генератор демо-проектов конкатенации трансформов (Р.44/Р.45, п.315):
-//! `cargo test -p kt-cli --test gen_demo -- --ignored` перезаписывает
-//! `fixtures/demo-concat/*.kt` (Р.70: файл проекта — свой формат). Медиа —
-//! `gen-media.sh` там же.
-//! Что смотреть в каждом проекте — fixtures/demo-concat/README.md.
+//! Generator of the demo projects of the concatenation of transforms (R.44/R.45, item 315):
+//! `cargo test -p kt-cli --test gen_demo -- --ignored` overwrites
+//! `fixtures/demo-concat/*.kt` (R.70: the project file is its own format). The media —
+//! `gen-media.sh` there as well.
+//! What to look at in each project — fixtures/demo-concat/README.md.
 
 use kt_model::*;
 use kt_time::Tick;
@@ -82,14 +82,14 @@ fn save(p: &mut Project, name: &str) {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/demo-concat");
     let text = kt_model::project_file::to_text(p, None);
     std::fs::write(dir.join(name), text).unwrap();
-    println!("написан {name}");
+    println!("written {name}");
 }
 
 #[test]
 #[ignore]
 fn gen_demo_concat() {
-    // 01: нетто-единица — цепочка, суммарно возвращающая масштаб к 1:1,
-    // обязана быть НЕОТЛИЧИМА от события без FX (до Р.44 — мыло).
+    // 01: net unit — a chain that in total returns the scale to 1:1,
+    // must be INDISTINGUISHABLE from an event without FX (before R.44 — blur).
     let mut p = project();
     p.clips = vec![
         clip(1, 0, 4, 1, vec![]),
@@ -98,8 +98,8 @@ fn gen_demo_concat() {
     ];
     save(&mut p, "01-net-identity.kt");
 
-    // 02: сценарий пользователя Р.44 с кривыми — параллаксы приходят в
-    // норму, зум в конце устраняет сетки; финал обязан быть резким.
+    // 02: the user scenario of R.44 with curves — the parallaxes come to
+    // normal, the zoom at the end removes the grids; the finale must be sharp.
     let mut p = project();
     let mut c = clip(1, 0, 8, 1, vec![grid2(), pan3d(1.0), grid2(), pan3d(1.0)]);
     let key = |t_s: f64, v: f64| AutoKey::at(Tick((t_s * SEC as f64) as i64), v);
@@ -110,13 +110,13 @@ fn gen_demo_concat() {
     };
     c.fx_auto = vec![
         vec![],
-        // первый pan3d: параллакс (поворот+сдвиг) уходит в норму к 4 c
+        // the first pan3d: the parallax (rotation + shift) returns to normal by 4 s
         vec![
             curve("rot_y", vec![key(0.0, 28.0), key(4.0, 0.0)]),
             curve("pos_x", vec![key(0.0, 90.0), key(4.0, 0.0)]),
         ],
         vec![],
-        // второй pan3d: лёгкий параллакс до 4 c, затем зум ×4 убирает сетки
+        // the second pan3d: a light parallax up to 4 s, then a zoom ×4 removes the grids
         vec![
             curve("rot_y", vec![key(0.0, -14.0), key(4.0, 0.0)]),
             curve("scale", vec![key(0.0, 1.0), key(4.0, 1.0), key(7.5, 4.0)]),
@@ -125,7 +125,7 @@ fn gen_demo_concat() {
     p.clips = vec![c];
     save(&mut p, "02-user-parallax.kt");
 
-    // 03: K×-барьеры (Р.45) — фактура VHS/edges переживает зум.
+    // 03: K× barriers (R.45) — the VHS/edges texture survives the zoom.
     let mut p = project();
     p.clips = vec![
         clip(
@@ -150,7 +150,7 @@ fn gen_demo_concat() {
     ];
     save(&mut p, "03-barrier.kt");
 
-    // 04: поточечные внутри серии (Р.45) — ключ и зерно сквозь зум.
+    // 04: pointwise within a series (R.45) — the key and the grain through the zoom.
     let mut p = project();
     p.clips = vec![
         clip(1, 0, 4, 2, vec![FxInstance::greenscreen([0, 255, 0], 90, 20)]),
@@ -165,9 +165,9 @@ fn gen_demo_concat() {
     ];
     save(&mut p, "04-pointwise.kt");
 
-    // 05: ступень декода (Р.46). Клипы 1-2 на detail-hi.mp4 (2560x1440),
-    // клип 3 — тот же зум на detail.mp4 (1280x720, запаса нет): рядом
-    // видно, что резкость берётся ИЗ ФАЙЛА, а не из зума.
+    // 05: decode step (R.46). Clips 1-2 on detail-hi.mp4 (2560x1440),
+    // clip 3 — the same zoom on detail.mp4 (1280x720, no margin): side by side
+    // it is visible that the sharpness is taken FROM THE FILE, not from the zoom.
     let mut p = project();
     p.media.push(MediaRef::new(MediaId(3), "detail-hi.mp4"));
     p.clips = vec![
@@ -187,8 +187,8 @@ fn gen_demo_concat() {
     ];
     save(&mut p, "05-decode-scale.kt");
 
-    // 06: цвет (Р.47 Кв2) — поточечные соло и ВНУТРИ гео-серии
-    // (поглощение тапом: ключ и зум не ломают формулу цвета).
+    // 06: color (R.47 Kv2) — pointwise solos and INSIDE the geometry series
+    // (absorption by tap: the key and the zoom do not break the color formula).
     let mut p = project();
     p.clips = vec![
         clip(
@@ -209,7 +209,7 @@ fn gen_demo_concat() {
     ];
     save(&mut p, "06-color.kt");
 
-    // 07: барьеры (Р.47 Кв3) — резкость/мозаика/аберрация/лучи/тень/растр.
+    // 07: barriers (R.47 Kv3) — sharpness/mosaic/aberration/rays/shadow/raster.
     let mut p = project();
     p.clips = vec![
         clip(1, 0, 4, 1, vec![FxInstance::Sharpen { amount: 2.0, radius: 3 }]),
@@ -222,7 +222,7 @@ fn gen_demo_concat() {
             1,
             vec![FxInstance::RadialBlur { amount: 0.5, center_x: 0.0, center_y: 0.0, spin: false }],
         ),
-        // тень видна на вырезанном ключе green.mp4
+        // the shadow is visible on the cut-out key green.mp4
         clip(
             5,
             16,
@@ -245,9 +245,9 @@ fn gen_demo_concat() {
     ];
     save(&mut p, "07-fx-barriers.kt");
 
-    // 08: варпы (Р.47 Кв4) — нелинейные гео в конкатенации; Ripple с
-    // кривой phase (волна бежит), CornerPin с кривыми углов (экран
-    // «устанавливается» на место).
+    // 08: warps (R.47 Kv4) — nonlinear geo in the concatenation; Ripple with
+    // a phase curve (the wave runs), CornerPin with the corner curves (the screen
+    // “settles” into place).
     let mut p = project();
     let key = |t_s: f64, v: f64| AutoKey::at(Tick((t_s * SEC as f64) as i64), v);
     let curve = |param: &str, keys: Vec<AutoKey>| ParamCurve {
@@ -270,7 +270,7 @@ fn gen_demo_concat() {
         pin,
         clip(3, 8, 4, 1, vec![FxInstance::LensDistort { k1: -0.5, k2: 0.0 }]),
         clip(4, 12, 4, 1, vec![FxInstance::twirl()]),
-        // конкатенация: калейдоскоп и цилиндр С ЗУМОМ — один слитый ран
+        // the concatenation: kaleidoscope and cylinder WITH A ZOOM — one merged run
         clip(5, 16, 4, 1, vec![FxInstance::kaleidoscope(), zoom(1.5)]),
         clip(6, 20, 4, 1, vec![FxInstance::Cylinder3d { curvature: 0.8 }, zoom(1.3)]),
     ];

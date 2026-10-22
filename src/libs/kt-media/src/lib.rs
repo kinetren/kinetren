@@ -1,6 +1,6 @@
-//! Источники медиа: трейт `MediaSource`, синтетические источники для тестов,
-//! rsmpeg/FFmpeg-бэкенд (feature `ffmpeg`, M3) и sidecar индекс-БД (M3,
-//! см. docs/media-index.md).
+//! Media sources: the `MediaSource` trait, synthetic sources for tests,
+//! rsmpeg/FFmpeg backend (feature `ffmpeg`, M3) and the sidecar index DB (M3,
+//! see docs/media-index.md).
 
 use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS, Tick};
 
@@ -17,25 +17,25 @@ pub struct MediaInfo {
     pub duration: Tick,
     pub has_video: bool,
     pub has_audio: bool,
-    /// Частота кадров источника (числитель/знаменатель), если есть видео.
+    /// Source frame rate (numerator/denominator), if there is video.
     pub fps: Option<(u32, u32)>,
-    /// Исходный размер кадра (0×0, если видео нет) — для «Max (по
-    /// источникам)» в выборе разрешения (п.11, порт v1).
+    /// The source's native frame size (0×0 if there is no video) — for “Max (across
+    /// sources)” in the resolution choice (item 11, v1 port).
     pub width: u32,
     pub height: u32,
-    /// Пиксельное соотношение сторон (SAR, num/den; Р.62). Вид кадра =
-    /// `width × sar`: всё приведение, тумбы и «Max (по источникам)»
-    /// считаются от ВИДА, иначе анаморф (DV 4:3, SAR 16:15) — ещё один
-    /// молчаливый растяг. Умолчание 1:1.
+    /// Pixel aspect ratio (SAR, num/den; R.62). The frame's FORM =
+    /// `width × sar`: all conforming, thumbs and “Max (across sources)” are computed from
+    /// the FORM, otherwise anamorphic footage (DV 4:3, SAR 16:15) would be yet another
+    /// silent stretch. Default 1:1.
     pub sar: (u32, u32),
-    /// ОДИНОЧНАЯ КАРТИНКА (Р.67): один кадр на любой тик, своей сетки
-    /// кадров и конца материала нет. Событие любой длительности показывает
-    /// её целиком, а «Loading…» над ним не висит.
+    /// A SINGLE PICTURE (R.67): one frame at any tick, with no frame grid
+    /// and no end of material. An event of any length shows it whole, and
+    /// “Loading…” does not hang over it.
     pub still: bool,
 }
 
 impl MediaInfo {
-    /// Вид кадра в квадратных пикселях: (ширина × SAR, высота).
+    /// Frame form in square pixels: (width × SAR, height).
     pub fn view_size(&self) -> (f64, f64) {
         let (n, d) = self.sar;
         let k = if n > 0 && d > 0 { n as f64 / d as f64 } else { 1.0 };
@@ -43,19 +43,19 @@ impl MediaInfo {
     }
 }
 
-/// Запрошенное качество видео (размер, в который декодер отдаёт кадр).
-/// `None` = полное разрешение источника. Входит в ключ кэша.
+/// The requested video quality (the size at which the decoder returns a frame).
+/// `None` = the source's full resolution. Part of the cache key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Quality {
     pub width: u32,
     pub height: u32,
 }
 
-/// Аудио-burst: ровно `AUDIO_BURST_FRAMES` кадров, 48 kHz stereo f32 interleaved.
-/// Инвариант движка №1: после декода другого формата аудио не существует.
+/// Audio burst: exactly `AUDIO_BURST_FRAMES` frames, 48 kHz stereo f32 interleaved.
+/// Engine invariant no. 1: after decoding, audio in another format does not exist.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AudioBurst {
-    /// Номер burst'а (покрывает сэмплы [idx*1024, (idx+1)*1024)).
+    /// The burst number (covers samples [idx*1024, (idx+1)*1024)).
     pub idx: i64,
     pub data: Box<[f32; AUDIO_BURST_FRAMES * AUDIO_CHANNELS]>,
 }
@@ -66,7 +66,7 @@ impl AudioBurst {
     }
 }
 
-/// Видеокадр: RGBA8, premultiplied alpha не требуется на этом уровне.
+/// Video frame: RGBA8; premultiplied alpha is not required at this level.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VideoFrame {
     pub pts: Tick,
@@ -76,12 +76,12 @@ pub struct VideoFrame {
     pub has_alpha: bool,
 }
 
-/// Источник медиа. Реализации: `FfmpegSource` (feature `ffmpeg`, M3),
-/// синтетические источники (тесты). Экземпляром владеет ровно один
-/// MediaWorker-поток (инвариант №5) — поэтому `&mut self` и только `Send`.
+/// Media source. Implementations: `FfmpegSource` (feature `ffmpeg`, M3),
+/// synthetic sources (tests). Exactly one MediaWorker thread owns an instance
+/// (invariant no. 5) — hence `&mut self` and only `Send`.
 pub trait MediaSource: Send {
     fn info(&self) -> &MediaInfo;
-    /// Sample-accurate: burst `idx` покрывает сэмплы источника [idx*1024, (idx+1)*1024).
+    /// Sample-accurate: burst `idx` covers the source's samples [idx*1024, (idx+1)*1024).
     fn read_audio_burst(&mut self, idx: i64) -> Result<AudioBurst, MediaError>;
     fn read_video_frame(
         &mut self,
@@ -90,38 +90,38 @@ pub trait MediaSource: Send {
     ) -> Result<VideoFrame, MediaError>;
     fn keyframe_before(&self, pts: Tick) -> Option<Tick>;
 
-    /// Принять НОВЫЕ параметры БЕЗ пересоздания источника (Р.53, п.410).
+    /// Accept NEW parameters WITHOUT recreating the source (R.53, item 410).
     ///
-    /// Контракт жёсткий: `true` — параметры применены И `info()` НЕ
-    /// изменился; `false` — источник этого не умеет, и вызывающий обязан
-    /// честно пересоздать его (`Player::replace_media`). Промежуточного
-    /// состояния не бывает: `false` не меняет ничего.
+    /// The contract is strict: `true` means the parameters are applied AND `info()` did NOT
+    /// change; `false` means the source cannot do it, and the caller must honestly
+    /// recreate it (`Player::replace_media`). There is no intermediate state:
+    /// `false` changes nothing.
     ///
-    /// Зачем: у генератора параметры лежат в пути медиа, и до этого
-    /// пункта их правка выглядела для движка ПОДМЕНОЙ ФАЙЛА — гасился
-    /// поток декодера, чистился кэш, дважды пересобирались рендереры. У
-    /// файловых источников метод так и остаётся `false`: смена пути там
-    /// и есть смена файла.
+    /// Why: a generator's parameters live in the media path, and until this item their
+    /// edit looked to the engine like a FILE SWAP — the decoder stream was stopped,
+    /// the cache was cleared, the renderers were rebuilt twice.
+    /// For file sources the method stays `false`:
+    /// changing the path there IS changing the file.
     fn retune(&mut self, _path: &str) -> bool {
         false
     }
 
-    /// Принять НОВЫЕ ЗНАЧЕНИЯ ГЕНЕРАТОРА без пересоздания (Р.59, стадия 2).
+    /// Accept NEW GENERATOR VALUES without recreation (R.59, stage 2).
     ///
-    /// Близнец `retune` с тем же жёстким контрактом (`true` ⇒ применено И
-    /// `info()` не изменился), только вход — состояние события, а не
-    /// строка. Отдельный метод, а не «`retune` с сериализацией в путь»:
-    /// кривые в путь не укладываются, а сериализовать значения в строку
-    /// ради того, чтобы тут же их разобрать, — это второй парсер на том
-    /// же горячем пути.
+    /// A twin of `retune` with the same strict contract (`true` ⇒ applied AND
+    /// `info()` did not change),
+    /// only the input is the event's state, not a string.
+    /// A separate method, not “`retune` with serialization into the path”:
+    /// curves do not fit into a path, and serializing values into a string
+    /// just to parse them right back is a second parser on the same hot path.
     fn retune_gen(&mut self, _state: &kt_model::GenState) -> bool {
         false
     }
 
-    /// Спан: кадр для КАЖДОГО ключа (ключи выровнены по сетке, строго
-    /// возрастают). Семантика кадра для ключа k — как у read_video_frame
-    /// (наибольший pts <= k). Планировщик кладёт ВСЕ кадры в кэш — GOP
-    /// декодируется один раз на спан (п.14/15). Дефолт — цикл одиночных.
+    /// Span: a frame for EVERY key (keys are aligned to the grid, strictly
+    /// increasing). The frame semantics for key k are as in read_video_frame
+    /// (the greatest pts <= k). The scheduler puts ALL frames into the cache — the GOP
+    /// is decoded once per span (item 14/15). The default is a loop of single calls.
     fn read_video_span(
         &mut self,
         keys: &[Tick],
@@ -139,7 +139,7 @@ pub trait MediaSource: Send {
     }
 }
 
-/// Кадров в блоке уровня 0 peak-пирамиды (docs/media-index.md).
+/// Frames in a level-0 block of the peak pyramid (docs/media-index.md).
 pub const PEAK_BLOCK_FRAMES: usize = 256;
 
 pub mod factory;

@@ -1,8 +1,8 @@
-//! Тест 9 (docs/porting-notes.md): MediaWorker-планировщик.
-//! - playback вытесняет prefetch;
-//! - generation-отмена дропает устаревшие запросы;
-//! - ни один ключ не декодируется дважды;
-//! - prefetch идемпотентен (второй проход по тёплому кэшу не сабмитит ничего).
+//! Test 9 (docs/porting-notes.md): the MediaWorker scheduler.
+//! - playback preempts prefetch;
+//! - generation cancel drops stale requests;
+//! - no key is decoded twice;
+//! - prefetch is idempotent (a second pass over the warm cache submits nothing).
 
 use kt_cache::{BurstCache, BurstKind, CacheConfig};
 use kt_engine::{
@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-/// Медленный источник: каждый read спит и ведёт журнал обслуженных idx.
+/// A slow source: each read sleeps and keeps a log of the served idx.
 struct SlowSource {
     inner: SyntheticSource,
     delay: Duration,
@@ -74,7 +74,7 @@ fn t9_playback_preempts_prefetch() {
     let cache = Arc::new(BurstCache::new(CacheConfig::default()));
     let (worker, served) = slow_worker(1, 5, &cache);
 
-    // Забиваем очередь дальним префетчем...
+    // We fill the queue with a far prefetch...
     for idx in 100..120 {
         worker.submit(DecodeRequest {
             kind: RequestKind::Audio { idx },
@@ -82,7 +82,7 @@ fn t9_playback_preempts_prefetch() {
             generation: 0,
         });
     }
-    // ...и когда воркер уже занят, прилетает playback.
+    // ...and when the worker is already busy, playback arrives.
     std::thread::sleep(Duration::from_millis(2));
     worker.submit(DecodeRequest {
         kind: RequestKind::Audio { idx: 7 },
@@ -94,7 +94,7 @@ fn t9_playback_preempts_prefetch() {
     let pos_playback = order.iter().position(|&i| i == 7).expect("playback served");
     assert!(
         pos_playback <= 2,
-        "playback обязан вытеснить очередь prefetch, а обслужен {pos_playback}-м: {order:?}"
+        "playback must displace the prefetch queue, yet it was served {pos_playback}th: {order:?}"
     );
     worker.shutdown();
 }
@@ -111,8 +111,8 @@ fn t9_generation_cancellation_drops_stale_work() {
             generation: 0,
         });
     }
-    std::thread::sleep(Duration::from_millis(12)); // пара запросов успевает
-    worker.cancel_generations_below(1); // seek: всё поколение 0 устарело
+    std::thread::sleep(Duration::from_millis(12)); // a pair of requests manages to run
+    worker.cancel_generations_below(1); // seek: the whole generation 0 is stale
     for idx in 500..503 {
         worker.submit(DecodeRequest {
             kind: RequestKind::Audio { idx },
@@ -125,9 +125,9 @@ fn t9_generation_cancellation_drops_stale_work() {
     let old_served = order.iter().filter(|&&i| i < 30).count();
     assert!(
         old_served <= 4,
-        "после отмены поколения хвост старых запросов не должен обслуживаться: {order:?}"
+        "after cancelling a generation the tail of old requests must not be served: {order:?}"
     );
-    assert!(order.ends_with(&[500, 501, 502]), "новое поколение обслужено: {order:?}");
+    assert!(order.ends_with(&[500, 501, 502]), "the new generation was served: {order:?}");
     worker.shutdown();
 }
 
@@ -136,7 +136,7 @@ fn t9_no_key_is_served_twice() {
     let cache = Arc::new(BurstCache::new(CacheConfig::default()));
     let (worker, served) = slow_worker(1, 1, &cache);
 
-    // Дубли в очереди + повторный сабмит после прогрева.
+    // Duplicates in the queue + a repeated submit after warm-up.
     for _round in 0..3 {
         for idx in 0..10 {
             worker.submit(DecodeRequest {
@@ -158,7 +158,7 @@ fn t9_no_key_is_served_twice() {
     assert_eq!(
         served.total.load(Ordering::SeqCst),
         10,
-        "каждый ключ декодируется ровно один раз (dedup очереди + кэш-проверка)"
+        "each key is decoded exactly once (queue dedup + cache check)"
     );
     worker.shutdown();
 }
@@ -168,7 +168,7 @@ fn t9_equal_priority_prefers_forward_of_cursor() {
     let cache = Arc::new(BurstCache::new(CacheConfig::default()));
     let (worker, served) = slow_worker(1, 3, &cache);
 
-    // Первый запрос ставит курсор на 50; дальше подкидываем позади и впереди.
+    // The first request puts the cursor at 50; then we add behind and ahead.
     worker.submit(DecodeRequest {
         kind: RequestKind::Audio { idx: 50 },
         prio: Priority::NearPrefetch,
@@ -190,7 +190,7 @@ fn t9_equal_priority_prefers_forward_of_cursor() {
     let first_back = order.iter().position(|&i| i <= 12).unwrap();
     assert!(
         last_fwd < first_back,
-        "вперёд по курсору раньше задних: {order:?} (fwd {fwd:?}, back {back:?})"
+        "forward from the cursor before the backward ones: {order:?} (fwd {fwd:?}, back {back:?})"
     );
     worker.shutdown();
 }
@@ -265,9 +265,9 @@ fn t9_prefetch_pass_is_idempotent() {
         0,
         false,
     );
-    assert_eq!(n2, 0, "по тёплому кэшу prefetch не должен сабмитить ничего");
+    assert_eq!(n2, 0, "on a warm cache prefetch must submit nothing");
 
-    // coverage совпадает с wanted
+    // coverage matches wanted
     let cov = cache.coverage(source_id(MediaId(1)), BurstKind::Audio, 0..1000);
     let (_, want) = &renderer.wanted_audio_bursts(range)[0];
     assert_eq!(cov, vec![want.clone()]);
@@ -275,15 +275,15 @@ fn t9_prefetch_pass_is_idempotent() {
     workers.remove(&MediaId(1)).unwrap().shutdown();
 }
 
-/// Тест 287 (Р.43 п.297): сотни микрособытий не превращаются в сотни
-/// одинаковых заказов префетча.
+/// Test 287 (R.43 item 297): hundreds of micro-events do not turn into hundreds
+/// of identical prefetch requests.
 ///
-/// Пользователь строит стоп-кадр из микрособытий и подтвердил, что это
-/// намеренный приём: в его проекте 885 аудио-событий длиной 90 тиков
-/// (4.8 сэмпла) стоят встык на 0.88 с и читают ОДИН И ТОТ ЖЕ кадр
-/// источника. Каждое клало в `wanted` свою пару, и на них делалось 885
-/// запросов `coverage` под мьютексом кэша — при том, что бёрст там ровно
-/// один.
+/// The user builds a freeze-frame out of micro-events and confirmed that this is a
+/// deliberate technique: in his project 885 audio events, 90 ticks long each
+/// (4.8 samples), stand back to back over 0.88 s and read ONE AND THE SAME source
+/// frame. Each put its own pair into `wanted`, and 885 `coverage` requests were made
+/// on them under the cache mutex — even though the burst there is exactly
+/// one.
 #[test]
 fn t287_stutter_of_micro_clips_asks_for_one_burst() {
     let mut p = Project::new(ProjectSettings {
@@ -300,7 +300,7 @@ fn t287_stutter_of_micro_clips_asks_for_one_burst() {
         settings_explicit: false,
     });
     p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
-    // 400 событий по 90 тиков встык, все с одной точки материала
+    // 400 events of 90 ticks back to back, all from one point of the material
     let step = kt_time::Tick(90);
     for i in 0..400u64 {
         p.clips.push(ClipEvent {
@@ -334,19 +334,19 @@ fn t287_stutter_of_micro_clips_asks_for_one_burst() {
     assert_eq!(
         wanted.len(),
         1,
-        "400 микрособытий на одном кадре источника — один заказ, а не 400: {wanted:?}"
+        "400 micro-events on one source frame — one order, not 400: {wanted:?}"
     );
 }
 
-/// Тест 501 (Р.53, п.411): перенастройка источника — НЕ запрос.
+/// Test 501 (R.53, item 411): reconfiguring a source is NOT a request.
 ///
-/// (а) Она не подчиняется generation-отмене: seek посреди сессии окна
-/// (драг пипетки цвета) не имеет права выбросить её из очереди — иначе
-/// источник навсегда остался бы со старыми параметрами, а модель ушла бы
-/// вперёд. Именно поэтому `Queue.retune` живёт отдельным полем.
+/// (a) It is not subject to generation cancel: a seek in the middle of the session
+/// (a color-picker drag) has no right to drop it from the queue — otherwise the source would
+/// stay with the old parameters forever while the model moved ahead. This is exactly why
+/// `Queue.retune` lives in a separate field.
 ///
-/// (б) После перенастройки в кэше не остаётся НИ ОДНОГО кадра старых
-/// параметров: чистит их сам воркер — тот же поток, который их вставляет.
+/// (b) After the reconfiguration NOT A SINGLE frame of the OLD
+/// parameters remains in the cache: the worker itself cleans them — the same thread that inserts them.
 #[test]
 fn t501_retune_is_not_cancelled_and_not_raced() {
     let cache = Arc::new(BurstCache::new(CacheConfig::default()));
@@ -355,11 +355,11 @@ fn t501_retune_is_not_cancelled_and_not_raced() {
     let q = Quality { width: 32, height: 18 };
     let src = match kt_media::factory::open_pseudo("gen:solid") {
         Some(Ok(s)) => s,
-        _ => unreachable!("gen: путь обязан открыться"),
+        _ => unreachable!("gen: the path must open"),
     };
     let w = MediaWorker::spawn(media, src, cache.clone());
 
-    // заказываем пачку кадров чёрного генератора и ждём прогрева
+    // we request a batch of frames of the black generator and wait for warm-up
     let step = 3000i64;
     for i in 0..64 {
         w.submit(DecodeRequest {
@@ -370,17 +370,17 @@ fn t501_retune_is_not_cancelled_and_not_raced() {
     }
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while !w.is_idle() {
-        assert!(std::time::Instant::now() < deadline, "прогрев не закончился");
+        assert!(std::time::Instant::now() < deadline, "the warm-up did not finish");
         std::thread::sleep(Duration::from_millis(10));
     }
     let warmed = (0..64).filter(|i| cache.get_video(sid, Some(q), i * step).is_some()).count();
-    assert!(warmed > 8, "кэш не прогрелся: {warmed} кадров");
+    assert!(warmed > 8, "the cache did not warm up: {warmed} frames");
 
-    // (а) перенастройка + НЕМЕДЛЕННЫЙ seek с огромным поколением
+    // (a) reconfiguration + an IMMEDIATE seek with a huge generation
     w.retune("gen:solid:c=ff8800");
     w.cancel_generations_below(u64::MAX / 2);
 
-    // ждём, пока перенастройка доедет: кадры новых параметров приходят
+    // we wait until the reconfiguration arrives: frames of the new parameters come
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
         w.submit(DecodeRequest {
@@ -395,18 +395,18 @@ fn t501_retune_is_not_cancelled_and_not_raced() {
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "seek отменил перенастройку — источник остался со старыми параметрами"
+            "a seek cancelled the reconfiguration — the source stayed with the old parameters"
         );
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    // (б) ни одного кадра СТАРЫХ параметров не осталось
+    // (b) not a single frame of the OLD parameters is left
     for i in 0..64 {
         if let Some(f) = cache.get_video(sid, Some(q), i * step) {
             assert_eq!(
                 &f.rgba[..3],
                 &[255, 136, 0],
-                "кадр {i} остался со старыми параметрами: чистка разошлась с воркером"
+                "frame {i} stayed with the old parameters: the cleanup diverged from the worker"
             );
         }
     }

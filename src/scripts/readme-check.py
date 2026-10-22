@@ -123,7 +123,7 @@ def check(root):
         for n, line in enumerate(text.split("\n"), 1):
             m = CYRILLIC.search(line)
             if m:
-                bad(doc, n, "cyrillic", f"«{line.strip()[:60]}»")
+                bad(doc, n, "cyrillic", f"“{line.strip()[:60]}”")
         for n, line in lines_outside_code(text):
             targets = MD_LINK.findall(line) + HTML_SRC.findall(line)
             for target in targets:
@@ -144,7 +144,7 @@ def check(root):
                         continue
                     referenced.add(rel.as_posix())
                 if anchor and dest.suffix == ".md" and anchor not in anchors(dest):
-                    bad(doc, n, "link", f"{target}: no heading «#{anchor}» in {dest.name}")
+                    bad(doc, n, "link", f"{target}: no heading “#{anchor}” in {dest.name}")
 
     total = 0
     on_disk = set()
@@ -167,10 +167,10 @@ def check(root):
     if shots is not None:
         shown = {Path(r).stem for r in referenced}
         for name in sorted(shots - shown):
-            bad(images_dir, 0, "shots", f"declared shot «{name}» is not shown in the docs")
+            bad(images_dir, 0, "shots", f"declared shot “{name}” is not shown in the docs")
         for name in sorted(shown - shots):
             bad(images_dir, 0, "shots",
-                f"«{name}» is not produced by readme_shots.py (images are never added by hand)")
+                f"“{name}” is not produced by readme_shots.py (images are never added by hand)")
     return problems
 
 

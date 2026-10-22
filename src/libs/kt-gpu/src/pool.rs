@@ -1,14 +1,14 @@
-//! Пулы GPU-ресурсов: транзиентные текстуры цепочек (ping-pong),
-//! LRU-кэш загруженных пре-FX кадров и LRU-кэш readback-результатов.
-//! Бюджеты VRAM жёсткие: кэши — единственные держатели текстур между
-//! кадрами, транзиенты возвращаются в пул внутри одного execute.
+//! Pools of GPU resources: transient textures of chains (ping-pong),
+//! an LRU cache of loaded pre-FX frames and an LRU cache of readback results.
+//! VRAM budgets are hard: the caches are the only holders of textures between
+//! frames; transients are returned to the pool within a single execute.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use kt_media::VideoFrame;
 
-/// Все текстуры движка — Rgba8Uint (сырые байты 0..255 без unorm-потерь).
+/// All engine textures are Rgba8Uint (raw bytes 0..255, without unorm loss).
 pub(crate) const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Uint;
 
 pub(crate) struct Tex {
@@ -40,8 +40,8 @@ fn tex_bytes(w: u32, h: u32) -> u64 {
     w as u64 * h as u64 * 4
 }
 
-/// Транзиенты по размеру. Внутри одного execute текстура возвращается в
-/// пул ТОЛЬКО когда её содержимое больше не читает ни один будущий пасс.
+/// Transients by size. Within a single execute a texture is returned to the
+/// pool ONLY when its content is no longer read by any future pass.
 pub(crate) struct TexturePool {
     free: HashMap<(u32, u32), Vec<Tex>>,
     bytes: u64,
@@ -66,21 +66,21 @@ impl TexturePool {
     pub fn release(&mut self, t: Tex) {
         let b = tex_bytes(t.w, t.h);
         if self.bytes + b > self.budget {
-            return; // дропаем — VRAM дороже повторного create
+            return; // we drop them: VRAM costs more than a repeated create
         }
         self.bytes += b;
         self.free.entry((t.w, t.h)).or_default().push(t);
     }
 }
 
-/// LRU загруженных пре-FX кадров: (СЕРИЙНЫЙ НОМЕР содержимого, dims) →
-/// текстура.
+/// LRU of loaded pre-FX frames: (SERIAL NUMBER of the content, dims) →
+/// texture.
 ///
-/// Адреса `(source, cache_idx)` для ключа НЕ ХВАТАЕТ (Р.53, п.409):
-/// у генератора с новыми параметрами и у вернувшегося вместо заглушки
-/// файла адрес тот же, а байты другие — кэш отдавал бы старую текстуру,
-/// и на GPU-пути правка цвета титра была бы не видна (t496, t211).
-/// Серийный номер выдаёт `BurstCache` и не переиспользует никогда.
+/// The addresses `(source, cache_idx)` are NOT ENOUGH for the key (R.53, item 409):
+/// a generator with new parameters, and a file that came back in place of a stub, have the same
+/// address but different bytes; the cache would return the old texture,
+/// and on the GPU path an edit of the title’s colour would not be visible (t496, t211).
+/// The serial number is issued by `BurstCache` and is never reused.
 pub(crate) struct UploadCache {
     map: HashMap<(u64, u32, u32), (Tex, u64)>,
     order: u64,
@@ -136,8 +136,8 @@ impl UploadCache {
     }
 }
 
-/// LRU готовых кадров композиции: hash плана → (RGBA, complete). Держит
-/// прогретый loop быстрым (у GPU-пути нет PostFxVideo-мемоизации CPU).
+/// LRU of ready composition frames: plan hash → (RGBA, complete). Keeps the
+/// warm loop fast (the GPU path has no PostFxVideo memoization of the CPU).
 pub(crate) struct ReadbackCache {
     map: HashMap<u64, (Vec<u8>, bool)>,
     order: VecDeque<u64>,
@@ -154,7 +154,7 @@ impl ReadbackCache {
         if !self.map.contains_key(&key) {
             return None;
         }
-        // бамп recency
+        // recency bump
         if let Some(p) = self.order.iter().position(|k| *k == key) {
             self.order.remove(p);
         }

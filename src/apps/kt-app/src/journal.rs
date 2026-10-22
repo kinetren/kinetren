@@ -1,26 +1,26 @@
-//! Журнал программы — единственный канал, когда показать некому.
+//! The program journal — the only channel when there is no one to show it to.
 //!
-//! Зачем он вообще (Р.49, п.350). Всё, что программа хочет сказать, идёт в
-//! колокольчик. Но у `on_exit` окна УЖЕ НЕТ: егуи закрыт, кадров больше не
-//! будет, а `.desktop` у нас с `Terminal=false` — вывод в stderr уходит в
-//! никуда (в лучшем случае в journald, куда монтажёр не пойдёт). Именно там
-//! живёт финальная запись проекта: отказ на ней — худший из возможных, и до
-//! Р.49 он не оставлял ни следа. То же у панического хука (п.355): показать
-//! отчёт некому, окно уже мертво.
+//! Why it exists at all (R.49, item 350). Everything the program wants to say goes into
+//! the bell. But the window's `on_exit` is ALREADY GONE: egui is closed, there will be no more
+//! frames, and our `.desktop` has `Terminal=false` — output to stderr goes
+//! nowhere (at best into journald, where the editor will never look). The project's
+//! final record lives exactly there: a failure on it is the worst possible, and before
+//! R.49 it left no trace. The same goes for the panic hook (item 355): there is no one to show
+//! the report to, the window is already dead.
 //!
-//! Поэтому журнал НЕ дублирует колокольчик: в него пишется то, что
-//! пользователь иначе не увидит никогда, плюс предупреждения — чтобы у
-//! жалобы «оно что-то сказало и пропало» был адрес.
+//! Therefore the journal does NOT duplicate the bell: it records what the
+//! person would otherwise never see, plus warnings — so that the complaint
+//! “it said something and it vanished” has an address.
 //!
-//! Формат — строка на запись: `ГГГГ-ММ-ДД ЧЧ:ММ:СС уровень текст`. Ротация
-//! по 1 МиБ в `kt-app.log.1` (один шаг, без веера номеров): журнал нужен для
-//! разбора последней сессии, а не для истории.
+//! Format — one line per record: `YYYY-MM-DD HH:MM:SS level text`. Rotation
+//! at 1 MiB into `kt-app.log.1` (one step, no fan of numbers): the journal is needed for
+//! analysis of the last session, not for history.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// Порог ротации. Мегабайт — это примерно десять тысяч строк: больше, чем
-/// программа наговорит за сутки работы, и меньше, чем заметно на диске.
+/// The rotation threshold. A megabyte is about ten thousand lines: more than the
+/// program produces in a day of work, and less than is noticeable on disk.
 pub const ROTATE_BYTES: u64 = 1024 * 1024;
 
 /// Name of the per-user data directory under `$XDG_DATA_HOME`.
@@ -29,8 +29,8 @@ pub const DATA_DIR_NAME: &str = "kinetren";
 /// moved into place once (`data_dir_in`); nothing reads it afterwards.
 pub const FORMER_DATA_DIR_NAME: &str = "kinotrain";
 
-/// Каталог данных программы (`$XDG_DATA_HOME/kinetren`). Общий с
-/// автосейвом — отдельный дом журналу заводить незачем. The single resolver:
+/// The program's data directory (`$XDG_DATA_HOME/kinetren`). Shared with the
+/// autosave — there is no need for a separate home for the journal. The single resolver:
 /// recovery, journal, locks, presets, workspace and eframe's own storage
 /// (its app id is the same name) all live here.
 pub fn data_dir() -> PathBuf {
@@ -80,9 +80,9 @@ pub fn path() -> PathBuf {
     data_dir().join("kt-app.log")
 }
 
-/// Отчёт о последнем падении. Один файл: он перезаписывается каждым новым
-/// падением, а прочитанный уезжает в `.seen` — так предупреждение появляется
-/// ровно один раз на аварию, и при этом последний отчёт всегда на месте.
+/// Report about the last crash. One file: it is overwritten by each new
+/// crash, and the read one moves to `.seen` — so the warning appears
+/// exactly once per crash, while the last report is always in place.
 pub fn crash_path() -> PathBuf {
     data_dir().join("kt-app-crash.txt")
 }
@@ -91,10 +91,10 @@ pub fn crash_seen_path() -> PathBuf {
     data_dir().join("kt-app-crash.seen.txt")
 }
 
-/// «Чёрный ящик» для панического хука. Хранится ОТДЕЛЬНО от приложения:
-/// хук не имеет права трогать модель (инвариант 2 — состояние FX принадлежит
-/// рендер-потоку; инвариант 6 — в колбэке ни локов, ни аллокаций), а
-/// кольцо событий самодостаточно и читается из любого потока.
+/// “Black box” for the panic hook. Stored SEPARATELY from the application:
+/// the hook has no right to touch the model (invariant 2 — the FX state belongs to the
+/// render thread; invariant 6 — in a callback, no locks and no allocations),
+/// while the event ring is self-sufficient and can be read from any thread.
 static FLIGHT: std::sync::OnceLock<
     std::sync::Mutex<Option<std::sync::Arc<kt_engine::flight::FlightRecorder>>>,
 > = std::sync::OnceLock::new();
@@ -110,10 +110,10 @@ pub fn set_flight(f: std::sync::Arc<kt_engine::flight::FlightRecorder>) {
     }
 }
 
-/// Поставить панический хук. Разделение труда с `Drop for KtApp` (п.354)
-/// прямое: **хук — диагностика, `Drop` — данные**. Хук не сохраняет проект
-/// (лезть в модель из произвольного паникующего потока нельзя) и не мешает
-/// раскрутке: прежний хук зовётся следом, `Drop` доедет своим ходом.
+/// Install the panic hook. The division of labor with `Drop for KtApp` (item 354)
+/// is direct: **the hook is diagnostics, `Drop` is data**. The hook does not save the project
+/// (one may not reach into the model from an arbitrary panicking thread) and does not interfere
+/// with unwinding: the previous hook is called next, and `Drop` runs its own course.
 pub fn install_panic_hook() {
     let prev = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -128,8 +128,8 @@ pub fn install_panic_hook() {
     }));
 }
 
-/// Тело отчёта. Вынесено из хука, чтобы его можно было проверить, не
-/// подменяя глобальный хук в тесте (подмена задела бы соседние тесты).
+/// The body of the report. Taken out of the hook so that it can be checked without
+/// replacing the global hook in a test (the replacement would affect neighboring tests).
 pub(crate) fn crash_report(panic_text: &str) -> String {
     let dump = flight_slot().lock().ok().and_then(|s| s.as_ref().map(|f| f.dump()));
     crash_report_with(panic_text, dump.as_deref())
@@ -143,7 +143,7 @@ pub(crate) fn crash_report_with(panic_text: &str, flight: Option<&str>) -> Strin
     out.push_str(&format!("thread: {}\n", t.name().unwrap_or("<unnamed>")));
     out.push_str(&format!("panic: {panic_text}\n\n"));
     out.push_str(&format!("{}\n", std::backtrace::Backtrace::force_capture()));
-    // дамп «чёрного ящика»: что программа делала последние секунды
+    // dump of the “black box”: what the program was doing in the last seconds
     if let Some(f) = flight {
         out.push_str("\n--- flight recorder ---\n");
         out.push_str(f);
@@ -151,8 +151,8 @@ pub(crate) fn crash_report_with(panic_text: &str, flight: Option<&str>) -> Strin
     out
 }
 
-/// Если прошлая сессия оставила отчёт — вернуть его путь ОДИН раз и
-/// отложить сам отчёт в сторону.
+/// If the previous session left a report — return its path ONCE and
+/// set the report itself aside.
 pub fn take_crash_report() -> Option<PathBuf> {
     let p = crash_path();
     if !p.exists() {
@@ -161,14 +161,14 @@ pub fn take_crash_report() -> Option<PathBuf> {
     let seen = crash_seen_path();
     match std::fs::rename(&p, &seen) {
         Ok(()) => Some(seen),
-        // переименовать не вышло — сказать всё равно надо, отчёт на месте
+        // renaming did not work — still must say so, the report is in place
         Err(_) => Some(p),
     }
 }
 
-/// Дописать строку. Ошибки записи журнала ГЛОТАЮТСЯ намеренно: журнал —
-/// вспомогательный канал, и падать/шуметь из-за него, когда пользователь
-/// как раз теряет проект, было бы издевательством.
+/// Append a line. Journal write errors are SWALLOWED on purpose: the journal is
+/// an auxiliary channel, and crashing or making noise because of it, when the user
+/// is just losing a project, would be mockery.
 pub fn log(level: &str, text: &str) {
     write_to(&path(), level, text);
 }
@@ -193,14 +193,14 @@ fn rotate(path: &Path) {
     }
 }
 
-/// Дата и время без внешних зависимостей: программа не тянет chrono ради
-/// одной строки. Алгоритм — civil_from_days Говарда Хиннанта.
+/// Date and time without external dependencies: the program does not pull in chrono for the
+/// sake of one line. The algorithm is civil_from_days by Howard Hinnant.
 fn stamp() -> String {
     stamp_of(std::time::SystemTime::now())
 }
 
-/// Та же метка для произвольного момента — ею диалог восстановления
-/// показывает время каждого кандидата (п.353).
+/// The same label for an arbitrary moment — the recovery dialog uses it to show the time
+/// of each candidate (item 353).
 pub fn stamp_of(t: std::time::SystemTime) -> String {
     let secs = t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let (days, rem) = (secs / 86_400, secs % 86_400);
@@ -232,8 +232,8 @@ mod tests {
         d.join("kt-app.log")
     }
 
-    /// t354: журнал дописывает, а не перетирает, и ротируется по порогу,
-    /// не теряя старое. Отказ записи журнала не должен быть заметен.
+    /// t354: the journal appends and does not overwrite, and rotates at the threshold,
+    /// without losing the old. A failure to write the journal must not be noticeable.
     #[test]
     fn t354_journal_appends_and_rotates() {
         let p = tmp("rot");
@@ -241,45 +241,45 @@ mod tests {
         write_to(&p, "INFO", "second line");
         let body = std::fs::read_to_string(&p).unwrap();
         assert!(body.contains("first line") && body.contains("second line"), "{body}");
-        assert_eq!(body.lines().count(), 2, "дописывание перетёрло журнал");
-        assert!(body.starts_with("20"), "нет даты в начале строки: {body}");
+        assert_eq!(body.lines().count(), 2, "appending overwrote the log");
+        assert!(body.starts_with("20"), "no date at the start of the line: {body}");
 
-        // перевалили порог — прошлое уезжает в .log.1, новое начинает с нуля
+        // the threshold crossed — the past moves into .log.1, the new one starts from zero
         std::fs::write(&p, "x".repeat(ROTATE_BYTES as usize + 1)).unwrap();
         write_to(&p, "WARN", "after rotate");
         let fresh = std::fs::read_to_string(&p).unwrap();
-        assert_eq!(fresh.lines().count(), 1, "ротация не обнулила журнал");
+        assert_eq!(fresh.lines().count(), 1, "rotation did not reset the log");
         assert!(fresh.contains("after rotate"));
         let old = std::fs::read_to_string(p.with_extension("log.1")).unwrap();
-        assert_eq!(old.len(), ROTATE_BYTES as usize + 1, "старое потеряно при ротации");
+        assert_eq!(old.len(), ROTATE_BYTES as usize + 1, "old data lost on rotation");
 
-        // недоступный путь — молча мимо: журнал не смеет ронять программу
+        // an unreachable path — silently past it: the journal does not dare to bring the program down
         write_to(Path::new("/proc/self/no-such-dir/kt.log"), "WARN", "ignored");
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
     }
 
-    /// t375: отчёт о падении называет версию, поток и место, несёт бэктрейс
-    /// и дамп «чёрного ящика» — иначе жалоба «программа закрылась» остаётся
-    /// без единой зацепки. Симметричный сторож на отравление кольца — t373
-    /// в kt-engine: хук читает ящик ровно тогда, когда кто-то уже паниковал.
+    /// t375: the crash report names the version, the thread and the place, carries the backtrace
+    /// and the dump of the “black box” — otherwise the complaint “the program closed” remains
+    /// without a single clue. The symmetric guard against poisoning of the ring — t373
+    /// in kt-engine: the hook reads the box exactly when someone has already panicked.
     #[test]
     fn t375_crash_report_names_version_thread_and_flight() {
         use kt_engine::flight::{Ev, FlightRecorder};
         let f = FlightRecorder::new();
         f.push(Ev::Play, 48_000, 0);
-        // дамп передаётся явно: слот «чёрного ящика» глобальный, а тесты
-        // идут параллельно — соседний харнесс успевает положить туда свой
+        // the dump is passed explicitly: the “black box” slot is global, and tests
+        // run in parallel — a neighboring harness manages to put its own there
         let r =
-            crash_report_with("assertion failed: у пользователя всё сломалось", Some(&f.dump()));
-        assert!(r.contains(kt_version::display()), "нет версии: жалоба без неё бесполезна");
-        assert!(r.contains("thread:"), "нет потока");
-        assert!(r.contains("assertion failed"), "нет самого сообщения паники");
-        assert!(r.contains("crash_report_with"), "в бэктрейсе нет имён — отчёт из голых адресов");
-        assert!(r.contains("--- flight recorder ---"), "нет дампа чёрного ящика");
-        assert!(r.to_lowercase().contains("play"), "чёрный ящик пуст: {r}");
+            crash_report_with("assertion failed: everything broke for the user", Some(&f.dump()));
+        assert!(r.contains(kt_version::display()), "no version: a complaint without it is useless");
+        assert!(r.contains("thread:"), "no thread");
+        assert!(r.contains("assertion failed"), "the panic message itself is missing");
+        assert!(r.contains("crash_report_with"), "the backtrace has no names — the report is made of bare addresses");
+        assert!(r.contains("--- flight recorder ---"), "no black box dump");
+        assert!(r.to_lowercase().contains("play"), "black box is empty: {r}");
     }
 
-    /// t374: отчёт прошлой сессии отдаётся ровно ОДИН раз и не теряется.
+    /// t374: the previous session's report is handed out exactly ONCE and is not lost.
     #[test]
     fn t374_crash_report_is_reported_once() {
         let dir = std::env::temp_dir().join(format!("kt-t374-{}", std::process::id()));
@@ -289,8 +289,8 @@ mod tests {
         let seen = dir.join("kt-app-crash.seen.txt");
         std::fs::write(&crash, "report").unwrap();
 
-        // та же логика, что в `take_crash_report`, на явных путях: каталог
-        // данных один на процесс, а тесты идут параллельно
+        // The same logic as in `take_crash_report`, on explicit paths: the data directory
+        // is one per process, and tests run in parallel
         let take = |c: &Path, s: &Path| -> Option<PathBuf> {
             if !c.exists() {
                 return None;
@@ -300,17 +300,17 @@ mod tests {
                 Err(_) => Some(c.to_path_buf()),
             }
         };
-        assert_eq!(take(&crash, &seen), Some(seen.clone()), "об аварии не сказано");
-        assert_eq!(std::fs::read_to_string(&seen).unwrap(), "report", "отчёт потерян");
-        assert_eq!(take(&crash, &seen), None, "об одной аварии сказано дважды");
+        assert_eq!(take(&crash, &seen), Some(seen.clone()), "the crash is not mentioned");
+        assert_eq!(std::fs::read_to_string(&seen).unwrap(), "report", "report lost");
+        assert_eq!(take(&crash, &seen), None, "one crash is reported twice");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Дата собирается своими руками — сторож на известные значения.
+    /// The date is assembled by hand — a guard on known values.
     #[test]
     fn t354b_civil_from_days() {
         assert_eq!(civil_from_days(0), (1970, 1, 1));
-        assert_eq!(civil_from_days(19_723), (2024, 1, 1)); // високосный
+        assert_eq!(civil_from_days(19_723), (2024, 1, 1)); // leap year
         assert_eq!(civil_from_days(19_782), (2024, 2, 29));
         assert_eq!(civil_from_days(20_713), (2026, 9, 17));
     }

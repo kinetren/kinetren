@@ -1,8 +1,8 @@
-//! GPU-исполнитель FramePlan: фрагментные пассы (НЕ compute — дефолтный
-//! device egui-wgpu на GL-бэкенде живёт в downlevel-лимитах, а live-check
-//! гоняет llvmpipe), ping-pong композит, readback финального кадра.
-//! Семантика зеркалит CPU-исполнитель kt-engine (execute_plan_cpu):
-//! целочисленные ядра байт-в-байт, билинейные — в допуске (t181/t182).
+//! The GPU executor of FramePlan: fragment passes (NOT compute: the default
+//! egui-wgpu device on the GL backend lives within the downlevel limits, and the live check
+//! runs on llvmpipe), ping-pong composite, readback of the final frame.
+//! The semantics mirror the CPU executor of kt-engine (execute_plan_cpu):
+//! integer kernels byte for byte, bilinear ones within tolerance (t181/t182).
 
 use std::sync::{Arc, Mutex};
 
@@ -17,21 +17,21 @@ use xxhash_rust::xxh3::Xxh3;
 use crate::context::{GpuContext, GpuInitError};
 use crate::pool::{FORMAT, ReadbackCache, Tex, TexturePool, UploadCache, create_tex};
 
-const SLOT: u64 = 256; // выравнивание dynamic offset (максимум по спеке)
-/// Юниформа слитого гео-пасса (Р.44): программа примитивов не влезает в
-/// общие 128 Б — свой bind group layout и 4 слота арены на пасс.
+const SLOT: u64 = 256; // dynamic offset alignment (the maximum per the spec)
+/// Uniform of the merged geometry pass (R.44): the primitive program does not fit
+/// into the shared 128 B, so it has its own bind group layout and 4 arena slots per pass.
 const GEOM_UNIFORM_BYTES: usize = 1024;
 const GEOM_SLOT_UNITS: u32 = (GEOM_UNIFORM_BYTES as u64 / SLOT) as u32;
 const UPLOAD_BUDGET: u64 = 256 * 1024 * 1024;
 const TRANSIENT_BUDGET: u64 = 128 * 1024 * 1024;
 const READBACK_BUDGET: u64 = 64 * 1024 * 1024;
 
-/// Униформа всех пассов: 2×vec4<u32> + 2×vec4<f32> + mat4 (см. common.wgsl).
+/// Uniform of all passes: 2×vec4<u32> + 2×vec4<f32> + mat4 (see common.wgsl).
 #[derive(Default, Clone, Copy)]
 struct UniformData {
     u: [u32; 8],
     f: [f32; 8],
-    /// MVP 3D-пассов (column-major, как ждёт WGSL mat4x4).
+    /// MVP of the 3D passes (column-major, as WGSL mat4x4 expects).
     m: [f32; 16],
 }
 
@@ -51,8 +51,8 @@ impl UniformData {
     }
 }
 
-/// Юниформа geom_fused.wgsl (зеркало структуры GeomParams): заголовок +
-/// vec4-слоты примитивов. 1024 Б = GEOM_SLOT_UNITS слотов арены.
+/// Uniform of geom_fused.wgsl (a mirror of the GeomParams structure): a header plus
+/// vec4 primitive slots. 1024 B = GEOM_SLOT_UNITS arena slots.
 struct GeomUniform {
     h: [u32; 4],
     d: [u32; 4],
@@ -78,8 +78,8 @@ impl GeomUniform {
     }
 }
 
-/// Упаковка программы kt-fx в юниформу: коэффициенты уже перемножены в f64
-/// при построении — здесь ОДНОКРАТНОЕ округление f64→f32 каждого числа.
+/// Packing of the kt-fx program into the uniform: the coefficients are already multiplied in f64
+/// at construction; here is a ONE-TIME rounding f64→f32 of each number.
 fn encode_geom(prog: &kt_fx::geom::GeomProgram) -> GeomUniform {
     use kt_fx::geom::GeomPrim;
     let mut u = GeomUniform { h: [0; 4], d: [0; 4], p: [[0.0; 4]; 62] };
@@ -126,8 +126,8 @@ fn encode_geom(prog: &kt_fx::geom::GeomProgram) -> GeomUniform {
         kinds |= kind << (i * 4);
     }
     debug_assert!(cur <= 46, "geom prims exceed uniform slots (tap table at 46+)");
-    // tap-таблица поглощённых поточечных (Р.45, п.312): оп i — слоты
-    // 46+2i; meta = kind(4 бита, Р.47) | after_prim<<4 | color<<9 | special<<10
+    // tap table of the absorbed pointwise ops (R.45, item 312): op i has slots
+    // 46+2i; meta = kind (4 bits, R.47) | after_prim<<4 | color<<9 | special<<10
     debug_assert!(prog.tap_ops.len() <= kt_fx::geom::MAX_TAP_OPS);
     for (i, op) in prog.tap_ops.iter().enumerate() {
         let base = 46 + i * 2;
@@ -174,9 +174,9 @@ fn encode_geom(prog: &kt_fx::geom::GeomProgram) -> GeomUniform {
             }
         }
     }
-    // суперсемплинг (п.309): тапы аффинных серий посчитаны на CPU и едут
-    // числом; Proj-серии меряют якобиан по-пиксельно ТОЙ ЖЕ формулой.
-    // Биты 24..31 — счётчик tap-опов.
+    // supersampling (item 309): the taps of the affine series are computed on the CPU and passed
+    // as a number; Proj series measure the Jacobian per pixel with THE SAME formula.
+    // Bits 24..31 are the counter of tap ops.
     let ss = match prog.ss {
         kt_fx::geom::SsSpec::Const { nx, ny } => (nx << 8) | (ny << 16),
         kt_fx::geom::SsSpec::PerPixel => 1,
@@ -196,32 +196,32 @@ enum Pipe {
     Vhs,
     GlowAdd,
     Composite,
-    /// Сила наложения слоя (Р.38 п.12): смешение сухой и мокрой сторон.
+    /// Layer blend strength (R.38 item 12): mixing of the dry and wet sides.
     LayerMix,
-    // поточечные Р.47 в барьерной позиции
+    // pointwise R.47 in the barrier position
     ColorGrade,
     Duotone,
     Posterize,
     Vignette,
-    // барьеры Р.47 Кв3
+    // R.47 barriers Kv3
     SharpenAdd,
     Pixelate,
     ChromaAb,
     RadialBlur,
     ShadowUnder,
     Halftone,
-    /// Граница вложения (Р.50): прямая альфа из премультиплицированной.
+    /// Embedding boundary (R.50): straight alpha from premultiplied.
     Unpremul,
-    /// Премультипликация перед мипом (Р.53, п.418).
+    /// Premultiplication before the mip (R.53, item 418).
     Premul,
 }
 
 const PIPE_COUNT: usize = 21;
 
-/// Один шаг цепочки, предвычисленный на CPU (общая математика — kt-fx:
-/// pan_frame/cam_at/noise_seed). Кол-во пассов и размеры известны заранее.
+/// One chain step precomputed on the CPU (common maths: kt-fx:
+/// pan_frame/cam_at/noise_seed). The number of passes and the sizes are known in advance.
 enum FxOp {
-    /// Билинейная рамка (Pan/CamMotion/Blur down+up): выход tw×th.
+    /// Bilinear frame (Pan/CamMotion/Blur down+up): output tw×th.
     Resample {
         tw: u32,
         th: u32,
@@ -259,21 +259,21 @@ enum FxOp {
         seed: u32,
         res_scale: u32,
     },
-    /// Bloom: даунскейл dw×dh → апскейл → аддитив ×s (3 пасса).
+    /// Bloom: downscale dw×dh → upscale → additive ×s (3 passes).
     Glow {
         dw: u32,
         dh: u32,
         s: f32,
         th: u32,
         tint: [f32; 3],
-        /// Мипить ПРЕМУЛЬТИПЛИЦИРОВАННОЕ (Р.53, п.418).
+        /// Mipping of PREMULTIPLIED data (R.53, item 418).
         pm: bool,
     },
-    /// Премультипликация/обратная конверсия вокруг мипа (Р.53, п.418).
+    /// Premultiplication/reverse conversion around the mip (R.53, item 418).
     Premul,
     Unpremul,
-    /// Барьеры Р.47 Кв3. Sharpen/DropShadow — 3 пасса (мип down/up +
-    /// финал), остальные — один.
+    /// R.47 barriers Kv3. Sharpen/DropShadow take 3 passes (mip down/up +
+    /// final), the others take one.
     Sharpen {
         dw: u32,
         dh: u32,
@@ -305,7 +305,7 @@ enum FxOp {
         sa: f32,
         k: f32,
     },
-    /// Поточечные Р.47 на барьерной позиции: один пасс, зеркала tap_*.
+    /// Pointwise R.47 at the barrier position: one pass, mirrors of tap_*.
     ColorGrade {
         br: f32,
         con: f32,
@@ -326,18 +326,18 @@ enum FxOp {
         radius: f32,
         softness: f32,
     },
-    /// Слитая гео-серия (Р.44): программа обратных отображений строится в
-    /// kt-fx (общий код с CPU-исполнителем), один пасс, юниформа 1024 Б.
-    /// EventGrid — всегда этим путём (мозаика прежних 2 пассов удалена).
+    /// Merged geometry series (R.44): the program of inverse mappings is built in
+    /// kt-fx (shared code with the CPU executor), one pass, a 1024 B uniform.
+    /// EventGrid always takes this path (the mosaic of the former 2 passes is removed).
     GeomFused {
         prog: kt_fx::geom::GeomProgram,
     },
-    /// Снимок состояния ДО вклада слоя (Р.38 п.12): сухая сторона
-    /// будущего смешения. Только маркер — пассов не порождает.
+    /// Snapshot of the state BEFORE a layer’s contribution (R.38 item 12): the dry side
+    /// of the future mix. A marker only; it spawns no passes.
     Snapshot,
-    /// Смешать текущий результат со снимком весом `k` (0..4096).
-    /// Размеры могли разойтись (Pan/CamMotion ресемплят) — тогда сухая
-    /// сторона вписывается ТОЙ ЖЕ билинейкой, что и на CPU.
+    /// Mix the current result with the snapshot with weight `k` (0..4096).
+    /// The sizes could have diverged (Pan/CamMotion resample), in which case the dry side is fitted
+    /// by THE SAME bilinear as on the CPU.
     Mix {
         k: u32,
     },
@@ -348,17 +348,17 @@ impl FxOp {
         match self {
             FxOp::Glow { .. } => 3,
             FxOp::Sharpen { .. } | FxOp::DropShadow { .. } => 3,
-            // снимок пассов не порождает; смешение при разошедшихся
-            // размерах добирает ресемпл сухой стороны
+            // a snapshot spawns no passes; when the sizes have diverged, mixing is completed
+            // by resampling the dry side
             FxOp::Snapshot => 0,
             FxOp::Mix { .. } => 2,
             _ => 1,
         }
     }
 
-    /// Слоты юниформ-арены (SLOT = 256 Б): обычный пасс — один слот,
-    /// слитый гео-пасс — GEOM_SLOT_UNITS. Сумма обязана ТОЧНО предсказывать
-    /// потребление арены (debug_assert в pass/pass_geom).
+    /// Uniform arena slots (SLOT = 256 B): an ordinary pass takes one slot,
+    /// a merged geometry pass takes GEOM_SLOT_UNITS. The sum MUST predict EXACTLY
+    /// the consumption of the arena (debug_assert in pass/pass_geom).
     fn slot_units(&self) -> u32 {
         match self {
             FxOp::GeomFused { .. } => GEOM_SLOT_UNITS,
@@ -367,7 +367,7 @@ impl FxOp {
     }
 }
 
-/// Слагаемые ключа ReadbackCache от разрешённой камеры (Р.29).
+/// Components of the ReadbackCache key from the resolved camera (R.29).
 fn put_cam3d(h: &mut Xxh3, c: &Option<Cam3d>) {
     match c {
         None => h.update(&[0u8]),
@@ -394,12 +394,12 @@ fn put_cam3d(h: &mut Xxh3, c: &Option<Cam3d>) {
     }
 }
 
-/// Результат chain_ops: опы, финальные размеры, альфа (значение/известна),
-/// максимум промежуточных размеров (гард max_dim, п.314).
+/// Result of chain_ops: ops, final sizes, alpha (value/known),
+/// the maximum of intermediate sizes (max_dim guard, item 314).
 type ChainOps = (Vec<FxOp>, (u32, u32), bool, bool, (u32, u32));
 
-/// Цепочка одного слоя: ops + предсказанные выходные размеры/альфа.
-/// Зеркало трансформаций apply_video_chain_pooled (kt-fx/src/video.rs).
+/// The chain of one layer: ops plus the predicted output sizes/alpha.
+/// A mirror of the transformations of apply_video_chain_pooled (kt-fx/src/video.rs).
 #[allow(clippy::too_many_arguments)]
 fn chain_ops(
     fx: &[FxInstance],
@@ -411,26 +411,26 @@ fn chain_ops(
     u: f64,
     t: Tick,
     cam3d: Option<Cam3d>,
-    // Контекст ведущего узла «Геометрия» (Р.62): тот же, что у CPU.
+    // Context of the leading “Geometry” node (R.62): the same as on the CPU.
     lead: Option<kt_fx::conform::LeadCtx>,
-    // Альфа ВХОДА цепочки (Р.53, п.418). Свёртка `has_alpha_known`
-    // говорит только о том, высказался ли какой-то шаг; пока никто не
-    // высказался, альфа кадра — это альфа источника, и премультипликацию
-    // перед мипом надо решать по ней, иначе CPU (у которого есть
-    // `Frame.has_alpha`) и GPU разошлись бы на титрах.
+    // The chain INPUT alpha (R.53, item 418). The `has_alpha_known` fold
+    // says only whether some step has spoken; until someone has spoken, the frame’s alpha
+    // is the source’s alpha, and the premultiplication before the mip must be decided by it,
+    // otherwise the CPU (which has
+    // `Frame.has_alpha`) and the GPU would diverge on titles.
     src_has_alpha: bool,
 ) -> ChainOps {
     let (mut w, mut h) = (src_w, src_h);
-    // максимум ПРОМЕЖУТОЧНЫХ размеров (K×-сегменты п.314): resolve_chain
-    // сверяет его с max_dim устройства — иначе create_texture упал бы
-    // валидацией и отравил device вместо аккуратного TooLarge
+    // the maximum of INTERMEDIATE sizes (K×-segments, item 314): resolve_chain
+    // checks it against the device max_dim, otherwise create_texture would fail
+    // validation and poison the device instead of a clean TooLarge
     let (mut mw, mut mh) = (src_w, src_h);
-    let mut has_alpha_known = false; // выставлял ли эффект альфу явно
+    let mut has_alpha_known = false; // whether an effect set the alpha explicitly
     let mut has_alpha = false;
     let mut ops = Vec::new();
     let (mow, moh) = (out_w.max(2), out_h.max(2));
-    // границы вклада слоёв (Р.38 п.12): на них делается снимок сухой
-    // стороны будущего смешения
+    // the boundaries of layer contributions (R.38 item 12): a snapshot of the dry
+    // side of the future mix is taken at them
     let froms: Vec<usize> = fx
         .iter()
         .enumerate()
@@ -439,8 +439,8 @@ fn chain_ops(
             _ => None,
         })
         .collect();
-    // План цепочки строит kt-fx (Р.45, п.311) — ОБЩИЙ код обоих бэкендов
-    // (инвариант №7); здесь опы только транслируются в FxOp.
+    // The chain plan is built by kt-fx (R.45, item 311): the SHARED code of both backends
+    // (invariant 7); here the ops are only translated into FxOp.
     let plan = kt_fx::plan::plan_chain_in(
         fx, src_w, src_h, src_scale, out_w, out_h, u, cam3d, t.0, &froms, lead,
     );
@@ -489,7 +489,7 @@ fn chain_ops(
             },
             kt_fx::plan::PlanOp::Barrier { idx, res_scale } => match &fx[idx] {
                 FxInstance::Blur { radius, radius_y } => {
-                    // Р.45 (п.313): шаги ×K — мип тот же, вид инвариантен
+                    // R.45 (item 313): steps ×K: the mip is the same, the view is invariant
                     let radius = (*radius).clamp(1, 48);
                     let step = ((radius / 3).max(1) + 1) * res_scale;
                     let step_y = if *radius_y == 0 {
@@ -498,10 +498,10 @@ fn chain_ops(
                         (((*radius_y).clamp(1, 48) / 3).max(1) + 1) * res_scale
                     };
                     let (dw, dh) = ((w / step).max(1), (h / step_y).max(1));
-                    // ПРАВИЛО АЛЬФЫ (п.418): мип идёт по
-                    // премультиплицированному — зеркало гейта в
-                    // `kt_fx::video::blur`. При a == 255 обе конверсии
-                    // тождественны, поэтому проходы и не ставятся.
+                    // ALPHA RULE (item 418): the mip runs over the
+                    // premultiplied data: a mirror of the gate in
+                    // `kt_fx::video::blur`. When a == 255 both conversions
+                    // are identities, so the passes are not set up at all.
                     let pm = if has_alpha_known { has_alpha } else { src_has_alpha };
                     if pm {
                         ops.push(FxOp::Premul);
@@ -538,13 +538,13 @@ fn chain_ops(
                 FxInstance::Edges { threshold, thickness, color_r, color_g, color_b } => {
                     ops.push(FxOp::Edges {
                         th: (*threshold).clamp(1, 255),
-                        // Р.45 (п.313): страйд Собеля ×K
+                        // R.45 (item 313): Sobel stride ×K
                         d: (*thickness).clamp(1, 8) * res_scale,
                         color: [*color_r as u32, *color_g as u32, *color_b as u32],
                     });
-                    // ПРАВИЛО АЛЬФЫ (Р.53, п.418): edges ПРОПУСКАЕТ альфу
-                    // (`a_out = max(a_in, сила линии)`), а не уничтожает
-                    // её — свёртку не трогает, как и вся геометрия.
+                    // ALPHA RULE (R.53, item 418): edges SKIPS the alpha
+                    // (`a_out = max(a_in, line strength)`) rather than destroying
+                    // it: it does not touch the convolution, like all the geometry.
                 }
                 FxInstance::Noise { amount, size, color } => {
                     let k = (amount.clamp(0.0, 1.0) * 32.0) as i64;
@@ -621,9 +621,9 @@ fn chain_ops(
                     tint_g,
                     tint_b,
                 } => {
-                    // непрозрачный вход: CPU делает passthrough; формула на
-                    // альфе 255 вырождается в тождество, поэтому пропуск —
-                    // оптимизация, а не другой результат
+                    // opaque input: the CPU does a passthrough; the formula on
+                    // alpha 255 degenerates into an identity, so the skip is
+                    // an optimization, not a different result
                     if !(has_alpha_known && !has_alpha) {
                         let step = (*radius).clamp(1, 32) * res_scale;
                         let (dw, dh) = ((w / step).max(1), (h / step).max(1));
@@ -648,13 +648,13 @@ fn chain_ops(
                 }
                 FxInstance::Vhs { rgb_shift, bleed, scan_step, jitter } => {
                     ops.push(FxOp::Vhs {
-                        // Р.45 (п.313): сдвиг ×K; строчный контекст (скан и
-                        // дрожание) шейдер ведёт от логической строки y/K
+                        // R.45 (item 313): shift ×K; the line context (scan and
+                        // jitter) the shader takes from the logical line y/K
                         shift: (*rgb_shift).clamp(0, 12) * res_scale,
                         line_off: ((t.0 / 3000) % 7) as u32,
                         bleed: bleed.clamp(0.0, 1.0) as f32,
                         step: (*scan_step).clamp(0, 32),
-                        // квант дрожания — тот же, что считает CPU-ядро
+                        // the jitter quantum is the same as the CPU kernel computes
                         jq: (jitter.clamp(0.0, 1.0) * 1024.0).round() as i32,
                         seed: kt_fx::video::noise_seed(t.0),
                         res_scale,
@@ -663,7 +663,7 @@ fn chain_ops(
                 FxInstance::Glow { strength, radius, threshold, tint_r, tint_g, tint_b } => {
                     let s = strength.clamp(0.0, 2.0) * 0.35;
                     if s > 0.0 {
-                        // Р.45 (п.313): делитель мипа ×K — мип тот же
+                        // R.45 (item 313): mip divisor ×K — the mip is the same
                         let r = (*radius).clamp(1, 32) * res_scale;
                         ops.push(FxOp::Glow {
                             dw: (w / r).max(1),
@@ -671,9 +671,9 @@ fn chain_ops(
                             s: s as f32,
                             th: (*threshold).min(255),
                             tint: [*tint_r as f32, *tint_g as f32, *tint_b as f32],
-                            // свет из прозрачных мест не идёт (п.418):
-                            // мипится премультиплицированная копия, база
-                            // сложения остаётся прямой
+                            // light from transparent places does not go (item 418):
+                            // the premultiplied copy is mipped, the base of the addition
+                            // stays straight
                             pm: if has_alpha_known { has_alpha } else { src_has_alpha },
                         });
                     }
@@ -685,14 +685,14 @@ fn chain_ops(
     (ops, (w, h), has_alpha, has_alpha_known, (mw, mh))
 }
 
-/// Откуда цепочка слоя берёт вход.
+/// Where the layer’s chain takes its input from.
 enum ChainSrc {
-    /// Загруженный кадр источника.
+    /// The loaded source frame.
     Tex(wgpu::TextureView),
-    /// ПОДДЕРЕВО вложения (Р.50): свои джобы, свой размер. Текстуры у него
-    /// в момент разбора ещё нет — она появится при кодировании, поэтому
-    /// разбор и кодирование пришлось разделить: арена юниформ выделяется
-    /// ДО энкодера, а её размер зависит от всего дерева.
+    /// The SUBTREE of an embedding (R.50): its own jobs, its own size. It has no texture
+    /// yet at parse time: it appears at encoding, so parsing and encoding
+    /// had to be split: the uniform arena is allocated BEFORE the encoder,
+    /// and its size depends on the whole tree.
     Nest(Vec<Job>),
 }
 
@@ -701,7 +701,7 @@ struct ChainSpec {
     src: ChainSrc,
     src_w: u32,
     src_h: u32,
-    has_alpha: bool, // после цепочки
+    has_alpha: bool, // after the chain
 }
 
 impl ChainSpec {
@@ -709,7 +709,7 @@ impl ChainSpec {
         let own: u32 = self.ops.iter().map(|o| o.slot_units()).sum();
         match &self.src {
             ChainSrc::Tex(_) => own,
-            // + 1 на пасс снятия премультипликации на границе
+            // + 1 per pass removing premultiplication at the boundary
             ChainSrc::Nest(jobs) => own + 1 + jobs.iter().map(|j| j.slot_units()).sum::<u32>(),
         }
     }
@@ -721,9 +721,9 @@ enum Job {
         alpha_k: u32,
         scale: bool,
         fade: Option<SoloFade>,
-        /// Режим наложения слоя вниз (Р.62). `Normal` — прежний путь
-        /// байт-в-байт; остальное считает `blend_over` шейдера, зеркало
-        /// CPU-ядра `kt_engine::video::blend_ch`.
+        /// The blend mode of a layer downward (R.62). `Normal` is the old path
+        /// byte for byte; the rest is computed by the shader’s `blend_over`, a mirror of the
+        /// CPU kernel `kt_engine::video::blend_ch`.
         blend_mode: kt_model::BlendMode,
     },
     Dissolve {
@@ -736,7 +736,7 @@ enum Job {
 }
 
 impl Job {
-    /// Слоты юниформ-арены на джоб: композит-пасс + цепочки слоёв.
+    /// Uniform arena slots per job: the composite pass plus the layer chains.
     fn slot_units(&self) -> u32 {
         1 + match self {
             Job::Single { chain, .. } => chain.slot_units(),
@@ -750,7 +750,7 @@ struct Inner {
     queue: Arc<wgpu::Queue>,
     layout: wgpu::BindGroupLayout,
     pipes: [wgpu::RenderPipeline; PIPE_COUNT],
-    /// Слитый гео-пасс (Р.44): своя юниформа 1024 Б → свой layout/пайп.
+    /// The merged geometry pass (R.44): its own 1024 B uniform → its own layout/pipe.
     geom_layout: wgpu::BindGroupLayout,
     geom_pipe: wgpu::RenderPipeline,
     arena: wgpu::Buffer,
@@ -796,8 +796,8 @@ const SHADERS: [(&str, &str); PIPE_COUNT] = [
 const COMMON: &str = include_str!("shaders/common.wgsl");
 
 impl GpuFxEngine {
-    /// Собирает пайплайны; ошибка компиляции шейдера/устройства → Err
-    /// (вызывающий уходит на CPU-фолбэк с notice).
+    /// Builds the pipelines; a shader/device compile error → Err
+    /// (the caller falls back to the CPU with a notice).
     pub fn new(ctx: GpuContext) -> Result<Arc<GpuFxEngine>, GpuInitError> {
         let device = ctx.device;
         let queue = ctx.queue;
@@ -818,9 +818,9 @@ impl GpuFxEngine {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    // ВЕРШИННЫЙ стейдж тоже читает униформу (vs3d Pan3d —
-                    // MVP/якорь): FRAGMENT-only валил create_render_pipeline
-                    // на настоящем железе и ронял ВЕСЬ движок в CPU (Р.31 п.1)
+                    // The VERTEX stage also reads the uniform (vs3d Pan3d:
+                    // MVP/anchor): FRAGMENT-only made create_render_pipeline fail
+                    // on real hardware and dropped the WHOLE engine to the CPU (R.31 item 1)
                     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
@@ -873,8 +873,8 @@ impl GpuFxEngine {
                 })
             })
             .collect();
-        // Слитый гео-пасс (Р.44): юниформа GEOM_UNIFORM_BYTES не влезает в
-        // общий layout (128 Б) — свой layout и пайп из того же буфера-арены.
+        // The merged geometry pass (R.44): the GEOM_UNIFORM_BYTES uniform does not fit into
+        // the shared layout (128 B) — its own layout and pipe from the same arena buffer.
         let geom_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("kt-gpu geom layout"),
             entries: &[
@@ -999,7 +999,7 @@ impl Inner {
             return Ok(complete);
         }
 
-        // --- resolve: присутствие/размер по правилам CPU-исполнителя ---
+        // --- resolve: presence/size by the rules of the CPU executor ---
         let (jobs, complete) = self.resolve_plan(plan)?;
 
         let n = (ow as usize) * (oh as usize) * 4;
@@ -1009,7 +1009,7 @@ impl Inner {
             return Ok(complete);
         }
 
-        // --- uniform-арена под все пассы (в слот-юнитах: гео-пасс = 4) ---
+        // --- uniform arena for all passes (in slot units: a geometry pass = 4) ---
         let total: u32 = jobs.iter().map(|j| j.slot_units()).sum();
         if total > self.arena_slots {
             let slots = total.next_power_of_two();
@@ -1097,9 +1097,9 @@ impl Inner {
         Ok(complete)
     }
 
-    /// Кодирует набор джобов в текстуру-аккумулятор. ОДИН код у корня и у
-    /// поддерева вложения (Р.50): иначе правило «первый слой пишет поверх
-    /// прозрачного» пришлось бы держать синхронным в двух местах.
+    /// Encodes a set of jobs into an accumulator texture. ONE code at the root and in
+    /// a subtree of an embedding (R.50): otherwise the rule “the first layer writes over the
+    /// transparent one” would have to be kept in sync in two places.
     fn encode_jobs(
         &mut self,
         enc: &mut wgpu::CommandEncoder,
@@ -1110,10 +1110,10 @@ impl Inner {
         let acc_a = self.pool.acquire(&self.device, ow, oh);
         let acc_b = self.pool.acquire(&self.device, ow, oh);
         let acc = [acc_a, acc_b];
-        let mut cur = 0usize; // куда писал ПОСЛЕДНИЙ композит-пасс
+        let mut cur = 0usize; // where the LAST composite pass wrote
         if jobs.is_empty() {
-            // Пул отдаёт ГРЯЗНЫЕ текстуры (t183): пустой план обязан
-            // очистить свою — иначе на экране остатки чужого кадра.
+            // The pool gives back DIRTY textures (t183): an empty plan MUST
+            // clear its own, otherwise the screen shows remnants of a foreign frame.
             self.clear_tex(enc, &acc[cur].view);
         }
         for (ji, job) in jobs.iter().enumerate() {
@@ -1122,9 +1122,9 @@ impl Inner {
             match job {
                 Job::Single { chain, alpha_k, scale, fade, blend_mode } => {
                     let (view, owned) = self.encode_chain(enc, chain);
-                    // РЕЖИМ НАЛОЖЕНИЯ (Р.62) — свой режим пасса: уровень
-                    // уходит в ядро, а не в альфу (две оси, обе после
-                    // альфы). Normal идёт прежними ветками.
+                    // BLEND MODE (R.62): its own mode of the pass: the level
+                    // goes into the kernel, not into the alpha (two axes, both after
+                    // alpha). Normal takes the former branches.
                     let blend_id =
                         kt_model::BlendMode::ALL.iter().position(|m| m == blend_mode).unwrap_or(0)
                             as u32;
@@ -1137,9 +1137,9 @@ impl Inner {
                     } else {
                         0
                     };
-                    // сольный фейд с видом: кадр стоит на своей стороне
-                    // пары, вторая помечена пустой (clear-бит) — ядро её
-                    // не читает вовсе (зеркало Img::Clear)
+                    // a solo fade with a view: the frame stands on its own side of the
+                    // pair, the second is marked empty (clear bit), and the kernel
+                    // does not read it at all (a mirror of Img::Clear)
                     let has = chain.has_alpha as u32;
                     let (u0z, u0w, clear, swap) = match fade {
                         Some(f) if f.incoming => (0, has, 1u32, true),
@@ -1153,18 +1153,18 @@ impl Inner {
                             u0z,
                             u0w,
                             first,
-                            // при mode == 4 (наложение) фейда не бывает,
-                            // и слот `k` занимает НОМЕР РЕЖИМА: своей
-                            // ячейки в юниформе нет, а эти две вещи
-                            // взаимно исключены по построению
+                            // with mode == 4 (blend) there is no fade,
+                            // and slot `k` takes the MODE NUMBER: it has
+                            // no cell in the uniform, and these two things
+                            // are mutually exclusive by construction
                             if mode == 4 { blend_id } else { fade.map(|f| f.k).unwrap_or(0) },
                             fade.map(|f| f.mix.mode).unwrap_or(0),
                             clear,
                         ],
                         f: fade.map(|f| f.mix.p).unwrap_or_default(),
-                        // объёмные виды (Р.51, п.401): гомографии панелей,
-                        // посчитанные в f64 общей trans_ext, — оба бэкенда
-                        // читают одни и те же f32-биты
+                        // volumetric kinds (R.51, item 401): panel homographies,
+                        // computed in f64 by the shared trans_ext: both backends
+                        // read the same f32 bits
                         m: fade
                             .map(|f| kt_engine::transitions::trans_ext(&f.mix, f.k))
                             .unwrap_or_default(),
@@ -1214,7 +1214,7 @@ impl Inner {
         }
     }
 
-    /// Прозрачно-чёрная текстура (пул отдаёт грязные).
+    /// A transparent-black texture (the pool gives back dirty ones).
     fn clear_tex(&mut self, enc: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
         enc.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("kt-gpu clear"),
@@ -1234,9 +1234,9 @@ impl Inner {
         });
     }
 
-    /// Разбор ПЛАНА в джобы (без энкодера). Рекурсия живёт здесь: арена
-    /// юниформ выделяется ДО кодирования, а её размер зависит от ВСЕГО
-    /// дерева (Р.50, Б3).
+    /// Parses the PLAN into jobs (without the encoder). The recursion lives here: the
+    /// uniform arena is allocated BEFORE encoding, and its size depends on the WHOLE
+    /// tree (R.50, B3).
     fn resolve_plan(&mut self, plan: &FramePlan<'_>) -> Result<(Vec<Job>, bool), GpuExecError> {
         let (ow, oh) = (plan.out_w, plan.out_h);
         if ow > self.max_dim || oh > self.max_dim {
@@ -1260,11 +1260,11 @@ impl Inner {
                                     blend_mode: src.blend_mode,
                                 });
                             } else {
-                                // Р.58, п.459: чужой размер БОЛЬШЕ не
-                                // проходит молча. У ленты он — наша
-                                // арифметика (`NestSrc::fit_to`), у файла
-                                // — сообщение декодера; и там и там кадр
-                                // не полон.
+                                // R.58, item 459: a foreign size no longer
+                                // passes silently. For a reel it is our
+                                // arithmetic (`NestSrc::fit_to`); for a file it is
+                                // the decoder’s message; in both cases the frame
+                                // is not full.
                                 debug_assert!(
                                     src.input.nest().is_none(),
                                     "nest chain ends at a foreign size, plan is {ow}x{oh}"
@@ -1289,8 +1289,8 @@ impl Inner {
                                 alpha_k: *alpha_k,
                                 scale: *alpha_k < 4096,
                                 fade: None,
-                                // половина пары перехода — обычное
-                                // наложение: режим живёт у слоя-дорожки
+                                // one half of a transition pair is an ordinary
+                                // blend: the mode lives on the layer-track
                                 blend_mode: kt_model::BlendMode::Normal,
                             });
                             complete = false;
@@ -1303,9 +1303,9 @@ impl Inner {
         Ok((jobs, complete))
     }
 
-    /// None — голода нет кадра; Some((chain, fits, complete)) — цепочка
-    /// готова, `fits` = финальный размер совпал с Quality, `complete` —
-    /// полнота ПОДДЕРЕВА (у обычного слоя всегда true).
+    /// None — no frame starvation; Some((chain, fits, complete)) — the chain
+    /// is ready, `fits` = the final size matched Quality, `complete` —
+    /// the completeness of the SUBTREE (an ordinary layer is always true).
     fn resolve_chain(
         &mut self,
         src: &LayerSrc<'_>,
@@ -1313,21 +1313,21 @@ impl Inner {
         oh: u32,
         t: Tick,
     ) -> Result<Option<(ChainSpec, bool, bool)>, GpuExecError> {
-        // ВЛОЖЕНИЕ: вход цепочки — не кадр из кэша, а суб-композит. Его
-        // текстуры сейчас нет, и это нормально: `ChainSrc::Nest` несёт
-        // джобы, а текстура появится при кодировании.
+        // EMBEDDING: the chain input is not a frame from the cache but a sub-composite. Its
+        // texture does not exist now, and that is normal: `ChainSrc::Nest` carries
+        // the jobs, and the texture appears at encoding.
         if let Some(n) = src.input.nest() {
             let (jobs, sub_ok) = self.resolve_plan(&n.plan)?;
             let (sw, sh) = (n.plan.out_w, n.plan.out_h);
-            // Ступень ЛЕНТЫ выше входа цепочки (Р.58, п.459): суб-композит
-            // собран крупнее, чем цепочка этого экземпляра умеет
-            // потребить. Вписываем его ПЕРЕД цепочкой — `Resample` во весь
-            // кадр это зеркало CPU-шной `fit_into` (та же билинейка, что у
-            // сухой стороны `FxOp::Mix`).
+            // The REEL tier above the chain input (R.58, item 459): the sub-composite is
+            // assembled larger than this instance’s chain can
+            // consume. We fit it in BEFORE the chain: `Resample` to the whole
+            // frame is the mirror of the CPU `fit_into` (the same bilinear as the
+            // dry side of `FxOp::Mix`).
             let fit = n.fit_to(src.src_scale, ow, oh);
             let (cw, ch) = fit.unwrap_or((sw, sh));
             let (mut ops, (fw, fh), ha, ha_known, (mw, mh)) =
-                // суб-композит всегда с альфой (см. ниже)
+                // the sub-composite always has alpha (see below)
                 chain_ops(&src.fx, cw, ch, src.src_scale, ow, oh, src.u, t, src.cam3d, src.lead, true);
             if fit.is_some() {
                 ops.insert(
@@ -1338,7 +1338,7 @@ impl Inner {
             if mw > self.max_dim || mh > self.max_dim {
                 return Err(GpuExecError::TooLarge { w: mw, h: mh });
             }
-            // суб-композит всегда с альфой: там, где слоёв нет, он прозрачен
+            // the sub-composite always has alpha: where there are no layers, it is transparent
             let has_alpha = if ha_known { ha } else { true };
             return Ok(Some((
                 ChainSpec { ops, src: ChainSrc::Nest(jobs), src_w: sw, src_h: sh, has_alpha },
@@ -1363,9 +1363,9 @@ impl Inner {
             src.lead,
             frame.has_alpha,
         );
-        // K×-промежутки плана (п.314) обязаны влезать в лимит текстур
-        // устройства; не влезли — аккуратный TooLarge (весь план уходит на
-        // CPU, который считает ТОТ ЖЕ план — семантика одна)
+        // The K×-gaps of the plan (item 314) MUST fit within the device texture limit;
+        // if they do not, a clean TooLarge (the whole plan goes to the
+        // CPU, which computes THE SAME plan, so the semantics are one)
         if mw > self.max_dim || mh > self.max_dim {
             return Err(GpuExecError::TooLarge { w: mw, h: mh });
         }
@@ -1385,8 +1385,8 @@ impl Inner {
         )))
     }
 
-    /// Кодирует цепочку слоя; возвращает view результата + транзиенты,
-    /// которые нельзя вернуть в пул до композит-пасса.
+    /// Encodes the layer chain; returns the view of the result plus the transients,
+    /// which cannot be returned to the pool before the composite pass.
     fn encode_chain(
         &mut self,
         enc: &mut wgpu::CommandEncoder,
@@ -1395,13 +1395,13 @@ impl Inner {
         let mut owned: Option<Tex> = None;
         let mut retired: Vec<Tex> = Vec::new();
         let (mut w, mut h) = (chain.src_w, chain.src_h);
-        // ВХОД цепочки: кадр из кэша или суб-композит вложения (Р.50).
+        // The chain INPUT: a frame from the cache or the sub-composite of an embedding (R.50).
         let mut view = match &chain.src {
             ChainSrc::Tex(v) => v.clone(),
             ChainSrc::Nest(jobs) => {
                 let sub = self.encode_jobs(enc, jobs, w, h);
-                // ГРАНИЦА ВЛОЖЕНИЯ: аккумулятор композита премультиплицирован
-                // при прямой альфе — ровно одна конверсия, зеркало
+                // THE EMBEDDING BOUNDARY: the composite accumulator is premultiplied
+                // while the alpha is straight: exactly one conversion, a mirror of
                 // `kt_engine::video::unpremultiply` (shaders/unpremul.wgsl).
                 let straight = self.pool.acquire(&self.device, w, h);
                 let dummy = self.dummy.view.clone();
@@ -1421,14 +1421,14 @@ impl Inner {
             }
         };
         let dummy = self.dummy.view.clone();
-        // сухая сторона смешения (Р.38 п.12): снимок состояния ДО вклада
-        // слоя. Текстуру снимка нельзя вернуть в пул до самого смешения.
+        // the dry side of the mix (R.38 item 12): the snapshot of the state BEFORE the contribution
+        // of the layer. The snapshot texture cannot go back to the pool before the mix itself.
         let mut snap: Option<(wgpu::TextureView, u32, u32)> = None;
         for op in &chain.ops {
             match op {
                 FxOp::Snapshot => {
-                    // текущий результат ещё живёт в `owned` (или это сам
-                    // источник) — придерживаем его до конца цепочки
+                    // the current result still lives in `owned` (or it is the source
+                    // itself): we hold it until the end of the chain
                     if let Some(t) = owned.take() {
                         snap = Some((t.view.clone(), w, h));
                         retired.push(t);
@@ -1438,8 +1438,8 @@ impl Inner {
                 }
                 FxOp::Mix { k } => {
                     let Some((dry_view, dw, dh)) = snap.clone() else { continue };
-                    // размеры могли разойтись — вписываем сухую сторону
-                    // ТОЙ ЖЕ билинейкой, что и на CPU (fit_into)
+                    // the sizes may have diverged: we fit the dry side in
+                    // THE SAME bilinear as on the CPU (fit_into)
                     let dry_fit = if (dw, dh) == (w, h) {
                         dry_view
                     } else {
@@ -1737,8 +1737,8 @@ impl Inner {
                     owned = Some(dst);
                 }
                 FxOp::Glow { dw, dh, s, th, tint, pm } => {
-                    // мип берётся с премультиплицированной КОПИИ, база
-                    // сложения остаётся прямой (зеркало kt_fx::video::glow)
+                    // the mip is taken from the premultiplied COPY; the base of
+                    // the addition stays straight (a mirror of kt_fx::video::glow)
                     let pm_tex = pm.then(|| {
                         let t = self.pool.acquire(&self.device, w, h);
                         self.pass(
@@ -1807,8 +1807,8 @@ impl Inner {
         (view, retired)
     }
 
-    /// Пасс слитой гео-серии: юниформа GEOM_UNIFORM_BYTES (4 слота арены),
-    /// свой layout — остальная механика как у `pass`.
+    /// The merged geometry-series pass: GEOM_UNIFORM_BYTES uniform (4 arena slots),
+    /// its own layout; the rest of the mechanics is as in `pass`.
     fn pass_geom(
         &mut self,
         enc: &mut wgpu::CommandEncoder,
@@ -1925,10 +1925,10 @@ impl Inner {
     }
 }
 
-/// Ключ ReadbackCache: полное описание плана. Кадр адресуется СЕРИЙНЫМ
-/// НОМЕРОМ содержимого (Р.53, п.409), а не парой (source, cache_idx):
-/// по адресу мемо отдавал бы старый композит после правки параметров
-/// генератора при неподвижном курсоре.
+/// ReadbackCache key: the full description of the plan. The frame is addressed by the SERIAL
+/// NUMBER of the content (R.53, item 409), not by the pair (source, cache_idx):
+/// by address the memo would return the old composite after an edit of the generator’s parameters
+/// with a still cursor.
 fn put_lead(h: &mut xxhash_rust::xxh3::Xxh3, lead: &Option<kt_fx::conform::LeadCtx>) {
     match lead {
         None => h.update(&[0u8]),
@@ -1951,9 +1951,9 @@ fn plan_key(plan: &FramePlan<'_>) -> u64 {
         h.update(&s.source.0.to_le_bytes());
         h.update(&s.cache_idx.to_le_bytes());
         h.update(&s.content.to_le_bytes());
-        // смешивание кадров (Р.37 С5) — В КЛЮЧ: те же два кадра с другим
-        // весом дают ДРУГУЮ картинку, и без этого ReadbackCache отдал бы
-        // чужой смес (та же причина, что у put_mix)
+        // frame blending (R.37 S5) goes INTO THE KEY: the same two frames with another
+        // weight give a DIFFERENT picture, and without this ReadbackCache would return
+        // someone else’s mix (the same reason as put_mix)
         match &s.blend {
             None => h.update(&[0u8]),
             Some(b) => {
@@ -1964,13 +1964,13 @@ fn plan_key(plan: &FramePlan<'_>) -> u64 {
             }
         }
         h.update(&s.fx_hash.to_le_bytes());
-        // ступень декода (Р.46, п.318): кадр того же ключа в другом
-        // размере даёт другую картинку — план обязан различаться
+        // decode scale step (R.46, item 318): a frame of the same key in another
+        // size gives another picture; the plan MUST differ
         h.update(&s.src_scale.to_le_bytes());
         h.update(&s.u.to_bits().to_le_bytes());
         put_cam3d(h, &s.cam3d);
-        // контекст ведущего узла «Геометрия» (Р.62): тот же кадр с той же
-        // цепочкой, но с другим правилом/видом — другая картинка
+        // context of the leading “Geometry” node (R.62): the same frame with the same
+        // chain but another rule/view gives another picture
         put_lead(h, &s.lead);
         match &s.input {
             kt_engine::video_plan::LayerInput::Frame(None) => h.update(&[0u8]),
@@ -1979,18 +1979,18 @@ fn plan_key(plan: &FramePlan<'_>) -> u64 {
                 h.update(&f.width.to_le_bytes());
                 h.update(&f.height.to_le_bytes());
             }
-            // Поддерево — В КЛЮЧ ЦЕЛИКОМ (Р.50): у ленты нет ни кадра, ни
-            // `cache_idx`, по которым её можно было бы различить, а
-            // ReadbackCache обязан отличать разные суб-композиты.
+            // The subtree goes ENTIRELY INTO THE KEY (R.50): a reel has neither a frame nor a
+            // `cache_idx` by which it could be told apart, while
+            // ReadbackCache MUST distinguish different sub-composites.
             kt_engine::video_plan::LayerInput::Nest(n) => {
                 h.update(&[2u8]);
                 h.update(&n.seq.0.to_le_bytes());
-                // режим кадров содержимого (Р.56, п.448): та же лента на
-                // том же времени в «смешивании» и в «ближайшем» — РАЗНЫЕ
-                // картинки, и различить их обязан ключ, а не удача
+                // content frame mode (R.56, item 448): the same reel at the
+                // same time in “blend” and in “nearest” gives DIFFERENT
+                // pictures, and the key, not luck, MUST tell them apart
                 h.update(&[n.blend as u8]);
-                // ступень ЛЕНТЫ (Р.58, п.459): при ней выше входа цепочки
-                // перед цепочкой встаёт вписывание, и байты другие
+                // REEL tier (R.58, item 459): with it, above the chain input
+                // a fit is placed before the chain, and the bytes differ
                 h.update(&n.nest_scale.to_le_bytes());
                 h.update(&n.content_hash.to_le_bytes());
                 h.update(&n.inner_t.0.to_le_bytes());
@@ -1998,10 +1998,10 @@ fn plan_key(plan: &FramePlan<'_>) -> u64 {
             }
         }
     }
-    /// Параметры перехода — В КЛЮЧ: без них ReadbackCache отдал бы кадр
-    /// другого вида перехода (Р.33 С4). Ext-скаляры объёмных видов (Р.51,
-    /// `trans_ext`) сюда НЕ входят и не должны: это детерминированная
-    /// функция уже захэшированного (mode, p, k) — «недостающего» здесь нет.
+    /// Transition parameters go INTO THE KEY: without them ReadbackCache would return a frame of
+    /// another transition kind (R.33 S4). The ext scalars of volumetric kinds (R.51,
+    /// `trans_ext`) are NOT included here and must not be: this is a deterministic
+    /// function of the already-hashed (mode, p, k), so there is nothing “missing” here.
     fn put_mix(h: &mut Xxh3, m: &TransMix) {
         h.update(&m.mode.to_le_bytes());
         for v in m.p {

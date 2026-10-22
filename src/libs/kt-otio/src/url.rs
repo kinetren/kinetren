@@ -1,8 +1,8 @@
-//! Пути медиа в target_url (решение Р.24 п.7): пишем ОТНОСИТЕЛЬНО файла
-//! проекта (POSIX-слэши), фолбэк — абсолютный file://-URL с percent-encoding
-//! (так пишут Resolve/Hiero). Читаем все три вида: относительный путь,
-//! абсолютный путь, file://-URL. `synth:<pattern>` — verbatim (тестовые
-//! источники). Никакого url-крейта — руками, минимум.
+//! Media paths in target_url (decision of R.24 item 7): we write RELATIVE to the project
+//! file (POSIX slashes), fallback — an absolute file://-URL with percent-encoding
+//! (as Resolve/Hiero write it). We read all three kinds: a relative path,
+//! an absolute path, a file://-URL. `synth:<pattern>` — verbatim (test
+//! sources). No url crate — by hand, minimally.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -10,7 +10,7 @@ fn is_unreserved(b: u8) -> bool {
     b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'/')
 }
 
-/// Абсолютный путь → file://-URL (percent-encoding всех байт вне unreserved).
+/// Absolute path → file://-URL (percent-encoding of all bytes outside the unreserved set).
 pub fn encode_file_url(path: &Path) -> String {
     let mut out = String::from("file://");
     for &b in path.to_string_lossy().as_bytes() {
@@ -23,7 +23,7 @@ pub fn encode_file_url(path: &Path) -> String {
     out
 }
 
-/// file://-URL → путь (None, если это не file-URL).
+/// file://-URL → path (None if this is not a file-URL).
 pub fn decode_file_url(url: &str) -> Option<PathBuf> {
     let rest = url
         .strip_prefix("file://localhost/")
@@ -45,8 +45,8 @@ pub fn decode_file_url(url: &str) -> Option<PathBuf> {
     Some(PathBuf::from(String::from_utf8(out).ok()?))
 }
 
-/// Чисто лексическая релятивизация `target` от каталога `base_dir`
-/// (оба абсолютные). None — если относительный путь не строится.
+/// A purely lexical relativization of `target` from the directory `base_dir`
+/// (both absolute). None — if the relative path cannot be built.
 pub fn relativize(base_dir: &Path, target: &Path) -> Option<String> {
     if !base_dir.is_absolute() || !target.is_absolute() {
         return None;
@@ -55,8 +55,8 @@ pub fn relativize(base_dir: &Path, target: &Path) -> Option<String> {
     let tgt: Vec<Component> = target.components().collect();
     let common = base.iter().zip(tgt.iter()).take_while(|(a, b)| a == b).count();
     if common <= 1 {
-        // общего только корень "/" — путь через весь диск не пишем,
-        // это случай для file://-фолбэка
+        // only the root “/” in common — we do not write a path across the whole disk,
+        // this is a case for the file://-fallback
         return None;
     }
     let mut parts: Vec<String> = std::iter::repeat_n("..".to_string(), base.len() - common)
@@ -68,9 +68,9 @@ pub fn relativize(base_dir: &Path, target: &Path) -> Option<String> {
     Some(parts.join("/"))
 }
 
-/// target_url из файла → путь для открытия. `base_dir` — каталог проекта.
-/// Псевдо-пути (`synth:`, `gen:`) возвращаются как есть (нефайловые
-/// источники).
+/// target_url from the file → a path to open. `base_dir` — the project directory.
+/// Pseudo-paths (`synth:`, `gen:`) are returned as-is (non-file
+/// sources).
 pub fn resolve_media_path(base_dir: &Path, target_url: &str) -> PathBuf {
     if kt_model::is_pseudo_path(target_url) {
         return PathBuf::from(target_url);
@@ -82,14 +82,14 @@ pub fn resolve_media_path(base_dir: &Path, target_url: &str) -> PathBuf {
     if p.is_absolute() { p.to_path_buf() } else { base_dir.join(p) }
 }
 
-/// Путь медиа → target_url для записи (решение Р.24 п.7).
+/// Media path → target_url for writing (decision of R.24 item 7).
 pub fn media_target_url(base_dir: &Path, media_path: &str) -> String {
     if kt_model::is_pseudo_path(media_path) {
         return media_path.to_string();
     }
     let p = Path::new(media_path);
     if !p.is_absolute() {
-        // уже относительный — нормализуем разделители и оставляем
+        // already relative — we normalize the separators and leave it
         return media_path.replace('\\', "/");
     }
     match relativize(base_dir, p) {

@@ -5,8 +5,8 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
-# The program people run is called `kinetren` (owner, 2026-10-22: "при билде и
-# распространении надо называть не kt-app … а kinetren"). The package keeps its
+# The program people run is called `kinetren` (owner, 2026-10-22: “when building and
+# distributing it should be named not kt-app … but kinetren”). The package keeps its
 # internal name, so `cargo run -p kt-app` and `-p kt-app` in test commands stay.
 [[bin]]
 name = "kinetren"
@@ -16,13 +16,13 @@ path = "src/main.rs"
 kt-time = { workspace = true }
 kt-version = { workspace = true }
 kt-model = { workspace = true }
-# «глифа нет» в окне титра считает тот же крейт, что рисует кадр (Р.52)
+# “glyph missing” in the title window is counted by the same crate that draws the frame (R.52)
 kt-text = { workspace = true }
 kt-otio = { workspace = true }
 kt-media = { workspace = true }
 kt-cache = { workspace = true }
 kt-engine = { workspace = true }
-# график АЧХ считает kt_fx::eq_mag_db — теми же коэффициентами, что звучат
+# the frequency response graph is computed by kt_fx::eq_mag_db — with the same coefficients that sound
 kt-fx = { workspace = true }
 kt-gpu = { workspace = true }
 eframe = { workspace = true }
@@ -31,34 +31,34 @@ rtrb = { workspace = true }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 xxhash-rust = { workspace = true }
 rfd = "0.15"
-# СИСТЕМНЫЙ буфер обмена читается по нажатию, своего зеркала у программы нет
-# (Р.61). Крейт уже в дереве через egui-winit — новых зависимостей не появляется.
+# The SYSTEM clipboard is read on press; the program has no mirror of its own
+# (R.61). The crate is already in the tree via egui-winit — no new dependencies appear.
 arboard = "3.6"
 serde_json.workspace = true
-# порядок арабского текста (Р.19): egui 0.36 шейпит вязь, но не переупорядочивает
+# Arabic text order (R.19): egui 0.36 shapes the cursive script but does not reorder
 unicode-bidi = "0.3"
 # anonymous usage telemetry (change telemetry-posthog): our own PostHog capture client on a
 # blocking HTTP client; rustls with bundled roots — no OpenSSL, nothing new in `ldd`
 ureq = { version = "3.5", default-features = false, features = ["rustls"] }
 getrandom = "0.3"
 
-# каталоги перевода компилируются в статические таблицы (apps/kt-app/build.rs)
+# translation catalogs are compiled into static tables (apps/kt-app/build.rs)
 [build-dependencies]
 unicode-bidi = "0.3"
 
-# harness-тесты вёрстки и интеракций (правило п.9 р.8): без wgpu/snapshot —
-# чистый CPU, без окна и GPU
+# layout and interaction harness tests (rule item 9 round 8): without wgpu/snapshot —
+# pure CPU, without window and GPU
 [dev-dependencies]
 egui_kittest = { version = "0.36.1", default-features = false }
-# проверка покрытия глифов (тест 100, п.12 р.11); версия уже в графе egui
+# glyph coverage check (Test 100, item 12 round 11); version already in the egui graph
 ab_glyph = "0.2"
 
-# позиция курсора при DnD файлов: winit/X11 не отдаёт координаты
-# XdndPosition (п.2 v1.4) — читаем указатель напрямую
+# cursor position during file DnD: winit/X11 does not provide the coordinates of
+# XdndPosition (item 2 v1.4) — we read the pointer directly
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = "0.13"
 
-# flock для замка на проект (п.352): ядро снимает его при любой смерти
-# процесса — свойство, которого нет ни у одного замка «своими руками»
+# flock for the per-project lock (item 352): the kernel releases it on any process death
+# — a property no lock made “by hand” has
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -1,40 +1,40 @@
-//! Связь: значение ведёт ДРУГОЕ свойство (Р.61).
+//! Link: a value follows a DIFFERENT property (R.61).
 //!
-//! **Решение владельца:** адресуется ЛЮБОЕ событие проекта, а не только
-//! своё. Из инвариантов выводится ровно одно ограничение, и оно не сужает
-//! решение, а объясняет, где у «проекта» край: **связь не пересекает границу
-//! ленты**. Наружу — потому что лента, читающая событие снаружи, перестаёт
-//! быть самодостаточной, два её экземпляра дали бы разные картинки, и закон
-//! Э (вложение тождественно развёрнутому содержимому) перестал бы
-//! выполняться. Внутрь — потому что «снаружи задать значение внутри» уже
-//! сделано и называется публичными параметрами композиции (Р.59).
+//! **Owner's decision:** ANY event of the project may be addressed, not only
+//! its own. Exactly one constraint follows from the invariants, and it does not narrow
+//! the decision, but explains where the “project” edge is: **a link does not cross the reel
+//! boundary**. Outward — because a reel that reads an event from outside stops
+//! being self-sufficient, two of its instances would give different pictures, and law
+//! E (an embedding is identical to the expanded content) would stop
+//! holding. Inward — because “setting a value inside from outside” is already
+//! done and is called the public parameters of a composition (R.59).
 //!
-//! **Время между РАЗНЫМИ событиями — тик ТАЙМЛАЙНА.** Домен ключа — материал
-//! своего события, и у двух событий в разных местах монтажа общего
-//! материального времени нет. Перевод идёт через `clip_timeline_at` своего
-//! события и `clip_material_at` источника — ту же пару, которой пользуется
-//! вся программа; второго правила перевода не заводим. Вне тела источника
-//! берётся его крайнее значение.
+//! **Time between DIFFERENT events is the TIMELINE tick.** The key's domain is the material
+//! of its own event, and two events at different places in the edit have no common
+//! material time. The conversion goes through `clip_timeline_at` of its own
+//! event and `clip_material_at` of the source — the same pair the whole program uses;
+//! we do not introduce a second conversion rule. Outside the source's body
+//! its extreme value is taken.
 
 use crate::project::*;
 use crate::published::ParamOwner;
 use kt_time::Tick;
 
-/// Разобранный адрес ведущего свойства.
+/// A parsed address of the leading property.
 ///
-/// Текстовая форма `"<событие>/<владелец>/<параметр>"`:
-/// `"12/fx0/radius"`, `"12/gen/size"`, `"12/clip/opacity"`. Событие — число
-/// `ClipId`; `self` означает «это же событие» и не требует его знать.
+/// Text form `"<event>/<owner>/<parameter>"`:
+/// `"12/fx0/radius"`, `"12/gen/size"`, `"12/clip/opacity"`. The event is a number
+/// `ClipId`; `self` means “this same event” and does not require knowing it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LinkPath {
-    /// `None` — своё событие.
+    /// `None` — its own event.
     pub clip: Option<ClipId>,
     pub owner: ParamOwner,
     pub param: String,
 }
 
 impl LinkPath {
-    /// Разобрать текст адреса. `None` — адрес не по форме.
+    /// Parse the address text. `None` — the address does not match the form.
     pub fn parse(s: &str) -> Option<LinkPath> {
         let mut it = s.split('/');
         let who = it.next()?;
@@ -68,7 +68,7 @@ impl LinkPath {
     }
 }
 
-/// Кто спрашивает: событие-потребитель и его геометрия.
+/// Who asks: the consuming event and its geometry.
 #[derive(Debug, Clone, Copy)]
 pub struct LinkCtx {
     pub source_in: Tick,
@@ -90,24 +90,24 @@ impl LinkCtx {
     }
 }
 
-/// Значение ведущего свойства в материальной позиции ПОТРЕБИТЕЛЯ.
+/// The value of the leading property at the CONSUMER's material position.
 ///
-/// Внутри ОДНОГО события перевод не нужен — домен общий. Между разными
-/// событиями считается общий знаменатель: своя материальная позиция → тик
-/// таймлайна → материал источника.
+/// Within ONE event no conversion is needed — the domain is shared. Between different
+/// events the common denominator is computed: its own material position → timeline tick →
+/// the source's material.
 pub fn read_link(reel: &dyn Reel, me: &LinkCtx, path: &LinkPath, at: Tick) -> Option<f64> {
     let clips = reel.clips();
     let src = match path.clip {
         None => return read_at(reel, None, path, at),
         Some(id) => clips.iter().find(|c| crate::same_clip(c.id, id))?,
     };
-    // общий знаменатель — ТАЙМЛАЙН
+    // the common denominator — the TIMELINE
     let tl = clip_timeline_at(me.source_in, me.start, me.duration, me.reversed, me.frame_step, at);
-    // вне тела источника берётся его крайнее значение: клампим тик, а не
-    // молчим — иначе связь «пропадала» бы на краях и это выглядело бы
-    // случайной поломкой
-    // границы ВКЛЮЧАЮТ конец события: последний ключ кривой стоит ровно
-    // там, и кламп на тик раньше терял бы его
+    // outside the source's body its extreme value is taken: we clamp the tick, and do not
+    // stay silent — otherwise the link would “vanish” at the edges, which would look like a
+    // random breakage
+    // the bounds INCLUDE the end of the event: the curve's last key sits exactly there,
+    // and a clamp one tick earlier would lose it
     let lo = src.start.0;
     let hi = src.start.0 + src.duration.0.max(1);
     let tl = Tick(tl.0.clamp(lo, hi));
@@ -116,7 +116,7 @@ pub fn read_link(reel: &dyn Reel, me: &LinkCtx, path: &LinkPath, at: Tick) -> Op
     read_at(reel, Some(src), path, mat)
 }
 
-/// Значение свойства владельца в ЕГО материальной позиции.
+/// The value of the owner's property at ITS material position.
 fn read_at(reel: &dyn Reel, src: Option<&ClipEvent>, path: &LinkPath, mat: Tick) -> Option<f64> {
     let c = match src {
         Some(c) => c,
@@ -127,8 +127,8 @@ fn read_at(reel: &dyn Reel, src: Option<&ClipEvent>, path: &LinkPath, mat: Tick)
         ParamOwner::Generator => &c.gen_auto,
         _ => &[],
     };
-    // живая кривая ведущего свойства главнее ручки — та же семантика, что
-    // у остальной программы
+    // the live curve of the leading property outranks the handle — the same semantics as
+    // the rest of the program
     if let Some(cur) = curves.iter().find(|x| x.param == path.param)
         && !cur.keys.is_empty()
         && cur.source.is_keys()
@@ -147,10 +147,10 @@ fn read_at(reel: &dyn Reel, src: Option<&ClipEvent>, path: &LinkPath, mat: Tick)
     }
 }
 
-/// Значение НЕЧИСЛОВОЙ цели по отметкам оси значения (Р.61).
+/// The value of a NON-NUMERIC target by the marks of the value axis (R.61).
 ///
-/// Между отметками держится ПРЕДЫДУЩИЙ снимок, ниже первой — первый: рига
-/// переключает вариант ступенькой, «половины» между вариантами нет.
+/// Between marks the PREVIOUS snapshot holds; below the first — the first: the rig
+/// switches a variant as a step, there is no “half” between variants.
 pub fn stop_value(stops: &[LinkStop], driver: f64) -> Option<&ParamValue> {
     if stops.is_empty() {
         return None;
@@ -161,22 +161,22 @@ pub fn stop_value(stops: &[LinkStop], driver: f64) -> Option<&ParamValue> {
             best = s;
         }
     }
-    // ниже первой отметки — первый снимок
+    // below the first mark — the first snapshot
     let first = stops.iter().min_by(|a, b| a.at.total_cmp(&b.at))?;
     Some(if driver < first.at { &first.value } else { &best.value })
 }
 
-// ---- граница ленты и циклы (Р.61) ------------------------------------------
+// ---- reel boundary and cycles (R.61) ------------------------------------------
 
-/// Проверить связи ОДНОЙ ленты: адреса разрешимы, границу не пересекают,
-/// циклов нет.
+/// Check the links of ONE reel: the addresses are resolvable, the boundary is not crossed,
+/// and there are no cycles.
 ///
-/// Цикл ищется обходом со ВСЕХ вершин, а не от корня: пара свойств, ведущих
-/// друг друга и никем не читаемых, всё равно цикл — файл с ней сохранился
-/// бы, а открылся бы с ошибкой. Тот же приём, что у цикла лент.
+/// A cycle is searched by a traversal from ALL vertices, not from the root: a pair of properties
+/// that lead each other and are read by no one is still a cycle — a file with it would be saved,
+/// and would open with an error. The same technique as for reel cycles.
 pub fn check_links(reel: &dyn Reel) -> Result<(), LinkError> {
     let clips = reel.clips();
-    // вершина графа — «свойство»: (событие, владелец-в-тексте, параметр)
+    // a graph vertex — a “property”: (event, owner-in-text, parameter)
     let mut edges: Vec<(String, String)> = Vec::new();
     for c in clips {
         for (slot, curves) in c.fx_auto.iter().enumerate() {
@@ -206,13 +206,13 @@ fn collect(
     edges: &mut Vec<(String, String)>,
 ) -> Result<(), LinkError> {
     let Some(text) = cur.source.link_path() else {
-        // у формулы адресов нет: имена в ней — переменные, их разрешает
-        // тот, кто строит план (стадия 4)
+        // the formula of addresses does not exist: the names in it are variables, resolved by
+        // whoever builds the plan (stage 4)
         return Ok(());
     };
     let path = LinkPath::parse(text).ok_or_else(|| LinkError::BadPath(text.to_string()))?;
-    // адрес обязан указывать на существующее событие ЭТОЙ ленты: пересечь
-    // границу нельзя ни наружу, ни внутрь — см. шапку модуля
+    // the address must point to an existing event of THIS reel: crossing the boundary
+    // is impossible neither outward nor inward — see the module header
     if let Some(id) = path.clip
         && !clips.iter().any(|x| crate::same_clip(x.id, id))
     {
@@ -223,8 +223,8 @@ fn collect(
     Ok(())
 }
 
-/// Обход СО ВСЕХ вершин: пара, ведущая друг друга и никем не читаемая, —
-/// тоже цикл.
+/// A traversal FROM ALL vertices: a pair that leads each other and is read by no one —
+/// is also a cycle.
 fn find_cycle(edges: &[(String, String)]) -> Option<Vec<String>> {
     let mut stack: Vec<String> = Vec::new();
     let mut done: Vec<String> = Vec::new();
@@ -267,7 +267,7 @@ fn walk(
     None
 }
 
-/// Чем связь может быть незаконна.
+/// What makes a link illegal.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum LinkError {
     #[error("link address {0:?} is not of the form <clip>/<owner>/<param>")]
@@ -281,25 +281,25 @@ pub enum LinkError {
     Cycle(Vec<String>),
 }
 
-// ---- разрешение производных источников (Р.61) ------------------------------
+// ---- resolution of derived sources (R.61) ------------------------------------------
 
-/// Разрешить связи и формулы ленты в ОБЫЧНЫЕ ключевые кривые.
+/// Resolve the links and formulas of the reel into ORDINARY keyed curves.
 ///
-/// Зовётся ОДИН раз при сборке рендерера — там же, где кривые превращаются в
-/// профили звука; в аудио-колбэке вычислений не появляется.
+/// Called ONCE when the renderer is built — the same place where curves become
+/// sound profiles; no computations appear in the audio callback.
 ///
-/// **Ноль цены без использования.** Лента, где ни одного производного
-/// источника нет, возвращается ЗАИМСТВОВАННОЙ: графа зависимостей не
-/// строится вовсе, ни одного клона. Это не оптимизация, а требование
-/// владельца «простой проект не лагает».
+/// **Zero cost without use.** A reel where not a single derived source exists is
+/// returned BORROWED: no dependency graph is built at all, not a single clone.
+/// This is not an optimization but the owner's requirement “a simple project
+/// must not lag”.
 ///
-/// **Порядок — топологический.** Ведущее свойство обязано быть разрешено
-/// раньше ведомого, иначе связь на связь прочитала бы сырой текст. Циклов
-/// здесь уже быть не может: их отвергла валидация.
+/// **Order is topological.** The leading property must be resolved before the led one,
+/// otherwise a link on a link would read raw text. Cycles can no longer exist here:
+/// validation has already rejected them.
 ///
-/// **Дискретизация — сетка кадров.** Производная кривая превращается в ключи
-/// на той же сетке, по которой читается любая другая кривая: человеческий
-/// ключ тоньше её тоже не поставит.
+/// **Discretization is the frame grid.** A derived curve turns into keys on
+/// the same grid on which any other curve is read:
+/// a human key cannot be placed any finer than that either.
 pub fn resolve_derived<'a>(
     clips: &'a [ClipEvent],
     frame_step: i64,
@@ -311,9 +311,9 @@ pub fn resolve_derived<'a>(
         return std::borrow::Cow::Borrowed(clips);
     }
     let mut out = clips.to_vec();
-    // порядок: сперва события БЕЗ производных источников (они ведущие),
-    // потом остальные. Цепочка длиннее двух звеньев разрешается повторными
-    // проходами — их не больше, чем событий, а цикл уже отвергнут.
+    // order: first the events WITHOUT derived sources (they are the leaders),
+    // then the rest. A chain longer than two links is resolved by repeated
+    // passes — there are no more of them than events, and the cycle has already been rejected.
     for _ in 0..=out.len() {
         let snapshot = out.clone();
         let mut moved = false;
@@ -340,20 +340,20 @@ pub fn resolve_derived<'a>(
     std::borrow::Cow::Owned(out)
 }
 
-/// Значения ФОРМУЛЬНОЙ кривой на окне — для показа (Р.63 п.3, Р.67).
+/// Values of a FORMULA curve over a window — for display (R.63 item 3, R.67).
 ///
-/// Тем же вычислителем и с теми же переменными, что у рендера
-/// (`resolve_one`): `t` — секунды от НАЧАЛА МАТЕРИАЛА (`source_in`), а не
-/// от края окна — иначе линия предпросмотра расходилась бы с рендером и
-/// уезжала при прокрутке (Р.67); `k` — значение ключей с формами под
-/// слоем; `src` — значение ведущего, которого у чистой формулы нет (ноль).
-/// `material` — тело материала события (`source_in..end`): за ним рендер
-/// держит крайнее значение (кривая разрешена только внутри тела), и
-/// предпросмотр обязан держать то же. Окно `from..to` — только диапазон
-/// выборки.
+/// The same evaluator and the same variables as the renderer (`resolve_one`):
+/// `t` is seconds from the START OF THE MATERIAL (`source_in`), not from the window's
+/// edge — otherwise the preview line would diverge from the render and drift on
+/// scrolling (R.67); `k` is the value of keys with shapes under the layer;
+/// `src` is the value of the leader, which a pure formula does not have (zero).
+/// `material` is the body of the event's material (`source_in..end`): beyond it the render
+/// holds the extreme value (the curve is resolved only within the body),
+/// and the preview must hold the same. The window `from..to` is only
+/// the sampling range.
 ///
-/// Возвращает пусто, если источник не формула или текст невычислим: врать
-/// линией хуже, чем не рисовать.
+/// It returns empty if the source is not a formula or its text is not computable: lying
+/// with a line is worse than not drawing.
 pub fn formula_preview(
     cur: &ParamCurve,
     material: (Tick, Tick),
@@ -368,7 +368,7 @@ pub fn formula_preview(
     let mut out = Vec::new();
     let mut t = from.0;
     while t <= to.0 {
-        // за телом материала — крайнее значение, как у разрешённой кривой
+        // beyond the material's body — the extreme value, as for a resolved curve
         let tm = t.clamp(material.0.0, material.1.0.max(material.0.0));
         let mut vars = std::collections::BTreeMap::new();
         vars.insert("src".to_string(), 0.0);
@@ -386,10 +386,10 @@ pub fn formula_preview(
     out
 }
 
-/// Разрешить ОДНУ кривую в ЗАДАННОМ материале (Р.67): переопределения
-/// экземпляра ленты разрешаются в домене ленты до перевода во время цели
-/// — `me` описывает ленту как материал (`source_in` 0, длина ленты), а
-/// `clips` — её содержимое, по которому читаются связи.
+/// Resolve ONE curve in the GIVEN material (R.67): overrides of a reel instance are
+/// resolved in the reel's domain before the conversion to the target's time
+/// — `me` describes the reel as material (`source_in` 0, the reel's length), and
+/// `clips` is its content, by which the links are read.
 pub fn resolve_curve_in(
     clips: &[ClipEvent],
     cur: &mut ParamCurve,
@@ -400,7 +400,7 @@ pub fn resolve_curve_in(
     resolve_one(clips, cur, me, me_id, frame_step)
 }
 
-/// Разрешить ОДНУ кривую. `true` — что-то изменилось.
+/// Resolve ONE curve. `true` — something changed.
 fn resolve_one(
     clips: &[ClipEvent],
     cur: &mut ParamCurve,
@@ -412,8 +412,8 @@ fn resolve_one(
         return false;
     }
     let expr = cur.source.expr().and_then(|e| crate::formula::Formula::parse(e).ok());
-    // `k` — значение КЛЮЧЕЙ С ФОРМАМИ под слоем (Р.67); без ключей — 0,
-    // и формула-источник прежних файлов звучит как раньше
+    // `k` is the value of the KEYS WITH SHAPES under the layer (R.67); without keys — 0,
+    // and the source formula of older files sounds as before
     let base_keys = cur.keys.clone();
     let path = cur.source.link_path().and_then(LinkPath::parse);
     let step = frame_step.max(1);
@@ -428,7 +428,7 @@ fn resolve_one(
                 let p = LinkPath { clip: p.clip.or(Some(me_id)), ..p.clone() };
                 match read_link_in(clips, me, &p, at) {
                     Some(v) => v,
-                    // ведущее ещё не разрешено — подождём следующего прохода
+                    // the leader is not yet resolved — we wait for the next pass
                     None => return false,
                 }
             }
@@ -443,13 +443,13 @@ fn resolve_one(
                 vars.insert("t".to_string(), (t - from) as f64 / 90_000.0);
                 match f.eval(&vars) {
                     Ok(v) => v,
-                    // невычислимое — не тихий ноль: кривая остаётся сырой,
-                    // и валидация уже сказала об этом громко
+                    // not computable — not a silent zero: the curve stays raw,
+                    // and validation has already said so loudly
                     Err(_) => return false,
                 }
             }
-            // связь без пересчёта — ведущее; ключи с формулой отрезка —
-            // их же значение, развёрнутое на сетку
+            // a link without recomputation — the leader; keys with a segment formula —
+            // their own value, expanded onto the grid
             None => {
                 if path.is_some() {
                     src
@@ -469,12 +469,12 @@ fn resolve_one(
     true
 }
 
-/// То же, что `read_link`, но по срезу событий (лента уже разобрана).
+/// The same as `read_link`, but over a slice of events (the reel is already parsed).
 fn read_link_in(clips: &[ClipEvent], me: &LinkCtx, path: &LinkPath, at: Tick) -> Option<f64> {
     let want = path.clip?;
     let src = clips.iter().find(|c| crate::same_clip(c.id, want))?;
-    // ведущее свойство, само ещё не разрешённое, читать нельзя: получили бы
-    // значение «до связи», то есть не то, что увидит человек
+    // the leading property, itself not yet resolved, cannot be read: one would get
+    // a value “before the link”, that is, not what a person will see
     let pending = match &path.owner {
         ParamOwner::FxSlot { slot } => src
             .fx_auto

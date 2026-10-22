@@ -1,36 +1,36 @@
-//! Громкость по ITU-R BS.1770-4 / EBU R 128 (Р.49, п.370).
+//! Loudness per ITU-R BS.1770-4 / EBU R 128 (R.49, item 370).
 //!
-//! Что считается: интегрированная громкость (LUFS), диапазон громкости
-//! (LRA, LU) и истинный пик (dBTP).
+//! What is computed: integrated loudness (LUFS), loudness range
+//! (LRA, LU) and true peak (dBTP).
 //!
-//! **Почему всё считается в f64 — и почему НЕ по той причине, которая первой
-//! приходит в голову.** Коэффициенты K-фильтра выглядят как
-//! `a1 = -1.99004745483398`, и соблазнительно сказать «в f32 такой хвост
-//! обрезается, а биквад рекурсивен». ЗАМЕРЕНО: обрезание коэффициентов до f32
-//! двигает результат не больше чем на 0.002 LU на 20…1000 Гц — при допуске
-//! EBU 0.1 LU это не причина.
+//! **Why everything is computed in f64 — and why NOT for the reason that comes first
+//! to mind.** The K-filter coefficients look like
+//! `a1 = -1.99004745483398`, and it is tempting to say “in f32 such a tail
+//! is cut off, and the biquad is recursive”. MEASURED: truncating the coefficients to f32
+//! shifts the result by no more than 0.002 LU at 20…1000 Hz — against the
+//! EBU tolerance of 0.1 LU this is not the cause.
 //!
-//! Настоящая причина — СУММЫ. Прямое накопление квадратов в f32 за десять
-//! минут тона −20 dBFS даёт −23.38 вместо −23.01, то есть 0.37 LU — втрое
-//! больше допуска: аккумулятор вырастает, и очередное слагаемое просто
-//! перестаёт в него попадать. Путь офлайновый и не горячий, поэтому в f64
-//! держится вся цепочка, а не каждая сумма по отдельности (сторожить
-//! «а вот эту сумму не переведи в f32» пришлось бы вечно). Обычный `Biquad`
-//! в f32 остаётся у эффектов: там он звучит, а не измеряет.
+//! The real cause is the SUMS. Direct accumulation of squares in f32 over ten
+//! minutes of a −20 dBFS tone gives −23.38 instead of −23.01, that is 0.37 LU — three times
+//! the tolerance: the accumulator grows, and the next addend simply
+//! stops getting into it. The path is offline and not hot, so in f64
+//! the whole chain is kept, not each sum separately (guarding
+//! “do not convert this sum to f32” would have to be done forever). The ordinary `Biquad`
+//! stays in f32 in the effects: there it sounds, rather than measures.
 //!
-//! **Гейты, а не среднее.** Абсолютный порог −70 LUFS выбрасывает тишину;
-//! относительный −10 LU от предварительного результата выбрасывает паузы
-//! между фразами. Без них диалог с паузами измерялся бы тише музыки, сведённой
-//! в тот же уровень, и «нормализуй до −23» делало бы речь слишком громкой.
+//! **Gates, not averages.** The absolute threshold of −70 LUFS discards silence;
+//! the relative −10 LU from the preliminary result discards the pauses
+//! between phrases. Without them, dialogue with pauses would measure quieter than music mixed
+//! to the same level, and “normalize to −23” would make speech too loud.
 //!
-//! **Истинный пик, а не пик сэмплов.** Между сэмплами сигнал бывает выше, чем
-//! в них: восстановленная волна проходит НАД точками. Оверсэмплинг ×4
-//! (полифазный FIR) ловит этот выброс — иначе «пик −0.1 dBFS» превращается в
-//! клиппинг после кодека.
+//! **True peak, not sample peak.** Between samples the signal can be higher than
+//! in them: the reconstructed wave passes ABOVE the points. ×4 oversampling
+//! (polyphase FIR) catches this overshoot — otherwise “a −0.1 dBFS peak” turns into
+//! clipping after the codec.
 
 use kt_time::AUDIO_CHANNELS;
 
-/// Биквад двойной точности — для измерений (см. модульный комментарий).
+/// Double-precision biquad — for measurements (see the module comment).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Biquad64 {
     b0: f64,
@@ -47,7 +47,7 @@ impl Biquad64 {
         Biquad64 { b0, b1, b2, a1, a2, z1: 0.0, z2: 0.0 }
     }
 
-    /// Прямая форма II transposed — та же, что у `Biquad`.
+    /// Direct form II transposed — the same as `Biquad`.
     pub fn step(&mut self, x: f64) -> f64 {
         let y = self.b0 * x + self.z1;
         self.z1 = self.b1 * x - self.a1 * y + self.z2;
@@ -61,8 +61,8 @@ impl Biquad64 {
     }
 }
 
-/// K-фильтр BS.1770: полочный подъём высоких + фильтр высоких частот.
-/// Коэффициенты — из спецификации для 48 кГц, ровно как напечатаны.
+/// K-filter of BS.1770: high-shelf boost + high-pass filter.
+/// Coefficients — from the specification for 48 kHz, exactly as printed.
 fn k_filter() -> (Biquad64, Biquad64) {
     let shelf = Biquad64::new(
         1.53512485958697,
@@ -75,64 +75,64 @@ fn k_filter() -> (Biquad64, Biquad64) {
     (shelf, hp)
 }
 
-/// Веса каналов BS.1770. Стерео: оба по 1.0 (окружение и тыл весят больше,
-/// но их у нас нет — тракт всегда 2 канала, инвариант 1).
+/// BS.1770 channel weights. Stereo: both 1.0 (surround and rear weigh more,
+/// but we have none — the path is always 2 channels, invariant 1).
 const CH_WEIGHT: [f64; 2] = [1.0, 1.0];
 
-/// Блок измерения: 400 мс с перекрытием 75 % (шаг 100 мс).
+/// Measurement block: 400 ms with 75 % overlap (100 ms step).
 const BLOCK_MS: usize = 400;
 const STEP_MS: usize = 100;
-/// Абсолютный гейт.
+/// Absolute gate.
 const ABS_GATE_LUFS: f64 = -70.0;
-/// Относительный гейт от предварительной громкости.
+/// Relative gate from the preliminary loudness.
 const REL_GATE_LU: f64 = -10.0;
 
-/// Итог измерения.
+/// Measurement result.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Loudness {
-    /// Интегрированная громкость, LUFS. `None` — материал целиком ниже
-    /// абсолютного гейта (тишина): «−70» тут было бы враньём о числе,
-    /// которого нет.
+    /// Integrated loudness, LUFS. `None` — the material is entirely below the
+    /// absolute gate (silence): “−70” here would be a lie about a number
+    /// that does not exist.
     pub lufs: Option<f64>,
-    /// Диапазон громкости, LU (EBU Tech 3342).
+    /// Loudness range, LU (EBU Tech 3342).
     pub lra: f64,
-    /// Истинный пик, dBTP.
+    /// True peak, dBTP.
     pub dbtp: f64,
 }
 
-/// Накопитель: кормится кусками аудио в любом порядке нарезки.
+/// Accumulator: fed with pieces of audio in any slicing order.
 ///
-/// Нарезка на результат НЕ ВЛИЯЕТ — это свойство, а не совпадение: и
-/// фильтры, и сетка блоков живут в накопителе, а не в вызове.
+/// The slicing does NOT AFFECT the result — this is a property, not a coincidence: both
+/// the filters and the block grid live in the accumulator, not in the call.
 pub struct LoudnessMeter {
     filters: [(Biquad64, Biquad64); AUDIO_CHANNELS],
-    /// Сумма квадратов текущего шага (100 мс) по каналам.
+    /// Sum of squares of the current step (100 ms) across channels.
     step_sum: [f64; AUDIO_CHANNELS],
     step_frames: usize,
     frames_per_step: usize,
-    /// Энергии последних шагов — блок это 4 шага подряд.
+    /// Energies of the last steps — a block is 4 consecutive steps.
     steps: std::collections::VecDeque<[f64; AUDIO_CHANNELS]>,
-    /// Средние квадраты блоков (для гейтов и LRA).
+    /// Mean squares of blocks (for gates and LRA).
     blocks: Vec<f64>,
-    /// Короткие блоки 3 с для LRA.
+    /// Short blocks of 3 s for LRA.
     short_steps: std::collections::VecDeque<[f64; AUDIO_CHANNELS]>,
     short_blocks: Vec<f64>,
     peak: f64,
-    /// Наибольший модуль СЭМПЛА — им гейтится дорогая интерполяция.
+    /// Largest SAMPLE magnitude — gates the expensive interpolation.
     sample_peak: f32,
-    /// Сколько кадров ещё считать интерполяцию после «большого» сэмпла.
+    /// How many frames to keep computing interpolation after a “large” sample.
     tp_countdown: usize,
-    /// Хвост для полифазного оверсэмплинга true-peak.
+    /// Tail for polyphase true-peak oversampling.
     tp_tail: [[f32; TP_TAPS]; AUDIO_CHANNELS],
 }
 
-/// Длина ядра интерполятора true-peak на фазу.
+/// Length of the true-peak interpolator kernel per phase.
 const TP_TAPS: usize = 8;
-/// Оверсэмплинг ×4 — минимум, требуемый BS.1770-4 для 48 кГц.
+/// Oversampling ×4 — the minimum required by BS.1770-4 for 48 kHz.
 const TP_OVER: usize = 4;
-/// Доля от наибольшего сэмпла, начиная с которой считается интерполяция.
-/// 0.7 ≈ −3 dB: межсэмпловый выброс band-limited сигнала не превышает
-/// соседний сэмпл больше чем примерно на 1.5 dB, так что запас тройной.
+/// Fraction of the largest sample from which interpolation is computed.
+/// 0.7 ≈ −3 dB: the inter-sample overshoot of a band-limited signal does not exceed
+/// the neighboring sample by more than about 1.5 dB, so the margin is threefold.
 const TP_GATE: f32 = 0.7;
 
 impl Default for LoudnessMeter {
@@ -160,7 +160,7 @@ impl LoudnessMeter {
         }
     }
 
-    /// Скормить кусок interleaved-аудио (f32, 48 кГц, 2 канала — инвариант 1).
+    /// Feed a piece of interleaved audio (f32, 48 kHz, 2 channels — invariant 1).
     pub fn feed(&mut self, data: &[f32]) {
         for frame in data.chunks_exact(AUDIO_CHANNELS) {
             for (ch, &x) in frame.iter().enumerate() {
@@ -185,7 +185,7 @@ impl LoudnessMeter {
         }
         self.step_frames = 0;
 
-        // блок 400 мс = 4 шага
+        // 400 ms block = 4 steps
         self.steps.push_back(mean);
         while self.steps.len() > BLOCK_MS / STEP_MS {
             self.steps.pop_front();
@@ -193,7 +193,7 @@ impl LoudnessMeter {
         if self.steps.len() == BLOCK_MS / STEP_MS {
             self.blocks.push(block_power(&self.steps));
         }
-        // короткий блок 3 с — для LRA
+        // short block of 3 s — for LRA
         self.short_steps.push_back(mean);
         while self.short_steps.len() > 3000 / STEP_MS {
             self.short_steps.pop_front();
@@ -203,17 +203,17 @@ impl LoudnessMeter {
         }
     }
 
-    /// Истинный пик: сигнал между сэмплами бывает выше, чем в них.
+    /// True peak: the signal between samples can be higher than in them.
     ///
-    /// Интерполяция считается НЕ на каждом кадре. Межсэмпловый выброс живёт
-    /// рядом с большими сэмплами — это и значит «пик»; в тишине его быть не
-    /// может. Поэтому полифазная сумма (восемь тапов на четыре фазы, то есть
-    /// 64 умножения на кадр) запускается только вокруг сэмплов, сравнимых с
-    /// наибольшим, и держится ещё длину ядра после него, чтобы выброс СПРАВА
-    /// от большого сэмпла тоже попал в счёт.
+    /// Interpolation is NOT computed on every frame. The inter-sample overshoot lives
+    /// next to large samples — that is what “peak” means; in silence it cannot
+    /// be present. Therefore the polyphase sum (eight taps over four phases, that is
+    /// 64 multiplications per frame) is run only around samples comparable to the
+    /// largest, and keeps the kernel length after it, so that an overshoot to the RIGHT
+    /// of a large sample also gets counted.
     ///
-    /// Без гейта проход по часовому файлу упирался в эту сумму: индексация
-    /// материала замедлялась в разы, а она идёт при каждом открытии проекта.
+    /// Without the gate the pass over a long file ran into this sum: indexing the material
+    /// slowed several times over, and it runs on every project open.
     fn true_peak(&mut self, ch: usize, x: f32) {
         let tail = &mut self.tp_tail[ch];
         tail.rotate_left(1);
@@ -241,8 +241,8 @@ impl LoudnessMeter {
         }
     }
 
-    /// Закрыть измерение. Хвост короче шага дописывается: выбросить его
-    /// значило бы не заметить пик в последней десятой доле секунды.
+    /// Close the measurement. The tail shorter than a step is appended: discarding it
+    /// would mean missing a peak in the last tenth of a second.
     pub fn finish(mut self) -> Loudness {
         if self.step_frames > 0 {
             self.close_step();
@@ -267,8 +267,8 @@ fn power_to_lufs(p: f64) -> f64 {
     if p <= 0.0 { -f64::INFINITY } else { -0.691 + 10.0 * p.log10() }
 }
 
-/// Двухпроходный гейт BS.1770: абсолютный −70 LUFS, потом относительный
-/// −10 LU от того, что осталось.
+/// BS.1770 two-pass gate: absolute −70 LUFS, then relative
+/// −10 LU from what remains.
 fn gated_lufs(blocks: &[f64]) -> Option<f64> {
     let pass1: Vec<f64> =
         blocks.iter().copied().filter(|p| power_to_lufs(*p) > ABS_GATE_LUFS).collect();
@@ -284,8 +284,8 @@ fn gated_lufs(blocks: &[f64]) -> Option<f64> {
     Some(power_to_lufs(pass2.iter().sum::<f64>() / pass2.len() as f64))
 }
 
-/// LRA (EBU Tech 3342): разница 95-го и 10-го перцентилей коротких блоков,
-/// прошедших абсолютный −70 и относительный −20 LU гейты.
+/// LRA (EBU Tech 3342): the difference between the 95th and 10th percentiles of short blocks
+/// that passed the absolute −70 and relative −20 LU gates.
 fn loudness_range(short: &[f64]) -> f64 {
     let pass1: Vec<f64> =
         short.iter().copied().filter(|p| power_to_lufs(*p) > ABS_GATE_LUFS).collect();
@@ -306,8 +306,8 @@ fn loudness_range(short: &[f64]) -> f64 {
     (at(0.95) - at(0.10)).max(0.0)
 }
 
-/// Полифазное ядро интерполятора: окно Ханна на sinc. Считается один раз на
-/// (тап, фазу) — таблица маленькая, а в горячем пути умножений и так восемь.
+/// Polyphase interpolator kernel: Hann window on sinc. Computed once per
+/// (tap, phase) — the table is small, and the hot path has eight multiplications anyway.
 fn tp_kernel(tap: usize, phase: usize) -> f64 {
     static TABLE: std::sync::OnceLock<[[f64; TP_OVER]; TP_TAPS]> = std::sync::OnceLock::new();
     let t = TABLE.get_or_init(|| {
@@ -321,14 +321,14 @@ fn tp_kernel(tap: usize, phase: usize) -> f64 {
                 } else {
                     (std::f64::consts::PI * x).sin() / (std::f64::consts::PI * x)
                 };
-                // окно Ханна по длине ядра — без него боковые лепестки
-                // добавляют к пику то, чего в сигнале нет
+                // Hann window over the kernel length — without it the side lobes
+                // add to the peak something that is not in the signal
                 let w = 0.5
                     - 0.5 * (2.0 * std::f64::consts::PI * (i as f64 + 0.5) / TP_TAPS as f64).cos();
                 *v = s * w;
             }
         }
-        // нормировка по каждой фазе: постоянный сигнал обязан давать сам себя
+        // normalization per phase: a constant signal must give itself back
         for p in 0..TP_OVER {
             let sum: f64 = (0..TP_TAPS).map(|i| t[i][p]).sum();
             if sum.abs() > 1e-9 {
@@ -342,7 +342,7 @@ fn tp_kernel(tap: usize, phase: usize) -> f64 {
     t[tap][phase]
 }
 
-/// Разовое измерение готового буфера.
+/// One-off measurement of a finished buffer.
 pub fn measure(data: &[f32]) -> Loudness {
     let mut m = LoudnessMeter::new();
     m.feed(data);

@@ -1,12 +1,12 @@
-//! Доступ к burst'ам источников для render graph.
+//! Access to the source bursts for the render graph.
 //!
-//! Два режима:
-//! - `DirectFetcher` — владеет источниками и декодирует по требованию,
-//!   наполняя кэш (офлайн-рендер/экспорт: темп неважен, инвариант №7 —
-//!   тот же граф, другой clock);
-//! - `CacheFetcher` — ТОЛЬКО кэш (realtime playback: промах = тишина +
-//!   underrun-счётчик, playback никогда не блокируется на декоде —
-//!   инвариант №5; наполнением кэша занимаются MediaWorker'ы, M3).
+//! Two modes:
+//! - `DirectFetcher` — owns the sources and decodes on demand,
+//!   filling the cache (offline render/export: pace does not matter, invariant 7 —
+//!   the same graph, another clock);
+//! - `CacheFetcher` — CACHE ONLY (realtime playback: a miss = silence +
+//!   underrun counter, playback never blocks on decode —
+//!   invariant 5; filling the cache is done by MediaWorkers, M3).
 
 use kt_cache::{BurstCache, SourceId};
 use kt_media::{AudioBurst, MediaSource};
@@ -19,40 +19,40 @@ pub fn source_id(media: MediaId) -> SourceId {
     SourceId(media.0)
 }
 
-/// Отдаёт аудио-burst источника по (media, idx источника) или None.
+/// Returns the source's audio burst by (media, source idx) or None.
 pub trait AudioFetcher {
     fn audio_burst(&mut self, media: MediaId, idx: i64) -> Option<Arc<AudioBurst>>;
 
-    /// Кто сейчас читает (Р.55, С4). У ВЛОЖЕНИЯ свой поток суб-микса на
-    /// КАЖДЫЙ экземпляр: лента, поставленная в пяти местах, — это пять
-    /// разных потоков через её цепочки, и делить между ними один реверб
-    /// было бы слышно. Под реверсом и растяжением экземпляры читают ленту
-    /// ещё и в РАЗНОМ порядке, то есть дерутся бы за один курсор.
+    /// Who is reading now (R.55, C4). An ATTACHMENT has its own sub-mix stream for
+    /// EACH instance: a reel placed in five places is five
+    /// different streams through its chains, and sharing one reverb between them
+    /// would be audible. Under reverse and stretching the instances read the reel
+    /// also in a DIFFERENT order, that is, they would fight over one cursor.
     ///
-    /// Обычным фетчерам это безразлично: у файла состояния нет, а адрес
-    /// бёрста — чистая функция индекса. Поэтому умолчание пустое, и ни
-    /// `DirectFetcher`, ни `CacheFetcher` метод не переопределяют.
+    /// For regular fetchers this does not matter: a file has no state, and the address of a
+    /// burst is a pure function of the index. Therefore the default is empty, and neither
+    /// `DirectFetcher` nor `CacheFetcher` override the method.
     fn begin_clip(&mut self, _id: kt_model::ClipId) {}
 
-    /// КОНЕЦ МАТЕРИАЛА этого медиа в кадрах 48 кГц (Р.63 п.2), если он
-    /// существует и известен фетчеру.
+    /// END OF MATERIAL of this media in 48 kHz frames (R.63 item 2), if it
+    /// exists and is known to the fetcher.
     ///
-    /// Зачем это фетчеру, а не плану. Длина файла — свойство ИСТОЧНИКА
-    /// (закон П), план знает только адрес. Без этого ответа движок не
-    /// отличает «бёрст ещё не декодирован» (настоящее голодание) от «за
-    /// этим адресом материала нет вовсе» — и честная тишина в хвосте
-    /// события, которое длиннее файла, считалась underrun'ами: у
-    /// владельца 180 480 кадров на пять секунд (Р.63 п.2).
+    /// Why it is the fetcher's and not the plan's. The file length is a property of the SOURCE
+    /// (law P), the plan knows only the address. Without this answer the engine does not
+    /// distinguish “the burst is not yet decoded” (real starvation) from “there is no material
+    /// at this address at all” — and honest silence at the tail of an event longer than the file
+    /// was counted as underruns: the owner had 180 480 frames for five seconds
+    /// (R.63 item 2).
     ///
-    /// `None` — «края нет или он неизвестен»: генератор, заглушка, лента
-    /// (её тишину даёт собственный суб-микс), файл без длительности.
-    /// Тогда поведение прежнее, до единого кадра.
+    /// `None` — “there is no edge or it is unknown”: a generator, a stub, a reel
+    /// (its silence is given by its own sub-mix), a file without a duration.
+    /// Then the behaviour is as before, down to a single frame.
     fn material_end_frames(&mut self, _media: MediaId) -> Option<i64> {
         None
     }
 }
 
-/// Владеет источниками; декодирует на месте, кладёт в кэш (если задан).
+/// Owns the sources; decodes in place, puts into the cache (if set).
 pub struct DirectFetcher {
     sources: HashMap<MediaId, Box<dyn MediaSource>>,
     cache: Option<Arc<BurstCache>>,
@@ -67,7 +67,7 @@ impl DirectFetcher {
         self.sources.insert(media, source);
     }
 
-    /// Конец материала по паспорту ОТКРЫТОГО источника (Р.63).
+    /// End of material from the passport of the OPEN source (R.63).
     fn source_end_frames(&self, media: MediaId) -> Option<i64> {
         let d = self.sources.get(&media)?.info().duration;
         (d.0 > 0).then(|| d.to_audio_frames())
@@ -98,12 +98,12 @@ impl AudioFetcher for DirectFetcher {
     }
 }
 
-/// Только кэш. Промах = None; вызывающий подставляет тишину и считает underrun.
+/// Cache only. Miss = None; the caller substitutes silence and counts an underrun.
 pub struct CacheFetcher {
     cache: Arc<BurstCache>,
     pub misses: AtomicU64,
-    /// Концы материала в КАДРАХ 48 кГц — от того, кто открыл источники
-    /// (Р.63 п.2). Пусто — прежнее поведение до единого кадра.
+    /// Material ends in FRAMES at 48 kHz — from whoever opened the sources
+    /// (R.63 item 2). Empty — the previous behaviour, down to a single frame.
     ends: std::collections::HashMap<MediaId, i64>,
 }
 
@@ -112,7 +112,7 @@ impl CacheFetcher {
         CacheFetcher { cache, misses: AtomicU64::new(0), ends: Default::default() }
     }
 
-    /// Тот же фетчер, но знающий длины материала (плеер, экспорт, probe).
+    /// The same fetcher, but knowing the material lengths (player, export, probe).
     pub fn with_lengths(
         cache: Arc<BurstCache>,
         lengths: &std::collections::HashMap<MediaId, kt_time::Tick>,

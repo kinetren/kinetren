@@ -1,13 +1,13 @@
-//! Видео-путь: выбор активных клипов, ключи кадров, построение плана
-//! кадра (video_plan) и CPU-исполнитель композиции.
+//! Video path: selection of active clips, frame keys, building the frame plan
+//! (video_plan) and the CPU composition executor.
 //!
-//! Инвариант №7 (ред. Р.29): код композиции ОДИН — build_plan решает слои,
-//! порядок, веса переходов и уровни для превью и экспорта; бэкенд
-//! (CPU здесь / GPU в kt-gpu) — параметр исполнения, не второй путь.
-//! CPU-исполнитель — байт-эталон (инвариант №11) и фолбэк. Слои
-//! запрашиваются в ОДНОМ качестве и складываются alpha-over по z
-//! (lane: меньше = выше, как в старом движке, где меньший индекс дорожки
-//! был передним планом).
+//! Invariant No. 7 (rev. R.29): composition code is ONE — build_plan decides layers,
+//! order, transition weights and levels for both preview and export;
+//! the backend (CPU here / GPU in kt-gpu) is an execution parameter, not a second path.
+//! The CPU executor is the byte reference (invariant 11) and the fallback. Layers
+//! are requested at ONE quality and composited alpha-over by z
+//! (lane: lower = higher, as in the old engine, where a smaller track index
+//! was the foreground).
 
 use std::sync::Arc;
 
@@ -18,12 +18,12 @@ use kt_time::{FpsGrid, Tick};
 
 use crate::video_plan::{Cam3d, FramePlan, LayerSrc, PlanLayer};
 
-/// СТАДИЯ ВИДЕОДОРОЖКИ (Р.62, change B): дорожка с цепочкой, уровнем ≠ 1
-/// или режимом наложения ≠ Normal входит в план ОДНИМ слоем-вложением —
-/// композит её событий (переходы, перекрытия, фейды, уровни событий
-/// внутри), затем цепочка дорожки, затем альфа × уровень и наложение вниз
-/// выбранным режимом. Дорожка без этого расплющивается в слои как прежде,
-/// байт-в-байт (на этом стоит GOLDEN_VIDEO).
+/// VIDEO-TRACK STAGE (R.62, change B): a track with a chain, a level ≠ 1
+/// or a blend mode ≠ Normal enters the plan as ONE nested layer —
+/// the composite of its events (transitions, overlaps, fades, event levels
+/// inside), then the track chain, then alpha × level and blending down
+/// with the chosen mode. A track without this is flattened into layers as before,
+/// byte for byte (GOLDEN_VIDEO relies on this).
 #[derive(Debug, Clone)]
 struct VideoTrackStage {
     id: kt_model::TrackId,
@@ -31,18 +31,18 @@ struct VideoTrackStage {
     fx: Vec<kt_model::FxInstance>,
     opacity: f64,
     blend: kt_model::BlendMode,
-    /// Редакция стадии: содержимое дорожки, её цепочка и свойства. Ключ
-    /// мемоизации суб-композита — без него правка внутри отдавала бы
-    /// стейл (та же беда, что у ленты, п.409).
+    /// Revision of the stage: the track's contents, its chain and properties. The
+    /// memoization key of the sub-composite — without it an edit inside would return
+    /// a stale result (the same problem as with the reel, item 409).
     content: u64,
 }
 
 #[derive(Debug, Clone)]
 struct VideoClip {
-    /// Дорожка ЗАГЛУШЕНА (mute либо не в соло-множестве, Р.62): слой в
-    /// композит не идёт, а ЗАКАЗ ПРЕФЕТЧА остаётся — снятие mute иначе
-    /// давало бы чёрный кадр до прогрева (инвариант 4 про заказ == чтение
-    /// сохраняется: греем то же, что прочтём, когда дорожку вернут).
+    /// Track MUTED (mute, or not in the solo set, R.62): the layer does not go
+    /// into the composite, but the PREFETCH ORDER remains — lifting mute otherwise
+    /// would give a black frame until warmed up (invariant 4 about order == read
+    /// still holds: we warm exactly what we will read once the track is restored).
     silent: bool,
     id: kt_model::ClipId,
     start: Tick,
@@ -52,108 +52,108 @@ struct VideoClip {
     media: MediaId,
     reversed: bool,
     fx: Vec<kt_model::FxInstance>,
-    /// Компилированная автоматизация цепочки (Р.30; компиляция — Р.59,
-    /// п.467). `None` — живых кривых нет, и тогда цепочка слоя
-    /// ЗАИМСТВУЕТСЯ: клип без кривых не платит ни аллокации, ни одного
-    /// сравнения строк. Хэш пост-FX по-прежнему считается от СЫРЫХ
-    /// кривых, поэтому ключи кэша не сдвинулись.
+    /// Compiled automation of the chain (R.30; compilation — R.59,
+    /// item 467). `None` — there are no live curves, and then the layer's chain
+    /// is BORROWED: a clip without curves pays neither an allocation nor a single
+    /// string comparison. The post-FX hash is still computed from the RAW
+    /// curves, so the cache keys have not moved.
     auto_plan: Option<kt_model::AutoPlan>,
-    /// Ключ пост-FX кэша (п.2 р.7): параметры цепочки + геометрия клипа +
-    /// шаг сетки. Любая правка модели пересоздаёт VideoRenderer → хэш
-    /// пересчитывается, стейл-кадры не читаются (их ключ не совпадёт).
+    /// Post-FX cache key (item 2 of round 7): chain parameters + clip geometry +
+    /// grid step. Any model edit recreates VideoRenderer → the hash
+    /// is recomputed, stale frames are not read (their key will not match).
     fx_hash: u64,
-    /// Окна dissolve из переходов (Р.24, п.137), тики [w0, w1): клип —
-    /// incoming (нарастает) / outgoing (затухает). Пара блендится линейно.
+    /// Dissolve windows from transitions (R.24, item 137), ticks [w0, w1): a clip is
+    /// incoming (ramping up) / outgoing (fading out). The pair blends linearly.
     fade_in: Option<(Tick, Tick)>,
     fade_out: Option<(Tick, Tick)>,
-    /// Переход со стороны INCOMING (пара считается в его слое) и
-    /// сольный фейд — Р.33 С4. Вид разрешается ПО ВРЕМЕНИ (Р.34 К4:
-    /// у параметров вида есть кривые), поэтому здесь лежит не готовый
-    /// `TransMix`, а вид с кривыми и начало окна.
+    /// Transition from the INCOMING side (the pair is computed in its layer) and
+    /// a solo fade — R.33 C4. The kind is resolved BY TIME (R.34 K4:
+    /// the kind's parameters have curves), so what is stored here is not a finished
+    /// `TransMix`, but the kind with its curves and the window start.
     fade_in_trans: Option<TransAnim>,
     fade_out_trans: Option<TransAnim>,
-    /// Фейд (Р.25): напротив окна пустота (край дорожки/Gap), пары нет и
-    /// ЖДАТЬ её не надо — слой уходит в прозрачность (под ним просвечивает
-    /// нижняя дорожка, а её нет — чёрное).
+    /// Fade (R.25): opposite the window there is emptiness (track edge or Gap), so there is no pair and
+    /// nothing to WAIT for — the layer fades to transparency (the track below shows through,
+    /// and there is none — black).
     fade_in_solo: bool,
     fade_out_solo: bool,
-    /// Непрозрачность слоя 0..4096 (Р.28, п.12: «уровень» события как в
-    /// Vegas). Множится на альфу при композиции — под полупрозрачным
-    /// клипом просвечивает нижняя дорожка.
+    /// Layer opacity 0..4096 (R.28, item 12: the event “level” as in
+    /// Vegas). Multiplied by alpha during compositing — under a semi-transparent
+    /// clip the track below shows through.
     opacity_k: u32,
-    /// «Ручки»: материал за краями тела (тики) — источник продолжается
-    /// линейно, за краями материала кадр клампится (политика краёв).
+    /// “Handles”: material beyond the body edges (ticks) — the source continues
+    /// linearly; beyond the material edges the frame is clamped (edge policy).
     head_ext: Tick,
     tail_ext: Tick,
-    /// Растяжение времени (Slowed+Reverb на ВИДЕО-клипе, Р.37 п.2).
-    /// `None` — линейный путь БАЙТ-В-БАЙТ прежний, и на этом стоит
-    /// GOLDEN_VIDEO.
+    /// Time stretch (Slowed+Reverb on a VIDEO clip, R.37 item 2).
+    /// `None` — the linear path, BYTE-FOR-BYTE as before, is what
+    /// GOLDEN_VIDEO relies on.
     warp: Option<VideoWarp>,
-    /// МАКСИМУМ нетто-зума цепочки за всю длительность клипа (Р.46,
-    /// п.320): сколько раз цепочке нужен вход крупнее Quality. Считается
-    /// один раз при построении рендерера (кривые автоматизации и камеры
-    /// сэмплируются по сетке), ступень — по клипу целиком (решение
-    /// владельца: один ключ кэша на клип).
+    /// MAXIMUM net zoom of the chain over the whole clip duration (R.46,
+    /// item 320): how many times the chain needs an input larger than Quality. Computed
+    /// once when the renderer is built (automation and camera curves
+    /// are sampled on the grid); the scale step is taken for the whole clip (the owner's
+    /// decision: one cache key per clip).
     head_zoom: f64,
-    /// Нативный размер файла, если известен. `None` — ступень 1: раздувать
-    /// декод вслепую нельзя (заглушка отсутствующего файла, синтетика).
+    /// Native file size, if known. `None` — scale step 1: the decode may not be
+    /// inflated blindly (a missing-file placeholder, synthetic).
     native: Option<(u32, u32)>,
-    /// Контекст ведущего узла «Геометрия» (Р.62): вид источника (натив ×
-    /// SAR) и разрешённое правило приведения. У ленты вид неизвестен
-    /// намеренно: суб-композит собирается в размере холста, рамка = холст.
+    /// Context of the leading “Geometry” node (R.62): the source kind (native ×
+    /// SAR) and the allowed conform rule. A reel's kind is deliberately unknown:
+    /// the sub-composite is assembled at canvas size, frame = canvas.
     lead: Option<kt_fx::conform::LeadCtx>,
-    /// Кроп ведущего узла (доли источника) — входит в размер декода: рамка
-    /// растягивается обратно на весь кадр, декодер отдаёт кадр целиком.
+    /// Crop of the leading node (source fractions) — it is part of the decode size: the frame
+    /// is stretched back to the full frame, the decoder returns the whole frame.
     crop: [f64; 4],
-    /// Вложенная лента (Р.50, волна Б): вместо кадра из кэша слой получает
-    /// СУБ-КОМПОЗИТ — и цепочка, навешенная на это событие, применяется к
-    /// СОБРАННОЙ картинке, а не к каждому куску. Ради этого всё и затевалось.
-    /// Ключ — ПАРА (лента, редакция ЭКЗЕМПЛЯРА): с Р.59 у двух
-    /// экземпляров одной ленты могут быть разные переопределения, и это
-    /// разное содержимое. Пустой набор даёт `content == content_hash`,
-    /// поэтому экземпляры без переопределений по-прежнему делят ОДИН
-    /// суб-рендерер (t442/t443 живы).
+    /// Nested reel (R.50, wave B): instead of a frame from the cache the layer gets
+    /// a SUB-COMPOSITE — and the chain hung on this event is applied to the
+    /// ASSEMBLED picture, not to each piece. That is what all this was for.
+    /// The key is a PAIR (reel, revision of the INSTANCE): since R.59 two
+    /// instances of one reel can have different overrides, and that is
+    /// different content. An empty set gives `content == content_hash`,
+    /// so instances without overrides still share ONE
+    /// sub-renderer (t442/t443 still hold).
     nest: Option<NestKey>,
-    /// Хэш редакции ленты: правка ВНУТРИ не трогает ни одного поля
-    /// экземпляра, поэтому без него мемо отдавало бы стейл. С Р.59 —
-    /// функция ПАРЫ (лента, набор переопределений).
+    /// Reel revision hash: an edit INSIDE touches no instance field, so without it the memo
+    /// would return stale data. Since R.59 it is a function of the PAIR
+    /// (reel, set of overrides).
     content: u64,
-    /// Ступень суб-композита — МАКСИМУМ по всем экземплярам этой ленты в
-    /// дереве (Р.50, Б5). Свойство ЛЕНТЫ, а не экземпляра: разойдись они —
-    /// у внутреннего клипа два ключа кэша и два заказа.
+    /// Sub-composite scale step — the MAXIMUM over all instances of this reel in
+    /// the tree (R.50, B5). A property of the REEL, not of an instance: if they diverged,
+    /// the inner clip would have two cache keys and two orders.
     nest_scale: u32,
-    /// СВОЙ fps ленты (Р.62): внутреннее время экземпляра квантуется к её
-    /// сетке (кадр держится). `None` — непрерывно, как Р.56.
+    /// The reel's OWN fps (R.62): the instance's inner time is quantized to its
+    /// grid (the frame is held). `None` — continuous, as in R.56.
     nest_fps: Option<u32>,
-    /// ПРОЦЕДУРНЫЙ источник (Р.56, п.448): у медиа нет своей сетки кадров,
-    /// кадр — чистая функция тика (генераторы, титры, заглушка). Такому
-    /// клипу пол по сетке не ставится: под растяжением он обязан двигаться
-    /// НЕПРЕРЫВНО, иначе замедленный титр дёргается покадрово.
+    /// PROCEDURAL source (R.56, item 448): the media has no grid of its own,
+    /// the frame is a pure function of the tick (generators, titles, placeholder). Such a
+    /// clip is not floored to the grid: under stretching it must move
+    /// CONTINUOUSLY, otherwise a slowed title would jerk frame by frame.
     procedural: bool,
-    /// КОНЕЦ МАТЕРИАЛА источника, если он известен (Р.63 п.2). За ним
-    /// кадров не существует, и просить их бессмысленно: событие, которое
-    /// длиннее файла, обязано ДЕРЖАТЬ последний кадр — ровно так же, как
-    /// у начала файла держится первый. Заказ при этом равен чтению
-    /// (инвариант 4): мы просим последний существующий кадр, а не
-    /// несуществующий, который декодер всё равно не отдаст.
+    /// END OF MATERIAL of the source, if known (R.63 item 2). Beyond it
+    /// no frames exist, and asking for them is pointless: an event longer than the file
+    /// must HOLD the last frame — just as the start of the file holds the first one.
+    /// The order is then equal to the read
+    /// (invariant 4): we ask for the last existing frame, not a non-existent one
+    /// that the decoder would not return anyway.
     material_end: Option<Tick>,
 }
 
-// Карта варпа клипа переехала в kt-model (Р.39): конструктор один на
-// всех — рендер, превью и правило куска клипа берут её оттуда, поэтому
-// разойтись «какой кадр показать» и «где режем» больше не могут.
+// The clip's warp map moved to kt-model (R.39): one constructor for
+// all — render, preview and the clip-cut rule take it from there, so
+// “which frame to show” and “where we cut” can no longer diverge.
 use kt_model::ClipWarp as VideoWarp;
 
-/// Переход, привязанный к клипу: вид, его кривые и начало окна. Вид
-/// разрешается на КАЖДЫЙ момент — иначе анимация параметров не дошла бы
-/// до картинки (Р.34 К4).
+/// A transition bound to a clip: its kind, its curves and the window start. The kind
+/// is resolved at EVERY moment — otherwise the parameter animation would not reach
+/// the picture (R.34 K4).
 #[derive(Debug, Clone)]
 struct TransAnim {
     kind: kt_model::TransitionKind,
     auto: Vec<kt_model::ParamCurve>,
     w0: Tick,
-    /// Инверсия перехода (Р.51, п.398). Исполняется ПЛАНОМ, не ядром:
-    /// `apply_invert` меняет стороны местами и обращает прогресс.
+    /// Transition inversion (R.51, item 398). Executed by the PLAN, not the kernel:
+    /// `apply_invert` swaps the sides and reverses the progress.
     invert: bool,
 }
 
@@ -177,40 +177,40 @@ impl TransAnim {
 }
 
 impl VideoClip {
-    /// Активен ли клип в момент t с учётом ручек перехода.
+    /// Whether the clip is active at moment t, taking the transition handles into account.
     fn active_at(&self, t: Tick) -> bool {
         self.start.0 - self.head_ext.0 <= t.0 && t.0 < self.end.0 + self.tail_ext.0
     }
 }
 
-/// Хэш СОДЕРЖИМОГО вложенной ленты, рекурсивный (Р.50, волна Б).
+/// Hash of the CONTENT of a nested reel, recursive (R.50, wave B).
 ///
-/// Сегодняшнее обещание «правка модели пересоздаёт рендерер, стейл-кадры не
-/// читаются» для вложения НЕПРАВДА: правка ВНУТРИ ленты не трогает ни одного
-/// поля клипа-экземпляра, и его `fx_hash` остаётся прежним. Этот хэш
-/// вплетается туда и закрывает дыру. Разделение получается чистым:
-/// `source` различает ЛЕНТЫ, `fx_hash` — ЭКЗЕМПЛЯРЫ, `content_hash` —
-/// РЕДАКЦИИ.
+/// The promise “an edit re-creates the renderer, stale frames are not
+/// read” is FALSE for a nested reel: an edit INSIDE the reel touches no field of
+/// the instance clip, and its `fx_hash` stays the same. This hash is woven in
+/// here and closes the gap. The separation is clean:
+/// `source` distinguishes REELS, `fx_hash` — INSTANCES, `content_hash` —
+/// REVISIONS.
 ///
-/// Считается Debug-представлением — тем же приёмом, что `fx_chain_hash`:
-/// f64 печатается shortest-roundtrip, значит детерминированно, а новое поле
-/// модели попадает в хэш САМО.
-/// Адрес суб-рендерера: ЛЕНТА плюс РЕДАКЦИЯ экземпляра (Р.59, стадия 3).
+/// Computed with the Debug representation — the same trick as `fx_chain_hash`:
+/// f64 is printed shortest-roundtrip, so it is deterministic, and a new model field
+/// gets into the hash BY ITSELF.
+/// Sub-renderer address: the REEL plus the REVISION of the instance (R.59, stage 3).
 pub type NestKey = (MediaId, u64);
 
-/// Редакция ленты, какой её видит ЭТОТ экземпляр (Р.59, стадия 3).
+/// Reel revision as THIS instance sees it (R.59, stage 3).
 ///
-/// Пустой набор переопределений обязан давать РОВНО `content_hash`:
-/// иначе сдвинулись бы все ключи мемоизации, sidecar-превью и GPU-планы
-/// у проектов, которые публикацией не пользуются вовсе.
+/// An empty set of overrides must give EXACTLY `content_hash`:
+/// otherwise all memo keys, sidecar previews and GPU plans would shift
+/// for projects that do not use publishing at all.
 pub fn instance_content(project: &Project, seq: MediaId, overrides: &[kt_model::Override]) -> u64 {
     let base = content_hash(project, seq);
     if overrides.is_empty() {
         return base;
     }
-    // Тем же приёмом, что и сам `content_hash`: Debug-представление
-    // детерминировано (f64 печатается shortest-roundtrip), и новое поле
-    // переопределения попадает в хэш САМО.
+    // Using the same trick as `content_hash` itself: the Debug representation
+    // is deterministic (f64 is printed shortest-roundtrip), and a new override
+    // field gets into the hash BY ITSELF.
     xxhash_rust::xxh3::xxh3_64(
         &[base.to_le_bytes().as_slice(), format!("{overrides:?}").as_bytes()].concat(),
     )
@@ -229,18 +229,18 @@ fn hash_reel(project: &Project, seq: MediaId, depth: usize, h: &mut xxhash_rust:
         return;
     }
     h.update(&[s.overlap_layers as u8]);
-    // ДОРОЖКИ ленты (Р.62) — редакция целиком: порядок строк, выключатели,
-    // уровень, режим наложения и цепочка дорожки меняют картинку и звук
+    // TRACKS of the reel (R.62) — the whole revision: the row order, switches,
+    // level, blend mode and track chain change the picture and the sound
     h.update(format!("{:?}", s.tracks).as_bytes());
     h.update(format!("{:?}", s.clips).as_bytes());
     h.update(format!("{:?}", s.transitions).as_bytes());
     h.update(format!("{:?}", s.morphers).as_bytes());
     h.update(format!("{:?}", s.cameras).as_bytes());
-    // объявленный набор ручек — тоже СОДЕРЖИМОЕ ленты: сужение предела
-    // меняет то, что рисуется у экземпляра с переопределением
+    // the declared set of handles is also the CONTENT of the reel: narrowing a limit
+    // changes what is drawn for an instance with overrides
     h.update(format!("{:?}", s.published).as_bytes());
-    // свои растр и fps (Р.62) — редакция: другой холст или другая сетка —
-    // другой кадр, ключи мемо и превью ленты обязаны это видеть
+    // its own raster and fps (R.62) — a revision: another canvas or another grid —
+    // another frame; the memo keys and reel previews must see this
     h.update(format!("{:?}{:?}", s.raster, s.fps).as_bytes());
     for c in &s.clips {
         if project.sequence(c.media).is_some() {
@@ -249,10 +249,10 @@ fn hash_reel(project: &Project, seq: MediaId, depth: usize, h: &mut xxhash_rust:
     }
 }
 
-/// Хэш цепочки для пост-FX кэша. Вход — Debug-представление параметров
-/// (детерминировано, f64 печатается shortest-roundtrip) + геометрия:
-/// start/span/source_in/reversed задают отображение t→(src_pts, u),
-/// frame_step — сетку (смена fps проекта обязана инвалидировать).
+/// Chain hash for the post-FX cache. Input — the Debug representation of the parameters
+/// (deterministic, f64 printed shortest-roundtrip) + geometry:
+/// start/span/source_in/reversed define the mapping t→(src_pts, u),
+/// frame_step — the grid (a change of project fps must invalidate).
 #[allow(clippy::too_many_arguments)]
 fn fx_chain_hash(
     fx: &[kt_model::FxInstance],
@@ -264,11 +264,11 @@ fn fx_chain_hash(
     frame_step: i64,
     content: u64,
 ) -> u64 {
-    // кривые автоматизации — часть ключа (Р.30): правка кейфрейма обязана
-    // инвалидировать пост-FX кадры, пережившие пересоздание рендерера.
-    // `content` (Р.50) — редакция ВЛОЖЕННОЙ ленты: правка внутри не
-    // трогает ни одного поля экземпляра, и без неё пост-FX кадр экземпляра
-    // остался бы стейлом. У обычного клипа это ноль, и ключ прежний.
+    // automation curves are part of the key (R.30): an edit of a keyframe must
+    // invalidate post-FX frames that survived a renderer re-creation.
+    // `content` (R.50) — the revision of a NESTED reel: an edit inside touches
+    // no field of the instance, and without it the post-FX frame of the instance would
+    // stay stale. For an ordinary clip this is zero, and the key is unchanged.
     let repr = format!(
         "{fx:?}|{auto:?}|{}|{}|{}|{reversed}|{frame_step}|{content}",
         start.0,
@@ -278,38 +278,38 @@ fn fx_chain_hash(
     xxhash_rust::xxh3::xxh3_64(repr.as_bytes())
 }
 
-/// pts источника для момента таймлайна `t` внутри клипа: прямой или
-/// зеркальный (п.16 реверс). Чистая функция — тест 24.
+/// Source pts for the timeline moment `t` inside the clip: direct or
+/// mirrored (item 16, reverse). A pure function — Test 24.
 ///
-/// **Пол по сетке ставит ЛИСТ, и только ФАЙЛОВЫЙ** (Р.56, п.448). Файл
-/// хранит кадры на своей сетке: просить между ними бессмысленно, декодер
-/// всё равно отдаст ближайший, а два ключа на один кадр — двойной расход
-/// кэша. У процедурного источника (генератор, титр, заглушка) кадра «между»
-/// не существует — он считается на любой тик, и пол там только дробит
-/// движение на ступеньки. У ЛЕНТЫ пола нет вовсе: её внутреннее время —
-/// время монтажа, а не индекс кадра (`clip_inner_tick`).
+/// **The grid floor is applied by a LEAF, and ONLY a FILE one** (R.56, item 448). A file
+/// stores frames on its own grid: asking for something between them is pointless, the decoder
+/// would return the nearest anyway, and two keys for one frame are a double cache cost.
+/// A procedural source (generator, title, placeholder) has no frame “between” —
+/// it is computed at any tick, and a floor there would only chop the
+/// motion into steps. A REEL has no floor at all: its inner time is
+/// editing time, not a frame index (`clip_inner_tick`).
 fn clip_source_pts(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
     let m = clip_material_pos(c, t, grid);
     let m = match c.material_end {
-        // за концом материала держим ПОСЛЕДНИЙ кадр (Р.63 п.2): просить
-        // несуществующий значит получить пустой слой и вечный промах
+        // beyond the end of the material we hold the LAST frame (R.63 item 2): asking for
+        // a non-existent one means getting an empty layer and a permanent miss
         Some(end) if end.0 > 0 && m >= end => Tick(end.0 - 1),
         _ => m,
     };
     if c.procedural { m } else { grid.align_floor(m) }
 }
 
-/// НЕПРЕРЫВНОЕ внутреннее время вложения (Р.56, п.448): момент ленты, в
-/// который играет экземпляр. Пола здесь нет по построению — у ленты нет
-/// декодированных кадров, округлять нечего, а округление ЛОМАЕТ: при
-/// rate 0.5 два соседних выходных кадра получали один и тот же `inner_t`,
-/// мемо суб-композита отдавало ту же запись, и всё процедурное внутри
-/// (титры, анимация, автоматизация, камеры) шло ступеньками по два кадра.
+/// CONTINUOUS inner time of a nesting (R.56, item 448): the reel moment at
+/// which the instance plays. There is no floor here by construction — a reel has no
+/// decoded frames, there is nothing to round, and rounding BREAKS: at
+/// rate 0.5 two adjacent output frames got the same `inner_t`,
+/// the sub-composite memo returned the same entry, and everything procedural inside
+/// (titles, animation, automation, cameras) moved in two-frame steps.
 fn clip_inner_tick(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
     let m = clip_material_pos(c, t, grid);
     match c.nest_fps {
-        // СВОЙ fps ленты (Р.62): её время квантуется к её сетке — кадр
-        // держится до следующего, без смешения; это намеренные ступеньки
+        // The reel's OWN fps (R.62): its time is quantized to its grid — the frame
+        // is held until the next one, without blending; these steps are intentional
         Some(f) if f > 0 => {
             let step = kt_time::TICK_HZ / f as i64;
             Tick(m.0.div_euclid(step) * step)
@@ -318,17 +318,17 @@ fn clip_inner_tick(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
     }
 }
 
-/// Смешивает ли этот экземпляр кадры (Р.56, п.448). Наследуется ВНИЗ: на
-/// самой ленте смешивать нечего (суб-композит — функция непрерывного
-/// времени, он и так точен), а вот её ЛИСТЬЯ обязаны смешать свои пары,
-/// иначе футаж внутри замедленной композиции остаётся ступенчатым.
+/// Whether this instance blends frames (R.56, item 448). It is inherited DOWNWARD: on
+/// the reel itself there is nothing to blend (the sub-composite is a function of continuous
+/// time and is already exact), but its LEAVES must blend their own pairs,
+/// otherwise footage inside a slowed composition stays stepped.
 fn nest_blend(c: &VideoClip, inherited: bool) -> bool {
     inherited || c.warp.as_ref().is_some_and(|w| w.blend())
 }
 
-/// Материальная позиция момента `t` БЕЗ выравнивания по сетке — в ней
-/// живут ключи автоматизации (Р.33). Правило одно на движок, модель и UI
-/// (`kt_model::clip_material_at`): зеркало реверса, кламп краёв — там же.
+/// The material position of moment `t` WITHOUT grid alignment — automation keys
+/// live in it (R.33). One rule for the engine, the model and the UI
+/// (`kt_model::clip_material_at`): reverse mirror, edge clamp — also there.
 fn clip_material_pos(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
     let span = (c.end.0 - c.start.0).max(1);
     let Some(w) = &c.warp else {
@@ -341,24 +341,24 @@ fn clip_material_pos(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
             t,
         );
     };
-    // Растяжение (Р.37 п.2): материал идёт по интегралу скорости. За телом
-    // (ручки перехода) tau уходит из [0,1] — карта продолжает крайним
-    // сегментом, ровно как chain_source_window_ext у аудио.
+    // Stretching (R.37 item 2): material follows the integral of the speed. Beyond the body
+    // (transition handles) tau leaves [0,1] — the map continues with the edge
+    // segment, exactly as chain_source_window_ext does for audio.
     let tau = (t.0 - c.start.0) as f64 / span as f64;
     let consumed = kt_fx::warp_material_ticks(w.base(), w.prof(), span, tau);
     if c.reversed {
-        // ВАРП, ПОТОМ ЗЕРКАЛО — не наоборот. Аудио-путь (`fill_source`)
-        // зеркалит УЖЕ потреблённый прямой поток; зеркало до варпа гнало бы
-        // кривую скорости задом наперёд и рассинхронило A/V. Якорь —
-        // ПРОЛЁТ позиции (Р.57), а не «сколько съедено»: со знаковой
-        // скоростью кривая может уйти назад и вернуться, съев вдвое
-        // больше, чем прошла. На положительных кривых пролёт равен
-        // (0, used), и выражение сворачивается в прежнее.
+        // WARP, THEN MIRROR — not the other way round. The audio path (`fill_source`)
+        // mirrors the ALREADY consumed forward stream; a mirror before the warp would run
+        // the speed curve backwards and desynchronize A/V. The anchor is
+        // the SPAN of the position (R.57), not “how much was eaten”: with a signed
+        // speed the curve can go back and return, eating twice
+        // more than it passed. On positive curves the span equals
+        // (0, used), and the expression collapses to the previous one.
         let (smin, smax) = w.span();
-        // два клампа, и оба нужны: нижний край ПРОЛЁТА (дальше зеркало не
-        // ходит) и НАЧАЛО ФАЙЛА — со знаковой скоростью пролёт уезжает за
-        // точку входа и может уйти левее нуля (Р.57). Кадра там нет ни у
-        // одного источника, держим крайний.
+        // Two clamps, and both are needed: the lower edge of the SPAN (the mirror does not
+        // go further) and the START OF THE FILE — with a signed speed the span drifts past
+        // the entry point and may go left of zero (R.57). There is no frame there for any
+        // source, so we hold the edge one.
         Tick(
             (c.source_in.0 + smin + smax - grid.frame_step() - consumed)
                 .max(c.source_in.0 + smin)
@@ -372,38 +372,38 @@ fn clip_material_pos(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
 pub struct VideoRenderer {
     clips: Vec<VideoClip>,
     pub grid: FpsGrid,
-    /// Пул RGBA-буферов FX-цепочек (п.2 р.7): без него каждый compose
-    /// платил ~6 полноразмерных аллокаций.
+    /// Pool of RGBA buffers for FX chains (item 2 of round 7): without it every compose
+    /// paid ~6 full-size allocations.
     fx_scratch: kt_fx::video::FxScratch,
-    /// Переиспользуемый буфер бленда пары перехода (п.137): аллокация
-    /// один раз, не на кадр.
+    /// Reusable blend buffer for a transition pair (item 137): allocated
+    /// once, not per frame.
     blend: Vec<u8>,
-    /// Снапшот камер проекта (Р.29): активная/прибитая камера Pan3d
-    /// разрешается при построении плана тем же правилом, что в модели.
+    /// Snapshot of the project cameras (R.29): the active/pinned Pan3d camera
+    /// is resolved when the plan is built, by the same rule as in the model.
     cameras: Vec<kt_model::CameraEvent>,
-    /// Размер проекта в px — мировая система координат 3D-эффектов.
+    /// Project size in px — the world coordinate system of 3D effects.
     project_size: (u32, u32),
-    /// Рендереры вложенных лент (Р.50). Дерево строится ОДИН раз вместе с
-    /// корнем: правка модели пересоздаёт рендерер целиком, и стейл-узлов
-    /// не бывает по построению.
+    /// Renderers of nested reels (R.50). The tree is built ONCE together with
+    /// the root: an edit of the model re-creates the renderer whole, and stale nodes
+    /// do not exist by construction.
     nests: std::collections::HashMap<NestKey, VideoRenderer>,
-    /// Стадии видеодорожек (Р.62). Пусто — ни одной лишней ветки в плане.
+    /// Video track stages (R.62). Empty — not a single extra branch in the plan.
     stages: Vec<VideoTrackStage>,
 }
 
-/// Кадр(ы) источника для момента `t`: основной и, в режиме «смешивание»,
-/// сосед с весом (Р.37 С5). ЕДИНСТВЕННОЕ место, где решается пара —
-/// `layers_at` и `layer_src` обязаны звать именно её, иначе префетч греет
-/// не то, что читает композит, и это вечный промах кэша.
+/// Source frame(s) for moment `t`: the main one and, in “blend” mode,
+/// a neighbour with a weight (R.37 C5). The ONLY place where the pair is decided —
+/// `layers_at` and `layer_src` must call exactly this, otherwise the prefetch warms
+/// not what the composite reads, and that is a permanent cache miss.
 ///
-/// `k == 0` (позиция ровно на сетке: целые скорости, rate = 1, кламп у
-/// края) пары НЕ даёт — путь остаётся байт-в-байт прежним.
+/// `k == 0` (position exactly on the grid: integer speeds, rate = 1, clamp at the
+/// edge) gives NO pair — the path stays byte-for-byte as before.
 ///
-/// `blend_footage` — смешивание, УНАСЛЕДОВАННОЕ от вложения сверху (Р.56,
-/// п.448): режим стоит на экземпляре ленты, а смешивают её листья.
-/// У самой ленты пары не бывает никогда: два суб-композита на кадр вдвое
-/// дороже на обоих бэкендах и ничего не добавляют — её время и так
-/// непрерывно.
+/// `blend_footage` — blending INHERITED from a nesting above (R.56,
+/// item 448): the mode sits on the reel instance, and its leaves do the blending.
+/// The reel itself never has a pair: two sub-composites per frame cost twice as much
+/// on both backends and add nothing — its time is already
+/// continuous.
 fn clip_frame_keys(
     c: &VideoClip,
     t: Tick,
@@ -420,36 +420,36 @@ fn clip_frame_keys(
     let m = clip_material_pos(c, t, grid);
     let step = grid.frame_step().max(1);
     let k = (((m.0 - a.0) * 4096) / step).clamp(0, 4096) as u32;
-    // сосед — ВПЕРЁД по индексу материала; у reversed материал идёт
-    // навстречу, но дробная часть по-прежнему меряется вперёд
+    // the neighbour is FORWARD by material index; with reversed, the material runs
+    // toward it, but the fractional part is still measured forward
     if k == 0 { (a, None) } else { (a, Some((Tick(a.0 + step), k))) }
 }
 
-/// Ключ кадра в кэше: idx = pts источника в тиках (выравнен по сетке проекта).
+/// Frame key in the cache: idx = source pts in ticks (aligned to the project grid).
 pub fn video_cache_idx(source_pts: Tick) -> i64 {
     source_pts.0
 }
 
-/// Ступень декода клипа (Р.46, п.320): во сколько ЦЕЛЫХ раз пре-FX кадр
-/// берётся крупнее Quality. Чистая функция от клипа и Quality —
-/// детерминирована, от устройства и бюджетов НЕ зависит (иначе экспорт
-/// зависел бы от машины).
+/// Decode scale step of the clip (R.46, item 320): by how many WHOLE times the pre-FX frame
+/// is taken larger than Quality. A pure function of the clip and Quality —
+/// deterministic, does NOT depend on the device or budgets (otherwise export
+/// would depend on the machine).
 ///
-/// Три множителя: сколько просит цепочка (`head_zoom` клипа, тем же
-/// квантом, что тапы суперсемплинга), сколько может дать файл (запас
-/// натива над Quality, округление ВВЕРХ — решение владельца: остаток
-/// дотянет sws при декоде) и потолок промежуточных буферов.
+/// Three factors: how much the chain asks for (the clip's `head_zoom`, with the same
+/// quantum as the supersampling taps), how much the file can give (the native headroom
+/// above Quality, rounded UP — the owner's decision: the remainder is covered by sws at decode)
+/// and the ceiling on intermediate buffers.
 fn clip_decode_scale(clip: &VideoClip, quality: Quality) -> u32 {
-    // база — размер приведения (Р.62): рамка правила на холсте Quality,
-    // растянутая на весь кадр; у ленты — сам холст
+    // base — the conform size (R.62): the rule's frame on the Quality canvas,
+    // stretched to the full frame; for a reel — the canvas itself
     let base = clip_base_quality(clip, quality);
     let (qw, qh) = (base.width.max(2), base.height.max(2));
     let cap = (kt_fx::plan::MAX_INTER_DIM / qw.max(qh)).max(1);
-    // ВЛОЖЕНИЕ (Р.50, Б5): «натива» у ленты нет — суб-композит можно
-    // собрать в любом размере, запас не ограничен ничем, кроме потолка
-    // промежуточных буферов. Ступень берётся ОДНА на ленту (максимум по
-    // всем её экземплярам): иначе у внутреннего клипа было бы два ключа
-    // кэша, две полоски и два заказа — вечный промах (t312/t317).
+    // NESTING (R.50, B5): a reel has no “native” — the sub-composite can be
+    // assembled at any size; its headroom is limited by nothing except the ceiling
+    // on intermediate buffers. The scale step is taken ONE per reel (the maximum over
+    // all its instances): otherwise the inner clip would have two cache keys,
+    // two coverage bars and two orders — a permanent miss (t312/t317).
     if clip.nest.is_some() {
         return clip.nest_scale.min(cap).max(1);
     }
@@ -458,52 +458,52 @@ fn clip_decode_scale(clip: &VideoClip, quality: Quality) -> u32 {
         return 1;
     }
     let Some((nw, nh)) = clip.native else { return 1 };
-    // запас файла: сколько ЦЕЛЫХ Quality в нативе, с округлением вверх
-    // (натив 1920 при Quality 1280 — это ступень 2, а не 1)
+    // file headroom: how many WHOLE Quality fit in the native size, rounded up
+    // (native 1920 at Quality 1280 is scale step 2, not 1)
     let spare_w = (nw as f64 / qw as f64).ceil() as u32;
     let spare_h = (nh as f64 / qh as f64).ceil() as u32;
     let spare = spare_w.min(spare_h).max(1);
     want.min(spare).min(cap)
 }
 
-/// ВХОД ЦЕПОЧКИ клипа (Р.58, п.459) — ступень, которую цепочка ЭТОГО
-/// экземпляра способна потребить.
+/// CHAIN INPUT of the clip (R.58, item 459) — the step that THIS instance's chain
+/// is able to consume.
 ///
-/// У листа равен ступени декода: она и выведена из его собственной
-/// цепочки. У ЛЕНТЫ ступень — свойство ленты (максимум по экземплярам,
-/// чтобы у внутреннего листа был один ключ кэша, t450), и отдавать её
-/// входом цепочки КАЖДОМУ экземпляру нельзя: пустая цепочка, одна сила
-/// слоя, ведущий стоп (морфер-слой) и цепочка без ресемпла (Blur/Glow)
-/// ступени не потребляют — S×-кадр никто не вернул бы в Quality. До Р.58
-/// это роняло debug-сборку и МОЛЧА выбрасывало вложение из кадра в
-/// релизной.
+/// For a leaf it equals the decode scale step: that is derived from its own
+/// chain. For a REEL the step is a property of the reel (the maximum over instances,
+/// so that the inner leaf has one cache key, t450), and handing it out as the
+/// chain input to EACH instance is not allowed: an empty chain, a single-strength
+/// layer, a leading stop (morpher layer) and a chain without resample (Blur/Glow)
+/// do not consume steps — an S× frame would never be returned to Quality. Before R.58
+/// this crashed the debug build and SILENTLY dropped the nesting from the frame in the
+/// release build.
 fn clip_chain_scale(clip: &VideoClip, quality: Quality) -> u32 {
     let stage = clip_decode_scale(clip, quality);
     if clip.nest.is_none() {
         return stage;
     }
-    // тот же квант, которым считал `nest_scales` — иначе «равно» никогда
-    // не совпало бы и лишний ресемпл появлялся бы на ровном месте
+    // the same quantum with which `nest_scales` computed — otherwise “equal” would never
+    // match, and an extra resample would appear out of nowhere
     stage.min(kt_fx::geom::ss_taps(clip.head_zoom).max(1))
 }
 
-/// Ступень суб-композита каждой ленты: МАКСИМУМ запроса по всем её
-/// экземплярам в ДЕРЕВЕ (Р.50, Б5).
+/// Sub-composite scale step of each reel: the MAXIMUM of the request over all its
+/// instances in the TREE (R.50, B5).
 ///
-/// Ступень обязана быть свойством ЛЕНТЫ, а не экземпляра: содержимое у них
-/// общее, и разные ступени дали бы внутреннему клипу два ключа кэша, две
-/// полоски прогретости и два заказа префетча — вечный промах (t312/t317).
-/// Чистая функция от проекта: от устройства и бюджетов не зависит.
+/// The scale step must be a property of the REEL, not of an instance: the content is
+/// shared between them, and different steps would give the inner clip two cache keys, two
+/// coverage bars and two prefetch orders — a permanent miss (t312/t317).
+/// A pure function of the project: it does not depend on the device or budgets.
 fn nest_scales(project: &Project) -> std::collections::HashMap<MediaId, u32> {
     let mut out: std::collections::HashMap<MediaId, u32> = std::collections::HashMap::new();
     let grid = FpsGrid::new(project.settings.fps);
     let size = (project.settings.width, project.settings.height);
-    // ОБХОД ДЕРЕВА ЭКЗЕМПЛЯРОВ, а не плоский перебор лент (Р.59, стадия
-    // 3): содержимое ленты теперь зависит от набора переопределений того
-    // экземпляра, через который в неё вошли, — а значит и зум цепочки
-    // внутри неё. Ступень при этом остаётся ОДНОЙ на ленту (t450):
-    // разные ступени дали бы внутреннему клипу два ключа кэша и два
-    // заказа. Максимум просто стал честным.
+    // A WALK OF THE INSTANCE TREE, not a flat scan of reels (R.59, stage
+    // 3): the content of a reel now depends on the override set of the instance
+    // through which it was entered — and hence the chain zoom inside it too.
+    // The scale step still remains ONE per reel (t450): different steps would give
+    // the inner clip two cache keys and two orders.
+    // The maximum has simply become honest.
     let mut seen: std::collections::HashSet<(MediaId, u64)> = std::collections::HashSet::new();
     let mut stack: Vec<(Option<MediaId>, Vec<kt_model::Override>, usize)> =
         vec![(None, Vec::new(), 0)];
@@ -546,7 +546,7 @@ fn nest_scales(project: &Project) -> std::collections::HashMap<MediaId, u32> {
     out
 }
 
-/// `a \ b` на отсортированных наборах интервалов.
+/// `a \ b` on sorted sets of intervals.
 fn subtract(
     a: Vec<std::ops::Range<i64>>,
     mut b: Vec<std::ops::Range<i64>>,
@@ -585,14 +585,14 @@ fn scaled(q: Quality, s: u32) -> Quality {
     if s <= 1 { q } else { Quality { width: q.width * s, height: q.height * s } }
 }
 
-/// Размер приведения клипа (Р.62): в какой размер декодер тянет ПОЛНЫЙ
-/// кадр при ступени 1 — рамка правила на холсте `quality`, растянутая
-/// обратно на весь кадр (кроп вырезает узел). У ленты — холст.
+/// Conform size of the clip (R.62): the size to which the decoder pulls the FULL
+/// frame at scale step 1 — the rule's frame on the `quality` canvas, stretched
+/// back to the full frame (the crop is cut by the node). For a reel — the canvas.
 fn clip_base_quality(clip: &VideoClip, quality: Quality) -> Quality {
     let lead =
         clip.lead.unwrap_or(kt_fx::conform::LeadCtx::new(None, kt_model::ConformRule::Stretch));
-    // лента без своего растра — холст родителя (закон Э); со своим (Р.62) —
-    // рамка правила, как у файла: суб-композит собирается в ней
+    // a reel without its own raster — the parent's canvas (law E); with its own (R.62) —
+    // the rule's frame, as for a file: the sub-composite is assembled in it
     if clip.nest.is_some() && lead.view.is_none() {
         return quality;
     }
@@ -605,18 +605,18 @@ fn clip_base_quality(clip: &VideoClip, quality: Quality) -> Quality {
     Quality { width: g.decode.0, height: g.decode.1 }
 }
 
-/// Качество декода клипа. ЕДИНСТВЕННОЕ место решения: заказ префетча,
-/// чтение композита и полоски прогретости обязаны спрашивать его — иначе
-/// греется не то, что читается (t247d по оси размера, t312).
+/// Decode quality of the clip. The ONLY place of decision: the prefetch order,
+/// the composite read and the coverage bars must ask it — otherwise
+/// what is warmed is not what is read (t247d along the size axis, t312).
 fn clip_decode_quality(clip: &VideoClip, quality: Quality) -> Quality {
     scaled(clip_base_quality(clip, quality), clip_decode_scale(clip, quality))
 }
 
-/// Ведущий узел «Геометрия» — в цепочку движка (Р.62). Позиция —
-/// `geometry_pos` в счёте АКТИВНЫХ слотов (bypass-слоты отфильтрованы);
-/// кривые (`auto`) получают пустой слот на той же позиции, чтобы индексы
-/// остались параллельны; `LayerMix.from`, указывающий на слот после
-/// точки вставки, сдвигается на один. У аудио-события узла нет.
+/// The leading “Geometry” node goes into the engine chain (R.62). The position —
+/// `geometry_pos` in the count of ACTIVE slots (bypass slots filtered out);
+/// curves (`auto`) get an empty slot at the same position, so that indices
+/// stay parallel; `LayerMix.from`, pointing at a slot after the
+/// insertion point, is shifted by one. An audio event has no such node.
 fn materialize_lead(
     c: &kt_model::ClipEvent,
     mut fx: Vec<kt_model::FxInstance>,
@@ -645,13 +645,13 @@ fn materialize_lead(
     (fx, auto)
 }
 
-/// Максимум нетто-зума цепочки за длительность клипа (Р.46, п.320).
-/// Кривые сэмплируются по ЛИНЕЙНОЙ материальной оси — той же, по которой
-/// их читает `layer_src`; камеры — по таймлайну. Точки: равномерная сетка,
-/// оба конца и все ключи кривых (экстремум зума почти всегда в ключе).
-/// Логическая база — размер ПРОЕКТА: зум почти не зависит от Quality
-/// (расхождения целочисленных огрублений сетки мельче кванта ступени), а
-/// ступень обязана быть одинаковой на превью и экспорте.
+/// Maximum net zoom of the chain over the clip duration (R.46, item 320).
+/// Curves are sampled along the LINEAR material axis — the same one by which
+/// `layer_src` reads them; cameras — along the timeline. Points: a uniform grid,
+/// both ends and all curve keys (the zoom extremum almost always sits on a key).
+/// The logical base is the PROJECT size: zoom barely depends on Quality
+/// (differences from integer rounding of the grid are smaller than the step quantum), and
+/// the step must be the same in preview and export.
 #[allow(clippy::too_many_arguments)]
 fn clip_head_zoom(
     fx: &[kt_model::FxInstance],
@@ -667,10 +667,10 @@ fn clip_head_zoom(
 ) -> f64 {
     let (pw, ph) = (project_size.0.max(2), project_size.1.max(2));
     let live = plan.is_some();
-    // Тождество проверяется по СТАТИЧЕСКИМ значениям: узел «Геометрия» с
-    // zoom 1 и кривой 1 → 4 статически тождествен, а к концу клипа
-    // просит ступень 4 (t311). С живым планом ранний выход невозможен —
-    // до Р.62 его спасал Pan, который тождеством не считался никогда.
+    // Identity is checked on STATIC values: a “Geometry” node with
+    // zoom 1 and a curve 1 → 4 is statically identical, yet by the end of the clip
+    // it requests step 4 (t311). With a live plan an early exit is impossible —
+    // before R.62 it was saved by Pan, which was never counted as identity.
     if !live && !kt_fx::video::has_video_fx_in(fx, lead, pw, ph) {
         return 1.0;
     }
@@ -682,10 +682,10 @@ fn clip_head_zoom(
         for i in 0..=GRID {
             probes.push(Tick(start.0 + span * i / GRID));
         }
-        // изломы кривых — тоже пробы: между двумя ключами максимум зума
-        // может стоять ровно на ключе
+        // curve kinks are also probes: between two keys the zoom maximum
+        // may sit exactly on a key
         for k_t in plan.into_iter().flat_map(|p| p.key_ticks()) {
-            // ключ живёт в МАТЕРИАЛЬНОЙ оси — переводим в таймлайн
+            // the key lives on the MATERIAL axis — convert to the timeline
             let t = kt_model::clip_timeline_at(
                 source_in,
                 start,
@@ -706,7 +706,7 @@ fn clip_head_zoom(
             }
         }
     } else {
-        // статика: зум одинаков на всей длительности, хватает середины
+        // static: the zoom is the same over the whole duration, the middle is enough
         probes.push(Tick(start.0 + span / 2));
     }
     let mut best = 1.0f64;
@@ -727,7 +727,7 @@ fn clip_head_zoom(
         let cam3d = has_3d.then(|| {
             let ev = kt_model::active_camera_in(cameras, t);
             let cam = ev.map(|e| e.params_at(t)).unwrap_or_default();
-            // логика считается на размере проекта — world_scale ровно 1
+            // the logic is computed at the project size — world_scale is exactly 1
             Cam3d { cam, world_scale: 1.0 }
         });
         let u = (t.0 - start.0) as f64 / span as f64;
@@ -736,33 +736,33 @@ fn clip_head_zoom(
     best
 }
 
-/// Что рендерер знает об ОТКРЫТЫХ источниках (Р.46 п.321, Р.56 п.448).
+/// What the renderer knows about OPENED sources (R.46 item 321, R.56 item 448).
 ///
-/// План знает о медиа ровно `MediaId` (закон П): ЧТО лежит по адресу —
-/// свойство ИСТОЧНИКА, и рендерер узнаёт об этом только от того, кто
-/// источник открыл. Отсюда и форма: не путь и не `MediaRef`, а два факта,
-/// которые плану действительно нужны — запас деталей (натив) и наличие
-/// собственной сетки кадров.
+/// The plan knows about media exactly as `MediaId` (law P): WHAT lies at an address is a
+/// property of the SOURCE, and the renderer learns this only from whoever opened the
+/// source. Hence the shape: not a path and not a `MediaRef`, but the two facts the plan
+/// really needs — the headroom of detail (native) and the presence of its own
+/// grid of frames.
 #[derive(Debug, Clone, Default)]
 pub struct SourceFacts {
-    /// Нативный размер видео-источника: запас для ступени декода.
+    /// Native size of the video source: headroom for the decode scale step.
     pub natives: std::collections::HashMap<MediaId, (u32, u32)>,
-    /// Источники БЕЗ своей сетки кадров (Р.56): кадр — чистая функция
-    /// тика. Им пол по сетке не ставится.
+    /// Sources WITHOUT a grid of their own (R.56): the frame is a pure function of
+    /// the tick. They are not floored to the grid.
     pub procedural: std::collections::HashSet<MediaId>,
-    /// Вид кадра источника (натив × пиксельное соотношение, Р.62) — вход
-    /// правила приведения. Считается ТЕМ ЖЕ каналом, что нативы.
+    /// The kind of the source frame (native × pixel aspect ratio, R.62) — the input of
+    /// the conform rule. Computed through the SAME channel as the natives.
     pub views: std::collections::HashMap<MediaId, (f64, f64)>,
-    /// ДЛИНА МАТЕРИАЛА (Р.63 п.2) — тем же каналом и по той же причине:
-    /// сколько материала есть, знает только тот, кто источник открыл.
-    /// Её отсутствие — не ноль, а «края нет» (генератор, заглушка).
+    /// MATERIAL LENGTH (R.63 item 2) — through the same channel and for the same reason:
+    /// only whoever opened the source knows how much material there is.
+    /// Its absence is not zero, but “no edge” (generator, placeholder).
     pub lengths: std::collections::HashMap<MediaId, kt_time::Tick>,
 }
 
 impl SourceFacts {
-    /// Запомнить факты открытого источника. ЕДИНСТВЕННОЕ место, где
-    /// решается «процедурный ли он»: разойдись плеер, экспорт и kt-cli в
-    /// этом вопросе — заказ и чтение считали бы разные ключи (инвариант 4).
+    /// Remember the facts of an opened source. The ONLY place where it is decided
+    /// whether it is “procedural”: if the player, export and kt-cli diverged on this question,
+    /// the order and the read would compute different keys (invariant 4).
     pub fn observe(&mut self, media: MediaId, info: &kt_media::MediaInfo) {
         if info.duration.0 > 0 {
             self.lengths.insert(media, info.duration);
@@ -776,10 +776,10 @@ impl SourceFacts {
             self.natives.remove(&media);
             self.views.remove(&media);
         }
-        // «Своей сетки кадров нет» — это и есть определение процедурного
-        // источника: у файла fps берётся из контейнера, у генератора,
-        // титра и заглушки его не существует, и кадр считается на любой
-        // запрошенный тик.
+        // “No grid of its own” is exactly the definition of a procedural
+        // source: a file takes its fps from the container, while a generator,
+        // title or placeholder has none, and the frame is computed at any
+        // requested tick.
         if info.has_video && info.fps.is_none() {
             self.procedural.insert(media);
         } else {
@@ -798,9 +798,9 @@ impl VideoRenderer {
         VideoRenderer::new_with_facts(project, &SourceFacts::default())
     }
 
-    /// Рендерер, знающий НАТИВНЫЕ размеры источников (Р.46, п.320): без
-    /// них ступень декода всегда 1 — раздувать декод, не зная запаса
-    /// файла, нельзя.
+    /// A renderer that knows the NATIVE sizes of the sources (R.46, item 320): without
+    /// them the decode scale step is always 1 — the decode may not be inflated without knowing the
+    /// file's headroom.
     pub fn new_with_natives(
         project: &Project,
         natives: &std::collections::HashMap<MediaId, (u32, u32)>,
@@ -811,9 +811,9 @@ impl VideoRenderer {
         )
     }
 
-    /// Рендерер, знающий ФАКТЫ об открытых источниках (Р.56): натив и
-    /// процедурность. Плеер, экспорт и kt-cli зовут этот конструктор —
-    /// иначе замедленный титр остаётся ступенчатым.
+    /// A renderer that knows the FACTS about opened sources (R.56): the native size and
+    /// procedurality. The player, export and kt-cli call this constructor —
+    /// otherwise a slowed title stays stepped.
     pub fn new_with_facts(project: &Project, facts: &SourceFacts) -> VideoRenderer {
         VideoRenderer::build(project, facts)
     }
@@ -830,23 +830,23 @@ impl VideoRenderer {
         overrides: &[kt_model::Override],
         depth: usize,
     ) -> VideoRenderer {
-        // морфер-слои применены здесь, движок их не видит (H1); вложения
-        // НЕ раскрываются — у каждого свой узел плана (Р.50, волна Б).
-        // Переопределения ЭКЗЕМПЛЯРА тоже разрешает модель (Р.59, стадия
-        // 3): движок про публикацию не знает вовсе, ему достаются готовые
-        // клипы. Пустой набор идёт байт-в-байт прежним путём.
+        // morpher layers are applied here, the engine does not see them (H1); nestings
+        // are NOT expanded — each has its own plan node (R.50, wave B).
+        // The overrides of an INSTANCE are also resolved by the model (R.59, stage
+        // 3): the engine knows nothing about publishing at all, it gets ready-made
+        // clips. An empty set goes the byte-for-byte prior path.
         let resolved = project.resolve_reel(seq, overrides);
         let effective = &resolved.clips;
         let grid = FpsGrid::new(project.settings.fps);
-        // Камеры — СВОИ у каждой ленты, и `head_zoom` обязан считаться по
-        // ним же: `nest_scales` выбирает камеры именно так, а ступень
-        // ленты и вход цепочки экземпляра сравниваются между собой
-        // (`clip_chain_scale`). Разные наборы камер разводили бы их сами
-        // по себе на Pan3d внутри ленты со своими камерами.
+        // Cameras are OWN to each reel, and `head_zoom` must be computed
+        // by them too: `nest_scales` selects cameras exactly this way, and the reel's step
+        // and the instance's chain input are compared with each other
+        // (`clip_chain_scale`). Different camera sets would pull them apart
+        // on their own, on Pan3d inside a reel with its own cameras.
         let cams: &[kt_model::CameraEvent] = &resolved.cameras;
-        // СОЛЬ адреса источника (Р.59, стадия 3) — одна на всю ленту
-        // экземпляра. Считается ТЕМ ЖЕ кодом, что и в `gen_sources`:
-        // заказ и чтение обязаны спрашивать один адрес (инвариант 4).
+        // SALT of the source address (R.59, stage 3) — one for the whole reel
+        // instance. Computed by the SAME code as in `gen_sources`:
+        // the order and the read must ask for one address (invariant 4).
         let salt = gen_salt(
             match seq.and_then(|id| project.sequence(id)) {
                 Some(s) => &s.published,
@@ -854,17 +854,17 @@ impl VideoRenderer {
             },
             overrides,
         );
-        // ГАШЕНИЕ ВИДЕОДОРОЖКИ (Р.62): mute либо соло-множество СВОЕГО
-        // вида. Уровень и режим наложения дорожки — стадия плана (она
-        // приходит отдельно), а гашение слоя стадии не требует.
+        // VIDEO TRACK MUTING (R.62): mute or the solo set of ITS OWN
+        // kind. The track's level and blend mode are a plan stage (it
+        // arrives separately), and muting a layer does not require the stage.
         let tracks: &[kt_model::Track] = match seq.and_then(|id| project.sequence(id)) {
             Some(s) => &s.tracks,
             None => &project.tracks,
         };
         let solo_on = tracks.iter().any(|t| t.kind == kt_model::LaneKind::Video && t.solo);
-        // СТАДИИ ВИДЕОДОРОЖЕК (Р.62): цепочка, уровень ≠ 1 или режим ≠
-        // Normal. Условие СТРОГОЕ: без него дорожка расплющивается в слои
-        // прежним путём, и байты не двигаются.
+        // VIDEO TRACK STAGES (R.62): a chain, level ≠ 1 or mode ≠
+        // Normal. The condition is STRICT: without it the track is flattened into layers
+        // by the prior path, and the bytes do not move.
         let stages: Vec<VideoTrackStage> = {
             let mut out = Vec::new();
             for (lane, t) in
@@ -897,12 +897,12 @@ impl VideoRenderer {
             .iter()
             .filter(|c| c.kind == ClipKind::Video)
             .map(|c| {
-                let fx = c.active_fx(); // bypass-слоты отфильтрованы (п.2)
+                let fx = c.active_fx(); // bypass slots are filtered out (item 2)
                 let auto = c.active_fx_auto();
-                // Ведущий узел «Геометрия» (Р.62) материализуется В ЦЕПОЧКУ
-                // на позиции `geometry_pos` (в счёте активных слотов):
-                // индексы слотов модели не двигаются, а цепочка движка —
-                // одна последовательность, как у Vegas.
+                // The leading “Geometry” node (R.62) is materialized INTO THE CHAIN
+                // at position `geometry_pos` (in the count of active slots):
+                // the model's slot indices do not move, and the engine's chain is
+                // one sequence, as in Vegas.
                 let (fx, auto) = materialize_lead(c, fx, auto);
                 let warp = kt_model::clip_warp_of(&fx, &auto, c.source_in, c.duration, c.reversed);
                 let nest = project
@@ -919,23 +919,23 @@ impl VideoRenderer {
                     grid.frame_step(),
                     content,
                 );
-                // ступень декода — свойство клипа (Р.46): максимум зума по
-                // всей длительности, считается до перемещения цепочки
-                // План компилируется ОДИН раз на сборку рендерера —
-                // дальше ни одного поиска параметра по имени (Р.59).
-                // Хэш выше посчитан от СЫРЫХ кривых: ключи кэша не
-                // двигаются от смены способа адресации.
+                // decode scale step — a property of the clip (R.46): the maximum zoom over
+                // the whole duration, computed before the chain is moved
+                // The plan is compiled ONCE per renderer build —
+                // no further parameter lookup by name (R.59).
+                // The hash above is computed from RAW curves: cache keys do not
+                // move because of a change in the addressing method.
                 let auto_plan = kt_model::AutoPlan::compile(&fx, &auto);
                 let addr = clip_source_addr_in(c, salt);
-                // контекст приведения: вид источника (у ленты — неизвестен,
-                // рамка = холст) и правило события, разрешённое проектом
-                // ПРОЦЕДУРНЫЙ источник (генератор, титр, заглушка) — функция
-                // запрошенного качества, пропорций у него нет: вид None →
-                // рамка = холст, узел тождествен (spec generators, Р.62)
+                // conform context: the source kind (for a reel — unknown, frame = canvas)
+                // and the event rule allowed by the project
+                // a PROCEDURAL source (generator, title, placeholder) — a function of the
+                // requested quality; it has no proportions: kind None →
+                // frame = canvas, the node is identity (spec generators, R.62)
                 let procedural = facts.procedural.contains(&addr);
-                // ЛЕНТА со своим растром (Р.62) — вид = её растр, экземпляр
-                // приводится как файл; без своего растра вид неизвестен и
-                // рамка равна холсту (закон Э)
+                // A reel WITH its own raster (R.62) — the kind is its raster, the instance
+                // is conformed as a file; without its own raster the kind is unknown and
+                // the frame equals the canvas (law E)
                 let reel_raster = nest
                     .and_then(|_| project.sequence(c.media))
                     .and_then(|s| s.raster)
@@ -997,30 +997,30 @@ impl VideoRenderer {
                     nest_scale: nest.and_then(|(id, _)| nest_scales.get(&id).copied()).unwrap_or(1),
                     nest_fps,
                     procedural,
-                    // у ленты своего материала нет (её кадры считает
-                    // суб-композит), у генератора края не бывает
+                    // a reel has no material of its own (its frames are computed by the
+                    // sub-composite); a generator never has edges
                     material_end: (nest.is_none() && !procedural)
                         .then(|| facts.lengths.get(&addr).copied())
                         .flatten(),
                 }
             })
             .collect();
-        // окна dissolve из переходов (Р.24): пары находят друг друга по
-        // равенству окна на одной дорожке (compose блендит их одним слоем)
-        // Геометрию стыков даёт ЛЕНТА КАК ЕСТЬ: переопределения меняют
-        // значения, а не `start`/`duration`, поэтому `joint`/`overlap_pair`
-        // считаются по ней. Вид и кривые перехода берутся из РАЗРЕШЁННОГО
-        // набора — их-то публикация и правит.
+        // dissolve windows from transitions (R.24): pairs find each other by
+        // the equality of the window on one track (compose blends them as one layer).
+        // The geometry of the joints is given by the reel AS IS: overrides change
+        // values, not `start`/`duration`, so `joint`/`overlap_pair`
+        // are computed from it. The kind and curves of the transition are taken from the RESOLVED
+        // set — and those are exactly what publishing edits.
         let reel: &dyn kt_model::Reel = match seq.and_then(|id| project.sequence(id)) {
             Some(s) => s,
             None => project,
         };
         for t in resolved.transitions.iter() {
-            // НАЛОЖЕННЫЙ переход (Р.51, п.399): окно — сама зона
-            // перекрытия, ручек нет (материал обеих сторон настоящий,
-            // ext = 0). Дальше пара находит себя обычным find_pair по
-            // равенству окна, и build_plan схлопывает её в Dissolve —
-            // вместо жёсткого среза Vegas-порядка в зоне наложения.
+            // An OVERLAID transition (R.51, item 399): the window is the overlap zone itself,
+            // there are no handles (the material of both sides is real,
+            // ext = 0). Further, the pair finds itself by the ordinary find_pair by
+            // window equality, and build_plan collapses it into a Dissolve —
+            // instead of a hard cut in the Vegas order inside the overlap zone.
             if let Some((pa, pb)) = t.overlap_pair(reel) {
                 let (w0, w1) = (pb.start, pa.start + pa.duration);
                 if w1.0 <= w0.0 {
@@ -1048,9 +1048,9 @@ impl VideoRenderer {
                 continue;
             }
             let solo = t.is_fade();
-            // морфер-слой мог разрезать цель (Р.35): id остался у куска
-            // №0, а стык достался тому куску, чья граница на нём стоит —
-            // без этого переход на разрезанном клипе молча исчезал
+            // a morpher layer could cut the target (R.35): the id stayed on piece
+            // No.0, and the joint went to the piece whose boundary sits on it —
+            // without this a transition on a cut clip silently vanished
             if let Some(a) = t.a.and_then(|id| {
                 clips.iter_mut().find(|c| kt_model::same_clip(c.id, id) && c.end == joint)
             }) {
@@ -1068,15 +1068,15 @@ impl VideoRenderer {
                 b.head_ext = Tick((b.start.0 - w0.0).max(0));
             }
         }
-        // Порядок композиции: задний план первым (большая lane), передний
-        // (lane 0) — последним. Внутри ОДНОЙ дорожки при наезде сверху тот,
-        // кто начался ПОЗЖЕ, — правило Vegas (решение пользователя после
-        // Р.28; до этого работало правило v1 «сверху тот, у кого start
-        // меньше», и полоса таймлайна с ним расходилась). Тест 162.
+        // Composition order: the background first (large lane), the foreground
+        // (lane 0) last. Inside ONE track, on an overlay from above, the one
+        // that STARTED LATER is on top — the Vegas rule (the owner's decision after
+        // R.28; before that the v1 rule “on top is the one with the smaller start”
+        // applied, and the timeline strip diverged with it). Test 162.
         clips.sort_by_key(|c| (std::cmp::Reverse(c.lane), c.start.0));
-        // Поддеревья: по одному рендереру на КАЖДУЮ использованную ленту.
-        // Предел глубины держит модель (`validate`), здесь он страховка от
-        // вражеского файла.
+        // Subtrees: one renderer for EACH reel in use.
+        // The depth limit is held by the model (`validate`); here it is a safeguard
+        // against a hostile file.
         let mut nests = std::collections::HashMap::new();
         if depth < kt_model::MAX_NEST_DEPTH {
             for c in effective.iter().filter(|c| c.kind == ClipKind::Video) {
@@ -1099,8 +1099,8 @@ impl VideoRenderer {
             grid,
             fx_scratch: Default::default(),
             blend: Vec::new(),
-            // камеры — СВОИ у каждой ленты: внутрь вложения можно класть
-            // камеры, и правило активной камеры считается по её ленте
+            // cameras are OWN to each reel: cameras may be placed inside a nesting,
+            // and the active-camera rule is computed from its own reel
             cameras: resolved.cameras.to_vec(),
             project_size: (project.settings.width, project.settings.height),
             nests,
@@ -1108,23 +1108,23 @@ impl VideoRenderer {
         }
     }
 
-    /// Кадры, нужные для композиции момента `t` (выравненного вызывающим):
-    /// (media, pts источника, КАЧЕСТВО ДЕКОДА). Порядок — back-to-front.
+    /// Frames needed for the composition of moment `t` (aligned by the caller):
+    /// (media, source pts, DECODE QUALITY). Order — back-to-front.
     ///
-    /// Качество — часть заказа (Р.46, п.318), а не свойство сессии: клип с
-    /// зумящей цепочкой декодируется крупнее Quality. Вызывающий обязан
-    /// греть и читать РОВНО это качество — иначе вечный промах кэша
-    /// (t247d), теперь и по оси размера (t312).
+    /// Quality is part of the order (R.46, item 318), not a property of the session: a clip with
+    /// a zooming chain is decoded larger than Quality. The caller must
+    /// warm and read EXACTLY this quality — otherwise a permanent cache miss
+    /// (t247d), now along the size axis too (t312).
     pub fn layers_at(&self, t: Tick, quality: Quality) -> Vec<(MediaId, Tick, Quality)> {
         let mut out = Vec::new();
         self.layers_at_into(t, quality, false, &mut out);
         out
     }
 
-    /// Заказ УХОДИТ ВГЛУБЬ (Р.50, волна Б): у ленты источника нет, есть
-    /// содержимое. Не спустись он — префетч грел бы адрес, которого не
-    /// существует, а композит читал бы настоящие кадры: вечный промах
-    /// кэша, тот самый, против которого стоит инвариант 4.
+    /// The order GOES DOWN into the nesting (R.50, wave B): a reel has no source, it has
+    /// content. If it did not descend, the prefetch would warm an address that does not
+    /// exist, while the composite would read real frames: a permanent cache miss,
+    /// the very one that invariant 4 is against.
     fn layers_at_into(
         &self,
         t: Tick,
@@ -1133,16 +1133,16 @@ impl VideoRenderer {
         out: &mut Vec<(MediaId, Tick, Quality)>,
     ) {
         for c in self.clips.iter().filter(|c| c.active_at(t)) {
-            // в режиме «смешивание» слой читает ДВА кадра — префетч
-            // обязан согреть оба, иначе второй не запросят никогда
+            // in “blend” mode the layer reads TWO frames — the prefetch
+            // must warm both, otherwise the second would never be requested
             let (a, b) = clip_frame_keys(c, t, &self.grid, blend_footage);
             match c.nest.and_then(|k| self.nests.get(&k)) {
-                // внутреннее время ленты НЕПРЕРЫВНО (Р.56, п.448): заказ
-                // спускается по тому же тику, на котором план собирает
-                // суб-композит, а КАЧЕСТВО увеличено ступенью ленты —
-                // заказ и чтение обязаны спрашивать одно и то же
-                // (инвариант 4). Режим «смешивание» едет ВНИЗ: смешивают
-                // листья, и греть им надо обе стороны пары.
+                // the reel's inner time is CONTINUOUS (R.56, item 448): the order
+                // descends at the same tick at which the plan assembles the
+                // sub-composite, and the QUALITY is raised by the reel's scale step —
+                // the order and the read must ask for the same thing
+                // (invariant 4). The “blend” mode travels DOWN: the leaves blend,
+                // and they must warm both sides of the pair.
                 Some(sub) => sub.layers_at_into(
                     a,
                     clip_decode_quality(c, quality),
@@ -1160,7 +1160,7 @@ impl VideoRenderer {
         }
     }
 
-    /// Все ключи кадров для диапазона таймлайна (prefetch/экспорт).
+    /// All frame keys for the timeline range (prefetch/export).
     pub fn wanted_frames(
         &self,
         range: kt_time::TickRange,
@@ -1178,17 +1178,17 @@ impl VideoRenderer {
         out
     }
 
-    /// Качество декода каждого видео-клипа (Р.46, п.322): полоски
-    /// прогретости в UI спрашивают coverage по НЕМУ. Id — эффективного
-    /// клипа (морфер-слой мог нарезать исходный на куски с разными
-    /// цепочками, а значит и разными ступенями).
+    /// Decode quality of each video clip (R.46, item 322): the coverage bars
+    /// in the UI ask coverage for IT. Id — of the effective
+    /// clip (a morpher layer could cut the source into pieces with different
+    /// chains, and hence different scale steps).
     pub fn video_decode_qualities(&self, quality: Quality) -> Vec<(kt_model::ClipId, Quality)> {
         self.clips.iter().map(|c| (c.id, clip_decode_quality(c, quality))).collect()
     }
 
-    /// Максимальное качество декода среди клипов (Р.46, п.318): бюджеты
-    /// кэша и лукахеда считают память по НЕМУ, а не по Quality — иначе
-    /// чанк экспорта недооценён в S² раз (п.15: «чёрный рендер»).
+    /// Maximum decode quality among the clips (R.46, item 318): the cache and lookahead
+    /// budgets count memory by IT, not by Quality — otherwise
+    /// an export chunk is underestimated by S² times (item 15: “black render”).
     pub fn max_decode_quality(&self, quality: Quality) -> Quality {
         self.clips
             .iter()
@@ -1201,21 +1201,21 @@ impl VideoRenderer {
             .unwrap_or(quality)
     }
 
-    /// Прогретость ВЛОЖЕНИЙ в тиках их содержимого (Р.50, Б6).
+    /// Coverage of NESTINGS in the ticks of their content (R.50, B6).
     ///
-    /// Coverage вложения = **ПЕРЕСЕЧЕНИЕ** прогретости его детей. Не
-    /// объединение: объединение врало бы В ХОРОШУЮ сторону — показывало бы
-    /// прогретым место, где половина слоёв ещё не пришла, а это ровно то,
-    /// против чего стоит инвариант 4 («кэш — единственная правда»).
+    /// The coverage of a nesting is the **INTERSECTION** of the coverage of its children.
+    /// Not the union: a union would lie in the GOOD direction — it would show as warm a
+    /// place where half of the layers have not yet arrived, and that is exactly what
+    /// invariant 4 is against (“the cache is the only truth”).
     ///
-    /// Считается интервальной арифметикой: из пролёта ленты вычитается
-    /// НЕПРОГРЕТАЯ часть каждого ребёнка. Дырка между детьми остаётся
-    /// прогретой — там нечего декодировать, и это правда.
+    /// Computed by interval arithmetic: from the reel's span the NOT-WARM part of each child
+    /// is subtracted. A hole between the children stays warm — there is nothing to decode
+    /// there, and that is true.
     ///
-    /// **Ребёнок с растяжением времени участвует целиком**: карта варпа
-    /// переводит интервалы источника в интервалы содержимого нелинейно, и
-    /// приблизительный перевод тут хуже честного огрубления — такой
-    /// ребёнок считается прогретым, только если прогрет весь.
+    /// **A child with time stretching participates as a whole**: the warp map
+    /// converts source intervals into content intervals non-linearly, and an
+    /// approximate conversion here is worse than an honest coarsening — such a child
+    /// counts as warm only if all of it is warm.
     pub fn nest_coverage(
         &self,
         cache: &BurstCache,
@@ -1224,12 +1224,12 @@ impl VideoRenderer {
         let mut out = Vec::new();
         for c in &self.clips {
             let Some(sub) = c.nest.and_then(|k| self.nests.get(&k)) else { continue };
-            // Окно — по ПРОЛЁТУ материала (Р.55 С4, ось уточнена в Р.57):
-            // у растянутого экземпляра оно не равно его длине на
-            // таймлайне, и полоска врала бы в ХОРОШУЮ сторону — то, чего
-            // инвариант 4 не разрешает. У зеркального интервал тот же,
-            // меняется направление, а не границы; у знаковой кривой
-            // границы даёт пролёт, а не «сколько съедено».
+            // The window is by the SPAN of the material (R.55 C4, the axis refined in R.57):
+            // for a stretched instance it is not equal to its length on the
+            // timeline, and the bar would lie in the GOOD direction — which
+            // invariant 4 does not allow. A mirrored interval is the same,
+            // only the direction changes, not the bounds; for a signed curve the bounds
+            // are given by the span, not by “how much was eaten”.
             let win = match &c.warp {
                 Some(w) => {
                     let (lo, hi) = w.span();
@@ -1243,7 +1243,7 @@ impl VideoRenderer {
         out
     }
 
-    /// Прогретость СОДЕРЖИМОГО ленты на окне `win` (тики ленты).
+    /// Coverage of the reel's CONTENT over the window `win` (reel ticks).
     fn reel_coverage(
         &self,
         cache: &BurstCache,
@@ -1251,9 +1251,9 @@ impl VideoRenderer {
         win: std::ops::Range<i64>,
         blend_footage: bool,
     ) -> Vec<std::ops::Range<i64>> {
-        // при смешивании лист читает ЕЩЁ ОДИН кадр справа (Р.56, п.448):
-        // не расширь окно — полоска звала бы прогретым место, у которого
-        // не пришла вторая половина пары, а это вранье в ХОРОШУЮ сторону
+        // when blending, a leaf reads ONE MORE frame on the right (R.56, item 448):
+        // if the window is not widened, the bar would call warm a place whose
+        // second half of the pair has not arrived, and that is a lie in the GOOD direction
         let pair_ext = |c: &VideoClip| -> i64 {
             if blend_footage || c.warp.as_ref().is_some_and(|w| w.blend()) {
                 self.grid.frame_step().max(1)
@@ -1267,12 +1267,12 @@ impl VideoRenderer {
             if body.start >= body.end {
                 continue;
             }
-            // вложенная лента внутри ленты — та же арифметика этажом ниже
+            // a nested reel inside a reel — the same arithmetic one level down
             let cold = if let Some(sub) = c.nest.and_then(|k| self.nests.get(&k)) {
-                // РАСТЯНУТОЕ или ЗЕРКАЛЬНОЕ вложение — целиком или никак,
-                // ровно как растянутый файловый ребёнок (Р.55, С4):
-                // `shift_runs` — ЛИНЕЙНАЯ карта, и под варпом она врёт, а
-                // врать в ХОРОШУЮ сторону полоска не имеет права.
+                // A STRETCHED or MIRRORED nesting — as a whole or not at all,
+                // exactly like a stretched file child (R.55, C4):
+                // `shift_runs` is a LINEAR map, and under the warp it lies, and
+                // the bar has no right to lie in the GOOD direction.
                 let inner = match &c.warp {
                     Some(w) => {
                         let (lo, hi) = w.span();
@@ -1294,10 +1294,10 @@ impl VideoRenderer {
                     subtract(vec![body.clone()], shift_runs(sub_warm, c.start.0 - c.source_in.0))
                 }
             } else if let Some(w) = &c.warp {
-                // растянутый ребёнок — целиком или никак (см. док).
-                // Окно — ПРОЛЁТ материала (Р.57): длина события тут ни при
-                // чём, на 0.5× она вдвое больше прочитанного, и полоска
-                // врала бы в ХОЛОДНУЮ сторону.
+                // a stretched child — as a whole or not at all (see the doc).
+                // The window is the SPAN of the material (R.57): the event length has nothing to do
+                // with it — at 0.5× it is twice what was read, and the bar
+                // would lie in the COLD direction.
                 let (lo, hi) = w.span();
                 let b0 = c.source_in.0 + lo;
                 let b1 = (c.source_in.0 + hi).max(b0 + 1) + pair_ext(c);
@@ -1317,9 +1317,9 @@ impl VideoRenderer {
                     kt_cache::BurstKind::video(Some(clip_decode_quality(c, quality))),
                     b0..b1,
                 );
-                // источник → время ленты; у reversed материал идёт навстречу.
-                // При смешивании прогон УКОРАЧИВАЕТСЯ справа на кадр: место
-                // готово, только если пришла и вторая половина пары.
+                // source → reel time; with reversed, the material runs toward it.
+                // When blending, the run is SHORTENED on the right by one frame: a place
+                // is ready only if the second half of the pair has arrived too.
                 let mapped: Vec<std::ops::Range<i64>> = runs
                     .into_iter()
                     .map(|r| r.start..(r.end - ext))
@@ -1343,9 +1343,9 @@ impl VideoRenderer {
         warm
     }
 
-    /// Композит момента `t` из кэша в RGBA-буфер `quality`-размера.
-    /// Возвращает (буфер, все ли слои были в кэше). Отсутствующий слой
-    /// пропускается (playback не ждёт — инвариант №5).
+    /// Composite of moment `t` from the cache into an RGBA buffer of `quality` size.
+    /// Returns (buffer, whether all layers were in the cache). A missing layer
+    /// is skipped (playback does not wait — invariant No. 5).
     pub fn compose_from_cache(
         &mut self,
         cache: &BurstCache,
@@ -1357,9 +1357,9 @@ impl VideoRenderer {
         (out, complete)
     }
 
-    /// Вариант с переиспользуемым буфером (превью 60 раз/с: аллокация
-    /// полного RGBA-кадра на каждый кадр была заметной, п.1 раунда 5).
-    /// Строит план кадра и исполняет его CPU-исполнителем (Р.29).
+    /// A variant with a reusable buffer (preview 60 times/s: allocating a
+    /// full RGBA frame for every frame was noticeable, item 1 of round 5).
+    /// Builds the frame plan and executes it with the CPU executor (R.29).
     pub fn compose_from_cache_into(
         &mut self,
         cache: &BurstCache,
@@ -1380,8 +1380,8 @@ impl VideoRenderer {
         execute_plan_cpu(&plan, cache, &mut self.fx_scratch, &mut self.blend, out)
     }
 
-    /// Экспортный вариант: без пост-FX мемоизации (Р.31 п.4 — см.
-    /// FramePlan::memoize_postfx). Байты кадра идентичны compose_from_cache.
+    /// Export variant: without post-FX memoization (R.31 item 4 — see
+    /// FramePlan::memoize_postfx). The frame bytes are identical to compose_from_cache.
     pub fn compose_export_into(
         &mut self,
         cache: &BurstCache,
@@ -1402,42 +1402,42 @@ impl VideoRenderer {
         execute_plan_cpu(&plan, cache, &mut self.fx_scratch, &mut self.blend, out)
     }
 
-    /// Сколько СУБ-РЕНДЕРЕРОВ держит эта лента (Р.59, стадия 3).
+    /// How many SUB-RENDERERS this reel holds (R.59, stage 3).
     ///
-    /// Сторож выигрыша t442/t443: два экземпляра одной ленты БЕЗ
-    /// переопределений обязаны делить ОДИН узел — в этом и был смысл
-    /// дерева. Ключ стал парой (лента, редакция), и без счётчика это
-    /// свойство проверить снаружи нечем.
+    /// A guard for the t442/t443 gain: two instances of one reel WITHOUT
+    /// overrides must share ONE node — that was the point of the tree. The key became
+    /// a pair (reel, revision), and without a counter this property cannot be
+    /// checked from outside.
     pub fn nest_count(&self) -> usize {
         self.nests.len()
     }
 
-    /// Максимум одновременных видео-слоёв (с ручками переходов) — экспорт
-    /// делит бюджет чанка на это число (Р.31 п.4).
+    /// Maximum number of simultaneous video layers (including transition handles) — export
+    /// divides the chunk budget by this number (R.31 item 4).
     pub fn max_concurrent_layers(&self) -> usize {
         self.max_concurrent_layers_in(false)
     }
 
-    /// То же внутри ленты, на которую унаследовано смешивание (Р.56,
-    /// п.448): пара считается у ЛИСТА, и считать её надо там же, где она
-    /// живёт, — иначе бюджет чанка разойдётся с тем, что план делает.
+    /// The same inside a reel onto which blending is inherited (R.56,
+    /// item 448): the pair is counted at the LEAF, and it must be counted where it
+    /// lives — otherwise the chunk budget would diverge from what the plan does.
     fn max_concurrent_layers_in(&self, blend_footage: bool) -> usize {
         let mut evs: Vec<(i64, i32)> = Vec::with_capacity(self.clips.len() * 2);
         for c in &self.clips {
-            // смешивающий слой держит ДВА кадра сразу (Р.37 С5). Не учесть
-            // это — чанк экспорта вытеснит соседа до композиции, сработает
-            // ветка голода, и БАЙТЫ ЭКСПОРТА станут зависеть от тайминга
-            // кэша.
-            // У САМОГО ВЛОЖЕНИЯ пары не бывает (Р.56, п.448): смешивают
-            // его листья, и двойной буфер считается ВНУТРИ — посчитай мы
-            // его и здесь, бюджет разошёлся бы с тем, что план делает.
+            // a blending layer holds TWO frames at once (R.37 C5). Failing to account for
+            // this — the export chunk would evict the neighbour before compositing, the
+            // starvation branch would fire, and EXPORT BYTES would come to depend on the timing of the
+            // cache.
+            // A NESTING ITSELF never has a pair (R.56, item 448): its leaves blend,
+            // and the double buffer is counted INSIDE — if we counted it here too, the budget would
+            // diverge from what the plan does.
             let blends =
                 c.nest.is_none() && (blend_footage || c.warp.as_ref().is_some_and(|w| w.blend()));
             let mut w = if blends { 2 } else { 1 };
-            // Вложение держит СВОЙ буфер суб-композита плюс всё, что
-            // одновременно живо внутри него (Р.50). Недосчёт делает БАЙТЫ
-            // ЭКСПОРТА зависящими от тайминга кэша — дословно регрессия
-            // Р.37 С5.
+            // A nesting holds ITS OWN sub-composite buffer plus everything
+            // that is alive inside it at the same time (R.50). Under-counting makes EXPORT
+            // BYTES depend on the timing of the cache — literally the R.37 C5
+            // regression.
             if let Some(sub) = c.nest.and_then(|k| self.nests.get(&k)) {
                 w += sub.max_concurrent_layers_in(nest_blend(c, blend_footage)) as i32;
             }
@@ -1453,8 +1453,8 @@ impl VideoRenderer {
         max.max(1) as usize
     }
 
-    /// План кадра для внешнего исполнителя (GPU в kt-gpu). Пре-FX кадры
-    /// уже прочитаны из кэша (recency бампнут), структура слоёв решена.
+    /// Frame plan for an external executor (GPU in kt-gpu). The pre-FX frames
+    /// are already read from the cache (recency bumped), the layer structure is settled.
     pub fn frame_plan(&self, cache: &BurstCache, t: Tick, quality: Quality) -> FramePlan<'_> {
         let ctx = PlanCtx {
             grid: &self.grid,
@@ -1469,40 +1469,40 @@ impl VideoRenderer {
     }
 }
 
-/// Контекст построения плана: сетка, камеры и мировой размер проекта.
+/// Plan-building context: the grid, cameras and the project's world size.
 struct PlanCtx<'a> {
     grid: &'a FpsGrid,
     cameras: &'a [kt_model::CameraEvent],
     project_size: (u32, u32),
-    /// Рендереры вложенных лент — из них строятся суб-планы (Р.50).
+    /// Renderers of nested reels — sub-plans are built from them (R.50).
     nests: &'a std::collections::HashMap<NestKey, VideoRenderer>,
-    /// Стадии видеодорожек (Р.62). В СУБ-плане самой стадии пусто —
-    /// иначе она собирала бы себя бесконечно.
+    /// Video track stages (R.62). In the SUB-plan of the stage itself it is empty —
+    /// otherwise it would assemble itself endlessly.
     stages: &'a [VideoTrackStage],
-    /// Мемоизировать ли пост-FX: наследуется ВНИЗ. Иначе суб-композиты
-    /// вытеснят ещё не использованные пре-кадры соседних слоёв из
-    /// 192-мегабайтного бюджета экспорта — дословно регрессия Р.31 п.4.
+    /// Whether to memoize post-FX: inherited DOWNWARD. Otherwise sub-composites
+    /// would evict the not-yet-used pre-frames of neighbouring layers from the
+    /// 192 MB export budget — literally the R.31 item 4 regression.
     memoize: bool,
-    /// Смешивание кадров, унаследованное от вложения СВЕРХУ (Р.56, п.448).
-    /// Режим стоит на экземпляре ленты, а исполняют его ЛИСТЬЯ: так на
-    /// кадр остаётся ОДИН суб-композит (два стоили бы вдвое и на CPU, и на
-    /// GPU), и процедурное внутри не оказывается на сетке вместо
-    /// непрерывного времени. В корне всегда `false` — байты GOLDEN_VIDEO
-    /// на этом стоят.
+    /// Frame blending, inherited from the nesting ABOVE (R.56, item 448).
+    /// The mode sits on the reel instance, and its LEAVES execute it: this way one
+    /// sub-composite remains per frame (two would cost double, on both CPU and
+    /// GPU), and procedural content inside does not land on the grid instead of
+    /// continuous time. At the root it is always `false` — the bytes of GOLDEN_VIDEO
+    /// rest on this.
     blend_footage: bool,
 }
 
-/// Камера цепочки: прибитая по id, иначе активная по `t`, иначе дефолтная
-/// «50 мм» (тождество для Pan3d с дефолтами). Нет Pan3d в цепочке — нет и
-/// камеры: `None` означает «Pan3d пропускается», как было до Р.44.
+/// The chain's camera: pinned by id, otherwise the active one by `t`, otherwise the default
+/// “50 mm” (identity for Pan3d with defaults). No Pan3d in the chain — no
+/// camera either: `None` means “Pan3d is skipped”, as it was before R.44.
 ///
-/// Pub с Р.54 (п.429) и зовётся ИЗ `layer_src`: правило разрешения должно
-/// остаться одно на программу. Второй потребитель — миниатюры пикера
-/// (kt-app): полоска показывает цепочку клипа с кандидатом в хвосте, и
-/// если бы она собирала камеру сама, вариант `Pan 3D` в пикере выглядел
-/// бы иначе, чем после клика. `out_w`/`project_w` дают `world_scale` —
-/// мир камеры заморожен форматом в мировых пикселях проекта (Р.29),
-/// поэтому масштаб цели входит в него, а не в саму камеру.
+/// Pub, from R.54 (item 429), is called FROM `layer_src`: the resolution rule must
+/// stay one for the whole program. The second consumer is the picker thumbnails
+/// (kt-app): the strip shows the clip's chain with the candidate at the tail, and
+/// if it assembled the camera itself, the `Pan 3D` variant in the picker would look
+/// different from what it does after a click. `out_w`/`project_w` give `world_scale` —
+/// the camera's world is frozen by the format in the project's world pixels (R.29),
+/// so the target scale goes into it, not into the camera itself.
 pub fn resolve_cam3d(
     fx: &[kt_model::FxInstance],
     cameras: &[kt_model::CameraEvent],
@@ -1524,9 +1524,9 @@ pub fn resolve_cam3d(
         })
 }
 
-/// Источник слоя: pts, пре-FX кадр (читается ВСЕГДА — бамп recency, чтобы
-/// полоски прогретости и prefetch не «остывали» под живым пост-FX кэшем),
-/// цепочка и прогресс клипа.
+/// Layer source: pts, the pre-FX frame (read ALWAYS — a recency bump, so that
+/// the coverage bars and prefetch do not “cool down” under a live post-FX cache),
+/// the chain and the clip's progress.
 fn layer_src<'a>(
     clip: &'a VideoClip,
     ctx: &PlanCtx<'a>,
@@ -1534,18 +1534,18 @@ fn layer_src<'a>(
     quality: Quality,
     t: Tick,
 ) -> LayerSrc<'a> {
-    // У ЛЕНТЫ `src_pts` — непрерывный внутренний тик, у листа — pts кадра
-    // (Р.56, п.448). Обе ветки ниже читают ровно то, что заказал
-    // `layers_at_into` той же функцией.
+    // For a REEL, `src_pts` is the continuous inner tick; for a leaf it is the frame pts
+    // (R.56, item 448). Both branches below read exactly what
+    // `layers_at_into` ordered with the same function.
     let (src_pts, pair) = clip_frame_keys(clip, t, ctx.grid, ctx.blend_footage);
-    // Кривые сэмплируются по ЛИНЕЙНОЙ материальной позиции — по той же,
-    // которой рисует ось UI и по которой считает звук (Р.37: «БЕЗ учёта
-    // замедления-ускорения»). До Р.39 здесь стоял `src_pts` — ВАРП-
-    // зависимая позиция кадра, — и на замедленном клипе картинка
-    // анимировалась по своему расписанию, а звук и UI по своему.
+    // Curves are sampled at the LINEAR material position — the same one that
+    // the UI axis draws and that audio uses for its timing (R.37: “WITHOUT accounting for
+    // slowing or speeding up”). Before R.39 this held `src_pts` — the WARP-
+    // dependent frame position — and on a slowed clip the picture animated
+    // to its own schedule, while the sound and UI followed their own.
     //
-    // Это разные вопросы, и путать их нельзя: «какой кадр показать» —
-    // карта варпа (`clip_frame_keys`), «где мы на оси анимации» — линейка.
+    // These are different questions, and they must not be confused: “which frame to show” —
+    // the warp map (`clip_frame_keys`); “where we are on the animation axis” — the ruler.
     let mat = kt_model::clip_material_at(
         clip.source_in,
         clip.start,
@@ -1555,42 +1555,42 @@ fn layer_src<'a>(
         t,
     );
     let cache_idx = video_cache_idx(src_pts);
-    // Адрес ЛЕНТЫ обязан нести `NEST_TAG` (Р.55, С4). Без него он численно
-    // совпадает с адресом ФАЙЛА с тем же id — ровно то, что `validate`
-    // запрещает, чтобы файл и секвенция не делили кэш. До сих пор спасало
-    // только различие `key_hash`; ветка смешивания кадров читала бы по
-    // этому адресу кадр ЧУЖОГО ФАЙЛА.
+    // The address of a REEL must carry `NEST_TAG` (R.55, C4). Without it, it numerically
+    // coincides with the address of a FILE with the same id — exactly what `validate`
+    // forbids, so that a file and a sequence do not share the cache. Until now only
+    // the difference in `key_hash` saved it; the frame-blending branch would read, at
+    // this address, a frame of a FOREIGN FILE.
     let source = match clip.nest {
         Some((seq, _)) => nest_source_id(seq),
         None => SourceId(clip.media.0),
     };
-    // Р.46 (п.318): слой читает кадр СВОЕГО качества декода — того же,
-    // которое заказал префетч через layers_at. У ЛЕНТЫ это ступень
-    // СУБ-ПЛАНА (одна на ленту), а вход цепочки экземпляра считается
-    // отдельно (Р.58, п.459) — см. `clip_chain_scale`.
+    // R.46 (item 318): the layer reads a frame of ITS OWN decode quality — the same
+    // one the prefetch ordered via layers_at. For a REEL this is the step of the
+    // SUB-PLAN (one per reel), while the instance's chain input is computed
+    // separately (R.58, item 459) — see `clip_chain_scale`.
     let stage = clip_decode_scale(clip, quality);
     let src_scale = clip_chain_scale(clip, quality);
     let dq = clip_decode_quality(clip, quality);
-    // Кадр берётся ВМЕСТЕ с серийным номером содержимого (Р.53, п.409):
-    // адрес `(source, cache_idx, размер)` у нового кадра генератора тот
-    // же, что у старого, и без номера GPU отдал бы старую текстуру.
+    // The frame is taken TOGETHER with the content serial number (R.53, item 409):
+    // the address `(source, cache_idx, size)` of a new generator frame is the same
+    // as that of the old one, and without the number the GPU would return the old texture.
     let (frame, content) = if clip.nest.is_some() {
-        (None, 0) // вход поддерева собирается ниже
+        (None, 0) // the subtree's input is assembled below
     } else {
         match cache.get_video_stamped(source, Some(dq), cache_idx) {
             Some((f, serial)) => (Some(f), serial),
             None => (None, 0),
         }
     };
-    // СМЕШИВАНИЕ (Р.37 С5) делается ЗДЕСЬ, в общем коде плана: оба
-    // исполнителя получают уже смешанный пре-FX кадр, и держать одну и ту
-    // же арифметику синхронной в CPU-ядре и в WGSL не приходится
-    // (инвариант №7). Ядро — готовый `dissolve_into`: байт-заморожено,
-    // с AVX2-близнецом.
-    // СМЕШИВАНИЕ КАДРОВ НА САМОМ ВЛОЖЕНИИ не делается (Р.56, п.448): два
-    // суб-композита на кадр вдвое дороже на обоих бэкендах и ничего не
-    // добавляют — внутреннее время ленты и так непрерывно. Режим едет
-    // ВНИЗ, к листьям, и пару отдаёт `clip_frame_keys` уже там.
+    // BLENDING (R.37 C5) is done HERE, in the plan's common code: both
+    // executors receive an already blended pre-FX frame, and the same
+    // arithmetic does not have to be kept in sync in the CPU kernel and in WGSL
+    // (invariant No. 7). The kernel is the ready `dissolve_into`: byte-frozen,
+    // with an AVX2 twin.
+    // FRAME BLENDING ON THE NESTING ITSELF is not done (R.56, item 448): two
+    // sub-composites per frame cost double on both backends and add nothing —
+    // the reel's inner time is already continuous. The mode travels
+    // DOWN, to the leaves, and `clip_frame_keys` already hands out the pair there.
     debug_assert!(
         pair.is_none() || clip.nest.is_none(),
         "a nest never gets a frame pair: the leaf does the blending"
@@ -1611,16 +1611,16 @@ fn layer_src<'a>(
     };
     let span = (clip.end.0 - clip.start.0).max(1);
     let u = (t.0 - clip.start.0) as f64 / span as f64;
-    // автоматизация (Р.30): кривые разрешаются ЗДЕСЬ, один раз на кадр —
-    // CPU и GPU получают уже вычисленные параметры (клон цепочки только
-    // при живых кривых)
+    // automation (R.30): curves are resolved HERE, once per frame —
+    // the CPU and GPU receive already computed parameters (the chain is cloned
+    // only with live curves)
     let fx: std::borrow::Cow<'_, [kt_model::FxInstance]> = match &clip.auto_plan {
         Some(plan) => {
             let mut owned = clip.fx.clone();
             plan.apply(&mut owned, mat);
             std::borrow::Cow::Owned(owned)
         }
-        // ноль цены: у клипа без кривых цепочка ЗАИМСТВУЕТСЯ
+        // zero cost: a clip without curves BORROWS its chain
         None => std::borrow::Cow::Borrowed(&clip.fx[..]),
     };
     let cam3d = resolve_cam3d(&clip.fx, ctx.cameras, t, quality.width, ctx.project_size.0);
@@ -1629,12 +1629,12 @@ fn layer_src<'a>(
             || kt_fx::video::has_video_fx_in(&fx, clip.lead, quality.width, quality.height),
         "a clip without video fx never gets a chain input above 1x"
     );
-    // ВХОД слоя. У вложения это не кадр из кэша, а СУБ-КОМПОЗИТ: план
-    // ленты, собранный на ВНУТРЕННЕМ времени экземпляра. Внутреннее время
-    // НЕПРЕРЫВНО (`clip_inner_tick`, Р.56 п.448): реверс и ручки переходов
-    // те же, что у файла, а пола нет — у ленты нет кадров, чтобы к ним
-    // прижиматься, зато есть титры и автоматизация, которым пол виден как
-    // дёрганье по два кадра.
+    // The layer's INPUT. For a nesting this is not a frame from the cache, but a SUB-COMPOSITE: the
+    // reel's plan, assembled on the instance's INNER time. The inner time is
+    // CONTINUOUS (`clip_inner_tick`, R.56 item 448): reverse and transition handles
+    // are the same as for a file, but there is no floor — a reel has no frames to
+    // snap to, yet it has titles and automation, for which a floor shows up as
+    // stepping in two-frame jumps.
     let input = match clip.nest.and_then(|k| ctx.nests.get(&k).map(|r| (k.0, r))) {
         Some((id, sub)) => {
             let blend = nest_blend(clip, ctx.blend_footage);
@@ -1647,10 +1647,10 @@ fn layer_src<'a>(
                 memoize: ctx.memoize,
                 blend_footage: blend,
             };
-            // Суб-план собирается в S×Quality (Р.50, Б5): цепочка на
-            // вложении зумит СОБРАННУЮ картинку, и без запаса она была бы
-            // мягкой. Дети считают свою ступень уже против УВЕЛИЧЕННОГО
-            // Quality — конъюгация правила п.317 этажом выше.
+            // The sub-plan is assembled at S×Quality (R.50, B5): the chain on the
+            // nesting zooms the ASSEMBLED picture, and without headroom it would be
+            // soft. The children compute their own step already against the ENLARGED
+            // Quality — the conjugation of the item 317 rule one level up.
             let plan = build_plan(
                 &sub.clips,
                 &sub_ctx,
@@ -1686,13 +1686,13 @@ fn layer_src<'a>(
     }
 }
 
-/// СЛОЙ-ВЛОЖЕНИЕ ДОРОЖКИ (Р.62, change B): композит её событий тем же
-/// кодом, что у ленты, затем цепочка дорожки, затем альфа × уровень и
-/// наложение вниз выбранным режимом.
+/// TRACK NESTING LAYER (R.62, change B): the composite of its events by the same
+/// code as for a reel, then the track chain, then alpha × level and
+/// blending down with the chosen mode.
 ///
-/// Растр и время — РОДИТЕЛЬСКИЕ (у дорожки нет ни своих настроек, ни
-/// своего нуля), ступень — максимум по её событиям: суб-план собирается
-/// в том же Quality, в котором собрался бы плоский слой.
+/// The raster and time are PARENTAL (a track has neither settings of its own nor
+/// its own zero), the scale step is the maximum over its events: the sub-plan is assembled
+/// at the same Quality in which a flat layer would be assembled.
 fn track_stage_layer<'a>(
     st: &'a VideoTrackStage,
     clips: &'a [VideoClip],
@@ -1702,8 +1702,8 @@ fn track_stage_layer<'a>(
     quality: Quality,
     memoize: bool,
 ) -> PlanLayer<'a> {
-    // суб-план СВОИХ событий: внутри — переходы, перекрытия, фейды и
-    // уровни событий, ровно как у ленты
+    // the sub-plan of ITS OWN events: inside — transitions, overlaps, fades and
+    // event levels, exactly as for a reel
     let sub_ctx = PlanCtx {
         grid: ctx.grid,
         cameras: ctx.cameras,
@@ -1711,11 +1711,11 @@ fn track_stage_layer<'a>(
         nests: ctx.nests,
         memoize: ctx.memoize,
         blend_footage: ctx.blend_footage,
-        // стадия НЕ собирает саму себя
+        // the stage does NOT assemble itself
         stages: &[],
     };
     let plan = build_plan(clips, &sub_ctx, cache, t, quality, memoize);
-    // редакция суб-композита: свойства дорожки плюс содержимое её событий
+    // revision of the sub-composite: the track's properties plus the contents of its events
     let mut h = xxhash_rust::xxh3::Xxh3::new();
     h.update(&st.content.to_le_bytes());
     for c in clips {
@@ -1745,14 +1745,14 @@ fn track_stage_layer<'a>(
         blend_mode: st.blend,
         lead: None,
     };
-    // уровень дорожки — альфа композита; режим — отдельная ось
+    // track level — the composite alpha; mode — a separate axis
     let alpha_k = ((st.opacity.clamp(0.0, 1.0) * 4096.0).round() as u32).min(4096);
     PlanLayer::One { src, alpha_k, scale_alpha: alpha_k < 4096, fade: None }
 }
 
-/// Построение плана кадра: какие слои, в каких ролях и с какими весами.
-/// Пара клипов в окне перехода блендится линейным dissolve в ОДИН слой
-/// (п.137); фейд у края/Gap (Р.25) — соло-слой, уходящий в прозрачность.
+/// Building the frame plan: which layers, in which roles and with which weights.
+/// A pair of clips in a transition window is blended by a linear dissolve into ONE layer
+/// (item 137); a fade at an edge/Gap (R.25) is a solo layer fading into transparency.
 fn build_plan<'a>(
     clips: &'a [VideoClip],
     ctx: &PlanCtx<'a>,
@@ -1762,12 +1762,12 @@ fn build_plan<'a>(
     memoize_postfx: bool,
 ) -> FramePlan<'a> {
     let mut layers = Vec::new();
-    // СТАДИИ ДОРОЖЕК (Р.62): дорожка со стадией даёт ОДИН слой на месте
-    // своей первой строки — её события в плоские слои не идут.
+    // TRACK STAGES (R.62): a track with a stage yields ONE layer at the position of
+    // its first row — its events do not go into flat layers.
     let mut staged_done: Vec<u32> = Vec::new();
     for (i, clip) in clips.iter().enumerate() {
-        // заглушённая дорожка в композит не идёт; её ЗАКАЗ при этом
-        // остаётся (`layers_at_into`/`wanted_frames` флага не смотрят)
+        // a muted track does not go into the composite; its ORDER nevertheless
+        // remains (`layers_at_into`/`wanted_frames` do not check the flag)
         if !clip.active_at(t) || clip.silent {
             continue;
         }
@@ -1777,7 +1777,7 @@ fn build_plan<'a>(
             }
             staged_done.push(st.lane);
             let lane_clips: &[VideoClip] = {
-                // события дорожки лежат подряд: список отсортирован по
+                // track events lie consecutively: the list is sorted by
                 // (Reverse(lane), start)
                 let from = clips.iter().position(|c| c.lane == st.lane).unwrap_or(i);
                 let to = clips[from..].iter().position(|c| c.lane != st.lane).map(|n| from + n);
@@ -1786,17 +1786,17 @@ fn build_plan<'a>(
             layers.push(track_stage_layer(st, lane_clips, ctx, cache, t, quality, memoize_postfx));
             continue;
         }
-        // фейд у края/Gap: пары нет по модели, слой всегда идёт через
-        // масштабирование альфы (scale_alpha)
+        // fade at an edge/Gap: there is no pair in the model, the layer always goes through
+        // alpha scaling (scale_alpha)
         if let Some((w, incoming, mix, inv)) = solo_fade(clip, t) {
-            // кроссфейд — прежний путь (вес прямо в альфе, байты те же);
-            // любой другой вид форму даёт ядром, а уровень остаётся
-            // уровнем события
+            // crossfade — the previous path (the weight goes straight into alpha; bytes the same);
+            // any other kind gives the shape via the kernel, and the level stays the
+            // event's level
             let (alpha_k, fade) = if mix.is_crossfade() {
                 (w * clip.opacity_k / 4096, None)
             } else {
-                // инверсия соло-фейда: флип роли ДО вычисления k — его
-                // выражение само даёт комплемент (п.398)
+                // inversion of the solo fade: flip the role BEFORE computing k — its expression
+                // itself gives the complement (item 398)
                 let incoming = incoming != inv;
                 let k = if incoming { w } else { 4096 - w };
                 (clip.opacity_k, Some(crate::video_plan::SoloFade { k, mix, incoming }))
@@ -1809,7 +1809,7 @@ fn build_plan<'a>(
             });
             continue;
         }
-        // outgoing половина пары рисуется в слое incoming
+        // the outgoing half of the pair is drawn in the incoming layer
         if let Some(win) = clip.fade_out
             && t.0 >= win.0.0
             && t.0 < win.1.0
@@ -1825,12 +1825,12 @@ fn build_plan<'a>(
             let outgoing = &clips[pi];
             debug_assert_ne!(pi, i);
             let mut k = (((t.0 - win.0.0) * 4096) / (win.1.0 - win.0.0)).clamp(0, 4096) as u32;
-            // вид разрешается по позиции ВНУТРИ окна: у его параметров
-            // могут быть кривые (Р.34 К4)
+            // the kind is resolved by the position INSIDE the window: its parameters
+            // may have curves (R.34 K4)
             let ta = clip.fade_in_trans.as_ref();
             let mix = ta.map(|a| a.mix_at(t)).unwrap_or_default();
-            // уровни соседей смешиваются тем же весом, что и картинка;
-            // выражение симметрично к (swap, 1−k) — инверсия его не трогает
+            // the neighbours' levels are blended with the same weight as the picture;
+            // the expression is symmetric to (swap, 1−k) — inversion does not touch it
             let op = (outgoing.opacity_k * (4096 - k) + clip.opacity_k * k) / 4096;
             let mut a = layer_src(outgoing, ctx, cache, quality, t);
             let mut b = layer_src(clip, ctx, cache, quality, t);
@@ -1848,17 +1848,17 @@ fn build_plan<'a>(
     FramePlan { t, out_w: quality.width, out_h: quality.height, layers, memoize_postfx }
 }
 
-/// CPU-исполнение плана без держателя пулов (parity-тесты kt-gpu:
-/// GPU-выход сверяется с этим эталоном; пулы одноразовые).
+/// CPU execution of the plan without a pool holder (parity tests of kt-gpu:
+/// the GPU output is checked against this reference; the pools are one-shot).
 pub fn compose_plan_cpu(plan: &FramePlan<'_>, cache: &BurstCache, out: &mut Vec<u8>) -> bool {
     let mut scratch = kt_fx::video::FxScratch::default();
     let mut blend = Vec::new();
     execute_plan_cpu(plan, cache, &mut scratch, &mut blend, out)
 }
 
-/// CPU-исполнитель плана: недостающая половина пары → присутствующая с
-/// полным весом + complete=false (playback не ждёт, инвариант №5); слой
-/// чужого размера молча пропускается (контракт «декодер отдаёт Quality»).
+/// CPU executor of the plan: a missing half of the pair → the present one at full
+/// weight + complete=false (playback does not wait, invariant No. 5); a layer
+/// of a foreign size is silently skipped (contract “the decoder delivers Quality”).
 fn execute_plan_cpu(
     plan: &FramePlan<'_>,
     cache: &BurstCache,
@@ -1887,15 +1887,15 @@ fn execute_plan_cpu(
                     &mut complete,
                 ) {
                     Some(f) if fits(&f) => {
-                        // РЕЖИМ НАЛОЖЕНИЯ ДОРОЖКИ (Р.62): уровень и режим —
-                        // разные оси, обе после альфы, поэтому уровень
-                        // отдаётся ядру, а не размазывается по альфе.
-                        // Normal сюда не заходит: у него прежний путь
-                        // байт-в-байт (GOLDEN_VIDEO).
+                        // TRACK BLEND MODE (R.62): level and mode are
+                        // different axes, both after alpha, so the level
+                        // goes to the kernel, not smeared into alpha.
+                        // Normal does not enter here: it has the previous path
+                        // byte for byte (GOLDEN_VIDEO).
                         if src.blend_mode != kt_model::BlendMode::Normal {
                             blend_over(out, &f.rgba, f.has_alpha, w * h, src.blend_mode, *alpha_k);
                         } else if let Some(sf) = fade {
-                            // сольный фейд с видом: вторая сторона — пустота
+                            // solo fade with a kind: the other side is emptiness
                             let (fa, fb) =
                                 if sf.incoming { (None, Some(&*f)) } else { (Some(&*f), None) };
                             crate::transitions::mix_into(blend, fa, fb, sf.k, sf.mix, w, h);
@@ -1911,11 +1911,11 @@ fn execute_plan_cpu(
                         }
                     }
                     Some(f) => {
-                        // Размер суб-композита ленты — НАША арифметика
-                        // (`NestSrc::fit_to`): разойдись он с планом,
-                        // слой молча исчезал бы из кадра — до Р.58 так и
-                        // было (п.459). У файла чужой размер — сообщение
-                        // декодера, и ответ на него один: кадр не полон.
+                        // The size of the reel's sub-composite is OUR arithmetic
+                        // (`NestSrc::fit_to`): if it diverged from the plan,
+                        // the layer would silently vanish from the frame — before R.58 that was
+                        // the case (item 459). For a file, a foreign size is a message
+                        // from the decoder, and the answer to it is one: the frame is not complete.
                         debug_assert!(
                             src.input.nest().is_none(),
                             "nest sub-composite {}x{} does not fit the plan {w}x{h}",
@@ -1998,26 +1998,26 @@ fn execute_plan_cpu(
     complete
 }
 
-/// Партнёр по переходу: клип той же дорожки с ТЕМ ЖЕ окном на противоположной
-/// стороне (incoming ищет outgoing и наоборот). Клипов мало, линейный скан.
+/// The transition partner: a clip of the same track with the SAME window on the opposite
+/// side (incoming looks for outgoing and vice versa). There are few clips, a linear scan.
 fn find_pair(clips: &[VideoClip], lane: u32, win: (Tick, Tick), incoming: bool) -> Option<usize> {
     clips.iter().position(|c| {
         c.lane == lane && (if incoming { c.fade_in } else { c.fade_out }) == Some(win)
     })
 }
 
-/// Суб-композит вложенной ленты (Р.50, волна Б).
+/// Sub-composite of a nested reel (R.50, wave B).
 ///
-/// **Ловушка, ради которой эта функция существует отдельно.**
-/// `execute_plan_cpu` начинает с прозрачно-чёрного и накладывает слои
-/// `alpha_over`; при `da == 0` получается `dst.rgb = s·sa/255`, `dst.a = sa`
-/// — то есть результат композита хранит ПРЕМУЛЬТИПЛИЦИРОВАННЫЙ RGB при
-/// ПРЯМОЙ альфе, а `alpha_over` ждёт на входе прямую. Подать такой буфер
-/// обратно в композит — картинка вдвое темнее РОВНО в полупрозрачных
-/// местах, что легко списать на «так и задумано».
+/// **The trap this function exists separately for.**
+/// `execute_plan_cpu` starts from transparent black and overlays the layers with
+/// `alpha_over`; with `da == 0` it yields `dst.rgb = s·sa/255`, `dst.a = sa`
+/// — that is, the composite result stores PREMULTIPLIED RGB with
+/// a STRAIGHT alpha, while `alpha_over` expects straight input. Feeding such a buffer
+/// back into a composite — the picture is half as dark EXACTLY in semi-transparent
+/// places, which is easy to write off as “by design”.
 ///
-/// Лечение — ровно ОДНА конверсия здесь, на границе вложения. Сам
-/// `alpha_over` не трогаем: на его байтах стоят GOLDEN_VIDEO и AVX2-близнец
+/// The cure is exactly ONE conversion here, at the boundary of the nesting. We do not
+/// touch `alpha_over` itself: GOLDEN_VIDEO and the AVX2 twin rest on its bytes
 /// (t198).
 fn nest_frame_cpu(
     n: &crate::video_plan::NestSrc<'_>,
@@ -2043,25 +2043,25 @@ fn nest_frame_cpu(
     let rgba: Box<[u8]> = buf[..].into();
     scratch.put(buf);
     let frame = Arc::new(VideoFrame { pts: n.inner_t, width: w, height: h, rgba, has_alpha: true });
-    // МЕМОИЗИРУЕТСЯ ТОЛЬКО ПОЛНЫЙ суб-композит (Р.59, стадия 2).
+    // ONLY a COMPLETE sub-composite is MEMOIZED (R.59, stage 2).
     //
-    // Голодный кадр — это НЕ функция редакции ленты, а функция того, что
-    // успел положить в кэш воркер. Записав его под ключом редакции, мы
-    // получали чёрную ленту НАВСЕГДА: ключ от прогрева не двигается,
-    // перезапросить нечего, и снаружи композит объявлен полным (голод
-    // виден только в тот единственный проход, где он случился). Живой
-    // плеер попадал в это на каждом холодном старте.
+    // A starved frame is NOT a function of the reel's revision, but of what the
+    // cache worker managed to put in. Recording it under the revision key, we got
+    // a black reel FOREVER: the key from warming does not move, there is nothing to
+    // re-request, and from outside the composite was declared complete (the starvation
+    // is visible only in the one pass where it happened). A live
+    // player fell into this on every cold start.
     if memoize && whole {
         cache.insert_postfx_video(source, q_key, key, n.inner_t.0, frame.clone());
     }
     Some(frame)
 }
 
-/// Вписать суб-композит ленты во вход цепочки (Р.58, п.459).
+/// Fit the reel's sub-composite into the chain input (R.58, item 459).
 ///
-/// Билинейка ОДНА на программу — `kt_fx::video::fit_into` (у неё же
-/// AVX2-близнец и зеркало в WGSL), своей арифметики здесь не заводим:
-/// разойдись она с GPU — превью и экспорт показали бы разное.
+/// There is ONE bilinear filter per program — `kt_fx::video::fit_into` (which also has
+/// the AVX2 twin and the WGSL mirror); we do not start a separate arithmetic here:
+/// if it diverged from the GPU, preview and export would show different things.
 fn fit_frame_cpu(
     f: &Arc<VideoFrame>,
     ow: u32,
@@ -2079,13 +2079,13 @@ fn fit_frame_cpu(
     Arc::new(VideoFrame { pts: f.pts, width: ow, height: oh, rgba, has_alpha: f.has_alpha })
 }
 
-/// Ключ мемоизации суб-композита (Р.56, п.448): редакция ленты + режим
-/// кадров. Один и тот же `inner_t` при «смешивании» и при «ближайшем»
-/// даёт РАЗНЫЕ байты — листья внутри читают либо пару, либо один кадр, —
-/// и без флага кэш отдал бы чужую картинку.
+/// Memoization key of the sub-composite (R.56, item 448): the reel's revision + the frame
+/// mode. The same `inner_t` under “blend” and under “nearest” gives DIFFERENT bytes — the
+/// leaves inside read either the pair or a single frame —
+/// and without the flag the cache would return someone else's picture.
 ///
-/// При `blend == false` ключ РАВЕН `content_hash`: прежние записи и
-/// прежние тесты (t441-t443) не двигаются.
+/// With `blend == false` the key EQUALS `content_hash`: the earlier entries and
+/// earlier tests (t441-t443) do not move.
 pub fn nest_memo_key(content_hash: u64, blend: bool) -> u64 {
     if !blend {
         return content_hash;
@@ -2093,17 +2093,17 @@ pub fn nest_memo_key(content_hash: u64, blend: bool) -> u64 {
     xxhash_rust::xxh3::xxh3_64(&[content_hash.to_le_bytes().as_slice(), b"blend"].concat())
 }
 
-/// Адрес ИСТОЧНИКА события (Р.59, стадия 2) — ЕДИНСТВЕННОЕ правило.
+/// The SOURCE address of an event (R.59, stage 2) — the ONLY rule.
 ///
-/// У генератора значения живут на событии, значит и источник у каждого
-/// события свой: адрес берётся от ЕГО id. У всех остальных — адрес медиа,
-/// как было. Форма заказа `(адрес, тик, качество)` не изменилась, поэтому
-/// «заказ == чтение», полоски прогретости, префетч, экспорт-чанки и
-/// покрытие лент работают без правок (инвариант 4).
+/// A generator's values live on the event, so its source is also its own for each
+/// event: the address is taken from ITS id. For all others — the media address,
+/// as before. The order shape `(address, tick, quality)` has not changed, so
+/// “order == read”, the coverage bars, prefetch, export chunks and
+/// reel coverage work without edits (invariant 4).
 ///
-/// Спрашивать это обязаны ВСЕ: план, префетч, экспорт, kt-cli и полоски.
-/// Разойдись двое — вечный промах кэша по адресу, ровно тот класс
-/// дефектов, против которого стоит инвариант 4.
+/// EVERYONE must ask this: the plan, prefetch, export, kt-cli and the bars.
+/// If two of them diverge — a permanent cache miss on the address, exactly the class
+/// of defects that invariant 4 is against.
 pub fn clip_source_addr(c: &kt_model::ClipEvent) -> MediaId {
     match c.r#gen {
         Some(_) => gen_source_addr(c.id),
@@ -2111,39 +2111,39 @@ pub fn clip_source_addr(c: &kt_model::ClipEvent) -> MediaId {
     }
 }
 
-/// Адрес источника генератора по событию.
+/// Source address of the generator per event.
 pub fn gen_source_addr(id: kt_model::ClipId) -> MediaId {
     MediaId(kt_model::GEN_TAG | id.0)
 }
 
-/// СОЛЬ адреса источника внутри ленты (Р.59, стадия 3).
+/// SALT of the source address inside a reel (R.59, stage 3).
 ///
-/// Ноль — ровно тогда, когда ни одна ручка набора не способна дотянуться
-/// до источника (`overrides_touch_sources`), и тогда адреса остаются
-/// побайтово прежними: корень, лента без публикаций и экземпляр без
-/// переопределений не платят ничего.
+/// Zero — exactly when no handle of the set is able to reach
+/// a source (`overrides_touch_sources`), and then the addresses remain
+/// byte-for-byte as before: the root, a reel without publishing and an instance without
+/// overrides pay nothing.
 pub fn gen_salt(published: &[kt_model::PublishedParam], ov: &[kt_model::Override]) -> u64 {
     if !kt_model::overrides_touch_sources(published, ov) {
         return 0;
     }
-    // Debug-представление детерминировано (f64 печатается
-    // shortest-roundtrip), и новое поле переопределения попадает в соль
-    // само — тот же приём, что у `content_hash`.
+    // The Debug representation is deterministic (f64 is printed
+    // shortest-roundtrip), and a new override field gets into the salt
+    // by itself — the same trick as for `content_hash`.
     xxhash_rust::xxh3::xxh3_64(format!("{ov:?}").as_bytes()) | 1
 }
 
-/// Адрес источника генератора ВНУТРИ экземпляра с переопределениями.
+/// The generator source address INSIDE an instance with overrides.
 ///
-/// До Р.59 адрес однозначно определял значения: событие одно — значения
-/// одни. Переопределение снимает эту посылку (одно событие внутри ленты
-/// играет в двух выпусках разным заголовком), и адрес обязан её вернуть:
-/// иначе заказ и чтение сойдутся на одном адресе — инвариант 4 формально
-/// цел, — а кадр придёт ЧУЖОЙ, и «второй выпуск» молча покажет первый.
+/// Before R.59 the address uniquely determined the values: one event — one set of values.
+/// An override removes this premise (one event inside a reel plays in two releases
+/// with a different title), and the address must bring it back:
+/// otherwise the order and the read would converge on one address — invariant 4 formally
+/// holds — and the frame would come in as someone else's, and the “second release” would silently show the first.
 ///
-/// Свободных битов в адресе нет (клип < кусок < генератор < лента), и
-/// адрес солится ХЭШЕМ. Это законно ровно потому же, почему законен
-/// `content_hash`: 62 бита, чистая функция, и `gen_sources` считает её
-/// ТЕМ ЖЕ кодом — заказ и чтение спрашивают одно и то же.
+/// There are no free bits in the address (clip < piece < generator < reel), and
+/// the address is salted with a HASH. This is legitimate for exactly the same reason
+/// `content_hash` is: 62 bits, a pure function, and `gen_sources` computes it
+/// with the SAME code — the order and the read ask for the same thing.
 pub fn gen_source_addr_in(id: kt_model::ClipId, salt: u64) -> MediaId {
     if salt == 0 {
         return gen_source_addr(id);
@@ -2154,8 +2154,8 @@ pub fn gen_source_addr_in(id: kt_model::ClipId, salt: u64) -> MediaId {
     MediaId(kt_model::GEN_TAG | (h & (kt_model::GEN_TAG - 1)))
 }
 
-/// `clip_source_addr` внутри экземпляра ленты: у генератора — солёный
-/// адрес, у всех остальных — адрес медиа, как было.
+/// `clip_source_addr` inside a reel instance: for a generator — the salted
+/// address; for all others — the media address, as before.
 pub fn clip_source_addr_in(c: &kt_model::ClipEvent, salt: u64) -> MediaId {
     match c.r#gen {
         Some(_) => gen_source_addr_in(c.id, salt),
@@ -2163,11 +2163,11 @@ pub fn clip_source_addr_in(c: &kt_model::ClipEvent, salt: u64) -> MediaId {
     }
 }
 
-/// Все генераторы ДОКУМЕНТА: корень и каждая лента, через ту же дверь
-/// выдачи клипов, что и рендер (`effective_reel` — морферы уже
-/// применены). Плеер, экспорт и kt-cli поднимают источники ровно по
-/// этому списку: второго перечисления быть не должно, иначе экспорт
-/// отрендерил бы не то, что показывало превью.
+/// All generators of the DOCUMENT: the root and each reel, through the same door of
+/// clip issue as the render (`effective_reel` — morphers already
+/// applied). The player, export and kt-cli bring up sources exactly by
+/// this list: there must be no second enumeration, otherwise export would
+/// render something other than what the preview showed.
 pub fn gen_sources(project: &Project) -> Vec<(MediaId, kt_model::GenState)> {
     let mut out: Vec<(MediaId, kt_model::GenState)> = Vec::new();
     let mut have: std::collections::HashSet<MediaId> = std::collections::HashSet::new();
@@ -2176,9 +2176,9 @@ pub fn gen_sources(project: &Project) -> Vec<(MediaId, kt_model::GenState)> {
             out.push((addr, st));
         }
     };
-    // 1) КАЖДАЯ лента со своим шаблонным содержимым — как было до Р.59.
-    //    Ленту, никуда не поставленную, тоже видно: её показывает бин и
-    //    её считает служба превью, и терять её источники нельзя.
+    // 1) EVERY reel with its own template content — as it was before R.59.
+    //    A reel that was placed nowhere is also visible: the bin shows it and
+    //    the preview service counts it, and its sources must not be lost.
     for seq in std::iter::once(None).chain(project.sequences.iter().map(|s| Some(s.id))) {
         for c in project.effective_reel(seq).iter() {
             if let Some(k) = &c.r#gen {
@@ -2189,10 +2189,10 @@ pub fn gen_sources(project: &Project) -> Vec<(MediaId, kt_model::GenState)> {
             }
         }
     }
-    // 2) ОБХОД ДЕРЕВА ЭКЗЕМПЛЯРОВ (Р.59, стадия 3): у экземпляра с
-    //    переопределениями свои значения, а значит и свой адрес. Список
-    //    строится ТЕМ ЖЕ кодом, что и адреса в плане (`build_reel`), —
-    //    разойдись они, префетч грел бы адрес, которого нет.
+    // 2) A WALK OF THE INSTANCE TREE (R.59, stage 3): an instance with
+    //    overrides has its own values, and hence its own address. The list
+    //    is built by the SAME code as the addresses in the plan (`build_reel`);
+    //    if they diverged, the prefetch would warm an address that does not exist.
     let mut seen: std::collections::HashSet<(MediaId, u64)> = std::collections::HashSet::new();
     let mut stack: Vec<(Option<MediaId>, Vec<kt_model::Override>, usize)> =
         vec![(None, Vec::new(), 0)];
@@ -2223,18 +2223,18 @@ pub fn gen_sources(project: &Project) -> Vec<(MediaId, kt_model::GenState)> {
     out
 }
 
-/// Лента, В КОТОРОЙ лежит событие, и все её предки — по этому списку
-/// протухает мемоизация суб-композитов при перенастройке источника
-/// (Р.59, стадия 2).
+/// The REEL that CONTAINS the event, and all its ancestors — by this list the
+/// memoization of sub-composites goes stale when the source is retuned
+/// (R.59, stage 2).
 ///
-/// Скрытый дефект, который здесь закрывается: правка титра ВНУТРИ ленты
-/// идёт по retune-полосе, проект при этом не меняется, а ключ мемо
-/// суб-композита — `content_hash` ленты — считается от МОДЕЛИ. Значит он
-/// не двигается, и лента продолжает отдавать картинку со старым текстом
-/// до первой правки плана. Сторож — t663.
+/// A hidden defect closed here: an edit of a title INSIDE a reel goes through the retune strip,
+/// the project does not change at that point, and the sub-composite memo key —
+/// the reel's `content_hash` — is computed from the MODEL. So it
+/// does not move, and the reel keeps returning the picture with the old text
+/// until the first edit of the plan. Guard — t663.
 ///
-/// Корень в список не входит: у него мемо нет, его композит собирается
-/// каждый кадр.
+/// The root is not on the list: it has no memo, its composite is assembled
+/// every frame.
 pub fn reel_chain_of_clip(project: &Project, id: kt_model::ClipId) -> Vec<MediaId> {
     let origin = kt_model::slice_origin(id).unwrap_or(id);
     let Some(home) =
@@ -2256,23 +2256,23 @@ pub fn reel_chain_of_clip(project: &Project, id: kt_model::ClipId) -> Vec<MediaI
     chain
 }
 
-/// Адрес ленты в кэше. Старший бит `MediaId` отдан вложениям (Р.50):
-/// файл с таким адресом молча делил бы кэш с секвенцией, и это отвергает
-/// `validate`.
+/// The reel's address in the cache. The high bit of `MediaId` is given to nestings (R.50):
+/// a file with such an address would silently share the cache with a sequence, and
+/// `validate` rejects this.
 pub fn nest_source_id(seq: MediaId) -> SourceId {
     SourceId(kt_model::NEST_TAG | seq.0)
 }
 
-/// Прямая альфа из премультиплицированной — ОДНА на проект, дом в kt-fx
-/// (её же зовёт premul-гейт ядер, Р.53 п.418). Здесь остался только
-/// реэкспорт под прежним именем.
+/// Straight alpha from premultiplied — ONE for the project, home in kt-fx
+/// (the premul gate of the kernels also calls it, R.53 item 418). Only a
+/// re-export under the old name remains here.
 use kt_fx::video::unpremultiply;
 
 #[allow(clippy::too_many_arguments)]
-/// Кадр слоя для CPU-исполнителя: пре-FX кадр из плана либо результат
-/// FX-цепочки (мемоизированный пост-FX кэшем). None — кадра нет (голод).
-/// Свежий пост-FX кадр возвращается ЧЕРЕЗ кэш (одна лишняя выборка на
-/// холодную цепочку — дешевле клона кадра).
+/// The layer frame for the CPU executor: the pre-FX frame from the plan or the result of
+/// the FX chain (memoized by the post-FX cache). None — no frame (starvation).
+/// A fresh post-FX frame is returned THROUGH the cache (one extra fetch on a
+/// cold chain — cheaper than cloning the frame).
 fn layer_frame_cpu(
     src: &LayerSrc<'_>,
     cache: &BurstCache,
@@ -2283,41 +2283,41 @@ fn layer_frame_cpu(
     memoize: bool,
     complete: &mut bool,
 ) -> Option<Arc<VideoFrame>> {
-    // цепочка видео-FX (п.25): кэш хранит ПРЕ-FX кадры (правда о
-    // coverage), пост-FX кадр мемоизируется отдельным kind'ом
-    // (п.2 р.7 — иначе цепочка платится на КАЖДЫЙ compose и loop
-    // играет 6.8 fps даже прогретым); эффекты детерминированы по
-    // (t, fx_hash) → байт-идентичность сохранена. GPU-исполнитель эту
-    // мемоизацию не трогает (у него свой ReadbackCache в kt-gpu).
+    // video FX chain (item 25): the cache stores PRE-FX frames (the truth about
+    // coverage), the post-FX frame is memoized under a separate kind
+    // (item 2 of round 7 — otherwise the chain would be paid on EVERY compose and the loop
+    // would play at 6.8 fps even when warm); effects are deterministic by
+    // (t, fx_hash) → byte identity is kept. The GPU executor does not touch this
+    // memoization (it has its own ReadbackCache in kt-gpu).
     let has_fx = kt_fx::video::has_video_fx_in(&src.fx, src.lead, q_key.0, q_key.1);
-    // СИЛА СЛОЯ (Р.38 п.12): слот `LayerMix` смешивает состояние ДО
-    // вклада слоя с состоянием после него. Значение уже разрешено
-    // автоматизацией при построении плана, а `fx_hash` хэширует всю
-    // цепочку — 60 % и 100 % не схлопнутся в один кадр пост-FX кэша.
+    // LAYER STRENGTH (R.38 item 12): the `LayerMix` slot mixes the state BEFORE the
+    // layer's contribution with the state after it. The value is already resolved by
+    // automation during plan building, and `fx_hash` hashes the whole chain —
+    // 60% and 100% would not collapse into one post-FX cache frame.
     let mixes = layer_mixes(&src.fx);
-    // Камера — В КЛЮЧ мемоизации (Р.44): CPU считает Pan3d, а камера
-    // разрешается ПО-КАДРОВО (анимация, правило активной камеры) — статика
-    // fx_hash её не видит, и правка/перенос камеры отдавали бы стейл.
-    // Зеркало put_cam3d в plan_key GPU-пути.
-    // Ступень декода — тоже В КЛЮЧ (Р.46, п.318): один и тот же клип на
-    // одном Quality даёт РАЗНЫЕ пост-FX байты при разном размере входа
-    // (натив появился/исчез, сменилась кривая зума) — без неё кэш отдал бы
-    // стейл (t313).
+    // The camera — INTO the memoization key (R.44): the CPU computes Pan3d, and the camera
+    // is resolved PER FRAME (animation, the active-camera rule) — the static
+    // fx_hash does not see it, and an edit/move of the camera would return stale frames.
+    // A mirror of put_cam3d in the plan_key of the GPU path.
+    // The decode scale step — also INTO the key (R.46, item 318): the same clip at the same Quality
+    // gives DIFFERENT post-FX bytes for different input sizes (the native appeared/disappeared,
+    // the zoom curve changed) — without it the cache would return a stale
+    // frame (t313).
     let nest_scale = src.input.nest().map_or(0, |n| n.nest_scale);
     let key_hash = postfx_key_hash(src.fx_hash, &src.cam3d, src.src_scale, nest_scale, &src.lead);
     if has_fx && let Some(f) = cache.get_postfx_video(src.source, q_key, key_hash, t.0) {
         return Some(f);
     }
-    // Вход слоя: кадр из кэша или СУБ-КОМПОЗИТ вложенной ленты.
+    // Layer input: a frame from the cache or the SUB-COMPOSITE of a nested reel.
     let resolved;
     let frame = match &src.input {
         crate::video_plan::LayerInput::Frame(f) => f.as_ref(),
         crate::video_plan::LayerInput::Nest(n) => {
             let sub = nest_frame_cpu(n, cache, scratch, blend, memoize, complete);
-            // Ступень ленты выше входа цепочки (Р.58, п.459): суб-композит
-            // собран КРУПНЕЕ, чем эта цепочка умеет потребить — вписываем
-            // его ТОЙ ЖЕ билинейкой, что и сухую сторону смешивания
-            // (`fit_into`, зеркало на GPU — `Resample` во весь кадр).
+            // The reel's step above the chain input (R.58, item 459): the sub-composite is
+            // assembled LARGER than this chain can consume — we fit it in
+            // with THE SAME bilinear filter as the dry side of the blend
+            // (`fit_into`, mirrored on GPU — `Resample` to the full frame).
             resolved = match (sub, n.fit_to(src.src_scale, q_key.0, q_key.1)) {
                 (Some(f), Some((fw, fh))) => Some(fit_frame_cpu(&f, fw, fh, scratch)),
                 (f, _) => f,
@@ -2326,8 +2326,8 @@ fn layer_frame_cpu(
         }
     };
     if !has_fx {
-        // цепочка из одной силы пикселей не трогает: смешивать вход с
-        // самим собой нечего
+        // a chain of a single pixel strength does not touch: there is nothing to blend the input
+        // with itself
         return frame.cloned();
     }
     let frame = frame?;
@@ -2345,7 +2345,7 @@ fn layer_frame_cpu(
     let start =
         kt_fx::video::Frame { w: frame.width, h: frame.height, rgba, has_alpha: frame.has_alpha };
     let f = if mixes.is_empty() {
-        // ПРЕЖНИЙ путь, байт-в-байт: на нём стоит GOLDEN_VIDEO
+        // the PREVIOUS path, byte for byte: GOLDEN_VIDEO rests on it
         kt_fx::video::apply_video_chain_pooled(&src.fx, start, &ctx, scratch)
     } else {
         apply_chain_with_mixes(&src.fx, &mixes, start, &ctx, scratch)
@@ -2358,16 +2358,16 @@ fn layer_frame_cpu(
         has_alpha: f.has_alpha,
     });
     if !memoize {
-        // экспорт (Р.31 п.4): кадр не переживёт этот t — не выжираем кэш
+        // export (R.31 item 4): the frame will not survive this t — do not consume the cache
         return Some(frame);
     }
     cache.insert_postfx_video(src.source, q_key, key_hash, t.0, frame);
     cache.get_postfx_video(src.source, q_key, key_hash, t.0)
 }
 
-/// Ключ пост-FX мемоизации: статический хэш цепочки + разрешённая камера
-/// момента (Р.44, t66d). None — константное слагаемое: 2D-цепочки
-/// по-прежнему различаются только fx_hash.
+/// Post-FX memoization key: the static hash of the chain + the layer's resolved camera
+/// at the moment (R.44, t66d). None — a constant addend: 2D chains
+/// still differ only by fx_hash.
 fn postfx_key_hash(
     fx_hash: u64,
     cam3d: &Option<Cam3d>,
@@ -2379,8 +2379,8 @@ fn postfx_key_hash(
     let mut h = Xxh3::new();
     h.update(&fx_hash.to_le_bytes());
     h.update(&src_scale.to_le_bytes());
-    // контекст ведущего узла (Р.62): та же цепочка на том же кадре с
-    // другим правилом приведения — другая картинка, другой ключ
+    // the context of the leading node (R.62): the same chain on the same frame with a
+    // different conform rule — a different picture, a different key
     match lead {
         None => h.update(&[0u8]),
         Some(l) => {
@@ -2391,11 +2391,11 @@ fn postfx_key_hash(
             }
         }
     }
-    // Ступень ЛЕНТЫ — тоже в ключ (Р.58, п.459). У экземпляра без зума
-    // вход цепочки равен 1 и при ступени 1, и при ступени 3 (её поднял
-    // зумящий БЛИЗНЕЦ), а байты разные: во втором случае цепочка получает
-    // вписанный суб-композит. Без этого слагаемого кэш отдавал бы стейл —
-    // тот же класс, что t313 по оси размера.
+    // The reel's step — also into the key (R.58, item 459). For an instance without zoom the
+    // chain input equals 1 both at step 1 and at step 3 (raised by a zooming
+    // TWIN), while the bytes differ: in the second case the chain gets
+    // the fitted sub-composite. Without this addend the cache would return a stale
+    // result — the same class as t313 along the size axis.
     h.update(&nest_scale.to_le_bytes());
     match cam3d {
         None => h.update(&[0u8]),
@@ -2423,8 +2423,8 @@ fn postfx_key_hash(
     h.digest()
 }
 
-/// Слоты смешения цепочки: (индекс слота, индекс начала вклада слоя,
-/// вес 0..4096). Пусто — прежний путь БАЙТ-В-БАЙТ.
+/// Chain mix slots: (slot index, index of the start of the layer contribution,
+/// weight 0..4096). Empty — the previous path, BYTE-FOR-BYTE.
 fn layer_mixes(fx: &[kt_model::FxInstance]) -> Vec<(usize, usize, u32)> {
     fx.iter()
         .enumerate()
@@ -2437,13 +2437,13 @@ fn layer_mixes(fx: &[kt_model::FxInstance]) -> Vec<(usize, usize, u32)> {
         .collect()
 }
 
-/// Цепочка со слотами СИЛЫ (Р.38 п.12): считается посегментно.
+/// A chain with LAYER STRENGTH slots (R.38 item 12): computed segment by segment.
 ///
-/// Слой дописывает свои эффекты в хвост цепочки цели, поэтому «сухая»
-/// сторона смешения — состояние ДО его первого слота, а не вход всей
-/// цепочки: иначе сила слоя откатывала бы и собственные эффекты события.
-/// Снимок делается ровно на границе `from`, и на каждый слот силы он
-/// ровно один.
+/// The layer appends its effects to the tail of the target chain, so the “dry”
+/// side of the mix is the state BEFORE its first slot, not the input of the whole
+/// chain: otherwise the layer's strength would roll back the event's own effects too.
+/// The snapshot is taken exactly at the boundary of `from`, and for each strength slot it is
+/// exactly one.
 fn apply_chain_with_mixes(
     fx: &[kt_model::FxInstance],
     mixes: &[(usize, usize, u32)],
@@ -2452,16 +2452,16 @@ fn apply_chain_with_mixes(
     scratch: &mut kt_fx::video::FxScratch,
 ) -> kt_fx::video::Frame {
     let mut frame = start;
-    // Ступень — свойство ВХОДНОГО кадра, а не цепочки (Р.46, п.318):
-    // первый слайс получает крупный кадр, все последующие работают с уже
-    // сведённым в Quality растром (стопы силы всегда на 1×).
+    // The step is a property of the INPUT frame, not of the chain (R.46, item 318):
+    // the first slice gets the large frame, all later ones work with the raster already
+    // brought to Quality (strength stops are always at 1×).
     let entry_dims = (frame.w, frame.h);
     let mut snaps: std::collections::HashMap<usize, kt_fx::video::Frame> =
         std::collections::HashMap::new();
-    // Границы (снимки сухой стороны и слоты силы) режут цепочку; МЕЖДУ ними
-    // она подаётся ЦЕЛЬНЫМИ слайсами — иначе слияние гео-серий (Р.44) не
-    // случалось бы у клипов с силой слоя. GPU-зеркало режет там же
-    // (Snapshot-точки в chain_ops).
+    // The boundaries (snapshots of the dry side and strength slots) cut the chain; BETWEEN them
+    // it is fed in WHOLE slices — otherwise the fusion of geometry series (R.44) would
+    // not happen for clips with a layer strength. The GPU mirror cuts at the same place
+    // (Snapshot points in chain_ops).
     let mut stops: Vec<usize> = mixes.iter().flat_map(|(at, from, _)| [*at, *from]).collect();
     stops.sort_unstable();
     stops.dedup();
@@ -2485,7 +2485,7 @@ fn apply_chain_with_mixes(
                 }
                 i += 1;
             }
-            // сила 100 % — смешивать нечего, снимок просто выбрасывается
+            // strength 100% — nothing to blend, the snapshot is simply discarded
             Some((_, from, _)) => {
                 snaps.remove(from);
                 i += 1;
@@ -2504,12 +2504,12 @@ fn apply_chain_with_mixes(
     frame
 }
 
-/// Смешать «сухой» кадр с «мокрым» весом `k` (0..4096).
+/// Blend the “dry” frame with the “wet” one with weight `k` (0..4096).
 ///
-/// Размеры могут не совпасть: Pan/CamMotion ресемплят кадр в размер
-/// вывода. Тогда сухая сторона вписывается ТОЙ ЖЕ билинейкой
-/// (`kt_fx::video::fit_into`), что и все остальные ресемплы, — её зеркало
-/// в kt-gpu считает то же самое, поэтому бэкенды сходятся в допуске.
+/// Sizes may not match: Pan/CamMotion resample the frame
+/// to the output size. Then the dry side is fitted by THE SAME bilinear filter
+/// (`kt_fx::video::fit_into`) as all other resamples —
+/// its mirror in kt-gpu computes the same thing, so the backends converge within tolerance.
 fn blend_frames_cpu(
     dry: kt_fx::video::Frame,
     wet: kt_fx::video::Frame,
@@ -2536,9 +2536,9 @@ fn blend_frames_cpu(
     kt_fx::video::Frame { w: wet.w, h: wet.h, rgba: buf, has_alpha: wet.has_alpha || dry.has_alpha }
 }
 
-/// Сольный фейд (Р.25) в момент t: (вес 0..4096, клип ПОЯВЛЯЕТСЯ, вид).
-/// fade_in нарастает 0→1, fade_out затухает 1→0. None — момент вне
-/// сольного окна (обычный слой или половина настоящей пары).
+/// Solo fade (R.25) at moment t: (weight 0..4096, the clip APPEARS, kind).
+/// fade_in ramps 0→1, fade_out decays 1→0. None — the moment is outside the
+/// solo window (an ordinary layer or a half of a real pair).
 fn solo_fade(clip: &VideoClip, t: Tick) -> Option<(u32, bool, crate::TransMix, bool)> {
     let frac =
         |w: (Tick, Tick)| (((t.0 - w.0.0) * 4096) / (w.1.0 - w.0.0).max(1)).clamp(0, 4096) as u32;
@@ -2571,13 +2571,13 @@ fn solo_fade(clip: &VideoClip, t: Tick) -> Option<(u32, bool, crate::TransMix, b
     None
 }
 
-/// Инверсия перехода (Р.51, п.398): «жест задом наперёд» — поменять
-/// стороны местами и обратить прогресс, `kernel(b, a, 1−k)`. Кроссфейд
-/// не трогаем: для него это тождество, а целочисленный `dissolve_into`
-/// держит GOLDEN_VIDEO. КОНТРАКТ: любая сборка `PlanLayer::Dissolve`
-/// (в т.ч. будущая пара наложения) обязана пройти через этот хелпер —
-/// иначе инверсия на ней молча потеряется. Ключи кэша едут сами: своп
-/// меняет порядок `put_src`, k уже хэшируется.
+/// Transition inversion (R.51, item 398): “the gesture backwards” — swap the
+/// sides and reverse the progress, `kernel(b, a, 1−k)`. The crossfade is
+/// not touched: for it this is an identity, and the integer `dissolve_into`
+/// keeps GOLDEN_VIDEO. CONTRACT: any construction of `PlanLayer::Dissolve`
+/// (including a future overlay pair) MUST go through this helper —
+/// otherwise the inversion on it would silently be lost. The cache keys travel by themselves: the swap
+/// changes the order of `put_src`, and k is already hashed.
 fn apply_invert<'a>(
     a: &mut crate::video_plan::LayerSrc<'a>,
     b: &mut crate::video_plan::LayerSrc<'a>,
@@ -2591,8 +2591,8 @@ fn apply_invert<'a>(
     }
 }
 
-/// Альфа буфера, умноженная на k/4096 НА МЕСТЕ (уровень поверх готового
-/// блендa пары — см. compose_from_cache_into).
+/// The buffer's alpha multiplied by k/4096 IN PLACE (a level over the finished
+/// blend of the pair — see compose_from_cache_into).
 fn scale_alpha_inplace(buf: &mut [u8], k: u32, pixels: usize) {
     for p in 0..pixels {
         let a = buf[p * 4 + 3] as u32;
@@ -2600,9 +2600,9 @@ fn scale_alpha_inplace(buf: &mut [u8], k: u32, pixels: usize) {
     }
 }
 
-/// Копия кадра с альфой, умноженной на k/4096 (кадр без альфы считается
-/// непрозрачным). Дальше идёт обычный alpha_over — под фейдом просвечивает
-/// нижняя дорожка, а если её нет — чёрный фон композиции.
+/// A copy of the frame with alpha multiplied by k/4096 (a frame without alpha is
+/// considered opaque). Next comes the ordinary alpha_over — under the fade the track
+/// below shows through, and if there is none — the composite's black background.
 fn scale_alpha_into(dst: &mut Vec<u8>, f: &kt_media::VideoFrame, k: u32, pixels: usize) {
     let n = pixels * 4;
     dst.clear();
@@ -2611,11 +2611,11 @@ fn scale_alpha_into(dst: &mut Vec<u8>, f: &kt_media::VideoFrame, k: u32, pixels:
     let mut start = 0usize;
     #[cfg(target_arch = "x86_64")]
     if kt_fx::simd::simd_level() == kt_fx::simd::SimdLevel::Avx2 && pixels_avail >= 8 {
-        // SAFETY: уровень проверен детектом; обе длины >= pixels_avail*4
+        // SAFETY: the level is checked by the detector; both lengths >= pixels_avail*4
         unsafe {
             crate::video_simd::scale_alpha_avx2(dst, &f.rgba, f.has_alpha, k, pixels_avail);
         }
-        start = pixels_avail & !7; // хвост — скаляром ниже
+        start = pixels_avail & !7; // tail — a scalar below
     }
     for p in start..pixels_avail {
         let i = p * 4;
@@ -2625,11 +2625,11 @@ fn scale_alpha_into(dst: &mut Vec<u8>, f: &kt_media::VideoFrame, k: u32, pixels:
     }
 }
 
-/// Линейный dissolve пары (п.137): dst = a·(1−k) + b·k, целочисленно
-/// (k из 4096 долей, округление к ближайшему). Кадр без альфы считается
-/// непрозрачным (A=255). Возвращает has_alpha результата.
-/// Смешать пару кадров (Р.37 С5). Голод любой стороны — берём имеющуюся
-/// с полным весом: то же правило, что у пары `PlanLayer::Dissolve`.
+/// Linear dissolve of the pair (item 137): dst = a·(1−k) + b·k, in integers
+/// (k out of 4096 parts, rounding to nearest). A frame without alpha is treated
+/// as opaque (A=255). Returns has_alpha of the result.
+/// Blend a pair of frames (R.37 C5). Starvation of either side — we take the one present
+/// at full weight: the same rule as for the `PlanLayer::Dissolve` pair.
 fn blend_frames(
     a: Option<Arc<VideoFrame>>,
     b: Option<Arc<VideoFrame>>,
@@ -2666,7 +2666,7 @@ fn dissolve_into(
     let mut start = 0usize;
     #[cfg(target_arch = "x86_64")]
     if kt_fx::simd::simd_level() == kt_fx::simd::SimdLevel::Avx2 && pixels_avail >= 4 {
-        // SAFETY: уровень проверен детектом; длины >= pixels_avail*4
+        // SAFETY: the level is checked by the detector; lengths >= pixels_avail*4
         unsafe {
             crate::video_simd::dissolve_avx2(
                 dst,
@@ -2691,10 +2691,10 @@ fn dissolve_into(
     a.has_alpha || b.has_alpha
 }
 
-/// dst = src OVER dst (straight alpha). Непрозрачный src — просто копия.
-/// ФОРМУЛА РЕЖИМА НАЛОЖЕНИЯ (Р.62, F-CMP-003) для ОДНОГО канала, в
-/// долях 0..1. Зеркало — `blend_ch` в `kt-gpu/src/shaders/composite.wgsl`;
-/// файлы правятся ОДНИМ коммитом (инвариант 7, сторож — конформанс).
+/// dst = src OVER dst (straight alpha). An opaque src is simply a copy.
+/// BLEND MODE FORMULA (R.62, F-CMP-003) for ONE channel, in
+/// fractions 0..1. The mirror is `blend_ch` in `kt-gpu/src/shaders/composite.wgsl`;
+/// the files are edited in ONE commit (invariant 7, guard — conformance).
 pub fn blend_ch(mode: kt_model::BlendMode, b: f64, a: f64) -> f64 {
     use kt_model::BlendMode as M;
     match mode {
@@ -2705,7 +2705,7 @@ pub fn blend_ch(mode: kt_model::BlendMode, b: f64, a: f64) -> f64 {
         M::Subtract => (b - a).max(0.0),
         M::Darken => b.min(a),
         M::Lighten => b.max(a),
-        // классический overlay: тёмная половина умножает, светлая — экран
+        // classic overlay: the dark half multiplies, the light half screens
         M::Overlay => {
             if b <= 0.5 {
                 2.0 * b * a
@@ -2717,16 +2717,16 @@ pub fn blend_ch(mode: kt_model::BlendMode, b: f64, a: f64) -> f64 {
     }
 }
 
-/// НАЛОЖЕНИЕ КОМПОЗИТА ДОРОЖКИ на слои ниже (Р.62):
-/// `out = lerp(below, blend(below, above), α_above × уровень)`.
+/// TRACK COMPOSITE BLENDING onto the layers below (R.62):
+/// `out = lerp(below, blend(below, above), α_above × level)`.
 ///
-/// Две оси РАЗДЕЛЬНЫ и обе стоят ПОСЛЕ альфы: уровень 0.5 даёт половину
-/// пути к результату РЕЖИМА, а не режим над полупрозрачным слоем. Дыра в
-/// композите дорожки (α = 0) — прозрачность, а не операнд: там остаётся
-/// нижний слой нетронутым (обход ловушки Vegas, F-CMP-003).
+/// The two axes are SEPARATE and both come AFTER alpha: a level of 0.5 gives half the
+/// path to the MODE result, not the mode over a semi-transparent layer. A hole in the
+/// track's composite (α = 0) is transparency, not an operand: there the layer below
+/// remains untouched (the Vegas trap bypass, F-CMP-003).
 ///
-/// `Normal` сюда не заходит вовсе — он остаётся прежним `alpha_over`
-/// байт-в-байт (на нём стоит GOLDEN_VIDEO).
+/// `Normal` does not enter here at all — it stays the previous `alpha_over`
+/// byte for byte (GOLDEN_VIDEO rests on it).
 fn blend_over(
     dst: &mut [u8],
     src: &[u8],
@@ -2750,7 +2750,7 @@ fn blend_over(
             let v = b + (m - b) * k;
             dst[i + ch] = (v * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
         }
-        // альфа результата — как у «over»: дыра сверху нижний слой не трогает
+        // result alpha — as for “over”: a hole on top does not touch the layer below
         let da = dst[i + 3] as f64 / 255.0;
         let out_a = k + da * (1.0 - k);
         dst[i + 3] = (out_a * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
@@ -2768,7 +2768,7 @@ fn alpha_over(dst: &mut [u8], src: &[u8], has_alpha: bool, pixels: usize) {
     let mut start = 0usize;
     #[cfg(target_arch = "x86_64")]
     if kt_fx::simd::simd_level() == kt_fx::simd::SimdLevel::Avx2 && pixels_avail >= 8 {
-        // SAFETY: уровень проверен детектом; длины >= pixels_avail*4
+        // SAFETY: the level is checked by the detector; lengths >= pixels_avail*4
         unsafe { crate::video_simd::alpha_over_avx2(dst, src, pixels_avail) };
         start = pixels_avail & !7;
     }

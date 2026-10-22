@@ -1,6 +1,6 @@
-//! Тест 716 (Р.62, change frame-conform-and-event-geometry): ведущий узел
-//! «Геометрия» — поле события с позицией в цепочке; дополнительный узел —
-//! обычный слот; `Pan` из реестра удалён; узел с умолчаниями тождествен.
+//! Test 716 (R.62, change frame-conform-and-event-geometry): the leading “Geometry” node —
+//! a field of the event with the position in the chain; the additional node is an ordinary
+//! slot; `Pan` is removed from the registry; a node with defaults is identical.
 
 use kt_model::*;
 use kt_time::Tick;
@@ -44,12 +44,12 @@ fn project_with_video() -> Project {
     p
 }
 
-/// Реестр: `pan` удалён, `geometry` есть; узел с умолчаниями — тождество,
-/// ведущий флаг живёт только у узла, материализованного из события.
+/// Registry: `pan` removed, `geometry` present; a node with defaults is the identity,
+/// the leading flag lives only on the node materialized from the event.
 #[test]
 fn t716_registry_and_identity() {
     let tags: Vec<&str> = FxInstance::all().iter().map(|f| f.tag()).collect();
-    assert!(!tags.contains(&"pan"), "Pan упразднён (Р.62)");
+    assert!(!tags.contains(&"pan"), "Pan abolished (R.62)");
     assert!(tags.contains(&"geometry"));
     let node = FxInstance::geometry_node();
     assert!(!node.is_lead_geometry());
@@ -59,10 +59,10 @@ fn t716_registry_and_identity() {
     assert!(lead.geometry_is_identity());
     assert!(!FxInstance::geometry_zoom(1.5).geometry_is_identity());
     assert!(!FxInstance::geometry_at(0.1, 0.0, 1.0).geometry_is_identity());
-    // паспорт: десять числовых рядов, все автоматизируемые
+    // passport: ten numeric rows, all automatable
     assert_eq!(node.param_specs().len(), 10);
     assert!(node.param_specs().iter().all(|s| s.kind == ParamKind::Smooth));
-    // круг событие ↔ узел
+    // the round trip event ↔ node
     let g = EventGeometry { rule: Conform::Fill, zoom: 2.0, rot: 30.0, ..Default::default() };
     let back = EventGeometry { rule: Conform::Fill, ..Default::default() }.with_node(&g.node());
     assert_eq!(back, g);
@@ -70,9 +70,9 @@ fn t716_registry_and_identity() {
     assert_eq!(Conform::Fill.resolve(ConformRule::AsIs), ConformRule::Fill);
 }
 
-/// Команда `SetGeometry`: правило, позиция и кривые доезжают до модели одним
-/// шагом истории; позиция за концом цепочки — отказ; удалить узел нечем —
-/// поле события существует всегда.
+/// The `SetGeometry` command: the rule, the position and the curves reach the model in one
+/// history step; a position past the end of the chain is a failure; there is nothing to
+/// delete on the node — the event field always exists.
 #[test]
 fn t716_set_geometry_command_and_validation() {
     let mut m = TimelineModel::new(project_with_video());
@@ -83,47 +83,47 @@ fn t716_set_geometry_command_and_validation() {
         source: Default::default(),
     }];
     m.apply(Command::SetGeometry { id: ClipId(1), geometry: g, pos: 1, auto: auto.clone() })
-        .expect("законная команда");
+        .expect("a legal command");
     let c = m.clip(ClipId(1)).unwrap();
     assert_eq!(c.geometry, g);
     assert_eq!(c.geometry_pos, 1);
     assert_eq!(c.geometry_auto, auto);
-    assert_eq!(c.fx.len(), 2, "цепочка модели узел не содержит");
-    // позиция за концом цепочки — отказ, модель не тронута
+    assert_eq!(c.fx.len(), 2, "the chain of the model does not contain the node");
+    // a position past the end of the chain — failure, the model untouched
     let err = m.apply(Command::SetGeometry { id: ClipId(1), geometry: g, pos: 5, auto: vec![] });
-    assert!(err.is_err(), "позиция за концом цепочки отвергается");
+    assert!(err.is_err(), "a position past the end of the chain is rejected");
     assert_eq!(m.clip(ClipId(1)).unwrap().geometry_pos, 1);
-    // undo возвращает умолчание
+    // undo restores the default
     m.undo().unwrap();
     let c = m.clip(ClipId(1)).unwrap();
     assert!(c.geometry.is_default());
     assert_eq!(c.geometry_pos, 0);
-    // укорочение цепочки прижимает позицию узла
+    // shortening the chain pins the node’s position
     m.apply(Command::SetGeometry { id: ClipId(1), geometry: g, pos: 2, auto: vec![] }).unwrap();
     m.apply(Command::SetFx { id: ClipId(1), fx: vec![FxInstance::blur(4)] }).unwrap();
-    assert!(m.project().validate().is_ok(), "валидация после укорочения");
+    assert!(m.project().validate().is_ok(), "validation after shortening");
 }
 
-/// Правило проекта — только правило, не «следовать проекту»: файл, где в
-/// настройках стоит «project», отвергается валидацией.
+/// The project rule is ONLY a rule, not “follow the project”: a file where the setting
+/// reads “project” is rejected by validation.
 #[test]
 fn t716_project_rule_is_a_rule() {
     let mut p = project_with_video();
     p.settings.conform = ConformRule::Fill;
     assert!(p.validate().is_ok());
-    // сериализация: умолчание не пишется, не-умолчание — пишется
+    // serialization: the default is not written, a non-default is written
     let js = serde_json::to_string(&p.settings).unwrap();
     assert!(js.contains("\"conform\":\"fill\""));
     p.settings.conform = ConformRule::Fit;
     let js = serde_json::to_string(&p.settings).unwrap();
-    assert!(!js.contains("conform"), "умолчание «вписать» не сериализуется");
-    // ведущий узел с умолчаниями не сериализуется у события
+    assert!(!js.contains("conform"), "the “fit” default is not serialized");
+    // a leading node with defaults is not serialized on the event
     let js = serde_json::to_string(&p.clips[0]).unwrap();
     assert!(!js.contains("geometry"));
 }
 
-/// CamMotion (легаси) читается в узел «Геометрия» с кривыми положения и
-/// зума; пан прежней рамки переведён в положение.
+/// CamMotion (legacy) is read into the “Geometry” node with position and zoom curves;
+/// the pan of the former frame is converted into position.
 #[test]
 fn t716_cammotion_migrates_to_geometry() {
     let mut p = project_with_video();
@@ -141,7 +141,7 @@ fn t716_cammotion_migrates_to_geometry() {
     let names: Vec<&str> = p.clips[0].fx_auto[0].iter().map(|c| c.param.as_str()).collect();
     assert!(names.contains(&"pos_x") && names.contains(&"zoom"));
     assert!(!names.contains(&"pan_x"));
-    // pan 1 при зуме 2 → сдвиг на четверть холста влево
+    // pan 1 at zoom 2 → a shift of a quarter of the canvas to the left
     assert!((pan_to_pos(1.0, 2.0) + 0.25).abs() < 1e-9);
-    assert_eq!(pan_to_pos(1.0, 1.0), 0.0, "без зума пан прежней рамки некуда двигать");
+    assert_eq!(pan_to_pos(1.0, 1.0), 0.0, "without zoom, pan has nowhere to move the previous frame");
 }

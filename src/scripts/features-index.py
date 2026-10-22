@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Проверка и сводка каталога docs/features/ (база будущих фич, Р.36).
+"""Check and summary of the docs/features/ catalog (base of future features, R.36).
 
-    python3 src/scripts/features-index.py --check    валидация, ненулевой выход на ошибках
-    python3 src/scripts/features-index.py --table    markdown-таблица приоритетов в stdout
+    python3 src/scripts/features-index.py --check    validation, non-zero exit on errors
+    python3 src/scripts/features-index.py --table    markdown table of priorities to stdout
 
-Скрипт НИЧЕГО не переписывает: таблица вставляется в README руками (правило 20
-чек-листа — ничего не отрастает само). Единственный источник правды о списке
-категорий — таблица «## Категории» в docs/features/README.md; здесь она читается,
-а не дублируется.
+The script rewrites NOTHING: the table is pasted into the README by hand (rule 20
+of the checklist — nothing grows by itself). The single source of truth about the list
+of categories is the table “## Categories” in docs/features/README.md; here it is read,
+not duplicated.
 
-Зависимостей нет: frontmatter у нас — фиксированное подмножество YAML
-(скаляр либо плоский список в квадратных скобках), парсится на месте.
+There are no dependencies: our frontmatter is a fixed subset of YAML
+(a scalar or a flat list in square brackets), parsed in place.
 """
 
 import datetime
@@ -37,46 +37,46 @@ REQUIRED_FIELDS = ["id", "title", "status", "priority", "cost", "category",
                    "editors", "we_have", "crates", "invariants", "ui_rules",
                    "round", "point", "tests", "depends_on", "checked"]
 
-# «Фишка фишки» короче этого — почти наверняка пересказ маркетингового списка.
+# “The trick behind it” shorter than this is almost certainly a retelling of a marketing list.
 GIMMICK_MIN = 200
-STALE_DAYS = 548  # 18 месяцев
+STALE_DAYS = 548  # 18 months
 
-# Вторая волна (Р.39, категория help/). Вывод «нам нужна справка» известен ДО
-# разведки, поэтому вердикт получает форму, а его обещание — адрес. Без этого
-# 33 заметки написали бы одно и то же, и волна не стоила бы прочтения.
+# The second wave (R.39, category help/). The conclusion “we need a reference” is known BEFORE
+# the reconnaissance, so the verdict takes a form, and its promise — an address. Without this
+# 33 notes would have written the same thing, and the wave would not have been worth reading.
 HELP_CAT = "help"
 VERDICT_SHAPES = ("TEST:", "CHECK:", "REJECTED:", "ALREADY-HAVE:", "DEFERRED:")
 VERDICT_TAIL_MIN = 60
 TEMPLATE = FEATURES / "_template.md"
 
-# Третья волна (Р.41): трекер — источник, а не ось. Заметка, объявившая trackers:,
-# обязана нести СЧЁТ (сравнение долей двух трекеров) и АДРЕС (наш код). «В Kdenlive
-# N багов про прокси» — статистика; находка начинается там, где число упёрто в src/.
+# Third wave (R.41): the tracker is a source, not an axis. A note that declares trackers:
+# must carry a COUNT (the share comparison of two trackers) and an ADDRESS (our code). “N bugs about proxies in Kdenlive”
+# is a statistic; a finding begins where the number is pinned to src/.
 TRACKERS = FEATURES / "_trackers.md"
 SIGNAL_CAT = "resilience"
 
-# Четвёртая волна (Р.42, категория collab/). Тема — облачные возможности чужих
-# редакторов, а сети у нас нет ни в одном виде: 0 совпадений по
-# std::net|TcpStream|reqwest|hyper|tokio во всём src/ и ни одного HTTP/TLS-крейта
-# среди 505 пакетов Cargo.lock. Значит вывод «сети нет, поэтому не берём» известен
-# ДО разведки и написался бы сам собой сорок пять раз. Заметка обязана разделить
-# фишку надвое: что остаётся на ОДНОЙ машине — и чем именно платят за вторую половину.
+# Fourth wave (R.42, category collab/). The topic is the cloud features of other editors,
+# and we have no network in any form: 0 matches for
+# std::net|TcpStream|reqwest|hyper|tokio across all of src/ and not a single HTTP/TLS crate
+# among the 505 packages in Cargo.lock. So the conclusion “there is no network, so we do not take it” is known
+# BEFORE the reconnaissance and would have written itself forty-five times. The note must split
+# the feature in two: what stays on ONE machine — and what exactly is paid for the second half.
 SERVICES = FEATURES / "_services.md"
 OFFLINE_CAT = "collab"
 OFFLINE_SHAPES = ("REMAINS", "DEGENERATES", "DOES NOT REMAIN")
-OFFLINE_TAIL_MIN = 80  # считается БЕЗ якоря: иначе длинный путь сам добирает минимум
-# Закрытый словарь «чего у нас нет сверх сокета». Слова «сеть» здесь нет
-# СОЗНАТЕЛЬНО: её отсутствие — не находка.
+OFFLINE_TAIL_MIN = 80  # is counted WITHOUT an anchor: otherwise a long path picks up the minimum by itself
+# Closed vocabulary of “what we lack beyond the socket”. The word “network” is not here
+# DELIBERATELY: its absence is not a finding.
 NET_COSTS = ("user account", "shared clock", "edit log", "access rights",
              "project-as-database", "cross-project storage", "external executor",
              "media address")
 ANCHOR_RE = re.compile(r"^(src/[\w./-]+?)(?::\d+(?:-\d+)?|::[\w:]+)?$")
 
-# Пятая волна (change bootstrap-specs-from-chronicles, 2026-09-21): проектные
-# решения переехали в OpenSpec. «Как ложится» обязана назвать capability
-# (`CAPABILITY: openspec/specs/<cap>/`, каталог существует и несёт spec.md), а у
-# ЗАМОРОЖЕННЫХ статусов раздел — ссылка плюс одна строка сути (≤ 5 непустых строк,
-# путей src/ не требуется). У живых статусов пути src/ по-прежнему обязательны.
+# Fifth wave (change bootstrap-specs-from-chronicles, 2026-09-21): project
+# decisions moved into OpenSpec. “How it fits” must name the capability
+# (`CAPABILITY: openspec/specs/<cap>/`, the directory exists and carries spec.md), and for
+# FROZEN statuses the section is a link plus one line of substance (≤ 5 non-empty lines,
+# no src/ paths required). For live statuses src/ paths are still mandatory.
 SPECS = ROOT / "openspec" / "specs"
 FROZEN_STATUSES = ("done", "accepted", "already-have", "rejected")
 FROZEN_FITS_MAX_LINES = 5
@@ -84,7 +84,7 @@ CAPABILITY_RE = re.compile(r"^CAPABILITY:\s*(.+)$", re.M)
 
 
 def parse_front(text):
-    """Frontmatter → dict. Значение: список [a, b], null, либо строка."""
+    """Frontmatter → dict. Value: list [a, b], null, or a string."""
     if not text.startswith("---\n"):
         return None, text
     end = text.find("\n---\n", 4)
@@ -111,7 +111,7 @@ def parse_front(text):
 
 
 def sections(body):
-    """{заголовок H2: текст под ним}."""
+    """{H2 heading: text under it}."""
     out, cur, buf = {}, None, []
     for line in body.splitlines():
         m = re.match(r"^##\s+(.+?)\s*$", line)
@@ -127,7 +127,7 @@ def sections(body):
 
 
 def read_categories():
-    """Категории из таблицы README: {каталог: (код, план)}."""
+    """Categories from the README table: {directory: (code, plan)}."""
     text = README.read_text(encoding="utf-8")
     out = {}
     for m in re.finditer(r"^\|\s*`(\w+)/`\s*\|\s*([A-Z]+)\s*\|[^|]*\|\s*(\d+)\s*/\s*(\d+)\s*\|",
@@ -137,12 +137,12 @@ def read_categories():
 
 
 def read_editor_keys():
-    # Точка законна: ключ несёт версию (blender-5.2, vscode-1.136, jetbrains-2026.2).
+    # The point is legitimate: the key carries the version (blender-5.2, vscode-1.136, jetbrains-2026.2).
     return set(re.findall(r"^\|\s*`([a-z0-9.-]+)`\s*\|", EDITORS.read_text(encoding="utf-8"), re.M))
 
 
 def read_tracker_keys():
-    """Ключи из таблицы «## Реестр» в _trackers.md — источник правды один."""
+    """Keys from the “## Registry” table in _trackers.md — one source of truth."""
     if not TRACKERS.exists():
         return set()
     return set(re.findall(r"^\|\s*`([a-z0-9-]+)`\s*\|\s*\w+\s*\|\s*`",
@@ -155,11 +155,11 @@ def load_notes():
 
 
 def read_service_keys():
-    """Ключи из таблицы «## Реестр» в _services.md.
+    """Keys from the “## Registry” table in _services.md.
 
-    ОТДЕЛЬНЫЙ файл, а не третья таблица _editors.md: read_editor_keys() берёт любую
-    строку файла со слагом в первой клетке, и `frame-io` молча стал бы законным
-    значением поля editors: — то есть сервис попал бы в таблицу, где живёт вердикт.
+    A SEPARATE file, not a third table in _editors.md: read_editor_keys() takes any
+    line of the file with a slug in the first cell, and `frame-io` would silently become a valid
+    value of the editors: field — i.e. a service would land in the table where the verdict lives.
     """
     if not SERVICES.exists():
         return set()
@@ -168,10 +168,10 @@ def read_service_keys():
 
 
 def anchor_ok(anchor):
-    """Правило 8 механически: адрес — это код, который есть СЕГОДНЯ.
+    """Rule 8 mechanically: an address is code that exists TODAY.
 
-    Первая в базе проверка адреса ПО ДЕРЕВУ, а не по форме: якорь на
-    src/libs/kt-collab/src/session.rs — уже схема реализации, и она не соберётся.
+    The first address check in the database is BY TREE, not by form: an anchor on
+    src/libs/kt-collab/src/session.rs — is already an implementation scheme, and it will not build.
     """
     m = ANCHOR_RE.match(anchor.strip())
     return bool(m) and (ROOT / m.group(1)).exists()
@@ -191,7 +191,7 @@ def check():
     today = datetime.date.today()
 
     if not cats:
-        errors.append("README.md: не разобралась таблица «## Категории»")
+        errors.append("README.md: the “## Categories” table was not parsed")
 
     for path in load_notes():
         rel = path.relative_to(ROOT)
@@ -200,296 +200,296 @@ def check():
 
         front, body = parse_front(path.read_text(encoding="utf-8"))
         if front is None:
-            bad("нет YAML-frontmatter")
+            bad("no YAML frontmatter")
             continue
 
         for f in REQUIRED_FIELDS:
             if f not in front:
-                bad(f"нет поля {f}")
+                bad(f"no field {f}")
 
         fid = front.get("id", "")
-        # путь: docs/features/<категория>/<подкатегория>/<файл>.md
+        # path: docs/features/<category>/<subcategory>/<file>.md
         parts = path.relative_to(FEATURES).parts
         if len(parts) != 3:
-            bad("файл лежит не по схеме категория/подкатегория/файл.md")
+            bad("file is not in the category/subcategory/file.md layout")
         else:
             cat = parts[0]
             if cat not in cats:
-                bad(f"категория «{cat}» не объявлена в README")
+                bad(f"category “{cat}” is not declared in README")
             else:
                 code = cats[cat][0]
                 if not fid.startswith(f"F-{code}-"):
-                    bad(f"id «{fid}» не начинается с F-{code}- (категория {cat})")
+                    bad(f"id “{fid}” does not start with F-{code}- (category {cat})")
             if front.get("category") != f"{parts[0]}/{parts[1]}":
-                bad(f"поле category «{front.get('category')}» ≠ пути {parts[0]}/{parts[1]}")
+                bad(f"category field “{front.get('category')}” ≠ path {parts[0]}/{parts[1]}")
 
         if not re.match(r"^F-[A-Z]+-\d{3}$", fid or ""):
-            bad(f"id «{fid}» не в формате F-КОД-NNN")
+            bad(f"id “{fid}” is not in the F-CODE-NNN format")
         elif fid in seen_ids:
-            bad(f"id {fid} уже занят: {seen_ids[fid]}")
+            bad(f"id {fid} is already taken: {seen_ids[fid]}")
         else:
             seen_ids[fid] = str(rel)
 
         m = re.search(r"^#\s+(\S+)\s+—\s+(.+?)\s*$", body, re.M)
         if not m:
-            bad("нет заголовка «# F-КОД-NNN — Название»")
+            bad("no heading “# F-CODE-NNN — Title”")
         else:
             if m.group(1) != fid:
-                bad(f"id в заголовке ({m.group(1)}) ≠ id в шапке ({fid})")
+                bad(f"id in the heading ({m.group(1)}) ≠ id in the header ({fid})")
             if front.get("title") and m.group(2).strip() != str(front["title"]).strip():
-                bad("title в шапке ≠ названию в заголовке")
+                bad("title in the header ≠ name in the heading")
 
         for field, allowed in (("status", STATUSES), ("priority", PRIORITIES),
                                ("cost", COSTS), ("we_have", WE_HAVE)):
             v = front.get(field)
             if v is not None and v not in allowed:
-                bad(f"{field}: «{v}» вне словаря {allowed}")
+                bad(f"{field}: “{v}” outside the vocabulary {allowed}")
 
         for e in front.get("editors") or []:
             if e not in editor_keys:
-                bad(f"редактор «{e}» не объявлен в _editors.md")
+                bad(f"editor “{e}” is not declared in _editors.md")
 
         sec = sections(body)
         for s in REQUIRED_SECTIONS:
             if s not in sec:
-                bad(f"нет раздела «{s}»")
+                bad(f"no section “{s}”")
             elif not sec[s].strip():
-                bad(f"раздел «{s}» пуст")
+                bad(f"section “{s}” is empty")
 
-        # Три проверки против превращения базы в википедию.
+        # Three checks against the database turning into a wikipedia.
         gimmick = sec.get("The trick behind it", "")
         if len(gimmick) < GIMMICK_MIN:
-            bad(f"«Фишка фишки» короче {GIMMICK_MIN} символов ({len(gimmick)}) — "
-                "это пересказ, а не находка")
+            bad(f"“The trick behind it” is shorter than {GIMMICK_MIN} characters ({len(gimmick)}) — "
+                "this is a retelling, not a finding")
         feedback = sec.get("What users say", "")
         has_quote = re.search(r"^>", feedback, re.M) and "http" in feedback
-        # Честный пробел лучше выдуманной цитаты: площадка бывает недоступна.
+        # An honest gap is better than an invented quote: the site may be unavailable.
         gap = re.search(r"NO QUOTES:\s*(.{80,})", feedback, re.S)
         if not (has_quote or gap):
-            bad("«Что говорят пользователи»: нужна дословная цитата (строка с >) "
-                "и ссылка, либо пометка «НЕТ ЦИТАТ:» с объяснением, что искали")
+            bad("“What users say”: a verbatim quote is needed (a line with >) "
+                "and a link, or a note “NO QUOTES:” with an explanation of what was searched for")
         fits = sec.get("How it fits Kinotrain", "")
         status = front.get("status")
         cap_lines = CAPABILITY_RE.findall(fits)
         for cl in cap_lines:
             for cap in re.findall(r"openspec/specs/([\w-]+)/", cl):
                 if not (SPECS / cap / "spec.md").is_file():
-                    bad(f"«CAPABILITY:» указывает на openspec/specs/{cap}/ — "
-                        "такой capability нет (или в ней нет spec.md)")
+                    bad(f"“CAPABILITY:” points to openspec/specs/{cap}/ — "
+                        "no such capability (or it has no spec.md)")
             if "openspec/specs/" not in cl:
-                bad("«CAPABILITY:» без пути openspec/specs/<cap>/")
+                bad("“CAPABILITY:” without a path openspec/specs/<cap>/")
         if status in FROZEN_STATUSES:
             if len(cap_lines) != 1:
-                bad("замороженный статус: «Как ложится» обязана нести ровно одну "
-                    "строку «CAPABILITY: openspec/specs/<cap>/» — решение живёт там")
+                bad("frozen status: “How it fits” must carry exactly one "
+                    "line “CAPABILITY: openspec/specs/<cap>/” — the decision lives there")
             n_lines = sum(1 for l in fits.splitlines() if l.strip())
             if n_lines > FROZEN_FITS_MAX_LINES:
-                bad(f"замороженный статус: «Как ложится» — {n_lines} строк при "
-                    f"пределе {FROZEN_FITS_MAX_LINES}; проектирование — в "
-                    "openspec/specs/<cap>/design.md, не здесь")
+                bad(f"frozen status: “How it fits” — {n_lines} lines at "
+                    f"a limit of {FROZEN_FITS_MAX_LINES}; the design is in "
+                    "openspec/specs/<cap>/design.md, not here")
         elif "src/" not in fits:
-            bad("«Как ложится на Kinotrain»: нет ни одного пути вида src/… — "
-                "раздел написан вслепую")
+            bad("“How it fits Kinotrain”: there is not a single path of the form src/… — "
+                "the section was written blind")
 
         if status == "rejected" and len(sec.get("Verdict", "")) < 40:
-            bad("статус «отвергнуто» без внятной причины в «Вердикт»")
+            bad("status “rejected” without a clear reason in “Verdict”")
         if status == "done":
             if not front.get("point"):
-                bad("статус «сделано» без point")
+                bad("status “done” without point")
             if not front.get("tests"):
-                bad("статус «сделано» без tests")
+                bad("status “done” without tests")
         if status in ("candidate", "accepted"):
             try:
                 d = datetime.date.fromisoformat(str(front.get("checked")))
                 if (today - d).days > STALE_DAYS:
-                    bad(f"checked={d} старше 18 месяцев при статусе «{status}» — перепроверить")
+                    bad(f"checked={d} older than 18 months with status “{status}” — recheck")
             except ValueError:
-                bad(f"checked=«{front.get('checked')}» не дата в формате ГГГГ-ММ-ДД")
+                bad(f"checked=“{front.get('checked')}” is not a date in the YYYY-MM-DD format")
 
-        # --- вторая волна: категория help/ (Р.39) --------------------------
+        # --- second wave: category help/ (R.39) --------------------------
         if len(parts) == 3 and parts[0] == HELP_CAT:
             verdict = sec.get("Verdict", "")
             shaped = [l.strip() for l in verdict.splitlines()
                       if l.strip().startswith(VERDICT_SHAPES)]
             if not shaped:
-                bad("«Вердикт»: нужна строка вида ТЕСТ:/ПРОВЕРКА:/ОТВЕРГНУТО:/"
-                    "УЖЕ-ЕСТЬ:/ОТЛОЖЕНО: — «нам нужна справка» выводом не считается")
+                bad("“Verdict”: a line of the form TEST:/CHECK:/REJECTED:/"
+                    "ALREADY-HAVE:/DEFERRED: — “we need a reference” does not count as a verdict")
             else:
                 head = shaped[0]
                 kind, tail = head.split(":", 1)
                 if len(tail.strip()) < VERDICT_TAIL_MIN:
-                    bad(f"«Вердикт»: после «{kind}:» меньше {VERDICT_TAIL_MIN} символов")
+                    bad(f"“Verdict”: after “{kind}:” less than {VERDICT_TAIL_MIN} characters")
                 m = re.search(r"\bt\d+[a-z]?\b"
                               r"|(?:src|site|docs)/[\w./-]+"
                               r"|--check\b[\w -]*"
                               r"|\b\w+::\w+\b", head)
                 if not m:
-                    bad("«Вердикт»: обещание не адресуемо — назови тест, путь "
-                        "или клаузулу --check")
+                    bad("“Verdict”: the promise is not addressable — name a test, a path "
+                        "or a --check clause")
                 else:
                     help_promises.setdefault(m.group(0), []).append(str(rel))
 
-            # Спор про всплывающие подсказки разрешён (Р.39), но только глядя
-            # в глаза стражу: t83 держит запрет, правило 10 — его формулировка.
+            # The dispute about pop-up hints is settled (R.39), but only by looking
+            # the guard in the eye: t83 holds the ban, rule 10 is its wording.
             if "tooltip_delay" in body or "Order::Tooltip" in body:
                 if "t83" not in fits:
-                    bad("спор про всплывающие подсказки без разбора t83 в «Как ложится» "
-                        "— регресс-страж не назван")
+                    bad("a dispute about pop-up hints without analysis of t83 in “How it fits” "
+                        "— the regression guard is not named")
                 if 10 not in [int(x) for x in (front.get("ui_rules") or [])
                               if str(x).isdigit()]:
-                    bad("спор про всплывающие подсказки без ui_rules: [10] в шапке")
+                    bad("a dispute about pop-up hints without ui_rules: [10] in the header")
 
-        # --- третья волна: трекеры как источник (Р.41) ------------------
+        # --- third wave: trackers as a source (R.41) ------------------
         trk = front.get("trackers") or []
         if len(parts) == 3 and parts[0] == SIGNAL_CAT and not trk:
-            bad("категория resilience/ заведена под счётные находки: "
-                "поле trackers: обязано быть непустым")
+            bad("category resilience/ was created for countable findings: "
+                "trackers: field must not be empty")
         if trk:
             for t in trk:
                 if t not in tracker_keys:
-                    bad(f"трекер «{t}» не объявлен в _trackers.md")
+                    bad(f"tracker “{t}” is not declared in _trackers.md")
 
             sig = [l.strip() for l in feedback.splitlines()
                    if l.strip().startswith("SIGNAL:")]
             if not sig:
-                bad("объявлен trackers:, но в «Что говорят пользователи» нет строки "
-                    "«СИГНАЛ:» — статистика без сравнения находкой не считается")
+                bad("trackers: is declared, but “What users say” has no line "
+                    "“SIGNAL:” — statistics without a comparison do not count as a finding")
             else:
                 head = sig[0]
                 if len(re.findall(r"\d", head)) < 2 or "%" not in head:
-                    bad("«СИГНАЛ:» обязан нести два числа и долю в процентах "
-                        "(число одного трекера против доли другого)")
+                    bad("“SIGNAL:” must carry two numbers and a share in percent "
+                        "(a count of one tracker against the share of another)")
                 f = re.search(r"`([^`]+)`", head)
                 if not f:
-                    bad("«СИГНАЛ:» без точного фильтра в обратных кавычках — "
-                        "число невоспроизводимо")
+                    bad("“SIGNAL:” without an exact filter in backticks — "
+                        "the number cannot be reproduced")
                 else:
                     signal_filters.setdefault(f.group(1), []).append(str(rel))
 
             addr = [l.strip() for l in fits.splitlines()
                     if l.strip().startswith("ADDRESS:")]
             if not addr:
-                bad("объявлен trackers:, но в «Как ложится» нет строки «АДРЕС:» — "
-                    "чужая боль не привязана к нашему коду")
+                bad("trackers: is declared, but “How it fits” has no line “ADDRESS:” — "
+                    "a foreign pain is not tied to our code")
             elif "src/" not in addr[0]:
-                bad("«АДРЕС:» без пути src/… — привязка к нашему коду не названа")
+                bad("“ADDRESS:” without a src/… path — the tie to our code is not named")
 
-        # --- четвёртая волна: категория collab/ (Р.42) ------------------
+        # --- fourth wave: category collab/ (R.42) ------------------
         if len(parts) == 3 and parts[0] == OFFLINE_CAT:
             svc = front.get("services") or []
             if not svc:
-                bad("категория collab/ заведена под облачные возможности: поле "
-                    "services: обязано быть непустым — заметка обязана назвать, "
-                    "что именно стоит по ту сторону сети")
+                bad("category collab/ was created for cloud capabilities: the field "
+                    "services: must not be empty — the note must name "
+                    "what exactly stands on the other side of the network")
             for sv in svc:
                 if sv not in service_keys:
-                    bad(f"сервис «{sv}» не объявлен в _services.md")
+                    bad(f"service “{sv}” is not declared in _services.md")
 
             off = [l.strip() for l in fits.splitlines()
                    if l.strip().startswith("OFFLINE:")]
             if not off:
-                bad("«Как ложится»: нет строки «БЕЗ СЕТИ:» — «у нас нет сети, "
-                    "поэтому не берём» выводом волны не считается")
+                bad("“How it fits”: there is no line “OFFLINE:” — “we have no network, "
+                    "so we do not take it” does not count as the conclusion of the wave")
             else:
                 tail = off[0].split(":", 1)[1].strip()
                 shape = next((x for x in OFFLINE_SHAPES if tail.startswith(x)), None)
                 if shape is None:
-                    bad("«БЕЗ СЕТИ:» без маркера — нужен ОСТАЁТСЯ / ВЫРОЖДАЕТСЯ / "
-                        "НЕ ОСТАЁТСЯ первым словом")
+                    bad("“OFFLINE:” without a marker — needs REMAINS / DEGENERATES / "
+                        "DOES NOT REMAIN as the first word")
                 else:
                     offline_shapes_seen.setdefault(shape, []).append(str(rel))
                     a = re.search(r"`([^`]+)`", tail)
                     if not a:
-                        bad("«БЕЗ СЕТИ:» без якоря в обратных кавычках — остаток "
-                            "не адресуем (якорь обязателен и в ветке НЕ ОСТАЁТСЯ: "
-                            "там он указывает на место, где отсутствие видно)")
+                        bad("“OFFLINE:” without an anchor in backticks — the remainder "
+                            "is not addressable (the anchor is mandatory also in the DOES NOT REMAIN branch: "
+                            "there it points to the place where the absence is visible)")
                     elif not anchor_ok(a.group(1)):
-                        bad(f"«БЕЗ СЕТИ:» якорь «{a.group(1)}» не указывает на "
-                            "существующий файл src/… — заметка проектирует "
-                            "реализацию (правило 8), а не описывает наш код")
+                        bad(f"“OFFLINE:” anchor “{a.group(1)}” does not point to "
+                            "an existing file src/… — the note designs "
+                            "the implementation (rule 8) instead of describing our code")
                     else:
                         offline_anchors.setdefault(a.group(1), []).append(str(rel))
                     prose = re.sub(r"`[^`]*`", "", tail[len(shape):]).strip(" —–-:")
                     if len(prose) < OFFLINE_TAIL_MIN:
-                        bad(f"«БЕЗ СЕТИ: {shape}» — прозы {len(prose)} символов при "
-                            f"минимуме {OFFLINE_TAIL_MIN}: не сказано, ЧТО именно "
-                            "остаётся (или где видно, что не остаётся ничего)")
+                        bad(f"“OFFLINE: {shape}” — prose {len(prose)} characters at "
+                            f"a minimum of {OFFLINE_TAIL_MIN}: it is not said WHAT exactly "
+                            "remains (or where it is visible that nothing remains)")
 
             price = [l.strip() for l in fits.splitlines()
                      if l.strip().startswith("NETWORK COST:")]
             if not price:
-                bad("«Как ложится»: нет строки «ЦЕНА СЕТИ:» — не названо, за что "
-                    "именно платят той стороной")
+                bad("“How it fits”: there is no line “NETWORK COST:” — it is not named what "
+                    "exactly is paid on that side")
             else:
                 head = price[0]
                 inv = [int(x) for x in re.findall(r"invariants?\s+(\d{1,2})", head)]
                 named = [c for c in NET_COSTS if c in head]
                 if not inv and not named:
-                    bad("«ЦЕНА СЕТИ:» обязана назвать инвариант N либо механизм из "
-                        f"словаря: {', '.join(NET_COSTS)}. Слова «сеть» в словаре "
-                        "нет: её отсутствие известно и без заметки")
+                    bad("“NETWORK COST:” must name invariant N or a mechanism from "
+                        f"the vocabulary: {', '.join(NET_COSTS)}. The word “network” is not in the vocabulary "
+                        "no: its absence is known without a note")
                 declared = [int(x) for x in (front.get("invariants") or [])
                             if str(x).isdigit()]
                 for n in inv:
                     if not 1 <= n <= 12:
-                        bad(f"«ЦЕНА СЕТИ:»: инварианта {n} не существует, их двенадцать")
+                        bad(f"“NETWORK COST:”: invariant {n} does not exist; there are twelve of them")
                     elif n not in declared:
-                        bad(f"«ЦЕНА СЕТИ:» называет инвариант {n}, а в шапке "
-                            f"invariants: {declared} — проза и шапка разошлись")
+                        bad(f"“NETWORK COST:” names invariant {n}, but the header "
+                            f"invariants: {declared} — the prose and the header disagree")
 
         notes.append((front, rel))
 
-    # Обещание, повторённое дважды, — это дублированный вывод.
+    # A promise repeated twice is a duplicated conclusion.
     for token, where in sorted(help_promises.items()):
         if len(where) > 1:
-            errors.append(f"help/: обещание «{token}» стоит ПЕРВЫМ в {len(where)} "
-                          f"заметках ({', '.join(where)}) — вывод дублируется")
+            errors.append(f"help/: the promise “{token}” stands FIRST in {len(where)} "
+                          f"notes ({', '.join(where)}) — the conclusion is duplicated")
 
-    # Один и тот же фильтр в двух заметках — это одна находка, посчитанная дважды.
-    # Остаток, названный дважды, — это один и тот же остаток.
+    # The same filter in two notes is one finding counted twice.
+    # A remainder named twice is the same remainder.
     for a, where in sorted(offline_anchors.items()):
         if len(where) > 1:
-            errors.append(f"БЕЗ СЕТИ: якорь «{a}» стоит в {len(where)} заметках "
-                          f"({', '.join(where)}) — остаток задвоен")
+            errors.append(f"OFFLINE: anchor “{a}” stands in {len(where)} notes "
+                          f"({', '.join(where)}) — the remainder is doubled")
 
-    # Балансир уровня КАТЕГОРИИ. Где всё ОСТАЁТСЯ — выдуманное локальное ядро;
-    # где ничего не остаётся — тот самый брак, ради которого правило заведено.
+    # Category-level balancer. Where everything STAYS — an invented local core;
+    # where nothing stays — exactly the defect the rule was made for.
     n_collab = sum(1 for f, _ in notes
                    if str(f.get("category", "")).startswith(OFFLINE_CAT + "/"))
     if n_collab >= 10:
         for sh in OFFLINE_SHAPES:
             if sh not in offline_shapes_seen:
-                errors.append(f"collab/: {n_collab} заметок и ни одной с маркером "
-                              f"«{sh}» — классификатор выродился, проверь ось")
+                errors.append(f"collab/: {n_collab} notes and not one with a marker "
+                              f"“{sh}” — the classifier has degenerated, check the axis")
 
     for f, where in sorted(signal_filters.items()):
         if len(where) > 1:
-            errors.append(f"СИГНАЛ: фильтр «{f}» повторяется в {len(where)} заметках "
-                          f"({', '.join(where)}) — находка задвоена")
+            errors.append(f"SIGNAL: filter “{f}” is repeated in {len(where)} notes "
+                          f"({', '.join(where)}) — the finding is doubled")
 
-    # _template.md исключён из load_notes() (имя на «_»), поэтому его слаги
-    # однажды протухли молча и сломали бы каждую скопированную заметку.
+    # _template.md is excluded from load_notes() (name starts with “_”), so its slugs
+    # once went stale silently and would break every copied note.
     tfront, _ = parse_front(TEMPLATE.read_text(encoding="utf-8"))
     for e in (tfront or {}).get("editors") or []:
         if e not in editor_keys:
-            errors.append(f"_template.md: редактор «{e}» не объявлен в _editors.md")
+            errors.append(f"_template.md: editor “{e}” is not declared in _editors.md")
     for sv in (tfront or {}).get("services") or []:
         if sv not in service_keys:
-            errors.append(f"_template.md: сервис «{sv}» не объявлен в _services.md")
+            errors.append(f"_template.md: service “{sv}” is not declared in _services.md")
 
-    # Таблица покрытия в README не должна врать.
+    # The coverage table in the README must not lie.
     actual = {}
     for front, rel in notes:
         actual[Path(rel).parts[2]] = actual.get(Path(rel).parts[2], 0) + 1
     for cat, (code, written, planned) in cats.items():
         got = actual.get(cat, 0)
         if got != written:
-            errors.append(f"README: у {cat}/ написано «{written} / {planned}», "
-                          f"а файлов {got}")
+            errors.append(f"README: at {cat}/ written “{written} / {planned}”, "
+                          f"but there are files {got}")
 
-    print(f"{len(notes)} заметок, {len(cats)} категорий, {len(errors)} ошибок")
+    print(f"{len(notes)} notes, {len(cats)} categories, {len(errors)} errors")
     for e in errors:
-        print(f"  ОШИБКА  {e}")
+        print(f"  ERROR  {e}")
     return 1 if errors else 0
 
 

@@ -1,45 +1,45 @@
-//! Правый клик В ПАНЕЛЯХ — второй реестр целей (Р.49, п.363).
+//! Right-click IN THE PANELS — the second registry of targets (R.49, item 363).
 //!
-//! **Почему реестр ВТОРОЙ, а не расширение `CtxTarget`.** У целей таймлайна
-//! общая сцена (одна полоса, один хит-тест по позиции, одно меню в конце
-//! кадра) и общий род идентификатора — время и дорожка. У панелей ничего из
-//! этого нет: слот цепочки живёт в окне FX, карточка — в бине, фейдер — в
-//! метрах; каждый рисуется своим кодом и знает свою цель сам. Свалить их в
-//! один enum значило бы получить `match`, половина веток которого никогда не
-//! встречается в своём месте.
+//! **Why the registry is SECOND, not an extension of `CtxTarget`.** Timeline
+//! targets share one scene (one strip, one hit test by position, one menu
+//! drawn at the end of the frame) and one kind of identifier: time and track.
+//! Panels have none of this: a chain slot lives in the FX window, a card
+//! in the bin, a fader in the meters; each is drawn by its own code and knows
+//! its own target. Merging them into one enum would mean a `match` half of whose
+//! branches never occur in their own place.
 //!
-//! **Зачем реестр вообще.** Разведка нашла двенадцать мест, где объект
-//! отвечает на НАВЕДЕНИЕ подсказкой, а на правую кнопку — ничем. Пользователь
-//! учится один раз: если правая кнопка где-то показала меню, он жмёт её
-//! везде. Молчание читается как «объекта нет» — ровно тот класс тупиков, что
-//! стоил раундов Р.33-Р.40.
+//! **Why a registry at all.** Reconnaissance found twelve places where an object
+//! answers a HOVER with a tooltip but answers the right button with nothing. The user
+//! learns once: if the right button showed a menu somewhere, he presses it everywhere.
+//! Silence reads as “there is no object” — exactly the kind of dead end that
+//! cost the rounds R.33–R.40.
 //!
-//! Тип `PanelEntity` существует ради КОМПИЛЯТОРА: литерал `ALL` фиксированной
-//! длины ломает сборку, пока новую панельную сущность не назвали, а тест 395 —
-//! исчерпывающий `match` по глаголам.
+//! The `PanelEntity` type exists for the COMPILER: a literal `ALL` of fixed
+//! length breaks the build until a new panel entity is named, and test 395 is
+//! an exhaustive `match` over the verbs.
 
 use kt_model::ClipId;
 
-/// Объект панели, по которому нажали правой кнопкой.
+/// The panel object that was right-clicked.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PanelTarget {
-    /// Слот цепочки эффектов: (клип-владелец цепочки, индекс слота).
+    /// Chain effect slot: (the clip that owns the chain, slot index).
     FxSlot { chain: ClipId, slot: usize },
-    /// Приколотая голова цепочки (источник морфер-слоя).
+    /// Pinned head of the chain (the source of the morpher layer).
     FxHead { chain: ClipId },
-    /// Ключ кривой автоматизации: (цепочка, слот, кривая, ключ).
+    /// Automation curve key: (chain, slot, curve, key).
     CurveKey { chain: ClipId, slot: usize, curve: usize, key: usize },
-    /// Свободный фон медиа-бина.
+    /// Free background of the media bin.
     BinEmpty,
-    /// Окно превью.
+    /// Preview window.
     Preview,
-    /// Панель метров (шкалы или фейдер).
+    /// Meters panel (scales or fader).
     Meters,
 }
 
-/// Род панельного объекта — по одному на каждую «вещь, которой управляют».
-// Тип живёт ради КОМПИЛЯТОРА и читается тестом 395; в продуктовом пути его
-// не зовут, и это норма.
+/// Kind of panel object — one for each “thing that is controlled”.
+// The type exists for the COMPILER and is read by test 395; in the product path it is
+// not called, and that is normal.
 #[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(usize)]
@@ -55,8 +55,8 @@ pub enum PanelEntity {
 #[allow(dead_code)]
 impl PanelEntity {
     pub const N: usize = PanelEntity::Meters as usize + 1;
-    /// Длина задана `N`: добавил вариант — литерал перестал соответствовать
-    /// длине, и не собирается ВСЁ приложение, а не только тесты.
+    /// The length is set by `N`: add a variant and the literal no longer matches the
+    /// length, and the WHOLE application fails to build, not only the tests.
     pub const ALL: [PanelEntity; Self::N] = [
         PanelEntity::FxSlot,
         PanelEntity::FxHead,
@@ -68,8 +68,8 @@ impl PanelEntity {
 }
 
 impl PanelTarget {
-    /// Какому роду принадлежит цель. Match исчерпывающий: завёл новую цель —
-    /// обязан назвать её род.
+    /// Which kind the target belongs to. The match is exhaustive: when you add a new target
+    /// you must name its kind.
     #[allow(dead_code)]
     pub fn entity(self) -> PanelEntity {
         match self {
@@ -84,12 +84,12 @@ impl PanelTarget {
 }
 
 impl crate::app::KtApp {
-    /// Запомнить, по чему нажали правой кнопкой в панели.
+    /// Remember what was right-clicked in the panel.
     ///
-    /// Цели ГАСЯТ ДРУГ ДРУГА: меню на экране одно, и если бы протухшая цель
-    /// таймлайна пережила правый клик в панели, тест прочитал бы её и
-    /// зазеленел на сломанном (а код, спрашивающий «а что там выделено»,
-    /// ответил бы про вчерашний объект).
+    /// Targets CANCEL EACH OTHER: there is one menu on screen, and if a stale
+    /// timeline target survived a right click in a panel, a test would read it and
+    /// turn green on broken code (and code asking “what is selected there”
+    /// would answer with yesterday’s object).
     pub fn set_panel_target(&mut self, t: PanelTarget) {
         self.ctx_panel = Some(t);
         self.ctx_target = None;

@@ -1,4 +1,4 @@
-//! Минимальный WAV-writer (IEEE float 32, stereo 48 kHz). Без зависимостей.
+//! Minimal WAV writer (IEEE float 32, stereo 48 kHz). No dependencies.
 
 use std::io::{self, Write};
 

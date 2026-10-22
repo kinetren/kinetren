@@ -1,14 +1,14 @@
-// Премультипликация (Р.53, п.418): rgb' = rgb·a/255, округление к
-// ближайшему.
+// Premultiplication (R.53, item 418): rgb' = rgb·a/255, rounding to the
+// nearest.
 //
-// ЗЕРКАЛО `kt_fx::video::premultiply` — байт-в-байт: арифметика
-// ЦЕЛОЧИСЛЕННАЯ (все текстуры движка `Rgba8Uint`), деление с `+ 127`.
-// Правится ТЕМ ЖЕ коммитом, что и функция в kt-fx.
+// A MIRROR of `kt_fx::video::premultiply`, byte for byte: the arithmetic is
+// INTEGER (all engine textures are `Rgba8Uint`), division with `+ 127`.
+// Edited in the SAME commit as the function in kt-fx.
 //
-// Зачем: мип размытия смешивает соседние пиксели, а у прозрачного цвет —
-// мусор. На прямой альфе он затекает в видимые пиксели и даёт тёмный
-// ореол по краю титра. При a == 255 — тождество, поэтому проход ставится
-// только там, где альфа у кадра ЕСТЬ.
+// Why: the blur mip mixes neighbouring pixels, and a transparent pixel’s colour is
+// garbage. On straight alpha it seeps into the visible pixels and gives a dark
+// halo along the edge of the title. At a == 255 it is an identity, so the pass is set up
+// only where the frame HAS alpha.
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     let p = vec2<i32>(pos.xy);

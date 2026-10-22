@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Установка Kinetren для текущего пользователя (~/.local).
-# Запускать из распакованного тарбола: ./install.sh
+# Installation of Kinetren for the current user (~/.local).
+# Run from the unpacked tarball: ./install.sh
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -21,15 +21,15 @@ for s in 16 22 24 32 48 64 128 256; do
 done
 install -m 755 kinetren kt-cli "$BIN/"
 install -m 644 kinetren.svg "$ICONS/kinetren.svg"
-# растры: часть панелей/таскбаров плохо масштабирует SVG в мелкие размеры
+# icons: some panels/taskbars scale SVG to small sizes poorly
 for s in 16 22 24 32 48 64 128 256; do
     d="$HOME/.local/share/icons/hicolor/${s}x${s}/apps"
     mkdir -p "$d"
     [ -f "icons/$s/kinetren.png" ] && install -m 644 "icons/$s/kinetren.png" "$d/kinetren.png"
 done
 install -m 644 kinetren-mime.xml "$MIME/kinetren-mime.xml"
-# Exec без пути: полагаемся на ~/.local/bin в PATH; если его там нет —
-# подставляем абсолютный путь.
+# Exec without a path: we rely on ~/.local/bin in PATH; if it is not there —
+# we substitute the absolute path.
 if command -v kinetren >/dev/null 2>&1; then
     install -m 644 kinetren.desktop "$APPS/kinetren.desktop"
 else

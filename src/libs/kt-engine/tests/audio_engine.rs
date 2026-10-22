@@ -1,10 +1,10 @@
-//! Регрессионные тесты движка (docs/porting-notes.md):
-//! 1 — конкатенация аудио-событий sample-exact;
-//! 2 — equal-power кроссфейд / 1-N;
-//! 3 — gain и суммирование дорожек;
-//! 7 — детерминизм рендера (аудио-часть);
-//! 8 — кэш/coverage;
-//! 14 — loop-регион: непрерывность wrap, pin головы.
+//! Regression tests of the engine (docs/porting-notes.md):
+//! 1 — audio-event concatenation sample-exact;
+//! 2 — equal-power crossfade / 1-N;
+//! 3 — gain and summing of tracks;
+//! 7 — render determinism (the audio part);
+//! 8 — cache/coverage;
+//! 14 — loop region: continuity of wrap, head pin.
 
 use kt_cache::{BurstCache, BurstKind, CacheConfig, SourceId};
 use kt_engine::{AudioFetcher, AudioRenderer, CacheFetcher, DirectFetcher, db_to_linear};
@@ -13,12 +13,12 @@ use kt_model::*;
 use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS, Tick};
 use std::sync::Arc;
 
-/// п.8.1 (Р.28): рендер с ПОЛНОСТЬЮ доступным источником обязан идти без
-/// единого underrun'а — иначе рендер спрашивает материал за пределами
-/// собственного окна, а на живом кэше это тишина и растущий счётчик.
+/// item 8.1 (R.28): a render with a FULLY available source must run without a
+/// single underrun — otherwise the render asks for material beyond its own window,
+/// and on a live cache that is silence and a growing counter.
 #[track_caller]
 fn no_underruns(s: kt_engine::RenderStats) {
-    assert_eq!(s.underruns, 0, "underrun при полностью доступном источнике");
+    assert_eq!(s.underruns, 0, "underrun with a fully available source");
 }
 
 const CH: usize = AUDIO_CHANNELS;
@@ -44,7 +44,7 @@ fn project_with_audio_clips(clips: Vec<ClipEvent>) -> Project {
         p.media.push(MediaRef::new(id, format!("synth:{}", id.0)));
     }
     p.clips = clips;
-    p.normalize(); // дорожки под содержимое (Р.62)
+    p.normalize(); // tracks to the content (R.62)
     p.validate().unwrap();
     p
 }
@@ -90,13 +90,13 @@ fn direct(media_patterns: &[(u64, AudioPattern)]) -> DirectFetcher {
     f
 }
 
-// ---- Тест 1: конкатенация ---------------------------------------------------
+// ---- Test 1: concatenation ---------------------------------------------------
 
 #[test]
 fn t1_butt_joined_clips_are_sample_exact() {
-    // Два клипа встык, второй продолжает источник с того же места:
-    // выход обязан быть НЕОТЛИЧИМ от сплошного чтения источника. Exact f32.
-    let d = 3 * AUDIO_BURST_FRAMES as i64 + 136; // границы клипов не на burst'ах
+    // Two clips back to back, the second continues the source from the same place:
+    // the output must be INDISTINGUISHABLE from a continuous read of the source. Exact f32.
+    let d = 3 * AUDIO_BURST_FRAMES as i64 + 136; // clip boundaries are not on bursts
     let p =
         project_with_audio_clips(vec![audio_clip(1, 0, 0, d, 0, 1), audio_clip(2, 0, d, d, d, 1)]);
     let r = AudioRenderer::new(&p);
@@ -108,14 +108,14 @@ fn t1_butt_joined_clips_are_sample_exact() {
     for s in 0..total as i64 {
         for ch in 0..CH {
             let expect = SyntheticSource::sample_at(AudioPattern::Ramp, s, ch);
-            assert_eq!(out[s as usize * CH + ch], expect, "разрыв на сэмпле {s} (шов на {d})");
+            assert_eq!(out[s as usize * CH + ch], expect, "gap at sample {s} (seam at {d})");
         }
     }
 }
 
 #[test]
 fn t1_second_clip_reads_its_own_source_window() {
-    // Второй клип с source_in=0: после шва выход = источник с нуля.
+    // The second clip with source_in=0: after the seam the output = the source from zero.
     let d = 2 * AUDIO_BURST_FRAMES as i64 + 40;
     let p =
         project_with_audio_clips(vec![audio_clip(1, 0, 0, d, 0, 1), audio_clip(2, 0, d, d, 0, 1)]);
@@ -132,17 +132,17 @@ fn t1_second_clip_reads_its_own_source_window() {
     }
 }
 
-// ---- Тест 2: кроссфейд ------------------------------------------------------
+// ---- Test 2: crossfade ------------------------------------------------------
 
 #[test]
 fn t2_crossfade_transition_is_equal_power() {
-    // Р.24: кроссфейд — явный переход на стыке (перекрытий больше нет,
-    // тест 135 их отвергает). Окно и формулы — те же, что у старого
-    // перекрытия: outgoing √(1−t), incoming √t.
-    let d = 4 * AUDIO_BURST_FRAMES as i64; // 4096 — конец окна
-    let ov = AUDIO_BURST_FRAMES as i64 + 336; // 1360 — ширина окна
-    let start2 = d - ov; // 2736 — начало окна
-    let joint = start2 + ov / 2; // 3416 — стык (середина бывшего наезда)
+    // R.24: crossfade — an explicit transition at the joint (there are no overlaps any more,
+    // test 135 rejects them). The window and formulas are the same as for the former
+    // overlap: outgoing √(1−t), incoming √t.
+    let d = 4 * AUDIO_BURST_FRAMES as i64; // 4096 — end of the window
+    let ov = AUDIO_BURST_FRAMES as i64 + 336; // 1360 — window width
+    let start2 = d - ov; // 2736 — window start
+    let joint = start2 + ov / 2; // 3416 — joint (the middle of the former overlay)
     let mut p = project_with_audio_clips(vec![
         audio_clip(1, 0, 0, joint, 0, 1),
         audio_clip(2, 0, joint, d + start2 - joint, ov / 2, 2),
@@ -167,17 +167,17 @@ fn t2_crossfade_transition_is_equal_power() {
     assert_eq!(r.render_frames(&mut f, 0, &mut out).underruns, 0);
     for s in 0..total as i64 {
         let expect = if s < start2 {
-            1.0f32 // только outgoing
+            1.0f32 // only outgoing
         } else if s < d {
             let t = (s - start2) as f64 / ov as f64;
             ((1.0 - t).sqrt() + t.sqrt()) as f32
         } else {
-            1.0f32 // только incoming
+            1.0f32 // only incoming
         };
         let got = out[s as usize * CH];
-        assert!((got - expect).abs() < 1e-6, "сэмпл {s}: got {got}, expect {expect}");
+        assert!((got - expect).abs() < 1e-6, "sample {s}: got {got}, expect {expect}");
     }
-    // unity power на равных входах в окне перехода: w1²+w2² == 1
+    // unity power on equal inputs in the transition window: w1²+w2² == 1
     for s in start2..d {
         let t = (s - start2) as f64 / ov as f64;
         let pw = (1.0 - t) + t;
@@ -198,7 +198,7 @@ fn t2_different_lanes_sum_without_weights() {
     assert_eq!(out[0], 0.75);
 }
 
-// ---- Тест 3: gain -----------------------------------------------------------
+// ---- Test 3: gain -----------------------------------------------------------
 
 #[test]
 fn t3_gain_is_applied_exactly() {
@@ -213,12 +213,12 @@ fn t3_gain_is_applied_exactly() {
     assert_eq!(out[0], 0.8 * db_to_linear(-6.0));
 }
 
-// ---- Тест 7 (аудио): детерминизм -------------------------------------------
+// ---- Test 7 (audio): determinism -------------------------------------------
 
 #[test]
 fn t7_render_is_deterministic_regardless_of_history() {
     let d = 5 * AUDIO_BURST_FRAMES as i64;
-    // Р.24: бывший нахлёст 496 конвертирован в стык + переход (окно то же)
+    // R.24: the former 496 overlap converted into a joint + transition (the window is the same)
     let joint = d - 248;
     let mut p = project_with_audio_clips(vec![
         audio_clip(1, 0, 0, joint, 0, 1),
@@ -237,14 +237,14 @@ fn t7_render_is_deterministic_regardless_of_history() {
     });
     p.validate().unwrap();
     let r = AudioRenderer::new(&p);
-    let target = d - 1000..d + 1000; // диапазон через шов/кроссфейд
+    let target = d - 1000..d + 1000; // range through the seam/crossfade
 
-    // холодный рендер
+    // cold render
     let mut f1 = direct(&[(1, AudioPattern::Sine { hz: 440.0 }), (2, AudioPattern::Ramp)]);
     let mut cold = vec![0f32; (target.end - target.start) as usize * CH];
     no_underruns(r.render_frames(&mut f1, target.start, &mut cold));
 
-    // рендер после «скачков» по таймлайну тем же фетчером
+    // render after “jumps” along the timeline by the same fetcher
     let mut f2 = direct(&[(1, AudioPattern::Sine { hz: 440.0 }), (2, AudioPattern::Ramp)]);
     let mut scratch = vec![0f32; 512 * CH];
     for pos in [7 * d / 2, 0, 3 * d / 2, d, 42] {
@@ -253,14 +253,14 @@ fn t7_render_is_deterministic_regardless_of_history() {
     let mut warm = vec![0f32; cold.len()];
     no_underruns(r.render_frames(&mut f2, target.start, &mut warm));
 
-    assert_eq!(cold, warm, "история обращений не должна влиять на результат");
+    assert_eq!(cold, warm, "access history must not affect the result");
 }
 
-// ---- Тест 8: кэш и coverage -------------------------------------------------
+// ---- Test 8: cache and coverage -------------------------------------------------
 
 #[test]
 fn t8_eviction_shrinks_coverage_exactly() {
-    // Бюджет на 32 аудио-burst'а (8 KiB каждый)
+    // Budget for 32 audio bursts (8 KiB each)
     let burst_bytes = AUDIO_BURST_FRAMES * CH * 4;
     let cache = BurstCache::new(CacheConfig {
         max_audio_bytes: 32 * burst_bytes,
@@ -272,10 +272,10 @@ fn t8_eviction_shrinks_coverage_exactly() {
     for idx in 0..64 {
         cache.insert_audio(src, Arc::new(synth.read_audio_burst(idx).unwrap()));
     }
-    // осталось ровно 32 последних
+    // exactly the last 32 remain
     assert_eq!(cache.audio_bytes(), 32 * burst_bytes);
     let cov = cache.coverage(src, BurstKind::Audio, 0..64);
-    assert_eq!(cov, vec![32..64], "coverage обязан сжаться ровно с eviction");
+    assert_eq!(cov, vec![32..64], "coverage must shrink exactly with eviction");
     assert!(cache.get_audio(src, 0).is_none());
     assert!(cache.get_audio(src, 63).is_some());
 }
@@ -296,7 +296,7 @@ fn t8_quality_does_not_cross_satisfy() {
     });
     cache.insert_video(src, q1, 5, frame);
     assert!(cache.get_video(src, q1, 5).is_some());
-    assert!(cache.get_video(src, q2, 5).is_none(), "другое качество ≠ прогрето");
+    assert!(cache.get_video(src, q2, 5).is_none(), "other quality ≠ warm");
     assert!(cache.get_video(src, None, 5).is_none());
     assert_eq!(cache.coverage(src, BurstKind::video(q2), 0..10), vec![]);
     assert_eq!(cache.coverage(src, BurstKind::video(q1), 0..10), vec![5..6]);
@@ -308,12 +308,12 @@ fn t8_epoch_changes_only_on_mutation() {
     let e0 = cache.epoch();
     let _ = cache.coverage(SourceId(1), BurstKind::Audio, 0..100);
     let _ = cache.get_audio(SourceId(1), 0);
-    assert_eq!(cache.epoch(), e0, "чтения не меняют epoch");
+    assert_eq!(cache.epoch(), e0, "reads do not change epoch");
     cache.insert_audio(SourceId(1), Arc::new(kt_media::AudioBurst::silence(0)));
     assert_ne!(cache.epoch(), e0);
 }
 
-// ---- Тест 14: loop-регион ---------------------------------------------------
+// ---- Test 14: loop region ---------------------------------------------------
 
 #[test]
 fn t14_loop_wrap_is_continuous_and_warm_cache_has_no_misses() {
@@ -321,11 +321,11 @@ fn t14_loop_wrap_is_continuous_and_warm_cache_has_no_misses() {
     let p = project_with_audio_clips(vec![audio_clip(1, 0, 0, d, 0, 1)]);
     let r = AudioRenderer::new(&p);
 
-    // Регион не выровнен ни на burst, ни на кадр видео.
+    // The region is aligned neither to a burst nor to a video frame.
     let region = 696i64..(3 * AUDIO_BURST_FRAMES as i64 + 264);
     let region_len = region.end - region.start;
 
-    // 1) Непрерывность: выход лупа == эталон, склеенный из прямых рендеров.
+    // 1) Continuity: the loop output == the reference, glued from direct renders.
     let mut f = direct(&[(1, AudioPattern::Ramp)]);
     let total = (region_len * 3 + 777) as usize;
     let mut looped = vec![0f32; total * CH];
@@ -335,11 +335,11 @@ fn t14_loop_wrap_is_continuous_and_warm_cache_has_no_misses() {
         let tl = region.start + (o % region_len);
         let mut one = [0f32; 2];
         no_underruns(r.render_frames(&mut f, tl, &mut one));
-        assert_eq!(looped[o as usize * CH], one[0], "wrap разорвал поток на кадре {o}");
+        assert_eq!(looped[o as usize * CH], one[0], "wrap broke the stream at frame {o}");
     }
 
-    // 2) Прогретый кэш: prefetch региона + pin головы → CacheFetcher без промахов,
-    //    и голова переживает вытеснение мусором.
+    // 2) Warm cache: prefetch of the region + head pin → CacheFetcher without misses,
+    //    and the head survives eviction by garbage.
     let burst_bytes = AUDIO_BURST_FRAMES * CH * 4;
     let cache = Arc::new(BurstCache::new(CacheConfig {
         max_audio_bytes: 8 * burst_bytes,
@@ -350,17 +350,17 @@ fn t14_loop_wrap_is_continuous_and_warm_cache_has_no_misses() {
         MediaId(1),
         Box::new(SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Ramp)),
     );
-    // prefetch = wanted-ключи региона (как это будет делать prefetch-поток)
+    // prefetch = the region's wanted keys (as the prefetch thread will do)
     for (media, bursts) in r.wanted_audio_bursts(region.clone()) {
         for b in bursts {
             warm.audio_burst(media, b);
         }
     }
-    // pin головы региона (первые 2 burst'а)
+    // head pin of the region (the first 2 bursts)
     let head0 = region.start.div_euclid(AUDIO_BURST_FRAMES as i64);
     cache.pin_range(kt_engine::source_id(MediaId(1)), BurstKind::Audio, head0..head0 + 2);
 
-    // давление: другой источник вымывает LRU
+    // pressure: another source flushes the LRU
     let mut noise = DirectFetcher::new(Some(cache.clone()));
     noise.add_source(
         MediaId(2),
@@ -370,36 +370,36 @@ fn t14_loop_wrap_is_continuous_and_warm_cache_has_no_misses() {
         noise.audio_burst(MediaId(2), b);
     }
 
-    // голова осталась
+    // the head survived
     let cov = cache.coverage(kt_engine::source_id(MediaId(1)), BurstKind::Audio, head0..head0 + 2);
-    assert_eq!(cov, vec![head0..head0 + 2], "pin обязан пережить вытеснение");
+    assert_eq!(cov, vec![head0..head0 + 2], "pin must survive eviction");
 
-    // wrap на прогретой голове не даёт промахов
+    // a wrap on a warm head gives no misses
     let mut cf = CacheFetcher::new(cache.clone());
     let head_frames =
         2 * AUDIO_BURST_FRAMES as i64 - (region.start - head0 * AUDIO_BURST_FRAMES as i64);
     let mut out = vec![0f32; (head_frames.min(region_len)) as usize * CH];
     r.render_frames(&mut cf, region.start, &mut out);
-    assert_eq!(cf.miss_count(), 0, "прогретая голова региона не должна давать Playback-промахов");
+    assert_eq!(cf.miss_count(), 0, "the warm head of a region must not produce Playback misses");
 }
 
-// ---- Loop в Player-домене (U3): wrap-математика transport --------------------
+// ---- Loop in the Player domain (U3): transport wrap arithmetic --------------------
 
 #[test]
 fn t14_transport_wrap_math() {
     use kt_engine::Transport;
     let tr = Transport::new();
     tr.seek_frames(90);
-    // без региона — линейно
+    // without a region — linear
     tr.advance_frames_wrapped(10, None);
     assert_eq!(tr.playhead_frames(), 100);
-    // wrap: регион [50, 110)
+    // wrap: region [50, 110)
     tr.advance_frames_wrapped(15, Some((50, 110)));
-    assert_eq!(tr.playhead_frames(), 50 + (115 - 50) % 60, "wrap в начало региона");
-    // до конца региона не долетели — линейно
+    assert_eq!(tr.playhead_frames(), 50 + (115 - 50) % 60, "wrap to the start of the region");
+    // not yet reached the end of the region — linear
     tr.advance_frames_wrapped(5, Some((50, 110)));
     assert_eq!(tr.playhead_frames(), 60);
-    // playhead ДО региона: не wrap'ается (старт до входа в регион)
+    // playhead BEFORE the region: no wrap (start before entering the region)
     tr.seek_frames(10);
     tr.advance_frames_wrapped(20, Some((50, 110)));
     assert_eq!(tr.playhead_frames(), 30);
@@ -409,7 +409,7 @@ fn t14_transport_wrap_math() {
 fn t14_player_loop_stream_equals_render_looped_reference() {
     use kt_engine::{FxStateStore, Player};
     use kt_time::TickRange;
-    // Проект: ramp-клип 4с; loop-регион не по границе burst'а.
+    // Project: ramp clip 4 s; loop region not on a burst boundary.
     let d = 4 * 48_000i64;
     let p = project_with_audio_clips(vec![audio_clip(1, 0, 0, d, 0, 1)]);
     let (player, mut ring) = Player::new(
@@ -425,10 +425,10 @@ fn t14_player_loop_stream_equals_render_looped_reference() {
         Tick::from_audio_frames(region_f.end),
     )));
     player.seek(Tick::from_audio_frames(region_f.start));
-    // ждём прогрева кэша prefetch-потоком (иначе первые чанки — underrun-тишина).
-    // Ждём РОВНО бёрсты региона: с п.167 префетч за конец региона не заходит
-    // (там ждать нечего — воспроизведение завернётся), запас «+4 бёрста»
-    // за концом теперь не прогревается никогда.
+    // we wait for the cache to be warmed by the prefetch thread (otherwise the first chunks would be underrun silence).
+    // We wait EXACTLY for the region's bursts: since item 167 prefetch does not go past the region's end
+    // (there is nothing to wait for there — playback will wrap), the margin “+4 bursts”
+    // past the end is now never warmed.
     let b0 = region_f.start.div_euclid(1024);
     let b1 = (region_f.end - 1).div_euclid(1024) + 1;
     let warm_start = std::time::Instant::now();
@@ -441,12 +441,12 @@ fn t14_player_loop_stream_equals_render_looped_reference() {
         if cov.len() == 1 && cov[0] == (b0..b1) {
             break;
         }
-        assert!(warm_start.elapsed().as_secs() < 20, "prefetch не прогрел регион: {cov:?}");
+        assert!(warm_start.elapsed().as_secs() < 20, "prefetch did not warm the region: {cov:?}");
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     player.play();
 
-    // потребляем из кольца как «колбэк»: 6с выхода (≈4 оборота)
+    // consume from the ring as a “callback”: 6 s of output (≈4 loops)
     let total = 6 * 48_000usize;
     let mut got = Vec::with_capacity(total * 2);
     let start = std::time::Instant::now();
@@ -463,11 +463,11 @@ fn t14_player_loop_stream_equals_render_looped_reference() {
             }
             Err(_) => std::thread::sleep(std::time::Duration::from_millis(1)),
         }
-        assert!(start.elapsed().as_secs() < 30, "кольцо не наполняется");
+        assert!(start.elapsed().as_secs() < 30, "ring does not fill");
     }
     player.pause();
 
-    // эталон: render_looped с той же позиции
+    // reference: render_looped from the same position
     let r = AudioRenderer::new(&p);
     let mut store = FxStateStore::new();
     r.sync_fx(&mut store);
@@ -482,7 +482,7 @@ fn t14_player_loop_stream_equals_render_looped_reference() {
     ));
     if let Some(i) = (0..got.len()).find(|&i| got[i] != expect[i]) {
         panic!(
-            "расхождение с эталоном на сэмпле {} (кадр {}): got {:?} expect {:?}",
+            "divergence from reference at sample {} (frame {}): got {:?} expect {:?}",
             i,
             i / 2,
             &got[i.saturating_sub(2)..(i + 6).min(got.len())],
@@ -491,9 +491,9 @@ fn t14_player_loop_stream_equals_render_looped_reference() {
     }
 }
 
-/// Тест 84 (п.7 р.9): мастер-громкость КЛАМПИТСЯ в движке. Сбой в UI
-/// (расходящаяся анимация фейдера) однажды прислал сюда 10^20 — целый
-/// burst умножился на это и ушёл в звук. Движок обязан защищаться сам.
+/// Test 84 (item 7 of round 9): the master volume is CLAMPED in the engine. A failure in the UI
+/// (a diverging fader animation) once sent 10^20 here — a whole burst got multiplied by it and went
+/// into the sound. The engine must protect itself.
 #[test]
 fn t84_master_gain_is_clamped() {
     let p = kt_model::Project::new(kt_model::ProjectSettings {
@@ -513,35 +513,35 @@ fn t84_master_gain_is_clamped() {
     player.set_master_gain(1e20);
     assert!(
         player.master_gain() <= kt_engine::player::MASTER_GAIN_MAX,
-        "усиление не ограничено: {}",
+        "gain is not limited: {}",
         player.master_gain()
     );
     player.set_master_gain(f32::NAN);
-    assert!(player.master_gain().is_finite(), "NaN просочился в мастер-гейн");
+    assert!(player.master_gain().is_finite(), "NaN leaked into master gain");
     player.set_master_gain(f32::INFINITY);
     assert!(player.master_gain().is_finite());
     player.set_master_gain(-5.0);
     assert!(player.master_gain() >= 0.0);
-    // нормальные значения проходят как есть
+    // normal values pass through as is
     player.set_master_gain(0.5);
     assert!((player.master_gain() - 0.5).abs() < 1e-6);
 }
 
-// ---- тест 162: переслаивание клипов (Р.28) -----------------------------------
+// ---- test 162: re-layering of clips (R.28) -----------------------------------
 
-/// Перекрытие клипов одной дорожки снова законно и звучит как в v1:
-/// equal-power на двоих, 1/N при трёх и более. Требование пользователя:
-/// «опция проекта, которая позволит переслаивать несколько событий одной
-/// дорожки одновременно… включи её по умолчанию».
+/// Overlapping clips of one track is legal again and sounds as in v1:
+/// equal-power for two, 1/N for three or more. The user's requirement:
+/// “a project option that will allow several events of one track to be layered
+/// at the same time… turn it on by default.”
 #[test]
 fn t162_overlap_mixes_like_v1() {
     let media = &[(1u64, AudioPattern::Ramp)];
-    // наезд [1000, 2000): equal-power по зоне наезда
+    // overlay [1000, 2000): equal-power across the overlay zone
     let p = project_with_audio_clips(vec![
         audio_clip(1, 0, 0, 2000, 0, 1),
         audio_clip(2, 0, 1000, 2000, 0, 1),
     ]);
-    assert!(p.overlap_layers, "переслаивание включено по умолчанию");
+    assert!(p.overlap_layers, "layering is on by default");
 
     let r = AudioRenderer::new(&p);
     let mut f = direct(media);
@@ -556,16 +556,16 @@ fn t162_overlap_mixes_like_v1() {
     for (f_idx, t) in [(1000usize, 0.0f64), (1500, 0.5), (1999, 0.999)] {
         let w_a = ((1.0 - t).max(0.0)).sqrt() as f32;
         let w_b = (t.max(0.0)).sqrt() as f32;
-        // ранний играет свой материал, поздний — свой (source_in 0 у обоих)
+        // the early one plays its own material, the late one its own (source_in 0 for both)
         let expect = dry[f_idx * CH] * w_a + dry[(f_idx - 1000) * CH] * w_b;
         assert!(
             (out[f_idx * CH] - expect).abs() < 1e-4,
-            "кадр {f_idx}: equal-power микс, ожидалось {expect}, вышло {}",
+            "frame {f_idx}: equal-power mix, expected {expect}, got {}",
             out[f_idx * CH]
         );
     }
 
-    // три клипа в одной точке — правило 1/N (v1)
+    // three clips at one point — the 1/N rule (v1)
     let p3 = project_with_audio_clips(vec![
         audio_clip(1, 0, 0, 3000, 0, 1),
         audio_clip(2, 0, 0, 3000, 0, 1),
@@ -577,17 +577,17 @@ fn t162_overlap_mixes_like_v1() {
     AudioRenderer::new(&project_with_audio_clips(vec![audio_clip(1, 0, 0, 3000, 0, 1)]))
         .render_frames(&mut direct(media), 0, &mut single);
     for f_idx in [10usize, 1500, 2900] {
-        // три источника с весом 1/3 дают исходный уровень
+        // three sources with weight 1/3 give the original level
         assert!(
             (out3[f_idx * CH] - single[f_idx * CH]).abs() < 1e-4,
-            "кадр {f_idx}: правило 1/N, ожидалось {}, вышло {}",
+            "frame {f_idx}: 1/N rule, expected {}, got {}",
             single[f_idx * CH],
             out3[f_idx * CH]
         );
     }
 }
 
-/// С выключённой опцией перекрытия по-прежнему незаконны (режим Р.24).
+/// With the overlap option switched off, overlaps remain illegal (R.24 mode).
 #[test]
 fn t162_overlap_rejected_when_option_off() {
     let mut p = Project::new(ProjectSettings {
@@ -608,5 +608,5 @@ fn t162_overlap_rejected_when_option_off() {
     p.overlap_layers = false;
     assert!(matches!(p.validate(), Err(ProjectError::ClipOverlap(..))));
     p.overlap_layers = true;
-    p.validate().expect("с переслаиванием — законно");
+    p.validate().expect("with overlap — legal");
 }

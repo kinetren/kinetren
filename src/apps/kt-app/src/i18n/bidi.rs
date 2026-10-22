@@ -1,32 +1,32 @@
-//! Порядок арабского текста для egui 0.36.
+//! Order of Arabic text for egui 0.36.
 //!
-//! ЗАЧЕМ ЭТО ВООБЩЕ НУЖНО и почему нельзя взять `unicode_bidi::reorder_line`:
+//! WHY THIS IS NEEDED AT ALL, and why `unicode_bidi::reorder_line` cannot be used:
 //!
-//! * `epaint::text::text_layout::segment_into_runs` режет строку на прогоны ПО
-//!   ШРИФТОВОМУ НАЧЕРТАНИЮ, без липкости для нейтралов: пробел резолвится в
-//!   Ubuntu-Light, арабская буква — в арабский фолбэк, значит каждый пробел
-//!   рвёт арабскую фразу на отдельные прогоны.
-//! * `shape_text` зовёт `buffer.guess_segment_properties()`, и для арабского
-//!   прогона harfrust сам ставит direction=RTL: глифы внутри прогона он уже
-//!   разворачивает, вязь соединяет верно.
-//! * Прогоны при этом выкладываются слева направо в ЛОГИЧЕСКОМ порядке.
+//! * `epaint::text::text_layout::segment_into_runs` cuts the string into runs BY
+//!   FONT GLYPH SET, with no stickiness for neutrals: a space resolves in
+//!   Ubuntu-Light, an Arabic letter in the Arabic fallback, so every space
+//!   breaks an Arabic phrase into separate runs.
+//! * `shape_text` calls `buffer.guess_segment_properties()`, and for an Arabic
+//!   run harfrust itself sets direction=RTL: it already reverses the glyphs
+//!   inside the run, and the cursive joining is correct.
+//! * The runs are nevertheless laid out left to right in LOGICAL order.
 //!
-//! Итого: одно арабское слово рисуется правильно уже сегодня, а фраза — с
-//! верными буквами и неверным порядком слов. Разворот по СИМВОЛАМ сделал бы
-//! хуже: harfrust развернул бы каждый прогон второй раз, а формы букв
-//! посчитались бы на развёрнутой последовательности.
+//! Result: a single Arabic word is drawn correctly even today, but a phrase has
+//! correct letters and the wrong word order. Reversing by CHARACTERS would make
+//! it worse: harfrust would reverse each run a second time, and the letter forms
+//! would be computed on the reversed sequence.
 //!
-//! Поэтому здесь переупорядочиваются АТОМЫ НАЧЕРТАНИЯ, а символы внутри атома
-//! остаются в логическом порядке. Атом — максимальный кусок арабского блока
-//! (его нарисует арабский шрифт) либо одиночный прочий символ. Предикат точен,
-//! а не эвристичен: в загружаемом наборе арабские кодпоинты есть ровно в одном
-//! шрифте (`icons.rs::install_fonts`, порядок семей менять нельзя).
+//! So here the GLYPH ATOMS are reordered, while the characters inside an atom
+//! stay in logical order. An atom is a maximal piece of the Arabic block
+//! (it will be drawn by the Arabic font) or a single other character. The predicate is exact,
+//! not heuristic: in the loaded set the Arabic codepoints are present in exactly one
+//! font (`icons.rs::install_fonts`; the order of families must not be changed).
 //!
-//! Закреплено тестом 126, включая проверку на падение с `reorder_line`.
+//! Pinned by Test 126, including a check of the failure with `reorder_line`.
 
 use unicode_bidi::{BidiInfo, Level};
 
-/// Кодпоинт рисуется арабским начертанием.
+/// A codepoint is drawn with the Arabic typeface.
 pub fn is_arabic(c: char) -> bool {
     matches!(c as u32,
         0x0600..=0x06FF   // Arabic
@@ -37,19 +37,19 @@ pub fn is_arabic(c: char) -> bool {
     )
 }
 
-/// Есть ли в строке хоть что-то, что нужно переупорядочивать. Дешёвый скан:
-/// для LTR-языков это единственная цена всего механизма.
+/// Whether the string contains anything at all that must be reordered. A cheap scan:
+/// for LTR languages it is the only cost of the whole mechanism.
 ///
-/// Намеренно ограничен арабским: иврит мы не поставляем, и трогать ивритское
-/// имя файла (оно прошло бы как «прочие символы», по одному в атоме, то есть
-/// задом наперёд) хуже, чем оставить как есть.
+/// Deliberately limited to Arabic: we do not ship Hebrew, and touching a Hebrew
+/// file name (it would pass as “other characters”, one per atom, that is,
+/// backwards) is worse than leaving it as it is.
 pub fn has_rtl(s: &str) -> bool {
     s.chars().any(is_arabic)
 }
 
-/// Зеркальные пары для символов на RTL-уровне (UAX #9, Bidi_Mirrored).
-/// Список короткий намеренно: это ровно те скобки и кавычки, которые могут
-/// встретиться в каталоге.
+/// Mirrored pairs for characters at the RTL level (UAX #9, Bidi_Mirrored).
+/// The list is deliberately short: exactly those brackets and quotes that
+/// can occur in the catalog.
 fn mirror(c: char) -> char {
     match c {
         '(' => ')',
@@ -60,7 +60,7 @@ fn mirror(c: char) -> char {
         '}' => '{',
         '<' => '>',
         '>' => '<',
-        '\u{00AB}' => '\u{00BB}', // « »
+        '\u{00AB}' => '\u{00BB}', // “ ”
         '\u{00BB}' => '\u{00AB}',
         '\u{2039}' => '\u{203A}', // ‹ ›
         '\u{203A}' => '\u{2039}',
@@ -68,23 +68,23 @@ fn mirror(c: char) -> char {
     }
 }
 
-/// Логический порядок → визуальный. Результат отдаётся egui как есть.
+/// Logical order → visual order. The result is handed to egui as is.
 pub fn visual(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     visual_into(s, &mut out);
     out
 }
 
-/// То же, но в чужой буфер: после прогрева не аллоцирует вовсе (см.
-/// `Memo` — заготовка на случай, если профиль когда-нибудь покажет цену).
+/// The same, but into a foreign buffer: after warm-up it does not allocate at all (see
+/// `Memo` — a stub in case the profile someday shows its cost).
 pub fn visual_into(s: &str, out: &mut String) {
     out.clear();
     if !has_rtl(s) {
         out.push_str(s);
         return;
     }
-    // `\n` и `\t` — жёсткие разделители: перенос строки не должен уезжать
-    // внутрь фразы, а таб разделяет пункт меню и его ярлык.
+    // `\n` and `\t` are hard separators: a line break must not drift
+    // inside the phrase, and a tab separates a menu item from its shortcut.
     let mut rest = s;
     loop {
         match rest.find(['\n', '\t']) {
@@ -101,8 +101,8 @@ pub fn visual_into(s: &str, out: &mut String) {
     }
 }
 
-/// Один абзац без переносов: прогоны в визуальном порядке, RTL-прогоны — по
-/// атомам.
+/// One paragraph without breaks: runs in visual order, RTL runs — by
+/// atoms.
 fn reorder_segment(s: &str, out: &mut String) {
     if s.is_empty() {
         return;
@@ -123,8 +123,8 @@ fn reorder_segment(s: &str, out: &mut String) {
     }
 }
 
-/// Атомы прогона в обратном порядке; внутри арабского атома символы остаются
-/// логическими — их развернёт и соединит harfrust.
+/// The atoms of a run in reverse order; inside an Arabic atom the characters stay
+/// logical — harfrust will reverse and join them.
 fn push_rtl_run(text: &str, out: &mut String) {
     let mut atoms: Vec<&str> = Vec::new();
     let mut start = 0usize;
@@ -153,9 +153,9 @@ fn push_rtl_run(text: &str, out: &mut String) {
     }
 }
 
-/// Одноместный мемо для строк, собираемых на каждом кадре. Пока не нужен
-/// (таких мест около десятка и они и так зовут `format!`), но лежит здесь,
-/// чтобы фикс был подстановкой, а не переписыванием.
+/// A single-slot memo for strings assembled on every frame. Not needed yet
+/// (there are about ten such places and they already call `format!`), but it lives here
+/// so that the fix is a substitution, not a rewrite.
 #[derive(Default)]
 #[allow(dead_code)]
 pub struct Memo {

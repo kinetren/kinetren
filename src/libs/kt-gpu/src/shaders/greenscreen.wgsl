@@ -1,9 +1,9 @@
-// Хромакей — зеркало greenscreen (kt-fx/src/video.rs): евклидова дистанция
-// до ключа, жёсткий порог hard, мягкий спад до tol. f32 вместо f64 —
-// у жёсткой границы законные точечные выбросы (конформанс t181).
+// Chroma key: a mirror of greenscreen (kt-fx/src/video.rs): Euclidean distance
+// to the key, a hard threshold hard, a soft falloff up to tol. f32 instead of f64:
+// at the hard boundary there are legitimate pointwise outliers (conformance t181).
 // f0 = (key_r, key_g, key_b, tol); f1 = (hard, spill, 0, 0);
-// u0 = (kc, 0, 0, 0) — доминирующий канал ключа (Р.33 С5, despill).
-// spill = 0 — прежний путь байт-в-байт.
+// u0 = (kc, 0, 0, 0): the dominant channel of the key (R.33 S5, despill).
+// spill = 0 is the former path, byte for byte.
 
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {

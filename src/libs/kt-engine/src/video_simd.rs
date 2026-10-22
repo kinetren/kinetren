@@ -1,46 +1,46 @@
-//! AVX2-ядра композита (Р.32). Весь unsafe крейта живёт здесь.
+//! AVX2 composite kernels (R.32). All the unsafe of the crate lives here.
 //!
-//! ЗАКОН тот же, что в kt-fx/src/video_simd.rs: байт-в-байт со скаляром
-//! из video.rs. Композит целочисленный, поэтому «бит-в-бит» здесь —
-//! вопрос точного повторения делений и ВЕТВЛЕНИЙ (у alpha_over ветка
-//! sa == 0 оставляет dst нетронутым — branchless-формула его бы
-//! испортила; см. select ниже).
+//! The LAW is the same as in kt-fx/src/video_simd.rs: byte-for-byte with the scalar
+//! from video.rs. The composite is integer, so “bit for bit” here is
+//! a question of exactly repeating the divisions and BRANCHES (in alpha_over the branch
+//! sa == 0 leaves dst untouched — a branchless formula would spoil it;
+//! see the select below).
 //!
-//! Каждая функция вызывается ТОЛЬКО после `simd_level() == Avx2`.
+//! Each function is called ONLY after `simd_level() == Avx2`.
 
 #![cfg(target_arch = "x86_64")]
 
 use std::arch::x86_64::*;
 
-/// Целочисленное `x / 255` для 8 лейнов u32 — magic-умножение
-/// `(x * 0x8080_8081) >> 39` в 64-битной ширине, точное для ВСЕГО u32
-/// (та же константа, что генерирует компилятор для `x / 255`).
+/// Integer `x / 255` for 8 u32 lanes — the magic multiplication
+/// `(x * 0x8080_8081) >> 39` in 64-bit width, exact for ALL of u32
+/// (the same constant the compiler generates for `x / 255`).
 ///
-/// Ходовая «быстрая» формула `t = x+1; (t + (t>>8)) >> 8` здесь НЕ
-/// годится: она врёт уже на 255·255·255 (даёт 65024 вместо 65025) —
-/// поймано исчерпывающим t198_div255_exhaustive.
+/// The popular “fast” formula `t = x+1; (t + (t>>8)) >> 8` is NOT suitable here: it is wrong
+/// already at 255·255·255 (gives 65024 instead of 65025) —
+/// caught by the exhaustive t198_div255_exhaustive.
 ///
 /// # Safety
-/// Требует AVX2.
+/// Requires AVX2.
 #[target_feature(enable = "avx2")]
 #[inline]
 pub(crate) unsafe fn div255(x: __m256i) -> __m256i {
     let magic = _mm256_set1_epi64x(0x8080_8081u32 as i64);
-    // mul_epu32 умножает ЧЁТНЫЕ 32-битные лейны, давая 4×u64
+    // mul_epu32 multiplies the EVEN 32-bit lanes, giving 4×u64
     let even = _mm256_srli_epi64::<39>(_mm256_mul_epu32(x, magic));
     let odd = _mm256_srli_epi64::<39>(_mm256_mul_epu32(_mm256_srli_epi64::<32>(x), magic));
     _mm256_blend_epi32::<0b1010_1010>(even, _mm256_slli_epi64::<32>(odd))
 }
 
-/// AVX2-близнец `dissolve_into`: `(av*ik + bv*k + 2048) >> 12` по всем
-/// четырём каналам, 4 пикселя за итерацию. `av*ik + bv*k` считается
-/// одним `madd_epi16` — это ровно та же целочисленная сумма.
-/// Подстановка A = 255 при `!has_alpha` делается `or` с маской альфы
-/// (255|x == 255 в альфа-байте) — алгебраически то же, что скалярное
+/// AVX2 twin of `dissolve_into`: `(av*ik + bv*k + 2048) >> 12` over all
+/// four channels, 4 pixels per iteration. `av*ik + bv*k` is computed by
+/// one `madd_epi16` — exactly the same integer sum.
+/// Substituting A = 255 when `!has_alpha` is done with an `or` with the alpha mask
+/// (255|x == 255 in the alpha byte) — algebraically the same as the scalar
 /// `if ch == 3 && !has_alpha { 255 }`.
 ///
 /// # Safety
-/// Требует AVX2; `a`/`b`/`dst` длиной >= `pixels * 4`.
+/// Requires AVX2; `a`/`b`/`dst` of length >= `pixels * 4`.
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn dissolve_avx2(
     dst: &mut [u8],
@@ -53,12 +53,12 @@ pub(crate) unsafe fn dissolve_avx2(
 ) {
     unsafe {
         let ik = 4096 - k;
-        // пары [ik, k] как i16 внутри i32-лейна: madd их и сложит
+        // pairs [ik, k] as i16 inside an i32 lane: madd will sum them
         let coef = _mm256_set1_epi32(((k as i32) << 16) | (ik as i32));
         let round = _mm256_set1_epi32(2048);
         let alpha_fill = _mm_set1_epi32(0xFF00_0000u32 as i32);
         let (pa, pb, pd) = (a.as_ptr(), b.as_ptr(), dst.as_mut_ptr());
-        let vec_pixels = pixels & !3; // хвост — скаляром у вызывающего
+        let vec_pixels = pixels & !3; // the tail — scalar in the caller
         let mut p = 0usize;
         while p < vec_pixels {
             let off = p * 4;
@@ -70,13 +70,13 @@ pub(crate) unsafe fn dissolve_avx2(
             if !b_has_alpha {
                 vb = _mm_or_si128(vb, alpha_fill);
             }
-            // чередуем байты a и b, расширяем до u16 и сворачиваем madd'ом
+            // interleave bytes a and b, widen to u16 and reduce with madd
             let lo = _mm256_madd_epi16(_mm256_cvtepu8_epi16(_mm_unpacklo_epi8(va, vb)), coef);
             let hi = _mm256_madd_epi16(_mm256_cvtepu8_epi16(_mm_unpackhi_epi8(va, vb)), coef);
             let lo = _mm256_srli_epi32::<12>(_mm256_add_epi32(lo, round));
             let hi = _mm256_srli_epi32::<12>(_mm256_add_epi32(hi, round));
-            // упаковка через 128-битные половины — порядок элементов
-            // сохраняется (packus 256-бит перемешал бы полосы)
+            // packing via the 128-bit halves — the element order
+            // is preserved (a 256-bit packus would shuffle the lanes)
             let lo16 =
                 _mm_packus_epi32(_mm256_castsi256_si128(lo), _mm256_extracti128_si256::<1>(lo));
             let hi16 =
@@ -87,12 +87,12 @@ pub(crate) unsafe fn dissolve_avx2(
     }
 }
 
-/// AVX2-близнец `scale_alpha_into`: RGB копируются, альфа умножается на
-/// k/4096 с округлением `(a*k + 2048) >> 12`; кадр без альфы считается
-/// непрозрачным (A = 255). 8 пикселей за итерацию.
+/// AVX2 twin of `scale_alpha_into`: RGB is copied, alpha is multiplied by
+/// k/4096 with rounding `(a*k + 2048) >> 12`; a frame without alpha is considered
+/// opaque (A = 255). 8 pixels per iteration.
 ///
 /// # Safety
-/// Требует AVX2; `src`/`dst` длиной >= `pixels * 4`.
+/// Requires AVX2; `src`/`dst` of length >= `pixels * 4`.
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn scale_alpha_avx2(
     dst: &mut [u8],
@@ -121,19 +121,19 @@ pub(crate) unsafe fn scale_alpha_avx2(
     }
 }
 
-/// AVX2-близнец `alpha_over` (straight alpha, целочисленный):
-/// `dst = (s*sa + d*inv*da/255)/255`, альфа `sa + da*inv/255`, обе с
-/// потолком 255. 8 пикселей за итерацию.
+/// AVX2 twin of `alpha_over` (straight alpha, integer):
+/// `dst = (s*sa + d*inv*da/255)/255`, alpha `sa + da*inv/255`, both with a
+/// ceiling of 255. 8 pixels per iteration.
 ///
-/// Ветвления скаляра воспроизведены так:
-/// - `sa == 0` — ОБЯЗАТЕЛЬНЫЙ select: скаляр оставляет dst нетронутым,
-///   а формула дала бы `d*da/255 != d`;
-/// - `sa == 255` — отдельный select НЕ нужен: при `inv == 0` формула
-///   схлопывается в копию точно (`(s*255+0)/255 == s`, альфа `255+0`),
-///   что прибито перебором (sa, da) в t198.
+/// The scalar's branches are reproduced as follows:
+/// - `sa == 0` — a REQUIRED select: the scalar leaves dst untouched,
+///   while the formula would give `d*da/255 != d`;
+/// - `sa == 255` — a separate select is NOT needed: at `inv == 0` the formula
+///   collapses to a copy exactly (`(s*255+0)/255 == s`, alpha `255+0`),
+///   which is nailed down by enumeration of (sa, da) in t198.
 ///
 /// # Safety
-/// Требует AVX2; `src`/`dst` длиной >= `pixels * 4`.
+/// Requires AVX2; `src`/`dst` of length >= `pixels * 4`.
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn alpha_over_avx2(dst: &mut [u8], src: &[u8], pixels: usize) {
     unsafe {
@@ -150,9 +150,9 @@ pub(crate) unsafe fn alpha_over_avx2(dst: &mut [u8], src: &[u8], pixels: usize) 
             let sa = _mm256_srli_epi32::<24>(s);
             let da = _mm256_srli_epi32::<24>(d);
             let inv = _mm256_sub_epi32(c255, sa);
-            // цвет: (s*sa + (d*inv*da)/255) / 255, потолок 255.
-            // Каналы развёрнуты явно: сдвиг AVX2 требует константу, а
-            // замыкание не унаследовало бы target_feature (не инлайнится).
+            // colour: (s*sa + (d*inv*da)/255) / 255, ceiling 255.
+            // The channels are unrolled explicitly: an AVX2 shift requires a constant, and a
+            // closure would not inherit target_feature (it would not inline).
             let sr = _mm256_and_si256(s, byte);
             let dr = _mm256_and_si256(d, byte);
             let sg = _mm256_and_si256(_mm256_srli_epi32::<8>(s), byte);
@@ -173,7 +173,7 @@ pub(crate) unsafe fn alpha_over_avx2(dst: &mut [u8], src: &[u8], pixels: usize) 
                 _mm256_or_si256(r, _mm256_slli_epi32::<8>(g)),
                 _mm256_or_si256(_mm256_slli_epi32::<16>(b), _mm256_slli_epi32::<24>(na)),
             );
-            // sa == 0 → dst нетронут (ветка скаляра)
+            // sa == 0 → dst untouched (the scalar branch)
             let keep = _mm256_cmpeq_epi32(sa, zero);
             let res = _mm256_blendv_epi8(out, d, keep);
             _mm256_storeu_si256(pd.add(off).cast(), res);

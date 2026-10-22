@@ -1,21 +1,21 @@
-//! Генераторы медиа (Р.52, F-TXT-003 + F-TXT-001): медиа, у которого нет
-//! файла — картинку считает источник.
+//! Media generators (R.52, F-TXT-003 + F-TXT-001): media that has no
+//! file — the source computes the picture.
 //!
-//! **Значения параметров живут на СОБЫТИИ (Р.59, стадия 2).** До этого
-//! раунда они лежали строкой в `MediaRef.path`, то есть были функцией
-//! МЕДИА: два титра на одну запись бина физически не могли нести разный
-//! текст, и «поменять заголовок во втором выпуске» было некуда записать.
-//! Теперь в пути остаётся ТОЛЬКО ВИД (`gen_kind_path`: `gen:text`,
-//! `gen:table:tb=grey`) — он и есть «что это за медиа» и кэш-полоска
-//! (решение Р.53 в силе), а значения и их кривые — `ClipEvent.gen` и
-//! `ClipEvent.gen_auto`. Разбор старых полных путей остаётся здесь же
-//! (`parse_gen_path_full`) и служит миграции.
+//! **Parameter values live on the EVENT (R.59, stage 2).** Until this
+//! round they lay as a string in `MediaRef.path`, that is, they were a function of
+//! the MEDIA: two titles on one bin record physically could not carry different
+//! text, and there was nowhere to write “change the heading in the second issue”.
+//! Now only the KIND remains in the path (`gen_kind_path`: `gen:text`,
+//! `gen:table:tb=grey`) — it is “what kind of media this is” and the cache strip
+//! (the R.53 decision stands), while the values and their curves are `ClipEvent.gen` and
+//! `ClipEvent.gen_auto`. Parsing of old full paths stays here too
+//! (`parse_gen_path_full`) and serves migration.
 //!
-//! Здесь — ЕДИНСТВЕННЫЙ словарь видов и ЕДИНСТВЕННЫЙ разбор/сборка пути:
-//! разбор `synth:` был продублирован в kt-app и kt-cli и уже расходился по
-//! регистру (сноска п.211), поэтому разбор регистронезависимый, а вторых
-//! парсеров не бывает. Рендерит кадры kt-media (`GeneratorSource`),
-//! формат обмена — kt-otio (`GeneratorReference.1`).
+//! The ONLY vocabulary of kinds and the ONLY parse/assembly of the path are here:
+//! parsing of `synth:` was duplicated in kt-app and kt-cli and already diverged in
+//! case (footnote item 211), so parsing is case-insensitive, and there are no second
+//! parsers. kt-media renders the frames (`GeneratorSource`); the exchange format is
+//! kt-otio (`GeneratorReference.1`).
 
 use std::borrow::Cow;
 
@@ -28,16 +28,16 @@ use crate::project::{
     params_for, text_spec,
 };
 
-/// Вид генератора с параметрами. Serde-представление (internally tagged
-/// `kind`) нужно kt-otio: поля уезжают словарём `parameters` в
-/// `GeneratorReference.1`, сам `kind` — строкой `generator_kind`
-/// (`kt.<tag>`). Незнакомые поля игнорируются, пропущенные берут
-/// умолчания — файл от будущей сборки читается без отказа.
+/// A generator kind with parameters. The serde representation (internally tagged
+/// `kind`) is needed by kt-otio: the fields go into a `parameters` dictionary in
+/// `GeneratorReference.1`, and `kind` itself — as the string `generator_kind`
+/// (`kt.<tag>`). Unknown fields are ignored, missing ones take defaults — a file
+/// from a future build is read without refusal.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum GeneratorKind {
-    /// Сплошной цвет — единственный генератор, которым пользуются
-    /// ежедневно (разведка F-TXT-003). Умолчание — чёрный (правило UI 4).
+    /// A solid color — the only generator that is used
+    /// daily (F-TXT-003 reconnaissance). The default is black (UI rule 4).
     Solid {
         #[serde(default)]
         color_r: u8,
@@ -46,12 +46,12 @@ pub enum GeneratorKind {
         #[serde(default)]
         color_b: u8,
     },
-    /// Титр (F-TXT-001): текст рисует kt-text (вендоренный шрифт,
-    /// правило детерминизма — kt-text/CLAUDE.md). Всё относительное:
-    /// кегль — доля высоты кадра, трекинг/обводка/тень/паддинги — доли
-    /// em. Поля оформления (F-TXT-005) и `order` — В ФОРМАТЕ с первого
-    /// дня (урок Kdenlive: смена порядка константой перерисовала чужие
-    /// проекты), даже пока их рендер (С3) и окно не готовы.
+    /// Title (F-TXT-001): the text is drawn by kt-text (vendored font,
+    /// the determinism rule — kt-text/CLAUDE.md). Everything is relative:
+    /// the size is a fraction of the frame height, tracking/outline/shadow/padding are fractions of
+    /// an em. The styling fields (F-TXT-005) and `order` are IN THE FORMAT from day one
+    /// (a Kdenlive lesson: changing the order with a constant redrew other people's projects),
+    /// even though their rendering (stage 3) and window are not ready yet.
     Text {
         #[serde(default)]
         text: String,
@@ -119,25 +119,25 @@ pub enum GeneratorKind {
         plate_a: u8,
         #[serde(default = "default_order")]
         order: [TextLayer; 4],
-        /// Доля раскрытия кластеров 0..1 (Р.53, п.423 — теперь ЧИСЛО, а
-        /// не режим). Пять прежних зашитых анимаций стали пресетами в
-        /// приложении: оно ставит на эти четыре числа обычные кривые, и
-        /// «печатная машинка» перестала быть особым случаем движка.
+        /// The opening share of clusters, 0..1 (R.53, item 423 — now a NUMBER, not
+        /// a mode). The five former hard-wired animations became presets in the
+        /// application: it puts ordinary curves on these four numbers, and the
+        /// “typewriter” stopped being a special case of the engine.
         #[serde(default = "default_one")]
         reveal: f64,
-        /// Ширина фронта раскрытия В КЛАСТЕРАХ: 0 — жёсткий срез,
-        /// 1 — буква успевает проявиться (прежний режим «мягко»).
+        /// The width of the opening front IN CLUSTERS: 0 — a hard cut,
+        /// 1 — a letter has time to fade in (the former “soft” mode).
         #[serde(default)]
         reveal_soft: f64,
-        /// Смещение всего блока в долях ШИРИНЫ кадра (и высоты у `y`):
-        /// доля, а не пиксели, потому что титр переживает смену формата
-        /// проекта — то же правило, что у `pos_x`/`pos_y`.
+        /// The offset of the whole block in fractions of the frame WIDTH (and height for `y`):
+        /// a fraction, not pixels, because the title survives a change of project format —
+        /// the same rule as for `pos_x`/`pos_y`.
         #[serde(default)]
         offset_x: f64,
         #[serde(default)]
         offset_y: f64,
     },
-    /// Линейный градиент между двумя цветами (угол в градусах).
+    /// A linear gradient between two colors (angle in degrees).
     Gradient {
         #[serde(default = "default_angle")]
         angle_deg: f64,
@@ -154,7 +154,7 @@ pub enum GeneratorKind {
         #[serde(default = "default_255")]
         b_b: u8,
     },
-    /// Четырёхцветный градиент по углам (билинейный).
+    /// A four-color gradient across the corners (bilinear).
     Corners {
         #[serde(default = "default_255")]
         tl_r: u8,
@@ -181,7 +181,7 @@ pub enum GeneratorKind {
         #[serde(default = "default_255")]
         br_b: u8,
     },
-    /// Шахматка: клетка задаётся СЧЁТОМ колонок (resolution-independent).
+    /// Checkerboard: the cell is given by a COUNT of columns (resolution-independent).
     Checker {
         #[serde(default = "default_cols")]
         cols: u32,
@@ -198,9 +198,9 @@ pub enum GeneratorKind {
         #[serde(default = "default_255")]
         b_b: u8,
     },
-    /// Шумовое поле: counter-based зерно от (x, y, pts МАТЕРИАЛА) —
-    /// сдвиг клипа зерно не меняет; полный диапазон яркости («серое
-    /// поле», которого Noise-ЭФФЕКТ дать не может — F-TXT-003).
+    /// Noise field: a counter-based seed from (x, y, pts of the MATERIAL) —
+    /// a clip shift does not change the seed; a full brightness range (a “gray
+    /// field” that the Noise EFFECT cannot give — F-TXT-003).
     #[serde(rename = "noise")]
     NoiseField {
         #[serde(default = "default_one")]
@@ -208,8 +208,8 @@ pub enum GeneratorKind {
         #[serde(default = "default_true_flag")]
         mono: bool,
     },
-    /// SMPTE-полосы 75 % (+ опоры в нижней трети); тон 1 кГц — параметр:
-    /// включение делает медиа звучащим (уровень в dBFS).
+    /// SMPTE bars at 75% (+ reference marks in the bottom third); a 1 kHz tone — a parameter:
+    /// enabling it makes the media audible (level in dBFS).
     #[serde(rename = "smpte")]
     SmpteBars {
         #[serde(default)]
@@ -217,23 +217,23 @@ pub enum GeneratorKind {
         #[serde(default = "default_tone_db")]
         tone_db: f64,
     },
-    /// Тайм-код БЕГУЩИМИ цифрами. Показывает время МАТЕРИАЛА (источник
-    /// «часов таймлайна» не видит по построению): клип от нуля с
-    /// source_in = 0 совпадает с часами таймлайна, трим/сдвиг показывают
-    /// материал. Burn-in выхода — другой будущий объект (F-TXT-003).
+    /// Timecode with RUNNING digits. Shows the time of the MATERIAL (the source
+    /// does not see the “timeline clock” by construction): a clip from zero with
+    /// source_in = 0 coincides with the timeline clock; trim/shift show the
+    /// material. Burn-in of the output is another future object (F-TXT-003).
     Timecode {
         #[serde(default = "default_tc_fps")]
         fps: u32,
     },
-    // --- Р.53, пп.419-422: фигуры, подложка, отсчёт, таблицы ----------
-    /// ПРОЗРАЧНАЯ подложка (п.420): кадр из нулей. Держатель места на
-    /// дорожке и заготовка матта. Отдельный вид, а не «Solid с альфой»:
-    /// полупрозрачная заливка уже выражается уровнем события, и второй
-    /// выключатель того же смысла запрещён (правило UI 9).
+    // --- R.53, items 419-422: shapes, backing, countdown, tables ----------
+    /// a TRANSPARENT backing (item 420): a frame of zeros. A placeholder on the
+    /// track and a matte blank. A separate kind, not “Solid with alpha”: a
+    /// semi-transparent fill is already expressed by the event's level, and a second switch for
+    /// the same meaning is forbidden (UI rule 9).
     Transparent,
-    /// Прямоугольник со скруглением (п.419). Размеры — в долях СВОЕЙ
-    /// оси, поэтому подложка переживает смену формата проекта;
-    /// изотропные длины (скругление, растушёвка) — в долях ВЫСОТЫ.
+    /// A rectangle with rounding (item 419). Sizes are in fractions of ITS OWN
+    /// axis, so the backing survives a change of project format;
+    /// isotropic lengths (rounding, feathering) are in fractions of the HEIGHT.
     Rect {
         #[serde(default = "default_half")]
         cx: f64,
@@ -256,8 +256,8 @@ pub enum GeneratorKind {
         #[serde(default = "default_255")]
         color_a: u8,
     },
-    /// Эллипс (п.419). Отдельный вид от прямоугольника: у него нет
-    /// скругления, и объединение дало бы мёртвый контрол (правило UI 9).
+    /// An ellipse (item 419). A separate kind from the rectangle: it has no
+    /// rounding, and merging would give a dead control (UI rule 9).
     Ellipse {
         #[serde(default = "default_half")]
         cx: f64,
@@ -278,8 +278,8 @@ pub enum GeneratorKind {
         #[serde(default = "default_255")]
         color_a: u8,
     },
-    /// Отрезок (п.419): концы, а не центр с размерами — своя пара
-    /// параметров, значит свой вид.
+    /// A line segment (item 419): the ends, not a center with dimensions — its own
+    /// pair of parameters, hence its own kind.
     Line {
         #[serde(default = "default_line_x1")]
         x1: f64,
@@ -302,9 +302,9 @@ pub enum GeneratorKind {
         #[serde(default = "default_255")]
         color_a: u8,
     },
-    /// Обратный отсчёт (п.421): крест, окружность, бегущий сектор и
-    /// цифра. Время — pts МАТЕРИАЛА, как у тайм-кода. «2-pop» длиной
-    /// ровно `1/fps` и биип 1 кГц тем же кодом, что тон SMPTE.
+    /// A countdown (item 421): a cross, a circle, a running sector and a
+    /// digit. Time is the pts of the MATERIAL, as for the timecode. The “2-pop” is
+    /// exactly `1/fps` long, and the 1 kHz beep is by the same code as the SMPTE tone.
     Leader {
         #[serde(default = "default_leader_secs")]
         seconds: u32,
@@ -315,17 +315,17 @@ pub enum GeneratorKind {
         #[serde(default = "default_tone_db")]
         beep_db: f64,
     },
-    /// Инженерная таблица (п.422). Своих ЧИСЕЛ у таблиц нет, поэтому вид
-    /// ОДИН, а разновидность — поле: пять вариантов enum с пустым
-    /// набором параметров были бы пятью копиями одного кода.
+    /// An engineering table (item 422). Tables have no numbers of their own, so the kind is
+    /// ONE, and the variety is a field: five enum variants with an empty set of
+    /// parameters would be five copies of one code.
     #[serde(rename = "table")]
     TestPattern {
         #[serde(default)]
         table: TestTable,
     },
-    /// Окно уровня (п.422): белое окно заданной ДОЛИ ПЛОЩАДИ кадра на
-    /// чёрном — измерение APL и разогрева панели. Числа свои, значит вид
-    /// свой.
+    /// A level window (item 422): a white window of a given SHARE OF THE FRAME AREA
+    /// on black — measurement of APL and panel warm-up. Its numbers are its own, hence the kind
+    /// is its own.
     #[serde(rename = "window")]
     WindowPattern {
         #[serde(default = "default_window_area")]
@@ -335,29 +335,29 @@ pub enum GeneratorKind {
     },
 }
 
-/// ПРЕСЕТ анимации титра (Р.53 пп.423-424 → Р.59 стадия 2).
+/// PRESET of title animation (R.53 items 423-424 → R.59 stage 2).
 ///
-/// Раньше это был режим В МОДЕЛИ, и движок знал про «печатную машинку».
-/// Теперь это имя НАБОРА КРИВЫХ (`text_anim_curves`): модель хранит
-/// только числа, а пресет — способ их расставить. Тип остался ради двух
-/// вещей: пунктов меню пресетов в окне титра и миграции старых файлов,
-/// где режим лежал полем (`am=`/`ams=` в пути, `anim` в `parameters`).
+/// Earlier this was a MODE IN THE MODEL, and the engine knew about the “typewriter”.
+/// Now it is the name of a SET OF CURVES (`text_anim_curves`): the model stores only
+/// numbers, and the preset is the way to lay them out. The type remains for two
+/// things: the menu items of the presets in the title window, and migration of old files
+/// where the mode lay as a field (`am=`/`ams=` in the path, `anim` in `parameters`).
 ///
-/// Две ветви по-прежнему РАЗНЫЕ по существу: раскрытие меняет ВИДИМОСТЬ
-/// кластеров, движение — СМЕЩЕНИЕ всего блока. Смешивать их в одно поле
-/// «скорость» нельзя: у раскрытия конец есть, у движения он за кадром.
+/// The two branches are still DIFFERENT in essence: the opening changes the VISIBILITY of
+/// clusters, motion changes the OFFSET of the whole block. They cannot be mixed into one
+/// “speed” field: the opening has an end, while for motion it is off-frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TextAnim {
     #[default]
     None,
-    /// Печатная машинка: кластеры появляются по одному, жёстким срезом.
+    /// Typewriter: clusters appear one at a time, with a hard cut.
     Typewriter,
-    /// Мягкое проявление: у фронта ширина в один кластер.
+    /// Soft fade-in: the front is one cluster wide.
     Fade,
-    /// Бегущая строка: блок едет справа налево, один полный проход.
+    /// Ticker: the block moves right to left, one full pass.
     Crawl,
-    /// Ползок финальных титров: снизу вверх.
+    /// Credits crawl: from bottom to top.
     Roll,
 }
 
@@ -379,33 +379,33 @@ impl TextAnim {
         TextAnim::ALL.into_iter().find(|a| a.token() == s)
     }
 
-    /// Зависит ли КАДР от времени. Ровно по этому признаку у титра
-    /// отключается кэш по Quality (`GeneratorSource`): статические титры
-    /// от появления анимации не страдают.
+    /// Whether the FRAME depends on time. By this very attribute a title's
+    /// Quality cache is disabled (`GeneratorSource`): static titles are not
+    /// affected by the appearance of animation.
     pub fn animated(self) -> bool {
         self != TextAnim::None
     }
 }
 
-/// Кривые пресета анимации титра — ОДНО место, где живут формулы
-/// (Р.59, стадия 2).
+/// The curves of the title animation preset — ONE place where the formulas live
+/// (R.59, stage 2).
 ///
-/// Зачем функция в модели, а не в окне: этими же формулами читаются
-/// старые файлы (`am=tw:ams=2` и `anim` в `parameters`), и разойдись
-/// миграция с пресетом — проект, сохранённый прошлой сборкой, поехал бы
-/// не так, как тот же пресет, поставленный руками.
+/// Why the function is in the model and not in the window: the same formulas read
+/// old files (`am=tw:ams=2` and `anim` in `parameters`), and if the migration diverged
+/// from the preset, a project saved by the previous build would move differently
+/// from the same preset set by hand.
 ///
-/// `secs` — прежняя длительность прохода; `span` — полный путь блока в
-/// долях кадра (`1 + размер_блока/размер_кадра`): окно знает раскладку и
-/// передаёт точный, миграция — 2.0 («блок не шире кадра»). Кривые в
-/// домене ТИКА МАТЕРИАЛА, якорь — `source_in` события, поэтому
-/// вызывающий добавляет его сам.
+/// `secs` — the former pass duration; `span` — the full path of the block in fractions
+/// of the frame (`1 + block size/frame size`): the window knows the layout and passes the exact one,
+/// migration passes 2.0 (“the block is no wider than the frame”). The curves are in the
+/// MATERIAL TICK domain, with the anchor at the event's `source_in`,
+/// so the caller adds it itself.
 pub fn text_anim_curves(anim: TextAnim, secs: f64, span: f64) -> Vec<ParamCurve> {
     let end = Tick((secs.max(1.0 / 1000.0) * 90_000.0).round() as i64);
     let ramp = |param: &str, a: f64, b: f64| ParamCurve {
         param: param.to_string(),
-        // ЛИНЕЙНО, а не ease: прежний код считал `prog` без сглаживания,
-        // и «печатная машинка» со smoothstep печатала бы рывками.
+        // LINEAR, not ease: the former code computed `prog` without smoothing,
+        // and a “typewriter” with smoothstep would print in jerks.
         keys: crate::AutoKey::linear(vec![
             crate::AutoKey::at(Tick::ZERO, a),
             crate::AutoKey::at(end, b),
@@ -420,9 +420,9 @@ pub fn text_anim_curves(anim: TextAnim, secs: f64, span: f64) -> Vec<ParamCurve>
     }
 }
 
-/// Значения, которые пресет ставит ПОМИМО кривых. У мягкого проявления
-/// это ширина фронта: она постоянна во времени, и кривая из одного ключа
-/// была бы вторым способом записать то же самое.
+/// Values that the preset sets BESIDES the curves. For a soft fade-in
+/// this is the front width: it is constant in time, and a curve of one key
+/// would be a second way to write the same thing.
 pub fn text_anim_values(kind: &mut GeneratorKind, anim: TextAnim) {
     let GeneratorKind::Text { reveal, reveal_soft, offset_x, offset_y, .. } = kind else { return };
     *reveal = 1.0;
@@ -431,20 +431,20 @@ pub fn text_anim_values(kind: &mut GeneratorKind, anim: TextAnim) {
     *offset_y = 0.0;
 }
 
-/// Разновидность инженерной таблицы (Р.53, п.422).
+/// A variety of engineering table (R.53, item 422).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TestTable {
-    /// Цветные полосы 75 % (восемь, включая чёрную).
+    /// 75% color bars (eight, including black).
     #[default]
     Ebu75,
-    /// Они же на полной амплитуде.
+    /// The same at full amplitude.
     Ebu100,
-    /// Непрерывная горизонтальная шкала серого 0..255.
+    /// A continuous horizontal gray scale 0..255.
     Grayscale,
-    /// Десять ступеней серого.
+    /// Ten gray steps.
     Steps10,
-    /// Плоскость цветности BT.709: Cb по X, Cr по Y при постоянной Y.
+    /// The BT.709 chroma plane: Cb along X, Cr along Y at constant Y.
     RampYcbcr,
 }
 
@@ -481,7 +481,7 @@ pub enum TextAlign {
     Right,
 }
 
-/// Якорь 3×3: какой точкой блок текста сидит в (pos_x, pos_y).
+/// A 3×3 anchor: which point of the text block sits at (pos_x, pos_y).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TextAnchor {
@@ -497,7 +497,7 @@ pub enum TextAnchor {
     BottomRight,
 }
 
-/// Слой оформления титра, порядок отрисовки снизу вверх.
+/// A title's styling layer; drawing order from bottom to top.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TextLayer {
@@ -558,8 +558,8 @@ fn default_shape_w() -> f64 {
 fn default_shape_h() -> f64 {
     0.25
 }
-/// Растушёвка края по умолчанию — полпроцента высоты: без неё
-/// аналитический край выглядит «лесенкой» на крупном кадре.
+/// The default edge feathering — half a percent of the height: without it the
+/// analytic edge looks “staircased” on a large frame.
 fn default_feather() -> f64 {
     0.005
 }
@@ -575,7 +575,7 @@ fn default_line_x2() -> f64 {
 fn default_leader_secs() -> u32 {
     8
 }
-/// Доля площади кадра у окна уровня: классические 10 % APL.
+/// The share of the frame area for the level window: the classic 10% APL.
 fn default_window_area() -> f64 {
     0.1
 }
@@ -584,10 +584,10 @@ fn default_order() -> [TextLayer; 4] {
 }
 
 impl GeneratorKind {
-    /// Все виды с УМОЛЧАНИЯМИ параметров — единственный реестр (роль
-    /// `TransitionKind::ALL`; функция, а не const: у титра есть String):
-    /// по нему меню создания в UI и полнота спек в тестах. Новый вид
-    /// добавляется В КОНЕЦ.
+    /// All kinds with the parameter DEFAULTS — the only registry (the role of
+    /// `TransitionKind::ALL`; a function, not a const: the title has a String):
+    /// it drives the creation menu in the UI and the completeness of the specs in tests. A new kind
+    /// is added AT THE END.
     pub fn all() -> Vec<GeneratorKind> {
         vec![
             GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 },
@@ -627,9 +627,9 @@ impl GeneratorKind {
             GeneratorKind::NoiseField { amount: 1.0, mono: true },
             GeneratorKind::SmpteBars { tone: false, tone_db: -20.0 },
             GeneratorKind::Timecode { fps: 30 },
-            // Р.53: новые виды — В КОНЕЦ реестра. Инженерные таблицы
-            // стоят ПЯТЬЮ строками одного вида: меню показывает каждую
-            // разновидность, кода у них один.
+            // R.53: new kinds — AT THE END of the registry. Engineering tables
+            // stand as FIVE rows of one kind: the menu shows each variety,
+            // and they share one code.
             GeneratorKind::Transparent,
             GeneratorKind::Rect {
                 cx: 0.5,
@@ -681,7 +681,7 @@ impl GeneratorKind {
         ]
     }
 
-    /// Титр с умолчаниями (текст пуст — его набирают в окне).
+    /// A title with defaults (empty text — it is typed in the window).
     pub fn default_text() -> GeneratorKind {
         GeneratorKind::Text {
             text: String::new(),
@@ -724,8 +724,8 @@ impl GeneratorKind {
         }
     }
 
-    /// Тег вида — он же имя в `gen:`-пути и суффикс `generator_kind`
-    /// (`kt.<tag>`) в файле обмена.
+    /// The kind tag — it is also the name in the `gen:` path and the `generator_kind`
+    /// suffix (`kt.<tag>`) in the exchange file.
     pub fn tag(&self) -> &'static str {
         match self {
             GeneratorKind::Solid { .. } => "solid",
@@ -746,8 +746,8 @@ impl GeneratorKind {
         }
     }
 
-    /// Вид с умолчаниями по тегу (регистр тега — забота вызывающего:
-    /// `parse_gen_path` приводит сам).
+    /// A kind with defaults by tag (the tag's case is the caller's concern:
+    /// `parse_gen_path` normalizes it itself).
     pub fn default_for_tag(tag: &str) -> Option<GeneratorKind> {
         GeneratorKind::all().into_iter().find(|k| k.tag() == tag)
     }
@@ -759,11 +759,11 @@ params_for! { GeneratorKind, gen_specs, gen_set_param, gen_get_param, gen_set_id
         color_g: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
         color_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
     },
-    // числовые параметры титра; текст/семья/выравнивание/цвета — не
-    // спеки (свои контролы окна, «законное исключение» F-TXT-001)
-    // всё, что в ДОЛЯХ КАДРА, показывается процентами (Р.53, п.415):
-    // хранение не меняется, читаемость меняется целиком. `line_spacing`
-    // и `plate_pad_*` — доли СВОЕЙ высоты текста, это множители.
+    // numeric parameters of the title; text/family/alignment/colors are not
+    // specs (their own window controls, the “legal exception” F-TXT-001)
+    // everything that is in FRACTIONS OF THE FRAME is shown as percentages (R.53, item 415):
+    // the storage does not change, readability changes entirely. `line_spacing`
+    // and `plate_pad_*` are fractions of ITS OWN text height, these are multipliers.
     Text {
         size: f64, 0.005, 0.5, 0.07, 0.001, Percent, Smooth;
         line_spacing: f64, 0.5, 3.0, 1.0, 0.05, Ratio, Smooth;
@@ -776,8 +776,8 @@ params_for! { GeneratorKind, gen_specs, gen_set_param, gen_get_param, gen_set_id
         shadow_blur: f64, 0.0, 0.5, 0.06, 0.005, Percent, Smooth;
         plate_pad_x: f64, 0.0, 2.0, 0.25, 0.01, Ratio, Smooth;
         plate_pad_y: f64, 0.0, 2.0, 0.12, 0.01, Ratio, Smooth;
-        // Р.59: анимация титра — обычные числа, новые ряды В КОНЦЕ
-        // (индексная адресация Р.59 стадии 1 стабильна по построению).
+        // R.59: title animation — ordinary numbers, the new rows AT THE END
+        // (the index addressing of R.59 stage 1 is stable by construction).
         reveal: f64, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
         reveal_soft: f64, 0.0, 1.0, 0.0, 0.01, Norm, Smooth;
         offset_x: f64, -4.0, 4.0, 0.0, 0.001, Percent, Smooth;
@@ -824,8 +824,8 @@ params_for! { GeneratorKind, gen_specs, gen_set_param, gen_get_param, gen_set_id
     Timecode {
         fps: u32, 1.0, 120.0, 30.0, 1.0, Count, Structural;
     },
-    // Р.53 (п.419): доли СВОЕЙ оси у размеров и позиций, доли ВЫСОТЫ у
-    // изотропных длин — подложка переживает смену формата проекта
+    // R.53 (item 419): fractions of ITS OWN axis for sizes and positions, fractions of the HEIGHT for
+    // isotropic lengths — the backing survives a change of project format
     Rect {
         cx: f64, 0.0, 1.0, 0.5, 0.001, Percent, Smooth;
         cy: f64, 0.0, 1.0, 0.5, 0.001, Percent, Smooth;
@@ -873,9 +873,9 @@ params_for! { GeneratorKind, gen_specs, gen_set_param, gen_get_param, gen_set_id
 }}
 
 flags_for! { GeneratorKind, gen_flag_specs, gen_set_flag, gen_get_flag, {
-    // «да/нет» ползунком не тянется и кривой не автоматизируется, но и
-    // забытым быть не должно: тон 1 кГц и цветной шум существовали в
-    // формате с Р.52, а включить их было нечем (Р.53, п.414).
+    // “yes/no” is not dragged by a slider and not automated by a curve, but it must not
+    // be forgotten either: the 1 kHz tone and colored noise existed in the format since R.52, and
+    // there was nothing to enable them with (R.53, item 414).
     NoiseField { mono: true },
     SmpteBars { tone: false },
     Text { bold: false },
@@ -905,9 +905,9 @@ impl HasParams for GeneratorKind {
         gen_set_flag(self, name, v)
     }
 
-    /// Нечисловые свойства титра (Р.59, стадия 3). Ради них раунд и
-    /// затевался: «заголовок выпуска» — это ТЕКСТ, и публиковать наружу
-    /// нужно именно его, а не кегль.
+    /// Non-numeric properties of the title (R.59, stage 3). The round was
+    /// undertaken for their sake: a “release heading” is TEXT, and it is
+    /// precisely that which must be published, not the size.
     fn extra_specs(&self) -> Vec<ParamSpec> {
         match self {
             GeneratorKind::Text { .. } => vec![
@@ -1021,37 +1021,37 @@ fn anchor_of_key(k: &str) -> Option<TextAnchor> {
     })
 }
 
-/// Путь-псевдосхема, за которым не стоит файла: `synth:` (тестовые
-/// источники) или `gen:` (генераторы). Единый предикат для всех мест,
-/// которые сегодня писали `starts_with("synth:")` руками: резолв путей,
-/// watchdog офлайна, служба индекса, sidecar-БД.
+/// A pseudo-scheme path behind which there is no file: `synth:` (test sources)
+/// or `gen:` (generators). A single predicate for all the places that today wrote
+/// `starts_with("synth:")` by hand: path resolution, the offline watchdog,
+/// the index service, sidecar DB.
 pub fn is_pseudo_path(path: &str) -> bool {
     starts_ci(path, "synth:") || starts_ci(path, "gen:")
 }
 
-/// Разбор `gen:`-пути. Регистронезависимый по схеме, тегу и ключам
-/// (значения-строки не трогаются). Любой незнакомый тег, ключ или битое
-/// значение — `None`: выше это честная ошибка «файл отсутствует», а не
-/// молчаливое умолчание (урок сноски п.211).
+/// Parsing of a `gen:` path. Case-insensitive for the scheme, tag and keys
+/// (string values are not touched). Any unknown tag, key or broken
+/// value — `None`: upstream this is an honest “file missing” error, not a
+/// silent default (a lesson of footnote item 211).
 pub fn parse_gen_path(path: &str) -> Option<GeneratorKind> {
     parse_gen_path_full(path).map(|(k, _)| k)
 }
 
-/// Режим анимации титра из СТАРОГО пути (Р.53). Отдельный выход разбора,
-/// потому что в виде его больше нет: миграция превращает его в кривые
-/// (`text_anim_curves`), а не в поле.
+/// The title animation mode from the OLD path (R.53). A separate parse output,
+/// because in the kind it no longer exists: migration turns it into curves
+/// (`text_anim_curves`), not into a field.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LegacyTextAnim {
     pub anim: TextAnim,
     pub secs: f64,
 }
 
-/// Разбор `gen:`-пути ВМЕСТЕ с легаси-режимом анимации.
+/// Parsing of a `gen:` path TOGETHER WITH the legacy animation mode.
 ///
-/// Единственная дверь разбора: `parse_gen_path` — обёртка, отбрасывающая
-/// режим. Ключи `am`/`ams` встречаются только в файлах Р.53..Р.58, и
-/// понимать их обязан ровно один парсер — иначе миграция и чтение
-/// разошлись бы в том, что считать битым путём.
+/// The only parsing door: `parse_gen_path` is a wrapper that discards the
+/// mode. The keys `am`/`ams` occur only in files of R.53..R.58, and
+/// exactly one parser must understand them — otherwise migration and reading
+/// would diverge on what counts as a broken path.
 pub fn parse_gen_path_full(path: &str) -> Option<(GeneratorKind, Option<LegacyTextAnim>)> {
     let rest = strip_ci(path, "gen:")?;
     let mut toks = rest.split(':');
@@ -1081,14 +1081,14 @@ pub fn parse_gen_path_full(path: &str) -> Option<(GeneratorKind, Option<LegacyTe
     Some((kind, legacy))
 }
 
-/// Путь медиа, несущий ТОЛЬКО ВИД (Р.59, стадия 2).
+/// A media path carrying ONLY THE KIND (R.59, stage 2).
 ///
-/// Значения переехали на событие, а в `MediaRef.path` осталось «что это
-/// за медиа» — тег вида. Единственное исключение — «сорт» варианта, у
-/// которого имя вида есть функция ЗНАЧЕНИЯ (правило п.419: пять
-/// инженерных таблиц — один вид с полем `table`, но пять строк меню).
-/// Сорт числом не является и кривой не автоматизируется, поэтому он
-/// часть адреса, а не значение события.
+/// The values moved to the event, and what remained in `MediaRef.path` is “what kind of
+/// media this is” — the kind tag. The single exception is the kind's “sort” of a variant,
+/// for which the kind name is a function of the VALUE (item 419 rule: five
+/// engineering tables — one kind with a `table` field, but five menu rows).
+/// A sort is not a number and is not automated by a curve, so it is
+/// part of the address, not a value of the event.
 pub fn gen_kind_path(k: &GeneratorKind) -> String {
     match k {
         GeneratorKind::TestPattern { table } if *table != TestTable::default() => {
@@ -1098,15 +1098,15 @@ pub fn gen_kind_path(k: &GeneratorKind) -> String {
     }
 }
 
-/// Состояние генератора для ИСТОЧНИКА: вид со значениями плюс кривые
-/// (Р.59, стадия 2).
+/// Generator state for the SOURCE: the kind with values plus curves
+/// (R.59, stage 2).
 ///
-/// Кривые разрешает ИСТОЧНИК по своему `pts` (тик материала), а не план:
-/// у заказа форма `(адрес, тик, качество)`, и хэш значений в адресе
-/// означал бы пересборку плана на каждое нажатие клавиши. Отсюда жёсткое
-/// ограничение: компилированный план автоматизации (`AutoPlan`) кривые
-/// генератора НЕ ТРОГАЕТ — иначе план и источник разошлись бы, и ключ
-/// кэша перестал бы определять кадр.
+/// The curves are resolved by the SOURCE from its `pts` (the material tick), not by the plan:
+/// the order has the form `(address, tick, quality)`, and a hash of the values in the address
+/// would mean rebuilding the plan on every keystroke. Hence the hard
+/// constraint: the compiled automation plan (`AutoPlan`) does NOT TOUCH the
+/// generator's curves — otherwise the plan and the source would diverge, and the
+/// cache key would stop determining the frame.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenState {
     pub kind: GeneratorKind,
@@ -1118,9 +1118,9 @@ impl GenState {
         GenState { kind, auto: Vec::new() }
     }
 
-    /// Вид СО ЗНАЧЕНИЯМИ на момент `pts` материала. Без кривых —
-    /// `Borrowed`: неанимированный генератор не платит ни аллокации
-    /// (правило ноля цены, претензия владельца п.4 Р.59).
+    /// The kind WITH VALUES at the moment `pts` of the material. Without curves —
+    /// `Borrowed`: a non-animated generator pays no allocation
+    /// (the zero-cost rule, the owner's claim item 4 of R.59).
     pub fn kind_at(&self, pts: Tick) -> Cow<'_, GeneratorKind> {
         if self.auto.is_empty() {
             return Cow::Borrowed(&self.kind);
@@ -1130,16 +1130,16 @@ impl GenState {
         Cow::Owned(k)
     }
 
-    /// Зависит ли кадр от времени ИЗ-ЗА кривых. Вид, зависящий от времени
-    /// сам по себе (шум, тайм-код), знает про себя kt-media.
+    /// Whether the frame depends on time BECAUSE OF the curves. A kind that depends on time
+    /// by itself (noise, timecode) is known to kt-media itself.
     pub fn animated(&self) -> bool {
         !self.auto.is_empty()
     }
 }
 
-/// Канонический `gen:`-путь: нижний регистр, умолчания не пишутся,
-/// цвет — одним токеном `c=rrggbb`. `format(parse(s))` канонизирует;
-/// модель всегда хранит канон (его производят окно и ридер kt-otio).
+/// The canonical `gen:` path: lowercase, defaults are not written, the color —
+/// as a single token `c=rrggbb`. `format(parse(s))` canonicalizes;
+/// the model always stores the canon (it is produced by the window and the kt-otio reader).
 pub fn format_gen_path(k: &GeneratorKind) -> String {
     let mut out = format!("gen:{}", k.tag());
     let mut push = |key: &str, val: String| {
@@ -1193,7 +1193,7 @@ pub fn format_gen_path(k: &GeneratorKind) -> String {
             offset_x,
             offset_y,
         } => {
-            // умолчания не пишутся; f64 — кратчайшая точная запись Display
+            // defaults are not written; f64 — the shortest exact Display form
             if !text.is_empty() {
                 push("t", escape_gen_value(text));
             }
@@ -1343,7 +1343,7 @@ pub fn format_gen_path(k: &GeneratorKind) -> String {
                 push("fps", format!("{fps}"));
             }
         }
-        // --- Р.53 (пп.419-422) -------------------------------------------
+        // --- R.53 (items 419-422) -------------------------------------------
         GeneratorKind::Transparent => {}
         GeneratorKind::Rect {
             cx,
@@ -1537,7 +1537,7 @@ fn order_from(s: &str) -> Option<[TextLayer; 4]> {
             _ => return None,
         };
     }
-    // каждый слой ровно один раз
+    // each layer exactly once
     for l in [TextLayer::Plate, TextLayer::Shadow, TextLayer::Stroke, TextLayer::Fill] {
         if !out.contains(&l) {
             return None;
@@ -1546,7 +1546,7 @@ fn order_from(s: &str) -> Option<[TextLayer; 4]> {
     Some(out)
 }
 
-/// Один `ключ=значение`-токен пути. Ключ уже в нижнем регистре.
+/// One `key=value` token of the path. The key is already in lowercase.
 fn apply_token(k: &mut GeneratorKind, key: &str, val: &str) -> Option<()> {
     match k {
         GeneratorKind::Solid { color_r, color_g, color_b } => match key {
@@ -1597,9 +1597,9 @@ fn apply_token(k: &mut GeneratorKind, key: &str, val: &str) -> Option<()> {
         } => {
             let n = || val.parse::<f64>().ok().filter(|v| v.is_finite());
             match key {
-                // ЛЕГАСИ-ключи режима анимации (Р.53): вид их больше не
-                // несёт, поэтому их ловит разбор целиком
-                // (`parse_gen_path_full`), а сюда они не доходят.
+                // LEGACY keys of the animation mode (R.53): the kind no longer
+                // carries them, so they are caught by the full parse
+                // (`parse_gen_path_full`), and they do not reach here.
                 "am" | "ams" => return None,
                 "rv" => *reveal = n()?,
                 "rvs" => *reveal_soft = n()?,
@@ -1694,8 +1694,8 @@ fn apply_token(k: &mut GeneratorKind, key: &str, val: &str) -> Option<()> {
             }
             Some(())
         }
-        // --- Р.53 (пп.419-422) -------------------------------------------
-        // у подложки параметров нет: любой токен — битый путь
+        // --- R.53 (items 419-422) -------------------------------------------
+        // the backing has no parameters: any token is a broken path
         GeneratorKind::Transparent => None,
         GeneratorKind::Rect {
             cx,
@@ -1785,19 +1785,19 @@ fn apply_token(k: &mut GeneratorKind, key: &str, val: &str) -> Option<()> {
     }
 }
 
-/// Доля 0..1 из токена. Вне диапазона или не число — битый путь, а не
-/// молчаливый кламп (правило разбора: ошибка, а не догадка).
+/// A 0..1 fraction from the token. Out of range or not a number — a broken path, not a
+/// silent clamp (the parse rule: an error, not a guess).
 fn unit(val: &str) -> Option<f64> {
     val.parse::<f64>().ok().filter(|v| v.is_finite() && (0.0..=1.0).contains(v))
 }
 
-/// Размер фигуры: до ДВУХ долей оси — фигура законно вылезает за кадр
-/// (подложка под титр шире кадра — обычное дело).
+/// The figure's size: up to TWO axis fractions — the figure legally extends beyond the frame
+/// (a backing under a title wider than the frame is a common thing).
 fn span(val: &str) -> Option<f64> {
     val.parse::<f64>().ok().filter(|v| v.is_finite() && (0.0..=2.0).contains(v))
 }
 
-/// `rrggbbaa` (8 hex-цифр) → четвёрка компонент.
+/// `rrggbbaa` (8 hex digits) → a four-component tuple.
 fn parse_rgba(s: &str) -> Option<(u8, u8, u8, u8)> {
     if s.len() != 8 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
@@ -1806,7 +1806,7 @@ fn parse_rgba(s: &str) -> Option<(u8, u8, u8, u8)> {
     Some((c(0)?, c(2)?, c(4)?, c(6)?))
 }
 
-/// `rrggbb` (6 hex-цифр, регистр любой) → тройка компонент.
+/// `rrggbb` (6 hex digits, any case) → a three-component tuple.
 fn parse_rgb(s: &str) -> Option<(u8, u8, u8)> {
     if s.len() != 6 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
@@ -1815,10 +1815,10 @@ fn parse_rgb(s: &str) -> Option<(u8, u8, u8)> {
     Some((c(0)?, c(2)?, c(4)?))
 }
 
-/// Экранирование строкового значения для токена `gen:`-пути (текст
-/// титра): служебные `%`, `:`, `=` и управляющие — в `%XX`. Путь остаётся
-/// одной строкой без переводов строк, а `unescape(escape(s)) == s` для
-/// любой строки (тест t469b).
+/// Escaping of a string value for the `gen:` path token (title text):
+/// the service characters `%`, `:`, `=` and control characters — in `%XX`. The path stays
+/// one line with no line breaks, and `unescape(escape(s)) == s` for
+/// any string (test t469b).
 pub fn escape_gen_value(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
@@ -1831,8 +1831,8 @@ pub fn escape_gen_value(s: &str) -> String {
     out
 }
 
-/// Обратное к [`escape_gen_value`]. Битая последовательность — `None`
-/// (правило то же, что у всего разбора: ошибка, а не догадка).
+/// The inverse of [`escape_gen_value`]. A broken sequence — `None`
+/// (the rule is the same as for the whole parse: an error, not a guess).
 pub fn unescape_gen_value(s: &str) -> Option<String> {
     let mut out = String::with_capacity(s.len());
     let mut it = s.chars();

@@ -1,5 +1,5 @@
-//! Диагностика/регрессия: Warp обязан потреблять источник ~rate·выход
-//! после каждого set_rate (rubato ramp учитываем допуском).
+//! Diagnostics/regression: Warp MUST consume the source at ~rate·output
+//! after each set_rate (we allow for the rubato ramp with a tolerance).
 
 use kt_fx::{CH, Warp};
 
@@ -10,7 +10,7 @@ fn warp_consumption_tracks_rate_changes() {
     let rates = [1.0f64, 0.35, 0.6, 1.0];
     for &r in &rates {
         w.set_rate(r);
-        // прогрев ramp'а: один чанк на переход
+        // warming up the ramp: one chunk per transition
         let mut src = |_k: kt_fx::PullKind, _f: i64, buf: &mut [f32]| {
             buf.fill(0.0);
             true
@@ -28,7 +28,7 @@ fn warp_consumption_tracks_rate_changes() {
         let expect = (46.0 * 1024.0 * r) as i64;
         assert!(
             (consumed - expect).abs() < expect / 10 + 2048,
-            "rate {r}: съедено {consumed}, ожидалось ~{expect}"
+            "rate {r}: consumed {consumed}, expected ~{expect}"
         );
     }
 }

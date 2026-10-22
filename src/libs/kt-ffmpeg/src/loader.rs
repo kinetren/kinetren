@@ -1,12 +1,12 @@
-//! Рантайм-загрузка libav*: перебор SONAME от новых мажоров к старым,
-//! определение версии через avcodec_version() и выбор согласованного
-//! набора библиотек (ld.so сам подтягивает зависимости той же мажорной
-//! версии по NEEDED, поэтому смешать 6 и 7 невозможно).
+//! Runtime loading of libav*: iteration over SONAMEs from newer majors to older,
+//! determining the version via avcodec_version(), and choosing a consistent
+//! set of libraries (ld.so itself pulls in the dependencies of the same major
+//! version via NEEDED, so mixing 6 and 7 is impossible).
 
 use crate::FfError;
 use libloading::os::unix::{Library, RTLD_LAZY, RTLD_LOCAL, Symbol};
 
-/// Набор SONAME одного релиза FFmpeg.
+/// SONAME set of one FFmpeg release.
 struct Soname {
     major: u32,
     avutil: &'static str,
@@ -16,7 +16,7 @@ struct Soname {
     swresample: &'static str,
 }
 
-/// Кандидаты — от новых к старым (порядок = приоритет).
+/// Candidates — from newer to older (order = priority).
 const CANDIDATES: &[Soname] = &[
     Soname {
         major: 8,
@@ -48,15 +48,15 @@ pub struct Lib(Library);
 
 impl Lib {
     fn open(name: &str) -> Result<Lib, FfError> {
-        // RTLD_LOCAL: не засоряем глобальную область — символы берём
-        // адресно из своих хэндлов.
+        // RTLD_LOCAL: we do not pollute the global namespace — symbols are taken
+        // by address from our own handles.
         unsafe { Library::open(Some(name), RTLD_LAZY | RTLD_LOCAL) }
             .map(Lib)
             .map_err(|e| FfError::Load(format!("{name}: {e}")))
     }
 
     /// # Safety
-    /// Тип `T` должен соответствовать реальной сигнатуре функции.
+    /// Type `T` must match the real signature of the function.
     pub unsafe fn sym<T: Copy>(&self, name: &str) -> Result<T, FfError> {
         let sym: Symbol<T> = unsafe { self.0.get(name.as_bytes()) }
             .map_err(|e| FfError::Load(format!("symbol {}: {e}", name.trim_end_matches('\0'))))?;
@@ -64,7 +64,7 @@ impl Lib {
     }
 }
 
-/// Пять загруженных библиотек одной мажорной версии.
+/// Five loaded libraries of one major version.
 pub struct Libs {
     pub avutil: Lib,
     pub avcodec: Lib,
@@ -72,11 +72,11 @@ pub struct Libs {
     pub swscale: Lib,
     pub swresample: Lib,
     pub major: u32,
-    /// Полная версия avcodec (major.minor.micro) для диагностики.
+    /// Full avcodec version (major.minor.micro) for diagnostics.
     pub avcodec_version: (u32, u32, u32),
 }
 
-/// Найти и загрузить установленный в системе FFmpeg.
+/// Find and load the FFmpeg installed in the system.
 pub fn load() -> Result<Libs, FfError> {
     let mut tried = Vec::new();
     for cand in CANDIDATES {
@@ -90,7 +90,7 @@ pub fn load() -> Result<Libs, FfError> {
 
 fn try_candidate(c: &Soname) -> Result<Libs, FfError> {
     let avcodec = Lib::open(c.avcodec)?;
-    // сверяем, что мажор библиотеки совпадает с ожидаемым набором типов
+    // we check that the library’s major matches the expected set of types
     let version: unsafe extern "C" fn() -> u32 = unsafe { avcodec.sym("avcodec_version\0")? };
     let v = unsafe { version() };
     let (maj, min, mic) = ((v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff);

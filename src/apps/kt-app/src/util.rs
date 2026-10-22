@@ -1,4 +1,4 @@
-//! Вспомогательное: источники, пути, фоновый индекс-воркер.
+//! Auxiliary: sources, paths, the background index worker.
 
 use kt_media::MediaSource;
 use kt_model::MediaId;
@@ -6,29 +6,29 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-// Разбор псевдо-путей (`synth:`, `gen:`) переехал в kt-media (Р.52,
-// `kt_media::factory`): раньше он был написан здесь и ВТОРОЙ раз в
-// kt-cli, и копии разъезжались по регистру (сноска п.211).
+// Parsing of pseudo-paths (`synth:`, `gen:`) moved to kt-media (R.52,
+// `kt_media::factory`): before, it was written here and a SECOND time in
+// kt-cli, and the copies drifted apart by case (footnote to item 211).
 
-pub type Peaks = Vec<(Vec<(i16, i16)>, Vec<(i16, i16)>)>; // [level] -> (L, R) по блокам
+pub type Peaks = Vec<(Vec<(i16, i16)>, Vec<(i16, i16)>)>; // [level] -> (L, R) by blocks
 
 pub fn open_source(path: &str) -> Result<Box<dyn MediaSource>, String> {
     open_source_indexed(path, None)
 }
 
-/// Открытие через sidecar индекс-БД проекта: если файл не менялся,
-/// пакетный индекс берётся из БД и полный скан-проход пропускается
-/// (быстрое открытие больших файлов, тест 34). Соединение короткоживущее —
-/// WAL допускает параллельных читателей/писателей из других потоков.
-/// Псевдо-пути (`synth:`, `gen:`) решает фабрика kt-media.
+/// Opening via the project's sidecar index DB: if the file has not changed,
+/// the batch index is taken from the DB and the full scan pass is skipped
+/// (fast opening of large files, test 34). The connection is short-lived —
+/// WAL allows parallel readers/writers from other threads.
+/// Pseudo-paths (`synth:`, `gen:`) are resolved by the kt-media factory.
 pub fn open_source_indexed(
     path: &str,
     db_path: Option<&Path>,
 ) -> Result<Box<dyn MediaSource>, String> {
-    // Псевдо-путь отсекается ДО sidecar-БД (Р.53, п.413): открытие
-    // sqlite (соединение + WAL-прагма + запрос версии схемы) ради
-    // источника, у которого файла нет, — чистая трата, а зовётся это на
-    // каждую правку параметров генератора и на каждую постановку клипа.
+    // A pseudo-path is cut off BEFORE the sidecar DB (R.53, item 413): opening an
+    // sqlite (the connection + WAL pragma + a schema version query) for a source that has no file is
+    // pure waste, and this is called on every edit of generator parameters and on every placement
+    // of a clip.
     if let Some(r) = kt_media::factory::open_pseudo(path) {
         return r;
     }
@@ -36,14 +36,14 @@ pub fn open_source_indexed(
     kt_media::factory::open_indexed(path, db.as_mut())
 }
 
-/// Источник или ПЛЕЙСХОЛДЕР вместо него (Р.33 п.10): недоступный файл не
-/// должен мешать открыть проект, играть и рендерить. Возвращает вторым
-/// значением текст ошибки — вызывающий решает, как о ней сказать.
+/// Source or a PLACEHOLDER in its place (R.33 item 10): an unavailable file must not
+/// prevent opening the project, playing and rendering. It returns the error text
+/// as a second value — the caller decides how to report it.
 ///
-/// Сам `open_source_indexed` не трогаем: его «ошибка = ошибка» нужна там,
-/// где плейсхолдер вреден — добавление медиа в проект (опечатка в пути
-/// молча превратилась бы в заглушку) и опрос настоящих разрешений
-/// источников для меню рендера.
+/// `open_source_indexed` itself is untouched: its “error = error” is needed
+/// where a placeholder is harmful — adding media to the project (a typo in the path
+/// would silently turn into a stub) and polling the real permissions
+/// of the sources for the render menu.
 pub fn open_source_or_placeholder(
     path: &str,
     db_path: Option<&Path>,
@@ -55,7 +55,7 @@ pub fn open_source_or_placeholder(
     }
 }
 
-/// Имя файла для подписи плейсхолдера и уведомлений.
+/// File name for the placeholder caption and notifications.
 pub fn media_label(path: &str) -> String {
     Path::new(path)
         .file_name()
@@ -73,26 +73,26 @@ pub fn resolve_media_path(base: Option<&Path>, path: &str) -> String {
     }
 }
 
-/// Служба индекса: ОДИН поток на проект, очередь заданий (Р.49, п.368).
+/// Index service: ONE thread per project, a task queue (R.49, item 368).
 ///
-/// Раньше это был `spawn_index_worker` — ЗАДАЧА, притворявшаяся сервисом.
-/// Каждый её вызов поднимал новый поток: открыли проект (раз), сохранили
-/// как… (два), добавили медиа (три) — и все трое дописывали в общий
-/// `Arc<Mutex<..>>`, а тот, что открыли первым, писал уже в таблицу, которую
-/// никто не читает. Разницу задачи и сервиса теперь несёт тип: сервис —
-/// бесконечный поток с очередью, живёт, пока живёт проект, и умирает по
-/// `Drop` (болезнь `WatchdogHandle`).
+/// Previously this was `spawn_index_worker` — a TASK pretending to be a service.
+/// Each call of it started a new thread: opened the project (once), saved
+/// as… (twice), added media (three times) — and all three kept writing into a shared
+/// `Arc<Mutex<..>>`, and the one opened first was writing already into a table that
+/// nobody reads. The difference between task and service is now carried by the type: the service is
+/// an endless thread with a queue, it lives as long as the project lives, and dies on
+/// `Drop` (the `WatchdogHandle` disease).
 ///
-/// Ошибки ПУБЛИКУЮТСЯ: четыре `let _ =` молчали о том, что индекс не
-/// построился, и пользователь видел плейсхолдеры вместо волноформ без
-/// единого слова о причине.
-/// Громкость медиа: (LUFS, dBTP, LRA).
+/// Errors are now PUBLISHED: four `let _ =` were silent about the index not
+/// being built, and the user saw placeholders instead of waveforms without
+/// a single word about the cause.
+/// Media loudness: (LUFS, dBTP, LRA).
 pub type LoudnessMap = HashMap<MediaId, (f64, f64, f64)>;
 
 pub struct IndexService {
     tx: std::sync::mpsc::Sender<IndexTask>,
     stop: Arc<std::sync::atomic::AtomicBool>,
-    /// Что пошло не так (читает UI). Не `let _ =`.
+    /// What went wrong (read by the UI). Not `let _ =`.
     pub errors: Arc<Mutex<Vec<String>>>,
 }
 
@@ -122,15 +122,15 @@ impl IndexService {
             .spawn(move || {
                 let mut db: Option<(PathBuf, kt_media::index::MediaIndexDb)> = None;
                 while !stop_t.load(std::sync::atomic::Ordering::Acquire) {
-                    // ждём задание, но просыпаемся проверить флаг остановки
+                    // waiting for a job, but waking up to check the stop flag
                     let task = match rx.recv_timeout(std::time::Duration::from_millis(200)) {
                         Ok(t) => t,
                         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-                        // канал закрыт — владелец умер, уходим
+                        // the channel is closed — the owner died, we leave
                         Err(_) => break,
                     };
-                    // БД переоткрываем, только когда сменился путь: на
-                    // каждое добавленное медиа открывать заново незачем
+                    // the DB is reopened only when the path has changed: on
+                    // each added media there is no point in reopening
                     if db.as_ref().map(|(p, _)| p) != task.db_path.as_ref() {
                         db = task.db_path.as_ref().and_then(|p| {
                             match kt_media::index::MediaIndexDb::open(p) {
@@ -166,8 +166,8 @@ impl IndexService {
         IndexService { tx, stop, errors }
     }
 
-    /// Поставить медиа в очередь. Служба мертва — не беда: волноформы
-    /// появятся при следующем открытии проекта.
+    /// Queue the media. The service is dead — not a disaster: the waveforms
+    /// will appear on the next opening of the project.
     pub fn enqueue(&self, db_path: Option<PathBuf>, media: Vec<(MediaId, String)>) {
         if media.is_empty() {
             return;
@@ -175,17 +175,17 @@ impl IndexService {
         let _ = self.tx.send(IndexTask { db_path, media });
     }
 
-    /// Забрать накопленные ошибки (UI показывает их один раз).
+    /// Take the accumulated errors (the UI shows them once).
     pub fn take_errors(&self) -> Vec<String> {
         std::mem::take(&mut *self.errors.lock().unwrap())
     }
 }
 
-/// Пирамида пиков одного медиа. Отдельной функцией — её зовут и служба, и
-/// тесты, и офлайн-анализ.
+/// The peak pyramid of one media. A separate function — it is called by the service, and
+/// by tests, and by offline analysis.
 ///
-/// Заодно МЕРЯЕТ ГРОМКОСТЬ (Р.49, п.373) и кладёт её в индекс-БД: проход по
-/// файлу и так идёт, а второй ради LUFS на часовом исходнике — минуты.
+/// It also MEASURES LOUDNESS (R.49, item 373) and puts it into the index DB: the pass over the
+/// file already runs, and a second one for LUFS on a one-hour source would take minutes.
 type PeaksAndLoudness = (Peaks, Option<(f64, f64, f64)>);
 
 fn build_peaks(
@@ -208,32 +208,32 @@ fn build_peaks(
         Ok(Some((pyramid_to_peaks(pyr), loud)))
     };
     if kt_model::is_pseudo_path(path) {
-        // Псевдо-источники громкость НЕ меряют: это генератор, а не
-        // материал — его уровень ровно такой, как сказано в параметрах, и
-        // «нормализовать синус до −23» никому не нужно. Заодно не платим
-        // за измерение там, где декода нет вовсе. У `gen:` без аудио
-        // (duration = 0) пирамида получается пустой — и это правильно.
+        // Pseudo-sources do NOT measure loudness: they are a generator, not
+        // material — their level is exactly what the parameters say, and
+        // “normalising a sine to −23” is needed by nobody. Also, we do not pay
+        // for a measurement where there is no decoder at all. For `gen:` without audio
+        // (duration = 0) the pyramid comes out empty — and that is correct.
         return from_source(path, false);
     }
     let Some(db) = db else {
-        // Проект без пути → БД нет, но пики нужны (п.3: «пропало превью
-        // аудио» у безымянного проекта): строим пирамиду в памяти — при
-        // сохранении проекта служба получит задание уже с БД
+        // A project without a path → no DB, but peaks are needed (item 3: “the audio preview
+        // disappeared” for an unnamed project): we build the pyramid in memory — on
+        // saving the project the service gets the job already with a DB
         return from_source(path, true);
     };
     let (mid, status) = db.ensure_media(Path::new(path)).map_err(|e| e.to_string())?;
     let complete =
         db.is_complete(mid).unwrap_or(false) && status == kt_media::index::MediaEntryStatus::Reused;
     if !complete && !stop.load(std::sync::atomic::Ordering::Acquire) {
-        // отдельный короткоживущий источник — не декодеры воспроизведения;
-        // заодно персистится пакетный индекс (тест 34)
+        // a separate short-lived source — not the playback decoders;
+        // the batch index is persisted as a side effect (test 34)
         let mut src = kt_media::ffmpeg::FfmpegSource::open_indexed(path, Some(db))
             .map_err(|e| e.to_string())?;
         let mut meter = kt_fx::audio::loudness::LoudnessMeter::new();
         db.build_audio_peaks_observed(mid, &mut src, &mut |b| meter.feed(b.data.as_slice()))
             .map_err(|e| e.to_string())?;
         let l = meter.finish();
-        // тишина — не «−70»: числа, которого нет, в БД не пишем
+        // silence — not “−70”: a number that does not exist is not written to the DB
         if let Some(lufs) = l.lufs {
             let _ = db.set_loudness(mid, lufs, l.dbtp, l.lra);
         }
@@ -246,8 +246,8 @@ fn build_peaks(
         levels.push((l, r));
         level += 1;
     }
-    // громкость берётся из БД: её мог посчитать и ПРОШЛЫЙ запуск — второй
-    // полный декод ради уже известного числа не нужен никому
+    // loudness is taken from the DB: the PREVIOUS launch could have computed it too — a second
+    // full decode for an already known number is needed by nobody
     let loud = db.loudness(mid).ok().flatten();
     Ok(Some((levels, loud)))
 }
@@ -263,10 +263,10 @@ pub(crate) fn pyramid_to_peaks(p: kt_media::index::PeakPyramid) -> Peaks {
         .collect()
 }
 
-/// Watchdog доступности медиафайлов (порт mediaSourceProbeTimer 900 мс):
-/// оффлайн-множество читает UI (тинт клипов); работает в своём потоке.
-/// Хэндл watchdog'а: Drop останавливает поток (раньше при переоткрытии
-/// проекта старые watchdog'и жили вечно — утечка потоков, п.1).
+/// Watchdog of media file availability (port of mediaSourceProbeTimer 900 ms):
+/// the offline set is read by the UI (clip tint); it runs in its own thread.
+/// The watchdog handle: Drop stops the thread (before, when the project was reopened
+/// the old watchdogs lived forever — a thread leak, item 1).
 pub struct WatchdogHandle {
     stop: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -310,11 +310,11 @@ pub fn spawn_media_watchdog(
     (set, WatchdogHandle { stop })
 }
 
-/// Тайм-код «чч:мм:сс.млс Fкк» (п.19 р.6, тест 63) — верхняя строка.
+/// Timecode “hh:mm:ss.mls Fkk” (item 19 round 6, test 63) — the top line.
 ///
-/// Отрицательное время (зона до нуля внутри ленты, Р.58 п.462) пишется
-/// со знаком и полями от |t|: «-00:00:01.000 F00», а не набор
-/// отрицательных полей.
+/// Negative time (the zone before zero inside the reel, R.58 item 462) is written
+/// with a sign and fields from |t|: “-00:00:01.000 F00”, not a set of
+/// negative fields.
 pub fn format_timecode(t: kt_time::Tick, fps: u32) -> String {
     let sign = if t.0 < 0 { "-" } else { "" };
     let t = kt_time::Tick(t.0.abs());
@@ -331,10 +331,10 @@ pub fn format_timecode(t: kt_time::Tick, fps: u32) -> String {
     )
 }
 
-/// Разбор введённого тайм-кода (п.4 р.10). Толерантен: «90» → 90 с,
-/// «1:30» → мм:сс, «1:02:03» → чч:мм:сс, можно с дробной частью
-/// («1:02:03.250»). Результат выравнивается по сетке кадров — иначе
-/// после перехода номер кадра дёргается. Мусор → None.
+/// Parsing the entered timecode (item 4 round 10). Tolerant: “90” → 90 s,
+/// “1:30” → mm:ss, “1:02:03” → hh:mm:ss, may include a fractional part
+/// (“1:02:03.250”). The result is aligned to the frame grid — otherwise
+/// after a transition the frame number jumps. Junk → None.
 pub fn parse_timecode(s: &str, fps: u32) -> Option<kt_time::Tick> {
     let s = s.trim();
     if s.is_empty() {
@@ -344,7 +344,7 @@ pub fn parse_timecode(s: &str, fps: u32) -> Option<kt_time::Tick> {
     if parts.len() > 3 {
         return None;
     }
-    // последняя группа может нести дробную часть секунд
+    // the last group may carry a fractional part of seconds
     let last = parts.pop()?;
     let (sec_str, frac_str) = match last.split_once(['.', ',']) {
         Some((a, b)) => (a, Some(b)),
@@ -359,7 +359,7 @@ pub fn parse_timecode(s: &str, fps: u32) -> Option<kt_time::Tick> {
         secs = secs * 60.0 + v;
     }
     let tail: f64 = if sec_str.trim().is_empty() && !parts.is_empty() {
-        0.0 // «1:» — минуты без секунд
+        0.0 // “1:” — minutes without seconds
     } else {
         sec_str.trim().parse().ok()?
     };
@@ -378,21 +378,21 @@ pub fn parse_timecode(s: &str, fps: u32) -> Option<kt_time::Tick> {
     Some(grid.align_floor(kt_time::Tick::from_secs_f64(secs)))
 }
 
-/// Маска ввода таймкода (п.9 р.11): цифры набиваются СПРАВА НАЛЕВО
-/// (решение пользователя) в разряды ЧЧММСС, ненабранные старшие разряды —
-/// нули. Так «130» это 00:01:30, а не «что-то от текущей позиции»: как в
-/// монтажках, где частичный тайм-код всегда дополняется нулями.
+/// The input mask of the timecode (item 9 round 11): digits are typed RIGHT TO LEFT
+/// (the user’s decision) into the HHMMSS places, and the unentered higher places are
+/// zeros. So “130” is 00:01:30, not “something from the current position”: as in
+/// editing suites, where a partial timecode is always padded with zeros.
 pub const TC_MASK_DIGITS: usize = 6;
 
-/// Разряды маски (ровно 6 символов) при текущем вводе.
+/// The places of the mask (exactly 6 characters) for the current input.
 pub fn mask_digits(input: &str) -> String {
     let d: Vec<char> = input.chars().filter(|c| c.is_ascii_digit()).collect();
     let d: String = d[d.len().saturating_sub(TC_MASK_DIGITS)..].iter().collect();
     format!("{}{}", "0".repeat(TC_MASK_DIGITS - d.len()), d)
 }
 
-/// Тик по маске. Минуты/секунды не нормализуются в 0..59 намеренно:
-/// «00:99:00» = 99 минут, так набирать быстрее и это не сюрприз.
+/// A tick from the mask. Minutes/seconds are deliberately not normalised to 0..59:
+/// “00:99:00” = 99 minutes, typing it is faster this way and it is no surprise.
 pub fn mask_to_tick(input: &str, fps: u32) -> kt_time::Tick {
     let d = mask_digits(input);
     let n = |a: usize, b: usize| -> i64 { d[a..b].parse::<i64>().unwrap_or(0) };
@@ -401,7 +401,7 @@ pub fn mask_to_tick(input: &str, fps: u32) -> kt_time::Tick {
     kt_time::Tick(secs * 90_000 / step * step)
 }
 
-/// Разряды ЧЧММСС из тика — для вставки готового тайм-кода в маску.
+/// The HHMMSS places from the tick — for inserting a ready timecode into the mask.
 pub fn tick_to_mask(t: kt_time::Tick) -> String {
     let ms = t.as_ms().max(0);
     format!(
@@ -412,13 +412,13 @@ pub fn tick_to_mask(t: kt_time::Tick) -> String {
     )
 }
 
-/// Как маска выглядит на экране: (ненабранная часть, набранная часть).
-/// Первая рисуется приглушённо — сразу видно, что уже зафиксировано.
+/// How the mask looks on screen: (the unentered part, the entered part).
+/// The first is drawn muted — it is immediately clear what is already fixed.
 pub fn mask_text(input: &str) -> (String, String) {
     let d = mask_digits(input);
     let typed = input.chars().filter(|c| c.is_ascii_digit()).count().min(TC_MASK_DIGITS);
     let full = format!("{}:{}:{}", &d[0..2], &d[2..4], &d[4..6]);
-    // индексы первого набранного символа в «чч:мм:сс» для 0..6 цифр
+    // indices of the first typed character in “hh:mm:ss” for 0..6 digits
     let cut = [8usize, 7, 6, 4, 3, 1, 0][typed];
     (full[..cut].to_string(), full[cut..].to_string())
 }
@@ -440,7 +440,7 @@ mod tests {
         dir.join("out").join(name).to_string_lossy().to_string()
     }
 
-    /// Тест 63 (п.19 р.6): тайм-код верхней строки.
+    /// Test 63 (item 19 round 6): the timecode of the top line.
     #[test]
     fn t63_format_timecode() {
         use kt_time::Tick;
@@ -451,23 +451,23 @@ mod tests {
         assert_eq!(format_timecode(Tick(90_000 / 24 * 5), 24), "00:00:00.208 F05");
     }
 
-    /// Тест 93 (п.4 р.10): разбор введённого тайм-кода.
+    /// Test 93 (item 4 round 10): parsing an entered timecode.
     #[test]
     fn t93_parse_timecode() {
         use kt_time::{FpsGrid, Tick};
         let g = FpsGrid::new(30);
         let p = |s: &str| parse_timecode(s, 30);
-        // формы ввода
+        // input forms
         assert_eq!(p("90"), Some(g.align_floor(Tick(90 * 90_000))));
         assert_eq!(p("1:30"), Some(g.align_floor(Tick(90 * 90_000))));
         assert_eq!(p("1:02:03"), Some(g.align_floor(Tick(3723 * 90_000))));
         assert_eq!(p("0:00:01.5"), Some(g.align_floor(Tick(90_000 + 45_000))));
         assert_eq!(p("  2:00  "), Some(g.align_floor(Tick(120 * 90_000))));
-        // результат всегда на границе кадра
+        // the result is always on a frame boundary
         let t = p("0:00:01.999").unwrap();
-        assert_eq!(g.align_floor(t), t, "не выровнено по сетке кадров");
-        // round-trip с форматтером: строка несёт миллисекунды, поэтому
-        // допуск — один кадр (шаг сетки)
+        assert_eq!(g.align_floor(t), t, "not aligned to the frame grid");
+        // round-trip with the formatter: the string carries milliseconds, so
+        // the tolerance is one frame (grid step)
         for ticks in [0i64, 90_000, 3_723_000, 12_345_678] {
             let s = format_timecode(Tick(ticks), 30);
             let head = s.split(' ').next().unwrap();
@@ -479,31 +479,31 @@ mod tests {
                 ticks
             );
         }
-        // мусор
+        // junk
         assert_eq!(p(""), None);
         assert_eq!(p("abc"), None);
         assert_eq!(p("1:2:3:4"), None);
         assert_eq!(p("-5"), None);
     }
 
-    /// Тест 399 (Р.49 Б2): служба — ОДИН поток с очередью, а не задача на
-    /// каждый вызов. Два задания подряд обслуживаются обоими, и второе не
-    /// теряется.
+    /// Test 399 (R.49 B2): the service is ONE thread with a queue, not a task for
+    /// each call. Two jobs in a row are served by both, and the second is
+    /// not lost.
     #[test]
     fn t399_index_service_serves_a_queue() {
         let out: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
         let loud: Arc<Mutex<LoudnessMap>> = Arc::new(Mutex::new(Default::default()));
         let svc = IndexService::start(out.clone(), loud.clone());
-        // синтетика не требует ни FFmpeg, ни файлов на диске
+        // the synthetic source needs neither FFmpeg nor files on disk
         svc.enqueue(None, vec![(MediaId(1), "synth:sine:440".into())]);
         svc.enqueue(None, vec![(MediaId(2), "synth:ramp".into())]);
-        // Дедлайн ЩЕДРЫЙ намеренно: `synth:`-источник длится ЧАС
-        // (SYNTH_DURATION фабрики), и пирамида пиков по нему в
-        // debug-сборке строится секунды, а под параллельным прогоном
-        // всего workspace — десятки. Тест утверждает «очередь не теряет
-        // работу», а не «служба быстрая»: о СКОРОСТИ судят по релизу
-        // (п.301), и смешивать эти два утверждения в одном ожидании —
-        // тот самый флак, что уже ловили на t411/t476 (Р.52).
+        // The deadline is deliberately GENEROUS: the `synth:` source lasts an HOUR
+        // (the factory’s SYNTH_DURATION), and the peak pyramid for it in a
+        // debug build takes seconds, and under a parallel run of the whole
+        // workspace — tens of seconds. The test asserts “the queue does not lose
+        // the work”, not “the service is fast”: SPEED is judged on the release build
+        // (item 301), and mixing these two claims in one expectation is
+        // exactly the flake caught before on t411/t476 (R.52).
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
         loop {
             if out.lock().unwrap().len() == 2 {
@@ -511,27 +511,27 @@ mod tests {
             }
             assert!(
                 std::time::Instant::now() < deadline,
-                "служба обслужила {} задания из двух — очередь теряет работу",
+                "the service served {} of two jobs — the queue loses work",
                 out.lock().unwrap().len()
             );
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         for id in [MediaId(1), MediaId(2)] {
             let g = out.lock().unwrap();
-            let p = g.get(&id).expect("пирамида");
-            assert!(!p.is_empty() && !p[0].0.is_empty(), "пустая пирамида у {id:?}");
+            let p = g.get(&id).expect("pyramid");
+            assert!(!p.is_empty() && !p[0].0.is_empty(), "empty pyramid for {id:?}");
         }
-        assert!(svc.take_errors().is_empty(), "на здоровой работе ошибок быть не должно");
-        // синтетика громкость не меряет: это генератор, а не материал
-        assert!(loud.lock().unwrap().is_empty(), "синтетику незачем измерять");
+        assert!(svc.take_errors().is_empty(), "healthy work must produce no errors");
+        // the synthetic source does not measure loudness: it is a generator, not material
+        assert!(loud.lock().unwrap().is_empty(), "there is no need to measure synthetics");
     }
 
-    /// Тест 400 (Р.49 Б2): служба умирает вместе с владельцем, а ошибки
-    /// ПУБЛИКУЮТСЯ. Четыре `let _ =` молчали о том, что индекс не
-    /// построился, и человек видел плейсхолдеры без единого слова о причине.
+    /// Test 400 (R.49 B2): the service dies together with its owner, and errors
+    /// are PUBLISHED. Four `let _ =` were silent about the index not
+    /// being built, and the person saw placeholders without a single word about the cause.
     #[test]
     fn t400_index_service_dies_with_owner_and_reports_errors() {
-        // 1) ошибка доезжает
+        // 1) the error gets through
         let out: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
         let loud: Arc<Mutex<LoudnessMap>> = Arc::new(Mutex::new(Default::default()));
         let svc = IndexService::start(out.clone(), loud.clone());
@@ -542,30 +542,30 @@ mod tests {
             errs = svc.take_errors();
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        assert!(!errs.is_empty(), "об отказе индекса не сказано ни слова");
-        assert!(errs[0].contains("no-such-file"), "в сообщении нет адреса: {errs:?}");
-        assert!(svc.take_errors().is_empty(), "ошибки отдаются один раз");
+        assert!(!errs.is_empty(), "the index failure is not mentioned at all");
+        assert!(errs[0].contains("no-such-file"), "no address in the message: {errs:?}");
+        assert!(svc.take_errors().is_empty(), "errors are reported once");
 
-        // 2) Drop останавливает поток: следующее задание не обслуживается
+        // 2) Drop stops the thread: the next job is not served
         let out2: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
         let tx = {
             let svc = IndexService::start(out2.clone(), Arc::new(Mutex::new(Default::default())));
             svc.tx.clone()
-        }; // здесь Drop
+        }; // here Drop
         std::thread::sleep(std::time::Duration::from_millis(400));
         let _ =
             tx.send(IndexTask { db_path: None, media: vec![(MediaId(3), "synth:ramp".into())] });
         std::thread::sleep(std::time::Duration::from_millis(600));
         assert!(
             out2.lock().unwrap().is_empty(),
-            "служба пережила владельца и продолжает работать — ровно та утечка \
-             потоков, ради которой сервис и заведён"
+            "the service survived its owner and keeps working — exactly the thread leak \
+             for which the service was created"
         );
     }
 
-    /// Тест 411 (Р.49 Б7): громкость НАСТОЯЩЕГО материала считается на том же
-    /// проходе, что и пирамида, и ложится в индекс-БД — второй запуск берёт
-    /// её оттуда, не декодируя файл заново.
+    /// Test 411 (R.49 B7): the loudness of the REAL material is computed in the same
+    /// pass as the pyramid and goes into the index DB — the second launch takes
+    /// it from there, without decoding the file again.
     #[test]
     fn t411_source_loudness_is_measured_on_the_pyramid_pass() {
         let dir = std::env::temp_dir().join(format!("kt-t411-{}", std::process::id()));
@@ -582,13 +582,13 @@ mod tests {
         while loud.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        let first = *loud.lock().unwrap().get(&MediaId(5)).expect("громкость не посчитана");
-        assert!(first.0 < 0.0 && first.0 > -60.0, "громкость подозрительна: {first:?}");
-        assert!(first.1 <= 0.5, "истинный пик выше нуля: {}", first.1);
+        let first = *loud.lock().unwrap().get(&MediaId(5)).expect("loudness not computed");
+        assert!(first.0 < 0.0 && first.0 > -60.0, "loudness is suspicious: {first:?}");
+        assert!(first.1 <= 0.5, "true peak above zero: {}", first.1);
         assert!(svc.take_errors().is_empty());
         drop(svc);
 
-        // второй запуск: число берётся из БД, а не считается заново
+        // second launch: the number is taken from the DB, not computed again
         let peaks2: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
         let loud2: Arc<Mutex<LoudnessMap>> = Arc::new(Mutex::new(Default::default()));
         let svc2 = IndexService::start(peaks2, loud2.clone());
@@ -597,38 +597,38 @@ mod tests {
         while loud2.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        let second = *loud2.lock().unwrap().get(&MediaId(5)).expect("громкость не прочитана из БД");
-        assert_eq!(first, second, "круг через БД изменил число");
+        let second = *loud2.lock().unwrap().get(&MediaId(5)).expect("loudness not read from the DB");
+        assert_eq!(first, second, "the round trip through the DB changed the number");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Тест 23 (п.3): пики строятся и БЕЗ индекс-БД (безымянный проект) —
-    /// раньше db_path=None означал «пиков не будет вообще».
+    /// Test 23 (item 3): peaks are built even WITHOUT an index DB (an unnamed project) —
+    /// before, db_path=None meant “there will be no peaks at all”.
     #[test]
     fn t23_peaks_build_without_db() {
         let out: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
         let loud: Arc<Mutex<LoudnessMap>> = Arc::new(Mutex::new(Default::default()));
         let svc = IndexService::start(out.clone(), loud.clone());
-        svc.enqueue(None, vec![(MediaId(7), fixture("sine48k_stereo.flac"))]); // безымянный проект
+        svc.enqueue(None, vec![(MediaId(7), fixture("sine48k_stereo.flac"))]); // unnamed project
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
         loop {
             if let Some(p) = out.lock().unwrap().get(&MediaId(7)) {
-                assert!(!p.is_empty(), "пирамида должна иметь уровни");
+                assert!(!p.is_empty(), "the pyramid must have levels");
                 let l0 = &p[0].0;
-                assert!(!l0.is_empty(), "уровень 0 не пустой");
+                assert!(!l0.is_empty(), "level 0 is not empty");
                 assert!(
                     l0.iter().any(|(lo, hi)| *lo != 0 || *hi != 0),
-                    "пики синуса не должны быть нулями"
+                    "sine peaks must not be zeros"
                 );
                 break;
             }
-            assert!(std::time::Instant::now() < deadline, "пики не построились за 15 с");
+            assert!(std::time::Instant::now() < deadline, "peaks did not build within 15 s");
             std::thread::sleep(std::time::Duration::from_millis(30));
         }
     }
 
-    /// Тест 23 (п.3): тумбы для медиа, добавленного ПОСЛЕ старта сервиса
-    /// (раньше карта медиа замораживалась при старте).
+    /// Test 23 (item 3): thumbnails for media added AFTER the service started
+    /// (before, the media map was frozen at start).
     #[test]
     fn t23_thumbs_for_media_added_after_start() {
         let project = kt_model::Project::new(kt_model::ProjectSettings {
@@ -655,7 +655,7 @@ mod tests {
             }
             assert!(
                 std::time::Instant::now() < deadline,
-                "тумба добавленного медиа не построилась за 15 с"
+                "the thumbnail of the added media did not build within 15 s"
             );
             std::thread::sleep(std::time::Duration::from_millis(30));
         }

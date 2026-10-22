@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.40 пп.15/18 и «ключи съезжают».
+"""Live scenario R.40 items 15/18 and “keys slide”.
 
-Претензии дословно:
+Claims verbatim:
 
-- «замочек не до конца работает, надо сделать так чтобы его надо было
-  СНЯТЬ чтобы отключилась синхронизация таймлайнов, и замочек надо чтобы
-  запоминал свое состояние (хотя бы на весь проект)»;
-- «когда я оттягиваю левый край события - у меня ключи автоматизации тоже
-  сдвигаются к началу, и это поведение никак не поменять».
+- “the padlock does not fully work, make it so that it has to be
+  RELEASED to turn off the timeline sync, and the padlock must
+  remember its state (at least for the whole project)”;
+- “when I drag the left edge of the event - my automation keys also
+  shift to the start, and this behavior cannot be changed in any way”.
 
-Вторая — не про данные: ключ и НЕ съезжает, врала ОСЬ графика. Здесь
-проверяется настоящий трим настоящей мышью и то, что доехало до файла:
-ключ обязан остаться на ТОМ ЖЕ кадре материала.
+The second is not about the data: the key does NOT slide, the AXIS of the graph lied. Here
+the real trim is checked with a real mouse, and what reached the file:
+the key must stay on the SAME frame of the material.
 
-Замок проверяется тем, что он ПЕРЕЖИЛ запись и открытие проекта: до Р.40
-он жил в окне и умирал вместе с ним.
+The lock is checked by the fact that it SURVIVED writing and opening the project: before R.40
+it lived in the window and died with it.
 """
 import json
 import os
@@ -36,9 +36,9 @@ def clip_kt(tl, index):
 
 
 def build(dest):
-    """Событие с блюром и двумя ключами радиуса внутри материала."""
-    # событие НЕ с нуля: левый край у самого края полосы дорожек
-    # не схватить — там кончается зона хвата и начинается gutter
+    """An event with a blur and two radius keys inside the material."""
+    # the event is NOT from scratch: the left edge at the very edge of the track strip
+    # cannot be grabbed — there the grab zone ends and the gutter begins
     project_with_clips(dest, [(1.0, 5.0, "synth:Ramp")])
     with open(dest) as f:
         doc = json.load(f)
@@ -76,47 +76,47 @@ def main(out):
     with Live("keys", out, project=proj) as app:
         app.shot("open")
         before = keys_of(app.project_now())
-        app.expect(before == [2 * SEC, 4 * SEC], f"старт: два ключа, {before}")
+        app.expect(before == [2 * SEC, 4 * SEC], f"start: two keys, {before}")
 
-        # --- левый край события вправо на секунду -------------------------
+        # --- left edge of the event to the right by a second -------------------------
         y = app.lane_y("video", 0, frac=0.7)
         start0 = app.project_now().clips[0].start
         app.drag(app.x_at(start0), y, app.x_at(start0 + 1 * SEC), y)
         saved = app.saved_project()
-        # СНАЧАЛА убеждаемся, что трим вообще произошёл: иначе «ключи не
-        # съехали» выполнялось бы само собой и ничего не проверяло
+        # FIRST we make sure that the trim happened at all: otherwise “the keys did not
+        # shift” would hold by itself and would check nothing
         start1 = saved.clips[0].source_in
         app.expect(
             saved.clips[0].start != start0 or start1 != 0,
-            f"трим обязан произойти: начало {saved.clips[0].start}, source_in {start1}",
+            f"the trim must happen: start {saved.clips[0].start}, source_in {start1}",
         )
         after = keys_of(saved)
         app.expect(
             after == before,
-            f"ключ обязан остаться на ТОМ ЖЕ кадре материала: было {before}, стало {after}",
+            f"the key must stay on the SAME frame of the material: was {before}, became {after}",
         )
         app.shot("trim-right")
 
-        # --- и обратно влево ---------------------------------------------
+        # --- and back to the left ---------------------------------------------
         clip = app.project_now().clips[0]
         app.drag(app.x_at(clip.start), y, app.x_at(max(clip.start - SEC // 2, 0)), y)
         saved = app.saved_project()
         app.expect(
             saved.clips[0].source_in != start1,
-            f"и этот трим тоже: source_in {start1} → {saved.clips[0].source_in}",
+            f"and this trim too: source_in {start1} → {saved.clips[0].source_in}",
         )
         after2 = keys_of(saved)
         app.expect(
             after2 == before,
-            f"и при движении края ВЛЕВО тоже: было {before}, стало {after2}",
+            f"and when the edge moves LEFT too: was {before}, became {after2}",
         )
         app.shot("trim-left")
 
-        # --- замок оси помнится в проекте --------------------------------
+        # --- the axis lock is remembered in the project --------------------------------
         ui = saved.doc["metadata"]["kt"].get("ui") or {}
         app.expect(
             not ui.get("auto_axis_unlinked", False),
-            "замок оси по умолчанию НАДЕТ и попадает в записанный проект",
+            "the axis lock is ON by default and gets into the saved project",
         )
         return app.done()
 

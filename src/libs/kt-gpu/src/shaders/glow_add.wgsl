@@ -1,8 +1,8 @@
-// Финал bloom — зеркало хвоста glow (kt-fx/src/video.rs): o + up·s·tint с
-// потолком 255 и УСЕЧЕНИЕМ (CPU `as u8` после .min(255.0)).
-// T0 = оригинал, T1 = апскейл малого мипа.
+// The final stage of bloom: a mirror of the tail of glow (kt-fx/src/video.rs): o + up·s·tint with
+// a cap of 255 and TRUNCATION (CPU `as u8` after .min(255.0)).
+// T0 = original, T1 = upscaled small mip.
 // u0 = (threshold, 0, 0, 0); f0 = (s, tint_r, tint_g, tint_b).
-// threshold = 0 и белый оттенок — прежняя формула байт-в-байт.
+// threshold = 0 and a white tint give the former formula, byte for byte.
 
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
@@ -11,7 +11,7 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     let u = textureLoad(T1, p, 0);
     let s = P.f0.x;
     let th = i32(P.u0.x);
-    // мягкое колено по яркости размытого кадра (0 — порога нет)
+    // a soft knee by the brightness of the blurred frame (0 means no threshold)
     var wgt = 1.0;
     if (th > 0) {
         let luma = (77 * i32(u.r) + 150 * i32(u.g) + 29 * i32(u.b)) >> 8u;

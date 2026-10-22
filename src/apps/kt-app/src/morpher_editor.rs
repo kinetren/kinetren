@@ -1,10 +1,10 @@
-//! Окно редактора morpher'а (порт MorpherEditWindow v1, sourceeditwidgets):
-//! показывает замороженные цели; для Replace — выбор нового источника из
-//! медиа проекта + сдвиг source-in (delta или absolute — фикс D4 v1); для
-//! FX-батча — редактирование двух цепочек (видео/аудио), действующих LIVE
-//! (фикс D1 v1). Все правки — apply_coalesced(SetMorpher): вся сессия
-//! окна = один undo-шаг. Автоматизация в батч-цепочках не редактируется —
-//! после bake доступен полный FX-редактор клипа.
+//! The morpher editor window (port of MorpherEditWindow v1, sourceeditwidgets):
+//! it shows the frozen targets; for Replace — the choice of a new source from the
+//! project’s media + a shift of source-in (delta or absolute — fix D4 v1); for an
+//! FX batch — editing of two chains (video/audio) acting LIVE
+//! (fix D1 v1). All edits — apply_coalesced(SetMorpher): the whole session of the
+//! window = one undo step. Automation in batch chains is not edited —
+//! after bake the full FX editor of the clip is available.
 
 use crate::app::KtApp;
 use crate::i18n::{k, tr};
@@ -15,31 +15,31 @@ use kt_time::{TICK_HZ, Tick};
 pub struct MorphEditor {
     pub id: MorphId,
     pub picker_query: String,
-    /// Поиск в пикере источника (Replace-морфер).
+    /// Search in the source picker (Replace morpher).
     pub src_query: String,
     pub gesture: u64,
     pub open: bool,
-    /// Выбранное в ОДНОЙ полосе цепочки (Р.35 п.3): голова —
-    /// подмена источника, дальше эффекты обоих видов подряд.
+    /// Selected in ONE strip of the chain (R.35 item 3): the head is
+    /// a source substitution, and further effects of both kinds one after another.
     pub sel: crate::widgets::ChainSel,
-    /// Прямоугольник поля источника на экране: по нему `handle_drops`
-    /// узнаёт, что файл бросили ИМЕННО СЮДА (Р.33 п.2 — «хотелось бы
-    /// чтобы можно было и dnd туда делать файла»).
+    /// The rectangle of the source field on screen: by it `handle_drops`
+    /// learns that the file was dropped EXACTLY HERE (R.33 item 2 — “it would be nice
+    /// if one could also do dnd of a file there”).
     pub src_rect: Option<egui::Rect>,
-    /// Снимок состояния на момент открытия — для «Отмена» (в окне FX
-    /// откат был, у морфера его не было вовсе).
+    /// The state snapshot at the moment of opening — for “Cancel” (in the FX window
+    /// there was a rollback, the morpher had none at all).
     pub backup: Option<kt_model::MorpherEvent>,
-    /// Состояние виджета автоматизации на каждый слот (Р.38 п.13).
+    /// The state of the automation widget for each slot (R.38 item 13).
     pub auto_views: std::collections::HashMap<usize, crate::automation::AutoView>,
 }
 
-const MS: i64 = TICK_HZ / 1000; // тиков в мс
-/// Сутки в миллисекундах — предел сдвига входа источника: у величины нет
-/// паспорта, но и «бесконечность» пределом не бывает (правило 6 чек-листа).
+const MS: i64 = TICK_HZ / 1000; // ticks in ms
+/// A day in milliseconds — the limit of the source-input shift: the quantity has no
+/// passport, but “infinity” is never a limit (rule 6 of the checklist).
 const DAY_MS: f64 = 24.0 * 60.0 * 60.0 * 1000.0;
 
-/// Ряд ВХОДА ИСТОЧНИКА морфера (мс). Пределы и единица объявлены ОДНИМ
-/// местом: абсолютный вход и сдвиг отличаются только нижней границей.
+/// The SOURCE INPUT row of the morpher (ms). The limits and the unit are declared in ONE
+/// place: the absolute input and the shift differ only in the lower bound.
 fn source_in_row(probe: &'static str, min: f64) -> crate::widgets::NumRow<'static> {
     crate::widgets::NumRow {
         label: "",
@@ -72,10 +72,10 @@ impl KtApp {
         });
     }
 
-    /// Новый источник Replace-морфера из ФАЙЛА: медиа добавляется в
-    /// проект (если его там не было) и подставляется морферу — одним
-    /// undo-шагом. Общая точка для системного диалога и дропа файла в
-    /// поле источника (Р.33 п.2).
+    /// A new source of a Replace morpher from a FILE: the media is added to the
+    /// project (if it was not there) and substituted into the morpher — in one
+    /// undo step. A common point for the system dialog and for dropping a file into the
+    /// source field (R.33 item 2).
     pub(crate) fn set_morph_source_file(&mut self, id: MorphId, path: &str) {
         let Some(mut ev) = self.model.project().morphers.iter().find(|m| m.id == id).cloned()
         else {
@@ -96,9 +96,9 @@ impl KtApp {
         self.apply_batch(cmds);
     }
 
-    /// Поле источника морф-слота: пикер медиа проекта с поиском, дроп
-    /// файла из системы, карточка из бина и сдвиг точки входа. Показано,
-    /// когда в полосе выбрана ГОЛОВА (Р.35 п.3).
+    /// The source field of the morph slot: the picker of project media with search, a drop of a
+    /// file from the system, a card from the bin, and a shift of the entry point. Shown
+    /// when the HEAD is selected in the strip (R.35 item 3).
     fn morph_source_section(
         &self,
         ui: &mut egui::Ui,
@@ -114,15 +114,15 @@ impl KtApp {
             .media
             .and_then(|id| media_list.iter().find(|(i, _)| *i == id).map(|(_, p)| p.clone()))
             .unwrap_or_else(|| tr(k::mrph::KEEP_SOURCE).to_string());
-        // Поле источника (Р.33 п.2): принимает дроп файла из системы и
-        // карточки из медиа-бина, открывает список медиа проекта с
-        // поиском и системный диалог файла.
+        // The source field (R.33 item 2): accepts a drop of a file from the system and
+        // cards from the media bin, opens the list of project media with search and the
+        // system file dialog.
         let frame =
             egui::Frame::group(ui.style()).fill(ui.visuals().extreme_bg_color).show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(tr(k::mrph::NEW_SOURCE));
-                    // то же усечение, что в полосе: имя файла тут ровно
-                    // то же самое, и без предела оно растягивало окно
+                    // the same truncation as in the strip: the file name here is exactly the
+                    // same, and without a limit it stretched the window
                     let nm = short_name(&cur_name);
                     let txt = crate::widgets::elided_name(
                         ui,
@@ -151,7 +151,7 @@ impl KtApp {
             });
         let rect = frame.response.rect;
         ed.src_rect = Some(rect);
-        // карточка из бина: тот же payload, что несёт перетаскивание на таймлайн
+        // a card from the bin: the same payload that a drag onto the timeline carries
         if ui.rect_contains_pointer(rect)
             && let Some(id) = egui::DragAndDrop::payload::<crate::bin_panel::BinDrag>(ui.ctx())
         {
@@ -168,7 +168,7 @@ impl KtApp {
             }
         }
         ui.separator();
-        // --- сдвиг source-in (delta / absolute, D4) ---------
+        // --- shift of source-in (delta / absolute, D4) ---------
         let mut absolute = ev.patch.absolute_source_in.is_some();
         if ui.checkbox(&mut absolute, tr(k::mrph::ABSOLUTE_IN)).changed() {
             ev.patch.absolute_source_in = absolute.then_some(Tick(0));
@@ -215,20 +215,20 @@ impl KtApp {
 
     #[allow(clippy::too_many_lines)]
     fn draw_one_morph_editor(&mut self, ctx: &egui::Context, ed: &mut MorphEditor) {
-        // морферу законны обе стороны — показываем всю библиотеку
+        // the morpher is legitimately given both sides — we show the whole library
         let preset_rows: Vec<crate::user_store::PresetRow> = self.presets.rows().to_vec();
         let mut preset_save: Option<kt_model::ops::FxChainBlock> = None;
         let mut preset_action: Option<crate::widgets::PresetAction> = None;
-        // событие исчезло (undo/удаление) — окно закрывается само (v1)
+        // the event disappeared (undo/deletion) — the window closes itself (v1)
         let Some(orig) = self.model.project().morphers.iter().find(|m| m.id == ed.id).cloned()
         else {
             ed.open = false;
             return;
         };
-        // с Р.35 морфер несёт и подмену, и цепочки — окно показывает всё
-        // сразу; подпись выбирается по СОДЕРЖИМОМУ, а не по «виду»
+        // from R.35 the morpher carries both the substitution and the chains — the window shows everything
+        // at once; the label is chosen by the CONTENT, not by the “kind”
         let is_batch = !orig.patch.video_fx.is_empty() || !orig.patch.audio_fx.is_empty();
-        // камеры для комбо Pan3d в FX-батче (Р.29)
+        // the camera for the Pan3d combo in the FX batch (R.29)
         let cameras: Vec<(u64, String)> = self
             .model
             .project()
@@ -238,7 +238,7 @@ impl KtApp {
                 (c.id.0, if c.name.is_empty() { format!("C{}", c.id.0) } else { c.name.clone() })
             })
             .collect();
-        // имена медиа для подписи морф-слота
+        // media names for the morph-slot label
         let media_names: Vec<(MediaId, String)> =
             self.model.project().media.iter().map(|m| (m.id, m.path.clone())).collect();
         let title = if is_batch {
@@ -250,18 +250,18 @@ impl KtApp {
         let mut changed = false;
         let mut bake = false;
         let mut delete = false;
-        // «Отмена» откатывает сессию окна (в окне FX так было всегда, у
-        // морфера отката не было вовсе — Р.33)
+        // “Cancel” rolls back the window session (in the FX window it was always so; the
+        // morpher had no rollback at all — R.33)
         let mut revert = false;
         let mut pick_file = false;
         let mut open = ed.open;
-        // чем заполняется замороженный список: регион приоритетнее
-        // выделения, оба расширяются link-группами (правило v1 —
-        // единственная точка сбора целей на всю программу)
+        // what fills the frozen list: the region takes priority over the
+        // selection, both are expanded by link groups (v1 rule —
+        // the single point of target collection for the whole program)
         let selection: Vec<ClipId> = self.morph_target_ids();
-        // имена ОДНОГО пространства: области и метки-диапазоны. `live` —
-        // те, что реально существуют: мёртвая ссылка остаётся в файле и
-        // рисуется ошибочным стилем (правило 16), а не выкидывается
+        // names of ONE namespace: areas and marker ranges. `live` —
+        // those that really exist: a dead reference stays in the file and
+        // is drawn in the error style (rule 16), not thrown away
         let areas_mode = matches!(orig.targets, MorphTargets::Areas { .. });
         let (all_names, live_names): (Vec<String>, Vec<(String, Tick)>) = {
             let p = self.model.project();
@@ -281,26 +281,26 @@ impl KtApp {
             }
         };
         let mut seek_to: Option<Tick> = None;
-        // просьбы про ось: замок один на программу (Р.40 п.15)
+        // the request about the axis: the lock is one per program (R.40 item 15)
         let mut axis_req = crate::automation::AxisReq::default();
         let mut need_selection = false;
-        // всё, что нужно автоматизации слоя (Р.38 п.13)
+        // everything the layer’s automation needs (R.38 item 13)
         let playhead = self.player.transport.playhead();
         let frame_step = 90_000 / self.model.project().settings.fps.max(1) as i64;
         let tl_view = self.tl_view();
-        // выключатель события (Р.33) — та же мастер-галка, что у цепочки
-        // события; буфер FX общий с окном событий
+        // the event’s toggle (R.33) — the same master checkbox as the event’s chain;
+        // the FX buffer is shared with the event windows
         let mut enabled = ev.enabled;
         let mut fx_clip = self.fx_clipboard.clone();
         let dflt_shape = self.model.document().settings.default_shape;
         let mut paste_req = false;
-        // подсказки — в статусбар, как везде (попапов в программе нет)
+        // hints — into the status bar, as everywhere (there are no popups in the program)
         let mut hover_out: Option<String> = None;
-        // цель правого клика в полосе цепочки (п.363): полоса — виджет,
-        // про KtApp она не знает, и цель отдаёт наружу
+        // the target of a right click in the chain strip (item 363): the strip is a widget,
+        // it knows nothing about KtApp, and it hands the target outward
         let mut panel_pick: Option<crate::ctx_menu::PanelTarget> = None;
-        // части контекста миниатюр пикера (Р.54): сервис и кэш текстур
-        // одалживаются ДО окна — внутри замыкания `self` занят моделью
+        // parts of the context of the picker’s thumbnails (R.54): the service and the texture cache
+        // are borrowed BEFORE the window — inside the closure `self` is taken by the model
         let pv_svc = &self.fx_thumbs;
         let pv_tick = playhead.0 - playhead.0.rem_euclid(frame_step);
         let pv_cam = kt_engine::resolve_cam3d(
@@ -330,8 +330,8 @@ impl KtApp {
             .vscroll(true)
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
-                // --- на кого и когда действует (Р.35) ------------------------
-                // ГРУППЫ по образцу «Трансформации» (Р.66): цели, источник, патч
+                // --- on whom and when it acts (R.35) ------------------------
+                // GROUPS after the “Transform” model (R.66): targets, source, patch
                 let frozen = ev.targets.clip_ids().to_vec();
                 crate::widgets::group(ui, "mrph.targets", tr(k::grp::TARGETS), |ui| {
                 ui.horizontal(|ui| {
@@ -355,10 +355,10 @@ impl KtApp {
                                 ev.targets = MorphTargets::Below;
                                 changed = true;
                             }
-                            // именованные ссылки (Р.35 п.2): область и
-                            // метка-диапазон живут в ОДНОМ пространстве
-                            // имён, поэтому и режимов ровно два, а не
-                            // «выберите сначала вид ссылки»
+                            // named references (R.35 item 2): an area and
+                            // a marker range live in ONE namespace,
+                            // therefore there are exactly two modes, not
+                            // “choose the reference kind first”
                             if ui.selectable_label(false, tr(k::mrph::ON_AREAS)).clicked()
                                 && !matches!(ev.targets, MorphTargets::Areas { .. })
                             {
@@ -371,9 +371,9 @@ impl KtApp {
                                 ev.targets = MorphTargets::Marks { names: Vec::new() };
                                 changed = true;
                             }
-                            // замораживаем ТЕКУЩЕЕ выделение; пустой
-                            // список у Clips запрещён моделью, поэтому
-                            // отказ показывается ошибкой, а не молчанием
+                            // we freeze the CURRENT selection; an empty
+                            // list for Clips is forbidden by the model, therefore
+                            // a refusal is shown as an error, not as silence
                             let sel: Vec<ClipId> =
                                 if frozen.is_empty() { selection.clone() } else { frozen.clone() };
                             let label = crate::tf!(k::mrph::ON_CLIPS, sel.len());
@@ -388,8 +388,8 @@ impl KtApp {
                         },
                     );
                     let mut timed = ev.timed;
-                    // в ссылочных режимах время задаёт САМА ссылка —
-                    // галка тут ничего не решает и честно гаснет
+                    // in reference modes the time is set by the reference itself —
+                    // the checkbox decides nothing here and honestly fades out
                     let by_ref = matches!(
                         ev.targets,
                         MorphTargets::Areas { .. } | MorphTargets::Marks { .. }
@@ -443,11 +443,11 @@ impl KtApp {
                 });
                 ui.separator();
 
-                // Р.35 п.3: ОДНА полоса цепочки, в которой первым
-                // стоит фиолетовый морф-слот (подмена источника). Виды
-                // эффектов в патче лежат раздельно (video/audio), но
-                // пользователю это не показываем: полоса склеивает их и
-                // раскладывает обратно по `FxInstance::class()`.
+                // R.35 item 3: ONE strip of the chain, in which the first
+                // is the purple morph slot (source substitution). The effect kinds in the patch
+                // lie separately (video/audio), but the user is not shown this: the strip glues them
+                // together and
+                // splits them back by `FxInstance::class()`.
                 let (mut fx, mut bypass, mut auto, split) = merge_chains(&ev.patch);
                 let mut src_on = !ev.patch.src_off;
                 let mut pv = crate::fx_thumbs::PickerCtx::new(
@@ -466,8 +466,8 @@ impl KtApp {
                         fx: &mut fx,
                         bypass: &mut bypass,
                         auto: &mut auto,
-                        // морферу показываем ВСЕ пресеты: в патче законны
-                        // цепочки обоих видов (split_chains разложит)
+                        // the morpher shows ALL presets: chains of both kinds are legitimate in the patch
+                        // (split_chains will sort them)
                         presets: crate::widgets::ChainPresets {
                             rows: &preset_rows,
                             save: &mut preset_save,
@@ -487,17 +487,17 @@ impl KtApp {
                     &mut fx_clip,
                     kt_time::Tick(0),
                     &mut hover_out,
-                    // у морфер-цепочки нет клипа-владельца: адресуем её
-                    // номером морфера — оба живут в своём пространстве имён
+                    // a morpher chain has no owning clip: we address it by the morpher’s
+                    // number — both live in their own namespace
                     &mut crate::widgets::ChainCtx {
                         chain: kt_model::ClipId(ed.id.0),
                         picked: &mut panel_pick,
                     },
-                    // Морфер: WYSIWYG невозможен по построению — слой
-                    // красит МНОГО целей (Below/Marks/Areas), и «первая
-                    // цель у курсора» нестабильна. Показываем встроенный
-                    // образец: он детерминирован и честно говорит, ЧТО
-                    // делает вариант, не притворяясь кадром монтажа.
+                    // Morpher: WYSIWYG is impossible by construction — the layer
+                    // paints MANY targets (Below/Marks/Areas), and “the first
+                    // target under the cursor” is unstable. We show the built-in
+                    // sample: it is deterministic and honestly says WHAT
+                    // the variant does, without pretending to be a frame of the edit.
                     Some(&mut pv),
                 );
                 if ch.any() {
@@ -505,10 +505,10 @@ impl KtApp {
                     split_chains(&mut ev.patch, &fx, &bypass, &auto, split);
                     changed = true;
                 }
-                // СИЛА и ФЕЙДЫ слоя (Р.38 п.12, дословно: «у морфера нет
-                // возможности применить fade и opacity — план не
-                // соблюден»). Одна строка на всё: сила — доля наложения,
-                // фейды — её нарастание и затухание у краёв блока.
+                // STRENGTH and FADES of the layer (R.38 item 12, verbatim: “the morpher has no
+                // way to apply fade and opacity — the plan is not
+                // kept”). One line for everything: the strength is the share of blending,
+                // the fades are its rise and fall at the edges of the block.
                 ui.horizontal(|ui| {
                     ui.label(tr(k::mrph::STRENGTH));
                     let mut s = ev.strength;
@@ -575,12 +575,12 @@ impl KtApp {
                         }
                     }
                     crate::widgets::ChainSel::Fx(i) => {
-                        // ПАТЧ — своя группа (Р.66): параметры слоя и их кривые
+                        // PATCH — its own group (R.66): the layer’s parameters and their curves
                         crate::widgets::group(ui, "mrph.patch", tr(k::grp::PATCH), |ui| {
-                        // Параметры и АВТОМАТИЗАЦИЯ — тем же кодом, что в
-                        // окне события (Р.38 п.13). Домен кривых слоя —
-                        // время БЛОКА: у морфера нет материала, он слой
-                        // правок. Тот же домен, что у камеры и перехода.
+                        // Parameters and AUTOMATION — by the same code as in the
+                        // event window (R.38 item 13). The layer’s curve domain is the
+                        // time of the BLOCK: the morpher has no material, it is a layer of
+                        // edits. The same domain as the camera and the transition.
                         let at = kt_time::Tick((playhead.0 - ev.start.0).clamp(0, ev.duration.0));
                         let view_sel = ed.auto_views.get(&i).and_then(|v| v.sel);
                         let mut slot_auto = auto.get(i).cloned().unwrap_or_default();
@@ -588,8 +588,8 @@ impl KtApp {
                             crate::widgets::CurveBind { curves: &mut slot_auto, sel: view_sel, at };
                         let mut slot_changed = false;
                         if let Some(f) = fx.get_mut(i) {
-                            // у морфера обе правки едут одной командой
-                            // SetMorpher, поэтому флаги схлопываются
+                            // for the morpher both edits travel in one command
+                            // SetMorpher, therefore the flags collapse
                             slot_changed |= crate::fx_editor::draw_video_fx_params(
                                 ui,
                                 f,
@@ -597,9 +597,9 @@ impl KtApp {
                                 &cameras,
                                 false,
                                 &mut hover_out,
-                                // у слота морфер-ПАТЧА адреса не
-                                // существует (`ParamOwner` его не знает),
-                                // и мёртвого пункта меню тут не будет
+                                // the morpher PATCH slot has no address
+                                // (`ParamOwner` does not know it),
+                                // and no dead menu item will appear here
                                 None,
                             )
                             .any();
@@ -676,15 +676,15 @@ impl KtApp {
                 });
                 });
             });
-        // рамка окна целиком — по ней режут скриншоты лендинга (site/screenshots.py)
+        // the window frame as a whole — landing-page screenshots are cropped by it (site/screenshots.py)
         if let Some(r) = &shown {
             crate::widgets::field_probe::note("win.morpher", r.response.rect);
         }
         ed.open = open;
 
-        // системный диалог файла: новый источник может не быть в проекте
+        // system file dialog: the new source may not be in the project
         if pick_file && let Some(path) = rfd::FileDialog::new().pick_file() {
-            // окно остаётся открытым: пользователь видит новый источник
+            // the window stays open: the user sees the new source
             self.set_morph_source_file(ed.id, &path.to_string_lossy());
             return;
         }
@@ -711,17 +711,17 @@ impl KtApp {
         }
         self.fx_clipboard = fx_clip;
         if need_selection {
-            // невозможность действия — ошибкой, а не блёклой строкой (п.16 р.28)
+            // an impossible action is an error, not a faded line (item 16 round 28)
             self.note(tr(k::mrph::NEED_SELECTION));
         }
-        // просьбы графика про ОСЬ применяет одно место (Р.40 п.15)
+        // the graph’s requests about the AXIS are applied in one place (R.40 item 15)
         self.apply_axis_req(axis_req);
         if let Some(t) = seek_to {
-            // клик по чипу подматывает таймлайн к этому месту
+            // clicking a chip scrolls the timeline to this place
             self.player.seek(t);
         }
         if let Some(t) = panel_pick {
-            self.set_panel_target(t); // цели гасят друг друга (п.363)
+            self.set_panel_target(t); // goals cancel each other out (item 363)
         }
         if let Some(h) = hover_out {
             self.hover_hint = Some(h);
@@ -732,8 +732,8 @@ impl KtApp {
             self.apply_coalesced(Command::SetMorpher(ev), ed.gesture);
         }
 
-        // запросы полосы по пресетам (Р.48): полоса их только кладёт —
-        // файл пишет окно, потому что диалог имени живёт у приложения
+        // requests of the strip for presets (R.48): the strip only puts them there —
+        // the file is written by the window, because the name dialog lives in the app
         if let Some(block) = preset_save.take() {
             self.preset_save = Some(crate::app::PresetSaveDialog {
                 block,
@@ -745,7 +745,7 @@ impl KtApp {
         match preset_action.take() {
             Some(crate::widgets::PresetAction::Rename(old)) => {
                 self.preset_save = Some(crate::app::PresetSaveDialog {
-                    // переименование блок не использует
+                    // rename does not use the block
                     block: kt_model::ops::FxChainBlock {
                         slots: vec![],
                         src_in: kt_time::Tick(0),
@@ -772,8 +772,8 @@ fn short_name(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
-/// Подпись фиолетового морф-слота: что подмена ДЕЛАЕТ. «Источник не
-/// менять» — честное состояние, а не пустое место: слот приколот всегда.
+/// Caption of the purple morph slot: what the substitution DOES. “Do not change source”
+/// is an honest state, not an empty place: the slot is always pinned.
 fn head_label(patch: &MorphPatch, media: &[(MediaId, String)]) -> String {
     match patch.media {
         Some(id) => {
@@ -791,17 +791,17 @@ fn head_label(patch: &MorphPatch, media: &[(MediaId, String)]) -> String {
     }
 }
 
-/// Склеить обе цепочки патча в ОДНУ полосу. `split` запоминает, сколько
-/// слотов было видео: обратная раскладка идёт по `FxInstance::class()`,
-/// а число нужно только для проверки, что порядок не потерялся.
+/// Glue both patch chains into ONE strip. `split` remembers how many slots were video:
+/// the reverse layout goes by `FxInstance::class()`, and the count is needed only to check
+/// that the order was not lost.
 type Merged = (Vec<FxInstance>, Vec<bool>, Vec<Vec<kt_model::ParamCurve>>, usize);
 
 fn merge_chains(patch: &MorphPatch) -> Merged {
     let mut fx = patch.video_fx.clone();
     let mut bypass = patch.video_bypass.clone();
     bypass.resize(fx.len(), false);
-    // кривые едут вместе со слотами (Р.38 п.13) — иначе перестановка
-    // мышью в полосе увозила бы эффект без его автоматизации
+    // curves travel together with the slots (R.38 item 13) — otherwise moving an effect by mouse
+    // in the strip would carry it away from its automation
     let mut auto = patch.video_auto.clone();
     auto.resize(fx.len(), Vec::new());
     let n = fx.len();
@@ -815,9 +815,9 @@ fn merge_chains(patch: &MorphPatch) -> Merged {
     (fx, bypass, auto, n)
 }
 
-/// Разложить полосу обратно по видам. Вид слота — функция от самого
-/// эффекта (`is_audio`), поэтому склейка обратима без побочных таблиц;
-/// относительный порядок внутри каждого вида сохраняется.
+/// Split the strip back by kind. The slot kind is a function of the effect itself
+/// (`is_audio`), so the gluing is reversible without side tables; the relative order
+/// within each kind is preserved.
 fn split_chains(
     patch: &mut MorphPatch,
     fx: &[FxInstance],
@@ -846,10 +846,10 @@ fn split_chains(
     }
 }
 
-/// Строка ссылок морфера: чипы с крестиками и `[+ ссылка]` тем же
-/// popup'ом с поиском, что медиа-пикер. Мёртвая ссылка (имя, которого в
-/// проекте нет) рисуется ошибочным стилем — это не «пусто», а «сломано»
-/// (п.16 р.28). Клик по живому чипу подматывает таймлайн.
+/// Morpher link row: chips with crosses and `[+ link]` by the same popup with search
+/// as the media picker. A dead link (a name that is not in the project) is drawn in the
+/// error style — it is not “empty” but “broken” (item 16 round 28). A click on a live
+/// chip scrolls the timeline.
 #[allow(clippy::too_many_arguments)]
 fn refs_row(
     ui: &mut egui::Ui,
@@ -888,7 +888,7 @@ fn refs_row(
                 remove = Some(i);
             }
         }
-        // добавление — тот же popup с поиском, что у медиа-пикера
+        // adding — the same popup with search as the media picker
         let free: Vec<(u64, String)> = all
             .iter()
             .enumerate()

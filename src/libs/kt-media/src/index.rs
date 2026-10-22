@@ -1,17 +1,17 @@
-//! Sidecar индекс-БД медиа (`<project>.ktindex.db`, SQLite).
-//! Схема и правила инвалидации — docs/media-index.md. Это КЭШ: потеря или
-//! повреждение не ошибка, БД пересоздаётся. Решает дефекты m (шторм декодов
-//! тумбнейлов/волноформ при скролле/зуме) и j (пересканирование файлов на
-//! каждый запуск) — см. docs/porting-notes.md.
+//! Sidecar media index DB (`<project>.ktindex.db`, SQLite).
+//! Schema and invalidation rules — docs/media-index.md. This is a CACHE: loss or
+//! corruption is not an error, the DB is recreated. Solves defects m (storm of
+//! thumbnail/waveform decodes on scroll/zoom) and j (rescanning files on
+//! every launch) — see docs/porting-notes.md.
 
 use crate::{MediaSource, PEAK_BLOCK_FRAMES};
 use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::{Path, PathBuf};
 
-// v2: audio_seek/video_keyframes (по строке на пакет, никогда не писались)
-// заменены на packet_index с блобами i64 LE — персист пакетного индекса
-// FfmpegSource (быстрое открытие больших файлов). Бамп = пересоздание БД.
+// v2: audio_seek/video_keyframes (one row per packet, never written)
+// replaced by packet_index with i64 LE blobs — persisted packet index of
+// FfmpegSource (fast opening of large files). A bump = DB recreation.
 pub const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Debug, thiserror::Error)]
@@ -22,12 +22,12 @@ pub enum IndexError {
     Io(#[from] std::io::Error),
 }
 
-/// Что произошло с записью медиа при открытии.
+/// What happens to the media record on opening.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediaEntryStatus {
-    /// Записи актуальны (size/mtime совпали, либо mtime сменился, но хэш тот же).
+    /// Records are current (size/mtime matched, or mtime changed but the hash is the same).
     Reused,
-    /// Содержимое изменилось или записи не было — секции надо строить заново.
+    /// Content changed or no record existed — sections must be built anew.
     Rebuilt,
 }
 
@@ -64,8 +64,8 @@ fn hash_file(path: &Path) -> std::io::Result<[u8; 16]> {
 }
 
 impl MediaIndexDb {
-    /// Открыть/создать. Битая или чужая БД молча пересоздаётся (правило 3
-    /// docs/media-index.md) — это кэш, падать из-за него нельзя.
+    /// Open/create. A broken or foreign DB is silently recreated (rule 3 of
+    /// docs/media-index.md) — this is a cache, it must not fail because of it.
     pub fn open(path: &Path) -> Result<MediaIndexDb, IndexError> {
         match Self::try_open(path) {
             Ok(db) => Ok(db),
@@ -79,8 +79,8 @@ impl MediaIndexDb {
     fn try_open(path: &Path) -> Result<MediaIndexDb, IndexError> {
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
-        // БД открывают несколько потоков (index-worker, тумбы, открытие
-        // источников) — короткие записи не должны падать по SQLITE_BUSY.
+        // The DB is opened by several threads (index-worker, thumbs, opening of
+        // sources) — short writes must not fail with SQLITE_BUSY.
         conn.busy_timeout(std::time::Duration::from_millis(5000))?;
         let version: Option<i64> = conn
             .query_row("SELECT value FROM meta WHERE key='schema_version'", [], |r| r.get(0))
@@ -89,7 +89,7 @@ impl MediaIndexDb {
         match version {
             Some(v) if v == SCHEMA_VERSION => {}
             Some(_) => {
-                // бамп схемы → полная перестройка (правило 2)
+                // schema bump → full rebuild (rule 2)
                 drop(conn);
                 std::fs::remove_file(path)?;
                 return Self::try_open(path);
@@ -128,10 +128,10 @@ impl MediaIndexDb {
                 )?;
             }
         }
-        // Аддитивные таблицы создаются ПРИ КАЖДОМ открытии (IF NOT EXISTS):
-        // так новая таблица появляется и в уже существующих БД, не требуя
-        // бампа SCHEMA_VERSION (бамп сносит packet_index/peaks/тумбы всех
-        // медиа проекта — слишком дорого ради одной таблицы).
+        // Additive tables are created on EVERY opening (IF NOT EXISTS):
+        // so a new table appears even in existing DBs, without requiring a
+        // SCHEMA_VERSION bump (a bump wipes packet_index/peaks/thumbs of all
+        // project media — too expensive for the sake of one table).
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS poster (
                media_id INTEGER PRIMARY KEY,
@@ -180,8 +180,8 @@ impl MediaIndexDb {
         &self.path
     }
 
-    /// Проверка идентичности файла и инвалидация ТОЛЬКО его записей
-    /// (правило 1 docs/media-index.md). Возвращает (media_id, статус).
+    /// Identity check of the file and invalidation of ONLY its records
+    /// (rule 1 of docs/media-index.md). Returns (media_id, status).
     pub fn ensure_media(&mut self, file: &Path) -> Result<(i64, MediaEntryStatus), IndexError> {
         let ident = file_identity(file)?;
         let key = file.to_string_lossy().to_string();
@@ -196,18 +196,18 @@ impl MediaIndexDb {
 
         if let Some((id, size, mtime_ns, stored_hash)) = row {
             if size == ident.size && mtime_ns == ident.mtime_ns {
-                return Ok((id, MediaEntryStatus::Reused)); // быстрый путь
+                return Ok((id, MediaEntryStatus::Reused)); // fast path
             }
             let hash = hash_file(file)?;
             if size == ident.size && stored_hash == hash {
-                // содержимое то же, только mtime — обновляем и переиспользуем
+                // the content is the same, only mtime — we update and reuse
                 self.conn.execute(
                     "UPDATE media SET mtime_ns=?1 WHERE media_id=?2",
                     params![ident.mtime_ns, id],
                 )?;
                 return Ok((id, MediaEntryStatus::Reused));
             }
-            // содержимое изменилось: чистим ТОЛЬКО этот media_id
+            // content changed: we clear ONLY this media_id
             self.purge_media(id)?;
             self.conn.execute(
                 "UPDATE media SET size=?1, mtime_ns=?2, xxhash=?3, complete=0 WHERE media_id=?4",
@@ -224,27 +224,27 @@ impl MediaIndexDb {
         Ok((self.conn.last_insert_rowid(), MediaEntryStatus::Rebuilt))
     }
 
-    /// Таблицы ЛЕНТ (`reel_*`, Р.58) здесь НЕ трогаются намеренно: они
-    /// ключуются содержимым (лента, редакция, отпечаток медиа), а не
-    /// `media_id`, и подмену файла ловит сам отпечаток — см. `reel_preview`.
+    /// Reel tables (`reel_*`, R.58) are deliberately NOT touched here: they are
+    /// keyed by content (reel, edit, media fingerprint), not by
+    /// `media_id`, and a file swap is caught by the fingerprint itself — see `reel_preview`.
     fn purge_media(&self, media_id: i64) -> Result<(), IndexError> {
         for table in ["packet_index", "audio_peaks", "thumbnails", "poster", "loudness"] {
             self.conn
                 .execute(&format!("DELETE FROM {table} WHERE media_id=?1"), params![media_id])?;
         }
-        // Сдвиг синхронизации — про ПАРУ, и однородное `WHERE media_id=?1`
-        // его не чистит: файл, оказавшийся не тем, делает недействительными
-        // обе стороны каждой своей пары (Р.49, п.369).
+        // The sync offset is about a PAIR, and the uniform `WHERE media_id=?1` does
+        // not clear it: a file that turned out to be the wrong one invalidates
+        // both sides of each of its pairs (R.49, item 369).
         self.conn
             .execute("DELETE FROM sync_offset WHERE a_media=?1 OR b_media=?1", params![media_id])?;
         Ok(())
     }
 
-    // ---- результаты офлайн-анализа (Р.49, п.369) --------------------------
+    // ---- results of offline analysis (R.49, item 369) --------------------------
     //
-    // Целые ×100, а не f64: round-trip обязан быть байт-точным, иначе
-    // «пересчитали то же самое» давало бы другое число в последнем знаке, и
-    // отличить «пересчитали» от «изменилось» стало бы нечем.
+    // Integers ×100, not f64: the round-trip must be byte-exact, otherwise
+    // “recalculated the same thing” would give a different number in the last digit, and
+    // there would be no way to tell “recalculated” from “changed”.
 
     pub fn set_loudness(
         &self,
@@ -266,7 +266,7 @@ impl MediaIndexDb {
         Ok(())
     }
 
-    /// (LUFS, dBTP, LRA) или `None`, если ещё не мерили.
+    /// (LUFS, dBTP, LRA) or `None` if not measured yet
     pub fn loudness(&self, media_id: i64) -> Result<Option<(f64, f64, f64)>, IndexError> {
         let mut st = self
             .conn
@@ -281,8 +281,8 @@ impl MediaIndexDb {
         }
     }
 
-    /// Сдвиг B относительно A в тиках и уверенность 0..1. Ключ —
-    /// УПОРЯДОЧЕННАЯ пара: знак сдвига от порядка зависит.
+    /// Shift of B relative to A in ticks, and confidence 0..1. The key is an
+    /// ORDERED pair: the sign of the shift depends on the order.
     pub fn set_sync_offset(
         &self,
         a_media: i64,
@@ -333,8 +333,8 @@ impl MediaIndexDb {
         Ok(())
     }
 
-    /// Построить и сохранить peak-пирамиду из аудио источника.
-    /// Level 0 — блок 256 кадров; level n — блок 256·2ⁿ. Значения (min,max) i16.
+    /// Build and save a peak pyramid from an audio source.
+    /// Level 0 — a block of 256 frames; level n — a block of 256·2ⁿ. Values (min,max) i16.
     pub fn build_audio_peaks(
         &mut self,
         media_id: i64,
@@ -343,9 +343,9 @@ impl MediaIndexDb {
         self.build_audio_peaks_observed(media_id, source, &mut |_| {})
     }
 
-    /// То же с наблюдателем за burst'ами (Р.49, п.373): громкость материала
-    /// считается на проходе, который И ТАК ИДЁТ, — второй полный декод ради
-    /// LUFS на часовом исходнике это минуты.
+    /// The same with an observer of bursts (R.49, item 373): the material's loudness
+    /// is computed on the pass that runs ANYWAY — a second full decode for the sake of
+    /// LUFS on an hour-long source is minutes.
     pub fn build_audio_peaks_observed(
         &mut self,
         media_id: i64,
@@ -367,24 +367,24 @@ impl MediaIndexDb {
         Ok(())
     }
 
-    // ---- превью ЛЕНТЫ на диске (Р.58, п.463) --------------------------------
+    // ---- reel PREVIEW on disk (R.58, item 463) --------------------------------
     //
-    // У ленты нет файла, и `media(path, size, mtime, xxhash)` ей не дом:
-    // ключ — СОДЕРЖИМОЕ. `seq` — id ленты (переживает save→load, t431),
-    // `hash` — редакция (`kt_engine::content_hash`), `media_fp` — отпечаток
-    // файлов дерева ленты (путь, размер, mtime): редакция файла не видит,
-    // и без отпечатка подменённый исходник показывал бы старую полосу.
-    // Одна версия на ленту: новая запись вытесняет прежнюю целиком.
+    // A reel has no file, and `media(path, size, mtime, xxhash)` is not its home:
+    // the key is the CONTENT. `seq` — the reel id (survives save→load, t431),
+    // `hash` — the edit (`kt_engine::content_hash`), `media_fp` — the fingerprint of the
+    // reel's tree files (path, size, mtime): the file's revision does not see it, and
+    // without the fingerprint a swapped source would show the old strip.
+    // One version per reel: a new record evicts the previous one entirely.
 
-    /// Сохранить полосу кадров и пирамиду пиков ленты одной транзакцией.
-    /// `frames[i]` — JPEG кадра `i * step`, `None` — кадра не было (строки
-    /// нет). `hash`/`media_fp` кладутся как i64 побитово.
+    /// Save the frame strip and the reel's peak pyramid in one transaction.
+    /// `frames[i]` — the JPEG of frame `i * step`, `None` — the frame was absent (no
+    /// row). `hash`/`media_fp` are stored as i64 bitwise.
     #[allow(clippy::too_many_arguments)]
-    /// КАДРЫ полосы — своей транзакцией, СРАЗУ после кадровой стадии
-    /// (Р.67). Раньше запись шла одна и только после аудио-стадии: полоса,
-    /// уже дошедшая до экрана, до диска не доживала, если задачу отменили
-    /// (пауза, правка, закрытие) — и при следующем открытии проекта лента
-    /// рендерилась заново («превью композиции ОПЯТЬ не сохраняются»).
+    /// The FRAMES of the strip — in their own transaction, RIGHT AFTER the frame stage
+    /// (R.67). Previously the write was single and came only after the audio stage: a strip
+    /// that had already reached the screen did not survive to disk if the task was cancelled
+    /// (pause, edit, close) — and on the next project opening the reel was rendered
+    /// anew (“the composition preview is AGAIN not saved”).
     pub fn put_reel_frames(
         &mut self,
         seq: i64,
@@ -415,11 +415,11 @@ impl MediaIndexDb {
         Ok(())
     }
 
-    /// ПИКИ той же полосы — отдельной транзакцией и ПОЗЖЕ. Пишутся только
-    /// к строке с тем же ключом: разошлась редакция — пики не наши.
-    /// Флага в схеме нет: «пики есть» — это непустая `reel_peaks`, и
-    /// бампать `schema_version` (он сносит пакетный индекс, пики и тумбы
-    /// ВСЕХ медиа проекта) ради одного булева нельзя.
+    /// The PEAKS of the same strip — in a separate transaction and LATER. They are written
+    /// only to a row with the same key: if the edit diverged, the peaks are not ours.
+    /// There is no flag in the schema: “peaks exist” means a non-empty `reel_peaks`, and
+    /// bumping `schema_version` (which wipes the packet index, peaks and thumbs of ALL
+    /// project media) for the sake of one boolean is not allowed.
     pub fn put_reel_peaks(
         &mut self,
         seq: i64,
@@ -436,7 +436,7 @@ impl MediaIndexDb {
             )
             .optional()?;
         if same.is_none() {
-            return Ok(()); // полосы с этим ключом нет — пики не к чему класть
+            return Ok(()); // there is no strip with this key — the peaks have nowhere to go
         }
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM reel_peaks WHERE seq=?1", params![seq])?;
@@ -452,8 +452,8 @@ impl MediaIndexDb {
         Ok(())
     }
 
-    /// Превью ленты, если на диске лежит ИМЕННО эта редакция с ТЕМИ ЖЕ
-    /// файлами; любое расхождение — `None`, и ленту рендерят заново.
+    /// The reel preview, if the disk holds EXACTLY this edit with the SAME
+    /// files; any mismatch — `None`, and the reel is rendered anew.
     pub fn reel_preview(
         &self,
         seq: i64,
@@ -494,8 +494,8 @@ impl MediaIndexDb {
             }
             levels.push(channels);
         }
-        // ПИКОВ МОЖЕТ НЕ БЫТЬ: кадры пишутся раньше, и полоса без
-        // огибающей — законное промежуточное состояние (Р.67)
+        // PEAKS MAY BE ABSENT: frames are written earlier, and a strip without an
+        // envelope is a legitimate intermediate state (R.67).
         let has_peaks = !levels.is_empty();
         Ok(Some(ReelPreviewRow {
             step,
@@ -506,8 +506,8 @@ impl MediaIndexDb {
         }))
     }
 
-    /// Убрать превью лент, которых в проекте больше нет. Возвращает число
-    /// убранных лент.
+    /// Remove the previews of reels that are no longer in the project. Returns the
+    /// number of removed reels.
     pub fn prune_reels(&mut self, keep: &[i64]) -> Result<usize, IndexError> {
         let stored: Vec<i64> = {
             let mut st = self.conn.prepare("SELECT seq FROM reel_strip")?;
@@ -528,8 +528,8 @@ impl MediaIndexDb {
         Ok(gone.len())
     }
 
-    /// Сохранить пакетный индекс потока (`stream` = "audio" | "video");
-    /// значения — pts в timebase потока, блоб i64 LE.
+    /// Save the packet index of a stream (`stream` = “audio” | “video”);
+    /// values are pts in the stream's timebase, an i64 LE blob.
     pub fn put_packet_index(
         &self,
         media_id: i64,
@@ -547,8 +547,8 @@ impl MediaIndexDb {
         Ok(())
     }
 
-    /// Пакетный индекс потока, если сохранён. None = не строился
-    /// (пустой Vec — валидный индекс файла без такого потока).
+    /// The stream's packet index, if saved. None = not built
+    /// (an empty Vec is a valid index of a file without such a stream).
     pub fn packet_index(
         &self,
         media_id: i64,
@@ -569,7 +569,7 @@ impl MediaIndexDb {
         }))
     }
 
-    /// JPEG-тумбнейл на момент t (тики), если уже построен.
+    /// JPEG thumbnail at time t (ticks), if already built.
     pub fn thumbnail(&self, media_id: i64, t_ticks: i64) -> Result<Option<Vec<u8>>, IndexError> {
         Ok(self
             .conn
@@ -581,9 +581,9 @@ impl MediaIndexDb {
             .optional()?)
     }
 
-    /// Ближайший тумбнейл в допуске max_dist тиков (п.14 р.7): скраб бина
-    /// переиспользует тумбы, записанные филмстрипом с другим шагом. BETWEEN
-    /// по PK (media_id, t_ticks) — range-scan, ABS только на кандидатах.
+    /// The nearest thumbnail within tolerance max_dist ticks (item 14, round 7): the bin
+    /// scrub reuses thumbs written by the filmstrip with another step. BETWEEN
+    /// on PK (media_id, t_ticks) — range scan, ABS only on the candidates.
     pub fn thumbnail_near(
         &self,
         media_id: i64,
@@ -602,9 +602,9 @@ impl MediaIndexDb {
             .optional()?)
     }
 
-    /// Постер медиа: момент самого информативного кадра (п.4 р.9).
-    /// `t_ticks < 0` — «информативного кадра нет» (негативный кэш: аудио,
-    /// битое видео) — повторно не ищем.
+    /// Media poster: the moment of the most informative frame (item 4, round 9).
+    /// `t_ticks < 0` — “no informative frame” (negative cache: audio,
+    /// broken video) — not searched again.
     pub fn poster(&self, media_id: i64) -> Result<Option<i64>, IndexError> {
         Ok(self
             .conn
@@ -622,11 +622,11 @@ impl MediaIndexDb {
         Ok(())
     }
 
-    /// Размер, в котором записаны тумбы медиа (Р.62, t719). Строки НЕТ у
-    /// сайдкаров, собранных до приведения тумб к виду источника: их тумбы
-    /// 320×180 раздавлены, и читать их нельзя — они перестраиваются при
-    /// первом заказе. Таблица аддитивна: бампа схемы (и потери индекса и
-    /// пиков всех медиа) ради этого не нужно.
+    /// The size at which the media's thumbs are written (R.62, t719). Sidecars built before
+    /// the thumbs were conformed to the source's form have NO such row: their thumbs
+    /// 320×180 are squashed, and they must not be read — they are rebuilt on the
+    /// first request. The table is additive: no schema bump (and loss of the index and
+    /// peaks of all media) is needed for this.
     pub fn thumb_size(&self, media_id: i64) -> Result<Option<(u32, u32)>, IndexError> {
         Ok(self
             .conn
@@ -657,7 +657,7 @@ impl MediaIndexDb {
         Ok(())
     }
 
-    /// Прочитать уровень пирамиды канала: Vec<(min, max)> по блокам.
+    /// Read a channel's pyramid level: Vec<(min, max)> by blocks.
     pub fn audio_peaks(
         &self,
         media_id: i64,
@@ -676,8 +676,8 @@ impl MediaIndexDb {
     }
 }
 
-/// Блоб уровня пирамиды: interleaved (min:i16, max:i16) LE на блок — один
-/// формат у `audio_peaks` и `reel_peaks`.
+/// A pyramid level blob: interleaved (min:i16, max:i16) LE per block — one
+/// format for `audio_peaks` and `reel_peaks`.
 fn peaks_blob(blocks: &[(i16, i16)]) -> Vec<u8> {
     let mut blob = Vec::with_capacity(blocks.len() * 4);
     for &(mn, mx) in blocks {
@@ -693,22 +693,22 @@ fn peaks_from_blob(b: &[u8]) -> Vec<(i16, i16)> {
         .collect()
 }
 
-/// Превью ленты с диска (Р.58): полоса JPEG-кадров по шагу `step` и
-/// пирамида пиков в том же виде, в каком её строит `PeakAcc::finish`.
+/// Reel preview from disk (R.58): a strip of JPEG frames at step `step` and a
+/// peak pyramid in the same form that `PeakAcc::finish` builds.
 #[derive(Debug)]
 pub struct ReelPreviewRow {
     pub step: i64,
     pub end_ticks: i64,
-    /// `frames[i]` — JPEG кадра `i * step`; `None` — кадра не было.
+    /// `frames[i]` — JPEG of frame `i * step`; `None` — the frame was absent.
     pub frames: Vec<Option<Vec<u8>>>,
     pub peaks: PeakPyramid,
-    /// Огибающая на диске УЖЕ есть. Кадры пишутся раньше пиков (Р.67),
-    /// и полоса без них — законное состояние: кадры отдаются с диска, а
-    /// пики дописываются следующей задачей.
+    /// The envelope is ALREADY on disk. Frames are written before the peaks (R.67),
+    /// and a strip without them is a legitimate state: frames are served from disk, and
+    /// the peaks are appended by the next task.
     pub has_peaks: bool,
 }
 
-/// Peak-пирамида в памяти (тест 15 сравнивает её с пересчётом в лоб).
+/// In-memory peak pyramid (test 15 compares it with a naive recomputation).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PeakPyramid {
     /// levels[level][channel][block] = (min, max)
@@ -720,15 +720,15 @@ impl PeakPyramid {
         Self::build_observed(source, &mut |_| {})
     }
 
-    /// То же, но КАЖДЫЙ прочитанный burst показывается наблюдателю
-    /// (Р.49, п.369).
+    /// The same, but EVERY burst that is read is shown to the observer
+    /// (R.49, item 369).
     ///
-    /// Зачем: громкость материала и его огибающая считаются на проходе,
-    /// который И ТАК ИДЁТ. Второй проход по файлу ради LUFS означал бы
-    /// второй полный декод — на часовом исходнике это минуты.
+    /// Why: the material's loudness and its envelope are computed on the pass that
+    /// runs ANYWAY. A second pass over the file for LUFS would mean a second full
+    /// decode — on an hour-long source that is minutes.
     ///
-    /// Пирамида от наблюдателя НЕ ЗАВИСИТ: тот только смотрит, и `build`
-    /// остаётся байт-в-байт прежней (t15 цел).
+    /// The pyramid from the observer is NOT DEPENDENT: it only watches, and `build`
+    /// remains byte-for-byte the same (t15 intact).
     pub fn build_observed(
         source: &mut dyn MediaSource,
         observe: &mut dyn FnMut(&crate::AudioBurst),
@@ -745,12 +745,12 @@ impl PeakPyramid {
     }
 }
 
-/// Накопитель пирамиды по ПОТОКУ сэмплов (Р.56, п.452).
+/// Peak-pyramid accumulator over a STREAM of samples (R.56, item 452).
 ///
-/// Выделен из `build_observed` и им же используется — арифметика одна, и
-/// t15 остаётся байт-в-байт. Нужен службе превью ленты: у ленты нет файла,
-/// её огибающая берётся с готового суб-микса, который отдаёт `AudioRenderer`
-/// кусками, а не `MediaSource`.
+/// Factored out of `build_observed` and used by it too — the arithmetic is one, and
+/// t15 remains byte-for-byte. It is needed by the reel preview service: a reel has no
+/// file, its envelope is taken from the ready sub-mix that `AudioRenderer` hands out
+/// in chunks, not from a `MediaSource`.
 #[derive(Default)]
 pub struct PeakAcc {
     level0: Vec<Vec<(i16, i16)>>,
@@ -759,7 +759,7 @@ pub struct PeakAcc {
 }
 
 impl PeakAcc {
-    /// Очередной кусок f32 interleaved (кратный числу каналов).
+    /// The next chunk of f32 interleaved (a multiple of the channel count).
     pub fn push(&mut self, data: &[f32]) {
         if self.level0.is_empty() {
             self.level0 = vec![Vec::new(); AUDIO_CHANNELS];

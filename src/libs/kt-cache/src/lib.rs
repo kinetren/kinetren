@@ -1,11 +1,11 @@
-//! Кэш burst'ов. Единственная правда о «прогретости» (инвариант №4):
-//! coverage для UI — это запрос к самому кэшу, никакой отдельной бухгалтерии
-//! (старые ms-бакеты — дефект g в docs/porting-notes.md — врали четырьмя
-//! способами; здесь врать структурно нечему: interval-set обновляется в тех же
-//! операциях, что и сам кэш).
+//! The burst cache. The single truth about “warmth” (invariant 4):
+//! coverage for the UI is a query to the cache itself, with no separate bookkeeping
+//! (the old ms-buckets — defect g in docs/porting-notes.md — lied in four
+//! ways; here there is structurally nothing to lie with: the interval set is updated in the same
+//! operations as the cache itself).
 //!
-//! Ключ: (source_id, kind{Audio | Video{quality}}, idx). Quality — часть ключа:
-//! записи разных качеств не взаимозаменяемы.
+//! Key: (source_id, kind{Audio | Video{quality}}, idx). Quality is part of the key:
+//! entries of different qualities are not interchangeable.
 
 use kt_media::{AudioBurst, Quality, VideoFrame};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -18,16 +18,16 @@ pub struct SourceId(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum BurstKind {
     Audio,
-    /// None = полное разрешение источника.
+    /// None = the full resolution of the source.
     Video {
         quality: Option<(u32, u32)>,
     },
-    /// Пост-FX композит-слой клипа (memoization, п.2 р.7): idx ключа —
-    /// ТАЙМЛАЙН-тик по сетке кадров (vhs/noise зависят от t, pan/cam — от
-    /// позиции в клипе; и то и другое — функции (idx, fx_hash)). fx_hash
-    /// включает параметры цепочки и геометрию клипа. В coverage-полоски,
-    /// prefetch и pin НЕ попадает: все эти запросы kind-точные (инвариант
-    /// №4 остаётся про ПРЕ-FX данные; см. kt-cache/CLAUDE.md).
+    /// Post-FX composite layer of the clip (memoization, item 2 round 7): the idx of the key is
+    /// a TIMELINE tick on the frame grid (vhs/noise depend on t, pan/cam — on the
+    /// position in the clip; both are functions of (idx, fx_hash)). fx_hash
+    /// includes the parameters of the chain and the geometry of the clip. It does NOT get into the coverage bars,
+    /// prefetch and pin: all these queries are kind-exact (invariant
+    /// 4 remains about PRE-FX data; see kt-cache/CLAUDE.md).
     PostFxVideo {
         quality: (u32, u32),
         fx_hash: u64,
@@ -79,24 +79,24 @@ impl Default for CacheConfig {
 
 struct Entry {
     payload: Payload,
-    /// Серийный номер СОДЕРЖИМОГО (Р.53, п.409): монотонный, никогда не
-    /// переиспользуется. По нему потребители (аплоад текстур в kt-gpu,
-    /// мемо композита) отличают «тот же адрес, другие байты» — адреса
-    /// `(источник, время, размер)` для этого мало: генератор с новыми
-    /// параметрами и вернувшийся вместо заглушки файл дают ТОТ ЖЕ адрес
-    /// и другую картинку (t496, t211).
+    /// The serial number of the CONTENT (R.53, item 409): monotonic, never
+    /// reused. By it consumers (the texture upload into kt-gpu,
+    /// the composite memo) tell apart “the same address, other bytes” — the addresses
+    /// `(source, time, size)` are too few for this: a generator with new
+    /// parameters and a file that came back in place of a placeholder give the SAME address
+    /// and a different picture (t496, t211).
     serial: u64,
     recency: u64,
     pinned: bool,
-    /// Был ли хоть один get после вставки — eviction непрочитанной записи
-    /// это prefetch-thrash (перф-панель: «no-read drops», порт v1 hadHit).
+    /// Was there at least one get after the insertion — eviction of an unread entry
+    /// is prefetch-thrash (the performance panel: “no-read drops”, port of v1 hadHit).
     had_hit: bool,
-    /// Ширина покрытия записи в idx-единицах (аудио = 1 burst; видео = шаг
-    /// сетки кадров в тиках — coverage сливается в честные полосы, п.20).
+    /// The width of an entry’s coverage in idx units (audio = 1 burst; video = the step of
+    /// the frame grid in ticks — coverage is merged into honest bars, item 20).
     span: i64,
 }
 
-/// Набор непересекающихся полуоткрытых диапазонов [start, end) по idx.
+/// A set of non-overlapping half-open ranges [start, end) by idx.
 #[derive(Default, Debug, Clone)]
 struct IntervalSet {
     runs: BTreeMap<i64, i64>, // start -> end
@@ -108,18 +108,18 @@ impl IntervalSet {
             return;
         }
         let (mut start, mut end) = (idx, idx_end);
-        // сосед слева (может содержать или примыкать)
+        // the neighbour on the left (may contain or adjoin)
         if let Some((&s, &e)) = self.runs.range(..=idx).next_back()
             && e >= start
         {
             if e >= end {
-                return; // уже покрыт
+                return; // already covered
             }
             start = s;
             end = end.max(e);
             self.runs.remove(&s);
         }
-        // все runs, начинающиеся внутри/на границе нового диапазона
+        // all runs starting inside/on the boundary of the new range
         let overlapped: Vec<i64> = self.runs.range(start..=end).map(|(&s, _)| s).collect();
         for s in overlapped {
             let e = self.runs.remove(&s).unwrap();
@@ -132,7 +132,7 @@ impl IntervalSet {
         if idx_end <= idx {
             return;
         }
-        // run слева, накрывающий начало
+        // the run on the left covering the start
         if let Some((&s, &e)) = self.runs.range(..=idx).next_back()
             && idx < e
         {
@@ -144,7 +144,7 @@ impl IntervalSet {
                 self.runs.insert(idx_end, e);
             }
         }
-        // runs, начинающиеся внутри вырезаемого диапазона
+        // runs starting inside the range being cut out
         let inside: Vec<i64> = self.runs.range(idx..idx_end).map(|(&s, _)| s).collect();
         for s in inside {
             let e = self.runs.remove(&s).unwrap();
@@ -156,7 +156,7 @@ impl IntervalSet {
 
     fn query(&self, range: std::ops::Range<i64>) -> Vec<std::ops::Range<i64>> {
         let mut out = Vec::new();
-        // первый run может начинаться до range.start
+        // the first run may start before range.start
         let iter = self
             .runs
             .range(..range.end)
@@ -176,11 +176,11 @@ impl IntervalSet {
 
 struct Inner {
     map: HashMap<BurstKey, Entry>,
-    // recency -> key; уникальность recency гарантируется монотонным счётчиком
+    // recency -> key; the uniqueness of recency is guaranteed by a monotonic counter
     lru: BTreeMap<u64, BurstKey>,
-    /// Ключи каждого источника (Р.53, п.409): `invalidate_source` иначе
-    /// сканирует ВЕСЬ кэш, а зовётся он теперь на каждую правку
-    /// параметров генератора. Держится в синхроне с `map`.
+    /// The keys of each source (R.53, item 409): `invalidate_source` otherwise
+    /// scans the WHOLE cache, and it is now called on every edit of
+    /// generator parameters. It is kept in sync with `map`.
     by_source: HashMap<SourceId, HashSet<BurstKey>>,
     coverage: HashMap<(SourceId, BurstKind), IntervalSet>,
     audio_bytes: usize,
@@ -188,7 +188,7 @@ struct Inner {
     recency_counter: u64,
 }
 
-/// Счётчики для перф-панели (кумулятивные; UI считает дельты).
+/// Counters for the performance panel (cumulative; the UI computes the deltas).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CacheStats {
     pub audio_hits: u64,
@@ -196,10 +196,10 @@ pub struct CacheStats {
     pub video_hits: u64,
     pub video_misses: u64,
     pub evictions: u64,
-    /// Записи, выселенные/перезаписанные ДО первого чтения (prefetch-thrash).
+    /// Entries evicted/overwritten BEFORE the first read (prefetch-thrash).
     pub unused_evictions: u64,
-    /// Сколько ключей просмотрел `invalidate_source` (п.409): сторож
-    /// того, что он идёт по индексу источника, а не по всему кэшу.
+    /// How many keys `invalidate_source` has viewed (item 409): a guard that
+    /// it goes by the source index, and not by the whole cache.
     pub invalidate_scan_steps: u64,
 }
 
@@ -214,13 +214,13 @@ struct StatCounters {
     invalidate_scan_steps: AtomicU64,
 }
 
-/// Потокобезопасный кэш burst'ов с LRU по раздельным байтовым бюджетам
-/// аудио/видео, pin'ом (loop-регион) и coverage-запросами.
+/// A thread-safe burst cache with LRU over separate byte budgets for
+/// audio/video, a pin (loop region) and coverage queries.
 pub struct BurstCache {
     config: CacheConfig,
     inner: Mutex<Inner>,
-    /// Меняется при insert/evict/invalidate — UI перерисовывает полоски
-    /// только при изменении.
+    /// Changes on insert/evict/invalidate — the UI redraws the bars
+    /// only when it changes.
     epoch: AtomicU64,
     stats: StatCounters,
 }
@@ -259,10 +259,10 @@ impl BurstCache {
         self.epoch.load(Ordering::Acquire)
     }
 
-    /// Проба наличия БЕЗ бампа recency и статистики: для планировщика и
-    /// префетча (п.19: get-пробы в возрастающем порядке инвертировали LRU —
-    /// ближние к playhead кадры становились «самыми старыми» и выселялись
-    /// первыми).
+    /// A presence probe WITHOUT a recency bump and without statistics: for the planner and
+    /// prefetch (item 19: get-probes in ascending order inverted the LRU — the frames
+    /// nearest the playhead became “the oldest” and were evicted
+    /// first).
     pub fn contains(&self, key: BurstKey) -> bool {
         self.inner.lock().unwrap().map.contains_key(&key)
     }
@@ -275,7 +275,7 @@ impl BurstCache {
         self.contains(BurstKey { source, kind: BurstKind::video(quality), idx })
     }
 
-    /// Видео-бюджет (для бюджетно-осознанного lookahead префетча).
+    /// The video budget (for the budget-aware lookahead of prefetch).
     pub fn max_video_bytes(&self) -> usize {
         self.config.max_video_bytes
     }
@@ -296,10 +296,10 @@ impl BurstCache {
         self.get_video_stamped(source, quality, idx).map(|(f, _)| f)
     }
 
-    /// Кадр вместе с СЕРИЙНЫМ НОМЕРОМ содержимого (Р.53, п.409). Номер
-    /// уезжает в план (`LayerSrc.content`) и дальше в ключи GPU: адрес
-    /// `(источник, время, размер)` один и тот же у старого и нового
-    /// кадра генератора, а байты разные.
+    /// A frame together with the SERIAL NUMBER of the content (R.53, item 409). The number
+    /// travels into the plan (`LayerSrc.content`) and further into the GPU keys: the address
+    /// `(source, time, size)` is the same for the old and the new
+    /// frame of a generator, while the bytes differ.
     pub fn get_video_stamped(
         &self,
         source: SourceId,
@@ -317,7 +317,7 @@ impl BurstCache {
         self.get_stamped(key).map(|(p, _)| p)
     }
 
-    /// `get` + серийный номер содержимого записи (п.409).
+    /// `get` + the serial number of the entry’s content (item 409).
     pub fn get_stamped(&self, key: BurstKey) -> Option<(Payload, u64)> {
         let mut inner = self.inner.lock().unwrap();
         inner.recency_counter += 1;
@@ -344,7 +344,7 @@ impl BurstCache {
         Some((payload, serial))
     }
 
-    /// Пост-FX кадр клипа (п.2 р.7): idx = таймлайн-тик по сетке.
+    /// A post-FX frame of the clip (item 2 round 7): idx = the timeline tick on the grid.
     pub fn get_postfx_video(
         &self,
         source: SourceId,
@@ -380,8 +380,8 @@ impl BurstCache {
         );
     }
 
-    /// Видео со span'ом покрытия (шаг сетки кадров, тики): coverage
-    /// сливается в честные полосы вместо 1-тиковых точек (п.20).
+    /// Video with a coverage span (the step of the frame grid, ticks): coverage
+    /// is merged into honest bars instead of 1-tick points (item 20).
     pub fn insert_video_span(
         &self,
         source: SourceId,
@@ -423,7 +423,7 @@ impl BurstCache {
 
         if let Some(old) = inner.map.remove(&key) {
             if !old.had_hit {
-                // перезапись непрочитанной записи — тоже thrash (v1)
+                // overwriting an unread entry is also thrash (v1)
                 self.stats.unused_evictions.fetch_add(1, Ordering::Relaxed);
             }
             inner.lru.remove(&old.recency);
@@ -433,7 +433,7 @@ impl BurstCache {
             } else {
                 inner.video_bytes -= ob;
             }
-            // старое покрытие снимаем со СВОИМ span'ом (мог отличаться)
+            // the old coverage is removed with ITS span (it could have differed)
             if let Some(set) = inner.coverage.get_mut(&(key.source, key.kind)) {
                 set.remove_range(key.idx, key.idx + old.span);
             }
@@ -441,9 +441,9 @@ impl BurstCache {
 
         inner.recency_counter += 1;
         let recency = inner.recency_counter;
-        // серийный номер содержимого берётся из того же монотонного
-        // счётчика: он не переиспользуется, поэтому «тот же адрес —
-        // другие байты» всегда различимы (п.409)
+        // the serial number of the content is taken from the same monotonic
+        // counter: it is not reused, therefore “the same address — other
+        // bytes” is always distinguishable (item 409)
         inner.recency_counter += 1;
         let serial = inner.recency_counter;
         inner
@@ -467,8 +467,8 @@ impl BurstCache {
     }
 
     fn evict_over_budget(&self, inner: &mut Inner) {
-        // Идём от самых старых; pinned пропускаем. Если всё pinned — бюджет
-        // может быть превышен, это осознанно (pin сильнее бюджета).
+        // Go from the oldest; pinned ones are skipped. If everything is pinned — the budget
+        // may be exceeded, and this is deliberate (a pin is stronger than the budget).
         let mut cursor = 0u64;
         while inner.audio_bytes > self.config.max_audio_bytes
             || inner.video_bytes > self.config.max_video_bytes
@@ -483,7 +483,7 @@ impl BurstCache {
             }
             let over_audio = inner.audio_bytes > self.config.max_audio_bytes;
             if entry.payload.is_audio() != over_audio {
-                continue; // выселяем из того пула, который превышен
+                continue; // evict from the pool that has been exceeded
             }
             let entry = inner.map.remove(&key).unwrap();
             inner.lru.remove(&recency);
@@ -509,8 +509,8 @@ impl BurstCache {
         }
     }
 
-    /// Диапазоны idx, реально лежащие в кэше, пересечённые с [range).
-    /// Это И ЕСТЬ полоски «прогретости» для UI.
+    /// The idx ranges actually lying in the cache, intersected with [range).
+    /// These ARE the “warmth” bars for the UI.
     pub fn coverage(
         &self,
         source: SourceId,
@@ -521,8 +521,8 @@ impl BurstCache {
         inner.coverage.get(&(source, kind)).map(|s| s.query(range)).unwrap_or_default()
     }
 
-    /// Закрепить записи диапазона (голова loop-региона): pinned не выселяются.
-    /// Pin действует только на уже существующие записи; вызывать после prefetch.
+    /// Pin the entries of the range (the head of the loop region): pinned ones are not evicted.
+    /// A pin acts only on entries that already exist; call it after prefetch.
     pub fn pin_range(&self, source: SourceId, kind: BurstKind, range: std::ops::Range<i64>) {
         let mut inner = self.inner.lock().unwrap();
         for idx in range {
@@ -539,9 +539,9 @@ impl BurstCache {
         }
     }
 
-    /// Сбросить все записи источника (файл изменился на диске; параметры
-    /// генератора перенастроены — Р.53, п.411). Идёт по индексу
-    /// `by_source`, а не по всему кэшу: зовётся на каждую правку.
+    /// Drop all entries of the source (the file changed on disk; the parameters
+    /// of the generator were reconfigured — R.53, item 411). It goes by the index
+    /// `by_source`, and not by the whole cache: it is called on every edit.
     pub fn invalidate_source(&self, source: SourceId) {
         let mut inner = self.inner.lock().unwrap();
         let keys: Vec<BurstKey> =
@@ -585,11 +585,11 @@ mod interval_tests {
         s.remove_range(0, 1);
         s.remove_range(3, 3 + 1);
         assert_eq!(s.query(-10..100), vec![1..2, 7..9]);
-        // повторные операции идемпотентны
+        // repeated operations are idempotent
         s.remove_range(0, 1);
         s.insert_range(7, 7 + 1);
         assert_eq!(s.query(-10..100), vec![1..2, 7..9]);
-        // запрос обрезается диапазоном
+        // the query is clipped by the range
         assert_eq!(s.query(8..100), vec![8..9]);
     }
 }
@@ -612,7 +612,7 @@ mod v12_tests {
         })
     }
 
-    /// Тест 27 (кэш-часть, п.19): contains-проба не трогает ни LRU, ни epoch.
+    /// Test 27 (cache part, item 19): a contains-probe touches neither the LRU nor the epoch.
     #[test]
     fn t27_contains_probe_does_not_touch_lru_or_epoch() {
         let bytes = 1000usize;
@@ -622,21 +622,21 @@ mod v12_tests {
         for idx in [0i64, 1, 2] {
             cache.insert_video(src, None, idx, frame(bytes));
         }
-        // честное чтение 0 — самый свежий
+        // an honest read of 0 — the freshest
         let _ = cache.get_video(src, None, 0);
         let epoch_before = cache.epoch();
-        // пробы 1 и 2 НЕ должны освежать
+        // probes 1 and 2 must NOT refresh
         assert!(cache.contains_video(src, None, 1));
         assert!(cache.contains_video(src, None, 2));
-        assert_eq!(cache.epoch(), epoch_before, "contains не меняет epoch");
-        // вставка 3 выселяет 1 (старейший по НАСТОЯЩЕЙ recency)
+        assert_eq!(cache.epoch(), epoch_before, "contains does not change epoch");
+        // insert 3 evicts 1 (the oldest by the REAL recency)
         cache.insert_video(src, None, 3, frame(bytes));
-        assert!(!cache.contains_video(src, None, 1), "выселен должен быть idx 1");
-        assert!(cache.contains_video(src, None, 0), "честно прочитанный 0 жив");
+        assert!(!cache.contains_video(src, None, 1), "evicted must be idx 1");
+        assert!(cache.contains_video(src, None, 0), "honestly read 0 alive");
     }
 
-    /// Тест 28 (п.20): видео-coverage со span'ом сливается в полосы и
-    /// честно дырявится при eviction.
+    /// Test 28 (item 20): video coverage with a span is merged into bars and
+    /// honestly gets holes on eviction.
     #[test]
     fn t28_video_coverage_merges_and_eviction_splits() {
         let bytes = 1000usize;
@@ -648,9 +648,9 @@ mod v12_tests {
             cache.insert_video_span(src, None, idx, step, frame(bytes));
         }
         let cov = cache.coverage(src, BurstKind::Video { quality: None }, 0..9000);
-        assert_eq!(cov, vec![0..9000], "полосы должны слиться в одну");
+        assert_eq!(cov, vec![0..9000], "bands must merge into one");
 
-        // бампим 0 и 6000 честным чтением, вставляем 9000 → выселяется 3000
+        // we bump 0 and 6000 with honest reads, insert 9000 → 3000 is evicted
         let _ = cache.get_video(src, None, 0);
         let _ = cache.get_video(src, None, 6000);
         cache.insert_video_span(src, None, 9000, step, frame(bytes));
@@ -658,21 +658,21 @@ mod v12_tests {
         assert_eq!(
             cov,
             vec![0..3000, 6000..12000],
-            "eviction обязан выбить ровно свой span (дыра на 3000..6000)"
+            "eviction must remove exactly its own span (hole at 3000..6000)"
         );
     }
 
-    /// insert_range/remove_range: граничные случаи слияния/разрезания.
+    /// insert_range/remove_range: edge cases of merging/cutting.
     #[test]
     fn t28_interval_set_range_ops() {
         let mut s = IntervalSet::default();
         s.insert_range(0, 10);
         s.insert_range(20, 30);
-        s.insert_range(10, 20); // мост
+        s.insert_range(10, 20); // bridge
         assert_eq!(s.query(0..40), vec![0..30]);
         s.remove_range(5, 25);
         assert_eq!(s.query(0..40), vec![0..5, 25..30]);
-        s.insert_range(4, 26); // накрыть обе + дыру
+        s.insert_range(4, 26); // cover both + the hole
         assert_eq!(s.query(0..40), vec![0..30]);
         s.remove_range(0, 30);
         assert!(s.query(0..40).is_empty());
@@ -693,9 +693,9 @@ mod postfx_tests {
         })
     }
 
-    /// Тест 65 (п.2 р.7): пост-FX kind невидим для coverage (инвариант №4 —
-    /// полоски прогретости строятся ТОЛЬКО по пре-FX записям), но участвует
-    /// в видео-бюджете/LRU и выбивается invalidate_source.
+    /// Test 65 (item 2 round 7): the post-FX kind is invisible to coverage (invariant 4 —
+    /// the warmth bars are built ONLY from pre-FX entries), but it takes part
+    /// in the video budget/LRU and is knocked out by invalidate_source.
     #[test]
     fn t65_postfx_kind_invisible_to_coverage() {
         let cache = BurstCache::new(CacheConfig::default());
@@ -707,23 +707,23 @@ mod postfx_tests {
 
         cache.insert_postfx_video(src, (2, 2), 0xDEAD, 0, vframe(16));
         cache.insert_postfx_video(src, (2, 2), 0xDEAD, 3000, vframe(16));
-        // coverage пре-FX не изменился
+        // the pre-FX coverage did not change
         assert_eq!(cache.coverage(src, BurstKind::video(Some(q)), 0..10_000), before);
         assert!(cache.coverage(src, BurstKind::Audio, 0..10_000).is_empty());
-        // байты учитываются в видео-пуле
+        // the bytes are counted in the video pool
         assert_eq!(cache.video_bytes(), bytes_before + 32);
-        // хит по точному ключу; другой fx_hash/quality — промах
+        // a hit by the exact key; another fx_hash/quality — a miss
         assert!(cache.get_postfx_video(src, (2, 2), 0xDEAD, 0).is_some());
         assert!(cache.get_postfx_video(src, (2, 2), 0xBEEF, 0).is_none());
         assert!(cache.get_postfx_video(src, (4, 4), 0xDEAD, 0).is_none());
-        // invalidate_source выбивает и пост-FX записи
+        // invalidate_source knocks out post-FX entries as well
         cache.invalidate_source(src);
         assert!(cache.get_postfx_video(src, (2, 2), 0xDEAD, 0).is_none());
         assert_eq!(cache.video_bytes(), 0);
     }
 
-    /// Пост-FX записи вытесняются LRU при переполнении видео-бюджета,
-    /// не дырявя пре-FX полосу (у неё свой kind).
+    /// Post-FX entries are displaced by LRU when the video budget overflows,
+    /// without punching a hole in the pre-FX bar (it has its own kind).
     #[test]
     fn t65b_postfx_evicts_under_budget() {
         let cache = BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: 64 });
@@ -733,15 +733,15 @@ mod postfx_tests {
         let pre = cache.coverage(src, BurstKind::video(Some(q)), 0..10_000);
         for i in 0..8 {
             cache.insert_postfx_video(src, (2, 2), 1, i * 3000, vframe(32));
-            // пре-FX запись горячая (как при живом compose: get бампает
-            // recency) — вытесняться должны только пост-FX записи
+            // a pre-FX entry is hot (as in live compose: a get bumps the
+            // recency) — only post-FX entries should be displaced
             assert!(cache.get_video(src, Some(q), 0).is_some());
         }
-        assert!(cache.video_bytes() <= 64 + 32, "бюджет держится");
+        assert!(cache.video_bytes() <= 64 + 32, "budget holds");
         assert_eq!(
             cache.coverage(src, BurstKind::video(Some(q)), 0..10_000),
             pre,
-            "пре-FX полоса не продырявлена пост-FX-вытеснением"
+            "pre-FX band is not punched by post-FX eviction"
         );
     }
 }
@@ -761,10 +761,10 @@ mod perf_counter_tests {
         })
     }
 
-    /// Тест 37 (перф-панель): no-read drops — записи, выселенные ИЛИ
-    /// перезаписанные до первого чтения, считаются отдельным счётчиком
-    /// (prefetch-thrash, порт hadHit v1); прочитанные записи в него
-    /// не попадают.
+    /// Test 37 (performance panel): no-read drops — entries evicted OR
+    /// overwritten before the first read — are counted
+    /// by a separate counter (prefetch-thrash, port of hadHit v1);
+    /// read entries do not get into it.
     #[test]
     fn t37_unused_evictions_counted_separately() {
         let bytes = 1000usize;
@@ -772,34 +772,34 @@ mod perf_counter_tests {
             BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: bytes * 2 });
         let src = SourceId(1);
 
-        // 0 и 1 влезают; 0 читаем (had_hit), 1 — нет
+        // 0 and 1 fit; 0 is read (had_hit), 1 — not
         cache.insert_video(src, None, 0, frame(bytes));
         cache.insert_video(src, None, 1, frame(bytes));
         let _ = cache.get_video(src, None, 0);
         assert_eq!(cache.stats().unused_evictions, 0);
 
-        // вставка 2 выселяет самого старого НЕчитанного (1) → thrash +1
+        // insert 2 evicts the oldest UNREAD one (1) → thrash +1
         cache.insert_video(src, None, 2, frame(bytes));
         let s = cache.stats();
-        assert_eq!(s.evictions, 1, "бюджет на 2 кадра");
-        assert_eq!(s.unused_evictions, 1, "выселен непрочитанный");
+        assert_eq!(s.evictions, 1, "budget for 2 frames");
+        assert_eq!(s.unused_evictions, 1, "evicted unread");
 
-        // вставка 3 выселяет прочитанного (0) → thrash НЕ растёт
+        // insert 3 evicts the read one (0) → thrash does NOT grow
         cache.insert_video(src, None, 3, frame(bytes));
         let s = cache.stats();
         assert_eq!(s.evictions, 2);
-        assert_eq!(s.unused_evictions, 1, "прочитанная запись — не thrash");
+        assert_eq!(s.unused_evictions, 1, "read entry is not thrash");
 
-        // перезапись непрочитанного ключа 3 тем же ключом → thrash +1 (v1:
-        // «dropped by LRU or overwritten before any read»)
+        // overwriting the unread key 3 with the same key → thrash +1 (v1:
+        // “dropped by LRU or overwritten before any read”)
         cache.insert_video(src, None, 3, frame(bytes));
-        assert_eq!(cache.stats().unused_evictions, 2, "overwrite до чтения — thrash");
+        assert_eq!(cache.stats().unused_evictions, 2, "overwrite before read — thrash");
     }
 
-    /// Тест 497 (Р.53, п.409): `invalidate_source` идёт по индексу СВОЕГО
-    /// источника, а не по всему кэшу. Зовётся он теперь на каждую правку
-    /// параметров генератора, и линейный проход по чужим записям был бы
-    /// ценой, растущей с прогретостью монтажа.
+    /// Test 497 (R.53, item 409): `invalidate_source` goes by the index of ITS
+    /// source, and not by the whole cache. It is now called on every edit of the
+    /// generator’s parameters, and a linear pass over other entries would be a price
+    /// growing with the warmth of the edit.
     #[test]
     fn t497_invalidate_source_scans_only_its_own() {
         let cache =
@@ -817,38 +817,38 @@ mod perf_counter_tests {
         let s = cache.stats();
         assert!(
             s.invalidate_scan_steps <= 8,
-            "чистка прошлась по чужим записям: {} шагов",
+            "cleanup swept other entries: {} steps",
             s.invalidate_scan_steps
         );
         for i in 0..3 {
-            assert!(cache.get_video(mine, None, i).is_none(), "свои записи обязаны уйти");
+            assert!(cache.get_video(mine, None, i).is_none(), "own entries must go");
         }
         for i in 0..300 {
             assert!(
                 cache.get_video(SourceId(100 + i as u64), None, i).is_some(),
-                "чужая запись {i} пострадала"
+                "foreign entry {i} was harmed"
             );
         }
     }
 
-    /// Тест 496a (Р.53, п.409): серийный номер содержимого. Тот же АДРЕС
-    /// с другими байтами обязан получить другой номер — по нему kt-gpu
-    /// отличает «новый кадр генератора» от «того же кадра» (иначе на
-    /// GPU-пути правка цвета не видна: t496 в kt-gpu).
+    /// Test 496a (R.53, item 409): the serial number of the content. The SAME ADDRESS
+    /// with other bytes must receive another number — by it kt-gpu
+    /// tells “a new frame of the generator” from “the same frame” (otherwise on the
+    /// GPU path a color edit is not visible: t496 in kt-gpu).
     #[test]
     fn t496a_content_serial_changes_with_bytes() {
         let cache =
             BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: 1 << 20 });
         let src = SourceId(1);
         cache.insert_video(src, None, 0, frame(64));
-        let (_, first) = cache.get_video_stamped(src, None, 0).expect("кадр лежит");
-        let (_, again) = cache.get_video_stamped(src, None, 0).expect("кадр лежит");
-        assert_eq!(first, again, "чтение не меняет номер содержимого");
+        let (_, first) = cache.get_video_stamped(src, None, 0).expect("frame is stored");
+        let (_, again) = cache.get_video_stamped(src, None, 0).expect("frame is stored");
+        assert_eq!(first, again, "reading does not change the content number");
 
-        // перезапись того же адреса другими байтами — номер обязан стать другим
+        // an overwrite of the same address with other bytes — the number must become different
         cache.insert_video(src, None, 0, frame(64));
-        let (_, second) = cache.get_video_stamped(src, None, 0).expect("кадр лежит");
-        assert_ne!(first, second, "тот же адрес, другие байты — номер обязан отличаться");
-        assert!(second > first, "номера монотонны и не переиспользуются");
+        let (_, second) = cache.get_video_stamped(src, None, 0).expect("frame is stored");
+        assert_ne!(first, second, "same address, different bytes — the number must differ");
+        assert!(second > first, "numbers are monotonic and not reused");
     }
 }

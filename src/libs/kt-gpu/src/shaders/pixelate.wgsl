@@ -1,5 +1,5 @@
-// Pixelate (Р.47): целочисленная копия центра ячейки — зеркало
-// kt_fx::video::pixelate байт-в-байт (EXACT). u0 = (w, h, cell).
+// Pixelate (R.47): an integer copy of the cell centre, a mirror of
+// kt_fx::video::pixelate byte for byte (EXACT). u0 = (w, h, cell).
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     let p = vec2<i32>(floor(pos.xy));

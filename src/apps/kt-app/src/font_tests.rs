@@ -1,35 +1,35 @@
-//! Тест 100 (п.12 р.11): КАЖДЫЙ непечатный/неASCII символ, который программа
-//! может показать, обязан существовать в шрифтах, которые она грузит.
+//! Test 100 (item 12, round 11): EVERY non-printing or non-ASCII character that the program
+//! may show must exist in the fonts it loads.
 //!
-//! Пользователь дважды ловил квадрат-заглушку вместо символа (`●` U+25CF в
-//! индикаторе изменений, неверные кодпоинты Phosphor). Правило «проверяй
-//! глифы» без теста не работает — поэтому проверка автоматическая: сканер
-//! разбирает исходники kt-app, достаёт содержимое строковых и символьных
-//! литералов (включая `\u{...}`-эскейпы, которыми записаны иконки), и
-//! проверяет каждый неASCII-символ по cmap ВСЕХ шрифтов семейства
-//! Proportional (Ubuntu-Light, NotoEmoji, emoji-icon-font) плюс
-//! вендоренных — ровно того набора, что ставит `install_fonts`.
+//! The user twice caught a placeholder box instead of a character (`●` U+25CF in
+//! the change indicator, wrong code points of Phosphor). The rule “check the
+//! glyphs” does not work without a test — so the check is automatic: the scanner
+//! parses the sources of kt-app, extracts the contents of string and char
+//! literals (including the `\u{...}` escapes in which the icons are written),
+//! and checks every non-ASCII character against the cmap of ALL fonts of the
+//! Proportional family (Ubuntu-Light, NotoEmoji, emoji-icon-font) plus the
+//! vendored ones — exactly the set that `install_fonts` installs.
 //!
-//! С Р.19 сканируются ЕЩЁ И каталоги перевода `i18n/*.toml`: текст интерфейса
-//! переехал туда, и без этого t100 перестал бы проверять что-либо осмысленное
-//! (в исходниках остались бы одни ключи из ASCII).
+//! Since R.19 the translation catalogs `i18n/*.toml` are scanned AS WELL: the interface
+//! text moved there, and without this t100 would have stopped checking anything meaningful
+//! (the sources would have been left with ASCII keys only).
 
 use std::collections::BTreeMap;
 
-/// Все шрифты, которые реально грузит программа: дефолт egui + вендоренные.
-/// Список вендоренных берётся из `icons::VENDORED`, а не дублируется здесь:
-/// расхождение между тестом и `install_fonts` — ровно та дыра, ради которой
-/// этот тест и написан.
+/// All fonts the program actually loads: the egui default plus the vendored ones.
+/// The list of vendored fonts is taken from `icons::VENDORED`, not duplicated
+/// here: a mismatch between the test and `install_fonts` is exactly the hole this
+/// test was written for.
 fn loaded_fonts() -> Vec<(String, Vec<u8>)> {
     let defs = eframe::egui::FontDefinitions::default();
     let family = defs
         .families
         .get(&eframe::egui::FontFamily::Proportional)
-        .expect("нет семейства Proportional")
+        .expect("no Proportional family")
         .clone();
     let mut out = Vec::new();
     for name in family {
-        let data = defs.font_data.get(&name).expect("шрифт семейства не загружен");
+        let data = defs.font_data.get(&name).expect("the family font is not loaded");
         out.push((name, data.font.to_vec()));
     }
     for (name, bytes) in crate::icons::VENDORED {
@@ -38,7 +38,7 @@ fn loaded_fonts() -> Vec<(String, Vec<u8>)> {
     out
 }
 
-/// Каталоги перевода: сами значения, без ключей и комментариев.
+/// Translation catalogs: the values themselves, without keys and comments.
 fn catalog_values() -> Vec<(String, String)> {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("i18n");
     let mut out = Vec::new();
@@ -58,26 +58,26 @@ fn catalog_values() -> Vec<(String, String)> {
     out
 }
 
-/// Есть ли глиф символа хотя бы в одном шрифте семейства.
+/// Whether the glyph of the character exists in at least one font of the family.
 fn covered(fonts: &[(String, ab_glyph::FontVec)], ch: char) -> bool {
     use ab_glyph::Font as _;
     fonts.iter().any(|(_, f)| f.glyph_id(ch).0 != 0)
 }
 
-/// Символы, которые программа НЕ рисует, хотя они лежат в литералах:
-/// пробельные и управляющие (`\n`, NBSP и т.п.) глифов не требуют.
+/// Characters that the program does NOT draw, although they sit in literals:
+/// whitespace and control ones (`\n`, NBSP, etc.) do not require glyphs.
 fn needs_glyph(ch: char) -> bool {
     !ch.is_ascii() && !ch.is_whitespace() && !ch.is_control()
 }
 
-/// Разбор исходника: содержимое строковых/символьных литералов, вне
-/// комментариев. `\u{...}` раскрывается — иконки записаны именно так.
+/// Parsing of the source: the contents of string/char literals, outside
+/// comments. `\u{...}` is expanded — the icons are written exactly that way.
 pub fn literal_chars(src: &str) -> Vec<(usize, char)> {
     let b: Vec<char> = src.chars().collect();
     let mut out = Vec::new();
     let mut line = 1usize;
     let mut i = 0usize;
-    // счётчик строк ведём по мере продвижения i
+    // the line counter is kept as i advances
     let bump = |c: char, line: &mut usize| {
         if c == '\n' {
             *line += 1;
@@ -85,7 +85,7 @@ pub fn literal_chars(src: &str) -> Vec<(usize, char)> {
     };
     while i < b.len() {
         let c = b[i];
-        // комментарии
+        // comments
         if c == '/' && i + 1 < b.len() && b[i + 1] == '/' {
             while i < b.len() && b[i] != '\n' {
                 i += 1;
@@ -109,7 +109,7 @@ pub fn literal_chars(src: &str) -> Vec<(usize, char)> {
             }
             continue;
         }
-        // сырая строка r"..." / r#"..."#
+        // raw string r"..." / r#"..."#
         if c == 'r' && i + 1 < b.len() && (b[i + 1] == '"' || b[i + 1] == '#') {
             let mut j = i + 1;
             let mut hashes = 0;
@@ -145,7 +145,7 @@ pub fn literal_chars(src: &str) -> Vec<(usize, char)> {
                 continue;
             }
         }
-        // обычная строка
+        // ordinary string
         if c == '"' {
             i += 1;
             while i < b.len() && b[i] != '"' {
@@ -181,7 +181,7 @@ pub fn literal_chars(src: &str) -> Vec<(usize, char)> {
             i += 1;
             continue;
         }
-        // символьный литерал против лайфтайма: 'x' / '\n' / 'a
+        // char literal against lifetime: 'x' / '\n' / 'a
         if c == '\'' {
             let is_char = (i + 2 < b.len() && b[i + 1] != '\\' && b[i + 2] == '\'')
                 || (i + 1 < b.len() && b[i + 1] == '\\');
@@ -220,12 +220,12 @@ pub fn literal_chars(src: &str) -> Vec<(usize, char)> {
     out
 }
 
-/// Исходники UI без тестового кода: текст ассертов и панику пользователь не
-/// видит, а стрелки/символы там законны. Тестовый модуль в файле начинается
-/// строкой `#[cfg(test)]` с нулевым отступом (атрибуты полей идут с отступом).
+/// UI sources without test code: the text of asserts and the panic message are not seen by
+/// the user, and arrows/symbols there are legitimate. A test module in a file starts with a
+/// line `#[cfg(test)]` at zero indentation (attributes of fields are indented).
 ///
-/// Обход РЕКУРСИВНЫЙ: с Р.19 часть кода живёт в `src/i18n/`, и плоский
-/// `read_dir` молча выронил бы его из t100 и t131.
+/// The walk is RECURSIVE: since R.19 part of the code lives in `src/i18n/`,
+/// and a flat `read_dir` would silently drop it from t100 and t131.
 pub fn sources() -> Vec<(String, String)> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut out = Vec::new();
@@ -256,31 +256,31 @@ fn walk(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<(String, St
     }
 }
 
-/// t100: ни одного символа без глифа во всех строках UI.
+/// t100: not a single character without a glyph in all UI strings.
 #[test]
 fn t100_ui_chars_have_glyphs() {
     let fonts: Vec<(String, ab_glyph::FontVec)> = loaded_fonts()
         .into_iter()
-        .map(|(n, d)| (n, ab_glyph::FontVec::try_from_vec(d).expect("шрифт не парсится")))
+        .map(|(n, d)| (n, ab_glyph::FontVec::try_from_vec(d).expect("the font does not parse")))
         .collect();
 
-    // символы, которые ТОЧНО должны быть/не быть — страховка самого теста:
-    // если проверка сломается и станет всё пропускать, эти две упадут.
+    // characters that MUST be / MUST NOT be present — insurance for the test itself:
+    // if the check breaks and starts letting everything through, these two fail.
     for (ch, what) in [
-        ('я', "кириллица"),
-        ('ñ', "латиница с диакритикой"),
-        ('日', "иероглиф из сабсета CJK"),
-        ('ب', "арабская буква из сабсета"),
+        ('я', "Cyrillic"),
+        ('ñ', "Latin with diacritics"),
+        ('日', "an ideograph from the CJK subset"),
+        ('ب', "an Arabic letter from the subset"),
     ] {
-        assert!(covered(&fonts, ch), "{what} обязана быть покрыта");
+        assert!(covered(&fonts, ch), "{what} must be covered");
     }
-    // Страховка от вырождения: если проверка сломается и станет пропускать
-    // всё, эта упадёт. U+25CF сюда больше не годится — он есть и в Hack, и в
-    // Noto CJK; берём тайскую букву, которой нет ни в одном из наборов и
-    // которая структурно не может попасть в сабсет (cmap режется по каталогам).
+    // Insurance against degeneration: if the check breaks and starts skipping
+    // everything, this one fails. U+25CF no longer fits here — it is present in both Hack and
+    // Noto CJK; take a Thai letter that is in none of the sets and that
+    // structurally cannot end up in the subset (the cmap is cut by catalogs).
     assert!(
         !covered(&fonts, char::from_u32(0x0E01).unwrap()),
-        "U+0E01 всё ещё отсутствует — если появился, самопроверку надо менять"
+        "U+0E01 is still missing — if it appeared, the self-check must change"
     );
 
     let mut missing: BTreeMap<char, Vec<String>> = BTreeMap::new();
@@ -300,7 +300,7 @@ fn t100_ui_chars_have_glyphs() {
     }
     assert!(
         missing.is_empty(),
-        "символы без глифа в шрифтах программы (пользователь увидит квадрат): {}",
+        "characters without a glyph in the program fonts (the user will see a box): {}",
         missing
             .iter()
             .map(|(ch, where_)| format!("U+{:04X} {:?} — {}", *ch as u32, ch, where_.join(", ")))

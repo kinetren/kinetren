@@ -1,15 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <!-- Kinetren (kt). Силуэт СОВПАДАЕТ с логотипом в самой программе
-       (apps/kt-app/src/toolbar.rs::draw_logo): кадр плёнки почти во весь
-       холст, БЕЗ внешней плашки и бордера (решение пользователя, п.6 р.8),
-       плоский акцент вместо градиента, перфорация по формулам кода. -->
+  <!-- Kinetren (kt). The silhouette MATCHES the logo inside the program
+       (apps/kt-app/src/toolbar.rs::draw_logo): a film frame almost over the whole
+       canvas, WITHOUT an outer plate or border (the user's decision, item 6 round 8),
+       a flat accent instead of a gradient, perforation by the code's formulas. -->
 
-  <!-- кадр плёнки: 92 % холста, скругление ~1 px при 16 px = 8 при 128 -->
+  <!-- film frame: 92 % of the canvas, rounding ~1 px at 16 px = 8 at 128 -->
   <rect x="5" y="5" width="118" height="118" rx="8" fill="#121418"/>
   <rect x="9" y="9" width="110" height="110" rx="6" fill="none"
         stroke="#4682eb" stroke-width="7"/>
 
-  <!-- перфорация: hole 0.13w × 0.17h, центры на 0.22h и 0.66h -->
+  <!-- perforation: hole 0.13w × 0.17h, centres at 0.22h and 0.66h -->
   <g fill="#464e5c">
     <rect x="14" y="24" width="15" height="20"/>
     <rect x="14" y="65" width="15" height="20"/>
@@ -17,8 +17,8 @@
     <rect x="99" y="65" width="15" height="20"/>
   </g>
 
-  <!-- монограмма kt (штрихи, не текст — иконка не должна зависеть от
-       системного шрифта); высота ≈ 0.62 кадра, как в draw_logo -->
+  <!-- kt monogram (strokes, not text — the icon must not depend on
+       the system font); height ≈ 0.62 of the frame, as in draw_logo -->
   <g stroke="#e4e9f2" stroke-width="8" stroke-linecap="round" fill="none">
     <path d="M45 40 V88"/>
     <path d="M45 66 L59 51"/>

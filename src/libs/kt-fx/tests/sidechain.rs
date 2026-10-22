@@ -1,11 +1,11 @@
-//! Тесты 767-768 (Р.65): КЛЮЧЕВОЙ вход компрессора.
+//! Tests 767-768 (R.65): the KEY input of the compressor.
 //!
-//! Владелец (Р.63 п.8.4): «в качестве дакинга можно показать тот же
-//! задублированный виджет аудио-компрессора… повсюду копятся бессмысленные
-//! копипасты одного и того же кода». Отсюда правило: дакинг — это НЕ новый
-//! прибор, а компрессор, у которого назначен ключ. Здесь проверяется сам
-//! прибор: детектор слушает ключ, сжимается свой вход, а без ключа всё
-//! остаётся ровно прежним.
+//! The owner (R.63 item 8.4): “you can show the same duplicated audio compressor
+//! widget as ducking…
+//! copies of the same code pile up everywhere.” Hence the rule: ducking is NOT a new
+//! device, but a compressor with an assigned key. Here the device itself is checked:
+//! the detector listens to the key, its own input is compressed, and without a key everything
+//! stays exactly as before.
 
 use kt_fx::{CH, ChainOpts, TrackProcessor};
 use kt_model::FxInstance;
@@ -19,11 +19,11 @@ fn comp() -> FxInstance {
         attack_ms: 5.0,
         release_ms: 60.0,
         makeup_db: 0.0,
-        key: None, // ключ подаётся ПРЯМО в process_keyed: kt-fx о дорожках не знает
+        key: None, // the key is fed DIRECTLY into process_keyed: kt-fx knows nothing about tracks
     }
 }
 
-/// Ровный тон — «музыка».
+/// A steady tone is “music”.
 fn tone(frames: usize) -> Vec<f32> {
     let mut v = vec![0f32; frames * CH];
     for i in 0..frames {
@@ -34,7 +34,7 @@ fn tone(frames: usize) -> Vec<f32> {
     v
 }
 
-/// «Речь»: две громкие реплики с паузой между ними.
+/// “Speech”: two loud lines with a pause between them.
 fn speech(frames: usize, spans: &[(usize, usize)]) -> Vec<f32> {
     let mut v = vec![0f32; frames * CH];
     for &(a, b) in spans {
@@ -52,55 +52,55 @@ fn rms(buf: &[f32], a: usize, b: usize) -> f32 {
     (sl.iter().map(|s| (*s as f64) * (*s as f64)).sum::<f64>() / sl.len() as f64).sqrt() as f32
 }
 
-/// Тест 767 (Р.65): ключ управляет, сжимается свой вход.
+/// Test 767 (R.65): the key controls, its own input is compressed.
 #[test]
 fn t767_key_drives_the_detector_and_input_is_compressed() {
     let frames = SR / 2; // 0.5 c
-    // пауза между репликами — заведомо длиннее возврата (60 мс ≈ 2880
-    // кадров): иначе «вернулся ли уровень» меряется на полуспаде
+    // the pause between lines is clearly longer than the release (60 ms ≈ 2880
+    // frames): otherwise “did the level return” is measured at the half-decay point
     let spans = [(2_000usize, 8_000usize), (20_000usize, 23_000usize)];
 
-    // --- С КЛЮЧОМ: детектор слышит речь, сжимается тон -----------------
+    // --- WITH KEY: the detector hears speech, the tone is compressed ---
     let mut p = TrackProcessor::new(&[comp()], ChainOpts::default());
     let mut out = tone(frames);
     let key = speech(frames, &spans);
     p.process_keyed(0, &mut out, &|slot| (slot == 0).then_some(&key[..]));
 
-    // …под репликой тише, между репликами — нет
+    // …quieter under a line, not between lines
     let under = rms(&out, 6_000, 8_000);
     let between = rms(&out, 16_000, 18_000);
     let before = rms(&out, 0, 1_500);
     assert!(
         under < between * 0.6,
-        "под ключом музыка обязана просесть: {under} против {between} между репликами"
+        "under the key the music must dip: {under} against {between} between the lines"
     );
     assert!(
         (between / before - 1.0).abs() < 0.2,
-        "между репликами уровень обязан вернуться: {between} против {before} до первой"
+        "between the lines the level must return: {between} against {before} before the first"
     );
 
-    // …и ЗВУЧИТ именно свой вход: под репликой в выходе частота тона (220),
-    // а не ключа (700) — иначе мы бы «подмешали» ключ вместо управления им
+    // …and the OUTPUT is the sound of its own input: under a line the output has the tone frequency (220),
+    // not the key frequency (700) — otherwise we would have “mixed in” the key instead of controlling it
     let z = |buf: &[f32], a: usize, b: usize| {
         buf[a * CH..b * CH].chunks_exact(CH).filter(|w| w[0] == 0.0).count()
     };
-    assert_eq!(z(&out, 6_000, 8_000), 0, "в выходе появились нули — это не сжатый тон");
+    assert_eq!(z(&out, 6_000, 8_000), 0, "zeros appeared in the output — this is not a compressed tone");
 
-    // --- БЕЗ КЛЮЧА: ровно прежний прибор -------------------------------
+    // --- WITHOUT KEY: exactly the previous device ---
     let mut p_plain = TrackProcessor::new(&[comp()], ChainOpts::default());
     let mut plain = tone(frames);
     p_plain.process(0, &mut plain);
 
-    // ключ, РАВНЫЙ собственному входу, обязан дать то же самое байт-в-байт:
-    // «то же снижение, что дал бы этот же сигнал на собственном входе»
+    // a key EQUAL to its own input must give the same result byte for byte:
+    // “the same reduction that this same signal would get on its own input”
     let mut p_self = TrackProcessor::new(&[comp()], ChainOpts::default());
     let mut selfkey = tone(frames);
     let same = tone(frames);
     p_self.process_keyed(0, &mut selfkey, &|slot| (slot == 0).then_some(&same[..]));
-    assert_eq!(selfkey, plain, "ключ, равный входу, дал не то же, что путь без ключа");
+    assert_eq!(selfkey, plain, "a key equal to the input gave something other than the path without a key");
 }
 
-/// Тест 768 (Р.65): нейтральность и цена ключевой ветки.
+/// Test 768 (R.65): neutrality and the cost of the key branch.
 #[test]
 fn t768_silent_key_is_transparent_and_costs_nothing() {
     let frames = 4_096;
@@ -110,12 +110,12 @@ fn t768_silent_key_is_transparent_and_costs_nothing() {
     let silent = vec![0f32; frames * CH];
     p.process_keyed(0, &mut out, &|_| Some(&silent[..]));
     for (o, s) in out.iter().zip(src.iter()) {
-        assert!((o - s).abs() < 1e-6, "тишина в ключе обязана оставить вход нетронутым");
+        assert!((o - s).abs() < 1e-6, "silence in the key must leave the input untouched");
     }
 
-    // ключ КОРОЧЕ буфера — это «ключ молчит» на остатке, а не паника
+    // a key SHORTER than the buffer is “key silent” over the remainder, not a panic
     let short = vec![0f32; (frames / 2) * CH];
     let mut out2 = tone(frames);
     p.process_keyed(0, &mut out2, &|_| Some(&short[..]));
-    assert!(out2.iter().all(|s| s.is_finite()), "короткий ключ дал не-числа");
+    assert!(out2.iter().all(|s| s.is_finite()), "a short key gave non-numbers");
 }

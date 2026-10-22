@@ -1,8 +1,8 @@
-//! Тест 191 (Р.30): автоматизация параметров в рендере. Кривые
-//! разрешаются при построении плана кадра — композит анимированного клипа
-//! в момент t байт-в-байт равен композиту клипа со СТАТИЧЕСКИ выставленным
-//! значением кривой в этот момент. Пост-FX кэш не отдаёт стейлов между
-//! разными t; правка кривой меняет fx_hash (кадры пересчитываются).
+//! Test 191 (R.30): automation of parameters in the render. Curves are
+//! resolved when the frame plan is built — the composite of an animated clip
+//! at time t is byte for byte equal to the composite of the clip with the curve's
+//! value STATICALLY set at that moment. The post-FX cache returns no stale frames across
+//! different t; editing a curve changes fx_hash (the frames are recomputed).
 
 use kt_engine::VideoRenderer;
 use kt_model::*;
@@ -107,11 +107,11 @@ fn t191_animated_equals_static_at_each_moment() {
         }],
     ];
     let animated = project(base.clone(), auto);
-    // моменты по сетке 30 fps (шаг 3000 тиков): начало, середина, у конца
+    // moments on the 30 fps grid (step 3000 ticks): start, middle, near the end
     for t in [Tick(0), Tick(SPAN / 2), Tick(87_000)] {
-        // статический эквивалент: значения кривых в этот момент. Кривая
-        // сэмплируется по кадру ИСТОЧНИКА, который показан в этот тик, —
-        // поэтому и здесь берём позицию, выровненную по сетке проекта
+        // the static equivalent: the values of the curves at that moment. The curve is
+        // sampled by the SOURCE frame that is shown at that tick, so here too we take a
+        // position aligned to the project grid
         let step = 90_000 / 30;
         let u = (t.0 / step * step) as f64 / SPAN as f64;
         let r = 1.0 + (47.0 - 1.0) * u;
@@ -123,7 +123,7 @@ fn t191_animated_equals_static_at_each_moment() {
         let (a, ca) = compose(&animated, t, &cache_a);
         let (b, cb) = compose(&static_p, t, &cache_s);
         assert!(ca && cb);
-        assert_eq!(a, b, "анимированный != статическому в t={} (u={u})", t.0);
+        assert_eq!(a, b, "animated != static at t={} (u={u})", t.0);
     }
 }
 
@@ -143,25 +143,25 @@ fn t191_postfx_cache_no_stale_across_time_and_curve_edits() {
     let (t0, t1) = (Tick(0), Tick(SPAN / 2));
     let (a0, _) = compose(&p, t0, &cache);
     let (a1, _) = compose(&p, t1, &cache);
-    assert_ne!(a0, a1, "разные моменты анимации дают разные кадры");
-    // повтор тем же кэшем — байт-идентичен (мемоизация честная по t)
+    assert_ne!(a0, a1, "different moments of animation give different frames");
+    // a repeat with the same cache — byte-identical (memoization is honest by t)
     let (a0b, _) = compose(&p, t0, &cache);
     assert_eq!(a0, a0b);
-    // правка кривой меняет fx_hash: тот же кэш, но кадр другой (не стейл)
+    // editing a curve changes fx_hash: the same cache, but a different frame (not stale)
     let p2 = project(base, curve(20.0));
     let (a1c, _) = compose(&p2, t1, &cache);
-    assert_ne!(a1, a1c, "правка кейфрейма обязана инвалидировать кадры");
+    assert_ne!(a1, a1c, "editing a keyframe must invalidate frames");
 }
 
-/// Тест 230 (Р.34 К2, пересмотрен Р.62): CamMotion сконвертирован в узел
-/// «Геометрия» с кривыми и рисует ТО ЖЕ в допуске ресемплинга. Байт-в-байт
-/// недостижимо по построению: узел хранит ПОЗИЦИЮ (`pan_to_pos(pan, zoom)`)
-/// и кладёт слой непрерывным аффином, легаси интерполировал pan и zoom
-/// порознь, перемножал и резал ЦЕЛОЧИСЛЕННУЮ рамку. Владелец: «обратной
-/// совместимости не надо», Pan упразднён. Замер на 64×36: среднее
-/// расхождение < 3 (одиночный пиксель кромки до 90) — допуск `mean < 4`;
-/// в нуле (pan 0 или zoom 1) — байт-в-байт. Проверяется рендером: миграция
-/// затрагивает домен ключа, форму хранения и `time_scale`.
+/// Test 230 (R.34 K2, revised in R.62): CamMotion is converted into a “Geometry”
+/// node with curves and draws the SAME within the resampling tolerance. Byte-for-byte is
+/// unreachable by construction: the node stores the POSITION (`pan_to_pos(pan, zoom)`)
+/// and places the layer with a continuous affine, while the legacy interpolated pan and zoom
+/// separately, multiplied them and cut an INTEGER frame. The owner: “backward
+/// compatibility is not needed”, Pan is abolished. Measured on 64×36: mean
+/// divergence < 3 (a single edge pixel up to 90) — tolerance `mean < 4`;
+/// at zero (pan 0 or zoom 1) — byte for byte. It is checked by rendering: the migration
+/// touches the key domain, the storage form and `time_scale`.
 #[test]
 fn t230_cammotion_migrates_to_pan_curves() {
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
@@ -181,32 +181,32 @@ fn t230_cammotion_migrates_to_pan_curves() {
         let mut after = before.clone();
         assert!(
             kt_model::migrate_legacy_cammotion(&mut after.clips[0]),
-            "{label}: миграция обязана сработать"
+            "{label}: the migration must fire"
         );
         assert!(
             matches!(after.clips[0].fx[0], FxInstance::Geometry { .. }),
-            "{label}: CamMotion обязан стать узлом «Геометрия»"
+            "{label}: CamMotion must become a “Geometry” node"
         );
-        assert_eq!(after.clips[0].fx_auto[0].len(), 3, "{label}: три кривые");
+        assert_eq!(after.clips[0].fx_auto[0].len(), 3, "{label}: three curves");
         after.validate().unwrap();
-        // моменты ПО СЕТКЕ кадров (шаг 3000): старый путь читал сырой
-        // прогресс клипа, новый — выровненную позицию материала
+        // times ON the frame GRID (step 3000): the old path read the raw
+        // progress of the clip, the new one — the aligned position of the material
         for t in [Tick(0), Tick(21_000), Tick(45_000), Tick(69_000)] {
             let (a, ca) = compose(&before, t, &cache);
             let (b, cb) = compose(&after, t, &cache);
-            assert!(ca && cb, "{label}: кадры прогреты");
+            assert!(ca && cb, "{label}: frames are warm");
             if t.0 == 0 {
-                assert_eq!(a, b, "{label}: в нуле (zoom 1) кадр обязан совпасть до байта");
+                assert_eq!(a, b, "{label}: at zero (zoom 1) the frame must match byte for byte");
             } else {
                 let sum: u64 = a.iter().zip(b.iter()).map(|(x, y)| x.abs_diff(*y) as u64).sum();
                 let mean = sum as f64 / a.len() as f64;
-                assert!(mean < 4.0, "{label}: кадр в {t:?} расходится на {mean:.2} > 4");
+                assert!(mean < 4.0, "{label}: the frame at {t:?} diverges by {mean:.2} > 4");
             }
         }
     }
 
-    // ПУСТЫЕ кейфреймы у CamMotion означали не статику, а пресет v1
-    // «наезд 1.0 → 1.35»: движение обязано пережить миграцию
+    // EMPTY keyframes on CamMotion meant not a static but the v1 preset
+    // “zoom 1.0 → 1.35”: the motion must survive the migration
     let empty = FxInstance::CamMotion {
         ease: true,
         mode: PanMode::Fit,
@@ -216,16 +216,16 @@ fn t230_cammotion_migrates_to_pan_curves() {
     let before = project(vec![empty], vec![]);
     let mut after = before.clone();
     assert!(kt_model::migrate_legacy_cammotion(&mut after.clips[0]));
-    let zoom = after.clips[0].fx_auto[0].iter().find(|c| c.param == "zoom").expect("кривая наезда");
+    let zoom = after.clips[0].fx_auto[0].iter().find(|c| c.param == "zoom").expect("push-in curve");
     assert_eq!(zoom.keys.len(), 2);
-    assert!((zoom.keys[1].v - 1.35).abs() < 1e-9, "пресет v1 сохранён: {:?}", zoom.keys);
+    assert!((zoom.keys[1].v - 1.35).abs() < 1e-9, "v1 preset saved: {:?}", zoom.keys);
     for t in [Tick(0), Tick(SPAN / 2), Tick(69_000)] {
         let (a, _) = compose(&before, t, &cache);
         let (b, _) = compose(&after, t, &cache);
-        assert_eq!(a, b, "пресет без кейфреймов: кадр в {t:?} совпадает");
+        assert_eq!(a, b, "preset without keyframes: the frame at {t:?} matches");
     }
 
-    // кривая НОВОГО домена главнее легаси-кейфреймов
+    // the curve of the NEW domain takes precedence over the legacy keyframes
     let cam = FxInstance::CamMotion {
         ease: true,
         mode: PanMode::Fit,
@@ -241,6 +241,6 @@ fn t230_cammotion_migrates_to_pan_curves() {
     }]];
     kt_model::migrate_legacy_cammotion(&mut c);
     let zoom = c.fx_auto[0].iter().find(|c| c.param == "zoom").unwrap();
-    assert_eq!(zoom.keys.len(), 1, "существующую кривую миграция не трогает");
+    assert_eq!(zoom.keys.len(), 1, "the migration does not touch an existing curve");
     assert_eq!(zoom.keys[0].v, 4.0);
 }

@@ -2,14 +2,14 @@
 /src/target/
 /src/fixtures/out/
 
-# Редакторы/ОС
+# Editors/OS
 *~
 *.swp
 .DS_Store
 .directory
 Thumbs.db
 
-# Sidecar-кэши проектов (создаются рядом с .ktproj)
+# Sidecar caches of projects (created next to .ktproj)
 *.ktindex.db
 *.ktindex.db-wal
 *.ktindex.db-shm
@@ -17,16 +17,16 @@ Thumbs.db
 # Python cache
 __pycache__/
 *.pyc
-# настоящий фильм для кросс-рендера (тест 179): 320 МБ, качается
-# скриптом src/scripts/fetch-oc-media.sh
+# real film for cross-render (Test 179): 320 MB, downloaded
+# by the script src/scripts/fetch-oc-media.sh
 /src/fixtures/otio-oc/
 
-# Секреты: токен GitHub для выгрузки багтрекеров (Р.41).
-# Кладётся владельцем руками, читается src/scripts/tracker-fetch.py.
-# В репозиторий не попадает НИКОГДА — ни значение, ни файл.
+# Secrets: GitHub token for exporting bug trackers (R.41).
+# Put in place by the owner by hand, read by src/scripts/tracker-fetch.py.
+# Never goes into the repository — neither the value nor the file.
 /.env
 .env.*
 
-# OpenSpec CLI (npm) и локальные настройки Claude
+# OpenSpec CLI (npm) and local Claude settings
 /node_modules/
 .claude/settings.local.json

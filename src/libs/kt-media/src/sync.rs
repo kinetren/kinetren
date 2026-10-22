@@ -1,61 +1,61 @@
-//! Сдвиг двух записей по звуку (Р.49, п.374).
+//! Offset of two recordings by sound (R.49, item 374).
 //!
-//! Задача монтажёра: камера писала свой звук, петличка — свой, хлопушки не
-//! было или её не видно. Нужен сдвиг, с которым дорожки совпадут.
+//! The editor's task: the camera recorded its own sound, the lav mic its own, and the clapper
+//! was missing or not visible. We need the offset at which the tracks line up.
 //!
-//! **Почему по ПИРАМИДЕ ПИКОВ, а не по сэмплам.** Пирамида уже построена
-//! (индекс-БД строит её для волноформ), лежит в памяти и в сто раз короче
-//! сигнала. Корреляция по сэмплам часового материала — это часы счёта; по
-//! верхнему уровню пирамиды — миллисекунды, а спуск по уровням доводит
-//! точность до кадра.
+//! **Why by the PEAK PYRAMID, not by samples.** The pyramid is already built
+//! (the index DB builds it for waveforms), lies in memory and is a hundred times shorter
+//! than the signal. Correlation over the samples of hours of material is hours of computing;
+//! over the top pyramid level it is milliseconds, and descending the levels brings
+//! the precision down to the frame.
 //!
-//! **Почему по ПОЛОЖИТЕЛЬНОЙ ЧАСТИ ПЕРВОЙ РАЗНОСТИ огибающей, а не по самой
-//! огибающей.** Две записи одного события сделаны разными микрофонами: у
-//! петлички близкий голос без зала, у камеры — зал, эхо и шум. Формы их
-//! огибающих не похожи. А ТРАНЗИЕНТЫ — моменты, когда звук резко начинается —
-//! у них общие: это одни и те же события в комнате. Положительная часть
-//! разности оставляет ровно их и выбрасывает разницу в АЧХ, уровне и
-//! реверберации.
+//! **Why by the POSITIVE PART OF THE FIRST DIFFERENCE of the envelope,
+//! not the envelope itself.** Two recordings of one event were made with
+//! different microphones: the lav has a close voice without the room, the camera has
+//! the room, echo and noise. The shapes of their envelopes are not alike.
+//! But the TRANSIENTS — the moments when sound sharply starts — are common
+//! to them: these are the same events in the room. The positive part of the difference
+//! keeps exactly them and discards the difference in frequency response, level and reverberation.
 //!
-//! **Знак.** `offset(a, b)` — насколько позже B начинается относительно A.
-//! Положительное значение означает «B отстаёт»: чтобы совместить, B надо
-//! сдвинуть НАЗАД. Перестановка аргументов обязана дать ровно минус тот же
-//! сдвиг — классическая ошибка корреляции, и она сторожится тестом.
+//! **Sign.** `offset(a, b)` — how much later B starts relative to A.
+//! A positive value means “B lags”: to align, B must be shifted BACK.
+//! Swapping the arguments must give exactly the negative of the same offset —
+//! a classic correlation mistake, guarded by a test.
 
 use kt_time::Tick;
 
-/// Точность результата: тик 90 кГц делится на неё нацело, и это меньше
-/// половины кадра при любом fps проекта.
+/// Result precision: the 90 kHz tick divides it evenly, and this is less than
+/// half a frame at any project fps.
 pub const SYNC_GRANULARITY_TICKS: i64 = 480;
 
-/// Порог доверия. Ниже него ответ НЕ ВОЗВРАЩАЕТСЯ: сдвиг «на глазок» хуже
-/// отказа — монтажёр подвинет дорожку, услышит фленжер и будет искать
-/// причину в чём угодно, кроме автоматики. 0.30 — эмпирический край, за
-/// которым у записей с разными микрофонами пик корреляции перестаёт
-/// отличаться от фона (проверено на шумовых парах, t415).
+/// Confidence threshold. Below it NO ANSWER IS RETURNED: an offset “by eye” is worse
+/// than a refusal — the editor would move a track, hear a flanger, and look for the
+/// cause anywhere but in the automation. 0.30 is an empirical edge beyond which, for
+/// recordings with different microphones, the correlation peak stops differing from the
+/// background (verified on noise pairs, t415).
 pub const SYNC_MIN_CONFIDENCE: f64 = 0.30;
 
-/// Результат: сдвиг B относительно A и уверенность 0..1.
+/// Result: the offset of B relative to A and confidence 0..1.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SyncOffset {
     pub ticks: Tick,
     pub confidence: f64,
 }
 
-/// Огибающая уровня из уровня пирамиды: полуразмах блока.
+/// The level envelope from a pyramid level: the half-range of the block.
 ///
-/// Берётся именно размах (max − min), а не максимум: он не зависит от
-/// постоянной составляющей, которая у дешёвых микрофонов бывает заметной.
+/// The RANGE (max − min) is taken, not the maximum: it does not depend on the DC component,
+/// which is noticeable in cheap microphones.
 fn envelope(level: &[(i16, i16)]) -> Vec<i32> {
     level.iter().map(|&(lo, hi)| hi as i32 - lo as i32).collect()
 }
 
-/// Положительная часть первой разности — «где звук НАЧАЛСЯ».
+/// The positive part of the first difference — “where the sound STARTED”.
 ///
-/// Первый блок сравнивается САМ С СОБОЙ, а не с нулём: иначе у любой записи
-/// на нулевом блоке появляется огромный ложный «онсет», одинаковый у всех
-/// пар, и корреляция двух НЕСВЯЗАННЫХ шумов на нулевом сдвиге взлетает почти
-/// до единицы (найдено t415).
+/// The first block is compared WITH ITSELF, not with zero: otherwise
+/// any recording's zero block produces a huge false “onset”, identical in all pairs,
+/// and the correlation of two UNRELATED noises at zero shift shoots up
+/// to almost one (found t415).
 fn onsets(env: &[i32]) -> Vec<f64> {
     let mut v = Vec::with_capacity(env.len());
     let mut prev = env.first().copied().unwrap_or(0);
@@ -66,8 +66,8 @@ fn onsets(env: &[i32]) -> Vec<f64> {
     v
 }
 
-/// Нормировка к нулевому среднему и единичной норме: после неё скалярное
-/// произведение и есть коэффициент корреляции.
+/// Normalization to zero mean and unit norm: after it the dot product is the
+/// correlation coefficient.
 fn normalize(mut v: Vec<f64>) -> Vec<f64> {
     if v.is_empty() {
         return v;
@@ -85,17 +85,17 @@ fn normalize(mut v: Vec<f64>) -> Vec<f64> {
     v
 }
 
-/// Корреляция при сдвиге `lag` блоков, где ПОЛОЖИТЕЛЬНЫЙ lag означает «B
-/// начинается ПОЗЖЕ A на lag блоков»: сравнивается `a[i]` с `b[i + lag]`.
+/// Correlation at a shift of `lag` blocks, where a POSITIVE lag means “B
+/// starts LATER than A by lag blocks”: `a[i]` is compared with `b[i + lag]`.
 ///
-/// Знак тут — не мелочь. При `b[j] = a[j − D]` (B отстаёт на D) максимум
-/// обязан прийтись на `lag = D`; если перепутать, «подвинь на +0.4 с»
-/// превращается в «подвинь на −0.4 с», и дорожки разъезжаются вдвое дальше,
-/// чем были (сторож — t414).
+/// The sign here is no trifle. With `b[j] = a[j − D]` (B lags by D) the maximum
+/// must fall on `lag = D`; if confused, “shift by +0.4 s” turns into
+/// “shift by −0.4 s”, and the tracks drift twice as far apart as they were
+/// (guard — t414).
 ///
-/// Короткое перекрытие не может выиграть: при нормировке по ВСЕЙ длине сумма
-/// на куске ничем не ограничена, и десяток блоков с краю дал бы «уверенный»
-/// ответ ни о чём.
+/// A short overlap cannot win: when normalizing over the WHOLE length, the sum
+/// over a piece is not bounded by anything, and a dozen blocks at the edge would give
+/// a “confident” answer about nothing.
 fn corr_at(a: &[f64], b: &[f64], lag: i64) -> f64 {
     let n = a.len() as i64;
     let m = b.len() as i64;
@@ -115,12 +115,12 @@ fn corr_at(a: &[f64], b: &[f64], lag: i64) -> f64 {
     sum
 }
 
-/// Лучший сдвиг в блоках и уверенность.
+/// Best shift in blocks and confidence.
 ///
-/// Тай-брейк ДЕТЕРМИНИРОВАН: при равных значениях берётся МЕНЬШИЙ по модулю
-/// сдвиг, а при равном модуле — отрицательный. Без явного правила результат
-/// зависел бы от порядка обхода, и «пересчитали то же самое» иногда давало бы
-/// другой ответ.
+/// The tie-break is DETERMINISTIC: with equal values the SMALLER in absolute value shift is taken,
+/// and at equal absolute value — the negative one. Without an explicit rule the result would
+/// depend on the traversal order, and “recalculated the same thing” would sometimes give
+/// a different answer.
 fn best_lag(a: &[f64], b: &[f64], lo: i64, hi: i64) -> (i64, f64) {
     let mut best = (0i64, f64::NEG_INFINITY);
     for lag in lo..=hi {
@@ -135,10 +135,10 @@ fn best_lag(a: &[f64], b: &[f64], lo: i64, hi: i64) -> (i64, f64) {
     best
 }
 
-/// Сдвиг B относительно A по пирамидам пиков одного канала.
+/// Offset of B relative to A from the peak pyramids of one channel.
 ///
-/// `levels_a`/`levels_b` — уровни пирамиды (уровень 0 — самый подробный),
-/// `frames_per_block0` — сколько аудио-кадров в блоке уровня 0.
+/// `levels_a`/`levels_b` — pyramid levels (level 0 is the most detailed),
+/// `frames_per_block0` — how many audio frames are in a level-0 block.
 pub fn offset_from_pyramids(
     levels_a: &[Vec<(i16, i16)>],
     levels_b: &[Vec<(i16, i16)>],
@@ -148,28 +148,28 @@ pub fn offset_from_pyramids(
     if depth == 0 || frames_per_block0 == 0 {
         return None;
     }
-    // Спуск по уровням: грубо и быстро наверху, точно и узко внизу.
+    // Descent through the levels: coarse and fast at the top, precise and narrow at the bottom.
     //
-    // Стартовый уровень выбирается ПО ДЛИНЕ, а не «самый верхний»: на вершине
-    // пирамиды блоков один-два, полный поиск там бессмыслен, а если начать с
-    // неё, то ни одного полного поиска не случится вовсе — дальше идут только
-    // узкие окрестности вокруг ненайденного нуля (найдено t414).
+    // The starting level is chosen BY LENGTH, not “the topmost”: at the apex of the pyramid there are
+    // one or two blocks, a full search there is pointless, and if one starts from it, not a single
+    // full search would happen at all — only narrow neighborhoods around the not-found zero would follow
+    // (found t414).
     const MIN_BLOCKS: usize = 16;
     let start = (0..depth)
         .rev()
         .find(|&l| levels_a[l].len() >= MIN_BLOCKS && levels_b[l].len() >= MIN_BLOCKS)
         .unwrap_or(0);
-    let mut coarse_lag = 0i64; // в блоках ТЕКУЩЕГО уровня
+    let mut coarse_lag = 0i64; // in blocks of the CURRENT level
     let mut confidence;
     let mut level = start;
     loop {
         let a = normalize(onsets(&envelope(&levels_a[level])));
         let b = normalize(onsets(&envelope(&levels_b[level])));
         let (lo, hi) = if level == start {
-            // первый проход — весь допустимый диапазон
+            // first pass — the whole admissible range
             (-(a.len() as i64 - 1), b.len() as i64 - 1)
         } else {
-            // дальше — только окрестность найденного: ±2 блока родителя
+            // after that — only the neighborhood of the found one: ±2 blocks of the parent
             (coarse_lag - 4, coarse_lag + 4)
         };
         let (lag, c) = best_lag(&a, &b, lo, hi);
@@ -179,14 +179,14 @@ pub fn offset_from_pyramids(
             break;
         }
         level -= 1;
-        coarse_lag *= 2; // блок следующего уровня вдвое короче
+        coarse_lag *= 2; // a block of the next level is half as long
     }
     if confidence.partial_cmp(&SYNC_MIN_CONFIDENCE) != Some(std::cmp::Ordering::Greater) {
-        return None; // NaN тоже сюда: «не знаю» — это отказ, а не ноль
+        return None; // NaN belongs here too: “don't know” is a refusal, not zero
     }
     let frames = coarse_lag * frames_per_block0 as i64;
     let ticks = Tick::from_audio_frames(frames);
-    // округление до сетки: обещать точность выше блока пирамиды нечестно
+    // rounding to the grid: promising precision above a pyramid block is dishonest
     let q =
         (ticks.0 as f64 / SYNC_GRANULARITY_TICKS as f64).round() as i64 * SYNC_GRANULARITY_TICKS;
     Some(SyncOffset { ticks: Tick(q), confidence })

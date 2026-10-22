@@ -1,6 +1,6 @@
-//! Тест 718 (Р.62): правило приведения — у ПРОЕКТА с исключением у
-//! события. Смена умолчания проекта переписывает событие «следовать
-//! проекту» и не трогает событие с явным правилом (правило UI 20).
+//! Test 718 (R.62): the conform rule — the PROJECT with an exception on the
+//! event. Changing the project's default rewrites the event that “follows
+//! the project” and does not touch an event with an explicit rule (UI rule 20).
 
 use kt_engine::{SourceFacts, VideoRenderer};
 use kt_media::Quality;
@@ -46,7 +46,7 @@ fn project(rules: &[Conform], project_rule: ConformRule) -> Project {
         c.geometry.rule = *r;
         p.clips.push(c);
     }
-    p.normalize(); // дорожки под содержимое (Р.62)
+    p.normalize(); // tracks fitted to the content (R.62)
     p.validate().unwrap();
     p
 }
@@ -71,16 +71,16 @@ fn t718_project_rule_rewrites_followers_and_spares_explicit() {
     const FIT: (u32, u32) = (608, 1080);
     const FILL: (u32, u32) = (1920, 3412);
     const AS_IS: (u32, u32) = (1080, 1920);
-    // событие 1 следует проекту, событие 2 — явное «заполнить»
+    // event 1 follows the project, event 2 — an explicit “fill”
     let p = project(&[Conform::Project, Conform::Fill], ConformRule::Fit);
     assert_eq!(decodes(&p), vec![(1, FIT), (2, FILL)]);
-    // умолчание проекта сменилось — следующий за ним меняется, явный нет
+    // the project default changed — the one that follows it changes, the explicit one does not
     let p = project(&[Conform::Project, Conform::Fill], ConformRule::AsIs);
     assert_eq!(decodes(&p), vec![(1, AS_IS), (2, FILL)]);
-    // явное «вписать» стоит и при проекте «заполнить»
+    // an explicit “fit” stands even when the project is “fill”
     let p = project(&[Conform::Fit, Conform::Project], ConformRule::Fill);
     assert_eq!(decodes(&p), vec![(1, FIT), (2, FILL)]);
-    // «растянуть» — холст целиком; проект «вписать» по умолчанию не пишется
+    // “stretch” — the whole canvas; a “fit” project default is not written
     let p = project(&[Conform::Stretch], ConformRule::Fit);
     assert_eq!(decodes(&p), vec![(1, (1920, 1080))]);
     assert_eq!(p.settings.conform, ConformRule::Fit);

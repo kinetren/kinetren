@@ -1,11 +1,11 @@
-//! Тест 322 (Р.47, п.326): ПАРАМЕТРИЗОВАННЫЙ каркас по реестру аудио-FX.
-//! Каждый аудио-вид из `FxInstance::all()` автоматически проходит один и
-//! тот же набор проверок: дефолт звучит и детерминирован, каждый
-//! Smooth-параметр слышен, кривая отрабатывает, реверс с кривой
-//! детерминирован, повторный seek байт-в-байт, хвост согласован между
-//! `chain_tail` (без state) и `ClipProcessor::tail()` (со state).
-//! Замок полноты: новый эффект, добавленный в `all()`, попадает сюда сам;
-//! не добавленный — не соберётся из-за исчерпывающего `tag()`.
+//! Test 322 (R.47, item 326): a PARAMETERIZED frame over the audio FX registry.
+//! Each audio kind from `FxInstance::all()` automatically passes the same set of checks:
+//! the default sounds and is deterministic, each Smooth parameter is audible, the curve
+//! works, reverse with a curve is deterministic, a repeated seek is byte-for-byte, and the tail
+//! is consistent between `chain_tail` (without state)
+//! and `ClipProcessor::tail()` (with state).
+//! Completeness lock: a new effect added to `all()` gets in here by itself;
+//! one that is not added will not build, because of the exhaustive `tag()`.
 
 use kt_engine::{AudioRenderer, DirectFetcher, FxStateStore};
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
@@ -57,16 +57,16 @@ fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool) -> P
     p
 }
 
-/// Рендер клипа; стимул — широкополосные СТЕРЕО-РАЗЛИЧНЫЕ щелчки: у
-/// фильтров есть что резать, у стерео-параметров — s-компонента, у
-/// кривых — события по всей длине клипа.
+/// Render of the clip; the stimulus — broadband STEREO-DIFFERENT clicks: the filters
+/// have something to cut, the stereo parameters have the s-component, and the
+/// curves have events along the whole length of the clip.
 fn render(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool, from: i64) -> Vec<f32> {
     render_on(fx, auto, reversed, from, AudioPattern::Clicks)
 }
 
-/// Тот же рендер на выбранном стимуле: динамика (гейт/компрессор) меряется
-/// на щелчках С ФОНОМ — на нулевом фоне hold/release принципиально
-/// неслышимы (нечего глушить между событиями).
+/// Same render on the chosen stimulus: dynamics (gate/compressor) are measured
+/// on clicks WITH BACKGROUND — on a zero background hold/release are fundamentally
+/// inaudible (there is nothing to duck between events).
 fn render_on(
     fx: Vec<FxInstance>,
     auto: Vec<Vec<ParamCurve>>,
@@ -95,7 +95,7 @@ fn rms(s: &[f32]) -> f64 {
     (s.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>() / s.len().max(1) as f64).sqrt()
 }
 
-/// Кривая одного параметра слота 0: default → пробное значение к концу.
+/// Curve of one parameter of slot 0: default → trial value at the end.
 fn curve_for(spec: &ParamSpec, probe: f64) -> Vec<Vec<ParamCurve>> {
     vec![vec![ParamCurve {
         param: spec.name.to_string(),
@@ -108,10 +108,10 @@ fn curve_for(spec: &ParamSpec, probe: f64) -> Vec<Vec<ParamCurve>> {
     }]]
 }
 
-/// Кандидаты пробы: оба конца диапазона (дальний первым). У параметра
-/// бывает «прозрачный» край (rate_hz=48000 у крашера — сетка в каждый
-/// кадр), поэтому слышимость требуется ХОТЯ БЫ от одного конца, а кривая
-/// строится на слышимом.
+/// Probe candidates: both ends of the range (the far one first). Some parameters
+/// have a “transparent” edge (rate_hz=48000 on the crusher is a grid in every
+/// frame), so audibility is required from at least one end, and the curve
+/// is built on the audible one.
 fn probe_values(spec: &ParamSpec) -> [f64; 2] {
     if (spec.default - spec.max).abs() > (spec.default - spec.min).abs() {
         [spec.max, spec.min]
@@ -131,39 +131,39 @@ fn t322_audio_registry_contract() {
         covered.push(f.tag());
         let fx = vec![(*f).clone()];
 
-        // (а) дефолт: не тишина, детерминирован между прогонами
+        // (a) default: not silence, deterministic between runs
         let a = render(fx.clone(), vec![], false, 0);
         assert!(rms(&a) > 1e-4, "{}: default renders silence", f.tag());
         let b = render(fx.clone(), vec![], false, 0);
         assert_eq!(a, b, "{}: default render is not deterministic", f.tag());
 
-        // (б) каждый Smooth-параметр слышен от пробного значения.
-        // Энейблеры: параметр, неслышимый на дефолтах соседей (частота
-        // полосы EQ при нулевом гейне), пробуется на базе, где сосед
-        // включён, — таблица с комментарием на каждую строку.
+        // (b) every Smooth parameter is audible from its trial value.
+        // Enablers: a parameter that is inaudible at its neighbours' defaults (EQ band
+        // frequency at zero gain) is probed on a base where the neighbour is
+        // enabled — a table with a comment on each row.
         let stim = match f.tag() {
             "gate" | "compressor" => AudioPattern::ClicksBed,
             _ => AudioPattern::Clicks,
         };
         let base_for = |param: &str| -> FxInstance {
             match (f.tag(), param) {
-                // детектор с дефолтной атакой 10 мс не успевает на
-                // 4-кадровом щелчке — пробы компрессора идут с быстрой
+                // the detector with the default 10 ms attack does not keep up with a
+                // 4-frame click — the compressor probes run with a fast
                 ("compressor", _) => {
                     let mut e = (*f).clone();
                     e.set_param("attack_ms", 0.1);
                     e
                 }
-                // дефолтный порог -40 ниже фона стимула (-34): гейт всегда
-                // открыт и рампы/hold не участвуют — пробы идут при пороге
-                // между фоном и щелчками
+                // default threshold -40 is below the stimulus background (-34): the gate is always
+                // open and ramps/hold do not take part — the probes run at a threshold
+                // between the background and the clicks
                 ("gate", "hold_ms") | ("gate", "release_ms") | ("gate", "attack_ms") => {
                     let mut e = (*f).clone();
                     e.set_param("threshold_db", -25.0);
                     e
                 }
-                // частота/добротность полосы слышны только при ненулевом
-                // гейне этой полосы
+                // frequency/Q of a band are audible only at a non-zero
+                // gain of that band
                 ("eq", "low_freq_hz") => {
                     let mut e = (*f).clone();
                     e.set_param("low_gain_db", -12.0);
@@ -198,8 +198,8 @@ fn t322_audio_registry_contract() {
             audible_probe.push((spec.name.to_string(), heard));
         }
 
-        // (в) кривая первого Smooth-параметра отрабатывает: выход не равен
-        // ни константному дефолту, ни константной пробе
+        // (c) the curve of the first Smooth parameter works: the output is equal to
+        // neither the constant default nor the constant probe
         if let Some(spec) = f.auto_params().next() {
             let probe =
                 audible_probe.iter().find(|(n, _)| *n == spec.name).map(|(_, v)| *v).unwrap();
@@ -221,9 +221,9 @@ fn t322_audio_registry_contract() {
                 spec.name
             );
 
-            // (г) реверс + кривая: детерминирован и отличается от реверса
-            // без кривой (движковый t271-кейс: до Р.39 никто не сочетал
-            // reversed с непустым fx_auto)
+            // (d) reverse + curve: deterministic and differs from reverse without a curve
+            // (the engine t271 case: before R.39 nobody combined reversed with a non-empty
+            // fx_auto)
             let rev_plain = render_on(fx.clone(), vec![], true, 0, stim);
             let rev_curved = render_on(fx.clone(), curve_for(spec, probe), true, 0, stim);
             let rev_curved2 = render_on(fx.clone(), curve_for(spec, probe), true, 0, stim);
@@ -236,13 +236,13 @@ fn t322_audio_registry_contract() {
             );
         }
 
-        // (д) повторный seek в ту же позицию со свежим store — байт-в-байт
+        // (e) repeated seek to the same position with a fresh store — byte for byte
         let s1 = render(fx.clone(), vec![], false, DUR / 3);
         let s2 = render(fx.clone(), vec![], false, DUR / 3);
         assert_eq!(s1, s2, "{}: seek render is not reproducible", f.tag());
 
-        // (е) хвост: формула без state == формула процессора (относительный
-        // допуск 2% — целочисленные усечения длин линий)
+        // (f) tail: a formula without state == the processor's formula (relative
+        // tolerance 2% — integer truncations of line lengths)
         let auto = AutoProfiles::from_curves_rev(&[vec![]], 0, DUR, false);
         let ct = kt_fx::chain_tail(&fx, &auto).0 as f64;
         let proc = kt_fx::ClipProcessor::new(&fx, &auto, 0, DUR);
@@ -254,18 +254,18 @@ fn t322_audio_registry_contract() {
             f.tag()
         );
 
-        // (ж) упреждение: статическая формула == устройство процессора
-        // (Р.48, п.337). Здесь равенство ТОЧНОЕ — это целые кадры, по
-        // которым расширяется окно источника и прогрев seek'а: разойдутся
-        // — цепочка попросит материал, которого префетч не грел.
+        // (g) lookahead: the static formula == the processor's implementation (R.48, item 337).
+        // Equality here is EXACT — these are whole frames by which the source window
+        // and the seek warm-up are widened: if they diverge, the chain would request
+        // material that the prefetch did not warm.
         assert_eq!(
             kt_fx::chain_lookahead(&fx, &auto),
             proc.lookahead_frames(),
             "{}: chain_lookahead disagrees with the processor",
             f.tag()
         );
-        // то же с живой кривой первого параметра: у упреждающих видов
-        // нейтраль зависит от кривых (база «ноль» при кривой — не нейтраль)
+        // the same with the live curve of the first parameter: for lookahead kinds the
+        // neutral depends on curves (base “zero” with a curve is not neutral)
         if let Some(sp) = f.auto_params().next() {
             let curve = vec![vec![kt_model::ParamCurve {
                 param: sp.name.to_string(),
@@ -286,27 +286,27 @@ fn t322_audio_registry_contract() {
         }
     }
 
-    // LayerMix — слот силы, в одиночной цепочке он смешивает вход с самим
-    // собой: контракт «слышимости» к нему неприменим, но детерминизм и
-    // нейтральность обязаны держаться
+    // LayerMix — the strength slot; in a single chain it mixes the input with itself:
+    // the audibility contract does not apply to it, but determinism and
+    // neutrality must hold
     let lm = render(vec![FxInstance::LayerMix { amount: 0.5, from: 0 }], vec![], false, 0);
     assert_eq!(lm, dry, "solo LayerMix must be a no-op (dry == wet)");
 
-    // замок полноты: покрыт каждый аудио-вид реестра
+    // completeness lock: every audio kind of the registry is covered
     let all_tags: std::collections::BTreeSet<&str> = audio.iter().map(|f| f.tag()).collect();
     let covered: std::collections::BTreeSet<&str> = covered.into_iter().collect();
     assert_eq!(covered, all_tags, "every audio kind of all() must pass this contract");
 }
 
-/// Тест 325 (Р.47, п.328): детерминизм фазы LFO. Фаза — интеграл кривой
-/// частоты по ПОЗИЦИИ клипа, не счётчик обработанного: рендер одним
-/// куском равен рендеру кусками, seek равен холодному рендеру, а кривая
-/// частоты ускоряет модуляцию к концу клипа.
+/// Test 325 (R.47, item 328): LFO phase determinism. The phase is the integral of the
+/// curve of frequency over the clip's POSITION, not a counter of processed samples:
+/// a render in one piece equals a render in pieces, a seek equals a cold render,
+/// and the frequency curve speeds up the modulation toward the end of the clip.
 #[test]
 fn t325_lfo_phase_is_a_function_of_position() {
     let trem = vec![FxInstance::Tremolo { rate_hz: 5.0, depth: 1.0 }];
 
-    // (а) куском == кусками: фаза не зависит от нарезки буферов
+    // (a) in one piece == in pieces: the phase does not depend on buffer slicing
     let whole = render(trem.clone(), vec![], false, 0);
     let p = project(trem.clone(), vec![], false);
     let r = AudioRenderer::new(&p);
@@ -327,8 +327,8 @@ fn t325_lfo_phase_is_a_function_of_position() {
     assert_eq!(n2.underruns, 0);
     assert_eq!(whole, pieces, "LFO phase must not depend on buffer slicing");
 
-    // (б) синус под тремоло: кривая rate_hz 2 -> 8 Гц ускоряет модуляцию
-    // (счёт минимумов огибающей во второй половине больше, чем в первой)
+    // (b) sine under tremolo: the rate_hz curve 2 -> 8 Hz speeds up the modulation
+    // (the count of envelope minima in the second half is larger than in the first)
     let sine_render = |auto: Vec<Vec<ParamCurve>>| -> Vec<f32> {
         let mut p = project(vec![FxInstance::Tremolo { rate_hz: 2.0, depth: 1.0 }], auto, false);
         p.media[0].path = "synth:sine:440".into();
@@ -354,7 +354,7 @@ fn t325_lfo_phase_is_a_function_of_position() {
         source: Default::default(),
     }]];
     let swept = sine_render(curve);
-    // огибающая по окнам 4 мс; минимумы = провалы тремоло
+    // envelope over 4 ms windows; minima = tremolo dips
     let env: Vec<f64> = swept
         .chunks(192 * CH)
         .map(|w| w.iter().map(|v| (*v as f64).abs()).fold(0.0, f64::max))
@@ -373,12 +373,12 @@ fn t325_lfo_phase_is_a_function_of_position() {
     assert!(d2 > d1 + 1, "rate curve 2->8 Hz must speed the modulation up: {d1} dips then {d2}");
 }
 
-/// Тест 326 (Р.47, п.329): эхо и динамика делают то, что написано на
-/// ручках — позиция повтора, серия затуханий, ping-pong в противоканале,
-/// закон компрессии, глушение гейтом.
+/// Test 326 (R.47, item 329): echo and dynamics do what their knobs say — repeat
+/// position, a series of decays, ping-pong into the opposite channel,
+/// the compression law, muting by the gate.
 #[test]
 fn t326_delay_and_dynamics_behave() {
-    // --- Delay: повтор ровно на time_ms, серия убывает, хвост честен ----
+    // --- Delay: repeat exactly at time_ms, the series decays, the tail is honest ----
     let time_ms = 250.0f32;
     let one = render_on(
         vec![FxInstance::Delay { time_ms, feedback: 0.6, mix: 1.0, pingpong: false }],
@@ -389,18 +389,18 @@ fn t326_delay_and_dynamics_behave() {
     );
     let frames = |ms: f32| ((ms / 1000.0) * 48_000.0) as usize;
     let at = |out: &[f32], f: usize, ch: usize| out[f * CH + ch].abs();
-    // повторы в левом канале: на 250/500/750 мс, убывают
+    // repeats in the left channel: at 250/500/750 ms, decaying
     let (e1, e2, e3) =
         (at(&one, frames(250.0), 0), at(&one, frames(500.0), 0), at(&one, frames(750.0), 0));
     assert!(e1 > 0.2, "first echo at time_ms: {e1}");
     assert!(e2 > 0.05 && e2 < e1, "second echo decays: {e2} vs {e1}");
     assert!(e3 < e2, "series keeps decaying: {e3} vs {e2}");
-    // между повторами тихо
+    // silent between repeats
     assert!(at(&one, frames(125.0), 0) < 1e-3, "silence between echoes");
 
-    // ping-pong: щелчки Clicks чередуются по каналам — первый (n=0..3)
-    // только ЛЕВЫЙ. Время 230 мс выбрано так, чтобы повторы (11040,
-    // 22080) не совпадали с щелчками источника (сетка 4800).
+    // ping-pong: the Clicks alternate by channel — the first (n=0..3)
+    // is only LEFT. The time 230 ms is chosen so that the repeats (11040,
+    // 22080) do not coincide with the source's clicks (grid 4800).
     let pp = render_on(
         vec![FxInstance::Delay { time_ms: 230.0, feedback: 0.6, mix: 1.0, pingpong: true }],
         vec![],
@@ -411,17 +411,17 @@ fn t326_delay_and_dynamics_behave() {
     let win = |out: &[f32], f: usize, ch: usize| -> f64 {
         (f.saturating_sub(4)..f + 8).map(|i| out[i * CH + ch].abs() as f64).sum()
     };
-    // первый повтор левого щелчка — по-прежнему в левом (читается своя
-    // линия), второй — перекрёстной связью уехал в правый
+    // the first repeat of the left click is still in the left (its own
+    // line is read), the second, after the cross-feedback, has moved to the right
     let (l1, r1) = (win(&pp, frames(230.0), 0), win(&pp, frames(230.0), 1));
     assert!(l1 > 0.5 && r1 < l1 * 0.1, "first pp echo stays in its line: {l1}/{r1}");
     let (l2, r2) = (win(&pp, frames(460.0), 0), win(&pp, frames(460.0), 1));
     assert!(r2 > 0.1 && l2 < r2 * 0.2, "second pp echo crosses channels: {l2}/{r2}");
 
-    // --- Compressor: выход ~ thr + (in-thr)/ratio ----------------------
+    // --- Compressor: output ~ thr + (in-thr)/ratio ----------------------
     let comp = |fx: Vec<FxInstance>| -> f64 {
         let out = render_on(fx, vec![], false, 0, AudioPattern::Sine { hz: 440.0 });
-        // стабильный участок после атаки: вторая половина
+        // stable section after the attack: the second half
         let tail = &out[out.len() / 2..];
         let rms = (tail.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>() / tail.len() as f64)
             .sqrt();
@@ -436,14 +436,14 @@ fn t326_delay_and_dynamics_behave() {
         makeup_db: 0.0,
         key: None,
     }]);
-    // синус 0.5 = -6 дБFS: ожидаем -18 + ( -6 - -18 )/4 = -15 дБFS
+    // sine 0.5 = -6 dBFS: expect -18 + ( -6 - -18 )/4 = -15 dBFS
     let expect = -18.0 + (dry_db + 18.0) / 4.0;
     assert!(
         (comp_db - expect).abs() < 1.5,
         "compression law: got {comp_db:.1} dB, expected {expect:.1} dB (dry {dry_db:.1})"
     );
 
-    // --- Gate: тихий синус глушится, громкий проходит ------------------
+    // --- Gate: a quiet sine is muted, a loud one passes ------------------
     let g = |amp_db: f32| -> f64 {
         let hz = 440.0;
         let out = render_on(
@@ -470,9 +470,9 @@ fn t326_delay_and_dynamics_behave() {
     assert!(quiet < 1e-4, "quiet sine is gated: {quiet}");
 }
 
-/// Тест 327 (Р.47, п.330): цена плотной цепочки — ПЕЧАТЬ, не ассерт
-/// (о скорости судят по release-прогону: п.301). Семь событий, у каждого
-/// цепочка из шести узлов.
+/// Test 327 (R.47, item 330): the cost of a dense chain is a PRINT, not an assert
+/// (speed is judged by the release run: item 301). Seven events, each with a
+/// chain of six nodes.
 #[test]
 #[ignore]
 fn t327_print_dense_chain_cost() {
@@ -483,8 +483,8 @@ fn t327_print_dense_chain_cost() {
             FxInstance::chorus(),
             FxInstance::delay(),
             FxInstance::compressor(),
-            // упреждающие узлы Р.48: лимитер дёшев, питч — самый дорогой
-            // из всех (зерновой ресемплинг на каждый грейн)
+            // lookahead nodes of R.48: the limiter is cheap, pitch is the most expensive
+            // of all (grain resampling for every grain)
             FxInstance::limiter(),
             FxInstance::PitchShift { semitones: 3.0, cents: 0.0 },
             FxInstance::gain(-3.0),
@@ -550,9 +550,9 @@ fn t327_print_dense_chain_cost() {
         ms / (secs as f64 * 1000.0) * 100.0
     );
 }
-/// Перф-печать упреждающих узлов (Р.48): сколько стоит ОДНО событие с
-/// лимитером и с питчем каждого движка. Ассертов нет — числа идут в
-/// porting-notes, а судить о скорости можно только по РЕЛИЗУ (п.301):
+/// Perf print of the lookahead nodes (R.48): how much ONE event costs with the
+/// limiter and with each engine's pitch. There are no asserts — the numbers go
+/// into porting-notes, and speed can be judged only by the RELEASE build (item 301):
 /// `cargo test -p kt-engine --test audio_fx_registry --release -- --ignored bench_pitch`
 #[test]
 #[ignore]

@@ -1,5 +1,5 @@
-//! Тест 12 (docs/porting-notes.md): round-trip команд, undo, байт-стабильная
-//! сериализация, явные ошибки загрузки.
+//! Test 12 (docs/porting-notes.md): round trip of commands, undo, byte-stable serialization,
+//! explicit load errors.
 
 use kt_model::*;
 use kt_time::Tick;
@@ -76,7 +76,7 @@ fn load_rejects_explicitly() {
     let s = serde_json::to_string(&p).unwrap();
     assert_eq!(Project::from_json(&s), Err(ProjectError::UnsupportedVersion(999)));
 
-    // unknown media — ошибка, а не молчаливое выбрасывание клипа (дефект p)
+    // unknown media — an error, not a silent dropping of the clip (defect p)
     let mut p = sample_project();
     p.clips[0].media = MediaId(777);
     let s = serde_json::to_string(&p).unwrap();
@@ -91,7 +91,7 @@ fn load_rejects_explicitly() {
 
 #[test]
 fn unknown_fields_are_tolerated() {
-    // forward-compat: лишние поля не валят загрузку
+    // forward-compat: extra fields do not break the load
     let mut v: serde_json::Value = serde_json::to_value(sample_project()).unwrap();
     v["future_field"] = serde_json::json!({"x": 1});
     v["clips"][0]["future_flag"] = serde_json::json!(true);
@@ -122,9 +122,9 @@ fn every_command_round_trips_via_undo() {
     for cmd in commands {
         let mut m = TimelineModel::new(base.clone());
         m.apply(cmd.clone()).unwrap_or_else(|e| panic!("{cmd:?}: {e}"));
-        assert_ne!(m.project(), &base, "{cmd:?} должна менять модель");
+        assert_ne!(m.project(), &base, "{cmd:?} must change the model");
         m.undo().unwrap();
-        assert_eq!(m.project(), &base, "undo после {cmd:?} должен вернуть исходное");
+        assert_eq!(m.project(), &base, "undo after {cmd:?} must restore the original");
         m.redo().unwrap();
         m.undo().unwrap();
         assert_eq!(m.project(), &base);
@@ -133,19 +133,19 @@ fn every_command_round_trips_via_undo() {
 
 #[test]
 fn invalid_command_leaves_no_undo_entry() {
-    // Регрессия на дефект q: push undo до валидации создавал no-op записи.
+    // Regression for defect q: pushing undo before validation created no-op records.
     let mut m = TimelineModel::new(sample_project());
     assert!(m.apply(Command::RemoveClip { id: ClipId(404) }).is_err());
     assert!(
         m.apply(Command::Split {
             id: ClipId(10),
-            at: Tick(0), // граница — резать нечего
+            at: Tick(0), // the boundary — nothing to cut
             new_id: ClipId(21),
             new_group: None,
         })
         .is_err()
     );
-    assert_eq!(m.undo_depth(), 0, "проваленные команды не должны попадать в историю");
+    assert_eq!(m.undo_depth(), 0, "failed commands must not enter history");
     assert_eq!(m.undo(), Err(CommandError::NothingToUndo));
 }
 
@@ -154,7 +154,7 @@ fn linked_group_moves_together() {
     let mut m = TimelineModel::new(sample_project());
     m.apply(Command::MoveClip { id: ClipId(10), new_start: Tick(5000), new_lane: 0 }).unwrap();
     let audio = m.clip(ClipId(11)).unwrap();
-    assert_eq!(audio.start, Tick(5000), "A/V-партнёр двигается тем же смещением");
+    assert_eq!(audio.start, Tick(5000), "the A/V partner moves by the same offset");
 }
 
 #[test]
@@ -175,16 +175,16 @@ fn split_semantics() {
     assert_eq!(left.start + left.duration, Tick(300_000));
     assert_eq!(right.start, Tick(300_000));
     assert_eq!(right.start + right.duration, before.start + before.duration);
-    // source_in правой половины продолжает источник БЕЗ РАЗРЫВА.
+    // source_in of the right half continues the source WITHOUT A BREAK.
     //
-    // У клипа фикстуры rate 0.82 (`slowed_reverb`), поэтому «без разрыва»
-    // это НЕ длина куска, а съеденный материал: 291000 · 0.82 = 238620.
-    // До Р.39 здесь стояло линейное ожидание — то есть тест утверждал сам
-    // дефект: разрез замедленного события уезжал на 52380 тиков (0.58 с)
-    // и давал слышимый скачок.
+    // The clip of the fixture has rate 0.82 (`slowed_reverb`), therefore “without a break”
+    // here is NOT the length of the piece but the material consumed: 291000 · 0.82 = 238620.
+    // Before R.39 a linear expectation stood here — that is, the test asserted the defect itself:
+    // the cut of a slowed event drifted by 52380 ticks (0.58 s)
+    // and gave an audible jump.
     let elapsed = (Tick(300_000) - before.start).0 as f64;
     let want = before.source_in + Tick((elapsed * 0.82).round() as i64);
-    assert_eq!(right.source_in, want, "правая половина продолжает МАТЕРИАЛ, а не длину");
+    assert_eq!(right.source_in, want, "the right half continues the MATERIAL, not the length");
     assert_eq!(right.link_group, Some(GroupId(7)));
 }
 
@@ -195,14 +195,14 @@ fn trim_start_keeps_source_alignment() {
     let c = m.clip(ClipId(10)).unwrap();
     assert_eq!(c.start, Tick(90_000));
     assert_eq!(c.duration, Tick(810_000));
-    // Смысл теста («материал под курсором не должен сдвигаться») до Р.39
-    // был записан ЛИНЕЙНЫМ числом, хотя у клипа фикстуры rate 0.82: в
-    // момент 90_000 под курсором стоит материал 73_800, а не 90_000.
-    // Теперь утверждение соответствует собственному названию.
+    // The point of the test (“the material under the cursor must not shift”) was written before R.39
+    // as a LINEAR number, although the fixture clip has rate 0.82: at
+    // moment 90_000 the material under the cursor is 73_800, not 90_000.
+    // Now the assertion matches its own name.
     assert_eq!(
         c.source_in,
         Tick((90_000.0f64 * 0.82).round() as i64),
-        "материал под курсором не должен сдвигаться"
+        "material under the cursor must not shift"
     );
 }
 

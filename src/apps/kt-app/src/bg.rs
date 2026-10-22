@@ -1,32 +1,32 @@
-//! Фоновая ЗАДАЧА — общий каркас (Р.49, п.367).
+//! Background TASK — the common framework (R.49, item 367).
 //!
-//! **Различие, из которого всё следует.** В программе есть ДВЕ формы фоновой
-//! работы, и путать их дорого:
+//! **The distinction everything follows from.** The program has TWO forms of background
+//! work, and confusing them is costly:
 //!
-//! - **задача** — конечная, с прогрессом, отменой и паузой; у неё есть конец,
-//!   и пользователь вправе его ждать. Эталон — рендер;
-//! - **сервис** — бесконечный поток с очередью, который живёт, пока живёт
-//!   проект. Эталон — служба тумбнейлов.
+//! - **task** — finite, with progress, cancellation and pause; it has an end,
+//!   and the user is entitled to wait for it. The reference — rendering;
+//! - **service** — an endless stream with a queue, which lives as long as
+//!   the project lives. The reference — the thumbnail service.
 //!
-//! `spawn_index_worker` был задачей, ПРИТВОРЯВШЕЙСЯ сервисом: каждый вызов
-//! поднимал новый поток, и на одном проекте их набиралось три, а дописывали
-//! они в осиротевшие `Arc`, которых никто уже не читал.
+//! `spawn_index_worker` was a task PRETENDING to be a service: each call
+//! started a new thread, and on one project three of them piled up, and they kept writing
+//! into orphaned `Arc`s that nobody read any more.
 //!
-//! Каркас выделен ИЗ `RenderJob`, а не написан рядом: копия разошлась бы с
-//! оригиналом на первой же правке.
+//! The framework was extracted FROM `RenderJob`, not written alongside it: a copy would diverge
+//! from the original at the first edit.
 //!
-//! **`Drop` гасит поток.** Это лечение болезни, а не удобство: до
-//! `WatchdogHandle` переоткрытие проекта оставляло прежние потоки жить вечно.
-//! Поток проверяет флаг сам — прервать его снаружи нельзя, и это честно:
-//! задача, не спрашивающая «не пора ли остановиться», остановлена быть и не
-//! может.
+//! **`Drop` stops the thread.** This is a cure for the disease, not a convenience: until
+//! `WatchdogHandle` a project re-open left the previous threads alive forever.
+//! The thread checks the flag itself — it cannot be interrupted from outside, and this is honest:
+//! a task that never asks “is it time to stop?” simply cannot be stopped
+//! at all.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Отправитель прогресса. ВЛАДЕЕТСЯ телом задачи, а не одалживается ему:
-/// потребители (тот же экспорт) требуют колбэк `Fn(..) + Send + Sync +
-/// 'static` и хранят его у себя, а ссылка такого обещания дать не может.
+/// The progress sender. It is OWNED by the task body, not lent to it:
+/// consumers (the same export) require a `Fn(..) + Send + Sync +
+/// 'static` callback and store it, and a reference cannot make such a promise.
 pub struct BgSend<P>(std::sync::mpsc::Sender<P>);
 
 impl<P> Clone for BgSend<P> {
@@ -36,14 +36,14 @@ impl<P> Clone for BgSend<P> {
 }
 
 impl<P> BgSend<P> {
-    /// Отправить шаг. Закрытый канал — не ошибка: значит про задачу забыли,
-    /// и она всё равно вот-вот остановится по флагу отмены.
+    /// Send a step. A closed channel is not an error: it means the task was forgotten,
+    /// and it is about to stop anyway by the cancel flag.
     pub fn send(&self, p: P) {
         let _ = self.0.send(p);
     }
 }
 
-/// Рычаги, которые задача ОБЯЗАНА опрашивать сама.
+/// The levers that the task MUST poll itself.
 #[derive(Clone)]
 pub struct BgCtl {
     cancel: Arc<AtomicBool>,
@@ -51,8 +51,8 @@ pub struct BgCtl {
 }
 
 impl BgCtl {
-    /// «Пора ли заканчивать». Заодно ЖДЁТ, пока снята пауза: пауза — это не
-    /// остановка, и спрашивающий про отмену всё равно обязан её уважать.
+    /// “Is it time to finish”. Also WAITS until the pause is lifted: a pause is not
+    /// a stop, and the one asking about cancellation must still respect it.
     pub fn should_stop(&self) -> bool {
         while self.pause.load(Ordering::Acquire) && !self.cancel.load(Ordering::Acquire) {
             std::thread::sleep(std::time::Duration::from_millis(30));
@@ -69,21 +69,21 @@ impl BgCtl {
     }
 }
 
-/// Запущенная фоновая задача: `P` — шаг прогресса, `R` — итог.
+/// A running background task: `P` — progress step, `R` — result.
 pub struct BgJob<P, R> {
     prog_rx: std::sync::mpsc::Receiver<P>,
     done_rx: std::sync::mpsc::Receiver<R>,
     cancel: Arc<AtomicBool>,
     pause: Arc<AtomicBool>,
     pub started: std::time::Instant,
-    /// Последний пришедший шаг прогресса.
+    /// The last progress step received.
     pub progress: Option<P>,
-    /// Итог. `Some` — задача кончилась.
+    /// The result. `Some` — the task is finished.
     pub done: Option<R>,
 }
 
 impl<P: Send + 'static, R: Send + 'static> BgJob<P, R> {
-    /// Запустить. `body` получает рычаги и «отправитель прогресса».
+    /// Start. `body` gets the levers and the “progress sender”.
     pub fn spawn<F>(name: &str, body: F) -> BgJob<P, R>
     where
         F: FnOnce(BgCtl, BgSend<P>) -> R + Send + 'static,
@@ -111,7 +111,7 @@ impl<P: Send + 'static, R: Send + 'static> BgJob<P, R> {
         }
     }
 
-    /// Забрать всё, что пришло. `true` — что-то изменилось (повод на кадр).
+    /// Collect everything that has arrived. `true` — something changed (a reason to redraw a frame).
     pub fn poll(&mut self) -> bool {
         let mut any = false;
         while let Ok(p) = self.prog_rx.try_recv() {
@@ -125,9 +125,9 @@ impl<P: Send + 'static, R: Send + 'static> BgJob<P, R> {
         any
     }
 
-    /// Задача ещё считает. Именно это, а не `is_some()` у самого джоба,
-    /// должно держать перерисовку: иначе окно, оставшееся на экране после
-    /// финиша, греет систему круглые сутки (повтор дефекта t38).
+    /// The task is still counting. It is exactly this, and not `is_some()` of the job itself,
+    /// that must keep the repaint going: otherwise a window left on screen after
+    /// completion would heat the system round the clock (a repeat of the t38 defect).
     pub fn is_running(&self) -> bool {
         self.done.is_none()
     }
@@ -147,7 +147,7 @@ impl<P: Send + 'static, R: Send + 'static> BgJob<P, R> {
 
 impl<P, R> Drop for BgJob<P, R> {
     fn drop(&mut self) {
-        // забыли про задачу — задача обязана закончиться
+        // the task was forgotten — the task must finish
         self.cancel.store(true, Ordering::Release);
         self.pause.store(false, Ordering::Release);
     }
@@ -157,12 +157,12 @@ impl<P, R> Drop for BgJob<P, R> {
 mod tests {
     use super::*;
 
-    /// t398 (Р.49 Б1): каркас задачи — прогресс доезжает, пауза держит,
-    /// отмена останавливает, а `Drop` гасит поток даже если про задачу
-    /// просто забыли.
+    /// t398 (R.49 B1): the task framework — progress arrives, the pause holds,
+    /// cancel stops, and `Drop` stops the thread even if the task was
+    /// simply forgotten.
     #[test]
     fn t398_bg_job_reports_pauses_cancels_and_dies_with_drop() {
-        // 1) прогресс и итог
+        // 1) progress and result
         let mut job: BgJob<u32, u32> = BgJob::spawn("t398-a", |_ctl, send: BgSend<u32>| {
             for i in 1..=5 {
                 send.send(i);
@@ -174,11 +174,11 @@ mod tests {
             job.poll();
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        assert_eq!(job.done, Some(42), "итог не доехал");
-        assert_eq!(job.progress, Some(5), "прогресс не доехал");
-        assert!(!job.is_running(), "законченная задача считается бегущей");
+        assert_eq!(job.done, Some(42), "the total did not arrive");
+        assert_eq!(job.progress, Some(5), "progress did not arrive");
+        assert!(!job.is_running(), "a finished task counts as running");
 
-        // 2) отмена: тело спрашивает `should_stop` и выходит
+        // 2) cancel: the body asks `should_stop` and exits
         let steps = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let s = steps.clone();
         let job2: BgJob<(), &'static str> =
@@ -199,9 +199,9 @@ mod tests {
             job2.poll();
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        assert_eq!(job2.done, Some("stopped"), "отменённая задача не закончилась");
+        assert_eq!(job2.done, Some("stopped"), "the cancelled task did not finish");
 
-        // 3) Drop гасит поток: про задачу забыли — она обязана остановиться
+        // 3) Drop stops the thread: the task was forgotten — it must stop
         let ticks = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let t = ticks.clone();
         {
@@ -212,20 +212,20 @@ mod tests {
                 }
             });
             std::thread::sleep(std::time::Duration::from_millis(40));
-        } // здесь Drop
+        } // here Drop
         std::thread::sleep(std::time::Duration::from_millis(80));
         let a = ticks.load(Ordering::Acquire);
         std::thread::sleep(std::time::Duration::from_millis(120));
         assert_eq!(
             ticks.load(Ordering::Acquire),
             a,
-            "после Drop поток продолжает крутиться — ровно та утечка, ради которой \
-             каркас и заведён"
+            "after Drop the thread keeps spinning — exactly the leak for which \
+             the harness is set up"
         );
     }
 
-    /// Пауза ДЕРЖИТ, а отмена снимает её и выпускает поток: иначе отменённая
-    /// на паузе задача висела бы вечно, а вместе с ней и окно прогресса.
+    /// The PAUSE holds, and cancel releases it and lets the thread go: otherwise a task
+    /// cancelled while paused would hang forever, and with it the progress window.
     #[test]
     fn t398b_cancel_releases_a_paused_job() {
         let ticks = Arc::new(std::sync::atomic::AtomicU32::new(0));
@@ -244,7 +244,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(60));
         let held = ticks.load(Ordering::Acquire);
         std::thread::sleep(std::time::Duration::from_millis(80));
-        assert_eq!(ticks.load(Ordering::Acquire), held, "пауза не держит");
+        assert_eq!(ticks.load(Ordering::Acquire), held, "the pause does not hold");
 
         job.cancel();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -252,6 +252,6 @@ mod tests {
             job.poll();
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        assert!(job.done.is_some(), "отменённая на паузе задача не вышла — окно висело бы вечно");
+        assert!(job.done.is_some(), "a task cancelled during pause did not exit — the window would hang forever");
     }
 }

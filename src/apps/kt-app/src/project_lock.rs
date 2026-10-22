@@ -1,43 +1,43 @@
-//! Замок на ПРОЕКТ (Р.49, п.352).
+//! Project lock (R.49, item 352).
 //!
-//! Задача — не запретить вторую копию программы, а не дать двум копиям молча
-//! писать в один файл проекта, затирая работу друг друга.
+//! The task is not to forbid a second copy of the program, but to keep two copies
+//! from silently writing to one project file, overwriting each other’s work.
 //!
-//! **Почему не единственный экземпляр программы.** Глобальный замок убил бы
-//! живые сценарии (`scripts/live-check.sh` запускает kt-app в Xvfb
-//! параллельно) и законный сценарий «открыл второй раз, чтобы посмотреть
-//! другой кусок монтажа». Замок именной: на конкретный проект.
+//! **Why not a single program instance.** A global lock would kill
+//! live scenarios (`scripts/live-check.sh` runs kt-app in Xvfb
+//! in parallel) and the legitimate scenario “opened a second time to look at
+//! another piece of the edit”. The lock is named: it applies to a specific project.
 //!
-//! **Почему `flock`, а не файл с pid и `O_EXCL`.** Ядро снимает `flock` при
-//! ЛЮБОЙ смерти процесса — падении, SIGKILL, `terminate()` из живого
-//! каркаса. Замок, который ядро само не снимает, после первого же
-//! принудительного гашения оставляет вечную блокировку: класс, уже стоивший
-//! раунда (п.232) — семь зелёных сценариев стали бы красными.
+//! **Why `flock` and not a file with a pid and `O_EXCL`.** The kernel releases `flock` on
+//! ANY process death — a crash, SIGKILL, `terminate()` from a live
+//! shell. A lock the kernel does not release by itself leaves a permanent
+//! block after the first forced kill: a class that already cost
+//! a round (item 232) — seven green scenarios would have turned red.
 //!
-//! **Почему замок на СОСЕДНЕМ файле, а не на самом проекте.** Сохранение
-//! атомарно: `rename` подменяет inode. Замок, взятый на файл проекта, после
-//! первого же Ctrl+S остался бы висеть на осиротевшем inode, а следующая
-//! копия открыла бы НОВЫЙ и спокойно взяла свой — защита исчезала ровно в
-//! тот момент, ради которого была нужна.
+//! **Why the lock is on a NEIGHBOR file, not on the project itself.** Saving is
+//! atomic: `rename` replaces the inode. A lock taken on the project file would, after the
+//! first Ctrl+S, remain on an orphaned inode, and the next
+//! copy would open a NEW one and calmly take its own — protection would vanish exactly
+//! at the moment it was needed.
 //!
-//! **Почему файл замка лежит в каталоге данных, а не рядом с проектом.**
-//! Каталог пользователя не засоряется, замок берётся даже на проекте в
-//! read-only каталоге (на сетевой шаре, на смонтированном образе), а
-//! брошенные нулевые файлы остаются в нашем каталоге, где никому не мешают.
-//! Имя — хэш абсолютного пути; сам путь и pid пишутся ВНУТРЬ файла, чтобы
-//! сообщение могло назвать чужой процесс.
+//! **Why the lock file lives in the data directory, not next to the project.**
+//! The user’s directory is not cluttered, the lock is taken even on a project in a
+//! read-only directory (on a network share, on a mounted image), and
+//! abandoned empty files stay in our directory, where they bother no one.
+//! The name is a hash of the absolute path; the path itself and the pid are written INSIDE the file, so that
+//! the message can name the other process.
 
 use std::path::{Path, PathBuf};
 
-/// Чем кончилась попытка занять проект.
+/// What ended the attempt to take the project.
 pub enum LockState {
-    /// Проект наш: пишем в него свободно.
+    /// The project is ours: we write to it freely.
     Owned(ProjectLock),
-    /// Занят другой копией. `pid` — её номер процесса, если файл замка
-    /// удалось прочитать (нет — работаем без номера, это не повод молчать).
+    /// Taken by another copy. `pid` is its process number, if the lock file
+    /// could be read (if not, we work without the number — that is no reason to stay silent).
     Busy { pid: Option<u32> },
-    /// Замок взять не удалось совсем (нет каталога данных, нет прав).
-    /// Не повод не работать: ведём себя как владелец, но без гарантии.
+    /// The lock could not be taken at all (no data directory, no rights).
+    /// Not a reason not to work: we behave as the owner, but without a guarantee.
     Unavailable,
 }
 
@@ -47,21 +47,21 @@ pub struct ProjectLock {
 
 impl Drop for ProjectLock {
     fn drop(&mut self) {
-        // Файл НЕ удаляем: между нашим `unlink` и `open` соседа успел бы
-        // втиснуться третий, и два процесса держали бы замки на разных
-        // inode одного имени. Нулевой файл в своём каталоге данных — цена
-        // корректности, и ядро освободит сам замок в любом случае.
+        // The file is NOT deleted: between our `unlink` and the neighbor’s `open` a third one could slip in,
+        // and two processes would hold locks on different inodes of one name. An empty file
+        // in its own data directory is the price of correctness, and the kernel releases the lock
+        // itself in any case.
     }
 }
 
-/// Каталог для файлов замков.
+/// Directory for the lock files.
 fn locks_dir() -> PathBuf {
     crate::journal::data_dir().join("locks")
 }
 
-/// Имя файла замка: хэш абсолютного пути проекта. Абсолютный, а не
-/// канонический: `canonicalize` требует существующего файла, а замок нужен
-/// и на «Сохранить как…» в ещё не созданный.
+/// Lock file name: a hash of the absolute project path. Absolute, not canonical:
+/// `canonicalize` requires an existing file, and the lock is needed also for “Save as…”
+/// to a file not yet created.
 pub fn lock_file_for(project: &Path) -> PathBuf {
     let abs = std::path::absolute(project).unwrap_or_else(|_| project.to_path_buf());
     locks_dir().join(format!("{:016x}.lock", fnv1a(abs.to_string_lossy().as_bytes())))
@@ -76,9 +76,9 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     h
 }
 
-/// Попытаться занять проект. Не блокирует ни на миллисекунду: занято —
-/// значит занято, и программа работает дальше, только честно об этом
-/// говорит.
+/// Try to take the project. Does not block for even a millisecond:
+/// taken means taken, and the program keeps working,
+/// only honestly reporting it.
 pub fn acquire(project: &Path) -> LockState {
     let path = lock_file_for(project);
     if let Some(d) = path.parent()
@@ -86,8 +86,8 @@ pub fn acquire(project: &Path) -> LockState {
     {
         return LockState::Unavailable;
     }
-    // truncate(false): файл замка переживает смену держателя, и обнулять
-    // чужую запись до взятия замка нельзя
+    // truncate(false): the lock file survives a change of holder, and another’s record
+    // must not be zeroed before the lock is taken
     let file = match std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -99,8 +99,8 @@ pub fn acquire(project: &Path) -> LockState {
         Err(_) => return LockState::Unavailable,
     };
     if try_lock(&file) {
-        // Содержимое — для сообщения соседу и для разбора руками. Пишем
-        // ПОСЛЕ взятия замка: иначе затирали бы чужую запись.
+        // The content — for the message to the neighbor and for manual inspection. We write
+        // AFTER taking the lock: otherwise we would overwrite another’s record.
         let _ = std::io::Write::write_all(
             &mut (&file),
             format!("{}\n{}\n", std::process::id(), project.display()).as_bytes(),
@@ -117,14 +117,14 @@ pub fn acquire(project: &Path) -> LockState {
 #[cfg(unix)]
 fn try_lock(file: &std::fs::File) -> bool {
     use std::os::fd::AsRawFd;
-    // SAFETY: передаётся живой дескриптор открытого файла; flock не
-    // трогает память и возвращает только код ошибки.
+    // SAFETY: a live handle to an open file is passed; flock does not touch memory
+    // and returns only an error code.
     unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) == 0 }
 }
 
 #[cfg(not(unix))]
 fn try_lock(_file: &std::fs::File) -> bool {
-    // Без flock честнее считать проект свободным, чем изображать защиту.
+    // Without flock it is more honest to consider the project free than to pretend there is protection.
     true
 }
 
@@ -132,10 +132,10 @@ fn try_lock(_file: &std::fs::File) -> bool {
 mod tests {
     use super::*;
 
-    /// t362: замок именной и живучий. Вторая попытка занять ТОТ ЖЕ проект
-    /// отказывает и называет процесс; другой проект берётся свободно;
-    /// атомарная перезапись самого проекта замок НЕ ломает (потому он и
-    /// взят на соседнем файле, а не на inode проекта).
+    /// t362: the lock is named and durable. A second attempt to take the SAME project is refused
+    /// and names the process; another project is taken freely; atomic rewriting of the project
+    /// itself does NOT break the lock (which is why it is taken on a neighboring file, not on the
+    /// project’s inode).
     #[test]
     fn t362_project_lock_is_per_project_and_survives_atomic_save() {
         let dir = std::env::temp_dir().join(format!("kt-t362-{}", std::process::id()));
@@ -147,31 +147,31 @@ mod tests {
 
         let first = match acquire(&a) {
             LockState::Owned(l) => l,
-            _ => panic!("свободный проект обязан заниматься"),
+            _ => panic!("a free project must be claimed"),
         };
-        // тот же процесс, тот же проект — flock у нас рекурсивен по
-        // дескриптору, поэтому берём НОВЫЙ дескриптор, как это сделала бы
-        // вторая копия программы
+        // same process, same project — flock is recursive per descriptor,
+        // so we take a NEW descriptor,
+        // as a second copy of the program would
         match acquire(&a) {
             LockState::Busy { pid } => {
-                assert_eq!(pid, Some(std::process::id()), "замок не назвал держателя")
+                assert_eq!(pid, Some(std::process::id()), "the lock did not name its holder")
             }
-            _ => panic!("занятый проект отдался второй копии"),
+            _ => panic!("the busy project was handed to a second copy"),
         }
-        // соседний проект не задет
-        assert!(matches!(acquire(&b), LockState::Owned(_)), "замок оказался глобальным");
+        // a neighboring project is not affected
+        assert!(matches!(acquire(&b), LockState::Owned(_)), "the lock turned out to be global");
 
-        // сохранение проекта атомарно подменяет inode — замок обязан устоять
+        // saving the project atomically replaces the inode — the lock must survive
         kt_otio::write_atomic(&a, "{\"x\":1}").unwrap();
-        assert!(matches!(acquire(&a), LockState::Busy { .. }), "Ctrl+S сбросил замок");
+        assert!(matches!(acquire(&a), LockState::Busy { .. }), "Ctrl+S cleared the lock");
 
         drop(first);
-        assert!(matches!(acquire(&a), LockState::Owned(_)), "замок не отпущен");
+        assert!(matches!(acquire(&a), LockState::Owned(_)), "the lock was not released");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Разные пути — разные файлы замков, один путь — один файл (в том
-    /// числе записанный по-разному).
+    /// Different paths — different lock files; one path — one lock file
+    /// (including one written differently).
     #[test]
     fn t362b_lock_file_is_keyed_by_path() {
         let a = lock_file_for(Path::new("/w/film.kt"));

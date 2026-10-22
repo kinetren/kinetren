@@ -1,4 +1,4 @@
-//! Временный дамп образца миниатюр (не коммитится).
+//! A temporary dump of the thumbnail sample (not committed).
 use kt_fx::video::{FxScratch, render_fx_thumb, test_pattern};
 use kt_model::FxInstance;
 use xxhash_rust::xxh3::xxh3_64;
@@ -13,7 +13,7 @@ fn dump() {
         println!("{name} {w}x{h} alpha={alpha} 0x{:016x}", xxh3_64(&p.rgba));
         std::fs::write(format!("{dir}/pat-{name}-{}x{}.raw", p.w, p.h), &p.rgba).unwrap();
     }
-    // и несколько эффектов на образце — посмотреть глазами, что видно
+    // and several effects on the sample: look at what is visible
     let p = test_pattern(320, 180, false);
     let pa = test_pattern(320, 180, true);
     let mut s = FxScratch::default();

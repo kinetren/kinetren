@@ -1,24 +1,24 @@
-//! Окно «Настройки проекта» (Р.62): растр, частота кадров, частота аудио,
-//! правило приведения по умолчанию, движок питча, форма ключей.
+//! Window “Project settings” (R.62): raster, frame rate, audio rate,
+//! default conform rule, pitch engine, keyframe form.
 //!
-//! Одно тело с комбо панели превью: обе двери шлют `Command::SetSettings`
-//! (правило 17). Применение ставит `settings_explicit` — с этого момента
-//! первый клип в пустой проект настройки не трогает (правило 20).
-//! Невозможное значение (нечётный растр, 29.97) — отказ с причиной, а не
-//! молчание (правило 16).
+//! One body with the combo of the preview panel: both doors send `Command::SetSettings`
+//! (rule 17). Applying sets `settings_explicit` — from this moment on
+//! the first clip into an empty project does not touch the settings (rule 20).
+//! An impossible value (odd raster, 29.97) is refused with a reason, not
+//! silence (rule 16).
 
 use crate::app::KtApp;
 use crate::i18n::{k, tr};
 use eframe::egui;
 use kt_model::{Command, ConformRule, PitchEngine, SegShape};
 
-/// Делители 90 000 в пределах 1…120 — частоты, которые сетка тиков
-/// выражает точно. 29.97 сюда не попадает по построению.
+/// Divisors of 90 000 within 1…120 — frame rates that the tick grid
+/// expresses exactly. 29.97 does not fall here by construction.
 pub const FPS_CHOICES: [u32; 12] = [12, 15, 18, 20, 24, 25, 30, 36, 45, 48, 50, 60];
 
 pub struct SettingsWindow {
-    /// `Some` — окно правит ЛЕНТУ (рабочий вид внутри неё): только растр и
-    /// fps, каждый с галкой «как в проекте» (Р.62).
+    /// `Some` — the window edits the REEL (the working view inside it): only raster and
+    /// fps, each with an “as in project” checkbox (R.62).
     pub reel: Option<kt_model::MediaId>,
     pub inherit_size: bool,
     pub inherit_fps: bool,
@@ -32,7 +32,7 @@ pub struct SettingsWindow {
     pub focus: bool,
 }
 
-/// Растр: оба числа чётные и в пределах 16…8192.
+/// Raster: both numbers are even and within 16…8192.
 pub fn parse_size(w: &str, h: &str) -> Result<(u32, u32), String> {
     let one = |s: &str| -> Option<u32> {
         let v: u32 = s.trim().parse().ok()?;
@@ -44,8 +44,8 @@ pub fn parse_size(w: &str, h: &str) -> Result<(u32, u32), String> {
     }
 }
 
-/// Частота кадров: целый делитель 90 000 в пределах 1…120. «29.97» —
-/// не целое, «7» — не делитель; обе — отказ с причиной.
+/// Frame rate: an integer divisor of 90 000 within 1…120. “29.97” is
+/// not an integer, “7” is not a divisor; both are refused with a reason.
 pub fn parse_fps(s: &str) -> Result<u32, String> {
     let v: f64 = s.trim().parse().map_err(|_| tr(k::settings::BAD_FPS).to_string())?;
     let n = v.round();
@@ -66,7 +66,7 @@ fn shape_label(s: &SegShape) -> &'static str {
     }
 }
 
-/// Имя щупа правила для живых сценариев (`settings.conform.<rule>`).
+/// Name of the rule probe for live scenarios (`settings.conform.<rule>`).
 fn rule_probe(r: ConformRule) -> &'static str {
     match r {
         ConformRule::Fit => "settings.conform.fit",
@@ -86,11 +86,11 @@ pub fn rule_label(r: ConformRule) -> &'static str {
 }
 
 impl KtApp {
-    /// Открыть окно на текущих настройках ДОКУМЕНТА (настройки — свойство
-    /// документа, а не раскрытой ленты).
+    /// Open the window on the DOCUMENT's current settings (settings are a property
+    /// of the document, not of the opened reel).
     pub fn open_project_settings(&mut self) {
         let s = self.model.document().settings.clone();
-        // внутри ленты та же дверь правит ЛЕНТУ: у неё свои растр и fps
+        // inside a reel the same door edits the REEL: it has its own raster and fps
         let reel = self.model.editing();
         let seq = reel.and_then(|id| self.model.document().sequence(id).cloned());
         let (inherit_size, inherit_fps, w, h, fps) = match seq {
@@ -138,8 +138,8 @@ impl KtApp {
             .collapsible(false)
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
-                // ГРУППЫ по образцу «Трансформации» (Р.66): кадр, звук,
-                // кривые. Свёртка — состояние окна, не проекта.
+                // GROUPS modeled on “Transform” (R.66): frame, audio,
+                // curves. The collapsed state belongs to the window, not to the project.
                 crate::widgets::group(ui, "settings.frame", tr(k::grp::FRAME), |ui| {
                 egui::Grid::new("project_settings_grid").num_columns(2).show(ui, |ui| {
                     ui.label(tr(k::settings::SIZE));
@@ -307,7 +307,7 @@ impl KtApp {
                     st.default_shape = d.shape;
                     st.settings_explicit = true;
                     if st != cur {
-                        // доля превью сохраняется, а не пиксели (п.20 р.7)
+                        // the share of the preview is kept, not the pixels (item 20 round 7)
                         let pq = self.player.preview_quality();
                         let frac = pq.width as f32 / cur.width.max(1) as f32;
                         self.apply(Command::SetSettings { settings: st });
@@ -333,7 +333,7 @@ impl KtApp {
         if open {
             self.settings_win = Some(d);
         } else {
-            // всё, что берёт фокус, обязано его ОТДАВАТЬ (правило 14)
+            // everything that takes focus must GIVE IT BACK (rule 14)
             for id in ["settings_w", "settings_h", "settings_fps"] {
                 ctx.memory_mut(|m| m.surrender_focus(egui::Id::new(id)));
             }

@@ -20,7 +20,7 @@ const FROZEN: &[&str] = &[
 /// A line that handles the rename says so.
 fn handles_the_rename(line: &str) -> bool {
     let l = line.to_lowercase();
-    l.contains("former") || l.contains("2026-10-21") || l.contains("прежн")
+    l.contains("former") || l.contains("2026-10-21") || l.contains("previous")
         || l.contains("\"kinotrain\"") || l.contains("\\\"kinotrain\\\"")
 }
 

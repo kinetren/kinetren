@@ -1,7 +1,7 @@
-//! Файл проекта СВОЕГО формата против файла обмена (Р.70) — та половина
-//! тестов формата, которой нужен `.otio` для сравнения и атомарный писатель.
-//! Сам формат (круг, версия, git) проверяется в
-//! `kt-model/tests/project_file.rs`: модель о формате обмена не знает.
+//! The project file of OUR format against the exchange file (R.70) — the half of the format
+//! tests that needs `.otio` for comparison and the atomic writer.
+//! The format itself (round trip, version, git) is checked in
+//! `kt-model/tests/project_file.rs`: the model knows nothing of the exchange format.
 use std::cell::RefCell;
 use std::io;
 use std::path::Path;
@@ -37,8 +37,8 @@ fn clip(id: u64, media: u64, start: i64, dur: i64) -> ClipEvent {
     }
 }
 
-/// Та самая сцена замера: лента L1 из `inner` клипов, L2 из `uses2`
-/// экземпляров L1, корень из `uses1` экземпляров L2.
+/// The very scene of the measurement: reel L1 of `inner` clips, L2 of
+/// `uses2` instances of L1, the root of `uses1` instances of L2.
 fn nested_scene(inner: u64, uses2: u64, uses1: u64) -> Project {
     let mut p = Project::new(ProjectSettings {
         fps: 30,
@@ -71,43 +71,43 @@ fn nested_scene(inner: u64, uses2: u64, uses1: u64) -> Project {
     p.sequences.push(s1);
     p.sequences.push(s2);
     p.normalize();
-    p.validate().expect("сцена законна");
+    p.validate().expect("the scene is legal");
     p
 }
 
-// ---- t810 (вторая половина). на порядки меньше файла обмена ---------------
+// ---- t810 (second half). orders of magnitude smaller than the exchange file ---------------
 
 #[test]
 fn t810_project_file_is_orders_of_magnitude_smaller_than_the_interchange_file() {
-    // замер 02.10.2026: .otio 1.97 МБ против 3.9 КБ компактного JSON; теперь
-    // файл построчный (≈2× компактного), и порог стоит с запасом
+    // measurement of 02.10.2026: .otio 1.97 MB against 3.9 KB of compact JSON; now the file
+    // is line-by-line (≈2× compact), and the threshold has a margin
     let p = nested_scene(10, 8, 8);
     let otio = save_project(&p, &Retained::default(), None);
     let ours = to_text(&p, None);
     let ratio = otio.len() / ours.len().max(1);
     assert!(
         ratio >= 100,
-        "файл проекта обязан быть на порядки меньше файла обмена: {} байт против {} ({}×)",
+        "project file must be orders of magnitude smaller than the exchange file: {} bytes against {} ({}×)",
         ours.len(),
         otio.len(),
         ratio
     );
-    // и это не ценой содержимого: круг цел
-    assert_eq!(from_text(&ours).expect("читается").project, p);
+    // and not at the cost of content: the round trip is intact
+    assert_eq!(from_text(&ours).expect("reads").project, p);
 
-    // плоский проект без повторов — тоже меньше, но без порядков: здесь
-    // выигрыш только от отсутствия чужой обёртки
+    // a flat project without repeats — also smaller, but without orders of magnitude: here the
+    // gain comes only from the absence of a foreign wrapper
     let flat = nested_scene(10, 1, 1);
     let r_flat = save_project(&flat, &Retained::default(), None).len() / to_text(&flat, None).len();
-    assert!(r_flat >= 4, "и плоский проект меньше файла обмена: {r_flat}×");
-    eprintln!("t810: вложенная сцена {ratio}×, плоская {r_flat}×");
+    assert!(r_flat >= 4, "and a flat project is smaller than the exchange file: {r_flat}×");
+    eprintln!("t810: nested scene {ratio}×, flat {r_flat}×");
 }
 
-// ---- t813. запись честна к отключению питания ----------------------------
+// ---- t813. the write is honest about power loss ----------------------------
 
-/// Подставная ФС: падает на названном шаге. `write_and_sync` и `rename`
-/// настоящие, пока не велено упасть, — так проверяется ИСХОД на диске, а не
-/// порядок вызовов (его держит t351).
+/// A substitute file system: fails at the named step. `write_and_sync` and `rename`
+/// are real until told to fail — so the OUTCOME on disk is checked, not the
+/// order of calls (that is held by t351).
 struct FailAt {
     step: &'static str,
     log: RefCell<Vec<String>>,
@@ -117,7 +117,7 @@ impl AtomicFs for FailAt {
     fn write_and_sync(&self, tmp: &Path, bytes: &[u8]) -> io::Result<()> {
         self.log.borrow_mut().push("write".into());
         if self.step == "write" {
-            // «питание пропало посреди записи»: на диске остался огрызок
+            // “power lost mid-write”: a stub remained on disk
             std::fs::write(tmp, &bytes[..bytes.len() / 2])?;
             return Err(io::Error::other("power loss during write"));
         }
@@ -151,28 +151,28 @@ fn t813_project_write_leaves_old_or_new_never_half() {
     for step in ["write", "rename"] {
         let fs = FailAt { step, log: RefCell::new(vec![]) };
         let r = write_atomic_with(&fs, &path, &new);
-        assert!(r.is_err(), "обрыв на шаге «{step}» обязан быть ОТКАЗОМ, а не успехом");
+        assert!(r.is_err(), "a break at step “{step}” must be a REFUSAL, not a success");
         let on_disk = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(on_disk, old, "после обрыва на «{step}» на диске обязан лежать ПРЕЖНИЙ проект целиком");
+        assert_eq!(on_disk, old, "after a break at “{step}” the PREVIOUS project must lie on disk intact");
         assert_eq!(from_text(&on_disk).unwrap().project, nested_scene(3, 1, 1));
     }
 
-    // без обрыва — новый целиком, и читается
+    // without a break — the new one wholly, and it is read
     let fs = FailAt { step: "", log: RefCell::new(vec![]) };
-    write_atomic_with(&fs, &path, &new).expect("запись без обрыва проходит");
+    write_atomic_with(&fs, &path, &new).expect("write without a break goes through");
     let on_disk = std::fs::read_to_string(&path).unwrap();
-    assert_eq!(on_disk, new, "после записи на диске обязан лежать НОВЫЙ проект целиком");
+    assert_eq!(on_disk, new, "after the write the NEW project must lie on disk intact");
     assert_eq!(from_text(&on_disk).unwrap().project, nested_scene(10, 2, 2));
     assert_eq!(fs.log.borrow().as_slice(), ["write", "rename", "sync_dir"]);
 
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-// ---- t816/t817. чужой passthrough переживает файл проекта -----------------
+// ---- t816/t817. foreign passthrough survives the project file -----------------
 
-/// Чужой файл обмена с незнакомым полем на Timeline, чужим неймспейсом в
-/// metadata, чужим полем у клипа и целым незнакомым узлом — ровно то, что
-/// обязано вернуться при экспорте.
+/// A foreign exchange file with an unknown field on Timeline, a foreign namespace in
+/// metadata, a foreign field on a clip and a whole unknown node — exactly what
+/// must come back on export.
 fn foreign_document() -> String {
     serde_json::json!({
         "OTIO_SCHEMA": "Timeline.1",
@@ -214,44 +214,44 @@ fn foreign_document() -> String {
 
 #[test]
 fn t816_retained_survives_json_round_trip() {
-    let bundle = kt_otio::load_project(&foreign_document(), None).expect("чужой файл читается");
+    let bundle = kt_otio::load_project(&foreign_document(), None).expect("foreign file is readable");
     let direct = save_project(&bundle.project, &bundle.retained, None);
 
     let json = bundle.retained.to_json();
-    assert_eq!(json, bundle.retained.to_json(), "to_json обязан быть детерминирован");
-    let back = Retained::from_json(&json).expect("passthrough читается обратно");
-    assert_eq!(back.to_json(), json, "круг Retained → JSON → Retained обязан быть тождеством");
+    assert_eq!(json, bundle.retained.to_json(), "to_json must be deterministic");
+    let back = Retained::from_json(&json).expect("passthrough reads back");
+    assert_eq!(back.to_json(), json, "the Retained → JSON → Retained round trip must be an identity");
 
-    // настоящая мера — ЭКСПОРТ: с восстановленным passthrough файл тот же
+    // the real measure — EXPORT: with the restored passthrough the file is the same
     let via_json = save_project(&bundle.project, &back, None);
-    assert_eq!(via_json, direct, "экспорт через восстановленный passthrough обязан быть байт-в-байт");
+    assert_eq!(via_json, direct, "export through the restored passthrough must be byte for byte");
     for needle in ["vendor_field", "colorVersion", "custom_clip_field", "FancyClip.7", "\"zeta\""] {
-        assert!(via_json.contains(needle), "чужое «{needle}» потеряно на круге");
+        assert!(via_json.contains(needle), "foreign “{needle}” lost on the round trip");
     }
 }
 
 #[test]
 fn t817_import_project_export_keeps_foreign_fields() {
-    // импорт чужого .otio → файл проекта → чтение → экспорт
-    let bundle = kt_otio::load_project(&foreign_document(), None).expect("импорт");
+    // import of a foreign .otio → project file → read → export
+    let bundle = kt_otio::load_project(&foreign_document(), None).expect("import");
     let text = to_text(&bundle.project, Some(&bundle.retained.to_json()));
-    assert!(text.contains("\"otio\""), "passthrough обязан лежать в файле проекта отдельным полем");
+    assert!(text.contains("\"otio\""), "passthrough must lie in the project file as a separate field");
 
-    let file = from_text(&text).expect("файл проекта читается");
-    let retained = Retained::from_json(file.otio.as_ref().expect("поле passthrough на месте"))
-        .expect("passthrough из файла проекта читается");
+    let file = from_text(&text).expect("project file is readable");
+    let retained = Retained::from_json(file.otio.as_ref().expect("passthrough field is in place"))
+        .expect("passthrough from the project file is readable");
     let exported = save_project(&file.project, &retained, None);
     assert_eq!(
         exported,
         save_project(&bundle.project, &bundle.retained, None),
-        "экспорт после круга через файл проекта обязан совпасть с прямым экспортом"
+        "export after the round trip through the project file must match the direct export"
     );
-    // и чужой порядок ключей пережил всё: zeta раньше alpha, как в исходнике
+    // and the foreign key order survived everything: zeta before alpha, as in the source
     let z = exported.find("\"zeta\"").unwrap();
     let a = exported.find("\"alpha\"").unwrap();
-    assert!(z < a, "порядок чужих ключей обязан сохраниться");
+    assert!(z < a, "order of foreign keys must be preserved");
 
-    // проект без passthrough поля не несёт — файл не растёт впустую
+    // a project without a passthrough field does not carry it — the file does not grow for nothing
     let plain = to_text(&bundle.project, None);
-    assert!(!plain.contains("\"otio\""), "пустой passthrough не пишется");
+    assert!(!plain.contains("\"otio\""), "empty passthrough is not written");
 }

@@ -1,43 +1,43 @@
 #!/usr/bin/env bash
-# Живая проверка в ВИРТУАЛЬНОМ экране (Р.27, параллель и стенд — Р.68).
+# Live check in a VIRTUAL screen (R.27, parallel run and stand — R.68).
 #
-# Раньше «живая проверка» была ручной: запусти окно, поводи мышью, посмотри
-# скриншот. Это не воспроизводилось, требовало свободного экрана (заблокировал
-# сессию — проверить нечем) и не годилось для регресса. Здесь то же самое, но
-# в Xvfb: настоящий бинарь kt-app, настоящий X-сервер, настоящие XTest-события
-# и настоящий wgpu (софт-рендер) — в отличие от harness-тестов, которые гоняют
-# egui без окна.
+# Previously the “live check” was manual: launch the window, move the mouse around, look at
+# the screenshot. It was not reproducible, required a free screen (if the session was locked,
+# there was nothing to check with) and was not fit for regression. Here it is the same thing, but
+# in Xvfb: the real kt-app binary, a real X server, real XTest events
+# and real wgpu (software rendering) — unlike the harness tests, which run
+# egui without a window.
 #
-# С Р.68 сценарии раздаются РАБОТНИКАМ (решение владельца: «Да, с ограничением
-# нагрузки и авто-перезапуском красного»). У каждого работника свой Xvfb, своё
-# пользовательское хранилище и один живой kt-app — стенд, в котором проекты
-# сценариев открываются подряд (scripts/live/worker.py). Запрет Р.59 §468
-# («живые сценарии в два потока не гоняются») снят вместе с его причиной:
-# красный сценарий автоматически перегоняется ОДИН в одиночку, и только
-# второе падение считается красным.
+# From R.68 scenarios are handed out to WORKERS (owner’s decision: “Yes, with a load limit
+# and auto-restart of the red one”). Each worker has its own Xvfb, its own
+# user storage and one live kt-app — a stand in which the projects of
+# scenarios are opened one after another (scripts/live/worker.py). The ban of R.59 §468
+# (“live scenarios are not run in two streams”) is lifted together with its reason:
+# a red scenario is automatically re-run ALONE, and only
+# a second failure counts as red.
 #
-#     ./scripts/live-check.sh                # все сценарии
-#     ./scripts/live-check.sh handles fade   # только названные
-#     KT_LIVE_WORKERS=1 ./scripts/live-check.sh   # строго по одному, без перегонов
+#     ./scripts/live-check.sh                # all scenarios
+#     ./scripts/live-check.sh handles fade   # only the named ones
+#     KT_LIVE_WORKERS=1 ./scripts/live-check.sh   # strictly one by one, no re-runs
 #
-# Скриншоты и логи — target/live-out/<сценарий>/.
+# Screenshots and logs — target/live-out/<scenario>/.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-# КАТАЛОГ ПРОГОНА — переопределяемый (Р.68): сторожа t801/t802 гоняют
-# live-check во время прогона мастерской, а он чистит каталог вердиктов —
-# и чужой ИДУЩИЙ прогон терял свои вердикты, объявляя красным всё подряд.
+# RUN DIRECTORY — overridable (R.68): the guards t801/t802 run
+# live-check during a workshop run, and it cleans the verdict directory —
+# so a foreign RUNNING run lost its verdicts, declaring everything red.
 out="${KT_LIVE_OUT:-$root/target/live-out}"
 scenarios_dir="$root/scripts/live"
 display_base="${KT_LIVE_DISPLAY:-:99}"
 display_base="${display_base#:}"
 
 if ! command -v Xvfb > /dev/null; then
-    echo "нет Xvfb: sudo apt install xvfb openbox" >&2
+    echo "no Xvfb: sudo apt install xvfb openbox" >&2
     exit 2
 fi
 if [ ! -x "$root/target/debug/kinetren" ]; then
-    echo "нет target/debug/kinetren: cargo build -p kt-app" >&2
+    echo "no target/debug/kinetren: cargo build -p kt-app" >&2
     exit 2
 fi
 
@@ -46,17 +46,17 @@ rm -rf "$out/verdicts"
 
 want=("$@")
 if [ ${#want[@]} -eq 0 ]; then
-    # kt_live.py — каркас, worker.py — работник, balance.py — раскладка по
-    # цене, `_*.py` — подставные сценарии сторожей (t801/t802): всё это не
-    # сценарии, и в общий прогон они не входят
+    # kt_live.py — the frame, worker.py — the worker, balance.py — the distribution by
+    # cost, `_*.py` — stand-in scenarios of the guards (t801/t802): none of these are
+    # scenarios, and they are not part of the common run
     mapfile -t want < <(cd "$scenarios_dir" && ls *.py \
         | grep -v -E '^(kt_live|worker|balance|_.*)\.py$' | sed 's/\.py$//')
 fi
 
-# Сколько работников. Один kt-app в софт-рендере держит нагрузку около семи
-# (замер Р.68), поэтому делим ядра на восемь: именно нагрузка ~14 на две
-# копии и красила зелёные сценарии в §468. Потолок — шесть: дальше упираемся
-# в диск и в X-серверы, а выигрыш становится шумом.
+# How many workers. One kt-app in software rendering holds a load of about seven
+# (measurement R.68), so we divide the cores by eight: exactly a load of ~14 on two
+# copies is what painted the green scenarios red in §468. The ceiling is six: beyond that we hit
+# the disk and the X servers, and the gain turns into noise.
 cores=$(nproc 2> /dev/null || echo 4)
 auto=$((cores / 8))
 [ "$auto" -lt 1 ] && auto=1
@@ -65,7 +65,7 @@ workers="${KT_LIVE_WORKERS:-$auto}"
 [ "${#want[@]}" -lt "$workers" ] && workers="${#want[@]}"
 [ "$workers" -lt 1 ] && workers=1
 
-run_worker() { # run_worker <номер> <сценарии...>
+run_worker() { # run_worker <number> <scenarios...>
     local n="$1"; shift
     [ $# -eq 0 ] && return 0
     local disp=":$((display_base + n))"
@@ -73,12 +73,12 @@ run_worker() { # run_worker <номер> <сценарии...>
         | sed "s/^/[$n] /"
 }
 
-echo "живые сценарии: ${#want[@]} шт., работников $workers (ядер $cores)"
+echo "live scenarios: ${#want[@]} pcs., workers $workers (cores $cores)"
 
-# РАСКЛАДКА ПО ЦЕНЕ, а не по порядку (Р.68): работники пишут время каждого
-# сценария в `times.txt`, и следующий прогон раздаёт их «самый долгий —
-# наименее занятому» (жадный LPT). Иначе один работник получает `nestparam`
-# (136 с) и держит весь прогон, пока трое других уже закончили.
+# DISTRIBUTION BY COST, not by order (R.68): workers write the time of each
+# scenario into `times.txt`, and the next run hands them out as “the longest one —
+# to the least busy” (greedy LPT). Otherwise one worker gets `nestparam`
+# (136 s) and holds the whole run while the other three have already finished.
 mapfile -t order < <(python3 "$scenarios_dir/balance.py" "$out/times.txt" "$workers" "${want[@]}")
 
 pids=()
@@ -98,40 +98,40 @@ for name in "${want[@]}"; do
     fi
 done
 
-# ЦЕНА СНА ПРОГОНА (Р.69): сумма фактического фиксированного сна всех
-# сценариев против их суммарного времени. Число для отчёта и следующего
-# замера, а НЕ вердикт: под работниками растёт не сон, а ожидания, и порог
-# на нём ловил бы нагрузку вместо регрессии. Вердикт держит статический
-# предел объявленных секунд (scripts/live-sleeps.py).
+# COST OF THE RUN’S SLEEP (R.69): the sum of the actual fixed sleep of all
+# scenarios against their total time. A number for the report and the next
+# measurement, NOT a verdict: under workers it is not sleep that grows but waiting, and a threshold
+# on it would catch load instead of regression. The verdict is held by the static
+# limit of declared seconds (scripts/live-sleeps.py).
 slept_files=()
 for name in "${want[@]}"; do
     [ -f "$out/$name/slept.txt" ] && slept_files+=("$out/$name/slept.txt")
 done
 if [ ${#slept_files[@]} -gt 0 ]; then
-    awk -F'\t' '{s+=$1; t+=$2} END {if (t>0) printf "сон прогона: %.0f c из %.0f c последовательного времени (%.0f %%)\n", s, t, 100*s/t}' \
+    awk -F'\t' '{s+=$1; t+=$2} END {if (t>0) printf "run sleep: %.0f s of %.0f s sequential time (%.0f %%)\n", s, t, 100*s/t}' \
         "${slept_files[@]}"
 fi
 
 if [ ${#reds[@]} -eq 0 ]; then
-    echo "живые сценарии: ${#want[@]} из ${#want[@]} зелёные"
+    echo "live scenarios: ${#want[@]} of ${#want[@]} green"
     exit 0
 fi
 
-# ПЕРЕГОН КРАСНОГО В ОДИНОЧКУ (Р.68). Покраснение под нагрузкой — не
-# вердикт: §468 показал, что второй прогон рядом красит зелёные сценарии, и
-# ровно это правило уже записано для «упавшего на паузе или порядке фонового
-# потока». Теперь его исполняет машина, а не память агента. Молчаливым
-# перегон быть не имеет права — иначе флак становится невидимкой.
+# RE-RUN OF RED ALONE (R.68). Going red under load is not
+# a verdict: §468 showed that a second run next to it paints green scenarios red, and
+# exactly this rule is already written for “fell during a pause or in the order of a background
+# stream”. Now the machine enforces it, not the agent’s memory. A silent
+# re-run has no right to exist — otherwise flakiness becomes invisible.
 if [ "$workers" = 1 ]; then
-    echo "КРАСНЫЕ (прогон и так одиночный): ${reds[*]}" >&2
+    echo "RED (the run is already single-process): ${reds[*]}" >&2
     exit 1
 fi
-echo "перегон в одиночку: ${reds[*]}"
+echo "rerun alone: ${reds[*]}"
 again=()
 for name in "${reds[@]}"; do
-    # `|| true`: работник возвращает код сценария, а `set -e` на нём молча
-    # обрывал ВЕСЬ перегон — отчёт терял и «прошёл со второго раза», и
-    # «красные дважды» (поймано тестом t801)
+    # `|| true`: the worker returns the scenario’s exit code, and `set -e` on it silently
+    # aborted the WHOLE re-run — the report lost both “passed the second time” and
+    # “red twice” (caught by test t801)
     run_worker 0 "$name" || true
     if [ "$(cat "$verdicts/$name" 2> /dev/null || echo fail)" != ok ]; then
         again+=("$name")
@@ -141,13 +141,13 @@ done
 for name in "${reds[@]}"; do
     case " ${again[*]} " in
         *" $name "*) ;;
-        *) echo "ПРОШЁЛ СО ВТОРОГО РАЗА (в одиночку): $name — разобрать сценарий" ;;
+        *) echo "PASSED ON THE SECOND TRY (alone): $name — analyze the scenario" ;;
     esac
 done
 
 if [ ${#again[@]} -eq 0 ]; then
-    echo "живые сценарии: зелёные (часть — со второго раза)"
+    echo "live scenarios: green (some on the second try)"
     exit 0
 fi
-echo "КРАСНЫЕ ДВАЖДЫ: ${again[*]} (скриншоты: target/live-out/<сценарий>)" >&2
+echo "RED TWICE: ${again[*]} (screenshots: target/live-out/<scenario>)" >&2
 exit 1

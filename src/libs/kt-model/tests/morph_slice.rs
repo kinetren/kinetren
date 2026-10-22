@@ -1,10 +1,10 @@
-//! Тесты 233, 234, 236 (docs/porting-notes.md): резка цели морфер-слоем.
+//! Tests 233, 234, 236 (docs/porting-notes.md): slicing a target with a morpher layer.
 //!
-//! Морфер с Р.35 действует ПО ВРЕМЕНИ, поэтому цель, накрытую частично,
-//! приходится резать. Здесь проверяется всё, что при этом обязано
-//! остаться верным: материал кусков, детерминизм их id, вырожденные
-//! случаи и запретные зоны (находка 1 Р.35 — резка ломает не цель, а
-//! соседей по дорожке).
+//! Since R.35 the morpher acts BY TIME,
+//! so a target that is partly covered has to be
+//! sliced. Here everything that must remain true in that case is checked: the material of the
+//! pieces, the determinism of their ids, degenerate cases and forbidden zones (finding 1 of R.35 —
+//! the slice breaks not the target but its neighbours on the track).
 
 use kt_model::*;
 use kt_time::{Tick, TickRange};
@@ -58,7 +58,7 @@ fn base() -> Project {
     p
 }
 
-/// Морфер-слой на середину клипа: подмена источника + видео-эффект.
+/// A morpher layer over the middle of the clip: a source swap + a video effect.
 fn layer(start: Tick, dur: Tick) -> MorpherEvent {
     MorpherEvent {
         id: MorphId(1),
@@ -79,9 +79,9 @@ fn layer(start: Tick, dur: Tick) -> MorpherEvent {
     }
 }
 
-/// Тест 233: клип, накрытый ЧАСТИЧНО, распадается на три куска; материал
-/// каждого куска совпадает с материалом оригинала в тех же точках, сумма
-/// длительностей равна оригиналу, патч достался ровно среднему.
+/// Test 233: a clip covered PARTLY splits into three pieces; the material
+/// of each piece matches the material of the original at the same points, the sum
+/// of the durations equals the original, and the patch went exactly to the middle one.
 #[test]
 fn t233_partial_cover_slices_into_three() {
     let mut p = base();
@@ -89,37 +89,37 @@ fn t233_partial_cover_slices_into_three() {
     p.validate().unwrap();
 
     let eff = p.effective_clips();
-    assert_eq!(eff.len(), 3, "три куска");
+    assert_eq!(eff.len(), 3, "three pieces");
     assert_eq!(
         eff.iter().map(|c| c.duration.0).sum::<i64>(),
         LEN.0,
-        "сумма длительностей равна оригиналу"
+        "sum of durations equals the original"
     );
     assert_eq!(eff[0].start, Tick(0));
     assert_eq!(eff[1].start, Tick(30_000));
     assert_eq!(eff[2].start, Tick(60_000));
-    // материал: точка входа едет ровно на смещение куска
+    // material: the entry point moves by exactly the offset of the piece
     assert_eq!(eff[0].source_in, Tick(3_000));
     assert_eq!(eff[1].source_in, Tick(33_000));
     assert_eq!(eff[2].source_in, Tick(63_000));
-    // патч — только у среднего
+    // the patch — only on the middle one
     assert_eq!(eff[0].media, MediaId(1));
-    assert_eq!(eff[1].media, MediaId(2), "накрытый кусок — на новом источнике");
+    assert_eq!(eff[1].media, MediaId(2), "the covered piece is on the new source");
     assert_eq!(eff[2].media, MediaId(1));
     assert!(eff[0].fx.is_empty() && eff[2].fx.is_empty());
-    assert_eq!(eff[1].fx.len(), 1, "эффект слоя дописан накрытому куску");
+    assert_eq!(eff[1].fx.len(), 1, "the layer’s effect was added to the covered piece");
 
-    // материал точка-в-точку совпадает с оригиналом на всём теле
+    // the material matches the original point for point over the whole body
     for t in [Tick(0), Tick(15_000), Tick(30_000), Tick(45_000), Tick(87_000)] {
         let c = eff.iter().find(|c| c.start <= t && t < c.start + c.duration).unwrap();
         let want = clip_material_at(Tick(3_000), Tick(0), LEN, false, 3_000, t);
         let got = clip_material_at(c.source_in, c.start, c.duration, false, 3_000, t);
-        assert_eq!(got, want, "материал в {t:?}");
+        assert_eq!(got, want, "material at {t:?}");
     }
 }
 
-/// Тест 233b: то же на REVERSED клипе — у него материал зеркальный, и
-/// точка входа куска едет с его КОНЦОМ.
+/// Test 233b: the same on a REVERSED clip — its material is mirrored, and
+/// the entry point of the piece moves with its END.
 #[test]
 fn t233_reversed_slices_keep_material() {
     let mut p = base();
@@ -129,15 +129,15 @@ fn t233_reversed_slices_keep_material() {
 
     let eff = p.effective_clips();
     assert_eq!(eff.len(), 3);
-    // точки берутся ПО СЕТКЕ КАДРОВ — на ней рендерится видео, и на ней
-    // куски обязаны совпасть с оригиналом (границы садит туда `windows_on`)
+    // the points are taken ON THE FRAME GRID — the video is rendered on it, and there the
+    // pieces must coincide with the original (the boundaries are placed there by `windows_on`)
     for t in [Tick(0), Tick(21_000), Tick(30_000), Tick(57_000), Tick(87_000)] {
         let c = eff.iter().find(|c| c.start <= t && t < c.start + c.duration).unwrap();
         let want = clip_material_at(Tick(3_000), Tick(0), LEN, true, 3_000, t);
         let got = clip_material_at(c.source_in, c.start, c.duration, true, 3_000, t);
-        assert_eq!(got, want, "материал реверса в {t:?}");
+        assert_eq!(got, want, "reverse material at {t:?}");
     }
-    // то же правило, что у Split: левая половина играет ХВОСТ источника
+    // the same rule as for Split: the left half plays the TAIL of the source
     let mut m = TimelineModel::new({
         let mut q = base();
         q.clips[0].reversed = true;
@@ -151,74 +151,74 @@ fn t233_reversed_slices_keep_material() {
     })
     .unwrap();
     let left = m.project().clips.iter().find(|c| c.id == ClipId(10)).unwrap();
-    assert_eq!(left.source_in, eff[0].source_in, "Split и резка считают source_in одинаково");
+    assert_eq!(left.source_in, eff[0].source_in, "Split and cut compute source_in the same way");
 }
 
-/// Тест 234: id кусков — чистая функция от (оригинал, номер); кусок №0
-/// держит id оригинала, `validate` отвергает настоящий клип в
-/// зарезервированном диапазоне, оригинал достаётся из самого id.
+/// Test 234: the ids of the pieces are a pure function of (original, number); piece №0
+/// keeps the id of the original, `validate` rejects a real clip in the
+/// reserved range, the original is recovered from the id itself.
 #[test]
 fn t234_slice_ids_are_deterministic_and_reserved() {
     let mut p = base();
     p.morphers.push(layer(Tick(30_000), Tick(30_000)));
     let ids: Vec<ClipId> = p.effective_clips().iter().map(|c| c.id).collect();
-    assert_eq!(ids[0], ClipId(10), "кусок №0 держит id оригинала");
+    assert_eq!(ids[0], ClipId(10), "piece No.0 holds the original id");
     assert_eq!(ids[1], slice_id(ClipId(10), 1));
     assert_eq!(ids[2], slice_id(ClipId(10), 2));
-    assert_eq!(slice_origin(ids[1]), Some(ClipId(10)), "оригинал достаётся из id");
-    assert_eq!(slice_origin(ids[0]), None, "настоящий клип куском не притворяется");
+    assert_eq!(slice_origin(ids[1]), Some(ClipId(10)), "the original is retrieved from the id");
+    assert_eq!(slice_origin(ids[0]), None, "a real clip does not pretend to be a piece");
     assert!(same_clip(ids[2], ClipId(10)) && !same_clip(ids[2], ClipId(11)));
 
-    // правка соседнего клипа на другой дорожке id кусков не двигает
+    // an edit of a neighbouring clip on another track does not move the ids of the pieces
     let mut q = p.clone();
     q.clips.push(clip(20, ClipKind::Video, 1, Tick(0), LEN));
     let got: Vec<ClipId> =
         q.effective_clips().iter().map(|c| c.id).filter(|&i| same_clip(i, ClipId(10))).collect();
-    assert_eq!(got, ids, "сосед на другой дорожке id кусков не двигает");
-    // перенос блока морфера мышью — тоже
+    assert_eq!(got, ids, "a neighbor on another track does not move piece ids");
+    // moving a morpher block with the mouse — neither does that
     let mut r = p.clone();
     r.morphers[0].start = Tick(40_000);
-    assert_eq!(r.effective_clips().iter().map(|c| c.id).collect::<Vec<_>>(), ids, "перенос блока");
+    assert_eq!(r.effective_clips().iter().map(|c| c.id).collect::<Vec<_>>(), ids, "block move");
 
-    // настоящий клип в зарезервированном диапазоне — ошибка модели
+    // a real clip in the reserved range — a model error
     let mut bad = base();
     bad.clips[0].id = ClipId(MAX_REAL_CLIP_ID);
     assert!(matches!(bad.validate(), Err(ProjectError::ReservedClipId(..))));
 }
 
-/// Тест 236: вырожденные случаи. Клип, накрытый целиком, НЕ режется и
-/// сохраняет id (а с ним аудио-FX-состояние, инвариант №3); окно короче
-/// минимума не действует; огрызок липнет к краю тела; патч, который
-/// этому виду клипа ничего не делает, не режет его вовсе.
+/// Test 236: degenerate cases. A clip covered ENTIRELY is NOT cut and
+/// keeps its id (and with it the audio-FX state, invariant №3); a window shorter than the
+/// minimum does not act; a stub sticks to the edge of the body; a patch that does nothing
+/// to this kind of clip does not cut it at all.
 #[test]
 fn t236_degenerate_windows() {
-    // накрыт целиком — один клип со своим id
+    // covered entirely — one clip with its own id
     let mut p = base();
     p.morphers.push(layer(Tick(-10_000), Tick(200_000)));
     let eff = p.effective_clips();
-    assert_eq!(eff.len(), 1, "накрытый целиком не режется");
-    assert_eq!(eff[0].id, ClipId(10), "и сохраняет id");
+    assert_eq!(eff.len(), 1, "a fully covered one is not cut");
+    assert_eq!(eff[0].id, ClipId(10), "and keeps the id");
     assert_eq!(eff[0].media, MediaId(2));
 
-    // окно короче минимума не действует вовсе
+    // a window shorter than the minimum does not act at all
     let mut p = base();
     p.morphers.push(layer(Tick(30_000), Tick(50)));
     let eff = p.effective_clips();
     assert_eq!(eff.len(), 1);
-    assert_eq!(eff[0].media, MediaId(1), "микроскопическое окно ничего не делает");
+    assert_eq!(eff[0].media, MediaId(1), "a microscopic window does nothing");
 
-    // огрызок в 50 тиков у начала тела липнет к краю: два куска, не три
+    // a 50-tick stub at the start of the body sticks to the edge: two pieces, not three
     let mut p = base();
     p.morphers.push(layer(Tick(50), Tick(30_000)));
     let eff = p.effective_clips();
-    assert_eq!(eff.len(), 2, "огрызок схлопнулся к краю тела");
+    assert_eq!(eff.len(), 2, "the stub collapsed to the edge of the body");
     assert_eq!(eff[0].start, Tick(0));
-    assert_eq!(eff[0].media, MediaId(2), "первый кусок накрыт целиком");
-    assert_eq!(eff[0].duration, Tick(30_000), "и конец сел на сетку кадров");
+    assert_eq!(eff[0].media, MediaId(2), "the first piece is fully covered");
+    assert_eq!(eff[0].duration, Tick(30_000), "and the end snapped to the frame grid");
 
-    // Патч с одними видео-эффектами не трогает аудио под собой — и с Р.55
-    // (С2) НЕ РЕЖЕТ И ВИДЕО: выключить вклад цепочки можно кривой силы,
-    // а значит резать ради неё незачем. Раньше тут было три куска.
+    // A patch with video effects only does not touch the audio beneath it — and with R.55
+    // (C2) it does NOT CUT THE VIDEO EITHER: the contribution of the chain can be switched off
+    // by a strength curve, so there is no reason to cut for it. Previously there were three pieces here.
     let mut p = base();
     p.clips.push(clip(11, ClipKind::Audio, 0, Tick(0), LEN));
     p.ensure_tracks(LaneKind::Audio, 1);
@@ -228,37 +228,37 @@ fn t236_degenerate_windows() {
     p.morphers.push(m);
     let eff = p.effective_clips();
     let audio: Vec<&ClipEvent> = eff.iter().filter(|c| c.kind == ClipKind::Audio).collect();
-    assert_eq!(audio.len(), 1, "аудио не разрезано");
+    assert_eq!(audio.len(), 1, "audio is not cut");
     assert_eq!(audio[0].id, ClipId(11));
     let video: Vec<&ClipEvent> = eff.iter().filter(|c| c.kind == ClipKind::Video).collect();
-    assert_eq!(video.len(), 1, "видео тоже НЕ разрезано: цепочку гасят, а не вырезают");
-    assert_eq!(video[0].id, ClipId(10), "и кусок держит id оригинала (инвариант 3)");
+    assert_eq!(video.len(), 1, "video is NOT cut either: the chain is turned off, not cut out");
+    assert_eq!(video[0].id, ClipId(10), "and the piece holds the original id (invariant 3)");
     assert!(
         video[0].fx.iter().any(|f| matches!(f, FxInstance::Mirror { .. })),
-        "цепочка слоя обязана быть на теле"
+        "the layer’s chain must be on the body"
     );
-    // ВОРОТА: сила нулевая вне окна блока и полная внутри
+    // GATE: the strength is zero outside the block’s window and full inside
     let (i, _) = video[0]
         .fx
         .iter()
         .enumerate()
         .find(|(_, f)| matches!(f, FxInstance::LayerMix { .. }))
-        .expect("слот силы обязан появиться: без него слой действовал бы на всё тело");
+        .expect("a strength slot must appear: without it the layer would act on the whole body");
     let cur = &video[0].fx_auto[i][0];
     let at = |t: i64| {
         let ks = &cur.keys;
         let j = ks.partition_point(|k| k.t.0 <= t).saturating_sub(1);
         ks[j].v
     };
-    assert!(at(10_000) < 0.01, "до окна слой обязан молчать, а не действовать");
-    assert!(at(45_000) > 0.99, "внутри окна слой обязан действовать в полную силу");
-    assert!(at(80_000) < 0.01, "после окна слой обязан молчать");
+    assert!(at(10_000) < 0.01, "before the window the layer must be silent, not active");
+    assert!(at(45_000) > 0.99, "inside the window the layer must act at full strength");
+    assert!(at(80_000) < 0.01, "after the window the layer must be silent");
 }
 
-/// Тест 236b: запретные зоны. Граница слоя не встаёт внутрь окна
-/// перехода и внутрь наезда соседа — она ЛИПНЕТ к их краю (решение 8
-/// Р.35): иначе разрезанный кусок с бо́льшим `start` вылезал бы над
-/// соседом (правило Vegas) и менял бы веса кроссфейда.
+/// Test 236b: forbidden zones. The boundary of the layer does not stop inside the window
+/// of a transition or inside the overlap of a neighbour — it STICKS to their edge (decision 8
+/// of R.35): otherwise a cut piece with a larger `start` would stick out above the
+/// neighbour (the Vegas rule) and would change the crossfade weights.
 #[test]
 fn t236_forbidden_zones_snap_the_boundary() {
     let mut p = base();
@@ -276,59 +276,59 @@ fn t236_forbidden_zones_snap_the_boundary() {
     });
     p.validate().unwrap();
     let zones = kt_model::forbidden_zones(&p, &p.clips[0]);
-    assert!(zones.iter().any(|z| z.start == Tick(81_000) && z.end == LEN), "окно перехода — зона");
+    assert!(zones.iter().any(|z| z.start == Tick(81_000) && z.end == LEN), "the transition window is a zone");
 
-    // граница внутри окна перехода выталкивается к ближнему краю
-    p.morphers.push(layer(Tick(30_000), Tick(53_000))); // конец 83_000 — внутри
+    // a boundary inside the transition window is pushed to the nearer edge
+    p.morphers.push(layer(Tick(30_000), Tick(53_000))); // the end at 83_000 — inside
     let eff = p.effective_clips();
     let first: Vec<&ClipEvent> = eff.iter().filter(|c| same_clip(c.id, ClipId(10))).collect();
-    assert_eq!(first.len(), 3, "два реза: начало слоя и вытолкнутый конец");
+    assert_eq!(first.len(), 3, "two cuts: the layer start and the pushed-out end");
     assert_eq!(first[1].start, Tick(30_000));
-    assert_eq!(first[2].start, Tick(81_000), "выталкивание к ближнему краю окна перехода");
-    assert_eq!(first[1].media, MediaId(2), "слой достался среднему куску");
-    assert_eq!(first[2].media, MediaId(1), "окно перехода слой не накрыл");
+    assert_eq!(first[2].start, Tick(81_000), "pushing to the near edge of the transition window");
+    assert_eq!(first[1].media, MediaId(2), "the layer went to the middle piece");
+    assert_eq!(first[2].media, MediaId(1), "the layer did not cover the transition window");
 
-    // наезд соседа по дорожке — тоже запретная зона
+    // an overlap of a neighbour on the track — also a forbidden zone
     let mut p = base();
     p.clips.push(clip(11, ClipKind::Video, 0, Tick(70_000), LEN));
     let zones = kt_model::forbidden_zones(&p, &p.clips[0]);
-    assert!(zones.iter().any(|z| z.start == Tick(70_000) && z.end == LEN), "наезд — зона");
-    p.morphers.push(layer(Tick(30_000), Tick(45_000))); // конец 75_000 — внутри наезда
+    assert!(zones.iter().any(|z| z.start == Tick(70_000) && z.end == LEN), "the overlap is a zone");
+    p.morphers.push(layer(Tick(30_000), Tick(45_000))); // the end at 75_000 — inside an overlap
     let eff = p.effective_clips();
     let first: Vec<&ClipEvent> = eff.iter().filter(|c| same_clip(c.id, ClipId(10))).collect();
     assert_eq!(first.len(), 3);
-    assert_eq!(first[2].start, Tick(70_000), "граница липнет к краю наезда, а не к сетке");
+    assert_eq!(first[2].start, Tick(70_000), "the boundary sticks to the edge of the overlap, not to the grid");
 }
 
-/// Тест 236c: `windows_on` — окно, в котором морфер реально действует.
-/// Файлы до v4 (`timed: false`) патчат тело целиком независимо от
-/// положения блока — на этом держится GOLDEN мигрированных проектов.
+/// Test 236c: `windows_on` — the window in which the morpher really acts.
+/// Files before v4 (`timed: false`) patch the whole body regardless of
+/// the position of the block — the GOLDEN of migrated projects rests on this.
 #[test]
 fn t236_untimed_morpher_ignores_block_position() {
     let mut p = base();
-    let mut m = layer(Tick(500_000), Tick(1_000)); // блок ВНЕ клипа
+    let mut m = layer(Tick(500_000), Tick(1_000)); // the block OUTSIDE the clip
     m.timed = false;
     p.morphers.push(m);
     let eff = p.effective_clips();
-    assert_eq!(eff.len(), 1, "старый морфер не режет");
-    assert_eq!(eff[0].media, MediaId(2), "и действует независимо от времени блока");
+    assert_eq!(eff.len(), 1, "an old morpher does not cut");
+    assert_eq!(eff[0].media, MediaId(2), "and acts independently of the block time");
     assert_eq!(
         p.morphers[0].windows_on(&p.clips[0], &p, &p, &p.rows()),
         vec![TickRange::new(Tick(0), LEN)]
     );
 
-    // выключенный морфер не действует и не режет
+    // a disabled morpher neither acts nor cuts
     p.morphers[0].timed = true;
     p.morphers[0].start = Tick(30_000);
     p.morphers[0].duration = Tick(30_000);
     p.morphers[0].enabled = false;
-    assert_eq!(p.effective_clips(), p.clips, "выключенный морфер прозрачен");
+    assert_eq!(p.effective_clips(), p.clips, "a disabled morpher is transparent");
 }
 
-/// Тест 235 (Р.35 С1, кусок 4): режим СЛОЯ. Морфер без выделения
-/// действует на всё, что НИЖЕ его строки; порядок наложения — снизу
-/// вверх (нижний слой первым, как adjustment layer в AE); перестановка
-/// строк меняет порядок эффектов и откатывается undo.
+/// Test 235 (R.35 C1, piece 4): LAYER mode. A morpher without a selection
+/// acts on everything BELOW its row; the stacking order is bottom to top
+/// (the bottom layer first, like an adjustment layer in AE); reordering the
+/// rows changes the order of effects and is rolled back by undo.
 #[test]
 fn t235_below_layer_and_bottom_up_order() {
     let mut p = base();
@@ -343,25 +343,25 @@ fn t235_below_layer_and_bottom_up_order() {
         ..Default::default()
     };
     p.morphers.push(m);
-    // морф-строка по умолчанию САМАЯ НИЖНЯЯ — «ниже» её пусто
-    assert_eq!(p.effective_clips(), p.clips, "снизу списка слой ничего не накрывает");
+    // the morph row by default is the BOTTOMMOST — “below” it is empty
+    assert_eq!(p.effective_clips(), p.clips, "the layer at the bottom of the list covers nothing");
 
-    // поднимаем морф-строку наверх — накрывает всё видео под собой
+    // we raise the morph row to the top — it covers all the video beneath it
     let mut order = p.rows();
     let morph = order.remove(order.iter().position(|&k| k.0 == LaneKind::Morph).unwrap());
     order.insert(0, morph);
     p.set_lane_order(&order);
     let eff = p.effective_clips();
-    assert_eq!(eff.len(), 3, "слой накрывает целиком — резки нет");
+    assert_eq!(eff.len(), 3, "the layer covers the whole thing — no cut");
     for c in eff.iter().filter(|c| c.kind == ClipKind::Video) {
-        assert_eq!(c.fx.len(), 1, "видео под слоем получило эффект");
+        assert_eq!(c.fx.len(), 1, "video under the layer got the effect");
     }
     assert!(
         eff.iter().find(|c| c.id == ClipId(30)).unwrap().fx.is_empty(),
-        "видео-слой не трогает аудио"
+        "a video layer does not touch audio"
     );
 
-    // слой видит ровно то, что НИЖЕ: между двумя видео-дорожками
+    // the layer sees exactly what is BELOW: between two video tracks
     let mut order = p.rows();
     let morph = order.remove(order.iter().position(|&k| k.0 == LaneKind::Morph).unwrap());
     order.insert(1, morph);
@@ -369,11 +369,11 @@ fn t235_below_layer_and_bottom_up_order() {
     let eff = p.effective_clips();
     let above = eff.iter().find(|c| c.id == ClipId(10)).unwrap();
     let below = eff.iter().find(|c| c.id == ClipId(20)).unwrap();
-    assert!(above.fx.is_empty(), "то, что ВЫШЕ слоя, не трогается");
-    assert_eq!(below.fx.len(), 1, "то, что ниже, — трогается");
+    assert!(above.fx.is_empty(), "what is ABOVE the layer is not touched");
+    assert_eq!(below.fx.len(), 1, "what is below is touched");
 }
 
-/// Тест 235b: порядок наложения снизу вверх и его откат undo.
+/// Test 235b: the stacking order bottom to top and its rollback by undo.
 #[test]
 fn t235_layer_order_is_bottom_up_and_undoable() {
     let mut p = base();
@@ -389,7 +389,7 @@ fn t235_layer_order_is_bottom_up_and_undoable() {
         m.patch = MorphPatch { video_fx: vec![fx], ..Default::default() };
         p.morphers.push(m);
     }
-    // обе морф-строки — над видео
+    // both morph rows — above the video
     let mut order = p.rows();
     order.retain(|k| k.0 != LaneKind::Morph);
     order.insert(0, (LaneKind::Morph, 0));
@@ -398,28 +398,28 @@ fn t235_layer_order_is_bottom_up_and_undoable() {
     let mut m = TimelineModel::new(p);
     let chain = |m: &TimelineModel| m.project().effective_clips()[0].fx.clone();
     let first = chain(&m);
-    assert_eq!(first.len(), 2, "оба слоя действуют");
+    assert_eq!(first.len(), 2, "both layers act");
     assert!(
         matches!(first[0], FxInstance::Mirror { vertical: true, .. }),
-        "НИЖНИЙ слой (строка 1) применён первым"
+        "the BOTTOM layer (row 1) was applied first"
     );
 
-    // меняем строки местами — порядок эффектов обязан перевернуться
+    // we swap the rows — the order of the effects must flip
     let mut order = m.project().rows();
     order.swap(0, 1);
     m.apply(Command::SetLaneOrder { order }).unwrap();
     let swapped = chain(&m);
     assert!(
         matches!(swapped[0], FxInstance::Mirror { horizontal: true, .. }),
-        "перестановка строк перевернула порядок наложения"
+        "reordering the rows reversed the overlay order"
     );
     m.undo().unwrap();
-    assert_eq!(chain(&m), first, "undo вернул и порядок строк, и порядок эффектов");
+    assert_eq!(chain(&m), first, "undo restored both the row order and the effect order");
 }
 
-/// Тест 239 (Р.35 С1, кусок 4): bake РЕЖЕТ честно. Рендер-вид до bake и
-/// содержимое клипов после совпадают, куски получают настоящие id,
-/// переход перевешивается на кусок со стыком, всё — одним undo-шагом.
+/// Test 239 (R.35 C1, piece 4): bake CUTS honestly. The render view before the bake and
+/// the content of the clips after it coincide, the pieces get real ids,
+/// the transition is re-hung on the piece that got the joint, all in ONE undo step.
 #[test]
 fn t239_bake_materializes_slices() {
     let mut p = base();
@@ -438,17 +438,17 @@ fn t239_bake_materializes_slices() {
     p.morphers.push(layer(Tick(30_000), Tick(30_000)));
     p.validate().unwrap();
     let before = p.effective_clips();
-    assert_eq!(before.len(), 4, "три куска первого клипа + сосед");
+    assert_eq!(before.len(), 4, "three pieces of the first clip + neighbor");
 
     let mut m = TimelineModel::new(p);
     m.apply(Command::BakeMorpher { id: MorphId(1) }).unwrap();
-    assert!(m.project().morphers.is_empty(), "bake убрал событие");
-    assert_eq!(m.project().clips.len(), 4, "куски стали настоящими клипами");
+    assert!(m.project().morphers.is_empty(), "bake removed the event");
+    assert_eq!(m.project().clips.len(), 4, "the pieces became real clips");
     assert!(
         m.project().clips.iter().all(|c| slice_origin(c.id).is_none()),
-        "синтетических id в проекте не остаётся"
+        "no synthetic ids remain in the project"
     );
-    // геометрия и материал — те же, что рисовались
+    // the geometry and material are the same as were drawn
     for (a, b) in m.project().clips.iter().zip(&before) {
         assert_eq!(
             (a.start, a.duration, a.source_in, a.media),
@@ -456,25 +456,25 @@ fn t239_bake_materializes_slices() {
         );
         assert_eq!(a.fx, b.fx);
     }
-    assert_eq!(m.project().effective_clips().len(), 4, "рендер не изменился");
-    // переход уехал на кусок, которому достался стык
+    assert_eq!(m.project().effective_clips().len(), 4, "render did not change");
+    // the transition moved to the piece that received the joint
     let t = &m.project().transitions[0];
     let a = m.project().clips.iter().find(|c| Some(c.id) == t.a).unwrap();
-    assert_eq!(a.start + a.duration, LEN, "конец перехода — у куска со стыком");
-    assert_ne!(t.a, Some(ClipId(10)), "а не у куска №0");
+    assert_eq!(a.start + a.duration, LEN, "the end of the transition belongs to the piece with the seam");
+    assert_ne!(t.a, Some(ClipId(10)), "not to piece No.0");
     m.project().validate().unwrap();
 
     m.undo().unwrap();
-    assert_eq!(m.project().clips.len(), 2, "один undo вернул монтаж");
-    assert_eq!(m.project().morphers.len(), 1, "и морфер");
+    assert_eq!(m.project().clips.len(), 2, "one undo restored the edit");
+    assert_eq!(m.project().morphers.len(), 1, "and the morpher");
     assert_eq!(m.project().transitions[0].a, Some(ClipId(10)));
 }
 
-/// Тест 243 (Р.35 С2): патч несёт И подмену источника, И цепочки — это
-/// одно событие, а не два взаимоисключающих вида (`MorphKind` удалён).
-/// Выключатель морф-слота гасит ТОЛЬКО подмену; гард `RemoveMedia`
-/// спрашивает `media_refs`, а не паттерн-матч по виду (компилятор такие
-/// места не ловит — на этом и держался прежний дефект).
+/// Test 243 (R.35 C2): the patch carries BOTH a source swap AND chains — this is
+/// one event, not two mutually exclusive kinds (`MorphKind` removed).
+/// The switch of the morph slot turns off ONLY the swap; the guard of `RemoveMedia`
+/// asks `media_refs`, not a pattern match on the kind (the compiler does not catch such
+/// places — this is where the earlier defect lived).
 #[test]
 fn t243_patch_carries_source_and_chains() {
     let mut p = base();
@@ -485,84 +485,84 @@ fn t243_patch_carries_source_and_chains() {
     p.validate().unwrap();
 
     let eff = p.effective_clips();
-    assert_eq!(eff.len(), 1, "накрыт целиком — не режется");
-    assert_eq!(eff[0].media, MediaId(2), "подмена источника действует");
-    assert_eq!(eff[0].source_in, Tick(7_500), "и сдвиг точки входа тоже");
-    assert_eq!(eff[0].fx.len(), 1, "и цепочка — одним и тем же событием");
+    assert_eq!(eff.len(), 1, "covered entirely — not cut");
+    assert_eq!(eff[0].media, MediaId(2), "source substitution applies");
+    assert_eq!(eff[0].source_in, Tick(7_500), "and the entry point shift too");
+    assert_eq!(eff[0].fx.len(), 1, "and the chain — by the same event");
 
-    // галка морф-слота гасит ТОЛЬКО подмену, эффекты остаются
+    // the checkbox of the morph slot turns off ONLY the swap, the effects stay
     p.morphers[0].patch.src_off = true;
     let eff = p.effective_clips();
-    assert_eq!(eff[0].media, MediaId(1), "выключенный морф-слот возвращает исходный источник");
-    assert_eq!(eff[0].source_in, Tick(3_000), "и исходную точку входа");
-    assert_eq!(eff[0].fx.len(), 1, "эффекты слоя к морф-слоту отношения не имеют");
-    assert!(!p.morphers[0].patch.is_empty(), "настройки подмены целы");
+    assert_eq!(eff[0].media, MediaId(1), "a disabled morph slot restores the original source");
+    assert_eq!(eff[0].source_in, Tick(3_000), "and the original entry point");
+    assert_eq!(eff[0].fx.len(), 1, "layer effects have nothing to do with the morph slot");
+    assert!(!p.morphers[0].patch.is_empty(), "substitution settings are intact");
 
-    // медиа, которое держит ТОЛЬКО морфер, из проекта не выкинуть
+    // media held ONLY by a morpher cannot be dropped from the project
     let mut mm = TimelineModel::new(p);
     assert!(
         mm.apply(Command::RemoveMedia { id: MediaId(2) }).is_err(),
-        "гард обязан отбить удаление медиа, которое держит морфер"
+        "the guard must block deletion of media held by a morpher"
     );
     assert!(mm.project().media.iter().any(|m| m.id == MediaId(2)));
 }
 
-/// Тест 247 (Р.35 С4, дословно: «можно area-selection сделать сохраняемой
-/// как marked_region в виде marked_area, и тоже на неё ссылаться… если
-/// юзер передумал он может в виджете морфера поменять/удалить/добавить
-/// регион/area на другие»). Ссылка ПО ИМЕНИ: имена уникальны в одном
-/// пространстве с метками-диапазонами, переименование правит ссылки,
-/// удаление оставляет ссылку мёртвой, а не молча её выкидывает.
+/// Test 247 (R.35 C4, verbatim: “can the area-selection be made saved
+/// as a marked_region in the form of a marked_area, and also referenced… if
+/// the user changes his mind he can change/delete/add in the morpher widget
+/// the region/area to other ones”). A reference BY NAME: names are unique in one
+/// space together with range markers, renaming fixes the references, deletion leaves the
+/// reference dead rather than silently dropping it.
 #[test]
 fn t247_named_areas_and_references() {
-    // `unique_name` — одна функция на проверку и на вставку
-    let taken = vec!["финал".to_string(), "финал 2".to_string()];
-    assert_eq!(unique_name(&taken, "финал", "область"), "финал 3");
-    assert_eq!(unique_name(&taken, "начало", "область"), "начало");
-    assert_eq!(unique_name(&taken, "  ", "область"), "область");
+    // `unique_name` — one function for the check and for the insertion
+    let taken = vec!["final".to_string(), "final 2".to_string()];
+    assert_eq!(unique_name(&taken, "final", "area"), "final 3");
+    assert_eq!(unique_name(&taken, "start", "area"), "start");
+    assert_eq!(unique_name(&taken, "  ", "area"), "area");
 
     let mut p = base();
     p.ensure_tracks(LaneKind::Video, 2);
     p.clips.push(clip(20, ClipKind::Video, 1, Tick(0), LEN));
     p.areas.push(MarkedArea {
-        name: "финал".into(),
+        name: "final".into(),
         start: Tick(30_000),
         duration: Tick(30_000),
         lanes: vec![(LaneKind::Video, 0)],
         color: None,
     });
-    let mut m = layer(Tick(0), Tick(1)); // блок КРОШЕЧНЫЙ и не там
-    m.targets = MorphTargets::Areas { names: vec!["финал".into()] };
+    let mut m = layer(Tick(0), Tick(1)); // the block is TINY and not there
+    m.targets = MorphTargets::Areas { names: vec!["final".into()] };
     p.morphers.push(m);
     p.validate().unwrap();
 
-    // окно взято из ОБЛАСТИ, а не из блока
+    // the window is taken from the AREA, not from the block
     let eff = p.effective_clips();
     let first: Vec<&ClipEvent> = eff.iter().filter(|c| same_clip(c.id, ClipId(10))).collect();
-    assert_eq!(first.len(), 3, "клип на дорожке области разрезан по её границам");
+    assert_eq!(first.len(), 3, "a clip on a region track is cut along its boundaries");
     assert_eq!(first[1].start, Tick(30_000));
-    assert_eq!(first[1].media, MediaId(2), "внутри области патч действует");
-    assert_eq!(first[0].media, MediaId(1), "снаружи — нет");
-    // область назвала ДОРОЖКИ: соседняя не тронута
+    assert_eq!(first[1].media, MediaId(2), "inside the region the patch applies");
+    assert_eq!(first[0].media, MediaId(1), "outside — no");
+    // the area named the TRACKS: the neighbouring one is untouched
     let other: Vec<&ClipEvent> = eff.iter().filter(|c| same_clip(c.id, ClipId(20))).collect();
-    assert_eq!(other.len(), 1, "дорожка вне области не режется");
+    assert_eq!(other.len(), 1, "a track outside the region is not cut");
     assert_eq!(other[0].media, MediaId(1));
 
-    // одно пространство имён: метка-диапазон с тем же именем незаконна
+    // one namespace: a range marker with the same name is illegal
     let mut bad = p.clone();
     bad.markers.push(Marker {
         t: Tick(0),
         duration: Tick(1_000),
-        name: "финал".into(),
+        name: "final".into(),
         color: None,
     });
     assert!(matches!(bad.validate(), Err(ProjectError::DuplicateName(..))));
 
     let mut mm = TimelineModel::new(p);
-    // команда тоже отбивает занятое имя, и своё пустое
+    // the command also rejects an occupied name, and an empty one
     assert!(matches!(
         mm.apply(Command::AddArea(MarkedArea {
-            name: "финал".into(),
+            name: "final".into(),
             start: Tick(0),
             duration: Tick(1_000),
             lanes: vec![],
@@ -571,38 +571,38 @@ fn t247_named_areas_and_references() {
         Err(CommandError::NameTaken(..))
     ));
 
-    // переименование правит ССЫЛКИ и откатывается ОДНИМ undo
-    mm.apply(Command::RenameArea { from: "финал".into(), to: "конец".into() }).unwrap();
-    assert_eq!(mm.project().areas[0].name, "конец");
+    // renaming fixes the REFERENCES and is rolled back in ONE undo
+    mm.apply(Command::RenameArea { from: "final".into(), to: "end".into() }).unwrap();
+    assert_eq!(mm.project().areas[0].name, "end");
     assert_eq!(
         mm.project().morphers[0].targets,
-        MorphTargets::Areas { names: vec!["конец".into()] },
-        "ссылка морфера переехала вместе с именем"
+        MorphTargets::Areas { names: vec!["end".into()] },
+        "the morpher reference moved along with the name"
     );
-    assert_eq!(mm.project().effective_clips().len(), 4, "и продолжает работать");
+    assert_eq!(mm.project().effective_clips().len(), 4, "and keeps working");
     mm.undo().unwrap();
-    assert_eq!(mm.project().areas[0].name, "финал");
+    assert_eq!(mm.project().areas[0].name, "final");
     assert_eq!(
         mm.project().morphers[0].targets,
-        MorphTargets::Areas { names: vec!["финал".into()] }
+        MorphTargets::Areas { names: vec!["final".into()] }
     );
 
-    // удаление области оставляет ссылку МЁРТВОЙ: пользователь вернёт
-    // область тем же именем, и всё оживёт (правило 20 — ничего не
-    // отрубается само)
-    mm.apply(Command::RemoveArea { name: "финал".into() }).unwrap();
+    // Deleting the area leaves the reference DEAD: the user restores the
+    // area under the same name, and everything comes back to life (rule 20 — nothing
+    // switches itself off)
+    mm.apply(Command::RemoveArea { name: "final".into() }).unwrap();
     assert!(mm.project().areas.is_empty());
     assert_eq!(
         mm.project().morphers[0].targets,
-        MorphTargets::Areas { names: vec!["финал".into()] },
-        "ссылка осталась в модели"
+        MorphTargets::Areas { names: vec!["final".into()] },
+        "the reference stayed in the model"
     );
-    assert_eq!(mm.project().effective_clips(), mm.project().clips, "но никуда не ведёт");
+    assert_eq!(mm.project().effective_clips(), mm.project().clips, "but leads nowhere");
     mm.project().validate().unwrap();
 }
 
-/// Тест 247b: ссылка на метку-ДИАПАЗОН даёт то же окно, что область на
-/// всех дорожках; несколько пересекающихся ссылок сливаются в одну.
+/// Test 247b: a reference to a range MARKER gives the same window as the area on
+/// all tracks; several overlapping references merge into one.
 #[test]
 fn t247_marks_give_windows_and_merge() {
     let mut p = base();
@@ -620,36 +620,36 @@ fn t247_marks_give_windows_and_merge() {
     });
     let mut m = layer(Tick(0), Tick(1));
     m.targets =
-        MorphTargets::Marks { names: vec!["a".into(), "b".into(), "нет такой".into()] };
+        MorphTargets::Marks { names: vec!["a".into(), "b".into(), "no such one".into()] };
     p.morphers.push(m);
     p.validate().unwrap();
 
     let eff = p.effective_clips();
-    assert_eq!(eff.len(), 3, "две пересекающиеся ссылки слились в ОДНО окно");
+    assert_eq!(eff.len(), 3, "two overlapping references merged into ONE window");
     assert_eq!(eff[1].start, Tick(30_000));
-    assert_eq!(eff[1].duration, Tick(30_000), "[30000,60000) — объединение");
+    assert_eq!(eff[1].duration, Tick(30_000), "[30000,60000) — union");
     assert_eq!(eff[1].media, MediaId(2));
-    // точечная метка окна не задаёт
+    // a point marker does not define a window
     let mut q = base();
     q.markers.push(Marker { t: Tick(30_000), duration: Tick::ZERO, name: "t".into(), color: None });
     let mut m = layer(Tick(0), Tick(1));
     m.targets = MorphTargets::Marks { names: vec!["t".into()] };
     q.morphers.push(m);
-    assert_eq!(q.effective_clips(), q.clips, "точечная метка не диапазон");
+    assert_eq!(q.effective_clips(), q.clips, "a point marker is not a range");
 }
 
-/// Тест 249 (Р.35 С5, дословно: «При выделении на таймлайне всего подряд
-/// и ctrl+c ctrl+v я хочу чтобы у меня проставлялись связи и для морферов
-/// тоже… и marked_area-ы тоже при выделении и копировании копируются, и
-/// marked_region тоже вместе с теми что внутри него. Имена — уникальные,
-/// и можно попросить пользователя ввести префикс»).
+/// Test 249 (R.35 C5, verbatim: “When I select everything on the timeline and
+/// ctrl+c ctrl+v, I want the links to be set for morphers too…
+/// and the marked_areas are copied
+/// on selection and copying too, and the marked_region together with those inside it. Names are unique,
+/// and the user can be asked to enter a prefix”).
 #[test]
 fn t249_clipboard_carries_morphers_areas_and_marks() {
     use kt_model::ops::*;
     let mut p = base();
     p.clips.push(clip(11, ClipKind::Video, 0, LEN, LEN));
     p.areas.push(MarkedArea {
-        name: "финал".into(),
+        name: "final".into(),
         start: Tick(0),
         duration: Tick(45_000),
         lanes: vec![(LaneKind::Video, 0)],
@@ -658,32 +658,32 @@ fn t249_clipboard_carries_morphers_areas_and_marks() {
     p.markers.push(Marker {
         t: Tick(10_000),
         duration: Tick(20_000),
-        name: "врез".into(),
+        name: "Insert".into(),
         color: None,
     });
-    // морфер на ПЕРВЫЙ клип и морфер-ссылка на область
+    // a morpher on the FIRST clip and a morpher-reference to an area
     p.morphers.push(layer(Tick(0), Tick(45_000)));
     let mut byref = layer(Tick(0), Tick(45_000));
     byref.id = MorphId(2);
-    byref.targets = MorphTargets::Areas { names: vec!["финал".into(), "чужая".into()] };
+    byref.targets = MorphTargets::Areas { names: vec!["final".into(), "foreign".into()] };
     p.morphers.push(byref);
-    // морфер, чьи цели ВНЕ блока — его вставка обязана пропустить
+    // a morpher whose targets are OUTSIDE the block — its insertion must skip it
     let mut orphan = layer(Tick(0), Tick(45_000));
     orphan.id = MorphId(3);
     orphan.targets = MorphTargets::Clips { ids: vec![ClipId(11)] };
     p.morphers.push(orphan);
     p.validate().unwrap();
 
-    // копируем ПЕРВЫЙ клип: с ним едут его морфер, область и метка
+    // we copy the FIRST clip: its morpher, the area and the marker travel with it
     let block = copy_clips(&p, &[ClipId(10)]);
     assert_eq!(block.clips.len(), 1);
-    assert_eq!(block.areas.len(), 1, "область в окне блока копируется");
-    assert_eq!(block.markers.len(), 1, "метка-диапазон тоже");
-    assert_eq!(block.morphers.len(), 2, "морфер, чьи цели ВНЕ блока, не копируется вовсе");
-    // ...а если блок пришёл со стороны (системный буфер — это JSON) и
-    // ссылается на клип, которого в нём нет, вставка ПРОПУСКАЕТ такой
-    // морфер и считает его: батч атомарен, и один плохой элемент уронил
-    // бы всю вставку, а выглядело бы это как «копипаст не работает»
+    assert_eq!(block.areas.len(), 1, "the region within the block window is copied");
+    assert_eq!(block.markers.len(), 1, "a range marker too");
+    assert_eq!(block.morphers.len(), 2, "a morpher whose targets are OUTSIDE the block is not copied at all");
+    // ...and if the block came from outside (the system clipboard is JSON) and
+    // refers to a clip that is not in it, the insertion SKIPS such a
+    // morpher and counts it: the batch is atomic, and one bad element would bring
+    // down the whole insertion, and it would look like “copy-paste does not work”
     let mut block = block;
     let mut foreign = block.morphers[0].clone();
     foreign.id = MorphId(9);
@@ -694,7 +694,7 @@ fn t249_clipboard_carries_morphers_areas_and_marks() {
     let (mut nc, mut ng, mut nt, mut nm) = (100u64, 100u64, 100u64, 100u64);
     let mut ncam = 100u64;
     let names =
-        PasteNames { affix: "копия".into(), before: false, taken: m.project().taken_names() };
+        PasteNames { affix: "copy".into(), before: false, taken: m.project().taken_names() };
     let (cmds, _end, skipped) = paste_block(
         &block,
         Tick(300_000),
@@ -707,36 +707,36 @@ fn t249_clipboard_carries_morphers_areas_and_marks() {
         },
         &names,
     );
-    assert_eq!(skipped.morphers, 1, "морфер без уцелевших целей пропущен");
-    m.apply_batch(cmds).expect("батч обязан пройти, а не упасть из-за пропущенного");
+    assert_eq!(skipped.morphers, 1, "a morpher without surviving targets is skipped");
+    m.apply_batch(cmds).expect("the batch must pass, not crash because of a skipped item");
 
-    // имена уникальны и с приставкой; умолчание — СУФФИКС (Р.38 п.19:
-    // «надо по дефолту проставлять не префикс а суффикс»)
-    let a = m.project().areas.iter().find(|a| a.name != "финал").expect("копия области");
-    assert_eq!(a.name, "финал копия");
-    assert_eq!(a.start, Tick(300_000), "область ребейзнута к точке вставки");
+    // names are unique and with a prefix; the default is a SUFFIX (R.38 item 19:
+    // “by default one should put a suffix, not a prefix”)
+    let a = m.project().areas.iter().find(|a| a.name != "final").expect("copy of the region");
+    assert_eq!(a.name, "final copy");
+    assert_eq!(a.start, Tick(300_000), "the region is rebased to the insertion point");
     assert!(
-        m.project().markers.iter().any(|k| k.name == "врез копия" && k.t == Tick(310_000)),
-        "метка тоже переименована и переехала"
+        m.project().markers.iter().any(|k| k.name == "Insert copy" && k.t == Tick(310_000)),
+        "the marker was also renamed and moved"
     );
 
-    // цели скопированного морфера указывают ТОЛЬКО на новые id
+    // the targets of a copied morpher point ONLY to the new ids
     let pasted: Vec<&MorpherEvent> =
         m.project().morphers.iter().filter(|x| x.id.0 >= 100).collect();
-    assert_eq!(pasted.len(), 2, "два морфера доехали, третий пропущен");
+    assert_eq!(pasted.len(), 2, "two morphers arrived, the third was skipped");
     let frozen = pasted.iter().find(|x| !x.targets.clip_ids().is_empty()).unwrap();
-    assert_eq!(frozen.targets.clip_ids(), &[ClipId(100)], "цель — новый клип, а не старый");
-    // ссылка на СКОПИРОВАННОЕ имя переехала, на нескопированное — нет
+    assert_eq!(frozen.targets.clip_ids(), &[ClipId(100)], "the target is the new clip, not the old one");
+    // a reference to the COPIED name moved, to a non-copied one it did not
     let byref = pasted.iter().find(|x| x.targets.clip_ids().is_empty()).unwrap();
     assert_eq!(
         byref.targets,
-        MorphTargets::Areas { names: vec!["финал копия".into(), "чужая".into()] }
+        MorphTargets::Areas { names: vec!["final copy".into(), "foreign".into()] }
     );
     m.project().validate().unwrap();
 
-    // ВТОРАЯ вставка тем же словом даёт « 2» — имена остаются адресами
+    // a SECOND insertion with the same word gives “ 2” — names remain addresses
     let names =
-        PasteNames { affix: "копия".into(), before: false, taken: m.project().taken_names() };
+        PasteNames { affix: "copy".into(), before: false, taken: m.project().taken_names() };
     let (cmds, _end, _) = paste_block(
         &block,
         Tick(600_000),
@@ -751,16 +751,16 @@ fn t249_clipboard_carries_morphers_areas_and_marks() {
     );
     m.apply_batch(cmds).unwrap();
     assert!(
-        m.project().areas.iter().any(|a| a.name == "финал копия 2"),
-        "вторая вставка обязана дать уникальное имя: {:?}",
+        m.project().areas.iter().any(|a| a.name == "final copy 2"),
+        "the second insertion must produce a unique name: {:?}",
         m.project().areas.iter().map(|a| &a.name).collect::<Vec<_>>()
     );
 }
 
-/// Тест 266 (Р.38 п.13, дословно: «у морфера я не могу задавать
-/// автоматизацию эффектов»). Кривые слоя живут в его патче в домене
-/// БЛОКА (у морфера нет материала), а `apply_to` переводит их в материал
-/// цели — тем же отображением, что и всё остальное.
+/// Test 266 (R.38 item 13, verbatim:
+/// “for a morpher I cannot set the automation of effects”).
+/// The curves of a layer live in its patch in the domain of the BLOCK (a morpher has no material),
+/// and `apply_to` converts them into the material of the target — by the same mapping as everything else.
 #[test]
 fn t266_morph_layer_curves_rebase_to_target_material() {
     use kt_model::*;
@@ -793,8 +793,8 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
         lane: 0,
         start: Tick(90_000),
         duration: Tick(90_000 * 4),
-        // точка входа НЕ нулевая: иначе «материал» и «таймлайн» совпали бы
-        // и тест не отличил бы правильный перевод от его отсутствия
+        // the entry point is NOT zero: otherwise “material” and “timeline” would coincide
+        // and the test could not tell the correct conversion from its absence
         source_in: Tick(90_000 * 10),
         media: MediaId(1),
         gain_db: 0.0,
@@ -810,7 +810,7 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
     p.morphers.push(MorpherEvent {
         id: MorphId(1),
         lane: 0,
-        // блок начинается ПОЗЖЕ клипа — сдвиг обязан войти в перевод
+        // the block starts LATER than the clip — the shift must enter the conversion
         start: Tick(90_000 * 2),
         duration: Tick(90_000 * 2),
         targets: MorphTargets::Below,
@@ -837,29 +837,29 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
 
     let eff = p.effective_clips();
     let patched: Vec<&ClipEvent> = eff.iter().filter(|c| !c.fx.is_empty()).collect();
-    assert_eq!(patched.len(), 1, "накрыт ровно один кусок: {:?}", eff.len());
+    assert_eq!(patched.len(), 1, "exactly one piece is covered: {:?}", eff.len());
     let c = patched[0];
-    assert_eq!(c.fx_auto.len(), c.fx.len(), "кривые параллельны цепочке");
+    assert_eq!(c.fx_auto.len(), c.fx.len(), "curves are parallel to the chain");
     let keys = &c.fx_auto[0][0].keys;
     assert_eq!(keys.len(), 2);
-    // блок 2..4 c таймлайна = материал 11..13 c (source_in = 10 c,
-    // клип начинается в 1 c)
-    assert_eq!(keys[0].t, Tick(90_000 * 11), "начало блока → материал цели");
-    assert_eq!(keys[1].t, Tick(90_000 * 13), "конец блока → материал цели");
+    // block 2..4 s of the timeline = material 11..13 s (source_in = 10 s,
+    // the clip starts at 1 s)
+    assert_eq!(keys[0].t, Tick(90_000 * 11), "block start → target material");
+    assert_eq!(keys[1].t, Tick(90_000 * 13), "block end → target material");
     assert_eq!(keys[0].v, 2.0);
     assert_eq!(keys[1].v, 9.0);
 
-    // выключенный слот кривую с собой не тащит: `auto_for` идёт тем же
-    // порядком, что `chain_for`, иначе кривая уехала бы на чужой эффект
+    // a disabled slot does not carry its curve along: `auto_for` goes in the same
+    // order as `chain_for`, otherwise the curve would drift onto a foreign effect
     let mut p2 = p.clone();
     p2.morphers[0].patch.video_bypass = vec![true];
     let eff2 = p2.effective_clips();
     assert!(
         eff2.iter().all(|c| c.fx.is_empty() && c.fx_auto.iter().all(|a| a.is_empty())),
-        "выключенный слот не приносит ни эффекта, ни кривой"
+        "a disabled slot brings neither an effect nor a curve"
     );
 
-    // и патч с одними кривыми не считается пустым: «пустой» не пишется в файл
+    // and a patch with only curves is not considered empty: an “empty” one is not written to the file
     let mut only = MorphPatch::default();
     assert!(only.is_empty());
     only.video_auto = vec![vec![ParamCurve {
@@ -868,11 +868,11 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
         keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 1.0)]),
         source: Default::default(),
     }]];
-    assert!(!only.is_empty(), "патч с кривыми обязан сериализоваться");
+    assert!(!only.is_empty(), "a patch with curves must serialize");
 }
 
 // ---------------------------------------------------------------------------
-// Тесты 270 (Р.39): резка РАСТЯНУТОГО клипа попадает в тот материал.
+// Tests 270 (R.39): cutting a STRETCHED clip lands on the right material.
 // ---------------------------------------------------------------------------
 
 fn warped(rate: f64, keys: Vec<AutoKey>, reversed: bool) -> ClipEvent {
@@ -909,7 +909,7 @@ fn warped(rate: f64, keys: Vec<AutoKey>, reversed: bool) -> ClipEvent {
     }
 }
 
-/// Тест 270: половинная скорость — половина материала.
+/// Test 270: half speed — half of the material.
 #[test]
 fn t270_split_half_speed_in_the_middle() {
     let c = warped(0.5, vec![], false);
@@ -918,34 +918,34 @@ fn t270_split_half_speed_in_the_middle() {
     assert_eq!(
         right.source_in,
         Tick(90_000 + 90_000),
-        "за 2 с выхода на 0.5× съедена 1 с материала, а не 2 (до Р.39 было 270_000)"
+        "over 2 s of output at 0.5× 1 s of material is consumed, not 2 (before R.39 it was 270_000)"
     );
-    // левый кусок начинается там же, где родитель
+    // the left piece starts where the parent does
     let left = clip_slice(&c, TickRange::new(Tick(0), Tick(2 * 90_000)), ClipId(1));
-    assert_eq!(left.source_in, c.source_in, "разрез в начале материал не двигает");
+    assert_eq!(left.source_in, c.source_in, "a cut at the start does not move the material");
 }
 
-/// Тест 270б: то же зеркально. «ВАРП, ПОТОМ ЗЕРКАЛО» — якорь считается от
-/// фактически потреблённого материала, а не от длины события.
+/// Test 270b: the same, mirrored. “WARP, THEN MIRROR” — the anchor is counted from the
+/// material actually consumed, not from the length of the event.
 #[test]
 fn t270b_split_reversed_half_speed() {
     let c = warped(0.5, vec![], true);
-    // всего съедается 2 с материала
+    // in total 2 s of material is consumed
     let first = clip_slice(&c, TickRange::new(Tick(0), Tick(2 * 90_000)), ClipId(1));
     assert_eq!(
         first.source_in,
         Tick(90_000 + 90_000),
-        "зеркальный клип начинает с ХВОСТА потреблённого: 1 с, а не 2"
+        "a mirrored clip starts from the TAIL of what was consumed: 1 s, not 2"
     );
     let last = clip_slice(&c, TickRange::new(Tick(2 * 90_000), Tick(4 * 90_000)), ClipId(2));
-    assert_eq!(last.source_in, c.source_in, "последний кусок играет начало источника");
+    assert_eq!(last.source_in, c.source_in, "the last piece plays the start of the source");
 }
 
-/// Тест 270в: КРИВАЯ скорости — интеграл, а не умножение. Плюс главное:
-/// ключи едут вместе с якорем, иначе за ним уезжает вся кривая.
+/// Test 270c: the speed CURVE is an integral, not a multiplication. And the main point:
+/// the keys travel together with the anchor, otherwise the whole curve drifts behind it.
 #[test]
 fn t270c_split_on_a_rate_curve_moves_keys_with_the_anchor() {
-    // рампа 1.0 → 2.0 по всему событию; ключи в тиках материала от source_in
+    // a ramp 1.0 → 2.0 over the whole event; keys in ticks of material from source_in
     let c = warped(
         1.0,
         vec![AutoKey::at(Tick(90_000), 1.0), AutoKey::at(Tick(90_000 + 4 * 90_000), 2.0)],
@@ -954,30 +954,30 @@ fn t270c_split_on_a_rate_curve_moves_keys_with_the_anchor() {
     let at = Tick(2 * 90_000);
     let right = clip_slice(&c, TickRange::new(at, Tick(4 * 90_000)), ClipId(2));
 
-    // S(0.5) для рампы 1→2 = 0.5·1 + 0.5²·0.5/… — трапеция: (1 + 1.5)/2 · 0.5 = 0.625
+    // S(0.5) for the ramp 1→2 = 0.5·1 + 0.5²·0.5/… — trapezoid: (1 + 1.5)/2 · 0.5 = 0.625
     let want = Tick(90_000 + (4.0f64 * 90_000.0 * 0.625).round() as i64);
-    assert_eq!(right.source_in, want, "якорь — интеграл скорости, а не 2 с");
+    assert_eq!(right.source_in, want, "the anchor is the integral of the speed, not 2 s");
 
-    // ключи сдвинулись на ТУ ЖЕ дельту: разность (k.t − source_in) цела
+    // the keys shifted by the SAME delta: the difference (k.t − source_in) is intact
     let d = (want - c.source_in).0 - (at - c.start).0;
-    assert_ne!(d, 0, "сцена должна быть варпнутой, иначе тест ничего не проверяет");
+    assert_ne!(d, 0, "the scene must be warped, otherwise the test checks nothing");
     for (before, after) in c.fx_auto[0][0].keys.iter().zip(&right.fx_auto[0][0].keys) {
         assert_eq!(
             after.t.0 - right.source_in.0,
             before.t.0 - c.source_in.0 - (at - c.start).0,
-            "ось автоматизации куска обязана остаться линейной (Р.37), \
-             а сдвинуться обязан только материал"
+            "the automation axis of the piece must stay linear (R.37), \
+             and only the material must shift"
         );
     }
 }
 
-/// Тест 270г: шов. Конец первого куска и начало второго — один и тот же
-/// материал; сумма потреблённого равна родительской.
+/// Test 270d: the seam. The end of the first piece and the start of the second are the same
+/// material; the sum consumed equals the parent’s.
 #[test]
 fn t270d_slice_seam_has_no_gap() {
     for (rate, rev) in [(0.5, false), (2.0, false), (0.5, true), (2.0, true)] {
         let c = warped(rate, vec![], rev);
-        let at = Tick(90_000 * 3 / 2); // не на круглой границе
+        let at = Tick(90_000 * 3 / 2); // not at a round boundary
         let l = clip_slice(&c, TickRange::new(Tick(0), at), ClipId(1));
         let r = clip_slice(&c, TickRange::new(at, Tick(4 * 90_000)), ClipId(2));
         let used = |x: &ClipEvent| kt_model::clip_warp(x).map(|w| w.used()).unwrap_or(x.duration.0);
@@ -985,18 +985,18 @@ fn t270d_slice_seam_has_no_gap() {
         let seam = near.source_in.0 + used(near);
         assert!(
             (seam - far.source_in.0).abs() <= 1,
-            "rate {rate} rev {rev}: шов расходится на {} тиков",
+            "rate {rate} rev {rev}: the seam diverges by {} ticks",
             seam - far.source_in.0
         );
         assert!(
             (used(&l) + used(&r) - used(&c)).abs() <= 2,
-            "rate {rate} rev {rev}: суммарно съедено не столько, сколько родителем"
+            "rate {rate} rev {rev}: total consumed is not the same as by the parent"
         );
     }
 }
 
-/// Тест 270д: на клипе БЕЗ варпа правило прежнее байт-в-байт — на этом
-/// стоят GOLDEN'ы и все старые тесты.
+/// Test 270e: on a clip WITHOUT warp the previous rule holds byte-for-byte — the GOLDENs
+/// and all old tests rest on it.
 #[test]
 fn t270e_unwarped_slice_is_unchanged() {
     for reversed in [false, true] {
@@ -1015,18 +1015,18 @@ fn t270e_unwarped_slice_is_unchanged() {
                 assert_eq!(
                     clip_slice(&c, win, ClipId(9)).source_in,
                     want,
-                    "без варпа — прежняя линейная формула, reversed={reversed}"
+                    "without warp — the previous linear formula, reversed={reversed}"
                 );
             }
         }
     }
-    // и выключенный слот варпа тоже не варп
+    // and a disabled warp slot is not a warp either
     let mut off = warped(0.5, vec![], false);
     off.fx_bypass = vec![true];
     assert_eq!(
         clip_slice(&off, TickRange::new(Tick(2 * 90_000), Tick(4 * 90_000)), ClipId(9)).source_in,
         Tick(90_000 + 2 * 90_000),
-        "выключенный слот варпа резку не искривляет"
+        "a disabled warp slot does not bend the cut"
     );
     let mut master = warped(0.5, vec![], false);
     master.fx_off = true;
@@ -1034,27 +1034,27 @@ fn t270e_unwarped_slice_is_unchanged() {
         clip_slice(&master, TickRange::new(Tick(2 * 90_000), Tick(4 * 90_000)), ClipId(9))
             .source_in,
         Tick(90_000 + 2 * 90_000),
-        "мастер-выключатель цепочки — тоже"
+        "the master switch of the chain too"
     );
 }
 
-/// Тест 288 (Р.43, п.298): вето «варпнутый клип не резать» не отменяет
-/// ВРЕМЯ блока.
+/// Test 288 (R.43, item 298): the veto “do not cut a warped clip” does not cancel
+/// the TIME of the block.
 ///
-/// Претензия пользователя на реальном проекте: «в problems1 … звук от
-/// другого события откуда-то взялся», «в rendereg на самом верхнем
-/// событии кривые автоматизации не работают», «регион зацикленность_5
-/// какой-то поломанный», — и решающая подсказка: «есть немного ранняя
-/// версия проекта где как минимум rendereg работает правильно». В ней НЕ
-/// БЫЛО НИ ОДНОГО МОРФЕРА.
+/// The user’s complaint on a real project: “in problems1 … sound from
+/// another event came from somewhere”, “in rendereg the automation curves do not work on the very top
+/// event”, “the region looping_5 is somehow broken” — and the deciding hint: “there is a slightly earlier
+/// version of the project where at least rendereg works correctly”. It had NOT A
+/// SINGLE MORPHER.
 ///
-/// Причина: `windows_on` проверял вето ПЕРВЫМ и возвращал всё тело клипа,
-/// ни разу не спросив, дотягивается ли блок до этого клипа по времени.
-/// «Целиком» — это про ГРАНИЦЫ куска, а не про ДОСЯГАЕМОСТЬ. В проекте
-/// пользователя морф-блок длиной 0.6 с на 5020-й секунде подменял
-/// источник у событий на 148-й («Салют» вместо «далеко»), а блок со
-/// slowed&reverb на 169-й секунде раздавал ВАРП ВРЕМЕНИ всем событиям
-/// проекта ниже своей строки — включая звук, у которого его в файле нет.
+/// Cause: `windows_on` checked the veto FIRST and returned the whole body of the clip,
+/// never asking whether the block reached this clip in time.
+/// “Entirely” is about the BOUNDARIES of the piece,
+/// not about REACHABILITY.
+/// In the user’s project a
+/// 0.6 s morph block at second 5020 swapped the source of events at second 148 (“Salut” instead of “far”), and a
+/// block with slowed&reverb at second 169 handed out a TIME WARP to all events of the
+/// project below its row — including the sound, which has no such thing in the file.
 #[test]
 fn t288_layer_does_not_reach_a_warped_clip_outside_its_window() {
     let warp = FxInstance::SlowedReverb {
@@ -1070,18 +1070,18 @@ fn t288_layer_does_not_reach_a_warped_clip_outside_its_window() {
         automation: vec![],
     };
 
-    // строка слоя обязана быть ВЫШЕ дорожки клипа, иначе `Below` не
-    // накрывает его и тест зеленел бы по совсем другой причине
+    // the row of the layer must be ABOVE the track of the clip, otherwise `Below` would not
+    // cover it and the test would pass for a completely different reason
     let above = |p: &mut Project| {
         p.set_lane_order(&[(LaneKind::Morph, 0), (LaneKind::Video, 0), (LaneKind::Audio, 0)]);
     };
 
-    // --- 1. варп у САМОГО КЛИПА: блок далеко, трогать нечего -------------
+    // --- 1. a warp on the CLIP ITSELF: the block is far away, nothing to touch ---
     let mut p = base();
     above(&mut p);
     p.clips[0].fx = vec![warp.clone()];
-    // цель — `Below`, то есть «всё, что ниже строки слоя»; блок стоит
-    // ДАЛЕКО от клипа по времени
+    // the target is `Below`, that is, “everything below the layer row”; the block stands
+    // FAR from the clip in time
     let mut m = layer(Tick(10 * 90_000), Tick(90_000));
     m.targets = MorphTargets::Below;
     p.morphers.push(m);
@@ -1090,20 +1090,20 @@ fn t288_layer_does_not_reach_a_warped_clip_outside_its_window() {
     let rows = p.rows();
     assert!(
         p.morphers[0].covers(&p.clips[0], &rows),
-        "слой обязан накрывать клип ПО ПРОСТРАНСТВУ — иначе проверка про ВРЕМЯ          выполнялась бы сама собой"
+        "the layer must cover the clip SPATIALLY — otherwise the check about TIME          would run by itself"
     );
     let wins = p.morphers[0].windows_on(&p.clips[0], &p, &p, &rows);
     assert!(
         wins.is_empty(),
-        "блок на 10-й секунде не имеет отношения к клипу 0..1 с, даже если тот \
-         растянут: {wins:?}"
+        "a block at the 10th second has nothing to do with the clip 0..1 s, even if that one \
+         is stretched: {wins:?}"
     );
     let eff = p.effective_clips();
-    assert_eq!(eff.len(), 1, "клип не режется");
-    assert_eq!(eff[0].media, MediaId(1), "источник обязан остаться своим");
-    assert_eq!(eff[0].fx.len(), 1, "чужих эффектов у клипа не появилось");
+    assert_eq!(eff.len(), 1, "the clip is not cut");
+    assert_eq!(eff[0].media, MediaId(1), "the source must remain its own");
+    assert_eq!(eff[0].fx.len(), 1, "no foreign effects appeared on the clip");
 
-    // --- 2. варп в ПАТЧЕ слоя: тот же запрет ------------------------------
+    // --- 2. a warp in the PATCH of the layer: the same prohibition -------------
     let mut p = base();
     above(&mut p);
     let mut m = layer(Tick(10 * 90_000), Tick(90_000));
@@ -1118,17 +1118,17 @@ fn t288_layer_does_not_reach_a_warped_clip_outside_its_window() {
     for c in &eff {
         assert!(
             c.fx.is_empty(),
-            "слой со slowed&reverb раздал варп событию {:?} за 10 секунд от себя: {:?}",
+            "a slowed&reverb layer handed warp to event {:?} 10 seconds away from itself: {:?}",
             c.id,
             c.fx
         );
     }
 
-    // --- 3. а ВНУТРИ окна варпнутый клип по-прежнему патчится ЦЕЛИКОМ -----
+    // --- 3. but INSIDE the window a warped clip is still patched WHOLE ---------
     let mut p = base();
     above(&mut p);
     p.clips[0].fx = vec![warp];
-    let mut m = layer(Tick(30_000), Tick(30_000)); // середина клипа
+    let mut m = layer(Tick(30_000), Tick(30_000)); // the middle of the clip
     m.targets = MorphTargets::Below;
     p.morphers.push(m);
     p.validate().unwrap();
@@ -1138,29 +1138,29 @@ fn t288_layer_does_not_reach_a_warped_clip_outside_its_window() {
     assert_eq!(
         wins,
         vec![TickRange::new(Tick(0), LEN)],
-        "накрытый растянутый клип патчится целиком и НЕ режется (Р.37)"
+        "a covered stretched clip is patched whole and is NOT cut (R.37)"
     );
     let eff = p.effective_clips();
-    assert_eq!(eff.len(), 1, "растянутый клип резать нельзя");
-    assert_eq!(eff[0].media, MediaId(2), "и патч на нём действует");
+    assert_eq!(eff.len(), 1, "a stretched clip must not be cut");
+    assert_eq!(eff[0].media, MediaId(2), "and the patch applies to it");
 }
 
-/// Тест 291 (Р.43, п.300): подмена источника слоем НЕ теряет собственную
-/// анимацию события.
+/// Test 291 (R.43, item 300): a source swap by a layer does NOT lose the event’s own animation.
 ///
-/// Претензия дословно: «в rendereg почему-то на самое верхнее событие не
-/// применяется pan3d пока я в морфере не отключу замену сурса, что
-/// странно».
+/// The complaint verbatim: “in rendereg for some reason pan3d is not applied to the very top
+/// event until I disable the source replacement in the morpher, which
+/// is strange”.
 ///
-/// Ключ автоматизации приклеен к МАТЕРИАЛУ (t212) — и это верно, пока
-/// материал тот же: обрезка прячет и открывает ключи, разрез делит кривую.
-/// Но подмена источника слоем меняет саму систему координат: у события
-/// пользователя `source_in` уезжал с 47.0 с на 99.0 с, а ключи оставались
-/// на 47.0..59.6 с — то есть ЦЕЛИКОМ левее нового окна. Кривая зажималась
-/// последним ключом, и pan3d становился постоянным: rot_y = 0, rot_z = 0.
-/// Со стороны это ровно «pan3d не применяется».
+/// The automation key is pinned to the MATERIAL (t212) —
+/// and this is correct, as long as
+/// the material is the same: trimming hides and reveals the keys, a split divides the curve.
+/// But a source swap by a layer changes the coordinate system itself: for the user’s event
+/// `source_in` went from 47.0 s to 99.0 s, while the keys stayed
+/// at 47.0..59.6 s — that is, ENTIRELY to the left of the new window. The curve was clamped
+/// by its last key, and pan3d became constant: rot_y = 0, rot_z = 0.
+/// From the outside this is exactly “pan3d is not applied”.
 ///
-/// Правило то же, что у `clip_slice`: якорь и ключи едут ОДНОЙ дельтой.
+/// The rule is the same as for `clip_slice`: the anchor and the keys move by ONE delta.
 #[test]
 fn t291_source_replacement_carries_the_clips_own_curves() {
     const STEP: i64 = 90_000 / 30;
@@ -1196,25 +1196,25 @@ fn t291_source_replacement_carries_the_clips_own_curves() {
             source_in_delta: if replace { Tick(50 * 90_000) } else { Tick::ZERO },
             ..Default::default()
         };
-        // слой, который вообще ничего не делает, до цели не доходит —
-        // при `replace == false` патч пустой, и это законно
+        // a layer that does nothing at all does not reach the target —
+        // with `replace == false` the patch is empty, and this is legitimate
         if replace {
             p.morphers.push(m);
         }
         p.validate().unwrap();
         let eff = p.effective_clips();
-        assert_eq!(eff.len(), 1, "событие не режется");
+        assert_eq!(eff.len(), 1, "the event is not cut");
         eff.into_iter().next().unwrap()
     };
 
     let plain = make(false);
     let patched = make(true);
-    assert_eq!(patched.media, MediaId(2), "источник обязан быть подменён");
-    assert_ne!(patched.source_in, plain.source_in, "точка входа обязана уехать");
+    assert_eq!(patched.media, MediaId(2), "the source must be substituted");
+    assert_ne!(patched.source_in, plain.source_in, "the entry point must move");
 
-    // значение кривой в СЕРЕДИНЕ события — там, где пользователь поставил
-    // пик, — обязано остаться тем же: анимация приклеена к событию, а не
-    // к номеру кадра чужого файла
+    // the value of the curve in the MIDDLE of the event — where the user put
+    // a peak — must remain the same: the animation is pinned to the event, not
+    // to the frame number of someone else’s file
     let at = |c: &ClipEvent| {
         let mid = Tick(c.start.0 + c.duration.0 / 2);
         let mat =
@@ -1222,18 +1222,18 @@ fn t291_source_replacement_carries_the_clips_own_curves() {
         kt_model::curve_value(&c.fx_auto[0][0].keys, mat)
     };
     let (a, b) = (at(&plain), at(&patched));
-    assert!((a - 30.0).abs() < 1e-6, "без подмены в середине события стоит пик кривой, а не {a}");
+    assert!((a - 30.0).abs() < 1e-6, "without substitution a curve peak stands mid-event, not {a}");
     assert!(
         (b - a).abs() < 1e-6,
-        "после подмены источника кривая обязана давать то же самое: было {a}, стало {b} \
-         (до Р.43 ключи оставались в СТАРОМ домене материала и кривая зажималась \
-          последним ключом — «pan3d не применяется»)"
+        "after substituting the source the curve must give the same: was {a}, now {b} \
+         (before R.43 the keyframes stayed in the OLD material domain and the curve was clamped \
+          by the last keyframe — “pan3d not applied”)"
     );
 }
 
-/// Клип с фейдом на ОБОИХ краях: два перехода с одним живым концом.
-/// `in/out_offset` считаются от СТЫКА (`joint`), поэтому у фейда на входе
-/// живёт `out_offset`, у фейда на выходе — `in_offset`.
+/// A clip with a fade at BOTH edges: two transitions with one live end.
+/// `in/out_offset` are counted from the JOINT (`joint`), so the fade at the entry keeps
+/// `out_offset` alive, and the fade at the exit keeps `in_offset`.
 fn with_fades_both_ends(p: &mut Project, id: ClipId, len: Tick, fade: Tick) {
     p.transitions.push(TransitionEvent {
         id: TransitionId(1),
@@ -1260,34 +1260,34 @@ fn with_fades_both_ends(p: &mut Project, id: ClipId, len: Tick, fade: Tick) {
     let _ = len;
 }
 
-/// Тест 555 (Р.55, С2): «по времени» на событии с фейдами означает ровно
-/// то, что написано.
+/// Test 555 (R.55, C2): “by time” on an event with fades means exactly
+/// what is written.
 ///
-/// **Претензия владельца дословно:** «еще на событиях с переходом(типо
-/// fade) морфер ломается и накладывает правки на всё событие вместо
-/// "by time"».
+/// **The owner’s complaint verbatim:** “also on events with a transition (like fade)
+/// the morpher breaks and applies the edits to the whole event instead of
+/// ‘by time’”.
 ///
-/// Причина была не в морфере, а в РЕЗКЕ. Резать кусок внутри окна
-/// перехода нельзя — это переслаивает соседей и меняет веса кроссфейда, —
-/// поэтому граница выталкивалась из запретной зоны к БЛИЖАЙШЕМУ краю, в
-/// том числе НАРУЖУ. На сцене ниже (фейды по 20 000 тиков с обеих сторон,
-/// окно слоя 5 000 … 85 000) старый код давал `s = 0`, `e = 90 000` —
-/// ровно «на всё событие».
+/// The cause was not in the morpher but in the SLICING. A piece inside the transition
+/// window cannot be cut — this re-layers the neighbours and changes the crossfade weights —
+/// so the boundary was pushed from the forbidden zone to the NEAREST edge,
+/// including OUTWARD. On the stage below (fades of 20 000 ticks on both sides, the layer
+/// window 5 000 … 85 000) the old code gave `s = 0`, `e = 90 000` —
+/// exactly “on the whole event”.
 ///
-/// Лечение — не чинить выталкивание, а не резать вовсе: вклад цепочки
-/// гасится кривой силы, и тогда граница точна ДО ТИКА, а переходы и
-/// соседи не тронуты совсем.
+/// The cure is not to fix the pushing but not to cut at all: the contribution of the chain
+/// is switched off by a strength curve, and then the boundary is exact TO THE TICK, while the transitions and
+/// neighbours are not touched at all.
 #[test]
 fn t555_time_window_is_exact_on_an_event_with_fades() {
     let mut p = base();
     with_fades_both_ends(&mut p, ClipId(10), LEN, Tick(20_000));
-    p.validate().expect("сцена с двумя фейдами законна");
-    // зоны, в которые не встаёт граница РЕЗА
+    p.validate().expect("a scene with two fades is legal");
+    // zones into which a CUT boundary does not stand
     let zones = kt_model::forbidden_zones(&p, &p.clips[0]);
-    assert!(zones.iter().any(|z| z.start == Tick(0) && z.end == Tick(20_000)), "фейд на входе");
-    assert!(zones.iter().any(|z| z.start == Tick(70_000) && z.end == LEN), "фейд на выходе");
+    assert!(zones.iter().any(|z| z.start == Tick(0) && z.end == Tick(20_000)), "fade in");
+    assert!(zones.iter().any(|z| z.start == Tick(70_000) && z.end == LEN), "fade out");
 
-    // слой из ОДНИХ ЭФФЕКТОВ: окно 5 000 … 85 000, оба конца в зонах
+    // a layer of EFFECTS ONLY: window 5 000 … 85 000, both ends in zones
     let mut m = layer(Tick(5_000), Tick(80_000));
     m.patch.media = None;
     p.morphers.push(m);
@@ -1296,69 +1296,69 @@ fn t555_time_window_is_exact_on_an_event_with_fades() {
     assert_eq!(
         wins,
         vec![TickRange::new(Tick(5_000), Tick(85_000))],
-        "окно обязано быть ТЕМ, что просили: ни выталкивания наружу, ни посадки на сетку"
+        "the window must be EXACTLY what was asked: no pushing outward, no snapping to the grid"
     );
 
     let eff = p.effective_clips();
-    assert_eq!(eff.len(), 1, "резов не появилось: гасить можно там, где резать нельзя");
-    assert_eq!(eff[0].id, ClipId(10), "id оригинала цел — с ним и FX-состояние (инвариант 3)");
-    assert_eq!(eff[0].duration, LEN, "тело не тронуто");
+    assert_eq!(eff.len(), 1, "no cuts appeared: fading is allowed where cutting is not");
+    assert_eq!(eff[0].id, ClipId(10), "the original id is intact — and so is the FX state with it (invariant 3)");
+    assert_eq!(eff[0].duration, LEN, "the body is untouched");
 
-    // ВОРОТА силы: молчит вне окна, полная сила внутри
+    // the GATE of the strength: silent outside the window, full strength inside
     let (i, _) = eff[0]
         .fx
         .iter()
         .enumerate()
         .find(|(_, f)| matches!(f, FxInstance::LayerMix { .. }))
-        .expect("слот силы обязан быть: без него слой бьёт по всему телу");
+        .expect("a strength slot must exist: without it the layer hits the whole body");
     let cur = &eff[0].fx_auto[i][0];
     let at = |t: i64| {
         let ks = &cur.keys;
         let j = ks.partition_point(|k| k.t.0 <= t).saturating_sub(1);
         ks[j].v
     };
-    // домен ключей — МАТЕРИАЛ цели (`source_in` = 3 000)
+    // the domain of the keys is the MATERIAL of the target (`source_in` = 3 000)
     let mat = |tl: i64| tl + 3_000;
-    assert!(at(mat(1_000)) < 0.01, "до окна слой обязан молчать");
-    assert!(at(mat(45_000)) > 0.99, "внутри окна — полная сила");
-    assert!(at(mat(88_000)) < 0.01, "после окна слой обязан молчать");
-    // и ГРАНИЦА ТОЧНА: за тик до окна ещё ноль, на самом краю уже сила
-    assert!(at(mat(4_999)) < 0.01, "граница уехала влево");
-    assert!(at(mat(5_000)) > 0.99, "граница уехала вправо");
+    assert!(at(mat(1_000)) < 0.01, "before the window the layer must be silent");
+    assert!(at(mat(45_000)) > 0.99, "inside the window — full strength");
+    assert!(at(mat(88_000)) < 0.01, "after the window the layer must be silent");
+    // and the BOUNDARY IS EXACT: a tick before the window it is still zero, at the very edge it is already the strength
+    assert!(at(mat(4_999)) < 0.01, "the boundary moved left");
+    assert!(at(mat(5_000)) > 0.99, "the boundary moved right");
 
-    // ПЕРЕХОДЫ ЦЕЛЫ: их окна не поехали, концы не потерялись
+    // TRANSITIONS INTACT: their windows did not move, the ends were not lost
     let after = kt_model::forbidden_zones(&p, &p.clips[0]);
-    assert_eq!(after, zones, "слой тронул окна переходов — соседи переслоились бы");
+    assert_eq!(after, zones, "the layer touched the transition windows — neighbors would have been overlaid");
 }
 
-/// Тест 556 (Р.55, С2): патч с ПОДМЕНОЙ ИСТОЧНИКА по-прежнему режет, а
-/// граница уходит ТОЛЬКО ВНУТРЬ.
+/// Test 556 (R.55, C2): a patch with a SOURCE SWAP still cuts, and the boundary moves ONLY
+/// INWARD.
 ///
-/// «Взять кадр из другого файла» кривой силы не выражается, поэтому здесь
-/// резка остаётся. Но выталкивание перестало быть «к ближайшему краю»:
-/// окно теперь только СОКРАЩАЕТСЯ. На той же сцене старый код давал всё
-/// тело, новый — середину между фейдами.
+/// “Taking a frame from another file” cannot be expressed as a strength curve, so here the
+/// cut remains. But the pushing has stopped being “to the nearest edge”:
+/// the window now only SHRINKS. On the same stage the old code gave the whole
+/// body, the new one — the middle between the fades.
 #[test]
 fn t556_source_replacing_layer_still_cuts_but_only_inward() {
     let mut p = base();
     with_fades_both_ends(&mut p, ClipId(10), LEN, Tick(20_000));
     p.morphers.push(layer(Tick(5_000), Tick(80_000))); // patch.media = Some(2)
-    p.validate().expect("сцена законна");
+    p.validate().expect("the scene is legal");
 
     let wins = p.morphers[0].windows_on(&p.clips[0], &p, &p, &p.rows());
     assert_eq!(
         wins,
         vec![TickRange::new(Tick(20_000), Tick(70_000))],
-        "границы обязаны уйти ВНУТРЬ, к дальним краям зон, а не наружу"
+        "boundaries must move INWARD, to the far edges of the zones, not outward"
     );
 
     let all = p.effective_clips();
     let eff: Vec<&ClipEvent> = all.iter().filter(|c| c.kind == ClipKind::Video).collect();
-    assert_eq!(eff.len(), 3, "три куска: до фейда, накрытый, после");
+    assert_eq!(eff.len(), 3, "three pieces: before the fade, covered, after");
     assert_eq!(eff[0].start, Tick(0));
-    assert_eq!(eff[1].start, Tick(20_000), "накрытый кусок начинается ЗА окном фейда");
-    assert_eq!(eff[2].start, Tick(70_000), "и кончается ПЕРЕД окном второго фейда");
-    assert_eq!(eff[1].media, MediaId(2), "подмена досталась среднему куску");
-    assert_eq!(eff[0].media, MediaId(1), "фейд на входе слой не накрыл");
-    assert_eq!(eff[2].media, MediaId(1), "и фейд на выходе тоже");
+    assert_eq!(eff[1].start, Tick(20_000), "the covered piece starts AFTER the fade window");
+    assert_eq!(eff[2].start, Tick(70_000), "and ends BEFORE the second fade window");
+    assert_eq!(eff[1].media, MediaId(2), "the substitution went to the middle piece");
+    assert_eq!(eff[0].media, MediaId(1), "the layer did not cover the fade in");
+    assert_eq!(eff[2].media, MediaId(1), "and the fade out too");
 }

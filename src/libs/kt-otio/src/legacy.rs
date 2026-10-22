@@ -1,18 +1,18 @@
-//! Импорт легаси .ktproj (Р.24 п.12: как ПРОЕКТ он больше не открывается —
-//! только пункт «Импортировать…», результат живёт как .otio).
+//! Import of a legacy .ktproj (R.24 item 12: as a PROJECT it no longer opens —
+//! only the “Import…” item; the result lives as .otio).
 //!
-//! Пока легаси-писатель kt-model жив (этап 13 его снесёт), чтение v1 идёт
-//! через его же `Project::from_json` (back-compat формы маркеров и дефолты —
-//! там); при сносе замороженные копии v1-структур переедут СЮДА. Перекрытия
-//! конвертируются `upgrade_legacy` (п.143): аудио-пары → переходы
-//! (байт-идентично), 3+/FX — развод по дорожкам, видео — демоция.
+//! While the legacy writer of kt-model is alive (stage 13 will remove it), reading v1 goes
+//! through its own `Project::from_json` (back-compat of the marker forms and defaults —
+//! there); when it is removed, the frozen copies of the v1 structures will move HERE. Overlaps are
+//! converted by `upgrade_legacy` (item 143): audio pairs → transitions
+//! (byte-identical), 3+/FX — spread across tracks, video — demoted.
 
 use crate::Error;
 use crate::convert::Notice;
 use kt_model::Project;
 
 pub fn import_legacy(text: &str) -> Result<(Project, Vec<Notice>), Error> {
-    // без validate: легаси-перекрытия законны ДО upgrade_legacy
+    // without validate: legacy overlaps are legal BEFORE upgrade_legacy
     let mut p = Project::from_json_unvalidated(text)
         .map_err(|e| Error::UnsupportedSchema(format!("ktproj: {e}")))?;
     let rep = kt_model::ops::upgrade_legacy(&mut p);

@@ -1,10 +1,10 @@
-//! Владение wgpu-устройством. Два пути создания:
-//! - `from_parts` — превью: Arc-хендлы ЖИВОГО устройства eframe
-//!   (egui_wgpu::RenderState), отдельного адаптера для превью нет;
-//! - `new_headless` — экспорт/kt-cli/тесты: свой адаптер без surface,
-//!   лимиты повторяют правило egui-wgpu (downlevel_webgl2 на GL, иначе
-//!   default; max_texture_dimension_2d 8192) — поведение шейдеров в GUI
-//!   и headless обязано совпадать.
+//! Ownership of the wgpu device. Two ways of creating it:
+//! - `from_parts` — preview: Arc handles of the LIVE eframe device
+//!   (egui_wgpu::RenderState); there is no separate adapter for the preview;
+//! - `new_headless` — export/kt-cli/tests: its own adapter without a surface,
+//!   the limits repeat the egui-wgpu rule (downlevel_webgl2 on GL, otherwise
+//!   default; max_texture_dimension_2d 8192): shader behaviour in the GUI
+//!   and in headless MUST match.
 
 use std::sync::Arc;
 
@@ -32,7 +32,7 @@ pub struct GpuContext {
 }
 
 impl GpuContext {
-    /// Устройство eframe (превью): хендлы из `egui_wgpu::RenderState`.
+    /// The eframe device (preview): handles from `egui_wgpu::RenderState`.
     pub fn from_parts(
         device: Arc<wgpu::Device>,
         queue: Arc<wgpu::Queue>,
@@ -41,8 +41,8 @@ impl GpuContext {
         GpuContext { device, queue, adapter_info }
     }
 
-    /// Headless-устройство (экспорт, kt-cli, тесты). PowerPreference —
-    /// как у GUI: WGPU_POWER_PREF либо LowPower (PRIME, п.39).
+    /// Headless device (export, kt-cli, tests). PowerPreference is
+    /// the same as in the GUI: WGPU_POWER_PREF or LowPower (PRIME, item 39).
     pub fn new_headless() -> Result<GpuContext, GpuInitError> {
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());

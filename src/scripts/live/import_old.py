@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.67 (п.1): проект СТАРОЙ версии — через свою дверь.
+"""Live scenario R.67 (item 1): a project of the OLD version — through its own door.
 
-Владелец: «проект 26.09.26/untitled2 не открывается - с чем это связано?»
-Файл v5 (18.09) несёт у морферов `targets: null`, а ридер знает список и
-объект. Его решение: «делай пункт в меню File для импорта старых версий, и
-именно в импорте чини». Здесь настоящая программа:
+Owner: “project 26.09.26/untitled2 does not open - what is this related to?”
+File v5 (18.09) has `targets: null` in its morphers, while the reader knows a list and
+an object. His decision: “make an item in the File menu for importing old versions, and
+repair exactly in the import”. Here is the real program:
 
-ПУТЬ (из спеки ui-reach, сценарий «Старый файл через импорт»):
-1. запускается со старым файлом → «Открыть» отвергает его, в уведомлении
-   версия и имя пункта импорта, событий на таймлайне нет;
-2. Файл → «Импортировать проект старой версии…» → системный диалог
-   (в Xvfb его нет — ответ подменяет `KT_FILE_PICK`, сам пункт нажимается);
-3. выбран тот же файл → таймлайн с событием и морфером, документ помечен
-   правками (звёздочка), уведомление о починке.
+PATH (from the ui-reach spec, scenario “Old file via import”):
+1. it starts with an old file → “Open” rejects it, in the notification
+   the version and the name of the import item, no events on the timeline;
+2. File → “Import a project of an old version…” → system dialog
+   (there is none in Xvfb — the answer is replaced by `KT_FILE_PICK`, the item itself is clicked);
+3. the same file is chosen → the timeline with an event and a morpher, the document is marked
+   with edits (asterisk), a notification about the repair.
 
-Фикстура — копия СТРУКТУРЫ untitled2 (v5, null-цели), не сам файл
-владельца.
+The fixture is a copy of the STRUCTURE of untitled2 (v5, null targets), not the file of
+the owner itself.
 """
 import json
 import os
@@ -26,8 +26,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import KT_CLI, Live, poll_step, require_tools  # noqa: E402
 from kt_live import demo_otio, import_project, new_otio  # noqa: E402,F401
 
-# СВОЙ ПРОЦЕСС (Р.68): сценарий проверяет САМ СТАРТ программы, а не работу в
-# уже открытом проекте, — стенд работника ему не подходит.
+# ITS OWN PROCESS (R.68): the scenario checks the program START ITSELF, not the work in an
+# already open project — the worker stand does not suit it.
 OWN_PROCESS = True
 
 SEC = 90000
@@ -97,24 +97,24 @@ def main(out):
     require_tools()
     old = old_v5_project(os.path.join(out, "old_v5.otio"))
     os.environ["KT_AUTOSAVE_SECS"] = "600"
-    # системного диалога в виртуальном экране нет (xdg-portal): пункт меню
-    # нажимается по-настоящему, ответ диалога подменяет KT_FILE_PICK
+    # there is no system dialog in the virtual screen (xdg-portal): the menu item
+    # is pressed for real, the dialog’s answer is substituted by KT_FILE_PICK
     os.environ["KT_FILE_PICK"] = old
     with Live("import_old", out, project=old, raw=True) as app:
-        # ШАГ 1: «Открыть» отверг — событий нет, в статусе версия и дверь
+        # STEP 1: “Open” refused — there are no events, the status shows the version and the door
         app.settle()
         g = app.geom()
-        app.expect(len(g.get("clips", [])) == 0, "старый файл обычным путём не открылся")
+        app.expect(len(g.get("clips", [])) == 0, "the old file did not open the usual way")
         notes = g.get("notices", [])
-        hit = [n for n in notes if "5" in n and ("Import older" in n or "старой версии" in n)]
-        app.expect(bool(hit), f"уведомление называет версию и дверь: {notes}")
-        app.step("open-refused", "старый файл отвергнут с адресом двери")
+        hit = [n for n in notes if "5" in n and ("Import older" in n or "old version" in n)]
+        app.expect(bool(hit), f"the notification names the version and the door: {notes}")
+        app.step("open-refused", "the old file was rejected with the address of the door")
 
-        # ШАГ 2: Файл → Импортировать проект старой версии…
-        app.click_probe("menu.file", "меню «Файл»")
-        app.step("file-menu", "меню «Файл» с пунктом импорта")
-        app.click_probe("file.import_older", "пункт «Импортировать проект старой версии…»")
-        # ШАГ 3: выбор файла (в Xvfb — ответ диалога подменён KT_FILE_PICK)
+        # STEP 2: File → Import project of an older version…
+        app.click_probe("menu.file", "“File” menu")
+        app.step("file-menu", "“File” menu with the import item")
+        app.click_probe("file.import_older", "“Import a project of an old version…” item")
+        # STEP 3: file selection (in Xvfb the dialog’s answer is substituted by KT_FILE_PICK)
         app.settle()
         ok = False
         for _ in range(20):
@@ -123,9 +123,9 @@ def main(out):
                 ok = True
                 break
             poll_step(0.5)
-        app.expect(ok, "после импорта на таймлайне событие и морфер")
-        app.expect(bool(g.get("dirty")), "документ помечен правками (звёздочка)")
-        app.step("imported", "проект открыт через импорт, звёздочка в заголовке")
+        app.expect(ok, "after the import, an event and a morpher are on the timeline")
+        app.expect(bool(g.get("dirty")), "the document is marked with edits (asterisk)")
+        app.step("imported", "the project opened via import, asterisk in the title")
     return app.done()
 
 

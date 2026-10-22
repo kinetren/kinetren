@@ -1,5 +1,5 @@
-// Vignette (Р.47): зеркало kt_fx::geom::tap_vig; на барьерной позиции
-// координата стадии = координата кадра пасса.
+// Vignette (R.47): a mirror of kt_fx::geom::tap_vig; at the barrier position
+// the stage coordinate is the frame coordinate of the pass.
 // f0 = (strength, radius, softness, 0), u0.xy = (w, h).
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {

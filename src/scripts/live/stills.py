@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.67 (п.13): СТАТИЧНАЯ КАРТИНКА в настоящем окне.
+"""Live scenario R.67 (item 13): a STATIC PICTURE in a real window.
 
-Владелец дословно: «статичные картинки не отображаюся, вообще.. там вечный
-Loading... ЭТО ПИЗДЕЦ. мало того что не работает - так ты еще об этом
-узнаешь только в момент просмотра».
+The owner verbatim: “static pictures do not display at all, ever.. there is an eternal
+Loading... THIS IS A DISASTER. Not only does it not work — you also find out
+about it only at the moment of viewing”.
 
-ПУТЬ (спека media-index, «Картинка читается, планируется, показывается»):
-1. проект с событием 20 с на картинке → курсор в начало → в превью сразу
-   картинка, без «Loading…»;
-2. курсор к концу события (19.5 с) → картинка на месте: у неё нет конца
-   материала;
-3. картинка УБИРАЕТСЯ с диска, проект открывается снова → в кадре тёмная
-   заглушка С ИМЕНЕМ файла, а не вечное «Loading…».
+PATH (media-index spec, “a picture is read, planned, shown”):
+1. a project with a 20 s event on a picture → cursor to the start → the preview shows the
+   picture at once, without “Loading…”;
+2. cursor to the end of the event (19.5 s) → the picture is in place: it has no end of
+   material;
+3. the picture is REMOVED from disk, the project is opened again → the frame shows a dark
+   placeholder WITH THE FILE NAME, not an eternal “Loading…”.
 """
 import json
 import os
@@ -60,8 +60,8 @@ def still_project(dest, img, secs=20.0):
 
 
 def looks_like_picture(app, box):
-    """Разброс яркостей в области превью, НОРМИРОВАННЫЙ 0..1 (так его
-    отдаёт ImageMagick): пустой кадр даёт ~0.0, картинка — десятые."""
+    """Spread of brightnesses in the preview area, NORMALIZED 0..1 (as ImageMagick
+    returns it): an empty frame gives ~0.0, a picture — tenths."""
     shot = app.shot("probe")
     out = subprocess.run(
         ["convert", shot, "-crop", f"{box[2]}x{box[3]}+{box[0]}+{box[1]}", "+repage",
@@ -73,7 +73,7 @@ def looks_like_picture(app, box):
 
 def main(out):
     require_tools()
-    # картинка — фикстурой программы же (детерминированный генератор)
+    # the picture is the program’s own fixture (a deterministic generator)
     img = os.path.join(out, "logo.jpg")
     subprocess.run(
         ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
@@ -90,19 +90,19 @@ def main(out):
         cx, cy = app.preview_center()
         box = (cx - 200, cy - 110, 400, 220)
 
-        # 1) картинка видна СРАЗУ
+        # 1) the picture is visible AT ONCE
         sd = looks_like_picture(app, box)
-        app.expect(sd > 0.15, f"в превью картинка, а не пустой кадр (разброс {sd:.2f})")
-        app.step("still-start", "картинка в превью в начале события")
+        app.expect(sd > 0.15, f"in the preview a picture, not an empty frame (spread {sd:.2f})")
+        app.step("still-start", "picture in the preview at the start of the event")
 
-        # 2) у конца события — та же картинка (конца материала у неё нет)
+        # 2) at the end of the event — the same picture (the material has no end for it)
         app.click(app.x_at(int(19.5 * SEC)), y)
         app.settle()
         sd_end = looks_like_picture(app, box)
-        app.expect(sd_end > 0.15, f"на 19.5 с картинка на месте (разброс {sd_end:.2f})")
-        app.step("still-end", "картинка на месте у конца двадцатисекундного события")
+        app.expect(sd_end > 0.15, f"at 19.5 s the picture is in place (spread {sd_end:.2f})")
+        app.step("still-end", "the picture is in place at the end of the twenty-second event")
 
-    # 3) картинка пропала — заглушка с именем, а не «Loading…»
+    # 3) the picture is gone — a placeholder with the name, not “Loading…”
     os.remove(img)
     with Live("stills-gone", out, project=path) as app:
         y = app.lane_y("video", 0, frac=0.5)
@@ -110,12 +110,12 @@ def main(out):
         app.settle()
         g = app.geom()
         notes = " ".join(g.get("notices", []))
-        app.expect("logo.jpg" in notes, f"пропавший файл назван человеку: {notes[:120]}")
+        app.expect("logo.jpg" in notes, f"the missing file was named to the person: {notes[:120]}")
         cx, cy = app.preview_center()
         box = (cx - 200, cy - 110, 400, 220)
         sd = looks_like_picture(app, box)
-        app.expect(sd > 0.02, f"в кадре заглушка с именем файла, а не пустота (разброс {sd:.2f})")
-        app.step("still-gone", "пропавшая картинка: заглушка с именем файла")
+        app.expect(sd > 0.02, f"in the frame a placeholder with the file name, not emptiness (spread {sd:.2f})")
+        app.step("still-gone", "missing picture: placeholder with the file name")
     return app.done()
 
 

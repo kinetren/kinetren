@@ -1,11 +1,11 @@
-//! Переиспользуемые DSP-примитивы аудио-узлов (Р.47, Ка1): сглаживание,
-//! линии задержки, фильтры, огибающие. Всё детерминировано и без locks —
-//! владелец состояния один (аудио-render-поток, инвариант №2).
+//! Reusable DSP primitives of the audio nodes (R.47, Ka1): smoothing, delay lines,
+//! filters, envelopes. Everything is deterministic and lock-free —
+//! there is one owner of the state (the audio-render thread, invariant 2).
 
 use kt_time::Tick;
 
-/// Сглаженный параметр: one-pole к цели, ~20 мс. Не «телепортируется»
-/// при set_target — только в reset().
+/// Smoothed parameter: one-pole toward the target, ~20 ms. It does not “teleport”
+/// on set_target — only in reset().
 #[derive(Debug, Clone, Copy)]
 pub struct SmoothedParam {
     current: f32,
@@ -38,8 +38,8 @@ impl SmoothedParam {
 // Freeverb
 // ---------------------------------------------------------------------------
 
-/// Классические тюнинги freeverb (44.1 kHz), масштабируются к 48 kHz
-/// и параметру delay (базовая точка delay_ms = 100).
+/// Classic freeverb tunings (44.1 kHz), scaled to 48 kHz
+/// and the delay parameter (base point delay_ms = 100).
 pub(crate) const COMB_TUNINGS: [usize; 8] = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
 pub(crate) const ALLPASS_TUNINGS: [usize; 4] = [556, 441, 341, 225];
 pub(crate) const STEREO_SPREAD: usize = 23;
@@ -84,7 +84,7 @@ impl Allpass {
 }
 
 // ---------------------------------------------------------------------------
-// Процессор клипа: цепочка FX поверх (возможно варпнутого) источника
+// Clip processor: an FX chain over the (possibly warped) source
 // ---------------------------------------------------------------------------
 
 pub(crate) fn tail_frames_for(max_comb_len: f32, feedback: f32) -> Tick {
@@ -94,25 +94,25 @@ pub(crate) fn tail_frames_for(max_comb_len: f32, feedback: f32) -> Tick {
 }
 
 // ---------------------------------------------------------------------------
-// Примитивы Р.47 (п.324): биквад, линия задержки, LFO, огибающая, softclip
+// R.47 primitives (item 324): biquad, delay line, LFO, envelope, softclip
 // ---------------------------------------------------------------------------
 
 use crate::CH;
 use kt_time::AUDIO_SAMPLE_RATE;
 
 impl SmoothedParam {
-    /// Сглаживание с НАСТРАИВАЕМЫМ временем (Р.47): attack/release
-    /// динамики и тейп-глайд времени дилея не живут на прибитых 20 мс.
-    /// `new(v)` == `with_ms(v, 20.0)` дословно.
+    /// Smoothing with a CONFIGURABLE time (R.47): the attack/release of the
+    /// dynamics and the tape glide of the delay time do not live on a fixed 20 ms.
+    /// `new(v)` == `with_ms(v, 20.0)` verbatim.
     pub fn with_ms(value: f32, ms: f32) -> SmoothedParam {
         let frames = (ms.max(0.01) / 1000.0) * AUDIO_SAMPLE_RATE as f32;
         SmoothedParam { current: value, target: value, alpha: 1.0 - (-1.0f32 / frames).exp() }
     }
 }
 
-/// RBJ-биквад (transposed direct form II), один канал. Коэффициенты
-/// пересчитываются суб-блоками (128 кадров) от сглаженных параметров —
-/// чанк 1024 (21 мс) на свипах слышен как zipper.
+/// RBJ biquad (transposed direct form II), one channel. Coefficients
+/// are recalculated in sub-blocks (128 frames) from the smoothed parameters —
+/// a chunk of 1024 (21 ms) is audible as zipper on sweeps.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Biquad {
     b0: f32,
@@ -134,8 +134,8 @@ pub enum BiquadKind {
 }
 
 impl Biquad {
-    /// Пересчитать коэффициенты, НЕ трогая состояние (z1/z2 живут —
-    /// свип частоты не щёлкает).
+    /// Recalculate the coefficients WITHOUT touching the state (z1/z2 live on —
+    /// a frequency sweep does not click).
     pub fn tune(&mut self, kind: &BiquadKind, freq_hz: f32, q: f32, gain_db: f32) {
         let sr = AUDIO_SAMPLE_RATE as f32;
         let f = freq_hz.clamp(10.0, sr * 0.49);
@@ -192,14 +192,14 @@ impl Biquad {
         self.a2 = a2 / a0;
     }
 
-    /// АЧХ в дБ на частоте `freq_hz` — по ТЕКУЩИМ коэффициентам, то
-    /// есть по тому самому фильтру, который сейчас звучит (включая
-    /// f32-квантование `tune`). Формулы RBJ здесь НЕ дублируются: график
-    /// в UI по построению не может разойтись с DSP, а правка `tune` сама
-    /// отражается в картинке.
+    /// The frequency response in dB at `freq_hz` — from the CURRENT coefficients, that is
+    /// from the very filter that is sounding now (including the
+    /// f32 quantization of `tune`). The RBJ formulas are NOT duplicated here: the graph
+    /// in the UI by construction cannot diverge from the DSP, and an edit to `tune` itself
+    /// is reflected in the picture.
     ///
-    /// |H(e^jw)|² = |B|²/|A|² раскрыто через cos(w) и cos(2w) — без
-    /// комплексного типа и без зависимостей.
+    /// |H(e^jw)|² = |B|²/|A|² expanded via cos(w) and cos(2w) — without a complex type
+    /// and without dependencies.
     pub fn mag_db(&self, freq_hz: f32) -> f64 {
         let w = 2.0 * std::f64::consts::PI * freq_hz.max(0.0) as f64 / AUDIO_SAMPLE_RATE as f64;
         let (c1, c2) = (w.cos(), (2.0 * w).cos());
@@ -224,9 +224,9 @@ impl Biquad {
     }
 }
 
-/// Кольцевая линия задержки, стерео-interleaved НЕ знает — по каналу.
-/// Аллоцируется на МАКСИМУМ при создании: смена времени — дробное чтение,
-/// не пересоздание (инвариант №3). Денормалы гасятся при записи.
+/// Circular delay line: it does NOT know stereo-interleaved — it works per channel.
+/// Allocated to the MAXIMUM at creation: a time change is a fractional read,
+/// not a re-creation (invariant 3). Denormals are flushed on write.
 #[derive(Debug, Clone)]
 pub struct DelayLine {
     buf: Vec<f32>,
@@ -240,15 +240,15 @@ impl DelayLine {
 
     #[inline]
     pub fn write(&mut self, v: f32) {
-        // flush денормалов: хвосты обратной связи на x86 без FTZ съедают
-        // такт на каждом суб-нормальном значении
+        // Flush of denormals: feedback tails on x86 without FTZ cost
+        // a clock tick on every subnormal value
         self.buf[self.pos] = if v.abs() < 1e-20 { 0.0 } else { v };
         self.pos = (self.pos + 1) % self.buf.len();
     }
 
-    /// Прочитать значение, записанное `frames` кадров НАЗАД (1.0 —
-    /// последняя запись; дробная задержка — линейная интерполяция).
-    /// Конвенция узлов: сперва read (эхо от прошлого), затем write.
+    /// Read the value written `frames` frames BACK (1.0 —
+    /// the last write; a fractional delay — linear interpolation).
+    /// Node convention: read first (echo from the past), then write.
     #[inline]
     pub fn read_frac(&self, frames: f32) -> f32 {
         let len = self.buf.len();
@@ -266,9 +266,9 @@ impl DelayLine {
     }
 }
 
-/// Фаза LFO в ЦИКЛАХ от начала клипа: интеграл кривой частоты по позиции
-/// (Р.47, п.324). Не счётчик: seek/шов/заворот лупа дают ту же фазу, что
-/// холодный рендер той же позиции (инвариант №11) — прогрев LFO не нужен.
+/// LFO phase in CYCLES from the clip start: the integral of the frequency curve over the position
+/// (R.47, item 324). Not a counter: seek/seam/loop wrap give the same phase as
+/// a cold render of the same position (invariant 11) — no LFO warm-up is needed.
 pub fn lfo_phase(
     base_hz: f64,
     points: &kt_model::ParamPoints,
@@ -279,8 +279,8 @@ pub fn lfo_phase(
         / AUDIO_SAMPLE_RATE as f64
 }
 
-/// Пиковая огибающая с attack/release (по каналу или на стерео-линк —
-/// решает вызывающий).
+/// Peak envelope with attack/release (per channel or on the stereo link —
+/// decided by the caller).
 #[derive(Debug, Clone, Copy)]
 pub struct EnvFollower {
     value: f32,
@@ -318,15 +318,15 @@ impl EnvFollower {
     }
 }
 
-/// Мягкое насыщение x/(1+|x|): алгебраическое (без tanh) — одинаково на
-/// всех платформах, детерминизм бесплатно.
+/// Soft saturation x/(1+|x|): algebraic (no tanh) — identical on
+/// all platforms, determinism for free.
 #[inline]
 pub fn softclip(v: f32) -> f32 {
     v / (1.0 + v.abs())
 }
 
-/// Матрица mid/side-ширины: применить к стерео-кадру. width 1.0 НЕ
-/// короткозамкнута здесь — короткое замыкание (байты) делает узел.
+/// Mid/side width matrix: apply to a stereo frame. width 1.0 is NOT
+/// short-circuited here — the node does the short-circuit (bytes).
 #[inline]
 pub fn apply_width(frame: &mut [f32], width: f32) {
     if CH < 2 {

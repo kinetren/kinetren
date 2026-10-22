@@ -1,8 +1,8 @@
-//! Тест 42 (docs/porting-notes.md, J4 v1.4): reverse-транспорт.
-//! Кольцо при dir<0 наполняется блоками [head−N, head) с покадровым
-//! разворотом — конкатенация обратных блоков обязана быть ТОЧНЫМ
-//! покадровым зеркалом форвард-прогона того же диапазона (детерминизм,
-//! инвариант №11). Плюс loop-вариант: rem_euclid-wrap назад.
+//! Test 42 (docs/porting-notes.md, J4 v1.4): reverse transport.
+//! With dir<0 the ring is filled with blocks [head−N, head) with a per-frame
+//! reversal — the concatenation of the reversed blocks must be an EXACT
+//! per-frame mirror of the forward run of the same range (determinism, invariant 11).
+//! Plus a loop variant: rem_euclid wrap backward.
 
 use kt_engine::{AudioRenderer, DirectFetcher, reverse_frames};
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
@@ -10,7 +10,7 @@ use kt_model::*;
 use kt_time::{AUDIO_CHANNELS, Tick};
 
 const CH: usize = AUDIO_CHANNELS;
-const N: usize = 1024; // кадров в блоке (как AUDIO_BURST_FRAMES)
+const N: usize = 1024; // frames in a block (as AUDIO_BURST_FRAMES)
 
 fn project() -> Project {
     let mut p = Project::new(ProjectSettings {
@@ -60,7 +60,7 @@ fn direct() -> DirectFetcher {
     f
 }
 
-/// Покадровое зеркало interleaved-буфера (эталон для сверки).
+/// a per-frame mirror of the interleaved buffer (the reference for comparison)
 fn mirror(buf: &[f32]) -> Vec<f32> {
     let n = buf.len() / CH;
     let mut out = vec![0f32; buf.len()];
@@ -78,13 +78,13 @@ fn t42_reverse_blocks_are_exact_mirror_of_forward() {
     let renderer = AudioRenderer::new(&project());
     let blocks = 3usize;
     let total = blocks * N;
-    let a = 48_000i64; // произвольная позиция
+    let a = 48_000i64; // an arbitrary position
 
-    // форвард: один прогон [a, a+total)
+    // forward: one run [a, a+total)
     let mut forward = vec![0f32; total * CH];
     renderer.render_frames_raw(&mut direct(), a, &mut forward);
 
-    // реверс: как render-поток — блоки [head-N, head) с разворотом
+    // reverse: like the render stream — blocks [head-N, head) with reversal
     let mut head = a + total as i64;
     let mut rev = Vec::with_capacity(total * CH);
     let mut chunk = vec![0f32; N * CH];
@@ -96,25 +96,25 @@ fn t42_reverse_blocks_are_exact_mirror_of_forward() {
         head = start;
     }
 
-    assert_eq!(rev, mirror(&forward), "конкатенация реверс-блоков == зеркало форварда, exact");
+    assert_eq!(rev, mirror(&forward), "the concatenation of reverse blocks == the mirror of the forward, exact");
 }
 
 #[test]
 fn t42_reverse_looped_wraps_backwards() {
     let renderer = AudioRenderer::new(&project());
-    // регион [rs, re): 2 блока шириной
+    // region [rs, re): 2 blocks wide
     let rs = 96_000i64;
     let re = rs + 2 * N as i64;
 
-    // эталон: форвард-материал региона
+    // reference: the forward material of the region
     let mut region_buf = vec![0f32; 2 * N * CH];
     renderer.render_frames_raw(&mut direct(), rs, &mut region_buf);
 
-    // реверс из линейной позиции head=rs (блок [rs-N, rs) должен
-    // замотаться в ХВОСТ региона [re-N, re))
+    // reverse from the linear position head=rs (block [rs-N, rs) must wrap
+    // into the TAIL of the region [re-N, re))
     let mut chunk = vec![0f32; N * CH];
     renderer.render_looped_raw(&mut direct(), rs..re, rs - N as i64, &mut chunk);
     reverse_frames(&mut chunk);
     let tail_mirror = mirror(&region_buf[(N * CH)..]);
-    assert_eq!(chunk, tail_mirror, "wrap назад читает хвост региона, exact");
+    assert_eq!(chunk, tail_mirror, "wrap backward reads the tail of the region, exact");
 }

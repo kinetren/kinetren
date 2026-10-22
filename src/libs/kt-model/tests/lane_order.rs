@@ -1,45 +1,45 @@
-//! Тест 49 (docs/porting-notes.md, п.6 v1.4): display-порядок дорожек.
-//! С Р.62 (change B) строки — ВЕКТОР ДОРОЖЕК-ОБЪЕКТОВ: `normalize_lane_order`
-//! осталась чистой функцией нормализации заказа перестановки (дубли/мусор
-//! вычищаются, недостающие дописываются), `lane_order_insert/remove` —
-//! shift-aware синхронизация заказанного порядка. Старые файлы со
-//! счётчиками и `lane_order` читаются в дорожки односторонне.
+//! Test 49 (docs/porting-notes.md, item 6 v1.4): the display order of tracks.
+//! Since R.62 (change B) the rows are a VECTOR OF OBJECT TRACKS: `normalize_lane_order`
+//! remains a pure function of normalizing the order of a permutation (duplicates and garbage
+//! are stripped, missing ones are appended), `lane_order_insert/remove` — the shift-aware
+//! synchronization of the ordered sequence. Old files with counters and `lane_order` are read
+//! into tracks one way.
 
 use kt_model::LaneKind::{Audio as A, Camera as C, Morph as M, Video as V};
 use kt_model::*;
 
 #[test]
 fn t49_normalize_lane_order() {
-    // пусто → блочный дефолт
+    // empty → the block default
     assert_eq!(normalize_lane_order(&[], 2, 2, 1, 0), vec![(V, 0), (V, 1), (A, 0), (A, 1), (M, 0)]);
-    // произвольный валидный порядок сохраняется
+    // an arbitrary valid order is preserved
     let mixed = vec![(V, 0), (A, 0), (V, 1), (M, 0), (A, 1)];
     assert_eq!(normalize_lane_order(&mixed, 2, 2, 1, 0), mixed);
-    // дубли и несуществующие вычищаются, недостающие дописываются в хвост
+    // duplicates and nonexistent ones are stripped, missing ones are appended to the tail
     let dirty = vec![(V, 0), (V, 0), (A, 7), (M, 0), (V, 1)];
     assert_eq!(normalize_lane_order(&dirty, 2, 1, 1, 0), vec![(V, 0), (M, 0), (V, 1), (A, 0)]);
-    // сжатие числа дорожек выбрасывает хвостовые
+    // shrinking the track count drops the trailing ones
     assert_eq!(normalize_lane_order(&mixed, 1, 1, 0, 0), vec![(V, 0), (A, 0)]);
 }
 
 #[test]
 fn t49_insert_remove_shift_aware() {
-    // вставка V-дорожки в позицию 1: (V,1) старая → (V,2), новая (V,1)
-    // встаёт прямо над ней, чужие виды не тронуты
+    // inserting a V track at position 1: the old (V,1) → (V,2), the new (V,1)
+    // sits right above it, foreign kinds are untouched
     let mut rows = vec![(V, 0), (A, 0), (V, 1), (M, 0)];
     lane_order_insert(&mut rows, V, 1);
     assert_eq!(rows, vec![(V, 0), (A, 0), (V, 1), (V, 2), (M, 0)]);
-    // вставка в конец вида (позиции at нет) — в хвост вектора
+    // insertion at the end of a kind (there is no position at) — to the tail of the vector
     lane_order_insert(&mut rows, A, 1);
     assert_eq!(rows, vec![(V, 0), (A, 0), (V, 1), (V, 2), (M, 0), (A, 1)]);
-    // удаление сдвигает большие lane вниз, строка исчезает
+    // removal shifts the larger lanes down, the row disappears
     lane_order_remove(&mut rows, V, 1);
     assert_eq!(rows, vec![(V, 0), (A, 0), (V, 1), (M, 0), (A, 1)]);
-    // нормализация после операций — идемпотентна (вектор уже корректен)
+    // normalization after operations is idempotent (the vector is already correct)
     assert_eq!(normalize_lane_order(&rows, 2, 2, 1, 0), rows);
-    // и ТО ЖЕ делает `Project::insert_track`: строка над бывшей `at`; ранга
-    // `at` нет — в конец БЛОКА своего вида (естественный порядок V..A..M..C,
-    // а не хвост списка: в приложении место всё равно задаёт `SetLaneOrder`)
+    // And `Project::insert_track` does THE SAME: the row above the former `at`; if there is no rank
+    // `at` — to the end of the BLOCK of its own kind (the natural order V..A..M..C,
+    // not the tail of the list: in the application the `SetLaneOrder` sets the place anyway)
     let mut p = Project::new(settings30());
     p.ensure_tracks(M, 1);
     p.set_lane_order(&[(V, 0), (A, 0), (M, 0)]);
@@ -53,69 +53,69 @@ fn t49_insert_remove_shift_aware() {
 
 #[test]
 fn t49_lane_order_serde_roundtrip() {
-    // с Р.35 порядок строк живёт В МОДЕЛИ (морфер-слой действует «на всё,
-    // что ниже», значит порядок влияет на картинку); с Р.62 — это порядок
-    // вектора дорожек, и отдельного поля нет ни в модели, ни в файле
+    // Since R.35 the row order lives IN THE MODEL (a morpher layer acts “on everything below”,
+    // so the order affects the picture); since R.62 it is the order of the track vector, and there
+    // is no separate field in either the model or the file
     let mut p = Project::new(settings30());
     p.ensure_tracks(M, 1);
     p.set_lane_order(&[(M, 0), (V, 0), (A, 0)]);
     assert_eq!(p.rows(), vec![(M, 0), (V, 0), (A, 0)]);
     let json = serde_json::to_string(&p).unwrap();
-    assert!(!json.contains("lane_order"), "отдельного поля порядка больше нет");
+    assert!(!json.contains("lane_order"), "there is no separate order field any more");
     let loaded = Project::from_json(&json).unwrap();
-    assert_eq!(loaded, p, "round-trip порядка строк");
-    assert_eq!(loaded.rows(), vec![(M, 0), (V, 0), (A, 0)], "строки в том же порядке");
+    assert_eq!(loaded, p, "round trip of row order");
+    assert_eq!(loaded.rows(), vec![(M, 0), (V, 0), (A, 0)], "rows in the same order");
 
-    // естественный порядок читается так же
+    // the natural order is read the same way
     let mut nat = p.clone();
     nat.set_lane_order(&[(V, 0), (A, 0), (M, 0)]);
     let json2 = serde_json::to_string(&nat).unwrap();
     assert_eq!(Project::from_json(&json2).unwrap(), nat);
-    assert_eq!(nat.rows(), vec![(V, 0), (A, 0), (M, 0)], "и всё равно даёт порядок");
+    assert_eq!(nat.rows(), vec![(V, 0), (A, 0), (M, 0)], "and it still gives the order");
 
-    // строка дорожки: row_of по порядку, а не по номеру дорожки
+    // a track row: row_of by order, not by track number
     assert_eq!(p.row_of((M, 0)), Some(0));
     assert_eq!(p.row_of((A, 0)), Some(2));
-    assert_eq!(p.row_of((C, 0)), None, "камерных дорожек нет");
+    assert_eq!(p.row_of((C, 0)), None, "there are no camera tracks");
 }
 
-/// Тест 241 (Р.35 С1): порядок строк — состояние МОДЕЛИ и ходит через
-/// undo; вставка и удаление дорожки двигают его ВНУТРИ своей команды.
+/// Test 241 (R.35 C1): the row order is a state of the MODEL and goes through undo; insertion
+/// and removal of a track move it INSIDE their own command.
 #[test]
 fn t241_lane_order_is_model_state() {
     use kt_model::{Command, TimelineModel};
     let mut m = TimelineModel::new(Project::new(settings30()));
-    // вставка morph-дорожки САМА кладёт строку в порядок
+    // inserting a morph track ITSELF puts the row into the order
     m.apply(Command::InsertTrack { kind: M, at: 0 }).unwrap();
     assert_eq!(m.project().rows(), vec![(V, 0), (A, 0), (M, 0)]);
 
-    // перестановка — команда, и она откатывается
+    // a permutation is a command, and it is rolled back
     let want = vec![(M, 0), (V, 0), (A, 0)];
     m.apply(Command::SetLaneOrder { order: want.clone() }).unwrap();
-    assert_eq!(m.project().rows(), want, "порядок применился");
+    assert_eq!(m.project().rows(), want, "order was applied");
     m.undo().unwrap();
-    assert_eq!(m.project().rows(), vec![(V, 0), (A, 0), (M, 0)], "undo вернул порядок");
+    assert_eq!(m.project().rows(), vec![(V, 0), (A, 0), (M, 0)], "undo restored the order");
     m.redo().unwrap();
-    assert_eq!(m.project().rows(), want, "redo вернул перестановку");
+    assert_eq!(m.project().rows(), want, "redo restored the permutation");
 
-    // удаление дорожки уносит её строку без ручной синхронизации
+    // removing a track takes its row with it without manual synchronization
     m.apply(Command::RemoveTrack { kind: M, at: 0 }).unwrap();
     assert_eq!(m.project().rows(), vec![(V, 0), (A, 0)]);
 
-    // мусор в команде нормализуется, а не проходит в модель
+    // garbage in the command is normalized, not passed into the model
     m.apply(Command::SetLaneOrder { order: vec![(V, 0), (V, 0), (M, 7), (A, 0)] }).unwrap();
-    assert_eq!(m.project().rows(), vec![(V, 0), (A, 0)], "дубли и небылицы выброшены");
+    assert_eq!(m.project().rows(), vec![(V, 0), (A, 0)], "duplicates and nonsense are discarded");
 }
 
-/// Р.29: камерные дорожки — четвёртый вид в display-порядке (хвост блока
-/// V..A..M..C), insert/remove работают той же машинерией.
+/// R.29: camera tracks are a fourth kind in the display order (the tail of the V..A..M..C block),
+/// insert/remove work with the same machinery.
 #[test]
 fn t188_camera_lanes_in_display_order() {
     assert_eq!(normalize_lane_order(&[], 1, 1, 1, 2), vec![(V, 0), (A, 0), (M, 0), (C, 0), (C, 1)]);
-    // произвольный валидный порядок с камерами сохраняется
+    // an arbitrary valid order with cameras is preserved
     let mixed = vec![(C, 0), (V, 0), (A, 0)];
     assert_eq!(normalize_lane_order(&mixed, 1, 1, 0, 1), mixed);
-    // несуществующая камера вычищается
+    // a nonexistent camera is stripped
     assert_eq!(normalize_lane_order(&mixed, 1, 1, 0, 0), vec![(V, 0), (A, 0)]);
     let mut rows = vec![(V, 0), (C, 0)];
     lane_order_insert(&mut rows, C, 0);
@@ -127,7 +127,7 @@ fn t188_camera_lanes_in_display_order() {
     assert_eq!(p.rows(), vec![(V, 0), (A, 0), (C, 0), (C, 1)]);
 }
 
-// ---- Р.56, п.449: НОМЕР ДОРОЖКИ = РАНГ СТРОКИ --------------------------------
+// ---- R.56, item 449: TRACK NUMBER = ROW RANK --------------------------------
 
 fn settings30() -> ProjectSettings {
     ProjectSettings {
@@ -175,8 +175,8 @@ fn three_video_lanes() -> Project {
     let mut p = Project::new(settings30());
     p.media.push(MediaRef::new(MediaId(1), "synth:sine:440"));
     p.ensure_tracks(V, 3);
-    // по событию на каждой дорожке, на РАЗНЫХ временах: перекрытие тут ни
-    // при чём, а различить дорожки после перенумерации надо по id
+    // one event on each track, at DIFFERENT times: overlap has nothing to do with it, but
+    // after renumbering the tracks must be told apart by id
     for (i, id) in [(0u32, 1u64), (1, 2), (2, 3)] {
         let mut c = vclip(id, i);
         c.start = kt_time::Tick(100_000 * i as i64);
@@ -185,19 +185,19 @@ fn three_video_lanes() -> Project {
     p
 }
 
-/// Тест 588 (Р.56, п.449). Перестановка строк ПЕРЕНУМЕРОВЫВАЕТ содержимое:
-/// номер дорожки внутри вида — это её ранг среди строк этого вида.
+/// Test 588 (R.56, item 449). A permutation of rows RENUMBERS the content: the track number
+/// within a kind is its rank among the rows of this kind.
 ///
-/// До Р.56 движок складывал видео по НОМЕРУ, а экран показывал по
-/// `lane_order` — дорожка могла стоять под потолком и быть нижним слоем
-/// композита («закинул туда видео, и его не видно»). Утверждение здесь —
-/// СЛЕДСТВИЕ: порядок выдачи клипов движку (`effective_clips`,
-/// отсортированный как в `VideoRenderer::build_reel`) совпадает с
-/// порядком строк. С Р.62 имя и высота — на дорожке-объекте и едут с ним.
+/// Before R.56 the engine laid out video by NUMBER,
+/// while the screen showed by `lane_order` —
+/// a track could stand at the ceiling and be the bottom layer of the composite (“I dropped the
+/// video there, and it is not visible”). The claim here is a CONSEQUENCE: the order of clip
+/// delivery to the engine (`effective_clips`, sorted as in `VideoRenderer::build_reel`)
+/// matches the order of the rows. Since R.62 the name and height live on the object track and travel with it.
 #[test]
 fn t588_lane_number_is_row_rank() {
     let mut p = three_video_lanes();
-    // адресуемое дорожками: область, чужой трек, имя и высота строки
+    // what is addressed by tracks: the area, a foreign track, the row’s name and height
     p.areas.push(MarkedArea {
         name: "main".into(),
         start: kt_time::Tick(0),
@@ -214,66 +214,66 @@ fn t588_lane_number_is_row_rank() {
     });
     {
         let t = p.track_at_mut(V, 2).unwrap();
-        t.name = "Потолок".into();
+        t.name = "Ceiling".into();
         t.height = 42.0;
     }
     let ceiling = p.track_at(V, 2).unwrap().id;
     p.validate().unwrap();
 
     let mut m = TimelineModel::new(p);
-    // человек тащит нижнюю видео-строку на самый верх
+    // a person drags the bottom video row to the very top
     m.apply(Command::SetLaneOrder { order: vec![(V, 2), (V, 0), (V, 1), (A, 0)] }).unwrap();
     let p = m.project();
 
-    // номера стали рангами
+    // the numbers became ranks
     assert_eq!(p.rows(), vec![(V, 0), (V, 1), (V, 2), (A, 0)]);
     let lane_of = |id: u64| p.clips.iter().find(|c| c.id == ClipId(id)).unwrap().lane;
-    assert_eq!(lane_of(3), 0, "бывшая нижняя строка стала ВЕРХНЕЙ дорожкой");
+    assert_eq!(lane_of(3), 0, "the former bottom row became the TOP track");
     assert_eq!(lane_of(1), 1);
     assert_eq!(lane_of(2), 2);
 
-    // побочные таблицы едут тем же отображением, объект — как объект
-    assert_eq!(p.areas[0].lanes, vec![(V, 0)], "область осталась на СВОЕЙ дорожке");
-    assert_eq!(p.foreign[0].lane, 0, "чужой трек уехал бы на соседний");
+    // side tables move with the same mapping, an object as an object
+    assert_eq!(p.areas[0].lanes, vec![(V, 0)], "the region stayed on ITS track");
+    assert_eq!(p.foreign[0].lane, 0, "a foreign track would have moved to the neighbor");
     let t = p.track_at(V, 0).unwrap();
-    assert_eq!(t.id, ceiling, "id дорожки стабилен при перестановке");
-    assert_eq!(t.name, "Потолок");
+    assert_eq!(t.id, ceiling, "track id is stable under reordering");
+    assert_eq!(t.name, "Ceiling");
     assert_eq!(t.height, 42.0);
 
-    // СЛЕДСТВИЕ: порядок композиции == порядок строк. Движок сортирует
-    // `(Reverse(lane), start)` и рисует задний план первым — значит
-    // последним в этом векторе идёт ВЕРХНИЙ слой, он же верхняя строка.
+    // CONSEQUENCE: the composition order == the order of rows. The engine sorts by
+    // `(Reverse(lane), start)` and draws the background first — so the LAST item in this vector
+    // is the TOP layer, which is also the top row.
     let mut sorted = p.effective_clips();
     sorted.sort_by_key(|c| (std::cmp::Reverse(c.lane), c.start.0));
     let order: Vec<ClipId> = sorted.iter().map(|c| c.id).collect();
-    assert_eq!(*order.last().unwrap(), ClipId(3), "верхняя строка обязана быть верхним слоем");
+    assert_eq!(*order.last().unwrap(), ClipId(3), "the top row must be the top layer");
 
-    // undo/redo возвращают номера целиком (история — снимки)
+    // undo/redo return the numbers in full (history is snapshots)
     m.undo().unwrap();
     let p = m.project();
-    assert_eq!(p.clips.iter().find(|c| c.id == ClipId(3)).unwrap().lane, 2, "undo не вернул номер");
+    assert_eq!(p.clips.iter().find(|c| c.id == ClipId(3)).unwrap().lane, 2, "undo did not restore the number");
     assert_eq!(p.areas[0].lanes, vec![(V, 2)]);
-    assert_eq!(p.track_at(V, 2).unwrap().name, "Потолок", "имя уехало от своей дорожки под undo");
+    assert_eq!(p.track_at(V, 2).unwrap().name, "Ceiling", "the name drifted from its track under undo");
     m.redo().unwrap();
     assert_eq!(m.project().clips.iter().find(|c| c.id == ClipId(3)).unwrap().lane, 0);
 }
 
-/// Тест 589 (Р.56, п.449; Р.62). Инвариант сторожит `validate`: событие на
-/// несуществующей дорожке (номер за рангом последней) — ошибка и в корне,
-/// и в ленте; чтение (`normalize`) дописывает дорожки.
+/// Test 589 (R.56, item 449; R.62). The invariant is guarded by `validate`: an event on a
+/// nonexistent track (a number past the last rank) is an error both at the root and in a reel;
+/// reading (`normalize`) appends tracks.
 #[test]
 fn t589_validate_guards_canon_but_not_the_bench() {
     let mut p = three_video_lanes();
-    // дорожку убрали, событие осталось — так выглядит чужой или битый файл
+    // a track was removed, the event stayed — this is what a foreign or broken file looks like
     let gone = p.track_at(V, 2).unwrap().id;
     p.tracks.retain(|t| t.id != gone);
     assert!(
         matches!(p.validate(), Err(ProjectError::TrackMissing(None, V, 2))),
-        "событие без дорожки в КОРНЕ обязано быть ошибкой: {:?}",
+        "an event without a track at the ROOT must be an error: {:?}",
         p.validate()
     );
 
-    // то же внутри ленты
+    // the same inside a reel
     let mut p2 = three_video_lanes();
     let mut s = Sequence::new(MediaId(9), "Reel");
     s.clips.push(vclip(10, 0));
@@ -283,30 +283,30 @@ fn t589_validate_guards_canon_but_not_the_bench() {
     p2.sequences.push(s);
     assert!(
         matches!(p2.validate(), Err(ProjectError::TrackMissing(Some(MediaId(9)), V, 1))),
-        "событие без дорожки в ЛЕНТЕ обязано быть ошибкой"
+        "an event without a track in a REEL must be an error"
     );
-    // и чинится чтением
+    // and it is repaired by reading
     p2.normalize();
-    p2.validate().expect("после normalize документ канонический");
+    p2.validate().expect("after normalize the document is canonical");
     assert_eq!(p2.sequence(MediaId(9)).unwrap().lanes(V), 2);
 }
 
-/// Тест 590 (Р.56, п.449; Р.62). Старый файл знает только счётчики,
-/// `lane_order` и имена в `ui`: чтение превращает их в дорожки — и в
-/// корне, и в каждой ленте — односторонне, а содержимое перенумеровано
-/// под ранги строк.
+/// Test 590 (R.56, item 449; R.62). An old file knows only counters, `lane_order` and names in
+/// `ui`: reading turns them into tracks — both at the root and in each reel —
+/// one way,
+/// and the content is renumbered to the row ranks.
 #[test]
 fn t590_load_canonicalizes_root_and_reels() {
     let p = three_video_lanes();
     let mut v = serde_json::to_value(&p).unwrap();
-    // конверт ДО Р.62: без `tracks`, со счётчиками, порядком и именами в ui
+    // the envelope BEFORE R.62: without `tracks`, with counters, order and names in ui
     v.as_object_mut().unwrap().remove("tracks");
     v["video_lanes"] = serde_json::json!(3);
     v["audio_lanes"] = serde_json::json!(1);
     v["lane_order"] = serde_json::json!([["video", 2], ["audio", 0], ["video", 0], ["video", 1]]);
     v["ui"] = serde_json::json!({
         "view_start": 0.0, "ticks_per_px": 100.0, "cursor": 0,
-        "lane_names": [["video", 2, "Потолок"]],
+        "lane_names": [["video", 2, "Ceiling"]],
         "lane_heights": [["video", 2, 42.0]]
     });
     v["sequences"] = serde_json::json!([{
@@ -327,27 +327,27 @@ fn t590_load_canonicalizes_root_and_reels() {
         .unwrap(),
     );
 
-    let loaded = Project::from_json(&v.to_string()).expect("старый конверт читается");
-    assert_eq!(loaded.rows(), vec![(V, 0), (A, 0), (V, 1), (V, 2)], "порядок строк из lane_order");
+    let loaded = Project::from_json(&v.to_string()).expect("the old envelope reads");
+    assert_eq!(loaded.rows(), vec![(V, 0), (A, 0), (V, 1), (V, 2)], "row order from lane_order");
     assert_eq!(
         loaded.clips.iter().find(|c| c.id == ClipId(3)).unwrap().lane,
         0,
-        "в корне верхняя строка не стала дорожкой 0"
+        "at the root the top row did not become track 0"
     );
     let top = loaded.track_at(V, 0).unwrap();
-    assert_eq!(top.name, "Потолок", "имя из ui.lane_names не доехало до дорожки");
-    assert_eq!(top.height, 42.0, "высота из ui.lane_heights не доехала до дорожки");
-    assert!(loaded.ui.as_ref().is_none_or(|u| u.lane_names.is_empty()), "легаси-имена не очищены");
+    assert_eq!(top.name, "Ceiling", "the name from ui.lane_names did not reach the track");
+    assert_eq!(top.height, 42.0, "the height from ui.lane_heights did not reach the track");
+    assert!(loaded.ui.as_ref().is_none_or(|u| u.lane_names.is_empty()), "legacy names were not cleared");
     let s = &loaded.sequences[0];
     assert_eq!(s.rows(), vec![(V, 0), (V, 1), (A, 0)]);
     assert_eq!(
         s.clips.iter().find(|c| c.id == ClipId(11)).unwrap().lane,
         0,
-        "лента не канонизирована"
+        "the reel is not canonicalized"
     );
-    assert!(loaded.tracks.iter().all(|t| t.id.0 != 0), "id не назначены");
-    assert!(s.tracks.iter().all(|t| t.id.0 != 0), "id ленты не назначены");
+    assert!(loaded.tracks.iter().all(|t| t.id.0 != 0), "ids were not assigned");
+    assert!(s.tracks.iter().all(|t| t.id.0 != 0), "reel ids were not assigned");
     let all: Vec<TrackId> = loaded.tracks.iter().chain(s.tracks.iter()).map(|t| t.id).collect();
     let uniq: std::collections::HashSet<TrackId> = all.iter().copied().collect();
-    assert_eq!(all.len(), uniq.len(), "id дорожек не уникальны по документу");
+    assert_eq!(all.len(), uniq.len(), "track ids are not unique across the document");
 }

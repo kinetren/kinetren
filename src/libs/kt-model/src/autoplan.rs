@@ -1,26 +1,26 @@
-//! Компилированная автоматизация цепочки (Р.59, п.467).
+//! Compiled automation of the chain (R.59, item 467).
 //!
-//! До этого раунда кривые видео-пути разрешались ПО ИМЕНИ на каждый кадр:
-//! `layer_src` клонировал всю цепочку и для каждой кривой звал
-//! `set_param(&str, …)`, а тот линейно искал спеку и сравнивал строки.
-//! У звука такого никогда не было — там кривые компилируются ОДИН РАЗ при
-//! сборке процессора (`AutoProfiles` в `warp.rs`), и на блок остаётся
-//! только арифметика. Этот модуль — то же самое для видео.
+//! Before this round the video path's curves were resolved BY NAME on every frame:
+//! `layer_src` cloned the whole chain and for each curve called
+//! `set_param(&str, …)`, which linearly searched the spec and compared strings.
+//! Audio never had this — there curves are compiled ONCE when the processor is built
+//! (`AutoProfiles` in `warp.rs`), and only arithmetic remains per block.
+//! This module is the same thing for video.
 //!
-//! Что план даёт помимо скорости: он ЯВНО отвечает на вопрос «есть ли у
-//! этого клипа живые кривые». Пустой план — это `None`, и вызывающий
-//! остаётся на прежнем пути заимствования (ноль аллокаций, байты прежние).
+//! What the plan gives besides speed: it EXPLICITLY answers the question “does this clip
+//! have live curves”. An empty plan is `None`, and the caller stays on the old
+//! borrowing path (zero allocations, the bytes are as before).
 //!
-//! Чего план НЕ делает: он не трогает кривые ГЕНЕРАТОРА. Их разрешает сам
-//! источник по своему тику — кадр генератора обязан оставаться чистой
-//! функцией (состояние источника, тик, качество), иначе ключ кэша
-//! перестаёт определять кадр (инвариант 4).
+//! What the plan does NOT do: it does not touch the GENERATOR's curves. The source itself
+//! resolves them by its own tick — a generator frame must remain a pure function
+//! (source state, tick, quality), otherwise the cache key stops determining the frame
+//! (invariant 4).
 
 use crate::{FxInstance, HasParams, ParamCurve, curve_value};
 use kt_time::Tick;
 
-/// Одна скомпилированная кривая: куда писать (слот + ИНДЕКС ряда паспорта)
-/// и чем (ключи + пределы клампа владельца).
+/// One compiled curve: where to write (slot + the INDEX of the passport row)
+/// and with what (keys + the owner's clamp limits).
 #[derive(Debug, Clone, PartialEq)]
 struct PlannedCurve {
     slot: u32,
@@ -28,20 +28,20 @@ struct PlannedCurve {
     keys: Box<[crate::AutoKey]>,
 }
 
-/// План автоматизации цепочки. Строится при сборке рендерера, живёт
-/// столько же, применяется на кадр.
+/// The chain's automation plan. Built when the renderer is constructed, lives as long
+/// as it, applied per frame.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AutoPlan {
     curves: Vec<PlannedCurve>,
 }
 
 impl AutoPlan {
-    /// Скомпилировать кривые цепочки. `None` — живых кривых нет вовсе:
-    /// ни одной, все пустые или все сиротские. Это и есть гейт «ноль
-    /// цены без использования».
+    /// Compile the chain's curves. `None` — there are no live curves at all:
+    /// not one, all of them empty or all orphaned. This is the gate of
+    /// “zero cost without use”.
     ///
-    /// Сироты (имя не подходит варианту) отбрасываются ЗДЕСЬ — ровно как
-    /// их молча пропускает именной путь: `set_param` вернул бы `false`.
+    /// Orphans (a name that fits no variant) are discarded HERE — exactly as the name-based
+    /// path silently skips them: `set_param` would return `false`.
     pub fn compile(fx: &[FxInstance], auto: &[Vec<ParamCurve>]) -> Option<AutoPlan> {
         let mut curves = Vec::new();
         for (slot, list) in auto.iter().enumerate() {
@@ -61,13 +61,13 @@ impl AutoPlan {
         (!curves.is_empty()).then_some(AutoPlan { curves })
     }
 
-    /// Разрешить кривые в материальной позиции `at`.
+    /// Resolve the curves at the material position `at`.
     ///
-    /// Числа обязаны совпадать с именным путём (`apply_fx_auto`) до
-    /// последнего бита: значение считает ТА ЖЕ `curve_value`, а предел
-    /// накладывает САМ ВЛАДЕЛЕЦ — кламп живёт в одном месте, в макросе
-    /// паспорта, и своего клампа у плана нет намеренно. Сторож —
-    /// замороженный оракул в тесте.
+    /// The numbers must match the name-based path (`apply_fx_auto`) down to the
+    /// last bit: the value is computed by the SAME `curve_value`, while the limit is
+    /// applied by the OWNER itself — the clamp lives in one place, in the passport macro,
+    /// and the plan has no clamp of its own on purpose.
+    /// The guard is a frozen oracle in the test.
     pub fn apply(&self, fx: &mut [FxInstance], at: Tick) {
         for c in &self.curves {
             let Some(f) = fx.get_mut(c.slot as usize) else { continue };
@@ -75,13 +75,13 @@ impl AutoPlan {
         }
     }
 
-    /// Тики всех ключей плана — по ним зондируют кривую там, где важны
-    /// именно изломы (например максимум зума по клипу).
+    /// The ticks of all the plan's keys — the curve is probed at them where exactly
+    /// the breaks matter (for example, the maximum zoom per clip).
     pub fn key_ticks(&self) -> impl Iterator<Item = Tick> + '_ {
         self.curves.iter().flat_map(|c| c.keys.iter().map(|k| k.t))
     }
 
-    /// Сколько кривых скомпилировалось (для тестов и диагностики).
+    /// How many curves were compiled (for tests and diagnostics).
     pub fn len(&self) -> usize {
         self.curves.len()
     }

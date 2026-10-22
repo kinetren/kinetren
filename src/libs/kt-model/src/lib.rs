@@ -1,11 +1,11 @@
-//! Модель таймлайна: клипы, дорожки, команды редактирования, undo,
-//! формат проекта `.ktproj` (см. docs/file-format.md).
+//! The timeline model: clips, tracks, editing commands, undo, the
+//! project format `.ktproj` (see docs/file-format.md).
 //!
-//! Этот крейт — единственное описание клипа в системе: движок (kt-engine)
-//! потребляет эти типы напрямую, без промежуточных пересказов
-//! (в старом C++ клип переописывался 4 структурами по пути в движок).
+//! This crate is the single description of a clip in the system: the engine (kt-engine)
+//! consumes these types directly, without intermediate retellings
+//! (in the old C++ a clip was re-described by 4 structures on the way into the engine).
 //!
-//! Реализация — этап M1 (см. docs/porting-notes.md).
+//! The implementation — stage M1 (see docs/porting-notes.md).
 
 pub mod autoplan;
 pub mod formula;

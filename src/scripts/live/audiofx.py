@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.47 (п.330): новые аудио-эффекты достижимы из окна FX
-и переживают сохранение.
+"""Live scenario R.47 (item 330): new audio effects are reachable from the FX window
+and survive saving.
 
-Демо-проект несёт на аудио-дорожке слот Filter (правка .otio нашей же
-библиотекой: формат один). Двойной клик по событию открывает окно FX —
-там полоса цепочки с «Filter» и сетка параметров (Cutoff/Resonance).
-Проверка следствия: (1) окно открылось (экран изменился), (2) ctrl+s —
-слот kt:filter с cutoff_hz пережил round-trip через настоящую программу
-(UI-сейв не теряет и не искажает новые виды эффектов).
+The demo project carries a Filter slot on the audio track (an edit of .otio by our own
+library: the format is one). A double click on an event opens the FX window —
+there is a chain strip with “Filter” and a grid of parameters (Cutoff/Resonance).
+Check of the consequence: (1) the window opened (the screen changed), (2) ctrl+s —
+the kt:filter slot with cutoff_hz survived a round trip through the real program
+(the UI save neither loses nor distorts the new kinds of effects).
 """
 import json
 import os
@@ -25,8 +25,8 @@ def main(out):
     require_tools()
     proj = os.path.join(out, "audiofx.otio")
     demo_otio(proj)
-    # первому АУДИО-событию демо-проекта дописываем слот Filter с
-    # неумолчальным cutoff — по нему узнаем свой слот после сейва
+    # to the first AUDIO event of the demo project we append a Filter slot with
+    # a non-default cutoff — by it we find our slot after the save
     with open(proj) as f:
         doc = json.load(f)
     audio_clip = None
@@ -63,10 +63,10 @@ def main(out):
         app.double_click(x, y)
         app.shot("fx-window")
         d = app.screen_diff(before)
-        app.expect(d > 0.01, f"двойной клик открыл окно FX (экран изменился на {d:.1%})")
+        app.expect(d > 0.01, f"double click opened the FX window (the screen changed by {d:.1%})")
 
-        # round-trip через настоящую программу: слот выжил и не исказился
-        saved = app.saved_project().doc  # ctrl+s — файл перезаписан программой
+        # round trip through the real program: the slot survived and was not distorted
+        saved = app.saved_project().doc  # ctrl+s — the file is overwritten by the program
         slots = [
             e
             for tr in saved["tracks"]["children"]
@@ -74,12 +74,12 @@ def main(out):
             for e in ch.get("effects", [])
             if e.get("effect_name") == "kt:filter"
         ]
-        app.expect(bool(slots), "слот kt:filter пережил сохранение программой")
+        app.expect(bool(slots), "the kt:filter slot survived the save by the program")
         if slots:
             kt = slots[0]["metadata"]["kt"]
             app.expect(
                 abs(kt.get("cutoff_hz", 0) - 1234.0) < 1e-6,
-                f"cutoff_hz сохранён без искажений: {kt.get('cutoff_hz')}",
+                f"cutoff_hz saved without distortion: {kt.get('cutoff_hz')}",
             )
         return app.done()
 

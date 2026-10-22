@@ -1,24 +1,24 @@
-//! Плейсхолдер отсутствующего исходника (Р.33 п.10, требование
-//! пользователя: «при рендере и превью отсутсвие исходников не должно быть
-//! блокером, нужно уведомлять юзера и рендерить, для отсутствующего видео
-//! надо подставлять placeholder»).
+//! Placeholder for a missing source (R.33 item 10, user requirement:
+//! “when rendering and previewing, missing sources must not block anything: the user
+//! must be notified and rendering continues, and for missing video a placeholder must
+//! be substituted”).
 //!
-//! Источник ведёт себя как обычный: отдаёт тёмный кадр с ИМЕНЕМ файла
-//! (сразу видно, чего не хватает) и тишину в аудио. Владеет им, как всеми
-//! остальными, ровно один MediaWorker-поток.
+//! The source behaves like a normal one: it delivers a dark frame with the file's NAME
+//! (it is immediately visible what is missing) and silence in the audio. Like all others,
+//! it is owned by exactly one MediaWorker thread.
 //!
-//! Текст рисуется встроенным пиксельным шрифтом 3×5 (`pixfont`, общий с
-//! генераторами): он не зависит ни от системных шрифтов, ни от рендерера
-//! egui, поэтому кадр детерминирован и одинаков в превью, экспорте и
-//! тестах. Символы вне таблицы (кириллица, иероглифы) показываются как
-//! «?» — имя файла остаётся узнаваемым по латинице, цифрам и расширению.
+//! Text is drawn with the built-in 3×5 pixel font (`pixfont`, shared with
+//! generators): it depends neither on system fonts nor on the egui renderer, so the
+//! frame is deterministic and identical in preview, export and tests. Characters outside
+//! the table (Cyrillic, hieroglyphs) are shown as “?” — the file name stays recognizable
+//! by its Latin letters, digits and extension.
 
 use crate::pixfont::{Canvas, GLYPH_H, GLYPH_W, text_width};
 use crate::{AudioBurst, MediaError, MediaInfo, MediaSource, Quality, VideoFrame};
 use kt_time::Tick;
 
-/// «Практически бесконечная» длительность: 1000 часов. Плейсхолдер не
-/// знает, сколько длился пропавший файл, а обрезать монтаж он не должен.
+/// “Practically infinite” duration: 1000 hours. The placeholder does not
+/// know how long the missing file lasted, and it must not trim the edit.
 const PLACEHOLDER_DURATION: Tick = Tick(90_000 * 3600 * 1000);
 const DEFAULT_W: u32 = 640;
 const DEFAULT_H: u32 = 360;
@@ -27,25 +27,25 @@ const BG: [u8; 4] = [42, 44, 48, 255];
 const INK: [u8; 4] = [188, 192, 200, 255];
 const MARK: [u8; 4] = [214, 122, 96, 255];
 
-/// Плейсхолдер вместо недоступного файла: тёмный кадр с именем и значком
-/// плёнки, тишина в аудио.
+/// Placeholder instead of an unavailable file: a dark frame with the name and a
+/// film icon, silence in the audio.
 pub struct PlaceholderSource {
     info: MediaInfo,
     label: String,
-    /// Кадр строится один раз на запрошенное качество: он не зависит ни от
-    /// времени, ни от чего-либо ещё, а рисовать его на каждый тик — трата.
+    /// The frame is built once per requested quality: it depends neither on time
+    /// nor on anything else, and drawing it on every tick would be a waste.
     cache: Option<(Quality, Box<[u8]>)>,
 }
 
 impl PlaceholderSource {
-    /// `label` — то, чего не хватает (обычно имя файла).
+    /// `label` — what is missing (usually the file name).
     pub fn new(label: impl Into<String>) -> PlaceholderSource {
         PlaceholderSource {
             info: MediaInfo {
                 duration: PLACEHOLDER_DURATION,
                 has_video: true,
                 has_audio: true,
-                // своей сетки кадров нет: движок планирует по сетке ПРОЕКТА
+                // it has no frame grid of its own: the engine plans on the PROJECT's grid
                 fps: None,
                 width: DEFAULT_W,
                 height: DEFAULT_H,
@@ -68,14 +68,14 @@ impl PlaceholderSource {
 fn render(label: &str, w: u32, h: u32) -> Box<[u8]> {
     let (w, h) = (w.max(1), h.max(1));
     let mut c = Canvas::new(w, h, BG);
-    // рамка кадра — видно, что это заглушка, а не чёрный провал
+    // the frame border — visible that it is a stub, not a black hole
     let b = (w.min(h) as i64 / 90).max(1);
     c.rect(0, 0, c.w, b, MARK);
     c.rect(0, c.h - b, c.w, b, MARK);
     c.rect(0, 0, b, c.h, MARK);
     c.rect(c.w - b, 0, b, c.h, MARK);
 
-    // имя: масштаб подбирается под ширину кадра, слишком длинное режется
+    // name: the scale is chosen to fit the frame width, too-long names are cut
     let mut text: Vec<char> = label.chars().collect();
     let s = ((c.w * 4 / 5) / text_width(text.len().max(1), 1).max(1)).clamp(1, 8);
     let max_chars = ((c.w * 4 / 5) / ((GLYPH_W as i64 + 1) * s)).max(1) as usize;
@@ -87,7 +87,7 @@ fn render(label: &str, w: u32, h: u32) -> Box<[u8]> {
     let tx = (c.w - text_width(text.chars().count(), s)) / 2;
     let ty = (c.h - GLYPH_H as i64 * s) / 2 + c.h / 12;
     c.text(tx, ty, s, &text, INK);
-    // значок над надписью
+    // an icon above the caption
     c.film((c.w - 14 * s) / 2, ty - 14 * s, s, MARK);
     c.buf.into_boxed_slice()
 }
@@ -125,38 +125,38 @@ mod tests {
         s.read_video_frame(Tick(12_345), Some(q)).unwrap()
     }
 
-    /// Тест 208 (Р.33 п.10): кадр плейсхолдера детерминирован, реально
-    /// содержит надпись и не зависит от системных шрифтов.
+    /// Test 208 (R.33 item 10): the placeholder frame is deterministic, really
+    /// contains the caption, and does not depend on system fonts.
     #[test]
     fn t208_placeholder_frame_is_deterministic_and_labeled() {
         let q = Quality { width: 320, height: 180 };
         let a = frame("clip-01.mp4", q);
         let b = frame("clip-01.mp4", q);
-        assert_eq!(a.rgba, b.rgba, "кадр обязан быть одинаковым при каждом запросе");
+        assert_eq!(a.rgba, b.rgba, "the frame must be the same on every request");
         assert_eq!((a.width, a.height), (320, 180));
 
-        // второй запрос ТОГО ЖЕ источника берётся из кэша и совпадает
+        // a second request for the SAME source is taken from the cache and matches
         let mut src = PlaceholderSource::new("clip-01.mp4");
         let f1 = src.read_video_frame(Tick(0), Some(q)).unwrap();
         let f2 = src.read_video_frame(Tick(90_000), Some(q)).unwrap();
-        assert_eq!(f1.rgba, f2.rgba, "кадр не должен зависеть от времени");
-        assert_eq!(f2.pts.0, 90_000, "pts обязан быть запрошенный");
+        assert_eq!(f1.rgba, f2.rgba, "the frame must not depend on time");
+        assert_eq!(f2.pts.0, 90_000, "pts must be the requested one");
 
-        // надпись видна: пикселей цвета текста заметно много и кадр не однотонный
+        // the caption is visible: there are noticeably many text-colored pixels and the frame is not uniform
         let ink = a.rgba.chunks_exact(4).filter(|p| p[0] == INK[0] && p[1] == INK[1]).count();
-        assert!(ink > 50, "надписи на кадре нет: {ink} пикселей");
+        assert!(ink > 50, "there is no text in the frame: {ink} pixels");
         let other = frame("zzzz-99.mov", q);
-        assert_ne!(a.rgba, other.rgba, "разные имена обязаны давать разные кадры");
+        assert_ne!(a.rgba, other.rgba, "different names must give different frames");
     }
 
-    /// Не-ASCII (кириллица, иероглифы) рисуется как «?» — кадр остаётся
-    /// детерминированным и не зависит от установленных шрифтов.
+    /// Non-ASCII (Cyrillic, hieroglyphs) is drawn as “?” — the frame stays
+    /// deterministic and does not depend on installed fonts.
     #[test]
     fn t208_non_ascii_label_falls_back_to_question_marks() {
         let q = Quality { width: 320, height: 180 };
         let cyr = frame("Ролик.mp4", q);
         let subs = frame("?????.mp4", q);
-        assert_eq!(cyr.rgba, subs.rgba, "не-ASCII обязан заменяться на «?»");
+        assert_eq!(cyr.rgba, subs.rgba, "non-ASCII must be replaced by “?”");
     }
 
     #[test]
@@ -164,8 +164,8 @@ mod tests {
         let mut s = PlaceholderSource::new("gone.wav");
         let b = s.read_audio_burst(7).unwrap();
         assert_eq!(b.idx, 7);
-        assert!(b.data.iter().all(|v| *v == 0.0), "плейсхолдер обязан молчать");
-        assert!(s.info().duration.0 > 90_000 * 3600, "длительность не должна резать монтаж");
+        assert!(b.data.iter().all(|v| *v == 0.0), "placeholder must be silent");
+        assert!(s.info().duration.0 > 90_000 * 3600, "duration must not cut the edit");
         assert!(s.info().has_video && s.info().has_audio);
     }
 }

@@ -1,19 +1,19 @@
-//! FxThumbService: миниатюры эффектов для пикера (Р.54, п.430).
+//! FxThumbService: effect thumbnails for the picker (R.54, item 430).
 //!
-//! Форма — СЕРВИС по образцу `ThumbService` (`bg.rs` называет его эталоном
-//! этой формы): свой поток, condvar-очередь, LIFO + dedup, RAM-LRU,
-//! отмена поколением. Каркас задачи (`BgJob`) тут не подходит: задача
-//! конечна и имеет прогресс, а миниатюры — бесконечная очередь мелких
-//! заявок, живущая, пока открыт пикер.
+//! The shape is a SERVICE modelled on `ThumbService` (`bg.rs` calls it the reference for this shape):
+//! its own thread, a condvar queue, LIFO + dedup, RAM-LRU,
+//! cancellation by generation. The task frame (`BgJob`)
+//! does not fit here: a task is finite and has progress,
+//! while thumbnails are an endless queue of small requests,
+//! living as long as the picker is open.
 //!
-//! Чего в сервисе НЕТ и быть не должно:
-//! * декодеров и sidecar-БД. Кадр-основу разрешает ВЫЗЫВАЮЩИЙ и передаёт
-//!   готовой картинкой (или просит встроенный образец). Инвариант №8 в
-//!   силе: рисование может только ЕНКЬЮИТЬ заявки, а декодирует чужой
-//!   выделенный воркер — `ThumbService`;
-//! * персиста. Дорогая половина превью (декод) уже лежит JPEG'ом в
-//!   `thumbnails`; наложить цепочку на готовый кадр дешевле, чем прочитать
-//!   результат из sqlite, поэтому кэш здесь только RAM и только на сессию.
+//! What the service does NOT have and must not have:
+//! * decoders and sidecar DB. The base frame is resolved by the CALLER and passed as a ready picture
+//!   (or it asks for the built-in sample). Invariant No. 8 holds: drawing may only ENQUEUE requests,
+//!   and the decoding is done by a foreign dedicated worker — `ThumbService`;
+//! * persistence. The expensive half of the preview (the decode) already lies as a JPEG in `thumbnails`;
+//!   applying the chain to a ready frame is cheaper than reading the result from sqlite,
+//!   so the cache here is only RAM and only for the session.
 
 use eframe::egui;
 use kt_model::{FxInstance, MediaId};
@@ -21,51 +21,51 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// Опорный размер расчёта — размер тумбы источника (`thumbs::THUMB_W/H`).
-/// Считать сразу в размере ячейки нельзя: часть параметров задана в
-/// ПИКСЕЛЯХ (`Pixelate.size`, радиусы размытий), и в мелком кадре они
-/// показали бы другую СИЛУ эффекта («превью вида, не силы», п.428).
+/// The reference size of the computation is the size of the source thumbnail (`thumbs::THUMB_W/H`).
+/// Computing right at the cell size is not allowed: some parameters are set in PIXELS (`Pixelate.size`,
+/// blur radii), and in a small frame they would show a different effect STRENGTH
+/// (“a preview of the kind, not of the strength”, item 428).
 pub const REF_W: u32 = crate::thumbs::THUMB_W;
 pub const REF_H: u32 = crate::thumbs::THUMB_H;
-/// Хранимый размер ячейки (вдвое больше рисуемого — hidpi).
+/// The stored cell size (twice the drawn one — hidpi).
 pub const CELL_W: u32 = 160;
 pub const CELL_H: u32 = 90;
-/// LRU готовых миниатюр: 160×90 RGBA ≈ 57 КБ, то есть ~14 МБ на потолке.
+/// LRU of ready thumbnails: 160×90 RGBA ≈ 57 KB, that is ~14 MB at the ceiling.
 pub const MAX_READY_FX: usize = 256;
-/// Мисклик-гард (Р.54, требование владельца «а только через секунду
-/// пытаться делать (вдруг мисклик)»). Ждёт НЕ рендер — он дешёвый и идёт
-/// сразу, — а ЗАКАЗЫ декода: просить тумбу недостающего кадра до этого
-/// срока значит платить открытием файла за случайный клик.
+/// Misclick guard (R.54, the owner’s requirement “only try to do it a second later (in case it was a misclick)”).
+/// It waits NOT for the render — that is cheap and goes at
+/// once — but for the decode ORDERS: asking for the thumbnail
+/// of a missing frame before this deadline means paying for opening the file for a random click.
 pub const DECODE_GUARD: std::time::Duration = std::time::Duration::from_millis(800);
-/// Пауза между рендерами, когда система занята (игра, экспорт): очередь
-/// LIFO, поэтому свежие ячейки всё равно первые.
+/// The pause between renders when the system is busy (game, export): the queue is LIFO,
+/// so fresh cells are still first anyway.
 const BUSY_PAUSE: std::time::Duration = std::time::Duration::from_millis(25);
 
-/// На чём считать миниатюру.
+/// What to compute the thumbnail on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FxThumbBase {
-    /// Кадр источника: ключ `ThumbService` — ТОТ ЖЕ, что у филмстрипа
-    /// (общий кэш, новых декодов не порождает).
+    /// The source frame: the `ThumbService` key — the SAME as the filmstrip’s
+    /// (a shared cache, it produces no new decodes).
     Thumb(crate::thumbs::ThumbKey),
-    /// Встроенный образец (`kt_fx::video::test_pattern`): клип-вложение,
-    /// морфер без источника, тумба ещё не приехала — пустых ячеек не
-    /// бывает.
+    /// The built-in sample (`kt_fx::video::test_pattern`):
+    /// a nested clip, a morpher without a source,
+    /// a thumbnail not yet arrived — empty cells do not occur.
     Pattern,
-    /// Он же с ПРОЗРАЧНЫМИ полями: `DropShadow` на непрозрачном кадре
-    /// тождествен по построению (п.428б).
+    /// The same, with TRANSPARENT fields: `DropShadow` on an
+    /// opaque frame is an identity by construction (item 428b).
     PatternAlpha,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FxThumbKey {
     pub base: FxThumbBase,
-    /// Хэш рецепта: цепочка + момент + камера (см. `recipe_hash`).
+    /// Recipe hash: chain + moment + camera (see `recipe_hash`).
     pub recipe: u64,
 }
 
 impl FxThumbKey {
-    /// Считает ли ячейка кадр этого медиа. Нужно при перенастройке
-    /// генератора: картинка изменилась, а ключ — нет (п.412).
+    /// Whether the cell computes a frame of this media. Needed when reconfiguring a generator:
+    /// the picture changed, but the key did not (item 412).
     pub fn is_media(&self, id: MediaId) -> bool {
         match self.base {
             FxThumbBase::Thumb(t) => t.media == id,
@@ -74,10 +74,10 @@ impl FxThumbKey {
     }
 }
 
-/// Рецепт миниатюры одной строкой. Хэшируется `Debug`-представление, а не
-/// serde: у `FxInstance` половина полей под `skip_serializing_if`, и новое
-/// поле с умолчанием из JSON выпало бы — из `Debug` не выпадет (тот же
-/// приём, что у `fx_chain_hash` в kt-engine).
+/// The thumbnail recipe in one line. The `Debug` representation is hashed, not serde: in `FxInstance`
+/// half the fields sit under `skip_serializing_if`, and
+/// a new field with a default from JSON would drop out —
+/// from `Debug` it will not drop out (the same trick as `fx_chain_hash` in kt-engine).
 pub fn recipe_hash(
     chain: &[FxInstance],
     u: f64,
@@ -88,25 +88,25 @@ pub fn recipe_hash(
     xxhash_rust::xxh3::xxh3_64(repr.as_bytes())
 }
 
-/// Эффекты, видимые ТОЛЬКО на прозрачности: демо-образцу для них нужны
-/// прозрачные поля, иначе ячейка покажет исходный кадр. `DropShadow` на
-/// непрозрачном кадре тождествен ПО ПОСТРОЕНИЮ — тень падает из-под
-/// альфы, а её нет (п.428б, сторож t544d).
+/// Effects visible ONLY on transparency: the demo sample needs transparent fields for them, otherwise the cell
+/// will show the source frame. `DropShadow` on an opaque
+/// frame is an identity BY CONSTRUCTION — the shadow falls
+/// from under the alpha, and there is no alpha (item 428b, guard t544d).
 ///
-/// На РЕАЛЬНОМ кадре события подмены не делаем: там passthrough честен —
-/// у непрозрачного клипа тень и правда ничего не меняет, и врать об этом
-/// в пикере нельзя.
+/// On a REAL frame of an event we do not substitute: there
+/// passthrough is honest — for an opaque clip the shadow
+/// really changes nothing, and one must not lie about it in the picker.
 fn needs_alpha(fx: &[FxInstance]) -> bool {
     fx.iter().any(|f| matches!(f, FxInstance::DropShadow { .. }))
 }
 
-/// Заявка на миниатюру. Кадр-основа приходит ГОТОВОЙ: воркер не ходит ни
-/// в чужие кэши, ни в декодеры.
+/// A thumbnail request. The base frame arrives READY: the worker goes neither to foreign caches
+/// nor to decoders.
 pub struct FxThumbJob {
     pub key: FxThumbKey,
-    /// `None` — база из `FxThumbBase::Pattern*`.
+    /// `None` — the base from `FxThumbBase::Pattern*`.
     pub base_img: Option<Arc<egui::ColorImage>>,
-    /// Цепочка с УЖЕ разрешёнными кривыми (значения на момент курсора).
+    /// The chain with curves ALREADY resolved (values at the moment of the cursor).
     pub chain: Vec<FxInstance>,
     pub u: f64,
     pub burst_index: i64,
@@ -114,9 +114,9 @@ pub struct FxThumbJob {
     pub generation: u64,
 }
 
-/// Очередь заявок: LIFO + dedup по ключу + отмена поколением. Отдельный
-/// тип, а не пара полей — по образцу `SourceLru`: так она проверяется
-/// юнит-тестом без потока и без egui (t546).
+/// The request queue: LIFO + dedup by key + cancellation by
+/// generation. A separate type rather than a pair of fields —
+/// modelled on `SourceLru`: this way it is checked by a unit test without a thread and without egui (t546).
 #[derive(Default)]
 pub(crate) struct JobQueue {
     jobs: VecDeque<FxThumbJob>,
@@ -130,8 +130,8 @@ impl JobQueue {
 }
 
 impl JobQueue {
-    /// true — заявка принята (новая). Дубликат отбрасывается: одна и та
-    /// же ячейка просится на каждом кадре интерфейса, пока не готова.
+    /// true — the request is accepted (new). A duplicate is dropped: the same cell asks on every frame
+    /// of the interface until it is ready.
     pub(crate) fn push(&mut self, job: FxThumbJob) -> bool {
         if !self.seen.insert(job.key) {
             return false;
@@ -140,8 +140,8 @@ impl JobQueue {
         true
     }
 
-    /// Свежие первыми (`pop_back`); заявки прошлых поколений выбрасываются
-    /// молча — пикер закрыли или курсор уехал, считать их незачем.
+    /// Fresh first (`pop_back`); requests of past generations are dropped silently — the picker was closed
+    /// or the cursor moved away, there is no point computing them.
     pub(crate) fn pop(&mut self, generation: u64) -> Option<FxThumbJob> {
         while let Some(job) = self.jobs.pop_back() {
             self.seen.remove(&job.key);
@@ -163,11 +163,11 @@ pub(crate) struct Shared {
     ready: Mutex<HashMap<FxThumbKey, Arc<egui::ColorImage>>>,
     order: Mutex<VecDeque<FxThumbKey>>,
     generation: AtomicU64,
-    /// Система занята (игра/экспорт) — «сбавить обороты» (правило 12
-    /// чек-листа: фоновая работа не мешает).
+    /// The system is busy (game/export) — “slow down” (rule 12
+    /// of the checklist: background work does not get in the way).
     busy: AtomicBool,
-    /// Владелец умер — поток обязан выйти (доктрина `bg.rs`: задача и
-    /// сервис гасятся вместе с владельцем).
+    /// The owner has died — the thread must exit (the `bg.rs` doctrine:
+    /// the task and the service are shut down together with their owner).
     stop: AtomicBool,
 }
 
@@ -198,11 +198,11 @@ impl Shared {
     }
 }
 
-/// Кэш egui-текстур ячеек. Живёт В СЕРВИСЕ, а не в `KtApp`, по причине
-/// заимствований: окна FX и морфера держат внутри ui-замыкания `&self.model`
-/// (а морфер ещё и зовёт свои методы по `&self`), и `&mut` на поле
-/// приложения туда уже не пролезает. `RefCell`, а не `Mutex`: текстуры
-/// трогает ТОЛЬКО UI-поток — воркер о них не знает, он отдаёт `ColorImage`.
+/// The egui texture cache of the cells. It lives IN THE SERVICE, not in `KtApp`, for reasons of borrowing:
+/// the FX and morpher windows hold `&self.model` inside the ui closures (and the morpher also calls its methods
+/// through `&self`), and a `&mut` to a field of the application does not fit there any more.
+/// `RefCell`, not `Mutex`: the textures are touched ONLY by the UI thread — the worker knows nothing about them,
+/// it hands over a `ColorImage`.
 #[derive(Default)]
 struct TexCache {
     map: HashMap<FxThumbKey, egui::TextureHandle>,
@@ -225,7 +225,7 @@ impl FxThumbService {
         FxThumbService { shared, tex: std::cell::RefCell::new(TexCache::default()) }
     }
 
-    /// Поставить заявку (dedup). Отрисовка никогда не блокируется.
+    /// Enqueue a request (dedup). Drawing is never blocked.
     pub fn request(&self, job: FxThumbJob) {
         if self.shared.ready.lock().unwrap().contains_key(&job.key) {
             return;
@@ -241,23 +241,23 @@ impl FxThumbService {
         self.shared.ready.lock().unwrap().get(key).cloned()
     }
 
-    /// Текущее поколение (его несут заявки).
+    /// The current generation (carried by the requests).
     pub fn generation(&self) -> u64 {
         self.shared.generation.load(Ordering::Relaxed)
     }
 
-    /// Пикер закрыли / курсор уехал: всё, что в очереди, считать больше
-    /// незачем. ГОТОВЫЕ миниатюры остаются — их LRU и так ограничен, а
-    /// повторное открытие пикера обычно просит те же ячейки.
+    /// The picker was closed / the cursor moved: everything in the queue is no longer needed to compute.
+    /// READY thumbnails stay — their LRU is limited anyway,
+    /// and reopening the picker usually asks for the same cells.
     pub fn bump_generation(&self) {
         self.shared.generation.fetch_add(1, Ordering::Relaxed);
         self.shared.cond.notify_all();
     }
 
-    /// Медиа осталось тем же, а КАРТИНКА изменилась (правка параметров
-    /// генератора, Р.53 п.412): ключ ячейки помнит `ThumbKey`, который от
-    /// параметров не зависит, поэтому готовые миниатюры этого медиа
-    /// протухли. Зовётся рядом с `ThumbService::retune_media`.
+    /// The media stayed the same, but the PICTURE changed
+    /// (an edit of the generator parameters, R.53 item 412):
+    /// the cell key remembers the `ThumbKey`, which does not depend on the parameters, so this media’s ready
+    /// thumbnails are stale. Called next to `ThumbService::retune_media`.
     pub fn invalidate_media(&self, id: MediaId) {
         self.shared.ready.lock().unwrap().retain(|k, _| !k.is_media(id));
         self.shared.order.lock().unwrap().retain(|k| !k.is_media(id));
@@ -266,7 +266,7 @@ impl FxThumbService {
         tex.lru.retain(|k| !k.is_media(id));
     }
 
-    /// Текстура готовой ячейки (заливается при первом показе) либо `None`.
+    /// The texture of a ready cell (uploaded at the first display) or `None`.
     fn texture_for(&self, ctx: &egui::Context, key: FxThumbKey) -> Option<egui::TextureId> {
         if let Some(h) = self.tex.borrow().map.get(&key) {
             return Some(h.id());
@@ -286,49 +286,49 @@ impl FxThumbService {
         Some(id)
     }
 
-    /// Занятость системы: играем или идёт экспорт.
+    /// System busy state: playing or export in progress.
     pub fn set_busy(&self, busy: bool) {
         self.shared.busy.store(busy, Ordering::Relaxed);
     }
 
-    /// Есть ли незакрытые заявки. Гейт перерисовки вешается на ЭТО, а не
-    /// на «пикер открыт»: иначе открытое меню держало бы 60 fps в простое
-    /// (дефект t38).
+    /// Whether there are unfinished requests. The redraw
+    /// gate hangs on THIS, not on “the picker is open”:
+    /// otherwise an open menu would hold 60 fps while idle (defect t38).
     pub fn pending(&self) -> bool {
         self.shared.queue.lock().unwrap().len() > 0
     }
 
-    /// Уже в очереди? Чтобы отрисовка не собирала заявку заново на каждом
-    /// кадре, пока ячейка считается (dedup внутри очереди спасает от
-    /// работы, но не от сборки задания).
+    /// Already queued? So that drawing does not assemble the
+    /// request anew on every frame while the cell is being computed
+    /// (dedup inside the queue saves from work, but not from assembling the job).
     pub fn queued(&self, key: &FxThumbKey) -> bool {
         self.shared.queue.lock().unwrap().seen_key(key)
     }
 }
 
-/// Контекст ячеек пикера на ОДИН кадр: сервис, кэш текстур и всё, что
-/// задаёт рецепт (кадр-основа, цепочка клипа, момент, камера).
+/// The cell context of the picker for ONE frame: the service, the texture cache and everything
+/// that sets the recipe (base frame, clip chain, moment, camera).
 ///
-/// Живёт снаружи `Window::show`, а внутрь отдаётся одной ссылкой: окно
-/// держит `&self.model`, и разъехаться эти два заимствования не могут —
-/// поля разные (тот же приём, что у буферов копипаста в `fx_editor`).
+/// It lives outside `Window::show`, and is passed inside by one reference: the window holds `&self.model`,
+/// and these two borrows cannot get tangled — the fields are
+/// different (the same trick as the copy buffers in `fx_editor`).
 pub struct PickerCtx<'a> {
     pub svc: &'a FxThumbService,
-    /// На чём считать (кадр источника / встроенный образец).
+    /// What to compute on (source frame / built-in sample).
     pub base: FxThumbBase,
-    /// Готовый кадр-основа; для `Pattern*` — `None`.
+    /// A ready base frame; for `Pattern*` — `None`.
     pub base_img: Option<Arc<egui::ColorImage>>,
-    /// Цепочка КЛИПА с уже разрешёнными кривыми — то, что стоит на
-    /// событии сейчас. Кандидат ячейки дописывается в хвост, поэтому
-    /// картинка показывает результат клика, а не эффект «в вакууме».
+    /// The CLIP chain with curves already resolved — what stands on the event now. The cell’s candidate
+    /// is appended to the tail, so the picture shows the
+    /// result of the click, not the effect “in a vacuum”.
     pub chain: Vec<FxInstance>,
     pub u: f64,
     pub burst_index: i64,
     pub cam3d: Option<kt_fx::geom::Cam3d>,
     pub generation: u64,
-    /// Переиспользуемый буфер «цепочка + кандидат»: ячеек в полоске
-    /// десятки, и Vec на каждую был бы аллокацией в draw-пути на кадр
-    /// (инвариант №12).
+    /// A reusable buffer “chain + candidate”: there
+    /// are tens of cells in a strip, and a Vec for each
+    /// would be an allocation in the draw path per frame (invariant No. 12).
     full: Vec<FxInstance>,
 }
 
@@ -357,8 +357,8 @@ impl<'a> PickerCtx<'a> {
         }
     }
 
-    /// Текстура ячейки для цепочки «клип + кандидат», либо `None` — тогда
-    /// заявка поставлена и ячейка рисуется плашкой до готовности.
+    /// The cell texture for the chain “clip + candidate”, or `None` — then the request is queued and the cell
+    /// is drawn as a placeholder until it is ready.
     pub fn texture(
         &mut self,
         ctx: &egui::Context,
@@ -400,16 +400,16 @@ impl Drop for FxThumbService {
     }
 }
 
-/// Разрешены ли ЗАКАЗЫ декода (тумба/постер) — мисклик-гард. Чистая
-/// функция: часы приходят снаружи, поэтому тест не спит.
+/// Whether decode ORDERS (thumbnail/poster) are allowed — the misclick guard. A pure function:
+/// the clock comes from outside, so the test does not sleep.
 pub fn decode_orders_allowed(since_open: std::time::Duration) -> bool {
     since_open >= DECODE_GUARD
 }
 
-/// `ColorImage` → `Frame`. `Color32` хранит цвет ПРЕМУЛЬТИПЛИЦИРОВАННЫМ,
-/// а цепочка работает с прямой альфой (правило альфы, пп.417-418): у
-/// JPEG-тумбы альфа сплошь 255 и это тождество, но у кадра генератора-
-/// титра — нет, и без разворота тёмная кромка приехала бы в цепочку.
+/// `ColorImage` → `Frame`. `Color32` stores the colour
+/// PREMULTIPLIED, while the chain works with straight alpha
+/// (the alpha rule, items 417–418): for a JPEG thumbnail the alpha is all 255 and that is an identity,
+/// but for a generator-title frame it is not — and without unpacking a dark edge would get into the chain.
 fn frame_from(img: &egui::ColorImage) -> kt_fx::video::Frame {
     let mut rgba = img.as_raw().to_vec();
     let has_alpha = rgba.chunks_exact(4).any(|p| p[3] != 255);
@@ -419,8 +419,8 @@ fn frame_from(img: &egui::ColorImage) -> kt_fx::video::Frame {
     kt_fx::video::Frame { w: img.width() as u32, h: img.height() as u32, rgba, has_alpha }
 }
 
-/// Рендер одной заявки. Вынесен из воркера, чтобы тест мог позвать его
-/// напрямую — без потока и без ожиданий.
+/// Rendering of one request. Taken out of the worker so that a test can call it directly —
+/// without a thread and without waiting.
 pub(crate) fn render_job(
     job: &FxThumbJob,
     scratch: &mut kt_fx::video::FxScratch,
@@ -428,12 +428,12 @@ pub(crate) fn render_job(
     let base = match (&job.base_img, job.key.base) {
         (Some(img), _) => frame_from(img),
         (None, FxThumbBase::PatternAlpha) => kt_fx::video::test_pattern(REF_W, REF_H, true),
-        // база не приехала, а ключ говорит «кадр источника» — считаем на
-        // образце: пустых ячеек не бывает (ключ при этом чужой, и когда
-        // кадр приедет, UI попросит его под своим ключом)
+        // the base has not arrived, but the key says “source frame”
+        // — we compute on the sample: empty cells do not occur
+        // (the key is then foreign, and when the frame arrives, the UI will ask for it under its own key)
         (None, _) => kt_fx::video::test_pattern(REF_W, REF_H, false),
     };
-    // расчёт на ОПОРНОМ размере, хранение — в размере ячейки (п.428)
+    // computation at the REFERENCE size, storage at the cell size (item 428)
     let full = kt_fx::video::render_fx_thumb(
         &base,
         &job.chain,
@@ -477,9 +477,9 @@ fn worker(shared: Arc<Shared>) {
             continue;
         }
         let img = render_job(&job, &mut scratch);
-        // поколение могло сменится ПОКА считали: публиковать всё равно
-        // можно (ключ адресует ровно эту картинку), а вот считать
-        // следующие устаревшие заявки — нет, их выбросит pop()
+        // the generation could change WHILE we were computing: publishing is still possible
+        // (the key addresses exactly this picture), but computing
+        // the next stale requests is not — pop() will drop them
         shared.publish(job.key, Arc::new(img));
         if shared.busy.load(Ordering::Relaxed) {
             std::thread::sleep(BUSY_PAUSE);
@@ -507,10 +507,10 @@ mod tests {
         }
     }
 
-    /// Тест 546 (п.430): очередь миниатюр — LIFO, dedup и отмена
-    /// поколением. Дубликат обязан отбрасываться: одна и та же ячейка
-    /// просится на КАЖДОМ кадре интерфейса, пока не готова, и без dedup
-    /// очередь росла бы пропорционально fps.
+    /// Test 546 (item 430): the thumbnail queue — LIFO, dedup and cancellation by generation.
+    /// A duplicate must be dropped: the same cell asks
+    /// on EVERY frame of the interface until it is ready,
+    /// and without dedup the queue would grow in proportion to fps.
     #[test]
     fn t546_queue_is_lifo_dedup_and_cancels_by_generation() {
         let mut q = JobQueue::default();
@@ -518,22 +518,22 @@ mod tests {
         assert!(q.push(job(2, 0)));
         assert!(!q.push(job(1, 0)), "duplicate key was queued twice");
         assert_eq!(q.len(), 2);
-        // свежие первыми
+        // fresh first
         assert_eq!(q.pop(0).expect("job").key.recipe, 2);
         assert_eq!(q.pop(0).expect("job").key.recipe, 1);
         assert!(q.pop(0).is_none());
 
-        // ключ, снятый с очереди, можно заказать снова (иначе повторное
-        // открытие пикера не дозаказало бы то, что не успело посчитаться)
+        // a key removed from the queue can be ordered again (otherwise reopening the picker would not re-order
+        // what had not managed to be computed)
         assert!(q.push(job(1, 0)));
 
-        // отмена поколением: заявки прошлых поколений выбрасываются
+        // cancellation by generation: requests of past generations are dropped
         assert!(q.push(job(3, 1)));
         assert_eq!(q.pop(1).expect("fresh job").key.recipe, 3);
         assert!(q.pop(1).is_none(), "a stale job survived the generation bump");
     }
 
-    /// Публикация и LRU: потолок держится, а вытесняется САМОЕ СТАРОЕ.
+    /// Publication and LRU: the ceiling holds, and the OLDEST is evicted.
     #[test]
     fn t546b_ready_lru_has_a_ceiling() {
         let shared = Shared::new();
@@ -544,13 +544,13 @@ mod tests {
         assert_eq!(shared.ready.lock().unwrap().len(), MAX_READY_FX);
         assert!(shared.ready.lock().unwrap().get(&key(0)).is_none(), "oldest survived");
         assert!(shared.ready.lock().unwrap().get(&key(MAX_READY_FX as u64 + 9)).is_some());
-        // повторная публикация того же ключа не растит очередь порядка
+        // republishing the same key does not grow the order queue
         let before = shared.order.lock().unwrap().len();
         shared.publish(key(MAX_READY_FX as u64 + 9), img());
         assert_eq!(shared.order.lock().unwrap().len(), before);
     }
 
-    /// Рецепт различает ровно то, от чего зависит картинка.
+    /// The recipe distinguishes exactly what the picture depends on.
     #[test]
     fn t546c_recipe_separates_what_changes_the_picture() {
         let a = vec![FxInstance::blur(8)];
@@ -569,12 +569,12 @@ mod tests {
             recipe_hash(&a, 0.5, 90_000, Some(cam2)),
             "world scale not seen"
         );
-        // пустая цепочка — тоже рецепт (чистый кадр в ячейке «шаблона»)
+        // an empty chain is also a recipe (a clean frame in the “template” cell)
         assert_ne!(base, recipe_hash(&[], 0.5, 90_000, None));
     }
 
-    /// Рендер заявки: ячейка нужного размера, цепочка ВИДНА, а тот же
-    /// рецепт даёт тот же результат (иначе полоска мерцала бы).
+    /// Rendering a request: the cell of the required size, the chain is VISIBLE, and the same recipe gives
+    /// the same result (otherwise the strip would flicker).
     #[test]
     fn t546d_render_job_gives_a_cell_and_the_chain_is_visible() {
         let mut s = kt_fx::video::FxScratch::default();
@@ -584,17 +584,17 @@ mod tests {
         with_fx.chain = vec![FxInstance::Mirror { horizontal: true, vertical: false }];
         let mirrored = render_job(&with_fx, &mut s);
         assert_ne!(plain.as_raw(), mirrored.as_raw(), "the chain changed nothing");
-        // второй прогон на ТОМ ЖЕ пуле — байт-в-байт (грязный пул, t68)
+        // a second run on the SAME pool is byte-for-byte (a dirty pool, t68)
         let again = render_job(&with_fx, &mut s);
         assert_eq!(mirrored.as_raw(), again.as_raw(), "a reused pool changed the bytes");
-        // альфа-образец отличается от непрозрачного
+        // the alpha sample differs from the opaque one
         let mut alpha = job(2, 0);
         alpha.key.base = FxThumbBase::PatternAlpha;
         assert_ne!(plain.as_raw(), render_job(&alpha, &mut s).as_raw());
     }
 
-    /// Сервис целиком: заявка доезжает до `get()`, а `invalidate_media`
-    /// выбрасывает ячейки ИМЕННО этого медиа (правка генератора, п.412).
+    /// The service as a whole: a request reaches `get()`, and `invalidate_media` drops the cells
+    /// of EXACTLY this media (a generator edit, item 412).
     #[test]
     fn t546e_service_delivers_and_invalidates_by_media() {
         let svc = FxThumbService::start();
@@ -611,7 +611,7 @@ mod tests {
         assert_eq!(img.size, [CELL_W as usize, CELL_H as usize]);
         assert!(!svc.pending(), "queue is not empty after delivery");
 
-        // ячейки на кадре медиа №1 и на образце
+        // cells on the frame of media No. 1 and on the sample
         let mine = FxThumbKey {
             base: FxThumbBase::Thumb(crate::thumbs::ThumbKey { media: MediaId(1), t: 0 }),
             recipe: 5,
@@ -629,18 +629,18 @@ mod tests {
         assert!(svc.get(&k).is_some(), "invalidation hit the built-in pattern");
     }
 
-    /// Путь, которым ходит ОТРИСОВКА: `PickerCtx::texture` обязана
-    /// сначала поставить заявку и вернуть `None`, а после работы воркера —
-    /// отдать текстуру. Без этого теста «ячейки чёрные» видно только
-    /// живым сценарием: харнесс-тест вёрстки находит ячейку по подписи и
-    /// про картинку внутри не знает ничего.
+    /// The path the DRAWING takes: `PickerCtx::texture` must first enqueue the request and return `None`,
+    /// and after the worker has worked, hand out the texture.
+    /// Without this test “the cells are black” is visible only
+    /// to a live scenario: the layout harness test finds the cell
+    /// by its caption and knows nothing about the picture inside.
     #[test]
     fn t546g_picker_ctx_requests_then_gets_a_texture() {
         let svc = FxThumbService::start();
         let ctx = egui::Context::default();
         let mut pv = PickerCtx::new(&svc, FxThumbBase::Pattern, None, vec![], 0.5, 90_000, None);
         let fx = [FxInstance::blur(8)];
-        assert!(pv.texture(&ctx, &fx).is_none(), "текстура нашлась до всякого рендера");
+        assert!(pv.texture(&ctx, &fx).is_none(), "the texture was found before any render");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
             if pv.texture(&ctx, &fx).is_some() {
@@ -648,18 +648,18 @@ mod tests {
             }
             assert!(
                 std::time::Instant::now() < deadline,
-                "ячейка так и осталась без текстуры: заявка не доехала до воркера \
-                 или ключ заявки не совпал с ключом поиска"
+                "the cell remained without a texture: the request did not reach the worker \
+                 or the request key did not match the lookup key"
             );
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        // повторный вызов берёт ГОТОВУЮ текстуру, а не заливает заново
+        // a repeated call takes the READY texture rather than uploading it again
         let first = pv.texture(&ctx, &fx);
         let second = pv.texture(&ctx, &fx);
-        assert_eq!(first, second, "текстура ячейки пересоздаётся на каждом кадре");
+        assert_eq!(first, second, "the cell texture is recreated on every frame");
     }
 
-    /// Мисклик-гард сторожит ЗАКАЗЫ ДЕКОДА, а не рендер.
+    /// The misclick guard watches the DECODE ORDERS, not the render.
     #[test]
     fn t546f_decode_guard_waits_but_rendering_does_not() {
         use std::time::Duration;

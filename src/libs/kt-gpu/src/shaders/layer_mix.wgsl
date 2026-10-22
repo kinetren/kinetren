@@ -1,9 +1,9 @@
-// Сила наложения слоя (Р.38 п.12) — зеркало `dissolve_into` в
-// kt-engine/src/video.rs, ЦЕЛОЧИСЛЕННО и байт-в-байт с ним и с
-// `dis()` из composite.wgsl (та же формула, отдельный пасс: смешение
-// идёт ВНУТРИ цепочки слоя, а не при композите).
+// Layer blend strength (R.38 item 12): a mirror of `dissolve_into` in
+// kt-engine/src/video.rs, INTEGER and byte-for-byte with it and with
+// `dis()` from composite.wgsl (the same formula, a separate pass: the mix
+// happens INSIDE the layer’s chain, not at the composite).
 //
-// T0 = сухая сторона (состояние ДО вклада слоя), T1 = мокрая (после).
+// T0 = dry side (the state BEFORE the layer’s contribution), T1 = wet (after).
 // u0 = (k, dry_has_alpha, wet_has_alpha, 0).
 
 @fragment

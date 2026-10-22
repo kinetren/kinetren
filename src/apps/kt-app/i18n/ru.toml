@@ -1,9 +1,9 @@
-# Каталог перевода Kinetren. Правила — i18n/README.md.
-# Формат: строгое подмножество TOML, значения только в одну строку.
-# СОБРАН автоматически на шаге массового переноса строк (Р.19);
-# дальше правится руками.
+# Kinetren translation catalog. Rules — i18n/README.md.
+# Format: a strict subset of TOML, values on one line only.
+# GENERATED automatically at the bulk line-wrap step (R.19);
+# further edits are made by hand.
 
-# Самоназвания языков. Одинаковы во ВСЕХ каталогах (сборка проверяет).
+# Language endonyms. Identical in ALL catalogs (the build checks this).
 [lang]
 en = "English"
 ru = "Русский"
@@ -11,7 +11,7 @@ es = "Español"
 zh = "中文（简体）"
 ar = "العربية"
 
-# Кнопки окна (свой титлбар, п.22 р.6).
+# Window buttons (own titlebar, item 22 round 6).
 [win]
 close = "Закрыть"
 restore = "Восстановить"
@@ -62,7 +62,7 @@ lang_auto = "Авто (система)"
 diagnostics = "Диагностика…"
 notices = "Уведомления"
 
-# Тулбар: подсказки кнопок. Акселератор в скобках — часть подсказки.
+# Toolbar: button hints. The accelerator in parentheses is part of the hint.
 [tb]
 play_pause = "Play/Pause (Space)"
 back = "Назад: маркер / регион / край клипа (A или Home; Shift — тянуть левый край региона)"
@@ -98,7 +98,7 @@ search = "Поиск по проекту (Ctrl+F)"
 diag = "Диагностика"
 save = "Сохранить (Ctrl+S)"
 
-# Таймлайн: контекстное меню дорожки.
+# Timeline: track context menu.
 [tl.lane]
 title = "Дорожка {0}"
 delete = "Удалить дорожку"
@@ -120,7 +120,7 @@ add_camera_here = "Добавить камеру под курсором"
 add_morpher_here = "Добавить морфер сюда"
 reset_height = "Сбросить высоту"
 
-# Таймлайн: подсказки зон (правый низ статусбара).
+# Timeline: zone hints (bottom right of the status bar).
 [tl.hint]
 area = "Область: кромки — длина, ПКМ — переименовать, цвет, удалить"
 transition = "Кроссфейд: края — ширина, центр — сдвиг стыка"
@@ -148,19 +148,19 @@ morph_lane = "Морф-дорожка: ПКМ — добавить сюда мо
 camera_lane = "Камерная дорожка: ПКМ — добавить сюда камеру; камера смотрит на 3D-слои дорожек ниже"
 empty = "ЛКМ — курсор, драг — регион, Ctrl+драг — выделить события; колесо — скролл, Ctrl — зум, Shift — дорожки"
 
-# Таймлайн: подписи на morph-событиях.
+# Timeline: labels on morph events.
 [tl.morph]
 layer = "Слой"
 clips = "События: {0}"
 
-# Таймлайн: подсказки полей ввода.
+# Timeline: input field hints.
 [tl.field]
 area_name = "Имя области"
 marker_name_new = "имя метки (можно пропустить)"
 marker_name = "имя метки"
 lane_name = "имя дорожки"
 
-# Таймлайн: контекстные меню клипа, метки, региона.
+# Timeline: context menus for clip, marker, region.
 [tl.menu]
 level = "Уровень"
 area_title = "Область: {0}"
@@ -205,7 +205,7 @@ duck = "Дакинг (приглушение фона под речь)…"
 remove_transition = "Убрать этот переход"
 sync_audio = "Синхронизировать по звуку со вторым выделенным"
 
-# Медиа-бин: режимы, подсказки, пустое состояние.
+# Media bin: modes, hints, empty state.
 collapse = "Свернуть выделение в ленту"
 nest_expand = "Развернуть ленту на дорожки"
 nest_independent = "Отвязать от других мест"
@@ -228,7 +228,7 @@ group_name = "имя группы"
 loudness = "{0} LUFS, пик {1} dBTP"
 loudness_pending = "громкость ещё не измерена"
 
-# Медиа-бин: контекстные меню карточки и группы.
+# Media bin: context menus for card and group.
 [bin.menu]
 rename = "Переименовать…"
 unlock = "Снять замок"
@@ -243,13 +243,13 @@ measure_loudness = "Измерить громкость"
 new_generator = "Создать генератор…"
 new_reel = "Создать композицию"
 
-# Метры и мастер-фейдер превью.
+# Meters and preview master fader.
 [meter]
 mute = "Мьют мастера превью"
 fader = "Мастер-громкость превью: тяни или колесо (Shift — точно), double-click — 0 dB"
 peak = "Пиковый уровень мастера, dBFS"
 
-# Редактор morpher'а.
+# Morpher editor.
 [mrph]
 strength = "Сила"
 strength_hint = "Насколько слой наложен: 1.0 — полностью, 0 — как будто слоя нет"
@@ -295,8 +295,8 @@ bake_batch = "Bake FX-батча"
 bake_morph = "Bake морфинга"
 remove = "Удалить morpher"
 
-# Реестр FX и пикер с поиском.
-# Подписи параметров эффектов (Р.33): один источник — спека kt-model.
+# FX registry and searchable picker.
+# Effect parameter labels (R.33): one source — the kt-model spec.
 [fxp]
 cx = "Центр по X:"
 cy = "Центр по Y:"
@@ -411,7 +411,7 @@ template_hint = "Добавит эффект со значениями по ум
 var_hint = "Добавит эффект уже настроенным — на миниатюре ваш кадр"
 axis_hint = "Сила: {0} … {1}, {2} %  (отпустите — добавится показанное)"
 
-# Категории эффектов в пикере.
+# Effect categories in the picker.
 [fxreg.cat]
 three_d = "3D"
 motion = "Движение"
@@ -431,8 +431,8 @@ dynamics = "Динамика"
 timestretch = "Тайм-стретч"
 color = "Цвет"
 
-# Ключевые слова поиска. НЕ переупорядочиваются для арабского
-# (сравниваются с вводом пользователя), пишутся в нижнем регистре.
+# Search keywords. NOT reordered for Arabic
+# (compared with the user’s input), written in lowercase.
 [fxreg.kw]
 pan3d = "пан 3d перспектива камера слой"
 geometry = "геометрия кроп положение зум поворот кадр geometry crop"
@@ -479,11 +479,11 @@ cylinder3d = "цилиндр изгиб 3d cylinder"
 limiter = "лимитер потолок пик громкость limiter"
 pitch_shift = "высота питч полутон транспонирование pitch"
 
-# Имена встроенных ВАРИАНТОВ эффекта (Р.54): настроенное состояние с
-# именем по виду, а не по параметру. Словарь общий на все эффекты —
-# «Мягко» у размытия и у свечения значит одно и то же, и держать под это
-# два ключа незачем. Имя варианта ПЕРЕВОДИТСЯ (в отличие от имени
-# эффекта): «Тушь» и «Чертёж» — не отраслевые термины.
+# Names of built-in VARIANTS of an effect (R.54): a preset state with
+# a name by look, not by parameter. The vocabulary is shared by all effects —
+# “Soft” for blur and for glow means the same thing, and two keys for it are pointless.
+# A variant name IS TRANSLATED (unlike the effect name);
+# “Ink” and “Blueprint” are not industry terms.
 [fxreg.var]
 soft = "Мягко"
 strong = "Сильно"
@@ -539,7 +539,7 @@ grid9 = "3×3"
 grid16 = "4×4"
 strip = "Полоса"
 
-# Редактор FX клипа.
+# FX editor of the clip.
 [fx]
 hint_reset = "Двойной клик по подписи — сброс параметра"
 conform = "Приведение:"
@@ -670,7 +670,7 @@ columns = "Столбцы:"
 rows = "Строки:"
 center = "Центрировать"
 
-# Диалог настроек рендера и окно прогресса.
+# Render settings dialog and progress window.
 chain_on = "Цепочка"
 chain_on_hint = "Мастер-выключатель: гасит всю цепочку, не трогая состояние слотов"
 shadow_color = "Тени"
@@ -721,7 +721,7 @@ done_msg = "Готово: {0}"
 error_msg = "Ошибка: {0}"
 close = "Закрыть"
 
-# Подсказки главного окна (правый низ статусбара).
+# Main window hints (bottom right of the status bar).
 missing_warn = "недоступных исходников ({0}), они попадут в файл заглушками: {1}"
 muted_warn = "заглушённых дорожек ({0}), в файл они не попадут: {1}"
 solo_warn = "включено соло ({0}), в файл попадут только эти дорожки: {1}"
@@ -742,7 +742,7 @@ preview_quality = "Качество превью: доля разрешения 
 smoothing = "Линейное сглаживание превью (выкл — резкие пиксели)"
 economy = "Для слабых GPU: вдвое меньше перерисовок при воспроизведении"
 
-# Палитра поиска по проекту.
+# Project-wide search palette.
 flight = "Компактное кольцо событий транспорта и счётчиков — для разбора плавающих багов воспроизведения"
 pitch_engine = "Движок питча на весь проект: WSOLA держит удары, вокодер глаже на гармонии"
 project_settings = "Растр, fps, правило приведения, движок питча и форма ключей этого проекта"
@@ -760,8 +760,8 @@ nothing = "ничего не найдено"
 marker_at = "метка {0}с"
 clip_at = "{0} @ {1}с"
 
-# Разовые сообщения note()/warn(). Согласования с числом НЕТ:
-# пишем «существительное: N» (правило Р.19, см. README).
+# One-off messages note()/warn(). There is NO agreement with the number:
+# we write “noun: N” (rule R.19, see README).
 [msg]
 area_needs_band = "Сначала выделите рамкой участок таймлайна (или регион)"
 area_stem = "область"
@@ -806,7 +806,7 @@ software_render = "Нет аппаратного ускорения график
 video_fx_cpu = "Видеоэффекты считаются на CPU (GPU недоступен): {0}"
 video_fx_gpu_lost = "GPU-рендер видео потерян ({0}) — переключился на CPU"
 
-# Заголовки системных файловых диалогов.
+# Titles of system file dialogs.
 flight_saved = "Журнал воспроизведения сохранён: {0}"
 
 media_missing = "{0}: исходник недоступен, показана заглушка ({1})"
@@ -889,7 +889,7 @@ import_older = "Импорт проекта старой версии Kinetren"
 open_project = "Открыть проект"
 save_project = "Сохранить проект"
 
-# Перф-панель и окно диагностики.
+# Perf panel and diagnostics window.
 [perf]
 loading = "Загрузка…"
 smoothing = "Сглаживание"
@@ -919,7 +919,7 @@ log_clear = "Очистить"
 graph_reset = "Сброс графиков"
 log_empty = "проблем не замечено"
 
-# Пороговые предупреждения в журнале проблем.
+# Threshold warnings in the problem log.
 flight_save = "Сохранить журнал воспроизведения"
 flight_stalls = "замираний: {0}"
 
@@ -932,7 +932,7 @@ prefetch_thrash = "сброшено {0} записей кэша до перво�
 low_video_hit = "видео-hit {0}% при воспроизведении — декод не успевает"
 offline_changed = "доступность медиа изменилась: офлайн {0}"
 
-# Переходы (Р.33 С4): вид, его параметры и кривая аудио.
+# Transitions (R.33 C4): kind, its parameters and audio curve.
 [trn]
 title = "Переход {0}"
 kind = "Вид:"
@@ -1009,7 +1009,7 @@ circle = "Круг"
 diamond = "Ромб"
 box = "Прямоугольник"
 
-# Окно камеры (Р.34 К3).
+# Camera window (R.34 K3).
 [cam]
 props = "Свойства камеры…"
 title = "Камера {0}"
@@ -1020,7 +1020,7 @@ look_at = "Смотреть в точку"
 look_at_hint = "Камера из двух узлов: всегда нацелена в точку (как в After Effects)"
 length = "Длина, с: {0}"
 
-# Вопросы, на которые программа обязана получить ответ до действия.
+# Questions the program must get answered before an action.
 [ask]
 drop_project_title = "Брошен проект"
 drop_project_body = "Файл {0} — проект. Открыть его или вставить в текущий монтаж композицией?"
@@ -1049,7 +1049,7 @@ save_and_go = "Сохранить и продолжить"
 discard = "Не сохранять"
 stay = "Остаться"
 
-# Окно генератора (Р.52): вид и параметры медиа без файла.
+# Generator window (R.52): kind and media parameters without a file.
 [genw]
 hint_kind = "Вид генератора; вся форма живёт на этом событии"
 head = "Источник: {0}"
@@ -1092,7 +1092,7 @@ noise = "Шумовое поле"
 smpte = "Полосы SMPTE"
 timecode = "Тайм-код"
 
-# Окно титра (Р.52 С3).
+# Title window (R.52 C3).
 [titlew]
 preset_roll = "Финальные титры"
 preset_crawl = "Бегущая строка"
@@ -1121,8 +1121,8 @@ align_l = "Слева"
 align_c = "По центру"
 align_r = "Справа"
 
-# Подписи параметров генераторов (Р.53 п.414): своя область — «size» у
-# титра это КЕГЛЬ, а не зерно эффекта Noise.
+# Generator parameter labels (R.53 item 414): own area — “size” in
+# a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
 text = "Текст"
 reveal = "Раскрытие"
@@ -1161,7 +1161,7 @@ fps = "Кадров в секунду:"
 mono = "Серый"
 tone = "Тон 1 кГц"
 
-# Публичные параметры композиции (Р.59, стадия 3).
+# Public parameters of the composition (R.59, stage 3).
 [pubp]
 publish = "Опубликовать…"
 unpublish = "Снять публикацию"

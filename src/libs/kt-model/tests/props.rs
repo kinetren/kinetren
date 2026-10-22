@@ -1,14 +1,14 @@
-//! Тесты 641-643 (Р.59, п.466-467): модель свойств и компилированная
-//! автоматизация.
+//! Tests 641-643 (R.59, item 466-467): the property model and compiled
+//! automation.
 //!
-//! Главный здесь — **t643**: замороженный оракул. Индексный путь обязан
-//! давать те же числа, что именной, иначе картинка поедет молча: ключи
-//! кэша от смены пути не меняются, и никакой сторож этого бы не поймал.
+//! The main one here is **t643**: a frozen oracle. The index path must
+//! give the same numbers as the named one, otherwise the picture drifts silently:
+//! cache keys do not change with the path switch, and no guard would catch it.
 
 use kt_model::*;
 use kt_time::Tick;
 
-/// Все носители паспортов, какие есть в модели.
+/// All the property carriers that exist in the model.
 fn owners() -> Vec<Box<dyn HasParams>> {
     let mut v: Vec<Box<dyn HasParams>> = Vec::new();
     for f in FxInstance::all() {
@@ -35,8 +35,8 @@ fn t641_every_passport_is_typed_and_unique() {
                 "parameter name {} occurs twice in one passport",
                 s.name
             );
-            // Встроенные ряды объявляет макрос, и все они числовые:
-            // типизация заведена ради ДИНАМИЧЕСКИХ владельцев.
+            // The built-in rows are declared by a macro, and all of them are numeric:
+            // the typing was set up for DYNAMIC owners.
             assert_eq!(s.ty, ParamType::Num, "built-in row {} is not a number", s.name);
             assert!(s.label.is_empty(), "built-in row {} carries its own label", s.name);
             assert!(s.min <= s.default && s.default <= s.max, "{}: default out of range", s.name);
@@ -56,10 +56,10 @@ fn t642_index_addressing_equals_names() {
             let by_name = o.get_param(&s.name).expect("read by name");
             assert_eq!(by_idx.to_bits(), by_name.to_bits(), "{}: two paths disagree", s.name);
 
-            // Кламп у обоих путей ОДИН И ТОТ ЖЕ — это главное здесь.
-            // Сравнение с самим пределом идёт с допуском на f32: поле
-            // варианта хранит 0.99 как 0.990000009, и это не промах
-            // клампа, а ширина типа.
+            // The clamp is ONE AND THE SAME for both paths — that is the main point here.
+            // The comparison with the limit itself uses a tolerance for f32: the variant field
+            // stores 0.99 as 0.990000009, and that is not a clamp miss
+            // but the width of the type.
             o.set_param_idx(i, s.max + 1e6);
             let hi = o.get_param_idx(i).unwrap();
             o.set_param(&s.name, s.max + 1e6);
@@ -80,8 +80,8 @@ fn t642_index_addressing_equals_names() {
     }
 }
 
-/// ЗАМОРОЖЕННЫЙ ОРАКУЛ: дословная копия именного пути, каким он был до
-/// Р.59. Живёт ЗДЕСЬ и правке не подлежит — против него сверяется план.
+/// FROZEN ORACLE: a verbatim copy of the named path as it was before R.59.
+/// It lives HERE and is not to be edited — the plan is checked against it.
 mod frozen {
     use kt_model::*;
     use kt_time::Tick;
@@ -96,7 +96,7 @@ mod frozen {
 }
 
 fn curve(param: &str, a: f64, b: f64, ease: bool) -> ParamCurve {
-    // прежнее булево сглаживание — это одна форма на все отрезки (Р.61)
+    // the former boolean smoothing is one form for all segments (R.61)
     let shape = if ease { SegShape::DEFAULT } else { SegShape::Linear };
     ParamCurve {
         param: param.into(),
@@ -125,11 +125,11 @@ fn t643_compiled_plan_equals_the_frozen_name_path() {
         }
         for s in &specs {
             for ease in [false, true] {
-                // кривая ВЫХОДИТ за пределы спеки с обоих концов: кламп
-                // обязан совпасть у двух путей, а не только значение
+                // the curve goes OUTSIDE the spec’s range at both ends: the clamp must
+                // match in both paths, not only the value
                 let curves = vec![vec![
                     curve(&s.name, s.min - 5.0, s.max + 5.0, ease),
-                    // сирота рядом: оба пути обязаны её пропустить
+                    // an orphan next to it: both paths must skip it
                     curve("no_such_param_at_all", 0.0, 1.0, ease),
                 ]];
                 let chain = vec![f.clone()];
@@ -216,13 +216,13 @@ fn t649_formula_curves_are_refused_loudly() {
     p.ensure_tracks(LaneKind::Video, 1);
     p.validate().expect("a project with ordinary key curves is legal");
 
-    // ...а с Р.61 формула СЧИТАЕТСЯ: отвергается не источник, а источник,
-    // который НЕ РАЗРЕШАЕТСЯ. Тихий рендер «по ключам» показал бы не то,
-    // что записано в файле.
+    // ...and with R.61 the formula is COMPUTED: what gets rejected is not the source
+    // but a source that is NOT ALLOWED. A silent render “by keys” would show
+    // something other than what is written in the file.
     c.fx_auto[0][0].source = CurveSource::Formula { expr: "t * 2".into() };
     c.fx_auto[0][0].keys.clear();
     p.clips[0] = c.clone();
-    p.validate().expect("a formula-driven curve is legal since Р.61");
+    p.validate().expect("a formula-driven curve is legal since R.61");
 
     c.fx_auto[0][0].source = CurveSource::Formula { expr: "1 + ".into() };
     p.clips[0] = c.clone();
@@ -233,7 +233,7 @@ fn t649_formula_curves_are_refused_loudly() {
     );
 
     c.fx_auto[0][0].source =
-        CurveSource::Link { path: "не адрес".into(), expr: None, stops: Vec::new() };
+        CurveSource::Link { path: "not an address".into(), expr: None, stops: Vec::new() };
     p.clips[0] = c;
     let err = p.validate().expect_err("a malformed link address must be refused");
     assert!(matches!(err, ProjectError::CurveSourceBroken(ClipId(1), _)), "{err:?}");

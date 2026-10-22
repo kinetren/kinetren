@@ -1,66 +1,66 @@
 #!/usr/bin/env python3
-"""Сторож «ожидание, а не сон» у живых сценариев (Р.68).
+"""The guard “waiting, not sleeping” for live scenarios (R.68).
 
-Замер Р.68: 96 % времени живого прогона уходило в безусловный `time.sleep`
-(`nestparam` — 130.5 с из 135.9 в 591 вызове; `curvesrc` — 41.9 из 43.2).
-Паузы подбирались под софт-рендер («кадр идёт ~0.2 с»), то есть каркас
-ЧАСАМИ ждал того, о чём программа может сказать сама: она сообщает номер
-нарисованного кадра и число прочитанных событий ввода.
+R.68 measurement: 96 % of the live run time went to unconditional `time.sleep`
+(`nestparam` — 130.5 s of 135.9 in 591 calls; `curvesrc` — 41.9 of 43.2).
+Pauses were tuned to software rendering (“a frame takes ~0.2 s”), that is, the framework
+waited for HOURS for what the program can say itself: it reports the number
+of the drawn frame and the count of input events read.
 
-Правило, которое этот сторож держит:
+The rule this guard enforces:
 
-* в СЦЕНАРИИ (`scripts/live/*.py`) сырого `time.sleep` не бывает вовсе —
-  ожидание идёт через каркас (`wait_frame`, `wait_seen`, `settle`,
-  `wait_playhead`, `pixel_settled`), а цикл опроса берёт `poll_step()`;
-* в КАРКАСЕ сырой `time.sleep` живёт ровно в трёх местах: `pause()` —
-  пауза С ПРИЧИНОЙ, `_poll()` — шаг ожидания внутри каркаса и
-  `poll_step()` — шаг опроса для циклов сценария;
-* у каждого вызова `pause(...)` причина словами не короче сорока символов;
-* КАЖДЫЙ ЖЕСТ каркаса ждёт, пока программа прочитает ввод (`_after_gesture`),
-  и фиксированных пауз внутри жеста не держит — законные места перечислены
-  поимённо (`PAUSE_OK_IN`). Это правило Р.69: ожидание по событию было
-  построено в Р.68 и до самих жестов не доехало.
+* in a SCENARIO (`scripts/live/*.py`) there is no raw `time.sleep` at all —
+  waiting goes through the framework (`wait_frame`, `wait_seen`, `settle`,
+  `wait_playhead`, `pixel_settled`), and a polling loop uses `poll_step()`;
+* in the FRAMEWORK the raw `time.sleep` lives in exactly three places: `pause()` —
+  a pause WITH A REASON, `_poll()` — a waiting step inside the framework, and
+  `poll_step()` — a polling step for scenario loops;
+* each call of `pause(...)` has a reason in words of at least forty characters;
+* EVERY GESTURE of the framework waits until the program reads the input (`_after_gesture`),
+  and keeps no fixed pauses inside a gesture — the legitimate places are listed
+  by name (`PAUSE_OK_IN`). This is the R.69 rule: waiting on an event was
+  built in R.68 but did not reach the gestures themselves.
 
-Мера «сорок символов» — та же, что у сторожа ПУТЬ (Р.67) и у реестра окон
-(Р.66): исключение обязано быть ИЗМЕРИМЫМ, иначе отговорка становится
-дешевле описания.
+The “forty characters” measure is the same as for the PATH guard (R.67) and the window registry
+(R.66): an exception must be MEASURABLE, otherwise an excuse becomes
+cheaper than the description.
 
     python3 scripts/live-sleeps.py --check
-    python3 scripts/live-sleeps.py --check --scripts <копия каталога scripts>
+    python3 scripts/live-sleeps.py --check --scripts <copy of the scripts directory>
 """
 import ast
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-# КОРЕНЬ ПРОВЕРЯЕМЫХ ИСХОДНИКОВ — ПОДМЕНЯЕМЫЙ (`--scripts <каталог>`).
-# Тесты сторожа (t803, t808) проверяют его НАРУШЕНИЯМИ: подставляют сценарий
-# с сырой паузой, ломают драйвер, поднимают константу. Делать это в рабочем
-# дереве нельзя — тесты идут одновременно (нити у `cargo test`, процессы у
-# nextest), и порча одного становится красным вердиктом другого. Ровно этот
-# класс («флак по построению») раунд и убирает, так что своих тестов правило
-# касается тоже: каждый работает на СВОЕЙ копии.
+# ROOT OF THE CHECKED SOURCES — OVERRIDABLE (`--scripts <directory>`).
+# The guard’s tests (t803, t808) check it with VIOLATIONS: they substitute a scenario
+# with a raw pause, break the driver, raise a constant. To do this in the working
+# tree is impossible — the tests run at the same time (threads in `cargo test`, processes in
+# nextest), and corrupting one becomes a red verdict for another. Exactly this
+# class (“flakiness by construction”) the round removes, so the rule
+# touches its own tests too: each works on its OWN copy.
 SCRIPTS = ROOT / "src" / "scripts"
 if "--scripts" in sys.argv:
     SCRIPTS = Path(sys.argv[sys.argv.index("--scripts") + 1]).resolve()
 LIVE = SCRIPTS / "live"
 FRAMEWORK = "kt_live.py"
-# ДРАЙВЕР МЫШИ И КЛАВИАТУРЫ (Р.69). До этого раунда сторож смотрел только на
-# каркас и сценарии, а драйвер спал внутри себя — 123 с из 387 с сна всего
-# живого прогона жили ВНЕ области действия правила «пауза только с причиной».
-# Сон, спрятанный в драйвере, ничем не отличается от сна в каркасе.
+# MOUSE AND KEYBOARD DRIVER (R.69). Before this round the guard looked only at
+# the frame and the scenarios, while the driver slept inside itself — 123 s of the 387 s of sleep
+# of the whole live run lived OUTSIDE the scope of the rule “a pause only with a reason”.
+# Sleep hidden in the driver is no different from sleep in the frame.
 DRIVER = SCRIPTS / "ui-probe.py"
 DRIVER_SLEEP_HOME = "_nap"
-# каркас работника поднимает Xvfb и процессы — там ожидание системное, а не
-# оконное: ждать «кадра» ещё некому, программа не запущена
+# the worker frame raises Xvfb and processes — there the wait is system-level, not
+# window-level: there is no “frame” to wait for yet, the program is not running
 RUNNER = "worker.py"
 SLEEP_HOMES = {"pause", "_poll", "poll_step"}
 MIN_REASON = 40
 
-# ЖЕСТЫ КАРКАСА и правило Р.69: каждый ждёт, пока ПРОГРАММА прочитает ввод
-# (`_after_gesture`), а не столько, сколько кадр идёт «обычно». Правило
-# держится сторожем, потому что прозой оно уже не удержалось: ожидание по
-# событию было построено в Р.68 и до жестов не доехало.
+# GESTURE FRAME and the rule of R.69: each waits until the PROGRAM has read the input
+# (`_after_gesture`), not as long as a frame takes “usually”. The rule
+# is held by the guard, because in prose it already failed to hold: the wait on an
+# event was built in R.68 and did not reach the gestures.
 GESTURES = {
     "click",
     "right_click",
@@ -72,31 +72,31 @@ GESTURES = {
     "close_window",
     "type_text",
 }
-# Где фиксированная пауза внутри жеста ЗАКОННА, и почему ровно там:
-#   _after_gesture — фолбэк, когда события у egui законно не будет вовсе;
-#   focus          — поднятие окна делает оконный менеджер, своего события
-#                    ввода у программы тут нет;
-#   double_click   — зазор между кликами это ВРЕМЕННОЙ порог egui (Р.34);
-#   type_text      — зазор между символами, когда его просит сценарий.
+# Where a fixed pause inside a gesture is LAWFUL, and why exactly there:
+#   _after_gesture — the fallback, when an egui event legitimately will not come at all;
+#   focus          — the window manager raises the window, and the program has no
+#                    input event of its own here;
+#   double_click   — the gap between clicks is a TEMPORARY egui threshold (R.34);
+#   type_text      — the gap between characters, when the scenario asks for it.
 PAUSE_OK_IN = {"_after_gesture", "focus", "double_click", "type_text"}
 
-# БЮДЖЕТ СНА — ХРАПОВИК (Р.69, стадия 1). Причины словами оказалось мало:
-# все 265 с сна в каркасе были «законными», у каждой паузы стояло
-# объяснение длиннее сорока символов. Поэтому считается ещё и СУММА
-# ОБЪЯВЛЕННЫХ СЕКУНД: каждая константа в `pause(...)` каркаса и в сонных
-# умолчаниях драйвера. Мера статическая — она не зависит ни от машины, ни
-# от того, сколько раз жест позвали: вердикт, зависящий от загрузки, это
-# флак по построению (фактический сон прогона печатает live-check.sh).
+# SLEEP BUDGET — RATCHET (R.69, stage 1). The reasons in words turned out not enough:
+# all 265 s of sleep in the frame were “lawful”, each pause carried
+# an explanation longer than forty characters. So the SUM of
+# DECLARED SECONDS is also counted: each constant in the frame’s `pause(...)` and in the
+# driver’s sleep defaults. The measure is static — it depends neither on the machine nor
+# on how many times the gesture was called: a verdict that depends on load is
+# flakiness by construction (the actual sleep of the run is printed by live-check.sh).
 #
-# Предел двигают ОСОЗНАННО, одной строкой и с причиной — как
-# `UNTOUCHED_LIMIT` у отчёта живого покрытия (Р.68). Р.69: 14.9 → 11.2
-# после того, как жесты перешли на ожидание прочитанного ввода; фактический
-# сон прогона при этом 539 → 41 с.
+# The limit is moved DELIBERATELY, in one line and with a reason — like
+# `UNTOUCHED_LIMIT` of the live coverage report (R.68). R.69: 14.9 → 11.2
+# after the gestures moved to waiting for the read input; the actual
+# sleep of the run at that moment went 539 → 41 s.
 SLEEP_BUDGET = 11.2
 
 
 def raw_sleeps(tree):
-    """(строка, имя объемлющей функции) для каждого `time.sleep(...)`."""
+    """(line, name of the enclosing function) for each `time.sleep(...)`."""
     out = []
 
     def walk(node, fn):
@@ -119,7 +119,7 @@ def raw_sleeps(tree):
 
 
 def pause_calls(tree):
-    """(строка, причина) для каждого вызова `pause(...)`."""
+    """(line, reason) for each call of `pause(...)`."""
     out = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "pause":
@@ -137,7 +137,7 @@ def pause_calls(tree):
 
 
 def param_defaults(tree, call):
-    """Числовые умолчания параметров функции, в теле которой стоит `call`."""
+    """Numeric default values of parameters of the function in whose body `call` stands."""
     for fn in ast.walk(tree):
         if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
@@ -154,16 +154,16 @@ def param_defaults(tree, call):
 
 
 def declared_pauses(tree, rel):
-    """[(секунды, где)] у каждого вызова `pause(<число>, …)` дерева.
+    """[(seconds, where)] for each call of `pause(<number>, …)` in the tree.
 
-    В КАРКАСЕ длительность обязана быть ЧИСЛОМ НА МЕСТЕ ВЫЗОВА: пауза,
-    спрятанная за именем константы, в бюджет не попадала вовсе — дыра
-    нашлась сразу, как только ею воспользовались (разнос двойного клика,
-    Р.69). В СЦЕНАРИИ длительность законно бывает параметром: у `rate`
-    пауза и есть сама проверка (столько программа должна играть), а у
-    набора строки зазор приходит от сценария. Такие не считаются бюджетом и
-    названы в отчёте отдельной строкой. Вторая величина возврата — список
-    нарушений, третья — вычисляемые паузы.
+    In the FRAMEWORK the duration must be a NUMBER AT THE CALL SITE: a pause
+    hidden behind a constant name never reached the budget at all — a gap
+    was found as soon as it was used (double-click spacing,
+    R.69). In a SCENARIO the duration may legitimately be a parameter: for `rate`
+    the pause is the check itself (the program must play that long), and for
+    the typing of a line the gap comes from the scenario. Such ones do not count toward the budget and
+    are named in the report on a separate line. The second return value is the list
+    of violations, the third is the computed pauses.
     """
     out, bad, computed = [], [], []
     for node in ast.walk(tree):
@@ -178,14 +178,14 @@ def declared_pauses(tree, rel):
         if isinstance(arg, ast.Constant) and isinstance(arg.value, (int, float)):
             out.append((float(arg.value), f"{rel}:{node.lineno}"))
         elif isinstance(arg, ast.Name) and arg.id in param_defaults(tree, node):
-            # длительность пришла ПАРАМЕТРОМ с числовым умолчанием: в бюджет
-            # идёт умолчание — столько каркас спит, когда сценарий не просил
-            # иного (`type_text(gap=0.0)`)
+            # the duration came in as a PARAMETER with a numeric default: the budget counts the default —
+            # how long the frame sleeps when the scenario did not ask for
+            # anything else (`type_text(gap=0.0)`)
             out.append((param_defaults(tree, node)[arg.id], f"{rel}:{node.lineno}"))
         elif rel.endswith(FRAMEWORK):
             bad.append(
-                f"{rel}:{node.lineno}: длительность паузы КАРКАСА не число на месте "
-                "вызова — такая пауза не попадает в бюджет сна и становится невидимкой"
+                f"{rel}:{node.lineno}: the duration of a FRAMEWORK pause is not a number at the "
+                "call site — such a pause does not reach the sleep budget and becomes invisible"
             )
         else:
             computed.append(f"{rel}:{node.lineno}")
@@ -193,11 +193,11 @@ def declared_pauses(tree, rel):
 
 
 def driver_sleeps(tree):
-    """Сон драйвера X: сырые `time.sleep` вне `_nap` и сонные УМОЛЧАНИЯ.
+    """Sleep of driver X: raw `time.sleep` outside `_nap` and sleepy DEFAULTS.
 
-    Умолчание — это тоже пауза, и она опаснее записанной в вызове: её не
-    видно на месте жеста. До Р.69 `move(pause=0.05)`, `button(pause=0.09)` и
-    `key(pause=0.05, after=0.12)` спали за каркас именно так.
+    A default is a pause too, and it is more dangerous than one written in the call: it is not
+    visible at the gesture site. Before R.69 `move(pause=0.05)`, `button(pause=0.09)` and
+    `key(pause=0.05, after=0.12)` slept behind the framework exactly that way.
     """
     raw = [(line, fn) for line, fn in raw_sleeps(tree) if fn != DRIVER_SLEEP_HOME]
     seconds = 0.0
@@ -217,7 +217,7 @@ def driver_sleeps(tree):
 
 
 def gesture_faults(tree):
-    """Жест, который не ждёт программу, и пауза внутри жеста не по списку."""
+    """A gesture that does not wait for the program, and a pause inside a gesture not on the list."""
     bad = []
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -227,17 +227,17 @@ def gesture_faults(tree):
         src = ast.dump(node)
         if "'_after_gesture'" not in src:
             bad.append(
-                f"жест `{node.name}` не ждёт ПРОЧИТАННЫЙ ввод (`_after_gesture`): "
-                "фиксированная пауза не растягивается под нагрузкой — это тот самый "
-                "класс ложных покраснений (§468), который Р.69 и убирает"
+                f"gesture `{node.name}` does not wait for the READ input (`_after_gesture`): "
+                "a fixed pause does not stretch under load — this is the very "
+                "class of false reds (§468) that R.69 removes"
             )
         if node.name in PAUSE_OK_IN:
             continue
         for line, _reason in pause_calls(node):
             bad.append(
-                f"kt_live.py:{line}: фиксированная пауза внутри жеста `{node.name}`. "
-                "Законные места перечислены (`PAUSE_OK_IN`): фолбэк ожидания, поднятие "
-                "окна, временной порог двойного клика, зазор набора по просьбе сценария"
+                f"kt_live.py:{line}: a fixed pause inside the gesture `{node.name}`. "
+                "Legitimate places are listed (`PAUSE_OK_IN`): the waiting fallback, raising "
+                "the window, the double-click time threshold, the typing gap requested by the scenario"
             )
     return bad
 
@@ -256,20 +256,20 @@ def check():
                 continue
             if path.name == FRAMEWORK:
                 bad.append(
-                    f"{rel}:{line}: сырой `time.sleep` в каркасе вне `pause`/`_poll` "
-                    f"(функция {fn}) — ожидание обязано ждать кадр или ввод программы"
+                    f"{rel}:{line}: raw `time.sleep` in the framework outside `pause`/`_poll` "
+                    f"(function {fn}) — waiting must wait for a frame or the input of the program"
                 )
             else:
                 bad.append(
-                    f"{rel}:{line}: сырой `time.sleep` в сценарии — ждать надо "
-                    "программу (`wait_frame`/`wait_seen`/`settle`), а не часы"
+                    f"{rel}:{line}: raw `time.sleep` in a scenario — it must wait for "
+                    "the program (`wait_frame`/`wait_seen`/`settle`), not the clock"
                 )
         for line, reason in pause_calls(tree):
             if reason is None:
-                bad.append(f"{rel}:{line}: `pause(...)` без причины словами")
+                bad.append(f"{rel}:{line}: `pause(...)` without a reason in words")
             elif len(reason) < MIN_REASON:
                 bad.append(
-                    f"{rel}:{line}: причина паузы короче {MIN_REASON} символов: {reason!r}"
+                    f"{rel}:{line}: the reason for the pause is shorter than {MIN_REASON} characters: {reason!r}"
                 )
         seen_pauses, bad_pauses, computed_pauses = declared_pauses(tree, rel)
         declared.extend(seen_pauses)
@@ -278,14 +278,14 @@ def check():
         if path.name == FRAMEWORK:
             bad.extend(gesture_faults(tree))
 
-    # ДРАЙВЕР X — та же область (Р.69)
+    # X DRIVER — the same area (R.69)
     drv = ast.parse(DRIVER.read_text(encoding="utf-8"), filename=str(DRIVER))
     raw, drv_seconds, defaults = driver_sleeps(drv)
     for line, fn in raw:
         bad.append(
-            f"{DRIVER.name}:{line}: сырой `time.sleep` в драйвере вне "
-            f"`{DRIVER_SLEEP_HOME}` (функция {fn}) — сон драйвера обязан быть "
-            "виден и посчитан наравне с сном каркаса"
+            f"{DRIVER.name}:{line}: raw `time.sleep` in the driver outside "
+            f"`{DRIVER_SLEEP_HOME}` (function {fn}) — the sleep of the driver must be "
+            "visible and counted on a par with the sleep of the framework"
         )
     declared.extend(
         (v, f"{DRIVER.name} ({f}.{a})") for f, a, v in defaults
@@ -294,28 +294,28 @@ def check():
 
     if computed:
         print(
-            "паузы с вычисляемой длительностью (в бюджет не входят, длительность "
-            f"приходит от сценария): {', '.join(computed)}"
+            "pauses with a computed duration (not in the budget; the duration "
+            f"comes from the scenario): {', '.join(computed)}"
         )
     print(
-        f"объявленный сон живой проверки: {budget:.2f} c при пределе "
-        f"{SLEEP_BUDGET:.2f} c (в драйвере {drv_seconds:.2f} c: "
+        f"declared sleep of the live check: {budget:.2f} s against a limit of "
+        f"{SLEEP_BUDGET:.2f} s (in the driver {drv_seconds:.2f} s: "
         + ", ".join(f"{f}.{a}={v}" for f, a, v in defaults)
         + ")"
     )
     if budget > SLEEP_BUDGET + 1e-9:
         worst = max(declared, default=(0.0, "—"))
         bad.append(
-            f"объявленный сон {budget:.2f} c превысил предел {SLEEP_BUDGET:.2f} c; "
-            f"самая дорогая пауза — {worst[1]} ({worst[0]} c). Предел двигают "
-            "осознанно, одной строкой и с причиной (SLEEP_BUDGET)"
+            f"declared sleep {budget:.2f} s exceeded the limit {SLEEP_BUDGET:.2f} s; "
+            f"the most expensive pause is {worst[1]} ({worst[0]} s). The limit is moved "
+            "deliberately, in one line and with a reason (SLEEP_BUDGET)"
         )
     if bad:
-        print("ОЖИДАНИЕ ПОДМЕНЕНО СНОМ:", file=sys.stderr)
+        print("WAITING REPLACED BY SLEEP:", file=sys.stderr)
         for b in bad:
             print("  " + b, file=sys.stderr)
         return 1
-    print("живые сценарии ждут программу, а не часы (сырых пауз нет)")
+    print("live scenarios wait for the program, not the clock (no raw pauses)")
     return 0
 
 

@@ -1,6 +1,6 @@
-//! Плавающий тулбар поверх таймлайна (порт TimelineToolChrome):
-//! полупрозрачная градиентная полоса с тенью, кнопки 30×28, подсказки
-//! дублируются в статусбар.
+//! Floating toolbar over the timeline (port of TimelineToolChrome):
+//! a semi-transparent gradient strip with a shadow, buttons 30×28, hints
+//! duplicated in the status bar.
 
 use crate::app::KtApp;
 use crate::i18n::{k, tr};
@@ -27,14 +27,14 @@ pub fn gradient_rect(
     painter.add(egui::Shape::mesh(mesh));
 }
 
-/// Логотип программы (п.6 р.7.1): кадр киноплёнки с монограммой «kt» —
-/// рисуется painter'ом, тот же силуэт, что в packaging/kinetren.svg.
+/// Programme logo (item 6 round 7.1): a film frame with the monogram “kt” —
+/// drawn by the painter, the same silhouette as in packaging/kinetren.svg.
 pub fn draw_logo(painter: &egui::Painter, rect: egui::Rect) {
     let a = crate::theme::ACCENT;
     let body = egui::Rect::from_center_size(rect.center(), rect.size() * 0.92);
     painter.rect_filled(body, 1.0, egui::Color32::from_rgb(18, 20, 24));
     painter.rect_stroke(body, 1.0, egui::Stroke::new(1.0, a), egui::StrokeKind::Middle);
-    // перфорация плёнки: по две «дырки» слева и справа
+    // film perforation: two “holes” on the left and two on the right
     let hole_w = body.width() * 0.13;
     let hole_h = body.height() * 0.17;
     for i in 0..2 {
@@ -56,15 +56,15 @@ pub fn draw_logo(painter: &egui::Painter, rect: egui::Rect) {
     );
 }
 
-/// Кнопка окна borderless-титлбара, ИКОНКИ РИСУЮТСЯ painter'ом (п.22 р.6:
-/// шрифтовые глифы ✕/❐ рендерились «квадратиками»-tofu). kind: 0=свернуть,
-/// 1=развернуть/восстановить, 2=закрыть (красный ховер).
+/// Borderless title-bar window button, ICONS ARE DRAWN by the painter (item 22 round 6:
+/// font glyphs ✕/❐ rendered as “tofu” squares). kind: 0=minimise,
+/// 1=maximise/restore, 2=close (red hover).
 fn window_button(ui: &mut egui::Ui, kind: u8, maximized: bool) -> egui::Response {
-    // 22 px: три кнопки помещаются в узкую колонку метров (п.15 р.8).
-    // Сенс именно click: с click_and_drag egui считает нажатие началом
-    // драга и clicked() не наступает вовсе (проверено t101). Драг окна
-    // за кнопку остаётся у полосы под ней — это привычное поведение
-    // титлбара, а сам клик теперь доходит (п.9 р.12).
+    // 22 px: three buttons fit in a narrow metres column (item 15 round 8).
+    // The sense is precisely click: with click_and_drag egui counts the press as the start
+    // of a drag, and clicked() does not happen at all (checked t101). A window drag
+    // from the button stays with the strip under it — this is the usual title-bar
+    // behaviour, and the click itself now gets through (item 9 round 12).
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(22.0, 20.0), egui::Sense::click());
     let p = ui.painter();
     if resp.hovered() {
@@ -79,7 +79,7 @@ fn window_button(ui: &mut egui::Ui, kind: u8, maximized: bool) -> egui::Response
             p.line_segment([c + egui::vec2(-4.5, 3.0), c + egui::vec2(4.5, 3.0)], s);
         }
         1 if maximized => {
-            // «восстановить»: два наложенных квадрата
+            // “restore”: two overlapping squares
             let r0 = egui::Rect::from_center_size(c + egui::vec2(1.5, -1.5), egui::vec2(7.0, 7.0));
             let r1 = egui::Rect::from_center_size(c + egui::vec2(-1.5, 1.5), egui::vec2(7.0, 7.0));
             p.rect_stroke(r0, 0.0, s, egui::StrokeKind::Middle);
@@ -102,8 +102,8 @@ fn window_button(ui: &mut egui::Ui, kind: u8, maximized: bool) -> egui::Response
     resp
 }
 
-/// Имя ленты для крошки: длинное усекается, а не разносит строку
-/// (правило 7 чек-листа; помощник усечения один на все места).
+/// Reel name for the crumb: a long one is truncated, not breaking the row
+/// (checklist rule 7; one truncation helper for all places).
 fn crumb_label(name: &str) -> String {
     const MAX: usize = 18;
     if name.chars().count() <= MAX {
@@ -114,11 +114,11 @@ fn crumb_label(name: &str) -> String {
 }
 
 impl KtApp {
-    /// Шапка ЛЕВОЙ колонки (пп.15,6,7 р.8): лого + меню + имя проекта с
-    /// версией. Полосы на всю ширину больше нет — центр сверху отдан
-    /// превью. Имя проекта рисуется painter'ом ВНЕ layout: если в колонку
-    /// не влезает, спокойно вытекает вправо поверх превью (решение
-    /// пользователя), а ширину панели не раздувает.
+    /// The header of the LEFT column (items 15, 6, 7 round 8): logo + menu + project name with
+    /// version. The full-width strip is gone — the centre is given to the
+    /// preview from above. The project name is drawn by the painter OUTSIDE the layout: if it does not
+    /// fit into the column, it quietly spills to the right over the preview (the user’s decision),
+    /// and does not inflate the panel width.
     pub fn draw_column_header(&mut self, ui: &mut egui::Ui) {
         let strip = egui::Rect::from_min_size(
             ui.available_rect_before_wrap().min,
@@ -126,17 +126,17 @@ impl KtApp {
         );
         let painter = ui.painter_at(strip);
         painter.rect_filled(strip, 0.0, crate::theme::WINDOW);
-        // драг окна за пустую часть шапки
+        // window drag from the empty part of the header
         let bg = ui.interact(strip, ui.id().with("header-drag"), egui::Sense::click_and_drag());
         self.window_drag_from(&bg, ui.ctx());
-        // лого
+        // logo
         let logo = egui::Rect::from_min_size(
             egui::pos2(strip.left() + 3.0, strip.top() + 3.0),
             egui::vec2(16.0, 16.0),
         );
         draw_logo(&painter, logo);
-        // меню: три пункта, если помещаются, иначе бургер (панель не
-        // должна раздуваться под контент — регрессия р.7.1)
+        // menu: three items if they fit, otherwise a burger (the panel must not
+        // inflate to fit the content — regression round 7.1)
         let menu_left = logo.right() + 5.0;
         let wide = strip.right() - menu_left >= 150.0;
         let mut child = ui.new_child(
@@ -147,9 +147,9 @@ impl KtApp {
                 ))
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
-        // ФАКТИЧЕСКИЙ конец последней кнопки меню: min_rect самого
-        // MenuBar растянут на всю доступную ширину, и имя проекта из-за
-        // этого улетало к правому краю колонки (п.5 р.12)
+        // the ACTUAL end of the last menu button: the min_rect of the MenuBar itself
+        // is stretched over the full available width, and because of this the project
+        // name flew to the right edge of the column (item 5 round 12)
         let menu_end = if wide {
             self.draw_menus(&mut child)
         } else {
@@ -158,16 +158,16 @@ impl KtApp {
             });
             r.response.rect.right()
         };
-        // меню тоже сидит в кромке окна: без этого верхняя четверть
-        // кнопок «Файл/Правка/Вид» уходила в ресайз (п.9 р.12)
-        // ТОЛЬКО кнопки меню: лого не интерактивно, и если захватить его,
-        // умирает угол окна NW (ловит t76 — тянуть за угол перестало)
+        // the menu also sits on the window edge: without this the top quarter of
+        // the “File/Edit/View” buttons went into the resize zone (item 9 round 12)
+        // ONLY the menu buttons: the logo is not interactive, and if it were grabbed
+        // the NW window corner would die (t76 catches it — dragging by the corner stopped).
         self.no_resize_rects.push(egui::Rect::from_min_max(
             egui::pos2(menu_left - 2.0, strip.top() - 4.0),
             egui::pos2(menu_end + 2.0, strip.bottom() + 2.0),
         ));
         ui.advance_cursor_after_rect(strip);
-        // имя проекта + версия — поверх всего, начиная за меню
+        // project name + version — over everything, starting past the menu
         let fg = ui.ctx().layer_painter(egui::LayerId::new(
             egui::Order::Foreground,
             egui::Id::new("project-title"),
@@ -179,17 +179,17 @@ impl KtApp {
             egui::FontId::proportional(11.5),
             egui::Color32::from_gray(125),
         );
-        // КРОШКИ ПУТИ — на УЖЕ ЗАНЯТОЙ строке, справа от имени проекта
-        // (правило 13: своей полосы под надпись, появляющуюся изредка, не
-        // заводим). Каждая крошка кликабельна: это и способ выйти на любой
-        // уровень сразу.
+        // PATH CRUMBS — on an ALREADY OCCUPIED row, to the right of the project name
+        // (checklist rule 13: a separate strip for a label that appears rarely is not
+        // made). Each crumb is clickable: this is also the way to reach any
+        // level at once.
         let crumbs = self.nest_crumbs();
         if crumbs.is_empty() {
             return;
         }
-        // САМО ИМЯ ПРОЕКТА — первая крошка: щёлкнув по нему, человек
-        // выходит в корень одним движением. Без этого у пути глубины 1
-        // кликабельных крошек не было бы вовсе.
+        // THE PROJECT NAME ITSELF is the first crumb: by clicking it, the person
+        // goes to the root in one movement. Without this a path of depth 1 would have no
+        // clickable crumbs at all.
         let root_hit = ui.interact(
             title_at.expand2(egui::vec2(2.0, 3.0)),
             ui.id().with("crumb-root"),
@@ -214,8 +214,8 @@ impl KtApp {
             let r = fg.text(
                 egui::pos2(x, strip.center().y),
                 egui::Align2::LEFT_CENTER,
-                // длинное имя усекается, а не разносит строку (правило 7):
-                // тем же помощником, что и везде
+                // a long name is truncated, not breaking the row (rule 7):
+                // by the same helper as everywhere
                 crumb_label(name),
                 font.clone(),
                 col,
@@ -238,8 +238,8 @@ impl KtApp {
                 back_to = Some(i);
             }
         }
-        // клик по крошке — выход НА НЕЁ: столько шагов наружу, сколько
-        // уровней ниже неё; клик по имени проекта — сразу в корень
+        // clicking a crumb is an exit TO IT: as many steps outward as there are
+        // levels below it; clicking the project name — straight to the root
         if to_root {
             while !self.nest_path.is_empty() {
                 self.leave_nest();
@@ -251,8 +251,8 @@ impl KtApp {
         }
     }
 
-    /// Кнопки окна — компактным блоком в шапке панели метров (п.15 р.8:
-    /// полосы на всю ширину нет, оверлея поверх метров тоже).
+    /// Window buttons — a compact block in the header of the metres panel (item 15 round 8:
+    /// no full-width strip, and no overlay over the metres either).
     pub fn draw_window_buttons(&mut self, ui: &mut egui::Ui) {
         if std::env::var_os("KT_DECORATIONS").is_some() {
             return;
@@ -291,10 +291,10 @@ impl KtApp {
         ui.advance_cursor_after_rect(strip);
     }
 
-    /// Общая обработка драга окна за «пустое место» полосы (п.10 р.8:
-    /// из развёрнутого состояния окно сперва восстанавливается, и только
-    /// СЛЕДУЮЩИМ кадром начинается перетаскивание — X11 не переваривает
-    /// обе команды в одном кадре).
+    /// The common handling of a window drag from the “empty space” of the strip (item 10 round 8:
+    /// from the expanded state the window is first restored, and only
+    /// on the NEXT frame does dragging start — X11 does not handle
+    /// both commands in one frame).
     pub(crate) fn window_drag_from(&mut self, bg: &egui::Response, ctx: &egui::Context) {
         if bg.drag_started() {
             if ctx.input(|i| i.viewport().maximized.unwrap_or(false)) {
@@ -311,9 +311,9 @@ impl KtApp {
         }
     }
 
-    /// Пункт меню с горячей клавишей. Ярлык склеивается ЗДЕСЬ, а не лежит в
-    /// каталоге: переводчик не должен иметь возможности сломать акселератор, а
-    /// латинский ярлык внутри арабской строки уехал бы при переупорядочивании.
+    /// A menu item with a hotkey. The label is assembled HERE, not kept in the
+    /// catalogue: the translator must have no way to break the accelerator, and a
+    /// Latin label inside an Arabic string would move on reordering.
     fn menu_btn(ui: &mut egui::Ui, label: &str, accel: &str) -> bool {
         crate::widgets::menu_item(ui, label, Some(accel))
     }
@@ -322,8 +322,8 @@ impl KtApp {
         crate::widgets::menu_item_probed(ui, label, Some(accel))
     }
 
-    /// Пункты меню (три корневых). Отдельно от контейнера, чтобы их же
-    /// показывал бургер при узкой колонке.
+    /// Menu items (three root ones). Separate from the container, so that the
+    /// burger shows them too when the column is narrow.
     fn menu_items(&mut self, ui: &mut egui::Ui) -> f32 {
         let file_btn = ui.menu_button(tr(k::menu::file::TITLE), |ui| {
             if ui.button(tr(k::menu::file::NEW)).clicked() {
@@ -334,8 +334,8 @@ impl KtApp {
                 self.open_project_dialog();
                 ui.close();
             }
-            // Р.67/Р.70: одна дверь импорта — легаси .ktproj, старый и
-            // чужой .otio; проект СТАРОЙ ВЕРСИИ конверта чинит импорт, не ридер
+            // Round 67/70: one import door — legacy .ktproj, the old and
+            // foreign .otio; a project of an OLD VERSION of the envelope is repaired by the import, not the reader
             let r = ui.button(tr(k::menu::file::IMPORT_OLDER));
             crate::widgets::field_probe::note("file.import_older", r.rect);
             let r = self.hint(r, tr(k::hint::IMPORT_OLDER));
@@ -343,9 +343,9 @@ impl KtApp {
                 self.import_older_dialog();
                 ui.close();
             }
-            // ТО ЖЕ ТЕЛО, что в меню пустого места бина (правило 17).
-            // До Р.55 генератор создавался ТОЛЬКО оттуда, и найти этот
-            // вход человек не смог — претензия 8 раунда дословно.
+            // THE SAME BODY as in the bin’s empty-space menu (rule 17).
+            // Until R.55 a generator was created ONLY from there, and a person could not
+            // find this entry — the 8th round claim, verbatim.
             if let Some(kd) = crate::gen_ui::generator_menu(ui) {
                 self.create_generator(kd);
                 ui.close();
@@ -363,8 +363,8 @@ impl KtApp {
                 self.offer_recovery(false);
                 ui.close();
             }
-            // Р.70: экспорт в формат обмена — ОТДЕЛЬНОЕ названное действие,
-            // а не сохранение; проект остаётся .kt
+            // R.70: export to the exchange format is a SEPARATE named action,
+            // not a save; the project remains .kt
             let export = ui.menu_button(tr(k::menu::file::EXPORT), |ui| {
                 let r = ui.button(tr(k::menu::file::EXPORT_OTIO));
                 crate::widgets::field_probe::note("file.export_otio", r.rect);
@@ -382,7 +382,7 @@ impl KtApp {
                 self.start_render();
                 ui.close();
             }
-            // Р.62: окно настроек проекта — одно тело с комбо панели превью
+            // R.62: the project settings window — one body with the preview panel combo
             let r = ui.button(tr(k::menu::file::PROJECT_SETTINGS));
             crate::widgets::field_probe::note("file.project_settings", r.rect);
             let r = self.hint(r, tr(k::hint::PROJECT_SETTINGS));
@@ -406,9 +406,9 @@ impl KtApp {
                 ui.close();
             }
             ui.separator();
-            // прямоугольники — наружу для живых сценариев (Р.27):
-            // системного буфера в виртуальном экране может не быть вовсе,
-            // а рука ходит в меню, и путь у них один (правило 17)
+            // rectangles — outward for live scenarios (R.27):
+            // the system clipboard in the virtual screen may not exist at all,
+            // and the hand goes to the menu, and their path is one (rule 17)
             let (hit, r) = Self::menu_btn_probed(ui, tr(k::menu::edit::COPY), "Ctrl+C");
             crate::widgets::field_probe::note("edit.copy", r);
             if hit {
@@ -421,7 +421,7 @@ impl KtApp {
                 self.paste_at_cursor();
                 ui.close();
             }
-            // ОДНО ТЕЛО с пунктом меню события (правило 17)
+            // ONE BODY with the event menu item (rule 17)
             if ui.button(tr(k::tl::menu::COLLAPSE)).clicked() {
                 self.collapse_selection();
                 ui.close();
@@ -431,8 +431,8 @@ impl KtApp {
                 ui.close();
             }
             if ui.button(tr(k::tl::menu::SYNC_AUDIO)).clicked() {
-                // одно тело на оба пути (правило 17): пункт меню события
-                // и пункт главного меню делают ровно одно и то же
+                // one body for both paths (rule 17): the event menu item
+                // and the main menu item do exactly the same thing
                 self.sync_selected_by_audio();
                 ui.close();
             }
@@ -440,10 +440,10 @@ impl KtApp {
                 self.delete_action();
                 ui.close();
             }
-            // Опция «трим растягивает анимацию вместе с событием»
-            // (Р.40). Живёт в меню ПРАВКИ, а не вида: она меняет
-            // результат редактирования, а не то, как он показан.
-            // Выключена по умолчанию — ключ остаётся на своём кадре.
+            // The option “trim stretches the animation together with the event”
+            // (R.40). It lives in the EDIT menu, not the view: it changes the
+            // result of editing, not how it is shown.
+            // Off by default — the key stays on its own frame.
             let mut stretch = self.model.project().trim_stretches_auto;
             if ui.checkbox(&mut stretch, tr(k::menu::edit::TRIM_STRETCHES_AUTO)).changed() {
                 self.apply(kt_model::Command::SetTrimStretchesAuto { on: stretch });
@@ -467,9 +467,9 @@ impl KtApp {
                 ui.close();
             }
             ui.checkbox(&mut self.ui_economy, tr(k::menu::view::ECONOMY));
-            // Язык живёт в УЖЕ существующем меню (правило 13 чек-листа:
-            // новой полосы под него не заводим). Пункты — самоназвания:
-            // выбравшему китайский нечего искать в русском списке.
+            // The language lives in an ALREADY EXISTING menu (checklist rule 13:
+            // no new strip is made for it). The items are self-names:
+            // whoever picks Chinese has nothing to look for in the Russian list.
             ui.menu_button(tr(k::menu::view::LANGUAGE), |ui| {
                 let items = std::iter::once((None, tr(k::menu::view::LANG_AUTO)))
                     .chain(crate::i18n::Lang::ALL.into_iter().map(|l| (Some(l), l.endonym())));
@@ -520,7 +520,7 @@ impl KtApp {
         last.response.rect.right()
     }
 
-    /// Рисует три корневых меню и возвращает x конца ПОСЛЕДНЕЙ кнопки.
+    /// Draws the three root menus and returns the x of the end of the LAST button.
     fn draw_menus(&mut self, ui: &mut egui::Ui) -> f32 {
         let mut end = ui.min_rect().left();
         egui::MenuBar::new().ui(ui, |ui| {
@@ -529,28 +529,28 @@ impl KtApp {
         end
     }
 
-    /// Кнопка тулбара: фиксированный размер, ховер-подсказка + статус-хинт.
+    /// Toolbar button: fixed size, hover hint + status hint.
     fn tb(&mut self, ui: &mut egui::Ui, label: &str, hint: &str) -> bool {
         let r = ui.add_sized([30.0, 26.0], egui::Button::new(label).frame(false));
         self.hint(r, hint).clicked()
     }
 
-    /// Полоса кнопок ВНИЗУ панели таймлайна (порт: кнопки снизу),
-    /// градиентный фон на всю ширину — ничего не вылезает.
+    /// The button strip at the BOTTOM of the timeline panel (port: buttons below),
+    /// a gradient background over the full width — nothing sticks out.
     pub fn draw_toolbar_strip(&mut self, ui: &mut egui::Ui) {
         let strip = egui::Rect::from_min_size(
             ui.available_rect_before_wrap().min,
             egui::vec2(ui.available_width(), 34.0),
         );
         let painter = ui.painter();
-        // плоский фон + 1px шов (тема р.6 — без градиентов)
+        // flat background + 1px seam (theme round 6 — no gradients)
         painter.rect_filled(strip, 0.0, crate::theme::WINDOW);
         painter.line_segment(
             [strip.left_bottom(), strip.right_bottom()],
             egui::Stroke::new(1.0, crate::theme::SEAM),
         );
-        // borderless (п.22 р.6): драг окна за пустые зоны строки,
-        // double-click = maximize; строго в кадре drag_started
+        // borderless (item 22 round 6): window drag from the empty zones of the row,
+        // double-click = maximise; strictly within the frame of drag_started
         let bg = ui.interact(strip, ui.id().with("titlebar-drag"), egui::Sense::click_and_drag());
         if bg.drag_started() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
@@ -575,8 +575,8 @@ impl KtApp {
         ) {
             self.on_transport_toggle();
         }
-        // Shift здесь — «тянуть регион» (как Shift+A/D, п.2 р.16); «в
-        // самое начало/конец» осталось за Shift+Home/End
+        // Shift here is “drag the region” (like Shift+A/D, item 2 round 16); “to
+        // the very start/end” remains on Shift+Home/End
         if self.tb(ui, crate::icons::SKIP_BACK, tr(k::tb::BACK)) {
             let shift = ui.input(|i| i.modifiers.shift);
             self.nav_jump(false, false, shift);
@@ -586,16 +586,16 @@ impl KtApp {
             self.nav_jump(true, false, shift);
         }
         ui.separator();
-        // ---- тайм-код и маска ввода (п.4 р.10, переделано п.9 р.11) ----
-        // Ввод рисуется В ТОМ ЖЕ прямоугольнике и ТЕМ ЖЕ шрифтом, что и
-        // сам тайм-код: ширина берётся от полного формата, поэтому
-        // раскладка тулбара при открытии маски не дёргается (был
-        // TextEdit на 96 px против 150 px текста). Работает и во время
-        // воспроизведения — плеер умеет seek на ходу.
+        // ---- timecode and input mask (item 4 round 10, redone item 9 round 11) ----
+        // The input is drawn IN THE SAME RECTANGLE and WITH THE SAME FONT as
+        // the timecode itself: the width is taken from the full format, so the
+        // toolbar layout does not jump when the mask opens (there was a
+        // TextEdit of 96 px against 150 px of text). It works during playback too —
+        // the player can seek on the fly.
         {
             let fps = self.model.project().settings.fps;
-            // позиция ПОКАЗА: сырой playhead при игре дёргается квантами
-            // аудио-колбэка (п.12 корневого CLAUDE.md)
+            // the DISPLAY position: the raw playhead during play jumps in quanta
+            // of the audio callback (item 12 of the root CLAUDE.md)
             let live = self.player.video_playhead();
             let font = egui::FontId::monospace(15.0);
             let bright = egui::Color32::from_rgb(235, 235, 240);
@@ -616,7 +616,7 @@ impl KtApp {
                     r.request_focus();
                     self.tc_edit_focus = false;
                 }
-                // стрелки/Tab не должны уводить фокус из маски
+                // arrows/Tab must not take the focus out of the mask
                 ui.memory_mut(|m| {
                     m.set_focus_lock_filter(
                         r.id,
@@ -628,7 +628,7 @@ impl KtApp {
                         },
                     )
                 });
-                // события СЪЕДАЕМ: иначе цифры и Enter утекут в хоткеи
+                // the events are CONSUMED: otherwise the digits and Enter would leak into the hotkeys
                 let mut input = input;
                 let mut apply = false;
                 let mut cancel = false;
@@ -638,8 +638,8 @@ impl KtApp {
                             input.push_str(t);
                             false
                         }
-                        // вставка готового тайм-кода («1:02:03») — разбираем
-                        // и раскладываем по разрядам маски
+                        // pasting a ready timecode (“1:02:03”) — we parse it
+                        // and lay it out into the mask's digit positions
                         egui::Event::Text(t) => match crate::util::parse_timecode(t, fps) {
                             Some(at) => {
                                 input = crate::util::tick_to_mask(at);
@@ -692,11 +692,11 @@ impl KtApp {
                 } else {
                     self.tc_edit = Some(input);
                 }
-                // ФОКУС ОБЯЗАН ВЕРНУТЬСЯ (п.8 р.12): виджет живёт каждый
-                // кадр с тем же id, поэтому «просто закрыть» мало —
-                // egui продолжал считать его сфокусированным, а
-                // handle_keys гейтится egui_wants_keyboard_input(), и
-                // Ctrl+L срабатывал ровно один раз до клика мышью
+                // FOCUS MUST RETURN (item 8 round 12): the widget lives each frame with the same id,
+                // so “just close it” is not enough —
+                // egui went on counting it as focused, and
+                // handle_keys is gated by egui_wants_keyboard_input(), and
+                // Ctrl+L fired exactly once, until a mouse click.
                 if self.tc_edit.is_none() {
                     ui.memory_mut(|m| m.surrender_focus(r.id));
                 }
@@ -721,18 +721,18 @@ impl KtApp {
         if self.tb(ui, "+A", tr(k::tb::ADD_AUDIO_LANE)) {
             self.add_track(ClipKind::Audio);
         }
-        // морфер-слой (Р.35 п.5): дорожка заводится СВЕРХУ над всеми —
-        // иначе «всё, что ниже» было бы пусто
+        // the morpher layer (R.35 item 5): the track is created ON TOP of all —
+        // otherwise “everything below” would be empty
         if self.tb(ui, "+M", tr(k::tb::ADD_MORPHER)) {
             self.add_morph_layer();
         }
-        // камера (Р.40 п.5): до этого раунда камерную дорожку нельзя было
-        // ни завести, ни наполнить ничем, кроме ПКМ по 34-пиксельному
-        // заголовку ЧУЖОЙ строки — «для чего он?????»
+        // camera (R.40 item 5): until this round the camera track could not be
+        // created or filled with anything, except via RMB on the 34-pixel
+        // header of a FOREIGN row — “what is it for?????”
         if self.tb(ui, "+C", tr(k::tb::ADD_CAMERA)) {
             self.add_camera_layer();
         }
-        // именованная область из последней рамки выделения (Р.35 п.2)
+        // a named area from the last selection frame (R.35 item 2)
         if self.tb(ui, crate::icons::AREA_SAVE, tr(k::tb::SAVE_AREA)) {
             self.save_marked_area();
         }
@@ -778,9 +778,9 @@ impl KtApp {
         if self.tb(ui, crate::icons::CLEAR, tr(k::tb::REGION_CLEAR)) {
             self.clear_region();
         }
-        // режим-инструмент выделения (Р.33 п.7, «как в vegas —
-        // toggle-button»): в нём обычный драг по пустому месту рисует рамку
-        // вместо региона. Ctrl+драг рисует её и без режима.
+        // the selection tool mode (R.33 item 7, “as in Vegas —
+        // toggle button”): in it an ordinary drag over empty space draws a frame
+        // instead of a region. Ctrl+drag draws it without the mode too.
         let sel_tool = self.sel_tool;
         let r = ui.add_sized(
             [30.0, 26.0],
@@ -789,9 +789,9 @@ impl KtApp {
         if self.hint(r, tr(k::tb::SELECT_TOOL)).clicked() {
             self.sel_tool = !sel_tool;
         }
-        // три состояния (п.3 р.11): выключен / включён с регионом /
-        // ВЗВЕДЁН без региона (Esc снял регион, намерение осталось) —
-        // приглушённый значок, подсказка объясняет, чего не хватает
+        // three states (item 3 round 11): off / on with a region /
+        // ARMED without a region (Esc removed the region, the intent stayed) —
+        // a muted icon, the hint explains what is missing
         let (loop_on, has_region) = {
             let p = self.model.project();
             (p.loop_enabled, p.region.is_some())
@@ -829,8 +829,8 @@ impl KtApp {
         if self.hint(diag, tr(k::tb::DIAG)).clicked() {
             self.perf.diag_open = true;
         }
-        // п.6 р.10: «●» нет ни в одном шрифте семейства Proportional —
-        // рисовался квадрат-заглушка. Звёздочка есть везде.
+        // item 6 round 10: “●” is in none of the Proportional family fonts —
+        // a placeholder square was drawn. The asterisk is present everywhere.
         let save_label = if self.dirty_content {
             format!("{} *", crate::icons::SAVE)
         } else {

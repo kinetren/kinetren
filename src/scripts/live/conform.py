@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.62: вертикальный источник в проекте 16:9.
+"""Live scenario R.62: a vertical source in a 16:9 project.
 
-Харнесс-тесты t715/t718/t722 держат правило приведения в СИНТЕТИЧЕСКОЙ
-сцене. Здесь настоящее окно отвечает на вопрос владельца («4:3 в 16:9
-растягивается по-идиотски») так, как его увидел бы человек:
+The harness tests t715/t718/t722 hold the conform rule in a SYNTHETIC
+scene. Here the real window answers the question of the owner (“4:3 in 16:9
+gets stretched in a stupid way”) the way a person would see it:
 
-1. вертикальный файл 360×640 в проекте 1280×720 показан ВПИСАННЫМ: красная
-   заливка занимает узкий столб посреди превью, а не весь кадр;
-2. постановка того же файла из бина даёт подсказку в строке состояния —
-   с именем файла, размерами и адресом, где решение меняется (правило 19);
-3. «Файл / Настройки проекта…» открывается, правило «заполнить» применяется,
-   и превью меняется: заливка растёт на всю ширину кадра.
+1. a vertical file 360×640 in a 1280×720 project is shown FITTED: the red
+   fill takes a narrow column in the middle of the preview, not the whole frame;
+2. placing the same file from the bin gives a hint in the status line —
+   with the file name, dimensions and the address where the decision changes (rule 19);
+3. “File / Project settings…” opens, the “fill” rule is applied,
+   and the preview changes: the fill grows to the full width of the frame.
 
-Ширина заливки меряется ПО ЭКРАНУ (красный пробег вдоль строки через центр
-превью), а не по внутреннему полю — утверждается следствие.
+The width of the fill is measured ON SCREEN (a red run along the line through the center of
+the preview), not by the internal field — the consequence is what is asserted.
 """
 import os
 import subprocess
@@ -26,7 +26,7 @@ SEC = 90000
 
 
 def red_run(app, cy, tag):
-    """Длина красного пробега вдоль строки y=cy на одном снимке экрана."""
+    """Length of the red run along the line y=cy in one screenshot."""
     img = app.shot(tag)
     out = subprocess.run(
         ["convert", img, "-crop", f"0x1+0+{cy}", "+repage", "-depth", "8", "rgb:-"],
@@ -52,16 +52,16 @@ def main(out):
         cx, cy = app.preview_center()
         app.click(app.x_at(2 * SEC), app.ruler_y())
         r, g, b = app.pixel_settled((cx, cy))
-        app.expect(r > 150 and g < 90, f"центр превью — красная заливка источника: RGB {r},{g},{b}")
+        app.expect(r > 150 and g < 90, f"preview center — the red fill of the source: RGB {r},{g},{b}")
         fit = red_run(app, cy, "fit")
-        # вписанный 9:16 в 16:9 занимает 9/16·9/16 ≈ 32 % ширины кадра
+        # a 9:16 fitted into 16:9 takes 9/16·9/16 ≈ 32 % of the frame width
         win_w = app.geom()["window"]["w"]
-        app.expect(0 < fit < win_w * 0.3, f"«вписать»: красный столб узкий ({fit} px из {win_w})")
+        app.expect(0 < fit < win_w * 0.3, f"“fit”: the red column is narrow ({fit} px of {win_w})")
 
-        # --- 2. постановка из бина → подсказка о несовпадении ---------------
+        # --- 2. placement from the bin → a hint about the mismatch ---------------
         app.click(app.x_at(7 * SEC), app.ruler_y())
         card = next((f for f in app.geom().get("fields", []) if f["param"] == "bin.file"), None)
-        app.expect(card is not None, "карточка файла показана в бине")
+        app.expect(card is not None, "the file card is shown in the bin")
         if card:
             from kt_live import geometry
 
@@ -70,7 +70,7 @@ def main(out):
                 win["x"] + int(card["x"] + card["w"] / 2),
                 win["y"] + int(card["y"] + card["h"] / 2),
             )
-            app.click_probe("bin.place", "пункт «Поставить» у карточки файла")
+            app.click_probe("bin.place", "the “Place” item on the file card")
             status = ""
             for _ in range(12):
                 status = app.geom().get("status", "")
@@ -80,88 +80,88 @@ def main(out):
             app.shot("placed")
             app.expect(
                 "360" in status and "640" in status and "1280" in status,
-                f"подсказка называет источник и проект: «{status}»",
+                f"the hint names the source and the project: “{status}”",
             )
-            # файл со звуком ставится ПАРОЙ видео+аудио: 1 + 2 = 3 события
+            # a file with sound is placed as a PAIR of video+audio: 1 + 2 = 3 events
             placed = app.live_clips()
             app.expect(
                 len(placed) == 3 and any(s == 7 * SEC for s, _ in placed),
-                f"второй экземпляр встал на 7 c: {placed}",
+                f"second instance started after 7 s: {placed}",
             )
 
-        # --- 3. окно настроек: правило «заполнить» ---------------------------
+        # --- 3. settings window: the “fill” rule ---------------------------
         app.click(app.x_at(2 * SEC), app.ruler_y())
-        app.click_probe("menu.file", "меню «Файл»")
-        app.click_probe("file.project_settings", "пункт «Настройки проекта…»")
-        app.expect(app.has_probe("settings.conform.fill"), "окно настроек показало правила")
+        app.click_probe("menu.file", "“File” menu")
+        app.click_probe("file.project_settings", "“Project settings…” item")
+        app.expect(app.has_probe("settings.conform.fill"), "the settings window showed the rules")
         app.shot("settings")
-        # ВСЕ ЧЕТЫРЕ правила жмутся мышью (Р.68, задача 5.3): до этого раунда
-        # живая проверка знала из окна ровно одно — «заполнить», а до трёх
-        # остальных человек не доходил НИ РАЗУ. Выбор — это состояние окна,
-        # в проект он уезжает только «Применить», поэтому перебор безопасен
-        # и утверждается тем же следствием, что раньше.
-        app.click_probe("settings.conform.as_is", "правило «как есть»")
-        app.click_probe("settings.conform.stretch", "правило «растянуть»")
-        app.click_probe("settings.conform.fit", "правило «вписать»")
-        app.click_probe("settings.conform.fill", "правило «заполнить»")
-        app.click_probe("settings.apply", "кнопка «Применить»")
-        app.expect(not app.has_probe("settings.apply", tries=2), "окно закрылось после применения")
+        # ALL FOUR RULES are clicked with the mouse (R.68, task 5.3): before this round
+        # the live check knew from the window exactly one — “fill” — and the other
+        # three the person NEVER reached. The choice is the window’s state,
+        # it goes into the project only on “Apply”, so the enumeration is safe
+        # and is confirmed by the same consequence as before.
+        app.click_probe("settings.conform.as_is", "rule “as is”")
+        app.click_probe("settings.conform.stretch", "rule “stretch”")
+        app.click_probe("settings.conform.fit", "rule “fit”")
+        app.click_probe("settings.conform.fill", "rule “fill”")
+        app.click_probe("settings.apply", "“Apply” button")
+        app.expect(not app.has_probe("settings.apply", tries=2), "the window closed after applying")
         r2 = app.pixel_settled((cx, cy))
-        app.expect(r2[0] > 150 and r2[1] < 90, f"после смены правила центр по-прежнему красный: {r2}")
+        app.expect(r2[0] > 150 and r2[1] < 90, f"after changing the rule the center is still red: {r2}")
         fill = red_run(app, cy, "fill")
         app.expect(
             fill > fit * 2,
-            f"«заполнить» растянул заливку на ширину кадра: {fill} px против {fit} px",
+            f"“fill” stretched the fill to the width of the frame: {fill} px against {fit} px",
         )
         saved = app.saved_project()
         doc = saved.doc if hasattr(saved, "doc") else None
         if doc is not None:
             conform = doc["metadata"]["kt"].get("settings", {}).get("conform")
-            app.expect(conform == "fill", f"правило проекта записано в файл: {conform}")
+            app.expect(conform == "fill", f"the project rule was written to the file: {conform}")
 
-        # --- 4. РАСТР И ЧАСТОТА КАДРОВ правятся руками (Р.68, задача 5.3) ----
-        # Поля растра и fps — второе, до чего живая проверка не доходила ни
-        # разу: окно открывалось только ради правила приведения. Здесь в них
-        # НАБИРАЮТ числа настоящей клавиатурой, и следствие ищется в файле —
-        # проект 1280×720@30 становится 640×480@25.
-        app.click_probe("menu.file", "меню «Файл» второй раз")
-        app.click_probe("file.project_settings", "пункт «Настройки проекта…» второй раз")
-        app.expect(app.has_probe("settings.width"), "окно настроек показало поля растра")
-        # группа «Кадр» сворачивается и разворачивается заголовком (контракт
-        # формы Р.66): заголовок — такая же цель жеста, как поле
-        app.click_probe("grp.settings.frame", "заголовок группы «Кадр» — свернуть")
-        # свёртка у egui АНИМИРОВАНА: пока она едет, поля ещё рисуются и
-        # честно публикуют свои прямоугольники. Ждём, пока СВЕЖИЙ дамп
-        # перестанет их нести, а не спрашиваем один раз наугад (Р.69).
+        # --- 4. RASTER AND FRAME RATE are edited by hand (R.68, task 5.3) ----
+        # The raster and fps fields are the second thing the live check never reached
+        # once: the window was opened only for the conform rule. Here numbers are
+        # TYPED into them with the real keyboard, and the consequence is looked for in the file —
+        # project 1280×720@30 becomes 640×480@25.
+        app.click_probe("menu.file", "“File” menu a second time")
+        app.click_probe("file.project_settings", "“Project settings…” item a second time")
+        app.expect(app.has_probe("settings.width"), "the settings window showed the raster fields")
+        # the “Frame” group collapses and expands by its header (form contract R.66):
+        # the header is the same gesture target as a field
+        app.click_probe("grp.settings.frame", "heading of the “Frame” group — collapse")
+        # the collapse in egui is ANIMATED: while it moves, the fields are still drawn and
+        # honestly publish their rectangles. We wait until a FRESH dump stops carrying
+        # them, instead of asking once at random (R.69).
         app.expect(
             app.wait_gone("settings.width"),
-            "свёрнутая группа спрятала свои поля",
+            "the collapsed group hid its fields",
         )
-        app.click_probe("grp.settings.frame", "заголовок группы «Кадр» — развернуть")
-        app.expect(app.has_probe("settings.width"), "развёрнутая группа вернула поля")
+        app.click_probe("grp.settings.frame", "heading of the “Frame” group — expand")
+        app.expect(app.has_probe("settings.width"), "the expanded group brought the fields back")
         for probe, text, what in (
-            ("settings.width", "640", "поле ширины кадра"),
-            ("settings.height", "480", "поле высоты кадра"),
-            ("settings.fps", "25", "поле частоты кадров"),
+            ("settings.width", "640", "frame width field"),
+            ("settings.height", "480", "frame height field"),
+            ("settings.fps", "25", "frame rate field"),
         ):
             app.click_probe(probe, what)
             app.key("ctrl+a")
             app.type_text(text)
         app.shot("settings-raster")
-        app.click_probe("settings.apply", "кнопка «Применить» после правки растра")
+        app.click_probe("settings.apply", "“Apply” button after editing the raster")
         app.expect(
             not app.has_probe("settings.apply", tries=2),
-            "окно закрылось после применения растра",
+            "the window closed after applying the raster",
         )
         saved = app.saved_project()
         st = saved.doc["metadata"]["kt"].get("settings", {})
         app.expect(
             (st.get("width"), st.get("height")) == (640, 480),
-            f"набранный растр доехал до файла: {st.get('width')}×{st.get('height')}",
+            f"the entered raster reached the file: {st.get('width')}×{st.get('height')}",
         )
         app.expect(
             abs(float(st.get("fps", 0)) - 25.0) < 1e-6,
-            f"набранная частота кадров доехала до файла: {st.get('fps')}",
+            f"the entered frame rate reached the file: {st.get('fps')}",
         )
         return app.done()
 

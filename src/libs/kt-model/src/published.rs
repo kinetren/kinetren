@@ -1,31 +1,31 @@
-//! Публичные параметры композиции и переопределения у экземпляра
-//! (Р.59, стадия 3).
+//! Public parameters of a composition and overrides at the instance
+//! (R.59, stage 3).
 //!
-//! Владелец назвал предмет дословно: «проект-шаблон новостного выпуска…
-//! очевидно не будут же люди каждый раз лезть в композицию и менять там
-//! текст логотипы». Механизм — ровно два поля и одно правило:
+//! The owner named the subject verbatim: “a template project of a news release…
+//! obviously people will not go into the composition each time and change there the
+//! text, logos”. The mechanism is exactly two fields and one rule:
 //!
-//! * у ЛЕНТЫ есть объявленный автором список ручек (`published`) —
-//!   ссылок на свойства внутри неё, с ИМЕНЕМ, которое придумал автор;
-//! * у ЭКЗЕМПЛЯРА есть список переопределений (`overrides`) — значений
-//!   этих и только этих ручек.
+//! * a REEL has a list of handles declared by its author (`published`) —
+//!   references to properties inside it, with a NAME that the author invented;
+//! * an INSTANCE has a list of overrides (`overrides`) — values of
+//!   these and only these handles.
 //!
-//! **Движок про публикацию не знает вовсе.** Переопределение разрешается
-//! там же, где применяются морфер-слои, — в модели, при выдаче клипов
-//! (`Project::resolve_reel`). Движку достаются готовые клипы, а РЕДАКЦИИ
-//! ленты он различает хэшем; меняется ровно одно — редакция становится
-//! функцией ПАРЫ (лента, набор переопределений экземпляра).
+//! **The engine knows nothing about publication at all.** The override is resolved
+//! in the same place where the morpher layers are applied — in the model, when clips are issued
+//! (`Project::resolve_reel`). The engine gets ready clips, and it tells the REVISIONS of the
+//! reel apart by a hash; exactly one thing changes — the revision becomes a
+//! function of the PAIR (reel, set of instance overrides).
 //!
-//! Два решения, которые легко потерять:
+//! Two decisions that are easy to lose:
 //!
-//! 1. **Значение шаблона НЕ ХРАНИТСЯ.** Оно читается у цели живьём
-//!    (`Project::addr_value`). Хранимая копия — второй источник того же
-//!    факта: автор правит ленту, копия остаётся прежней, и «значение по
-//!    умолчанию» молча врёт.
-//! 2. **Переопределения ложатся ДО морфер-слоёв.** Адрес автора — это
-//!    структура ленты, какой он её видит; морфер дописывает слоты В КОНЕЦ
-//!    цепочки, а при выключенной цепочке события чистит её целиком —
-//!    лягни мы после, `FxSlot(i)` указывал бы не туда.
+//! 1. **The template value is NOT STORED.** It is read from the target live
+//!    (`Project::addr_value`). A stored copy is a second source of the same
+//!    fact: the author edits the reel, the copy stays the same, and the “default
+//!    value” silently lies.
+//! 2. **Overrides go in BEFORE the morpher layers.** The author's address is the
+//!    structure of the reel as the author sees it; the morpher appends slots AT THE END
+//!    of the chain, and when the event chain is switched off it clears it entirely —
+//!    had we applied them after, `FxSlot(i)` would point to the wrong place.
 
 use kt_time::Tick;
 use serde::{Deserialize, Serialize};
@@ -36,15 +36,15 @@ use crate::project::{
     ParamType, ParamUnit, ParamValue, TransitionEvent, TransitionId, clip_material_at,
 };
 
-/// Номер публичного параметра внутри ленты. Адрес, переживающий
-/// переименование: имя придумывает автор и правит его когда хочет.
+/// Number of the public parameter within the reel. An address that survives
+/// renaming: the author invents the name and edits it whenever they want.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct PubId(pub u64);
 
-/// Сужение пределов объявленной ручки (разведка F-TL-012, фишка 1: автор
-/// выносит наружу слайдер с пределами, чтобы потребитель физически не мог
-/// увести титр за кадр). Пусто — пределы цели как есть.
+/// Narrowing of the limits of a declared handle (reconnaissance F-TL-012, trick 1: the author
+/// puts out a slider with limits so that the consumer physically cannot
+/// drive a title off the frame). Empty — the target's limits as they are.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct PubRange {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -58,13 +58,13 @@ impl PubRange {
         self.min.is_none() && self.max.is_none()
     }
 
-    /// Нормализовать сужение против паспорта ЦЕЛИ (Р.60).
+    /// Normalize the narrowing against the target's PASSPORT (R.60).
     ///
-    /// Предел, равный пределу цели, — это ОТСУТСТВИЕ сужения, а не
-    /// число: иначе первая же публикация писала бы в файл копию
-    /// паспорта, и та разошлась бы с целью при смене версии эффекта.
-    /// Допуск — половина шага паспорта: поле отдаёт число, округлённое
-    /// до шага, и точного равенства на нём не бывает.
+    /// A limit equal to the target's limit is the ABSENCE of narrowing, not a
+    /// number: otherwise the very first publication would write a copy of the passport
+    /// into the file, and it would diverge from the target when the effect's version changes.
+    /// The tolerance is half a passport step: the field gives a number rounded
+    /// to the step, and an exact equality is never obtained on it.
     pub fn narrowed(spec: &ParamSpec, min: f64, max: f64) -> PubRange {
         let eps = (spec.step.abs() * 0.5).max(f64::EPSILON);
         PubRange {
@@ -73,9 +73,9 @@ impl PubRange {
         }
     }
 
-    /// Зажать число объявленными пределами. Пределы цели при этом никуда
-    /// не деваются — их применяет сам `set_param`, и порядок неважен:
-    /// обе операции — кламп.
+    /// Clamp the number to the declared limits. The target's limits do not go anywhere
+    /// in the process — `set_param` itself applies them, and the order does not matter:
+    /// both operations are a clamp.
     pub fn clamp(&self, v: f64) -> f64 {
         let mut v = v;
         if let Some(lo) = self.min {
@@ -88,22 +88,22 @@ impl PubRange {
     }
 }
 
-/// Кому принадлежит свойство внутри ленты.
+/// Whom the property inside the reel belongs to.
 ///
-/// У `Transition` и `Camera` поле `ParamAddr::clip` не используется:
-/// адрес несут их собственные номера. Оставлено одним типом намеренно —
-/// второй «адрес без клипа» развёл бы код публикации на две ветки.
+/// For `Transition` and `Camera` the field `ParamAddr::clip` is not used:
+/// their own numbers carry the address. It is kept as one type deliberately —
+/// a second “address without a clip” would split the publication code into two branches.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "owner", rename_all = "snake_case")]
 pub enum ParamOwner {
-    /// Слот цепочки эффектов события (индекс в `ClipEvent::fx`).
+    /// Chain slot of the event's effects (index into `ClipEvent::fx`).
     FxSlot {
         slot: usize,
     },
-    /// Значения генератора события (Р.59, стадия 2) — текст титра, цвет
-    /// плашки, кегль.
+    /// Values of the event's generator (R.59, stage 2) — the title text, the badge
+    /// colour, the font size.
     Generator,
-    /// Свойство самого события: `opacity`, `gain_db`, `media`, `reversed`.
+    /// A property of the event itself: `opacity`, `gain_db`, `media`, `reversed`.
     ClipAttr,
     Transition {
         id: TransitionId,
@@ -111,28 +111,28 @@ pub enum ParamOwner {
     Camera {
         id: CameraId,
     },
-    /// ВЕДУЩИЙ УЗЕЛ «Геометрия» события (Р.62): правило приведения,
-    /// кроп, позиция, зум, поворот, якорь.
+    /// LEADING “Geometry” NODE of the event (R.62): the conform rule,
+    /// crop, position, zoom, rotation, anchor.
     ///
-    /// Узел живёт не в `fx`, а своим полем `ClipEvent::geometry` — и
-    /// до Р.63 у него единственного не было адреса публикации: «по какой
-    /// причине у первого geometry нет возможности опубликовать параметры
-    /// а у второго есть? или у нас дубли кода?» (владелец). Не дубли —
-    /// дыра в адресации: паспорт, `set_value` и кривые у него ровно те
-    /// же, что у слота, и ветка здесь стоит ровно поэтому одна строка
-    /// длиной. У аудио-события узла нет, и адрес отвергает валидация.
+    /// The node lives not in `fx` but in its own field `ClipEvent::geometry` — and
+    /// until R.63 it alone had no publication address: “for what reason does the first geometry
+    /// have no way to publish its parameters while the second has one? or do we have code duplicates?” (the owner).
+    /// Not duplicates — a hole in addressing: its passport, `set_value` and curves are
+    /// exactly the same as for a slot, and the branch here is one line long
+    /// for exactly that reason.
+    /// An audio event has no such node, and validation rejects the address.
     Geometry,
-    /// Публичный параметр ленты, вложенной ВНУТРЬ этой (шаблон в
-    /// шаблоне). Внешняя лента патчит `overrides` внутреннего экземпляра,
-    /// дальше он разбирается сам — рекурсия бесплатна по построению.
+    /// A public parameter of a reel nested INSIDE this one (a template in a
+    /// template). The outer reel patches `overrides` of the inner instance,
+    /// and the rest is resolved by itself — recursion is free by construction.
     Nested {
         pub_id: PubId,
     },
 }
 
-/// Адрес свойства ВНУТРИ ленты. Приклеен к `ClipId`, поэтому переживает
-/// трим, перенос и ЛЕВУЮ половину разреза (кусок №0 держит id — то же
-/// правило, что у морфер-резки).
+/// Address of a property INSIDE a reel. Glued to `ClipId`, so it survives
+/// trimming, moving and the LEFT half of a cut (piece no. 0 keeps the id — the same
+/// rule as for morpher cutting).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParamAddr {
     pub clip: ClipId,
@@ -147,30 +147,30 @@ impl ParamAddr {
     }
 }
 
-/// Объявленная наружу ручка ленты.
+/// Handle of the reel declared outward.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PublishedParam {
     pub id: PubId,
-    /// Свободный текст АВТОРА (решение владельца Р.59). Это содержимое
-    /// документа, как имя события, и в каталог переводов программы оно не
-    /// попадёт никогда.
+    /// Free text of the AUTHOR (the owner’s decision, R.59). This is document content,
+    /// like an event name, and it will not
+    /// get into the program's translation catalog, ever.
     pub name: String,
     pub target: ParamAddr,
-    /// Тип, каким его видел автор при публикации. Расхождение с целью —
-    /// явная ошибка валидации, а не молчаливое приведение.
+    /// The type as the author saw it at publication. A mismatch with the target is
+    /// an explicit validation error, not a silent coercion.
     pub ty: ParamType,
     #[serde(default, skip_serializing_if = "PubRange::is_empty")]
     pub range: PubRange,
 }
 
-/// Переопределение ОДНОЙ объявленной ручки у ОДНОГО экземпляра.
+/// Override of ONE declared handle on ONE instance.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Override {
     pub pub_id: PubId,
     pub value: ParamValue,
-    /// Кривая живёт в МАТЕРИАЛЬНОМ времени ЭКЗЕМПЛЯРА — а это и есть
-    /// время ленты. В материал цели её переводит тот же код, что кривые
-    /// морфер-слоя (`clip_material_at`).
+    /// A curve lives in the MATERIAL time of the INSTANCE — and that is the time of the reel.
+    /// The same code that translates the curves of the morpher layer
+    /// (`clip_material_at`) translates it into the target's material.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub curves: Vec<ParamCurve>,
 }
@@ -181,10 +181,10 @@ impl Override {
     }
 }
 
-/// Содержимое ленты, РАЗРЕШЁННОЕ под конкретный набор переопределений.
+/// The contents of the reel, RESOLVED for a concrete set of overrides.
 ///
-/// `Cow` здесь не украшение: пустой набор обязан идти путём, побайтово
-/// равным прежнему, — а прежний путь ничего не клонировал (t673/t676).
+/// `Cow` here is not decoration: the empty set must take the path byte-for-byte
+/// equal to the previous one — and the previous path cloned nothing (t673/t676).
 #[derive(Debug, Clone)]
 pub struct ResolvedReel<'a> {
     pub clips: Vec<ClipEvent>,
@@ -192,14 +192,14 @@ pub struct ResolvedReel<'a> {
     pub cameras: std::borrow::Cow<'a, [CameraEvent]>,
 }
 
-/// Может ли ручка этого носителя нести КРИВУЮ.
+/// Can the handle of this carrier carry a CURVE.
 ///
-/// Правило одно и оно про ДОМЕН: кривая переопределения приезжает в
-/// материальном времени экземпляра и переводится в материал цели
-/// `clip_material_at`. У перехода домен — тик от начала окна, у камеры —
-/// прогресс события: перевода туда не существует, и «почти правильная»
-/// кривая там была бы хуже отказа. У свойства события (`opacity`,
-/// `gain_db`) носителя кривой нет вовсе.
+/// There is one rule and it is about the DOMAIN: an override curve arrives in the
+/// material time of the instance and is translated into the target's material
+/// by `clip_material_at`. A transition's domain is the tick from the start of the window;
+/// a camera's is the event progress: there is no translation there, and an “almost correct”
+/// curve would be worse than a refusal. A property of the event (`opacity`,
+/// `gain_db`) has no carrier curve at all.
 pub fn owner_takes_curves(owner: &ParamOwner) -> bool {
     matches!(
         owner,
@@ -210,7 +210,7 @@ pub fn owner_takes_curves(owner: &ParamOwner) -> bool {
     )
 }
 
-/// Перевести ключи кривой из времени ЛЕНТЫ в материал цели.
+/// Translate the curve keys from the time of the REEL into the target's material.
 pub fn retime_curve(mut c: ParamCurve, target: &ClipEvent, frame_step: i64) -> ParamCurve {
     for k in &mut c.keys {
         k.t = clip_material_at(
@@ -226,7 +226,7 @@ pub fn retime_curve(mut c: ParamCurve, target: &ClipEvent, frame_step: i64) -> P
     c
 }
 
-/// Положить кривые переопределения в слот, заменив одноимённые.
+/// Put the override curves into the slot, replacing those with the same name.
 fn put_curves(slot: &mut Vec<ParamCurve>, curves: Vec<ParamCurve>) {
     for c in curves {
         slot.retain(|x| x.param != c.param);
@@ -234,12 +234,12 @@ fn put_curves(slot: &mut Vec<ParamCurve>, curves: Vec<ParamCurve>) {
     }
 }
 
-/// Применить переопределения к содержимому ленты — ДО морфер-слоёв.
+/// Apply the overrides to the contents of the reel — BEFORE the morpher layers.
 ///
-/// `default_gen` отвечает на «этот адрес медиа — генератор какого вида?»:
-/// подмена источника обязана согласовать значения генератора с новым
-/// медиа тем же правилом, что `fit_gen_to_media`, иначе логотип-файл
-/// остался бы с чужим титром на событии.
+/// `default_gen` answers “which kind of generator is this media address?”:
+/// the source substitution must reconcile the generator values with the new
+/// media by the same rule as `fit_gen_to_media`, otherwise a logo file
+/// would stay with someone else's title on the event.
 pub fn apply_overrides(
     published: &[PublishedParam],
     overrides: &[Override],
@@ -249,14 +249,14 @@ pub fn apply_overrides(
     frame_step: i64,
     default_gen: &dyn Fn(MediaId) -> Option<GeneratorKind>,
 ) {
-    // Порядок — ПО СПИСКУ АВТОРА, а не по порядку переопределений:
-    // набор у экземпляра приходит из файла и из буфера обмена, и его
-    // порядок правилом рендера быть не может.
+    // Order is BY THE AUTHOR'S LIST, not by the order of the overrides:
+    // the set at the instance comes from a file and from the clipboard, and its
+    // order cannot be a rendering rule.
     for p in published {
         let Some(ov) = overrides.iter().find(|o| o.pub_id == p.id) else { continue };
-        // Кривые с формулой, слоем или связью разрешаются В ДОМЕНЕ ЛЕНТЫ
-        // (Р.67): формула, набранная по оси экземпляра, звучит по ней же.
-        // Ноль цены без источников — набор клонируется только тогда.
+        // Curves with a formula, layer or link are resolved in the REEL'S DOMAIN
+        // (R.67): a formula typed on the instance's axis sounds on it too.
+        // Zero cost without sources — the set is cloned only then.
         if ov.curves.iter().any(ParamCurve::needs_resolve) {
             let snapshot = clips.to_vec();
             let end = clips.iter().map(|c| c.start.0 + c.duration.0).max().unwrap_or(0);
@@ -288,8 +288,8 @@ fn apply_one(
     default_gen: &dyn Fn(MediaId) -> Option<GeneratorKind>,
 ) {
     let value = match (&ov.value, &p.ty) {
-        // сужение пределов — часть ОБЪЯВЛЕНИЯ, а не украшение окна:
-        // испорченный файл не имеет права увести титр за кадр
+        // the narrowing of limits is part of the DECLARATION, not decoration of the window:
+        // a corrupted file has no right to drive a title off the frame
         (ParamValue::Num(v), ParamType::Num) => ParamValue::Num(p.range.clamp(*v)),
         (v, _) => v.clone(),
     };
@@ -331,8 +331,8 @@ fn apply_one(
             }
         }
         ParamOwner::Geometry => {
-            // тот же паспорт и тот же `set_value`, что у слота; кривые —
-            // в свой дом `geometry_auto` (домен тот же, тик материала)
+            // the same passport and the same `set_value` as for a slot; curves go into
+            // their own home `geometry_auto` (the same domain, material tick)
             c.geometry.set_value(name, &value);
             if !ov.curves.is_empty() {
                 let retimed: Vec<ParamCurve> =
@@ -342,10 +342,10 @@ fn apply_one(
         }
         ParamOwner::ClipAttr => set_clip_attr(c, name, &value, default_gen),
         ParamOwner::Nested { pub_id } => {
-            // Патчим НАБОР внутреннего экземпляра — дальше он разберётся
-            // сам, своим же кодом. Кривая при этом остаётся в материале
-            // внутреннего экземпляра: его материал — время его ленты, а
-            // мы стоим ровно в нём.
+            // We patch the SET of the inner instance — it will sort itself out further,
+            // by its own code. The curve remains in the material
+            // of the inner instance: its material is the time of its reel, and
+            // we stand exactly in it.
             let inner = Override {
                 pub_id: *pub_id,
                 value,
@@ -358,24 +358,24 @@ fn apply_one(
     }
 }
 
-/// Может ли этот набор переопределений изменить СОСТОЯНИЕ ИСТОЧНИКА
-/// внутри ленты (Р.59, стадия 3).
+/// Can this set of overrides change the STATE OF THE SOURCE
+/// inside a reel (R.59, stage 3).
 ///
-/// Зачем это нужно и почему это не мелочь. С Р.53 адрес источника
-/// генератора — `GEN_TAG | id СОБЫТИЯ`, и до этой стадии он однозначно
-/// определял ЗНАЧЕНИЯ: событие одно, значения одни. Переопределение
-/// ломает посылку — одно и то же событие ВНУТРИ ленты играет в разных
-/// экземплярах разным текстом. Значит у таких экземпляров и адрес
-/// источника обязан быть разным, иначе «второй выпуск с другим
-/// заголовком» молча покажет первый: заказ и чтение сойдутся на одном
-/// адресе (инвариант 4 соблюдён), но кадр будет ЧУЖОЙ.
+/// Why this is needed and why it is not a trifle. Since R.53 the address of a generator
+/// source is `GEN_TAG | event id`, and until this stage it unambiguously
+/// determined the VALUES: one event, one set of values. An override
+/// breaks the premise — the same event INSIDE a reel plays a different text in
+/// different instances. So for such instances the source address must also differ,
+/// otherwise a “second issue with another title” would silently show the first:
+/// the order and the read would meet at one address (invariant 4 holds),
+/// but the frame would be a FOREIGN one.
 ///
-/// Ответ «нет» обязан быть точным, а не оптимистичным: соль равна нулю
-/// ровно тогда, когда ни одна ручка набора не способна дотянуться до
-/// источника, — и тогда адреса остаются побайтово прежними. Сюда входят
-/// `Generator` (значения прямо), `ClipAttr media` (событие может стать
-/// генератором другого вида) и `Nested` (шаблон в шаблоне — набор едет
-/// внутрь).
+/// The answer “no” must be exact, not optimistic: the salt is zero
+/// exactly when no handle of the set is able to reach the source — and then the addresses remain
+/// byte-for-byte the same as before. This includes `Generator` (values directly),
+/// `ClipAttr media` (an event may become a generator of another kind), and `Nested`
+/// (a template in a template — the set travels
+/// inside).
 pub fn overrides_touch_sources(published: &[PublishedParam], ov: &[Override]) -> bool {
     ov.iter().any(|o| {
         published.iter().any(|p| {
@@ -389,7 +389,7 @@ pub fn overrides_touch_sources(published: &[PublishedParam], ov: &[Override]) ->
     })
 }
 
-/// Имена свойств самого события — ЕДИНСТВЕННЫЙ их список.
+/// Names of the event's own properties — the ONLY list of them.
 pub const CLIP_ATTRS: &[(&str, ParamType)] = &[
     ("opacity", ParamType::Num),
     ("gain_db", ParamType::Num),
@@ -401,12 +401,12 @@ pub fn clip_attr_type(name: &str) -> Option<ParamType> {
     CLIP_ATTRS.iter().find(|(n, _)| *n == name).map(|(_, t)| t.clone())
 }
 
-/// Паспорт атрибута события. Пределы — ТЕ ЖЕ, которыми их клампит
-/// `set_clip_attr`: второй набор чисел разошёлся бы с первым (Р.60).
+/// Passport of the event attribute. The limits are THE SAME that
+/// `set_clip_attr` clamps them with: a second set of numbers would diverge from the first (R.60).
 pub fn clip_attr_spec(name: &str) -> Option<ParamSpec> {
     let ty = clip_attr_type(name)?;
-    // ±6.0206 дБ — множитель 2.0, та же шкала, что у полосы уровня на
-    // таймлайне (`RAIL_DB_SPAN` вдвое шире, потому что она двусторонняя)
+    // ±6.0206 dB — gain factor 2.0, the same scale as the level rail on the
+    // timeline (`RAIL_DB_SPAN` is twice as wide because it is two-sided)
     let (min, max, default, step, unit) = match name {
         "opacity" => (0.0, 1.0, 1.0, 0.01, ParamUnit::Norm),
         "gain_db" => (-6.0206, 6.0206, 0.0, 0.1, ParamUnit::Db),
@@ -450,9 +450,9 @@ fn set_clip_attr(
                 return;
             }
             c.media = *m;
-            // Тем же правилом, что `fit_gen_to_media`: стал файлом —
-            // значений генератора быть не может; стал генератором другого
-            // вида — значения берутся из пути.
+            // By the same rule as `fit_gen_to_media`: once it has become a file,
+            // it cannot have generator values; once it has become a generator of another
+            // kind — the values are taken from the path.
             match default_gen(*m) {
                 Some(k) if c.r#gen.as_ref().is_some_and(|g| g.tag() == k.tag()) => {}
                 Some(k) => {

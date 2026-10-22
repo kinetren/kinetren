@@ -105,7 +105,7 @@ def file_info(name):
         data = json.load(r)
     page = next(iter(data["query"]["pages"].values()))
     if "imageinfo" not in page:
-        raise SystemExit(f"Commons has no file «{name}» (renamed or deleted?)")
+        raise SystemExit(f"Commons has no file “{name}” (renamed or deleted?)")
     ii = page["imageinfo"][0]
     return ii["url"], ii["sha1"], ii["size"], ii.get("descriptionurl", "")
 

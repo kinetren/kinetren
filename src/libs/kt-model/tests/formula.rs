@@ -1,11 +1,11 @@
-//! Тест 701 (Р.61): вычислитель мини-формулы — замкнутый, детерминированный
-//! и объясняющий свои отказы.
+//! Test 701 (R.61): the mini-formula evaluator is closed, deterministic
+//! and explains its failures.
 //!
-//! Решение владельца (Р.59): «Выражения — своя мини-формула, считается
-//! вживую на каждом кадре; внешних интерпретаторов нет». Из инварианта
-//! детерминизма следует остальное: набор операций закрыт, окружения в языке
-//! нет, а отказ НАЗЫВАЕТСЯ — молчаливый ноль показал бы человеку картинку,
-//! которой он поверит.
+//! Owner’s decision (R.59): “Expressions are their own mini-formula, evaluated live on every frame;
+//! there are no external interpreters.” From the determinism invariant
+//! the rest follows: the operation set is closed, the language has no environment,
+//! and a failure is NAMED — a silent zero would show a person a picture
+//! that they would believe.
 
 use kt_model::{Formula, FormulaErrorKind};
 use std::collections::BTreeMap;
@@ -18,7 +18,7 @@ fn vars(pairs: &[(&str, f64)]) -> BTreeMap<String, f64> {
 fn t701_formula_is_closed_deterministic_and_names_its_refusals() {
     let v = vars(&[("t", 2.0), ("x", 3.0), ("blur.radius", 8.0)]);
 
-    // --- НАБОР операций считается и считается ОДИНАКОВО ---------------
+    // --- the SET of operations is computed, and computed the SAME way ---------------
     let cases: &[(&str, f64)] = &[
         ("1 + 2 * 3", 7.0),
         ("(1 + 2) * 3", 9.0),
@@ -40,78 +40,78 @@ fn t701_formula_is_closed_deterministic_and_names_its_refusals() {
         ("round(2.5)", 3.0),
         ("sqrt(9)", 3.0),
         ("lerp(0, 10, 0.25)", 2.5),
-        // адрес свойства — обычное имя с точкой
+        // a property address is an ordinary dotted name
         ("blur.radius / 2", 4.0),
     ];
     for (src, want) in cases {
-        let f = Formula::parse(src).unwrap_or_else(|e| panic!("{src:?} не разобралось: {e}"));
-        let got = f.eval(&v).unwrap_or_else(|e| panic!("{src:?} не посчиталось: {e}"));
-        assert!((got - want).abs() < 1e-12, "{src:?} дало {got}, ждали {want}");
-        // ДВА прогона байт-в-байт
-        assert_eq!(f.eval(&v).unwrap().to_bits(), got.to_bits(), "{src:?} не детерминировано");
+        let f = Formula::parse(src).unwrap_or_else(|e| panic!("{src:?} did not parse: {e}"));
+        let got = f.eval(&v).unwrap_or_else(|e| panic!("{src:?} did not evaluate: {e}"));
+        assert!((got - want).abs() < 1e-12, "{src:?} gave {got}, expected {want}");
+        // TWO runs, byte-for-byte
+        assert_eq!(f.eval(&v).unwrap().to_bits(), got.to_bits(), "{src:?} is not deterministic");
     }
 
-    // шум детерминирован и ограничен, и зависит от ЦЕЛОГО зерна
-    let n = Formula::parse("noise(t)").expect("шум разбирается");
-    let a = n.eval(&v).expect("шум считается");
-    assert_eq!(a.to_bits(), n.eval(&v).unwrap().to_bits(), "шум не детерминирован");
-    assert!((-1.0..=1.0).contains(&a), "шум вне диапазона: {a}");
+    // noise is deterministic and bounded, and depends on the WHOLE seed
+    let n = Formula::parse("noise(t)").expect("noise parses");
+    let a = n.eval(&v).expect("noise evaluates");
+    assert_eq!(a.to_bits(), n.eval(&v).unwrap().to_bits(), "noise is not deterministic");
+    assert!((-1.0..=1.0).contains(&a), "noise out of range: {a}");
     let b = n.eval(&vars(&[("t", 9.0)])).unwrap();
-    assert_ne!(a.to_bits(), b.to_bits(), "шум не зависит от зерна");
+    assert_ne!(a.to_bits(), b.to_bits(), "noise does not depend on the seed");
 
-    // --- ЧЕТЫРЕ отказа, и у каждого СВОЯ причина ----------------------
-    let unknown = Formula::parse("нет_такого + 1")
+    // --- FOUR failures, each with its OWN cause -------------------------------
+    let unknown = Formula::parse("no_such + 1")
         .err()
         .or_else(|| Formula::parse("qqq").ok().and_then(|f| f.eval(&v).err()))
-        .expect("неизвестное имя обязано быть отказом");
+        .expect("an unknown name must be a rejection");
     assert!(
         matches!(unknown.kind, FormulaErrorKind::UnknownName(_) | FormulaErrorKind::BadChar(_)),
-        "неизвестное имя отвергнуто не тем: {unknown:?}"
+        "unknown name rejected for the wrong reason: {unknown:?}"
     );
 
-    let div = Formula::parse("x / (t - 2)").expect("разбирается");
-    let e = div.eval(&v).expect_err("деление на ноль обязано быть ОТКАЗОМ, а не бесконечностью");
+    let div = Formula::parse("x / (t - 2)").expect("parses");
+    let e = div.eval(&v).expect_err("division by zero must be a REJECTION, not infinity");
     assert_eq!(e.kind, FormulaErrorKind::DivZero, "{e:?}");
 
-    let open = Formula::parse("(1 + 2").expect_err("незакрытая скобка обязана быть отказом");
+    let open = Formula::parse("(1 + 2").expect_err("an unclosed bracket must be a rejection");
     assert_eq!(open.kind, FormulaErrorKind::Unclosed, "{open:?}");
 
-    // окружения в языке НЕТ сознательно: ни часов, ни случайности
+    // the language has NO environment on purpose: no clock, no randomness
     for src in ["now()", "now", "rand()", "time()"] {
         let bad = Formula::parse(src)
             .err()
             .or_else(|| Formula::parse(src).ok().and_then(|f| f.eval(&v).err()))
-            .unwrap_or_else(|| panic!("{src:?} прошло — окружение просочилось в язык"));
+            .unwrap_or_else(|| panic!("{src:?} passed — the environment leaked into the language"));
         assert!(
             matches!(bad.kind, FormulaErrorKind::UnknownName(_)),
-            "{src:?} отвергнуто не как неизвестное имя: {bad:?}"
+            "{src:?} rejected not as an unknown name: {bad:?}"
         );
     }
 
-    // --- ни один отказ не даёт МОЛЧАЛИВОГО НУЛЯ -----------------------
+    // --- no failure gives a SILENT ZERO ---------------------------------------
     for src in ["1/0", "(2", "wat(1)", "min(1)"] {
         let r = Formula::parse(src).and_then(|f| f.eval(&v));
-        assert!(r.is_err(), "{src:?} посчиталось вместо отказа: {r:?}");
+        assert!(r.is_err(), "{src:?} evaluated instead of being rejected: {r:?}");
         let text = r.unwrap_err().to_string();
-        assert!(text.len() > 12 && text.contains("formula"), "отказ без причины: {text}");
+        assert!(text.len() > 12 && text.contains("formula"), "rejection without a reason: {text}");
     }
 
-    // позиция в строке названа: поле ввода подсветит её
-    let e = Formula::parse("1 + $").expect_err("мусор обязан быть отказом");
-    assert!(e.at >= 4, "позиция ошибки не указана: {e:?} ({})", e.at);
+    // the position in the string is named: the input field will highlight it
+    let e = Formula::parse("1 + $").expect_err("garbage must be a rejection");
+    assert!(e.at >= 4, "error position not given: {e:?} ({})", e.at);
 
-    // --- какие ИМЕНА читает выражение, известно ДО счёта ---------------
-    let f = Formula::parse("blur.radius * 2 + t").expect("разбирается");
+    // --- which NAMES an expression reads is known BEFORE evaluation -----------
+    let f = Formula::parse("blur.radius * 2 + t").expect("parses");
     assert_eq!(f.reads, vec!["blur.radius".to_string(), "t".to_string()], "{:?}", f.reads);
-    let none = Formula::parse("1 + 2").expect("разбирается");
-    assert!(none.reads.is_empty(), "константа зря объявила зависимости: {:?}", none.reads);
+    let none = Formula::parse("1 + 2").expect("parses");
+    assert!(none.reads.is_empty(), "a constant declared dependencies for no reason: {:?}", none.reads);
 }
 
-/// Тест 784 (Р.67): `t` формулы — секунды от НАЧАЛА МАТЕРИАЛА, и в
-/// предпросмотре тот же: рендер на материале 12 с при точке входа 10 с
-/// даёт 2.0, а предпросмотр для двух разных окон совпадает с рендером в
-/// тех же тиках. На прежнем коде предпросмотр считал `t` от левого края
-/// окна — линия врала и уезжала при прокрутке.
+/// Test 784 (R.67): the `t` of a formula is seconds from the START OF THE MATERIAL, and in
+/// the preview it is the same: rendering on 12 s of material with an entry point of 10 s
+/// gives 2.0, and the preview for two different windows matches the render at the
+/// same ticks. In the old code the preview counted `t` from the left edge of the
+/// window — the line lied and drifted on scrolling.
 #[test]
 fn t784_formula_time_counts_from_material_start_everywhere() {
     use kt_model::*;
@@ -149,24 +149,24 @@ fn t784_formula_time_counts_from_material_start_everywhere() {
     let rendered = &out[0].fx_auto[0][0].keys;
     let at = Tick(12 * 90_000);
     let v = curve_value(rendered, at);
-    assert!((v - 2.0).abs() < 1e-9, "рендер: {v}, ждали 2.0 (не 12 и не 0)");
-    // предпросмотр: два окна — одна линия, равная рендеру
+    assert!((v - 2.0).abs() < 1e-9, "render: {v}, expected 2.0 (not 12 and not 0)");
+    // preview: two windows — one line, equal to the render
     let material = (clip.source_in, Tick(clip.source_in.0 + clip.duration.0));
     let win_a = formula_preview(&curve, material, Tick(11 * 90_000), Tick(13 * 90_000), step);
     let win_b = formula_preview(&curve, material, Tick(5 * 90_000), Tick(20 * 90_000), step);
     for k in win_a.iter().chain(win_b.iter()) {
         let r = curve_value(rendered, k.t);
-        assert!((k.v - r).abs() < 1e-9, "предпросмотр {} ≠ рендер {} на тике {}", k.v, r, k.t.0);
+        assert!((k.v - r).abs() < 1e-9, "preview {} ≠ render {} at tick {}", k.v, r, k.t.0);
     }
     let a12 = win_a.iter().find(|k| k.t == at).map(|k| k.v).unwrap();
     let b12 = win_b.iter().find(|k| k.t == at).map(|k| k.v).unwrap();
-    assert!((a12 - 2.0).abs() < 1e-9 && (b12 - 2.0).abs() < 1e-9, "окна разошлись: {a12} / {b12}");
-    // `k` в предпросмотре тоже есть
+    assert!((a12 - 2.0).abs() < 1e-9 && (b12 - 2.0).abs() < 1e-9, "windows diverged: {a12} / {b12}");
+    // `k` is present in the preview as well
     let with_keys = ParamCurve {
         keys: vec![AutoKey::at(Tick(0), 1.0), AutoKey::at(Tick(20 * 90_000), 1.0)],
         source: CurveSource::Formula { expr: "k + t".into() },
         ..curve
     };
     let p = formula_preview(&with_keys, material, at, at, step);
-    assert!((p[0].v - 3.0).abs() < 1e-9, "k + t в предпросмотре: {}", p[0].v);
+    assert!((p[0].v - 3.0).abs() < 1e-9, "k + t in preview: {}", p[0].v);
 }

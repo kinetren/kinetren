@@ -1,5 +1,5 @@
-// Радиальное размытие (Р.47): зеркало kt_fx::video::radial_blur —
-// среднее РОВНО 16 тапов зум-луча или дуги (константа обоих бэкендов).
+// Radial blur (R.47): a mirror of kt_fx::video::radial_blur:
+// the average of EXACTLY 16 taps of a zoom ray or an arc (a constant of both backends).
 // u0 = (w, h, spin); f0 = (amount, cx_norm, cy_norm, 0).
 fn bilin(sx: f32, sy: f32) -> vec4<f32> {
     let sw = i32(P.u0.x);

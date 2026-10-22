@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.52 С3: титр набирается в настоящем окне.
+"""Live scenario R.52 C3: a title is typed in a real window.
 
-Меню бина → «Создать генератор» → «Текст» открывает ОКНО ТИТРА (не общее
-окно генератора — маршрутизация); клик в поле, ввод с клавиатуры; клип на
-курсор — в превью появляются НАРИСОВАННЫЕ БУКВЫ (яркость падает с
-цветного ramp-кадра к «белые буквы на пустоте», но не в ноль); Ctrl+S —
-набранный текст лежит в gen:text-пути экранированным и в
+Bin menu → “Create a generator” → “Text” opens the TITLE WINDOW (not the common
+generator window — routing); a click into the field, keyboard input; a clip onto the
+cursor — DRAWN LETTERS appear in the preview (brightness falls from the colored ramp frame
+to “white letters on emptiness”, but not to zero); Ctrl+S —
+the typed text lies in the gen:text path, escaped, and in
 GeneratorReference.1.
 """
 import os
@@ -29,53 +29,53 @@ def main(out):
         b = app.geom()["bin"]
         app.shot("open")
 
-        # 1. создать ТЕКСТ из подменю генераторов. Курсор — ЗА концом
-        # нижнего клипа: создание сразу кладёт клип (п.416), а наложение
-        # на одной дорожке — это кроссфейд, и титр в его начале невидим.
+        # 1. create a TEXT from the generators submenu. The cursor is AFTER the end of the
+        # bottom clip: creation puts the clip at once (item 416), and an overlap
+        # on one track is a crossfade, and the title at its start is invisible.
         app.click(app.x_at(5 * SEC), app.ruler_y())
         app.right_click(
             win["x"] + int((b["left"] + b["right"]) / 2),
             win["y"] + int(b["bottom"]) - 10,
         )
-        app.click_probe("gen.new", "пункт «Создать генератор»")
-        # Р.53: титр лежит в группе «Титры и отсчёт»
-        app.hover_probe("gen.new.group.titles", "группа «Титры и отсчёт»")
-        app.click_probe("gen.new.text", "вид «Текст» в подменю")
+        app.click_probe("gen.new", "item “Create a generator”")
+        # R.53: the title lies in the group “Titles and counter”
+        app.hover_probe("gen.new.group.titles", "group “Titles and countdown”")
+        app.click_probe("gen.new.text", "kind “Text” in the submenu")
         app.expect(
             app.has_probe("titlew.text"),
-            "открылось ОКНО ТИТРА (маршрутизация мимо общего окна)",
+            "the TITLE WINDOW opened (routing past the common window)",
         )
         app.shot("title-window")
 
-        # 2. набрать текст в поле окна
-        app.click_probe("titlew.text", "поле текста титра")
+        # 2. type the text into the window’s field
+        app.click_probe("titlew.text", "title text field")
         for ch in ["k", "t"]:
             app.key(ch)
-        # Esc закрывает окно титра (каскад п.11) — иначе оно ПЕРЕКРЫВАЕТ
-        # бин и превью, и клики уходят в него; заодно фокус отдан
-        # (правило 14): следующая горячая клавиша работает
+        # Esc closes the title window (cascade of item 11) — otherwise it OVERLAPS
+        # the bin and the preview, and clicks go into it; at the same time the focus is handed back
+        # (rule 14): the next hotkey works
         app.key("Escape")
-        app.expect(not app.has_probe("titlew.text", tries=2), "Esc закрыл окно титра")
+        app.expect(not app.has_probe("titlew.text", tries=2), "Esc closed the title window")
 
-        # 3. превью: на synth-клипе кадр цветной; ставим титр на пустое
-        # место — приезжают белые буквы поверх пустоты
+        # 3. preview: on the synth clip the frame is coloured; we put the title on an empty
+        # place — white letters arrive over the emptiness
         preview = app.preview_center()
         app.click(app.x_at(int(1.5 * SEC)), app.ruler_y())
         ramp_px = app.pixel_settled(preview)
         ramp_b = app.brightness(preview)
-        app.expect(ramp_b > 20, f"кадр synth-клипа светлый: {ramp_b:.1f}")
+        app.expect(ramp_b > 20, f"frame of the synth clip is light: {ramp_b:.1f}")
 
-        # Р.53 (п.416): клип титра поставило само создание — в бин за
-        # карточкой ходить не надо. Двигаем его на пустое место мышью не
-        # будем: достаточно встать курсором НА него.
+        # R.53 (item 416): the title clip was placed by creation itself — there is no need to walk
+        # to the bin behind the card. We will not move it by hand to an empty place:
+        # it is enough to stand the cursor ON it.
         placed = len(app.live_clips()) == 2
-        app.expect(placed, f"создание титра обязано класть клип: {app.live_clips()}")
+        app.expect(placed, f"creating a title must place a clip: {app.live_clips()}")
         gen_start = app.live_clips()[-1][0] if placed else 0
         app.click(app.x_at(int(gen_start + 2 * SEC)), app.ruler_y())
 
-        # буквы есть, а фона нет: яркость ОБЛАСТИ высока (белый штрих), а
-        # центральная точка кадра тёмная — титр это буквы на пустоте, а
-        # не залитый прямоугольник
+        # the letters are there, but there is no background: the brightness of the AREA is high (white stroke), while
+        # the frame’s central point is dark — the title is letters on emptiness,
+        # not a filled rectangle
         drawn = None
         for _ in range(30):
             drawn = app.ink_box(preview, half=150)
@@ -84,43 +84,43 @@ def main(out):
             poll_step(0.4)
         app.expect(
             drawn is not None and drawn > 120,
-            f"в превью буквы титра поверх пустоты: {drawn} (ramp {ramp_b:.1f})",
+            f"in the preview the title letters over emptiness: {drawn} (ramp {ramp_b:.1f})",
         )
         app.shot("placed")
 
-        # 4. НАБОР ТЕКСТА ПРИ ИГРАЮЩЕМ ТРАНСПОРТЕ (правило 2 чек-листа:
-        # гейт «только на паузе» ставится, лишь если без него ломается
-        # инвариант движка). Правка идёт перенастройкой источника на
-        # месте (Р.53, п.411), поэтому звук не должен заикаться, а поток
-        # декодера — пересоздаваться.
-        # окно открываем ИЗ МЕНЮ СОБЫТИЯ, пока стоим: при игре вид едет
-        # за курсором, и координата клипа устаревает раньше клика
+        # 4. TYPING TEXT WITH TRANSPORT PLAYING (checklist rule 2:
+        # the gate “only on pause” is set only if, without it, an engine invariant breaks).
+        # The edit goes through reconfiguring the source in
+        # place (R.53, item 411), so the sound must not stutter, and the decoder
+        # stream must not be recreated.
+        # the window is opened FROM THE EVENT MENU while we stand: during play the view moves
+        # with the cursor, and the clip’s coordinate goes stale before the click
         app.right_click(
             app.x_at(int(gen_start + 1 * SEC)),
             app.lane_y("video", 0, 0.6),
         )
-        app.click_probe("gen.params", "пункт «Параметры генератора…»")
-        app.expect(app.has_probe("titlew.text"), "окно титра открылось из меню события")
+        app.click_probe("gen.params", "“Generator parameters…” item")
+        app.expect(app.has_probe("titlew.text"), "title window opened from the event menu")
         app.key("space")
-        app.expect(app.geom().get("playing") is True, "транспорт играет")
-        app.click_probe("titlew.text", "поле текста при игре")
+        app.expect(app.geom().get("playing") is True, "transport plays")
+        app.click_probe("titlew.text", "text field during playback")
         app.key("9")
         app.expect(
             app.geom().get("playing") is True,
-            "правка титра при игре не имеет права останавливать транспорт",
+            "a title edit during playback must not stop the transport",
         )
-        # Esc СНАЧАЛА: пока фокус в поле, пробел напечатался бы в текст
+        # Esc FIRST: while the focus is in the field, the space would be typed into the text
         app.key("Escape")
         app.key("space")
         app.shot("typed-while-playing")
 
-        # 5. набранный текст в файле: схема — в ЭКСПОРТЕ (Р.70), сам текст
-        # — в модели файла проекта
-        app.expect('"kt9"' in app.saved_text(), "набранный текст лежит в файле проекта")
+        # 5. the typed text in the file: the scheme — in the EXPORT (R.70), the text itself
+        # — in the model of the project file
+        app.expect('"kt9"' in app.saved_text(), "the typed text lies in the project file")
         with open(app.project_now().otio_path) as f:
             text = f.read()
-        app.expect('"kt.text"' in text, "клип титра уехал GeneratorReference.1/kt.text")
-        app.expect('"text": "kt9"' in text, "набранный при игре текст лежит в parameters")
+        app.expect('"kt.text"' in text, "the title clip moved to GeneratorReference.1/kt.text")
+        app.expect('"text": "kt9"' in text, "the text typed during playback lies in parameters")
         app.shot("saved")
         return app.done()
 

@@ -1,21 +1,21 @@
-//! Тест 748 (Р.63 п.2): КОНЕЦ МАТЕРИАЛА — это не голодание.
+//! Test 748 (R.63 item 2): the END OF THE MATERIAL is not starvation.
 //!
-//! У владельца событие Rolling Stones длилось 316.967 с при файле 226.268 с:
-//! при rate 0.75 оно потребляет 237.7 с материала, и последние 11.5 с
-//! читают за концом файла. Звучала там тишина — правильно, — но каждый
-//! такой кадр считался underrun'ом (180 480 кадров на пять секунд), и
-//! регион-луп на хвосте выглядел как «луп ломает звук».
+//! The owner's event Rolling Stones lasted 316.967 s with a 226.268 s file:
+//! at rate 0.75 it consumes 237.7 s of material, and the last 11.5 s
+//! read past the end of the file. There was silence there — correct — but each such frame
+//! counted as an underrun (180 480 frames per five seconds), and a region loop on the tail
+//! looked like “the loop breaks the sound”.
 //!
-//! Утверждается СЛЕДСТВИЕ: за краем материала тишина, underrun'ов ноль, а
-//! внутри материала промах кэша по-прежнему считается — иначе тест
-//! «починил» бы счётчик, а не движок.
+//! The CONSEQUENCE is asserted: past the edge of the material there is silence, zero underruns,
+//! while inside the material a cache miss is still counted — otherwise the test
+//! would “fix” the counter rather than the engine.
 
 use kt_engine::{AudioFetcher, AudioRenderer, DirectFetcher};
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
 use kt_model::*;
 use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS, Tick};
 
-/// Материал — 2 секунды, событие — 4: половина за краем.
+/// The material is 2 seconds, the event is 4: half is past the edge.
 const MEDIA_SECS: i64 = 2;
 const CLIP_SECS: i64 = 4;
 
@@ -72,7 +72,7 @@ fn project(rate: Option<f64>) -> Project {
     project_kind(rate, ClipKind::Audio)
 }
 
-/// Источник с НАСТОЯЩИМ концом, как у файла.
+/// A source with a REAL end, like the file's.
 fn fetcher_with_eof() -> DirectFetcher {
     let mut f = DirectFetcher::new(None);
     f.add_source(
@@ -94,54 +94,54 @@ fn render(p: &Project, f: &mut dyn AudioFetcher, from_s: f64, len_s: f64) -> (Ve
 
 #[test]
 fn t748_material_end_is_silence_not_starvation() {
-    // ---- 1. прямое событие: вторая половина за материалом ----------------
+    // ---- 1. direct event: the second half is past the material ----------------
     let p = project(None);
     let mut f = fetcher_with_eof();
     let (tail, under, warm) = render(&p, &mut f, 2.5, 1.0);
     assert!(
         tail.iter().all(|s| *s == 0.0),
-        "за концом материала обязана быть тишина"
+        "there must be silence past the end of the material"
     );
     assert_eq!(
         (under, warm),
         (0, 0),
-        "тишина за концом материала посчитана голоданием (на прежнем коде — 48000 кадров)"
+        "silence past the end of the material was counted as starvation (in the previous code — 48000 frames)"
     );
 
-    // внутри материала звук есть и голодания тоже нет
+    // inside the material there is sound and no starvation either
     let (body, under, _) = render(&p, &mut f, 0.5, 0.5);
-    assert!(body.iter().any(|s| *s != 0.0), "внутри материала обязан быть звук");
-    assert_eq!(under, 0, "внутри материала промахов быть не должно");
+    assert!(body.iter().any(|s| *s != 0.0), "there must be sound inside the material");
+    assert_eq!(under, 0, "there must be no misses inside the material");
 
-    // ---- 2. ЗАМЕДЛЕНИЕ: край уезжает вправо по таймлайну -----------------
-    // rate 0.5 — 2 с материала растянуты на 4 с: край материала ровно в
-    // конце события, и тишины быть не должно вовсе
+    // ---- 2. SLOWDOWN: the edge moves right along the timeline -----------------
+    // rate 0.5 — 2 s of material stretched to 4 s: the material's edge is exactly at the
+    // end of the event, and there must be no silence at all
     let p = project(Some(0.5));
     let mut f = fetcher_with_eof();
     let (all, under, warm) = render(&p, &mut f, 0.0, 3.5);
-    assert!(all.iter().any(|s| *s != 0.0), "замедленное событие обязано звучать");
-    assert_eq!((under, warm), (0, 0), "у замедленного события голодания нет");
+    assert!(all.iter().any(|s| *s != 0.0), "a slowed event must sound");
+    assert_eq!((under, warm), (0, 0), "a slowed event has no starvation");
 
-    // ---- 2б. КАК У ВЛАДЕЛЬЦА: замедление 0.75 и хвост за материалом ------
-    // 2 с материала при rate 0.75 съедаются за 2.67 с, а событие длится 4 с:
-    // последние 1.33 с читают за концом файла ЧЕРЕЗ ЦЕПОЧКУ FX (варп), а не
-    // прямым путём — это ровно случай Rolling Stones.
+    // ---- 2b. AS THE OWNER HAS IT: slowdown 0.75 and the tail past the material ------
+    // 2 s of material at rate 0.75 is consumed in 2.67 s, and the event lasts 4 s:
+    // the last 1.33 s read past the end of the file THROUGH THE FX CHAIN (the warp), not by the
+    // direct path — this is exactly the Rolling Stones case.
     let p = project(Some(0.75));
     let mut f = fetcher_with_eof();
     let (tail, under, warm) = render(&p, &mut f, 3.0, 0.9);
     assert!(
         tail.iter().all(|s| s.abs() < 1e-6),
-        "за концом материала на варп-пути обязана быть тишина"
+        "past the end of the material on the warp path there must be silence"
     );
     assert_eq!(
         (under, warm),
         (0, 0),
-        "хвост варп-события за материалом посчитан голоданием (случай владельца)"
+        "the tail of a warp event past the material was counted as starvation (the owner’s case)"
     );
 
-    // ---- 3. голодание ВНУТРИ материала по-прежнему считается -------------
-    // пустой кэш-фетчер: бёрстов нет, но материал есть — это настоящий
-    // underrun, и он обязан остаться видимым
+    // ---- 3. starvation INSIDE the material is still counted -------------
+    // an empty cache fetcher: there are no bursts, but there is material — this is a real
+    // underrun, and it must remain visible
     struct Empty {
         end: Option<i64>,
     }
@@ -161,17 +161,17 @@ fn t748_material_end_is_silence_not_starvation() {
     let (_, under, _) = render(&p, &mut Empty { end: Some(MEDIA_SECS * 48_000) }, 0.0, 1.0);
     assert!(
         under >= 48_000 - AUDIO_BURST_FRAMES as u64,
-        "промах внутри материала обязан считаться underrun'ом, получено {under}"
+        "a miss inside the material must count as an underrun, got {under}"
     );
-    // а за краем — ноль, тем же фетчером
+    // and past the edge — zero, with the same fetcher
     let (_, under_tail, _) = render(&p, &mut Empty { end: Some(MEDIA_SECS * 48_000) }, 2.5, 1.0);
-    assert_eq!(under_tail, 0, "за краем материала промахов не бывает");
+    assert_eq!(under_tail, 0, "there are no misses past the edge of the material");
 
-    // ---- 3б. ОБЁРТКА ФЕТЧЕРА обязана пропускать вопрос о крае ------------
-    // Ловушка, стоившая половины задачи: `NestFetcher` оборачивает фетчер
-    // на КАЖДОМ проекте (он же ведёт `begin_clip`), а умолчание трейта —
-    // «края нет». Не переопредели его обёртка, механизм молчит целиком:
-    // на проекте владельца хвост считался голоданием ровно поэтому.
+    // ---- 3b. the FETCHER WRAPPER must pass the question about the edge ------------
+    // A trap that cost half the task: `NestFetcher` wraps the fetcher
+    // on EVERY project (it also drives `begin_clip`), and the trait's default is
+    // “there is no edge”. If its wrapper did not override it, the mechanism would be silent entirely:
+    // on the owner's project the tail counted as starvation for exactly this reason.
     {
         struct Wrap<'a>(&'a mut dyn AudioFetcher);
         impl AudioFetcher for Wrap<'_> {
@@ -182,34 +182,34 @@ fn t748_material_end_is_silence_not_starvation() {
             ) -> Option<std::sync::Arc<kt_media::AudioBurst>> {
                 self.0.audio_burst(m, i)
             }
-            // намеренно НЕ переопределяем material_end_frames
+            // deliberately does NOT override material_end_frames
         }
         let p = project(None);
         let mut inner = fetcher_with_eof();
         let (_, under, _) = render(&p, &mut Wrap(&mut inner), 2.5, 1.0);
         assert!(
             under > 0,
-            "сцена вырождена: обёртка без делегирования обязана терять край"
+            "the scene is degenerate: a wrapper without delegation must lose the edge"
         );
-        // а настоящая обёртка движка — делегирует
+        // but the engine's real wrapper — delegates
         let mut direct = fetcher_with_eof();
         assert_eq!(
             direct.material_end_frames(MediaId(1)),
             Some(MEDIA_SECS * 48_000),
-            "DirectFetcher обязан знать конец материала"
+            "DirectFetcher must know the end of the material"
         );
     }
 
-    // ---- 4. без известной длины — поведение прежнее -----------------------
+    // ---- 4. without a known length — the former behaviour -----------------------
     let (_, under_unknown, _) = render(&p, &mut Empty { end: None }, 2.5, 1.0);
     assert!(
         under_unknown > 0,
-        "без известной длины край не выдумывается: считаем как раньше"
+        "without a known length the edge is not invented: we count as before"
     );
 }
 
-/// Та же политика у ВИДЕО: за концом материала держится последний кадр, и
-/// заказ префетча не уходит за край (инвариант 4 — заказ равен чтению).
+/// The same policy for VIDEO: past the end of the material the last frame is held, and
+/// the prefetch order does not go past the edge (invariant 4 — the order equals the read).
 #[test]
 fn t748e_video_holds_the_last_frame_past_the_material_end() {
     use kt_engine::{SourceFacts, VideoRenderer};
@@ -230,20 +230,20 @@ fn t748e_video_holds_the_last_frame_past_the_material_end() {
         vr.layers_at(last_inside, q).into_iter().map(|(_, pts, _)| pts).collect();
     let beyond: Vec<Tick> =
         vr.layers_at(Tick(3 * 90_000), q).into_iter().map(|(_, pts, _)| pts).collect();
-    assert_eq!(inside.len(), 1, "сцена: один слой внутри материала");
-    assert_eq!(beyond.len(), 1, "за краем слой обязан остаться (последний кадр)");
+    assert_eq!(inside.len(), 1, "scene: one layer inside the material");
+    assert_eq!(beyond.len(), 1, "past the edge the layer must stay (last frame)");
     assert!(
         beyond[0].0 < MEDIA_SECS * 90_000,
-        "за концом материала просим НЕсуществующий кадр {:?}: заказ ушёл за край",
+        "past the end of the material we ask for a NON-existent frame {:?}: the order went past the edge",
         beyond[0]
     );
-    assert_eq!(beyond[0], inside[0], "держится последний кадр материала");
+    assert_eq!(beyond[0], inside[0], "the last frame of the material is held");
 
-    // и заказ префетча на хвосте не выходит за материал
+    // and the prefetch order on the tail does not go beyond the material
     let wanted =
         vr.wanted_frames(kt_time::TickRange::new(Tick(0), Tick(CLIP_SECS * 90_000)), q);
     assert!(
         wanted.iter().all(|(_, pts, _)| pts.0 < MEDIA_SECS * 90_000),
-        "заказ просит кадры за концом материала"
+        "the order asks for frames past the end of the material"
     );
 }

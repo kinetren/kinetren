@@ -1,74 +1,74 @@
-//! Синтетические источники для тестов: детерминированные, без FFmpeg.
-//! Живут в основном крейте (не под #[cfg(test)]), чтобы downstream-крейты
-//! могли использовать их в своих тестах.
+//! Synthetic sources for tests: deterministic, without FFmpeg.
+//! They live in the main crate (not under #[cfg(test)]) so that downstream crates
+//! can use them in their tests.
 
 use crate::{AudioBurst, MediaError, MediaInfo, MediaSource, Quality, VideoFrame};
 use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS, AUDIO_SAMPLE_RATE, Tick};
 
-/// Какой сигнал генерирует аудио-часть источника.
+/// What signal the source's audio part generates.
 #[derive(Debug, Clone, Copy)]
 pub enum AudioPattern {
-    /// Тишина.
+    /// Silence.
     Silence,
-    /// Синус заданной частоты, амплитуда 0.5, одинаковый в обоих каналах.
+    /// A sine of the given frequency, amplitude 0.5, identical in both channels.
     Sine { hz: f64 },
-    /// Значение сэмпла = его глобальный номер (для sample-exact тестов стыков).
-    /// Левый канал = n, правый = -n, масштаб 1e-6 чтобы остаться в разумном диапазоне.
+    /// The sample value = its global number (for sample-exact seam tests).
+    /// Left channel = n, right = -n, scale 1e-6 to stay in a reasonable range.
     Ramp,
-    /// Постоянное значение (для тестов кроссфейда).
+    /// A constant value (for crossfade tests).
     Dc { value: f32 },
-    /// Единичный импульс в сэмпле 0, дальше тишина (для тестов хвостов FX).
+    /// A unit impulse at sample 0, then silence (for FX tail tests).
     Impulse,
-    /// Щелчки поверх тихого фона (Р.47): те же пачки, что у Clicks, плюс
-    /// постоянный синус 200 Гц амплитудой 0.02 (−34 дБFS) в обоих каналах.
-    /// Стимул динамики: у гейта появляется что глушить МЕЖДУ щелчками
-    /// (hold/threshold слышимы), у компрессора release качает фон.
+    /// Clicks over a quiet background (R.47): the same bursts as Clicks, plus a
+    /// constant 200 Hz sine of amplitude 0.02 (−34 dBFS) in both channels.
+    /// A dynamics stimulus: the gate has something to suppress BETWEEN the clicks
+    /// (hold/threshold are audible), and the compressor's release pumps the background.
     ClicksBed,
-    /// Широкополосные стерео-щелчки (Р.47): пачка из 4 кадров каждые 4800,
-    /// каналы чередуются. Стимул для каркаса аудио-FX: у фильтров есть ВЧ,
-    /// у стерео-параметров — s-компонента, у кривых — события по всей
-    /// длине; ширина 4 кадра — чтобы держатель сэмпла (bitcrusher) ловил
-    /// щелчок на любой фазе своей сетки, включая реверс.
+    /// Wideband stereo clicks (R.47): a burst of 4 frames every 4800 frames,
+    /// channels alternating. A stimulus for the audio FX skeleton: filters have HF,
+    /// stereo parameters have the S component, and curves have events along the
+    /// whole length; a width of 4 frames — so that a sample holder (bitcrusher) catches
+    /// the click at any phase of its grid, including reverse.
     Clicks,
 }
 
-/// Разделяемые счётчики обращений: источник живёт в потоке воркера, а тест
-/// наблюдает снаружи (тесты 13, 21).
+/// Shared call counters: the source lives in the worker thread, and the test
+/// observes from outside (tests 13, 21).
 #[derive(Default)]
 pub struct SyntheticStats {
     pub audio_reads: std::sync::atomic::AtomicU64,
     pub video_reads: std::sync::atomic::AtomicU64,
-    /// Видео-запросы с pts МЕНЬШЕ предыдущего (для реального декодера это
-    /// backward seek + пересоздание — тест 21 требует ноль на секвенции).
+    /// Video requests with a pts LESS than the previous one (for a real decoder this is
+    /// a backward seek + recreation — test 21 requires zero on a sequence).
     pub video_backward_reads: std::sync::atomic::AtomicU64,
     pub last_video_pts: std::sync::atomic::AtomicI64,
     pub audio_backward_reads: std::sync::atomic::AtomicU64,
     pub last_audio_idx: std::sync::atomic::AtomicI64,
 }
 
-/// Синтетический источник: детерминированная функция от номера burst'а/pts.
+/// Synthetic source: a deterministic function of the burst number / pts.
 pub struct SyntheticSource {
     info: MediaInfo,
     pattern: AudioPattern,
-    /// Счётчик обращений — для регрессионных тестов «ноль декодов» (тест 13).
+    /// Call counter — for regression tests “zero decodes” (test 13).
     pub audio_reads: u64,
     pub video_reads: u64,
-    /// Опциональные разделяемые счётчики (тесты через MediaWorker).
+    /// Optional shared counters (tests through MediaWorker).
     pub stats: Option<std::sync::Arc<SyntheticStats>>,
-    /// Искусственная задержка видео-декода (тест 27: «медленный 4К»).
+    /// An artificial delay of the video decode (test 27: “slow 4K”).
     pub video_delay: std::time::Duration,
-    /// true: кадры за пределами duration → OutOfRange (тест 27: EOF).
+    /// true: frames beyond duration → OutOfRange (test 27: EOF).
     pub video_eof: bool,
-    /// Аудио тоже КОНЧАЕТСЯ на `duration` (Р.63 п.2): настоящий файл за
-    /// своим концом бёрстов не отдаёт, а синтетика по умолчанию тянет
-    /// узор бесконечно — на ней край материала не воспроизвести.
+    /// Audio also ENDS at `duration` (R.63 item 2): a real file does not deliver bursts
+    /// past its end, while synthetic material by default extends the pattern
+    /// infinitely — the material's edge cannot be reproduced on it.
     pub audio_eof: bool,
-    /// Собственная СЕТКА КАДРОВ источника (п.14 р.14). По умолчанию нет:
-    /// синтетика отдаёт кадр ровно на запрошенный тик, поэтому на ней
-    /// неразличимы floor и ceil и не воспроизводится конверсия частот.
-    /// Со включённой сеткой кадр выравнивается вниз по сетке ИСТОЧНИКА, а
-    /// цвет кодирует НОМЕР кадра источника — по готовому кадру композиции
-    /// тест видит, какой именно кадр попал в вывод.
+    /// The source's own FRAME GRID (item 14, round 14). By default there is none:
+    /// the synthetic source delivers a frame exactly at the requested tick, so floor and ceil
+    /// are indistinguishable on it and frame-rate conversion cannot be reproduced.
+    /// With the grid enabled, the frame is aligned down to the SOURCE's grid, and the
+    /// color encodes the source frame NUMBER — by the finished composition frame the
+    /// test sees which exact frame reached the output.
     pub video_fps: Option<u32>,
 }
 
@@ -101,17 +101,17 @@ impl SyntheticSource {
         self
     }
 
-    /// Включить собственную сетку кадров источника (п.14 р.14).
-    /// Заявленный натив кадра (Р.62): синтетика рисует заливку в любой
-    /// запрошенный размер, а вид (`info().width/height`) — вход правила
-    /// приведения.
+    /// Enable the source's own frame grid (item 14, round 14).
+    /// The declared frame native (R.62): the synthetic source paints a fill at any
+    /// requested size, while its form (`info().width/height`) is the input
+    /// of the conform rule.
     pub fn with_video_size(mut self, w: u32, h: u32) -> Self {
         self.info.width = w.max(1);
         self.info.height = h.max(1);
         self
     }
 
-    /// Пиксельное соотношение (Р.62): вид кадра = width × sar.
+    /// Pixel aspect ratio (R.62): frame form = width × sar.
     pub fn with_sar(mut self, num: u32, den: u32) -> Self {
         self.info.sar = (num.max(1), den.max(1));
         self
@@ -123,8 +123,8 @@ impl SyntheticSource {
         self
     }
 
-    /// Источник с настоящим концом: и видео, и аудио кончаются на
-    /// `duration`, как у файла.
+    /// A source with a real end: both video and audio end at
+    /// `duration`, as with a file.
     pub fn with_eof(mut self) -> SyntheticSource {
         self.video_eof = true;
         self.audio_eof = true;
@@ -146,7 +146,7 @@ impl SyntheticSource {
         s
     }
 
-    /// Значение сэмпла `n` канала `ch` для паттерна — эталон для ассертов в тестах.
+    /// The sample value `n` of channel `ch` for the pattern — the reference for assertions in tests.
     pub fn sample_at(pattern: AudioPattern, n: i64, ch: usize) -> f32 {
         match pattern {
             AudioPattern::Silence => 0.0,
@@ -241,9 +241,9 @@ impl MediaSource for SyntheticSource {
             }
         }
         let q = quality.unwrap_or(Quality { width: 64, height: 36 });
-        // Без своей сетки: кадр однозначно определяется pts (цвет = номер
-        // тика). Со своей сеткой: floor по сетке источника, цвет = НОМЕР
-        // кадра источника (п.14 р.14).
+        // Without its own grid: the frame is uniquely determined by pts (color = tick
+        // number). With its own grid: floor on the source grid, color = the source frame's
+        // NUMBER (item 14, round 14).
         let (code, out_pts) = match self.video_fps {
             Some(fps) => {
                 let step = kt_time::TICK_HZ / fps.max(1) as i64;
@@ -272,19 +272,19 @@ impl MediaSource for SyntheticSource {
     }
 }
 
-/// Источник с НАСТОЯЩИМ нативным разрешением и честной минификацией
-/// (Р.46): `SyntheticSource` рисует заливку в любой запрошенный размер,
-/// поэтому на нём невозможно измерить ни потерю деталей при декоде в
-/// Quality, ни их возврат при декоде крупнее.
+/// A source with a REAL native resolution and honest minification
+/// (R.46): `SyntheticSource` fills any requested size, so on it it is impossible to measure
+/// the loss of detail when decoding at Quality, nor its return when decoding larger.
 ///
-/// Фактура — вертикальные полосы шириной 2 px В НАТИВЕ: ужатие вдвое их
-/// сохраняет (box берёт пары одного цвета), ужатие вчетверо гасит в ровный
-/// серый. Поэтому «декод в Quality» и «декод крупнее» различимы прямо по
-/// контрасту готового кадра. Запрос КРУПНЕЕ натива растягивает ближайшим
-/// соседом — деталей не прибавляется, как и у настоящего sws.
+/// The texture — vertical stripes 2 px wide IN NATIVE: halving keeps them (box takes
+/// pairs of one color), quartering turns them into an even gray.
+/// Therefore “decode at Quality” and “decode larger” are distinguishable
+/// right by the contrast of the finished frame. A request LARGER than native
+/// stretches with the nearest neighbor — no detail is added,
+/// just as with real sws.
 pub struct CheckerSource {
     info: MediaInfo,
-    /// Нативный размер (детализация есть только на нём).
+    /// Native size (detail exists only at this size).
     native: (u32, u32),
 }
 
@@ -305,7 +305,7 @@ impl CheckerSource {
         }
     }
 
-    /// Значение фактуры в нативных координатах (серый канал).
+    /// The texture value in native coordinates (gray channel).
     fn native_px(x: u32) -> u8 {
         if (x / 2).is_multiple_of(2) { 16 } else { 239 }
     }
@@ -330,8 +330,8 @@ impl MediaSource for CheckerSource {
         let (w, h) = (q.width.max(2) & !1, q.height.max(2) & !1);
         let mut rgba = vec![0u8; (w * h * 4) as usize];
         for x in 0..w {
-            // box по нативному диапазону этого выходного столбца; при
-            // увеличении диапазон вырождается в один нативный пиксель
+            // box over the native range of this output column; when
+            // enlarging, the range degenerates to one native pixel
             let x0 = (x as u64 * nw as u64 / w as u64) as u32;
             let x1 = (((x as u64 + 1) * nw as u64).div_ceil(w as u64) as u32).max(x0 + 1).min(nw);
             let mut sum = 0u32;
@@ -357,8 +357,8 @@ impl MediaSource for CheckerSource {
 
 #[cfg(test)]
 mod tests {
-    /// Р.62 (t711b): пиксельное соотношение — часть фактов источника и
-    /// без FFmpeg: синтетика несёт то же поле, вид = ширина × SAR.
+    /// R.62 (t711b): pixel aspect ratio is part of the source's facts and
+    /// works without FFmpeg: the synthetic source carries the same field, form = width × SAR.
     #[test]
     fn t711b_synthetic_carries_sar_into_the_view() {
         use super::*;
@@ -368,7 +368,7 @@ mod tests {
         let s = s.with_sar(2, 1);
         assert_eq!(s.info().sar, (2, 1));
         assert_eq!(s.info().view_size(), (128.0, 36.0));
-        // нулевой знаменатель не проходит: клампится к 1
+        // a zero denominator is not accepted: clamped to 1
         let s = SyntheticSource::new(Tick(90_000), AudioPattern::Silence).with_sar(0, 0);
         assert_eq!(s.info().sar, (1, 1));
     }
@@ -380,7 +380,7 @@ mod tests {
         let mut s = SyntheticSource::new(Tick(90_000), AudioPattern::Ramp);
         let b0 = s.read_audio_burst(0).unwrap();
         let b1 = s.read_audio_burst(1).unwrap();
-        // последний сэмпл b0 и первый b1 — соседние значения ramp
+        // the last sample b0 and the first b1 — adjacent values of the ramp
         let last = b0.data[(AUDIO_BURST_FRAMES - 1) * AUDIO_CHANNELS];
         let first = b1.data[0];
         assert_eq!(first, AUDIO_BURST_FRAMES as f32 * 1e-6);

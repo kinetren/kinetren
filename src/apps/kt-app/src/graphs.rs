@@ -1,10 +1,10 @@
-//! Rolling-графики перф-панели (порт MultiLineGraphWidget v1): кольцо 180
-//! сэмплов (~90 с при тике 500 мс), до 5 серий, фирменные «pinned legends» —
-//! подписи слева с коленчатыми выносками к линиям и раздвижкой при
-//! наложении, маркер-точка текущего значения с числом у правого края.
-//! Отличия от v1 (осознанные, по разведке): ОДНА общая шкала на график
-//! (в v1 у каждой серии была своя при общих подписях оси — линии были
-//! несравнимы), явное пустое состояние «—», DPI-независимые размеры egui.
+//! Rolling graphs of the performance panel (port of MultiLineGraphWidget v1): a ring of 180
+//! samples (~90 s at a 500 ms tick), up to 5 series, the signature “pinned legends” —
+//! labels on the left with bent leader lines to the lines and spreading out
+//! on overlap, a marker dot for the current value with the number at the right edge.
+//! Differences from v1 (deliberate, from reconnaissance): ONE common scale per graph
+//! (in v1 each series had its own, with shared axis labels — the lines were
+//! incomparable), an explicit empty state “—”, DPI-independent egui sizes.
 
 use eframe::egui;
 use std::collections::VecDeque;
@@ -15,14 +15,14 @@ pub struct Series {
     pub name: &'static str,
     pub color: egui::Color32,
     pub data: VecDeque<f32>,
-    /// Жёсткий потолок шкалы (для linear-режима).
+    /// Hard ceiling of the scale (for linear mode).
     pub soft_cap: f32,
 }
 
 pub enum Axis {
-    /// 0..100% с сеткой.
+    /// 0..100% with a grid.
     Percent,
-    /// Автомасштаб: атака 0.35, спад 0.08 (порт adaptive scale v1).
+    /// Auto-scale: attack 0.35, decay 0.08 (port of adaptive scale v1).
     LinearAuto,
 }
 
@@ -82,13 +82,13 @@ impl RollingGraph {
         let p = ui.painter_at(rect);
         p.rect_filled(rect, 3.0, egui::Color32::from_gray(16));
 
-        // зона графика: слева колонка легенд, справа колонка значений
+        // graph zone: the legend column on the left, the value column on the right
         let g = egui::Rect::from_min_max(
             egui::pos2(rect.left() + LEGEND_W, rect.top() + 4.0),
             egui::pos2(rect.right() - VALUE_W, rect.bottom() - 4.0),
         );
 
-        // пустое состояние (в v1 было только у LinearAutoRange)
+        // empty state (in v1 it existed only in LinearAutoRange)
         if self.series.iter().all(|s| s.data.len() < 2) {
             p.text(
                 g.center(),
@@ -100,7 +100,7 @@ impl RollingGraph {
             return;
         }
 
-        // общая шкала: атака быстрая, спад медленный (порт 0.35/0.08)
+        // common scale: fast attack, slow decay (port of 0.35/0.08)
         let cap = match self.axis {
             Axis::Percent => 100.0,
             Axis::LinearAuto => {
@@ -114,7 +114,7 @@ impl RollingGraph {
             }
         };
 
-        // сетка: верх/середина/низ + подписи шкалы (порт 100%/50%/0%)
+        // grid: top/middle/bottom + scale labels (port of 100%/50%/0%)
         let grid = egui::Color32::from_gray(30);
         for frac in [0.0f32, 0.5, 1.0] {
             let y = g.bottom() - frac * g.height();
@@ -139,7 +139,7 @@ impl RollingGraph {
             g.bottom() - (v / cap.max(1e-6)).clamp(0.0, 1.0) * (g.height() - 2.0)
         };
 
-        // линии серий
+        // series lines
         for s in &self.series {
             if s.data.len() < 2 {
                 continue;
@@ -154,7 +154,7 @@ impl RollingGraph {
                 })
                 .collect();
             p.add(egui::Shape::line(pts, egui::Stroke::new(1.4, s.color)));
-            // маркер текущего значения у правого края линии + число (порт)
+            // marker of the current value at the right edge of the line + number (port)
             let last = *s.data.back().unwrap();
             let last_x = g.left() + ((s.data.len() - 1) as f32 / (SAMPLES - 1) as f32) * g.width();
             let last_y = y_of(last);
@@ -168,8 +168,8 @@ impl RollingGraph {
             );
         }
 
-        // --- pinned legends (фирменное v1): подпись слева на уровне линии,
-        // коленчатая выноска, раздвижка при наложении -----------------------
+        // --- pinned legends (the v1 signature): label on the left at the line's level,
+        // bent leader line, spreading out on overlap -----------------------
         struct Pin {
             idx: usize,
             source_y: f32,
@@ -229,7 +229,7 @@ impl RollingGraph {
     }
 }
 
-/// Короткий формат чисел для подписей: 1234 → «1.2k».
+/// Short number format for labels: 1234 → “1.2k”.
 fn fmt_short(v: f32) -> String {
     if v >= 10_000.0 {
         format!("{:.0}k", v / 1000.0)

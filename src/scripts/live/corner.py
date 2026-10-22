@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.28 п.12: фейд за верхний уголок события.
+"""Live scenario R.28 item 12: a fade by the upper corner of an event.
 
-Слова пользователя: «в sony vegas fade можно у событий сделать по краям без
-еще одних событий — просто потянув за верхний уголок события». Проверяется
-в НАСТОЯЩЕМ окне: мышь водит XTest, а результат читается из сохранённого
-программой .otio — включая то, что само событие при этом НЕ тронуто
-(«ничего нигде не должно отрастать/отрубаться», п.6).
+Words of the user: “in sony vegas fade can be made on events at the edges without
+more events — just by dragging the upper corner of the event”. Checked
+in a REAL window: the mouse is driven by XTest, and the result is read from the .otio saved
+by the program — including the fact that the event itself is NOT touched in the process
+(“nothing should grow or cut off anywhere”, item 6).
 """
 import os
 import sys
@@ -25,39 +25,39 @@ def main(out):
 
     with Live("corner", out, project=proj) as app:
         y_body = app.lane_y("video", 0, frac=0.72)
-        y_strip = app.lane_y("video", 0, frac=0.06)  # верхняя полоса события
+        y_strip = app.lane_y("video", 0, frac=0.06)  # the top strip of the event
         app.shot("open")
 
         p = app.project_now()
         c1 = p.clip("c1")
-        app.expect(c1.duration == 8 * SEC and not p.transitions, f"старт: {p.clips}")
+        app.expect(c1.duration == 8 * SEC and not p.transitions, f"start: {p.clips}")
 
-        # выделяем событие — ручки фейда видны только у выделенного
+        # we select the event — the fade handles are visible only on the selected one
         app.click(app.x_at(c1.mid()), y_body)
         app.shot("selected")
 
-        # тянем ЛЕВЫЙ верхний уголок вправо на 2 с
+        # we drag the LEFT top corner to the right by 2 s
         app.drag(app.x_at(c1.start + 200), y_strip, app.x_at(c1.start + 2 * SEC), y_strip)
         p = app.saved_project()
-        app.expect(len(p.transitions) == 1, f"уголок завёл фейд: {p.transitions}")
+        app.expect(len(p.transitions) == 1, f"the corner started the fade: {p.transitions}")
         win = p.transitions[0]
-        app.expect(win["in"] == 0, f"внешнего офсета нет — фейд внутри события: {win}")
-        app.near(win["out"], 2 * SEC, SEC // 4, "длина фейда ≈ пройденному пути")
+        app.expect(win["in"] == 0, f"there is no external offset — the fade is inside the event: {win}")
+        app.near(win["out"], 2 * SEC, SEC // 4, "fade length ≈ the distance traveled")
         c1 = p.clip("c1")
         app.expect(
             c1.duration == 8 * SEC and c1.source_in == 0,
-            f"событие не тронуто: {p.clips}",
+            f"event untouched: {p.clips}",
         )
         app.shot("after-fade")
 
-        # задвигаем уголок обратно — фейд исчезает целиком
+        # we push the corner back — the fade disappears entirely
         app.drag(app.x_at(c1.start + 2 * SEC), y_strip, app.x_at(c1.start + 100), y_strip)
         p = app.saved_project()
-        app.expect(not p.transitions, f"уголок задвинут — фейда нет: {p.transitions}")
+        app.expect(not p.transitions, f"corner pushed back — no fade: {p.transitions}")
         c1 = p.clip("c1")
         app.expect(
             c1.duration == 8 * SEC and c1.source_in == 0,
-            f"событие по-прежнему целое: {p.clips}",
+            f"event still whole: {p.clips}",
         )
         app.shot("after-undo-fade")
         return app.done()

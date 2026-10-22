@@ -1,10 +1,10 @@
-//! Тест 198 (Р.32), часть композита: AVX2-ядра alpha_over/dissolve/
-//! scale_alpha БАЙТ-В-БАЙТ равны скалярным. Композит целочисленный,
-//! поэтому проверяются ровно две вещи: точность деления на 255 (весь
-//! домен) и повторение ВЕТВЛЕНИЙ скаляра (sa == 0 оставляет dst
-//! нетронутым, sa == 255 — копия).
+//! Test 198 (R.32), composite part: the AVX2 kernels alpha_over/dissolve/
+//! scale_alpha are BYTE-FOR-BYTE equal to the scalar ones. The composite is integer,
+//! so exactly two things are checked: the precision of division by 255 (the whole
+//! domain) and the repetition of the scalar BRANCHES (sa == 0 leaves dst
+//! untouched, sa == 255 — a copy).
 //!
-//! Без AVX2 — skip; `KT_REQUIRE_SIMD=1` превращает пропуск в провал.
+//! Without AVX2 — skip; `KT_REQUIRE_SIMD=1` turns the skip into a failure.
 
 #![cfg(target_arch = "x86_64")]
 
@@ -16,13 +16,13 @@ fn avx2() -> bool {
         return true;
     }
     if std::env::var("KT_REQUIRE_SIMD").as_deref() == Ok("1") {
-        panic!("KT_REQUIRE_SIMD=1, а AVX2 на этом CPU нет");
+        panic!("KT_REQUIRE_SIMD=1, but AVX2 is not on this CPU");
     }
-    eprintln!("skipped: у CPU нет AVX2 — SIMD-путь недостижим");
+    eprintln!("skipped: the CPU has no AVX2 — the SIMD path is unreachable");
     false
 }
 
-/// Исчерпывающе: `x / 255` для ВСЕГО домена, который может встретиться
+/// Exhaustively: `x / 255` for the WHOLE domain that can occur
 /// (max 255·255·255 = 16 581 375 < 2^24).
 #[test]
 fn t198_div255_exhaustive() {
@@ -38,14 +38,14 @@ fn t198_div255_exhaustive() {
         let got = st::div255_avx2(buf);
         for i in 0..8 {
             let want = buf[i] / 255;
-            assert_eq!(got[i], want, "div255({}) = {want}, а SIMD дал {}", buf[i], got[i]);
+            assert_eq!(got[i], want, "div255({}) = {want}, but SIMD gave {}", buf[i], got[i]);
         }
         x += 8;
     }
 }
 
-/// Кадр: `kind` задаёт паттерн RGB, `alphas` — циклический набор альф
-/// (в т.ч. крайние 0 и 255 — они выбирают ветки alpha_over).
+/// Frame: `kind` sets the RGB pattern, `alphas` — a cyclic set of alphas
+/// (including the extreme 0 and 255 — they select the alpha_over branches).
 fn frame(pixels: usize, kind: u32, alphas: &[u8]) -> Vec<u8> {
     let mut v = vec![0u8; pixels * 4];
     for p in 0..pixels {
@@ -70,8 +70,8 @@ fn t198_alpha_over_scalar_eq_avx2() {
     if !avx2() {
         return;
     }
-    // ПОЛНЫЙ перебор (sa, da): 256×256 пикселей — обе ветки и все
-    // промежуточные значения, включая sa=255 (копия) и sa=0 (не трогать)
+    // FULL enumeration of (sa, da): 256×256 pixels — both branches and all
+    // intermediate values, including sa=255 (copy) and sa=0 (do not touch)
     let pixels = 256 * 256;
     let mut src = vec![0u8; pixels * 4];
     let mut dst0 = vec![0u8; pixels * 4];
@@ -98,7 +98,7 @@ fn t198_alpha_over_scalar_eq_avx2() {
         let i = a.iter().zip(&b).position(|(x, y)| x != y).unwrap();
         let p = i / 4;
         panic!(
-            "alpha_over: пиксель {p} (sa={}, da={}), канал {}: скаляр {} != avx2 {}",
+            "alpha_over: pixel {p} (sa={}, da={}), channel {}: scalar {} != avx2 {}",
             src[p * 4 + 3],
             dst0[p * 4 + 3],
             i % 4,
@@ -107,7 +107,7 @@ fn t198_alpha_over_scalar_eq_avx2() {
         );
     }
 
-    // разные паттерны и НЕКРАТНЫЕ 8 длины (хвост)
+    // different patterns and lengths NOT a multiple of 8 (the tail)
     for kind in 0..4u32 {
         for pixels in [1usize, 7, 8, 9, 33, 1000] {
             let src = frame(pixels, kind, &[0, 1, 127, 128, 254, 255]);
@@ -116,7 +116,7 @@ fn t198_alpha_over_scalar_eq_avx2() {
             let mut b = base.clone();
             st::alpha_over_scalar(&mut a, &src, pixels);
             st::alpha_over_avx2(&mut b, &src, pixels & !7);
-            // хвост у SIMD-пути дорисовывает скаляр — эмулируем это
+            // the tail on the SIMD path is finished by the scalar — we emulate this
             for p in (pixels & !7)..pixels {
                 let one = p * 4;
                 let mut tmp = b[one..one + 4].to_vec();
@@ -143,7 +143,7 @@ fn t198_dissolve_and_scale_alpha_scalar_eq_avx2() {
                     let mut sb = vec![0u8; pixels * 4];
                     st::dissolve_scalar(&mut sa_, &a_buf, &b_buf, ah, bh, k, pixels);
                     st::dissolve_avx2(&mut sb, &a_buf, &b_buf, ah, bh, k, pixels);
-                    // хвост (pixels % 4) SIMD не трогает — дорисовываем
+                    // the tail (pixels % 4) is not touched by SIMD — we finish it
                     for p in (pixels & !3)..pixels {
                         let i = p * 4;
                         let mut tmp = vec![0u8; 4];
@@ -181,10 +181,10 @@ fn t198_dissolve_and_scale_alpha_scalar_eq_avx2() {
     }
 }
 
-/// Бенч композита: `cargo test -p kt-engine --release --test simd_parity
+/// Composite benchmark: `cargo test -p kt-engine --release --test simd_parity
 /// -- --ignored --nocapture bench`.
 #[test]
-#[ignore = "бенч: cargo test --release -- --ignored --nocapture bench"]
+#[ignore = "bench: cargo test --release -- --ignored --nocapture bench"]
 fn bench_composite_1080p() {
     if !avx2() {
         return;

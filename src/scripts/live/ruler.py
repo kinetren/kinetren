@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.40 п.14: линейка показывает время и риски.
+"""Live scenario R.40 item 14: the ruler shows time and tick marks.
 
-Претензия дословно: «у таймлайна автоматизации если событие/морфер
-маленькое то время в линейке проставляется только 0:00 самое первое, что
-тупо. а если зазумится то и время это улетает в бок… линейка должна
-отображать и следующую секунду и рисочки тоже желательно (и рисочек на
-основном таймлайне тоже нет)».
+Complaint verbatim: “on the automation timeline, if the event/morpher
+is small, the time is shown on the ruler only as 0:00, the very first one, which is dumb.
+And if it is zoomed in, the time flies off to the side… the ruler must
+show the next second too, and tick marks as well, which is desirable (and there are no tick marks
+on the main timeline either).”
 
-Обе беды от одной причины: лестница шагов начиналась с СЕКУНДЫ, а подпись
-выбирается порогом 70 px — при 1 с ≥ 70 px минорный шаг совпадал с
-подписью, и рисок не рисовалось ни одной.
+Both troubles have one cause: the ladder of steps started from a SECOND, and the label
+is chosen by a 70 px threshold — at 1 s ≥ 70 px the minor step coincided with
+the label, and not a single tick mark was drawn.
 
-Проверяется по ПИКСЕЛЯМ полосы линейки: сколько на ней вертикальных
-штрихов. Харнесс этого не покажет — он не рисует.
+Checked by the PIXELS of the ruler strip: how many vertical
+strokes it has. The harness would not show this — it does not draw.
 """
 import os
 import subprocess
@@ -25,10 +25,10 @@ SEC = 90000
 
 
 def tick_columns(png, y, x0, x1):
-    """Сколько «светлых» столбцов на строке y в диапазоне [x0, x1).
+    """How many “light” columns there are on row y in the range [x0, x1).
 
-    Риски линейки — вертикальные штрихи в 1 px по тёмному фону, поэтому
-    достаточно посчитать локальные всплески яркости.
+    The ruler’s tick marks are vertical 1 px strokes on a dark background, so it is
+    enough to count the local brightness spikes.
     """
     out = subprocess.run(
         ["convert", png, "-crop", f"{int(x1 - x0)}x1+{int(x0)}+{int(y)}",
@@ -60,27 +60,27 @@ def main(out):
         shot = app.shot("open")
         g = app.geom()
         tl = g["timeline"]
-        # дамп геометрии даёт координаты ОТНОСИТЕЛЬНО ОКНА, а снимок —
-        # экранный: забыть начало окна значит мерить не там (грабли Р.38)
+        # the geometry dump gives coordinates RELATIVE TO THE WINDOW, and the snapshot is
+        # screen-based: forgetting the window origin means measuring in the wrong place (the R.38 pitfall)
         win = geometry()
         x0, x1 = win["x"] + tl["left"] + 20, win["x"] + tl["left"] + 320
-        # ДВЕ строки пикселей, и в этом весь смысл замера:
-        #   y_minor — самый верх полосы рисок (STRIPES_H = 11), туда
-        #     достают И минорные, И крупные риски, а подписи ещё нет
-        #     (её верх на 12);
-        #   y_major — ниже подписей, там остаются только крупные риски.
-        # Абсолютное число штрихов ничего не доказывает: на первой попытке
-        # замер стоял на 20 px, ловил антиалиасинг ЦИФР и был зелёным на
-        # старой лестнице тоже.
+        # TWO rows of pixels, and that is the whole point of the measurement:
+        #   y_minor — the very top of the strip of ticks (STRIPES_H = 11), there reach
+        #     BOTH the minor and the major ticks, and the caption is not there yet
+        #     (its top is at 12);
+        #   y_major — below the captions, only the major ticks remain there.
+        # The absolute number of strokes proves nothing: at the first attempt the
+        # measure stood at 20 px, caught the antialiasing of the DIGITS, and was green
+        # on the old ladder too.
         y_minor = win["y"] + tl["top"] + 11
         y_major = win["y"] + tl["top"] + 30
         n_minor = tick_columns(shot, y_minor, x0, x1)
         n_major = tick_columns(shot, y_major, x0, x1)
         app.expect(
             n_minor >= 3 * n_major + 5,
-            f"минорных рисок обязано быть КРАТНО больше, чем подписей: "
-            f"{n_minor} на полосе рисок против {n_major} ниже подписей "
-            f"(при 100 px/с шаг 0.1 с — это примерно 30 против 3)",
+            f"minor tick marks must be MANY TIMES more than labels: "
+            f"{n_minor} on the tick strip versus {n_major} below the labels "
+            f"(at 100 px/s a step of 0.1 s — that is roughly 30 versus 3)",
         )
         app.shot("ruler-ticks")
         return app.done()

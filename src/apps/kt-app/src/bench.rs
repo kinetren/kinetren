@@ -1,47 +1,47 @@
-//! ЖИВОЙ СТЕНД (Р.68): один процесс kt-app на работника, проекты подряд.
+//! LIVE BENCH (R.68): one kt-app process per worker, projects in succession.
 //!
-//! Повод дословно (владелец): «сократить перезапуски kt (можно же подряд
-//! открывать проекты)». Замер Р.68: 50 живых сценариев стоили 1012 с, и
-//! каждый платил 3-5 с за холодный старт программы, а 96 % остального
-//! времени каркас просто СПАЛ — фиксированными паузами под софт-рендер
-//! (0.35 с на клик, 0.65 с на КАЖДЫЙ набранный символ), потому что о
-//! нарисованном кадре спросить было некого.
+//! The reason, verbatim (the owner): “reduce the restarts of kt (you can open projects
+//! one after another)”. The R.68 measurement: 50 live scenarios cost 1012 s, and
+//! each paid 3–5 s for the cold start of the program, while 96 % of the remaining
+//! time the harness simply SLEPT — fixed pauses for the software renderer
+//! (0.35 s per click, 0.65 s for EACH typed character), because there was no one
+//! to ask about a drawn frame.
 //!
-//! Стенд закрывает и то и другое:
+//! The bench closes both:
 //!
-//! * `frames()` — сколько кадров программа НАРИСОВАЛА. Каркас ждёт кадр, а
-//!   не часы: под нагрузкой ожидание растягивается вместе с кадром — именно
-//!   этого фиксированная пауза не умела, и отсюда росли ложные покраснения
-//!   (§468: второй прогон под нагрузкой ~14 покрасил зелёные сценарии).
-//! * канал команд: «открой проект» вместо перезапуска процесса. Открытие
-//!   идёт тем же кодом, что `File → Открыть` (`KtApp::open` + `*self`), то
-//!   есть новое состояние программы строится с нуля — чистота не
-//!   обещается, а получается по устройству.
+//! * `frames()` — how many frames the program has DRAWN. The harness waits for a frame, not for
+//!   the clock: under load the wait stretches together with the frame — exactly
+//!   what the fixed pause could not do, and false reds grew from it
+//!   (§468: a second run under load turned ~14 green scenarios red).
+//! * a command channel: “open a project” instead of restarting the process. Opening
+//!   goes through the same code as `File → Open` (`KtApp::open` + `*self`), so
+//!   the new state of the program is built from scratch — cleanliness is not
+//!   promised, it is obtained by construction.
 //!
-//! Канал включает ТОЛЬКО `KT_LIVE_CTL=<файл>`; без переменной здесь стоит
-//! один `OnceLock`-чек и ни одной системной операции. Протокол — строка
-//! «<номер> <команда> [аргумент]»: программа выполняет команду с номером
-//! больше уже выполненного и публикует его в дампе геометрии
-//! (`bench.done`), откуда каркас узнаёт, что команда прошла. Номер — не
-//! «есть новая строка»: файл перезаписывается целиком, и без счётчика две
-//! одинаковые команды подряд («открой тот же проект») были бы неразличимы.
+//! The channel is enabled ONLY by `KT_LIVE_CTL=<file>`; without the variable there is
+//! just one `OnceLock` check here and not a single system operation. The protocol is a line
+//! “<number> <command> [argument]”: the program executes a command with a number
+//! greater than the one already executed and publishes it in the geometry dump
+//! (`bench.done`), from which the harness learns that the command passed. The number is not
+//! “there is a new line”: the file is rewritten whole, and without a counter two
+//! identical commands in a row (“open the same project”) would be indistinguishable.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Нарисованные кадры. Счётчик ПРОЦЕССА, а не приложения: `File → Открыть`
-/// пересоздаёт `KtApp` на месте (`*self = app`), и счётчик внутри структуры
-/// обнулялся бы на каждом открытии — каркас ждал бы кадра, который «уже
-/// был».
+/// Drawn frames. The counter of the PROCESS, not of the application: `File → Open`
+/// recreates `KtApp` in place (`*self = app`), and a counter inside the struct would
+/// reset on every open — the harness would wait for a frame that had “already been”
+/// drawn.
 static FRAMES: AtomicU64 = AtomicU64::new(0);
-/// Номер последней ВЫПОЛНЕННОЙ команды (по той же причине — статик).
+/// number of the last EXECUTED command (for the same reason — a static)
 static DONE: AtomicU64 = AtomicU64::new(0);
-/// Сколько СОБЫТИЙ ВВОДА программа прочитала. Кадра мало: кадр мог начаться
-/// раньше, чем событие доехало от X-сервера, и «кадр нарисован» ещё не значит
-/// «жест увиден». Счётчик событий отвечает ровно на этот вопрос.
+/// How many INPUT EVENTS the program has read. A frame is not enough: a frame may have started
+/// before the event arrived from the X server, and “frame drawn” does not yet mean
+/// “gesture seen”. The event counter answers exactly this question.
 static INPUTS: AtomicU64 = AtomicU64::new(0);
-/// Метка времени файла команд: читать его каждый кадр незачем.
+/// timestamp of the command file: there is no need to read it every frame
 static LAST_CTL: AtomicU64 = AtomicU64::new(0);
 
 fn ctl_path() -> Option<&'static PathBuf> {
@@ -49,18 +49,18 @@ fn ctl_path() -> Option<&'static PathBuf> {
     P.get_or_init(|| std::env::var_os("KT_LIVE_CTL").map(PathBuf::from)).as_ref()
 }
 
-/// Стенд включён? В продукте — нет, и ни одна ветка ниже не работает.
+/// Is the bench on? In the product — no, and none of the branches below work.
 pub(crate) fn enabled() -> bool {
     ctl_path().is_some()
 }
 
-/// Кадр нарисован. Зовётся из `eframe::App::ui` — то есть счётчик считает
-/// именно ПОКАЗАННЫЕ кадры, а не проходы вёрстки.
+/// Frame drawn. Called from `eframe::App::ui` — that is, the counter counts
+/// exactly the SHOWN frames, not layout passes.
 pub(crate) fn tick() {
     FRAMES.fetch_add(1, Ordering::Relaxed);
 }
 
-/// Программа прочитала события ввода этого кадра.
+/// The program has read the input events of this frame.
 pub(crate) fn note_inputs(n: u64) {
     if n > 0 {
         INPUTS.fetch_add(n, Ordering::Relaxed);
@@ -79,25 +79,25 @@ pub(crate) fn done() -> u64 {
     DONE.load(Ordering::Relaxed)
 }
 
-/// Команда стенда.
+/// A bench command.
 pub(crate) enum Cmd {
-    /// Открыть проект по пути (без вопроса о несохранённом: стенд не
-    /// человек, и модальное окно предыдущего сценария сорвало бы
-    /// следующий).
+    /// Open a project by path (without the question about unsaved work: the bench is not
+    /// a person, and a modal window left by the previous scenario would break the
+    /// next one).
     Open(PathBuf),
-    /// Хранилище пользователя на СЛЕДУЮЩИЙ сценарий. Рабочее место,
-    /// пресеты и журнал предыдущего сценария не имеют права влиять на
-    /// вердикт следующего: `nestpreview` был зелёным в одиночку и красным
-    /// в полном прогоне ровно из-за этого.
+    /// The user store for the NEXT scenario. The workspace,
+    /// presets and log of the previous scenario have no right to influence the
+    /// verdict of the next one: `nestpreview` was green alone and red
+    /// in a full run for exactly this reason.
     Store(PathBuf),
-    /// Ничего не делать — нужна, чтобы каркас мог дождаться кадра и
-    /// убедиться, что программа жива и слушает.
+    /// Do nothing — needed so that the harness can wait for a frame and
+    /// make sure the program is alive and listening.
     Noop,
 }
 
-/// Хранилище, назначенное стендом (см. `Cmd::Store`). `user_store::store_dir`
-/// спрашивает его первым: переменную окружения живого процесса снаружи не
-/// поменять, а хранилище обязано быть своим у каждого сценария.
+/// The store assigned by the bench (see `Cmd::Store`). `user_store::store_dir`
+/// asks it first: the environment variable of a live process cannot be changed from outside,
+/// and the store must be its own for each scenario.
 static STORE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 
 pub(crate) fn set_store(dir: PathBuf) {
@@ -107,7 +107,7 @@ pub(crate) fn set_store(dir: PathBuf) {
     }
 }
 
-/// Каталог хранилища, назначенный стендом (или `None` в обычном запуске).
+/// The store directory assigned by the bench (or `None` in a normal launch).
 pub(crate) fn store_dir() -> Option<PathBuf> {
     if !enabled() {
         return None;
@@ -115,15 +115,15 @@ pub(crate) fn store_dir() -> Option<PathBuf> {
     STORE.lock().ok().and_then(|g| g.clone())
 }
 
-/// Прочитать команду, если она новая. Ошибка разбора — НЕ паника: стенд
-/// читает файл, который пишет другой процесс, и поймать его на половине
-/// записи законно (следующий кадр прочитает целое).
+/// Read the command if it is new. A parse error is NOT a panic: the bench
+/// reads a file that another process is writing, and catching it mid-write is legitimate
+/// (the next frame will read the whole thing).
 pub(crate) fn poll() -> Option<(u64, Cmd)> {
     let path = ctl_path()?;
-    // ЧИТАЕМ ТОЛЬКО ИЗМЕНИВШИЙСЯ ФАЙЛ: `poll` зовётся каждый кадр, а чтение
-    // файла в кадре — это ввод-вывод в драв-пути. Тем же классом (запись
-    // дампа каждым кадром) в этом раунде уже ломались тонкие жесты, так что
-    // сначала дешёвый `stat`, и только по новой метке времени — чтение.
+    // WE READ ONLY A CHANGED FILE: `poll` is called every frame, and reading the
+    // file within a frame is I/O in the draw path. This round had already broken fine gestures
+    // with the same class (writing a dump every frame), so first a cheap `stat`, and only on a
+    // new timestamp — the read.
     let stamp = std::fs::metadata(path)
         .and_then(|m| m.modified())
         .ok()
@@ -150,22 +150,22 @@ pub(crate) fn poll() -> Option<(u64, Cmd)> {
     Some((seq, cmd))
 }
 
-/// Команда выполнена — каркас увидит номер в дампе и пойдёт дальше.
+/// The command is executed — the harness will see the number in the dump and move on.
 pub(crate) fn finished(seq: u64) {
     DONE.store(seq, Ordering::Relaxed);
 }
 
-/// Сколько окон программы открыто прямо сейчас.
+/// How many program windows are open right now.
 ///
-/// Доказательство ЧИСТОТЫ между сценариями: стенд открывает проекты
-/// подряд, и сценарий обязан начинать с программы без чужих окон. Считаем
-/// видимые слои egui поверх содержимого — ОКНА (`Order::Middle`).
+/// Proof of CLEANLINESS between scenarios: the bench opens projects in
+/// succession, and a scenario must start with a program without anyone else's windows. We count
+/// the visible egui layers above the content — WINDOWS (`Order::Middle`).
 ///
-/// `Order::Foreground` сюда не годится, хотя модальные окна живут там:
-/// в нём же рисуется строка состояния (`Area(Foreground)`, правило «одна
-/// подсказка в одном месте»), и «чисто» превращалось в «одно окно
-/// открыто» на ровном месте. Модальные окна программа называет сама —
-/// `ask`/`recovery_open` дописываются к этому числу на месте вызова.
+/// `Order::Foreground` does not fit here, although modal windows live there:
+/// the status line is drawn there too (`Area(Foreground)`, the rule “one hint in one place”),
+/// and “clean” turned into “one window open” out of nowhere. The program names
+/// modal windows itself —
+/// `ask`/`recovery_open` are added to this number at the call site.
 pub(crate) fn open_windows(ctx: &eframe::egui::Context) -> usize {
     ctx.memory(|m| {
         m.areas()

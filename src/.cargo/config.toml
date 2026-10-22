@@ -1,16 +1,16 @@
-# Линкер мастерской — mold (Р.68, прямая просьба владельца: «п.1 + mold …»).
+# Workshop linker — mold (R.68, direct request of the owner: “item 1 + mold …”).
 #
-# Дерево большое: kt-app в debug — 705 МБ, тестовых бинарей 96, и каждая
-# правка в kt-model перелинковывает почти всё. Замер до/после — в
-# openspec/changes/…/tasks.md (задача 2.1) и в отчёте раунда.
+# The tree is large: kt-app in debug — 705 MB, 96 test binaries, and every
+# edit in kt-model relinks almost everything. Before/after measurement — in
+# openspec/changes/…/tasks.md (task 2.1) and in the round report.
 #
-# Флаг едет через link-arg, а не через `linker = "clang"`: менять драйвер
-# компоновки незачем — gcc 13 понимает `-fuse-ld=mold` сам, а mold стоит в
-# системе (2.30.0, /usr/bin/ld.mold).
+# The flag goes through link-arg, not through `linker = "clang"`: changing the driver
+# of the link step is unnecessary — gcc 13 understands `-fuse-ld=mold` itself, and mold is installed in
+# the system (2.30.0, /usr/bin/ld.mold).
 #
-# ПОСТАВКА ЭТОТ ФАЙЛ НЕ ВИДИТ: scripts/release-build.sh гасит RUSTFLAGS у
-# контейнера Ubuntu 22.04 (там gcc 11 и mold не установлен). Ускоритель
-# разработки не имеет права стать условием сборки того, что уезжает людям —
-# профили release/dist и инвариант №10 («ldd без libav*») не меняются.
+# THE SHIPPED BUILD DOES NOT SEE THIS FILE: scripts/release-build.sh clears RUSTFLAGS for the
+# Ubuntu 22.04 container (there gcc 11 and no mold are installed). The accelerator
+# of development has no right to become a condition of building what is shipped to people —
+# the release/dist profiles and invariant #10 (“ldd without libav*”) do not change.
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]

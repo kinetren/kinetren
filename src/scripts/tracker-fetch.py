@@ -1,35 +1,35 @@
 #!/usr/bin/env python3
-"""Выгрузка багтрекеров открытых редакторов (Р.41, третья волна разведки).
+"""Dump of the bug trackers of open editors (R.41, third reconnaissance wave).
 
-    python3 src/scripts/tracker-fetch.py                 что объявлено и что уже лежит
-    python3 src/scripts/tracker-fetch.py --fetch mlt      докачать один трекер
-    python3 src/scripts/tracker-fetch.py --all            докачать все по очереди
+    python3 src/scripts/tracker-fetch.py                 what is declared and what is already there
+    python3 src/scripts/tracker-fetch.py --fetch mlt      resume one tracker
+    python3 src/scripts/tracker-fetch.py --all            resume all of them in turn
     python3 src/scripts/tracker-fetch.py --all --budget 300
-    python3 src/scripts/tracker-fetch.py --pin            строки реестра для _trackers.md
+    python3 src/scripts/tracker-fetch.py --pin            registry rows for _trackers.md
 
-Реестр трекеров читается из `docs/features/_trackers.md` и НЕ дублируется здесь —
-тот же приём, что чтение категорий из README в features-index.py.
+The tracker registry is read from `docs/features/_trackers.md` and is NOT duplicated here —
+the same trick as reading the categories from the README in features-index.py.
 
-Почему так, а не иначе:
+Why it is done this way and not otherwise:
 
-* **Возобновление по КУРСОРУ, а не по номеру страницы.** GitHub не отдаёт `rel="last"`,
-  общее число страниц заранее неизвестно. Плюс при сортировке по умолчанию (created desc)
-  новая задача сдвигает пагинацию и выгрузка теряет записи. Поэтому везде, где можно, —
-  `sort=created&direction=asc`: новое дописывается в хвост, а состояние хранит URL
-  следующей страницы.
-* **ETag.** Ответ 304 у GitHub не расходует лимит, поэтому повторный прогон почти
-  бесплатен. ETag лежит в state-файле рядом с курсором.
-* **Лимит читается из ответа**, а не угадывается: при `x-ratelimit-remaining <= 1` спим до
-  `x-ratelimit-reset`. Без токена GitHub даёт 60 запросов в час.
-* **Дампы вне репозитория** — ~150 МБ, лицензии на массовое распространение текстов задач
-  нет ни у одного источника, и ни одному тесту они офлайн не нужны. См. раздел «Лицензии»
-  в `_trackers.md`.
+* **Resumption by CURSOR, not by page number.** GitHub does not return `rel="last"`,
+  the total number of pages is not known in advance. Plus, with the default sort (created desc)
+  a new issue shifts the pagination and the dump loses records. So wherever possible —
+  `sort=created&direction=asc`: new items are appended to the tail, and the state keeps the URL
+  of the next page.
+* **ETag.** A 304 response from GitHub does not spend the limit, so a repeated run is almost
+  free. The ETag lies in the state file next to the cursor.
+* **The limit is read from the response**, not guessed: at `x-ratelimit-remaining <= 1` we sleep until
+  `x-ratelimit-reset`. Without a token GitHub gives 60 requests per hour.
+* **Dumps outside the repository** — ~150 MB, and there is no license for mass distribution of issue texts
+  from any source, and no test needs them offline. See the “Licenses” section
+  in `_trackers.md`.
 
-ТОКЕН. Читается из окружения `GITHUB_TOKEN` либо из `.env` в корне проекта (файл закрыт
-`.gitignore`). Скрипт его НИКОГДА не печатает, не логирует и не сохраняет: в выводе видно
-только «токен: есть/нет». Без токена всё работает, просто медленнее.
+TOKEN. It is read from the `GITHUB_TOKEN` environment variable or from `.env` in the project root (the file is covered by
+`.gitignore`). The script NEVER prints, logs or saves it: the output shows only
+“token: present/absent”. Without a token everything works, just more slowly.
 
-Коды возврата: 0 — успех, 1 — что-то не докачано, 2 — неизвестный аргумент.
+Return codes: 0 — success, 1 — something not fully downloaded, 2 — unknown argument.
 """
 
 import csv
@@ -51,11 +51,11 @@ CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "kinetr
 
 UA = "kinetren-features-research (+docs/features/_trackers.md)"
 BODY_MAX = 4000
-DEFAULT_BUDGET = 55  # ниже часовых 60 у GitHub без токена
+DEFAULT_BUDGET = 55  # below the hourly limit of 60 for GitHub without a token
 
 
 def token():
-    """GITHUB_TOKEN из окружения либо из .env. Значение наружу не отдаётся."""
+    """GITHUB_TOKEN from the environment or from .env. The value is not given out."""
     t = os.environ.get("GITHUB_TOKEN", "").strip()
     if t:
         return t
@@ -70,7 +70,7 @@ def token():
 
 
 def read_registry():
-    """{ключ: {engine, url}} из таблицы «## Реестр» в _trackers.md."""
+    """{key: {engine, url}} from the table “## Registry” in _trackers.md."""
     text = REGISTRY.read_text(encoding="utf-8")
     out = {}
     for m in re.finditer(
@@ -94,11 +94,11 @@ class Budget:
 
 
 def get(url, headers=None, budget=None, tries=4):
-    """GET с уважением к лимитам. Возвращает (код, тело, заголовки).
+    """GET respecting the limits. Returns (code, body, headers).
 
-    Сетевой сбой — не повод терять выгрузку: таймаут и обрыв соединения
-    повторяются с нарастающей паузой. Один необработанный TimeoutError уже
-    уронил прогон на середине pitivi (Р.41).
+    A network failure is not a reason to lose the dump: a timeout and a broken connection are
+    retried with a growing pause. A single unhandled TimeoutError already
+    brought the run down midway through pitivi (R.41).
     """
     if budget is not None and not budget.take():
         return None, None, None
@@ -110,10 +110,10 @@ def get(url, headers=None, budget=None, tries=4):
             raise
         except (TimeoutError, OSError) as e:
             if attempt == tries - 1:
-                print(f"    сеть не отвечает после {tries} попыток: {e}", flush=True)
+                print(f"    the network does not respond after {tries} attempts: {e}", flush=True)
                 return None, None, None
             wait = 5 * (attempt + 1)
-            print(f"    сетевой сбой ({e}), повтор через {wait} с", flush=True)
+            print(f"    network failure ({e}), retry after {wait} s", flush=True)
             time.sleep(wait)
 
 
@@ -142,7 +142,7 @@ def _respect_limits(hdrs, forced=False):
             if int(rem) <= 1 or forced:
                 wait = max(0, int(reset) - int(time.time())) + 3
                 if wait > 0:
-                    print(f"    лимит исчерпан, сон {wait} с", flush=True)
+                    print(f"    limit exhausted, sleep {wait} s", flush=True)
                     time.sleep(min(wait, 3700))
                     return
         except ValueError:
@@ -151,12 +151,12 @@ def _respect_limits(hdrs, forced=False):
 
 
 def set_param(url, key, value):
-    """Заменить/добавить параметр честным разбором query.
+    """Replace/add a parameter with an honest parse of the query.
 
-    Наивная подстановка через re здесь уже стоила зацикливания: `per_page=100`
-    содержит подстроку `page=`, поэтому проверка «параметр уже есть» срабатывала
-    ложно, страница не менялась, и выгрузка намотала 8991 запись при 100
-    уникальных id (Р.41).
+    Naive substitution via re has already cost a loop here: `per_page=100`
+    contains the substring `page=`, so the check “the parameter is already there” fired
+    falsely, the page did not change, and the dump piled up 8991 records with only 100
+    unique ids (R.41).
     """
     parts = urllib.parse.urlsplit(url)
     q = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
@@ -165,11 +165,11 @@ def set_param(url, key, value):
 
 
 def norm(tracker, engine, raw):
-    """Одна схема на пять движков. None — запись выбрасывается."""
+    """One schema for five engines. None — the record is discarded."""
     g = lambda k, d=None: raw.get(k, d)
     if engine == "github":
         if "pull_request" in raw:
-            return None  # /issues отдаёт и пул-реквесты
+            return None  # /issues also returns pull requests
         labels = [l["name"] for l in g("labels", [])]
         return dict(
             tracker=tracker, id=g("number"), url=g("html_url"), title=g("title") or "",
@@ -201,11 +201,11 @@ def norm(tracker, engine, raw):
             comments=0, reactions=0, upvotes=0,
             cc=len(g("cc", []) or []), dupe_of=g("dupe_of"))
     if engine == "gitea":
-        # Gitea, как и GitHub, кладёт пул-реквесты в /issues. Фильтр был написан
-        # только для github, и в дамп blender-vse попало 100 PR (Р.42).
-        # ВНИМАНИЕ: проверять ЗНАЧЕНИЕ, а не наличие ключа. GitHub поле
-        # pull_request у задач не отдаёт вовсе, а Gitea отдаёт его равным null —
-        # проверка "in raw" отсеяла бы весь дамп до последней записи.
+        # Gitea, like GitHub, puts pull requests into /issues. The filter was written
+        # only for github, and 100 PRs got into the blender-vse dump (R.42).
+        # WARNING: check the VALUE, not the presence of the key. GitHub does not return the
+        # pull_request field for issues at all, while Gitea returns it as null —
+        # a check “in raw” would filter the whole dump down to the last record.
         if g("pull_request") or "/pulls/" in (g("html_url") or ""):
             return None
         labels = [l["name"] for l in g("labels", [])]
@@ -216,12 +216,12 @@ def norm(tracker, engine, raw):
             labels=labels, severity_raw="", component="",
             comments=g("comments", 0) or 0, reactions=0, upvotes=0, cc=0, dupe_of=None)
     if engine == "trac":
-        # csv.DictReader молча разбирает ЛЮБОЙ текст: если ответ не тот CSV, что мы
-        # ждём, получаются строки с id=None и пустым summary. Дамп ffmpeg-trac был
-        # 3095 таких пустышек, и никто этого не заметил (Р.42).
-        # Trac отдаёт колонки с ЗАГЛАВНОЙ буквы (Summary, Created, Modified), хотя
-        # в запросе они строчные, и предваряет файл BOM — из-за чего первая колонка
-        # звалась "\ufeffid". Оба промаха давали пустые записи (Р.42).
+        # csv.DictReader silently parses ANY text: if the answer is not the CSV we
+        # expect, we get rows with id=None and an empty summary. The ffmpeg-trac dump had
+        # 3095 such blanks, and nobody noticed (R.42).
+        # Trac returns columns with a CAPITAL letter (Summary, Created, Modified), although
+        # the query uses lowercase, and puts a BOM before the file — because of which the first column
+        # was called “﻿id”. Both misses produced empty records (R.42).
         raw = {k.lstrip("\ufeff").strip().lower(): v for k, v in raw.items() if k}
         rid = raw.get("id")
         if not rid or not (raw.get("summary") or "").strip():
@@ -247,7 +247,7 @@ def state_path(key):
 
 
 def fetch(key, info, budget):
-    """Возвращает (записей, докачано_ли_до_конца)."""
+    """Returns (records, whether downloaded to the end)."""
     engine, base = info["engine"], info["url"]
     CACHE.mkdir(parents=True, exist_ok=True)
     st = {}
@@ -258,9 +258,9 @@ def fetch(key, info, budget):
         return n, True
 
     mode = "a" if st.get("next") else "w"
-    # Возобновление ДОПИСЫВАЕТ файл, а счётчик берётся из state — без дедупликации
-    # второй проход кладёт весь дамп повторно. Так blender-vse стал 3992 строками
-    # на 1996 задач, по две копии каждой (Р.42).
+    # Resuming APPENDS to the file, and the counter is taken from state — without deduplication
+    # a second pass puts the whole dump in again. That is how blender-vse became 3992 rows
+    # for 1996 tasks, two copies of each (R.42).
     seen = set()
     if mode == "a" and out_path(key).exists():
         with open(out_path(key), encoding="utf-8") as f:
@@ -276,7 +276,7 @@ def fetch(key, info, budget):
     total = st.get("count", 0)
 
     def emit(r):
-        """Единственное место записи: отбрасывает None и повторы."""
+        """The single place of writing: discards None and duplicates."""
         nonlocal total
         if not r or r.get("id") in seen:
             return
@@ -305,8 +305,8 @@ def fetch(key, info, budget):
             rd = csv.DictReader(io.StringIO(body.decode("utf-8-sig", "replace")))
             cols = {(c or "").strip().lower() for c in (rd.fieldnames or [])}
             if not {"id", "summary"} <= cols:
-                print(f"    ОТВЕТ НЕ ТОТ CSV: колонки {sorted(cols)[:6]} — "
-                      "ни одной записи не взято")
+                print(f"    THE RESPONSE IS NOT THE EXPECTED CSV: the columns {sorted(cols)[:6]} — "
+                      "not a single record was taken")
                 return total, False
             for row in rd:
                 emit(norm(key, engine, row))
@@ -335,11 +335,11 @@ def fetch(key, info, budget):
                 h = dict(hdrs)
                 code, body, rh = get(url, headers=h, budget=budget)
                 if code is None:
-                    print(f"    бюджет исчерпан на странице {page}")
+                    print(f"    budget exhausted on page {page}")
                     st = {"next": url, "count": total, "page": page}
                     return total, False
                 if code != 200:
-                    print(f"    HTTP {code} на странице {page}")
+                    print(f"    HTTP {code} on page {page}")
                     st = {"next": url, "count": total, "page": page}
                     return total, False
                 items = json.loads(body)
@@ -360,12 +360,12 @@ def fetch(key, info, budget):
                 else:  # gitea
                     nxt = set_param(url, "page", str(page)) if len(items) == 50 else None
                 if nxt == url:
-                    print("    следующая страница совпала с текущей — обрываю, "
-                          "чтобы не зациклиться")
+                    print("    the next page matched the current one — stopping, "
+                          "so as not to loop")
                     nxt = None
                 url = nxt
                 if total and total % 500 == 0:
-                    print(f"    {total} записей…", flush=True)
+                    print(f"    {total} records…", flush=True)
             st = {"done": True, "count": total}
     finally:
         fh.close()
@@ -383,18 +383,18 @@ def sha_of(p):
 
 
 def cmd_list(reg):
-    print(f"реестр: {len(reg)} трекеров; кэш: {CACHE}")
-    print(f"токен GitHub: {'есть' if token() else 'нет (60 запросов/час)'}")
+    print(f"registry: {len(reg)} trackers; cache: {CACHE}")
+    print(f"GitHub token: {'present' if token() else 'absent (60 requests/hour)'}")
     done = 0
     for k, v in reg.items():
         p, s = out_path(k), state_path(k)
         n = sum(1 for _ in open(p, encoding="utf-8")) if p.exists() else 0
         st = json.loads(s.read_text()) if s.exists() else {}
-        mark = "готов" if st.get("done") else ("частично" if n else "нет")
+        mark = "ready" if st.get("done") else ("partially" if n else "no")
         if st.get("done"):
             done += 1
-        print(f"  {k:<14} {v['engine']:<9} {n:>6} записей  {mark}")
-    print(f"готово: {done}/{len(reg)}")
+        print(f"  {k:<14} {v['engine']:<9} {n:>6} records  {mark}")
+    print(f"done: {done}/{len(reg)}")
     return 0
 
 
@@ -402,7 +402,7 @@ def main():
     args = sys.argv[1:]
     reg = read_registry()
     if not reg:
-        sys.exit("реестр пуст: не разобралась таблица «## Реестр» в _trackers.md")
+        sys.exit("registry empty: the “## Registry” table in _trackers.md was not parsed")
 
     if not args or args[0] == "--list":
         return cmd_list(reg)
@@ -424,27 +424,27 @@ def main():
     elif args[0] == "--fetch":
         keys = [args[1]]
         if keys[0] not in reg:
-            sys.exit(f"нет такого трекера: {keys[0]}")
+            sys.exit(f"no such tracker: {keys[0]}")
     else:
         print(__doc__)
         return 2
 
-    print(f"токен GitHub: {'есть' if token() else 'нет (60 запросов/час)'}; "
-          f"бюджет запросов: {budget.left}")
+    print(f"GitHub token: {'present' if token() else 'absent (60 requests/hour)'}; "
+          f"request budget: {budget.left}")
     incomplete = 0
     for k in keys:
         print(f"[{k}] {reg[k]['engine']}", flush=True)
         n, done = fetch(k, reg[k], budget)
-        print(f"    {n} записей, {'готов' if done else 'НЕ ДОКАЧАН'}", flush=True)
-        # Дамп, законченный нулём, — почти всегда сломанный разбор, а не пустой
-        # трекер. Фильтр пул-реквестов, написанный как «ключ есть», однажды отсёк
-        # весь gitea до последней записи, и это прошло молча (Р.42).
+        print(f"    {n} records, {'ready' if done else 'NOT FULLY DOWNLOADED'}", flush=True)
+        # A dump finished with zero is almost always a broken parse, not an empty
+        # tracker. A pull-request filter written as “the key is present” once cut off
+        # the whole gitea down to the last record, and this passed silently (R.42).
         if done and n == 0:
-            print("    ВНИМАНИЕ: ноль записей при успешном ответе — почти наверняка "
-                  "сломан разбор, а не пустой трекер", flush=True)
+            print("    WARNING: zero records on a successful response — almost certainly the parse is "
+                  "broken, not an empty tracker", flush=True)
         if not done:
             incomplete += 1
-    print(f"запросов израсходовано: {budget.used}")
+    print(f"requests spent: {budget.used}")
     return 1 if incomplete else 0
 
 

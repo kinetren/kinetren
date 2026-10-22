@@ -1,47 +1,47 @@
 #!/usr/bin/env python3
-"""Живое покрытие: до каких мест человек НИ РАЗУ не дошёл мышью (Р.68).
+"""Live coverage: which places a person has NEVER reached with the mouse (R.68).
 
-Решение владельца: «часть тестов вынести в non-gui, ведь тесты отчасти
-повторяют действия между собой, можно большую простую часть вынести в
-headless спокойно, и прокликивать сложные моменты или те которые не
-прокликали ни разу». Чтобы «не прокликали ни разу» не было вкусовщиной,
-его считает машина.
+Decision of the owner: “part of the tests should move to non-gui, since tests partly repeat
+each other, so a large simple part can calmly go to headless, while the complex moments
+and those never clicked through must be clicked by hand. So that “never clicked through”
+is not a matter of taste,
+the machine counts it.”
 
-Что с чем сверяется:
+What is checked against what:
 
-* ПРОГРАММА публикует прямоугольники именованных виджетов
-  (`widgets::field_probe::note("…")`) — это и есть места, куда живой
-  сценарий может прицелиться;
-* СЦЕНАРИИ кликают их по имени (`click_probe`, `right_click_probe`,
+* the PROGRAM publishes rectangles of named widgets
+  (`widgets::field_probe::note("…")`) — these are the places a live
+  scenario can aim at;
+* SCENARIOS click them by name (`click_probe`, `right_click_probe`,
   `double_click_probe`, `hover_probe`, `has_probe`,
-  `scroll_probe_into_view`) — ИЛИ берут прямоугольник щупа из дампа
-  (`f["param"] == "bin.reel"`) и целятся по координате. Второй путь
-  считается ТАК ЖЕ: иначе отчёт врёт в свою пользу — `bin.reel` и `speed`
-  прокликаны руками в `nestparam` и `rate`, а числились дырой.
+  `scroll_probe_into_view`) — OR take a probe rectangle from the dump
+  (`f["param"] == "bin.reel"`) and aim by coordinate. The second path
+  is counted THE SAME WAY: otherwise the report lies in its own favor — `bin.reel` and `speed`
+  were clicked by hand in `nestparam` and `rate`, yet counted as gaps.
 
-Отчёт: имена, которые программа публикует, а мышью не трогал никто, — это
-кандидаты на живую проверку. Красным (`--check`) становятся вещи про ЛОЖЬ,
-а не про полноту, плюс ОБЪЯВЛЕННЫЙ ПРЕДЕЛ дыр:
+The report: names that the program publishes and that nobody touched with the mouse are
+candidates for a live check. What turns RED (`--check`) are things about FALSEHOOD,
+not about completeness, plus the DECLARED LIMIT of gaps:
 
-1. сценарий целится в имя, которого программа больше НЕ публикует — такой
-   сценарий проверяет воздух;
-2. спека ссылается на живой сценарий, которого нет на диске — «переезд»
-   проверки в headless обязан оставлять сценарий спеки с новым адресом, а
-   не выкидывать его;
-3. у сценария НЕТ ТОЧКИ ВХОДА (`if __name__ == "__main__"`). Такой файл
-   запускается и не делает НИЧЕГО, а прогон считает его зелёным: `select.py`
-   прожил так с Р.33 и был пойман только хронометражем (0.0 с на сценарий,
-   который должен идти пятнадцать секунд);
-4. живой сценарий из реестра переезда (`MIGRATED`) остался на диске или его
-   новый адрес не существует. Переезд проверки в headless — это СМЕНА
-   АДРЕСА, а не потеря: реестр называет, куда уехала каждая проверка, и
-   сторож проверяет, что названный тест есть в исходниках;
-5. нетронутых мест стало БОЛЬШЕ объявленного предела (`UNTOUCHED_LIMIT`).
-   Предел — не цель, а храповик: новое место программы либо кликается
-   живьём, либо предел двигают осознанно, одной строкой и с объяснением.
+1. a scenario aims at a name that the program no longer publishes — such a
+   scenario checks thin air;
+2. a spec refers to a live scenario that is not on disk — a “move”
+   of a check to headless must leave the scenario of the spec with the new address, and
+   not drop it;
+3. a scenario has NO ENTRY POINT (`if __name__ == "__main__"`). Such a file
+   runs and does NOTHING, and the run counts it as green: `select.py`
+   lived that way since R.33 and was caught only by timing (0.0 s per scenario that
+   must run for fifteen seconds);
+4. a live scenario from the move registry (`MIGRATED`) remained on disk or its
+   new address does not exist. Moving a check to headless is a CHANGE
+   OF ADDRESS, not a loss: the registry names where each check went, and
+   the guard checks that the named test exists in the sources;
+5. untouched places became MORE than the declared limit (`UNTOUCHED_LIMIT`).
+   The limit is not a target but a ratchet: a new place in the program is either clicked
+   live, or the limit is moved deliberately, in one line and with an explanation.
 
-    python3 scripts/live-coverage.py            # отчёт
-    python3 scripts/live-coverage.py --check    # отчёт и вердикт
+    python3 scripts/live-coverage.py            # report
+    python3 scripts/live-coverage.py --check    # report and verdict
 """
 import re
 import sys
@@ -53,28 +53,28 @@ LIVE = ROOT / "src" / "scripts" / "live"
 SPECS = ROOT / "openspec"
 
 NOTE = re.compile(r'field_probe::note\(\s*&?(?:format!\()?\s*"([^"]+)"')
-# Имя щупа часто собирается `format!` в переменную, и по вызову `note(...)`
-# его не увидеть. Поэтому вторым источником берутся все литералы ФОРМЫ
-# ИМЕНИ ЩУПА: «слово.слово[.слово]», где вставки записаны как «{}»/«{x}».
+# The probe name is often built by `format!` into a variable, and by a call to `note(...)`
+# it cannot be seen. So the second source is taken from all the literals of the FORM
+# OF THE PROBE NAME: “word.word[.word]”, where the insertions are written as “{}”/“{x}”.
 SHAPE = re.compile(r'"([a-z][a-z0-9_]*(?:\.[a-z0-9_]*(?:\{[^"}]*\})?[a-z0-9_]*)+)"')
 USE = re.compile(
     r'(?:click_probe|right_click_probe|double_click_probe|hover_probe|has_probe'
     r'|scroll_probe_into_view)\(\s*f?"([^"]+)"'
-    # ВТОРОЙ ЗАКОННЫЙ ПУТЬ ПРИЦЕЛА: сценарий достаёт прямоугольник щупа из
-    # дампа сам и целится по координате — так `nestparam` жмёт карточку
-    # композиции в бине, а `rate` тянет полосу скорости. Не считать его
-    # значит врать в свою пользу: место прокликано руками, а отчёт зовёт
-    # его дырой и посылает заводить второй такой же сценарий.
+    # THE SECOND LAWFUL WAY OF AIMING: the scenario takes the probe’s rectangle from the
+    # dump itself and aims by coordinate — so `nestparam` presses the composition card
+    # in the bin, and `rate` drags the speed bar. Not counting it
+    # means lying in its own favour: the place was clicked by hand, and the report calls
+    # it a hole and sends people to write a second, identical scenario.
     r'|\[\s*"param"\s*\]\s*==\s*"([^"]+)"'
 )
-# ТРЕТИЙ ПУТЬ: имени щупа сценарий заранее НЕ ЗНАЕТ и берёт его из дампа по
-# приставке (`f["param"].startswith("auto.add.")` в `formula`) — параметр,
-# у которого заводится кривая, зависит от проекта. Такой прицел покрывает
-# ВСЮ семью имён с этой приставкой.
+# THE THIRD WAY: the scenario does NOT know the probe name in advance and takes it from the
+# dump by its prefix (`f["param"].startswith("auto.add.")` in `formula`) — the parameter
+# for which a curve is created depends on the project. Such an aim covers
+# the WHOLE family of names with this prefix.
 USE_PREFIX = re.compile(r'\.startswith\(\s*"([^"]+)"')
-# Клик — это прицел; `has_probe` бывает и ОТРИЦАТЕЛЬНЫМ («виджета тут быть не
-# должно»), и имя в нём законно отсутствует у программы. Поэтому «целится в
-# несуществующее» считается только по жестам.
+# A click is an aim; `has_probe` can also be NEGATIVE (“the widget must not be
+# here”), and in that case the name is legitimately absent from the program. So “aims at
+# something nonexistent” is counted only for gestures.
 USE_CLICK = re.compile(
     r'(?:click_probe|right_click_probe|double_click_probe|hover_probe'
     r'|scroll_probe_into_view)\(\s*f?"([^"]+)"'
@@ -82,56 +82,56 @@ USE_CLICK = re.compile(
 SPEC_LIVE = re.compile(r"src/scripts/live/([a-z_0-9]+)\.py")
 FILE_EXT = {"otio", "kt", "png", "json", "db", "rs", "py", "toml", "wav", "mp4", "jpg", "ktproj"}
 
-# РЕЕСТР ПЕРЕЕЗДА (Р.68, задача 5.2). Критерий — в спеке `ui-reach`: живьём
-# остаётся место, не тронутое НИ РАЗУ, попадание жеста и сложный путь из
-# претензии владельца; проверка, которая ПОСЛЕ уже прокликанного в другом
-# месте жеста утверждает только состояние модели или файла, уезжает в
-# headless. Реестр — доказательство, что уехала ПРОВЕРКА, а не исчезла:
-# сторож требует, чтобы файла сценария больше не было И чтобы каждый
-# названный тест существовал в исходниках.
+# REGISTRY OF THE MOVE (R.68, task 5.2). The criterion is in the spec `ui-reach`: live
+# what remains is a place never touched ONCE, a gesture hit, and a complex path from
+# the owner’s claim; a check that AFTER a gesture already clicked in another
+# place asserts only the state of the model or file, moves to
+# headless. The registry is the proof that the CHECK moved, not that it vanished:
+# the guard requires that the scenario file no longer exists AND that each
+# named test exists in the sources.
 MIGRATED = {
     "nest": (
-        "свернуть → войти → подвинуть → выйти → сохранить: все утверждения "
-        "про модель и .otio, жесты прокликаны в nestparam/nestshare/nestdead",
+        "roll up → enter → move → exit → save: all assertions "
+        "about the model and .otio; gestures clicked in nestparam/nestshare/nestdead",
         ["t427", "t456", "t457", "t431"],
     ),
     "nestenter": (
-        "каскад Enter/Esc и полоса внутри открытой ленты: утверждения про "
-        "глубину и строки, клавиатурный жест прокликан в nestdead/nestshare",
+        "Enter/Esc cascade and the strip inside an open reel: assertions about "
+        "depth and rows; keyboard gesture clicked in nestdead/nestshare",
         ["t597", "t634", "t636"],
     ),
     "nestopen": (
-        "раскрытие на месте, правка из полосы, Esc: утверждения про документ "
-        "и то, что играет; двойной клик по событию прокликан в nestdead/audiofx",
+        "expansion in place, edit from the strip, Esc: assertions about the document "
+        "and what plays; double click on an event clicked in nestdead/audiofx",
         ["t570", "t571", "t572", "t573"],
     ),
     "nestzero": (
-        "событие за ноль внутри ленты и курсор, который туда не идёт: "
-        "утверждения про модель, драг события прокликан в select/level/corner",
+        "an event at zero inside the reel and a cursor that does not go there: "
+        "assertions about the model; event drag clicked in select/level/corner",
         ["t637", "t637b"],
     ),
     "fxfield": (
-        "напечатанное значение ключа доезжает до файла: набор в поле параметра "
-        "прокликан живьём в nestparam (ручки экземпляра) и formula",
+        "the typed key value reaches the file: typing in the parameter field "
+        "clicked live in nestparam (instance handles) and formula",
         ["t281"],
     ),
     "curvesrc": (
-        "битый текст формулы не портит модель, верный применяется: жест "
-        "остался живым в formula (туда же переехал клик «отвязать»)",
+        "broken formula text does not spoil the model, the valid one is applied: gesture "
+        "stayed live in formula (the “unlink” click moved there too)",
         ["t709", "t749"],
     ),
 }
 
-# ПРЕДЕЛ ДЫР — храповик, а не цель (Р.68, задача 5.3). Мест, до которых
-# человек не доходил мышью НИ РАЗУ, было 108 из 174 на начало стадии 5
-# (после того как отчёт научился считать прицелом ещё и разбор дампа и
-# приставку — 105). Задача 5.3 закрыла двадцать три: глаголы дорожки из
-# меню строки и из её окна (`trackverbs.py`), растр, частоту кадров и все
-# четыре правила приведения в окне настроек (`conform.py`), форму узла
-# «Геометрия» (`geomctl.py`), «Удалить кривую» и «Готово» в окне эффектов
-# (`formula.py`), предупреждение о соло в окне рендера (`track.py`).
-# Предел держит достигнутое: новое место программы либо получает живой
-# шаг, либо число двигают осознанно — одной строкой и с причиной в отчёте.
+# LIMIT ON HOLES — a ratchet, not a target (R.68, task 5.3). Places that a
+# person never reached with the mouse ONCE were 108 of 174 at the start of stage 5
+# (after the report learned to count, as an aim, also the parsing of the dump and
+# the prefix — 105). Task 5.3 closed twenty-three: track verbs from the
+# menu of the strip and from its window (`trackverbs.py`), the raster, the frame rate and all
+# four conform rules in the settings window (`conform.py`), the form of the
+# “Geometry” node (`geomctl.py`), “Delete curve” and “Done” in the effects window
+# (`formula.py`), the solo warning in the render window (`track.py`).
+# The limit holds what has been achieved: a new place of the program either gets a live
+# step, or the number is moved deliberately — in one line and with a reason in the report.
 # 82 → 88 (landing screenshots, 2026-10-21): six probes added for
 # site/screenshots.py — window frames `win.fx`, `win.morpher`, `win.render`,
 # `win.render_progress`, the picker popup `fxreg.popup` and `render.start`.
@@ -146,7 +146,7 @@ UNTOUCHED_LIMIT = 84
 
 
 def as_pattern(name):
-    """«titlew.preset.{i}» → регулярка, которой соответствует «titlew.preset.2»."""
+    """“titlew.preset.{i}” → a regex that matches “titlew.preset.2”."""
     return re.compile("^" + re.sub(r"\{[^}]*\}", ".*", re.escape(name)
                                    .replace(r"\{", "{").replace(r"\}", "}")) + "$")
 
@@ -160,7 +160,7 @@ def published():
         for m in NOTE.finditer(text):
             out.setdefault(m.group(1), p.name)
         for m in SHAPE.finditer(text):
-            # имена файлов и расширения в форму имени щупа тоже попадают
+            # file names and extensions also get into the form of the probe name
             if m.group(1).rsplit(".", 1)[-1] in FILE_EXT:
                 continue
             out.setdefault(m.group(1), p.name)
@@ -174,20 +174,20 @@ def used(rx=USE):
             continue
         text = p.read_text(encoding="utf-8")
         for m in rx.finditer(text):
-            # у прицела два законных вида (вызов щупа и разбор дампа), и
-            # какая группа сработала — знает только регулярка
+            # an aim has two lawful kinds (the probe call and the parsing of the dump), and
+            # which group fired is known only to the regex
             name = next((g for g in m.groups() if g), None)
             if name:
                 out.setdefault(name, set()).add(p.stem)
         if rx is USE:
-            # приставка покрывает всю семью: «auto.add.» → «auto.add.{}»
+            # the prefix covers the whole family: “auto.add.” → “auto.add.{}”
             for m in USE_PREFIX.finditer(text):
                 out.setdefault(m.group(1) + "{}", set()).add(p.stem)
     return out
 
 
 def migration_faults():
-    """Нарушения реестра переезда: сценарий остался или адрес пустой."""
+    """Violations of the move registry: the scenario remained or the address is empty."""
     sources = [
         p
         for d in (ROOT / "src" / "apps", ROOT / "src" / "libs")
@@ -198,15 +198,15 @@ def migration_faults():
     for name, (_why, tests) in sorted(MIGRATED.items()):
         if (LIVE / f"{name}.py").exists():
             bad.append(
-                f"сценарий {name}.py объявлен переехавшим в headless, а он на диске: "
-                "либо уберите его из реестра MIGRATED, либо удалите файл"
+                f"scenario {name}.py is declared as moved to headless, but it is on disk: "
+                "either remove it from the MIGRATED registry or delete the file"
             )
         for t in tests:
-            # адрес сверяется ТОЧНО (`fn t456_…`, а не «начинается на t456»):
-            # иначе удаление t456 прошло бы незамеченным, пока жив t456b
+            # the address is matched EXACTLY (`fn t456_…`, not “starts with t456”):
+            # otherwise deleting t456 would pass unnoticed while t456b is alive
             if not re.search(rf"\bfn {re.escape(t)}_", text):
                 bad.append(
-                    f"переезд {name}.py назвал адресом тест {t}, которого нет в исходниках"
+                    f"move {name}.py gave the test as its address {t}, which does not exist in the sources"
                 )
     return bad
 
@@ -226,16 +226,16 @@ def report(brief=False):
         if not any(pat.match(p) or pats[p].match(name) for p in pub)
     )
 
-    print(f"живое покрытие: программа публикует {len(pub)} мест, "
-          f"сценарии трогают {len(pub) - len(untouched)}, "
-          f"мышью ни разу не трогали {len(untouched)} "
-          f"(объявленный предел {UNTOUCHED_LIMIT})")
+    print(f"live coverage: the program publishes {len(pub)} places, "
+          f"scenarios touch {len(pub) - len(untouched)}, "
+          f"with the mouse never touched {len(untouched)} "
+          f"(declared limit {UNTOUCHED_LIMIT})")
     if MIGRATED and not brief:
-        print(f"переехало в headless ({len(MIGRATED)} сценариев):")
+        print(f"moved to headless ({len(MIGRATED)} scenarios):")
         for name, (why, tests) in sorted(MIGRATED.items()):
             print(f"  {name}.py → {', '.join(tests)}: {why}")
     if untouched and not brief:
-        print(f"мышью НИ РАЗУ не трогали ({len(untouched)}):")
+        print(f"NEVER touched with the mouse ({len(untouched)}):")
         by_place = {}
         for n in untouched:
             by_place.setdefault(n.split(".")[0], []).append(n)
@@ -262,28 +262,28 @@ def main(argv):
         return 0
     bad = []
     for n in phantom:
-        bad.append(f"сценарий целится в «{n}», которого программа не публикует")
+        bad.append(f"scenario aims at “{n}” which the program does not publish")
     for n in dead_specs:
-        bad.append(f"спека ссылается на живой сценарий {n}.py, которого нет на диске")
+        bad.append(f"spec refers to live scenario {n}.py which is not on disk")
     for n in no_entry:
         bad.append(
-            f"у сценария {n}.py нет точки входа (`if __name__ == \"__main__\"`) — "
-            "он запускается, не делает ничего и считается зелёным"
+            f"scenario {n}.py has no entry point (`if __name__ == \"__main__\"`) — "
+            "it runs, does nothing and counts as green"
         )
     bad.extend(migration_faults())
     if len(untouched) > UNTOUCHED_LIMIT:
         bad.append(
-            f"мест, не тронутых мышью НИ РАЗУ, стало {len(untouched)} при "
-            f"объявленном пределе {UNTOUCHED_LIMIT}: новому месту нужен живой "
-            "шаг, либо предел двигается осознанно (UNTOUCHED_LIMIT)"
+            f"places never touched with the mouse have become {len(untouched)} with "
+            f"the declared limit {UNTOUCHED_LIMIT}: a new place needs a live "
+            "step, or the limit is moved deliberately (UNTOUCHED_LIMIT)"
         )
     if bad:
-        print("ЖИВОЕ ПОКРЫТИЕ — КРАСНОЕ:", file=sys.stderr)
+        print("LIVE COVERAGE — RED:", file=sys.stderr)
         for b in bad:
             print("  " + b, file=sys.stderr)
         return 1
-    print("живое покрытие: сценарии целятся в существующие места, "
-          "спеки — в существующие сценарии")
+    print("live coverage: scenarios aim at existing places, "
+          "specs — at existing scenarios")
     return 0
 
 

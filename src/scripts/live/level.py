@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.40 п.12: непрозрачность у МЕЛКОГО события.
+"""Live scenario R.40 item 12: opacity on a SMALL event.
 
-Претензия дословно: «п.12 ощущение что не выполнено - я у мелкого события
-пытаюсь там выловить opacity но не получается».
+Complaint verbatim: “item 12, it feels not done - on a small event I
+try to catch the opacity there but it does not work”.
 
-Замков было два, и оба видны только в окне: зона уровня требовала ширины
-больше 24 px, а ручки фейда ловились на ±12 px от каждого угла — на
-событии в 20 px они перекрывали его целиком, и середины, где живёт линия
-уровня, не оставалось ни одного пикселя.
+There were two locks, and both are visible only in the window: the level zone required a width
+greater than 24 px, and the fade handles were caught within ±12 px of each corner — on
+an event of 20 px they covered all of it, and the middle, where the level line lives,
+was left without a single pixel.
 
-Здесь настоящая мышь тянет линию у события шириной ~20 px, и следствие
-проверяется тем, что доехало до файла проекта.
+Here a real mouse drags the line on an event ~20 px wide, and the consequence
+is checked by what reached the project file.
 """
 import os
 import sys
@@ -22,7 +22,7 @@ SEC = 90000
 
 
 def clip_kt(tl, index):
-    """kt-метаданные index-го клипа в .otio (там живёт непрозрачность)."""
+    """kt metadata of the index-th clip in the .otio (where opacity lives)"""
     items = []
     for track in tl.doc.get("tracks", {}).get("children", []):
         for item in track.get("children", []):
@@ -33,7 +33,7 @@ def clip_kt(tl, index):
 
 def main(out):
     require_tools()
-    # два коротких события: 0.2 с — это ~20 px при зуме по умолчанию
+    # two short events: 0.2 s is ~20 px at the default zoom
     proj = project_with_clips(
         os.path.join(out, "level.otio"),
         [(0.0, 0.2, "synth:Ramp"), (1.0, 4.0, "synth:Ramp")],
@@ -42,16 +42,16 @@ def main(out):
     with Live("level", out, project=proj) as app:
         app.shot("open")
         p = app.project_now()
-        app.expect(len(p.clips) == 2, f"старт: два события, {p.clips}")
+        app.expect(len(p.clips) == 2, f"start: two events, {p.clips}")
 
         g = app.geom()
         short = p.clips[0]
         x0 = app.x_at(short.start)
         x1 = app.x_at(short.end)
         w = x1 - x0
-        app.expect(w < 24.0, f"сцена: событие короче старого порога — {w:.0f} px")
+        app.expect(w < 24.0, f"scene: an event shorter than the old threshold — {w:.0f} px")
 
-        # линия уровня при opacity = 1.0 стоит у самого верха события
+        # the level line at opacity = 1.0 stands at the very top of the event
         top = app.lane_y("video", 0, frac=0.0)
         lane_h = {(r["kind"], r["lane"]): r for r in g["rows"]}[("video", 0)]["h"]
         ly = top + 3.0
@@ -59,19 +59,19 @@ def main(out):
 
         app.drag(mid_x, ly, mid_x, ly + lane_h * 0.45)
         saved = app.saved_project()
-        # непрозрачность лежит в metadata.kt САМОГО клипа .otio, а не в
-        # корневой kt-секции
+        # the opacity lies in metadata.kt of the clip ITSELF in the .otio, not in the
+        # root kt section
         op = clip_kt(saved, 0).get("opacity", 1.0)
         app.expect(
             op < 0.95,
-            f"линия уровня у короткого события обязана тянуться, а непрозрачность {op}",
+            f"the level line of a short event must stretch, and the opacity {op}",
         )
         app.shot("level-dragged")
 
-        # соседнее ДЛИННОЕ событие не тронуто: жест правит ровно то, за что
-        # тянули (правило 20 «ничего не отрастает и не отрубается само»)
+        # the neighbouring LONG event is untouched: the gesture adjusts exactly what was
+        # dragged (rule 20 “nothing grows or switches off by itself”)
         op2 = clip_kt(saved, 1).get("opacity", 1.0)
-        app.expect(op2 == 1.0, f"соседнее событие не тронуто, а у него {op2}")
+        app.expect(op2 == 1.0, f"the neighboring event is untouched, and its {op2}")
         return app.done()
 
 

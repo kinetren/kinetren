@@ -1,6 +1,6 @@
-// Билинейная выборка рамки [x0,y0,cw,ch] источника в цель ow×oh —
-// зеркало bilinear_into (kt-fx/src/video.rs): те же веса и кламп краёв,
-// f32 вместо f64 (допуск ±1-2 LSB, конформанс t181).
+// Bilinear sampling of the source frame rect [x0,y0,cw,ch] into the target ow×oh:
+// a mirror of bilinear_into (kt-fx/src/video.rs): the same weights and edge clamping,
+// f32 instead of f64 (tolerance ±1-2 LSB, conformance t181).
 // u0 = (ow, oh, sw, sh); f0 = (x0, y0, cw, ch).
 
 @fragment

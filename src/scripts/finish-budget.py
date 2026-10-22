@@ -1,92 +1,92 @@
 #!/usr/bin/env python3
-"""Цена проверки: таблица «стадия — секунды», итог и бюджет (Р.68).
+"""Cost of verification: a table “stage — seconds”, total and budget (R.68).
 
-Повод дословно (владелец): «тесты в finish.sh или что-то типо того - очень
-долго выполняются, нужно что-то придумать». Замер показал, что круг проверки
-стоит 21 минуту, но НИ ОДНА стадия не называла своей цены — говорить о том,
-что ускорять, было нечем, а деградация никому не видна.
+The occasion verbatim (owner): “tests in finish.sh or something like that - very
+slow to run, we need to think of something”. The measurement showed that the verification round
+takes 21 minutes, but NO stage named its own cost — there was nothing to say
+about what to speed up, and the degradation was visible to no one.
 
-Бюджет — 300 с (пять минут, поставлено владельцем). Перерасход ПЕЧАТАЕТСЯ и
-помечается, но НЕ делает прогон красным: иначе бюджет стал бы ножом по
-набору проверок, а правило «тесты из спек не ослабляются» сильнее бюджета
-(см. openspec/specs/durability/spec.md).
+The budget is 300 s (five minutes, set by the owner). An overrun IS PRINTED and
+is marked, but does NOT make the run red: otherwise the budget would become a knife against
+the set of checks, and the rule “tests from the specs are not weakened” outweighs the budget
+(see openspec/specs/durability/spec.md).
 
-    finish-budget.py --report target/finish-times.txt    # таблица и вердикт
-    finish-budget.py --check-script scripts/finish.sh    # все стадии в замере
-    finish-budget.py --selftest                          # проверка себя (t800)
+    finish-budget.py --report target/finish-times.txt    # table and verdict
+    finish-budget.py --check-script scripts/finish.sh    # all stages in the measurement
+    finish-budget.py --selftest                          # self-check (t800)
 
-Формат файла замеров — по строке на стадию: «имя<TAB>секунды<TAB>код».
+Format of the measurement file — one line per stage: “name<TAB>seconds<TAB>code”.
 """
 import re
 import sys
 from pathlib import Path
 
-BUDGET = 300  # с; пять минут — решение владельца (Р.68)
+BUDGET = 300  # s; five minutes — the owner’s decision (R.68)
 
 
 class Bad(Exception):
-    """Сам учёт сломан: это красное, а не перерасход."""
+    """The accounting itself is broken: this is red, not an overrun."""
 
 
 def read_times(path):
     p = Path(path)
     if not p.exists():
-        raise Bad(f"нет файла замеров {path} — стадии не хронометрировались")
+        raise Bad(f"no measurement file {path} — the stages were not timed")
     rows = []
     for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip():
             continue
         parts = line.split("\t")
         if len(parts) != 3:
-            raise Bad(f"{path}:{n}: строка не «имя<TAB>секунды<TAB>код»: {line!r}")
+            raise Bad(f"{path}:{n}: the line is not “name<TAB>seconds<TAB>code”: {line!r}")
         name, secs, rc = parts
         try:
             rows.append((name, int(secs), int(rc)))
         except ValueError as e:
-            raise Bad(f"{path}:{n}: не число: {line!r}") from e
+            raise Bad(f"{path}:{n}: not a number: {line!r}") from e
     if not rows:
-        raise Bad(f"{path}: ни одного замера — стадии не хронометрировались")
+        raise Bad(f"{path}: not a single measurement — the stages were not timed")
     return rows
 
 
 def report(rows, budget=BUDGET, out=sys.stdout):
     total = sum(s for _, s, _ in rows)
     width = max(len(n) for n, _, _ in rows)
-    print("== цена проверки ==", file=out)
+    print("== cost of verification ==", file=out)
     for name, secs, rc in sorted(rows, key=lambda r: -r[1]):
-        mark = "" if rc == 0 else "  ← КРАСНАЯ"
+        mark = "" if rc == 0 else "  ← RED"
         share = 100.0 * secs / total if total else 0.0
-        print(f"  {secs:6d} c  {name:<{width}}  {share:4.0f} %{mark}", file=out)
-    print(f"  {total:6d} c  {'ИТОГО':<{width}}  бюджет {budget} c", file=out)
+        print(f"  {secs:6d} s  {name:<{width}}  {share:4.0f} %{mark}", file=out)
+    print(f"  {total:6d} s  {'TOTAL':<{width}}  budget {budget} s", file=out)
     if total > budget:
         worst, wsecs, _ = max(rows, key=lambda r: r[1])
         print(
-            f"ВНИМАНИЕ: проверка вышла за бюджет {budget} c на {total - budget} c; "
-            f"дороже всех «{worst}» ({wsecs} c, {100.0 * wsecs / total:.0f} %)",
+            f"WARNING: verification exceeded the budget {budget} s by {total - budget} s; "
+            f"more expensive than all “{worst}” ({wsecs} s, {100.0 * wsecs / total:.0f} %)",
             file=out,
         )
     else:
-        print(f"проверка в бюджете: {total} c из {budget} c", file=out)
+        print(f"verification within budget: {total} s of {budget} s", file=out)
     return total
 
 
-# ---- сторож самого скрипта ------------------------------------------------
+# ---- guard of the script itself ------------------------------------------------
 #
-# Стадию можно было бы тихо вынести из бюджета — напечатать заголовок мимо
-# обёртки, и её секунды исчезнут из таблицы. Это тот же класс, что «красное
-# чужим именем» (Р.55) и «вердикт у tail» (Р.58): отчёт врёт о том, что
-# происходило. Поэтому единственный законный способ напечатать заголовок
-# стадии — обёртка, а сторож это проверяет.
-# Заголовок стадии — это печать строки, НАЧИНАЮЩЕЙСЯ с «== ». Шире брать
-# нельзя: «simd: ok (AVX2 == скаляр)» — обычная строка вердикта, и сторож,
-# который падал бы на ней, научил бы обходить себя переформулировкой.
+# A stage could quietly be taken out of the budget — its header printed outside
+# the wrapper, and its seconds vanish from the table. This is the same class as “red under
+# someone else’s name” (R.55) and “verdict from tail” (R.58): the report lies about what
+# happened. So the only lawful way to print a stage header is the wrapper,
+# and the guard checks that.
+# A stage header is a line PRINTED that STARTS with “== ”. It must not be wider:
+# “simd: ok (AVX2 == scalar)” is an ordinary verdict line, and a guard that failed on it
+# would teach people to get around it by rewording.
 HEADER = re.compile(r"""(?:echo|printf)\s+["']==\s""")
 
 
 def check_script(path):
     p = Path(path)
     if not p.exists():
-        raise Bad(f"нет скрипта {path}")
+        raise Bad(f"no script {path}")
     src = p.read_text(encoding="utf-8")
     bad = []
     in_stage = False
@@ -107,42 +107,42 @@ def check_script(path):
             bad.append((n, stripped))
     if bad:
         raise Bad(
-            "заголовок стадии печатается мимо обёртки stage — её секунды не попадут "
-            "в бюджет:\n"
+            "the stage heading is printed outside the stage wrapper — its seconds will not reach "
+            "the budget:\n"
             + "\n".join(f"  {path}:{n}: {t}" for n, t in bad)
         )
     for need, why in (
-        ("finish-budget.py", "скрипт не зовёт учёт цены — таблицы стадий не будет"),
-        ("finish-times.txt", "скрипт не пишет файл замеров"),
+        ("finish-budget.py", "the script does not call the cost accounting — there will be no stage table"),
+        ("finish-times.txt", "the script does not write the measurement file"),
     ):
         if need not in src:
-            raise Bad(f"{why} (нет упоминания {need})")
+            raise Bad(f"{why} (no mention of {need})")
     return True
 
 
 def selftest():
     import io
 
-    # 1) перерасход: назван самой дорогой стадией и размером перебора
+    # 1) overrun: named the most expensive stage and the size of the search
     buf = io.StringIO()
-    report([("живые сценарии", 1012, 0), ("мастерская", 259, 0)], out=buf)
+    report([("live scenarios", 1012, 0), ("workshop", 259, 0)], out=buf)
     said = buf.getvalue()
-    assert "ВНИМАНИЕ" in said and "живые сценарии" in said, said
-    assert "на 971 c" in said, said  # 1012 + 259 - 300
+    assert "WARNING" in said and "live scenarios" in said, said
+    assert "by 971 s" in said, said  # 1012 + 259 - 300
 
-    # 2) в бюджете: пометки нет
+    # 2) within budget: no mark
     buf = io.StringIO()
-    report([("сборка", 43, 0), ("мастерская", 90, 0)], out=buf)
+    report([("build", 43, 0), ("workshop", 90, 0)], out=buf)
     said = buf.getvalue()
-    assert "ВНИМАНИЕ" not in said and "в бюджете" in said, said
+    assert "WARNING" not in said and "within budget" in said, said
 
-    # 3) красная стадия названа красной прямо в таблице
+    # 3) a red stage is named red directly in the table
     buf = io.StringIO()
-    report([("живые сценарии", 120, 1)], out=buf)
-    assert "КРАСНАЯ" in buf.getvalue(), buf.getvalue()
+    report([("live scenarios", 120, 1)], out=buf)
+    assert "RED" in buf.getvalue(), buf.getvalue()
 
-    # 4) сломанный учёт — это красное, а не «ноль стадий»
-    for rows, what in ((None, "нет файла"), ("", "пустой файл")):
+    # 4) broken accounting is red, not “zero stages”
+    for rows, what in ((None, "no file"), ("", "empty file")):
         import tempfile
 
         with tempfile.TemporaryDirectory() as d:
@@ -154,9 +154,9 @@ def selftest():
             except Bad:
                 pass
             else:
-                raise AssertionError(f"{what}: учёт промолчал")
+                raise AssertionError(f"{what}: the accounting stayed silent")
 
-    # 5) сторож видит заголовок стадии мимо обёртки
+    # 5) the guard sees a stage header outside the wrapper
     import tempfile
 
     with tempfile.TemporaryDirectory() as d:
@@ -164,25 +164,25 @@ def selftest():
         f.write_text(
             'stage() {\n  printf "== %s ==\\n" "$1"\n}\n'
             "# finish-budget.py finish-times.txt\n"
-            'stage "сборка" cargo build\n',
+            'stage "build" cargo build\n',
             encoding="utf-8",
         )
         assert check_script(f) is True
         f.write_text(
             'stage() {\n  printf "== %s ==\\n" "$1"\n}\n'
             "# finish-budget.py finish-times.txt\n"
-            'echo "== чистка =="\n',
+            'echo "== cleanup =="\n',
             encoding="utf-8",
         )
         try:
             check_script(f)
         except Bad as e:
-            assert "мимо обёртки" in str(e), e
+            assert "outside the stage wrapper" in str(e), e
         else:
-            raise AssertionError("сторож не заметил стадии вне обёртки")
+            raise AssertionError("the guard did not notice a stage outside the wrapper")
 
-    print("finish-budget: самопроверка зелёная (перерасход, бюджет, красная стадия, "
-          "сломанный учёт, стадия мимо обёртки)")
+    print("finish-budget: self-check green (overrun, budget, red stage, "
+          "broken accounting, stage outside the wrapper)")
 
 
 def main(argv):
@@ -194,7 +194,7 @@ def main(argv):
         return 0
     if len(argv) == 3 and argv[1] == "--check-script":
         check_script(argv[2])
-        print(f"{argv[2]}: все стадии идут через обёртку с замером")
+        print(f"{argv[2]}: all stages go through the timed wrapper")
         return 0
     print(__doc__)
     return 2
@@ -204,5 +204,5 @@ if __name__ == "__main__":
     try:
         sys.exit(main(sys.argv))
     except Bad as e:
-        print(f"УЧЁТ ЦЕНЫ СЛОМАН: {e}", file=sys.stderr)
+        print(f"COST ACCOUNTING BROKEN: {e}", file=sys.stderr)
         sys.exit(1)

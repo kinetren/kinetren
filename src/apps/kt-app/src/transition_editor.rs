@@ -1,12 +1,12 @@
-//! Окно перехода (Р.33 С4): вид, его параметры, кривая аудио.
+//! Transition window (R.33 C4): the kind, its parameters, the audio curve.
 //!
-//! До этого раунда у перехода не было НИ ОДНОГО окна: вид существовал в
-//! одном варианте, а офсеты тянулись мышью. Претензия пользователя —
-//! «на любых событиях склейки переход всегда fade… управление ими надо
-//! унифицировать как fx-chain», поэтому окно устроено как FX-редактор:
-//! пикер вида по категориям (реестр `TransitionKind::ALL`), параметры —
-//! той же `widgets::params_grid` из тех же `ParamSpec`, что у эффектов,
-//! отмена откатывает сессию целиком одним undo-шагом.
+//! Until this round a transition had NOT A SINGLE window: the kind existed in
+//! one variant, and the offsets were dragged with the mouse. The user’s claim —
+//! “on any splices the transition is always a fade… these must be unified like an fx-chain”,
+//! so the window is built like the FX editor: a kind picker by category
+//! (the registry `TransitionKind::ALL`), parameters — the same
+//! `widgets::params_grid` from the same `ParamSpec` as for effects,
+//! cancel rolls the whole session back in one undo step.
 
 use crate::app::KtApp;
 use crate::i18n::{Key, k, tr};
@@ -16,16 +16,16 @@ use kt_model::{AudioCurve, Command, TransitionEvent, TransitionId, TransitionKin
 
 pub struct TransitionEditor {
     pub id: TransitionId,
-    /// Состояние виджета кривых (Р.34 К4).
+    /// the state of the curves widget (R.34 K4)
     pub view: crate::automation::AutoView,
-    /// Состояние на момент открытия — «Отмена» возвращает его.
+    /// the state at the moment of opening — “Cancel” restores it
     pub backup: TransitionEvent,
     pub gesture: u64,
     pub open: bool,
 }
 
-/// Категория вида для группировки в пикере. Семейства — те самые три, о
-/// которых договорились с пользователем (вайпы, сдвиги, стилизованные).
+/// the kind's category for grouping in the picker. The families are the very three
+/// agreed with the user (wipes, shifts, stylised).
 pub fn kind_category(kind: &TransitionKind) -> Key {
     match kind {
         TransitionKind::Crossfade => k::trn::cat::BASIC,
@@ -43,12 +43,12 @@ pub fn kind_category(kind: &TransitionKind) -> Key {
         | TransitionKind::Squeeze { .. }
         | TransitionKind::Stretch { .. }
         | TransitionKind::Swap { .. } => k::trn::cat::MOTION,
-        // узоры (Р.51): маски-паттерны — своё семейство
+        // patterns (R.51): mask patterns — their own family
         TransitionKind::Blinds { .. }
         | TransitionKind::Checker { .. }
         | TransitionKind::Blocks { .. }
         | TransitionKind::Spiral { .. } => k::trn::cat::PATTERN,
-        // объёмные (Р.51): панели и цилиндры
+        // volumetric (R.51): panels and cylinders
         TransitionKind::Flip { .. }
         | TransitionKind::Cube { .. }
         | TransitionKind::Door { .. }
@@ -58,7 +58,7 @@ pub fn kind_category(kind: &TransitionKind) -> Key {
     }
 }
 
-/// Локализованное имя вида. Полные пути — тест 125 ищет ключ по ним.
+/// Localised name of the kind. Full paths — test 125 looks up the key by them.
 pub fn kind_name(kind: &TransitionKind) -> &'static str {
     match kind {
         TransitionKind::Crossfade => tr(k::trn::kind::CROSSFADE),
@@ -106,8 +106,8 @@ fn curve_name(c: AudioCurve) -> &'static str {
     }
 }
 
-/// Направление вида, если оно у него есть: своим контролом (стрелки), а не
-/// числом — направление не число, и спекой параметров не выражается.
+/// The direction of the kind, if it has one: with its own control (arrows), not a
+/// number — a direction is not a number, and it is not expressed by the parameter spec.
 fn dir_of(kind: &mut TransitionKind) -> Option<&mut kt_model::Dir> {
     match kind {
         TransitionKind::Wipe { dir, .. }
@@ -151,11 +151,11 @@ impl KtApp {
     }
 
     fn draw_one_transition_editor(&mut self, ctx: &egui::Context, ed: &mut TransitionEditor) {
-        // документ для публикации — один клон на отрисовку окна (Р.59)
+        // the publish document — one clone per window draw (R.59)
         let pub_doc = self.model.document();
         let Some(cur) = self.model.project().transitions.iter().find(|t| t.id == ed.id).cloned()
         else {
-            ed.open = false; // переход умер (растащили клипы) — окно уходит
+            ed.open = false; // the transition died (clips were pulled apart) — the window goes away
             return;
         };
         let mut hover_out: Option<String> = None;
@@ -165,16 +165,16 @@ impl KtApp {
         let mut axis_req = crate::automation::AxisReq::default();
         let playhead = self.player.transport.playhead();
         let frame_step = 90_000 / self.model.project().settings.fps.max(1) as i64;
-        // окно перехода на таймлайне: домен кривых — тик от его начала.
-        // У наложенного (Р.51) окно — зона перекрытия, офсеты — мёртвый
-        // груз, поэтому длина берётся у САМОГО окна.
+        // transition window on the timeline: the curve domain — the tick from its start.
+        // For an overlapping (R.51) window — the overlap zone, the offsets are dead
+        // weight, so the length is taken from the window itself.
         let win = cur.window(self.model.project());
         let w0 = win.map(|w| w.start).unwrap_or(kt_time::Tick::ZERO);
         let win_len = win.map(|w| (w.end - w.start).0).unwrap_or(1).max(1);
         let mut open = ed.open;
         let is_fade = cur.is_fade();
-        // переход на АУДИО-дорожке: вид картинки ему не нужен вовсе —
-        // звук всегда кроссфейдится, у него есть только кривая
+        // a transition on an AUDIO track: the picture kind is not needed for it at all —
+        // the sound is always crossfaded, it has only a curve
         let audio_only = cur
             .a
             .or(cur.b)
@@ -190,7 +190,7 @@ impl KtApp {
                 crate::widgets::window_body(ui, |ui| {
                 let mut t = cur.clone();
                 let mut changed = false;
-                // ---- вид: пикер по семействам --------------------------
+                // ---- kind: picker by families --------------------------
                 if !audio_only {
                     ui.horizontal(|ui| {
                         ui.label(tr(k::trn::KIND));
@@ -209,18 +209,18 @@ impl KtApp {
                                     }
                                     let same = k.tag() == t.kind.tag();
                                     if ui.selectable_label(same, kind_name(k)).clicked() && !same {
-                                        // смена вида = его УМОЛЧАНИЯ: параметры
-                                        // у видов разные, переносить нечего
+                                        // changing the kind = its DEFAULTS: the parameters differ
+                                        // between kinds, there is nothing to carry over
                                         t.kind = k.clone();
                                         changed = true;
                                     }
                                 }
                             });
                     });
-                    // ---- параметры вида: та же сетка, что у эффектов -------
+                    // ---- kind parameters: the same grid as for effects -------
                     let color =
                         matches!(t.kind, TransitionKind::Flash { .. } | TransitionKind::Dip { .. });
-                    // у прожога и бликов цвет зовётся tint_* — та же пипетка
+                    // in burn and flare the colour is called tint_* — the same eyedropper
                     let tint = matches!(
                         t.kind,
                         TransitionKind::FilmBurn { .. } | TransitionKind::LightLeaks { .. }
@@ -274,7 +274,7 @@ impl KtApp {
                     {
                         changed = true;
                     }
-                    // ось у сдвигов-симбиозов Р.51 — одна галка на троих
+                    // the axis for the R.51 symbiotic shifts — one checkbox for all three
                     if let TransitionKind::Split { vertical }
                     | TransitionKind::Stretch { vertical }
                     | TransitionKind::Swap { vertical, .. }
@@ -289,9 +289,9 @@ impl KtApp {
                     {
                         changed = true;
                     }
-                    // инверсия перехода (Р.51, п.398) — свойство СОБЫТИЯ:
-                    // жест играется задом наперёд. У симметричных видов
-                    // это тождество — галка не показывается (правило 16)
+                    // transition inversion (R.51, item 398) — a property of the EVENT:
+                    // the gesture is played backwards. For symmetric kinds
+                    // this is an identity — the checkbox is not shown (rule 16)
                     if !t.kind.symmetric()
                         && ui.checkbox(&mut t.invert, tr(k::trn::INVERSE)).changed()
                     {
@@ -320,14 +320,14 @@ impl KtApp {
                         kt_model::ClipId(0),
                         kt_model::ParamOwner::Transition { id: ed.id },
                     );
-                    // ГРУППА параметров вида — образец «Трансформации» (Р.66)
+                    // the GROUP of kind parameters — the sample is “Transform” (R.66)
                     if let Some(ch) = widgets::group(ui, "trn.params", tr(k::grp::PARAMS), |ui| {
                         widgets::params_grid(ui, ("trp", ed.id), &mut t.kind, skip, Some(&pubc))
                     }) {
                         changed |= ch;
                     }
 
-                    // ---- кривые параметров вида (Р.34 К4) --------------
+                    // ---- curves of the kind parameters (R.34 K4) --------------
                     if !t.kind.param_specs().is_empty() {
                         ui.horizontal(|ui| {
                             let specs = t.kind.param_specs();
@@ -379,12 +379,12 @@ impl KtApp {
                         );
                         changed |= res.changed;
                         seek = res.seek;
-                        // замок оси один на программу (Р.40 п.15)
+                        // the axis lock is one per programme (R.40 item 15)
                         axis_req = axis_req.merge(&res);
                     }
                 }
 
-                // ---- звук ----------------------------------------------
+                // ---- sound ----------------------------------------------
                 if !audio_only {
                     ui.separator();
                 }
@@ -408,9 +408,9 @@ impl KtApp {
                             }
                         });
                 });
-                // звук у стилизованных видов всё равно кроссфейдится —
-                // сказать это прямо дешевле, чем дать пользователю
-                // гадать, почему «глитч» не звучит глитчем
+                // the sound of stylised kinds is crossfaded anyway —
+                // saying this plainly is cheaper than letting the user
+                // guess why “glitch” does not sound like a glitch
                 crate::app::hint_into(
                     &mut hover_out,
                     ui.label(tr(k::trn::AUDIO_NOTE)),
@@ -418,9 +418,9 @@ impl KtApp {
                 );
 
                 ui.horizontal(|ui| {
-                    // длина окна — величина, которую тянут мышью (у
-                    // наложенного — тримом клипов); здесь она ЧИТАЕТСЯ,
-                    // чтобы не гадать по пикселям
+                    // the window length is a value that is dragged with the mouse (for
+                    // an overlapping one — by the clip trim); here it is READ,
+                    // so as not to guess from pixels
                     let len = win_len as f64 / 90_000.0;
                     ui.label(crate::tf!(k::trn::LENGTH, format!("{len:.2}")));
                     if is_fade {
@@ -453,7 +453,7 @@ impl KtApp {
             self.apply_coalesced(Command::SetTransition(ed.backup.clone()), ed.gesture);
             ed.open = false;
         }
-        // просьбы графика про ОСЬ применяет одно место (Р.40 п.15)
+        // the chart's requests about the AXIS are applied in one place (R.40 item 15)
         self.apply_axis_req(axis_req);
         if let Some(t) = seek {
             self.player.seek(t);

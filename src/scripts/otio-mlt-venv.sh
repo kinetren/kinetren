@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# venv с эталонной библиотекой OTIO и MLT-адаптером — для кросс-рендер
-# конформанса (тест 158, Р.25). Запускает человек/CI, тест только проверяет
-# маркер и подсказывает эту команду.
+# venv with the reference OTIO library and the MLT adapter — for cross-render
+# conformance (test 158, R.25). Run by a person/CI; the test only checks
+# the marker and suggests this command.
 #
-# Адаптер otio-mlt-adapter официально поддерживает otio <= 0.14, поэтому
-# пины перебираются лестницей: работает свежий — берём свежий.
+# The otio-mlt-adapter officially supports otio <= 0.14, so the pins are
+# tried down a ladder: the fresh one works — we take the fresh one.
 set -euo pipefail
 
 venv="$(cd "$(dirname "$0")/.." && pwd)/target/otio-venv"
 marker="$venv/.kt-ok"
 
-smoke() { # проверка, что адаптер РЕАЛЬНО пишет .mlt на этой версии otio
+smoke() { # check that the adapter ACTUALLY writes .mlt on this version of otio
     "$venv/bin/python3" - <<'PY'
 import opentimelineio as otio
 from opentimelineio.opentime import RationalTime, TimeRange
@@ -29,7 +29,7 @@ PY
 }
 
 if [ -x "$venv/bin/python3" ] && [ -f "$marker" ] && smoke > /dev/null 2>&1; then
-    echo "уже готов: $(cat "$marker")"
+    echo "already ready: $(cat "$marker")"
     exit 0
 fi
 
@@ -39,16 +39,16 @@ python3 -m venv "$venv"
 
 for pin in "opentimelineio" "opentimelineio==0.17.*" "opentimelineio==0.16.*" \
            "opentimelineio==0.15.*" "opentimelineio==0.14.1"; do
-    echo "пробую $pin…"
+    echo "trying $pin…"
     if ! "$venv/bin/pip" install -q "$pin" otio-mlt-adapter 2>/dev/null; then
         continue
     fi
     if out=$(smoke 2>/dev/null); then
-        echo "otio $out (адаптер mlt_xml работает)" > "$marker"
-        echo "готово: $(cat "$marker")"
+        echo "otio $out (the mlt_xml adapter works)" > "$marker"
+        echo "done: $(cat "$marker")"
         exit 0
     fi
 done
 
-echo "ни один пин opentimelineio не дал рабочий адаптер mlt_xml" >&2
+echo "not one opentimelineio pin gave a working mlt_xml adapter" >&2
 exit 1

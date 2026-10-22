@@ -1,6 +1,6 @@
-//! Тест 26 (docs/porting-notes.md, п.25): golden-тесты 10 видео-FX.
-//! Синтетический кадр детерминирован; хэш фиксирует поведение, свойства
-//! ловят смысловые поломки (агенты обязаны гонять при правках kt-fx).
+//! Test 26 (docs/porting-notes.md, item 25): golden tests of the 10 video FX.
+//! The synthetic frame is deterministic; the hash fixes the behaviour, the properties
+//! catch semantic breakage (agents must run them on any kt-fx edit).
 
 use kt_fx::video::{Frame, VideoFxCtx, apply_video_chain};
 use kt_model::{CamKeyframe, FxInstance, PanMode};
@@ -21,7 +21,7 @@ fn ctx() -> VideoFxCtx {
     }
 }
 
-/// Детерминированный кадр: градиенты + «зелёный экран» в правом нижнем углу.
+/// Deterministic frame: gradients + a “green screen” in the bottom-right corner.
 fn test_frame() -> Frame {
     let mut rgba = vec![0u8; (W * H * 4) as usize];
     for y in 0..H {
@@ -51,20 +51,20 @@ fn mean_rgb(f: &Frame) -> f64 {
     s as f64 / (f.rgba.len() as f64 * 3.0 / 4.0)
 }
 
-/// Golden-хэши: фиксируют текущее поведение всех 10 эффектов ПОИМЁННО
-/// (Р.29: одна сумма на всех прятала, какой именно эффект уехал). Менять
-/// эталон можно ТОЛЬКО при осознанном изменении алгоритма конкретного
-/// эффекта. Последняя санкционированная правка: noise → counter-based hash
-/// (Р.29, параллелизуемый RNG для GPU); остальные 9 не менялись с v1.
+/// Golden hashes: fix the current behaviour of all 10 effects BY NAME
+/// (R.29: one shared sum hid which exact effect had drifted). Changing the
+/// reference is allowed ONLY with a deliberate change to the algorithm of that
+/// exact effect. The last sanctioned change: noise → counter-based hash
+/// (R.29, a parallelizable RNG for GPU); the other 9 have not changed since v1.
 const GOLDEN: [(&str, u64); 10] = [
-    // Р.62: строка Pan стала узлом «Геометрия» с тем же зумом и сдвигом
+    // R.62: the Pan row became the “Geometry” node with the same zoom and shift
     ("pan", 0x6c0bcbba503e2045),
     ("cammotion", 0x796fb338df86d795),
     ("mirror", 0x6e6b11df22c1c072),
     ("blur", 0xec8d2f412f21f555),
     ("greenscreen", 0x18dd7db23eb92552),
     ("edges", 0x35521b30cd97497e),
-    ("noise", 0x2c1bd320d47c00c6), // Р.29: counter-based hash
+    ("noise", 0x2c1bd320d47c00c6), // R.29: counter-based hash
     ("vhs", 0xd82252c584915e16),
     ("glow", 0x32647b93a6a84eb2),
     ("eventgrid", 0x0f78a8817bcf1bbe),
@@ -96,39 +96,39 @@ fn t26_golden_hashes_all_effects() {
         ("eventgrid", FxInstance::EventGrid { cols: 2, rows: 2, center: true }),
     ];
     let mut failures = Vec::new();
-    // zip молча обрезал бы лишний кейс — 11-й эффект остался бы без
-    // голдена и никто бы не заметил (ловушка Р.47, Кв1)
+    // zip would silently drop the extra case: the 11th effect would be left without
+    // a golden and nobody would notice (trap of R.47, Kv1)
     assert_eq!(cases.len(), GOLDEN.len(), "cases and GOLDEN must be the same length");
     for ((name, fx), (gname, golden)) in cases.into_iter().zip(GOLDEN) {
-        assert_eq!(name, gname, "порядок cases и GOLDEN обязан совпадать");
+        assert_eq!(name, gname, "the order of cases and GOLDEN must match");
         let f = run(fx);
         let h = xxh3_64(&f.rgba);
-        // при осознанной смене алгоритма: cargo test -- --nocapture, взять
-        // новый хэш из вывода и обновить ТОЛЬКО строку этого эффекта
+        // on a deliberate algorithm change: cargo test -- --nocapture, take the
+        // new hash from the output and update ONLY the line of this effect
         println!("(\"{name}\", 0x{h:016x}), // {}x{}", f.w, f.h);
         if golden != 0 && h != golden {
             failures.push(format!("{name}: 0x{h:016x} != golden 0x{golden:016x}"));
         }
     }
-    assert!(failures.is_empty(), "видео-FX изменили поведение:\n{}", failures.join("\n"));
+    assert!(failures.is_empty(), "video FX changed behaviour:\n{}", failures.join("\n"));
 }
 
-/// Тест 299 (п.306): сетка крупнее кадра не паникует и не смещается.
-/// До правки `center: true` при `cols > out_w` уводил `ow - grid_w` в
-/// u32-underflow (паника в debug); гард — зеркало kt-gpu `chain_ops`.
+/// Test 299 (item 306): a grid larger than the frame neither panics nor shifts.
+/// Before the fix, `center: true` with `cols > out_w` drove `ow - grid_w` into a
+/// u32 underflow (a panic in debug); the guard mirrors `chain_ops` of kt-gpu.
 #[test]
 fn t299_eventgrid_larger_than_frame_is_guarded() {
     for center in [false, true] {
         let f = run(FxInstance::EventGrid { cols: 1000, rows: 1000, center });
         assert_eq!((f.w, f.h), (W, H));
         let again = run(FxInstance::EventGrid { cols: 1000, rows: 1000, center });
-        assert_eq!(f.rgba, again.rgba, "детерминизм (center={center})");
+        assert_eq!(f.rgba, again.rgba, "determinism (center={center})");
     }
-    // сетка шире кадра по X (cols→кламп 512 > W): center с гардом не смещает,
-    // по Y grid_h == oh даёт offy = 0 — кадры обязаны совпасть байт-в-байт
+    // a grid wider than the frame along X (cols clamped to 512 > W): center with the guard does not shift,
+    // with grid_h == oh along Y gives offy = 0; the frames must match byte for byte
     let a = run(FxInstance::EventGrid { cols: 1000, rows: 4, center: true });
     let b = run(FxInstance::EventGrid { cols: 1000, rows: 4, center: false });
-    assert_eq!(a.rgba, b.rgba, "гард обязан зеркалить GPU: вне кадра — от нуля");
+    assert_eq!(a.rgba, b.rgba, "the guard must mirror the GPU: outside the frame — from zero");
 }
 
 #[test]
@@ -136,14 +136,14 @@ fn t26_mirror_is_involution() {
     let m = FxInstance::Mirror { horizontal: true, vertical: true };
     let once = apply_video_chain(std::slice::from_ref(&m), test_frame(), &ctx());
     let twice = apply_video_chain(&[m], once, &ctx());
-    assert_eq!(twice.rgba, test_frame().rgba, "двойное зеркало = исходник");
+    assert_eq!(twice.rgba, test_frame().rgba, "double mirror = source");
 }
 
 #[test]
 fn t26_blur_preserves_mean_and_reduces_variance() {
     let src = test_frame();
     let out = run(FxInstance::blur(12));
-    assert!((mean_rgb(&src) - mean_rgb(&out)).abs() < 8.0, "blur сохраняет среднюю яркость");
+    assert!((mean_rgb(&src) - mean_rgb(&out)).abs() < 8.0, "blur preserves mean brightness");
     let var = |f: &Frame| {
         let m = mean_rgb(f);
         f.rgba
@@ -154,38 +154,38 @@ fn t26_blur_preserves_mean_and_reduces_variance() {
             })
             .sum::<f64>()
     };
-    assert!(var(&out) < var(&src), "blur снижает дисперсию");
+    assert!(var(&out) < var(&src), "blur reduces variance");
 }
 
 #[test]
 fn t26_greenscreen_keys_out_green_corner() {
     let out = run(FxInstance::greenscreen([0, 255, 0], 70, 25));
     assert!(out.has_alpha);
-    // центр зелёного угла прозрачен
+    // the centre of the green corner is transparent
     let (x, y) = (W * 3 / 4, H * 3 / 4);
-    assert_eq!(out.rgba[((y * W + x) * 4 + 3) as usize], 0, "зелёный угол выключен");
-    // не-зелёный угол непрозрачен
-    assert_eq!(out.rgba[3], 255, "обычные пиксели не тронуты");
+    assert_eq!(out.rgba[((y * W + x) * 4 + 3) as usize], 0, "green corner is off");
+    // the non-green corner is opaque
+    assert_eq!(out.rgba[3], 255, "ordinary pixels untouched");
 }
 
 #[test]
 fn t26_noise_is_deterministic_per_position() {
     let a = run(FxInstance::noise(0.3));
     let b = run(FxInstance::noise(0.3));
-    assert_eq!(a.rgba, b.rgba, "одна позиция таймлайна = одно зерно");
+    assert_eq!(a.rgba, b.rgba, "one timeline position = one grain");
     let other = apply_video_chain(
         &[FxInstance::noise(0.3)],
         test_frame(),
         &VideoFxCtx { burst_index: 180_000, ..ctx() },
     );
-    assert_ne!(a.rgba, other.rgba, "другая позиция = другое зерно");
+    assert_ne!(a.rgba, other.rgba, "another position = another grain");
 }
 
 #[test]
 fn t26_eventgrid_tiles_are_identical() {
     let out = run(FxInstance::EventGrid { cols: 2, rows: 2, center: true });
     assert_eq!((out.w, out.h), (W, H));
-    // левая верхняя и правая верхняя ячейки идентичны
+    // the top-left and top-right cells are identical
     let cell_w = (W / 2) as usize;
     let cell_h = (H / 2) as usize;
     for y in 0..cell_h {
@@ -194,14 +194,14 @@ fn t26_eventgrid_tiles_are_identical() {
         assert_eq!(
             &out.rgba[a0..a0 + cell_w * 4],
             &out.rgba[b0..b0 + cell_w * 4],
-            "строка {y}: плитки мозаики должны совпадать"
+            "row {y}: mosaic tiles must match"
         );
     }
 }
 
 #[test]
 fn t26_pan_stretch_identity_when_no_zoom() {
-    // stretch + zoom 1 + pan 0 на кадре размеров out = почти тождество
+    // stretch + zoom 1 + pan 0 on a frame of out size is almost an identity
     let out = run(FxInstance::geometry_zoom(1.0));
     let src = test_frame();
     let diff: u64 = out
@@ -211,12 +211,12 @@ fn t26_pan_stretch_identity_when_no_zoom() {
         .map(|(a, b)| (*a as i64 - *b as i64).unsigned_abs())
         .sum();
     let per_px = diff as f64 / (W * H * 4) as f64;
-    assert!(per_px < 1.5, "stretch 1:1 почти без искажений, avg diff {per_px:.3}");
+    assert!(per_px < 1.5, "stretch 1:1 almost without distortion, avg diff {per_px:.3}");
 }
 
-/// Тест 68 (п.2 р.7): pooled-цепочка с ГРЯЗНЫМ переиспользованным пулом
-/// байт-идентична свежему прогону — для каждого эффекта и для цепочки
-/// Mirror+EventGrid+Glow+VHS (пул не протекает между кадрами).
+/// Test 68 (item 2, round 7): a pooled chain with a DIRTY reused pool
+/// is byte-identical to a fresh run, for each effect and for the chain
+/// Mirror+EventGrid+Glow+VHS (the pool does not leak between frames).
 #[test]
 fn t68_pooled_chain_identical_with_dirty_scratch() {
     use kt_fx::video::{FxScratch, apply_video_chain_pooled};
@@ -237,7 +237,7 @@ fn t68_pooled_chain_identical_with_dirty_scratch() {
         vec![FxInstance::vhs(3, 0.4)],
         vec![FxInstance::glow(1.2)],
         vec![FxInstance::EventGrid { cols: 3, rows: 2, center: true }],
-        // цепочка из жалобы пользователя (п.2 р.7)
+        // the chain from the user’s complaint (item 2, round 7)
         vec![
             FxInstance::Mirror { horizontal: true, vertical: false },
             FxInstance::EventGrid { cols: 2, rows: 2, center: false },
@@ -246,42 +246,42 @@ fn t68_pooled_chain_identical_with_dirty_scratch() {
         ],
     ];
     let mut dirty = FxScratch::default();
-    // испачкать пул чужими данными разных размеров
+    // dirty the pool with foreign data of different sizes
     let junk = apply_video_chain_pooled(&[FxInstance::blur(5)], test_frame(), &ctx(), &mut dirty);
     drop(junk);
     for fx in &all {
         let fresh = apply_video_chain(fx, test_frame(), &ctx());
         let pooled = apply_video_chain_pooled(fx, test_frame(), &ctx(), &mut dirty);
-        assert_eq!(fresh.rgba, pooled.rgba, "грязный пул изменил результат: {fx:?}");
+        assert_eq!(fresh.rgba, pooled.rgba, "the dirty pool changed the result: {fx:?}");
         assert_eq!((fresh.w, fresh.h, fresh.has_alpha), (pooled.w, pooled.h, pooled.has_alpha));
-        // второй прогон тем же пулом — тоже идентичен
+        // a second run with the same pool is also identical
         let again = apply_video_chain_pooled(fx, test_frame(), &ctx(), &mut dirty);
         assert_eq!(fresh.rgba, again.rgba);
     }
 }
 
-/// Тест 228 (Р.33 С5): новые параметры эффектов. Правило раунда — «дефолт
-/// нового параметра = прежнее поведение БАЙТ-В-БАЙТ» (его держат golden'ы
-/// t26 выше), поэтому здесь проверяется вторая половина: параметр,
-/// сдвинутый с умолчания, обязан РЕАЛЬНО менять картинку и менять её
-/// осмысленно.
+/// Test 228 (R.33 S5): new parameters of the effects. The round rule is “the default of a new parameter
+/// = the previous behaviour BYTE FOR BYTE” (the goldens of t26 above hold it), so here the second half
+/// is checked: a parameter moved away from its default
+/// must REALLY change the picture and change it
+/// meaningfully.
 #[test]
 fn t228_new_fx_params_change_the_picture() {
     let hash = |f: Frame| xxh3_64(&f.rgba);
-    // ---- Blur: раздельные оси -------------------------------------------
+    // ---- Blur: separate axes -------------------------------------------
     let base = run(FxInstance::blur(12));
     let plain = hash(run(FxInstance::blur(12)));
     assert_eq!(
         plain,
         hash(run(FxInstance::Blur { radius: 12, radius_y: 0 })),
-        "radius_y = 0 обязан быть тождеством прежнему размытию"
+        "radius_y = 0 must be an identity to the prior blur"
     );
     let wide = run(FxInstance::Blur { radius: 12, radius_y: 1 });
-    assert_ne!(plain, hash(wide), "радиус по Y обязан менять картинку");
-    // размытие только по X: вертикальные соседи различаются СИЛЬНЕЕ, чем
-    // при размытии по обеим осям (по Y кадр остался резким)
-    // метрика — по ЗЕЛЁНОМУ каналу: в тестовом кадре по вертикали меняется
-    // именно он (R = x*4 от y не зависит вовсе, и на нём метрика слепа)
+    assert_ne!(plain, hash(wide), "radius along Y must change the picture");
+    // blur along X only: vertical neighbours differ MORE strongly than
+    // with blur on both axes (along Y the frame stayed sharp)
+    // the metric is on the GREEN channel: in the test frame it is exactly that channel that changes vertically
+    // (R = x*4 does not depend on y at all, so the metric is blind on it)
     let var_y = |f: &Frame| {
         let mut s = 0u64;
         for y in 1..f.h as usize {
@@ -297,13 +297,13 @@ fn t228_new_fx_params_change_the_picture() {
     let both = run(FxInstance::Blur { radius: 48, radius_y: 0 });
     assert!(
         var_y(&x_only) > var_y(&both),
-        "смаз по одной оси обязан оставить вертикальный контраст: {} vs {}",
+        "a smear along one axis must keep vertical contrast: {} vs {}",
         var_y(&x_only),
         var_y(&both)
     );
     drop(base);
 
-    // ---- Edges: толщина и цвет ------------------------------------------
+    // ---- Edges: thickness and colour ------------------------------------------
     let thin = run(FxInstance::edges(48));
     let lit = |f: &Frame| f.rgba.chunks_exact(4).filter(|p| p[0] > 0 || p[1] > 0).count();
     let thick = run(FxInstance::Edges {
@@ -315,7 +315,7 @@ fn t228_new_fx_params_change_the_picture() {
     });
     assert!(
         lit(&thick) > lit(&thin),
-        "толстая линия обязана зажигать больше пикселей: {} vs {}",
+        "a thick line must light up more pixels: {} vs {}",
         lit(&thick),
         lit(&thin)
     );
@@ -331,27 +331,27 @@ fn t228_new_fx_params_change_the_picture() {
         any_r |= p[0] > 0;
         green += (p[1] > 0) as usize;
     }
-    assert!(any_r && green == 0, "красные линии: зелёного канала быть не должно ({green})");
+    assert!(any_r && green == 0, "red lines: there must be no green channel ({green})");
 
-    // ---- Noise: размер зерна и цвет -------------------------------------
+    // ---- Noise: grain size and colour -------------------------------------
     let fine = run(FxInstance::noise(0.5));
     assert_eq!(
         hash(run(FxInstance::noise(0.5))),
         hash(run(FxInstance::Noise { amount: 0.5, size: 1, color: false })),
-        "size = 1, mono — прежняя формула"
+        "size = 1, mono — the prior formula"
     );
     let coarse = run(FxInstance::Noise { amount: 0.5, size: 8, color: false });
-    assert_ne!(hash(fine), xxh3_64(&coarse.rgba), "крупное зерно обязано отличаться");
-    // крупное зерно: внутри блока 8×8 сдвиг ОДИН, значит соседние пиксели
-    // блока отличаются ровно как в исходнике
+    assert_ne!(hash(fine), xxh3_64(&coarse.rgba), "a large grain must differ");
+    // coarse grain: inside an 8×8 block the shift is ONE, so the neighbouring pixels
+    // of the block differ exactly as in the source
     let src = test_frame();
     let d_at = |f: &Frame, x: usize, y: usize| {
         let i = (y * f.w as usize + x) * 4;
         f.rgba[i] as i32 - src.rgba[i] as i32
     };
-    assert_eq!(d_at(&coarse, 0, 0), d_at(&coarse, 3, 3), "внутри зерна сдвиг один");
-    assert_ne!(d_at(&coarse, 0, 0), d_at(&coarse, 9, 9), "у соседнего зерна он свой");
-    // цветной шум: у каналов свои сдвиги
+    assert_eq!(d_at(&coarse, 0, 0), d_at(&coarse, 3, 3), "within a grain the shift is one");
+    assert_ne!(d_at(&coarse, 0, 0), d_at(&coarse, 9, 9), "the neighbouring grain has its own");
+    // colour noise: the channels have their own shifts
     let col = run(FxInstance::Noise { amount: 0.5, size: 1, color: true });
     let mut differs = 0;
     for (p, s) in col.rgba.chunks_exact(4).zip(src.rgba.chunks_exact(4)) {
@@ -361,17 +361,17 @@ fn t228_new_fx_params_change_the_picture() {
             differs += 1;
         }
     }
-    assert!(differs > 100, "у цветного шума каналы обязаны расходиться: {differs}");
+    assert!(differs > 100, "colour noise channels must diverge: {differs}");
 }
 
-/// Тест 228b (Р.33 С5): вторая пачка параметров — свечение, VHS, хромакей.
+/// Test 228b (R.33 S5): the second batch of parameters: glow, VHS, chroma key.
 #[test]
 fn t228_glow_vhs_greenscreen_params() {
     let hash = |f: &Frame| xxh3_64(&f.rgba);
     let mean = |f: &Frame| {
         f.rgba.chunks_exact(4).map(|p| p[0] as u64 + p[1] as u64 + p[2] as u64).sum::<u64>()
     };
-    // ---- Glow: радиус, порог, оттенок -----------------------------------
+    // ---- Glow: radius, threshold, tint -----------------------------------
     let plain = run(FxInstance::glow(1.0));
     assert_eq!(
         hash(&plain),
@@ -383,7 +383,7 @@ fn t228_glow_vhs_greenscreen_params() {
             tint_g: 255,
             tint_b: 255
         })),
-        "радиус 4, порог 0 и белый оттенок — прежнее свечение"
+        "radius 4, threshold 0 and white tint — the prior glow"
     );
     let wide = run(FxInstance::Glow {
         strength: 1.0,
@@ -393,7 +393,7 @@ fn t228_glow_vhs_greenscreen_params() {
         tint_g: 255,
         tint_b: 255,
     });
-    assert_ne!(hash(&plain), hash(&wide), "радиус свечения обязан менять картинку");
+    assert_ne!(hash(&plain), hash(&wide), "the glow radius must change the picture");
     let gated = run(FxInstance::Glow {
         strength: 1.0,
         radius: 4,
@@ -404,7 +404,7 @@ fn t228_glow_vhs_greenscreen_params() {
     });
     assert!(
         mean(&gated) < mean(&plain),
-        "порог обязан убрать свечение с тёмных мест: {} vs {}",
+        "the threshold must remove glow from dark areas: {} vs {}",
         mean(&gated),
         mean(&plain)
     );
@@ -422,16 +422,16 @@ fn t228_glow_vhs_greenscreen_params() {
         dr += p[0] as i64 - s[0] as i64;
         dg += p[1] as i64 - s[1] as i64;
     }
-    assert!(dr > 0 && dg == 0, "красный оттенок светит только в красный: {dr}/{dg}");
+    assert!(dr > 0 && dg == 0, "red tint glows only in red: {dr}/{dg}");
 
-    // ---- VHS: шаг скан-линий и дрожание ---------------------------------
+    // ---- VHS: scan-line step and jitter ---------------------------------
     let vplain = run(FxInstance::vhs(4, 0.4));
     assert_eq!(
         hash(&vplain),
         hash(&run(FxInstance::Vhs { rgb_shift: 4, bleed: 0.4, scan_step: 4, jitter: 0.0 })),
-        "шаг 4 и нулевое дрожание — прежний VHS"
+        "step 4 and zero jitter — the prior VHS"
     );
-    // строк со скан-линией: считаем ряды, где зелёный просел
+    // rows with a scan line: we count the rows where green dropped
     let dark_rows = |f: &Frame| {
         (0..f.h as usize)
             .filter(|&y| {
@@ -445,15 +445,15 @@ fn t228_glow_vhs_greenscreen_params() {
     let none = run(FxInstance::Vhs { rgb_shift: 4, bleed: 0.4, scan_step: 0, jitter: 0.0 });
     assert!(
         dark_rows(&sparse) < dark_rows(&vplain),
-        "редкие скан-линии: {} против {}",
+        "sparse scan lines: {} against {}",
         dark_rows(&sparse),
         dark_rows(&vplain)
     );
-    assert_eq!(dark_rows(&none), 0, "шаг 0 — скан-линий нет вовсе");
+    assert_eq!(dark_rows(&none), 0, "step 0 — no scan lines at all");
     let jit = run(FxInstance::Vhs { rgb_shift: 0, bleed: 0.0, scan_step: 0, jitter: 0.8 });
-    assert_ne!(hash(&jit), hash(&src), "дрожание обязано сдвигать строки");
+    assert_ne!(hash(&jit), hash(&src), "jitter must shift rows");
 
-    // ---- Greenscreen: подавление засветки --------------------------------
+    // ---- Greenscreen: spill suppression --------------------------------
     let key = [0u8, 255, 0];
     let keyed = run(FxInstance::greenscreen(key, 70, 25));
     let despilled = run(FxInstance::Greenscreen {
@@ -464,7 +464,7 @@ fn t228_glow_vhs_greenscreen_params() {
         softness: 25,
         spill: 1.0,
     });
-    // у видимых пикселей зелёный обязан просесть, альфа — не измениться
+    // in visible pixels green MUST drop, alpha must not change
     let (mut lower, mut alpha_same) = (0usize, true);
     for (a, b) in keyed.rgba.chunks_exact(4).zip(despilled.rgba.chunks_exact(4)) {
         alpha_same &= a[3] == b[3];
@@ -472,23 +472,23 @@ fn t228_glow_vhs_greenscreen_params() {
             lower += 1;
         }
     }
-    assert!(lower > 50, "подавление обязано убрать зелёную засветку: {lower}");
-    assert!(alpha_same, "подавление засветки не трогает альфу");
+    assert!(lower > 50, "suppression must remove the green spill: {lower}");
+    assert!(alpha_same, "spill suppression does not touch alpha");
 }
 
-/// Тест 328 (Р.47, п.331): golden-цикл по ВИДЕО-подмножеству реестра
-/// FxInstance::all() — хэш дефолт-шаблона каждого эффекта на test_frame.
-/// Замок полноты в обе стороны: вид без строки в таблице и строка без
-/// вида валят тест (t26 остаётся замороженным на 10 легаси-хэшах). Плюс
-/// замок КЛАССИФИКАЦИИ: каждый видео-вид обязан быть гео, поточечным или
-/// иметь арм барьера — «неклассифицированный» эффект молча проходит
-/// насквозь, и в debug это ловится паникой debug_assert в apply_barrier.
-/// (Дефолтные pan и pan3d — оба тождества, их совпадающие хэши легальны.)
+/// Test 328 (R.47, item 331): a golden cycle over the VIDEO subset of the registry
+/// FxInstance::all(): the hash of each effect’s default template on test_frame.
+/// A completeness lock in both directions: a view without a row in the table and a row without
+/// a view fail the test (t26 stays frozen on the 10 legacy hashes). Plus a
+/// CLASSIFICATION lock: every video kind MUST be geometric, pointwise, or
+/// have a barrier arm; an “unclassified” effect would pass through silently,
+/// and in debug it is caught by a panic of debug_assert in apply_barrier.
+/// (The default pan and pan3d are both identities; their matching hashes are legal.)
 #[test]
 fn t328_golden_cycle_over_the_registry() {
     use kt_fx::geom::{is_geo, is_pointwise};
     const GOLDEN_ALL: &[(&str, u64)] = &[
-        // Р.62: Pan упразднён; узел «Геометрия» с умолчаниями — тождество
+        // R.62: Pan is retired; the “Geometry” node with defaults is an identity
         ("geometry", 0x05719cf53332c61a),
         ("cam_motion", 0x410e2d08915e02e9),
         ("mirror", 0x6e6b11df22c1c072),
@@ -500,22 +500,22 @@ fn t328_golden_cycle_over_the_registry() {
         ("glow", 0x32647b93a6a84eb2),
         ("event_grid", 0x0f78a8817bcf1bbe),
         ("pan3d", 0x05719cf53332c61a),
-        // Р.47 Кв2: дефолтные color_grade и corner_pin — тождества,
-        // их совпадение с identity-хэшем pan легально и НАМЕРЕННО
+        // R.47 Kv2: the default color_grade and corner_pin are identities,
+        // their match with the identity hash of pan is legal and DELIBERATE
         ("color_grade", 0x05719cf53332c61a),
         ("duotone", 0xb24b68c2dc8d352e),
         ("posterize", 0x067921e26e16007c),
         ("vignette", 0xa815992243883318),
         ("corner_pin", 0x05719cf53332c61a),
-        // Р.47 Кв3: drop_shadow на непрозрачном тест-кадре — passthrough
-        // (identity-хэш) — вход без альфы тень не рисует НАМЕРЕННО
+        // R.47 Kv3: drop_shadow on an opaque test frame is a passthrough
+        // (identity hash): an input without alpha DELIBERATELY draws no shadow
         ("sharpen", 0x542512aaafe117ad),
         ("pixelate", 0xd856791cc8952d79),
         ("chromatic_aberration", 0x4513f7b18223cea3),
         ("radial_blur", 0xcf33730d85dc9c70),
         ("drop_shadow", 0x05719cf53332c61a),
         ("halftone", 0x7a640931274d6e24),
-        // Р.47 Кв4: у всех пяти дефолт видим (нейтральных нет)
+        // R.47 Kv4: all five defaults are visible (there are no neutral ones)
         ("lens_distort", 0x580537c8e0f3badf),
         ("twirl", 0x0955aa3873066955),
         ("ripple", 0xaf7efc91f739ccf0),
@@ -565,9 +565,9 @@ fn t328_golden_cycle_over_the_registry() {
     }
 }
 
-// ---- Р.62: узел «Геометрия» ------------------------------------------------
+// ---- R.62: “Geometry” node ------------------------------------------------
 
-/// Вертикальный кадр 36×64: градиент + непрозрачная альфа.
+/// Vertical frame 36×64: gradient + opaque alpha.
 fn vertical_frame() -> Frame {
     let (w, h) = (36u32, 64u32);
     let mut rgba = vec![0u8; (w * h * 4) as usize];
@@ -587,18 +587,18 @@ fn lead_ctx(view: (f64, f64), rule: kt_fx::conform::ConformRule) -> VideoFxCtx {
     VideoFxCtx { lead: Some(kt_fx::conform::LeadCtx::new(Some(view), rule)), ..ctx() }
 }
 
-/// Тест 713 (Р.62): ведущий узел кладёт вертикальный кадр в 16:9 с
-/// ПРОЗРАЧНЫМИ полями; на совпадающих пропорциях узел с умолчаниями —
-/// тождество байт-в-байт (прежний путь без единого ресемпла).
+/// Test 713 (R.62): the leading node puts a vertical frame into 16:9 with
+/// TRANSPARENT margins; on matching proportions the node with defaults is
+/// an identity byte for byte (the old path without a single resample).
 #[test]
 fn t713_lead_geometry_places_with_transparent_fields() {
     use kt_fx::conform::ConformRule;
     let lead = vec![FxInstance::geometry()];
-    // совпадающие пропорции: узел прозрачен, кадр не тронут
+    // matching proportions: the node is transparent, the frame is untouched
     let same = apply_video_chain(&lead, test_frame(), &lead_ctx((64.0, 36.0), ConformRule::Fit));
     assert_eq!(same.rgba, test_frame().rgba, "identity lead must be byte-identical");
     assert!(!same.has_alpha);
-    // вертикальный источник, «вписать»: рамка 20.25×36 по центру, поля прозрачны
+    // vertical source, “fit”: a 20.25×36 frame centred, margins transparent
     let out = apply_video_chain(&lead, vertical_frame(), &lead_ctx((36.0, 64.0), ConformRule::Fit));
     assert_eq!((out.w, out.h), (W, H));
     assert!(out.has_alpha, "fields are transparent, the node produces alpha");
@@ -610,11 +610,11 @@ fn t713_lead_geometry_places_with_transparent_fields() {
     }
     let opaque = (0..W).filter(|&x| alpha(x, H / 2) == 255).count();
     assert!((19..=22).contains(&opaque), "frame width ≈ 20.25 px, got {opaque}");
-    // «заполнить»: полей нет, кадр обрезан сверху и снизу
+    // “fill”: no margins, the frame is cropped at the top and bottom
     let fill =
         apply_video_chain(&lead, vertical_frame(), &lead_ctx((36.0, 64.0), ConformRule::Fill));
     assert!(fill.rgba.chunks(4).all(|p| p[3] == 255), "fill has no transparent pixel");
-    // «как есть»: 36×64 по центру холста 64×36 — торчит за край сверху и снизу
+    // “as is”: 36×64 centred on the 64×36 canvas, sticking out past the top and bottom edges
     let asis =
         apply_video_chain(&lead, vertical_frame(), &lead_ctx((36.0, 64.0), ConformRule::AsIs));
     let a2 = |x: u32, y: u32| asis.rgba[((y * W + x) * 4 + 3) as usize];
@@ -622,14 +622,14 @@ fn t713_lead_geometry_places_with_transparent_fields() {
     assert_eq!(a2(W / 2, 0), 255, "as-is sticks out: column opaque to the edge");
     let opaque = (0..W).filter(|&x| a2(x, H / 2) == 255).count();
     assert!((35..=37).contains(&opaque), "as-is keeps 36 px, got {opaque}");
-    // «растянуть»: весь холст, непрозрачно
+    // “stretch”: the whole canvas, opaque
     let st =
         apply_video_chain(&lead, vertical_frame(), &lead_ctx((36.0, 64.0), ConformRule::Stretch));
     assert!(st.rgba.chunks(4).all(|p| p[3] == 255));
 }
 
-/// Тест 717 (Р.62): эффекты ДО ведущего узла работают в пространстве
-/// источника, ПОСЛЕ — на холсте; поворот на 90° с зумом заполняет холст.
+/// Test 717 (R.62): effects BEFORE the leading node work in the source space,
+/// AFTER it on the canvas; a 90° rotation with zoom fills the canvas.
 #[test]
 fn t717_before_lead_is_source_space_after_is_canvas() {
     use kt_fx::conform::ConformRule;
@@ -640,19 +640,19 @@ fn t717_before_lead_is_source_space_after_is_canvas() {
     assert_eq!((before.w, before.h), (W, H));
     assert_eq!((after.w, after.h), (W, H));
     assert_ne!(before.rgba, after.rgba, "vignette in source space differs from canvas space");
-    // виньетка В ИСТОЧНИКЕ темнит его собственные боковые кромки (узкий
-    // кадр, край далеко от центра); НА ХОЛСТЕ тот же столбец стоит у
-    // центра холста и почти не темнеет — у «after» он светлее
+    // a vignette IN THE SOURCE darkens its own side edges (a narrow
+    // frame, the edge far from the centre); ON THE CANVAS the same column stands near the
+    // centre of the canvas and barely darkens; in “after” it is lighter
     let px = |f: &Frame, x: u32, y: u32| {
         f.rgba[((y * W + x) * 4) as usize..((y * W + x) * 4 + 3) as usize].to_vec()
     };
     let lum = |p: Vec<u8>| p.iter().map(|&v| v as u32).sum::<u32>();
-    let edge = W / 2 - 9; // левая кромка рамки 20.25 px по центру холста
+    let edge = W / 2 - 9; // the left edge of a 20.25 px frame centred on the canvas
     assert!(
         lum(px(&after, edge, H / 2)) > lum(px(&before, edge, H / 2)),
         "canvas-space vignette leaves the source edge brighter"
     );
-    // поворот 90° + зум: вертикальный источник накрывает холст целиком
+    // a 90° rotation + zoom: the vertical source covers the whole canvas
     let mut g = kt_model::EventGeometry { rot: 90.0, zoom: 1.8, ..Default::default() };
     g.rule = kt_model::Conform::Fit;
     let rot = apply_video_chain(&[g.node()], vertical_frame(), &c);

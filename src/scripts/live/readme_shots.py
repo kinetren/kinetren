@@ -161,7 +161,7 @@ class Shooter:
 
     def require(self, step, ok, what):
         if not ok:
-            raise StepError(f"step «{step}»: expected {what}")
+            raise StepError(f"step “{step}”: expected {what}")
 
     def preview_lit(self, app, png):
         """Share of non-dark pixels in the middle band above the timeline."""
@@ -196,9 +196,9 @@ class Shooter:
     def probe(self, app, step, name, shown):
         """`shown` is `app.has_probe("<name>")` written AT THE CALL SITE: the
         coverage guard (live-coverage.py, t804) reads probe names literally."""
-        self.require(step, shown, f"probe «{name}» on screen")
+        self.require(step, shown, f"probe “{name}” on screen")
         f = app._probe_rect(name)
-        self.require(step, f is not None, f"rectangle of probe «{name}»")
+        self.require(step, f is not None, f"rectangle of probe “{name}”")
         return f
 
     def abs(self, rect):
@@ -226,7 +226,7 @@ class Shooter:
         y = win["y"] + int(r["y"] + 10)
         app.drag(x, y, x, y + int(floor - r["y"]))
         moved = self.probe(app, step, name, True)
-        self.require(step, moved["y"] >= floor - 2, f"«{name}» below the menu bar")
+        self.require(step, moved["y"] >= floor - 2, f"“{name}” below the menu bar")
         return moved
 
     @staticmethod
@@ -250,7 +250,7 @@ class Shooter:
             app.double_click(x, y)
             if app.has_probe(name, tries=8):
                 return
-        self.require(step, False, f"«{name}» opened by a double click")
+        self.require(step, False, f"“{name}” opened by a double click")
 
     def open_event(self, app, step, clip):
         x, y = self.point(app, step, clip["kind"], clip["lane"], clip["start"] + clip["duration"] // 2)
@@ -258,7 +258,7 @@ class Shooter:
         # UI frame is slow and two clicks fall apart in egui's frame clock
         app.click(x, y)
         app.right_click(x, y)
-        self.require(step, app.click_probe("tl.fx"), "click on «tl.fx»")
+        self.require(step, app.click_probe("tl.fx"), "click on “tl.fx”")
         return self.below_header(app, step, "win.fx", app.has_probe("win.fx"))
 
     # ---- the shots -----------------------------------------------------
@@ -431,7 +431,7 @@ class Shooter:
         try:
             r = self.open_event(app, name, clip)
             if picker:
-                self.require(name, app.click_probe("fxreg.add.video"), "click on «+ effect…» (video)")
+                self.require(name, app.click_probe("fxreg.add.video"), "click on “+ effect…” (video)")
                 self.still(app, name, "effect picker opened")
                 parts = [self.probe(app, name, "win.fx", app.has_probe("win.fx")),
                          self.probe(app, name, "fxreg.popup", app.has_probe("fxreg.popup"))]
@@ -470,8 +470,8 @@ class Shooter:
         step = "render-dialog"
         app = self.fresh(step)
         try:
-            self.require(step, app.click_probe("menu.file"), "click on «File»")
-            self.require(step, app.click_probe("file.render"), "click on «Render…»")
+            self.require(step, app.click_probe("menu.file"), "click on “File”")
+            self.require(step, app.click_probe("file.render"), "click on “Render…”")
             r = self.probe(app, step, "win.render", app.has_probe("win.render"))
             self.capture(app, step, "render-dialog", r)
         finally:
@@ -562,7 +562,7 @@ def main(out):
     try:
         written = shoot(fixture_sources(os.path.join(out, "sources")), images, out, keep_raw=True)
     except StepError as e:
-        print(f"   ПРОВАЛ {e}")
+        print(f"   FAILURE {e}")
         return 1
     from PIL import Image
 
@@ -572,7 +572,7 @@ def main(out):
             if im.size[0] < 50 or im.size[1] < 50:
                 bad.append(f"{os.path.basename(path)} {im.size}")
     for b in bad:
-        print(f"   ПРОВАЛ tiny image: {b}")
+        print(f"   FAILURE tiny image: {b}")
     print(f"   ok   {len(written) - len(bad)} of {len(SHOTS)} images in {images}")
     return 1 if bad else 0
 

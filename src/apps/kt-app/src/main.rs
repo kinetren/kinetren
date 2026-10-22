@@ -1,7 +1,7 @@
-//! GUI-редактор Kinetren. Модули: app (состояние/панели), timeline
-//! (таймлайн), util (источники/индекс), audio_out (cpal).
+//! GUI editor of Kinetren. Modules: app (state/panels), timeline
+//! (the timeline), util (sources/index), audio_out (cpal).
 //!
-//! Инварианты UI — см. корневой CLAUDE.md (№3, №8).
+//! UI invariants — see the root CLAUDE.md (No. 3, No. 8).
 
 mod analysis;
 mod app;

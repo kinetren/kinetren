@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.49 Б (пп.372-373): офлайн-анализ материала не мешает.
+"""Live scenario R.49 B (items 372-373): offline analysis of the material does not get in the way.
 
-Проверяются три вещи, каждую из которых видно только в настоящем окне:
+Three things are checked, each of which is visible only in a real window:
 
-1. **показ ничего не запускает** — наведение на карточки бина оставляет
-   очередь анализа пустой (прямая родня инварианта 8: скролл и наведение не
-   порождают декод-запросов);
-2. по прямой просьбе («Измерить громкость» в меню карточки) анализ считает и
-   доезжает до ПОДСКАЗКИ — то есть до глаз человека, а не только до памяти;
-3. пока он считает, окно ЖИВОЕ: кадры продолжают идти, интерфейс отвечает.
+1. **showing starts nothing** — hovering over bin cards leaves
+the analysis queue empty (a direct kin of invariant 8: scrolling and hovering do not
+produce decode requests);
+2. on a direct request (“Measure loudness” in the card menu) the analysis computes and
+reaches the HINT — that is, to the eyes of the person, not only the memory;
+3. while it computes, the window is LIVE: frames keep coming, the interface responds.
 """
 import os
 import sys
@@ -30,13 +30,13 @@ def main(out):
     with Live("analysis", out, project=proj) as app:
         app.shot("open")
         p = app.project_now()
-        app.expect(len(p.clips) == 2, f"старт: два события, {p.clips}")
+        app.expect(len(p.clips) == 2, f"start: two events, {p.clips}")
 
         win = geometry()
         b = app.geom()["bin"]
         card_x = win["x"] + int((b["left"] + b["right"]) / 2)
 
-        # --- 1. наведение ничего не запускает --------------------------
+        # --- 1. hovering starts nothing --------------------------
         before = app.shot("before-hover")
         for dy in (40, 90, 140, 190):
             y = win["y"] + int(b["top"]) + dy
@@ -44,29 +44,29 @@ def main(out):
                 break
             app.hover(card_x, y)
         app.shot("hovered")
-        # окно прогресса анализа появилось бы правым нижним углом — экран
-        # изменился бы заметно; проверяем, что этого не случилось
+        # the analysis progress window would appear in the bottom-right corner — the screen
+        # would change noticeably; we check that this did not happen
         d = app.screen_diff(before)
         app.expect(
             d < 0.02,
-            f"наведение на бин что-то запустило (экран изменился на {d:.1%}) — "
-            f"показ обязан быть бесплатным",
+            f"hovering over the bin started something (the screen changed by {d:.1%}) — "
+            f"showing must be free",
         )
 
-        # --- 2. по прямой просьбе — считает и говорит ------------------
+        # --- 2. by direct request — it counts and speaks ------------------
         app.right_click(card_x, win["y"] + int(b["top"]) + 60)
         app.shot("card-menu")
-        # пункт «Измерить громкость» — второй в меню карточки
+        # item “Measure loudness” — the second in the card’s menu
         app.key("Escape")
 
-        # --- 3. окно живое, пока идёт работа --------------------------
-        # само наличие ответа интерфейса: щёлкаем по линейке и смотрим, что
-        # курсор доехал
+        # --- 3. the window is alive while work is going on --------------------------
+        # the very presence of an interface response: we click on the ruler and check that
+        # the cursor moved
         app.click(app.x_at(2 * SEC), app.ruler_y())
         ph = app.playhead()
         app.expect(
             abs(ph - 2 * SEC) < 30000,
-            f"интерфейс не ответил на клик по линейке: курсор в {ph}",
+            f"the interface did not respond to a click on the ruler: the cursor in {ph}",
         )
         app.shot("alive")
 

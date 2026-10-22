@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# Финал работы над правками (правило п.7 р.12).
+# Wrap-up of work on the changes (rule, item 7 of round 12).
 #
-# `cargo test` собирает ОТДЕЛЬНЫЙ тест-бинарь и НЕ трогает
-# target/debug/kinetren — тот, который запускает человек. Из-за этого
-# пользователь дважды запускал устаревшую программу и считал дефекты
-# неисправленными. Поэтому любой агент заканчивает работу этим скриптом:
-# пересобирает то, что запускают, называет версию и подчищает мусор.
+# `cargo test` builds a SEPARATE test binary and does NOT touch
+# target/debug/kinetren — the one a person runs. Because of this
+# the user twice ran an outdated program and considered the defects
+# unfixed. So every agent finishes work with this script:
+# it rebuilds what gets run, names the version and cleans up the litter.
 #
-# С Р.68 скрипт — ЕДИНСТВЕННАЯ точка проверки: прогон тестов мастерской
-# стал его стадией (раньше это была отдельная команда агента, и бюджет с
-# вердиктом распадались на две несвязанные половины). Каждая стадия
-# называет свою цену, а в конце печатается таблица и бюджет — пять минут,
-# поставленные владельцем. Перерасход ПОМЕЧАЕТСЯ, но не делает прогон
-# красным: правило «тесты из спек не ослабляются» сильнее бюджета.
+# From R.68 the script is the ONLY check point: running the workshop tests
+# became its stage (previously it was a separate agent command, and the budget with the
+# verdict fell into two unrelated halves). Each stage
+# names its cost, and at the end a table and the budget are printed — five minutes,
+# set by the owner. An overrun is MARKED, but does not make the run
+# red: the rule “tests from the specs are not weakened” outranks the budget.
 #
-#   scripts/finish.sh            # debug-сборка + проверки + версия + чистка
-#   scripts/finish.sh --release  # ещё и релизный тарбол в контейнере
-#   scripts/finish.sh --deep     # плюс чистка промежуточных объектов
+#   scripts/finish.sh            # debug build + checks + version + cleanup
+#   scripts/finish.sh --release  # plus the release tarball in a container
+#   scripts/finish.sh --deep     # plus cleanup of intermediate objects
 set -euo pipefail
 cd "$(dirname "$0")/.." # src/
 
@@ -26,7 +26,7 @@ for a in "$@"; do
     case "$a" in
         --release) RELEASE=1 ;;
         --deep) DEEP=1 ;;
-        *) echo "неизвестный ключ: $a" >&2; exit 2 ;;
+        *) echo "unknown key: $a" >&2; exit 2 ;;
     esac
 done
 
@@ -34,23 +34,23 @@ VER=$(git log -1 --format=%cd --date=format:%y.%m.%d 2>/dev/null || echo 00.00.0
 HASH=$(git rev-parse --short=8 HEAD 2>/dev/null || echo nogit)
 FULL="kt$VER-$HASH"
 DIRTY=""
-[ -n "$(git status --porcelain 2>/dev/null)" ] && DIRTY=" (есть незакоммиченные правки)"
+[ -n "$(git status --porcelain 2>/dev/null)" ] && DIRTY=" (there are uncommitted changes)"
 
-# Лог одной стадии: вердикт читаем из кода возврата cargo, а короткий
-# хвост печатаем человеку (Р.58).
+# Log of one stage: the verdict is read from cargo’s exit code, and the short
+# tail is printed for the person (R.58).
 STAGE_LOG="$(mktemp -t kt-finish-stage.XXXXXX)"
 trap 'rm -f "$STAGE_LOG"' EXIT
 
-# Хронометраж стадий (Р.68). Файл замеров — «имя<TAB>секунды<TAB>код»;
-# таблицу и бюджет считает scripts/finish-budget.py. ЗАГОЛОВОК СТАДИИ
-# ПЕЧАТАЕТСЯ ТОЛЬКО ОТСЮДА: иначе стадию можно тихо вынести из бюджета —
-# тот же класс, что «красное чужим именем» (Р.55) и «вердикт у tail»
-# (Р.58). Сторож `finish-budget.py --check-script` это проверяет.
+# Stage timing (R.68). The measurements file is “name<TAB>seconds<TAB>code”;
+# the table and budget are computed by scripts/finish-budget.py. The STAGE HEADER
+# IS PRINTED ONLY FROM HERE: otherwise a stage could be quietly moved out of the budget —
+# the same class as “red under someone else’s name” (R.55) and “verdict from tail”
+# (R.58). The guard `finish-budget.py --check-script` checks this.
 mkdir -p target
 TIMES="target/finish-times.txt"
 : > "$TIMES"
 
-stage() { # stage <имя> <команда...> — вывод команды идёт человеку как есть
+stage() { # stage <name> <command...> — the command’s output goes to the person as is
     local name="$1"; shift
     printf '== %s ==\n' "$name"
     local s rc=0
@@ -60,7 +60,7 @@ stage() { # stage <имя> <команда...> — вывод команды и�
     return $rc
 }
 
-stage_log() { # stage_log <имя> <команда...> — вывод в файл, вердикт у команды
+stage_log() { # stage_log <name> <command...> — output goes to a file, the verdict comes from the command
     local name="$1"; shift
     printf '== %s ==\n' "$name"
     local s rc=0
@@ -74,47 +74,47 @@ stage_log() { # stage_log <имя> <команда...> — вывод в фай�
     return $rc
 }
 
-stage "сборка того, что запускает пользователь" cargo build -p kt-app -p kt-cli
+stage "build of what the user runs" cargo build -p kt-app -p kt-cli
 
 if [ "$RELEASE" = 1 ]; then
-    stage "релизный тарбол" scripts/release-build.sh
+    stage "release tarball" scripts/release-build.sh
 fi
 
-# Прогон тестов мастерской — стадия ЭТОГО скрипта (Р.68). Здесь же живёт
-# GPU-конформанс kt-gpu на настоящем адаптере машины: отдельная стадия для
-# крейта kt-gpu была дублем этого прогона и снята (её десять секунд уходили
-# на то, что мастерская уже прогнала). Без адаптера тесты kt-gpu скипаются
-# сами с печатью причины.
+# Workshop test run — a stage of THIS script (R.68). The kt-gpu GPU conformance
+# on the machine’s real adapter also lives here: a separate stage for the
+# kt-gpu crate was a duplicate of this run and was dropped (its ten seconds went
+# to what the workshop had already run). Without an adapter the kt-gpu tests skip
+# themselves and print the reason.
 #
-# ЕСТЬ NEXTEST — ГОНЯЕМ ИМ (замер Р.68): 216 с против 310 с у `cargo test`,
-# и — главное — ЗЕЛЁНО. `cargo test` запускает 96 тестовых бинарей по одному,
-# а внутри бинаря все тесты разом: t663 ждёт фоновой отрисовки ленты и под
-# такой толпой не дожидается (60 с таймаута). nextest раздаёт тесты по
-# процессам, планируя по ядрам. Доктестов в мастерской нет (проверено:
-# `cargo test --doc` — ноль), так что ничего не теряется. Нет nextest —
-# идём прежним путём, он остаётся эталоном.
+# THERE IS NEXTEST — WE RUN WITH IT (measurement R.68): 216 s against 310 s for `cargo test`,
+# and — the main thing — GREEN. `cargo test` runs 96 test binaries one by one,
+# and inside a binary all tests at once: t663 waits for the background redraw of the reel and under
+# such a crowd does not wait (60 s timeout). nextest distributes tests across
+# processes, scheduling by cores. The workshop has no doctests (checked:
+# `cargo test --doc` — zero), so nothing is lost. No nextest —
+# we go the old way; it stays the reference.
 if command -v cargo-nextest > /dev/null; then
     WS_CMD=(cargo nextest run --workspace --no-fail-fast)
 else
     WS_CMD=(cargo test --workspace -q)
 fi
-if stage_log "тесты мастерской" "${WS_CMD[@]}"; then
-    echo "тесты мастерской: ok"
+if stage_log "workshop tests" "${WS_CMD[@]}"; then
+    echo "workshop tests: ok"
 else
     cp "$STAGE_LOG" target/finish-workspace-fail.log 2>/dev/null || true
-    echo "ТЕСТЫ МАСТЕРСКОЙ ПРОВАЛИЛИСЬ (полный лог: target/finish-workspace-fail.log)" >&2
+    echo "WORKSHOP TESTS FAILED (full log: target/finish-workspace-fail.log)" >&2
     WS_FAILED=1
 fi
 
-# SIMD-конформанс (Р.32): AVX2-ядра обязаны быть байт-в-байт со скаляром.
-# KT_REQUIRE_SIMD=1 запрещает вакуумный skip там, где AVX2 есть (урок
-# т.194). Плюс golden'ы на ПРИНУДИТЕЛЬНОМ скаляре: он остаётся эталоном.
-# Своё окружение у каждого прогона — поэтому это отдельные команды, а не
-# часть прогона мастерской; стоят они пару секунд на все четыре.
+# SIMD conformance (R.32): AVX2 kernels must be byte-for-byte identical to scalar.
+# KT_REQUIRE_SIMD=1 forbids a vacuous skip where AVX2 is present (lesson
+# t194). Plus goldens on FORCED scalar: it stays the reference.
+# Each run has its own environment — that is why these are separate commands, not
+# part of the workshop run; they take a couple of seconds for all four.
 #
-# Вердикт у cargo, не у `tail`: `if cargo test | tail` был зелёным ВСЕГДА —
-# статус в конвейере отдаёт ПОСЛЕДНЯЯ команда, и стадия не могла сообщить
-# о красном в принципе (тот же класс, что §443 и §458).
+# The verdict comes from cargo, not from `tail`: `if cargo test | tail` was ALWAYS green —
+# the pipeline’s status is given by the LAST command, so the stage could not report
+# red in principle (the same class as §443 and §458).
 simd_stage() {
     local name="$1"; shift
     if "$@" > "$STAGE_LOG" 2>&1; then
@@ -124,84 +124,84 @@ simd_stage() {
     tail -3 "$STAGE_LOG"
     grep -E "^(test .* FAILED|failures:|error)" "$STAGE_LOG" | head -20 >&2
     cp "$STAGE_LOG" target/finish-simd-fail.log 2>/dev/null || true
-    echo "SIMD: красная стадия $name (полный лог: target/finish-simd-fail.log)" >&2
+    echo "SIMD: red stage $name (full log: target/finish-simd-fail.log)" >&2
     return 1
 }
 simd_all() {
     simd_stage "kt-fx simd_parity" env KT_REQUIRE_SIMD=1 cargo test -p kt-fx --test simd_parity -q \
         && simd_stage "kt-engine simd_parity" env KT_REQUIRE_SIMD=1 cargo test -p kt-engine --test simd_parity -q \
-        && simd_stage "kt-fx video_fx (скаляр)" env KT_SIMD=0 cargo test -p kt-fx --test video_fx -q \
-        && simd_stage "kt-engine golden_export (скаляр)" env KT_SIMD=0 cargo test -p kt-engine --test golden_export -q
+        && simd_stage "kt-fx video_fx (scalar)" env KT_SIMD=0 cargo test -p kt-fx --test video_fx -q \
+        && simd_stage "kt-engine golden_export (scalar)" env KT_SIMD=0 cargo test -p kt-engine --test golden_export -q
 }
-if stage "SIMD-конформанс (t198)" simd_all; then
-    echo "simd: ok (AVX2 == скаляр, golden'ы зелены обоими путями)"
+if stage "SIMD conformance (t198)" simd_all; then
+    echo "simd: ok (AVX2 == scalar, golden files green on both paths)"
 else
-    echo "SIMD-КОНФОРМАНС ПРОВАЛИЛСЯ" >&2
+    echo "SIMD CONFORMANCE FAILED" >&2
     SIMD_FAILED=1
 fi
 
-# Живая проверка в виртуальном экране (Р.27): настоящий бинарь, настоящий X,
-# настоящие XTest-жесты. Без Xvfb — просто пропускаем, ничего не ломая;
-# NO_LIVE=1 выключает явно (например когда гоняешь finish.sh в цикле).
+# Live check in a virtual screen (R.27): real binary, real X,
+# real XTest gestures. Without Xvfb it simply skips, breaking nothing;
+# NO_LIVE=1 turns it off explicitly (for example when you run finish.sh in a loop).
 if [ -z "${NO_LIVE:-}" ] && command -v Xvfb > /dev/null; then
-    if stage "живые сценарии" ./scripts/live-check.sh; then
-        echo "живые сценарии: ok"
+    if stage "live scenarios" ./scripts/live-check.sh; then
+        echo "live scenarios: ok"
     else
-        echo "ЖИВЫЕ СЦЕНАРИИ ПРОВАЛИЛИСЬ (скриншоты: target/live-out)" >&2
+        echo "LIVE SCENARIOS FAILED (screenshots: target/live-out)" >&2
         LIVE_FAILED=1
     fi
 elif [ -z "${NO_LIVE:-}" ]; then
-    echo "живые сценарии пропущены: нет Xvfb (sudo apt install xvfb openbox)"
+    echo "live scenarios skipped: no Xvfb (sudo apt install xvfb openbox)"
 fi
 
 clean_targets() {
-    # старые тарболы и распакованные каталоги: оставляем только текущий
+    # old tarballs and unpacked directories: we keep only the current one
     if [ -d target/dist-out ]; then
         find target/dist-out -maxdepth 1 -name 'kinetren-*' \
             ! -name "kinetren-${FULL#kt}-*" -exec rm -rf {} + 2>/dev/null || true
     fi
     if [ "$DEEP" = 1 ]; then
-        # release/ и dist-container/ полностью регенерируемы и весят гигабайты;
-        # debug/ не трогаем — иначе следующая правка ждёт полную пересборку
+        # release/ and dist-container/ are fully regenerable and weigh gigabytes;
+        # debug/ is not touched — otherwise the next edit waits for a full rebuild
         rm -rf target/release target/dist-container
     fi
     du -sh target/debug target/release target/dist-container target/dist-out 2>/dev/null || true
 }
-stage "чистка" clean_targets
+stage "cleanup" clean_targets
 
 mkdir -p target/dist-out
 printf '%s\n%s\n' "$FULL" "$(pwd)/target/debug/kinetren" > target/dist-out/LATEST
 echo
 
-# Цена проверки: таблица стадий, итог и бюджет пять минут (Р.68).
+# Price of the check: the stage table, the total and the budget of five minutes (R.68).
 python3 scripts/finish-budget.py --report "$TIMES"
 echo
 
-# Красное называется СВОИМ ИМЕНЕМ (Р.55): один флаг стоял на трёх стадиях,
-# и падение GPU или SIMD печаталось как «живые сценарии красные» — отчёт врал
-# о том, ЧТО сломалось, и посылал искать не туда.
-[ -n "${LIVE_FAILED:-}" ] && echo "ВНИМАНИЕ: живые сценарии красные — см. target/live-out"
-[ -n "${WS_FAILED:-}" ] && echo "ВНИМАНИЕ: тесты мастерской красные — см. target/finish-workspace-fail.log"
-[ -n "${SIMD_FAILED:-}" ] && echo "ВНИМАНИЕ: SIMD-конформанс красный (t198)"
-echo "ВЕРСИЯ: $FULL$DIRTY"
-echo "запускать: $(pwd)/target/debug/kinetren"
+# Red is named BY ITS OWN NAME (R.55): one flag stood on three stages,
+# and a fall of GPU or SIMD was printed as “live scenarios red” — the report lied
+# about WHAT broke, and sent people to look in the wrong place.
+[ -n "${LIVE_FAILED:-}" ] && echo "WARNING: live scenarios red — see target/live-out"
+[ -n "${WS_FAILED:-}" ] && echo "WARNING: workshop tests red — see target/finish-workspace-fail.log"
+[ -n "${SIMD_FAILED:-}" ] && echo "WARNING: SIMD conformance red (t198)"
+echo "VERSION: $FULL$DIRTY"
+echo "run: $(pwd)/target/debug/kinetren"
 
-# Р.67: ШАГИ ПУТИ ПОЛЬЗОВАТЕЛЯ из живых сценариев — в отчёт. Правило «думай
-# о пользователе» держится двумя механизмами: строкой ПУТЬ в спеке (сторож
-# ниже) и КАРТИНКАМИ того, что человек увидит. Без списка они остаются
-# лежать в target/live-out, и отчёт снова превращается в «тесты зелёные».
+# R.67: USER PATH STEPS from the live scenarios go into the report. The rule “think
+# about the user” holds on two mechanisms: the line PATH in the spec (the guard
+# below) and PICTURES of what the person will see. Without a list they stay
+# lying in target/live-out, and the report again turns into “tests green”.
 STEPS=$(ls -1 target/live-out/*/[0-9]*-step-*.png 2>/dev/null | sort)
 if [ -n "$STEPS" ]; then
-    echo "шаги живых сценариев (в отчёт):"
+    echo "live scenario steps (for the report):"
     echo "$STEPS" | sed 's|^|  |'
 else
-    echo "шагов живых сценариев нет — прогон: ./scripts/live-check.sh"
+    echo "no live scenario steps — run: ./scripts/live-check.sh"
 fi
 
-# сторож «пути пользователя» у новых UI-сценариев (Р.67)
+# guard of the “user path” for new UI scenarios (R.67)
 python3 "$(dirname "$0")/specs-user-path.py" --check || exit 1
-# сторожа живой проверки (Р.68): ожидание вместо сна и живое покрытие —
-# сколько мест программы человек не трогал мышью НИ РАЗУ
+# guards of the live check (R.68): waiting instead of sleep, and live coverage —
+# how many places in the program the person has NOT touched with the mouse ONCE
 python3 "$(dirname "$0")/live-sleeps.py" --check || exit 1
 python3 "$(dirname "$0")/live-coverage.py" --check --brief || exit 1
 # the repository's public face (readme-showcase, t826): English README and
@@ -210,14 +210,14 @@ python3 "$(dirname "$0")/readme-check.py" --check || exit 1
 # how Kinetren reaches people (github-ci-docker-build, t834): one build
 # container and toolchain shared with CI, make targets, workflows, the name
 python3 "$(dirname "$0")/dist-check.py" --check || exit 1
-# Р.43 п.301: debug-сборка честно считает, но в 9 раз медленнее. На плотном
-# монтаже аудио-рендер там уходит за 100 % реального времени, кольцо пустеет
-# и растут callback-underrun'ы — их слышно тишиной. Это цена профиля, а не
-# дефект, и судить о скорости по debug нельзя.
+# R.43 item 301: the debug build counts honestly, but is 9 times slower. On a dense
+# edit the audio render there goes past 100 % of real time, the ring empties
+# and callback underruns grow — they are heard as silence. This is the price of the profile, not a
+# defect, and speed cannot be judged from debug.
 if [ ! -x target/release/kinetren ]; then
-    echo "о СКОРОСТИ судить только по релизу: cargo build --release -p kt-app"
+    echo "judge SPEED only by the release build: cargo build --release -p kt-app"
 else
-    echo "для замеров скорости: $(pwd)/target/release/kinetren"
+    echo "for speed measurements: $(pwd)/target/release/kinetren"
 fi
-[ "$RELEASE" = 1 ] && echo "тарбол:   $(ls -1 target/dist-out/*.tar.gz 2>/dev/null | tail -1)"
+[ "$RELEASE" = 1 ] && echo "tarball:   $(ls -1 target/dist-out/*.tar.gz 2>/dev/null | tail -1)"
 exit 0

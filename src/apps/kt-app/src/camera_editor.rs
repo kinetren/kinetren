@@ -1,15 +1,15 @@
-//! Окно камеры (Р.34 К3).
+//! Camera window (R.34 K3).
 //!
-//! До этого раунда у камер не было редактора ВООБЩЕ: событие создавалось
-//! из меню камерной дорожки, рисовалось бирюзовым блоком — и всё; ни
-//! выделить, ни перенести, ни удалить, ни поправить параметры. При этом
-//! комментарий у `add_camera_at_playhead` обещал «параметры правятся в
-//! окне камеры (двойной клик)» — то есть код врал ровно так же, как
-//! врала подсказка про FX до п.204.
+//! Until this round the cameras had NO editor AT ALL: an event was created
+//! from the camera track's menu, drawn as a turquoise block — and that was all; neither
+//! selecting, nor moving, nor deleting, nor adjusting the parameters. Moreover,
+//! the comment on `add_camera_at_playhead` promised “parameters are edited in the
+//! camera window (double click)” — that is, the code lied exactly as
+//! the FX hint lied before item 204.
 //!
-//! Устроено как окно перехода: та же `widgets::params_grid` из тех же
-//! `ParamSpec` и ТОТ ЖЕ виджет автоматизации, что у эффектов — своего
-//! редактора кейфреймов у камеры больше нет.
+//! It is built like the transition window: the same `widgets::params_grid` from the same
+//! `ParamSpec` and THE SAME automation widget as the effects have — the camera no longer has
+//! its own keyframe editor.
 
 use crate::app::KtApp;
 use crate::i18n::{k, tr};
@@ -20,7 +20,7 @@ use kt_time::Tick;
 
 pub struct CameraEditor {
     pub id: CameraId,
-    /// Состояние на момент открытия — «Отмена» возвращает его.
+    /// State at the moment of opening — “Cancel” returns it.
     pub backup: CameraEvent,
     pub gesture: u64,
     pub view: crate::automation::AutoView,
@@ -56,10 +56,10 @@ impl KtApp {
     }
 
     fn draw_one_camera_editor(&mut self, ctx: &egui::Context, ed: &mut CameraEditor) {
-        // документ для публикации — один клон на отрисовку окна (Р.59)
+        // the publishing document — one clone per draw of the window (R.59)
         let pub_doc = self.model.document();
         let Some(cur) = self.model.project().cameras.iter().find(|c| c.id == ed.id).cloned() else {
-            ed.open = false; // камеру удалили — окно уходит
+            ed.open = false; // the camera was deleted — the window goes away
             return;
         };
         let mut hover_out: Option<String> = None;
@@ -90,16 +90,16 @@ impl KtApp {
                     ui.label(tr(k::cam::NAME));
                     changed |= ui.text_edit_singleline(&mut c.name).changed();
                 });
-                // числовые параметры — та же сетка, что у эффектов
-                // подписи камеры — та же дверь публикации (Р.59): камера
-                // это структура ленты, и «наезд выпуска» объявляется
-                // наружу ровно так же, как заголовок
+                // numeric parameters — the same grid as for effects
+                // camera captions — the same publishing door (R.59): the camera
+                // is a structure of the reel, and the “release zoom” is declared
+                // outward exactly like the title
                 let pubc = self.publish_ctx(
                     &pub_doc,
                     kt_model::ClipId(0),
                     kt_model::ParamOwner::Camera { id: ed.id },
                 );
-                // ГРУППЫ по образцу «Трансформации» (Р.66)
+                // GROUPS modelled on “Transform” (R.66)
                 if let Some(ch) = widgets::group(ui, "cam.params", tr(k::grp::PARAMS), |ui| {
                     widgets::params_grid(ui, ("camp", ed.id), &mut c.cam, &[], Some(&pubc))
                 }) {
@@ -107,7 +107,7 @@ impl KtApp {
                 }
                 ui.horizontal(|ui| {
                     changed |= ui.checkbox(&mut c.cam.ortho, tr(k::cam::ORTHO)).changed();
-                    // точка интереса: two-node камера, как в AE
+                    // point of interest: two-node camera, as in AE
                     let mut look = c.cam.target.is_some();
                     if crate::app::hint_into(
                         &mut hover_out,
@@ -121,8 +121,8 @@ impl KtApp {
                     }
                 });
                 if let Some(t) = &mut c.cam.target {
-                    // точка интереса — МИРОВЫЕ px (единицы заморожены форматом
-                    // Р.29): пределы и шаг объявлены рядом, рисует общий ряд
+                    // point of interest — WORLD px (the units are frozen by the format
+                    // R.29): the bounds and step are declared alongside, the shared row draws it
                     let row = |label: &'static str, probe: &'static str| crate::widgets::NumRow {
                         label,
                         probe,
@@ -155,7 +155,7 @@ impl KtApp {
                 }
                 ui.separator();
 
-                // ---- автоматизация: ТОТ ЖЕ виджет, что у эффектов -------
+                // ---- automation: THE SAME widget as for effects -------
                 ui.horizontal(|ui| {
                     let specs = c.cam.param_specs();
                     let mut add: Option<String> = None;
@@ -182,7 +182,7 @@ impl KtApp {
                     }
                 });
                 let tl_view = self.tl_view();
-                // домен кривых камеры — тики ОТ НАЧАЛА события
+                // the domain of the camera curves — ticks FROM THE START of the event
                 let start = c.start;
                 let to_tl = move |t: Tick| Tick(start.0 + t.0);
                 let to_cur = move |t: Tick| Tick(t.0 - start.0);
@@ -208,17 +208,17 @@ impl KtApp {
                 );
                 changed |= res.changed;
                 seek = res.seek;
-                // замок оси один на программу (Р.40 п.15)
+                // the axis lock is one per program (R.40 item 15)
                 axis_req = axis_req.merge(&res);
 
                 widgets::group(ui, "cam.length", tr(k::grp::LENGTH), |ui| {
                 ui.horizontal(|ui| {
-                    // ДЛИНА ПРАВИТСЯ (Р.38 п.5): была read-only подписью,
-                    // а кромок у блока не было — изменить её было нечем
+                    // LENGTH IS EDITABLE (R.38 item 5): it was a read-only caption,
+                    // and the block had no edges — there was no way to change it
                     ui.label(crate::tf!(k::cam::LENGTH, ""));
                     let mut secs = cur.duration.0 as f64 / 90_000.0;
-                    // длительность — величина БЕЗ паспорта: пределы названы
-                    // здесь, одним местом, а ряд — общий (Р.66)
+                    // duration — a value WITHOUT a spec: the bounds are named
+                    // here, in one place, and the row is shared (R.66)
                     if crate::widgets::plain_row(
                         ui,
                         &crate::widgets::NumRow {
@@ -263,7 +263,7 @@ impl KtApp {
             self.apply_coalesced(Command::SetCamera(ed.backup.clone()), ed.gesture);
             ed.open = false;
         }
-        // просьбы графика про ОСЬ применяет одно место (Р.40 п.15)
+        // the graph's requests about the AXIS are applied in one place (R.40 item 15)
         self.apply_axis_req(axis_req);
         if let Some(t) = seek {
             self.player.seek(t);

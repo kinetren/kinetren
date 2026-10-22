@@ -1,14 +1,14 @@
-//! Таблица функций FFmpeg, резолвится в рантайме через dlsym.
+//! FFmpeg function table, resolved at runtime via dlsym.
 //!
-//! Ключевой момент архитектуры: бинарь НЕ линкуется с libav* (нет NEEDED),
-//! поэтому один и тот же kt-app работает на системе с FFmpeg 6, 7 или 8 —
-//! берётся то, что установлено, со всеми его аппаратными ускорениями.
+//! Key architectural point: the binary does NOT link to libav* (no NEEDED entries),
+//! so the same kt-app works on a system with FFmpeg 6, 7 or 8 —
+//! whatever is installed is used, with all its hardware acceleration.
 //!
-//! Макрос инстанцируется отдельно в каждом версионном модуле (src/v6.rs и
-//! т.д.), поэтому сигнатуры ссылаются на типы ИМЕННО той версии — layout
-//! структур совпадает с загруженной библиотекой.
+//! The macro is instantiated separately in each version module (src/v6.rs etc.),
+//! so the signatures refer to types of THAT version — the layout of
+//! the structs matches the loaded library.
 
-/// Объявляет `Api` со списком функций и `Api::load(&Libs)`.
+/// Declares `Api` with the list of functions and `Api::load(&Libs)`.
 #[macro_export]
 macro_rules! declare_api {
     ($( $lib:ident :: $name:ident : $ty:ty ),* $(,)?) => {
@@ -19,8 +19,8 @@ macro_rules! declare_api {
 
         impl Api {
             /// # Safety
-            /// Библиотеки должны быть той же мажорной версии, что и типы
-            /// этого модуля (гарантирует loader по avcodec_version()).
+            /// The libraries must be of the same major version as the types
+            /// of this module (guaranteed by the loader via avcodec_version()).
             pub unsafe fn load(libs: &$crate::loader::Libs) -> Result<Api, $crate::FfError> {
                 unsafe {
                     Ok(Api {
@@ -32,8 +32,8 @@ macro_rules! declare_api {
     };
 }
 
-/// Список функций, общий для всех версий (сигнатуры совпадают в 6/7/8;
-/// различающиеся типы приходят из версионного модуля).
+/// The function list, shared by all versions (signatures match in 6/7/8;
+/// the differing types come from the version module).
 #[macro_export]
 macro_rules! ffmpeg_api {
     () => {
@@ -57,9 +57,9 @@ macro_rules! ffmpeg_api {
             avutil::av_opt_set:
                 unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char, c_int) -> c_int,
             avutil::av_strerror: unsafe extern "C" fn(c_int, *mut c_char, usize) -> c_int,
-            // Р.67: у формата пикселей спрашивают, есть ли АЛЬФА — иначе
-            // прозрачность PNG/ProRes 4444 выбрасывалась молча, и логотип
-            // ложился на видео непрозрачным прямоугольником (F-MED-003)
+            // R.67: the pixel format is asked whether it has ALPHA — otherwise the transparency of PNG/ProRes 4444
+            // was silently discarded, and the logo was laid on the video as an opaque rectangle
+            // (F-MED-003)
             avutil::av_pix_fmt_desc_get:
                 unsafe extern "C" fn(ffi::AVPixelFormat) -> *const ffi::AVPixFmtDescriptor,
 

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.54 (п.431): галерея пикера эффектов в НАСТОЯЩЕЙ программе.
+"""Live scenario R.54 (item 431): the effects picker gallery in the REAL program.
 
-Харнесс-тесты (t547/t548) гоняют клик и вёрстку внутри одного процесса на
-искусственном клипе. Здесь проверяется то, чего харнесс проверить не может:
-миниатюры рисуются НА КАДРЕ настоящего медиа (фоновый поток успел посчитать
-цепочку и залить текстуру), а клик по ячейке доезжает до файла проекта с
-параметрами ИМЕННО этого варианта.
+The harness tests (t547/t548) run the click and the layout inside one process on an
+artificial clip. Here we check what the harness cannot check:
+thumbnails are drawn ON THE FRAME of real media (the background thread managed to compute
+the chain and upload the texture), and a click on a cell reaches the project file with the
+parameters of EXACTLY this variant.
 
-Попап в дереве доступности не ищется, поэтому координаты берутся из самой
-программы: `KT_GEOM_DUMP` отдаёт прямоугольники `fxreg.add` и
-`fxreg.var.<вид>.<номер>` (правило Р.27 — сценарий не угадывает смещения).
+A popup is not found in the accessibility tree, so the coordinates are taken from the
+program itself: `KT_GEOM_DUMP` gives the rectangles `fxreg.add` and
+`fxreg.var.<kind>.<number>` (rule R.27 — the scenario does not guess the offsets).
 """
 import json
 import os
@@ -21,14 +21,14 @@ from kt_live import KT_CLI, Live, geometry, poll_step, require_tools  # noqa: E4
 from kt_live import demo_otio, import_project, new_otio  # noqa: E402,F401
 
 SEC = 90000
-# «Плотно» — второй вариант размытия (radius 24 против шаблонных 8)
+# “Dense” — the second blur variant (radius 24 against the template 8)
 VARIANT = "fxreg.var.blur.1"
 WANT_RADIUS = 24
 
 
 def radius_in(text):
-    """Радиусы всех blur-эффектов в сохранённом проекте (текст файла
-    проекта: цепочка эффектов — часть МОДЕЛИ)."""
+    """Radii of all blur effects in the saved project (the text of the file
+    project: the chain of effects is part of the MODEL)."""
     doc = json.loads(text)
     found = []
 
@@ -52,33 +52,33 @@ def main(out):
     demo_otio(proj)
 
     with Live("fxpicker", out, project=proj) as app:
-        # 1) окно FX по двойному клику (зазор между кликами МАЛЕНЬКИЙ, п.232)
+        # 1) the FX window by a double click (the gap between clicks is SMALL, item 232)
         y = app.lane_y("video", 0, frac=0.5)
         before = app.shot("before")
         app.double_click(app.x_at(3 * SEC), y)
         app.shot("fxwin")
         d = app.screen_diff(before)
-        app.expect(d > 0.01, f"окно FX открылось (экран изменился на {d:.1%})")
+        app.expect(d > 0.01, f"FX window opened (the screen changed by {d:.1%})")
 
-        # 2) галерея: кнопка пикера отдаёт свой прямоугольник, клик по ней
-        # раскрывает попап
+        # 2) the gallery: the picker button gives up its rectangle, a click on it
+        # opens the popup
         pre_picker = app.shot("pre-picker")
-        if not app.click_probe("fxreg.add", "программа отдала прямоугольник кнопки пикера"):
+        if not app.click_probe("fxreg.add", "the program gave the rectangle of the picker button"):
             return app.done()
         app.shot("gallery")
         d = app.screen_diff(pre_picker)
-        app.expect(d > 0.02, f"галерея раскрылась (экран изменился на {d:.1%})")
+        app.expect(d > 0.02, f"gallery expanded (the screen changed by {d:.1%})")
 
-        # 2б) сужаем поиском, как человек: 27 строк в прокрутку целиком не
-        # влезают, а ячейки НИЖЕ СГИБА не рисуются и не считаются вовсе.
-        # Строка поиска получает фокус сама при открытии меню.
+        # 2b) we narrow by search, as a person does: 27 rows do not fit whole into the scroll,
+        # and the cells BELOW THE FOLD are neither drawn nor counted at all.
+        # The search line gets focus by itself when the menu opens.
         for ch in "blur":
             app.key(ch)
         app.shot("filtered")
 
-        # 3) МИНИАТЮРЫ ПОСЧИТАНЫ: ячейка варианта перестала быть пустой
-        # плашкой. Ждём не «пока устоится», а СМЕНЫ (правило Р.37): фоновый
-        # поток считает цепочку и заливает текстуру уже после раскрытия.
+        # 3) MINIATURES ARE COUNTED: the variant cell has stopped being an empty
+        # tile. We wait not “until it settles”, but for a CHANGE (rule R.37): a background
+        # thread computes the chain and fills the texture only after the expansion.
         cell = None
         for _ in range(40):
             f = next(
@@ -89,11 +89,11 @@ def main(out):
                 cell = f
                 break
             poll_step(0.25)
-        app.expect(cell is not None, f"программа отдала прямоугольник ячейки «{VARIANT}»")
+        app.expect(cell is not None, f"the program gave the rectangle of the cell “{VARIANT}”")
         if cell is None:
             return app.done()
         win = geometry()
-        # центр КАРТИНКИ ячейки (подпись идёт ниже картинки)
+        # the centre of the cell’s PICTURE (the caption goes below the picture)
         px = (
             win["x"] + int(cell["x"] + cell["w"] / 2),
             win["y"] + int(cell["y"] + cell["h"] * 0.35),
@@ -101,12 +101,12 @@ def main(out):
         drawn = app.pixel_settled(px, differs_from=None)
         app.expect(
             drawn is not None and sum(drawn) > 24,
-            f"миниатюра нарисована, а не осталась чёрной плашкой (пиксель {drawn})",
+            f"thumbnail drawn, not left as a black plate (pixel {drawn})",
         )
 
-        # 4) ОСЬ СИЛЫ: проводка по горизонтали от ячейки «Плотно» к
-        # соседней слева обязана дать ПРОМЕЖУТОЧНОЕ значение — то, что
-        # человек видел под курсором, а не названный вариант.
+        # 4) FORCE AXIS: the drag horizontally from the “Dense” cell to the
+        # neighbouring one on the left must give an INTERMEDIATE value — what
+        # the person saw under the cursor, not the named variant.
         win = geometry()
         cx = win["x"] + int(cell["x"] + cell["w"] / 2)
         cy = win["y"] + int(cell["y"] + cell["h"] * 0.35)
@@ -117,41 +117,41 @@ def main(out):
         axis_radii = [r for r in radius_in(app.project_text()) if r not in before_radii]
         app.expect(
             len(axis_radii) == 1,
-            f"проводка добавила ровно один blur (было {before_radii}, стало {radius_in(app.project_text())})",
+            f"the wiring added exactly one blur (was {before_radii}, became {radius_in(app.project_text())})",
         )
         if axis_radii:
             app.expect(
                 3 < axis_radii[0] < WANT_RADIUS,
-                f"ось дала ПРОМЕЖУТОЧНОЕ значение между 3 и {WANT_RADIUS}: {axis_radii[0]}",
+                f"the axis gave an INTERMEDIATE value between 3 and {WANT_RADIUS}: {axis_radii[0]}",
             )
-        # откат: ось добавила эффект одним шагом истории, и Ctrl+Z обязан
-        # его снять — иначе следующая проверка мерила бы сумму двух жестов
+        # undo: the axis added the effect in one history step, and Ctrl+Z must
+        # remove it — otherwise the next check would measure the sum of two gestures
         app.key("ctrl+z")
         app.saved_project()
         after_undo = radius_in(app.project_text())
         app.expect(
             axis_radii and axis_radii[0] not in after_undo,
-            f"Ctrl+Z снял добавленное осью (осталось {after_undo})",
+            f"Ctrl+Z removed what the axis added (left {after_undo})",
         )
 
-        # 5) клик по ячейке — и в ФАЙЛЕ ровно её параметры
+        # 5) a click on a cell — and in the FILE exactly its parameters
         before_radii = after_undo
-        app.click_probe("fxreg.add", "пикер открывается повторно")
+        app.click_probe("fxreg.add", "the picker opens again")
         for ch in "blur":
             app.key(ch)
-        if not app.click_probe(VARIANT, "ячейка варианта кликабельна"):
+        if not app.click_probe(VARIANT, "the variant cell is clickable"):
             return app.done()
         app.shot("after-pick")
         app.saved_project()
         after_radii = radius_in(app.project_text())
         app.expect(
             len(after_radii) == len(before_radii) + 1,
-            f"в проекте появился ровно один новый blur ({before_radii} → {after_radii})",
+            f"exactly one new blur appeared in the project ({before_radii} → {after_radii})",
         )
         new = [r for r in after_radii if r not in before_radii] or after_radii
         app.expect(
             WANT_RADIUS in new,
-            f"добавился ВАРИАНТ (radius {WANT_RADIUS}), а не шаблон: {after_radii}",
+            f"a VARIANT was added (radius {WANT_RADIUS}), not a template: {after_radii}",
         )
         return app.done()
 

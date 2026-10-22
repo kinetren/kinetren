@@ -1,5 +1,5 @@
-// Полутоновый растр (Р.47): зеркало kt_fx::video::halftone — чёрные
-// точки на белом по люме центра ячейки; узор в ЛОГИЧЕСКИХ координатах
+// Halftone screen (R.47): a mirror of kt_fx::video::halftone: black
+// dots on white by the luma of the cell centre; the pattern in LOGICAL coordinates
 // l = p/K. u0 = (w, h); f0 = (size, cos, sin, K).
 fn bilin(sx: f32, sy: f32) -> vec4<f32> {
     let sw = i32(P.u0.x);

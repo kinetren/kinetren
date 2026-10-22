@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.56 (С5): у композиции на таймлайне есть КАДРЫ и ПИКИ.
+"""Live scenario R.56 (C5): a composition on the timeline has FRAMES and PEAKS.
 
-Претензия владельца дословно: «у композиций нет превью почему-то», и,
-уточняя, — «на таймлайне нет превью как у обычных событий - кадров и
-аудио-пиков».
+The owner’s complaint verbatim: “compositions for some reason have no preview”, and,
+clarifying: “on the timeline there is no preview as for ordinary events — frames and
+audio peaks”.
 
-Харнесс-тест t600 проверяет, что кадры доезжают до текстур. Здесь вопрос
-другой и единственный, ради которого живые сценарии заведены: видно ли это
-НА ЭКРАНЕ настоящей программы. Сравниваем яркостную «пестроту» тела
-события ДО и ПОСЛЕ того, как служба досчитала: пустая плашка однородна,
-филмстрип — нет.
+The harness test t600 checks that the frames reach the textures. Here the question is
+different and the only one for which the live scenarios were set up: is it visible
+ON THE SCREEN of the real program. We compare the brightness “variegation” of the event body
+BEFORE and AFTER the service has computed: an empty tile is uniform, a
+filmstrip is not.
 
-Шаги:
+Steps:
 
-1. свернуть два события в ленту — на таймлайне одно событие;
-2. дождаться службы и снять картинку тела: она обязана перестать быть
-   однородной заливкой;
-3. правка внутри ленты меняет редакцию — полоса пересчитывается, и на
-   экране снова кадры.
+1. collapse two events into a reel — on the timeline there is one event;
+2. wait for the service and take a picture of the body: it must stop being
+   a uniform fill;
+3. an edit inside the reel changes the revision — the strip is recomputed, and on
+   the screen there are frames again.
 """
 import os
 import subprocess
@@ -30,12 +30,12 @@ SEC = 90000
 
 
 def slice_means(app, x0, y0, w, h, tag, n=3):
-    """Средняя яркость N вертикальных ломтей прямоугольника — одним
-    снимком экрана.
+    """Average brightness of N vertical slices of the rectangle — with one
+    screen snapshot.
 
-    Пустая плашка и мини-карта содержимого дают ломти ОДИНАКОВОЙ яркости;
-    филмстрип — разные кадры, значит разные ломти. Это и есть наблюдаемое
-    следствие «кадры видно», а не «что-то изменилось».
+    An empty tile and a mini-map of the content give slices of the SAME brightness;
+    a filmstrip gives different frames, hence different slices. This is the observable
+    consequence of “frames are visible”, not of “something changed”.
     """
     img = app.shot(tag)
     out = []
@@ -75,29 +75,29 @@ def main(out):
     with Live("nestpreview", out, project=proj) as app:
         y = app.lane_y("video", 0, 0.6)
 
-        # --- 1. свернуть ПЕРВЫЕ ДВА события в ленту --------------------
+        # --- 1. collapse the FIRST TWO events into a reel --------------------
         app.click(app.x_at(1 * SEC), y)
         app.click(app.x_at(3 * SEC), y, mods=("ctrl",))
         app.right_click(app.x_at(3 * SEC), y)
-        app.click_probe("nest.collapse", "пункт сворачивания")
+        app.click_probe("nest.collapse", "collapse item")
         app.expect(
             len(app.live_clips()) == 2,
-            f"свёрнуто не в одно (плюс третье событие): {app.live_clips()}",
+            f"collapsed not into one (plus a third event): {app.live_clips()}",
         )
         inst = min(app.live_clips())
         x0 = app.x_at(inst[0]) + 6
         x1 = app.x_at(inst[0] + inst[1]) - 6
-        # координаты строки — из САМОЙ программы (правило Р.27)
+        # the row coordinates — from the program ITSELF (rule R.27)
         g = app.geom()
         row = next(r for r in g["rows"] if r["kind"] == "video" and r["lane"] == 0)
         h = row.get("h", g["lane_h"])
         top = app.lane_y("video", 0, 0.0)
         box = (x0, top + 6, x1 - x0, h - 12)
 
-        # --- 2. дождаться службы: в теле видно РАЗНЫЕ кадры ------------
+        # --- 2. wait for the service: in the body DIFFERENT frames are visible ------------
         spread = 0.0
         for _ in range(60):
-            # шевелим мышь: перерисовка идёт по ДВИЖЕНИЮ (инвариант 12)
+            # we move the mouse: redraw goes by MOVEMENT (invariant 12)
             app.hover(app.x_at(inst[0]) + 20, y, pause=0.05)
             poll_step(0.4)
             m = slice_means(app, *box, "wait")
@@ -107,17 +107,17 @@ def main(out):
         app.shot("frames")
         app.expect(
             spread > 0.08,
-            f"в теле композиции все ломти одной яркости (разброс {spread:.3f}) — "
-            "значит это заливка или мини-карта, а не кадры",
+            f"in the body of the composition all slices have one brightness (spread {spread:.3f}) — "
+            "so this is a fill or a mini-map, not frames",
         )
 
-        # --- 3. и это КАДРЫ ЛЕНТЫ, а не тумбы файла: у ленты файла нет,
-        # а служба индекса про неё ничего не знает --------------------
+        # --- 3. and these are the REEL’S FRAMES, not the file’s thumbnails: the file’s reel has none,
+        # and the index service knows nothing about it --------------------
         app.key("ctrl+s")
         kt = app.saved_project().doc["metadata"]["kt"]
         app.expect(
             len(kt.get("sequences", [])) == 1,
-            f"лента не записалась — проверяли не то событие: {list(kt.keys())}",
+            f"reel not recorded — we checked the wrong event: {list(kt.keys())}",
         )
         return app.done()
 

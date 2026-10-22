@@ -1,14 +1,14 @@
-// Зерно — counter-based hash (Р.29): та же целочисленная формула, что
-// noise/noise_hash в kt-fx/src/video.rs → байт-в-байт с CPU на любом
-// железе. u0 = (seed, k, size, color); u1 = (res_scale, 0, 0, 0).
-// Р.45 (п.313): при K× ячейка = size·K и координаты особой формулы
-// делятся на K — узор зерна побитно совпадает с 1×; ветка формулы —
-// по ПОЛЬЗОВАТЕЛЬСКОМУ size.
+// Grain: a counter-based hash (R.29): the same integer formula as
+// noise/noise_hash in kt-fx/src/video.rs, so byte for byte with the CPU on any
+// hardware. u0 = (seed, k, size, color); u1 = (res_scale, 0, 0, 0).
+// R.45 (item 313): at K× the cell is size·K and the coordinates of the special formula
+// are divided by K, so the grain pattern matches the 1× one bit for bit; the branch of the formula is
+// chosen by the USER size.
 //
-// size — размер зерна в пикселях, color — своё смещение на канал
-// (Р.33 С5). ВАЖНО: при size == 1 и color == 0 считается ПРЕЖНЯЯ формула
-// (без лишнего хэша зерна) — ровно так же ветвится CPU, и golden'ы обоих
-// путей не двигаются.
+// size is the grain size in pixels, color is its own offset per channel
+// (R.33 S5). IMPORTANT: with size == 1 and color == 0 the FORMER formula is computed
+// (without the extra grain hash), exactly how the CPU branches too, and the goldens of both
+// paths do not move.
 
 fn nh(v: u32) -> u32 {
     var x = v;
@@ -34,8 +34,8 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     let color = P.u0.w == 1u;
     let rs = max(P.u1.x, 1u);
     if (size == 1u && !color) {
-        // прежняя формула: seed идёт в хэш строки без обёртки; при K×
-        // координаты делятся на K (узор 1× поблочно)
+        // former formula: seed goes into the row hash without a wrapper; at K×
+        // the coordinates are divided by K (the 1× pattern block by block)
         let q = p / rs;
         let off = off_of(nh(q.x ^ nh(q.y ^ P.u0.x)), k);
         let rgb = clamp(vec3<i32>(c.rgb) + vec3<i32>(off), vec3<i32>(0), vec3<i32>(255));

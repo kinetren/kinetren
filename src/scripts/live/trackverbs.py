@@ -1,33 +1,33 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.68 (задача 5.3): глаголы дорожки ИЗ МЕНЮ и ИЗ ОКНА.
+"""Live scenario R.68 (task 5.3): track verbs FROM THE MENU and FROM THE WINDOW.
 
-Почему он появился. Отчёт живого покрытия (`scripts/live-coverage.py`)
-показал десять мест, до которых человек в проверке НЕ ДОХОДИЛ МЫШЬЮ НИ
-РАЗУ, и все десять — второй путь к тому, что `track.py` делает бейджами:
+Why it appeared. The live coverage report (`scripts/live-coverage.py`)
+showed ten places that a person in the check had NOT REACHED BY MOUSE
+EVEN ONCE, and all ten are a second path to what `track.py` does with badges:
 
-* меню строки — `track.menu.props`, `.mute`, `.solo`, `.lock`, `.fx`;
-* окно дорожки — галки `track.mute`/`track.solo`/`track.lock`, режим
-  наложения `track.blend.{}` и кнопка «Отмена» `track.cancel`.
+* row menu — `track.menu.props`, `.mute`, `.solo`, `.lock`, `.fx`;
+* track window — checkboxes `track.mute`/`track.solo`/`track.lock`, blend mode
+  `track.blend.{}` and the “Cancel” button `track.cancel`.
 
-Решение владельца (Р.68): «прокликивать сложные моменты или те которые не
-прокликали ни разу». Правило 17 («парные способы одного действия ведут
-себя одинаково») до сих пор держалось только харнессом t741: он сверяет,
-что пункт и бейдж ведут в ОДНУ команду. Здесь проверяется другое и
-единственное, ради чего живые сценарии заведены, — что до пункта можно
-ДОТЯНУТЬСЯ мышью в настоящем окне и что следствие ВИДНО в кадре.
+The owner’s decision (R.68): “click through the complex moments, or those that were not
+clicked even once”. Rule 17 (“paired ways of one action behave
+identically”) has so far been held only by the harness t741: it checks
+that the item and the badge lead to ONE command. Here something else is checked, the only
+thing for which the live scenarios were set up — that one can REACH
+the item with a mouse in a real window, and that the consequence is VISIBLE in the frame.
 
-ПУТЬ (спека `ui-reach`, «У дорожки полный набор глаголов…»):
-1. правый клик по пустому месту ВЕРХНЕЙ видеодорожки → в меню «Заглушить» →
-   в превью вместо зелёного становится красное (видна нижняя дорожка);
-2. тем же путём «Заглушить» ещё раз → зелёное вернулось (жест повторяем);
-3. правый клик по НИЖНЕЙ дорожке → «Соло» → в кадре только она, красная;
-   ещё раз — соло снято;
-4. «Замок» из меню → драг события по запертой дорожке его не двигает;
-   «Замок» ещё раз — снят;
-5. «Свойства…» из меню → открылось окно дорожки; галка «Заглушить» в нём
-   красит кадр красным, режим наложения «Сложение» — жёлтым;
-6. «Отмена» в окне → и галка, и режим откатились одним шагом, кадр снова
-   зелёный.
+PATH (spec `ui-reach`, “A track has the full set of verbs…”):
+1. right click on an empty spot of the UPPER video track → in the “Mute” menu →
+   in the preview the green becomes red (the lower track is visible);
+2. the same way, “Mute” once more → green came back (the gesture is repeated);
+3. right click on the LOWER track → “Solo” → only it is in the frame, red;
+   once more — solo lifted;
+4. “Lock” from the menu → a drag of an event on the locked track does not move it;
+   “Lock” once more — lifted;
+5. “Properties…” from the menu → the track window opened; the “Mute” checkbox in it
+   colors the frame red, the blend mode “Add” — yellow;
+6. “Cancel” in the window → both the checkbox and the mode were rolled back in one step, and
+   the frame is green again.
 """
 import json
 import os
@@ -40,10 +40,10 @@ SEC = 90000
 
 
 def two_video_tracks(dest, red, green):
-    """Две видеодорожки: зелёная ПОВЕРХ красной (в OTIO верхняя — последняя).
+    """Two video tracks: green ABOVE red (in the OTIO the upper one is the last).
 
-    Та же фикстура, что у `track.py`: без второй дорожки «заглушил верхнюю»
-    неотличимо от «заглушил всё» — в кадре была бы просто пустота."""
+    The same fixture as `track.py`: without the second track “muted the upper one” is
+    indistinguishable from “muted everything” — the frame would simply be empty."""
     project_with_clips(dest, [(0.0, 6.0, red)])
     doc = json.load(open(dest))
     vid = [t for t in doc["tracks"]["children"] if t.get("kind") == "Video"]
@@ -60,15 +60,15 @@ def two_video_tracks(dest, red, green):
 
 
 def lane_menu(app, lane):
-    """Открыть меню СТРОКИ правым кликом.
+    """Open the row menu with a right click.
 
-    Целимся в ПУСТОЕ место дорожки (события стоят 0..6 с, жмём на 8 с):
-    правый клик по событию открыл бы меню события, а не строки.
+    We aim at an EMPTY spot of the track (events are at 0..6 s, we press at 8 s):
+    a right click on an event would open the event menu, not the row’s.
 
-    Имя пункта в `click_probe` пишется ЛИТЕРАЛОМ на месте вызова, а не
-    едет сюда переменной: отчёт живого покрытия читает исходники сценариев
-    и переменную не развернёт — место числилось бы непрокликанным, хотя по
-    нему и кликают (поймано этим же сценарием)."""
+    The item name in `click_probe` is written as a LITERAL at the call site, not
+    carried here in a variable: the live coverage report reads the scenario sources
+    and would not expand the variable — the place would count as not clicked, although
+    it is clicked by it too (caught by this same scenario)."""
     app.right_click(app.x_at(8 * SEC), app.lane_y("video", lane, 0.6))
 
 
@@ -87,86 +87,86 @@ def main(out):
 
     with Live("trackverbs", out, project=path) as app:
         cx, cy = app.preview_center()
-        # курсор В ТЕЛО событий: у 8 с материала уже нет, и кадр был бы пуст
+        # the cursor INTO THE BODY of the events: 8 s of material is no longer there, and the frame would be empty
         app.click(app.x_at(2 * SEC), app.ruler_y())
         top = app.pixel_settled((cx, cy))
-        app.expect(is_green(top), f"старт: сверху зелёная дорожка, RGB {top}")
+        app.expect(is_green(top), f"start: the green track on top, RGB {top}")
 
-        # --- 1. «Заглушить» ИЗ МЕНЮ строки -------------------------------
+        # --- 1. “Mute” FROM the row MENU -------------------------------
         lane_menu(app, 0)
-        app.click_probe("track.menu.mute", "пункт «Заглушить» в меню строки")
+        app.click_probe("track.menu.mute", "“Mute” item in the row menu")
         muted = app.pixel_settled((cx, cy), differs_from=top)
-        app.expect(is_red(muted), f"под заглушённой из меню дорожкой видна красная: RGB {muted}")
-        app.step("menu-mute", "меню строки → «Заглушить»: в кадре нижняя, красная дорожка")
+        app.expect(is_red(muted), f"under the track muted from the menu the red is visible: RGB {muted}")
+        app.step("menu-mute", "row menu → “Mute”: the lower, red track is in the frame")
 
-        # --- 2. и тот же пункт СНИМАЕТ глушение (правило 14) -------------
+        # --- 2. and the same item CANCELS the mute (rule 14) -------------
         lane_menu(app, 0)
-        app.click_probe("track.menu.mute", "пункт «Заглушить» второй раз")
+        app.click_probe("track.menu.mute", "“Mute” item a second time")
         back = app.pixel_settled((cx, cy), differs_from=muted)
-        app.expect(is_green(back), f"пункт сработал повторно, снова зелёное: RGB {back}")
+        app.expect(is_green(back), f"the item worked again, green once more: RGB {back}")
 
-        # --- 3. «Соло» на НИЖНЕЙ дорожке ---------------------------------
+        # --- 3. “Solo” on the BOTTOM track ---------------------------------
         lane_menu(app, 1)
-        app.click_probe("track.menu.solo", "пункт «Соло» в меню нижней строки")
+        app.click_probe("track.menu.solo", "“Solo” item in the menu of the lower row")
         solo = app.pixel_settled((cx, cy), differs_from=back)
-        app.expect(is_red(solo), f"соло из меню оставило в кадре только нижнюю: RGB {solo}")
-        app.step("menu-solo", "меню строки → «Соло»: в кадре только нижняя дорожка")
+        app.expect(is_red(solo), f"solo from the menu left only the lower one in the frame: RGB {solo}")
+        app.step("menu-solo", "row menu → “Solo”: only the lower track is in the frame")
         lane_menu(app, 1)
-        app.click_probe("track.menu.solo", "снять соло тем же пунктом")
+        app.click_probe("track.menu.solo", "lift the solo with the same item")
         app.pixel_settled((cx, cy), differs_from=solo)
 
-        # --- 4. «Замок» из меню отказывает драгу -------------------------
+        # --- 4. “Lock” from the menu refuses the drag -------------------------
         before = app.live_clips()
         lane_menu(app, 1)
-        app.click_probe("track.menu.lock", "пункт «Замок» в меню нижней строки")
+        app.click_probe("track.menu.lock", "“Lock” item in the menu of the lower row")
         y = app.lane_y("video", 1, frac=0.6)
         app.drag(app.x_at(2 * SEC), y, app.x_at(4 * SEC), y)
         after = app.live_clips()
         app.expect(
             before == after,
-            f"запертая ИЗ МЕНЮ дорожка не отдала событие драгу: {before} → {after}",
+            f"the track locked FROM THE MENU did not hand the event over to the drag: {before} → {after}",
         )
-        app.step("menu-lock", "меню строки → «Замок»: событие драгом не двигается")
+        app.step("menu-lock", "row menu → “Lock”: the event does not move with the drag")
         lane_menu(app, 1)
-        app.click_probe("track.menu.lock", "снять замок тем же пунктом")
+        app.click_probe("track.menu.lock", "lift the lock with the same item")
 
-        # --- 5. «Свойства…» и галки САМОГО окна --------------------------
+        # --- 5. “Properties…” and the checkboxes of the window ITSELF --------------------------
         lane_menu(app, 0)
-        app.click_probe("track.menu.props", "пункт «Свойства…» в меню строки")
-        app.expect(app.has_probe("track.name"), "окно дорожки открылось из меню строки")
-        app.step("menu-props", "меню строки → «Свойства…»: окно дорожки верхней дорожки")
+        app.click_probe("track.menu.props", "“Properties…” item in the row menu")
+        app.expect(app.has_probe("track.name"), "track window opened from the row menu")
+        app.step("menu-props", "row menu → “Properties…”: the track window of the upper track")
 
         was = app.pixel_settled((cx, cy))
-        app.click_probe("track.mute", "галка «Заглушить» в окне дорожки")
+        app.click_probe("track.mute", "the “Mute” checkbox in the track window")
         win_muted = app.pixel_settled((cx, cy), differs_from=was)
-        app.expect(is_red(win_muted), f"галка окна заглушила дорожку: RGB {win_muted}")
-        app.click_probe("track.mute", "снять галку «Заглушить»")
+        app.expect(is_red(win_muted), f"the checkbox of the window muted the track: RGB {win_muted}")
+        app.click_probe("track.mute", "lift the “Mute” checkbox")
         app.pixel_settled((cx, cy), differs_from=win_muted)
-        # соло и замок — те же галки; следствие соло уже показано выше,
-        # здесь важно, что до НИХ дотягиваются мышью и они переключаются
-        app.click_probe("track.solo", "галка «Соло» в окне дорожки")
-        app.click_probe("track.solo", "снять галку «Соло»")
-        app.click_probe("track.lock", "галка «Замок» в окне дорожки")
-        app.click_probe("track.lock", "снять галку «Замок»")
+        # solo and lock — the same checkboxes; the consequence of solo has been shown above,
+        # here what matters is that they can be reached by the mouse and they switch
+        app.click_probe("track.solo", "the “Solo” checkbox in the track window")
+        app.click_probe("track.solo", "lift the “Solo” checkbox")
+        app.click_probe("track.lock", "the “Lock” checkbox in the track window")
+        app.click_probe("track.lock", "lift the “Lock” checkbox")
 
-        # режим наложения: зелёная поверх красной в «Сложении» даёт ЖЁЛТОЕ
+        # the blend mode: green over red in “Add” gives YELLOW
         blended_from = app.pixel_settled((cx, cy))
-        app.click_probe("track.blend.add", "режим наложения «Сложение»")
+        app.click_probe("track.blend.add", "blend mode “Add”")
         blended = app.pixel_settled((cx, cy), differs_from=blended_from)
         app.expect(
             blended[0] > 120 and blended[1] > 120,
-            f"сложение зелёной с красной даёт жёлтое: RGB {blended}",
+            f"adding green to red gives yellow: RGB {blended}",
         )
-        app.step("window-blend", "окно дорожки: режим наложения «Сложение» — кадр жёлтый")
+        app.step("window-blend", "track window: blend mode “Add” — the frame is yellow")
 
-        # --- 6. «Отмена» откатывает сессию окна ОДНИМ шагом --------------
-        app.click_probe("track.cancel", "кнопка «Отмена» в окне дорожки")
+        # --- 6. “Cancel” rolls back the window session in ONE step --------------
+        app.click_probe("track.cancel", "the “Cancel” button in the track window")
         undone = app.pixel_settled((cx, cy), differs_from=blended)
         app.expect(
             is_green(undone),
-            f"«Отмена» вернула дорожку как была: RGB {undone} против старта {top}",
+            f"“Cancel” returned the track as it was: RGB {undone} against the start {top}",
         )
-        app.step("window-cancel", "окно дорожки: «Отмена» — кадр снова зелёный")
+        app.step("window-cancel", "track window: “Cancel” — the frame is green again")
         doc = app.saved_project().doc
         blends = [
             t.get("metadata", {}).get("kt", {}).get("blend")
@@ -174,18 +174,18 @@ def main(out):
         ]
         app.expect(
             not any(b == "add" for b in blends),
-            f"«Отмена» не оставила режим наложения в файле: {blends}",
+            f"“Cancel” did not leave the blend mode in the file: {blends}",
         )
 
-        # --- 7. «Эффекты…» из меню строки ведут в ТУ ЖЕ форму ------------
-        # «Отмена» закрыла окно, поэтому второй путь открывает его с нуля:
-        # человек попадает в полосу цепочки дорожки, не заходя в свойства.
+        # --- 7. “Effects…” from the row menu lead to THE SAME form ------------
+        # “Cancel” closed the window, so the second path opens it from scratch:
+        # the person gets into the track chain strip without going into properties.
         lane_menu(app, 0)
-        app.click_probe("track.menu.fx", "пункт «Эффекты…» в меню строки")
-        app.expect(app.has_probe("track.name"), "«Эффекты…» открыли окно дорожки")
-        app.expect(app.has_probe("fxreg.add"), "в открытом окне есть полоса цепочки")
-        app.step("menu-fx", "меню строки → «Эффекты…»: окно дорожки с полосой цепочки")
-        app.click_probe("track.close", "кнопка закрытия окна дорожки")
+        app.click_probe("track.menu.fx", "“Effects…” item in the row menu")
+        app.expect(app.has_probe("track.name"), "“Effects…” opened the track window")
+        app.expect(app.has_probe("fxreg.add"), "in the open window there is a chain strip")
+        app.step("menu-fx", "row menu → “Effects…”: the track window with the chain strip")
+        app.click_probe("track.close", "close button of the track window")
         return app.done()
 
 

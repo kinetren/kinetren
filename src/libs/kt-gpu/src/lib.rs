@@ -1,9 +1,9 @@
-//! GPU-бэкенд видео-FX и композита (Р.29): wgpu f32/целочисленные
-//! фрагментные пассы поверх устройства eframe (превью) или headless
-//! (экспорт/kt-cli). Реализует kt_engine::VideoGpuExec; kt-engine от
-//! этого крейта НЕ зависит — исполнитель инжектится сверху (kt-app,
-//! kt-cli). CPU-путь kt-fx/kt-engine остаётся байт-эталоном; конформанс
-//! GPU-vs-CPU — tests/parity.rs (допуски, t181/t182/t183).
+//! The GPU backend of video FX and compositing (R.29): wgpu f32/integer
+//! fragment passes on top of the eframe device (preview) or headless
+//! (export/kt-cli). Implements kt_engine::VideoGpuExec; kt-engine does NOT depend on
+//! this crate: the executor is injected from above (kt-app,
+//! kt-cli). The CPU path of kt-fx/kt-engine remains the byte reference;
+//! GPU-vs-CPU conformance is tests/parity.rs (tolerances, t181/t182/t183).
 
 mod context;
 mod engine;
@@ -12,18 +12,18 @@ mod pool;
 pub use context::{GpuContext, GpuInitError};
 pub use engine::GpuFxEngine;
 
-/// Единая методика сравнения кадров GPU-vs-CPU (Р.29): ad-hoc epsilon в
-/// тестах запрещены — только этот хелпер.
+/// A single method of comparing GPU-vs-CPU frames (R.29): ad-hoc epsilons in
+/// tests are forbidden; only this helper is used.
 #[derive(Clone, Copy)]
 pub struct FrameTol {
-    /// |Δ| ≤ max_lsb для «обычных» пикселей.
+    /// |Δ| ≤ max_lsb for “ordinary” pixels.
     pub max_lsb: u32,
-    /// Доля пикселей, которым разрешено превысить max_lsb.
+    /// The share of pixels allowed to exceed max_lsb.
     pub outlier_frac: f64,
-    /// Потолок |Δ| даже для выбросов (255 = без ограничения — пороговые
-    /// эффекты флипают 0↔255 у границы порога).
+    /// A ceiling of |Δ| even for outliers (255 = no limit: threshold
+    /// effects flip 0↔255 at the threshold edge).
     pub outlier_max: u32,
-    /// Средний |Δ| по всем каналам.
+    /// Mean |Δ| over all channels.
     pub mean_lsb: f64,
 }
 
@@ -34,19 +34,19 @@ impl FrameTol {
         FrameTol { max_lsb: 2, outlier_frac: 0.001, outlier_max: 4, mean_lsb: 0.5 };
     pub const THRESHOLD: FrameTol =
         FrameTol { max_lsb: 2, outlier_frac: 0.005, outlier_max: 255, mean_lsb: 1.0 };
-    /// Слитые гео-серии с Pan3d (Р.44): внутри квада — билинейная точность;
-    /// СИЛУЭТ (границы квада, тест w≤0) решается f32-предикатами против f64.
-    /// Замер (lavapipe, t181 geo3d + t187 + t301): worst |Δ| = 1–2 LSB,
-    /// доля |Δ|=1 до 6.2 %, mean ≤ 0.07, выбросов НЕТ ВОВСЕ — предикаты
-    /// сошлись на всех пикселях. Бюджет outlier'ов оставлен на драйверы с
-    /// FMA-контракцией предикатов (кросс-бэкенд битовость недостижима,
-    /// п.308): контурные пиксели там флипают на полную величину.
+    /// Merged geometry series with Pan3d (R.44): inside the quad, bilinear precision;
+    /// the SILHOUETTE (the quad boundaries, test w≤0) is decided by f32 predicates against f64.
+    /// Measurement (lavapipe, t181 geo3d + t187 + t301): worst |Δ| = 1–2 LSB,
+    /// share of |Δ|=1 up to 6.2 %, mean ≤ 0.07, NO outliers AT ALL: the predicates
+    /// agreed on all pixels. The outlier budget is left for drivers with FMA
+    /// contraction of predicates (cross-backend bit-exactness is unreachable,
+    /// item 308): contour pixels there flip by the full amount.
     pub const GEOM: FrameTol =
         FrameTol { max_lsb: 2, outlier_frac: 0.002, outlier_max: 255, mean_lsb: 0.5 };
 }
 
-/// Панихида по расхождению: где, сколько, гистограмма. Паникует при
-/// нарушении допуска.
+/// A post-mortem of the divergence: where, how many, a histogram. It panics on
+/// a tolerance violation.
 pub fn assert_frames_close(cpu: &[u8], gpu: &[u8], w: u32, h: u32, tol: FrameTol, label: &str) {
     assert_eq!(cpu.len(), gpu.len(), "{label}: buffer sizes differ");
     assert_eq!(cpu.len(), (w * h * 4) as usize, "{label}: size {w}x{h}");
@@ -97,14 +97,14 @@ pub fn assert_frames_close(cpu: &[u8], gpu: &[u8], w: u32, h: u32, tol: FrameTol
     );
 }
 
-/// Адаптер для тестов: skip с печатью, если wgpu-адаптера НЕТ;
-/// `KT_REQUIRE_GPU=1` превращает и этот пропуск в провал (калька
-/// KT_REQUIRE_CROSS_RENDER). lavapipe/llvmpipe — полноценный адаптер.
+/// Adapter for tests: skip with a printout if there is NO wgpu adapter;
+/// `KT_REQUIRE_GPU=1` turns this skip into a failure too (a copy of
+/// KT_REQUIRE_CROSS_RENDER). lavapipe/llvmpipe is a full-fledged adapter.
 ///
-/// Адаптер ЕСТЬ, а движок не собрался (шейдер/пайплайн) — это ВСЕГДА
-/// провал, не skip: урок Р.31 — сломанный layout Pan3d ронял создание
-/// движка целиком, а тесты вакуумно зеленели через «skip без адаптера»
-/// и дефект доехал до машины пользователя.
+/// An adapter IS there, but the engine did not build (shader/pipeline): this is ALWAYS
+/// a failure, not a skip. A lesson of R.31: a broken Pan3d layout dropped the
+/// creation of the engine as a whole, and the tests turned vacuously green via “skip without adapter”
+/// and the defect reached the user’s machine.
 pub fn test_engine() -> Option<std::sync::Arc<GpuFxEngine>> {
     let ctx = match GpuContext::new_headless() {
         Ok(c) => c,

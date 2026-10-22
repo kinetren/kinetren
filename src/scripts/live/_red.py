@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""ПОДСТАВНОЙ сценарий для t801: красный ВСЕГДА (см. `_flaky.py`)."""
+"""STUB scenario for t801: red ALWAYS (see `_flaky.py`)."""
 import os
 import sys
 
 OWN_PROCESS = True
-# программы этот сценарий не запускает — X-сервер ему не нужен
+# this scenario does not launch the program — it does not need an X server
 NO_DISPLAY = True
 
 
 def main(out):
     os.makedirs(out, exist_ok=True)
-    print("   ПРОВАЛ подставной сценарий красный всегда")
+    print("   FAIL stub scenario red always")
     return 1
 
 

@@ -1,6 +1,6 @@
-//! Тесты 27-28 (docs/porting-notes.md, пп.19-20): видео-кэш не «встаёт»
-//! под потоком Playback-запросов, EOF-ключи не декодируются повторно,
-//! coverage со span'ом даёт честные полосы.
+//! Tests 27-28 (docs/porting-notes.md, items 19-20): the video cache does not “stall”
+//! under a stream of Playback requests, EOF keys are not re-decoded,
+//! coverage with a span gives honest strips.
 
 use kt_cache::{BurstCache, BurstKind, CacheConfig};
 use kt_engine::{DecodeRequest, MediaWorker, Priority, RequestKind, source_id};
@@ -14,18 +14,18 @@ use std::sync::atomic::Ordering::Relaxed;
 const STEP: i64 = TICK_HZ / 30;
 const Q: Quality = Quality { width: 64, height: 36 };
 
-/// Тест 27 (п.19): «медленный 4К» + постоянный поток Playback-запросов
-/// текущего кадра (имитация неполного превью). Раньше Playback-одиночки
-/// вырождали спаны в «один кадр за раз» и покрытие переставало расти.
+/// Test 27 (item 19): “slow 4K” + a constant stream of Playback requests for the
+/// current frame (imitating an incomplete preview). Previously Playback singles
+/// degraded spans into “one frame at a time” and the coverage stopped growing.
 #[test]
 fn t27_span_absorbs_prefetch_tail_under_playback_stream() {
     let cache = Arc::new(BurstCache::new(CacheConfig::default()));
     let stats = Arc::new(SyntheticStats::default());
     let src = SyntheticSource::with_stats(Tick(90_000 * 60), AudioPattern::Silence, stats.clone())
-        .with_video_delay(std::time::Duration::from_millis(8)); // декод дольше «кадра» эмуляции
+        .with_video_delay(std::time::Duration::from_millis(8)); // a decode longer than the emulated “frame”
     let worker = MediaWorker::spawn(MediaId(1), Box::new(src), cache.clone());
 
-    let total: i64 = 90; // 3 c сетки 30 fps
+    let total: i64 = 90; // 3 s of a 30 fps grid
     let t0 = std::time::Instant::now();
     let covered = |cache: &BurstCache| -> i64 {
         cache
@@ -36,8 +36,8 @@ fn t27_span_absorbs_prefetch_tail_under_playback_stream() {
     };
 
     let mut mid_covered = None;
-    // эмулятор: playhead ползёт по «реальному времени» (25 мс/кадр), Playback
-    // на текущий кадр (если не в кэше), NearPrefetch-проход раз в ~100 мс
+    // emulator: the playhead creeps along “real time” (25 ms/frame), Playback
+    // for the current frame (if not in the cache), a NearPrefetch pass once per ~100 ms
     let mut last_prefetch = std::time::Instant::now() - std::time::Duration::from_secs(1);
     loop {
         let el = t0.elapsed();
@@ -63,27 +63,27 @@ fn t27_span_absorbs_prefetch_tail_under_playback_stream() {
         }
         let c = covered(&cache);
         if c >= total / 2 && mid_covered.is_none() {
-            mid_covered = Some(el); // момент половины покрытия
+            mid_covered = Some(el); // the moment of half coverage
         }
         if c >= total {
             break;
         }
         assert!(
             el < std::time::Duration::from_secs(15),
-            "покрытие встало: {}/{total} кадров (стагнация п.19)",
+            "coverage stalled: {}/{total} frames (stagnation item 19)",
             covered(&cache)
         );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    // прогресс непрерывный: половина покрыта задолго до конца
-    let mid_at = mid_covered.expect("половина покрытия должна была случиться");
-    assert!(mid_at < t0.elapsed(), "половина покрытия обязана прийти раньше полного ({mid_at:?})");
-    // каждый кадр декодирован ровно один раз
-    assert_eq!(stats.video_reads.load(Relaxed), total as u64, "без повторных декодов");
+    // progress is continuous: half is covered long before the end
+    let mid_at = mid_covered.expect("half of the coverage had to happen");
+    assert!(mid_at < t0.elapsed(), "half of the coverage must arrive before the full one ({mid_at:?})");
+    // each frame is decoded exactly once
+    assert_eq!(stats.video_reads.load(Relaxed), total as u64, "without repeated decodes");
     worker.shutdown();
 }
 
-/// Тест 27 (п.19г): ключи за EOF не передекодируются вечно.
+/// Test 27 (item 19g): keys beyond EOF are not re-decoded forever.
 #[test]
 fn t27_failed_keys_are_not_redecoded() {
     let cache = Arc::new(BurstCache::new(CacheConfig::default()));
@@ -92,7 +92,7 @@ fn t27_failed_keys_are_not_redecoded() {
         .with_video_eof();
     let worker = MediaWorker::spawn(MediaId(1), Box::new(src), cache.clone());
 
-    let beyond = Tick(90_000 * 10); // далеко за EOF
+    let beyond = Tick(90_000 * 10); // far beyond EOF
     for _ in 0..5 {
         worker.submit(DecodeRequest {
             kind: RequestKind::video_on_grid(beyond, Some(Q), STEP),
@@ -107,14 +107,14 @@ fn t27_failed_keys_are_not_redecoded() {
     }
     assert!(
         stats.video_reads.load(Relaxed) <= 1,
-        "EOF-ключ декодируется максимум один раз, было {}",
+        "the EOF key is decoded at most once, was {}",
         stats.video_reads.load(Relaxed)
     );
     worker.shutdown();
 }
 
-/// Тест 28 (п.20): воркер вставляет coverage полосой по шагу сетки —
-/// весь прогнанный диапазон = ОДИН непрерывный run.
+/// Test 28 (item 20): the worker inserts coverage as a strip at the grid step —
+/// the whole run range = ONE continuous run.
 #[test]
 fn t28_worker_inserts_grid_span_coverage() {
     let cache = Arc::new(BurstCache::new(CacheConfig::default()));
@@ -134,33 +134,33 @@ fn t28_worker_inserts_grid_span_coverage() {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     let cov = cache.coverage(source_id(MediaId(1)), BurstKind::video(Some(Q)), 0..n * STEP);
-    assert_eq!(cov, vec![0..n * STEP], "полоса должна быть непрерывной: {cov:?}");
+    assert_eq!(cov, vec![0..n * STEP], "the bar must be continuous: {cov:?}");
     worker.shutdown();
 }
 
-/// Тест 758 (Р.63 п.13): после ПРЫЖКА звук не ждёт видео.
+/// Test 758 (R.63 item 13): after a JUMP the sound does not wait for the video.
 ///
-/// Жалоба владельца: «я просто прыгнул на участок с одним длинным
-/// событием… но это не повод так долго подгружать видео с такими
-/// underruns». По флайт-логу каждый прыжок в файл 870 с давал секунды
-/// полной тишины, при том что офлайн-цена рендера того же места — 2 %
-/// реального времени: звук стоял в очереди ЗА кадрами того же воркера.
+/// The owner's complaint: “I just jumped to a section with one long
+/// event… but that is no reason to load the video for so long with such
+/// underruns”. From the flight log every jump into a 870 s file gave seconds of
+/// full silence, even though the offline cost of rendering the same place is 2 %
+/// of real time: the sound stood in the queue BEHIND the frames of the same worker.
 ///
-/// Утверждается СЛЕДСТВИЕ: на прыжке первые аудио-бёрсты обслужены раньше
-/// видео, то есть звук успевает к дедлайну, а видео догоняет само.
+/// What is asserted is a CONSEQUENCE: on a jump the first audio bursts are served before the
+/// video, that is, the sound makes the deadline and the video catches up on its own.
 #[test]
 fn t758_audio_is_served_before_video_after_a_seek() {
     let cache = Arc::new(BurstCache::new(CacheConfig::default()));
     let stats = Arc::new(SyntheticStats::default());
-    // «медленный 1080p»: кадр дороже бёрста аудио — ровно как H.264 у
-    // владельца против дешёвого декода Opus
+    // “slow 1080p”: a frame costs more than an audio burst — exactly like the owner's H.264
+    // against the cheap Opus decode
     let src = SyntheticSource::with_stats(Tick(90_000 * 900), AudioPattern::Ramp, stats.clone())
         .with_video_delay(std::time::Duration::from_millis(12));
     let worker = MediaWorker::spawn(MediaId(1), Box::new(src), cache.clone());
 
-    // ПРЫЖОК в хвост: префетч видео уже заказал окно вокруг новой точки и
-    // воркер УЖЕ НАЧАЛ его декодировать — именно в эту дыру и попадает
-    // звук воспроизведения (спан не смотрел в очередь до самого конца)
+    // A JUMP to the tail: the video prefetch has already requested the window around the new point, and
+    // the worker has ALREADY STARTED decoding it — and it is into this gap that the playback sound falls
+    // (the span did not look into the queue until the very end)
     let jump_tick = 800 * TICK_HZ;
     let first_burst = jump_tick / kt_time::AUDIO_BURST_TICKS;
     for i in 0..64i64 {
@@ -170,7 +170,7 @@ fn t758_audio_is_served_before_video_after_a_seek() {
             generation: 0,
         });
     }
-    // даём воркеру войти в спан (один кадр = 12 мс)
+    // let the worker enter the span (one frame = 12 ms)
     std::thread::sleep(std::time::Duration::from_millis(30));
     for i in 0..8i64 {
         worker.submit(DecodeRequest {
@@ -180,10 +180,10 @@ fn t758_audio_is_served_before_video_after_a_seek() {
         });
     }
 
-    // Звук обязан появиться БЫСТРО: восемь бёрстов — это 170 мс материала,
-    // и ждать их дольше, чем они звучат, значит гарантированно молчать.
-    // Мерка — кольцо вывода (около 85 мс): всё, что дольше, слышно тишиной.
-    // Спан здесь 64 кадра по 12 мс = 768 мс одним куском на прежнем коде.
+    // The sound must appear QUICKLY: eight bursts are 170 ms of material, and waiting for them
+    // longer than they sound guarantees silence.
+    // The yardstick is the output ring (about 85 ms): anything longer is heard as silence.
+    // The span here is 64 frames of 12 ms = 768 ms in one piece on the old code.
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
     let mut got = 0;
     while std::time::Instant::now() < deadline {
@@ -198,17 +198,17 @@ fn t758_audio_is_served_before_video_after_a_seek() {
     let vid = stats.video_reads.load(Relaxed);
     assert_eq!(
         got, 8,
-        "звук после прыжка не успел: прочитано {got} из 8 бёрстов, \
-         а видео-кадров за то же время — {vid} (звук ждёт видео)"
+        "audio after the jump did not keep up: read {got} of 8 bursts, \
+         while the video frames in the same time were {vid} (audio waits for video)"
     );
-    // и видео при этом не брошено — оно догоняет следом
+    // and the video is not abandoned at the same time — it catches up right behind
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(900);
     while std::time::Instant::now() < deadline && stats.video_reads.load(Relaxed) < 8 {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(
         stats.video_reads.load(Relaxed) >= 8,
-        "видео перестало догонять после того, как звук пропустили вперёд: кадров {}, звук {}",
+        "video stopped catching up after audio was let through ahead: frames {}, audio {}",
         stats.video_reads.load(Relaxed),
         stats.audio_reads.load(Relaxed)
     );

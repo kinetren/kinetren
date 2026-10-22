@@ -1,4 +1,4 @@
-//! Тесты 416-417 (Р.49 Б9): команда синхронизации по звуку.
+//! Tests 416-417 (R.49 B9): the sync-by-sound command.
 
 use kt_model::*;
 use kt_time::Tick;
@@ -53,47 +53,47 @@ fn scene(source_in_b: Tick, start_b: Tick, reversed_b: bool) -> Project {
     scene_at(Tick(180_000), source_in_b, start_b, reversed_b)
 }
 
-/// Тест 416 (Р.49 Б9): сдвиг применяется так, что материалы совмещаются, и
-/// учитывает подрезанное начало каждого события.
+/// Test 416 (R.49 B9): the shift is applied so that the materials line up, and
+/// takes into account the trimmed start of each event.
 #[test]
 fn t416_sync_aligns_the_material_not_the_clip_edges() {
-    // B входит в свой материал с другой точки и стоит не там
+    // B enters its material from another point and stands not there
     let p = scene(Tick(45_000), Tick(600_000), false);
-    // «материал B отстаёт от материала A на 0.2 с»
+    // “material B lags behind material A by 0.2 s”
     let off = Tick(18_000);
     let ops::SyncPlan::Move(cmds) = ops::sync_by_audio_commands(&p, ClipId(1), ClipId(2), off)
     else {
-        panic!("ожидался перенос");
+        panic!("a move was expected");
     };
-    assert_eq!(cmds.len(), 1, "ожидалась одна команда переноса: {cmds:?}");
+    assert_eq!(cmds.len(), 1, "one move command was expected: {cmds:?}");
     let mut m = TimelineModel::new(p.clone());
-    m.apply_batch(cmds).expect("перенос");
+    m.apply_batch(cmds).expect("move");
     let b = m.project().clips.iter().find(|c| c.id == ClipId(2)).unwrap().clone();
 
-    // проверяем СЛЕДСТВИЕ: момент реального мира, стоящий в начале A,
-    // теперь стоит там же и у B
+    // we check the CONSEQUENCE: the real-world moment at the start of A
+    // now stands in the same place for B too
     let step = 90_000 / 30;
     let mat_a =
         clip_material_at(Tick(90_000), Tick(180_000), Tick(900_000), false, step, Tick(180_000));
     let mat_b = Tick(mat_a.0 + off.0);
     let at_b = clip_timeline_at(b.source_in, b.start, b.duration, b.reversed, step, mat_b);
-    assert_eq!(at_b.0, 180_000, "материалы не совместились: момент B встал в {}", at_b.0);
+    assert_eq!(at_b.0, 180_000, "materials did not align: moment B landed at {}", at_b.0);
 
-    // повтор ничего не двигает: уже совмещено
+    // a repeat moves nothing: already aligned
     let again = ops::sync_by_audio_commands(m.project(), ClipId(1), ClipId(2), off);
     assert_eq!(
         again,
         ops::SyncPlan::AlreadyAligned,
-        "повторная синхронизация двигает уже совмещённое: {again:?}"
+        "repeated sync moves what is already aligned: {again:?}"
     );
 }
 
-/// Тест 417 (Р.49 Б9): синхронизация НЕ тримит и НЕ линкует.
+/// Test 417 (R.49 B9): sync does NOT trim and does NOT link.
 ///
-/// Она отвечает на вопрос «где», а не «как долго» и не «вместе ли»: магнит
-/// подрезает соседа — это его свойство, а link-группа — отдельное решение
-/// монтажёра. И реверс она обязана понимать: у перевёрнутого события
-/// материал идёт назад, и своя арифметика по `source_in` тут уехала бы.
+/// It answers the question “where”, not “how long” or “together or not”: a magnet
+/// trims the neighbour — that is its property, while a link group is a separate decision
+/// of the editor. And it must understand reverse: for a reversed event
+/// the material runs backward, and its own arithmetic by `source_in` would have gone off here.
 #[test]
 fn t417_sync_only_moves_and_understands_reverse() {
     let p = scene(Tick(45_000), Tick(600_000), false);
@@ -101,33 +101,33 @@ fn t417_sync_only_moves_and_understands_reverse() {
     let ops::SyncPlan::Move(cmds) =
         ops::sync_by_audio_commands(&p, ClipId(1), ClipId(2), Tick(18_000))
     else {
-        panic!("ожидался перенос");
+        panic!("a move was expected");
     };
     for c in &cmds {
         assert!(
             matches!(c, Command::MoveClip { .. }),
-            "синхронизация выдала команду не переноса: {c:?}"
+            "sync issued a command that is not a move: {c:?}"
         );
     }
     let mut m = TimelineModel::new(p);
     m.apply_batch(cmds).unwrap();
     let after = m.project().clips.iter().find(|c| c.id == ClipId(2)).unwrap().clone();
-    assert_eq!(after.duration, before.duration, "синхронизация подрезала событие");
-    assert_eq!(after.source_in, before.source_in, "синхронизация сдвинула точку входа");
-    assert_eq!(after.link_group, before.link_group, "синхронизация связала события");
-    assert_eq!(after.lane, before.lane, "синхронизация переставила дорожку");
+    assert_eq!(after.duration, before.duration, "sync trimmed the event");
+    assert_eq!(after.source_in, before.source_in, "sync shifted the entry point");
+    assert_eq!(after.link_group, before.link_group, "sync linked the events");
+    assert_eq!(after.lane, before.lane, "sync reordered the track");
 
-    // РЕВЕРС: то же следствие на перевёрнутом событии. Событие стоит
-    // ПОЗЖЕ: у перевёрнутого начало материала показывается в конце, и
-    // совмещение тянет его назад почти на всю длину.
-    // у перевёрнутого события начало материала показывается в КОНЦЕ, и
-    // совмещение тянет его назад почти на всю длину — значит цель обязана
-    // стоять не в самом начале проекта, иначе места не хватит (t417b)
+    // REVERSE: the same consequence on a reversed event. The event stands
+    // LATER: on a reversed one the start of the material is shown at the end, and
+    // alignment drags it back almost the whole length.
+    // on a reversed event the start of the material is shown at the END, and
+    // alignment drags it back almost the whole length — so the target must
+    // not stand at the very start of the project, otherwise there is not enough room (t417b)
     let p = scene_at(Tick(900_000), Tick(45_000), Tick(2_500_000), true);
     let off = Tick(18_000);
     let ops::SyncPlan::Move(cmds) = ops::sync_by_audio_commands(&p, ClipId(1), ClipId(2), off)
     else {
-        panic!("ожидался перенос на реверсе");
+        panic!("a move on reverse was expected");
     };
     let mut m = TimelineModel::new(p);
     m.apply_batch(cmds).unwrap();
@@ -137,12 +137,12 @@ fn t417_sync_only_moves_and_understands_reverse() {
         clip_material_at(Tick(90_000), Tick(900_000), Tick(900_000), false, step, Tick(900_000));
     let at_b =
         clip_timeline_at(b.source_in, b.start, b.duration, b.reversed, step, Tick(mat_a.0 + off.0));
-    assert_eq!(at_b.0, 900_000, "на реверсе материалы не совместились: {}", at_b.0);
+    assert_eq!(at_b.0, 900_000, "on reverse the materials did not align: {}", at_b.0);
 }
 
-/// Совмещение, уводящее событие за начало проекта, — ОТКАЗ, а не кламп.
-/// Прижатое к нулю событие выглядит как успешно синхронизированное, а
-/// материалы при этом остаются вразнобой.
+/// Alignment that pushes an event past the start of the project is a REJECTION, not a clamp.
+/// An event pinned to zero looks successfully synchronized, while
+/// the materials stay out of step.
 #[test]
 fn t417b_sync_refuses_instead_of_clamping_to_zero() {
     let p = scene(Tick(45_000), Tick(600_000), true);
@@ -150,6 +150,6 @@ fn t417b_sync_refuses_instead_of_clamping_to_zero() {
     assert_eq!(
         r,
         ops::SyncPlan::OutOfRange,
-        "совмещение за начало проекта прижато к нулю и выдано за успех: {r:?}"
+        "alignment at the start of the project was pinned to zero and reported as success: {r:?}"
     );
 }

@@ -1,31 +1,31 @@
-//! Единый виджет автоматизации (Р.33 С3).
+//! A single automation widget (R.33 C3).
 //!
-//! Требование пользователя дословно: «Хотелось бы унифицированный виджет
-//! управления автоматизацией, и чтобы можно было переключаться
-//! график<->таблица-список… График хотелось бы удобный как таймлайн
-//! проекта сделать (переиспользовать код виджета). А в текущем
-//! таблице-списке нужно несколько параметров на строку иметь а не по
-//! одной, и перемещать их мышкой (причем сейчас есть дебильность —
-//! программа вроде сбрасывает/сортирует рядом стоящие значения если я
-//! ввиду после t=1.0 следующей строчкой t=0.5)… Ну и превью не хватает
-//! там, гадаешь не пойми как по нормализованному времени, а можно было бы
-//! сделать так, что курсор внутри мини-таймлайна двигает курсор в
-//! основном таймлайне… Естественно надо и реверсирование учитывать и
-//! скорость».
+//! The user's requirement, verbatim: “I would like a unified automation
+//! widget, and to be able to switch between
+//! graph<->list table… The graph should be as convenient as the project
+//! timeline (reuse the widget code). And in the current
+//! list table you need several parameters per row instead of one,
+//! and they should be movable with the mouse (right now there is a stupidity —
+//! the program seems to reset/sort neighbouring values if I
+//! enter t=0.5 on the line after t=1.0)… And the preview is missing:
+//! you guess blindly from normalised time, but it could be done so that
+//! the cursor inside the mini-timeline moves the cursor in the
+//! main timeline… Of course reverse playback has to be taken into account
+//! as well as speed.”
 //!
-//! Поэтому здесь: ОДИН виджет на все кривые слота, линейка и снап из
-//! таймлайна проекта, ключи в секундах материала (доля клипа — второй
-//! строкой, не нагромождая), таблица со всеми параметрами в строке и
-//! сортировкой ТОЛЬКО на отпускании, мини-таймлайн, двигающий главный
-//! курсор.
+//! So here: ONE widget for all curves of the slot, a ruler and snap from the
+//! project timeline, keys in seconds of material (the clip fraction — on a second
+//! line, without clutter), a table with all parameters on the row and
+//! sorting ONLY on release, a mini-timeline that moves the main
+//! cursor.
 
 use crate::i18n::{k, tr};
 use eframe::egui;
 use kt_model::{ClipEvent, FxInstance, HasParams, ParamCurve, ParamSpec};
 use kt_time::Tick;
 
-/// Радиус хвата ключа. Шире рисунка (правило 1 чек-листа): в ромбик
-/// радиусом 4.5 px целиться не должно быть нужно.
+/// The key grab radius. Wider than the drawing (rule 1 of the checklist): one should not need
+/// to aim at a diamond with a 4.5 px radius.
 const KEY_GRAB_PX: f32 = 9.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -35,116 +35,116 @@ pub enum AutoMode {
     Table,
 }
 
-/// Состояние виджета (живёт в окне, не в модели).
+/// Widget state (lives in the window, not in the model).
 ///
-/// Замка среди полей больше нет: он один на всю программу и живёт в
-/// `UiState` (Р.40 п.15) — окно его только читает через `AutoCtx`.
-/// Во что целится правый клик по графику (Р.63 п.5).
+/// There is no lock among the fields any more: there is one for the whole program and it lives in
+/// `UiState` (R.40 item 15) — the window only reads it via `AutoCtx`.
+/// What the right-click on the graph aims at (R.63 item 5).
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum MenuTarget {
-    /// Ключ (кривая, индекс).
+    /// Key (curve, index).
     Key(usize, usize),
-    /// Участок между ключами `ki` и `ki+1` кривой `ci`: форма живёт на
-    /// ЛЕВОМ ключе отрезка.
+    /// The segment between keys `ki` and `ki+1` of curve `ci`: the shape lives on
+    /// the LEFT key of the segment.
     Segment(usize, usize),
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct AutoView {
     pub mode: AutoMode,
-    /// Выбранный ключ: (кривая, индекс).
+    /// Selected key: (curve, index).
     pub sel: Option<(usize, usize)>,
-    /// Ключ под мышью во время драга.
+    /// Key under the mouse during a drag.
     pub drag: Option<(usize, usize)>,
-    /// Кривая, в которую кладёт ключ клик по пустому месту графика.
+    /// The curve into which a click on an empty spot of the graph puts a key.
     pub active: usize,
-    /// Собственное окно оси (домен кривой), когда замок снят.
+    /// Own axis window (the curve's domain) when the lock is off.
     pub win: Option<(i64, i64)>,
-    /// Незакоммиченный ввод времени в таблице: (кривая, ключ, секунды).
-    /// Пока строка редактируется, ключи НЕ пересортировываются — иначе
-    /// строка уезжает из-под рук на каждой цифре.
+    /// Uncommitted time input in the table: (curve, key, seconds).
+    /// While a row is being edited, the keys are NOT re-sorted — otherwise
+    /// the row slides out from under the fingers on every digit.
     pub t_edit: Option<(usize, usize, f64)>,
-    /// Экранные позиции ключей ПОСЛЕДНЕЙ отрисовки: (кривая, ключ, точка).
+    /// Screen positions of keys from the LAST draw: (curve, key, point).
     ///
-    /// Рисунок и щуп — из одного места правды (Р.49, п.364). До этого
-    /// раунда хит-тест жил внутри цикла отрисовки и срабатывал только на
-    /// `interact_pointer_pos` — то есть при НАЖАТОЙ кнопке. Поэтому ключ
-    /// молчал и на наведение, и на правую кнопку: подсказки не было, меню
-    /// не было, а «ПКМ удаляет» не завели намеренно — удаление и так есть
-    /// двумя путями, а destructive правая кнопка обесценила бы обещание
-    /// «правой кнопкой можно пробовать безопасно» во всех остальных местах.
+    /// The drawing and the probe come from one place of truth (R.49, item 364). Before this
+    /// round the hit test lived inside the draw loop and fired only on
+    /// `interact_pointer_pos` — that is, with the button PRESSED. So the key
+    /// stayed silent both on hover and on the right button: there was no hint, no menu,
+    /// and “RMB deletes” was not introduced on purpose — deletion already exists
+    /// by two paths, and a destructive right button would devalue the promise that
+    /// “the right button is safe to try” everywhere else.
     ///
-    /// Буфер ПЕРЕИСПОЛЬЗУЕТСЯ (`clear`, не `Vec::new`): инвариант 12 —
-    /// в draw-путях на кадр не аллоцируем.
+    /// The buffer is REUSED (`clear`, not `Vec::new`): invariant 12 —
+    /// we do not allocate per frame in the draw paths.
     pub key_marks: Vec<(usize, usize, egui::Pos2)>,
-    /// Замороженное окно значений тянущейся кривой: (кривая, lo, hi).
-    /// Без заморозки шкала пересчитывалась бы по самим же ключам и
-    /// «дышала» под курсором.
+    /// The frozen value window of the curve being pulled: (curve, lo, hi).
+    /// Without freezing, the scale would be recomputed from the same keys and
+    /// would “breathe” under the cursor.
     pub drag_win: Option<(usize, f64, f64)>,
-    /// ЦЕЛЬ ПРАВОГО КЛИКА, пока меню открыто (Р.63 п.5): либо ключ, либо
-    /// участок между двумя ключами.
+    /// TARGET OF THE RIGHT CLICK while the menu is open (R.63 item 5): either the key or
+    /// the segment between two keys.
     ///
-    /// До этого и ключ, и участок считались от `hover_pos()` КАЖДЫЙ КАДР,
-    /// а содержимое `context_menu` перерисовывается каждый кадр: указатель
-    /// ушёл к пунктам — попадание пропало — меню закрылось само.
-    /// «Контекстное меню просто пропадает, я не успеваю дотянуться до
-    /// него» (владелец, Р.63 п.5).
+    /// Before this, both the key and the segment were computed from `hover_pos()` EVERY FRAME,
+    /// while the `context_menu` contents are redrawn every frame: the pointer
+    /// moved to the items — the hit was lost — and the menu closed by itself.
+    /// “The context menu just disappears, I don't have time to reach
+    /// it” (the owner, R.63 item 5).
     pub menu_target: Option<MenuTarget>,
-    /// НАБИРАЕМЫЙ текст формулы: (кривая, текст). Р.63 п.3.
+    /// TYPED formula text: (curve, text). R.63 item 3.
     ///
-    /// Поле держит свой текст между кадрами и отдаёт его модели ТОЛЬКО по
-    /// подтверждению (Enter или уход фокуса). До этого текст читался из
-    /// модели каждый кадр и применялся по первой же законной приставке:
-    /// набор `sin(t)` умирал на `sin(` («стирает формулу»), а первая буква
-    /// `t` законна сама по себе — она немедленно применялась и обнуляла
-    /// ключи кривой («либо нихера не происходит»). Владелец, Р.63 п.3.
+    /// The field holds its own text between frames and gives it to the model ONLY on
+    /// confirmation (Enter or focus loss). Before this, the text was read from the
+    /// model every frame and applied at the first legal prefix:
+    /// typing `sin(t)` died at `sin(` (“erases the formula”), while the first letter
+    /// `t` is legal by itself — it was applied at once and zeroed the keys of the curve
+    /// (“either nothing happens at all”). The owner, R.63 item 3.
     pub formula: Option<(usize, String)>,
-    /// НАБИРАЕМЫЙ текст формулы ОТРЕЗКА: (кривая, ключ, текст) — Р.67.
+    /// TYPED formula text of the SEGMENT: (curve, key, text) — R.67.
     pub seg_formula: Option<(usize, usize, String)>,
-    /// Участок, выбранный правым кликом (кривая, левый ключ): у него в
-    /// блоке показывается поле формулы отрезка.
+    /// The segment selected by a right click (curve, left key): its block shows the
+    /// segment formula field.
     pub sel_seg: Option<(usize, usize)>,
-    /// Участок под указателем — у него рисуется ручка параметра формы.
+    /// The segment under the pointer — its shape-parameter handle is drawn.
     pub hover_seg: Option<(usize, usize)>,
-    /// Драг РУЧКИ ПАРАМЕТРА формы участка (Р.67): вертикаль — главный
-    /// параметр (натяжение/амплитуда), Shift+горизонталь — периоды.
+    /// Drag of the shape-PARAMETER HANDLE of the segment (R.67): vertical — the main
+    /// parameter (tension/amplitude), Shift+horizontal — periods.
     pub shape_drag: Option<ShapeDrag>,
-    /// Экранные середины участков активной кривой ПОСЛЕДНЕЙ отрисовки:
-    /// (ключ, точка) — щуп ручки по нарисованному, как у ключей.
+    /// Screen midpoints of the segments of the active curve from the LAST draw:
+    /// (key, point) — the probe of the handle by what is drawn, as for keys.
     pub seg_marks: Vec<(usize, egui::Pos2)>,
 }
 
-/// Драг ручки параметра формы (Р.67).
+/// Drag of the shape-parameter handle (R.67).
 #[derive(Debug, Clone, Copy)]
 pub struct ShapeDrag {
     pub ci: usize,
     pub ki: usize,
     pub from: egui::Pos2,
     pub shape0: kt_model::SegShape,
-    /// Окно значений в момент захвата: амплитуда тянется в единицах оси.
+    /// Value window at the moment of capture: the amplitude is pulled in axis units.
     pub span: f64,
     pub plot_h: f32,
 }
 
-/// Событие ленты как цель связи (Р.67): подпись, «это моё событие» и
-/// свойства — (адрес `LinkPath`, подпись).
+/// A timeline event as a link target (R.67): the caption, “this is mine” and the
+/// properties — (`LinkPath` address, caption).
 pub struct LinkEvent {
     pub label: String,
     pub this: bool,
     pub params: Vec<(String, String)>,
 }
 
-/// Хват ручки параметра формы — шире рисунка (правило 1).
+/// The grab of the shape-parameter handle — wider than the drawing (rule 1).
 const SEG_GRAB_PX: f32 = 14.0;
 
 impl AutoView {
-    /// Участок под точкой — по нарисованным серединам активной кривой.
+    /// The segment under the point — by the drawn midpoints of the active curve.
     pub fn seg_at(&self, pos: egui::Pos2) -> Option<usize> {
         self.seg_marks.iter().find(|(_, p)| (*p - pos).length() < SEG_GRAB_PX).map(|(ki, _)| *ki)
     }
 
-    /// Ключ под точкой. Один щуп на все каналы: нажатие, наведение и
-    /// правая кнопка спрашивают ОДНО И ТО ЖЕ.
+    /// The key under the point. One probe for all channels: press, hover and
+    /// the right button ask ONE AND THE SAME thing.
     pub fn key_at(&self, pos: egui::Pos2) -> Option<(usize, usize)> {
         self.key_marks
             .iter()
@@ -152,19 +152,19 @@ impl AutoView {
             .map(|(ci, ki, _)| (*ci, *ki))
     }
 
-    /// Видимое окно оси времени в домене кривой.
+    /// Visible window of the time axis in the curve's domain.
     ///
-    /// **Связанный график показывает окно таймлайна КАК ЕСТЬ** (Р.40).
-    /// Раньше оно клампилось диапазоном носителя — и в этом был дефект,
-    /// на который пожаловался пользователь: «когда я оттягиваю левый край
-    /// события — у меня ключи автоматизации тоже сдвигаются к началу».
-    /// Ключ НЕ двигался (`clip_slice` его не трогает, он остаётся на том
-    /// же кадре материала и в том же моменте таймлайна) — врала ОСЬ: она
-    /// нормировалась на событие, событие укорачивалось, и ключ переезжал,
-    /// скажем, с половины графика на треть. Чинится осью, а не данными.
+    /// **The linked graph shows the timeline window AS IS** (R.40).
+    /// Previously it was clamped to the range of the carrier — and that was the defect
+    /// the user complained about: “when I drag the left edge of an
+    /// event, my automation keys also shift toward the start.”
+    /// The key did NOT move (`clip_slice` does not touch it, it stays on the same
+    /// frame of the material and at the same moment of the timeline) — the AXIS was lying: it
+    /// was normalised to the event, the event got shorter, and the key moved,
+    /// say, from the middle of the graph to a third. It is fixed by the axis, not by the data.
     ///
-    /// Отвязанный график по-прежнему живёт своим окном, а без окна
-    /// показывает носитель целиком.
+    /// An unlinked graph still lives in its own window, and without a window
+    /// it shows the carrier in full.
     pub fn axis(&self, ctx: &AutoCtx<'_>) -> (i64, i64) {
         let (r0, r1) = (ctx.range.0.0, ctx.range.1.0.max(ctx.range.0.0 + 1));
         let (a, b) = match (ctx.linked, self.win) {
@@ -172,25 +172,25 @@ impl AutoView {
             (false, Some(w)) => (w.0.clamp(r0, r1), w.1.clamp(r0, r1)),
             (false, None) => (r0, r1),
         };
-        // окно уже кадра бессмысленно и делает деление на ноль
+        // a window narrower than one frame is meaningless and divides by zero
         if b - a < ctx.frame_step.max(1) { (r0, r1) } else { (a, b) }
     }
 }
 
-/// Вертикальная ось графика: как значение кладётся на высоту (Р.57, п.456).
+/// Vertical axis of the graph: how a value is placed on the height (R.57, item 456).
 ///
-/// Правило КЛАССА, а не имени параметра: знаковое ОТНОШЕНИЕ — это
-/// скорость, и её −32…32 на линейной оси делают обычную кривую 0.66…1.0
-/// прямой у самого края (та самая жалоба Р.34 про старый график slowed).
-/// Логарифм по модулю растягивает окрестность единицы и оставляет ноль
-/// нулём; внутри полосы ±knee ось линейна, иначе логарифм ушёл бы в −∞.
+/// A rule of the CLASS, not of the parameter name: a signed RATIO is
+/// a speed, and its −32…32 on a linear axis makes an ordinary curve 0.66…1.0
+/// a straight line at the very edge (the very complaint of R.34 about the old slowed graph).
+/// A logarithm of the absolute value stretches the neighbourhood of one and leaves zero
+/// as zero; inside the band ±knee the axis is linear, otherwise the logarithm would go to −∞.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Axis {
     Linear,
     SymLog { knee: f64 },
 }
 
-/// Ось параметра по его СПЕКЕ.
+/// Axis of the parameter by its SPEC.
 pub fn axis_of(spec: &ParamSpec) -> Axis {
     if spec.unit == kt_model::ParamUnit::Ratio && spec.min < 0.0 {
         Axis::SymLog { knee: 0.25 }
@@ -200,7 +200,7 @@ pub fn axis_of(spec: &ParamSpec) -> Axis {
 }
 
 impl Axis {
-    /// Значение → координата оси (нечётная, монотонная, непрерывная).
+    /// Value → axis coordinate (odd, monotonic, continuous).
     pub fn map(self, v: f64) -> f64 {
         match self {
             Axis::Linear => v,
@@ -212,7 +212,7 @@ impl Axis {
         }
     }
 
-    /// Обратно: координата оси → значение.
+    /// Back: axis coordinate → value.
     pub fn unmap(self, g: f64) -> f64 {
         match self {
             Axis::Linear => g,
@@ -225,8 +225,8 @@ impl Axis {
     }
 }
 
-/// Окно значений кривой: замороженное на время драга или посчитанное по
-/// её ключам.
+/// Value window of the curve: frozen for the duration of a drag or computed from
+/// its keys.
 fn win_of(c: &ParamCurve, spec: &ParamSpec, view: &AutoView, ci: usize) -> (f64, f64) {
     match view.drag_win {
         Some((i, lo, hi)) if i == ci => (lo, hi),
@@ -234,44 +234,44 @@ fn win_of(c: &ParamCurve, spec: &ParamSpec, view: &AutoView, ci: usize) -> (f64,
     }
 }
 
-/// Что виджету нужно знать о событии.
-/// Владелец кривых глазами виджета (Р.34 К1). Виджет больше НЕ знает про
-/// клип: ему нужны только спеки параметров, диапазон оси времени и
-/// перевод «позиция кривой ↔ тик таймлайна». Благодаря этому один и тот
-/// же виджет обслуживает слот эффекта, камеру и переход — иначе у каждого
-/// нового носителя параметров заводился бы свой редактор кейфреймов, а
-/// именно так и разъехались slowed с pan3d (п.221).
+/// What the widget needs to know about an event.
+/// The owner of the curves through the widget's eyes (R.34 K1). The widget no longer knows about the
+/// clip: it needs only the parameter specs, the time-axis range and the
+/// translation “curve position ↔ timeline tick”. Thanks to this the same
+/// widget serves an effect slot, a camera and a transition — otherwise every
+/// new carrier of parameters would get its own keyframe editor, and that is exactly how
+/// slowed and pan3d drifted apart (item 221).
 pub struct AutoCtx<'a> {
-    /// Спеки параметров носителя (min/max/шаг/единица).
+    /// Parameter specs of the carrier (min/max/step/unit).
     pub specs: &'a [ParamSpec],
-    /// ПОЛНЫЙ диапазон оси времени в домене кривой (границы носителя).
+    /// FULL range of the time axis in the curve's domain (the carrier's bounds).
     pub range: (Tick, Tick),
-    /// Окно ГЛАВНОГО таймлайна в домене кривой — то, что график
-    /// показывает при включённом замке (Р.38 п.14).
+    /// The window of the MAIN timeline in the curve's domain — what the graph
+    /// shows with the lock on (R.38 item 14).
     pub view: (Tick, Tick),
-    /// Замок оси. ОДИН НА ВСЮ ПРОГРАММУ и живёт в `UiState` (Р.40 п.15):
-    /// раньше он был полем `AutoView` и умирал вместе с окном. Виджет его
-    /// только ЧИТАЕТ, а просьбу переключить возвращает в `AutoResult` —
-    /// иначе одно окно молча правило бы состояние всех остальных.
+    /// The axis lock. ONE FOR THE WHOLE PROGRAM, living in `UiState` (R.40 item 15):
+    /// previously it was a field of `AutoView` and died together with the window. The widget
+    /// only READS it, and returns a request to toggle in `AutoResult` —
+    /// otherwise one window would silently rule the state of all the others.
     pub linked: bool,
-    /// Форма отрезка у НОВЫХ кривых (поле ПРОЕКТА, Р.61). Новый КЛЮЧ
-    /// форму наследует у отрезка, который делит, — умолчание нужно лишь
-    /// когда делить нечего.
+    /// The segment shape of NEW curves (a project field, R.61). A new KEY
+    /// inherits the shape from the segment it splits — the default is needed only
+    /// when there is nothing to split.
     pub default_shape: kt_model::SegShape,
-    /// Домен кривой → тик таймлайна (мини-таймлайн двигает главный курсор).
+    /// Curve domain → timeline tick (the mini-timeline moves the main cursor).
     pub to_timeline: &'a dyn Fn(Tick) -> Tick,
-    /// Тик таймлайна → домен кривой (позиция курсора на графике).
+    /// Timeline tick → curve domain (the cursor position on the graph).
     pub to_curve: &'a dyn Fn(Tick) -> Tick,
-    /// Шаг кадра проекта — им выравнивается позиция ключа.
+    /// Step of the project frame — the key position is aligned to it.
     pub frame_step: i64,
-    /// Цели связи «Ведётся…» (Р.67): события ленты и их свойства. `None`
-    /// — у носителя связи не бывает (переход, камера, патч морфера), и
-    /// мёртвого пункта в блоке не будет. Строится ПО НАЖАТИЮ, не на кадр.
+    /// “Driven by…” link targets (R.67): timeline events and their properties. `None`
+    /// — a carrier of a link never exists (transition, camera, morpher patch), and there
+    /// will be no dead item in the block. Built ON PRESS, not per frame.
     pub links: Option<&'a dyn Fn() -> Vec<LinkEvent>>,
 }
 
 impl AutoCtx<'_> {
-    /// Доля диапазона (вторая подпись времени: «секунды и проценты»).
+    /// Fraction of the range (the second time label: “seconds and percentages”).
     fn frac(&self, t: Tick) -> f64 {
         let span = (self.range.1.0 - self.range.0.0).max(1);
         ((t.0 - self.range.0.0) as f64 / span as f64).clamp(0.0, 1.0)
@@ -281,11 +281,11 @@ impl AutoCtx<'_> {
         self.specs.iter().find(|s| s.name == param)
     }
 
-    /// Подпись кривой. У встроенных рядов имя snake_case переводится
-    /// каталогом; у ДИНАМИЧЕСКОГО владельца (публичный параметр
-    /// композиции, завтра плагин) имя придумал АВТОР, в каталог оно
-    /// попасть не может — и лежит готовой подписью в `ParamSpec::label`
-    /// (Р.59). Виджет обязан рисовать её дословно, мимо `tr()` (t684).
+    /// Curve caption. Built-in series have their snake_case names translated by the
+    /// catalogue; for a DYNAMIC owner (a public parameter of a composition, a plugin tomorrow)
+    /// the name was made up by its AUTHOR and cannot get into the catalogue — it lies as a
+    /// ready-made caption in `ParamSpec::label`
+    /// (R.59). The widget must draw it verbatim, bypassing `tr()` (t684).
     pub(crate) fn label(&self, param: &str) -> String {
         match self.spec(param) {
             Some(s) if !s.label.is_empty() => s.label.to_string(),
@@ -294,16 +294,16 @@ impl AutoCtx<'_> {
     }
 }
 
-/// Окно главного таймлайна в домене кривой. Переводится ТЕМ ЖЕ
-/// отображением, что и всё остальное; у реверснутого носителя концы
-/// меняются местами — поэтому min/max, а не «первый-второй».
+/// Window of the main timeline in the curve's domain. It is translated by the SAME
+/// mapping as everything else; for a reversed carrier the ends swap
+/// places — hence min/max, not “first-second”.
 pub fn view_in_curve(to_curve: &dyn Fn(Tick) -> Tick, tl_view: (Tick, Tick)) -> (Tick, Tick) {
     let (a, b) = (to_curve(tl_view.0).0, to_curve(tl_view.1).0);
     (Tick(a.min(b)), Tick(a.max(b)))
 }
 
-/// Контекст для слота эффекта на событии — прежнее поведение виджета
-/// одной строкой (домен = материал клипа).
+/// Context for an effect slot on an event — the former behaviour of the widget
+/// in one line (domain = the clip's material).
 #[allow(clippy::too_many_arguments)]
 pub fn clip_ctx<'a>(
     clip: &'a ClipEvent,
@@ -329,9 +329,9 @@ pub fn clip_ctx<'a>(
     }
 }
 
-/// Цели связи для события `me` в документе (Р.67): каждое событие ленты
-/// и его числовые свойства — слоты цепочки и генератор — адресами
-/// `LinkPath`. Своё событие — первым и с адресом `self/…`.
+/// Link targets for the event `me` in the document (R.67): each timeline event
+/// and its numeric properties — chain slots and the generator — by `LinkPath`
+/// addresses. Its own event — first, with the address `self/…`.
 pub fn link_events(doc: &kt_model::Project, me: kt_model::ClipId) -> Vec<LinkEvent> {
     let mut out = Vec::new();
     let mut clips: Vec<&ClipEvent> = doc.clips.iter().collect();
@@ -370,29 +370,29 @@ pub fn link_events(doc: &kt_model::Project, me: kt_model::ClipId) -> Vec<LinkEve
 #[derive(Default)]
 pub struct AutoResult {
     pub changed: bool,
-    /// Отказ формулы (разбор, чужое имя) — ОШИБКОЙ в строку состояния
-    /// (правило 16), а не подсказкой на кадр: подсказка наведения тут же
-    /// перекрыла бы её текстом поля.
+    /// A formula rejection (parse error, a foreign name) — as an ERROR in the status line
+    /// (rule 16), not as a per-frame hint: a hover hint would immediately cover it
+    /// with the text of the field.
     pub error: Option<String>,
-    /// Куда двинуть ГЛАВНЫЙ курсор (жест по линейке мини-таймлайна).
+    /// Where to move the MAIN cursor (a gesture on the mini-timeline ruler).
     pub seek: Option<Tick>,
-    /// Просьба переключить замок оси (Р.40 п.15). Пишет её ТОЛЬКО кнопка
-    /// замка: «надо сделать так чтобы его надо было СНЯТЬ чтобы
-    /// отключилась синхронизация таймлайнов» — дословно.
+    /// A request to toggle the axis lock (R.40 item 15). Only the lock button writes it:
+    /// “it must be made so that it has to be TURNED OFF for the timeline
+    /// synchronisation to be disabled” — verbatim.
     pub set_linked: Option<bool>,
-    /// Просьба изменить окно ГЛАВНОГО таймлайна: при ВКЛЮЧЁННОМ замке
-    /// колесо над графиком зумит и панорамирует именно его — оси остаются
-    /// синхронными, а жест не пропадает.
+    /// A request to change the window of the MAIN timeline: with the lock ON the wheel over the graph
+    /// zooms and pans precisely it — the axes stay
+    /// in sync, and the gesture is not lost.
     pub set_view: Option<(Tick, Tick)>,
-    /// По какому ключу открыто контекстное меню (Р.49, п.364). Нужен
-    /// владельцу окна, чтобы записать панельную цель: сам виджет про
-    /// `KtApp` не знает.
+    /// Which key the context menu is open on (R.49, item 364). Needed by the
+    /// owner of the window to record the panel target: the widget itself does not
+    /// know about `KtApp`.
     pub key_menu: Option<(usize, usize)>,
 }
 
-/// Просьбы виджета про ОСЬ, собранные с нескольких графиков одного окна
-/// (Р.40 п.15). Замок один на программу, поэтому окно с несколькими
-/// слотами обязано слить их и применить один раз.
+/// Requests of the widget about the AXIS, collected from several graphs of one window
+/// (R.40 item 15). The lock is one per program, so a window with several
+/// slots must merge them and apply once.
 #[derive(Default, Clone, Copy)]
 pub struct AxisReq {
     pub set_linked: Option<bool>,
@@ -400,7 +400,7 @@ pub struct AxisReq {
 }
 
 impl AxisReq {
-    /// Слить с просьбами ДРУГОЙ секции того же окна (голова полосы).
+    /// Merge with the requests of ANOTHER section of the same window (the head of the strip).
     pub fn merge_req(self, r: &AxisReq) -> Self {
         AxisReq {
             set_linked: r.set_linked.or(self.set_linked),
@@ -432,13 +432,13 @@ pub fn curve_color(i: usize) -> egui::Color32 {
     C[i % C.len()]
 }
 
-/// Окно значений кривой по ВЕРТИКАЛИ. Берётся по её собственным ключам с
-/// запасом, а не по всему диапазону спеки: у скорости spec — 0.25..32, и
-/// на полном диапазоне обычная кривая 0.7..1.0 вырождается в прямую у
-/// нижнего края (ровно та жалоба, что была про старый график slowed).
-/// Окно считается В КООРДИНАТАХ ОСИ (Р.57): на знаковой скорости
-/// линейное окно прижимало бы обычную кривую 0.66…1.0 к самому краю
-/// −32…32 и рисовало прямую (жалоба Р.34).
+/// Value window of the curve VERTICALLY. Taken from its own keys with a
+/// margin, not from the whole spec range: for speed the spec is 0.25..32, and
+/// on the full range an ordinary curve 0.7..1.0 degenerates into a line at the
+/// lower edge (exactly the complaint that existed about the old slowed graph).
+/// The window is computed IN AXIS COORDINATES (R.57): on a signed speed a
+/// linear window would press an ordinary curve 0.66…1.0 against the very edge of
+/// −32…32 and draw a straight line (complaint of R.34).
 fn value_window(c: &ParamCurve, spec: &ParamSpec) -> (f64, f64) {
     let ax = axis_of(spec);
     let (mut lo, mut hi) = (f64::MAX, f64::MIN);
@@ -456,7 +456,7 @@ fn value_window(c: &ParamCurve, spec: &ParamSpec) -> (f64, f64) {
     ((lo - pad).max(gmin), (hi + pad).min(gmax))
 }
 
-/// Виджет целиком: переключатель вида + график или таблица.
+/// The whole widget: a view switch + graph or table.
 pub fn draw(
     ui: &mut egui::Ui,
     id: impl std::hash::Hash + std::fmt::Debug + Copy,
@@ -469,8 +469,8 @@ pub fn draw(
     let mut out = AutoResult::default();
     ui.horizontal(|ui| {
         ui.label(tr(k::fx::AUTO_CLIP));
-        // переключение вида — требование «чтобы можно было переключаться
-        // график<->таблица-список»
+        // switching the view — the requirement “to be able to switch between
+        // graph<->list table”
         for (m, label) in
             [(AutoMode::Graph, tr(k::fx::VIEW_GRAPH)), (AutoMode::Table, tr(k::fx::VIEW_TABLE))]
         {
@@ -481,9 +481,9 @@ pub fn draw(
         if let Some((c, k)) = view.sel
             && let Some(key) = curves.get(c).and_then(|c| c.keys.get(k))
         {
-            // ОБА времени сразу, но одной строкой: секунды материала и
-            // доля события (пользователь: «писать и одно и другое, но не
-            // нагромождая»)
+            // BOTH times at once, but on one line: seconds of the material and the
+            // share of the event (the user: “write both, but without
+            // cluttering”)
             ui.weak(crate::tf!(
                 k::fx::KEY_AT,
                 format!("{:.3}", secs(key.t)),
@@ -494,26 +494,26 @@ pub fn draw(
     if curves.is_empty() {
         return out;
     }
-    // активная кривая могла исчезнуть (удалили параметр) — иначе клик по
-    // пустому месту молча ушёл бы в никуда
+    // the active curve could disappear (a parameter was deleted) — otherwise a click on an
+    // empty spot would silently go nowhere
     view.active = view.active.min(curves.len() - 1);
     toolbar(ui, ctx, curves, view, playhead, &mut out, hover);
     match view.mode {
         AutoMode::Graph => graph(ui, id, ctx, curves, view, playhead, &mut out, hover),
         AutoMode::Table => table(ui, id, ctx, curves, view, &mut out),
     }
-    // БЛОК «КРИВАЯ КАК ПАРАМЕТР» — один на всех носителей (Р.67), под
-    // графиком, у той кривой, которую человек видит выбранной
+    // The “CURVE AS PARAMETER” BLOCK — one for all carriers (R.67), below the graph,
+    // for the curve that the person sees as selected
     curve_block(ui, id, ctx, curves, view, &mut out, hover);
     out
 }
 
-/// Кнопки управления элементами графика (Р.38 п.18, дословно: «еще не
-/// хватает кнопок управления элементами таймлайна автоматизации»).
+/// Buttons controlling the graph elements (R.38 item 18, verbatim: “still missing
+/// buttons to control the elements of the automation timeline”).
 ///
-/// Живут В САМОМ ВИДЖЕТЕ, а не в окне FX: их получают все носители кривых
-/// разом — слот эффекта, камера, переход, морфер. Именно так разъехались
-/// slowed с pan3d, когда у каждого был свой редактор ключей (п.221).
+/// They live IN THE WIDGET ITSELF, not in the FX window: all carriers of curves get them
+/// at once — an effect slot, a camera, a transition, a morpher. That is exactly how
+/// slowed and pan3d drifted apart, when each had its own key editor (item 221).
 #[allow(clippy::too_many_arguments)]
 fn toolbar(
     ui: &mut egui::Ui,
@@ -525,13 +525,13 @@ fn toolbar(
     hover: &mut Option<String>,
 ) {
     ui.horizontal(|ui| {
-        // выбор активной кривой — ЦВЕТОМ её линии на графике: иначе
-        // «добавил второй параметр, а редактируется первый» (п.17). До
-        // Р.38 новый параметр не становился активным вовсе.
+        // selecting the active curve — by the COLOUR of its line on the graph: otherwise
+        // “added a second parameter, but the first one is edited” (item 17). Until
+        // R.38 a new parameter did not become active at all.
         for (ci, c) in curves.iter().enumerate() {
             let name = ctx.label(&c.param);
-            // производная кривая ОТЛИЧИМА: рядом с именем видно, чем она
-            // ведома — адресом источника или формулой (Р.61)
+            // a derived curve is DISTINGUISHABLE: next to its name one sees what it is
+            // driven by — the source address or a formula (R.61)
             let name = match &c.source {
                 kt_model::CurveSource::Keys => name,
                 kt_model::CurveSource::Link { path, .. } => format!("{name} <- {path}"),
@@ -550,23 +550,23 @@ fn toolbar(
                 view.sel = None;
             }
         }
-        // поле формулы, связь и «отвязать» живут в БЛОКЕ КРИВОЙ под
-        // графиком (Р.67, `curve_block`) — один на всех носителей
+        // the formula field, the link and “unlink” live in the CURVE BLOCK below the
+        // graph (R.67, `curve_block`) — one for all carriers
         ui.separator();
-        // ---- ключи ----
+        // ---- keys ----
         //
-        // ТРИ кнопки (Р.40 п.18, дословно: «не хватает по мимо кнопки
-        // установки ключа - двух кнопок ключ ДО и ключ ПОСЛЕ текущей
-        // позиции (чтобы зафиксировать предыдущие и следующие
-        // параметры)»). «До» и «после» ставят ключ на СОСЕДНИЙ КАДР со
-        // значением кривой в этой точке: форма кривой не меняется, но
-        // участок слева (или справа) от курсора становится закреплён — и
-        // дальнейшая правка ключа под курсором его уже не тянет.
+        // THREE buttons (R.40 item 18, verbatim: “beyond the key-setting button
+        // there are no two buttons: a key BEFORE and a key AFTER the current position
+        // (to fix the previous and next parameters)”). “Before” and “after” set a key
+        // on the NEIGHBOURING FRAME with the value of the curve at this point: the shape
+        // of the curve does not change, but the segment to the left (or right) of the
+        // cursor becomes pinned — and
+        // further editing of the key under the cursor no longer pulls it.
         //
-        // Ctrl — во ВСЕ кривые слота сразу. Это бывшая кнопка
-        // «+ keyframe at playhead» из окна FX: она отличалась от «+»
-        // ровно этим и ни словом об этом не говорила (правило 18:
-        // название пункта говорит, ЧТО произойдёт).
+        // Ctrl — onto ALL curves of the slot at once. This is the former button
+        // “+ keyframe at playhead” from the FX window: it differed from “+” by exactly
+        // this and did not say a word about it (rule 18: the name of an item says
+        // WHAT will happen).
         let ph = (ctx.to_curve)(playhead);
         let step = ctx.frame_step.max(1);
         let all = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
@@ -590,8 +590,8 @@ fn toolbar(
             }
             out.changed = true;
         }
-        // прыжок по ключам активной кривой двигает ГЛАВНЫЙ курсор: «сразу
-        // видно, к чему относится»
+        // a jump between the keys of the active curve moves the MAIN cursor: “it is immediately
+        // visible what it belongs to”
         for (icon, fwd, hint) in [
             (crate::icons::SKIP_BACK, false, tr(k::fx::KEY_PREV_HINT)),
             (crate::icons::SKIP_FWD, true, tr(k::fx::KEY_NEXT_HINT)),
@@ -624,11 +624,11 @@ fn toolbar(
             out.changed = true;
         }
         ui.separator();
-        // ---- ось времени (п.14) ----
-        // ЕДИНСТВЕННОЕ место, снимающее замок (Р.40 п.15, дословно: «надо
-        // сделать так чтобы его надо было СНЯТЬ чтобы отключилась
-        // синхронизация таймлайнов»). Прежде его снимало ЛЮБОЕ колесо над
-        // графиком — включая прокрутку самого окна FX мимо графика.
+        // ---- time axis (item 14) ----
+        // THE ONLY place that releases the lock (R.40 item 15, verbatim: “it must be made so that it
+        // has to be RELEASED for the timeline synchronisation to be disabled”). Formerly ANY wheel
+        // over the graph released it — including
+        // scrolling the FX window itself past the graph.
         if crate::app::hint_into(
             hover,
             ui.selectable_label(ctx.linked, crate::icons::LOCK),
@@ -638,15 +638,15 @@ fn toolbar(
         {
             out.set_linked = Some(!ctx.linked);
             if ctx.linked {
-                // снимая замок, оставляем ТО ЖЕ окно, что было видно:
-                // «ничего не скачет» (правило 3 чек-листа)
+                // releasing the lock, we keep THE SAME window that was visible:
+                // “nothing jumps” (rule 3 of the checklist)
                 let (a, b) = view.axis(ctx);
                 view.win = Some((a, b));
             }
         }
-        // «вписать» показывает носитель целиком — это ЯВНАЯ просьба про
-        // ось графика, поэтому она замок снимает, и снимает ВИДИМО
-        // (кнопка замка тут же гаснет), а не молча по дороге
+        // “fit” shows the carrier in full — this is an EXPLICIT request about the
+        // axis of the graph, so it releases the lock, and releases it VISIBLY
+        // (the lock button goes out at once), not silently on the way
         if crate::app::hint_into(
             hover,
             ui.small_button(crate::icons::ARROWS_OUT),
@@ -678,14 +678,14 @@ fn graph(
     let p = ui.painter_at(rect);
     p.rect_filled(rect, 3.0, egui::Color32::from_gray(18));
 
-    // ось X — ВИДИМОЕ окно (замок к таймлайну или своё); шкала и снап
-    // взяты у таймлайна проекта
+    // the X axis — the VISIBLE window (the timeline's lock or its own); the ruler and snap
+    // are taken from the project timeline
     let (m0, m1) = view.axis(ctx);
     let tpp = (m1 - m0) as f64 / rect.width().max(1.0) as f64;
 
-    // колесо над графиком: скролл — пан, Ctrl — зум с якорем под
-    // указателем. Те же жесты, что на главном таймлайне (правило 17:
-    // парные способы ведут себя одинаково), и любой из них снимает замок.
+    // the wheel over the graph: scroll — pan, Ctrl — zoom anchored under the
+    // pointer. The same gestures as on the main timeline (rule 17: paired
+    // methods behave identically), and any of them releases the lock.
     if resp.hovered() {
         let (scroll, zoom) = ui.input(|i| {
             let mut dx = 0.0f32;
@@ -713,10 +713,10 @@ fn graph(
             let a = at - ns * anchor + shift;
             let (na, nb) = (a.round() as i64, (a + ns).round() as i64);
             if ctx.linked {
-                // ЗАМОК НАДЕТ — жест едет в ГЛАВНЫЙ таймлайн, оси остаются
-                // синхронными (Р.40 п.15). Раньше он молча снимал замок, и
-                // снимала его даже прокрутка самого окна FX колесом над
-                // графиком: «замочек не до конца работает».
+                // THE LOCK IS ON — the gesture goes to the MAIN timeline, the axes stay
+                // in sync (R.40 item 15). Formerly it silently released the lock, and
+                // even scrolling the FX window itself with the wheel over the
+                // graph released it: “the little lock does not fully work”.
                 out.set_view = Some(((ctx.to_timeline)(Tick(na)), (ctx.to_timeline)(Tick(nb))));
             } else {
                 view.win = Some((na, nb));
@@ -729,11 +729,11 @@ fn graph(
         egui::pos2(rect.left(), rect.top() + RULER_H),
         egui::pos2(rect.right(), rect.bottom()),
     );
-    // прямоугольник графика — живому сценарию (Р.67): клики по пустому
-    // месту ставят ключи, целиться в них надо по данным программы
+    // the graph rectangle — for the live scenario (R.67): clicks on an empty
+    // spot place keys, one must aim at them by the program's data
     crate::widgets::field_probe::note("auto.graph", plot);
 
-    // линейка: те же лестница шагов и подписи, что на таймлайне проекта
+    // ruler: the same ladder of steps and captions as on the project timeline
     let (minor, label) = crate::timeline::ruler_steps(tpp);
     let mut t = m0 - m0.rem_euclid(minor);
     while t <= m1 {
@@ -759,9 +759,9 @@ fn graph(
         }
         t += minor;
     }
-    // подпись ушедшей влево риски — прижата к краю (Р.40 п.14): ось графика
-    // это МАТЕРИАЛ события, при зуме её начало уезжает, и без этого на
-    // линейке не оставалось ни одного времени
+    // a caption of the tick that went off to the left is pressed against the edge (R.40 item 14): the
+    // graph's axis is the MATERIAL of the event; when zooming its start goes away, and without this
+    // no time remained on the ruler
     {
         let pinned = crate::timeline::ruler_pinned_label(m0, label);
         if x_of(pinned) < rect.left() {
@@ -781,7 +781,7 @@ fn graph(
         }
     }
 
-    // курсор главного таймлайна в координатах материала
+    // the main timeline cursor in material coordinates
     let ph_mat = (ctx.to_curve)(playhead);
     if ph_mat.0 >= m0 && ph_mat.0 <= m1 {
         let x = x_of(ph_mat.0);
@@ -791,16 +791,16 @@ fn graph(
         );
     }
 
-    // кривые и ключи
+    // curves and keys
     view.key_marks.clear();
     for (ci, c) in curves.iter().enumerate() {
         let Some(spec) = ctx.spec(&c.param) else { continue };
         let (mut lo, mut hi) = win_of(c, spec, view, ci);
-        // окно уже В КООРДИНАТАХ ОСИ (Р.57): значение переводится в них
+        // the window is already IN AXIS COORDINATES (R.57): the value is translated into them
         let ax = axis_of(spec);
-        // результат слоя/источника — тем же вычислителем, что у рендера
-        // (`t` от начала материала, край тела держится); окно значений
-        // расширяется под него, иначе штрих прибивало к кромке (Р.67)
+        // the result of the layer/source — by the same evaluator as the render
+        // (`t` from the start of the material, the body edge is held); the value window
+        // widens to fit it, otherwise the stroke was pinned to the edge (R.67)
         let derived = !c.source.is_keys();
         let pv: Vec<kt_model::AutoKey> = if derived {
             kt_model::formula_preview(c, ctx.range, Tick(m0), Tick(m1), (m1 - m0).max(1) / 160)
@@ -820,9 +820,9 @@ fn graph(
             let u = ((ax.map(v) - lo) / (hi - lo).max(1e-9)).clamp(0.0, 1.0) as f32;
             plot.bottom() - 6.0 - u * (plot.height() - 12.0)
         };
-        // НУЛЕВАЯ ЛИНИЯ (Р.57, п.456): окно пересекает ноль — значит
-        // «вперёд» и «назад» обязаны различаться не только подписью. Это
-        // класс, а не случай скорости: панорама и dB тоже знаковые.
+        // ZERO LINE (R.57, item 456): the window crosses zero — so
+        // “forward” and “backward” must be distinguished not only by the caption. This is
+        // a CLASS, not a speed case: pan and dB are signed too.
         if lo < 0.0 && hi > 0.0 {
             let y0 = y_of(0.0);
             p.add(egui::Shape::line_segment(
@@ -837,8 +837,8 @@ fn graph(
                 crate::theme::AXIS_ZERO,
             );
         }
-        // УЧАСТОК ПОД МЕНЮ подсвечен (Р.63 п.5): иначе непонятно, к чему
-        // относится форма, которую сейчас выбирают
+        // THE SEGMENT UNDER THE MENU is highlighted (R.63 item 5): otherwise it is unclear what
+        // the shape being chosen now belongs to
         if let Some(MenuTarget::Segment(mc, mk)) = view.menu_target
             && mc == ci
             && let (Some(a), Some(b)) = (c.keys.get(mk), c.keys.get(mk + 1))
@@ -853,11 +853,11 @@ fn graph(
             );
         }
         let col = curve_color(ci);
-        // ЛИНИЯ ЗНАЧЕНИЯ — выборкой того же `curve_value`, что считает
-        // рендер, по пикселям (Р.67): зигзаг виден зигзагом, ступень —
-        // ступенью, формула отрезка — своей линией. До этого линия шла
-        // прямыми между ключами, и «визуально не видно, что там за
-        // кривая» (владелец). Шаг — 2 px, не крупнее кадра на пиксель.
+        // THE VALUE LINE — by sampling the same `curve_value` that the render computes, per pixel (R.67):
+        // a zigzag is seen as a zigzag, a step as a step,
+        // a segment formula as its own line. Before this the line ran straight between keys,
+        // and “you cannot visually see what the curve is there” (the owner).
+        // The step is 2 px, no coarser than one frame per pixel.
         if c.keys.len() > 1 {
             let (ka, kb) = (c.keys[0].t.0, c.keys[c.keys.len() - 1].t.0);
             let (xa, xb) = (x_of(ka).max(plot.left()), x_of(kb).min(plot.right()));
@@ -869,20 +869,20 @@ fn graph(
                 x += 2.0;
             }
             pts.push(egui::pos2(xb, y_of(kt_model::curve_value(&c.keys, Tick(kb)))));
-            // у кривой со слоем линия `k` — сплошная, но тише: результат
-            // (штрих) — то, что звучит
+            // for a curve with a layer the `k` line is solid but quieter: the result
+            // (the stroke) is what sounds
             let stroke = egui::Stroke::new(1.0, if derived { col.gamma_multiply(0.55) } else { col });
             p.add(egui::Shape::line(pts, stroke));
         }
-        // РЕЗУЛЬТАТ слоя/источника — штрихом, тем же вычислителем, что у
-        // рендера (`t` от начала материала, край тела держится): верная
-        // формула больше не даёт пустоты, а линия не уезжает при прокрутке
+        // the RESULT of the layer/source — as a stroke, by the same evaluator as the
+        // render (`t` from the start of the material, the body edge is held): a correct
+        // formula no longer gives an empty space, and the line does not drift on scroll
         if derived && pv.len() > 1 {
             let pts: Vec<egui::Pos2> = pv.iter().map(|k| egui::pos2(x_of(k.t.0), y_of(k.v))).collect();
             p.add(egui::Shape::dashed_line(&pts, egui::Stroke::new(1.5, col), 5.0, 3.0));
         }
-        // РУЧКА ПАРАМЕТРА ФОРМЫ (Р.67) — на середине участка активной
-        // кривой, у форм с параметром: под указателем и у тянущейся
+        // THE SHAPE-PARAMETER HANDLE (R.67) — at the midpoint of the segment of the active
+        // curve, for shapes with a parameter: under the pointer and on the one being dragged
         if ci == view.active {
             view.seg_marks.clear();
             for ki in 0..c.keys.len().saturating_sub(1) {
@@ -901,9 +901,9 @@ fn graph(
                 }
             }
         }
-        // ПРОИЗВОДНАЯ кривая (связь или формула) — маркеры ключей есть,
-        // если ключи есть: слой стоит НАД ними, и человек правит именно
-        // ключи; штрих результата мышкой не правится (у него нет точек).
+        // a DERIVED curve (link or formula) — the key markers are there
+        // if the keys exist: the layer stands ABOVE them, and the person edits exactly the
+        // keys; the result stroke cannot be edited with the mouse (it has no points).
         if derived && c.keys.is_empty() {
             continue;
         }
@@ -923,10 +923,10 @@ fn graph(
             ));
             view.key_marks.push((ci, ki, egui::pos2(x, y)));
         }
-        // УЧАСТКИ активной кривой — цель живого сценария (Р.63 п.5):
-        // правый клик обязан попасть МЕЖДУ ключами, а где они, знает
-        // только отрисовка. `format!` под флагом: в draw-путях на кадр не
-        // аллоцируем (инвариант 12).
+        // SEGMENTS of the active curve — the target of the live scenario (R.63 item 5):
+        // the right click must land BETWEEN keys, and only the drawing knows where they are.
+        // `format!` under a flag: in the draw paths we do not
+        // allocate per frame (invariant 12).
         if ci == view.active && crate::widgets::field_probe::on() {
             for ki in 0..c.keys.len().saturating_sub(1) {
                 crate::widgets::field_probe::note(
@@ -939,13 +939,13 @@ fn graph(
             }
         }
     }
-    // щуп — по НАРИСОВАННОМУ, и один на все каналы
+    // the probe — by what is DRAWN, and one for all channels
     let hit = resp.interact_pointer_pos().and_then(|pos| view.key_at(pos));
-    // Подсказка у ключа (Р.49, п.364): раньше он молчал в ОБОИХ каналах —
-    // ни наведение, ни правая кнопка ничего не сообщали, и что это за
-    // точка, узнать было негде, кроме как выбрать её и прочесть строку
-    // сверху. Формат тот же, что у выбранного ключа: секунды материала и
-    // доля события одной строкой.
+    // The hint at a key (R.49, item 364): previously it stayed silent in BOTH channels —
+    // neither hover nor the right button reported anything, and what this point
+    // was could be learned only by selecting it and reading the line
+    // at the top. The format is the same as for the selected key: seconds of the material and
+    // the share of the event on one line.
     if let Some(hp) = resp.hover_pos()
         && let Some((ci, ki)) = view.key_at(hp)
         && let Some(key) = curves.get(ci).and_then(|c| c.keys.get(ki))
@@ -960,12 +960,12 @@ fn graph(
             ),
         );
     }
-    // Меню ключа — ДО ранних `return` ниже (линейка, двойной клик): после
-    // них правый клик по ключу не доходил бы до привязки вовсе.
+    // The key menu — BEFORE the early `return`s below (the ruler, double click): after
+    // them a right click on a key would not reach the binding at all.
     {
-        // ЦЕЛЬ ФИКСИРУЕТСЯ НА НАЖАТИИ (Р.63 п.5), а не пересчитывается от
-        // положения указателя каждый кадр: иначе движение к пунктам меню
-        // сбрасывало попадание, и меню закрывалось само.
+        // THE TARGET IS FIXED ON PRESS (R.63 item 5), and is not recomputed from the
+        // pointer position every frame: otherwise the movement toward the menu items
+        // lost the hit, and the menu closed by itself.
         if resp.secondary_clicked()
             && let Some(pos) = resp.interact_pointer_pos()
         {
@@ -980,8 +980,8 @@ fn graph(
                         .position(|w| t >= w[0].t.0 && t < w[1].t.0)
                         .map(|ki| MenuTarget::Segment(ci, ki))
                 });
-            // участок запоминается и ПОСЛЕ меню (Р.67): у него в блоке
-            // кривой показывается поле формулы отрезка
+            // the segment is remembered AFTER the menu too (R.67): its block of the curve shows
+            // the segment formula field
             if let Some(MenuTarget::Segment(ci, ki)) = view.menu_target {
                 view.sel_seg = Some((ci, ki));
                 view.seg_formula = None;
@@ -993,9 +993,9 @@ fn graph(
         };
         let mut del: Option<(usize, usize)> = None;
         let mut picked: Option<(usize, usize)> = None;
-        // Правый клик по УЧАСТКУ (не по ключу) — форма этого отрезка
-        // (Р.61). Соседние участки не трогаются: форма принадлежит
-        // ЛЕВОМУ ключу отрезка, и меняется ровно он.
+        // Right click on a SEGMENT (not on a key) — the shape of this segment
+        // (R.61). Neighbouring segments are untouched: the shape belongs to the
+        // LEFT key of the segment, and exactly it changes.
         let seg_hit: Option<(usize, usize)> = match view.menu_target {
             Some(MenuTarget::Segment(ci, ki)) => Some((ci, ki)),
             _ => None,
@@ -1007,9 +1007,9 @@ fn graph(
                 if let Some((ci, ki)) = seg_hit {
                     let rate = curves.get(ci).is_some_and(|c| c.param == "rate");
                     let cur = curves[ci].keys[ki].shape;
-                    // ЧЕЛОВЕК ВИДИТ, МЕЖДУ ЧЕМ ставит форму (Р.63 п.5):
-                    // заголовок называет оба конца участка, а сам участок
-                    // подсвечен на графике
+                    // THE PERSON SEES BETWEEN WHAT the shape is being set (R.63 item 5):
+                    // the header names both ends of the segment, and the segment itself is
+                    // highlighted on the graph
                     let (a, b) = (curves[ci].keys[ki].t, curves[ci].keys[ki + 1].t);
                     ui.label(
                         egui::RichText::new(crate::tf!(
@@ -1022,14 +1022,14 @@ fn graph(
                         .strong(),
                     );
                     if rate {
-                        // невозможность — ОШИБКА с причиной, а не тишина
+                        // impossibility — an ERROR with a reason, not silence
                         ui.label(egui::RichText::new(tr(k::fx::SHAPE_RATE_LINEAR)).weak().small());
                     } else {
                         for (i, sh) in crate::widgets::all_shapes().into_iter().enumerate() {
                             let on = std::mem::discriminant(&sh) == std::mem::discriminant(&cur);
                             let r = ui.selectable_label(on, crate::widgets::shape_label(sh));
-                            // пункты меню — цель живого сценария: он обязан
-                            // ДОТЯНУТЬСЯ до них указателем (Р.63 п.5)
+                            // menu items — the target of the live scenario: it must
+                            // REACH them with the pointer (R.63 item 5)
                             if crate::widgets::field_probe::on() {
                                 crate::widgets::field_probe::note(
                                     &format!("auto.shape.{i}"),
@@ -1041,8 +1041,8 @@ fn graph(
                                 ui.close();
                             }
                         }
-                        // ФОРМУЛА ОТРЕЗКА (Р.67): форма участка со своим
-                        // текстом; текст правится в блоке кривой под графиком
+                        // SEGMENT FORMULA (R.67): the shape of the segment with its own
+                        // text; the text is edited in the curve block below the graph
                         let is_formula = matches!(cur, kt_model::SegShape::Formula { .. });
                         let r = ui.selectable_label(is_formula, tr(k::fx::SHAPE_FORMULA_ITEM));
                         if crate::widgets::field_probe::on() {
@@ -1084,15 +1084,15 @@ fn graph(
                     .strong(),
                 );
             }
-            // «Удалить» БЕЗ аккорда: Del удаляет выделенные события
-            // таймлайна, а не ключ (п.362)
+            // “Delete” WITHOUT a chord: Del deletes the selected timeline events,
+            // not the key (item 362)
             if crate::widgets::menu_item(ui, tr(k::tl::menu::DELETE), None) {
                 del = Some((ci, ki));
                 ui.close();
             }
         });
-        // меню закрылось — цель забыта (иначе следующий правый клик по
-        // пустому месту показал бы форму прошлого участка)
+        // the menu closed — the target is forgotten (otherwise the next right click on an
+        // empty spot would show the shape of the previous segment)
         if menu.is_none() {
             view.menu_target = None;
         }
@@ -1119,7 +1119,7 @@ fn graph(
             out.changed = true;
         }
     }
-    // подпись активной кривой (в неё кладёт ключ клик по пустому месту)
+    // the caption of the active curve (a click on an empty spot places a key into it)
     if let Some(c) = curves.get(view.active)
         && let Some(spec) = ctx.spec(&c.param)
     {
@@ -1133,8 +1133,8 @@ fn graph(
             egui::FontId::proportional(11.0),
             col,
         );
-        // границы шкалы значений: без них непонятно, «насколько» кривая
-        // поднимается — а шкала у каждой кривой своя
+        // the bounds of the value scale: without them it is unclear “how much” the curve
+        // rises — and each curve has its own scale
         for (g, y) in [(hi, plot.top() + 2.0), (lo, plot.bottom() - 12.0)] {
             let v = ax.unmap(g);
             p.text(
@@ -1149,9 +1149,9 @@ fn graph(
 
     let Some(pos) = resp.interact_pointer_pos() else { return };
     let on_ruler = pos.y < rect.top() + RULER_H;
-    // мини-таймлайн: жест по линейке двигает ГЛАВНЫЙ курсор — «сразу
-    // видно, к чему относится» (реверс и скорость учитывает обратный
-    // перевод материал → таймлайн)
+    // mini-timeline: a gesture on the ruler moves the MAIN cursor — “it is immediately
+    // visible what it belongs to” (reverse and speed are accounted for by the inverse
+    // mapping material → timeline)
     if on_ruler && (resp.clicked() || resp.dragged()) {
         out.seek = Some((ctx.to_timeline)(Tick(t_of(pos.x))));
         crate::app::hint_into(hover, resp.clone(), tr(k::fx::GRAPH_RULER_HINT));
@@ -1165,7 +1165,7 @@ fn graph(
         }
         return;
     }
-    // ручка параметра формы: наведение и захват — до ключей по пустоте
+    // the shape-parameter handle: hover and grab — before the keys on empty space
     view.hover_seg = resp.hover_pos().and_then(|hp| {
         if view.key_at(hp).is_some() {
             None
@@ -1173,8 +1173,8 @@ fn graph(
             view.seg_at(hp).map(|ki| (view.active, ki))
         }
     });
-    // захват — по ТОЧКЕ НАЖАТИЯ: egui объявляет драг, когда указатель уже
-    // ушёл на порог, и текущая позиция может быть дальше хвата ручки
+    // grab — by the PRESS POINT: egui declares a drag when the pointer has already
+    // moved past the threshold, and the current position may be farther than the handle's grab
     let press = ui.input(|i| i.pointer.press_origin()).unwrap_or(pos);
     if resp.drag_started()
         && hit.is_none()
@@ -1198,7 +1198,7 @@ fn graph(
         && d.ci < curves.len()
         && d.ki < curves[d.ci].keys.len()
     {
-        let dy = (d.from.y - pos.y) as f64; // вверх — больше
+        let dy = (d.from.y - pos.y) as f64; // up — more
         let dx = (pos.x - d.from.x) as f64;
         let shift = ui.input(|i| i.modifiers.shift);
         let next = shape_dragged(d.shape0, dx, dy, shift, d.span / d.plot_h as f64);
@@ -1206,7 +1206,7 @@ fn graph(
             curves[d.ci].keys[d.ki].shape = next;
             out.changed = true;
         }
-        // число рядом с ручкой — на время жеста (оверлей, не попап)
+        // the number next to the handle — for the duration of the gesture (an overlay, not a popup)
         if let Some((_, m)) = view.seg_marks.iter().find(|(ki, _)| *ki == d.ki) {
             let (label, v) = shape_main_param(next).unwrap_or(("", 0.0));
             let text = if shift {
@@ -1237,7 +1237,7 @@ fn graph(
                 view.drag_win = Some((ci, lo, hi));
             }
         } else if resp.clicked() && view.seg_at(pos).is_none() {
-            // клик по пустому месту — новый ключ активной кривой
+            // a click on an empty spot — a new key on the active curve
             if let Some(spec) = curves.get(view.active).and_then(|c| ctx.spec(&c.param)).cloned() {
                 let (lo, hi) = win_of(&curves[view.active], &spec, view, view.active);
                 let c = &mut curves[view.active];
@@ -1256,18 +1256,18 @@ fn graph(
         && ki < curves[ci].keys.len()
     {
         let Some(spec) = ctx.spec(&curves[ci].param).cloned() else { return };
-        // снап по сетке кадров: ключ садится на кадр, а не «около»
+        // snap to the frame grid: the key sits on a frame, not “near”
         let raw = t_of(pos.x).clamp(m0, m1);
         let step = ctx.frame_step.max(1);
         let t = Tick(raw - raw.rem_euclid(step));
         let (lo, hi) = win_of(&curves[ci], &spec, view, ci);
         let u = ((plot.bottom() - 6.0 - pos.y) / (plot.height() - 12.0)).clamp(0.0, 1.0);
         let v = axis_of(&spec).unmap(lo + (hi - lo) * u as f64).clamp(spec.min, spec.max);
-        // форма отрезка принадлежит ключу и при перетаскивании обязана
-        // остаться: иначе драг молча превращал бы зигзаг в сглаживание
+        // the shape of the segment belongs to the key and must
+        // remain during dragging: otherwise a drag would silently turn a zigzag into smoothing
         let shape = curves[ci].keys[ki].shape;
         curves[ci].keys[ki] = kt_model::AutoKey::shaped(t, v, shape);
-        // порядок восстанавливаем сразу, но выбор следует за СВОИМ ключом
+        // the order is restored at once, but the selection follows ITS OWN key
         curves[ci].keys.sort_by_key(|k| k.t.0);
         view.sel = curves[ci].keys.iter().position(|k| k.t == t).map(|ki| (ci, ki));
         view.drag = view.sel;
@@ -1287,8 +1287,8 @@ fn table(
     view: &mut AutoView,
     out: &mut AutoResult,
 ) {
-    // строки — МОМЕНТЫ, колонки — параметры: «нужно несколько параметров
-    // на строку иметь а не по одной»
+    // rows are MOMENTS, columns are parameters: “several parameters per row
+    // instead of one”
     let mut times: Vec<i64> = curves.iter().flat_map(|c| c.keys.iter().map(|k| k.t.0)).collect();
     times.sort_unstable();
     times.dedup();
@@ -1305,8 +1305,8 @@ fn table(
             ui.end_row();
             for t in &times {
                 let tick = Tick(*t);
-                // время строки: правится ОДНИМ полем; сортировка — только
-                // на отпускании, иначе строка уезжает из-под рук
+                // row time: edited by ONE field; sorting — only on
+                // release, otherwise the row slides out from under the fingers
                 let edit = view
                     .t_edit
                     .filter(|(ci, ki, _)| {
@@ -1314,9 +1314,9 @@ fn table(
                     })
                     .map(|(_, _, s)| s);
                 let mut s = edit.unwrap_or_else(|| secs(tick));
-                // время ключа — величина БЕЗ паспорта (это позиция, а не
-                // параметр): пределы и единица объявлены здесь одним местом,
-                // рисует общий ряд (Р.66)
+                // a key's time is a value WITHOUT a spec (it is a position, not a
+                // parameter): its bounds and unit are declared here in one place,
+                // the shared row draws it (R.66)
                 let resp = crate::widgets::plain_row(
                     ui,
                     &crate::widgets::NumRow {
@@ -1360,7 +1360,7 @@ fn table(
                             });
                         }
                         None => {
-                            // пустая клетка — кнопка «поставить сюда ключ»
+                            // an empty cell — a “place a key here” button
                             if ui.small_button(tr(k::fx::CELL_ADD)).clicked() {
                                 let v = kt_model::curve_value(&c.keys, tick);
                                 kt_model::insert_key(
@@ -1396,10 +1396,10 @@ fn table(
     }
 }
 
-// ---- Р.67: ручка параметра формы, блок «кривая как параметр» -----------------
+// ---- R.67: shape-parameter handle, block “curve as parameter” -----------------
 
-/// Главный параметр формы участка под ручку: подпись и значение. У прямой,
-/// ступени и формулы отрезка ручки нет (правило 9: ничего лишнего).
+/// The main shape parameter of the segment for the handle: caption and value. A straight line,
+/// a step and a segment formula have no handle (rule 9: nothing superfluous).
 fn shape_main_param(s: kt_model::SegShape) -> Option<(&'static str, f64)> {
     use kt_model::SegShape as S;
     match s {
@@ -1418,9 +1418,9 @@ fn shape_periods(s: kt_model::SegShape) -> Option<f64> {
     }
 }
 
-/// Форма после драга ручки: вертикаль правит главный параметр (натяжение —
-/// 0.02 на пиксель, амплитуда — в единицах оси), Shift+горизонталь —
-/// периоды (0.05 на пиксель).
+/// The shape after a handle drag: the vertical drives the main parameter (tension —
+/// 0.02 per pixel, amplitude — in axis units), Shift+horizontal —
+/// periods (0.05 per pixel).
 fn shape_dragged(
     s0: kt_model::SegShape,
     dx: f64,
@@ -1444,7 +1444,7 @@ fn shape_dragged(
     }
 }
 
-/// Имена, известные формуле: переменные носителя и функции реестра.
+/// Names known to the formula: the carrier's variables and the registry functions.
 fn known_names(vars: &[&str]) -> Vec<&'static str> {
     let mut v: Vec<&'static str> = vars
         .iter()
@@ -1465,8 +1465,8 @@ fn known_names(vars: &[&str]) -> Vec<&'static str> {
     v
 }
 
-/// Ближайшие имена к неизвестному (правило 16: отказ называет, ЧТО есть):
-/// по префиксу, потом по расстоянию правки ≤ 2.
+/// The nearest names to an unknown one (rule 16: the rejection names WHAT exists):
+/// by prefix, then by edit distance ≤ 2.
 fn nearest_names(bad: &str, vars: &[&str]) -> Vec<&'static str> {
     let names = known_names(vars);
     let mut out: Vec<&'static str> =
@@ -1492,9 +1492,9 @@ fn edit_distance(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
-/// Дополнение по Tab (Р.67, без попапов): последнее имя в тексте
-/// дописывается до единственного кандидата либо до общего префикса;
-/// кандидаты возвращаются для строки состояния.
+/// Completion by Tab (R.67, without popups): the last name in the text
+/// is completed to the single candidate or to the common prefix;
+/// the candidates are returned for the status line.
 fn complete_prefix(text: &str, vars: &[&str]) -> (String, Vec<&'static str>) {
     let start = text.rfind(|c: char| !(c.is_alphanumeric() || c == '_')).map(|i| i + 1).unwrap_or(0);
     let prefix = &text[start..];
@@ -1522,9 +1522,9 @@ fn complete_prefix(text: &str, vars: &[&str]) -> (String, Vec<&'static str>) {
     (done, cands)
 }
 
-/// Поле формулы с ЖИВЫМ текстом (состояние виджета), подтверждением по
-/// Enter/уходу фокуса, ошибкой с позицией и ближайшими именами и
-/// дополнением по Tab. `Some(text)` — подтверждённый текст к применению.
+/// The formula field with LIVE text (the widget state), confirmation by
+/// Enter/focus loss, an error with a position and the nearest names, and
+/// completion by Tab. `Some(text)` — the confirmed text to apply.
 #[allow(clippy::too_many_arguments)]
 fn formula_field(
     ui: &mut egui::Ui,
@@ -1545,8 +1545,8 @@ fn formula_field(
     );
     crate::widgets::field_probe::note(probe, r.rect);
     crate::app::hint_into(hover, r.clone(), hint);
-    // Tab (фокус заперт — навигация его не забирает): дополняем на месте;
-    // символ табуляции, если поле его вставило, снимается
+    // Tab (the focus is locked — navigation does not take it): we complete in place;
+    // a tab character, if the field inserted one, is removed
     let tab = r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Tab));
     let mut changed = r.changed();
     if tab || text.contains('\t') {
@@ -1608,13 +1608,13 @@ fn explain_error(e: &kt_model::FormulaError, vars: &[&str]) -> String {
     }
 }
 
-/// БЛОК «КРИВАЯ КАК ПАРАМЕТР» (Р.67): один на слот, генератор и экземпляр
-/// ленты; относится к кривой, которую человек видит выбранной, и говорит
-/// об этом заголовком. Внутри: форма всех отрезков с параметрами, формула
-/// выбранного участка, формула-слой, дверь связи, «отвязать», справка и
-/// удаление кривой. До этого «форма всех отрезков» стояла в окне слота
-/// без имени кривой и правила невидимо активную — «меняется только одно
-/// поле, хотя я в двух полях задал зигзаги» (владелец).
+/// The “CURVE AS PARAMETER” BLOCK (R.67): one per slot, generator and timeline instance;
+/// it belongs to the curve the person sees as selected, and says so in its
+/// header. Inside: the shape of all segments with parameters, the formula of the
+/// selected segment, the layer formula, the link door, “unlink”, the help and
+/// deletion of the curve. Before this, “the shape of all segments” stood in the slot window
+/// without the curve's name and silently governed the active one — “only one field changes,
+/// though I set zigzags in two fields” (the owner).
 #[allow(clippy::too_many_arguments)]
 fn curve_block(
     ui: &mut egui::Ui,
@@ -1633,12 +1633,12 @@ fn curve_block(
     let r = ui.label(egui::RichText::new(title).color(curve_color(ci)).strong());
     crate::widgets::field_probe::note("curve.title", r.rect);
 
-    // 1. форма всех отрезков и её параметры
+    // 1. the shape of all segments and its parameters
     ui.horizontal(|ui| {
         out.changed |= crate::widgets::shape_all_control(ui, &mut curves[ci], hover);
     });
 
-    // 2. формула ВЫБРАННОГО участка — только если у него форма-формула
+    // 2. the formula of the SELECTED segment — only if it has a formula shape
     if let Some((sc, sk)) = view.sel_seg
         && sc == ci
         && let Some(kt_model::SegShape::Formula { expr }) = curves[ci].keys.get(sk).map(|k| k.shape)
@@ -1668,7 +1668,7 @@ fn curve_block(
         });
     }
 
-    // 3. формула-слой (над ключами) / текст пересчёта связи
+    // 3. layer formula (over the keys) / link recalculation text
     ui.horizontal(|ui| {
         ui.label(tr(k::fx::FORMULA));
         let from_model = match &curves[ci].source {
@@ -1693,7 +1693,7 @@ fn curve_block(
         if let Some(t) = got {
             let c = &mut curves[ci];
             if t.trim().is_empty() {
-                // пустой текст — снять слой; ключи под ним остаются
+                // an empty text — removes the layer; the keys under it remain
                 match &c.source {
                     kt_model::CurveSource::Link { path, stops, .. } => {
                         c.source = kt_model::CurveSource::Link { path: path.clone(), expr: None, stops: stops.clone() };
@@ -1712,7 +1712,7 @@ fn curve_block(
                         expr: Some(t.clone()),
                         stops: stops.clone(),
                     },
-                    // слой НЕ стирает ключи (Р.67)
+                    // the layer does NOT erase the keys (R.67)
                     _ => kt_model::CurveSource::Formula { expr: t.clone() },
                 };
                 out.changed = true;
@@ -1720,7 +1720,7 @@ fn curve_block(
         }
     });
 
-    // 4. дверь связи и «отвязать»
+    // 4. the link door and “unlink”
     ui.horizontal(|ui| {
         if let Some(links) = ctx.links {
             let mb = ui.menu_button(tr(k::fx::DRIVE_BY), |ui| {
@@ -1728,8 +1728,8 @@ fn curve_block(
                 let mut pick: Option<String> = None;
                 let mut said_others = false;
                 for ev in &events {
-                    // чужие события — под своим подзаголовком: человек видит,
-                    // где кончается «это событие» и начинается лента
+                    // foreign events — under their own subheading: the person sees
+                    // where “this event” ends and the reel begins
                     if !ev.this && !said_others {
                         said_others = true;
                         ui.separator();
@@ -1765,13 +1765,13 @@ fn curve_block(
             crate::app::hint_into(hover, b.clone(), tr(k::fx::UNLINK_HINT));
             crate::widgets::field_probe::note("auto.unlink", b.rect);
             if b.clicked() {
-                // значения уже разрешены моделью при сборке — здесь
-                // остаётся снять сам источник
+                // the values are already resolved by the model at assembly — here
+                // only the source itself is removed
                 curves[ci].source = kt_model::CurveSource::Keys;
                 out.changed = true;
             }
         }
-        // удалить кривую — здесь же, у названной кривой
+        // delete the curve — here too, at the named curve
         let del = ui.button(tr(k::fx::AUTO_REMOVE));
         crate::widgets::field_probe::note("auto.remove", del.rect);
         if del.clicked() {
@@ -1786,7 +1786,7 @@ fn curve_block(
         return;
     }
 
-    // 5. справка — группа в блоке из реестра вычислителя; попапов нет
+    // 5. help — a group in the block from the evaluator's registry; no popups
     let hdr = egui::CollapsingHeader::new(tr(k::fx::HELP))
         .id_salt(("formula_help", id))
         .default_open(false)
@@ -1811,8 +1811,8 @@ fn curve_block(
                     if crate::widgets::field_probe::on() {
                         crate::widgets::field_probe::note(&format!("auto.help.{name}"), b.rect);
                     }
-                    // клик вставляет образец в поле формулы (форма AE —
-                    // меню вставки, но без попапа)
+                    // a click inserts a sample into the formula field (the AE form —
+                    // an insert menu, but without a popup)
                     if b.clicked() {
                         let cur = view.formula.take().filter(|(c, _)| *c == ci).map(|(_, t)| t);
                         let base = cur.unwrap_or_else(|| curves[ci].source.expr().unwrap_or("").to_string());

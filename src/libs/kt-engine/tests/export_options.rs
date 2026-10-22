@@ -1,5 +1,5 @@
-//! Тест 25 (docs/porting-notes.md, п.5): выбор энкодера и roundtrip mp4.
-//! Требует системный FFmpeg (муксер kt-ffmpeg) — как conformance-тест 10.
+//! Test 25 (docs/porting-notes.md, item 5): encoder choice and mp4 roundtrip.
+//! Requires the system FFmpeg (the kt-ffmpeg muxer) — like conformance test 10.
 
 use kt_engine::export::{ExportOptions, export_mp4_with};
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
@@ -83,23 +83,23 @@ fn t25_force_libx264_and_roundtrip_via_own_source() {
         &Arc::new(AtomicBool::new(false)),
         |_| {},
     )
-    .expect("экспорт с force libx264");
-    assert_eq!(stats.encoder, "libx264", "force-энкодер обязан быть выбран");
+    .expect("export with force libx264");
+    assert_eq!(stats.encoder, "libx264", "the force encoder must be selected");
     assert_eq!(stats.video_frames, 30);
 
-    // roundtrip НАШИМ ЖЕ декодером: длительность и потоки сходятся
-    let mut src = kt_media::ffmpeg::FfmpegSource::open(&out).expect("открытие результата");
+    // roundtrip with OUR OWN decoder: duration and streams converge
+    let mut src = kt_media::ffmpeg::FfmpegSource::open(&out).expect("opening the result");
     let info = src.info().clone();
     assert!(info.has_video && info.has_audio);
     let dur_s = info.duration.0 as f64 / 90_000.0;
-    assert!((dur_s - 1.0).abs() < 0.15, "длительность ~1 c, вышло {dur_s:.3}");
+    assert!((dur_s - 1.0).abs() < 0.15, "duration ~1 s, got {dur_s:.3}");
     let f = src
         .read_video_frame(Tick(0), Some(Quality { width: 320, height: 180 }))
-        .expect("кадр 0 читается");
+        .expect("frame 0 is read");
     assert_eq!((f.width, f.height), (320, 180));
-    let b = src.read_audio_burst(0).expect("аудио читается");
+    let b = src.read_audio_burst(0).expect("audio is read");
     let energy: f32 = b.data.iter().map(|s| s * s).sum();
-    assert!(energy > 1e-3, "аудио не тишина");
+    assert!(energy > 1e-3, "audio is not silence");
 }
 
 #[test]
@@ -119,7 +119,7 @@ fn t25_force_unknown_encoder_is_explicit_error() {
         &Arc::new(AtomicBool::new(false)),
         |_| {},
     );
-    assert!(err.is_err(), "неизвестный force-энкодер = явная ошибка, не фолбэк");
+    assert!(err.is_err(), "an unknown force encoder = an explicit error, not a fallback");
 }
 
 #[test]
@@ -137,17 +137,17 @@ fn t25_auto_encoder_selects_something() {
         &Arc::new(AtomicBool::new(false)),
         |_| {},
     )
-    .expect("экспорт с автовыбором");
-    assert!(!stats.encoder.is_empty(), "имя выбранного энкодера должно быть видно (UI)");
+    .expect("export with auto selection");
+    assert!(!stats.encoder.is_empty(), "the name of the selected encoder must be visible (UI)");
 }
 
-/// Тест 33 (п.9): в файле РЕАЛЬНО есть все кадры — дроп любого (EAGAIN
-/// без ретрая в муксере) — провал. Считаем кадры собственным декодером.
+/// Test 33 (item 9): the file REALLY contains all frames — dropping any (EAGAIN
+/// without a retry in the muxer) is a failure. Count frames with our own decoder.
 #[test]
 fn t33_exported_file_contains_every_frame() {
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("t33.mp4").to_string_lossy().to_string();
-    // 2 секунды = 60 кадров при 30 fps
+    // 2 seconds = 60 frames at 30 fps
     let mut p = Project::new(ProjectSettings {
         fps: 30,
         width: 320,
@@ -199,20 +199,20 @@ fn t33_exported_file_contains_every_frame() {
         &Arc::new(AtomicBool::new(false)),
         |_| {},
     )
-    .expect("экспорт");
-    assert_eq!(stats.video_frames, 60, "движок отдал 60 кадров");
+    .expect("export");
+    assert_eq!(stats.video_frames, 60, "the engine delivered 60 frames");
 
-    // считаем кадры В ФАЙЛЕ: span по всем ключам + frames_decoded
+    // count frames IN THE FILE: the span over all keys + frames_decoded
     let mut src = kt_media::ffmpeg::FfmpegSource::open(&out).unwrap();
     let step = 90_000 / 30;
     let keys: Vec<Tick> = (0..60).map(|i| Tick(i * step)).collect();
     let mut emitted = 0usize;
     src.read_video_span(&keys, Some(Quality { width: 320, height: 180 }), &mut |_, _| emitted += 1)
-        .expect("чтение всех ключей");
-    assert_eq!(emitted, 60, "каждый ключ сетки закрыт кадром");
+        .expect("reading all keys");
+    assert_eq!(emitted, 60, "every grid key is covered by a frame");
     let (_reopens, decoded) = src.decode_debug_stats();
     assert!(
         decoded >= 60,
-        "файл обязан содержать все 60 кадров (декодировано {decoded}) — дроп в муксере"
+        "the file must contain all 60 frames (decoded {decoded}) — a drop in the muxer"
     );
 }

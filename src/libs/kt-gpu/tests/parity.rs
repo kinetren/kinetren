@@ -1,13 +1,13 @@
-//! Тесты 181–183 (Р.29): конформанс GPU-исполнителя против CPU-эталона.
+//! Tests 181–183 (R.29): conformance of the GPU executor against the CPU reference.
 //!
-//! - t181: каждый эффект и цепочки — допуски по видам арифметики
-//!   (целочисленные ядра байт-в-байт, билинейные ±LSB, пороговые с
-//!   законными выбросами у границы порога);
-//! - t182: композит-сцены (over/scale/solo/dissolve/недостающие слои) —
-//!   байт-в-байт (композит целочисленный);
-//! - t183: детерминизм на одном устройстве + «грязный» пул текстур.
+//! - t181: each effect and chains: tolerances by kind of arithmetic
+//!   (integer kernels byte for byte, bilinear ±LSB, threshold ones with
+//!   legitimate outliers at the threshold edge);
+//! - t182: composite scenes (over/scale/solo/dissolve/missing layers):
+//!   byte for byte (the composite is integer);
+//! - t183: determinism on one device + a “dirty” texture pool.
 //!
-//! Без wgpu-адаптера — skip с печатью; KT_REQUIRE_GPU=1 требует адаптер.
+//! Without a wgpu adapter: skip with a printout; KT_REQUIRE_GPU=1 requires an adapter.
 
 use std::sync::Arc;
 
@@ -21,8 +21,8 @@ use kt_time::Tick;
 const W: u32 = 64;
 const H: u32 = 36;
 
-/// Детерминированный кадр: градиенты + зелёный угол (как в t26 kt-fx),
-/// опционально с градиентной альфой.
+/// A deterministic frame: gradients + a green corner (as in t26 of kt-fx),
+/// optionally with a gradient alpha.
 fn frame(w: u32, h: u32, alpha: bool, tint: u8) -> Arc<VideoFrame> {
     let mut rgba = vec![0u8; (w * h * 4) as usize];
     for y in 0..h {
@@ -56,16 +56,16 @@ struct Src {
     fx_hash: u64,
     u: f64,
     cam3d: Option<kt_engine::Cam3d>,
-    /// Ступень декода слоя (Р.46): кадр в src_scale раз крупнее Quality.
+    /// The decode scale step of the layer (R.46): a frame src_scale times larger than Quality.
     src_scale: u32,
-    /// Контекст ведущего узла «Геометрия» (Р.62).
+    /// Context of the leading “Geometry” node (R.62).
     lead: Option<kt_fx::conform::LeadCtx>,
 }
 
 impl Src {
     fn new(id: u64, frame: Option<Arc<VideoFrame>>, fx: Vec<FxInstance>) -> Src {
-        // fx_hash обязан быть уникален на набор параметров: CPU-путь
-        // мемоизирует пост-FX по нему (как fx_chain_hash в kt-engine)
+        // fx_hash MUST be unique per set of parameters: the CPU path
+        // memoizes the post-FX by it (like fx_chain_hash in kt-engine)
         let repr = format!("{fx:?}|{id}");
         Src {
             source: SourceId(id),
@@ -83,9 +83,9 @@ impl Src {
         LayerSrc {
             source: self.source,
             cache_idx: 0,
-            // серийный номер содержимого (Р.53, п.409): в продукте его
-            // выдаёт BurstCache, здесь — хэш самих байт кадра, чтобы
-            // разные кадры не делили текстуру в UploadCache
+            // the serial number of the content (R.53, item 409): in the product
+            // BurstCache issues it; here it is a hash of the frame’s own bytes, so that
+            // different frames do not share a texture in UploadCache
             content: self.frame.as_ref().map(|f| xxhash_rust::xxh3::xxh3_64(&f.rgba)).unwrap_or(0),
             src_scale: self.src_scale,
             input: kt_engine::video_plan::LayerInput::Frame(self.frame.clone()),
@@ -108,7 +108,7 @@ fn plan<'a>(t: i64, layers: Vec<PlanLayer<'a>>) -> FramePlan<'a> {
     FramePlan { t: Tick(t), out_w: W, out_h: H, layers, memoize_postfx: true }
 }
 
-/// CPU против GPU на одном плане; возвращает (cpu, gpu, complete_cpu,
+/// CPU against GPU on one plan; returns (cpu, gpu, complete_cpu,
 /// complete_gpu).
 fn run_both(engine: &dyn VideoGpuExec, p: &FramePlan<'_>) -> (Vec<u8>, Vec<u8>, bool, bool) {
     let cache = BurstCache::new(CacheConfig::default());
@@ -142,7 +142,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         ("greenscreen", vec![FxInstance::greenscreen([0, 255, 0], 70, 25)], FrameTol::THRESHOLD),
         ("edges", vec![FxInstance::edges(48)], FrameTol::THRESHOLD),
         ("noise", vec![FxInstance::noise(0.3)], FrameTol::EXACT),
-        // новые параметры Р.33 С5 — зеркала обязаны сойтись и на них
+        // the new parameters of R.33 S5: the mirrors MUST converge on them too
         ("blur-xy", vec![FxInstance::Blur { radius: 24, radius_y: 4 }], FrameTol::BILINEAR),
         (
             "edges-thick-color",
@@ -218,9 +218,9 @@ fn t181_effect_parity_gpu_vs_cpu() {
             vec![FxInstance::EventGrid { cols: 2, rows: 2, center: true }],
             FrameTol::BILINEAR,
         ),
-        // Слитые гео-серии (Р.44): один проход обратных отображений на
-        // обоих бэкендах (программа общая, kt-fx::geom); допуск билинейный —
-        // f32 против f64 в композиции карт и тапах.
+        // Merged geometry series (R.44): one pass of inverse mappings on
+        // both backends (the program is shared, kt-fx::geom); the tolerance is bilinear:
+        // f32 versus f64 in the composition of maps and in the taps.
         (
             "geo-mirror-grid",
             vec![
@@ -245,8 +245,8 @@ fn t181_effect_parity_gpu_vs_cpu() {
             ],
             FrameTol::BILINEAR,
         ),
-        // ядро сценария Р.44: сетка уменьшила, зум вернул — слитый проход
-        // сэмплирует ИСХОДНИК, а не растр сетки
+        // a scenario core of R.44: the grid shrank, zoom brought it back; the merged pass
+        // samples the SOURCE, not the raster of the grid
         (
             "geo-grid-pan-zoomback",
             vec![
@@ -255,7 +255,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
             ],
             FrameTol::BILINEAR,
         ),
-        // zoom<1: рамка шире входа — «плато» (Clamp-prim) на обоих путях
+        // zoom<1: the frame is wider than the input, a “plateau” (Clamp prim) on both paths
         (
             "geo-pan-shrink-clamp",
             vec![
@@ -264,10 +264,10 @@ fn t181_effect_parity_gpu_vs_cpu() {
             ],
             FrameTol::BILINEAR,
         ),
-        // Поглощённые поточечные (Р.45, п.312): Greenscreen/Noise на
-        // сабтапе внутри серии. Пороговые (мягкий ключ) и ячеистые (сетка
-        // зерна) решения законно флипают на f32/f64-границах — THRESHOLD
-        // (прецедент edges/greenscreen).
+        // Absorbed pointwise ops (R.45, item 312): Greenscreen/Noise on a
+        // subtap inside a series. Threshold (a soft key) and cellular (a grain grid)
+        // decisions legitimately flip at the f32/f64 boundaries: THRESHOLD
+        // (a precedent of edges/greenscreen).
         (
             "tap-gs-in-run",
             vec![
@@ -286,8 +286,8 @@ fn t181_effect_parity_gpu_vs_cpu() {
             ],
             FrameTol::THRESHOLD,
         ),
-        // K×-барьеры (Р.45, п.314): сетка стиснула → барьер в K=2 →
-        // зум вернул. CPU-ядро и GPU-пасс работают на K×-буферах.
+        // K×-barriers (R.45, item 314): the grid squeezed, a barrier at K=2,
+        // zoom brought it back. The CPU kernel and the GPU pass work on K×-buffers.
         (
             "k2-vhs",
             vec![
@@ -324,8 +324,8 @@ fn t181_effect_parity_gpu_vs_cpu() {
             ],
             FrameTol::THRESHOLD,
         ),
-        // Noise-БАРЬЕР в K× (не поглощён: стоит сразу за жёстким барьером,
-        // ведущий для следующего рана)
+        // a Noise BARRIER at K× (not absorbed: it stands right after a hard barrier,
+        // the leader for the next run)
         (
             "k2-noise-barrier",
             vec![
@@ -351,9 +351,9 @@ fn t181_effect_parity_gpu_vs_cpu() {
             vec![FxInstance::greenscreen([0, 255, 0], 70, 25), FxInstance::noise(0.5)],
             FrameTol::THRESHOLD,
         ),
-        // СИЛА СЛОЯ (Р.38 п.12): смешение сухой и мокрой сторон. Ядро
-        // целочисленное (зеркало dissolve_into), поэтому байт-в-байт —
-        // но вход мокрой стороны билинейный, отсюда общий допуск.
+        // LAYER STRENGTH (R.38 item 12): mixing of the dry and wet sides. The kernel
+        // is integer (a mirror of dissolve_into), so it is byte for byte,
+        // but the input of the wet side is bilinear, hence the common tolerance.
         (
             "layer-mix-half",
             vec![
@@ -368,8 +368,8 @@ fn t181_effect_parity_gpu_vs_cpu() {
             vec![FxInstance::edges(48), FxInstance::LayerMix { amount: 0.0, from: 1 }],
             FrameTol::THRESHOLD,
         ),
-        // сила ПОСЛЕ ресемплящего эффекта: сухая сторона обязана быть
-        // вписана той же билинейкой, что и на CPU
+        // the strength AFTER a resampling effect: the dry side MUST be
+        // fitted by the same bilinear as on the CPU
         (
             "layer-mix-after-resize",
             vec![
@@ -379,7 +379,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
             ],
             FrameTol::BILINEAR,
         ),
-        // сила НУЛЬ поверх всего: обязана вернуть состояние до слоя
+        // strength ZERO on top of everything: MUST return the state before the layer
         (
             "layer-mix-whole-chain",
             vec![FxInstance::vhs(4, 0.4), FxInstance::LayerMix { amount: 0.25, from: 0 }],
@@ -390,13 +390,13 @@ fn t181_effect_parity_gpu_vs_cpu() {
         let src = Src::new(1000 + i as u64, Some(frame(W, H, false, 0)), fx);
         let p = plan(90_000, vec![one(&src, 4096, false)]);
         let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
-        assert_eq!(cc, cg, "{name}: complete разошёлся");
+        assert_eq!(cc, cg, "{name}: complete diverged");
         assert_frames_close(&cpu, &gpu, W, H, tol, name);
     }
-    // ПРАВИЛО АЛЬФЫ (Р.53, п.418): вход С АЛЬФОЙ. Тут бэкенды расходятся
-    // легче всего — премультипликация перед мипом и поднятие альфы у
-    // edges живут ДВАЖДЫ (kt-fx и WGSL), и разойдись они, титр с
-    // размытием выглядел бы на GPU иначе, чем в экспорте на CPU.
+    // ALPHA RULE (R.53, item 418): input WITH ALPHA. The backends diverge
+    // most easily here: the premultiplication before the mip and the raising of alpha in
+    // edges live TWICE (kt-fx and WGSL), and were they to diverge, a title with
+    // blur would look different on the GPU than in the CPU export.
     let alpha_cases: Vec<(&str, Vec<FxInstance>, FrameTol)> = vec![
         ("alpha-blur", vec![FxInstance::blur(8)], FrameTol::BILINEAR),
         ("alpha-blur-xy", vec![FxInstance::Blur { radius: 24, radius_y: 4 }], FrameTol::BILINEAR),
@@ -429,11 +429,11 @@ fn t181_effect_parity_gpu_vs_cpu() {
         let src = Src::new(3000 + i as u64, Some(frame(W, H, true, 0)), fx);
         let p = plan(90_000, vec![one(&src, 4096, false)]);
         let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
-        assert_eq!(cc, cg, "{name}: complete разошёлся");
+        assert_eq!(cc, cg, "{name}: complete diverged");
         assert_frames_close(&cpu, &gpu, W, H, tol, name);
     }
 
-    // Pan с кадром ЧУЖОГО размера (ресайз в Quality обязан совпасть)
+    // Pan with a frame of a FOREIGN size (the resize to Quality MUST match)
     let src = Src::new(
         2000,
         Some(frame(96, 54, false, 0)),
@@ -443,9 +443,9 @@ fn t181_effect_parity_gpu_vs_cpu() {
     let (cpu, gpu, _, _) = run_both(engine.as_ref(), &p);
     assert_frames_close(&cpu, &gpu, W, H, FrameTol::BILINEAR, "pan-resize");
 
-    // Pan3d-серии (Р.44): CPU-эталон появился (обратная гомография);
-    // допуск GEOM — силуэт квада законно флипает единичные пиксели
-    // (f32-предикаты против f64), внутри — билинейная точность.
+    // Pan3d series (R.44): the CPU reference has appeared (the inverse homography);
+    // tolerance GEOM: the silhouette of the quad legitimately flips single pixels
+    // (f32 predicates versus f64), inside it is bilinear precision.
     let p3 = |pos_x: f64, rot_y: f64, scale: f64| FxInstance::Pan3d {
         pos_x,
         pos_y: 0.0,
@@ -463,8 +463,8 @@ fn t181_effect_parity_gpu_vs_cpu() {
         ("pan3d-alone", vec![p3(4.0, 20.0, 0.9)]),
         ("grid-pan3d", vec![grid2.clone(), p3(0.0, 35.0, 1.0)]),
         ("pan3d-grid", vec![p3(0.0, 0.0, 0.7), grid2.clone()]),
-        // ЦЕПОЧКА ПОЛЬЗОВАТЕЛЯ (Р.44): grid → pan3d → grid → pan3d-зум,
-        // нетто-масштаб ≈ 1 — слитый проход сэмплирует исходник
+        // THE USER’S CHAIN (R.44): grid → pan3d → grid → pan3d-zoom,
+        // net scale ≈ 1: the merged pass samples the source
         ("user-grid-pan3d-x2", vec![grid2.clone(), p3(2.0, 15.0, 1.0), grid2, p3(0.0, 0.0, 4.0)]),
     ];
     for (i, (name, fx)) in geo3d.into_iter().enumerate() {
@@ -473,33 +473,33 @@ fn t181_effect_parity_gpu_vs_cpu() {
             Some(kt_engine::Cam3d { cam: kt_model::CameraParams::default(), world_scale: 1.0 });
         let p = plan(90_000, vec![one(&src, 4096, false)]);
         let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
-        assert_eq!(cc, cg, "{name}: complete разошёлся");
+        assert_eq!(cc, cg, "{name}: complete diverged");
         assert_frames_close(&cpu, &gpu, W, H, FrameTol::GEOM, name);
     }
 }
 
-/// Тест 309 (п.319, Р.46): СТУПЕНЬ ДЕКОДА на GPU. Пре-FX кадр приходит
-/// вдвое крупнее Quality (`src_scale = 2`), план строится в логике, а
-/// исполняется на крупном буфере: конъюгация, ведущие барьеры в 2×,
-/// поглощённые поточечные и Legacy-зеркало обязаны совпасть с CPU в тех же
-/// допусках, что и K×-барьеры Р.45.
+/// Test 309 (item 319, R.46): the DECODE SCALE STEP on the GPU. The pre-FX frame arrives
+/// twice as large as Quality (`src_scale = 2`), the plan is built in logic, and
+/// it is executed on the large buffer: conjugation, leading barriers at 2×,
+/// absorbed pointwise ops and the Legacy mirror MUST match the CPU within the same
+/// tolerances as the K×-barriers of R.45.
 #[test]
 fn t309_decode_stage_parity_gpu_vs_cpu() {
     let Some(engine) = test_engine() else { return };
     let zoom2 = FxInstance::geometry_zoom(2.0);
     let grid2 = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
     let cases: Vec<(&str, Vec<FxInstance>, FrameTol)> = vec![
-        // чистая конъюгация: 2×-вход сводится зумом ровно в Quality
+        // pure conjugation: the 2× input is brought back exactly to Quality by zoom
         ("s2-zoom", vec![zoom2.clone()], FrameTol::BILINEAR),
-        // ведущий барьер исполняется в 2× (ресемпла до него не было)
+        // the leading barrier runs at 2× (there was no resample before it)
         ("s2-vhs-zoom", vec![FxInstance::vhs(4, 0.4), zoom2.clone()], FrameTol::BILINEAR),
-        // ступень + сетка выше барьера: K берётся по обоим источникам
+        // step + grid above the barrier: K is taken from both sources
         (
             "s2-grid-vhs-zoom",
             vec![grid2.clone(), FxInstance::vhs(2, 0.3), zoom2.clone()],
             FrameTol::BILINEAR,
         ),
-        // зеркало на равных краях — старое ядро прямо на 2×-буфере
+        // mirror on equal edges: the old kernel directly on the 2× buffer
         (
             "s2-mirror-zoom",
             vec![
@@ -509,13 +509,13 @@ fn t309_decode_stage_parity_gpu_vs_cpu() {
             ],
             FrameTol::BILINEAR,
         ),
-        // поглощённые поточечные на сабтапе крупного входа
+        // absorbed pointwise ops on a subtap of the large input
         (
             "s2-tap-gs",
             vec![grid2, FxInstance::greenscreen([0, 255, 0], 70, 25), zoom2.clone()],
             FrameTol::THRESHOLD,
         ),
-        // ядро сценария фичи: зум ×2 берёт детали, которых в 1× не было
+        // the scenario core of the feature: zoom ×2 takes details that were absent at 1×
         ("s2-zoom-edges", vec![zoom2, FxInstance::edges(48)], FrameTol::THRESHOLD),
     ];
     for (i, (name, fx, tol)) in cases.into_iter().enumerate() {
@@ -523,11 +523,11 @@ fn t309_decode_stage_parity_gpu_vs_cpu() {
         src.src_scale = 2;
         let p = plan(90_000, vec![one(&src, 4096, false)]);
         let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
-        assert_eq!(cc, cg, "{name}: complete разошёлся");
+        assert_eq!(cc, cg, "{name}: complete diverged");
         assert_frames_close(&cpu, &gpu, W, H, tol, name);
     }
-    // 3D на ступени: обратная гомография считается в логике, тапы — на
-    // крупном буфере (допуск GEOM — силуэт квада, как у t181)
+    // 3D on the step: the inverse homography is computed in logic, the taps on the
+    // large buffer (the GEOM tolerance: the quad silhouette, as in t181)
     let mut src = Src::new(
         4100,
         Some(frame(W * 2, H * 2, false, 0)),
@@ -548,7 +548,7 @@ fn t309_decode_stage_parity_gpu_vs_cpu() {
     src.cam3d = Some(kt_engine::Cam3d { cam: kt_model::CameraParams::default(), world_scale: 1.0 });
     let p = plan(90_000, vec![one(&src, 4096, false)]);
     let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
-    assert_eq!(cc, cg, "s2-pan3d: complete разошёлся");
+    assert_eq!(cc, cg, "s2-pan3d: complete diverged");
     assert_frames_close(&cpu, &gpu, W, H, FrameTol::GEOM, "s2-pan3d");
 }
 
@@ -561,7 +561,7 @@ fn t182_composite_parity_byte_exact() {
     let missing = Src::new(4, None, vec![]);
     let misfit = Src::new(5, Some(frame(32, 18, false, 0)), vec![]);
 
-    // (имя, слои, ожидаемый complete)
+    // (name, layers, expected complete)
     let cases: Vec<(&str, Vec<PlanLayer<'_>>, bool)> = vec![
         ("two-opaque", vec![one(&bg, 4096, false), one(&top_opaque, 4096, false)], true),
         ("alpha-over", vec![one(&bg, 4096, false), one(&top_alpha, 4096, false)], true),
@@ -611,11 +611,11 @@ fn t182_composite_parity_byte_exact() {
             false,
         ),
         ("missing-layer", vec![one(&bg, 4096, false), one(&missing, 4096, false)], false),
-        // Р.58, п.459: слой ЧУЖОГО РАЗМЕРА больше не проходит молча. До
-        // этого раунда кадр объявлялся ПОЛНЫМ без него — так вложение
-        // исчезало из готового кадра, а экспорт писал его как годный.
-        // Байты по-прежнему сходятся у обоих исполнителей: оба слой не
-        // рисуют, — а вот «полон» стало общим и честным `false`.
+        // R.58, item 459: a layer of a FOREIGN SIZE no longer passes silently. Before
+        // this round the frame was declared COMPLETE without it, so the embedding
+        // disappeared from the finished frame, and the export wrote it as good.
+        // The bytes still converge between both executors (both do not draw the layer),
+        // but “complete” became a shared and honest `false`.
         ("misfit-not-silent", vec![one(&bg, 4096, false), one(&misfit, 4096, false)], false),
         ("empty", vec![one(&missing, 4096, false)], false),
     ];
@@ -632,8 +632,8 @@ fn t182_composite_parity_byte_exact() {
 fn t183_gpu_deterministic_on_device_and_dirty_pool() {
     let Some(e1) = test_engine() else { return };
     let Some(e2) = test_engine() else { return };
-    // цепочка БЕЗ t-зависимых эффектов: смена t меняет ключ кэша
-    // движка, но не байты → форсит пересчёт «грязным» пулом
+    // a chain WITHOUT t-dependent effects: a change of t alters the engine’s cache key
+    // but not the bytes, so it forces a recalculation with a “dirty” pool
     let src = Src::new(
         10,
         Some(frame(96, 54, false, 3)),
@@ -644,13 +644,13 @@ fn t183_gpu_deterministic_on_device_and_dirty_pool() {
 
     let mut a1 = Vec::new();
     e1.execute_into(&mk(90_000), &mut a1).unwrap();
-    // два независимых движка на одном адаптере — байт-в-байт
+    // two independent engines on one adapter: byte for byte
     let mut b1 = Vec::new();
     e2.execute_into(&mk(90_000), &mut b1).unwrap();
-    assert_eq!(a1, b1, "два движка на одном устройстве разошлись");
+    assert_eq!(a1, b1, "two engines on one device diverged");
 
-    // испачкать пулы e1 другими планами (вкл. слитую гео-серию Р.44 и
-    // K×-барьер Р.45: сетка стиснула → blur в 2× → зум)
+    // dirty the pools of e1 with other plans (including the merged geometry series of R.44 and
+    // the K×-barrier of R.45: the grid squeezed → blur at 2× → zoom)
     let junk = Src::new(
         12,
         Some(frame(W, H, false, 9)),
@@ -665,36 +665,36 @@ fn t183_gpu_deterministic_on_device_and_dirty_pool() {
     e1.execute_into(&plan(1920, vec![one(&junk, 4096, false)]), &mut _j).unwrap();
     e1.execute_into(&plan(3840, vec![one(&junk, 2000, true)]), &mut _j).unwrap();
 
-    // тот же план с другим t (обход ReadbackCache) → пересчёт грязным
-    // пулом обязан дать те же байты
+    // the same plan with another t (bypassing the ReadbackCache) → recalculation with a dirty
+    // pool MUST give the same bytes
     let mut a2 = Vec::new();
     e1.execute_into(&mk(180_000), &mut a2).unwrap();
-    assert_eq!(a1, a2, "грязный пул текстур изменил результат");
+    assert_eq!(a1, a2, "a dirty texture pool changed the result");
 
-    // а повтор с исходным t — хит ReadbackCache с теми же байтами
+    // and a repeat with the original t is a ReadbackCache hit with the same bytes
     let mut a3 = Vec::new();
     e1.execute_into(&mk(90_000), &mut a3).unwrap();
-    assert_eq!(a1, a3, "ReadbackCache вернул не те байты");
+    assert_eq!(a1, a3, "ReadbackCache returned the wrong bytes");
 }
 
-/// Тест 224 (Р.33 С4): КАЖДЫЙ вид перехода считается на GPU так же, как на
-/// CPU. Ядра переходов — единственное место, где одну формулу пришлось
-/// написать дважды (Rust и WGSL), поэтому расхождение здесь означает, что
-/// у пользователя превью и экспорт покажут РАЗНОЕ — ровно то, что
-/// запрещает инвариант 7.
+/// Test 224 (R.33 S4): EVERY kind of transition is computed on the GPU the same way as on the
+/// CPU. The transition kernels are the only place where one formula had to be written twice
+/// (Rust and WGSL), so a divergence here means that the user’s preview and export
+/// would show DIFFERENT things: exactly
+/// what invariant 7 forbids.
 #[test]
 fn t224_transition_parity_gpu_vs_cpu() {
     let Some(engine) = test_engine() else { return };
     let a = Src::new(1, Some(frame(W, H, false, 0)), vec![]);
     let b = Src::new(2, Some(frame(W, H, false, 0x5a)), vec![]);
-    // допуск: ядра переходов считаются в f32 на обоих путях, но выборка
-    // и тригонометрия у драйвера своя — берём билинейный допуск, а
-    // маскам с резкой кромкой разрешаем полосу пикселей на границе
+    // tolerance: the transition kernels are computed in f32 on both paths, but the sampling
+    // and the trigonometry are the driver’s own, so we take the bilinear tolerance, and for
+    // masks with a sharp edge we allow a band of pixels at the boundary
     let soft = FrameTol { max_lsb: 2, outlier_frac: 0.01, outlier_max: 4, mean_lsb: 0.05 };
-    // ВАРИАЦИИ, а не только умолчания: у вайпа/сдвига дефолт — Dir::Left,
-    // то есть вектор (−1, 0). На нём ошибка в Y-члене формулы не видна
-    // вовсе — именно так первая версия этого теста прозевала намеренно
-    // сломанное зеркало. Каждая ось и каждый флаг обязаны быть в списке.
+    // VARIATIONS, not just the defaults: for wipe/shift the default is Dir::Left,
+    // that is the vector (−1, 0). On it the error in the Y term of the formula is not visible
+    // at all: that is exactly how the first version of this test missed a deliberately
+    // broken mirror. Every axis and every flag MUST be in the list.
     let cases: Vec<TransitionKind> = vec![
         TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.15 },
         TransitionKind::Wipe { dir: Dir::Up, angle: 0.0, softness: 0.0 },
@@ -702,7 +702,7 @@ fn t224_transition_parity_gpu_vs_cpu() {
         TransitionKind::Iris { shape: IrisShape::Circle, cx: 0.5, cy: 0.5, softness: 0.15 },
         TransitionKind::Iris { shape: IrisShape::Diamond, cx: 0.5, cy: 0.5, softness: 0.0 },
         TransitionKind::Iris { shape: IrisShape::Box, cx: 0.5, cy: 0.5, softness: 0.4 },
-        // смещённый центр (Р.51): без него ошибка в члене центра не видна
+        // an offset centre (R.51): without it the error in the centre term is not visible
         TransitionKind::Iris { shape: IrisShape::Circle, cx: 0.2, cy: 0.7, softness: 0.1 },
         TransitionKind::Clock { reverse: false, cx: 0.5, cy: 0.5, softness: 0.1 },
         TransitionKind::Clock { reverse: true, cx: 0.5, cy: 0.5, softness: 0.0 },
@@ -726,8 +726,8 @@ fn t224_transition_parity_gpu_vs_cpu() {
         TransitionKind::Glitch { amount: 0.5 },
         TransitionKind::Flash { color_r: 255, color_g: 200, color_b: 40, strength: 1.0 },
         TransitionKind::Dip { color_r: 0, color_g: 0, color_b: 0 },
-        // Р.51 (п.400): узоры, сдвиги-симбиозы, стилизованные — обе оси
-        // и оба флага у каждого направленного, как требует шапка списка
+        // R.51 (item 400): patterns, symbiotic shifts, stylised ones: both axes
+        // and both flags for each directional one, as the list header requires
         TransitionKind::Blinds { count: 8, angle: 0.0, softness: 0.1 },
         TransitionKind::Blinds { count: 5, angle: 30.0, softness: 0.0 },
         TransitionKind::Checker { cols: 8, rows: 6, softness: 0.1 },
@@ -764,26 +764,26 @@ fn t224_transition_parity_gpu_vs_cpu() {
     let mut seen = std::collections::BTreeSet::new();
     for kind in &cases {
         if matches!(kind, TransitionKind::Crossfade) {
-            continue; // целочисленный путь, его держит t182
+            continue; // the integer path, held by t182
         }
         let mix = kt_engine::TransMix::of(kind);
         seen.insert(mix.mode);
-        // несколько фаз: у переходов формула зависит от k нелинейно.
-        // 1800 = 0.44 — фаза МЕЖДУ четвертью и серединой: без неё
-        // мутация «порог фазы dip сдвинут с 0.5 на 0.4» проходила мимо.
+        // several phases: for the transitions the formula depends non-linearly on k.
+        // 1800 = 0.44 is a phase BETWEEN a quarter and the middle: without it
+        // the mutation “the dip phase threshold shifted from 0.5 to 0.4” got past.
         for k in [200u32, 1024, 1800, 2048, 3600] {
             let p = plan(
                 k as i64,
                 vec![PlanLayer::Dissolve { a: a.layer(), b: b.layer(), k, alpha_k: 4096, mix }],
             );
             let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
-            assert!(cc && cg, "{}: план обязан быть полным", kind.tag());
+            assert!(cc && cg, "{}: the plan must be complete", kind.tag());
             assert_frames_close(&cpu, &gpu, W, H, soft, &format!("{}@{k}", kind.tag()));
         }
     }
-    // объёмные (Р.51, п.401): жёсткие кромки панелей и перспективное
-    // деление — допуск GEOM, как у pan3d (пиксель на кромке может
-    // перещёлкнуться целиком)
+    // volumetric (R.51, item 401): the hard edges of the panels and the perspective
+    // division: the GEOM tolerance, as for pan3d (a pixel on an edge may
+    // flip over entirely)
     let hard: Vec<TransitionKind> = vec![
         TransitionKind::Flip { vertical: false, persp: 0.5, shade: 0.5 },
         TransitionKind::Flip { vertical: true, persp: 1.0, shade: 0.0 },
@@ -806,23 +806,23 @@ fn t224_transition_parity_gpu_vs_cpu() {
                 vec![PlanLayer::Dissolve { a: a.layer(), b: b.layer(), k, alpha_k: 4096, mix }],
             );
             let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
-            assert!(cc && cg, "{}: план обязан быть полным", kind.tag());
+            assert!(cc && cg, "{}: the plan must be complete", kind.tag());
             assert_frames_close(&cpu, &gpu, W, H, FrameTol::GEOM, &format!("{}@{k}", kind.tag()));
         }
     }
-    assert_eq!(seen.len(), 32, "все 32 не-кроссфейдных режима проверены: {seen:?}");
+    assert_eq!(seen.len(), 32, "all 32 non-crossfade modes checked: {seen:?}");
     assert_eq!(
         seen.len() + 1,
         TransitionKind::ALL.len(),
-        "новый вид перехода обязан появиться и в этом списке"
+        "a new kind of transition must appear in this list too"
     );
 
-    // сольный фейд С ВИДОМ: вторая сторона — пустота, тот же код
+    // solo fade WITH A VIEW: the second side is empty, the same code
     for (incoming, kind) in [
         (true, TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.2 }),
         (false, TransitionKind::Iris { shape: IrisShape::Circle, cx: 0.5, cy: 0.5, softness: 0.1 }),
         (true, TransitionKind::Push { dir: Dir::Up }),
-        // представители Р.51: узор и сдвиг-симбиоз фейдом «из пустоты»
+        // R.51 representatives: the pattern and the symbiotic shift with a fade “out of emptiness”
         (true, TransitionKind::Blinds { count: 8, angle: 0.0, softness: 0.1 }),
         (false, TransitionKind::Squeeze { dir: Dir::Right }),
     ] {
@@ -837,31 +837,31 @@ fn t224_transition_parity_gpu_vs_cpu() {
             }],
         );
         let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
-        assert!(cc && cg, "{}: сольный фейд обязан быть полным", kind.tag());
+        assert!(cc && cg, "{}: the solo fade must be complete", kind.tag());
         assert_frames_close(&cpu, &gpu, W, H, soft, &format!("solo-{}", kind.tag()));
-        // фейд обязан ЧТО-ТО скрывать: иначе тест зелен на «вида нет»
+        // the fade MUST hide SOMETHING: otherwise the test is green on “no view”
         let opaque = cpu.chunks_exact(4).filter(|p| p[3] > 250).count();
         let clear = cpu.chunks_exact(4).filter(|p| p[3] < 5).count();
         assert!(
             opaque > 100 && clear > 100,
-            "{}: у сольного фейда обязаны быть и открытая, и пустая части ({opaque}/{clear})",
+            "{}: the solo fade must have both an opaque and an empty part ({opaque}/{clear})",
             kind.tag()
         );
     }
 }
 
-/// Тест 329 (Р.47, п.331): конформанс-цикл CPU↔GPU по ВИДЕО-подмножеству
-/// реестра FxInstance::all(): на каждый эффект — одиночный кейс и сэндвич
-/// `[сетка 2×2, эффект, зум ×2]` (у барьеров сэндвич даёт K=2). Классы
-/// допуска — из таблицы; замок полноты как у t224: вид без строки валит
-/// тест. Slowed+Reverb на видео — варп времени, не пиксельный фильтр —
-/// исключён явно.
+/// Test 329 (R.47, item 331): a CPU↔GPU conformance cycle over the VIDEO subset of the
+/// registry FxInstance::all(): for each effect, a single case and a sandwich
+/// `[grid 2×2, effect, zoom ×2]` (for barriers the sandwich gives K=2). The tolerance classes
+/// come from the table; the completeness lock is as in t224: a kind without a row fails the
+/// test. Slowed+Reverb on video is a time warp, not a pixel filter, and is
+/// excluded explicitly.
 #[test]
 fn t329_parity_cycle_over_the_registry() {
     let Some(engine) = test_engine() else { return };
-    // (тег, допуск одиночного, допуск сэндвича)
+    // (tag, single tolerance, sandwich tolerance)
     let classes: &[(&str, FrameTol, FrameTol)] = &[
-        // Р.62: Pan упразднён; узел «Геометрия» — аффин/Proj слитого прохода
+        // R.62: Pan is retired; the “Geometry” node is the affine/Proj of the merged pass
         ("geometry", FrameTol::GEOM, FrameTol::GEOM),
         ("cam_motion", FrameTol::BILINEAR, FrameTol::BILINEAR),
         ("mirror", FrameTol::EXACT, FrameTol::BILINEAR),
@@ -873,24 +873,24 @@ fn t329_parity_cycle_over_the_registry() {
         ("glow", FrameTol::BILINEAR, FrameTol::BILINEAR),
         ("event_grid", FrameTol::BILINEAR, FrameTol::BILINEAR),
         ("pan3d", FrameTol::GEOM, FrameTol::GEOM),
-        // Р.47 Кв2: поточечные — f32-континуум против f64 (в сэндвиче они
-        // едут тапами слитого гео-прохода); Posterize — пороговый квант;
-        // CornerPin — проективный, как pan3d
+        // R.47 Kv2: pointwise ops: f32 continuum against f64 (in a sandwich they
+        // travel as taps of the merged geometry pass); Posterize: a threshold quantization;
+        // CornerPin: projective, like pan3d
         ("color_grade", FrameTol::BILINEAR, FrameTol::BILINEAR),
         ("duotone", FrameTol::BILINEAR, FrameTol::BILINEAR),
         ("posterize", FrameTol::THRESHOLD, FrameTol::THRESHOLD),
         ("vignette", FrameTol::BILINEAR, FrameTol::BILINEAR),
         ("corner_pin", FrameTol::GEOM, FrameTol::GEOM),
-        // Р.47 Кв3: барьеры. Pixelate — целочисленная копия (EXACT
-        // одиночный); drop_shadow на непрозрачном входе — тождество по
-        // формуле; halftone — жёсткий край точки (пороговый класс)
+        // R.47 Kv3: barriers. Pixelate: an integer copy (EXACT
+        // single); drop_shadow on an opaque input: an identity by the formula;
+        // halftone: the hard edge of a dot (a threshold class)
         ("sharpen", FrameTol::BILINEAR, FrameTol::BILINEAR),
         ("pixelate", FrameTol::EXACT, FrameTol::BILINEAR),
         ("chromatic_aberration", FrameTol::BILINEAR, FrameTol::BILINEAR),
         ("radial_blur", FrameTol::BILINEAR, FrameTol::BILINEAR),
         ("drop_shadow", FrameTol::EXACT, FrameTol::BILINEAR),
         ("halftone", FrameTol::THRESHOLD, FrameTol::THRESHOLD),
-        // Р.47 Кв4: гео Warp-прима
+        // R.47 Kv4: the geometric Warp prim
         ("lens_distort", FrameTol::GEOM, FrameTol::GEOM),
         ("twirl", FrameTol::GEOM, FrameTol::GEOM),
         ("ripple", FrameTol::GEOM, FrameTol::GEOM),
@@ -917,7 +917,7 @@ fn t329_parity_cycle_over_the_registry() {
         let (tol_single, tol_sand) = table[f.tag()];
         let cam = matches!(f, FxInstance::Pan3d { .. })
             .then(|| kt_engine::Cam3d { cam: kt_model::CameraParams::default(), world_scale: 1.0 });
-        // одиночный
+        // single
         let mut src =
             Src::new(9000 + i as u64 * 2, Some(frame(W, H, false, 0)), vec![(*f).clone()]);
         src.cam3d = cam;
@@ -925,7 +925,7 @@ fn t329_parity_cycle_over_the_registry() {
         let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
         assert_eq!(cc, cg, "{}: complete diverged (single)", f.tag());
         assert_frames_close(&cpu, &gpu, W, H, tol_single, f.tag());
-        // сэндвич
+        // sandwich
         let mut src = Src::new(
             9001 + i as u64 * 2,
             Some(frame(W, H, false, 0)),
@@ -937,10 +937,10 @@ fn t329_parity_cycle_over_the_registry() {
         assert_eq!(cc, cg, "{}: complete diverged (sandwich)", f.tag());
         assert_frames_close(&cpu, &gpu, W, H, tol_sand, &format!("sandwich-{}", f.tag()));
     }
-    // Р.47 Кв2: у color_grade и corner_pin дефолт — тождество, и цикл выше
-    // их формул не касается. Настроенные экземпляры сверяют математику:
-    // одиночный — барьерный пасс (или Proj-ран), сэндвич — тап слитого
-    // гео-прохода (kind 2..5 в geom_fused.wgsl).
+    // R.47 Kv2: for color_grade and corner_pin the default is an identity, and the cycle above
+    // does not touch their formulas.
+    // The configured instances check the maths: single = a barrier pass (or a Proj run),
+    // sandwich = a tap of the merged geometry pass (kind 2..5 in geom_fused.wgsl).
     let tuned: &[(FxInstance, FrameTol, FrameTol)] = &[
         (
             FxInstance::ColorGrade { brightness: 0.12, contrast: 0.35, saturation: 1.6, hue: 60.0 },
@@ -961,8 +961,8 @@ fn t329_parity_cycle_over_the_registry() {
             FrameTol::BILINEAR,
         ),
         (FxInstance::Posterize { levels: 4 }, FrameTol::THRESHOLD, FrameTol::THRESHOLD),
-        // Р.62: дополнительный узел «Геометрия» с кропом, сдвигом, зумом и
-        // поворотом (Proj-аффин + Bounds)
+        // R.62: an additional “Geometry” node with a crop, shift, zoom and
+        // rotation (Proj-affine + Bounds)
         (
             FxInstance::Geometry {
                 lead: false,
@@ -1016,10 +1016,10 @@ fn t329_parity_cycle_over_the_registry() {
         assert_eq!(cc, cg, "tuned {}: complete diverged (sandwich)", f.tag());
         assert_frames_close(&cpu, &gpu, W, H, *tol_sand, &format!("tuned-sandwich-{}", f.tag()));
     }
-    // Р.47 Кв4: жёсткие варпы — f32-тригонометрия под максимальной
-    // нагрузкой (замер: оба бэкенда сессии держат GEOM; провал здесь —
-    // расследование и, при подтверждении, ввод класса WARP ×2 от замера,
-    // НЕ подкрутка GEOM)
+    // R.47 Kv4: hard warps: f32 trigonometry under maximum load
+    // (measurement: both backends of the session hold GEOM; a failure here means
+    // an investigation and, upon confirmation, the introduction of a WARP ×2 class based on the measurement,
+    // NOT a tweak of GEOM)
     for (i, f) in [
         FxInstance::LensDistort { k1: -0.8, k2: 0.5 },
         FxInstance::Twirl { angle: 540.0, radius: 1.2 },
@@ -1050,9 +1050,9 @@ fn t329_parity_cycle_over_the_registry() {
             &format!("warp-hard-sandwich-{}", f.tag()),
         );
     }
-    // Р.47 Кв3: spin-ветка радиального размытия (дуга — тригонометрия
-    // f32 против f64) и тень на НАСТОЯЩЕЙ альфе (после greenscreen —
-    // THRESHOLD, порог ключа рвёт билинейную гладкость)
+    // R.47 Kv3: the spin branch of radial blur (an arc: f32 against f64 trigonometry)
+    // and the shadow on REAL alpha (after greenscreen: THRESHOLD, the key’s threshold
+    // breaks the bilinear smoothness)
     let spin = FxInstance::RadialBlur { amount: 0.6, center_x: 0.2, center_y: -0.1, spin: true };
     let src = Src::new(9700, Some(frame(W, H, false, 0)), vec![spin.clone()]);
     let p = plan(90_000, vec![one(&src, 4096, false)]);
@@ -1072,10 +1072,10 @@ fn t329_parity_cycle_over_the_registry() {
     assert_frames_close(&cpu, &gpu, W, H, FrameTol::THRESHOLD, "tuned-shadow-alpha-zoom");
 }
 
-/// Тест 714b (Р.62): размещение ведущим узлом «Геометрия» — GPU против
-/// CPU. Вертикальный кадр в 16:9 по правилу «вписать» (прозрачные поля),
-/// «как есть» (за край) и с поворотом; класс допуска — билинейный, поля
-/// (альфа 0 против 255) обязаны совпасть точно.
+/// Test 714b (R.62): placement by the leading “Geometry” node: GPU against
+/// CPU. A vertical frame in 16:9 by the “fit” rule (transparent margins),
+/// “as is” (past the edge) and with a rotation; the tolerance class is bilinear, and the margins
+/// (alpha 0 against 255) MUST match exactly.
 #[test]
 fn t714b_lead_geometry_placement_parity() {
     use kt_fx::conform::{ConformRule, LeadCtx};
@@ -1090,9 +1090,9 @@ fn t714b_lead_geometry_placement_parity() {
         ("fit", ConformRule::Fit, FxInstance::geometry()),
         ("fill", ConformRule::Fill, FxInstance::geometry()),
         ("as_is", ConformRule::AsIs, FxInstance::geometry()),
-        // «растянуть» здесь нет: рамка = холст, узел тождествен, и кадр
-        // обязан прийти уже в размере холста (контракт декодера) — это
-        // прежний путь без единого ресемпла, его сторожит t182
+        // “stretch” is absent here: the frame = the canvas, the node is an identity, and the frame
+        // MUST arrive already at the canvas size (the decoder contract): this is
+        // the former path without a single resample, guarded by t182
         ("rot", ConformRule::Fit, rot),
     ];
     for (name, rule, node) in cases {
@@ -1103,7 +1103,7 @@ fn t714b_lead_geometry_placement_parity() {
         assert!(cc && cg, "{name}: complete on both");
         assert_frames_close(&cpu, &gpu, W, H, FrameTol::BILINEAR, name);
         if name == "fit" {
-            // поля: слева и справа композит прозрачен → фон (0,0,0,0) на обоих
+            // margins: on the left and right the composite is transparent → background (0,0,0,0) on both
             for y in 0..H {
                 let i = ((y * W) * 4) as usize;
                 assert_eq!(&cpu[i..i + 4], &[0, 0, 0, 0], "cpu left field y={y}");
@@ -1113,19 +1113,19 @@ fn t714b_lead_geometry_placement_parity() {
     }
 }
 
-/// Тест 737 (Р.62, change B): РЕЖИМЫ НАЛОЖЕНИЯ дорожки — конформанс GPU
-/// против CPU-эталона. Ядро `blend_over` живёт в двух файлах (CPU в
-/// kt-engine, WGSL в composite.wgsl) и правится одним коммитом — этот
-/// тест и есть сторож их согласия (инвариант 7).
+/// Test 737 (R.62, change B): BLEND MODES of a track: conformance GPU
+/// against the CPU reference. The `blend_over` kernel lives in two files (CPU in
+/// kt-engine, WGSL in composite.wgsl) and is edited in one commit: this
+/// test is the guard of their agreement (invariant 7).
 ///
-/// Класс допуска — как у переходов: обе стороны считают в f32/f64 и
-/// округляют одинаково, но порядок операций у GPU свой.
+/// The tolerance class is that of transitions: both sides compute in f32/f64 and
+/// round the same way, but the order of operations on the GPU is its own.
 #[test]
 fn t737_blend_modes_gpu_matches_cpu() {
     use kt_model::BlendMode;
     let Some(engine) = test_engine() else { return };
-    // НИЖНИЙ слой — непрозрачный фон, ВЕРХНИЙ — с альфой: так видно и
-    // формулу режима, и то, что дыра оставляет низ нетронутым
+    // the BOTTOM layer is an opaque background, the TOP one has alpha: this shows both
+    // the formula of the mode and that a hole leaves the bottom untouched
     for (i, mode) in BlendMode::ALL.into_iter().enumerate() {
         for level_k in [4096u32, 2048] {
             let below = Src::new(7000 + i as u64, Some(frame(W, H, false, 3)), vec![]);
@@ -1140,7 +1140,7 @@ fn t737_blend_modes_gpu_matches_cpu() {
             let p = plan(90_000, layers);
             let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
             let name = format!("{mode:?}@{level_k}");
-            assert_eq!(cc, cg, "{name}: complete разошёлся");
+            assert_eq!(cc, cg, "{name}: complete diverged");
             assert_frames_close(&cpu, &gpu, W, H, FrameTol::THRESHOLD, &name);
         }
     }

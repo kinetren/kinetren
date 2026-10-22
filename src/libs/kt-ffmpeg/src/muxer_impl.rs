@@ -1,17 +1,17 @@
-// Внутрипроцессный муксер MP4 (h264 + aac). ВКЛЮЧАЕТСЯ в каждый версионный
-// модуль вместе с source_impl.rs — типы соответствуют загруженной версии.
+// In-process MP4 muxer (h264 + aac). INCLUDED into each version
+// module together with source_impl.rs — the types match the loaded version.
 //
-// Заменяет прежний шелл-аут в бинарник ffmpeg: кодеки берутся из СИСТЕМНОГО
-// FFmpeg, поэтому доступны его аппаратные энкодеры (nvenc/vaapi/qsv).
+// It replaces the former shell-out to the ffmpeg binary: codecs are taken from the SYSTEM
+// FFmpeg, so its hardware encoders (nvenc/vaapi/qsv) are available.
 
 use crate::MuxConfig;
 
-/// Константы-#define, которые bindgen не выносит.
+/// #define constants that bindgen does not emit.
 const AVFMT_GLOBALHEADER: c_int = 0x0040;
 const AVIO_FLAG_WRITE: c_int = 2;
 const AV_CODEC_FLAG_GLOBAL_HEADER: c_int = 1 << 22;
 
-/// Кандидаты видео-энкодера по убыванию предпочтения: сперва аппаратные.
+/// Video encoder candidates in descending order of preference: hardware first.
 const VIDEO_ENCODERS: &[(&str, bool)] = &[
     ("h264_nvenc", true),
     ("h264_vaapi", true),
@@ -20,7 +20,7 @@ const VIDEO_ENCODERS: &[(&str, bool)] = &[
     ("mpeg4", false),
 ];
 
-/// Доступные в системе энкодеры (для UI).
+/// Encoders available in the system (for the UI).
 pub fn available_encoders(api: &Api) -> Vec<String> {
     VIDEO_ENCODERS
         .iter()
@@ -48,7 +48,7 @@ pub struct Muxer {
     fps: c_int,
     video_pts: i64,
     audio_pts: i64,
-    /// Накопитель аудио до размера кадра энкодера (aac = 1024).
+    /// Audio accumulator up to the encoder frame size (aac = 1024).
     audio_fifo: Vec<f32>,
     frame_size: usize,
     encoder_name: String,
@@ -74,10 +74,10 @@ impl Muxer {
             return Err(averr(api, "creating mp4 context", r));
         }
 
-        // --- видео-энкодер: автовыбор с РЕАЛЬНОЙ проверкой открытия ---
-        // Наличие энкодера в сборке (find_encoder_by_name) не значит, что он
-        // заработает: h264_nvenc есть почти везде, но без libcuda/железа
-        // avcodec_open2 падает. Поэтому пробуем открывать по очереди.
+        // --- video encoder: automatic choice with a REAL open check ---
+        // The presence of an encoder in the build (find_encoder_by_name) does not mean it
+        // will work: h264_nvenc is almost everywhere, but without libcuda/hardware
+        // avcodec_open2 fails. So we try opening them one by one.
         let width = (cfg.width.max(2) as c_int) & !1;
         let height = (cfg.height.max(2) as c_int) & !1;
         let set = |d: &mut *mut ffi::AVDictionary, k: &str, v: &str| {
@@ -88,7 +88,7 @@ impl Muxer {
             !(*fmt).oformat.is_null()
                 && ((*(*fmt).oformat).flags & AVFMT_GLOBALHEADER) != 0
         };
-        // на время проб глушим FFmpeg-лог (неудачные кандидаты — норма)
+        // during the probes, the FFmpeg log is silenced (failed candidates are normal)
         unsafe { (api.av_log_set_level)(8) }; // AV_LOG_FATAL
         let mut opened: Option<(String, *mut ffi::AVCodecContext)> = None;
         let mut last_err = String::new();
@@ -118,7 +118,7 @@ impl Muxer {
             }
             let mut vopts: *mut ffi::AVDictionary = core::ptr::null_mut();
             if let Some(bps) = cfg.video_bitrate {
-                // режим целевого битрейта (п.9)
+                // target bitrate mode (item 9)
                 unsafe { (*ctx).bit_rate = bps as i64 };
                 match *name {
                     "libx264" => {
@@ -158,7 +158,7 @@ impl Muxer {
             let mut ctx = ctx;
             unsafe { (api.avcodec_free_context)(&mut ctx) };
         }
-        unsafe { (api.av_log_set_level)(16) }; // обратно AV_LOG_ERROR
+        unsafe { (api.av_log_set_level)(16) }; // back to AV_LOG_ERROR
         let (enc_name, venc) = opened.ok_or_else(|| {
             FfError::Av(format!(
                 "no video encoder could be opened (last error: {last_err})"
@@ -166,7 +166,7 @@ impl Muxer {
         })?;
         let enc_name = enc_name.as_str();
 
-        // --- аудио-энкодер aac ---
+        // --- aac audio encoder ---
         let aac = CString::new("aac").unwrap();
         let acodec = unsafe { (api.avcodec_find_encoder_by_name)(aac.as_ptr()) };
         if acodec.is_null() {
@@ -192,7 +192,7 @@ impl Muxer {
             if fs > 0 { fs as usize } else { 1024 }
         };
 
-        // --- потоки ---
+        // --- streams ---
         let vst = unsafe { (api.avformat_new_stream)(fmt, core::ptr::null()) };
         let ast = unsafe { (api.avformat_new_stream)(fmt, core::ptr::null()) };
         if vst.is_null() || ast.is_null() {
@@ -206,7 +206,7 @@ impl Muxer {
         }
         let (vstream_idx, astream_idx) = unsafe { ((*vst).index, (*ast).index) };
 
-        // --- открытие файла и заголовок (+faststart) ---
+        // --- opening the file and header (+faststart) ---
         let r = unsafe { (api.avio_open)(&mut (*fmt).pb, path.as_ptr(), AVIO_FLAG_WRITE) };
         if r < 0 {
             return Err(averr(api, "creating file", r));
@@ -219,7 +219,7 @@ impl Muxer {
             return Err(averr(api, "writing header", r));
         }
 
-        // --- рабочие буферы ---
+        // --- working buffers ---
         let vframe = unsafe { (api.av_frame_alloc)() };
         unsafe {
             (*vframe).format = ffi::AV_PIX_FMT_YUV420P;
@@ -329,11 +329,11 @@ impl Muxer {
         } else {
             (self.aenc, self.aframe, self.astream_idx, tb(1, AUDIO_SAMPLE_RATE as c_int))
         };
-        // EAGAIN = «энкодер полон, кадр НЕ принят» — обязан быть ретрай
-        // после дренажа очереди. Раньше кадр молча ТЕРЯЛСЯ, а PTS-сетка
-        // продолжалась: ролик той же длины со «скачками» (п.9 — дропы
-        // кадров у nvenc с глубокой очередью; у аудио — дыра в 1024
-        // сэмпла со сдвигом A/V).
+        // EAGAIN = “encoder is full, frame NOT accepted” — a retry is required
+        // after draining the queue. Previously the frame was silently LOST while the PTS grid
+        // continued: a video of the same length with “jumps” (item 9 — frame drops
+        // in nvenc with a deep queue; for audio — a hole of 1024
+        // samples with an A/V shift).
         let mut attempts = 0u32;
         loop {
             let r = unsafe { (api.avcodec_send_frame)(enc, frame) };
@@ -349,7 +349,7 @@ impl Muxer {
                     "encoder does not accept frames (1000 attempts on EAGAIN)".into(),
                 ));
             }
-            // освободить место в очереди энкодера и повторить send
+            // free space in the encoder queue and repeat the send
             self.drain(enc, stream_idx, tb_src)?;
         }
         self.drain(enc, stream_idx, tb_src)
@@ -383,17 +383,17 @@ impl Muxer {
         }
     }
 
-    /// Дозаписать хвосты, закрыть файл.
+    /// Flush the tails, close the file.
     pub fn finish(mut self) -> Result<(), FfError> {
         let api = self.api;
-        // добить неполный аудио-кадр тишиной
+        // pad the incomplete audio frame with silence
         if !self.audio_fifo.is_empty() {
             let need = self.frame_size * AUDIO_CHANNELS - self.audio_fifo.len();
             self.audio_fifo.extend(std::iter::repeat_n(0.0, need));
             let fifo = std::mem::take(&mut self.audio_fifo);
             self.write_audio(&fifo)?;
         }
-        // флаш энкодеров
+        // flush the encoders
         unsafe { (api.avcodec_send_frame)(self.venc, core::ptr::null()) };
         self.drain(self.venc, self.vstream_idx, tb(1, self.fps))?;
         unsafe { (api.avcodec_send_frame)(self.aenc, core::ptr::null()) };

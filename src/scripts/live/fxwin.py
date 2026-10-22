@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Живой сценарий Р.33 С2: окно эффектов открывается двойным кликом и
-показывает цепочку.
+"""Live scenario R.33 C2: the effects window opens with a double click and
+shows the chain.
 
-Проверяются два решения раунда сразу: двойной клик по событию открывает FX
-(п.204 — подсказка обещала это с Р.18 и врала) и окно рисуется единой
-полосой цепочки (п.217). Окно ищется по пикселям: после двойного клика над
-таймлайном обязана появиться панель, которой до клика не было.
+Two decisions of the round are checked at once: a double click on an event opens FX
+(item 204 — the hint promised this since R.18 and lied) and the window is drawn as a single
+strip of the chain (item 217). The window is searched by pixels: after a double click above the
+timeline a panel must appear that was not there before the click.
 """
 import os
 import sys
@@ -20,37 +20,37 @@ SEC = 90000
 
 def main(out):
     require_tools()
-    # демо-проект: у первого видео-события есть цепочка (пан/зум), значит
-    # окно покажет и полосу цепочки, и сетку параметров
+    # demo project: the first video event has a chain (pan/zoom), so the
+    # window will show both the chain strip and the parameter grid
     proj = os.path.join(out, "fxwin.otio")
     demo_otio(proj)
 
     with Live("fxwin", out, project=proj) as app:
-        # аудио-дорожка 1 демо-проекта: на ней slowed&reverb с кривыми,
-        # поэтому окно покажет и цепочку, и ГРАФИК автоматизации
+        # audio track 1 of the demo project: it carries slowed&reverb with curves,
+        # so the window will show both the chain and the automation GRAPH
         y = app.lane_y("audio", 1, frac=0.72)
         before = app.shot("open")
-        # двойной клик по событию: окно FX обязано открыться
+        # a double click on the event: the FX window must open
         x = app.x_at(10 * SEC)
         app.double_click(x, y)
         after = app.shot("after-double-click")
 
-        # окно рисуется поверх интерфейса: сравниваем ВЕСЬ экран, а не
-        # редкую сетку точек (она мазала мимо окна — Р.34)
+        # the window is drawn over the interface: we compare the WHOLE screen, not a
+        # sparse grid of points (it smeared past the window — R.34)
         d = app.screen_diff(before)
-        app.expect(d > 0.01, f"двойной клик открыл окно FX (экран изменился на {d:.1%})")
-        app.expect(os.path.exists(after), "скриншот окна снят")
+        app.expect(d > 0.01, f"double click opened the FX window (the screen changed by {d:.1%})")
+        app.expect(os.path.exists(after), "screenshot of the window taken")
 
-        # переключение вида: кнопка «Таблица» стоит правее кнопки
-        # «График» в строке заголовка секции автоматизации. Её позиция
-        # берётся из самого кадра: ищем подпись по цвету выделения не
-        # получится, поэтому кликаем по известному смещению внутри окна
-        # (окно открывается в одном и том же месте — по центру сверху).
+        # switching the view: the “Table” button stands to the right of the “Graph” button
+        # in the header row of the automation section. Its position is
+        # taken from the frame itself: looking for the label by the selection colour will not
+        # work, so we click at a known offset inside the window
+        # (the window opens in the same place — centre top).
         app.click(300, 247)
         app.shot("table-view")
 
-        # виджет автоматизации: добавляем кривую и снимаем график.
-        # Пикер «+ кривая» — комбо; его пункт лежит прямо под ним.
+        # the automation widget: we add a curve and remove the graph.
+        # The “+ curve” picker is a combo box; its item lies right under it.
 
         return app.done()
 

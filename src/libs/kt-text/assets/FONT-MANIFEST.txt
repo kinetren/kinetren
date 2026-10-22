@@ -1,21 +1,21 @@
-Вендоренные шрифты титров (Р.52, F-TXT-001). ПОЛНЫЕ файлы, не сабсеты:
-текст титра вводит пользователь, резать по каталогам UI — ошибка
-категории. Сборка UNHINTED: хинтинг не исполняется по правилу
-детерминизма (ab_glyph инструкции игнорирует; артефакт закрепляет это).
+Vendored title fonts (R.52, F-TXT-001). FULL files, not subsets:
+title text is typed by the user, so cutting by the UI catalogs is a
+category error. UNHINTED build: hinting is not executed, by the
+determinism rule (ab_glyph ignores the instructions; the artifact pins it).
 
-ОБНОВЛЕНИЕ ЛЮБОГО ФАЙЛА = осознанная перегенерация голденов титра
-(GOLDEN_TITLE_*) с записью здесь. Заполняется руками: вендоринг —
-событие, а не сборка.
+UPDATING ANY FILE = a deliberate regeneration of the title goldens
+(GOLDEN_TITLE_*) recorded here. Filled in by hand: vendoring is an
+event, not a build step.
 
-источник:  https://github.com/notofonts/latin-greek-cyrillic
-релиз:     NotoSans-v2.015 (2024-11-20)
-архив:     NotoSans-v2.015.zip
-sha256(архив): 0c34df072a3fa7efbb7cbf34950e1f971a4447cffe365d3a359e2d4089b958f5
-взято из:  NotoSans/unhinted/ttf/
-дата вендоринга: 2026-09-16 (Р.52 С2)
+source:    https://github.com/notofonts/latin-greek-cyrillic
+release:   NotoSans-v2.015 (2024-11-20)
+archive:   NotoSans-v2.015.zip
+sha256(archive): 0c34df072a3fa7efbb7cbf34950e1f971a4447cffe365d3a359e2d4089b958f5
+taken from:NotoSans/unhinted/ttf/
+vendored on: 2026-09-16 (R.52 C2)
 
-NotoSans-Regular.ttf  431364 байт
+NotoSans-Regular.ttf  431364 bytes
   sha256: f3961a9cde016d41a4879aecda1474d3a36d6bf54fa0e4643de029cc2248b0e8
-NotoSans-Bold.ttf     432376 байт
+NotoSans-Bold.ttf     432376 bytes
   sha256: 87cb2d84472a7d66da659ee47b6cdb9552326e8c128245231f191b6ac72529d9
-OFL.txt — лицензия SIL OFL 1.1 (обязана лежать рядом с файлами шрифта)
+OFL.txt — SIL OFL 1.1 license (must sit next to the font files)

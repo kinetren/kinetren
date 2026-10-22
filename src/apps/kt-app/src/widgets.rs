@@ -1,21 +1,21 @@
-//! Общие виджеты полей ввода (Р.33 С2).
+//! Common widgets for input fields (R.33 C2).
 //!
-//! До этого раунда каждое окно рисовало параметры само: одни и те же
-//! значения жили под слайдером в одном месте и под drag-полем в другом, а
-//! их диапазоны расходились между окном FX, окном морфера и спекой модели
-//! (у которой они и есть настоящие). Требование пользователя: «ui полей
-//! хромает везде», «ревизия во всех полях ввода».
+//! Until this round each window drew its parameters itself: the same
+//! values lived under a slider in one place and under a drag field in another, and
+//! their ranges diverged between the FX window, the morpher window and the model spec
+//! (where they are the real ones). The user’s requirement: “the ui of the fields
+//! limps everywhere”, “a revision across all input fields”.
 //!
-//! Отсюда правило: числовой параметр эффекта рисуется ТОЛЬКО этими
-//! функциями, а диапазон, шаг и единица берутся из `ParamSpec` — одного
-//! источника правды в kt-model. Разойтись им теперь негде.
+//! Hence the rule: a numeric effect parameter is drawn ONLY by these
+//! functions, and the range, step and unit are taken from `ParamSpec` — one
+//! source of truth in kt-model. There is now no room for them to diverge.
 
 use crate::i18n::{k, tr};
 use eframe::egui;
 use kt_model::{FxInstance, HasParams, ParamKind, ParamSpec, ParamType, ParamUnit};
 
-/// Суффикс единицы: значение с единицей само себя объясняет, поэтому
-/// подпись остаётся короткой (правило «очевидных надписей не делать»).
+/// Unit suffix: a value with a unit explains itself, so the
+/// caption stays short (the rule “do not make obvious captions”).
 fn unit_suffix(u: ParamUnit) -> &'static str {
     match u {
         ParamUnit::Db => " dB",
@@ -34,11 +34,11 @@ fn unit_suffix(u: ParamUnit) -> &'static str {
     }
 }
 
-/// Локализованная подпись параметра СВОЕЙ области (Р.53, п.414).
+/// The localised caption of a parameter of ITS OWN area (R.53, item 414).
 ///
-/// Одно имя значит у разных носителей разное: `size` — зерно у эффекта
-/// Noise и КЕГЛЬ у титра. Глобальная карта на этом врала, поэтому
-/// область спрашивается первой, и только потом общая таблица.
+/// One name means different things on different carriers: `size` is the grain in the
+/// Noise effect and the FONT SIZE of a title. The global map lied about this, so
+/// the area is asked first, and only then the common table.
 pub fn param_label_scoped(scope: kt_model::ParamScope, name: &str) -> String {
     if scope == kt_model::ParamScope::Generator
         && let Some(s) = generator_param_label(name)
@@ -48,8 +48,8 @@ pub fn param_label_scoped(scope: kt_model::ParamScope, name: &str) -> String {
     param_label(name)
 }
 
-/// Подписи параметров ГЕНЕРАТОРОВ. `None` — имя общее с эффектами и
-/// берётся из общей таблицы.
+/// Captions of GENERATOR parameters. `None` — the name is shared with effects and
+/// is taken from the common table.
 fn generator_param_label(name: &str) -> Option<&'static str> {
     Some(match name {
         "size" => tr(k::genp::SIZE),
@@ -65,7 +65,7 @@ fn generator_param_label(name: &str) -> Option<&'static str> {
         "cols" => tr(k::genp::COLS),
         "tone_db" => tr(k::genp::TONE_DB),
         "fps" => tr(k::genp::FPS),
-        // Р.53 (пп.419-422): фигуры, отсчёт, окно уровня
+        // R.53 (items 419-422): shapes, countdown, level window
         "cx" => tr(k::genp::CX),
         "cy" => tr(k::genp::CY),
         "w" => tr(k::genp::W),
@@ -81,9 +81,9 @@ fn generator_param_label(name: &str) -> Option<&'static str> {
         "beep_db" => tr(k::genp::BEEP_DB),
         "area" => tr(k::genp::AREA),
         "level" => tr(k::genp::LEVEL),
-        // Р.59: текст титра — такое же свойство, как остальные
+        // R.59: the title text is the same kind of property as the others
         "text" => tr(k::genp::TEXT),
-        // Р.59, стадия 2: анимация титра — обычные числа вида
+        // R.59, stage 2: title animation — ordinary numbers of the kind
         "reveal" => tr(k::genp::REVEAL),
         "reveal_soft" => tr(k::genp::REVEAL_SOFT),
         "offset_x" => tr(k::genp::OFFSET_X),
@@ -92,13 +92,13 @@ fn generator_param_label(name: &str) -> Option<&'static str> {
     })
 }
 
-/// Пипетка цвета + поле HEX для ПРЯМЫХ полей носителя (Р.53, п.415).
+/// Colour eyedropper + HEX field for the DIRECT fields of the carrier (R.53, item 415).
 ///
-/// У титра цвета — не `ParamSpec` и никогда ими не были («первое
-/// законное исключение» F-TXT-001), поэтому путь через `get_param`
-/// для них молча возвращает ноль: именно так в Р.53 заливка титра
-/// оказалась прозрачно-чёрной, и титр перестал рисоваться вовсе. Живой
-/// сценарий это увидел, харнесс — нет.
+/// For a title, colours are not a `ParamSpec` and never were (“the first lawful exception”,
+/// F-TXT-001), so the path through `get_param` silently returns zero for them: this is how in R.53
+/// the title fill became transparent black, and the title stopped being drawn at all.
+/// A live scenario saw this,
+/// the harness did not.
 pub fn color_row_rgba(
     ui: &mut egui::Ui,
     label: &str,
@@ -117,10 +117,10 @@ pub fn color_row_rgba(
         if resp.changed() {
             changed = true;
         }
-        // HEX-поле: канон пути (rrggbbaa) и приём его же.
-        // ПРЯМЫЕ компоненты: `Color32` внутри премультиплицирован, и
-        // `col.r()` на полупрозрачном цвете вернул бы затемнённый байт —
-        // цвет темнел бы при каждом открытии окна.
+        // HEX field: the canonical path form (rrggbbaa) and the same technique.
+        // DIRECT components: `Color32` is premultiplied inside, and
+        // `col.r()` on a semi-transparent colour would return a darkened byte —
+        // the colour would darken on every opening of the window.
         let s = col.to_srgba_unmultiplied();
         let shown = format!("{:02x}{:02x}{:02x}{:02x}", s[0], s[1], s[2], s[3]);
         let id = ui.id().with(("hexedit", label.len(), probe.unwrap_or("")));
@@ -160,11 +160,11 @@ pub fn color_row_rgba(
     changed
 }
 
-/// Пипетка цвета + поле HEX (Р.53, п.415). Канон пути — именно hex
-/// (`c=rrggbb`), и до этого пункта пользователь видел его в модели, но
-/// ввести не мог: egui-пикер hex-поля не содержит.
+/// Colour eyedropper + HEX field (R.53, item 415). The canonical path form is hex
+/// (`c=rrggbb`), and until this item the person saw it in the model but
+/// could not enter it: the egui picker does not contain a hex field.
 ///
-/// `alpha` — имя четвёртого компонента, если у цвета есть прозрачность.
+/// `alpha` — the name of the fourth component, if the colour has transparency.
 pub fn color_row<P: HasParams + ?Sized>(
     ui: &mut egui::Ui,
     label: &str,
@@ -175,14 +175,14 @@ pub fn color_row<P: HasParams + ?Sized>(
     pubc: Option<&PublishCtx>,
 ) -> bool {
     let mut changed = false;
-    // Основа имени цвета — ЕГО адрес как свойства (Р.59): каналы
-    // `<stem>_r/_g/_b/_a` это обычные числовые ряды, а цвет выводится из
-    // них (`derive_color_groups`), поэтому и публикуется он стеблем.
+    // The base of a colour’s name — ITS ADDRESS as a property (R.59): the channels
+    // `<stem>_r/_g/_b/_a` are ordinary numeric series, and the colour is derived from
+    // them (`derive_color_groups`), which is why it is published by its stem.
     let stem = names[0].strip_suffix("_r").unwrap_or(names[0]).to_string();
-    // ДВЕРИ НЕТ ТАМ, КУДА НЕЛЬЗЯ ВОЙТИ (правило 9). У титра цвета — не
-    // свойства вовсе («первое законное исключение» F-TXT-001): они лежат
-    // прямо в варианте, мимо паспорта, и публикация на них умерла бы в
-    // валидации. Спрашиваем сам носитель, а не список исключений.
+    // NO DOOR WHERE ONE MUST NOT ENTER (rule 9). For a title, colours are not
+    // properties at all (“the first lawful exception” F-TXT-001): they lie
+    // right in the variant, bypassing the spec, and publishing on them would die in
+    // validation. We ask the carrier itself, not the list of exceptions.
     let pubc = pubc.filter(|_| f.value_type(&stem).is_some());
     ui.horizontal(|ui| {
         pub_label(ui, label, pubc, &stem, kt_model::ParamType::Color);
@@ -206,9 +206,9 @@ pub fn color_row<P: HasParams + ?Sized>(
         if let Some(name) = probe {
             field_probe::note(name, resp.rect);
         }
-        // ПРЯМЫЕ компоненты: `Color32` внутри премультиплицирован (см.
-        // `color_row_rgba`), и на полупрозрачном цвете `col.r()` вернул
-        // бы затемнённый байт
+        // DIRECT components: `Color32` is premultiplied inside (see
+        // `color_row_rgba`), and on a semi-transparent colour `col.r()` would return
+        // a darkened byte
         let straight = col.to_srgba_unmultiplied();
         if resp.changed() {
             for (n, v) in names.iter().zip(straight) {
@@ -219,7 +219,7 @@ pub fn color_row<P: HasParams + ?Sized>(
             }
             changed = true;
         }
-        // HEX-поле: показывает канон пути и принимает его же
+        // HEX field: shows the canonical path form and accepts the same
         let shown = match alpha {
             Some(_) => format!(
                 "{:02x}{:02x}{:02x}{:02x}",
@@ -240,8 +240,8 @@ pub fn color_row<P: HasParams + ?Sized>(
                 .char_limit(8),
         );
         if let Some(name) = probe {
-            // hex-поле — отдельная проба: живому сценарию надо ПЕЧАТАТЬ
-            // цвет, а не тыкать в системный пикер
+            // a hex field is a separate probe — the live scenario has to TYPE
+            // a colour, not poke at the system picker
             field_probe::note(&format!("{name}.hex"), te.rect);
         }
         if te.changed() {
@@ -270,7 +270,7 @@ pub fn color_row<P: HasParams + ?Sized>(
     changed
 }
 
-/// Подпись ФЛАГА (Р.53, п.414).
+/// Flag caption (R.53, item 414).
 pub fn flag_label(name: &str) -> String {
     let s: &str = match name {
         "mono" => tr(k::genp::MONO),
@@ -285,9 +285,9 @@ pub fn flag_label(name: &str) -> String {
     s.to_string()
 }
 
-/// Ряд флагов носителя — ОДИН виджет на все окна (Р.53, п.414). До него
-/// «да/нет» рисовались рукописными строками в каждом окне и потому
-/// забывались: тон 1 кГц и цветной шум включить было нечем.
+/// The carrier’s flag row — ONE widget for all windows (R.53, item 414). Until it,
+/// “yes/no” were drawn by hand in each window and so were forgotten:
+/// there was no way to switch on the 1 kHz tone or the coloured noise.
 pub fn flags_row<P: HasParams + ?Sized>(
     ui: &mut egui::Ui,
     _id: impl std::hash::Hash + std::fmt::Debug,
@@ -312,8 +312,8 @@ pub fn flags_row<P: HasParams + ?Sized>(
     changed
 }
 
-/// Локализованная подпись параметра. Имя поля — ключ, перевод живёт в
-/// каталогах: kt-model про язык интерфейса ничего не знает.
+/// The localised parameter caption. The field name is the key, the translation lives in
+/// the catalogues: kt-model knows nothing about the interface language.
 pub fn param_label(name: &str) -> String {
     let s: &str = match name {
         "db" => tr(k::fxp::DB),
@@ -323,7 +323,7 @@ pub fn param_label(name: &str) -> String {
         "damp" => tr(k::fxp::DAMP),
         "decay" => tr(k::fxp::DECAY),
         "wet_gain" => tr(k::fxp::WET_GAIN),
-        // аудио-эффекты Р.47 (Ка2)
+        // R.47 audio effects (Ka2)
         "cutoff_hz" => tr(k::fxp::CUTOFF_HZ),
         "resonance" => tr(k::fxp::RESONANCE),
         "low_gain_db" => tr(k::fxp::LOW_GAIN_DB),
@@ -349,10 +349,10 @@ pub fn param_label(name: &str) -> String {
         "release_ms" => tr(k::fxp::RELEASE_MS),
         "hold_ms" => tr(k::fxp::HOLD_MS),
         "makeup_db" => tr(k::fxp::MAKEUP_DB),
-        // лимитер Р.48
+        // R.48 limiter
         "ceiling_db" => tr(k::fxp::CEILING_DB),
         "lookahead_ms" => tr(k::fxp::LOOKAHEAD_MS),
-        // питч Р.48
+        // R.48 pitch
         "semitones" => tr(k::fxp::SEMITONES),
         "cents" => tr(k::fxp::CENTS),
         "pan_x" => tr(k::fxp::PAN_X),
@@ -360,7 +360,7 @@ pub fn param_label(name: &str) -> String {
         "zoom" => tr(k::fxp::ZOOM),
         "time_scale" => tr(k::fxp::TIME_SCALE),
         "radius" => tr(k::fx::RADIUS),
-        // новые параметры Р.33 С5
+        // new parameters of R.33 C5
         "radius_y" => tr(k::fxp::RADIUS_Y),
         "thickness" => tr(k::fxp::THICKNESS),
         "size" => tr(k::fxp::SIZE),
@@ -377,7 +377,7 @@ pub fn param_label(name: &str) -> String {
         "softness" => tr(k::fx::SOFTNESS),
         "threshold" => tr(k::fx::THRESHOLD),
         "amount" => tr(k::fxp::AMOUNT),
-        // параметры видов переходов (Р.33 С4)
+        // parameters of the transition kinds (R.33 C4)
         "angle" => tr(k::fxp::ANGLE),
         "turns" => tr(k::fxp::TURNS),
         "blur" => tr(k::fxp::BLUR),
@@ -394,7 +394,7 @@ pub fn param_label(name: &str) -> String {
         "rot_z" => tr(k::fxp::ROT_Z),
         "anchor_x" => tr(k::fxp::ANCHOR_X),
         "anchor_y" => tr(k::fxp::ANCHOR_Y),
-        // узел «Геометрия» (Р.62)
+        // the “Geometry” node (R.62)
         "crop_l" => tr(k::fxp::CROP_L),
         "crop_t" => tr(k::fxp::CROP_T),
         "crop_r" => tr(k::fxp::CROP_R),
@@ -402,7 +402,7 @@ pub fn param_label(name: &str) -> String {
         "rot" => tr(k::fxp::ROT),
         "scale" => tr(k::fxp::SCALE),
         "fov_deg" => tr(k::fxp::FOV_DEG),
-        // видео-эффекты Р.47 (Кв2)
+        // R.47 video effects (Kv2)
         "brightness" => tr(k::fxp::BRIGHTNESS),
         "contrast" => tr(k::fxp::CONTRAST),
         "saturation" => tr(k::fxp::SATURATION),
@@ -416,21 +416,21 @@ pub fn param_label(name: &str) -> String {
         "y2" => tr(k::fxp::Y2),
         "x3" => tr(k::fxp::X3),
         "y3" => tr(k::fxp::Y3),
-        // барьеры Р.47 (Кв3)
+        // R.47 barriers (Kv3)
         "offset_x" => tr(k::fxp::OFFSET_X),
         "offset_y" => tr(k::fxp::OFFSET_Y),
         "opacity" => tr(k::fxp::OPACITY),
         "center_x" => tr(k::fxp::CENTER_X),
         "center_y" => tr(k::fxp::CENTER_Y),
-        // гео Р.47 (Кв4)
+        // R.47 geo (Kv4)
         "k1" => tr(k::fxp::K1),
         "k2" => tr(k::fxp::K2),
         "freq" => tr(k::fxp::FREQ),
         "phase" => tr(k::fxp::PHASE),
         "segments" => tr(k::fxp::SEGMENTS),
         "curvature" => tr(k::fxp::CURVATURE),
-        // параметры видов переходов Р.51: центр жеста, объёмные панели
-        // (поймано t508 — показывались сырыми английскими именами)
+        // parameters of the R.51 transition kinds: the gesture centre, volumetric panels
+        // (caught by t508 — they were shown as raw English names)
         "cx" => tr(k::fxp::CX),
         "cy" => tr(k::fxp::CY),
         "count" => tr(k::fxp::COUNT),
@@ -439,23 +439,23 @@ pub fn param_label(name: &str) -> String {
         "curl" => tr(k::fxp::CURL),
         "shadow" => tr(k::fxp::SHADOW),
         "steps" => tr(k::fxp::STEPS),
-        // параметр без подписи в каталоге — видно сразу, а не молча
+        // a parameter without a caption in the catalogue — visible at once, not silently
         other => return other.to_string(),
     };
     s.to_string()
 }
 
-/// ТЕЛО ОКНА В ПРОКРУТКЕ, кнопки — под ней (Р.66, контракт формы).
+/// THE WINDOW BODY IN A SCROLL, the buttons — below it (R.66, form contract).
 ///
-/// Окно, переросшее экран, не имеет права прятать свои действия: в Р.65
-/// именно так у окна дорожки уехали за кромку «Закрыть» и «Отмена», и
-/// поймал это тест, а не глаз. Высота прокрутки — доля экрана, чтобы на
-/// любом ноутбуке кнопки остались видны.
+/// A window that has outgrown the screen has no right to hide its actions: in R.65
+/// this is exactly how the track window’s “Close” and “Cancel” went past the edge, and
+/// a test caught it, not the eye. The scroll height is a fraction of the screen, so that on
+/// any laptop the buttons remain visible.
 pub fn window_body<R>(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    // Доля экрана — потолок; у окна с ЗАДАННОЙ высотой тело вдобавок
-    // оставляет место кнопкам под собой (Р.67): иначе окно прокручивало
-    // ещё и себя, и «Готово» уходило за нижнюю кромку — блок кривой под
-    // графиком стало нечем закрыть (живой сценарий `curves`).
+    // The screen fraction is the ceiling; a window with a SET height, in addition,
+    // leaves room for the buttons below it (R.67): otherwise the window scrolled
+    // itself too, and “Done” went past the bottom edge — the curve block had nothing
+    // to close it with (live scenario `curves`).
     let screen = (ui.ctx().content_rect().height() * 0.62).max(240.0);
     let in_window = ui.available_height() - ACTIONS_H;
     let max_h = if in_window.is_finite() { screen.min(in_window).max(160.0) } else { screen };
@@ -466,15 +466,15 @@ pub fn window_body<R>(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui) -> R) 
         .inner
 }
 
-/// Сколько высоты окна оставляет себе строка кнопок действия: разделитель
-/// плюс ряд кнопок. Одно число на программу — `window_body` вычитает его,
-/// `window_actions` в нём и рисуется.
+/// How much of the window height the action button row keeps for itself: a
+/// separator plus the row of buttons. One number per programme — `window_body` subtracts it,
+/// and `window_actions` draws within it.
 const ACTIONS_H: f32 = 34.0;
 
-/// СВЁРТЫВАЕМАЯ ГРУППА формы — образец «Трансформации» (Р.64/Р.66).
+/// A COLLAPSIBLE form group — the sample is “Transform” (R.64/R.66).
 ///
-/// Свёртка живёт в памяти egui по `id`, то есть это состояние ОКНА, а не
-/// проекта: в файл она не попадает и через undo не ходит.
+/// The collapse state lives in egui memory by `id`, so it is the state of the WINDOW,
+/// not of the project: it does not go into the file and does not go through undo.
 pub fn group<R>(
     ui: &mut egui::Ui,
     id: &str,
@@ -485,39 +485,39 @@ pub fn group<R>(
         .id_salt(("form_group", id))
         .default_open(true)
         .show(ui, body);
-    // заголовок группы — цель жеста: живому сценарию `CollapsingHeader` в
-    // дереве доступности не найти, а угадывать смещения он не должен (Р.27)
+    // the group header is the GESTURE target: the live scenario cannot find a `CollapsingHeader`
+    // in the accessibility tree, and it must not guess offsets (R.27)
     field_probe::note(&format!("grp.{id}"), r.header_response.rect);
     r.body_returned
 }
 
-/// Ряд ДЕЙСТВИЙ окна — ПОД прокруткой тела. Отдельным вызовом, а не
-/// вторым замыканием: оба замыкания держали бы один и тот же заём
-/// (накопитель подсказок), и борроу-чекер прав.
+/// ACTIONS row of the window — BELOW the scrolling body. A separate call, not
+/// a second closure: both closures would hold the same borrow
+/// (the hint accumulator), and the borrow checker is right.
 pub fn window_actions(ui: &mut egui::Ui, actions: impl FnOnce(&mut egui::Ui)) {
     ui.separator();
     actions(ui);
 }
 
-/// Ряд ЧИСЛА БЕЗ ПАСПОРТА (Р.66).
+/// Row of a NUMBER WITHOUT A SPEC (R.66).
 ///
-/// Не у всякой величины окна есть `ParamSpec`: сдвиг морфера в мс,
-/// длительность камеры в секундах, поля таймлайна — это свойства модели и
-/// интерфейса, а не параметры эффекта, и выдумывать им паспорт значило бы
-/// врать об их природе. Но рисоваться они обязаны ТЕМ ЖЕ рядом, а пределы,
-/// шаг и единица — приходить из ОДНОГО места рядом с определением
-/// величины, а не из кода отрисовки (иначе у одного и того же числа в двух
-/// окнах окажутся разные границы — дефект Р.33 с Gain −24…24 против −48…24).
+/// Not every window quantity has a `ParamSpec`: morpher shift in ms,
+/// camera duration in seconds, timeline fields — these are model and
+/// UI properties, not effect parameters, and inventing a spec for them would
+/// misstate their nature. Yet they MUST be drawn in the SAME row, while the limits,
+/// step and unit MUST come from ONE place next to the quantity’s definition,
+/// not from the drawing code (otherwise one and the same number in two
+/// windows would get different bounds — the R.33 defect with Gain −24…24 versus −48…24).
 pub struct NumRow<'a> {
-    /// Подпись слева. Пусто — ряд без подписи (например второй в паре).
+    /// Label on the left. Empty — a row without a label (for example the second in a pair).
     pub label: &'a str,
-    /// Имя прямоугольника для живых сценариев (`field_probe`).
+    /// Rectangle name for live scenarios (`field_probe`).
     pub probe: &'a str,
     pub unit: ParamUnit,
     pub min: f64,
     pub max: f64,
     pub step: f64,
-    /// Ширина ползунка рядом с числом; `None` — только число.
+    /// Width of the slider next to the number; `None` — number only.
     pub slider: Option<f32>,
 }
 
@@ -537,9 +537,9 @@ impl NumRow<'_> {
     }
 }
 
-/// Нарисовать ряд числа без паспорта. Возвращает ОТКЛИК, а не «тронули»:
-/// вызывающему бывает нужно и «отпустили» (сортировка ключей по отпусканию,
-/// Р.33), и «ушёл фокус».
+/// Draw a row of a number without a spec. Returns a RESPONSE, not “touched”:
+/// the caller sometimes needs “released” too (sorting keys on release,
+/// R.33), and “focus left”.
 pub fn plain_row(ui: &mut egui::Ui, row: &NumRow<'_>, v: &mut f64) -> egui::Response {
     if !row.label.is_empty() {
         ui.label(row.label);
@@ -550,9 +550,9 @@ pub fn plain_row(ui: &mut egui::Ui, row: &NumRow<'_>, v: &mut f64) -> egui::Resp
     r
 }
 
-/// ПАРА значений одной строкой (X/Y, ширина/высота) — образец
-/// «Трансформации» (Р.64): два числа одной величины читаются вместе, и
-/// разносить их по строкам значит тратить место зря (правило 13).
+/// A PAIR of values on one line (X/Y, width/height) — the model for
+/// “Transform” (R.64): two numbers of one quantity are read together, and
+/// splitting them across lines wastes space (rule 13).
 pub fn pair_row(
     ui: &mut egui::Ui,
     label: &str,
@@ -570,10 +570,10 @@ pub fn pair_row(
     changed
 }
 
-/// Единый числовой контрол параметра. Диапазон, шаг и единица — из спеки.
+/// Unified numeric control of a parameter. Range, step and unit — from the spec.
 pub fn param_value(ui: &mut egui::Ui, spec: &ParamSpec, v: &mut f64) -> egui::Response {
-    // Доля, показываемая процентом (Р.53, п.415): пересчёт живёт ЗДЕСЬ и
-    // только здесь — в модели, в файле и в кривых значение остаётся долей.
+    // Fraction shown as a percentage (R.53, item 415): the conversion lives HERE and
+    // only here — in the model, in the file and in the curves the value stays a fraction.
     if spec.unit == ParamUnit::Percent {
         let mut pct = *v * 100.0;
         let step = spec.step * 100.0;
@@ -597,17 +597,17 @@ pub fn param_value(ui: &mut egui::Ui, spec: &ParamSpec, v: &mut f64) -> egui::Re
     if !suffix.is_empty() {
         dv = dv.suffix(suffix);
     }
-    // целочисленные параметры не показывают дробную часть
+    // integer parameters do not show the fractional part
     if spec.step >= 1.0 {
         dv = dv.max_decimals(0);
     }
     ui.add(dv)
 }
 
-/// Число плюс необязательный ползунок — ОДНО значение и один ответ
-/// «тронули». Порядок (сначала число, потом ползунок) фиксирован: поле
-/// стоит там же, где у параметров без ползунка, и форма не «скачет»
-/// (правило 3 чек-листа).
+/// A number plus an optional slider — ONE value and one answer
+/// “touched”. The order (number first, then slider) is fixed: the field stays
+/// where it is for parameters without a slider, and the form does not “jump”
+/// (rule 3 of the checklist).
 fn param_edit(
     ui: &mut egui::Ui,
     spec: &ParamSpec,
@@ -628,21 +628,21 @@ fn param_edit(
     }
 }
 
-/// Связь полей параметров с кривыми (Р.38 пп.15-16).
+/// Link between parameter fields and curves (R.38 items 15-16).
 ///
-/// Претензии дословно: «при нажатии на ключ — чтобы значения которые
-/// прописаны в полях — имели связь с ключем» и «ощущение что у эффектов
-/// есть какое-то отдельное "дефолтное" состояние значений».
+/// The claims, verbatim: “when pressing a keyframe — so that the values written in the fields
+/// have a link with the keyframe” and “a feeling that effects have some separate
+/// “default” state of values.”
 ///
-/// Второе — следствие первого: при живой кривой поле правило БАЗУ, а
-/// движок брал значение кривой. База оставалась невидимой, всплывала при
-/// снятии кривой и выглядела как «отдельное состояние».
+/// The second is a consequence of the first: with a live curve the field was
+/// the base rule, while the engine took the curve value. The base stayed invisible,
+/// surfacing when the curve was removed and looking like a “separate state”.
 pub struct CurveBind<'a> {
     pub curves: &'a mut Vec<kt_model::ParamCurve>,
-    /// Выбранный ключ виджета автоматизации: (кривая, индекс).
+    /// Selected key of the automation widget: (curve, index).
     pub sel: Option<(usize, usize)>,
-    /// Позиция курсора В ДОМЕНЕ КРИВОЙ — сюда садится ключ, когда ни один
-    /// не выбран.
+    /// Cursor position IN THE CURVE DOMAIN — the key lands here when none
+    /// is selected.
     pub at: kt_time::Tick,
 }
 
@@ -651,14 +651,14 @@ impl CurveBind<'_> {
         self.curves.iter().position(|c| c.param == param)
     }
 
-    /// Есть ли у параметра ЖИВАЯ кривая — от этого зависит, куда пишет
-    /// и поле, и парный ему график АЧХ (Р.48).
+    /// Whether the parameter has a LIVE curve — this decides where both the
+    /// field and its paired frequency-response graph (R.48) write.
     pub fn has_curve<P: HasParams + ?Sized>(&self, _f: &P, param: &str) -> bool {
         self.index_of(param).is_some()
     }
 
-    /// Что ПОКАЗЫВАЕТ поле этого параметра: значение выбранного ключа,
-    /// значение кривой под курсором или базу (Р.38 п.15).
+    /// What the field SHOWS for this parameter: the value of the selected key,
+    /// the value of the curve under the cursor, or the base (R.38 item 15).
     pub fn shown<P: HasParams + ?Sized>(&self, f: &P, param: &str) -> f64 {
         let base = f.get_param(param).unwrap_or(0.0);
         match self.index_of(param) {
@@ -673,7 +673,7 @@ impl CurveBind<'_> {
         }
     }
 
-    /// Что поле ПРАВИТ — ровно то, что показывает.
+    /// What the field EDITS — exactly what it shows.
     pub fn apply<P: HasParams + ?Sized>(&mut self, _f: &mut P, param: &str, v: f64) {
         let Some(ci) = self.index_of(param) else { return };
         let key = match self.sel {
@@ -685,19 +685,19 @@ impl CurveBind<'_> {
     }
 }
 
-/// Что именно тронуло поле параметра (Р.43, п.291).
+/// What exactly touched the parameter field (R.43, item 291).
 ///
-/// Прежде обе правки возвращались ОДНИМ `bool`, и вызывающий не мог знать,
-/// куда писать результат: в `SetFx` или в `SetFxAuto`. `fx_editor` писал
-/// только в `SetFx`, поэтому правка ключа ЧИСЛОМ умирала вместе с кадром и
-/// поле «скидывалось на предыдущее значение» — претензия пользователя
-/// Р.43 п.1. У морфера флаг был один на оба источника правки, и потому там
-/// это работало.
+/// Previously both edits returned ONE `bool`, and the caller could not know
+/// where to write the result: to `SetFx` or `SetFxAuto`.
+/// `fx_editor` wrote only to `SetFx`, so a key edit by NUMBER died with the
+/// frame and the field “reset to the previous value” — the user’s claim of
+/// R.43 item 1. The morpher had one flag for both edit sources, so it worked
+/// there.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ParamsChanged {
-    /// Тронута БАЗА эффекта (параметр без живой кривой) → `SetFx`.
+    /// Base of the effect touched (parameter without a live curve) → `SetFx`.
     pub base: bool,
-    /// Тронута КРИВАЯ (ключ параметра с живой кривой) → `SetFxAuto`.
+    /// Curve touched (key of a parameter with a live curve) → `SetFxAuto`.
     pub curve: bool,
 }
 
@@ -720,23 +720,23 @@ impl std::ops::BitOrAssign for ParamsChanged {
     }
 }
 
-/// Пункт меню с АККОРДОМ (Р.49, п.362).
+/// Menu item with a CHORD (R.49, item 362).
 ///
-/// Аккорд — аргумент, а не часть переводимой фразы. Пока он жил в значении
-/// каталога («Удалить (Del)»), одна строка обслуживала разные контексты, и в
-/// половине из них обещание было ложным: у ИМЕНОВАННОЙ ОБЛАСТИ клавиша Del
-/// ничего не удаляет (она удаляет выделенные события), а подпись это обещала.
-/// Переводчику тоже становилось хуже: аккорд не переводится, а править его
-/// приходилось в пяти каталогах.
+/// The chord is an argument, not part of the translatable phrase.
+/// While it lived in the catalog value (“Delete (Del)”), one string served different
+/// contexts, and in half of them the promise was false: in a NAMED REGION the Del key
+/// deletes nothing (it deletes the selected events), yet the label promised it.
+/// The translator also had it worse: the chord is not translated, yet it had to be
+/// edited in five catalogs.
 ///
-/// Разделитель — `\t`: egui разносит им подпись и аккорд по краям пункта,
-/// как это делают системные меню.
+/// The separator is `\t`: egui places the label and the chord at the edges of the item,
+/// as system menus do.
 pub fn menu_item(ui: &mut egui::Ui, label: &str, accel: Option<&str>) -> bool {
     menu_item_probed(ui, label, accel).0
 }
 
-/// То же плюс ПРЯМОУГОЛЬНИК пункта: живым сценариям нечем найти пункт меню
-/// egui (в дереве доступности его нет), а угадывать смещения они не должны.
+/// The same PLUS the item’s RECTANGLE: live scenarios have no way to find an
+/// egui menu item (it is absent from the accessibility tree), and they must not guess offsets.
 pub fn menu_item_probed(ui: &mut egui::Ui, label: &str, accel: Option<&str>) -> (bool, egui::Rect) {
     let r = match accel {
         Some(a) => ui.button(format!("{label}\t{a}")),
@@ -745,12 +745,12 @@ pub fn menu_item_probed(ui: &mut egui::Ui, label: &str, accel: Option<&str>) -> 
     (r.clicked(), r.rect)
 }
 
-/// Прямоугольники полей параметров последнего кадра — ТОЛЬКО для живых
-/// сценариев (`KT_GEOM_DUMP`, правило Р.27 «координаты берутся из САМОЙ
-/// программы»). У `egui::DragValue` нет узла в дереве доступности, и по
-/// подписи его не найти ни харнессу, ни скрипту: без этого списка сценарий
-/// на поле параметра пришлось бы писать угаданными смещениями внутри окна.
-/// В обычном запуске ветка стоит один `OnceLock`-чек.
+/// Rectangles of the parameter fields of the last frame — ONLY for live scenarios
+/// (`KT_GEOM_DUMP`, rule R.27 “coordinates are taken from the program ITSELF”).
+/// `egui::DragValue` has no node in the accessibility tree, and its label cannot be
+/// used to find it, neither by the harness nor by a script: without this list a scenario
+/// on a parameter field would have to be written with guessed offsets inside the window.
+/// In a normal run the branch costs one `OnceLock` check.
 pub(crate) mod field_probe {
     use eframe::egui;
     use std::cell::RefCell;
@@ -776,19 +776,19 @@ pub(crate) mod field_probe {
         });
     }
 
-    /// Забрать накопленное (дамп геометрии пишется раз в 100 мс).
+    /// Take the accumulated data (the geometry dump is written every 100 ms).
     pub(crate) fn take() -> Vec<(String, egui::Rect)> {
         RECTS.with(|v| std::mem::take(&mut *v.borrow_mut()))
     }
 }
 
-/// Подсказки из ЗАМЫКАНИЙ (Р.53, п.415). Правило 10 требует ровно одно
-/// место для подсказки — правый низ строки состояния, — но общие виджеты
-/// (`param_row_bound`, `color_row`) рисуются внутри `Window::show`, где
-/// `&mut KtApp` недоступен, а протаскивать накопитель через семь
-/// сигнатур значило бы менять все вызовы ради строки текста. Механизм
-/// тот же, что у `field_probe`: виджет кладёт, `KtApp` забирает в конце
-/// кадра.
+/// Hints from CLOSURES (R.53, item 415). Rule 10 requires exactly one place for a hint —
+/// the bottom right of the status line — but the shared widgets (`param_row_bound`,
+/// `color_row`) are drawn inside `Window::show`, where `&mut KtApp` is not available, and
+/// threading the accumulator through seven signatures would mean changing every call just
+/// for a line of text. The mechanism is the same as for `field_probe`:
+/// the widget puts it in, and `KtApp` takes it out at the end of
+/// the frame.
 pub(crate) mod hint_sink {
     use std::cell::RefCell;
 
@@ -800,13 +800,13 @@ pub(crate) mod hint_sink {
         TEXT.with(|t| *t.borrow_mut() = Some(text.to_string()));
     }
 
-    /// Забрать накопленное (зовётся `draw_status_hint` в конце кадра).
+    /// Take the accumulated data (called by `draw_status_hint` at the end of the frame).
     pub(crate) fn take() -> Option<String> {
         TEXT.with(|t| t.borrow_mut().take())
     }
 }
 
-/// Человекочитаемое имя формы отрезка.
+/// Human-readable name of the segment shape.
 pub fn shape_label(s: kt_model::SegShape) -> &'static str {
     use kt_model::SegShape as S;
     match s {
@@ -820,8 +820,8 @@ pub fn shape_label(s: kt_model::SegShape) -> &'static str {
     }
 }
 
-/// Закрытый набор форм в порядке показа. ОДИН список на всю программу:
-/// два списка разошлись бы, и вид, забытый в одном, стал бы недостижим.
+/// A closed set of shapes in display order. ONE list for the whole program:
+/// two lists would diverge, and a shape forgotten in one would become unreachable.
 pub fn all_shapes() -> [kt_model::SegShape; 6] {
     use kt_model::SegShape as S;
     [
@@ -834,12 +834,12 @@ pub fn all_shapes() -> [kt_model::SegShape; 6] {
     ]
 }
 
-/// «Форма всех отрезков кривой» — команда над кривой, а не настройка
-/// машины (Р.61): настройка машины дала бы «один файл, два поведения».
+/// “Shape of all segments of the curve” is a command over the curve, not a machine setting
+/// (R.61): a machine setting would give “one file, two behaviors”.
 ///
-/// У скорости варпа форма только прямая: на кусочно-линейном профиле
-/// стоит замкнутая карта растяжения. Отказ ГРОМКИЙ — строкой состояния,
-/// а не молча погашенным контролом.
+/// The warp speed has only the straight shape: on a piecewise-linear profile
+/// a closed stretch map stands. The refusal is LOUD — via the status line,
+/// not a silently disabled control.
 pub fn shape_all_control(
     ui: &mut egui::Ui,
     curve: &mut kt_model::ParamCurve,
@@ -849,8 +849,8 @@ pub fn shape_all_control(
     let rate = curve.param == "rate";
     let cur = curve.keys.first().map(|k| k.shape).unwrap_or_default();
     ui.label(tr(k::fx::SHAPE_ALL));
-    // ширина — по галлее САМОГО ДЛИННОГО названия формы (правило 3): поле
-    // не растёт за окном и не скачет при смене формы
+    // width — measured by the LONGEST shape name (rule 3): the field
+    // does not grow past the window and does not jump when the shape changes.
     let widest = all_shapes()
         .iter()
         .map(|s| {
@@ -882,9 +882,9 @@ pub fn shape_all_control(
             }
         });
     crate::app::hint_into(hover, r.response, tr(k::fx::SHAPE_ALL_HINT));
-    // ПАРАМЕТРЫ формы — рядом с ней: у каждого вида они свои, и общего
-    // числа «жёсткости» тут нет (Р.61, D2). Правка ложится на все
-    // отрезки — это и есть «форма всех отрезков».
+    // PARAMETERS of the shape — next to it: each kind has its own, and there is no common
+    // “stiffness” number here (R.61, D2). The edit lands on all segments —
+    // that is what “all segments of the shape” means.
     let mut next = cur;
     match &mut next {
         kt_model::SegShape::Smooth { tension }
@@ -901,8 +901,8 @@ pub fn shape_all_control(
                 changed = true;
             }
             ui.label(tr(k::fx::SHAPE_AMP));
-            // амплитуда в ЕДИНИЦАХ ПАРАМЕТРА: зигзаг вокруг постоянного
-            // значения — самый частый, и доля перепада схлопнула бы его
+            // amplitude in UNITS OF THE PARAMETER: a zigzag around a constant
+            // value is the most frequent — and a fraction of the swing would collapse it.
             if ui.add(egui::DragValue::new(amplitude).speed(0.01)).changed() {
                 changed = true;
             }
@@ -927,7 +927,7 @@ pub fn shape_all_control(
                     }
                 });
         }
-        // текст формулы отрезка правится в меню участка (Р.67), не тут
+        // text of the segment formula is edited in the segment’s menu (R.67), not here
         kt_model::SegShape::Linear | kt_model::SegShape::Hold | kt_model::SegShape::Formula { .. } => {}
     }
     if next != cur && !rate {
@@ -938,53 +938,53 @@ pub fn shape_all_control(
     changed
 }
 
-/// Подсказка у виджета, нарисованного в замыкании.
+/// Hint for a widget drawn inside a closure.
 pub fn hint(r: &egui::Response, text: &str) {
     if r.hovered() {
         hint_sink::put(text);
     }
 }
 
-// ---- публикация свойства наружу (Р.59, стадия 3) -------------------------
+// ---- publication of a property outward (R.59, stage 3) -------------------------
 
-/// Контекст ПУБЛИКАЦИИ у подписи поля.
+/// Context of PUBLICATION at the field’s label.
 ///
-/// Дверь одна: объявить свойство наружу можно только правым кликом по
-/// ПОДПИСИ его поля. Второго входа не заводим намеренно — иначе «где же
-/// это публикуется» стало бы вопросом, а публичный набор ленты обязан
-/// собираться там, где автор на свойство и смотрит (разведка F-TL-012:
-/// панель Essential Graphics собирается РУКАМИ, а не выводится из
-/// содержимого).
+/// There is one door: a property can be published outward only by right-clicking
+/// the LABEL of its field. A second entry is deliberately not added — otherwise “where is
+/// this published” becomes a question, and the public set of a reel must be assembled
+/// where the author looks at the property (reconnaissance F-TL-012:
+/// the Essential Graphics panel is assembled BY HAND,
+/// not derived from the content).
 ///
-/// Носитель окна решает, давать ли контекст вообще: у морфер-патча
-/// адреса не существует (`ParamOwner` его не знает), и он передаёт
+/// Whether a window offers a context at all is decided by its host: a morpher patch has no
+/// address (`ParamOwner` does not know it), so it passes
 /// `None`.
 pub struct PublishCtx {
-    /// Лента, внутри которой стоит носитель. `None` — мы в КОРНЕ: корень
-    /// никому не экземпляр, публиковать у него нечего, и пункта меню НЕТ
-    /// ВОВСЕ (правило 9 «мёртвых контролов не бывает»). Почему — говорит
-    /// подсказка подписи (правило 16).
+    /// The track that holds the carrier. `None` — we are at the ROOT: the root
+    /// is not anyone’s instance, there is nothing to publish from it, and the menu item
+    /// is ABSENT ENTIRELY (rule 9, “there are no dead controls”). The reason is given by
+    /// the label’s hint (rule 16).
     pub seq: Option<kt_model::MediaId>,
     pub clip: kt_model::ClipId,
     pub owner: kt_model::ParamOwner,
-    /// Уже объявленные ручки ЭТОГО носителя: имя свойства → номер ручки.
-    /// По ней строка узнаёт себя, рисует булавку и предлагает снятие.
+    /// Handles of THIS carrier that are already declared: property name → handle number.
+    /// By it the row recognizes itself, draws a pin and offers removal.
     pub published: std::collections::HashMap<String, kt_model::PubId>,
-    /// Объяснять ли в подсказке, ПОЧЕМУ пункта нет (правило 16).
+    /// Whether the hint should explain WHY there is no item (rule 16).
     ///
-    /// Только когда в документе композиции есть: в проекте без единой
-    /// ленты фраза «публикация живёт внутри композиции» висела бы у
-    /// КАЖДОЙ подписи и рассказывала бы про механизм, которого человек
-    /// ещё не завёл, — это шум (правило 9 и правило 10).
+    /// Only when the composition document has one: in a project without a single
+    /// reel, the phrase “publication lives inside a composition” would hang over
+    /// EVERY label and talk about a mechanism the person has not set up yet —
+    /// that is noise (rule 9 and rule 10).
     pub explain_outside: bool,
 }
 
-/// Что попросила подпись поля. Исполняет `KtApp` в конце кадра — внутри
-/// `Window::show` до модели не дотянуться.
+/// What the field label asked for. `KtApp` executes it at the end of the frame — inside
+/// `Window::show` the model is out of reach.
 #[derive(Debug, Clone)]
 pub enum PublishReq {
-    /// Открыть диалог имени для этой цели. Имя по умолчанию — ПОДПИСЬ
-    /// поля на языке интерфейса; дальше это текст АВТОРА.
+    /// Open the name dialog for this target. The default name is the LABEL
+    /// of the field in the interface language; from then on it is the AUTHOR’s text.
     Publish {
         seq: kt_model::MediaId,
         addr: kt_model::ParamAddr,
@@ -997,8 +997,8 @@ pub enum PublishReq {
     },
 }
 
-/// Сток заявок подписи — тот же механизм, что `hint_sink`: виджет кладёт,
-/// `KtApp` забирает в конце кадра.
+/// The label request sink — the same mechanism as `hint_sink`: the widget puts it,
+/// `KtApp` takes it at the end of the frame.
 pub(crate) mod publish_sink {
     use std::cell::RefCell;
 
@@ -1015,7 +1015,7 @@ pub(crate) mod publish_sink {
     }
 }
 
-/// Булавка перед подписью объявленного свойства.
+/// The pin before the label of a declared property.
 fn pin_prefix(pubc: Option<&PublishCtx>, param: &str) -> &'static str {
     match pubc {
         Some(c) if c.published.contains_key(param) => crate::icons::PIN,
@@ -1023,10 +1023,10 @@ fn pin_prefix(pubc: Option<&PublishCtx>, param: &str) -> &'static str {
     }
 }
 
-/// Правый клик по подписи: «Опубликовать…» либо «Снять публикацию».
+/// Right-click on the label: “Publish…” or “Remove publication”.
 ///
-/// Вне ленты пункта НЕТ (правило 9), и это не молчание: подсказка самой
-/// подписи объясняет, где публикация вообще живёт (правило 16).
+/// There is NO item outside a reel (rule 9), and this is not silence: the hint of
+/// the label itself explains where publication lives at all (rule 16).
 fn publish_menu(
     r: &egui::Response,
     pubc: Option<&PublishCtx>,
@@ -1038,9 +1038,9 @@ fn publish_menu(
     let Some(seq) = c.seq else { return };
     let existing = c.published.get(param).copied();
     let (clip, owner, param) = (c.clip, c.owner.clone(), param.to_string());
-    // ИМЯ ПО УМОЛЧАНИЮ — подпись БЕЗ двоеточия: у полей оно часть вёрстки
-    // («Кегль:»), а у ручки композиции это её имя, и «Кегль:» в списке
-    // выглядит опечаткой (замечено живым сценарием, Р.63)
+    // DEFAULT NAME — the label WITHOUT a colon: for fields the colon is part of the layout
+    // (“Size:”), while for a composition handle it is its name, and “Size:” in the list
+    // looks like a typo (noticed by a live scenario, R.63)
     let label = label.trim().trim_end_matches(':').trim().to_string();
     r.clone().context_menu(|ui| {
         match existing {
@@ -1069,9 +1069,9 @@ fn publish_menu(
     });
 }
 
-/// Дверь публикации на САМОМ ПОЛЕ — там, где подписи нет и заводить её
-/// ради одной надписи нельзя (правило 13). Единственный такой случай —
-/// многострочный текст титра: он занимает всю ширину формы.
+/// The publication door on the FIELD ITSELF — where there is no label and adding one
+/// for a single caption is not allowed (rule 13). The only such case is
+/// the multi-line title text: it takes the full width of the form.
 pub fn publish_on_field(
     r: &egui::Response,
     pubc: Option<&PublishCtx>,
@@ -1082,9 +1082,9 @@ pub fn publish_on_field(
     publish_menu(r, pubc, param, label, ty);
 }
 
-/// Подпись НЕЧИСЛОВОГО свойства (текст, цвет, выбор, медиа) — та же дверь
-/// публикации, что и у числа. Возвращает `Response`, чтобы носитель мог
-/// повесить свою подсказку.
+/// The label of a NON-NUMERIC property (text, color, choice, media) — the same publication
+/// door as for a number. Returns a `Response`, so the carrier can
+/// attach its own hint.
 pub fn pub_label(
     ui: &mut egui::Ui,
     text: &str,
@@ -1106,10 +1106,10 @@ pub fn pub_label(
     r
 }
 
-/// Подпись параметра — КЛИКАБЕЛЬНАЯ: двойной клик сбрасывает параметр к
-/// умолчанию спеки (Р.53, п.415). «Вернуть как было» не должно требовать
-/// от пользователя помнить число; подсказка об этом висит на самой
-/// подписи, а значит находится там же, где и жест.
+/// The parameter label is CLICKABLE: a double click resets the parameter to the
+/// spec default (R.53, item 415). “Restore as it was” must not require
+/// the user to remember a number; the hint about it hangs on the label
+/// itself, so it is found in the same place as the gesture.
 fn param_label_widget(
     ui: &mut egui::Ui,
     text: impl Into<egui::RichText>,
@@ -1118,13 +1118,13 @@ fn param_label_widget(
     plain: &str,
 ) -> bool {
     let r = ui.add(egui::Label::new(text.into()).sense(egui::Sense::click()));
-    // ПОДПИСЬ — тоже цель жеста (двойной клик, правый клик), значит её
-    // прямоугольник обязан уезжать наружу: живому сценарию нечем найти
-    // `Label` в дереве доступности, а угадывать смещения он не должен.
+    // The LABEL is also a gesture target (double click, right click), so its
+    // rectangle MUST be exported outward: a live scenario has no way to find the
+    // `Label` in the accessibility tree, and it must not guess offsets.
     field_probe::note(&format!("lbl.{param}"), r.rect);
-    // Р.59, стадия 3: та же подпись — дверь публикации. Подсказка одна на
-    // обе роли (правило 10), и вне ленты она честно говорит, почему
-    // пункта нет (правило 16).
+    // R.59, stage 3: the same label is the publication door. One hint for
+    // both roles (rule 10), and outside a reel it honestly says why there is no
+    // item (rule 16).
     publish_menu(&r, pubc, param, plain, kt_model::ParamType::Num);
     match pubc {
         Some(c) if c.seq.is_none() && c.explain_outside => {
@@ -1138,13 +1138,13 @@ fn param_label_widget(
     r.double_clicked()
 }
 
-/// Та же строка, но знающая про кривые.
+/// The same row, but aware of curves.
 ///
-/// Правило одно: **поле правит ровно то, что показывает.**
-/// - кривой нет → база эффекта, как раньше;
-/// - кривая есть и выбран ЕЁ ключ → этот ключ;
-/// - кривая есть, ключ не выбран → значение кривой под курсором, а правка
-///   ставит там ключ (то же делает «+» в панели автоматизации).
+/// The rule is one: **the field edits exactly what it shows.**
+/// - no curve → the effect’s base, as before;
+/// - a curve exists and ITS key is selected → that key;
+/// - a curve exists, no key selected → the curve value under the cursor, and an edit
+///   places a key there (the “+” in the automation panel does the same).
 pub fn param_row_bound<P: HasParams + ?Sized>(
     ui: &mut egui::Ui,
     f: &mut P,
@@ -1155,10 +1155,10 @@ pub fn param_row_bound<P: HasParams + ?Sized>(
     param_row_bound_ex(ui, f, spec, bind, pubc, None)
 }
 
-/// Поле параметра С ПОЛЗУНКОМ рядом (Р.64): ползунок — это ТОТ ЖЕ ряд, а
-/// не второй виджет со своими границами (правило 24). Число и ползунок
-/// правят одно значение и пишут по одному правилу `CurveBind`; ширина
-/// ползунка — аргумент, потому что место у формы разное.
+/// A parameter field WITH A SLIDER next to it (R.64): the slider is the SAME row, and
+/// not a second widget with its own bounds (rule 24). The number and the slider
+/// edit one value and write by one rule, `CurveBind`; the slider
+/// width is an argument, because the space in the form differs.
 pub fn param_row_bound_ex<P: HasParams + ?Sized>(
     ui: &mut egui::Ui,
     f: &mut P,
@@ -1169,8 +1169,8 @@ pub fn param_row_bound_ex<P: HasParams + ?Sized>(
 ) -> ParamsChanged {
     let none = ParamsChanged::default();
     let Some(base) = f.get_param(&spec.name) else { return none };
-    // подпись — СВОЕЙ области носителя (Р.53, п.414): «size» у титра это
-    // кегль, а не зерно эффекта Noise
+    // the label — in the carrier’s OWN area (R.53, item 414): “size” of a title is
+    // the font size, not the grain of the Noise effect
     let label = param_label_scoped(f.params_scope(), &spec.name);
     let pin = format!("{}{label}", pin_prefix(pubc, &spec.name));
     let Some(bind) = bind else {
@@ -1195,8 +1195,8 @@ pub fn param_row_bound_ex<P: HasParams + ?Sized>(
         }
         return none;
     };
-    // подпись ЦВЕТОМ кривой — видно, что поле правит именно её (и какую
-    // линию на графике искать глазами)
+    // the label in the COLOR of the curve — it is visible which line the field edits
+    // (and which line on the graph to look for with the eyes)
     let key = match bind.sel {
         Some((c, k)) if c == ci && k < bind.curves[ci].keys.len() => Some(k),
         _ => None,
@@ -1209,30 +1209,30 @@ pub fn param_row_bound_ex<P: HasParams + ?Sized>(
         &label,
     );
     let c = &mut bind.curves[ci];
-    // ПОКАЗ — уже в пределах паспорта (Р.67): `DragValue`/`Slider` с
-    // пределами клампят входящее значение и помечают ответ «изменено» —
-    // зигзаг, вышедший за паспорт под курсором, ставил ключ на каждом
-    // кадре игры («ключи-самописцы» на проекте владельца)
+    // DISPLAY — already within the spec bounds (R.67): `DragValue`/`Slider` with
+    // bounds clamp the incoming value and mark the answer “changed” —
+    // a zigzag that left the spec under the cursor placed a key on every
+    // frame of playback (“recorder keys” in the owner’s project)
     let shown = if reset { spec.default } else { bound_value(c, key, bind.at) };
     let mut v = shown.clamp(spec.min.min(spec.max), spec.max.max(spec.min));
     let r = param_edit(ui, spec, &mut v, slider);
     field_probe::note(&spec.name, r.rect);
-    // ключ — ТОЛЬКО от жеста человека: драг, ввод с клавиатуры (фокус /
-    // подтверждение), клик по ползунку или сброс; «изменено» без жеста
-    // — не правка
+    // A key — ONLY from a human gesture: drag, keyboard input (focus /
+    // confirmation), a click on the slider or a reset; “changed” without a gesture
+    // is not an edit
     let gesture = r.dragged() || r.has_focus() || r.lost_focus() || r.clicked();
     if (r.changed() && gesture) || reset {
         bound_apply(c, key, bind.at, v);
-        // правка ушла в КРИВУЮ — значит и команда обязана быть SetFxAuto
+        // the edit went to the CURVE — so the command MUST also be SetFxAuto
         return ParamsChanged::curve();
     }
     none
 }
 
-/// Что ПОКАЗЫВАЕТ поле параметра с живой кривой: значение выбранного
-/// ключа, а нет выбранного — значение кривой под курсором. Базы эффекта
-/// тут нет вовсе: именно её невидимость и была «отдельным дефолтным
-/// состоянием» (Р.38 п.16).
+/// What the field of a parameter with a live curve SHOWS: the value of the selected
+/// key, and if none is selected — the curve value under the cursor. There is no
+/// effect base here at all: its invisibility was precisely the “separate default
+/// state” (R.38 item 16).
 pub fn bound_value(c: &kt_model::ParamCurve, key: Option<usize>, at: kt_time::Tick) -> f64 {
     match key.filter(|k| *k < c.keys.len()) {
         Some(k) => c.keys[k].v,
@@ -1240,20 +1240,20 @@ pub fn bound_value(c: &kt_model::ParamCurve, key: Option<usize>, at: kt_time::Ti
     }
 }
 
-/// Что поле ПРАВИТ. Ровно то же, что показывает (Р.38 п.15): выбранный
-/// ключ либо новый ключ под курсором.
+/// What the field EDITS. Exactly what it shows (R.38 item 15): the selected
+/// key or a new key under the cursor.
 pub fn bound_apply(c: &mut kt_model::ParamCurve, key: Option<usize>, at: kt_time::Tick, v: f64) {
     match key.filter(|k| *k < c.keys.len()) {
         Some(k) => c.keys[k].v = v,
-        // форма отрезка НАСЛЕДУЕТСЯ: правка поля не вправе менять вид
-        // кривой, а у скорости варпа сглаженный ключ был бы отказом
+        // the segment shape is INHERITED: an edit of the field may not change the view of the
+        // curve, and for warp speed a smoothed key would be a refusal
         None => kt_model::insert_key(&mut c.keys, at, v, kt_model::SegShape::Linear),
     }
 }
 
-/// Сетка ВСЕХ числовых параметров эффекта в две пары «подпись/значение».
-/// `skip` — параметры, у которых есть свой контрол (цвет ключа рисуется
-/// пипеткой, а не тремя числами).
+/// The grid of ALL numeric parameters of the effect in two pairs “label/value”.
+/// `skip` — parameters that have their own control (the key color is drawn with
+/// an eyedropper, not with three numbers).
 pub fn params_grid<P: HasParams + ?Sized>(
     ui: &mut egui::Ui,
     id: impl std::hash::Hash + std::fmt::Debug,
@@ -1264,7 +1264,7 @@ pub fn params_grid<P: HasParams + ?Sized>(
     params_grid_bound(ui, id, f, skip, None, pubc).base
 }
 
-/// Та же сетка, но связанная с кривыми (Р.38 пп.15-16).
+/// The same grid, but linked with curves (R.38 items 15-16).
 pub fn params_grid_bound<P: HasParams + ?Sized>(
     ui: &mut egui::Ui,
     id: impl std::hash::Hash + std::fmt::Debug,
@@ -1273,11 +1273,11 @@ pub fn params_grid_bound<P: HasParams + ?Sized>(
     mut bind: Option<&mut CurveBind<'_>>,
     pubc: Option<&PublishCtx>,
 ) -> ParamsChanged {
-    // Паспорт КОПИРУЕТСЯ, а не заимствуется у владельца (Р.59): он
-    // заимствуется у `self`, и живой заём не дал бы писать в него в том
-    // же цикле. Клон дешёвый — у встроенных рядов имя и подпись это
-    // `Cow::Borrowed`, аллокаций не возникает вовсе, а сам Vec один на
-    // отрисовку окна (не на кадр таймлайна — правило 12 не задето).
+    // The spec is COPIED, not borrowed from the owner (R.59): it is borrowed from `self`, and a live
+    // borrow would not allow writing into it in the same
+    // cycle. The clone is cheap — for built-in rows the name and the label are
+    // `Cow::Borrowed`, no allocations arise at all, and the Vec itself is one per
+    // window drawing (not per timeline frame — rule 12 is not touched).
     let specs: Vec<ParamSpec> =
         f.param_specs().iter().filter(|s| !skip.contains(&&*s.name)).cloned().collect();
     if specs.is_empty() {
@@ -1295,69 +1295,69 @@ pub fn params_grid_bound<P: HasParams + ?Sized>(
     changed
 }
 
-// ---- единая полоса FX-цепочки (Р.33 С2) ---------------------------------
-// «в двух местах один и тот же смысл, а сделано у обоих не до конца»:
-// у событий были галки и стрелки-перестановка, у морферов — крестики, и
-// ни там, ни там не было ни мыши, ни мастер-галки, ни копипаста. Теперь
-// полоса одна и умеет всё; вызывают её окно событий и обе секции морфера.
+// ---- single strip of the FX chain (R.33 S2) ---------------------------------
+// “the same meaning in two places, and done only halfway in both”:
+// events had checkboxes and up/down arrows, morphers had crosses, and
+// neither had a mouse, a master checkbox or copy-paste. Now there is one strip
+// and it does everything; the event window and both morpher sections call it.
 
-/// Что цепочка отдаёт на редактирование. `bypass` и `auto` параллельны
+/// What the chain hands over for editing. `bypass` and `auto` are parallel to
 /// `fx`.
 ///
-/// Кривые есть У ОБОИХ носителей (Р.38 п.13 дал их морферу), и `auto`
-/// здесь НЕ `Option` намеренно: пока он был опциональным, вставка
-/// цепочки при `None` молча роняла кривые на пол — дефект жил
-/// незамеченным, потому что «тихая ветка» выглядела как забота о
-/// носителе без автоматизации. Домены разные, и это нормально: у
-/// события ключ живёт в тиках МАТЕРИАЛА (`src_in` = `source_in`), у
-/// морфера — во времени БЛОКА (`src_in` = 0). Вставка переводит ключи
-/// «вход к входу» в обе стороны (`ops::rebase_curves`).
+/// Curves exist ON BOTH carriers (R.38 item 13 gave them to the morpher), and `auto`
+/// here is NOT an `Option` on purpose: while it was optional, inserting a
+/// chain with `None` silently dropped the curves on the floor — a defect that lived
+/// unnoticed, because the “quiet branch” looked like care for
+/// a carrier without automation. The domains differ, and that is normal: for an
+/// event the key lives in the ticks of the MATERIAL (`src_in` = `source_in`),
+/// for a morpher — in the time of the BLOCK (`src_in` = 0). Insertion converts keys
+/// “input to input” in both directions (`ops::rebase_curves`).
 pub struct ChainEdit<'a> {
     pub fx: &'a mut Vec<FxInstance>,
     pub bypass: &'a mut Vec<bool>,
     pub auto: &'a mut Vec<Vec<kt_model::ParamCurve>>,
     pub selected: &'a mut ChainSel,
-    /// Библиотека пресетов (Р.48): строки для пикера и «почтовый ящик»
-    /// запроса на сохранение — саму запись делает владелец окна.
+    /// Preset library (R.48): rows for the picker and the “mailbox” of the
+    /// save request — the record itself is written by the window’s owner.
     pub presets: ChainPresets<'a>,
-    /// Мастер-выключатель цепочки (у морфера — выключатель события).
+    /// Master switch of the chain (for a morpher — the switch of the event).
     pub master_on: &'a mut bool,
-    /// Приколотый ПЕРВЫЙ слот, эффектом не являющийся (Р.35): у морфера
-    /// это подмена источника. Своя галка, фиолетовая подпись, мышью не
-    /// переставляется и крестика не имеет.
+    /// The pinned FIRST slot, which is not an effect (R.35): for a morpher
+    /// it is a source substitution. Its own checkbox, a purple label, it is not
+    /// rearranged with the mouse and has no cross.
     pub head: Option<HeadSlot<'a>>,
 }
 
-/// Псевдо-слот в начале полосы.
+/// Pseudo-slot at the start of the strip.
 pub struct HeadSlot<'a> {
     pub label: String,
-    /// Включён ли (у морфера — `!patch.src_off`).
+    /// Whether it is enabled (for a morpher — `!patch.src_off`).
     ///
-    /// `None` — выключателя у головы НЕТ и быть не может: у события с
-    /// генератором голова это его ИСТОЧНИК (Р.59, стадия 2), а источник
-    /// не выключают — выключенный он оставил бы событие без картинки
-    /// вовсе. Мёртвая галка тут была бы нарушением правила 9.
+    /// `None` — the head has NO switch and cannot have one: for an event with a
+    /// generator the head is its SOURCE (R.59, stage 2), and a source is not switched off —
+    /// a disabled one would leave the event with no picture at all. A dead checkbox here
+    /// would be a violation of rule 9.
     pub on: Option<&'a mut bool>,
     pub hint: &'a str,
-    /// Цвет подписи: у морфера фиолетовый (цвет слоя), у источника
-    /// генератора — акцент программы.
+    /// Color of the label: for a morpher purple (the layer color), for a generator
+    /// source — the program accent.
     pub color: egui::Color32,
 }
 
-/// Что выбрано в полосе. Отдельный тип, а не «голова = 0» — иначе
-/// смещение индексов эффектов на единицу гарантированно даёт off-by-one.
-/// Связка полосы с библиотекой пресетов (Р.48).
+/// What is selected in the strip. A separate type, not “head = 0” — otherwise
+/// shifting effect indices by one is guaranteed to give an off-by-one error.
+/// The link of the strip with the preset library (R.48).
 pub struct ChainPresets<'a> {
-    /// Что показать в пикере (уже отфильтровано по виду события).
+    /// What to show in the picker (already filtered by the event kind).
     pub rows: &'a [crate::user_store::PresetRow],
-    /// Запрос «сохранить эту цепочку»: полоса кладёт блок, владелец окна
-    /// открывает диалог имени и пишет файл.
+    /// The request “save this chain”: the strip puts a block in, and the owner of the window
+    /// opens the name dialog and writes the file.
     pub save: &'a mut Option<kt_model::ops::FxChainBlock>,
-    /// Запрос на управление пресетом (переименовать/удалить).
+    /// Request to manage a preset (rename/delete).
     pub action: &'a mut Option<PresetAction>,
 }
 
-/// Что сделать с пользовательским пресетом.
+/// What to do with a user preset.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PresetAction {
     Rename(String),
@@ -1369,13 +1369,13 @@ pub enum ChainSel {
     #[default]
     Head,
     Fx(usize),
-    /// Ведущий узел «Геометрия» события (Р.62): в полосе он слот, в
-    /// модели — поле события, поэтому индекса среди `fx` у него нет.
+    /// The leading “Geometry” node of the event (R.62): in the strip it is a slot, in the
+    /// model it is a field of the event, so it has no index among `fx`.
     Lead,
 }
 
 impl ChainSel {
-    /// Индекс слота эффекта, если выбран именно он.
+    /// Index of the effect slot, if exactly that one is selected.
     pub fn fx(self) -> Option<usize> {
         match self {
             ChainSel::Fx(i) => Some(i),
@@ -1390,7 +1390,7 @@ pub struct ChainChanged {
     pub bypass: bool,
     pub auto: bool,
     pub master: bool,
-    /// Тронут приколотый слот (галка морф-слота).
+    /// The pinned slot was touched (the checkbox of the morph slot).
     pub head: bool,
 }
 
@@ -1400,25 +1400,25 @@ impl ChainChanged {
     }
 }
 
-/// Потолок подписи слота в символах (Р.38 пп.7-8, дословно: «если в кроше
-/// Source указать сурс с длинным именем — то весь чейн разлетается по
-/// длинне» и «если накидать много крошек — то последняя надпись упирается
-/// в край»).
+/// Ceiling of the slot label in characters (R.38 items 7-8, verbatim: “if in the Source
+/// crumb you pick a source with a long name, the whole chain flies apart by
+/// the length” and “if you toss in many crumbs, the last label runs
+/// into the edge”).
 ///
-/// Причина была не в длине как таковой: полоса живёт в
-/// `horizontal_wrapped`, а он ставит `TextWrapMode::Wrap`, и подпись
-/// переносится ВНУТРИ СЕБЯ — в имени файла пробелов нет, поэтому по
-/// буквам. На новую строку крошка при этом целиком не уходила: она
-/// заранее ужималась под остаток ширины.
+/// The cause was not the length as such: the strip lives in
+/// `horizontal_wrapped`, and it sets `TextWrapMode::Wrap`, so the label wraps
+/// INSIDE ITSELF — a file name has no spaces, so it wrapped by letters. The crumb
+/// did not move to a new line as a whole: it was shrunk in advance
+/// to the remaining width.
 pub const SLOT_NAME_CHARS: usize = 22;
-/// Хват подписи слота выше и ниже рисунка (правило 1 чек-листа).
+/// The grab area of the slot label above and below the drawing (rule 1 of the checklist).
 pub const SLOT_GRAB_PAD: f32 = 2.0;
 
-/// Имя, усечённое одной строкой с многоточием, а не перенесённое.
+/// A name truncated to one line with an ellipsis, not wrapped.
 ///
-/// ОДНА функция на все места, где показывается имя пользователя: подпись
-/// слота, голова полосы, поле источника морфера. Разойдись они — половина
-/// мест снова начала бы разъезжаться, а это и была претензия пп.7-8.
+/// ONE function for all places where a user name is shown: the slot label,
+/// the strip head, the morpher source field. If they diverged, half of the
+/// places would start drifting apart again, and that was the claim of items 7-8.
 pub fn elided_name(ui: &egui::Ui, name: &str, color: egui::Color32, off: bool) -> egui::WidgetText {
     let mut job = egui::text::LayoutJob::single_section(
         name.to_string(),
@@ -1429,8 +1429,8 @@ pub fn elided_name(ui: &egui::Ui, name: &str, color: egui::Color32, off: bool) -
             ..Default::default()
         },
     );
-    // предел в ШИРИНЕ, а не «сколько влезет в остаток строки»: иначе
-    // последняя крошка снова ужимается под край вместо переноса целиком
+    // the limit is by WIDTH, not “however much fits in the rest of the line”: otherwise
+    // the last crumb is again shrunk to the edge instead of moving whole to the next line
     job.wrap = egui::text::TextWrapping {
         max_width: ui.fonts_mut(|f| {
             let fid = egui::TextStyle::Button.resolve(ui.style());
@@ -1440,8 +1440,8 @@ pub fn elided_name(ui: &egui::Ui, name: &str, color: egui::Color32, off: bool) -
         overflow_character: Some('…'),
         ..Default::default()
     };
-    // ГОТОВАЯ галлея, а не job: виджет переложил бы job под доступную
-    // ширину строки и вернул бы перенос — то самое «разлетается»
+    // A FINISHED galley, not a job: the widget would lay the job out to the available
+    // line width and return a wrap — the very “flying apart”
     egui::WidgetText::Galley(ui.fonts_mut(|f| f.layout_job(job)))
 }
 
@@ -1449,12 +1449,12 @@ fn slot_text(ui: &egui::Ui, name: &str, color: egui::Color32, off: bool) -> egui
     elided_name(ui, name, color, off)
 }
 
-/// Полоса цепочки: мастер-галка, слоты (галка вкл/выкл, имя, крестик),
-/// перестановка мышью, пикер и копипаст. `audio` — фильтр пикера.
+/// The chain strip: master checkbox, slots (on/off checkbox, name, cross),
+/// mouse rearrangement, picker and copy-paste. `audio` — the picker filter.
 #[allow(clippy::too_many_arguments)]
-/// Кому принадлежит полоса и куда сообщить о правом клике (Р.49, п.363).
-/// Полоса не знает про `KtApp` и знать не должна — она виджет; адрес цели
-/// она принимает снаружи и снаружи же отдаёт результат.
+/// Who owns the strip and where to report a right click (R.49, item 363).
+/// The strip does not know `KtApp` and must not know it — it is a widget; it accepts
+/// the target address from outside and gives the result back outside as well.
 pub struct ChainCtx<'a> {
     pub chain: kt_model::ClipId,
     pub picked: &'a mut Option<crate::ctx_menu::PanelTarget>,
@@ -1471,9 +1471,9 @@ pub fn chain_strip(
     src_in: kt_time::Tick,
     hover: &mut Option<String>,
     ctx: &mut ChainCtx<'_>,
-    // Контекст миниатюр пикера (Р.54). `None` — картинок не рисуем:
-    // аудио-цепочка (миниатюру звука не нарисовать) и харнесс-тесты без
-    // сервиса. Полоса про миниатюры больше ничего не знает — она виджет.
+    // Context of picker thumbnails (R.54). `None` — we draw no pictures:
+    // the audio chain (a sound thumbnail cannot be drawn) and harness tests without a
+    // service. The strip knows nothing else about thumbnails — it is a widget.
     preview: Option<&mut crate::fx_thumbs::PickerCtx<'_>>,
 ) -> ChainChanged {
     let mut ch = ChainChanged::default();
@@ -1483,7 +1483,7 @@ pub fn chain_strip(
     let mut swap: Option<(usize, usize)> = None;
 
     ui.horizontal_wrapped(|ui| {
-        // мастер-галка: гасит ВСЮ цепочку, не трогая состояние слотов
+        // master checkbox: switches off the WHOLE chain, without touching the slot states
         if crate::app::hint_into(
             hover,
             ui.checkbox(edit.master_on, tr(k::fx::CHAIN_ON)),
@@ -1494,8 +1494,8 @@ pub fn chain_strip(
             ch.master = true;
         }
         ui.separator();
-        // приколотая голова: своя галка, фиолетовая подпись, ни драга,
-        // ни крестика — она не эффект
+        // the pinned head: its own checkbox, a purple label, no drag
+        // and no cross — it is not an effect
         if let Some(h) = edit.head.as_mut() {
             if let Some(on) = h.on.as_deref_mut()
                 && crate::app::hint_into(hover, ui.checkbox(on, ""), h.hint).changed()
@@ -1513,10 +1513,10 @@ pub fn chain_strip(
             if resp.clicked() {
                 *edit.selected = ChainSel::Head;
             }
-            // голова тоже отвечает на правую кнопку (п.363): у неё есть
-            // ровно одно действие — своя галка, и молчать об этом нельзя.
-            // Галки нет (источник генератора) — меню не врёт пунктом, а
-            // называет голову: имя усечено, а полное надо где-то видеть.
+            // the head also responds to the right button (item 363): it has
+            // exactly one action — its own checkbox, and staying silent about it is not allowed.
+            // There is no checkbox (a generator source) — the menu does not lie with an item,
+            // it names the head: the name is truncated, and the full one must be visible somewhere.
             let head_label = h.label.clone();
             let switchable = h.on.is_some();
             let mut head_toggle = false;
@@ -1535,8 +1535,8 @@ pub fn chain_strip(
                 *on = !head_on;
                 ch.head = true;
             }
-            // полное имя — в подсказке: усечённое видно, а какой файл
-            // подставлен, узнать иначе негде
+            // the full name — in the hint: the truncated one is visible, but which file
+            // is substituted can be learned in no other way
             if h.label.chars().count() > SLOT_NAME_CHARS {
                 resp.on_hover_text(h.label.clone());
             }
@@ -1546,7 +1546,7 @@ pub fn chain_strip(
         }
         for i in 0..edit.fx.len() {
             let off = edit.bypass[i];
-            // галка включения слота (у морферов её не было вовсе)
+            // the enable checkbox of the slot (morphers had none at all)
             let mut on = !off;
             if crate::app::hint_into(
                 hover,
@@ -1558,23 +1558,23 @@ pub fn chain_strip(
                 edit.bypass[i] = !on;
                 ch.bypass = true;
             }
-            // Имя слота: и выбор кликом, и источник перетаскивания.
+            // The slot name: both the selection by click and the drag source.
             //
-            // ОДНА интеракция `click_and_drag`, а не `dnd_drag_source`
-            // вокруг метки (Р.38 п.6, дословно: «в fx-chain виджетах
-            // проблематично активировать ввод параметров»). В egui 0.36
-            // `dnd_drag_source` регистрирует ПОВЕРХ содержимого
-            // прямоугольник с `Sense::drag()` и делает это ПОСЛЕ него —
-            // `hit_test` отдаёт `click: None`, и `.clicked()` внутри не
-            // наступает НИКОГДА. Идиома репозитория (bin_panel.rs,
-            // automation.rs, meters.rs, timeline.rs) — разбирать
-            // `drag_started()`/`clicked()` у одной интеракции.
+            // ONE interaction `click_and_drag`, not `dnd_drag_source`
+            // around the label (R.38 item 6, verbatim: “in fx-chain widgets
+            // it is troublesome to activate the input of parameters”). In egui 0.36
+            // `dnd_drag_source` registers OVER the content a
+            // rectangle with `Sense::drag()` and does it AFTER the content —
+            // `hit_test` gives `click: None`, and `.clicked()` inside
+            // NEVER fires. The repository idiom (bin_panel.rs,
+            // automation.rs, meters.rs, timeline.rs) — to parse
+            // `drag_started()`/`clicked()` on one interaction.
             let slot_id = egui::Id::new((&id, "slot", i));
             let name = crate::fx_editor::fx_display_name(&edit.fx[i]);
             let text = slot_text(ui, name, ui.visuals().text_color(), off);
             let drawn = ui.selectable_label(*edit.selected == ChainSel::Fx(i), text);
-            // хват шире рисунка (правило 1 чек-листа): в подпись высотой
-            // в строку целиться не должно быть нужно
+            // the grab area is wider than the drawing (rule 1 of the checklist): one should not
+            // have to aim at a label one line high
             let resp = crate::app::hint_into(
                 hover,
                 ui.interact(
@@ -1584,9 +1584,9 @@ pub fn chain_strip(
                 ),
                 tr(k::fx::SLOT_HINT),
             );
-            // слот отдаёт свой прямоугольник живым сценариям: полоса —
-            // единственный способ выбрать слот, а угадывать смещения
-            // внутри окна сценарий не должен (Р.27)
+            // the slot hands its rectangle to live scenarios: the strip is the
+            // only way to select a slot, and a scenario must not guess offsets
+            // inside the window (R.27)
             if crate::widgets::field_probe::on() {
                 crate::widgets::field_probe::note(&format!("fx.slot.{i}"), resp.rect);
             }
@@ -1599,17 +1599,17 @@ pub fn chain_strip(
             if name.chars().count() > SLOT_NAME_CHARS {
                 resp.clone().on_hover_text(name.to_string());
             }
-            // отпустили чужой слот над этим — переставляем
+            // released another slot over this one — we rearrange
             if let Some(from) = resp.dnd_release_payload::<usize>()
                 && *from != i
             {
                 swap = Some((*from, i));
             }
-            // Правый клик по слоту (Р.49, п.363): до этого раунда слот
-            // отвечал подсказкой на наведение и МОЛЧАЛ на правую кнопку —
-            // а пользователь, научившись правой кнопке на таймлайне, жмёт
-            // её везде. Новых ключей ноль: пункты — те же действия, что
-            // уже есть галкой и крестиком.
+            // Right click on a slot (R.49, item 363): before this round the slot
+            // answered with a hover hint and was SILENT on the right button —
+            // and a user who has learned the right button on the timeline presses
+            // it everywhere. No new keys: the items are the same actions that
+            // already exist as a checkbox and a cross.
             resp.context_menu(|ui| {
                 *ctx.picked =
                     Some(crate::ctx_menu::PanelTarget::FxSlot { chain: ctx.chain, slot: i });
@@ -1654,8 +1654,8 @@ pub fn chain_strip(
         ) {
             Some(crate::fx_registry::Picked::Preset(i)) => {
                 if let Some(row) = edit.presets.rows.get(i) {
-                    // вставка пресета — ТА ЖЕ функция, что вставка из
-                    // буфера: ключи переезжают «вход к входу»
+                    // insertion of a preset — the SAME function as insertion from the
+                    // clipboard: keys move “input to input”
                     kt_model::ops::append_chain_block(
                         edit.fx,
                         edit.bypass,
@@ -1679,13 +1679,13 @@ pub fn chain_strip(
                 *edit.selected = ChainSel::Fx(edit.fx.len() - 1);
                 ch.fx = true;
             }
-            // голову не «добавляют» — она приколота; пикер лишь помогает
-            // её НАЙТИ поиском наравне с эффектами
+            // the head is not “added” — it is pinned; the picker only helps
+            // to FIND it by search, on a par with the effects
             Some(crate::fx_registry::Picked::Head) => *edit.selected = ChainSel::Head,
             None => {}
         }
-        // сохранить цепочку пресетом (Р.48): сам файл пишет владелец
-        // окна — полоса лишь передаёт ему блок
+        // save the chain as a preset (R.48): the file itself is written by the owner of the
+        // window — the strip only passes it the block
         if !edit.fx.is_empty()
             && crate::app::hint_into(
                 hover,
@@ -1709,7 +1709,7 @@ pub fn chain_strip(
                 fx_off: !*edit.master_on,
             });
         }
-        // копипаст цепочки (модель — kt_model::ops, Р.33)
+        // copy-paste of the chain (the model — kt_model::ops, R.33)
         if !edit.fx.is_empty()
             && crate::app::hint_into(
                 hover,
@@ -1746,9 +1746,9 @@ pub fn chain_strip(
         .clicked()
             && let Some(b) = clipboard.clone()
         {
-            // ОДНА правда вставки: та же функция, что зовут пресеты
-            // (Р.48). Ключи переезжают «вход к входу» — у события это
-            // тики материала, у морфера время блока.
+            // ONE truth of insertion: the same function that the presets call
+            // (R.48). Keys move “input to input” — for an event these are
+            // the ticks of the material, for a morpher the time of the block.
             kt_model::ops::append_chain_block(edit.fx, edit.bypass, edit.auto, &b, src_in);
             *edit.selected = ChainSel::Fx(edit.fx.len().saturating_sub(1));
             ch.fx = true;
@@ -1779,7 +1779,7 @@ pub fn chain_strip(
             edit.auto.remove(i);
             ch.auto = true;
         }
-        // выбор съезжает на уцелевший слот, а голова остаётся головой
+        // the selection moves to the surviving slot, and the head stays the head
         if let Some(sel) = edit.selected.fx() {
             *edit.selected = if edit.fx.is_empty() {
                 ChainSel::Head
@@ -1796,9 +1796,9 @@ pub fn chain_strip(
     ch
 }
 
-/// Пикер медиа проекта с поиском — тот же жест, что у пикера эффектов.
-/// `media` — (id, путь). Возвращает выбор: `Some(None)` — «оставить
-/// источник», `Some(Some(id))` — конкретное медиа.
+/// The media picker of the project with search — the same gesture as the effect picker.
+/// `media` — (id, path). Returns the choice: `Some(None)` — “keep
+/// the source”, `Some(Some(id))` — a concrete media.
 pub fn media_picker(
     ui: &mut egui::Ui,
     id: impl std::hash::Hash + std::fmt::Debug,
@@ -1841,9 +1841,9 @@ pub fn media_picker(
     picked
 }
 
-/// Тот же popup с поиском, но по произвольному списку «id → подпись»
-/// (Р.35 п.2: ссылки морфера на области и метки-диапазоны). Подписи —
-/// готовые имена, файловых путей тут нет.
+/// The same popup with search, but over an arbitrary list of “id → label”
+/// (R.35 item 2: morpher references to areas and range markers). The labels are
+/// ready names, there are no file paths here.
 pub fn media_picker_raw(
     ui: &mut egui::Ui,
     id: impl std::hash::Hash + std::fmt::Debug,

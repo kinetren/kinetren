@@ -1,24 +1,24 @@
-//! Тесты 4–6 (docs/porting-notes.md) — регрессии на хрипы slowed&reverb.
+//! Tests 4–6 (docs/porting-notes.md) — regressions for slowed&reverb artifacts.
 //!
-//! 4 — спектральная чистота варпа: 440 Гц при rate 0.5 → пик на 220 Гц,
-//!     паразитные компоненты < −60 dB (ловит и «46.9 Гц треск» (дефект c),
-//!     и пропуски burst'ов (дефект a) старого движка);
-//! 5 — сглаживание параметров: смена mix посреди воспроизведения не даёт
-//!     скачка сэмпл-к-сэмплу (дефект e — зануление буферов в setParams);
-//! 6 — хвост реверба живёт за границей клипа и переживает пересборку графа
-//!     (дефекты f и «rebuildGraph убивает FX-состояние»).
+//! 4 — spectral purity of the warp: 440 Hz at rate 0.5 → peak at 220 Hz,
+//!     spurious components < −60 dB (catches both the “46.9 Hz crackle” (defect c)
+//!     and the skipped bursts (defect a) of the old engine);
+//! 5 — parameter smoothing: changing mix in the middle of playback gives no
+//!     sample-to-sample jump (defect e — zeroing of the buffers in setParams);
+//! 6 — the reverb tail lives past the clip boundary and survives a graph rebuild
+//!     (defect f and “rebuildGraph kills the FX state”).
 
 use kt_engine::{AudioRenderer, DirectFetcher, FxStateStore};
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
 use kt_model::*;
 use kt_time::{AUDIO_CHANNELS, AUDIO_SAMPLE_RATE, Tick};
 
-/// п.8.1 (Р.28): рендер с ПОЛНОСТЬЮ доступным источником обязан идти без
-/// единого underrun'а — иначе рендер спрашивает материал за пределами
-/// собственного окна, а на живом кэше это тишина и растущий счётчик.
+/// item 8.1 (R.28): a render with a FULLY available source must run without a
+/// single underrun — otherwise the render asks for material beyond its own window,
+/// and on a live cache that is silence plus a growing counter.
 #[track_caller]
 fn no_underruns(s: kt_engine::RenderStats) {
-    assert_eq!(s.underruns, 0, "underrun при полностью доступном источнике");
+    assert_eq!(s.underruns, 0, "underrun with a fully available source");
 }
 
 const CH: usize = AUDIO_CHANNELS;
@@ -65,8 +65,8 @@ fn fx_project(fx: Vec<FxInstance>, pattern_path: &str, dur_frames: i64) -> Proje
     p
 }
 
-/// Кривая скорости в НОВОМ домене (Р.33): точки (доля материала, rate)
-/// переводятся в тики материала клипа `0..dur_frames` с `source_in = 0`.
+/// Speed curve in the NEW domain (R.33): the points (fraction of the material, rate)
+/// are converted to the material ticks of the clip `0..dur_frames` with `source_in = 0`.
 fn rate_curve(points: &[(f64, f64)], dur_frames: i64) -> Vec<Vec<ParamCurve>> {
     vec![vec![ParamCurve {
         param: "rate".into(),
@@ -83,7 +83,7 @@ fn rate_curve(points: &[(f64, f64)], dur_frames: i64) -> Vec<Vec<ParamCurve>> {
     }]]
 }
 
-/// Проект с автоматизацией на единственном слоте.
+/// A project with automation on a single slot.
 fn fx_project_auto(
     fx: Vec<FxInstance>,
     auto: Vec<Vec<ParamCurve>>,
@@ -102,7 +102,7 @@ fn direct(pattern: AudioPattern) -> DirectFetcher {
     f
 }
 
-/// Амплитудный спектр моно-сигнала (окно Ханна), дБ относительно пика.
+/// Amplitude spectrum of the mono signal (Hann window), dB relative to the peak.
 fn spectrum_db(samples: &[f32]) -> Vec<f32> {
     use realfft::RealFftPlanner;
     let n = samples.len();
@@ -123,7 +123,7 @@ fn spectrum_db(samples: &[f32]) -> Vec<f32> {
     mags.iter().map(|m| 20.0 * (m / peak).max(1e-12).log10()).collect()
 }
 
-// ---- Тест 4 -----------------------------------------------------------------
+// ---- Test 4 -----------------------------------------------------------------
 
 #[test]
 fn t4_slowed_halves_pitch_without_artifacts() {
@@ -134,8 +134,8 @@ fn t4_slowed_halves_pitch_without_artifacts() {
     let mut store = FxStateStore::new();
     r.sync_fx(&mut store);
 
-    let n = 1 << 16; // 65536 сэмплов анализа
-    let skip = 8192; // пропускаем переходный процесс ресемплера
+    let n = 1 << 16; // 65536 analysis samples
+    let skip = 8192; // skip the resampler's transient
     let mut out = vec![0f32; (skip + n) * CH];
     let stats = r.render_frames_with(&mut f, &mut store, 0, &mut out);
     assert_eq!(stats.underruns, 0);
@@ -147,24 +147,24 @@ fn t4_slowed_halves_pitch_without_artifacts() {
     let peak_hz = peak_bin as f32 * bin_hz;
     assert!(
         (peak_hz - 220.0).abs() < 2.0 * bin_hz,
-        "rate 0.5 обязан дать 220 Гц, получили {peak_hz:.2} Гц"
+        "rate 0.5 must give 220 Hz, got {peak_hz:.2} Hz"
     );
-    // Всё вне ±16 бинов (±12 Гц — скирт окна Ханна) — тише −60 dB.
-    // Артефакты старого движка лежали далеко за этим окном: треск 46.9 Гц
-    // дал бы компоненты на peak±47 Гц (±64 бина), пропуск burst'ов — гребёнку
-    // по всей полосе.
+    // Everything outside ±16 bins (±12 Hz — the Hann window's skirt) is quieter than −60 dB.
+    // The artifacts of the old engine lay far beyond this window: the 46.9 Hz crackle
+    // would give components at peak±47 Hz (±64 bins), the skipping of bursts — a comb
+    // across the whole band.
     for (bin, &v) in db.iter().enumerate() {
         if (bin as i64 - peak_bin as i64).abs() > 16 && v > -60.0 {
             let hz = bin as f32 * bin_hz;
-            panic!("паразитная компонента {v:.1} dB на {hz:.1} Гц (bin {bin})");
+            panic!("spurious component {v:.1} dB at {hz:.1} Hz (bin {bin})");
         }
     }
 }
 
 #[test]
 fn t4_warp_consumes_source_at_rate() {
-    // rate 0.5 на клипе длиной D требует D/2 кадров источника: ramp в конце
-    // окна источника должен дойти ровно до source_in + D*rate (±чанк ресемплера).
+    // rate 0.5 on a clip of length D requires D/2 source frames: the ramp at the end of the
+    // source window must reach exactly source_in + D*rate (± the resampler chunk).
     let dur = 4 * AUDIO_SAMPLE_RATE as i64;
     let p = fx_project(vec![FxInstance::slowed_reverb(0.5, 0.0, 140.0)], "synth:ramp", dur);
     let r = AudioRenderer::new(&p);
@@ -173,20 +173,20 @@ fn t4_warp_consumes_source_at_rate() {
     r.sync_fx(&mut store);
     let mut out = vec![0f32; dur as usize * CH];
     no_underruns(r.render_frames_with(&mut f, &mut store, 0, &mut out));
-    // последний выходной сэмпл ≈ значение ramp на кадре dur*0.5 источника
+    // the last output sample ≈ the ramp value at source frame dur*0.5
     let got = out[(dur as usize - 1) * CH];
     let expect = SyntheticSource::sample_at(AudioPattern::Ramp, dur / 2, 0);
-    // допуск = групповая задержка sinc-ресемплера + пара чанков; главное,
-    // что нет НАКОПЛЕННОГО дрейфа (старый движок терял burst каждые ~230 мс,
-    // что за 4 c дало бы ~17 000 кадров)
+    // tolerance = the group delay of the sinc resampler + a couple of chunks; the main point
+    // is that there is NO ACCUMULATED drift (the old engine lost a burst every ~230 ms,
+    // which over 4 s would give ~17,000 frames).
     let tolerance = 4096.0 * 1e-6;
     assert!(
         (got - expect).abs() < tolerance,
-        "источник потреблялся не с rate 0.5: конец на {got} vs {expect}"
+        "the source was consumed not at rate 0.5: end at {got} vs {expect}"
     );
 }
 
-// ---- Тест 5 -----------------------------------------------------------------
+// ---- Test 5 -----------------------------------------------------------------
 
 #[test]
 fn t5_param_step_does_not_click() {
@@ -200,21 +200,21 @@ fn t5_param_step_does_not_click() {
     let half = dur as usize / 2;
     let mut out = vec![0f32; dur as usize * CH];
 
-    // первая половина с mix 0.1
+    // first half with mix 0.1
     let p1 = mk(0.1);
     let r1 = AudioRenderer::new(&p1);
     r1.sync_fx(&mut store);
     no_underruns(r1.render_frames_with(&mut f, &mut store, 0, &mut out[..half * CH]));
 
-    // ступенька: mix 0.9 (та же структура цепочки → тот же state, сглаживание)
+    // step: mix 0.9 (the same chain structure → the same state, smoothing)
     let p2 = mk(0.9);
     let r2 = AudioRenderer::new(&p2);
     r2.sync_fx(&mut store);
     no_underruns(r2.render_frames_with(&mut f, &mut store, half as i64, &mut out[half * CH..]));
 
-    // максимальный скачок сэмпл-к-сэмплу вокруг ступеньки не больше, чем
-    // естественный наклон синуса с запасом (сглаживание ~20 мс)
-    let natural = 2.0 * std::f32::consts::PI * 220.0 / AUDIO_SAMPLE_RATE as f32; // ~0.0288 при ампл. 1
+    // the maximum sample-to-sample jump around the step is no larger than
+    // the natural slope of the sine with a margin (smoothing ~20 ms)
+    let natural = 2.0 * std::f32::consts::PI * 220.0 / AUDIO_SAMPLE_RATE as f32; // ~0.0288 at amplitude 1
     let window = &out[(half - 2000) * CH..(half + 4000) * CH];
     let mut max_jump = 0f32;
     for w in window.chunks_exact(CH).collect::<Vec<_>>().windows(2) {
@@ -222,11 +222,11 @@ fn t5_param_step_does_not_click() {
     }
     assert!(
         max_jump < natural * 1.5,
-        "ступенька mix дала щелчок: max sample-to-sample jump {max_jump}"
+        "a step in mix gave a click: max sample-to-sample jump {max_jump}"
     );
 }
 
-// ---- Тест 6 -----------------------------------------------------------------
+// ---- Test 6 -----------------------------------------------------------------
 
 #[test]
 fn t6_reverb_tail_rings_past_clip_end_and_decays() {
@@ -243,27 +243,27 @@ fn t6_reverb_tail_rings_past_clip_end_and_decays() {
     let mut out = vec![0f32; total * CH];
     no_underruns(r.render_frames_with(&mut f, &mut store, 0, &mut out));
 
-    // энергия сразу за границей клипа есть (хвост дозванивает)
+    // energy right past the clip boundary is present (the tail rings on)
     let after: f32 = out[dur as usize * CH..(dur as usize + 4800) * CH]
         .iter()
         .map(|s| s.abs())
         .fold(0.0, f32::max);
-    assert!(after > 1e-4, "хвост реверба обрезан на границе клипа: {after}");
+    assert!(after > 1e-4, "the reverb tail was cut at the clip boundary: {after}");
 
-    // к концу tail затухает ниже −60 dB от пика хвоста
+    // by the end of the tail it decays below −60 dB from the tail's peak
     let tail_last: f32 = out[(total - 4800) * CH..].iter().map(|s| s.abs()).fold(0.0, f32::max);
-    assert!(tail_last < after * 0.001, "хвост не затух за tail(): пик {after}, конец {tail_last}");
+    assert!(tail_last < after * 0.001, "the tail did not decay within tail(): peak {after}, end {tail_last}");
 }
 
 #[test]
 fn t6_graph_rebuild_mid_tail_preserves_state() {
-    // Правка ДРУГОГО клипа (пересборка AudioRenderer) посреди звучания
-    // не должна прерывать/менять реверб (старый rebuildGraph убивал state).
+    // Editing ANOTHER clip (rebuilding the AudioRenderer) in the middle of playback
+    // must not interrupt or change the reverb (the old rebuildGraph killed the state).
     let dur = AUDIO_SAMPLE_RATE as i64;
     let fx = vec![FxInstance::slowed_reverb(1.0, 0.6, 140.0)];
     let p1 = fx_project(fx.clone(), "synth:sine:330", dur);
 
-    // эталон: непрерывный рендер одним графом
+    // reference: a continuous render in a single graph
     let r1 = AudioRenderer::new(&p1);
     let mut store_a = FxStateStore::new();
     r1.sync_fx(&mut store_a);
@@ -271,8 +271,8 @@ fn t6_graph_rebuild_mid_tail_preserves_state() {
     let mut full = vec![0f32; dur as usize * CH];
     no_underruns(r1.render_frames_with(&mut fa, &mut store_a, 0, &mut full));
 
-    // тот же рендер, но посреди — «правка»: добавлен посторонний клип,
-    // граф пересобран, store тот же
+    // the same render, but with an “edit” in the middle: an extraneous clip is added,
+    // the graph is rebuilt, the store is the same
     let mut store_b = FxStateStore::new();
     r1.sync_fx(&mut store_b);
     let mut fb = direct(AudioPattern::Sine { hz: 330.0 });
@@ -306,7 +306,7 @@ fn t6_graph_rebuild_mid_tail_preserves_state() {
         fx_off: false,
     });
     let r2 = AudioRenderer::new(&p2);
-    r2.sync_fx(&mut store_b); // state клипа 1 обязан пережить пересборку
+    r2.sync_fx(&mut store_b); // the state of clip 1 must survive the rebuild
     no_underruns(r2.render_frames_with(
         &mut fb,
         &mut store_b,
@@ -314,14 +314,14 @@ fn t6_graph_rebuild_mid_tail_preserves_state() {
         &mut split[half * CH..],
     ));
 
-    assert_eq!(full, split, "пересборка графа не должна менять звук (state сохранён)");
+    assert_eq!(full, split, "rebuilding the graph must not change the sound (state preserved)");
 }
 
-// ---- Тест 4в: автоматизация rate реально меняет скорость во времени -------
-// (регрессия: оценка автоматизации один раз на буфер давала константное
-// замедление; поймано на слух пользователем — фикс: по-чанковая оценка)
+// ---- Test 4c: automation of rate really changes the speed over time -------
+// (regression: evaluating the automation once per buffer gave a constant
+// slowdown; caught by the user by ear — fix: per-chunk evaluation)
 
-/// Мгновенная частота сигнала в окне по нулевым пересечениям (канал 0).
+/// Instantaneous frequency of the signal in the window by zero crossings (channel 0).
 fn window_freq_hz(out: &[f32], from_frame: usize, frames: usize) -> f64 {
     let mut crossings = 0u32;
     let mut prev = out[from_frame * CH];
@@ -337,9 +337,9 @@ fn window_freq_hz(out: &[f32], from_frame: usize, frames: usize) -> f64 {
 
 #[test]
 fn t4_automation_changes_rate_over_time() {
-    // ДОМЕН СОБЫТИЯ (Р.37): kf.t — позиция в материале, но ОСЬ линейна, то
-    // есть на выходном времени τ звучит ровно rate(τ). Чек-точки берутся
-    // прямо из профиля — тесту больше не нужна карта, которую он сторожит.
+    // EVENT DOMAIN (R.37): kf.t is the position in the material, but the AXIS is linear, so
+    // at output time τ exactly rate(τ) sounds. The checkpoints are taken
+    // straight from the profile — the test no longer needs the map it guards.
     let dur = 40 * AUDIO_SAMPLE_RATE as i64;
     let fx = vec![FxInstance::SlowedReverb {
         rate: 1.0,
@@ -358,17 +358,17 @@ fn t4_automation_changes_rate_over_time() {
     let mut f = direct(AudioPattern::Sine { hz: 240.0 });
     let mut store = FxStateStore::new();
     r.sync_fx(&mut store);
-    // рендер ОДНИМ куском — как офлайн-экспорт (там и была регрессия)
+    // render in ONE piece — like the offline export (where the regression was)
     let mut out = vec![0f32; dur as usize * CH];
     assert_eq!(r.render_frames_with(&mut f, &mut store, 0, &mut out).underruns, 0);
 
-    let win = AUDIO_SAMPLE_RATE as usize; // окно 1 c
-    // (профиль здесь и в кривой клипа — один и тот же)
+    let win = AUDIO_SAMPLE_RATE as usize; // window 1 s
+    // (the profile here and in the clip's curve is the same one)
     let checks = [
-        (0.10, 1.0),  // до первой точки профиля
-        (0.30, 0.75), // середина спада
-        (0.45, 0.5),  // центр плато
-        (0.95, 1.0),  // далеко после последнего kf
+        (0.10, 1.0),  // before the first point of the profile
+        (0.30, 0.75), // middle of the decline
+        (0.45, 0.5),  // centre of the plateau
+        (0.95, 1.0),  // far after the last kf
     ];
     for (t, expected_rate) in checks {
         let center = (dur as f64 * t) as usize;
@@ -376,8 +376,8 @@ fn t4_automation_changes_rate_over_time() {
         let expected = 240.0 * expected_rate;
         assert!(
             (freq - expected).abs() < expected * 0.05,
-            "t={t}: частота {freq:.1} Гц, ожидалось ~{expected:.1} Гц — \
-             автоматизация обязана менять скорость по профилю"
+            "t={t}: frequency {freq:.1} Hz, expected ~{expected:.1} Hz — \
+             automation must change the speed along the profile"
         );
     }
 }
@@ -392,8 +392,8 @@ fn automation_probe() -> &'static [(f64, f64)] {
 
 #[test]
 fn t4_automation_consumes_source_by_integral() {
-    // «Оборванный конец»: при duration = src/avg_rate источник обязан быть
-    // дочитан до конца (± задержка ресемплера), а не до avg-доли константы.
+    // “Dangling end”: at duration = src/avg_rate the source must be read
+    // to the end (± the resampler delay), not to the avg fraction of a constant.
     let avg = kt_fx::avg_rate(1.0, automation_probe());
     let dur = 20 * AUDIO_SAMPLE_RATE as i64;
     let fx = vec![FxInstance::SlowedReverb {
@@ -416,9 +416,9 @@ fn t4_automation_consumes_source_by_integral() {
     let mut out = vec![0f32; dur as usize * CH];
     no_underruns(r.render_frames_with(&mut f, &mut store, 0, &mut out));
 
-    // пробуем не самый край (последние ~64 сэмпла легально затухают:
-    // sinc-ресемплер видит нули за окном источника), а точку чуть раньше
-    // плюс несколько промежуточных — интеральный маппинг по всему клипу
+    // we try not the very edge (the last ~64 samples legitimately decay:
+    // the sinc resampler sees zeros beyond the source window), but a point slightly earlier
+    // plus several intermediate ones — the integral mapping across the whole clip
     for frac in [0.35f64, 0.55, 0.75, 0.95, 0.995] {
         let x = (dur as f64 * frac) as usize;
         let got = out[x * CH];
@@ -427,7 +427,7 @@ fn t4_automation_consumes_source_by_integral() {
         let tolerance = 4096.0 * 1e-6;
         assert!(
             (got - expect).abs() < tolerance,
-            "t={frac}: источник на {:.0}, ожидалось {:.0} (интеграл профиля)",
+            "t={frac}: source at {:.0}, expected {:.0} (integral of the profile)",
             got as f64 / 1e-6,
             expect_src
         );
@@ -435,19 +435,19 @@ fn t4_automation_consumes_source_by_integral() {
     let _ = avg;
 }
 
-/// Тест 31 (Р.33; ПЕРЕВЁРНУТ в Р.37 по решению пользователя). Раньше он
-/// утверждал обратное: «ранний бамп скорости не двигает МАТЕРИАЛ, на
-/// котором срабатывают поздние ключи, но двигает ВРЕМЯ». С Р.37 ось
-/// автоматизации — собственный размах события, поэтому верно зеркальное:
-/// **ранний бамп не двигает МОМЕНТ срабатывания поздних ключей, но
-/// двигает материал, играющий в этот момент.**
+/// Test 31 (R.33; FLIPPED in R.37 by the user's decision). Before, it
+/// asserted the opposite: “an early speed bump does not move the MATERIAL that the
+/// late keys fire on, but it moves the TIME”. With R.37 the automation axis is the
+/// event's own span, so the mirror image is true: **an early bump does not move the
+/// MOMENT at which the late keys fire, but moves the material playing at that moment.**
 ///
-/// Тест не ослаблен, а перевёрнут: проверок столько же, и добавлена проба
-/// в ХВОСТЕ. Проба только на плато (τ=0.55) давала бы ложно-зелёное — там
-/// старая и новая семантика совпадают; расходятся они на τ=0.90.
+/// The test is not weakened but flipped: the number of checks is the same,
+/// and a probe is added in the TAIL. A probe only on the plateau (τ=0.55)
+/// would give a false green — there the old and new semantics coincide;
+/// they diverge at τ=0.90.
 #[test]
 fn t31_keyframes_anchor_to_event_time() {
-    let dur = 20 * AUDIO_SAMPLE_RATE as i64; // L, кадры
+    let dur = 20 * AUDIO_SAMPLE_RATE as i64; // L, frames
     let profile_a: Vec<(f64, f64)> = vec![(0.40, 1.0), (0.50, 0.5), (0.70, 0.5), (0.75, 1.0)];
     let mut profile_b: Vec<(f64, f64)> = vec![(0.10, 1.0), (0.18, 2.0), (0.26, 2.0), (0.34, 1.0)];
     profile_b.extend(profile_a.iter().copied());
@@ -455,7 +455,7 @@ fn t31_keyframes_anchor_to_event_time() {
     let render = |profile: Vec<(f64, f64)>| -> Vec<f32> {
         let fx = vec![FxInstance::SlowedReverb {
             rate: 1.0,
-            mix: 0.0, // ramp не должен загрязняться ревербом
+            mix: 0.0, // the ramp must not be contaminated by the reverb
             reverb_delay_ms: 85.0,
             damp: 0.32,
             decay: 0.58,
@@ -477,70 +477,70 @@ fn t31_keyframes_anchor_to_event_time() {
     let out_a = render(profile_a.clone());
     let out_b = render(profile_b.clone());
 
-    // материал, играющий на ВЫХОДНОМ прогрессе τ (ramp кодирует кадр)
+    // the material playing at the OUTPUT progress τ (the ramp encodes the frame)
     let material_at_out =
         |out: &[f32], tau: f64| -> f64 { out[((tau * dur as f64) as usize) * CH] as f64 / 1e-6 };
-    // фактическая скорость на ВЫХОДНОМ прогрессе τ (окно 0.5 c)
+    // the actual speed at the OUTPUT progress τ (window 0.5 s)
     let rate_at_out = |out: &[f32], tau: f64| -> f64 {
         let x = (tau * dur as f64) as usize;
         let w = AUDIO_SAMPLE_RATE as usize / 2;
         (out[(x + w) * CH] as f64 - out[x * CH] as f64) / (w as f64 * 1e-6)
     };
 
-    // 1) ЯКОРЬ: на одном и том же выходном времени играет одна и та же
-    //    скорость — ранний бамп момент НЕ сдвинул
+    // 1) ANCHOR: at the same output time the same speed plays —
+    //    the early bump did NOT shift the moment
     for (tau, want) in [(0.55, 0.5), (0.60, 0.5), (0.64, 0.5), (0.85, 1.0), (0.90, 1.0)] {
         let ra = rate_at_out(&out_a, tau);
         let rb = rate_at_out(&out_b, tau);
         assert!(
             (ra - want).abs() < 0.06,
-            "A: на τ={tau} обязана играть скорость {want}, вышло {ra:.3}"
+            "A: at τ={tau} the speed must be {want}, got {ra:.3}"
         );
         assert!(
             (rb - want).abs() < 0.06,
-            "B: ранний кейфрейм НЕ должен сдвигать МОМЕНТ срабатывания, вышло {rb:.3}"
+            "B: an early keyframe must NOT shift the MOMENT of firing, got {rb:.3}"
         );
     }
 
-    // 2) бамп активен на СВОЁМ выходном времени, и только у B
-    assert!((rate_at_out(&out_b, 0.22) - 2.0).abs() < 0.2, "B: τ=0.22 ускорено ×2");
-    assert!((rate_at_out(&out_a, 0.22) - 1.0).abs() < 0.1, "A: τ=0.22 без ускорения");
+    // 2) the bump is active at ITS output time, and only for B
+    assert!((rate_at_out(&out_b, 0.22) - 2.0).abs() < 0.2, "B: τ=0.22 sped up ×2");
+    assert!((rate_at_out(&out_a, 0.22) - 1.0).abs() < 0.1, "A: τ=0.22 without speed-up");
 
-    // 3) ускорение сдвигает МАТЕРИАЛ, играющий в этот момент, а не момент;
-    //    величина сдвига предсказывается картой: S_B(τ) − S_A(τ)
+    // 3) acceleration shifts the MATERIAL playing at that moment, not the moment;
+    //    the size of the shift is predicted by the map: S_B(τ) − S_A(τ)
     let ma = material_at_out(&out_a, 0.5);
     let mb = material_at_out(&out_b, 0.5);
-    assert!(mb > ma, "с ранним ускорением к τ=0.5 съедено БОЛЬШЕ материала: {mb} vs {ma}");
+    assert!(mb > ma, "with an early speed-up toward τ=0.5 MORE material was consumed: {mb} vs {ma}");
     let pred =
         kt_fx::source_progress(1.0, &profile_b, 0.5) - kt_fx::source_progress(1.0, &profile_a, 0.5);
     let got = (mb - ma) / dur as f64;
     assert!(
         (got - pred).abs() < 8192.0 / dur as f64,
-        "сдвиг материала {got:.5} должен совпадать с предсказанием карты {pred:.5}"
+        "material shift {got:.5} must match the prediction of the map {pred:.5}"
     );
 
-    // 4) к концу события съедено ровно avg_rate материала — на этом стоят
-    //    окно источника и префетч
+    // 4) by the end of the event exactly avg_rate of material is consumed — the source
+    //    window and the prefetch rest on this
     for (out, prof) in [(&out_a, &profile_a), (&out_b, &profile_b)] {
         let end = material_at_out(out, 0.995) / dur as f64;
         let want = kt_fx::avg_rate(1.0, prof);
         assert!(
             (end - want).abs() < 0.03,
-            "потреблено {end:.4} материала, карта обещает {want:.4}"
+            "consumed {end:.4} of material, the map promises {want:.4}"
         );
     }
 }
 
-/// Тест 213 (Р.33 С1): АУДИО-параметры автоматизируются общим механизмом.
-/// До этого раунда кривые существовали только у видео-FX, а из аудио —
-/// лишь собственная механика slowed&reverb; громкость автоматизировать
-/// было нечем (требование пользователя: «нужна автоматизация всех
-/// параметров всех эффектов»).
+/// Test 213 (R.33 C1): AUDIO parameters are automated by the common mechanism.
+/// Until this round, curves existed only for video FX, and for audio there was
+/// only slowed&reverb's own machinery; there was nothing to automate the volume with
+/// (the user's requirement:
+/// “automation of all parameters of all effects is needed”).
 #[test]
 fn t213_audio_gain_follows_its_curve() {
     let dur = 4 * AUDIO_SAMPLE_RATE as i64;
     let fx = vec![FxInstance::gain(0.0)];
-    // кривая громкости: тишина → 0 dB → тишина, ключи в тиках материала
+    // volume curve: silence → 0 dB → silence, keys in material ticks
     let auto = vec![vec![ParamCurve {
         param: "db".into(),
 
@@ -568,16 +568,16 @@ fn t213_audio_gain_follows_its_curve() {
     let head = rms(win / 2, win);
     let mid = rms(dur as usize / 2 - win / 2, win);
     let tail = rms(dur as usize - win * 2, win);
-    assert!(mid > head * 8.0, "громкость обязана расти к середине: {head:.4} → {mid:.4}");
-    assert!(mid > tail * 8.0, "и падать к концу: {mid:.4} → {tail:.4}");
-    // на самом пике — примерно исходная амплитуда синуса (0 dB): 0.5/√2.
-    // Окно узкое: широкое усредняет склон вокруг пика и занижает RMS, а
-    // сглаживание параметра (one-pole ~20 мс) чуть отстаёт от кривой —
-    // это не дефект, а то, ради чего оно и стоит (без него тут щёлкало бы)
+    assert!(mid > head * 8.0, "loudness must rise toward the middle: {head:.4} → {mid:.4}");
+    assert!(mid > tail * 8.0, "and fall toward the end: {mid:.4} → {tail:.4}");
+    // at the very peak — roughly the original sine amplitude (0 dB): 0.5/√2.
+    // The window is narrow: a wide one averages the slope around the peak and underestimates the RMS, and
+    // the parameter smoothing (one-pole ~20 ms) lags slightly behind the curve —
+    // this is not a defect, but the very thing it exists for (without it there would be clicks here)
     let peak = rms(dur as usize / 2 - 375, 750);
-    assert!((peak - 0.3536).abs() < 0.03, "в 0 dB ожидается исходный уровень, вышло {peak:.4}");
+    assert!((peak - 0.3536).abs() < 0.03, "at 0 dB the original level is expected, got {peak:.4}");
 
-    // без кривой звук байт-в-байт прежний (константный путь не тронут)
+    // without a curve the sound is byte for byte as before (the constant path is untouched)
     let plain = fx_project(vec![FxInstance::gain(0.0)], "synth:sine:440", dur);
     let r2 = AudioRenderer::new(&plain);
     let mut f2 = direct(AudioPattern::Sine { hz: 440.0 });
@@ -591,12 +591,12 @@ fn t213_audio_gain_follows_its_curve() {
             [v, v]
         })
         .collect();
-    assert_eq!(out2, src, "без кривой громкость не должна трогать сигнал вовсе");
+    assert_eq!(out2, src, "without a curve the loudness must not touch the signal at all");
 }
 
-/// Кейфреймы slowed&reverb старого образца переезжают в общий механизм
-/// (Р.33): собственного домена у них больше нет, но проект пользователя
-/// обязан звучать так же.
+/// Keyframes of the old-style slowed&reverb move into the common mechanism
+/// (R.33): they no longer have their own domain, but the user's project
+/// must sound the same.
 #[test]
 fn t213_legacy_slowed_automation_migrates_to_curves() {
     let dur = 20 * AUDIO_SAMPLE_RATE as i64;
@@ -619,24 +619,24 @@ fn t213_legacy_slowed_automation_migrates_to_curves() {
         "synth:ramp",
         dur,
     );
-    assert!(kt_model::migrate_legacy_slowed(&mut p.clips[0]), "миграция обязана сработать");
+    assert!(kt_model::migrate_legacy_slowed(&mut p.clips[0]), "the migration must fire");
     let c = &p.clips[0];
-    // легаси-поле опустело, кривые встали в тиках материала
+    // the legacy field is now empty, the curves are set in material ticks
     assert!(
         matches!(&c.fx[0], FxInstance::SlowedReverb { automation, .. } if automation.is_empty()),
-        "старое поле обязано опустеть — иначе оно уедет обратно в файл"
+        "the old field must be emptied — otherwise it moves back into the file"
     );
-    let rate = c.fx_auto[0].iter().find(|k| k.param == "rate").expect("кривая rate");
+    let rate = c.fx_auto[0].iter().find(|k| k.param == "rate").expect("rate curve");
     assert_eq!(
         rate.keys.iter().map(|k| k.t.0).collect::<Vec<_>>(),
         vec![
             (0.2 * c.duration.0 as f64).round() as i64,
             (0.8 * c.duration.0 as f64).round() as i64
         ],
-        "доли материала обязаны стать тиками материала"
+        "fractions of material must become ticks of material"
     );
-    assert!(c.fx_auto[0].iter().any(|k| k.param == "mix"), "mix тоже переезжает");
-    // и проект играет: профиль скорости продолжает действовать
+    assert!(c.fx_auto[0].iter().any(|k| k.param == "mix"), "mix moves too");
+    // and the project plays: the speed profile continues to act
     p.validate().unwrap();
     let r = AudioRenderer::new(&p);
     let mut f = direct(AudioPattern::Ramp);
@@ -647,13 +647,13 @@ fn t213_legacy_slowed_automation_migrates_to_curves() {
     let end_src = out[(dur as usize - 1) * CH] as f64 / 1e-6;
     assert!(
         end_src < dur as f64 * 0.95,
-        "замедление обязано остаться: съедено {end_src:.0} из {dur}"
+        "the slowdown must remain: consumed {end_src:.0} of {dur}"
     );
 }
 
-/// Тест 229 (Р.33 С5): новые параметры АУДИО-эффектов. Умолчания
-/// байт-в-байт держит GOLDEN_AUDIO; здесь — что сдвинутый параметр
-/// действительно слышен и слышен правильно.
+/// Test 229 (R.33 C5): new parameters of AUDIO effects. The defaults
+/// byte for byte are held by GOLDEN_AUDIO; here — that a shifted parameter
+/// is really audible and is audible correctly.
 #[test]
 fn t229_new_audio_params() {
     let dur = 2 * AUDIO_SAMPLE_RATE as i64;
@@ -675,24 +675,24 @@ fn t229_new_audio_params() {
         (s / (out.len() / CH) as f64).sqrt()
     };
 
-    // ---- Gain.pan: баланс ------------------------------------------------
+    // ---- Gain.pan: balance ------------------------------------------------
     let flat = render(vec![FxInstance::gain(0.0)], vec![]);
     assert_eq!(
         flat,
         render(vec![FxInstance::Gain { db: 0.0, pan: 0.0 }], vec![]),
-        "баланс 0 — прежний путь байт-в-байт"
+        "balance 0 — the old path is byte-for-byte"
     );
     let left = render(vec![FxInstance::Gain { db: 0.0, pan: -1.0 }], vec![]);
-    assert!(rms(&left, 1) < 1e-9, "полный сдвиг влево гасит правый канал");
-    assert!((rms(&left, 0) - rms(&flat, 0)).abs() < 1e-6, "левый канал не тронут");
+    assert!(rms(&left, 1) < 1e-9, "full shift to the left mutes the right channel");
+    assert!((rms(&left, 0) - rms(&flat, 0)).abs() < 1e-6, "the left channel is untouched");
     let half = render(vec![FxInstance::Gain { db: 0.0, pan: 0.5 }], vec![]);
     assert!(
         (rms(&half, 0) / rms(&flat, 0) - 0.5).abs() < 0.01,
-        "баланс +0.5 обязан вдвое приглушить левый: {}",
+        "balance +0.5 must halve the left: {}",
         rms(&half, 0) / rms(&flat, 0)
     );
 
-    // ---- Gain.pan автоматизируется тем же механизмом ---------------------
+    // ---- Gain.pan is automated by the same mechanism ---------------------
     let curve = vec![vec![ParamCurve {
         param: "pan".into(),
 
@@ -706,9 +706,9 @@ fn t229_new_audio_params() {
     let half_len = swept.len() / 2;
     let (l1, r1) = (rms(&swept[..half_len], 0), rms(&swept[..half_len], 1));
     let (l2, r2) = (rms(&swept[half_len..], 0), rms(&swept[half_len..], 1));
-    assert!(l1 > r1 && l2 < r2, "кривая баланса обязана переехать слева направо");
+    assert!(l1 > r1 && l2 < r2, "the balance curve must move from left to right");
 
-    // ---- SlowedReverb: пред-задержка и ширина ----------------------------
+    // ---- SlowedReverb: pre-delay and width ----------------------------
     let rev = |predelay_ms: f32, width: f32| {
         vec![FxInstance::SlowedReverb {
             rate: 1.0,
@@ -724,41 +724,41 @@ fn t229_new_audio_params() {
         }]
     };
     let plain = render(rev(0.0, 1.0), vec![]);
-    // хвост слышен ПОСЛЕ конца материала — сравниваем начало отклика
+    // the tail is audible AFTER the end of the material — we compare the onset of the response
     let onset = |out: &[f32]| -> usize {
         out.chunks_exact(CH).position(|f| f[0].abs() > 0.02).unwrap_or(usize::MAX)
     };
     let delayed = render(rev(100.0, 1.0), vec![]);
     assert!(
         onset(&delayed) > onset(&plain),
-        "пред-задержка обязана сдвинуть отклик: {} vs {}",
+        "pre-delay must shift the response: {} vs {}",
         onset(&delayed),
         onset(&plain)
     );
-    // ширина 0 — каналы хвоста совпадают (моно), 1 — расходятся
+    // width 0 — the tail's channels coincide (mono), 1 — they diverge
     let mono = render(rev(0.0, 0.0), vec![]);
     let diff = |out: &[f32]| -> f64 {
         out.chunks_exact(CH).map(|f| (f[0] - f[1]).abs() as f64).sum::<f64>()
     };
     assert!(
         diff(&mono) < diff(&plain) * 0.5,
-        "ширина 0 обязана свести хвост в моно: {} vs {}",
+        "width 0 must collapse the tail to mono: {} vs {}",
         diff(&mono),
         diff(&plain)
     );
 }
 
-/// Тест 246 (Р.37 С1): потребление источника — ИНТЕГРАЛ кривой скорости по
-/// ВЫХОДНОМУ времени. Прямая проверка новой семантики, независимая от
-/// GOLDEN_AUDIO: раньше эталон был единственным, кто это сторожил.
+/// Test 246 (R.37 C1): consumption of the source is the INTEGRAL of the speed curve over
+/// OUTPUT time. A direct check of the new semantics, independent of
+/// GOLDEN_AUDIO: before, the reference was the only thing guarding it.
 #[test]
 fn t246_consumption_is_the_integral_over_event_time() {
     let dur = 10 * AUDIO_SAMPLE_RATE as i64;
-    // разгон 1.0 → 2.0 ровно за событие: интеграл = средняя скорость = 1.5
+    // ramp 1.0 → 2.0 exactly across the event: integral = average speed = 1.5
     let profile: Vec<(f64, f64)> = vec![(0.0, 1.0), (1.0, 2.0)];
     assert!(
         (kt_fx::avg_rate(1.0, &profile) - 1.5).abs() < 1e-15,
-        "карта: линейный разгон 1→2 съедает ровно 1.5 длины события"
+        "map: a linear ramp 1→2 consumes exactly 1.5 of the event length"
     );
 
     let fx = vec![FxInstance::SlowedReverb {
@@ -781,30 +781,30 @@ fn t246_consumption_is_the_integral_over_event_time() {
     let mut out = vec![0f32; dur as usize * CH];
     assert_eq!(r.render_frames_with(&mut f, &mut store, 0, &mut out).underruns, 0);
 
-    // ramp кодирует номер кадра источника — читаем его прямо с выхода
+    // the ramp encodes the source frame number — we read it directly from the output
     let src_at = |tau: f64| out[((tau * dur as f64) as usize) * CH] as f64 / 1e-6;
     for tau in [0.25f64, 0.5, 0.75, 0.99] {
         let want = dur as f64 * kt_fx::source_progress(1.0, &profile, tau);
         let got = src_at(tau);
         assert!(
             (got - want).abs() < 8192.0,
-            "τ={tau}: съедено {got:.0} материала, интеграл обещает {want:.0}"
+            "τ={tau}: consumed {got:.0} of material, the integral promises {want:.0}"
         );
     }
-    // квадратичность видна невооружённо: к половине события съедено 0.625
-    // длины (парабола), а не 0.75 (что дала бы линейная интерполяция)
+    // the quadraticness is visible to the naked eye: by the middle of the event 0.625 of the
+    // length is consumed (a parabola), not 0.75 (which linear interpolation would give)
     assert!((src_at(0.5) / dur as f64 - 0.625).abs() < 0.01);
 }
 
-/// Тест 246b (Р.37 С1): кривая ЛЮБОГО параметра тоже живёт в выходном
-/// времени. Раньше `mix`/`gain`/`pan` индексировались по потреблённому
-/// материалу, и ранний ключ скорости сдвигал момент их срабатывания —
-/// эту половину сторожил только GOLDEN_AUDIO.
+/// Test 246b (R.37 C1): the curve of ANY parameter also lives in output
+/// time. Before, `mix`/`gain`/`pan` were indexed by the consumed
+/// material, and an early speed key shifted the moment they fired —
+/// only GOLDEN_AUDIO guarded this half.
 #[test]
 fn t246_gain_curve_peaks_at_event_middle_under_warp() {
     let dur = 8 * AUDIO_SAMPLE_RATE as i64;
     let t = |frac: f64| Tick::from_audio_frames((dur as f64 * frac) as i64);
-    // клип замедлен вдвое; громкость — треугольник с пиком в СЕРЕДИНЕ
+    // the clip is slowed by half; the volume is a triangle peaking in the MIDDLE
     let fx = vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0), FxInstance::gain(0.0)];
     let auto = vec![
         vec![],
@@ -836,24 +836,24 @@ fn t246_gain_curve_peaks_at_event_middle_under_warp() {
     let mid = rms(dur as usize / 2);
     let quarter = rms(dur as usize / 4);
     let three_q = rms(dur as usize * 3 / 4);
-    // пик — в СЕРЕДИНЕ СОБЫТИЯ. На прежней семантике ключ «середина
-    // материала» приходился на КОНЕЦ события (0.5 материала при 0.5×
-    // съедается за всё событие), и здесь была бы монотонно растущая рампа
-    assert!(mid > quarter * 3.0, "пик громкости обязан быть в середине: {mid:.4} vs {quarter:.4}");
-    assert!(mid > three_q * 3.0, "и спадать к концу: {mid:.4} vs {three_q:.4}");
+    // the peak — in the MIDDLE OF THE EVENT. Under the old semantics the key “middle of the
+    // material” fell at the END of the event (0.5 of the material at 0.5× is
+    // consumed over the whole event), and here there would be a monotonically rising ramp
+    assert!(mid > quarter * 3.0, "the loudness peak must be in the middle: {mid:.4} vs {quarter:.4}");
+    assert!(mid > three_q * 3.0, "and fall toward the end: {mid:.4} vs {three_q:.4}");
     assert!(
         (quarter / three_q).ln().abs() < 0.7,
-        "треугольник симметричен: {quarter:.5} vs {three_q:.5}"
+        "the triangle is symmetric: {quarter:.5} vs {three_q:.5}"
     );
 }
 
-// ---- Тест 320/321 (Р.47, п.325): честный порядок аудио-слотов ---------------
+// ---- Test 320/321 (R.47, item 325): honest order of the audio slots ---------------
 
-/// Тест 320: обработка идёт В ПОРЯДКЕ ЦЕПОЧКИ. Автоматизированный Gain
-/// ПЕРЕД ревербом — это фейд ВХОДА: хвост реверба обязан дозвонить после
-/// того, как вход ушёл в ноль. До Р.47 конвейер был прибит (громкость
-/// всегда после реверба), и тот же фейд душил ХВОСТ — red-proof: на
-/// коммите до узловой цепочки RMS последней четверти ~0.
+/// Test 320: processing runs IN CHAIN ORDER. An automated Gain
+/// BEFORE the reverb is an input FADE: the reverb tail must still ring on after
+/// the input has gone to zero. Until R.47 the pipeline was fixed (the volume was always
+/// after the reverb), and the same fade choked the TAIL — red-proof: on a commit before the node chain
+/// the RMS of the last quarter is ~0.
 #[test]
 fn t320_slot_order_is_honest_gain_before_reverb_fades_the_input() {
     let dur = 48_000 * 4;
@@ -899,8 +899,8 @@ fn t320_slot_order_is_honest_gain_before_reverb_fades_the_input() {
     };
     let frames = |a: f64, b: f64| ((a * 48_000.0) as usize * CH)..((b * 48_000.0) as usize * CH);
     let head = rms(&out[frames(0.0, 0.5)]);
-    // окно сразу после фейда входа (2.4..3.6 c): хвост реверба от громкой
-    // первой половины ещё жирный (decay 0.95 ≈ t60 5 c)
+    // a window right after the input fade (2.4..3.6 s): the reverb tail from the loud
+    // first half is still heavy (decay 0.95 ≈ t60 5 s)
     let tail = rms(&out[frames(1.2, 2.4)]);
     assert!(head > 0.03, "start must sound: {head}");
     assert!(
@@ -909,9 +909,9 @@ fn t320_slot_order_is_honest_gain_before_reverb_fades_the_input() {
     );
 }
 
-/// Тест 321: байт-якоря одно-слотовых цепочек после узлового рефакторинга.
-/// [Gain −6] — ровно источник × 10^(−6/20) поэлементно (константный путь —
-/// один и тот же множитель, нарезка на чанки не меняет float-умножение).
+/// Test 321: byte anchors of single-slot chains after the node refactoring.
+/// [Gain −6] — exactly the source × 10^(−6/20) element-wise (the constant path —
+/// the same multiplier; slicing into chunks does not change the float multiplication).
 #[test]
 fn t321_single_gain_is_exact_scalar_multiply() {
     let dur = 48_000;
@@ -941,12 +941,12 @@ fn t321_single_gain_is_exact_scalar_multiply() {
     }
 }
 
-// ---- Тесты 323/324 (Р.47, п.327): пятёрка Ка2 -------------------------------
+// ---- Tests 323/324 (R.47, item 327): the Ka2 quintet -------------------------------
 
-/// Тест 323: порядок слотов на НЕЛИНЕЙНОСТИ. «Тихо → перегруз» чист (драйв
-/// почти не кусает −40 дБ), «перегруз → тихо» — грязный, но тихий: спектры
-/// и RMS обязаны различаться в разы. На линейных эффектах порядок слышен
-/// только с кривыми (t320) — дисторшн доказывает его на константах.
+/// Test 323: slot order on NONLINEARITY. “Quiet → overload” is clean (the drive
+/// barely bites at −40 dB), “overload → quiet” is dirty but quiet: the spectra
+/// and RMS must differ several times over. On linear effects the order is audible
+/// only with curves (t320) — distortion proves it on constants.
 #[test]
 fn t323_slot_order_matters_on_nonlinear_chains() {
     let dur = 48_000;
@@ -975,8 +975,8 @@ fn t323_slot_order_matters_on_nonlinear_chains() {
     assert!(a / b > 2.0 || b / a > 2.0, "nonlinear chain must depend on slot order: {a} vs {b}");
 }
 
-/// Тест 324: спектральные пробы пятёрки Ка2 — формулы делают то, что
-/// написано на ручках.
+/// Test 324: spectral probes of the Ka2 quintet — the formulas do what
+/// their knobs say.
 #[test]
 fn t324_ka2_spectral_probes() {
     let dur = 48_000;
@@ -1001,7 +1001,7 @@ fn t324_ka2_spectral_probes() {
         resonance: 0.707,
     };
 
-    // LP 800: 200 Гц проходит, 8 кГц глушится >= 40 дБ
+    // LP 800: 200 Hz passes, 8 kHz is muted by ≥ 40 dB
     let pass = rms_mono(&render(vec![lp(800.0)], 200.0));
     let dry = rms_mono(&render(vec![], 200.0));
     assert!((pass / dry - 1.0).abs() < 0.1, "LP passband: {pass} vs {dry}");
@@ -1009,7 +1009,7 @@ fn t324_ka2_spectral_probes() {
     let dry8 = rms_mono(&render(vec![], 8000.0));
     assert!(cut / dry8 < 0.01, "LP must kill 8 kHz by 40 dB: {}", cut / dry8);
 
-    // EQ: low_gain −12 глушит 100 Гц вдвое-с-лишним, 8 кГц не трогает
+    // EQ: low_gain −12 mutes 100 Hz by more than half, does not touch 8 kHz
     let mut eq = FxInstance::eq();
     eq.set_param("low_gain_db", -12.0);
     let low = rms_mono(&render(vec![eq.clone()], 100.0));
@@ -1019,7 +1019,7 @@ fn t324_ka2_spectral_probes() {
     let high = rms_mono(&render(vec![eq], 8000.0));
     assert!((high / dry8 - 1.0).abs() < 0.1, "EQ low shelf must not touch 8 kHz");
 
-    // Bitcrusher bits 3 поднимает шумовой пол на чистом синусе
+    // Bitcrusher bits 3 raises the noise floor on a pure sine
     let crushed =
         render(vec![FxInstance::Bitcrusher { bits: 3.0, rate_hz: 48_000.0, mix: 1.0 }], 1000.0);
     let clean = render(vec![], 1000.0);
@@ -1027,9 +1027,9 @@ fn t324_ka2_spectral_probes() {
     let mono_clean: Vec<f32> = clean.chunks_exact(CH).map(|f| (f[0] + f[1]) * 0.5).collect();
     let sp = spectrum_db(&mono[8192..16384]);
     let sp_clean = spectrum_db(&mono_clean[8192..16384]);
-    // квант ПЕРИОДИКИ — гребёнка гармоник, не сплошной пол: меряем ПИК
-    // в полосе вдали от тона (бин = 48000/8192 ≈ 5.86 Гц; 1000..3000 =
-    // 5.9..17.6 кГц — там живут нечётные гармоники кванта)
+    // the quantization is PERIODIC — a comb of harmonics, not a continuous floor: we measure the PEAK
+    // in a band far from the tone (bin = 48000/8192 ≈ 5.86 Hz; 1000..3000 =
+    // 5.9..17.6 kHz — where the odd harmonics of the quantization live)
     let peak = |sp: &[f32]| -> f32 { sp[1000..3000].iter().cloned().fold(f32::MIN, f32::max) };
     assert!(
         peak(&sp) > peak(&sp_clean) + 60.0,
@@ -1038,7 +1038,7 @@ fn t324_ka2_spectral_probes() {
         peak(&sp_clean)
     );
 
-    // StereoWidth 0 — моно: каналы равны; 2 — s-энергия растёт
+    // StereoWidth 0 — mono: the channels are equal; 2 — the side energy grows
     let p = fx_project(vec![FxInstance::StereoWidth { width: 0.0 }], "synth:ramp", dur);
     let r = AudioRenderer::new(&p);
     let mut f = direct(AudioPattern::Ramp);

@@ -1,6 +1,6 @@
-//! Рендер-диалог (порт RenderProgressDialog): прогресс/фаза/ETA/скорость,
-//! лог, Cancel. Экспорт в фоне через export_mp4_with со СВЕЖИМИ
-//! FfmpegSource (не декодеры плеера); диапазон = регион, иначе весь проект.
+//! Render dialog (port of RenderProgressDialog): progress/phase/ETA/speed,
+//! log, Cancel. Export in the background via export_mp4_with with FRESH
+//! FfmpegSource (not the player's decoders); range = region, otherwise the whole project.
 
 use crate::app::KtApp;
 use crate::i18n::{k, tr};
@@ -12,38 +12,38 @@ use kt_model::{MediaId, Project};
 use kt_time::Tick;
 
 pub struct RenderJob {
-    /// Общий каркас фоновой ЗАДАЧИ (Р.49, п.367): канал, отмена, пауза и
-    /// гашение потока при `Drop`. Рендер — эталон, из которого каркас и
-    /// выделен; всё, что ниже, — его собственные числа для панели Run.
+    /// Common frame of a background TASK (R.49, item 367): channel, cancel, pause and
+    /// stopping the thread on `Drop`. Render is the reference from which the frame was
+    /// extracted; everything below is its own numbers for the Run panel.
     pub job: crate::bg::BgJob<ExportProgress, Result<kt_engine::export::ExportStats, String>>,
     pub progress: ExportProgress,
     pub out_path: String,
-    /// Настройки запуска (для панели Output).
+    /// Launch settings (for the Output panel).
     pub opts: kt_engine::export::ExportOptions,
     pub out_res: (u32, u32),
     pub fps: u32,
-    /// Скорость ×realtime: min/max/сумма/число замеров (панель Run, v1).
+    /// Speed ×realtime: min/max/sum/number of samples (Run panel, v1).
     pub speed_min: f64,
     pub speed_max: f64,
     pub speed_sum: f64,
     pub speed_n: u64,
     pub last_frames: u64,
     pub last_tick: std::time::Instant,
-    /// Исходники, отрендеренные заглушкой (Р.33 п.10).
+    /// Sources rendered as a stub (R.33 item 10).
     pub missing: Vec<String>,
 }
 
-/// Диалог НАСТРОЕК рендера (п.5): кодек, качество, битрейт, разрешение.
+/// Render SETTINGS dialog (item 5): codec, quality, bitrate, resolution.
 pub struct RenderSetup {
     pub encoder: Option<String>, // None = Auto
     pub quality: u32,
-    /// Some = режим целевого битрейта видео (бит/с) вместо CRF (п.9).
+    /// Some = target video bitrate mode (bit/s) instead of CRF (item 9).
     pub video_bitrate: Option<u32>,
     pub audio_bitrate: u32,
     pub resolution: Option<(u32, u32)>,
     pub open: bool,
-    /// Недоступные исходники на момент открытия настроек: показываются
-    /// предупреждением ДО запуска, а не сюрпризом в готовом файле.
+    /// Sources unavailable at the moment the settings are opened: shown as a
+    /// warning BEFORE the launch, not a surprise in the finished file.
     pub missing: Vec<String>,
 }
 
@@ -63,9 +63,9 @@ impl Default for RenderSetup {
 
 type Sources = Vec<(MediaId, Box<dyn MediaSource>)>;
 
-/// Источники для рендера. Недоступный файл НЕ отменяет экспорт (Р.33
-/// п.10): вместо него встаёт плейсхолдер, а имя попадает в список —
-/// пользователь предупреждён до старта и видит счёт после.
+/// Render sources. An unavailable file does NOT cancel the export (R.33
+/// item 10): a placeholder takes its place, and the name goes into the list —
+/// the user is warned before the start and sees the count afterwards.
 pub(crate) fn open_all(
     project: &Project,
     base: Option<&std::path::Path>,
@@ -75,9 +75,9 @@ pub(crate) fn open_all(
     for m in &project.media {
         let src: Box<dyn MediaSource> = match kt_media::factory::open_pseudo(&m.path) {
             Some(Ok(s)) => s,
-            // битый псевдо-путь (генератор новее этой сборки) — та же
-            // судьба, что у пропавшего файла: заметная заглушка + строка
-            // в списке, экспорт не отменяется
+            // a broken pseudo-path (a generator newer than this build) — the same
+            // fate as a missing file: a visible placeholder + a line
+            // in the list; the export is not cancelled
             Some(Err(e)) => {
                 let label = crate::util::media_label(&m.path);
                 missing.push(format!("{label}: {e}"));
@@ -100,13 +100,13 @@ pub(crate) fn open_all(
     (out, missing)
 }
 
-/// Недоступные исходники проекта — для предупреждения ДО старта рендера.
+/// Unavailable project sources — for the warning BEFORE the render starts.
 pub(crate) fn missing_sources(project: &Project, base: Option<&std::path::Path>) -> Vec<String> {
     project
         .media
         .iter()
         .filter(|m| match kt_media::factory::open_pseudo(&m.path) {
-            // псевдо-источник «недоступен», только если путь битый
+            // pseudo-source “unavailable” only if the path is broken
             Some(r) => r.is_err(),
             None => !std::path::Path::new(&resolve_media_path(base, &m.path)).exists(),
         })
@@ -114,8 +114,8 @@ pub(crate) fn missing_sources(project: &Project, base: Option<&std::path::Path>)
         .collect()
 }
 
-/// Кусок имени файла из пользовательского текста: пробелы — дефисом,
-/// запрещённые файловой системой символы — подчёркиванием (Р.33 п.9).
+/// A piece of a file name from user text: spaces become hyphens,
+/// characters forbidden by the file system become underscores (R.33 item 9).
 fn sanitize_name_part(s: &str) -> String {
     s.trim()
         .chars()
@@ -128,10 +128,10 @@ fn sanitize_name_part(s: &str) -> String {
         .collect()
 }
 
-/// Имя выходного файла по шаблону пользователя (Р.33 п.9):
-/// `kt-<проект>-<регион>-<длина в секундах>s.mp4`. Проекта нет — `untitled`;
-/// регион не совпал с именованной меткой (или имя пустое) — сегмент региона
-/// опускается, чтобы имя не врало про содержимое.
+/// Output file name from the user's template (R.33 item 9):
+/// `kt-<project>-<region>-<length in seconds>s.mp4`. No project — `untitled`;
+/// the region did not match a named marker (or the name is empty) — the region
+/// segment is omitted so that the name does not misstate the content.
 pub(crate) fn render_file_name(
     project_stem: Option<&str>,
     region_name: Option<&str>,
@@ -149,15 +149,15 @@ pub(crate) fn render_file_name(
 }
 
 impl KtApp {
-    /// Имя, подставляемое в диалог сохранения рендера.
+    /// Name substituted into the render save dialog.
     pub(crate) fn default_render_name(&self) -> String {
         let project = self.model.project();
         let (start, end) = project.region.map_or_else(
             || (Tick::ZERO, kt_engine::export::project_range(project)),
             |r| (r.start, r.end),
         );
-        // имя берём только у метки-диапазона, СОВПАДАЮЩЕЙ с регионом: иначе
-        // в имени файла оказался бы чужой кусок таймлайна
+        // the name is taken only from a range marker MATCHING the region: otherwise
+        // the file name would contain a foreign piece of the timeline.
         let region_name = project
             .markers
             .iter()
@@ -171,7 +171,7 @@ impl KtApp {
         render_file_name(stem.as_deref(), region_name.as_deref(), (end - start).0)
     }
 
-    /// Кнопка «Рендер»: открыть панель настроек (п.5 — выбор кодека и пр.).
+    /// “Render” button: opens the settings panel (item 5 — choice of codec etc.).
     pub fn start_render(&mut self) {
         if self.render_job.is_some() {
             self.note(tr(k::render::ALREADY_RUNNING));
@@ -179,26 +179,26 @@ impl KtApp {
         }
         let base = self.project_path.as_deref().and_then(|p| p.parent());
         self.render_setup.missing = missing_sources(&self.model.document(), base);
-        // Расхождение обязано быть НАЗВАНО (правило 16, Р.55 С1): с этого
-        // раунда внутри ленты ИГРАЕТ лента, а экспортируется по-прежнему
-        // ДОКУМЕНТ целиком. Человек, нажавший «Рендер» изнутри композиции,
-        // иначе получил бы не то, что слушал, и узнал бы об этом только
-        // из готового файла.
+        // The mismatch must be NAMED (rule 16, R.55 C1): from this
+        // round on, INSIDE a reel the reel PLAYS, but the export still covers
+        // the whole DOCUMENT. A person who pressed “Render” from inside a composition
+        // would otherwise get something other than what they heard, and would learn of it
+        // only from the finished file.
         if self.model.editing().is_some() {
             self.warn(tr(k::render::WHOLE_PROJECT_NOT_REEL));
         }
         self.render_setup.open = true;
     }
 
-    /// Запуск после подтверждения настроек.
+    /// Start after the settings are confirmed.
     pub fn launch_render(&mut self) {
         if self.render_job.is_some() {
             return;
         }
         let default_name = self.default_render_name();
-        // через общий шов диалога сохранения (`KT_FILE_PICK`): прямой rfd
-        // в виртуальном экране молча отдаёт «ничего», и рендер из живого
-        // сценария (скриншоты лендинга) не запускался вовсе
+        // via the shared save-dialog seam (`KT_FILE_PICK`): a direct rfd
+        // in the virtual screen silently returns “nothing”, and a render from a live
+        // scenario (landing screenshots) did not start at all
         let Some(path) = crate::app::pick_save(
             tr(k::render::SETTINGS_TITLE),
             "MP4 Video",
@@ -227,9 +227,9 @@ impl KtApp {
             let send_p = move |p| send.send(p);
             let (a, _) = open_all(&project, base.as_deref());
             let (v, _) = open_all(&project, base.as_deref());
-            // Р.29: GPU-рендер по умолчанию — свой headless-девайс на
-            // джоб (очередь UI не делит время с экспортом); движка нет
-            // → CPU (для 2D это полноценный путь)
+            // R.29: GPU render by default — its own headless device per
+            // job (the UI queue does not share time with the export); if there is no engine
+            // → CPU (for 2D this is a full-fledged path)
             let backends = kt_engine::ExportBackends { video_gpu: crate::app::export_video_gpu() };
             kt_engine::export::export_mp4_with_backends(
                 &project,
@@ -264,7 +264,7 @@ impl KtApp {
         self.render_setup.open = false;
     }
 
-    /// Панель настроек рендера (до запуска).
+    /// Render settings panel (before the launch).
     pub fn draw_render_setup(&mut self, ctx: &egui::Context) {
         if !self.render_setup.open || self.render_job.is_some() {
             return;
@@ -281,7 +281,7 @@ impl KtApp {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
-                // ГРУППЫ по образцу «Трансформации» (Р.66): видео, звук, файл
+                // GROUPS modeled on “Transform” (R.66): video, audio, file
                 crate::widgets::group(ui, "render.video", tr(k::grp::VIDEO), |ui| {
                 egui::Grid::new("render_setup").num_columns(2).spacing([12.0, 8.0]).show(
                     ui,
@@ -429,12 +429,12 @@ impl KtApp {
                         ),
                     );
                 }
-                // ЧТО НЕ ПОПАДЁТ В ФАЙЛ (Р.62): mute и solo — содержимое
-                // проекта и действуют на экспорт (решение владельца),
-                // значит сказать о них обязаны ДО старта и там же, где
-                // говорим о недоступных исходниках (правила 16, 19).
-                // Адрес «где изменить» — заголовок дорожки, и он назван
-                // именем самой дорожки.
+                // WHAT WILL NOT GET INTO THE FILE (R.62): mute and solo — are the
+                // project's content and affect the export (owner's decision),
+                // so they must be mentioned BEFORE the start and in the same place as
+                // the unavailable sources (rules 16, 19).
+                // The “where to change it” address is the track header, and it is named
+                // by the track's own name.
                 let doc = self.model.document();
                 let silenced = kt_model::silenced_tracks(&doc);
                 if !silenced.is_empty() {
@@ -477,7 +477,7 @@ impl KtApp {
                 });
                 });
             });
-        // рамка окна целиком — по ней режут скриншоты лендинга (site/screenshots.py)
+        // the window frame as a whole — the landing screenshots are cropped by it (site/screenshots.py)
         if let Some(r) = &shown {
             crate::widgets::field_probe::note("win.render", r.response.rect);
         }
@@ -538,7 +538,7 @@ impl KtApp {
                 } else {
                     0.0
                 };
-                // мгновенная скорость по дельте кадров (панель Speed v1)
+                // instantaneous speed from the frame delta (Speed panel v1)
                 let dt = job.last_tick.elapsed().as_secs_f64();
                 if dt >= 0.5 && job.job.done.is_none() {
                     let cur = (job.progress.video_frames - job.last_frames) as f64 / dt / proj_fps;
@@ -616,9 +616,9 @@ impl KtApp {
                             egui::Color32::from_rgb(120, 230, 120),
                             crate::tf!(k::render::DONE_MSG, msg),
                         );
-                        // неполный рендер больше не выглядит успехом (Р.33
-                        // п.10): заглушки и потерянные слои названы прямо
-                        // в сводке, а не только в выводе kt-cli
+                        // an incomplete render no longer looks like a success (R.33
+                        // item 10): stubs and lost layers are named directly
+                        // in the summary, not only in the kt-cli output
                         if !job.missing.is_empty() {
                             ui.colored_label(
                                 egui::Color32::from_rgb(255, 190, 120),
@@ -629,13 +629,13 @@ impl KtApp {
                                 ),
                             );
                         }
-                        // Громкость посчитана на том же проходе (Р.49,
-                        // п.371). Показывается СПРАВОЧНО: кнопки
-                        // «нормализовать» тут нет намеренно — цель
-                        // нормализации (вещание −23, стриминг −14, кино
-                        // −27) выбирает человек, а не программа, и
-                        // применять её задним числом к уже записанному
-                        // файлу значило бы перекодировать его ещё раз.
+                        // Loudness is computed on the same pass (R.49,
+                        // item 371). It is shown FOR REFERENCE: there is deliberately no
+                        // “normalize” button here — the normalization target
+                        // (broadcast −23, streaming −14, cinema −27)
+                        // is chosen by a person, not by the program, and applying
+                        // it afterwards to a file already written
+                        // would mean encoding it a second time.
                         if let Some(l) = stats.loudness
                             && let Some(lufs) = l.lufs
                         {
@@ -672,7 +672,7 @@ impl KtApp {
                     }
                 }
             });
-        // рамка окна целиком — по ней режут скриншоты лендинга (site/screenshots.py)
+        // the window frame as a whole — the landing screenshots are cropped by it (site/screenshots.py)
         if let Some(r) = &shown {
             crate::widgets::field_probe::note("win.render_progress", r.response.rect);
         }

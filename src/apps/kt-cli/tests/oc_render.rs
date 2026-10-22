@@ -1,24 +1,24 @@
-//! Тест 179 (п.179 porting-notes): кросс-рендер НАСТОЯЩЕГО фильма.
+//! Test 179 (item 179 of porting-notes): cross-render of a REAL film.
 //!
-//! Предложение пользователя: «в интернете я где-то встречал opensource otio
-//! файлы общественных фильмов — предлагаю взять какой-то фильм у которого
-//! исходники поменьше весят и тоже прорендерить двумя программами».
+//! The user’s proposal: “somewhere on the internet I came across opensource OTIO
+//! files of public films — I propose taking some film whose sources weigh less
+//! and rendering it with both programs too”.
 //!
-//! Взят Netflix Open Content «Sol Levante» (CC BY 4.0), аниматик: 63
-//! склейки на одной дорожке, 23.976 fps, старт таймкода с часа, один
-//! исходник H.264 1080p. Синтетика такого не даёт: настоящий декод с
-//! B-кадрами, NTSC-частота и реальные длины планов (7…347 кадров).
+//! Taken: Netflix Open Content “Sol Levante” (CC BY 4.0), an animatic: 63
+//! splices on one track, 23.976 fps, the timecode starts at one hour, one
+//! H.264 1080p source. Synthetics do not give this: a real decode with
+//! B-frames, an NTSC rate and real shot lengths (7…347 frames).
 //!
-//! Ни .otio, ни медиа НЕ коммитятся (320 МБ, у репозитория с .otio нет
-//! лицензии): `src/scripts/fetch-oc-media.sh` кладёт их в
-//! fixtures/otio-oc/, без них тест молча пропускается.
-//! KT_REQUIRE_OC_RENDER=1 превращает пропуск в провал.
+//! Neither the .otio nor the media are COMMITTED (320 MB, and the repository with the .otio has
+//! no license): `src/scripts/fetch-oc-media.sh` puts them into
+//! fixtures/otio-oc/, without them the test is silently skipped.
+//! KT_REQUIRE_OC_RENDER=1 turns the skip into a failure.
 //!
-//! Сверка не может быть попиксельной: два разных энкодера на настоящей
-//! картинке никогда не дадут одинаковых байтов. Поэтому метрика
-//! САМОКАЛИБРУЮЩАЯСЯ: кадр нашего рендера обязан быть похож на кадр melt
-//! в тот же момент СИЛЬНЕЕ, чем на кадр melt в полутора секундах оттуда.
-//! Уехавшая склейка ломает именно это отношение, а разница кодеков — нет.
+//! The comparison cannot be pixel-exact: two different encoders on a real
+//! picture will never give identical bytes. Therefore the metric is
+//! SELF-CALIBRATING: a frame of our render MUST resemble the frame of melt
+//! at the same moment MORE than the frame of melt one and a half seconds away.
+//! A shifted splice breaks exactly this ratio, while a codec difference does not.
 
 use kt_media::MediaSource;
 use kt_time::Tick;
@@ -26,10 +26,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-/// Сколько секунд монтажа рендерим. Весь фильм — 162 с 1080p в двух
-/// энкодерах; для проверки склеек хватает окна, а склеек в нём ~12.
+/// How many seconds of the edit we render. The whole film — 162 s of 1080p in two
+/// encoders; for checking splices a window is enough, and there are ~12 splices in it.
 const WINDOW_S: f64 = 30.0;
-/// Отступ от склейки при выборе момента сверки (доля плана).
+/// Offset from a splice when choosing a comparison moment (share of a shot).
 const EDGE: f64 = 0.25;
 
 struct Env {
@@ -92,7 +92,7 @@ fn prepare(env: &Env, out: &Path) -> Result<Prep, String> {
         serde_json::from_str(&std::fs::read_to_string(out.join("manifest.json")).unwrap())
             .map_err(|e| e.to_string())?;
     let mlt =
-        m["mlt"].as_str().ok_or_else(|| format!("MLT-адаптер отказался: {}", m["mlt_error"]))?;
+        m["mlt"].as_str().ok_or_else(|| format!("MLT adapter refused: {}", m["mlt_error"]))?;
     Ok(Prep {
         prepared: PathBuf::from(m["prepared"].as_str().unwrap()),
         mlt: PathBuf::from(mlt),
@@ -102,8 +102,8 @@ fn prepare(env: &Env, out: &Path) -> Result<Prep, String> {
     })
 }
 
-/// Подготовленный файл обмена — в файл проекта той же дверью, что
-/// `File → Import` (Р.70): `kt-cli export` читает только `.kt`.
+/// The prepared exchange file — into a project file by the same door as
+/// `File → Import` (R.70): `kt-cli export` reads only `.kt`.
 fn import_prepared(prepared: &Path) -> Result<PathBuf, String> {
     let kt = prepared.with_extension("kt");
     let o = Command::new(env!("CARGO_BIN_EXE_kt-cli"))
@@ -134,9 +134,9 @@ fn render_ours(prepared: &Path, out: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// melt по профилю с ДРОБНОЙ частотой: 24000/1001, а не округлённые 24 —
-/// иначе чужой рендер сам поедет на 0.1 % и сверка меряла бы наш дрейф
-/// вместе с чужим.
+/// melt on a profile with a FRACTIONAL rate: 24000/1001, not the rounded 24 —
+/// otherwise the foreign render itself would drift by 0.1 % and the comparison would measure our drift
+/// together with the foreign one.
 fn render_theirs(mlt: &Path, rate: f64, dir: &Path, out: &Path) -> Result<(), String> {
     let (num, den) = ntsc_ratio(rate);
     let profile = dir.join("kt-profile");
@@ -174,14 +174,14 @@ fn render_theirs(mlt: &Path, rate: f64, dir: &Path, out: &Path) -> Result<(), St
     Ok(())
 }
 
-/// Дробная частота как отношение целых: 23.976→24000/1001, 24→24/1.
+/// A fractional rate as a ratio of integers: 23.976→24000/1001, 24→24/1.
 fn ntsc_ratio(rate: f64) -> (u32, u32) {
     let r = rate.round();
     if (rate - r).abs() < 1e-6 { (r as u32, 1) } else { ((r * 1000.0) as u32, 1001) }
 }
 
-/// Сигнатура кадра: яркость по сетке 16×9. Устойчива к разнице кодеков,
-/// но ломается, если показан ДРУГОЙ план.
+/// Frame signature: brightness on a 16×9 grid. Stable to the difference of codecs,
+/// but it breaks if a DIFFERENT shot is shown.
 fn signature(f: &kt_media::VideoFrame) -> Vec<f64> {
     let (w, h) = (f.width as usize, f.height as usize);
     let mut out = vec![0.0; 16 * 9];
@@ -222,29 +222,29 @@ fn t179_real_film_cross_render() {
     let dir = std::env::temp_dir().join(format!("kt-oc-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
 
-    let prep = prepare(env, &dir).expect("подготовка настоящего фильма");
+    let prep = prepare(env, &dir).expect("preparing the real film");
     let ours_path = dir.join("ours.mp4");
     let theirs_path = dir.join("theirs.mp4");
-    render_ours(&prep.prepared, &ours_path).expect("наш рендер");
-    render_theirs(&prep.mlt, prep.rate, &dir, &theirs_path).expect("рендер melt");
+    render_ours(&prep.prepared, &ours_path).expect("our render");
+    render_theirs(&prep.mlt, prep.rate, &dir, &theirs_path).expect("melt render");
 
     let mut ours =
-        kt_media::ffmpeg::FfmpegSource::open(ours_path.to_str().unwrap()).expect("наш рендер");
+        kt_media::ffmpeg::FfmpegSource::open(ours_path.to_str().unwrap()).expect("our render");
     let mut theirs =
-        kt_media::ffmpeg::FfmpegSource::open(theirs_path.to_str().unwrap()).expect("рендер melt");
+        kt_media::ffmpeg::FfmpegSource::open(theirs_path.to_str().unwrap()).expect("melt render");
 
-    // длительность: сверяем в СЕКУНДАХ — число кадров у нас и у melt разное
-    // по построению (наша сетка 24, у melt 24000/1001, п.178)
+    // duration: we compare in SECONDS — the number of frames is different for us and for melt
+    // by construction (our grid is 24, melt’s is 24000/1001, item 178)
     let (od, td) =
         (ours.info().duration.0 as f64 / 90_000.0, theirs.info().duration.0 as f64 / 90_000.0);
     let frame = 1.0 / prep.rate;
     assert!(
         (od - td).abs() <= 2.0 * frame,
-        "длительности разошлись: наш {od:.3} c, melt {td:.3} c (монтаж {:.3} c)",
+        "durations diverged: ours {od:.3} s, melt {td:.3} s (edit {:.3} s)",
         prep.duration_s
     );
 
-    // моменты сверки: внутри каждого плана, с отступом от склеек
+    // comparison moments: inside each shot, with an offset from the splices
     let mut probes: Vec<f64> = Vec::new();
     let mut prev = 0.0;
     for &c in &prep.cuts {
@@ -255,23 +255,23 @@ fn t179_real_film_cross_render() {
         }
         prev = c;
     }
-    assert!(probes.len() >= 8, "мало точек сверки: {}", probes.len());
+    assert!(probes.len() >= 8, "too few check points: {}", probes.len());
 
-    // Сколько кадров разбега терпим. Наша сетка 24, у melt 24000/1001
-    // (п.178): к концу третьей минуты набегает ~4 кадра, на окне 30 с —
-    // не больше двух. Больше — это уже уехавшая склейка, а не дрейф.
+    // How many frames of drift we tolerate. Our grid is 24, melt’s is 24000/1001
+    // (item 178): by the end of the third minute about ~4 frames accumulate, on a 30 s window —
+    // no more than two. More than that is already a shifted splice, not drift.
     const MAX_SHIFT: i64 = 2;
 
     let mut bad: Vec<String> = Vec::new();
     let mut worst = 0i64;
     for &t in &probes {
         let Some(a) = frame_at(&mut ours, t) else {
-            bad.push(format!("{t:.3} c: наш кадр не прочитался"));
+            bad.push(format!("{t:.3} s: our frame could not be read"));
             continue;
         };
         let sa = signature(&a);
-        // ищем, каким кадром melt наш кадр объясняется ЛУЧШЕ ВСЕГО:
-        // смещение в кадрах — это и есть измеренный разбег
+        // we look for which frame of melt our frame is explained by BEST:
+        // the offset in frames is the measured drift itself
         let mut best: Option<(i64, f64)> = None;
         for k in -4i64..=4 {
             let tt = t + k as f64 * frame;
@@ -286,26 +286,26 @@ fn t179_real_film_cross_render() {
             }
         }
         match best {
-            None => bad.push(format!("{t:.3} c: кадры melt не прочитались")),
+            None => bad.push(format!("{t:.3} s: melt frames could not be read")),
             Some((k, d)) if d > 24.0 => bad.push(format!(
-                "{t:.3} c: ни один кадр melt не похож на наш (лучший {d:.1}/255 при сдвиге {k})"
+                "{t:.3} s: no melt frame resembles ours (best {d:.1}/255 at shift {k})"
             )),
             Some((k, _)) if k.abs() > MAX_SHIFT => bad.push(format!(
-                "{t:.3} c: наш кадр совпал с melt только при сдвиге {k} кадров — уехала склейка"
+                "{t:.3} s: our frame matched melt only at a shift of {k} frames — the splice drifted"
             )),
             Some((k, _)) => worst = worst.max(k.abs()),
         }
     }
     assert!(
         bad.is_empty(),
-        "точек сверки {}, расхождений {}:\n{}",
+        "check points {}, mismatches {}:\n{}",
         probes.len(),
         bad.len(),
         bad.join("\n")
     );
     eprintln!(
-        "t179: {} точек сверки на {:.1} c монтажа — сошлись, худший разбег {worst} кадр(а) \
-         (наша сетка {:.0} против {:.3} у melt, п.178)",
+        "t179: {} check points over {:.1} s of edit — matched, worst drift {worst} frame(s) \
+         (our grid {:.0} against {:.3} in melt, item 178)",
         probes.len(),
         prep.duration_s,
         prep.rate.round(),

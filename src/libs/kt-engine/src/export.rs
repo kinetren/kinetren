@@ -1,12 +1,12 @@
-//! Экспорт. Инварианты №7 и №9:
-//! - путь рендеринга ОДИН: те же AudioRenderer/VideoRenderer, что и превью
-//!   (другой clock — «по готовности», другое Quality — разрешение проекта);
-//! - ноль временных файлов: rawvideo(RGBA) → stdin ffmpeg, аудио f32le →
-//!   named pipe; ffmpeg муксит на лету, backpressure через пайпы.
-//!   (Старый движок писал гигабайты rgb24+s16le в tmpfs — дефект o.)
+//! Export. Invariants 7 and 9:
+//! - a SINGLE render path: the same AudioRenderer/VideoRenderer as the preview
+//!   (a different clock — “as ready”, a different Quality — the project's resolution);
+//! - zero temporary files: rawvideo(RGBA) → ffmpeg stdin, audio f32le →
+//!   named pipe; ffmpeg muxes on the fly, backpressure via the pipes.
+//!   (The old engine wrote gigabytes of rgb24+s16le into tmpfs — defect o.)
 //!
-//! `render_raw_*` отдают сырые потоки колбэкам — на этом стоят golden-тесты
-//! (тест 11: хэши потоков + «превью == экспорт» по построению).
+//! `render_raw_*` hands raw streams to the callbacks — the golden tests stand on this
+//! (test 11: stream hashes + “preview == export” by construction).
 
 use crate::audio::AudioRenderer;
 use crate::fetch::DirectFetcher;
@@ -21,14 +21,14 @@ use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS, Tick};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Прогресс экспорта (ETA/скорость считает UI — wall-clock не наш, инв. №10).
+/// Export progress (ETA/speed is computed by the UI — wall-clock is not ours, inv. 10).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ExportProgress {
     pub audio_frames: u64,
     pub total_audio_frames: u64,
     pub video_frames: u64,
     pub total_video_frames: u64,
-    /// Текущая фаза (п.17: видно, чем занят экспорт).
+    /// Current phase (item 17: visible what the export is busy with).
     pub phase: ExportPhase,
 }
 
@@ -46,35 +46,35 @@ pub struct ExportStats {
     pub video_frames: u64,
     pub audio_frames: u64,
     pub underruns: u64,
-    /// Какой видео-энкодер выбран (для UI); пусто для render_raw_*.
+    /// Which video encoder was chosen (for the UI); empty for render_raw_*.
     pub encoder: String,
-    /// Слои видео, не декодированные к моменту кадра (в экспорте это ошибка
-    /// источника, не тайминга — декод блокирующий).
+    /// Video layers not decoded by the frame's time (in export this is an error
+    /// of the source, not of timing — the decode is blocking).
     pub missing_video_layers: u64,
-    /// Громкость СМИКШИРОВАННОГО материала (Р.49, п.371). `None` — аудио не
-    /// считалось (видео-проход) или материал целиком ниже абсолютного гейта.
+    /// Loudness of the MIXED material (R.49, item 371). `None` — audio was not
+    /// measured (video pass) or the material is entirely below the absolute gate.
     ///
-    /// Меряется на проходе, который И ТАК ИДЁТ: метр кормится готовым
-    /// буфером чанка — ни одного нового декода и ни одного нового цикла.
+    /// Measured on the pass that RUNS ANYWAY: the meter is fed the finished
+    /// chunk buffer — not a single new decode and not a single new cycle.
     ///
-    /// БЕЗ мастер-гейна — и это не упущение: мастер-гейн живёт только в
-    /// `Player`, его нет ни в `Project`, ни в .otio, экспорт его не
-    /// применяет, а ставит его фейдер панели метров. Это громкость
-    /// КОНТРОЛЯ, а не материала. Следствие: число в превью и число файла
-    /// совпадают по построению.
+    /// WITHOUT the master gain — and this is not an oversight: the master gain lives only in
+    /// `Player`, it is not in `Project`, nor in .otio, export does not
+    /// apply it, and it is set by the meter panel's fader. This is the loudness of
+    /// CONTROL, not of the material. Consequence: the number in the preview and the
+    /// file's number coincide by construction.
     pub loudness: Option<kt_fx::audio::loudness::Loudness>,
 }
 
-/// Диапазон экспорта: [0, конец последнего клипа].
-/// Бюджет видео-кэша экспорта.
+/// Export range: [0, end of the last clip].
+/// Export video cache budget.
 pub const EXPORT_VIDEO_CACHE_BYTES: usize = 192 * 1024 * 1024;
 
-/// Сколько кадров декодировать одной пачкой, чтобы они ГАРАНТИРОВАННО
-/// дожили в кэше до композиции (р.15 п.1). Пачка занимает не больше
-/// половины бюджета; `layers` — максимум ОДНОВРЕМЕННЫХ видео-слоёв
-/// (Р.31 п.4: каждый момент чанка держит в кэше по кадру НА СЛОЙ —
-/// пачка, посчитанная на один слой, вытесняла пре-кадры соседних дорожек
-/// до композиции, и рендер терял слои).
+/// How many frames to decode in one batch so that they GUARANTEED
+/// survive in the cache until composition (R.15 item 1). A batch takes no more than
+/// half the budget; `layers` — the maximum of SIMULTANEOUS video layers
+/// (R.31 item 4: each moment of the chunk holds one frame PER LAYER in the cache —
+/// a batch computed for one layer was evicting the pre-frames of neighbouring tracks
+/// before composition, and the render lost layers).
 pub fn export_chunk_frames(budget_bytes: usize, width: u32, height: u32, layers: usize) -> i64 {
     let frame = (width.max(1) as usize) * (height.max(1) as usize) * 4 * layers.max(1);
     ((budget_bytes / 2) / frame.max(1)).clamp(1, 120) as i64
@@ -82,13 +82,13 @@ pub fn export_chunk_frames(budget_bytes: usize, width: u32, height: u32, layers:
 
 pub fn project_range(project: &Project) -> Tick {
     let material = project.clips.iter().map(|c| c.start + c.duration).max().unwrap_or(Tick::ZERO);
-    // монтажная длина чужого файла (хвостовой Gap) считается концом: рендер
-    // доходит до неё чёрным/тишиной, как у эталона и melt (Р.25)
+    // a foreign file's edit length (trailing Gap) is counted as its end: the render
+    // reaches it with black/silence, as in the reference and melt (R.25)
     project.timeline_end.map_or(material, |e| e.max(material))
 }
 
-/// Аудио-поток экспорта: interleaved f32 48k/2ch чанками по burst'у.
-/// Тот же AudioRenderer, что в плеере; DirectFetcher = «clock по готовности».
+/// The export audio stream: interleaved f32 48k/2ch in chunks per burst.
+/// The same AudioRenderer as in the player; DirectFetcher = “clock as ready”.
 pub fn render_raw_audio(
     project: &Project,
     sources: Vec<(MediaId, Box<dyn MediaSource>)>,
@@ -97,7 +97,7 @@ pub fn render_raw_audio(
     render_raw_audio_range(project, sources, None, &AtomicBool::new(false).into(), |_| {}, emit)
 }
 
-/// Полный вариант: диапазон, отмена, прогресс.
+/// The full variant: range, cancel, progress.
 pub fn render_raw_audio_range(
     project: &Project,
     sources: Vec<(MediaId, Box<dyn MediaSource>)>,
@@ -111,10 +111,10 @@ pub fn render_raw_audio_range(
     for (id, s) in sources {
         fetcher.add_source(id, s);
     }
-    // Генераторы экспорт открывает САМ (Р.59, стадия 2): их адреса
-    // производны от событий, вызывающему их взять неоткуда, а список —
-    // тот же `gen_sources`, по которому их поднимает плеер. Разойдись
-    // они, экспорт отрендерил бы не то, что показывало превью.
+    // Generators are opened BY export ITSELF (R.59, stage 2): their addresses
+    // are derived from events, and the caller has nowhere to take them from — and the list is
+    // the same `gen_sources` by which the player raises them. If the two
+    // diverged, the export would render something other than the preview showed.
     for (addr, state) in crate::gen_sources(project) {
         fetcher.add_source(addr, kt_media::factory::open_gen(&state));
     }
@@ -146,17 +146,17 @@ pub fn render_raw_audio_range(
     Ok(stats)
 }
 
-/// Бэкенды рендера экспорта (Р.29). Тестовые/старые вызовы идут без них
-/// (CPU — байт-эталон, golden-тесты нетронуты); продукт (kt-app/kt-cli)
-/// передаёт GPU-исполнитель явно.
+/// Export render backends (R.29). Test/old calls run without them
+/// (CPU — the byte reference, golden tests untouched); the product (kt-app/kt-cli)
+/// passes the GPU executor explicitly.
 #[derive(Default, Clone)]
 pub struct ExportBackends {
     pub video_gpu: Option<Arc<dyn VideoGpuExec>>,
 }
 
-/// Видео-поток экспорта: RGBA-кадры по сетке fps проекта. Композит —
-/// ТОТ ЖЕ план кадра (`VideoRenderer::frame_plan`), что у превью;
-/// исполнитель — CPU (этот вариант) или GPU (`_with` c backends).
+/// Export video stream: RGBA frames on the project's fps grid. The composite is
+/// THE SAME frame plan (`VideoRenderer::frame_plan`) as in the preview;
+/// the executor is CPU (this variant) or GPU (`_with` with backends).
 pub fn render_raw_video(
     project: &Project,
     sources: Vec<(MediaId, Box<dyn MediaSource>)>,
@@ -174,7 +174,7 @@ pub fn render_raw_video(
     )
 }
 
-/// Полный вариант: диапазон, отмена, прогресс. CPU-исполнитель.
+/// The full variant: range, cancel, progress. CPU executor.
 pub fn render_raw_video_range(
     project: &Project,
     sources: Vec<(MediaId, Box<dyn MediaSource>)>,
@@ -196,9 +196,9 @@ pub fn render_raw_video_range(
     )
 }
 
-/// Вариант с выбором бэкенда. Ошибка GPU ПОСРЕДИ экспорта — ошибка
-/// экспорта, а не молчаливый переход на CPU: начатый файл обязан быть
-/// отрендерен одним бэкендом (ред. инварианта №7, Р.29).
+/// The variant with backend choice. A GPU error IN THE MIDDLE of export is an export
+/// error, not a silent switch to CPU: a started file must be rendered by
+/// one backend (wording of invariant 7, R.29).
 #[allow(clippy::too_many_arguments)]
 pub fn render_raw_video_range_with(
     project: &Project,
@@ -213,19 +213,19 @@ pub fn render_raw_video_range_with(
     let mut stats = ExportStats::default();
     let mut src: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         sources.into_iter().collect();
-    // см. `render_raw_audio_range`: генераторы открывает сам экспорт
+    // see `render_raw_audio_range`: export opens the generators itself
     for (addr, state) in crate::gen_sources(project) {
         src.insert(addr, kt_media::factory::open_gen(&state));
     }
-    // факты источников: натив для ступени декода (Р.46, п.321) и
-    // процедурность для непрерывного времени (Р.56, п.448). Экспорт обязан
-    // спрашивать ТО ЖЕ, что превью, — иначе превью и файл разойдутся.
+    // source facts: native for the decode scale step (R.46, item 321) and
+    // procedural for continuous time (R.56, item 448). Export must ask
+    // THE SAME things as the preview — otherwise the preview and the file would diverge.
     let mut facts = crate::video::SourceFacts::default();
     for (m, s) in src.iter() {
         facts.observe(*m, s.info());
     }
-    // Кэш на пару кадров: композит читает из кэша (тот же код, что превью),
-    // экспорт лишь наполняет его блокирующим декодом.
+    // A cache of a pair of frames: the composite reads from the cache (the same code as the preview),
+    // export only fills it with a blocking decode.
     let cache = BurstCache::new(CacheConfig {
         max_audio_bytes: 1,
         max_video_bytes: EXPORT_VIDEO_CACHE_BYTES,
@@ -236,19 +236,19 @@ pub fn render_raw_video_range_with(
         None => (Tick(0), project_range(project)),
     };
     let step = video.grid.frame_step();
-    // Кадры берём ПАЧКАМИ через read_video_span — тем же путём, что
-    // превью (п.14 р.14). Раньше здесь был по-кадровый read_video_frame:
-    // при fps проекта > fps источника он на каждом втором кадре уходил в
-    // seek+пересоздание декодера, а семантика выборки расходилась со
-    // span'ом — отсюда джаддер в готовом файле и нарушение инварианта №7.
-    // Размер чанка считается от ПАМЯТИ, а не «120 и всё» (р.15 п.1):
-    // 120 кадров 1080p — это 995 МБ, они не влезали в кэш экспорта, LRU
-    // выбрасывал их ДО композиции, и рендер выходил чёрным с редкими
-    // уцелевшими кадрами. На 320×180 (где я это «проверил») чанк влезал —
-    // отсюда и пропущенная регрессия.
-    // Считается по САМОМУ КРУПНОМУ качеству декода (Р.46, п.318): клип,
-    // который берётся крупнее Quality, занимает в кэше в S^2 раз больше —
-    // на Quality чанк был бы недооценён и вернул бы ту же регрессию.
+    // Frames are taken in BATCHES via read_video_span — by the same path as the
+    // preview (item 14 round 14). Previously this was a per-frame read_video_frame:
+    // when the project's fps > the source's fps, on every second frame it went into
+    // a seek + decoder recreation, and the sampling semantics diverged from the
+    // span — hence judder in the finished file and a violation of invariant 7.
+    // The chunk size is computed from MEMORY, not “120 and that's it” (R.15 item 1):
+    // 120 frames of 1080p are 995 MB; they did not fit into the export cache, and the LRU
+    // evicted them BEFORE composition, and the render came out black with rare
+    // surviving frames. At 320×180 (where I “checked” this) the chunk fit —
+    // hence the missed regression.
+    // Computed by the LARGEST decode quality (R.46, item 318): a clip that is taken
+    // larger than the Quality occupies S^2 times more in the cache —
+    // at Quality the chunk would be underestimated and would bring back the same regression.
     let dq_max = video.max_decode_quality(quality);
     let chunk_frames = export_chunk_frames(
         EXPORT_VIDEO_CACHE_BYTES,
@@ -262,9 +262,9 @@ pub fn render_raw_video_range_with(
             return Err(std::io::Error::other("cancelled"));
         }
         let chunk_end = Tick((t.0 + chunk_frames * step).min(end.0));
-        // ключи чанка по каждому источнику: строго возрастают, дубли сняты
-        // ключ группы — (медиа, КАЧЕСТВО ДЕКОДА): спан декодера не смешивает
-        // размеры (kt-media), и заказ приходит уже с качеством (Р.46)
+        // chunk keys for each source: strictly increasing, duplicates removed
+        // group key — (media, DECODE QUALITY): the decoder span does not mix
+        // sizes (kt-media), and the request already comes with the quality (R.46)
         let mut per_src: std::collections::BTreeMap<(MediaId, Quality), Vec<Tick>> =
             Default::default();
         for (media, src_pts, dq) in
@@ -329,13 +329,13 @@ pub enum ExportError {
     #[error("export cancelled")]
     Cancelled,
 }
-// Отказ GpuRequired (Р.29) снят в Р.44: Pan3d считается и на CPU
-// (обратная гомография в слитом гео-проходе) — экспорт без GPU легален,
-// просто медленнее. Тест 301.
+// The GpuRequired refusal (R.29) was lifted in R.44: Pan3d is also computed on CPU
+// (the inverse homography in the fused geometry pass) — export without GPU is legal,
+// just slower. Test 301.
 
-/// Потоковый экспорт в mp4 (h264+aac). `audio_sources`/`video_sources` —
-/// независимые наборы (пишутся из двух потоков в два пайпа параллельно,
-/// иначе дедлок на backpressure).
+/// Streaming export to mp4 (h264+aac). `audio_sources`/`video_sources` are
+/// independent sets (written from two streams into two pipes in parallel,
+/// otherwise a deadlock on backpressure).
 pub fn export_mp4(
     project: &Project,
     audio_sources: Vec<(MediaId, Box<dyn MediaSource>)>,
@@ -355,20 +355,20 @@ pub fn export_mp4(
     )
 }
 
-/// Полный экспорт: диапазон (регион), отмена (kill ffmpeg + удаление
-/// частичного файла), прогресс-колбэк (зовётся из обоих потоков).
-/// Настройки экспорта (п.5): выбор кодека, качество, битрейт, разрешение.
+/// Full export: range (region), cancel (kill ffmpeg + deletion of the
+/// partial file), progress callback (called from both threads).
+/// Export settings (item 5): codec choice, quality, bitrate, resolution.
 #[derive(Debug, Clone)]
 pub struct ExportOptions {
-    /// CRF/CQ/QP (23 ≈ визуально прозрачно). Игнорируется при video_bitrate.
+    /// CRF/CQ/QP (23 ≈ visually transparent). Ignored when video_bitrate is set.
     pub quality: u32,
-    /// Целевой битрейт видео, бит/с (None = режим качества).
+    /// Target video bitrate, bit/s (None = quality mode).
     pub video_bitrate: Option<u32>,
     pub audio_bitrate: u32,
-    /// None = автовыбор с hw-приоритетом; Some = только этот энкодер
-    /// (не открылся — явная ошибка, без фолбэка).
+    /// None = automatic choice with hw priority; Some = only this encoder
+    /// (if it does not open — an explicit error, no fallback).
     pub force_encoder: Option<String>,
-    /// Переопределение разрешения (None = из настроек проекта).
+    /// Resolution override (None = from the project settings).
     pub resolution: Option<(u32, u32)>,
 }
 
@@ -410,8 +410,8 @@ pub fn export_mp4_with(
     )
 }
 
-/// Продуктовый вариант (kt-app/kt-cli): бэкенды рендера передаются явно —
-/// GPU по умолчанию, CPU когда движка нет (Р.29).
+/// Product variant (kt-app/kt-cli): render backends are passed explicitly —
+/// GPU by default, CPU when the engine is absent (R.29).
 #[allow(clippy::too_many_arguments)]
 pub fn export_mp4_with_backends(
     project: &Project,
@@ -425,8 +425,8 @@ pub fn export_mp4_with_backends(
     pause: &Arc<AtomicBool>,
     progress: impl Fn(ExportProgress) + Send + Sync + 'static,
 ) -> Result<ExportStats, ExportError> {
-    // пауза (порт v1 waitWhilePaused): кооперативный wait 40 мс,
-    // отменяемый; проверяется на каждом кадре/чанке через progress-обёртки
+    // pause (port of v1 waitWhilePaused): cooperative wait of 40 ms,
+    // cancellable; checked on every frame/chunk via the progress wrappers
     let wait_paused = {
         let pause = pause.clone();
         let cancel = cancel.clone();
@@ -446,10 +446,10 @@ pub fn export_mp4_with_backends(
     let total_audio = (r1.to_audio_frames() - r0.to_audio_frames()).max(0) as u64;
     let total_video = ((r1.0 - r0.0) / (kt_time::TICK_HZ / fps as i64)).max(0) as u64;
 
-    // Внутрипроцессный муксер: кодеки берутся из СИСТЕМНОГО FFmpeg,
-    // поэтому доступны его аппаратные энкодеры. Внешний бинарник ffmpeg
-    // и mkfifo больше не нужны (инвариант №9 усилен: не только без
-    // временных файлов, но и без внешних процессов).
+    // In-process muxer: codecs are taken from the SYSTEM FFmpeg,
+    // so its hardware encoders are available. An external ffmpeg binary
+    // and mkfifo are no longer needed (invariant 9 strengthened: not only without
+    // temporary files, but also without external processes).
     let mut muxer = kt_media::muxer::Muxer::open(&kt_media::muxer::MuxConfig {
         path: out_path.to_string(),
         width: quality.width,
@@ -462,8 +462,8 @@ pub fn export_mp4_with_backends(
     })
     .map_err(|e| ExportError::Io(std::io::Error::other(e)))?;
 
-    // Аудио и видео рендерятся последовательно в один муксер (он
-    // сам перемежает пакеты через av_interleaved_write_frame).
+    // Audio and video are rendered sequentially into one muxer (it
+    // interleaves packets itself via av_interleaved_write_frame).
     let a_done = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let v_done = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let progress = Arc::new(progress);
@@ -482,7 +482,7 @@ pub fn export_mp4_with_backends(
         }
     };
 
-    // 1) видео (ошибка/отмена внутри фаз — удалить частичный файл, п.17)
+    // 1) video (an error/cancel inside the phases — delete the partial file, item 17)
     let cleanup_on_err = |e: ExportError| {
         let _ = std::fs::remove_file(out_path);
         e
@@ -508,7 +508,7 @@ pub fn export_mp4_with_backends(
         )
         .map_err(|e| cleanup_on_err(e.into()))?
     };
-    // 2) аудио
+    // 2) audio
     let astats = {
         let a_done = a_done.clone();
         let report = report.clone();
@@ -544,8 +544,8 @@ pub fn export_mp4_with_backends(
         underruns: astats.underruns,
         missing_video_layers: vstats.missing_video_layers,
         encoder,
-        // громкость посчитана на аудио-проходе — тем же метром, тем же
-        // буфером и без мастер-гейна (п.371)
+        // the loudness is computed on the audio pass — with the same meter, the same
+        // buffer and without the master gain (item 371)
         loudness: astats.loudness,
     })
 }

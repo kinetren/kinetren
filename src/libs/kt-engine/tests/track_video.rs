@@ -1,8 +1,8 @@
-//! Р.62 (change B): гашение ВИДЕОДОРОЖКИ — mute и solo.
+//! R.62 (change B): muting a VIDEO TRACK — mute and solo.
 //!
-//! Заглушённая дорожка не композится, но её ЗАКАЗ префетча остаётся:
-//! иначе снятие mute давало бы чёрный кадр до прогрева (инвариант 4 —
-//! греем ровно то, что прочтём).
+//! A muted track is not composited, but its PREFETCH REQUEST remains:
+//! otherwise lifting mute would give a black frame until warm-up (invariant 4 —
+//! we warm up exactly what we will read).
 
 use kt_engine::VideoRenderer;
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
@@ -52,10 +52,10 @@ fn clip(id: u64, lane: u32, media: u64) -> ClipEvent {
     }
 }
 
-/// Два слоя на ОДНОМ источнике, но с разным `source_in`: синтетический
-/// кадр красится НОМЕРОМ тика, поэтому верхний слой (дорожка 0) читает
-/// кадр 3000 (r = 184), нижний — кадр 0 (r = 0). Так по одному пикселю
-/// видно, какой слой попал в композит.
+/// Two layers on ONE source, but with a different `source_in`: the synthetic frame is painted
+/// by the TICK NUMBER, so the upper layer (track 0) reads frame 3000 (r = 184),
+/// the lower one — frame 0 (r = 0).
+/// So by a single pixel one can see which layer got into the composite.
 const TOP_IN: i64 = 3_000;
 
 fn project() -> Project {
@@ -86,7 +86,7 @@ fn render(p: &Project) -> (Vec<u8>, bool) {
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         sources().into_iter().collect();
-    // ЗАКАЗ — то, что просит движок; читаем ровно его
+    // the REQUEST — what the engine asks for; we read exactly it
     for (media, pts, dq) in video.layers_at(Tick(0), Q) {
         let frame = srcs.get_mut(&media).unwrap().read_video_frame(pts, Some(dq)).unwrap();
         cache.insert_video(
@@ -99,8 +99,8 @@ fn render(p: &Project) -> (Vec<u8>, bool) {
     video.compose_from_cache(&cache, Tick(0), Q)
 }
 
-/// Что ЗАКАЗАНО: пары «источник, кадр» — по ним видно, не пропал ли
-/// префетч заглушённой дорожки.
+/// What was REQUESTED: the pairs “source, frame” — by them one sees whether the prefetch
+/// of the muted track went missing.
 fn ordered(p: &Project) -> Vec<(u64, i64)> {
     let mut facts = kt_engine::SourceFacts::default();
     for (id, s) in sources() {
@@ -118,57 +118,57 @@ fn lum(f: &[u8]) -> u8 {
     f[0]
 }
 
-/// Тест 735 (Р.62): mute и solo видеодорожки.
+/// Test 735 (R.62): mute and solo of a video track.
 #[test]
 fn t735_video_mute_and_solo_leave_the_prefetch_order() {
-    // сцена: сверху яркий слой — он и виден
+    // scene: a bright layer on top — it is the one visible
     let base = project();
     let (f, complete) = render(&base);
     assert!(complete);
     let top_px = (TOP_IN & 0xff) as u8;
-    assert_eq!(lum(&f), top_px, "сцена: в кадре ВЕРХНИЙ слой");
-    assert_eq!(ordered(&base), vec![(1, 0), (1, TOP_IN)], "сцена: заказаны оба кадра");
+    assert_eq!(lum(&f), top_px, "scene: the TOP layer is in the frame");
+    assert_eq!(ordered(&base), vec![(1, 0), (1, TOP_IN)], "scene: both frames are ordered");
 
-    // MUTE верхней дорожки — в кадре нижний слой, а ЗАКАЗ прежний
+    // MUTE of the upper track — the lower layer is in the frame, while the REQUEST is the old one
     let mut p = base.clone();
     p.track_at_mut(V, 0).unwrap().mute = true;
     let (f, complete) = render(&p);
     assert!(complete);
-    assert_eq!(lum(&f), 0, "заглушённая дорожка попала в композит");
+    assert_eq!(lum(&f), 0, "the muted track got into the composite");
     assert_eq!(
         ordered(&p),
         vec![(1, 0), (1, TOP_IN)],
-        "заказ заглушённой дорожки пропал — снятие mute дало бы чёрный кадр"
+        "the order for the muted track was lost — unmuting would give a black frame"
     );
 
-    // SOLO — множество СВОЕГО вида: в композите ровно соло-дорожки
+    // SOLO — the set of ITS OWN kind: the composite contains exactly the solo tracks
     let mut p = base.clone();
     p.track_at_mut(V, 1).unwrap().solo = true;
     let (f, _) = render(&p);
-    assert_eq!(lum(&f), 0, "в соло обязана остаться нижняя дорожка");
-    assert_eq!(ordered(&p), vec![(1, 0), (1, TOP_IN)], "соло не имеет права терять заказ");
+    assert_eq!(lum(&f), 0, "in solo the bottom track must remain");
+    assert_eq!(ordered(&p), vec![(1, 0), (1, TOP_IN)], "solo has no right to lose the order");
 
-    // снятие mute возвращает кадр БЕЗ промаха: заказ всё это время был
+    // lifting mute returns the frame WITHOUT a miss: the request was there all along
     let mut p = base.clone();
     p.track_at_mut(V, 0).unwrap().mute = true;
     let _ = render(&p);
     p.track_at_mut(V, 0).unwrap().mute = false;
     let (f, complete) = render(&p);
-    assert!(complete, "после снятия mute кадр обязан быть полным");
+    assert!(complete, "after unmuting the frame must be complete");
     assert_eq!(lum(&f), top_px);
 }
 
-/// Тест 736 (Р.62, change B): дорожка с цепочкой — ОДИН слой-вложение.
+/// Test 736 (R.62, change B): a track with a chain — ONE nested layer.
 ///
-/// Утверждение, ради которого раунд затевался: цепочка ложится на
-/// КОМПОЗИТ дорожки, а не дописывается в каждое событие. Проверяется на
-/// ПЕРЕХОДЕ: в его окне поклипная цепочка считала бы эффект дважды (по
-/// разу на каждую половину), а дорожечная — ровно один раз, поверх уже
-/// смешанной картинки.
+/// The claim the round was started for: the chain lands on the COMPOSITE of the track,
+/// not written into each event. It is checked on a TRANSITION: in its window a per-clip chain
+/// would apply the effect twice (once per half), while the track chain applies it exactly
+/// once, on top of
+/// the already mixed picture.
 #[test]
 fn t736_track_chain_covers_the_whole_composite() {
     use kt_model::{BlendMode, FxInstance};
-    // одна дорожка, два события встык с переходом между ними
+    // one track, two events back to back with a transition between them
     let mut p = Project::new(settings());
     p.media.push(MediaRef::new(MediaId(1), "synth:silence"));
     let mut a = clip(1, 0, 1);
@@ -191,7 +191,7 @@ fn t736_track_chain_covers_the_whole_composite() {
         invert: false,
     });
     p.validate().unwrap();
-    let mid = Tick(6_000); // середина окна перехода
+    let mid = Tick(6_000); // the middle of the transition window
 
     let render_at = |p: &Project, t: Tick| -> Vec<u8> {
         let mut facts = kt_engine::SourceFacts::default();
@@ -214,12 +214,12 @@ fn t736_track_chain_covers_the_whole_composite() {
         video.compose_from_cache(&cache, t, Q).0
     };
 
-    // ЦЕПОЧКА НА ДОРОЖКЕ
+    // the CHAIN ON THE TRACK
     let mut on_track = p.clone();
     on_track.track_at_mut(V, 0).unwrap().fx = vec![FxInstance::Posterize { levels: 3 }];
     on_track.validate().unwrap();
 
-    // ТА ЖЕ цепочка, дописанная В КАЖДОЕ СОБЫТИЕ
+    // the SAME chain, appended TO EACH EVENT
     let mut per_clip = p.clone();
     for c in per_clip.clips.iter_mut() {
         c.fx = vec![FxInstance::Posterize { levels: 3 }];
@@ -228,27 +228,27 @@ fn t736_track_chain_covers_the_whole_composite() {
 
     let track = render_at(&on_track, mid);
     let clips = render_at(&per_clip, mid);
-    assert_ne!(track, clips, "цепочка дорожки совпала с поклипной — значит она не на композите");
-    // и это НЕ «ничего не сделала»: против дорожки без цепочки разница есть
-    assert_ne!(track, render_at(&p, mid), "цепочка дорожки вообще не применилась");
+    assert_ne!(track, clips, "the track chain matched the per-clip one — so it is not on the composite");
+    // and this is NOT “did nothing”: against a track without a chain the difference is there
+    assert_ne!(track, render_at(&p, mid), "the track chain was not applied at all");
 
-    // БЕЗ УСЛОВИЯ — путь прежний: дорожка без цепочки, уровня и режима
-    // даёт ровно то же, что и до Р.62 (на этом стоит GOLDEN_VIDEO)
+    // WITHOUT CONDITION — the old path: a track without a chain, level and mode
+    // gives exactly the same as before R.62 (GOLDEN_VIDEO rests on this)
     let plain = render_at(&p, mid);
     let mut same = p.clone();
     same.track_at_mut(V, 0).unwrap().opacity = 1.0;
     same.track_at_mut(V, 0).unwrap().blend = BlendMode::Normal;
-    assert_eq!(render_at(&same, mid), plain, "дорожка без свойств изменила байты");
+    assert_eq!(render_at(&same, mid), plain, "a track without properties changed the bytes");
 }
 
-/// Тест 737 (Р.62, change B): режимы наложения против аналитической
-/// формулы. Уровень и режим — РАЗНЫЕ оси, обе после альфы; дыра в
-/// композите дорожки оставляет нижние слои нетронутыми.
+/// Test 737 (R.62, change B): blend modes against the analytic
+/// formula. Level and mode are DIFFERENT axes, both after the alpha; a hole in the
+/// track's composite leaves the lower layers untouched.
 #[test]
 fn t737_blend_modes_match_the_formula() {
     use kt_engine::video::blend_ch;
     use kt_model::BlendMode as M;
-    // формулы — ровно те, что записаны в спеке
+    // the formulas — exactly those written in the spec
     for (b, a) in [(0.2f64, 0.6f64), (0.8, 0.3), (0.0, 1.0), (1.0, 0.0)] {
         assert_eq!(blend_ch(M::Normal, b, a), a);
         assert_eq!(blend_ch(M::Multiply, b, a), b * a);
@@ -261,6 +261,6 @@ fn t737_blend_modes_match_the_formula() {
         let want = if b <= 0.5 { 2.0 * b * a } else { 1.0 - 2.0 * (1.0 - b) * (1.0 - a) };
         assert_eq!(blend_ch(M::Overlay, b, a), want);
     }
-    // реестр полон: у каждого вида своя формула, и ни один не забыт
+    // the registry is complete: each kind has its own formula, and none is forgotten
     assert_eq!(M::ALL.len(), 9);
 }

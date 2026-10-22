@@ -1,8 +1,8 @@
-//! Единый реестр FX + popup-пикер с поиском (п.3 v1.4): одно место выбора
-//! эффектов для всех четырёх точек добавления (FX-редактор клипа ×2 вида,
-//! morpher FX-батч ×2 цепочки), масштабируемое на сотни эффектов —
-//! строка поиска (имя + keywords, без регистра) и группировка по
-//! категориям. Шаблоны — те же, что были в кнопках/комбо (тест 48).
+//! Single FX registry + popup picker with search (item 3 of v1.4): one place to choose effects
+//! for all four add points (clip FX editor ×2 kinds, morpher
+//! FX batch ×2 chains), scalable to hundreds of effects —
+//! a search row (name + keywords, case-insensitive) and grouping by categories. The templates are the same
+//! as were in the buttons/combo (test 48).
 
 use crate::fx_editor::video_fx_templates;
 use crate::i18n::{Key, k, tr, tr_en};
@@ -10,45 +10,45 @@ use eframe::egui;
 use kt_model::FxInstance;
 
 pub struct FxEntry {
-    /// Имя эффекта НЕ переводится: это отраслевой термин, по нему эффект ищут
-    /// в любой локали (и он же сверяется с `fx_display_name`, тест 48).
+    /// The effect name is NOT translated: it is an industry term, by it the effect is searched
+    /// in any locale (and it is checked against `fx_display_name`, test 48).
     pub name: &'static str,
     pub category: Key,
-    /// В каком пикере предлагать. Обычно ровно одно из двух; двусторонним
-    /// бывает ТОЛЬКО варп времени (Р.37): он не пиксельный фильтр, а
-    /// правило выбора исходного кадра, и осмыслен на обоих видах.
+    /// Which picker to offer it in. Usually exactly one of the two; the only two-sided one is the time warp
+    /// (R.37): it is not a pixel filter but a rule for choosing
+    /// the source frame, and it makes sense on both kinds.
     pub audio: bool,
     pub video: bool,
-    /// Ключевые слова поиска. Ключ каталога, а не текст: реестр от языка не
-    /// зависит и `OnceLock` не пересобирается при переключении.
+    /// Search keywords. A catalog key, not text: the registry does not depend on the language
+    /// and `OnceLock` is not rebuilt on switching.
     pub keywords: Option<Key>,
     pub template: FxInstance,
-    /// Встроенные ВАРИАНТЫ (Р.54). У аудио-записей пусты: миниатюру звука
-    /// не нарисовать, а полоска без картинок — это второй список имён.
+    /// Built-in VARIANTS (R.54). Empty for audio entries: a thumbnail of sound cannot be drawn,
+    /// and a strip without pictures would be a second list of names.
     pub variants: Vec<FxVariant>,
 }
 
-/// Встроенный вариант эффекта (Р.54): тот же вид, приведённый в
-/// осмысленное состояние, с именем по ВИДУ, а не по параметру.
+/// A built-in effect variant (R.54): the same kind, brought to
+/// a meaningful state, with a name by KIND, not by parameter.
 ///
-/// Вариант — это ровно `FxInstance`, а не отдельная сущность: клик по его
-/// миниатюре идёт тем же путём `Picked::Fx`, что и клик по имени эффекта,
-/// поэтому ни новой команды, ни новой сущности таймлайна не появляется
-/// (t252/t253). Библиотека пользовательских пресетов (Р.48) — другое:
-/// там блок ЦЕПОЧКИ, он не принадлежит виду эффекта и живёт в файле.
+/// A variant is exactly an `FxInstance`, not a separate entity: a click on its thumbnail goes by the same path
+/// `Picked::Fx` as a click on the effect name, so no new command and no new timeline entity appears (t252/t253).
+/// The library of user presets (R.48) is something else:
+/// there is a CHAIN block, it does not belong to an effect kind
+/// and lives in a file.
 ///
-/// Имя варианта ПЕРЕВОДИТСЯ, в отличие от имени эффекта: «Тушь», «Чертёж»,
-/// «Крупно» отраслевыми терминами не являются. Двойная политика в одном
-/// списке — осознанная цена, разобранная в F-HLP-031 («Минусы»).
+/// The variant’s name IS translated, unlike the effect
+/// name: “Ink”, “Blueprint”, “Large” are not industry terms.
+/// A double policy in one list is a deliberate price, analysed in F-HLP-031 (“Cons”).
 pub struct FxVariant {
     pub name: Key,
     pub fx: FxInstance,
 }
 
-/// Категория и keywords видео-эффекта по имени из video_fx_templates.
+/// The category and keywords of a video effect by name from video_fx_templates.
 fn video_meta(name: &str) -> (Key, Option<Key>) {
-    // Полными путями намеренно: тест 125 ищет ключ каталога по пути `k::…`
-    // и сокращённый `use` спрятал бы использование.
+    // Full paths are deliberate: test 125 looks up the catalog key by the path `k::…`
+    // and a shortened `use` would hide the usage.
     match name {
         "Geometry" => (k::fxreg::cat::MOTION, Some(k::fxreg::kw::GEOMETRY)),
         "Mirror" => (k::fxreg::cat::GEOMETRY, Some(k::fxreg::kw::MIRROR)),
@@ -60,13 +60,13 @@ fn video_meta(name: &str) -> (Key, Option<Key>) {
         "Glow" => (k::fxreg::cat::GLOW, Some(k::fxreg::kw::GLOW)),
         "EventGrid" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::EVENTGRID)),
         "Pan 3D" => (k::fxreg::cat::THREE_D, Some(k::fxreg::kw::PAN3D)),
-        // Р.47 Кв2: цвет/стиль/перспектива
+        // R.47 Q2: color/style/perspective
         "Color Grade" => (k::fxreg::cat::COLOR, Some(k::fxreg::kw::COLOR_GRADE)),
         "Duotone" => (k::fxreg::cat::COLOR, Some(k::fxreg::kw::DUOTONE)),
         "Posterize" => (k::fxreg::cat::COLOR, Some(k::fxreg::kw::POSTERIZE)),
         "Vignette" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::VIGNETTE)),
         "Corner Pin" => (k::fxreg::cat::GEOMETRY, Some(k::fxreg::kw::CORNER_PIN)),
-        // Р.47 Кв3: барьеры
+        // R.47 Q3: barriers
         "Sharpen" => (k::fxreg::cat::BLUR, Some(k::fxreg::kw::SHARPEN)),
         "Pixelate" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::PIXELATE)),
         "Chromatic Aberration" => {
@@ -75,7 +75,7 @@ fn video_meta(name: &str) -> (Key, Option<Key>) {
         "Radial Blur" => (k::fxreg::cat::BLUR, Some(k::fxreg::kw::RADIAL_BLUR)),
         "Drop Shadow" => (k::fxreg::cat::KEY, Some(k::fxreg::kw::DROP_SHADOW)),
         "Halftone" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::HALFTONE)),
-        // Р.47 Кв4: Warp-семейство и цилиндр
+        // R.47 Q4: the Warp family and the cylinder
         "Lens Distort" => (k::fxreg::cat::DISTORT, Some(k::fxreg::kw::LENS_DISTORT)),
         "Twirl" => (k::fxreg::cat::DISTORT, Some(k::fxreg::kw::TWIRL)),
         "Ripple" => (k::fxreg::cat::DISTORT, Some(k::fxreg::kw::RIPPLE)),
@@ -85,42 +85,42 @@ fn video_meta(name: &str) -> (Key, Option<Key>) {
     }
 }
 
-/// Вариант из шаблона: значения ставятся ПО ИМЕНИ через `set_param`, а не
-/// литералом структуры. Так новый параметр эффекта не трогает полсотни
-/// мест (правило kt-fx), а значение вне спеки невозможно по построению —
-/// `set_param` клампит диапазоном (t543 сверяет это отдельно).
+/// A variant from a template: the values are set BY NAME via `set_param`, not as a structure literal.
+/// This way a new effect parameter does not touch fifty
+/// places (the kt-fx rule), and a value outside the spec
+/// is impossible by construction — `set_param` clamps to the range (t543 checks this separately).
 fn var(tmpl: &FxInstance, name: Key, sets: &[(&str, f64)]) -> FxVariant {
     let mut fx = tmpl.clone();
     for (p, v) in sets {
-        // опечатка в имени параметра иначе прошла бы молча: set_param
-        // вернул бы false, и вариант оказался бы копией шаблона
+        // a typo in a parameter name would otherwise pass silently: set_param would return false,
+        // and the variant would turn out to be a copy of the template
         debug_assert!(fx.param_spec(p).is_some(), "{}: no such param {p}", fx.tag());
         fx.set_param(p, *v);
     }
     FxVariant { name, fx }
 }
 
-/// Встроенные варианты видео-эффекта (Р.54).
+/// Built-in variants of a video effect (R.54).
 ///
-/// Порядок в полоске — от слабого к сильному: первая ячейка обязана быть
-/// НЕ тождеством, потому что у пяти видов (Pan, Pan 3D, Color Grade,
-/// Corner Pin, Drop Shadow) сам шаблон — тождество, и его миниатюра
-/// показывает исходный кадр. Именно первый вариант и служит им иконкой
-/// (t543 держит это условие).
+/// The order in the strip is from weak to strong: the first
+/// cell must be NOT an identity, because for five kinds
+/// (Pan, Pan 3D, Color Grade, Corner Pin, Drop Shadow) the
+/// template itself is an identity, and its thumbnail shows
+/// the source frame. It is precisely the first variant that serves them as an icon (t543 holds this condition).
 ///
-/// Полными путями к ключам намеренно — та же причина, что у `video_meta`:
-/// t125 ищет ключ каталога по пути, сокращённый `use` спрятал бы его.
+/// Full paths to the keys are deliberate — the same reason as for `video_meta`: t125 looks up the catalog key
+/// by path, a shortened `use` would hide it.
 fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
     match name {
-        // Р.62: дополнительный узел «Геометрия» — три варианта (тождественный
-        // дефолт иконкой служить не может, t543)
+        // R.62: the additional “Geometry” node — three variants
+        // (the identity default cannot serve as an icon, t543)
         "Geometry" => vec![
             var(tmpl, k::fxreg::var::CLOSEUP, &[("zoom", 1.25)]),
             var(tmpl, k::fxreg::var::PUNCH, &[("zoom", 2.0)]),
             var(tmpl, k::fxreg::var::OFFCENTER, &[("zoom", 1.4), ("pos_x", -0.12)]),
         ],
-        // у зеркала числовых параметров нет вовсе — только две галки,
-        // поэтому вариантов ровно два: третье состояние и есть шаблон
+        // the mirror has no numeric parameters at all — only two checkboxes, so there are exactly two variants:
+        // the third state is the template itself
         "Mirror" => vec![
             FxVariant {
                 name: k::fxreg::var::VERTICAL,
@@ -134,7 +134,7 @@ fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
         "Blur" => vec![
             var(tmpl, k::fxreg::var::SOFT, &[("radius", 3.0)]),
             var(tmpl, k::fxreg::var::HEAVY, &[("radius", 24.0)]),
-            // смаз по одной оси: radius_y = 1 (не 0 — ноль значит «как X»)
+            // blur along one axis: radius_y = 1 (not 0 — zero means “as X”)
             var(tmpl, k::fxreg::var::HORIZONTAL, &[("radius", 28.0), ("radius_y", 1.0)]),
         ],
         "Greenscreen" => vec![
@@ -290,13 +290,13 @@ fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
             ),
         ],
         "Corner Pin" => vec![
-            // трапеция: верхняя кромка сужена и опущена
+            // trapezoid: the top edge is narrowed and lowered
             var(
                 tmpl,
                 k::fxreg::var::PERSPECTIVE,
                 &[("x0", 0.12), ("y0", 0.06), ("x1", 0.88), ("y1", 0.06)],
             ),
-            // правый край короче левого
+            // the right edge is shorter than the left
             var(tmpl, k::fxreg::var::TILT, &[("y1", 0.14), ("y3", 0.86)]),
             var(tmpl, k::fxreg::var::SKEW, &[("x0", 0.18), ("x3", 0.82)]),
         ],
@@ -313,10 +313,10 @@ fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
         "Chromatic Aberration" => vec![
             var(tmpl, k::fxreg::var::SUBTLE, &[("amount", 0.004)]),
             var(tmpl, k::fxreg::var::STRONG, &[("amount", 0.028)]),
-            // НЕ 0.05 (потолок спеки): поле f32, а кламп в `set_param`
-            // считается в f64 — ровный потолок при записи в f32
-            // округляется ВВЕРХ и значение оказывается ВНЕ спеки (нашёл
-            // t543). Вариант — это вид, а не проверка предела
+            // NOT 0.05 (the spec ceiling): the field is f32, and the clamp in `set_param` is computed in f64 —
+            // the exact ceiling when written to f32 rounds UP and
+            // the value ends up OUTSIDE the spec (found by t543).
+            // A variant is a kind, not a limit check
             var(tmpl, k::fxreg::var::GLITCH, &[("amount", 0.045)]),
         ],
         "Radial Blur" => {
@@ -324,8 +324,8 @@ fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
                 var(tmpl, k::fxreg::var::ZOOM, &[("amount", 0.5)]),
                 var(tmpl, k::fxreg::var::HEAVY, &[("amount", 0.85)]),
             ];
-            // вращение вместо наезда — единственный нечисловой параметр
-            // среди всех вариантов: у `spin` спеки нет, он bool
+            // rotation instead of zoom — the only non-numeric parameter among all variants:
+            // `spin` has no spec, it is a bool
             let mut spin = var(tmpl, k::fxreg::var::SPIN, &[("amount", 0.4)]);
             if let FxInstance::RadialBlur { spin: s, .. } = &mut spin.fx {
                 *s = true;
@@ -380,8 +380,8 @@ fn video_variants(name: &str, tmpl: &FxInstance) -> Vec<FxVariant> {
             var(tmpl, k::fxreg::var::STRONG, &[("curvature", 0.85)]),
             var(tmpl, k::fxreg::var::TUBE, &[("curvature", 1.0)]),
         ],
-        // пустой список = забытая запись; t543 краснеет на нём так же,
-        // как t48 на категории-фолбэке
+        // an empty list = a forgotten entry; t543 turns
+        // red on it just as t48 does on a fallback category
         _ => Vec::new(),
     }
 }
@@ -403,14 +403,14 @@ pub fn registry() -> &'static [FxEntry] {
                 name: "Slowed+Reverb",
                 category: k::fxreg::cat::TIMESTRETCH,
                 audio: true,
-                // ДВУСТОРОННИЙ (Р.37 п.2): на видео-клипе он растягивает
-                // время, то есть меняет выбор исходного кадра
+                // TWO-SIDED (R.37 item 2): on a video clip it stretches
+                // time, that is, it changes the choice of the source frame
                 video: true,
                 keywords: Some(k::fxreg::kw::SLOWEDREVERB),
                 template: FxInstance::slowed_reverb(0.82, 0.1, 85.0),
-                // вариантов нет и у него: на статичном кадре растяжение
-                // времени невидимо, а полоска из одинаковых картинок —
-                // ровно то «впустую занятое место», про которое правило 13
+                // it has no variants either: on a static frame stretching
+                // time is invisible, and a strip of identical pictures
+                // is exactly the “wasted space” that rule 13 is about
                 variants: Vec::new(),
             },
             FxEntry {
@@ -575,17 +575,17 @@ pub fn registry() -> &'static [FxEntry] {
     })
 }
 
-/// Фильтр реестра: вид (аудио/видео) + подстрока запроса в имени или
-/// keywords, без регистра. Чистая функция — тест 48.
+/// Registry filter: kind (audio/video) + a substring of the query in the name or keywords, case-insensitive.
+/// A pure function — test 48.
 ///
-/// Ищет по ключевым словам ТЕКУЩЕГО языка И по английским: иначе выбравший
-/// китайский не смог бы найти «blur», хотя имя эффекта именно такое.
-/// Значения keywords лежат в каталоге уже в нижнем регистре.
+/// It searches by the keywords of the CURRENT language
+/// AND by English ones: otherwise someone who chose Chinese
+/// could not find “blur”, although the effect name is exactly
+/// that. Keyword values already lie in the catalog in lower case.
 ///
-/// С Р.54 совпадение по имени ВАРИАНТА тоже показывает строку («чертёж»
-/// находит Edges). Матч — на уровне СТРОКИ, а не ячейки: сколько бы
-/// вариантов ни совпало, строка остаётся одна, и счётчики фильтра не
-/// зависят от числа вариантов (t48).
+/// Since R.54 a match on the VARIANT name also shows the row (“blueprint” finds Edges).
+/// The match is at the level of the ROW, not the cell: however many variants match, the row stays one,
+/// and the filter counters do not depend on the number of variants (t48).
 pub fn filter_entries<'a>(entries: &'a [FxEntry], audio: bool, query: &str) -> Vec<&'a FxEntry> {
     let q = query.trim().to_lowercase();
     entries
@@ -603,34 +603,34 @@ pub fn filter_entries<'a>(entries: &'a [FxEntry], audio: bool, query: &str) -> V
         .collect()
 }
 
-/// Кнопка «+ эффект…» с popup: поиск + список по категориям.
-/// Что выбрали в пикере.
+/// The “+ effect…” button with a popup: search + a list by categories.
+/// What was chosen in the picker.
 pub enum Picked {
-    /// Пресет из библиотеки пользователя (индекс в переданном срезе).
+    /// A preset from the user’s library (index in the passed slice).
     Preset(usize),
-    /// Управление пользовательским пресетом из его контекст-меню.
+    /// Management of a user preset from its context menu.
     PresetAction(crate::widgets::PresetAction),
-    /// Приколотая голова полосы (у морфера — подмена источника).
+    /// Pinned head of the strip (for the morpher — a source substitution).
     Head,
     Fx(FxInstance),
 }
 
-/// Ширина галереи (Р.54). Фиксирована галлеей самого длинного варианта
-/// содержимого: правило 3 чек-листа — ничего не скачет при наборе в
-/// строке поиска и при смене числа ячеек.
+/// Gallery width (R.54). Fixed by the gallery of the
+/// longest variant content: rule 3 of the checklist —
+/// nothing jumps when typing in the search row and when the number of cells changes.
 pub(crate) const GALLERY_W: f32 = 520.0;
-/// Высота прокрутки списка эффектов и секции пресетов.
+/// Scroll height of the effects list and the presets section.
 const GALLERY_H: f32 = 450.0;
 const PRESETS_H: f32 = 160.0;
-/// Рисуемый размер ячейки (хранится вдвое крупнее — hidpi).
+/// Drawn cell size (stored twice as large — hidpi).
 pub(crate) const CELL_DRAW_W: f32 = 80.0;
 const CELL_DRAW_H: f32 = 45.0;
 
-/// Значок категории для строки эффекта. Исчерпывающе по категориям
-/// реестра: новая категория без значка обязана краснеть в t543b, а не
-/// молча рисоваться пустотой.
+/// The category icon for an effect row. Exhaustive
+/// over the registry categories: a new category
+/// without an icon must turn red in t543b, and not silently be drawn as emptiness.
 fn cat_glyph(cat: Key) -> &'static str {
-    // Полными путями к ключам — та же причина, что у `video_meta`.
+    // Full paths to the keys — the same reason as for `video_meta`.
     match cat {
         c if c == k::fxreg::cat::MOTION => crate::icons::CAT_MOTION,
         c if c == k::fxreg::cat::GEOMETRY => crate::icons::CAT_GEOMETRY,
@@ -652,35 +652,35 @@ fn cat_glyph(cat: Key) -> &'static str {
     }
 }
 
-/// Сколько промежуточных ступеней между соседними точками оси силы
-/// (Р.54, п.433). Ось КВАНТУЕТСЯ, потому что каждая позиция — свой
-/// рецепт и свой рендер: без квантования проводка мышью порождала бы
-/// новый кадр на каждый пиксель.
+/// How many intermediate steps between neighbouring points of the strength axis (R.54, item 433).
+/// The axis is QUANTIZED, because each position is its
+/// own recipe and its own render: without quantization
+/// dragging with the mouse would produce a new frame for every pixel.
 const AXIS_STEPS: i32 = 8;
 
-/// Точка оси силы по сдвигу курсора. Ось — это ряд `[шаблон, вариант₀,
-/// вариант₁, …]`, ячейка варианта `cell` стоит в позиции `cell + 1`, и
-/// один размер ячейки сдвига = один шаг по оси.
+/// The strength-axis point by the cursor shift. The axis is a row `[template, variant₀, variant₁, …]`;
+/// the variant cell `cell` sits at position `cell + 1`,
+/// and one cell size of shift = one step along the axis.
 ///
-/// Возвращает `(j, t)`: смешивать `axis[j]` с `axis[j + 1]` в доле `t`.
-/// Чистая функция — её проверяет t551 без всякого egui.
+/// Returns `(j, t)`: blend `axis[j]` with `axis[j + 1]` at fraction `t`.
+/// A pure function — t551 checks it without any egui.
 pub(crate) fn axis_at(cell: usize, dx_px: f32, points: usize) -> (usize, f64) {
     let last = points.saturating_sub(1).max(1);
     let raw = (cell + 1) as f32 + dx_px / CELL_DRAW_W;
-    // квантуем и зажимаем в границы ряда: за краями ось упирается, а не
-    // «тянет» несуществующие значения
+    // we quantize and clamp to the bounds of the row: beyond the edges the axis stops,
+    // rather than “pulling” non-existent values
     let q = ((raw * AXIS_STEPS as f32).round() as i32).clamp(0, last as i32 * AXIS_STEPS);
     let j = (q / AXIS_STEPS) as usize;
     if j >= last {
-        // правый край ряда выражается как «предыдущая точка, доля 1»
+        // the right edge of the row is expressed as “previous point, fraction 1”
         return (last - 1, 1.0);
     }
     (j, (q % AXIS_STEPS) as f64 / AXIS_STEPS as f64)
 }
 
-/// Точка ряда: нулевая — ШАБЛОН эффекта (сила «ничего»), дальше варианты.
-/// Ряд не материализуется: аллокация на каждую строку в draw-пути — это
-/// инвариант №12.
+/// A point of the row: zero is the effect’s
+/// TEMPLATE (strength “nothing”), then the variants.
+/// The row is not materialized: an allocation per row in the draw path is invariant No. 12.
 fn axis_point(e: &FxEntry, k: usize) -> &FxInstance {
     if k == 0 { &e.template } else { &e.variants[k - 1].fx }
 }
@@ -689,16 +689,16 @@ fn axis_name(e: &FxEntry, k: usize) -> &str {
     if k == 0 { e.name } else { tr(e.variants[k - 1].name) }
 }
 
-/// Ячейка полоски: картинка (или плашка, пока считается) и подпись под
-/// ней, ОДНА интеракция на всё. Клик в центре без движения обязан дать
-/// действие (философия t254), а по подписи ячейка находится харнессом.
-/// `prefix` — имя эффекта для ДОСТУПНОГО имени ячейки. Видимая подпись
-/// остаётся короткой («Мягко»), а доступное имя обязано быть уникальным:
-/// словарь вариантов общий на реестр, и «Мягко» есть у шести видов —
-/// без префикса ни скринридер, ни харнесс не отличат ячейку Blur от
-/// ячейки Glow (нашлось при написании t547). Строка склеивается ВНУТРИ
-/// `widget_info`, а его замыкание egui зовёт только при включённой
-/// доступности — в обычном запуске это ноль аллокаций.
+/// A strip cell: the picture (or a placeholder while it is being computed) and the caption under it,
+/// ONE interaction for all of it. A click in the centre
+/// without movement must give an action (the t254 philosophy),
+/// and the harness finds the cell by its caption. `prefix` is the effect name for the ACCESSIBLE name of the cell.
+/// The visible caption stays short (“Soft”), while the accessible
+/// name must be unique: the variant dictionary is shared
+/// across the registry, and “Soft” exists for six kinds — without a prefix neither a screen reader nor the harness
+/// could tell the Blur cell from the Glow cell (found when writing t547). The string is concatenated INSIDE
+/// `widget_info`, and its egui closure is called only when
+/// accessibility is on — in a normal run it is zero allocations.
 #[allow(clippy::too_many_arguments)]
 fn preview_cell(
     ui: &mut egui::Ui,
@@ -707,39 +707,39 @@ fn preview_cell(
     prefix: &str,
     label: &str,
     frame: egui::Color32,
-    // ось силы: запись реестра и номер ячейки в её полоске. `None` —
-    // ячейка без оси (пресет библиотеки: смешивать ЦЕПОЧКИ нельзя).
+    // the strength axis: a registry entry and the cell number in its strip. `None` — a cell without an axis
+    // (a library preset: CHAINS cannot be blended)
     axis: Option<(&FxEntry, usize)>,
 ) -> (egui::Response, Option<(usize, f64, FxInstance)>) {
-    // подпись рисуется ПОД картинкой; пустая подпись = имя стоит рядом
-    // (строка пресета), и место под текст не резервируется (правило 13)
+    // the caption is drawn UNDER the picture; an empty caption = the name stands next to it (a preset row),
+    // and no space for text is reserved (rule 13)
     let cap_h =
         if label.is_empty() { 0.0 } else { ui.text_style_height(&egui::TextStyle::Small) + 2.0 };
     let size = egui::vec2(CELL_DRAW_W, CELL_DRAW_H + cap_h);
-    // click_and_drag: клик без движения = именно этот вариант (t254),
-    // а проводка по горизонтали ведёт ОСЬ СИЛЫ между соседями (п.433).
-    // Идиома репозитория — одна интеракция с разбором clicked()/dragged(),
-    // а не два вложенных виджета (запрет dnd_drag_source, t254b).
+    // click_and_drag: a click without movement = exactly this variant (t254), and a horizontal drag leads
+    // the STRENGTH AXIS between neighbours (item 433).
+    // The repository idiom is one interaction with a split
+    // of clicked()/dragged(), not two nested widgets (the dnd_drag_source ban, t254b).
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
     let img_rect = egui::Rect::from_min_size(rect.min, egui::vec2(CELL_DRAW_W, CELL_DRAW_H));
-    // НИЖЕ СГИБА прокрутки ячейка не считается и не рисуется: список
-    // раскладывается целиком (прокрутке нужен полный размер), и без этого
-    // гарда одно открытие галереи заказывало полторы сотни миниатюр —
-    // видимых из них полтора десятка. Нашёл живой сценарий: кликать по
-    // невидимой ячейке он уходил МИМО попапа, в таймлайн (её
-    // прямоугольник честно лежал там, где её никто не видит).
+    // BELOW THE SCROLL FOLD a cell is not computed and not drawn: the list is laid out in full
+    // (the scroll needs the full size), and without this guard one
+    // opening of the gallery ordered a hundred and fifty thumbnails —
+    // of which fifteen were visible. The live scenario found
+    // it: clicking on an invisible cell went PAST the popup,
+    // into the timeline (its rectangle honestly lay where nobody can see it).
     if !ui.is_rect_visible(rect) {
         return (resp, None);
     }
-    // ОСЬ СИЛЫ (п.433): пока ведут по горизонтали, ячейка показывает
-    // смесь соседних точек ряда — «сколько тут ставят» видно кадрами, а
-    // не объявленным «главным параметром» (у VHS и Color Grade таких
-    // параметра четыре, и выбор одного был бы спорным).
+    // The STRENGTH AXIS (item 433): while dragging horizontally,
+    // the cell shows a mix of neighbouring points of the row —
+    // “how much is put here” is visible frame by frame, and not as a declared “main parameter”
+    // (VHS and Color Grade have four such parameters, and choosing one would be disputable).
     //
-    // Отсчёт — от ЦЕНТРА своей ячейки по абсолютной позиции указателя, а
-    // не накоплением `drag_delta`: накопление уезжает от руки на каждом
-    // пропущенном кадре. `drag_stopped` тоже читается — на кадре
-    // отпускания `dragged()` уже false, а применять надо показанное.
+    // The count is from the CENTRE of its own cell by the absolute
+    // pointer position, and not by accumulating `drag_delta`:
+    // accumulation drifts by hand on every skipped frame. `drag_stopped` is also read — on the frame of release
+    // `dragged()` is already false, and what was shown must be applied.
     let pick = axis.and_then(|(e, cell)| {
         if !(resp.dragged() || resp.drag_stopped()) {
             return None;
@@ -751,9 +751,9 @@ fn preview_cell(
     let shown: &[FxInstance] =
         pick.as_ref().map(|(_, _, fx)| std::slice::from_ref(fx)).unwrap_or(extra);
     let p = ui.painter();
-    // подложка ОДНИМ прямоугольником, не шахматкой: прозрачные места
-    // (Greenscreen, Pan3d, CornerPin) видны на ней как есть, а шахматка
-    // из плиток дала бы тысячи примитивов на открытие (инвариант №12)
+    // the backdrop is ONE rectangle, not a checkerboard: transparent areas (Greenscreen, Pan3d, CornerPin)
+    // show on it as they are, and a checkerboard of tiles would
+    // give thousands of primitives on opening (invariant No. 12)
     p.rect_filled(img_rect, 2.0, crate::theme::EXTREME);
     if let Some(ctx) = preview.as_deref_mut()
         && let Some(tex) = ctx.texture(ui.ctx(), shown)
@@ -778,7 +778,7 @@ fn preview_cell(
     if label.is_empty() {
         return (resp, pick);
     }
-    // подпись усекается, а не разносит ячейку (правило 7 чек-листа)
+    // the caption is truncated, not expanding the cell (rule 7 of the checklist)
     let galley = ui.fonts_mut(|f| {
         let mut job = egui::text::LayoutJob::single_section(
             label.to_string(),
@@ -801,15 +801,15 @@ fn preview_cell(
     (resp, pick)
 }
 
-/// Пикер, у которого ПЕРВОЙ строкой стоит голова полосы. В `registry()`
-/// её нет намеренно: t48 сверяет реестр с шаблонами эффектов, а у
-/// псевдо-слота шаблона не бывает — он не эффект, а часть морфера.
+/// A picker where the head of the strip stands as the FIRST row. It is deliberately absent from `registry()`:
+/// t48 checks the registry against the effect templates, and a pseudo-slot
+/// has no template — it is not an effect but a part of the morpher.
 ///
-/// С Р.54 это галерея: у каждого видео-эффекта под именем стоит полоска
-/// миниатюр (встроенные варианты и подходящие одноэффектные пресеты), а у
-/// пресетов библиотеки — своя миниатюра целого блока. `preview` — контекст
-/// ячеек; `None` означает «картинок не рисуем» (аудио-пикер, харнесс-тесты
-/// без сервиса), и тогда пикер вырождается в прежний список имён.
+/// Since R.54 this is a gallery: each video effect has a strip of thumbnails under its name (the built-in variants
+/// and the suitable single-effect presets), and library presets have their own thumbnail of the whole block.
+/// `preview` is the cell context; `None` means “we do not draw
+/// pictures” (the audio picker, harness tests without a service),
+/// and then the picker degenerates into the former list of names.
 #[allow(clippy::too_many_arguments)]
 pub fn fx_picker_with_head(
     ui: &mut egui::Ui,
@@ -822,10 +822,10 @@ pub fn fx_picker_with_head(
     mut preview: Option<&mut crate::fx_thumbs::PickerCtx<'_>>,
 ) -> Option<Picked> {
     let mut picked = None;
-    // CloseOnClickOutside обязателен (Р.54): у меню egui дефолт
-    // CloseOnClick — попап закрывается ЛЮБЫМ кликом, в том числе по
-    // миниатюре, и галерея была бы мертворождённой. Наши клики закрывают
-    // попап явным `ui.close()`, Esc работает как раньше.
+    // CloseOnClickOutside is mandatory (R.54): the egui menu default is CloseOnClick — the popup closes on ANY click,
+    // including on a thumbnail, and the gallery would be stillborn.
+    // Our clicks close the popup with an explicit `ui.close()`,
+    // Esc works as before.
     let cfg = egui::containers::menu::MenuConfig::new()
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
     let (btn, popup) =
@@ -835,13 +835,13 @@ pub fn fx_picker_with_head(
                 .hint_text(tr(k::fxreg::SEARCH))
                 .desired_width(210.0);
             let resp = ui.add(edit);
-            // фокус в строку поиска при открытии меню
+            // focus in the search row when the menu opens
             if ui.input(|i| i.events.is_empty()) && !resp.has_focus() {
                 resp.request_focus();
             }
             ui.separator();
-            // голова — своим цветом и ПЕРВОЙ («поднять в списке fx»);
-            // ищется той же строкой поиска, что и эффекты
+            // the head — in its own colour and FIRST (“raise in the fx
+            // list”); it is searched with the same search row as the effects
             if let Some(h) = head
                 && (query.is_empty() || h.to_lowercase().contains(&query.to_lowercase()))
             {
@@ -853,10 +853,10 @@ pub fn fx_picker_with_head(
                 }
                 ui.separator();
             }
-            // Пресеты (Р.48) — СВОЕЙ секцией сразу после головы: это не
-            // виды эффектов, и в статический реестр они не попадают (t48
-            // сверяет его с шаблонами). Ищутся той же строкой — и по имени
-            // пресета, и по именам эффектов внутри него.
+            // Presets (R.48) — in their OWN section right after the head: they are not effect kinds, and they do not get into
+            // the static registry (t48 checks it against the templates).
+            // They are searched by the same row — both by the preset name
+            // and by the names of the effects inside it.
             let q = query.to_lowercase();
             let shown: Vec<(usize, &crate::user_store::PresetRow)> = presets
                 .iter()
@@ -871,17 +871,17 @@ pub fn fx_picker_with_head(
                 .collect();
             if !shown.is_empty() {
                 ui.label(egui::RichText::new(tr(k::fx::PRESETS)).small().weak());
-                // Пресеты живут НАД прокруткой эффектов (правило Р.53: за
-                // ними тянутся первыми), но своя прокрутка им нужна — иначе
-                // тридцать сохранённых цепочек выдавят список эффектов за
-                // край экрана.
+                // Presets live ABOVE the scroll of the effects (the R.53 rule: they are reached for first),
+                // but they need their own scroll — otherwise
+                // thirty saved chains would push the list of effects
+                // past the edge of the screen.
                 egui::ScrollArea::vertical().id_salt("fxpreset-rows").max_height(PRESETS_H).show(
                     ui,
                     |ui| {
                         for (i, r) in shown {
                             let resp = if preview.is_some() && r.video_ok {
-                                // миниатюра ЦЕЛОГО блока: кривые берутся в точке входа
-                                // пресета (ключи в блоке ребейзнуты к нулю)
+                                // thumbnail of the WHOLE block: the curves are taken at the entry point of the preset
+                                // (keys in the block are rebased to zero)
                                 let chain: Vec<FxInstance> = r
                                     .block
                                     .slots
@@ -898,10 +898,10 @@ pub fn fx_picker_with_head(
                                     })
                                     .collect();
                                 ui.horizontal(|ui| {
-                                    // подпись НЕ дублируем: имя стоит
-                                    // кнопкой сразу справа от миниатюры
-                                    // (правило 13). Оси у пресета нет —
-                                    // смешивать ЦЕПОЧКИ бессмысленно.
+                                    // the caption is NOT duplicated: the name
+                                    // stands as a button right next to the thumbnail
+                                    // (rule 13). A preset has no axis
+                                    // — blending CHAINS makes no sense.
                                     let (c, _) = preview_cell(
                                         ui,
                                         &mut preview,
@@ -935,8 +935,8 @@ pub fn fx_picker_with_head(
                                 query.clear();
                                 ui.close();
                             }
-                            // заводские не переименовываются и не удаляются — и это
-                            // видно: у них нет меню, а подсказка говорит почему
+                            // factory presets are not renamed or deleted — and this is visible: they have no menu,
+                            // and the hint says why
                             if r.factory {
                                 resp.on_hover_text(tr(k::msg::PRESET_FACTORY));
                             } else {
@@ -969,11 +969,11 @@ pub fn fx_picker_with_head(
             if list.is_empty() && head.is_none() {
                 ui.weak(tr(k::fxreg::NOTHING));
             }
-            // КАТЕГОРИИ ГРУППИРУЮТСЯ НА ОТРИСОВКЕ (Р.54). Реестр отсортирован
-            // по смыслу («кварталы» Р.47), и категории в нём повторяются:
-            // заголовок «Стилизация» печатался пять раз, «Размытие» — три.
-            // Порядок самих категорий — по первому появлению, сортировка
-            // стабильная, поэтому внутри категории порядок реестра цел.
+            // CATEGORIES ARE GROUPED WHEN DRAWN (R.54). The
+            // registry is sorted by meaning (the “quarters” of R.47),
+            // and categories repeat in it: the heading “Stylization” was printed five times, “Blur” — three times.
+            // The order of the categories themselves is by first appearance; the sort is stable,
+            // so inside a category the registry order is intact.
             let mut cats: Vec<Key> = Vec::new();
             for e in &list {
                 if !cats.contains(&e.category) {
@@ -991,8 +991,8 @@ pub fn fx_picker_with_head(
                             last_cat = Some(e.category);
                             ui.label(egui::RichText::new(tr(e.category)).small().weak());
                         }
-                        // строка имени: глиф категории + имя (клик = ШАБЛОН, как
-                        // было до Р.54)
+                        // the name row: category glyph + name
+                        // (click = TEMPLATE, as it was before R.54)
                         let mut hit_name = None;
                         ui.horizontal(|ui| {
                             ui.label(cat_glyph(e.category));
@@ -1001,10 +1001,10 @@ pub fn fx_picker_with_head(
                                 ui.button(e.name),
                                 tr(k::fxreg::TEMPLATE_HINT),
                             );
-                            // строка ШАБЛОНА тоже отдаёт прямоугольник: у
-                            // окна без кадра-основы (цепочка дорожки)
-                            // галереи вариантов нет вовсе, и живому
-                            // сценарию иначе не во что целиться
+                            // the TEMPLATE row also gives a rectangle: a
+                            // window without a base frame (a track chain)
+                            // has no variant gallery at all, and otherwise
+                            // the live scenario would have nothing to aim at
                             crate::widgets::field_probe::note(
                                 &format!("fxreg.tpl.{}", e.template.tag()),
                                 r.rect,
@@ -1018,9 +1018,9 @@ pub fn fx_picker_with_head(
                             query.clear();
                             ui.close();
                         }
-                        // полоска: встроенные варианты, затем ОДНОэффектные
-                        // пресеты пользователя того же вида — они про то же
-                        // («вот как это настраивают»), и место у них там же
+                        // the strip: built-in variants, then the user’s SINGLE-effect presets of the same kind —
+                        // they are about the same thing (“here is how
+                        // it is tuned”), and their place is there too
                         if preview.is_some() && !e.variants.is_empty() {
                             let mut hit = None;
                             ui.horizontal_wrapped(|ui| {
@@ -1038,10 +1038,10 @@ pub fn fx_picker_with_head(
                                         &format!("fxreg.var.{}.{vi}", e.template.tag()),
                                         c.rect,
                                     );
-                                    // подсказка — в статусбар, как всё в
-                                    // программе (правило 10): пока ведут
-                                    // ось, она говорит МЕЖДУ ЧЕМ ведут и
-                                    // на сколько
+                                    // the hint goes to the status bar, like everything
+                                    // in the program (rule 10): while the axis
+                                    // is being dragged, it says BETWEEN
+                                    // WHAT the drag is and by how much
                                     let axis_hint = pick.as_ref().map(|(j, t, _)| {
                                         crate::tf!(
                                             k::fxreg::AXIS_HINT,
@@ -1053,9 +1053,9 @@ pub fn fx_picker_with_head(
                                     let hint =
                                         axis_hint.as_deref().unwrap_or(tr(k::fxreg::VAR_HINT));
                                     let c = crate::app::hint_into(hover, c, hint);
-                                    // клик без движения — ИМЕННО этот
-                                    // вариант (t254); проводка — то, что
-                                    // показано на кадре отпускания
+                                    // a click without movement — EXACTLY this variant
+                                    // (t254); the drag — what is
+                                    // shown on the frame of release
                                     if c.clicked() {
                                         hit = Some(Picked::Fx(v.fx.clone()));
                                     } else if c.drag_stopped()
@@ -1105,17 +1105,17 @@ pub fn fx_picker_with_head(
             );
             let _ = id_salt;
         });
-    // прямоугольники для живых сценариев: модальные попапы egui в дереве
-    // доступности не ищутся, а угадывать смещения внутри окна сценарий не
-    // должен (Р.27). Ветка стоит один OnceLock-чек без KT_GEOM_DUMP.
+    // rectangles for live scenarios: modal egui popups are not searched in the accessibility tree,
+    // and a scenario must not guess offsets inside the window (R.27).
+    // The branch costs one OnceLock check without KT_GEOM_DUMP.
     crate::widgets::field_probe::note("fxreg.add", btn.rect);
     // the window of a linked pair has two pickers and the last one drawn
     // (audio) wins the shared name; the README shot needs the VIDEO gallery
     if !audio {
         crate::widgets::field_probe::note("fxreg.add.video", btn.rect);
     }
-    // раскрытый пикер целиком: он свисает за окно FX, и скриншот лендинга
-    // режет по объединению рамок (site/screenshots.py)
+    // the expanded picker as a whole: it hangs out past the FX window, and the landing-page screenshot
+    // crops by the union of the frames (site/screenshots.py)
     if let Some(p) = &popup {
         crate::widgets::field_probe::note("fxreg.popup", p.response.rect);
     }
@@ -1126,34 +1126,34 @@ pub fn fx_picker_with_head(
 mod tests {
     use super::*;
 
-    /// Тест 48 (п.3 v1.4): полнота реестра и идентичность шаблонов прежним
-    /// кнопкам/комбо; фильтр находит по подстроке имени и по keyword и
-    /// отделяет аудио от видео.
+    /// Test 48 (item 3 of v1.4): completeness of the registry and identity of the templates with the former
+    /// buttons/combos; the filter finds by a substring of
+    /// the name and by keyword and separates audio from video.
     #[test]
     fn t48_registry_complete_and_filter_works() {
         let reg = registry();
-        // все 10 видео-шаблонов на месте и байт-в-байт равны прежним
+        // all 10 video templates are in place and byte-for-byte equal to the former ones
         let old = video_fx_templates();
         assert_eq!(reg.iter().filter(|e| !e.audio).count(), old.len());
-        // ДВУСТОРОННЯЯ запись ровно одна — варп времени (Р.37). Он не
-        // пиксельный фильтр, а правило выбора исходного кадра, поэтому
-        // осмыслен на обоих видах; всё остальное обязано остаться в своей
-        // корзине, иначе деление вырождается
+        // Exactly one entry is TWO-SIDED — the time warp (R.37).
+        // It is not a pixel filter but a rule for choosing
+        // the source frame, so it makes sense on both kinds; everything else must stay in its own bucket,
+        // otherwise the division degenerates
         assert_eq!(
             reg.iter().filter(|e| e.audio && e.video).map(|e| e.name).collect::<Vec<_>>(),
             ["Slowed+Reverb"],
-            "двусторонним бывает только растяжение времени"
+            "only time stretching can be two-sided"
         );
         for (name, tmpl) in &old {
-            let e = reg.iter().find(|e| e.name == *name).expect("видео-эффект в реестре");
+            let e = reg.iter().find(|e| e.name == *name).expect("video effect in the registry");
             assert!(!e.audio);
             assert_eq!(
                 serde_json::to_string(&e.template).unwrap(),
                 serde_json::to_string(tmpl).unwrap(),
-                "шаблон {name} идентичен прежнему"
+                "template {name} is identical to the previous one"
             );
         }
-        // аудио-шаблоны прежних кнопок
+        // the audio templates of the former buttons
         let gain = reg.iter().find(|e| e.name == "Gain").unwrap();
         assert!(gain.audio);
         assert_eq!(
@@ -1166,15 +1166,15 @@ mod tests {
             serde_json::to_string(&sr.template).unwrap(),
             serde_json::to_string(&FxInstance::slowed_reverb(0.82, 0.1, 85.0)).unwrap()
         );
-        // морф-слот в реестре НЕ живёт и жить не может (Р.35): у
-        // псевдо-слота нет шаблона, а этот тест сверяет реестр именно с
-        // шаблонами — «просто дописать его в реестр» обязано краснеть
+        // the morph slot does NOT live in the registry and cannot live there (R.35): a pseudo-slot has no template,
+        // and this test checks the registry precisely against the
+        // templates — “simply add it to the registry” must turn red
         assert!(
             !reg.iter().any(|e| e.name.to_lowercase().contains("source")),
-            "подмена источника — не эффект: её место в голове полосы, не в реестре"
+            "source substitution is not an effect: its place is at the head of the strip, not in the registry"
         );
-        // Р.47 (п.331): категория-фолбэк VIDEO — признак забытой записи в
-        // video_meta; каждый видео-эффект обязан жить в своей категории
+        // R.47 (item 331): the fallback category VIDEO is a sign of a forgotten entry in video_meta;
+        // every video effect must live in its own category
         for e in reg.iter().filter(|e| e.video && e.name != "Slowed+Reverb") {
             assert_ne!(
                 e.category,
@@ -1183,65 +1183,65 @@ mod tests {
                 e.name
             );
         }
-        // имена согласованы с fx_display_name
+        // names are consistent with fx_display_name
         for e in reg {
             assert_eq!(crate::fx_editor::fx_display_name(&e.template), e.name);
         }
-        // Р.54: у аудио-записей вариантов не бывает — миниатюру звука не
-        // нарисовать, а полоска из одних подписей была бы вторым списком
-        // имён на том же месте (правило 13)
+        // R.54: audio entries have no variants — a sound
+        // thumbnail cannot be drawn, and a strip of captions alone
+        // would be a second list of names in the same place (rule 13)
         for e in reg.iter().filter(|e| e.audio) {
             assert!(e.variants.is_empty(), "{}: audio entries carry no variants", e.name);
         }
-        // Р.47 (п.326): счёт — СВОЙСТВОМ реестра FxInstance::all(), а не
-        // константой. Каждый аудио-вид из all() (кроме LayerMix — слот
-        // силы, у него нет места в пикере) обязан быть в аудио-списке;
-        // каждый видео-вид, у которого есть шаблон, — в видео-списке.
+        // R.47 (item 326): the count is a PROPERTY of the registry FxInstance::all(), not a constant.
+        // Every audio kind from all() (except LayerMix — the
+        // strength slot, which has no place in the picker)
+        // must be in the audio list; every video kind that has a template — in the video list.
         crate::i18n::set_lang(crate::i18n::Lang::Ru);
         let audio_kinds: std::collections::BTreeSet<&str> =
             FxInstance::all().iter().filter(|f| f.is_audio()).map(|f| f.tag()).collect();
         let audio_in_picker: std::collections::BTreeSet<&str> =
             filter_entries(reg, true, "").iter().map(|e| e.template.tag()).collect();
-        assert_eq!(audio_in_picker, audio_kinds, "каждый аудио-вид реестра — в пикере");
-        // видео-список = все видео-шаблоны + двусторонний Slowed+Reverb
+        assert_eq!(audio_in_picker, audio_kinds, "every audio kind of the registry is in the picker");
+        // video list = all video templates + the two-sided Slowed+Reverb
         assert_eq!(filter_entries(reg, false, "").len(), old.len() + 1);
-        assert_eq!(filter_entries(reg, false, "reverb").len(), 1, "варп ищется и в видео-пикере");
-        assert_eq!(filter_entries(reg, true, "РевЕрб").len(), 1, "кириллический keyword");
-        assert_eq!(filter_entries(reg, false, "виш").len(), 0);
+        assert_eq!(filter_entries(reg, false, "reverb").len(), 1, "warp is also searched in the video picker");
+        assert_eq!(filter_entries(reg, true, "ReVerb").len(), 1, "Cyrillic keyword");
+        assert_eq!(filter_entries(reg, false, "vish").len(), 0);
         assert_eq!(filter_entries(reg, false, "vhs").len(), 1);
-        // Р.47 Кв3: "blur" находит Blur И Radial Blur
+        // R.47 Q3: “blur” finds Blur AND Radial Blur
         assert_eq!(filter_entries(reg, false, "blur").len(), 2);
         assert_eq!(filter_entries(reg, true, "gain").len(), 1);
-        assert!(filter_entries(reg, true, "vhs").is_empty(), "видео-эффект не в аудио-списке");
-        // Р.19: английские ключевые слова обязаны находить эффект В ЛЮБОМ
-        // языке — имя эффекта не переводится, и искать его будут по нему
+        assert!(filter_entries(reg, true, "vhs").is_empty(), "video effect is not in the audio list");
+        // R.19: English keywords must find the effect in ANY language — the effect name is not translated,
+        // and it will be searched by it
         for lang in crate::i18n::Lang::ALL {
             crate::i18n::set_lang(lang);
-            assert_eq!(filter_entries(reg, false, "blur").len(), 2, "blur в {}", lang.code());
-            assert_eq!(filter_entries(reg, false, "vhs").len(), 1, "vhs в {}", lang.code());
-            assert_eq!(filter_entries(reg, true, "reverb").len(), 1, "reverb в {}", lang.code());
+            assert_eq!(filter_entries(reg, false, "blur").len(), 2, "blur in {}", lang.code());
+            assert_eq!(filter_entries(reg, false, "vhs").len(), 1, "vhs in {}", lang.code());
+            assert_eq!(filter_entries(reg, true, "reverb").len(), 1, "reverb in {}", lang.code());
         }
         crate::i18n::set_lang(crate::i18n::Lang::Ru);
     }
 
-    /// Тест 543 (Р.54, п.427): встроенные варианты эффекта.
+    /// Test 543 (R.54, item 427): built-in variants of an effect.
     ///
-    /// Вариант — это НАСТРОЕННОЕ состояние того же вида, и у него ровно три
-    /// обязанности: быть тем же видом, отличаться от шаблона и лежать в
-    /// границах спек. Первая ловушка, которую тест ловит на старом коде, —
-    /// опечатка в имени параметра: `set_param` возвращает false, значение
-    /// не ставится, и вариант молча становится копией шаблона (в релизе
-    /// `debug_assert!` в `var()` не стреляет, а ячейка полоски показывает
-    /// исходный кадр).
+    /// A variant is a TUNED state of the same kind, and it has exactly three duties: to be the same kind,
+    /// to differ from the template and to lie within the
+    /// spec bounds. The first trap that the test catches
+    /// on old code — a typo in a parameter name: `set_param` returns false, the value is not set,
+    /// and the variant silently becomes a copy of the template
+    /// (in release `debug_assert!` in `var()` does not fire,
+    /// and the strip cell shows the source frame).
     #[test]
     fn t543_builtin_variants_are_distinct_and_in_range() {
         let reg = registry();
-        // порядок языков не важен, но имена читаем в известном
+        // the order of languages does not matter, but the names are read in a known way
         crate::i18n::set_lang(crate::i18n::Lang::Ru);
         let mut with_variants = 0;
         for e in reg.iter().filter(|e| e.video && e.name != "Slowed+Reverb") {
-            // забытая запись в video_variants даёт пустой список — та же
-            // ловушка, что категория-фолбэк в t48
+            // a forgotten entry in video_variants gives an empty
+            // list — the same trap as the fallback category in t48
             assert!(
                 e.variants.len() >= 2,
                 "{}: fewer than two variants (add it to video_variants)",
@@ -1251,7 +1251,7 @@ mod tests {
             let tmpl_repr = format!("{:?}", e.template);
             let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
             for v in &e.variants {
-                // тот же ВИД: вариант не подменяет эффект другим
+                // the SAME kind: a variant does not replace the effect with another
                 assert_eq!(
                     std::mem::discriminant(&v.fx),
                     std::mem::discriminant(&e.template),
@@ -1259,23 +1259,23 @@ mod tests {
                     e.name
                 );
                 let repr = format!("{:?}", v.fx);
-                // отличается от шаблона. Для Pan/Pan 3D/Color Grade/Corner
-                // Pin/Drop Shadow это ещё и условие ИКОНКИ: их шаблон —
-                // тождество, иконку рисует ПЕРВЫЙ вариант, и копия шаблона
-                // дала бы пустую картинку
+                // differs from the template. For Pan/Pan 3D/Color
+                // Grade/Corner Pin/Drop Shadow this is also the condition
+                // of the ICON: their template is an identity, the icon is drawn by the FIRST variant, and a copy of
+                // the template would give an empty picture
                 assert_ne!(repr, tmpl_repr, "{}: variant equals the template", e.name);
-                // и от остальных вариантов того же эффекта
+                // and from the other variants of the same effect
                 assert!(seen.insert(repr), "{}: two identical variants", e.name);
-                // значения в границах спек (`set_param` клампит, но Mirror
-                // собран литералом, и будущая правка может обойти var()).
+                // values within the spec bounds (`set_param`
+                // clamps, but Mirror is assembled as a literal,
+                // and a future edit may bypass var()).
                 //
-                // Проверка СТРОГАЯ намеренно, и вот почему: у f32-поля
-                // ровный потолок спеки после `set_param` оказывается ВНЕ
-                // спеки — кламп считается в f64, а запись в f32 округляет
-                // вверх (`amount` = 0.05 у Chromatic Aberration давал
-                // 0.05000000074505806). Вариант — это ВИД, а не проверка
-                // предела: упёрся в границу — отойди от неё, а не ослабляй
-                // тест допуском.
+                // The check is STRICT on purpose, and here is why: for
+                // an f32 field the exact spec ceiling after `set_param`
+                // ends up OUTSIDE the spec — the clamp is computed in f64, and the write to f32 rounds up
+                // (`amount` = 0.05 in Chromatic Aberration gave
+                // 0.05000000074505806). A variant is a KIND, not a limit check:
+                // if it hits the boundary — step away from it, do not weaken the test with a tolerance.
                 for s in v.fx.param_specs() {
                     let x = v.fx.get_param(&s.name).unwrap_or(f64::NAN);
                     assert!(
@@ -1289,9 +1289,9 @@ mod tests {
                     );
                 }
             }
-            // имена вариантов ОДНОГО эффекта различимы во всех языках:
-            // словарь общий на реестр, и «Мягко» дважды в одной полоске —
-            // это два неразличимых кликабельных места
+            // the names of variants of ONE effect are distinguishable in
+            // all languages: the dictionary is shared across the registry,
+            // and “Soft” twice in one strip would be two indistinguishable clickable places
             for lang in crate::i18n::Lang::ALL {
                 crate::i18n::set_lang(lang);
                 let mut names: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
@@ -1308,30 +1308,30 @@ mod tests {
             }
             crate::i18n::set_lang(crate::i18n::Lang::Ru);
         }
-        // счёт — свойством реестра, не константой (правило t48)
+        // the count is a property of the registry, not a constant (the t48 rule)
         assert_eq!(with_variants, video_fx_templates().len());
-        // голова полосы вариантов не имеет: она не эффект (Р.35)
-        // и в реестре её нет — проверено в t48.
+        // the head of the variants strip does not have one: it is not an effect (R.35)
+        // and it is not in the registry — checked in t48.
 
-        // поиск по имени варианта показывает СТРОКУ эффекта, и в любом
-        // языке — по английскому имени тоже (правило Р.19)
+        // a search by variant name shows the EFFECT ROW, and
+        // in any language — also by the English name (rule R.19)
         for lang in crate::i18n::Lang::ALL {
             crate::i18n::set_lang(lang);
             let by_var = filter_entries(reg, false, "blueprint");
             assert_eq!(
                 by_var.iter().map(|e| e.name).collect::<Vec<_>>(),
                 ["Edges"],
-                "blueprint → Edges в {}",
+                "blueprint → Edges in {}",
                 lang.code()
             );
         }
         crate::i18n::set_lang(crate::i18n::Lang::Ru);
         assert_eq!(
-            filter_entries(reg, false, "чертёж").iter().map(|e| e.name).collect::<Vec<_>>(),
+            filter_entries(reg, false, "blueprint").iter().map(|e| e.name).collect::<Vec<_>>(),
             ["Edges"],
-            "русское имя варианта тоже ищется"
+            "the Russian name of the variant is searched too"
         );
-        // ...и не ломает прежние счётчики: матч на уровне СТРОКИ
+        // ...and does not break the former counters: the match is at the level of the ROW
         assert_eq!(filter_entries(reg, false, "blur").len(), 2);
     }
 }

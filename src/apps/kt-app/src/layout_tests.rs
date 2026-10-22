@@ -1,13 +1,13 @@
-//! Тест 76 (п.9 р.8): ЖИВАЯ проверка вёрстки и интеракций через
-//! egui_kittest (Harness прогоняет настоящие кадры без окна и GPU).
+//! Test 76 (item 9 of round 8): a LIVE check of the layout and interactions through
+//! egui_kittest (the Harness runs real frames without a window or GPU).
 //!
-//! Заведено потому, что три поломки подряд не ловились ничем: сепаратор
-//! панели не перетаскивался, панель раздувалась контентом и съедала
-//! превью, кромки окна не давали ресайза. Чистые функции такие дефекты
-//! не видят — их видит только реальный проход layout+hit-test.
+//! It was introduced because three breakages in a row went uncaught: the panel separator
+//! did not drag, the panel swelled with its content and ate the preview, and the window edges
+//! gave no resize. Pure functions do not see such defects —
+//! only a real pass of layout+hit-test sees them.
 //!
-//! ПРАВИЛО (apps/kt-app/CLAUDE.md): любое изменение вёрстки или
-//! интерактивного поведения обязано сопровождаться тестом отсюда.
+//! RULE (apps/kt-app/CLAUDE.md): any change to the layout or the interactive behavior
+//! must be accompanied by a test from here.
 
 use crate::app::KtApp;
 use crate::i18n::{Lang, k, tr};
@@ -21,33 +21,33 @@ pub fn harness() -> Harness<'static, KtApp> {
     harness_lang(crate::i18n::Lang::Ru)
 }
 
-/// Харнесс на конкретном языке. Язык закреплён ЯВНО: иначе тест зависел бы от
-/// LANG в оболочке разработчика. Шрифты ставятся настоящие — до Р.19 все
-/// замеры ширин делались на дефолтном наборе egui, то есть не на той
-/// программе, которую запускает пользователь.
+/// A harness on a specific language. The language is fixed EXPLICITLY: otherwise the test would depend on
+/// LANG in the developer's shell. Real fonts are installed — before R.19 all
+/// width measurements were made on the default egui set, that is, not on the
+/// program the user actually runs.
 fn harness_lang(lang: crate::i18n::Lang) -> Harness<'static, KtApp> {
     harness_lang_dt(lang, None)
 }
 
-/// Тот же харнесс с управляемым шагом времени. Двойной клик у egui —
-/// ВРЕМЕННОЙ жест (два клика ближе 0.3 с), а шаг харнесса по умолчанию
-/// 0.25 с: события в соседних кадрах не складываются в двойной клик, и
-/// тест «двойной клик» проверял бы одиночный.
-/// Сколько ждать фоновую запись. Это НЕ утверждение о скорости: под полным
-/// параллельным прогоном (полтораста тестов, каждый со своим egui-контекстом)
-/// поток автосейва честно ждал своей очереди дольше пяти секунд, и тесты
-/// краснели от загрузки машины, а не от дефекта.
+/// The same harness with a controlled time step. The double click in egui is a
+/// TEMPORARY gesture (two clicks closer than 0.3 s), while the harness step by default is
+/// 0.25 s: events in neighboring frames do not add up into a double click, and the
+/// “double click” test would check a single click.
+/// How long to wait for a background write. This is NOT a claim about speed: under a full
+/// parallel run (one hundred and fifty tests, each with its own egui context)
+/// the autosave thread honestly waited its turn for longer than five seconds, and the tests
+/// turned red from the machine's load, not from a defect.
 const WAIT_BG: std::time::Duration = std::time::Duration::from_secs(60);
 
 fn harness_lang_dt(lang: crate::i18n::Lang, step_dt: Option<f32>) -> Harness<'static, KtApp> {
     crate::i18n::set_lang(lang);
     let mut app = KtApp::new_empty(None);
-    // «последний рубеж» (п.354) в харнессе выключен: тысяча создаваемых и
-    // уничтожаемых приложений сыпала бы файлами восстановления в общий
-    // каталог данных. Сам рубеж проверяет t372, включая его явно.
+    // “Last line of defense” (item 354) is switched off in the harness: a thousand created and
+    // destroyed applications would scatter recovery files into the shared
+    // data directory. The line itself is checked by t372, which enables it explicitly.
     app.recovery_on_drop = false;
-    // рабочее место (п.360) — в свой файл: общий лежит в домашнем каталоге
-    // разработчика, и полторы сотни тестов писали бы туда наперегонки
+    // The workspace (item 360) — into its own file: the shared one lies in the developer’s home directory,
+    // and a hundred and fifty tests would write there in a race
     app.workspace_file =
         Some(std::env::temp_dir().join(format!("kt-ws-{}-{:p}.json", std::process::id(), &app)));
     let mut b = Harness::builder().with_size(egui::vec2(W, H));
@@ -61,9 +61,9 @@ fn harness_lang_dt(lang: crate::i18n::Lang, step_dt: Option<f32>) -> Harness<'st
     h
 }
 
-/// Харнесс ЗАДАННОГО размера (Р.66): контракт формы проверяется в НИЗКОМ
-/// окне — там, где содержимое заведомо выше экрана и окно обязано
-/// прокручиваться, а кнопки действия оставаться на виду.
+/// A harness of a GIVEN size (R.66): the form contract is checked in a LOW
+/// window — where the content is certainly taller than the screen and the window must
+/// scroll, while the action buttons stay in view.
 pub(crate) fn harness_sized(w: f32, h: f32) -> Harness<'static, KtApp> {
     crate::i18n::set_lang(crate::i18n::Lang::Ru);
     let mut app = KtApp::new_empty(None);
@@ -79,12 +79,12 @@ pub(crate) fn harness_sized(w: f32, h: f32) -> Harness<'static, KtApp> {
     hh
 }
 
-/// ФАКТИЧЕСКИЙ прямоугольник панели (не запрошенный размер: сепаратор
-/// egui живёт у фактической границы, и именно расхождение между ними —
-/// та самая ловушка «полоска не двигается»).
+/// The ACTUAL rectangle of the panel (not the requested size: the egui separator
+/// lives at the actual boundary, and exactly the divergence between them is
+/// that very trap “the strip does not move”).
 fn panel_rect(h: &Harness<'_, KtApp>, id: &str) -> egui::Rect {
     egui::containers::panel::PanelState::load(&h.ctx, egui::Id::new(id))
-        .expect("панель должна быть отрисована")
+        .expect("the panel must be drawn")
         .outer_rect
 }
 
@@ -96,33 +96,33 @@ fn cursor(h: &Harness<'_, KtApp>) -> egui::CursorIcon {
     h.output().platform_output.cursor_icon
 }
 
-/// (а,б) Вёрстка: левая колонка в своих пределах, превью занимает центр —
-/// и НЕ схлопывается, когда контент колонки длинный (регрессия р.7.1:
-/// ScrollArea/Grid раздували панель, превью «пропадало вникуда»).
+/// (a,b) Layout: the left column within its limits, the preview takes the center —
+/// and does NOT collapse when the column's content is long (regression of round 7.1:
+/// ScrollArea/Grid swelled the panel, the preview “vanished into nowhere”).
 #[test]
 fn t76_layout_panels_and_preview_share_space() {
     let mut h = harness();
     let w = panel_width(&h, "left_col");
-    assert!((72.0..=420.0).contains(&w), "левая колонка по умолчанию вне пределов: {w}");
+    assert!((72.0..=420.0).contains(&w), "the left column is by default out of bounds: {w}");
     assert!(
         h.state().preview_rect.width() > 600.0,
-        "превью схлопнулось: {:?}",
+        "preview collapsed: {:?}",
         h.state().preview_rect
     );
 
-    // длинный контент не должен раздувать панель
+    // long content must not swell the panel
     h.state_mut().gpu_info = Some("X".repeat(400));
     h.step();
     let w2 = panel_width(&h, "left_col");
-    assert!(w2 <= w + 1.0, "длинный контент раздул колонку: было {w}, стало {w2}");
+    assert!(w2 <= w + 1.0, "long content inflated the column: was {w}, became {w2}");
     assert!(
         h.state().preview_rect.width() > 600.0,
-        "длинный контент съел превью: {:?}",
+        "long content ate the preview: {:?}",
         h.state().preview_rect
     );
 }
 
-/// (в,г) Сепаратор левой колонки: даёт курсор ресайза и реально тянется.
+/// (c,d) The separator of the left column: gives the resize cursor and really drags.
 #[test]
 fn t76_left_panel_separator_is_draggable() {
     let mut h = harness();
@@ -136,7 +136,7 @@ fn t76_left_panel_separator_is_draggable() {
     assert_eq!(
         cursor(&h),
         egui::CursorIcon::ResizeHorizontal,
-        "на сепараторе нет курсора ресайза — зону кто-то съел"
+        "no resize cursor on the separator — someone ate the zone"
     );
 
     h.drag_at(egui::pos2(w0, y));
@@ -148,27 +148,27 @@ fn t76_left_panel_separator_is_draggable() {
     let w1 = panel_rect(&h, "left_col").right();
     assert!(
         (w1 - (w0 + 90.0)).abs() < 12.0,
-        "сепаратор не потянулся: правый край был {w0}, стал {w1}"
+        "the separator did not stretch: right edge was {w0}, became {w1}"
     );
 }
 
-/// (д) Кромки и углы окна: курсор ресайза + отправленный BeginResize.
+/// (e) Edges and corners of the window: resize cursor + sent BeginResize.
 #[test]
 fn t76_window_edges_resize() {
     use egui::{CursorIcon as C, ViewportCommand as V};
     let cases: [(egui::Pos2, C); 6] = [
-        (egui::pos2(2.0, H * 0.5), C::ResizeHorizontal), // левая кромка
-        (egui::pos2(W - 2.0, H * 0.5), C::ResizeHorizontal), // правая
-        (egui::pos2(W * 0.5, 2.0), C::ResizeVertical),   // верхняя
-        (egui::pos2(W * 0.5, H - 2.0), C::ResizeVertical), // нижняя
-        (egui::pos2(3.0, 3.0), C::ResizeNwSe),           // угол СЗ
-        (egui::pos2(W - 3.0, 3.0), C::ResizeNeSw),       // угол СВ
+        (egui::pos2(2.0, H * 0.5), C::ResizeHorizontal), // left edge
+        (egui::pos2(W - 2.0, H * 0.5), C::ResizeHorizontal), // right
+        (egui::pos2(W * 0.5, 2.0), C::ResizeVertical),   // top
+        (egui::pos2(W * 0.5, H - 2.0), C::ResizeVertical), // bottom
+        (egui::pos2(3.0, 3.0), C::ResizeNwSe),           // NW corner
+        (egui::pos2(W - 3.0, 3.0), C::ResizeNeSw),       // NE corner
     ];
     for (pos, want) in cases {
         let mut h = harness();
         h.hover_at(pos);
         h.step();
-        assert_eq!(cursor(&h), want, "нет курсора ресайза в {pos:?}");
+        assert_eq!(cursor(&h), want, "no resize cursor at {pos:?}");
         h.drag_at(pos);
         h.step();
         let sent = h
@@ -176,48 +176,48 @@ fn t76_window_edges_resize() {
             .viewport_output
             .values()
             .any(|v| v.commands.iter().any(|c| matches!(c, V::BeginResize(_))));
-        assert!(sent, "BeginResize не отправлен из {pos:?}");
+        assert!(sent, "BeginResize not sent from {pos:?}");
     }
 }
 
-/// Верхняя зона (п.15 р.8): полосы на всю ширину НЕТ — превью начинается
-/// от самого верха окна; кнопки окна живут в шапке метров и кликабельны;
-/// меню в шапке колонки не раздувает панель.
+/// The top zone (item 15 of round 8): there is NO full-width strip — the preview starts
+/// from the very top of the window; the window buttons live in the header of the meters and are clickable;
+/// a menu in the column header does not swell the panel.
 #[test]
 fn t76_top_area_gives_space_to_preview() {
     let mut h = harness();
-    // п.1 р.11: превью начинается У САМОЙ кромки — полоса перетаскивания
-    // окна места больше не занимает (было ~23 px впустую)
+    // item 1 of round 11: the preview starts AT the very edge — the window drag strip
+    // no longer takes up space (it was ~23 px wasted)
     assert!(
         h.state().preview_rect.top() <= crate::app::WIN_EDGE,
-        "превью не дотянулось до верха: {:?}",
+        "preview did not reach the top: {:?}",
         h.state().preview_rect
     );
     let w = panel_width(&h, "left_col");
-    assert!(w <= 420.0, "шапка с меню раздула колонку: {w}");
-    // кнопка закрытия — правый верхний угол, внутри панели метров
+    assert!(w <= 420.0, "the header with the menu inflated the column: {w}");
+    // close button — top right corner, inside the meters panel
     h.hover_at(egui::pos2(W - 11.0, 10.0));
     h.step();
     assert_eq!(
         h.state().hover_hint.as_deref(),
         Some(tr(k::win::CLOSE)),
-        "кнопка окна не ловит наведение (её перекрыли)"
+        "the window button does not catch hover (it was covered)"
     );
 }
 
-/// (е) Зона ресайза не должна воровать клики у виджетов: кнопки тулбара
-/// внизу и кнопки окна остаются кликабельными.
+/// (f) The resize zone must not steal clicks from the widgets: the toolbar buttons
+/// at the bottom and the window buttons remain clickable.
 #[test]
 fn t76_resize_zones_do_not_steal_widgets() {
     let mut h = harness();
-    // Play-кнопка тулбара — первая слева в нижней полосе таймлайна
+    // The toolbar's play button — the first on the left in the bottom strip of the timeline
     let playing_before = h.state().player.transport.is_playing();
-    let toolbar_y = H - 20.0 - 34.0 * 0.5; // статусбар 20, полоса тулбара 34
+    let toolbar_y = H - 20.0 - 34.0 * 0.5; // status bar 20, toolbar strip 34
     h.hover_at(egui::pos2(24.0, toolbar_y));
     h.step();
     assert!(
         h.state().hover_hint.is_some(),
-        "кнопка тулбара не получает hover — её перекрыла чужая зона"
+        "the toolbar button gets no hover — a foreign zone covered it"
     );
     h.drag_at(egui::pos2(24.0, toolbar_y));
     h.step();
@@ -226,21 +226,21 @@ fn t76_resize_zones_do_not_steal_widgets() {
     assert_ne!(
         h.state().player.transport.is_playing(),
         playing_before,
-        "клик по кнопке тулбара не сработал"
+        "click on the toolbar button did not work"
     );
 }
 
-/// Тест 79 (пп.5,7 р.8): медиа-бин — режимы и раскладка.
-/// Свободная раскладка живёт в проекте (UiState, вне undo), переключение
-/// режимов её не стирает, а карточки не вылезают за панель (иначе панель
-/// растёт под контент и её сепаратор уезжает — ловушка из t76).
+/// Test 79 (items 5,7 of round 8): media bin — modes and layout.
+/// The free layout lives in the project (UiState, outside undo), switching
+/// modes does not erase it, and the cards do not stick out past the panel (otherwise the panel
+/// grows with the content and its separator drifts away — the trap from t76).
 #[test]
 fn t79_bin_modes_and_layout() {
     use kt_model::MediaId;
     let mut h = harness();
-    assert!(h.state().bin_free, "свободная раскладка — режим по умолчанию");
+    assert!(h.state().bin_free, "free layout is the default mode");
 
-    // позиции карточек переживают переключение режимов
+    // card positions survive a mode switch
     h.state_mut().bin_layout.insert(MediaId(7), egui::pos2(30.0, 40.0));
     h.state_mut().bin_free = false;
     h.step();
@@ -249,75 +249,75 @@ fn t79_bin_modes_and_layout() {
     assert_eq!(
         h.state().bin_layout.get(&MediaId(7)).copied(),
         Some(egui::pos2(30.0, 40.0)),
-        "переключение режимов сбило раскладку"
+        "switching modes broke the layout"
     );
 
-    // раскладка едет в проект и не раздувает файл, когда пуста
+    // the layout goes into the project and does not bloat the file when it is empty
     let st = h.state().ui_state_for_test();
     assert_eq!(st.bin_layout, vec![(MediaId(7), 30.0, 40.0)]);
     assert!(st.bin_free);
     let json = serde_json::to_string(&kt_model::UiState::default()).unwrap();
-    assert!(!json.contains("bin_layout"), "пустая раскладка не должна попадать в файл: {json}");
+    assert!(!json.contains("bin_layout"), "an empty layout must not go into the file: {json}");
     assert!(!json.contains("bin_free"));
 }
 
-/// Тест 83 (п.1 р.9): подсказка кнопки ОБЯЗАНА отрисоваться в строке
-/// состояния в ТОМ ЖЕ кадре. Регрессия: статусбар — вторая панель кадра,
-/// а кнопки рисуются позже, поэтому он всегда видел hover_hint = None и
-/// показывал дежурную строку. Прошлые тесты читали внутреннее поле после
-/// кадра и были ложно-зелёными — здесь проверяется ОТРИСОВАННОЕ.
+/// Test 83 (item 1 of round 9): a button's hint MUST be drawn in the status line in the
+/// SAME frame. Regression: the status bar is the second panel of the frame, while the
+/// buttons are drawn later, so it always saw hover_hint = None and
+/// showed the default line. Earlier tests read the internal field after the frame
+/// and were falsely green — here what is DRAWN is what gets checked.
 #[test]
 fn t83_hints_reach_status_line() {
     use crate::app::HintKind;
     let mut h = harness();
-    assert_eq!(h.state().status_line_shown.1, HintKind::Idle, "без наведения — дежурная строка");
+    assert_eq!(h.state().status_line_shown.1, HintKind::Idle, "without hover — the standby line");
 
-    let toolbar_y = H - 20.0 - 34.0 * 0.5; // статусбар 20 + полоса тулбара 34
+    let toolbar_y = H - 20.0 - 34.0 * 0.5; // status bar 20 + toolbar strip 34
     for (pos, want) in [
-        (egui::pos2(24.0, toolbar_y), tr(k::tb::PLAY_PAUSE)), // тулбар (рисуется ПОСЛЕ статусбара)
-        (egui::pos2(W - 11.0, 10.0), tr(k::win::CLOSE)),      // кнопки окна (ещё позже)
-        (egui::pos2(14.0, 40.0), tr(k::bin::HINT_FREE)),      // бин
+        (egui::pos2(24.0, toolbar_y), tr(k::tb::PLAY_PAUSE)), // the toolbar (drawn AFTER the status bar)
+        (egui::pos2(W - 11.0, 10.0), tr(k::win::CLOSE)),      // window buttons (even later)
+        (egui::pos2(14.0, 40.0), tr(k::bin::HINT_FREE)),      // bin
     ] {
         let mut h = harness();
         h.hover_at(pos);
         h.step();
         let (text, kind) = h.state().status_line_shown.clone();
-        assert!(text.starts_with(want), "из {pos:?} ждали «{want}», в строке состояния «{text}»");
+        assert!(text.starts_with(want), "from {pos:?} expected “{want}”, in the status line “{text}”");
         assert_eq!(kind, HintKind::Hover);
     }
 
-    // всплывающих подсказок в программе нет (п.14 р.8)
+    // there are no pop-up hints in the program (item 14 of round 8)
     h.hover_at(egui::pos2(24.0, toolbar_y));
     h.step();
     h.step();
     assert!(
         h.ctx.memory(|m| m.layer_ids().all(|l| l.order != egui::Order::Tooltip)),
-        "вернулся всплывающий тултип"
+        "the pop-up tooltip came back"
     );
 }
 
-/// Тест 85 (п.2 р.9): окно таскается за верх В ЛЮБОЙ точке ширины —
-/// раньше между шапкой колонки и кнопками окна зияла дыра над превью.
+/// Test 85 (item 2 of round 9): the window drags from the top at ANY point of the width —
+/// previously there was a hole above the preview between the column header and the window buttons.
 #[test]
 fn t85_top_drag_is_continuous() {
     use egui::ViewportCommand as V;
     for x in [120.0f32, W * 0.5, W - 200.0] {
         let mut h = harness();
-        h.drag_at(egui::pos2(x, 14.0)); // ниже кромки ресайза (8 px)
+        h.drag_at(egui::pos2(x, 14.0)); // below the resize edge (8 px)
         h.step();
-        h.hover_at(egui::pos2(x + 20.0, 18.0)); // реальный жест: сдвиг мыши
+        h.hover_at(egui::pos2(x + 20.0, 18.0)); // real gesture: mouse movement
         h.step();
         let sent = h
             .output()
             .viewport_output
             .values()
             .any(|v| v.commands.iter().any(|c| matches!(c, V::StartDrag)));
-        assert!(sent, "окно не таскается за верх при x={x}");
+        assert!(sent, "the window is not dragged along the top edge at x={x}");
     }
 
-    // п.11 р.13: в РАЗВЁРНУТОМ окне ресайза нет, поэтому верхние WIN_EDGE
-    // пикселей раньше были мёртвыми — «полоска, по которой бесполезно
-    // тянуть». Теперь драг начинается от самой кромки.
+    // item 11 of round 13: in a MAXIMIZED window there is no resize, so the top WIN_EDGE
+    // pixels used to be dead — “a strip along which it is useless
+    // to drag”. Now the drag starts from the very edge.
     let mut h = harness();
     h.input_mut().viewports.entry(egui::ViewportId::ROOT).or_default().maximized = Some(true);
     h.step();
@@ -330,18 +330,18 @@ fn t85_top_drag_is_continuous() {
         .viewport_output
         .values()
         .any(|v| v.commands.iter().any(|c| matches!(c, V::StartDrag | V::Maximized(false))));
-    assert!(sent, "в развёрнутом окне верхняя кромка не тянет окно");
+    assert!(sent, "in a maximized window the top edge does not drag the window");
 }
 
-/// Тест 86 (пп.3,10 р.9): метры прижаты к правому краю окна, а при
-/// минимальном окне 640×640 шапка (кнопки окна) не вытесняется таймлайном
-/// и превью не схлопывается.
+/// Test 86 (items 3,10 of round 9): the meters are pinned to the right edge of the window, and at
+/// the minimum window 640×640 the header (window buttons) is not pushed out by the timeline
+/// and the preview does not collapse.
 #[test]
 fn t86_meters_edge_and_min_window() {
     let mut h = harness();
     let p = panel_rect(&h, "meters_col");
-    assert!((W - p.right()).abs() < 1.5, "панель метров не у края: {p:?}");
-    // у самой кромки окна метр обязан ловить наведение (нет мёртвой зоны)
+    assert!((W - p.right()).abs() < 1.5, "meter panel is not at the edge: {p:?}");
+    // at the very edge of the window the meter must catch hover (no dead zone)
     h.hover_at(egui::pos2(W - 3.0, H * 0.35));
     h.step();
     assert!(
@@ -350,11 +350,11 @@ fn t86_meters_edge_and_min_window() {
             .status_line_shown
             .0
             .starts_with(want)),
-        "у правого края зазор: в строке «{}»",
+        "a gap at the right edge: in the line “{}”",
         h.state().status_line_shown.0
     );
 
-    // минимальное окно
+    // minimum window
     let app = KtApp::new_empty(None);
     let (w, hh) = (640.0f32, 640.0f32);
     let mut h = Harness::builder()
@@ -368,38 +368,38 @@ fn t86_meters_edge_and_min_window() {
     assert_eq!(
         h.state().status_line_shown.0,
         tr(k::win::CLOSE),
-        "при 640×640 шапку вытеснил таймлайн"
+        "at 640×640 the timeline pushed out the header"
     );
     assert!(
         h.state().preview_rect.height() > 60.0,
-        "превью схлопнулось: {:?}",
+        "preview collapsed: {:?}",
         h.state().preview_rect
     );
 }
 
-/// Тест 88 (п.11 р.9): прыжок по точкам остановки ПОКАЗЫВАЕТ курсор —
-/// раньше playhead уезжал, а окно таймлайна оставалось на месте (на паузе
-/// follow_view не работает по построению).
+/// Test 88 (item 11 of round 9): a jump to stop points SHOWS the cursor —
+/// previously the playhead drifted away while the timeline window stayed in place (during pause
+/// follow_view does not work by construction).
 #[test]
 fn t88_jump_reveals_cursor() {
     let mut h = harness();
     h.state_mut().view_start = 5_000_000.0;
     h.step();
-    h.state_mut().jump_stop(false, true); // Shift+Home — в начало проекта
+    h.state_mut().jump_stop(false, true); // Shift+Home — to the start of the project
     h.step();
     let st = h.state();
     let vis =
         (st.timeline_rect.width() as f64 - crate::timeline::GUTTER_W as f64) * st.ticks_per_px;
     let ph = st.player.transport.playhead().0 as f64;
     let vs = st.view_start;
-    assert!(ph >= vs && ph <= vs + vis, "курсор вне окна: ph={ph}, окно=[{vs}, {}]", vs + vis);
+    assert!(ph >= vs && ph <= vs + vis, "cursor outside the window: ph={ph}, window=[{vs}, {}]", vs + vis);
 }
 
-/// Тест 94 (пп.7,8 р.10): кнопка «Вперёд» РЕАЛЬНО двигает курсор вправо,
-/// повторные нажатия дают монотонную цепочку без застревания, и хоткеи
-/// A/D делают то же самое. Регрессия: playhead живёт в аудиокадрах, а
-/// точки остановки — в тиках; round-trip усекал вниз, курсор вставал на
-/// тик левее цели, и next_stop бесконечно находил ту же точку.
+/// Test 94 (items 7,8 of round 10): the “Forward” button REALLY moves the cursor to the right,
+/// repeated presses give a monotonic chain without sticking, and the hotkeys
+/// A/D do the same. Regression: the playhead lives in audio frames, while the
+/// stop points live in ticks; the round-trip truncated downward, the cursor landed one
+/// tick left of the target, and next_stop kept finding the same point endlessly.
 #[test]
 fn t94_forward_navigation_advances() {
     use kt_model::*;
@@ -407,7 +407,7 @@ fn t94_forward_navigation_advances() {
     let mut h = harness();
     {
         let app = h.state_mut();
-        // проект с точками, НЕ кратными аудио-сетке: 1000, 4000, 7000
+        // a project with stop points NOT multiple of the audio grid: 1000, 4000, 7000
         let mut p = app.model.project().clone();
         p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         p.clips.push(ClipEvent {
@@ -440,52 +440,52 @@ fn t94_forward_navigation_advances() {
     }
     h.step();
 
-    // цепочка вперёд обязана быть строго возрастающей
+    // the chain forward must be strictly increasing
     let mut seen = vec![h.state().player.transport.playhead().0];
     for _ in 0..3 {
         h.state_mut().jump_stop(true, false);
         h.step();
         let now = h.state().player.transport.playhead().0;
-        assert!(now > *seen.last().unwrap(), "курсор не двинулся вперёд: цепочка {seen:?} → {now}");
+        assert!(now > *seen.last().unwrap(), "the cursor did not move forward: chain {seen:?} → {now}");
         seen.push(now);
     }
-    // и ни один прыжок не утащил назад
-    assert!(seen.windows(2).all(|w| w[1] > w[0]), "не монотонно: {seen:?}");
-    // на самой правой точке дальше двигаться некуда — и НЕ отбрасывает назад
+    // and no jump dragged it back
+    assert!(seen.windows(2).all(|w| w[1] > w[0]), "not monotonic: {seen:?}");
+    // at the rightmost point there is nowhere further to move — and it does NOT throw back
     let last = *seen.last().unwrap();
     h.state_mut().jump_stop(true, false);
     h.step();
     assert_eq!(
         h.state().player.transport.playhead().0,
         last,
-        "упор в конец не должен утаскивать курсор назад"
+        "hitting the end must not pull the cursor back"
     );
 
-    // назад — тоже монотонно, до нуля
+    // backward — also monotonic, down to zero
     for _ in 0..6 {
         h.state_mut().jump_stop(false, false);
         h.step();
     }
-    assert_eq!(h.state().player.transport.playhead().0, 0, "не дошли до нуля");
+    assert_eq!(h.state().player.transport.playhead().0, 0, "did not reach zero");
 }
 
-/// Тест 95 (п.2 р.11): магнит РЕАЛЬНО притягивает клип к границе соседа.
+/// Test 95 (item 2 of round 11): the magnet REALLY pulls the clip to the neighbor's edge.
 ///
-/// Дефект: кандидаты «примагнитить по началу» и «по концу» сравнивались
-/// после подстановки «не нашлось = как есть», и такой кандидат со
-/// смещением 0 всегда побеждал — жёлтая линия рисовалась, а клип не
-/// прилипал. Тест ведёт мышь как человек (нажать, сдвинуть, отпустить) и
-/// проверяет ИТОГОВУЮ модель, а не внутренние поля.
+/// Defect: the candidates “snap to the start” and “snap to the end” were compared
+/// after substituting “not found = as is”, and such a candidate with an offset of 0
+/// always won — the yellow line was drawn, but the clip did not stick.
+/// The test drives the mouse like a person (press, move, release) and checks
+/// the FINAL model, not the internal fields.
 #[test]
 fn t95_clip_drag_snaps_to_neighbour() {
     use kt_model::*;
     use kt_time::Tick;
 
-    // тики/px = 1000 → порог магнита 10 px = 10 000 тиков
+    // ticks/px = 1000 → magnet threshold 10 px = 10,000 ticks
     const TPP: f64 = 1000.0;
     const DUR: i64 = 90_000;
-    const NEIGHBOUR_END: i64 = DUR; // сосед [0, 90000)
-    const FAR: i64 = 200_000; // таскаемый клип
+    const NEIGHBOUR_END: i64 = DUR; // neighbor [0, 90000)
+    const FAR: i64 = 200_000; // the clip being dragged
 
     fn scene(ctrl: bool) -> (i64, i64) {
         let mut h = harness();
@@ -526,7 +526,7 @@ fn t95_clip_drag_snaps_to_neighbour() {
         }
         h.step();
 
-        let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+        let g = h.state().tl_geom.clone().expect("no timeline geometry");
         let y = g.lane_y(ClipKind::Video, 0, 0.5);
         let grab = g.tick_to_x(FAR + DUR / 2);
         if ctrl {
@@ -536,16 +536,16 @@ fn t95_clip_drag_snaps_to_neighbour() {
         h.step();
         h.drag_at(egui::pos2(grab, y));
         h.step();
-        // сдвиг на 8 px — здесь egui и признаёт драг начавшимся
+        // a shift by 8 px — this is where egui recognizes the drag as started
         h.hover_at(egui::pos2(grab - 8.0, y));
         h.step();
 
-        // целимся так, чтобы НАЧАЛО оказалось на 4 px правее конца соседа:
-        // магнит должен дотянуть, «без магнита» — оставить как есть.
+        // we aim so that the START ends up 4 px to the right of the neighbor's END:
+        // the magnet must pull it in, “without the magnet” must leave it as is.
         let want_raw = NEIGHBOUR_END + (4.0 * TPP) as i64;
         let grab_dt = match h.state().drag {
             Some(crate::timeline::Drag::Clip(ref d)) => d.grab_dt,
-            _ => panic!("драг клипа не начался — его перехватил кто-то другой"),
+            _ => panic!("clip drag did not start — someone else intercepted it"),
         };
         let to = g.tick_to_x(want_raw + grab_dt);
         h.hover_at(egui::pos2(to, y));
@@ -560,39 +560,39 @@ fn t95_clip_drag_snaps_to_neighbour() {
             .clips
             .iter()
             .find(|c| c.id == ClipId(2))
-            .expect("клип пропал")
+            .expect("clip disappeared")
             .start
             .0;
         (start, want_raw)
     }
 
     let (snapped, _) = scene(false);
-    assert_eq!(snapped, NEIGHBOUR_END, "магнит не притянул клип к соседу");
+    assert_eq!(snapped, NEIGHBOUR_END, "magnet did not pull the clip to its neighbor");
 
     let (free, raw) = scene(true);
     assert!(
         (free - raw).abs() <= 2 * TPP as i64,
-        "Ctrl обязан снимать магнит: клип встал в {free}, ждали ≈{raw}"
+        "Ctrl must disable the magnet: clip landed at {free}, expected ≈{raw}"
     );
-    assert_ne!(free, NEIGHBOUR_END, "Ctrl не снял магнит");
+    assert_ne!(free, NEIGHBOUR_END, "Ctrl did not disable the magnet");
 }
 
-/// Тест 96 (пп.3,4,5 р.11): грязность проекта и loop.
+/// Test 96 (items 3,4,5 of round 11): project dirtiness and loop.
 ///
-/// «Правки содержимого» (клипы, FX, метки) поднимают звёздочку и
-/// запускают автосейв; «правки удобства» (регион, loop, зум, раскладка
-/// бина, имена дорожек) — нет, они доезжают на диск попутно. Esc снимает
-/// регион, но НЕ гасит взведённый loop — это отдельное намерение.
+/// “Content edits” (clips, FX, markers) raise the asterisk and start the autosave;
+/// “convenience edits” (region, loop, zoom, bin layout, track names) do not —
+/// they reach the disk along the way. Esc clears the region, but does NOT switch off
+/// an armed loop — that is a separate intention.
 #[test]
 fn t96_dirty_split_and_loop_survives_esc() {
     use kt_model::*;
     use kt_time::Tick;
 
     let mut h = harness();
-    assert!(!h.state().dirty_content && !h.state().dirty_ui, "свежий проект чист");
+    assert!(!h.state().dirty_content && !h.state().dirty_ui, "a fresh project is clean");
 
-    // --- удобства: регион, loop, зум, раскладка бина (имя дорожки с Р.62
-    // — СОДЕРЖИМОЕ модели и проверяется ниже, вместе с правками монтажа)
+    // --- conveniences: region, loop, zoom, bin layout (the track name from R.62
+    // — the CONTENT of the model is checked below, together with the edit changes)
     h.state_mut().model.set_region(Region::normalized(Tick(0), Tick(90_000)));
     h.state_mut().on_region_changed();
     h.state_mut().toggle_loop();
@@ -601,35 +601,35 @@ fn t96_dirty_split_and_loop_survives_esc() {
     h.step();
     assert!(
         !h.state().dirty_content,
-        "удобства не должны помечать проект изменённым (звёздочка врёт)"
+        "conveniences must not mark the project as changed (the asterisk lies)"
     );
-    assert!(h.state().dirty_ui, "удобства обязаны быть учтены как ui-правки");
+    assert!(h.state().dirty_ui, "conveniences must be counted as UI edits");
 
-    // --- содержимое: правка модели
+    // --- content: a model edit
     h.state_mut().apply(Command::AddMarker { at: Tick(45_000), duration: Tick::ZERO });
     h.step();
-    assert!(h.state().dirty_content, "правка содержимого обязана дать звёздочку");
+    assert!(h.state().dirty_content, "a content edit must give an asterisk");
 
-    // --- Esc: регион снят, loop ОСТАЁТСЯ взведённым
-    assert!(h.state().model.project().loop_enabled, "loop включён");
+    // --- Esc: region cleared, loop STAYS armed
+    assert!(h.state().model.project().loop_enabled, "loop is on");
     h.state_mut().escape_action();
     h.step();
-    assert!(h.state().model.project().region.is_none(), "Esc не снял регион");
+    assert!(h.state().model.project().region.is_none(), "Esc did not clear the region");
     assert!(
         h.state().model.project().loop_enabled,
-        "Esc погасил loop — это отдельное намерение пользователя (п.3 р.11)"
+        "Esc turned off the loop — that is a separate user intent (item 3 round 11)"
     );
-    // явное «Снять регион» по-прежнему гасит и loop (иначе лампочка горит
-    // без региона и переживает рестарт — п.16 р.6)
+    // an explicit “Clear region” still switches off the loop too (otherwise the lamp stays lit
+    // without a region and survives a restart — item 16 of round 6)
     h.state_mut().model.set_region(Region::normalized(Tick(0), Tick(90_000)));
     h.state_mut().clear_region();
-    assert!(!h.state().model.project().loop_enabled, "явная команда обязана гасить loop");
+    assert!(!h.state().model.project().loop_enabled, "an explicit command must turn off the loop");
 
-    // --- автосейв не срабатывает чаще положенного и не пишет во время жеста
-    assert!(!h.state().autosave_due(), "автосейв сразу после старта — слишком часто");
+    // --- the autosave does not fire more often than due and does not write during a gesture
+    assert!(!h.state().autosave_due(), "autosave right after start — too often");
 }
 
-/// Тест 97 (пп.1,7,8 р.11): верх превью, предел ширины метров, LED-сетка.
+/// Test 97 (items 1,7,8 of round 11): top of the preview, the width limit of the meters, LED grid.
 #[test]
 fn t97_top_meters_and_leds() {
     use crate::meters::{
@@ -637,51 +637,51 @@ fn t97_top_meters_and_leds() {
         zone_color,
     };
 
-    // --- (п.1 р.12) шаг сетки подбирается под высоту бара: сегменты
-    // должны быть ЧАСТЫМИ (как в v1 — 6 px + 2 px), а не крупными
+    // --- (item 1 of round 12) the grid step is chosen to fit the bar height: the segments
+    // must be FREQUENT (as in v1 — 6 px + 2 px), not large
     for bar_h in [180.0f32, 300.0, 420.0, 560.0, 700.0] {
         let step = seg_db_for(bar_h);
         let px = bar_h * step / (METER_MAX_DB - METER_MIN_DB);
         assert!(
             (4.5..=9.5).contains(&px),
-            "при баре {bar_h} px шаг сегмента {px} px (шаг {step} dB) — сетка не как в v1"
+            "with bar {bar_h} px, the segment step {px} px (step {step} dB) — the grid is not as in v1"
         );
-        assert!(SEG_STEPS.contains(&step), "шаг {step} не из списка делителей зон");
+        assert!(SEG_STEPS.contains(&step), "step {step} is not from the list of zone divisors");
     }
-    // на типичной высоте панели сегментов заметно больше прежних 36
-    assert!(seg_count(seg_db_for(500.0)) >= 60, "сегментов мало: {}", seg_count(seg_db_for(500.0)));
+    // at a typical panel height the segments are noticeably more than the former 36
+    assert!(seg_count(seg_db_for(500.0)) >= 60, "too few segments: {}", seg_count(seg_db_for(500.0)));
 
-    // --- свойства для КАЖДОГО допустимого шага
+    // --- properties for EVERY allowed step
     for step in SEG_STEPS {
         let n = seg_count(step);
-        assert_eq!(led_lit(METER_MIN_DB, step), 0, "тишина — всё погашено");
+        assert_eq!(led_lit(METER_MIN_DB, step), 0, "silence — everything is off");
         assert_eq!(led_lit(METER_MIN_DB - 20.0, step), 0);
-        assert_eq!(led_lit(METER_MAX_DB, step), n, "клип — шкала до верха");
-        assert_eq!(led_lit(METER_MAX_DB + 6.0, step), n, "перегруз не выходит за шкалу");
+        assert_eq!(led_lit(METER_MAX_DB, step), n, "clip — the scale up to the top");
+        assert_eq!(led_lit(METER_MAX_DB + 6.0, step), n, "overload does not go beyond the scale");
         let mut prev = 0;
         let mut db = METER_MIN_DB;
         while db <= METER_MAX_DB {
             let lit = led_lit(db, step);
-            assert!(lit >= prev, "немонотонно при {db} dB, шаг {step}");
+            assert!(lit >= prev, "not monotonic at {db} dB, step {step}");
             prev = lit;
             db += 0.1;
         }
-        // ни один сегмент не пересекает границу цветовой зоны — иначе он
-        // был бы двухцветным и «горел наполовину»
+        // no segment crosses the boundary of a colour zone — otherwise it would be
+        // two-coloured and would “burn half-way”
         for i in 0..n {
             let lo = METER_MIN_DB + i as f32 * step + 0.01;
             let hi = METER_MIN_DB + (i + 1) as f32 * step - 0.01;
-            assert_eq!(zone_color(lo), zone_color(hi), "сегмент {i} шага {step} двухцветный");
-            assert_eq!(zone_color(seg_mid_db(i, step)), zone_color(lo), "цвет сегмента {i}");
+            assert_eq!(zone_color(lo), zone_color(hi), "segment {i} of step {step} is two-colored");
+            assert_eq!(zone_color(seg_mid_db(i, step)), zone_color(lo), "color of segment {i}");
         }
     }
 
     let mut h = harness();
-    // --- (п.1) превью начинается у самой кромки окна
+    // --- (item 1) the preview starts at the very edge of the window
     let top = h.state().preview_rect.top();
-    assert!(top <= crate::app::WIN_EDGE, "превью не у верха: {top}");
+    assert!(top <= crate::app::WIN_EDGE, "preview is not at the top: {top}");
 
-    // клик в полосе перетаскивания окна НЕ должен играть/ставить паузу
+    // a click on the window drag strip must NOT play/pause
     let playing = h.state().player.transport.is_playing();
     let x = h.state().preview_rect.center().x;
     h.drag_at(egui::pos2(x, crate::app::WIN_EDGE + 4.0));
@@ -691,10 +691,10 @@ fn t97_top_meters_and_leds() {
     assert_eq!(
         h.state().player.transport.is_playing(),
         playing,
-        "клик в полосе драга окна дёрнул воспроизведение"
+        "a click in the window drag strip started playback"
     );
-    // а ниже полосы — обычный клик по превью (play/pause с задержкой на
-    // распознавание двойного клика)
+    // but below the strip — an ordinary click on the preview (play/pause with a delay for
+    // double-click recognition)
     let y = h.state().preview_rect.center().y;
     h.drag_at(egui::pos2(x, y));
     h.step();
@@ -702,16 +702,16 @@ fn t97_top_meters_and_leds() {
     h.step();
     assert!(
         h.state().preview_click_at.is_some() || h.state().player.transport.is_playing() != playing,
-        "клик по превью не дошёл"
+        "click on the preview did not arrive"
     );
 
-    // --- (п.3 р.12) линейка не тратит место: полоса под метки убрана,
-    // имя метки живёт на строке подписей времени
-    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    // --- (item 3 of round 12) the ruler takes no space: the strip for labels is removed,
+    // the marker name lives on the time-label row
+    let g = h.state().tl_geom.clone().expect("no timeline geometry");
     let ruler = g.lane_top(kt_model::ClipKind::Video, 0) - g.rect.top();
-    assert!(ruler <= 36.0, "линейка съела {ruler} px до первой дорожки — место тратится впустую");
+    assert!(ruler <= 36.0, "the ruler ate {ruler} px before the first track — the space is wasted");
 
-    // --- (п.7) панель метров нельзя растянуть на пол-экрана
+    // --- (item 7) the meters panel cannot be stretched to half the screen
     let sep = panel_rect(&h, "meters_col").left();
     let mid = H * 0.5;
     h.hover_at(egui::pos2(sep, mid));
@@ -723,9 +723,9 @@ fn t97_top_meters_and_leds() {
     h.drop_at(egui::pos2(W * 0.4, mid));
     h.step();
     let w = panel_width(&h, "meters_col");
-    assert!(w <= 90.0, "метры растянулись на {w} px — нет верхнего предела");
-    assert!(w > 75.0, "сепаратор метров вообще не потянулся ({w}) — тест ничего не проверил");
-    // тот же класс: левая колонка не должна занимать пол-окна
+    assert!(w <= 90.0, "meters stretched by {w} px — there is no upper limit");
+    assert!(w > 75.0, "the meter separator did not stretch at all ({w}) — the test checked nothing");
+    // the same class: the left column must not take half the window
     let sep = panel_rect(&h, "left_col").right();
     h.hover_at(egui::pos2(sep, mid));
     h.step();
@@ -737,46 +737,46 @@ fn t97_top_meters_and_leds() {
     h.step();
     h.drop_at(egui::pos2(W * 0.9, mid));
     h.step();
-    // п.4 р.13: предел бина — 70 % окна (не ужимать!), тянуться обязан
+    // item 4 of round 13: the bin limit is 70% of the window (do not squeeze!), it must stretch
     let lw = panel_width(&h, "left_col");
-    assert!(lw <= W * 0.7 + 1.0, "левая колонка вышла за предел: {lw}");
-    assert!(lw > 600.0, "медиа-бин снова зажат ({lw} px) — предел ставился по прямой просьбе");
+    assert!(lw <= W * 0.7 + 1.0, "left column went past the limit: {lw}");
+    assert!(lw > 600.0, "the media bin is clamped again ({lw} px) — the limit was set by a direct request");
 }
 
-/// Тест 98 (п.9 р.11): маска ввода таймкода.
+/// Test 98 (item 9 of round 11): the timecode input mask.
 ///
-/// Требования пользователя: набор СПРАВА НАЛЕВО, ширина тулбара не
-/// скачет при открытии маски, работает во время воспроизведения, и это
-/// не «просто воткнутый inputfield» — рисуется в том же прямоугольнике и
-/// тем же шрифтом, что сам тайм-код.
+/// The user's requirements: entry RIGHT TO LEFT, the toolbar width does not
+/// jump when the mask opens, it works during playback, and this is
+/// not a “simply plugged-in inputfield” — it is drawn in the same rectangle
+/// and in the same font as the timecode itself.
 #[test]
 fn t98_timecode_mask() {
     use crate::util::{mask_digits, mask_text, mask_to_tick};
 
-    // цифры вдвигаются справа, ненабранные старшие разряды — нули
+    // digits slide in from the right, the unentered high digits are zeros
     assert_eq!(mask_digits(""), "000000");
     assert_eq!(mask_digits("7"), "000007");
     assert_eq!(mask_digits("130"), "000130");
     assert_eq!(mask_digits("123456"), "123456");
-    // лишние цифры не ломают маску: держим последние шесть
+    // extra digits do not break the mask: the last six are kept
     assert_eq!(mask_digits("9123456"), "123456");
-    // разбор: 00:01:30; минуты/секунды не нормализуются (99 минут — можно)
+    // parse: 00:01:30; minutes/seconds are not normalized (99 minutes — allowed)
     assert_eq!(mask_to_tick("130", 30).0, 90_000 * 90);
     assert_eq!(mask_to_tick("9900", 30).0, 90_000 * 99 * 60);
-    // подсветка: набранное — справа, ненабранное — слева приглушённо
+    // highlight: what is typed — on the right, what is not typed — on the left, muted
     let (dimmed, typed) = mask_text("130");
-    assert_eq!(dimmed, "00:0", "ненабранная часть слева");
-    assert_eq!(typed, "1:30", "набранное справа");
-    assert_eq!(mask_text("").1, "", "ничего не набрано — подсвечивать нечего");
-    // вставка готового тайм-кода раскладывается по разрядам
+    assert_eq!(dimmed, "00:0", "unfilled part on the left");
+    assert_eq!(typed, "1:30", "typed part on the right");
+    assert_eq!(mask_text("").1, "", "nothing typed — nothing to highlight");
+    // pasting a ready timecode is laid out by digit positions
     assert_eq!(
         crate::util::tick_to_mask(
-            crate::util::parse_timecode("1:02:03", 30).expect("не разобрался")
+            crate::util::parse_timecode("1:02:03", 30).expect("did not understand")
         ),
         "010203"
     );
-    // ОТРИЦАТЕЛЬНОЕ время (зона до нуля внутри ленты, Р.58 п.462) — знак и
-    // поля от |t|, а не набор отрицательных полей
+    // NEGATIVE time (the zone up to zero inside the reel, R.58 item 462) — the sign and
+    // the fields come from |t|, not from a set of negative fields
     assert_eq!(
         crate::util::format_timecode(kt_time::Tick(-90_000 - 3_000), 30),
         "-00:00:01.033 F01"
@@ -785,65 +785,65 @@ fn t98_timecode_mask() {
     assert_eq!(crate::timeline::format_ruler_time_step(-45_000, 9_000), "-0:00.5");
     assert_eq!(crate::timeline::format_ruler_time_step(-60 * 90_000, 90_000), "-1:00");
 
-    // --- ширина тулбара не меняется при открытии маски
+    // --- the toolbar width does not change when the mask opens
     let mut h = harness();
     let strip_h = |h: &Harness<'_, KtApp>| h.state().tl_geom.clone().map(|g| g.rect.height());
     let before = strip_h(&h);
     h.state_mut().tc_edit = Some(String::new());
     h.state_mut().tc_edit_focus = true;
     h.step();
-    assert_eq!(strip_h(&h), before, "открытие маски сдвинуло вёрстку таймлайна");
+    assert_eq!(strip_h(&h), before, "opening the mask shifted the timeline layout");
 
-    // --- при открытой маске пробел НЕ запускает воспроизведение
+    // --- with the mask open, the space key does NOT start playback
     let playing = h.state().player.transport.is_playing();
     h.key_press(egui::Key::Space);
     h.step();
-    assert_eq!(h.state().player.transport.is_playing(), playing, "пробел утёк в хоткеи мимо маски");
+    assert_eq!(h.state().player.transport.is_playing(), playing, "space leaked into hotkeys past the mask");
 
-    // --- ПОВТОРНЫЙ вызов (п.8 р.12): после Enter маска обязана отдать
-    // фокус, иначе все горячие клавиши мертвы до клика мышью
+    // --- a REPEATED call (item 8 of round 12): after Enter the mask must return
+    // focus, otherwise all hotkeys are dead until a mouse click
     h.key_press(egui::Key::Escape);
     h.step();
-    assert!(h.state().tc_edit.is_none(), "Esc не закрыл маску");
+    assert!(h.state().tc_edit.is_none(), "Esc did not close the mask");
     assert!(
         !h.ctx.egui_wants_keyboard_input(),
-        "маска закрылась, но фокус не отдан — хоткеи мертвы"
+        "the mask closed, but focus was not returned — hotkeys are dead"
     );
     h.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::L);
     h.step();
-    assert!(h.state().tc_edit.is_some(), "второй Ctrl+L не открыл маску");
+    assert!(h.state().tc_edit.is_some(), "the second Ctrl+L did not open the mask");
 
-    // --- ввод цифр и Enter переводят курсор (и не требуют паузы)
+    // --- digit input and Enter move the cursor (and do not require a pause)
     h.event(egui::Event::Text("130".into()));
     h.step();
     h.key_press(egui::Key::Enter);
     h.step();
-    assert!(h.state().tc_edit.is_none(), "Enter не закрыл маску");
-    assert_eq!(h.state().player.transport.playhead().0 / 90_000, 90, "курсор не встал на 00:01:30");
-    // подмотка отрабатывает тем же кадром: запрос уже погашен, а курсор
-    // виден в окне (иначе «перешёл, но не видно»)
-    assert!(h.state().pending_reveal.is_none(), "запрос подмотки завис");
-    // и после ПРИМЕНЕНИЯ маска тоже отдаёт фокус — Ctrl+L работает снова
-    assert!(!h.ctx.egui_wants_keyboard_input(), "после Enter фокус остался на маске");
+    assert!(h.state().tc_edit.is_none(), "Enter did not close the mask");
+    assert_eq!(h.state().player.transport.playhead().0 / 90_000, 90, "the cursor did not land on 00:01:30");
+    // the seek is applied in the same frame: the request is already cleared, and the cursor is
+    // visible in the window (otherwise “moved but not visible”)
+    assert!(h.state().pending_reveal.is_none(), "the seek request hung");
+    // and after APPLYING the mask also returns focus — Ctrl+L works again
+    assert!(!h.ctx.egui_wants_keyboard_input(), "after Enter the focus stayed on the mask");
     h.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::L);
     h.step();
-    assert!(h.state().tc_edit.is_some(), "Ctrl+L после Enter не сработал");
+    assert!(h.state().tc_edit.is_some(), "Ctrl+L did not work after Enter");
     h.key_press(egui::Key::Escape);
     h.step();
-    let g = h.state().tl_geom.clone().expect("нет геометрии");
+    let g = h.state().tl_geom.clone().expect("no geometry");
     let x = g.tick_to_x(90 * 90_000);
     assert!(
         (g.rect.left()..=g.rect.right()).contains(&x),
-        "после перехода курсор вне видимой области: x={x}, окно {:?}",
+        "after the jump the cursor is outside the visible area: x={x}, window {:?}",
         g.rect
     );
 }
 
-/// Тест 99 (п.13 р.11): группы карточек медиа-бина.
+/// Test 99 (item 13 of round 11): groups of cards in the media bin.
 ///
-/// Проверяем ЖИВЫЕ сценарии: рамка выделения ловит карточки, группа
-/// едет целиком и не выпускает карточки за край панели, замок держит,
-/// удаление медиа не оставляет висячих групп, пустое не попадает в файл.
+/// We check LIVE scenarios: the selection outline catches the cards, the group
+/// moves as a whole and does not let cards out past the panel edge, the lock holds,
+/// deleting media leaves no dangling groups, and an empty one does not get into the file.
 #[test]
 fn t99_bin_groups() {
     use kt_model::{BinGroup, MediaId, MediaRef};
@@ -860,70 +860,70 @@ fn t99_bin_groups() {
         app.bin_free = true;
         app.bin_layout.insert(MediaId(1), egui::pos2(0.0, 0.0));
         app.bin_layout.insert(MediaId(2), egui::pos2(0.0, 100.0));
-        // третья карточка стоит с запасом: между второй и третьей есть
-        // пустое место, откуда можно тянуть рамку выделения
+        // the third card stands with a margin: between the second and third there is an
+        // empty spot from which the selection outline can be dragged
         app.bin_layout.insert(MediaId(3), egui::pos2(0.0, 320.0));
     }
     h.step();
 
-    // --- группировка выделенного: одна группа, карточка ровно в одной
+    // --- grouping the selection: one group, the card in exactly one
     h.state_mut().bin_sel = [MediaId(1), MediaId(2)].into_iter().collect();
-    let gi = h.state_mut().bin_group_selection("Планы".into()).expect("группа не создалась");
+    let gi = h.state_mut().bin_group_selection("Plans".into()).expect("group was not created");
     assert_eq!(h.state().bin_groups[gi].members.len(), 2);
-    assert_eq!(h.state().bin_group_of(MediaId(3)), None, "третья карточка вне группы");
-    // повторная группировка перекладывает участника, а не дублирует
+    assert_eq!(h.state().bin_group_of(MediaId(3)), None, "third card outside the group");
+    // regrouping moves the member, it does not duplicate it
     h.state_mut().bin_sel = [MediaId(2), MediaId(3)].into_iter().collect();
-    let gi2 = h.state_mut().bin_group_selection("Интервью".into()).expect("вторая группа");
+    let gi2 = h.state_mut().bin_group_selection("Interview".into()).expect("second group");
     let in_groups: Vec<usize> = (0..h.state().bin_groups.len())
         .filter(|i| h.state().bin_groups[*i].members.contains(&MediaId(2)))
         .collect();
-    assert_eq!(in_groups, vec![gi2], "карточка оказалась сразу в двух группах: {in_groups:?}");
+    assert_eq!(in_groups, vec![gi2], "a card ended up in two groups at once: {in_groups:?}");
 
-    // --- кого тянуть: всю группу, даже если схвачена одна карточка
+    // --- whom to drag: the whole group, even if one card is grabbed
     let mates = h.state().bin_drag_set(MediaId(3));
-    assert_eq!(mates.len(), 2, "группа обязана ехать целиком: {mates:?}");
-    // карточка ВНЕ группы, но в выделении — едет вместе с выделением
-    h.state_mut().bin_ungroup(gi); // «Планы» осталась с одним участником
+    assert_eq!(mates.len(), 2, "a group must move as a whole: {mates:?}");
+    // a card OUTSIDE the group, but in the selection — moves together with the selection
+    h.state_mut().bin_ungroup(gi); // “Plans” kept one member
     h.state_mut().bin_sel = [MediaId(1), MediaId(3)].into_iter().collect();
     assert_eq!(
         h.state().bin_drag_set(MediaId(1)).len(),
         2,
-        "свободная карточка обязана ехать со всем выделением"
+        "a free card must move with the whole selection"
     );
 
-    // --- замок
+    // --- the lock
     assert!(!h.state().bin_locked(MediaId(3)));
     let gi2 =
-        h.state().bin_groups.iter().position(|g| g.name == "Интервью").expect("группа пропала");
+        h.state().bin_groups.iter().position(|g| g.name == "Interview").expect("group disappeared");
     h.state_mut().bin_groups[gi2].locked = true;
     h.step();
-    assert!(h.state().bin_locked(MediaId(3)), "замок группы не действует на участника");
-    assert!(!h.state().bin_locked(MediaId(1)), "замок утёк на чужую карточку");
+    assert!(h.state().bin_locked(MediaId(3)), "the group lock does not apply to a member");
+    assert!(!h.state().bin_locked(MediaId(1)), "the lock leaked onto another card");
 
-    // --- группы переживают переключение режимов и едут в проект
+    // --- groups survive a mode switch and go into the project
     h.state_mut().bin_free = false;
     h.step();
     h.state_mut().bin_free = true;
     h.step();
-    assert_eq!(h.state().bin_groups.len(), 1, "переключение режимов потеряло группы");
+    assert_eq!(h.state().bin_groups.len(), 1, "switching modes lost the groups");
     let st = h.state().ui_state_for_test();
-    assert_eq!(st.bin_groups.len(), 1, "группы не попали в UiState");
-    assert!(st.bin_groups[0].locked, "замок не доехал до проекта");
+    assert_eq!(st.bin_groups.len(), 1, "groups did not get into UiState");
+    assert!(st.bin_groups[0].locked, "the lock did not reach the project");
     let json = serde_json::to_string(&kt_model::UiState::default()).unwrap();
-    assert!(!json.contains("bin_groups"), "пустые группы не должны попадать в файл: {json}");
+    assert!(!json.contains("bin_groups"), "empty groups must not go into the file: {json}");
 
-    // --- ЖИВОЙ сценарий: рамка выделения по пустому месту ловит карточки
+    // --- LIVE scenario: the selection outline from empty space catches the cards
     h.state_mut().bin_groups.clear();
     h.state_mut().bin_sel.clear();
     h.step();
     let rects = h.state().bin_card_rects.clone();
-    assert_eq!(rects.len(), 3, "карточки не нарисовались: {rects:?}");
+    assert_eq!(rects.len(), 3, "cards were not drawn: {rects:?}");
     let at = |h: &Harness<'_, KtApp>, m: MediaId| {
         h.state().bin_card_rects.iter().find(|(id, _)| *id == m).unwrap().1
     };
     let (r0, r1) = (at(&h, MediaId(1)), at(&h, MediaId(2)));
-    // тянем из ПУСТОГО места под второй карточкой вверх, накрывая первые
-    // две; жест как у человека: нажать, чуть сдвинуть, вести дальше
+    // we drag from the EMPTY place under the second card upward, covering the first
+    // two; the gesture like a person's: press, nudge slightly, keep dragging
     let start = egui::pos2(r0.center().x, r1.bottom() + 40.0);
     h.drag_at(start);
     h.step();
@@ -935,18 +935,18 @@ fn t99_bin_groups() {
     h.step();
     assert!(
         h.state().bin_sel.contains(&MediaId(1)) && h.state().bin_sel.contains(&MediaId(2)),
-        "рамка выделения не поймала карточки: {:?}",
+        "the selection frame did not catch the cards: {:?}",
         h.state().bin_sel
     );
-    assert!(!h.state().bin_sel.contains(&MediaId(3)), "рамка захватила лишнюю карточку");
+    assert!(!h.state().bin_sel.contains(&MediaId(3)), "the frame captured an extra card");
 
-    // --- групповой драг: обе карточки уехали на одну дельту
-    h.state_mut().bin_group_selection("Пара".into()).expect("группа");
+    // --- group drag: both cards moved by one delta
+    h.state_mut().bin_group_selection("Pair".into()).expect("group");
     h.step();
     let before: Vec<egui::Pos2> =
         [MediaId(1), MediaId(2)].iter().map(|m| h.state().bin_layout[m]).collect();
     let grab = at(&h, MediaId(1));
-    // нажать → чуть сдвинуть (здесь egui признаёт драг) → вести дальше
+    // press → nudge slightly (here egui recognizes the drag) → keep dragging
     h.drag_at(grab.center());
     h.step();
     h.hover_at(grab.center() + egui::vec2(0.0, 8.0));
@@ -959,11 +959,11 @@ fn t99_bin_groups() {
         [MediaId(1), MediaId(2)].iter().map(|m| h.state().bin_layout[m]).collect();
     let d0 = after[0] - before[0];
     let d1 = after[1] - before[1];
-    assert!(d0.y > 10.0, "схваченная карточка не поехала: {d0:?}");
-    assert!((d0 - d1).length() < 0.6, "группа разъехалась: {d0:?} vs {d1:?}");
-    assert!(after.iter().all(|p| p.x >= 0.0 && p.y >= 0.0), "карточку вынесло за край: {after:?}");
+    assert!(d0.y > 10.0, "the grabbed card did not move: {d0:?}");
+    assert!((d0 - d1).length() < 0.6, "the group came apart: {d0:?} vs {d1:?}");
+    assert!(after.iter().all(|p| p.x >= 0.0 && p.y >= 0.0), "the card was carried past the edge: {after:?}");
 
-    // --- замок держит: залоченная группа не двигается мышью
+    // --- the lock holds: the locked group does not move with the mouse
     let gi3 = h.state().bin_groups.len() - 1;
     h.state_mut().bin_groups[gi3].locked = true;
     h.step();
@@ -977,60 +977,60 @@ fn t99_bin_groups() {
     h.step();
     h.drop_at(grab.center() + egui::vec2(0.0, 40.0));
     h.step();
-    assert_eq!(h.state().bin_layout[&MediaId(1)], before, "замок не удержал карточку");
+    assert_eq!(h.state().bin_layout[&MediaId(1)], before, "the lock did not hold the card");
 
-    // --- ИМЯ ГРУППЫ СОХРАНЯЕТСЯ ПО ENTER (жалоба р.13: поле не исчезало
-    // и имя терялось — request_focus звался каждый кадр, поэтому
-    // lost_focus не наступал никогда)
+    // --- THE GROUP NAME IS SAVED BY ENTER (round-13 complaint: the field did not disappear
+    // and the name was lost — request_focus was called every frame, so
+    // lost_focus never happened)
     h.state_mut().bin_sel = [MediaId(1)].into_iter().collect();
-    let gi4 = h.state_mut().bin_group_selection(String::new()).expect("группа");
+    let gi4 = h.state_mut().bin_group_selection(String::new()).expect("group");
     h.state_mut().bin_group_edit = Some((gi4, String::new()));
     h.state_mut().bin_group_focus = true;
     h.step();
-    h.event(egui::Event::Text("план".into()));
+    h.event(egui::Event::Text("plan".into()));
     h.step();
     h.key_press(egui::Key::Enter);
     h.step();
     h.step();
-    assert!(h.state().bin_group_edit.is_none(), "поле имени группы не закрылось по Enter");
-    assert_eq!(h.state().bin_groups[gi4].name, "план", "имя группы не сохранилось");
+    assert!(h.state().bin_group_edit.is_none(), "the group name field did not close on Enter");
+    assert_eq!(h.state().bin_groups[gi4].name, "plan", "the group name was not saved");
 
-    // Esc закрывает поле и имя НЕ меняет
-    h.state_mut().bin_group_edit = Some((gi4, "другое".into()));
+    // Esc closes the field and does NOT change the name
+    h.state_mut().bin_group_edit = Some((gi4, "other".into()));
     h.state_mut().bin_group_focus = true;
     h.step();
     h.key_press(egui::Key::Escape);
     h.step();
-    assert!(h.state().bin_group_edit.is_none(), "Esc не закрыл поле");
-    assert_eq!(h.state().bin_groups[gi4].name, "план", "Esc не должен менять имя");
+    assert!(h.state().bin_group_edit.is_none(), "Esc did not close the field");
+    assert_eq!(h.state().bin_groups[gi4].name, "plan", "Esc must not change the name");
 
-    // --- удаление медиа не оставляет висячих участников и пустых групп
+    // --- deleting media leaves no dangling members and empty groups
     let mut groups = vec![
         BinGroup { name: "a".into(), members: vec![MediaId(1), MediaId(2)], locked: false },
         BinGroup { name: "b".into(), members: vec![MediaId(3)], locked: true },
     ];
     kt_model::prune_bin_groups(&mut groups, &[MediaId(1)]);
-    assert_eq!(groups.len(), 1, "опустевшая группа не убрана");
-    assert_eq!(groups[0].members, vec![MediaId(1)], "удалённое медиа осталось в группе");
+    assert_eq!(groups.len(), 1, "the emptied group was not removed");
+    assert_eq!(groups[0].members, vec![MediaId(1)], "the deleted media stayed in the group");
 }
 
-/// Тест 101 (п.9 р.12): кнопки у краёв окна нажимаются, а не отдают
-/// нажатие window-менеджеру.
+/// Test 101 (item 9 of round 12): buttons at the window edges are clicked, and do not hand the
+/// click over to the window manager.
 ///
-/// Зона ресайза — не виджет: она читает СЫРОЙ указатель в конце кадра и
-/// на нажатии шлёт BeginResize, забирая указатель у WM. Центр кнопки
-/// «Закрыть» (W−11, 11) лежал прямо в углу 16×16, колокольчик — в углу
-/// SW, у меню умирала верхняя четверть. Старые тесты этого не видели,
-/// потому что проверяли НАВЕДЕНИЕ: ему зона ресайза не мешает.
+/// The resize zone is not a widget: it reads the RAW pointer at the end of the frame
+/// and on press sends BeginResize, taking the pointer away from the WM.
+/// The center of the “Close” button
+/// (W−11, 11) lay right in the 16×16 corner, the bell — in the SW corner, and the top quarter of the menu
+/// died. Old tests did not see this, because they checked HOVER: the resize zone does not interfere with it.
 #[test]
 fn t101_edge_buttons_are_clickable() {
     use egui::ViewportCommand as V;
 
-    // Команды копим за ОБА кадра: BeginResize уходит на нажатии, а
-    // Close/Minimized — только на отпускании (clicked()). Отпускание
-    // шлём ЯВНЫМ событием, а не drop_at: тот следом кладёт PointerGone,
-    // step() прогоняет кадр НА КАЖДОЕ событие, и output() показывает уже
-    // кадр без команды — тест ловил пустоту при работающей кнопке.
+    // Commands are accumulated over BOTH frames: BeginResize goes out on press, while
+    // Close/Minimized — only on release (clicked()). The release is sent as an
+    // EXPLICIT event, not via drop_at: the latter is followed by PointerGone,
+    // step() runs a frame FOR EACH event, and output() shows a frame
+    // without the command already — the test caught emptiness while the button was working.
     fn press(h: &mut Harness<'_, KtApp>, pos: egui::Pos2) -> Vec<V> {
         let grab = |h: &Harness<'_, KtApp>| -> Vec<V> {
             h.output().viewport_output.values().flat_map(|v| v.commands.iter().cloned()).collect()
@@ -1054,50 +1054,50 @@ fn t101_edge_buttons_are_clickable() {
         sent
     }
 
-    // мёртвые точки: центр «Закрыть» в углу NE, «Развернуть»/«Свернуть» в
-    // верхней кромке, колокольчик в углу SW, «Файл» в верхней кромке
+    // dead points: the center of “Close” in the NE corner, “Maximize”/“Minimize” in the
+    // top edge, the bell in the SW corner, “File” in the top edge
     let cases: [(egui::Pos2, &str); 5] = [
-        (egui::pos2(W - 11.0, 11.0), "Закрыть"),
-        (egui::pos2(W - 33.0, 4.0), "Развернуть"),
-        (egui::pos2(W - 55.0, 4.0), "Свернуть"),
-        (egui::pos2(18.0, H - 5.0), "Уведомления"),
-        (egui::pos2(30.0, 6.0), "меню Файл"),
+        (egui::pos2(W - 11.0, 11.0), "Close"),
+        (egui::pos2(W - 33.0, 4.0), "Expand"),
+        (egui::pos2(W - 55.0, 4.0), "Collapse"),
+        (egui::pos2(18.0, H - 5.0), "Notifications"),
+        (egui::pos2(30.0, 6.0), "File menu"),
     ];
     for (pos, what) in cases {
         let mut h = harness();
         let sent = press(&mut h, pos);
         assert!(
             !sent.iter().any(|c| matches!(c, V::BeginResize(_))),
-            "нажатие по «{what}» ушло в ресайз окна вместо кнопки"
+            "a press on “{what}” went to window resize instead of the button"
         );
     }
 
-    // и последствия нажатий действительно наступают
+    // and the consequences of presses really take place
     let mut h = harness();
     let sent = press(&mut h, egui::pos2(W - 11.0, 11.0));
-    assert!(sent.iter().any(|c| matches!(c, V::Close)), "окно не закрылось");
+    assert!(sent.iter().any(|c| matches!(c, V::Close)), "the window did not close");
 
     let mut h = harness();
     let sent = press(&mut h, egui::pos2(W - 55.0, 4.0));
-    assert!(sent.iter().any(|c| matches!(c, V::Minimized(true))), "окно не свернулось");
+    assert!(sent.iter().any(|c| matches!(c, V::Minimized(true))), "the window did not collapse");
 
     let mut h = harness();
     let before = h.state().notices_open;
     press(&mut h, egui::pos2(18.0, H - 5.0));
-    assert_ne!(h.state().notices_open, before, "колокольчик не открыл уведомления");
+    assert_ne!(h.state().notices_open, before, "the bell did not open notifications");
 
-    // САМАЯ кромка (4 px) остаётся за ресайзом даже поверх кнопок —
-    // иначе теряется диагональ угла; проверяем, что она жива
+    // the VERY edge (4 px) stays with the resize even over the buttons —
+    // otherwise the corner diagonal is lost; we check that it is alive
     let mut h = harness();
     let sent = press(&mut h, egui::pos2(W - 2.0, 2.0));
     assert!(
         sent.iter().any(|c| matches!(c, V::BeginResize(_))),
-        "угол окна перестал тянуться из-за кнопок"
+        "the window corner stopped resizing because of the buttons"
     );
 
-    // (п.6 р.13) кнопка «свернуть» нажимается при ЛЮБОЙ ширине панели
-    // метров: своя полоса перетаскивания лежит ЛЕВЕЕ панели и в кнопки не
-    // заходит (штатный хват egui был ±8 px по всей высоте и выигрывал)
+    // (item 6 of round 13) the “minimize” button is clicked at ANY width of the meters
+    // panel: its own drag strip lies to the LEFT of the panel and does not
+    // reach into the buttons (the standard egui grab was ±8 px over the whole height and won)
     for w in [crate::app::METERS_W_MIN, 70.0, crate::app::METERS_W_MAX] {
         let mut h = harness();
         h.state_mut().meters_w = w;
@@ -1105,11 +1105,11 @@ fn t101_edge_buttons_are_clickable() {
         let sent = press(&mut h, egui::pos2(W - 55.0, 11.0));
         assert!(
             sent.iter().any(|c| matches!(c, V::Minimized(true))),
-            "при ширине метров {w} «свернуть» не сработала"
+            "at meter width {w}, “collapse” did not work"
         );
     }
 
-    // и сама полоса тянет панель: хват СЛЕВА от её кромки
+    // and the strip itself drags the panel: the grab is to the LEFT of its edge
     let mut h = harness();
     let start = W - h.state().meters_w;
     h.hover_at(egui::pos2(start - 5.0, H * 0.5));
@@ -1123,28 +1123,28 @@ fn t101_edge_buttons_are_clickable() {
     h.drop_at(egui::pos2(W - 88.0, H * 0.5));
     h.step();
     let mw = h.state().meters_w;
-    assert!(mw > 80.0, "полоса не потянула панель метров: {mw}");
-    assert!(mw <= crate::app::METERS_W_MAX, "панель метров вышла за предел: {mw}");
+    assert!(mw > 80.0, "the strip did not pull the meter panel: {mw}");
+    assert!(mw <= crate::app::METERS_W_MAX, "meter panel went past the limit: {mw}");
 
-    // чистые кромки по-прежнему дают ресайз — гейт не должен убить его
+    // clean edges still give a resize — the gate must not kill it
     let mut h = harness();
     let sent = press(&mut h, egui::pos2(W * 0.5, H - 2.0));
     assert!(
         sent.iter().any(|c| matches!(c, V::BeginResize(_))),
-        "нижняя кромка перестала тянуться"
+        "the bottom edge stopped stretching"
     );
 }
 
-/// Тест 102 (пп.2,5 р.13): ярлык дорожки не наслаивается на имя клипа,
-/// свечение курсора не заходит на полоски кэша и светит со стороны
-/// движения.
-/// Тест 122 (п.5 р.16): дорожки добавляются ПОД кликнутой строкой, а
-/// имена дорожек едут вместе со своими дорожками.
+/// Test 102 (items 2,5 of round 13): the track label does not overlay the clip name, the
+/// cursor glow does not reach into the cache strips and shines from the side of the
+/// movement.
+/// Test 122 (item 5 of round 16): tracks are added BELOW the clicked row, and the
+/// track names move together with their tracks.
 ///
-/// Вторая половина — настоящий дефект, найденный по дороге: функции
-/// `lane_names_insert/remove/rotate` в kt-model есть и покрыты t90, но из
-/// приложения не вызывались ни разу, поэтому после вставки/удаления/
-/// перестановки подпись приклеивалась к чужой дорожке.
+/// The second half is a real defect found along the way: the functions
+/// `lane_names_insert/remove/rotate` exist in kt-model and are covered by t90, but were never
+/// called from the application, so after insertion/removal/
+/// reordering the label stuck to someone else's track.
 #[test]
 fn t122_insert_lane_after_clicked_row() {
     use kt_model::LaneKind;
@@ -1157,40 +1157,40 @@ fn t122_insert_lane_after_clicked_row() {
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
         edit_project(app, |p| {
-            p.track_at_mut(LaneKind::Video, 1).unwrap().name = "Титры".into();
-            p.track_at_mut(LaneKind::Audio, 1).unwrap().name = "Голос".into();
+            p.track_at_mut(LaneKind::Video, 1).unwrap().name = "Titles".into();
+            p.track_at_mut(LaneKind::Audio, 1).unwrap().name = "Voice".into();
         });
     }
     h.step();
 
-    // --- клик по V1 (индекс 0) + «добавить видео-дорожку» → новая
-    // строка ровно СЛЕДУЮЩАЯ, а не в конце списка
+    // --- click on V1 (index 0) + “add video track” → the new row is exactly the NEXT one,
+    // not at the end of the list
     h.state_mut().insert_lane_after_row(LaneKind::Video, Some((LaneKind::Video, 0)));
     h.step();
     assert_eq!(
         h.state().model.project().lanes(kt_model::LaneKind::Video),
         4,
-        "дорожка не добавилась"
+        "track was not added"
     );
     assert_eq!(
         h.state().model.project().rows()[1],
         (LaneKind::Video, 1),
-        "новая дорожка не встала под кликнутой: {:?}",
+        "the new track did not land under the clicked one: {:?}",
         h.state().model.project().rows()
     );
-    // имя «Титры» ехало на V2 (индекс 1) — обязано уехать на индекс 2
+    // the name “Titles” moved to V2 (index 1) — it must move to index 2
     assert_eq!(
         h.state().row_label(LaneKind::Video, 2),
-        "Титры",
-        "имя не поехало вместе со своей дорожкой"
+        "Titles",
+        "the name did not move together with its track"
     );
-    assert_eq!(h.state().row_label(LaneKind::Video, 1), "V2", "новая дорожка забрала чужое имя");
+    assert_eq!(h.state().row_label(LaneKind::Video, 1), "V2", "the new track took a name not its own");
 
-    // --- клик по ПОСЛЕДНЕЙ строке своего вида: строка обязана встать
-    // сразу под ней, а не в самый низ списка. Именно это и нашлось живой
-    // проверкой: lane_order_insert кладёт строку перед следующей
-    // дорожкой своего вида, а когда такой нет — в конец, и клик по V2
-    // при порядке V1,V2,A1,A2 давал V1,V2,A1,A2,V3.
+    // --- click on the LAST row of its kind: the row must land
+    // right under it, not at the bottom of the list. This is exactly what the live
+    // check found: lane_order_insert puts the row before the next track of its kind,
+    // and when there is none it goes to the end, so a click on V2
+    // with the order V1,V2,A1,A2 gave V1,V2,A1,A2,V3.
     let last_video = h
         .state()
         .model
@@ -1198,17 +1198,17 @@ fn t122_insert_lane_after_clicked_row() {
         .rows()
         .iter()
         .position(|&e| e == (LaneKind::Video, 3))
-        .expect("последняя видео-строка");
+        .expect("last video row");
     h.state_mut().insert_lane_after_row(LaneKind::Video, Some((LaneKind::Video, 3)));
     h.step();
     assert_eq!(
         h.state().model.project().rows()[last_video + 1],
         (LaneKind::Video, 4),
-        "новая строка уехала в самый низ вместо места под кликнутой: {:?}",
+        "the new row went to the very bottom instead of the place under the clicked one: {:?}",
         h.state().model.project().rows()
     );
 
-    // --- клик по строке ДРУГОГО вида: аудио-дорожка встаёт под ней же
+    // --- click on a row of ANOTHER kind: the audio track lands under that same row
     let audio_row = h
         .state()
         .model
@@ -1216,40 +1216,40 @@ fn t122_insert_lane_after_clicked_row() {
         .rows()
         .iter()
         .position(|&e| e == (LaneKind::Video, 3))
-        .expect("строка V4 пропала");
+        .expect("row V4 disappeared");
     h.state_mut().insert_lane_after_row(LaneKind::Audio, Some((LaneKind::Video, 3)));
     h.step();
     assert_eq!(
         h.state().model.project().rows()[audio_row + 1].0,
         LaneKind::Audio,
-        "аудио-дорожка не встала под кликнутой видео-строкой: {:?}",
+        "the audio track did not land under the clicked video row: {:?}",
         h.state().model.project().rows()
     );
 
-    // --- morph тоже добавляется из меню
+    // --- morph is also added from the menu
     let m0 = h.state().model.project().lanes(kt_model::LaneKind::Morph);
     h.state_mut().insert_lane_after_row(LaneKind::Morph, None);
     h.step();
     assert_eq!(
         h.state().model.project().lanes(kt_model::LaneKind::Morph),
         m0 + 1,
-        "morph-дорожка не добавилась"
+        "morph track was not added"
     );
 
-    // --- удаление: имя уходит вместе с дорожкой, соседи съезжают
+    // --- deletion: the name goes with the track, neighbors shift
     {
         let app = h.state_mut();
         edit_project(app, |p| {
-            p.track_at_mut(LaneKind::Audio, 0).unwrap().name = "Музыка".into();
-            p.track_at_mut(LaneKind::Audio, 1).unwrap().name = "Голос".into();
+            p.track_at_mut(LaneKind::Audio, 0).unwrap().name = "Music".into();
+            p.track_at_mut(LaneKind::Audio, 1).unwrap().name = "Voice".into();
         });
         app.delete_lane(kt_model::ClipKind::Audio, 0);
     }
     h.step();
-    assert_eq!(h.state().row_label(LaneKind::Audio, 0), "Голос", "после удаления имена не съехали");
+    assert_eq!(h.state().row_label(LaneKind::Audio, 0), "Voice", "after deletion the names did not shift");
 
-    // --- перестановка: имя едет за содержимым (иначе «Голос» останется
-    // на чужой строке)
+    // --- reordering: the name moves with the content (otherwise “Voice” would remain
+    // on someone else's row)
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
@@ -1280,9 +1280,9 @@ fn t122_insert_lane_after_clicked_row() {
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
-        edit_project(app, |p| p.track_at_mut(LaneKind::Audio, 0).unwrap().name = "Голос".into());
-        // строки, а не номера: с Р.56 номер дорожки — это РАНГ строки, и
-        // перестановка идёт одной командой на любые виды
+        edit_project(app, |p| p.track_at_mut(LaneKind::Audio, 0).unwrap().name = "Voice".into());
+        // rows, not numbers: since R.56 the track number is the RANK of the row, and
+        // reordering goes by one command for any kinds
         let rows = app.model.project().rows();
         let from = rows.iter().position(|&r| r == (LaneKind::Audio, 0)).unwrap();
         let to = rows.iter().position(|&r| r == (LaneKind::Audio, 2)).unwrap();
@@ -1292,55 +1292,55 @@ fn t122_insert_lane_after_clicked_row() {
     assert_eq!(
         h.state().model.project().clips[0].lane,
         2,
-        "содержимое не переехало — тест ниже проверял бы не то"
+        "the contents did not move — the test below would check the wrong thing"
     );
     assert_eq!(
         h.state().row_label(LaneKind::Audio, 2),
-        "Голос",
-        "имя не поехало за содержимым при перестановке"
+        "Voice",
+        "the name did not follow the contents on reordering"
     );
 }
 
-/// Тест 120 (п.3 р.16): удержание пробела разгоняет воспроизведение до
-/// 4× примерно за 2 с (как на YouTube) и НЕ ломает одиночное/двойное
-/// нажатие.
+/// Test 120 (item 3 of round 16): holding the space bar speeds playback up to
+/// 4× in about 2 s (as on YouTube) and does NOT break a single/double
+/// press.
 ///
-/// Ловушка, из-за которой понадобился перенос решения на отпускание:
-/// `key_pressed` включает АВТОПОВТОР клавиатуры — зажатый пробел слал
-/// серию play/pause. Поэтому нажатие только запоминается, а play/pause
-/// делается по отпусканию, если удержание было коротким.
+/// A trap that made it necessary to move the decision to release:
+/// `key_pressed` turns on keyboard AUTO-REPEAT — a held space sent a
+/// series of play/pause. Therefore the press is only remembered, and
+/// play/pause is done on release, if the hold was short.
 #[test]
 fn t120_space_hold_boosts_playback() {
     use crate::app::{KtApp, SPACE_BOOST_MAX, SPACE_BOOST_SECS};
     use kt_model::*;
     use kt_time::Tick;
 
-    // --- чистая функция: монотонна, упирается в потолок, устойчива на
-    // плохих dt (после простоя stable_dt приходит до 250 мс — явная
-    // схема на таких шагах перелетает цель, п.7 р.9)
+    // --- pure function: monotonic, runs into a ceiling, stable on
+    // bad dt (after idling stable_dt arrives up to 250 ms — an explicit
+    // scheme overshoots the target on such steps, item 7 of round 9)
     let mut b = 1.0f32;
     let mut prev = b;
     for _ in 0..(60.0 * SPACE_BOOST_SECS) as i32 {
         b = KtApp::space_boost_step(b, 1.0 / 60.0);
-        assert!(b >= prev, "разгон не монотонен: {prev} → {b}");
-        assert!(b <= SPACE_BOOST_MAX + 1e-4, "разгон перелетел потолок: {b}");
+        assert!(b >= prev, "the boost is not monotonic: {prev} → {b}");
+        assert!(b <= SPACE_BOOST_MAX + 1e-4, "the boost overshot the ceiling: {b}");
         prev = b;
     }
-    assert!(b > SPACE_BOOST_MAX * 0.9, "за {SPACE_BOOST_SECS} с не доехали до потолка: {b}");
-    // и НЕ быстрее, чем просил пользователь (п.3 р.17: «надо не за 2с а
-    // за 5, а то очень быстро»): за 2 с разгон обязан быть заметно ниже
-    // потолка — на прежней константе выходило 3.85 из 4
+    assert!(b > SPACE_BOOST_MAX * 0.9, "in {SPACE_BOOST_SECS} s it did not reach the ceiling: {b}");
+    // and NOT faster than the user asked (item 3 of round 17: “it must take not 2 s but
+    // 5, otherwise it is very fast”): in 2 s the ramp must be noticeably below the
+    // ceiling — with the former constant it came out at 3.85 of 4
     let mut half = 1.0f32;
     for _ in 0..120 {
         half = KtApp::space_boost_step(half, 1.0 / 60.0);
     }
-    assert!(half < 3.4, "разгон слишком резкий: за 2 с уже {half}× из {SPACE_BOOST_MAX}");
+    assert!(half < 3.4, "the boost is too sharp: in 2 s already {half}× of {SPACE_BOOST_MAX}");
     let mut rough = 1.0f32;
     for dt in [0.25f32, 0.1, 1.0 / 30.0, 0.25, 0.25] {
         rough = KtApp::space_boost_step(rough, dt);
         assert!(
             (1.0..=SPACE_BOOST_MAX + 1e-4).contains(&rough),
-            "плохой dt={dt} вынес разгон за пределы: {rough}"
+            "a bad dt={dt} pushed the boost out of bounds: {rough}"
         );
     }
 
@@ -1377,7 +1377,7 @@ fn t120_space_hold_boosts_playback() {
     }
     h.step();
 
-    // --- одиночное нажатие по-прежнему переключает транспорт
+    // --- a single press still toggles the transport
     let before = h.state().player.transport.is_playing();
     h.key_press(egui::Key::Space);
     h.step();
@@ -1385,11 +1385,11 @@ fn t120_space_hold_boosts_playback() {
     assert_ne!(
         h.state().player.transport.is_playing(),
         before,
-        "короткое нажатие пробела перестало переключать play/pause"
+        "a short press of space stopped toggling play/pause"
     );
     let playing = h.state().player.transport.is_playing();
 
-    // --- удержание: скорость растёт, транспорт НЕ переключается
+    // --- hold: the speed grows, the transport does NOT toggle
     h.key_down(egui::Key::Space);
     h.step();
     std::thread::sleep(std::time::Duration::from_millis(260));
@@ -1399,30 +1399,30 @@ fn t120_space_hold_boosts_playback() {
     let boosted = h.state().player.playback_rate();
     assert!(
         boosted > 1.5 && boosted <= SPACE_BOOST_MAX + 0.01,
-        "удержание не разогнало воспроизведение: {boosted}"
+        "holding did not speed up playback: {boosted}"
     );
-    assert!(h.state().player.transport.is_playing(), "удержание обязано играть");
-    // пользователь обязан ВИДЕТЬ разгон: нижняя (временная) полоса
-    // контрола скорости показывает фактическую скорость, а не «1×»
-    let shown = h.state().speed_temp_slider().expect("разгон не виден на контроле скорости");
+    assert!(h.state().player.transport.is_playing(), "holding must play");
+    // the user must SEE the ramp: the lower (temporary) strip of the speed control
+    // shows the actual speed, not “1×”
+    let shown = h.state().speed_temp_slider().expect("the boost is not visible on the speed control");
     assert!(
         shown > crate::app::rate_to_slider(1.0) + 0.01,
-        "полоса скорости показывает не разгон: {shown}"
+        "the speed bar shows not the boost: {shown}"
     );
     h.key_up(egui::Key::Space);
     h.step();
     assert!(
         (h.state().player.playback_rate() - 1.0).abs() < 0.01,
-        "после отпускания скорость не вернулась: {}",
+        "after release the speed did not return: {}",
         h.state().player.playback_rate()
     );
     assert_eq!(
         h.state().player.transport.is_playing(),
         playing,
-        "отпускание разгона не должно переключать play/pause"
+        "releasing the boost must not toggle play/pause"
     );
 
-    // --- реверс: разгон не теряет знак скорости
+    // --- reverse: the ramp does not lose the sign of the speed
     h.state_mut().base_rate = -1.0;
     h.state_mut().player.set_playback_rate(-1.0);
     h.key_down(egui::Key::Space);
@@ -1432,37 +1432,37 @@ fn t120_space_hold_boosts_playback() {
         h.step();
     }
     let rev = h.state().player.playback_rate();
-    assert!(rev < -1.5, "разгон в реверсе потерял знак/скорость: {rev}");
+    assert!(rev < -1.5, "the boost in reverse lost its sign/speed: {rev}");
     h.key_up(egui::Key::Space);
     h.step();
     h.state_mut().base_rate = 1.0;
     h.state_mut().player.set_playback_rate(1.0);
 
-    // --- двойное нажатие: пауза, затем «стоп в начало региона» (п.15 р.6)
+    // --- double press: pause, then “stop at the start of the region” (item 15 of round 6)
     h.state_mut().model.set_region(Region::normalized(Tick(90_000), Tick(180_000)));
     h.state_mut().player.seek(Tick(120_000));
     h.step();
-    h.key_press(egui::Key::Space); // пауза
+    h.key_press(egui::Key::Space); // pause
     h.step();
     h.step();
-    assert!(!h.state().player.transport.is_playing(), "первое нажатие не поставило паузу");
-    h.key_press(egui::Key::Space); // сразу второе — стоп в начало региона
+    assert!(!h.state().player.transport.is_playing(), "the first press did not pause");
+    h.key_press(egui::Key::Space); // immediately a second one — stop at the start of the region
     h.step();
     h.step();
     assert_eq!(
         h.state().player.transport.playhead(),
         Tick(90_000),
-        "двойное нажатие пробела перестало уводить в начало региона"
+        "a double press of space stopped moving to the start of the region"
     );
 }
 
-/// Тест 119 (п.2 р.16): Shift+A / Shift+D тянут край региона.
+/// Test 119 (item 2 of round 16): Shift+A / Shift+D drag the region edge.
 ///
-/// Shift — модификатор «расширить выделение» из проф. программ. Shift+A
-/// ставит ЛЕВЫЙ край в новую позицию курсора, Shift+D — правый; без
-/// региона вторым краем становится позиция ДО прыжка. Обычные A/D регион
-/// не трогают (иначе навигация начнёт молча портить выделение), а
-/// Shift+Home/End остаются «в самое начало/конец».
+/// Shift is the “extend selection” modifier from pro programs. Shift+A
+/// puts the LEFT edge at the new cursor position, Shift+D — the right one; without a
+/// region the second edge becomes the position BEFORE the jump. Plain A/D do not
+/// touch the region (otherwise navigation would silently spoil the selection), and
+/// Shift+Home/End remain “to the very start/end”.
 #[test]
 fn t119_shift_nav_drags_region() {
     use kt_model::*;
@@ -1505,69 +1505,69 @@ fn t119_shift_nav_drags_region() {
     }
     h.step();
 
-    // обычная навигация регион НЕ создаёт
+    // ordinary navigation does NOT create a region
     h.key_press(egui::Key::D);
     h.step();
     let after_plain = h.state().player.transport.playhead();
-    assert!(after_plain.0 > 0, "обычный D не сдвинул курсор");
-    assert!(h.state().model.project().region.is_none(), "обычный D создал регион");
+    assert!(after_plain.0 > 0, "plain D did not move the cursor");
+    assert!(h.state().model.project().region.is_none(), "plain D created a region");
 
-    // первый Shift+D выделяет пройденный участок [было, стало]
+    // the first Shift+D selects the traversed stretch [was, now]
     let before = h.state().player.transport.playhead();
     h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::D);
     h.step();
     let now = h.state().player.transport.playhead();
-    let r = h.state().model.project().region.expect("Shift+D не создал регион");
-    assert!(now > before, "Shift+D не сдвинул курсор: {before:?} → {now:?}");
-    assert_eq!(r.start, before, "левый край обязан остаться там, откуда прыгнули");
-    assert_eq!(r.end, now, "правый край обязан встать в новую позицию");
+    let r = h.state().model.project().region.expect("Shift+D did not create a region");
+    assert!(now > before, "Shift+D did not move the cursor: {before:?} → {now:?}");
+    assert_eq!(r.start, before, "the left edge must stay where it jumped from");
+    assert_eq!(r.end, now, "the right edge must land at the new position");
 
-    // следующий Shift+D двигает ТОЛЬКО правый край
+    // the next Shift+D moves ONLY the right edge
     h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::D);
     h.step();
-    let r2 = h.state().model.project().region.expect("регион пропал");
-    assert_eq!(r2.start, r.start, "правый край утянул за собой левый: {r:?} → {r2:?}");
-    assert!(r2.end > r.end, "правый край не поехал: {r:?} → {r2:?}");
+    let r2 = h.state().model.project().region.expect("region disappeared");
+    assert_eq!(r2.start, r.start, "the right edge dragged the left one along: {r:?} → {r2:?}");
+    assert!(r2.end > r.end, "the right edge did not move: {r:?} → {r2:?}");
 
-    // Shift+A двигает ЛЕВЫЙ край и правого не трогает
+    // Shift+A moves the LEFT edge and does not touch the right one
     h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::A);
     h.step();
-    let r3 = h.state().model.project().region.expect("регион пропал");
-    assert_eq!(r3.end, r2.end, "левый край утянул правый: {r2:?} → {r3:?}");
-    assert!(r3.start > r2.start, "левый край не поехал: {r2:?} → {r3:?}");
-    assert_eq!(h.state().player.transport.playhead(), r3.start, "курсор не на левом крае");
+    let r3 = h.state().model.project().region.expect("region disappeared");
+    assert_eq!(r3.end, r2.end, "the left edge dragged the right one: {r2:?} → {r3:?}");
+    assert!(r3.start > r2.start, "the left edge did not move: {r2:?} → {r3:?}");
+    assert_eq!(h.state().player.transport.playhead(), r3.start, "the cursor is not on the left edge");
 
-    // регион — «удобство»: звёздочка «есть несохранённое содержимое» не
-    // загорается (п.5 р.11)
-    assert!(!h.state().dirty_content, "правка региона подняла dirty_content");
-    assert!(h.state().dirty_ui, "правка региона не подняла dirty_ui");
+    // region — a “convenience”: the asterisk “there is unsaved content” does not
+    // light up (item 5 of round 11)
+    assert!(!h.state().dirty_content, "editing the region raised dirty_content");
+    assert!(h.state().dirty_ui, "editing the region did not raise dirty_ui");
 }
 
-/// Тест 118 (п.1 р.16): медиа-бин скроллится — сам при драге к кромке и
-/// колесом.
+/// Test 118 (item 1 of round 16): the media bin scrolls — by itself when dragging to the edge and
+/// with the wheel.
 ///
-/// Причина дефекта: «курсор ушёл из бина» проверялось по `ui.max_rect()`,
-/// а внутри ScrollArea это ВЬЮПОРТ в координатах содержимого. У нижней
-/// кромки экрана включался липкий режим «вынос на таймлайн», позиции
-/// откатывались — карточку нельзя было положить ниже одного экрана,
-/// содержимое никогда не перерастало вьюпорт, и колесу было нечего
-/// крутить. Тест ведёт мышь как человек (нажать → сдвинуть → вести).
+/// Cause of the defect: “the cursor left the bin” was checked by `ui.max_rect()`,
+/// but inside a ScrollArea that is the VIEWPORT in content coordinates. At the lower
+/// edge of the screen the sticky “move to the timeline” mode switched on, and the positions
+/// were rolled back — a card could not be placed below one screen,
+/// the content never outgrew the viewport, and the wheel had nothing
+/// to scroll. The test drives the mouse like a person (press → move → keep moving).
 #[test]
 fn t118_bin_autoscrolls_and_wheel_works() {
     use crate::bin_panel::bin_edge_scroll;
     use kt_model::{MediaId, MediaRef};
 
-    // --- чистая кривая: у нижней кромки мотаем вниз, у верхней вверх,
-    // в середине покоя нет вообще
+    // --- a pure curve: at the lower edge we scroll down, at the upper one up,
+    // in the middle there is no rest at all
     let view = egui::Rect::from_min_size(egui::pos2(0.0, 100.0), egui::vec2(200.0, 400.0));
-    assert_eq!(bin_edge_scroll(view, 300.0), 0.0, "середина не должна мотать");
+    assert_eq!(bin_edge_scroll(view, 300.0), 0.0, "the middle must not wobble");
     let down = bin_edge_scroll(view, view.bottom() - 1.0);
     let up = bin_edge_scroll(view, view.top() + 1.0);
-    assert!(down < 0.0, "у нижней кромки список обязан ехать вниз: {down}");
-    assert!(up > 0.0, "у верхней кромки — вверх: {up}");
+    assert!(down < 0.0, "at the bottom edge the list must scroll down: {down}");
+    assert!(up > 0.0, "at the top edge — up: {up}");
     assert!(
         bin_edge_scroll(view, view.bottom() - 20.0).abs() < down.abs(),
-        "кривая обязана расти к кромке"
+        "the curve must grow toward the edge"
     );
 
     let mut h = harness();
@@ -1592,8 +1592,8 @@ fn t118_bin_autoscrolls_and_wheel_works() {
     let grab = at(&h, MediaId(1)).center();
     let anchor_before = at(&h, MediaId(3));
 
-    // тянем первую карточку к самой нижней кромке колонки и ДЕРЖИМ там:
-    // список обязан ползти сам, как у таймлайна
+    // we drag the first card to the very bottom edge of the column and HOLD it there:
+    // the list must crawl by itself, as the timeline does
     h.drag_at(grab);
     h.step();
     h.hover_at(grab + egui::vec2(0.0, 8.0));
@@ -1606,18 +1606,18 @@ fn t118_bin_autoscrolls_and_wheel_works() {
     let anchor_after = at(&h, MediaId(3));
     assert!(
         anchor_after.top() < anchor_before.top() - 20.0,
-        "список не проскроллился при драге к кромке: {} → {}",
+        "the list did not scroll when dragged to the edge: {} → {}",
         anchor_before.top(),
         anchor_after.top()
     );
     h.drop_at(low);
     h.step();
     let moved = h.state().bin_layout[&MediaId(1)];
-    assert!(moved.y > 200.0, "карточку откатило вместо переноса вниз (липкий «вынос»): {moved:?}");
+    assert!(moved.y > 200.0, "the card was rolled back instead of moved down (sticky “carry out”): {moved:?}");
 
-    // --- колесо: содержимое теперь длиннее вьюпорта, и над бином оно
-    // обязано крутиться (штатный ScrollArea глушит колесо только на
-    // время драга — драг мы уже отпустили)
+    // --- wheel: the content is now longer than the viewport, and above the bin it
+    // must scroll (the standard ScrollArea mutes the wheel only during a drag —
+    // we have already released the drag)
     let before = at(&h, MediaId(3)).top();
     let over = egui::pos2(col.center().x, col.center().y);
     h.hover_at(over);
@@ -1632,15 +1632,15 @@ fn t118_bin_autoscrolls_and_wheel_works() {
         h.step();
     }
     let after = at(&h, MediaId(3)).top();
-    assert!(after < before - 20.0, "колесо не крутит медиа-бин: {before} → {after}");
+    assert!(after < before - 20.0, "the wheel does not scroll the media bin: {before} → {after}");
 
-    // --- п.1 р.17: колесо обязано работать И ВО ВРЕМЯ драга. egui сам
-    // глушит скролл у ScrollArea, пока что-нибудь тащат
-    // (`dragged_id().is_none()`), а человек крутит колесо именно тогда —
-    // чтобы дотянуться до нужного места («scroll мышки по прежнему не
-    // работает»).
-    // возвращаемся наверх: после проверок выше список домотан вниз и
-    // карточки уехали за пределы видимой полосы
+    // --- item 1 of round 17: the wheel must work ALSO DURING a drag. egui itself
+    // mutes the ScrollArea's scroll while something is being dragged
+    // (`dragged_id().is_none()`), and a person turns the wheel exactly then —
+    // to reach the needed place (“the mouse scroll still does not
+    // work”).
+    // we return to the top: after the checks above the list was wound down
+    // and the cards went out past the visible strip
     let wheel_up = |h: &mut Harness<'_, KtApp>, n: usize| {
         for _ in 0..n {
             h.event(egui::Event::MouseWheel {
@@ -1656,7 +1656,7 @@ fn t118_bin_autoscrolls_and_wheel_works() {
     h.step();
     wheel_up(&mut h, 12);
     let grab2 = at(&h, MediaId(2)).center();
-    assert!(col.contains(grab2), "карточка вне видимой части колонки: {grab2:?} / {col:?}");
+    assert!(col.contains(grab2), "card outside the visible part of the column: {grab2:?} / {col:?}");
     h.drag_at(grab2);
     h.step();
     h.hover_at(grab2 + egui::vec2(0.0, 8.0));
@@ -1674,14 +1674,14 @@ fn t118_bin_autoscrolls_and_wheel_works() {
     let after_drag_wheel = at(&h, MediaId(3)).top();
     assert!(
         after_drag_wheel < before_drag_wheel - 20.0,
-        "колесо во время драга не крутит бин: {before_drag_wheel} → {after_drag_wheel}"
+        "the wheel does not scroll the bin during a drag: {before_drag_wheel} → {after_drag_wheel}"
     );
     h.drop_at(grab2 + egui::vec2(0.0, 8.0));
     h.step();
 
-    // --- п.1 р.17: тычок В КРОМКУ — это «мотай список», а не «выноси»:
-    // карточка обязана остаться там, куда её ведут. Пользователь: «тыкаю
-    // в край — мы скролимся, но потом сурс сам улетает обратно».
+    // --- item 1 of round 17: a tap ON THE EDGE is “scroll the list”, not “move out”:
+    // the card must stay where it is being led. The user: “I tap
+    // the edge — we scroll, but then the source flies back by itself”.
     let card = at(&h, MediaId(1));
     let before_pos = h.state().bin_layout[&MediaId(1)];
     h.drag_at(card.center());
@@ -1698,11 +1698,11 @@ fn t118_bin_autoscrolls_and_wheel_works() {
     let after_pos = h.state().bin_layout[&MediaId(1)];
     assert!(
         (after_pos - before_pos).length() > 4.0,
-        "тычок в кромку откатил карточку на старое место: {before_pos:?} → {after_pos:?}"
+        "a poke at the edge rolled the card back to its old place: {before_pos:?} → {after_pos:?}"
     );
 
-    // но настоящий вынос (далеко за колонку) по-прежнему откатывает
-    // раскладку — иначе карточка уезжает при удачном дропе на таймлайн
+    // but a real move-out (far beyond the column) still rolls back the
+    // layout — otherwise the card flies away on a successful drop onto the timeline
     let card = at(&h, MediaId(1));
     let before_pos = h.state().bin_layout[&MediaId(1)];
     h.drag_at(card.center());
@@ -1717,7 +1717,7 @@ fn t118_bin_autoscrolls_and_wheel_works() {
     assert_eq!(
         h.state().bin_layout[&MediaId(1)],
         before_pos,
-        "вынос на таймлайн не должен менять раскладку бина (п.8 р.9)"
+        "carrying out onto the timeline must not change the bin layout (item 8 round 9)"
     );
 }
 
@@ -1725,84 +1725,84 @@ fn t118_bin_autoscrolls_and_wheel_works() {
 fn t102_lane_label_and_playhead_trail() {
     use crate::timeline::{STRIPES_H, TIME_TOP, lane_label_y};
 
-    // (п.2) ярлык дорожки живёт СТРОКОЙ НИЖЕ имени клипа: имя клипа
-    // рисуется от row_top+2 плашкой высотой ~17 px, значит ярлык обязан
-    // начинаться не выше row_top+17 — иначе буквы наложатся
+    // (item 2) the track label lives one ROW BELOW the clip name: the clip name
+    // is drawn from row_top+2 as a band about 17 px high, so the label must
+    // start no higher than row_top+17 — otherwise the letters would overlap
     for (lane_h, galley_h) in [(64.0f32, 14.0f32), (40.0, 14.0), (28.0, 14.0), (120.0, 14.0)] {
         let y = lane_label_y(100.0, lane_h, galley_h);
-        assert!(y >= 100.0, "ярлык уехал выше дорожки: {y}");
-        assert!(y + galley_h <= 100.0 + lane_h, "ярлык вылез за дорожку: {y}+{galley_h}");
+        assert!(y >= 100.0, "the label went above the track: {y}");
+        assert!(y + galley_h <= 100.0 + lane_h, "the label stuck out past the track: {y}+{galley_h}");
         if lane_h >= 36.0 {
-            assert!(y >= 117.0, "ярлык на дорожке {lane_h} встал на строку имени клипа: {y}");
+            assert!(y >= 117.0, "the label on track {lane_h} landed on the clip name row: {y}");
         }
     }
-    // (п.5) свечение стартует ниже полосок кэша
-    let g = harness().state().tl_geom.clone().expect("нет геометрии");
+    // (item 5) the glow starts below the cache strips
+    let g = harness().state().tl_geom.clone().expect("no geometry");
     assert!(
         g.rect.top() + TIME_TOP >= g.rect.top() + STRIPES_H,
-        "свечение курсора начнётся поверх полосок кэша"
+        "the cursor glow will begin over the cache strips"
     );
 
     let mut h = harness();
-    // направление запоминается по знаку скорости и не мигает на паузе
-    assert!(!h.state().play_dir_back, "по умолчанию шлейф слева (игра вперёд)");
+    // the direction is remembered by the sign of the speed and does not blink during pause
+    assert!(!h.state().play_dir_back, "by default the trail is on the left (forward play)");
     h.state_mut().player.set_playback_rate(-1.0);
     h.step();
-    assert!(h.state().play_dir_back, "реверс не переключил сторону шлейфа");
+    assert!(h.state().play_dir_back, "reverse did not switch the trail side");
     h.state_mut().player.set_playback_rate(0.0);
     h.step();
-    assert!(h.state().play_dir_back, "на паузе сторона обязана сохраниться");
+    assert!(h.state().play_dir_back, "on pause the side must be kept");
     h.state_mut().player.set_playback_rate(1.0);
     h.step();
-    assert!(!h.state().play_dir_back, "вперёд не вернуло шлейф налево");
+    assert!(!h.state().play_dir_back, "forward did not return the trail to the left");
 }
 
-/// Тест 127 (Р.19): вёрстка держится ВО ВСЕХ ПЯТИ ЯЗЫКАХ.
+/// Test 127 (R.19): the layout holds in ALL FIVE LANGUAGES.
 ///
-/// Пределы 420 px (левая колонка) и 90 px (метры) поставлены по прямым
-/// просьбам пользователя (п.4 р.13, п.6 р.12) и НЕ двигаются: если перевод в
-/// них не влезает — короче делают перевод. До Р.19 эти пределы проверялись
-/// только на русском, то есть на одном наборе длин строк.
+/// The limits of 420 px (left column) and 90 px (meters) were set by direct requests
+/// of the user (item 4 of round 13, item 6 of round 12) and are NOT moved: if a translation
+/// does not fit in them, the translation is made shorter. Before R.19 these limits were checked
+/// only in Russian, that is, on a single set of string lengths.
 #[test]
 fn t127_layout_holds_in_every_language() {
     for lang in Lang::ALL {
         let code = lang.code();
         let mut h = harness_lang(lang);
         let w = panel_width(&h, "left_col");
-        assert!((72.0..=420.0).contains(&w), "{code}: левая колонка {w}");
+        assert!((72.0..=420.0).contains(&w), "{code}: left column {w}");
         assert!(
             h.state().preview_rect.width() > 600.0,
-            "{code}: превью схлопнулось: {:?}",
+            "{code}: preview collapsed: {:?}",
             h.state().preview_rect
         );
         assert!(
             panel_width(&h, "meters_col") <= crate::app::METERS_W_MAX + 0.5,
-            "{code}: панель метров шире предела: {}",
+            "{code}: meter panel wider than the limit: {}",
             panel_width(&h, "meters_col")
         );
 
-        // длинный контент не имеет права раздуть колонку ни в одном языке
+        // long content has no right to swell the column in any language
         h.state_mut().gpu_info = Some("X".repeat(400));
         h.step();
         let w = panel_width(&h, "left_col");
-        assert!(w <= 420.0, "{code}: длинный контент раздул колонку: {w}");
+        assert!(w <= 420.0, "{code}: long content inflated the column: {w}");
 
-        // маска таймкода — чистые ASCII-цифры, она обязана быть одинаковой
-        // во всех языках (её порядок ввода — справа налево независимо от RTL)
+        // the timecode mask is pure ASCII digits, it must be the same in all languages
+        // (its entry order is right to left regardless of RTL)
         assert_eq!(
             crate::util::mask_text("130"),
             crate::util::mask_text("130"),
-            "{code}: маска таймкода зависит от языка"
+            "{code}: the timecode mask depends on the language"
         );
     }
 }
 
-/// Тест 129 (Р.19): переключение языка на лету не ломает состояние.
+/// Test 129 (R.19): switching the language on the fly does not break state.
 ///
-/// Главное здесь — id окон. `Window::new(title)` выводит `Id` из ЗАГОЛОВКА, а
-/// под этим id живут позиция и размер: без явного `.id()` смена языка
-/// сбрасывала бы положение каждого диалога. Проверяется именно это — что
-/// состояние окна лежит под постоянным id, а не под переведённым заголовком.
+/// The main point here is the window ids. `Window::new(title)` derives the `Id` from the TITLE, and
+/// the position and size live under this id: without an explicit `.id()` a language change
+/// would reset the position of every dialog. Exactly this is checked — that the
+/// window state lies under a constant id, not under the translated title.
 #[test]
 fn t129_language_switch_keeps_state() {
     use egui::AreaState;
@@ -1819,12 +1819,12 @@ fn t129_language_switch_keeps_state() {
         .iter()
         .map(|i| {
             AreaState::load(&h.ctx, egui::Id::new(*i))
-                .unwrap_or_else(|| panic!("окно {i} не отрисовано"))
+                .unwrap_or_else(|| panic!("window {i} is not drawn"))
                 .left_top_pos()
         })
         .collect();
 
-    // реестр FX не должен пересобираться: категории и keywords — ключи
+    // the FX registry must not be rebuilt: categories and keywords are keys
     let reg_before = crate::fx_registry::registry().as_ptr();
 
     crate::i18n::set_lang_ctx(&h.ctx, Lang::En);
@@ -1833,36 +1833,36 @@ fn t129_language_switch_keeps_state() {
 
     for (i, id) in ids.iter().enumerate() {
         let after = AreaState::load(&h.ctx, egui::Id::new(*id))
-            .unwrap_or_else(|| panic!("после смены языка окно {id} потеряло состояние"))
+            .unwrap_or_else(|| panic!("after a language change window {id} lost its state"))
             .left_top_pos();
-        assert_eq!(before[i], after, "окно {id} переехало при смене языка");
+        assert_eq!(before[i], after, "window {id} moved on a language change");
     }
     assert_eq!(
         reg_before,
         crate::fx_registry::registry().as_ptr(),
-        "реестр FX пересобрался при смене языка"
+        "the FX registry was rebuilt on a language change"
     );
 
-    // и собственно перевод: подсказка кнопки окна стала английской
+    // and the translation itself: the window button's hint became English
     h.hover_at(egui::pos2(W - 11.0, 10.0));
     h.step();
     assert_eq!(h.state().status_line_shown.0, tr(k::win::CLOSE));
-    assert_eq!(tr(k::win::CLOSE), "Close", "английский каталог не подхватился");
+    assert_eq!(tr(k::win::CLOSE), "Close", "the English catalog was not picked up");
 }
 
-/// Тест 126, часть «б» (Р.19): ЗАКРЕПЛЕНИЕ РЕНДЕРА арабского.
+/// Test 126, part “b” (R.19): PINNING THE RENDER of Arabic.
 ///
-/// Юнит-тесты `bidi::visual` проверяют строку, а этот — то, что из неё
-/// получилось у egui. Он и отличает верный алгоритм от правдоподобного:
+/// The unit tests of `bidi::visual` check the string, while this one checks what came out of it
+/// in egui. It is what tells a correct algorithm from a plausible one:
 ///
-/// * без переупорядочивания первое ЛОГИЧЕСКОЕ слово оказывается СЛЕВА, то
-///   есть фраза читается задом наперёд (замерено: 'م' на x=22, 'ج' на x=56);
-/// * с посимвольным разворотом (`unicode_bidi::reorder_line`) порядок слов
-///   верный, но harfrust разворачивает каждый прогон ВТОРОЙ раз, и буквы
-///   внутри слова встают наоборот — это ловит первая проверка.
+/// * without reordering, the first LOGICAL word ends up on the LEFT, that is,
+///   the phrase reads backwards (measured: 'م' at x=22, 'ج' at x=56);
+/// * with per-character reversal (`unicode_bidi::reorder_line`) the word order
+///   is correct, but harfrust reverses each run a SECOND time, and the letters
+///   inside a word come out inverted — the first check catches this.
 ///
-/// Если egui когда-нибудь научится bidi сам, этот тест покраснеет — и это
-/// правильный сигнал: тогда наш слой надо снимать.
+/// If egui someday learns bidi itself, this test turns red — and that is the
+/// right signal: then our layer must be removed.
 #[test]
 fn t126_arabic_renders_right_to_left() {
     let h = harness_lang(Lang::Ar);
@@ -1871,18 +1871,18 @@ fn t126_arabic_renders_right_to_left() {
         h.ctx.fonts_mut(|f| f.layout_no_wrap(text, font.clone(), egui::Color32::WHITE))
     };
 
-    // «файл»: م ل ف. Внутри слова буквы обязаны остаться логическими — их
-    // развернёт сам harfrust, поэтому САМЫЙ ЛЕВЫЙ глиф это ПОСЛЕДНЯЯ буква.
+    // “file”: م ل ف. Inside the word the letters must stay logical — their
+    // order will be reversed by harfrust itself, so the LEFTMOST glyph is the LAST letter.
     let word = "\u{0645}\u{0644}\u{0641}";
     let g = layout(crate::i18n::bidi::visual(word));
     assert_eq!(
         g.rows[0].glyphs.first().map(|x| x.chr),
         Some('\u{0641}'),
-        "буквы внутри слова развёрнуты дважды — похоже на посимвольный reorder_line"
+        "letters inside a word were reversed twice — looks like a per-character reorder_line"
     );
 
-    // «ملف جديد»: последнее логическое слово обязано оказаться ЛЕВЕЕ первого.
-    // Буквы у слов не пересекаются, поэтому позиции однозначны.
+    // “ملف جديد”: the last logical word must end up to the LEFT of the first.
+    // The letters of the words do not overlap, so the positions are unambiguous.
     let phrase = format!("{word} \u{062C}\u{062F}\u{064A}\u{062F}");
     let g = layout(crate::i18n::bidi::visual(&phrase));
     let x_of = |ch: char| {
@@ -1890,43 +1890,43 @@ fn t126_arabic_renders_right_to_left() {
             .glyphs
             .iter()
             .find(|x| x.chr == ch)
-            .unwrap_or_else(|| panic!("глиф {ch:?} не отрисован"))
+            .unwrap_or_else(|| panic!("glyph {ch:?} is not drawn"))
             .pos
             .x
     };
     assert!(
         x_of('\u{062C}') < x_of('\u{0645}'),
-        "второе слово не уехало влево: ج на {:.0}, م на {:.0}",
+        "the second word did not move left: ج at {:.0}, م at {:.0}",
         x_of('\u{062C}'),
         x_of('\u{0645}')
     );
 
-    // и контроль: БЕЗ переупорядочивания порядок обратный — то есть тест
-    // действительно меряет работу bidi, а не свойство шрифта
+    // and a control: WITHOUT reordering the order is reversed — that is, the test
+    // really measures the work of bidi, not a property of the font
     let g = layout(phrase.clone());
-    let x_of = |ch: char| g.rows[0].glyphs.iter().find(|x| x.chr == ch).expect("глиф").pos.x;
+    let x_of = |ch: char| g.rows[0].glyphs.iter().find(|x| x.chr == ch).expect("glyph").pos.x;
     assert!(
         x_of('\u{062C}') > x_of('\u{0645}'),
-        "логический порядок вдруг совпал с визуальным — проверка выродилась"
+        "the logical order suddenly matched the visual one — the check degenerated"
     );
 }
 
-/// Тест 128 (Р.19): надпись влезает в отведённое ей место В КАЖДОМ ЯЗЫКЕ.
+/// Test 128 (R.19): the label fits its allotted place IN EVERY LANGUAGE.
 ///
-/// Прямая реализация правил 3 и 7 чек-листа (`apps/kt-app/CLAUDE.md`):
-/// ширина берётся от галлеи самого длинного варианта, а длинное имя не имеет
-/// права вылезти за свою зону. Бюджеты выведены из настоящих констант
-/// вёрстки, а не назначены на глаз:
+/// A direct implementation of rules 3 and 7 of the checklist (`apps/kt-app/CLAUDE.md`):
+/// the width is taken from the longest variant, and a long name has no
+/// right to climb out of its zone. The budgets are derived from the real layout
+/// constants, not set by eye:
 ///
-/// * меню делит шапку левой колонки с кнопками окна, а колонка по умолчанию
-///   232 px (`app.rs`), поэтому трём заголовкам отведено 160;
-/// * строки перф-панели рисуются `ui.columns(2)` внутри колонки шириной до
-///   420 px — на столбец приходится меньше 200, и именно из-за этого
-///   пользователю уже обрезало счётчик откатов многоточием (п.14 р.14).
+/// * the menu shares the header of the left column with the window buttons, and the column by default is
+///   232 px (`app.rs`), so the three headings get 160;
+/// * the rows of the performance panel are drawn with `ui.columns(2)` inside a column up to
+///   420 px wide — each column gets less than 200, and because of exactly this
+///   the user's rollback counter was already truncated with an ellipsis (item 14 of round 14).
 ///
-/// Слишком длинный перевод падает здесь с именем ключа и фактической шириной:
-/// чинится он на стороне перевода, а не расширением панели — пределы 420 и 90
-/// стоят по прямым просьбам пользователя.
+/// A translation that is too long fails here with the key name and the actual width:
+/// it is fixed on the translation side, not by widening the panel — the limits of 420 and 90
+/// are set by direct requests of the user.
 #[test]
 fn t128_labels_fit_their_budget() {
     const MENU_BUDGET: f32 = 160.0;
@@ -1948,11 +1948,11 @@ fn t128_labels_fit_their_budget() {
             .sum();
         assert!(
             menu <= MENU_BUDGET,
-            "{code}: три заголовка меню занимают {menu:.0} px при бюджете {MENU_BUDGET}"
+            "{code}: three menu headers take {menu:.0} px against the budget {MENU_BUDGET}"
         );
 
-        // двухколоночные строки меряются СОБРАННЫМИ: шаблон короче того, что
-        // увидит пользователь
+        // two-column rows are measured ASSEMBLED: the template is shorter than
+        // what the user will see
         let rows = [
             (k::perf::CACHE_MB, crate::tf!(k::perf::CACHE_MB, 1234, 5678)),
             (k::perf::PREVIEW_RES, crate::tf!(k::perf::PREVIEW_RES, 1920, 1080)),
@@ -1967,7 +1967,7 @@ fn t128_labels_fit_their_budget() {
             let got = w(text.clone(), body.clone());
             assert!(
                 got <= PERF_COLUMN,
-                "{code}: {} = {text:?} занимает {got:.0} px при бюджете {PERF_COLUMN}",
+                "{code}: {} = {text:?} takes {got:.0} px against the budget {PERF_COLUMN}",
                 crate::i18n::key_name(key)
             );
         }
@@ -1975,14 +1975,14 @@ fn t128_labels_fit_their_budget() {
         let got = w(tr(k::perf::ECONOMY).to_string(), body.clone());
         assert!(
             got <= CHECKBOX_BUDGET,
-            "{code}: чекбокс экономного UI занимает {got:.0} px при бюджете {CHECKBOX_BUDGET}"
+            "{code}: the checkbox of the economy UI takes {got:.0} px against the budget {CHECKBOX_BUDGET}"
         );
     }
 }
 
-/// Тест 139 (п.139 porting-notes, Р.24): план Move-драга. Одиночный
-/// частичный наезд = кроссфейд; мульти-наезд/поглощение/крошечный наезд/
-/// вертикальный перенос в занятое — кламп (решение пользователя п.10).
+/// Test 139 (item 139 of porting-notes, R.24): the plan of the Move drag. A single
+/// partial overlap = crossfade; a multi-overlap / absorption / tiny overlap /
+/// vertical move into an occupied spot — a clamp (the user's decision, item 10).
 #[test]
 fn t139_move_plan_crossfade_and_clamp() {
     use crate::timeline::{MovePlan, plan_move};
@@ -2025,52 +2025,52 @@ fn t139_move_plan_crossfade_and_clamp() {
 
         settings_explicit: false,
     });
-    // поведение Р.24/Р.26 живёт в режиме БЕЗ переслаивания (Р.28)
+    // the behavior of R.24/R.26 lives in the mode WITHOUT layering (R.28)
     p.overlap_layers = false;
     p.media.push(MediaRef::new(MediaId(1), "synth:1"));
     p.clips = vec![clip(1, 0, 0, 90_000), clip(2, 0, 200_000, 90_000), clip(3, 0, 400_000, 90_000)];
     p.validate().unwrap();
 
-    // без коллизий
+    // without collisions
     assert_eq!(plan_move(&p, ClipId(2), 100_000, 0), MovePlan::Free);
-    // incoming-наезд: начало клипа 2 в теле клипа 1 → стык в середине наезда
+    // incoming overlap: the start of clip 2 is inside the body of clip 1 → the joint is in the middle of the overlap
     match plan_move(&p, ClipId(2), 50_000, 0) {
         MovePlan::Crossfade { outgoing, incoming, joint, in_off, out_off } => {
             assert_eq!((outgoing, incoming), (ClipId(1), ClipId(2)));
-            assert_eq!(joint, 70_000, "середина наезда [50000, 90000)");
+            assert_eq!(joint, 70_000, "middle of the overlap [50000, 90000)");
             assert_eq!((in_off, out_off), (20_000, 20_000));
         }
-        other => panic!("ожидался кроссфейд, получен {other:?}"),
+        other => panic!("expected a crossfade, got {other:?}"),
     }
-    // outgoing-наезд: конец клипа 2 в теле клипа 3
+    // outgoing overlap: the end of clip 2 is inside the body of clip 3
     match plan_move(&p, ClipId(2), 350_000, 0) {
         MovePlan::Crossfade { outgoing, incoming, joint, .. } => {
             assert_eq!((outgoing, incoming), (ClipId(2), ClipId(3)));
-            assert_eq!(joint, 420_000, "середина наезда [400000, 440000)");
+            assert_eq!(joint, 420_000, "middle of the overlap [400000, 440000)");
         }
-        other => panic!("ожидался кроссфейд, получен {other:?}"),
+        other => panic!("expected a crossfade, got {other:?}"),
     }
-    // полное покрытие соседа (равные длительности, want==n.start) → кламп
-    // (движение влево упирается в его конец)
+    // a full cover of the neighbor (equal durations, want==n.start) → clamp
+    // (a move to the left stops at its end)
     assert!(
         matches!(plan_move(&p, ClipId(2), 0, 0), MovePlan::Clamped { start: 90_000, .. }),
-        "полное покрытие → кламп"
+        "full coverage → clamp"
     );
-    // крошечный наезд (< минимума окна) → кламп, не микропереход
+    // tiny overlap (< the minimum of the window) → clamp, not a micro-transition
     assert!(
         matches!(plan_move(&p, ClipId(2), 89_960, 0), MovePlan::Clamped { start: 90_000, .. }),
-        "крошечный наезд → кламп"
+        "tiny overlap → clamp"
     );
-    // мульти-наезд: сдвинем клип 3 ближе и наедем сразу на двоих
+    // multi-overlap: move clip 3 closer and overlap both at once
     let mut p2 = p.clone();
     p2.clips[2].start = Tick(95_000);
     assert!(matches!(plan_move(&p2, ClipId(2), 60_000, 0), MovePlan::Clamped { .. }));
-    // вертикальный перенос в занятое место чужой дорожки → кламп, не тримы
+    // vertical move into an occupied spot of someone else's track → clamp, not trims
     let mut p3 = p.clone();
     p3.clips[1].lane = 1;
     p3.normalize();
     assert!(matches!(plan_move(&p3, ClipId(2), 50_000, 0), MovePlan::Clamped { .. }));
-    // foreign-плейсхолдер занимает место
+    // a foreign placeholder occupies the spot
     let mut p4 = p.clone();
     p4.foreign.push(ForeignEvent {
         key: 1,
@@ -2082,7 +2082,7 @@ fn t139_move_plan_crossfade_and_clamp() {
     assert!(matches!(plan_move(&p4, ClipId(2), 110_000, 0), MovePlan::Clamped { .. }));
 }
 
-/// Тест 139 (живая часть): наезд драгом создаёт переход, клипы встык.
+/// Test 139 (live part): an overlap by a drag creates a transition, clips butt together.
 #[test]
 fn t139_drag_overlap_creates_crossfade() {
     use kt_model::*;
@@ -2092,7 +2092,7 @@ fn t139_drag_overlap_creates_crossfade() {
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-        // поведение Р.24/Р.26 живёт в режиме БЕЗ переслаивания (Р.28)
+        // the behavior of R.24/R.26 lives in the mode WITHOUT layering (R.28)
         p.overlap_layers = false;
         p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         for (n, start) in [(1u64, 0i64), (2, 200_000)] {
@@ -2127,7 +2127,7 @@ fn t139_drag_overlap_creates_crossfade() {
         app.player.seek(Tick(0));
     }
     h.step();
-    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let g = h.state().tl_geom.clone().expect("no timeline geometry");
     let y = g.lane_y(ClipKind::Video, 0, 0.5);
     let grab = g.tick_to_x(200_000 + 45_000);
     h.hover_at(egui::pos2(grab, y));
@@ -2138,9 +2138,9 @@ fn t139_drag_overlap_creates_crossfade() {
     h.step();
     let grab_dt = match h.state().drag {
         Some(crate::timeline::Drag::Clip(ref d)) => d.grab_dt,
-        _ => panic!("драг клипа не начался"),
+        _ => panic!("clip drag did not start"),
     };
-    // цель: start = 50000 — частичный наезд на хвост клипа 1
+    // target: start = 50000 — a partial overlap of the tail of clip 1
     let to = g.tick_to_x(50_000 + grab_dt);
     h.hover_at(egui::pos2(to, y));
     h.step();
@@ -2148,10 +2148,10 @@ fn t139_drag_overlap_creates_crossfade() {
     h.step();
 
     let p = h.state().model.project().clone();
-    assert_eq!(p.transitions.len(), 1, "наезд обязан создать переход");
+    assert_eq!(p.transitions.len(), 1, "an overlap must create a transition");
     let t = &p.transitions[0];
     assert_eq!((t.a, t.b), (Some(ClipId(1)), Some(ClipId(2))));
-    // указатель харнесса квантуется пикселем: допуск 1 px = 1000 тиков
+    // the harness pointer is quantized by the pixel: tolerance 1 px = 1000 ticks
     let near = |a: Tick, want: i64, what: &str| {
         assert!((a.0 - want).abs() <= 1_000, "{what}: {a:?} vs ~{want}");
     };
@@ -2159,14 +2159,14 @@ fn t139_drag_overlap_creates_crossfade() {
     near(t.out_offset, 20_000, "out_offset");
     let c1 = p.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
     let c2 = p.clips.iter().find(|c| c.id == ClipId(2)).unwrap();
-    near(c1.start + c1.duration, 70_000, "стык в середине наезда");
-    assert_eq!(c2.start, c1.start + c1.duration, "клипы строго встык");
-    near(c2.source_in, 20_000, "in-point подрезан тримом");
-    p.validate().expect("итог валиден");
+    near(c1.start + c1.duration, 70_000, "a junction in the middle of the overlap");
+    assert_eq!(c2.start, c1.start + c1.duration, "clips strictly butted together");
+    near(c2.source_in, 20_000, "in-point trimmed");
+    p.validate().expect("result is valid");
 }
 
-/// Тест 140 (п.140 porting-notes, Р.24): драги краёв/тела перехода и
-/// геометрия отрисовки.
+/// Test 140 (item 140 of porting-notes, R.24): drags of the edges/body of the transition and
+/// the drawing geometry.
 #[test]
 fn t140_transition_edge_and_body_drags() {
     use kt_model::*;
@@ -2220,10 +2220,10 @@ fn t140_transition_edge_and_body_drags() {
         app.player.seek(Tick(0));
     }
     h.step();
-    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let g = h.state().tl_geom.clone().expect("no timeline geometry");
     let y = g.lane_y(ClipKind::Video, 0, 0.5);
 
-    // драг ЛЕВОГО края окна наружу: in_offset 10000 → 30000
+    // drag the LEFT edge of the window outward: in_offset 10000 → 30000
     let x_edge = g.tick_to_x(90_000 - 10_000);
     h.hover_at(egui::pos2(x_edge, y));
     h.step();
@@ -2233,7 +2233,7 @@ fn t140_transition_edge_and_body_drags() {
     h.step();
     assert!(
         matches!(h.state().drag, Some(crate::timeline::Drag::TransitionEdge { left: true, .. })),
-        "хват края перехода не сработал: {:?}",
+        "grabbing the transition edge did not work: {:?}",
         matches!(h.state().drag, Some(crate::timeline::Drag::Clip(_)))
     );
     let to = g.tick_to_x(90_000 - 30_000);
@@ -2244,12 +2244,12 @@ fn t140_transition_edge_and_body_drags() {
     let t0 = h.state().model.project().transitions[0].clone();
     assert!((t0.in_offset.0 - 30_000).abs() <= 1_000, "in_offset ~30000: {t0:?}");
     assert_eq!(t0.out_offset, Tick(10_000));
-    // один undo откатывает весь жест (коалесинг)
+    // one undo rolls back the whole gesture (coalescing)
     h.state_mut().model.undo().unwrap();
     assert_eq!(h.state().model.project().transitions[0].in_offset, Tick(10_000));
     h.step();
 
-    // roll стыка: центр окна тянем на +20000 — стык и клипы едут
+    // roll of the joint: we pull the window centre by +20000 — the joint and the clips move
     let xj = g.tick_to_x(90_000);
     h.hover_at(egui::pos2(xj, y));
     h.step();
@@ -2267,20 +2267,20 @@ fn t140_transition_edge_and_body_drags() {
     let c1 = p.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
     let c2 = p.clips.iter().find(|c| c.id == ClipId(2)).unwrap();
     let joint = c1.start + c1.duration;
-    assert!((joint.0 - 110_000).abs() <= 2_000, "roll сдвинул стык: {joint:?}");
-    assert_eq!(c2.start, joint, "клипы строго встык");
-    assert_eq!(c2.source_in - Tick(30_000), joint - Tick(90_000), "TrimStart подрезал источник");
-    assert_eq!(p.transitions[0].joint(&p), Some(joint), "окно уехало со стыком");
+    assert!((joint.0 - 110_000).abs() <= 2_000, "roll moved the junction: {joint:?}");
+    assert_eq!(c2.start, joint, "clips strictly butted together");
+    assert_eq!(c2.source_in - Tick(30_000), joint - Tick(90_000), "TrimStart cut the source");
+    assert_eq!(p.transitions[0].joint(&p), Some(joint), "the window moved with the junction");
 
-    // геометрия отрисовки — чистая функция
+    // drawing geometry — a pure function
     let r = crate::timeline::transition_rect(100.0, 140.0, 50.0, 40.0);
     assert_eq!((r.left(), r.right()), (100.0, 140.0));
-    assert!(r.top() > 50.0 && r.bottom() < 90.0, "полоса внутри строки дорожки");
+    assert!(r.top() > 50.0 && r.bottom() < 90.0, "strip inside the track row");
 }
 
-/// Тест 163 (п.163 porting-notes, Р.28): с переслаиванием жест НИЧЕГО не
-/// режет. Требование пользователя дословно: «вот сколько было столько и
-/// должно остаться… НИЧЕГО НИГДЕ НЕ ДОЛЖНО ОТРАСТАТЬ/ОТРУБАТЬСЯ».
+/// Test 163 (item 163 of porting-notes, R.28): with layering the gesture cuts NOTHING.
+/// The user's requirement verbatim: “however much there was, that much must remain…
+/// NOTHING ANYWHERE MUST GROW BACK OR BE CUT OFF”.
 #[test]
 fn t163_overlap_drag_changes_nothing_but_position() {
     use kt_model::*;
@@ -2290,9 +2290,9 @@ fn t163_overlap_drag_changes_nothing_but_position() {
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-        assert!(p.overlap_layers, "переслаивание включено по умолчанию");
+        assert!(p.overlap_layers, "layering is on by default");
         p.media.push(MediaRef::new(MediaId(1), "synth:1"));
-        // A/V-пара + одиночный видео-клип: проверяем и группы, и одиночек
+        // A/V pair + a single video clip: we check both the groups and the singles
         for (n, kind, start, group) in [
             (1u64, ClipKind::Video, 0i64, Some(GroupId(1))),
             (2, ClipKind::Audio, 0, Some(GroupId(1))),
@@ -2329,11 +2329,11 @@ fn t163_overlap_drag_changes_nothing_but_position() {
         app.player.seek(Tick(0));
     }
     h.step();
-    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let g = h.state().tl_geom.clone().expect("no timeline geometry");
     let y = g.lane_y(ClipKind::Video, 0, 0.5);
     let before: Vec<ClipEvent> = h.state().model.project().clips.clone();
 
-    // наезжаем третьим клипом на первый (перекрытие 40 000 тиков)
+    // we overlap with a third clip onto the first (overlap 40,000 ticks)
     let from = g.tick_to_x(200_000 + 45_000);
     let to = g.tick_to_x(50_000 + 45_000);
     h.hover_at(egui::pos2(from, y));
@@ -2348,20 +2348,20 @@ fn t163_overlap_drag_changes_nothing_but_position() {
     h.step();
 
     let p = h.state().model.project().clone();
-    assert!(p.transitions.is_empty(), "перекрытие звучит само — переход не заводится");
+    assert!(p.transitions.is_empty(), "the overlap plays by itself — a transition is not created");
     for c in &p.clips {
         let was = before.iter().find(|x| x.id == c.id).unwrap();
-        assert_eq!(c.duration, was.duration, "длительность {:?} не менялась", c.id);
-        assert_eq!(c.source_in, was.source_in, "точка входа {:?} не менялась", c.id);
+        assert_eq!(c.duration, was.duration, "duration {:?} did not change", c.id);
+        assert_eq!(c.source_in, was.source_in, "entry point {:?} did not change", c.id);
         if c.id != ClipId(3) {
-            assert_eq!(c.start, was.start, "чужой клип {:?} не двигался", c.id);
+            assert_eq!(c.start, was.start, "another clip {:?} did not move", c.id);
         }
     }
     let moved = p.clips.iter().find(|c| c.id == ClipId(3)).unwrap();
-    assert!((moved.start.0 - 50_000).abs() <= 1_000, "клип встал куда тянули: {moved:?}");
-    p.validate().expect("перекрытие законно");
+    assert!((moved.start.0 - 50_000).abs() <= 1_000, "the clip landed where it was dragged: {moved:?}");
+    p.validate().expect("the overlap is legal");
 
-    // растаскиваем обратно — снова ничего не режется
+    // we drag it back apart — again nothing is cut
     let from = g.tick_to_x(moved.start.0 + 45_000);
     let to = g.tick_to_x(300_000 + 45_000);
     h.hover_at(egui::pos2(from, y));
@@ -2377,14 +2377,14 @@ fn t163_overlap_drag_changes_nothing_but_position() {
     let p = h.state().model.project().clone();
     for c in &p.clips {
         let was = before.iter().find(|x| x.id == c.id).unwrap();
-        assert_eq!(c.duration, was.duration, "после растаскивания {:?} цел", c.id);
-        assert_eq!(c.source_in, was.source_in, "после растаскивания in-point {:?} цел", c.id);
+        assert_eq!(c.duration, was.duration, "after pulling apart {:?} is intact", c.id);
+        assert_eq!(c.source_in, was.source_in, "after pulling apart the in-point {:?} is intact", c.id);
     }
 }
 
-/// Тест 160 (п.160 porting-notes, Р.26): наехал — растащил — материал
-/// вернулся. Жалоба пользователя: «в sony vegas если растащить
-/// перекрывающиеся события — остаётся то, что перекрывалось, без обрезки».
+/// Test 160 (item 160 of porting-notes, R.26): overlapped — pulled apart — the material
+/// came back. The user's complaint: “in Sony Vegas, if you pull apart
+/// overlapping events — what was overlapping remains, without trimming”.
 #[test]
 fn t160_pulling_apart_restores_trimmed_material() {
     use kt_model::*;
@@ -2394,7 +2394,7 @@ fn t160_pulling_apart_restores_trimmed_material() {
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-        // поведение Р.24/Р.26 живёт в режиме БЕЗ переслаивания (Р.28)
+        // the behavior of R.24/R.26 lives in the mode WITHOUT layering (R.28)
         p.overlap_layers = false;
         p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         for (n, start) in [(1u64, 0i64), (2, 200_000)] {
@@ -2429,10 +2429,10 @@ fn t160_pulling_apart_restores_trimmed_material() {
         app.player.seek(Tick(0));
     }
     h.step();
-    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let g = h.state().tl_geom.clone().expect("no timeline geometry");
     let y = g.lane_y(ClipKind::Video, 0, 0.5);
     let grab = |h: &mut Harness<KtApp>, from: f32, to: f32, y: f32| {
-        // драг как человек: нажать → сдвинуть чуть → вести дальше
+        // drag like a person: press → nudge slightly → keep dragging
         h.hover_at(egui::pos2(from, y));
         h.step();
         h.drag_at(egui::pos2(from, y));
@@ -2445,41 +2445,41 @@ fn t160_pulling_apart_restores_trimmed_material() {
         h.step();
     };
 
-    // 1. наезжаем клипом 2 на клип 1: [200000..290000) → [50000..140000)
+    // 1. overlap clip 2 onto clip 1: [200000..290000) → [50000..140000)
     let from = g.tick_to_x(200_000 + 45_000);
     grab(&mut h, from, g.tick_to_x(50_000 + 45_000), y);
     {
         let p = h.state().model.project();
-        assert_eq!(p.transitions.len(), 1, "наезд создал кроссфейд");
+        assert_eq!(p.transitions.len(), 1, "the overlap created a crossfade");
         let c1 = p.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
-        assert!(c1.duration < Tick(90_000), "уходящий подрезан стыком");
+        assert!(c1.duration < Tick(90_000), "the outgoing one trimmed by the junction");
     }
 
-    // 2. растаскиваем обратно — материал обязан вернуться
-    // хват берём ПОДАЛЬШЕ от окна перехода: его края перехватывают клик
+    // 2. drag it back apart — the material must come back
+    // grab it FURTHER from the transition window: its edges intercept the click
     let cur = h.state().model.project().clips.iter().find(|c| c.id == ClipId(2)).unwrap().start.0;
     let grab_dt = 60_000;
     let from = g.tick_to_x(cur + grab_dt);
     grab(&mut h, from, g.tick_to_x(300_000 + grab_dt), y);
 
     let p = h.state().model.project().clone();
-    assert!(p.transitions.is_empty(), "переход умер вместе со стыком");
+    assert!(p.transitions.is_empty(), "the transition died together with the junction");
     let c1 = p.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
     let c2 = p.clips.iter().find(|c| c.id == ClipId(2)).unwrap();
-    assert_eq!(c1.duration, Tick(90_000), "уходящему вернули хвост: {c1:?}");
-    assert_eq!(c2.duration, Tick(90_000), "входящему вернули голову: {c2:?}");
-    assert_eq!(c2.source_in, Tick(0), "точка входа вернулась к нулю");
-    p.validate().expect("итог валиден");
+    assert_eq!(c1.duration, Tick(90_000), "the outgoing one got its tail back: {c1:?}");
+    assert_eq!(c2.duration, Tick(90_000), "the incoming one got its head back: {c2:?}");
+    assert_eq!(c2.source_in, Tick(0), "the entry point returned to zero");
+    p.validate().expect("result is valid");
 
-    // геометрия ручек — чистая функция
+    // the geometry of the handles — a pure function
     let (l, r) = crate::timeline::transition_handle_rects(100.0, 120.0, 140.0, 50.0, 40.0);
-    assert_eq!((l.left(), l.right()), (100.0, 120.0), "слева — продолжение входящего");
-    assert_eq!((r.left(), r.right()), (120.0, 140.0), "справа — хвост уходящего");
-    assert!(l.top() > 50.0 && r.bottom() < 90.0, "ручки внутри строки дорожки");
+    assert_eq!((l.left(), l.right()), (100.0, 120.0), "on the left — the continuation of the incoming");
+    assert_eq!((r.left(), r.right()), (120.0, 140.0), "on the right — the tail of the outgoing");
+    assert!(l.top() > 50.0 && r.bottom() < 90.0, "handles inside the track row");
 }
 
-/// Тест 157 (п.157 porting-notes, Р.25): фейд у края в UI — хват окна,
-/// живой драг края и отсутствие соседа не мешают ни тому, ни другому.
+/// Test 157 (item 157 of porting-notes, R.25): the fade at the edge in the UI — the window grab,
+/// the live drag of the edge and the absence of a neighbor do not interfere with either.
 #[test]
 fn t157_fade_edge_drag_without_neighbour() {
     use kt_model::*;
@@ -2513,7 +2513,7 @@ fn t157_fade_edge_drag_without_neighbour() {
             opacity: 1.0,
             fx_off: false,
         });
-        // фейд-ин: соседа слева нет вообще
+        // fade-in: there is no neighbor on the left at all
         p.transitions.push(TransitionEvent {
             id: TransitionId(1),
             a: None,
@@ -2532,10 +2532,10 @@ fn t157_fade_edge_drag_without_neighbour() {
         app.player.seek(Tick(0));
     }
     h.step();
-    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let g = h.state().tl_geom.clone().expect("no timeline geometry");
     let y = g.lane_y(ClipKind::Video, 0, 0.5);
 
-    // ПРАВЫЙ край окна фейда (внутри тела клипа) тянем вправо: 10000 → 40000
+    // the RIGHT edge of the fade window (inside the clip body) drag to the right: 10000 → 40000
     let x_edge = g.tick_to_x(90_000 + 10_000);
     h.hover_at(egui::pos2(x_edge, y));
     h.step();
@@ -2545,7 +2545,7 @@ fn t157_fade_edge_drag_without_neighbour() {
     h.step();
     assert!(
         matches!(h.state().drag, Some(crate::timeline::Drag::TransitionEdge { left: false, .. })),
-        "край фейда не схватился"
+        "the fade edge did not grab"
     );
     let to = g.tick_to_x(90_000 + 40_000);
     h.hover_at(egui::pos2(to, y));
@@ -2553,10 +2553,10 @@ fn t157_fade_edge_drag_without_neighbour() {
     h.drop_at(egui::pos2(to, y));
     h.step();
     let t = h.state().model.project().transitions[0].clone();
-    assert!(t.a.is_none() && t.b == Some(ClipId(1)), "фейд остался фейдом: {t:?}");
-    assert!((t.out_offset.0 - 40_000).abs() <= 1_000, "окно расширилось: {t:?}");
+    assert!(t.a.is_none() && t.b == Some(ClipId(1)), "the fade stayed a fade: {t:?}");
+    assert!((t.out_offset.0 - 40_000).abs() <= 1_000, "the window expanded: {t:?}");
 
-    // окно не может выйти за тело клипа
+    // the window cannot leave the clip body
     let far = g.tick_to_x(90_000 + 200_000);
     h.hover_at(egui::pos2(g.tick_to_x(90_000 + 40_000), y));
     h.step();
@@ -2569,13 +2569,13 @@ fn t157_fade_edge_drag_without_neighbour() {
     h.drop_at(egui::pos2(far, y));
     h.step();
     let t = h.state().model.project().transitions[0].clone();
-    assert!(t.out_offset <= Tick(90_000), "окно клампится телом клипа: {t:?}");
+    assert!(t.out_offset <= Tick(90_000), "the window is clamped by the clip body: {t:?}");
 }
 
-/// Тест 142 (п.142 porting-notes, Р.24): метки-диапазоны в UI. Жест M —
-/// дословно по решению пользователя: «при выделенном регионе и курсоре в
-/// нем - m дает marked_range, при курсоре вне региона - одинарная метка по
-/// курсору»; повторное M — toggle; края и snap/stop по обеим граням.
+/// Test 142 (item 142 of porting-notes, R.24): range markers in the UI. The M gesture —
+/// verbatim by the user's decision: “with a region selected and the cursor in it, m gives
+/// marked_range; with the cursor outside the region — a single marker at the cursor”;
+/// a repeated M is a toggle; the edges and snap/stop see both edges.
 #[test]
 fn t142_marker_range_gesture_and_edges() {
     use kt_model::*;
@@ -2584,31 +2584,31 @@ fn t142_marker_range_gesture_and_edges() {
     {
         let app = h.state_mut();
         app.model.set_region(Some(Region { start: Tick(30_000), end: Tick(90_000) }));
-        app.player.seek(Tick(60_000)); // курсор ВНУТРИ региона
-        // зум фиксируем: магнитный порог M зависит от ticks_per_px
+        app.player.seek(Tick(60_000)); // the cursor INSIDE the region
+        // zoom fixed: the magnetic threshold M depends on ticks_per_px
         app.ticks_per_px = 1_000.0;
     }
     h.step();
 
-    // M внутри региона → диапазон по региону
+    // M inside the region → a range over the region
     h.state_mut().marker_toggle_at_cursor();
     {
         let p = h.state().model.project();
         assert_eq!(p.markers.len(), 1);
         assert_eq!((p.markers[0].t, p.markers[0].duration), (Tick(30_000), Tick(60_000)));
     }
-    // повторное M там же → toggle (удаление)
+    // a repeated M there → toggle (deletion)
     h.state_mut().marker_edit = None;
     h.state_mut().marker_toggle_at_cursor();
-    assert!(h.state().model.project().markers.is_empty(), "toggle удаляет диапазон");
+    assert!(h.state().model.project().markers.is_empty(), "toggle removes the range");
 
-    // точечная метка на старте региона растягивается жестом M
+    // a point marker at the start of the region is stretched by the M gesture
     h.state_mut().apply(Command::AddMarker { at: Tick(30_000), duration: Tick::ZERO });
     h.state_mut().marker_toggle_at_cursor();
     assert_eq!(h.state().model.project().markers[0].duration, Tick(60_000));
 
-    // M вне региона → точечная по курсору (тик кратен 15 — playhead живёт
-    // в аудиокадрах, round-trip точен только на кратных, п.94)
+    // M outside the region → a point marker at the cursor (the tick is a multiple of 15 — the playhead lives
+    // in audio frames, the round-trip is exact only on multiples, item 94)
     h.state_mut().player.seek(Tick(192_000));
     h.state_mut().marker_edit = None;
     h.state_mut().marker_toggle_at_cursor();
@@ -2617,19 +2617,19 @@ fn t142_marker_range_gesture_and_edges() {
         assert!(p.markers.iter().any(|m| m.t == Tick(192_000) && !m.is_range()), "{:?}", p.markers);
     }
 
-    // snap и stop_points видят ОБЕ грани диапазона
+    // snap and stop_points see BOTH edges of the range
     let targets = h.state().snap_targets(None);
     assert!(targets.contains(&30_000) && targets.contains(&90_000), "{targets:?}");
     let stops = crate::app::stop_points(h.state().model.project());
     assert!(stops.contains(&30_000) && stops.contains(&90_000), "{stops:?}");
 
-    // лента — чистая геометрия: узкая полоса на строке подписей времени
+    // the strip is pure geometry: a narrow band on the time-label row
     let band = crate::timeline::marker_band_rect(100.0, 160.0, 20.0);
     assert_eq!((band.left(), band.right()), (100.0, 160.0));
-    assert!(band.height() <= 6.0, "лента не съедает строку времени");
+    assert!(band.height() <= 6.0, "the reel does not eat the time row");
 }
 
-/// Тест 142 (живая часть): драг конца диапазона меняет длительность.
+/// Test 142 (live part): dragging the end of the range changes its duration.
 #[test]
 fn t142_marker_end_drag() {
     use kt_model::*;
@@ -2644,8 +2644,8 @@ fn t142_marker_end_drag() {
         app.player.seek(Tick(0));
     }
     h.step();
-    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
-    // конец диапазона на полосе флажков (верх таймлайна)
+    let g = h.state().tl_geom.clone().expect("no timeline geometry");
+    // the end of the range on the flag strip (top of the timeline)
     let y = g.rect.top() + 4.0;
     let x_end = g.tick_to_x(60_000);
     h.hover_at(egui::pos2(x_end, y));
@@ -2656,7 +2656,7 @@ fn t142_marker_end_drag() {
     h.step();
     assert!(
         matches!(h.state().drag, Some(crate::timeline::Drag::MarkerEdge { left: false, .. })),
-        "хват конца диапазона не сработал"
+        "grabbing the range end did not work"
     );
     let to = g.tick_to_x(80_000);
     h.hover_at(egui::pos2(to, y));
@@ -2664,16 +2664,16 @@ fn t142_marker_end_drag() {
     h.drop_at(egui::pos2(to, y));
     h.step();
     let m = &h.state().model.project().markers[0];
-    assert!((m.duration.0 - 50_000).abs() <= 1_000, "длительность ~50000: {:?}", m.duration);
+    assert!((m.duration.0 - 50_000).abs() <= 1_000, "duration ~50000: {:?}", m.duration);
 }
 
-/// Тест 150 (п.150 porting-notes, Р.24): файловый IO приложения — .kt.
+/// Test 150 (item 150 of porting-notes, R.24): the application's file IO — .kt.
 #[test]
 fn t150_project_io_is_otio() {
     use std::path::{Path, PathBuf};
-    // атомарный tmp дописывается к ПОЛНОМУ имени (старый with_extension
-    // был захардкожен под ktproj и съедал многоточечные имена); с Р.49
-    // (п.352) в имени ещё и номер процесса — см. t363
+    // the atomic tmp is appended to the FULL name (the old with_extension
+    // was hardcoded for ktproj and swallowed multi-dot names); since R.49
+    // (item 352) the name also has the process number — see t363
     let pid = std::process::id();
     assert_eq!(
         kt_otio::atomic_tmp_path(Path::new("/x/a.kt")),
@@ -2683,12 +2683,12 @@ fn t150_project_io_is_otio() {
         kt_otio::atomic_tmp_path(Path::new("/x/a.b.kt")),
         PathBuf::from(format!("/x/a.b.kt.{pid}.tmp"))
     );
-    // recovery безымянного проекта — тоже .kt
+    // recovery of an unnamed project — also .kt
     assert!(crate::app::autosave_path().to_string_lossy().ends_with("autosave-project.kt"));
 
     let dir = std::env::temp_dir().join(format!("kt-t150-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    // .kt читается
+    // .kt is read
     let p = kt_model::Project::new(kt_model::ProjectSettings {
         fps: 30,
         width: 640,
@@ -2707,21 +2707,21 @@ fn t150_project_io_is_otio() {
         .unwrap();
     let (loaded, _, _) = crate::app::load_project_file(&otio).expect("otio opens");
     assert_eq!(loaded.settings.fps, 30);
-    // .ktproj как проект НЕ открывается (Р.24 п.12) — честная подсказка
+    // .ktproj does NOT open as a project (R.24 item 12) — an honest hint
     let legacy = dir.join("old.ktproj");
     std::fs::write(&legacy, include_str!("../../../fixtures/demo.ktproj")).unwrap();
     let err = crate::app::load_project_file(&legacy).unwrap_err();
     assert!(
         err.contains(crate::i18n::tr(crate::i18n::k::menu::file::IMPORT_OLDER)),
-        "подсказка на импорт: {err}"
+        "hint for import: {err}"
     );
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// Тест 169 (п.2 Р.28): превью материала при жестах — «сколько было столько
-/// и должно остаться». Пользователь: «перетаскиваю событие вглубь предыдущего
-/// — превью звука прокручивается влево, хотя при воспроизведении сам звук не
-/// меняется». Материал внутри куска двигает ТОЛЬКО трим левого края.
+/// Test 169 (item 2 of R.28): material preview during gestures — “however much there was, that much
+/// must remain”. The user: “I drag the event deeper into the previous one — the sound preview
+/// scrolls to the left, although during playback the sound itself does not change”.
+/// Material inside the piece moves ONLY the trim of the left edge.
 #[test]
 fn t169_preview_material_shifts_only_on_trim_start() {
     use crate::timeline::{Drag, DragMode, DragState, preview_src_shift};
@@ -2765,33 +2765,33 @@ fn t169_preview_material_shifts_only_on_trim_start() {
         })
     };
 
-    // перенос вправо на 4000: кусок едет целиком, материал — вместе с ним
+    // a move to the right by 4000: the piece goes as a whole, the material with it
     let d = drag(DragMode::Move, 5_000, 15_000);
-    assert_eq!(preview_src_shift(Some(&d), ClipId(1), 1_000), 0, "перенос не крутит материал");
-    // перенос влево — тоже ноль (раньше .max(0) прятал только эту половину)
+    assert_eq!(preview_src_shift(Some(&d), ClipId(1), 1_000), 0, "the move does not spin the material");
+    // a move to the left — also zero (before, .max(0) hid only this half)
     let d = drag(DragMode::Move, -3_000, 7_000);
-    assert_eq!(preview_src_shift(Some(&d), ClipId(1), 1_000), 0, "перенос влево не крутит");
-    // трим левого края: кусок стоит, край едет ПО материалу
+    assert_eq!(preview_src_shift(Some(&d), ClipId(1), 1_000), 0, "the move to the left does not spin");
+    // trim of the left edge: the piece stands, the edge moves ALONG the material
     let d = drag(DragMode::TrimStart, 5_000, 11_000);
     assert_eq!(
         preview_src_shift(Some(&d), ClipId(1), 1_000),
         4_000,
-        "трим начала двигает материал"
+        "trimming the start moves the material"
     );
     let d = drag(DragMode::TrimStart, 0, 11_000);
-    assert_eq!(preview_src_shift(Some(&d), ClipId(1), 1_000), -1_000, "влево — в обратную сторону");
-    // трим правого края левую границу не трогает
+    assert_eq!(preview_src_shift(Some(&d), ClipId(1), 1_000), -1_000, "to the left — in the opposite direction");
+    // trim of the right edge does not touch the left boundary
     let d = drag(DragMode::TrimEnd, 1_000, 20_000);
-    assert_eq!(preview_src_shift(Some(&d), ClipId(1), 1_000), 0, "трим конца материал не крутит");
-    // соседние клипы жест не касается
+    assert_eq!(preview_src_shift(Some(&d), ClipId(1), 1_000), 0, "trimming the end does not spin the material");
+    // neighboring clips are not touched by the gesture
     let d = drag(DragMode::TrimStart, 5_000, 11_000);
-    assert_eq!(preview_src_shift(Some(&d), ClipId(2), 1_000), 0, "чужой клип не трогаем");
-    assert_eq!(preview_src_shift(None, ClipId(1), 1_000), 0, "без жеста сдвига нет");
+    assert_eq!(preview_src_shift(Some(&d), ClipId(2), 1_000), 0, "we do not touch another clip");
+    assert_eq!(preview_src_shift(None, ClipId(1), 1_000), 0, "without a shift gesture there is none");
 }
 
-/// Тест 170 (п.11 Р.28): «marker here при выделенном регионе должен порождать
-/// region marker». Парные способы одного действия обязаны учитывать контекст
-/// одинаково (п.17 чек-листа): жест M и пункт меню — одно тело `marker_here`.
+/// Test 170 (item 11 of R.28): “marker here with a selected region must produce a
+/// region marker”. Paired ways of one action must account for the context
+/// identically (item 17 of the checklist): the M gesture and the menu item — one body `marker_here`.
 #[test]
 fn t170_marker_here_matches_the_m_gesture() {
     use kt_model::*;
@@ -2800,29 +2800,29 @@ fn t170_marker_here_matches_the_m_gesture() {
     {
         let app = h.state_mut();
         app.model.set_region(Region::normalized(Tick(30_000), Tick(90_000)));
-        // пункт меню на КРОМКЕ региона: тик грани — это «по региону»
+        // the menu item on the EDGE of the region: the tick of the edge is “over the region”
         app.marker_here(Tick(30_000));
     }
     h.step();
     {
         let m = h.state().model.project().markers.clone();
-        assert_eq!(m.len(), 1, "метка одна: {m:?}");
-        assert_eq!(m[0].t, Tick(30_000), "метка на начале региона");
-        assert_eq!(m[0].duration, Tick(60_000), "это ДИАПАЗОН, а не точка: {:?}", m[0]);
+        assert_eq!(m.len(), 1, "one marker: {m:?}");
+        assert_eq!(m[0].t, Tick(30_000), "marker at the start of the region");
+        assert_eq!(m[0].duration, Tick(60_000), "this is a RANGE, not a point: {:?}", m[0]);
     }
-    // повторный вызов — toggle, как у жеста M
+    // a repeated call — toggle, as with the M gesture
     h.state_mut().marker_here(Tick(30_000));
     h.step();
-    assert!(h.state().model.project().markers.is_empty(), "повтор снимает метку");
-    // вторая кромка ведёт себя так же
+    assert!(h.state().model.project().markers.is_empty(), "a repeat removes the marker");
+    // the second edge behaves the same
     h.state_mut().marker_here(Tick(90_000));
     h.step();
     assert_eq!(
         h.state().model.project().markers[0].duration,
         Tick(60_000),
-        "кромка конца — тоже регион"
+        "the end edge is also a region"
     );
-    // вне региона — точечная метка (прежнее поведение)
+    // outside the region — a point marker (the former behavior)
     {
         let app = h.state_mut();
         app.model.set_region(None);
@@ -2832,18 +2832,18 @@ fn t170_marker_here_matches_the_m_gesture() {
     let m = h.state().model.project().markers.clone();
     assert!(
         m.iter().any(|k| k.t == Tick(200_000) && k.duration == Tick::ZERO),
-        "без региона — одиночная метка: {m:?}"
+        "without a region — a single marker: {m:?}"
     );
 }
 
-/// Тест 172 (п.5 Р.28): невозможность действия показывается КАК ОШИБКА.
+/// Test 172 (item 5 of R.28): an impossible action is shown AS AN ERROR.
 ///
-/// Жалоба дословно: «я пока сам туда не промотал — не понял что оказывается
-/// там еще событие есть в конце которое мешает, а еще оказывается есть
-/// подсказка беленькая блеклая, везде в подсказках такие ситуации делаются
-/// как ошибочные». Проверяем всё три требования: препятствие известно
-/// (значит, есть что подсветить), подсказка идёт ошибочным стилем и
-/// перебивает наведение, а за пределами вида говорит, куда смотреть.
+/// The complaint verbatim: “I did not scroll there myself — I did not understand that there is still an
+/// event at the end that gets in the way, and there is also a pale faded
+/// hint; in hints such situations are always done
+/// as errors”. We check all three requirements: the obstacle is known
+/// (so there is something to highlight), the hint is in the error style and
+/// overrides the hover, and beyond the view it says where to look.
 #[test]
 fn t172_blocked_gesture_is_an_error_not_a_pale_hint() {
     use crate::app::HintKind;
@@ -2852,7 +2852,7 @@ fn t172_blocked_gesture_is_an_error_not_a_pale_hint() {
     use kt_time::Tick;
     const TPP: f64 = 1000.0;
 
-    // 1. план знает, ВО ЧТО упёрлись
+    // 1. the plan knows WHAT they ran into
     let mut p = Project::new(ProjectSettings {
         fps: 30,
         width: 640,
@@ -2866,9 +2866,9 @@ fn t172_blocked_gesture_is_an_error_not_a_pale_hint() {
 
         settings_explicit: false,
     });
-    p.overlap_layers = false; // блокировка возможна только в этом режиме
+    p.overlap_layers = false; // blocking is possible only in this mode
     p.media.push(MediaRef::new(MediaId(1), "synth:1"));
-    // клипы 2 и 3 стоят встык: любое попадание между ними — наезд на ДВОИХ
+    // clips 2 and 3 stand butt to butt: any hit between them is an overlap of TWO
     for (n, start) in [(1u64, 0i64), (2, 200_000), (3, 250_000)] {
         p.clips.push(ClipEvent {
             r#gen: None,
@@ -2895,31 +2895,31 @@ fn t172_blocked_gesture_is_an_error_not_a_pale_hint() {
         });
     }
     p.validate().unwrap();
-    // клип 1 едет вправо и накрывает СРАЗУ ДВОИХ (одиночный частичный наезд
-    // — это кроссфейд, а не упор): препятствие — первый по ходу движения
+    // clip 1 moves to the right and covers TWO at once (a single partial overlap
+    // is a crossfade, not a stop): the obstacle is the first one in the direction of motion
     match plan_move(&p, ClipId(1), 230_000, 0) {
         MovePlan::Clamped { blocker, .. } => {
-            assert_eq!(blocker, (200_000, 250_000), "по ходу движения первым мешает клип 2");
+            assert_eq!(blocker, (200_000, 250_000), "along the motion, clip 2 blocks first");
         }
-        other => panic!("ожидался упор, получен {other:?}"),
+        other => panic!("expected a stop, got {other:?}"),
     }
-    // движение влево в полное покрытие соседа — упор в его правый край
+    // a move to the left into a full cover of the neighbor — a stop at its right edge
     match plan_move(&p, ClipId(3), 200_000, 0) {
         MovePlan::Clamped { start, blocker } => {
-            assert_eq!(blocker, (200_000, 250_000), "слева мешает клип 2");
-            assert_eq!(start, 250_000, "упор — правый край препятствия");
+            assert_eq!(blocker, (200_000, 250_000), "clip 2 blocks on the left");
+            assert_eq!(start, 250_000, "the stop is the right edge of the obstacle");
         }
-        other => panic!("ожидался упор, получен {other:?}"),
+        other => panic!("expected a stop, got {other:?}"),
     }
 
-    // 2. «куда смотреть», когда препятствие за пределами вида
+    // 2. “where to look” when the obstacle is outside the view
     assert_eq!(block_view((100, 200), (0, 1000)), BlockView::Visible);
     assert_eq!(block_view((0, 100), (500, 1000)), BlockView::Left(400));
     assert_eq!(block_view((2000, 2100), (500, 1000)), BlockView::Right(1000));
-    // касание кромки вида — уже видно
+    // touching the edge of the view — already visible
     assert_eq!(block_view((900, 1500), (500, 1000)), BlockView::Visible);
 
-    // 3. живой жест: подсказка ошибочная и перебивает наведение
+    // 3. live gesture: the hint is an error and overrides the hover
     let mut h = harness();
     {
         let app = h.state_mut();
@@ -2929,40 +2929,40 @@ fn t172_blocked_gesture_is_an_error_not_a_pale_hint() {
         app.player.seek(Tick(0));
     }
     h.step();
-    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let g = h.state().tl_geom.clone().expect("no timeline geometry");
     let y = g.lane_y(ClipKind::Video, 0, 0.5);
     let grab = g.tick_to_x(25_000);
     h.hover_at(egui::pos2(grab, y));
     h.step();
     h.drag_at(egui::pos2(grab, y));
     h.step();
-    // тащим клип 1 так, чтобы он накрыл сразу два события — упор
+    // dragging clip 1 so that it covers two events at once — a stop
     let to = g.tick_to_x(230_000 + 25_000);
     h.hover_at(egui::pos2(to, y));
     h.step();
     h.hover_at(egui::pos2(to + 1.0, y));
     h.step();
     let blocked = h.state().blocked;
-    assert!(blocked.is_some(), "препятствие обязано быть известно (его подсвечивают)");
-    assert_eq!(blocked.unwrap().span, (200_000, 250_000), "подсвечивается именно клип 2");
+    assert!(blocked.is_some(), "the obstacle must be known (it is highlighted)");
+    assert_eq!(blocked.unwrap().span, (200_000, 250_000), "exactly clip 2 is highlighted");
     assert_eq!(
         h.state().status_line_shown.1,
         HintKind::Error,
-        "подсказка обязана быть ОШИБОЧНОЙ, а не блёклой: {:?}",
+        "the hint must be an ERROR, not faded: {:?}",
         h.state().status_line_shown
     );
     h.drop_at(egui::pos2(to + 1.0, y));
     h.step();
-    assert!(h.state().blocked.is_none(), "после жеста подсветка гаснет");
+    assert!(h.state().blocked.is_none(), "after the gesture the highlight goes out");
 }
 
-/// Тест 173 (п.12 Р.28): фейд за верхний уголок события и уровень мышью.
+/// Test 173 (item 12 of R.28): a fade by the top corner of the event, and the level by mouse.
 ///
-/// Пользователь: «в sony vegas fade можно у событий сделать по краям без еще
-/// одних событий — просто потянув за верхний уголок события, а еще там можно
-/// вроде прозрачность менять… наводишься на фейд и тянешь либо вверх либо
-/// вниз». Уголковый фейд лежит ЦЕЛИКОМ внутри события (внешний офсет 0),
-/// поэтому «ничего не отрастает» (п.6).
+/// The user: “in Sony Vegas you can make fades at the edges of events without extra
+/// events — just by pulling the top corner of the event, and there you can also
+/// change the transparency… you hover over the fade and pull either up or
+/// down”. The corner fade lies ENTIRELY inside the event (outer offset 0),
+/// so “nothing grows back” (item 6).
 #[test]
 fn t173_corner_fade_and_level_gestures() {
     use crate::timeline::{corner_fade_len, fade_handle_tick, level_from_y, level_y};
@@ -2970,20 +2970,20 @@ fn t173_corner_fade_and_level_gestures() {
     use kt_time::Tick;
     const TPP: f64 = 1000.0;
 
-    // ---- чистые функции ----
-    assert_eq!(fade_handle_tick(1_000, 5_000, 0, true), 1_000, "нет фейда — ручка в углу");
-    assert_eq!(fade_handle_tick(1_000, 5_000, 700, true), 1_700, "ручка на конце фейда");
+    // ---- pure functions ----
+    assert_eq!(fade_handle_tick(1_000, 5_000, 0, true), 1_000, "no fade — the handle is in the corner");
+    assert_eq!(fade_handle_tick(1_000, 5_000, 700, true), 1_700, "handle at the end of the fade");
     assert_eq!(fade_handle_tick(1_000, 5_000, 0, false), 5_000);
     assert_eq!(fade_handle_tick(1_000, 5_000, 700, false), 4_300);
-    // уровень: верх строки = 1.0, низ = 0.0, симметрично туда и обратно
+    // level: the top of the row = 1.0, the bottom = 0.0, symmetric back and forth
     let (top, h) = (100.0f32, 48.0f32);
     assert!((level_from_y(top + 3.0, top, h) - 1.0).abs() < 1e-6);
     assert!((level_from_y(top + 3.0 + (h - 8.0), top, h)).abs() < 1e-6);
-    assert!((level_from_y(top - 50.0, top, h) - 1.0).abs() < 1e-6, "выше строки — кламп");
+    assert!((level_from_y(top - 50.0, top, h) - 1.0).abs() < 1e-6, "above the row — clamp");
     let mid = level_y(0.5, top, h);
-    assert!((level_from_y(mid, top, h) - 0.5).abs() < 1e-3, "прямое и обратное сходятся");
+    assert!((level_from_y(mid, top, h) - 0.5).abs() < 1e-3, "forward and back converge");
 
-    // ---- живой жест ----
+    // ---- live gesture ----
     let mut h = harness();
     {
         let app = h.state_mut();
@@ -3020,11 +3020,11 @@ fn t173_corner_fade_and_level_gestures() {
         app.player.seek(Tick(0));
     }
     h.step();
-    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let g = h.state().tl_geom.clone().expect("no timeline geometry");
     let top = g.lane_top(ClipKind::Video, 0);
     let y_strip = top + 3.0;
 
-    // тянем левый уголок вправо на 40 000 тиков
+    // pull the left corner to the right by 40,000 ticks
     let x0 = g.tick_to_x(100_000);
     h.hover_at(egui::pos2(x0 + 1.0, y_strip));
     h.step();
@@ -3037,24 +3037,24 @@ fn t173_corner_fade_and_level_gestures() {
     h.step();
     {
         let p = h.state().model.project();
-        assert_eq!(p.transitions.len(), 1, "уголок завёл ровно один фейд: {:?}", p.transitions);
+        assert_eq!(p.transitions.len(), 1, "the corner created exactly one fade: {:?}", p.transitions);
         let t = &p.transitions[0];
-        assert!(t.is_fade(), "это фейд, а не кроссфейд");
-        assert_eq!((t.a, t.b), (None, Some(ClipId(1))), "пустота слева, живой конец — клип");
-        assert_eq!(t.in_offset, Tick::ZERO, "внешнего офсета нет — фейд внутри события");
+        assert!(t.is_fade(), "this is a fade, not a crossfade");
+        assert_eq!((t.a, t.b), (None, Some(ClipId(1))), "empty space on the left, the live end is the clip");
+        assert_eq!(t.in_offset, Tick::ZERO, "there is no external offset — the fade is inside the event");
         assert!(
             (t.out_offset.0 - 40_000).abs() <= 2_000,
-            "длина фейда ≈ пройденному пути: {:?}",
+            "fade length ≈ the distance traveled: {:?}",
             t.out_offset
         );
-        // событие не тронуто: «сколько было столько и осталось»
+        // the event is untouched: “however much there was, that much remained”
         let c = &p.clips[0];
         assert_eq!((c.start, c.duration, c.source_in), (Tick(100_000), Tick(200_000), Tick::ZERO));
         assert_eq!(corner_fade_len(p, ClipId(1), true), Some(t.out_offset.0));
-        assert_eq!(corner_fade_len(p, ClipId(1), false), None, "правого фейда нет");
+        assert_eq!(corner_fade_len(p, ClipId(1), false), None, "there is no right fade");
     }
 
-    // задвигаем уголок обратно — фейд снимается
+    // push the corner back — the fade is removed
     let from = g.tick_to_x(140_000);
     h.hover_at(egui::pos2(from, y_strip));
     h.step();
@@ -3066,11 +3066,11 @@ fn t173_corner_fade_and_level_gestures() {
     h.step();
     assert!(
         h.state().model.project().transitions.is_empty(),
-        "уголок задвинут — фейда нет: {:?}",
+        "the corner is pushed in — no fade: {:?}",
         h.state().model.project().transitions
     );
 
-    // уровень: тянем линию вниз до середины строки
+    // level: pull the line down to the middle of the row
     let ly = level_y(1.0, top, g.lane_h_of(ClipKind::Video, 0));
     let xm = g.tick_to_x(200_000);
     h.hover_at(egui::pos2(xm, ly));
@@ -3083,19 +3083,19 @@ fn t173_corner_fade_and_level_gestures() {
     h.drop_at(egui::pos2(xm, target_y));
     h.step();
     let op = h.state().model.project().clips[0].opacity;
-    assert!((op - 0.4).abs() < 0.05, "уровень доехал до 0.4: {op}");
-    // и это undo-able, как и всё остальное
-    h.state_mut().model.undo().expect("undo уровня доступен");
+    assert!((op - 0.4).abs() < 0.05, "level reached 0.4: {op}");
+    // and this is undoable, like everything else
+    h.state_mut().model.undo().expect("level undo is available");
     h.step();
-    assert_eq!(h.state().model.project().clips[0].opacity, 1.0, "undo вернул уровень");
+    assert_eq!(h.state().model.project().clips[0].opacity, 1.0, "undo restored the level");
 }
 
-/// Тест 176: уровень аудио и видео — ОДИН элемент (требование пользователя
-/// «фейды должны быть у аудио и видео одинаково выглядящими»).
+/// Test 176: the level of audio and video is ONE element (the user's requirement:
+/// “fades must look the same for audio and for video”).
 ///
-/// Вертикальный рейл громкости v1 стоял ровно в зоне фейда и делал фейд на
-/// аудио непохожим на фейд на видео. Теперь у обоих видов линия по верху;
-/// диапазон громкости остался прежним (±6.02 dB, 0 dB — середина).
+/// The vertical volume rail of v1 stood exactly in the fade zone and made the fade on
+/// audio unlike the fade on video. Now both kinds have the line on top;
+/// the volume range stayed as before (±6.02 dB, 0 dB — the middle).
 #[test]
 fn t176_audio_and_video_share_one_level_line() {
     use crate::timeline::{RAIL_DB_SPAN, gain_to_level, level_to_gain, level_y};
@@ -3103,12 +3103,12 @@ fn t176_audio_and_video_share_one_level_line() {
     use kt_time::Tick;
     const TPP: f64 = 1000.0;
 
-    // диапазон рейла v1 сохранён точь-в-точь
-    assert!((gain_to_level(0.0) - 0.5).abs() < 1e-6, "0 dB — середина");
-    assert!((level_to_gain(1.0) - RAIL_DB_SPAN / 2.0).abs() < 1e-4, "верх — +6.02 dB");
-    assert!((level_to_gain(0.0) + RAIL_DB_SPAN / 2.0).abs() < 1e-4, "низ — −6.02 dB");
+    // the rail range of v1 is kept exactly
+    assert!((gain_to_level(0.0) - 0.5).abs() < 1e-6, "0 dB — the middle");
+    assert!((level_to_gain(1.0) - RAIL_DB_SPAN / 2.0).abs() < 1e-4, "top — +6.02 dB");
+    assert!((level_to_gain(0.0) + RAIL_DB_SPAN / 2.0).abs() < 1e-4, "bottom — −6.02 dB");
     for db in [-6.0f32, -3.0, 0.0, 2.5, 6.0] {
-        assert!((level_to_gain(gain_to_level(db)) - db).abs() < 1e-3, "круг по {db} dB");
+        assert!((level_to_gain(gain_to_level(db)) - db).abs() < 1e-3, "circle over {db} dB");
     }
 
     let mut h = harness();
@@ -3147,10 +3147,10 @@ fn t176_audio_and_video_share_one_level_line() {
         app.player.seek(Tick(0));
     }
     h.step();
-    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let g = h.state().tl_geom.clone().expect("no timeline geometry");
     let top = g.lane_top(ClipKind::Audio, 0);
 
-    // тот же жест, что у видео: тянем линию уровня вверх
+    // the same gesture as for video: pull the level line up
     let x = g.tick_to_x(200_000);
     let y0 = level_y(0.5, top, g.lane_h_of(ClipKind::Audio, 0)); // 0 dB
     h.hover_at(egui::pos2(x, y0));
@@ -3163,9 +3163,9 @@ fn t176_audio_and_video_share_one_level_line() {
     h.drop_at(egui::pos2(x, y1));
     h.step();
     let gain = h.state().model.project().clips[0].gain_db;
-    assert!((gain - RAIL_DB_SPAN * 0.25).abs() < 0.5, "уровень аудио доехал до +3 dB: {gain}");
+    assert!((gain - RAIL_DB_SPAN * 0.25).abs() < 0.5, "audio level reached +3 dB: {gain}");
 
-    // у уголка фейда приоритет над линией: верхняя полоса — жест фейда
+    // the fade corner has priority over the line: the top strip is the fade gesture
     let y_strip = top + 2.0;
     let x0 = g.tick_to_x(100_000);
     h.hover_at(egui::pos2(x0 + 1.0, y_strip));
@@ -3177,13 +3177,13 @@ fn t176_audio_and_video_share_one_level_line() {
     h.drop_at(egui::pos2(g.tick_to_x(140_000), y_strip));
     h.step();
     let p = h.state().model.project();
-    assert_eq!(p.transitions.len(), 1, "уголок аудио-события тоже заводит фейд");
-    assert_eq!(p.transitions[0].in_offset, Tick::ZERO, "фейд внутри события");
-    assert_eq!(p.clips[0].duration, Tick(200_000), "событие не тронуто");
+    assert_eq!(p.transitions.len(), 1, "the corner of an audio event also creates a fade");
+    assert_eq!(p.transitions[0].in_offset, Tick::ZERO, "fade inside the event");
+    assert_eq!(p.clips[0].duration, Tick(200_000), "event is untouched");
 }
 
-/// Тест 185 (Р.29): потеря GPU-исполнителя видео — предупреждение ровно
-/// один раз, дальше CPU-фолбэк работает молча; статус бэкенда честный.
+/// Test 185 (R.29): loss of the video GPU executor — the warning exactly once, after that the CPU fallback works silently;
+/// the backend status is honest.
 #[test]
 fn t185_gpu_loss_notice_once() {
     struct DeadGpu(kt_engine::GpuBackendInfo);
@@ -3202,36 +3202,36 @@ fn t185_gpu_loss_notice_once() {
     let mut h = harness();
     assert!(
         matches!(h.state().player.video_backend(), kt_engine::VideoBackendStatus::Cpu),
-        "в харнессе без wgpu бэкенд честно CPU"
+        "in the harness without wgpu the backend is honestly CPU"
     );
     h.state_mut().player.set_video_gpu(Some(std::sync::Arc::new(DeadGpu(
         kt_engine::GpuBackendInfo { name: "test".into(), backend: "Test".into(), software: true },
     ))));
-    // форсируем перекомпозицию (ключ превью уже устоялся на прошлых
-    // кадрах): сброс ключа → compose зовёт исполнитель → DeviceLost →
-    // отравление; следующий кадр показывает notice
+    // force a recomposition (the preview key has already settled on the previous
+    // frames): key reset → compose calls the executor → DeviceLost →
+    // poisoning; the next frame shows the notice
     h.state_mut().preview_key = None;
     h.step();
     h.step();
     h.step();
     let app = h.state();
-    assert!(app.gpu_fx_lost_notified, "notice о потере GPU обязан показаться");
+    assert!(app.gpu_fx_lost_notified, "the notice about GPU loss must appear");
     assert!(
         matches!(app.player.video_backend(), kt_engine::VideoBackendStatus::Poisoned { .. }),
-        "бэкенд отравлен до конца сессии"
+        "the backend is poisoned until the end of the session"
     );
     let texts: Vec<&str> = app.notices.iter().map(|n| n.text.as_str()).collect();
     let hits =
         texts.iter().filter(|t| **t == crate::tf!(k::msg::VIDEO_FX_GPU_LOST, "DeviceLost")).count();
-    assert_eq!(hits, 1, "предупреждение ровно одно: {texts:?}");
+    assert_eq!(hits, 1, "exactly one warning: {texts:?}");
 }
 
-/// Тест 221 (Р.33 п.5): единый виджет автоматизации. Проверяются четыре
-/// требования пользователя разом — переключение график↔таблица, перевод
-/// «материал ↔ таймлайн» с УЧЁТОМ реверса и скорости (на нём стоит
-/// мини-таймлайн, двигающий главный курсор), ключ по курсору встаёт под
-/// курсором, и ввод времени в таблице не пересортировывает строки под
-/// руками.
+/// Test 221 (R.33 item 5): a single automation widget.
+/// Four user requirements are checked at once — switching graph↔table,
+/// conversion “material ↔ timeline” ACCOUNTING for reverse and speed
+/// (a mini-timeline sits on it and moves the main cursor),
+/// a keyframe at the cursor lands under the cursor,
+/// and typing a time into the table does not re-sort the rows under one's hands.
 #[test]
 fn t221_automation_widget_maps_material_and_keeps_input_stable() {
     use crate::automation::{AutoMode, AutoView};
@@ -3239,7 +3239,7 @@ fn t221_automation_widget_maps_material_and_keeps_input_stable() {
     use kt_time::Tick;
     const STEP: i64 = 3000; // 30 fps
 
-    // прямой клип: материал = таймлайн со сдвигом на точку входа
+    // direct clip: material = timeline shifted by the entry point
     let mut c = ClipEvent {
         r#gen: None,
         gen_auto: Vec::new(),
@@ -3270,20 +3270,20 @@ fn t221_automation_widget_maps_material_and_keeps_input_stable() {
         clip_timeline_at(c.source_in, c.start, c.duration, c.reversed, STEP, mat)
     };
     let mat = m(&c, Tick(180_000 + 30_000));
-    assert_eq!(mat.0, 75_000, "материал = source_in + смещение внутри события");
-    assert_eq!(tl(&c, mat).0, 180_000 + 30_000, "обратный перевод обязан возвращать тот же момент");
+    assert_eq!(mat.0, 75_000, "material = source_in + offset inside the event");
+    assert_eq!(tl(&c, mat).0, 180_000 + 30_000, "the reverse mapping must return the same moment");
 
-    // реверс: материал идёт навстречу таймлайну
+    // reverse: the material runs against the timeline
     c.reversed = true;
     let mat_r = m(&c, Tick(180_000));
-    assert_eq!(mat_r.0, 45_000 + 90_000 - STEP, "у реверса начало события — конец материала");
-    assert_eq!(tl(&c, mat_r).0, 180_000, "обратный перевод реверса обязан сходиться");
+    assert_eq!(mat_r.0, 45_000 + 90_000 - STEP, "for reverse, the event start is the material end");
+    assert_eq!(tl(&c, mat_r).0, 180_000, "the reverse mapping of reverse must converge");
     c.reversed = false;
 
-    // СКОРОСТЬ ОСЬ НЕ СЖИМАЕТ (Р.37, п.1 пользователя): у клипа на 0.5×
-    // ось кривой по-прежнему размах СОБЫТИЯ. Раньше здесь было
-    // 45_000 + 45_000 — правая половина графика была недостижима, и
-    // автоключ, который редактор сеет в конец, никогда не срабатывал.
+    // SPEED DOES NOT COMPRESS THE AXIS (R.37, item 1 of the user): for a clip at 0.5×
+    // the curve's axis is still the SPAN of the EVENT. Previously it was
+    // 45_000 + 45_000 — the right half of the graph was unreachable, and
+    // the auto-key that the editor sows at the end never fired.
     let mut slow = c.clone();
     slow.kind = ClipKind::Audio;
     slow.fx = vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)];
@@ -3291,17 +3291,17 @@ fn t221_automation_widget_maps_material_and_keeps_input_stable() {
     assert_eq!(
         mid.0,
         45_000 + 90_000,
-        "ось кривой — собственный размах события, скорость её не сжимает"
+        "the curve axis is the event’s own span; speed does not compress it"
     );
     assert_eq!(
         tl(&slow, mid).0,
         180_000 + 90_000,
-        "и обратный перевод теперь ТОЧЕН, а не в пределах кадра"
+        "and the reverse mapping is now EXACT, not within a frame"
     );
 
-    // виджет: переключение вида и стабильный ввод времени в таблице
+    // widget: switching the view and stable entry of time in the table
     let mut view = AutoView::default();
-    assert_eq!(view.mode, AutoMode::Graph, "по умолчанию график");
+    assert_eq!(view.mode, AutoMode::Graph, "graph by default");
     view.mode = AutoMode::Table;
     let mut curves = [ParamCurve {
         param: "radius".into(),
@@ -3312,30 +3312,30 @@ fn t221_automation_widget_maps_material_and_keeps_input_stable() {
         ]),
         source: Default::default(),
     }];
-    // пользователь начал править время ВТОРОГО ключа на значение МЕНЬШЕ
-    // первого: пока правка не закоммичена, порядок ключей не меняется
+    // the user started editing the time of the SECOND key to a value LESS than
+    // the first one: while the edit is not committed, the order of keys does not change
     view.t_edit = Some((0, 1, 0.4));
     assert_eq!(
         curves[0].keys.iter().map(|k| k.t.0).collect::<Vec<_>>(),
         vec![45_000, 135_000],
-        "во время ввода ключи не пересортировываются — строка уезжала бы из-под рук"
+        "during input the keys are not re-sorted — the row would slide out from under the hands"
     );
-    // на отпускании правка применяется и порядок восстанавливается
+    // on release the edit is applied and the order is restored
     let (ci, ki, s) = view.t_edit.take().unwrap();
     curves[ci].keys[ki].t = Tick((s * 90_000.0).round() as i64);
     curves[ci].keys.sort_by_key(|k| k.t.0);
     assert_eq!(
         curves[0].keys.iter().map(|k| k.t.0).collect::<Vec<_>>(),
         vec![36_000, 45_000],
-        "после отпускания ключи встают по порядку"
+        "after release the keys fall into order"
     );
 }
 
-/// Тест 219 (Р.33 п.2, дословно: «для одного и того же события с
-/// примагниченными треками — можно и сразу все chain в одном окне давать,
-/// так проще должно быть. Ну можно дать возможность скрытия-переключения»).
-/// У A/V-пары теперь ОДНО окно с обеими цепочками в свёртках, а не два
-/// независимых окна, у каждого из которых своя кнопка «Отмена».
+/// Test 219 (R.33 item 2, verbatim: “for the same event with
+/// magnetized tracks — you can also give all the chains at once in one window,
+/// it should be simpler this way. Well, one can give the option to hide-switch”).
+/// An A/V pair now has ONE window with both chains in collapsible sections, rather than two
+/// independent windows, each with its own “Cancel” button.
 #[test]
 fn t219_one_window_for_the_whole_link_group() {
     use kt_model::*;
@@ -3373,28 +3373,28 @@ fn t219_one_window_for_the_whole_link_group() {
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
 
-    // окно открыто по видео — оно же показывает и аудио-цепочку
+    // the window is opened by the video — it also shows the audio chain
     app.open_fx_editor(ClipId(1));
     h.step();
     h.step();
-    assert_eq!(h.state().fx_editors.len(), 1, "окно одно");
+    assert_eq!(h.state().fx_editors.len(), 1, "one window");
     assert_eq!(
         h.state().fx_editors[0].members,
         vec![ClipId(1), ClipId(2)],
-        "окно обязано вести обе цепочки пары"
+        "the window must drive both chains of the pair"
     );
-    // повторное открытие ПАРТНЁРА не плодит второе окно
+    // a repeated opening of the PARTNER does not spawn a second window
     h.state_mut().open_fx_editor(ClipId(2));
     h.step();
-    assert_eq!(h.state().fx_editors.len(), 1, "у пары не должно быть двух окон");
+    assert_eq!(h.state().fx_editors.len(), 1, "a pair must not have two windows");
 
-    // «Отмена» откатывает ОБЕ цепочки, а не только якорь
+    // “Cancel” rolls back BOTH chains, not only the anchor
     let app = h.state_mut();
     let g = app.fx_editors[0].gesture;
     app.set_fx_coalesced(ClipId(1), vec![FxInstance::glow(1.0)], g);
     app.set_fx_coalesced(ClipId(2), vec![], g);
     let backup = app.fx_editors[0].backup.clone();
-    assert_eq!(backup.len(), 2, "снимок обязан покрывать обе цепочки");
+    assert_eq!(backup.len(), 2, "the snapshot must cover both chains");
     for (id, fx, auto, bypass, off) in backup {
         app.set_fx_coalesced(id, fx, g);
         app.set_fx_auto_coalesced(id, auto, g);
@@ -3403,19 +3403,19 @@ fn t219_one_window_for_the_whole_link_group() {
     }
     assert!(
         matches!(app.model.clip(ClipId(1)).unwrap().fx.as_slice(), [FxInstance::Blur { .. }]),
-        "видео-цепочка не откатилась"
+        "the video chain did not roll back"
     );
     assert!(
         matches!(app.model.clip(ClipId(2)).unwrap().fx.as_slice(), [FxInstance::Gain { .. }]),
-        "аудио-цепочка не откатилась — окно вело только якорь"
+        "the audio chain did not roll back — the window drove only the anchor"
     );
     h.step();
 }
 
-/// Тест 218 (Р.33 п.2, требование пользователя про поле «New source»:
-/// «хотелось бы чтобы можно было и dnd туда делать файла и dnd из сурсов
-/// проекта или выбор через открытие виджета медиа»). Плюс «Отмена» у
-/// морфера, которой не было вовсе (в окне FX она была всегда).
+/// Test 218 (R.33 item 2, the user's requirement about the “New source” field:
+/// “I would like it to be possible to drag and drop files there, and drag and drop from the project's
+/// sources, or choose via opening the media widget”). Plus a “Cancel” for the
+/// morpher, which was not there at all (in the FX window it was always present).
 #[test]
 fn t218_morpher_source_field_takes_files_and_reverts() {
     use kt_model::*;
@@ -3470,43 +3470,43 @@ fn t218_morpher_source_field_takes_files_and_reverts() {
     app.open_morph_editor(MorphId(1));
     h.step();
     h.step();
-    // поле источника знает своё место на экране — по нему ловится дроп
+    // the source field knows its place on the screen — a drop is caught by it
     assert!(
         h.state().morph_editors[0].src_rect.is_some(),
-        "поле источника не сообщило свой прямоугольник — дроп файла в него не поймать"
+        "the source field did not report its rectangle — a file drop into it cannot be caught"
     );
 
-    // файл, которого нет в проекте, становится источником ОДНИМ шагом
+    // a file that is not in the project becomes a source in ONE step
     let app = h.state_mut();
     let depth = app.model.undo_depth();
     app.set_morph_source_file(MorphId(1), "synth:dc");
     let ev = app.model.project().morphers[0].clone();
     let media = ev.patch.media;
-    let mid = media.expect("источник обязан подставиться");
+    let mid = media.expect("the source must be substituted");
     assert_eq!(
         app.model.project().media.iter().find(|m| m.id == mid).map(|m| m.path.as_str()),
         Some("synth:dc"),
-        "медиа обязано появиться в проекте"
+        "the media must appear in the project"
     );
-    assert_eq!(app.model.undo_depth(), depth + 1, "добавление медиа и подмена — один шаг");
+    assert_eq!(app.model.undo_depth(), depth + 1, "adding media and substitution are one step");
 
-    // «Отмена» возвращает морфер к состоянию на момент открытия окна
+    // “Cancel” returns the morpher to the state at the moment the window was opened
     let app = h.state_mut();
     let ed_gesture = app.morph_editors[0].gesture;
-    let backup = app.morph_editors[0].backup.clone().expect("снимок на открытии");
+    let backup = app.morph_editors[0].backup.clone().expect("snapshot on opening");
     app.apply_coalesced(Command::SetMorpher(backup), ed_gesture);
     let ev = app.model.project().morphers[0].clone();
     let media = ev.patch.media;
-    assert!(media.is_none(), "откат обязан вернуть «источник не менять»");
+    assert!(media.is_none(), "rollback must restore “do not change the source”");
     h.step();
 }
 
-/// Тест 217 (Р.33 С2, требования пользователя: «у морферов fx-chain имеет
-/// крестики, можно и галочки добавить включения-выключения эффектов и
-/// возможность перемещения порядка мышкой. Ну и заменить fx-chain у
-/// событийных эффектов, а то в двух местах один и тот же смысл, а сделано
-/// у обоих не до конца»). Полоса цепочки теперь ОДНА: и окно события, и
-/// обе секции морфера рисуют её одним кодом.
+/// Test 217 (R.33 C2, user requirements: “morphers' fx-chain has crosses,
+/// you could add check marks too — switching effects on and off — and the ability to move
+/// the order with the mouse.
+/// And replace the fx-chain of event effects, because in two places
+/// there is the same meaning, and it is done not fully in both”). The chain strip is now ONE:
+/// the event window and both morpher sections draw it with one piece of code.
 #[test]
 fn t217_one_chain_widget_for_events_and_morphers() {
     use egui_kittest::kittest::Queryable;
@@ -3538,7 +3538,7 @@ fn t217_one_chain_widget_for_events_and_morphers() {
         opacity: 1.0,
         fx_off: false,
     });
-    // морфер-батч с двумя эффектами — вторая цепочка тем же виджетом
+    // morpher batch with two effects — the second chain with the same widget
     p.ensure_tracks(kt_model::LaneKind::Morph, 1);
     p.morphers.push(MorpherEvent {
         id: MorphId(1),
@@ -3565,55 +3565,55 @@ fn t217_one_chain_widget_for_events_and_morphers() {
     h.step();
     h.step();
 
-    // 1) мастер-галка цепочки есть в ОБОИХ окнах — она одна и та же
+    // 1) the master check mark of the chain is in BOTH windows — it is one and the same
     let chain_label = tr(k::fx::CHAIN_ON).to_string();
-    assert!(h.query_by_label(&chain_label).is_some(), "в окне события нет мастер-галки цепочки");
+    assert!(h.query_by_label(&chain_label).is_some(), "the event window has no master chain checkbox");
     h.state_mut().open_morph_editor(MorphId(1));
     h.step();
     h.step();
-    assert!(h.state().morph_editors.iter().any(|e| e.open), "окно морфера не открылось");
-    // у морфера мастер-галка тоже есть (их теперь две — по одной на окно)
+    assert!(h.state().morph_editors.iter().any(|e| e.open), "the morpher window did not open");
+    // the morpher's master check mark is also there (now there are two — one per window)
     assert!(
         h.get_all_by_label(&chain_label).count() >= 2,
-        "у морфера нет мастер-галки цепочки — виджет не общий"
+        "the morpher has no master chain checkbox — the widget is not shared"
     );
 
-    // 2) выключатели слотов есть и у морфера (раньше были только крестики)
+    // 2) the slot switches are there in the morpher too (before, there were only crosses)
     let app = h.state_mut();
     let ev = app.model.project().morphers[0].clone();
     let video_bypass = &ev.patch.video_bypass;
-    assert!(video_bypass.is_empty(), "стартовое состояние — всё включено");
+    assert!(video_bypass.is_empty(), "the starting state — everything is on");
 
-    // 3) выключение слота батча убирает эффект из целей, не теряя его
+    // 3) switching a batch slot off removes the effect from the targets, without losing it
     let mut ev2 = ev.clone();
     ev2.patch.video_bypass = vec![true, false];
-    assert!(app.apply(Command::SetMorpher(ev2)), "команда не прошла");
+    assert!(app.apply(Command::SetMorpher(ev2)), "command did not go through");
     let eff = app.model.project().effective_clips();
     let c = eff.iter().find(|c| c.id == ClipId(9)).unwrap();
     assert!(
         !c.fx.iter().any(|f| matches!(f, FxInstance::Mirror { .. })),
-        "выключенный слот батча не должен доезжать до клипа"
+        "a disabled batch slot must not reach the clip"
     );
     assert!(
         c.fx.iter().any(|f| matches!(f, FxInstance::Edges { .. })),
-        "включённый слот батча обязан остаться"
+        "an enabled batch slot must remain"
     );
     assert_eq!(
         app.model.project().morphers[0].patch.video_fx.len(),
         2,
-        "сам эффект из батча не пропадает"
+        "the effect itself from the batch does not disappear"
     );
     h.step();
 }
 
-/// Тест 193 (Р.30): редактор FX и автоматизация — окно с кривыми рисуется,
-/// а пара SetFx+SetFxAuto одного жеста коалесцируется в ОДИН undo-шаг
-/// (иначе Ctrl+Z откатывал бы цепочку и кривые вразнобой).
+/// Test 193 (R.30): FX editor and automation — the window with curves is drawn,
+/// and the pair SetFx+SetFxAuto of one gesture coalesces into ONE undo step
+/// (otherwise Ctrl+Z would roll the chain and the curves back out of step).
 #[test]
 fn t193_fx_editor_automation_coalesces_into_one_undo() {
     use kt_model::*;
     let mut h = harness();
-    // видео-клип с Blur и живой кривой — секция автоматизации рисуется
+    // a video clip with Blur and a live curve — the automation section is drawn
     let app = h.state_mut();
     let mut p = app.model.project().clone();
     p.media.push(MediaRef::new(MediaId(9), "synth:ramp"));
@@ -3652,9 +3652,9 @@ fn t193_fx_editor_automation_coalesces_into_one_undo() {
     app.open_fx_editor(ClipId(9));
     h.step();
     h.step();
-    assert!(h.state().fx_editors.iter().any(|e| e.open), "окно редактора живо с кривыми");
+    assert!(h.state().fx_editors.iter().any(|e| e.open), "the editor window is alive with the curves");
 
-    // жест редактора: цепочка + кривые ОДНИМ gesture-токеном (как UI)
+    // an editor gesture: the chain + curves with ONE gesture token (as in the UI)
     let app = h.state_mut();
     let depth_before = app.model.undo_depth();
     let gesture = app.fx_editors[0].gesture;
@@ -3672,18 +3672,18 @@ fn t193_fx_editor_automation_coalesces_into_one_undo() {
     app.set_fx_auto_coalesced(ClipId(9), auto, gesture);
     let c = app.model.clip(ClipId(9)).unwrap().clone();
     assert_eq!(c.fx, fx);
-    assert_eq!(c.fx_auto.len(), 1, "хвост без кривых подрезан");
-    assert_eq!(app.model.undo_depth(), depth_before + 1, "оба изменения жеста — один undo-шаг");
+    assert_eq!(c.fx_auto.len(), 1, "the tail without curves is trimmed");
+    assert_eq!(app.model.undo_depth(), depth_before + 1, "both gesture changes are one undo step");
     app.model.undo().unwrap();
     let c = app.model.clip(ClipId(9)).unwrap().clone();
-    assert_eq!(c.fx.len(), 1, "undo вернул цепочку");
-    assert_eq!(c.fx_auto[0][0].keys.len(), 2, "undo вернул кривые тем же шагом");
+    assert_eq!(c.fx.len(), 1, "undo restored the chain");
+    assert_eq!(c.fx_auto[0][0].keys.len(), 2, "undo restored the curves in the same step");
     h.step();
 }
 
-/// Тест 194 (Р.31 п.2): автосейв идёт В ФОНЕ — UI-поток только снимает
-/// снапшот и позже забирает результат. Правки ПОСЛЕ снапшота не теряют
-/// звёздочку (dirty гасится только при неизменной модели).
+/// Test 194 (R.31 item 2): autosave runs IN THE BACKGROUND — the UI thread only takes the
+/// snapshot and later picks up the result. Edits AFTER the snapshot do not lose
+/// the asterisk (dirty is cleared only when the model is unchanged).
 #[test]
 fn t194_autosave_runs_in_background() {
     use kt_model::*;
@@ -3694,30 +3694,30 @@ fn t194_autosave_runs_in_background() {
     let mut h = harness();
     let app = h.state_mut();
     app.project_path = Some(target.clone());
-    // правка содержимого + «прошло 30 секунд»
+    // a content edit + “30 seconds have passed”
     app.model.apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() }).unwrap();
     app.model_rev += 1;
     app.dirty_content = true;
     app.last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(40);
     h.step();
-    assert!(h.state().autosave_rx.is_some(), "фоновый автосейв обязан стартовать");
-    // дождаться воркер и забрать результат следующим кадром
+    assert!(h.state().autosave_rx.is_some(), "background autosave must start");
+    // wait for the worker and pick up the result on the next frame
     let deadline = std::time::Instant::now() + WAIT_BG;
     while h.state().autosave_rx.is_some() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));
         h.step();
     }
-    assert!(h.state().autosave_rx.is_none(), "результат автосейва забран");
-    // Р.49 п.351 (решение владельца, user-feedback.md): автосейв больше НЕ
-    // пишет в файл пользователя и НЕ гасит звёздочку. Тест из замороженного
-    // диапазона 1-221 переписан по прямой санкции владельца: «фоновая запись
-    // идёт в свой recovery-файл, проект меняет только явное сохранение».
-    assert!(h.state().dirty_content, "автосейв не имеет права считать проект сохранённым");
-    assert!(!target.exists(), "автосейв тронул файл проекта");
+    assert!(h.state().autosave_rx.is_none(), "autosave result collected");
+    // R.49 item 351 (the owner's decision, user-feedback.md): autosave NO LONGER
+    // writes to the user's file and does NOT clear the asterisk. The test from the frozen
+    // range 1-221 was rewritten by direct sanction of the owner: “the background write
+    // goes to its own recovery file; the project changes only on an explicit save”.
+    assert!(h.state().dirty_content, "autosave has no right to count the project as saved");
+    assert!(!target.exists(), "autosave touched the project file");
     let rec = crate::app::recovery_path_for(Some(&target));
-    assert!(rec.exists(), "файл восстановления записан фоновым потоком: {}", rec.display());
+    assert!(rec.exists(), "the recovery file was written by a background thread: {}", rec.display());
 
-    // правка ПОСЛЕ снапшота не должна терять звёздочку
+    // an edit AFTER the snapshot must not lose the asterisk
     let app = h.state_mut();
     app.model.apply(Command::AddMedia { id: MediaId(2), path: "synth:ramp".into() }).unwrap();
     app.model_rev += 1;
@@ -3725,7 +3725,7 @@ fn t194_autosave_runs_in_background() {
     app.last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(40);
     h.step();
     assert!(h.state().autosave_rx.is_some());
-    // модель меняется, пока запись в полёте
+    // the model changes while the write is in flight
     let app = h.state_mut();
     app.model.apply(Command::AddMedia { id: MediaId(3), path: "synth:ramp".into() }).unwrap();
     app.model_rev += 1;
@@ -3737,26 +3737,26 @@ fn t194_autosave_runs_in_background() {
     }
     assert!(
         h.state().dirty_content,
-        "правки после снапшота сохраняют звёздочку (иначе они бы потерялись)"
+        "edits after a snapshot keep the asterisk (otherwise they would be lost)"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Проект под тесты выделения: три видео-события на одной дорожке с
-/// зазорами (зазор нужен, чтобы рамке было с чего начаться).
+/// The project for the selection tests: three video events on one track with
+/// gaps (a gap is needed so that the outline has somewhere to start).
 #[cfg(test)]
 fn harness_three_clips() -> (Harness<'static, KtApp>, crate::timeline::TlGeom) {
     harness_three_clips_dt(None)
 }
 
-/// Правка модели ФИКСТУРЫ напрямую (тест готовит сцену, а не жест):
-/// клон рабочего вида, правка, новая модель. С Р.62 так ставятся имя и
-/// высота дорожки — они живут на дорожке-объекте.
+/// A direct edit of the FIXTURE model (the test prepares the scene, not a gesture):
+/// a clone of the working view, the edit, a new model. Since R.62 this is how the name and
+/// height of the track are set — they live on the track-object.
 #[cfg(test)]
 pub(crate) fn edit_project(app: &mut KtApp, f: impl FnOnce(&mut kt_model::Project)) {
     let mut p = app.model.project().clone();
     f(&mut p);
-    p.validate().expect("фикстура законна");
+    p.validate().expect("the fixture is legitimate");
     app.model = kt_model::TimelineModel::new(p);
 }
 
@@ -3803,11 +3803,11 @@ pub(crate) fn harness_three_clips_dt(
         app.player.seek(Tick(0));
     }
     h.step();
-    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let g = h.state().tl_geom.clone().expect("no timeline geometry");
     (h, g)
 }
 
-/// Драг рамкой В ТРИ ШАГА (порог драга egui) с зажатым Ctrl.
+/// a drag with the outline IN THREE STEPS (the egui drag threshold) with Ctrl held
 #[cfg(test)]
 fn rubber_drag(h: &mut Harness<'_, KtApp>, from: egui::Pos2, to: egui::Pos2, ctrl: bool) {
     let m = if ctrl { egui::Modifiers::CTRL } else { egui::Modifiers::NONE };
@@ -3826,10 +3826,10 @@ fn rubber_drag(h: &mut Harness<'_, KtApp>, from: egui::Pos2, to: egui::Pos2, ctr
     h.step();
 }
 
-/// Тест 202 (Р.33 п.7, требование пользователя: «на основном таймлайне не
-/// хватает area-selection… можно по зажатию ctrl выделять через area»).
-/// Выделение стало МНОЖЕСТВОМ: Ctrl+клик набирает пачку, Ctrl+драг с
-/// пустого места ловит события рамкой и региона при этом не создаёт.
+/// Test 202 (R.33 item 7, user requirement: “the main timeline lacks area selection…
+/// could select via area while holding ctrl”).
+/// The selection has become a SET: Ctrl+click gathers a batch, and Ctrl+drag from
+/// an empty place catches events with the outline and does not create a region in the process.
 #[test]
 fn t202_ctrl_click_and_rubber_band_select() {
     use kt_model::*;
@@ -3837,7 +3837,7 @@ fn t202_ctrl_click_and_rubber_band_select() {
     let y = g.lane_y(ClipKind::Video, 0, 0.6);
     let at = |t: i64| egui::pos2(g.tick_to_x(t), y);
 
-    // обычный клик — одно событие; Ctrl+клик добавляет второе
+    // a plain click — one event; Ctrl+click adds a second
     h.hover_at(at(25_000));
     h.step();
     h.drag_at(at(25_000));
@@ -3872,45 +3872,45 @@ fn t202_ctrl_click_and_rubber_band_select() {
     assert_eq!(
         h.state().selected.iter().copied().collect::<Vec<_>>(),
         vec![ClipId(1), ClipId(2)],
-        "Ctrl+клик обязан ДОБАВЛЯТЬ к выделению"
+        "Ctrl+click must ADD to the selection"
     );
     assert_eq!(
         h.state().player.transport.playhead(),
         cursor_before,
-        "набор пачки не должен таскать курсор"
+        "a batch selection must not drag the cursor"
     );
     node_click_ctrl(&mut h, at(125_000));
     assert_eq!(
         h.state().selected.iter().copied().collect::<Vec<_>>(),
         vec![ClipId(1)],
-        "повторный Ctrl+клик снимает выделение с события"
+        "a repeated Ctrl+click removes the selection from the event"
     );
 
-    // Ctrl+драг с ПУСТОГО места: рамка забирает второе и третье событие
+    // Ctrl+drag from an EMPTY place: the outline takes the second and the third event
     h.state_mut().model.set_region(None);
     h.step();
     rubber_drag(&mut h, at(70_000), at(260_000), true);
     assert_eq!(
         h.state().selected.iter().copied().collect::<Vec<_>>(),
         vec![ClipId(2), ClipId(3)],
-        "рамка не собрала события"
+        "the frame did not gather the events"
     );
     assert!(
         h.state().model.project().region.is_none(),
-        "Ctrl+драг обязан рисовать рамку, а не регион"
+        "Ctrl+drag must draw a frame, not a region"
     );
 
-    // без Ctrl тот же драг по-прежнему делает регион (старый жест цел)
+    // without Ctrl the same drag still makes a region (the old gesture is intact)
     rubber_drag(&mut h, at(70_000), at(260_000), false);
     assert!(
         h.state().model.project().region.is_some(),
-        "обычный драг с пустого места обязан остаться выделением региона"
+        "a plain drag from an empty spot must remain a region selection"
     );
 }
 
-/// Тест 203 (Р.33 п.7, вторая половина требования: «а можно как в vegas —
-/// toggle-button»). Кнопка-инструмент включается КЛИКОМ и меняет смысл
-/// обычного драга по пустому месту.
+/// Test 203 (R.33 item 7, second half of the requirement: “like in Vegas —
+/// a toggle-button”). The tool button is switched on by a CLICK and changes the meaning of
+/// the ordinary drag over an empty place.
 #[test]
 fn t203_selection_tool_button_switches_drag() {
     use egui_kittest::kittest::Queryable;
@@ -3919,34 +3919,34 @@ fn t203_selection_tool_button_switches_drag() {
     let y = g.lane_y(ClipKind::Video, 0, 0.6);
     let at = |t: i64| egui::pos2(g.tick_to_x(t), y);
 
-    assert!(!h.state().sel_tool, "режим выключен по умолчанию");
+    assert!(!h.state().sel_tool, "the mode is off by default");
     h.get_by_label(crate::icons::SELECTION).click();
     h.step();
-    assert!(h.state().sel_tool, "клик по кнопке не включил инструмент выделения");
+    assert!(h.state().sel_tool, "click on the button did not enable the selection tool");
 
-    // в режиме ОБЫЧНЫЙ драг рисует рамку и региона не создаёт
+    // in the MODE the ordinary drag draws an outline and does not create a region
     h.state_mut().model.set_region(None);
     h.step();
     rubber_drag(&mut h, at(70_000), at(260_000), false);
     assert_eq!(
         h.state().selected.iter().copied().collect::<Vec<_>>(),
         vec![ClipId(2), ClipId(3)],
-        "в режиме выделения драг обязан ловить события"
+        "in selection mode the drag must catch events"
     );
-    assert!(h.state().model.project().region.is_none(), "в режиме выделения регион не ставится");
+    assert!(h.state().model.project().region.is_none(), "in selection mode a region is not placed");
 
-    // выключили — драг снова делает регион
+    // switched off — the drag makes a region again
     h.get_by_label(crate::icons::SELECTION).click();
     h.step();
     assert!(!h.state().sel_tool);
     rubber_drag(&mut h, at(70_000), at(260_000), false);
-    assert!(h.state().model.project().region.is_some(), "режим выключен — вернулся регион");
+    assert!(h.state().model.project().region.is_some(), "mode off — the region came back");
 }
 
-/// Тест 211 (Р.33 п.10, живая половина): вернувшийся на диск файл
-/// подменяет свою заглушку сам — без переоткрытия проекта и без потери
-/// позиции. Движковая половина теста — в kt-engine (замена источника
-/// выбивает его кадры из кэша).
+/// Test 211 (R.33 item 10, live half): a file that returned to disk
+/// replaces its placeholder itself — without reopening the project and without losing the
+/// position. The engine half of the test is in kt-engine (replacing the source
+/// knocks its frames out of the cache).
 #[test]
 fn t211_returned_source_replaces_its_placeholder() {
     use kt_model::*;
@@ -3968,8 +3968,8 @@ fn t211_returned_source_replaces_its_placeholder() {
 
         settings_explicit: false,
     });
-    // «пропавший» файл: имя synth-источника, которого нет на диске — при
-    // открытии он не откроется, а к моменту возврата станет валидным
+    // a “vanished” file: the name of a synth source that is not on disk — on
+    // opening it does not open, and by the time of its return it becomes valid
     p.media.push(MediaRef::new(MediaId(1), "later.mp4"));
     p.clips.push(ClipEvent {
         r#gen: None,
@@ -3997,8 +3997,8 @@ fn t211_returned_source_replaces_its_placeholder() {
     p.validate().unwrap();
     std::fs::write(&path, crate::app::project_text_of(&p, &Default::default(), None)).unwrap();
 
-    let app = KtApp::open(&path).expect("проект обязан открыться");
-    assert_eq!(app.placeholder_media.len(), 1, "заглушка не подставилась");
+    let app = KtApp::open(&path).expect("the project must open");
+    assert_eq!(app.placeholder_media.len(), 1, "the placeholder was not substituted");
     let pos_before = app.player.transport.playhead();
 
     let mut h = Harness::builder()
@@ -4006,8 +4006,8 @@ fn t211_returned_source_replaces_its_placeholder() {
         .build_ui_state(|ui, app: &mut KtApp| app.draw_all(ui), app);
     crate::icons::install_fonts(&h.ctx);
     h.step();
-    // файл «вернулся»: подменяем путь на синтетический источник и гасим
-    // offline-набор руками, чтобы не ждать 900 мс сторожа
+    // file “returned”: we swap the path for a synthetic source and turn off the
+    // offline set by hand, so as not to wait 900 ms for the watchdog
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
@@ -4020,23 +4020,23 @@ fn t211_returned_source_replaces_its_placeholder() {
         h.step();
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert!(h.state().placeholder_media.is_empty(), "вернувшийся файл так и не заменил заглушку");
+    assert!(h.state().placeholder_media.is_empty(), "the returned file never replaced the placeholder");
     assert!(
         h.state().notices.iter().any(|n| n.text.contains("later.mp4")),
-        "о возврате исходника не сказано"
+        "the return of the source is not mentioned"
     );
     assert_eq!(
         h.state().player.transport.playhead(),
         pos_before,
-        "подмена источника не должна двигать курсор"
+        "source substitution must not move the cursor"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 210 (Р.33 п.10, про рендер): недоступный исходник больше не
-/// отменяет экспорт — он идёт заглушкой, о чём сказано ДО старта (в окне
-/// настроек) и ПОСЛЕ (в сводке). Раньше рендер просто не запускался, а
-/// потерянные слои движка в GUI не показывались вовсе.
+/// Test 210 (R.33 item 10, about render): an unavailable source no longer
+/// cancels the export — it goes with a placeholder, which is said BEFORE the start (in the
+/// settings window) and AFTER (in the summary). Before, the render simply did not start, and
+/// the lost layers of the engine were not shown in the GUI at all.
 #[test]
 fn t210_render_with_missing_sources_warns_and_runs() {
     use crate::render_dialog::{missing_sources, open_all};
@@ -4088,24 +4088,24 @@ fn t210_render_with_missing_sources_warns_and_runs() {
     });
     p.validate().unwrap();
 
-    // предупреждение ДО старта: назван только пропавший, синтетика не в счёт
+    // warning BEFORE the start: only the missing one is named, the synthetic one does not count
     let warn = missing_sources(&p, Some(dir.as_path()));
-    assert_eq!(warn, vec!["gone.mp4".to_string()], "список для предупреждения неверный: {warn:?}");
+    assert_eq!(warn, vec!["gone.mp4".to_string()], "the list for the warning is wrong: {warn:?}");
 
-    // источники для рендера собираются ВСЕ: экспорт стартует
+    // the sources for the render are ALL collected: the export starts
     let (sources, missing) = open_all(&p, Some(dir.as_path()));
-    assert_eq!(sources.len(), 2, "рендер обязан получить источник на каждое медиа");
-    assert_eq!(missing.len(), 1, "заглушка обязана быть названа");
-    assert!(missing[0].contains("gone.mp4"), "в списке нет имени файла: {missing:?}");
-    // и заглушка реально отдаёт кадры, а не пустоту
+    assert_eq!(sources.len(), 2, "the render must get a source for every media");
+    assert_eq!(missing.len(), 1, "the placeholder must be named");
+    assert!(missing[0].contains("gone.mp4"), "the list has no file name: {missing:?}");
+    // and the placeholder really gives frames, not emptiness
     let mut sources = sources;
     let (_, src) = sources.iter_mut().find(|(id, _)| *id == MediaId(2)).unwrap();
     let f = src
         .read_video_frame(Tick(0), Some(kt_media::Quality { width: 320, height: 180 }))
-        .expect("заглушка обязана отдавать кадр");
-    assert!(f.rgba.iter().any(|b| *b != 0), "кадр заглушки пустой");
+        .expect("the placeholder must return a frame");
+    assert!(f.rgba.iter().any(|b| *b != 0), "the placeholder frame is empty");
 
-    // в живом приложении список доезжает до окна настроек
+    // in the live application the list reaches the settings window
     let mut h = harness();
     {
         let app = h.state_mut();
@@ -4117,16 +4117,16 @@ fn t210_render_with_missing_sources_warns_and_runs() {
     assert_eq!(
         h.state().render_setup.missing,
         vec!["gone.mp4".to_string()],
-        "окно настроек не знает о недоступных исходниках"
+        "the settings window does not know about unavailable sources"
     );
     h.state_mut().render_setup.open = false;
     h.step();
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 209 (Р.33 п.10): проект с ПРОПАВШИМ исходником открывается,
-/// каждый недоступный файл называется в уведомлениях, а вместо кадров
-/// встаёт плейсхолдер — превью укомплектовано, а не висит в «Loading».
+/// Test 209 (R.33 item 10): a project with a VANISHED source opens,
+/// each unavailable file is named in the notifications, and instead of frames
+/// a placeholder stands — the preview is complete, not hanging in “Loading”.
 #[test]
 fn t209_missing_source_opens_with_placeholder_and_notices() {
     use kt_model::*;
@@ -4177,19 +4177,19 @@ fn t209_missing_source_opens_with_placeholder_and_notices() {
     let text = crate::app::project_text_of(&p, &Default::default(), None);
     std::fs::write(&path, text).unwrap();
 
-    let app = KtApp::open(&path).expect("проект с пропавшим исходником обязан открыться");
-    assert_eq!(app.placeholder_media.len(), 2, "оба недоступных медиа обязаны получить заглушку");
+    let app = KtApp::open(&path).expect("a project with a missing source must open");
+    assert_eq!(app.placeholder_media.len(), 2, "both unavailable media must get a placeholder");
     let named: Vec<&String> = app.notices.iter().map(|n| &n.text).collect();
     assert!(
         named.iter().any(|t| t.contains("no-such-clip.mp4")),
-        "первый пропавший файл не назван: {named:?}"
+        "the first missing file is not named: {named:?}"
     );
     assert!(
         named.iter().any(|t| t.contains("also-gone.wav")),
-        "второй пропавший файл потерялся — раньше выживала только последняя ошибка: {named:?}"
+        "the second missing file was lost — before, only the last error survived: {named:?}"
     );
 
-    // и кадр реально приходит: композиция укомплектовывается
+    // and the frame really arrives: the composition completes
     let mut h = Harness::builder()
         .with_size(egui::vec2(W, H))
         .build_ui_state(|ui, app: &mut KtApp| app.draw_all(ui), app);
@@ -4204,15 +4204,15 @@ fn t209_missing_source_opens_with_placeholder_and_notices() {
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert!(complete, "превью так и не укомплектовалось — заглушка не доехала до композиции");
+    assert!(complete, "the preview never got complete — the placeholder did not reach the composition");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 206 (Р.33 п.4): двойной клик по событию открывает FX — ровно то,
-/// что подсказка клипа обещает с Р.18 и чего не делала (ставила регион, а
-/// FX прятались в ПКМ-меню; дефект записан в user-feedback ещё тогда).
-/// Регион по событию переехал на Shift+двойной клик и пункт меню, и оба
-/// пути дают ОДИН результат (п.17 чек-листа — парность способов).
+/// Test 206 (R.33 item 4): a double-click on an event opens the FX — exactly
+/// what the clip hint has promised since R.18 and did not do (it set a region, while the
+/// FX were hidden in the RMB menu; the defect was recorded in user-feedback even then).
+/// The region by event moved to Shift+double-click and the menu item, and both ways
+/// give ONE result (item 17 of the checklist — pairing of ways).
 #[test]
 fn t206_double_click_opens_fx_shift_makes_region() {
     use kt_model::*;
@@ -4245,60 +4245,60 @@ fn t206_double_click_opens_fx_shift_makes_region() {
     };
 
     dbl(&mut h, pos, egui::Modifiers::NONE);
-    assert_eq!(h.state().fx_editors.len(), 1, "двойной клик не открыл FX-редактор");
-    assert_eq!(h.state().fx_editors[0].clip, ClipId(2), "открылось окно не того события");
-    assert!(h.state().model.project().region.is_none(), "двойной клик больше не ставит регион");
+    assert_eq!(h.state().fx_editors.len(), 1, "double-click did not open the FX editor");
+    assert_eq!(h.state().fx_editors[0].clip, ClipId(2), "the window of the wrong event opened");
+    assert!(h.state().model.project().region.is_none(), "double-click no longer places a region");
 
-    // Shift+двойной клик — регион по событию. Свой харнесс: история кликов
-    // у egui общая, и повтор жеста в том же окне сложился бы в тройной клик
+    // Shift+double-click — region by event. Its own harness: the click history in
+    // egui is shared, and a repeat of the gesture in the same window would add up to a triple click
     let (mut h2, g2) = harness_three_clips_dt(Some(0.02));
     let pos2 = egui::pos2(g2.tick_to_x(125_000), g2.lane_y(ClipKind::Video, 0, 0.6));
     dbl(&mut h2, pos2, egui::Modifiers::SHIFT);
-    let by_gesture = h2.state().model.project().region.expect("Shift+двойной клик не дал регион");
+    let by_gesture = h2.state().model.project().region.expect("Shift+double-click did not give a region");
     assert_eq!((by_gesture.start.0, by_gesture.end.0), (100_000, 150_000));
-    assert!(h2.state().fx_editors.is_empty(), "Shift+двойной клик не должен открывать FX");
+    assert!(h2.state().fx_editors.is_empty(), "Shift+double-click must not open FX");
 
-    // тот же результат из меню — одно тело на оба пути
+    // the same result from the menu — one body for both ways
     h2.state_mut().model.set_region(None);
     h2.state_mut().region_from_event(ClipId(2));
-    let by_menu = h2.state().model.project().region.expect("пункт меню не дал регион");
-    assert_eq!(by_menu, by_gesture, "жест и пункт меню обязаны совпадать");
+    let by_menu = h2.state().model.project().region.expect("the menu item did not give a region");
+    assert_eq!(by_menu, by_gesture, "the gesture and the menu item must match");
 }
 
-/// Тест 207 (Р.33 п.8, дословно: «нужно чтобы при двойном клике на
-/// marked_region он выделялся весь, если там пересечение нескольких — то
-/// по названию региона»).
+/// Test 207 (R.33 item 8, verbatim: “it is needed that on a double-click on a
+/// marked_region the whole of it is selected; if there is an overlap of several — then
+/// by the name of the region”).
 #[test]
 fn t207_double_click_on_marked_range_selects_it() {
     use crate::timeline::pick_range_marker;
     use kt_model::*;
     use kt_time::Tick;
 
-    // ---- чистая часть: какой диапазон под кликом ----
+    // ---- pure part: which range is under the click ----
     let markers = vec![
         Marker { t: Tick(30_000), duration: Tick(60_000), name: "a".into(), color: None },
         Marker { t: Tick(60_000), duration: Tick(60_000), name: "b".into(), color: None },
-        Marker { t: Tick(500_000), duration: Tick::ZERO, name: "точка".into(), color: None },
+        Marker { t: Tick(500_000), duration: Tick::ZERO, name: "point".into(), color: None },
     ];
     let tol = 4_000;
     assert_eq!(
         pick_range_marker(&markers, 70_000, tol),
         Some(60_000),
-        "общая часть — ближний флажок слева"
+        "the shared part — the nearest flag on the left"
     );
     assert_eq!(
         pick_range_marker(&markers, 31_000, tol),
         Some(30_000),
-        "клик по флажку берёт свою метку"
+        "a click on a flag takes its own label"
     );
-    assert_eq!(pick_range_marker(&markers, 200_000, tol), None, "мимо лент — ничего");
+    assert_eq!(pick_range_marker(&markers, 200_000, tol), None, "nothing past the reels");
     assert_eq!(
         pick_range_marker(&markers, 500_000, tol),
         None,
-        "точечная метка регионом не становится"
+        "a point marker does not become a region"
     );
 
-    // ---- живой двойной клик по ленте ----
+    // ---- live double-click on the reel ----
     let (mut h, g) = harness_three_clips_dt(Some(0.02));
     {
         let app = h.state_mut();
@@ -4332,26 +4332,26 @@ fn t207_double_click_on_marked_range_selects_it() {
     }
     h.step();
     h.step();
-    let r = h.state().model.project().region.expect("двойной клик по ленте не дал регион");
-    assert_eq!((r.start.0, r.end.0), (90_000, 220_000), "регион не по границам метки");
+    let r = h.state().model.project().region.expect("double-click on the reel did not give a region");
+    assert_eq!((r.start.0, r.end.0), (90_000, 220_000), "the region is not on the marker bounds");
     assert_eq!(
         h.state().selected.iter().copied().collect::<Vec<_>>(),
         vec![ClipId(2), ClipId(3)],
-        "события внутри диапазона обязаны выделиться («выделялся весь»)"
+        "events inside the range must be selected (“everything was selected”)"
     );
 }
 
-/// Тест 204 (Р.33 п.7): пачка едет драгом ЦЕЛИКОМ и одним undo-шагом, а
-/// упор считается по первому контакту любого её участника. Взаимные
-/// сдвиги внутри блока при этом не меняются — «ничего не отрастает и не
-/// отрубается» (п.6 Р.28).
+/// Test 204 (R.33 item 7): the batch moves by the drag as a WHOLE and in one undo step, and
+/// the stop is computed from the first contact of any of its members. The mutual
+/// shifts inside the block do not change — “nothing grows back and is not cut off”
+/// (item 6 of R.28).
 #[test]
 fn t204_multi_drag_moves_the_whole_block() {
     use crate::timeline::plan_move_block;
     use kt_model::*;
     use kt_time::Tick;
 
-    // ---- чистая часть: кламп блока о препятствие ----
+    // ---- pure part: clamping the block against an obstacle ----
     let mut p = Project::new(ProjectSettings {
         fps: 30,
         width: 640,
@@ -4390,23 +4390,23 @@ fn t204_multi_drag_moves_the_whole_block() {
         fx_off: false,
     };
     p.clips = vec![clip(1, 0), clip(2, 100_000), clip(3, 400_000)];
-    p.overlap_layers = false; // режим без переслаивания: упор настоящий
+    p.overlap_layers = false; // layering-free mode: the stop is real
     let moving = [ClipId(1), ClipId(2)];
-    // блок [0..50k]+[100k..150k] едет вправо к препятствию на 400k:
-    // передний участник (2) касается его через 250 000 тиков
+    // the block [0..50k]+[100k..150k] moves right toward an obstacle at 400k:
+    // its front member (2) touches it after 250,000 ticks
     let plan = plan_move_block(&p, &moving, 400_000);
-    assert_eq!(plan.delta, 250_000, "блок не остановился у препятствия");
+    assert_eq!(plan.delta, 250_000, "the block did not stop at the obstacle");
     assert_eq!(plan.blocker.map(|(s, _, _)| s), Some((400_000, 450_000)));
-    // влево блок упирается в ноль (за начало таймлайна не уезжает)
+    // moving left, the block stops at zero (it does not go past the start of the timeline)
     assert_eq!(plan_move_block(&p, &moving, -80_000).delta, 0);
-    // свободный ход не трогается
+    // a free move is not touched
     let free = plan_move_block(&p, &moving, 100_000);
-    assert_eq!((free.delta, free.blocker.is_none()), (100_000, true), "свободный ход зажали");
-    // при переслаивании (умолчание проекта) упора нет вовсе
+    assert_eq!((free.delta, free.blocker.is_none()), (100_000, true), "free movement was clamped");
+    // with layering (the project default) there is no stop at all
     p.overlap_layers = true;
     assert_eq!(plan_move_block(&p, &moving, 400_000).delta, 400_000);
 
-    // ---- живой жест ----
+    // ---- live gesture ----
     let (mut h, g) = harness_three_clips();
     {
         let app = h.state_mut();
@@ -4434,14 +4434,14 @@ fn t204_multi_drag_moves_the_whole_block() {
             .map(|id| p.clips.iter().find(|c| c.id == *id).unwrap().start.0)
             .collect()
     };
-    assert_eq!(starts[0], 300_000, "якорь пачки не доехал: {starts:?}");
-    assert_eq!(starts[1], 400_000, "второе событие пачки обязано ехать тем же сдвигом");
-    assert_eq!(starts[2], 200_000, "невыделенное событие двигать нельзя");
+    assert_eq!(starts[0], 300_000, "the batch anchor did not arrive: {starts:?}");
+    assert_eq!(starts[1], 400_000, "the second event of the batch must move by the same shift");
+    assert_eq!(starts[2], 200_000, "an unselected event must not be moved");
     let durs: Vec<i64> = {
         let p = h.state().model.project();
         p.clips.iter().map(|c| c.duration.0).collect()
     };
-    assert!(durs.iter().all(|d| *d == 50_000), "длительности изменились: {durs:?}");
+    assert!(durs.iter().all(|d| *d == 50_000), "durations changed: {durs:?}");
     h.state_mut().undo();
     let after_undo: Vec<i64> = {
         let p = h.state().model.project();
@@ -4450,12 +4450,12 @@ fn t204_multi_drag_moves_the_whole_block() {
             .map(|id| p.clips.iter().find(|c| c.id == *id).unwrap().start.0)
             .collect()
     };
-    assert_eq!(after_undo, vec![0, 100_000], "перенос пачки — один undo-шаг");
+    assert_eq!(after_undo, vec![0, 100_000], "moving the batch is one undo step");
 }
 
-/// Тест 205 (Р.33 п.7, «ну и это естественно везде учесть, в том же
-/// создании морферов»): операции работают по ВСЕМУ выделению, а не по
-/// одному событию.
+/// Test 205 (R.33 item 7, “well, this is naturally to be accounted for everywhere, including
+/// morpher creation”): operations work on the WHOLE selection,
+/// not on a single event.
 #[test]
 fn t205_operations_run_over_whole_selection() {
     use kt_model::*;
@@ -4464,34 +4464,34 @@ fn t205_operations_run_over_whole_selection() {
     app.select_only(ClipId(1));
     app.selected.insert(ClipId(3));
 
-    // цели морфера = всё выделение
+    // the target of the morpher = the whole selection
     assert_eq!(app.morph_target_ids(), vec![ClipId(1), ClipId(3)]);
 
-    // копирование забирает оба события, вставка кладёт оба
+    // copy takes both events, paste lays down both
     app.copy_selection();
-    assert_eq!(app.clipboard.clips.len(), 2, "копируется всё выделение");
+    assert_eq!(app.clipboard.clips.len(), 2, "the whole selection is copied");
     app.player.seek(kt_time::Tick(400_000));
     app.paste_at_cursor();
-    assert_eq!(app.model.project().clips.len(), 5, "вставились оба события");
+    assert_eq!(app.model.project().clips.len(), 5, "both events were pasted");
 
-    // удаление сносит оба и откатывается одним undo
+    // deletion removes both and is rolled back by one undo
     app.select_only(ClipId(1));
     app.selected.insert(ClipId(3));
     let before = app.model.project().clips.len();
     app.delete_selected();
-    assert_eq!(app.model.project().clips.len(), before - 2, "Del удалил не всё выделение");
+    assert_eq!(app.model.project().clips.len(), before - 2, "Del did not delete the whole selection");
     app.undo();
-    assert_eq!(app.model.project().clips.len(), before, "undo вернул оба одним шагом");
+    assert_eq!(app.model.project().clips.len(), before, "undo restored both in one step");
 }
 
-/// Тест 201 (Р.33 п.9, требование пользователя: «шаблон для всех рендеров
-/// всегда kt-<projectname>-<region_name>-<его длинна в секундах>»). Было
-/// `kp-render-<unix-время>.mp4` — ни проекта, ни региона, ни длины.
+/// Test 201 (R.33 item 9, the user's requirement: “the template for all renders
+/// is always kt-<projectname>-<region_name>-<its length in seconds>”). It was
+/// `kp-render-<unix-time>.mp4` — neither the project, nor the region, nor the length.
 #[test]
 fn t201_render_file_name_follows_template() {
     use crate::render_dialog::render_file_name;
     use kt_model::*;
-    // чистая часть шаблона
+    // the pure part of the template
     assert_eq!(
         render_file_name(Some("movie"), Some("intro"), 90_000 * 12),
         "kt-movie-intro-12s.mp4"
@@ -4502,10 +4502,10 @@ fn t201_render_file_name_follows_template() {
     assert_eq!(
         render_file_name(Some("my project"), Some("scene 2: take?"), 90_000 * 5 / 2),
         "kt-my-project-scene-2_-take_-3s.mp4",
-        "пробелы дефисом, запрещённые ФС-символы подчёркиванием, длина округляется"
+        "spaces become hyphens, forbidden FS characters underscores, the length is rounded"
     );
 
-    // живая часть: имя берётся у метки-диапазона, СОВПАДАЮЩЕЙ с регионом
+    // the live part: the name is taken from the range marker that MATCHES the region
     let mut h = harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
@@ -4520,7 +4520,7 @@ fn t201_render_file_name_follows_template() {
     app.project_path = Some(std::path::PathBuf::from("/tmp/kt-t201/song.kt"));
     assert_eq!(app.default_render_name(), "kt-song-chorus-4s.mp4");
 
-    // регион не совпал с меткой — сегмент региона опускается (имя не врёт)
+    // the region did not match the marker — the segment of the region is dropped (the name does not lie)
     let mut p = app.model.project().clone();
     p.region = Some(Region { start: kt_time::Tick(0), end: kt_time::Tick(90_000 * 5) });
     app.model = kt_model::TimelineModel::new(p);
@@ -4528,12 +4528,12 @@ fn t201_render_file_name_follows_template() {
     h.step();
 }
 
-/// Тест 200 (Р.33, п.К1): правки ВНУТРИ жеста (окно FX, драг края
-/// перехода, окно морфера) обязаны двигать ревизию модели. Пока они
-/// звали `model.apply_coalesced` мимо обёртки приложения, ревизия стояла
-/// на месте — и фоновый автосейв гасил звёздочку по гейту «ревизия та
-/// же», хотя цепочка эффектов уже изменилась ПОСЛЕ снимка: правки
-/// выглядели сохранёнными и терялись при выходе.
+/// Test 200 (R.33, item K1): edits INSIDE a gesture (the FX window, the drag of a
+/// transition's edge, the morpher window) must advance the model revision. While they
+/// called `model.apply_coalesced` bypassing the application wrapper, the revision stood
+/// still — and the background autosave cleared the asterisk through the gate “revision is the
+/// same”, although the effect chain had already changed AFTER the snapshot: the edits
+/// looked saved and were lost on exit.
 #[test]
 fn t200_coalesced_edits_bump_revision_and_keep_dirty() {
     use kt_model::*;
@@ -4574,36 +4574,36 @@ fn t200_coalesced_edits_bump_revision_and_keep_dirty() {
     app.dirty_content = true;
     app.last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(40);
     h.step();
-    assert!(h.state().autosave_rx.is_some(), "фоновая запись в полёте");
+    assert!(h.state().autosave_rx.is_some(), "a background write is in flight");
 
-    // правка цепочки жестом окна FX, пока запись не финишировала
+    // a chain edit by the gesture of the FX window, while the write had not finished
     let app = h.state_mut();
     let rev_before = app.model_rev;
     app.open_fx_editor(ClipId(9));
     let gesture = app.fx_editors[0].gesture;
     app.set_fx_coalesced(ClipId(9), vec![FxInstance::blur(20), FxInstance::glow(1.0)], gesture);
-    assert!(app.model_rev > rev_before, "правка жеста двигает ревизию модели");
+    assert!(app.model_rev > rev_before, "a gesture edit moves the model revision");
 
     let deadline = std::time::Instant::now() + WAIT_BG;
     while h.state().autosave_rx.is_some() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));
         h.step();
     }
-    assert!(h.state().autosave_rx.is_none(), "результат автосейва забран");
-    assert!(h.state().dirty_content, "цепочка изменена ПОСЛЕ снимка — звёздочка обязана остаться");
+    assert!(h.state().autosave_rx.is_none(), "autosave result collected");
+    assert!(h.state().dirty_content, "the chain was changed AFTER the snapshot — the asterisk must stay");
     assert_eq!(
         h.state().model.clip(ClipId(9)).unwrap().fx.len(),
         2,
-        "правка на месте (не откачена автосейвом)"
+        "the edit in place (not rolled back by autosave)"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 199 (Р.32): ПРАВИЛО сторожа — запись со СТАРОЙ ревизией не
-/// трогает файл, с новой — пишет. Именно так фоновый автосейв перестаёт
-/// перетирать свежий Ctrl+S (гонку нашли живые сценарии: они читают
-/// сохранённый .kt и видели устаревшую модель — у пользователя так же
-/// терялись бы правки).
+/// Test 199 (R.32): the RULE of the guard — a write with an OLD revision
+/// does not touch the file, a write with a new one does. This is exactly how the background
+/// autosave stops overwriting a fresh Ctrl+S
+/// (the race was found by live scenarios: they read the saved .kt and saw an outdated model —
+/// the user would lose edits the same way).
 #[test]
 fn t199_guarded_write_never_goes_backwards() {
     let dir = std::env::temp_dir().join(format!("kt-t199g-{}", std::process::id()));
@@ -4614,21 +4614,21 @@ fn t199_guarded_write_never_goes_backwards() {
     use crate::app::SaveOutcome;
     let wrote = |o: SaveOutcome| matches!(o, SaveOutcome::Wrote { .. });
 
-    // первая запись (ревизия 5) проходит
+    // the first write (revision 5) passes
     assert!(wrote(crate::app::write_project_guarded(&guard, &f, 5, "rev5").unwrap()));
     assert_eq!(std::fs::read_to_string(&f).unwrap(), "rev5");
-    // «опоздавший» фоновый снапшот ревизии 3 — файл не трогает
+    // a “late” background snapshot of revision 3 — does not touch the file
     assert!(!wrote(crate::app::write_project_guarded(&guard, &f, 3, "rev3").unwrap()));
-    assert_eq!(std::fs::read_to_string(&f).unwrap(), "rev5", "старый снимок перетёр свежий");
-    // повтор той же ревизии допустим (идемпотентно), новее — пишется
+    assert_eq!(std::fs::read_to_string(&f).unwrap(), "rev5", "an old snapshot overwrote the fresh one");
+    // a repeat of the same revision is allowed (idempotent), a newer one is written
     assert!(wrote(crate::app::write_project_guarded(&guard, &f, 5, "rev5b").unwrap()));
     assert!(wrote(crate::app::write_project_guarded(&guard, &f, 9, "rev9").unwrap()));
     assert_eq!(std::fs::read_to_string(&f).unwrap(), "rev9");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тот же инвариант в живом потоке приложения: фоновая запись в полёте +
-/// немедленный Ctrl+S следующей ревизии → на диске остаётся свежее.
+/// The same invariant in the live application thread: a background write in flight +
+/// an immediate Ctrl+S of the next revision → the fresher one remains on disk.
 #[test]
 fn t199_background_autosave_never_overwrites_newer_save() {
     use kt_model::*;
@@ -4639,21 +4639,21 @@ fn t199_background_autosave_never_overwrites_newer_save() {
     let mut h = harness();
     let app = h.state_mut();
     app.project_path = Some(target.clone());
-    // ревизия 1: медиа A, фоновый автосейв стартует с ЭТИМ снапшотом
+    // revision 1: media A, the background autosave starts with THIS snapshot
     app.model.apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() }).unwrap();
     app.model_rev += 1;
     app.dirty_content = true;
     app.last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(40);
     h.step();
-    assert!(h.state().autosave_rx.is_some(), "фоновая запись в полёте");
+    assert!(h.state().autosave_rx.is_some(), "a background write is in flight");
 
-    // ревизия 2 + немедленный Ctrl+S, пока фоновая ещё не финишировала
+    // revision 2 + an immediate Ctrl+S while the background one has not finished yet
     let app = h.state_mut();
     app.model.apply(Command::AddMedia { id: MediaId(2), path: "synth:ramp".into() }).unwrap();
     app.model_rev += 1;
     app.save();
 
-    // дожидаемся фоновую и убеждаемся, что она НЕ откатила файл
+    // we wait for the background one and make sure it did NOT roll the file back
     let deadline = std::time::Instant::now() + WAIT_BG;
     while h.state().autosave_rx.is_some() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -4664,14 +4664,14 @@ fn t199_background_autosave_never_overwrites_newer_save() {
     assert_eq!(
         saved.media.len(),
         2,
-        "на диске обязана остаться СВЕЖАЯ версия (2 медиа), а не снимок автосейва"
+        "on disk the FRESH version (2 media) must remain, not the autosave snapshot"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 382 (Р.49 А9): конверт наследуется НА ЖИВОМ ЖЕСТЕ, а не только в
-/// теории kt-otio. Разрез и вставка копии идут через `apply_batch`, и родство
-/// доезжает до `Retained` тем же путём, каким его сообщила модель.
+/// Test 382 (R.49 A9): the envelope is inherited ON A LIVE GESTURE, not only in
+/// the theory of kt-otio. The cut and the paste of a copy go through `apply_batch`, and the kinship
+/// reaches `Retained` by the same path by which the model reported it.
 #[test]
 fn t382_app_carries_extras_to_born_clips() {
     use kt_model::*;
@@ -4680,28 +4680,28 @@ fn t382_app_carries_extras_to_born_clips() {
     let app = h.state_mut();
     let src = app.model.project().clips[0].clone();
 
-    // у события есть конверт из «файла»: имя и чужой маркер
+    // the event has an envelope from a “file”: a name and a foreign marker
     app.retained
         .clips
-        .insert(src.id, kt_otio::ClipExtra { name: "Шот 12A".into(), ..Default::default() });
+        .insert(src.id, kt_otio::ClipExtra { name: "Shot 12A".into(), ..Default::default() });
 
-    // разрез жестом приложения
+    // a cut by the application's gesture
     let mid = src.start + Tick(src.duration.0 / 2);
     let new_id = ClipId(app.next_clip_id());
     assert!(app.apply(Command::Split { id: src.id, at: mid, new_id, new_group: None }));
     assert_eq!(
         h.state().retained.clips.get(&new_id).map(|e| e.name.as_str()),
-        Some("Шот 12A"),
-        "половина разреза осталась безымянной: в файл уедет клип без имени"
+        Some("Shot 12A"),
+        "half of the cut is left unnamed: a clip without a name will go into the file"
     );
 
-    // вставка копии — тот же путь через ops::paste_block
+    // a paste of a copy — the same path via ops::paste_block
     let app = h.state_mut();
     let before = app.model.project().clips.len();
     app.selected = [src.id].into_iter().collect();
     app.copy_selection();
     app.paste_here(Tick(500_000), None, String::new(), false);
-    assert!(h.state().model.project().clips.len() > before, "вставка не добавила событий");
+    assert!(h.state().model.project().clips.len() > before, "the paste added no events");
     let pasted = h
         .state()
         .model
@@ -4717,15 +4717,15 @@ fn t382_app_carries_extras_to_born_clips() {
             .retained
             .clips
             .get(id)
-            .is_some_and(|e| e.name == "Шот 12A")),
-        "вставленная копия потеряла имя оригинала"
+            .is_some_and(|e| e.name == "Shot 12A")),
+        "the pasted copy lost the name of the original"
     );
 }
 
-/// Тест 390 (Р.49 А12): рабочее место не уезжает в чужой файл проекта.
-/// Ширина панели метров и вид (зум/скролл/курсор) жили в `.kt`: открыл
-/// проект коллеги — потерял свою ширину, сохранил — навязал ему свою. В файле
-/// остаётся passthrough: что прочитали, то и пишем, байт-стабильность цела.
+/// Test 390 (R.49 A12): the work place does not move into someone else's project file.
+/// The width of the meters panel and the view (zoom/scroll/cursor) lived in `.kt`: open
+/// a colleague's project — lose your own width; save — impose yours on him. In the file
+/// a passthrough remains: what was read is what we write, byte stability is intact.
 #[test]
 fn t390_workspace_does_not_travel_in_the_project_file() {
     use kt_model::*;
@@ -4738,7 +4738,7 @@ fn t390_workspace_does_not_travel_in_the_project_file() {
     let app = h.state_mut();
     app.project_path = Some(target.clone());
     app.workspace_file = Some(dir.join("workspace.json"));
-    // «прочитали из чужого файла»: его ширина метров и его вид
+    // “read from someone else's file”: its meters width and its view
     app.ui_passthrough = Some(kt_model::UiState {
         meters_w: 123.0,
         view_start: 4444.0,
@@ -4746,7 +4746,7 @@ fn t390_workspace_does_not_travel_in_the_project_file() {
         cursor: 555,
         ..Default::default()
     });
-    // а у нас своё рабочее место
+    // but we have our own work place
     app.meters_w = 90.0;
     app.view_start = 10.0;
     app.ticks_per_px = 200.0;
@@ -4755,27 +4755,27 @@ fn t390_workspace_does_not_travel_in_the_project_file() {
     app.dirty_content = true;
     app.save();
 
-    // в файле — ЧУЖИЕ значения, нетронутые
+    // in the file — FOREIGN values, untouched
     let text = std::fs::read_to_string(&target).unwrap();
     let saved = kt_model::project_file::from_text(&text).unwrap().project;
-    let ui = saved.ui.expect("вьюпорт обязан остаться в файле");
-    assert_eq!(ui.meters_w, 123.0, "в чужой файл уехала НАША ширина метров");
-    assert_eq!(ui.view_start, 4444.0, "в чужой файл уехал НАШ скролл");
-    assert_eq!(ui.cursor, 555, "в чужой файл уехал НАШ курсор");
+    let ui = saved.ui.expect("the viewport must stay in the file");
+    assert_eq!(ui.meters_w, 123.0, "OUR meter width went into another file");
+    assert_eq!(ui.view_start, 4444.0, "OUR scroll went into another file");
+    assert_eq!(ui.cursor, 555, "OUR cursor went into another file");
 
-    // а наше — в своём хранилище
+    // and ours — in our own store
     let w = crate::user_store::load_workspace_at(&dir.join("workspace.json"));
-    assert_eq!(w.meters_w, 90.0, "своя ширина метров не сохранена");
-    let v = w.view_of(Some(&target)).expect("вид проекта не сохранён");
+    assert_eq!(w.meters_w, 90.0, "our own meter width was not saved");
+    let v = w.view_of(Some(&target)).expect("the project view was not saved");
     assert_eq!(v.view_start, 10.0);
     assert_eq!(v.ticks_per_px, 200.0);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 391 (Р.49 А12): переезд без потерь. Пустое хранилище (первый запуск
-/// после переезда) оставляет значения из файла — миграция без единой строки
-/// кода; заполненное сильнее файла; имена и высоты дорожек и группы бина
-/// остаются в ПРОЕКТЕ, потому что они про ЭТОТ монтаж.
+/// Test 391 (R.49 A12): the move without losses. An empty store (the first launch
+/// after the move) keeps the values from the file — a migration without a single line of
+/// code; a filled store takes precedence over the file; the names and heights of the tracks and the bin groups
+/// remain in the PROJECT, because they are about THIS edit.
 #[test]
 fn t391_workspace_falls_back_to_file_and_project_keeps_its_own() {
     use crate::user_store::{ProjectView, Workspace, load_workspace_at, save_workspace_at};
@@ -4785,65 +4785,65 @@ fn t391_workspace_falls_back_to_file_and_project_keeps_its_own() {
     let ws = dir.join("workspace.json");
     let proj = dir.join("p.kt");
 
-    // пустое хранилище ничего не навязывает
+    // an empty store imposes nothing
     let w = load_workspace_at(&ws);
-    assert_eq!(w.meters_w, 0.0, "пустое хранилище обязано молчать");
+    assert_eq!(w.meters_w, 0.0, "an empty store must stay silent");
     assert!(w.view_of(Some(&proj)).is_none());
 
-    // круг: записали — прочитали
+    // a round trip: written — read back
     let mut w = Workspace::default();
     w.meters_w = 111.0;
     w.set_view(Some(&proj), ProjectView { view_start: 7.0, ticks_per_px: 13.0, cursor: 42 });
     save_workspace_at(&ws, &w);
     let back = load_workspace_at(&ws);
     assert_eq!(back.meters_w, 111.0);
-    let v = back.view_of(Some(&proj)).expect("вид не прочитан");
+    let v = back.view_of(Some(&proj)).expect("the view was not read");
     assert_eq!((v.view_start, v.ticks_per_px, v.cursor), (7.0, 13.0, 42));
-    // вид другого проекта не подменяется
+    // the view of another project is not overwritten
     assert!(back.view_of(Some(&dir.join("other.kt"))).is_none());
 
-    // битый файл не роняет программу и не навязывает мусор
-    std::fs::write(&ws, "{ это не json").unwrap();
+    // a broken file does not bring the program down and does not impose junk
+    std::fs::write(&ws, "{ this is not json").unwrap();
     assert_eq!(load_workspace_at(&ws).meters_w, 0.0);
 
-    // файл из БУДУЩЕЙ версии читается, но не перезаписывается: ломать то,
-    // чего мы не понимаем, нельзя (политика user_store с Р.48)
+    // a file from a FUTURE version is read but not overwritten: we must not break
+    // what we do not understand (user_store policy, R.48)
     std::fs::write(&ws, r#"{"version":99,"meters_w":55.0,"views":[]}"#).unwrap();
     let future = load_workspace_at(&ws);
-    assert_eq!(future.meters_w, 55.0, "будущий файл обязан читаться");
+    assert_eq!(future.meters_w, 55.0, "a future file must be readable");
     assert!(future.is_readonly());
-    // программа держит ПРОЧИТАННОЕ хранилище — оно и отказывается писать
+    // the program holds the READ store, and that is why it refuses to write
     save_workspace_at(&ws, &future);
     assert!(
         std::fs::read_to_string(&ws).unwrap().contains("99"),
-        "переписали файл новее нашей версии"
+        "the file newer than our version was overwritten"
     );
 
-    // а вот ЭТО остаётся в проекте: оно про монтаж, а не про рабочее место
+    // but THIS stays in the project: it is about editing, not about the workspace
     let mut h = harness();
     let app = h.state_mut();
-    // имя и высота дорожки с Р.62 — СОДЕРЖИМОЕ модели (ходят через undo),
-    // а не поля `ui`: в рабочем месте им делать нечего тем более
+    // the name and height of a track from R.62 are CONTENT of the model (they go through undo),
+    // not fields of `ui`: the workspace has even less business with them
     edit_project(app, |p| {
-        p.track_at_mut(kt_model::LaneKind::Audio, 0).unwrap().name = "Речь".into();
+        p.track_at_mut(kt_model::LaneKind::Audio, 0).unwrap().name = "Speech".into();
         p.track_at_mut(kt_model::LaneKind::Video, 0).unwrap().height = 88.0;
     });
     app.bin_free = true;
     let ui = app.ui_state_for_test();
-    assert!(ui.lane_names.is_empty(), "имя дорожки больше не живёт в ui");
-    assert!(ui.lane_heights.is_empty(), "высота дорожки больше не живёт в ui");
-    assert_eq!(app.row_label(kt_model::LaneKind::Audio, 0), "Речь");
-    assert!(ui.bin_free, "раскладка бина — часть монтажа");
+    assert!(ui.lane_names.is_empty(), "the track name no longer lives in the UI");
+    assert!(ui.lane_heights.is_empty(), "the track height no longer lives in the UI");
+    assert_eq!(app.row_label(kt_model::LaneKind::Audio, 0), "Speech");
+    assert!(ui.bin_free, "the bin layout is part of the edit");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Двойной клик в точку. История кликов у egui общая на окно, поэтому шаг
-/// харнесса должен быть коротким (0.02 с) — иначе два клика расходятся во
-/// времени и складываются в два одиночных (ловушка п.232).
+/// Double click at a point. egui’s click history is shared per window, so the harness step
+/// must be short (0.02 s), otherwise two clicks drift apart in time and add up to two single clicks
+/// (trap of item 232).
 fn double_click_at(h: &mut Harness<'_, KtApp>, pos: egui::Pos2) {
-    // история кликов у egui общая на окно: два жеста подряд складываются в
-    // ТРОЙНОЙ клик, и второй «двойной» не случается вовсе (ловушка п.232).
-    // Даём окну двойного клика истечь.
+    // egui’s click history is shared per window: two gestures in a row add up to a
+    // TRIPLE click, and the second “double” never happens at all (trap of item 232).
+    // We let the double-click window expire.
     for _ in 0..25 {
         h.step();
     }
@@ -4867,7 +4867,7 @@ fn double_click_at(h: &mut Harness<'_, KtApp>, pos: egui::Pos2) {
     h.step();
 }
 
-/// Правый клик без движения указателя.
+/// Right click without pointer movement.
 fn right_click_at(h: &mut Harness<'_, KtApp>, pos: egui::Pos2) {
     h.hover_at(pos);
     h.step();
@@ -4883,7 +4883,7 @@ fn right_click_at(h: &mut Harness<'_, KtApp>, pos: egui::Pos2) {
     h.step();
 }
 
-/// Подписи пунктов открытого меню.
+/// Labels of the items in the open menu.
 pub(crate) fn menu_labels(h: &mut Harness<'_, KtApp>) -> Vec<String> {
     use egui_kittest::kittest::{NodeT, Queryable};
     h.query_all_by_label_contains("")
@@ -4891,15 +4891,15 @@ pub(crate) fn menu_labels(h: &mut Harness<'_, KtApp>) -> Vec<String> {
         .collect()
 }
 
-/// Тест 392 (Р.49 В2): двойной клик по линии уровня СБРАСЫВАЕТ уровень.
-/// Подсказка обещала это с самого начала («тяни, двойной клик — 0 dB»), а
-/// двойной клик по линии всё это время открывал окно FX: обещание в подсказке
-/// было, поведения не было.
+/// Test 392 (R.49 B2): a double click on the level line RESETS the level.
+/// The hint promised this from the very start (“drag, double click — 0 dB”), but
+/// a double click on the line kept opening the FX window: the promise was in the hint,
+/// the behaviour was not.
 #[test]
 fn t392_double_click_on_level_rail_resets_level() {
     use kt_model::*;
     let (mut h, g) = harness_three_clips_dt(Some(0.02));
-    // звук и видео: линия уровня одна на оба вида (п.176)
+    // audio and video: the level line is one for both kinds (item 176)
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
@@ -4916,7 +4916,7 @@ fn t392_double_click_on_level_rail_resets_level() {
     h.step();
     let g = h.state().tl_geom.clone().unwrap_or(g);
 
-    // линия уровня стоит по значению: у 35 % она низко, у −9 dB — тоже
+    // the level line sits by its value: at 35 % it is low, at −9 dB it is also low
     let vclip = h.state().model.project().clips[0].clone();
     let level_y = |kind: ClipKind, lane: u32, v: f32| -> f32 {
         let top = g.lane_top(kind, lane);
@@ -4931,11 +4931,11 @@ fn t392_double_click_on_level_rail_resets_level() {
     assert_eq!(
         st.model.project().clips.iter().find(|c| c.id == vclip.id).map(|c| c.opacity),
         Some(1.0),
-        "двойной клик по линии уровня видео не сбросил непрозрачность"
+        "double-click on the video level line did not reset the opacity"
     );
-    assert!(st.fx_editors.is_empty(), "двойной клик по линии открыл окно FX вместо сброса");
+    assert!(st.fx_editors.is_empty(), "double-click on the line opened the FX window instead of resetting");
 
-    // тот же жест у звука: 0 dB
+    // the same gesture for audio: 0 dB
     let aclip =
         h.state().model.project().clips.iter().find(|c| c.id == ClipId(10)).cloned().unwrap();
     let ax = g.tick_to_x(aclip.start.0 + aclip.duration.0 / 2);
@@ -4944,28 +4944,28 @@ fn t392_double_click_on_level_rail_resets_level() {
     assert_eq!(
         h.state().model.project().clips.iter().find(|c| c.id == ClipId(10)).map(|c| c.gain_db),
         Some(0.0),
-        "двойной клик по линии громкости не дал 0 dB"
+        "double-click on the volume line did not give 0 dB"
     );
 
-    // а по ТЕЛУ события двойной клик по-прежнему открывает FX
+    // but on the BODY of an event a double click still opens FX
     let body_y = g.lane_y(ClipKind::Video, 0, 0.75);
     double_click_at(&mut h, egui::pos2(vx, body_y));
-    assert!(!h.state().fx_editors.is_empty(), "двойной клик по телу перестал открывать FX");
+    assert!(!h.state().fx_editors.is_empty(), "double-click on the body stopped opening FX");
 }
 
-/// Тест 393 (Р.49 В2): аккорд в подписи пункта обещает ровно то, что клавиша
-/// делает. «Удалить (Del)» у именованной области было неправдой: Del удаляет
-/// ВЫДЕЛЕННЫЕ СОБЫТИЯ, а область не трогает вовсе.
+/// Test 393 (R.49 B2): the chord in the item label promises exactly what the key does.
+/// “Delete (Del)” on a named area was untrue: Del deletes the SELECTED EVENTS,
+/// and does not touch the area at all.
 #[test]
 fn t393_menu_accelerator_promises_only_what_the_key_does() {
     use kt_model::*;
     use kt_time::Tick;
-    // сам механизм: аккорд — аргумент, а не часть переводимой фразы
+    // the mechanism itself: the chord is an argument, not part of the translated phrase
     for lang in crate::i18n::Lang::ALL {
         crate::i18n::set_lang(lang);
         assert!(
             !tr(k::tl::menu::DELETE).contains("(Del"),
-            "{}: аккорд остался внутри значения каталога — одна фраза на все контексты",
+            "{}: the chord stayed inside the catalog value — one phrase for all contexts",
             lang.code()
         );
     }
@@ -4974,10 +4974,10 @@ fn t393_menu_accelerator_promises_only_what_the_key_does() {
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-        // область СВОБОДНА от событий: под клипом её контур не схватить —
-        // там выигрывает клип, и это правильно
+        // the area is FREE of events: its outline cannot be grabbed under a clip —
+        // the clip wins there, and that is correct
         p.areas.push(MarkedArea {
-            name: "сцена 3".into(),
+            name: "scene 3".into(),
             start: Tick(300_000),
             duration: Tick(50_000),
             lanes: vec![(LaneKind::Video, 0)],
@@ -4988,23 +4988,23 @@ fn t393_menu_accelerator_promises_only_what_the_key_does() {
     h.step();
     let g = h.state().tl_geom.clone().unwrap_or(g);
 
-    // меню ОБЛАСТИ: пункт есть, аккорда в нём нет
-    let row = g.row_of((LaneKind::Video, 0)).expect("видео-строка");
+    // AREA menu: the item is there, the chord is not in it
+    let row = g.row_of((LaneKind::Video, 0)).expect("video row");
     right_click_at(&mut h, egui::pos2(g.tick_to_x(320_000), g.row_top(row) + 1.0));
     assert!(
         matches!(h.state().ctx_target, Some(crate::timeline::CtxTarget::Area(_))),
-        "сцена: правый клик обязан дать область"
+        "scene: right-click must give an area"
     );
     let labels = menu_labels(&mut h);
     let del = labels
         .iter()
         .find(|l| l.starts_with(tr(k::tl::menu::DELETE)))
-        .unwrap_or_else(|| panic!("в меню области нет пункта удаления: {labels:?}"));
-    assert!(!del.contains("Del"), "у области обещан аккорд Del, который её не удаляет: «{del}»");
+        .unwrap_or_else(|| panic!("the area menu has no delete item: {labels:?}"));
+    assert!(!del.contains("Del"), "the area promises the Del chord, which does not delete it: “{del}”");
 
-    // и это не «убрали везде»: у КАМЕРЫ Del работает, и обещание осталось.
-    // Свой харнесс: у egui история кликов общая на окно, и второй правый
-    // клик в том же окне ЗАКРЫЛ бы уже открытое меню.
+    // and this is not “removed everywhere”: CAMERA Del still works, and the promise stayed.
+    // Own harness: egui’s click history is shared per window, and a second right click
+    // in the same window would CLOSE the menu already open.
     let (mut h2, _) = harness_three_clips();
     {
         let app = h2.state_mut();
@@ -5015,8 +5015,8 @@ fn t393_menu_accelerator_promises_only_what_the_key_does() {
     }
     h2.step();
     h2.step();
-    let g2 = h2.state().tl_geom.clone().expect("геометрия");
-    let cam_row = g2.row_of((LaneKind::Camera, 0)).expect("камерная строка");
+    let g2 = h2.state().tl_geom.clone().expect("geometry");
+    let cam_row = g2.row_of((LaneKind::Camera, 0)).expect("camera row");
     let cam = h2.state().model.project().cameras[0].clone();
     right_click_at(
         &mut h2,
@@ -5024,54 +5024,54 @@ fn t393_menu_accelerator_promises_only_what_the_key_does() {
     );
     assert!(
         matches!(h2.state().ctx_target, Some(crate::timeline::CtxTarget::Camera(_))),
-        "сцена: правый клик обязан дать камеру"
+        "scene: right-click must give a camera"
     );
     let labels = menu_labels(&mut h2);
     assert!(
         labels.iter().any(|l| l.starts_with(tr(k::tl::menu::DELETE)) && l.contains("Del")),
-        "у камеры Del работает — обещание обязано остаться: {labels:?}"
+        "Del works for the camera — the promise must stay: {labels:?}"
     );
 }
 
-/// Тест 394 (Р.49 В3-В5): немых объектов в панелях не бывает.
+/// Test 394 (R.49 B3–B5): there are no mute objects in the panels.
 ///
-/// Разведка нашла двенадцать мест, где объект отвечает на НАВЕДЕНИЕ
-/// подсказкой, а на правую кнопку — ничем. Человек учится один раз: если
-/// правая кнопка где-то показала меню, он жмёт её везде, и молчание читается
-/// как «объекта нет». Здесь правый клик приходит в КАЖДЫЙ панельный объект и
-/// проверяется, что программа назвала цель — то есть меню принадлежит именно
-/// тому, во что целились.
+/// Recon found twelve places where an object answers to HOVER with a hint,
+/// but to the right button with nothing. A person learns once: if the right button
+/// somewhere showed a menu, they press it everywhere, and silence reads as
+/// “there is no object”. Here a right click goes to EVERY panel object and
+/// it is checked that the program named the target, i.e. the menu belongs to
+/// exactly what was aimed at.
 #[test]
 fn t394_panel_objects_answer_right_click() {
     use crate::ctx_menu::PanelTarget as T;
     use kt_model::*;
     let (mut h, _) = harness_three_clips_dt(Some(0.02));
 
-    // ---- фон медиа-бина ---------------------------------------------------
+    // ---- media bin background ---------------------------------------------------
     {
         let app = h.state_mut();
         app.ctx_panel = None;
     }
     h.step();
-    // прямоугольник бина программа сообщает сама: ниже него в колонке живёт
-    // перф-панель, и «примерно внизу колонки» щупало бы её
+    // the bin’s rectangle is reported by the program itself: below it in the column lives
+    // the perf panel, and “roughly at the bottom of the column” would probe it
     let bin = h.state().bin_rect;
-    assert!(bin.is_positive(), "бин не сообщил свой прямоугольник");
+    assert!(bin.is_positive(), "the bin did not report its rectangle");
     right_click_at(&mut h, egui::pos2(bin.center().x, bin.bottom() - 10.0));
-    assert_eq!(h.state().ctx_panel, Some(T::BinEmpty), "фон медиа-бина молчит на правую кнопку");
+    assert_eq!(h.state().ctx_panel, Some(T::BinEmpty), "the media bin background is silent on the right button");
 
-    // ---- панель метров ----------------------------------------------------
+    // ---- meter panel ----------------------------------------------------
     let meters = panel_rect(&h, "meters_col");
     right_click_at(&mut h, meters.center());
-    assert_eq!(h.state().ctx_panel, Some(T::Meters), "панель метров молчит на правую кнопку");
+    assert_eq!(h.state().ctx_panel, Some(T::Meters), "the meter panel is silent on the right button");
 
-    // ---- окно превью ------------------------------------------------------
+    // ---- preview window ------------------------------------------------------
     let prev = h.state().preview_rect;
-    assert!(prev.is_finite(), "превью не нарисовано — сцена сломана");
+    assert!(prev.is_finite(), "the preview is not drawn — the scene is broken");
     right_click_at(&mut h, egui::pos2(prev.center().x, prev.center().y + 20.0));
-    assert_eq!(h.state().ctx_panel, Some(T::Preview), "окно превью молчит на правую кнопку");
+    assert_eq!(h.state().ctx_panel, Some(T::Preview), "the preview window is silent on the right button");
 
-    // ---- слот цепочки эффектов -------------------------------------------
+    // ---- effect chain slot -------------------------------------------
     {
         let app = h.state_mut();
         let id = app.model.project().clips[0].id;
@@ -5085,28 +5085,28 @@ fn t394_panel_objects_answer_right_click() {
         h.query_all_by_label_contains(crate::fx_editor::fx_display_name(&FxInstance::blur(8)))
             .map(|n| n.rect())
             .next()
-            .expect("слот цепочки не нарисован")
+            .expect("the chain slot is not drawn")
     };
     right_click_at(&mut h, slot.center());
     assert!(
         matches!(h.state().ctx_panel, Some(T::FxSlot { .. })),
-        "слот цепочки молчит на правую кнопку"
+        "the chain slot is silent on the right button"
     );
 
-    // и цель ТАЙМЛАЙНА при этом погашена: меню на экране одно
+    // and the TIMELINE target is dimmed at the same time: one menu on screen
     assert!(
         h.state().ctx_target.is_none(),
-        "панельная цель не погасила цель таймлайна — тест прочитал бы протухшую"
+        "the panel target did not clear the timeline target — the test would read a stale one"
     );
 }
 
-/// Тест 412 (Р.49 Б7): громкость видна В ПОДСКАЗКЕ карточки бина, а показ
-/// НИЧЕГО НЕ ЗАПУСКАЕТ.
+/// Test 412 (R.49 B7): loudness is shown IN THE HINT of the bin card, and showing
+/// STARTS NOTHING.
 ///
-/// Второе важнее первого: провести мышью по бину значило бы начать декод
-/// десятка файлов — прямая родня инварианта 8 («скролл/зум не порождает
-/// декод-запросов»). И пока не мерили, программа так и говорит, а не
-/// показывает выдуманный ноль.
+/// The second matters more than the first: sweeping the mouse across the bin would mean
+/// starting decode of a dozen files, a direct relative of invariant 8 (“scroll/zoom does not produce
+/// decode requests”). And until it is measured, the program says so, instead of
+/// showing an invented zero.
 #[test]
 fn t412_bin_tooltip_shows_loudness_and_does_not_request_it() {
     use kt_model::*;
@@ -5117,15 +5117,15 @@ fn t412_bin_tooltip_shows_loudness_and_does_not_request_it() {
         app.model
             .apply(Command::AddMedia { id: MediaId(2), path: "synth:sine:440".into() })
             .unwrap();
-        // первому громкость известна, второму — нет
+        // the first one’s loudness is known, the second one’s is not
         app.loudness.lock().unwrap().insert(MediaId(1), (-18.5, -1.2, 6.0));
     }
     h.step();
     h.step();
 
     let g = h.state().bin_rect;
-    assert!(g.is_positive(), "бин не нарисован");
-    // наводимся на карточки и читаем строку состояния
+    assert!(g.is_positive(), "the bin is not drawn");
+    // hover over the cards and read the status line
     let mut seen_known = false;
     let mut seen_pending = false;
     for y in 0..20 {
@@ -5144,27 +5144,27 @@ fn t412_bin_tooltip_shows_loudness_and_does_not_request_it() {
             }
         }
     }
-    assert!(seen_known, "громкость не доехала до подсказки карточки");
-    assert!(seen_pending, "о неизмеренной громкости программа промолчала");
+    assert!(seen_known, "the volume did not reach the card hint");
+    assert!(seen_pending, "the program stayed silent about unmeasured volume");
 
-    // и ни одна заявка на анализ при этом не поставлена
+    // and no analysis request has been queued
     let st = h.state();
-    assert_eq!(st.analysis.queued(), 0, "показ поставил заявку на анализ");
-    assert!(st.analysis.current().is_none(), "показ запустил анализ");
+    assert_eq!(st.analysis.queued(), 0, "the display queued an analysis request");
+    assert!(st.analysis.current().is_none(), "the display started the analysis");
 }
 
-/// Тест 418 (Р.49 Б9): невозможность синхронизации называется ВСЛУХ и
-/// РАЗНЫМИ причинами (правило 16).
+/// Test 418 (R.49 B9): inability to sync is named ALOUD, and with DIFFERENT causes
+/// (rule 16).
 ///
-/// «Индекс ещё строится» и «записи не совпадают» — не одно и то же: в первом
-/// случае надо подождать, во втором ждать бессмысленно. Молчание или общее
-/// «не получилось» оставляет человека гадать.
+/// “Index still building” and “records do not match” are not the same thing: in the first
+/// case one should wait, in the second waiting is pointless. Silence or a generic
+/// “it did not work” leaves the person guessing.
 #[test]
 fn t418_sync_refusals_are_spoken_and_distinct() {
     use kt_model::*;
     let (mut h, _) = harness_three_clips();
 
-    // ни одного выделения — сказано, что надо выделить два
+    // nothing selected: it says that two must be selected
     let app = h.state_mut();
     app.selected.clear();
     app.notices.clear();
@@ -5172,28 +5172,28 @@ fn t418_sync_refusals_are_spoken_and_distinct() {
     assert_eq!(
         h.state().notices.back().map(|n| n.text.clone()),
         Some(tr(k::msg::SYNC_NEED_TWO).to_string()),
-        "о неверном выделении не сказано"
+        "the wrong selection is not mentioned"
     );
 
-    // два выделено, но пирамид нет — «индекс ещё строится», другая причина
+    // two selected, but no peaks — “index still building”, a different cause
     let app = h.state_mut();
     let ids: Vec<ClipId> = app.model.project().clips.iter().take(2).map(|c| c.id).collect();
     app.selected = ids.iter().copied().collect();
     app.peaks.lock().unwrap().clear();
     app.notices.clear();
     app.sync_selected_by_audio();
-    let last = h.state().notices.back().cloned().expect("о неготовом индексе промолчали");
-    assert_eq!(last.text, tr(k::msg::SYNC_PENDING), "причина названа не та");
-    assert_eq!(last.severity, crate::app::Severity::Warn, "отказ показан не как ошибка");
+    let last = h.state().notices.back().cloned().expect("they stayed silent about the index not being ready");
+    assert_eq!(last.text, tr(k::msg::SYNC_PENDING), "the wrong reason was named");
+    assert_eq!(last.severity, crate::app::Severity::Warn, "the refusal was shown not as an error");
     assert_ne!(
         tr(k::msg::SYNC_PENDING),
         tr(k::msg::SYNC_NO_MATCH),
-        "две разные причины обязаны звучать по-разному"
+        "two different reasons must sound different"
     );
 }
 
-/// Тест 419 (Р.49 Б9): пункт меню события и пункт главного меню — ОДНО ТЕЛО
-/// (правило 17). Разные тела разъехались бы на первой же правке.
+/// Test 419 (R.49 B9): the event menu item and the main menu item are ONE BODY
+/// (rule 17). Separate bodies would drift apart at the first edit.
 #[test]
 fn t419_sync_menu_and_timeline_item_are_the_same_body() {
     let root = crate::reach_tests::workspace_root();
@@ -5202,23 +5202,23 @@ fn t419_sync_menu_and_timeline_item_are_the_same_body() {
         let src = std::fs::read_to_string(root.join(rel)).expect(rel);
         assert!(
             src.contains("SYNC_AUDIO"),
-            "{rel}: пункта синхронизации нет — парный способ потерян"
+            "{rel}: there is no sync item — the paired way is lost"
         );
         callers.push(src.matches("sync_selected_by_audio()").count());
     }
-    assert!(callers.iter().all(|&n| n >= 1), "один из путей зовёт не общее тело: {callers:?}");
-    // и само тело — одно на весь app
+    assert!(callers.iter().all(|&n| n >= 1), "one of the paths calls not the shared body: {callers:?}");
+    // and the body itself is one for the whole app
     let app = std::fs::read_to_string(root.join("apps/kt-app/src/app.rs")).expect("app.rs");
     assert_eq!(
         app.matches("pub fn sync_selected_by_audio").count(),
         1,
-        "тел синхронизации больше одного — они разъедутся"
+        "there is more than one sync body — they will drift apart"
     );
 }
 
-/// Тест 421 (Р.49 Б10): результат, посчитанный по УСТАРЕВШЕЙ модели, не
-/// применяется. Пока задача читала файлы, монтаж мог поехать — кривые от
-/// старой модели легли бы не на те события, и молча.
+/// Test 421 (R.49 B10): a result computed from an OUTDATED model is not applied. While the task
+/// was reading files the edit could have moved — curves from the old model would have landed
+/// on the wrong events, silently.
 #[test]
 fn t421_stale_analysis_result_is_not_applied() {
     use kt_model::*;
@@ -5229,7 +5229,7 @@ fn t421_stale_analysis_result_is_not_applied() {
         app.model_rev += 1;
     }
     let rev = h.state().model_rev;
-    // результат «из прошлого»: ревизия та же, медиа на месте — применяется
+    // result “from the past”: same revision, media in place — applied
     h.state_mut().on_analysis_done_for_test(
         crate::analysis::AnalysisKind::Loudness(MediaId(1)),
         rev,
@@ -5242,10 +5242,10 @@ fn t421_stale_analysis_result_is_not_applied() {
     );
     assert!(
         h.state().loudness.lock().unwrap().contains_key(&MediaId(1)),
-        "свежий результат не применён"
+        "the fresh result was not applied"
     );
 
-    // а теперь медиа подменили: результат по прежнему файлу к нему не относится
+    // but now the media was swapped: the result for the old file does not belong to it
     {
         let app = h.state_mut();
         app.loudness.lock().unwrap().clear();
@@ -5264,15 +5264,15 @@ fn t421_stale_analysis_result_is_not_applied() {
     );
     assert!(
         !h.state().loudness.lock().unwrap().contains_key(&MediaId(1)),
-        "число по исчезнувшему медиа применено — стейл-защита не сработала"
+        "a number for vanished media was applied — the stale guard did not trigger"
     );
 }
 
-/// Тест 376 (Р.49 А8): номер события не переиспользуется в пределах сессии.
-/// Прежняя формула «максимум по текущим клипам + 1» после удаления последнего
-/// события выдавала его же номер заново — и новорождённый клип наследовал
-/// ЧУЖОЙ конверт из `Retained.clips`: имя, маркеры и ссылки на материал
-/// удалённого. По тому же номеру ходят link-группы и ссылки морферов.
+/// Test 376 (R.49 A8): an event number is not reused within a session.
+/// The old formula “maximum over current clips + 1” handed out the very same number again
+/// after the last event was deleted — and a newborn clip inherited
+/// a FOREIGN envelope from `Retained.clips`: name, markers and links to the media of the
+/// deleted one. Link groups and morpher links go by the same number.
 #[test]
 fn t376_clip_ids_are_not_reused_within_a_session() {
     use kt_model::*;
@@ -5310,37 +5310,37 @@ fn t376_clip_ids_are_not_reused_within_a_session() {
     let first = app.next_clip_id();
     make(app, first);
     let second = app.next_clip_id();
-    assert!(second > first, "второй номер не больше первого");
+    assert!(second > first, "the second number is not greater than the first");
     make(app, second);
 
-    // удалили оба — номера всё равно не возвращаются
+    // deleted both — the numbers still do not come back
     app.apply(Command::RemoveClip { id: ClipId(second) });
     app.apply(Command::RemoveClip { id: ClipId(first) });
     assert!(app.model.project().clips.is_empty());
     let third = app.next_clip_id();
     assert!(
         third > second,
-        "номер переиспользован после удаления ({third} <= {second}): новый клип получит \
-         конверт удалённого — его имя, маркеры и ссылки на материал"
+        "a number was reused after deletion ({third} <= {second}): the new clip will get \
+         the envelope of the deleted one — its name, markers and media references"
     );
 
-    // отметка не двигается, пока номер не взяли на деле
-    assert_eq!(app.next_clip_id(), third, "выдали два разных номера на один запрос");
+    // the mark does not move until the number is actually taken
+    assert_eq!(app.next_clip_id(), third, "two different numbers were issued for one request");
 
-    // undo, отменивший рождение, отметку НЕ откатывает: номер уже жил, и
-    // конверт под ним мог осесть в Retained
+    // undo that cancelled a birth does NOT roll the mark back: the number was already live, and
+    // the envelope under it might have settled into Retained
     make(app, third);
     app.undo();
-    assert!(app.model.project().clips.is_empty(), "undo обязан был убрать рождённый клип");
+    assert!(app.model.project().clips.is_empty(), "undo had to remove the born clip");
     assert!(
         app.next_clip_id() > third,
-        "undo вернул номер в оборот — вместе с конвертом, который под ним завёлся"
+        "undo returned the number to circulation — together with the envelope that had been created under it"
     );
 }
 
-/// Тест 379 (Р.49 А8, идиома t273): арифметика номеров событий живёт в ОДНОМ
-/// месте. Каждая своя копия «max(...)+1» — это ещё один способ выдать номер
-/// удалённого клипа, и найти её потом можно только по жалобе.
+/// Test 379 (R.49 A8, idiom t273): event-number arithmetic lives in ONE place. Every private
+/// copy of “max(...)+1” is one more way to hand out the number of a deleted clip, and it can
+/// only be found later by a complaint.
 #[test]
 fn t379_clip_id_arithmetic_lives_in_one_place() {
     let root = crate::reach_tests::workspace_root();
@@ -5359,11 +5359,11 @@ fn t379_clip_id_arithmetic_lives_in_one_place() {
         );
         for (n, line) in src.lines().enumerate() {
             let t = line.trim();
-            // «взять максимум номеров клипов и прибавить» — формула выдачи
+            // “take the maximum of clip numbers and add one” — the issuing formula
             if !(t.contains("c.id.0") && t.contains("max()")) {
                 continue;
             }
-            // в доме правила (next_clip_id/bump_clip_hw) такие строки законны
+            // in the house of rules (next_clip_id/bump_clip_hw) such lines are legitimate
             if rel == HOME {
                 continue;
             }
@@ -5372,16 +5372,16 @@ fn t379_clip_id_arithmetic_lives_in_one_place() {
     }
     assert!(
         bad.is_empty(),
-        "номер события выдаётся ВНЕ единственного правила (`next_clip_id` в {HOME}). \
-         Своя копия «max + 1» не знает об уже рождённых и переиспользует номера \
-         удалённых событий вместе с их конвертами: {bad:?}"
+        "the event number is issued OUTSIDE the single rule (`next_clip_id` in {HOME}). \
+         A private copy “max + 1” does not know the already issued ones and reuses the numbers \
+         of deleted events together with their envelopes: {bad:?}"
     );
 }
 
-/// Тест 369 (Р.49 А6): «Новый» и «Открыть» при несохранённой работе СПРАШИВАЮТ.
-/// До Р.49 не спрашивали — и это был законный выбор (вердикт F-RES-005):
-/// фоновый автосейв писал прямо в файл пользователя, терять было нечего.
-/// Владелец автосейв в проект убрал (п.351) — вместе с правом не спрашивать.
+/// Test 369 (R.49 A6): “New” and “Open” ASK when there is unsaved work.
+/// Before R.49 they did not ask — and that was a legitimate choice (verdict F-RES-005):
+/// the background autosave wrote straight into the user’s file, so there was nothing to lose.
+/// The owner removed autosave from the project (item 351), along with the right not to ask.
 #[test]
 fn t369_new_and_open_guard_unsaved_work() {
     use kt_model::*;
@@ -5391,28 +5391,28 @@ fn t369_new_and_open_guard_unsaved_work() {
     app.model_rev += 1;
     app.dirty_content = true;
 
-    // «Новый» не выбрасывает работу молча
+    // “New” does not silently throw away the work
     app.new_project();
     assert_eq!(h.state().ask, Some(crate::app::Ask::Unsaved(crate::app::Pending::New)));
-    assert_eq!(h.state().model.project().media.len(), 1, "работа выброшена до ответа");
+    assert_eq!(h.state().model.project().media.len(), 1, "work was discarded before the answer");
 
-    // «Остаться» — ничего не произошло
+    // “Stay” — nothing happened
     h.state_mut().answer_ask(crate::app::Answer::Cancel);
     assert!(h.state().ask.is_none());
-    assert_eq!(h.state().model.project().media.len(), 1, "«Остаться» выбросило работу");
+    assert_eq!(h.state().model.project().media.len(), 1, "“Stay” discarded the work");
     assert!(h.state().dirty_content);
 
-    // «Не сохранять» — новый проект на месте, и звёздочки на нём нет
+    // “Do not save” — the new project takes its place, and there is no asterisk on it
     h.state_mut().new_project();
     h.state_mut().answer_ask(crate::app::Answer::No);
-    assert_eq!(h.state().model.project().media.len(), 0, "новый проект не создан");
+    assert_eq!(h.state().model.project().media.len(), 0, "the new project was not created");
     assert!(!h.state().dirty_content);
 
-    // чистому проекту вопрос не задаётся
+    // a clean project is not asked the question
     h.state_mut().new_project();
-    assert!(h.state().ask.is_none(), "спросили на пустом месте");
+    assert!(h.state().ask.is_none(), "asked for nothing");
 
-    // «Открыть» — тот же сторож (правило 17: парные пути ведут себя одинаково)
+    // “Open” — the same guard (rule 17: paired paths behave the same way)
     let app = h.state_mut();
     app.dirty_content = true;
     app.open_project_dialog();
@@ -5420,9 +5420,9 @@ fn t369_new_and_open_guard_unsaved_work() {
     h.state_mut().answer_ask(crate::app::Answer::Cancel);
 }
 
-/// Тест 370 (Р.49 А6): «Сохранить и продолжить» НЕ продолжает, если сохранить
-/// не вышло. Иначе отказ записи (нет прав, диск полон, отменённый Save-As)
-/// оборачивался бы ровно той потерей работы, от которой сторож и поставлен.
+/// Test 370 (R.49 A6): “Save and continue” does NOT continue if the save did not succeed.
+/// Otherwise a write refusal (no rights, full disk, a cancelled Save As) would turn into
+/// exactly the loss of work the guard is there to prevent.
 #[test]
 fn t370_save_and_go_does_not_go_when_save_failed() {
     use kt_model::*;
@@ -5436,15 +5436,15 @@ fn t370_save_and_go_does_not_go_when_save_failed() {
     h.state_mut().answer_ask(crate::app::Answer::Yes);
 
     let st = h.state();
-    assert_eq!(st.model.project().media.len(), 1, "работа выброшена, хотя запись не удалась");
-    assert!(st.dirty_content, "звёздочка погашена при неудачной записи");
+    assert_eq!(st.model.project().media.len(), 1, "work was discarded, although the write failed");
+    assert!(st.dirty_content, "the asterisk was cleared on a failed write");
     assert!(st.notices.iter().any(|n| n.severity == crate::app::Severity::Warn));
 }
 
-/// Тест 371 (Р.49 А6): выход перехватывается и отменяется. `CancelClose` в
-/// eframe 0.36 работает и для КОРНЕВОГО окна — на этом и держится вопрос
-/// «сохранить перед выходом?»; без него пришлось бы ловить системные события
-/// мимо egui.
+/// Test 371 (R.49 A6): exit is intercepted and cancelled. `CancelClose` in
+/// eframe 0.36 works also for the ROOT window — the question “save before exit?” rests on this;
+/// without it one would have to catch system events
+/// around egui.
 #[test]
 fn t371_close_request_is_intercepted_and_cancelled() {
     use kt_model::*;
@@ -5454,30 +5454,30 @@ fn t371_close_request_is_intercepted_and_cancelled() {
     app.model_rev += 1;
     app.dirty_content = true;
 
-    // сторож принимает решение тем же кодом, каким его принимает кадр
-    assert!(!h.state_mut().guard_unsaved(crate::app::Pending::Quit), "выход не перехвачен");
+    // the guard makes its decision with the same code the frame uses
+    assert!(!h.state_mut().guard_unsaved(crate::app::Pending::Quit), "exit was not intercepted");
     assert_eq!(h.state().ask, Some(crate::app::Ask::Unsaved(crate::app::Pending::Quit)));
-    assert!(!h.state().quit_confirmed, "выход разрешён до ответа");
+    assert!(!h.state().quit_confirmed, "exit was allowed before the answer");
 
-    // «Остаться» — уходить не собираемся
+    // “Stay” — we are not leaving
     h.state_mut().answer_ask(crate::app::Answer::Cancel);
     assert!(!h.state().quit_confirmed);
 
-    // «Не сохранять» — выход разрешён, и второй раз не переспрашиваем
+    // “Do not save” — exit is allowed, and we do not ask a second time
     assert!(!h.state_mut().guard_unsaved(crate::app::Pending::Quit));
     h.state_mut().answer_ask(crate::app::Answer::No);
-    assert!(h.state().quit_confirmed, "после ответа выход не разрешён — окно не закроется");
+    assert!(h.state().quit_confirmed, "after the answer exit is not allowed — the window will not close");
     assert!(!h.state().dirty_content);
 
-    // чистому проекту сторож не мешает уйти
+    // for a clean project the guard does not stop you from leaving
     assert!(h.state_mut().guard_unsaved(crate::app::Pending::Quit));
 }
 
-/// Тест 372 (Р.49 А6): последний рубеж — `Drop`. Он срабатывает там, где
-/// `on_exit` не зовут вовсе: `*self = app` при «Новый»/«Открыть» и раскрутка
-/// стека от паники. В теле ни одного `unwrap`: паника внутри `Drop` во время
-/// раскрутки — немедленный `abort`, уносящий ровно тот файл, ради которого
-/// всё затевалось. Потому здесь же проверяется ОТРАВЛЕННЫЙ сторож.
+/// Test 372 (R.49 A6): the last line of defence is `Drop`. It fires where
+/// `on_exit` is not called at all: `*self = app` on “New”/“Open”, and the unwinding
+/// of the stack after a panic. The body has not a single `unwrap`: a panic inside `Drop` during
+/// unwinding is an immediate `abort`, taking with it exactly the file the whole thing was for.
+/// That is why a POISONED guard is checked here too.
 #[test]
 fn t372_drop_is_the_last_line_of_defence() {
     use kt_model::*;
@@ -5490,28 +5490,28 @@ fn t372_drop_is_the_last_line_of_defence() {
     {
         let mut h = harness();
         let app = h.state_mut();
-        app.recovery_on_drop = true; // в харнессе рубеж выключен — включаем
+        app.recovery_on_drop = true; // in the harness the barrier is off — we turn it on
         app.project_path = Some(proj.clone());
         app.model.apply(Command::AddMedia { id: MediaId(5), path: "synth:ramp".into() }).unwrap();
         app.model_rev += 1;
         app.dirty_content = true;
-        // сторож отравлен: поток паниковал под замком. Запись обязана пройти —
-        // иначе чужая паника лишает пользователя последнего шанса.
+        // the guard is poisoned: a thread panicked while holding the lock. The write must go through —
+        // otherwise someone else’s panic takes away the user’s last chance.
         let g = app.recovery_rev.clone();
         let _ = std::thread::spawn(move || {
             let _held = g.lock().unwrap();
             panic!("poison");
         })
         .join();
-        assert!(app.recovery_rev.is_poisoned(), "мьютекс не отравлен — тест ничего не проверяет");
-    } // здесь Drop
+        assert!(app.recovery_rev.is_poisoned(), "the mutex is not poisoned — the test checks nothing");
+    } // here Drop
 
-    let text = std::fs::read_to_string(&rec).expect("Drop не записал восстановление");
+    let text = std::fs::read_to_string(&rec).expect("Drop did not write the recovery");
     let saved = kt_model::project_file::from_text(&text).unwrap().project;
-    assert_eq!(saved.media.len(), 1, "в восстановлении не та работа");
-    assert!(!proj.exists(), "Drop записал В ПРОЕКТ: его меняет только Ctrl+S");
+    assert_eq!(saved.media.len(), 1, "the recovery has the wrong work");
+    assert!(!proj.exists(), "Drop wrote INTO THE PROJECT: only Ctrl+S changes it");
 
-    // чистому приложению ронять нечего
+    // a clean application has nothing to drop
     let _ = std::fs::remove_file(&rec);
     {
         let mut h = harness();
@@ -5521,14 +5521,14 @@ fn t372_drop_is_the_last_line_of_defence() {
         app.dirty_content = false;
         app.dirty_ui = false;
     }
-    assert!(!rec.exists(), "Drop записал восстановление на чистом проекте");
+    assert!(!rec.exists(), "Drop wrote a recovery on a clean project");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 365 (Р.49 А5): кандидаты отбираются по ВРЕМЕНИ. Восстановление
-/// старше проекта не предлагается (иначе после каждого Ctrl+S программа
-/// звала бы «восстановить» то, что и так в файле), новее — предлагается,
-/// безымянная работа предлагается всегда, свежее — первым.
+/// Test 365 (R.49 A5): candidates are selected by TIME. A recovery older than the project
+/// is not offered (otherwise after every Ctrl+S the program would urge “recover”
+/// what is already in the file), a newer one is offered,
+/// unnamed work is always offered, and the freshest comes first.
 #[test]
 fn t365_recovery_candidates_are_picked_by_time() {
     use std::time::{Duration, SystemTime};
@@ -5546,34 +5546,34 @@ fn t365_recovery_candidates_are_picked_by_time() {
         std::fs::File::options().write(true).open(p).unwrap().set_modified(t).unwrap();
     };
 
-    // проект новее восстановления: предлагать нечего
+    // the project is newer than the recovery: nothing to offer
     touch(&rec, 600);
     touch(&proj, 60);
     let got = crate::app::recovery_candidates_at(Some(&proj), &anon);
-    assert!(got.is_empty(), "предложено восстановление старее самого проекта: {got:?}");
+    assert!(got.is_empty(), "a recovery older than the project itself was offered: {got:?}");
 
-    // восстановление новее проекта — предлагается
+    // the recovery is newer than the project — it is offered
     touch(&rec, 10);
     let got = crate::app::recovery_candidates_at(Some(&proj), &anon);
-    assert_eq!(got.len(), 1, "не предложено восстановление новее проекта");
+    assert_eq!(got.len(), 1, "a recovery newer than the project was not offered");
     assert_eq!(got[0].path, rec);
     assert_eq!(got[0].for_project.as_deref(), Some(proj.as_path()));
 
-    // безымянная работа предлагается всегда и, будучи свежее, идёт первой
+    // unnamed work is always offered and, being fresher, comes first
     touch(&anon, 1);
     let got = crate::app::recovery_candidates_at(Some(&proj), &anon);
     assert_eq!(got.len(), 2);
-    assert_eq!(got[0].path, anon, "свежее обязано идти первым");
-    assert!(got[0].for_project.is_none(), "безымянная работа не привязана к проекту");
+    assert_eq!(got[0].path, anon, "the fresher one must go first");
+    assert!(got[0].for_project.is_none(), "the unnamed work is not tied to a project");
     assert_eq!(got[1].path, rec);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 366 (Р.49 А5): главный сценарий, не покрытый ничем до Р.49 —
-/// «открыл проект A, нажал Новый, час работы, падение». `last_project`
-/// указывает на A, A существует, программа его открывает — и про час работы
-/// не говорит ни слова, потому что смотрела на автосейв только когда
-/// `last_project` не нашёлся.
+/// Test 366 (R.49 A5): the main scenario, not covered by anything before R.49 —
+/// “opened project A, pressed New, an hour of work, a crash”. `last_project`
+/// points to A, A exists, the program opens it — and says nothing about the hour of work,
+/// because it looked at the autosave only when `last_project`
+/// was not found.
 #[test]
 fn t366_unnamed_work_is_offered_even_when_project_opens() {
     let dir = std::env::temp_dir().join(format!("kt-t366-{}", std::process::id()));
@@ -5586,27 +5586,27 @@ fn t366_unnamed_work_is_offered_even_when_project_opens() {
     std::fs::write(&anon, "{}").unwrap();
 
     let list = crate::app::recovery_candidates_at(Some(&proj), &anon);
-    assert_eq!(list.len(), 1, "час безымянной работы не предложен: {list:?}");
+    assert_eq!(list.len(), 1, "the hour of unnamed work was not offered: {list:?}");
 
     let mut h = harness();
     let app = h.state_mut();
     app.project_path = Some(proj.clone());
     app.offer_recovery_list(list, true);
-    assert!(h.state().recovery_open, "окно восстановления не открылось");
+    assert!(h.state().recovery_open, "the recovery window did not open");
 
-    // и наоборот: предлагать нечего — окна нет, а по прямой просьбе из меню
-    // программа обязана сказать это словами, а не промолчать
+    // and the reverse: nothing to offer — there is no window, and on a direct request from the menu
+    // the program must say so in words rather than stay silent
     let app = h.state_mut();
     app.notices.clear();
     app.offer_recovery_list(Vec::new(), false);
     assert!(!h.state().recovery_open);
-    assert_eq!(h.state().notices.len(), 1, "меню «Восстановить…» промолчало");
+    assert_eq!(h.state().notices.len(), 1, "the “Restore…” menu stayed silent");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 367 (Р.49 А5): восстановление кладёт работу В РЕДАКТОР и больше
-/// никуда. Файл проекта не трогается (его меняет только Ctrl+S), файл-источник
-/// не съедается, звёздочка горит, и всё это ПОВТОРИМО (правило 14).
+/// Test 367 (R.49 A5): recovery puts the work INTO THE EDITOR and nowhere else.
+/// The project file is not touched (only Ctrl+S changes it), the source file is not consumed,
+/// the asterisk lights up, and all of this is REPEATABLE (rule 14).
 #[test]
 fn t367_restore_puts_work_in_editor_and_repeats() {
     use kt_model::*;
@@ -5614,9 +5614,9 @@ fn t367_restore_puts_work_in_editor_and_repeats() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let proj = dir.join("t367.kt");
-    std::fs::write(&proj, "исходный файл пользователя").unwrap();
+    std::fs::write(&proj, "the original file of the user").unwrap();
 
-    // в файле восстановления — работа с тремя медиа
+    // in the recovery file — work with three media
     let mut p = kt_model::Project::new(kt_model::ProjectSettings {
         fps: 30,
         width: 640,
@@ -5635,9 +5635,9 @@ fn t367_restore_puts_work_in_editor_and_repeats() {
     }
     let rec = crate::app::recovery_path_for(Some(&proj));
     std::fs::write(&rec, crate::app::project_text_of(&p, &Default::default(), None)).unwrap();
-    // проект заведомо СТАРШЕ восстановления: гранулярность mtime у файловой
-    // системы бывает секундной, и «записали одно за другим» её не различает.
-    // Сам отбор по времени проверяет t365 — здесь он не предмет теста.
+    // the project is deliberately OLDER than the recovery: the mtime granularity of a file system
+    // can be one second, and “written one after another” does not tell them apart.
+    // The time selection itself is checked by t365 — it is not the subject of this test here.
     std::fs::File::options()
         .write(true)
         .open(&proj)
@@ -5653,21 +5653,21 @@ fn t367_restore_puts_work_in_editor_and_repeats() {
         crate::app::recovery_candidates_at(Some(&proj), &dir.join("none")),
         true,
     );
-    assert_eq!(h.state().recovery_offer.len(), 1, "восстановление не найдено рядом с проектом");
+    assert_eq!(h.state().recovery_offer.len(), 1, "the recovery was not found next to the project");
 
     h.state_mut().restore_recovery(0);
     let st = h.state();
-    assert_eq!(st.model.project().media.len(), 3, "работа не доехала до редактора");
-    assert!(st.dirty_content, "восстановленная работа обязана считаться несохранённой");
-    assert!(!st.recovery_open, "окно не закрылось после восстановления");
+    assert_eq!(st.model.project().media.len(), 3, "the work did not reach the editor");
+    assert!(st.dirty_content, "restored work must count as unsaved");
+    assert!(!st.recovery_open, "the window did not close after the recovery");
     assert_eq!(
         std::fs::read_to_string(&proj).unwrap(),
-        "исходный файл пользователя",
-        "восстановление переписало файл проекта"
+        "the original file of the user",
+        "the recovery overwrote the project file"
     );
-    assert!(rec.exists(), "восстановление съело свой источник — второй раз не выйдет");
+    assert!(rec.exists(), "the recovery ate its own source — a second time will not work");
 
-    // правило 14: то же самое ещё раз, после отмены
+    // rule 14: the same thing once more, after undo
     let app = h.state_mut();
     app.model = kt_model::TimelineModel::new(kt_model::Project::new(kt_model::ProjectSettings {
         fps: 30,
@@ -5688,12 +5688,12 @@ fn t367_restore_puts_work_in_editor_and_repeats() {
         true,
     );
     h.state_mut().restore_recovery(0);
-    assert_eq!(h.state().model.project().media.len(), 3, "повторное восстановление не сработало");
+    assert_eq!(h.state().model.project().media.len(), 3, "the repeated recovery did not work");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 368 (Р.49 А5): «Удалить» уносит именно этот файл и закрывает окно,
-/// когда предлагать больше нечего; «Не сейчас» файл оставляет.
+/// Test 368 (R.49 A5): “Delete” removes exactly this file and closes the window
+/// when there is nothing left to offer; “Not now” leaves the file in place.
 #[test]
 fn t368_forget_removes_file_and_later_keeps_it() {
     let dir = std::env::temp_dir().join(format!("kt-t368-{}", std::process::id()));
@@ -5713,57 +5713,57 @@ fn t368_forget_removes_file_and_later_keeps_it() {
     let app = h.state_mut();
     app.offer_recovery_list(vec![cand(&a), cand(&b)], true);
     app.forget_recovery(0);
-    assert!(!a.exists(), "выбранный файл не удалён");
-    assert!(b.exists(), "удалён не тот файл");
-    assert!(h.state().recovery_open, "остался кандидат — окно обязано остаться");
+    assert!(!a.exists(), "the selected file was not deleted");
+    assert!(b.exists(), "the wrong file was deleted");
+    assert!(h.state().recovery_open, "a candidate remained — the window must stay");
 
     h.state_mut().forget_recovery(0);
     assert!(!b.exists());
-    assert!(!h.state().recovery_open, "кандидатов не осталось — окно обязано закрыться");
+    assert!(!h.state().recovery_open, "no candidates left — the window must close");
 
-    // «Не сейчас» ничего не уничтожает
+    // “Not now” destroys nothing
     std::fs::write(&a, "{}").unwrap();
     let app = h.state_mut();
     app.offer_recovery_list(vec![cand(&a)], true);
     app.recovery_open = false;
-    assert!(a.exists(), "«не сейчас» удалило файл");
+    assert!(a.exists(), "“not now” deleted the file");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 363 (Р.49 А4, расширяет t150): две копии программы, открывшие один
-/// проект, не делят ни временный файл, ни файл восстановления. Общий tmp
-/// означал бы, что `rename` одной копии подменяет проект наполовину
-/// записанным содержимым другой — то есть атомарная запись перестаёт быть
-/// атомарной ровно тогда, когда защита нужнее всего.
+/// Test 363 (R.49 A4, extends t150): two copies of the program that opened one
+/// project share neither the temp file nor the recovery file. A shared tmp
+/// would mean that `rename` of one copy replaces the project halfway with
+/// the half-written content of the other — that is, an atomic write stops being atomic
+/// exactly when protection is most needed.
 #[test]
 fn t363_second_copy_has_its_own_tmp_and_recovery() {
     let pid = std::process::id();
     let tmp = kt_otio::atomic_tmp_path(std::path::Path::new("/w/film.kt"));
     assert!(
         tmp.to_string_lossy().contains(&pid.to_string()),
-        "во временном имени нет номера процесса: {}",
+        "the temporary name has no process number: {}",
         tmp.display()
     );
     assert!(tmp.to_string_lossy().ends_with(".tmp"));
-    assert!(tmp.to_string_lossy().starts_with("/w/film.kt."), "съедена часть имени проекта");
+    assert!(tmp.to_string_lossy().starts_with("/w/film.kt."), "part of the project name was eaten");
 
     let mut h = harness();
     let app = h.state_mut();
     app.project_path = Some(std::path::PathBuf::from("/w/film.kt"));
     let owner = app.recovery_target();
     assert_eq!(owner, std::path::Path::new("/w/film.kt.recovery.kt"));
-    // та же программа, но проект занят кем-то ещё
+    // the same program, but the project is held by someone else
     app.lock_holder = Some(Some(4242));
     let second = app.recovery_target();
-    assert_ne!(owner, second, "вторая копия пишет в чужой файл восстановления");
+    assert_ne!(owner, second, "the second copy writes into another recovery file");
     assert!(second.to_string_lossy().contains(&pid.to_string()));
-    assert!(second.to_string_lossy().ends_with(".kt"), "восстановление обязано быть .kt");
+    assert!(second.to_string_lossy().ends_with(".kt"), "the recovery must be .kt");
 }
 
-/// Тест 364 (Р.49 А4): вторая копия не запрещается, а честно деградирует.
-/// Предупреждение с номером чужого процесса, и первый Ctrl+S не пишет молча,
-/// а спрашивает. Ответ «не сохранять» оставляет файл нетронутым и звёздочку
-/// на месте; «всё равно» пишет и больше не переспрашивает.
+/// Test 364 (R.49 A4): a second copy is not forbidden, but degrades honestly.
+/// A warning with the number of the foreign process, and the first Ctrl+S does not write silently,
+/// but asks. The answer “Do not save” leaves the file untouched and the asterisk
+/// in place; “Anyway” writes and does not ask again.
 #[test]
 fn t364_locked_project_asks_before_first_save() {
     use kt_model::*;
@@ -5771,29 +5771,29 @@ fn t364_locked_project_asks_before_first_save() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let target = dir.join("t364.kt");
-    std::fs::write(&target, "чужое содержимое").unwrap();
+    std::fs::write(&target, "foreign content").unwrap();
 
     let mut h = harness();
     let app = h.state_mut();
     app.project_path = Some(target.clone());
     app.notices.clear();
     app.claim_project(&target);
-    assert!(app.project_lock.is_some(), "свободный проект обязан заниматься");
+    assert!(app.project_lock.is_some(), "a free project must be claimed");
     assert!(app.lock_holder.is_none());
 
-    // вторая копия в этом же процессе: свой замок отпускаем, проект занимает
-    // «сосед» — а программа заходит на него заново, как соседняя копия
+    // a second copy in this same process: we release our own lock, the project is held by a
+    // “neighbour” — and the program enters it again, like a neighbouring copy
     h.state_mut().project_lock = None;
     let _held = match crate::project_lock::acquire(&target) {
         crate::project_lock::LockState::Owned(l) => l,
-        _ => panic!("первый замок должен был отпуститься вместе с полем"),
+        _ => panic!("the first lock was to be released together with the field"),
     };
     let app = h.state_mut();
     app.claim_project(&target);
-    assert_eq!(app.lock_holder, Some(Some(std::process::id())), "занятость не замечена");
+    assert_eq!(app.lock_holder, Some(Some(std::process::id())), "the busy state went unnoticed");
     assert!(
         app.notices.iter().any(|n| n.text.contains(&std::process::id().to_string())),
-        "о занятости не сказано с номером процесса: {:?}",
+        "the busy state was not reported with the process number: {:?}",
         app.notices.iter().map(|n| &n.text).collect::<Vec<_>>()
     );
 
@@ -5801,37 +5801,37 @@ fn t364_locked_project_asks_before_first_save() {
     app.model_rev += 1;
     app.dirty_content = true;
     app.save();
-    assert!(matches!(h.state().ask, Some(crate::app::Ask::SaveOverLock { .. })), "не спросили");
+    assert!(matches!(h.state().ask, Some(crate::app::Ask::SaveOverLock { .. })), "did not ask");
     assert_eq!(
         std::fs::read_to_string(&target).unwrap(),
-        "чужое содержимое",
-        "записали, не дождавшись ответа"
+        "foreign content",
+        "wrote without waiting for the answer"
     );
 
-    // «не сохранять» — файл цел, звёздочка на месте, вопрос закрыт
+    // “do not save” — the file is intact, asterisk in place, question closed
     h.state_mut().answer_ask(crate::app::Answer::No);
     assert!(h.state().ask.is_none());
-    assert_eq!(std::fs::read_to_string(&target).unwrap(), "чужое содержимое");
-    assert!(h.state().dirty_content, "отказ сохранять погасил звёздочку");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "foreign content");
+    assert!(h.state().dirty_content, "refusing to save cleared the asterisk");
 
-    // «всё равно» — пишем; второй раз уже не спрашиваем
+    // “anyway” — we write; the second time we no longer ask
     h.state_mut().save();
     h.state_mut().answer_ask(crate::app::Answer::Yes);
-    assert!(!h.state().dirty_content, "после ответа «всё равно» проект не записан");
+    assert!(!h.state().dirty_content, "after the answer “anyway” the project was not written");
     assert!(h.state().lock_override);
     let app = h.state_mut();
     app.dirty_content = true;
     app.model_rev += 1;
     app.save();
-    assert!(h.state().ask.is_none(), "переспросили после принятого решения");
+    assert!(h.state().ask.is_none(), "asked again after the decision was made");
     assert!(!h.state().dirty_content);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 357 (Р.49 А3): имя файла восстановления дописывается к ПОЛНОМУ имени
-/// проекта. Подмена расширения (`with_extension`) склеила бы `film.kt` и
-/// `film.mp4.kt` в одно восстановление — ровно тот класс, что закрывал t150.
-/// Безымянный проект восстанавливается в каталоге данных.
+/// Test 357 (R.49 A3): the recovery file name is appended to the FULL project name.
+/// Replacing the extension (`with_extension`) would merge `film.kt` and
+/// `film.mp4.kt` into one recovery — exactly the class of bug that t150 closed.
+/// An unnamed project is recovered in the data directory.
 #[test]
 fn t357_recovery_path_appends_to_full_name() {
     use crate::app::recovery_path_for;
@@ -5839,18 +5839,18 @@ fn t357_recovery_path_appends_to_full_name() {
     let b = recovery_path_for(Some(std::path::Path::new("/w/film.mp4.kt")));
     assert_eq!(a, std::path::Path::new("/w/film.kt.recovery.kt"));
     assert_eq!(b, std::path::Path::new("/w/film.mp4.kt.recovery.kt"));
-    assert_ne!(a, b, "два разных проекта делят один файл восстановления");
-    assert_eq!(a.parent(), Some(std::path::Path::new("/w")), "восстановление лежит рядом");
+    assert_ne!(a, b, "two different projects share one recovery file");
+    assert_eq!(a.parent(), Some(std::path::Path::new("/w")), "the recovery lies next to it");
     assert_eq!(
         recovery_path_for(None),
         crate::app::autosave_path(),
-        "у безымянного проекта каталога ещё нет — восстановление в каталоге данных"
+        "an unnamed project has no directory yet — the recovery goes into the data directory"
     );
 }
 
-/// Тест 358 (Р.49 А3): фоновая запись идёт в ФАЙЛ ВОССТАНОВЛЕНИЯ, проект
-/// пользователя не трогает, звёздочку не гасит — и всё это восстановимо:
-/// в recovery лежит настоящая модель с правками.
+/// Test 358 (R.49 A3): background writing goes to the RECOVERY FILE, leaves the user’s project
+/// alone, does not clear the asterisk — and all of this is recoverable:
+/// the real model with the edits lies in recovery.
 #[test]
 fn t358_autosave_writes_recovery_not_project() {
     use kt_model::*;
@@ -5858,7 +5858,7 @@ fn t358_autosave_writes_recovery_not_project() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let target = dir.join("t358.kt");
-    std::fs::write(&target, "исходный файл пользователя").unwrap();
+    std::fs::write(&target, "the original file of the user").unwrap();
 
     let mut h = harness();
     let app = h.state_mut();
@@ -5876,21 +5876,21 @@ fn t358_autosave_writes_recovery_not_project() {
 
     assert_eq!(
         std::fs::read_to_string(&target).unwrap(),
-        "исходный файл пользователя",
-        "автосейв переписал файл пользователя — его меняет только Ctrl+S"
+        "the original file of the user",
+        "autosave overwrote the file of the user — only Ctrl+S changes it"
     );
-    assert!(h.state().dirty_content, "автосейв погасил звёздочку: работа считается сохранённой");
+    assert!(h.state().dirty_content, "autosave cleared the asterisk: the work counts as saved");
     let rec = crate::app::recovery_path_for(Some(&target));
-    let text = std::fs::read_to_string(&rec).expect("файла восстановления нет");
+    let text = std::fs::read_to_string(&rec).expect("there is no recovery file");
     let saved = kt_model::project_file::from_text(&text).unwrap().project;
-    assert_eq!(saved.media.len(), 1, "в восстановлении не та модель");
+    assert_eq!(saved.media.len(), 1, "the recovery has the wrong model");
     assert_eq!(h.state().recovery_written.as_deref(), Some(rec.as_path()));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 359 (Р.49 А3): сохранение уносит СВОЙ файл восстановления и не трогает
-/// чужой. Прежний код сносил `autosave_path()` безусловно — Ctrl+S в одной
-/// копии программы убивал несохранённую работу другой.
+/// Test 359 (R.49 A3): saving removes ITS OWN recovery file and does not touch someone else’s.
+/// The old code unconditionally deleted `autosave_path()` — Ctrl+S in one
+/// copy of the program killed the unsaved work of another.
 #[test]
 fn t359_save_drops_only_own_recovery() {
     use kt_model::*;
@@ -5900,8 +5900,8 @@ fn t359_save_drops_only_own_recovery() {
     let target = dir.join("t359.kt");
     let mine = crate::app::recovery_path_for(Some(&target));
     let alien = dir.join("other.kt.recovery.kt");
-    std::fs::write(&mine, "мой снимок").unwrap();
-    std::fs::write(&alien, "чужая несохранённая работа").unwrap();
+    std::fs::write(&mine, "my snapshot").unwrap();
+    std::fs::write(&alien, "unsaved work of another").unwrap();
 
     let mut h = harness();
     let app = h.state_mut();
@@ -5912,17 +5912,17 @@ fn t359_save_drops_only_own_recovery() {
     app.dirty_content = true;
     app.save();
 
-    assert!(target.exists(), "Ctrl+S обязан записать проект");
-    assert!(!mine.exists(), "своё восстановление не убрано — старт предложит уже сохранённое");
-    assert!(alien.exists(), "снесено ЧУЖОЕ восстановление: потеряна работа другой копии");
+    assert!(target.exists(), "Ctrl+S must write the project");
+    assert!(!mine.exists(), "our own recovery was not removed — the start will offer the already saved one");
+    assert!(alien.exists(), "the recovery of ANOTHER was wiped: the work of another copy was lost");
     assert!(h.state().recovery_written.is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 360 (Р.49 А3): дрейф вьюпорта не запускает запись. Зум и скролл
-/// раз в 30 секунд гоняли полную сериализацию проекта БЕЗ ЕДИНОЙ правки —
-/// на большом монтаже это заметный фриз ни за что (инвариант 8 по духу:
-/// прокрутка таймлайна не порождает работы).
+/// Test 360 (R.49 A3): viewport drift does not start a write. Zoom and scroll every 30 seconds
+/// ran a full serialization of the project WITHOUT A SINGLE edit —
+/// on a large edit that is a noticeable freeze for nothing (invariant 8 in spirit:
+/// scrolling the timeline does not produce work).
 #[test]
 fn t360_viewport_drift_does_not_write() {
     let dir = std::env::temp_dir().join(format!("kt-t360-{}", std::process::id()));
@@ -5935,21 +5935,21 @@ fn t360_viewport_drift_does_not_write() {
     app.project_path = Some(target.clone());
     app.dirty_content = false;
     app.dirty_ui = false;
-    // проект «как на диске» не знает текущего вьюпорта — и это не повод писать
+    // a project “as on disk” does not know the current viewport — and that is no reason to write
     app.model.set_ui_state(None);
     app.ticks_per_px *= 1.7;
     app.view_start += 400_000.0;
     app.last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(40);
     h.step();
-    assert!(h.state().autosave_rx.is_none(), "дрейф вьюпорта запустил запись проекта");
+    assert!(h.state().autosave_rx.is_none(), "viewport drift started a project write");
     assert!(!crate::app::recovery_path_for(Some(&target)).exists());
 
-    // а настоящая правка — запускает
+    // but a real edit — starts it
     let app = h.state_mut();
     app.dirty_content = true;
     app.last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(40);
     h.step();
-    assert!(h.state().autosave_rx.is_some(), "правка обязана запускать автосейв");
+    assert!(h.state().autosave_rx.is_some(), "an edit must start autosave");
     let deadline = std::time::Instant::now() + WAIT_BG;
     while h.state().autosave_rx.is_some() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -5958,9 +5958,9 @@ fn t360_viewport_drift_does_not_write() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 361 (Р.49 А2/А3): сторожа ДВА. Один мьютекс на две цели поднимал бы
-/// планку ревизии фоновой записью восстановления — и следующий Ctrl+S
-/// оказывался «устаревшим», то есть молча ничего не сохранял.
+/// Test 361 (R.49 A2/A3): there are TWO guards. One mutex for two targets would raise
+/// the revision bar with the background recovery write — and the next Ctrl+S
+/// would turn out “stale”, that is, silently save nothing.
 #[test]
 fn t361_recovery_guard_does_not_block_save() {
     use kt_model::*;
@@ -5984,21 +5984,21 @@ fn t361_recovery_guard_does_not_block_save() {
     }
     assert!(
         *h.state().recovery_rev.lock().unwrap() > 0,
-        "фоновая запись восстановления обязана поднять СВОЙ сторож"
+        "the background recovery write must raise ITS OWN guard"
     );
-    assert_eq!(*h.state().saved_rev.lock().unwrap(), 0, "она подняла сторож ПРОЕКТА");
+    assert_eq!(*h.state().saved_rev.lock().unwrap(), 0, "it raised the PROJECT guard");
 
-    // Ctrl+S той же ревизии обязан пройти
+    // Ctrl+S of the same revision must pass
     h.state_mut().save();
-    assert!(target.exists(), "Ctrl+S отменён сторожем файла восстановления");
+    assert!(target.exists(), "Ctrl+S was cancelled by the recovery file guard");
     assert!(!h.state().dirty_content);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 355 (Р.49 А2): исход записи — ТИП, и Ctrl+S его разбирает. Раньше
-/// `write_project_guarded` возвращал `bool`, а `save()` делал `.map(|_| ())`:
-/// отказ по сторожу («на диске уже свежее») выглядел как успех — звёздочка
-/// гасла, в статусе писалось «сохранено», а файла с этими правками не было.
+/// Test 355 (R.49 A2): the outcome of a write is a TYPE, and Ctrl+S dispatches on it. Before,
+/// `write_project_guarded` returned `bool`, and `save()` did `.map(|_| ())`:
+/// a refusal by the guard (“the disk already has something newer”) looked like success — the asterisk
+/// went out, the status said “saved”, and no file with these edits existed.
 #[test]
 fn t355_save_reports_skipped_and_keeps_dirty() {
     use kt_model::*;
@@ -6013,10 +6013,10 @@ fn t355_save_reports_skipped_and_keeps_dirty() {
     app.model_rev += 1;
     app.dirty_content = true;
     app.save();
-    assert!(!h.state().dirty_content, "обычный Ctrl+S обязан гасить звёздочку");
+    assert!(!h.state().dirty_content, "plain Ctrl+S must clear the asterisk");
     let ok_len = std::fs::read_to_string(&target).unwrap().len();
 
-    // на диск «лёг» снимок ревизии из будущего: сторож обязан отказать
+    // a snapshot of a revision from the future “landed” on disk: the guard must refuse
     let app = h.state_mut();
     *app.saved_rev.lock().unwrap() = app.model_rev + 100;
     app.model.apply(Command::AddMedia { id: MediaId(2), path: "synth:ramp".into() }).unwrap();
@@ -6026,26 +6026,26 @@ fn t355_save_reports_skipped_and_keeps_dirty() {
     app.save();
 
     let st = h.state();
-    assert!(st.dirty_content, "отказ по сторожу погасил звёздочку: правки считаются сохранёнными");
+    assert!(st.dirty_content, "a refusal by the guard cleared the asterisk: the edits count as saved");
     assert_eq!(
         std::fs::read_to_string(&target).unwrap().len(),
         ok_len,
-        "при отказе файл не должен меняться"
+        "on refusal the file must not change"
     );
     let texts: Vec<&str> = st.notices.iter().map(|n| n.text.as_str()).collect();
-    assert!(!texts.is_empty(), "об отказе не сказано ни слова");
+    assert!(!texts.is_empty(), "the refusal was not mentioned at all");
     assert!(
         !texts.iter().any(|t| t.contains(&target.display().to_string())),
-        "об отказе сказано как об успешном сохранении: {texts:?}"
+        "the refusal was reported as a successful save: {texts:?}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 356 (Р.49 А2): повтор одного сообщения красит колокольчик. Схлопывание
-/// дублей было сделано ранним возвратом ДО инкремента `notices_unread` — и
-/// вторая подряд «не удалось сохранить» не поднимала счётчик непрочитанных:
-/// единственный канал сообщения об ошибке записи умирал ровно тогда, когда
-/// ошибка повторялась. Плюс ошибка Ctrl+S — это Warn, а не Info.
+/// Test 356 (R.49 A2): a repeated message lights the bell. Collapsing of duplicates
+/// was done by an early return BEFORE the increment of `notices_unread` — and the second
+/// “could not save” in a row did not raise the unread counter:
+/// the only channel for a write-error message died exactly when
+/// the error repeated. Plus, a Ctrl+S error is a Warn, not an Info.
 #[test]
 fn t356_repeated_notice_still_marks_unread() {
     let mut h = harness();
@@ -6056,39 +6056,39 @@ fn t356_repeated_notice_still_marks_unread() {
     app.warn("disk on fire");
     app.warn("disk on fire");
     app.warn("disk on fire");
-    assert_eq!(app.notices.len(), 1, "дубли обязаны схлопываться в одну строку");
-    assert_eq!(app.notices.back().unwrap().repeats, 3, "счётчик повторов не вырос");
-    assert_eq!(app.notices_unread, 3, "повтор не покрасил колокольчик");
+    assert_eq!(app.notices.len(), 1, "duplicates must collapse into one line");
+    assert_eq!(app.notices.back().unwrap().repeats, 3, "the repeat counter did not grow");
+    assert_eq!(app.notices_unread, 3, "a repeat did not color the bell");
     assert_eq!(
         app.notices.back().unwrap().text,
         "disk on fire",
-        "«×N» — дело показа: в тексте записи его быть не должно"
+        "“×N” is a job of the display: it must not be in the record text"
     );
     assert!(matches!(app.notices.back().unwrap().severity, crate::app::Severity::Warn));
 
-    // другое сообщение начинает свою строку
+    // another message starts its own line
     app.warn("other");
     assert_eq!(app.notices.len(), 2);
     assert_eq!(app.notices.back().unwrap().repeats, 1);
 
-    // ошибка записи проекта приходит именно как предупреждение
+    // a project write error arrives as a warning, exactly
     let app = h.state_mut();
     app.notices.clear();
     app.project_path = Some(std::path::PathBuf::from("/proc/self/no-such-dir/x.kt"));
     app.model_rev += 1;
     app.dirty_content = true;
     app.save();
-    let last = h.state().notices.back().cloned().expect("об ошибке записи не сказано");
+    let last = h.state().notices.back().cloned().expect("the write error was not mentioned");
     assert!(
         matches!(last.severity, crate::app::Severity::Warn),
-        "ошибка Ctrl+S пришла как обычная заметка: {last:?}"
+        "the Ctrl+S error came as an ordinary note: {last:?}"
     );
-    assert!(h.state().dirty_content, "после ошибки записи звёздочка обязана остаться");
+    assert!(h.state().dirty_content, "after a write error the asterisk must stay");
 }
 
-/// Пиксель кадра, который ЖИВОЙ источник плеера отдаёт прямо сейчас
-/// (Р.53): проверка «правка доехала до картинки», а не только до модели.
-/// Ходит тем же путём, что превью: воркер → кэш.
+/// The pixel of the frame that the LIVE player source is delivering right now
+/// (R.53): a check that “the edit reached the picture”, not only the model.
+/// It goes the same way as the preview: worker → cache.
 pub(crate) fn generator_pixel(
     h: &egui_kittest::Harness<'_, crate::app::KtApp>,
     id: kt_model::MediaId,
@@ -6096,14 +6096,14 @@ pub(crate) fn generator_pixel(
     generator_pixel_after(h, id, 0).map(|(px, _)| px)
 }
 
-/// Пиксель генератора и СЕРИЙНЫЙ НОМЕР записи кэша (Р.53, п.416).
+/// The generator pixel and the SERIAL NUMBER of the cache entry (R.53, item 416).
 ///
-/// Серийник обязателен, когда правку надо увидеть ГЛАЗАМИ теста: кадр
-/// старых параметров живёт в кэше до тех пор, пока воркер не дойдёт до
-/// перенастройки (чистка идёт ВНУТРИ его потока — п.411), и голое чтение
-/// возвращало бы предыдущую картинку. Ждём кадр, записанный ПОЗЖЕ
-/// `after`: это ровно «пришёл НОВЫЙ кадр», а не «дождались нужного
-/// цвета» — второе было бы тестом, который не умеет покраснеть.
+/// The serial number is mandatory when the edit has to be seen by the test’s EYES: a frame of
+/// the old parameters lives in the cache until the worker reaches the reconfiguration
+/// (the cleanup runs INSIDE its thread — item 411), and a bare read
+/// would return the previous picture. We wait for a frame written LATER than `after`:
+/// that is exactly “a NEW frame has arrived”, not “we waited for the right colour” —
+/// the second would be a test that cannot turn red.
 pub(crate) fn generator_pixel_after(
     h: &egui_kittest::Harness<'_, crate::app::KtApp>,
     id: kt_model::MediaId,
@@ -6128,19 +6128,19 @@ pub(crate) fn generator_pixel_after(
     }
 }
 
-/// Событие-генератор, только что созданное из меню: (медиа, событие).
-/// Значения живут на СОБЫТИИ (Р.59, стадия 2), поэтому тесту нужно и то
-/// и другое.
+/// The generator event just created from the menu: (media, event).
+/// The values live on the EVENT (R.59, stage 2), so the test needs both
+/// of these.
 pub(crate) fn made_generator(
     h: &egui_kittest::Harness<'_, crate::app::KtApp>,
 ) -> (kt_model::MediaId, kt_model::ClipId) {
     let p = h.state().model.project();
-    let m = p.media.last().expect("медиа генератора");
-    let c = p.clips.iter().find(|c| c.media == m.id).expect("событие генератора");
+    let m = p.media.last().expect("generator media");
+    let c = p.clips.iter().find(|c| c.media == m.id).expect("generator event");
     (m.id, c.id)
 }
 
-/// Что выбрано в полосе цепочки окна эффектов этого события.
+/// what is selected in the chain strip of this event’s effects window
 pub(crate) fn chain_sel(
     h: &egui_kittest::Harness<'_, crate::app::KtApp>,
     clip: kt_model::ClipId,
@@ -6152,23 +6152,23 @@ pub(crate) fn chain_sel(
         .and_then(|e| e.selected.get(&clip).copied())
 }
 
-/// Значения генератора события — то, что с Р.59 и есть «параметры».
+/// the generator values of the event — what since R.59 “are the parameters”
 pub(crate) fn gen_of(
     h: &egui_kittest::Harness<'_, crate::app::KtApp>,
     clip: kt_model::ClipId,
 ) -> kt_model::GeneratorKind {
-    h.state().model.clip(clip).and_then(|c| c.r#gen.clone()).expect("у события есть генератор")
+    h.state().model.clip(clip).and_then(|c| c.r#gen.clone()).expect("the event has a generator")
 }
 
-/// Тест 477 (Р.52, переписан в Р.59 стадии 2): «Создать генератор» —
-/// медиа без файла появляется в модели и в сервисах, а ЗНАЧЕНИЯ ложатся
-/// на СОБЫТИЕ.
+/// Test 477 (R.52, rewritten in R.59 stage 2): “Create generator” —
+/// media without a file appears in the model and in the services, and the VALUES land
+/// on the EVENT.
 ///
-/// Что изменилось по решению владельца: путь медиа несёт теперь ТОЛЬКО
-/// ВИД (`gen:solid`), выбранные в меню значения едут на событие, и
-/// «окно параметров» — это окно эффектов события с выбранной ГОЛОВОЙ
-/// полосы. Своего окна у генератора больше нет: владелец просил видеть
-/// источник первой крошкой цепочки, в том же окне.
+/// What changed by the owner’s decision: the media path now carries ONLY
+/// THE KIND (`gen:solid`), the values chosen in the menu go to the event, and
+/// the “parameters window” is the event’s effects window with its HEAD strip selected.
+/// The generator has no window of its own any more: the owner asked to see
+/// the source as the first crumb of the chain, in the same window.
 #[test]
 fn t477_create_generator_from_bin() {
     use kt_model::*;
@@ -6180,57 +6180,57 @@ fn t477_create_generator_from_bin() {
     let (id, clip) = made_generator(&h);
     let app = h.state();
     let p = app.model.project();
-    assert_eq!(p.media.len(), before + 1, "медиа не добавилось");
+    assert_eq!(p.media.len(), before + 1, "the media was not added");
     assert_eq!(
         p.media.last().unwrap().path,
         "gen:solid",
-        "путь медиа несёт ТОЛЬКО вид: значения переехали на событие"
+        "the media path carries ONLY the kind: the values moved to the event"
     );
     assert!(p.is_gen_media(id));
-    assert_eq!(gen_of(&h, clip), made, "выбранные значения обязаны лечь на СОБЫТИЕ");
-    // «окно параметров» открыто сразу — и открыто на ГОЛОВЕ полосы
-    assert_eq!(app.fx_editors.len(), 1, "окно параметров не открылось");
+    assert_eq!(gen_of(&h, clip), made, "the selected values must land on the EVENT");
+    // the “parameters window” is open at once — and open on the HEAD of the strip
+    assert_eq!(app.fx_editors.len(), 1, "the parameters window did not open");
     assert!(app.fx_editors[0].members.contains(&clip));
     assert_eq!(
         chain_sel(&h, clip),
         Some(crate::widgets::ChainSel::Head),
-        "форма генератора — ПЕРВАЯ КРОШКА цепочки, и окно обязано открыться на ней"
+        "the generator form is the FIRST LINK of the chain, and the window must open on it"
     );
-    // сервис тумб знает вид и «длительность» — карточка нарисует тумбу,
-    // а не «♪», и скроет нулевую длительность
+    // the thumbnail service knows the kind and the “duration” — the card draws a thumbnail
+    // rather than “♪”, and hides a zero duration
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let _ = app.thumbs.duration_or_probe(id);
     loop {
         if let Some((v, a)) = h.state().thumbs.kinds(id) {
-            assert!(v && !a, "генератор — видео без аудио");
+            assert!(v && !a, "the generator is video without audio");
             break;
         }
-        assert!(std::time::Instant::now() < deadline, "probe генератора не опубликован");
+        assert!(std::time::Instant::now() < deadline, "the generator probe is not published");
         std::thread::sleep(std::time::Duration::from_millis(10));
         h.step();
     }
     assert_eq!(h.state().thumbs.duration(id), Some(kt_time::Tick(0)));
-    // повторное открытие (второй путь меню) не плодит второе окно
+    // reopening (the second menu path) does not create a second window
     h.state_mut().open_generator_editor(id);
-    assert_eq!(h.state().fx_editors.len(), 1, "окно обязано быть одно");
-    // снимки синка зарегистрированы — правки пойдут диффом
+    assert_eq!(h.state().fx_editors.len(), 1, "there must be one window");
+    // the sync snapshots are registered — edits will go as diffs
     assert_eq!(h.state().media_paths.get(&id).map(String::as_str), Some("gen:solid"));
     assert_eq!(
         h.state().gen_states.get(&clip).map(|st| st.kind.clone()),
         Some(made),
-        "снимок источника события обязан знать его значения"
+        "the snapshot of the event source must know its values"
     );
 }
 
-/// Тест 478 (Р.52, усилен в Р.53 п.412, переписан в Р.59 стадии 2):
-/// правка цвета в живой сессии окна доезжает до МОДЕЛИ, до ИСТОЧНИКА
-/// плеера и до КАРТИНКИ; «Отмена» возвращает backup; вся сессия — ОДИН
-/// шаг undo, и undo тоже доезжает до картинки.
+/// Test 478 (R.52, strengthened in R.53 item 412, rewritten in R.59 stage 2):
+/// a colour edit in the live session of the window reaches the MODEL, the player’s
+/// SOURCE and the PICTURE; “Cancel” restores the backup; the whole session is ONE
+/// undo step, and undo also reaches the picture.
 ///
-/// Механизм новый (`SetClipGen` на событии вместо `SetMediaPath` на
-/// медиа), утверждение прежнее: правка видна человеку, а не только
-/// модели. Картинка спрашивается по АДРЕСУ ИСТОЧНИКА СОБЫТИЯ — с Р.59
-/// это единственное правило (`kt_engine::clip_source_addr`).
+/// The mechanism is new (`SetClipGen` on the event instead of `SetMediaPath` on the
+/// media), the claim is the old one: the edit is visible to a person, not only to the
+/// model. The picture is requested by the SOURCE ADDRESS OF THE EVENT — since R.59 this is
+/// the only rule (`kt_engine::clip_source_addr`).
 #[test]
 fn t478_generator_edit_reaches_model_and_source() {
     use kt_model::*;
@@ -6242,7 +6242,7 @@ fn t478_generator_edit_reaches_model_and_source() {
     let gesture = h.state().fx_editors[0].gesture;
     let depth = h.state().model.undo_depth();
 
-    // сессия окна: две правки цвета тем же gesture (как шлёт пипетка)
+    // session of the window: two colour edits with the same gesture (as the eyedropper sends)
     for c in [(0x10, 0x40, 0x80), (0xff, 0x88, 0x00)] {
         let kind = GeneratorKind::Solid { color_r: c.0, color_g: c.1, color_b: c.2 };
         let app = h.state_mut();
@@ -6254,43 +6254,43 @@ fn t478_generator_edit_reaches_model_and_source() {
         GeneratorKind::Solid { color_r: 0xff, color_g: 0x88, color_b: 0x00 }
     );
     let app = h.state();
-    // источник плеера догнал модель (перенастройкой, а не пересозданием)
+    // the player source caught up with the model (by reconfiguration, not recreation)
     assert_eq!(
         app.gen_states.get(&clip).map(|st| st.kind.clone()),
         Some(GeneratorKind::Solid { color_r: 0xff, color_g: 0x88, color_b: 0x00 })
     );
-    assert_eq!(app.model.undo_depth(), depth + 1, "сессия окна — один шаг истории");
-    // ...и до КАРТИНКИ: источник плеера отдаёт кадр НОВОГО цвета
+    assert_eq!(app.model.undo_depth(), depth + 1, "the window session is one history step");
+    // ...and to the PICTURE: the player source delivers a frame of the NEW colour
     let (px, serial) = crate::layout_tests::generator_pixel_after(&h, addr, 0)
-        .expect("кадр генератора так и не пришёл");
-    assert_eq!(px, [255, 136, 0], "правка обязана доехать до картинки, а не только до модели");
+        .expect("the generator frame never arrived");
+    assert_eq!(px, [255, 136, 0], "the edit must reach the picture, not only the model");
 
-    // undo возвращает и модель, и картинку (хук в undo, а не только в apply)
+    // undo restores both the model and the picture (a hook in undo, not only in apply)
     h.state_mut().undo();
     h.step();
     assert_eq!(
         gen_of(&h, clip),
         GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 },
-        "undo обязан вернуть значения события"
+        "undo must restore the event values"
     );
     assert_eq!(
         h.state().gen_states.get(&clip).map(|st| st.kind.clone()),
         Some(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
-        "undo обязан догнать источник — иначе картинка отстаёт от модели"
+        "undo must catch up the source — otherwise the picture lags behind the model"
     );
     let (px, _) = crate::layout_tests::generator_pixel_after(&h, addr, serial)
-        .expect("после undo новый кадр так и не пришёл");
-    assert_eq!(px, [0, 0, 0], "undo обязан доехать до картинки");
+        .expect("after undo the new frame never arrived");
+    assert_eq!(px, [0, 0, 0], "undo must reach the picture");
 
-    // «Отмена» окна: снимок ГОЛОВЫ взят на открытии и откатывается тем
-    // же gesture — значения источника часть той же сессии окна
+    // “Cancel” of the window: the snapshot of the HEAD is taken on opening and is rolled back by
+    // the same gesture — the source values are part of the same window session
     h.state_mut().redo();
     h.step();
     let backup = h.state().fx_editors[0].gen_backup.clone();
     assert_eq!(
         backup.iter().find(|(c, _, _)| *c == clip).map(|(_, k, _)| k.clone()).unwrap(),
         Some(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }),
-        "backup — значения на момент открытия"
+        "backup — the values at the moment of opening"
     );
     {
         let app = h.state_mut();
@@ -6300,30 +6300,30 @@ fn t478_generator_edit_reaches_model_and_source() {
     h.step();
     assert_eq!(gen_of(&h, clip), GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 });
     {
-        // клип генератора снимаем первым: создание кладёт его сразу
-        // (п.416), а медиа под живым событием модель удалить не даёт
+        // the generator clip is taken first: creation puts it in at once
+        // (item 416), and the model does not let go of media under a live event
         let app = h.state_mut();
         let clips: Vec<ClipId> =
             app.model.project().clips.iter().filter(|c| c.media == id).map(|c| c.id).collect();
-        assert!(!clips.is_empty(), "создание генератора обязано ставить клип (п.416)");
+        assert!(!clips.is_empty(), "creating a generator must place a clip (item 416)");
         app.apply_batch(clips.into_iter().map(|id| Command::RemoveClip { id }).collect());
         assert!(app.apply(Command::RemoveMedia { id }));
     }
     h.step();
-    assert!(h.state().fx_editors.is_empty(), "окно мёртвого события обязано закрыться");
-    assert!(!h.state().media_paths.contains_key(&id), "источник мёртвого медиа снят");
-    assert!(!h.state().gen_states.contains_key(&clip), "источник мёртвого события снят");
+    assert!(h.state().fx_editors.is_empty(), "the window of a dead event must close");
+    assert!(!h.state().media_paths.contains_key(&id), "the source of dead media is removed");
+    assert!(!h.state().gen_states.contains_key(&clip), "the source of a dead event is removed");
 }
 
-/// Тест 487 (Р.52 С3, переписан в Р.59 стадии 2): все входы генераторов
-/// ведут в ОДНО место — окно эффектов события с выбранной головой;
-/// правка текста через сессию окна доезжает до модели, схлопывается в
-/// один шаг undo, и окно умирает вместе с событием.
+/// Test 487 (R.52 C3, rewritten in R.59 stage 2): all generator inputs lead to ONE place —
+/// the effects window of the event with its selected head;
+/// a text edit through the window session reaches the model and collapses into
+/// one undo step, and the window dies together with the event.
 ///
-/// Что изменилось по решению владельца: отдельного окна титра больше
-/// нет («запрятан в жопу» — про прежнюю развязку окон), а текст живёт на
-/// СОБЫТИИ, а не в строке-адресе медиа. Утверждение прежнее: набранный
-/// текст доезжает до модели без потерь и одним шагом истории.
+/// What changed by the owner’s decision: there is no separate title window any more
+/// (“buried out of the way” — about the former window split), and the text lives on the
+/// EVENT, not in the media’s address string. The claim is the old one: the typed
+/// text reaches the model without loss and in one history step.
 #[test]
 fn t487_title_editor_routes_and_edits() {
     use kt_model::*;
@@ -6331,19 +6331,19 @@ fn t487_title_editor_routes_and_edits() {
     h.state_mut().create_generator(GeneratorKind::default_text());
     h.step();
     let (id, clip) = made_generator(&h);
-    assert_eq!(h.state().fx_editors.len(), 1, "форма титра — в окне эффектов события");
+    assert_eq!(h.state().fx_editors.len(), 1, "the title form is in the event effects window");
     assert_eq!(
         chain_sel(&h, clip),
         Some(crate::widgets::ChainSel::Head),
-        "титр обязан открыться на голове полосы"
+        "the title must open at the head of the strip"
     );
     let gesture = h.state().fx_editors[0].gesture;
     let depth = h.state().model.undo_depth();
 
-    // сессия окна: набранный текст уезжает на СОБЫТИЕ
+    // window session: the typed text goes to the EVENT
     let mut kind = gen_of(&h, clip);
     if let GeneratorKind::Text { text, .. } = &mut kind {
-        *text = "Привет,\nтитр!".into();
+        *text = "Hello,\ntitle!".into();
     }
     {
         let app = h.state_mut();
@@ -6355,38 +6355,38 @@ fn t487_title_editor_routes_and_edits() {
         );
     }
     h.step();
-    assert_eq!(gen_of(&h, clip), kind, "текст доехал до события целиком");
+    assert_eq!(gen_of(&h, clip), kind, "the text reached the event in full");
     assert_eq!(
         h.state().model.project().media.last().unwrap().path,
         "gen:text",
-        "в пути медиа остаётся ТОЛЬКО вид"
+        "in the media path ONLY the kind remains"
     );
-    assert_eq!(h.state().model.undo_depth(), depth + 1, "сессия окна — один шаг истории");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "the window session is one history step");
     assert_eq!(
         h.state().gen_states.get(&clip).map(|st| st.kind.clone()),
         Some(kind),
-        "правка обязана доехать до источника события"
+        "the edit must reach the event source"
     );
 
-    // повторное открытие — то же окно
+    // reopening — the same window
     h.state_mut().open_generator_editor(id);
     assert_eq!(h.state().fx_editors.len(), 1);
 
-    // событие умерло — окно ушло
+    // the event died — the window went with it
     {
         let app = h.state_mut();
         let clips: Vec<ClipId> =
             app.model.project().clips.iter().filter(|c| c.media == id).map(|c| c.id).collect();
-        assert!(!clips.is_empty(), "создание генератора обязано ставить клип (п.416)");
+        assert!(!clips.is_empty(), "creating a generator must place a clip (item 416)");
         app.apply_batch(clips.into_iter().map(|id| Command::RemoveClip { id }).collect());
     }
     h.step();
-    assert!(h.state().fx_editors.is_empty(), "окно мёртвого титра обязано закрыться");
+    assert!(h.state().fx_editors.is_empty(), "the window of a dead title must close");
 }
 
-/// Тест 488 (Р.52 С3, правило UI 11): «глифа нет» — видимый ответ.
-/// Кириллица/латиница полного вендоренного шрифта чисты; CJK-символ
-/// называется кодпоинтом и счётчиком остальных.
+/// Test 488 (R.52 C3, UI rule 11): “no glyph” is a visible answer.
+/// Cyrillic/Latin of the full vendored font is clean; a CJK character
+/// is named by its code point and a counter of the rest.
 #[test]
 fn t488_missing_glyph_warning() {
     use kt_model::GeneratorKind;
@@ -6397,41 +6397,41 @@ fn t488_missing_glyph_warning() {
         }
     };
     set(&mut k, "Привет, Kinotrain! ёЁ №5");
-    assert_eq!(crate::gen_ui::title_warning(&k), None, "кириллица покрыта");
-    set(&mut k, "до 漢字 после");
-    let warn = crate::gen_ui::title_warning(&k).expect("CJK непокрыт — ответ обязан быть");
+    assert_eq!(crate::gen_ui::title_warning(&k), None, "Cyrillic is covered");
+    set(&mut k, "before 漢字 after");
+    let warn = crate::gen_ui::title_warning(&k).expect("CJK not covered — the answer must be");
     assert!(warn.contains("U+5B57") || warn.contains("U+6F22"), "{warn}");
-    assert!(warn.contains("+1"), "счётчик остальных: {warn}");
+    assert!(warn.contains("+1"), "counter of the rest: {warn}");
     set(&mut k, "");
     assert_eq!(crate::gen_ui::title_warning(&k), None);
 }
 
-/// Тест 489 (Р.52 С3): safe-зоны — 5 % и 10 % от кадра превью, видны
-/// ровно пока правится титр.
+/// Test 489 (R.52 C3): safe areas — 5 % and 10 % of the preview frame, visible
+/// exactly while the title is being edited.
 #[test]
 fn t489_safe_zones_follow_title_window() {
     use kt_model::GeneratorKind;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
-    assert!(!h.state().show_safe_zones(), "без правки титра зоны не рисуются");
+    assert!(!h.state().show_safe_zones(), "without an edit the title zones are not drawn");
     h.state_mut().create_generator(GeneratorKind::default_text());
     h.step();
-    assert!(h.state().show_safe_zones(), "форма титра включает зоны");
+    assert!(h.state().show_safe_zones(), "the title form turns on the zones");
     let img = egui::Rect::from_min_max(egui::pos2(100.0, 200.0), egui::pos2(300.0, 300.0));
     let [action, title] = crate::app::safe_zone_rects(img);
     assert_eq!(action.min, egui::pos2(110.0, 205.0));
     assert_eq!(action.max, egui::pos2(290.0, 295.0));
     assert_eq!(title.min, egui::pos2(120.0, 210.0));
     assert_eq!(title.max, egui::pos2(280.0, 290.0));
-    // окно закрыли — зоны ушли
+    // the window closed — the zones went away
     h.state_mut().fx_editors[0].open = false;
     h.step();
     assert!(!h.state().show_safe_zones());
 }
 
-/// Тест 495 (Р.52 С6, переписан в Р.59 стадии 2): драг титра ПРЯМО В
-/// ПРЕВЬЮ — рамка блока, пока титр правится, а перетаскивание в три шага
-/// пишет pos_x/pos_y ТОЙ ЖЕ командой (`SetClipGen`) и тем же gesture,
-/// что форма в окне (правило 17 по построению).
+/// Test 495 (R.52 C6, rewritten in R.59 stage 2): dragging the title DIRECTLY IN
+/// THE PREVIEW — the block’s frame while the title is edited, and the three-step drag
+/// writes pos_x/pos_y with the SAME command (`SetClipGen`) and the same gesture
+/// as the form in the window (rule 17 by construction).
 #[test]
 fn t495_title_drag_in_preview_writes_pos() {
     use kt_model::*;
@@ -6440,7 +6440,7 @@ fn t495_title_drag_in_preview_writes_pos() {
     h.step();
     let (_id, clip) = made_generator(&h);
     let gesture = h.state().fx_editors[0].gesture;
-    // титру нужен видимый блок — даём текст той же сессией окна
+    // the title needs a visible block — we give the text through the same window session
     let mut kind = gen_of(&h, clip);
     if let GeneratorKind::Text { text, size, .. } = &mut kind {
         *text = "DRAG".into();
@@ -6452,7 +6452,7 @@ fn t495_title_drag_in_preview_writes_pos() {
     }
     h.step();
     let preview = h.state().preview_rect;
-    assert!(preview.width() > 40.0, "превью в харнесте есть: {preview:?}");
+    assert!(preview.width() > 40.0, "preview is present in the harness: {preview:?}");
 
     let depth = h.state().model.undo_depth();
     let before = match gen_of(&h, clip) {
@@ -6461,7 +6461,7 @@ fn t495_title_drag_in_preview_writes_pos() {
     };
     assert_eq!(before, (0.5, 0.5));
 
-    // драг в ТРИ шага из центра превью (блок с якорем Center сидит там)
+    // a three-step drag from the centre of the preview (the block with the Center anchor sits there)
     let c = preview.center();
     h.drag_at(c);
     h.step();
@@ -6478,23 +6478,23 @@ fn t495_title_drag_in_preview_writes_pos() {
     };
     assert!(
         after.0 > before.0 + 0.01 && after.1 > before.1 + 0.01,
-        "драг обязан сдвинуть позицию: {before:?} -> {after:?}"
+        "the drag must move the position: {before:?} -> {after:?}"
     );
     assert_eq!(
         h.state().model.undo_depth(),
         depth,
-        "драг пишет тем же gesture, что сессия окна, — новых шагов истории нет"
+        "the drag writes with the same gesture as the window session — there are no new history steps"
     );
 }
 
-/// Тест 502 (Р.53, п.412; переписан в Р.59 стадии 2): сессия правки
-/// генератора НЕ пересоздаёт источник и НЕ пересобирает рендереры.
-/// Тридцать правок цвета — ровно столько, сколько даёт секунда драга
-/// пипетки: до п.412 каждая гасила и поднимала поток декодера и дважды
-/// пересобирала графы, а на игре это гарантированные провалы звука.
+/// Test 502 (R.53, item 412; rewritten in R.59 stage 2): an edit session of a
+/// generator does NOT recreate the source and does NOT rebuild the renderers.
+/// Thirty colour edits — exactly what one second of eyedropper drag produces:
+/// before item 412 each one stopped and restarted the decoder thread and rebuilt the graphs twice,
+/// and in play that is a guaranteed audio dropout.
 ///
-/// Механизм новый (`SetClipGen` вместо `SetMediaPath`), закон П тот же:
-/// команда, не трогающая план, не имеет права пересобирать рендереры.
+/// The mechanism is new (`SetClipGen` instead of `SetMediaPath`), the law P is the same:
+/// a command that does not touch the plan has no right to rebuild the renderers.
 #[test]
 fn t502_generator_edit_does_not_respawn_source() {
     use kt_model::*;
@@ -6518,35 +6518,35 @@ fn t502_generator_edit_does_not_respawn_source() {
     assert_eq!(
         app.player.worker_spawns(),
         spawns,
-        "поток декодера пересоздавался на каждую правку параметров"
+        "the decoder stream was recreated on every parameter edit"
     );
     assert_eq!(
         app.player.project_version(),
         pver,
-        "рендереры пересобирались: SetClipGen план не трогает (закон П)"
+        "renderers were rebuilt: the SetClipGen plan does not touch them (law P)"
     );
     assert_eq!(
         app.gen_states.get(&clip).map(|st| st.kind.clone()),
         Some(GeneratorKind::Solid { color_r: 0x1d, color_g: 0x1d, color_b: 0x1d }),
-        "снимок синка обязан догнать модель"
+        "the sync snapshot must catch up with the model"
     );
     assert_eq!(
         crate::layout_tests::generator_pixel(&h, addr),
         Some([0x1d, 0x1d, 0x1d]),
-        "последняя правка обязана доехать до картинки"
+        "the last edit must reach the picture"
     );
 }
 
-/// Тест 503 (Р.53, п.413): кадр ЖЕСТА не пересобирает карту путей.
-/// Синк зовётся из каждой обёртки правок, то есть на каждом кадре любого
-/// coalesced-жеста — а он собирал `HashMap` с клоном каждого пути
-/// (аллокации в пути кадра, инвариант 12).
+/// Test 503 (R.53, item 413): a GESTURE frame does not rebuild the path map.
+/// Sync is called from every edit wrapper, that is, on every frame of any coalesced
+/// gesture — and it built a `HashMap` with a clone of every path
+/// (allocations on the frame path, invariant 12).
 #[test]
 fn t503_gesture_frame_touches_no_media_paths() {
     use kt_model::*;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
     let gesture = 4242u64;
-    // один жест, 60 кадров — секунда драга уровня события
+    // one gesture, 60 frames — a second of dragging a level of an event
     let before = h.state().media_sync_builds;
     for i in 0..60 {
         let app = h.state_mut();
@@ -6555,15 +6555,15 @@ fn t503_gesture_frame_touches_no_media_paths() {
         h.step();
     }
     let builds = h.state().media_sync_builds - before;
-    assert!(builds <= 60, "карта путей пересобиралась чаще, чем менялась модель: {builds}");
-    // состав медиа не менялся ни разу — источники трогать было незачем
-    assert_eq!(h.state().player.worker_spawns(), 0, "жест уровня поднимал источники");
+    assert!(builds <= 60, "the path map was rebuilt more often than the model changed: {builds}");
+    // the media set did not change even once — there was no reason to touch the sources
+    assert_eq!(h.state().player.worker_spawns(), 0, "the level gesture raised the sources");
 }
 
-/// Тест 504 (Р.53, п.413): псевдо-путь НЕ открывает sidecar-БД. У
-/// генератора файла нет, а открытие sqlite (соединение + WAL-прагма +
-/// версия схемы) висело на каждой правке параметров и на каждой
-/// постановке клипа.
+/// Test 504 (R.53, item 413): a pseudo-path does NOT open the sidecar DB. A generator
+/// has no file, yet opening sqlite (connection + WAL pragma + schema version) hung on
+/// every parameter edit
+/// and on every clip placement.
 #[test]
 fn t504_pseudo_path_never_opens_sqlite() {
     let dir = std::env::temp_dir().join(format!("kt-t504-{}", std::process::id()));
@@ -6572,19 +6572,19 @@ fn t504_pseudo_path_never_opens_sqlite() {
     assert!(!db.exists());
 
     let src = crate::util::open_source_indexed("gen:solid:c=ff8800", Some(&db));
-    assert!(src.is_ok(), "генератор обязан открыться");
-    assert!(!db.exists(), "псевдо-путь открыл sidecar-БД");
+    assert!(src.is_ok(), "the generator must open");
+    assert!(!db.exists(), "the pseudo-path opened the sidecar DB");
 
     let src = crate::util::open_source_indexed("synth:ramp", Some(&db));
     assert!(src.is_ok());
-    assert!(!db.exists(), "тестовая схема открыла sidecar-БД");
+    assert!(!db.exists(), "the test schema opened the sidecar DB");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 505 (Р.53, п.413): о подменённом шрифте говорится ОДИН раз.
-/// Путь титра меняется на каждый набранный символ, и без дедупа
-/// отсутствующая семья давала свой notice на каждую правку — шторм
-/// одинаковых сообщений и счётчик непрочитанного в сотнях.
+/// Test 505 (R.53, item 413): a substituted font is mentioned ONCE.
+/// The title’s path changes on every typed character, and without de-duplication
+/// a missing family gave its own notice on every edit — a storm of
+/// identical messages and an unread counter in the hundreds.
 #[test]
 fn t505_missing_font_warns_once() {
     use kt_model::*;
@@ -6609,18 +6609,18 @@ fn t505_missing_font_warns_once() {
         h.step();
     }
     let added = h.state().notices.len() - notices;
-    assert!(added <= 1, "о подмене шрифта сказали {added} раз вместо одного");
+    assert!(added <= 1, "the font substitution was reported {added} times instead of once");
 }
 
-/// Тест 227 (Р.33 С4): у перехода появилось окно свойств. Двойной клик по
-/// его окну на полосе открывает редактор, вид меняется пикером и сразу
-/// уезжает в модель, «Отмена» возвращает прежний.
+/// Test 227 (R.33 C4): a transition got a properties window. A double click on its
+/// window on the strip opens the editor, the kind changes via the picker and at once
+/// goes to the model; “Cancel” restores the previous one.
 #[test]
 fn t227_transition_editor_opens_and_sets_kind() {
     use kt_model::*;
     use kt_time::Tick;
     let (mut h, g) = harness_three_clips_dt(Some(0.02));
-    // склеиваем клипы 1 и 2 встык и вешаем переход
+    // we join clips 1 and 2 end to end and hang a transition on them
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
@@ -6641,8 +6641,8 @@ fn t227_transition_editor_opens_and_sets_kind() {
     }
     h.step();
     let g = h.state().tl_geom.clone().unwrap_or(g);
-    // окно перехода [41_000, 59_000): целимся в его середину, НИЖЕ
-    // верхней полосы жестов (там живут ручки фейда)
+    // the transition window [41_000, 59_000): we aim at its middle, BELOW
+    // the upper gesture strip (where the fade handles live)
     let y = g.lane_y(ClipKind::Video, 0, 0.75);
     let pos = egui::pos2(g.tick_to_x(46_000), y);
     for _ in 0..2 {
@@ -6664,12 +6664,12 @@ fn t227_transition_editor_opens_and_sets_kind() {
     assert_eq!(
         h.state().transition_editors.len(),
         1,
-        "двойной клик по окну перехода обязан открыть его свойства"
+        "double-click on the transition window must open its properties"
     );
     assert_eq!(h.state().transition_editors[0].id, TransitionId(1));
 
-    // смена вида через модель редактора: окно пишет команду тем же
-    // gesture-токеном, поэтому вся сессия — один шаг undo
+    // the kind changes through the editor model: the window writes the command with the same
+    // gesture token, so the whole session is one undo step
     let gesture = h.state().transition_editors[0].gesture;
     {
         let app = h.state_mut();
@@ -6680,10 +6680,10 @@ fn t227_transition_editor_opens_and_sets_kind() {
     }
     h.step();
     let t = &h.state().model.project().transitions[0];
-    assert_eq!(t.kind.tag(), "wipe", "вид не доехал до модели");
+    assert_eq!(t.kind.tag(), "wipe", "the view did not reach the model");
     assert_eq!(t.audio, AudioCurve::SCurve);
 
-    // «Отмена» окна возвращает исходный вид ОДНИМ шагом undo
+    // “Cancel” of the window returns the original kind in ONE undo step
     let backup = h.state().transition_editors[0].backup.clone();
     {
         let app = h.state_mut();
@@ -6696,10 +6696,10 @@ fn t227_transition_editor_opens_and_sets_kind() {
     assert_eq!(
         h.state().model.project().transitions[0].kind,
         TransitionKind::Crossfade,
-        "вся сессия окна — один шаг истории"
+        "the whole window session is one history step"
     );
 
-    // окно закрывается вместе со смертью перехода
+    // the window closes together with the death of the transition
     {
         let app = h.state_mut();
         let _ = app.apply(Command::RemoveTransition { id: TransitionId(1) });
@@ -6708,14 +6708,14 @@ fn t227_transition_editor_opens_and_sets_kind() {
     h.step();
     assert!(
         h.state().transition_editors.is_empty(),
-        "окно мёртвого перехода обязано закрыться само"
+        "the window of a dead transition must close by itself"
     );
 }
 
-/// Тест 231b (Р.34 К3): камера наконец редактируема. Двойной клик по её
-/// блоку открывает окно (до этого раунда редактора не было вовсе, а
-/// комментарий в коде обещал его с Р.29), правки идут одним undo-шагом,
-/// окно удалённой камеры закрывается само.
+/// Test 231b (R.34 K3): the camera is finally editable. A double click on its
+/// block opens the window (until this round there was no editor at all, while the
+/// comment in the code promised one since R.29), edits go in one undo step,
+/// and the window of a deleted camera closes by itself.
 #[test]
 fn t231_camera_editor_opens_and_edits() {
     use kt_model::*;
@@ -6740,10 +6740,10 @@ fn t231_camera_editor_opens_and_edits() {
         app.model = kt_model::TimelineModel::new(p);
     }
     h.step();
-    let g = h.state().tl_geom.clone().expect("геометрия");
-    let row = g.row_of((LaneKind::Camera, 0)).expect("камерная дорожка есть в строках");
-    // ЦЕНТР строки, а не «полбазовой высоты»: камерная строка втрое ниже
-    // (Р.35 п.1), и старая формула била мимо неё
+    let g = h.state().tl_geom.clone().expect("geometry");
+    let row = g.row_of((LaneKind::Camera, 0)).expect("the camera track is in the rows");
+    // the CENTRE of the row, not “half the base height”: the camera row is three times lower
+    // (R.35 item 1), and the old formula missed it
     let pos = egui::pos2(g.tick_to_x(60_000), g.row_center_y(row));
     for _ in 0..2 {
         h.event(egui::Event::PointerButton {
@@ -6761,9 +6761,9 @@ fn t231_camera_editor_opens_and_edits() {
     }
     h.step();
     h.step();
-    assert_eq!(h.state().camera_editors.len(), 1, "двойной клик по камере обязан открыть её окно");
+    assert_eq!(h.state().camera_editors.len(), 1, "double-click on the camera must open its window");
 
-    // правка через сессию окна: один gesture — один шаг истории
+    // one gesture through the window session — one history step
     let gesture = h.state().camera_editors[0].gesture;
     {
         let app = h.state_mut();
@@ -6777,28 +6777,28 @@ fn t231_camera_editor_opens_and_edits() {
         assert!(app.apply_coalesced(Command::SetCamera(c), gesture));
     }
     h.step();
-    assert_eq!(h.state().model.project().cameras[0].auto.len(), 1, "кривая доехала до модели");
+    assert_eq!(h.state().model.project().cameras[0].auto.len(), 1, "the curve reached the model");
     let _ = h.state_mut().model.undo();
     h.step();
     assert!(
         h.state().model.project().cameras[0].auto.is_empty(),
-        "вся сессия окна — один шаг истории"
+        "the whole window session is one history step"
     );
 
-    // камеру удалили — окно уходит само
+    // the camera is deleted — the window leaves by itself
     {
         let app = h.state_mut();
         let _ = app.apply(Command::RemoveCamera { id: CameraId(1) });
     }
     h.step();
     h.step();
-    assert!(h.state().camera_editors.is_empty(), "окно мёртвой камеры закрывается");
+    assert!(h.state().camera_editors.is_empty(), "the window of a dead camera closes");
 }
 
-/// Тест 242 (Р.35 С1, кусок 5): окно морфера показывает, НА КОГО и КОГДА
-/// он действует. До этого раунда цели были заморожены навсегда и не
-/// показывались иначе как строкой «#1, #2», а времени у морфера не было
-/// вовсе — блок можно было двигать, и это ничего не значило.
+/// Test 242 (R.35 C1, piece 5): the morpher window shows WHOM and WHEN it acts on.
+/// Until this round the targets were frozen for good and were shown only as
+/// the line “#1, #2”, and the morpher had no time at all — the block
+/// could be moved, and that meant nothing.
 #[test]
 fn t242_morph_editor_shows_target_mode_and_timing() {
     use egui_kittest::kittest::Queryable;
@@ -6850,26 +6850,26 @@ fn t242_morph_editor_shows_target_mode_and_timing() {
     h.step();
     h.step();
 
-    // режим целей виден и объяснён, а не спрятан в коде
+    // the targets mode is visible and explained, not hidden in code
     assert!(
         h.query_by_label(crate::i18n::tr(crate::i18n::k::mrph::ON)).is_some(),
-        "строка «действует на» обязана быть в окне"
+        "the “applies to” row must be in the window"
     );
     assert!(
         h.query_by_label(crate::i18n::tr(crate::i18n::k::mrph::BELOW_NOTE)).is_some(),
-        "и сказано, что именно слой накрывает"
+        "and it is said what exactly the layer covers"
     );
 
-    // галка «по времени» правит МОДЕЛЬ и укладывается в один undo-шаг
+    // the “by time” checkbox edits the MODEL and fits in one undo step
     let depth = h.state().model.undo_depth();
     h.get_by_label(crate::i18n::tr(crate::i18n::k::mrph::TIMED)).click();
     h.step();
     h.step();
-    assert!(!h.state().model.project().morphers[0].timed, "галка сняла действие по времени");
-    assert_eq!(h.state().model.undo_depth(), depth + 1, "сессия окна — один шаг истории");
+    assert!(!h.state().model.project().morphers[0].timed, "the checkbox removed the action by time");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "the window session is one history step");
 
-    // второй режим окно показывает ДРУГИМ: вместо объяснения слоя —
-    // сам замороженный список (иначе «на кого действует» не увидеть)
+    // the window shows the second mode DIFFERENTLY: instead of the layer explanation —
+    // the frozen list itself (otherwise “whom it acts on” cannot be seen)
     let app = h.state_mut();
     let mut ev = app.model.project().morphers[0].clone();
     ev.targets = MorphTargets::Clips { ids: vec![ClipId(1)] };
@@ -6878,20 +6878,20 @@ fn t242_morph_editor_shows_target_mode_and_timing() {
     h.step();
     assert!(
         h.query_by_label(crate::i18n::tr(crate::i18n::k::mrph::BELOW_NOTE)).is_none(),
-        "у замороженного списка объяснению слоя не место"
+        "a frozen list has no place for the layer explanation"
     );
     assert!(
         h.query_by_label_contains("#1").is_some(),
-        "замороженный список обязан быть виден поимённо"
+        "the frozen list must be visible by name"
     );
 }
 
-/// Тест 244 (Р.35 С2, дословно: «Пункт "Add morpher" (и у clips и у
-/// региона) можно сократить с двух до одного и в ui морфера их
-/// объединить — может быть сразу fx-chain делать, в котором помимо
-/// остальных fx есть fx для морфинга, его пункты пометить фиолетовым и
-/// поднять в списке fx»). Полоса в окне морфера ОДНА, морф-слот в ней
-/// первый и не переставляется, а «+M» в тулбаре заводит слой сверху.
+/// Test 244 (R.35 C2, verbatim: “Item ‘Add morpher’ (both for clips and for
+/// the region) can be cut from two to one, and in the morpher ui merge them —
+/// maybe make a fx-chain straight away, in which, besides the other fx, there is a fx for morphing,
+/// mark its items purple and raise them in the fx list”). The strip in the morpher window is ONE,
+/// the morph slot is first in it and is not reordered, and “+M” in the toolbar
+/// opens a layer on top.
 #[test]
 fn t244_morpher_has_one_chain_with_pinned_head() {
     use egui_kittest::kittest::Queryable;
@@ -6926,40 +6926,40 @@ fn t244_morpher_has_one_chain_with_pinned_head() {
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
 
-    // «+M»: морф-дорожка заводится СВЕРХУ над всеми — иначе «всё, что
-    // ниже» было бы пусто (умолчание порядка кладёт морф-строки вниз)
+    // “+M”: the morph track is opened ON TOP of all — otherwise “everything below”
+    // would be empty (the default order puts morph rows down)
     let depth = app.model.undo_depth();
     app.add_morph_layer();
     let pr = app.model.project();
-    assert_eq!(pr.morphers.len(), 1, "слой создан");
-    assert_eq!(pr.rows()[0], (LaneKind::Morph, 0), "и поднят строкой 0");
-    assert!(matches!(pr.morphers[0].targets, MorphTargets::Below), "режим — «всё, что ниже»");
-    assert!(pr.morphers[0].timed, "и по времени");
-    assert_eq!(app.model.undo_depth(), depth + 1, "дорожка, порядок и событие — один шаг");
+    assert_eq!(pr.morphers.len(), 1, "layer created");
+    assert_eq!(pr.rows()[0], (LaneKind::Morph, 0), "and raised to row 0");
+    assert!(matches!(pr.morphers[0].targets, MorphTargets::Below), "mode — “everything below”");
+    assert!(pr.morphers[0].timed, "and by time");
+    assert_eq!(app.model.undo_depth(), depth + 1, "track, order and event — one step");
     assert!(!pr.effective_clips()[0].fx.is_empty() || pr.morphers[0].patch.is_empty());
     h.step();
     h.step();
 
-    // окно открылось само; полоса ОДНА (одна мастер-галка), и первым в
-    // ней стоит морф-слот
-    assert!(h.state().morph_editors.iter().any(|e| e.open), "окно морфера не открылось");
+    // the window opened by itself; the strip is ONE (one master checkbox), and first in it
+    // stands the morph slot
+    assert!(h.state().morph_editors.iter().any(|e| e.open), "the morpher window did not open");
     let chain_label = tr(k::fx::CHAIN_ON).to_string();
     assert_eq!(
         h.get_all_by_label(&chain_label).count(),
         1,
-        "полос цепочки в окне морфера должна быть ОДНА (было две: видео и аудио)"
+        "there must be ONE chain strip in the morpher window (there were two: video and audio)"
     );
     let head = tr(k::mrph::SRC_SLOT_NONE).to_string();
-    assert!(h.query_by_label(&head).is_some(), "морф-слот обязан быть виден в полосе");
+    assert!(h.query_by_label(&head).is_some(), "the morph slot must be visible in the strip");
 
-    // выбран он же — значит окно сразу показывает поле источника
+    // the one selected — so the window shows the source field at once
     assert_eq!(h.state().morph_editors[0].sel, crate::widgets::ChainSel::Head);
     assert!(
         h.state().morph_editors[0].src_rect.is_some(),
-        "поле источника показано при выбранной голове"
+        "the source field is shown when a head is selected"
     );
 
-    // эффекты ОБОИХ видов живут в одной полосе и раскладываются обратно
+    // effects of BOTH kinds live in one strip and are laid out back again
     let app = h.state_mut();
     let mut ev = app.model.project().morphers[0].clone();
     ev.patch.video_fx = vec![FxInstance::Mirror { horizontal: true, vertical: false }];
@@ -6969,17 +6969,17 @@ fn t244_morpher_has_one_chain_with_pinned_head() {
     h.step();
     assert!(
         h.query_by_label(crate::fx_editor::fx_display_name(&FxInstance::gain(3.0))).is_some(),
-        "аудио-эффект обязан быть в ТОЙ ЖЕ полосе"
+        "the audio effect must be in the SAME strip"
     );
     let ev = h.state().model.project().morphers[0].clone();
-    assert_eq!(ev.patch.video_fx.len(), 1, "и раскладываться обратно по видам");
+    assert_eq!(ev.patch.video_fx.len(), 1, "and be split back by kinds");
     assert_eq!(ev.patch.audio_fx.len(), 1);
 }
 
-/// Тест 245 (Р.35 С3, дословно: «чтобы не терять место — треки-морферы
-/// можно уменьшить по высоте в три раза»). Чистая геометрия строк:
-/// отношение 3, пол высоты, префиксные суммы, биекция `row_at_y` на
-/// смешанном наборе и якорь зума.
+/// Test 245 (R.35 C3, verbatim: “to not lose space — morpher tracks
+/// can be reduced in height three times”). Pure row geometry:
+/// ratio 3, height floor, prefix sums, bijection `row_at_y` on a
+/// mixed set, and the zoom anchor.
 #[test]
 fn t245_thin_service_rows_geometry() {
     use crate::timeline::{THIN_ROW_MIN, TlGeom, row_height, row_offsets};
@@ -6991,15 +6991,15 @@ fn t245_thin_service_rows_geometry() {
         (LaneKind::Audio, 0),
         (LaneKind::Morph, 1),
     ];
-    // камерная — ровно втрое ниже (Р.35 п.1), морф-строка ВДВОЕ выше
-    // камерной (Р.38 п.10: «увеличь высоту морфер трека по дефолту на 2»),
-    // пол — 10 px (в строку в 5 px мышью не попасть)
+    // the camera row is exactly three times lower (R.35 item 1), the morph row TWICE as high
+    // as the camera row (R.38 item 10: “increase the default height of the morpher track by 2”),
+    // the floor is 10 px (a 5 px row cannot be hit with the mouse)
     assert_eq!(row_height(LaneKind::Morph, 60.0), 40.0);
     assert_eq!(row_height(LaneKind::Camera, 60.0), 20.0);
     assert_eq!(row_height(LaneKind::Video, 60.0), 60.0);
     assert_eq!(row_height(LaneKind::Morph, 12.0), THIN_ROW_MIN);
 
-    // префиксные суммы: длина n+1, последний — полная высота
+    // prefix sums: length n+1, the last one is the full height
     let offs = row_offsets(&rows, 60.0, &[]);
     assert_eq!(offs.len(), rows.len() + 1);
     assert_eq!(offs, vec![0.0, 40.0, 100.0, 120.0, 180.0, 220.0]);
@@ -7013,42 +7013,42 @@ fn t245_thin_service_rows_geometry() {
         0.0,
         900.0,
     );
-    // биекция: центр каждой строки попадает в неё саму
+    // bijection: the centre of each row falls in that row itself
     for (i, &key) in rows.iter().enumerate() {
-        assert_eq!(g.row_at_y(g.row_center_y(i)), Some(i), "строка {i}");
+        assert_eq!(g.row_at_y(g.row_center_y(i)), Some(i), "row {i}");
         assert_eq!(g.key_at_y(g.row_center_y(i)), Some(key));
         assert_eq!(g.row_h(i), row_height(key.0, 60.0));
     }
-    // границы строк: верх принадлежит строке, низ — уже следующей
+    // row bounds: the top belongs to the row, the bottom already to the next one
     assert_eq!(g.row_at_y(g.row_top(1)), Some(1));
     assert_eq!(g.row_at_y(g.row_top(1) - 0.5), Some(0));
-    assert_eq!(g.row_at_y(g.row_top(0) - 1.0), None, "выше первой строки — не строка");
-    assert_eq!(g.row_at_y(g.row_top(rows.len() - 1) + 100.0), None, "ниже последней — тоже");
+    assert_eq!(g.row_at_y(g.row_top(0) - 1.0), None, "above the first row — not a row");
+    assert_eq!(g.row_at_y(g.row_top(rows.len() - 1) + 100.0), None, "below the last — also not");
 
-    // «сколько строк проехали» при драге: считается ПО СТРОКАМ, а не
-    // делением на одну высоту — на старой формуле тонкая строка стоила
-    // бы столько же, сколько дорожка клипов
+    // “how many rows were passed” during a drag: counted BY ROWS, not
+    // by dividing by one height — under the old formula a thin row would have cost
+    // as much as the clip track
     assert_eq!(g.row_at_y_unbounded(g.row_center_y(0)), 0);
     assert_eq!(g.row_at_y_unbounded(g.row_center_y(2)), 2);
     assert_eq!(g.row_at_y_unbounded(g.row_center_y(4)), 4);
-    assert!(g.row_at_y_unbounded(g.row_top(0) - 1.0) < 0, "выше первой — отрицательная строка");
-    // прилипание к своему виду считает те же строки
+    assert!(g.row_at_y_unbounded(g.row_top(0) - 1.0) < 0, "above the first — a negative row");
+    // sticking to its own kind counts the same rows
     assert_eq!(g.nearest_lane(ClipKind::Video, g.row_at_y_unbounded(g.row_center_y(2))), 0);
 
-    // якорь зума: целая часть — строка, дробная — место внутри неё
+    // zoom anchor: the integer part is the row, the fractional part is the place within it
     let a = g.anchor_at(g.row_top(2) + g.row_h(2) * 0.5);
-    assert!((a - 2.5).abs() < 0.01, "якорь в середине третьей строки: {a}");
+    assert!((a - 2.5).abs() < 0.01, "the anchor in the middle of the third row: {a}");
     let a0 = g.anchor_at(g.row_top(0));
-    assert!(a0.abs() < 0.01, "верх первой строки — ровно 0");
+    assert!(a0.abs() < 0.01, "the top of the first row — exactly 0");
 
-    // lane_y: доли считаются от высоты СТРОКИ КЛИПОВ
+    // lane_y: fractions are computed from the height of the CLIP ROW
     assert_eq!(g.lane_y(ClipKind::Video, 0, 0.5), g.row_top(1) + 30.0);
 }
 
-/// Тест 246 (Р.35 С3): в ТОНКУЮ служебную строку попадают мышью, и якорь
-/// вертикального зума не уезжает. Харнесс, а не чистая функция: именно
-/// здесь ловится «геометрия посчитана правильно, а кликнуть некуда»
-/// (урок п.7 р.11).
+/// Test 246 (R.35 C3): a THIN service row is hit by the mouse, and the vertical zoom
+/// anchor does not drift. A harness, not a pure function: this is exactly where
+/// “the geometry is computed correctly, but there is nowhere to click” gets caught
+/// (lesson of item 7, round 11).
 #[test]
 fn t246_thin_row_is_clickable_and_zoom_anchor_holds() {
     use kt_model::*;
@@ -7097,13 +7097,13 @@ fn t246_thin_row_is_clickable_and_zoom_anchor_holds() {
     app.model = kt_model::TimelineModel::new(p);
     h.step();
 
-    let g = h.state().tl_geom.clone().expect("геометрия");
-    let mrow = g.row_of((LaneKind::Morph, 0)).expect("морф-строка есть");
-    // строка действительно втрое ниже дорожки клипов — и всё же нажимаема
-    assert!(g.row_h(mrow) < g.lane_h_of(ClipKind::Video, 0), "служебная строка обязана быть ниже");
-    assert!(g.row_h(mrow) >= crate::timeline::THIN_ROW_MIN, "но не ниже пола нажимаемости");
+    let g = h.state().tl_geom.clone().expect("geometry");
+    let mrow = g.row_of((LaneKind::Morph, 0)).expect("a morph row exists");
+    // the row really is three times lower than the clip track — and yet it can be clicked
+    assert!(g.row_h(mrow) < g.lane_h_of(ClipKind::Video, 0), "the service row must be lower");
+    assert!(g.row_h(mrow) >= crate::timeline::THIN_ROW_MIN, "but not below the clickability floor");
 
-    // клик по блоку в тонкой строке выделяет морфер
+    // a click on a block in the thin row selects the morpher
     let pos = egui::pos2(g.tick_to_x(45_000), g.row_center_y(mrow));
     h.drag_at(pos);
     h.step();
@@ -7111,56 +7111,56 @@ fn t246_thin_row_is_clickable_and_zoom_anchor_holds() {
     h.step();
     assert!(
         h.state().selected_morph.contains(&MorphId(1)),
-        "в тонкую морф-строку не попасть мышью — считать её сделанной нельзя"
+        "a thin morph row cannot be hit with the mouse — it cannot be counted as done"
     );
 
-    // вертикальный зум не ломает отношение высот
+    // vertical zoom does not break the height ratio
     let g = h.state().tl_geom.clone().unwrap();
     let app = h.state_mut();
     app.tl_v_zoom = Some(g.lane_h_of(ClipKind::Video, 0) * 1.5);
     h.step();
     let g2 = h.state().tl_geom.clone().unwrap();
-    assert!(g2.lane_h_of(ClipKind::Video, 0) > g.lane_h_of(ClipKind::Video, 0), "зум применился");
+    assert!(g2.lane_h_of(ClipKind::Video, 0) > g.lane_h_of(ClipKind::Video, 0), "zoom was applied");
     assert!(
         (g2.row_h(mrow) / g2.lane_h_of(ClipKind::Video, 0) - 1.0 / crate::timeline::MORPH_ROW_DIV)
             .abs()
             < 0.05,
-        "отношение высоты морф-строки держится при зуме"
+        "the height ratio of the morph row holds under zoom"
     );
 }
 
-/// Тест 248 (Р.35 С4): рамка выделения превращается в именованную
-/// область с ТЕМИ ЖЕ дорожками и временем, а окно морфера показывает
-/// ссылку на неё чипом и находит её поиском.
+/// Test 248 (R.35 C4): a selection frame turns into a named area with the SAME tracks
+/// and time, and the morpher window shows a link to it as a chip
+/// and finds it by search.
 #[test]
 fn t248_band_becomes_named_area() {
     use kt_model::*;
     let (mut h, g) = harness_three_clips();
-    // рамка (Ctrl+драг с пустого места) по ПЕРВОЙ видео-дорожке
+    // a frame (Ctrl+drag from an empty spot) on the FIRST video track
     let y = g.lane_y(ClipKind::Video, 0, 0.6);
     let at = |t: i64| egui::pos2(g.tick_to_x(t), y);
     rubber_drag(&mut h, at(70_000), at(260_000), true);
-    assert!(h.state().last_band.is_some(), "рамка обязана запомниться в домене модели");
+    assert!(h.state().last_band.is_some(), "the frame must be remembered in the model domain");
 
     let app = h.state_mut();
     let depth = app.model.undo_depth();
     app.save_marked_area();
     let p = app.model.project();
-    assert_eq!(p.areas.len(), 1, "область сохранена");
+    assert_eq!(p.areas.len(), 1, "area saved");
     let a = &p.areas[0];
-    assert!(!a.name.trim().is_empty(), "имя генерится готовым, а не спрашивается отказом");
-    assert!((a.start.0 - 70_000).abs() < 3_000, "время из рамки: {:?}", a.start);
-    assert!(((a.start + a.duration).0 - 260_000).abs() < 3_000, "и её конец");
-    assert_eq!(a.lanes, vec![(LaneKind::Video, 0)], "и ТЕ ЖЕ дорожки");
-    assert_eq!(app.model.undo_depth(), depth + 1, "один шаг истории");
+    assert!(!a.name.trim().is_empty(), "the name is generated ready, not asked for with a refusal");
+    assert!((a.start.0 - 70_000).abs() < 3_000, "time from the frame: {:?}", a.start);
+    assert!(((a.start + a.duration).0 - 260_000).abs() < 3_000, "and its end");
+    assert_eq!(a.lanes, vec![(LaneKind::Video, 0)], "and the SAME tracks");
+    assert_eq!(app.model.undo_depth(), depth + 1, "one history step");
 
-    // второе сохранение той же рамки даёт ДРУГОЕ имя (имя — это адрес)
+    // a second save of the same frame gives a DIFFERENT name (the name is the address)
     app.save_marked_area();
     let names: Vec<String> = app.model.project().areas.iter().map(|a| a.name.clone()).collect();
     assert_eq!(names.len(), 2);
-    assert_ne!(names[0], names[1], "имена уникальны без вопросов пользователю");
+    assert_ne!(names[0], names[1], "names are unique without asking the user questions");
 
-    // окно морфера: ссылка на область рисуется чипом
+    // morpher window: the link to the area is drawn as a chip
     let mut p = app.model.project().clone();
     p.ensure_tracks(kt_model::LaneKind::Morph, 1);
     p.morphers.push(MorpherEvent {
@@ -7168,7 +7168,7 @@ fn t248_band_becomes_named_area() {
         lane: 0,
         start: kt_time::Tick(0),
         duration: kt_time::Tick(90_000),
-        targets: MorphTargets::Areas { names: vec![names[0].clone(), "нет такой".into()] },
+        targets: MorphTargets::Areas { names: vec![names[0].clone(), "no such one".into()] },
         patch: MorphPatch::default(),
         timed: true,
         strength: 1.0,
@@ -7182,37 +7182,37 @@ fn t248_band_becomes_named_area() {
     h.step();
     h.step();
     use egui_kittest::kittest::Queryable;
-    assert!(h.query_by_label(&names[0]).is_some(), "живая ссылка видна чипом");
+    assert!(h.query_by_label(&names[0]).is_some(), "a live link is visible as a chip");
     assert!(
-        h.query_by_label("нет такой").is_some(),
-        "мёртвая ссылка ОСТАЁТСЯ на виду: её не выкидывают молча"
+        h.query_by_label("no such one").is_some(),
+        "a dead link STAYS in sight: it is not silently thrown away"
     );
 }
 
-/// Тест 250 (Р.35 С5): окно префикса вставки. Открывается ТОЛЬКО когда в
-/// буфере есть именованное, вставляет одним undo-шагом, Esc не оставляет
-/// следов, а ВТОРОЙ Ctrl+V подряд открывает его снова (правило 14 —
-/// фича обязана работать повторно, дефект п.8 р.12).
+/// Test 250 (R.35 C5): the insert-prefix window. It opens ONLY when the buffer
+/// holds a named item, inserts in one undo step, Esc leaves no traces, and a SECOND Ctrl+V
+/// in a row opens it again (rule 14 —
+/// a feature must work repeatedly, the defect of item 8, round 12).
 #[test]
 fn t250_paste_prefix_dialog() {
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
     let (mut h, _g) = harness_three_clips();
 
-    // без именованного вставка идёт МОЛЧА — старые сценарии целы
+    // without a named item the paste goes SILENTLY — old scenarios stay intact
     let app = h.state_mut();
     app.select_only(ClipId(1));
     app.copy_selection();
     app.player.seek(kt_time::Tick(400_000));
     let n = app.model.project().clips.len();
     app.paste_at_cursor();
-    assert!(app.paste_names.is_none(), "окна быть не должно: имён в буфере нет");
-    assert_eq!(app.model.project().clips.len(), n + 1, "и вставка прошла сразу");
+    assert!(app.paste_names.is_none(), "there must be no window: there are no names in the buffer");
+    assert_eq!(app.model.project().clips.len(), n + 1, "and the paste went through at once");
 
-    // область в буфере — окно появляется
+    // an area in the buffer — the window appears
     let mut p = app.model.project().clone();
     p.areas.push(MarkedArea {
-        name: "финал".into(),
+        name: "final".into(),
         start: kt_time::Tick(0),
         duration: kt_time::Tick(90_000),
         lanes: vec![],
@@ -7222,54 +7222,54 @@ fn t250_paste_prefix_dialog() {
     app.model = kt_model::TimelineModel::new(p);
     app.select_only(ClipId(1));
     app.copy_selection();
-    assert!(!app.clipboard.areas.is_empty(), "область обязана попасть в буфер");
+    assert!(!app.clipboard.areas.is_empty(), "the area must get into the buffer");
     app.player.seek(kt_time::Tick(700_000));
     app.paste_at_cursor();
-    assert!(app.paste_names.is_some(), "окно префикса не открылось");
+    assert!(app.paste_names.is_some(), "the prefix window did not open");
     let frozen = app.paste_names.as_ref().unwrap().at;
     h.step();
     h.step();
     assert!(
         h.query_by_label(tr(k::msg::PASTE_PREFIX_LABEL)).is_some(),
-        "окно нарисовалось, а не только завелось в состоянии"
+        "the window was drawn, not only created in state"
     );
 
-    // Esc отменяет и следов не оставляет
+    // Esc cancels and leaves no traces
     let before = h.state().model.project().clone();
     h.key_press(egui::Key::Escape);
     h.step();
     h.step();
-    assert!(h.state().paste_names.is_none(), "Esc обязан закрыть окно");
-    assert_eq!(h.state().model.project().areas, before.areas, "и ничего не вставить");
+    assert!(h.state().paste_names.is_none(), "Esc must close the window");
+    assert_eq!(h.state().model.project().areas, before.areas, "and paste nothing");
 
-    // ВТОРОЙ Ctrl+V подряд открывает окно снова
+    // a SECOND Ctrl+V in a row opens the window again
     let app = h.state_mut();
     app.paste_at_cursor();
-    assert!(app.paste_names.is_some(), "повторная вставка обязана открыть окно опять");
-    assert_eq!(app.paste_names.as_ref().unwrap().at, frozen, "позиция вставки заморожена");
+    assert!(app.paste_names.is_some(), "a repeated paste must open the window again");
+    assert_eq!(app.paste_names.as_ref().unwrap().at, frozen, "the paste position is frozen");
 
-    // подтверждение — ОДИН шаг истории
+    // confirmation — ONE history step
     let depth = app.model.undo_depth();
     let at = app.paste_names.as_ref().unwrap().at;
     app.paste_names = None;
-    app.paste_here(at, None, "копия".into(), false);
-    assert_eq!(app.model.undo_depth(), depth + 1, "вставка — один шаг истории");
+    app.paste_here(at, None, "copy".into(), false);
+    assert_eq!(app.model.undo_depth(), depth + 1, "paste is one history step");
     let names: Vec<String> = app.model.project().areas.iter().map(|a| a.name.clone()).collect();
-    // Р.38 п.19: «надо по дефолту проставлять не префикс а суффикс» —
-    // копии сортируются рядом с оригиналом, а не по первой букве слова
-    assert!(names.contains(&"финал копия".to_string()), "суффикс применён: {names:?}");
-    // а префикс остаётся возможностью того же окна
+    // R.38 item 19: “by default one should put a suffix, not a prefix” —
+    // copies sort next to the original, not by the first letter of the word
+    assert!(names.contains(&"final copy".to_string()), "suffix applied: {names:?}");
+    // and the prefix remains an option of the same window
     app.model.undo().unwrap();
-    app.paste_here(at, None, "копия".into(), true);
+    app.paste_here(at, None, "copy".into(), true);
     let names: Vec<String> = app.model.project().areas.iter().map(|a| a.name.clone()).collect();
-    assert!(names.contains(&"копия финал".to_string()), "префикс всё ещё доступен: {names:?}");
+    assert!(names.contains(&"copy final".to_string()), "prefix is still available: {names:?}");
     app.model.undo().unwrap();
-    assert_eq!(app.model.project().areas.len(), 1, "и одним undo откатилась");
+    assert_eq!(app.model.project().areas.len(), 1, "and was rolled back with one undo");
 }
 
-/// Тест 248c (Р.37 С3): окно FX пары показывает у ВИДЕО-экземпляра варпа
-/// только то, что для него значит. Реверб на видео не звучит, и его ручки
-/// там — враньё пользователю (п.9 чек-листа).
+/// Test 248c (R.37 C3): the FX window of a pair shows, for the VIDEO instance of the warp,
+/// only what it means for it. Reverb does not sound on video, and its handles
+/// there would be a lie to the user (item 9 of the checklist).
 #[test]
 fn t248_video_warp_shows_only_what_matters() {
     use egui_kittest::kittest::Queryable;
@@ -7309,31 +7309,31 @@ fn t248_video_warp_shows_only_what_matters() {
     h.step();
     h.step();
 
-    // окно у пары ОДНО, и в нём обе цепочки
-    assert_eq!(h.state().fx_editors.len(), 1, "у пары одно окно");
+    // the pair has ONE window, and it holds both chains
+    assert_eq!(h.state().fx_editors.len(), 1, "the pair has one window");
     assert_eq!(h.state().fx_editors[0].members.len(), 2);
-    // режим кадров есть (он значим только на видео)
+    // the frames mode exists (it is meaningful only on video)
     assert!(
         h.query_by_label(crate::i18n::tr(crate::i18n::k::fx::FRAMES)).is_some(),
-        "у видео-экземпляра обязан быть выбор режима кадров"
+        "a video instance must have a frame-mode choice"
     );
     assert!(
         h.query_by_label(crate::i18n::tr(crate::i18n::k::fx::RATE_LINKED)).is_some(),
-        "и сказано, что скорость общая с партнёром"
+        "and it is said that the speed is shared with the partner"
     );
-    // а ручка предзадержки реверба — только у аудио-экземпляра, один раз
+    // and the reverb pre-delay handle — only on the audio instance, once
     let predelay = crate::widgets::param_label("predelay_ms").to_string();
     assert_eq!(
         h.get_all_by_label(&predelay).count(),
         1,
-        "ручки реверба показываются ровно один раз — у аудио"
+        "the reverb handles are shown exactly once — for audio"
     );
 }
 
-/// Тест 249 (Р.37 С4, требование пользователя: «slowed&reverb должен
-/// учитываться в превью аудио/видео в событиях»). Волноформа и филмстрип
-/// переводили пиксель в материал ЛИНЕЙНО и игнорировали даже реверс —
-/// замедленный клип рисовал не то, что играет.
+/// Test 249 (R.37 C4, user requirement: “slowed&reverb must
+/// be taken into account in the audio/video previews in events”). The waveform and the filmstrip
+/// mapped a pixel to the material LINEARLY and ignored even the reverse —
+/// a slowed clip drew not what it plays.
 #[test]
 fn t249_previews_follow_the_warp() {
     use kt_model::*;
@@ -7364,37 +7364,37 @@ fn t249_previews_follow_the_warp() {
         fx_off: false,
     };
 
-    // без варпа карта не заводится вовсе — отображение линейно, как было
+    // without a warp the map is not created at all — the mapping is linear, as before
     assert!(kt_engine::clip_warp_map(&clip(vec![], false)).is_none());
 
-    // 0.5×: к середине события съедена ЧЕТВЕРТЬ материала, а не половина
+    // 0.5×: by the middle of the event a QUARTER of the material is eaten, not half
     let slow = clip(vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)], false);
-    let w = kt_engine::clip_warp_map(&slow).expect("карта варпа есть");
-    assert_eq!(w.used(), 2 * SEC, "за 4 с события съедается 2 с материала");
-    assert_eq!(w.material_off(slow.duration, false, 2 * SEC), SEC, "середина — четверть материала");
+    let w = kt_engine::clip_warp_map(&slow).expect("the warp map exists");
+    assert_eq!(w.used(), 2 * SEC, "over 4 s of the event, 2 s of material is eaten");
+    assert_eq!(w.material_off(slow.duration, false, 2 * SEC), SEC, "the middle is a quarter of the material");
     assert_eq!(w.material_off(slow.duration, false, 0), 0);
     assert_eq!(w.material_off(slow.duration, false, 4 * SEC), 2 * SEC);
 
-    // реверс — «варп, потом зеркало»: то же правило, что в движке
+    // reverse — “warp, then mirror”: the same rule as in the engine
     let rev = clip(vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)], true);
-    let wr = kt_engine::clip_warp_map(&rev).expect("карта");
-    assert_eq!(wr.material_off(rev.duration, true, 0), 2 * SEC, "реверс начинается с конца");
-    assert_eq!(wr.material_off(rev.duration, true, 4 * SEC), 0, "и кончается началом");
+    let wr = kt_engine::clip_warp_map(&rev).expect("map");
+    assert_eq!(wr.material_off(rev.duration, true, 0), 2 * SEC, "reverse starts from the end");
+    assert_eq!(wr.material_off(rev.duration, true, 4 * SEC), 0, "and ends at the start");
 
-    // ВЫКЛЮЧЕННЫЙ слот = «не замедлять картинку» (Р.37: это и есть та
-    // самая отдельная галочка, второго выключателя не заводим)
+    // a DISABLED slot = “do not slow the picture” (R.37: this is exactly that
+    // separate checkbox; we do not add a second switch)
     let mut off = slow.clone();
     off.fx_bypass = vec![true];
-    assert!(kt_engine::clip_warp_map(&off).is_none(), "галка слота снимает растяжение");
+    assert!(kt_engine::clip_warp_map(&off).is_none(), "the slot checkbox removes the stretch");
 
-    // ступень филмстрипа берётся из ПОТРЕБЛЁННОГО пролёта, иначе
-    // замедленный клип получает вдвое более грубый шаг и вырождается
-    // в повторяющиеся бакеты
+    // the filmstrip step is taken from the CONSUMED span, otherwise
+    // a slowed clip gets a step twice as coarse and degenerates
+    // into repeating buckets
     let by_event = crate::thumbs::thumb_source_step(Tick(4 * SEC), 800.0, 48.0);
     let by_used = crate::thumbs::thumb_source_step(Tick(w.used()), 800.0, 48.0);
-    assert!(by_used <= by_event, "шаг по потреблённому не грубее: {by_used} vs {by_event}");
+    assert!(by_used <= by_event, "the step by consumed is not coarser: {by_used} vs {by_event}");
 
-    // и кэш карт живёт по ревизии модели, а не строится на кадр
+    // and the map cache lives by the model revision, not built per frame
     let mut h = harness();
     let app = h.state_mut();
     let mut p = app.model.project().clone();
@@ -7404,18 +7404,18 @@ fn t249_previews_follow_the_warp() {
     app.model = kt_model::TimelineModel::new(p);
     let a = app.warp_maps();
     let b = app.warp_maps();
-    assert!(std::sync::Arc::ptr_eq(&a, &b), "на кадр карта не пересобирается");
-    assert_eq!(a.len(), 1, "в кэше только клипы С варпом");
+    assert!(std::sync::Arc::ptr_eq(&a, &b), "the map is not rebuilt per frame");
+    assert_eq!(a.len(), 1, "only clips WITH a warp are in the cache");
 }
 
-/// Тест 258 (Р.38 пп.3-4). Претензии дословно: «add morpher layer тоже
-/// странно работает» и «если я жму тот же add morpher layer в другой
-/// области - он мне создает еще один трек».
+/// Test 258 (R.38 items 3–4). Complaints verbatim: “add morpher layer also works
+/// strangely” and “if I press the same add morpher layer in another
+/// area - it creates one more track for me”.
 ///
-/// «Слой» — про слой правок, а не про дорожку: повторное «+M»
-/// ПЕРЕИСПОЛЬЗУЕТ верхнюю морф-дорожку. Место блока считает одна
-/// `morph_span` (есть регион — по региону, нет — от курсора), и её же
-/// зовут оба способа создания: жест и пункт меню дорожки (правило 17).
+/// “Layer” is about the layer of edits, not about the track: a repeated “+M”
+/// REUSES the top morph track. The block’s place is computed by one `morph_span`
+/// (if there is a region — by the region, otherwise from the cursor), and the same
+/// function is called by both ways of creating it: the gesture and the track menu item (rule 17).
 #[test]
 fn t258_morph_layer_reuses_lane_and_honours_region() {
     use kt_model::*;
@@ -7450,48 +7450,48 @@ fn t258_morph_layer_reuses_lane_and_honours_region() {
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
 
-    // без региона — блок от курсора, 1.5 с
+    // without a region — the block from the cursor, 1.5 s
     app.player.seek(Tick(180_000));
     app.add_morph_layer();
     let pr = app.model.project().clone();
-    assert_eq!(pr.lanes(kt_model::LaneKind::Morph), 1, "первая морф-дорожка заведена");
+    assert_eq!(pr.lanes(kt_model::LaneKind::Morph), 1, "the first morph track was created");
     assert_eq!(pr.morphers.len(), 1);
-    assert_eq!(pr.morphers[0].start, Tick(180_000), "блок встал под курсором");
-    assert_eq!(pr.morphers[0].duration, Tick(90 * 1500), "и на 1.5 с");
+    assert_eq!(pr.morphers[0].start, Tick(180_000), "the block landed under the cursor");
+    assert_eq!(pr.morphers[0].duration, Tick(90 * 1500), "and for 1.5 s");
 
-    // повторное «+M» в другом месте — ТА ЖЕ дорожка, новый блок
-    app.player.seek(Tick(495_000)); // кратно 15: playhead живёт в аудиокадрах
+    // a repeated “+M” in another place — the SAME track, a new block
+    app.player.seek(Tick(495_000)); // a multiple of 15: the playhead lives in audio frames
     app.add_morph_layer();
     let pr = app.model.project().clone();
     assert_eq!(
         pr.lanes(kt_model::LaneKind::Morph),
         1,
-        "вторая морф-дорожка НЕ заводится: «слой» — не «дорожка»"
+        "a second morph track is NOT created: a “layer” is not a “track”"
     );
-    assert_eq!(pr.morphers.len(), 2, "а блок добавился");
-    assert_eq!(pr.morphers[1].lane, 0, "на ту же дорожку");
+    assert_eq!(pr.morphers.len(), 2, "but the block was added");
+    assert_eq!(pr.morphers[1].lane, 0, "to the same track");
     assert_eq!(pr.morphers[1].start, Tick(495_000));
 
-    // с регионом — блок ПО РЕГИОНУ, и у обоих способов создания одинаково
+    // with a region — the block BY THE REGION, and both ways of creating it match
     let mut pr = app.model.project().clone();
     pr.region = Some(kt_model::Region { start: Tick(700_000), end: Tick(760_000) });
     app.model = kt_model::TimelineModel::new(pr);
     app.add_morph_layer();
     let by_gesture = app.model.project().morphers.last().cloned().unwrap();
-    assert_eq!(by_gesture.start, Tick(700_000), "есть регион — блок по региону");
+    assert_eq!(by_gesture.start, Tick(700_000), "a region exists — the block by the region");
     assert_eq!(by_gesture.duration, Tick(60_000));
     app.add_morpher_at(0);
     let by_menu = app.model.project().morphers.last().cloned().unwrap();
     assert_eq!(
         (by_menu.start, by_menu.duration),
         (by_gesture.start, by_gesture.duration),
-        "пункт меню дорожки обязан ставить блок так же, как жест (правило 17)"
+        "the track menu item must place the block the same way as the gesture (rule 17)"
     );
 }
 
-/// Тест 259 (Р.38 п.9, дословно: «я не понимаю как менять длинну у морфер
-/// события»). Кромки блока тянутся: правая меняет длительность, левая
-/// двигает начало при СТОЯЩЕМ конце — как у метки-диапазона.
+/// Test 259 (R.38 item 9, verbatim: “I do not understand how to change the length of morphers
+/// of an event”). The block’s edges are draggable: the right one changes the duration, the left one
+/// moves the start while the end STANDS — as with a range marker.
 #[test]
 fn t259_morph_block_edges_resize() {
     use kt_time::Tick;
@@ -7509,7 +7509,7 @@ fn t259_morph_block_edges_resize() {
     let y = g.row_center_y(row);
     let end_x = g.tick_to_x((m.start + m.duration).0);
 
-    // правая кромка: тянем вправо — растёт длительность, начало стоит
+    // right edge: drag to the right — the duration grows, the start stays
     let to = end_x + 60.0;
     h.hover_at(egui::pos2(end_x, y));
     h.step();
@@ -7522,15 +7522,15 @@ fn t259_morph_block_edges_resize() {
     h.drop_at(egui::pos2(to, y));
     h.step();
     let m2 = h.state().model.project().morphers[0].clone();
-    assert_eq!(m2.start, m.start, "правая кромка не двигает начало");
+    assert_eq!(m2.start, m.start, "the right edge does not move the start");
     assert!(
         m2.duration > m.duration,
-        "правая кромка обязана удлинять блок: было {:?}, стало {:?}",
+        "the right edge must lengthen the block: was {:?}, became {:?}",
         m.duration,
         m2.duration
     );
 
-    // левая кромка: конец СТОИТ на месте
+    // left edge: the end STAYS in place
     let end_before = (m2.start + m2.duration).0;
     let sx = g.tick_to_x(m2.start.0);
     let to = sx + 40.0;
@@ -7545,21 +7545,21 @@ fn t259_morph_block_edges_resize() {
     h.drop_at(egui::pos2(to, y));
     h.step();
     let m3 = h.state().model.project().morphers[0].clone();
-    assert!(m3.start > m2.start, "левая кромка сдвинула начало");
+    assert!(m3.start > m2.start, "the left edge moved the start");
     assert_eq!(
         (m3.start + m3.duration).0,
         end_before,
-        "и конец остался на месте (правило 20: ничего не отрастает само)"
+        "and the end stayed in place (rule 20: nothing grows by itself)"
     );
 }
 
-/// Тест 260 (Р.38 п.5 «не понимаю как работает камерный трек» + подметание
-/// того же класса). Камера выделяется кликом, удаляется с клавиатуры и
-/// меняет длину кромками; левая кромка диапазонной метки наконец работает.
+/// Test 260 (R.38 item 5 “I do not understand how the camera track works” + sweeping up
+/// the same class). The camera is selected by a click, deleted from the keyboard and
+/// changes its length by its edges; the left edge of a range marker finally works.
 ///
-/// `Drag::MarkerEdge.left` был описан в комментарии как рабочий, и на этот
-/// вариант даже матчился тест — но конструировался ТОЛЬКО `left: false`, а
-/// жест уходил в `_ => {}` и пропадал молча.
+/// `Drag::MarkerEdge.left` was described in a comment as working, and a test even matched
+/// this variant — but ONLY `left: false` was constructed, and the gesture went into
+/// `_ => {}` and vanished silently.
 #[test]
 fn t260_camera_and_marker_left_edge_are_reachable() {
     use kt_model::*;
@@ -7578,7 +7578,7 @@ fn t260_camera_and_marker_left_edge_are_reachable() {
     let row = g.row_of((LaneKind::Camera, 0)).unwrap();
     let y = g.row_center_y(row);
 
-    // клик по камере — выделение (до Р.38 поля `selected_camera` не было)
+    // a click on the camera — selection (before R.38 there was no `selected_camera` field)
     let mid = egui::pos2(g.tick_to_x(c.start.0 + c.duration.0 / 2), y);
     h.hover_at(mid);
     h.step();
@@ -7586,9 +7586,9 @@ fn t260_camera_and_marker_left_edge_are_reachable() {
     h.step();
     h.drop_at(mid);
     h.step();
-    assert!(h.state().selected_camera.contains(&c.id), "клик по камере обязан её выделить");
+    assert!(h.state().selected_camera.contains(&c.id), "a click on the camera must select it");
 
-    // правая кромка меняет длину
+    // the right edge changes the length
     let ex = g.tick_to_x((c.start + c.duration).0);
     let to = ex - 40.0;
     h.hover_at(egui::pos2(ex, y));
@@ -7602,18 +7602,18 @@ fn t260_camera_and_marker_left_edge_are_reachable() {
     h.drop_at(egui::pos2(to, y));
     h.step();
     let c2 = h.state().model.project().cameras[0].clone();
-    assert_eq!(c2.start, c.start, "кромка не двигает начало");
-    assert!(c2.duration < c.duration, "правая кромка обязана менять длительность камеры");
+    assert_eq!(c2.start, c.start, "the edge does not move the start");
+    assert!(c2.duration < c.duration, "the right edge must change the camera duration");
 
-    // Del удаляет выделенную камеру
+    // Del deletes the selected camera
     let app = h.state_mut();
     app.select_camera_only(c.id);
     app.delete_action();
-    assert!(h.state().model.project().cameras.is_empty(), "Del обязан удалять камеру");
+    assert!(h.state().model.project().cameras.is_empty(), "Del must delete the camera");
 
-    // ЛЕВАЯ кромка диапазонной метки: конец стоит, начало едет
+    // the LEFT edge of a range marker: the end stays, the start moves
     let m = h.state().model.project().markers[0].clone();
-    assert!(m.is_range(), "сцена: диапазонная метка");
+    assert!(m.is_range(), "scene: range marker");
     let end0 = m.end().0;
     let ry = g.rect.top() + 6.0;
     let sx = g.tick_to_x(m.t.0);
@@ -7629,33 +7629,33 @@ fn t260_camera_and_marker_left_edge_are_reachable() {
     h.drop_at(egui::pos2(to, ry));
     h.step();
     let m2 = h.state().model.project().markers[0].clone();
-    assert!(m2.t.0 > m.t.0, "левая кромка сдвинула начало метки: {:?} → {:?}", m.t, m2.t);
-    assert_eq!(m2.end().0, end0, "а конец остался на месте");
+    assert!(m2.t.0 > m.t.0, "the left edge moved the start of the marker: {:?} → {:?}", m.t, m2.t);
+    assert_eq!(m2.end().0, end0, "and the end stayed in place");
 }
 
-/// Тест 262 (Р.38 п.11, дословно: «разреши менять высоту каждого трека
-/// индивидуально»). Нижняя кромка строки в gutter'е тянет её высоту,
-/// пункт меню сбрасывает, и это УДОБСТВО — звёздочку не зажигает.
+/// Test 262 (R.38 item 11, verbatim: “allow changing the height of each track
+/// individually”). The bottom edge of a row in the gutter drags its height, the menu item
+/// resets it, and this is a CONVENIENCE — it does not light the asterisk.
 #[test]
 fn t262_per_track_height() {
     use crate::timeline::{ROW_H_MAX, THIN_ROW_MIN, TlGeom, row_height_of};
     use kt_model::LaneKind;
 
-    // чистая геометрия: переопределение бьёт расчётную высоту и клампится
+    // pure geometry: an override beats the computed height and is clamped
     let over = vec![(LaneKind::Video, 0, 150.0), (LaneKind::Morph, 0, 5.0)];
     assert_eq!(row_height_of(LaneKind::Video, 0, 60.0, &over), 150.0);
-    assert_eq!(row_height_of(LaneKind::Video, 1, 60.0, &over), 60.0, "чужая дорожка не тронута");
+    assert_eq!(row_height_of(LaneKind::Video, 1, 60.0, &over), 60.0, "another track is untouched");
     assert_eq!(
         row_height_of(LaneKind::Morph, 0, 60.0, &over),
         THIN_ROW_MIN,
-        "предел снизу: в строку в 5 px мышью не попасть"
+        "the lower limit: a row of 5 px cannot be hit with the mouse"
     );
     assert_eq!(
         row_height_of(LaneKind::Video, 0, 60.0, &[(LaneKind::Video, 0, 9999.0)]),
         ROW_H_MAX,
-        "предел сверху есть у всего, что тянется мышью (правило 6)"
+        "an upper limit exists for everything that is stretched with the mouse (rule 6)"
     );
-    // верхи строк согласованы с высотами
+    // the row tops agree with the heights
     let rows = vec![(LaneKind::Video, 0), (LaneKind::Video, 1)];
     let g = TlGeom::new(
         egui::Rect::from_min_max(egui::pos2(50.0, 0.0), egui::pos2(1000.0, 500.0)),
@@ -7667,13 +7667,13 @@ fn t262_per_track_height() {
         1000.0,
     );
     assert_eq!(g.row_h(0), 150.0);
-    assert_eq!(g.row_top(1) - g.row_top(0), 150.0, "верх второй строки поехал за высотой первой");
+    assert_eq!(g.row_top(1) - g.row_top(0), 150.0, "the top of the second row moved with the height of the first");
 
-    // жест: тянем нижнюю кромку первой строки в gutter'е
+    // gesture: drag the bottom edge of the first row in the gutter
     let (mut h, g0) = harness_three_clips();
     let row0_bottom = g0.row_top(0) + g0.row_h(0);
-    // x берётся В СЕРЕДИНЕ gutter'а, а не у самого края окна: первые 16 px
-    // — зона ресайза окна, она забирает нажатие себе (правило 15)
+    // x is taken in the MIDDLE of the gutter, not at the window’s very edge: the first 16 px
+    // are the window resize zone, which takes the press for itself (rule 15)
     let gx = g0.rect.left() - 12.0;
     let want = g0.row_h(0) + 40.0;
     h.hover_at(egui::pos2(gx, row0_bottom));
@@ -7688,28 +7688,28 @@ fn t262_per_track_height() {
     h.step();
     let app = h.state();
     let over = app.row_heights();
-    assert_eq!(over.len(), 1, "высота дорожки запомнена: {over:?}");
+    assert_eq!(over.len(), 1, "track height remembered: {over:?}");
     let (k, l, hh) = over[0];
-    assert_eq!((k, l), g0.rows[0], "запомнена ИМЕННО та строка, за кромку которой тянули");
-    assert!((hh - want).abs() < 3.0, "высота {hh} ≈ {want}");
-    // с Р.62 высота живёт НА ДОРОЖКЕ и ходит через undo вместе с именем
-    assert!(app.dirty_content, "высота дорожки — содержимое модели");
+    assert_eq!((k, l), g0.rows[0], "EXACTLY the row whose edge was dragged is remembered");
+    assert!((hh - want).abs() < 3.0, "height {hh} ≈ {want}");
+    // since R.62 the height lives ON THE TRACK and goes through undo together with the name
+    assert!(app.dirty_content, "track height is model content");
 
-    // и сброс возвращает расчётную
+    // and the reset returns the computed height
     let app = h.state_mut();
     app.set_row_height(g0.rows[0], None);
-    assert!(app.row_heights().is_empty(), "сброс убирает переопределение");
-    assert!(app.model.undo_depth() >= 2, "высота обязана ходить через undo");
+    assert!(app.row_heights().is_empty(), "reset removes the override");
+    assert!(app.model.undo_depth() >= 2, "height must go through undo");
 }
 
-/// Тест 265 (Р.38 пп.14-18): панель автоматизации.
+/// Test 265 (R.38 items 14–18): the automation panel.
 ///
-/// Претензии дословно: «в таймлайне автоматизации я не понимаю как
-/// зазумится», «при нажатии на ключ - чтобы значения которые прописаны в
-/// полях - имели связь с ключем», «ощущение что у эффектов есть какое-то
-/// отдельное "дефолтное" состояние значений», «я добавил второй параметр
-/// автоматизации - но редактируется только первый», «еще не хватает
-/// кнопок управления элементами таймлайна автоматизации».
+/// Complaints verbatim: “in the automation timeline I do not understand
+/// how it zooms”,
+/// “when I press a key — so that the values written in the fields are linked to the key”,
+/// “the feeling that effects have some kind of separate ‘default’ state of values”,
+/// “I added a second automation parameter — but only the first one gets edited”,
+/// “still missing the buttons controlling the automation timeline elements”.
 #[test]
 fn t265_automation_axis_and_field_bind() {
     use crate::automation::{AutoCtx, AutoView};
@@ -7717,9 +7717,9 @@ fn t265_automation_axis_and_field_bind() {
     use kt_model::{AutoKey, ParamCurve};
     use kt_time::Tick;
 
-    // ---- п.14: ось времени ------------------------------------------
+    // ---- item 14: time axis ------------------------------------------
     let id = |t: Tick| t;
-    // замок с Р.40 живёт в UiState (один на программу), а не в AutoView
+    // the lock since R.40 lives in UiState (one per program), not in AutoView
     let mut ctx = AutoCtx {
         links: None,
         default_shape: Default::default(),
@@ -7733,30 +7733,30 @@ fn t265_automation_axis_and_field_bind() {
     };
     assert!(
         crate::app::KtApp::default_axis_linked(),
-        "замок «связать с таймлайном» включён по умолчанию (решение п.14)"
+        "the “link to timeline” lock is on by default (decision item 14)"
     );
     let mut v = AutoView::default();
     assert_eq!(
         v.axis(&ctx),
         (90_000 * 2, 90_000 * 4),
-        "связанный график показывает окно таймлайна"
+        "the linked graph shows the timeline window"
     );
     ctx.linked = false;
-    assert_eq!(v.axis(&ctx), (0, 90_000 * 10), "без своего окна отвязанный показывает всё");
+    assert_eq!(v.axis(&ctx), (0, 90_000 * 10), "without its own window the unlinked one shows everything");
     v.win = Some((90_000, 90_000 * 3));
-    assert_eq!(v.axis(&ctx), (90_000, 90_000 * 3), "и своё окно, когда оно есть");
+    assert_eq!(v.axis(&ctx), (90_000, 90_000 * 3), "and its own window when there is one");
     v.win = Some((-90_000, 90_000 * 99));
-    assert_eq!(v.axis(&ctx), (0, 90_000 * 10), "СВОЁ окно клампится диапазоном носителя");
-    // Р.40: СВЯЗАННАЯ ось окном носителя НЕ клампится. Претензия дословно:
-    // «когда я оттягиваю левый край события — у меня ключи автоматизации
-    // тоже сдвигаются к началу». Ключ не двигался: врала ось, нормированная
-    // на событие. Смотрим то же, что таймлайн, — и ключ стоит на месте.
+    assert_eq!(v.axis(&ctx), (0, 90_000 * 10), "its OWN window is clamped to the range of the carrier");
+    // R.40: the LINKED axis is NOT clamped by the media window. Complaint verbatim:
+    // “when I pull the left edge of the event, my automation keys also shift
+    // to the start”. The key did not move: the axis lied, normalised
+    // to the event. We look at what the timeline looks at — and the key stays in place.
     ctx.linked = true;
     ctx.view = (Tick(-90_000), Tick(90_000 * 99));
     assert_eq!(
         v.axis(&ctx),
         (-90_000, 90_000 * 99),
-        "связанный график показывает окно ТАЙМЛАЙНА как есть, включая место за краями события"
+        "the linked graph shows the TIMELINE window as is, including the space beyond the event edges"
     );
     ctx.view = (Tick(90_000 * 2), Tick(90_000 * 4));
     ctx.linked = false;
@@ -7764,36 +7764,36 @@ fn t265_automation_axis_and_field_bind() {
     assert_eq!(
         v.axis(&ctx),
         (0, 90_000 * 10),
-        "вырожденное окно (уже кадра) откатывается к полному: делить на ноль нечем"
+        "a degenerate window (narrower than a frame) rolls back to the full one: there is nothing to divide by zero with"
     );
 
-    // ---- пп.15-16: поле правит ровно то, что показывает --------------
+    // ---- items 15–16: the field edits exactly what it shows --------------
     let mut c = ParamCurve {
         param: "db".into(),
 
         keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 0.0), AutoKey::at(Tick(90_000), 6.0)]),
         source: Default::default(),
     };
-    // выбран ключ — поле показывает и правит ЕГО
+    // a key is selected — the field shows and edits IT
     assert_eq!(bound_value(&c, Some(1), Tick(45_000)), 6.0);
     bound_apply(&mut c, Some(1), Tick(45_000), 3.0);
-    assert_eq!(c.keys[1].v, 3.0, "правка поля ушла в выбранный ключ");
-    assert_eq!(c.keys.len(), 2, "и лишнего ключа не появилось");
-    // ключ не выбран — поле показывает значение кривой ПОД КУРСОРОМ
+    assert_eq!(c.keys[1].v, 3.0, "the field edit went to the selected key");
+    assert_eq!(c.keys.len(), 2, "and no extra key appeared");
+    // the key is not selected — the field shows the value of the curve UNDER THE CURSOR
     let mid = bound_value(&c, None, Tick(45_000));
-    assert!((mid - 1.5).abs() < 1e-9, "показано значение кривой под курсором: {mid}");
+    assert!((mid - 1.5).abs() < 1e-9, "the curve value under the cursor is shown: {mid}");
     bound_apply(&mut c, None, Tick(45_000), 4.0);
-    assert_eq!(c.keys.len(), 3, "правка без выбранного ключа ставит ключ под курсором");
-    // новый ключ НАСЛЕДУЕТ форму отрезка, который делит (Р.61): иначе
-    // клик по графику молча превращал бы зигзаг в сглаживание, а у
-    // скорости варпа сглаженный ключ был бы отказом валидации
+    assert_eq!(c.keys.len(), 3, "an edit without a selected key places a key under the cursor");
+    // a new key INHERITS the shape of the segment it divides (R.61): otherwise
+    // a click on the graph would silently turn a zigzag into a smoothing, and for
+    // the warp speed a smoothed key would be a validation refusal
     assert_eq!(c.keys[1], AutoKey::shaped(Tick(45_000), 4.0, c.keys[0].shape));
-    assert_eq!(c.keys[1].shape, kt_model::SegShape::Linear, "форма отрезка не унаследована");
-    assert!(c.keys.windows(2).all(|w| w[0].t.0 <= w[1].t.0), "порядок ключей не нарушен");
-    // выбор за пределами кривой не роняет и трактуется как «не выбран»
+    assert_eq!(c.keys[1].shape, kt_model::SegShape::Linear, "the segment shape is not inherited");
+    assert!(c.keys.windows(2).all(|w| w[0].t.0 <= w[1].t.0), "key order is not broken");
+    // a selection outside the curve does not crash and is treated as “not selected”
     assert_eq!(bound_value(&c, Some(99), Tick(0)), c.keys[0].v);
 
-    // ---- пп.17-18: активная кривая и кнопки в живом окне -------------
+    // ---- items 17–18: the active curve and the buttons in the live window -------------
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
     let mut h = harness();
@@ -7829,33 +7829,33 @@ fn t265_automation_axis_and_field_bind() {
     h.step();
     h.step();
 
-    // добавляем ДВА параметра автоматизации подряд
+    // we add TWO automation parameters in a row
     let names: Vec<String> = {
         let f = h.state().model.project().clips[0].fx[0].clone();
         f.auto_params().take(2).map(|s| crate::widgets::param_label(&s.name)).collect()
     };
-    assert_eq!(names.len(), 2, "у slowed+reverb есть хотя бы два автоматизируемых параметра");
+    assert_eq!(names.len(), 2, "slowed+reverb has at least two automatable parameters");
 
     for n in &names {
         h.get_by_label(tr(k::fx::AUTO_ADD)).click();
         h.step();
         h.step();
-        // подпись параметра есть и в сетке значений, и в открывшемся
-        // меню — жмём ПОСЛЕДНЮЮ: меню рисуется поверх
-        h.get_all_by_label(n.as_str()).last().expect("пункт меню параметра").click();
+        // the parameter label is present both in the value grid and in the menu that opens —
+        // we press the LAST one: the menu is drawn on top
+        h.get_all_by_label(n.as_str()).last().expect("parameter menu item").click();
         h.step();
         h.step();
     }
     let curves = h.state().model.project().clips[0].fx_auto[0].clone();
-    assert_eq!(curves.len(), 2, "обе кривые заведены: {curves:?}");
+    assert_eq!(curves.len(), 2, "both curves are created: {curves:?}");
     assert_eq!(
         h.state().fx_editors[0].auto_views[&(ClipId(1), 0)].active,
         1,
-        "ВТОРОЙ добавленный параметр обязан стать активным — иначе клик по графику \
-         продолжает класть ключи в первую кривую, и вторая выглядит мёртвой (п.17)"
+        "the SECOND added parameter must become active — otherwise a click on the graph \
+         keeps placing keys into the first curve, and the second looks dead (item 17)"
     );
 
-    // кнопки управления ключами и осью на месте (п.18)
+    // the key and axis buttons are in place (item 18)
     for icon in [
         crate::icons::PLUS,
         crate::icons::SKIP_BACK,
@@ -7866,16 +7866,16 @@ fn t265_automation_axis_and_field_bind() {
     ] {
         assert!(
             h.query_all_by_label(icon).count() >= 1,
-            "в панели автоматизации нет кнопки {icon:?} (п.18)"
+            "there is no button {icon:?} in the automation panel (item 18)"
         );
     }
 }
 
-/// Тест 269 (Р.38 п.12): сила и фейды слоя правятся В ОКНЕ морфера и
-/// доезжают до модели. До этого раунда в патче не было ни одного поля
-/// силы, а `enabled` был бинарным — ровно расхождение, с которого начался
-/// Р.36 («морфер в Vegas позволяет ползунком управлять прозрачностью
-/// наложения эффектов, а у нас — нет»).
+/// Test 269 (R.38 item 12): the layer’s strength and fades are edited IN THE MORPHER WINDOW and
+/// reach the model. Until this round the patch had not a single strength field,
+/// and `enabled` was binary — exactly the mismatch with which R.36 began
+/// (“the morpher in Vegas lets you control the
+/// opacity of the effects overlay with a slider, and ours does not”).
 #[test]
 fn t269_morph_strength_and_fades_reach_the_model() {
     use egui_kittest::kittest::Queryable;
@@ -7890,14 +7890,14 @@ fn t269_morph_strength_and_fades_reach_the_model() {
     }
     h.step();
     h.step();
-    assert!(h.state().morph_editors.iter().any(|e| e.open), "окно морфера открылось");
-    // подпись силы видна — значит контрол дошёл до пользователя
+    assert!(h.state().morph_editors.iter().any(|e| e.open), "the morpher window opened");
+    // the strength label is visible — so the control reached the user
     assert!(
         h.query_by_label(tr(k::mrph::STRENGTH)).is_some(),
-        "в окне морфера нет поля силы (п.12)"
+        "there is no strength field in the morpher window (item 12)"
     );
 
-    // ставим силу и фейды через модель и проверяем, что движок их видит
+    // set strength and fades through the model and check that the engine sees them
     let app = h.state_mut();
     let mut ev = app.model.project().morphers[0].clone();
     ev.patch.video_fx = vec![FxInstance::edges(24)];
@@ -7909,31 +7909,31 @@ fn t269_morph_strength_and_fades_reach_the_model() {
         .iter()
         .filter(|c| c.fx.iter().any(|f| matches!(f, FxInstance::LayerMix { .. })))
         .collect();
-    // блок накрывает несколько событий — слот силы дописан КАЖДОМУ
-    assert!(!mixed.is_empty(), "слот силы дописан накрытым кускам");
+    // a block covering several events — the strength slot was added to EACH of them
+    assert!(!mixed.is_empty(), "the strength slot was appended to the covered pieces");
     let c = mixed[0];
     let mix_at = c.fx.iter().position(|f| matches!(f, FxInstance::LayerMix { .. })).unwrap();
     match &c.fx[mix_at] {
         FxInstance::LayerMix { amount, from } => {
-            assert!((amount - 0.4).abs() < 1e-9, "сила доехала: {amount}");
+            assert!((amount - 0.4).abs() < 1e-9, "strength reached: {amount}");
             assert_eq!(
                 *from as usize,
                 mix_at.saturating_sub(1),
-                "вклад слоя начинается с его эффекта"
+                "the contribution of a layer starts with its effect"
             );
         }
         _ => unreachable!(),
     }
-    assert!(!c.fx_auto[mix_at].is_empty(), "фейд — это КРИВАЯ силы, а не отдельный механизм");
+    assert!(!c.fx_auto[mix_at].is_empty(), "a fade is the strength CURVE, not a separate mechanism");
 
-    // Сила 1.0 без фейдов слота НЕ создаёт — ТАМ, ГДЕ СЛОЙ НАКРЫВАЕТ
-    // СОБЫТИЕ ЦЕЛИКОМ. Именно на этом стоят GOLDEN'ы: полное накрытие —
-    // самый частый случай, и путь для него обязан остаться байт-в-байт.
+    // Strength 1.0 without fades does NOT create a slot — WHERE THE LAYER COVERS
+    // THE EVENT ENTIRELY. This is exactly what the GOLDENs rest on: full coverage is
+    // the most frequent case, and its path must remain byte-for-byte.
     //
-    // С Р.55 (С2) у ЧАСТИЧНО накрытого события слот появляется и на
-    // умолчаниях: «по времени» теперь выражается ВОРОТАМИ силы, а не
-    // резкой, и без слота слой бил бы по всему телу. Это не регрессия
-    // умолчаний, а то, ради чего ворота и заведены.
+    // Since R.55 (C2) a PARTIALLY covered event gets a slot also on the defaults:
+    // “by time” is now expressed by strength GATES rather than a hard cut, and without a slot
+    // the layer would hit the whole body. This is not a regression of the defaults,
+    // but exactly what the gates were introduced for.
     let app = h.state_mut();
     let mut ev = app.model.project().morphers[0].clone();
     ev.strength = 1.0;
@@ -7945,13 +7945,13 @@ fn t269_morph_strength_and_fades_reach_the_model() {
     let has_mix = |c: &ClipEvent| c.fx.iter().any(|f| matches!(f, FxInstance::LayerMix { .. }));
     let whole: Vec<&ClipEvent> =
         eff.iter().filter(|c| win.start <= c.start && c.start + c.duration <= win.end).collect();
-    assert!(!whole.is_empty(), "сцена выродилась: слой не накрывает ни одного события целиком");
+    assert!(!whole.is_empty(), "scene degenerated: the layer does not cover a single event entirely");
     assert!(
         whole.iter().all(|c| !has_mix(c)),
-        "на умолчаниях у ЦЕЛИКОМ накрытого события слота смешения нет вовсе — \
-         на этом стоят GOLDEN'ы"
+        "by default a blending slot does not exist at all for an event FULLY covered — \
+         the GOLDEN tests depend on this"
     );
-    // а у частично накрытого он есть, и это и есть «по времени»
+    // but a PARTIALLY covered one has it, and that is what “by time” is
     let part: Vec<&ClipEvent> = eff
         .iter()
         .filter(|c| {
@@ -7961,21 +7961,21 @@ fn t269_morph_strength_and_fades_reach_the_model() {
         .collect();
     assert!(
         part.iter().all(|c| has_mix(c)),
-        "у частично накрытого события обязаны быть ВОРОТА силы — иначе слой \
-         действует на всё тело, а человек просил окно"
+        "a partially covered event must have a strength GATE — otherwise the layer \
+         acts on the whole body, while the person asked for a window"
     );
 }
 
-/// Тест 274 (Р.40 п.11): высота дорожки доходит до СОБЫТИЯ.
+/// Test 274 (R.40 item 11): the track height reaches the EVENT.
 ///
-/// Претензия дословно: «дорожка меняет высоту а события до сих пор мелкие —
-/// ты нихуя не проверял». И правда: t262 проверял, что поле `lane_heights`
-/// получило значение и `row_h` изменился, а во всём `draw_timeline` стояла
-/// ОДНА переменная `lane_h = vl.base_h` на 36 использований — событие как
-/// рисовалось базовой высотой, так и рисовалось.
+/// Complaint verbatim: “the track changes its height but the events are still tiny —
+/// you did not check a damn thing”. And true: t262 checked that the field `lane_heights`
+/// got a value and `row_h` changed, but throughout `draw_timeline` there was
+/// ONE variable `lane_h = vl.base_h` used 36 times — an event was drawn at the base
+/// height, and that was all.
 ///
-/// Поэтому этот тест утверждает НАБЛЮДАЕМОЕ СЛЕДСТВИЕ: прямоугольник
-/// события вырос, и мышь попадает в него ТАМ, где он теперь нарисован.
+/// Therefore this test asserts the OBSERVABLE CONSEQUENCE: the event’s rectangle
+/// has grown, and the mouse hits it WHERE it is now drawn.
 #[test]
 fn t274_row_height_reaches_the_clip() {
     use kt_model::{ClipKind, LaneKind};
@@ -7984,7 +7984,7 @@ fn t274_row_height_reaches_the_clip() {
     let key = (LaneKind::Video, 0u32);
     let before = g0.lane_h_of(ClipKind::Video, 0);
 
-    // ставим строке высоту вдвое больше базовой
+    // set the row height to twice the base
     let want = before * 2.0;
     {
         let app = h.state_mut();
@@ -7996,16 +7996,16 @@ fn t274_row_height_reaches_the_clip() {
 
     assert!(
         (g.lane_h_of(ClipKind::Video, 0) - want).abs() < 1.0,
-        "СОБЫТИЕ обязано считаться высотой своей строки: {} вместо {want}",
+        "the EVENT must count the height of its row: {} instead of {want}",
         g.lane_h_of(ClipKind::Video, 0)
     );
     assert!(
         (g.row_h(g.row_of(key).unwrap()) - want).abs() < 1.0,
-        "и строка тоже (это и раньше работало)"
+        "and the row too (this worked before as well)"
     );
 
-    // СЛЕДСТВИЕ: мышь попадает в событие НИЖЕ прежней границы —
-    // там, где до Р.40 была голая подложка дорожки
+    // CONSEQUENCE: the mouse hits the event BELOW the old boundary —
+    // where before R.40 there was the bare track backing
     let c = h.state().model.project().clips[0].clone();
     let x = g.tick_to_x(c.start.0 + c.duration.0 / 2);
     let deep_y = g.lane_top(ClipKind::Video, 0) + before + (want - before) * 0.5;
@@ -8017,29 +8017,29 @@ fn t274_row_height_reaches_the_clip() {
     h.step();
     assert!(
         h.state().is_selected(c.id),
-        "клик в нижнюю половину выросшей строки обязан попасть в событие \
-         (y = {deep_y}, прежняя граница была {})",
+        "a click in the lower half of the grown row must hit the event \
+         (y = {deep_y}, the previous boundary was {})",
         g.lane_top(ClipKind::Video, 0) + before
     );
 
-    // соседняя дорожка не поехала
+    // the neighbouring track did not move
     let audio_h = g.lane_h_of(ClipKind::Audio, 0);
     assert!(
         (audio_h - before).abs() < 1.0,
-        "чужая дорожка сохраняет свою высоту: {audio_h} вместо {before}"
+        "another track keeps its height: {audio_h} instead of {before}"
     );
 }
 
-/// Тест 275 (Р.40 п.4, дословно: «можно сто раз добавить морфер слой, и он
-/// будет каждый раз его создавать на одном и том же треке — в итоге там
-/// может быть куча морферов скрыта за одним и тем же местом»).
+/// Test 275 (R.40 item 4, verbatim: “you can add a morpher layer a hundred times, and it
+/// will create it each time on the same track — in the end there can be a heap of morphers hidden
+/// behind one and the same place”).
 ///
-/// Р.38 переиспользовал ПЕРВУЮ морф-строку всегда. Пользователь ответил,
-/// что делать: «но надо проверить — может ещё одна дорожка уже свободная
-/// есть». Свободная — значит свободная НА ЭТОМ ПРОМЕЖУТКЕ.
+/// R.38 always reused the FIRST morph row. The user answered what to do:
+/// “but one should check — maybe one more track is already free”.
+/// Free means free IN THIS SPAN.
 ///
-/// Тест утверждает НАБЛЮДАЕМОЕ СЛЕДСТВИЕ: два блока не лежат друг на
-/// друге, то есть каждый можно схватить мышью.
+/// This test asserts the OBSERVABLE CONSEQUENCE: two blocks do not lie on top of each other,
+/// that is, each one can be grabbed with the mouse.
 #[test]
 fn t275_morph_layer_never_hides_a_block_under_another() {
     use kt_model::LaneKind;
@@ -8049,22 +8049,22 @@ fn t275_morph_layer_never_hides_a_block_under_another() {
         let app = h.state_mut();
         app.player.seek(Tick(100_000));
         app.add_morph_layer();
-        // второе «+M» РОВНО ТАМ ЖЕ: место занято
+        // the second “+M” RIGHT THERE: the place is taken
         app.add_morph_layer();
         app.morph_editors.clear();
     }
     h.step();
     let pr = h.state().model.project().clone();
-    assert_eq!(pr.morphers.len(), 2, "оба блока созданы");
+    assert_eq!(pr.morphers.len(), 2, "both blocks created");
     assert_eq!(
         pr.lanes(kt_model::LaneKind::Morph),
         2,
-        "занятое место обязано увести блок на новую дорожку"
+        "an occupied place must move the block to a new track"
     );
-    assert_ne!(pr.morphers[0].lane, pr.morphers[1].lane, "и они не на одной дорожке");
+    assert_ne!(pr.morphers[0].lane, pr.morphers[1].lane, "and they are not on one track");
 
-    // третье «+M» в СВОБОДНОЕ время: новой дорожки быть не должно —
-    // «слой» не про дорожки, дорожки заводятся своим пунктом меню
+    // a third “+M” in a FREE time: there must be no new track —
+    // “layer” is not about tracks, tracks are opened by their own menu item
     {
         let app = h.state_mut();
         app.player.seek(Tick(600_000));
@@ -8076,15 +8076,15 @@ fn t275_morph_layer_never_hides_a_block_under_another() {
     assert_eq!(
         pr.lanes(kt_model::LaneKind::Morph),
         2,
-        "свободное время — дорожка переиспользуется"
+        "free time — the track is reused"
     );
     assert_eq!(pr.morphers.len(), 3);
 
-    // и следствие, ради которого всё: каждый блок ловится мышью в СВОЕЙ
-    // строке — ни один не спрятан под другим
+    // and the consequence the whole thing is for: each block is caught by the mouse in ITS OWN
+    // row — none is hidden under another
     let g = h.state().tl_geom.clone().unwrap();
     for m in &pr.morphers {
-        let row = g.row_of((LaneKind::Morph, m.lane)).expect("строка блока");
+        let row = g.row_of((LaneKind::Morph, m.lane)).expect("block row");
         let pos = egui::pos2(g.tick_to_x(m.start.0 + m.duration.0 / 2), g.row_center_y(row));
         h.hover_at(pos);
         h.step();
@@ -8094,16 +8094,16 @@ fn t275_morph_layer_never_hides_a_block_under_another() {
         h.step();
         assert!(
             h.state().selected_morph.contains(&m.id),
-            "блок {:?} на дорожке {} не ловится мышью — он спрятан под другим",
+            "block {:?} on track {} cannot be hit with the mouse — it is hidden under another",
             m.id,
             m.lane
         );
     }
 }
 
-/// Тест 276 (Р.40 п.2, дословно: «я не могу перемещать морферы по разным
-/// дорожкам»). Морф- и камера-блок ездят между своими строками мышью —
-/// как клип.
+/// Test 276 (R.40 item 2, verbatim: “I cannot move morphers between different
+/// tracks”). Morph and camera blocks move between their own rows with the mouse —
+/// like a clip.
 #[test]
 fn t276_service_blocks_move_between_lanes() {
     use kt_model::{Command, LaneKind};
@@ -8113,7 +8113,7 @@ fn t276_service_blocks_move_between_lanes() {
         let app = h.state_mut();
         app.player.seek(Tick(100_000));
         app.add_morph_layer();
-        app.add_morph_layer(); // вторая строка (место занято) — есть куда везти
+        app.add_morph_layer(); // the second row (place taken) — there is somewhere to move it to
         app.morph_editors.clear();
         assert!(app.apply(Command::InsertTrack { kind: kt_model::LaneKind::Camera, at: 0 }));
         assert!(app.apply(Command::InsertTrack { kind: kt_model::LaneKind::Camera, at: 1 }));
@@ -8123,7 +8123,7 @@ fn t276_service_blocks_move_between_lanes() {
     h.step();
     h.step();
 
-    // ---- морфер: с дорожки 0 на дорожку 1 ----
+    // ---- morpher: from track 0 to track 1 ----
     let g = h.state().tl_geom.clone().unwrap();
     let m = h.state().model.project().morphers[0].clone();
     let from_row = g.row_of((LaneKind::Morph, m.lane)).unwrap();
@@ -8136,7 +8136,7 @@ fn t276_service_blocks_move_between_lanes() {
     h.step();
     h.drag_at(from);
     h.step();
-    // порог драга: сначала маленький сдвиг, потом цель (правило харнесса)
+    // drag threshold: first a small shift, then the target (harness rule)
     h.hover_at(egui::pos2(x + 8.0, from.y));
     h.step();
     h.hover_at(to);
@@ -8144,9 +8144,9 @@ fn t276_service_blocks_move_between_lanes() {
     h.drop_at(to);
     h.step();
     let m2 = h.state().model.project().morphers.iter().find(|z| z.id == m.id).unwrap().clone();
-    assert_eq!(m2.lane, to_lane, "морф-блок обязан переезжать на строку под курсором");
+    assert_eq!(m2.lane, to_lane, "a morph block must move to the row under the cursor");
 
-    // ---- камера: то же самое ----
+    // ---- camera: the same ----
     let g = h.state().tl_geom.clone().unwrap();
     let c = h.state().model.project().cameras[0].clone();
     let from_row = g.row_of((LaneKind::Camera, c.lane)).unwrap();
@@ -8166,14 +8166,14 @@ fn t276_service_blocks_move_between_lanes() {
     h.drop_at(to);
     h.step();
     let c2 = h.state().model.project().cameras.iter().find(|z| z.id == c.id).unwrap().clone();
-    assert_eq!(c2.lane, to_lane, "камерный блок обязан переезжать на строку под курсором");
+    assert_eq!(c2.lane, to_lane, "a camera block must move to the row under the cursor");
 }
 
-/// Тест 277 (Р.40, дословно: «Морферы почему-то не выделяются через
-/// area-select, нихуя ты не проверял»).
+/// Test 277 (R.40, verbatim: “Morphers for some reason are not selected via
+/// area-select, you did not check a damn thing”).
 ///
-/// Рамка ловила ТОЛЬКО клипы — её улов был `Vec<ClipId>`, тип сам это
-/// заявлял, — а поймав клипы, ещё и ГАСИЛА выделенный морфер.
+/// The frame caught ONLY clips — its catch was `Vec<ClipId>`, the type itself said so —
+/// and having caught the clips, it also CANCELLED the selected morpher.
 #[test]
 fn t277_rubber_band_catches_service_blocks() {
     use kt_model::{Command, LaneKind};
@@ -8187,7 +8187,7 @@ fn t277_rubber_band_catches_service_blocks() {
         assert!(app.apply(Command::InsertTrack { kind: kt_model::LaneKind::Camera, at: 0 }));
         app.player.seek(Tick(100_000));
         app.add_camera_at_playhead(0);
-        app.sel_tool = true; // рамка обычным драгом
+        app.sel_tool = true; // a plain drag of the frame
     }
     h.step();
     h.step();
@@ -8198,13 +8198,13 @@ fn t277_rubber_band_catches_service_blocks() {
     let c = pr.cameras[0].clone();
     let m_row = g.row_of((LaneKind::Morph, m.lane)).unwrap();
     let c_row = g.row_of((LaneKind::Camera, c.lane)).unwrap();
-    // рамка от верха верхней служебной строки до низа нижней, по времени —
-    // поверх обоих блоков
+    // the frame from the top of the upper service row to the bottom of the lower one, in time —
+    // over both blocks
     let top = g.row_top(m_row.min(c_row)) - 2.0;
     let bot = g.row_top(m_row.max(c_row)) + g.row_h(m_row.max(c_row)) - 2.0;
     let x0 = g.tick_to_x(m.start.0.min(c.start.0)) + 2.0;
     let x1 = g.tick_to_x((m.start + m.duration).0.min((c.start + c.duration).0)) - 2.0;
-    assert!(x1 > x0 + 10.0, "сцена: блоки перекрываются по времени");
+    assert!(x1 > x0 + 10.0, "scene: blocks overlap in time");
 
     let from = egui::pos2(x0, top);
     h.hover_at(from);
@@ -8220,47 +8220,47 @@ fn t277_rubber_band_catches_service_blocks() {
 
     assert!(
         h.state().selected_morph.contains(&m.id),
-        "рамка обязана выделять морфер: она рисуется поверх него и «ловит» — а ловила нет"
+        "the frame must select the morpher: it is drawn over it and “catches” — but it did not catch"
     );
-    assert!(h.state().selected_camera.contains(&c.id), "и камеру — тем же жестом");
+    assert!(h.state().selected_camera.contains(&c.id), "and the camera with the same gesture");
 
-    // и следствие: Del убирает ровно пойманное
+    // and the consequence: Del removes exactly what was caught
     h.state_mut().delete_action();
     h.step();
     let pr = h.state().model.project().clone();
-    assert!(pr.morphers.is_empty() && pr.cameras.is_empty(), "Del убирает всё пойманное рамкой");
+    assert!(pr.morphers.is_empty() && pr.cameras.is_empty(), "Del removes everything caught by the frame");
 }
 
-/// Тест 278 (Р.40 п.12, дословно: «я у мелкого события пытаюсь там выловить
-/// opacity но не получается»).
+/// Test 278 (R.40 item 12, verbatim: “on a small event I try to catch
+/// the opacity there but it does not work”).
 ///
-/// Замков было два, и оба подтверждались арифметикой:
-///   * `ClipZone::Level` требовал `x1 − x0 > 24.0` — на коротком событии
-///     уровня не было ни при каком y;
-///   * ручка фейда ловилась на ±12 px от УГЛА всегда, поэтому на событии
-///     уже 24 px обе ручки перекрывали его целиком и середины не
-///     оставалось.
+/// There were two locks, and both were confirmed by arithmetic:
+///   * `ClipZone::Level` required `x1 − x0 > 24.0` — on a short event
+///     there was no level at any y;
+///   * the fade handle was always caught ±12 px from the CORNER, so on an event
+///     only 24 px wide both handles covered it entirely and no middle was
+///     left.
 ///
-/// Тест утверждает СЛЕДСТВИЕ: на коротком событии тянут вниз в середине
-/// верхней полосы — и непрозрачность падает.
+/// The test asserts the CONSEQUENCE: on a short event one pulls down in the middle of the
+/// upper strip — and the opacity drops.
 #[test]
 fn t278_opacity_reachable_on_a_short_event() {
     use crate::timeline::{fade_grab_for_width, level_y, top_strip_h};
     use kt_model::ClipKind;
     use kt_time::Tick;
 
-    // чистая арифметика: середина узкого события не принадлежит ручкам
+    // pure arithmetic: the middle of a narrow event does not belong to the handles
     for w in [10.0f32, 18.0, 24.0, 40.0] {
         let g = fade_grab_for_width(w);
         assert!(
             2.0 * g < w,
-            "при ширине {w} ручки фейда (±{g}) перекрывают событие целиком — \
-             середины, где живёт уровень, не остаётся"
+            "at width {w} the fade handles (±{g}) cover the event entirely — \
+             no middle remains where the level lives"
         );
     }
 
     let (mut h, _) = harness_three_clips();
-    // укоротим первое событие до ~20 px: ровно тот случай, о котором речь
+    // shorten the first event to about 20 px: exactly the case in question
     let (id, x0, y_line) = {
         let g0 = h.state().tl_geom.clone().unwrap();
         let px = 20.0 * g0.tpp;
@@ -8278,8 +8278,8 @@ fn t278_opacity_reachable_on_a_short_event() {
     let g = h.state().tl_geom.clone().unwrap();
     let c = h.state().model.project().clips.iter().find(|z| z.id == id).unwrap().clone();
     let wide = g.tick_to_x((c.start + c.duration).0) - g.tick_to_x(c.start.0);
-    assert!(wide < 24.0, "сцена: событие короче старого порога, {wide} px");
-    assert_eq!(c.opacity, 1.0, "старт с умолчания — с него и начинают тянуть");
+    assert!(wide < 24.0, "scene: event shorter than the old threshold, {wide} px");
+    assert_eq!(c.opacity, 1.0, "the start from the default — that is where dragging starts");
 
     let top = g.lane_top(ClipKind::Video, c.lane);
     let lane_h = g.lane_h_of(ClipKind::Video, c.lane);
@@ -8287,11 +8287,11 @@ fn t278_opacity_reachable_on_a_short_event() {
     let ly = level_y(1.0, top, lane_h);
     assert!(
         ly <= top + top_strip_h(lane_h),
-        "линия уровня при opacity = 1.0 лежит внутри полосы фейда — \
-         именно поэтому первый захват и не удавался"
+        "the level line at opacity = 1.0 lies inside the fade strip — \
+         that is exactly why the first grab did not succeed"
     );
 
-    // и жест доводит дело до модели
+    // and the gesture carries it through to the model
     let from = egui::pos2(mid_x, ly);
     h.hover_at(from);
     h.step();
@@ -8306,41 +8306,41 @@ fn t278_opacity_reachable_on_a_short_event() {
     let after = h.state().model.project().clips.iter().find(|z| z.id == id).unwrap().opacity;
     assert!(
         after < 0.95,
-        "тянули линию уровня вниз — непрозрачность обязана упасть, а она {after}"
+        "the level line was dragged down — the opacity must drop, but it is {after}"
     );
 }
 
-/// Тест 279 (Р.40 пп.15/18 и «ключи съезжают»).
+/// Test 279 (R.40 items 15/18 and “keys slide”).
 ///
-/// Три претензии одного семейства:
-///   * «замочек не до конца работает, надо сделать так чтобы его надо было
-///     СНЯТЬ чтобы отключилась синхронизация таймлайнов, и замочек надо
-///     чтобы запоминал свое состояние»;
-///   * «не хватает по мимо кнопки установки ключа - двух кнопок ключ ДО и
-///     ключ ПОСЛЕ текущей позиции»;
-///   * «когда я оттягиваю левый край события - у меня ключи автоматизации
-///     тоже сдвигаются к началу, и это поведение никак не поменять».
+/// Three complaints of one family:
+///   * “the lock does not fully work: it has to be made so that it must be
+///     TAKEN OFF to disable timeline sync, and the lock must
+///     remember its state”;
+///   * “there is not enough beside the set-key button — two buttons, key BEFORE and
+///     key AFTER the current position”;
+///   * “when I pull the left edge of the event — my automation keys also shift
+///     to the start, and this behaviour cannot be changed in any way”.
 ///
-/// Последняя — не про данные: ключ НЕ двигается, врала ось. Тест
-/// утверждает обе половины: ключ на месте, и ось его показывает на месте.
+/// The last one is not about data: the key does NOT move, the axis lied. The test
+/// asserts both halves: the key is in place, and the axis shows it in place.
 #[test]
 fn t279_axis_lock_and_keys_that_stay() {
     use kt_model::{AutoKey, Command, FxInstance, ParamCurve};
     use kt_time::Tick;
 
-    // ---- замок помнится в проекте и один на программу ----------------
+    // ---- the lock is remembered in the project and is one per program ----------------
     let mut h = harness();
     {
         let app = h.state_mut();
-        assert!(app.auto_axis_linked, "умолчание — замок НАДЕТ (правило 4 чек-листа)");
+        assert!(app.auto_axis_linked, "the default — the lock is ON (rule 4 of the checklist)");
         app.auto_axis_linked = false;
         let ui = app.ui_state_for_test();
-        assert!(ui.auto_axis_unlinked, "снятый замок обязан попадать в проект");
+        assert!(ui.auto_axis_unlinked, "a removed lock must get into the project");
         let back = kt_model::UiState { auto_axis_unlinked: true, ..Default::default() };
-        assert!(!(!back.auto_axis_unlinked), "и читаться обратно снятым");
+        assert!(!(!back.auto_axis_unlinked), "and be read back as removed");
     }
 
-    // ---- ключ при триме остаётся на СВОЁМ кадре ----------------------
+    // ---- the key stays on ITS frame during a trim ----------------------
     let (mut h, _) = harness_three_clips();
     let id = h.state().model.project().clips[0].id;
     {
@@ -8363,23 +8363,23 @@ fn t279_axis_lock_and_keys_that_stay() {
     }
     let before: Vec<i64> =
         h.state().model.project().clips[0].fx_auto[0][0].keys.iter().map(|k| k.t.0).collect();
-    // левый край вправо на 20 000 тиков
+    // left edge to the right by 20 000 ticks
     let start = h.state().model.project().clips[0].start;
     assert!(h.state_mut().apply(Command::TrimStart { id, new_start: start + Tick(20_000) }));
     let after: Vec<i64> =
         h.state().model.project().clips[0].fx_auto[0][0].keys.iter().map(|k| k.t.0).collect();
     assert_eq!(
         after, before,
-        "ключ обязан остаться на ТОМ ЖЕ кадре материала: «вот как сделать так чтобы \
-         он НЕ съезжал никуда хоть я левый край двигаю влево хоть в право»"
+        "the key must stay on THE SAME frame of the material: “how do I make it \
+         NOT slide anywhere, whether I move the left edge to the left or to the right”"
     );
 
-    // ---- и опция, которая делает ОБРАТНОЕ, выключена по умолчанию ----
+    // ---- and the option that does the OPPOSITE is off by default ----
     {
         let app = h.state_mut();
         assert!(
             !app.model.project().trim_stretches_auto,
-            "растягивание анимации вместе с событием — НЕ умолчание"
+            "stretching the animation together with the event is NOT the default"
         );
         assert!(app.apply(Command::SetTrimStretchesAuto { on: true }));
     }
@@ -8390,36 +8390,36 @@ fn t279_axis_lock_and_keys_that_stay() {
     assert!(h.state_mut().apply(Command::TrimStart { id, new_start: start + Tick(10_000) }));
     let c1 = h.state().model.project().clips[0].clone();
     let stretched: Vec<i64> = c1.fx_auto[0][0].keys.iter().map(|k| k.t.0).collect();
-    assert_ne!(stretched, after, "с включённой опцией ключи обязаны поехать");
-    // и поехать РОВНО пропорционально: доля ключа внутри события сохранена
+    assert_ne!(stretched, after, "with the option on, the keys must move");
+    // and move EXACTLY proportionally: the key’s share within the event is kept
     let span_new = kt_model::clip_material_span(&c1);
     for (k, off0) in stretched.iter().zip(&offs_old) {
         let want =
             c1.source_in.0 + (*off0 as f64 * span_new as f64 / span_old as f64).round() as i64;
         assert_eq!(
             *k, want,
-            "доля ключа внутри события обязана сохраниться: {span_old} → {span_new}"
+            "the share of the key inside the event must be preserved: {span_old} → {span_new}"
         );
     }
 }
 
-/// Тест 281 (Р.43 п.1): значение ключа, НАПЕЧАТАННОЕ в поле параметра,
-/// доезжает до модели.
+/// Test 281 (R.43 item 1): a key value TYPED in the parameter field
+/// reaches the model.
 ///
-/// Претензия дословно: «в таймлайне автоматизации для ключей slowed-reverb я
-/// например проставляю в поле ввода rate а он скидывается на предыдущее
-/// значение, а если на графике сдвину ключ - то значение меняется как надо.
-/// Кстати - в морфере это работает хорошо».
+/// Complaint verbatim: “in the automation timeline for slowed-reverb keys I
+/// for example type a rate into the input field and it jumps back to the previous
+/// value, but if I move the key on the graph the value changes as it should.
+/// By the way — in the morpher this works well”.
 ///
-/// Причина: у поля и у графика был ОДИН флаг на двоих, а окно FX клало
-/// `auto` в команду только по флагу графика. Правка поля уходила в локальный
-/// клон `auto`, который умирал вместе с кадром, и на следующем кадре поле
-/// читало старое значение из модели.
+/// Cause: the field and the graph had ONE flag between them, and the FX window put
+/// `auto` into the command only by the graph’s flag. The field’s edit went into a local
+/// clone of `auto`, which died together with the frame, and on the next frame the field
+/// read the old value from the model.
 ///
-/// Тест утверждает СЛЕДСТВИЕ (кривая в МОДЕЛИ) и щупает ИЗ ТОЧКИ, ОТКУДА
-/// ДЕЙСТВУЕТ ЧЕЛОВЕК (символы в поле рядом с подписью параметра) — этого не
-/// делал t265, который проверял `bound_value`/`bound_apply` как чистые
-/// функции и был зелёным на сломанной программе.
+/// The test asserts the CONSEQUENCE (the curve in the MODEL) and probes FROM THE POINT WHERE
+/// THE PERSON ACTS (the characters in the field next to the parameter label) — this is what
+/// t265 did not do: it checked `bound_value`/`bound_apply` as pure
+/// functions and was green on a broken program.
 #[test]
 fn t281_typed_key_value_reaches_the_model() {
     use egui_kittest::kittest::Queryable;
@@ -8465,28 +8465,28 @@ fn t281_typed_key_value_reaches_the_model() {
     h.step();
     h.step();
 
-    // поле ЖИВОГО параметра стоит в сетке между своей подписью и подписью
-    // следующего параметра — целимся туда же, куда человек. `DragValue`
-    // своего узла в дереве доступности не заводит, поэтому по подписи его
-    // не найти: берём координату из РЕАЛЬНОЙ вёрстки.
+    // the field of the LIVE parameter sits in the grid between its own label and the label
+    // of the next parameter — we aim where a person would. `DragValue`
+    // does not create its own node in the accessibility tree, so it cannot be found by its label:
+    // we take the coordinate from the REAL layout.
     let (lbl_rate, lbl_mix) =
         (crate::widgets::param_label("rate"), crate::widgets::param_label("mix"));
-    // подпись параметра встречается дважды: в сетке значений и кнопкой
-    // выбора кривой в панели автоматизации НИЖЕ. Нам нужна ВЕРХНЯЯ — сетка
-    // рисуется до графика.
+    // the parameter label occurs twice: in the value grid and as the curve-selection button
+    // in the automation panel BELOW. We need the UPPER one — the grid
+    // is drawn before the graph.
     let top_label = |h: &Harness<'_, KtApp>, lbl: &str| -> egui::Rect {
         h.query_all_by_label(lbl)
             .map(|n| n.rect())
             .min_by(|a, b| a.top().total_cmp(&b.top()))
-            .unwrap_or_else(|| panic!("подпись параметра {lbl:?} не нарисована"))
+            .unwrap_or_else(|| panic!("the label of parameter {lbl:?} is not drawn"))
     };
     let r = top_label(&h, &lbl_rate);
     let (x0, y) = (r.right(), r.center().y);
     let x1 = top_label(&h, &lbl_mix).left();
-    assert!(x1 > x0 + 8.0, "между подписями параметров обязано быть место под поле");
+    assert!(x1 > x0 + 8.0, "there must be room for a field between the parameter labels");
     let pos = egui::pos2((x0 + x1) * 0.5, y);
 
-    // клик по полю переводит его в режим ввода; дальше — символы и Enter
+    // a click on the field switches it to input mode; then characters and Enter
     h.hover_at(pos);
     h.step();
     for pressed in [true, false] {
@@ -8509,33 +8509,33 @@ fn t281_typed_key_value_reaches_the_model() {
         .iter()
         .find(|c| c.param == "rate")
         .and_then(|c| c.keys.iter().find(|k| k.t == kt_time::Tick(0)))
-        .expect("ключ кривой rate в нуле материала");
+        .expect("the rate curve key at the material zero");
     assert_eq!(
         key.v, 3.0,
-        "напечатанное значение обязано доехать до МОДЕЛИ, а не откатиться \
-         (кривая: {curves:?})"
+        "the typed value must reach the MODEL, not roll back \
+         (curve: {curves:?})"
     );
-    // и правка кривой не выдумывает шагов истории на каждый символ
+    // and a curve edit does not invent a history step for every character
     assert_eq!(
         h.state().model.project().clips[0].fx_auto[0][0].keys.len(),
         2,
-        "поле правит существующий ключ, а не плодит новые"
+        "the field edits an existing key, not creates new ones"
     );
 }
 
-/// Тест 286 (Р.43 п.296): правка «удобства» не пересобирает движок.
+/// Test 286 (R.43 item 296): an edit of the “convenience” does not rebuild the engine.
 ///
-/// Претензия: «регион "зацикленность_5" какой-то поломанный при
-/// воспроизведении, underruns растут». `on_region_changed` звала
-/// `Player::set_project` — клон всего проекта плюс `VideoRenderer::new` и
-/// пересборка `AudioRenderer` в render-потоке. На монтаже пользователя это
-/// 1961 событие НА КАЖДОЕ движение границы региона и на каждое нажатие
-/// Loop: аудио-поток вставал, кольцо пустело, начинались
-/// callback-underrun'ы — а после п.294 они больше не тормозят часы, но
-/// слышны тишиной.
+/// Complaint: “the region ‘looping_5’ is somehow broken during
+/// playback, underruns keep growing”. `on_region_changed` called
+/// `Player::set_project` — a clone of the whole project plus `VideoRenderer::new` and
+/// a rebuild of `AudioRenderer` in the render thread. On the user’s edit this meant
+/// 1961 events, ON EVERY MOVE of the region boundary and on every press of
+/// Loop: the audio thread stopped, the ring emptied, and callback underruns began,
+/// and after item 294 they no longer slow the clock, but are heard as silence.
 ///
-/// Регион и `loop_enabled` живут в «удобстве» (`apps/kt-app/CLAUDE.md`), и
-/// движок их из проекта не читает: луп доезжает `set_loop_region`.
+/// The region and `loop_enabled` live in the “convenience” state (`apps/kt-app/CLAUDE.md`),
+/// and the engine does not read them from the project: the loop reaches it via
+/// `set_loop_region`.
 #[test]
 fn t286_region_edits_do_not_rebuild_the_engine() {
     use kt_model::*;
@@ -8578,39 +8578,39 @@ fn t286_region_edits_do_not_rebuild_the_engine() {
     assert_eq!(
         app.player.project_version(),
         before,
-        "регион и loop — «удобство»: движок пересобирать не за чем"
+        "region and loop are a “convenience”: there is no reason to rebuild the engine"
     );
 
-    // а правка СОДЕРЖИМОГО обязана доехать до плеера тем же путём, что и была
+    // but a CONTENT edit must reach the player by the same path it did
     app.apply(Command::SetGain { id: ClipId(1), gain_db: -3.0 });
     assert!(
         app.player.project_version() > before,
-        "правка содержимого обязана доносить проект до движка"
+        "a content edit must carry the project to the engine"
     );
 }
 
-/// Тест 289 (Р.43 п.290): два числа underrun'ов подписаны, а тишина
-/// показана в МИЛЛИСЕКУНДАХ.
+/// Test 289 (R.43 item 290): two underrun numbers are labelled, but silence is
+/// shown in MILLISECONDS.
 ///
-/// Претензия пользователя была написана так: «левый underruns растет, и
-/// правый тоже начинает чуть позже». Левое число — промахи РЕНДЕРА,
-/// правое — голодание КОЛБЭКА, и это каскад «кэш не отдал бёрст → кольцо
-/// опустело», а вовсе не левый и правый каналы. В интерфейсе стояло голое
-/// `Underruns X/Y` без единого слова о том, что есть что, — читать их как
-/// L/R было совершенно законно.
+/// The user’s complaint was phrased as: “the left underruns grow, and
+/// the right one also starts a little later”. The left number is RENDER misses,
+/// the right one is CALLBACK starvation, and this is a cascade “the cache did not give a burst → the ring
+/// emptied”, not the left and right channels at all. The interface showed a bare
+/// `Underruns X/Y` without a single word about what is what — reading them as
+/// L/R was entirely legitimate.
 ///
-/// Отдельно: голодание колбэка — это КАДРЫ, которых не было на выходе.
-/// В кадрах число человеку ни о чём не говорит; в строке состояния оно
-/// показано ещё и миллисекундами тишины.
+/// Separately: callback starvation means FRAMES that were missing at the output.
+/// In frames the number says nothing to a person; the status line shows it
+/// also in milliseconds of silence.
 #[test]
 fn t289_underrun_counters_are_labelled_and_silence_is_in_ms() {
     use egui_kittest::kittest::Queryable;
     use std::sync::atomic::Ordering;
 
     let mut h = harness();
-    // различимые числа: перепутать местами не выйдет
+    // distinguishable numbers: they cannot be swapped by mistake
     const RENDER: u64 = 7;
-    const CALLBACK: u64 = 96_000; // ровно 2000 мс тишины при 48 кГц
+    const CALLBACK: u64 = 96_000; // exactly 2000 ms of silence at 48 kHz
     {
         let app = h.state();
         app.player.underruns.store(RENDER, Ordering::Relaxed);
@@ -8619,9 +8619,9 @@ fn t289_underrun_counters_are_labelled_and_silence_is_in_ms() {
     h.step();
     h.step();
 
-    // берём НАСТОЯЩИЙ текст надписи, а не Debug узла: в дампе узла полно
-    // букв от служебных полей, и проверка «между числами есть слово»
-    // выполнялась бы сама собой
+    // we take the REAL text of the label, not the node’s Debug output: the node dump is full of
+    // letters from service fields, and the check “there is a word between the numbers”
+    // would pass by itself
     use egui_kittest::kittest::NodeT;
     let texts: Vec<String> = h
         .query_all_by_label_contains("")
@@ -8632,13 +8632,13 @@ fn t289_underrun_counters_are_labelled_and_silence_is_in_ms() {
         .filter(|t| t.to_lowercase().contains("underrun"))
         .collect();
     let all = texts.join("\n").to_lowercase();
-    assert!(!texts.is_empty(), "счётчики underrun'ов обязаны быть видны — их не нашлось вовсе");
+    assert!(!texts.is_empty(), "the underrun counters must be visible — they were not found at all");
     assert!(
         all.contains(&RENDER.to_string()) && all.contains(&CALLBACK.to_string()),
-        "оба числа обязаны быть показаны: {texts:?}"
+        "both numbers must be shown: {texts:?}"
     );
-    // и хотя бы в одном месте они РАЗЛИЧЕНЫ СЛОВАМИ, а не только косой
-    // чертой: «7/96000» не говорит, где рендер, а где колбэк
+    // and in at least one place they are DISTINGUISHED BY WORDS, not only by a slash:
+    // “7/96000” does not say which is the render and which is the callback
     let labelled = texts.iter().any(|t| {
         let (Some(a), Some(b)) = (t.find(&RENDER.to_string()), t.find(&CALLBACK.to_string()))
         else {
@@ -8648,23 +8648,23 @@ fn t289_underrun_counters_are_labelled_and_silence_is_in_ms() {
     });
     assert!(
         labelled,
-        "между числами обязано стоять слово (рендер/колбэк), а не только «/»: {texts:?}"
+        "between the numbers there must be a word (render/callback), not only “/”: {texts:?}"
     );
-    // тишина — в миллисекундах, а не в кадрах
+    // silence is in milliseconds, not in frames
     let ms = CALLBACK / (kt_time::AUDIO_SAMPLE_RATE as u64 / 1000);
     assert!(
         all.contains(&ms.to_string()),
-        "голодание колбэка обязано быть показано и в миллисекундах ({ms} мс): {texts:?}"
+        "callback starvation must be shown also in milliseconds ({ms} ms): {texts:?}"
     );
 }
 
-/// Тест 343 (Р.48, п.342): вставка FX-цепочки В МОРФЕР доносит кривые.
+/// Test 343 (R.48, item 342): inserting an FX chain INTO A MORPHER carries the curves.
 ///
-/// Дефект жил с Р.38: `ChainEdit.auto` был `Option`, и при `None` ветка
-/// переноса кривых молча пропускалась — вставленная цепочка приезжала
-/// «пустой», хотя в буфере анимация была. Теперь тип не даёт этой ветке
-/// существовать, а тест сторожит СМЫСЛ: ключи доехали и пересчитаны в
-/// домен морфера (время блока — отступ от точки входа донора).
+/// The defect lived since R.38: `ChainEdit.auto` was an `Option`, and on `None` the branch
+/// that carried the curves was silently skipped — the inserted chain arrived
+/// “empty”, although the buffer held an animation. Now the type does not let this branch
+/// exist, and the test guards the MEANING: the keys were carried and recomputed into
+/// the morpher’s domain (block time — offset from the donor’s entry point).
 #[test]
 fn t343_paste_chain_into_morpher_carries_curves() {
     use egui_kittest::kittest::Queryable;
@@ -8699,7 +8699,7 @@ fn t343_paste_chain_into_morpher_carries_curves() {
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
     app.add_morph_layer();
-    // в буфере — цепочка С КРИВОЙ от донора с точкой входа 45_000
+    // in the buffer — a chain WITH A CURVE from the donor with an entry point of 45_000
     app.fx_clipboard = Some(kt_model::ops::FxChainBlock {
         slots: vec![kt_model::ops::FxSlotBlock {
             fx: FxInstance::blur(8),
@@ -8719,27 +8719,27 @@ fn t343_paste_chain_into_morpher_carries_curves() {
     });
     h.step();
     h.step();
-    assert!(h.state().morph_editors.iter().any(|e| e.open), "окно морфера не открылось");
+    assert!(h.state().morph_editors.iter().any(|e| e.open), "the morpher window did not open");
 
-    // кнопка вставки цепочки — та же, что у события
+    // the chain insert button — the same as the event’s
     let paste = tr(k::fx::PASTE_CHAIN).to_string();
     h.get_by_label(&paste).click();
     h.step();
     h.step();
 
     let ev = h.state().model.project().morphers[0].clone();
-    assert_eq!(ev.patch.video_fx.len(), 1, "цепочка обязана вставиться в морфер");
+    assert_eq!(ev.patch.video_fx.len(), 1, "the chain must be inserted into the morpher");
     let curves: Vec<_> = ev.patch.video_auto.iter().flatten().collect();
-    assert_eq!(curves.len(), 1, "кривая обязана доехать вместе со слотом");
+    assert_eq!(curves.len(), 1, "the curve must arrive together with the slot");
     assert_eq!(
         curves[0].keys.iter().map(|k| k.t.0).collect::<Vec<_>>(),
         vec![0, 90_000],
-        "и пересчитаться в домен морфера (отступ от точки входа донора)"
+        "and be recomputed into the morpher domain (offset from the entry point of the donor)"
     );
 }
 
-/// Проект с одним видео-событием и открытым окном FX — общая обвязка
-/// тестов пресетов.
+/// A project with one video event and the FX window open — the shared setup
+/// of the preset tests.
 #[cfg(test)]
 pub(crate) fn harness_with_fx_window() -> egui_kittest::Harness<'static, crate::app::KtApp> {
     use kt_model::*;
@@ -8786,8 +8786,8 @@ pub(crate) fn harness_with_fx_window() -> egui_kittest::Harness<'static, crate::
     h
 }
 
-/// Тот же харнесс, но у слота 0 ДВА эффекта: размытие с кривой радиуса и
-/// второе размытие — цель для двери связи (Р.67).
+/// The same harness, but slot 0 has TWO effects: a blur with a radius curve and
+/// a second blur — the target for the link door (R.67).
 pub(crate) fn harness_with_fx_window_two_slots() -> egui_kittest::Harness<'static, crate::app::KtApp> {
     use kt_model::*;
     let mut h = harness_with_fx_window();
@@ -8804,7 +8804,7 @@ pub(crate) fn harness_with_fx_window_two_slots() -> egui_kittest::Harness<'stati
     h
 }
 
-/// Событие-образец с одним полем на замену (Р.67, t790).
+/// A sample event with one field to replace (R.67, t790).
 pub(crate) fn sample_clip(id: kt_model::ClipId) -> kt_model::ClipEvent {
     use kt_model::*;
     ClipEvent {
@@ -8832,58 +8832,58 @@ pub(crate) fn sample_clip(id: kt_model::ClipId) -> kt_model::ClipEvent {
     }
 }
 
-/// Тест 345 (Р.48, п.344): окно «сохранить пресетом» по чек-листу t250.
+/// Test 345 (R.48, item 344): the “save as preset” window per the t250 checklist.
 ///
-/// Окно не открывается само, реально рисуется по кнопке, Esc закрывает
-/// начисто, повторный вызов работает, а ПОДТВЕРЖДЕНИЕ не трогает модель:
-/// пресет — файл пользователя, и undo проекта его не касается.
+/// The window does not open by itself, it is really drawn on the button; Esc closes it
+/// cleanly, a repeated call works, and CONFIRMATION does not touch the model:
+/// a preset is the user’s file, and the project’s undo does not touch it.
 #[test]
 fn t345_preset_save_dialog_follows_the_rules() {
     use egui_kittest::kittest::Queryable;
     let mut h = harness_with_fx_window();
     let title = tr(k::msg::PRESET_SAVE_TITLE).to_string();
-    assert!(h.query_by_label(&title).is_none(), "окно не должно открываться само");
+    assert!(h.query_by_label(&title).is_none(), "the window must not open by itself");
 
-    // кнопка в полосе цепочки
+    // the button in the chain strip
     h.get_by_label(tr(k::fx::SAVE_PRESET)).click();
     h.step();
     h.step();
-    assert!(h.query_by_label(&title).is_some(), "окно обязано быть НАРИСОВАНО");
+    assert!(h.query_by_label(&title).is_some(), "the window must be DRAWN");
 
-    // Esc закрывает и не оставляет следов
+    // Esc closes and leaves no traces
     h.key_press(egui::Key::Escape);
     h.step();
     h.step();
-    assert!(h.query_by_label(&title).is_none(), "Esc обязан закрыть окно");
-    assert!(h.state().preset_save.is_none(), "и не оставить состояния");
+    assert!(h.query_by_label(&title).is_none(), "Esc must close the window");
+    assert!(h.state().preset_save.is_none(), "and leave no state behind");
 
-    // повторный вызов работает (правило 14)
+    // a repeated call works (rule 14)
     h.get_by_label(tr(k::fx::SAVE_PRESET)).click();
     h.step();
     h.step();
-    assert!(h.query_by_label(&title).is_some(), "фича обязана работать повторно");
+    assert!(h.query_by_label(&title).is_some(), "the feature must work again");
 
-    // подтверждение: пресет в библиотеке, модель НЕ тронута
+    // confirmation: the preset is in the library, the model is NOT touched
     let undo_before = h.state().model.undo_depth();
     let rev_before = h.state().model_rev;
     h.state_mut().preset_save.as_mut().unwrap().name = "My chain".into();
-    // имя набрано → появился живой предпросмотр → окно стало выше, и
-    // кнопки уехали вниз: щупать надо ПОСЛЕ перерисовки, иначе клик
-    // уйдёт по старым координатам (та же ловушка, что с драгом в три шага)
+    // the name is typed → a live preview appears → the window grew taller, and
+    // the buttons moved down: one must probe AFTER the redraw, otherwise the click
+    // goes to the old coordinates (the same trap as the three-step drag)
     h.step();
     h.step();
     h.get_by_label(tr(k::msg::PRESET_SAVE_DO)).click();
     h.step();
     h.step();
     let app = h.state_mut();
-    assert!(app.preset_save.is_none(), "после сохранения окно закрывается");
+    assert!(app.preset_save.is_none(), "after saving, the window closes");
     assert!(
         app.presets.rows().iter().any(|r| r.name == "My chain" && !r.factory),
-        "пресет обязан появиться в библиотеке"
+        "the preset must appear in the library"
     );
-    assert_eq!(app.model.undo_depth(), undo_before, "пресет — файл, а не правка проекта");
-    assert_eq!(app.model_rev, rev_before, "и модель он не двигает");
-    // ключи хранятся от нуля: пресет не помнит донора (вход был 30_000)
+    assert_eq!(app.model.undo_depth(), undo_before, "a preset is a file, not a project edit");
+    assert_eq!(app.model_rev, rev_before, "and it does not move the model");
+    // keys are stored from zero: the preset does not remember the donor (the entry was 30_000)
     let saved = app.presets.rows().iter().find(|r| r.name == "My chain").unwrap().clone();
     assert_eq!(
         saved.block.slots[0].curves[0].keys.iter().map(|k| k.t.0).collect::<Vec<_>>(),
@@ -8891,16 +8891,16 @@ fn t345_preset_save_dialog_follows_the_rules() {
     );
 }
 
-/// Тест 346 (Р.48, п.345): вставка пресета из пикера.
+/// Test 346 (R.48, item 345): inserting a preset from the picker.
 ///
-/// Пресет дописывается в конец цепочки, кривые переезжают на материал
-/// приёмника, и всё это — обычная правка события: одна ступень undo.
+/// The preset is appended to the end of the chain, the curves move onto the receiver’s
+/// material, and all of this is an ordinary edit of the event: one undo step.
 #[test]
 fn t346_preset_insert_appends_chain_with_curves() {
     use kt_model::*;
     let mut h = harness_with_fx_window();
-    // в библиотеке — пресет с кривой (кладём прямо в стор: пикер —
-    // меню egui, его раскрытие проверяет t345-часть про кнопку)
+    // in the library — a preset with a curve (we put it straight into the store: the picker is
+    // an egui menu, whose opening is checked by the t345 part about the button)
     let block = kt_model::ops::FxChainBlock {
         slots: vec![kt_model::ops::FxSlotBlock {
             fx: FxInstance::glow(0.7),
@@ -8920,10 +8920,10 @@ fn t346_preset_insert_appends_chain_with_curves() {
     let app = h.state_mut();
     app.presets.add("Glow ramp", &block).expect("add");
     let row = app.presets.rows().iter().find(|r| r.name == "Glow ramp").unwrap().clone();
-    assert!(row.video_ok && !row.audio_ok, "свечение — видео-пресет");
+    assert!(row.video_ok && !row.audio_ok, "glow is a video preset");
 
-    // вставка идёт тем же путём, что из пикера: append_chain_block с
-    // точкой входа приёмника
+    // the insert goes the same way as from the picker: append_chain_block with
+    // the receiver’s entry point
     let clip = app.model.clip(ClipId(1)).unwrap().clone();
     let (mut fx, mut bypass, mut auto) =
         (clip.fx.clone(), clip.fx_bypass.clone(), clip.fx_auto.clone());
@@ -8937,27 +8937,27 @@ fn t346_preset_insert_appends_chain_with_curves() {
     h.step();
 
     let clip = h.state().model.clip(ClipId(1)).unwrap().clone();
-    assert_eq!(clip.fx.len(), 2, "пресет дописывается в конец, а не заменяет цепочку");
+    assert_eq!(clip.fx.len(), 2, "the preset is appended to the end, not replacing the chain");
     assert!(matches!(clip.fx[1], FxInstance::Glow { .. }));
     assert_eq!(
         clip.fx_auto[1][0].keys.iter().map(|k| k.t.0).collect::<Vec<_>>(),
         vec![30_000, 120_000],
-        "кривая обязана переехать на материал приёмника (вход 30_000)"
+        "the curve must move to the material of the receiver (entry 30_000)"
     );
     assert_eq!(
         h.state().model.undo_depth(),
         undo_before + 1,
-        "вставка пресета — одна ступень истории"
+        "inserting a preset is one history step"
     );
     h.state_mut().model.undo().expect("undo");
     assert_eq!(
         h.state().model.clip(ClipId(1)).unwrap().fx.len(),
         1,
-        "undo снимает вставленный пресет"
+        "undo removes the inserted preset"
     );
 }
 
-/// Проект с одним аудио-событием и эквалайзером; окно FX открыто.
+/// A project with one audio event and an equaliser; the FX window is open.
 #[cfg(test)]
 fn harness_with_eq_window() -> egui_kittest::Harness<'static, crate::app::KtApp> {
     use kt_model::*;
@@ -8996,23 +8996,23 @@ fn harness_with_eq_window() -> egui_kittest::Harness<'static, crate::app::KtApp>
     h
 }
 
-/// Тест 349 (Р.48, п.347): график АЧХ есть у эквалайзера, его точка
-/// тянется мышью, и правка доезжает ДО МОДЕЛИ одной ступенью истории.
+/// Test 349 (R.48, item 347): the equaliser has a frequency-response graph, its point
+/// is dragged with the mouse, and the edit reaches the MODEL in one history step.
 ///
-/// Утверждается следствие, которое видит человек (полоса переехала на
-/// другую частоту и усиление), а не «функция вернула значение»: ровно
-/// этот урок записан правилом Р.40.
+/// What is asserted is the consequence a person sees (the band moved to another frequency
+/// and gain), not “the function returned a value”: exactly
+/// this lesson is recorded in the rule of R.40.
 #[test]
 fn t349_eq_graph_drag_edits_the_model() {
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
     let mut h = harness_with_eq_window();
     let node = h.query_by_label("eq_graph");
-    assert!(node.is_some(), "у эквалайзера обязан быть график АЧХ");
+    assert!(node.is_some(), "the equalizer must have a frequency response graph");
     let rect = node.unwrap().rect();
 
-    // середина полосы «mid»: дефолт 1 кГц / 0 дБ. Координаты считаем теми
-    // же функциями, что рисуют — иначе тест проверял бы свою арифметику.
+    // the middle of the “mid” band: default 1 kHz / 0 dB. We compute the coordinates with the
+    // same functions that draw them — otherwise the test would check its own arithmetic.
     let plot_w = rect.width() - 4.0;
     let plot_x = rect.left() + 2.0;
     let plot_h = rect.height() - 12.0;
@@ -9022,8 +9022,8 @@ fn t349_eq_graph_drag_edits_the_model() {
     let from = egui::pos2(x_of(1000.0), y_of(0.0));
     let to = egui::pos2(x_of(2000.0), y_of(6.0));
 
-    // драг в ТРИ шага: egui признаёт драг только после порога, и позиция
-    // читается в кадре начала жеста (правило харнесса)
+    // a three-step drag: egui recognises a drag only after a threshold, and the position
+    // is read in the frame where the gesture starts (harness rule)
     h.drag_at(from);
     h.step();
     h.hover_at(from + egui::vec2(8.0, -4.0));
@@ -9036,37 +9036,37 @@ fn t349_eq_graph_drag_edits_the_model() {
     let clip = h.state().model.clip(ClipId(1)).unwrap().clone();
     let (freq, gain) = match &clip.fx[0] {
         FxInstance::Eq { mid_freq_hz, mid_gain_db, .. } => (*mid_freq_hz, *mid_gain_db),
-        other => panic!("ожидался эквалайзер, получен {other:?}"),
+        other => panic!("expected an equalizer, got {other:?}"),
     };
-    println!("t349 после драга: {freq:.0} Гц, {gain:+.2} дБ");
+    println!("t349 after drag: {freq:.0} Hz, {gain:+.2} dB");
     assert!(
         (freq as f64 - 2000.0).abs() / 2000.0 < 0.03,
-        "частота полосы обязана переехать на 2 кГц, а не {freq}"
+        "the band frequency must move to 2 kHz, not {freq}"
     );
-    assert!((gain - 6.0).abs() < 0.5, "усиление обязано стать +6 дБ, а не {gain}");
+    assert!((gain - 6.0).abs() < 0.5, "the gain must become +6 dB, not {gain}");
 
-    // одна ступень истории на весь жест (коалесцирование сессии окна)
+    // one history step for the whole gesture (coalescing of the window session)
     let depth = h.state().model.undo_depth();
     h.state_mut().model.undo().expect("undo");
     assert_eq!(h.state().model.undo_depth(), depth - 1);
     let back = h.state().model.clip(ClipId(1)).unwrap().clone();
     match &back.fx[0] {
         FxInstance::Eq { mid_freq_hz, mid_gain_db, .. } => {
-            assert!((*mid_freq_hz - 1000.0).abs() < 1.0, "undo вернул частоту");
-            assert!(mid_gain_db.abs() < 0.01, "и усиление");
+            assert!((*mid_freq_hz - 1000.0).abs() < 1.0, "undo restored the frequency");
+            assert!(mid_gain_db.abs() < 0.01, "and the gain");
         }
-        other => panic!("ожидался эквалайзер, получен {other:?}"),
+        other => panic!("expected an equalizer, got {other:?}"),
     }
 }
 
-/// Тест 350 (Р.48, п.347): колесо над средней точкой правит добротность
-/// и НЕ прокручивает окно (жест поглощается только у самой точки).
+/// Test 350 (R.48, item 347): the wheel over the middle point edits the Q factor
+/// and does NOT scroll the window (the gesture is absorbed only at the point itself).
 #[test]
 fn t350_eq_graph_wheel_sets_q() {
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
     let mut h = harness_with_eq_window();
-    let rect = h.query_by_label("eq_graph").expect("график есть").rect();
+    let rect = h.query_by_label("eq_graph").expect("the graph exists").rect();
     let plot_w = rect.width() - 4.0;
     let plot_x = rect.left() + 2.0;
     let plot_h = rect.height() - 12.0;
@@ -9089,95 +9089,95 @@ fn t350_eq_graph_wheel_sets_q() {
     let clip = h.state().model.clip(ClipId(1)).unwrap().clone();
     let q = match &clip.fx[0] {
         FxInstance::Eq { mid_q, .. } => *mid_q,
-        other => panic!("ожидался эквалайзер, получен {other:?}"),
+        other => panic!("expected an equalizer, got {other:?}"),
     };
-    println!("t350 добротность после колеса: {q:.2}");
-    assert!(q < 1.0 - 0.05, "колесо вниз обязано уменьшить добротность, а не {q}");
-    assert!(q >= 0.3, "и не выйти за нижнюю границу спеки");
+    println!("t350 Q after the wheel: {q:.2}");
+    assert!(q < 1.0 - 0.05, "the wheel down must decrease the Q, not {q}");
+    assert!(q >= 0.3, "and not go past the lower bound of the spec");
 }
 
-/// Тест 430b (Р.50 А2): свернуть и развернуть можно РУКАМИ, и программа
-/// говорит, что при этом изменилось.
+/// Test 430b (R.50 A2): one can collapse and expand BY HAND, and the program
+/// says what has changed as a result.
 ///
-/// Утверждается СЛЕДСТВИЕ (Р.40): не «пункт в меню есть», а «монтаж стал
-/// другим». Точка, из которой тест жмёт, — тело события: именно туда жмёт
-/// человек.
+/// What is asserted is the CONSEQUENCE (R.40): not “the item is in the menu”, but “the edit became
+/// different”. The point from which the test presses is the event’s body: exactly where
+/// a person presses.
 #[test]
 fn t430b_collapse_and_expand_are_reachable_by_hand() {
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
     let (mut h, g) = harness_three_clips();
-    let row = g.row_of((LaneKind::Video, 0)).expect("видео-строка");
+    let row = g.row_of((LaneKind::Video, 0)).expect("video row");
     let y = g.row_center_y(row);
 
-    // выделили два события рамкой не станем — хватит одного: пункт работает
-    // и на одиночном, а тест утверждает достижимость
+    // we will not select two events with a frame — one is enough: the item works
+    // on a single one too, and the test asserts reachability
     h.state_mut().select_only(ClipId(1));
     h.step();
     right_click_at(&mut h, egui::pos2(g.tick_to_x(20_000), y));
     assert!(
         matches!(h.state().ctx_target, Some(crate::timeline::CtxTarget::Clip(ClipId(1)))),
-        "правый клик по телу события обязан дать меню СОБЫТИЯ"
+        "right-click on the event body must give the EVENT menu"
     );
     let labels = menu_labels(&mut h);
     assert!(
         labels.iter().any(|l| l == tr(k::tl::menu::COLLAPSE)),
-        "в меню события нет пункта сворачивания: {labels:?}"
+        "there is no collapse item in the event menu: {labels:?}"
     );
     h.get_by_label(tr(k::tl::menu::COLLAPSE)).click();
     h.step();
     h.step();
 
-    // СЛЕДСТВИЕ: лента завелась, событие стало экземпляром
+    // CONSEQUENCE: the track became a reel, the event became an instance
     let p = h.state().model.project().clone();
-    assert_eq!(p.sequences.len(), 1, "лента не завелась: {:?}", p.sequences);
+    assert_eq!(p.sequences.len(), 1, "the reel was not created: {:?}", p.sequences);
     let seq = p.sequences[0].id;
-    let inst = p.clips.iter().find(|c| c.media == seq).expect("экземпляра на таймлайне нет");
-    assert_eq!(p.sequences[0].clips.len(), 1, "в ленте не то содержимое");
-    assert_eq!(h.state().nest_uses(seq), 1, "мест использования посчитано неверно");
+    let inst = p.clips.iter().find(|c| c.media == seq).expect("there is no instance on the timeline");
+    assert_eq!(p.sequences[0].clips.len(), 1, "the reel has the wrong content");
+    assert_eq!(h.state().nest_uses(seq), 1, "the number of usage places was counted wrongly");
     let inst_id = inst.id;
 
-    // ...и меню САМОГО вложения знает, что с ним делать
+    // ...and the menu of the NESTED item itself knows what to do with it
     let g = h.state().tl_geom.clone().unwrap_or(g);
     right_click_at(&mut h, egui::pos2(g.tick_to_x(20_000), y));
     let labels = menu_labels(&mut h);
     for want in [tr(k::tl::menu::NEST_EXPAND), tr(k::tl::menu::NEST_RENAME)] {
-        assert!(labels.iter().any(|l| l == want), "в меню вложения нет «{want}»: {labels:?}");
+        assert!(labels.iter().any(|l| l == want), "there is no “{want}” in the nested menu: {labels:?}");
     }
     assert!(
         !labels.iter().any(|l| l.starts_with(tr(k::tl::menu::NEST_INDEPENDENT))),
-        "«отвязать от других мест» предложено там, где место ОДНО — обещание,          которое ничего не изменит: {labels:?}"
+        "“unlink from other places” is offered where there is ONE place — a promise that changes nothing: {labels:?}"
     );
 
-    // окно имени открывается, Esc закрывает без следов, и оно работает
-    // ПОВТОРНО (правило 14)
+    // the name window opens, Esc closes it without traces, and it works
+    // REPEATABLE (rule 14)
     for _ in 0..2 {
         h.get_by_label(tr(k::tl::menu::NEST_RENAME)).click();
         h.step();
         h.step();
-        assert!(h.state().seq_name.is_some(), "окно имени ленты не открылось");
+        assert!(h.state().seq_name.is_some(), "the reel name window did not open");
         h.key_press(egui::Key::Escape);
         h.step();
         h.step();
-        assert!(h.state().seq_name.is_none(), "Esc не закрыл окно имени ленты");
+        assert!(h.state().seq_name.is_none(), "Esc did not close the reel name window");
         let g = h.state().tl_geom.clone().unwrap_or(g.clone());
         right_click_at(&mut h, egui::pos2(g.tick_to_x(20_000), y));
     }
 
-    // развернули — монтаж вернулся, и об этом сказано
+    // expanded — the edit came back, and this is said
     h.state_mut().expand_nest(inst_id);
     h.step();
     let p = h.state().model.project().clone();
     assert!(
         p.clips.iter().all(|c| c.media != seq),
-        "экземпляр остался на таймлайне после разворачивания"
+        "the instance stayed on the timeline after expanding"
     );
-    assert_eq!(p.clips.len(), 3, "содержимое не вернулось на дорожку: {:?}", p.clips.len());
+    assert_eq!(p.clips.len(), 3, "the content did not return to the track: {:?}", p.clips.len());
 }
 
-// ---- 456-460 (Р.50, В): вход внутрь ленты руками -----------------------------
+// ---- 456-460 (R.50, B): entering a reel by hand -----------------------------
 
-/// Харнесс с лентой из одного события и экземпляром на дорожке.
+/// a harness with a reel of one event and an instance on a track
 #[cfg(test)]
 fn harness_with_nest_dt(
     dt: Option<f32>,
@@ -9185,13 +9185,13 @@ fn harness_with_nest_dt(
     let (mut h, g) = harness_three_clips_dt(dt);
     {
         let app = h.state_mut();
-        // СВОРАЧИВАЕМ СРЕДНЕЕ событие, а не первое, и это не вкусовщина
-        // (Р.55, С1). `ClipId(1)` стоит в нуле, поэтому у экземпляра
-        // `start == 0` и `source_in == 0`, а перевод курсора
-        // `source_in + (t − start)` вырождается в тождество: t456 был
-        // зелёным и на коде, который курсор не переводит ВОВСЕ. Здесь
-        // `ClipId(2)` стоит на 100_000 — сдвиг оси ненулевой, и формулу
-        // стало чем проверить.
+        // WE COLLAPSE THE MIDDLE event, not the first one, and this is not whim
+        // (R.55, C1). `ClipId(1)` sits at zero, so the instance has
+        // `start == 0` and `source_in == 0`, and the cursor mapping
+        // `source_in + (t − start)` degenerates into an identity: t456 was
+        // green even on code that does not map the cursor AT ALL. Here
+        // `ClipId(2)` sits at 100_000 — the axis offset is non-zero, and there is
+        // something to check the formula with.
         app.select_only(kt_model::ClipId(2));
     }
     h.step();
@@ -9208,16 +9208,16 @@ fn harness_with_nest() -> (Harness<'static, KtApp>, crate::timeline::TlGeom, kt_
     harness_with_nest_dt(None)
 }
 
-/// Тест 456 (Р.50, В1): вход и выход — тождество по виду и курсору.
+/// Test 456 (R.50, B1): entry and exit are an identity in kind and in cursor.
 #[test]
 fn t456_entering_and_leaving_is_identity() {
     use kt_time::Tick;
     let (mut h, g, seq) = harness_with_nest();
     let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
 
-    // снимок вида СНАРУЖИ. Курсор — ВНУТРИ тела экземпляра (100_000 …
-    // 150_000): вход переводит время, а не телепортирует, и проверять
-    // перевод имеет смысл только оттуда, откуда человек входит.
+    // a snapshot of the view from OUTSIDE. The cursor is INSIDE the instance’s body (100_000 …
+    // 150_000): entry translates the time rather than teleporting, and checking the
+    // translation only makes sense from where the person enters.
     h.state_mut().player.seek(Tick(120_000));
     h.state_mut().view_start = 5_000.0;
     h.state_mut().ticks_per_px = 900.0;
@@ -9228,103 +9228,103 @@ fn t456_entering_and_leaving_is_identity() {
 
     h.state_mut().enter_nest(inst);
     h.step();
-    assert_eq!(h.state().model.editing(), Some(seq), "вход не состоялся");
-    assert_eq!(h.state().nest_crumbs().len(), 1, "крошка пути не появилась");
-    // КУРСОР ПЕРЕВЕДЁН, а не сброшен: человек вошёл, а не перепрыгнул
+    assert_eq!(h.state().model.editing(), Some(seq), "the entry did not happen");
+    assert_eq!(h.state().nest_crumbs().len(), 1, "the path crumb did not appear");
+    // the CURSOR IS TRANSLATED, not reset: the person entered, did not jump
     let c = h.state().model.document().clips.iter().find(|c| c.id == inst).unwrap().clone();
     let want = c.source_in + (outside - c.start);
-    // СТОРОЖ САМОЙ ПРОВЕРКИ: на экземпляре, стоящем в нуле, `want`
-    // совпадает с `outside`, и всё, что ниже, перестаёт что-либо
-    // утверждать. Сцена обязана оставаться со сдвигом.
+    // THE GUARD OF THE CHECK ITSELF: on an instance standing at zero, `want`
+    // coincides with `outside`, and everything below stops asserting anything.
+    // The scene must stay offset.
     assert_ne!(
         want.0, outside.0,
-        "сцена выродилась: экземпляр стоит в нуле, и перевод курсора нечем отличить \
-         от его отсутствия"
+        "scene degenerated: the instance is at zero, and the cursor transfer cannot be told apart \
+         from its absence"
     );
-    // ТОЧНОСТЬ — КВАНТ ТРАНСПОРТА, названный, а не подобранный: playhead
-    // живёт в аудиокадрах 48 кГц, и round-trip «тик → кадр → тик» усекает
-    // вниз (п.7 р.10). Один кадр — 90000/48000 = 1.875 тика, округляем
-    // вверх. Требовать тик-в-тик значило бы требовать того, чего транспорт
-    // не умеет ни здесь, ни где-либо ещё.
+    // ACCURACY — THE TRANSPORT QUANTUM, named rather than tuned: the playhead
+    // lives in 48 kHz audio frames, and the round trip “tick → frame → tick” truncates
+    // downwards (item 7, round 10). One frame — 90000/48000 = 1.875 ticks, rounded
+    // up. Requiring tick-for-tick would mean requiring what the transport
+    // cannot do here or anywhere else.
     const QUANT: i64 = (kt_time::TICK_HZ + kt_time::AUDIO_SAMPLE_RATE as i64 - 1)
         / kt_time::AUDIO_SAMPLE_RATE as i64;
     let got = h.state().player.transport.playhead();
     assert!(
         (got.0 - want.0).abs() <= QUANT,
-        "курсор при входе сброшен, а не переведён ({got:?} против {want:?}) — превью \
-         показало бы другой кадр"
+        "the cursor was reset on entry, not transferred ({got:?} against {want:?}) — the preview \
+         would show a different frame"
     );
-    // под руками содержимое ЛЕНТЫ
-    assert_eq!(h.state().model.project().clips.len(), 1, "внутри ленты видно не её содержимое");
+    // the CONTENT of the REEL is at hand
+    assert_eq!(h.state().model.project().clips.len(), 1, "inside the reel its content is not visible");
 
-    // выход — вид вернулся ТОТ ЖЕ (правило 14: фича работает повторно)
+    // exit — the view came back the SAME (rule 14: the feature works repeatedly)
     h.state_mut().leave_nest();
     h.step();
-    assert_eq!(h.state().model.editing(), None, "выход не состоялся");
-    assert!(h.state().nest_crumbs().is_empty(), "крошка осталась после выхода");
+    assert_eq!(h.state().model.editing(), None, "the exit did not happen");
+    assert!(h.state().nest_crumbs().is_empty(), "the crumb remained after the exit");
     let back = h.state().player.transport.playhead();
     assert!(
         (back.0 - outside.0).abs() <= 2 * QUANT,
-        "курсор не вернулся на место: {back:?} против {outside:?}"
+        "the cursor did not return to its place: {back:?} against {outside:?}"
     );
-    assert_eq!((h.state().view_start, h.state().ticks_per_px), (vs, tpp), "вид не восстановлен");
-    assert!(h.state().selected.contains(&inst), "выделение не восстановлено");
+    assert_eq!((h.state().view_start, h.state().ticks_per_px), (vs, tpp), "the view was not restored");
+    assert!(h.state().selected.contains(&inst), "the selection was not restored");
     let _ = g;
 }
 
-/// Тест 552 (Р.55, С1): внутри ленты играет ЛЕНТА, а не корень.
+/// Test 552 (R.55, C1): INSIDE a reel the REEL plays, not the root.
 ///
-/// До Р.55 в плеер всегда уходил `document()`. Человек входил в
-/// композицию, видел на таймлайне её события — и слышал корневой монтаж,
-/// взятый в момент, численно равный ЛОКАЛЬНОМУ времени ленты. Совпадало
-/// это ровно тогда, когда экземпляр стоит в нуле, поэтому ни один тест
-/// дефекта не видел (та же дыра, что закрыта в харнессе t456).
+/// Before R.55 the player always received `document()`. A person entered a
+/// composition, saw its events on the timeline — and heard the root edit, taken at a
+/// moment numerically equal to the reel’s LOCAL time. That matched exactly when the
+/// instance stood at zero, so no test caught the defect
+/// (the same hole closed by the t456 harness).
 ///
-/// Утверждение проверяется по СЛЕДСТВИЮ — по тому, что реально уходит в
-/// плеер, а не по тому, какой метод вызвался.
+/// The claim is verified by its CONSEQUENCE — by what actually goes to
+/// the player, not by which method was called.
 #[test]
 fn t552_inside_a_reel_the_reel_is_what_plays() {
     let (mut h, _g, seq) = harness_with_nest();
     let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
 
-    // СНАРУЖИ играет документ: корень несёт экземпляр и соседей
+    // OUTSIDE the document plays: the root carries the instance and its neighbours
     let outside = h.state().player_project();
     assert!(
         outside.clips.iter().any(|c| c.id == inst),
-        "в корне плеер обязан играть документ — экземпляра в нём нет"
+        "at the root the player must play the document — there is no instance in it"
     );
     assert!(
         outside.sequences.iter().any(|s| s.id == seq),
-        "лента обязана остаться в документе: её играют через экземпляр"
+        "the reel must stay in the document: it is played through the instance"
     );
 
     h.state_mut().enter_nest(inst);
     h.step();
 
     let inside = h.state().player_project();
-    // КОРЕНЬ того, что играет, — содержимое ЛЕНТЫ
+    // the ROOT of what is playing — the content of the REEL
     let want: Vec<kt_model::ClipId> =
         h.state().model.project().clips.iter().map(|c| c.id).collect();
     let got: Vec<kt_model::ClipId> = inside.clips.iter().map(|c| c.id).collect();
     assert_eq!(
         got, want,
-        "внутри ленты плеер играет НЕ ЕЁ: на таймлайне одни события, в звуке и \
-         превью другие"
+        "inside the reel the player plays NOT ITS OWN: on the timeline one set of events, in the sound and \
+         preview others"
     );
     assert!(
         !inside.clips.iter().any(|c| c.id == inst),
-        "экземпляр обязан исчезнуть из того, что играет: стоя ВНУТРИ него, \
-         слышать его же снаружи значит слышать себя дважды"
+        "the instance must disappear from what plays: standing INSIDE it, \
+         hearing it from outside means hearing yourself twice"
     );
 
-    // А НАРУЖУ (в файл и в экспорт) по-прежнему уходит ДОКУМЕНТ —
-    // настоящая раскладка, корень корнем (t456b сторожит вызовы,
-    // этот кусок сторожит СОДЕРЖИМОЕ)
+    // But OUTSIDE (to the file and to the export) the DOCUMENT still goes —
+    // the real layout, the root as root (t456b guards the calls,
+    // this piece guards the CONTENT).
     let doc = h.state().model.document();
     assert!(
         doc.clips.iter().any(|c| c.id == inst),
-        "в документ уехало содержимое ленты вместо корня — записать такое значит \
-         поменять местами корень и ленту на диске"
+        "the content of the reel went into the document instead of the root — writing such means \
+         swapping the root and the reel on disk"
     );
 
     h.state_mut().leave_nest();
@@ -9332,16 +9332,16 @@ fn t552_inside_a_reel_the_reel_is_what_plays() {
     let back: Vec<kt_model::ClipId> =
         h.state().player_project().clips.iter().map(|c| c.id).collect();
     let was: Vec<kt_model::ClipId> = outside.clips.iter().map(|c| c.id).collect();
-    assert_eq!(back, was, "выход не вернул плееру корень");
+    assert_eq!(back, was, "the exit did not return the root to the player");
 }
 
-/// Тест 553 (Р.55, С1): вход приводит ВИД туда, где встал курсор.
+/// Test 553 (R.55, C1): entry brings the VIEW to where the cursor stood.
 ///
-/// Курсор переводился и раньше, а прокрутка — нет: она оставалась в оси
-/// КОРНЯ. Войдя во вложение, стоящее на десятой минуте, человек видел
-/// пустой экран — содержимое ленты лежит около её нуля. Это и есть
-/// претензия «мы оказываемся на том же t, где были, а композиция идёт
-/// с t=0».
+/// The cursor was translated before, but the scroll was not: it stayed in the axis
+/// of the ROOT. Entering a nested item standing at the tenth minute, a person saw
+/// an empty screen — the reel’s content lies around its zero.
+/// This is the complaint “we end up at the same t where we were,
+/// while the composition runs from t=0”.
 #[test]
 fn t553_entering_brings_the_view_to_the_cursor() {
     use kt_time::Tick;
@@ -9349,7 +9349,7 @@ fn t553_entering_brings_the_view_to_the_cursor() {
     let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
     let c = h.state().model.project().clips.iter().find(|x| x.id == inst).unwrap().clone();
 
-    // курсор внутри тела экземпляра, вид — вокруг него В ОСИ КОРНЯ
+    // the cursor INSIDE the instance body, the view around it IN THE ROOT AXIS
     h.state_mut().player.seek(c.start + Tick(c.duration.0 / 2));
     h.state_mut().view_start = c.start.0 as f64;
     h.state_mut().select_only(inst);
@@ -9360,67 +9360,67 @@ fn t553_entering_brings_the_view_to_the_cursor() {
     h.step();
 
     let cur = h.state().player.transport.playhead();
-    let g = h.state().tl_geom.clone().expect("геометрия таймлайна");
+    let g = h.state().tl_geom.clone().expect("timeline geometry");
     let span = g.rect.width() as f64 * h.state().ticks_per_px;
     let vs = h.state().view_start;
     assert!(
         cur.0 as f64 >= vs && (cur.0 as f64) < vs + span,
-        "курсор ({}) вне видимого окна [{vs}, {}) — человек смотрит на пустое место",
+        "the cursor ({}) is outside the visible window [{vs}, {}) — the person looks at an empty place",
         cur.0,
         vs + span
     );
-    // сторож самой проверки: сцена обязана быть со сдвигом, иначе
-    // «вид не тронули» неотличимо от «вид привели»
-    assert_ne!(before, vs, "сцена выродилась: вид и так стоял там, куда его надо было привести");
+    // the guard of the check itself: the scene must be offset, otherwise
+    // “the view was not touched” is indistinguishable from “the view was brought”
+    assert_ne!(before, vs, "scene degenerated: the view was already where it was supposed to be brought");
 }
 
-/// Тест 457 (Р.50, В3): войти можно ЧЕТЫРЬМЯ способами, и все они — одно тело.
+/// Test 457 (R.50, B3): entering is possible in FOUR ways, and all of them are one body.
 #[test]
 fn t457_four_ways_in_one_way_out() {
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
     let (mut h, g, seq) = harness_with_nest();
     let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
-    let row = g.row_of((LaneKind::Video, 0)).expect("видео-строка");
+    let row = g.row_of((LaneKind::Video, 0)).expect("video row");
     let y = g.row_center_y(row);
     let x = {
         let c = h.state().model.project().clips.iter().find(|c| c.id == inst).unwrap().clone();
         g.tick_to_x(c.start.0 + c.duration.0 / 2)
     };
 
-    // 1) пункт меню
+    // 1) menu item
     right_click_at(&mut h, egui::pos2(x, y));
     assert!(
         matches!(h.state().ctx_target, Some(crate::timeline::CtxTarget::Nest(_))),
-        "ПКМ по вложению обязан дать цель ВЛОЖЕНИЯ, а не обычного события"
+        "RMB on a nested item must give the NESTED target, not an ordinary event"
     );
-    // подпись пункта ищется ПОДСТРОКОЙ: у пункта есть колонка аккорда
-    // (Р.56, п.451), и точное совпадение сломалось бы о неё
+    // the item label is searched as a SUBSTRING: the item has a chord column
+    // (R.56, item 451), and an exact match would break on it
     h.get_by_label_contains(tr(k::tl::menu::NEST_ENTER)).click();
     h.step();
     h.step();
-    assert_eq!(h.state().model.editing(), Some(seq), "пункт меню не завёл внутрь");
+    assert_eq!(h.state().model.editing(), Some(seq), "the menu item did not enter inside");
 
-    // 2) Esc — ПОСЛЕДНИМ в каскаде: сначала он снимает выделение
+    // 2) Esc — LAST in the cascade: first it removes the selection
     let inner = h.state().model.project().clips[0].id;
     h.state_mut().select_only(inner);
     h.state_mut().escape_action();
     assert_eq!(
         h.state().model.editing(),
         Some(seq),
-        "Esc выкинул наружу вместо того, чтобы снять выделение — одна клавиша \
-         делает два дела, и второе необратимо по вниманию"
+        "Esc threw out instead of clearing the selection — one key \
+         does two things, and the second is irreversible in attention"
     );
     h.state_mut().escape_action();
-    assert_eq!(h.state().model.editing(), None, "Esc на пустом выделении обязан выводить наружу");
+    assert_eq!(h.state().model.editing(), None, "Esc on an empty selection must lead outward");
 
-    // 3) ДВОЙНОЙ КЛИК даёт не полный вход, а РАСКРЫТИЕ НА МЕСТЕ (Р.55,
-    // С5): быстрый жест даёт режим ПО УМОЛЧАНИЮ, названный пункт меню —
-    // названный режим. Прямая просьба владельца: «по умолчанию гибридный
-    // удобный режим нужен».
+    // 3) A DOUBLE CLICK gives not a full entry but an IN-PLACE EXPAND (R.55,
+    // C5): a quick gesture gives the DEFAULT mode, the named menu item — the
+    // named mode. The owner’s direct request: “by default a hybrid convenient
+    // mode is needed”.
     //
-    // двойной клик у egui ВРЕМЕННОЙ: шаг харнесса по умолчанию 0.25 с, и
-    // без мелкого dt тест проверял бы ОДИНОЧНЫЙ клик
+    // egui’s double click is TEMPORAL: the harness step by default is 0.25 s, and
+    // without a small dt the test would check a SINGLE click
     let (mut h2, g2, seq2) = harness_with_nest_dt(Some(0.02));
     let inst2 = h2.state().model.project().clips.iter().find(|c| c.media == seq2).unwrap().id;
     let row2 = g2.row_of((LaneKind::Video, 0)).unwrap();
@@ -9433,25 +9433,25 @@ fn t457_four_ways_in_one_way_out() {
     assert_eq!(
         h2.state().model.editing(),
         None,
-        "двойной клик ушёл в ПОЛНЫЙ вход: из корня в гибридном режиме не выходят, \
-         иначе играть будет лента, а не программа"
+        "double-click went into the FULL entry: from the root in hybrid mode one does not exit, \
+         otherwise the reel, not the program, would play"
     );
     assert_eq!(
         h2.state().model.bands().iter().map(|b| b.inst).collect::<Vec<_>>(),
         vec![inst2],
-        "двойной клик не раскрыл композицию на месте"
+        "double-click did not expand the composition in place"
     );
-    // ЖЕСТ РАБОТАЕТ ПОВТОРНО (правило 14): второй раз сворачивает
+    // THE GESTURE WORKS AGAIN (rule 14): the second time it collapses
     double_click_at(&mut h2, pos2);
     assert!(
         h2.state().model.bands().is_empty(),
-        "повторный двойной клик обязан сворачивать раскрытие, а не копить полосы"
+        "a repeated double-click must collapse the expansion, not accumulate strips"
     );
     let _ = row2;
 
-    // 4) Enter по выделенному — КАСКАД (Р.56, п.451, решение владельца:
-    // «я хочу чтобы двойной enter переходил в нее»). Первый раскрывает
-    // на месте, второй по уже раскрытому — ПОЛНЫЙ ВХОД.
+    // 4) Enter on the selection — a CASCADE (R.56, item 451, the owner’s decision:
+    // “I want a double enter to go into it”). The first expands in place,
+    // the second, on the already expanded one — a FULL ENTRY.
     let (mut h3, _, seq3) = harness_with_nest();
     let inst3 = h3.state().model.project().clips.iter().find(|c| c.media == seq3).unwrap().id;
     h3.state_mut().select_only(inst3);
@@ -9459,93 +9459,93 @@ fn t457_four_ways_in_one_way_out() {
     h3.key_press(egui::Key::Enter);
     h3.step();
     h3.step();
-    assert_eq!(h3.state().model.editing(), None, "первый Enter ушёл в полный вход");
+    assert_eq!(h3.state().model.editing(), None, "the first Enter went into the full entry");
     assert_eq!(
         h3.state().model.bands().len(),
         1,
-        "Enter по выделенному вложению не раскрыл его на месте"
+        "Enter on the selected nested item did not expand it in place"
     );
-    // экземпляр ОСТАЛСЯ выделен — иначе второму Enter не во что целиться,
-    // и жест молча не делал бы ничего
+    // the instance REMAINED selected — otherwise the second Enter would have nothing to aim at,
+    // and the gesture would silently do nothing
     assert!(
         h3.state().is_selected(inst3),
-        "раскрытие сбросило выделение экземпляра: следующий жест бьёт в пустоту"
+        "the expansion reset the instance selection: the next gesture hits nothing"
     );
 
     let (vs, tpp) = (h3.state().view_start, h3.state().ticks_per_px);
     h3.key_press(egui::Key::Enter);
     h3.step();
     h3.step();
-    assert_eq!(h3.state().model.editing(), Some(seq3), "второй Enter не завёл ВНУТРЬ ленты");
-    assert!(h3.state().model.bands().is_empty(), "полный вход обязан свернуть полосу");
+    assert_eq!(h3.state().model.editing(), Some(seq3), "the second Enter did not enter INSIDE the reel");
+    assert!(h3.state().model.bands().is_empty(), "the full entry must collapse the strip");
 
-    // выход — в КОРЕНЬ, И ПОЛОСА ВОЗВРАЩАЕТСЯ (решение владельца Р.58,
-    // пересмотр Р.56 п.5: «сбрасывают состояние раскрытости, а хотелось бы
-    // чтобы оставляли»; каскад Enter/Esc симметричен — t636)
+    // exit — to the ROOT, AND THE STRIP COMES BACK (the owner’s decision in R.58,
+    // a revision of R.56 item 5: “they reset the expanded state, but we would like
+    // them to keep it”; the Enter/Esc cascade is symmetric — t636)
     h3.state_mut().escape_action();
     h3.step();
-    assert_eq!(h3.state().model.editing(), None, "Esc не вывел наружу");
+    assert_eq!(h3.state().model.editing(), None, "Esc did not lead outward");
     assert_eq!(
         h3.state().model.bands().iter().map(|b| b.inst).collect::<Vec<_>>(),
         vec![inst3],
-        "выход обязан ВЕРНУТЬ полосу, через которую вошли (решение владельца Р.58)"
+        "the exit must RESTORE the strip through which one entered (decision of the owner R.58)"
     );
     assert_eq!(
         (h3.state().view_start, h3.state().ticks_per_px),
         (vs, tpp),
-        "вид после выхода не вернулся"
+        "the view did not return after the exit"
     );
 }
 
-/// Тест 458 (Р.50, В2): у вложения свой вид и свои обещания.
+/// Test 458 (R.50, B2): a nested item has its own view and its own promises.
 ///
-/// Три вещи, которых не видно в модели: тумб ПО ФАЙЛУ у вложения не
-/// бывает (файла у ленты нет; кадры ей даёт офлайн-рендер содержимого —
-/// Р.56, п.452, служба `reel_preview`), бейдж «×N» появляется ТОЛЬКО при
-/// N > 1, и фон внутри ленты тонирован.
+/// Three things not visible in the model: thumbnails BY FILE do not exist for a nested item
+/// (a reel has no file; its frames come from the offline render of its content —
+/// R.56, item 452, the `reel_preview` service), the “×N” badge appears ONLY when
+/// N > 1, and the background inside a reel is tinted.
 #[test]
 fn t458_nest_looks_like_a_nest() {
     use kt_model::*;
     let (mut h, _g, seq) = harness_with_nest();
     let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
 
-    // ТУМБЫ ПО ФАЙЛУ: ни один ключ службы тумб не адресует ЛЕНТУ — файла
-    // у неё нет, и служба индекса полезла бы по нему ffmpeg'ом. Кадры на
-    // событии при этом ЕСТЬ, но приходят из `reel_preview` (t600).
+    // THUMBNAILS BY FILE: no key of the thumbnail service addresses a REEL — it has no file,
+    // and the index service would go after it with ffmpeg. The frames on the
+    // event DO exist, but they come from `reel_preview` (t600).
     h.step();
     h.step();
     assert!(
         h.state().thumb_textures.keys().all(|k| k.media != seq),
-        "вложение завело тумбы по адресу ЛЕНТЫ — у неё нет файла"
+        "the nested item created thumbnails at the address of the REEL — the reel has no file"
     );
 
-    // БЕЙДЖ ×N: при одном месте его нет
-    assert_eq!(h.state().nest_uses(seq), 1, "сцена: одно место");
-    // ...а при двух — есть, и «следующее место» ведёт по кругу
+    // the BADGE ×N: with one place it is absent
+    assert_eq!(h.state().nest_uses(seq), 1, "scene: one place");
+    // ...but with two it is present, and “next place” cycles round
     let mut twin = h.state().model.project().clips.iter().find(|c| c.id == inst).unwrap().clone();
     twin.id = ClipId(h.state().next_clip_id());
     twin.start = kt_time::Tick(900_000);
     twin.link_group = None;
     assert!(h.state_mut().apply(Command::AddClip(twin.clone())));
     h.step();
-    assert_eq!(h.state().nest_uses(seq), 2, "второе место не посчиталось");
+    assert_eq!(h.state().nest_uses(seq), 2, "the second place was not counted");
     h.state_mut().goto_next_place(inst);
     h.step();
     assert!(
         h.state().selected.contains(&twin.id),
-        "«следующее место» не привело ко второму экземпляру — бейдж ×N остался \
-         сообщением без продолжения"
+        "“next place” did not lead to the second instance — the ×N badge remained \
+         a message with no continuation"
     );
-    // ...и по кругу обратно
+    // ...and round again, back
     h.state_mut().goto_next_place(twin.id);
     h.step();
-    assert!(h.state().selected.contains(&inst), "круг не замкнулся на первом месте");
+    assert!(h.state().selected.contains(&inst), "the cycle did not close at the first place");
 }
 
-/// Тест 460 (п.397, Р.51): повторный драг уголка-фейда правит ТОЛЬКО длину
-/// окна — выбранный вид, кривые параметров и кривая аудио выживают.
-/// Раньше `commit_fade_handle` собирал свежий Crossfade и молча стирал
-/// настройки (против правила 20 «ничего не отрубается само»).
+/// Test 460 (item 397, R.51): a repeated drag of the fade corner handle edits ONLY the length
+/// of the window — the chosen kind, the parameter curves and the audio curve survive.
+/// Before, `commit_fade_handle` built a fresh Crossfade and silently wiped
+/// the settings (against rule 20 “nothing switches itself off”).
 #[test]
 fn t460_fade_handle_redrag_keeps_kind() {
     use kt_model::*;
@@ -9579,7 +9579,7 @@ fn t460_fade_handle_redrag_keeps_kind() {
             opacity: 1.0,
             fx_off: false,
         });
-        // уголковый фейд-ин с НАСТРОЕННЫМ видом, кривой и звуком
+        // a corner fade-in with the CONFIGURED kind, curve and sound
         p.transitions.push(TransitionEvent {
             id: TransitionId(1),
             a: None,
@@ -9607,10 +9607,10 @@ fn t460_fade_handle_redrag_keeps_kind() {
         app.player.seek(Tick(0));
     }
     h.step();
-    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let g = h.state().tl_geom.clone().expect("no timeline geometry");
     let y_strip = g.lane_top(ClipKind::Video, 0) + 3.0;
 
-    // тянем ручку фейда (конец окна, тик 140 000) дальше вправо до 180 000
+    // drag the fade handle (the end of the window, tick 140 000) further right to 180 000
     let from = g.tick_to_x(140_000);
     h.hover_at(egui::pos2(from, y_strip));
     h.step();
@@ -9623,24 +9623,24 @@ fn t460_fade_handle_redrag_keeps_kind() {
     h.step();
 
     let p = h.state().model.project().clone();
-    assert_eq!(p.transitions.len(), 1, "фейд один: {:?}", p.transitions);
+    assert_eq!(p.transitions.len(), 1, "one fade: {:?}", p.transitions);
     let t = &p.transitions[0];
     assert!(
         (t.out_offset.0 - 80_000).abs() <= 2_000,
-        "длина окна поехала за ручкой: {:?}",
+        "the window length moved with the handle: {:?}",
         t.out_offset
     );
     assert_eq!(
         t.kind,
         TransitionKind::Wipe { dir: Dir::Left, angle: 10.0, softness: 0.2 },
-        "вид фейда пережил повторный драг уголка"
+        "the fade view survived a repeated corner drag"
     );
-    assert_eq!(t.audio, AudioCurve::SCurve, "кривая аудио не сброшена");
-    assert_eq!(t.auto.len(), 1, "кривые параметров не стёрты: {:?}", t.auto);
+    assert_eq!(t.audio, AudioCurve::SCurve, "the audio curve was not reset");
+    assert_eq!(t.auto.len(), 1, "the parameter curves were not erased: {:?}", t.auto);
 }
 
-/// Тест 460b (п.397, Р.51): повторный наезд Move-драгом на пару с уже
-/// настроенным переходом двигает окно, но вид/кривую аудио сохраняет.
+/// Test 460b (item 397, R.51): a repeated overlap by a Move drag on a pair with an already
+/// configured transition moves the window, but keeps the kind/audio curve.
 #[test]
 fn t460b_overlap_redrag_keeps_kind() {
     use kt_model::*;
@@ -9650,7 +9650,7 @@ fn t460b_overlap_redrag_keeps_kind() {
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-        // ветка кроссфейда из наезда живёт в режиме БЕЗ переслаивания (Р.28)
+        // the overlap crossfade branch lives in the mode WITHOUT interleaving (R.28)
         p.overlap_layers = false;
         p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         for (n, start, src_in) in [(1u64, 0i64, 0i64), (2, 90_000, 20_000)] {
@@ -9696,7 +9696,7 @@ fn t460b_overlap_redrag_keeps_kind() {
         app.player.seek(Tick(0));
     }
     h.step();
-    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let g = h.state().tl_geom.clone().expect("no timeline geometry");
     let y = g.lane_y(ClipKind::Video, 0, 0.5);
     let grab = g.tick_to_x(90_000 + 45_000);
     h.hover_at(egui::pos2(grab, y));
@@ -9707,9 +9707,9 @@ fn t460b_overlap_redrag_keeps_kind() {
     h.step();
     let grab_dt = match h.state().drag {
         Some(crate::timeline::Drag::Clip(ref d)) => d.grab_dt,
-        _ => panic!("драг клипа не начался"),
+        _ => panic!("clip drag did not start"),
     };
-    // цель: start = 50 000 — наезд ГЛУБЖЕ на хвост клипа 1
+    // target: start = 50 000 — the overlap goes DEEPER into the tail of clip 1
     let to = g.tick_to_x(50_000 + grab_dt);
     h.hover_at(egui::pos2(to, y));
     h.step();
@@ -9717,23 +9717,23 @@ fn t460b_overlap_redrag_keeps_kind() {
     h.step();
 
     let p = h.state().model.project().clone();
-    assert_eq!(p.transitions.len(), 1, "переход один: {:?}", p.transitions);
+    assert_eq!(p.transitions.len(), 1, "one transition: {:?}", p.transitions);
     let t = &p.transitions[0];
     assert_eq!((t.a, t.b), (Some(ClipId(1)), Some(ClipId(2))));
-    assert!((t.in_offset.0 - 20_000).abs() <= 1_000, "окно поехало: {:?}", t.in_offset);
+    assert!((t.in_offset.0 - 20_000).abs() <= 1_000, "the window moved: {:?}", t.in_offset);
     assert_eq!(
         t.kind,
         TransitionKind::Barn { vertical: true, softness: 0.1 },
-        "вид перехода пережил повторный наезд"
+        "the transition view survived a repeated overlap"
     );
-    assert_eq!(t.audio, AudioCurve::Linear, "кривая аудио не сброшена");
-    p.validate().expect("итог валиден");
+    assert_eq!(t.audio, AudioCurve::Linear, "the audio curve was not reset");
+    p.validate().expect("result is valid");
 }
 
-/// Тест 466 (п.399, Р.51): переход НА НАЛОЖЕНИИ достижим жестами — ПКМ по
-/// зоне наложения предлагает «Переход с…» (сосед-«лесенка» равноправен
-/// стыковому, правило 17), а двойной клик по зоне наложенного перехода
-/// открывает его свойства, как у стыкового.
+/// Test 466 (item 399, R.51): a transition ON AN OVERLAP is reachable by gestures — RMB on the
+/// overlap zone offers “Transition from…” (the neighbouring “staircase” is equal to the butt-joint one,
+/// rule 17), and a double click on the zone of an overlapping transition
+/// opens its properties, as for the butt-joint one.
 #[test]
 fn t466_overlap_transition_reachable() {
     use kt_model::*;
@@ -9743,7 +9743,7 @@ fn t466_overlap_transition_reachable() {
         {
             let app = h.state_mut();
             let mut p = app.model.project().clone();
-            // лесенка: клип 1 [0..50к), клип 2 [30к..80к); третий подальше
+            // staircase: clip 1 [0..50k), clip 2 [30k..80k); the third further away
             p.clips[0].duration = Tick(50_000);
             p.clips[1].start = Tick(30_000);
             p.clips[1].duration = Tick(50_000);
@@ -9769,25 +9769,25 @@ fn t466_overlap_transition_reachable() {
         (h, g2)
     };
 
-    // ПКМ по зоне наложения БЕЗ перехода: меню клипа предлагает переход
+    // RMB on the overlap zone WITHOUT a transition: the clip menu offers a transition
     let (mut h, g) = overlap_app(false);
     let y = g.lane_y(kt_model::ClipKind::Video, 0, 0.75);
     right_click_at(&mut h, egui::pos2(g.tick_to_x(40_000), y));
     assert!(
         matches!(h.state().ctx_target, Some(crate::timeline::CtxTarget::Clip(_))),
-        "ПКМ по зоне наложения обязан дать меню клипа"
+        "RMB on the overlap zone must give the clip menu"
     );
     let labels = menu_labels(&mut h);
     assert!(
         labels.iter().any(|l| {
-            // menu_button дописывает к подписи стрелку подменю
+            // menu_button appends a submenu arrow to the label
             l.starts_with(tr(k::tl::menu::TRANSITION_PREV))
                 || l.starts_with(tr(k::tl::menu::TRANSITION_NEXT))
         }),
-        "сосед-«лесенка» обязан дать пункт «Переход с…»: {labels:?}"
+        "the “staircase” neighbor must give the “Transition from…” item: {labels:?}"
     );
 
-    // двойной клик по зоне НАЛОЖЕННОГО перехода открывает свойства
+    // a double click on the zone of an OVERLAPPING transition opens its properties
     let (mut h, g) = overlap_app(true);
     let pos = egui::pos2(g.tick_to_x(40_000), y);
     for _ in 0..2 {
@@ -9809,28 +9809,28 @@ fn t466_overlap_transition_reachable() {
     assert_eq!(
         h.state().transition_editors.len(),
         1,
-        "двойной клик по наложенному переходу обязан открыть свойства"
+        "double-click on an overlapping transition must open its properties"
     );
-    // и длина окна в свойствах — длина ПЕРЕКРЫТИЯ, офсеты тут ни при чём
+    // and the window length in the properties is the length of the OVERLAP, the offsets have nothing to do with it
     let p = h.state().model.project();
     let t = &p.transitions[0];
-    let w = t.window(p).expect("окно наложенного");
-    assert_eq!((w.end - w.start).0, 20_000, "окно = зона перекрытия");
+    let w = t.window(p).expect("overlap window");
+    assert_eq!((w.end - w.start).0, 20_000, "window = overlap zone");
 }
 
-/// Тест 511 (Р.53, п.415; переписан в Р.59 стадии 2): пикер вида ОДИН,
-/// и смена вида доезжает до модели, не выкидывая человека из окна.
+/// Test 511 (R.53, item 415; rewritten in R.59 stage 2): ONE kind picker, and a change of kind
+/// reaches the model without throwing the person out of the window.
 ///
-/// До Р.53 окно титра было тупиком: вид генератора в нём не показывался
-/// вовсе, и сменить титр обратно на цвет было нечем (правило 17). С Р.59
-/// окон стало одно, и роутить больше некуда — утверждение сузилось до
-/// сути: пикер есть, вид меняется, форма остаётся на месте, а смена вида
-/// — СВОЙ шаг истории (правило 20): один Ctrl+Z возвращает титр со всем
-/// набранным текстом, а не откатывает заодно правку цвета.
+/// Before R.53 the title window was a dead end: the generator’s kind was not shown in it
+/// at all, and there was no way to switch the title back to a colour (rule 17). With R.59
+/// there is one window, and there is nowhere else to route — the claim narrowed to
+/// its essence: the picker exists, the kind changes, the form stays in place, and the change of kind
+/// is its OWN history step (rule 20): one Ctrl+Z restores the title with all
+/// the typed text, rather than also rolling back the colour edit.
 ///
-/// Пикер щупается по РОЛИ: у `ComboBox` в accesskit нет label, показанный
-/// текст лежит в `value` — по подписи его не найти (родня заметки про
-/// `DragValue` в CLAUDE.md).
+/// The picker is probed by ROLE: a `ComboBox` in accesskit has no label, the shown
+/// text sits in `value` — so it cannot be found by its label (a relative of the note about
+/// `DragValue` in CLAUDE.md).
 #[test]
 fn t511_kind_picker_routes_between_windows() {
     use eframe::egui::accesskit::Role;
@@ -9842,31 +9842,31 @@ fn t511_kind_picker_routes_between_windows() {
     h.step();
     h.step();
     let (_id, clip) = made_generator(&h);
-    assert_eq!(h.state().fx_editors.len(), 1, "форма генератора — в окне события");
+    assert_eq!(h.state().fx_editors.len(), 1, "the generator form is in the event window");
     let depth = h.state().model.undo_depth();
 
     let text_name = crate::gen_ui::kind_name(&GeneratorKind::default_text());
     let solid_name =
         crate::gen_ui::kind_name(&GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 });
 
-    // пикер вида ЕСТЬ в форме и показывает «Текст»
+    // the kind picker IS in the form and shows “Text”
     h.get(by().role(Role::ComboBox).value(text_name)).click();
     h.step();
     h.get_by_label(solid_name).click();
     h.step();
     h.step();
 
-    // следствие: вид сменился и в медиа, и на событии, окно на месте
+    // consequence: the kind changed in the media and on the event, the window stays in place
     let app = h.state();
     assert_eq!(app.model.project().media.last().unwrap().path, "gen:solid");
     assert!(
         matches!(gen_of(&h, clip), GeneratorKind::Solid { .. }),
-        "значения события обязаны переодеться вместе с видом"
+        "the event values must change together with the view"
     );
-    assert_eq!(app.fx_editors.len(), 1, "смена вида не имеет права закрывать окно");
-    assert_eq!(app.model.undo_depth(), depth + 1, "смена вида — ровно один шаг истории");
+    assert_eq!(app.fx_editors.len(), 1, "a view change has no right to close the window");
+    assert_eq!(app.model.undo_depth(), depth + 1, "a view change is exactly one history step");
 
-    // и обратно: «Текст» тем же пикером
+    // and back: “Text” with the same picker
     h.get(by().role(Role::ComboBox).value(solid_name)).click();
     h.step();
     h.get_by_label(text_name).click();
@@ -9874,14 +9874,14 @@ fn t511_kind_picker_routes_between_windows() {
     h.step();
     let app = h.state();
     assert_eq!(app.model.project().media.last().unwrap().path, "gen:text");
-    assert!(matches!(gen_of(&h, clip), GeneratorKind::Text { .. }), "вид не вернулся в титр");
-    assert_eq!(app.fx_editors.len(), 1, "форма осталась одна");
+    assert!(matches!(gen_of(&h, clip), GeneratorKind::Text { .. }), "the view did not return to the title");
+    assert_eq!(app.fx_editors.len(), 1, "one form remained");
 }
 
-/// Тест 516 (Р.53, п.415): доля кадра ПОКАЗЫВАЕТСЯ процентом, а хранится
-/// долей. «Кегль 0.070» не говорит пользователю ничего; при этом ни
-/// формат, ни кривые, ни движок о процентах не знают — пересчёт живёт в
-/// одном месте (`widgets::param_value`).
+/// Test 516 (R.53, item 415): a frame share is SHOWN as a percentage, but STORED as a
+/// fraction. “Font size 0.070” tells the user nothing; at the same time neither the format,
+/// nor the curves, nor the engine knows about percentages — the conversion lives in
+/// one place (`widgets::param_value`).
 #[test]
 fn t516_frame_fractions_are_shown_in_percent() {
     use eframe::egui::accesskit::Role;
@@ -9893,37 +9893,37 @@ fn t516_frame_fractions_are_shown_in_percent() {
     h.step();
     h.step();
 
-    // объявление: кегль — процент, межстрочный интервал — множитель
+    // the declaration: font size is a percentage, line spacing is a multiplier
     let kind = GeneratorKind::default_text();
     let spec = |n: &str| kind.param_specs().iter().find(|s| s.name == n).unwrap().clone();
-    assert_eq!(spec("size").unit, ParamUnit::Percent, "кегль обязан показываться процентом");
+    assert_eq!(spec("size").unit, ParamUnit::Percent, "the point size must be shown as a percentage");
     assert_eq!(spec("pos_x").unit, ParamUnit::Percent);
-    assert_eq!(spec("line_spacing").unit, ParamUnit::Ratio, "множитель процентом не бывает");
+    assert_eq!(spec("line_spacing").unit, ParamUnit::Ratio, "a multiplier cannot be a percentage");
 
-    // следствие В ОКНЕ: поле кегля показывает «7.0 %», а не «0.07»
+    // consequence IN THE WINDOW: the font-size field shows “7.0 %”, not “0.07”
     let shown: Vec<String> = h
         .query_all(by().role(Role::SpinButton))
         .filter_map(|n| n.accesskit_node().value().map(|v| v.to_string()))
         .collect();
     assert!(
         shown.iter().any(|s| s == "7.0 %"),
-        "в окне титра нет поля кегля в процентах: {shown:?}"
+        "there is no point size field in percent in the title window: {shown:?}"
     );
     assert!(
         shown.iter().any(|s| s == "1.00"),
-        "множитель уехал в проценты вместе с долями: {shown:?}"
+        "the multiplier went into percents together with the fractions: {shown:?}"
     );
 
-    // и хранение осталось долей: путь пишет 0.125, а не 12.5
+    // and the storage is still a fraction: the path writes 0.125, not 12.5
     let mut k = GeneratorKind::default_text();
     k.set_param("size", 0.125);
     let path = format_gen_path(&k);
-    assert!(path.contains("s=0.125"), "в путь уехал процент вместо доли: {path}");
+    assert!(path.contains("s=0.125"), "a percent instead of a fraction went into the path: {path}");
 }
 
-/// Тест 517 (Р.53, п.415): двойной клик по ПОДПИСИ возвращает параметру
-/// умолчание. Раньше «вернуть как было» требовало помнить число — у
-/// титра таких чисел одиннадцать.
+/// Test 517 (R.53, item 415): a double click on the LABEL restores the parameter’s default.
+/// Before, “put it back as it was” required remembering the number — a title has
+/// eleven such numbers.
 #[test]
 fn t517_double_click_on_label_resets_param() {
     use egui_kittest::kittest::Queryable;
@@ -9949,16 +9949,16 @@ fn t517_double_click_on_label_resets_param() {
     });
     let got = kt_model::parse_gen_path(path.as_deref().unwrap_or(""))
         .and_then(|k| k.get_param("size"))
-        .expect("медиа обязано остаться титром");
+        .expect("the media must remain a title");
     assert!(
         (got - default_size).abs() < 1e-9,
-        "двойной клик по подписи не вернул умолчание: {got} вместо {default_size}"
+        "double-click on the label did not restore the default: {got} instead of {default_size}"
     );
 }
 
-/// Тест 518 (Р.53, п.415): непарсящийся `gen:`-путь — ОШИБКА, а не
-/// молчание (правило 16), и подсказка общего виджета доезжает до строки
-/// состояния (правило 10: место показа одно).
+/// Test 518 (R.53, item 415): an unparseable `gen:` path is an ERROR, not
+/// silence (rule 16), and the shared widget’s hint reaches the status line
+/// (rule 10: there is one place for display).
 #[test]
 fn t518_unknown_kind_is_loud_and_widget_hints_reach_the_status_line() {
     use egui_kittest::kittest::Queryable;
@@ -9968,7 +9968,7 @@ fn t518_unknown_kind_is_loud_and_widget_hints_reach_the_status_line() {
     h.step();
     let id = h.state().model.project().media.last().unwrap().id;
 
-    // подсказка подписи параметра: наводим на неё и читаем СТРОКУ СОСТОЯНИЯ
+    // the parameter label’s hint: we hover over it and read the STATUS LINE
     let label = crate::widgets::param_label_scoped(kt_model::ParamScope::Generator, "size");
     let rect = h.get_by_label(&label).rect();
     h.hover_at(rect.center());
@@ -9977,12 +9977,12 @@ fn t518_unknown_kind_is_loud_and_widget_hints_reach_the_status_line() {
     assert_eq!(
         h.state().hover_hint.as_deref(),
         Some(crate::i18n::tr(crate::i18n::k::fx::HINT_RESET)),
-        "подсказка общего виджета не доехала до строки состояния"
+        "the hint of the shared widget did not reach the status line"
     );
 
-    // вид новее сборки: формы у него нет, но пользователь слышит почему.
-    // С Р.59 значения живут на СОБЫТИИ, и неизвестный вид снимает их —
-    // голова полосы исчезает, окно эффектов остаётся (цепочка-то жива).
+    // a kind newer than the build: it has no form, but the user hears why.
+    // Since R.59 the values live on the EVENT, and an unknown kind removes them —
+    // the strip head disappears, the effects window stays (the chain itself is alive).
     let notices = h.state().notices.len();
     let clip = h
         .state()
@@ -9992,7 +9992,7 @@ fn t518_unknown_kind_is_loud_and_widget_hints_reach_the_status_line() {
         .iter()
         .find(|c| c.media == id)
         .map(|c| c.id)
-        .expect("событие генератора");
+        .expect("generator event");
     {
         let app = h.state_mut();
         let _ = app.apply(Command::SetMediaPath { id, path: "gen:from_the_future".into() });
@@ -10002,25 +10002,25 @@ fn t518_unknown_kind_is_loud_and_widget_hints_reach_the_status_line() {
     let app = h.state();
     assert!(
         app.model.clip(clip).is_some_and(|c| c.r#gen.is_none()),
-        "у неизвестного вида не может быть формы — значения обязаны сняться"
+        "an unknown kind cannot have a form — the values must be cleared"
     );
-    assert!(app.notices.len() > notices, "непарсящийся путь снял форму МОЛЧА");
+    assert!(app.notices.len() > notices, "an unparseable path removed the form SILENTLY");
 }
 
-/// Тест 512 (Р.53, п.416): новый генератор появляется НА МОНТАЖЕ, а не
-/// только в бине, и всё это — один шаг истории.
+/// Test 512 (R.53, item 416): a new generator appears ON THE EDIT, not only in the bin,
+/// and all of this is one history step.
 ///
-/// До этого пункта пункт меню заводил медиа и открывал окно параметров, а
-/// в превью не было ничего: пользователь набирал титр вслепую, потом шёл
-/// в бин и ставил карточку руками. Правило 4 чек-листа — умолчание должно
-/// быть полезным.
+/// Before this item the menu item created the media and opened the parameters window, but
+/// there was nothing in the preview: the user typed a title blind, then went
+/// to the bin and placed the card by hand. Rule 4 of the checklist — the default must
+/// be useful.
 #[test]
 fn t512_new_generator_lands_on_the_timeline() {
     use kt_model::*;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
-    // тик КРАТЕН 15: playhead живёт в аудиокадрах 48 кГц, и round-trip
-    // «тик → кадр → тик» усекает вниз (п.7 р.10) — 400_000 вернулось бы
-    // как 399_999, и тест ловил бы не то
+    // the tick is a MULTIPLE of 15: the playhead lives in 48 kHz audio frames, and the round trip
+    // “tick → frame → tick” truncates downwards (item 7, round 10) — 400_000 would come back
+    // as 399_999, and the test would catch the wrong thing
     h.state_mut().player.seek(kt_time::Tick(450_000));
     let clips_before = h.state().model.project().clips.len();
     let depth = h.state().model.undo_depth();
@@ -10032,30 +10032,30 @@ fn t512_new_generator_lands_on_the_timeline() {
     let id = app.model.project().media.last().unwrap().id;
     let mine: Vec<&ClipEvent> =
         app.model.project().clips.iter().filter(|c| c.media == id).collect();
-    assert_eq!(mine.len(), 1, "генератор без звука кладёт ровно одно событие");
-    assert_eq!(mine[0].start, kt_time::Tick(450_000), "событие обязано встать ПОД КУРСОР");
-    assert!(mine[0].duration.0 > 0, "у события нулевой длины нечего показывать");
+    assert_eq!(mine.len(), 1, "a generator without sound places exactly one event");
+    assert_eq!(mine[0].start, kt_time::Tick(450_000), "the event must land UNDER THE CURSOR");
+    assert!(mine[0].duration.0 > 0, "there is nothing to show for an event of zero length");
     assert_eq!(app.model.project().clips.len(), clips_before + 1);
-    assert_eq!(app.model.undo_depth(), depth + 1, "медиа и клип — ОДИН шаг истории");
+    assert_eq!(app.model.undo_depth(), depth + 1, "media and clip — ONE history step");
 
-    // один Ctrl+Z убирает и событие, и медиа
+    // one Ctrl+Z removes both the event and the media
     h.state_mut().undo();
     h.step();
     let app = h.state();
-    assert_eq!(app.model.project().clips.len(), clips_before, "undo оставил событие");
+    assert_eq!(app.model.project().clips.len(), clips_before, "undo left the event");
     assert!(
         !app.model.project().media.iter().any(|m| m.id == id),
-        "undo оставил медиа: шаг был не один"
+        "undo left the media: the step was not one"
     );
 }
 
-/// Тест 513 (Р.53, п.416): событие-генератор подписано ИМЕНЕМ ВИДА, а не
-/// сырым `gen:`-путём, и подпись следует за языком интерфейса.
+/// Test 513 (R.53, item 416): a generator event is labelled with the KIND’s NAME, not with the
+/// raw `gen:` path, and the label follows the interface language.
 ///
-/// Сырой путь врал дважды: в нём были параметры (подпись дёргалась на
-/// каждое нажатие в окне) и не было вида. Язык — отдельный штамп в кэше
-/// имён: смена языка модель не трогает, и без него таймлайн оставался бы
-/// на старом языке до первой правки монтажа.
+/// The raw path lied twice: it contained the parameters (the label jumped on every keystroke
+/// in the window) and did not contain the kind. The language is a separate stamp in the name
+/// cache: a language change does not touch the model, and without it the timeline would stay
+/// in the old language until the first edit.
 #[test]
 fn t513_generator_clip_is_labelled_by_its_kind() {
     use kt_model::*;
@@ -10066,38 +10066,38 @@ fn t513_generator_clip_is_labelled_by_its_kind() {
     let clip = h.state().model.project().clips.iter().find(|c| c.media == id).unwrap().id;
 
     let name_of = |h: &mut Harness<'_, KtApp>| h.state_mut().names().0.get(&clip).cloned();
-    let ru = name_of(&mut h).expect("у события генератора нет подписи");
+    let ru = name_of(&mut h).expect("the generator event has no label");
     assert_eq!(
         ru,
         crate::gen_ui::kind_name(&GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 })
     );
-    assert!(!ru.contains("gen:"), "подпись всё ещё сырой путь: {ru}");
-    assert!(!ru.contains("ff8800"), "параметры уехали в подпись: {ru}");
+    assert!(!ru.contains("gen:"), "the label is still a raw path: {ru}");
+    assert!(!ru.contains("ff8800"), "parameters went into the label: {ru}");
 
-    // смена языка — подпись обязана переехать вместе с интерфейсом
+    // a language change — the label must move together with the interface
     crate::i18n::set_lang(crate::i18n::Lang::En);
     h.step();
-    let en = name_of(&mut h).expect("подпись пропала после смены языка");
+    let en = name_of(&mut h).expect("the label disappeared after a language change");
     crate::i18n::set_lang(crate::i18n::Lang::Ru);
-    assert_ne!(en, ru, "подпись осталась на прежнем языке: кэш имён не знает про язык");
+    assert_ne!(en, ru, "the label stayed in the previous language: the name cache does not know about the language");
 
-    // и цвет события НЕ зависит от параметров: правка не перекрашивает
+    // and the event colour does NOT depend on the parameters: an edit does not recolour it
     let a = crate::timeline::clip_color("gen:solid:c=ff8800", ClipKind::Video);
     let b = crate::timeline::clip_color("gen:solid:c=104080", ClipKind::Video);
-    assert_eq!(a, b, "клип перекрашивается на каждое нажатие в окне параметров");
+    assert_eq!(a, b, "the clip is recolored on every press in the parameters window");
     assert_ne!(
         a,
         crate::timeline::clip_color("gen:text", ClipKind::Video),
-        "разные виды обязаны отличаться цветом"
+        "different kinds must differ in color"
     );
 }
 
-/// Тест 514 (Р.53, п.416): двойной клик по карточке бина даёт ОДИН клип и
-/// открывает окно параметров.
+/// Test 514 (R.53, item 416): a double click on a bin card gives ONE clip and
+/// opens the parameters window.
 ///
-/// У egui `clicked()` истинно на ОБОИХ кликах двойного, а одиночный клик
-/// по карточке ставит событие — значит двойной ставил ДВА внахлёст, и
-/// пользователь этого не просил (правило 20: ничего не отрастает само).
+/// In egui `clicked()` is true on BOTH clicks of a double, and a single click
+/// on a card places the event — so a double placed TWO overlapping, and the
+/// user did not ask for that (rule 20: nothing grows by itself).
 #[test]
 fn t514_double_click_on_a_card_gives_one_clip_and_the_window() {
     use kt_model::*;
@@ -10107,33 +10107,33 @@ fn t514_double_click_on_a_card_gives_one_clip_and_the_window() {
         h.step();
     }
     let id = h.state().model.project().media.last().unwrap().id;
-    // окно создания закрываем: тест про ОТКРЫТИЕ двойным кликом
+    // close the creation window: the test is about OPENING by double click
     h.state_mut().fx_editors.clear();
     h.state_mut().player.seek(kt_time::Tick(700_000));
     h.step();
     let before = h.state().model.project().clips.iter().filter(|c| c.media == id).count();
 
     let card =
-        h.state().bin_card_rect(id).expect("карточка генератора не нарисована — щупать нечего");
+        h.state().bin_card_rect(id).expect("the generator card is not drawn — there is nothing to probe");
     double_click_at(&mut h, card.center());
     h.step();
     h.step();
 
     let app = h.state();
     let after = app.model.project().clips.iter().filter(|c| c.media == id).count();
-    assert_eq!(after, before + 1, "двойной клик поставил не один клип, а {}", after - before);
-    assert_eq!(app.fx_editors.len(), 1, "двойной клик по карточке не открыл окно");
+    assert_eq!(after, before + 1, "double-click placed not one clip but {}", after - before);
+    assert_eq!(app.fx_editors.len(), 1, "double-click on the card did not open the window");
     assert!(
         app.model.clip(app.fx_editors[0].clip).is_some_and(|c| c.media == id && c.r#gen.is_some()),
-        "окно открылось не на событии этого генератора"
+        "the window opened not on the event of this generator"
     );
 }
 
-/// Тест 515 (Р.53, п.416): карточка говорит, во СКОЛЬКИХ местах стоит
-/// генератор. Параметры общие на все места, и правка цвета меняет
-/// картинку сразу везде — число обязано быть видно ДО правки, а не только
-/// в окне. Место не новое: у генератора длительности нет, и подпись
-/// занимает её пустующий слот (правило 13).
+/// Test 515 (R.53, item 416): the card says in HOW MANY places the
+/// generator stands. Parameters are shared by all places, and a colour edit changes the
+/// picture everywhere at once — the count must be visible BEFORE the edit, not only in the
+/// window. The place is not new: a generator has no duration, and the label takes
+/// its empty slot (rule 13).
 #[test]
 fn t515_card_counts_places_on_the_timeline() {
     use kt_model::*;
@@ -10141,22 +10141,22 @@ fn t515_card_counts_places_on_the_timeline() {
     h.state_mut().create_generator(GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 });
     h.step();
     let id = h.state().model.project().media.last().unwrap().id;
-    assert_eq!(h.state_mut().media_uses().get(&id).copied(), Some(1), "клип создания не сосчитан");
+    assert_eq!(h.state_mut().media_uses().get(&id).copied(), Some(1), "the creation clip was not counted");
 
     h.state_mut().player.seek(kt_time::Tick(800_000));
     h.state_mut().place_media_at_cursor(id);
     h.step();
     assert_eq!(h.state_mut().media_uses().get(&id).copied(), Some(2));
 
-    // счёт идёт по ВСЕМУ документу, а не по корню: событие внутри ленты —
-    // такое же место, и правка параметров меняет и его
+    // the count covers the WHOLE document, not just the root: an event inside a reel is
+    // the same kind of place, and a parameter edit changes it too
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
         let mut inner = p.clips.iter().find(|c| c.media == id).unwrap().clone();
         inner.id = ClipId(9001);
         inner.start = kt_time::Tick(0);
-        let mut seq = Sequence::new(MediaId(9000), "лента");
+        let mut seq = Sequence::new(MediaId(9000), "reel");
         seq.clips.push(inner);
         p.sequences.push(seq);
         p.validate().unwrap();
@@ -10166,30 +10166,30 @@ fn t515_card_counts_places_on_the_timeline() {
     assert_eq!(
         h.state_mut().media_uses().get(&id).copied(),
         Some(3),
-        "событие внутри ленты не сосчитано — «мест» меньше, чем правка затронет"
+        "an event inside the reel was not counted — “places” is less than the edit will affect"
     );
 }
 
-/// Тест 540 (Р.53, п.424; переписан в Р.59 стадии 2): пресет титра
-/// ставит ВСЁ одним шагом истории, а активный пресет определяется
-/// ОБРАТНОЙ функцией.
+/// Test 540 (R.53, item 424; rewritten in R.59 stage 2): a title preset
+/// sets EVERYTHING in one history step, and the active preset is determined by an
+/// INVERSE function.
 ///
-/// Решение владельца дословно: «пресет ставит всё», включая позицию и
-/// якорь, один Ctrl+Z возвращает весь набор, а ручная подкрутка честно
-/// показывает «не совпадает ни с одним». Флага «какой пресет нажимали» в
-/// программе нет намеренно: он врал бы после первой же правки поля.
+/// The owner’s decision verbatim: “the preset sets everything”, including the position
+/// and the anchor; one Ctrl+Z restores the whole set, and a manual tweak honestly
+/// shows “matches none”. There is deliberately no flag of “which preset was pressed” in the
+/// program: it would lie after the first field edit.
 ///
-/// Что изменилось: «всё» теперь включает и АНИМАЦИЮ — она стала
-/// обычными кривыми на событии (`gen_auto`), и они уезжают тем же одним
-/// шагом (кривые проверяет t668).
+/// What changed: “everything” now includes the ANIMATION too — it became
+/// plain curves on the event (`gen_auto`), and they move in the same single
+/// step (the curves are checked by t668).
 #[test]
 fn t540_title_preset_sets_everything_in_one_step() {
     use crate::gen_ui::{active_preset, title_presets};
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
 
-    // обратная функция: пресет, применённый к своему результату, даёт
-    // тот же результат — иначе «активный» не определялся бы вовсе
+    // the inverse function: a preset applied to its own result gives
+    // the same result — otherwise “active” would not be determined at all
     let base = GeneratorKind::default_text();
     for (i, pr) in title_presets().iter().enumerate() {
         let made = pr.applied(&base);
@@ -10197,16 +10197,16 @@ fn t540_title_preset_sets_everything_in_one_step() {
         assert_eq!(
             active_preset(&made, &curves),
             Some(i),
-            "пресет {i} не узнаёт собственный результат"
+            "preset {i} does not recognize its own result"
         );
     }
-    // умолчание титра ни одному пресету не равно — и это честно. По
-    // ЗНАЧЕНИЯМ пустой титр совпадает с «печатной машинкой» (тот же кегль
-    // и та же середина кадра), и различает их ровно вторая половина
-    // пресета — кривые, которых у нового титра нет.
-    assert_eq!(active_preset(&base, &[]), None, "пустой титр не обязан совпадать с пресетом");
+    // the title’s default equals NO preset — and that is honest. By its VALUES an
+    // empty title matches the “typewriter” (the same font size and the same frame centre),
+    // and exactly the second half of the preset tells them apart
+    // — the curves, which a new title does not have.
+    assert_eq!(active_preset(&base, &[]), None, "an empty title need not match the preset");
 
-    // ...и то же в ОКНЕ: нажатие ставит набор полей одной командой
+    // and the same in the WINDOW: a click sets the set of fields in one command
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
     h.state_mut().create_generator(GeneratorKind::default_text());
     for _ in 0..3 {
@@ -10223,31 +10223,31 @@ fn t540_title_preset_sets_everything_in_one_step() {
 
     let made = gen_of(&h, clip);
     let curves = h.state().model.clip(clip).map(|c| c.gen_auto.clone()).unwrap_or_default();
-    assert_ne!(made, before, "нажатие пресета ничего не изменило");
-    assert_eq!(active_preset(&made, &curves), Some(0), "окно поставило не тот набор");
+    assert_ne!(made, before, "pressing the preset changed nothing");
+    assert_eq!(active_preset(&made, &curves), Some(0), "the window set the wrong set");
     let GeneratorKind::Text { anchor, pos_y, size, .. } = &made else { unreachable!() };
-    assert_eq!(*anchor, TextAnchor::BottomLeft, "пресет обязан ставить и ЯКОРЬ");
-    assert!(*pos_y > 0.5 && *size < 0.07, "пресет обязан ставить и позицию, и кегль");
-    assert_eq!(h.state().model.undo_depth(), depth + 1, "пресет — ровно один шаг истории");
+    assert_eq!(*anchor, TextAnchor::BottomLeft, "the preset must set the ANCHOR too");
+    assert!(*pos_y > 0.5 && *size < 0.07, "the preset must set both the position and the point size");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "the preset is exactly one history step");
 
-    // один Ctrl+Z возвращает весь набор разом
+    // one Ctrl+Z restores the whole set at once
     h.state_mut().undo();
     h.step();
-    assert_eq!(gen_of(&h, clip), before, "undo обязан вернуть титр целиком");
+    assert_eq!(gen_of(&h, clip), before, "undo must restore the whole title");
 }
 
-/// Тест 541 (Р.53, п.412; переписан в Р.59 стадии 2): правка параметров
-/// при НЕПОДВИЖНОМ курсоре доезжает до ЭКРАНА, а не только до кэша
-/// плеера.
+/// Test 541 (R.53, item 412; rewritten in R.59 stage 2): an edit of parameters
+/// with a STILL cursor reaches the SCREEN,
+/// not only the player’s cache.
 ///
-/// Нашёл этот дефект живой сценарий, а не харнесс, и это ровно тот
-/// случай, о котором предупреждает CLAUDE.md: t478 спрашивает кэш плеера
-/// НАПРЯМУЮ, мимо мемоизации превью, и был зелёным на программе, где в
-/// окне стоял оранжевый цвет, а на экране висел чёрный кадр. Ключ превью
-/// не менялся: ни курсор, ни качество, ни план правка не двигает — и
-/// композит считался «уже посчитанным» до первого движения playhead'а.
+/// This defect was found by a live scenario, not by a harness — exactly the
+/// case CLAUDE.md warns about: t478 asks the player cache DIRECTLY, bypassing
+/// the preview memoisation, and was green on a program where the window showed
+/// an orange colour while the screen showed a black frame. The preview key did
+/// not change: neither the cursor, the quality nor the plan is moved by the edit,
+/// and the composite counted as “already computed” until the playhead first moved.
 ///
-/// Поэтому тест утверждает СЛЕДСТВИЕ: программа пересобрала превью.
+/// Therefore the test asserts the CONSEQUENCE: the program rebuilt the preview.
 #[test]
 fn t541_param_edit_repaints_the_preview_without_moving_the_playhead() {
     use kt_model::*;
@@ -10259,7 +10259,7 @@ fn t541_param_edit_repaints_the_preview_without_moving_the_playhead() {
     let (_id, clip) = made_generator(&h);
     let gesture = h.state().fx_editors[0].gesture;
 
-    // дать превью устояться: ключ посчитан, композит полон
+    // let the preview settle: the key is computed, the composite is full
     for _ in 0..40 {
         if h.state().preview_key.is_some_and(|k| k.2) {
             break;
@@ -10268,9 +10268,9 @@ fn t541_param_edit_repaints_the_preview_without_moving_the_playhead() {
     }
     let before = h.state().preview_key;
     let content_before = h.state().preview_content;
-    assert!(before.is_some(), "превью так и не посчиталось");
+    assert!(before.is_some(), "the preview never got computed");
 
-    // правка цвета БЕЗ движения курсора
+    // a colour edit WITHOUT moving the cursor
     {
         let app = h.state_mut();
         assert!(app.apply_coalesced(
@@ -10281,8 +10281,8 @@ fn t541_param_edit_repaints_the_preview_without_moving_the_playhead() {
             gesture
         ));
     }
-    // ...и программа обязана пересобрать превью: версия содержимого
-    // источников вошла в ключ
+    // ...and the program MUST rebuild the preview: the version of the content of the
+    // sources went into the key
     let mut repainted = false;
     for _ in 0..60 {
         h.step();
@@ -10293,29 +10293,29 @@ fn t541_param_edit_repaints_the_preview_without_moving_the_playhead() {
     }
     assert!(
         repainted,
-        "правка параметров не сдвинула ключ превью — на экране остался бы старый кадр"
+        "the parameter edit did not move the preview key — the old frame would have stayed on screen"
     );
     assert_eq!(
         h.state().preview_key.map(|k| k.0),
         before.map(|k| k.0),
-        "курсор не двигался: тик ключа обязан остаться прежним"
+        "the cursor did not move: the key tick must stay the same"
     );
 }
 
-/// Тест 542 (Р.53, п.415; переписан в Р.59 стадии 2): цвета в форме
-/// титра — НАСТОЯЩИЕ.
+/// Test 542 (R.53, item 415; rewritten in R.59 stage 2): the colours in the title form
+/// are REAL.
 ///
-/// Регрессия, которую нашёл живой сценарий, а не харнесс: пипетка титра
-/// была переведена на общий `color_row`, а тот читает значения через
-/// `ParamSpec`. У титра цвета — прямые поля и `ParamSpec`'ами не
-/// выражаются («первое законное исключение» F-TXT-001), поэтому
-/// `get_param` молча возвращал ноль: заливка показывалась (и записывалась
-/// при первом же касании) прозрачно-чёрной, и титр переставал рисоваться
-/// вовсе. Ни один тест этого не видел — они щупали текст и числа.
+/// A regression found by a live scenario, not by a harness: the title’s eyedropper
+/// was moved onto the shared `color_row`, which reads values through
+/// `ParamSpec`. Title colours are plain fields and cannot be expressed as `ParamSpec`s
+/// (“the first legitimate exception” F-TXT-001), so
+/// `get_param` silently returned zero: the fill was shown (and written on the first touch)
+/// as transparent black, and the title stopped being drawn at all. No test saw this —
+/// they probed text and numbers.
 ///
-/// Тест утверждает СЛЕДСТВИЕ: форма показывает те же цвета, что лежат в
-/// модели, и hex-поле рядом с пипеткой показывает их же. Форма теперь
-/// живёт в окне эффектов события — щупается она там же.
+/// The test asserts the CONSEQUENCE: the form shows the same colours that lie in the
+/// model, and the hex field next to the eyedropper shows them too. The form now
+/// lives in the event’s effects window — it is probed there too.
 #[test]
 fn t542_title_window_shows_real_colors() {
     use kt_model::*;
@@ -10330,9 +10330,9 @@ fn t542_title_window_shows_real_colors() {
         h.step();
     }
 
-    // hex-поле заливки показывает РОВНО то, что в модели. Щупаем по
-    // РОЛИ: у текстового поля в accesskit нет label, содержимое лежит в
-    // `value` (родня заметки про DragValue и ComboBox).
+    // the fill’s hex field shows EXACTLY what is in the model. We probe by
+    // ROLE: a text field in accesskit has no label, the content sits in
+    // `value` (a relative of the note about DragValue and ComboBox).
     use eframe::egui::accesskit::Role;
     use egui_kittest::kittest::{NodeT, Queryable, by};
     let shown: Vec<String> = h
@@ -10342,25 +10342,25 @@ fn t542_title_window_shows_real_colors() {
         .collect();
     assert!(
         shown.iter().any(|s| s == "ff8800c8"),
-        "форма титра показывает не тот цвет заливки: {shown:?}"
+        "the title form shows the wrong fill color: {shown:?}"
     );
 
-    // и умолчание титра НЕ прозрачно-чёрное: иначе новый титр невидим
+    // and the title’s default is NOT transparent black: otherwise a new title would be invisible
     let d = GeneratorKind::default_text();
     let GeneratorKind::Text { fill_r, fill_g, fill_b, fill_a, .. } = &d else { unreachable!() };
     assert_eq!(
         (*fill_r, *fill_g, *fill_b, *fill_a),
         (255, 255, 255, 255),
-        "умолчание заливки титра обязано быть непрозрачно-белым"
+        "the default title fill must be opaque white"
     );
 }
 
-/// Тест 570 (Р.55, С5): раскрытие НЕ МЕНЯЕТ ни проект, ни то, что играет.
+/// Test 570 (R.55, C5): expanding changes NEITHER the project nor what plays.
 ///
-/// Главное обещание гибридного режима: из корня мы не выходим, поэтому
-/// движок продолжает играть ВСЮ ПРОГРАММУ, а документ остаётся тем же
-/// байт-в-байт. Раскрытие — рабочее место, а не работа: ни шага истории,
-/// ни следа в файле.
+/// The main promise of the hybrid mode: we do not leave the root, so
+/// the engine keeps playing the WHOLE PROGRAM, and the document stays the same
+/// byte-for-byte. Expanding is a workspace, not work: no history step,
+/// no trace in the file.
 #[test]
 fn t570_expanding_in_place_changes_nothing_but_the_view() {
     let (mut h, _g, seq) = harness_with_nest();
@@ -10373,35 +10373,35 @@ fn t570_expanding_in_place_changes_nothing_but_the_view() {
     h.state_mut().expand_in_place(inst);
     h.step();
 
-    assert_eq!(h.state().model.editing(), None, "раскрытие вышло из корня — играть будет лента");
-    assert_eq!(h.state().model.bands().len(), 1, "полоса не завелась");
-    assert_eq!(h.state().model.document(), doc_before, "раскрытие изменило ДОКУМЕНТ");
-    assert_eq!(h.state().player_project(), play_before, "раскрытие изменило то, что ИГРАЕТ");
-    assert_eq!(h.state().model.undo_depth(), undo_before, "раскрытие записалось в историю");
+    assert_eq!(h.state().model.editing(), None, "the expansion went out of the root — the reel will play");
+    assert_eq!(h.state().model.bands().len(), 1, "the strip was not created");
+    assert_eq!(h.state().model.document(), doc_before, "the expansion changed the DOCUMENT");
+    assert_eq!(h.state().player_project(), play_before, "the expansion changed what PLAYS");
+    assert_eq!(h.state().model.undo_depth(), undo_before, "the expansion was recorded in the history");
 
-    // а вид — да: строки ленты встали ПОД строкой экземпляра
-    let g = h.state().tl_geom.clone().expect("геометрия");
-    assert!(g.rows.len() > rows_before, "строк не прибавилось — полосы не видно: {:?}", g.rows);
+    // but the VIEW does change: the strip’s rows stand BELOW the instance row
+    let g = h.state().tl_geom.clone().expect("geometry");
+    assert!(g.rows.len() > rows_before, "no rows were added — the strip is not visible: {:?}", g.rows);
     let inner = h.state().model.project().clips.iter().find(|c| c.id != inst && c.media != seq);
-    assert!(inner.is_some(), "содержимого ленты нет в рабочем виде");
+    assert!(inner.is_some(), "the content of the reel is not in the working view");
 
-    // и свернуть обратно — тождество вида (правило 14: жест повторный)
+    // and collapsing back — the view is identical (rule 14: a repeated gesture)
     h.state_mut().collapse_in_place(inst);
     h.step();
-    assert!(h.state().model.bands().is_empty(), "свёртка не сработала");
-    assert_eq!(h.state().model.document(), doc_before, "свёртка изменила документ");
+    assert!(h.state().model.bands().is_empty(), "collapse did not work");
+    assert_eq!(h.state().model.document(), doc_before, "collapse changed the document");
     assert_eq!(
         h.state().tl_geom.clone().map(|g| g.rows.len()).unwrap_or(0),
         rows_before,
-        "после свёртки строк осталось не столько же"
+        "after collapse, the number of rows left was not the same"
     );
 }
 
-/// Тест 571 (Р.55, С5): правка ИЗ ПОЛОСЫ доезжает до ЛЕНТЫ.
+/// Test 571 (R.55, C5): an edit FROM THE STRIP reaches the REEL.
 ///
-/// Адресации правок нет и не нужно: событие полосы физически лежит в
-/// корневом векторе рабочего вида, команда приходит на него обычным путём,
-/// а сборка вычитает смещение. Утверждение проверяется по ДОКУМЕНТУ.
+/// No addressing of edits is needed: the strip’s event physically lies in the
+/// root vector of the working view, the command arrives at it by the ordinary path,
+/// and the assembly subtracts the offset. The claim is checked against the DOCUMENT.
 #[test]
 fn t571_editing_inside_a_band_lands_in_the_reel() {
     use kt_time::Tick;
@@ -10410,14 +10410,14 @@ fn t571_editing_inside_a_band_lands_in_the_reel() {
     h.state_mut().expand_in_place(inst);
     h.step();
 
-    // событие ПОЛОСЫ — то, чья строка принадлежит раскрытию
+    // the event of the STRIP — the one whose row belongs to the expansion
     let ids: Vec<(kt_model::ClipId, kt_time::Tick, u32)> =
         h.state().model.project().clips.iter().map(|c| (c.id, c.start, c.lane)).collect();
     let (id, was, lane) = ids
         .iter()
         .copied()
         .find(|(id, _, _)| *id != inst && h.state().reel_of_clip(*id).is_some())
-        .expect("событие полосы");
+        .expect("strip event");
 
     assert!(h.state_mut().apply(kt_model::Command::MoveClip {
         id,
@@ -10427,24 +10427,24 @@ fn t571_editing_inside_a_band_lands_in_the_reel() {
     h.step();
 
     let doc = h.state().model.document();
-    let s = doc.sequence(seq).expect("лента");
+    let s = doc.sequence(seq).expect("reel");
     assert!(
         s.clips.iter().any(|c| c.id == id),
-        "правка не доехала до ленты: событие ушло в корень документа"
+        "the edit did not reach the reel: the event went to the document root"
     );
     assert!(
         !doc.clips.iter().any(|c| c.id == id),
-        "событие ленты оказалось в КОРНЕ документа — на диск уехал бы другой монтаж"
+        "a reel event ended up in the document ROOT — a different edit would have gone to disk"
     );
-    // раскрытие пережило правку
-    assert_eq!(h.state().model.bands().len(), 1, "правка свернула раскрытие");
+    // the expansion survived the edit
+    assert_eq!(h.state().model.bands().len(), 1, "the edit collapsed the expansion");
 }
 
-/// Тест 572 (Р.55, С5): выделение живёт РОВНО В ОДНОЙ ленте.
+/// Test 572 (R.55, C5): the selection lives in EXACTLY ONE reel.
 ///
-/// Смешанное выделение выглядело бы обычным, а жест по нему поехал бы
-/// наполовину: команды на события разных лент один батч не переживут.
-/// Клик в другой полосе ЗАМЕНЯЕТ выделение и говорит об этом.
+/// A mixed selection would look ordinary, and a gesture on it would go
+/// half-way: commands on events of different reels cannot survive one batch.
+/// A click in another strip REPLACES the selection and says so.
 #[test]
 fn t572_selection_lives_in_one_reel() {
     let (mut h, _g, seq) = harness_with_nest();
@@ -10457,34 +10457,34 @@ fn t572_selection_lives_in_one_reel() {
         .iter()
         .copied()
         .find(|id| *id != inst && h.state().reel_of_clip(*id).is_none())
-        .expect("корневое событие рядом");
+        .expect("a root event nearby");
     let in_band = ids
         .iter()
         .copied()
         .find(|id| h.state().reel_of_clip(*id).is_some())
-        .expect("событие полосы");
+        .expect("strip event");
 
     h.state_mut().select_only(root_other);
     h.state_mut().toggle_selected(in_band);
     assert_eq!(
         h.state().selected.iter().copied().collect::<Vec<_>>(),
         vec![in_band],
-        "выделение размазалось по двум лентам — половина жеста молча не поехала бы"
+        "the selection was spread across two reels — half of the gesture would silently not move"
     );
-    // и обратно тоже
+    // and back too
     h.state_mut().toggle_selected(root_other);
     assert_eq!(
         h.state().selected.iter().copied().collect::<Vec<_>>(),
         vec![root_other],
-        "выделение размазалось по двум лентам в обратную сторону"
+        "the selection was spread across two reels in the opposite direction"
     );
 }
 
-/// Тест 573 (Р.55, С5): Esc сворачивает раскрытие ПЕРЕД выходом из ленты.
+/// Test 573 (R.55, C5): Esc collapses the expansion BEFORE exiting the reel.
 ///
-/// Свёртка полосы стоит человеку меньше внимания, чем выход наружу, —
-/// значит и в каскаде стоит раньше. Но позже «снять выделение»: одна
-/// клавиша не имеет права делать два дела за раз.
+/// Collapsing a strip costs the person less attention than exiting outward —
+/// so it also comes earlier in the cascade. But later than “clear selection”: one
+/// key has no right to do two things at once.
 #[test]
 fn t573_escape_collapses_the_band_before_leaving_a_reel() {
     let (mut h, _g, seq) = harness_with_nest();
@@ -10494,24 +10494,24 @@ fn t573_escape_collapses_the_band_before_leaving_a_reel() {
     h.step();
 
     h.state_mut().escape_action();
-    assert_eq!(h.state().model.bands().len(), 1, "Esc свернул полосу вместо снятия выделения");
-    assert!(h.state().selected.is_empty(), "Esc не снял выделение");
+    assert_eq!(h.state().model.bands().len(), 1, "Esc collapsed the strip instead of clearing the selection");
+    assert!(h.state().selected.is_empty(), "Esc did not clear the selection");
 
     h.state_mut().escape_action();
-    assert!(h.state().model.bands().is_empty(), "второй Esc обязан свернуть раскрытие");
+    assert!(h.state().model.bands().is_empty(), "the second Esc must collapse the expansion");
 }
 
-/// Тест 576 (Р.55, С6): дроп ПРОЕКТА СПРАШИВАЕТ и не теряет работу.
+/// Test 576 (R.55, C6): dropping a PROJECT ASKS and does not lose work.
 ///
-/// **Претензия владельца дословно:** «я переношу файл проекта на таймлайн и
-/// открывается новый таймлайн, а я хочу чтобы оно дало мне выбор».
+/// **The owner’s complaint verbatim:** “I drag the project file onto the timeline and
+/// a new timeline opens, but I want it to give me a choice”.
 ///
-/// Выбора не было — и, что хуже, не было и вопроса о несохранённой работе:
-/// дроп делал `*self = app` в обход `guard_unsaved` и `claim_project`, то
-/// есть мимо всего, что построено в Р.49. Работа исчезала молча.
+/// There was no choice — and, worse, there was no question about unsaved work:
+/// the drop did `*self = app` bypassing `guard_unsaved` and `claim_project`, that is,
+/// around everything built in R.49. The work vanished silently.
 ///
-/// Тест утверждает ТРИ вещи: вопрос задаётся; «Отмена» ничего не делает;
-/// «Открыть» проходит через сторож несохранённого.
+/// The test asserts THREE things: the question is asked; “Cancel” does nothing;
+/// “Open” goes through the unsaved-work guard.
 #[test]
 fn t576_dropping_a_project_asks_and_keeps_the_work() {
     let (mut h, _) = harness_three_clips();
@@ -10519,7 +10519,7 @@ fn t576_dropping_a_project_asks_and_keeps_the_work() {
     let _ = std::fs::create_dir_all(&dir);
     let foreign = dir.join("foreign.kt");
     {
-        // чужой проект на диске — минимальный, но законный
+        // a foreign project on disk — minimal, but legitimate
         let mut p = kt_model::Project::new(h.state().model.project().settings.clone());
         p.media.push(kt_model::MediaRef::new(kt_model::MediaId(1), "synth:1"));
         p.clips.push(h.state().model.project().clips[0].clone());
@@ -10528,7 +10528,7 @@ fn t576_dropping_a_project_asks_and_keeps_the_work() {
         std::fs::write(&foreign, text).unwrap();
     }
 
-    // в редакторе есть НЕСОХРАНЁННАЯ работа
+    // the editor has UNSAVED work
     h.state_mut().dirty_content = true;
     let clips_before: Vec<kt_model::ClipId> =
         h.state().model.project().clips.iter().map(|c| c.id).collect();
@@ -10537,43 +10537,43 @@ fn t576_dropping_a_project_asks_and_keeps_the_work() {
     h.state_mut().ask = Some(crate::app::Ask::DropProject);
     h.step();
 
-    // 1) ВОПРОС задан, и монтаж пока не тронут
-    assert!(matches!(h.state().ask, Some(crate::app::Ask::DropProject)), "вопрос не задан");
+    // 1) the QUESTION is asked, and the edit is not yet touched
+    assert!(matches!(h.state().ask, Some(crate::app::Ask::DropProject)), "the question was not asked");
     assert_eq!(
         h.state().model.project().clips.iter().map(|c| c.id).collect::<Vec<_>>(),
         clips_before,
-        "дроп изменил монтаж ДО ответа"
+        "the drop changed the edit BEFORE the answer"
     );
 
-    // 2) ОТМЕНА не делает ничего
+    // 2) CANCEL does nothing
     h.state_mut().answer_ask(crate::app::Answer::Cancel);
     h.step();
-    assert!(h.state().ask.is_none(), "вопрос остался после отмены");
+    assert!(h.state().ask.is_none(), "the question remained after cancel");
     assert_eq!(
         h.state().model.project().clips.iter().map(|c| c.id).collect::<Vec<_>>(),
         clips_before,
-        "отмена всё-таки что-то сделала"
+        "cancel still did something"
     );
-    assert!(h.state().dirty_content, "отмена погасила признак несохранённой работы");
+    assert!(h.state().dirty_content, "cancel cleared the mark of unsaved work");
 
-    // 3) «ОТКРЫТЬ» при несохранённой работе обязано СПРОСИТЬ, а не открыть
+    // 3) “Open” with unsaved work MUST ask, not open
     h.state_mut().pending_drop = Some((foreign.clone(), None));
     h.state_mut().ask = Some(crate::app::Ask::DropProject);
     h.state_mut().answer_ask(crate::app::Answer::Yes);
     h.step();
     assert!(
         matches!(h.state().ask, Some(crate::app::Ask::Unsaved(crate::app::Pending::DropOpen))),
-        "дроп проекта открыл его поверх несохранённой работы — она пропала бы молча"
+        "dropping a project opened it over unsaved work — it would silently disappear"
     );
     assert_eq!(
         h.state().model.project().clips.iter().map(|c| c.id).collect::<Vec<_>>(),
         clips_before,
-        "монтаж подменён до ответа на вопрос о несохранённом"
+        "the edit was replaced before the answer to the question about unsaved changes"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 577 (Р.55, С6): «вставить композицией» кладёт ленту и экземпляр.
+/// Test 577 (R.55, C6): “paste as a composition” puts the reel and an instance.
 #[test]
 fn t577_dropping_a_project_can_insert_it_as_a_composition() {
     use kt_time::Tick;
@@ -10599,52 +10599,52 @@ fn t577_dropping_a_project_can_insert_it_as_a_composition() {
     h.step();
 
     let doc = h.state().model.document();
-    assert_eq!(doc.sequences.len(), seqs_before + 1, "лента из чужого проекта не завелась");
+    assert_eq!(doc.sequences.len(), seqs_before + 1, "the reel from another project was not created");
     assert_eq!(
         h.state().model.project().clips.len(),
         clips_before + 1,
-        "экземпляр чужого проекта не встал на таймлайн"
+        "the instance of another project did not land on the timeline"
     );
     let seq = doc.sequences.last().unwrap().id;
-    let inst = doc.clips.iter().find(|c| c.media == seq).expect("экземпляра нет");
-    assert_eq!(inst.start, Tick(400_000), "экземпляр встал не в точку дропа");
-    doc.validate().expect("документ после вставки обязан быть законным");
-    // и это ОДИН шаг истории: Ctrl+Z убирает вставку целиком
+    let inst = doc.clips.iter().find(|c| c.media == seq).expect("no instance");
+    assert_eq!(inst.start, Tick(400_000), "the instance did not land at the drop point");
+    doc.validate().expect("the document must be valid after the paste");
+    // and it is ONE history step: Ctrl+Z removes the paste entirely
     assert!(h.state_mut().model.undo().is_ok());
     assert_eq!(
         h.state().model.document().sequences.len(),
         seqs_before,
-        "вставка чужого проекта снялась не одним шагом"
+        "the paste of another project was not undone in one step"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 578 (Р.55, С6): лента — ОБЪЕКТ БИНА, а не только событие.
+/// Test 578 (R.55, C6): a reel is a BIN OBJECT, not only an event.
 ///
-/// **Претензия владельца дословно:** «наверное еще куча вещей недоступна
-/// из ui». Лента была ровно таким случаем: в бине её не было вовсе, и
-/// поставить композицию во второе место можно было только копипастом уже
-/// стоящего экземпляра, завести пустую — ничем, а удалить конкретную —
-/// тоже (кнопка «убрать неиспользованные» убирает все сразу).
+/// **The owner’s complaint verbatim:** “there are probably a lot of things unavailable
+/// from the ui”. The reel was exactly such a case: it was not in the bin at all, and
+/// placing a composition in a second place was possible only by copy-pasting an already
+/// standing instance, creating an empty one was impossible, and deleting a specific one
+/// too (the “remove unused” button removes all at once).
 ///
-/// t253 этого не ловил: его таблица исчерпывающая по сущностям ТАЙМЛАЙНА,
-/// а бин — панель. t395 спрашивает, отвечает ли панель на правую кнопку, а
-/// не что в ней показано.
+/// t253 did not catch this: its table is exhaustive by TIMELINE entities,
+/// and the bin is a panel. t395 asks whether a panel answers to the right button, not
+/// what is shown in it.
 #[test]
 fn t578_a_reel_is_an_object_of_the_bin() {
     let (mut h, _g, seq) = harness_with_nest();
     h.step();
     h.step();
 
-    // 1) КАРТОЧКА ленты есть в бине
+    // 1) a CARD of the reel is in the bin
     let cards: Vec<kt_model::MediaId> =
         h.state().bin_card_rects.iter().map(|(id, _)| *id).collect();
     assert!(
         cards.contains(&seq),
-        "ленты нет в бине: {cards:?} — поставить её во второе место было бы нечем"
+        "the reel is not in the bin: {cards:?} — there would be nothing to place in the second place"
     );
 
-    // 2) ПОСТАВИТЬ во второе место — одним глаголом, а не копипастом
+    // 2) PLACE it in a second spot — with one verb, not copy-paste
     let before = h.state().model.document().sequence_uses(seq);
     h.state_mut().player.seek(kt_time::Tick(400_000));
     h.state_mut().place_media_at_cursor(seq);
@@ -10652,7 +10652,7 @@ fn t578_a_reel_is_an_object_of_the_bin() {
     assert_eq!(
         h.state().model.document().sequence_uses(seq),
         before + 1,
-        "лента не встала во второе место из бина"
+        "the reel did not land in the second place from the bin"
     );
     let inst = h
         .state()
@@ -10663,13 +10663,13 @@ fn t578_a_reel_is_an_object_of_the_bin() {
         .filter(|c| c.media == seq)
         .map(|c| c.start)
         .max()
-        .expect("экземпляра нет");
-    // точность — квант транспорта (playhead живёт в аудиокадрах 48 кГц,
-    // п.7 р.10): требовать тик-в-тик значило бы требовать того, чего
-    // транспорт не умеет нигде
-    assert!((inst.0 - 400_000).abs() <= 2, "экземпляр встал не под курсор: {inst:?}");
+        .expect("no instance");
+    // precision — the transport quantum (the playhead lives in 48 kHz audio frames,
+    // item 7, round 10): requiring tick-for-tick would mean requiring what
+    // the transport cannot do anywhere
+    assert!((inst.0 - 400_000).abs() <= 2, "the instance did not land under the cursor: {inst:?}");
 
-    // 3) ЗАВЕСТИ ПУСТУЮ — тоже глагол, а не побочный эффект сворачивания
+    // 3) CREATE AN EMPTY one — also a verb, not a side effect of collapsing
     let seqs_before = h.state().model.document().sequences.len();
     h.state_mut().create_empty_reel();
     h.step();
@@ -10677,17 +10677,17 @@ fn t578_a_reel_is_an_object_of_the_bin() {
     assert_eq!(
         h.state().model.document().sequences.len(),
         seqs_before + 1,
-        "пустая лента не завелась"
+        "the empty reel was not created"
     );
     let cards: Vec<kt_model::MediaId> =
         h.state().bin_card_rects.iter().map(|(id, _)| *id).collect();
     assert_eq!(
         cards.len(),
         h.state().model.project().media.len() + h.state().model.document().sequences.len(),
-        "в бине показаны не все объекты: {cards:?}"
+        "not all objects are shown in the bin: {cards:?}"
     );
 
-    // 4) УДАЛИТЬ АДРЕСНО — и занятая лента отказывается уходить (t429)
+    // 4) DELETE BY ADDRESS — and an occupied reel refuses to go (t429)
     let fresh = h
         .state()
         .model
@@ -10696,73 +10696,73 @@ fn t578_a_reel_is_an_object_of_the_bin() {
         .iter()
         .map(|s| s.id)
         .find(|id| *id != seq)
-        .expect("пустая лента");
+        .expect("empty reel");
     assert!(
         h.state_mut().apply(kt_model::Command::RemoveSequence { id: fresh }),
-        "пустая лента обязана удаляться адресно"
+        "an empty reel must be deleted by address"
     );
     assert!(
         !h.state_mut().apply(kt_model::Command::RemoveSequence { id: seq }),
-        "ЗАНЯТАЯ лента ушла молча — события повисли бы на несуществующем адресе"
+        "a BUSY reel went away silently — events would hang on a nonexistent address"
     );
 }
 
-/// Тест 594 (Р.56, п.449): дорожка, добавленная ПОД потолок, и есть
-/// верхний слой картинки.
+/// Test 594 (R.56, item 449): a track added ABOVE THE CEILING is the
+/// top layer of the picture.
 ///
-/// Претензия владельца дословно: «если поместить видеотрек под потолок
-/// (перед морфером самым высоким) и закинуть туда видео — то оно не
-/// отображается вообще». Причина была в расхождении двух порядков:
-/// движок складывал слои по НОМЕРУ дорожки, а экран показывал по
-/// `lane_order`, и вставка из меню чужой строки брала `at = tail`, то
-/// есть самый большой номер — нижний слой.
+/// The owner’s complaint verbatim: “if I place a video track under the ceiling
+/// (before the tallest morpher) and drop a video there — it does not
+/// display at all”. The cause was a mismatch of two orders:
+/// the engine stacked layers by the track NUMBER, while the screen showed by
+/// `lane_order`, and inserting from the menu of a foreign row took `at = tail`, that is
+/// the largest number — the bottom layer.
 ///
-/// Тест утверждает СЛЕДСТВИЕ и щупает оттуда, откуда действует человек:
-/// пункт меню строки, затем событие на новой дорожке, затем порядок, в
-/// котором движок будет рисовать слои.
+/// The test asserts the CONSEQUENCE and probes from where the person acts:
+/// the row’s menu item, then the event on the new track, then the order in which
+/// the engine will draw the layers.
 #[test]
 fn t594_a_lane_added_under_the_ceiling_is_the_top_layer() {
     use kt_model::{ClipKind, LaneKind};
     let (mut h, _g) = harness_three_clips();
-    // морф-строка сверху — та самая «под потолком» раскладка
+    // the morph row on top — the very “under the ceiling” layout
     h.state_mut().insert_lane_after_row(LaneKind::Morph, None);
     h.step();
     let rows = h.state().model.project().rows();
-    let morph = rows.iter().position(|&r| r.0 == LaneKind::Morph).expect("морф-строка");
-    let top_video = rows.iter().position(|&r| r.0 == LaneKind::Video).expect("видео-строка");
+    let morph = rows.iter().position(|&r| r.0 == LaneKind::Morph).expect("morph row");
+    let top_video = rows.iter().position(|&r| r.0 == LaneKind::Video).expect("video row");
     h.state_mut().reorder_rows(morph, 0);
     h.step();
-    assert_eq!(h.state().model.project().rows()[0].0, LaneKind::Morph, "морф-строка не сверху");
+    assert_eq!(h.state().model.project().rows()[0].0, LaneKind::Morph, "the morph row is not at the top");
     let _ = top_video;
 
-    // ПКМ по морф-строке → «добавить видеодорожку»
+    // RMB on the morph row → “add video track”
     let undo_before = h.state().model.undo_depth();
     h.state_mut().insert_lane_after_row(LaneKind::Video, Some((LaneKind::Morph, 0)));
     h.step();
     let p = h.state().model.project().clone();
     let under = p.rows()[1];
-    assert_eq!(under.0, LaneKind::Video, "новая строка встала не под морф-строкой: {:?}", p.rows());
+    assert_eq!(under.0, LaneKind::Video, "the new row did not land under the morph row: {:?}", p.rows());
     assert_eq!(
         h.state().model.undo_depth(),
         undo_before + 1,
-        "вставка дорожки стоила больше одного шага истории"
+        "inserting a track cost more than one history step"
     );
 
-    // «закинул туда видео»
+    // “dropped the video there”
     let media = p.media[0].id;
     let id = kt_model::ClipId(p.clips.iter().map(|c| c.id.0).max().unwrap_or(0) + 1);
     let mut c = p.clips.iter().find(|c| c.kind == ClipKind::Video).unwrap().clone();
     c.id = id;
     c.link_group = None;
-    // дорожка — ТА, что видна под морф-строкой: номер её и решает
+    // the track is the one visible under the morph row: its number decides
     c.lane = under.1;
     c.media = media;
     c.start = kt_time::Tick(0);
-    assert!(h.state_mut().apply(kt_model::Command::AddClip(c)), "событие не встало на дорожку");
+    assert!(h.state_mut().apply(kt_model::Command::AddClip(c)), "the event did not land on the track");
     h.step();
 
-    // СЛЕДСТВИЕ: в порядке композиции движка (задний план первым) оно
-    // ПОСЛЕДНЕЕ, то есть верхний слой
+    // CONSEQUENCE: in the engine’s composition order (background first) it is
+    // LAST, that is, the top layer
     let p = h.state().model.project();
     let mut order = p.effective_clips();
     order.retain(|c| c.kind == ClipKind::Video);
@@ -10770,23 +10770,23 @@ fn t594_a_lane_added_under_the_ceiling_is_the_top_layer() {
     assert_eq!(
         order.last().map(|c| c.id),
         Some(id),
-        "событие «под потолком» рисуется НЕ верхним слоем: {:?}",
+        "the event “under the ceiling” is drawn NOT on the top layer: {:?}",
         order.iter().map(|c| (c.id, c.lane)).collect::<Vec<_>>()
     );
 }
 
-/// Тест 596 (Р.56, п.450): копия из раскрытой композиции вставляется
-/// ПАРОЙ и в НАЗВАННОЕ место.
+/// Test 596 (R.56, item 450): a copy from an expanded composition is inserted
+/// as a PAIR and into the NAMED place.
 ///
-/// Претензия владельца дословно: «я копирую ZEF последний в длинной
-/// композиции из rendereg3 через пкм и иду потом ее вставлять, тоже через
-/// пкм, а он берет и вставляет одну часть сверху а другую часть(аудио)
-/// уносит вниз, ну и в самом низу морфер т.к. для него действительно
-/// места не было».
+/// The owner’s complaint verbatim: “I copy ZEF last in a long composition
+/// from rendereg3 via RMB and then go to paste it, also via RMB, and it puts one part on top
+/// and drops the other part (audio) down, and at the very bottom the morpher,
+/// because there was really no place for it”.
 ///
-/// Причин было две, и обе здесь проверяются следствием: клипборд хранил
-/// номера РАБОЧЕГО ВИДА (в полосе раскрытия у видов разные базы), а
-/// «Вставить» из меню клало блок НА КУРСОР, а не в точку клика.
+/// There were two causes, and both are checked here by their consequence:
+/// the clipboard held numbers of the WORKING VIEW (in the expansion strip the views have
+/// different bases), and “Paste” from the menu put the block AT THE CURSOR,
+/// not at the click point.
 #[test]
 fn t596_paste_from_a_band_lands_as_a_pair_at_the_click() {
     use kt_model::{ClipKind, LaneKind};
@@ -10795,9 +10795,9 @@ fn t596_paste_from_a_band_lands_as_a_pair_at_the_click() {
     let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
     h.state_mut().expand_in_place(inst);
     h.step();
-    assert_eq!(h.state().model.bands().len(), 1, "полоса не раскрылась");
+    assert_eq!(h.state().model.bands().len(), 1, "the strip did not expand");
 
-    // событие ПОЛОСЫ: его номер дорожки — со смещением базы
+    // event of the STRIP: its track number carries the base offset
     let band = h.state().model.bands()[0].clone();
     let inner = h
         .state()
@@ -10806,12 +10806,12 @@ fn t596_paste_from_a_band_lands_as_a_pair_at_the_click() {
         .clips
         .iter()
         .find(|c| c.kind == ClipKind::Video && band.owns(LaneKind::Video, c.lane))
-        .expect("события полосы не видно")
+        .expect("the strip event is not visible")
         .clone();
-    assert!(inner.lane >= band.base.video, "сцена выродилась: полоса не смещена");
+    assert!(inner.lane >= band.base.video, "scene degenerated: the strip is not shifted");
 
-    // ПАРА: аудио-половина в той же полосе и в одной link-группе — ровно
-    // то, что копировал владелец
+    // the PAIR: the audio half in the same strip and in one link group — exactly
+    // what the owner copied
     let mut a = inner.clone();
     a.id = kt_model::ClipId(
         h.state().model.document().clips.iter().map(|c| c.id.0).max().unwrap_or(0) + 50,
@@ -10819,29 +10819,29 @@ fn t596_paste_from_a_band_lands_as_a_pair_at_the_click() {
     a.kind = ClipKind::Audio;
     a.lane = band.base.audio;
     a.link_group = Some(kt_model::GroupId(77));
-    assert!(h.state_mut().apply(kt_model::Command::AddClip(a.clone())), "аудио-половина");
+    assert!(h.state_mut().apply(kt_model::Command::AddClip(a.clone())), "audio half");
     h.step();
     assert!(
         h.state_mut().apply(kt_model::Command::LinkClips {
             ids: vec![inner.id, a.id],
             group: kt_model::GroupId(77)
         }),
-        "пара не связалась"
+        "the pair did not link"
     );
     h.step();
 
     h.state_mut().select_only(inner.id);
     h.state_mut().copy_selection();
     h.step();
-    assert_eq!(h.state().clipboard.clips.len(), 2, "link-пара скопировалась не целиком");
-    // КЛИПБОРД В КООРДИНАТАХ ЛЕНТЫ: номера начинаются с нуля, а не с базы
+    assert_eq!(h.state().clipboard.clips.len(), 2, "the link pair was not copied entirely");
+    // CLIPBOARD IN THE REEL’S COORDINATES: numbers start from zero, not from the base
     assert_eq!(
         h.state().clipboard.clips[0].lane,
         inner.lane - band.base.video,
-        "клипборд хранит номера рабочего вида, а не ленты"
+        "the clipboard stores the numbers of the working view, not of the reel"
     );
 
-    // вставка ПКМ в корневую строку и в НАЗВАННОЕ время
+    // PASTE via RMB into the root row and into the NAMED time
     let root_row = (LaneKind::Video, 0u32);
     h.state_mut().player.seek(Tick(0));
     let seqs_before = h.state().model.document().sequences[0].clips.len();
@@ -10853,46 +10853,46 @@ fn t596_paste_from_a_band_lands_as_a_pair_at_the_click() {
     assert_eq!(
         doc.sequences[0].clips.len(),
         seqs_before,
-        "вставка в КОРЕНЬ дописала событий в ленту"
+        "the paste into the ROOT appended events to the reel"
     );
     let fresh: Vec<&kt_model::ClipEvent> =
         doc.clips.iter().filter(|c| !matches!(c.id.0, 1..=3) && c.media != seq).collect();
-    assert_eq!(doc.clips.len(), root_before + fresh.len(), "счёт не сошёлся");
+    assert_eq!(doc.clips.len(), root_before + fresh.len(), "the count did not match");
     let pasted = fresh.iter().find(|c| c.start == Tick(700_000)).unwrap_or_else(|| {
         panic!(
-            "вставка легла не в точку клика: {:?}",
+            "the paste did not land at the click point: {:?}",
             fresh.iter().map(|c| c.start).collect::<Vec<_>>()
         )
     });
-    assert_eq!(pasted.lane, 0, "вставка не попала в кликнутую строку");
+    assert_eq!(pasted.lane, 0, "the paste did not hit the clicked row");
     assert_eq!(pasted.kind, ClipKind::Video);
 
-    // ПАРА не разъехалась: аудио-половина тоже в корне, на своей верхней
-    // дорожке, в то же время и в одной link-группе с видео
+    // the PAIR did not split: the audio half is also in the root, on its own top
+    // track, at the same time and in one link group with the video
     let pair: Vec<&kt_model::ClipEvent> =
         fresh.iter().filter(|c| c.start == Tick(700_000)).copied().collect();
-    assert_eq!(pair.len(), 2, "вставилась половина пары: {pair:?}");
-    let pa = pair.iter().find(|c| c.kind == ClipKind::Audio).expect("аудио-половина потерялась");
-    assert_eq!(pa.lane, 0, "аудио уехало вниз, а не на кликнутую строку: {pa:?}");
+    assert_eq!(pair.len(), 2, "half of the pair was pasted: {pair:?}");
+    let pa = pair.iter().find(|c| c.kind == ClipKind::Audio).expect("the audio half was lost");
+    assert_eq!(pa.lane, 0, "the audio went down instead of to the clicked row: {pa:?}");
     assert_eq!(
         pa.link_group.is_some() && pa.link_group == pasted.link_group,
         true,
-        "пара приехала разными группами"
+        "the pair arrived in different groups"
     );
-    // и ни одна половина не осталась в ленте
+    // and neither half was left in the reel
     assert!(
         !doc.sequences[0].clips.iter().any(|c| c.start == Tick(700_000)),
-        "вставка в корень залезла в ленту"
+        "the paste into the root got into the reel"
     );
 }
 
-/// Тест 597 (Р.56, п.451): решение «что делает Enter» живёт в ОДНОМ месте
-/// и не зависит от того, откуда его спросили.
+/// Test 597 (R.56, item 451): the decision “what Enter does” lives in ONE place
+/// and does not depend on where it was asked from.
 ///
-/// Плюс два следствия, на которых каскад держится: раскрытие и свёртка
-/// СВОЕЙ полосы оставляют экземпляр выделенным (иначе следующий жест
-/// некуда направить), а «свернуть всё» — нет (полос больше нет, и держать
-/// адрес не за чем).
+/// Plus two consequences the cascade rests on: expanding and collapsing
+/// OWN strip leave the instance selected (otherwise the next gesture would have
+/// nowhere to aim), while “collapse all” does not (there are no strips left, and holding
+/// an address is pointless).
 #[test]
 fn t597_enter_cascade_decision_and_selection() {
     use crate::app::EnterOnNest;
@@ -10901,7 +10901,7 @@ fn t597_enter_cascade_decision_and_selection() {
     let plain = h.state().model.project().clips.iter().find(|c| c.media != seq).unwrap().id;
 
     assert_eq!(h.state().enter_pressed_on_nest(plain), EnterOnNest::NotANest);
-    assert_eq!(h.state().enter_pressed_on_nest(inst), EnterOnNest::Expand, "свёрнутое — раскрыть");
+    assert_eq!(h.state().enter_pressed_on_nest(inst), EnterOnNest::Expand, "expand the collapsed");
 
     h.state_mut().select_only(inst);
     h.state_mut().expand_in_place(inst);
@@ -10909,21 +10909,21 @@ fn t597_enter_cascade_decision_and_selection() {
     assert_eq!(
         h.state().enter_pressed_on_nest(inst),
         EnterOnNest::Enter,
-        "по уже раскрытому Enter обязан вести ВНУТРЬ"
+        "on an already expanded one, Enter must lead INSIDE"
     );
-    assert!(h.state().is_selected(inst), "раскрытие потеряло выделение экземпляра");
+    assert!(h.state().is_selected(inst), "the expansion lost the instance selection");
 
-    // своя свёртка выделение держит, «свернуть всё» — нет
+    // its own collapse keeps the selection, “collapse all” does not
     h.state_mut().collapse_in_place(inst);
     h.step();
-    assert!(h.state().is_selected(inst), "свёртка потеряла выделение экземпляра");
+    assert!(h.state().is_selected(inst), "the collapse lost the instance selection");
     h.state_mut().expand_in_place(inst);
     h.step();
     h.state_mut().collapse_all_in_place();
     h.step();
-    assert!(h.state().selected.is_empty(), "«свернуть всё» обязано снимать выделение");
+    assert!(h.state().selected.is_empty(), "“collapse all” must clear the selection");
 
-    // внутри полного входа быстрый жест ведёт ГЛУБЖЕ, а не в тупик
+    // inside the full entry a quick gesture leads DEEPER, not into a dead end
     h.state_mut().enter_nest(inst);
     h.step();
     assert_eq!(h.state().model.editing(), Some(seq));
@@ -10931,12 +10931,12 @@ fn t597_enter_cascade_decision_and_selection() {
     assert_eq!(
         h.state().enter_pressed_on_nest(deeper),
         EnterOnNest::NotANest,
-        "обычное событие внутри ленты лентой не стало"
+        "an ordinary event inside the reel did not become a reel"
     );
 }
 
-/// Ключ превью ленты по её ПЕРВОМУ экземпляру (Р.59, стадия 3: ключ стал
-/// парой «лента + набор переопределений экземпляра», t680).
+/// The reel’s preview key is by its FIRST instance (R.59, stage 3: the key became a
+/// pair “reel + the set of instance overrides”, t680).
 #[cfg(test)]
 fn reel_key_of(
     h: &mut Harness<'static, KtApp>,
@@ -10950,29 +10950,29 @@ fn reel_key_of(
         .iter()
         .find(|c| c.media == seq)
         .map(|c| c.id)
-        .expect("на монтаже нет ни одного экземпляра ленты");
-    *h.state_mut().reel_keys().get(&inst).expect("ключ превью экземпляра")
+        .expect("there is not a single reel instance in the edit");
+    *h.state_mut().reel_keys().get(&inst).expect("instance preview key")
 }
 
-/// Тест 599 (Р.56, п.452): служба превью лент — очередь, дедуп,
-/// инвалидация и потолок кадров.
+/// Test 599 (R.56, item 452): the reel preview service — queue, de-duplication,
+/// invalidation and the frame ceiling.
 #[test]
 fn t599_reel_preview_service_rules() {
     use crate::reel_preview::{MAX_FRAMES_PER_REEL, ReelPreviews};
     use kt_time::Tick;
 
-    // ШАГ ПОЛОСЫ — ступень лестницы тумб, и кадров не больше потолка
+    // the STRIP STEP is a step of the thumbnail ladder, and frames are no more than the ceiling
     for len in [Tick(90_000), Tick(45 * 90_000), Tick(3600 * 90_000)] {
         let step = ReelPreviews::strip_step(len);
         assert!(
             crate::thumbs::THUMB_STEP_LADDER.contains(&step),
-            "шаг {step} не со ступени лестницы — ключи разойдутся с филмстрипом файла"
+            "step {step} is not from a ladder step — the keys will diverge from the filmstrip of the file"
         );
         let n = (len.0 + step - 1) / step;
         assert!(
             n <= MAX_FRAMES_PER_REEL as i64
                 || step == *crate::thumbs::THUMB_STEP_LADDER.last().unwrap(),
-            "у ленты {len:?} вышло {n} кадров при потолке {MAX_FRAMES_PER_REEL}"
+            "the reel {len:?} came out with {n} frames at the ceiling {MAX_FRAMES_PER_REEL}"
         );
     }
 
@@ -10980,32 +10980,32 @@ fn t599_reel_preview_service_rules() {
     let key = reel_key_of(&mut h, seq);
     let hash = key.hash;
 
-    // ДЕДУП: вторая заявка по тому же ключу работы не добавляет
+    // DEDUP: a second request under the same key adds no work
     h.state_mut().request_reel_preview(key, &[]);
     let pending = h.state().reel_previews.pending();
-    assert!(pending >= 1, "заявка не встала в очередь");
+    assert!(pending >= 1, "the request did not join the queue");
     h.state_mut().request_reel_preview(key, &[]);
-    assert_eq!(h.state().reel_previews.pending(), pending, "дубль заявки прошёл");
+    assert_eq!(h.state().reel_previews.pending(), pending, "a duplicate request went through");
 
-    // ИНВАЛИДАЦИЯ: другая редакция той же ленты снимает старую работу
+    // INVALIDATION: another edit of the same reel removes the old work
     let keep = std::collections::HashSet::from([hash ^ 1]);
     h.state_mut().reel_previews.invalidate_seq(seq, &keep);
-    assert_eq!(h.state().reel_previews.pending(), 0, "устаревшая работа осталась в очереди");
+    assert_eq!(h.state().reel_previews.pending(), 0, "stale work stayed in the queue");
 }
 
-/// Тест 600 (Р.56, п.452): кадры и пики ленты доезжают до ЭКРАНА.
+/// Test 600 (R.56, item 452): the reel’s frames and peaks reach the SCREEN.
 ///
-/// Утверждается следствие, а не наличие поля: у события-вложения на
-/// таймлайне появляются ТЕКСТУРЫ КАДРОВ и непустая огибающая — ровно то,
-/// чего владелец не увидел («на таймлайне нет превью как у обычных
-/// событий - кадров и аудио-пиков»).
+/// What is asserted is the consequence, not the presence of a field: the nested
+/// event on the timeline gets FRAME TEXTURES and a non-empty envelope — exactly what the
+/// owner did not see (“on the timeline there is no preview like normal events have
+/// - frames and audio peaks”).
 #[test]
 fn t600_reel_frames_and_peaks_reach_the_timeline() {
     let (mut h, _g, seq) = harness_with_nest();
     let key = reel_key_of(&mut h, seq);
     let hash = key.hash;
 
-    // аудио-половина ленты: без неё пики проверять не на чем
+    // the audio half of the reel: without it there is nothing to check the peaks against
     let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().clone();
     let mut a = inst.clone();
     a.id = kt_model::ClipId(
@@ -11014,7 +11014,7 @@ fn t600_reel_frames_and_peaks_reach_the_timeline() {
     a.kind = kt_model::ClipKind::Audio;
     a.lane = 0;
     a.link_group = None;
-    assert!(h.state_mut().apply(kt_model::Command::AddClip(a)), "аудио-половина");
+    assert!(h.state_mut().apply(kt_model::Command::AddClip(a)), "audio half");
     h.step();
 
     let deadline = std::time::Instant::now() + WAIT_BG;
@@ -11025,23 +11025,23 @@ fn t600_reel_frames_and_peaks_reach_the_timeline() {
         h.step();
     }
 
-    let prev = h.state().reel_previews.get(&key).expect("превью ленты не посчиталось");
-    let strip = prev.strip.as_ref().expect("кадров ленты нет");
-    assert!(strip.frames.iter().any(|f| f.is_some()), "в полосе ленты ни одного кадра");
+    let prev = h.state().reel_previews.get(&key).expect("the reel preview was not computed");
+    let strip = prev.strip.as_ref().expect("there are no reel frames");
+    assert!(strip.frames.iter().any(|f| f.is_some()), "not a single frame in the reel strip");
     assert!(
         prev.peaks.as_ref().is_some_and(|p| !p.is_empty()),
-        "огибающей ленты нет — аудио-половина осталась пустой плашкой"
+        "there is no reel envelope — the audio half stayed an empty plate"
     );
 
-    // и они ДОЕХАЛИ до отрисовки: текстуры кадров этой ленты загружены
+    // and they REACHED the drawing: the frame textures of this reel are loaded
     h.step();
     h.step();
     assert!(
         h.state().reel_textures.keys().any(|(k, _)| *k == key),
-        "кадры ленты не дошли до экрана: текстур нет"
+        "the reel frames did not reach the screen: there are no textures"
     );
 
-    // ПРАВКА ВНУТРИ ленты меняет редакцию — старое превью больше не наше
+    // an EDIT INSIDE the reel changes the revision — the old preview is no longer ours
     let inner = h.state().model.document().sequences[0].clips[0].clone();
     h.state_mut().expand_in_place(inst.id);
     h.step();
@@ -11052,7 +11052,7 @@ fn t600_reel_frames_and_peaks_reach_the_timeline() {
         .clips
         .iter()
         .find(|c| c.id == inner.id)
-        .expect("событие полосы")
+        .expect("strip event")
         .clone();
     assert!(
         h.state_mut().apply(kt_model::Command::MoveClip {
@@ -11060,33 +11060,33 @@ fn t600_reel_frames_and_peaks_reach_the_timeline() {
             new_start: band_clip.start + kt_time::Tick(1_000),
             new_lane: band_clip.lane,
         }),
-        "правка внутри ленты"
+        "edit inside the reel"
     );
     h.step();
     let fresh = reel_key_of(&mut h, seq).hash;
-    assert_ne!(fresh, hash, "правка внутри ленты не изменила редакцию — инвалидировать нечем");
+    assert_ne!(fresh, hash, "an edit inside the reel did not change the revision — there is nothing to invalidate");
     assert!(
         h.state().reel_previews.get(&key).is_none(),
-        "устаревшее превью осталось в кэше и рисовалось бы вместо правки"
+        "a stale preview stayed in the cache and would be drawn instead of the edit"
     );
 }
 
-/// Тест 601 (Р.56, п.452): прокрутка и зум заявок НЕ ставят (инвариант 8),
-/// а служба тумб про ленту не знает вовсе.
+/// Test 601 (R.56, item 452): scrolling and zoom do NOT queue requests (invariant 8),
+/// and the THUMBNAIL service does not know about the reel at all.
 #[test]
 fn t601_scrolling_does_not_order_reel_work() {
     let (mut h, _g, seq) = harness_with_nest();
     let key = reel_key_of(&mut h, seq);
     let deadline = std::time::Instant::now() + WAIT_BG;
-    // ждём КОНЦА работы, а не только кадров: `pending()` считает и
-    // бегущую задачу, и тест мерил бы её, а не новые заявки
+    // we wait for the END of the work, not only the frames: `pending()` counts
+    // the running task too, and the test would measure it rather than the new requests
     while h.state().reel_previews.pending() > 0 && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));
         h.step();
     }
-    assert!(h.state().reel_previews.get(&key).is_some(), "превью не посчиталось");
+    assert!(h.state().reel_previews.get(&key).is_some(), "the preview was not computed");
 
-    // возим вид туда-сюда и зумим — новых заявок появиться не должно
+    // move the view back and forth and zoom — no new requests should appear
     for i in 0..6 {
         h.state_mut().view_start = (i as f64) * 25_000.0;
         h.state_mut().ticks_per_px = 400.0 * (1.0 + i as f64 * 0.3);
@@ -11094,30 +11094,30 @@ fn t601_scrolling_does_not_order_reel_work() {
         assert_eq!(
             h.state().reel_previews.pending(),
             0,
-            "прокрутка/зум поставили заявку на превью ленты (шаг {i})"
+            "scroll/zoom queued a reel preview request (step {i})"
         );
     }
 
-    // и служба ТУМБ про ленту по-прежнему не знает: у неё ключ по файлу
+    // and the THUMBNAIL service still does not know about the reel: its key is by file
     assert!(
         h.state().reel_textures.keys().all(|(k, _)| k.seq == seq),
-        "в кэше текстур лент оказалась чужая лента"
+        "a foreign reel ended up in the reel texture cache"
     );
     assert!(
         h.state().thumb_textures.keys().all(|k| k.media != seq),
-        "тумба по ленте заказана: у ленты нет файла, и служба индекса полезла бы ffmpeg'ом"
+        "a thumbnail for the reel was ordered: the reel has no file, and the index service would go for ffmpeg"
     );
 }
 
-/// Тест 640 (Р.58, п.463): превью ленты переживает открытие проекта.
+/// Test 640 (R.58, item 463): the reel preview survives reopening the project.
 ///
-/// Претензия владельца: «У композиций превью на таймлайне, кажется, не
-/// кешируется и каждое открытие проекта строится заново». Утверждается
-/// следствие: второй `KtApp::open` того же файла получает кадры и
-/// огибающую ленты при НУЛЕ настоящих рендеров — из sidecar
-/// `<project>.ktindex.db`. А подмена исходника (mtime) — промах и
-/// перерендер: редакция ленты подмену файла не видит, её ловит отпечаток
-/// медиа в ключе.
+/// The owner’s complaint: “the compositions’ preview on the timeline, it seems, is not
+/// cached, and every project opening builds it anew”. What is asserted is the
+/// consequence: a second `KtApp::open` of the same file gets the reel’s frames and
+/// envelope with ZERO real renders — from the sidecar
+/// `<project>.ktindex.db`. But a substitution of the source (mtime) is a miss and a
+/// re-render: the reel’s revision does not see the file substitution; the media fingerprint
+/// in the key catches it.
 #[test]
 fn t640_reel_preview_survives_reopen_from_sidecar() {
     use crate::reel_preview::{MAX_REELS_READY, ReelKey, ReelPreviews};
@@ -11127,17 +11127,17 @@ fn t640_reel_preview_survives_reopen_from_sidecar() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("t640.kt");
-    // файл-исходник, чтобы отпечатку медиа было что нюхать: содержимое
-    // роли не играет (открыть его нельзя — клип честно пуст), важны путь,
-    // размер и mtime
+    // a source file, so that the media fingerprint has something to sniff: the content
+    // of the role does not matter (it cannot be opened — the clip is honestly empty); the path,
+    // size and mtime are what matter
     let extra = dir.join("extra.bin");
     std::fs::write(&extra, b"not a media file").unwrap();
 
-    // документ с лентой — из готовой сцены, плюс клип ПО ФАЙЛУ внутри ленты
+    // a document with the reel — from a ready scene, plus a clip BY FILE inside the reel
     let seq = {
         let (h, _g, seq) = harness_with_nest();
         let mut p = h.state().model.document().clone();
-        // адреса медиа и лент — одно пространство (t425): свежий id над обоими
+        // media and reel addresses are one space (t425): a fresh id over both
         let file_id = MediaId(
             p.media.iter().map(|m| m.id.0).chain(p.sequences.iter().map(|s| s.id.0)).max().unwrap()
                 + 1,
@@ -11165,7 +11165,7 @@ fn t640_reel_preview_survives_reopen_from_sidecar() {
         seq
     };
 
-    // открыть файл и дождаться превью ленты (как t600)
+    // open the file and wait for the reel preview (as in t600)
     let open_and_wait = || -> (Harness<'static, KtApp>, ReelKey) {
         let mut app = KtApp::open(&path).expect("project opens");
         app.recovery_on_drop = false;
@@ -11193,13 +11193,13 @@ fn t640_reel_preview_survives_reopen_from_sidecar() {
         assert!(prev.peaks.as_ref().is_some_and(|p| !p.is_empty()), "{what}: no peaks");
     };
 
-    // 1) первое открытие: рендер настоящий — и ровно один
+    // 1) first opening: the render is real — and exactly one
     let (h1, key1) = open_and_wait();
     check_preview(&h1, &key1, "first open");
     assert_eq!(h1.state().reel_previews.renders(), 1, "first open must render the reel once");
     drop(h1);
 
-    // 2) второе открытие того же файла: всё есть, рендеров НОЛЬ
+    // 2) second opening of the same file: everything is there, renders ZERO
     let (h2, key2) = open_and_wait();
     assert_eq!(key2, key1, "reel key changed across save/load — the disk key could never hit");
     check_preview(&h2, &key2, "second open");
@@ -11210,7 +11210,7 @@ fn t640_reel_preview_survives_reopen_from_sidecar() {
     );
     drop(h2);
 
-    // 3) подменённый исходник: mtime вперёд — промах, перерендер
+    // 3) substituted source: mtime forward — a miss, a re-render
     {
         let f = std::fs::File::options().write(true).open(&extra).unwrap();
         f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5)).unwrap();
@@ -11226,7 +11226,7 @@ fn t640_reel_preview_survives_reopen_from_sidecar() {
     drop(h3);
     let _ = std::fs::remove_dir_all(&dir);
 
-    // ---- попутные дыры службы (Р.58): честный LRU, а не очередь вставки ----
+    // ---- side defects of the service (R.58): honest LRU, not an insertion queue ----
     let mut svc = ReelPreviews::default();
     let k = |i: u64| ReelKey { seq: MediaId(1000 + i), hash: i };
     for i in 0..MAX_REELS_READY as u64 {
@@ -11240,18 +11240,18 @@ fn t640_reel_preview_survives_reopen_from_sidecar() {
     assert_eq!(svc.failed_len(), 0);
 }
 
-// ===================== скорость транспорта (Р.57, п.455) =====================
+// ===================== transport speed (R.57, item 455) =====================
 
-/// Прямоугольник контрола скорости (программа отдаёт его сама — правило
-/// «координаты берутся из САМОЙ программы», Р.27).
+/// The rectangle of the speed control (the program reports it itself — the rule
+/// “coordinates are taken from the program ITSELF”, R.27).
 fn speed_rect(h: &Harness<'_, KtApp>) -> egui::Rect {
     let r = h.state().speed_rect;
-    assert!(r.is_finite() && r.width() > 100.0, "контрол скорости не нарисован: {r:?}");
+    assert!(r.is_finite() && r.width() > 100.0, "the speed control is not drawn: {r:?}");
     r
 }
 
-/// Ctrl+клик без движения указателя. Модификатор едет ОТДЕЛЬНЫМ событием:
-/// `i.modifiers` egui читает из состояния кадра, а не из кнопки мыши.
+/// Ctrl+click without pointer movement. The modifier travels as a SEPARATE event:
+/// `i.modifiers` egui reads from the frame state, not from the mouse button.
 fn ctrl_click_at(h: &mut Harness<'_, KtApp>, pos: egui::Pos2) {
     let m = egui::Modifiers::COMMAND;
     h.hover_at(pos);
@@ -11271,13 +11271,13 @@ fn ctrl_click_at(h: &mut Harness<'_, KtApp>, pos: egui::Pos2) {
     h.step();
 }
 
-/// Тест 627 (Р.57): ВВОД СКОРОСТИ ЧИСЛОМ.
+/// Test 627 (R.57): ENTERING THE SPEED AS A NUMBER.
 ///
-/// Прямая претензия владельца: «я должен иметь возможность выставить 0,05
-/// или −0,03». Тест щупает оттуда, откуда действует человек: правая кнопка
-/// (и Ctrl+клик — второй обещанный путь, правило 17) по САМОЙ полосе,
-/// печать символов, Enter — и утверждает СЛЕДСТВИЕ: что стоит в базовой
-/// скорости и что уехало в плеер.
+/// The owner’s direct complaint: “I must be able to set 0.05
+/// or −0.03”. The test probes from where the person acts: the right button
+/// (and Ctrl+click — the second promised path, rule 17) on the strip ITSELF,
+/// typing characters, Enter — and asserts the CONSEQUENCE: what stands in the base
+/// speed and what went to the player.
 #[test]
 fn t627_speed_typed_value_reaches_player() {
     use crate::app::format_rate;
@@ -11285,34 +11285,34 @@ fn t627_speed_typed_value_reaches_player() {
     let rect = speed_rect(&h);
     let on_bar = egui::pos2(rect.center().x, rect.top() + 4.0);
 
-    // --- подсказка полосы правдива и обещает оба входа
+    // --- the strip’s hint is truthful and promises both entries
     h.hover_at(on_bar);
     h.step();
     assert_eq!(
         h.state().hover_hint.as_deref(),
         Some(tr(k::hint::SPEED)),
-        "полоса скорости не отдаёт свою подсказку"
+        "the speed strip does not give its hint"
     );
 
-    // --- правый клик открывает поле НА МЕСТЕ полосы
+    // --- right click opens the field IN PLACE of the strip
     let before = h.state().tl_geom.clone().map(|g| g.rect.height());
     right_click_at(&mut h, on_bar);
-    assert!(h.state().speed_entry.is_some(), "ПКМ по полосе не открыл ввод скорости");
+    assert!(h.state().speed_entry.is_some(), "RMB on the strip did not open speed input");
     assert_eq!(
         h.state().tl_geom.clone().map(|g| g.rect.height()),
         before,
-        "открытие поля сдвинуло вёрстку (правило 3: ничего не скачет)"
+        "opening the field shifted the layout (rule 3: nothing jumps)"
     );
-    assert_eq!(speed_rect(&h), rect, "поле заняло не тот прямоугольник, что полоса");
+    assert_eq!(speed_rect(&h), rect, "the field took a different rectangle than the strip");
     h.hover_at(on_bar);
     h.step();
     assert_eq!(
         h.state().hover_hint.as_deref(),
         Some(tr(k::hint::SPEED_ENTRY)),
-        "у открытого поля чужая подсказка"
+        "the open field has a foreign hint"
     );
 
-    // --- пробел при открытом поле НЕ запускает воспроизведение
+    // --- the space bar with the field open does NOT start playback
     let playing = h.state().player.transport.is_playing();
     h.event(egui::Event::Text(" ".into()));
     h.key_press(egui::Key::Space);
@@ -11320,36 +11320,36 @@ fn t627_speed_typed_value_reaches_player() {
     assert_eq!(
         h.state().player.transport.is_playing(),
         playing,
-        "пробел утёк в хоткеи мимо открытого поля"
+        "space leaked into hotkeys past the open field"
     );
 
-    // --- «0.05» + Enter
+    // --- “0.05” + Enter
     h.event(egui::Event::Text("0.05".into()));
     h.step();
     h.key_press(egui::Key::Enter);
     h.step();
-    assert!(h.state().speed_entry.is_none(), "Enter не закрыл поле");
+    assert!(h.state().speed_entry.is_none(), "Enter did not close the field");
     let base = h.state().base_rate;
-    assert!((base - 0.05).abs() < 1e-6, "база не стала 0.05, а {base}");
+    assert!((base - 0.05).abs() < 1e-6, "the base did not become 0.05, but {base}");
     let live = h.state().player.playback_rate();
-    assert!((live - 0.05).abs() < 1e-6, "плеер не получил 0.05, а {live}");
-    assert_eq!(format_rate(base), "+0.05×", "показ скорости врёт");
+    assert!((live - 0.05).abs() < 1e-6, "the player did not get 0.05, but {live}");
+    assert_eq!(format_rate(base), "+0.05×", "the speed display lies");
     assert!(
         !h.ctx.egui_wants_keyboard_input(),
-        "поле закрылось, но фокус не отдан — хоткеи мертвы (правило 14)"
+        "the field closed, but focus was not returned — hotkeys are dead (rule 14)"
     );
 
-    // --- второй вход: Ctrl+клик, и минус доезжает до модели
+    // --- second entry: Ctrl+click, and the minus reaches the model
     ctrl_click_at(&mut h, on_bar);
-    assert!(h.state().speed_entry.is_some(), "Ctrl+клик не открыл ввод скорости");
+    assert!(h.state().speed_entry.is_some(), "Ctrl+click did not open speed input");
     h.event(egui::Event::Text("\u{2212}0,03".into()));
     h.step();
     h.key_press(egui::Key::Enter);
     h.step();
     let base = h.state().base_rate;
-    assert!((base + 0.03).abs() < 1e-6, "типографский минус и запятая не доехали: {base}");
+    assert!((base + 0.03).abs() < 1e-6, "the typographic minus and comma did not get through: {base}");
 
-    // --- нечитаемое значение НЕ закрывает поле (правило 16: это ошибка)
+    // --- an unreadable value does NOT close the field (rule 16: it is an error)
     right_click_at(&mut h, on_bar);
     h.event(egui::Event::Text("-".into()));
     h.step();
@@ -11357,17 +11357,17 @@ fn t627_speed_typed_value_reaches_player() {
     h.step();
     assert!(
         h.state().speed_entry.as_ref().is_some_and(|e| e.bad),
-        "нечитаемое значение молча закрыло поле"
+        "unreadable value silently closed the field"
     );
-    assert!((h.state().base_rate + 0.03).abs() < 1e-6, "нечитаемое значение испортило базу");
+    assert!((h.state().base_rate + 0.03).abs() < 1e-6, "unreadable value broke the database");
 
-    // --- Esc закрывает без правки, и ПОСЛЕ него всё живо (правило 14)
+    // --- Esc closes without an edit, and AFTER it everything is alive (rule 14)
     h.key_press(egui::Key::Escape);
     h.step();
     h.step();
-    assert!(h.state().speed_entry.is_none(), "Esc не закрыл поле");
-    assert!((h.state().base_rate + 0.03).abs() < 1e-6, "Esc изменил скорость");
-    assert!(!h.ctx.egui_wants_keyboard_input(), "после Esc фокус остался на поле");
+    assert!(h.state().speed_entry.is_none(), "Esc did not close the field");
+    assert!((h.state().base_rate + 0.03).abs() < 1e-6, "Esc changed the speed");
+    assert!(!h.ctx.egui_wants_keyboard_input(), "after Esc focus stayed in the field");
     let playing = h.state().player.transport.is_playing();
     h.key_press(egui::Key::Space);
     h.step();
@@ -11375,28 +11375,28 @@ fn t627_speed_typed_value_reaches_player() {
     assert_ne!(
         h.state().player.transport.is_playing(),
         playing,
-        "после закрытия поля пробел перестал переключать воспроизведение"
+        "after closing the field, Space stopped toggling playback"
     );
-    // и поле открывается ПОВТОРНО
+    // and the field opens AGAIN
     right_click_at(&mut h, on_bar);
-    assert!(h.state().speed_entry.is_some(), "второй правый клик не открыл поле");
+    assert!(h.state().speed_entry.is_some(), "second right click did not open the field");
 }
 
-/// Тест 628 (Р.57): драг полосы даёт МАЛЫЕ скорости, Shift — точную
-/// подстройку, центр — стоп, двойной клик — 1×.
+/// Test 628 (R.57): dragging the strip gives SMALL speeds, Shift — fine
+/// adjustment, the centre — stop, double click — 1×.
 #[test]
 fn t628_speed_drag_reaches_small_rates() {
     use crate::app::{RATE_KNEE, SPEED_FINE_DIV, format_rate, slider_to_rate};
 
-    // Общий путь указателя: захват слева от центра, порог драга берётся
-    // ЯВНЫМ шагом (egui признаёт драг после ~6 px, и позиция ИМЕННО того
-    // кадра становится якорем виртуального курсора).
+    // The common pointer path: capture to the left of the centre, the drag threshold is taken
+    // by an EXPLICIT step (egui recognises a drag after ~6 px, and the position of THAT
+    // frame becomes the anchor of the virtual cursor).
     fn drag_upper(shift: bool, extra: f32) -> (f32, f32) {
         let mut h = harness();
         let rect = speed_rect(&h);
         let y = rect.top() + 4.0;
         let x0 = rect.center().x - 40.0;
-        let x1 = rect.center().x - 20.0; // якорь: тут жест признаётся драгом
+        let x1 = rect.center().x - 20.0; // anchor: here the gesture is recognised as a drag
         h.hover_at(egui::pos2(x0, y));
         h.step();
         h.drag_at(egui::pos2(x0, y));
@@ -11415,7 +11415,7 @@ fn t628_speed_drag_reaches_small_rates() {
         (got, x1 - rect.left())
     }
 
-    // --- 6 px вправо от центра — это 0.05×, а НЕ 0.25× и не стоп
+    // --- 6 px to the right of the centre is 0.05×, NOT 0.25× and not stop
     {
         let mut h = harness();
         let rect = speed_rect(&h);
@@ -11434,10 +11434,10 @@ fn t628_speed_drag_reaches_small_rates() {
         h.step();
         assert!(
             got > 0.02 && got < RATE_KNEE,
-            "6 px от центра обязаны дать десятые доли процента скорости, а дали {got}"
+            "6 px from the center must give tenths of a percent of speed, but gave {got}"
         );
-        assert!((got - 0.055).abs() < 0.02, "6 px от центра дали {got}, ждали около 0.055");
-        // --- отпуск в 1 px от центра — РОВНО стоп
+        assert!((got - 0.055).abs() < 0.02, "6 px from the center gave {got}, expected about 0.055");
+        // --- release 1 px from the centre is EXACTLY stop
         let mut h = harness();
         let rect = speed_rect(&h);
         h.hover_at(egui::pos2(x0, y));
@@ -11451,40 +11451,40 @@ fn t628_speed_drag_reaches_small_rates() {
         let got = h.state().base_rate;
         h.drop_at(egui::pos2(rect.center().x + 1.0, y));
         h.step();
-        assert_eq!(got, 0.0, "1 px от центра обязан быть стопом");
+        assert_eq!(got, 0.0, "1 px from the center must be a stop");
         assert_eq!(format_rate(0.0), tr(k::perf::RATE_STOP));
     }
 
-    // --- Shift: тот же путь указателя проходит в SPEED_FINE_DIV раз меньше
+    // --- Shift: the same pointer path covers SPEED_FINE_DIV times less
     let travel = 48.0f32;
     let (plain, anchor) = drag_upper(false, travel);
     let (fine, anchor2) = drag_upper(true, travel);
-    assert_eq!(anchor, anchor2, "харнесс разошёлся: якоря жестов разные");
+    assert_eq!(anchor, anchor2, "harness diverged: gesture anchors differ");
     let w = 170.0f32;
     let t_of = |vx: f32| vx / w * 2.0 - 1.0;
     let want_plain = slider_to_rate(t_of(anchor + travel));
     let want_fine = slider_to_rate(t_of(anchor + travel / SPEED_FINE_DIV));
-    assert!((plain - want_plain).abs() < 1e-4, "обычный драг: {plain}, ждали {want_plain}");
+    assert!((plain - want_plain).abs() < 1e-4, "plain drag: {plain}, expected {want_plain}");
     assert!(
         (fine - want_fine).abs() < 1e-4,
-        "Shift не поделил ХОД на {SPEED_FINE_DIV}: {fine}, ждали {want_fine}"
+        "Shift did not divide the RUN by {SPEED_FINE_DIV}: {fine}, expected {want_fine}"
     );
-    assert!(fine < plain, "Shift обязан идти медленнее обычного драга");
+    assert!(fine < plain, "Shift must go slower than a plain drag");
 
-    // --- двойной клик возвращает 1×
+    // --- double click returns 1×
     let mut h = harness_lang_dt(crate::i18n::Lang::Ru, Some(0.02));
     let rect = speed_rect(&h);
     h.state_mut().base_rate = 0.05;
     h.step();
     double_click_at(&mut h, egui::pos2(rect.center().x, rect.top() + 4.0));
-    assert_eq!(h.state().base_rate, 1.0, "двойной клик не вернул 1×");
+    assert_eq!(h.state().base_rate, 1.0, "double click did not return to 1×");
 }
 
-/// Тест 629 (Р.57): разгон удержанием пробела работает и от МАЛОЙ базы.
+/// Test 629 (R.57): holding the space bar to ramp works also from a SMALL base.
 ///
-/// Прежний гистерезис был абсолютным (0.02): на базе 0.05 это 40 % базы,
-/// и разогнанная скорость физически не доезжала до плеера — виджет
-/// показывал разгон, а программа играла как стояла.
+/// The former hysteresis was absolute (0.02): on a base of 0.05 that is 40 % of the base,
+/// and the ramped speed physically did not reach the player — the widget
+/// showed the ramp, while the program played as it stood.
 #[test]
 fn t629_space_boost_from_small_base() {
     use crate::app::SPACE_BOOST_MAX;
@@ -11495,10 +11495,10 @@ fn t629_space_boost_from_small_base() {
     h.key_down(egui::Key::Space);
     h.step();
     std::thread::sleep(std::time::Duration::from_millis(260));
-    // СРАЗУ после старта разгона: показанное множителем и то, что играет,
-    // обязаны совпадать. Прежний АБСОЛЮТНЫЙ порог 0.02 держал плеер на
-    // 0.05, пока множитель не дорастал до 1.4 — программа играла как
-    // стояла, а виджет уже показывал разгон.
+    // RIGHT after the start of the ramp: what the multiplier shows and what plays
+    // must match. The former ABSOLUTE threshold of 0.02 held the player at
+    // 0.05 until the multiplier grew to 1.4 — the program played as it stood,
+    // while the widget already showed the ramp.
     let mut worst = 0.0f32;
     for _ in 0..12 {
         h.step();
@@ -11509,40 +11509,40 @@ fn t629_space_boost_from_small_base() {
     }
     assert!(
         worst < 0.10,
-        "разгон от малой базы отстаёт от показанного на {:.0} % базы",
+        "acceleration from a small base lags the displayed value by {:.0} % of the base",
         worst * 100.0
     );
     for _ in 0..60 {
         h.step();
     }
     let boosted = h.state().player.playback_rate();
-    assert!(boosted > 0.075, "от базы 0.05 разгон не доехал до плеера: {boosted}");
+    assert!(boosted > 0.075, "from base 0.05 the acceleration did not reach the player: {boosted}");
     assert!(
         boosted <= 0.05 * SPACE_BOOST_MAX + 1e-3,
-        "разгон от малой базы перелетел потолок: {boosted}"
+        "acceleration from a small base overshot the cap: {boosted}"
     );
-    // и виджет это ПОКАЗЫВАЕТ
-    let shown = h.state().speed_temp_slider().expect("разгон не виден на контроле скорости");
+    // and the widget SHOWS this
+    let shown = h.state().speed_temp_slider().expect("the boost is not visible on the speed control");
     assert!(
         shown > crate::app::rate_to_slider(0.05) + 0.001,
-        "полоса скорости не показывает разгон от малой базы: {shown}"
+        "speed strip does not show acceleration from a small base: {shown}"
     );
     h.key_up(egui::Key::Space);
     h.step();
     assert!(
         (h.state().player.playback_rate() - 0.05).abs() < 1e-4,
-        "после отпускания скорость не вернулась к малой базе: {}",
+        "after release, speed did not return to the small base: {}",
         h.state().player.playback_rate()
     );
 }
 
-/// Тест 630 (Р.57, п.456): ось графика для ЗНАКОВОЙ скорости —
-/// логарифм по модулю, и обычная кривая перестаёт быть прямой.
+/// Test 630 (R.57, item 456): the axis of the graph for a SIGNED speed is the
+/// logarithm of the modulus, and an ordinary curve stops being straight.
 ///
-/// Жалоба Р.34 дословно: «График Slowed обрезан по оси rate на 2.0, а
-/// числовое поле пускает до 4.0». С диапазоном −32…32 линейная ось
-/// повторила бы ту же беду с другой стороны: кривая 0.66…1.0 заняла бы
-/// 0.5 % высоты и выглядела прямой.
+/// The R.34 complaint verbatim: “the Slowed graph is cut off on the rate axis at 2.0, while
+/// the numeric field accepts up to 4.0”. With a range of −32…32 a linear axis would
+/// repeat the same trouble from the other side: the curve 0.66…1.0 would take
+/// 0.5 % of the height and look straight.
 #[test]
 fn t630_signed_ratio_axis_is_log_by_modulus() {
     use crate::automation::{Axis, axis_of};
@@ -11552,42 +11552,42 @@ fn t630_signed_ratio_axis_is_log_by_modulus() {
     let rate = slowed.param_specs().iter().find(|s| s.name == "rate").unwrap();
     assert_eq!(rate.unit, ParamUnit::Ratio);
     let ax = axis_of(rate);
-    assert!(matches!(ax, Axis::SymLog { .. }), "у знакового отношения ось обязана быть лог");
+    assert!(matches!(ax, Axis::SymLog { .. }), "for a signed ratio the axis must be log");
 
-    // нечётность, ноль в нуле, монотонность и обратимость
+    // oddness, zero at zero, monotonicity and invertibility
     assert_eq!(ax.map(0.0), 0.0);
     for v in [0.01f64, 0.05, 0.25, 0.66, 1.0, 4.0, 32.0] {
-        assert!((ax.map(-v) + ax.map(v)).abs() < 1e-12, "ось не нечётна на {v}");
-        assert!((ax.unmap(ax.map(v)) - v).abs() < 1e-9, "круг оси разошёлся на {v}");
+        assert!((ax.map(-v) + ax.map(v)).abs() < 1e-12, "axis is not odd at {v}");
+        assert!((ax.unmap(ax.map(v)) - v).abs() < 1e-9, "axis circle diverged by {v}");
         assert!((ax.unmap(ax.map(-v)) + v).abs() < 1e-9);
     }
     let mut prev = f64::MIN;
     for i in -320..=320 {
         let g = ax.map(i as f64 / 10.0);
-        assert!(g > prev, "ось не монотонна около {}", i as f64 / 10.0);
+        assert!(g > prev, "axis is not monotonic near {}", i as f64 / 10.0);
         prev = g;
     }
-    // непрерывность в колене
+    // continuity at the knee
     assert!((ax.map(0.2499) - ax.map(0.2501)).abs() < 1e-3);
 
-    // СЛЕДСТВИЕ: кривая 0.66…1.0 занимает заметную долю шкалы, а не
-    // полпроцента, как было бы на линейной оси
+    // CONSEQUENCE: the curve 0.66…1.0 takes a noticeable share of the scale, not
+    // half a percent, as it would on a linear axis
     let g = (ax.map(1.0) - ax.map(0.66)) / (ax.map(32.0) - ax.map(-32.0));
     let lin = (1.0 - 0.66) / 64.0;
-    assert!(g > lin * 5.0, "лог-ось не растянула окрестность единицы: {g} против {lin}");
+    assert!(g > lin * 5.0, "log axis did not stretch the neighborhood of 1: {g} versus {lin}");
 
-    // у беззнакового отношения ось прежняя — правило по КЛАССУ, а не по имени
+    // for an unsigned ratio the axis is the old one — the rule is by CLASS, not by name
     let blur = FxInstance::blur(8);
     for s in blur.param_specs() {
-        assert!(matches!(axis_of(s), Axis::Linear), "{}: ось поехала", s.name);
+        assert!(matches!(axis_of(s), Axis::Linear), "{}: the axis drifted", s.name);
     }
 }
 
-// ---- Р.58: полоса внутри ленты, полосы через контексты, зона до нуля --------
+// ---- R.58: strip inside a reel, strips across contexts, zone down to zero --------
 
-/// Двухуровневый харнесс: корень → X → Y. Внутри X событие свёрнуто в
-/// ленту Y тем же жестом, что и в корне. Возвращает геометрию ВНУТРИ X,
-/// адреса обеих лент и экземпляр Y (в оси X).
+/// A two-level harness: root → X → Y. Inside X the event is collapsed into
+/// the reel Y by the same gesture as in the root. Returns the geometry INSIDE X,
+/// the addresses of both reels and the instance Y (in the axis of X).
 #[cfg(test)]
 fn harness_two_level() -> (
     Harness<'static, KtApp>,
@@ -11621,16 +11621,16 @@ fn harness_two_level() -> (
     (h, g, x, y, y_inst)
 }
 
-/// Тест 634 (Р.58, п.460): полоса раскрывается ВНУТРИ полного входа.
+/// Test 634 (R.58, item 460): a strip expands INSIDE a full entry.
 ///
-/// **Претензия владельца дословно:** «открывая композицию не могу раскрыть
-/// в ней вложенную композицию (я именно открываю композицию на весь
-/// таймлайн и не могу в ней раскрыть вложенную не залезая уже в неё)».
+/// **The owner’s complaint verbatim:** “while opening a composition I cannot expand
+/// a nested composition in it (I open the composition on the whole
+/// timeline and I cannot expand a nested one in it without getting into it already)”.
 ///
-/// Каскад Enter внутри X — тот же, что в корне: первый раскрывает, второй
-/// входит. Документ от раскрытия не меняется, правка в полосе доезжает до
-/// ленты Y (не до X и не до корня), Esc сворачивает полосу РАНЬШЕ выхода
-/// из X.
+/// The Enter cascade inside X is the same as in the root: the first expands, the second
+/// enters. The document does not change from the expansion, an edit in the strip reaches
+/// reel Y (not X and not the root), and Esc collapses the strip BEFORE exiting
+/// X.
 #[test]
 fn t634_a_band_opens_inside_an_entered_reel() {
     use crate::app::EnterOnNest;
@@ -11639,7 +11639,7 @@ fn t634_a_band_opens_inside_an_entered_reel() {
     let doc_before = h.state().model.document();
     let rows_before = h.state().tl_geom.clone().map(|g| g.rows.len()).unwrap_or(0);
 
-    // 1-й Enter — РАСКРЫТЬ, и решение не зависит от контекста
+    // 1st Enter — EXPAND, and the decision does not depend on the context
     assert_eq!(h.state().enter_pressed_on_nest(y_inst), EnterOnNest::Expand);
     h.state_mut().select_only(y_inst);
     h.state_mut().expand_in_place(y_inst);
@@ -11657,10 +11657,10 @@ fn t634_a_band_opens_inside_an_entered_reel() {
     let g = h.state().tl_geom.clone().expect("geometry");
     assert!(g.rows.len() > rows_before, "band rows are not on screen inside X: {:?}", g.rows);
     assert_eq!(h.state().model.document(), doc_before, "expanding inside X changed the DOCUMENT");
-    // 2-й Enter — ВОЙТИ
+    // 2nd Enter — ENTER
     assert_eq!(h.state().enter_pressed_on_nest(y_inst), EnterOnNest::Enter);
 
-    // правка в полосе доезжает до Y
+    // an edit in the strip reaches Y
     let (id, was, lane) = h
         .state()
         .model
@@ -11686,7 +11686,7 @@ fn t634_a_band_opens_inside_an_entered_reel() {
     );
     assert_eq!(h.state().model.bands().len(), 1, "the edit collapsed the band");
 
-    // Esc: снять выделение → свернуть полосу → и только потом выйти из X
+    // Esc: clear selection → collapse the strip → and only then exit X
     h.state_mut().escape_action();
     assert_eq!(h.state().model.bands().len(), 1, "Esc collapsed the band instead of deselecting");
     h.state_mut().escape_action();
@@ -11696,24 +11696,24 @@ fn t634_a_band_opens_inside_an_entered_reel() {
     assert_eq!(h.state().model.editing(), None, "the 3rd Esc must leave X");
 }
 
-/// Тест 636 (Р.58, п.461): полосы ПЕРЕЖИВАЮТ смену контекста.
+/// Test 636 (R.58, item 461): strips SURVIVE a change of context.
 ///
-/// **Претензия владельца дословно:** «при переходе между композициями/
-/// root-таймлайном они сбрасывают состояние раскрытости, а хотелось бы
-/// чтобы оставляли чтобы не путаться». Решение владельца (пересмотр Р.56
-/// п.5): восстанавливать ВСЁ, включая полосу, через которую вошли вторым
-/// Enter, — каскад Enter/Esc симметричен.
+/// **The owner’s complaint verbatim:** “when moving between compositions /
+/// root timeline they reset the expanded state, but we would like
+/// them to keep it so as not to get confused”. The owner’s decision (a revision of R.56
+/// item 5): restore EVERYTHING, including the strip through which the second
+/// Enter entered — the Enter/Esc cascade is symmetric.
 #[test]
 fn t636_bands_survive_context_switches() {
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
     use kt_time::Tick;
 
-    // (а) корень: полоса на A, вход в B через ДРУГОЙ экземпляр (пункт меню
-    // «Открыть»), возврат — A раскрыта, вид и курсор те же (t456)
+    // (a) root: the strip on A, entry into B through ANOTHER instance (menu item
+    // “Open”), return — A is expanded, the view and cursor are the same (t456)
     let (mut h, g, a) = harness_with_nest();
     let a_inst = h.state().model.project().clips.iter().find(|c| c.media == a).unwrap().id;
-    // второй экземпляр: третье событие сворачивается в ленту B
+    // a second instance: the third event collapses into the reel B
     h.state_mut().select_only(ClipId(3));
     h.step();
     h.state_mut().collapse_selection();
@@ -11722,9 +11722,9 @@ fn t636_bands_survive_context_switches() {
     let b = h.state().model.document().sequences.iter().map(|s| s.id).find(|id| *id != a).unwrap();
     let b_inst = h.state().model.project().clips.iter().find(|c| c.media == b).unwrap().id;
     h.state_mut().expand_in_place(a_inst);
-    // курсор — В ТЕЛЕ экземпляра B (200 000 … 250 000): вход переводит
-    // время, а не телепортирует, и возврат обязан попасть в ту же точку
-    // (снаружи тела курсор клампится к материалу — правило п.447)
+    // the cursor — INSIDE THE BODY of instance B (200 000 … 250 000): entry translates
+    // the time rather than teleporting, and the return must land on the same point
+    // (outside the body the cursor is clamped to the material — rule of item 447)
     h.state_mut().player.seek(Tick(220_000));
     h.state_mut().view_start = 5_000.0;
     h.state_mut().ticks_per_px = 900.0;
@@ -11752,13 +11752,13 @@ fn t636_bands_survive_context_switches() {
         "(a) the band on A was not restored after returning from B"
     );
     assert_eq!((h.state().view_start, h.state().ticks_per_px), (vs, tpp), "(a) view not restored");
-    // точность — квант транспорта (аудиокадр 48 кГц ≈ 1.875 тика), как в t456
+    // precision — the transport quantum (an audio frame ≈ 1.875 ticks), as in t456
     let back = h.state().player.transport.playhead();
     assert!((back.0 - cursor.0).abs() <= 4, "(a) cursor not restored: {back:?} vs {cursor:?}");
     assert!(h.state().selected.contains(&b_inst), "(a) selection not restored");
 
-    // (б) вход через 2-й Enter по раскрытой A, Esc-каскад до выхода — A
-    // снова раскрыта и выделена, третий Enter входит снова
+    // (b) entry via the 2nd Enter on the expanded A, Esc cascade up to the exit — A
+    // is expanded and selected again, the third Enter enters again
     h.state_mut().select_only(a_inst);
     h.step();
     h.key_press(egui::Key::Enter);
@@ -11777,7 +11777,7 @@ fn t636_bands_survive_context_switches() {
     assert_eq!(
         h.state().model.bands().iter().map(|b| b.inst).collect::<Vec<_>>(),
         vec![a_inst],
-        "(b) the band we entered through was not restored (owner's decision, Р.58)"
+        "(b) the band we entered through was not restored (owner’s decision, R.58)"
     );
     assert!(h.state().is_selected(a_inst), "(b) the instance is not selected after the return");
     h.key_press(egui::Key::Enter);
@@ -11786,8 +11786,8 @@ fn t636_bands_survive_context_switches() {
     h.state_mut().leave_nest();
     h.step();
 
-    // (г, часть 1) экземпляр из снимка исчез или перестал быть вложением —
-    // молча без полосы, без паники
+    // (d, part 1) the instance from the snapshot has disappeared or stopped being a nested item —
+    // silently, without the strip, without a panic
     h.state_mut().enter_nest(b_inst);
     h.step();
     h.state_mut().nest_path.last_mut().unwrap().band = Some(ClipId(999_999));
@@ -11796,8 +11796,8 @@ fn t636_bands_survive_context_switches() {
     assert_eq!(h.state().model.editing(), None);
     assert!(h.state().model.bands().is_empty(), "(d) a vanished instance must not leave a band");
 
-    // (в) внутри X полоса на Y, выход в корень и вход обратно в X — Y
-    // раскрыта; (г, часть 2) удалили экземпляр внутри — полосы нет
+    // (c) inside X the strip on Y, exit to the root and entry back into X — Y is
+    // expanded; (d, part 2) the instance inside was deleted — there is no strip
     let (mut h2, _g2, x, _y, y_inst) = harness_two_level();
     let x_inst = h2.state().model.document().clips.iter().find(|c| c.media == x).unwrap().id;
     h2.state_mut().expand_in_place(y_inst);
@@ -11822,7 +11822,7 @@ fn t636_bands_survive_context_switches() {
     assert!(h2.state().model.bands().is_empty(), "(d) a removed instance came back as a band");
 }
 
-/// Драг события: навести → нажать → сдвинуть чуть → вести → отпустить.
+/// Drag of an event: hover → press → move slightly → carry → release.
 #[cfg(test)]
 fn drag_clip(h: &mut Harness<'_, KtApp>, from: egui::Pos2, to: egui::Pos2) {
     h.hover_at(from);
@@ -11837,15 +11837,15 @@ fn drag_clip(h: &mut Harness<'_, KtApp>, from: egui::Pos2, to: egui::Pos2) {
     h.step();
 }
 
-/// Тест 637 (Р.58, п.462): внутри ленты событие уезжает ЗА НОЛЬ, в корне
-/// ноль — стена.
+/// Test 637 (R.58, item 462): inside a reel an event moves BEYOND ZERO; in the root
+/// zero is a wall.
 ///
-/// **Претензия владельца дословно:** «При редактировании полностью открытой
-/// композиции я не могу закинуть событие за ее пределы, а при раскрытой
-/// композиции в root — могу. Воспроизводить в полностью открытой композиции
-/// зону до 0 мне не надо». Стена была только в UI (`.max(0)` над тиком
-/// жеста); формат и модель отрицательный `start` допускают, окно экземпляра
-/// такое не играет.
+/// **The owner’s complaint verbatim:** “When editing a fully opened
+/// composition I cannot drag an event beyond its limits, but with an expanded
+/// composition in root — I can. I do not need playing down to 0 in a fully open composition”.
+/// The wall was only in the UI (`.max(0)` over the gesture tick); the format and the model
+/// allow a negative `start`, and the instance window
+/// does not play such.
 #[test]
 fn t637_inside_a_reel_an_event_may_cross_zero() {
     use kt_model::*;
@@ -11868,22 +11868,22 @@ fn t637_inside_a_reel_an_event_may_cross_zero() {
     let moved = h.state().model.project().clips.iter().find(|c| c.id == inner.id).unwrap().clone();
     assert_eq!(moved.start, Tick(-30_000), "the event did not cross zero inside the reel");
 
-    // ДОКУМЕНТ ленты хранит отрицательный start
+    // the DOCUMENT of the reel stores a negative start
     let doc = h.state().model.document();
     assert_eq!(
         doc.sequence(seq).unwrap().clips.iter().find(|c| c.id == inner.id).map(|c| c.start),
         Some(Tick(-30_000)),
         "the reel's sequence does not store the negative start"
     );
-    // и НЕ ИГРАЕТ его: окно экземпляра отсекает всё до нуля ленты —
-    // в корне остаётся кусок [inst.start, +20 000) и ничего левее
+    // and does NOT PLAY it: the instance window cuts off everything before the reel’s zero —
+    // in the root a piece [inst.start, +20 000) remains and nothing to the left
     let eff = doc.effective_clips();
     assert!(eff.iter().all(|c| c.start >= Tick::ZERO), "played content went before zero: {eff:?}");
     assert!(
         eff.iter().any(|c| c.start == inst_ev.start && c.duration == Tick(20_000)),
         "the instance window did not cut the pre-zero part: {eff:?}"
     );
-    // Esc/выход/вход — событие на месте
+    // Esc/exit/entry — the event stays in place
     h.state_mut().leave_nest();
     h.step();
     h.state_mut().enter_nest(inst);
@@ -11894,7 +11894,7 @@ fn t637_inside_a_reel_an_event_may_cross_zero() {
         "leave + re-enter lost the negative start"
     );
 
-    // в КОРНЕ тот же жест упирается в ноль
+    // in the ROOT the same gesture hits zero
     let (mut h2, g2) = harness_three_clips();
     let y2 = g2.lane_y(ClipKind::Video, 0, 0.6);
     let grab2 = egui::pos2(g2.tick_to_x(25_000), y2);
@@ -11904,20 +11904,20 @@ fn t637_inside_a_reel_an_event_may_cross_zero() {
     assert_eq!(c1, Tick::ZERO, "in the root zero must remain a wall");
 }
 
-/// Тест 637b (Р.58, п.462): вид уходит левее нуля ТОЛЬКО внутри ленты, а
-/// курсор ниже нуля не уходит нигде.
+/// Test 637b (R.58, item 462): the view goes left of zero ONLY inside a reel, and the
+/// cursor does not go below zero anywhere.
 #[test]
 fn t637b_view_before_zero_only_inside_a_reel_and_the_cursor_never() {
     use kt_model::*;
     use kt_time::Tick;
-    // корень: прежние −40 px и ни тиком больше
+    // root: the former −40 px and not a tick further
     let (mut h, _g) = harness_three_clips();
     h.state_mut().view_start = -1.0e6;
     h.step();
     let tpp = h.state().ticks_per_px;
     assert_eq!(h.state().view_start, -40.0 * tpp, "the root view went past −40 px");
 
-    // внутри ленты: пол — самое раннее событие (оно левее нуля) и те же −40 px
+    // inside a reel: the floor is the earliest event (it is left of zero) and the same −40 px
     let (mut h, _g, seq) = harness_with_nest();
     let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
     h.state_mut().enter_nest(inst);
@@ -11937,7 +11937,7 @@ fn t637b_view_before_zero_only_inside_a_reel_and_the_cursor_never() {
         "inside a reel the view floor is the earliest event"
     );
 
-    // курсор: клик по дорожке и по линейке ЛЕВЕЕ нуля ставит его в 0
+    // cursor: a click on the track and on the ruler LEFT of zero sets it to 0
     let g = h.state().tl_geom.clone().expect("geometry");
     let x = g.tick_to_x(-20_000);
     assert!(x > g.rect.left(), "scene: the pre-zero zone is not on screen");
@@ -11965,19 +11965,19 @@ fn t637b_view_before_zero_only_inside_a_reel_and_the_cursor_never() {
     }
 }
 
-/// Тест 666 (Р.59, стадия 2): форма генератора в окне события доезжает
-/// до МОДЕЛИ — и значением, и кривой.
+/// Test 666 (R.59, stage 2): the generator form in the event window reaches
+/// the MODEL — both by value and by curve.
 ///
-/// Утверждается то, что делает человек: он открыл окно эффектов события,
-/// увидел ИСТОЧНИК первой крошкой, напечатал в поле титра — и текст лежит
-/// на СОБЫТИИ; нажал «+ кривая» и выбрал ряд — и на событии появилась его
-/// кривая. Прежние окна генератора и титра тем самым закрыты не
-/// «удалением кода», а переносом: все их входы ведут сюда.
+/// What is verified is what a person does: he opens the event’s effects window,
+/// sees the SOURCE as the first crumb, types into the title field — and the text
+/// lands on the EVENT; presses “+ curve” and picks a row — and the event gets its
+/// curve. The earlier generator and title windows are thereby closed not by
+/// “deleting code” but by moving: all their inputs lead here.
 ///
-/// Харнесса два, и это не лень: форма титра — самая высокая в программе,
-/// и её меню кривых в окне харнесса открывается уже за нижней кромкой.
-/// Кривые при этом свойство ЛЮБОГО генератора, поэтому щупаются на
-/// компактном виде, а поле текста — на титре.
+/// There are two harnesses, and this is not laziness: the title form is the tallest in the program,
+/// and its curve menu in the harness window opens already below the bottom edge.
+/// Curves are a property of ANY generator, so they are probed on the
+/// compact view, and the text field on the title.
 #[test]
 fn t666_generator_form_in_the_fx_window_reaches_the_model() {
     use eframe::egui::accesskit::Role;
@@ -11985,7 +11985,7 @@ fn t666_generator_form_in_the_fx_window_reaches_the_model() {
     use kt_model::*;
     crate::i18n::set_lang(crate::i18n::Lang::Ru);
 
-    // ---- КРИВАЯ: «+ кривая» → ряд -----------------------------------
+    // ---- CURVE: “+ curve” → row -----------------------------------
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
     h.state_mut().create_generator(GeneratorKind::NoiseField { amount: 0.5, mono: false });
     for _ in 0..3 {
@@ -11995,33 +11995,33 @@ fn t666_generator_form_in_the_fx_window_reaches_the_model() {
     assert_eq!(
         chain_sel(&h, clip),
         Some(crate::widgets::ChainSel::Head),
-        "источник обязан быть ПЕРВОЙ КРОШКОЙ и быть выбран сразу"
+        "the source must be the FIRST CRUMB and be selected at once"
     );
     assert!(
         h.state().model.clip(clip).is_some_and(|c| c.gen_auto.is_empty()),
-        "у нового генератора кривых быть не должно"
+        "the new curve generator must not have any curves"
     );
     let depth = h.state().model.undo_depth();
     h.get_by_label(crate::i18n::tr(crate::i18n::k::fx::AUTO_ADD)).click();
     h.step();
     h.step();
-    // подпись ряда есть и в сетке значений, и в открывшемся меню —
-    // жмём ПОСЛЕДНЮЮ: меню рисуется поверх (идиома t193)
+    // the row label is both in the value grid and in the open menu —
+    // we press the LAST one: the menu is drawn on top (idiom t193)
     let row = crate::widgets::param_label_scoped(kt_model::ParamScope::Generator, "amount");
-    h.get_all_by_label(row.as_str()).last().expect("пункт меню ряда").click();
+    h.get_all_by_label(row.as_str()).last().expect("row menu item").click();
     h.step();
     h.step();
     let curves = h.state().model.clip(clip).map(|c| c.gen_auto.clone()).unwrap_or_default();
-    assert_eq!(curves.len(), 1, "кривая не доехала до события: {curves:?}");
+    assert_eq!(curves.len(), 1, "curve did not reach the event: {curves:?}");
     assert_eq!(curves[0].param, "amount");
     assert_eq!(
         curves[0].keys.first().map(|k| k.t),
         h.state().model.clip(clip).map(|c| c.source_in),
-        "кривая генератора живёт в тике МАТЕРИАЛА — по нему её и разрешает источник"
+        "the generator curve lives in the tick of the MATERIAL — the source resolves it by that"
     );
-    assert_eq!(h.state().model.undo_depth(), depth + 1, "правка в окне — шаг истории");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "an edit in the window is one history step");
 
-    // ---- ЗНАЧЕНИЕ: печатаем в поле титра, как человек ----------------
+    // ---- VALUE: we type into the title field, as a person would ----------------
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
     h.state_mut().create_generator(GeneratorKind::default_text());
     for _ in 0..3 {
@@ -12031,31 +12031,31 @@ fn t666_generator_form_in_the_fx_window_reaches_the_model() {
     let depth = h.state().model.undo_depth();
     h.get(by().role(Role::MultilineTextInput)).click();
     h.step();
-    for part in ["Вы", "пуск"] {
+    for part in ["Iss", "ue"] {
         h.event(egui::Event::Text(part.into()));
         h.step();
         h.step();
     }
     match gen_of(&h, clip) {
         GeneratorKind::Text { text, .. } => {
-            assert_eq!(text, "Выпуск", "набранный текст не доехал до события")
+            assert_eq!(text, "Issue", "entered text did not reach the event")
         }
-        other => panic!("вид подменился: {other:?}"),
+        other => panic!("view was swapped: {other:?}"),
     }
     assert_eq!(
         h.state().model.undo_depth(),
         depth + 1,
-        "вся сессия окна — ОДИН шаг истории: иначе каждый символ титра попал бы в undo"
+        "the whole window session is ONE history step: otherwise every character of the title would land in undo"
     );
 }
 
-/// Тест 667 (Р.59, стадия 2): «Применить ко всем (×N)» — ОТДЕЛЬНАЯ
-/// команда и ОДИН шаг истории.
+/// Test 667 (R.59, stage 2): “Apply to all (×N)” is a SEPARATE
+/// command and ONE history step.
 ///
-/// Решение владельца: правка одного события соседей больше не трогает, а
-/// «править во всех местах разом» остаётся доступным отдельным жестом.
-/// Значит утверждать надо обе половины: пока кнопку не нажали — сосед не
-/// шелохнулся; нажали — сосед догнал, и один Ctrl+Z вернул его назад.
+/// The owner’s decision: editing one event no longer touches its neighbours, and
+/// “edit in all places at once” stays available as a separate gesture.
+/// So both halves must be verified: until the button is pressed the neighbour does not
+/// move; once pressed, the neighbour catches up, and one Ctrl+Z returns it back.
 #[test]
 fn t667_apply_to_all_is_one_command_and_one_step() {
     use egui_kittest::kittest::Queryable;
@@ -12065,7 +12065,7 @@ fn t667_apply_to_all_is_one_command_and_one_step() {
     h.state_mut().create_generator(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 });
     h.step();
     let (id, first) = made_generator(&h);
-    // второе место того же генератора
+    // second place of the same generator
     h.state_mut().player.seek(kt_time::Tick(700_000));
     h.state_mut().place_media_at_cursor(id);
     h.step();
@@ -12077,9 +12077,9 @@ fn t667_apply_to_all_is_one_command_and_one_step() {
         .iter()
         .find(|c| c.media == id && c.id != first)
         .map(|c| c.id)
-        .expect("второе событие генератора");
+        .expect("second generator event");
 
-    // правка ОДНОГО события соседа не трогает
+    // editing ONE neighbouring event does not touch it
     let gesture = h.state().fx_editors[0].gesture;
     let mine = GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 };
     {
@@ -12096,92 +12096,92 @@ fn t667_apply_to_all_is_one_command_and_one_step() {
     assert_eq!(
         gen_of(&h, second),
         GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 },
-        "правка одного события не имеет права трогать соседей"
+        "editing one event has no right to touch its neighbors"
     );
 
-    // ...а кнопка — трогает, и говорит об этом числом мест
+    // ...but the button does touch it, and says so with the number of places
     let depth = h.state().model.undo_depth();
     let label = crate::tf!(crate::i18n::k::genw::APPLY_ALL, 2usize);
-    assert!(h.query_by_label(&label).is_some(), "кнопки «{label}» нет в форме источника");
+    assert!(h.query_by_label(&label).is_some(), "button “{label}” is missing from the source form");
     h.get_by_label(&label).click();
     h.step();
     h.step();
-    assert_eq!(gen_of(&h, second), mine, "«применить ко всем» не догнало соседа");
-    assert_eq!(h.state().model.undo_depth(), depth + 1, "жест обязан быть ОДНИМ шагом истории");
+    assert_eq!(gen_of(&h, second), mine, "“apply to all” did not reach the neighbor");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "the gesture must be ONE history step");
     h.state_mut().undo();
     h.step();
     assert_eq!(
         gen_of(&h, second),
         GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 },
-        "один Ctrl+Z обязан вернуть соседа"
+        "one Ctrl+Z must restore the neighbor"
     );
 }
 
-/// Тест 668 (Р.59, стадия 2): пресет анимации титра ставит КРИВЫЕ, а
-/// раскладка от них не двигается.
+/// Test 668 (R.59, stage 2): the title animation preset sets CURVES, and
+/// the layout does not move because of them.
 ///
-/// Пять прежних режимов анимации были полем МОДЕЛИ, и движок знал про
-/// «печатную машинку». Теперь это имя НАБОРА КРИВЫХ, формулы живут в
-/// одном месте (`kt_model::text_anim_curves`) — ими же читаются старые
-/// файлы, и разойдись миграция с пресетом, проект прошлой сборки поехал
-/// бы не так.
+/// The five earlier animation modes were a field of the MODEL, and the engine knew about
+/// the “typewriter”. Now this is the NAME of a SET OF CURVES; the formulas live in one
+/// place (`kt_model::text_anim_curves`) — old files are read by them too, and if the migration
+/// diverged from the preset, a project from the previous build would come out
+/// differently.
 ///
-/// Вторая половина — правило F-TXT-006: раскладка считается ОДИН РАЗ, а
-/// анимация только модулирует. Значит блок текста у титра с анимацией и
-/// без неё обязан быть тем же самым: поедет он — и «бегущая строка»
-/// начнёт переносить слова под себя.
+/// The second half is rule F-TXT-006: the layout is computed ONCE, and
+/// the animation only modulates it. So a title’s text block must be the same
+/// with and without animation: if it moved, the
+/// “ticker” would start to re-wrap words under itself.
 #[test]
 fn t668_preset_writes_curves_and_keeps_the_layout() {
     use crate::gen_ui::title_presets;
     use kt_model::*;
     let mut base = GeneratorKind::default_text();
     if let GeneratorKind::Text { text, .. } = &mut base {
-        *text = "Бегущая строка выпуска".into();
+        *text = "Issue ticker".into();
     }
     let frame = (1920u32, 1080u32);
     let src_in = kt_time::Tick(123_456);
 
-    // «Бегущая строка»: один ряд, ключи от +span/2 до −span/2, якорь —
-    // ВХОД события (кривые генератора живут в тике материала)
-    let crawl = title_presets().iter().find(|p| p.anim == TextAnim::Crawl).expect("пресет");
+    // “Ticker”: one row, keys from +span/2 to −span/2, anchored at
+    // the event ENTRY (generator curves live in the material tick)
+    let crawl = title_presets().iter().find(|p| p.anim == TextAnim::Crawl).expect("preset");
     let made = crawl.applied(&base);
     let curves = crawl.curves(&made, frame, src_in);
-    assert_eq!(curves.len(), 1, "бегущая строка — ровно один анимируемый ряд");
+    assert_eq!(curves.len(), 1, "ticker is exactly one animated row");
     assert_eq!(curves[0].param, "offset_x");
     assert!(
         curves[0].keys.iter().all(|k| k.shape == kt_model::SegShape::Linear),
-        "проход линейный: со сглаживанием строка ехала бы рывками"
+        "the pass is linear: with smoothing the line would move in jerks"
     );
     assert_eq!(curves[0].keys.len(), 2);
-    assert_eq!(curves[0].keys[0].t, src_in, "кривая обязана начинаться на ВХОДЕ события");
+    assert_eq!(curves[0].keys[0].t, src_in, "curve must start at the event’s ENTRY");
     assert_eq!(
         curves[0].keys[1].t.0 - src_in.0,
         (crawl.anim_secs * 90_000.0).round() as i64,
-        "длительность прохода — прежняя (старые файлы читаются теми же формулами)"
+        "pass duration is the old one (old files are read with the same formulas)"
     );
-    let block = kt_media::generator::title_layout(&made, frame.0, frame.1).expect("раскладка");
+    let block = kt_media::generator::title_layout(&made, frame.0, frame.1).expect("layout");
     let span = 1.0 + block.block.w / frame.0 as f64;
     assert!(
         (curves[0].keys[0].v - span / 2.0).abs() < 1e-9
             && (curves[0].keys[1].v + span / 2.0).abs() < 1e-9,
-        "путь считается по РАСКЛАДКЕ блока: {:?}",
+        "path is computed from the block’s LAYOUT: {:?}",
         curves[0].keys
     );
 
-    // ...и раскладка от анимации НЕ зависит: сдвиг модулирует показ, а
-    // не переносит слова (F-TXT-006)
+    // ...and the layout does NOT depend on the animation: the shift modulates the display, and
+    // does not move the words (F-TXT-006)
     let mut moved = made.clone();
     moved.set_param("offset_x", 0.37);
     moved.set_param("reveal", 0.25);
-    let after = kt_media::generator::title_layout(&moved, frame.0, frame.1).expect("раскладка");
+    let after = kt_media::generator::title_layout(&moved, frame.0, frame.1).expect("layout");
     assert_eq!(
         (after.block.w, after.block.h),
         (block.block.w, block.block.h),
-        "анимация сдвинула РАСКЛАДКУ — правило «считается один раз» нарушено"
+        "animation shifted the LAYOUT — the “computed once” rule is violated"
     );
 
-    // «Печатная машинка»: пресет у неё есть, и он ведёт ряд `reveal`
-    let tw = title_presets().iter().find(|p| p.anim == TextAnim::Typewriter).expect("пресет");
+    // “Typewriter”: it has a preset, and it drives the `reveal` row
+    let tw = title_presets().iter().find(|p| p.anim == TextAnim::Typewriter).expect("preset");
     let made = tw.applied(&base);
     let c = tw.curves(&made, frame, kt_time::Tick::ZERO);
     assert_eq!(c.len(), 1);
@@ -12189,48 +12189,48 @@ fn t668_preset_writes_curves_and_keeps_the_layout() {
     assert_eq!(c[0].keys.first().map(|k| k.v), Some(0.0));
     assert_eq!(c[0].keys.last().map(|k| k.v), Some(1.0));
 
-    // «Проявление» ведёт ТОТ ЖЕ ряд, и различает их ширина фронта — она
-    // постоянна во времени, значит это ЗНАЧЕНИЕ, а не кривая (кривая из
-    // одного ключа была бы вторым способом записать то же самое).
-    // Пресета у него нет, поэтому спрашиваем общие формулы напрямую —
-    // те же, которыми читаются старые файлы.
+    // “Reveal” drives the SAME row, and what tells them apart is the front width — it is
+    // constant over time, so it is a VALUE, not a curve (a curve with a single key would be a
+    // second way to write the same thing).
+    // It has no preset, so we query the common formulas directly —
+    // the same ones by which old files are read.
     for (anim, soft) in [(TextAnim::Typewriter, 0.0), (TextAnim::Fade, 1.0)] {
         let mut k = base.clone();
         text_anim_values(&mut k, anim);
         let GeneratorKind::Text { reveal_soft, .. } = &k else { unreachable!() };
-        assert_eq!(*reveal_soft, soft, "{anim:?}: ширина фронта — значение, а не кривая");
+        assert_eq!(*reveal_soft, soft, "{anim:?}: front width is a value, not a curve");
         let c = text_anim_curves(anim, 2.0, 2.0);
         assert_eq!(c.len(), 1);
-        assert_eq!(c[0].param, "reveal", "{anim:?} ведёт тот же ряд");
+        assert_eq!(c[0].param, "reveal", "{anim:?} drives the same row");
     }
 
-    // ...и «активный пресет» на этих двух не путается: он сравнивает и
-    // значения, и набор кривых
+    // ...and the “active preset” does not confuse these two: it compares both
+    // the values and the set of curves
     let curves_tw = tw.curves(&made, frame, kt_time::Tick::ZERO);
     assert_eq!(crate::gen_ui::active_preset(&made, &curves_tw), Some(2));
     assert_eq!(
         crate::gen_ui::active_preset(&made, &[]),
         None,
-        "без кривых «машинка» перестаёт быть машинкой — иначе новый титр звался бы ею"
+        "without curves the “machine” stops being a machine — otherwise a new title would be named after it"
     );
 }
 
-// ---- Публичные параметры композиции (Р.59, стадия 3) --------------------
+// ---- Public composition parameters (R.59, stage 3) --------------------
 
-/// Новостной шаблон для тестов: лента с ТИТРОМ внутри, поставленная
-/// дважды, и шесть объявленных наружу ручек — по одной на каждый тип
-/// значения.
+/// News template for tests: a reel with a TITLE inside, placed
+/// twice, and six knobs declared outward — one for each value
+/// type.
 ///
-/// Сцена НЕ вырожденная намеренно: второй экземпляр стоит в другом месте
-/// и переопределяет заголовок. На сцене «один экземпляр без
-/// переопределений» половина утверждений ниже выполнялась бы сама собой.
+/// The scene is intentionally NOT degenerate: the second instance sits in another place
+/// and overrides the title. On a scene with “one instance without
+/// overrides” half of the assertions below would pass by themselves.
 pub(crate) struct NewsScene {
     pub seq: kt_model::MediaId,
-    /// Титр ВНУТРИ ленты — цель текстовых публикаций.
+    /// The title INSIDE the reel is the target of the text editions.
     pub inner: kt_model::ClipId,
-    /// Цветной логотип внутри ленты — цель цветовой и медийной.
+    /// The colored logo inside the reel is the target of the color and media editions.
     pub logo_clip: kt_model::ClipId,
-    /// Первый выпуск (шаблонные значения) и второй (свой заголовок).
+    /// The first edition (template values) and the second (its own title).
     pub a: kt_model::ClipId,
     pub b: kt_model::ClipId,
     pub headline: kt_model::PubId,
@@ -12241,25 +12241,25 @@ pub(crate) struct NewsScene {
     pub flip: kt_model::PubId,
 }
 
-/// Собрать сцену. Публикации ставятся ИЗНУТРИ ленты — командами, как это
-/// делает окно: команда правит ту ленту, в которой стоишь.
+/// Build the scene. The editions are placed INSIDE the reel by commands, as the
+/// window does: a command edits the reel you are standing in.
 pub(crate) fn harness_news_template() -> (Harness<'static, KtApp>, NewsScene) {
     use kt_model::*;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
     h.state_mut().create_generator(GeneratorKind::default_text());
     h.step();
     let (_media, title) = made_generator(&h);
-    // непустой титр: у вида с умолчаниями текста нет вовсе, и «шаблон»
-    // выглядел бы пустым
+    // a non-empty title: the kind with defaults has no text at all, and the “template”
+    // would look empty
     let mut kind = gen_of(&h, title);
     if let GeneratorKind::Text { text, .. } = &mut kind {
-        *text = "ВЫПУСК".into();
+        *text = "ISSUE".into();
     }
     assert!(h.state_mut().apply(Command::SetClipGen { id: title, kind: Some(kind) }));
     h.step();
-    // ЛОГОТИП — цветная плашка рядом с титром. Цвет у неё настоящий ряд
-    // паспорта (`color_*` с единицей Rgb8), в отличие от красок титра:
-    // те живут прямо в варианте и свойствами не являются вовсе.
+    // The LOGO is a color plate next to the title. Its color is a real passport row
+    // (`color_*` with unit Rgb8), unlike the title’s paints:
+    // those live right in the variant and are not properties at all.
     h.state_mut().create_generator(GeneratorKind::Solid { color_r: 200, color_g: 30, color_b: 30 });
     h.step();
     let (_lm, logo_clip) = made_generator(&h);
@@ -12269,7 +12269,7 @@ pub(crate) fn harness_news_template() -> (Harness<'static, KtApp>, NewsScene) {
             .model
             .clip(title)
             .map(|c| (c.start + c.duration, c.lane))
-            .expect("титр на месте");
+            .expect("title in place");
         assert!(h.state_mut().apply(Command::MoveClip {
             id: logo_clip,
             new_start: start,
@@ -12277,7 +12277,7 @@ pub(crate) fn harness_news_template() -> (Harness<'static, KtApp>, NewsScene) {
         }));
     }
     h.step();
-    // окна, открытые созданием генераторов, сцене мешают: дальше свои
+    // windows opened by creating generators get in the way of the scene: from here on, our own
     h.state_mut().fx_editors.clear();
     h.state_mut().selected.clear();
     h.state_mut().selected.insert(title);
@@ -12286,7 +12286,7 @@ pub(crate) fn harness_news_template() -> (Harness<'static, KtApp>, NewsScene) {
     h.state_mut().collapse_selection();
     h.step();
     h.step();
-    let seq = h.state().model.document().sequences.last().expect("лента").id;
+    let seq = h.state().model.document().sequences.last().expect("reel").id;
     let a = h
         .state()
         .model
@@ -12294,13 +12294,13 @@ pub(crate) fn harness_news_template() -> (Harness<'static, KtApp>, NewsScene) {
         .clips
         .iter()
         .find(|c| c.media == seq)
-        .expect("экземпляр ленты")
+        .expect("reel instance")
         .id;
 
-    // ---- объявляем ручки ИЗНУТРИ ленты ------------------------------
+    // ---- declaring the knobs INSIDE the reel ------------------------------
     h.state_mut().enter_nest(a);
     h.step();
-    assert_eq!(h.state().model.editing(), Some(seq), "вход внутрь ленты не состоялся");
+    assert_eq!(h.state().model.editing(), Some(seq), "entry into the reel did not happen");
     let inner = h
         .state()
         .model
@@ -12308,7 +12308,7 @@ pub(crate) fn harness_news_template() -> (Harness<'static, KtApp>, NewsScene) {
         .clips
         .iter()
         .find(|c| matches!(c.r#gen, Some(GeneratorKind::Text { .. })))
-        .expect("титр внутри ленты")
+        .expect("title inside the reel")
         .id;
     let logo_in = h
         .state()
@@ -12317,7 +12317,7 @@ pub(crate) fn harness_news_template() -> (Harness<'static, KtApp>, NewsScene) {
         .clips
         .iter()
         .find(|c| matches!(c.r#gen, Some(GeneratorKind::Solid { .. })))
-        .expect("логотип внутри ленты")
+        .expect("logo inside the reel")
         .id;
     let mut next = 0u64;
     let mut publish = |h: &mut Harness<'static, KtApp>,
@@ -12337,22 +12337,22 @@ pub(crate) fn harness_news_template() -> (Harness<'static, KtApp>, NewsScene) {
         };
         assert!(
             h.state_mut().apply(Command::PublishParam { seq, param: Box::new(param) }),
-            "публикация «{name}» отвергнута"
+            "publication “{name}” rejected"
         );
         h.step();
         id
     };
     let headline = publish(
         &mut h,
-        "Заголовок",
+        "Heading",
         inner,
         ParamOwner::Generator,
         "text",
         ParamType::Text { multiline: true },
     );
     let tint =
-        publish(&mut h, "Цвет логотипа", logo_in, ParamOwner::Generator, "color", ParamType::Color);
-    let size = publish(&mut h, "Кегль", inner, ParamOwner::Generator, "size", ParamType::Num);
+        publish(&mut h, "Logo color", logo_in, ParamOwner::Generator, "color", ParamType::Color);
+    let size = publish(&mut h, "Font size", inner, ParamOwner::Generator, "size", ParamType::Num);
     let align_ty = h
         .state()
         .model
@@ -12360,80 +12360,80 @@ pub(crate) fn harness_news_template() -> (Harness<'static, KtApp>, NewsScene) {
         .addr_type(Some(seq), &ParamAddr::new(inner, ParamOwner::Generator, "align"));
     let align = publish(
         &mut h,
-        "Выключка",
+        "Justification",
         inner,
         ParamOwner::Generator,
         "align",
-        align_ty.expect("у титра есть выключка"),
+        align_ty.expect("title has justification"),
     );
-    let logo = publish(&mut h, "Логотип", logo_in, ParamOwner::ClipAttr, "media", ParamType::Media);
+    let logo = publish(&mut h, "Logo", logo_in, ParamOwner::ClipAttr, "media", ParamType::Media);
     let flip =
-        publish(&mut h, "Задом наперёд", inner, ParamOwner::ClipAttr, "reversed", ParamType::Flag);
+        publish(&mut h, "Reversed", inner, ParamOwner::ClipAttr, "reversed", ParamType::Flag);
 
     h.state_mut().leave_nest();
     h.step();
-    assert_eq!(h.state().model.editing(), None, "выход из ленты не состоялся");
+    assert_eq!(h.state().model.editing(), None, "exit from the reel did not happen");
 
-    // ---- второй выпуск ----------------------------------------------
+    // ---- second edition ----------------------------------------------
     let mut b_clip = h.state().model.project().clips.iter().find(|c| c.id == a).cloned().unwrap();
     let free = h.state().model.document().clips.iter().map(|c| c.id.0).max().unwrap_or(0) + 40;
     b_clip.id = ClipId(free);
     b_clip.start = kt_time::Tick(600_000);
     b_clip.link_group = None;
-    assert!(h.state_mut().apply(Command::AddClip(b_clip)), "второй выпуск не встал");
+    assert!(h.state_mut().apply(Command::AddClip(b_clip)), "second issue did not take");
     h.step();
     let b = ClipId(free);
     (h, NewsScene { seq, inner, logo_clip: logo_in, a, b, headline, tint, size, align, logo, flip })
 }
 
-/// Тест 680 (Р.59, стадия 3): у превью ЛЕНТЫ ключ по ЭКЗЕМПЛЯРУ.
+/// Test 680 (R.59, stage 3): the reel PREVIEW is keyed by INSTANCE.
 ///
-/// До этого раунда служба `reel_preview` ключевалась `(лента,
-/// content_hash)`, то есть РЕДАКЦИЕЙ ШАБЛОНА. С переопределениями это
-/// значит, что два выпуска с разными заголовками показывали бы на
-/// таймлайне ОДНИ И ТЕ ЖЕ кадры — кадры первого из них. Утверждение
-/// теста — следствие: ключи двух экземпляров РАЗНЫЕ, а у экземпляра без
-/// переопределений ключ остался прежним (байт в байт `content_hash`).
+/// Until this round the `reel_preview` service was keyed by `(reel,
+/// content_hash)`, that is, by the EDIT OF THE TEMPLATE. With overrides this
+/// means that two editions with different titles would show ONE AND THE SAME frames
+/// on the timeline — the frames of the first of them. The assertion of the test is a
+/// consequence: the keys of the two instances are DIFFERENT, and the instance without overrides kept
+/// its old key (byte for byte `content_hash`).
 #[test]
 fn t680_reel_preview_keys_are_per_instance() {
     use kt_model::*;
     let (mut h, s) = harness_news_template();
 
-    // без переопределений оба выпуска делят ОДИН ключ: проекты, которые
-    // публикацией не пользуются, не платят ничего
+    // without overrides both editions share ONE key: projects that
+    // do not use publishing pay nothing
     let keys = h.state_mut().reel_keys();
-    let (ka, kb) = (*keys.get(&s.a).expect("ключ A"), *keys.get(&s.b).expect("ключ B"));
-    assert_eq!(ka, kb, "экземпляры без переопределений обязаны делить один ключ превью");
+    let (ka, kb) = (*keys.get(&s.a).expect("key A"), *keys.get(&s.b).expect("key B"));
+    assert_eq!(ka, kb, "instances without overrides must share one preview key");
     let plain = kt_engine::content_hash(&h.state().model.document(), s.seq);
-    assert_eq!(ka.hash, plain, "пустой набор сдвинул редакцию ленты — поехали бы все ключи");
+    assert_eq!(ka.hash, plain, "empty set shifted the reel’s revision — all keys would move");
 
-    // второй выпуск получает СВОЙ заголовок
+    // the second edition gets ITS OWN title
     assert!(h.state_mut().apply(Command::SetOverride {
         id: s.b,
-        ov: Box::new(Override::value(s.headline, ParamValue::Text("ВТОРОЙ ВЫПУСК".into()))),
+        ov: Box::new(Override::value(s.headline, ParamValue::Text("SECOND ISSUE".into()))),
     }));
     h.step();
     let keys = h.state_mut().reel_keys();
-    let (ka2, kb2) = (*keys.get(&s.a).expect("ключ A"), *keys.get(&s.b).expect("ключ B"));
-    assert_eq!(ka2, ka, "шаблонный экземпляр не трогали — его ключ обязан остаться прежним");
+    let (ka2, kb2) = (*keys.get(&s.a).expect("key A"), *keys.get(&s.b).expect("key B"));
+    assert_eq!(ka2, ka, "template instance was not touched — its key must stay the same");
     assert_ne!(
         ka2, kb2,
-        "переопределённый экземпляр получил ключ шаблона: на таймлайне он показал бы ЧУЖИЕ кадры"
+        "overridden instance got the template’s key: on the timeline it would show OTHER frames"
     );
 
-    // и обе редакции ЖИВЫ одновременно: инвалидация не имеет права
-    // выбрасывать соседнюю, иначе два выпуска пересчитывали бы друг друга
-    // по кругу
+    // and both editions are ALIVE at the same time: invalidation has no right to
+    // discard the neighbouring one, otherwise the two editions would recompute each other
+    // in a loop
     h.state_mut().request_reel_preview(ka2, &[]);
     let ov_b = h.state().model.clip(s.b).map(|c| c.overrides.clone()).unwrap_or_default();
     h.state_mut().request_reel_preview(kb2, &ov_b);
     let pending = h.state().reel_previews.pending();
-    assert!(pending >= 2, "две редакции одной ленты не встали в очередь разом: {pending}");
+    assert!(pending >= 2, "two revisions of one reel did not queue together: {pending}");
 }
 
-/// Тест 683 (Р.59, стадия 3): окно «Параметры композиции» рисует КАЖДЫЙ
-/// тип своим виджетом, сброс шлёт `ClearOverride`, а число с кривой
-/// садит ключ в материале ЭКЗЕМПЛЯРА.
+/// Test 683 (R.59, stage 3): the “Composition parameters” window draws EACH
+/// type with its own widget, reset sends `ClearOverride`, and a number with a curve
+/// places a key in the material of the INSTANCE.
 #[test]
 fn t683_instance_params_window_draws_every_type() {
     use egui_kittest::kittest::Queryable;
@@ -12445,60 +12445,60 @@ fn t683_instance_params_window_draws_every_type() {
     assert_eq!(
         h.state().fx_editors.first().and_then(|e| e.selected.get(&s.b)),
         Some(&crate::widgets::ChainSel::Head),
-        "голова «Параметры композиции» не выбрана в окне FX"
+        "the head “Composition parameters” is not selected in the FX window"
     );
 
-    // ИМЕНА АВТОРА видны все и в объявленном порядке
-    for name in ["Заголовок", "Цвет логотипа", "Кегль", "Выключка", "Логотип", "Задом наперёд"]
+    // ALL AUTHOR NAMES are visible, in the declared order
+    for name in ["Heading", "Logo color", "Font size", "Justification", "Logo", "Reversed"]
     {
         assert!(
             h.query_all_by_label_contains(name).count() > 0,
-            "строки «{name}» в окне нет — тип нарисован нечем"
+            "row “{name}” is missing from the window — the type is drawn with nothing"
         );
     }
 
-    // --- ТЕКСТ: поле правит переопределение --------------------------
+    // --- TEXT: the field edits the override --------------------------
     let win = h.state().fx_editors[0].gesture;
     assert!(h.state_mut().apply_coalesced(
         Command::SetOverride {
             id: s.b,
-            ov: Box::new(Override::value(s.headline, ParamValue::Text("ВТОРОЙ".into()))),
+            ov: Box::new(Override::value(s.headline, ParamValue::Text("SECOND".into()))),
         },
         win
     ));
     h.step();
     assert_eq!(
         h.state().model.document().instance_value(h.state().model.clip(s.b).unwrap(), s.headline),
-        Some(ParamValue::Text("ВТОРОЙ".into())),
-        "переопределение заголовка не доехало до модели"
+        Some(ParamValue::Text("SECOND".into())),
+        "heading override did not reach the model"
     );
-    // а ШАБЛОН при этом цел: сосед играет своим
+    // while the TEMPLATE stays intact: the neighbour plays its own
     assert_eq!(
         h.state().model.document().published_value(s.seq, s.headline),
-        Some(ParamValue::Text("ВЫПУСК".into())),
-        "правка экземпляра уехала в ленту — это была бы правка всех мест сразу"
+        Some(ParamValue::Text("ISSUE".into())),
+        "instance edit went to the reel — that would be an edit of all places at once"
     );
 
-    // --- СБРОС: кнопка строки шлёт ClearOverride ---------------------
+    // --- RESET: the row’s button sends ClearOverride ---------------------
     h.step();
-    let reset = format!("{} Заголовок", tr(k::pubp::RESET));
+    let reset = format!("{} Heading", tr(k::pubp::RESET));
     let before = h.state().model.clip(s.b).map(|c| c.overrides.len()).unwrap_or(0);
-    assert_eq!(before, 1, "к этому месту у второго выпуска ровно одно переопределение");
+    assert_eq!(before, 1, "the second issue has exactly one override at this place");
     h.get_by_label(&reset).click();
     h.step();
     h.step();
     assert_eq!(
         h.state().model.clip(s.b).map(|c| c.overrides.len()),
         Some(0),
-        "кнопка сброса не сняла переопределение"
+        "reset button did not clear the override"
     );
 
-    // --- ТИПЫ: объявленное совпадает с тем, что у цели ЖИВЬЁМ --------
-    // окно рисует строку ПО ТИПУ, и разойдись объявление с целью —
-    // человек получил бы чекбокс на месте текста
+    // --- TYPES: the declared type matches what the target actually HAS --------
+    // the window draws the row BY TYPE, and if the declaration diverged from the target —
+    // the person would get a checkbox in place of the text
     {
         let doc = h.state().model.document();
-        let seq = doc.sequence(s.seq).cloned().expect("лента");
+        let seq = doc.sequence(s.seq).cloned().expect("reel");
         for (id, want) in [
             (s.headline, ParamType::Text { multiline: true }),
             (s.tint, ParamType::Color),
@@ -12507,26 +12507,26 @@ fn t683_instance_params_window_draws_every_type() {
             (s.logo, ParamType::Media),
             (s.flip, ParamType::Flag),
         ] {
-            let p = seq.published.iter().find(|p| p.id == id).expect("объявленная ручка");
-            let live = doc.addr_type(Some(s.seq), &p.target).expect("цель жива");
+            let p = seq.published.iter().find(|p| p.id == id).expect("declared handle");
+            let live = doc.addr_type(Some(s.seq), &p.target).expect("target is alive");
             assert!(
                 live.same_family(&want) && p.ty.same_family(&want),
-                "ручка «{}» объявлена не тем типом: {:?} против живого {live:?}",
+                "handle “{}” is declared with the wrong type: {:?} versus the live {live:?}",
                 p.name,
                 p.ty
             );
         }
-        // цветная ручка целит в ЛОГОТИП, а не в титр: адрес — часть
-        // объявления, и перепутай окно носителя, правился бы чужой ряд
+        // the color knob targets the LOGO, not the title: the address is part of
+        // the declaration, and if the host window were mixed up, a foreign row would be edited
         let tint = seq.published.iter().find(|p| p.id == s.tint).unwrap();
-        assert!(kt_model::same_clip(tint.target.clip, s.logo_clip), "цвет объявлен не у логотипа");
+        assert!(kt_model::same_clip(tint.target.clip, s.logo_clip), "color is declared not on the logo");
     }
 
-    // --- ЧИСЛО С КРИВОЙ: ключ садится в материале ЭКЗЕМПЛЯРА ---------
-    // второй выпуск стоит НЕ в нуле (start = 600_000), поэтому «материал
-    // экземпляра» и «время проекта» тут различимы — сцена не вырождена
+    // --- NUMBER WITH A CURVE: the key lands in the material of the INSTANCE ---------
+    // the second edition does NOT sit at zero (start = 600_000), so “instance material” and
+    // “project time” are distinguishable here — the scene is not degenerate
     let inst = h.state().model.clip(s.b).cloned().unwrap();
-    assert_ne!(inst.start.0, 0, "сцена выродилась: у экземпляра в нуле домен не отличить");
+    assert_ne!(inst.start.0, 0, "scene degenerated: at zero the instance’s domain cannot be told apart");
     let frame_step = 90_000 / h.state().model.project().settings.fps.max(1) as i64;
     let at = kt_model::clip_material_at(
         inst.source_in,
@@ -12536,16 +12536,16 @@ fn t683_instance_params_window_draws_every_type() {
         frame_step,
         h.state().player.transport.playhead(),
     );
-    // Кривая заводится НАЗВАННЫМ действием окна (Р.60): до этого раунда
-    // тут стоял `SetOverride` руками, и тест был зелёным на интерфейсе,
-    // где кривую заводил безымянный глиф, а показать её было нечем.
+    // The curve is created by a NAMED window action (R.60): until this round
+    // `SetOverride` stood here by hand, and the test was green on an interface
+    // where an unnamed glyph created the curve, and there was nothing to show it with.
     h.get_by_label(tr(k::fx::AUTO_ADD)).click();
     h.step();
     h.step();
     {
         use eframe::egui::accesskit::Role;
         use egui_kittest::kittest::by;
-        h.get(by().role(Role::Button).label("Кегль")).click();
+        h.get(by().role(Role::Button).label("Font size")).click();
     }
     h.step();
     h.step();
@@ -12554,44 +12554,44 @@ fn t683_instance_params_window_draws_every_type() {
         .model
         .clip(s.b)
         .and_then(|c| c.overrides.iter().find(|o| o.pub_id == s.size).cloned())
-        .expect("переопределение кегля");
-    assert_eq!(got.curves.len(), 1, "кривая переопределения не доехала");
-    assert_eq!(got.curves[0].param, "size", "в модель уехало оконное имя кривой");
+        .expect("font size override");
+    assert_eq!(got.curves.len(), 1, "override curve did not arrive");
+    assert_eq!(got.curves[0].param, "size", "the window name of the curve went into the model");
     assert!(
         got.curves[0].keys.iter().all(|k| k.t.0 >= at.0.min(0)),
-        "ключи стартовой кривой легли вне материала экземпляра: {:?}",
+        "keys of the starting curve landed outside the instance’s material: {:?}",
         got.curves[0]
     );
-    // и сама кривая ВИДНА: тот же виджет, что у слота эффекта
+    // and the curve itself is VISIBLE: the same widget as the effect slot has
     assert!(
         h.query_all_by_label_contains(tr(k::fx::AUTO_CLIP)).count() > 0,
-        "кривая заведена, а виджета автоматизации в окне нет"
+        "curve is set up, but there is no automation widget in the window"
     );
 
-    // и модель ЭТО ВИДИТ: разрешение ленты под набором отдаёт кривую цели
+    // and the model SEES IT: the reel resolution under the set returns the target’s curve
     let doc = h.state().model.document();
     let ov = h.state().model.clip(s.b).unwrap().overrides.clone();
     let resolved = doc.resolve_reel(Some(s.seq), &ov);
     let target = resolved.clips.iter().find(|c| kt_model::same_clip(c.id, s.inner)).unwrap();
     assert!(
         target.gen_auto.iter().any(|c| c.param == "size"),
-        "кривая переопределения не доехала до цели внутри ленты"
+        "override curve did not reach the target inside the reel"
     );
 }
 
-/// Тест 691 (Р.60): кривая переопределения ВИДНА, и без неё поле — константа.
+/// Test 691 (R.60): the override curve is VISIBLE, and without it the field is a constant.
 ///
-/// Владелец: «я могу в разных местах поставить разные значения и будет
-/// что-то типо автоматизации кривых… но кривых автоматизаций я нигде не
-/// вижу… ни одной кнопки в окне про автоматизацию нет». Окно правило ключи
-/// вслепую: безымянный глиф заводил кривую, и дальше каждая правка поля
-/// клала ключ по курсору.
+/// The owner: “I can put different values in different places, and there will be
+/// something like curve automation…
+/// but I don’t see any curve automations anywhere… there is not a single button
+/// in the automation window.” The window set keys blindly: an unnamed glyph
+/// created a curve, and from then on every edit dropped a key at the cursor.
 ///
-/// Тест утверждает НАБЛЮДАЕМОЕ СЛЕДСТВИЕ с двух сторон. Без кривой правка
-/// поля при двух разных положениях курсора обязана дать ОДНО значение и
-/// НОЛЬ ключей — скрытой записи не бывает. После названного действия
-/// «+ кривая» в окне обязан появиться тот же виджет, что у слота эффекта,
-/// и те же две правки дают уже ДВА ключа.
+/// The test asserts an OBSERVABLE CONSEQUENCE from two sides. Without a curve, editing
+/// the field at two different cursor positions must give ONE value and
+/// ZERO keys — a hidden record does not exist. After the named action
+/// “+ curve” the same widget as the effect slot must appear in the window,
+/// and the same two edits then give TWO keys.
 #[test]
 fn t691_instance_curves_are_visible_and_never_hidden() {
     use eframe::egui;
@@ -12599,10 +12599,10 @@ fn t691_instance_curves_are_visible_and_never_hidden() {
     use kt_model::*;
     let (mut h, s) = harness_news_template();
 
-    // курсор ставим внутрь ВТОРОГО выпуска: домен ключа — материал
-    // экземпляра, и снаружи события он не определён
+    // we place the cursor INSIDE the SECOND edition: the key domain is the instance’s
+    // material, and outside the event it is not defined
     let (b_start, b_dur) =
-        h.state().model.clip(s.b).map(|c| (c.start, c.duration)).expect("второй выпуск на месте");
+        h.state().model.clip(s.b).map(|c| (c.start, c.duration)).expect("second issue in place");
     let t1 = kt_time::Tick(b_start.0 + b_dur.0 / 4);
     let t2 = kt_time::Tick(b_start.0 + b_dur.0 / 2);
 
@@ -12613,23 +12613,23 @@ fn t691_instance_curves_are_visible_and_never_hidden() {
     assert_eq!(
         h.state().fx_editors.first().and_then(|e| e.selected.get(&s.b)),
         Some(&crate::widgets::ChainSel::Head),
-        "голова «Параметры композиции» не выбрана в окне FX"
+        "the head “Composition parameters” is not selected in the FX window"
     );
 
-    // поле «Кегля» лежит между подписью-именем автора и подписью шаблона
+    // the “Kegel” (font size) field sits between the author-name label and the template label
     let field_pos = |h: &Harness<'_, KtApp>| -> egui::Pos2 {
         let name = h
-            .query_all_by_label("Кегль")
+            .query_all_by_label("Font size")
             .map(|n| n.rect())
             .min_by(|a, b| a.top().total_cmp(&b.top()))
-            .expect("строка «Кегль» в окне");
+            .expect("“Font size” row in the window");
         let right = h
             .query_all_by_label_contains("шаблон")
             .map(|n| n.rect())
             .filter(|r| (r.center().y - name.center().y).abs() < 6.0)
             .min_by(|a, b| a.left().total_cmp(&b.left()))
-            .expect("подпись шаблона в строке «Кегль»");
-        assert!(right.left() > name.right() + 8.0, "между именем и шаблоном нет места под поле");
+            .expect("template label in the “Font size” row");
+        assert!(right.left() > name.right() + 8.0, "no room between the name and the template for the field");
         egui::pos2((name.right() + right.left()) * 0.5, name.center().y)
     };
     let type_value = |h: &mut Harness<'static, KtApp>, pos: egui::Pos2, text: &str| {
@@ -12657,69 +12657,69 @@ fn t691_instance_curves_are_visible_and_never_hidden() {
             .and_then(|c| c.overrides.iter().find(|o| o.pub_id == s.size).cloned())
     };
 
-    // --- БЕЗ КРИВОЙ: две правки в разных местах дают ОДНО значение -----
-    // Р.66: поле экземпляра рисует общий ряд, и доля вводится ПРОЦЕНТОМ —
-    // той же единицей, что внутри композиции (раньше одно и то же число
-    // писалось «0.1» в одном окне и «10 %» в другом)
+    // --- WITHOUT A CURVE: two edits at different places give ONE value -----
+    // R.66: the instance field draws the common row, and the share is entered as a PERCENT —
+    // the same unit as inside the composition (previously the same number
+    // was written “0.1” in one window and “10 %” in another)
     let pos = field_pos(&h);
     type_value(&mut h, pos, "10");
-    let after_first = ov_of(&h).expect("правка поля не доехала до модели");
-    assert!(after_first.curves.is_empty(), "поле завело кривую само: {after_first:?}");
+    let after_first = ov_of(&h).expect("field edit did not reach the model");
+    assert!(after_first.curves.is_empty(), "the field set up a curve by itself: {after_first:?}");
 
     h.state_mut().player.seek(t2);
     h.step();
     let pos = field_pos(&h);
     type_value(&mut h, pos, "30");
-    let after_second = ov_of(&h).expect("вторая правка не доехала");
+    let after_second = ov_of(&h).expect("second edit did not arrive");
     assert!(
         after_second.curves.is_empty(),
-        "правка при другом положении курсора ЗАПИСАЛА ключ — это и есть скрытая \
-         автоматизация, на которую жаловался владелец: {after_second:?}"
+        "an edit at a different cursor position WROTE a keyframe — this is the hidden \
+         automation the owner complained about: {after_second:?}"
     );
     assert_eq!(
         after_second.value.as_num(),
         Some(0.3),
-        "без кривой переопределение обязано быть КОНСТАНТОЙ последней правки"
+        "without a curve, the override must be a CONSTANT of the last edit"
     );
     assert_ne!(
         after_first.value.as_num(),
         after_second.value.as_num(),
-        "харнесс не изменил значение — тест ничего не проверяет"
+        "harness did not change the value — the test checks nothing"
     );
 
-    // --- НАЗВАННОЕ ДЕЙСТВИЕ заводит кривую и показывает её -------------
+    // --- A NAMED ACTION creates the curve and shows it -------------
     assert!(
         h.query_all_by_label_contains(tr(k::fx::AUTO_CLIP)).count() == 0,
-        "виджет автоматизации нарисован до того, как кривую завели"
+        "automation widget was drawn before the curve was set up"
     );
     h.get_by_label(tr(k::fx::AUTO_ADD)).click();
     h.step();
     h.step();
-    // в меню ПУНКТ, а не подпись строки: имя ручки в окне встречается и
-    // тем и другим, и «любой узел с этим текстом» кликнул бы не туда
+    // in the menu an ITEM, not the row label: the knob’s name occurs in the window in both
+    // places, and “any node with this text” would click the wrong one
     {
         use eframe::egui::accesskit::Role;
         use egui_kittest::kittest::by;
-        h.get(by().role(Role::Button).label("Кегль")).click();
+        h.get(by().role(Role::Button).label("Font size")).click();
     }
     h.step();
     h.step();
 
-    let with_curve = ov_of(&h).expect("переопределение исчезло");
-    assert_eq!(with_curve.curves.len(), 1, "кривая не завелась: {with_curve:?}");
+    let with_curve = ov_of(&h).expect("override disappeared");
+    assert_eq!(with_curve.curves.len(), 1, "curve was not set up: {with_curve:?}");
     assert_eq!(
         with_curve.curves[0].param, "size",
-        "в модель уехало ОКОННОЕ имя кривой вместо целевого — apply_overrides её не найдёт"
+        "the model got the WINDOW name of the curve instead of the target name — apply_overrides will not find it"
     );
     assert!(
         h.query_all_by_label_contains(tr(k::fx::AUTO_CLIP)).count() > 0,
-        "кривая заведена, а виджета автоматизации в окне нет — ровно та дыра, \
-         из-за которой «кривых автоматизаций я нигде не вижу»"
+        "curve is set up, but the automation widget is missing from the window — exactly the gap behind the complaint \
+         “I see automation curves nowhere”"
     );
 
-    // --- С КРИВОЙ: те же две правки дают ДВА ключа ---------------------
+    // --- WITH A CURVE: the same two edits give TWO keys ---------------------
     let mat = |t: kt_time::Tick| {
-        let c = h.state().model.clip(s.b).expect("второй выпуск");
+        let c = h.state().model.clip(s.b).expect("second issue");
         kt_model::clip_material_at(
             c.source_in,
             c.start,
@@ -12732,7 +12732,7 @@ fn t691_instance_curves_are_visible_and_never_hidden() {
     let (m1, m2) = (mat(t1), mat(t2));
     h.state_mut().player.seek(t1);
     h.step();
-    // те же проценты, что и выше: 20 % и 40 % от кадра
+    // the same percentages as above: 20 % and 40 % of the frame
     let pos = field_pos(&h);
     type_value(&mut h, pos, "20");
     h.state_mut().player.seek(t2);
@@ -12740,33 +12740,33 @@ fn t691_instance_curves_are_visible_and_never_hidden() {
     let pos = field_pos(&h);
     type_value(&mut h, pos, "40");
 
-    let curve = ov_of(&h).expect("переопределение исчезло").curves.remove(0);
+    let curve = ov_of(&h).expect("override disappeared").curves.remove(0);
     let at = |t: kt_time::Tick| curve.keys.iter().find(|k| k.t == t).map(|k| k.v);
-    assert_eq!(at(m1), Some(0.2), "ключ не сел в материале экземпляра: {curve:?}");
-    assert_eq!(at(m2), Some(0.4), "второй ключ не сел: {curve:?}");
-    // …и в МОДЕЛИ это доли, а не проценты: пересчёт живёт в одном месте
-    assert!(at(m1).is_some_and(|v| v < 1.0), "в модель уехал процент вместо доли");
-    assert!(m1 != m2, "харнесс двигал курсор в одну и ту же точку материала");
+    assert_eq!(at(m1), Some(0.2), "key did not land in the instance’s material: {curve:?}");
+    assert_eq!(at(m2), Some(0.4), "second key did not land: {curve:?}");
+    // …and in the MODEL these are shares, not percents: the conversion lives in one place
+    assert!(at(m1).is_some_and(|v| v < 1.0), "percent instead of fraction went into the model");
+    assert!(m1 != m2, "harness moved the cursor to the same point of the material");
 
-    // имя АВТОРА виджет рисует дословно: у ручки композиции имени в
-    // каталоге нет и быть не может (Р.59)
+    // the widget draws the AUTHOR name verbatim: a composition knob’s name is
+    // not in the catalog and cannot be there (R.59)
     assert!(
-        h.query_all_by_label_contains("Кегль").count() > 0,
-        "виджет подписал кривую не именем автора"
+        h.query_all_by_label_contains("Font size").count() > 0,
+        "widget labeled the curve with something other than the author’s name"
     );
 }
 
-/// Тест 709 (Р.61): поле формулы объясняет ошибку и не портит модель.
+/// Test 709 (R.61): the formula field explains the error and does not spoil the model.
 ///
-/// Владелец: «возможность задания кривой автоматизации через ввод формулы
-/// (без прокликивания мышки)». Проверка на лету обязана быть именно
-/// проверкой: полустёртый текст в поле не вправе ронять кривую на каждом
-/// нажатии клавиши.
+/// The owner: “the ability to set an automation curve by typing a formula
+/// (without clicking with the mouse).” The on-the-fly check must really be
+/// a check: a half-erased text in the field must not drop the curve on every
+/// keystroke.
 #[test]
 fn t709_the_formula_field_explains_errors_without_touching_the_model() {
     use kt_model::{CurveSource, Formula, ParamCurve};
 
-    // --- незакрытая скобка и неизвестное имя НЕ применяются -----------
+    // --- an unclosed bracket and an unknown name are NOT applied -----------
     let mut c = ParamCurve {
         param: "radius".into(),
         keys: vec![kt_model::AutoKey::at(kt_time::Tick(0), 3.0)],
@@ -12774,45 +12774,45 @@ fn t709_the_formula_field_explains_errors_without_touching_the_model() {
     };
     let before = c.clone();
     for bad in ["(1 + 2", "1 + ", "wat(1)", "1 + $"] {
-        let e = Formula::parse(bad).expect_err("битый текст обязан быть отказом");
-        // позиция названа — поле подсветит её
-        assert!(e.to_string().contains("char"), "в отказе нет позиции: {e}");
-        // и модель НЕ ТРОНУТА
-        assert_eq!(c, before, "битый текст {bad:?} доехал до модели");
+        let e = Formula::parse(bad).expect_err("broken text must be a rejection");
+        // the position is named — the field highlights it
+        assert!(e.to_string().contains("char"), "rejection has no position: {e}");
+        // and the model is NOT TOUCHED
+        assert_eq!(c, before, "broken text {bad:?} got into the model");
     }
 
-    // --- ВЕРНЫЙ текст применяется и стирает ключи --------------------
+    // --- a CORRECT text is applied and erases the keys --------------------
     let good = "t * 2 + 1";
-    Formula::parse(good).expect("верный текст разбирается");
+    Formula::parse(good).expect("valid text is parsed");
     c.keys.clear();
     c.source = CurveSource::Formula { expr: good.into() };
-    assert!(!c.source.is_keys(), "источник не сменился");
-    assert!(c.keys.is_empty(), "у формулы ключей быть не может — они второй источник правды");
+    assert!(!c.source.is_keys(), "source did not change");
+    assert!(c.keys.is_empty(), "a formula cannot have keys — they are a second source of truth");
 
-    // --- пустое поле НЕ превращает кривую в формулу -------------------
-    assert!(Formula::parse("").is_err(), "пустой текст не выражение");
+    // --- an empty field does NOT turn the curve into a formula -------------------
+    assert!(Formula::parse("").is_err(), "empty text is not an expression");
 
-    // --- поле и подсказка названы во всех языках ----------------------
+    // --- the field and its hint are named in all languages ----------------------
     for lang in crate::i18n::Lang::ALL {
         crate::i18n::set_lang(lang);
         let name = tr(k::fx::FORMULA);
         let hint = tr(k::fx::FORMULA_HINT);
-        assert!(!name.is_empty(), "{}: у поля формулы нет подписи", lang.code());
+        assert!(!name.is_empty(), "{}: the formula field has no label", lang.code());
         assert!(
             hint.contains('t') || hint.contains("src") || hint.len() > 30,
-            "{}: подсказка не объясняет переменные: {hint}",
+            "{}: the hint does not explain the variables: {hint}",
             lang.code()
         );
     }
     crate::i18n::set_lang(crate::i18n::Lang::Ru);
 }
 
-/// Тест 706 (Р.61): производная кривая ВИДНА, но мышкой не правится, и её
-/// можно отвязать.
+/// Test 706 (R.61): the derived curve is VISIBLE, but cannot be edited with the mouse, and it
+/// can be detached.
 ///
-/// Владелец: «итоговый граф тоже рисуется но не редактируется мышкой».
-/// Редактируемый производный график был бы третьей правдой о значении:
-/// ключей у такой кривой нет, и перетаскивание точки некуда записать.
+/// The owner: “the final graph is also drawn but is not edited with the mouse.”
+/// An editable derived graph would be a third truth about the value:
+/// such a curve has no keys, and there is nowhere to write a dragged point.
 #[test]
 fn t706_a_driven_curve_is_visible_but_not_draggable() {
     use crate::automation::{AutoCtx, AutoView};
@@ -12833,16 +12833,16 @@ fn t706_a_driven_curve_is_visible_but_not_draggable() {
     };
     let _ = &ctx;
 
-    // --- у производной кривой МАРКЕРОВ КЛЮЧЕЙ нет ---------------------
-    // (щуп ходит по нарисованному: нет маркера — нет и попадания)
+    // --- a derived curve has NO KEY MARKERS ---------------------
+    // (the probe walks over what is drawn: no marker — no hit either)
     let mut view = AutoView::default();
     view.key_marks.clear();
     assert!(
         view.key_at(eframe::egui::pos2(10.0, 10.0)).is_none(),
-        "щуп нашёл ключ там, где ничего не нарисовано"
+        "the probe found a key where nothing is drawn"
     );
 
-    // --- «отвязать» превращает её в обычные ключи ---------------------
+    // --- “detach” turns it into ordinary keys ---------------------
     let mut driven = ParamCurve {
         param: "radius".into(),
         keys: vec![AutoKey::at(Tick(0), 3.0), AutoKey::at(Tick(90_000), 9.0)],
@@ -12852,34 +12852,34 @@ fn t706_a_driven_curve_is_visible_but_not_draggable() {
             stops: Vec::new(),
         },
     };
-    assert!(!driven.source.is_keys(), "кривая не производная — тест ничего не проверяет");
+    assert!(!driven.source.is_keys(), "curve is not derived — the test checks nothing");
     let before = driven.keys.clone();
     driven.source = CurveSource::Keys;
-    assert!(driven.source.is_keys(), "«отвязать» не сняло источник");
-    assert_eq!(driven.keys, before, "«отвязать» изменило значения — они уже разрешены моделью");
+    assert!(driven.source.is_keys(), "“detach” did not clear the source");
+    assert_eq!(driven.keys, before, "“detach” changed the values — they are already resolved by the model");
 
-    // --- подпись показывает, ЧЕМ она ведома ---------------------------
+    // --- the label shows WHAT it is driven by ---------------------------
     let link = CurveSource::Link { path: "2/fx0/radius".into(), expr: None, stops: Vec::new() };
-    assert_eq!(link.link_path(), Some("2/fx0/radius"), "адрес источника не достать для подписи");
+    assert_eq!(link.link_path(), Some("2/fx0/radius"), "source address cannot be fetched for the label");
     let f = CurveSource::Formula { expr: "t * 2".into() };
-    assert_eq!(f.expr(), Some("t * 2"), "текст формулы не достать для подписи");
+    assert_eq!(f.expr(), Some("t * 2"), "formula text cannot be fetched for the label");
     assert_eq!(CurveSource::Keys.expr(), None);
     assert_eq!(CurveSource::Keys.link_path(), None);
 
-    // --- действие «отвязать» ДОСТИЖИМО и объясняет себя ---------------
+    // --- the “detach” action is REACHABLE and explains itself ---------------
     for lang in crate::i18n::Lang::ALL {
         crate::i18n::set_lang(lang);
         let name = tr(k::fx::UNLINK);
         let hint = tr(k::fx::UNLINK_HINT);
-        assert!(!name.is_empty(), "{}: у действия «отвязать» нет имени", lang.code());
-        assert!(hint.len() > 20, "{}: подсказка не объясняет действие: {hint}", lang.code());
-        assert_ne!(name, hint, "{}: подсказка повторяет имя", lang.code());
+        assert!(!name.is_empty(), "{}: the “detach” action has no name", lang.code());
+        assert!(hint.len() > 20, "{}: the hint does not explain the action: {hint}", lang.code());
+        assert_ne!(name, hint, "{}: the hint repeats the name", lang.code());
     }
     crate::i18n::set_lang(crate::i18n::Lang::Ru);
 }
 
-/// Тест 700b (Р.61): окно сопоставления открывается только при остатке, а
-/// пропущенная кривая НАЗЫВАЕТСЯ.
+/// Test 700b (R.61): the matching window opens only when there is a remainder, and
+/// a skipped curve is NAMED.
 #[test]
 fn t700b_field_mapping_dialog_never_loses_a_curve_silently() {
     use crate::envclip::FitDialog;
@@ -12899,11 +12899,11 @@ fn t700b_field_mapping_dialog_never_loses_a_curve_silently() {
         source: Default::default(),
     };
 
-    // остаток из двух кривых: одну кладём в свободный параметр, вторую нет
+    // a remainder of two curves: one is put into the free parameter, the second is not
     h.state_mut().env_fit = Some(FitDialog {
         target: (id, 0),
         delta: 0,
-        rows: vec![(curve("чужое_1"), Some(free[0].clone())), (curve("чужое_2"), None)],
+        rows: vec![(curve("foreign_1"), Some(free[0].clone())), (curve("foreign_2"), None)],
         free: free.clone(),
         matched: Vec::new(),
         open: true,
@@ -12914,43 +12914,43 @@ fn t700b_field_mapping_dialog_never_loses_a_curve_silently() {
         use egui_kittest::kittest::Queryable;
         assert!(
             h.query_all_by_label_contains(tr(k::fx::FIT_TITLE)).count() > 0,
-            "окно сопоставления не открылось при непустом остатке"
+            "match window did not open with a non-empty remainder"
         );
         h.get_by_label(tr(k::fx::FIT_DO)).click();
     }
     h.step();
     h.step();
 
-    // выбранная кривая доехала до модели ПОД НОВЫМ именем
+    // the chosen curve reached the model UNDER A NEW NAME
     let auto = h.state().model.clip(id).map(|c| c.fx_auto.clone()).unwrap_or_default();
     let got: Vec<String> =
         auto.first().map(|v| v.iter().map(|c| c.param.clone()).collect()).unwrap_or_default();
-    assert_eq!(got, vec![free[0].clone()], "сопоставленная кривая не легла: {auto:?}");
-    // а пропущенная НАЗВАНА, а не исчезла молча
+    assert_eq!(got, vec![free[0].clone()], "matched curve did not land: {auto:?}");
+    // and the skipped one is NAMED, not silently gone
     let msg = h.state().status.as_ref().map(|(m, _)| m.clone()).unwrap_or_default();
     assert!(
         msg.contains('1'),
-        "пропущенная кривая исчезла молча — ровно то, чего быть не должно: {msg:?}"
+        "skipped curve vanished silently — exactly what must not happen: {msg:?}"
     );
 
-    // окно закрылось и второй раз само не открывается
-    assert!(h.state().env_fit.is_none(), "окно сопоставления осталось висеть");
+    // the window closed and does not reopen by itself a second time
+    assert!(h.state().env_fit.is_none(), "match window was left hanging");
 }
 
-/// Тест 699 (Р.61): три исхода чтения буфера, и ни одного молчаливого.
+/// Test 699 (R.61): three outcomes of reading the buffer, and not one silent one.
 ///
-/// Владелец: «нужно по нажатию кнопки брать значение из реального буфера и
-/// уже потом проверять можно вставить или нет, и предложить действия».
-/// Отсюда: свой блок — кладём; чужой текст и пустой буфер — НАЗВАННАЯ
-/// ошибка, а не погашенная кнопка.
+/// The owner: “on a button press, take the value from the real buffer and only then
+/// check whether it can be pasted or not, and offer actions.”
+/// Hence: our own block — we put it in; foreign text and an empty buffer are a NAMED
+/// error, not a greyed-out button.
 #[test]
 fn t699_clipboard_is_read_on_press_and_explains_refusals() {
     use crate::envclip::ClipRead;
     use kt_model::{AutoKey, ParamCurve};
     use kt_time::Tick;
 
-    // блок огибающей переживает системный буфер ТЕМ ЖЕ текстом, каким
-    // туда попадает: копирование пишет json, чтение его разбирает
+    // an envelope block survives the system buffer in the SAME text
+    // in which it arrives: copying writes JSON, reading parses it
     let block = kt_model::ops::EnvelopeBlock {
         fx_tag: "blur".into(),
         curves: vec![ParamCurve {
@@ -12960,40 +12960,40 @@ fn t699_clipboard_is_read_on_press_and_explains_refusals() {
         }],
         src_in: Tick(12_345),
     };
-    let json = serde_json::to_string_pretty(&block).expect("блок сериализуется");
+    let json = serde_json::to_string_pretty(&block).expect("block is serialized");
     let parsed: kt_model::ops::EnvelopeBlock =
-        serde_json::from_str(&json).expect("и разбирается обратно");
-    assert_eq!(parsed, block, "блок не пережил круг через текст буфера");
+        serde_json::from_str(&json).expect("and parsed back");
+    assert_eq!(parsed, block, "block did not survive the round trip through the buffer text");
 
-    // чужой текст и пустая строка РАЗЛИЧАЮТСЯ, и у каждого своя причина
+    // foreign text and an empty string DIFFER, and each has its own cause
     assert!(
-        serde_json::from_str::<kt_model::ops::EnvelopeBlock>("просто текст").is_err(),
-        "чужой текст разобрался как огибающая"
+        serde_json::from_str::<kt_model::ops::EnvelopeBlock>("plain text").is_err(),
+        "foreign text was parsed as an envelope"
     );
     let foreign = tr(k::fx::PASTE_ENV_FOREIGN);
     let empty = tr(k::fx::PASTE_ENV_EMPTY);
-    assert_ne!(foreign, empty, "у двух разных отказов один текст — причина не названа");
+    assert_ne!(foreign, empty, "two different failures share one text — the cause is not named");
     for t in [foreign, empty] {
-        assert!(t.len() > 20, "отказ не объясняет причину: {t:?}");
+        assert!(t.len() > 20, "failure does not explain the cause: {t:?}");
     }
-    // и оба исхода существуют в типе, а не «молчание по умолчанию»
+    // and both outcomes exist in the type, not as “silence by default”
     assert!(matches!(ClipRead::Foreign, ClipRead::Foreign));
     assert!(matches!(ClipRead::Empty, ClipRead::Empty));
 
-    // --- окно сопоставления открывается ТОЛЬКО при остатке ------------
+    // --- the matching window opens ONLY when there is a remainder ------------
     let blur = kt_model::FxInstance::Blur { radius: 8, radius_y: 0 };
     let own = kt_model::ops::fit_envelope(&block.curves, &blur);
-    assert!(own.leftover.is_empty(), "свой вид дал остаток — окно показалось бы зря");
+    assert!(own.leftover.is_empty(), "own view produced a remainder — the window would show up for nothing");
     let alien = ParamCurve {
-        param: "чужое_поле".into(),
+        param: "foreign_field".into(),
         keys: vec![AutoKey::at(Tick(0), 1.0)],
         source: Default::default(),
     };
     let mixed = kt_model::ops::fit_envelope(&[alien], &blur);
-    assert_eq!(mixed.leftover.len(), 1, "остаток не назван — кривая потерялась бы молча");
-    assert!(!mixed.free.is_empty(), "не предложено ни одного параметра цели");
+    assert_eq!(mixed.leftover.len(), 1, "remainder is not named — the curve would be lost silently");
+    assert!(!mixed.free.is_empty(), "no target parameter was offered");
 
-    // --- кнопка вставки ЖИВАЯ даже когда класть нечего ----------------
+    // --- the paste button is ALIVE even when there is nothing to put ----------------
     let (mut h, _g) = harness_three_clips();
     let id = h.state().model.project().clips[0].id;
     assert!(h.state_mut().apply(kt_model::Command::SetFx { id, fx: vec![blur.clone()] }));
@@ -13004,24 +13004,24 @@ fn t699_clipboard_is_read_on_press_and_explains_refusals() {
     {
         use egui_kittest::kittest::Queryable;
         let n = h.query_all_by_label(tr(k::fx::PASTE_ENV)).count();
-        assert!(n > 0, "кнопки «вставить огибающую» нет в окне вовсе");
+        assert!(n > 0, "the “paste envelope” button is missing from the window altogether");
     }
 }
 
-/// Тест 698 (Р.61): форма правится ПО УЧАСТКУ, соседи целы, «ко всем» —
-/// один шаг; график рисуется той же функцией значения, что считает рендер.
+/// Test 698 (R.61): the shape is edited PER SEGMENT, neighbours stay intact, “all” is
+/// one step; the graph is drawn by the same value function that the render uses.
 ///
-/// Владелец: «в автоматизациях хотелось бы задавать формы отрезков… а
-/// можно и отдельную кривую сконфигурировать по своему, другим типом».
-/// Отсюда два обязательства, которые тест и утверждает: правка одного
-/// участка НЕ трогает соседние (форма принадлежит левому ключу отрезка), а
-/// у скорости варпа форма только прямая, и отказ ГРОМКИЙ.
+/// The owner: “in automations I would like to set the shapes of segments… and
+/// it is also possible to configure a separate curve in your own way, with another type.”
+/// Hence two obligations that the test asserts: editing one
+/// segment does NOT touch the neighbouring ones (the shape belongs to the left key of the segment), and
+/// the warp-speed curve has only a straight shape, and the refusal is LOUD.
 #[test]
 fn t698_segment_shape_is_edited_per_segment() {
     use kt_model::{AutoKey, ParamCurve, SegShape, ZigProfile, curve_value};
     use kt_time::Tick;
 
-    // --- правка участка не трогает соседей ----------------------------
+    // --- editing a segment does not touch the neighbours ----------------------------
     let mut c = ParamCurve {
         param: "radius".into(),
         keys: vec![
@@ -13034,27 +13034,27 @@ fn t698_segment_shape_is_edited_per_segment() {
     let before: Vec<SegShape> = c.keys.iter().map(|k| k.shape).collect();
     let zig = SegShape::Zigzag { periods: 3.0, amplitude: 2.0, profile: ZigProfile::Triangle };
     c.keys[1].shape = zig;
-    assert_eq!(c.keys[0].shape, before[0], "левый сосед участка изменился");
-    assert_eq!(c.keys[2].shape, before[2], "правый сосед участка изменился");
-    // и значение ПЕРВОГО участка осталось прежним
+    assert_eq!(c.keys[0].shape, before[0], "the left neighbor of the segment changed");
+    assert_eq!(c.keys[2].shape, before[2], "the right neighbor of the segment changed");
+    // and the value of the FIRST segment stayed the same
     assert_eq!(
         curve_value(&c.keys, Tick(15_000)).to_bits(),
         SegShape::DEFAULT.at(0.5, 0.0, 10.0).to_bits(),
-        "первый участок поехал от правки второго"
+        "the first segment moved because of the edit of the second"
     );
-    // а ВТОРОЙ теперь дрожит
+    // while the SECOND one now jitters
     let mid = curve_value(&c.keys, Tick(45_000));
     let plain = SegShape::DEFAULT.at(0.5, 10.0, 5.0);
-    assert!((mid - plain).abs() > 0.1, "участок не взял новую форму: {mid} против {plain}");
+    assert!((mid - plain).abs() > 0.1, "segment did not take the new shape: {mid} versus {plain}");
 
-    // --- «ко всем отрезкам» — один шаг --------------------------------
+    // --- “to all segments” is one step --------------------------------
     let all = AutoKey::all_shaped(c.keys.clone(), SegShape::Hold);
-    assert!(all.iter().all(|k| k.shape == SegShape::Hold), "форма легла не на все участки");
-    assert_eq!(all.len(), c.keys.len(), "команда не вправе менять число ключей");
+    assert!(all.iter().all(|k| k.shape == SegShape::Hold), "the shape did not land on all segments");
+    assert_eq!(all.len(), c.keys.len(), "the command has no right to change the number of keys");
 
-    // --- ГРАФИК считает ту же функцию, что рендер ---------------------
-    // (рисование берёт `curve_value`; второй формулы в программе нет —
-    // это же утверждает сторож t693 про единственный виджет)
+    // --- the GRAPH computes the same function as the render ---------------------
+    // (drawing takes `curve_value`; there is no second formula in the program —
+    // guard t693 likewise asserts this, about the single widget)
     for t in [Tick(0), Tick(7_000), Tick(30_000), Tick(45_000), Tick(60_000)] {
         let direct = {
             let keys = &c.keys;
@@ -13072,20 +13072,20 @@ fn t698_segment_shape_is_edited_per_segment() {
         assert_eq!(
             curve_value(&c.keys, t).to_bits(),
             direct.to_bits(),
-            "рисунок и рендер считают участок по-разному на {t:?}"
+            "drawing and render compute the segment differently at {t:?}"
         );
     }
 
-    // --- у СКОРОСТИ форма только прямая, и отказ назван ---------------
+    // --- SPEED has only a straight shape, and the refusal is named ---------------
     let rate = ParamCurve::constant("rate", Tick(0), Tick(90_000), 1.0, SegShape::DEFAULT);
     assert!(
         rate.keys.iter().all(|k| k.shape == SegShape::Linear),
-        "стартовая кривая скорости обязана быть прямой при ЛЮБОМ умолчании проекта: {rate:?}"
+        "the starting speed curve must be straight under ANY project default: {rate:?}"
     );
     let other = ParamCurve::constant("radius", Tick(0), Tick(90_000), 1.0, SegShape::Hold);
     assert!(
         other.keys.iter().all(|k| k.shape == SegShape::Hold),
-        "у обычного параметра стартовая кривая берёт умолчание проекта"
+        "for an ordinary parameter the starting curve takes the project default"
     );
     let mut bad = rate.clone();
     bad.keys[0].shape = SegShape::DEFAULT;
@@ -13094,17 +13094,17 @@ fn t698_segment_shape_is_edited_per_segment() {
             kt_model::check_fx_auto(kt_model::ClipId(1), &[vec![bad]]),
             Err(kt_model::ProjectError::RateShapeMustBeLinear(_))
         ),
-        "сглаженная скорость прошла молча"
+        "smoothed speed passed silently"
     );
 }
 
-/// Тест 692b (Р.60): пределы ручки в окне АВТОРА приходят из паспорта цели.
+/// Test 692b (R.60): the limits of a knob in the AUTHOR window come from the target’s passport.
 ///
-/// «Еще значения min max всегда в 0 проставляются по умолчанию» — пустое
-/// сужение (`Option::None`) рисовалось нулём, и автор видел ручку, у которой
-/// якобы разрешено ровно ничего. Утверждение теста — наблюдаемое следствие:
-/// в окне НАРИСОВАНЫ пределы цели, а не нули; кнопка «к пределам цели»
-/// доступна только у суженной ручки и снимает сужение в МОДЕЛИ.
+/// “The min and max values are still always set to 0 by default” — an empty
+/// narrowing (`Option::None`) was drawn as zero, and the author saw a knob for which
+/// apparently exactly nothing was allowed. The assertion of the test is the observable consequence:
+/// the window DRAWS the target’s limits, not zeros; the “to target limits” button is
+/// available only on a narrowed knob and removes the narrowing in the MODEL.
 #[test]
 fn t692b_author_window_shows_the_target_range() {
     use eframe::egui::accesskit::Role;
@@ -13112,23 +13112,23 @@ fn t692b_author_window_shows_the_target_range() {
     use kt_model::*;
     let (mut h, s) = harness_news_template();
 
-    // паспорт цели «Кегля» — то, что окно ОБЯЗАНО показать
+    // the target passport “Kegel” is what the window MUST show
     let spec = {
         let doc = h.state().model.document();
         let p = doc
             .sequence(s.seq)
-            .expect("лента")
+            .expect("reel")
             .published
             .iter()
             .find(|p| p.id == s.size)
-            .expect("ручка «Кегль»")
+            .expect("“Font size” handle")
             .clone();
-        doc.addr_spec(Some(s.seq), &p.target).expect("паспорт цели «Кегля»")
+        doc.addr_spec(Some(s.seq), &p.target).expect("target spec of “Font size”")
     };
-    assert!(spec.max > spec.min, "паспорт кегля вырожден: {spec:?}");
+    assert!(spec.max > spec.min, "font size spec is degenerate: {spec:?}");
     assert!(
         spec.min != 0.0 || spec.max != 0.0,
-        "тест ничего не докажет: у цели пределы и так нулевые"
+        "the test proves nothing: the target’s limits are zero already"
     );
 
     h.state_mut().open_published_win(s.seq);
@@ -13139,10 +13139,10 @@ fn t692b_author_window_shows_the_target_range() {
         .query_all(by().role(Role::SpinButton))
         .filter_map(|n| n.accesskit_node().value().map(|v| v.to_string()))
         .collect();
-    // Р.66: пределы автора рисует ОБЩИЙ ряд, и единица берётся из паспорта
-    // цели — доля показывается процентом ровно так же, как в самом поле
-    // параметра. Утверждение то же («автор видит пределы цели»), меняется
-    // только единица, в которой они написаны.
+    // R.66: the author limits draw the COMMON row, and the unit is taken from the target’s passport —
+    // the share is shown as a percent exactly as in the parameter field itself.
+    // The assertion is the same (“the author sees the target limits”); only the unit
+    // in which they are written changes.
     let scale = if spec.unit == kt_model::ParamUnit::Percent { 100.0 } else { 1.0 };
     let has = |x: f64| {
         let want = x * scale;
@@ -13157,12 +13157,12 @@ fn t692b_author_window_shows_the_target_range() {
     };
     assert!(
         has(spec.min) && has(spec.max),
-        "окно автора не показало пределы цели ({} … {}): {shown:?}",
+        "author window did not show the target limits ({} … {}): {shown:?}",
         spec.min,
         spec.max
     );
 
-    // --- сужение доезжает до модели и снимается одной кнопкой ---------
+    // --- the narrowing reaches the model and is removed by one button ---------
     let narrowed = PubRange { min: Some(spec.min + spec.step), max: Some(spec.max - spec.step) };
     {
         let mut p = h
@@ -13170,16 +13170,16 @@ fn t692b_author_window_shows_the_target_range() {
             .model
             .document()
             .sequence(s.seq)
-            .expect("лента")
+            .expect("reel")
             .published
             .iter()
             .find(|p| p.id == s.size)
             .cloned()
-            .expect("ручка «Кегль»");
+            .expect("“Font size” handle");
         p.range = narrowed;
         assert!(
             h.state_mut().apply(Command::SetPublished { seq: s.seq, param: Box::new(p) }),
-            "сужение отвергнуто"
+            "narrowing rejected"
         );
     }
     h.step();
@@ -13189,14 +13189,14 @@ fn t692b_author_window_shows_the_target_range() {
             .model
             .document()
             .sequence(s.seq)
-            .expect("лента")
+            .expect("reel")
             .published
             .iter()
             .find(|p| p.id == s.size)
-            .expect("ручка")
+            .expect("handle")
             .range
             .is_empty(),
-        "сужение не легло в модель"
+        "narrowing did not land in the model"
     );
 
     h.get_by_label(tr(k::pubp::RANGE_RESET)).click();
@@ -13207,38 +13207,38 @@ fn t692b_author_window_shows_the_target_range() {
             .model
             .document()
             .sequence(s.seq)
-            .expect("лента")
+            .expect("reel")
             .published
             .iter()
             .find(|p| p.id == s.size)
-            .expect("ручка")
+            .expect("handle")
             .range
             .is_empty(),
-        "кнопка «к пределам цели» сужение не сняла"
+        "the “to target limits” button did not remove the narrowing"
     );
 
-    // и после сброса окно снова показывает пределы цели
+    // and after the reset the window again shows the target limits
     let shown: Vec<String> = h
         .query_all(by().role(Role::SpinButton))
         .filter_map(|n| n.accesskit_node().value().map(|v| v.to_string()))
         .collect();
-    assert!(has(spec.min) && has(spec.max), "после сброса пределы цели не вернулись: {shown:?}");
+    assert!(has(spec.min) && has(spec.max), "after reset the target limits did not come back: {shown:?}");
 }
 
-/// Тест 684 (Р.59, стадия 3): ИМЯ АВТОРА — содержимое документа.
+/// Test 684 (R.59, stage 3): the AUTHOR NAME is document content.
 ///
-/// Решение владельца: «имена публичных параметров — свободный текст
-/// автора». Значит оно рисуется ДОСЛОВНО, мимо каталога переводов, как
-/// имя события или ленты, и сторож t131 обязан остаться зелёным (в коде
-/// ни одного нового русского литерала).
+/// The owner’s decision: “the names of public parameters are free text
+/// written by the author.” So it is drawn VERBATIM, bypassing the translation catalog, like
+/// an event or reel name, and guard t131 must stay green (in the code
+/// not a single new Russian literal).
 #[test]
 fn t684_author_names_are_shown_verbatim() {
     use kt_model::*;
     let (mut h, s) = harness_news_template();
-    // кириллица и арабица — два письма с разной раскладкой; арабское имя
-    // проверяет ещё и то, что текст ПРОЕКТА не переупорядочивается как
-    // строка каталога
-    let names = ["Заголовок выпуска №3", "عنوان النشرة"];
+    // Cyrillic and Arabic — two scripts with different layout; the Arabic name
+    // also checks that PROJECT text is not reordered like
+    // a catalog string
+    let names = ["Issue heading No. 3", "عنوان النشرة"];
     h.state_mut().enter_nest(s.a);
     h.step();
     for (id, name) in [s.headline, s.tint].iter().zip(names) {
@@ -13263,69 +13263,69 @@ fn t684_author_names_are_shown_verbatim() {
     h.state_mut().open_fx_editor_head(s.b);
     h.step();
     h.step();
-    // смотреть надо на ГАЛЛЕИ, а не на дерево доступности: доступное имя
-    // кнопки сброса составное и несёт имя ручки тоже — по нему «дословно
-    // ли нарисовано» не отличить (урок t255/t548). Берём ИСХОДНЫЙ текст
-    // галлеи: перестановка слов у арабского живёт в `tr()` (i18n::bidi) и
-    // применяется ДО отрисовки, поэтому расхождение здесь означало бы
-    // ровно то, чего быть не должно, — имя автора прошло через каталог.
+    // one must look at the PAINT LIST, not at the accessibility tree: the accessible name
+    // of the reset button is composite and carries the knob name too — so “drawn verbatim”
+    // cannot be told apart by it (lesson from t255/t548). We take the SOURCE text of the
+    // paint list: the word reordering for Arabic lives in `tr()` (i18n::bidi) and
+    // is applied BEFORE drawing, so a mismatch here would mean exactly
+    // what must not happen — the author name went through the catalog.
     let drawn = |h: &Harness<'static, KtApp>| -> Vec<String> {
         crate::reach_tests::painted_texts(h).into_iter().map(|t| t.src).collect()
     };
     for name in names {
         assert!(
             drawn(&h).iter().any(|t| t == name),
-            "имя автора «{name}» не НАРИСОВАНО дословно: {:?}",
+            "author name “{name}” was not DRAWN verbatim: {:?}",
             drawn(&h)
         );
     }
 
-    // ЯЗЫК ПРОГРАММЫ имя автора не трогает: переключили каталог — имя то же
+    // the PROGRAM LANGUAGE does not touch the author name: the catalog was switched — the name is the same
     crate::i18n::set_lang(crate::i18n::Lang::En);
     h.step();
     h.step();
     assert!(
         drawn(&h).iter().any(|t| t == tr(k::pubp::RESET)),
-        "язык программы не переключился — дальнейшее утверждение пусто"
+        "program language did not switch — the next assertion is empty"
     );
     for name in names {
         assert!(
             drawn(&h).iter().any(|t| t == name),
-            "имя автора «{name}» уехало вместе с языком программы"
+            "author name “{name}” moved together with the program language"
         );
     }
     crate::i18n::set_lang(crate::i18n::Lang::Ru);
     h.step();
 }
 
-/// Тест 685 (Р.59, стадия 3): бейджи.
+/// Test 685 (R.59, stage 3): badges.
 ///
-/// Булавка на экземпляре С переопределениями, число объявленных ручек на
-/// карточке ленты в бине, и НИЧЕГО из этого — когда публикаций нет.
+/// A pin on an instance WITH overrides, the number of declared knobs on the
+/// reel card in the bin, and NONE of this when there are no editions.
 #[test]
 fn t685_badges_show_overrides_and_publications() {
     use kt_model::*;
     let (mut h, s) = harness_news_template();
 
-    // --- НИЧЕГО, пока не переопределено -------------------------------
+    // --- NOTHING while nothing is overridden -------------------------------
     let inst = h.state().model.clip(s.b).cloned().unwrap();
     assert!(inst.overrides.is_empty());
     assert_eq!(
         h.state().instance_override_counts(&inst),
         (0, 6),
-        "счётчик обязан знать и сколько объявлено, и сколько тронуто"
+        "the counter must know both how many are declared and how many are touched"
     );
 
-    // --- БУЛАВКА и подсказка после переопределения ---------------------
+    // --- the PIN and its hint after an override ---------------------
     assert!(h.state_mut().apply(Command::SetOverride {
         id: s.b,
-        ov: Box::new(Override::value(s.headline, ParamValue::Text("ВТОРОЙ".into()))),
+        ov: Box::new(Override::value(s.headline, ParamValue::Text("SECOND".into()))),
     }));
     h.step();
     let inst = h.state().model.clip(s.b).cloned().unwrap();
     assert_eq!(h.state().instance_override_counts(&inst), (1, 6));
-    // и БУЛАВКА ПО-НАСТОЯЩЕМУ НАРИСОВАНА на событии: смотреть надо на
-    // галлеи, а не на модель — «поле выставилось» не следствие (Р.40)
+    // and the PIN is really DRAWN on the event: one must look at the
+    // paint list, not the model — “the field was set” is not a consequence (R.40)
     h.step();
     h.step();
     let pinned: Vec<String> = crate::reach_tests::painted_texts(&h)
@@ -13333,45 +13333,45 @@ fn t685_badges_show_overrides_and_publications() {
         .map(|t| t.src)
         .filter(|s| s.contains(crate::icons::PIN))
         .collect();
-    // подпись СОБЫТИЯ несёт булавку в хвосте («имя ×N 📌»), карточка
-    // бина — в голове («📌6»): это разные бейджи, и путать их нельзя
+    // the EVENT label carries the pin at its tail (“name ×N 📌”), the bin card
+    // carries it at its head (“📌6”): these are different badges and must not be confused
     assert!(
         pinned.iter().any(|s| s.ends_with(crate::icons::PIN) && s.len() > 4),
-        "булавки на событии-экземпляре не нарисовано: {pinned:?}"
+        "pin on the instance event is not drawn: {pinned:?}"
     );
     assert!(
         pinned.iter().any(|s| s.starts_with(crate::icons::PIN)),
-        "числа объявленных ручек на карточке ленты не нарисовано: {pinned:?}"
+        "the count of declared handles is not drawn on the reel card: {pinned:?}"
     );
-    // подсказка НАЗЫВАЕТ числа — «булавка есть, а что значит» без этого
-    // было бы загадкой (правило 16)
+    // the hint NAMES the numbers — “a pin exists, but what does it mean” would be
+    // a puzzle without this (rule 16)
     let hint = crate::tf!(k::pubp::OVERRIDDEN, 1, 6);
-    assert!(hint.contains('1') && hint.contains('6'), "подсказка не называет чисел: {hint}");
-    // соседний выпуск булавки не получил: переопределение — свойство
-    // ЭКЗЕМПЛЯРА, а не ленты
+    assert!(hint.contains('1') && hint.contains('6'), "hint does not name the numbers: {hint}");
+    // the neighbouring edition did not get the pin: the override is a property of
+    // the INSTANCE, not of the reel
     assert!(
         h.state().model.clip(s.a).unwrap().overrides.is_empty(),
-        "переопределение расползлось на соседний экземпляр"
+        "override spread onto the neighboring instance"
     );
 
-    // --- КАРТОЧКА БИНА: число объявленных ручек ------------------------
-    assert_eq!(h.state().published_of(s.seq).len(), 6, "карточка ленты берёт число ручек отсюда");
-    // лента без публикаций числа не показывает — «×1» того же рода шум
+    // --- REEL CARD: the number of declared knobs ------------------------
+    assert_eq!(h.state().published_of(s.seq).len(), 6, "reel card takes the handle count from here");
+    // a reel without editions does not show a number — a “×1” of the same kind is noise
     {
         let app = h.state_mut();
         let ids: Vec<PubId> = app.published_of(s.seq).iter().map(|p| p.id).collect();
         app.enter_nest(s.a);
         for id in ids {
-            assert!(app.apply(Command::UnpublishParam { seq: s.seq, id }), "снятие ручки отвергнуто");
+            assert!(app.apply(Command::UnpublishParam { seq: s.seq, id }), "handle removal rejected");
         }
         app.leave_nest();
     }
     h.step();
     assert_eq!(h.state().published_of(s.seq).len(), 0);
-    // и переопределения ушли ВМЕСТЕ с ручками — мёртвой булавки не бывает
+    // and the overrides went away TOGETHER with the knobs — a dead pin does not exist
     assert!(
         h.state().model.clip(s.b).unwrap().overrides.is_empty(),
-        "снятие публикаций оставило переопределение: булавка врала бы"
+        "removing pins left the override: the pin would lie"
     );
     h.step();
     h.step();
@@ -13380,13 +13380,13 @@ fn t685_badges_show_overrides_and_publications() {
         .map(|t| t.src)
         .filter(|s| s.contains(crate::icons::PIN))
         .collect();
-    assert!(left.is_empty(), "бейджи остались там, где публикаций больше нет: {left:?}");
+    assert!(left.is_empty(), "badges remained where there are no more pins: {left:?}");
 }
 
-/// Тест 716b (Р.62): ведущий узел «Геометрия» в редакторе цепочки —
-/// первый и помечен, выбирается кликом, показывает правило приведения,
-/// смена правила доезжает до модели одним шагом истории; крестик на нём —
-/// ошибка в строке состояния, узел остаётся.
+/// Test 716b (R.62): the leading node “Geometry” in the chain editor is
+/// the first and is marked, is selected by a click, shows the conform rule,
+/// a change of rule reaches the model in one history step; the cross on it is
+/// an error in the status line, the node stays.
 #[test]
 fn t716b_lead_geometry_in_the_chain_editor() {
     use egui_kittest::kittest::Queryable;
@@ -13424,21 +13424,21 @@ fn t716b_lead_geometry_in_the_chain_editor() {
     h.step();
     h.step();
 
-    // ведущий узел виден и помечен; обычный «Blur» тоже на месте
+    // the leading node is visible and marked; the usual “Blur” is in place too
     let lead_label = crate::fx_editor::fx_display_name(&EventGeometry::default().node());
-    assert!(h.query_by_label(lead_label).is_some(), "ведущий узел обязан быть в полосе");
+    assert!(h.query_by_label(lead_label).is_some(), "the leading node must be in the strip");
     assert!(h.query_by_label(crate::fx_editor::fx_display_name(&FxInstance::blur(8))).is_some());
-    // клик по узлу выбирает его — и появляется правило приведения
+    // a click on a node selects it — and the conform rule appears
     h.get_by_label(lead_label).click();
     h.step();
     h.step();
     assert_eq!(
         h.state().fx_editors[0].selected.get(&ClipId(1)),
         Some(&crate::widgets::ChainSel::Lead),
-        "клик по ведущему узлу выбирает его, а не слот с тем же индексом"
+        "a click on the leading node selects it, not the slot with the same index"
     );
-    assert!(h.query_by_label(tr(k::fx::CONFORM)).is_some(), "правило приведения показано");
-    // смена правила через комбо → SetGeometry, один шаг истории
+    assert!(h.query_by_label(tr(k::fx::CONFORM)).is_some(), "alignment rule is shown");
+    // a rule change via the combo → SetGeometry, one history step
     let undo_before = h.state().model.undo_depth();
     h.get_by_label(tr(k::fx::CONFORM_FILL)).click();
     h.step();
@@ -13447,16 +13447,16 @@ fn t716b_lead_geometry_in_the_chain_editor() {
     assert_eq!(
         app.model.clip(ClipId(1)).unwrap().geometry.rule,
         Conform::Fill,
-        "правило доехало до модели"
+        "rule reached the model"
     );
-    assert_eq!(app.model.undo_depth(), undo_before + 1, "сессия окна — один шаг истории");
-    assert_eq!(app.model.clip(ClipId(1)).unwrap().fx.len(), 1, "цепочка модели узел не содержит");
-    // крестик на ведущем узле — отказ ошибкой, узел на месте
-    // крестик ведущего узла — ближайший справа на его строке (в полосе
-    // есть и другие крестики: у слота Blur и у поля поиска)
+    assert_eq!(app.model.undo_depth(), undo_before + 1, "the window session is one history step");
+    assert_eq!(app.model.clip(ClipId(1)).unwrap().fx.len(), 1, "the chain of the model does not contain the node");
+    // the cross on the leading node — a refusal with an error, the node stays in place
+    // the cross of the leading node — the nearest one to the right on its row (the strip
+    // has other crosses too: on the Blur slot and in the search field)
     let lead_rect = h.get_by_label(lead_label).rect();
     let crosses: Vec<_> = h.get_all_by_label(crate::icons::CLEAR).collect();
-    assert!(crosses.len() >= 2, "у каждого слота свой крестик");
+    assert!(crosses.len() >= 2, "each slot has its own cross");
     let lead_cross = crosses
         .iter()
         .filter(|n| {
@@ -13464,34 +13464,34 @@ fn t716b_lead_geometry_in_the_chain_editor() {
             (r.center().y - lead_rect.center().y).abs() < 10.0 && r.min.x > lead_rect.max.x
         })
         .min_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
-        .expect("крестик справа от ведущего узла");
+        .expect("cross to the right of the leading node");
     lead_cross.click();
     h.step();
     h.step();
     let app = h.state();
-    assert!(app.error_status.is_some(), "удаление ведущего узла — ошибка, не тишина");
-    assert_eq!(app.model.clip(ClipId(1)).unwrap().fx.len(), 1, "Blur не пострадал");
+    assert!(app.error_status.is_some(), "deleting the leading node is an error, not silence");
+    assert_eq!(app.model.clip(ClipId(1)).unwrap().fx.len(), 1, "Blur was unharmed");
     assert_eq!(app.model.clip(ClipId(1)).unwrap().geometry.rule, Conform::Fill);
 }
 
-/// Тест 720b (Р.62): окно настроек проекта — поля с проверкой, отказ
-/// ошибочным стилем, применение одной командой, флаг явных настроек,
-/// повторное открытие и возврат фокуса.
+/// Test 720b (R.62): the project settings window — fields with validation, refusal
+/// with an error style, applying with one command, a flag of explicit settings,
+/// reopening and focus return.
 #[test]
 fn t720b_project_settings_window_validates_and_applies() {
     use egui_kittest::kittest::Queryable;
     let mut h = harness();
-    // дважды подряд: окно обязано открываться повторно
+    // twice in a row: the window must reopen again
     for _ in 0..2 {
         h.state_mut().open_project_settings();
         h.step();
-        assert!(h.query_by_label(tr(k::settings::TITLE)).is_some(), "окно открыто");
+        assert!(h.query_by_label(tr(k::settings::TITLE)).is_some(), "window is open");
         h.get_by_label(tr(k::settings::CANCEL)).click();
         h.step();
         h.step();
-        assert!(h.query_by_label(tr(k::settings::TITLE)).is_none(), "«Отмена» закрывает");
+        assert!(h.query_by_label(tr(k::settings::TITLE)).is_none(), "“Cancel” closes");
     }
-    // нечётная ширина — отказ ошибкой, настройки не тронуты
+    // an odd width — refusal with an error, settings untouched
     h.state_mut().open_project_settings();
     h.step();
     let before = h.state().model.document().settings.clone();
@@ -13504,10 +13504,10 @@ fn t720b_project_settings_window_validates_and_applies() {
     h.step();
     h.step();
     let app = h.state();
-    assert!(app.settings_win.is_some(), "окно остаётся открытым при отказе");
-    assert!(app.error_status.is_some(), "нечётная ширина — ошибка, не тишина");
+    assert!(app.settings_win.is_some(), "window stays open on rejection");
+    assert!(app.error_status.is_some(), "odd width is an error, not silence");
     assert_eq!(app.model.document().settings, before);
-    // 29.97 — невыразимо: отказ
+    // 29.97 — not expressible: refusal
     {
         let d = h.state_mut().settings_win.as_mut().unwrap();
         d.width = "1440".into();
@@ -13517,9 +13517,9 @@ fn t720b_project_settings_window_validates_and_applies() {
     h.get_by_label(tr(k::settings::APPLY)).click();
     h.step();
     h.step();
-    assert!(h.state().error_status.is_some(), "29.97 отвергается с причиной");
+    assert!(h.state().error_status.is_some(), "29.97 is rejected with a reason");
     assert_eq!(h.state().model.document().settings, before);
-    // 1440×1080 при 50 fps и правило «заполнить» — одна команда, флаг явности
+    // 1440×1080 at 50 fps and the “fill” rule — one command, the explicitness flag
     {
         let d = h.state_mut().settings_win.as_mut().unwrap();
         d.fps = "50".into();
@@ -13533,21 +13533,21 @@ fn t720b_project_settings_window_validates_and_applies() {
     let s = app.model.document().settings.clone();
     assert_eq!((s.width, s.height, s.fps), (1440, 1080, 50));
     assert_eq!(s.conform, kt_model::ConformRule::Fill);
-    assert!(s.settings_explicit, "применение ставит флаг явных настроек");
-    assert_eq!(app.model.undo_depth(), undo_before + 1, "одна команда");
-    assert!(app.settings_win.is_none(), "окно закрылось");
-    // фокус отдан: горячие клавиши живы (правило 14)
-    assert!(!h.ctx.memory(|m| m.focused().is_some()), "поле не держит фокус после закрытия");
-    // комбо панели превью показывает то же (одно тело)
+    assert!(s.settings_explicit, "applying sets the explicit-settings flag");
+    assert_eq!(app.model.undo_depth(), undo_before + 1, "one command");
+    assert!(app.settings_win.is_none(), "window closed");
+    // focus given back: hotkeys are alive (rule 14)
+    assert!(!h.ctx.memory(|m| m.focused().is_some()), "the field does not keep focus after closing");
+    // the preview panel’s combo shows the same (one body)
     assert!(
         h.query_by_label("1440×1080").is_some()
             || h.query_all_by_label_contains("1440").count() > 0
     );
 }
 
-/// Тест 721 (Р.62): первый клип в пустой проект с неявными настройками задаёт
-/// растр и fps одним undo-шагом с постановкой; явные настройки не трогаются;
-/// 29.97 — растр принят, fps прежний, подсказка называет причину.
+/// Test 721 (R.62): the first clip in an empty project with implicit settings sets
+/// the raster and fps in one undo step with placement; explicit settings are not touched;
+/// 29.97 — raster accepted, fps the same, the hint names the cause.
 #[test]
 fn t721_first_clip_sets_project_settings() {
     use kt_model::*;
@@ -13574,19 +13574,19 @@ fn t721_first_clip_sets_project_settings() {
         let undo_before = app.model.undo_depth();
         let cmds =
             app.clip_cmds_for(MediaId(1), &info(1440, 1080, (25, 1)), kt_time::Tick(0), None);
-        assert!(matches!(cmds[0], Command::SetSettings { .. }), "настройки — первым в батче");
+        assert!(matches!(cmds[0], Command::SetSettings { .. }), "settings go first in the batch");
         app.apply_batch(cmds);
         let s = app.model.document().settings.clone();
         assert_eq!((s.width, s.height, s.fps), (1440, 1080, 25));
         assert_eq!(app.model.project().clips.len(), 1);
-        assert_eq!(app.model.undo_depth(), undo_before + 1, "постановка и настройки — один шаг");
+        assert_eq!(app.model.undo_depth(), undo_before + 1, "placement and settings are one step");
         let msg = app.status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
-        assert!(msg.contains("1440"), "подсказка называет принятый растр: {msg}");
+        assert!(msg.contains("1440"), "hint names the accepted raster: {msg}");
         app.undo();
         assert!(app.model.project().clips.is_empty());
-        assert_eq!(app.model.document().settings.width, width_before, "undo вернул и настройки");
+        assert_eq!(app.model.document().settings.width, width_before, "undo restored the settings too");
     }
-    // явные настройки: второй проект, окно применено — постановка не трогает
+    // explicit settings: a second project, window applied — placement does not touch them
     {
         let app = h.state_mut();
         let mut st = app.model.document().settings.clone();
@@ -13597,7 +13597,7 @@ fn t721_first_clip_sets_project_settings() {
         app.apply_batch(cmds);
         assert_eq!(app.model.document().settings.width, width_before);
     }
-    // 29.97 в пустой проект без явных настроек: растр принят, fps нет
+    // 29.97 in an empty project without explicit settings: raster accepted, fps not
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
@@ -13611,12 +13611,12 @@ fn t721_first_clip_sets_project_settings() {
         let s = app.model.document().settings.clone();
         assert_eq!((s.width, s.height, s.fps), (1280, 720, 30));
         let msg = app.status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
-        assert!(msg.contains("90000"), "подсказка объясняет, почему fps не принят: {msg}");
+        assert!(msg.contains("90000"), "hint explains why the fps was not accepted: {msg}");
     }
 }
 
-/// Тест 722 (Р.62): несовпадение пропорций при постановке сообщается с
-/// адресом «где изменить»; совпадение — молчит.
+/// Test 722 (R.62): an aspect-ratio mismatch at placement is reported with an
+/// address “where to change”; a match stays silent.
 #[test]
 fn t722_aspect_mismatch_is_reported_with_an_address() {
     use kt_model::*;
@@ -13639,37 +13639,37 @@ fn t722_aspect_mismatch_is_reported_with_an_address() {
     p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
-    // 4:3 в 16:9 — подсказка с правилом и адресом
+    // 4:3 in 16:9 — a hint with the rule and the address
     let cmds = app.clip_cmds_for(MediaId(1), &info(640, 480), kt_time::Tick(0), None);
     app.apply_batch(cmds);
     let msg = app.status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
     assert!(msg.contains("640×480") && msg.contains("1920×1080"), "{msg}");
-    assert!(msg.contains(tr(k::fx::CONFORM_FIT)), "правило названо: {msg}");
-    assert!(msg.contains(tr(k::menu::file::PROJECT_SETTINGS)), "адрес назван: {msg}");
-    // 16:9 в 16:9 — молчание
+    assert!(msg.contains(tr(k::fx::CONFORM_FIT)), "rule is named: {msg}");
+    assert!(msg.contains(tr(k::menu::file::PROJECT_SETTINGS)), "address is named: {msg}");
+    // 16:9 in 16:9 — silence
     app.status = None;
     let cmds = app.clip_cmds_for(MediaId(1), &info(1280, 720), kt_time::Tick(90_000), None);
     app.apply_batch(cmds);
-    assert!(app.status.is_none(), "совпадающие пропорции не сообщаются");
+    assert!(app.status.is_none(), "matching proportions are not reported");
 }
 
-/// Тест 719 (Р.62): тумба вертикального клипа НЕ раздавлена — нарисована
-/// в пропорциях источника, по центру ячейки, а скролл и зум таймлайна не
-/// заказывают ни одного декода (инвариант 8: единственный ключ клипа ≤5 c
-/// уже в текстурах). Щупается ОТРИСОВАННОЕ: прямоугольник картинки в
-/// шейпах кадра, а не поле сервиса.
+/// Test 719 (R.62): the thumbnail of a vertical clip is NOT squashed — drawn
+/// in the source proportions, centred in the cell, and the scroll and zoom of the timeline
+/// request no decodes at all (invariant 8: the only clip key ≤5 c
+/// is already in the textures). What is probed is what is DRAWN: the image rectangle in the
+/// frame shapes, not the service field.
 #[test]
 fn t719_vertical_thumb_keeps_its_aspect_and_scroll_orders_no_decode() {
     use kt_model::ClipKind;
     let (mut h, _g) = harness_three_clips_dt(None);
     h.step();
     h.step();
-    // ключи спрашивает САМ филмстрип (арифметику шага тест не повторяет);
-    // клип 50 000 тиков ≤ 5 c → шаг постоянен при любом зуме, ключей мало
+    // the keys are asked by the filmstrip ITSELF (the test does not repeat the step arithmetic);
+    // a clip of 50 000 ticks ≤ 5 c → the step is constant at any zoom, few keys
     let mut keys: Vec<crate::thumbs::ThumbKey> = h.state().thumbs.requested_keys();
     keys.sort_by_key(|k| (k.media.0, k.t));
     keys.dedup();
-    assert!(!keys.is_empty(), "филмстрип не заказал ни одной тумбы");
+    assert!(!keys.is_empty(), "filmstrip did not request a single thumbnail");
     assert!(
         keys.iter().all(|k| h
             .state()
@@ -13678,13 +13678,13 @@ fn t719_vertical_thumb_keeps_its_aspect_and_scroll_orders_no_decode() {
             .clips
             .iter()
             .any(|c| c.kind == ClipKind::Video && kt_engine::clip_source_addr(c) == k.media)),
-        "ключи не про видео-события сцены: {keys:?}"
+        "keys are not about the video events of the scene: {keys:?}"
     );
     let img = egui::ColorImage::filled([100, 180], egui::Color32::from_rgb(200, 40, 40));
     let tex = h.ctx.load_texture("t719-vertical", img, egui::TextureOptions::LINEAR);
-    // текстуры — под ВСЕ ключи, какие может дать сетка шага (кратные
-    // 0.5 c, клип 50 000 тиков): зум открывает новые моменты, и это
-    // законный заказ; сторож ниже — про то, что ГОТОВОЕ не заказывается
+    // the textures — for ALL keys the step grid may yield (multiples of
+    // 0.5 c, a clip of 50 000 ticks): zoom opens new moments, and this is a
+    // legitimate request; the guard below checks that what is READY is not requested again
     let media: std::collections::BTreeSet<kt_model::MediaId> =
         keys.iter().map(|k| k.media).collect();
     for m in &media {
@@ -13705,7 +13705,7 @@ fn t719_vertical_thumb_keeps_its_aspect_and_scroll_orders_no_decode() {
     ) {
         fn walk(sh: &egui::Shape, id: egui::TextureId, out: &mut Vec<egui::Rect>) {
             match sh {
-                // `painter.image` в egui 0.36 кладёт меш с текстурой
+                // `painter.image` in egui 0.36 puts a mesh with the texture
                 egui::Shape::Mesh(m) if m.texture_id == id => out.push(m.calc_bounds()),
                 egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, id, out)),
                 _ => {}
@@ -13720,25 +13720,25 @@ fn t719_vertical_thumb_keeps_its_aspect_and_scroll_orders_no_decode() {
         h.output().shapes.iter().filter(|c| matches!(c.shape, egui::Shape::Mesh(_))).count();
     assert!(
         !rects.is_empty(),
-        "вертикальная тумба не нарисована ни разу (shapes={n_shapes}, meshes={n_mesh}, \
+        "vertical thumbnail was never drawn (shapes={n_shapes}, meshes={n_mesh}, \
          offline={:?}, tex={:?}, keys={:?})",
         h.state().offline.lock().unwrap(),
         h.state().thumb_textures.keys().collect::<Vec<_>>(),
         keys
     );
-    // полная (не обрезанная краем события) ячейка: ширина = высота·100/180
+    // the full (not edge-cropped) cell: width = height·100/180
     let full = rects.iter().find(|r| (r.width() / r.height() - 100.0 / 180.0).abs() < 0.03);
     assert!(
         full.is_some(),
-        "тумба раздавлена: ни один прямоугольник не в пропорциях 100:180, есть {:?}",
+        "thumbnail is squashed: no rectangle has the 100:180 proportions, there is {:?}",
         rects.iter().map(|r| (r.width(), r.height())).collect::<Vec<_>>()
     );
     assert!(
         rects.iter().all(|r| r.width() <= r.height() * 16.0 / 9.0 * 0.6 + 1.0),
-        "вертикальная тумба растянута на всю ячейку 16:9"
+        "vertical thumbnail is stretched over the whole 16:9 cell"
     );
 
-    // скролл и зум — ни одного нового заказа декода (инвариант 8)
+    // scroll and zoom — not one new decode request (invariant 8)
     let (vs, tpp) = (h.state().view_start, h.state().ticks_per_px);
     h.state_mut().view_start = vs + 2_000.0;
     h.step();
@@ -13751,15 +13751,15 @@ fn t719_vertical_thumb_keeps_its_aspect_and_scroll_orders_no_decode() {
     assert_eq!(
         h.state().thumbs.requested_total(),
         before,
-        "скролл/зум таймлайна заказал декод тумб (инвариант 8)"
+        "timeline scroll/zoom requested thumbnail decode (invariant 8)"
     );
 }
 
-/// Тест 722b (Р.62): смена правила приведения в окне настроек НА ПАУЗЕ
-/// пересобирает превью. Нашёл живой сценарий `conform`: правило было
-/// записано в файл, а в окне висел прежний кадр — ключ превью не видел
-/// версии проекта (ни курсор, ни качество, ни содержимое источников
-/// правка не трогает). Утверждается СЛЕДСТВИЕ: пиксель поля меняется.
+/// Test 722b (R.62): changing the conform rule in the settings window WHILE PAUSED
+/// rebuilds the preview. Found by the live scenario `conform`: the rule was written
+/// to the file, but the previous frame stayed in the window — the preview key did not see the
+/// project version (neither the cursor, nor quality, nor the content of the sources is touched
+/// by the edit). The CONSEQUENCE is asserted: the field’s pixel changes.
 #[test]
 fn t722b_project_rule_change_repaints_the_paused_preview() {
     use kt_model::*;
@@ -13768,8 +13768,8 @@ fn t722b_project_rule_change_repaints_the_paused_preview() {
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-        // вертикальный проект, горизонтальный синтетический источник 64×36:
-        // «вписать» оставляет поля сверху и снизу, «заполнить» — нет
+        // vertical project, horizontal synthetic source 64×36:
+        // “fit” leaves margins at top and bottom, “fill” does not
         p.settings.width = 36;
         p.settings.height = 64;
         p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
@@ -13799,13 +13799,13 @@ fn t722b_project_rule_change_repaints_the_paused_preview() {
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
         app.push_project_to_player();
-        // источник поднимается так же, как это делает создание генератора:
-        // первый синк лишь снимает состав медиа, сам он источники не поднимает
+        // the source is brought up the same way the generator creation does it:
+        // the first sync only removes the media composition, it does not bring up the sources itself
         let src = crate::util::open_source("synth:ramp").expect("synthetic source");
         app.media_paths.insert(MediaId(1), "synth:ramp".into());
         app.player.add_media(MediaId(1), src);
-        // холст превью — в пропорциях ПРОЕКТА (окно настроек делает это
-        // само; здесь настройки подменены мимо него)
+        // the preview canvas is in the PROJECT proportions (the settings window does this
+        // itself; here the settings are substituted around it)
         app.player.set_preview_quality(kt_media::Quality { width: 36, height: 64 });
         app.player.seek(Tick(30_000));
     }
@@ -13815,14 +13815,14 @@ fn t722b_project_rule_change_repaints_the_paused_preview() {
             break;
         }
     }
-    assert!(h.state().preview_key.is_some_and(|k| k.2), "превью так и не посчиталось");
+    assert!(h.state().preview_key.is_some_and(|k| k.2), "the preview never got computed");
     let top_dark = |app: &KtApp| -> bool {
         let (_, (w, hgt), _) = app.preview_key.unwrap();
         assert!(hgt > 4 && app.preview_buf.len() >= (w * hgt * 4) as usize);
-        let i = ((w + w / 2) * 4) as usize; // строка 1, середина
+        let i = ((w + w / 2) * 4) as usize; // row 1, middle
         app.preview_buf[i..i + 3].iter().all(|&v| v < 8)
     };
-    assert!(top_dark(h.state()), "«вписать» горизонтального в вертикальный: сверху поле");
+    assert!(top_dark(h.state()), "“fit” of a horizontal into a vertical: a margin on top");
 
     let mut st = h.state().model.document().settings.clone();
     st.conform = ConformRule::Fill;
@@ -13836,14 +13836,14 @@ fn t722b_project_rule_change_repaints_the_paused_preview() {
             break;
         }
     }
-    assert!(repainted, "правило «заполнить» применено, а превью на паузе осталось с полями");
+    assert!(repainted, "the “fill” rule was applied, but the preview stayed with margins while paused");
 }
 
-/// Тест 740 (Р.62, change B): окно рендера ПЕРЕЧИСЛЯЕТ заглушённые
-/// дорожки и активное соло ДО старта — там же, где говорит о недоступных
-/// исходниках. Отказа нет (mute и solo — содержимое проекта, решение
-/// владельца), но молчать нельзя: «забыл снять соло — сдал одну дорожку»
-/// (правила 16, 19). Утверждается ОТРИСОВАННОЕ: имя дорожки в окне.
+/// Test 740 (R.62, change B): the render window LISTS the muted
+/// tracks and the active solo BEFORE the start — in the same place where it talks about unavailable
+/// sources. There is no refusal (mute and solo are project content, the owner’s decision),
+/// but it must not stay silent: “forgot to clear the solo — delivered one track”
+/// (rules 16, 19). What is asserted is what is DRAWN: the track name in the window.
 #[test]
 fn t740_render_dialog_lists_muted_and_solo_tracks() {
     use kt_model::LaneKind::{Audio, Video};
@@ -13852,9 +13852,9 @@ fn t740_render_dialog_lists_muted_and_solo_tracks() {
         let app = h.state_mut();
         edit_project(app, |p| {
             p.ensure_tracks(Audio, 2);
-            p.track_at_mut(Video, 0).unwrap().name = "Титры".into();
+            p.track_at_mut(Video, 0).unwrap().name = "Titles".into();
             p.track_at_mut(Video, 0).unwrap().mute = true;
-            p.track_at_mut(Audio, 1).unwrap().name = "Голос".into();
+            p.track_at_mut(Audio, 1).unwrap().name = "Voice".into();
             p.track_at_mut(Audio, 1).unwrap().solo = true;
         });
         app.render_setup.open = true;
@@ -13865,12 +13865,12 @@ fn t740_render_dialog_lists_muted_and_solo_tracks() {
         crate::reach_tests::painted_texts(&h).into_iter().map(|t| t.src).collect();
     let all = texts.join(" | ");
     assert!(
-        all.contains("Титры"),
-        "окно рендера молчит о заглушённой дорожке — «в файле её не будет» человек узнает потом: {all}"
+        all.contains("Titles"),
+        "render window is silent about a muted track — the person will learn later that it is “not in the file”: {all}"
     );
-    assert!(all.contains("Голос"), "окно рендера молчит об активном соло: {all}");
+    assert!(all.contains("Voice"), "render window is silent about an active solo: {all}");
 
-    // без заглушённых и соло — ни строки лишней (правило 9)
+    // without muted and solo — not one extra line (rule 9)
     let mut h2 = harness_three_clips_dt(None).0;
     h2.state_mut().render_setup.open = true;
     h2.step();
@@ -13880,22 +13880,22 @@ fn t740_render_dialog_lists_muted_and_solo_tracks() {
         .map(|t| t.src)
         .collect::<Vec<_>>()
         .join(" | ");
-    assert!(!clean.contains("Титры") && !clean.contains("Голос"));
+    assert!(!clean.contains("Titles") && !clean.contains("Voice"));
 }
 
-/// Тест 742 (Р.62, change B, 4.1): ряд бейджей в заголовке дорожки.
-/// Утверждается то, что делает ЧЕЛОВЕК (Р.40): мышь наводится в центр
-/// бейджа, нажимается и отпускается БЕЗ движения — и меняется МОДЕЛЬ.
-/// Плюс три правила чек-листа: ширина заголовка не скачет при смене
-/// состояния (правило 3), повторное нажатие возвращает как было
-/// (правило 14), у служебной строки бейдж ровно один — замок
-/// (правило 9: мёртвых контролов не бывает).
+/// Test 742 (R.62, change B, 4.1): the row of badges in the track header.
+/// What is asserted is what a PERSON does (R.40): the mouse moves to the centre of the
+/// badge, presses and releases WITHOUT moving — and the MODEL changes.
+/// Plus three checklist rules: the header width does not jump when the
+/// state changes (rule 3), a repeated press returns it as it was
+/// (rule 14), the service row has exactly one badge — the lock
+/// (rule 9: dead controls do not exist).
 #[test]
 fn t742_track_badges_take_a_human_click_and_never_move() {
     use crate::timeline::{GUTTER_W, TrackBadge};
     use kt_model::LaneKind::{Morph, Video};
 
-    /// Клик человека: навёл, нажал, отпустил, мышь не двигал.
+    /// A human click: hover, press, release, mouse did not move.
     fn click_at(h: &mut Harness<'_, KtApp>, pos: egui::Pos2) {
         h.hover_at(pos);
         h.step();
@@ -13915,41 +13915,41 @@ fn t742_track_badges_take_a_human_click_and_never_move() {
     h.state_mut().model.apply(kt_model::Command::InsertTrack { kind: Morph, at: 0 }).unwrap();
     h.step();
 
-    // ряд бейджей строки — ЧИСТАЯ функция геометрии, ровно та же, что у
-    // отрисовки и у хит-теста
+    // the row of the track’s badges is a PURE function of geometry, exactly the same as
+    // for drawing and for hit-testing
     let badges = |h: &Harness<'_, KtApp>, kind: kt_model::LaneKind, lane: u32| {
-        let g = h.state().tl_geom.clone().expect("геометрия таймлайна");
-        let row = g.rows.iter().position(|r| *r == (kind, lane)).expect("строка на экране");
+        let g = h.state().tl_geom.clone().expect("timeline geometry");
+        let row = g.rows.iter().position(|r| *r == (kind, lane)).expect("row on screen");
         let left = g.rect.left() - GUTTER_W;
         TrackBadge::row_rects(kind, left, g.row_top(row), g.row_h(row))
     };
     let track = |h: &Harness<'_, KtApp>, kind, lane| {
-        h.state().model.project().track_at(kind, lane).cloned().expect("дорожка есть")
+        h.state().model.project().track_at(kind, lane).cloned().expect("track is there")
     };
 
-    // хват-зона не уже 14 px (правило 1: попасть с первого раза)
+    // the grab zone is not narrower than 14 px (rule 1: hit on the first try)
     for (b, r) in badges(&h, Video, 0) {
         assert!(
             r.width() >= 14.0 && r.height() >= 8.0,
-            "бейдж {b:?} мельче хват-зоны: {:?}",
+            "badge {b:?} is smaller than the grab zone: {:?}",
             r.size()
         );
     }
 
-    // ---- в каждый бейдж мышью, из точки человека ---------------------------
+    // ---- into each badge with the mouse, from the person’s point ---------------------------
     let before = badges(&h, Video, 0);
     for (badge, r) in before.clone() {
         click_at(&mut h, r.center());
         let t = track(&h, Video, 0);
         match badge {
-            TrackBadge::Mute => assert!(t.mute, "клик в M не заглушил дорожку"),
-            TrackBadge::Solo => assert!(t.solo, "клик в S не включил соло"),
-            TrackBadge::Lock => assert!(t.lock, "клик в замок не запер дорожку"),
+            TrackBadge::Mute => assert!(t.mute, "click on M did not mute the track"),
+            TrackBadge::Solo => assert!(t.solo, "click on S did not enable solo"),
+            TrackBadge::Lock => assert!(t.lock, "click on the lock did not lock the track"),
             TrackBadge::Fx => {
                 assert_eq!(
                     h.state().track_win.as_ref().map(|w| w.id),
                     Some(t.id),
-                    "клик в бейдж FX не открыл цепочку дорожки"
+                    "click on the FX badge did not open the track chain"
                 );
                 h.state_mut().track_win = None;
                 h.step();
@@ -13957,43 +13957,43 @@ fn t742_track_badges_take_a_human_click_and_never_move() {
         }
     }
 
-    // ---- ширина не скачет от состояния (правило 3) -------------------------
+    // ---- width does not jump with the state (rule 3) -------------------------
     let after = badges(&h, Video, 0);
     assert_eq!(
         before, after,
-        "ряд бейджей переехал, когда дорожка сменила состояние: заголовок обязан быть \
-         зафиксирован галлеей ряда, а не шириной сегодняшних значков"
+        "the row of badges shifted when the track changed state: the header must be fixed by the row gallery \
+         and not by the width of today’s icons"
     );
 
-    // ---- повторное нажатие (правило 14) ------------------------------------
+    // ---- repeated press (rule 14) ------------------------------------
     let mute = before.iter().find(|(b, _)| *b == TrackBadge::Mute).unwrap().1;
     click_at(&mut h, mute.center());
-    assert!(!track(&h, Video, 0).mute, "второе нажатие M не сняло глушение");
+    assert!(!track(&h, Video, 0).mute, "second press of M did not clear the mute");
     click_at(&mut h, mute.center());
-    assert!(track(&h, Video, 0).mute, "третье нажатие M не вернуло глушение");
+    assert!(track(&h, Video, 0).mute, "third press of M did not restore the mute");
 
-    // ---- кромка окна не ворует клики (правило 15) --------------------------
-    // Заголовки дорожек прижаты к левому краю окна, а первые 8 px там —
-    // зона ресайза: без записи бейджей в `no_resize_rects` левая половина
-    // M мертва, когда медиа-бин скрыт. Целимся сразу за полосой в
-    // `WIN_BORDER` — её владелец оставил ресайзу намеренно (п.9 р.12).
+    // ---- the window edge does not steal clicks (rule 15) --------------------------
+    // The track headers are pressed against the window’s left edge, and the first 8 px there are
+    // the resize zone: without recording the badges in `no_resize_rects` the left half of
+    // M is dead when the media bin is hidden. We aim just past the strip at
+    // `WIN_BORDER` — its owner left it to resize on purpose (item 9, round 12).
     let edge = egui::pos2(mute.left() + crate::app::WIN_BORDER + 0.5, mute.center().y);
     assert!(
         edge.x < mute.left() + crate::timeline::BADGE_W / 2.0,
-        "точка кромки обязана лежать ЛЕВЕЕ центра бейджа, иначе проверять нечего"
+        "the edge point must lie LEFT of the badge center, otherwise there is nothing to check"
     );
     let was = track(&h, Video, 0).mute;
     click_at(&mut h, edge);
     assert_ne!(
         track(&h, Video, 0).mute,
         was,
-        "левый край бейджа M мёртв: клик в {edge:?} забрала зона ресайза окна"
+        "left edge of the M badge is dead: a click at {edge:?} was taken by the window resize zone"
     );
 
-    // ---- горячие клавиши: ТО ЖЕ ТЕЛО, что у бейджа (правило 17) ------------
-    // Голые M и S заняты меткой и разрезом по прямой просьбе владельца,
-    // поэтому глушение и соло берут ALT. Цель — дорожка ВЫДЕЛЕННОГО
-    // события; выделения нет — строка под указателем.
+    // ---- hotkeys: THE SAME BODY as the badge (rule 17) ------------
+    // Bare M and S are taken by the marker and the cut at the owner’s direct request,
+    // so mute and solo take ALT. The target is the track of the SELECTED
+    // event; if there is no selection — the row under the pointer.
     let v0 = track(&h, Video, 0).id;
     {
         let app = h.state_mut();
@@ -14008,40 +14008,40 @@ fn t742_track_badges_take_a_human_click_and_never_move() {
     h.step();
     h.key_press_modifiers(egui::Modifiers::ALT, egui::Key::M);
     h.step();
-    assert!(track(&h, Video, 0).mute, "Alt+M не заглушил дорожку выделенного события");
+    assert!(track(&h, Video, 0).mute, "Alt+M did not mute the track of the selected event");
     h.key_press_modifiers(egui::Modifiers::ALT, egui::Key::S);
     h.step();
-    assert!(track(&h, Video, 0).solo, "Alt+S не включил соло на дорожке выделенного события");
-    // голая M остаётся МЕТКОЙ: чужую привязку клавиша дорожки не забирает
+    assert!(track(&h, Video, 0).solo, "Alt+S did not enable solo on the track of the selected event");
+    // a bare M stays a MARKER: the track key does not steal another binding
     let marks = h.state().model.project().markers.len();
     h.key_press(egui::Key::M);
     h.step();
     assert_eq!(
         h.state().model.project().markers.len(),
         marks + 1,
-        "голая M перестала ставить метку — привязка владельца отобрана"
+        "bare M stopped placing a marker — the owner’s binding was taken away"
     );
 
-    // ---- служебная строка: только замок ------------------------------------
+    // ---- service row: only the lock ------------------------------------
     let serv = badges(&h, Morph, 0);
     assert_eq!(
         serv.iter().map(|(b, _)| *b).collect::<Vec<_>>(),
         vec![TrackBadge::Lock],
-        "у морф-строки глушить нечего — лишний бейдж был бы мёртвым контролом"
+        "a morph row has nothing to mute — an extra badge would be a dead control"
     );
-    // и он стоит В ПЕРВОЙ ячейке ряда: человек жмёт туда, где у видео M
+    // and it sits in the FIRST cell of the row: a person presses where the video’s M is
     assert_eq!(serv[0].1.min.x, before[0].1.min.x);
     click_at(&mut h, serv[0].1.center());
     let m = track(&h, Morph, 0);
-    assert!(m.lock, "клик в первую ячейку служебной строки не запер её");
-    assert!(!m.mute, "служебная строка не имеет права заглушиться");
+    assert!(m.lock, "click on the first cell of the service row did not lock it");
+    assert!(!m.mute, "the service row has no right to be muted");
 }
 
-/// Тест 743 (Р.62, change B, 4.2): окно «Свойства дорожки». Проверяется
-/// то, что делает человек: открыл, поправил имя, уровень и режим, закрыл —
-/// и ВСЯ сессия откатывается ОДНИМ Ctrl+Z (как у окна FX). «Отмена»
-/// возвращает снимок, окно отдаёт фокус (правило 14), пределы полей
-/// приходят из паспорта, а не из литералов окна (прецедент Gain в Р.33).
+/// Test 743 (R.62, change B, 4.2): the “Track properties” window. What is checked is
+/// what a person does: opens it, fixes the name, level and mode, closes —
+/// and the WHOLE session is rolled back by ONE Ctrl+Z (as with the FX window). “Cancel”
+/// returns the snapshot, the window gives focus back (rule 14), the field limits
+/// come from the passport, not from literals of the window (precedent: Gain in R.33).
 #[test]
 fn t743_track_window_is_one_undo_step_and_gives_focus_back() {
     use egui_kittest::kittest::Queryable;
@@ -14054,29 +14054,29 @@ fn t743_track_window_is_one_undo_step_and_gives_focus_back() {
     let was = props_of(&h);
     let depth0 = h.state().model.undo_depth();
 
-    // ---- пределы полей — ИЗ ПАСПОРТА --------------------------------------
+    // ---- field limits — FROM THE PASSPORT --------------------------------------
     {
         let p = h.state().model.project().clone();
         let v = p.track(id).unwrap();
         let a = p.track_at(kt_model::LaneKind::Audio, 0).unwrap();
-        assert!(v.param_spec("opacity").is_some(), "у видеодорожки нет строки уровня");
-        assert!(v.param_spec("gain_db").is_none(), "децибелы на ВИДЕОдорожке — чужая строка");
-        let g = a.param_spec("gain_db").expect("у аудиодорожки обязан быть уровень");
+        assert!(v.param_spec("opacity").is_some(), "the video track has no level row");
+        assert!(v.param_spec("gain_db").is_none(), "decibels on a VIDEO track are a foreign row");
+        let g = a.param_spec("gain_db").expect("the audio track must have a level");
         assert_eq!(
             (g.min, g.max),
             (kt_model::TRACK_GAIN_MIN_DB, kt_model::TRACK_GAIN_MAX_DB),
-            "окно обязано брать пределы у паспорта, иначе они разъедутся с моделью"
+            "the window must take the limits from the spec, otherwise they drift apart from the model"
         );
     }
 
-    // ---- одна сессия — один шаг истории -----------------------------------
+    // ---- one session — one history step -----------------------------------
     h.state_mut().open_track_window(id);
     h.step();
     h.step();
-    // имя: поле забирает фокус при открытии, печатаем как человек
-    h.event(egui::Event::Text("Титры".into()));
+    // name: the field takes focus on opening, we type as a person does
+    h.event(egui::Event::Text("Titles".into()));
     h.step();
-    // режим наложения и выключатель — в том же окне и той же сессии
+    // the blend mode and the toggle — in the same window and the same session
     let multiply = crate::track_window::blend_label(kt_model::BlendMode::Multiply).to_string();
     h.get_by_label(&multiply).click();
     h.step();
@@ -14085,33 +14085,33 @@ fn t743_track_window_is_one_undo_step_and_gives_focus_back() {
     h.step();
 
     let now = props_of(&h);
-    assert_eq!(now.name, "Титры", "имя не доехало до модели");
-    assert_eq!(now.blend, kt_model::BlendMode::Multiply, "режим наложения не доехал");
-    assert!(now.mute, "выключатель не доехал");
+    assert_eq!(now.name, "Titles", "name did not reach the model");
+    assert_eq!(now.blend, kt_model::BlendMode::Multiply, "blend mode did not arrive");
+    assert!(now.mute, "the switch did not arrive");
     assert_eq!(
         h.state().model.undo_depth(),
         depth0 + 1,
-        "сессия окна разложилась на несколько шагов истории: человек будет жать Ctrl+Z \
-         столько раз, сколько полей тронул"
+        "the window session split into several history steps: the person would press Ctrl+Z as many times as the number of fields they \
+         touched"
     );
     h.state_mut().undo();
     h.step();
-    assert_eq!(props_of(&h), was, "один Ctrl+Z обязан вернуть ВСЮ сессию окна");
+    assert_eq!(props_of(&h), was, "one Ctrl+Z must restore the WHOLE window session");
 
-    // выделение готовим ЗАРАНЕЕ: клавишу жмём сразу после закрытия окна,
-    // без лишних кадров — иначе фокус успеет отпуститься сам и проверка
-    // правила 14 ничего не значит
+    // the selection is prepared IN ADVANCE: the key is pressed right after the window closes,
+    // without extra frames — otherwise focus would have time to release itself and the check of
+    // rule 14 would mean nothing
     {
         let app = h.state_mut();
         app.selected.clear();
         app.selected.insert(kt_model::ClipId(1));
     }
 
-    // ---- строки формы не наезжают друг на друга (правило 7) ---------------
-    // Девять кнопок режима переносятся на вторую строку, а `Grid` высоту
-    // ПЕРЕНОСА не меряет: в живом окне вторая строка наезжала на
-    // «Выключатели», и харнесс этого не видел, пока не начал сверять
-    // ПРЯМОУГОЛЬНИКИ нарисованного.
+    // ---- form rows do not overlap each other (rule 7) ---------------
+    // Nine mode buttons wrap onto a second row, and `Grid` does not measure
+    // the WRAP height: in the live window the second row ran into
+    // “Toggles”, and the harness did not see this until it began to compare
+    // the RECTANGLES that are drawn.
     {
         let painted = crate::reach_tests::painted_texts(&h);
         let rect_of = |name: &str| {
@@ -14123,54 +14123,54 @@ fn t743_track_window_is_one_undo_step_and_gives_focus_back() {
         if let (Some(a), Some(b)) = (rect_of(&last_blend), rect_of(&sw)) {
             assert!(
                 !a.intersects(b),
-                "кнопки режима наложения наезжают на «Выключатели»: {a:?} и {b:?}"
+                "blend-mode buttons overlap the “Switches”: {a:?} and {b:?}"
             );
         } else {
-            panic!("в окне дорожки не нарисованы режим наложения и выключатели");
+            panic!("the track window does not draw the blend mode or the switches");
         }
     }
 
-    // ---- «Отмена» возвращает снимок и закрывает окно -----------------------
+    // ---- “Cancel” returns the snapshot and closes the window -----------------------
     h.state_mut().open_track_window(id);
     h.step();
     h.step();
     h.get_by_label(&mute_label).click();
     h.step();
-    assert!(props_of(&h).mute, "сцена не состоялась: отменять нечего");
+    assert!(props_of(&h).mute, "scene did not happen: nothing to cancel");
     h.get_by_label(crate::i18n::tr(crate::i18n::k::track::CANCEL)).click();
     h.step();
     h.step();
-    assert_eq!(props_of(&h), was, "«Отмена» не вернула свойства дорожки");
-    assert!(h.state().track_win.is_none(), "«Отмена» не закрыла окно");
+    assert_eq!(props_of(&h), was, "“Cancel” did not restore the track properties");
+    assert!(h.state().track_win.is_none(), "“Cancel” did not close the window");
 
-    // ---- Esc закрывает, а фокус возвращается (правило 14) ------------------
-    // Поле имени забирает фокус при открытии, и пока оно его держит, до
-    // каскада Esc не доходит вовсе — окно обязано ловить его само. А
-    // закрывшись, окно обязано фокус ОТДАТЬ: иначе клавиатура мертва до
-    // клика мимо.
+    // ---- Esc closes, and focus is returned (rule 14) ------------------
+    // The name field takes focus on opening, and while it holds it, the
+    // Esc cascade does not reach it at all — the window must catch it itself. And
+    // once closed, the window must GIVE BACK focus: otherwise the keyboard is dead until a
+    // click elsewhere.
     h.state_mut().open_track_window(id);
     h.step();
     h.step();
     assert!(
         h.state().track_win.is_some(),
-        "сцена не состоялась: окно не открылось"
+        "scene did not happen: the window did not open"
     );
     h.key_press(egui::Key::Escape);
     h.step();
-    assert!(h.state().track_win.is_none(), "Esc не закрыл окно дорожки");
+    assert!(h.state().track_win.is_none(), "Esc did not close the track window");
     h.key_press_modifiers(egui::Modifiers::ALT, egui::Key::M);
     h.step();
     assert!(
         props_of(&h).mute,
-        "после закрытия окна клавиши мертвы: поле имени не отдало фокус egui"
+        "after closing the window the keys are dead: the name field did not hand focus back to egui"
     );
 }
 
-/// Тест 744 (Р.62, change B, 4.3): цепочка ДОРОЖКИ — та же полоса, что у
-/// события (правило 17), а огибающая, приехавшая с вставленной цепочкой,
-/// отвергается ВСЛУХ и с причиной (правило 16): у дорожки автоматизации
-/// нет, и молча уронить кривые нельзя — человек увидел бы «эффект тот же,
-/// а звучит иначе» и искал бы дефект в движке.
+/// Test 744 (R.62, change B, 4.3): the TRACK’s chain — the same strip as the
+/// event’s (rule 17), and an envelope that arrives with the pasted chain is
+/// rejected ALOUD and with a reason (rule 16): a track has no automation,
+/// and silently dropping the curves is not allowed — the person would see “the effect is the same,
+/// but it sounds different” and would look for a defect in the engine.
 #[test]
 fn t744_track_chain_is_the_same_strip_and_refuses_curves_aloud() {
     use egui_kittest::kittest::Queryable;
@@ -14183,7 +14183,7 @@ fn t744_track_chain_is_the_same_strip_and_refuses_curves_aloud() {
     };
     h.step();
 
-    // в буфере — цепочка С ОГИБАЮЩЕЙ, как её кладёт полоса события
+    // in the buffer — a chain WITH AN ENVELOPE, as the event’s strip puts it
     h.state_mut().fx_clipboard = Some(kt_model::ops::FxChainBlock {
         slots: vec![kt_model::ops::FxSlotBlock {
             fx: FxInstance::gain(-6.0),
@@ -14204,41 +14204,41 @@ fn t744_track_chain_is_the_same_strip_and_refuses_curves_aloud() {
     h.step();
     h.step();
 
-    // полоса цепочки у дорожки — ТА ЖЕ: кнопка вставки на месте
+    // the track’s chain strip is THE SAME: the paste button is in place
     let paste = crate::i18n::tr(crate::i18n::k::fx::PASTE_CHAIN).to_string();
     assert!(
         h.query_by_label(&paste).is_some(),
-        "у дорожки нет общей полосы цепочки: вставлять эффекты нечем"
+        "track has no shared effect chain strip: there is nowhere to insert effects"
     );
     h.get_by_label(&paste).click();
     h.step();
     h.step();
 
     let t = h.state().model.project().track(id).unwrap().clone();
-    assert_eq!(t.fx.len(), 1, "эффект не доехал до цепочки дорожки");
+    assert_eq!(t.fx.len(), 1, "effect did not reach the track chain");
     assert!(
         matches!(t.fx[0], FxInstance::Gain { .. }),
-        "в цепочку дорожки попал не тот эффект: {:?}",
+        "the wrong effect got into the track chain: {:?}",
         t.fx[0]
     );
     let err = h.state().error_status.clone().map(|(m, _)| m);
     assert!(
         err.as_deref() == Some(crate::i18n::tr(crate::i18n::k::track::CURVES_DROPPED)),
-        "кривая пропала молча — человеку не сказали ни что отброшено, ни куда её класть: {err:?}"
+        "the curve vanished silently — the person was told neither what was dropped nor where to put it: {err:?}"
     );
-    // и сама модель кривых у дорожки не носит
+    // and the track’s own curve model does not carry it
     assert!(
         h.state().model.project().validate().is_ok(),
-        "дорожка с кривыми прошла проверку проекта"
+        "track with curves passed the project check"
     );
 }
 
-/// Тест 745 (Р.62, change B, 4.4): ЗАМОК дорожки в интерфейсе. Жест по
-/// запертой дорожке — не тишина и не блёклая подсказка, а ошибка, которая
-/// называет дорожку и место, где замок снять (правила 16 и 19), плюс
-/// красная подсветка самой строки (механизм t172). Проверяются все четыре
-/// жеста, которыми событие правят; глушение при этом продолжает
-/// действовать — замок про РЕДАКТИРОВАНИЕ, а не про звук.
+/// Test 745 (R.62, change B, 4.4): the track LOCK in the interface. A gesture on a
+/// locked track is neither silence nor a faded hint, but an error that
+/// names the track and the place where the lock is removed (rules 16 and 19), plus a
+/// red highlight of the row itself (mechanism t172). All four
+/// gestures that edit the event are checked; muting at the same time continues to
+/// act — the lock is about EDITING, not about sound.
 #[test]
 fn t745_locked_track_refuses_every_gesture_with_a_reason() {
     use kt_model::{ClipId, LaneKind::Video};
@@ -14259,7 +14259,7 @@ fn t745_locked_track_refuses_every_gesture_with_a_reason() {
     let y = g.row_top(row) + g.row_h(row) * 0.6;
     let body = egui::pos2(g.tick_to_x(20_000), y);
 
-    // ---- перенос --------------------------------------------------------
+    // ---- move --------------------------------------------------------
     h.state_mut().error_status = None;
     h.drag_at(body);
     h.step();
@@ -14269,19 +14269,19 @@ fn t745_locked_track_refuses_every_gesture_with_a_reason() {
     h.step();
     h.drop_at(body + egui::vec2(120.0, 0.0));
     h.step();
-    assert_eq!(start_of(&h, ClipId(1)), Some(was), "запертая дорожка отдала событие драгу");
+    assert_eq!(start_of(&h, ClipId(1)), Some(was), "locked track gave the event to the drag");
     let label = h.state().row_label(Video, 0);
     let err = h.state().error_status.clone().map(|(m, _)| m).unwrap_or_default();
     assert!(
         err.contains(&label),
-        "отказ не назвал дорожку («{label}»), человек не поймёт, что именно мешает: {err:?}"
+        "rejection did not name the track (“{label}”), so the person cannot tell what is in the way: {err:?}"
     );
     assert!(
         h.state().blocked_track.map(|(t, _)| t) == Some(id),
-        "строка запертой дорожки не подсвечена — отказ выглядит как «нажал, и ничего»"
+        "row of the locked track is not highlighted — the rejection looks like “pressed, and nothing happened”"
     );
 
-    // ---- тримминг правого края ------------------------------------------
+    // ---- trim of the right edge ------------------------------------------
     let edge = egui::pos2(g.tick_to_x(50_000) - 2.0, y);
     h.drag_at(edge);
     h.step();
@@ -14291,9 +14291,9 @@ fn t745_locked_track_refuses_every_gesture_with_a_reason() {
     h.step();
     h.drop_at(edge + egui::vec2(60.0, 0.0));
     h.step();
-    assert_eq!(start_of(&h, ClipId(1)), Some(was), "запертая дорожка дала себя подтянуть");
+    assert_eq!(start_of(&h, ClipId(1)), Some(was), "locked track let itself be pulled");
 
-    // ---- разрез и удаление клавишами ------------------------------------
+    // ---- cut and delete with keys ------------------------------------
     let n = h.state().model.project().clips.len();
     {
         let app = h.state_mut();
@@ -14304,41 +14304,41 @@ fn t745_locked_track_refuses_every_gesture_with_a_reason() {
     h.step();
     h.key_press(egui::Key::S);
     h.step();
-    assert_eq!(h.state().model.project().clips.len(), n, "запертое событие разрезалось");
+    assert_eq!(h.state().model.project().clips.len(), n, "locked event was cut");
     h.key_press(egui::Key::Delete);
     h.step();
-    assert_eq!(h.state().model.project().clips.len(), n, "запертое событие удалилось");
+    assert_eq!(h.state().model.project().clips.len(), n, "locked event was deleted");
     assert!(
         h.state().blocked_track.map(|(t, _)| t) == Some(id),
-        "отказ от КЛАВИШИ не подсветил строку: `handle_keys` идёт раньше отрисовки, и \
-         подсветка, гаснущая каждый кадр, живёт ровно ноль кадров"
+        "rejection from a KEY did not highlight the row: `handle_keys` runs before drawing, and \
+         a highlight that fades every frame lives exactly zero frames"
     );
 
-    // ---- замок про правку, а не про звук --------------------------------
+    // ---- the lock is about editing, not about sound --------------------------------
     h.state_mut().toggle_track_badge(id, crate::timeline::TrackBadge::Mute);
     h.step();
     let p = h.state().model.project().clone();
-    assert!(p.track(id).unwrap().lock, "бейдж снял чужой выключатель");
-    assert!(p.track(id).unwrap().mute, "свойства ЗАПЕРТОЙ дорожки править нельзя стало");
+    assert!(p.track(id).unwrap().lock, "badge removed someone else’s switch");
+    assert!(p.track(id).unwrap().mute, "properties of a LOCKED track became editable");
     assert!(
         kt_model::silenced_tracks(&p).muted.contains(&label),
-        "глушение запертой дорожки перестало действовать на файл"
+        "muting a locked track stopped affecting the file"
     );
 }
 
-/// Тест 748d (Р.63 п.2): хвост события БЕЗ МАТЕРИАЛА виден на полосе.
+/// Test 748d (R.63 item 2): the tail of an event WITHOUT MATERIAL is visible on the strip.
 ///
-/// Событие может быть длиннее файла (край утащили за конец ещё до Р.63,
-/// скорость поменяли) — и тогда в его хвосте тишина и стоп-кадр. Пока
-/// хвост выглядел как обычный материал, это читалось как «луп ломает
-/// звук»: человек видит событие, а звука в нём нет. Утверждается
-/// НАРИСОВАННОЕ: штриховка начинается там же, где кончается материал по
-/// модели, и у события внутри материала её нет вовсе.
+/// An event may be longer than its file (the edge was dragged past the end even before R.63,
+/// or the speed was changed) — and then its tail is silence and a freeze frame. While the
+/// tail looked like ordinary material, this read as “the loop breaks the
+/// sound”: the person sees the event, and there is no sound in it. What is asserted is what is
+/// DRAWN: the hatching starts exactly where the material ends per the
+/// model, and in an event inside the material there is no hatching at all.
 #[test]
 fn t748d_tail_without_material_is_hatched() {
     use kt_model::LaneKind::Video;
     let (mut h, _) = harness_three_clips_dt(None);
-    // событие 0..50_000 на медиа, которого хватает только на 20_000
+    // event 0..50_000 on media that is enough for only 20_000
     {
         let app = h.state_mut();
         edit_project(app, |p| {
@@ -14352,7 +14352,7 @@ fn t748d_tail_without_material_is_hatched() {
         h.state().model.project().clips.first().and_then(|c| {
             let len = h.state().model.project().media_duration(c.media);
             kt_model::material_end_on_timeline(c, len).map(|end| {
-                let g = h.state().tl_geom.clone().expect("геометрия");
+                let g = h.state().tl_geom.clone().expect("geometry");
                 let row = g.rows.iter().position(|r| *r == (Video, 0)).unwrap();
                 egui::Rect::from_min_max(
                     egui::pos2(g.tick_to_x(end), g.row_top(row)),
@@ -14364,14 +14364,14 @@ fn t748d_tail_without_material_is_hatched() {
             })
         })
     };
-    let r = probe(&h).expect("модель знает, где кончается материал");
-    assert!(r.width() > 1.0, "хвост без материала обязан быть шире пикселя");
+    let r = probe(&h).expect("the model knows where the material ends");
+    assert!(r.width() > 1.0, "the tail without material must be wider than a pixel");
 
-    // НАРИСОВАНО: в зоне хвоста есть штриховка — линии, которых нет в
-    // теле события. Считаем отрезки, попавшие в прямоугольник хвоста.
-    // Штрих — диагональ во всю высоту строки: внутри узкого хвоста она не
-    // помещается и обрезается КЛИП-ПРЯМОУГОЛЬНИКОМ. Считаем по нему: у
-    // хвоста он свой и ничей больше.
+    // DRAWN: the tail zone has hatching — lines that are absent from the
+    // event body. We count the segments that fall into the tail rectangle.
+    // The stroke is a diagonal across the full row height: inside a narrow tail it does not
+    // fit and is cut by the CLIP RECTANGLE. We count by it:
+    // the tail has its own, and nobody else’s.
     let lines_in = |h: &Harness<'_, KtApp>, r: egui::Rect| -> usize {
         fn walk(s: &egui::epaint::Shape, n: &mut usize) {
             use egui::epaint::Shape;
@@ -14391,9 +14391,9 @@ fn t748d_tail_without_material_is_hatched() {
         n
     };
     let hatch = lines_in(&h, r);
-    assert!(hatch >= 2, "штриховки в хвосте без материала нет (линий {hatch})");
+    assert!(hatch >= 2, "there is no hatching in the tail without material (lines {hatch})");
 
-    // у события ВНУТРИ материала хвоста нет вовсе (правило 9)
+    // an event INSIDE the material has no tail at all (rule 9)
     {
         let app = h.state_mut();
         edit_project(app, |p| {
@@ -14402,20 +14402,20 @@ fn t748d_tail_without_material_is_hatched() {
     }
     h.step();
     h.step();
-    assert!(probe(&h).is_none(), "у события внутри материала хвоста быть не должно");
+    assert!(probe(&h).is_none(), "an event inside the tail’s material must not exist");
     let body = egui::Rect::from_min_max(r.min, r.max);
-    assert_eq!(lines_in(&h, body), 0, "штриховка осталась там, где материал есть");
+    assert_eq!(lines_in(&h, body), 0, "hatching remained where material exists");
 }
 
-/// Тест 749 (Р.63 п.3): формула НАБИРАЕТСЯ целиком, ключи живы до
-/// подтверждения, а верная формула видна на графике.
+/// Test 749 (R.63 item 3): the formula is TYPED IN in full, keys stay alive until
+/// confirmation, and a correct formula is visible on the graph.
 ///
-/// Владелец: «я не понимаю как ввести формулы в кривые автоматизации — я
-/// прописываю а оно либо стирает формулу либо нихера не происходит». И то
-/// и другое было правдой: поле перечитывало текст ИЗ МОДЕЛИ каждый кадр
-/// (значит `sin(` исчезал на следующем), а первая законная приставка `t`
-/// применялась немедленно и обнуляла ключи. Плюс формульная кривая ключей
-/// не хранит по контракту — и график рисовал пустоту.
+/// The owner: “I don’t understand how to enter formulas into automation curves — I
+/// type it in and it either erases the formula or nothing happens at all.” Both were
+/// true: the field re-read the text FROM THE MODEL on every frame
+/// (so `sin(` disappeared on the next one), and the first legitimate prefix `t`
+/// was applied at once and zeroed the keys. Plus a formula curve does not
+/// store keys by contract — and the graph drew emptiness.
 #[test]
 fn t749_formula_is_typed_whole_and_drawn() {
     use kt_model::*;
@@ -14465,14 +14465,14 @@ fn t749_formula_is_typed_whole_and_drawn() {
     h.step();
     h.step();
 
-    // координата поля — из НАСТОЯЩЕЙ ВЁРСТКИ: у TextEdit нет узла
-    // доступности, зато подпись «Формула» нарисована рядом (приём t281)
+    // the field’s coordinate — from the REAL LAYOUT: TextEdit has no accessibility
+    // node, but the “Formula” label is drawn next to it (technique t281)
     let label = crate::i18n::tr(crate::i18n::k::fx::FORMULA).to_string();
     let lr = crate::reach_tests::painted_texts(&h)
         .into_iter()
         .find(|t| t.src == label)
         .map(|t| t.rect)
-        .expect("подпись поля формулы нарисована");
+        .expect("formula field label is drawn");
     let field = egui::pos2(lr.right() + 60.0, lr.center().y);
     h.hover_at(field);
     h.step();
@@ -14494,9 +14494,9 @@ fn t749_formula_is_typed_whole_and_drawn() {
             .collect()
     };
     let before = keys_of(&h);
-    assert_eq!(before.len(), 3, "сцена: у кривой три ключа");
+    assert_eq!(before.len(), 3, "scene: the curve has three keys");
 
-    // НАБИРАЕМ ПО СИМВОЛУ — и после каждого кадра ключи обязаны быть целы
+    // we TYPE CHARACTER BY CHARACTER — and after each frame the keys must be intact
     for ch in "sin(t)*0.5".chars() {
         h.event(egui::Event::Text(ch.to_string()));
         h.step();
@@ -14504,32 +14504,32 @@ fn t749_formula_is_typed_whole_and_drawn() {
         assert_eq!(
             keys_of(&h),
             before,
-            "после символа {ch:?} ключи кривой изменились: текст применился до подтверждения"
+            "after the character {ch:?} the curve keys changed: the text was applied before confirmation"
         );
         assert!(
             h.state().model.project().clips[0].fx_auto[0][0].source.is_keys(),
-            "после символа {ch:?} источник стал формулой без подтверждения"
+            "after the character {ch:?} the source became a formula without confirmation"
         );
     }
-    // и сам текст не исчез из поля (на прежнем коде — исчезал)
+    // and the text itself did not vanish from the field (on the old code it did)
     let shown: Vec<String> =
         crate::reach_tests::painted_texts(&h).into_iter().map(|t| t.src).collect();
     assert!(
         shown.iter().any(|s| s.contains("sin(t)*0.5")),
-        "набранный текст пропал из поля: {shown:?}"
+        "typed text vanished from the field: {shown:?}"
     );
 
-    // ПОДТВЕРЖДЕНИЕ
+    // CONFIRMATION
     h.key_press(egui::Key::Enter);
     h.step();
     h.step();
     let c = &h.state().model.project().clips[0].fx_auto[0][0];
     assert!(
         matches!(&c.source, kt_model::CurveSource::Formula { expr } if expr == "sin(t)*0.5"),
-        "после Enter формула не доехала до модели: {:?}",
+        "after Enter the formula did not reach the model: {:?}",
         c.source
     );
-    // и она ВИДНА: разрешение даёт линию, а не пустоту
+    // and it is VISIBLE: the resolution gives a line, not emptiness
     let pts = kt_model::formula_preview(
         c,
         (kt_time::Tick(0), kt_time::Tick(90_000)),
@@ -14537,20 +14537,20 @@ fn t749_formula_is_typed_whole_and_drawn() {
         kt_time::Tick(90_000),
         750,
     );
-    assert!(pts.len() > 10, "формульная кривая не разрешается в точки: {}", pts.len());
+    assert!(pts.len() > 10, "formula curve does not resolve into points: {}", pts.len());
     assert!(
         pts.iter().any(|k| (k.v - pts[0].v).abs() > 1e-6),
-        "разрешённая кривая — прямая: синус не посчитан"
+        "resolved curve is a straight line: the sine was not computed"
     );
 }
 
-/// Тест 750 (Р.63 п.4): клик мимо поля отдаёт фокус, и клавиши живы СРАЗУ.
+/// Test 750 (R.63 item 4): a click outside the field gives focus back, and the keys are alive AT ONCE.
 ///
-/// Владелец: «если начать вводить что-то в поле формулы то фокус ввода
-/// переходит туда, и как бы я не тыкал по остальной части интерфейса —
-/// нажатие пробела не приводит к паузе… пока я не закрою окно эффекта».
-/// Проверяется СЛЕДСТВИЕ: после клика по таймлайну пробел играет, а поле
-/// снова принимает ввод, если в него кликнуть (правило 14).
+/// The owner: “if I start typing something in the formula field, the input focus
+/// goes there, and no matter how I poke the rest of the interface,
+/// pressing space does not lead to pause… until I close the effect window.”
+/// The CONSEQUENCE is checked: after a click on the timeline space plays, and the field
+/// accepts input again if clicked into (rule 14).
 #[test]
 fn t750_click_outside_a_field_gives_the_keyboard_back() {
     use kt_model::*;
@@ -14575,13 +14575,13 @@ fn t750_click_outside_a_field_gives_the_keyboard_back() {
     h.step();
     h.step();
 
-    // 1) кликаем в поле формулы и печатаем — фокус там
+    // 1) click in the formula field and type — focus is there
     let label = crate::i18n::tr(crate::i18n::k::fx::FORMULA).to_string();
     let lr = crate::reach_tests::painted_texts(&h)
         .into_iter()
         .find(|t| t.src == label)
         .map(|t| t.rect)
-        .expect("подпись поля формулы нарисована");
+        .expect("formula field label is drawn");
     let field = egui::pos2(lr.right() + 60.0, lr.center().y);
     let click = |h: &mut Harness<'_, KtApp>, pos: egui::Pos2| {
         h.hover_at(pos);
@@ -14600,19 +14600,19 @@ fn t750_click_outside_a_field_gives_the_keyboard_back() {
     click(&mut h, field);
     h.event(egui::Event::Text("t".into()));
     h.step();
-    assert!(h.ctx.memory(|m| m.focused()).is_some(), "поле обязано взять фокус");
+    assert!(h.ctx.memory(|m| m.focused()).is_some(), "the field must take focus");
     assert!(
         h.ctx.egui_wants_keyboard_input(),
-        "сцена вырождена: клавиатуру никто не держит"
+        "scene degenerated: nobody holds the keyboard"
     );
 
-    // 2) КЛИК ПО ТАЙМЛАЙНУ — и пробел играет
+    // 2) CLICK ON THE TIMELINE — and space plays
     let was_playing = h.state().player.transport.is_playing();
     let empty = egui::pos2(g.tick_to_x(400_000), g.row_center_y(0));
     click(&mut h, empty);
     assert!(
         !h.ctx.egui_wants_keyboard_input(),
-        "после клика по таймлайну поле всё ещё держит клавиатуру"
+        "after a click on the timeline the field still holds the keyboard"
     );
     h.key_press(egui::Key::Space);
     h.step();
@@ -14620,39 +14620,39 @@ fn t750_click_outside_a_field_gives_the_keyboard_back() {
     assert_ne!(
         h.state().player.transport.is_playing(),
         was_playing,
-        "пробел не сработал после клика мимо поля (на прежнем коде — не работал, \
-         пока открыто окно эффекта)"
+        "Space did not work after a click outside the field (on the old code it did not work \
+         while the effect window was open)"
     );
     h.key_press(egui::Key::Space);
     h.step();
 
-    // 3) поле снова принимает ввод — фича работает ПОВТОРНО (правило 14)
+    // 3) the field accepts input again — the feature works AGAIN (rule 14)
     click(&mut h, field);
     h.event(egui::Event::Text("2".into()));
     h.step();
     assert!(
         h.ctx.egui_wants_keyboard_input(),
-        "поле перестало принимать ввод после того, как у него забрали фокус"
+        "field stopped accepting input after it lost focus"
     );
 
-    // Про КНОПКИ: в egui клик кнопке фокуса не даёт, поэтому в харнессе
-    // эта половина претензии не воспроизводится вовсе — её проверяет живой
-    // сценарий `formula.py`. Гейт горячих клавиш при этом всё равно
-    // переписан на «набор текста» вместо «что-то в фокусе»: сторожа
-    // прежнего смысла — t98 и t627 (маски таймкода и скорости).
+    // As for the BUTTONS: in egui a click gives a button no focus, so in the harness
+    // this half of the claim does not reproduce at all — the live scenario `formula.py`
+    // checks it. The hotkey gate, meanwhile, is still rewritten as “text entry” instead
+    // of “something has focus”: the guards of the former meaning are
+    // t98 and t627 (timecode and speed masks).
 }
 
-/// Тест 751 (Р.63 п.5): цель правого клика ФИКСИРУЕТСЯ на нажатии, живёт
-/// пока меню открыто, участок подсвечен, а заголовок называет оба конца.
+/// Test 751 (R.63 item 5): the target of a right click is FIXED on press, lives
+/// while the menu is open, the segment is highlighted, and the header names both ends.
 ///
-/// Владелец: «невозможно указать формы кривых в кривых автоматизациях —
-/// контекстное меню просто пропадает я не успеваю дотянуться до него, а
-/// еще не понятно между какими точками(и точками ли?) я установлю форму».
-/// Причина: и ключ, и участок считались от `hover_pos()` КАЖДЫЙ КАДР, а
-/// содержимое `context_menu` перерисовывается каждый кадр — указатель
-/// уходил к пунктам, попадание пропадало, и меню закрывало само себя.
-/// Утверждения теста — наблюдаемые следствия: после увода указателя меню
-/// на месте, форма применяется и ложится РОВНО на левый ключ участка.
+/// The owner: “it is impossible to specify the shapes of curves in automation curves —
+/// the context menu just disappears, I do not manage to reach it, and
+/// it is still unclear between which points (and are they points?) I would set the shape.”
+/// Cause: both the key and the segment were computed from `hover_pos()` EVERY FRAME, and the
+/// content of `context_menu` is redrawn every frame — the pointer
+/// moved to the items, the hit was lost, and the menu closed itself.
+/// The test’s assertions are observable consequences: after the pointer is moved away the menu is
+/// in place, the shape is applied and lands EXACTLY on the segment’s left key.
 #[test]
 fn t751_the_menu_target_is_latched_on_press() {
     use crate::automation::MenuTarget;
@@ -14702,13 +14702,13 @@ fn t751_the_menu_target_is_latched_on_press() {
     h.step();
     h.step();
 
-    // положения ключей — из НАСТОЯЩЕЙ отрисовки (рисунок и щуп из одного
-    // места правды, п.364)
+    // the positions of the keys — from the REAL drawing (the drawing and the probe from one
+    // place of truth, item 364)
     let marks = |h: &Harness<'_, KtApp>| -> Vec<(usize, usize, egui::Pos2)> {
         h.state().fx_editors[0].auto_views[&(ClipId(1), 0)].key_marks.clone()
     };
     let m = marks(&h);
-    assert_eq!(m.len(), 3, "сцена вырождена: график ключей не нарисован ({m:?})");
+    assert_eq!(m.len(), 3, "scene degenerated: the key graph is not drawn ({m:?})");
     let target = |h: &Harness<'_, KtApp>| -> Option<MenuTarget> {
         h.state().fx_editors[0].auto_views[&(ClipId(1), 0)].menu_target
     };
@@ -14726,7 +14726,7 @@ fn t751_the_menu_target_is_latched_on_press() {
         h.step();
         h.step();
     };
-    // ЗАЛИВКИ подсветки в выводе кадра (участок под меню)
+    // the highlight FILL in the frame output (the segment under the menu)
     fn fills(shape: &egui::epaint::Shape, want: egui::Color32, out: &mut Vec<egui::Rect>) {
         use egui::epaint::Shape;
         match shape {
@@ -14744,34 +14744,34 @@ fn t751_the_menu_target_is_latched_on_press() {
         out
     };
 
-    // --- ПРАВЫЙ КЛИК ПО УЧАСТКУ между ключами 0 и 1 -------------------
+    // --- RIGHT CLICK ON THE SEGMENT between keys 0 and 1 -------------------
     let seg = egui::pos2((m[0].2.x + m[1].2.x) * 0.5, (m[0].2.y + m[1].2.y) * 0.5);
     right_click(&mut h, seg);
     assert_eq!(
         target(&h),
         Some(MenuTarget::Segment(0, 0)),
-        "цель не зафиксирована на нажатии"
+        "target was not fixed on press"
     );
 
-    // --- ТЯНЕМСЯ УКАЗАТЕЛЕМ К ПУНКТУ МЕНЮ -----------------------------
-    // (на прежнем коде именно здесь попадание пропадало, и меню закрывало
-    // себя само: «я не успеваю дотянуться до него»)
+    // --- POINTER MOVES TOWARD THE MENU ITEM -----------------------------
+    // (on the old code this is exactly where the hit was lost, and the menu closed
+    // itself: “I do not manage to reach it”)
     let hold = crate::widgets::shape_label(kt_model::SegShape::Hold).to_string();
     let item = crate::reach_tests::painted_texts(&h)
         .into_iter()
         .find(|t| t.src == hold)
         .map(|t| t.rect.center())
-        .expect("пункт формы не нарисован — меню не открылось вовсе");
+        .expect("form item is not drawn — the menu did not open at all");
     h.hover_at(item);
     h.step();
     h.step();
     assert_eq!(
         target(&h),
         Some(MenuTarget::Segment(0, 0)),
-        "цель потерялась, когда указатель ушёл к пунктам меню"
+        "target was lost when the pointer moved to the menu items"
     );
 
-    // заголовок называет ОБА конца участка: времена и доли события
+    // the header names BOTH ends of the segment: the times and the shares of the event
     let head = crate::tf!(
         k::fx::SHAPE_SEGMENT_AT,
         "0.000".to_string(),
@@ -14783,17 +14783,17 @@ fn t751_the_menu_target_is_latched_on_press() {
         crate::reach_tests::painted_texts(&h).into_iter().map(|t| t.src).collect();
     assert!(
         shown.iter().any(|s| s == &head),
-        "в меню нет заголовка участка «{head}»: {shown:?}"
+        "the menu has no segment heading “{head}”: {shown:?}"
     );
-    // и сам участок подсвечен ровно между этими ключами
+    // and the segment itself is highlighted exactly between these keys
     let hl = highlights(&h);
     assert!(
         hl.iter().any(|r| (r.left() - m[0].2.x).abs() < 1.5 && (r.right() - m[1].2.x).abs() < 1.5),
-        "участок под меню не подсвечен: {hl:?} против ключей {:?}",
+        "the segment under the menu is not highlighted: {hl:?} versus keys {:?}",
         (m[0].2.x, m[1].2.x)
     );
 
-    // --- ФОРМА ложится на ЛЕВЫЙ ключ участка и только на него ---------
+    // --- the SHAPE lands on the LEFT key of the segment and only on it ---------
     {
         use egui_kittest::kittest::Queryable;
         h.get_by_label(&hold).click();
@@ -14801,53 +14801,53 @@ fn t751_the_menu_target_is_latched_on_press() {
     h.step();
     h.step();
     let keys = h.state().model.project().clips[0].fx_auto[0][0].keys.clone();
-    assert_eq!(keys[0].shape, kt_model::SegShape::Hold, "форма не легла на левый ключ участка");
+    assert_eq!(keys[0].shape, kt_model::SegShape::Hold, "the shape did not land on the left key of the segment");
     assert_eq!(
         keys[1].shape,
         kt_model::SegShape::DEFAULT,
-        "форма поехала на соседний участок"
+        "the shape drifted onto the neighboring segment"
     );
-    // меню закрылось — цель забыта
+    // the menu closed — the target is forgotten
     h.step();
-    assert_eq!(target(&h), None, "после закрытия меню цель осталась висеть");
+    assert_eq!(target(&h), None, "after closing the menu the target was left hanging");
 
-    // --- ПРАВЫЙ КЛИК ПО КЛЮЧУ ведёт себя так же -----------------------
+    // --- a RIGHT CLICK ON A KEY behaves the same way -----------------------
     let m = marks(&h);
     right_click(&mut h, m[1].2);
-    assert_eq!(target(&h), Some(MenuTarget::Key(0, 1)), "ключ не зафиксирован на нажатии");
+    assert_eq!(target(&h), Some(MenuTarget::Key(0, 1)), "key was not fixed on press");
     let del = tr(k::tl::menu::DELETE).to_string();
     let item = crate::reach_tests::painted_texts(&h)
         .into_iter()
         .find(|t| t.src == del)
         .map(|t| t.rect.center())
-        .expect("пункта «удалить» нет — меню ключа не открылось");
+        .expect("no “delete” item — the key menu did not open");
     h.hover_at(item);
     h.step();
     h.step();
     assert_eq!(
         target(&h),
         Some(MenuTarget::Key(0, 1)),
-        "цель-ключ потерялась, когда указатель ушёл к пунктам меню"
+        "the target key was lost when the pointer moved to the menu items"
     );
     let head = crate::tf!(k::fx::KEY_AT, "0.500".to_string(), "50".to_string());
     let shown: Vec<String> =
         crate::reach_tests::painted_texts(&h).into_iter().map(|t| t.src).collect();
-    assert!(shown.iter().any(|s| s == &head), "в меню ключа нет заголовка «{head}»: {shown:?}");
+    assert!(shown.iter().any(|s| s == &head), "the key menu has no heading “{head}”: {shown:?}");
 }
 
-/// Тест 752c (Р.63 п.9): ручка ведущей геометрии действует у ЭКЗЕМПЛЯРА.
+/// Test 752c (R.63 item 9): the knob of the leading geometry acts on the INSTANCE.
 ///
-/// Вторая половина претензии «у первого geometry нет возможности
-/// опубликовать параметры»: мало открыть дверь автору — потребитель обязан
-/// получить обычную ручку, которая меняет КАДР и, значит, ключ превью
-/// ленты (иначе на таймлайне он увидит чужие кадры, t680).
+/// The second half of the claim “the first geometry has no way to
+/// publish parameters”: it is not enough to open the door for the author — the consumer must
+/// get an ordinary knob, which changes the FRAME and, therefore, the key of the reel
+/// preview (otherwise on the timeline it would show other people’s frames, t680).
 #[test]
 fn t752c_an_instance_edits_the_published_lead_geometry() {
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
     let (mut h, s) = harness_news_template();
 
-    // автор объявляет зум ведущего узла титра
+    // the author declares the zoom of the title’s leading node
     let zoom = PubId(50);
     h.state_mut().enter_nest(s.a);
     h.step();
@@ -14856,31 +14856,31 @@ fn t752c_an_instance_edits_the_published_lead_geometry() {
             seq: s.seq,
             param: Box::new(PublishedParam {
                 id: zoom,
-                name: "Крупность".into(),
+                name: "Zoom".into(),
                 target: ParamAddr::new(s.inner, ParamOwner::Geometry, "zoom"),
                 ty: ParamType::Num,
                 range: PubRange::default(),
             }),
         }),
-        "публикация зума ведущего узла отвергнута"
+        "publication of the leading node’s zoom was rejected"
     );
     h.step();
     h.state_mut().leave_nest();
     h.step();
 
-    // окно потребителя рисует ручку ИМЕНЕМ АВТОРА
+    // the consumer’s window draws the knob by the AUTHOR’S NAME
     h.state_mut().open_fx_editor_head(s.b);
     h.step();
     h.step();
     assert!(
-        h.query_all_by_label_contains("Крупность").count() > 0,
-        "ручка ведущей геометрии не показана потребителю"
+        h.query_all_by_label_contains("Zoom").count() > 0,
+        "the leading geometry handle is not shown to the consumer"
     );
 
-    // ...и правка поля (тем же жестом, что шлёт окно) меняет КАДР
+    // ...and editing the field (with the same gesture the window sends) changes the FRAME
     let keys = h.state_mut().reel_keys();
-    let (ka, kb) = (*keys.get(&s.a).expect("ключ A"), *keys.get(&s.b).expect("ключ B"));
-    assert_eq!(ka, kb, "сцена: до правки оба выпуска делят один ключ превью");
+    let (ka, kb) = (*keys.get(&s.a).expect("key A"), *keys.get(&s.b).expect("key B"));
+    assert_eq!(ka, kb, "scene: before the edit both issues share one preview key");
     let win = h.state().fx_editors[0].gesture;
     assert!(h.state_mut().apply_coalesced(
         Command::SetOverride { id: s.b, ov: Box::new(Override::value(zoom, ParamValue::Num(3.0))) },
@@ -14889,35 +14889,35 @@ fn t752c_an_instance_edits_the_published_lead_geometry() {
     h.step();
 
     let doc = h.state().model.document();
-    let inst = h.state().model.clip(s.b).cloned().expect("второй выпуск");
+    let inst = h.state().model.clip(s.b).cloned().expect("second issue");
     let r = doc.resolve_reel(Some(s.seq), &inst.overrides);
     assert_eq!(
         r.clips.iter().find(|c| same_clip(c.id, s.inner)).map(|c| c.geometry.zoom),
         Some(3.0),
-        "переопределение не доехало до ведущего узла внутри ленты"
+        "override did not reach the leading node inside the reel"
     );
     assert_eq!(
         doc.published_value(s.seq, zoom),
         Some(ParamValue::Num(1.0)),
-        "правка экземпляра уехала в САМУ ленту — это была бы правка всех мест сразу"
+        "instance edit went into the reel ITSELF — that would be an edit of all places at once"
     );
     let keys = h.state_mut().reel_keys();
-    let (ka2, kb2) = (*keys.get(&s.a).expect("ключ A"), *keys.get(&s.b).expect("ключ B"));
-    assert_eq!(ka2, ka, "шаблонный экземпляр не трогали — его ключ обязан остаться прежним");
+    let (ka2, kb2) = (*keys.get(&s.a).expect("key A"), *keys.get(&s.b).expect("key B"));
+    assert_eq!(ka2, ka, "template instance was not touched — its key must stay the same");
     assert_ne!(
         ka2, kb2,
-        "ключ превью не поехал: на таймлайне переопределённый выпуск показал бы ЧУЖИЕ кадры"
+        "preview key did not move: on the timeline the overridden issue would show OTHER frames"
     );
 }
 
-/// Тест 753b (Р.63 п.11): подтверждение публикации НЕ входит в ленту.
+/// Test 753b (R.63 item 11): the publish confirmation does NOT enter the reel.
 ///
-/// Владелец: «если опубликовать параметр не входя полностью в композицию —
-/// то зачем-то мы автоматически полностью входим в композицию». Вход был
-/// следствием команды (она правила «ту ленту, в которой стоишь»); теперь
-/// лента названа, и человек остаётся там, где стоял, — в корне с раскрытой
-/// полосой. Утверждение — наблюдаемое: `editing()` не изменился, а ручка
-/// лежит в ленте полосы.
+/// The owner: “if I publish a parameter without fully entering the composition —
+/// why do we then automatically enter the composition fully?” The entry was a
+/// consequence of the command (it edited “the reel you are standing in”); now the
+/// reel is named, and the person stays where he stood — at the root with the strip
+/// expanded. The assertion is observable: `editing()` has not changed, and the knob
+/// lies in the reel of the strip.
 #[test]
 fn t753b_confirming_a_publication_keeps_you_where_you_stand() {
     use egui_kittest::kittest::Queryable;
@@ -14927,22 +14927,22 @@ fn t753b_confirming_a_publication_keeps_you_where_you_stand() {
     let free_row =
         crate::widgets::param_label_scoped(kt_model::ParamScope::Generator, "line_spacing");
 
-    // человек стоит в КОРНЕ, лента раскрыта полосой
+    // the person stands at the ROOT, and the reel is expanded by its strip
     h.state_mut().expand_in_place(s.a);
     h.step();
     h.step();
-    assert!(!h.state().model.bands().is_empty(), "полоса не раскрылась — сцена не та");
-    assert_eq!(h.state().model.editing(), None, "сцена: человек в корне");
+    assert!(!h.state().model.bands().is_empty(), "strip did not expand — the scene is wrong");
+    assert_eq!(h.state().model.editing(), None, "scene: the person is at the root");
     h.state_mut().open_fx_editor_head(s.inner);
     h.step();
     h.step();
 
-    // правый клик по подписи → «Опубликовать…»
+    // right click on the label → “Publish…”
     let rect = h
         .query_all_by_label_contains(&free_row)
         .map(|n| n.rect())
         .min_by(|a, b| a.top().total_cmp(&b.top()))
-        .expect("подписи ряда нет");
+        .expect("no row label");
     let pos = rect.center();
     h.hover_at(pos);
     h.step();
@@ -14959,9 +14959,9 @@ fn t753b_confirming_a_publication_keeps_you_where_you_stand() {
     h.get_by_label_contains(&publish).click();
     h.step();
     h.step();
-    assert!(h.state().publish_dialog.is_some(), "окно подтверждения не открылось");
+    assert!(h.state().publish_dialog.is_some(), "confirmation window did not open");
 
-    // подтверждаем
+    // we confirm
     h.get_by_label_contains(&ok).click();
     h.step();
     h.step();
@@ -14969,30 +14969,30 @@ fn t753b_confirming_a_publication_keeps_you_where_you_stand() {
     assert_eq!(
         h.state().model.editing(),
         None,
-        "подтверждение утащило человека внутрь ленты (на прежнем коде — утаскивало)"
+        "confirmation pulled the person inside the reel (on the old code it did pull)"
     );
     assert!(
         !h.state().model.bands().is_empty(),
-        "полоса закрылась сама — а она и есть рабочее место человека"
+        "strip closed by itself — yet that strip is the person’s workplace"
     );
     let set = h.state().model.document().sequence(s.seq).map(|q| q.published.len()).unwrap_or(0);
-    assert_eq!(set, 7, "ручка не легла в ленту полосы: в наборе {set} вместо семи");
+    assert_eq!(set, 7, "handle did not land in the strip’s set: {set} instead of seven");
 }
 
-/// Тест 755b (Р.63 п.10): ручка эффекта, правленная у ЭКЗЕМПЛЯРА, меняет
-/// то, что показывает таймлайн.
+/// Test 755b (R.63 item 10): an effect knob edited on the INSTANCE changes
+/// what the timeline shows.
 ///
-/// Владелец: «накинул Radial blur, опубликовал параметр количества,
-/// поменял его на композиции — а оно не меняется». Наблюдаемое следствие,
-/// которое обязано выполняться: ключ превью ленты у этого экземпляра
-/// поехал (иначе на таймлайне он показывает кадры ШАБЛОНА), а у соседа —
-/// нет.
+/// The owner: “I threw on Radial blur, published the amount parameter,
+/// changed it in the composition — and it does not change.” The observable consequence
+/// that must hold: the reel preview key of this instance
+/// moved (otherwise the timeline shows TEMPLATE frames), and the neighbour’s did
+/// not.
 #[test]
 fn t755b_an_instance_knob_moves_its_preview_key() {
     use kt_model::*;
     let (mut h, s) = harness_news_template();
 
-    // внутри ленты на титр — радиальное размытие, ручка «количество»
+    // inside the reel, on the title — radial blur, the “amount” knob
     let amount = PubId(60);
     h.state_mut().enter_nest(s.a);
     h.step();
@@ -15006,23 +15006,23 @@ fn t755b_an_instance_knob_moves_its_preview_key() {
             seq: s.seq,
             param: Box::new(PublishedParam {
                 id: amount,
-                name: "Размытие".into(),
+                name: "Blur".into(),
                 target: ParamAddr::new(s.inner, ParamOwner::FxSlot { slot: 0 }, "amount"),
                 ty: ParamType::Num,
                 range: PubRange::default(),
             }),
         }),
-        "публикация ручки размытия отвергнута"
+        "publication of the blur handle was rejected"
     );
     h.step();
     h.state_mut().leave_nest();
     h.step();
 
     let keys = h.state_mut().reel_keys();
-    let (ka, kb) = (*keys.get(&s.a).expect("ключ A"), *keys.get(&s.b).expect("ключ B"));
-    assert_eq!(ka, kb, "сцена: до правки оба выпуска делят один ключ превью");
+    let (ka, kb) = (*keys.get(&s.a).expect("key A"), *keys.get(&s.b).expect("key B"));
+    assert_eq!(ka, kb, "scene: before the edit both issues share one preview key");
 
-    // правим ручку У ЭКЗЕМПЛЯРА — тем же путём, каким это делает окно
+    // we edit the knob ON THE INSTANCE — by the same route the window uses
     h.state_mut().open_fx_editor_head(s.b);
     h.step();
     h.step();
@@ -15036,108 +15036,108 @@ fn t755b_an_instance_knob_moves_its_preview_key() {
     ));
     h.step();
 
-    // ...и это видно: редакция ленты у второго выпуска другая
+    // ...and this is visible: the reel edition of the second edition is different
     let doc = h.state().model.document();
-    let inst = h.state().model.clip(s.b).cloned().expect("второй выпуск");
+    let inst = h.state().model.clip(s.b).cloned().expect("second issue");
     let r = doc.resolve_reel(Some(s.seq), &inst.overrides);
     let got = r
         .clips
         .iter()
         .find(|c| same_clip(c.id, s.inner))
         .and_then(|c| c.fx.first().and_then(|f| f.get_value("amount")));
-    // сравнение с допуском: у слота параметр f32, и 0.9 туда не ложится точно
+    // a comparison with a tolerance: the slot’s parameter is f32, and 0.9 does not fit there exactly
     assert!(
         matches!(got, Some(ParamValue::Num(v)) if (v - 0.9).abs() < 1e-6),
-        "переопределение не доехало до слота эффекта внутри ленты: {got:?}"
+        "override did not reach the effect slot inside the reel: {got:?}"
     );
     let keys = h.state_mut().reel_keys();
-    let (ka2, kb2) = (*keys.get(&s.a).expect("ключ A"), *keys.get(&s.b).expect("ключ B"));
-    assert_eq!(ka2, ka, "шаблонный экземпляр не трогали — его ключ обязан остаться прежним");
+    let (ka2, kb2) = (*keys.get(&s.a).expect("key A"), *keys.get(&s.b).expect("key B"));
+    assert_eq!(ka2, ka, "template instance was not touched — its key must stay the same");
     assert_ne!(
         ka2, kb2,
-        "ключ превью не поехал: экземпляр показывал бы кадры ШАБЛОНА — ровно \
-         «поменял его на композиции, а оно не меняется»"
+        "preview key did not move: the instance would show the frames of the TEMPLATE — exactly \
+         “I changed it on the composition, and it does not change”"
     );
 }
 
-/// Тест 754 (Р.63 п.12): параметры композиции живут ГОЛОВОЙ ПОЛОСЫ, а не
-/// отдельным окном.
+/// Test 754 (R.63 item 12): the composition parameters live at the HEAD OF THE STRIP, not in
+/// a separate window.
 ///
-/// Владелец: «достаточно ебануто сделано то, что параметры композиции
-/// открываются в отдельном окне, когда их можно поместить в тот же
-/// fx-chain для удобства. Я ставлю запрет любым агентам порождать
-/// какие-либо дополнительные окна без очевидного смысла». Утверждения —
-/// наблюдаемые: голова есть в полосе, клик по ней выбирает её, форма
-/// рисуется В ОКНЕ FX (её прямоугольники внутри его прямоугольника), а
-/// правка ручки и правка слота в одной сессии дают ОДИН шаг истории.
+/// The owner: “it is damn crazy how the composition parameters
+/// open in a separate window, when they could be placed in the same
+/// fx-chain for convenience. I am putting a ban on any agents spawning
+/// any additional windows without an obvious purpose.” The assertions are
+/// observable: the head is in the strip, a click on it selects it, the shape
+/// is drawn IN THE FX WINDOW (its rectangles inside its rectangle), and
+/// a knob edit and a slot edit in one session give ONE history step.
 #[test]
 fn t754_instance_params_live_in_the_chain_head() {
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
     let (mut h, s) = harness_news_template();
 
-    // окно FX экземпляра открывается обычным путём
+    // the FX window of the instance opens by the usual route
     h.state_mut().open_fx_editor(s.b);
     h.step();
     h.step();
-    // С Р.67 голова подписана ИМЕНЕМ ЛЕНТЫ, а не «Параметры композиции»:
-    // длинная строка закрывала полосу, а акцентный цвет при выделении давал
-    // «длинный синий прямоугольник» (владелец, п.8). Утверждение прежнее —
-    // голова есть и по клику даёт ручки автора, — меняется только подпись.
+    // Since R.67 the head is labelled with the REEL’s NAME, not “Composition parameters”:
+    // the long line covered the strip, and the accent colour on selection gave a
+    // “long blue rectangle” (owner, item 8). The assertion is the same —
+    // the head is there and a click gives the author’s knobs — only the label changes.
     let reel = h
         .state()
         .model
         .project()
         .sequence(s.seq)
         .map(|x| x.name.clone())
-        .expect("лента на месте");
+        .expect("reel is in place");
     let head = format!("{} {reel}", crate::icons::PIN);
     assert!(
         h.query_all_by_label_contains(&head).count() > 0,
-        "головы экземпляра (пин и имя ленты) нет в полосе цепочки"
+        "instance heads (pin and reel name) are not in the chain strip"
     );
 
-    // клик по голове выбирает её — и появляются ручки автора
+    // a click on the head selects it — and the author’s knobs appear
     h.get_by_label_contains(&head).click();
     h.step();
     h.step();
     assert_eq!(
         h.state().fx_editors[0].selected.get(&s.b),
         Some(&crate::widgets::ChainSel::Head),
-        "клик по голове её не выбрал"
+        "click on the head did not select it"
     );
-    for name in ["Заголовок", "Кегль", "Логотип"] {
+    for name in ["Heading", "Font size", "Logo"] {
         assert!(
             h.query_all_by_label_contains(name).count() > 0,
-            "ручки «{name}» в голове нет — форма не переехала"
+            "handle “{name}” is not in the head — the form did not move"
         );
     }
 
-    // форма ВНУТРИ окна FX: отдельного окна больше нет
+    // the shape INSIDE the FX window: there is no separate window any more
     let probes = crate::widgets::field_probe::take();
     let _ = probes;
     let win = h
         .ctx
         .memory(|m| m.area_rect(egui::Id::new(("fx", h_clip(&h, s.b)))))
-        .expect("прямоугольник окна FX");
+        .expect("FX window rectangle");
     let row = h
-        .query_all_by_label_contains("Заголовок")
+        .query_all_by_label_contains("Heading")
         .map(|n| n.rect())
         .find(|r| r.width() > 0.0)
-        .expect("строка ручки нарисована");
+        .expect("handle row is drawn");
     assert!(
         win.expand(2.0).contains_rect(row),
-        "строка ручки нарисована ВНЕ окна FX ({row:?} против {win:?}) — значит \
-         рядом всё-таки живёт своё окно"
+        "handle row is drawn OUTSIDE the FX window ({row:?} versus {win:?}) — which means \
+             a separate window still lives next to it"
     );
 
-    // ОДИН шаг истории на сессию: ручка и слот правятся общим токеном
+    // ONE history step per session: the knob and the slot are edited by a shared token
     let token = h.state().fx_editors[0].gesture;
     let before = h.state().model.undo_depth();
     assert!(h.state_mut().apply_coalesced(
         Command::SetOverride {
             id: s.b,
-            ov: Box::new(Override::value(s.headline, ParamValue::Text("ВТОРОЙ".into()))),
+            ov: Box::new(Override::value(s.headline, ParamValue::Text("SECOND".into()))),
         },
         token
     ));
@@ -15149,36 +15149,36 @@ fn t754_instance_params_live_in_the_chain_head() {
     assert_eq!(
         h.state().model.undo_depth(),
         before + 1,
-        "правка ручки и правка события дали РАЗНЫЕ шаги истории: токен окна не общий"
+        "handle edit and event edit produced DIFFERENT history steps: the window token is not shared"
     );
 
-    // ...и «Отмена» окна возвращает ручку тоже: голова — часть той же
-    // сессии, откатывать её половину было бы ложью
+    // ...and the “Cancel” of the window returns the knob too: the head is part of the same
+    // session, and rolling back its half would be a lie
     h.get_by_label_contains(tr(k::fx::CANCEL)).click();
     h.step();
     h.step();
     assert!(
         h.state().model.clip(s.b).is_some_and(|c| c.overrides.is_empty()),
-        "«Отмена» окна FX не вернула ручки композиции — окно откатило половину своей сессии"
+        "“Cancel” in the FX window did not restore the composition handles — the window rolled back half of its session"
     );
 }
 
-/// Прямоугольник окна FX ищется по id его якоря — того события, вокруг
-/// которого окно собрано (у A/V-пары это один якорь на обе дорожки).
+/// The FX window’s rectangle is found by the id of its anchor — the event
+/// around which the window is built (for an A/V pair this is one anchor for both tracks).
 fn h_clip(h: &Harness<'_, KtApp>, want: kt_model::ClipId) -> u64 {
     h.state()
         .fx_editors
         .iter()
         .find(|e| e.members.contains(&want))
         .map(|e| e.clip.0)
-        .expect("окно FX экземпляра открыто")
+        .expect("instance FX window is open")
 }
 
 pub(crate) fn harness_geom_ctl() -> (Harness<'static, KtApp>, kt_model::ClipId) {
     use kt_model::*;
-    // сцена — ГЕНЕРАТОР: у него источник поднимается тем же путём, что в
-    // программе, и превью получает НАСТОЯЩИЙ кадр (без кадра нет ни
-    // картинки, ни контролов над ней — как у драга титра, t495)
+    // the scene is a GENERATOR: its source is brought up by the same route as in the
+    // program, and the preview gets a REAL frame (without a frame there is neither a
+    // picture nor controls over it — as with the title drag, t495)
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
     h.state_mut().create_generator(GeneratorKind::Solid {
         color_r: 200,
@@ -15190,7 +15190,7 @@ pub(crate) fn harness_geom_ctl() -> (Harness<'static, KtApp>, kt_model::ClipId) 
     h.state_mut().fx_editors.clear();
     {
         let app = h.state_mut();
-        let c = app.model.clip(clip).cloned().expect("событие");
+        let c = app.model.clip(clip).cloned().expect("event");
         app.selected.clear();
         app.selected.insert(clip);
         app.player.seek(kt_time::Tick(c.start.0 + c.duration.0 / 2));
@@ -15201,13 +15201,13 @@ pub(crate) fn harness_geom_ctl() -> (Harness<'static, KtApp>, kt_model::ClipId) 
     (h, clip)
 }
 
-/// Тест 760 (Р.64): рамка над кадром равна аналитической, жест правит те
-/// же числа, что поля, и даёт ОДИН шаг истории.
+/// Test 760 (R.64): the frame over the picture equals the analytic one, the gesture edits the
+/// same numbers as the fields, and gives ONE history step.
 ///
-/// Владелец (Р.63 п.6): «КАК МИНИМУМ у нас должно быть редактирование прям
-/// в превью удобное». Рамка обязана совпадать с прямоугольником, по
-/// которому композит кладёт слой, — иначе человек тянет одно, а получает
-/// другое.
+/// The owner (R.63 item 6): “AT MINIMUM we should have convenient editing right
+/// in the preview.” The frame must coincide with the rectangle onto which the composite
+/// places the layer — otherwise the person drags one thing and gets
+/// another.
 #[test]
 fn t760_frame_matches_the_placement_and_drag_writes_the_same_numbers() {
     use kt_model::*;
@@ -15215,8 +15215,8 @@ fn t760_frame_matches_the_placement_and_drag_writes_the_same_numbers() {
     let q = h.state().player.preview_quality();
     let canvas = (q.width as f64, q.height as f64);
 
-    // --- РАМКА равна аналитической -----------------------------------
-    let pl = h.state().geom_placement(clip, canvas).expect("размещение есть");
+    // --- the FRAME equals the analytic one -----------------------------------
+    let pl = h.state().geom_placement(clip, canvas).expect("placement is present");
     let g = h.state().model.clip(clip).unwrap().geometry;
     let want = kt_fx::geom::geometry_placement(
         &g.node(),
@@ -15230,27 +15230,27 @@ fn t760_frame_matches_the_placement_and_drag_writes_the_same_numbers() {
             .unwrap_or(canvas),
         canvas,
     )
-    .expect("аналитическое размещение");
-    assert_eq!(pl, want, "рамка интерфейса разошлась с размещением рендера");
+    .expect("analytical placement");
+    assert_eq!(pl, want, "interface frame diverged from the render placement");
 
-    // --- ПЕРЕНОС за тело: те же числа, один шаг истории ---------------
+    // --- MOVE by the body: the same numbers, one history step ---------------
     let depth = h.state().model.undo_depth();
     let before = h.state().model.clip(clip).unwrap().geometry;
-    // масштаб «экран → холст» считается по КАРТИНКЕ, а не по панели:
-    // у панели есть поля letterbox, и по ней 48 px указателя переводятся
-    // в другое число долей (ровно этим тест краснел на верном коде)
+    // the “screen → canvas” scale is computed by the PICTURE, not by the panel:
+    // the panel has letterbox margins, and by it 48 px of the pointer are converted
+    // into a different number of shares (this exact thing turned the test red on the correct code)
     let img = {
         let r = h.state().preview_img_rect;
-        assert!(r.width() > 40.0, "превью в харнессе есть: {r:?}");
+        assert!(r.width() > 40.0, "preview in the harness exists: {r:?}");
         r
     };
-    // диагностика сцены: есть ли кадр и виден ли набор
-    assert!(h.state().texture.is_some(), "в превью нет кадра — контролам не над чем рисоваться");
-    assert_eq!(h.state().geom_mode(), crate::geomctl::GeomMode::Transform, "набор не включён");
-    assert!(h.state().geom_target().is_ok(), "цель рамки не выбрана");
-    assert!(h.state().geom_ctl_drawn, "контролы не дошли до разбора жеста");
-    // берём точку ВНУТРИ рамки, но не на ручке: центр занят якорем,
-    // углы и середины сторон — ручками масштаба
+    // scene diagnostics: is there a frame and is the set visible
+    assert!(h.state().texture.is_some(), "there is no frame in the preview — the controls have nothing to draw on");
+    assert_eq!(h.state().geom_mode(), crate::geomctl::GeomMode::Transform, "set is not enabled");
+    assert!(h.state().geom_target().is_ok(), "frame target is not selected");
+    assert!(h.state().geom_ctl_drawn, "controls did not reach gesture parsing");
+    // we take a point INSIDE the frame, but not on a knob: the centre is taken by the anchor,
+    // the corners and side midpoints are the scale knobs
     let c = img.min + egui::vec2(img.width() * 0.3, img.height() * 0.32);
     h.hover_at(c);
     h.step();
@@ -15258,7 +15258,7 @@ fn t760_frame_matches_the_placement_and_drag_writes_the_same_numbers() {
     h.step();
     h.hover_at(c + egui::vec2(12.0, 0.0));
     h.step();
-    assert!(h.state().geom_drag.is_some(), "жест не начался: контрол не поймал нажатие");
+    assert!(h.state().geom_drag.is_some(), "gesture did not start: the control did not catch the press");
     h.hover_at(c + egui::vec2(48.0, 30.0));
     h.step();
     h.drop_at(c + egui::vec2(48.0, 30.0));
@@ -15267,18 +15267,18 @@ fn t760_frame_matches_the_placement_and_drag_writes_the_same_numbers() {
     let after = h.state().model.clip(clip).unwrap().geometry;
     assert!(
         after.pos_x > before.pos_x + 1e-6 && after.pos_y > before.pos_y + 1e-6,
-        "перенос за тело не сдвинул позицию: {:?} → {:?}",
+        "moving by the body did not shift the position: {:?} → {:?}",
         (before.pos_x, before.pos_y),
         (after.pos_x, after.pos_y)
     );
     assert_eq!(
         h.state().model.undo_depth(),
         depth + 1,
-        "жест обязан дать РОВНО один шаг истории"
+        "gesture must produce EXACTLY one history step"
     );
-    // …и сдвиг ПРАВДОПОДОБЕН: это то же движение указателя, переведённое
-    // в доли холста той же функцией (точность возврата доказывает t761 на
-    // чистой функции — здесь проверяется, что жест ходит через неё)
+    // ...and the shift is PLAUSIBLE: this is the same pointer movement, converted
+    // into canvas shares by the same function (the round-trip accuracy is proved by t761 on the
+    // pure function — here it is checked that the gesture goes through it)
     let img_w = img.width() as f64;
     let img_h = img.height() as f64;
     let full = kt_fx::geom::pos_for_drag(
@@ -15289,18 +15289,18 @@ fn t760_frame_matches_the_placement_and_drag_writes_the_same_numbers() {
     for (got, want, ax) in [(after.pos_x, full.0, "X"), (after.pos_y, full.1, "Y")] {
         assert!(
             got > want * 0.6 && got <= want * 1.05,
-            "сдвиг по {ax} не похож на движение указателя: {got} против {want} \
-             (порог драга в значение не попадает, поэтому «чуть меньше» — норма)"
+            "shift along {ax} does not look like pointer movement: {got} versus {want} \
+             (the drag threshold does not land on the value, so “slightly less” is normal)"
         );
     }
-    // ЧИСЛО ОДНО: модель и поле окна FX читают одно и то же значение
+    // the NUMBER IS ONE: the model and the FX window field read the same value
     assert_eq!(
         h.state().model.clip(clip).unwrap().geometry.pos_x,
         after.pos_x,
-        "значение в модели разошлось с тем, что показывает форма"
+        "value in the model diverged from what the form shows"
     );
 
-    // --- рамки НЕТ у аудио и при мультивыделении, причина названа ------
+    // --- there is NO frame for audio and for multi-selection, the reason is named ------
     {
         let app = h.state_mut();
         let audio = app
@@ -15315,14 +15315,14 @@ fn t760_frame_matches_the_placement_and_drag_writes_the_same_numbers() {
             app.selected.insert(a);
             assert!(
                 matches!(app.geom_target(), Err(crate::geomctl::NoFrame::NotVideo)),
-                "у аудио-события рамка не должна рисоваться"
+                "frame must not be drawn for an audio event"
             );
         }
         app.selected.insert(clip);
         if audio.is_some() {
             assert!(
                 matches!(app.geom_target(), Err(crate::geomctl::NoFrame::ManySelected)),
-                "при мультивыделении рамка не рисуется"
+                "frame is not drawn during multi-selection"
             );
         }
         app.selected.clear();
@@ -15330,23 +15330,23 @@ fn t760_frame_matches_the_placement_and_drag_writes_the_same_numbers() {
     }
 }
 
-/// Тест 759 (Р.64): форма «Трансформация» у ведущего узла.
+/// Test 759 (R.64): the “Transform” shape on the leading node.
 ///
-/// Претензия владельца (Р.63 п.6): «сплошные скучные поля ввода, даже в
-/// Vegas и то лучше сделано… в том же Pr/Ae это удобнее». Утверждается то,
-/// что человек видит и делает: группы, пара X/Y ОДНОЙ строкой, ползунки у
-/// зума и поворота, схема, считающая ТЕ ЖЕ числа, и «сбросить геометрию»
-/// одним шагом истории.
+/// The owner’s claim (R.63 item 6): “solid boring input fields; even in
+/// Vegas it is done better… in Pr/Ae this is more convenient.” What is asserted is what
+/// a person sees and does: groups, the X/Y pair on ONE row, sliders for
+/// zoom and rotation, a diagram that computes THE SAME numbers, and “reset geometry”
+/// in one history step.
 #[test]
 fn t759_transform_form_groups_pairs_sliders_and_reset() {
     use eframe::egui::accesskit::Role;
     use egui_kittest::kittest::{Queryable, by};
     use kt_model::*;
     let (mut h, clip) = harness_geom_ctl();
-    // геометрия СДВИНУТА — иначе сброс нечего возвращать
+    // the geometry is MOVED — otherwise the reset has nothing to return
     {
         let app = h.state_mut();
-        let c = app.model.clip(clip).cloned().expect("событие");
+        let c = app.model.clip(clip).cloned().expect("event");
         app.apply(Command::SetGeometry {
             id: clip,
             geometry: EventGeometry { pos_x: 0.2, zoom: 1.7, rot: 30.0, crop_l: 0.1, ..c.geometry },
@@ -15362,45 +15362,45 @@ fn t759_transform_form_groups_pairs_sliders_and_reset() {
     h.step();
     h.step();
 
-    // ---- ГРУППЫ -------------------------------------------------------
+    // ---- GROUPS -------------------------------------------------------
     for key in [k::geomctl::GROUP_FRAME, k::geomctl::GROUP_POS, k::geomctl::GROUP_CROP] {
         let title = tr(key);
         assert!(
             h.query_all_by_label_contains(title).count() > 0,
-            "группы «{title}» в форме нет — поля остались сплошным списком"
+            "group “{title}” is not in the form — the fields stayed a flat list"
         );
     }
 
-    // ---- ПАРА X/Y ОДНОЙ СТРОКОЙ ---------------------------------------
-    // подпись ищется ТОЧНО: «X:» встречается и внутри «Якорь X:»
+    // ---- X/Y PAIR ON ONE ROW ---------------------------------------
+    // the label is searched EXACTLY: “X:” occurs inside “Anchor X:” too
     let row_of = |h: &Harness<'_, KtApp>, label: &str| -> egui::Rect {
         h.get_all_by_label(label)
             .map(|n| n.rect())
             .find(|r| r.width() > 0.0)
-            .unwrap_or_else(|| panic!("подписи «{label}» нет в форме"))
+            .unwrap_or_else(|| panic!("label “{label}” is not in the form"))
     };
     let rx = row_of(&h, tr(k::fxp::POS_X));
     let ry = row_of(&h, tr(k::fxp::POS_Y));
     assert!(
         (rx.center().y - ry.center().y).abs() < 4.0 && (rx.center().x - ry.center().x).abs() > 8.0,
-        "X и Y стоят не парой на одной строке: {rx:?} против {ry:?}"
+        "X and Y are not paired on one row: {rx:?} versus {ry:?}"
     );
 
-    // ---- ПОЛЗУНКИ у зума и поворота -----------------------------------
+    // ---- SLIDERS for zoom and rotation -----------------------------------
     let sliders = h.query_all(by().role(Role::Slider)).count();
     assert!(
         sliders >= 2,
-        "ползунков в форме {sliders}: зум и поворот обязаны иметь их оба          (тянуть число по одному пикселю — это и есть «скучные поля»)"
+        "sliders in the form: {sliders} — zoom and rotation must both have them          (dragging a number by one pixel is exactly what makes the fields “boring”)"
     );
 
-    // ---- СХЕМА считает ТЕ ЖЕ числа ------------------------------------
+    // ---- the DIAGRAM computes THE SAME numbers ------------------------------------
     {
         let g = h.state().model.clip(clip).unwrap().geometry;
         let size = egui::vec2(116.0, 66.0);
-        let (quad, anchor) = crate::geomctl::schema_quad(&g.node(), size).expect("схема считается");
+        let (quad, anchor) = crate::geomctl::schema_quad(&g.node(), size).expect("diagram is computed");
         let (q0, a0) = crate::geomctl::schema_quad(&EventGeometry::default().node(), size)
-            .expect("схема умолчаний");
-        assert_ne!(quad, q0, "схема не видит ни зума, ни поворота, ни кропа");
+            .expect("default diagram");
+        assert_ne!(quad, q0, "diagram does not see zoom, rotation or crop");
         let w = |q: [(f64, f64); 4]| {
             let (mut lo, mut hi) = (f64::MAX, f64::MIN);
             for c in q {
@@ -15409,14 +15409,14 @@ fn t759_transform_form_groups_pairs_sliders_and_reset() {
             }
             hi - lo
         };
-        assert!(w(quad) > w(q0), "зум 1.7 не расширил рамку схемы: {} против {}", w(quad), w(q0));
+        assert!(w(quad) > w(q0), "zoom 1.7 did not widen the diagram frame: {} versus {}", w(quad), w(q0));
         assert!(
             (anchor.0 - a0.0).abs() > 1.0,
-            "якорь схемы не уехал вместе с положением: {anchor:?} против {a0:?}"
+            "diagram anchor did not move with the position: {anchor:?} versus {a0:?}"
         );
     }
 
-    // ---- СБРОС одним шагом истории ------------------------------------
+    // ---- RESET in one history step ------------------------------------
     let depth = h.state().model.undo_depth();
     h.get_by_label_contains(tr(k::geomctl::RESET)).click();
     h.step();
@@ -15425,41 +15425,41 @@ fn t759_transform_form_groups_pairs_sliders_and_reset() {
     assert_eq!(
         (g.pos_x, g.zoom, g.rot, g.crop_l),
         (0.0, 1.0, 0.0, 0.0),
-        "«Сбросить геометрию» не вернула умолчания"
+        "“Reset geometry” did not restore the defaults"
     );
     assert_eq!(
         h.state().model.undo_depth(),
         depth + 1,
-        "сброс — ОДИН шаг истории (сессия окна), а не десять команд"
+        "reset is ONE history step (window session), not ten commands"
     );
-    // единицы берутся из ПАСПОРТА, а не пишутся в подпись
+    // units are taken from the PASSPORT, not written into the label
     assert_eq!(
         crate::geomctl::shown_spec_unit("crop_l"),
         Some(kt_model::ParamUnit::Percent),
-        "доля кропа обязана показываться процентом (п.415)"
+        "crop fraction must be shown as a percent (item 415)"
     );
     assert_eq!(
         crate::geomctl::shown_spec_unit("zoom"),
         Some(kt_model::ParamUnit::Ratio),
-        "зум — отношение (×), а не процент"
+        "zoom is a ratio (×), not a percent"
     );
 }
 
-/// Тест 762b (Р.64): жест над АНИМИРОВАННЫМ параметром ставит ключ.
+/// Test 762b (R.64): a gesture over an ANIMATED parameter sets a key.
 ///
-/// Правило 17 буквально: экранная рамка и поле окна FX правят одно и то же
-/// значение ОДНИМ правилом (`CurveBind`). У параметра с живой кривой это
-/// ключ по курсору, а не константа: иначе жест стирал бы анимацию, показывая
-/// при этом её же значение. Соседний параметр БЕЗ кривой тем же жестом
-/// правит базу — обе половины правила в одном тесте.
+/// Rule 17 to the letter: the on-screen frame and the FX window field edit the same
+/// value with ONE rule (`CurveBind`). For a parameter with a live curve this is a
+/// key at the cursor, not a constant: otherwise the gesture would erase the animation, while
+/// showing that same value. A neighbouring parameter WITHOUT a curve is edited by the same gesture
+/// into the base — both halves of the rule in one test.
 #[test]
 fn t762b_gesture_over_a_curve_sets_a_key() {
     use kt_model::*;
     let (mut h, clip) = harness_geom_ctl();
-    // кривая у pos_x: 0 → 0.2 по всему материалу события
+    // a curve on pos_x: 0 → 0.2 across all the material of the event
     let (at, keys0) = {
         let app = h.state_mut();
-        let c = app.model.clip(clip).cloned().expect("событие");
+        let c = app.model.clip(clip).cloned().expect("event");
         let curve = ParamCurve {
             param: "pos_x".into(),
             keys: AutoKey::linear(vec![
@@ -15477,56 +15477,56 @@ fn t762b_gesture_over_a_curve_sets_a_key() {
         (app.geom_curve_at(clip), 2usize)
     };
     h.step();
-    // рамка показывает то же, что рендер: значение КРИВОЙ под курсором
-    let shown = h.state().geom_effective(clip).expect("эффективная геометрия").pos_x;
+    // the frame shows the same as the render: the CURVE value under the cursor
+    let shown = h.state().geom_effective(clip).expect("effective geometry").pos_x;
     assert!(
         (shown - 0.1).abs() < 1e-6,
-        "рамка считает по базе, а не по кривой под курсором: {shown}"
+        "frame is computed from the base, not from the curve under the cursor: {shown}"
     );
 
     let c0 = body_pos(&h, clip);
     let depth = h.state().model.undo_depth();
     geom_drag(&mut h, c0, c0 + egui::vec2(40.0, 26.0), egui::Modifiers::NONE);
 
-    let c = h.state().model.clip(clip).cloned().expect("событие");
-    assert_eq!(h.state().model.undo_depth(), depth + 1, "жест — один шаг истории");
-    // …параметр С КРИВОЙ: база цела, ключ по курсору поставлен
-    assert_eq!(c.geometry.pos_x, 0.0, "жест переписал КОНСТАНТУ анимированного параметра");
+    let c = h.state().model.clip(clip).cloned().expect("event");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "gesture — one history step");
+    // …the parameter WITH A CURVE: the base is intact, the key is set at the cursor
+    assert_eq!(c.geometry.pos_x, 0.0, "gesture overwrote the CONSTANT of an animated parameter");
     let curve = c
         .geometry_auto
         .iter()
         .find(|cu| cu.param == "pos_x")
-        .expect("кривая pos_x жива");
+        .expect("pos_x curve is alive");
     assert!(
         curve.keys.len() > keys0,
-        "ключ по курсору не поставлен: ключей по-прежнему {}",
+        "key was not set at the cursor: keys remain {}",
         curve.keys.len()
     );
     let key = curve
         .keys
         .iter()
         .find(|k| k.t == at)
-        .unwrap_or_else(|| panic!("нет ключа в позиции курсора {at:?}: {:?}", curve.keys));
+        .unwrap_or_else(|| panic!("no key at the cursor position {at:?}: {:?}", curve.keys));
     assert!(
         key.v > 0.1 + 1e-6,
-        "ключ поставлен, но значение не от жеста: {} (кривая под курсором давала 0.1)",
+        "key was set, but the value is not from the gesture: {} (the curve under the cursor gave 0.1)",
         key.v
     );
-    // …а параметр БЕЗ кривой тем же жестом правит базу
-    assert!(c.geometry.pos_y > 1e-6, "pos_y без кривой обязан править базу: {}", c.geometry.pos_y);
+    // …and the parameter WITHOUT a curve is edited into the base by the same gesture
+    assert!(c.geometry.pos_y > 1e-6, "pos_y without a curve must edit the base: {}", c.geometry.pos_y);
     assert!(
         !c.geometry_auto.iter().any(|cu| cu.param == "pos_y"),
-        "жест завёл кривую там, где её не было"
+        "gesture created a curve where there was none"
     );
 }
 
-/// Тест 763 (Р.64): попадание в ручку с первого раза и приоритет при
-/// мелкой рамке.
+/// Test 763 (R.64): hitting a knob on the first try, and priority on a
+/// small frame.
 ///
-/// Разведка F-UI-001: «точность жеста падает вместе с качеством превью» —
-/// на мелкой рамке хват-зоны перекрываются, и правило «кто ближе» остаётся
-/// единственным однозначным. Плюс правило 1 чек-листа: целиться в ручку
-/// размером с точку человек не должен.
+/// Discovery F-UI-001: “gesture accuracy drops along with preview quality” —
+/// on a small frame the grab zones overlap, and the rule “whichever is nearer” remains
+/// the only unambiguous one. Plus rule 1 of the checklist: a person must not have to aim
+/// at a knob the size of a dot.
 #[test]
 fn t763_handles_are_hittable_and_the_nearest_wins() {
     use crate::geomctl::{GRAB, GeomMode, nearest_handle};
@@ -15534,8 +15534,8 @@ fn t763_handles_are_hittable_and_the_nearest_wins() {
     let (h, clip) = harness_geom_ctl();
     let q = h.state().player.preview_quality();
     let canvas = (q.width as f64, q.height as f64);
-    let pl = h.state().geom_placement(clip, canvas).expect("размещение");
-    // холст → экран, как в контроле
+    let pl = h.state().geom_placement(clip, canvas).expect("placement");
+    // canvas → screen, as in the control
     let img = h.state().preview_img_rect;
     let to_screen = |p: (f64, f64)| -> egui::Pos2 {
         egui::pos2(
@@ -15544,56 +15544,56 @@ fn t763_handles_are_hittable_and_the_nearest_wins() {
         )
     };
 
-    // --- КАЖДАЯ ручка ловится в своей точке и в пределах хват-зоны -----
+    // --- EACH knob is caught at its own point and within the grab zone -----
     for h_ in GeomMode::Transform.handles() {
         if *h_ == Handle::Anchor {
-            continue; // у якоря своя, узкая зона — проверяется ниже
+            continue; // the anchor has its own narrow zone — checked below
         }
         let p = to_screen(h_.point(&pl));
         assert_eq!(
             nearest_handle(&pl, GeomMode::Transform, p, &to_screen, false),
             Some(*h_),
-            "ручка {h_:?} не ловится в собственной точке"
+            "handle {h_:?} is not caught at its own point"
         );
-        // …и с края хват-зоны (правило 1: 14 px)
+        // ...and from the edge of the grab zone (rule 1: 14 px)
         let edge = p + egui::vec2(GRAB * 0.45, GRAB * 0.45);
         assert!(
             nearest_handle(&pl, GeomMode::Transform, edge, &to_screen, false).is_some(),
-            "ручка {h_:?} не ловится с края хват-зоны — целиться придётся точно"
+            "handle {h_:?} is not caught from the edge of the grab zone — aiming will have to be exact"
         );
     }
 
-    // --- ЯКОРЬ: за СВОЮ ТОЧКУ берётся, чуть в стороне — уже тело ------
-    // (только с Alt его оставить нельзя: Alt+перетаскивание перехватывает
-    // оконный менеджер, и до программы жест не доходит — живой `geomctl`)
+    // --- ANCHOR: taken by its POINT; a bit to the side — already the body ------
+    // (it can only be grabbed with Alt: Alt+drag is intercepted by the window manager, and the
+    // gesture never reaches the program — live `geomctl`)
     let a = to_screen(Handle::Anchor.point(&pl));
     assert_eq!(
         nearest_handle(&pl, GeomMode::Transform, a, &to_screen, false),
         Some(Handle::Anchor),
-        "якорь не берётся за собственную точку — жест недостижим"
+        "anchor is not grabbed at its own point — the gesture is unreachable"
     );
     let near_a = a + egui::vec2(crate::geomctl::ANCHOR_GRAB + 3.0, 0.0);
     assert_ne!(
         nearest_handle(&pl, GeomMode::Transform, near_a, &to_screen, false),
         Some(Handle::Anchor),
-        "якорь в центре рамки забирает захват картинки вокруг себя: \
-         его зона обязана быть узкой"
+        "the anchor at the center of the frame takes the picture grab around itself: \
+         its zone must be narrow"
     );
     assert_eq!(
         nearest_handle(&pl, GeomMode::Transform, near_a, &to_screen, true),
         Some(Handle::Anchor),
-        "с Alt зона якоря — общая: поймать его наверняка должно быть можно"
+        "with Alt the anchor zone is shared: it must be possible to catch it for sure"
     );
 
-    // --- ТЕЛО: точка внутри рамки, но не у ручки, жеста ручки не даёт --
+    // --- BODY: a point inside the frame but not at a knob gives no knob gesture ---
     let inside = img.min + egui::vec2(img.width() * 0.3, img.height() * 0.32);
     assert_eq!(
         nearest_handle(&pl, GeomMode::Transform, inside, &to_screen, false),
         None,
-        "тело рамки перехватило жест ручки"
+        "the frame body intercepted the handle gesture"
     );
 
-    // --- МЕЛКАЯ РАМКА: выигрывает БЛИЖАЙШАЯ, а не первая попавшаяся ---
+    // --- SMALL FRAME: the NEAREST wins, not the first one caught ---
     let tiny = kt_fx::geom::Placement {
         ox: 100.0,
         oy: 100.0,
@@ -15605,75 +15605,75 @@ fn t763_handles_are_hittable_and_the_nearest_wins() {
     };
     let ident = |p: (f64, f64)| egui::pos2(p.0 as f32, p.1 as f32);
     for corner in [Handle::TopLeft, Handle::TopRight, Handle::BottomRight, Handle::BottomLeft] {
-        // с Р.66 ручки мелкой рамки вынесены НАРУЖУ её кромок — щупаем
-        // там, где они теперь нарисованы (t781), а утверждение прежнее:
-        // указатель на ручке — выигрывает она
+        // from R.66 the knobs of a small frame are moved OUTSIDE its edges — we probe
+        // where they are now drawn (t781), and the assertion is the same:
+        // the pointer on a knob — the knob wins
         let p = crate::geomctl::handle_screen(&tiny, corner, &ident);
         assert_eq!(
             nearest_handle(&tiny, GeomMode::Transform, p, &ident, false),
             Some(corner),
-            "на рамке 6×6 ручка {corner:?} проиграла соседней, хотя указатель на ней"
+            "on a 6×6 frame handle {corner:?} lost to the neighbor, although the pointer is on it"
         );
     }
 
-    // --- КРОП — другой набор: в режиме трансформации его ручек нет ----
+    // --- CROP — a different set: in transform mode its knobs are absent ---
     assert_eq!(
         nearest_handle(&pl, GeomMode::Transform, to_screen(Handle::CropLeft.point(&pl)), &to_screen, false),
         Some(Handle::Left),
-        "в наборе трансформации середина стороны — это масштаб, а не кроп"
+        "in the transform set the side midpoint is the scale, not the crop"
     );
     assert_eq!(
         nearest_handle(&pl, GeomMode::Crop, to_screen(Handle::CropLeft.point(&pl)), &to_screen, false),
         Some(Handle::CropLeft),
-        "в наборе кропа середина стороны — это кроп"
+        "in the crop set the side midpoint is the crop"
     );
 }
 
-/// Тест 764 (Р.64): контролы гаснут при игре и не греют простой.
+/// Test 764 (R.64): the controls fade during playback and do not heat an idle system.
 ///
-/// Отрасль гасит их всегда (FCP) или автоматически (AE): контрол закрывает
-/// то, ради чего человек смотрит в кадр. Наше правило стоимости кадра
-/// (инвариант 12) требует того же с другой стороны.
+/// The industry hides them always (FCP) or automatically (AE): the control covers
+/// what the person looks at the frame for. Our frame-cost rule
+/// (invariant 12) demands the same from the other side.
 #[test]
 fn t764_controls_hide_while_playing_and_cost_nothing_idle() {
     let (mut h, _clip) = harness_geom_ctl();
-    assert!(h.state().geom_ctl_drawn, "сцена: на паузе контролы рисуются");
+    assert!(h.state().geom_ctl_drawn, "scene: during pause the controls are drawn");
 
-    // --- ИГРА: контролов нет ------------------------------------------
+    // --- PLAYBACK: no controls ---------------------------------------------
     h.state_mut().geom_ctl_drawn = false;
     h.state_mut().player.play();
     h.step();
     h.step();
     assert!(
         !h.state().geom_ctl_drawn,
-        "при воспроизведении контролы остались на кадре — они закрывают то, ради чего смотрят"
+        "during playback the controls stayed on the frame — they cover what one is watching"
     );
 
-    // --- ПАУЗА: вернулись ---------------------------------------------
+    // --- PAUSE: they are back -----------------------------------------------
     h.state_mut().player.pause();
     h.state_mut().geom_ctl_drawn = false;
     h.step();
     h.step();
-    assert!(h.state().geom_ctl_drawn, "на паузе контролы не вернулись");
+    assert!(h.state().geom_ctl_drawn, "during pause the controls did not come back");
 
-    // --- ПРОСТОЙ: набор выключен — путь превью прежний ------------------
+    // --- IDLE: the set is off — the preview path is as before ------------------
     h.state_mut().geom_ctl = crate::geomctl::GeomMode::Off;
     h.state_mut().geom_ctl_drawn = false;
     h.step();
     h.step();
-    assert!(!h.state().geom_ctl_drawn, "выключенный набор всё равно лезет в кадр");
+    assert!(!h.state().geom_ctl_drawn, "a switched-off set still gets into the frame");
 }
 
-/// Драг рамки в превью В ТРИ ШАГА (порог драга egui) с модификаторами.
+/// Drag of the frame in the preview IN THREE STEPS (the egui drag threshold), with modifiers.
 fn geom_drag(
     h: &mut Harness<'_, KtApp>,
     from: egui::Pos2,
     to: egui::Pos2,
     mods: egui::Modifiers,
 ) {
-    // модификатор едет и отдельным событием, и В САМОЙ кнопке: `drag_at`
-    // шлёт `PointerButton { modifiers: NONE }` и этим гасит состояние кадра
-    // (родня урока `ctrl_click_at`)
+    // the modifier travels both as a separate event AND in the button itself: `drag_at`
+    // sends `PointerButton { modifiers: NONE }` and by this clears the frame state
+    // (a kin of the lesson of `ctrl_click_at`)
     h.event(egui::Event::ModifiersChanged(mods));
     h.hover_at(from);
     h.step();
@@ -15700,14 +15700,14 @@ fn geom_drag(
     h.step();
 }
 
-/// Экранная точка ручки (контрол считает её тем же `Handle::point`).
-/// Точка ТЕЛА рамки: не центр (там якорь) и не кромка (там ручки масштаба).
-/// Брать долю панели превью нельзя — сдвинутая рамка из-под этой точки
-/// уезжает, и жест начинается мимо (t762b ловил это «нулём шагов истории»).
+/// The knob’s screen point (the control computes it with the same `Handle::point`).
+/// The BODY point of the frame: not the centre (that is the anchor) and not an edge (those are the scale knobs).
+/// Taking a share of the preview panel is not allowed — the frame shifted from under this point
+/// drifts away, and the gesture starts beside it (t762b caught this as “zero history steps”).
 fn body_pos(h: &Harness<'_, KtApp>, clip: kt_model::ClipId) -> egui::Pos2 {
     let q = h.state().player.preview_quality();
     let canvas = (q.width as f64, q.height as f64);
-    let pl = h.state().geom_placement(clip, canvas).expect("размещение");
+    let pl = h.state().geom_placement(clip, canvas).expect("placement");
     let c = pl.center();
     let p = (c.0 + pl.dw * 0.22, c.1 + pl.dh * 0.24);
     let img = h.state().preview_img_rect;
@@ -15724,7 +15724,7 @@ fn handle_pos(
 ) -> egui::Pos2 {
     let q = h.state().player.preview_quality();
     let canvas = (q.width as f64, q.height as f64);
-    let pl = h.state().geom_placement(clip, canvas).expect("размещение");
+    let pl = h.state().geom_placement(clip, canvas).expect("placement");
     let img = h.state().preview_img_rect;
     let p = which.point(&pl);
     egui::pos2(
@@ -15733,24 +15733,24 @@ fn handle_pos(
     )
 }
 
-/// Тест 760b (Р.64): поворот ручкой вращения, шаг по Shift.
+/// Test 760b (R.64): rotation by the rotate knob, step by Shift.
 #[test]
 fn t760b_rotation_handle_turns_the_layer() {
     use kt_fx::geom::Handle;
     let (mut h, clip) = harness_geom_ctl();
-    assert_eq!(h.state().model.clip(clip).unwrap().geometry.rot, 0.0, "сцена: слой не повёрнут");
+    assert_eq!(h.state().model.clip(clip).unwrap().geometry.rot, 0.0, "scene: the layer is not rotated");
 
-    // ручка поворота — над верхней стороной; тянем вбок
+    // the rotate knob is above the top side; we drag sideways
     let from = handle_pos(&h, clip, Handle::Rot);
     let to = from + egui::vec2(120.0, 60.0);
-    // диагностика сцены: ручка поворота вообще внутри превью?
+    // scene diagnostics: is the rotate knob inside the preview at all?
     assert!(
         h.state().preview_rect.contains(from),
-        "ручка поворота вне превью: {from:?} при {:?}",
+        "rotation handle is outside the preview: {from:?} at {:?}",
         h.state().preview_rect
     );
     let depth = h.state().model.undo_depth();
-    // какая ручка попадётся в этой точке?
+    // which knob will be caught at this point?
     {
         let q = h.state().player.preview_quality();
         let canvas = (q.width as f64, q.height as f64);
@@ -15771,28 +15771,28 @@ fn t760b_rotation_handle_turns_the_layer() {
                 false
             ),
             Some(Handle::Rot),
-            "в точке ручки поворота ловится не она"
+            "at the rotation handle’s point it is not the handle that is caught"
         );
     }
     geom_drag(&mut h, from, to, egui::Modifiers::NONE);
     let rot = h.state().model.clip(clip).unwrap().geometry.rot;
-    assert!(rot.abs() > 1.0, "поворот не состоялся: {rot}");
-    assert_eq!(h.state().model.undo_depth(), depth + 1, "поворот — один шаг истории");
+    assert!(rot.abs() > 1.0, "rotation did not happen: {rot}");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "rotation is one history step");
 
-    // Shift — шаг 15°
+    // Shift — 15° step
     let from = handle_pos(&h, clip, Handle::Rot);
     let to = from + egui::vec2(-90.0, 70.0);
     geom_drag(&mut h, from, to, egui::Modifiers::SHIFT);
     let rot = h.state().model.clip(clip).unwrap().geometry.rot;
     assert!(
         (rot / 15.0 - (rot / 15.0).round()).abs() < 1e-6,
-        "с Shift угол обязан быть кратен 15°: {rot}"
+        "with Shift the angle must be a multiple of 15°: {rot}"
     );
 }
 
-/// Тест 761b (Р.64): якорь двигается — картинка стоит, и на повёрнутом
-/// слое тоже. Тот же контракт, что у чистой функции в t761, но ЧЕРЕЗ
-/// НАСТОЯЩИЙ ЖЕСТ.
+/// Test 761b (R.64): the anchor moves — the picture stands still, and on a rotated
+/// layer too. The same contract as the pure function in t761, but THROUGH
+/// A REAL GESTURE.
 #[test]
 fn t761b_anchor_gesture_keeps_the_picture_in_place() {
     use kt_fx::geom::Handle;
@@ -15810,7 +15810,7 @@ fn t761b_anchor_gesture_keeps_the_picture_in_place() {
         let before = h.state().geom_placement(clip, canvas).unwrap().corners();
         let a0 = h.state().model.clip(clip).unwrap().geometry;
 
-        // тянем ЯКОРЬ (только с Alt) к левому верхнему углу рамки
+        // we drag the ANCHOR (only with Alt) to the top-left corner of the frame
         let from = handle_pos(&h, clip, Handle::Anchor);
         let to = handle_pos(&h, clip, Handle::TopLeft);
         geom_drag(&mut h, from, to, egui::Modifiers::ALT);
@@ -15818,13 +15818,13 @@ fn t761b_anchor_gesture_keeps_the_picture_in_place() {
         let a1 = h.state().model.clip(clip).unwrap().geometry;
         assert!(
             (a1.anchor_x - a0.anchor_x).abs() > 0.05 || (a1.anchor_y - a0.anchor_y).abs() > 0.05,
-            "поворот {rot}°: якорь не сдвинулся — жест ничего не сделал"
+            "rotation {rot}°: the anchor did not move — the gesture did nothing"
         );
         let after = h.state().geom_placement(clip, canvas).unwrap().corners();
         for i in 0..4 {
             assert!(
                 (after[i].0 - before[i].0).abs() < 1.0 && (after[i].1 - before[i].1).abs() < 1.0,
-                "поворот {rot}°: картинка уехала за якорем — угол {i}: {:?} против {:?}",
+                "rotation {rot}°: the picture drifted away from the anchor — angle {i}: {:?} versus {:?}",
                 after[i],
                 before[i]
             );
@@ -15832,7 +15832,7 @@ fn t761b_anchor_gesture_keeps_the_picture_in_place() {
     }
 }
 
-/// Тест 762 (Р.64): кроп своими ручками в своём наборе.
+/// Test 762 (R.64): crop with its own knobs in its own set.
 #[test]
 fn t762_crop_handles_cut_their_own_side() {
     use kt_fx::geom::Handle;
@@ -15849,26 +15849,26 @@ fn t762_crop_handles_cut_their_own_side() {
     geom_drag(&mut h, from, to, egui::Modifiers::NONE);
 
     let g = h.state().model.clip(clip).unwrap().geometry;
-    assert!(g.crop_l > 0.02, "кроп слева не поехал: {}", g.crop_l);
+    assert!(g.crop_l > 0.02, "left crop did not move: {}", g.crop_l);
     assert_eq!(
         (g.crop_t, g.crop_r, g.crop_b),
         (0.0, 0.0, 0.0),
-        "ручка кропа тронула чужие стороны"
+        "crop handle touched foreign sides"
     );
-    assert_eq!(h.state().model.undo_depth(), depth + 1, "кроп — один шаг истории");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "crop is one history step");
     let w1 = h.state().geom_placement(clip, canvas).unwrap().dw;
-    assert!(w1 < w0, "рамка не сузилась после кропа: {w1} против {w0}");
+    assert!(w1 < w0, "the frame did not narrow after the crop: {w1} versus {w0}");
 }
 
-/// Тест 775 (Р.65): ДАКИНГ — ЭТО ДВА КОМПРЕССОРА, а не своя форма.
+/// Test 775 (R.65): DUCKING — IS TWO COMPRESSORS, not its own shape.
 ///
-/// Владелец (Р.63 п.8.4): «в качестве дакинга можно показать тот же
-/// задублированный виджет аудио-компрессора с затемненными полями, т.е.
-/// компрессор на фоновом объекте и компрессор на переднем объекте…
-/// повсюду копятся бессмысленные копипасты одного и того же кода».
-/// Утверждается то, что видно и делается: выбор ключа заводит прибор,
-/// компрессор РЕЧИ заводится одним действием, обе правки — одна сессия
-/// окна и один шаг истории, «Отмена» откатывает обе.
+/// The owner (R.63 item 8.4): “as ducking one can show the same duplicated
+/// audio-compressor widget with dimmed fields, i.e. a compressor on the
+/// background object and a compressor on the foreground object…
+/// meaningless copy-pastes of the same code pile up everywhere.”
+/// What is asserted is what is seen and done: choosing the key adds the device,
+/// the SPEECH compressor is added with one action, both edits — one session
+/// of the window and one history step, “Cancel” rolls back both.
 #[test]
 fn t775_ducking_is_two_compressors_in_the_track_window() {
     use eframe::egui::accesskit::Role;
@@ -15887,18 +15887,18 @@ fn t775_ducking_is_two_compressors_in_the_track_window() {
     h.step();
     h.step();
 
-    // секция названа по отрасли и стоит В ОКНЕ ДОРОЖКИ
+    // the section is named after the industry and sits IN THE TRACK WINDOW
     for s in [tr(k::msg::DUCK_TITLE), tr(k::msg::DUCK_KEY), tr(k::msg::DUCK_BG)] {
         assert!(
             h.query_all_by_label_contains(s).count() > 0,
-            "в окне дорожки нет строки «{s}» — дакингу негде жить"
+            "there is no “{s}” row in the track window — ducking has nowhere to live"
         );
     }
     let depth = h.state().model.undo_depth();
 
-    // ВЫБОР КЛЮЧА заводит прибор: человек не обязан искать компрессор в каталоге
+    // CHOOSING THE KEY adds the device: the person does not have to search for a compressor in the catalog
     let key_name = h.state().model.project().track(key).unwrap().label(1);
-    // комбо ищется по РОЛИ и ЗНАЧЕНИЮ: слово «нет» встречается в окне не раз
+    // the combo is searched by ROLE and VALUE: the word “no” occurs in the window more than once
     h.get(by().role(Role::ComboBox).value(tr(k::msg::DUCK_KEY_NONE))).click();
     h.step();
     h.get_by_label_contains(&key_name).click();
@@ -15911,12 +15911,12 @@ fn t775_ducking_is_two_compressors_in_the_track_window() {
         .track(bg)
         .map(|t| kt_model::sidechain_keys(&t.fx).collect())
         .unwrap_or_default();
-    assert_eq!(keys, vec![key], "выбор ключа не доехал до модели (или прибор не заведён)");
+    assert_eq!(keys, vec![key], "key choice did not reach the model (or the device is not set up)");
 
-    // …и ВТОРОЙ компрессор — настоящий, на дорожке-КЛЮЧЕ, одним действием
+    // ...and a SECOND compressor — a real one, on the KEY track — with one action
     assert!(
         h.query_all_by_label_contains(tr(k::msg::DUCK_ADD_COMP)).count() > 0,
-        "кнопки «завести компрессор на ключе» нет — второй прибор недостижим"
+        "no “set up compressor on key” button — the second device is unreachable"
     );
     h.get_by_label_contains(tr(k::msg::DUCK_ADD_COMP)).click();
     h.step();
@@ -15927,17 +15927,17 @@ fn t775_ducking_is_two_compressors_in_the_track_window() {
             .project()
             .track(key)
             .is_some_and(|t| t.fx.iter().any(|f| matches!(f, kt_model::FxInstance::Compressor { .. }))),
-        "компрессор речи не заведён"
+        "speech compressor is not set up"
     );
 
-    // ОБЕ правки — ОДНА сессия окна и ОДИН шаг истории
+    // BOTH edits — ONE session of the window and ONE history step
     assert_eq!(
         h.state().model.undo_depth(),
         depth + 1,
-        "сессия окна дорожки обязана быть одним шагом истории"
+        "the track window session must be one history step"
     );
 
-    // «Отмена» откатывает и ключ, и компрессор речи
+    // “Cancel” rolls back both the key and the speech compressor
     h.get_by_label_contains(tr(k::track::CANCEL)).click();
     h.step();
     h.step();
@@ -15945,18 +15945,18 @@ fn t775_ducking_is_two_compressors_in_the_track_window() {
     assert_eq!(
         app.model.project().track(bg).map(|t| kt_model::sidechain_keys(&t.fx).count()),
         Some(0),
-        "«Отмена» не сняла ключ"
+        "“Cancel” did not remove the key"
     );
     assert!(
         app.model
             .project()
             .track(key)
             .is_some_and(|t| !t.fx.iter().any(|f| matches!(f, kt_model::FxInstance::Compressor { .. }))),
-        "«Отмена» не вернула цепочку дорожки-ключа"
+        "“Cancel” did not restore the key track’s chain"
     );
 }
 
-/// Тест 776 (Р.65): список ключей не предлагает невозможного.
+/// Test 776 (R.65): the list of keys does not offer the impossible.
 #[test]
 fn t776_key_list_offers_only_possible_tracks() {
     use eframe::egui::accesskit::Role;
@@ -15970,7 +15970,7 @@ fn t776_key_list_offers_only_possible_tracks() {
         let b = app.model.project().track_at(Audio, 1).unwrap().id;
         (a, b)
     };
-    // A уже слушает B — значит B не может слушать A (цикл)
+    // A already listens to B — so B cannot listen to A (a cycle)
     {
         let app = h.state_mut();
         let mut c = kt_model::FxInstance::compressor();
@@ -15986,35 +15986,35 @@ fn t776_key_list_offers_only_possible_tracks() {
     h.get(by().role(Role::ComboBox).value(tr(k::msg::DUCK_KEY_NONE))).click();
     h.step();
     h.step();
-    // метка ищется ТОЧНО: заголовок окна содержит имя дорожки, и поиск
-    // «по вхождению» нашёл бы его, а не пункт списка
+    // the label is searched EXACTLY: the window header contains the track name, and a
+    // “substring” search would find it, not the list item
     let a_name = h.state().model.project().track(a).unwrap().label(0);
     let offered = h.query_all_by_label(&a_name).count();
     assert_eq!(
         offered, 0,
-        "дорожка, дающая ЦИКЛ, предложена в списке ключей — молчаливый тупик"
+        "a track that gives a CYCLE is offered in the key list — a silent dead end"
     );
-    // и себя в списке тоже нет
+    // and itself is not in the list either
     let b_name = h.state().model.project().track(b).unwrap().label(1);
     assert_eq!(
         h.query_all_by_label(&b_name).count(),
         0,
-        "дорожка предложена ключом самой себе"
+        "a track is offered as a key for itself"
     );
 }
 
-/// Тест 781 (Р.66): МЕЛКАЯ РАМКА отдаёт ручки наружу, тело — своё.
+/// Test 781 (R.66): a SMALL FRAME pushes its knobs outward, the body stays its own.
 ///
-/// На проекте владельца (`paintitblack.kt`) правило «как есть» и
-/// заглушка вместо недоступного медиа дают рамку 45×25 px: восемь ручек
-/// с хват-зоной 14 px покрывают её целиком, и ПЕРЕНОС становится
-/// недоступен — ручка выигрывает всегда. Отложенный предел Р.64.
+/// On the owner’s project (`paintitblack.kt`) the “as is” rule and a placeholder in place of
+/// unavailable media give a frame of 45×25 px: eight knobs
+/// with a 14 px grab zone cover all of it, and MOVE becomes
+/// unavailable — a knob always wins. A deferred limit of R.64.
 #[test]
 fn t781_small_frame_moves_handles_outside() {
     use crate::geomctl::{GeomMode, handle_screen, nearest_handle, small_frame};
     use kt_fx::geom::{Handle, Placement};
 
-    // рамка 40×24 px на экране: меньше трёх хват-зон по обеим сторонам
+    // a frame 40×24 px on screen: less than three grab zones on both sides
     let tiny = Placement {
         ox: 200.0,
         oy: 120.0,
@@ -16024,60 +16024,60 @@ fn t781_small_frame_moves_handles_outside() {
         anchor: (220.0, 132.0),
         crop_in: (0.0, 0.0, 1.0, 1.0),
     };
-    // экран = холст один к одному
+    // screen = canvas, one to one
     let to_screen = |p: (f64, f64)| egui::pos2(p.0 as f32, p.1 as f32);
-    assert!(small_frame(&tiny, &to_screen), "сцена: рамка обязана быть мелкой");
+    assert!(small_frame(&tiny, &to_screen), "scene: the frame must be small");
 
-    // ручки масштаба УЕХАЛИ наружу своих кромок
+    // the scale knobs have MOVED outward from their edges
     for h in [Handle::TopLeft, Handle::Top, Handle::Right, Handle::BottomLeft] {
         let inside = to_screen(h.point(&tiny));
         let shown = handle_screen(&tiny, h, &to_screen);
         assert!(
             (shown - inside).length() > 10.0,
-            "{h:?} не вынесена наружу: {shown:?} против кромки {inside:?}"
+            "{h:?} is not moved outward: {shown:?} versus the edge {inside:?}"
         );
-        // …и ловится ТАМ ЖЕ, где нарисована
+        // ...and are caught THERE, where they are drawn
         assert_eq!(
             nearest_handle(&tiny, GeomMode::Transform, shown, &to_screen, false),
             Some(h),
-            "{h:?} нарисована снаружи, а ловится не там"
+            "{h:?} is drawn outside, but it is grabbed somewhere else"
         );
     }
 
-    // ЦЕНТР мелкой рамки — это ПЕРЕНОС, а не ручка (кроме самого якоря)
+    // the CENTRE of a small frame is MOVE, not a knob (except the anchor itself)
     let c = to_screen(tiny.center());
     let off = egui::pos2(c.x + 9.0, c.y + 5.0);
     assert_eq!(
         nearest_handle(&tiny, GeomMode::Transform, off, &to_screen, false),
         None,
-        "тело мелкой рамки перехвачено ручкой — переносить её нечем"
+        "the body of the small frame is intercepted by a handle — there is nothing to move it with"
     );
 
-    // ОБЫЧНАЯ рамка не меняется: ручки на кромках, как прежде
+    // a NORMAL frame does not change: knobs on the edges, as before
     let big = Placement { dw: 400.0, dh: 240.0, ..tiny };
-    assert!(!small_frame(&big, &to_screen), "сцена: обычная рамка не мелкая");
+    assert!(!small_frame(&big, &to_screen), "scene: an ordinary frame is not small");
     for h in [Handle::TopLeft, Handle::Right] {
         assert_eq!(
             handle_screen(&big, h, &to_screen),
             to_screen(h.point(&big)),
-            "{h:?} на обычной рамке сдвинулась — прежнее поведение сломано"
+            "{h:?} on an ordinary frame moved — the previous behavior is broken"
         );
     }
 }
 
-/// Тест 780 (Р.66): ШЕСТЬ ПЛОТНЫХ ФОРМ выложены по образцу «Трансформации».
+/// Test 780 (R.66): SIX DENSE SHAPES laid out on the “Transform” model.
 ///
-/// Прямая просьба владельца Р.64: «и не забудь на будущее во всех других
-/// виджетах и окнах тоже пройтись надо будет». Образец он принял тогда же —
-/// свёртываемые группы, пары одной строкой, единицы из паспорта. Здесь
-/// утверждается наблюдаемое: у каждой из шести форм есть СВОИ группы, и
-/// свёртка — состояние окна, а не проекта.
+/// The owner’s direct request of R.64: “and remember for the future to go over all the other
+/// widgets and windows as well.” He accepted the model then too —
+/// collapsible groups, pairs on one row, units from the passport. What is asserted here
+/// is observable: each of the six shapes has ITS OWN groups, and
+/// collapsing is a state of the window, not of the project.
 #[test]
 fn t780_dense_forms_have_groups() {
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
 
-    // --- настройки проекта: кадр / звук / кривые ----------------------
+    // --- project settings: frame / sound / curves ----------------------
     let mut h = harness();
     h.state_mut().open_project_settings();
     h.step();
@@ -16086,11 +16086,11 @@ fn t780_dense_forms_have_groups() {
         let t = tr(key);
         assert!(
             h.query_all_by_label_contains(t).count() > 0,
-            "в настройках проекта нет группы «{t}»"
+            "the project settings have no group “{t}”"
         );
     }
-    // свёртка — состояние ОКНА: закрыли группу, значение проекта не тронуто
-    // «Звук» встречается и подписью поля — берём ЗАГОЛОВОК группы точно
+    // collapsing is the state of the WINDOW: closing a group does not touch the project value
+    // “Sound” occurs also as a field label — we take the group HEADER exactly
     let before = h.state().model.project().settings.clone();
     h.get_by_label(tr(k::grp::AUDIO)).click();
     h.step();
@@ -16098,12 +16098,12 @@ fn t780_dense_forms_have_groups() {
     assert_eq!(
         h.state().model.project().settings,
         before,
-        "свёртка группы изменила ПРОЕКТ — это состояние окна, а не содержимого"
+        "collapsing a group changed the PROJECT — it is window state, not content"
     );
 
-    // --- окно FX: группа параметров у обычного эффекта -----------------
+    // --- FX window: a parameter group of an ordinary effect -----------------
     let (mut h, _) = harness_three_clips_dt(None);
-    let clip = h.state().model.project().clips.first().map(|c| c.id).expect("событие");
+    let clip = h.state().model.project().clips.first().map(|c| c.id).expect("event");
     {
         let app = h.state_mut();
         app.apply(Command::SetFx { id: clip, fx: vec![FxInstance::blur(8)] });
@@ -16116,11 +16116,11 @@ fn t780_dense_forms_have_groups() {
     h.step();
     assert!(
         h.query_all_by_label_contains(tr(k::grp::PARAMS)).count() > 0,
-        "в окне FX нет группы «{}» у параметров эффекта",
+        "the FX window has no group “{}” for the effect parameters",
         tr(k::grp::PARAMS)
     );
 
-    // --- рендер: файл / видео / звук ----------------------------------
+    // --- render: file / video / sound ----------------------------------
     let mut h = harness();
     h.state_mut().render_setup.open = true;
     h.step();
@@ -16129,21 +16129,21 @@ fn t780_dense_forms_have_groups() {
         let t = tr(key);
         assert!(
             h.query_all_by_label_contains(t).count() > 0,
-            "в окне рендера нет группы «{t}»"
+            "the render window has no group “{t}”"
         );
     }
 }
 
-/// Тест 786 (Р.67): поле с живой кривой пишет ключ ТОЛЬКО от жеста
-/// человека. `DragValue`/`Slider` с пределами клампят значение, вышедшее
-/// за паспорт, и помечают ответ «изменено» — на прежнем коде зигзаг
-/// вокруг предела ставил ключ на каждом кадре игры (ключи-самописцы на
-/// проекте владельца: 66.1→0.20, 69.7→0.98, 69.9→0.07…).
+/// Test 786 (R.67): a field with a live curve writes a key ONLY from the person’s
+/// gesture. `DragValue`/`Slider` with limits clamp a value that has left
+/// the passport, and mark the answer as “changed” — on the old code a zigzag
+/// around the limit set a key on every frame of play (recorder keys on
+/// the owner’s project: 66.1→0.20, 69.7→0.98, 69.9→0.07…).
 #[test]
 fn t786_bound_field_writes_keys_only_from_a_gesture() {
     use kt_model::*;
     let mut h = harness_with_fx_window();
-    // кривая радиуса: постоянная у ПОТОЛКА паспорта с зигзагом за него
+    // a radius curve: constant at the CEILING of the passport with a zigzag past it
     let spec_max = {
         let f = FxInstance::blur(8);
         f.param_specs().iter().find(|s| s.name == "radius").map(|s| s.max).unwrap()
@@ -16167,22 +16167,22 @@ fn t786_bound_field_writes_keys_only_from_a_gesture() {
     let before = keys_of(&h);
     assert_eq!(before.len(), 2);
 
-    // --- «игра»: курсор идёт по событию 120 кадров, поле не трогается ----
+    // --- “play”: the cursor walks across the event for 120 frames, the field is not touched ----
     for i in 0..120i64 {
         h.state_mut().player.seek(kt_time::Tick(i * 1500));
         h.step();
     }
-    assert_eq!(keys_of(&h), before, "поле поставило ключи само (кламп виджета = «изменено»)");
-    // то же с воспроизведением
+    assert_eq!(keys_of(&h), before, "the field set keyframes by itself (the widget clamp counted as a “change”)");
+    // the same with playback
     h.state_mut().player.play();
     for _ in 0..30 {
         h.step();
     }
     h.state_mut().player.pause();
     h.step();
-    assert_eq!(keys_of(&h), before, "при игре поле поставило ключи само");
+    assert_eq!(keys_of(&h), before, "during playback the field set keyframes by itself");
 
-    // --- правка рукой: клик в поле, число, Enter — ровно один ключ -------
+    // --- an edit by hand: a click in the field, a number, Enter — exactly one key ---
     h.state_mut().player.seek(kt_time::Tick(90_000));
     h.step();
     h.step();
@@ -16191,7 +16191,7 @@ fn t786_bound_field_writes_keys_only_from_a_gesture() {
         .into_iter()
         .find(|t| t.src == label)
         .map(|t| t.rect)
-        .expect("подпись радиуса нарисована");
+        .expect("radius label is drawn");
     let field = egui::pos2(lr.right() + 40.0, lr.center().y);
     h.hover_at(field);
     h.step();
@@ -16211,32 +16211,32 @@ fn t786_bound_field_writes_keys_only_from_a_gesture() {
     h.step();
     h.step();
     let after = keys_of(&h);
-    assert_eq!(after.len(), 3, "правка рукой обязана поставить ровно один ключ: {after:?}");
-    assert!(after.iter().any(|(t, _)| *t == 120_000), "ключ не на курсоре (материал 30000+90000): {after:?}");
+    assert_eq!(after.len(), 3, "a manual edit must set exactly one key: {after:?}");
+    assert!(after.iter().any(|(t, _)| *t == 120_000), "key is not at the cursor (material 30000+90000): {after:?}");
 }
 
-// ---- Р.67: график рисует вычислителем, ручка формы, блок кривой, справка ----
+// ---- R.67: the graph draws with the evaluator, the shape knob, the curve block, the hint ----
 
-/// Вид автоматизации слота 0 события 1 в первом окне FX.
+/// The automation view of slot 0 of event 1 in the first FX window.
 fn fx_auto_view<'a>(h: &'a Harness<'_, KtApp>) -> &'a crate::automation::AutoView {
     h.state().fx_editors[0]
         .auto_views
         .get(&(kt_model::ClipId(1), 0))
-        .expect("вид автоматизации слота 0")
+        .expect("automation view of slot 0")
 }
 
-/// Прокрутить тело окна FX так, чтобы БЛОК КРИВОЙ был виден: колесо над
-/// подписью «+ кривая» (внутри прокрутки, вне графика — тот забирает
-/// колесо себе), пока заголовок блока не нарисован. Подпись за сгибом
-/// egui не рисует вовсе, а подсказку поля — рисует: по ней и виден блок.
+/// Scroll the body of the FX window so that the CURVE BLOCK is visible: the wheel over the
+/// “+ curve” label (inside the scroll area, outside the graph — the graph takes the
+/// wheel for itself), until the block header is drawn. A label beyond the fold
+/// egui does not draw at all, but it does draw the field hint: that is how the block is seen.
 pub(crate) fn reveal_curve_block(h: &mut Harness<'_, KtApp>) {
     reveal_until(h, &tr(k::fx::HELP).to_string());
 }
 
-/// Прямоугольник нарисованного текста, выбранного `pick`, ПОСЛЕ того как
-/// он перестал двигаться: `ScrollArea` egui доезжает анимацией, и
-/// координаты, снятые сразу после колеса, к моменту клика устаревают —
-/// клик уходил в пустоту (поймано на окне экземпляра, t791).
+/// The rectangle of the drawn text selected by `pick` — taken AFTER it has stopped moving:
+/// egui’s `ScrollArea` catches up with an animation, and the
+/// coordinates read right after the wheel are stale by the time of the click —
+/// the click went into emptiness (caught on the instance window, t791).
 fn settled_text_rect(
     h: &mut Harness<'_, KtApp>,
     pick: impl Fn(&str) -> bool,
@@ -16256,11 +16256,11 @@ fn settled_text_rect(
         }
         prev = now;
     }
-    panic!("«{what}» не устоялся на месте (прокрутка не доехала)");
+    panic!("“{what}” did not settle in place (the scroll did not arrive)");
 }
 
-/// Крутить тело окна FX, пока не нарисован текст `sentinel` (см.
-/// `reveal_curve_block`).
+/// Scroll the body of the FX window until the text `sentinel` is drawn
+/// (see `reveal_curve_block`).
 pub(crate) fn reveal_until(h: &mut Harness<'_, KtApp>, sentinel: &str) {
     let anchor_label = tr(k::fx::AUTO_ADD).to_string();
     for _ in 0..16 {
@@ -16283,26 +16283,26 @@ pub(crate) fn reveal_until(h: &mut Harness<'_, KtApp>, sentinel: &str) {
         h.step();
     }
     let texts: Vec<String> = crate::reach_tests::painted_texts(h).into_iter().map(|t| t.src).collect();
-    assert!(texts.iter().any(|t| t == sentinel), "«{sentinel}» не прокрутился в окно: {texts:?}");
+    assert!(texts.iter().any(|t| t == sentinel), "“{sentinel}” did not scroll into the window: {texts:?}");
 }
 
-/// Линейный экран↔кривая по нарисованным ромбикам ключей: x(t), y(v).
-/// Два ключа с разными t и v дают обе оси; сами ключи известны модели.
+/// A linear screen↔curve mapping from the drawn key diamonds: x(t), y(v).
+/// Two keys with different t and v give both axes; the keys themselves are known to the model.
 fn graph_axes(h: &Harness<'_, KtApp>) -> (impl Fn(i64) -> f32, impl Fn(f64) -> f32) {
     let keys = h.state().model.project().clips[0].fx_auto[0][0].keys.clone();
     let marks = fx_auto_view(h).key_marks.clone();
-    // ось значений — та же, что у виджета (у части паспортов она нелинейна)
+    // the value axis — the same as the widget’s (on some passports it is non-linear)
     let spec = kt_model::FxInstance::blur(8).param_specs().iter().find(|s| s.name == "radius").cloned().unwrap();
     let ax = crate::automation::axis_of(&spec);
     let pt = |ki: usize| marks.iter().find(|(c, k, _)| *c == 0 && *k == ki).map(|(_, _, p)| *p).unwrap();
     let (a, b) = (0usize, keys.len() - 1);
     let (pa, pb) = (pt(a), pt(b));
     let (ta, tb) = (keys[a].t.0 as f64, keys[b].t.0 as f64);
-    // для оси значений — пара ключей с РАЗНЫМИ значениями
+    // for the value axis — a pair of keys with DIFFERENT values
     let (va_i, vb_i) = (0..keys.len())
         .flat_map(|i| (0..keys.len()).map(move |j| (i, j)))
         .find(|(i, j)| (keys[*i].v - keys[*j].v).abs() > 1e-9)
-        .expect("нужны два ключа с разными значениями");
+        .expect("two keys with different values are needed");
     let (pva, pvb) = (pt(va_i), pt(vb_i));
     let (va, vb) = (ax.map(keys[va_i].v), ax.map(keys[vb_i].v));
     (
@@ -16311,16 +16311,16 @@ fn graph_axes(h: &Harness<'_, KtApp>) -> (impl Fn(i64) -> f32, impl Fn(f64) -> f
     )
 }
 
-/// Тест 784b (Р.67): график рисует ЗНАЧЕНИЕ кривой тем же вычислителем,
-/// что рендер: зигзаг виден зигзагом, ступень — ступенью, формула отрезка
-/// — своей линией. На прежнем коде между ключами шла прямая (t698
-/// проверял модель, не рисунок).
+/// Test 784b (R.67): the graph draws the curve’s VALUE with the same evaluator
+/// as the render: a zigzag is shown as a zigzag, a step as a step, the segment formula
+/// as its own line. On the old code a straight line ran between the keys (t698
+/// checked the model, not the drawing).
 #[test]
 fn t784b_graph_draws_the_curve_as_it_sounds() {
     use kt_model::*;
     let mut h = harness_with_fx_window();
-    // значения и амплитуда — ВНУТРИ паспорта радиуса (1..48): за ним
-    // окно значений клампится, и линия легла бы на кромку графика
+    // values and amplitude are WITHIN the radius passport (1..48): beyond it the
+    // value window would clamp, and the line would lie on the edge of the graph
     let zig = SegShape::Zigzag { periods: 4.0, amplitude: 4.0, profile: ZigProfile::Triangle };
     let formula = SegShape::Formula { expr: ExprId::intern("a + (b - a) * s * s") };
     {
@@ -16339,8 +16339,8 @@ fn t784b_graph_draws_the_curve_as_it_sounds() {
     h.step();
     let keys = h.state().model.project().clips[0].fx_auto[0][0].keys.clone();
     let (x_of, y_of) = graph_axes(&h);
-    // линия кривой — самая длинная ломаная В ОБЛАСТИ ГРАФИКА (по ромбикам
-    // ключей): в окне есть и другие длинные линии (таймлайн)
+    // the curve’s line is the longest polyline INSIDE THE GRAPH AREA (by the key
+    // diamonds): the window has other long lines too (the timeline)
     let marks = fx_auto_view(&h).key_marks.clone();
     let (mx0, mx1) = (
         marks.iter().map(|m| m.2.x).fold(f32::MAX, f32::min) - 8.0,
@@ -16354,15 +16354,15 @@ fn t784b_graph_draws_the_curve_as_it_sounds() {
         .into_iter()
         .filter(|l| l.iter().all(|p| p.x >= mx0 && p.x <= mx1 && p.y >= my0 && p.y <= my1))
         .max_by_key(|l| l.len())
-        .expect("линий в области графика нет");
-    assert!(line.len() >= 40, "линия кривой слишком редкая: {} точек", line.len());
-    // КАЖДАЯ точка линии: её x → тик, нарисованный y против curve_value
+        .expect("there are no lines in the graph area");
+    assert!(line.len() >= 40, "the curve line is too sparse: {} points", line.len());
+    // EACH point of the line: its x → tick, drawn y against curve_value
     let (x0, x1) = (x_of(keys[0].t.0), x_of(keys[keys.len() - 1].t.0));
     let t_of = |x: f32| keys[0].t.0 + ((x - x0) / (x1 - x0) * (keys[keys.len() - 1].t.0 - keys[0].t.0) as f32) as i64;
     let mut worst = (0.0f32, egui::Pos2::ZERO, 0.0f32, 0i64);
     let key_xs: Vec<f32> = keys.iter().map(|k| x_of(k.t.0)).collect();
     for p in line.iter().filter(|p| p.x >= x0 - 0.5 && p.x <= x1 + 0.5) {
-        // у самого ключа ступень рвётся: пиксель x — обе стороны разрыва
+        // at the key itself the step breaks: the pixel x — both sides of the break
         if key_xs.iter().any(|kx| (p.x - kx).abs() < 2.5) {
             continue;
         }
@@ -16374,10 +16374,10 @@ fn t784b_graph_draws_the_curve_as_it_sounds() {
     }
     assert!(
         worst.0 <= 3.0,
-        "линия расходится с вычислителем на {} px: точка {:?}, ждали y {}, t {}",
+        "line diverges from the evaluator by {} px: point {:?}, expected y {}, t {}",
         worst.0, worst.1, worst.2, worst.3
     );
-    // зигзаг: не меньше 8 экстремумов между первыми двумя ключами
+    // zigzag: not fewer than 8 extrema between the first two keys
     let (xa, xb) = (x_of(keys[0].t.0), x_of(keys[1].t.0));
     let seg: Vec<&egui::Pos2> = line.iter().filter(|p| p.x > xa + 1.0 && p.x < xb - 1.0).collect();
     let mut extrema = 0;
@@ -16387,21 +16387,21 @@ fn t784b_graph_draws_the_curve_as_it_sounds() {
             extrema += 1;
         }
     }
-    // шаг выборки 2 px: на узком участке 4 периода дают 6-8 поворотов —
-    // требуем больше половины, а «не прямая» доказывает пик ниже
-    assert!(extrema >= 5, "зигзаг нарисован прямой: экстремумов {extrema}");
-    // и прямая на прежнем коде дала бы расхождение ≥ 10 px на пике зигзага
+    // sampling step 2 px: on a narrow stretch 4 periods give 6–8 turns —
+    // we require more than half, and “not a straight line” proves the peak is lower
+    assert!(extrema >= 5, "zigzag is drawn straight: extrema {extrema}");
+    // and a straight line on the old code would give a discrepancy of ≥ 10 px at the zigzag peak
     let mid = x_of((keys[0].t.0 + keys[1].t.0) / 2);
     let straight = (y_of(keys[0].v) + y_of(keys[1].v)) / 2.0;
     let peak = seg.iter().map(|p| (p.y - straight).abs()).fold(0.0f32, f32::max);
-    assert!(peak >= 10.0, "пик зигзага от прямой всего {peak} px (x середины {mid})");
+    assert!(peak >= 10.0, "the zigzag peak is only {peak} px from the straight line (midpoint x {mid})");
 }
 
-/// Тест 785 (Р.67): «форма всех отрезков» и её параметры относятся к
-/// кривой, которую человек ВИДИТ выбранной: у слота две кривые, форма
-/// ложится на выбранную вторую, первая цела, заголовок блока называет её.
-/// На прежнем коде форма ложилась на невидимо активную первую — «меняется
-/// только одно поле, хотя я в двух полях задал зигзаги».
+/// Test 785 (R.67): “the shape of all segments” and its parameters refer to the
+/// curve the person SEES as selected: the slot has two curves, the shape
+/// lands on the selected second one, the first stays intact, and the block header names it.
+/// On the old code the shape landed on the invisibly active first one — “only one field
+/// changes, though I set zigzags in two fields.”
 #[test]
 fn t785_shape_control_belongs_to_the_visible_curve() {
     use egui_kittest::kittest::Queryable;
@@ -16422,21 +16422,21 @@ fn t785_shape_control_belongs_to_the_visible_curve() {
     }
     h.step();
     h.step();
-    // человек кликает по ИМЕНИ второй кривой в тулбаре виджета (подпись
-    // поля в сетке носит то же имя — тулбар рисуется позже)
+    // the person clicks on the NAME of the second curve in the widget’s toolbar
+    // (the field label in the grid carries the same name — the toolbar is drawn later)
     let name2 = crate::widgets::param_label("radius_y");
-    h.query_all_by_label(&name2).last().expect("имя кривой в тулбаре").click();
+    h.query_all_by_label(&name2).last().expect("curve name in the toolbar").click();
     h.step();
     h.step();
-    assert_eq!(fx_auto_view(&h).active, 1, "клик по имени не выбрал вторую кривую");
+    assert_eq!(fx_auto_view(&h).active, 1, "click on the name did not select the second curve");
     reveal_curve_block(&mut h);
-    // заголовок блока называет её
+    // the block header names it
     let title = crate::tf!(k::fx::CURVE_TITLE, name2.trim_end_matches(':'));
     assert!(
         crate::reach_tests::painted_texts(&h).iter().any(|t| t.src == title),
-        "блок не подписан именем выбранной кривой: {title:?}"
+        "the block is not labeled with the selected curve’s name: {title:?}"
     );
-    // форма всех отрезков — зигзаг (комбо по роли и текущему значению)
+    // the shape of all segments — zigzag (combo by role and current value)
     pick_shape_all(&mut h, tr(k::fx::SHAPE_ZIGZAG));
     h.step();
     h.step();
@@ -16444,18 +16444,18 @@ fn t785_shape_control_belongs_to_the_visible_curve() {
     let (c0, c1) = (&p.clips[0].fx_auto[0][0], &p.clips[0].fx_auto[0][1]);
     assert!(
         c1.keys.iter().all(|k| matches!(k.shape, SegShape::Zigzag { .. })),
-        "зигзаг не лёг на выбранную кривую: {:?}",
+        "zigzag did not land on the selected curve: {:?}",
         c1.keys.iter().map(|k| k.shape).collect::<Vec<_>>()
     );
     assert!(
         c0.keys.iter().all(|k| !matches!(k.shape, SegShape::Zigzag { .. })),
-        "форма легла на НЕвыбранную первую кривую"
+        "the shape landed on the NOT selected first curve"
     );
 }
 
-/// Тест 785b (Р.67): ручка параметра формы на середине участка — драг
-/// вверх увеличивает амплитуду зигзага, число видно рядом; у прямой
-/// ручки нет.
+/// Test 785b (R.67): the parameter knob of the shape at the middle of a segment — dragging
+/// up increases the zigzag amplitude, the number is visible next to it; a straight
+/// line has no knob.
 #[test]
 fn t785b_shape_parameter_handle_on_the_segment() {
     use kt_model::*;
@@ -16475,39 +16475,39 @@ fn t785b_shape_parameter_handle_on_the_segment() {
     h.step();
     h.step();
     let marks = fx_auto_view(&h).seg_marks.clone();
-    let handle = marks.iter().find(|(ki, _)| *ki == 0).map(|(_, p)| *p).expect("ручка у зигзага");
-    assert!(marks.iter().all(|(ki, _)| *ki != 1), "у прямой ручки быть не должно");
+    let handle = marks.iter().find(|(ki, _)| *ki == 0).map(|(_, p)| *p).expect("handle of the zigzag");
+    assert!(marks.iter().all(|(ki, _)| *ki != 1), "a straight line must not have a handle");
     let amp0 = 2.0;
     geom_drag(&mut h, handle, handle + egui::vec2(0.0, -20.0), egui::Modifiers::NONE);
     let s = h.state().model.project().clips[0].fx_auto[0][0].keys[0].shape;
-    let SegShape::Zigzag { amplitude, periods, .. } = s else { panic!("форма сменилась: {s:?}") };
-    assert!(amplitude > amp0, "амплитуда не выросла: {amplitude}");
-    assert_eq!(periods, 4.0, "периоды тронуты без Shift");
-    // Shift + вправо — периоды
+    let SegShape::Zigzag { amplitude, periods, .. } = s else { panic!("shape changed: {s:?}") };
+    assert!(amplitude > amp0, "amplitude did not grow: {amplitude}");
+    assert_eq!(periods, 4.0, "periods were touched without Shift");
+    // Shift + right — periods
     let marks = fx_auto_view(&h).seg_marks.clone();
     let handle = marks.iter().find(|(ki, _)| *ki == 0).map(|(_, p)| *p).unwrap();
     geom_drag(&mut h, handle, handle + egui::vec2(40.0, 0.0), egui::Modifiers::SHIFT);
     let s = h.state().model.project().clips[0].fx_auto[0][0].keys[0].shape;
-    let SegShape::Zigzag { periods, .. } = s else { panic!("форма сменилась: {s:?}") };
-    assert!(periods > 4.0, "периоды не выросли: {periods}");
-    // Ctrl+Z возвращает шагом истории
+    let SegShape::Zigzag { periods, .. } = s else { panic!("shape changed: {s:?}") };
+    assert!(periods > 4.0, "periods did not grow: {periods}");
+    // Ctrl+Z returns by a history step
     h.state_mut().undo();
     h.step();
     let s = h.state().model.project().clips[0].fx_auto[0][0].keys[0].shape;
-    let SegShape::Zigzag { periods, .. } = s else { panic!("форма сменилась: {s:?}") };
-    assert_eq!(periods, 4.0, "undo не вернул периоды одним шагом");
+    let SegShape::Zigzag { periods, .. } = s else { panic!("shape changed: {s:?}") };
+    assert_eq!(periods, 4.0, "undo did not restore the periods in one step");
 }
 
-/// Выбрать форму в комбо «форма всех отрезков» блока: комбо ищется по
-/// роли и текущему значению (у подписи egui доступного имени нет).
+/// Choose the shape in the “shape of all segments” combo of the block: the combo is searched by
+/// role and current value (the egui label has no accessible name).
 fn pick_shape_all(h: &mut Harness<'_, KtApp>, shape: &str) {
     use egui_kittest::kittest::Queryable;
-    // комбо ищется по НАРИСОВАННОМУ значению формы: в прокрученном окне
-    // accesskit отдаёт прямоугольник ДО прокрутки, и клик по нему уходил
-    // мимо (поймано на окне экземпляра, t791)
+    // the combo is searched by the DRAWN value of the shape: in the scrolled window
+    // accesskit gives the rectangle BEFORE scrolling, and the click on it went
+    // beside it (caught on the instance window, t791)
     let labels: Vec<&'static str> =
         crate::widgets::all_shapes().iter().map(|s| crate::widgets::shape_label(*s)).collect();
-    let crect = settled_text_rect(h, |s| labels.contains(&s), "комбо формы всех отрезков");
+    let crect = settled_text_rect(h, |s| labels.contains(&s), "shape combo for all segments");
     let c = crect.center();
     h.hover_at(c);
     h.step();
@@ -16526,10 +16526,10 @@ fn pick_shape_all(h: &mut Harness<'_, KtApp>, shape: &str) {
     h.step();
 }
 
-/// Набрать текст в поле формулы блока (клик правее подписи, символы, Enter).
+/// Type text into the block’s formula field (click to the right of the label, characters, Enter).
 fn type_layer_formula(h: &mut Harness<'_, KtApp>, text: &str) {
     let label = tr(k::fx::FORMULA).to_string();
-    let lr = settled_text_rect(h, move |s| s == label, "подпись поля формулы");
+    let lr = settled_text_rect(h, move |s| s == label, "formula field label");
     let field = egui::pos2(lr.right() + 60.0, lr.center().y);
     h.hover_at(field);
     h.step();
@@ -16542,7 +16542,7 @@ fn type_layer_formula(h: &mut Harness<'_, KtApp>, text: &str) {
         });
     }
     h.step();
-    // прежний текст — выделить всё и стереть (курсор клика стоит где попало)
+    // previous text — select all and erase (the click cursor is placed anywhere)
     h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
     h.key_press(egui::Key::Backspace);
     h.step();
@@ -16552,9 +16552,9 @@ fn type_layer_formula(h: &mut Harness<'_, KtApp>, text: &str) {
     }
 }
 
-/// Тест 787e (Р.67): слой-формула поверх ключей на графике и в поле:
-/// после Enter — две линии (сплошная `k` и штрих результата), ключи и
-/// зигзаг целы; очистка поля снимает слой; каждый Enter — шаг истории.
+/// Test 787e (R.67): a formula layer over the keys on the graph and in the field:
+/// after Enter — two lines (a solid `k` and the dashed result), the keys and
+/// the zigzag intact; clearing the field removes the layer; each Enter — a history step.
 #[test]
 fn t787e_layer_formula_over_keys_in_the_widget() {
     use kt_model::*;
@@ -16583,35 +16583,35 @@ fn t787e_layer_formula_over_keys_in_the_widget() {
     let c = h.state().model.project().clips[0].fx_auto[0][0].clone();
     assert!(
         matches!(&c.source, CurveSource::Formula { expr } if expr == "k * 0.5 + 0.1"),
-        "слой не доехал: {:?}",
+        "layer did not arrive: {:?}",
         c.source
     );
-    assert_eq!(c.keys, keys_before, "слой стёр ключи или форму");
+    assert_eq!(c.keys, keys_before, "layer erased the keys or the shape");
     let lines_after = crate::reach_tests::painted_lines(&h).len();
-    assert!(lines_after > lines_before, "штрих результата не нарисован ({lines_before} → {lines_after})");
-    // очистка снимает слой, ключи целы
+    assert!(lines_after > lines_before, "the result stroke was not drawn ({lines_before} → {lines_after})");
+    // clearing removes the layer, the keys are intact
     type_layer_formula(&mut h, "");
     h.key_press(egui::Key::Enter);
     h.step();
     h.step();
     let c = h.state().model.project().clips[0].fx_auto[0][0].clone();
-    assert!(c.source.is_keys(), "пустое поле не сняло слой: {:?}", c.source);
+    assert!(c.source.is_keys(), "empty field did not remove the layer: {:?}", c.source);
     assert_eq!(c.keys, keys_before);
-    // фокус отдан: пробел ставит паузу, а не печатает
-    assert!(!h.ctx.egui_wants_keyboard_input(), "поле не отдало фокус после Enter");
-    // правки — сессия окна FX: один шаг истории на сессию (контракт окна);
-    // «Отмена» окна откатывает и слой, и его снятие разом
+    // focus given back: space pauses, does not type
+    assert!(!h.ctx.egui_wants_keyboard_input(), "field did not hand back focus after Enter");
+    // the edits — a session of the FX window: one history step per session (the window’s contract);
+    // “Cancel” of the window rolls back both the layer and its removal at once
 }
 
-/// Тест 789 (Р.67): справка в блоке — из реестра вычислителя; Tab
-/// дополняет имя на месте без всплывающего слоя; неизвестное имя названо с
-/// ближайшими; у поля есть подсказка в строке состояния.
+/// Test 789 (R.67): the hint in the block — from the evaluator’s registry; Tab
+/// completes the name in place without a popup layer; an unknown name is reported with
+/// the nearest ones; the field has a hint in the status line.
 #[test]
 fn t789_formula_help_in_the_block_and_tab_completion() {
     use egui_kittest::kittest::Queryable;
     let mut h = harness_with_fx_window();
     reveal_curve_block(&mut h);
-    // группа «Справка» — по клику перечисляет все функции реестра
+    // the “Help” group — a click lists all the registry’s functions
     h.get_by_label(tr(k::fx::HELP)).click();
     h.step();
     h.step();
@@ -16620,34 +16620,34 @@ fn t789_formula_help_in_the_block_and_tab_completion() {
     for (name, arity) in kt_model::formula::FUNCTIONS {
         let args = (0..*arity).map(|i| ["x", "y", "z"][i]).collect::<Vec<_>>().join(", ");
         let sig = format!("{name}({args})");
-        assert!(texts.iter().any(|t| t == &sig), "функция {sig} не показана в справке");
+        assert!(texts.iter().any(|t| t == &sig), "function {sig} is not shown in the help");
     }
     for key in [k::fx::HELP_VAR_T, k::fx::HELP_VAR_K, k::fx::HELP_VAR_SRC, k::fx::HELP_VAR_S] {
-        assert!(texts.iter().any(|t| t == tr(key)), "переменная не описана: {}", tr(key));
+        assert!(texts.iter().any(|t| t == tr(key)), "variable is not described: {}", tr(key));
     }
-    // Tab дополняет `cl` до `clamp(` — на месте, без слоя поверх
+    // Tab completes `cl` to `clamp(` — in place, without a layer on top
     type_layer_formula(&mut h, "cl");
     h.key_press(egui::Key::Tab);
     h.step();
     h.step();
     let shown: Vec<String> = crate::reach_tests::painted_texts(&h).into_iter().map(|t| t.src).collect();
-    assert!(shown.iter().any(|s| s == "clamp("), "Tab не дополнил имя: {shown:?}");
+    assert!(shown.iter().any(|s| s == "clamp("), "Tab did not complete the name: {shown:?}");
     let layers: Vec<egui::LayerId> = h.ctx.memory(|m| m.layer_ids().collect());
     assert!(
         layers.iter().all(|l| l.order <= egui::Order::Middle || l.order == egui::Order::Debug),
-        "появился слой поверх интерфейса: {layers:?}"
+        "a layer appeared over the interface: {layers:?}"
     );
-    // неизвестное имя — ошибка с ближайшими
+    // unknown name — an error with the nearest ones
     type_layer_formula(&mut h, "flor(t)");
     h.key_press(egui::Key::Enter);
     h.step();
     h.step();
     let err = h.state().error_status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
-    assert!(err.contains("flor") && err.contains("floor"), "ошибка не названа в строке состояния: {err:?}");
-    assert!(h.state().model.project().clips[0].fx_auto[0][0].source.is_keys(), "неверный текст применился");
+    assert!(err.contains("flor") && err.contains("floor"), "error is not named in the status line: {err:?}");
+    assert!(h.state().model.project().clips[0].fx_auto[0][0].source.is_keys(), "invalid text was applied");
 }
 
-/// Тест 790 (Р.67): ширина полей блока не зависит от ширины окна.
+/// Test 790 (R.67): the width of the block’s fields does not depend on the window width.
 #[test]
 fn t790_field_widths_do_not_follow_the_window() {
     use eframe::egui::accesskit::Role;
@@ -16680,18 +16680,18 @@ fn t790_field_widths_do_not_follow_the_window() {
         out
     };
     let (narrow, wide) = (widths(900.0), widths(1800.0));
-    assert!(!narrow.is_empty(), "полей не нашлось");
-    assert_eq!(narrow.len(), wide.len(), "набор полей зависит от ширины окна");
+    assert!(!narrow.is_empty(), "no fields were found");
+    assert_eq!(narrow.len(), wide.len(), "the set of fields depends on the window width");
     for ((ka, a), (kb, b)) in narrow.iter().zip(wide.iter()) {
         assert_eq!(ka, kb);
-        assert!((a - b).abs() < 1.0, "поле {ka} растёт с окном: {a} → {b}");
+        assert!((a - b).abs() < 1.0, "field {ka} grows with the window: {a} → {b}");
     }
 }
 
-/// Тест 791/791b (Р.67): у экземпляра ленты блок кривой ТОТ ЖЕ — форма
-/// всех отрезков, формула-слой; `t*2` после Enter не стирается и становится
-/// источником переопределения (на прежнем коде — `CurveSourceUnsupported`
-/// и пустое поле).
+/// Test 791/791b (R.67): on an instance of a reel the curve block is THE SAME — the shape
+/// of all segments, the formula layer; `t*2` after Enter is not erased and becomes a
+/// source of the override (on the old code — `CurveSourceUnsupported`
+/// and an empty field).
 #[test]
 fn t791_instance_head_has_the_same_curve_block() {
     use egui_kittest::kittest::Queryable;
@@ -16699,32 +16699,32 @@ fn t791_instance_head_has_the_same_curve_block() {
     h.state_mut().open_fx_editor_head(s.b);
     h.step();
     h.step();
-    // кривая у числовой ручки «Кегль»
+    // the curve on the numeric knob “Kegel”
     h.get_by_label(tr(k::fx::AUTO_ADD)).click();
     h.step();
     h.step();
     let item = h
-        .query_all_by_label_contains("Кегль")
+        .query_all_by_label_contains("Font size")
         .last()
-        .expect("пункт «Кегль» в меню «+ кривая»");
+        .expect("item “Font size” in the “+ curve” menu");
     item.click();
     h.step();
     h.step();
     let inst = h.state().model.project().clips.iter().find(|c| c.id == s.b).cloned().unwrap();
-    let ov = inst.overrides.iter().find(|o| !o.curves.is_empty()).expect("кривая переопределения");
+    let ov = inst.overrides.iter().find(|o| !o.curves.is_empty()).expect("override curve");
     assert_eq!(ov.curves.len(), 1);
     reveal_curve_block(&mut h);
-    // блок тот же: заголовок, форма всех отрезков, поле формулы
+    // the block is the same: the header, the shape of all segments, the formula field
     let texts: Vec<String> = crate::reach_tests::painted_texts(&h).into_iter().map(|t| t.src).collect();
-    assert!(texts.iter().any(|t| t.starts_with(&crate::tf!(k::fx::CURVE_TITLE, ""))), "заголовка блока нет: {texts:?}");
-    assert!(texts.iter().any(|t| t == tr(k::fx::SHAPE_ALL)), "у экземпляра нет «форма всех отрезков»");
-    assert!(texts.iter().any(|t| t == tr(k::fx::FORMULA)), "у экземпляра нет поля формулы");
-    // зигзаг на все отрезки
+    assert!(texts.iter().any(|t| t.starts_with(&crate::tf!(k::fx::CURVE_TITLE, ""))), "block heading is missing: {texts:?}");
+    assert!(texts.iter().any(|t| t == tr(k::fx::SHAPE_ALL)), "the instance has no “shape of all segments”");
+    assert!(texts.iter().any(|t| t == tr(k::fx::FORMULA)), "the instance has no formula field");
+    // zigzag over all segments
     pick_shape_all(&mut h, tr(k::fx::SHAPE_ZIGZAG));
     let inst = h.state().model.project().clips.iter().find(|c| c.id == s.b).cloned().unwrap();
     let ov = inst.overrides.iter().find(|o| !o.curves.is_empty()).unwrap();
-    assert!(ov.curves[0].keys.iter().all(|k| matches!(k.shape, kt_model::SegShape::Zigzag { .. })), "зигзаг не лёг на переопределение");
-    // формула t*2 — не стирается, становится слоем переопределения
+    assert!(ov.curves[0].keys.iter().all(|k| matches!(k.shape, kt_model::SegShape::Zigzag { .. })), "zigzag did not land on the override");
+    // formula t*2 — is not erased, becomes an override layer
     type_layer_formula(&mut h, "t*2");
     h.key_press(egui::Key::Enter);
     h.step();
@@ -16733,51 +16733,51 @@ fn t791_instance_head_has_the_same_curve_block() {
     let ov = inst.overrides.iter().find(|o| !o.curves.is_empty()).unwrap();
     assert!(
         matches!(&ov.curves[0].source, kt_model::CurveSource::Formula { expr } if expr == "t*2"),
-        "формула у экземпляра не доехала: {:?}",
+        "instance formula did not arrive: {:?}",
         ov.curves[0].source
     );
     let shown: Vec<String> = crate::reach_tests::painted_texts(&h).into_iter().map(|t| t.src).collect();
-    assert!(shown.iter().any(|t| t == "t*2"), "поле стёрлось после Enter: {shown:?}");
+    assert!(shown.iter().any(|t| t == "t*2"), "field was erased after Enter: {shown:?}");
 }
 
-/// Тест 794 (Р.67): рамка над кадром есть СРАЗУ (полезный контрол включён
-/// по умолчанию), выключение ПОМНИТСЯ между запусками, а схема формы
-/// вписывает кадр и рамку целиком при любом зуме.
+/// Test 794 (R.67): the frame over the picture is there AT ONCE (the useful control is on
+/// by default), switching it off is REMEMBERED between runs, and the shape diagram
+/// fits the frame and the frame whole at any zoom.
 ///
-/// Владелец: «вместо управления в превью у нас только скудное управление
-/// внутри виджета-fx» — рамка стартовала выключенной, не запоминалась и
-/// включалась лишь пунктом контекстного меню; «если заскейлишь даже на 2x
-/// — у тебя просто ничего в превью нет» — схема клиповалась своим
-/// прямоугольником.
+/// The owner: “instead of controls in the preview we have only meagre controls
+/// inside the fx widget” — the frame started switched off, was not remembered, and was
+/// turned on only through a context-menu item; “if you scale even by 2x
+/// you simply have nothing in the preview” — the diagram was clipped by its own
+/// rectangle.
 #[test]
 fn t794_frame_is_on_by_default_remembered_and_the_schema_fits() {
     use kt_model::*;
-    // --- умолчание: показ ВКЛЮЧЁН без единого действия -------------------
+    // --- default: the display is ON with no action at all ---------------------
     assert_eq!(
         KtApp::default_geom_mode(None),
         crate::geomctl::GeomMode::Transform,
-        "без хранилища рамка обязана быть включена (правило 4: полезное — по умолчанию)"
+        "without storage the frame must be enabled (rule 4: useful by default)"
     );
     assert_eq!(KtApp::default_geom_mode(Some(false)), crate::geomctl::GeomMode::Off);
     assert_eq!(KtApp::default_geom_mode(Some(true)), crate::geomctl::GeomMode::Transform);
 
-    // --- выключение помнится: круг через файл рабочего места -------------
+    // --- switching off is remembered: a round trip through the workspace file -------------
     let dir = std::env::temp_dir().join(format!("kt-t794-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let ws = dir.join("workspace.json");
     let mut w = crate::user_store::load_workspace_at(&ws);
-    assert_eq!(w.geom_controls, None, "пустое хранилище не знает о рамке — это умолчание");
+    assert_eq!(w.geom_controls, None, "empty storage knows nothing about the frame — this is the default");
     w.geom_controls = Some(false);
     crate::user_store::save_workspace_at(&ws, &w);
     let back = crate::user_store::load_workspace_at(&ws);
-    assert_eq!(back.geom_controls, Some(false), "выключение не пережило круг через файл");
+    assert_eq!(back.geom_controls, Some(false), "switching off did not survive the round trip through the file");
     assert_eq!(
         KtApp::default_geom_mode(back.geom_controls),
         crate::geomctl::GeomMode::Off,
-        "после перезапуска рамка обязана остаться выключенной"
+        "after a restart the frame must stay switched off"
     );
-    // удаление хранилища возвращает умолчание «включено»
+    // deleting the storage returns the default “on”
     let _ = std::fs::remove_file(&ws);
     assert_eq!(
         KtApp::default_geom_mode(crate::user_store::load_workspace_at(&ws).geom_controls),
@@ -16785,14 +16785,14 @@ fn t794_frame_is_on_by_default_remembered_and_the_schema_fits() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 
-    // --- кнопка на самом кадре: есть, переключает, помнит ----------------
+    // --- the button on the frame itself: it is there, toggles, remembers ----------------
     let (mut h, _clip) = harness_geom_ctl();
     h.step();
     let probes = crate::widgets::field_probe::take();
     let _ = probes;
     assert!(
         h.state().geom_mode() != crate::geomctl::GeomMode::Off,
-        "сцена: рамка включена"
+        "scene: the frame is enabled"
     );
     let img = h.state().preview_img_rect;
     let btn = egui::pos2(img.right() - 17.0, img.top() + 17.0);
@@ -16811,52 +16811,52 @@ fn t794_frame_is_on_by_default_remembered_and_the_schema_fits() {
     assert_eq!(
         h.state().geom_mode(),
         crate::geomctl::GeomMode::Off,
-        "кнопка в углу кадра не выключила рамку"
+        "the button in the frame corner did not switch the frame off"
     );
     assert_eq!(
         h.state().workspace.geom_controls,
         Some(false),
-        "выключение не попало в рабочее место"
+        "switching off did not reach the workplace"
     );
-    // при ИГРЕ кнопки нет (как и контролов)
+    // during PLAYBACK the button is absent (as are the controls)
     h.state_mut().player.play();
     h.step();
     h.step();
     let shown = crate::widgets::field_probe::take();
     assert!(
         !shown.iter().any(|(n, _)| n == "preview.geom_toggle"),
-        "при игре кнопка рамки осталась на кадре"
+        "during playback the frame button stayed on the frame"
     );
     h.state_mut().player.pause();
 
-    // --- СХЕМА вписывает кадр и рамку при зуме 2× -----------------------
+    // --- the DIAGRAM fits the frame and the frame at 2× zoom -----------------------
     let size = egui::vec2(116.0, 66.0);
     let zoomed = FxInstance::geometry_at(0.0, 0.0, 2.0);
-    let (quad, frame) = crate::geomctl::schema_points(&zoomed, size).expect("схема считается");
+    let (quad, frame) = crate::geomctl::schema_points(&zoomed, size).expect("diagram is computed");
     let area = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
     for c in quad {
-        assert!(area.contains(c), "угол рамки {c:?} вне схемы {area:?} (на прежнем коде — все четыре)");
+        assert!(area.contains(c), "frame corner {c:?} is outside the diagram {area:?} (on the old code all four were)");
     }
-    assert!(area.contains(frame.min) && area.contains(frame.max), "кадр не влез в схему: {frame:?}");
-    // рамка при 2× ВИДНА и больше кадра — иначе схема не информативна
+    assert!(area.contains(frame.min) && area.contains(frame.max), "frame did not fit the diagram: {frame:?}");
+    // the frame at 2× is VISIBLE and larger than the frame — otherwise the diagram is not informative
     let (qw, fw) = (quad[1].x - quad[0].x, frame.width());
-    assert!(qw > fw * 1.5, "рамка при 2× не больше кадра: {qw} против {fw}");
-    // у умолчания рамка совпадает с кадром
+    assert!(qw > fw * 1.5, "at 2× the frame is not larger than the picture: {qw} versus {fw}");
+    // by default the frame coincides with the picture
     let (q0, f0) = crate::geomctl::schema_points(&EventGeometry::default().node(), size).unwrap();
-    assert!((q0[1].x - q0[0].x - f0.width()).abs() < 1.5, "без зума рамка обязана лечь на кадр");
+    assert!((q0[1].x - q0[0].x - f0.width()).abs() < 1.5, "without zoom the frame must lie on the picture");
 }
 
-/// Тест 793 (Р.67): голова полосы у экземпляра ленты — короткая подпись
-/// цветом слота, а не длинная акцентная строка.
+/// Test 793 (R.67): the head of the strip for an instance of a reel is a short label in
+/// the slot’s colour, not a long accent line.
 ///
-/// Владелец дословно: «нахуя пользователю загораживать fx-chain длинной
-/// надписью "Composition parameters"? Она еще и синяя... если ее выделить
-/// — то получится длинный синий прямоугольник».
+/// The owner, verbatim: “why on earth would a user cover the fx-chain with a long
+/// caption “Composition parameters”? It is also blue… if you select it
+/// it becomes a long blue rectangle.”
 #[test]
 fn t793_instance_head_is_short_and_not_accent() {
     let (mut h, s) = harness_news_template();
-    // длинное имя ленты: усечение обязано сработать, а не растить полосу
-    let long = "Выпуск новостей понедельника, вечерний эфир";
+    // a long reel name: truncation must work and not grow the strip
+    let long = "Monday news issue, evening broadcast with the regional weather";
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
@@ -16868,35 +16868,35 @@ fn t793_instance_head_is_short_and_not_accent() {
     h.step();
     h.step();
 
-    // щуп пишется только под KT_GEOM_DUMP — в харнессе смотрим на
-    // НАРИСОВАННОЕ (то же правило, что у прочих утверждений о вёрстке)
+    // the probe is written only under KT_GEOM_DUMP — in the harness we look at the
+    // DRAWN thing (the same rule as for the other layout claims)
     let painted = crate::reach_tests::painted_texts(&h);
     let label = painted
         .iter()
-        .find(|t| t.src.starts_with(crate::icons::PIN) && t.src.contains("Выпуск"))
+        .find(|t| t.src.starts_with(crate::icons::PIN) && t.src.contains("Monday"))
         .unwrap_or_else(|| {
             let pins: Vec<&String> = painted.iter().map(|t| &t.src).filter(|s| s.contains(crate::icons::PIN)).collect();
-            let all: Vec<&String> = painted.iter().map(|t| &t.src).filter(|s| s.contains("Выпуск")).collect();
-            panic!("подпись головы не нарисована; с пином: {pins:?}; с именем ленты: {all:?}")
+            let all: Vec<&String> = painted.iter().map(|t| &t.src).filter(|s| s.contains("Monday")).collect();
+            panic!("head label is not drawn; with pin: {pins:?}; with reel name: {all:?}")
         });
-    // ширина головы — не больше слота с самым длинным именем
+    // the width of the head — no more than the slot with the longest name
     let slot_max = {
         let fid = h.ctx.style_of(egui::Theme::Dark).text_styles[&egui::TextStyle::Button].clone();
         h.ctx.fonts_mut(|f| f.glyph_width(&fid, 'M')) * crate::widgets::SLOT_NAME_CHARS as f32
     };
     assert!(
         label.rect.width() <= slot_max + 40.0,
-        "голова шире слота: {} против {slot_max} (подпись не усечена)",
+        "head is wider than the slot: {} versus {slot_max} (the label is not truncated)",
         label.rect.width()
     );
-    assert!(label.src.contains("Выпуск"), "голова не несёт имени ленты: {:?}", label.src);
-    assert!(label.elided, "длинное имя ленты не усечено: {:?}", label.drawn);
+    assert!(label.src.contains("Monday"), "head does not carry the reel name: {:?}", label.src);
+    assert!(label.elided, "long reel name is not truncated: {:?}", label.drawn);
     assert!(
         !label.src.contains(tr(k::pubp::INST_TITLE)),
-        "голова по-прежнему подписана «{}»",
+        "head is still labeled “{}”",
         tr(k::pubp::INST_TITLE)
     );
-    // цвет — обычный текст, НЕ акцент (синего прямоугольника не будет)
+    // the colour — ordinary text, NOT accent (there will be no blue rectangle)
     let accent = crate::theme::ACCENT;
     let head_color = h
         .output()
@@ -16905,39 +16905,39 @@ fn t793_instance_head_is_short_and_not_accent() {
         .filter_map(|cs| match &cs.shape {
             egui::epaint::Shape::Text(t)
                 if t.galley.text().starts_with(crate::icons::PIN)
-                    && t.galley.text().contains("Выпуск") =>
+                    && t.galley.text().contains("Monday") =>
             {
                 t.galley.job.sections.first().map(|s| s.format.color)
             }
             _ => None,
         })
         .next()
-        .expect("цвет подписи головы");
-    assert_ne!(head_color, accent, "голова осталась акцентной");
+        .expect("head label color");
+    assert_ne!(head_color, accent, "head stayed accented");
     assert_eq!(
         head_color,
         h.ctx.style_of(egui::Theme::Dark).visuals.text_color(),
-        "голова не цвета слота"
+        "head is not the slot’s color"
     );
 }
 
-/// Тест 795 (Р.67): полоса ленты ДОЖИВАЕТ ДО ДИСКА без огибающей, отмена —
-/// не провал, а второе открытие проекта в форме файла владельца (две ленты
-/// друг над другом с переопределениями и пропавший исходник) не рендерит
-/// заново.
+/// Test 795 (R.67): the strip of a reel SURVIVES TO DISK without an envelope, cancelling is
+/// not a failure, and a second opening of the project in the owner’s file form (two reels
+/// one above the other with overrides and a lost source) does not render
+/// again.
 ///
-/// Владелец: «открываю paintitblack и превью композиции ОПЯТЬ не
-/// сохраняются, каждый раз он просчитывает превью заново, этот баг уже был
-/// раньше с другим проектом». Прежде запись шла ОДНОЙ транзакцией и только
-/// после аудио-стадии: отменённая задача (пауза, правка, закрытие) не
-/// оставляла на диске ничего, а её ключ попадал в негативный кэш как
-/// провал — и до следующей правки ленты превью не появлялось вовсе.
+/// The owner: “I open paintitblack and the composition preview is AGAIN not
+/// saved, every time it recomputes the preview, this bug already existed
+/// with another project.” Previously the write went in ONE transaction and only
+/// after the audio stage: a cancelled job (pause, edit, close) left nothing on
+/// disk, and its key went into the negative cache as a
+/// failure — and until the next edit of the reel the preview did not appear at all.
 #[test]
 fn t795_reel_frames_reach_the_disk_and_cancel_is_not_a_failure() {
     use crate::reel_preview::{CANCELLED, ReelKey, ReelPreviews};
     use kt_model::*;
 
-    // --- отмена НЕ кладётся в негативный кэш, заявка повторяется ---------
+    // --- cancel is NOT put in the negative cache, the request is repeated ---------
     let mut svc = ReelPreviews::default();
     let key = ReelKey { seq: MediaId(1), hash: 7 };
     let p = || {
@@ -16952,25 +16952,25 @@ fn t795_reel_frames_reach_the_disk_and_cancel_is_not_a_failure() {
             settings_explicit: false,
         })
     };
-    assert!(svc.request(key, p(), None, None), "первая заявка обязана встать в очередь");
-    assert!(!svc.request(key, p(), None, None), "дубль заявки в очереди");
+    assert!(svc.request(key, p(), None, None), "the first request must get into the queue");
+    assert!(!svc.request(key, p(), None, None), "duplicate request in the queue");
     svc.note_done_for_test(key, Err(CANCELLED.to_string()));
-    assert_eq!(svc.failure(&key), None, "отмена попала в негативный кэш как провал");
-    assert!(svc.request(key, p(), None, None), "после отмены заявка обязана вставать заново");
-    // а ОШИБКА рендера — провал, и повторной заявки нет
+    assert_eq!(svc.failure(&key), None, "cancellation got into the negative cache as a failure");
+    assert!(svc.request(key, p(), None, None), "after cancellation the request must be inserted again");
+    // but a render ERROR is a failure, and there is no repeated request
     let bad = ReelKey { seq: MediaId(2), hash: 7 };
     svc.note_done_for_test(bad, Err("decode failed".into()));
-    assert_eq!(svc.failure(&bad), Some("decode failed"), "ошибка рендера обязана запомниться");
-    assert!(!svc.request(bad, p(), None, None), "провальный ключ не долбится заново");
+    assert_eq!(svc.failure(&bad), Some("decode failed"), "render error must be remembered");
+    assert!(!svc.request(bad, p(), None, None), "a failed key is not hammered again");
 
-    // --- полоса БЕЗ пиков: заявка на неё ставится, полная — нет ----------
+    // --- a strip WITHOUT peaks: a request for it is placed, a full one is not ----------
     let half = ReelKey { seq: MediaId(3), hash: 7 };
     svc.put_for_test(half, Some(crate::reel_preview::ReelStrip {
         step: 90_000,
         frames: vec![None],
         end: kt_time::Tick(90_000),
     }), None);
-    assert!(svc.request(half, p(), None, None), "полоса без огибающей обязана пускать заявку");
+    assert!(svc.request(half, p(), None, None), "a strip without an envelope must let the request through");
     let full = ReelKey { seq: MediaId(4), hash: 7 };
     svc.put_for_test(
         full,
@@ -16981,11 +16981,11 @@ fn t795_reel_frames_reach_the_disk_and_cancel_is_not_a_failure() {
         }),
         Some(Default::default()),
     );
-    assert!(!svc.request(full, p(), None, None), "полная запись не имеет права заказываться снова");
+    assert!(!svc.request(full, p(), None, None), "a complete record has no right to be ordered again");
 
-    // --- СКВОЗНОЕ: проект в форме файла владельца открывается дважды -----
-    // две ленты ДРУГ НАД ДРУГОМ с разными наборами переопределений и
-    // пропавший исходник внутри ленты (у него заглушка — тоже кадр)
+    // --- END-TO-END: the project in the owner’s file form is opened twice -----
+    // two reels ONE ABOVE THE OTHER with different sets of overrides and a lost source
+    // inside the reel (its placeholder is also a frame)
     let dir = std::env::temp_dir().join(format!("kt-t795-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -16993,7 +16993,7 @@ fn t795_reel_frames_reach_the_disk_and_cancel_is_not_a_failure() {
     let seq = {
         let (h, _g, seq) = harness_with_nest();
         let mut doc = h.state().model.document().clone();
-        // пропавший файл ВНУТРИ ленты: заглушка обязана попасть в отпечаток
+        // the lost file INSIDE the reel: the placeholder must get into the fingerprint
         let gone = MediaId(
             doc.media.iter().map(|m| m.id.0).chain(doc.sequences.iter().map(|s| s.id.0)).max().unwrap() + 1,
         );
@@ -17007,7 +17007,7 @@ fn t795_reel_frames_reach_the_disk_and_cancel_is_not_a_failure() {
             .unwrap_or(0)
             + 500;
         {
-            let sq = doc.sequences.iter_mut().find(|x| x.id == seq).expect("лента");
+            let sq = doc.sequences.iter_mut().find(|x| x.id == seq).expect("reel");
             let mut miss = sq.clips[0].clone();
             miss.id = ClipId(next);
             miss.lane = 1;
@@ -17016,20 +17016,20 @@ fn t795_reel_frames_reach_the_disk_and_cancel_is_not_a_failure() {
             sq.clips.push(miss);
             sq.ensure_tracks(LaneKind::Video, 2);
         }
-        // ВТОРОЙ экземпляр той же ленты — над первым, в то же время
-        let first = doc.clips.iter().find(|c| c.media == seq).cloned().expect("экземпляр ленты");
+        // A SECOND instance of the same reel — above the first, at the same time
+        let first = doc.clips.iter().find(|c| c.media == seq).cloned().expect("reel instance");
         let mut second = first.clone();
         second.id = ClipId(next + 1);
         second.lane = first.lane + 1;
         second.link_group = None;
         doc.clips.push(second);
         doc.ensure_tracks(LaneKind::Video, first.lane + 2);
-        doc.validate().expect("проект в форме файла владельца законен");
+        doc.validate().expect("a project in the owner’s file form is legal");
         std::fs::write(&path, crate::app::project_text_of(&doc, &Default::default(), None)).unwrap();
         seq
     };
     let open_and_wait = || -> (Harness<'static, KtApp>, crate::reel_preview::ReelKey) {
-        let mut app = KtApp::open(&path).expect("проект открывается");
+        let mut app = KtApp::open(&path).expect("project opens");
         app.recovery_on_drop = false;
         app.workspace_file = Some(dir.join(format!("ws-{:p}.json", &app)));
         let mut h = Harness::builder()
@@ -17050,27 +17050,27 @@ fn t795_reel_frames_reach_the_disk_and_cancel_is_not_a_failure() {
     let (h1, k1) = open_and_wait();
     assert!(
         h1.state().reel_previews.get(&k1).and_then(|e| e.strip.clone()).is_some(),
-        "первое открытие не дало полосы"
+        "first opening gave no strip"
     );
-    assert!(h1.state().reel_previews.renders() >= 1, "первое открытие обязано отрендерить ленту");
+    assert!(h1.state().reel_previews.renders() >= 1, "first opening must render the reel");
     drop(h1);
 
     let (h2, k2) = open_and_wait();
-    assert_eq!(k2, k1, "ключ ленты изменился между открытиями — диск никогда бы не попал");
-    let prev = h2.state().reel_previews.get(&k2).expect("второе открытие без превью");
-    assert!(prev.strip.as_ref().is_some_and(|s| s.step > 0), "кадры не пришли с диска");
-    assert!(prev.peaks.as_ref().is_some_and(|p| !p.is_empty()), "огибающая не пришла с диска");
+    assert_eq!(k2, k1, "reel key changed between openings — the disk would never hit");
+    let prev = h2.state().reel_previews.get(&k2).expect("second opening without preview");
+    assert!(prev.strip.as_ref().is_some_and(|s| s.step > 0), "frames did not come from the disk");
+    assert!(prev.peaks.as_ref().is_some_and(|p| !p.is_empty()), "envelope did not come from the disk");
     assert_eq!(
         h2.state().reel_previews.renders(),
         0,
-        "второе открытие снова отрендерило ленту: на проекте владельца превью «ОПЯТЬ не сохраняются»"
+        "second opening rendered the reel again: on the owner’s project the previews are “NOT saved again”"
     );
     drop(h2);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Сцена со СТИЛЛОМ: одно видео-событие на картинке (существующей или
-/// пропавшей) и открытый проект на диске — чтобы медиа шло обычным путём.
+/// A scene with a STILL: one video event on a picture (existing or
+/// missing) and an open project on disk — so that the media goes the ordinary way.
 fn harness_still(exists: bool) -> (Harness<'static, KtApp>, std::path::PathBuf) {
     use kt_model::*;
     let dir = std::env::temp_dir().join(format!(
@@ -17089,7 +17089,7 @@ fn harness_still(exists: bool) -> (Harness<'static, KtApp>, std::path::PathBuf) 
             .status()
             .expect("gen.sh");
         assert!(st.success());
-        std::fs::copy(&src, &img).expect("копия фикстуры");
+        std::fs::copy(&src, &img).expect("copy of the fixture");
     }
     let path = dir.join("still.kt");
     let mut p = Project::new(ProjectSettings {
@@ -17104,14 +17104,14 @@ fn harness_still(exists: bool) -> (Harness<'static, KtApp>, std::path::PathBuf) 
     });
     p.media.push(MediaRef::new(MediaId(1), img.to_string_lossy().to_string()));
     let mut c = sample_clip(ClipId(1));
-    c.duration = kt_time::Tick(20 * 90_000); // ДЛИННЕЕ любой «длительности» картинки
+    c.duration = kt_time::Tick(20 * 90_000); // LONGER than any “duration” of the picture
     c.media = MediaId(1);
     p.clips.push(c);
     p.ensure_tracks(LaneKind::Video, 1);
     p.validate().unwrap();
     std::fs::write(&path, crate::app::project_text_of(&p, &Default::default(), None)).unwrap();
 
-    let mut app = KtApp::open(&path).expect("проект со стиллом открывается");
+    let mut app = KtApp::open(&path).expect("project with a still opens");
     app.recovery_on_drop = false;
     app.workspace_file = Some(dir.join("ws.json"));
     let mut h = Harness::builder()
@@ -17122,7 +17122,7 @@ fn harness_still(exists: bool) -> (Harness<'static, KtApp>, std::path::PathBuf) 
     (h, dir)
 }
 
-/// Курсор в заданную секунду события и ожидание укомплектованного кадра.
+/// The cursor at a given second of the event and waiting for the assembled frame.
 fn wait_complete(h: &mut Harness<'_, KtApp>, at_s: f64) -> bool {
     h.state_mut().player.seek(kt_time::Tick((at_s * 90_000.0) as i64));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -17136,60 +17136,60 @@ fn wait_complete(h: &mut Harness<'_, KtApp>, at_s: f64) -> bool {
     false
 }
 
-/// Тест 796c (Р.67): событие на КАРТИНКЕ показывает её на всей своей
-/// длине, и «Loading…» над ним не висит.
+/// Test 796c (R.67): an event on a PICTURE shows it over its whole
+/// length, and “Loading…” does not hang above it.
 ///
-/// Владелец: «статичные картинки не отображаюся, вообще.. там вечный
-/// Loading...». Событие длиной 20 с на картинке: кадр обязан быть и в
-/// нуле, и в середине, и у конца — у картинки нет ни сетки кадров, ни
-/// конца материала.
+/// The owner: “static pictures do not show at all.. there is an eternal
+/// Loading...”. An event 20 s long on a picture: the frame must be there at
+/// zero, in the middle, and at the end — a picture has neither a frame grid
+/// nor an end of material.
 #[test]
 fn t796c_a_still_shows_on_the_whole_event_without_loading() {
     let (mut h, dir) = harness_still(true);
     for at in [0.0, 9.5, 19.9] {
         assert!(
             wait_complete(&mut h, at),
-            "на {at} с кадра картинки нет: над событием висит «Loading…»"
+            "at {at} there is no picture from the frame: “Loading…” hangs over the event"
         );
-        // скрим неполноты не взводится
+        // the incompleteness alarm is not triggered
         assert!(
             h.state().incomplete_since.is_none(),
-            "на {at} с взведён скрим неполноты"
+            "at {at} with the incompleteness scrim raised"
         );
     }
     drop(h);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 796d (Р.67): ПРОПАВШАЯ картинка — заглушка с именем файла, а не
-/// вечное «Loading…»; вернувшийся файл подменяет её на ходу.
+/// Test 796d (R.67): a MISSING picture is a placeholder with the file name, not an
+/// eternal “Loading…”; the returned file replaces it on the fly.
 #[test]
 fn t796d_a_missing_still_is_a_named_placeholder_not_loading() {
     let (mut h, dir) = harness_still(false);
-    assert_eq!(h.state().placeholder_media.len(), 1, "пропавшая картинка не стала заглушкой");
+    assert_eq!(h.state().placeholder_media.len(), 1, "the missing picture did not turn into a placeholder");
     assert!(
         wait_complete(&mut h, 5.0),
-        "над пропавшей картинкой висит «Loading…» вместо заглушки с именем"
+        "“Loading…” hangs over the missing picture instead of a placeholder with the name"
     );
-    assert!(h.state().incomplete_since.is_none(), "скрим неполноты взведён над заглушкой");
-    // имя пропавшего файла названо человеку
+    assert!(h.state().incomplete_since.is_none(), "incompleteness scrim is raised over the placeholder");
+    // the name of the missing file is shown to the person
     let said: Vec<String> = h.state().notices.iter().map(|n| n.text.clone()).collect();
     assert!(
         said.iter().any(|t| t.contains("logo.jpg")),
-        "пропавший файл не назван в уведомлениях: {said:?}"
+        "the missing file is not named in the notifications: {said:?}"
     );
     drop(h);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 797 (Р.67): путь ДОБАВЛЯЕМОГО медиа становится абсолютным, и файл
-/// не «пропадает» после сохранения проекта в подкаталог.
+/// Test 797 (R.67): the path of ADDED media becomes absolute, and the file
+/// does not “disappear” after saving the project into a subdirectory.
 ///
-/// У владельца картинка записана как `sources/a3566951817_10.jpg` рядом с
-/// файлом, который сам лежит в `sources/`: путь, относительный к каталогу
-/// ЗАПУСКА, попал в модель как есть, а писатель принял его за
-/// относительный К ПРОЕКТУ. Файл искали по `sources/sources/…` — и не
-/// находили, хотя он не сдвинулся с места.
+/// The owner’s picture is recorded as `sources/a3566951817_10.jpg` next to a
+/// file that itself lies in `sources/`: a path relative to the LAUNCH
+/// directory got into the model as it was, and the writer took it for a
+/// path relative TO THE PROJECT. The file was searched under `sources/sources/…` — and was not
+/// found, although it had not moved at all.
 #[test]
 fn t797_added_media_path_becomes_absolute() {
     use kt_model::*;
@@ -17199,18 +17199,18 @@ fn t797_added_media_path_becomes_absolute() {
     let img = dir.join("sources/x.jpg");
     std::fs::write(&img, b"not really a jpeg").unwrap();
 
-    // относительный путь — ровно та форма, что была у владельца
+    // a relative path — exactly the form the owner had
     let rel = "sources/x.jpg";
     let abs = KtApp::absolute_media_path(rel);
-    assert!(std::path::Path::new(&abs).is_absolute(), "путь остался относительным: {abs}");
-    assert!(abs.ends_with("sources/x.jpg"), "путь искажён: {abs}");
-    // псевдо-пути не трогаются
+    assert!(std::path::Path::new(&abs).is_absolute(), "path stayed relative: {abs}");
+    assert!(abs.ends_with("sources/x.jpg"), "path is distorted: {abs}");
+    // pseudo-paths are left untouched
     assert_eq!(KtApp::absolute_media_path("synth:Ramp"), "synth:Ramp");
     assert_eq!(KtApp::absolute_media_path("gen:solid"), "gen:solid");
-    // абсолютный остаётся собой
+    // an absolute one stays itself
     assert_eq!(KtApp::absolute_media_path(&abs), abs);
 
-    // СЛЕДСТВИЕ: запись в подкаталог и чтение обратно находят файл
+    // CONSEQUENCE: writing into a subdirectory and reading back find the file
     let mut p = Project::new(ProjectSettings {
         fps: 30,
         width: 320,
@@ -17227,30 +17227,30 @@ fn t797_added_media_path_becomes_absolute() {
     p.clips.push(c);
     p.ensure_tracks(LaneKind::Video, 1);
     p.validate().unwrap();
-    // проект ЛЕЖИТ РЯДОМ С КАРТИНКОЙ, в том же `sources/`
+    // the project LIES NEXT TO THE PICTURE, in the same `sources/`
     let proj = dir.join("sources/p.kt");
     let text = crate::app::project_text_of(&p, &Default::default(), proj.parent());
     std::fs::write(&proj, &text).unwrap();
     let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
-    let url = doc["project"]["media"][0]["path"].as_str().expect("путь медиа в файле");
-    assert_eq!(url, "x.jpg", "в файле не относительный к проекту путь: {url}");
-    // читаем ТЕМ ЖЕ путём, что «Открыть»: относительный путь файла
-    // разрешается от каталога проекта при чтении
-    let (back, _, _) = crate::app::load_project_file(&proj).expect("проект читается");
+    let url = doc["project"]["media"][0]["path"].as_str().expect("media path in the file");
+    assert_eq!(url, "x.jpg", "path in the file is not relative to the project: {url}");
+    // we read by the SAME path as “Open”: the relative path of the file
+    // is resolved from the project directory at read time
+    let (back, _, _) = crate::app::load_project_file(&proj).expect("project is read");
     let found = &back.media[0].path;
     assert!(
         std::path::Path::new(found).exists(),
-        "после круга файл не найден: {found} (ожидался {})",
+        "after the round trip the file is not found: {found} (expected {})",
         img.display()
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Тест 815 (Р.70): автосейв большого проекта перестал быть событием. Сцена
-/// замера владельца — лента в ленте по несколько экземпляров: в обменном
-/// формате она давала мегабайты (тело ленты в каждом экземпляре), в файле
-/// восстановления своего формата — килобайты, и запись не задерживает
-/// интерфейс.
+/// Test 815 (R.70): autosave of a big project stopped being an event. The owner’s
+/// measuring scene — a reel inside a reel, several instances each: in the exchange
+/// format it gave megabytes (the reel’s body in every instance), in the recovery file
+/// of its own format — kilobytes, and the write does not hold up the
+/// interface.
 #[test]
 fn t815_recovery_of_a_nested_scene_is_orders_of_magnitude_smaller() {
     use kt_model::*;
@@ -17278,7 +17278,7 @@ fn t815_recovery_of_a_nested_scene_is_orders_of_magnitude_smaller() {
         opacity: 1.0,
         fx_off: false,
     };
-    // та самая сцена: L1 из 10 клипов, L2 из 8 экземпляров L1, корень из 8 L2
+    // that very scene: L1 of 10 clips, L2 of 8 instances of L1, the root of 8 L2
     let mut p = Project::new(ProjectSettings {
         fps: 30,
         width: 1280,
@@ -17327,17 +17327,17 @@ fn t815_recovery_of_a_nested_scene_is_orders_of_magnitude_smaller() {
     app.write_recovery_now();
     let took = t0.elapsed();
     let rec = crate::app::recovery_path_for(Some(&target));
-    let ours = std::fs::metadata(&rec).expect("файла восстановления нет").len() as usize;
+    let ours = std::fs::metadata(&rec).expect("there is no recovery file").len() as usize;
     let interchange = kt_otio::save_project(&p, &Default::default(), None).len();
     let ratio = interchange / ours.max(1);
-    eprintln!("t815: восстановление {ours} байт против {interchange} в формате обмена ({ratio}×), {took:?}");
+    eprintln!("t815: restore {ours} bytes versus {interchange} in the interchange format ({ratio}×), {took:?}");
     assert!(
         ratio >= 100,
-        "восстановление обязано быть на порядки меньше файла обмена: {ours} против {interchange} ({ratio}×)"
+        "restore must be orders of magnitude smaller than the interchange file: {ours} versus {interchange} ({ratio}×)"
     );
-    // «не событие»: запись укладывается в доли интервала автосейва даже в
-    // отладочной сборке; порог щедрый, чтобы не мерить машину
-    assert!(took < std::time::Duration::from_secs(2), "запись восстановления заняла {took:?}");
+    // “not an event”: the write fits in a fraction of the autosave interval even in
+    // the debug build; the threshold is generous so as not to measure the machine
+    assert!(took < std::time::Duration::from_secs(2), "writing the restore record took {took:?}");
     assert_eq!(kt_model::project_file::from_text(&std::fs::read_to_string(&rec).unwrap()).unwrap().project, p);
     let _ = std::fs::remove_dir_all(&dir);
 }

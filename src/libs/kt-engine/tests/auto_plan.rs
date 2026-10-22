@@ -1,10 +1,10 @@
-//! Тесты 644-645 (Р.59, п.467): цена автоматизации.
+//! Tests 644-645 (R.59, item 467): the cost of automation.
 //!
-//! Претензия владельца, ради которой это писалось: «если проект простой
-//! без выкрутасов — то и лагать он не должен вовсе… если физику добавили
-//! только на один сурс — то это не повод утяжелять работу всего проекта».
-//! Оба теста утверждают ровно это и на уровне НАБЛЮДАЕМОГО следствия:
-//! цепочка соседа ЗАИМСТВУЕТСЯ, а не копируется.
+//! The owner's claim that this was written for: “if the project is simple
+//! with no tricks — it must not lag at all… if physics was added
+//! to only one source — that is no reason to slow down the whole project.”
+//! Both tests assert exactly this, at the level of the OBSERVABLE consequence:
+//! the neighbour's chain is BORROWED, not copied.
 
 use kt_engine::VideoRenderer;
 use kt_media::Quality;
@@ -76,7 +76,7 @@ fn project(clips: Vec<ClipEvent>, lanes: u32) -> Project {
 
 #[test]
 fn t644_a_clip_without_curves_borrows_its_chain() {
-    // сосед с ЖИВОЙ кривой, сосед без кривых и сосед с одной СИРОТОЙ
+    // neighbour with a LIVE curve, a neighbour without curves, and a neighbour with one ORPHAN
     let p = project(
         vec![
             clip(1, 0, 0, vec![FxInstance::vignette()], vec![vec![curve("strength", 0.1, 0.9)]]),
@@ -90,8 +90,8 @@ fn t644_a_clip_without_curves_borrows_its_chain() {
     let q = Quality { width: 64, height: 36 };
     let plan = v.frame_plan(&cache, Tick(SEC), q);
 
-    // порядок слоёв — задний план первым (дорожка 2, 1, 0), то есть
-    // сирота, «без кривых» и живая кривая
+    // layer order — the background first (track 2, 1, 0), that is the
+    // orphan, “without curves” and the live curve
     let owned: Vec<bool> = plan
         .layers
         .iter()
@@ -113,8 +113,8 @@ fn t644_a_clip_without_curves_borrows_its_chain() {
 
 #[test]
 fn t645_curves_on_one_clip_do_not_tax_the_others() {
-    // Цена кадра у СОСЕДЕЙ не зависит от того, сколько кривых на первом
-    // клипе: план соседей обязан быть дословно тем же.
+    // the frame cost of the NEIGHBOURS does not depend on how many curves there are on the
+    // first clip: the neighbours' plan must be literally the same.
     let plain = |auto: Vec<Vec<ParamCurve>>| {
         project(
             vec![
@@ -132,7 +132,7 @@ fn t645_curves_on_one_clip_do_not_tax_the_others() {
     ]]);
     let q = Quality { width: 64, height: 36 };
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
-    // сосед идёт ПЕРВЫМ слоем (задний план — большая дорожка)
+    // the neighbour goes as the FIRST layer (the background is the larger track)
     let neighbour = |p: &Project| -> (bool, u64, Vec<FxInstance>) {
         let v = VideoRenderer::new(p);
         let plan = v.frame_plan(&cache, Tick(SEC), q);

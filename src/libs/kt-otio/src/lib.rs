@@ -1,14 +1,14 @@
-//! Родной формат проекта Kinetren — OpenTimelineIO (.otio, JSON).
+//! The native project format of Kinetren — OpenTimelineIO (.otio, JSON).
 //!
-//! Чистая Rust-реализация подмножества схем OTIO (эталон — C++/Python
-//! библиотека 0.18.x) с полным passthrough непонятого: неизвестные ПОЛЯ
-//! известных схем сохраняются на своих местах (`extra`), объекты неизвестных
-//! схем/версий — как сырой JSON (`RawObject`), чужие неймспейсы `metadata` —
-//! verbatim. Наши данные живут в `metadata["kt"]` (решение Р.24).
+//! A pure Rust implementation of a subset of OTIO schemas (the reference — the C++/Python
+//! library 0.18.x) with full passthrough of the not-understood: unknown FIELDS
+//! of known schemas are kept in their places (`extra`), objects of unknown
+//! schemas/versions — as raw JSON (`RawObject`), foreign `metadata` namespaces —
+//! verbatim. Our data lives in `metadata["kt"]` (decision R.24).
 //!
-//! Инвариант байт-стабильности — ИДЕМПОТЕНТНОСТЬ записи:
-//! `write(parse(write(x))) == write(x)`. Первое сохранение чужого файла
-//! нормализует форматирование (как делает и эталонная библиотека).
+//! The byte-stability invariant — the IDEMPOTENCE of writing:
+//! `write(parse(write(x))) == write(x)`. The first save of a foreign file
+//! normalizes the formatting (as the reference library does too).
 
 mod convert;
 mod io;
@@ -37,9 +37,9 @@ pub use schema::{
     MarkerNode, MediaRefNode, Metadata, MissingReference, RationalTime, RawObject, Stack,
     TimeRange, Timeline, Track, Transition,
 };
-/// Чужие имена генераторов, у которых есть наш эквивалент (импорт-алиас,
-/// Р.52 С5): читаются первоклассно и при пересохранении канонизируются в
-/// `kt.<tag>`. Список короткий и явный — незнакомое остаётся passthrough.
+/// Foreign generator names that have our equivalent (import alias,
+/// R.52 S5): they are read first-class, and on re-save they are canonicalized to
+/// `kt.<tag>`. The list is short and explicit — the unfamiliar stays passthrough.
 pub(crate) fn generator_alias(kind: &str) -> Option<&'static str> {
     match kind {
         "SMPTEBars" => Some("smpte"),
@@ -49,7 +49,7 @@ pub(crate) fn generator_alias(kind: &str) -> Option<&'static str> {
 
 pub use url::{decode_file_url, encode_file_url, media_target_url, relativize, resolve_media_path};
 
-/// Ключ единственной media-reference наших клипов (конвенция эталона).
+/// The key of the single media reference of our clips (the reference convention).
 pub const DEFAULT_MEDIA_KEY: &str = "DEFAULT_MEDIA";
 
 #[derive(Debug, thiserror::Error)]
@@ -60,33 +60,33 @@ pub enum Error {
     MissingSchemaTag,
     #[error("malformed OTIO_SCHEMA tag: {0}")]
     BadSchemaTag(String),
-    /// Схема структурного хребта (Timeline/Stack/Track) новее поддерживаемой:
-    /// «полупонимание» позиций детей небезопасно — честный отказ.
+    /// The schema of the structural spine (Timeline/Stack/Track) is newer than the supported one:
+    /// “half-understanding” the positions of children is unsafe — an honest refusal.
     #[error("unsupported schema version: {0}")]
     UnsupportedSchema(String),
     #[error("root of an .otio file must be a Timeline, found {0}")]
     UnsupportedRoot(String),
     #[error("not an OpenTimelineIO file")]
     NotOtio,
-    /// Это файл ПРОЕКТА своего формата (Р.70), а не файл обмена: дверь
-    /// импорта ему не нужна — его открывает обычное «Открыть».
+    /// This is a PROJECT file of its own format (R.70), not an exchange file: the import
+    /// door is not needed for it — it is opened by the ordinary “Open”.
     #[error("a Kinetren project file, not an interchange file — use File → Open")]
     ProjectFile,
     /// A project of the former name (`kinotrain` root key): Open refuses it,
     /// the import door repairs it (`kt_model::project_file::from_former_text`).
     #[error("a project of Kinotrain (the former name of Kinetren) — use File → Import older Kinetren project…")]
     FormerProject,
-    /// Файл написан более новым Kinetren (metadata.kt.v выше нашей).
+    /// The file was written by a newer Kinetren (metadata.kt.v above ours).
     #[error("project written by a newer Kinetren (kt.v = {0})")]
     KtMetaTooNew(u32),
-    /// Секция metadata.kt есть, но не читается. Молчать нельзя: с ней
-    /// уехали бы настройки проекта, дорожки, морферы и раскладка, а файл
-    /// открылся бы как чужой (Р.35 — нашлось живым сценарием).
+    /// The metadata.kt section exists but cannot be read. We must not stay silent: with it
+    /// the project settings, tracks, morphers and layout would be lost, and the file
+    /// would open as a foreign one (R.35 — found by a live scenario).
     #[error("metadata.kt is unreadable: {0}")]
     KtMetaBroken(String),
-    /// Файл ПРЕЖНЕЙ версии конверта, который ридер не читает (Р.67):
-    /// его чинит импорт (`import_older`), а не ридер. Текст называет
-    /// версию и дверь — kt-app подставляет имя пункта меню.
+    /// A file of a PREVIOUS envelope version that the reader does not read (R.67):
+    /// it is fixed by the import (`import_older`), not by the reader. The text names the
+    /// version and the door — kt-app substitutes the menu item’s name.
     #[error("project of an older Kinetren version (kt.v = {version}) — use File → Import older Kinetren project… ({cause})")]
     NeedsImport { version: u32, cause: String },
     #[error("non-finite number in {0}")]
@@ -95,22 +95,22 @@ pub enum Error {
     Json(#[from] serde_json::Error),
 }
 
-/// Формат файла по СОДЕРЖИМОМУ (расширению не верим).
+/// File format by its CONTENT (we do not trust the extension).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileFormat {
-    /// Файл ПРОЕКТА своего формата (Р.70): признак `kinetren` на корне.
-    /// Читает его `kt_model::project_file`; этот крейт лишь опознаёт.
+    /// A project file of its own format (R.70): the `kinetren` marker on the root.
+    /// It is read by `kt_model::project_file`; this crate only recognizes it.
     Project,
     /// A project file of the former name (`kinotrain` at the root).
     FormerProject,
     Otio,
-    /// Старый .ktproj: как проект не открывается (решение Р.24 п.12) —
-    /// только пункт «Импортировать .ktproj…».
+    /// An old .ktproj: it does not open as a project (decision R.24 item 12) —
+    /// only the “Import .ktproj…” item.
     LegacyKtproj,
 }
 
-/// Загрузка .otio-проекта (файл .ktproj — честная ошибка: Р.24 п.12, «как
-/// проект не открывается» — используйте import_legacy из пункта импорта).
+/// Loading an .otio project (a .ktproj file is an honest error: R.24 item 12,
+/// “how a project is not opened” — use import_legacy from the import item).
 pub fn load_project(
     text: &str,
     base_dir: Option<&std::path::Path>,
@@ -121,8 +121,8 @@ pub fn load_project(
         FileFormat::Otio => {
             let tl = parse_document(text)?;
             match timeline_to_project(&tl, base_dir) {
-                // наша секция старой версии не читается — это работа
-                // импорта, а не ридера (Р.67): называем версию и дверь
+                // our section of an old version is not read — this is the job of
+                // import, not the reader (R.67): we name the version and the door
                 Err(Error::KtMetaBroken(cause)) => match meta::kt_version(&tl) {
                     Some(v) if v < meta::KT_META_VERSION => {
                         Err(Error::NeedsImport { version: v, cause })
@@ -136,17 +136,17 @@ pub fn load_project(
     }
 }
 
-/// Импорт проекта СТАРОЙ версии конверта (Р.67): починки старых форм, затем
-/// обычное чтение. См. `legacy_import`.
+/// Import of an OLD-version project envelope (R.67): fixes for old forms, then
+/// the normal read. See `legacy_import`.
 pub use legacy_import::{FIXUPS, Fixup, import_older};
 
-/// ДВЕРЬ ИМПОРТА (Р.70) — одна на три входа: легаси `.ktproj`, наш `.otio`
-/// любой версии конверта и чужой `.otio`. Правило выбора пути живёт ЗДЕСЬ,
-/// и приложение с kt-cli зовут его одинаково: чужой файл без нашего конверта
-/// читается обычным ридером (ему починки не нужны и `import_older` его
-/// отверг бы), наш старой версии — починками, легаси — своим ридером.
-/// Файл проекта в эту дверь не идёт: `Error::ProjectFile` называет «Открыть».
-/// Пути медиа в результате АБСОЛЮТНЫ (разрешены от `base_dir`), как у
+/// IMPORT DOOR (R.70) — one for three inputs: legacy `.ktproj`, our `.otio`
+/// of any envelope version, and a foreign `.otio`. The rule for choosing the path lives HERE,
+/// and the app and kt-cli call it the same way: a foreign file without our envelope is
+/// read by the ordinary reader (it needs no fixes, and `import_older` would
+/// reject it), ours of an old version — by the fixes, legacy — by its own reader.
+/// A project file does not go through this door: `Error::ProjectFile` names “Open”.
+/// Media paths in the result are ABSOLUTE (resolved from `base_dir`), as in
 /// `load_project`.
 pub fn import_interchange(
     text: &str,
@@ -184,9 +184,9 @@ pub fn import_interchange(
     }
 }
 
-/// Относительные пути медиа → абсолютные от каталога файла. Псевдо-пути
-/// (`synth:`, `gen:`) и абсолютные не трогаются. Зовётся при ЧТЕНИИ файла
-/// проекта: модель в памяти держит абсолютные пути, как после `load_project`.
+/// Relative media paths → absolute, from the file's directory. Pseudo-paths
+/// (`synth:`, `gen:`) and absolute ones are left untouched. Called when the project
+/// file is READ: the model in memory holds absolute paths, as after `load_project`.
 pub fn resolve_project_media(p: &mut kt_model::Project, base_dir: Option<&std::path::Path>) {
     let Some(base) = base_dir else { return };
     for m in &mut p.media {
@@ -197,9 +197,9 @@ pub fn resolve_project_media(p: &mut kt_model::Project, base_dir: Option<&std::p
     }
 }
 
-/// Абсолютные пути медиа → относительные к каталогу файла, где это
-/// выразимо (иначе остаются абсолютными). Зовётся при ЗАПИСИ файла проекта:
-/// проект, переехавший вместе с материалом, обязан открыться (т797).
+/// Absolute media paths → relative to the directory of the file, where this is
+/// expressible (otherwise they stay absolute). Called when the project file is
+/// WRITTEN: a project moved together with its material must open (t797).
 pub fn relativize_project_media(p: &mut kt_model::Project, base_dir: Option<&std::path::Path>) {
     let Some(base) = base_dir else { return };
     for m in &mut p.media {
@@ -212,7 +212,7 @@ pub fn relativize_project_media(p: &mut kt_model::Project, base_dir: Option<&std
     }
 }
 
-/// Сериализация проекта в .otio (идемпотентная запись, тест 144).
+/// Serialization of the project to .otio (idempotent write, test 144).
 pub fn save_project(
     p: &kt_model::Project,
     retained: &Retained,

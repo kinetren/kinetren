@@ -1,27 +1,27 @@
-//! Приведение кадра источника к холсту (Р.62, F-MED-004): ОДНА функция
-//! на размер декода, рамку размещения, тумбы, превью и экспорт.
+//! Conforming the source frame to the canvas (R.62, F-MED-004): ONE function
+//! for the decode size, the placement frame, thumbnails, preview and export.
 //!
-//! Правило («вписать / заполнить / растянуть / как есть») — свойство
-//! ПРОЕКТА с исключением у события; здесь оно уже разрешено
-//! (`ConformRule`). Вид источника — натив × пиксельное соотношение
-//! (`MediaInfo::view_size`), холст — логический размер выхода.
+//! The rule (“fit / fill / stretch / as is”) is a property
+//! of the PROJECT with an exception for the event; here it is already resolved
+//! (`ConformRule`). The source view — native × pixel aspect ratio
+//! (`MediaInfo::view_size`); the canvas — the logical output size.
 //!
-//! Контракт декодера «кадр ровно запрошенного качества» НЕ меняется —
-//! меняется, кто считает запрошенное: `conform_geometry(...).decode` даёт
-//! размер, в который декодер тянет кадр (при ступени 1), а ведущий узел
-//! «Геометрия» в гео-программе (`geom.rs`) кладёт его в рамку `dest`
-//! холста; вне рамки — прозрачно.
+//! The decoder contract “a frame of exactly the requested quality” does NOT change —
+//! what changes is who computes the requested size: `conform_geometry(...).decode` gives
+//! the size to which the decoder pulls the frame (at step 1), and the leading node
+//! “Geometry” in the geo program (`geom.rs`) puts it into the `dest` frame
+//! of the canvas; outside the frame — transparent.
 
 use crate::plan::MAX_INTER_DIM;
 pub use kt_model::ConformRule;
 
-/// Контекст ведущего узла: вид источника (квадратные пиксели) и
-/// разрешённое правило. Едет из kt-engine в kt-fx через `VideoFxCtx`
-/// и в kt-gpu через `chain_ops`; оба бэкенда получают одни числа.
+/// Context of the leading node: the source view (square pixels) and the
+/// allowed rule. It travels from kt-engine to kt-fx via `VideoFxCtx`
+/// and to kt-gpu via `chain_ops`; both backends receive the same numbers.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LeadCtx {
-    /// Вид кадра источника (ширина × SAR, высота). `None` — вид
-    /// неизвестен: правило вырождается в «растянуть» детерминированно.
+    /// The view of the source frame (width × SAR, height). `None` — the view is
+    /// unknown: the rule degenerates to “stretch”, deterministically.
     pub view: Option<(f64, f64)>,
     pub rule: ConformRule,
 }
@@ -32,19 +32,19 @@ impl LeadCtx {
     }
 }
 
-/// Геометрия слоя: рамка размещения на холсте (логические пиксели, при
-/// зуме 1 и положении 0) и размер декода полного кадра (без ступени).
+/// Layer geometry: the placement frame on the canvas (logical pixels, at
+/// zoom 1 and position 0) and the decode size of the full frame (without a step).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LayerGeom {
-    /// Размер рамки кропнутого источника на холсте.
+    /// Size of the cropped source frame on the canvas.
     pub dest: (f64, f64),
-    /// Размер, в который декодер тянет ПОЛНЫЙ кадр (чётный, ≥ 2, с
-    /// потолком `MAX_INTER_DIM` пропорционально).
+    /// The size to which the decoder pulls the FULL frame (even, ≥ 2, with a
+    /// ceiling `MAX_INTER_DIM` proportionally).
     pub decode: (u32, u32),
 }
 
-/// Размер рамки для вида `view` на холсте `canvas` по правилу (зум 1).
-/// Нулевой/неизвестный вид — «растянуть».
+/// Frame size for the view `view` on the canvas `canvas` by the rule (zoom 1).
+/// A zero/unknown view — “stretch”.
 pub fn conform_dest(view: Option<(f64, f64)>, canvas: (f64, f64), rule: ConformRule) -> (f64, f64) {
     let (cw, ch) = (canvas.0.max(2.0), canvas.1.max(2.0));
     let Some((vw, vh)) = view.filter(|(w, h)| *w > 0.0 && *h > 0.0) else {
@@ -64,10 +64,10 @@ pub fn conform_dest(view: Option<(f64, f64)>, canvas: (f64, f64), rule: ConformR
     }
 }
 
-/// Полная геометрия: вид источника, холст, правило, кроп (доли источника:
-/// слева, сверху, справа, снизу). Кроп режет вид ДО правила: «заполнить»
-/// заполняет кропнутым; размер декода — рамка, растянутая обратно на
-/// весь кадр (декодер отдаёт кадр целиком, узел вырезает).
+/// Full geometry: the source view, the canvas, the rule, the crop (fractions of the source:
+/// left, top, right, bottom). The crop cuts the view BEFORE the rule: “fill”
+/// fills with the cropped one; the decode size is the frame, stretched back to
+/// the whole frame (the decoder gives the whole frame, the node cuts it out).
 pub fn conform_geometry(
     view: Option<(f64, f64)>,
     canvas: (u32, u32),
@@ -80,7 +80,7 @@ pub fn conform_geometry(
     let canvas_f = (canvas.0.max(2) as f64, canvas.1.max(2) as f64);
     let dest = conform_dest(cropped, canvas_f, rule);
     let (mut dw, mut dh) = (dest.0 / kx, dest.1 / ky);
-    // потолок промежуточных буферов — проект-константа (п.314), пропорционально
+    // ceiling of intermediate buffers — a project constant (item 314), proportionally
     let cap = MAX_INTER_DIM as f64;
     if dw > cap || dh > cap {
         let k = (cap / dw).min(cap / dh);

@@ -1,36 +1,36 @@
-// Слитый гео-проход (Р.44, конкатенация трансформов): зеркало
-// kt_fx::geom (map_pos + sample_at + ss_taps). Программа примитивов
-// приезжает юниформой 1024 Б (свой bind group layout — общая Params на
-// 128 Б мала); коэффициенты ПЕРЕМНОЖЕНЫ на CPU в f64, здесь —
-// однократное округление f32. Правишь семантику — правь kt-fx/src/geom.rs
-// ТЕМ ЖЕ КОММИТОМ (t181).
+// Fused geometry pass (R.44, concatenation of transforms): a mirror of
+// kt_fx::geom (map_pos + sample_at + ss_taps). The primitive program arrives as a
+// 1024 B uniform (its own bind group layout: the shared Params of 128 B is too small);
+// the coefficients are MULTIPLIED on the CPU in f64, here a
+// one-time rounding to f32. If you edit the semantics, edit kt-fx/src/geom.rs
+// in the SAME COMMIT (t181).
 //
-// Примитивы (kind по 4 бита в h.y|h.z, данные — vec4-слоты подряд):
-//   0 Affine: (ax, bx, ay, by)                          — 1 слот
-//   1 Clamp:  (x0, x1, y0, y1), выключенная ось ±1e30   — 1 слот
-//   2 Fold:   (gw, gh, cw, ch) + (in_w, in_h, 0, 0)     — 2 слота;
-//     вне [0,gw)×[0,gh) — чёрный непрозрачный, внутри — тайл-локальная
-//     фаза `(r / cell) * in − 0.5` (дословно старое ядро event_grid).
-//   3 Proj:   три строки обратной гомографии Pan3d      — 3 слота;
-//     вход — центр-space; t.z ≤ 0 (за камерой) и uv вне [0,1]² — прозрачно.
-//   5 Bounds: (x0, x1, y0, y1) — вне рамки прозрачно     — 1 слот
-//     (Р.62, узел «Геометрия»: поля приведения не выдумывают пикселей).
+// Primitives (kind in 4 bits in h.y|h.z, data are vec4 slots one after another):
+//   0 Affine: (ax, bx, ay, by)                          — 1 slot
+//   1 Clamp:  (x0, x1, y0, y1), a disabled axis ±1e30  — 1 slot
+//   2 Fold:   (gw, gh, cw, ch) + (in_w, in_h, 0, 0)     — 2 slots;
+//     outside [0,gw)×[0,gh) — opaque black, inside — the tile-local
+//     phase `(r / cell) * in − 0.5` (verbatim the old event_grid kernel).
+//   3 Proj:   three rows of the inverse homography of Pan3d      — 3 slots;
+//     input — centre-space; t.z ≤ 0 (behind the camera) and uv outside [0,1]² — transparent.
+//   5 Bounds: (x0, x1, y0, y1) — transparent outside the frame     — 1 slot
+//     (R.62, the “Geometry” node: the fit margins do not invent pixels).
 //
-// Tap-таблица (Р.45, п.312): поглощённые поточечные опы (Greenscreen/
-// Noise) — слоты 46+2i (meta|params, params2), счётчик в h.w битах 24..31;
-// применяются к значению сабтапа в порядке цепочки, координата стадии
-// записывается обратным проходом (зеркало kt_fx::geom::map_pos_rec).
+// Tap table (R.45, item 312): absorbed pointwise ops (Greenscreen/
+// Noise) — slots 46+2i (meta|params, params2), the counter in the h.w bits 24..31;
+// they are applied to the subtap value in chain order, the stage coordinate is
+// written by the reverse pass (a mirror of kt_fx::geom::map_pos_rec).
 //
-// Суперсемплинг (п.309): h.w = mode | nx<<8 | ny<<16. mode 0 — тапы
-// посчитаны на CPU (аффинная программа, якобиан константен); mode 1 —
-// по-пиксельно конечными разностями, ФОРМУЛА тапов та же, что в kt-fx
-// (`ss_taps`: квант 1/32, включение строго при len > 1 + 1/64, потолок 4).
+// Supersampling (item 309): h.w = mode | nx<<8 | ny<<16. Mode 0: the taps are
+// computed on the CPU (affine program, the Jacobian is constant); mode 1 —
+// per-pixel by finite differences, the tap FORMULA is the same as in kt-fx
+// (`ss_taps`: quantum 1/32, enabled strictly when len > 1 + 1/64, cap 4).
 
 struct GeomParams {
-    // x: число примитивов, y|z: kinds (4 бита на примитив, до 16),
-    // w: суперсемплинг (mode | nx<<8 | ny<<16)
+    // x: number of primitives, y|z: kinds (4 bits per primitive, up to 16),
+    // w: supersampling (mode | nx<<8 | ny<<16)
     h: vec4<u32>,
-    // src_w, src_h (входной кадр серии), out_w, out_h
+    // src_w, src_h (the input frame of the series), out_w, out_h
     d: vec4<u32>,
     p: array<vec4<f32>, 62>,
 };
@@ -38,7 +38,7 @@ struct GeomParams {
 @group(0) @binding(0) var<uniform> G: GeomParams;
 @group(0) @binding(1) var T0: texture_2d<u32>;
 
-// Fullscreen-треугольник — как в common.wgsl.
+// Fullscreen triangle: as in common.wgsl.
 @vertex
 fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
     let x = f32(i32(vi / 2u)) * 4.0 - 1.0;
@@ -46,8 +46,8 @@ fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
     return vec4<f32>(x, y, 0.0, 1.0);
 }
 
-// Обратная цепочка примитивов: (x, y, dead), dead: 0 — жив,
-// 1 — чёрный непрозрачный (вне сетки Fold), 2 — прозрачный (Proj).
+// The reverse chain of primitives: (x, y, dead), dead: 0 — alive,
+// 1 — opaque black (outside the Fold grid), 2 — transparent (Proj).
 fn geo_map(px: f32, py: f32) -> vec3<f32> {
     var x = px;
     var y = py;
@@ -63,7 +63,7 @@ fn geo_map(px: f32, py: f32) -> vec3<f32> {
                 x = a.x * x + a.y;
                 y = a.z * y + a.w;
             }
-        } else if (kind == 1u) { // Clamp («плато» Pan при zoom<1/Stretch)
+        } else if (kind == 1u) { // Clamp (the Pan “plateau” at zoom<1 / Stretch)
             let c = G.p[cur];
             cur = cur + 1u;
             if (dead == 0.0) {
@@ -84,7 +84,7 @@ fn geo_map(px: f32, py: f32) -> vec3<f32> {
                     y = (y - ky * g.w) / g.w * s.y - 0.5;
                 }
             }
-        } else if (kind == 3u) { // Proj (Pan3d): вход — центр-space, зеркало kt_fx::geom
+        } else if (kind == 3u) { // Proj (Pan3d): input in centre-space, a mirror of kt_fx::geom
             let r0 = G.p[cur];
             let r1 = G.p[cur + 1u];
             let r2 = G.p[cur + 2u];
@@ -93,34 +93,34 @@ fn geo_map(px: f32, py: f32) -> vec3<f32> {
                 let tx = r0.x * x + r0.y * y + r0.z;
                 let ty = r1.x * x + r1.y * y + r1.z;
                 let tz = r2.x * x + r2.y * y + r2.z;
-                if (tz <= 0.0) { // за камерой (клиппинг растеризатора)
+                if (tz <= 0.0) { // behind the camera (clipping of the rasterizer)
                     dead = 2.0;
                 } else {
                     let qx = tx / tz;
                     let qy = ty / tz;
                     if (qx < 0.0 || qx > 1.0 || qy < 0.0 || qy > 1.0) {
-                        dead = 2.0; // вне квада — прозрачно
+                        dead = 2.0; // outside the quad — transparent
                     } else {
                         x = qx;
                         y = qy;
                     }
                 }
             }
-        } else if (kind == 5u) { // Bounds (Р.62): зеркало kt_fx::geom::map_pos
+        } else if (kind == 5u) { // Bounds (R.62): a mirror of kt_fx::geom::map_pos
             let b = G.p[cur];
             cur = cur + 1u;
             if (dead == 0.0) {
                 if (x < b.x || x > b.y || y < b.z || y > b.w) {
-                    dead = 2.0; // вне рамки — прозрачно
+                    dead = 2.0; // outside the frame — transparent
                 }
             }
-        } else if (kind == 4u) { // Warp (Р.47): зеркало kt_fx::geom::warp_map
+        } else if (kind == 4u) { // Warp (R.47): a mirror of kt_fx::geom::warp_map
             let a = G.p[cur];
             let b = G.p[cur + 1u];
             cur = cur + 2u;
             if (dead == 0.0) {
                 let mode = u32(a.x);
-                if (mode == 0u) { // lens: полином
+                if (mode == 0u) { // lens: a polynomial
                     let r2 = x * x + y * y;
                     let sc = 1.0 + a.y * r2 + a.z * r2 * r2;
                     x = x * sc;
@@ -143,7 +143,7 @@ fn geo_map(px: f32, py: f32) -> vec3<f32> {
                         x = x * k;
                         y = y * k;
                     }
-                } else if (mode == 3u) { // kaleidoscope: треугольная волна
+                } else if (mode == 3u) { // kaleidoscope: a triangle wave
                     let r = sqrt(x * x + y * y);
                     let q = (atan2(y, x) - a.z) / a.y;
                     let hh = q / 2.0 - floor(q / 2.0);
@@ -151,7 +151,7 @@ fn geo_map(px: f32, py: f32) -> vec3<f32> {
                     let ang = a.z + m * a.y;
                     x = r * cos(ang);
                     y = r * sin(ang);
-                } else { // cylinder: asin(u·sin a)/a по X
+                } else { // cylinder: asin(u·sin a)/a along X
                     x = asin(clamp(x * a.y, -1.0, 1.0)) * a.z;
                 }
             }
@@ -160,7 +160,7 @@ fn geo_map(px: f32, py: f32) -> vec3<f32> {
     return vec3<f32>(x, y, dead);
 }
 
-// Финальная билинейка БЕЗ округления — дословно как resample.wgsl.
+// The final bilinear WITHOUT rounding: verbatim as resample.wgsl.
 fn bilin(mx: f32, my: f32) -> vec4<f32> {
     let sw = i32(G.d.x);
     let sh = i32(G.d.y);
@@ -183,7 +183,7 @@ fn bilin(mx: f32, my: f32) -> vec4<f32> {
     return acc;
 }
 
-// Сабтап без округления: короткие замыкания либо билинейка.
+// A subtap without rounding: short-circuits or the bilinear.
 fn geo_tap(m: vec3<f32>) -> vec4<f32> {
     if (m.z == 1.0) {
         return vec4<f32>(0.0, 0.0, 0.0, 255.0);
@@ -194,7 +194,7 @@ fn geo_tap(m: vec3<f32>) -> vec4<f32> {
     return bilin(m.x, m.y);
 }
 
-// lowbias32 — копия noise.wgsl (зеркало kt_fx::video::noise_hash).
+// lowbias32: a copy of noise.wgsl (a mirror of kt_fx::video::noise_hash).
 fn nh(v: u32) -> u32 {
     var x = v;
     x = x ^ (x >> 16u);
@@ -205,21 +205,21 @@ fn nh(v: u32) -> u32 {
     return x;
 }
 
-// Офсет зерна общей формулы noise (целочисленное деление — как i64 в Rust).
+// The grain offset of the common noise formula (integer division, as i64 in Rust).
 fn noff(gx: u32, gy: u32, ch: u32, seed: u32, k: i32) -> f32 {
     let h = nh(gx ^ nh(gy ^ nh(ch ^ seed)));
     let n = i32((h >> 16u) & 0x7fffu) - 16384;
     return f32(n * k / 32767);
 }
 
-// meta i-го tap-опа: kind | after_prim<<2 | color<<7 | special<<8.
+// meta of the i-th tap op: kind | after_prim<<2 | color<<7 | special<<8.
 fn tap_meta(i: u32) -> u32 {
     return bitcast<u32>(G.p[46u + i * 2u].x);
 }
 
-// Сабтап С ПОГЛОЩЁННЫМИ поточечными опами (Р.45, п.312): обратный проход
-// записывает координаты tap-стадий, после билинейки опы применяются к
-// значению в порядке цепочки. Зеркало kt_fx::geom::{map_pos_rec,sample_at}.
+// A subtap WITH absorbed pointwise ops (R.45, item 312): the reverse pass
+// writes the coordinates of the tap stages; after the bilinear the ops are applied to the
+// value in chain order. A mirror of kt_fx::geom::{map_pos_rec,sample_at}.
 fn geo_sample(px: f32, py: f32) -> vec4<f32> {
     let tap_count = (G.h.w >> 24u) & 0xffu;
     var rec: array<vec2<f32>, 8>;
@@ -227,7 +227,7 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
     var y = py;
     var dead = 0.0;
     var cur = 0u;
-    // tap'ы лежат с УБЫВАЮЩИМИ after_prim — курсор идёт с конца списка
+    // the taps lie with DECREASING after_prim: the cursor walks from the end of the list
     var tcur = tap_count;
     loop {
         if (tcur == 0u) { break; }
@@ -289,21 +289,21 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
                     }
                 }
             }
-        } else if (kind == 5u) { // Bounds (Р.62): зеркало kt_fx::geom::map_pos
+        } else if (kind == 5u) { // Bounds (R.62): a mirror of kt_fx::geom::map_pos
             let b = G.p[cur];
             cur = cur + 1u;
             if (dead == 0.0) {
                 if (x < b.x || x > b.y || y < b.z || y > b.w) {
-                    dead = 2.0; // вне рамки — прозрачно
+                    dead = 2.0; // outside the frame — transparent
                 }
             }
-        } else if (kind == 4u) { // Warp (Р.47): зеркало kt_fx::geom::warp_map
+        } else if (kind == 4u) { // Warp (R.47): a mirror of kt_fx::geom::warp_map
             let a = G.p[cur];
             let b = G.p[cur + 1u];
             cur = cur + 2u;
             if (dead == 0.0) {
                 let mode = u32(a.x);
-                if (mode == 0u) { // lens: полином
+                if (mode == 0u) { // lens: a polynomial
                     let r2 = x * x + y * y;
                     let sc = 1.0 + a.y * r2 + a.z * r2 * r2;
                     x = x * sc;
@@ -326,7 +326,7 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
                         x = x * k;
                         y = y * k;
                     }
-                } else if (mode == 3u) { // kaleidoscope: треугольная волна
+                } else if (mode == 3u) { // kaleidoscope: a triangle wave
                     let r = sqrt(x * x + y * y);
                     let q = (atan2(y, x) - a.z) / a.y;
                     let hh = q / 2.0 - floor(q / 2.0);
@@ -334,7 +334,7 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
                     let ang = a.z + m * a.y;
                     x = r * cos(ang);
                     y = r * sin(ang);
-                } else { // cylinder: asin(u·sin a)/a по X
+                } else { // cylinder: asin(u·sin a)/a along X
                     x = asin(clamp(x * a.y, -1.0, 1.0)) * a.z;
                 }
             }
@@ -357,15 +357,15 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
     } else {
         v = bilin(x, y);
     }
-    // опы в порядке цепочки; при коротком замыкании на приме d живы опы
-    // с after_prim <= d
+    // ops in chain order; on a short-circuit at the prim d, the ops
+    // with after_prim <= d stay alive
     for (var t = 0u; t < tap_count; t = t + 1u) {
         let tm = tap_meta(t);
         if (((tm >> 4u) & 0x1fu) > applied) { continue; }
         let a = G.p[46u + t * 2u];
         let b = G.p[47u + t * 2u];
         let tap_kind = tm & 0xfu;
-        if (tap_kind == 0u) { // Greenscreen (континуум формулы ядра)
+        if (tap_kind == 0u) { // Greenscreen (the continuum of the kernel’s formula)
             let key = a.yzw;
             let tol = b.x;
             let hard = b.y;
@@ -392,7 +392,7 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
                     else { v.z = vc; }
                 }
             }
-        } else if (tap_kind == 2u) { // ColorGrade: зеркало tap_grade
+        } else if (tap_kind == 2u) { // ColorGrade: a mirror of tap_grade
             let br = a.y;
             let con = a.z;
             let sat = a.w;
@@ -414,18 +414,18 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
                 );
             }
             v = vec4<f32>((v.xyz - vec3<f32>(128.0)) * (1.0 + con) + vec3<f32>(128.0 + br * 255.0), v.w);
-        } else if (tap_kind == 3u) { // Duotone: зеркало tap_duo
+        } else if (tap_kind == 3u) { // Duotone: a mirror of tap_duo
             let sh3 = a.yzw;
             let hi3 = b.xyz;
             let am = b.w;
             let l = clamp((77.0 * v.x + 150.0 * v.y + 29.0 * v.z) / 256.0 / 255.0, 0.0, 1.0);
             let outc = sh3 + (hi3 - sh3) * l;
             v = vec4<f32>(v.xyz + (outc - v.xyz) * am, v.w);
-        } else if (tap_kind == 4u) { // Posterize: зеркало tap_poster
+        } else if (tap_kind == 4u) { // Posterize: a mirror of tap_poster
             let n = a.y;
             let idx3 = clamp(floor(v.xyz * n / 256.0), vec3<f32>(0.0), vec3<f32>(n - 1.0));
             v = vec4<f32>(idx3 * 255.0 / (n - 1.0), v.w);
-        } else if (tap_kind == 5u) { // Vignette: зеркало tap_vig
+        } else if (tap_kind == 5u) { // Vignette: a mirror of tap_vig
             let st = a.y;
             let ra = a.z;
             let so = a.w;
@@ -438,7 +438,7 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
             let tt = clamp((r - ra) / max(so, 1e-6), 0.0, 1.0);
             let ww = tt * tt * (3.0 - 2.0 * tt);
             v = vec4<f32>(v.xyz * (1.0 - st * ww), v.w);
-        } else if (tap_kind == 1u) { // Noise: зерно прибито к сетке своей стадии
+        } else if (tap_kind == 1u) { // Noise: the grain is pinned to the grid of its stage
             let seed = bitcast<u32>(a.y);
             let k = i32(bitcast<u32>(a.z));
             let cell = u32(a.w);
@@ -447,7 +447,7 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
             let c = rec[t];
             let xi = u32(clamp(i32(floor(c.x)), 0, sw - 1));
             let yi = u32(clamp(i32(floor(c.y)), 0, sh - 1));
-            if (((tm >> 10u) & 1u) == 1u) { // особая формула size==1 && !color
+            if (((tm >> 10u) & 1u) == 1u) { // a special formula for size==1 && !color
                 let hsh = nh(xi ^ nh(yi ^ seed));
                 let nn = i32((hsh >> 16u) & 0x7fffu) - 16384;
                 let off = f32(nn * k / 32767);
@@ -455,7 +455,7 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
             } else {
                 let gx = xi / cell;
                 let gy = yi / cell;
-                if (((tm >> 9u) & 1u) == 1u) { // цветное зерно
+                if (((tm >> 9u) & 1u) == 1u) { // colour grain
                     v = vec4<f32>(
                         v.x + noff(gx, gy, 1u, seed, k),
                         v.y + noff(gx, gy, 2u, seed, k),
@@ -467,21 +467,21 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
                 }
             }
         } else {
-            // неизвестный вид тапа: значение не трогается (замок Кв1)
+            // unknown tap kind: the value is not touched (lock Kv1)
         }
     }
     return v;
 }
 
-// Число сабтапов на ось — ФОРМУЛА kt_fx::geom::ss_taps один в один.
+// The number of subtaps per axis: the ss_taps FORMULA, one to one.
 fn ss_taps(len: f32) -> u32 {
     let q = floor(len * 32.0 + 0.5) / 32.0;
     return clamp(u32(ceil(q)), 1u, 4u);
 }
 
-// Длина образа единичного шага оси: мёртвая прямая проба заменяется
-// ОБРАТНОЙ (зеркало kt_fx::geom::probe_taps — иначе кромка тождественной
-// карты получала бы лишние тапы); обе мертвы/мёртв центр — один тап.
+// The length of the image of a unit step along an axis: a dead straight probe is replaced
+// by the INVERSE one (a mirror of kt_fx::geom::probe_taps; otherwise the edge of an identity
+// map would get extra taps); if both are dead, or the centre is dead, it is one tap.
 fn probe_axis(c0: vec3<f32>, ox: f32, oy: f32, dx: f32, dy: f32) -> f32 {
     if (c0.z != 0.0) {
         return 1.0;
@@ -503,7 +503,7 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     let mode = G.h.w & 0xffu;
     var nx = (G.h.w >> 8u) & 0xffu;
     var ny = (G.h.w >> 16u) & 0xffu;
-    if (mode == 1u) { // Proj-серия: якобиан по-пиксельно
+    if (mode == 1u) { // Proj series: the Jacobian per pixel
         let c0 = geo_map(o.x, o.y);
         nx = ss_taps(probe_axis(c0, o.x, o.y, 1.0, 0.0));
         ny = ss_taps(probe_axis(c0, o.x, o.y, 0.0, 1.0));
@@ -515,7 +515,7 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
         for (var i = 0u; i < nx; i = i + 1u) {
             let sx = o.x - 0.5 + (f32(i) + 0.5) / f32(nx);
             if (tap_count == 0u) {
-                // путь Р.44 — без поглощённых опов, байт-в-байт прежний
+                // the R.44 path: without absorbed ops, byte for byte as before
                 acc = acc + geo_tap(geo_map(sx, sy));
             } else {
                 acc = acc + geo_sample(sx, sy);

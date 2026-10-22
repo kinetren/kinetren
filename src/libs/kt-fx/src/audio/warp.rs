@@ -1,5 +1,5 @@
-//! Варispeed-ресемплер (дословный переезд из lib.rs). Варп — НЕ узел
-//! цепочки: у него монополия на потребление источника (chain_source_*).
+//! Varispeed resampler (a verbatim move from lib.rs). The warp is NOT a node of the
+//! chain: it holds the monopoly on consuming the source (chain_source_*).
 
 use crate::{CH, PullKind};
 use rubato::{
@@ -7,49 +7,49 @@ use rubato::{
 };
 
 // ---------------------------------------------------------------------------
-// Warp (варispeed через rubato)
+// Warp (varispeed via rubato)
 // ---------------------------------------------------------------------------
 
-/// Читает источник ПОСЛЕДОВАТЕЛЬНО и выдаёт клип-локальный поток с
-/// изменённой скоростью (rate < 1 — slowed, питч падает: это желаемая
-/// эстетика slowed&reverb). Ни пропусков, ни дублей: source-позиция —
-/// внутренний счётчик rubato, не пересчитывается извне.
+/// Reads the source SEQUENTIALLY and gives out a clip-local stream with a
+/// changed speed (rate < 1 — slowed, the pitch drops: this is the desired
+/// slowed&reverb aesthetic). No skips, no duplicates: the source position is
+/// an internal counter of rubato, not recalculated from outside.
 pub struct Warp {
     rs: SincFixedOut<f32>,
-    /// МОДУЛЬ скорости: направление к ресемплеру отношения не имеет
-    /// (Р.57). Знак живёт в адресе чтения (`fill_source`), а рубато ест
-    /// поток со скоростью |rate| и о направлении не знает.
+    /// The MODULE of the speed: the direction has no bearing on the resampler
+    /// (R.57). The sign lives in the read address (`fill_source`), while rubato eats the
+    /// stream at speed |rate| and does not know the direction.
     rate: f64,
-    /// Следующий кадр источника, который будет запрошен у pull.
+    /// Next source frame that will be requested from pull.
     src_cursor: i64,
-    /// Готовый выход (interleaved), ещё не отданный.
+    /// Ready output (interleaved), not yet handed out.
     ready: std::collections::VecDeque<f32>,
     underruns: u64,
-    /// Сколько раз rubato ОТКАЗАЛ в смене отношения (окно ±rel вокруг
-    /// якоря). Раньше отказ глотался `let _ =`, и кривая 0.25→32 молча
-    /// застревала на последнем принятом значении (Р.57, латентный дефект).
+    /// How many times rubato REFUSED a change of ratio (window ±rel around
+    /// the anchor). Previously the refusal was swallowed by `let _ =`, and the curve 0.25→32 silently
+    /// got stuck at the last accepted value (R.57, a latent defect).
     rejected: u64,
 }
 
 const WARP_CHUNK_OUT: usize = 1024;
 
-/// Окно отношений вокруг якоря у ЛЕГАСИ-режима (кривая целиком в
-/// 0.25…32): ровно как было до Р.57 — на этом стоит байтовое тождество.
+/// The ratio window around the anchor in the LEGACY mode (the whole curve within
+/// 0.25…32): exactly as before R.57 — the byte identity rests on this.
 const WARP_RATIO_REL_LEGACY: f64 = 32.0;
-/// Потолок ЯКОРЯ в расширенном режиме. Якорь задаёт и срез анти-алиасинга
-/// (rubato масштабирует `f_cutoff` конструкционным отношением), и размер
-/// буфера `(rel+1)·needed_input`. Два — компромисс: выше растёт память,
-/// ниже становится слышен алиасинг на быстрых участках.
+/// The ANCHOR ceiling in the extended mode. The anchor sets both the anti-aliasing cutoff
+/// (rubato scales `f_cutoff` by the construction ratio) and the
+/// buffer size `(rel+1)·needed_input`. The two are a compromise: higher, memory grows;
+/// lower, aliasing becomes audible on fast passages.
 const WARP_EXT_ANCHOR_MAX_RATE: f64 = 2.0;
 
 impl Warp {
-    /// `rate` — МОДУЛЬ скорости. `reach` — (мин, макс) модуля по ВСЕМУ
-    /// профилю: ресемплеру нужно знать разброс отношений ДО первого чанка,
-    /// иначе смена отношения будет отвергнута (см. `rejected`).
+    /// `rate` — the MODULE of the speed. `reach` — the (min, max) of the module over the WHOLE
+    /// profile: the resampler needs to know the spread of ratios BEFORE the first chunk,
+    /// otherwise a change of ratio will be rejected (see `rejected`).
     pub fn new(rate: f64, src_start: i64, reach: (f64, f64)) -> Warp {
         let rate = rate.abs().clamp(kt_model::RATE_AUDIO_FLOOR, 32.0);
-        // ЛЕГАСИ-РЕЖИМ (профиль целиком в 0.25…32) — тело дословно
-        // прежнее: тот же якорь, то же окно. Байты не двигаются.
+        // LEGACY MODE (the profile entirely within 0.25…32) — the body verbatim
+        // as before: the same anchor, the same window. The bytes do not move.
         let extended = reach.0 < 0.25;
         let (anchor, rel) = if extended {
             let anchor = rate.clamp(kt_model::RATE_AUDIO_FLOOR, WARP_EXT_ANCHOR_MAX_RATE);
@@ -68,7 +68,7 @@ impl Warp {
             oversampling_factor: 128,
             window: WindowFunction::BlackmanHarris2,
         };
-        // ratio = f_out / f_in = 1 / rate (rate 0.5 → выхода вдвое больше)
+        // ratio = f_out / f_in = 1 / rate (rate 0.5 → twice as much output)
         let mut rs = SincFixedOut::<f32>::new(1.0 / anchor, rel, params, WARP_CHUNK_OUT, CH)
             .expect("rubato init");
         let mut rejected = 0;
@@ -86,22 +86,22 @@ impl Warp {
         }
     }
 
-    /// `rate` — МОДУЛЬ скорости.
+    /// `rate` — the MODULE of the speed.
     pub fn set_rate(&mut self, rate: f64) {
         let rate = rate.abs().clamp(kt_model::RATE_AUDIO_FLOOR, 32.0);
         if (rate - self.rate).abs() > 1e-9 {
             self.rate = rate;
-            // ramp=true: rubato плавно ведёт ratio к цели внутри чанка
+            // ramp=true: rubato smoothly drives the ratio toward the target within the chunk
             if self.rs.set_resample_ratio(1.0 / rate, true).is_err() {
-                // ОТКАЗ НАЗЫВАЕТСЯ (Р.57): молчаливое залипание на прежнем
-                // отношении слышно как «замедление не применилось»
+                // A REFUSAL IS NAMED (R.57): a silent sticking to the previous
+                // ratio is heard as “the slowdown was not applied”
                 self.rejected += 1;
                 debug_assert!(false, "rubato rejected a ratio change: {rate}");
             }
         }
     }
 
-    /// Сколько смен отношения rubato отверг (диагностика, тесты).
+    /// How many ratio changes rubato rejected (diagnostics, tests).
     pub fn rejected(&self) -> u64 {
         self.rejected
     }
@@ -110,9 +110,9 @@ impl Warp {
         self.rate
     }
 
-    /// Выдать `out.len()/CH` кадров, дотягивая источник через `pull`.
-    /// `pull(frame, buf)` заполняет interleaved-кадры источника, начиная с
-    /// `frame`; false = не удалось (underrun, будет тишина).
+    /// Emit `out.len()/CH` frames, pulling the source via `pull`.
+    /// `pull(frame, buf)` fills the interleaved frames of the source, starting from
+    /// `frame`; false = failed (underrun, silence will follow).
     pub fn produce(
         &mut self,
         kind: PullKind,
@@ -144,10 +144,10 @@ impl Warp {
         }
     }
 
-    /// Переставить источник БЕЗ пересоздания ресемплера — шов заворота
-    /// (см. `ClipProcessor::seam`): внутреннее состояние sinc'а живёт
-    /// дальше, выбрасывается только произведённый, но не отданный выход
-    /// (он посчитан от прежней позиции источника).
+    /// Reposition the source WITHOUT re-creating the resampler — the wrap seam
+    /// (see `ClipProcessor::seam`): the internal state of the sinc lives on, only the
+    /// produced but not yet handed-out output is discarded
+    /// (it was computed from the previous source position).
     pub fn seek_source(&mut self, src: i64) {
         self.src_cursor = src;
         self.ready.clear();
@@ -157,7 +157,7 @@ impl Warp {
         self.underruns
     }
 
-    /// Текущий курсор источника (диагностика/тесты).
+    /// Current source cursor (diagnostics/tests).
     pub fn src_cursor(&self) -> i64 {
         self.src_cursor
     }

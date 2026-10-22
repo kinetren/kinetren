@@ -1,10 +1,10 @@
-//! Тесты 247 (docs/porting-notes.md): ВИДЕО замедляется (Р.37 п.2).
+//! Tests 247 (docs/porting-notes.md): the VIDEO slows down (R.37 item 2).
 //!
-//! Просьба пользователя: «slowed&reverb для видео (отдельная галочка по
-//! умолчанию — с некоторой простой генерацией фреймов)». Растяжение времени
-//! не выражается покадровым фильтром — оно меняет ВЫБОР исходного кадра,
-//! то есть одну функцию `clip_material_pos`. От неё же кормятся префетч,
-//! превью и экспорт, поэтому проверяем именно их согласие.
+//! The user's request: “slowed&reverb for video (a separate checkbox by default — with some simple frame generation)”.
+//! Stretching time is not expressed by a per-frame filter —
+//! it changes the CHOICE of the source frame, that is, a single function `clip_material_pos`.
+//! Prefetch, preview and export are all fed from it,
+//! so we check precisely their agreement.
 
 use kt_engine::VideoRenderer;
 use kt_model::*;
@@ -12,7 +12,7 @@ use kt_time::{Tick, TickRange};
 
 const SEC: i64 = 90_000;
 const STEP: i64 = SEC / 30; // 3000, 30 fps
-/// Quality тестов; ступень декода (Р.46) без нативов источников — 1.
+/// Quality of the tests; decode scale step (R.46) without native sizes of the sources — 1.
 const Q: kt_media::Quality = kt_media::Quality { width: 64, height: 36 };
 
 fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool) -> Project {
@@ -57,53 +57,53 @@ fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool) -> P
     p
 }
 
-/// pts источника, которые рендер запрашивает на каждом кадре события.
+/// the source pts that the render requests on each frame of the event.
 fn pts_track(p: &Project) -> Vec<i64> {
     let vr = VideoRenderer::new(p);
     (0..4 * 30)
         .map(|i| {
             let t = Tick(i * STEP);
-            vr.layers_at(t, Q).first().map(|(_, s, _)| s.0).expect("слой есть")
+            vr.layers_at(t, Q).first().map(|(_, s, _)| s.0).expect("layer is present")
         })
         .collect()
 }
 
-/// Тест 247: замедление вдвое — каждый исходный кадр держится два выходных;
-/// ускорение вдвое — каждый второй пропускается. Позиция считается по
-/// интегралу скорости, а не «на глазок».
+/// Test 247: half speed — each source frame is held for two output frames;
+/// double speed — every second one is skipped. The position is computed from the
+/// integral of the speed, not “by eye”.
 #[test]
 fn t247_video_follows_the_rate() {
-    // 0.5×: за 4 с события съедается 2 с материала
+    // 0.5×: over 4 s of the event 2 s of material is consumed
     let slow = pts_track(&project(vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)], vec![], false));
-    assert_eq!(slow[0], SEC, "первый кадр — точка входа");
-    assert_eq!(slow[119], SEC + 2 * SEC - STEP, "к концу события съедено 2 с материала");
-    // каждый кадр источника держится ровно два выходных
+    assert_eq!(slow[0], SEC, "the first frame is the entry point");
+    assert_eq!(slow[119], SEC + 2 * SEC - STEP, "by the end of the event 2 s of material was consumed");
+    // each source frame is held for exactly two output frames
     for i in (0..118).step_by(2) {
-        assert_eq!(slow[i], slow[i + 1], "кадр {i} обязан держаться два выходных");
-        assert_eq!(slow[i + 2] - slow[i], STEP, "и меняться ровно на кадр");
+        assert_eq!(slow[i], slow[i + 1], "frame {i} must hold for two output frames");
+        assert_eq!(slow[i + 2] - slow[i], STEP, "and change exactly by one frame");
     }
 
-    // 2×: пропускаем каждый второй
+    // 2×: we skip every second one
     let fast = pts_track(&project(vec![FxInstance::slowed_reverb(2.0, 0.0, 85.0)], vec![], false));
     for i in 0..119 {
-        assert_eq!(fast[i + 1] - fast[i], 2 * STEP, "на 2× шаг источника вдвое больше");
+        assert_eq!(fast[i + 1] - fast[i], 2 * STEP, "at 2× the source step is twice as large");
     }
 
-    // rate = 1 — путь БАЙТ-В-БАЙТ прежний (на этом стоит GOLDEN_VIDEO)
+    // rate = 1 — the path is BYTE-FOR-BYTE the old one (GOLDEN_VIDEO rests on this)
     let plain = pts_track(&project(vec![], vec![], false));
     let one = pts_track(&project(vec![FxInstance::slowed_reverb(1.0, 0.0, 85.0)], vec![], false));
-    assert_eq!(plain, one, "единичная скорость ничего не меняет");
+    assert_eq!(plain, one, "unit speed changes nothing");
 }
 
-/// Тест 247b: кривая скорости — тот же интеграл, что у аудио. Разгон
-/// 1.0 → 2.0 за событие съедает ровно 1.5 длины (парабола, не прямая).
+/// Test 247b: the speed curve — the same integral as for audio. Accelerating
+/// 1.0 → 2.0 over an event consumes exactly 1.5 of its length (a parabola, not a line).
 #[test]
 fn t247_video_follows_the_rate_curve() {
     let dur = 4 * SEC;
     let curve = vec![vec![ParamCurve {
         param: "rate".into(),
 
-        // ключи — в тиках МАТЕРИАЛА от source_in (домен Р.37: ось линейна)
+        // keys — in ticks of the MATERIAL from source_in (the domain of R.37: the axis is linear)
         keys: AutoKey::linear(vec![AutoKey::at(Tick(SEC), 1.0), AutoKey::at(Tick(SEC + dur), 2.0)]),
         source: Default::default(),
     }]];
@@ -113,50 +113,50 @@ fn t247_video_follows_the_rate_curve() {
     for i in [0usize, 30, 60, 90, 119] {
         let tau = (i as i64 * STEP) as f64 / dur as f64;
         let want = SEC + kt_fx::warp_material_ticks(1.0, &prof, dur, tau);
-        // рендер выравнивает по сетке кадров — сравниваем с точностью кадра
+        // the render aligns to the frame grid — we compare with frame precision
         assert!(
             (track[i] - (want / STEP) * STEP).abs() <= STEP,
-            "кадр {i}: pts {} против интеграла {want}",
+            "frame {i}: pts {} against the integral {want}",
             track[i]
         );
     }
     assert!(
         track[119] - SEC > (dur as f64 * 1.4) as i64,
-        "разгон обязан съесть ~1.5 длины события, съедено {}",
+        "the acceleration must consume ~1.5 of the event length, consumed {}",
         track[119] - SEC
     );
 }
 
-/// Тест 247c: реверс + растяжение — те же кадры в обратном порядке.
-/// Композиция «ВАРП, потом ЗЕРКАЛО»: зеркало до варпа гнало бы кривую
-/// скорости задом наперёд и рассинхронило бы A/V.
+/// Test 247c: reverse + stretch — the same frames in reverse order.
+/// The composition “WARP, then MIRROR”: a mirror before the warp would drive the speed curve
+/// backwards and desynchronize A/V.
 #[test]
 fn t247_reverse_and_stretch_compose() {
     let fx = vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)];
     let fwd = pts_track(&project(fx.clone(), vec![], false));
     let rev = pts_track(&project(fx, vec![], true));
-    // тот же материал, пройденный в обратную сторону
-    assert_eq!(rev[0], fwd[119], "реверс начинается с последнего кадра прямого");
-    assert_eq!(rev[119], fwd[0], "и кончается первым");
-    assert!(rev.windows(2).all(|w| w[0] >= w[1]), "материал идёт строго навстречу");
-    assert!(rev.iter().all(|&s| (SEC..SEC + 2 * SEC).contains(&s)), "материал внутри окна");
-    // фаза повторов может отличаться на полкадра: композиция —
-    // «ВАРП, потом ЗЕРКАЛО» (как у аудио), а не зеркало выходной оси.
-    // На rate = 1 расхождения нет вовсе — это и держит t24 и GOLDEN.
+    // the same material, traversed in the opposite direction
+    assert_eq!(rev[0], fwd[119], "the reverse starts with the last frame of the forward one");
+    assert_eq!(rev[119], fwd[0], "and ends with the first");
+    assert!(rev.windows(2).all(|w| w[0] >= w[1]), "the material runs strictly toward us");
+    assert!(rev.iter().all(|&s| (SEC..SEC + 2 * SEC).contains(&s)), "the material inside the window");
+    // the phase of repeats may differ by half a frame: the composition is
+    // “WARP, then MIRROR” (as in audio), not a mirror of the output axis.
+    // At rate = 1 there is no divergence at all — this is what holds t24 and GOLDEN.
     let one = pts_track(&project(vec![FxInstance::slowed_reverb(1.0, 0.0, 85.0)], vec![], true));
     let plain = pts_track(&project(vec![], vec![], true));
-    assert_eq!(one, plain, "на единичной скорости реверс байт-в-байт прежний");
+    assert_eq!(one, plain, "at unit speed the reverse is byte for byte the same as before");
 }
 
-/// Тест 247d: префетч греет РОВНО то, что читает композит. Расхождение
-/// этих двух расчётов = вечный промах кэша и чёрный кадр — тот же
-/// инвариант, что у аудио (kt-fx: «единый источник правды»).
+/// Test 247d: prefetch warms EXACTLY what the composite reads. A divergence of
+/// these two calculations = a permanent cache miss and a black frame — the same
+/// invariant as in audio (kt-fx: “a single source of truth”).
 #[test]
 fn t247_prefetch_matches_what_render_reads() {
     let p = project(vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)], vec![], false);
     let vr = VideoRenderer::new(&p);
-    // сравниваются ПАРЫ (кадр, качество декода): с Р.46 размер — часть
-    // заказа, и разойтись по нему так же смертельно, как по pts (п.318)
+    // PAIRS are compared (frame, decode quality): since R.46 the size is part of
+    // the request, and diverging on it is as fatal as on pts (item 318)
     let wanted: std::collections::BTreeSet<(i64, kt_media::Quality)> = vr
         .wanted_frames(TickRange::new(Tick(0), Tick(4 * SEC)), Q)
         .into_iter()
@@ -166,16 +166,16 @@ fn t247_prefetch_matches_what_render_reads() {
         .flat_map(|i| vr.layers_at(Tick(i * STEP), Q))
         .map(|(_, s, q)| (s.0, q))
         .collect();
-    assert_eq!(read, wanted, "префетч и рендер обязаны просить один и тот же набор кадров");
-    // ключи строго возрастают и без дублей — предусловие read_video_span
+    assert_eq!(read, wanted, "prefetch and render must ask for the same set of frames");
+    // keys strictly increase and have no duplicates — a precondition of read_video_span
     let keys: Vec<i64> = wanted.iter().map(|(k, _)| *k).collect();
-    assert!(keys.windows(2).all(|w| w[0] < w[1]), "ключи строго возрастают");
-    // на 0.5× кадров вдвое меньше, чем выходных — повторы схлопнулись
-    assert_eq!(keys.len(), 60, "за 4 с на 0.5× нужно 60 исходных кадров, а не 120");
+    assert!(keys.windows(2).all(|w| w[0] < w[1]), "the keys strictly increase");
+    // at 0.5× there are half as many frames as output — the repeats collapsed
+    assert_eq!(keys.len(), 60, "over 4 s at 0.5× we need 60 source frames, not 120");
 }
 
-/// Тест 247e: морфер-слой не режет РАСТЯНУТЫЙ клип независимо от вида —
-/// и в ссылочных режимах тоже (вето стояло ниже них, дефект до Р.37).
+/// Test 247e: a morpher layer does not cut a STRETCHED clip regardless of the kind —
+/// and in the reference modes too (the veto stood below them, a defect before R.37).
 #[test]
 fn t247_layer_never_slices_a_stretched_clip() {
     for kind in [ClipKind::Video, ClipKind::Audio] {
@@ -187,7 +187,7 @@ fn t247_layer_never_slices_a_stretched_clip() {
         p.markers.push(Marker {
             t: Tick(SEC),
             duration: Tick(SEC),
-            name: "врез".into(),
+            name: "Insert".into(),
             color: None,
         });
         p.ensure_tracks(kt_model::LaneKind::Morph, 1);
@@ -196,7 +196,7 @@ fn t247_layer_never_slices_a_stretched_clip() {
             lane: 0,
             start: Tick(SEC),
             duration: Tick(SEC),
-            targets: MorphTargets::Marks { names: vec!["врез".into()] },
+            targets: MorphTargets::Marks { names: vec!["Insert".into()] },
             patch: MorphPatch {
                 video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
                 audio_fx: vec![FxInstance::gain(3.0)],
@@ -212,15 +212,15 @@ fn t247_layer_never_slices_a_stretched_clip() {
         assert_eq!(
             p.effective_clips().len(),
             1,
-            "{kind:?}: растянутый клип не режется даже по именованной ссылке"
+            "{kind:?}: a stretched clip is not cut even by a named reference"
         );
     }
 }
 
-/// Тест 250 (Р.37 С5): режим кадров «смешивание». Пре-FX кадр слоя —
-/// линейная смесь двух соседних исходных, сделанная ТЕМ ЖЕ
-/// `dissolve_into`, что кроссфейд. Смешивание живёт в ОБЩЕМ коде плана,
-/// поэтому оба исполнителя получают один и тот же кадр (инвариант №7).
+/// Test 250 (R.37 C5): the frame mode “blending”. The pre-FX frame of the layer is a
+/// linear mix of two adjacent source frames, made by the SAME `dissolve_into` as the crossfade.
+/// Blending lives in the COMMON code of the plan,
+/// so both executors receive the same frame (invariant 7).
 #[test]
 fn t250_blend_mode_mixes_neighbouring_frames() {
     use kt_media::MediaSource;
@@ -245,7 +245,7 @@ fn t250_blend_mode_mixes_neighbouring_frames() {
     let q = kt_media::Quality { width: 64, height: 36 };
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let mut synth = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence);
-    // греем ровно то, что просит план
+    // we warm exactly what the plan asks for
     for (media, pts, _q) in vr.wanted_frames(TickRange::new(Tick(0), Tick(4 * SEC)), Q) {
         let f = synth.read_video_frame(pts, Some(q)).unwrap();
         cache.insert_video(
@@ -256,11 +256,11 @@ fn t250_blend_mode_mixes_neighbouring_frames() {
         );
     }
 
-    // на 0.5× нечётные выходные кадры стоят ровно посередине между
-    // исходными: вес 2048/4096
-    let t = Tick(STEP); // второй кадр события
+    // at 0.5× the odd output frames sit exactly midway between the source frames:
+    // weight 2048/4096
+    let t = Tick(STEP); // the second frame of the event
     let (out, complete) = vr.compose_from_cache(&cache, t, q);
-    assert!(complete, "оба кадра пары прогреты");
+    assert!(complete, "both frames of the pair are warm");
     let a = synth.read_video_frame(Tick(SEC), Some(q)).unwrap().rgba.into_vec();
     let b = synth.read_video_frame(Tick(SEC + STEP), Some(q)).unwrap().rgba.into_vec();
     let want: Vec<u8> = a
@@ -268,25 +268,25 @@ fn t250_blend_mode_mixes_neighbouring_frames() {
         .zip(&b)
         .map(|(&x, &y)| ((x as u32 * 2048 + y as u32 * 2048 + 2048) >> 12) as u8)
         .collect();
-    assert_eq!(out, want, "смесь считается тем же целочисленным ядром, что кроссфейд");
+    assert_eq!(out, want, "the mix is computed with the same integer kernel as the crossfade");
 
-    // чётные кадры стоят НА сетке — вес 0, пары нет, путь прежний
+    // even frames sit ON the grid — weight 0, no pair, the old path
     let (on_grid, _) = vr.compose_from_cache(&cache, Tick(0), q);
-    assert_eq!(on_grid, a, "на сетке смешивать нечего");
+    assert_eq!(on_grid, a, "on the grid there is nothing to mix");
 
-    // «ближайший» на тех же данных даёт ЧИСТЫЙ кадр, а не смесь
+    // “nearest” on the same data gives a CLEAN frame, not a mix
     let mut near = VideoRenderer::new(&project(
         vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)],
         vec![],
         false,
     ));
     let (n, _) = near.compose_from_cache(&cache, t, q);
-    assert_eq!(n, a, "режим «ближайший» держит кадр");
-    assert_ne!(n, out, "и отличается от смешивания");
+    assert_eq!(n, a, "the “nearest” mode holds the frame");
+    assert_ne!(n, out, "and it differs from mixing");
 }
 
-/// Тест 250b: префетч греет ОБА кадра пары. Не согреет — второй не
-/// запросят никогда, и слой вечно голодает.
+/// Test 250b: prefetch warms BOTH frames of the pair. If it does not warm them, the second
+/// is never requested, and the layer starves forever.
 #[test]
 fn t250_blend_prefetches_both_sides() {
     let p = project(
@@ -311,25 +311,25 @@ fn t250_blend_prefetches_both_sides() {
         .into_iter()
         .map(|(_, s, _)| s.0)
         .collect();
-    // соседи добавили по кадру справа: 61 вместо 60
-    assert_eq!(wanted.len(), 61, "греются обе стороны смеси, а не одна");
+    // the neighbors added a frame on the right: 61 instead of 60
+    assert_eq!(wanted.len(), 61, "both sides of the mix warm up, not one");
     let keys: Vec<i64> = wanted.iter().copied().collect();
-    assert!(keys.windows(2).all(|w| w[0] < w[1]), "ключи по-прежнему строго возрастают");
+    assert!(keys.windows(2).all(|w| w[0] < w[1]), "the keys still strictly increase");
 
-    // смешивающий слой держит ДВА кадра — экспорт обязан это учитывать,
-    // иначе чанк вытеснит соседа и байты станут зависеть от кэша
-    assert_eq!(vr.max_concurrent_layers(), 2, "смешивающий слой весит два кадра");
+    // a blending layer holds TWO frames — the export must account for this,
+    // otherwise the chunk would evict the neighbor and the bytes would depend on the cache
+    assert_eq!(vr.max_concurrent_layers(), 2, "a mixing layer weighs two frames");
 }
 
 // ---------------------------------------------------------------------------
-// Тесты 272 (Р.39): резка и домен автоматизации на растянутом клипе.
+// Tests 272 (R.39): slicing and the automation domain on a stretched clip.
 // ---------------------------------------------------------------------------
 
-/// Тест 272: разрезанный проект рендерит ТЕ ЖЕ кадры, что неразрезанный.
+/// Test 272: a sliced project renders the SAME frames as an unsliced one.
 ///
-/// Это и есть тот самый «скачок на стыке», о котором шла речь: до Р.39
-/// `clip_slice` считал `source_in` линейно, и последовательность исходных
-/// pts расходилась НА КАЖДОМ кадре после разреза.
+/// This is exactly the “jump at the joint” that was discussed: before R.39
+/// `clip_slice` computed `source_in` linearly, and the sequence of source
+/// pts diverged on EVERY frame after the cut.
 #[test]
 fn t272_split_renders_the_same_frames() {
     for (name, fx, auto, reversed) in [
@@ -337,7 +337,7 @@ fn t272_split_renders_the_same_frames() {
         ("2x", vec![FxInstance::slowed_reverb(2.0, 0.0, 85.0)], vec![], false),
         ("0.5x rev", vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)], vec![], true),
         (
-            "кривая",
+            "curve",
             vec![FxInstance::slowed_reverb(1.0, 0.0, 85.0)],
             vec![vec![ParamCurve {
                 param: "rate".into(),
@@ -361,7 +361,7 @@ fn t272_split_renders_the_same_frames() {
                 new_id: ClipId(2),
                 new_group: None,
             })
-            .expect("разрез проходит");
+            .expect("the cut goes through");
             let after = pts_track(m.project());
             let bad = before
                 .iter()
@@ -372,24 +372,24 @@ fn t272_split_renders_the_same_frames() {
             assert_eq!(
                 bad,
                 0,
-                "{name}, разрез на {at}: {bad} кадров из {} разошлись — резка попала не в тот \
-                 материал",
+                "{name}, cut at {at}: {bad} frames out of {} diverged — the cut landed on the wrong \
+                 material",
                 before.len()
             );
         }
     }
 }
 
-/// Тест 272б: кривая ВИДЕО-FX сэмплируется в том же домене, что звук и UI.
+/// Test 272b: the VIDEO-FX curve is sampled in the same domain as the sound and UI.
 ///
-/// До Р.39 `layer_src` брал варп-зависимую позицию кадра, то есть на
-/// замедленном клипе картинка анимировалась по своему расписанию. Ось
-/// линейна по решению Р.37 («БЕЗ учёта замедления-ускорения»).
+/// Before R.39 `layer_src` took the warp-dependent frame position, that is, on a
+/// slowed clip the picture was animated on its own schedule. The axis is
+/// linear by the decision of R.37 (“WITHOUT accounting for slowing-speeding”).
 #[test]
 fn t272b_video_curves_use_the_linear_axis() {
-    // Blur с кривой радиуса + замедление вдвое. Ключ ровно на середине
-    // события: значение под ним обязано совпасть со значением, которое
-    // покажет UI (тот же `clip_material_at`).
+    // Blur with a radius curve + half speed. The key is exactly at the middle of the
+    // event: the value under it must match the value that the UI will show
+    // (the same `clip_material_at`).
     let mut p = project(
         vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0), FxInstance::blur(1)],
         vec![
@@ -409,7 +409,7 @@ fn t272b_video_curves_use_the_linear_axis() {
     p.clips[0].fx_bypass = vec![false, false];
     p.validate().unwrap();
 
-    let mid = Tick(2 * SEC); // середина события
+    let mid = Tick(2 * SEC); // the middle of the event
     let want_at = kt_model::clip_material_at(
         p.clips[0].source_in,
         p.clips[0].start,
@@ -418,9 +418,9 @@ fn t272b_video_curves_use_the_linear_axis() {
         STEP,
         mid,
     );
-    // ключи покрывают [SEC, 3·SEC]; линейная ось ставит середину события в
-    // материал 3·SEC — то есть конец кривой
-    assert_eq!(want_at, Tick(SEC + 2 * SEC), "линейная ось: середина события = середина материала");
+    // the keys cover [SEC, 3·SEC]; the linear axis puts the middle of the event at
+    // material 3·SEC — that is, the end of the curve
+    assert_eq!(want_at, Tick(SEC + 2 * SEC), "linear axis: the middle of the event = the middle of the material");
 
     let vr = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
@@ -435,21 +435,21 @@ fn t272b_video_curves_use_the_linear_axis() {
     assert_eq!(
         radius,
         Some(48),
-        "радиус обязан быть взят по ЛИНЕЙНОЙ оси (конец кривой), а не по варп-позиции"
+        "the radius must be taken from the LINEAR axis (the end of the curve), not from the warp position"
     );
 }
 
-// ---- Р.57: знаковая скорость -------------------------------------------------
+// ---- R.57: signed speed -------------------------------------------------
 
-/// Тест 604a (Р.57): видео идёт по материалу НАЗАД, когда скорость
-/// отрицательна, и разворачивается там, где кривая меняет знак.
+/// Test 604a (R.57): the video runs over the material BACKWARD when the speed
+/// is negative, and turns around where the curve changes sign.
 ///
-/// Претензия владельца дословно: «реверсивное проигрывание в slowed-эффекте
-/// (отрицательный rate)».
+/// The owner's claim, verbatim: “reverse playback in a slowed effect
+/// (negative rate)”.
 #[test]
 fn t604a_video_follows_a_signed_curve() {
     let dur = 4 * SEC;
-    // 1 → −1: позиция поднимается к середине события и возвращается
+    // 1 → −1: the position rises to the middle of the event and returns
     let curve = vec![vec![ParamCurve {
         param: "rate".into(),
 
@@ -463,50 +463,50 @@ fn t604a_video_follows_a_signed_curve() {
     let top = track.iter().enumerate().max_by_key(|(_, v)| **v).unwrap().0;
     assert!(
         (55..65).contains(&top),
-        "вершина не посередине события: кадр {top}, дорожка {:?}",
+        "the apex is not in the middle of the event: frame {top}, track {:?}",
         &track[..5]
     );
-    assert!(track[top] > track[0] + SEC / 2, "материал не продвинулся вперёд вовсе");
-    // и ВЕРНУЛСЯ туда, откуда вышел: ∫rate по всему событию равен нулю
+    assert!(track[top] > track[0] + SEC / 2, "the material did not advance forward at all");
+    // and RETURNED to where it started: ∫rate over the whole event is zero
     assert!(
         (track[119] - track[0]).abs() <= 2 * STEP,
-        "кривая не вернулась в старт: {} против {}",
+        "the curve did not return to the start: {} against {}",
         track[119],
         track[0]
     );
-    // вторая половина строго убывает — это и есть ход назад
+    // the second half strictly decreases — this is the backward motion
     for i in (top + 2)..118 {
-        assert!(track[i] >= track[i + 1], "кадр {i}: материал не идёт назад");
+        assert!(track[i] >= track[i + 1], "frame {i}: the material does not go backward");
     }
 }
 
-/// Тест 604b (Р.57): нулевая скорость — СТОП-КАДР, а не «очень медленно».
+/// Test 604b (R.57): zero speed is a FREEZE FRAME, not “very slow”.
 #[test]
 fn t604b_zero_rate_is_a_freeze() {
     let track = pts_track(&project(vec![FxInstance::slowed_reverb(0.0, 0.0, 85.0)], vec![], false));
-    assert!(track.iter().all(|&t| t == track[0]), "стоп-кадр поехал: {:?}", &track[..6]);
-    assert_eq!(track[0], SEC, "стоп держит кадр точки входа");
-    // и заказ на такой клип — ОДИН ключ на всё событие
+    assert!(track.iter().all(|&t| t == track[0]), "the still frame moved: {:?}", &track[..6]);
+    assert_eq!(track[0], SEC, "the hold keeps the frame of the entry point");
+    // and the order for such a clip is ONE keyframe for the whole event
     let p = project(vec![FxInstance::slowed_reverb(0.0, 0.0, 85.0)], vec![], false);
     let vr = VideoRenderer::new(&p);
     let keys = vr.wanted_frames(TickRange::new(Tick(0), Tick(4 * SEC)), Q);
-    assert_eq!(keys.len(), 1, "стоп-кадр заказал больше одного кадра: {keys:?}");
+    assert_eq!(keys.len(), 1, "the still frame ordered more than one frame: {keys:?}");
 }
 
-/// Тест 604c (Р.57): у начала материала кадр ДЕРЖИТСЯ, а не уходит в минус.
+/// Test 604c (R.57): at the start of the material the frame HOLDS, rather than going negative.
 #[test]
 fn t604c_edge_holds_at_the_material_start() {
-    // source_in = 1 c, скорость −1: через секунду упрёмся в ноль файла
+    // source_in = 1 s, speed −1: in a second we would hit the file’s zero point
     let track =
         pts_track(&project(vec![FxInstance::slowed_reverb(-1.0, 0.0, 85.0)], vec![], false));
-    assert!(track.iter().all(|&t| t >= 0), "кадр ушёл за начало файла: {:?}", &track[28..34]);
+    assert!(track.iter().all(|&t| t >= 0), "the frame went past the start of the file: {:?}", &track[28..34]);
     assert_eq!(track[0], SEC);
-    assert_eq!(track[119], 0, "к концу события мы у начала файла и держимся");
-    assert!(track[35] == 0 && track[60] == 0, "край не держится");
+    assert_eq!(track[119], 0, "by the end of the event we are at the start of the file and hold");
+    assert!(track[35] == 0 && track[60] == 0, "the edge does not hold");
 }
 
-/// Тест 604d (Р.57): под отрицательной скоростью пара «смешивания» берётся
-/// с ТОЙ ЖЕ стороны, что у положительной, — дробная часть меряется вперёд.
+/// Test 604d (R.57): under negative speed the “blend” pair is taken
+/// from the SAME side as for positive speed — the fractional part is measured forward.
 #[test]
 fn t604d_blend_pair_under_negative_rate() {
     let mut fx = FxInstance::slowed_reverb(-0.5, 0.0, 85.0);
@@ -515,19 +515,19 @@ fn t604d_blend_pair_under_negative_rate() {
     }
     let p = project(vec![fx], vec![], false);
     let vr = VideoRenderer::new(&p);
-    // на полукадре пара обязана быть (a, a+STEP) и вес ровно половина
+    // at mid-frame the pair must be (a, a+STEP) and the weight exactly one half
     for i in [1i64, 3, 5, 7] {
         let keys = vr.layers_at(Tick(i * STEP), Q);
-        assert_eq!(keys.len(), 2, "кадр {i}: пары нет — {keys:?}");
+        assert_eq!(keys.len(), 2, "frame {i}: there is no pair — {keys:?}");
         let (a, b) = (keys[0].1.0, keys[1].1.0);
-        assert_eq!(b - a, STEP, "кадр {i}: сосед взят не вперёд: {a} и {b}");
+        assert_eq!(b - a, STEP, "frame {i}: the neighbour was not taken forward: {a} and {b}");
     }
 }
 
-/// Тест 604e (Р.57): заказ == чтение под сменой знака (класс t247d).
+/// Test 604e (R.57): order == read under a sign flip (class t247d).
 ///
-/// Окно по двум концам пропустило бы экскурсию: кривая уходит вперёд и
-/// возвращается, и максимум лежит ВНУТРИ окна, а не на его краю.
+/// A window over the two ends would miss the excursion: the curve goes forward
+/// and comes back, and the maximum lies INSIDE the window, not at its edge.
 #[test]
 fn t604e_prefetch_matches_reads_under_a_sign_change() {
     let dur = 4 * SEC;
@@ -553,32 +553,32 @@ fn t604e_prefetch_matches_reads_under_a_sign_change() {
     assert!(!read.is_empty());
     assert!(
         read.is_subset(&wanted),
-        "читается то, чего не заказывали: {:?}",
+        "something was read that was not ordered: {:?}",
         read.difference(&wanted).collect::<Vec<_>>()
     );
-    // СТОРОЖ СЦЕНЫ: экскурсия обязана быть — иначе тест ничего не ловит
+    // SCENE GUARD: the excursion must exist — otherwise the test catches nothing
     let first = vr.layers_at(Tick(0), Q)[0].1.0;
     let last = vr.layers_at(Tick(119 * STEP), Q)[0].1.0;
     let top = *read.iter().max().unwrap();
-    assert!(top > first.max(last) + STEP, "сцена выродилась: экскурсии нет");
+    assert!(top > first.max(last) + STEP, "the scene degenerated: there is no excursion");
 }
 
-/// Тест 604g (Р.57): «Реверс» поверх отрицательной скорости даёт ход
-/// ВПЕРЁД — зеркало берётся вокруг пролёта, а не вокруг съеденного.
+/// Test 604g (R.57): “Reverse” on top of negative speed gives motion
+/// FORWARD — the mirror is taken around the span, not around the consumed part.
 #[test]
 fn t604g_reverse_over_negative_rate_goes_forward() {
     let rev = pts_track(&project(vec![FxInstance::slowed_reverb(-0.5, 0.0, 85.0)], vec![], true));
-    // без зеркала −0.5 идёт назад; с зеркалом — вперёд, от нижнего края
-    // пролёта к верхнему
-    assert!(rev[0] < rev[119], "зеркало не развернуло ход: {} → {}", rev[0], rev[119]);
+    // without the mirror −0.5 goes backward; with the mirror — forward, from the lower edge
+    // of the span to the upper edge
+    assert!(rev[0] < rev[119], "the mirror did not reverse the motion: {} → {}", rev[0], rev[119]);
     for i in 0..118 {
-        assert!(rev[i] <= rev[i + 1] + STEP, "кадр {i}: ход не монотонен");
+        assert!(rev[i] <= rev[i + 1] + STEP, "frame {i}: the motion is not monotonic");
     }
-    // пролёт −0.5 на 4 c — это 2 c назад: зеркало кладёт нас в −1 c от
-    // точки входа и ведёт к ней
-    assert_eq!(rev[0], 0, "зеркало начинает с нижнего края пролёта");
-    // допуск в два кадра: зеркало вычитает шаг сетки (первый выходной
-    // кадр зеркального клипа — ПОСЛЕДНИЙ настоящий), и последний кадр
-    // события лежит ещё на шаг раньше конца
-    assert!((rev[119] - SEC).abs() <= 2 * STEP, "зеркало не доходит до точки входа: {}", rev[119]);
+    // span −0.5 over 4 s is 2 s backward: the mirror puts us at −1 s from the
+    // entry point and leads back to it
+    assert_eq!(rev[0], 0, "the mirror starts from the lower edge of the span");
+    // tolerance of two frames: the mirror subtracts the grid step (the first output
+    // frame of the mirrored clip is the LAST real one), and the last frame
+    // of the event lies one more step earlier than the end
+    assert!((rev[119] - SEC).abs() <= 2 * STEP, "the mirror does not reach the entry point: {}", rev[119]);
 }
