@@ -30,4 +30,4 @@
 ## 4. Finish
 
 - [x] 4.1 `cargo test --workspace` and `cargo clippy --all-targets` green; live check with a local capture server: run `target/debug/kinetren` built with `KINETREN_POSTHOG_KEY=phc_test` and the endpoint overridden by the test-only env `KT_TELEMETRY_URL` (debug builds only), start → close, the server log holds `app_started` and `app_closed` with `duration_s`
-- [ ] 4.2 `src/scripts/finish.sh`; version `vYY.MM.DD-hash` in the report
+- [x] 4.2 `src/scripts/finish.sh`; version `vYY.MM.DD-hash` in the report
