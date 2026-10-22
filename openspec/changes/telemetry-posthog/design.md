@@ -73,8 +73,11 @@ then enqueues `app_closed`, drops the sender and waits on a `done` channel with
 Requests: connect timeout 1 s, global 2 s. Failures go to `journal::log("telemetry", …)`
 once per run. `Drop` for `Telemetry` sends nothing — `Drop` of `KtApp` runs on `*self = app`
 (File → New/Open), where the session is not over, and on panic unwind, where it is not clean.
-Note: File → New/Open re-create `KtApp` in place, so the `Telemetry` value MUST be moved into
-the new app (not re-created), or a second `app_started` would be sent per New.
+Note: File → New/Open re-create `KtApp` in place (nine `*self = …` sites). Moving a value
+across each would be one missed site away from a second `app_started` per New, so the
+`Telemetry` is one `Arc` per process (`telemetry::install` in `run`, `telemetry::global()` in
+every `KtApp` constructor; t840 checks the constructors), and `frame`/`closed` are idempotent.
+The harness installs none and sets `KtApp::telemetry` itself.
 
 ### D6. Key only at compile time
 `option_env!("KINETREN_POSTHOG_KEY")` in `telemetry.rs`; `release-build.sh` reads

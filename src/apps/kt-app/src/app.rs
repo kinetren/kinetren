@@ -255,6 +255,10 @@ pub struct KtApp {
     /// Это ПОЛЬЗОВАТЕЛЬСКАЯ настройка: живёт в eframe Storage, а не в
     /// `.ktproj`, и звёздочку несохранённого не поднимает.
     pub lang_choice: Option<crate::i18n::Lang>,
+    /// Anonymous usage telemetry (change telemetry-posthog). One per PROCESS: File → New/Open
+    /// rebuild `KtApp` in place and pick the same value up from `telemetry::global()`, so a
+    /// new document never sends a second `app_started`. `None` in the harness.
+    pub telemetry: Option<std::sync::Arc<crate::telemetry::Telemetry>>,
     /// Момент последней паузы (двойной Space = стоп, п.15 раунда 6).
     pub paused_at: Option<std::time::Instant>,
     /// Пробел зажат с этого момента (п.3 р.16). None = не зажат.
@@ -790,6 +794,7 @@ impl KtApp {
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
             ui_economy: false,
             lang_choice: None,
+            telemetry: crate::telemetry::global(),
             paused_at: None,
             space_down_at: None,
             space_boost: None,
@@ -1055,6 +1060,7 @@ impl KtApp {
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
             ui_economy: false,
             lang_choice: None,
+            telemetry: crate::telemetry::global(),
             paused_at: None,
             space_down_at: None,
             space_boost: None,
@@ -1453,6 +1459,15 @@ impl KtApp {
         crate::bench::tick();
         if crate::bench::enabled() {
             crate::bench::note_inputs(ui.ctx().input(|i| i.events.len()) as u64);
+        }
+        // Telemetry (telemetry-posthog): `app_started` once per process on the first frame,
+        // and the first-start notice once — it lists what is sent and what is NOT sent and
+        // says where it is switched off (rule 19). After the first frame this is two atomics.
+        if let Some(t) = self.telemetry.clone()
+            && t.frame(crate::i18n::current().code())
+        {
+            self.push_notice(Severity::Info, crate::telemetry::notice_text());
+            self.status = Some((tr(k::telemetry::HEADLINE).to_string(), std::time::Instant::now()));
         }
         let ctx = ui.ctx().clone();
         // Потеря GPU-исполнителя видео посреди сессии (DeviceLost) —
@@ -8952,6 +8967,9 @@ impl eframe::App for KtApp {
         if let Some(p) = &self.project_path {
             storage.set_string("last_project", p.to_string_lossy().to_string());
         }
+        if let Some(v) = self.telemetry.as_ref().and_then(|t| t.stored_value()) {
+            storage.set_string(crate::telemetry::STORAGE_KEY, v.to_string());
+        }
     }
 
     fn on_exit(&mut self) {
@@ -8971,6 +8989,11 @@ impl eframe::App for KtApp {
             self.write_recovery_now();
         } else {
             self.drop_own_recovery();
+        }
+        // after the recovery write (durability first): the clean-close event, within a
+        // fixed budget; a dead network looks exactly like no telemetry
+        if let Some(t) = &self.telemetry {
+            t.closed(crate::i18n::current().code(), crate::telemetry::EXIT_BUDGET);
         }
     }
 }
@@ -9056,6 +9079,10 @@ pub fn run() -> eframe::Result {
             crate::i18n::set_lang_ctx(&cc.egui_ctx, crate::i18n::resolve(lang_choice));
             crate::icons::install_fonts(&cc.egui_ctx);
             crate::journal::install_panic_hook();
+            // before the first KtApp: every app of this process takes the same telemetry
+            crate::telemetry::install(crate::telemetry::Telemetry::for_process(
+                cc.storage.and_then(|s| s.get_string(crate::telemetry::STORAGE_KEY)).as_deref(),
+            ));
             let restored = arg
                 .clone()
                 .or_else(|| cc.storage.and_then(|s| s.get_string("last_project")))

@@ -1277,3 +1277,14 @@ length = "Duración"
 source = "Origen"
 targets = "Destinos"
 patch = "Parche"
+
+# Anonymous usage telemetry (change telemetry-posthog): the notice and the View menu
+# checkbox hint share the two lists — what IS sent and what is NOT sent.
+[telemetry]
+checkbox = "Enviar estadísticas de uso anónimas"
+headline = "Kinetren envía estadísticas de uso anónimas a PostHog (servidores en la UE)."
+sent = "Se envía: inicio y cierre normal, duración de la sesión, versión, SO y tipo de procesador, idioma, un número de instalación aleatorio."
+not_sent = "NO se envía: proyectos, nombres y rutas de archivos, medios, fotogramas o sonido, tu nombre, el nombre del equipo. La IP no se guarda."
+how_off = "Desactivar: Ver / Enviar estadísticas de uso anónimas, o iniciar con KINETREN_TELEMETRY=0."
+no_key = "Esta compilación no envía estadísticas."
+env_off = "Desactivado por KINETREN_TELEMETRY o DO_NOT_TRACK."

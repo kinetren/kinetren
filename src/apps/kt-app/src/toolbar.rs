@@ -487,6 +487,26 @@ impl KtApp {
                     }
                 }
             });
+            // Telemetry switch next to Language: a per-machine preference lives where the
+            // other one is (checklist rule 13). Disabled, with the reason in the hint, when
+            // this build cannot send (no key) or the environment forbids it.
+            if let Some(t) = self.telemetry.clone() {
+                let c = t.consent();
+                let mut on = c.on();
+                let r = ui.add_enabled(
+                    c.block.is_none(),
+                    egui::Checkbox::new(&mut on, tr(k::telemetry::CHECKBOX)),
+                );
+                let text = crate::telemetry::hint_text(c.block);
+                // a disabled widget is not `hovered()`: its reason is shown all the same
+                if c.block.is_some() && r.contains_pointer() {
+                    self.hover_hint = Some(text.clone());
+                }
+                let r = self.hint(r, &text);
+                if r.changed() {
+                    t.set_choice(on);
+                }
+            }
             ui.separator();
             if ui.button(tr(k::menu::view::DIAGNOSTICS)).clicked() {
                 self.perf.diag_open = true;

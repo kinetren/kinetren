@@ -4613,3 +4613,87 @@ fn t832_project_of_the_former_name_comes_in_through_the_import_door() {
     assert!(app.dirty_content, "the star after the import");
     assert_eq!(std::fs::read(&old).unwrap(), before, "the import touched the source");
 }
+
+/// Test 840 (telemetry-posthog): the first-start notice lists what is sent and what is NOT
+/// sent, is said once, and the switch is reachable in View next to Language; unchecking it
+/// is remembered and cancels the session's `app_closed`.
+#[test]
+fn t840_telemetry_notice_once_and_switch_in_view() {
+    use crate::i18n::{Lang, k, set_lang, tr};
+    use crate::telemetry::testing::Recording;
+    use crate::telemetry::{EnvView, Telemetry, new_uuid, resolve_consent};
+    use egui_kittest::kittest::Queryable;
+    use std::sync::Arc;
+
+    // every catalog: the notice holds both lists and names the real menu item
+    for lang in Lang::ALL {
+        set_lang(lang);
+        let notice = crate::telemetry::notice_text();
+        let hint = crate::telemetry::hint_text(None);
+        for part in [tr(k::telemetry::SENT), tr(k::telemetry::NOT_SENT)] {
+            assert!(notice.contains(part) && hint.contains(part), "{lang:?}: {part}");
+        }
+        let off = tr(k::telemetry::HOW_OFF);
+        // Arabic catalog strings come back in display order (words reordered, i18n::bidi):
+        // there the item is named when each of its words is present
+        let word = |w: &str| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+        let names = |s: &str| {
+            off.contains(s)
+                || s.split_whitespace().all(|w| off.split_whitespace().any(|o| word(o) == word(w)))
+        };
+        assert!(
+            names(tr(k::menu::view::TITLE)) && names(tr(k::telemetry::CHECKBOX)),
+            "{lang:?}: the notice must name View and the checkbox: {off}"
+        );
+    }
+
+    let rec = Recording::default();
+    let consent = resolve_consent(Some("phc_test"), &EnvView::default(), None);
+    assert!(consent.first_start);
+    let t =
+        Arc::new(Telemetry::new(consent, new_uuid(), Box::new(rec.clone())).with_key("phc_test"));
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().telemetry = Some(t.clone());
+    for _ in 0..4 {
+        h.step();
+    }
+    let said = |h: &egui_kittest::Harness<'_, crate::app::KtApp>| {
+        h.state().notices.iter().filter(|n| n.text == crate::telemetry::notice_text()).count()
+    };
+    assert_eq!(said(&h), 1, "the notice is said exactly once");
+
+    h.get_by_label(tr(k::menu::view::TITLE)).click();
+    h.step();
+    h.step();
+    let labels = crate::layout_tests::menu_labels(&mut h);
+    assert!(
+        h.query_by_label(tr(k::telemetry::CHECKBOX)).is_some(),
+        "the switch must be in View; seen: {labels:?}"
+    );
+    assert!(t.consent().on(), "on by default");
+    h.get_by_label(tr(k::telemetry::CHECKBOX)).click();
+    h.step();
+    h.step();
+    assert!(!t.consent().on(), "unchecking switches it off");
+    assert_eq!(t.stored_value(), Some("off"), "the choice is remembered");
+    assert_eq!(said(&h), 1);
+
+    eframe::App::on_exit(h.state_mut());
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let events: Vec<String> =
+        rec.events().iter().map(|e| e["event"].as_str().unwrap_or("").to_string()).collect();
+    assert_eq!(events, ["app_started"], "switched off mid-session: no app_closed");
+
+    // the restart with the stored choice: no second notice, nothing sent
+    let consent = resolve_consent(Some("phc_test"), &EnvView::default(), t.stored_value());
+    assert!(!consent.first_start && !consent.on());
+    let t2 = Telemetry::new(consent, new_uuid(), Box::new(Recording::default()));
+    assert!(!t2.frame("en"), "the notice is not said again");
+
+    // File → New/Open rebuild KtApp in place: every constructor takes the process telemetry,
+    // so a new document never sends a second app_started
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/app.rs")).unwrap();
+    let ctors = src.matches("            lang_choice: None,\n").count();
+    assert!(ctors >= 2);
+    assert_eq!(src.matches("            telemetry: crate::telemetry::global(),\n").count(), ctors);
+}

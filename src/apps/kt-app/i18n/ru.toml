@@ -1277,3 +1277,14 @@ length = "Длина"
 source = "Источник"
 targets = "Цели"
 patch = "Патч"
+
+# Anonymous usage telemetry (change telemetry-posthog): the notice and the View menu
+# checkbox hint share the two lists — what IS sent and what is NOT sent.
+[telemetry]
+checkbox = "Отправлять анонимную статистику"
+headline = "Kinetren отправляет анонимную статистику использования в PostHog (серверы в ЕС)."
+sent = "Отправляется: запуск и штатное закрытие, длительность сессии, версия, ОС и тип процессора, язык интерфейса, случайный номер установки."
+not_sent = "НЕ отправляется: проекты, имена файлов и пути, медиа, кадры и звук, ваше имя, имя компьютера. IP-адрес не сохраняется."
+how_off = "Выключить: Вид / Отправлять анонимную статистику или запуск с KINETREN_TELEMETRY=0."
+no_key = "Эта сборка статистику не отправляет."
+env_off = "Выключено переменной KINETREN_TELEMETRY или DO_NOT_TRACK."

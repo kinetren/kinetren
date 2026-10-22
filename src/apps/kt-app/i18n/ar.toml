@@ -1277,3 +1277,14 @@ length = "المدة"
 source = "المصدر"
 targets = "الأهداف"
 patch = "الرقعة"
+
+# Anonymous usage telemetry (change telemetry-posthog): the notice and the View menu
+# checkbox hint share the two lists — what IS sent and what is NOT sent.
+[telemetry]
+checkbox = "إرسال إحصاءات استخدام مجهولة"
+headline = "يرسل Kinetren إحصاءات استخدام مجهولة إلى PostHog (خوادم في الاتحاد الأوروبي)."
+sent = "يُرسَل: تشغيل البرنامج وإغلاقه السليم، مدة الجلسة، الإصدار، نظام التشغيل ونوع المعالج، لغة الواجهة، رقم تثبيت عشوائي."
+not_sent = "لا يُرسَل: المشاريع، أسماء الملفات ومساراتها، الوسائط، الإطارات أو الصوت، اسمك، اسم الحاسوب. لا يُحفَظ عنوان IP."
+how_off = "للإيقاف: عرض / إرسال إحصاءات استخدام مجهولة، أو التشغيل مع KINETREN_TELEMETRY=0."
+no_key = "هذا الإصدار لا يرسل إحصاءات."
+env_off = "أُوقف بواسطة KINETREN_TELEMETRY أو DO_NOT_TRACK."

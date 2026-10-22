@@ -7,18 +7,18 @@
 
 ## 1. Core module (no UI)
 
-- [ ] 1.1 Add `ureq` (rustls + webpki-roots, no default native-tls) to `src/apps/kt-app/Cargo.toml` only; verify `cargo tree -p kt-app -i openssl-sys` finds nothing and libs/ crates gained no dependency
-- [ ] 1.2 `src/apps/kt-app/src/telemetry.rs`: `resolve_consent`, install id in `<data_dir>/telemetry-id`, event builder with the closed allow-list, `Sink` trait (HTTP sink + recording sink for tests); verify t837, t838, t839
-- [ ] 1.3 Sender thread with `sync_channel(4)`, `try_send`, 1 s connect / 2 s total timeouts, exit wait `recv_timeout(2 s)`, one journal line on failure, `Drop` sends nothing; verify t836 and t841 (local `TcpListener`: black hole and `200`)
-- [ ] 1.4 Key only via `option_env!("KINETREN_POSTHOG_KEY")` and the tree guard against `phc_` literals in `.rs`; verify t842
-- [ ] 1.5 Commit stage 1 (`cargo test -p kt-app` green, `cargo clippy --all-targets` clean)
+- [x] 1.1 Add `ureq` (rustls + webpki-roots, no default native-tls) to `src/apps/kt-app/Cargo.toml` only; verify `cargo tree -p kt-app -i openssl-sys` finds nothing and libs/ crates gained no dependency
+- [x] 1.2 `src/apps/kt-app/src/telemetry.rs`: `resolve_consent`, install id in `<data_dir>/telemetry-id`, event builder with the closed allow-list, `Sink` trait (HTTP sink + recording sink for tests); verify t837, t838, t839
+- [x] 1.3 Sender thread with `sync_channel(4)`, `try_send`, 1 s connect / 2 s total timeouts, exit wait `recv_timeout(2 s)`, one journal line on failure, `Drop` sends nothing; verify t836 and t841 (local `TcpListener`: black hole and `200`)
+- [x] 1.4 Key only via `option_env!("KINETREN_POSTHOG_KEY")` and the tree guard against `phc_` literals in `.rs`; verify t842 (its `release-build.sh` assertion lands with 3.1)
+- [x] 1.5 Commit stage 1 (`cargo test -p kt-app` green, `cargo clippy --all-targets` clean)
 
 ## 2. Wiring into the app
 
-- [ ] 2.1 `KtApp` holds `Telemetry`; resolve consent in the `run_native` closure from env + `cc.storage` `telemetry`; `app_started` on the first `update`; `save` stores `telemetry`; move the value across every `*self = app` / `*self = Self::new_empty(..)` (File → New/Open, recovery) so New/Open never sends a second start; verify t836 and a harness check that File → New keeps the session id
-- [ ] 2.2 `on_exit`: after the recovery write, enqueue `app_closed` and wait within the 2 s budget; verify the durability tests stay green (t351…, `openspec show durability --type spec`) and t841
-- [ ] 2.3 First-start notice through `KtApp::warn`-style notices (info, once) with the "sent" / "NOT sent" lists and the same lists as the checkbox hover text and the View menu checkbox next to Language (disabled with hover text when the build has no key); strings in all five catalogs `src/apps/kt-app/i18n/{en,ru,es,ar,zh-Hans}.toml`; verify t840 (`reach_tests.rs`, with the ПУТЬ line), `font_tests.rs`, `i18n_tests.rs`, `layout_tests.rs`
-- [ ] 2.4 Commit stage 2
+- [x] 2.1 `KtApp` holds `Telemetry`; resolve consent in the `run_native` closure from env + `cc.storage` `telemetry`; `app_started` on the first `update`; `save` stores `telemetry`; move the value across every `*self = app` / `*self = Self::new_empty(..)` (File → New/Open, recovery) so New/Open never sends a second start; verify t836 and a harness check that File → New keeps the session id
+- [x] 2.2 `on_exit`: after the recovery write, enqueue `app_closed` and wait within the 2 s budget; verify the durability tests stay green (t351…, `openspec show durability --type spec`) and t841
+- [x] 2.3 First-start notice through `KtApp::warn`-style notices (info, once) with the "sent" / "NOT sent" lists and the same lists as the checkbox hover text and the View menu checkbox next to Language (disabled with hover text when the build has no key); strings in all five catalogs `src/apps/kt-app/i18n/{en,ru,es,ar,zh-Hans}.toml`; verify t840 (`reach_tests.rs`, with the ПУТЬ line), `font_tests.rs`, `i18n_tests.rs`, `layout_tests.rs`
+- [x] 2.4 Commit stage 2
 
 ## 3. Release build and docs
 

@@ -1277,3 +1277,14 @@ length = "时长"
 source = "来源"
 targets = "目标集"
 patch = "补丁"
+
+# Anonymous usage telemetry (change telemetry-posthog): the notice and the View menu
+# checkbox hint share the two lists — what IS sent and what is NOT sent.
+[telemetry]
+checkbox = "发送匿名使用统计"
+headline = "Kinetren 会向 PostHog（欧盟服务器）发送匿名使用统计。"
+sent = "发送：程序启动与正常关闭、会话时长、版本、操作系统与处理器类型、界面语言、一个随机安装编号。"
+not_sent = "不发送：项目、文件名与路径、媒体、画面或声音、你的姓名、计算机名称。不保存 IP 地址。"
+how_off = "关闭：视图 / 发送匿名使用统计，或以 KINETREN_TELEMETRY=0 启动。"
+no_key = "此版本不发送统计。"
+env_off = "已由 KINETREN_TELEMETRY 或 DO_NOT_TRACK 关闭。"

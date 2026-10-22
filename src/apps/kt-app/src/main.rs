@@ -38,6 +38,7 @@ mod reach_tests;
 mod reel_preview;
 mod render_dialog;
 mod settings_window;
+mod telemetry;
 mod track_window;
 mod theme;
 mod thumbs;
