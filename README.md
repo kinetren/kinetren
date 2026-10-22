@@ -15,6 +15,13 @@
   <a href="https://github.com/kinetren/kinetren/releases"><img src="https://img.shields.io/github/v/release/kinetren/kinetren?include_prereleases&amp;label=release" alt="Latest release"></a>
   <a href="https://github.com/kinetren/kinetren/commits"><img src="https://img.shields.io/github/last-commit/kinetren/kinetren" alt="Last commit"></a>
   <a href="https://github.com/kinetren/kinetren/stargazers"><img src="https://img.shields.io/github/stars/kinetren/kinetren?style=flat" alt="GitHub stars"></a>
+  <a href="https://discord.gg/w8enAWJSc"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&amp;logoColor=white" alt="Discord"></a>
+</p>
+
+<p align="center">
+  <a href="http://kinetren.com"><b>kinetren.com</b></a> ·
+  <a href="https://discord.gg/w8enAWJSc"><b>Discord</b></a> ·
+  <a href="https://github.com/kinetren/kinetren/releases"><b>Download</b></a>
 </p>
 
 Kinetren is free to download, use, study, modify and share. It gives you a multi-track
@@ -168,6 +175,11 @@ kt-cli export project.kt out.mp4
 - [Export and kt-cli](docs/guide/export.md)
 - [Keyboard and mouse](docs/guide/shortcuts.md)
 - [Contributing](CONTRIBUTING.md)
+
+## Community
+
+Questions, ideas and bug reports: join the [Discord server](https://discord.gg/w8enAWJSc)
+or visit [kinetren.com](http://kinetren.com).
 
 ## License
 
