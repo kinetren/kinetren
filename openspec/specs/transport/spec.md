@@ -1,285 +1,275 @@
-# Транспорт
+# Transport
 
 ## Purpose
 
-Часы воспроизведения и управление ими: cpal-колбэк как мастер-часы, playhead по
-выданным кадрам, интерполированные часы показа видео, loop-регион с «вооружённостью»,
-скорость со знаком на транспорте и внутри события (стоп-кадр, ход назад по материалу),
-непрерывная шкала скорости с точной подстройкой и вводом числом.
+The playback clock and its control: the cpal callback as the master clock, the playhead by the frames handed out,
+the interpolated clock of the video display, the loop region with its "armed" state, the speed with a sign on the
+transport and inside an event (freeze frame, backward motion through the material), and a continuous speed scale
+with fine adjustment and numeric input.
 
 ## Requirements
 
-### Requirement: Мастер-часы — cpal-колбэк, playhead идёт по ВЫДАННЫМ кадрам
+### Requirement: Master clock — the cpal callback; the playhead follows the frames DELIVERED
+The playhead SHALL advance exactly by the number of frames that the audio callback handed to the device,
+not by the number of frames successfully read from the ring. Starvation of the ring
+SHALL produce audible silence and an increase of the callback underrun counter, but MUST NOT
+stop time. The single exception — until the FIRST frame has arrived after a start or flush:
+then consumption is zero, and silence is output, not the material before the seek.
+In the callback — no allocations, no locks; the wall clock in the render paths is forbidden.
+Why: starvation that froze the playhead made the whole programme play slower than real time, and the owner saw
+it as "the event is slowed down".
 
-Playhead SHALL продвигаться ровно на число кадров, которые аудио-колбэк выдал
-устройству, а не на число кадров, успешно прочитанных из кольца. Голодание кольца
-SHALL давать слышимую тишину и рост счётчика underrun'ов колбэка, но MUST NOT
-останавливать время. Единственное исключение — пока не пришёл ПЕРВЫЙ кадр после
-старта или flush'а: тогда потребление равно нулю, а наружу выдаётся тишина, не
-материал до seek'а. В колбэке — ни аллокаций, ни локов; wall-clock в путях рендера
-запрещён. Почему: голодание, замораживающее playhead, заставляло всю программу
-играть медленнее реального времени, и владелец видел это как «событие замедленно».
-
-#### Scenario: Голодание кольца не останавливает часы
-- **WHEN** поток начался и оборвался, а колбэк продолжает выдавать буферы устройству
-- **THEN** playhead уезжает на число выданных кадров (плюс два кадра прайминга интерполяции), underrun'ы колбэка растут, выход — последний кадр/тишина
+#### Scenario: Starvation of the ring does not stop the clock
+- **WHEN** the stream has started and then broke off, while the callback keeps handing buffers to the device
+- **THEN** the playhead moves by the number of frames handed out (plus two frames of interpolation priming), the callback underruns grow, the output is the last frame / silence
 - **TEST** t284, t32 (`src/libs/kt-engine/src/player.rs`)
 
-#### Scenario: До первого кадра время стоит
-- **WHEN** кольцо пусто и ни одного кадра ещё не было (старт игры, после flush'а)
-- **THEN** потребление равно нулю, а на выход идут нули — материал до seek'а не выдаётся
+#### Scenario: Before the first frame time stands still
+- **WHEN** the ring is empty and no frame has arrived yet (the start of playback, after a flush)
+- **THEN** consumption is zero, and zeros go to the output — the material before the seek is not emitted
 - **TEST** t284b (`src/libs/kt-engine/src/player.rs`)
 
-#### Scenario: Колбэк направления не знает
-- **WHEN** скорость транспорта отрицательна или близка к нулю
-- **THEN** шаг чтения кольца равен `device_step × |rate|`, при `|rate| ≈ 0` — тишина без потребления; знак применяется при продвижении playhead, и заворот региона работает в обе стороны, вне региона отрицательное продвижение клампится в 0
+#### Scenario: The callback does not know the direction
+- **WHEN** the transport speed is negative or close to zero
+- **THEN** the ring read step equals `device_step × |rate|`; at `|rate| ≈ 0` — silence without consumption; the sign is applied when the playhead advances, and the wrap of the region works in both directions; outside the region a negative advance is clamped to 0
 - **TEST** t45 (`src/libs/kt-engine/src/player.rs`), t43 (`src/libs/kt-engine/src/transport.rs`)
 
-#### Scenario: Underrun'ы измеряются в кадрах и подписаны
-- **WHEN** голодает событие с FX и такое же без FX; в UI показываются счётчики рендера и колбэка
-- **THEN** оба пути считают промахи в кадрах (числа одного порядка, а не 1024×); счётчики подписаны «рендер/колбэк», а не читаются как L/R, и тишина колбэка показана миллисекундами
+#### Scenario: Underruns are measured in frames and labelled
+- **WHEN** an event with FX and the same without FX starve; the counters of the render and the callback are shown in the UI
+- **THEN** both paths count misses in frames (numbers of the same order, not 1024×); the counters are labelled "render/callback", not read as L/R, and the callback silence is shown in milliseconds
 - **TEST** t280 (`src/libs/kt-engine/tests/loop_fx.rs`), t289 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Реверс-транспорт — точное покадровое зеркало форварда
-- **WHEN** транспорт крутится назад (dir < 0) и кольцо наполняется блоками [head−N, head) с покадровым разворотом, в том числе через заворот loop-региона
-- **THEN** конкатенация обратных блоков байт-в-байт равна покадровому зеркалу форвард-прогона того же диапазона, а заворот назад идёт по rem_euclid
+#### Scenario: Reverse transport — an exact frame-by-frame mirror of forward
+- **WHEN** the transport runs backward (dir < 0) and the ring is filled with blocks [head−N, head) with a frame-by-frame reversal, including across a wrap of the loop region
+- **THEN** the concatenation of the reverse blocks is byte-for-byte equal to the frame-by-frame mirror of the forward run of the same range, and the backward wrap goes by rem_euclid
 - **TEST** t42 `t42_reverse_blocks_are_exact_mirror_of_forward`, `t42_reverse_looped_wraps_backwards` (`src/libs/kt-engine/tests/reverse_transport.rs`)
 
-### Requirement: Часы показа видео интерполируются и компенсируют задержку
+### Requirement: Video display clock is interpolated and compensates latency
+The DISPLAY position SHALL be interpolated by the wall clock between the steps of the master clock
+(the clamp — the size of the last quantum), subtract the smoothed output latency,
+scaled by speed (`latency · |rate|`, in reverse — added with a plus sign), and pass through a
+ratchet: rolling the key back is allowed only at a seek / re-anchoring. The raw playhead of the transport MUST NOT
+be read for display during playback. Why: the callback quantum (PipeWire up to 42.7 ms) limited the display to 24 frames/s,
+and an unscaled latency at 0.25× rolled the picture back.
 
-Позиция ПОКАЗА SHALL интерполироваться wall-clock'ом между шагами мастер-часов
-(кламп — размер последнего кванта), вычитать сглаженную задержку вывода,
-масштабированную скоростью (`latency · |rate|`, при реверсе — со знаком плюс), и
-проходить через ратчет: откат ключа назад допустим только при seek/переанкоре.
-Сырой playhead транспорта MUST NOT читаться для отображения при игре. Почему:
-квант колбэка (PipeWire до 42.7 мс) ограничивал показ 24 кадрами/с, а немасштабированная задержка на 0.25× разворачивала картинку назад.
-
-#### Scenario: Интерполяция покрывает каждую ячейку сетки
-- **WHEN** playhead шагает квантами 2048 кадров, а UI сэмплирует 60 Гц
-- **THEN** последовательность ключей сетки 60 fps монотонна и без пропусков
+#### Scenario: Interpolation covers every cell of the grid
+- **WHEN** the playhead steps by quanta of 2048 frames, and the UI samples at 60 Hz
+- **THEN** the sequence of keys of the 60 fps grid is monotonic and without gaps
 - **TEST** t56 (`src/libs/kt-engine/src/player.rs`)
 
-#### Scenario: Компенсация задержки, кламп и заворот
-- **WHEN** кадр показа выбирается при задержке вывода, у старта, в loop-регионе и при реверсе
-- **THEN** задержка вычитается (при реверсе — прибавляется), у нуля клампится, отрицательная задержка не двигает вперёд, внутри региона заворачивается к его концу/началу
+#### Scenario: Latency compensation, clamp and wrap
+- **WHEN** the display frame is chosen at an output latency, at the start, inside the loop region and in reverse
+- **THEN** the latency is subtracted (in reverse it is added), clamped at zero, a negative latency does not move forward, inside the region it wraps to its end/start
 - **TEST** t22, t44 (`src/libs/kt-engine/src/player.rs`)
 
-#### Scenario: Показ на медленной скорости не откатывается
-- **WHEN** скорость из {0.01, 0.05, 0.25, 0.5, 1, 2, 8} в обе стороны, задержка дрожит на ±квант
-- **THEN** ключ показа никогда не уходит против направления, ратчет срабатывает редко (< 50 из 1600 выборок при rate ≤ 1); откат разрешён только по seek/паузе, вперёд считаются пропуски, при реверсе норма — убывание
+#### Scenario: The display does not roll back at slow speed
+- **WHEN** the speed from {0.01, 0.05, 0.25, 0.5, 1, 2, 8} in both directions, the latency jitters by ±a quantum
+- **THEN** the display key never goes against the direction, the ratchet fires rarely (< 50 out of 1600 samples at rate ≤ 1); rollback is allowed only by seek/pause, forward the skips are counted, in reverse the norm is a decrease
 - **TEST** t114 (`src/libs/kt-engine/src/player.rs`)
 
-### Requirement: Loop-регион заворачивает по правилам транспорта, «вооружённость» — только на прыжках
+### Requirement: Loop region wraps by transport rules; "armed" state only on jumps
+The wrap SHALL happen only when the end of the region is crossed FROM INSIDE (the edge
+`p == e` is inclusive; for reverse — `p == s`), and all consumers (both fill branches,
+the Playback prefetch, the advance of the playhead, the display) SHALL see one `effective_region`.
+The armed state SHALL be recomputed only on jumps (a change of generation, of the speed sign,
+of the region value) by the wrapped playhead; a Some↔None flip on the fly is a
+mini-seek without a generation bump. A wrap is a SEAM, not a seek: the FX state is not
+reset, the misses of pre-roll go to `warmup_misses`, not to underruns. An edit of the
+region MUST NOT rebuild the engine. Why: inconsistent membership conditions gave "the cursor moves linearly while the sound loops the region", and a rebuild on every move of a boundary dropped the audio stream.
 
-Заворот SHALL происходить только при пересечении конца региона ИЗНУТРИ (грань
-`p == e` инклюзивна; для реверса — `p == s`), и все потребители (обе fill-ветки,
-Playback-префетч, продвижение playhead, показ) SHALL видеть один `effective_region`.
-Вооружённость SHALL пересчитываться только на прыжках (смена generation, знака
-скорости, значения региона) по завёрнутому playhead; флип Some↔None на лету —
-мини-seek без бампа generation. Заворот — ШОВ, а не seek: FX-состояние не
-сбрасывается, промахи пре-ролла идут в `warmup_misses`, не в underrun'ы. Правка
-региона MUST NOT пересобирать движок. Почему: рассогласованные условия принадлежности давали «курсор едет линейно, а звук крутит регион», а пересборка на каждое движение границы роняла аудио-поток.
-
-#### Scenario: Заворот сэмпл-непрерывен, голова региона запинена
-- **WHEN** регион не выровнен ни на burst, ни на кадр, и играет несколько кругов
-- **THEN** выход байт-в-байт равен эталону из прямых рендеров, на прогретом кэше промахов нет; wrap-арифметика транспорта: до региона — линейно, через конец — к началу
+#### Scenario: The wrap is sample-continuous, the head of the region is pinned
+- **WHEN** the region is aligned neither to a burst nor to a frame, and it plays several laps
+- **THEN** the output is byte-for-byte equal to the reference from direct renders, on a warm cache there are no misses; the wrap arithmetic of the transport: before the region — linear, past the end — back to the start
 - **TEST** t14 (`src/libs/kt-engine/tests/audio_engine.rs`)
 
-#### Scenario: Seek правее конца региона развооружает луп до следующего прыжка
-- **WHEN** при loop-плее курсор ставится за конец региона
-- **THEN** звук и транспорт линейны, `wraps` не растёт; seek внутрь снова вооружает; цель ровно на конце — внутри; показ за регионом — линейно, на грани — инклюзивный фолд
+#### Scenario: A seek past the end of the region disarms the loop until the next jump
+- **WHEN** during loop playback the cursor is placed beyond the end of the region
+- **THEN** the sound and the transport are linear, `wraps` does not grow; a seek inside arms again; a target exactly at the end — inside; the display beyond the region — linear, at the edge — an inclusive fold
 - **TEST** t132 (`src/libs/kt-engine/tests/loop_disarm.rs`), t134 (`src/libs/kt-engine/src/player.rs`)
 
-#### Scenario: Reverse-loop живёт дольше круга, подход справа линеен
-- **WHEN** реверс-транспорт крутит регион три круга, затем seek правее конца
-- **THEN** выход байт-в-байт равен блочному эталону (render_head ниже начала региона луп не гасит); справа — линейный подход до региона и подхват лупа на входе
+#### Scenario: A reverse loop lives longer than a lap, the approach from the right is linear
+- **WHEN** the reverse transport runs the region for three laps, then a seek past the end
+- **THEN** the output is byte-for-byte equal to the block reference (a render_head below the start of the region does not switch the loop off); from the right — a linear approach to the region and the loop's pick-up at the entrance
 - **TEST** t133 (`src/libs/kt-engine/tests/loop_disarm.rs`)
 
-#### Scenario: Правка региона не пересобирает движок
-- **WHEN** границы региона или флаг Loop меняются на ходу
-- **THEN** проект в движок не клонируется и рендереры не пересобираются, а правка содержимого — обязана доехать
+#### Scenario: An edit of the region does not rebuild the engine
+- **WHEN** the boundaries of the region or the Loop flag change on the fly
+- **THEN** the project is not cloned into the engine and the renderers are not rebuilt, while an edit of the content — MUST arrive
 - **TEST** t286 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Окно упреждения префетча складывается в регион
-- **WHEN** курсор внутри региона, а окно длиннее остатка или круга
-- **THEN** окно режется на «до конца» + «заворот в голову», не длиннее круга; вне региона — линейно; грань конца — уже голова следующего круга
+#### Scenario: The prefetch lookahead window folds into the region
+- **WHEN** the cursor is inside the region, and the window is longer than the remainder or the lap
+- **THEN** the window is cut into "to the end" + "wrap to the head", no longer than a lap; outside the region — linear; the edge of the end — is already the head of the next lap
 - **TEST** t167b (`src/libs/kt-engine/tests/loop_fx.rs`)
 
-### Requirement: В паузе плеер тих, правки состава медиа на ходу не сбивают транспорт
+### Requirement: When paused the player is quiet; edits to the media composition on the fly do not disturb transport
+Pause SHALL park the render and prefetch threads (a safety timeout, ≤ 8 passes/s),
+rebuilding the renderers without an edit of the model MUST NOT happen, pause→resume MUST NOT
+deadlock. The addition and the substitution of sources SHALL survive coverage, the playhead and the
+generation, and a substitution SHALL clear the cache of the old source and recompute the decode scale
+step on the fly. Why: at pause the system lagged even with an empty project, and after a file returned, the preview showed the placeholder for a long time.
 
-Пауза SHALL парковать render- и prefetch-потоки (страховочный таймаут, ≤ 8 проходов/с),
-пересборка рендереров без правки модели MUST NOT происходить, pause→resume не
-дедлочится. Добавление и подмена источников SHALL переживать coverage, playhead и
-generation, а подмена SHALL чистить кэш старого источника и пересчитывать ступень
-декода на ходу. Почему: в паузе система лагала даже с пустым проектом, а после возврата файла превью подолгу показывало заглушку.
-
-#### Scenario: Пауза — парковка потоков
-- **WHEN** плеер стоит на паузе секунду; затем правка модели; затем resume
-- **THEN** ≤ 8 проходов рендера, ноль пересборок префетча; правка будит ровно одну пересборку; после resume кольцо снова наполняется
+#### Scenario: Pause — parking of the threads
+- **WHEN** the player stands on pause for a second; then an edit of the model; then resume
+- **THEN** ≤ 8 render passes, zero prefetch rebuilds; the edit wakes exactly one rebuild; after resume the ring fills again
 - **TEST** t20 (`src/libs/kt-engine/tests/player_dynamic.rs`)
 
-#### Scenario: Добавление медиа инкрементально
-- **WHEN** при прогретом кэше добавляется новый файл
-- **THEN** coverage, байты, playhead и generation сохраняются, новый воркер живой
+#### Scenario: Adding media incrementally
+- **WHEN** a new file is added on a warm cache
+- **THEN** coverage, bytes, playhead and generation are preserved, the new worker is alive
 - **TEST** t18 (`src/libs/kt-engine/tests/player_dynamic.rs`)
 
-#### Scenario: Подмена источника на ходу (контейнер: capability `media-index`, `video-plan`)
-- **WHEN** вернувшийся на диск исходник подменяет заглушку при игре
-- **THEN** кадры старого источника уходят из кэша, а новый натив меняет ступень декода без правки таймлайна — полоски и префетч спрашивают уже её
+#### Scenario: Substitution of a source on the fly (container: capability `media-index`, `video-plan`)
+- **WHEN** a source that has returned to the disk replaces the placeholder during playback
+- **THEN** the frames of the old source leave the cache, and the new native changes the decode scale step without an edit of the timeline — the strips and the prefetch already ask for it
 - **TEST** t211, t316 (`src/libs/kt-engine/tests/player_dynamic.rs`)
 
-### Requirement: Шкала скорости транспорта непрерывна ±0.01…±2, стоп — узкая зона, Shift и ввод числом
+### Requirement: Transport speed scale is continuous ±0.01…±2; stop is a narrow zone; Shift and numeric input
+The speed strip SHALL display continuously `RATE_FLOOR = 0.01 … RATE_MAX = 2` by
+modulus with an odd, strictly monotonic, invertible function; exactly 0 SHALL be given
+only by the narrow zone in the centre (`|t| < RATE_STOP`), and the edge of the zone — the floor 0.01, not 0.25.
+Shift SHALL divide the INCREMENT of a gesture by 8 (the virtual cursor), a right click or
+Ctrl+click on the strip SHALL open the input field IN PLACE of the strip (the height does not change),
+a double click — 1×. The boost by the space bar SHALL reach the player with a threshold
+relative to the base. The engine accepts any `|rate| ≥ 0.001`, clamps ±8.
+Why: the owner demanded that 0.05 and −0.03 can be set; the former dead zone made the interval (0, 0.25) unrepresentable by construction.
 
-Полоса скорости SHALL отображать непрерывно `RATE_FLOOR = 0.01 … RATE_MAX = 2` по
-модулю с нечётной, строго монотонной, обратимой функцией; ровно 0 SHALL отдавать
-только узкая зона в центре (`|t| < RATE_STOP`), а край зоны — пол 0.01, не 0.25.
-Shift SHALL делить ПРИРАЩЕНИЕ жеста на 8 (виртуальный курсор), правый клик или
-Ctrl+клик по полосе SHALL открывать поле ввода НА МЕСТЕ полосы (высота не меняется),
-двойной клик — 1×. Разгон пробелом SHALL доезжать до плеера с порогом,
-относительным к базе. Движок принимает любой `|rate| ≥ 0.001`, клампит ±8.
-Почему: владелец потребовал выставлять 0.05 и −0.03; прежняя мёртвая зона делала интервал (0, 0.25) непредставимым по построению.
-
-#### Scenario: Маппинг полосы
-- **WHEN** позиция полосы переводится в скорость и обратно
-- **THEN** стоп только при `|t| < RATE_STOP`, край зоны даёт `RATE_FLOOR`, отображение нечётно и строго монотонно шагом 0.001, round-trip держится на {0.01, 0.03, 0.05, …, 2}, 1× стоит в 65–80 % хода, 0.03 и 0.05 разнесены ≥ 1.9 px при половине полосы 85 px
+#### Scenario: Strip mapping
+- **WHEN** the position on the strip is converted to a speed and back
+- **THEN** the stop only at `|t| < RATE_STOP`, the edge of the zone gives `RATE_FLOOR`, the mapping is odd and strictly monotonic with a step of 0.001, the round trip holds on {0.01, 0.03, 0.05, …, 2}, 1× stands at 65–80 % of travel, 0.03 and 0.05 are separated by ≥ 1.9 px at a half-strip of 85 px
 - **TEST** t46 (`src/apps/kt-app/src/app.rs`)
 
-#### Scenario: Арифметика ввода и точной подстройки
-- **WHEN** разбирается напечатанное («0,05», «−0,03» с типографским минусом, «2×»), нормализуется значение, идёт драг с Shift, считается гистерезис разгона
-- **THEN** почти-ноль — стоп, выше порога — пол со знаком, потолок — предел движка, NaN — стоп; мусор не разбирается; Shift делит приращение, а не позицию; порог разгона — 2 % от базы
+#### Scenario: Arithmetic of input and fine adjustment
+- **WHEN** what was typed is parsed ("0,05", "−0,03" with a typographic minus, "2×"), a value is normalised, a drag with Shift takes place, the boost hysteresis is computed
+- **THEN** an almost-zero is the stop, above the threshold — the floor with a sign, the ceiling — the engine limit, NaN — the stop; garbage is not parsed; Shift divides the increment, not the position; the boost threshold is 2 % of the base
 - **TEST** t626 (`src/apps/kt-app/src/app.rs`)
 
-#### Scenario: Напечатанное значение доезжает до плеера
-- **WHEN** правый клик или Ctrl+клик по полосе, печать «0.05» / «−0,03», Enter
-- **THEN** базовая скорость и скорость плеера равны напечатанному, поле закрыто и фокус отдан; пробел при открытом поле не играет, Esc не правит; работает повторно; подсказка полосы обещает оба входа
+#### Scenario: The typed value reaches the player
+- **WHEN** a right click or Ctrl+click on the strip, typing "0.05" / "−0,03", Enter
+- **THEN** the base speed and the player's speed equal what was typed, the field is closed and the focus is released; the space bar with the field open does not play, Esc does not edit; it works repeatedly; the tooltip of the strip promises both inputs
 - **TEST** t627 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Драг даёт малые скорости
-- **WHEN** полосу тянут на 6 px от центра, то же с Shift, отпускают в 1 px от центра, делают двойной клик
-- **THEN** ~0.05 (не 0.25 и не стоп); с Shift — тот же путь в 8 раз меньше; 1 px — ровно стоп; двойной клик — 1×
+#### Scenario: A drag gives small speeds
+- **WHEN** the strip is dragged 6 px from the centre, the same with Shift, released at 1 px from the centre, a double click is made
+- **THEN** ~0.05 (not 0.25 and not a stop); with Shift — the same path, 8 times smaller; 1 px — exactly the stop; a double click — 1×
 - **TEST** t628 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Разгон пробелом от малой базы
-- **WHEN** база 0.05 и зажат пробел
-- **THEN** скорость плеера отстаёт от показанного множителя не более чем на 10 % базы, не превышает `база × SPACE_BOOST_MAX`, полоса показывает разгон, после отпускания — возврат к базе
+#### Scenario: Boost by the space bar from a small base
+- **WHEN** the base is 0.05 and the space bar is held
+- **THEN** the player's speed lags behind the displayed multiplier by no more than 10 % of the base, does not exceed `base × SPACE_BOOST_MAX`, the strip shows the boost; after release — a return to the base
 - **TEST** t629 (`src/apps/kt-app/src/layout_tests.rs`)
 
-### Requirement: Скорость события со знаком — две оси: позиция P = ∫rate и потребление A = ∫|rate|
+### Requirement: Event speed with sign — two axes: position P = ∫rate and consumption A = ∫|rate|
+The warp map SHALL store the signed speed in `RATE_CLAMP = (−32, 32)`, zero
+is allowed. The position in the material SHALL equal the entry point + ∫rate (non-monotonic,
+not invertible); ONLY the consumption A SHALL be inverted (monotonic, for the trims).
+The mirror axis of the "Reverse" flag is the SPAN `(min P, max P)`, not "consumed". The extrema
+of the span SHALL be sought at the zeros of the speed, and for a monotonic curve give exactly the ends.
+On curves lying entirely within 0.25…32 the new map MUST be bit-for-bit equal to the former one.
+Why: a slowdown "was not applied" because of three independent clamps at 0.25, and people tried to invert a position that cannot be inverted.
 
-Карта варпа SHALL хранить знаковую скорость в `RATE_CLAMP = (−32, 32)`, ноль
-разрешён. Позиция в материале SHALL равняться точке входа + ∫rate (немонотонна,
-не обращается); обращаться SHALL только потребление A (монотонно, для тримов).
-Ось зеркала флага «Реверс» — ПРОЛЁТ `(min P, max P)`, а не «съедено». Экстремумы
-пролёта SHALL искаться в нулях скорости, а для монотонной кривой давать ровно концы.
-На кривых целиком в 0.25…32 новая карта MUST быть бит-в-бит равна прежней.
-Почему: замедление «не применялось» из-за трёх независимых клампов в 0.25, а обращать пытались позицию, которую обратить нечем.
-
-#### Scenario: Карта ходит назад, потребление только растёт
-- **WHEN** кривая 1 → −1 (разворот посередине), кривая с плато нулевой скорости
-- **THEN** позиция поднимается и возвращается, A неубывающая и A⁻¹(A(t)) = t; разбиение сегмента в нуле точно (сверка с численным ∫|rate|); на плато позиция и потребление стоят, A⁻¹ отдаёт левый край плато
+#### Scenario: The map goes back, the consumption only grows
+- **WHEN** the curve goes 1 → −1 (a turn in the middle), a curve with a plateau of zero speed
+- **THEN** the position rises and returns, A is non-decreasing and A⁻¹(A(t)) = t; the splitting of the segment at zero is exact (checked against the numerical ∫|rate|); on the plateau the position and the consumption stand still, A⁻¹ gives the left edge of the plateau
 - **TEST** t603a, t603b, t603c (`src/libs/kt-model/src/warp.rs`)
 
-#### Scenario: Положительные кривые бит-в-бит равны замороженному оракулу
-- **WHEN** кривые целиком лежат в 0.25…32
-- **THEN** позиция, потребление и обратная карта совпадают по `to_bits()` с копией старой карты, лежащей в тесте; пролёт — `(0, used)`
+#### Scenario: Positive curves are bit-for-bit equal to the frozen oracle
+- **WHEN** the curves lie entirely within 0.25…32
+- **THEN** the position, the consumption and the inverse map match by `to_bits()` the copy of the old map that lies in the test; the span — `(0, used)`
 - **TEST** t603d (`src/libs/kt-model/src/warp.rs`)
 
-#### Scenario: Экстремумы пролёта и ось зеркала
-- **WHEN** кривая уходит вперёд и назад (максимум внутри события); событие с флагом «Реверс» на знаковой кривой
-- **THEN** пролёт находит вершину внутри сегмента, монотонная кривая даёт ровно концы (бит-тождество окон префетча); зеркало берётся вокруг пролёта и на положительных кривых сворачивается в прежнюю формулу
+#### Scenario: The extrema of the span and the mirror axis
+- **WHEN** the curve goes forward and back (a maximum inside the event); an event with the "Reverse" flag on a signed curve
+- **THEN** the span finds the vertex inside the segment, a monotonic curve gives exactly the ends (a bit identity of the prefetch windows); the mirror is taken around the span and on positive curves collapses into the former formula
 - **TEST** t603e, t603f (`src/libs/kt-model/src/warp.rs`)
 
-#### Scenario: Кламп симметричен, ноль проходит
-- **WHEN** кривая с ключами вне ±32, кривая ровно 0, реестр параметров эффекта
-- **THEN** кламп −32…32, ноль остаётся нулём (пол — свойство аудио, не карты), кривая с минусом «знаковая», охват модуля видит ноль ВНУТРИ сегмента; спека `rate` — (−32, 32) и принимает −32, −0.03, 0, 0.05, 32
+#### Scenario: The clamp is symmetric, zero passes through
+- **WHEN** a curve with keys outside ±32, a curve exactly 0, the parameter registry of the effect
+- **THEN** the clamp −32…32, zero remains zero (the floor is a property of audio, not of the map), a curve with a minus is "signed", the modulus coverage sees zero INSIDE a segment; the spec `rate` — (−32, 32) and accepts −32, −0.03, 0, 0.05, 32
 - **TEST** t603g (`src/libs/kt-model/src/warp.rs`), t190 (`src/libs/kt-model/tests/fx_auto.rs`)
 
-#### Scenario: Формат переживает знак (контейнер: capability `project-format`)
-- **WHEN** проект с базой −0.5 и ключами {1, 0, −2} сохраняется и читается
-- **THEN** база и ключи возвращаются без подтягивания к прежнему минимуму 0.25, запись идемпотентна
+#### Scenario: The format survives the sign (container: capability `project-format`)
+- **WHEN** a project with a base of −0.5 and keys {1, 0, −2} is saved and read
+- **THEN** the base and the keys come back without being pulled to the former minimum of 0.25; the write is idempotent
 - **TEST** t606 (`src/libs/kt-otio/tests/convert.rs`)
 
-### Requirement: Видео под знаковой скоростью — ход назад, стоп-кадр, край материала, заказ == чтение
+### Requirement: Video at signed speed — reverse motion, freeze frame, source edge, order == read
+The video SHALL go back through the material at negative speed and turn around
+at zero; zero SHALL be a freeze frame (one key in the order for the whole event); at the start of the
+file the frame SHALL hold, not go into negative; the blend pair SHALL be taken from the
+same side as at positive speed; the window of the prefetch order SHALL coincide
+with the render's read, including under a change of sign.
+The END of the material is the same edge as the start, and for BOTH paths: an event that consumes
+more material than the file contains (a stretch, a trim), beyond the end of the file SHALL hold
+the last frame and play silence, and this MUST NOT count as an underrun either on the live or on the
+offline path — an underrun is a miss of what EXISTS. The tail of an event without material SHALL
+be visible on the event itself (hatching from the point where the material ended, taking the speed into account)
+and be named in `kt-cli probe` ("material ends at … s, then silence/freeze frame"). The trim of the
+right edge of an event SHALL stop at the end of material of known length, taking the speed into account
+(as the left one stops at its start); events that already exist longer than the material MUST NOT
+shorten themselves (rule 20) — they are shown and play as stated above, the limit for them is not less than their current
+end (one may trim them down, but may not extend them further; the edge does not jump back).
+Why: a window by the two ends would miss an excursion, and a cache miss would become eternal. R.63:
+the events of Rolling Stones in paintitblack at rate 0.75 consume 237.7 s from a file of 226.3 s —
+the last 11 s sounded as silence and were counted as underruns (180 480 frames in 5 s), and on the
+screen the tail was not distinguishable from the material; the engine by the law of P does not know
+the length of the media, so the edge is delivered by the source (the fetcher), not by the plan.
 
-Видео SHALL идти по материалу назад при отрицательной скорости и разворачиваться
-в нуле; ноль SHALL быть стоп-кадром (один ключ в заказе на всё событие); у начала
-файла кадр SHALL держаться, а не уходить в минус; пара смешивания SHALL браться с
-той же стороны, что при положительной скорости; окно заказа префетча SHALL совпадать
-с чтением рендера и под сменой знака.
-КОНЕЦ материала — такой же край, как начало, и для ОБОИХ трактов: событие, потребляющее
-больше материала, чем есть в файле (растяжение, трим), за концом файла SHALL держать
-последний кадр и играть тишиной, и это MUST NOT считаться underrun'ом ни на живом, ни на
-офлайн-пути — underrun есть промах ТОГО, что существует. Хвост события без материала SHALL
-быть виден на самом событии (штриховка от точки, где материал кончился, с учётом скорости)
-и назван в `kt-cli probe` («материал кончается на … с, дальше тишина/стоп-кадр»). Трим
-правого края события SHALL упираться в конец материала известной длины с учётом скорости
-(как левого — в его начало); уже существующие события длиннее материала MUST NOT
-укорачиваться сами (правило 20) — они показываются и играют, как сказано выше, предел для
-них не меньше их нынешнего конца (подрезать можно, растить дальше нельзя, край не прыгает
-назад).
-Почему: окно по двум концам пропустило бы экскурсию, и промах кэша стал бы вечным. Р.63:
-события Rolling Stones в paintitblack при rate 0.75 потребляют 237.7 с из файла 226.3 с —
-последние 11 с звучали тишиной и считались underrun'ами (180 480 кадров на 5 с), а на
-экране хвост ничем не отличался от материала; движок по закону П длины медиа не знает,
-поэтому край доносит источник (фетчер), а не план.
-
-#### Scenario: Ход назад и стоп-кадр
-- **WHEN** кривая 1 → −1; кривая ровно 0
-- **THEN** ∫rate по событию равен нулю (вернулись), вторая половина строго убывает; при нуле все кадры — кадр точки входа, заказ — один ключ
+#### Scenario: Backward motion and a freeze frame
+- **WHEN** the curve goes 1 → −1; the curve is exactly 0
+- **THEN** ∫rate over the event equals zero (it came back), the second half strictly decreases; at zero all frames are the frame of the entry point, the order is one key
 - **TEST** t604a, t604b (`src/libs/kt-engine/tests/video_warp.rs`)
 
-#### Scenario: Край материала и пара смешивания
-- **WHEN** скорость −1 от точки входа 1 с; дробная позиция под минусом
-- **THEN** кадр не уходит за начало файла и держится у нуля; пара — (a, a+STEP) с весом ½
+#### Scenario: The edge of the material and the blend pair
+- **WHEN** speed −1 from an entry point of 1 s; a fractional position under the minus
+- **THEN** the frame does not go past the start of the file and holds at zero; the pair is (a, a+STEP) with a weight of ½
 - **TEST** t604c, t604d (`src/libs/kt-engine/tests/video_warp.rs`)
 
-#### Scenario: Заказ равен чтению под сменой знака, реверс поверх минуса идёт вперёд
-- **WHEN** кривая с экскурсией (максимум внутри окна); флаг «Реверс» на постоянной −0.5
-- **THEN** заказ префетча ⊇ чтения рендера и сцена не вырождена (сторож экскурсии); зеркало ведёт от нижнего края пролёта к точке входа, ход монотонен
+#### Scenario: The order equals the read under a sign change, reverse on top of a minus goes forward
+- **WHEN** a curve with an excursion (a maximum inside the window); the "Reverse" flag on a constant −0.5
+- **THEN** the prefetch order ⊇ the render read, and the scene is not degenerate (the excursion guard); the mirror leads from the lower edge of the span to the entry point, the motion is monotonic
 - **TEST** t604e, t604g (`src/libs/kt-engine/tests/video_warp.rs`)
 
-#### Scenario: Конец материала — тишина и стоп-кадр без underrun'ов, хвост назван
-- **WHEN** событие с замедлением потребляет больше материала, чем длится синтетический источник известной длины; оно играется офлайн и через плеер, регион-луп стоит на его хвосте; `kt-cli probe` зовётся на хвосте
-- **THEN** за концом материала аудио — тишина, видео — последний кадр; `underruns == 0` и `warmup_misses == 0` на обоих путях (на прежнем коде — сотни тысяч кадров); заказ префетча ⊇ чтения и не растёт за край; probe печатает момент, где материал кончился, и «дальше тишина/стоп-кадр»
+#### Scenario: The end of the material — silence and a freeze frame without underruns, the tail is named
+- **WHEN** an event with slowdown consumes more material than a synthetic source of known length lasts; it is played offline and through the player, the region loop stands on its tail; `kt-cli probe` is called on the tail
+- **THEN** beyond the end of the material the audio is silence, the video is the last frame; `underruns == 0` and `warmup_misses == 0` on both paths (on the former code — hundreds of thousands of frames); the prefetch order ⊇ the read and does not grow past the edge; probe prints the moment where the material ended, and "then silence/freeze frame"
 - **TEST** t748 (`src/libs/kt-engine/tests/material_edge.rs`), t748b (`src/apps/kt-cli/tests/cli.rs`)
 
-#### Scenario: Трим упирается в конец материала, существующее не укорачивается
-- **WHEN** у события с известной длиной медиа правый край тянут за конец материала при скорости 1 и при 0.5; открывается проект, где событие уже длиннее материала
-- **THEN** трим останавливается на конце материала с учётом скорости и говорит об этом ошибкой (правило 16); при неизвестной длине (генератор, лента, файл без длительности) упора нет; существующее событие проходит валидацию, не меняет длины и подрезается свободно, но дальше не растёт; его хвост нарисован штриховкой
+#### Scenario: The trim stops at the end of the material, the existing is not shortened
+- **WHEN** for an event with a known media length the right edge is pulled past the end of the material at speed 1 and at 0.5; a project is opened where the event is already longer than the material
+- **THEN** the trim stops at the end of the material taking the speed into account and says so with an error (rule 16); with an unknown length (a generator, a reel, a file without duration) there is no stop; the existing event passes validation, does not change its length and can be trimmed freely, but does not grow further; its tail is drawn with hatching
 - **TEST** t748c (`src/libs/kt-model/tests/trim_material.rs`), t748d (`src/apps/kt-app/src/layout_tests.rs`)
 
-### Requirement: Аудио под знаковой скоростью — модуль в ресемплер, адрес по ранам, удержание ниже 0.01
+### Requirement: Audio at signed speed — modulus into the resampler, address by runs, hold below 0.01
+The resampler SHALL receive `|rate|`; the read address SHALL be taken from the address map
+of runs of constant direction with integer accumulation of positions. A `|rate|` below
+`RATE_AUDIO_FLOOR = 0.01` SHALL be a hold: silence without consumption, the nodes
+keep working (the reverb tail rings out); the decision is taken per chunk. A constant −1
+goes into the material BEFORE the entry point and equals the "Reverse" flag only with a shifted
+entry point — this is the definition. Why: the owner's decision "drag down to 0.01, silence only at zero"; a static mirror for the whole clip did not express a turn in the middle of an event.
 
-В ресемплер SHALL уходить `|rate|`; адрес чтения SHALL браться из адресной карты
-ранов постоянного направления с целочисленным накоплением позиций. `|rate|` ниже
-`RATE_AUDIO_FLOOR = 0.01` SHALL быть удержанием: тишина без потребления, узлы
-работают (хвост реверба дозванивает); решение принимается на чанк. Постоянная −1
-идёт в материал ДО точки входа и равна флагу «Реверс» только со сдвинутой точкой
-входа — это определение. Почему: решение владельца «тянуть до 0.01, тишина только в нуле»; статическое зеркало на весь клип не выражало разворот посреди события.
-
-#### Scenario: −1 равна «Реверсу» со сдвинутой точкой входа байт-в-байт
-- **WHEN** «Реверс» на +1 от точки входа X и скорость −1 от точки входа X + длина события
-- **THEN** выходы равны байт-в-байт и не тишина
+#### Scenario: −1 equals "Reverse" with a shifted entry point, byte for byte
+- **WHEN** "Reverse" at +1 from the entry point X and speed −1 from the entry point X + the length of the event
+- **THEN** the outputs are byte-for-byte equal and are not silence
 - **TEST** t616 (`src/libs/kt-engine/tests/reverse.rs`)
 
-#### Scenario: Реверб звучит вперёд, разворот — палиндром
-- **WHEN** цепочка с ревербом над чтением назад; кривая 1 → −1
-- **THEN** реверб равен ревербу над таким же входом и НЕ равен зеркалу готового прямого рендера; вокруг точки разворота выход — палиндром без пропущенного и сдвоенного кадра
+#### Scenario: The reverb sounds forward, the turn is a palindrome
+- **WHEN** a chain with a reverb over a backward read; the curve 1 → −1
+- **THEN** the reverb equals the reverb over the same input and does NOT equal the mirror of a finished forward render; around the turning point the output is a palindrome without a skipped or doubled frame
 - **TEST** t617, t618 (`src/libs/kt-engine/tests/reverse.rs`)
 
-#### Scenario: Ноль — тишина с дозванивающим хвостом
-- **WHEN** скорость доходит до нуля после звучащего материала
-- **THEN** сухой выход — тишина, а с ревербом хвост на удержании имеет ненулевой RMS
+#### Scenario: Zero — silence with a ringing-out tail
+- **WHEN** the speed reaches zero after sounding material
+- **THEN** the dry output is silence, and with the reverb the tail on the hold has a non-zero RMS
 - **TEST** t619 (`src/libs/kt-engine/tests/reverse.rs`)
 
-### Requirement: «Чёрный ящик» воспроизведения компактен и пишется только render-потоком
+### Requirement: The playback "black box" is compact and written only by the render thread
+The flight log SHALL be a ring of fixed size, deduplicate consecutive
+events (`×N`), write a snapshot of the deltas once per second and only when the deltas are non-zero,
+record the sticking `STALL` (playing, while the playhead stands still); it MUST NOT
+enter the cpal callback. Why: the owner jumps across small loop regions, and the log must not produce "tons of logs".
 
-Журнал полёта SHALL быть кольцом фиксированного размера, дедуплицировать подряд
-идущие события (`×N`), писать снимок дельт раз в секунду и только при ненулевых
-дельтах, фиксировать залипание `STALL` (играем, а playhead стоит); в cpal-колбэк
-он MUST NOT заходить. Почему: владелец прыгает по мелким loop-регионам, и журнал не должен порождать «тонны логов».
-
-#### Scenario: Тысяча событий не рождает тысячу строк
-- **WHEN** 1000 заворотов одного лупа; прыжки по 4×CAP разным регионам; пустой снимок
-- **THEN** одна запись с `×1000`; не больше CAP записей; в тишине журнал не растёт
+#### Scenario: A thousand events do not produce a thousand lines
+- **WHEN** 1000 wraps of one loop; jumps by 4×CAP across different regions; an empty snapshot
+- **THEN** one record with `×1000`; no more than CAP records; in silence the log does not grow
 - **TEST** t175 (`src/libs/kt-engine/tests/loop_fx.rs`)

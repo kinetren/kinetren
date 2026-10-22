@@ -1,318 +1,101 @@
-# Свойства и автоматизация — почему так
+# Properties and automation — why it is this way
 
-## Что было и у кого болело
+## What hurt and for whom
 
-Параметр был ПОЛЕМ ВАРИАНТА перечисления с тремя ручными таблицами (спеки, запись,
-чтение), и они разошлись: один и тот же Gain имел −24…24 в одном окне и −48…24 в другом,
-у Pan3d `pos_*` в спеке ±100 000, а в UI без предела. Кривые существовали только у
-видео-эффектов, у slowed&reverb был свой домен и свой график, у pan3d — таблица «строка
-на параметр»; ключ стоял в доле длины события, поэтому обрезка растягивала анимацию, а
-Split копировал кривую в обе половины. Владелец (Р.33) спросил «почему мы работаем в
-нормализованном времени?», потребовал автоматизацию ВСЕХ параметров, единый виджет
-график ↔ таблица с превью, копипаст эффектов/цепочек/огибающих и мастер-галку цепочки.
+A parameter was a FIELD OF A VARIANT of an enumeration with three hand-written tables (spec, write, read), and they diverged: the same Gain had −24…24 in one window and −48…24 in another, Pan3d `pos_*` was ±100 000 in the spec, while in the UI it had no limit. Curves existed only for video effects; slowed&reverb had its own domain and its own graph; pan3d had a table "a row per parameter"; a keyframe sat at a fraction of the event's length, so trimming stretched the animation, and Split copied the curve into both halves. The owner (R.33) asked "why do we work in normalized time?", demanded automation of ALL parameters, a single widget graph ↔ table with a preview, copy-paste of effects/chains/envelopes, and a master toggle for the chain.
 
-Дальше болело по цепочке. Скорость варпа у пары A/V правилась порознь — картинка и звук
-разъезжались. Вставка цепочки в морфер молча теряла кривые. Резка растянутого клипа
-ставила кусок не в тот материал (60 кадров из 120 расходились). Подмена источника слоем
-уводила якорь `source_in`, оставляя ключи на старом месте, — «pan3d не применяется, пока
-не отключу замену сурса». Пресетов с кривыми не было, как и места вне проекта, где им
-жить. Наконец (Р.59): текст титра был частью АДРЕСА МЕДИА, общего на все места, — «поменять
-заголовок во втором выпуске» было некуда записать; статический паспорт не выражал ни
-плагин, ни ручку, которую автор переименовывает; видео с кривыми клонировало цепочку на
-каждый кадр и искало параметры сравнением строк — простой проект платил за чужие кривые.
+Further down the chain, it hurt too. The warp speed of the A/V pair was edited separately — the picture and the sound drifted apart. Inserting a chain into a morpher silently lost the curves. Cutting a stretched clip put a piece on the wrong material (60 of 120 frames diverged). Substituting the source with a layer moved the anchor `source_in`, leaving the keys in the old place — "pan3d does not apply until I disable the source replacement". There were no presets with curves, and no place outside the project for them to live. Finally (R.59): the text of a title was part of the MEDIA ADDRESS, shared by all places — "change the heading in the second issue" had nowhere to be written; a static passport expressed neither a plugin nor a handle that the author renames; video with curves cloned the chain on every frame and looked up parameters by comparing strings — a simple project paid for other people's curves.
 
-## Решения и почему
+## Decisions and why
 
-- **Одна декларация паспорта (макрос), спека типизирована, паспорт по ссылке на
-  владельца.** Рассинхрон трёх таблиц невозможен по построению; `&'static` снят, потому
-  что у публичного параметра и у плагина паспорт известен только в рантайме. Цвет
-  выводится из рядов `_r/_g/_b/_a`, а не объявляется, — формат не двигается, а ручные
-  списки цветов в UI были бы вторым источником того же факта.
-- **Кламп в макросе паспорта, индекс == имя.** Одно правило на всех владельцев и оба
-  пути; тест t642 нашёл, что у генераторов клампа не было вовсе.
-- **Домен ключа — тик материала.** Прямой ответ владельца («как в Premiere»); пять
-  геометрических команд получили правильное поведение без строчки кода — они просто не
-  трогают ключи. Второго домена для клипов (дорожечные огибающие во времени секвенции,
-  глобальный переключатель «привязать к событиям») нет намеренно: ни одного места, где
-  ответ «поедет ли анимация» зависел бы от настройки.
-- **Один виджет автоматизации, не знающий про клип.** Контекст — спеки, диапазон в
-  домене кривой и пара переводов «домен ↔ таймлайн». Иначе у каждого носителя заводился
-  бы свой редактор, как разъехались slowed с pan3d. Домены носителей различны и
-  записаны (клип — материал, камера — от начала события, переход — от начала окна): «ничего
-  не отрастает само» — правка длины открывает/прячет ключи, а не растягивает их.
-- **CamMotion слит с Pan.** «CamMotion с кейфреймами» — это «Pan с кривыми»; конверсия на
-  чтении убрала дублирующий механизм, а не портировала его.
-- **Компилированная автоматизация видео.** Как у звука с самого начала: кривые → план
-  (слот, индекс ряда, ключи) один раз при сборке рендерера. Клип без живых кривых
-  заимствует цепочку — требование ноля цены владельца (Р.59 п.4). Хэш пост-FX — от сырых
-  кривых, чтобы ключи кэша не сдвинулись ни на бит.
-- **Мастер-выключатель гасит, а не удаляет.** Состояние слотов и кривые целы; одним
-  полем накрыты хэш цепочки, отпечаток аудио и preflight GPU — все спрашивают активную
-  цепочку.
-- **Копипаст — блоки в модели, вставка одной функцией.** Той же формой (serde) пользуется
-  системный буфер; вставка возвращает команды — один undo. Ребейз «вход к входу» без
-  масштабирования, иначе вернулась бы «резина». Шесть осиротевших функций копипаста с
-  расходящейся семантикой снесены: две правды хуже одной неудобной.
-- **Скорость варпа синхронится В МОДЕЛИ.** `SetFx` прилетает из буфера, bake, ридера
-  формата и kt-cli — правило в окне FX прошло бы мимо всех; прецедент —
-  `reconcile_transitions`. Галка видео-слота и есть «отключить замедление картинки»,
-  второго выключателя того же смысла не заводится.
-- **Карта варпа — две оси.** Позиция P = ∫rate знаковая и необратима, потребление
-  A = ∫|rate| монотонно; обращается только A. Ось зеркала — пролёт, а не «съедено».
-  Разбиение в нуле включается строго при смене знака — положительные кривые бит-в-бит
-  прежние (сторож с замороженным оракулом внутри теста; на этом стоят GOLDEN_*).
-- **Пресеты — в общем пользовательском хранилище.** Первое постоянное место вне проекта,
-  сделано общим (на него упирались четыре фичи). Проект самодостаточен; сырые записи
-  переживают чужую версию; битый файл в `.broken`. Библиотека заведена ТОЛЬКО после того,
-  как потеря кривых в морфере закрыта типом (вердикт F-AUT-004 выполнен буквально).
-- **Смешивание двух состояний одного вида** — детерминированная арифметика под осью силы
-  пикера; концы байт-в-байт, чтобы клик по ячейке давал ровно её вариант.
-- **Параметры генератора — на событии** (решение владельца), медиа остаётся видом и
-  кэш-полоской. Кривые генератора разрешает сам источник по своему тику: кадр обязан
-  остаться чистой функцией (состояние, тик, качество), иначе ключ кэша не определяет кадр.
-- **Публичные параметры: экземпляр переопределяет только опубликованное.** Значение
-  шаблона не хранится (читается у цели живьём), переопределения — до морфер-слоёв,
-  пустой набор — прежний путь без клона. Имя ручки — свободный текст автора, содержимое
-  документа. Редакция ленты стала парой (лента, набор); адрес генератора солится хэшем
-  набора, соль ноль когда ручки до источника не дотягиваются, — корень и проекты без
-  публикаций получают прежние адреса байт в байт.
-- **Выражения, физика и плагины — только слот и интерфейсы** (решение владельца: объём
-  раунда — фундамент). У кривой есть источник (`Keys`/`Formula`/`Link`), формула
-  отвергается громко. Порядок дальше: связь (рига) раньше формулы — формула без адресата
-  вырождается в дорогой способ нарисовать кривую; плагины — встроенные → dlopen → OFX,
-  контракт: чистая функция, без часов, I/O и состояния, вне golden-цикла.
+- **One passport declaration (a macro), the spec is typed, the passport is referenced by the owner.** A desynchronization of three tables is impossible by construction; `&'static` was dropped, because for a public parameter and a plugin the passport is known only at runtime. The color is derived from the rows `_r/_g/_b/_a`, not declared — the format does not move, and hand-written color lists in the UI would be a second source of the same fact.
+- **A clamp in the passport macro, index == name.** One rule for all owners and both paths; test t642 found that generators had no clamp at all.
+- **The key's domain is the material tick.** The owner's direct answer ("as in Premiere"); five geometric commands received the correct behavior without a line of code — they simply do not touch the keys. A second domain for clips (track envelopes in the sequence's time, a global switch "bind to events") is intentionally absent: there is not a single place where the answer to "will the animation move" depended on a setting.
+- **One automation widget that knows nothing about the clip.** The context is the spec, the range in the domain of the curve, and a pair of conversions "domain ↔ timeline". Otherwise each carrier would get its own editor, as slowed and pan3d had diverged. The domains of the carriers differ and are recorded (a clip — material, a camera — from the start of the event, a transition — from the start of the window): "nothing grows by itself" — editing the length shows/hides keys, rather than stretching them.
+- **CamMotion merged into Pan.** "CamMotion with keyframes" is "Pan with curves"; the conversion on read removed the duplicate mechanism rather than porting it.
+- **Compiled video automation.** As with audio from the very beginning: curves → a plan (slot, row index, keys) once at renderer build time. A clip without live curves borrows the chain — the owner's requirement of zero cost (R.59 item 4). The hash of the post-FX is taken from the raw curves, so that the cache keys do not shift by a single bit.
+- **The master switch turns off, it does not delete.** The slot states and curves remain intact; one field covers the chain hash, the audio fingerprint, and the GPU preflight — all of them query the active chain.
+- **Copy-paste — blocks in the model, insertion by one function.** The system clipboard uses the same form (serde); insertion returns commands — a single undo. A "start-to-start" rebase without scaling, otherwise "rubber" would return. Six orphaned copy-paste functions with diverging semantics were removed: two truths are worse than one inconvenient one.
+- **The warp speed is synchronized IN THE MODEL.** `SetFx` arrives from the buffer, bake, the format reader, and kt-cli — a rule in the FX window would bypass all of them; the precedent is `reconcile_transitions`. The video slot's checkbox is itself "disable slowing of the picture", and a second switch with the same meaning is not introduced.
+- **The warp map has two axes.** The position P = ∫rate is signed and irreversible, the consumption A = ∫|rate| is monotonic; only A is inverted. The mirror axis is the span, not "consumed". The split at zero is enabled strictly on a sign change — positive curves remain bit-for-bit the same as before (a guard with a frozen oracle inside the test; GOLDEN_* rests on this).
+- **Presets — in a shared user store.** The first persistent place outside the project, made shared (four features were waiting on it). The project is self-sufficient; raw records survive another version's copy; a broken file goes to `.broken`. The library was created ONLY after the loss of curves in the morpher was closed by a type (verdict F-AUT-004 fulfilled literally).
+- **Blending two states of one kind** — deterministic arithmetic under the axis of the picker's strength; the ends are byte-for-byte, so that a click on a cell gives exactly its variant.
+- **Generator parameters — on the event** (the owner's decision); the media remains a kind and a cache strip. The generator's curves are resolved by the source itself at its own tick: the frame MUST remain a pure function (state, tick, quality), otherwise the cache key would not determine the frame.
+- **Public parameters: an instance overrides only what is published.** The template's value is not stored (it is read live from the target); overrides come before the morpher layers; an empty set is the previous path without a clone. The handle's name is free text by the author, the content of the document. The edit of a reel became a pair (reel, set); the address of a generator is salted by the hash of the set, the salt is zero when the handles do not reach the source — the root and projects without publications receive the previous addresses byte for byte.
+- **Expressions, physics, and plugins — only the slot and the interfaces** (the owner's decision: the scope of the round is the foundation). A curve has a source (`Keys`/`Formula`/`Link`), a formula is rejected loudly. Further order: a link (rig) before a formula — a formula without a target degenerates into an expensive way to draw a curve; plugins — built-in → dlopen → OFX, contract: a pure function, without clocks, I/O, or state, outside the golden cycle.
 
-## Отвергнуто и почему
+## Rejected and why
 
-- **«Зигзаг — это источник значения, а не форма отрезка»** — ПЕРЕСМОТРЕНО решением
-  владельца (Р.61). Заметка F-AUT-009 п.3 утверждала, что зигзаг ключами не выражается и
-  шестым видом в закрытый список не влезет («прямой путь к Smooth 2»). Владелец решил:
-  зигзаг — форма на отрезке между двумя соседними ключами. Причина: у зигзага между двумя
-  ключами есть начало и конец, и задаются они ключами, а источник описывает кривую ЦЕЛИКОМ
-  и ключей не имеет вовсе. Следствие принято вместе с решением: форма — перечисление С
-  ДАННЫМИ (у каждого вида свои параметры), а не число плюс общая «жёсткость». **Не
-  «чинить» обратно**: попытка сделать зигзаг источником вернёт требование формулы там, где
-  человек хочет «на этом куске подрожи».
+- **"A zigzag is a source of a value, not the shape of a segment"** — REVISED by the owner's decision (R.61). Note F-AUT-009 item 3 claimed that a zigzag cannot be expressed by keys and would not fit into the closed list of a sixth kind ("a direct path to Smooth 2"). The owner decided: a zigzag is a shape on the segment between two neighboring keys. Reason: a zigzag between two keys has a start and an end, and they are set by keys, whereas a source describes the curve as a WHOLE and has no keys at all. The consequence accepted along with the decision: the shape is an enumeration WITH DATA (each kind has its own parameters), not a number plus a common "stiffness". **Do not "fix" this back**: an attempt to make the zigzag a source would bring back the requirement of a formula exactly where a person wants "to jitter on this piece".
 
-- **Домен «доля события» / «тик таймлайна»** — резина при обрезке, дублирование при
-  Split; таймлайн-домен теряет анимацию при сдвиге.
-- **Масштабирование ключей при вставке под длину приёмника** (режим «Scale» Premiere,
-  «Stretch to Fit» FCP) — умножения времени кривых нет нигде в коде; заводить его надо
-  осознанно (округление тиков, реверс, спрятанные ключи), не в вставке по умолчанию.
-- **Синхрон скорости в окне FX** — мимо буфера, bake, ридера и kt-cli.
-- **Отдельное поле «замедлять видео»** — второй выключатель того же смысла (п.9 чек-листа).
-- **`LinkClips` выравнивает скорость задним числом** — молчаливая перезапись работы.
-- **Хранимая копия значения шаблона у публичного параметра** — второй источник факта,
-  молча врёт после первой правки внутри ленты; список вариантов `Choice` в файл не едет
-  по той же причине.
-- **«Экземпляр переопределяет любое свойство внутри по адресу»** — шаблон теряет
-  интерфейс и ломается при правке внутри (решение владельца).
-- **Публикация через «показать наружу всё интересное»** — ни один редактор так не
-  делает; интерфейс шаблона собирается руками, дверь одна.
-- **Внешний интерпретатор выражений** (rhai/lua/py/js) — детерминизм требует
-  воспроизводимого вычислителя; смена движка у AE поменяла результат готовых проектов.
-- **Физика как состояние между кадрами** — отменяет мемоизацию и детерминизм; ответ —
-  симуляция от начала события фиксированным шагом, состояние на кадре чистая функция.
-- **Ручной список цветов в UI** — второй источник; цвет выводится из рядов паспорта.
-- **`Choice` номером варианта** — номер поехал бы при вставке варианта в середину.
-- **Тихий рендер формулы «по ключам»** — человек видит картинку и верит ей; отказ лучше.
-- **Пресеты в статическом реестре эффектов** — его сверяет с шаблонами t48,
-  пользовательские записи там были бы ложью; пресеты — своя секция пикера.
+- **The domain "share of the event" / "timeline tick"** — rubber on trimming, duplication on Split; the timeline domain loses the animation on a shift.
+- **Scaling keys on insertion to the length of the receiver** ("Scale" mode of Premiere, "Stretch to Fit" in FCP) — there is no multiplication of curve time anywhere in the code; it must be introduced deliberately (tick rounding, reverse, hidden keys), not as the default on insertion.
+- **Speed sync in the FX window** — bypasses the buffer, bake, the reader, and kt-cli.
+- **A separate "slow down video" field** — a second switch with the same meaning (item 9 of the checklist).
+- **`LinkClips` aligns the speed after the fact** — a silent overwriting of work.
+- **A stored copy of the template's value on a public parameter** — a second source of the fact, which silently lies after the first edit inside the reel; the list of `Choice` variants does not travel to the file for the same reason.
+- **"The instance overrides any property inside by address"** — the template loses its interface and breaks on an edit inside (the owner's decision).
+- **Publishing via "show everything interesting outward"** — no editor does it this way; the template's interface is assembled by hand, the door is one.
+- **An external expression interpreter** (rhai/lua/py/js) — determinism requires a reproducible evaluator; a change of engine in AE changed the results of finished projects.
+- **Physics as state between frames** — cancels memoization and determinism; the answer is a simulation from the start of the event at a fixed step, with the state at a frame being a pure function.
+- **A hand-made list of colors in the UI** — a second source; the color is derived from the rows of the passport.
+- **`Choice` by variant number** — the number would move when a variant is inserted in the middle.
+- **A silent render of a formula "by keys"** — the person sees the picture and believes it; a refusal is better.
+- **Presets in the static effects registry** — the t48 check compares it with the templates, and user records there would be a lie; presets are their own section of the picker.
 
-## Неочевидные детали
+## Non-obvious details
 
-- **Умолчание формы отрезка считает РОВНО прежний `smoothstep01`** (Р.61,
-  `src/libs/kt-model/src/project.rs`, `SegShape::at`). При натяжении 1 и 0 значение
-  берётся точно, а не формулой смешивания: `s + (w − s)·1` арифметически равно `w`, в
-  плавающей точке — нет, и последний бит двигал `GOLDEN_AUDIO`/`GOLDEN_VIDEO`. Сторож —
-  тест против замороженного оракула прежней редакции. Окно зигзага — парабола `4s(1−s)`,
-  а не синус: `sin(π)` равен 1.2e−16, и правый конец не сходился с ключом точно.
-- **Новый ключ наследует форму отрезка, который делит** (`insert_key`), новая кривая
-  берёт умолчание проекта (`ParamCurve::constant`). Два места, по одному на правило. Без
-  них клик по графику молча превращал бы зигзаг в сглаживание, а у скорости варпа
-  сглаженный ключ стал бы отказом валидации в ту же секунду.
-- **Текст формулы в хэш пост-FX НЕ кладётся**, и это не упущение. Производные источники
-  разрешаются в числа РАНЬШЕ, чем движок считает ключ (`links::resolve_derived` зовётся из
-  `morph_pass`), поэтому правка формулы меняет сами значения и ключ меняется сам. Две
-  разные формулы с одинаковыми значениями дают один ключ — и это верно: кадры у них
-  одинаковые. Утверждать надо следствие («стейла нет»), а не устройство.
-- **Производная кривая сэмплируется по сетке кадров** — той же, по которой читается любая
-  другая кривая: человеческий ключ тоньше её тоже не поставить. Ключи получаются ПРЯМЫЕ,
-  поэтому разрешённая формула законна даже на скорости варпа.
-- **Вычислитель один на связь и формулу** (`src/libs/kt-model/src/formula.rs`). Набор
-  операций закрыт; `now` и `rand` отвергаются как неизвестные имена — окружение в языке
-  сломало бы детерминизм. Деление на ноль — отказ, а не бесконечность: бесконечность
-  уехала бы в кадр чёрным экраном.
+- **The default shape of a segment is computed by EXACTLY the old `smoothstep01`** (R.61, `src/libs/kt-model/src/project.rs`, `SegShape::at`). At tension 1 and 0 the value is taken exactly, not by a blending formula: `s + (w − s)·1` is arithmetically equal to `w`, but in floating point it is not, and the last bit moved `GOLDEN_AUDIO`/`GOLDEN_VIDEO`. The guard is a test against a frozen oracle of the previous edition. The window of the zigzag is the parabola `4s(1−s)`, not a sine: `sin(π)` equals 1.2e−16, and the right end did not converge exactly with the key.
+- **A new key inherits the shape of the segment it divides** (`insert_key`); a new curve takes the project default (`ParamCurve::constant`). Two places, one per rule. Without them a click on the graph would silently turn a zigzag into smoothing, and for the warp speed a smoothed key would become a validation rejection in the same second.
+- **The text of the formula is NOT put into the post-FX hash**, and this is not an oversight. Derived sources are resolved into numbers BEFORE the engine computes the key (`links::resolve_derived` is called from `morph_pass`), so an edit of the formula changes the values themselves, and the key changes by itself. Two different formulas with identical values give one key — and this is correct: their frames are identical. One must assert the consequence ("there is no stale data"), not the mechanism.
+- **A derived curve is sampled on the grid of frames** — the same grid on which any other curve is read: a human key cannot be placed finer than it either. The keys obtained are DIRECT, so a resolved formula is legitimate even at the warp's speed.
+- **One evaluator per link and formula** (`src/libs/kt-model/src/formula.rs`). The set of operations is closed; `now` and `rand` are rejected as unknown names — an environment in the language would break determinism. Division by zero is a refusal, not infinity: infinity would propagate into a frame as a black screen.
 
-- **Подпись кривой у ДИНАМИЧЕСКОГО владельца берётся из `ParamSpec::label`, а не из
-  каталога** (`AutoCtx::label`, `src/apps/kt-app/src/automation.rs`). Для того поле и
-  заведено в Р.59: имя публичного параметра композиции придумал автор, в каталог переводов
-  оно попасть не может. Виджет рисует его дословно, мимо `tr()` (t684).
-- **Паспорт по адресу — единственный источник пределов** (`Project::addr_spec`,
-  `src/libs/kt-model/src/project.rs`, Р.60): зеркало `addr_type` с исчерпывающим `match`
-  по владельцу. У вложенной публикации наружу едет паспорт цели, СУЖЕННЫЙ пределами
-  внутренней ручки — потребитель внешней ленты не вправе получить больше, чем разрешил
-  автор внутренней. Новый владелец свойств не соберётся, пока сюда не дописана ветка.
-- **Окон, правящих значение по времени мимо общего виджета, не бывает** — сторож t693
-  (`src/apps/kt-app/src/reach_tests.rs`) сканирует исходники: примитивы `bound_apply`/
-  `bound_value` зовутся только из `widgets.rs` (через `CurveBind`) и `automation.rs`, а у
-  каждого носителя есть вызов `automation::draw`. Без сторожа решение «один механизм
-  анимации на всё» (Р.34) обходится молча: так и появился невидимый редактор ключей.
+- **The label of a curve of a DYNAMIC owner is taken from `ParamSpec::label`, not from the catalog** (`AutoCtx::label`, `src/apps/kt-app/src/automation.rs`). The field was introduced in R.59 for exactly this: the name of a composition's public parameter was invented by the author, and it cannot get into the translation catalog. The widget draws it verbatim, bypassing `tr()` (t684).
+- **The passport by address is the single source of limits** (`Project::addr_spec`, `src/libs/kt-model/src/project.rs`, R.60): a mirror of `addr_type` with an exhaustive `match` by owner. For a nested publication outward, the target's passport travels NARROWED by the limits of the internal handle — a consumer of the external reel has no right to get more than the author of the internal handle allowed. A new property owner will not build until its branch is added here.
+- **Windows that change a value over time bypassing the common widget do not exist** — the guard t693 (`src/apps/kt-app/src/reach_tests.rs`) scans the sources: the primitives `bound_apply`/`bound_value` are called only from `widgets.rs` (through `CurveBind`) and `automation.rs`, and every carrier has a call to `automation::draw`. Without the guard the decision "one animation mechanism for everything" (R.34) would be bypassed silently: that is how an invisible key editor appeared.
 
-- **Перевод «тик таймлайна → материал» один на весь проект** —
-  `clip_material_at` (`src/libs/kt-model/src/project.rs`); движок, окно FX и тесты зовут
-  её же. Кривая сэмплируется по ВЫРОВНЕННОЙ по сетке кадров позиции — «ключ стоит на своём
-  кадре» выполняется буквально, и на этом стоит детерминизм видео. `curve_value` там же
-  не клампит домен: за телом клипа (ручка перехода, пре-ролл) продолжает крайним значением.
-- **`source_in` несёт две работы**: якорь чтения материала и начало оси автоматизации.
-  Под варпом они расходятся, поэтому `clip_slice` (`src/libs/kt-model/src/ops.rs`) и
-  `MorphPatch::apply_to` (`src/libs/kt-model/src/project.rs`, п.300) сдвигают ключи на ту
-  же дельту; на клипе без варпа дельта ноль и блок не исполняется — обещание «команды
-  ключей не трогают» держится. Сканирующий сторож t273 запрещает арифметику над
-  `source_in` вне одного правила (capability `ui-reach`).
-- **Ребейз при вставке — «вход к входу», кламп в ноль**: `rebase_curves` и
-  `append_chain_block` (`src/libs/kt-model/src/ops.rs`). У морфера домен — время блока,
-  вход = 0; перенос работает в обе стороны одной функцией. `fx_off` блока не применяется
-  НАМЕРЕННО (мастер-выключатель — свойство события, не куска), это записано в доке функции.
-  `ChainEdit.auto` (`src/apps/kt-app/src/widgets.rs`) больше не `Option` — тихую ветку
-  «кривые некуда класть» снял ТИП.
-- **Синхрон варпа ищет слот ПО ВИДУ** — `sync_warp_to_link_group`
-  (`src/libs/kt-model/src/model.rs`, внутри `mutate_on`): у аудио может быть `[Gain,
-  Slowed]`, у видео `[Blur, Slowed, Mirror]`. Зеркалирование попадает в тот же undo-шаг по
-  построению, в том числе под `apply_coalesced`. Синхронны наличие слота, `rate`, кривая
-  `"rate"`; реверб, режим кадров и bypass — свои.
-- **Профиль варпа подрезается в `segments`, а не в потребителях** —
-  `source_progress`/`consumed_abs` (`src/libs/kt-model/src/warp.rs`): T = S⁻¹ остаётся
-  обратной, потому что обе видят один профиль. `ease` у кривой rate игнорируется —
-  ln/expm1-формулы карты требуют кусочно-линейного профиля; новый вид формы отрезка
-  обязан выбрасываться там же и показываться ошибкой. Зеркало реверса живёт в НОРМИРОВКЕ
-  (`AutoProfiles::from_curves`, там же), DSP про реверс не знает.
-- **Компилированный план без собственного клампа** — `AutoPlan::compile`
-  (`src/libs/kt-model/src/autoplan.rs`): предел накладывает владелец через
-  `set_param_idx` (`src/libs/kt-model/src/project.rs`), кламп живёт в одном месте.
-  Замороженный оракул t643 — дословная копия прежнего именного пути ВНУТРИ теста
-  (`src/libs/kt-model/tests/props.rs`, `mod frozen`), правке не подлежит: смена способа
-  адресации иначе непроверяема, ключи кэша от неё не меняются.
-- **Хэш пост-FX — от сырых кривых, Debug-представлением** — `fx_chain_hash`
-  (`src/libs/kt-engine/src/video.rs`). Всё, что влияет на значение (источник кривой,
-  будущий текст формулы), обязано попасть в это представление целиком, иначе правка
-  оставит на экране старые кадры.
-- **Структурные параметры не автоматизируются** — `auto_params`
-  (`src/libs/kt-model/src/project.rs`): смена длины comb-линий реверба пересоздаёт DSP,
-  кривая на нём щёлкала бы; UI берёт кандидатов именно оттуда.
-- **Правка кривой не сбрасывает FX-состояние** — профили доезжают до процессора через
-  `FxStateStore::sync_clip` (`src/libs/kt-engine/src/fxstore.rs`) ДО `apply_params`;
-  `set_auto` без сброса, хвост реверба переживает правку ключа.
-- **Шкала графика у каждой кривой своя и замораживается на драг** —
-  `src/apps/kt-app/src/automation.rs`: по диапазону спеки (0.25…32 у скорости) кривая
-  0.66…1.0 вырождалась в прямую; без заморозки шкала «дышала» бы под курсором. Ввод
-  времени живёт в буфере вида, сортировка — на отпускании. Мини-таймлайн двигает главный
-  курсор через ту же карту варпа, что рендер (`material_at` в `src/apps/kt-app/src/thumbs.rs`).
-- **Числовое поле рисуется ТОЛЬКО `param_row`/`params_grid`**
-  (`src/apps/kt-app/src/widgets.rs`) по спеке; своя форма с собственными границами — тот
-  самый разнобой Gain. Драг по графику АЧХ (`src/apps/kt-app/src/eq_graph.rs`) пишет через
-  `CurveBind` (там же, `widgets.rs`) туда же, куда поле: база или выбранный ключ живой
-  кривой. Кривая графика — `eq_mag_db` (`src/libs/kt-fx/src/audio/nodes.rs`) тем же
-  `tune`, что DSP; запись только при реально изменившемся значении, иначе ревизия модели
-  росла бы каждый кадр жеста и сбрасывала кэши.
-- **Хранилище пресетов под `cfg!(test)` живёт только в памяти** — `FxPresetStore`
-  (`src/apps/kt-app/src/user_store.rs`): иначе любой тест, открывший пикер, читал бы файл
-  разработчика. `KT_USER_STORE_DIR` подменяет каталог в живых сценариях. Совместимость
-  пресета — по реестру из тегов слотов, не догадкой.
-- **Генератор: инвариант «значения ⇔ медиа-генератор» держится по построению** —
-  `AddMedia`/`SetMediaPath` канонизируют путь, `AddClip`/`SetClipMedia` подгоняют значения
-  (`fit_gen_to_media`), `migrate_gen_to_events` — единственное место миграции; сторож —
-  `check_clip_gen` (`src/libs/kt-model/src/project.rs`). Кривая-сирота у генератора
-  ОТВЕРГАЕТСЯ (в отличие от `fx_auto`, где слот мог сменить вид). Пять режимов анимации
-  титра стали пресетами кривых — формулы в одном месте `text_anim_curves`
-  (`src/libs/kt-model/src/genmedia.rs`): их зовёт и миграция, и окно.
-- **Retune внутри ленты отдавал стейл** — ключ мемоизации суб-композита не несёт
-  серийников листьев; список адресов для инвалидации едет ВНУТРИ сообщения retune и
-  обрабатывается воркером (`src/libs/kt-engine/src/player.rs`): инвалидация со стороны
-  вызывающего проигрывает гонку проходу композитора.
-- **Переопределения — ДО морфер-слоёв, одна дверь** — `Project::resolve_reel`
-  (`src/libs/kt-model/src/project.rs`), `effective_reel` — обёртка с пустым набором.
-  Морфер дописывает слоты в конец и при `fx_off` чистит цепочку — `FxSlot(i)` после него
-  указывал бы не туда. Носителей кривой три (`owner_takes_curves`,
-  `src/libs/kt-model/src/published.rs`): у перехода и камеры перевода домена не
-  существует, «почти правильная» кривая хуже отказа.
-- **Судьба цели — `reconcile_published` рядом с `reconcile_transitions` в `simulate`**
-  (`src/libs/kt-model/src/model.rs`), на каждый батч и без списка триггеров: список —
-  место, где забывают строку. Адрес приклеен к `ClipId` (кусок №0 держит id, как у
-  морфер-резки).
-- **Соль адреса генератора считают ДВОЕ и обязаны совпадать** — `gen_salt` и
-  `gen_source_addr_in` (`src/libs/kt-engine/src/video.rs`) зовут `build_reel` (план) и
-  `gen_sources` (кто поднимает источники); разойдись — вечный промах по адресу. Соль — хэш
-  набора, ноль когда `overrides_touch_sources` (`src/libs/kt-model/src/published.rs`)
-  ложь. Свободных битов в адресе нет (клип < кусок < генератор < лента), хэш законен по
-  той же причине, что `content_hash`.
-- **`instance_content` при пустом наборе равен `content_hash`**
-  (`src/libs/kt-engine/src/video.rs`) — иначе сдвинулись бы ключи мемо, sidecar и
-  GPU-планы у всех проектов без публикаций. Побочно: `Debug` у `ClipEvent` сменился полем
-  `overrides`, и все хэши редакций сдвинулись ОДИН раз — sidecar-превью пересчитается при
-  открытии, миграции не требует.
-- **Полоса раскрытия показывает шаблон, `expand_instance` впекает** —
-  `src/libs/kt-model/src/ops.rs`, `ExpandReport.overrides_baked`. `effective_clips` тоже
-  применяет набор: он оракул закона Э и то, что печатает `kt-cli probe`.
-- **Лента-владелец публикации — по РАБОЧЕМУ ВИДУ** — `owner_reel_of`
-  (`src/apps/kt-app/src/pubparam.rs`): событие раскрытой полосы принадлежит ленте полосы;
-  опубликуй в текущей — `reconcile_published` снял бы ручку тем же батчем. Заявка на
-  публикацию кладётся в сток `publish_sink` (`src/apps/kt-app/src/widgets.rs`) — внутри
-  `Window::show` до модели не дотянуться. `PublishCtx::explain_outside` объясняет
-  отсутствие пункта только когда композиции в документе ЕСТЬ.
-- **Двери нет там, куда нельзя войти**: краски титра — не свойства (лежат в варианте мимо
-  паспорта); `color_row` (`src/apps/kt-app/src/widgets.rs`) спрашивает сам носитель
-  (`value_type(stem).is_some()`), а не список исключений.
-- **Имя автора проверяется по НАРИСОВАННЫМ галлеям**, не по дереву доступности
-  (`src/apps/kt-app/src/layout_tests.rs`, t684): составное имя кнопки сброса несёт имя
-  ручки, и тест был зелёным на коде, рисующем строку каталога. То же у бейджей (t685).
-- **Сторож кривых генератора щупает компактный генератор, а не титр**
-  (`src/apps/kt-app/src/layout_tests.rs`): форма титра самая высокая, попап «+ кривая»
-  открывается ниже края харнесса и в дерево доступности не попадает вовсе.
-- **Формула отвергается в `validate`** — `CurveSourceUnsupported`
-  (`src/libs/kt-model/src/project.rs`, `check_fx_auto`); `ParamCurve.source` с
-  `skip_serializing_if` — байты файлов с ключами не двигаются.
+- **The translation "timeline tick → material" is one for the whole project** — `clip_material_at` (`src/libs/kt-model/src/project.rs`); the engine, the FX window, and the tests call that same function. The curve is sampled at the position ALIGNED to the grid of frames — "the key stands on its own frame" holds literally, and the determinism of the video rests on this. `curve_value` there does not clamp the domain: beyond the body of the clip (a transition handle, a pre-roll) it continues with the edge value.
+- **`source_in` carries two jobs**: the anchor for reading the material and the start of the automation axis. Under a warp they diverge, so `clip_slice` (`src/libs/kt-model/src/ops.rs`) and `MorphPatch::apply_to` (`src/libs/kt-model/src/project.rs`, item 300) shift the keys by the same delta; on a clip without a warp the delta is zero and the block is not executed — the promise "key commands do not touch the keys" holds. The scanning guard t273 forbids arithmetic on `source_in` outside a single rule (capability `ui-reach`).
+- **Rebase on insertion — "input to input", clamp to zero**: `rebase_curves` and `append_chain_block` (`src/libs/kt-model/src/ops.rs`). For the morpher the domain is the block's time, input = 0; the transfer works in both directions with one function. The `fx_off` of the block is deliberately NOT applied (the master switch is a property of the event, not of the piece), and this is written in the function's docs. `ChainEdit.auto` (`src/apps/kt-app/src/widgets.rs`) is no longer an `Option` — the silent branch "curves have nowhere to go" was removed by the TYPE.
+- **The warp sync finds the slot BY KIND** — `sync_warp_to_link_group` (`src/libs/kt-model/src/model.rs`, inside `mutate_on`): audio may have `[Gain, Slowed]`, video `[Blur, Slowed, Mirror]`. Mirroring falls into the same undo step by construction, including under `apply_coalesced`. Synchronized are the presence of the slot, `rate`, and the curve `"rate"`; the reverb, the frame mode, and the bypass are their own.
+- **The warp profile is trimmed in `segments`, not in the consumers** — `source_progress`/`consumed_abs` (`src/libs/kt-model/src/warp.rs`): T = S⁻¹ remains the inverse, because both see one profile. The `ease` of a rate curve is ignored — the ln/expm1 formulas of the map require a piecewise-linear profile; a new kind of segment shape MUST be discarded there and shown as an error. The mirror of the reverse lives in the NORMALIZATION (`AutoProfiles::from_curves`, there too); the DSP knows nothing about reversal.
+- **A compiled plan without its own clamp** — `AutoPlan::compile` (`src/libs/kt-model/src/autoplan.rs`): the limit is imposed by the owner through `set_param_idx` (`src/libs/kt-model/src/project.rs`); the clamp lives in one place. The frozen oracle t643 is a verbatim copy of the previous named path INSIDE the test (`src/libs/kt-model/tests/props.rs`, `mod frozen`), not subject to edits: otherwise a change of addressing method could not be verified, and the cache keys would not change because of it.
+- **The post-FX hash is taken from the raw curves, via the Debug representation** — `fx_chain_hash` (`src/libs/kt-engine/src/video.rs`). Everything that affects the value (the source of a curve, a future formula text) MUST get into this representation in full, otherwise an edit would leave old frames on the screen.
+- **Structural parameters are not automated** — `auto_params` (`src/libs/kt-model/src/project.rs`): a change of the length of the reverb's comb lines recreates the DSP, and a curve on it would click; the UI takes its candidates precisely from there.
+- **Editing a curve does not reset the FX state** — the profiles reach the processor through `FxStateStore::sync_clip` (`src/libs/kt-engine/src/fxstore.rs`) BEFORE `apply_params`; `set_auto` without a reset — the reverb tail survives the edit of a key.
+- **The scale of the graph is separate for each curve and is frozen during a drag** — `src/apps/kt-app/src/automation.rs`: by the range of the spec (0.25…32 for speed) a curve of 0.66…1.0 would degenerate into a straight line; without freezing, the scale would "breathe" under the cursor. Time input lives in the view's buffer, sorting happens on release. The mini-timeline moves the main cursor through the same warp map as the render (`material_at` in `src/apps/kt-app/src/thumbs.rs`).
+- **A numeric field is drawn ONLY by `param_row`/`params_grid`** (`src/apps/kt-app/src/widgets.rs`) according to the spec; a custom form with its own bounds is the very mismatch of Gain. A drag over the frequency-response graph (`src/apps/kt-app/src/eq_graph.rs`) writes through `CurveBind` (there too, `widgets.rs`) to the same place as the field: the base or the selected key of the live curve. The curve of the graph is `eq_mag_db` (`src/libs/kt-fx/src/audio/nodes.rs`), computed with the same `tune` as the DSP; a write happens only when the value has really changed, otherwise the model revision would grow on every frame of a gesture and flush the caches.
+- **The preset store under `cfg!(test)` lives only in memory** — `FxPresetStore` (`src/apps/kt-app/src/user_store.rs`): otherwise any test that opened the picker would read the developer's file. `KT_USER_STORE_DIR` replaces the directory in live scenarios. A preset's compatibility is checked against a registry built from slot tags, not by guesswork.
+- **The generator: the invariant "values ⇔ media generator" holds by construction** — `AddMedia`/`SetMediaPath` canonicalize the path, `AddClip`/`SetClipMedia` fit the values (`fit_gen_to_media`), `migrate_gen_to_events` is the only place of migration; the guard is `check_clip_gen` (`src/libs/kt-model/src/project.rs`). An orphan curve on a generator is REJECTED (unlike `fx_auto`, where a slot could change its kind). The five animation modes of a title became presets of curves — the formulas are in one place, `text_anim_curves` (`src/libs/kt-model/src/genmedia.rs`): they are called by both the migration and the window.
+- **Retune inside a reel gave stale data** — the memoization key of a sub-composition does not carry the serial numbers of the leaves; the list of addresses for invalidation travels INSIDE the retune message and is processed by the worker (`src/libs/kt-engine/src/player.rs`): invalidation from the caller's side loses the race with the compositor's pass.
+- **Overrides — BEFORE the morpher layers, one door** — `Project::resolve_reel` (`src/libs/kt-model/src/project.rs`); `effective_reel` is a wrapper with an empty set. The morpher appends slots to the end and, with `fx_off`, clears the chain — `FxSlot(i)` after it would point to the wrong place. There are three carriers of a curve (`owner_takes_curves`, `src/libs/kt-model/src/published.rs`): a transition and a camera's move have no domain conversion, and an "almost correct" curve is worse than a refusal.
+- **The fate of the target — `reconcile_published` next to `reconcile_transitions` in `simulate`** (`src/libs/kt-model/src/model.rs`), on every batch and without a list of triggers: a list is a place where a line gets forgotten. The address is glued to the `ClipId` (piece No. 0 keeps the id, as in the morpher cut).
+- **The salt of the generator's address is computed by TWO places and they MUST match** — `gen_salt` and `gen_source_addr_in` (`src/libs/kt-engine/src/video.rs`) call `build_reel` (the plan) and `gen_sources` (who raises the sources); if they diverge — a permanent miss by address. The salt is the hash of the set, zero when `overrides_touch_sources` (`src/libs/kt-model/src/published.rs`) is false. There are no free bits in the address (clip < piece < generator < reel), and the hash is legitimate for the same reason as `content_hash`.
+- **`instance_content` with an empty set equals `content_hash`** (`src/libs/kt-engine/src/video.rs`) — otherwise the memo, sidecar, and GPU-plan keys would shift for all projects without publications. As a side effect, the `Debug` of `ClipEvent` changed with the `overrides` field, and all the revision hashes shifted ONCE — the sidecar previews will be recomputed on opening; no migration is required.
+- **The expansion strip shows the template, `expand_instance` bakes it in** — `src/libs/kt-model/src/ops.rs`, `ExpandReport.overrides_baked`. `effective_clips` also applies the set: it is the oracle of the law E and what `kt-cli probe` prints.
+- **The reel that owns a publication — by the WORKING VIEW** — `owner_reel_of` (`src/apps/kt-app/src/pubparam.rs`): an event of an expanded strip belongs to the strip's reel; publish in the current one — `reconcile_published` would remove the handle in the same batch. The publication request is placed into the sink `publish_sink` (`src/apps/kt-app/src/widgets.rs`) — inside `Window::show` the model cannot be reached. `PublishCtx::explain_outside` explains the absence of an item only when there ARE compositions in the document.
+- **There is no door where one cannot enter**: the colors of a title are not properties (they lie in the variant, bypassing the passport); `color_row` (`src/apps/kt-app/src/widgets.rs`) asks the carrier itself (`value_type(stem).is_some()`), not a list of exceptions.
+- **The author's name is checked against the DRAWN glyphs**, not against the accessibility tree (`src/apps/kt-app/src/layout_tests.rs`, t684): the composite name of the reset button carries the handle's name, and the test was green on code that drew a catalog string. The same applies to the badges (t685).
+- **The guard of the generator's curves probes the compact generator, not the title** (`src/apps/kt-app/src/layout_tests.rs`): the title's form is the tallest, the "+ curve" popup opens below the edge of the harness and does not get into the accessibility tree at all.
+- **A formula is rejected in `validate`** — `CurveSourceUnsupported` (`src/libs/kt-model/src/project.rs`, `check_fx_auto`); `ParamCurve.source` with `skip_serializing_if` — the bytes of files with keys do not move.
 
-## Р.67: кривая — слои, и они сочетаются
+## R.67: a curve — layers, and they combine
 
-- **Формула — ФОРМА ОТРЕЗКА и СЛОЙ, а не третий источник.** Владелец: «я могу ЛИБО сам
-  нарисовать точки проставить, либо проставить в таблице, либо проставить всему диапазону
-  кривую, либо формулу, либо отдельным областям что-то проставить А ТАКЖЕ КОМБИНАЦИЯ ВСЕГО
-  ЭТОГО». Порядок фиксирован: ключи с формами дают `k`, поверх — необязательный слой
-  (`k`, `t`, `src`). Установка слоя НЕ стирает ключи — прежнее поведение («ввёл формулу —
-  точки пропали») и было жалобой. `CurveSource::Formula` прежних файлов читается как слой
-  над пустыми ключами: байты и звук не двигаются.
-- **`SegShape` осталась `Copy` через интернер текста** (`ExprId`): форма лежит в `AutoKey`,
-  который копируется в горячих путях. `String` в форме отняла бы `Copy` у ключа и потянула
-  бы клоны по всей модели — цена не за что.
-- **`t` любой формулы — от начала МАТЕРИАЛА.** Предпросмотр считал его от левого края окна
-  графика: линия расходилась с рендером и уезжала при прокрутке. Одна переменная — одно
-  начало отсчёта, в рендере и в показе.
-- **Кривые переопределений разрешаются В ДОМЕНЕ ЛЕНТЫ** — до перевода во время цели.
-  Формула, набранная в окне экземпляра по его оси, обязана звучать по ней же; разрешение
-  после `retime_curve` дало бы другое `t`.
-- **Ключ ставится только жестом человека.** `DragValue`/`Slider` с пределами клампят
-  входящее значение и рапортуют «изменено»: поле с живой кривой, показывающее значение под
-  курсором, писало ключ на каждом кадре игры. На проекте владельца так появились ключи
-  66.1→0.20, 69.7→0.98, 69.9→0.07, 72.3→0.99, 74.7→0.16, которых он не ставил. Показ идёт
-  уже заклампленным паспортом, запись — по жесту (драг, фокус+правка, сброс).
+- **A formula is a SHAPE OF THE SEGMENT and a LAYER, not a third source.** The owner: "I can EITHER place the points myself, or enter them in a table, or assign a curve to the whole range, or a formula, or put something on separate areas, AND A COMBINATION OF ALL OF THIS". The order is fixed: keys with shapes give `k`; on top — an optional layer (`k`, `t`, `src`). Setting a layer does NOT erase the keys — the previous behavior ("entered a formula — the points disappeared") was the complaint. `CurveSource::Formula` of earlier files is read as a layer over empty keys: the bytes and the sound do not move.
+- **`SegShape` stays `Copy` through an interner of the text** (`ExprId`): the shape lives in `AutoKey`, which is copied on hot paths. A `String` in the shape would take `Copy` away from the key and drag clones through the whole model — the price is not justified.
+- **`t` of any formula is from the start of the MATERIAL.** The preview counted it from the left edge of the graph window: the line diverged from the render and drifted on scrolling. One variable — one origin of counting, in the render and in the display.
+- **Override curves are resolved IN THE REEL'S DOMAIN** — before translation during the target's time. A formula typed in the instance's window along its axis MUST sound along that same axis; resolution after `retime_curve` would give a different `t`.
+- **A key is placed only by a human gesture.** `DragValue`/`Slider` with limits clamp the incoming value and report "changed": a field with a live curve, showing the value under the cursor, wrote a key on every frame of playback. On the owner's project this is how keys appeared that he had not placed: 66.1→0.20, 69.7→0.98, 69.9→0.07, 72.3→0.99, 74.7→0.16. The display now shows the already clamped passport, and the write happens by gesture only (drag, focus+edit, reset).
 
-## Отложено
+## Deferred
 
-- **Формула** (F-AUT-007, принято): своя мини-формула, закрытый набор операций, текст в
-  ключе пост-FX, разрешение до аудио-потока, счётчик обращений у проекта без формул = 0.
-- **Плагины** (F-EXT-003, принято): встроенные → dlopen по образцу загрузчика
-  `src/libs/kt-ffmpeg/src/loader.rs` → OFX; в этом раунде только типы контракта.
-- **Связь параметров / рига** (F-AUT-008, кандидат): решать сразу после публичных
-  параметров — опубликованная ручка, ведущая несколько свойств, и есть рига; вопрос
-  «кривая или связь главнее» обязан иметь один ответ на программу.
-- **Формы отрезков и безье-ручки** (F-AUT-006/F-AUT-001, кандидат): одним решением, форма
-  — полином в `curve_value`, `rate` остаётся исключением, «включить всем» — команда, не
-  настройка машины.
-- **Огибающая дорожки** (F-AUT-003) — заводить только с ответом «едет ли за событиями».
-- **Индикатор спрятанных ключей** на краях графика и подпись домена в заголовке виджета.
-- **Унификация доменов переходов и камер** — долг помеченный, не сюрприз.
-- **Физика** — симуляция от начала события фиксированным шагом, даёт генератору числа;
-  скорость события должна доехать до генератора числами.
-- **Команда «править во всех местах разом»** для генератора есть (`ApplyGenToAll`);
-  режим переноса кривых «под длину приёмника» — нет.
+- **Formula** (F-AUT-007, accepted): its own mini-formula, a closed set of operations, the text in the post-FX key, resolution before the audio stream, the counter of references in a project without formulas = 0.
+- **Plugins** (F-EXT-003, accepted): built-in → dlopen following the loader pattern of `src/libs/kt-ffmpeg/src/loader.rs` → OFX; in this round only the contract types.
+- **Parameter links / rig** (F-AUT-008, candidate): decide right after the public parameters — a published handle driving several properties is a rig; the question "is the curve or the link more important" MUST have one answer for the whole program.
+- **Shapes of segments and Bezier handles** (F-AUT-006/F-AUT-001, candidate): in one decision — a shape is a polynomial in `curve_value`, `rate` stays an exception, "turn it on for all" is a command, not a machine setting.
+- **Track envelope** (F-AUT-003) — to be opened only with an answer to "does it move with the events".
+- **An indicator of hidden keys** at the edges of the graph and a domain label in the widget's header.
+- **Unification of the domains of transitions and cameras** — a marked debt, not a surprise.
+- **Physics** — a simulation from the start of the event at a fixed step, supplying numbers to the generator; the speed of the event must reach the generator as numbers.
+- **The command "edit in all places at once"** exists for a generator (`ApplyGenToAll`); a mode of transferring curves "to the length of the receiver" does not.

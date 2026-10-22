@@ -9,7 +9,6 @@ it publishes on a tag. Only releases are kept for good.
 ## ADDED Requirements
 
 ### Requirement: One build container, described by a committed file
-
 The portable build SHALL be described by one committed Dockerfile
 (`src/packaging/Dockerfile`, base Ubuntu 22.04, glibc 2.35) that pins an exact Rust
 toolchain version. `src/scripts/release-build.sh`, `make` and the release workflow SHALL
@@ -47,10 +46,9 @@ image a second way, would get a different result from the one the owner checks.
 - **THEN** both binaries have no `libav*` in `ldd` and need at most `GLIBC_2.35`; otherwise
   the build fails and no tarball is left in `dist-out`
 - **TEST** guard inside `src/scripts/release-build.sh` (invariant 10; media-index scenario
-  "Релизный бинарь не линкован с libav*")
+  "Release binary is not linked against libav*")
 
 ### Requirement: The program is called `kinetren` on disk
-
 The GUI binary SHALL be named `kinetren` everywhere a person meets it: the build output
 (`src/target/<profile>/kinetren`), the release tarball, `~/.local/bin/kinetren` after
 installation, the `.desktop` file (`Exec=kinetren %f`, `StartupWMClass=kinetren`, matching
@@ -59,8 +57,8 @@ the window's application id `kinetren`) and `make run`. The cargo package MAY st
 `~/.local/bin/kt-app` left by an older install, the same way it already removes `kinotrain`
 leftovers, so the menu doesn't start an old build. No tarball, desktop entry or script
 that people run may start a binary named `kt-app`.
-Why: the owner's request ("при билде и распространении надо называть не kt-app … а
-kinetren"); `kt-app` is an internal crate name that leaked into what people install.
+Why: the owner's request ("when building and distributing, call it kinetren, not kt-app …");
+`kt-app` is an internal crate name that leaked into what people install.
 
 #### Scenario: Packaging names agree
 - **WHEN** `dist-check.py --check` reads the manifest of `kt-app`, `install.sh`,
@@ -77,7 +75,6 @@ kinetren"); `kt-app` is an internal crate name that leaked into what people inst
 - **TEST** manual check recorded in `tasks.md`
 
 ### Requirement: Simple make commands at the repository root
-
 A `Makefile` at the repository root SHALL provide:
 - `make` / `make build`: the tarball through the build container.
 - `make install`: build if needed, then the tarball's own `install.sh` into `~/.local`.
@@ -105,7 +102,6 @@ container builds, the host runs.
   the targets' existence is t834
 
 ### Requirement: CI on every push and pull request
-
 `.github/workflows/ci.yml` SHALL run on every push and every pull request to any branch.
 It builds the workspace, runs `cargo clippy --workspace --all-targets` (warnings are reported, not fatal, until
 the existing ones are fixed), runs the workspace tests
@@ -128,7 +124,6 @@ automatically), not in artifacts.
 - **TEST** t834, t835 (`src/apps/kt-cli/tests/dist_guard.rs`)
 
 ### Requirement: Release on a version tag
-
 `.github/workflows/release.yml` SHALL run only when a tag matching `v*` is pushed. It builds
 the tarball with `release-build.sh` through the committed Dockerfile, so the delivery checks
 run on every release. Then it creates a GitHub Release named after the tag and attaches the tarball and its `.sha256`. A tag with a `-` suffix (`v26.11.01-rc1`) is

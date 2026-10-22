@@ -1,317 +1,96 @@
-# Сохранность работы — почему так
+# Keeping the work safe — the reasons
 
-## Что было и у кого болело
+## What hurt and for whom
 
-Фич-разведка нашла 47 адресов собственных дефектов, и большинство были про
-ПОТЕРЮ РАБОТЫ, а не про отсутствующие функции: автосейв писал ПОВЕРХ файла
-пользователя (на диске существовало ровно одно состояние, откатиться было
-некуда), `write + rename` без единого `fsync` во всём дереве (после
-отключения питания на месте проекта мог остаться файл нулевой длины),
-отказ сторожа ревизии выглядел как успех (звёздочка гасла, файла с правками
-не было), две копии программы молча затирали друг друга, паника не
-оставляла ни отчёта, ни записи, восстановление предлагалось только «если
-проект не нашёлся», а «Новый»/«Открыть»/крестик не спрашивали ничего.
-Отдельно — рождённые правкой события уезжали в файл без конверта (имя,
-маркеры, таймкод материала), и в чужом редакторе половины одного разреза
-стояли в разных системах координат.
+Feature reconnaissance found 47 of the editor's own defects, and most of them were about LOSING WORK, not about missing features: autosave wrote OVER the user's file (exactly one state existed on disk, so there was nowhere to roll back to); `write + rename` without a single `fsync` anywhere in the tree (after a power cut the project file in place could be left zero bytes long); a refusal by the revision guard looked like success (the unsaved-changes asterisk went out, and there was no file with the edits); two copies of the program silently overwrote each other; a panic left neither a report nor a record; recovery was offered only "if the project was not found"; and "New"/"Open"/the window close button asked nothing.
+Separately, events born from an edit went into the file without an envelope (name, markers, material timecode), and in a foreign editor the two halves of one cut stood in different coordinate systems.
 
-Владелец на прямые вопросы ответил решениями: автосейв больше не пишет в
-файл пользователя; проект меняет только явное сохранение; при старте
-несохранённое предлагается; замок ставится на файл проекта, а не на
-программу. И трижды повторил «ты не проверял» — харнесс и модель ничего не
-доказывают, доказывает живой сценарий и пересобранный бинарь, который он
-запускает.
+Asked direct questions, the owner answered with decisions: autosave no longer writes to the user's file; only an explicit save changes the project; on startup unsaved work is offered for recovery; the lock is placed on the project file, not on the program. And three times he repeated "you did not verify it" — the harness and the model prove nothing; a live scenario and the rebuilt binary it runs prove it.
 
-## Решения и почему
+## Decisions and why
 
-- **Один дом атомарной записи в kt-otio.** GUI и kt-cli пишут проект одним
-  кодом: «записать и сбросить tmp → rename → сбросить каталог». Порядок —
-  всё, ради чего функция существует; проверяется инъекцией файловой
-  системы, потому что фолт-инжекция ядра зависит от машины (ext4 прячет
-  разницу через `auto_da_alloc`), а тест обязан краснеть от перестановки
-  строк.
-- **Отказ синка каталога — деградация, не ошибка.** exFAT, сетевые шары,
-  не-unix; вызывающий получает `dir_synced == false` и предупреждает один
-  раз за сессию.
-- **Исход записи — тип с двумя ветками.** У трёх вызывающих три разных
-  реакции на `SkippedNewerOnDisk`, и забыть одну нельзя по построению.
-- **Сторожей ревизии два.** Проект и восстановление — разные цели с разными
-  планками; один мьютекс на обе делал следующий Ctrl+S «устаревшим».
-- **Recovery рядом с проектом, суффикс к ПОЛНОМУ имени.** Та же логика, что
-  у tmp: `with_extension` склеивает `film.otio` и `film.mp4.otio`.
-- **Замок — `flock` на файле в каталоге данных, именной.** Против трёх
-  альтернатив сразу: глобальный замок ломает живые сценарии и «второе окно
-  на другой кусок»; замок на inode проекта отваливается после первого
-  атомарного `rename`; файл с pid и `O_EXCL` не снимается ядром после
-  `SIGKILL` и оставляет вечную блокировку. Файл замка не удаляется в `Drop`
-  (между `unlink` и чужим `open` втиснулся бы третий).
-- **Вторая копия не запрещается, а честно деградирует.** Свой tmp с pid,
-  свой recovery, предупреждение с номером чужого процесса, один вопрос при
-  первом Ctrl+S.
-- **Кандидаты восстановления — по mtime, строго новее проекта.** Иначе
-  после каждого Ctrl+S программа звала бы восстановить то, что и так в
-  файле. Безымянной работе сравнивать не с чем — предлагается всегда.
-  Восстановление кладёт работу в редактор и не съедает источник:
-  правило «работает повторно».
-- **Сторож несохранённого с тремя ответами.** «Не сохранять» и «Отмена» —
-  разные вещи; `bool` терял монтаж по кнопке «Отмена». «Сохранить и
-  продолжить» не продолжает при неудаче записи — иначе сторож сам приводил
-  бы к потере, от которой поставлен. Это сознательный разворот прежнего
-  вердикта «не спрашиваем»: он был законен только при автосейве поверх.
-- **`Drop` — последний рубеж, хук — только диагностика.** `Drop` ловит
-  пересоздание приложения на месте и раскрутку от паники (`panic = "unwind"`
-  сохранён намеренно); хук пишет отчёт и не трогает модель (инварианты 2
-  и 6). Профиль `dist` держит `debug = 1` со `strip = "debuginfo"`: отчёт
-  из голых адресов — театр; цена измерена (+0.77 МиБ в тарболе).
-- **Журнал — для того, что показать некому.** У `on_exit` окна нет, stderr
-  при `Terminal=false` уходит в никуда; журнал не дублирует колокольчик.
-- **Номера событий — сессионная отметка, не «max + 1».** Undo рождения
-  отметку не откатывает: номер уже жил, конверт под ним мог осесть.
-  Формат не трогается — класс живёт внутри сессии.
-- **Родство сообщает модель.** `apply_batch` возвращает пары «ребёнок ←
-  родитель»; для производных без явного родителя — команда-заметка
-  `NoteBirth` в том же пакете, чтобы родство переживало undo вместе с
-  правкой. Догадка снаружи после перенумерации невозможна.
-- **Ссылки на материал — свойство медиа.** `available_range` описывает файл,
-  не событие; медиа-уровень — запасной путь для рождённых, собственный
-  конверт клипа он не перетирает.
-- **Рабочее место в `user_store`, в `.otio` — passthrough.** Байт-стабильность
-  цела, старые сборки читают то же, миграция — пустое хранилище уступает
-  файлу без единой строки кода.
-- **`finish.sh` и живые сценарии — часть контракта.** Скрипт пересобирает
-  то, что запускает владелец, печатает версию, гоняет `live-check.sh` и
-  берёт вердикт стадий у cargo. Живой сценарий на каждый пункт претензии,
-  утверждающий следствие из точки действия человека.
+- **One home for atomic writing in kt-otio.** The GUI and kt-cli write a project with one code path: "write and flush tmp → rename → flush the directory". The order is everything the function exists for; it is verified by injecting faults into the file system, because kernel fault injection depends on the machine (ext4 hides the difference via `auto_da_alloc`), and the test must turn red when the lines are swapped.
+- **A failure to sync the directory is degradation, not an error.** exFAT, network shares, non-unix systems; the caller gets `dir_synced == false` and warns once per session.
+- **The outcome of a write is a type with two branches.** The three callers have three different reactions to `SkippedNewerOnDisk`, and forgetting one is impossible by construction.
+- **There are two revision guards.** The project and the recovery are different targets with different bars; a single mutex for both made the next Ctrl+S "stale".
+- **Recovery sits next to the project, with the suffix appended to the FULL name.** The same logic as for tmp: `with_extension` collides `film.otio` and `film.mp4.otio`.
+- **The lock is `flock` on a named file in the data directory.** Against three alternatives at once: a global lock breaks live scenarios and "a second window on another piece"; a lock on the project's inode falls off after the first atomic `rename`; a file with a pid and `O_EXCL` is not released by the kernel after `SIGKILL` and leaves a permanent lock. The lock file is not deleted in `Drop` (a third process would slip in between `unlink` and someone else's `open`).
+- **A second copy is not forbidden; it degrades honestly.** Its own tmp with a pid, its own recovery, a warning with the number of the other process, one question at the first Ctrl+S.
+- **Recovery candidates are chosen by mtime, strictly newer than the project.** Otherwise after every Ctrl+S the program would offer to recover what is already in the file. Unnamed work has nothing to compare against, so it is always offered. Recovery puts the work into the editor and does not consume the source: the rule "is repeatable".
+- **The unsaved-work guard has three answers.** "Do not save" and "Cancel" are different things; a `bool` lost the edit on the "Cancel" button. "Save and continue" does not continue when the write fails — otherwise the guard would itself cause the loss it was set up to prevent. This is a deliberate reversal of the earlier verdict "we don't ask": that verdict was valid only while autosave wrote over the file.
+- **`Drop` is the last line; the hook is diagnostics only.** `Drop` catches re-creation of the application in place and unwinding from a panic (`panic = "unwind"` is kept deliberately); the hook writes a report and does not touch the model (invariants 2 and 6). The `dist` profile keeps `debug = 1` with `strip = "debuginfo"`: a report made of bare addresses is theatre; the cost was measured (+0.77 MiB in the tarball).
+- **The journal is for what nobody can be shown.** A window's `on_exit` has no UI; stderr with `Terminal=false` goes nowhere; the journal does not duplicate the notification bell.
+- **Event numbers are a session mark, not "max + 1".** Undoing a birth does not roll back the mark: the number had already lived, and an envelope may have been written under it. The format is not touched — the class lives inside the session.
+- **The model reports kinship.** `apply_batch` returns pairs "child ← parent"; for derived events without an explicit parent there is a note command `NoteBirth` in the same package, so that kinship survives undo together with the edit. A guess from outside after renumbering is impossible.
+- **References to material are a property of the media.** `available_range` describes the file, not the event; the media level is the fallback path for born events, and it does not overwrite the clip's own envelope.
+- **The workspace layout is in `user_store`; in `.otio` it is passthrough.** Byte stability is intact, old builds read the same data, and migration is simple: an empty store yields to the file, without a single line of code.
+- **`finish.sh` and the live scenarios are part of the contract.** The script rebuilds what the owner runs, prints the version, runs `live-check.sh`, and takes the stage verdicts from cargo. There is a live scenario for each point of the complaint, asserting a consequence from the point of a person's action.
 
-## Отвергнуто и почему
+## Rejected and why
 
-- **Единственный экземпляр программы** — ломает живые сценарии (kt-app в
-  Xvfb параллельно) и законное «открыл второй раз посмотреть другой кусок».
-- **Файл замка с pid и `O_EXCL` вместо `flock`** — ядро его не снимает;
-  после первого `terminate()` из каркаса вечная блокировка (класс уже
-  стоил раунда).
-- **Замок на самом файле проекта** — атомарный `rename` подменяет inode,
-  защита исчезала бы после первого Ctrl+S.
-- **Фолт-инжекция ядра для проверки порядка синков** — результат зависит от
-  конфигурации машины, а не от кода.
-- **Отказ записи при неудачном синке каталога** — отказывать в сохранении
-  там, где оно работает (exFAT, шары).
-- **Один мьютекс-сторож на проект и восстановление** — фоновая запись
-  поднимала планку и отменяла явный Ctrl+S.
-- **Два ответа в диалоге несохранённого** — «Отмена» становилась «Не
-  сохранять».
-- **Чистить `Retained` при удалении клипа** (вместо неповторяемых номеров)
-  — удаление откатывается undo, вычищенный конверт — нет.
-- **Перенести `ClipExtra` в модель** — kt-model держит правило «не сырой
-  JSON», а `ClipEvent` клонируется в горячих путях.
-- **Раскладывать маркеры при разрезе** — отменённый разрез вернул бы
-  родителя без маркеров, уехавших к детям; раскладывает писатель.
-- **Версии внутри `metadata.kt`** — конец байт-стабильности круга и подъём
-  версии формата; кольцо именованных версий — отдельная фича
-  (`docs/features/project/history/versions-and-snapshots.md`).
-- **Подделывать таймер автосейва изнутри для живого сценария** — проверялась
-  бы не та программа, которую запускает пользователь; вместо этого
-  `KT_AUTOSAVE_SECS`.
-- **`Clip.enabled` «чинить за компанию»** — не сломан: чужой выключенный
-  клип уже идёт verbatim; «класс проблем» ≠ «ужать всё подряд».
-- **Кнопка «нормализовать до −23» и автосвязывание синхронизированных пар**
-  — решения человека, не программы (соседняя волна того же раунда).
+- **A single running instance of the program** — breaks live scenarios (kt-app under Xvfb in parallel) and the legitimate "opened a second time to look at another piece".
+- **A lock file with a pid and `O_EXCL` instead of `flock`** — the kernel does not release it; after the first `terminate()` from the scaffold it leaves a permanent lock (this class already cost a round).
+- **A lock on the project file itself** — an atomic `rename` swaps the inode, so the protection would vanish after the first Ctrl+S.
+- **Kernel fault injection to check the sync order** — the result depends on the machine's configuration, not on the code.
+- **Refusing a write when the directory sync fails** — refusing to save where saving works (exFAT, shares).
+- **One mutex guard for the project and for recovery** — background writing raised the bar and cancelled an explicit Ctrl+S.
+- **Two answers in the unsaved-work dialog** — "Cancel" became "Do not save".
+- **Clearing `Retained` when a clip is deleted** (instead of non-repeating numbers) — deletion is rolled back by undo, a cleared envelope is not.
+- **Moving `ClipExtra` into the model** — kt-model keeps the rule "not raw JSON", and `ClipEvent` is cloned on hot paths.
+- **Distributing markers at a cut** — a cancelled cut would return the parent without the markers that went to the children; the writer distributes them.
+- **Versions inside `metadata.kt`** — the end of byte stability of the round trip and a format version bump; a ring of named versions is a separate feature (`docs/features/project/history/versions-and-snapshots.md`).
+- **Faking the autosave timer from inside for a live scenario** — the program checked would not be the one the user runs; instead, `KT_AUTOSAVE_SECS`.
+- **"Fixing" `Clip.enabled` along the way** — it is not broken: another's disabled clip already goes through verbatim; a "class of problems" ≠ "squeeze everything indiscriminately".
+- **The "normalize to −23" button and automatic linking of synchronized pairs** — decisions for a person, not for the program (a neighbouring wave of the same round).
 
-## Неочевидные детали
+## Non-obvious details
 
-- Порядок синков и имя tmp живут в `write_atomic_with` / `atomic_tmp_path`
-  (`src/libs/kt-otio/src/io.rs`); трейт `AtomicFs` существует только ради
-  инъекции в t351/t353 (`src/libs/kt-otio/tests/io.rs`), и ожидания
-  подставляют pid, а не хардкодят его. GUI-обёртка `write_project_atomic` в
-  `src/apps/kt-app/src/app.rs` — тонкая, второго писателя в дереве нет.
-- `write_project_guarded` (`src/apps/kt-app/src/app.rs`) берёт мьютекс через
-  `unwrap_or_else(|e| e.into_inner())`: под замком лежит одно число, оно цело
-  после чужой паники, а `unwrap` в `Drop` при раскрутке — `abort`.
-- `KtApp::save` (`src/apps/kt-app/src/app.rs`) удаляет ТОЛЬКО файл из
-  `recovery_written`; прежний безусловный `remove(autosave_path())` убивал
-  несохранённую работу второй копии.
-- Гейт `autosave_due` (`src/apps/kt-app/src/app.rs`): не во время драга и
-  не при игре, но после двух интервалов пишет всё равно — потерять правки
-  хуже, чем разово моргнуть. Запуск только от `dirty_content`; проект «как
-  на диске» без вьюпорта (`set_ui_state(None)`) не считается поводом (t360).
-- `dirty_content` поднимают только обёртки `apply*`/`undo`/`redo`
-  (`src/apps/kt-app/src/app.rs`); прямой `self.model.apply*` мимо них не
-  двигает `model_rev`, и автосейв считает правку сохранённой (t200). Живые
-  пути шлют команду только при реально изменившемся значении.
-- `on_exit` (`src/apps/kt-app/src/app.rs`) сначала дожидается фоновой
-  записи (до 5 с), потом пишет recovery, а не проект; чистый выход зовёт
-  `drop_own_recovery`. В харнессе рубеж `Drop` выключен полем
-  `recovery_on_drop` — полторы сотни приложений тестов иначе сыплют файлами
-  в общий каталог данных; t372 включает его явно.
-- `recovery_target` (`src/apps/kt-app/src/app.rs`) у второй копии
-  (`lock_holder.is_some()`) подмешивает pid и сохраняет расширение `.otio` —
-  иначе кандидат не найдётся сканом при старте.
-- `recovery_candidates_at` (`src/apps/kt-app/src/app.rs`) сравнивает mtime
-  СТРОГО; гранулярность mtime у ФС бывает секундной, поэтому t367 сдвигает
-  проект на 600 с назад и отбор по времени оставляет t365.
-- Замок: `lock_file_for` (`src/apps/kt-app/src/project_lock.rs`) хэширует
-  абсолютный путь (`/w/./film.otio` == `/w/film.otio`), `flock` рекурсивен по
-  дескриптору — вторая копия в тесте берёт НОВЫЙ дескриптор. `Unavailable`
-  (нет каталога данных) — работаем как владелец, но без гарантии.
-- kt-cli `write_project` (`src/apps/kt-cli/src/main.rs`) — предфлайт по
-  замку с pid, отказ без `--force`, и тот же `write_atomic`; у kt-cli нет ни
-  звёздочки, ни диалога, помешать молчаливому затиранию нечему.
-- Журнал (`src/apps/kt-app/src/journal.rs`): ротация одним шагом в
-  `.log.1`, без веера номеров; «чёрный ящик» хранится в глобальном слоте
-  ОТДЕЛЬНО от приложения, отчёт `kt-app-crash.txt` уезжает в `.seen` через
-  `rename` — так сообщение об аварии одно, а последний отчёт всегда на месте.
-  Тесты t374/t375 работают на явных путях и явном дампе: каталог данных и
-  слот один на процесс, а тесты идут параллельно.
-- `FlightRecorder` (`src/libs/kt-engine/src/flight.rs`) читает кольцо через
-  `into_inner` отравленного мьютекса — хук зовётся ровно тогда, когда кто-то
-  уже паниковал, возможно под этим замком (t373).
-- `next_clip_id`/`bump_clip_hw` (`src/apps/kt-app/src/app.rs`) — единственный
-  дом арифметики номеров; t379 (`src/apps/kt-app/src/layout_tests.rs`)
-  сканирует UI-файлы на «`c.id.0` + `max()`» по идиоме t273 и красен от любой
-  своей копии.
-- `inherit_extras` (`src/apps/kt-app/src/app.rs`) не трогает ребёнка, у
-  которого уже есть свой конверт, и получает пары из `Births`
-  (`src/libs/kt-model`); `KtApp::apply` идёт через `apply_batch`, чтобы
-  путь родства был один и одиночный разрез не был исключением.
-- Маркеры в конверте ребёнка — ВСЕ, раскладка по окну материала — в
-  писателе (`src/libs/kt-otio/src/lib.rs`, `save_project`); чужие маркеры
-  неизвестной схемы проходят как есть — их диапазон не прочесть.
-- `Retained.media: HashMap<MediaId, MediaRefs>` (`src/libs/kt-otio`) —
-  запасной путь ссылок для рождённых; t378 стережёт, что он не перетирает
-  `media_references`/`active_media_reference_key` клипа.
-- `user_store::{load_workspace_at, save_workspace_at}`
-  (`src/apps/kt-app/src/user_store.rs`): хранилище будущей версии читается,
-  `is_readonly()` и не перезаписывается; программа держит ПРОЧИТАННОЕ
-  хранилище, и оно само отказывается писать. В `.otio` `ui_passthrough`
-  (`src/apps/kt-app/src/app.rs`) пишет ровно то, что прочли.
-- `#[cfg(test)]` посреди `src/apps/kt-app/src/app.rs` обрезает сканеры
-  каталога (`font_tests::sources()` читает файл до первой такой строки) —
-  тестовые обёртки держать в самом конце файла (ловушка найдена при t125 в
-  этой волне).
-- Дедлайны ожидания фоновой записи в тестах — 60 с, не 5
-  (`WAIT_BG`, `src/apps/kt-app/src/layout_tests.rs`): под полным
-  параллельным прогоном поток автосейва честно ждёт очереди дольше, и тесты
-  краснели от загрузки машины.
-- Живые сценарии `src/scripts/live/recover.py` и `unsaved.py` читают
-  клипы ЖИВОЙ модели и прямоугольники кнопок модальных окон из дампа
-  геометрии (в дереве доступности их нет); `unsaved.py` ставит
-  `KT_AUTOSAVE_SECS=600`, чтобы проверялся сторож, а не фоновая запись;
-  `src/scripts/live-check.sh` даёт прогону свой `XDG_DATA_HOME` — журнал,
-  замки и безымянное восстановление не лезут в домашний каталог.
-  Перед разбором «регрессии» — `pkill -f target/debug/kinetren` (до 2026-10-22 бинарь звался kt-app): зависшие
-  копии держат ALSA.
-- `src/scripts/finish.sh`: вывод стадии идёт в файл, вердикт — код возврата
-  cargo (`if cargo test | tail` был зелёным всегда — статус конвейера отдаёт
-  `tail`); флагов три, каждый называет свою стадию; красный печатает имена
-  упавших и `target/finish-*-fail.log`. Правки в дерево во время прогона —
-  красное чужим именем. `SIGBUS` без единой строки теста на первом
-  `cargo test -p kt-app` после перелинковки — подмена бинаря под
-  отображённым образом (рабочее дерево на `/media`), перезапустить.
-- `KtApp::save` для eframe-storage (`src/apps/kt-app/src/app.rs`) остаётся
-  дешёвым (строки хранилища): синхронная запись проекта оттуда каждые 30 с
-  роняла FPS в ноль.
+- The order of syncs and the tmp name live in `write_atomic_with` / `atomic_tmp_path` (`src/libs/kt-otio/src/io.rs`); the `AtomicFs` trait exists only for injection into t351/t353 (`src/libs/kt-otio/tests/io.rs`), and the expectations substitute the pid rather than hardcode it. The GUI wrapper `write_project_atomic` in `src/apps/kt-app/src/app.rs` is thin; there is no second writer in the tree.
+- `write_project_guarded` (`src/apps/kt-app/src/app.rs`) takes the mutex via `unwrap_or_else(|e| e.into_inner())`: under the lock lies a single number, which stays intact after someone else's panic, while an `unwrap` in `Drop` during unwinding would mean `abort`.
+- `KtApp::save` (`src/apps/kt-app/src/app.rs`) removes ONLY the file from `recovery_written`; the former unconditional `remove(autosave_path())` killed the unsaved work of a second copy.
+- The `autosave_due` gate (`src/apps/kt-app/src/app.rs`): not during a drag and not during playback, but after two intervals it writes anyway — losing edits is worse than a single flicker. It starts only from `dirty_content`; a project "as on disk" without a viewport (`set_ui_state(None)`) does not count as a reason (t360).
+- `dirty_content` is raised only by the `apply*`/`undo`/`redo` wrappers (`src/apps/kt-app/src/app.rs`); a direct `self.model.apply*` bypassing them does not move `model_rev`, and autosave then considers the edit saved (t200). Live paths send the command only when the value has really changed.
+- `on_exit` (`src/apps/kt-app/src/app.rs`) first waits for the background write (up to 5 s), then writes recovery rather than the project; a clean exit calls `drop_own_recovery`. In the harness the `Drop` boundary is disabled by the field `recovery_on_drop` — otherwise a hundred and fifty test applications would scatter files into the shared data directory; t372 enables it explicitly.
+- `recovery_target` (`src/apps/kt-app/src/app.rs`) for a second copy (`lock_holder.is_some()`) mixes in the pid and keeps the `.otio` extension — otherwise the candidate would not be found by the scan at startup.
+- `recovery_candidates_at` (`src/apps/kt-app/src/app.rs`) compares mtimes STRICTLY; filesystem mtime granularity can be one second, so t367 moves the project 600 s back, and the time-based selection leaves t365.
+- The lock: `lock_file_for` (`src/apps/kt-app/src/project_lock.rs`) hashes the absolute path (`/w/./film.otio` == `/w/film.otio`); `flock` is recursive per descriptor — the second copy in the test takes a NEW descriptor. `Unavailable` (no data directory) — we work as the owner, but without a guarantee.
+- kt-cli `write_project` (`src/apps/kt-cli/src/main.rs`) — a preflight by the lock with a pid, refusal without `--force`, and the same `write_atomic`; kt-cli has neither an asterisk nor a dialog, so there is nothing to prevent silent overwriting.
+- The journal (`src/apps/kt-app/src/journal.rs`): rotation in one step into `.log.1`, without a fan of numbers; the "black box" is kept in a global slot SEPARATE from the application, and the report `kt-app-crash.txt` moves to `.seen` via `rename` — so a crash message is one, and the last report is always in place. Tests t374/t375 work on explicit paths and an explicit dump: the data directory and the slot are one per process, while the tests run in parallel.
+- `FlightRecorder` (`src/libs/kt-engine/src/flight.rs`) reads the ring via `into_inner` of a poisoned mutex — the hook is called exactly when someone is already panicking, possibly under this lock (t373).
+- `next_clip_id`/`bump_clip_hw` (`src/apps/kt-app/src/app.rs`) — the single home of number arithmetic; t379 (`src/apps/kt-app/src/layout_tests.rs`) scans the UI files for "`c.id.0` + `max()`" by the idiom of t273 and fails on any copy of its own.
+- `inherit_extras` (`src/apps/kt-app/src/app.rs`) does not touch a child that already has its own envelope, and takes pairs from `Births` (`src/libs/kt-model`); `KtApp::apply` goes through `apply_batch`, so the kinship path is one and a single cut is not an exception.
+- Markers in a child's envelope — ALL of them; the distribution across the material window is done in the writer (`src/libs/kt-otio/src/lib.rs`, `save_project`); foreign markers of an unknown schema pass through as they are — their range cannot be read.
+- `Retained.media: HashMap<MediaId, MediaRefs>` (`src/libs/kt-otio`) — the fallback path of references for born events; t378 guards that it does not overwrite the clip's `media_references`/`active_media_reference_key`.
+- `user_store::{load_workspace_at, save_workspace_at}` (`src/apps/kt-app/src/user_store.rs`): a store of a future version is read, `is_readonly()`, and is not overwritten; the program holds the store it READ, and the store itself refuses to write. In `.otio`, `ui_passthrough` (`src/apps/kt-app/src/app.rs`) writes exactly what was read.
+- `#[cfg(test)]` in the middle of `src/apps/kt-app/src/app.rs` cuts off the directory scanners (`font_tests::sources()` reads the file up to the first such line) — keep the test wrappers at the very end of the file (a trap found at t125 in this wave).
+- The wait deadlines for background writes in tests are 60 s, not 5 (`WAIT_BG`, `src/apps/kt-app/src/layout_tests.rs`): under a full parallel run the autosave thread honestly waits in the queue longer, and tests were failing from machine load.
+- The live scenarios `src/scripts/live/recover.py` and `unsaved.py` read the clips of the LIVE model and the button rectangles of modal dialogs from the geometry dump (they are absent from the accessibility tree); `unsaved.py` sets `KT_AUTOSAVE_SECS=600` so that the guard is checked, not the background write; `src/scripts/live-check.sh` gives the run its own `XDG_DATA_HOME` — the journal, locks and unnamed recovery do not reach the home directory. Before analysing a "regression": `pkill -f target/debug/kinetren` (until 2026-10-22 the binary was called kt-app), because hung copies hold ALSA.
+- `src/scripts/finish.sh`: the stage output goes to a file, and the verdict is the cargo return code (`if cargo test | tail` was always green — the pipeline status is given by `tail`); there are three flags, each naming its own stage; a red run prints the names of the failed tests and `target/finish-*-fail.log`. Edits to the tree during a run show as red under someone else's name. `SIGBUS` without a single line of test on the first `cargo test -p kt-app` after relinking means the binary was swapped under a mapped image (the working tree is on `/media`); restart it.
+- `KtApp::save` for eframe storage (`src/apps/kt-app/src/app.rs`) stays cheap (storage lines): a synchronous project write from there every 30 s dropped the FPS to zero.
+## R.68: the cost of verification is named, parallelism is allowed with a mechanism
 
-## Р.68: цена проверки названа, параллель разрешена с механизмом
+- **Numbers first.** The owner's claim ("the tests in finish.sh… take a very long time") was examined by measurement, not guesswork: a verification cycle takes 1368 s (22.8 min) on 32 cores, of which live scenarios take 982 s (72 %), the workshop run 357 s (26 %), the build 28 s, and SIMD 1 s. Until then no stage named its own cost, so there was nothing to say about WHAT to speed up.
+- **Only the wrapper prints the stage header** (`stage`/`stage_log` in `src/scripts/finish.sh`); it also measures and writes `target/finish-times.txt`. Otherwise a stage could be quietly taken out of the budget by printing its header past the measurement — the same class as "red under someone else's name" (R.55) and "the verdict at `tail`" (R.58). The guard is `finish-budget.py --check-script`, test t800.
+- **The budget prints, it does not cut.** 300 s is the owner's bar; an overrun is marked together with the most expensive stage, but the run is NOT made red by it: the rule "tests from the specs are not weakened" outweighs the budget, otherwise the bar would start dropping checks.
+- **The workshop run is a script stage**; a separate stage for the kt-gpu crate was removed as a duplicate of this run (ten seconds for what the workshop has already run). The SIMD stages remain: they have their own environment (`KT_REQUIRE_SIMD=1`, `KT_SIMD=0`) and cost a couple of seconds for all four.
+- **Parallelism was allowed by the owner together with the mechanism** that closes the reason for the ban in R.59 §468: a worker has its own screen, its own storage and its OWN bench directory, and a red scenario is rerun ALONE — the verdict counts only the second failure, and the rerun is printed (a silent rerun would turn flakiness into invisibility). Tests t801, t802.
+- **A shared bench directory cost a whole run.** The first version of the worker put the command channel and the geometry dump into a shared `target/live-out/bench`, and the workers opened each other's projects: 42 of 50 scenarios turned red, and it looked like "parallelism breaks everything". Isolation must cover EVERY shared file, not only the screen and the storage.
+- **The load of one kt-app in software rendering is about nine** (measured in R.68, `uptime` with one worker), so the number of workers is computed from the cores with this divisor and a ceiling; `KT_LIVE_WORKERS=1` returns the former single run.
+- **The 300 s bar is not reached, and this is a NUMBER, not an excuse.** The total of the cycle at the end of R.68 is **643 s** (1368 s at the start of the round): live scenarios 424 s (66 %), workshop run 215 s (33 %), build and SIMD 2 s each. Two floors are visible right in the table. The first is the workshop run: 215 s with nextest on 32 cores, and stage 5 does not reduce it, but slightly increases it (the checks that moved over live in it). The second is the fixed cost of a live scenario: starting the project in the bench, waiting for the view, screenshots — about 10 s even for a scenario without a single gesture (`ruler`: 11.7 s with zero gestures), i.e. 45 scenarios cost ≈ 450 s sequentially and ≈ 115 s on four workers before the first click. 215 + 115 = 330 s is the arithmetic floor under the CURRENT mechanics. The revision of the set (stage 5) does not move it by construction: it changes WHAT is checked, not how much one gesture costs.
+- **Stage 5 is about the quality of the set, not about minutes.** Moving six scenarios over removed 175 s of sequential live time, and closing the gaps added ≈ 140 s of new live checks (23 places a person never reached with the mouse even once): 1677 → 1582 s sequentially, 423 → 424 s by the clock. This is an honest trade-off, and it is recorded here so that the next round does not look for speed-up where there is none: what gets cheaper is not the set but the gesture mechanics (the fixed pauses of `click`/`key`/`type_text` and the pair `xwd`+`convert` on every pixel read — see "Deferred").
+- **mold — at the owner's direct request; the gain was measured on site**: an edit of the kt-app source plus build and linking — 40 and 36 s against 50 and 46 s with GNU ld (about 21 % on the most frequent action). The shipping configuration does not see it: `scripts/release-build.sh` clears `RUSTFLAGS` in the Ubuntu 22.04 container, where gcc 11 and mold are not installed — the development accelerator has no right to become a condition of building what is shipped to people.
 
-- **Сначала числа.** Претензия владельца («тесты в finish.sh… очень долго
-  выполняются») разбиралась замером, а не догадкой: круг проверки — 1368 с
-  (22.8 мин) на 32 ядрах, из них живые сценарии 982 с (72 %), прогон
-  мастерской 357 с (26 %), сборка 28 с, SIMD 1 с. До этого ни одна стадия не
-  называла своей цены, и говорить о том, ЧТО ускорять, было нечем.
-- **Заголовок стадии печатает только обёртка** (`stage`/`stage_log` в
-  `src/scripts/finish.sh`), она же замеряет и пишет `target/finish-times.txt`.
-  Иначе стадию можно тихо вынести из бюджета, напечатав заголовок мимо
-  замера, — тот же класс, что «красное чужим именем» (Р.55) и «вердикт у
-  `tail`» (Р.58). Сторож — `finish-budget.py --check-script`, тест t800.
-- **Бюджет печатает, а не режет.** 300 с — планка владельца; перерасход
-  помечается вместе с самой дорогой стадией, но прогон красным НЕ делает:
-  правило «тесты из спек не ослабляются» сильнее бюджета, иначе планка
-  начала бы выкидывать проверки.
-- **Прогон мастерской — стадия скрипта**, отдельная стадия для крейта kt-gpu
-  снята как дубль этого прогона (десять секунд на то, что мастерская уже
-  прогнала). SIMD-стадии остались: у них своё окружение
-  (`KT_REQUIRE_SIMD=1`, `KT_SIMD=0`) и они стоят пару секунд на все четыре.
-- **Параллель разрешена владельцем вместе с механизмом**, который закрывает
-  причину запрета Р.59 §468: у работника свой экран, своё хранилище и СВОЙ
-  каталог стенда, а красный сценарий перегоняется ОДИН в одиночку — вердикт
-  только у второго падения, и перегон печатается (молчаливый перегон
-  превратил бы флак в невидимку). Тесты t801, t802.
-- **Общий каталог стенда стоил целого прогона.** Первая версия работника
-  клала канал команд и дамп геометрии в общий `target/live-out/bench`, и
-  работники открывали проекты друг другу: 42 сценария из 50 покраснели, а
-  выглядело это как «параллель всё ломает». Изоляция обязана быть на КАЖДЫЙ
-  общий файл, а не только на экран и хранилище.
-- **Нагрузка одного kt-app в софт-рендере — около девяти** (замер Р.68,
-  `uptime` при одном работнике), поэтому число работников считается от ядер с
-  этим делителем и потолком; `KT_LIVE_WORKERS=1` возвращает прежний
-  одиночный прогон.
-- **Планка 300 с не взята, и это ЧИСЛО, а не оправдание.** Итог круга на
-  конец Р.68 — **643 с** (1368 с в начале раунда): живые сценарии 424 с
-  (66 %), прогон мастерской 215 с (33 %), сборка и SIMD по 2 с. Два пола
-  видно прямо в таблице. Первый — прогон мастерской: 215 с nextest'ом на
-  32 ядрах, и стадия 5 его не уменьшает, а слегка увеличивает (переехавшие
-  проверки живут в нём). Второй — постоянные расходы живого сценария:
-  подъём проекта в стенде, ожидание вида, снимки экрана — около 10 с даже у
-  сценария без единого жеста (`ruler`: 11.7 с при нуле жестов), то есть
-  45 сценариев стоят ≈ 450 с последовательно и ≈ 115 с на четырёх
-  работниках ещё до первого клика. 215 + 115 = 330 с — арифметический пол
-  при НЫНЕШНЕЙ механике. Ревизия набора (стадия 5) его не двигает по
-  построению: она меняет, ЧТО проверяется, а не сколько стоит один жест.
-- **Стадия 5 — про качество набора, а не про минуты.** Переезд шести
-  сценариев снял 175 с последовательного живого времени, закрытие дыр
-  добавило ≈ 140 с новой живой проверки (23 места, до которых человек не
-  доходил мышью ни разу): 1677 → 1582 с последовательно, 423 → 424 с по
-  часам. Это честный размен, и записан он здесь, чтобы следующий раунд не
-  искал ускорения там, где его нет: дешевеет не набор, а механика жеста
-  (фиксированные паузы `click`/`key`/`type_text` и пара
-  `xwd`+`convert` на каждое чтение пикселя — см. «Отложено»).
-- **mold — по прямой просьбе владельца, выигрыш измерен на месте**: правка
-  исходника kt-app плюс сборка и линковка — 40 и 36 с против 50 и 46 с у
-  GNU ld (около 21 % на самом частом действии). Поставка конфиг не видит:
-  `scripts/release-build.sh` гасит `RUSTFLAGS` у контейнера Ubuntu 22.04,
-  где gcc 11 и mold не установлен, — ускоритель разработки не имеет права
-  стать условием сборки того, что уезжает людям.
+## Deferred
 
-## Отложено
+- **The gesture mechanics in the live run is the next and largest lever (R.68).** Waiting for a frame is built (`wait_frame`, `wait_seen`, `settle`) and works for the probes, but the gestures THEMSELVES still sleep for fixed durations: `click` — 0.2 s for raising the window plus 0.35 s, `key` — 0.6 s, `type_text` — 0.65 s per character, `drag` — about 2.4 s; `focus()` is called on EVERY gesture, although `raise_once` for "only when the window changes" already exists. The guard `live-sleeps.py` skips them: each pause has a reason stated in words. Next to it is pixel reading: `pixel()` does `xwd` plus two `convert` calls on every access, and `pixel_settled` repeats this until the picture changes. By the order of magnitude for the current set this is hundreds of seconds of sequential time; it must be touched BY MEASUREMENT, not by eye.
+- **A ring of copies with a limit, named versions and a history panel** — F-PRJ-002 (`docs/features/project/history/versions-and-snapshots.md`); today there are two states on disk (the project and recovery), and no ring.
+- **Honest degradation of directory sync on Windows** — now the `Unsupported` branch covers non-unix systems by the same path, with no separate check.
+- **An estimate of export time in the audio phase by a sliding window** — the subject of the `export` capability; noted in the note on cancelling long operations.
 
-- **Механика жеста в живом прогоне — следующий и самый большой рычаг
-  (Р.68).** Ожидание по кадру построено (`wait_frame`, `wait_seen`,
-  `settle`) и работает у щупов, но САМИ жесты по-прежнему спят
-  фиксированно: `click` — 0.2 с на подъём окна плюс 0.35 с, `key` — 0.6 с,
-  `type_text` — 0.65 с на символ, `drag` — около 2.4 с; `focus()` зовётся
-  на КАЖДЫЙ жест, хотя `raise_once` для «только при смене окна» уже есть.
-  Сторож `live-sleeps.py` их пропускает: у каждой паузы есть причина
-  словами. Рядом — чтение пикселя: `pixel()` делает `xwd` плюс два
-  `convert` на каждое обращение, а `pixel_settled` повторяет это до смены
-  картинки. Порядок величины по нынешнему набору — сотни секунд
-  последовательного времени; трогать это надо ЗАМЕРОМ, а не на глаз.
-- **Кольцо копий с пределом, именованные версии и панель истории** —
-  F-PRJ-002 (`docs/features/project/history/versions-and-snapshots.md`);
-  сегодня на диске два состояния (проект и recovery), кольца нет.
-- **Честная деградация синка каталога на Windows** — сейчас ветка
-  `Unsupported` покрывает не-unix тем же путём, отдельной проверки нет.
-- **Оценка времени экспорта на аудио-фазе по скользящему окну** — предмет
-  capability `export`; отмечено в заметке об отмене долгих операций.
+## R.70: recovery writes its own format
 
-## Р.70: восстановление пишет свой формат
-
-Автосейв писал 115 МБ каждые полминуты не потому, что был плохо устроен, а потому, что
-проект жил в обменном формате и тело ленты повторялось в каждом экземпляре. Файл
-восстановления теперь ТОГО ЖЕ формата, что проект (`<полное имя>.recovery.kt`, безымянный —
-`autosave-project.kt` в каталоге данных): на сцене замера он на порядки меньше файла обмена
-и пишется за миллисекунды (t815). Суффикс по-прежнему дописывается к ПОЛНОМУ имени (урок
-t150: `film.kt` и `film.mp4.kt` не склеиваются). Механика не тронута: атомарная замена,
-два сторожа ревизии, «своё восстановление уносит только своё», `Drop`-рубеж, замок —
-живые `recover.py` и `unsaved.py` дают прежние вердикты на `.kt`. Единственный дом
-атомарной записи остаётся в kt-otio; kt-model отвечает за ТЕКСТ.
+Autosave wrote 115 MB every half minute not because it was badly built, but because the project lived in the exchange format and the body of the reel was repeated in every instance. The recovery file is now of THE SAME format as the project (`<full name>.recovery.kt`; unnamed — `autosave-project.kt` in the data directory): on the measurement scene it is orders of magnitude smaller than the exchange file and is written in milliseconds (t815). The suffix is still appended to the FULL name (the lesson of t150: `film.kt` and `film.mp4.kt` do not collide). The mechanics are untouched: atomic replacement, two revision guards, "one's own recovery removes only its own", the `Drop` boundary, and the lock — the live `recover.py` and `unsaved.py` give the same verdicts on `.kt`. The single home of atomic writing stays in kt-otio; kt-model is responsible for the TEXT.
 
 ## The data directory moved from `kinotrain` to `kinetren` (2026-10-21)
 
-`journal::data_dir()` is the single resolver, and it moves the former directory once:
-rename, or copy through a staging directory and leave the former one in place. When both
-directories exist the new one wins and nothing is merged, because a merge could resurrect
-deleted presets or stale locks (t830). The move runs before eframe starts, because
-eframe's storage (app id `kinetren`) lives in the same directory. A stale binary still
-named `kinotrain` re-created the old folder during the live check — that is the "rebuild
-what you run" trap. `kt-cli` also looks at `kinotrain/locks` for an older app that has
-not migrated yet (t831).
+`journal::data_dir()` is the single resolver, and it moves the former directory once: a rename, or a copy through a staging directory that leaves the former one in place. When both directories exist, the new one wins and nothing is merged, because a merge could resurrect deleted presets or stale locks (t830). The move runs before eframe starts, because eframe's storage (app id `kinetren`) lives in the same directory. A stale binary still named `kinotrain` re-created the old folder during the live check — that is the "rebuild what you run" trap. `kt-cli` also looks at `kinotrain/locks` for an older app that has not migrated yet (t831).

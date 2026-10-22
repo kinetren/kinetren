@@ -1,671 +1,431 @@
-# Формат проекта
+# Project format
 
 ## Purpose
 
-Файл ПРОЕКТА — свой формат `.kt` (Р.70): сериализация модели построчным детерминированным
-JSON, где каждая сущность записана один раз, признак и версия на корне, отказ на незнакомой
-версии, запись атомарная; файл индексируем в git.
-Файл ОБМЕНА — OpenTimelineIO (.otio, JSON) за двумя названными дверями (импорт и экспорт):
-стандартные схемы для всего, что формат выражает, passthrough чужого без потерь, наши данные
-в `metadata["kt"]` с версией по содержимому, время только в тиках, идемпотентная запись.
-Всё в этой capability, что говорит про OTIO, относится к ДВЕРЯМ, а не к файлу проекта.
+The PROJECT file is its own format `.kt` (R.70): a serialization of the model as line-by-line deterministic JSON, where each entity is written once, the marker and the version are at the root, refusal on an unknown version, atomic write; the file is indexable in git.
+The EXCHANGE file is OpenTimelineIO (.otio, JSON), behind two named doors (import and export): standard schemas for everything the format can express, lossless passthrough of foreign data, our data in `metadata["kt"]` with a version by content, time only in ticks, idempotent writing.
+Everything in this capability that speaks about OTIO refers to the DOORS, not to the project file.
 
 ## Requirements
 
-### Requirement: Экспорт в OTIO — явная дверь, самодостаточный файл
+### Requirement: Export to OTIO — an explicit door, a self-contained file
+Export to OTIO SHALL be a SEPARATE named action (`File → Export → OpenTimelineIO…`), not a save. The exported file SHALL be SELF-SUFFICIENT: the reader does not know our conventions, so the body of a reel is inlined into each of its instances, and our envelope remains advisory. A regular "Open" MUST NOT accept an exchange file: it SHALL be rejected with the name of the import item in the error text (rule 19).
+Why: self-sufficiency is needed by exchange and harmful to the project — these are opposite requirements for two different files. No major editor lives in an exchange format: Resolve keeps the project as a database record and makes `.drp` only on the person's command; FCP hides a SQLite database inside the bundle (reconnaissance F-PRJ-005).
 
-Экспорт в OTIO SHALL быть ОТДЕЛЬНЫМ названным действием (`File → Export → OpenTimelineIO…`),
-а не сохранением. Экспортированный файл SHALL быть САМОДОСТАТОЧНЫМ: читатель не знает
-наших соглашений, поэтому тело ленты инлайнится в каждый её экземпляр, а наш конверт
-остаётся совещательным. Обычное «Открыть» MUST NOT принимать файл обмена: он SHALL
-отвергаться с именем пункта импорта в тексте ошибки (правило 19).
-Почему: самодостаточность нужна обмену и вредна проекту — это противоположные требования
-к двум разным файлам. Ни один крупный редактор не живёт в обменном формате: Resolve
-держит проект записью в базе и делает `.drp` только по команде человека, FCP прячет
-внутри бандла базы SQLite (разведка F-PRJ-005).
-
-#### Scenario: Экспорт самодостаточен, открытие его не принимает
-- **WHEN** проект с лентой в трёх экземплярах экспортируется в OTIO; затем полученный файл подсовывается обычному «Открыть»
-- **THEN** в экспорте три `Stack` с НЕПУСТЫМИ телами и прежняя версия конверта; «Открыть» отвергает его с именем пункта импорта
+#### Scenario: The export is self-sufficient, opening does not accept it
+- **WHEN** a project with a reel in three instances is exported to OTIO; then the resulting file is offered to an ordinary "Open"
+- **THEN** the export has three `Stack`s with NON-EMPTY bodies and the previous envelope version; "Open" rejects it with the name of the import item
 - **TEST** t814 (`src/libs/kt-otio/tests/convert.rs`)
 
-### Requirement: Файл ПРОЕКТА — свой формат: каждая сущность записана один раз
+### Requirement: Project file — its own format: each entity written once
+The project SHALL be read and written in ITS OWN format (`.kt`), not in the exchange format. Each entity of the document SHALL be written ONCE: a reel is stored with its body at an address, and its instance on the edit is a reference to that address. The size of the file SHALL depend on the size of the MODEL, not on the number of instances: adding a second instance of the same reel MUST NOT increase the file by the size of its body.
+The file SHALL carry a FORMAT VERSION and a marker by which it is recognized by its content, not by its extension. An unknown (newer) version SHALL be rejected with an explicit error carrying the version number and the name of the item by which the file can be opened — and MUST NOT be read partially: "it opened, and part of the edit is missing" is worse than an honest refusal. Breaking changes of the format are ALLOWED (the owner's decision): a compatibility cascade with a foreign schema does not apply here.
+Foreign passthrough remnants of an imported exchange file SHALL travel in the project in a separate field and return on export: foreign work must not be silently lost.
+The file SHALL be TEXTUAL, LINE-BY-LINE and DETERMINISTIC — "indexable in git" (the owner's requirement: "I am against binary junk"). This is measurable: editing one event SHALL change units of lines, not the file; one and the same model SHALL give the same bytes; for foreign passthrough, unordered maps (`HashMap` fields) SHALL be written by sorted keys so that their traversal does not become a false diff, while the order of the FOREIGN keys of the document SHALL be preserved — it is part of the promise to the exchange file. A binary format, compression and single-line (compact) JSON MUST NOT be applied to the project file.
+The write SHALL be atomic and idempotent under the same conditions as the exchange file had (`save(load(save(p))) == save(p)`, byte for byte).
+Why: in the JSON of the exchange format there is NO object identity — there is nothing to say "this is the same reel as above"; only nested content is expressed, and the body of a reel is written anew into each of its instances. For the owner, three reels gave 15 220 clips and 115 MB per file that the autosave writes regularly. Measurement: `.otio` against the serialization of the model — 17× on a flat project, 501× and 929× on nested scenes. The owner's decision: "we are leaving the otio format, we keep otio only for export and make breaking changes so that our format becomes a hundred times better".
 
-Проект SHALL читаться и писаться СВОИМ форматом (`.kt`), а не форматом обмена. Каждая
-сущность документа SHALL быть записана ОДИН РАЗ: лента хранится своим телом по адресу, а
-её экземпляр на монтаже — ссылкой на этот адрес. Размер файла SHALL зависеть от размера
-МОДЕЛИ, а не от числа экземпляров: добавление второго экземпляра той же ленты MUST NOT
-увеличивать файл на размер её тела.
-Файл SHALL нести ВЕРСИЮ формата и признак, по которому он опознаётся содержимым, а не
-расширением. Незнакомая (более новая) версия SHALL отвергаться явной ошибкой с номером
-версии и именем пункта, которым файл можно открыть, — и MUST NOT читаться частично:
-«открылось, и части монтажа нет» хуже честного отказа. Ломающие изменения формата
-РАЗРЕШЕНЫ (решение владельца): каскад совместимости с чужой схемой здесь не действует.
-Чужие passthrough-остатки импортированного файла обмена SHALL ехать в проекте отдельным
-полем и возвращаться при экспорте: потерять чужую работу молча нельзя.
-Файл SHALL быть ТЕКСТОВЫМ, ПОСТРОЧНЫМ и ДЕТЕРМИНИРОВАННЫМ — «индексируемым в git»
-(требование владельца: «я против бинарщины»). Это измеримо: правка одного события SHALL
-менять единицы строк, а не файл; одна и та же модель SHALL давать те же байты; у чужого
-passthrough неупорядоченные карты (`HashMap`-поля) SHALL писаться по отсортированным ключам,
-чтобы их обход не становился ложным диффом, а порядок ЧУЖИХ ключей документа SHALL
-сохраняться — он часть обещания файлу обмена. Двоичный формат, сжатие и однострочный (компактный) JSON MUST
-NOT применяться к файлу проекта.
-Запись SHALL быть атомарной и идемпотентной на тех же условиях, что были у файла обмена
-(`save(load(save(p))) == save(p)` байт-в-байт).
-Почему: в JSON-формате обмена НЕТ объектной идентичности — сказать «это та же лента, что
-выше» нечем, выражается только вложенное содержимое, и тело ленты записывается заново в
-каждый её экземпляр. У владельца три ленты дали 15 220 клипов и 115 МБ на файл, который
-автосейв пишет регулярно. Замер: `.otio` против сериализации модели — 17× на плоском
-проекте, 501× и 929× на вложенных сценах. Решение владельца: «мы уходим от otio-формата,
-оставляем otio только на экспорт и делаем breaking changes чтобы наш формат стал в сто раз
-лучше».
+#### Scenario: A second instance of a reel does not double the file
+- **WHEN** a project with a reel is saved; then the same reel is placed as a second and third instance and the project is saved again
+- **THEN** the growth of the file per each new instance equals the size of a REFERENCE, not of the reel's body; for a nested scene (a reel in a reel, several instances each) the file remains orders of magnitude smaller than the same project in the exchange format
+- **TEST** t810 (`src/libs/kt-model/tests/project_file.rs` — growth per instance; `src/libs/kt-otio/tests/project_file.rs` — against the exchange file)
 
-#### Scenario: Второй экземпляр ленты не удваивает файл
-- **WHEN** проект с лентой сохраняется; затем та же лента ставится вторым и третьим экземпляром и проект сохраняется снова
-- **THEN** прирост файла на каждый новый экземпляр равен размеру ССЫЛКИ, а не тела ленты; у вложенной сцены (лента в ленте, по несколько экземпляров) файл остаётся на порядки меньше того же проекта в формате обмена
-- **TEST** t810 (`src/libs/kt-model/tests/project_file.rs` — прирост на экземпляр; `src/libs/kt-otio/tests/project_file.rs` — против файла обмена)
-
-#### Scenario: Круг проекта поле-в-поле и байт-в-байт
-- **WHEN** проект с лентами, морферами, камерами, переходами, публичными параметрами и чужими passthrough-остатками пишется, читается и пишется снова
-- **THEN** прочитанная модель равна исходной поле-в-поле, второй круг байт-в-байт, passthrough цел
+#### Scenario: The project's round trip field by field and byte by byte
+- **WHEN** a project with reels, morphers, cameras, transitions, public parameters and foreign passthrough remnants is written, read and written again
+- **THEN** the read model equals the original field by field, the second round is byte-for-byte, the passthrough is intact
 - **TEST** t811 (`src/libs/kt-model/tests/project_file.rs`)
 
-#### Scenario: Версия своего формата — отказ, а не частичное чтение
-- **WHEN** открывается файл своего формата с версией БОЛЬШЕ нынешней; отдельно — файл с версией меньше; отдельно — файл обмена `.otio`
-- **THEN** первый отвергается с номером версии в тексте ошибки; второй читается миграцией либо отвергается с именем пункта импорта; третий отвергается с именем пункта импорта, а не читается как проект
+#### Scenario: The version of its own format — refusal, not a partial read
+- **WHEN** a file of its own format with a version GREATER than the current one is opened; separately — a file with a lower version; separately — an exchange file `.otio`
+- **THEN** the first is rejected with the version number in the error text; the second is read by migration or rejected with the name of the import item; the third is rejected with the name of the import item, rather than being read as a project
 - **TEST** t812 (`src/libs/kt-model/tests/project_file.rs`)
 
-#### Scenario: Файл индексируем в git
-- **WHEN** проект из полусотни событий сохраняется; затем одно событие сдвигается и проект сохраняется снова; отдельно — та же модель сохраняется дважды подряд; отдельно — проект с чужим passthrough сохраняется дважды
-- **THEN** файл многострочный (строк не меньше, чем событий), построчная разница между двумя сохранениями — единицы строк; два сохранения одной модели байт-в-байт равны, с passthrough — тоже
+#### Scenario: The file is indexable in git
+- **WHEN** a project of about fifty events is saved; then one event is shifted and the project is saved again; separately — the same model is saved twice in a row; separately — a project with foreign passthrough is saved twice
+- **THEN** the file is multi-line (no fewer lines than events), the line-by-line difference between two saves is in units of lines; two saves of one model are byte-for-byte equal, with passthrough too
 - **TEST** t822 (`src/libs/kt-model/tests/project_file.rs`)
 
-#### Scenario: Запись честна к отключению питания
-- **WHEN** запись проекта обрывается между временным файлом и переименованием
-- **THEN** на диске остаётся либо прежний проект целиком, либо новый целиком; исход записи — тип, и отказ не выглядит успехом
-- **TEST** t813 (`src/libs/kt-otio/tests/project_file.rs` — там живёт атомарный писатель)
+#### Scenario: The write is honest about power loss
+- **WHEN** writing a project is interrupted between the temporary file and the rename
+- **THEN** the disk keeps either the previous project entirely or the new one entirely; the outcome of the write is a type, and a refusal does not look like success
+- **TEST** t813 (`src/libs/kt-otio/tests/project_file.rs` — the atomic writer lives there)
 
-### Requirement: Файл проекта — OTIO `Timeline.1`, формат определяется по содержимому
+### Requirement: Project file — OTIO `Timeline.1`, format detected by content
+**Since R.70 this requirement describes the EXCHANGE file, not the project file** (the project — a separate requirement "The PROJECT file is its own format"). The heading is left unchanged deliberately: it is an address by which the requirement is referenced, and renaming would cost the loss of those references.
 
-**С Р.70 это требование описывает ФАЙЛ ОБМЕНА, а не файл проекта** (проект — отдельное
-требование «Файл ПРОЕКТА — свой формат»). Заголовок оставлен прежним намеренно: он адрес,
-по которому на требование ссылаются, и переименование стоило бы потери этих ссылок.
+The EXCHANGE file SHALL be read and written as one OTIO `Timeline.1` with the `Stack.1` of tracks. The kind of file SHALL be determined by content (the marker of its own format, `OTIO_SCHEMA`, `format_version`), not by the extension. A root that is not a `Timeline` (for example `SerializableCollection`) SHALL be rejected with an explicit error. The legacy `.ktproj` and the exchange file `.otio` MUST NOT be opened as a project — only by a separate import item, which converts and opens the result in ITS OWN format, without touching the source.
+All other requirements of this capability that describe OTIO (idempotence, passthrough, schema versions, time in ticks, media paths, model mapping, the `kt` envelope version, migrations, transitions, nested reels, generators, the legacy `.ktproj`, conformance with the reference library) SHALL refer to the IMPORT AND EXPORT DOORS, not to the project file.
+Why: the owner's decision — "as a PROJECT, .ktproj is not opened anymore, no crutches are needed"; the extension cannot be trusted, because recovery and tmp files carry foreign suffixes.
+R.70: the same argument is extended to `.otio` — the exchange format has ceased to be the project's format, and the door to it is now called by its own name.
 
-Файл ОБМЕНА SHALL читаться и писаться как один OTIO `Timeline.1` со `Stack.1` дорожек.
-Вид файла SHALL определяться по содержимому (признак своего формата, `OTIO_SCHEMA`,
-`format_version`), а не по расширению. Корень, не являющийся `Timeline` (например
-`SerializableCollection`), SHALL отвергаться явной ошибкой. Старый `.ktproj` и файл обмена
-`.otio` MUST NOT открываться как проект — только отдельный пункт импорта, который
-конвертирует и открывает результат СВОИМ форматом, не трогая исходник.
-Все прочие требования этой capability, описывающие OTIO (идемпотентность, passthrough,
-версии схем, время в тиках, пути медиа, маппинг модели, версия конверта `kt`, миграции,
-переходы, вложенные ленты, генераторы, легаси `.ktproj`, конформанс с эталонной
-библиотекой), SHALL относиться к ДВЕРЯМ ИМПОРТА И ЭКСПОРТА, а не к файлу проекта.
-Почему: решение владельца — «как ПРОЕКТ .ktproj не открывается больше, костылей тянуть не
-надо»; расширению верить нельзя, потому что recovery- и tmp-файлы носят чужие суффиксы.
-Р.70: тот же довод распространён на `.otio` — обменный формат перестал быть форматом
-проекта, и дверь к нему теперь называется своим именем.
-
-#### Scenario: Детект по содержимому и отказ на чужом корне
-- **WHEN** на вход приходит JSON своего формата, JSON с `OTIO_SCHEMA`, JSON с `format_version`, либо `SerializableCollection.1`
-- **THEN** первый распознаётся как проект, второй — как файл обмена, третий — как легаси-проект (и загрузка обоих как проекта даёт ошибку с именем пункта импорта), четвёртый отвергается ошибкой «неподдерживаемый корень»
+#### Scenario: Detection by content and refusal on a foreign root
+- **WHEN** the input is JSON of its own format, JSON with `OTIO_SCHEMA`, JSON with `format_version`, or `SerializableCollection.1`
+- **THEN** the first is recognized as a project, the second — as an exchange file, the third — as a legacy project (and loading both as a project gives an error with the name of the import item), the fourth is rejected with the error "unsupported root"
 - **TEST** t144, t146 (`src/libs/kt-otio/tests/format.rs`)
 
-### Requirement: Идемпотентность записи и канонический порядок ключей
+### Requirement: Write idempotence and a canonical key order
+Writing SHALL be idempotent: `write(parse(write(x))) == write(x)` byte for byte, and at the project level `save(load(save(p))) == save(p)`. Byte-passthrough of a FOREIGN file is not promised: the first save normalizes the formatting (4 spaces, `OTIO_SCHEMA` first, known fields in declaration order, passthrough — in document order), and invariance is guaranteed for the content. All committed samples of the upstream SHALL be read and re-saved idempotently.
+Why: without byte stability of the round trip, every save would "stir" the file, and a data substitution could not be told apart from reformatting; the key order requires `serde_json/preserve_order`, enabled globally for the workspace.
 
-Запись SHALL быть идемпотентной: `write(parse(write(x))) == write(x)` байт-в-байт, и на
-уровне проекта `save(load(save(p))) == save(p)`. Байт-passthrough ЧУЖОГО файла не обещается:
-первое сохранение нормализует форматирование (4 пробела, `OTIO_SCHEMA` первым, известные
-поля в порядке объявления, passthrough — в порядке документа), неизменность гарантируется
-содержимому. Все закоммиченные сэмплы апстрима SHALL читаться и пересохраняться идемпотентно.
-Почему: без байт-стабильности круга каждое сохранение «шевелило» бы файл, и подмену данных
-нельзя было бы отличить от переформатирования; порядок ключей требует `serde_json/preserve_order`,
-включённого глобально на workspace.
-
-#### Scenario: Свой документ и чужой после первой нормализации
-- **WHEN** богатый документ (обе дорожки, gap, переход, метка-диапазон, реверс, конверт kt) записывается, читается и пишется снова; чужой минифицированный файл проходит два круга
-- **THEN** второй вывод байт-в-байт равен первому; тики записаны как `value` целое, `rate: 90000.0`
+#### Scenario: Our own document and a foreign one after the first normalization
+- **WHEN** a rich document (both tracks, gap, transition, range marker, reverse, the kt envelope) is written, read and written again; a foreign minified file goes through two rounds
+- **THEN** the second output is byte-for-byte equal to the first; ticks are written as the whole number `value`, `rate: 90000.0`
 - **TEST** t144 (`src/libs/kt-otio/tests/format.rs`)
 
-#### Scenario: Круг на уровне проекта стабилен
-- **WHEN** проект с FX, bypass, реверсом, громкостью, link-группой, регионом, loop и UI сохраняется, читается и сохраняется снова
-- **THEN** модель равна поле-в-поле, второй текст равен первому; клипы/медиа/foreign после загрузки упорядочены по id, чтобы сравнение было честным
+#### Scenario: The round trip at the project level is stable
+- **WHEN** a project with FX, bypass, reverse, volume, a link group, a region, loop and UI is saved, read and saved again
+- **THEN** the model equals the original field by field, the second text equals the first; clips/media/foreign items after loading are ordered by id, so that the comparison is honest
 - **TEST** t152 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Сэмплы апстрима читаются и пересохраняются идемпотентно
-- **WHEN** каждый `.otio` из `src/fixtures/otio-samples` читается, сохраняется, читается и сохраняется снова
-- **THEN** ни один не падает, второй вывод равен первому, сэмплов не меньше девяти
+#### Scenario: Upstream samples are read and re-saved idempotently
+- **WHEN** each `.otio` from `src/fixtures/otio-samples` is read, saved, read and saved again
+- **THEN** none fails, the second output equals the first, there are no fewer than nine samples
 - **TEST** t154 (`src/libs/kt-otio/tests/convert.rs`)
 
-### Requirement: Passthrough — «не понимать наполовину»
+### Requirement: Passthrough — "do not understand halfway"
+Unknown fields of known schemas SHALL return to their original places; objects of unknown schemas and leaves newer than the supported version SHALL be stored verbatim (including the key order) and shown as a grey placeholder; foreign `metadata` namespaces MUST NOT be changed, our `kt` is appended at the end. A foreign `transition_type`, a foreign scalar of `LinearTimeWarp`, effects, markers and the track's `enabled` flag, a comment and the metadata of a marker, a disabled foreign clip SHALL return to the file untouched (with a notice where we do not play it).
+Why: the owner's requirement — "do not break what we cannot read there, when saving"; a half-interpretation silently lost foreign data.
 
-Неизвестные поля известных схем SHALL возвращаться на исходные места; объекты неизвестных
-схем и листьев новее поддерживаемой версии SHALL храниться verbatim (включая порядок ключей)
-и отображаться серым плейсхолдером; чужие неймспейсы `metadata` MUST NOT изменяться, наш
-`kt` дописывается в конец. Чужой `transition_type`, чужой скаляр `LinearTimeWarp`, эффекты,
-маркеры и флаг `enabled` дорожки, комментарий и metadata метки, выключенный чужой клип SHALL
-возвращаться в файл нетронутыми (с notice там, где мы этого не играем).
-Почему: требование владельца — «не ломать то, что мы не умеем читать, при сохранении»;
-половинная интерпретация теряла чужие данные молча.
-
-#### Scenario: Неизвестные поля, схемы и неймспейсы переживают круг
-- **WHEN** документ несёт чужое поле у Timeline, чужой неймспейс в metadata, поле у известного Clip и объект схемы `FancyClip.7`
-- **THEN** всё возвращается на свои места, порядок ключей чужого объекта исходный
+#### Scenario: Unknown fields, schemas and namespaces survive a round trip
+- **WHEN** a document carries a foreign field on Timeline, a foreign namespace in metadata, a field on a known Clip and an object of the schema `FancyClip.7`
+- **THEN** everything returns to its own places; the key order of the foreign object is the original
 - **TEST** t145 (`src/libs/kt-otio/tests/format.rs`)
 
-#### Scenario: Чужой тип перехода и тайм-варп не подменяются
-- **WHEN** в файле `transition_type` не из нашего словаря или `LinearTimeWarp` со скаляром ≠ ±1
-- **THEN** загрузка даёт notice, переход импортируется кроссфейдом, а при записи чужой тип и скаляр возвращаются как были
+#### Scenario: A foreign transition type and time warp are not substituted
+- **WHEN** the file has a `transition_type` not from our vocabulary, or a `LinearTimeWarp` with a scalar ≠ ±1
+- **THEN** loading gives a notice, the transition is imported as a crossfade, and on writing the foreign type and scalar are returned as they were
 - **TEST** t152 (`src/libs/kt-otio/tests/convert.rs`), t222 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Чужое у дорожки, метки и выключенного клипа возвращается на место
-- **WHEN** дорожка несёт чужие `effects`, `markers` и `enabled: false`; метка — `comment` и чужие metadata; клип выключен
-- **THEN** всё это есть в пересохранённом файле; выключенная дорожка даёт notice; выключенный клип не становится нашим событием и едет как есть
+#### Scenario: Foreign content of a track, a marker and a disabled clip returns to its place
+- **WHEN** a track carries foreign `effects`, `markers` and `enabled: false`; a marker has a `comment` and foreign metadata; a clip is disabled
+- **THEN** all of this is in the re-saved file; the disabled track gives a notice; the disabled clip does not become our event and travels as it is
 - **TEST** t384, t385, t386 (`src/libs/kt-otio/tests/convert.rs`)
 
-### Requirement: Версии схем OTIO: единственный апгрейд, отказ на хребте
+### Requirement: OTIO schema versions: the single upgrade, a refusal on the spine
+`Clip.1` SHALL be upgraded to `Clip.2` (`media_reference` → `media_references{DEFAULT_MEDIA}`) and written already as `Clip.2` — the only written upgrade. A leaf newer than the supported version is passthrough. The version of the BACKBONE (`Timeline`/`Stack`/`Track`) newer than the supported one SHALL give a hard refusal, checked by a preflight on the raw JSON before typing.
+Why: the positions of a track's children cannot be understood halfway, and the serde bridge of polymorphic children turns a typed error into an addressless `Json(custom)`.
 
-`Clip.1` SHALL апгрейдиться до `Clip.2` (`media_reference` → `media_references{DEFAULT_MEDIA}`)
-и писаться уже как `Clip.2` — единственный писаный апгрейд. Лист новее поддерживаемой
-версии — passthrough. Версия ХРЕБТА (`Timeline`/`Stack`/`Track`) новее поддерживаемой SHALL
-давать жёсткий отказ, проверяемый префлайтом по сырому JSON до типизации.
-Почему: позиции детей дорожки нельзя понять наполовину, а serde-мост полиморфных детей
-превращает типизированную ошибку в безадресную `Json(custom)`.
-
-#### Scenario: Политика версий схем
-- **WHEN** приходят `Clip.1`, `Clip.99`, `Track.2`, `Timeline.3`
-- **THEN** первый типизируется и пишется как `Clip.2`, второй — сырой блок, третий и четвёртый — ошибка `UnsupportedSchema`
+#### Scenario: The policy for schema versions
+- **WHEN** `Clip.1`, `Clip.99`, `Track.2`, `Timeline.3` arrive
+- **THEN** the first is typed and written as `Clip.2`, the second is a raw block, the third and fourth give the error `UnsupportedSchema`
 - **TEST** t146 (`src/libs/kt-otio/tests/format.rs`)
 
-### Requirement: Время в файле — только тики; чужие частоты квантуются
+### Requirement: Time in the file is only ticks; foreign rates are quantized
+Our times SHALL be written as `RationalTime{value: whole number, rate: 90000}`; foreign `rate` values SHALL be quantized to ticks `round(value*90000/rate)`. The frame rate of a foreign file's project SHALL be taken by the heuristic "the most frequent rate that divides 90000", and NTSC rates (23.976/29.97/59.94) SHALL be rounded to the nearest whole number dividing 90000 if the distance is less than half a frame; otherwise the default 30 with a notice. Milliseconds MUST NOT be in the format.
+Why: the 90 kHz grid does not express the NTSC series exactly (90000/23.976 = 3753.75), and a real film at 23.976 silently became a 30 fps project.
 
-Наши времена SHALL писаться `RationalTime{value: целое, rate: 90000}`; чужие `rate` SHALL
-квантоваться к тикам `round(value*90000/rate)`. Частота проекта чужого файла SHALL браться
-эвристикой «самая частая частота, делящая 90000», а NTSC-частоты (23.976/29.97/59.94)
-SHALL округляться до ближайшей целой, делящей 90000, если расстояние меньше половины
-кадра; иначе умолчание 30 с notice. Миллисекунд в формате MUST NOT быть.
-Почему: сетка 90 кГц не выражает NTSC-ряд точно (90000/23.976 = 3753.75), и настоящий фильм
-на 23.976 молча становился проектом на 30 fps.
-
-#### Scenario: NTSC-частоты ложатся на ближайшую сетку
-- **WHEN** `grid_fps` получает 23.976, 29.97, 59.94, 47.952, целые 24…60, а также 23, 7, 0, −24, 1000, NaN, 24.4, 24.6
-- **THEN** NTSC даёт 24/30/60/48, целые — себя, не делящие 90000 и мусор — None, «почти целая» — только в пределах половины кадра; таймлайн на 23.976 читается проектом 24 fps
+#### Scenario: NTSC rates fall onto the nearest grid
+- **WHEN** `grid_fps` receives 23.976, 29.97, 59.94, 47.952, whole numbers 24…60, and also 23, 7, 0, −24, 1000, NaN, 24.4, 24.6
+- **THEN** NTSC gives 24/30/60/48, whole numbers — themselves if they divide 90000, and garbage — None, "almost whole" — only within half a frame; a timeline at 23.976 is read as a 24 fps project
 - **TEST** t178 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Чужой файл без kt: детерминизм и квантование
-- **WHEN** чужой таймлайн на 24 fps без нашего конверта импортируется дважды
-- **THEN** модели идентичны, id назначены по порядку обхода, медиа дедуплицированы по URL, fps подхвачен 24, времена квантованы к тикам, пересохранение стабильно, есть notice о настройках по умолчанию
+#### Scenario: A foreign file without kt: determinism and quantization
+- **WHEN** a foreign timeline at 24 fps without our envelope is imported twice
+- **THEN** the models are identical, ids are assigned in traversal order, media is deduplicated by URL, the fps is picked up as 24, times are quantized to ticks, re-saving is stable, there is a notice about the default settings
 - **TEST** t153 (`src/libs/kt-otio/tests/convert.rs`)
 
-### Requirement: Пути медиа — относительные, фолбэк file://, псевдо-пути verbatim
+### Requirement: Media paths — relative, file:// fallback, pseudo-paths verbatim
+`target_url` SHALL be written relative to the project file with POSIX slashes; a path that cannot be made relative (shared only at the root) — as an absolute `file://` URL with percent-encoding; all three kinds (relative, absolute, `file://`) SHALL be read. Pseudo-paths (`synth:`, `gen:`) SHALL travel verbatim. The media path of a file ADDED to the project (dialog, drag-and-drop, command line) SHALL be made absolute relative to the current directory of the process AT THE MOMENT OF ADDITION; the model has no relative file paths, and relativity appears only on writing and only relative to the project file. A project file without a path (not yet saved) SHALL keep its paths absolute until the first write.
+Why: the owner's decision "relative; fallback/absolute — only if it is in other editors" (Resolve/Hiero write absolute `file://`). R.67: in the owner's project a picture was written as `sources/a3566951817_10.jpg` relative to a file lying in `sources/` — a path relative to the launch directory got into the model as is, and on writing was taken as relative to the project; the file "disappeared" without having moved.
 
-`target_url` SHALL писаться относительно файла проекта с POSIX-слэшами; нерелятивизуемый
-(общий только корень) — абсолютным `file://`-URL с percent-encoding; читаться SHALL все
-три вида (относительный, абсолютный, `file://`). Псевдо-пути (`synth:`, `gen:`) SHALL
-ездить verbatim. Путь медиа, ДОБАВЛЯЕМОГО в проект (диалог, перетаскивание, командная
-строка), SHALL делаться абсолютным относительно текущего каталога процесса В МОМЕНТ
-ДОБАВЛЕНИЯ; в модели относительных путей к файлам не бывает, относительность появляется
-только на записи и только относительно файла проекта. Файл проекта без пути (не сохранён)
-SHALL держать пути абсолютными до первой записи.
-Почему: решение владельца «относительные; fallback/абсолютные — только если это есть в
-других редакторах» (Resolve/Hiero пишут абсолютные `file://`). Р.67: в проекте владельца
-картинка записана как `sources/a3566951817_10.jpg` относительно файла, лежащего в
-`sources/`, — путь, относительный к каталогу запуска, попал в модель как есть и при
-записи был принят за относительный к проекту; файл «пропал», не сдвинувшись с места.
-
-#### Scenario: Релятивизация, кодирование и разрешение
-- **WHEN** путь рядом, глубже, выше и на другом корне релятивизуется; путь с пробелами/процентами/UTF-8 кодируется в URL и обратно; `synth:` и уже относительный путь проходят через писатель
-- **THEN** рядом/глубже/выше дают относительные пути, другой корень — `file://`-URL; URL декодируется в исходный путь; `synth:` и относительный путь не изменяются; разрешение принимает все три вида
+#### Scenario: Relativization, encoding and resolution
+- **WHEN** a path nearby, deeper, higher, and on another root is relativized; a path with spaces/percent signs/UTF-8 is encoded into a URL and back; `synth:` and an already relative path pass through the writer
+- **THEN** nearby/deeper/higher give relative paths, another root gives a `file://` URL; the URL decodes to the original path; `synth:` and the relative path do not change; resolution accepts all three kinds
 - **TEST** t147 (`src/libs/kt-otio/tests/format.rs`)
 
-#### Scenario: Добавленный относительный путь становится абсолютным
-- **WHEN** медиа добавляется путём `sources/x.jpg` при текущем каталоге `/work` в несохранённый проект; проект сохраняется в `/work/sources/p.otio`; открывается снова
-- **THEN** в модели путь `/work/sources/x.jpg`; в файле — `x.jpg` (относительно проекта); после открытия файл найден (на прежнем коде — `sources/x.jpg` относительно проекта, то есть `/work/sources/sources/x.jpg`, пропажа)
+#### Scenario: An added relative path becomes absolute
+- **WHEN** media is added by the path `sources/x.jpg` with the current directory `/work` into an unsaved project; the project is saved to `/work/sources/p.otio`; it is opened again
+- **THEN** in the model the path is `/work/sources/x.jpg`; in the file — `x.jpg` (relative to the project); after opening the file is found (in the previous code — `sources/x.jpg` relative to the project, that is `/work/sources/sources/x.jpg`, the file was lost)
 - **TEST** t797 (`src/apps/kt-app/src/layout_tests.rs`), t797b (`src/libs/kt-otio/tests/format.rs`)
 
-### Requirement: Точка входа считается от первого кадра файла
+### Requirement: The entry point is counted from the first frame of the file
+`source_range` and `available_range` are one coordinate system of the material; in broadcast files it starts from the embedded timecode. The start of `available_range` SHALL be subtracted on reading and returned on writing; a clip to the left of the declared start of the material is clamped to zero.
+A clip without `source_range` SHALL take the material whole with a ZERO entry point; a clip with `media_reference: null` SHALL be read as a clip without material, receive a separate media record and be written back with `null`, rather than an invented reference. The references to material (`available_range`, variants) are a property of the MEDIA: an event born of an edit SHALL be written in the same coordinates as its neighbour from the file, while the clip's own envelope (a foreign `active_key`, the set of variants) MUST NOT be overwritten.
+Why: without the subtraction the engine drifted an hour into a 162-second file; without a media level the two halves of one cut drifted into the file in different coordinate systems.
 
-`source_range` и `available_range` — одна система координат материала, у вещательных
-файлов начинающаяся со вшитого таймкода. Начало `available_range` SHALL вычитаться на
-чтении и возвращаться на записи; клип левее объявленного начала материала клампится нулём.
-Клип без `source_range` SHALL брать материал целиком с НУЛЕВОЙ точкой входа; клип с
-`media_reference: null` SHALL читаться как клип без материала, получать отдельную запись
-медиа и писаться обратно с `null`, а не выдуманной ссылкой. Ссылки на материал
-(`available_range`, варианты) — свойство МЕДИА: событие, рождённое правкой, SHALL писаться
-в тех же координатах, что и его сосед из файла, при этом собственный конверт клипа
-(чужой `active_key`, набор вариантов) MUST NOT перетираться.
-Почему: без вычитания движок уезжал на час в 162-секундный файл; без медиа-уровня две
-половины одного разреза уезжали в файл в разных системах координат.
-
-#### Scenario: Таймкод вычитается и возвращается
-- **WHEN** клип с `source_range.start` = час + 10 с при `available_range.start` = час; тот же файл без таймкода; клип левее начала материала
-- **THEN** `source_in` = 10 с от начала файла; в записи таймкод вернулся; файл без таймкода не изменился; левее материала — ноль
+#### Scenario: The timecode is subtracted and returned
+- **WHEN** a clip with `source_range.start` = an hour + 10 s, with `available_range.start` = an hour; the same file without a timecode; a clip to the left of the start of the material
+- **THEN** `source_in` = 10 s from the start of the file; on writing the timecode returned; the file without a timecode did not change; to the left of the material — zero
 - **TEST** t180 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Клип без `source_range` и без ссылки
-- **WHEN** читаются `simple_cut.otio` (Clip-004 без `source_range`) и `transition_test.otio` (все ссылки `null`)
-- **THEN** длительность взята из `available_range`, точка входа нулевая; клипы без ссылки получают пустой путь и разные media id, `null` переживает пересохранение
+#### Scenario: A clip without `source_range` and without a reference
+- **WHEN** `simple_cut.otio` (Clip-004 without `source_range`) and `transition_test.otio` (all references `null`) are read
+- **THEN** the duration is taken from `available_range`, the entry point is zero; clips without a reference get an empty path and different media ids, `null` survives re-saving
 - **TEST** t154 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Новорождённое событие в координатах материала
-- **WHEN** клип с часовым таймкодом режется пополам и проект сохраняется; клип с двумя вариантами ссылок и `active_key: proxy` пересохраняется
-- **THEN** обе половины в файле лежат в координатах материала с `available_range`; активный ключ и обе ссылки целы
+#### Scenario: A newborn event in the coordinates of the material
+- **WHEN** a clip with an hour-long timecode is cut in half and the project is saved; a clip with two reference variants and `active_key: proxy` is re-saved
+- **THEN** both halves in the file lie in the coordinates of the material with `available_range`; the active key and both references are intact
 - **TEST** t377, t378 (`src/libs/kt-otio/tests/edit_roundtrip.rs`)
 
-### Requirement: Маппинг модели на OTIO — один код и известные соглашения
+### Requirement: Mapping the model to OTIO — one code and known conventions
+Video tracks SHALL be written inverted (the first video track of the file is the lower layer), audio — after the video in direct order. FX SHALL be written as the standard `Effect.1` with `effect_name = "kt:<kind>"`, `enabled = !bypass` and the full instance in `metadata.kt`; reverse — `LinearTimeWarp{−1}` FIRST in the chain. The default track labels (V1/A1) MUST NOT be written to `Track.name`. Parameter values SHALL survive a round trip without clamping by the reader (in particular a signed and zero speed). Overlapping clips of one track SHALL be written as neighbouring `Track`s according to the `metadata.kt.layers` map; without overlaps the map is not written. The track number on reading SHALL become the rank of its row, and a track's foreign raw data — travels with its own track.
+Why: in OTIO the clip's position is the order of the track's children, and overlap within one track is physically inexpressible (verified on the owner's file); the owner's file with a track "under the ceiling" hid an event in the lower layer.
 
-Видео-дорожки SHALL писаться с инверсией (первый видео-трек файла — нижний слой), аудио —
-после видео в прямом порядке. FX SHALL писаться стандартным `Effect.1` с
-`effect_name = "kt:<kind>"`, `enabled = !bypass` и полным экземпляром в `metadata.kt`; реверс —
-`LinearTimeWarp{−1}` ПЕРВЫМ в цепочке. Дефолтные ярлыки дорожек (V1/A1) MUST NOT писаться
-в `Track.name`. Значения параметров SHALL переживать круг без клампа читателем (в частности
-знаковая и нулевая скорость). Перекрытые клипы одной дорожки SHALL писаться соседними
-`Track` по карте `metadata.kt.layers`; без перекрытий карта не пишется. Номер дорожки при
-чтении SHALL становиться рангом её строки, а чужое сырьё трека — ехать за своей дорожкой.
-Почему: в OTIO позиция клипа — порядок детей трека, наложение в одном треке невыразимо
-физически (проверено на файле владельца); файл владельца с дорожкой «под потолком» прятал
-событие в нижний слой.
-
-#### Scenario: Инверсия видео-дорожек и стандартные эффекты
-- **WHEN** проект с двумя видео-дорожками и аудио-парой с переходом пишется
-- **THEN** первый видео-трек файла — нижняя дорожка, верхняя — последний видео, далее аудио; при чтении клипы равны поле-в-поле, цвет метки нормализован в GREEN
+#### Scenario: Inversion of video tracks and standard effects
+- **WHEN** a project with two video tracks and an audio pair with a transition is written
+- **THEN** the first video track of the file is the bottom track, the top one is the last video, then audio; on reading the clips equal field by field, the marker colour is normalized to GREEN
 - **TEST** t152 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Перекрытая дорожка раскладывается на треки и собирается обратно
-- **WHEN** три клипа одной видео-дорожки, два из которых перекрываются, сохраняются
-- **THEN** в файле два `Track`, при чтении все три клипа снова на дорожке 0 с той же геометрией; у проекта без перекрытий ключа `layers` нет
+#### Scenario: An overlapping track is split into tracks and assembled back
+- **WHEN** three clips of one video track are saved, two of which overlap
+- **THEN** the file has two `Track`s; on reading all three clips are again on track 0 with the same geometry; a project without overlaps has no `layers` key
 - **TEST** t165 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Файл владельца читается канонически
-- **WHEN** порядок строк ставит видео-дорожку с большим номером выше дорожек с меньшими, а на её треке лежит чужая metadata
-- **THEN** после чтения номера равны рангам строк, порядок на экране тот же, чужое сырьё лежит на треке того же события; круг идемпотентен
+#### Scenario: The owner's file is read canonically
+- **WHEN** the row order puts a video track with a larger number above tracks with smaller numbers, and its track carries foreign metadata
+- **THEN** after reading the numbers equal the ranks of the rows, the order on screen is the same, the foreign raw data lies on the track of the same event; the round trip is idempotent
 - **TEST** t593 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Знаковая скорость переживает круг
-- **WHEN** slowed&reverb с базой −0.5 и ключами 1 → 0 → −2 сохраняется и читается
-- **THEN** база и ключи равны исходным, ноль и минус не подтянуты к прежнему минимуму
+#### Scenario: A signed speed survives a round trip
+- **WHEN** slowed&reverb with base −0.5 and keys 1 → 0 → −2 is saved and read
+- **THEN** the base and keys equal the originals; zero and minus are not pulled up to the former minimum
 - **TEST** t606 (`src/libs/kt-otio/tests/convert.rs`)
 
-### Requirement: Версия конверта `kt` — одна на файл и ставится ПО СОДЕРЖИМОМУ
+### Requirement: Version of the `kt` envelope — one per file, set BY CONTENT
+`Timeline.metadata.kt.v` SHALL be the single version of the file; nested envelopes carry no versions. The writer SHALL set the OLDER version at which an old build would read the file without silent corruption: v2 — cameras; v3 — curves in the ticks of the material, switches, the kind of transition and the audio curve; v4 — the morpher layer and areas; v5 — curves and the strength of a layer; v6 — nested reels; v7 — inversion and overlapping transitions; v8 — an event to the left of zero in a reel; v9 — the generator on the event, public parameters and overrides; **v10 — the shape of a segment on a key, working sources of a curve (the link to an address and an expression, a formula with text) and the default shape of the project** (one version per round, a single predicate).
+A file newer than the supported one SHALL be rejected with `KtMetaTooNew`; unknown fields of our envelope SHALL pass through as passthrough. A file without novelties MUST remain byte-stable and on the previous version — the cascade is checked over all committed fixtures.
+**BREAKING (model):** the shape moves from the curve to the KEY, the field `ParamCurve::ease` in the model is removed. In the FILE the shape is written BY CONTENT, by the same rule as the version: a curve whose keys all carry one shape SHALL be written in the former field `ease` (third order — `true`, straight — `false`) and does not move the version; a curve with different shapes, or with a shape not expressible by this field, SHALL write the shape on the keys and raise the file to v10. On reading: `ease` expands into a uniform shape; the shape on a key overrides it. A link to a vanished property and an unparseable formula SHALL be rejected on reading, with an address and a reason.
+Why: the owner does not require backward compatibility, but "ours so that nobody breaks it": a refusal is more honest than silent corruption, and a condition built into the cascade in the wrong place raises the version for all files in a row; a silent change of shape during migration would shift the frames of finished projects.
 
-`Timeline.metadata.kt.v` SHALL быть единственной версией файла; вложенные конверты версий не
-несут. Писатель SHALL ставить младшую версию, при которой старая сборка прочла бы файл без
-молчаливой порчи: v2 — камеры; v3 — кривые в тиках материала, выключатели, вид перехода и
-кривая аудио; v4 — морфер-слой и области; v5 — кривые и сила слоя; v6 — вложенные ленты;
-v7 — инверсия и наложенные переходы; v8 — событие левее нуля в ленте; v9 — генератор на
-событии, публичные параметры и переопределения; **v10 — форма отрезка на ключе, рабочие
-источники кривой (связь с адресом и выражением, формула с текстом) и умолчание формы
-проекта** (одна версия на раунд, единый предикат).
-Файл новее поддерживаемой SHALL отвергаться `KtMetaTooNew`; неизвестные поля нашего
-конверта SHALL проходить passthrough. Файл без новшеств MUST оставаться байт-стабильным и на
-прежней версии — каскад проверяется по всем закоммиченным фикстурам.
-**BREAKING (модель):** форма переезжает с кривой на КЛЮЧ, поле `ParamCurve::ease` в модели
-удалено. В ФАЙЛЕ форма пишется ПО СОДЕРЖИМОМУ, тем же правилом, что и версия: кривая, все
-ключи которой несут одну форму, SHALL писаться прежним полем `ease` (третий порядок —
-`true`, прямая — `false`) и версию не двигать; кривая с разными формами или с формой, не
-выразимой этим полем, SHALL писать форму на ключах и поднимать файл до v10. Чтение:
-`ease` разворачивается в однородную форму, форма на ключе её перекрывает. Связь на
-исчезнувшее свойство и неразбираемая формула SHALL отвергаться при чтении с адресом и
-причиной.
-Почему: обратной совместимости владелец не требует, но «наше чтобы никто не ломал»:
-отказ честнее тихой порчи, а условие, встроенное в каскад не туда, поднимает версию всем
-файлам подряд; молчаливая смена формы при миграции сдвинула бы кадры сведённых проектов.
-
-#### Scenario: Файл новее сборки отвергается, версия читается
-- **WHEN** в конверте `v: 999`; в обычном файле `v: 1`
-- **THEN** проверка версии даёт `KtMetaTooNew(999)`; версия читается как 1
+#### Scenario: A file newer than the build is rejected, the version is read
+- **WHEN** the envelope has `v: 999`; in an ordinary file `v: 1`
+- **THEN** the version check gives `KtMetaTooNew(999)`; the version is read as 1
 - **TEST** t146 (`src/libs/kt-otio/tests/format.rs`)
 
-#### Scenario: Камеры — v2, автоматизация — v3, без них — v1; будущие поля проходят
-- **WHEN** пишутся проект без камер, проект с камерами без кривых, проект с камерами и кривыми; в конверт вписано неизвестное поле
-- **THEN** версии 1/2/3 соответственно; без камер камерных ключей нет; круг идемпотентен; неизвестное поле возвращается; вывод байт-в-байт равен golden `demo-3d.otio`
+#### Scenario: Cameras — v2, automation — v3, without them — v1; future fields pass through
+- **WHEN** a project without cameras, a project with cameras without curves, and a project with cameras and curves are written; an unknown field is inserted into the envelope
+- **THEN** versions 1/2/3 respectively; without cameras there are no camera keys; the round trip is idempotent; the unknown field returns; the output is byte-for-byte equal to the golden `demo-3d.otio`
 - **TEST** t189, t189b (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Автоматизация эффекта поднимает до v3, битая кривая — отказ
-- **WHEN** плоский проект с кривой радиуса blur сохраняется; затем в файле ключ с отрицательной позицией; затем `auto` заменён на мусор
-- **THEN** v3, круг поле-в-поле и байт-в-байт; оба испорченных файла валят загрузку явно
+#### Scenario: Effect automation raises to v3, a broken curve is a refusal
+- **WHEN** a flat project with a blur radius curve is saved; then in the file a key with a negative position; then `auto` is replaced with garbage
+- **THEN** v3, the round trip field by field and byte by byte; both spoiled files fail the load explicitly
 - **TEST** t192 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Морфер-слой и области — v4, естественный порядок строк не хранится
-- **WHEN** морфер становится слоем «по времени» на всё ниже; в проект добавлена именованная область; порядок строк перемешан
-- **THEN** файл v4, умолчания слоя не сериализуются; область переживает круг; порядок пишется своим полем `lane_order` вне `ui`; проект без морферов/областей/перестановок не несёт этих ключей и версию не двигает
+#### Scenario: The morpher layer and areas — v4, the natural order of rows is not stored
+- **WHEN** a morpher becomes a "by time" layer over everything below; a named area is added to the project; the row order is shuffled
+- **THEN** the file is v4, the layer's defaults are not serialized; the area survives the round trip; the order is written in its own field `lane_order` outside `ui`; a project without morphers/areas/reorderings carries none of these keys and does not move the version
 - **TEST** t240, t241, t248 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Каскад версии не двигает старые файлы
-- **WHEN** каждая закоммиченная фикстура `src/fixtures/*.otio` читается и пересохраняется
-- **THEN** версия конверта та же, что была, вывод байт-в-байт равен исходнику, вложений в них нет
+#### Scenario: The version cascade does not move old files
+- **WHEN** each committed fixture `src/fixtures/*.otio` is read and re-saved
+- **THEN** the envelope version is the same as it was, the output is byte-for-byte equal to the source, there are no attachments in them
 - **TEST** t433b (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Публичные параметры и переопределения — v9
-- **WHEN** лента объявляет ручку «текст титра», второй экземпляр несёт своё значение; обычная лента без публикаций
-- **THEN** первый файл v9, набор и переопределения переживают круг идемпотентно; второй не содержит ни `published`, ни `overrides` и остаётся v6
+#### Scenario: Public parameters and overrides — v9
+- **WHEN** a reel declares a handle "subtitle text", the second instance carries its own value; an ordinary reel without publications
+- **THEN** the first file is v9, the set and the overrides survive the round trip idempotently; the second contains neither `published` nor `overrides` and remains v6
 - **TEST** t681 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Форма, связь и формула поднимают до v10
-- **WHEN** сохраняется проект без новых возможностей; затем проект с формой отрезка; затем со связью; затем с формулой
-- **THEN** первый остаётся прежней версией и байт-в-байт прежним, остальные получают v10; версия в файле одна
+#### Scenario: A shape, a link and a formula raise to v10
+- **WHEN** a project without new capabilities is saved; then a project with a segment shape; then with a link; then with a formula
+- **THEN** the first remains the previous version and byte-for-byte as before, the rest get v10; the version in the file is one
 - **TEST** t698b (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Круг v10 и однородная форма прежним полем
-- **WHEN** файл v10 с разными формами на ключах читается и пишется; затем читается файл со старым полем `ease` в обоих значениях; затем пишется кривая, все ключи которой несут одну форму
-- **THEN** круг тождественен; `ease = true` стал третьим порядком с прежним сглаживанием, `ease = false` — прямой, значения кривой после чтения побитово равны значениям до него; однородная кривая записана прежним полем `ease`, байты и версия файла не двинулись
+#### Scenario: The v10 round trip and the uniform shape in the former field
+- **WHEN** a v10 file with different shapes on keys is read and written; then a file with the old `ease` field in both values is read; then a curve whose keys all carry one shape is written
+- **THEN** the round trip is identical; `ease = true` became the third order with the former smoothing, `ease = false` — straight, the values of the curve after reading are bitwise equal to the values before; the uniform curve is written in the former field `ease`, the bytes and the file version did not move
 - **TEST** t698c (`src/libs/kt-otio/tests/convert.rs`), t433b (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Неразрешимый источник в файле — ошибка с адресом
-- **WHEN** читается файл, где связь указывает на исчезнувшее событие, а формула не разбирается
-- **THEN** чтение отвергается с адресом и причиной, а не рисует кривую по ключам молча
+#### Scenario: An unresolvable source in the file — an error with an address
+- **WHEN** a file is read where a link points to a vanished event and a formula does not parse
+- **THEN** the reading is rejected with an address and a reason, rather than silently drawing the curve from its keys
 - **TEST** t698d (`src/libs/kt-otio/tests/convert.rs`)
 
-### Requirement: Старые файлы мигрируют на чтении, односторонне
+### Requirement: Old files migrate on read, one-way
+Files of versions up to the current one SHALL be read and translated into the current semantics on reading; the next write SHALL already go in the new form: curves in fractions 0..1 → material ticks by the geometry of the clip (v<3); camera keyframes in fractions → common curves; a morpher before v4 → a patch with `timed: false`; `ui.lane_order` → the model's `lane_order`; generator values in `parameters` and the animation mode of a title → values on the event and curves by the same formulas as the preset in the window; the former boolean `ease` of a curve → the shape of a segment on the key, and for a SPEED curve (`rate`) `ease: true` SHALL be read as the STRAIGHT shape — that is how it always sounded (the warp map rests on a piecewise-linear profile and never read the `ease` field). The migration MUST NOT produce a file that its own validation rejects: a file that was opened by the previous build SHALL open with the next one too, and the sound and the frame SHALL remain as before.
+Why: backward compatibility is not required, but the owner's working projects must open and sound/look as before; a divergence of the migration from the preset would give "the same button — a different result". R.63: `untitled_v26.09.19.otio` (14 speed curves with `ease: true`) was rejected by `RateShapeMustBeLinear` — the reader translated `ease` as "smooth", while the speed validator accepts only the straight one; the previous warp did not see the shape, so the correct translation is "linear".
 
-Файлы до текущей версии SHALL читаться и переводиться в текущую семантику на чтении,
-следующая запись SHALL идти уже в новой форме: кривые в долях 0..1 → тики материала по
-геометрии клипа (v<3); кейфреймы камеры в долях → общие кривые; морфер до v4 → патч с
-`timed: false`; `ui.lane_order` → `lane_order` модели; значения генератора в `parameters`
-и режим анимации титра → значения на событии и кривые теми же формулами, что пресет в окне;
-прежнее булево `ease` кривой → форма отрезка на ключе, причём у кривой СКОРОСТИ (`rate`)
-`ease: true` SHALL читаться ПРЯМОЙ формой — так она всегда звучала (карта варпа стоит на
-кусочно-линейном профиле и поле `ease` не читала никогда). Миграция MUST NOT порождать
-файл, который отвергает собственная валидация: файл, открывавшийся прежней сборкой, SHALL
-открыться и следующей, а звук и кадр SHALL остаться прежними.
-Почему: обратной совместимости не требуется, но рабочие проекты владельца обязаны открыться
-и звучать/выглядеть как раньше; расхождение миграции с пресетом дало бы «та же кнопка —
-другой результат». Р.63: `untitled_v26.09.19.otio` (14 кривых скорости с `ease: true`)
-отвергался `RateShapeMustBeLinear` — читатель перевёл `ease` в «плавно», а валидатор
-скорости принимает только прямую; прежний варп форму не видел, значит правильный перевод —
-«линейно».
-
-#### Scenario: Кривые старого домена переводятся в тики материала
-- **WHEN** файл v2 с ключами 0.0 и 0.5 у клипа 0..90000 читается и пересохраняется
-- **THEN** ключи стали 0 и 45000, запись — v3
+#### Scenario: Curves of the old domain are translated into material ticks
+- **WHEN** a v2 file with keys 0.0 and 0.5 on a clip 0..90000 is read and re-saved
+- **THEN** the keys became 0 and 45000; the write is v3
 - **TEST** t212 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Легаси-кейфреймы камеры, старый морфер и старое место порядка
-- **WHEN** камера несёт `keyframes` в долях события; морфер записан голым массивом целей и внешне-тегированным видом; порядок строк лежит в `ui.lane_order`
-- **THEN** кейфреймы съедены миграцией в кривые в тиках; морфер читается с `timed: false` и прежней семантикой, версию до v4 не поднимает; порядок переезжает в модель
+#### Scenario: Legacy camera keyframes, the old morpher and the old place of order
+- **WHEN** a camera carries `keyframes` in fractions of the event; a morpher was written as a bare array of targets and an externally tagged kind; the row order lies in `ui.lane_order`
+- **THEN** the keyframes are eaten by the migration into curves in ticks; the morpher is read with `timed: false` and the previous semantics, it does not raise the version to v4 or above; the order moves into the model
 - **TEST** t189, t240, t241 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Генератор старого файла раздаёт значения событию
-- **WHEN** файл v8 с текстом и режимом анимации внутри `parameters` и без `kt.gen` у клипа
-- **THEN** путь медиа укоротился до вида, значения доехали до события, кривые анимации равны тем, что ставит пресет, проект законен
+#### Scenario: The generator of an old file hands the values to the event
+- **WHEN** a v8 file with text and an animation mode inside `parameters` and without `kt.gen` on the clip
+- **THEN** the media path is shortened to its kind, the values moved to the event, the animation curves equal those set by the preset, the project is valid
 - **TEST** t665 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Кривая скорости с прежним `ease` читается прямой и файл открывается
-- **WHEN** читается файл до Р.61 с кривыми `rate` `ease: true` на событии, в патче морфера и внутри вложенной ленты (форма файла — как у `untitled_v26.09.19.otio`), и такой же с `ease: false`
-- **THEN** проект законен, у всех ключей скорости форма `Linear`, у прочих кривых `ease: true` даёт прежнее сглаживание; карта варпа даёт те же тики, что до Р.61; пересохранение пишет `shape` только там, где он не умолчание; на прежнем коде — отказ `RateShapeMustBeLinear`
-- **TEST** t747 (`src/libs/kt-otio/tests/convert.rs`), t747b (`src/libs/kt-model/tests/fx_auto.rs`), живой сценарий `src/scripts/live/oldfile.py`
+#### Scenario: A speed curve with the former `ease` is read as straight and the file opens
+- **WHEN** a file before R.61 is read with `rate` curves `ease: true` on an event, in a morpher's patch and inside a nested reel (the file shape — as in `untitled_v26.09.19.otio`), and the same with `ease: false`
+- **THEN** the project is valid, all speed keys have the shape `Linear`, the other curves with `ease: true` give the previous smoothing; the warp map gives the same ticks as before R.61; re-saving writes `shape` only where it is not the default; on the previous code — the refusal `RateShapeMustBeLinear`
+- **TEST** t747 (`src/libs/kt-otio/tests/convert.rs`), t747b (`src/libs/kt-model/tests/fx_auto.rs`), live scenario `src/scripts/live/oldfile.py`
 
-### Requirement: Битая наша секция — ошибка с адресом; битая запись — notice
+### Requirement: Our own broken section — an error with an address; a broken record — a notice
+The absence of a `kt` section SHALL mean an ordinary foreign file. A `kt` section that is present but cannot be read (in Timeline, in a clip, in an attachment) SHALL fail the load with the error `KtMetaBroken` and a list of the addresses of all broken clips (name, kind, track, position); the source file is not touched.
+An unreadable SEPARATE record (a kind of transition, an overlap transition with an unknown clip) SHALL give a notice and an honest default, not silence.
+Why: a silently discarded envelope gave the clip a new number and irreversibly broke the A/V link groups and the morpher references; on a live scenario one wrong byte opened the project "empty".
 
-Отсутствие секции `kt` SHALL означать обычный чужой файл. Секция `kt`, которая есть, но не
-читается (у Timeline, у клипа, у вложения), SHALL валить загрузку ошибкой `KtMetaBroken` со
-списком адресов всех битых клипов (имя, вид, дорожка, позиция); исходный файл не трогается.
-Нечитаемая ОТДЕЛЬНАЯ запись (вид перехода, наложенный переход с неизвестным клипом) SHALL
-давать notice и честное умолчание, а не тишину.
-Почему: молчаливо выброшенный конверт давал клипу новый номер и рвал link-группы A/V и
-ссылки морферов необратимо; на живом сценарии один неверный байт открыл проект «пустым».
-
-#### Scenario: Битый конверт Timeline и клипа
-- **WHEN** в конверте Timeline одно поле не число; у клипа секция `kt` с `id: "не число"`; у клипа секции нет или есть только чужой неймспейс
-- **THEN** первые два — `KtMetaBroken`, в сообщении о клипе есть его имя и дорожка; последние два читаются
+#### Scenario: A broken envelope of Timeline and of a clip
+- **WHEN** in the Timeline envelope one field is not a number; a clip has a `kt` section with `id: "not a number"`; a clip has no section, or has only a foreign namespace
+- **THEN** the first two — `KtMetaBroken`, the message about the clip carries its name and track; the last two are read
 - **TEST** t251, t383 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Битый вид перехода и битая запись наложенного перехода
-- **WHEN** `kind` перехода — «чепуха»; у наложенного перехода `b` указывает на несуществующий клип
-- **THEN** файл открывается, переход — кроссфейд с notice; наложенный переход пропущен с notice
+#### Scenario: A broken kind of transition and a broken record of an overlap transition
+- **WHEN** the `kind` of a transition is "nonsense"; an overlap transition's `b` points to a nonexistent clip
+- **THEN** the file opens, the transition is a crossfade with a notice; the overlap transition is skipped with a notice
 - **TEST** t222, t465 (`src/libs/kt-otio/tests/convert.rs`)
 
-### Requirement: Переходы в файле — стандартный тип наружу, вид в конверте
+### Requirement: Transitions in the file — a standard type outward, the kind inside the envelope
+A transition SHALL be written as `Transition.1` between neighbours with a meaningful `transition_type` (`SMPTE_Dissolve` / `SMPTE_Wipe` / `Custom`); a kind with parameters, the audio curve, the curves of parameters and the inversion SHALL travel in `Transition.metadata.kt`. An ordinary crossfade with equal-power MUST NOT have an envelope written; a return to a crossfade SHALL clear the envelope entirely.
+A transition as the first/last child of a track or next to a `Gap` SHALL be read as a fade (a transition with an empty side) and written back to its own place. An overlap transition (a pair of neighbouring `Track`s of the layer map) SHALL travel as a list `overlap_transitions` in the envelope of its own reel, without offsets.
+Why: an old build would have played a wipe as a dissolve; an obsolete `"kind":"wipe"` from the retained data would have gone back into the file; an overlapping pair cannot be expressed as a child of a sequential track.
 
-Переход SHALL писаться `Transition.1` между соседями с осмысленным `transition_type`
-(`SMPTE_Dissolve` / `SMPTE_Wipe` / `Custom`); вид с параметрами, кривая аудио, кривые
-параметров и инверсия SHALL ехать в `Transition.metadata.kt`. У обычного кроссфейда с
-equal-power конверт MUST NOT писаться; возврат к кроссфейду SHALL вычищать конверт целиком.
-Переход первым/последним ребёнком дорожки или рядом с `Gap` SHALL читаться фейдом (переход
-с пустой стороной) и писаться на своё место. Наложенный переход (пара из соседних `Track`
-карты слоёв) SHALL ехать списком `overlap_transitions` в конверте своей ленты без офсетов.
-Почему: старая сборка сыграла бы вайп растворением; устаревший `"kind":"wipe"` из retained
-уезжал бы обратно в файл; ребёнком последовательного трека наложенная пара невыразима.
-
-#### Scenario: Вайп, кривые, инверсия и чистка конверта
-- **WHEN** переход — кроссфейд; затем вайп с s-кривой; затем возврат к кроссфейду; затем кривая угла; затем инверсия и её выключение
-- **THEN** кроссфейд — v1 без конверта; вайп — v3, `SMPTE_Wipe`, вид и кривая в конверте; возврат — v1, конверт убран; кривые — v3 и круг; инверсия — v7, выключение убирает ключ и версию
+#### Scenario: Wipe, curves, inversion and cleaning of the envelope
+- **WHEN** a transition is a crossfade; then a wipe with an S-curve; then a return to a crossfade; then an angle curve; then inversion and its switching off
+- **THEN** the crossfade is v1 without an envelope; the wipe is v3, `SMPTE_Wipe`, the kind and the curve are in the envelope; the return is v1, the envelope is removed; the curves are v3 and the round trip; the inversion is v7, switching off removes the key and the version
 - **TEST** t222 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Наложенный переход в конверте ленты
-- **WHEN** два видео-клипа одной дорожки лесенкой с переходом Barn, s-кривой и инверсией
-- **THEN** файл v7, запись `{a, b, kind, audio, invert}` в `overlap_transitions`, после чтения окно перехода равно зоне перекрытия, круг идемпотентен
+#### Scenario: An overlap transition in the envelope of a reel
+- **WHEN** two video clips of one track in a staircase with a Barn transition, an S-curve and inversion
+- **THEN** the file is v7, the record `{a, b, kind, audio, invert}` in `overlap_transitions`; after reading the transition window equals the overlap zone; the round trip is idempotent
 - **TEST** t465 (`src/libs/kt-otio/tests/convert.rs`)
 
-### Requirement: Вложенные ленты — `Stack` ребёнком `Track`, тело инлайном, сайдкар совещательный
+### Requirement: Nested reels — `Stack` as the child of `Track`, body inline, sidecar advisory
+In the EXCHANGE file an instance of a reel SHALL be written as a `Stack` child of a `Track` (the window — the `source_range` of the stack, the name — `Stack.name`, the chain and reverse — `Stack.effects`, the address of the reel — `metadata.kt.seq`), and the body of the reel SHALL be inlined into EACH instance. On reading, the instances SHALL collapse into one reel by address; diverged bodies SHALL become separate reels with fresh ids and a notice. The sidecar `metadata.kt.sequences` (tracks, the order of rows, morphers, cameras, the layer map of the reel) SHALL be advisory: if it is lost, the edit is read from the file with a notice. Foreign nested `Stack` and `Track` inside a `Track` SHALL be read as genuine reels. An event to the left of the reel's zero SHALL carry `kt.start` only where the position in the track does not express it (v8).
+In the PROJECT file the body of a reel SHALL be stored ONCE, and the instance SHALL be a reference to its address: the inline is not needed there and is forbidden at a price — it is what gave 115 MB.
+Why: there is no object identity in the JSON of OTIO; a silent choice of one of two bodies is a loss of someone else's work; a foreign editor draws the content of attachments, and a grey placeholder does not.
+R.70: the same fact (no object identity) means that for the PROJECT the inline is not a merit but a multiplicative price; the requirement is divided by addressee.
 
-В файле ОБМЕНА экземпляр ленты SHALL писаться `Stack` ребёнком `Track` (окно —
-`source_range` стека, имя — `Stack.name`, цепочка и реверс — `Stack.effects`, адрес ленты —
-`metadata.kt.seq`), а тело ленты SHALL инлайниться в КАЖДЫЙ экземпляр. На чтении
-экземпляры SHALL схлопываться в одну ленту по адресу; разошедшиеся тела SHALL становиться
-отдельными лентами со свежими id и notice. Сайдкар `metadata.kt.sequences` (дорожки,
-порядок строк, морферы, камеры, карта слоёв ленты) SHALL быть совещательным: пропал —
-монтаж читается из файла с notice. Чужие вложенные `Stack` и `Track` внутри `Track` SHALL
-читаться настоящими лентами. Событие левее нуля ленты SHALL ехать `kt.start` только там,
-где позиция в треке его не выражает (v8).
-В файле ПРОЕКТА тело ленты SHALL храниться ОДИН раз, а экземпляр SHALL быть ссылкой на её
-адрес: инлайн там не нужен и запрещён ценой — он и дал 115 МБ.
-Почему: объектной идентичности в JSON OTIO нет; тихий выбор одного из двух тел — потеря
-чужой работы; чужой редактор рисует содержимое вложений, а серый плейсхолдер — нет.
-Р.70: тот же факт (нет объектной идентичности) означает, что для ПРОЕКТА инлайн —
-не достоинство, а мультипликативная цена; требование разделено по адресату.
-
-#### Scenario: Лента в двух экземплярах переживает круг
-- **WHEN** лента с кроссфейдом, морфер-слоем и камерой стоит дважды, у экземпляра уровень 0.5 и реверс; файл — ЭКСПОРТ в OTIO
-- **THEN** в файле два `Stack` с непустыми телами, версия v6; после чтения одна лента, содержимое поле-в-поле, экземпляры поле-в-поле, второй круг байт-в-байт
+#### Scenario: A reel in two instances survives a round trip
+- **WHEN** a reel with a crossfade, a morpher layer and a camera stands twice, the instance has level 0.5 and reverse; the file is an EXPORT to OTIO
+- **THEN** the file has two `Stack`s with non-empty bodies, version v6; after reading one reel, the content field by field, the instances field by field, the second round is byte-for-byte
 - **TEST** t431 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Разошедшиеся тела и потерянный сайдкар
-- **WHEN** тело второго экземпляра изменено чужим редактором; сайдкар `sequences` удалён
-- **THEN** первое даёт две ленты с notice и валидный проект; второе — ленту с монтажом и кроссфейдом из файла, без морфера, с notice
+#### Scenario: Diverged bodies and a lost sidecar
+- **WHEN** the body of the second instance is changed by a foreign editor; the `sequences` sidecar is deleted
+- **THEN** the first gives two reels with a notice and a valid project; the second — the reel with the edit and the crossfade from the file, without the morpher, with a notice
 - **TEST** t432, t433 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Чужие вложения становятся настоящими лентами
-- **WHEN** читается `nested_example.otio` (два `Stack` и `Track` внутри `Track`)
-- **THEN** три ленты с событиями, foreign пуст, после раскрытия ни одно событие не смотрит на ленту, круг идемпотентен
+#### Scenario: Foreign attachments become genuine reels
+- **WHEN** `nested_example.otio` is read (two `Stack`s and a `Track` inside a `Track`)
+- **THEN** three reels with events, foreign is empty; after unfolding, no event points at a reel; the round trip is idempotent
 - **TEST** t437 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Событие левее нуля внутри ленты
-- **WHEN** первое событие ленты начинается в −10000, второе стоит в своём времени
-- **THEN** `kt.start` есть ровно у двух смещённых событий, файл v8, круг байт-в-байт; обычный монтаж поля не несёт
+#### Scenario: An event to the left of zero inside a reel
+- **WHEN** the first event of a reel starts at −10000, the second stands at its own time
+- **THEN** `kt.start` is present on exactly two shifted events, the file is v8, the round trip is byte-for-byte; an ordinary edit carries no such field
 - **TEST** t638 (`src/libs/kt-otio/tests/convert.rs`)
 
-### Requirement: Генераторы — `GeneratorReference.1`, чужой вид — passthrough и заглушка
+### Requirement: Generators — `GeneratorReference.1`; a foreign kind — passthrough and a placeholder
+Our generator SHALL be written as `GeneratorReference.1` with `generator_kind = "kt.<kind>"`, the values of the event in `parameters` and a MANDATORY `available_range` (0..source_in+duration, rate 90000); only the kind remains in the media path. A foreign `generator_kind` (not `kt.*` and not a known alias) MUST NOT be typed: a noticeable stub (an empty path) plus passthrough of the node. The upstream alias `SMPTEBars` SHALL be read by our bars generator and canonicalized on re-saving. A generator on the event SHALL raise the file to v9.
+Why: a generator has no duration, but the format requires naming one; the byte-idempotence of foreign files costs more than typing; the values moved from the media path to the event, and an old build would have looked for them where they no longer are.
 
-Наш генератор SHALL писаться `GeneratorReference.1` с `generator_kind = "kt.<вид>"`,
-значениями события в `parameters` и ОБЯЗАТЕЛЬНЫМ `available_range` (0..source_in+duration,
-rate 90000); в пути медиа остаётся только вид. Чужой `generator_kind` (не `kt.*` и не
-известный алиас) MUST NOT типизироваться: заметная заглушка (пустой путь) плюс passthrough
-узла. Алиас апстрима `SMPTEBars` SHALL читаться нашим генератором полос и канонизироваться
-при пересохранении. Генератор на событии SHALL поднимать файл до v9.
-Почему: у генератора нет длительности, но формат требует её назвать; байт-идемпотентность
-чужих файлов дороже типизации; значения переехали с пути медиа на событие, и старая сборка
-искала бы их там, где их больше нет.
-
-#### Scenario: Наш генератор в корне и в ленте
-- **WHEN** solid-генератор стоит в корне и внутри ленты, рядом `synth:`-источник
-- **THEN** оба — `GeneratorReference.1` с `kt.solid`, параметрами и `available_range` от нуля; `synth:` — `ExternalReference` verbatim; путь медиа `gen:solid`; файл v9, проект без генератора версию не поднимает; круг идемпотентен
+#### Scenario: Our generator at the root and inside a reel
+- **WHEN** a solid generator stands at the root and inside a reel, next to a `synth:` source
+- **THEN** both are `GeneratorReference.1` with `kt.solid`, parameters and `available_range` from zero; `synth:` is `ExternalReference` verbatim; the media path is `gen:solid`; the file is v9, a project without a generator does not raise the version; the round trip is idempotent
 - **TEST** t473 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Чужой вид и алиас
-- **WHEN** `generator_kind` заменён на `Legacy.Title`; на `SMPTEBars`
-- **THEN** первый читается заглушкой с пустым путём и пересохраняется с видом и параметрами; второй читается как `gen:smpte` и канонизируется в `kt.smpte`; оба круга идемпотентны
+#### Scenario: A foreign kind and an alias
+- **WHEN** `generator_kind` is replaced by `Legacy.Title`; and by `SMPTEBars`
+- **THEN** the first is read as a stub with an empty path and re-saved with its kind and parameters; the second is read as `gen:smpte` and canonicalized to `kt.smpte`; both round trips are idempotent
 - **TEST** t474, t494 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Два титра одного вида с разным текстом
-- **WHEN** два события одного вида `gen:text` несут разный текст и кривые анимации
-- **THEN** файл v9, у каждого своя `GeneratorReference` с текстом события, путь медиа остаётся `gen:text`, круг поле-в-поле и байт-в-байт
+#### Scenario: Two titles of one kind with different text
+- **WHEN** two events of one kind `gen:text` carry different text and animation curves
+- **THEN** the file is v9, each has its own `GeneratorReference` with the event's text, the media path remains `gen:text`; the round trip is field by field and byte-for-byte
 - **TEST** t664 (`src/libs/kt-otio/tests/convert.rs`)
 
-### Requirement: Производное событие наследует конверт родителя, маркеры раскладывает писатель
+### Requirement: A derived event inherits its parent's envelope; the writer lays out markers
+An event born of an edit (the half of a cut, a piece of a bake, a paste) SHALL receive the envelope of its parent entirely — the name, foreign effects, foreign metadata, markers; the writer SHALL distribute the markers by their intersection with the material window of each event.
+Why: distributing markers on a cut would mean losing them under undo; nameless halves without foreign data were a loss for a foreign editor.
 
-Событие, рождённое правкой (половина разреза, кусок bake, вставка), SHALL получать конверт
-родителя целиком — имя, чужие эффекты, чужие metadata, маркеры; писатель SHALL раскладывать
-маркеры по пересечению с окном материала каждого события.
-Почему: разложить маркеры при разрезе значило бы потерять их под undo; безымянные половины
-без чужих данных были потерей для чужого редактора.
-
-#### Scenario: Имя, эффекты, metadata и маркеры после разреза
-- **WHEN** клип с именем, чужим эффектом, чужой metadata и тремя маркерами режется пополам
-- **THEN** у обеих половин то же имя, эффект и metadata; маркеры разложены: «рано» — первой, «граница» и «поздно» — второй
+#### Scenario: Name, effects, metadata and markers after a cut
+- **WHEN** a clip with a name, a foreign effect, foreign metadata and three markers is cut in half
+- **THEN** both halves have the same name, effect and metadata; the markers are distributed: "early" — to the first, "boundary" and "late" — to the second
 - **TEST** t380, t381 (`src/libs/kt-otio/tests/edit_roundtrip.rs`)
 
-### Requirement: Легаси `.ktproj` — только импорт, golden замораживает конверсию и схему
+### Requirement: Legacy `.ktproj` — import only; the golden freezes the conversion and schema
+The import of `.ktproj` SHALL convert overlaps by the rules: with layering switched off, an audio pair → a trim to the middle of the overlap plus a transition in the same window; 3+ and FX overlaps → a split across tracks without volume compensation; a video overlap → demotion of the later one below; with layering switched on (the default) the import SHALL change nothing except normalization.
+The result of importing `fixtures/demo.ktproj` SHALL be byte-for-byte equal to the committed `fixtures/demo-legacy-import.otio`.
+Why: the owner's decisions — "a split without volume compensation" and "as it was, with overlaps" (his project of 1952 clips was unfolding into ~40 tracks); the golden catches the drift of the serde schemas of reusable model types.
 
-Импорт `.ktproj` SHALL конвертировать перекрытия по правилам: при выключенном переслаивании
-аудио-пара → трим до середины наезда + переход тем же окном, 3+ и FX-перекрытия → развод по
-дорожкам без компенсации громкости, видео-перекрытие → демоция позднего ниже; при
-включённом переслаивании (умолчание) импорт SHALL ничего не менять, кроме нормализации.
-Результат импорта `fixtures/demo.ktproj` SHALL байт-в-байт равняться закоммиченному
-`fixtures/demo-legacy-import.otio`.
-Почему: решения владельца — «развод без компенсации громкости» и «как было, с
-перекрытиями» (его проект на 1952 клипа разворачивало в ~40 дорожек); golden ловит дрейф
-serde-схем переиспользуемых типов модели.
-
-#### Scenario: Конверсия перекрытий при выключенном переслаивании
-- **WHEN** аудио-пара с наездом, реверсированный входящий, тройное перекрытие, пара с FX, видео-наезд
-- **THEN** пара становится переходом с окном наезда; реверс не двигает точку входа; тройка и FX разводятся по дорожкам; поздний видео-клип уходит на дорожку ниже
+#### Scenario: Conversion of overlaps with layering switched off
+- **WHEN** an audio pair with an overlap, a reversed incoming clip, a triple overlap, a pair with FX, a video overlap
+- **THEN** the pair becomes a transition with the window of the overlap; reverse does not move the entry point; the triple and the FX are split across tracks; the late video clip goes to the track below
 - **TEST** t143 (`src/libs/kt-model/tests/legacy_upgrade.rs`)
 
-#### Scenario: Импорт «как было» при переслаивании
-- **WHEN** смесь A/V-пары с наездом, тройной зоны и микро-наезда в 1 тик импортируется с включённым переслаиванием
-- **THEN** ни один клип не тронут, дорожки не размножились
+#### Scenario: Import "as it was" with layering
+- **WHEN** a mix of an A/V pair with an overlap, a triple zone and a micro-overlap of 1 tick is imported with layering switched on
+- **THEN** no clip is touched, the tracks have not multiplied
 - **TEST** t164 (`src/libs/kt-model/tests/legacy_upgrade.rs`)
 
-#### Scenario: Golden легаси-импорта
-- **WHEN** `demo.ktproj` импортируется и сохраняется
-- **THEN** вывод байт-в-байт равен `demo-legacy-import.otio`
+#### Scenario: Golden of the legacy import
+- **WHEN** `demo.ktproj` is imported and saved
+- **THEN** the output is byte-for-byte equal to `demo-legacy-import.otio`
 - **TEST** t148 (`src/libs/kt-otio/tests/convert.rs`)
 
-### Requirement: Конформанс с эталонной библиотекой OpenTimelineIO
+### Requirement: Conformance with the reference OpenTimelineIO library
+Our file SHALL survive a round trip through the reference Python library (reading and rewriting by the reference → our reader restores an equivalent model; the reference is obliged to keep `metadata.kt`), and a timeline built with the reference's API SHALL be read by us and, after our re-saving, checked by the reference's assertions. `OTIO_SCHEMA` SHALL be on EVERY serializable object, including the nested `RationalTime`/`TimeRange` and the `Stack` in `Timeline.tracks`. The test is gated: without `opentimelineio` it is skipped with a reason; `KT_REQUIRE_OTIO_CONFORMANCE=1` requires it.
+Why: the format has no official JSON Schema, the norm is the implementation; our idempotence tests forgive our own "incomplete", and only the reference found bare dictionaries without a tag.
 
-Наш файл SHALL переживать круг через эталонную python-библиотеку (чтение и перезапись
-эталоном → наш ридер восстанавливает эквивалентную модель, `metadata.kt` эталон обязан
-сохранить), а таймлайн, построенный API эталона, SHALL читаться нами и после нашего
-пересохранения сверяться ассертами эталона. `OTIO_SCHEMA` SHALL стоять на КАЖДОМ
-сериализуемом объекте, включая вложенные `RationalTime`/`TimeRange` и `Stack` в
-`Timeline.tracks`. Тест gated: без `opentimelineio` — skip с причиной,
-`KT_REQUIRE_OTIO_CONFORMANCE=1` требует.
-Почему: официальной JSON Schema у формата нет, норматив — реализация; наши тесты
-идемпотентности прощают своё «неполное», и только эталон нашёл голые словари без тега.
-
-#### Scenario: Два круга через эталон
-- **WHEN** есть `python3 -c "import opentimelineio"`
-- **THEN** наш файл после перезаписи эталоном читается в эквивалентную модель; построенный эталоном таймлайн с переходом и меткой читается, наш пересейв проходит python-ассерты
+#### Scenario: Two round trips through the reference
+- **WHEN** `python3 -c "import opentimelineio"` is available
+- **THEN** our file after rewriting by the reference is read into an equivalent model; a timeline built by the reference with a transition and a marker is read, and our re-save passes the Python assertions
 - **TEST** t149 (`src/libs/kt-otio/tests/otio_conformance.rs`)
 
-### Requirement: Атомарная запись честна к отключению питания
+### Requirement: Atomic write is honest to power loss
+The project write SHALL go through one place: a temporary file with the full name plus `.<pid>.tmp` → writing and `fsync` of the file → `rename` → `fsync` of the directory. A failure of the DIRECTORY sync MUST NOT count as a write failure: the file is in place and intact, the degradation is reported by a flag.
+Why: a rename that reached the disk before the contents leaves an empty file in place of a whole one; on exFAT and network shares the directory sync is legitimately unsupported; two copies of the program with one tmp name would replace the project with half-written contents.
 
-Запись проекта SHALL идти в одном месте: временный файл с полным именем плюс `.<pid>.tmp` →
-запись и `fsync` файла → `rename` → `fsync` каталога. Отказ синка КАТАЛОГА MUST NOT
-считаться отказом записи: файл на месте и цел, деградация сообщается флагом.
-Почему: переименование, попавшее на диск раньше содержимого, оставляет пустой файл на
-месте целого; на exFAT и сетевых шарах синк каталога законно не поддержан; две копии
-программы с одним tmp-именем подменяли бы проект наполовину записанным содержимым.
-
-#### Scenario: Порядок операций и деградация каталога
-- **WHEN** запись идёт через инъецированную файловую систему с журналом; затем синк каталога отвечает `Unsupported`
-- **THEN** журнал ровно «write+sync `a.b.otio.<pid>.tmp` → rename → sync dir», временного файла не остаётся; во втором случае запись успешна, `dir_synced == false`, содержимое на месте
+#### Scenario: The order of operations and the degradation of the directory
+- **WHEN** the write goes through an injected file system with a journal; then the directory sync answers `Unsupported`
+- **THEN** the journal is exactly "write+sync `a.b.otio.<pid>.tmp` → rename → sync dir", no temporary file remains; in the second case the write succeeds, `dir_synced == false`, the contents are in place
 - **TEST** t351, t353 (`src/libs/kt-otio/tests/io.rs`)
 
-### Requirement: Правило приведения, ведущий узел и настройки ленты в файле — v11 по содержимому
+### Requirement: Conform rule, leading node and reel settings in the file — v11 by content
+The file SHALL raise the envelope version to v11 only when it carries at least one of: a project conform rule other than "fit"; a leading "Geometry" node with a rule other than "follow the project", or with non-identity parameters; the reel's own raster or fps; a flag of explicit project settings. A leading node with defaults MUST NOT be written — an event without a node in the file receives it on reading. An old `Effect` of the kind `kt:Pan` SHALL be read into the event's leading node (mode → rule, shift and zoom → position and zoom) one-way and never written again. One version per round of R.62: the change `track-object-and-track-fx` extends the predicate of v11 with its own fields.
+Why: a file without novelties must remain byte-stable on the previous version (the cascade over the fixtures), and migration on reading is the only legitimate path for old files.
 
-Файл SHALL поднимать версию конверта до v11 только когда несёт хотя бы одно из: правило
-приведения проекта, отличное от «вписать»; ведущий узел «Геометрия» с правилом, отличным от
-«следовать проекту», или с нетождественными параметрами; собственные растр или fps ленты;
-флаг явных настроек проекта. Ведущий узел с умолчаниями MUST NOT писаться — событие без
-узла в файле получает его при чтении. Старый `Effect` вида `kt:Pan` SHALL читаться в
-ведущий узел события (режим → правило, сдвиг и зум → положение и зум) односторонне и
-больше никогда не писаться. Одна версия на раунд Р.62: change `track-object-and-track-fx`
-расширяет предикат v11 своими полями.
-Почему: файл без новшеств обязан оставаться байт-стабильным на прежней версии (каскад по
-фикстурам), а миграция на чтении — единственный законный путь старых файлов.
-
-#### Scenario: Круг v11 и байт-стабильность старого
-- **WHEN** сохраняются проект без новшеств; проект с явным правилом события; проект с правилом проекта «заполнить»; лента со своим растром; затем читается файл со старым `kt:Pan`
-- **THEN** первый — прежняя версия и байт-в-байт (t433b); остальные — v11 с идемпотентным кругом; `Pan` прочитан в ведущий узел с теми же числами и при записи не появляется
+#### Scenario: The round trip of v11 and the byte-stability of the old
+- **WHEN** a project without novelties is saved; a project with an explicit rule of the event; a project with the project rule "fill"; a reel with its own raster; then a file with the old `kt:Pan` is read
+- **THEN** the first — the previous version and byte-for-byte (t433b); the rest — v11 with an idempotent round trip; `Pan` is read into the leading node with the same numbers and does not appear on writing
 - **TEST** t728 (`src/libs/kt-otio/tests/convert.rs`), t433b (`src/libs/kt-otio/tests/convert.rs`)
 
-### Requirement: Дорожка в файле — конверт трека, `enabled`, эффекты трека, миграция счётчиков
+### Requirement: Track in the file — track envelope, `enabled`, track effects, counter migration
+`Track.metadata.kt` SHALL carry the id, the switches, the level, the blend mode and the track height (defaults are not written); `Track.enabled` SHALL equal `!mute` and be read back as mute (a foreign disabled track becomes muted, not enabled); the track's chain SHALL be written as standard `Effect.1` in `Track.effects` by the same code as for a clip; the name — in `Track.name`, default labels are still not written; there is no separate field for the order of rows — the order of the file's tracks. Old files with counters, `lane_order` and `ui.lane_names/lane_heights` SHALL be migrated on reading into tracks one-way. The v11 predicate of the R.62 round SHALL count any non-default track property as a novelty; a file without novelties is byte-stable on the previous version.
+Why: neighbours have track effects and `enabled`, and the round trip was losing them (`TrackExtra`); the notice "Kinotrain has no per-track mute" is removed in substance.
 
-`Track.metadata.kt` SHALL нести id, выключатели, уровень, режим наложения и высоту дорожки
-(умолчания не пишутся); `Track.enabled` SHALL равняться `!mute` и читаться обратно как mute
-(чужая выключенная дорожка становится заглушённой, а не включается); цепочка дорожки SHALL
-писаться стандартными `Effect.1` в `Track.effects` тем же кодом, что у клипа; имя — в
-`Track.name`, дефолтные ярлыки по-прежнему не пишутся; отдельного поля порядка строк нет —
-порядок треков файла. Старые файлы со счётчиками, `lane_order` и `ui.lane_names/lane_heights`
-SHALL мигрировать на чтении в дорожки односторонне. Предикат v11 раунда Р.62 SHALL считать
-любое не-умолчание дорожки новшеством; файл без новшеств байт-стабилен на прежней версии.
-Почему: у соседей дорожечные эффекты и `enabled` есть, и круг их терял (`TrackExtra`);
-notice «Kinotrain has no per-track mute» снимается по существу.
-
-#### Scenario: Круг дорожки, чужой `enabled`, миграция старого
-- **WHEN** проект с mute/solo/замком/уровнем/режимом/цепочкой дорожки пишется и читается; чужой файл с `enabled: false` на треке читается и пересохраняется; читается старый файл с `lane_order` и `ui.lane_names`
-- **THEN** круг идемпотентен и v11; чужая дорожка стала mute и записана `enabled: false`; старый файл дал дорожки с теми же именами, высотами и порядком, файл без новшеств байт-стабилен (t433b)
+#### Scenario: Track round trip, foreign `enabled`, migration of an old file
+- **WHEN** a project with a track's mute/solo/lock/level/mode/chain is written and read; a foreign file with `enabled: false` on a track is read and re-saved; an old file with `lane_order` and `ui.lane_names` is read
+- **THEN** the round trip is idempotent and v11; the foreign track became mute and is written with `enabled: false`; the old file yielded tracks with the same names, heights and order; a file without the new features is byte-stable (t433b)
 - **TEST** t731 (`src/libs/kt-otio/tests/convert.rs`), t433b (`src/libs/kt-otio/tests/convert.rs`)
 
-### Requirement: Ключевой вход компрессора в файле — v12 по содержимому
+### Requirement: Compressor key input in the file — v12 by content
+The sidechain key SHALL be written in the compressor's parameters as the TRACK address (`TrackId`), not its number: the number is the row rank, and inserting a track above would move the key onto a foreign signal. A compressor WITHOUT a key MUST NOT write the field at all: a project file without a sidechain stays byte-for-byte the same and on the same envelope version. A file carrying at least one assigned key SHALL raise the envelope version to v12: an old build would lose the key silently and sound different, and the version is the only honest way to tell it so.
+Reading SHALL be tolerant: a key pointing at a track that is not in the file is read as "no key" (the device is a plain compressor), the project opens, there is no error. The "read → write" round trip with a key SHALL be idempotent.
+Why: the envelope rule is a version by CONTENT and one per round; an address by row rank already caused state to move onto a neighbour (R.62, the `TrackId` key in FX state).
 
-Ключ сайдчейна SHALL писаться в параметрах компрессора адресом ДОРОЖКИ (`TrackId`), а не
-её номером: номер — это ранг строки, и вставка дорожки выше перевесила бы ключ на чужой
-сигнал. Компрессор БЕЗ ключа MUST NOT писать поле вовсе — файл проекта без сайдчейна
-остаётся байт-в-байт прежним и на прежней версии конверта. Файл, несущий хотя бы один
-назначенный ключ, SHALL поднимать версию конверта до v12: старая сборка потеряла бы ключ
-молча и звучала бы иначе, а версия — единственный честный способ ей об этом сказать.
-Чтение SHALL быть терпимым: ключ, указывающий на дорожку, которой в файле нет, читается
-как «ключа нет» (прибор — обычный компрессор), проект открывается, ошибки нет. Круг
-«прочитать → записать» с ключом SHALL быть идемпотентным.
-Почему: правило конверта — версия по СОДЕРЖИМОМУ и одна на раунд; адрес по рангу строки
-уже приводил к перевешиванию состояния на соседа (Р.62, ключ `TrackId` в FX-состоянии).
-
-#### Scenario: Круг v12 и байт-стабильность файла без сайдчейна
-- **WHEN** сохраняется проект с компрессором без ключа; затем тот же проект с назначенным ключом; затем читается файл, где ключ указывает на удалённую дорожку
-- **THEN** первый — прежняя версия и байт-в-байт; второй — v12 с идемпотентным кругом и тем же `TrackId` после чтения; третий открывается, ключ прочитан как отсутствующий, запись его не воскрешает
+#### Scenario: v12 round trip and byte stability of a file without a sidechain
+- **WHEN** a project with a compressor without a key is saved; then the same project with an assigned key is saved; then a file is read where the key points to a deleted track
+- **THEN** the first is the prior version and byte-for-byte; the second is v12 with an idempotent round trip and the same `TrackId` after reading; the third opens, the key is read as absent, and writing does not resurrect it
 - **TEST** t773 (`src/libs/kt-otio/tests/convert.rs`)
 
-### Requirement: Импорт проекта старой версии — отдельная дверь; починки отмирают с версиями
+### Requirement: Import of an old-version project — a separate door; fixes lapse with versions
+A envelope file of a version lower than the current one, which the ordinary reader rejects, SHALL be opened via an IMPORT: a separate entry point that applies REPAIRS of known old forms to the document before the ordinary read, and returns the project in the current form plus the list of repairs made (as notices). The reader MUST NOT learn new old forms: a repair goes into the import, each one tagged with the version it was made for, and is DELETED when support for that version is dropped (the list of versions-with-repairs is one place). Ordinary opening of such a file SHALL be rejected with an error naming the file's version and pointing to the import. The first repair: `targets: null` on a morpher of v5 ⇒ "everything below the row". The import does not write the source file; the next save goes out in the current form and version.
+Why: the owner's decision (R.67) — "fix it in the import… and pin it for other agents too, so that they automatically put fixes for old versions into the import; these fixes will gradually be deleted as old versions are retired"; a reader with accumulated permanent migrations is exactly the "backward compatibility" that "is not needed".
 
-Файл конверта версии ниже текущей, который обычный ридер отвергает, SHALL открываться
-через ИМПОРТ: отдельный вход, который применяет к документу ПОЧИНКИ известных старых форм
-до обычного чтения и отдаёт проект текущей формы плюс список сделанных починок
-(notice'ами). Ридер MUST NOT учить новые старые формы: починка кладётся в импорт, каждая
-— с версией, для которой она заведена, и УДАЛЯЕТСЯ, когда поддержка этой версии
-снимается (список версий-с-починками — одно место). Обычное открытие такого файла SHALL
-отвергаться ошибкой с версией файла и указанием на импорт. Первая починка: `targets:
-null` у морфера v5 ⇒ «всё, что ниже строки». Импорт не пишет исходный файл; следующая
-запись идёт в текущей форме и версии.
-Почему: решение владельца (Р.67) — «именно в импорте чини… и другим агентам закрепи чтобы
-сами автоматом правки в импорт старых версий делали, постепенно эти правки будут удаляться
-с уходом старых версий»; ридер с накопленными вечными миграциями и есть та «обратная
-совместимость», которой «не надо».
-
-#### Scenario: Импорт чинит v5, ридер не трогается
-- **WHEN** файл v5 с `targets: null` у трёх морферов, объектом `{on: clips}` у двух и списком у одного читается обычным ридером; затем импортом; затем импортированный проект пишется и читается ридером
-- **THEN** ридер отвергает с версией 5 и словом «import»; импорт даёт проект с шестью морферами: три — «всё, что ниже», два — по списку, один — по списку; в notice'ах — «morpher targets: null → below (v5)» ×3; записанный файл читается ридером без починок (версия — по содержимому, `null` в нём не остаётся); список починок в коде несёт версию у каждой
+#### Scenario: Import repairs v5, the reader is untouched
+- **WHEN** a v5 file with `targets: null` on three morphers, an object `{on: clips}` on two, and a list on one is read by the ordinary reader; then by the import; then the imported project is saved and read by the reader
+- **THEN** the reader rejects it with version 5 and the word "import"; the import yields a project with six morphers: three "everything below", two by list, one by list; in the notices — "morpher targets: null → below (v5)" ×3; the written file is read by the reader without repairs (the version is by content, no `null` remains in it); the repair list in the code carries a version for each
 - **TEST** t783b (`src/libs/kt-otio/tests/convert.rs`)
 
-### Requirement: Формула отрезка и слой-формула в файле — v13 по содержимому
+### Requirement: Segment formula and formula layer in the file — v13 by content
+A key with the "segment formula" form and a curve with a formula layer SHALL be written to the curve envelope; the envelope version SHALL be raised to 13 ONLY when the file contains at least one of them; a file without them SHALL be written with the same bytes and the same version. An old build reading such a file SHALL refuse it by version (a segment form it does not know would sound like a straight line, and a layer would be silently ignored), not read it partially.
+Why: the rule "the version is one and is raised by content" (v9–v12); a silent reading of an unknown form is a corrupted edit without any sign.
 
-Ключ с формой «формула отрезка» и кривая со слоем-формулой SHALL писаться в конверт кривой;
-версия конверта SHALL подниматься до 13 ТОЛЬКО когда в файле есть хотя бы одно из них;
-файл без них SHALL писаться прежними байтами и прежней версией. Старая сборка на таком
-файле SHALL отказать по версии (форма отрезка, которую она не знает, звучала бы прямой,
-слой — молчал бы), а не читать частично.
-Почему: правило «версия одна и поднимается по содержимому» (v9–v12); тихое чтение
-неизвестной формы — испорченный монтаж без признака.
-
-#### Scenario: Круг v13 по содержимому
-- **WHEN** проект с формулой отрезка пишется и читается; проект со слоем — то же; проект без них пишется после открытия файла v12
-- **THEN** первые два — v13, круг байт-в-байт, формы и слой те же; третий — v12 и прежние байты; ридер v12 на файле v13 отказывает по версии
+#### Scenario: Round trip to v13 by content
+- **WHEN** a project with a segment formula is saved and read; a project with a layer is the same; a project without them is saved after a v12 file was opened
+- **THEN** the first two are v13, the round trip is byte-for-byte, the forms and the layer are the same; the third is v12 with the prior bytes; a v12 reader refuses a v13 file by version
 - **TEST** t787b, t787d (`src/libs/kt-otio/tests/convert.rs`)
 
 ### Requirement: The project file marker is `kinetren`; the former `kinotrain` comes in through the import door
-
 The project writer SHALL put the root key `kinetren` (with the format version as its
 value) into every `.kt` file. The reader SHALL accept only that key. A file whose root
 carries the former key `kinotrain` SHALL be refused by the reader. The refusal names the

@@ -2,75 +2,40 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Окна только из реестра; инструмент помнит параметры; имя — по отрасли; виджет один
+### Requirement: Windows only from the registry; the tool remembers its parameters; name by industry; one widget
+A new window (`egui::Window`, `Modal`) SHALL be created only together with an entry in the window registry (`src/apps/kt-app/src/reach_tests.rs`, `WINDOWS`): its id, what it contains, and WHY the feature cannot work without a window; the guard SHALL enumerate all places in the kt-app sources where windows are created and SHALL fail on any place outside the registry. Things that already have a place (the chain strip, the track window, the panel, the status line) MUST NOT get their own window. A tool with parameters (render, analysis) SHALL remember the last entered parameters in the user storage and substitute them on the next call; a tool whose result is an envelope SHALL return it as ordinary automation curves. The name of the menu item, the tool and the window SHALL be the generally accepted industry name (Vegas/Premiere/Resolve/FCP), not a description of the mechanics.
+A device that already exists in the program SHALL show the new function by itself, not by a copy of its own fields: ducking is a COMPRESSOR WITH A KEY INPUT in the track's chain, shown by its own widget next to the compressor of the key track. The parameters of such a tool live in the PROJECT (they are the content — the track's chain) and go through undo; a workspace store is not created for them — "remembering what was entered" is here ensured by the project itself.
+Settings of a live device SHALL be reachable from where the person already stands: the window of the audio track and its chain strip; a refusal (a cycle, a key on itself, a vanished track) SHALL be named in words, not fade out silently.
+THE FORM OF A WINDOW SHALL obey one contract common to all windows of the registry: the window body scrolls, and the action buttons ("Close", "Cancel", "Apply", "Render", "Restore") live OUTSIDE the scroll and remain pressable at any screen height — a window that outgrows the screen MUST NOT hide its actions. A numeric field SHALL be drawn by the COMMON row of widgets; there are no windows with their own `DragValue` outside the common widget. The limits, step and unit SHALL come from the parameter's passport (`ParamSpec`), and for a quantity without a passport they SHALL be declared in ONE place next to its definition and passed to the row as arguments; writing them into the drawing code MUST NOT happen.
+The six densest forms (the effect chain, morpher, transition, camera, project settings, render) SHALL be laid out on the model of the "Transform" section: collapsible groups, pairs on one row, a unit for each number, a slider for a quantity with both limits, a reset with one action. The other windows of the registry do NOT fall under the re-layout, but they are subject to the form contract.
+Why: R.63, the owner's words: "I impose a ban on any agents generating any additional windows without an obvious purpose (like the window on closing the program)"; "why the agent… forces him to enter all the parameters again"; "duck under a track… why didn't you name it normally"; "everywhere, meaningless copy-pastes of the same code pile up". R.65: the ducking snapshot was removed together with its parameter memory — a live device has its memory by construction, and a second one (in the storage) would diverge from the project. R.66 (the owner's direct request of R.64 "in all the other widgets and windows it will also have to be gone through"): prose about the look of a form did not work — body scrolling at that point existed for exactly one of the twenty-one windows, and it was added only after a test dropped a window with buttons hidden behind the edge.
 
-Новое окно (`egui::Window`, `Modal`) SHALL заводиться только с записью в реестре окон
-(`src/apps/kt-app/src/reach_tests.rs`, `WINDOWS`): id, что в нём и ПОЧЕМУ без окна нельзя;
-сторож SHALL перечислять все места создания окон в исходниках kt-app и падать на месте
-вне реестра. Вещи, у которых уже есть место (полоса цепочки, окно дорожки, панель, строка
-состояния), MUST NOT получать своё окно. Инструмент с параметрами (рендер, анализ) SHALL
-помнить последние введённые параметры в пользовательском хранилище и подставлять их при
-следующем вызове; инструмент, результат которого — огибающая, SHALL отдавать её обычными
-кривыми автоматизации. Название пункта, инструмента и окна SHALL быть общепринятым
-отраслевым именем (Vegas/Premiere/Resolve/FCP), а не описанием механики.
-Прибор, который уже есть в программе, SHALL показывать новую функцию собой, а не копией
-своих полей: дакинг — это КОМПРЕССОР С КЛЮЧЕВЫМ ВХОДОМ в цепочке дорожки, показанный
-своим же виджетом рядом с компрессором дорожки-ключа. Параметры такого инструмента живут в
-ПРОЕКТЕ (они и есть содержимое — цепочка дорожки) и ходят через undo; хранилище рабочего
-места для них не заводится — «помнить введённое» здесь обеспечено самим проектом.
-Настройка живого прибора SHALL быть достижима оттуда, где человек уже стоит: окно
-аудиодорожки и её полоса цепочки; отказ (цикл, ключ на самой себе, исчезнувшая дорожка)
-SHALL называться словами, а не гаснуть молча.
-ФОРМА ОКНА SHALL подчиняться одному контракту, общему для всех окон реестра:
-тело окна прокручивается, а кнопки действия («Закрыть», «Отмена», «Применить», «Рендер»,
-«Восстановить») живут ВНЕ прокрутки и остаются нажимаемыми при любой высоте экрана —
-окно, переросшее экран, MUST NOT прятать свои действия. Числовое поле SHALL рисоваться
-ОБЩИМ рядом виджетов; собственных `DragValue` вне общего виджета в окнах не бывает.
-Пределы, шаг и единица SHALL приходить из паспорта параметра (`ParamSpec`), а у величины
-без паспорта — объявляться ОДНИМ местом рядом с её определением и передаваться ряду
-аргументом; вписывать их в код отрисовки MUST NOT.
-Шесть самых плотных форм (цепочка эффектов, морфер, переход, камера, настройки проекта,
-рендер) SHALL быть выложены по образцу раздела «Трансформация»: свёртываемые группы, пары
-одной строкой, единица у каждого числа, ползунок у величины с обоими пределами, сброс
-одним действием. Остальные окна реестра под перевёрстку НЕ попадают, но контракту формы
-подчиняются.
-Почему: Р.63, слова владельца: «Я ставлю запрет любым агентам порождать какие-либо
-дополнительные окна без очевидного смысла (по типу окна при закрытии программы)»;
-«почему агент… вынуждает его вводить все параметры заново»; «duck under a track…
-почему ты нормально это не назвал»; «повсюду копятся бессмысленные копипасты одного и того
-же кода». Р.65: снимок дакинга снят вместе со своей памятью параметров — у живого прибора
-память есть по построению, и вторая (в хранилище) разошлась бы с проектом. Р.66 (прямая
-просьба владельца Р.64 «во всех других виджетах и окнах тоже пройтись надо будет»): проза
-про вид формы не работает — прокрутка тела к тому моменту была ровно у одного окна из
-двадцати одного, и её завели только после того, как тест уронил окно со спрятанными за
-кромкой кнопками.
-
-#### Scenario: Реестр окон
-- **WHEN** сканируются исходники kt-app на `egui::Window::new` и `Modal::new`; временно добавляется окно без записи; из реестра удаляется запись живого окна
-- **THEN** каждое место создания окна найдено в реестре с причиной длиной ≥ 25 символов; оба нарушения красны; окна `duck` и `inst_params` в реестре отсутствуют и в коде их нет
+#### Scenario: The window registry
+- **WHEN** the kt-app sources are scanned for `egui::Window::new` and `Modal::new`; a window without an entry is temporarily added; the entry of a live window is removed from the registry
+- **THEN** every place where a window is created is found in the registry with a reason at least 25 characters long; both violations are red; the `duck` and `inst_params` windows are absent from the registry and do not exist in the code
 - **TEST** t757 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Инструмент помнит параметры и отдаёт кривые
-- **WHEN** рабочее место (ширина метров, вид проекта) проходит круг через файл хранилища, и файл без секции читается заново; отдельно — сайдчейн-компрессор дорожки: ключ и параметры правятся в окне дорожки
-- **THEN** настройки рабочего места вернулись, файл без секции читается по-прежнему; параметры сайдчейна лежат в ПРОЕКТЕ (цепочка дорожки), ходят через undo и правятся общим виджетом параметров — второй их копии в пользовательском хранилище нет
+#### Scenario: A tool remembers its parameters and delivers curves
+- **WHEN** the workspace (the meter width, the project view) goes through a round trip via the storage file, and a file without the section is read again; separately — the track's sidechain compressor: the key and the parameters are edited in the track window
+- **THEN** the workspace settings are restored, a file without the section is still read; the sidechain parameters live in the PROJECT (the track's chain), go through undo and are edited by the common parameter widget — there is no second copy of them in the user storage
 - **TEST** t756b (`src/apps/kt-app/src/user_store.rs`), t775 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Имена — по отрасли
-- **WHEN** сканируются каталоги на слова, описывающие механику вместо имени («under a track», «под дорожкой», «snapshot of» в названиях пунктов)
-- **THEN** названий пунктов меню и окон с такими оборотами нет; у пунктов, чьи имена введены Р.63, есть все пять переводов
+#### Scenario: Names — by industry
+- **WHEN** the catalogs are scanned for words describing the mechanics instead of a name ("under a track", "Russian: "under the track"", "snapshot of" in item names)
+- **THEN** there are no menu item names or windows with such phrasing; the items whose names were introduced by R.63 have all five translations
 - **TEST** t756c (`src/apps/kt-app/src/i18n_tests.rs`)
 
-#### Scenario: Сайдчейн достижим и объясняет отказ
-- **WHEN** сканируются окно аудиодорожки и её полоса цепочки на путь «назначить ключ»; делается попытка выбрать саму себя и дорожку, дающую цикл; живой сценарий ставит дакинг руками и слушает результат
-- **THEN** путь найден из обоих мест и ведёт в одну команду; невозможный выбор назван причиной в строке состояния, а не отсутствует молча; живой сценарий показывает, что музыка просела под речью и вернулась после неё
-- **TEST** t777 (`src/apps/kt-app/src/reach_tests.rs`), `src/scripts/live/sidechain.py` (живой сценарий, `./scripts/live-check.sh`)
+#### Scenario: The sidechain is reachable and explains a refusal
+- **WHEN** the track window and its chain strip are scanned for the path "assign key"; an attempt is made to choose the track itself and a track that would produce a cycle; a live scenario sets ducking by hand and listens to the result
+- **THEN** the path is found from both places and leads to one command; an impossible choice is named with its reason in the status line, rather than missing silently; the live scenario shows that the music dipped under the speech and came back after it
+- **TEST** t777 (`src/apps/kt-app/src/reach_tests.rs`), `src/scripts/live/sidechain.py` (live scenario, `./scripts/live-check.sh`)
 
-#### Scenario: Контракт формы — по всем окнам реестра
-- **WHEN** каждое окно реестра `WINDOWS` открывается в НИЗКОМ окне; отдельно сканируются исходники kt-app на `egui::DragValue::new` вне `widgets.rs`
-- **THEN** у каждого окна кнопки действия видны в пределах экрана, тело живёт в прокрутке; окно, закрывающееся крестиком заголовка, и окно, короткое ПО ПОСТРОЕНИЮ, объявлены явно — с причиной и измеримым порогом строк; ни одного собственного `DragValue` вне общего виджета не найдено
-- **TEST** t779 (`src/apps/kt-app/src/reach_tests.rs`), `src/scripts/live/forms.py` (живой сценарий: кнопки видны и жмутся в настоящем низком окне)
+#### Scenario: The form contract — across all windows of the registry
+- **WHEN** each window of the `WINDOWS` registry is opened in a LOW window; separately the kt-app sources are scanned for `egui::DragValue::new` outside `widgets.rs`
+- **THEN** in each window the action buttons are visible within the screen, and the body lives in a scroll; a window that closes by the title's cross, and a window that is short BY CONSTRUCTION, are declared explicitly — with a reason and a measurable row threshold; not a single own `DragValue` outside the common widget is found
+- **TEST** t779 (`src/apps/kt-app/src/reach_tests.rs`), `src/scripts/live/forms.py` (live scenario: the buttons are visible and pressable in a real low window)
 
-#### Scenario: Шесть плотных форм выложены по образцу
-- **WHEN** открываются окна цепочки эффектов, морфера, перехода, камеры, настроек проекта и рендера
-- **THEN** у каждого есть свёртываемые группы, пары значений одной строкой, единица у каждого числа и ползунок у величины с обоими пределами; свёртка — состояние окна, не проекта; пределы совпадают с паспортом параметра
-- **TEST** t780 (`src/apps/kt-app/src/layout_tests.rs`), `src/scripts/live/forms.py` (живой сценарий: группа сворачивается и разворачивается)
+#### Scenario: Six dense forms are laid out on the model
+- **WHEN** the windows of the effect chain, morpher, transition, camera, project settings and render are opened
+- **THEN** each has collapsible groups, pairs of values on one row, a unit for each number, and a slider for a quantity with both limits; the grouping is the state of the window, not the project; the limits match the parameter's passport
+- **TEST** t780 (`src/apps/kt-app/src/layout_tests.rs`), `src/scripts/live/forms.py` (live scenario: a group collapses and expands)

@@ -1,419 +1,280 @@
-# Сохранность работы
+# Keeping the work safe
 
 ## Purpose
 
-Работа монтажёра не теряется ни при отключении питания, ни при падении или
-убийстве программы, ни при второй копии на том же проекте, ни по кнопке
-«Отмена»: файл проекта меняет только явное сохранение, всё остальное уезжает
-в файл восстановления и предлагается обратно.
+The editor's work is not lost on a power cut, nor on a crash or killing of the program, nor with a second copy on the same project, nor by the "Cancel" button: the project file is changed only by an explicit save; everything else goes to the recovery file and is offered back.
 
 ## Requirements
 
-### Requirement: Атомарная запись проекта честна к отключению питания
+### Requirement: Atomic project write is honest to power loss
+Any write of the project file (GUI and kt-cli) SHALL go through one home — `kt_otio::write_atomic` — in the order "write and flush the TEMPORARY file → rename → flush the directory". The temporary name MUST be appended to the FULL name of the project and carry the process number. A failure of directory sync MUST NOT count as a write failure: the file is in place and intact, and the caller learns of the degradation through a flag and says so once per session.
+Why: `write + rename` without sync survives a process crash but not a power cut — the rename may land in the journal before the data, and the project file in place is left zero bytes long; exFAT and network shares cannot sync a directory, and turning that into an error would mean claiming the save did not happen.
 
-Любая запись файла проекта (GUI и kt-cli) SHALL идти через один дом —
-`kt_otio::write_atomic` — в порядке «записать и сбросить ВРЕМЕННЫЙ файл →
-переименовать → сбросить каталог». Временное имя MUST дописываться к ПОЛНОМУ
-имени проекта и нести номер процесса. Отказ синка каталога MUST NOT
-считаться отказом записи: файл на месте и цел, вызывающий узнаёт о деградации
-флагом и говорит об этом один раз за сессию.
-Почему: `write + rename` без синка переживает падение процесса, но не
-питание — переименование может лечь в журнал раньше данных, и на месте
-проекта остаётся файл нулевой длины; exFAT и сетевые шары каталог синкнуть
-не умеют, и превращать это в ошибку значило бы врать, что сохранения не было.
-
-#### Scenario: Порядок синков наблюдается инъекцией, а не фолт-инжекцией
-- **WHEN** проект пишется через подменённую файловую систему, записывающую вызовы
-- **THEN** журнал вызовов ровно «write+sync `<имя>.<pid>.tmp` → rename → sync dir», временного файла после записи нет, а перестановка `sync_dir` перед `rename` делает тест красным
+#### Scenario: The sync order is observed by injection, not by fault injection
+- **WHEN** the project is written through a substituted file system that records the calls
+- **THEN** the call log is exactly "write+sync `<name>.<pid>.tmp` → rename → sync dir", there is no temporary file left after the write, and swapping `sync_dir` before `rename` turns the test red
 - **TEST** t351 (`src/libs/kt-otio/tests/io.rs`), t150 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Каталог не сбросился — запись всё равно успешна
-- **WHEN** `sync_dir` отвечает `Unsupported`
-- **THEN** запись возвращает успех с `dir_synced == false`, файл цел и читается
+#### Scenario: Directory not synced — the write still succeeds
+- **WHEN** `sync_dir` answers `Unsupported`
+- **THEN** the write returns success with `dir_synced == false`; the file is intact and readable
 - **TEST** t353 (`src/libs/kt-otio/tests/io.rs`)
 
-#### Scenario: kt-cli пишет тем же кодом и не затирает без `--force`
-- **WHEN** `kt-cli new/convert/demo/roundtrip` получает путь существующего файла
-- **THEN** без `--force` отказ с подсказкой, с `--force` — атомарная запись без остатка временного файла
+#### Scenario: kt-cli writes with the same code and does not overwrite without `--force`
+- **WHEN** `kt-cli new/convert/demo/roundtrip` receives the path of an existing file
+- **THEN** without `--force` it refuses with a hint; with `--force` it is an atomic write with no leftover temporary file
 - **TEST** t387 (`src/apps/kt-cli/tests/cli.rs`)
 
-### Requirement: Исход записи — тип, и отказ не выглядит успехом
+### Requirement: The write outcome is a type, and a failure does not look like success
+A guarded write SHALL return an explicit outcome (`Wrote { dir_synced }` / `SkippedNewerOnDisk`), and each caller MUST handle both; a refusal by the guard or an I/O error MUST NOT clear the asterisk, change the file, or print "saved". A save error is a warning (Warn), and its repeat MUST turn the counter of unread notifications red.
+Why: a `bool` with `.map(|_| ())` turned a guard refusal into success — the asterisk went out, and there was no file with the edits; collapsing duplicates by an early return silenced the only channel of the message exactly when the error repeated.
 
-Сторожевая запись SHALL возвращать явный исход (`Wrote { dir_synced }` /
-`SkippedNewerOnDisk`), и каждый вызывающий MUST разбирать оба; отказ по
-сторожу или ошибка ввода-вывода MUST NOT гасить звёздочку, менять файл или
-печатать «сохранено». Ошибка сохранения — предупреждение (Warn), и её повтор
-MUST красить счётчик непрочитанных уведомлений.
-Почему: `bool` с `.map(|_| ())` превращал отказ сторожа в успех — звёздочка
-гасла, а файла с правками не было; схлопывание дублей ранним возвратом
-глушило единственный канал сообщения ровно тогда, когда ошибка повторялась.
-
-#### Scenario: Отказ сторожа оставляет звёздочку и файл
-- **WHEN** на диске ревизия «из будущего» и пользователь жмёт Ctrl+S
-- **THEN** файл не меняется, `dirty_content` остаётся, уведомление есть и не выглядит как успех
+#### Scenario: A guard refusal leaves the asterisk and the file
+- **WHEN** on disk there is a revision "from the future" and the user presses Ctrl+S
+- **THEN** the file does not change, `dirty_content` remains, and a notification is present that does not look like success
 - **TEST** t355 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Сторож ревизии не идёт назад
-- **WHEN** запись со старой ревизией приходит после записи с новой
-- **THEN** старая не трогает файл, новая пишет; фоновый автосейв не перетирает свежий Ctrl+S
+#### Scenario: The revision guard does not go backward
+- **WHEN** a write with an old revision arrives after a write with a new one
+- **THEN** the old one does not touch the file, the new one writes; the background autosave does not overwrite a fresh Ctrl+S
 - **TEST** t199 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Повтор предупреждения виден
-- **WHEN** одно и то же предупреждение приходит трижды
-- **THEN** строка одна с `repeats == 3`, `notices_unread == 3`, текст без «×N», а ошибка Ctrl+S приходит как Warn
+#### Scenario: A repeated warning is visible
+- **WHEN** the same warning arrives three times
+- **THEN** there is one line with `repeats == 3` and `notices_unread == 3`, the text without "×N", and an error from Ctrl+S arrives as Warn
 - **TEST** t356 (`src/apps/kt-app/src/layout_tests.rs`)
 
-### Requirement: Автосейв пишет в файл восстановления, проект меняет только Ctrl+S
+### Requirement: Autosave writes to a recovery file, only Ctrl+S changes the project
+Background writing SHALL go to `<full project name>.recovery.kt` next to the project (an unnamed project — to the data directory) and MUST NOT touch the user's file or clear the asterisk. The recovery file SHALL be of the same format as the project: writing megabytes of the exchange format every half minute is both interface lag and a window of loss on a crash. A successful save SHALL remove only ITS OWN recovery. Exiting the program SHALL write the recovery, not the project; a clean exit takes its own recovery away. Drift of the viewport (zoom, scroll, cursor) MUST NOT start a write. There are TWO revision guards — one for the project, one for the recovery. The gate "not during a gesture and not during playback" SHALL yield after two quiet intervals.
+Why: the owner's decision — there must be a SECOND state on disk, otherwise there is nowhere to roll back to; a shared guard raised the bar with background writes, and the next Ctrl+S turned out "stale"; a substitution of the extension merged `film.otio` and `film.mp4.otio` into one recovery; a zoom every 30 s ran a full serialization without a single edit. R.70: the owner's autosave wrote 115 MB, because the project lived in the exchange format and the body of the reel was repeated in every instance.
 
-Фоновая запись SHALL идти в `<полное имя проекта>.recovery.kt` рядом с
-проектом (безымянный проект — в каталог данных) и MUST NOT трогать файл
-пользователя и гасить звёздочку. Файл восстановления SHALL быть того же
-формата, что проект: писать мегабайты обменного формата каждые полминуты —
-это и задержка интерфейса, и окно потери при падении. Успешное сохранение
-SHALL удалять только СВОЁ восстановление. Выход из программы SHALL писать
-восстановление, а не проект; чистый выход уносит своё восстановление. Дрейф
-вьюпорта (зум, прокрутка, курсор) MUST NOT запускать запись. Сторожей
-ревизии ДВА — свой у проекта, свой у восстановления. Гейт «не во время жеста
-и не при игре» SHALL уступать после двух тихих интервалов.
-Почему: решение владельца — на диске должно быть ВТОРОЕ состояние, иначе
-откатиться некуда; общий сторож поднимал планку фоновой записью, и следующий
-Ctrl+S оказывался «устаревшим»; подмена расширения склеивала `film.otio` и
-`film.mp4.otio` в одно восстановление; зум раз в 30 с гонял полную сериализацию
-без единой правки. Р.70: у владельца автосейв писал 115 МБ, потому что проект
-жил в обменном формате и тело ленты повторялось в каждом экземпляре.
-
-#### Scenario: Фоновая запись не касается проекта и не гасит звёздочку
-- **WHEN** есть правка содержимого и прошёл интервал автосейва
-- **THEN** файл проекта байт-в-байт прежний, `dirty_content` горит, в recovery лежит модель с правкой
+#### Scenario: Background write does not touch the project and does not clear the asterisk
+- **WHEN** there is a content edit and the autosave interval has passed
+- **THEN** the project file is byte for byte unchanged, `dirty_content` stays lit, and the recovery holds the model with the edit
 - **TEST** t358 (`src/apps/kt-app/src/layout_tests.rs`), t194 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Имя восстановления дописывается к полному имени
-- **WHEN** проекты `film.kt` и `film.mp4.kt`
-- **THEN** у них разные файлы восстановления рядом с проектом; у безымянного — каталог данных
+#### Scenario: The recovery name is appended to the full name
+- **WHEN** the projects are `film.kt` and `film.mp4.kt`
+- **THEN** they have different recovery files next to the project; for an unnamed one — the data directory
 - **TEST** t357 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Ctrl+S уносит только своё восстановление
-- **WHEN** рядом лежат своё и чужое восстановление и пользователь сохраняется
-- **THEN** своё удалено, чужое цело, отметка `recovery_written` снята
+#### Scenario: Ctrl+S removes only its own recovery
+- **WHEN** its own and someone else's recovery lie next to each other and the user saves
+- **THEN** its own is removed, the other's is intact, and the `recovery_written` mark is cleared
 - **TEST** t359 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Дрейф вьюпорта не пишет, правка пишет
-- **WHEN** менялись только зум и прокрутка при чистом проекте
-- **THEN** фоновая запись не запускается; после правки содержимого — запускается
+#### Scenario: Viewport drift does not write, an edit does
+- **WHEN** only the zoom and scroll changed on a clean project
+- **THEN** no background write starts; after a content edit it starts
 - **TEST** t360 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Сторож восстановления не блокирует сохранение
-- **WHEN** фоновая запись восстановления подняла свой сторож
-- **THEN** сторож проекта остался на нуле и Ctrl+S той же ревизии проходит
+#### Scenario: The recovery guard does not block saving
+- **WHEN** the background recovery write has raised its own guard
+- **THEN** the project guard stays at zero, and Ctrl+S of the same revision passes
 - **TEST** t361 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Правки внутри жеста двигают ревизию
-- **WHEN** окно FX или драг края правит модель через `apply_coalesced`
-- **THEN** ревизия растёт и автосейв не считает правку сохранённой
+#### Scenario: Edits inside a gesture advance the revision
+- **WHEN** the FX window or a drag of an edge edits the model via `apply_coalesced`
+- **THEN** the revision grows and autosave does not count the edit as saved
 - **TEST** t200 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Автосейв большого проекта перестал быть событием
-- **WHEN** проект с лентой в нескольких экземплярах (сцена, дающая в обменном формате мегабайты) пишется автосейвом
-- **THEN** файл восстановления на порядки меньше того же проекта в обменном формате, а запись укладывается в интервал без задержки интерфейса
+#### Scenario: Autosave of a large project stopped being an event
+- **WHEN** a project with a reel in several instances (a scene that gives megabytes in the exchange format) is written by autosave
+- **THEN** the recovery file is orders of magnitude smaller than the same project in the exchange format, and the write fits in the interval without interface lag
 - **TEST** t815 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Живой SIGKILL
-- **WHEN** правка настоящим жестом → фоновая запись → `SIGKILL` → перезапуск
-- **THEN** файл проекта не тронут, программа сама предлагает восстановить, работа на месте — и так дважды
-- **TEST** живой `recover.py` (`src/scripts/live/recover.py`, через `src/scripts/live-check.sh`)
+#### Scenario: Live SIGKILL
+- **WHEN** an edit by a real gesture → background write → `SIGKILL` → restart
+- **THEN** the project file is untouched, the program itself offers recovery, and the work is in place — and this twice over
+- **TEST** live `recover.py` (`src/scripts/live/recover.py`, via `src/scripts/live-check.sh`)
 
-### Requirement: Восстановление предлагается по времени и кладётся в редактор
+### Requirement: Recovery is offered by time and placed into the editor
+At startup and by the menu item "Recover unsaved…" the program SHALL collect all candidates (recoveries next to the project, including the files of second copies, and unnamed work) and offer recovery of the project only if it is STRICTLY newer than the project; unnamed work is always offered, the freshest first.
+The dialog shows the path and the time; "Recover" puts the work INTO THE EDITOR with an asterisk and MUST NOT consume the source; "Delete" removes only this file; "Not now" touches nothing. An empty list on a direct request from the menu SHALL say so in words.
+Why: the chain "argument → last_project → autosave" chose by order, not by time — "opened A, New, an hour of work, a crash" was lost silently; a comparison without strictness would call for recovering what is already in the file after every Ctrl+S.
 
-При старте и по пункту «Восстановить несохранённое…» программа SHALL собрать
-всех кандидатов (восстановления рядом с проектом, включая файлы вторых копий,
-и безымянную работу) и предлагать восстановление проекта только если оно
-СТРОГО новее проекта; безымянная работа предлагается всегда, свежее — первым.
-Диалог показывает путь и время; «Восстановить» кладёт работу В РЕДАКТОР со
-звёздочкой и MUST NOT съедать источник; «Удалить» уносит только этот файл;
-«Не сейчас» ничего не трогает. Пустой список по прямой просьбе из меню SHALL
-сказать об этом словами.
-Почему: цепочка «аргумент → last_project → автосейв» выбирала порядком, а не
-временем — «открыл A, Новый, час работы, падение» терялся молча; сравнение
-без строгости звало бы восстановить то, что и так в файле после каждого
-Ctrl+S.
-
-#### Scenario: Отбор по mtime
-- **WHEN** восстановление старее проекта / новее проекта / безымянное
-- **THEN** не предложено / предложено / предложено всегда и первым, если свежее
+#### Scenario: Selection by mtime
+- **WHEN** the recovery is older than the project / newer than the project / unnamed
+- **THEN** not offered / offered / always offered and first, if it is fresher
 - **TEST** t365 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Безымянная работа видна и при открывшемся проекте
-- **WHEN** `last_project` существует, а в каталоге данных лежит безымянная работа
-- **THEN** окно восстановления открывается; пустой список из меню даёт уведомление
+#### Scenario: Unnamed work is visible even when a project is open
+- **WHEN** `last_project` exists, and unnamed work lies in the data directory
+- **THEN** the recovery window opens; an empty list from the menu gives a notification
 - **TEST** t366 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Восстановление повторимо и не пишет в проект
-- **WHEN** пользователь восстанавливает кандидата, затем отменяет и восстанавливает снова
-- **THEN** модель в редакторе, звёздочка горит, файл проекта и источник нетронуты оба раза
+#### Scenario: Recovery is repeatable and does not write to the project
+- **WHEN** the person recovers a candidate, then cancels and recovers it again
+- **THEN** the model is in the editor, the asterisk is lit, and the project file and the source are untouched both times
 - **TEST** t367 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: «Удалить» и «Не сейчас»
-- **WHEN** два кандидата, «Удалить» по первому, затем по второму
-- **THEN** удалён именно выбранный, окно живёт пока есть кандидаты и закрывается на пустом; «Не сейчас» файл оставляет
+#### Scenario: "Delete" and "Not now"
+- **WHEN** there are two candidates; "Delete" on the first, then on the second
+- **THEN** exactly the selected one is removed; the window lives while candidates remain and closes on an empty list; "Not now" leaves the file
 - **TEST** t368 (`src/apps/kt-app/src/layout_tests.rs`)
 
-### Requirement: Несохранённую работу не выбрасывают молча, Drop — последний рубеж
+### Requirement: Unsaved work is not silently discarded; Drop is the last line
+"New", "Open", and closing the window with unsaved work SHALL ask with one guard that has THREE answers (save / do not save / stay); "Save and continue" MUST NOT continue if the save did not succeed. Closing the window is intercepted in the standard way (`CancelClose`). The application's `Drop` SHALL write the recovery in cases where `on_exit` is not called (re-creation of the application in place, unwinding of the stack from a panic), and its body MUST NOT contain a single `unwrap`; a poisoned guard is no reason not to write. A clean project is not hindered by the guard.
+Why: the right not to ask was legitimate while autosave wrote over the user's file; the owner removed that — together with the right to stay silent. A `bool` instead of three answers lost the edit on the "Cancel" button; a panic inside `Drop` during unwinding is an `abort`, which takes away exactly the file the whole thing was for.
 
-«Новый», «Открыть» и закрытие окна при несохранённой работе SHALL
-спрашивать одним сторожем с ТРЕМЯ ответами (сохранить / не сохранять /
-остаться); «Сохранить и продолжить» MUST NOT продолжать, если сохранить не
-вышло. Закрытие окна перехватывается штатно (`CancelClose`). `Drop`
-приложения SHALL писать восстановление там, где `on_exit` не зовут
-(пересоздание приложения на месте, раскрутка стека от паники), и в его теле
-MUST NOT быть ни одного `unwrap`; отравленный сторож — не повод не писать.
-Чистому проекту сторож не мешает.
-Почему: право не спрашивать было законно, пока автосейв писал поверх файла
-пользователя; владелец это убрал — вместе с правом молчать. `bool` вместо
-трёх ответов терял монтаж по кнопке «Отмена»; паника внутри `Drop` при
-раскрутке — `abort`, уносящий ровно тот файл, ради которого всё затевалось.
-
-#### Scenario: «Новый» и «Открыть» спрашивают
-- **WHEN** проект грязный и пользователь жмёт «Новый» или «Открыть»
-- **THEN** вопрос задан, «Остаться» ничего не меняет, «Не сохранять» отпускает; чистому проекту вопроса нет
+#### Scenario: "New" and "Open" ask
+- **WHEN** the project is dirty and the user presses "New" or "Open"
+- **THEN** the question is asked; "Stay" changes nothing; "Do not save" lets go; a clean project gets no question
 - **TEST** t369 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Неудачное сохранение останавливает переход
-- **WHEN** ответ «сохранить», а запись отказала
-- **THEN** работа на месте, звёздочка горит, предупреждение есть
+#### Scenario: A failed save stops the transition
+- **WHEN** the answer is "save", and the write was refused
+- **THEN** the work stays in place, the asterisk is lit, and a warning is present
 - **TEST** t370 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Закрытие окна перехвачено
-- **WHEN** окно закрывают при грязном проекте
-- **THEN** выход не разрешён до ответа, «Остаться» держит программу, «Не сохранять» разрешает выход без переспроса
-- **TEST** t371 (`src/apps/kt-app/src/layout_tests.rs`), живой `unsaved.py` (`src/scripts/live/unsaved.py`)
+#### Scenario: Window close is intercepted
+- **WHEN** the window is closed on a dirty project
+- **THEN** exit is not permitted until an answer is given; "Stay" keeps the program; "Do not save" allows exit without a second question
+- **TEST** t371 (`src/apps/kt-app/src/layout_tests.rs`), live `unsaved.py` (`src/scripts/live/unsaved.py`)
 
-#### Scenario: Drop пишет восстановление даже под отравленным сторожем
-- **WHEN** приложение с грязной моделью уничтожается, а мьютекс сторожа отравлен паникой
-- **THEN** recovery записан с той же работой, файл проекта не создан; чистое приложение ничего не пишет
+#### Scenario: Drop writes the recovery even under a poisoned guard
+- **WHEN** an application with a dirty model is destroyed, and the guard's mutex is poisoned by a panic
+- **THEN** the recovery is written with the same work, and the project file is not created; a clean application writes nothing
 - **TEST** t372 (`src/apps/kt-app/src/layout_tests.rs`)
 
-### Requirement: Замок на проект — flock на соседнем файле, вторая копия деградирует честно
+### Requirement: Project lock — flock on an adjacent file, a second copy degrades honestly
+An open project SHALL take an `flock` on a file in the data directory (the key is a hash of the absolute path; the path and the pid are inside), and not on the project itself nor globally on the program. A second copy MUST NOT be forbidden: it gets a warning with the number of the other process, ITS OWN recovery file, ITS OWN temporary file, and one question at the first Ctrl+S per session. kt-cli warns about the occupation before writing, but does not refuse.
+Why: a global lock would have killed live scenarios and the "opened a second time to look at another piece"; a lock on the project's inode would fall off after the first atomic `rename`; a pid file without `flock` would leave a permanent lock after `SIGKILL`; a shared tmp of two copies would substitute the project with half-written content from the other.
 
-Открытый проект SHALL заниматься `flock` на файле в каталоге данных
-(ключ — хэш абсолютного пути; путь и pid внутри), а не на самом проекте и не
-глобально на программу. Вторая копия MUST NOT запрещаться: она получает
-предупреждение с номером чужого процесса, СВОЙ файл восстановления, СВОЙ
-временный файл и один вопрос при первом Ctrl+S за сессию. kt-cli перед
-записью предупреждает о занятости, но не отказывает.
-Почему: глобальный замок убил бы живые сценарии и «открыл второй раз
-посмотреть»; замок на inode проекта отваливался бы после первого атомарного
-`rename`; файл с pid без `flock` оставлял бы вечную блокировку после
-`SIGKILL`; общий tmp двух копий подменял бы проект наполовину записанным
-содержимым другой.
-
-#### Scenario: Замок именной и переживает атомарное сохранение
-- **WHEN** проект занят, затем атомарно перезаписан
-- **THEN** второй дескриптор получает `Busy` с pid, соседний проект берётся свободно, после перезаписи замок держится, после drop отпускается
+#### Scenario: The lock is named and survives an atomic save
+- **WHEN** the project is occupied, then atomically rewritten
+- **THEN** the second descriptor gets `Busy` with the pid, a neighbouring project is taken freely; after the rewrite the lock holds; after drop it is released
 - **TEST** t362 (`src/apps/kt-app/src/project_lock.rs`), t362b (`src/apps/kt-app/src/project_lock.rs`)
 
-#### Scenario: У второй копии свои tmp и recovery
-- **WHEN** временное имя и цель восстановления считаются при занятом проекте
-- **THEN** в tmp есть pid и полное имя проекта; recovery второй копии отличается от владельца и остаётся `.otio`
+#### Scenario: The second copy has its own tmp and recovery
+- **WHEN** the temporary name and the recovery target are computed for an occupied project
+- **THEN** the tmp contains the pid and the full project name; the second copy's recovery differs from the owner's and remains `.otio`
 - **TEST** t363 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Первый Ctrl+S на занятом проекте спрашивает один раз
-- **WHEN** проект занят соседом и пользователь сохраняется
-- **THEN** уведомление с pid, вопрос; «не сохранять» оставляет файл и звёздочку; «всё равно» пишет и больше не переспрашивает
+#### Scenario: The first Ctrl+S on an occupied project asks once
+- **WHEN** the project is occupied by a neighbour and the user saves
+- **THEN** a notification with the pid and a question; "do not save" leaves the file and the asterisk; "anyway" writes and does not ask again
 - **TEST** t364 (`src/apps/kt-app/src/layout_tests.rs`)
 
-### Requirement: Журнал и отчёт о падении — канал, когда показать некому
+### Requirement: The log and crash report — a channel for when there is no one to show it to
+The program SHALL keep a journal `kt-app.log` in the data directory: append, do not overwrite, rotate at 1 MiB in one step, and a failure to write the journal MUST NOT bring down the program. The panic hook SHALL leave a report with the version, thread, message, backtrace with names, and a dump of the "black box", without touching the model; the next start reports the crash exactly once. The "black box" MUST be readable even under a poisoned mutex.
+Why: the window's `on_exit` no longer exists, and a `.desktop` with `Terminal=false` sends stderr nowhere — that is exactly where the final record lives; the hook is called in the panicking thread (invariants 2 and 6 forbid going into the engine), and a second `unwrap` inside the hook is an `abort` with no report.
 
-Программа SHALL вести журнал `kt-app.log` в каталоге данных: дописывать, не
-перетирать, ротировать по 1 МиБ одним шагом, а отказ записи журнала MUST NOT
-ронять программу. Панический хук SHALL оставлять отчёт с версией, потоком,
-сообщением, бэктрейсом с именами и дампом «чёрного ящика», не трогая модель;
-следующий старт сообщает об аварии ровно один раз. «Чёрный ящик» MUST
-читаться и под отравленным мьютексом.
-Почему: у `on_exit` окна уже нет, а `.desktop` с `Terminal=false` уводит
-stderr в никуда — именно там живёт финальная запись; хук зовётся в
-паникующем потоке (инварианты 2 и 6 запрещают ходить в движок), а второй
-`unwrap` внутри хука — `abort` без отчёта.
-
-#### Scenario: Журнал дописывает и ротирует
-- **WHEN** две записи, затем файл за порогом и ещё одна
-- **THEN** обе строки на месте с датой, после порога старое в `.log.1`, новое с нуля; недоступный путь молча мимо
+#### Scenario: The journal appends and rotates
+- **WHEN** two records are written, then the file goes past the threshold and one more is written
+- **THEN** both lines are in place with dates; after the threshold the old content goes to `.log.1` and the new starts from zero; an unavailable path is silently skipped
 - **TEST** t354 (`src/apps/kt-app/src/journal.rs`)
 
-#### Scenario: Отчёт о падении полон и отдаётся один раз
-- **WHEN** хук формирует отчёт и программа стартует после аварии
-- **THEN** в отчёте версия, поток, сообщение, имена функций, дамп ящика; второй старт об аварии молчит, отчёт лежит в `.seen`
+#### Scenario: The crash report is complete and is given once
+- **WHEN** the hook forms the report and the program starts after the crash
+- **THEN** the report holds the version, thread, message, function names, and the dump of the box; the second start stays silent about the crash, and the report lies in `.seen`
 - **TEST** t375 (`src/apps/kt-app/src/journal.rs`), t374 (`src/apps/kt-app/src/journal.rs`), t373 (`src/libs/kt-engine/src/flight.rs`)
 
-### Requirement: Номер события не переиспользуется, конверт рождённого наследуется
+### Requirement: An event number is not reused; the envelope of a born event is inherited
+An event number SHALL be issued from ONE place, by a session mark that does not drop after deletion and undo; copies of the formula "max + 1" outside that home MUST NOT exist. A derived event (a half of a cut, a chunk of a bake, a paste) SHALL receive the parent's envelope whole — the kinship is reported by the model as a batch of edits — and references to material (`available_range`) live on the MEDIA as the fallback path for born events and MUST NOT overwrite the clip's own envelope. Markers are inherited whole; the WRITER distributes them across the material window.
+Why: a reused number hung someone else's envelope (name, markers, references of a deleted one) on a newborn, and numbers are what link groups and morphers go by; the two halves of one cut went into a foreign editor in DIFFERENT coordinates (from an hour and from zero); markers laid out at a cut were lost under undo.
 
-Номер события SHALL выдаваться из ОДНОГО места по сессионной отметке, не
-опускающейся после удаления и undo; копий формулы «max + 1» вне дома MUST NOT
-быть. Производное событие (половина разреза, кусок bake, вставка) SHALL
-получать конверт родителя целиком — родство сообщает модель пакетом правок, —
-а ссылки на материал (`available_range`) живут у МЕДИА как запасной путь для
-рождённых и MUST NOT перетирать собственный конверт клипа. Маркеры
-наследуются целиком, раскладывает их по окну материала ПИСАТЕЛЬ.
-Почему: переиспользованный номер вешал на новорождённого чужой конверт (имя,
-маркеры, ссылки удалённого), а по номерам ходят link-группы и морферы; две
-половины одного разреза уезжали в чужой редактор в РАЗНЫХ координатах
-(от часа и от нуля); разложенные при разрезе маркеры терялись под undo.
-
-#### Scenario: Номера не возвращаются после удаления и undo
-- **WHEN** два клипа созданы и удалены, третий создан и отменён
-- **THEN** каждый следующий номер строго больше, повторный запрос без взятия отдаёт тот же номер
+#### Scenario: Numbers are not reused after deletion and undo
+- **WHEN** two clips are created and deleted, and a third is created and undone
+- **THEN** each next number is strictly greater; a repeated request without taking one returns the same number
 - **TEST** t376 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Арифметика номеров в одном доме
-- **WHEN** сканируются UI-файлы приложения
-- **THEN** формула «max по клипам + 1» встречается только в доме правила
+#### Scenario: Number arithmetic in one home
+- **WHEN** the UI files of the application are scanned
+- **THEN** the formula "max over clips + 1" occurs only in the home of the rule
 - **TEST** t379 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Рождённый клип пишется в координатах материала соседа
-- **WHEN** клип с часом вшитого таймкода режется пополам и сохраняется
-- **THEN** обе половины уезжают от часа, а не правая от нуля
+#### Scenario: A newborn clip is written in the neighbour's material coordinates
+- **WHEN** a clip with an hour of embedded timecode is cut in half and saved
+- **THEN** both halves are placed from the hour, and not the right half from zero
 - **TEST** t377 (`src/libs/kt-otio/tests/edit_roundtrip.rs`)
 
-#### Scenario: Конверт медиа не перетирает конверт клипа
-- **WHEN** у клипа несколько ссылок на материал и свой `active_key`
-- **THEN** после круга сохранены обе ссылки и активный ключ
+#### Scenario: The media envelope does not overwrite the clip's envelope
+- **WHEN** a clip has several references to material and its own `active_key`
+- **THEN** after the round trip both references and the active key are preserved
 - **TEST** t378 (`src/libs/kt-otio/tests/edit_roundtrip.rs`)
 
-#### Scenario: Имя, чужие эффекты и metadata наследуются
-- **WHEN** клип с чужим эффектом и чужим неймспейсом metadata режется
-- **THEN** обе половины несут имя, эффект и metadata
+#### Scenario: Name, foreign effects and metadata are inherited
+- **WHEN** a clip with a foreign effect and a foreign metadata namespace is cut
+- **THEN** both halves carry the name, the effect and the metadata
 - **TEST** t380 (`src/libs/kt-otio/tests/edit_roundtrip.rs`)
 
-#### Scenario: Маркеры раскладывает писатель
-- **WHEN** три маркера (до, на границе, после разреза), конверт ребёнка несёт все три
-- **THEN** в файле у каждой половины только маркеры её окна, граничный — у правой
+#### Scenario: The writer distributes the markers
+- **WHEN** there are three markers (before, on the boundary, after the cut), and the child's envelope carries all three
+- **THEN** in the file each half has only the markers of its own window; the boundary marker goes to the right half
 - **TEST** t381 (`src/libs/kt-otio/tests/edit_roundtrip.rs`)
 
-#### Scenario: Наследование доезжает на живом жесте
-- **WHEN** разрез и вставка копии делаются через приложение
-- **THEN** новорождённые получают имя родителя в `Retained`
+#### Scenario: Inheritance arrives on a live gesture
+- **WHEN** a cut and a paste of a copy are done through the application
+- **THEN** the newborns get the parent's name in `Retained`
 - **TEST** t382 (`src/apps/kt-app/src/layout_tests.rs`)
 
-### Requirement: Рабочее место ≠ проект
+### Requirement: Workspace ≠ project
+The width of the meters panel, zoom, scroll and cursor SHALL be stored in the user store (`workspace.json`: the width is shared, the view is per project), while in `.otio` they remain passthrough: what was read is what gets written. An empty store MUST yield to the values from the file; a filled store takes precedence over the file; a store of a future version is read but not overwritten. Track names and heights, groups and the bin layout SHALL remain in the project. Convenience edits (region, loop, zoom, bin layout, track name) MUST NOT give an asterisk; content edits do.
+Why: you open a colleague's project and lose your own width; you save it and impose yours on them; passthrough keeps byte stability and old builds working; the boundary "convenience/content" moves along with the features and is held only by a test.
 
-Ширина панели метров, зум, прокрутка и курсор SHALL храниться в
-пользовательском хранилище (`workspace.json`: ширина общая, вид — по
-проектам), а в `.otio` оставаться passthrough: что прочли, то и записали.
-Пустое хранилище MUST уступать значениям из файла; заполненное сильнее
-файла; хранилище будущей версии читается, но не перезаписывается. Имена и
-высоты дорожек, группы и раскладка бина SHALL оставаться в проекте. Правки
-удобства (регион, loop, зум, раскладка бина, имя дорожки) MUST NOT давать
-звёздочку; правки содержимого — дают.
-Почему: открыл проект коллеги — потерял свою ширину, сохранил — навязал ему
-свою; passthrough держит байт-стабильность и старые сборки; граница
-«удобство/содержимое» ездит вслед за фичами и держится только тестом.
-
-#### Scenario: Чужие значения не переписываются нашими
-- **WHEN** из файла прочитаны чужие ширина метров и вид, у нас свои
-- **THEN** в сохранённом файле чужие значения нетронуты, наши — в хранилище
+#### Scenario: Foreign values are not overwritten by ours
+- **WHEN** the foreign meter width and view were read from the file, and we have our own
+- **THEN** in the saved file the foreign values are untouched; ours are in the store
 - **TEST** t390 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Переезд без потерь и будущая версия
-- **WHEN** хранилище пусто / заполнено / битое / версии 99
-- **THEN** молчит / круг точен и вид другого проекта не подменяется / не роняет / читается и не перезаписывается; имена и высоты дорожек и раскладка бина едут в проекте
+#### Scenario: Migration without loss, and a future version
+- **WHEN** the store is empty / filled / broken / of version 99
+- **THEN** silent / the round trip is exact and another project's view is not substituted / does not crash / is read and not overwritten; track names, heights and the bin layout travel in the project
 - **TEST** t391 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Граница грязности
-- **WHEN** меняются регион, loop, зум, раскладка бина или имя дорожки, затем ставится метка
-- **THEN** звёздочки нет до метки и есть после; Esc снимает регион, не трогая loop
+#### Scenario: The dirtiness boundary
+- **WHEN** the region, loop, zoom, bin layout or a track name change, and then a marker is set
+- **THEN** there is no asterisk before the marker and there is one after it; Esc clears the region without touching the loop
 - **TEST** t96 (`src/apps/kt-app/src/layout_tests.rs`)
 
-### Requirement: Долгая фоновая работа конечна и отменяема
+### Requirement: Long background work is finite and cancellable
+A finite background task (render, analysis, index) SHALL have progress, cancellation and pause, and its handle MUST stop the thread on `Drop`; a service (a queue that lives with the project) is a separate type. Cancellation MUST clear everything: "running" means running.
+Why: a task that pretended to be a service raised a thread on every call and appended to the orphaned `Arc`s of a closed project; within one day of writing, the flag and the handle were not separated, and the cost grew. The services themselves are the `media-index` capability.
 
-Конечная фоновая задача (рендер, анализ, индекс) SHALL иметь прогресс, отмену
-и паузу, а её ручка MUST гасить поток по `Drop`; служба (очередь, живущая с
-проектом) — отдельный тип. Отмена MUST очищать всё, «идёт» означает «идёт».
-Почему: задача, притворявшаяся службой, поднимала поток на каждый вызов и
-дописывала в осиротевшие `Arc` закрытого проекта; в один день написания
-флаг и хэндл не раздали, и цена росла. Сами службы — capability `media-index`.
-
-#### Scenario: Каркас задачи
-- **WHEN** задача докладывает, ставится на паузу, отменяется, роняется
-- **THEN** прогресс приходит, пауза держит, отмена отпускает паузу, `Drop` гасит поток
+#### Scenario: Task scaffolding
+- **WHEN** a task reports progress, is paused, cancelled, and dropped
+- **THEN** progress arrives, the pause holds, cancellation releases the pause, and `Drop` stops the thread
 - **TEST** t398 (`src/apps/kt-app/src/bg.rs`), t398b (`src/apps/kt-app/src/bg.rs`)
 
-#### Scenario: Отмена очищает всё
-- **WHEN** в очереди анализа несколько заявок и приходит отмена
-- **THEN** очередь пуста, флаг «идёт» соответствует реальному потоку
+#### Scenario: Cancellation clears everything
+- **WHEN** there are several requests in the analysis queue and a cancellation arrives
+- **THEN** the queue is empty, and the "running" flag matches the real thread
 - **TEST** t410 (`src/apps/kt-app/src/analysis.rs`)
 
-### Requirement: Работа заканчивается `finish.sh`, а доказательство — живой сценарий
+### Requirement: Work ends with `finish.sh`, and the proof is a live scenario
+Any work on the program SHALL end with `src/scripts/finish.sh` and the version `vYY.MM.DD-hash` in the report; the script's output MUST NOT be filtered, and the tree is not edited while it runs. The verdict of each verification stage MUST be taken from the command that does the checking (the cargo return code), not from the one that prints. For each point of the owner's complaint there SHALL be a live scenario on a virtual screen (the real binary, real gestures), and the test asserts the observable consequence from the point where a person acts. A failing test that depends on a pause or on the order of a background thread, and a `SIGBUS` without a single line of test on the first run after a rebuild, MUST be rerun separately before they are considered a regression.
 
-Любая работа над программой SHALL завершаться `src/scripts/finish.sh` и
-версией `vYY.MM.DD-hash` в отчёте; вывод скрипта MUST NOT фильтроваться, а
-дерево во время его прогона не правится. Вердикт каждой стадии проверки
-MUST браться у команды, которая проверяет (код возврата cargo), а не у той,
-которая печатает. На каждый пункт претензии владельца SHALL быть живой
-сценарий в виртуальном экране (настоящий бинарь, настоящие жесты), и тест
-утверждает наблюдаемое следствие из точки, откуда действует человек.
-Упавший тест, стоящий на паузе или порядке фонового потока, и `SIGBUS` без
-единой строки теста на первом прогоне после пересборки MUST быть
-перезапущены отдельно, прежде чем считаться регрессией.
+**The script is the ONLY point of verification, and it names its own cost.** The workshop test run SHALL be a stage of this same script, not a separate command of the agent: otherwise the budget and the verdict split into two unrelated halves, and the kt-gpu stage duplicates what the workshop has already run, and therefore MUST be removed (the SIMD stages remain — they have their own environment). Each stage SHALL print its own time, and the script — a TOTAL; a total longer than **five minutes** (the budget set by the owner) SHALL be marked in the report together with the name of the stage that consumed it. The budget and the timing SHALL be held by a guard, not by the agent's memory.
 
-**Скрипт — ЕДИНСТВЕННАЯ точка проверки и называет свою цену.** Прогон тестов
-мастерской SHALL быть стадией этого же скрипта, а не отдельной командой
-агента: иначе бюджет и вердикт распадаются на две несвязанные половины, а
-стадия kt-gpu дублирует то, что уже прогнала мастерская, и потому MUST
-быть снята (стадии SIMD остаются — у них своё окружение). Каждая стадия
-SHALL печатать своё время, а скрипт — ИТОГ; итог дольше **пяти минут**
-(бюджет, поставленный владельцем) SHALL быть помечен в отчёте вместе с
-названием стадии, которая его съела. Бюджет и хронометраж SHALL держаться
-сторожем, а не памятью агента.
+**Live scenarios are run by several workers.** The run SHALL hand out scenarios to workers, each of which has its OWN virtual screen and its OWN user store; the number of workers SHALL be limited so that the load does not exceed the number of cores of the machine (one kt-app in software rendering takes about seven). A scenario that failed in the parallel run SHALL be automatically rerun ALONE; only a scenario that fails again counts as red, and the report SHALL name the scenarios that passed only on the second attempt. A run without parallelism SHALL remain available through one key.
+Why: `cargo test` builds a separate binary and does not rebuild `target/debug/kt-app` — the owner twice ran the monthly build and counted the defects as alive ("you did not verify" ×3); `if cargo test | tail` was green on any failure; eleven "green" items of the round turned out to be broken in the window, because the harness checked the wiring rather than the consequence; `SIGBUS` is a swap of the binary under a mapped image on a separate partition, not a defect. R.68: a verification cycle cost 21 minutes (live scenarios 1012 s, workshop 259 s, build ~100 s), and a check that costs this much itself creates the temptation to skip it — that is, it works against the rule for which it was set up. The ban on "two threads" was lifted by the owner by direct decision ("Yes, with load limiting and automatic rerun of the red") together with the mechanism that removes its cause: a red under load of ~14 now differs from a defect by a repeated solo run.
 
-**Живые сценарии гоняются несколькими работниками.** Прогон SHALL
-раздавать сценарии работникам, у каждого из которых СВОЙ виртуальный экран
-и СВОЁ пользовательское хранилище; число работников SHALL быть ограничено
-так, чтобы нагрузка не превышала числа ядер машины (один kt-app в
-софт-рендере занимает около семи). Сценарий, упавший в параллельном
-прогоне, SHALL быть автоматически перегнан ОДИН в одиночку; красным
-считается только повторно упавший, и отчёт SHALL называть сценарии,
-которые прошли лишь со второго раза. Прогон без параллели SHALL остаться
-доступным одним ключом.
-Почему: `cargo test` собирает отдельный бинарь и не пересобирает
-`target/debug/kt-app` — владелец дважды запускал месячную сборку и считал
-дефекты живыми («ты не проверял» ×3); `if cargo test | tail` был зелёным при
-любом падении; одиннадцать «зелёных» пунктов раунда оказались сломаны в окне,
-потому что харнесс проверял проводку, а не следствие; `SIGBUS` — подмена
-бинаря под отображённым образом на отдельном разделе, не дефект. Р.68:
-круг проверки стоил 21 минуту (живые сценарии 1012 с, мастерская 259 с,
-сборка ~100 с), и проверка, которая столько стоит, сама создаёт соблазн её
-обойти — то есть работает против правила, которым заведена. Запрет «в два
-потока» снят владельцем прямым решением («Да, с ограничением нагрузки и
-авто-перезапуском красного») вместе с механизмом, который убирает его
-причину: покраснение под нагрузкой ~14 теперь отличается от дефекта
-повторным одиночным прогоном.
+#### Scenario: Stage verdict from cargo
+- **WHEN** the test stage of `finish.sh` fails
+- **THEN** "WARNING: … red" is printed, along with the names of the failed tests and the path to the full log; replacing `cargo` with a failing one makes the stage red
+- **TEST** `src/scripts/finish.sh` (workshop/SIMD stages, log `target/finish-*-fail.log`)
 
-#### Scenario: Вердикт стадии от cargo
-- **WHEN** тестовая стадия `finish.sh` падает
-- **THEN** печатается «ВНИМАНИЕ: … красный», имена упавших тестов и путь к полному логу; подмена `cargo` на падающий делает стадию красной
-- **TEST** `src/scripts/finish.sh` (стадии мастерской/SIMD, лог `target/finish-*-fail.log`)
+#### Scenario: Live data-safety scenarios
+- **WHEN** `src/scripts/live-check.sh` starts Xvfb with a separate `XDG_DATA_HOME` and `KT_AUTOSAVE_SECS`
+- **THEN** `recover.py` (SIGKILL → offer to recover, twice) and `unsaved.py` (the close button asks, "Stay" holds, "Do not save" does not touch the file) are green; screenshots and `.otio` are in `target/live-out`
+- **TEST** live `recover.py`, `unsaved.py` (`src/scripts/live/recover.py`, `src/scripts/live/unsaved.py`)
 
-#### Scenario: Живые сценарии сохранности
-- **WHEN** `src/scripts/live-check.sh` поднимает Xvfb с отдельным `XDG_DATA_HOME` и `KT_AUTOSAVE_SECS`
-- **THEN** `recover.py` (SIGKILL → предложение восстановить, дважды) и `unsaved.py` (крестик спрашивает, «Остаться» держит, «Не сохранять» не трогает файл) зелёные, скриншоты и `.otio` в `target/live-out`
-- **TEST** живые `recover.py`, `unsaved.py` (`src/scripts/live/recover.py`, `src/scripts/live/unsaved.py`)
+#### Scenario: The cost of each stage and the five-minute budget
+- **WHEN** `finish.sh` finishes a run; separately — a run in which a stage artificially lasts longer than the budget
+- **THEN** a table "stage — seconds" is printed with ALL the stages the script executed, and the total; with a total above 300 s the report carries a mark with the name of the most expensive stage; not one executed stage is left without a time line
+- **TEST** t800 (`src/apps/kt-app/src/reach_tests.rs`, calls the timing guard `src/scripts/finish-budget.py --selftest` and checks the script's list of stages against the list of measurements)
 
-#### Scenario: Цена каждой стадии и бюджет в пять минут
-- **WHEN** `finish.sh` заканчивает прогон; отдельно — прогон, в котором стадия искусственно длится дольше бюджета
-- **THEN** напечатана таблица «стадия — секунды» со ВСЕМИ стадиями, которые скрипт выполнил, и итог; при итоге свыше 300 с в отчёте стоит пометка с названием самой дорогой стадии; ни одна выполненная стадия не осталась без строки времени
-- **TEST** t800 (`src/apps/kt-app/src/reach_tests.rs`, зовёт сторож хронометража `src/scripts/finish-budget.py --selftest` и сверяет список стадий скрипта с списком замеров)
+#### Scenario: A red in parallel is rerun alone
+- **WHEN** in a parallel run a scenario fails the first time and passes the second; separately — it fails both times
+- **THEN** in the first case the run is green, and the report says the scenario passed on the second attempt alone; in the second case it is red, with the scenario's name and the path to the screenshots; a solo run under one key reruns nothing
+- **TEST** t801 (`src/apps/kt-app/src/reach_tests.rs`, calls `src/scripts/live-check.sh` on a substitute scenario directory; without Xvfb the test is skipped with the named reason)
 
-#### Scenario: Красный в параллели перегоняется один
-- **WHEN** в параллельном прогоне сценарий падает с первого раза и проходит со второго; отдельно — падает оба раза
-- **THEN** в первом случае прогон зелёный, а в отчёте сказано, что сценарий прошёл со второго раза в одиночку; во втором — красный с именем сценария и путём к скриншотам; одиночный прогон одним ключом не перегоняет ничего
-- **TEST** t801 (`src/apps/kt-app/src/reach_tests.rs`, зовёт `src/scripts/live-check.sh` на подставном каталоге сценариев; без Xvfb тест скипается с названной причиной)
-
-#### Scenario: Работники не видят друг друга
-- **WHEN** прогон идёт несколькими работниками
-- **THEN** у каждого сценария свой номер экрана и свой каталог пользовательского хранилища, ни один сценарий не получил хранилище соседа, и число одновременно живых kt-app не превысило объявленного предела работников
-- **TEST** t802 (`src/apps/kt-app/src/reach_tests.rs`, подставной сценарий печатает `DISPLAY`/`XDG_DATA_HOME`; без Xvfb скип с названной причиной)
-
+#### Scenario: Workers do not see each other
+- **WHEN** the run goes with several workers
+- **THEN** each scenario has its own screen number and its own user-store directory; no scenario received a neighbour's store; and the number of simultaneously live kt-app instances did not exceed the declared worker limit
+- **TEST** t802 (`src/apps/kt-app/src/reach_tests.rs`, a substitute scenario prints `DISPLAY`/`XDG_DATA_HOME`; without Xvfb it skips with the named reason)
 ### Requirement: Per-user data lives in `kinetren`; the former directory is moved once
-
 The application's per-user data directory SHALL be `$XDG_DATA_HOME/kinetren` (falling
 back to `~/.local/share/kinetren`). This covers recovery files, the journal and crash
 report, project locks, presets, the workspace and UI state. If the directory does not

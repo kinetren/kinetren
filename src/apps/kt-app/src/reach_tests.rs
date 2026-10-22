@@ -3464,11 +3464,11 @@ fn t799_ui_scenarios_describe_the_user_path() {
         .collect();
     let victim = specs
         .iter()
-        .find(|p| std::fs::read_to_string(p).unwrap_or_default().contains("- **ПУТЬ**"))
+        .find(|p| std::fs::read_to_string(p).unwrap_or_default().contains("- **PATH**"))
         .cloned()
         .expect("ни в одной спеке нет строки ПУТЬ — правило не действует вовсе");
     let orig = std::fs::read_to_string(&victim).unwrap();
-    let broken = orig.replacen("- **ПУТЬ**", "- **БЫЛО**", 1);
+    let broken = orig.replacen("- **PATH**", "- **WAS**", 1);
     std::fs::write(&victim, &broken).unwrap();
     let (ok_after, said_after) = run(&root);
     std::fs::write(&victim, &orig).unwrap();

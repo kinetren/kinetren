@@ -2,126 +2,125 @@
 
 ## Context
 
-См. proposal.md — Why. Ограничения, которые задают форму:
+See proposal.md — Why. Constraints that set the shape:
 
-- У OpenSpec (1.13, схема `spec-driven`) ровно два долговременных места памяти:
-  `openspec/specs/<capability>/spec.md` (Purpose + Requirements со сценариями; их
-  `opsx:propose` обязан просмотреть через `openspec show`) и `openspec/config.yaml`
-  (`context` и `rules` впрыскиваются в каждую генерацию артефакта). `design.md` внутри
-  change **уходит в архив вместе с ним** и новым change не читается.
-- Парсер главных спек читает только `## Purpose` и `## Requirements`; посторонние
-  файлы рядом со `spec.md` он не трогает ни при валидации, ни при архиве, но и не
-  показывает через `openspec show`.
-- Единица работы в проекте — раунд Р.N со стадиями С1…С5; регрессионные тесты tNNN
-  нумеруются сквозно и являются фактическими контрактами.
+- OpenSpec (1.13, schema `spec-driven`) has exactly two long-term memory places:
+  `openspec/specs/<capability>/spec.md` (Purpose + Requirements with scenarios; `opsx:propose`
+  must review them via `openspec show`) and `openspec/config.yaml` (`context` and `rules` are
+  injected into every artifact generation). `design.md` inside a change **goes to the archive
+  together with it** and is not read by a new change.
+- The main-spec parser reads only `## Purpose` and `## Requirements`; foreign files next to
+  `spec.md` it does not touch either in validation or in archiving, but it also does not show
+  them through `openspec show`.
+- The unit of work in the project is a round R.N with stages S1…S5; the regression tests tNNN
+  are numbered across the whole project and are the actual contracts.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- Каждое решение, которое до сих пор ограничивает код, лежит ровно в одном месте,
-  которое OpenSpec читает при каждом новом change.
-- «Почему» решения (боль владельца, отвергнутые варианты, неочевидная деталь)
-  переживает миграцию и достижимо из спеки одним шагом.
-- `docs/features/*` возвращается к своей роли: база чужих фич.
+- Every decision that still constrains the code lies in exactly one place, which OpenSpec reads
+  on every new change.
+- The "why" of a decision (the owner's pain, the rejected options, the non-obvious detail)
+  survives the migration and is reachable from the spec in one step.
+- `docs/features/*` returns to its role: the base of other editors' features.
 
 **Non-Goals:**
-- Не переписывать историю: `user-feedback.md` не трогается, `porting-notes.md`
-  замораживается, а не чистится. Заметки features со статусом «сделано» остаются
-  замороженными (правило 7 README) — из них только вырезается «Как ложится».
-- Не менять код, тесты, инварианты. Не переименовывать тесты.
-- Не строить свою схему OpenSpec (`openspec/schemas/`): стандартной достаточно.
+- Do not rewrite history: `user-feedback.md` is not touched, `porting-notes.md` is frozen, not
+  cleaned. Feature notes with status "done" remain frozen (rule 7 of the README) — only the
+  "How it fits" section is cut out of them.
+- Do not change code, tests, invariants. Do not rename tests.
+- Do not build our own OpenSpec schema (`openspec/schemas/`): the standard one is enough.
 
 ## Decisions
 
-### D1. Долговременное «почему» — `design.md` рядом со `spec.md` capability, а не внутри требований
+### D1. The long-term "why" — `design.md` next to the capability's `spec.md`, not inside the requirements
 
-`openspec/specs/<capability>/design.md` — файл вне парсера OpenSpec. Связка держится на
-`config.yaml`: `rules.proposal` и `rules.design` обязывают прочитать `design.md` каждой
-затрагиваемой capability, а противоречие ему оформлять явным пунктом «пересмотр:
-<решение> — <причина>». Правило впрыскивается в каждую генерацию — это надёжнее памяти
-агента.
+`openspec/specs/<capability>/design.md` — a file outside the OpenSpec parser. The link is held by
+`config.yaml`: `rules.proposal` and `rules.design` oblige every affected capability's `design.md`
+to be read, and a contradiction of it is formalized as an explicit item "revision: <decision> —
+<reason>". The rule is injected into every generation — this is more reliable than the agent's
+memory.
 
-*Альтернатива — «почему» внутри текста требований*: OpenSpec читал бы его сам, но
-инструкция спек запрещает имена функций и пути `src/…`, а 23 000 строк «нашего» из
-features туда не влезают. Отвергнуто. Компромисс: в требовании — одна строка «почему»,
-полная аргументация — в `design.md`.
+*Alternative — the "why" inside the text of the requirements*: OpenSpec would read it itself, but
+the spec instructions forbid function names and `src/…` paths, and 23,000 lines of "our" material
+from features do not fit there. Rejected. Compromise: in the requirement — one line of "why", the
+full argument — in `design.md`.
 
-### D2. Capability — по поведению, 17 штук
+### D2. Capabilities — by behaviour, 17 of them
 
-Не по крейтам (kt-engine = «всё») и не по категориям features (`help/`, `collab/`
-у нас пусты). Нарезка совпадает с таблицей тестов CLAUDE.md и с тем, как назывались
-раунды.
+Not by crates (kt-engine = "everything") and not by feature categories (`help/`, `collab/` are
+empty for us). The slicing coincides with the test table of CLAUDE.md and with how the rounds were
+named.
 
-| capability | контракты (spec.md) | «почему» (design.md) — источники |
+| capability | contracts (spec.md) | "why" (design.md) — sources |
 |---|---|---|
-| `time-model` | тики 90 kHz, burst 1024/1920, сетки fps, tick↔sample 15/8 | CLAUDE.md «Модель времени» |
-| `transport` | часы = cpal-колбэк, голодание не останавливает время, `video_playhead()`, скорость ±, стоп-кадр, шкала | инв. 6/12; Р.43 (M3TEOR), Р.57; kt-engine/CLAUDE.md |
-| `audio-render` | f32 48k/2ch всегда, FX-состояние только у render-потока, diff цепочек по clip id, PDC, дакинг, LUFS, реверс/варп, cost O(1) от размера проекта | инв. 1–3; каталог дефектов slowed&reverb; Р.48; features audio/processing (8 сделано), loudness, audio-waveform-sync |
-| `video-plan` | один код композиции (`frame_plan`), ступень декода в заказе, CPU = байт-эталон, GPU по допускам через `assert_frames_close`, мемоизация пост-FX, экспорт не смешивает бэкенды | инв. 4/7/11; Р.44–46; features transform-concatenation; kt-gpu/CLAUDE.md |
-| `video-fx` | реестр 27 видов, `plan_chain` единственное место решений, барьеры K×, golden-цикл t328/t329, `geom_fused.wgsl` ↔ `geom.rs` парой, миниатюры пикера | Р.47, Р.54; features fx/* (4 сделано), color/basic-color-fx, preset-gallery |
-| `audio-fx` | реестр 16 узлов, каркас t322, порядок слотов, спектральные пробы | Р.47–48; features audio/processing |
-| `transitions` | 33 вида, `transitions.rs` ↔ `composite.wgsl` парой, MODE_* только в конец, инверсия планом, наложение, closed-form t459 | Р.33 С4, Р.51; features transition-vocabulary, same-track-transitions |
-| `automation` | домен ключей = материал, компилированные кривые видео, паспорт в рантайме, типы параметров, кламп в макросе, выражения/плагины (интерфейсы) | Р.33–34, §466–467; features keyframe-domain, presets-carrying-automation, expressions-and-drivers, plugin-abi-and-sandbox |
-| `compositions` | лента = ссылка, законы Э и Г, три ключа, ступень ленты ≠ вход экземпляра, полоса раскрытия, ноль не стена, публичные параметры и `gen_salt`, отложенное §464 | Р.50, Р.55, Р.56, Р.58, §459–464, §469–470; features nested-sequences, inline-nest-expansion, composition-public-parameters |
-| `morpher` | слои, размещение, bake == рендер, резка «по времени» гасит силой, подмена источника везёт кривые одной дельтой | H1, Р.35–37, п.300; user-feedback про Adjustment Events |
-| `generators` | 8 видов, псевдо-пути только через `factory`, титры: вендоренный шрифт + пины + FONT-MANIFEST, натив 4096, параметры на событии | Р.52–53, §468; features titles/* (5 сделано), solid-gradient-shapes |
-| `media-index` | владение декодером (две половины инв. 5), очередь MediaWorker с приоритетами, скролл/зум не декодирует, sidecar-БД, dlopen FFmpeg 6/7/8, `ldd` без libav | инв. 5/8/10; docs/media-index.md; Р.49 волна Б (BgJob/IndexService) |
-| `export` | внутрипроцессный, каскад энкодеров с реальным открытием, превью == экспорт, golden аудио/видео/титры | инв. 9; features hardware-encoder-selection, preview-vs-export-mismatch |
-| `project-format` | .otio, `metadata.kt`, версии v1–v9 по содержимому, passthrough чужого, битая kt-секция = ошибка, только тики | docs/file-format.md; kt-otio/CLAUDE.md; §464 |
-| `durability` | автосейв в recovery, flock, Drop-рубеж, журнал, сторож выхода, вторая копия | Р.49; features resilience/* (6 сделано); user-feedback «ты не проверял» |
-| `ui-timeline` | repaint = движение, ключ превью по сетке fps, без аллокаций в draw, чек-лист удобства, пределы «поставлено по жалобе», i18n и глифы, `finish.sh` + версия | kt-app/CLAUDE.md; Р.4–5, Р.8–13; таблица «повторял» user-feedback |
-| `ui-reach` | «тупиков не бывает»: t252–t255, глаголы у каждой `TlEntity`, правый клик не молчит, живые сценарии на пункт | Р.38, Р.40, волна В Р.49; features help/* (уже-есть ×4, сделано ×1) |
+| `time-model` | ticks 90 kHz, burst 1024/1920, fps grids, tick↔sample 15/8 | CLAUDE.md "Time model" |
+| `transport` | clock = cpal callback, starvation does not stop time, `video_playhead()`, speed ±, freeze frame, scale | inv. 6/12; R.43 (M3TEOR), R.57; kt-engine/CLAUDE.md |
+| `audio-render` | f32 48k/2ch always, FX state only on the render thread, chain diff by clip id, PDC, ducking, LUFS, reverse/warp, cost O(1) from project size | inv. 1–3; the defect catalogue slowed&reverb; R.48; features audio/processing (8 done), loudness, audio-waveform-sync |
+| `video-plan` | one composition code (`frame_plan`), decode scale step in the order, CPU = byte reference, GPU by tolerances via `assert_frames_close`, memoization of post-FX, export does not mix backends | inv. 4/7/11; R.44–46; features transform-concatenation; kt-gpu/CLAUDE.md |
+| `video-fx` | registry of 27 kinds, `plan_chain` the only place of decisions, K× barriers, golden cycle t328/t329, `geom_fused.wgsl` ↔ `geom.rs` as a pair, picker thumbnails | R.47, R.54; features fx/* (4 done), color/basic-color-fx, preset-gallery |
+| `audio-fx` | registry of 16 nodes, frame of t322, slot order, spectral probes | R.47–48; features audio/processing |
+| `transitions` | 33 kinds, `transitions.rs` ↔ `composite.wgsl` as a pair, MODE_* only at the end, inversion by the plan, overlay, closed-form t459 | R.33 S4, R.51; features transition-vocabulary, same-track-transitions |
+| `automation` | domain of keys = material, compiled video curves, passport at runtime, parameter types, clamp in the macro, expressions/plugins (interfaces) | R.33–34, §466–467; features keyframe-domain, presets-carrying-automation, expressions-and-drivers, plugin-abi-and-sandbox |
+| `compositions` | reel = link, laws E and G, three keys, reel scale step ≠ instance input, expansion strip, zero is not a wall, public parameters and `gen_salt`, deferred §464 | R.50, R.55, R.56, R.58, §459–464, §469–470; features nested-sequences, inline-nest-expansion, composition-public-parameters |
+| `morpher` | layers, placement, bake == render, "by time" cut suppresses by force, source swap carries curves by one delta | H1, R.35–37, item 300; user-feedback about Adjustment Events |
+| `generators` | 8 kinds, pseudo-paths only through `factory`, titles: vendored font + pins + FONT-MANIFEST, native 4096, parameters on the event | R.52–53, §468; features titles/* (5 done), solid-gradient-shapes |
+| `media-index` | decoder ownership (the two halves of inv. 5), MediaWorker queue with priorities, scroll/zoom does not decode, sidecar DB, dlopen FFmpeg 6/7/8, `ldd` without libav | inv. 5/8/10; docs/media-index.md; R.49 wave B (BgJob/IndexService) |
+| `export` | in-process, encoder cascade with a real opening, preview == export, golden audio/video/titles | inv. 9; features hardware-encoder-selection, preview-vs-export-mismatch |
+| `project-format` | .otio, `metadata.kt`, versions v1–v9 by content, passthrough of foreign data, broken kt section = error, ticks only | docs/file-format.md; kt-otio/CLAUDE.md; §464 |
+| `durability` | autosave into recovery, flock, Drop-boundary, journal, exit watchdog, second copy | R.49; features resilience/* (6 done); user-feedback "you did not check" |
+| `ui-timeline` | repaint = motion, preview key by the fps grid, no allocations in draw, usability checklist, limits "set on a complaint", i18n and glyphs, `finish.sh` + version | kt-app/CLAUDE.md; R.4–5, R.8–13; the "repeated" table of user-feedback |
+| `ui-reach` | "there are no dead ends": t252–t255, verbs for each `TlEntity`, a right click does not stay silent, live scenarios per item | R.38, R.40, wave V of R.49; features help/* (already-have ×4, done ×1) |
 
-Спорные границы, принятые сознательно: `ui-reach` отдельно от `ui-timeline` (свой
-механизм тестов, семь раундов повторов); `morpher` отдельно от `compositions` (старше
-лент, свой домен кривых; иначе design.md compositions разбухает).
+Disputed boundaries, accepted consciously: `ui-reach` separate from `ui-timeline` (its own test
+mechanism, seven rounds of repeats); `morpher` separate from `compositions` (older than reels, its
+own domain of curves; otherwise design.md of compositions swells).
 
-### D3. Критерий цежения — один на все три источника
+### D3. The culling criterion — one for all three sources
 
-Строка остаётся, если **до сих пор ограничивает код**: есть тест tNNN, инвариант или
-правило, которое агент нарушит, не зная его. Вместе с ней остаётся её «почему».
-Отбрасывается: хронология («в Р.43 сначала…»), «переписали с C++», сравнение с v1,
-отвергнутые варианты без причины, номера пунктов как таковые (ссылка на тест заменяет
-ссылку на пункт).
+A line stays if it **still constrains the code**: there is a test tNNN, an invariant or a rule that
+an agent would break without knowing it. Together with it its "why" stays. Dropped: chronology
+("in R.43 first…"), "rewritten from C++", comparison with v1, rejected options without a reason,
+item numbers as such (a reference to the test replaces the reference to the item).
 
-Форма сценария в `spec.md`: `#### Scenario: <имя>` с WHEN/THEN и последней строкой
-`- **TEST** tNNN (`crate/tests/file.rs`)`. Так таблица «крейт → тесты» из CLAUDE.md
-переезжает в спеки без потери.
+Form of a scenario in `spec.md`: `#### Scenario: <name>` with WHEN/THEN and a last line
+`- **TEST** tNNN (`crate/tests/file.rs`)`. So the table "crate → tests" from CLAUDE.md moves into
+the specs without loss.
 
-### D4. Порядок работы — по одной capability, каждая: spec → design → усечение источников
+### D4. Order of work — one capability at a time, each: spec → design → truncation of sources
 
-Для каждой capability: (1) собрать её строки из трёх источников по таблице D2 (grep по
-тестам tNNN и путям `src/…` — точнее, чем по заголовкам); (2) написать `spec.md`;
-(3) написать `design.md`; (4) усечь «Как ложится» в затронутых заметках features до
-ссылки; (5) `openspec validate --strict` и `features-index.py --check`. Только после
-всех 17 — `config.yaml`, заморозка porting-notes, чистка CLAUDE.md. Так до последнего
-шага старые летописи остаются целыми, и работа обратима.
+For each capability: (1) collect its lines from the three sources by the table in D2 (grep by the
+tests tNNN and by the paths `src/…` — more precise than by headings); (2) write `spec.md`;
+(3) write `design.md`; (4) truncate "How it fits" in the affected feature notes to a reference;
+(5) `openspec validate --strict` and `features-index.py --check`. Only after all 17 — `config.yaml`,
+freezing of porting-notes, cleaning of CLAUDE.md. So until the last step the old chronicles remain
+intact, and the work is reversible.
 
-### D5. `porting-notes.md` замораживается, не чистится
+### D5. `porting-notes.md` is frozen, not cleaned
 
-Каталог дефектов старого движка и главы раундов — история порта. Чистка стоила бы
-дороже переноса и уничтожила бы контекст, на который ссылаются коммиты. В шапку
-добавляется: «заморожено на §470; актуальные правила — `openspec/specs/`».
+The defect catalogue of the old engine and the chapters of the rounds are the history of the port.
+Cleaning would cost more than the transfer and would destroy the context that the commits refer to.
+A line is added to the header: "frozen at §470; current rules — `openspec/specs/`".
 
 ## Risks / Trade-offs
 
-- [Потеря решения при цежении — критерий «ограничивает код» пропустит правило без
-  теста] → перед усечением заметки features сверять список tNNN и путей `src/…` в её
-  «Как ложится» с `spec.md`/`design.md` capability; непокрытые — переносить, не
-  выбрасывать.
-- [`openspec show` не показывает `design.md`, агент его не откроет] → правило в
-  `config.yaml` для `proposal` и `design`; проверка живьём: первый настоящий change
-  после миграции обязан сослаться на `design.md` capability.
-- [Дубль между инвариантами в CLAUDE.md и спеками] → в CLAUDE.md инварианты остаются
-  одной строкой каждый с ссылкой на capability; полный текст — только в спеке.
-- [`features-index.py --check` завязан на правило 5 (пути в «Как ложится»)] →
-  правило меняется вместе со скриптом в одной задаче.
-- [Объём: 17 capability × 3 источника] → задачи по одной capability, каждая
-  самодостаточна и проверяема `openspec validate --strict`.
+- [Loss of a decision during culling — the criterion "constrains the code" will miss a rule without
+  a test] → before truncating a feature note, compare the list of tNNN and `src/…` paths in its
+  "How it fits" with the `spec.md`/`design.md` of the capability; uncovered ones are to be carried
+  over, not thrown away.
+- [`openspec show` does not show `design.md`, the agent will not open it] → a rule in `config.yaml`
+  for `proposal` and `design`; a live check: the first real change after the migration must reference
+  the capability's `design.md`.
+- [Duplication between the invariants in CLAUDE.md and the specs] → in CLAUDE.md the invariants stay
+  one line each with a reference to the capability; the full text — only in the spec.
+- [`features-index.py --check` depends on rule 5 (the paths in "How it fits")] → the rule changes
+  together with the script in one task.
+- [Scope: 17 capabilities × 3 sources] → tasks one capability at a time, each self-sufficient and
+  verifiable by `openspec validate --strict`.
 
 ## Open Questions
 
-- Судьба `docs/architecture.md`: оглавление `design.md` или удаление — решается,
-  когда видно, что осталось после переноса.
-- Нужна ли `time-model` отдельной capability или её место в `transport`: решается по
-  объёму после цежения (если спека < 3 требований — слить).
+- The fate of `docs/architecture.md`: a table of contents of `design.md` or deletion — to be decided
+  when it is clear what is left after the transfer.
+- Whether `time-model` needs to be a separate capability or its place is in `transport`: decided by
+  the volume after culling (if the spec has < 3 requirements — merge).

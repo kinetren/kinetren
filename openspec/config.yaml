@@ -1,85 +1,85 @@
 schema: spec-driven
 
-# Kinetren — нелинейный видеоредактор, cargo workspace в src/ (older documents are Russian; new text is English).
-# Проектные решения живут в openspec/specs/<cap>/: spec.md — контракт (требования и
-# сценарии, каждый сценарий называет регрессионный тест tNNN), design.md — «почему»
-# (что болело, что отвергли и почему, неочевидные детали с путями src/…).
+# Kinetren — a non-linear video editor, a cargo workspace in src/.
+# Design decisions live in openspec/specs/<cap>/: spec.md is the contract (requirements and
+# scenarios, every scenario names a regression test tNNN), design.md is the "why"
+# (what hurt, what was rejected and why, non-obvious details with src/… paths).
 context: |
-  Kinetren — нелинейный видеоредактор; код — cargo workspace в `src/` (libs/kt-time,
+  Kinetren is a non-linear video editor; the code is a cargo workspace in `src/` (libs/kt-time,
   kt-model, kt-otio, kt-media, kt-text, kt-cache, kt-fx, kt-gpu, kt-engine; apps/kt-app
-  GUI на eframe, apps/kt-cli headless). New documents, artifacts and commit messages are written
-  in English (owner, 2026-10-21); existing Russian documents stay as they are.
-  Инструменты: `openspec` CLI работает только на Node ≥ 20
-  (`export PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"`); работа заканчивается
-  `src/scripts/finish.sh` и версией `vYY.MM.DD-hash` в отчёте.
+  GUI on eframe, apps/kt-cli headless). Documents, artifacts and commit messages are written
+  in English (owner, 2026-10-21).
+  Tools: the `openspec` CLI works only on Node ≥ 20
+  (`export PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"`); work ends with
+  `src/scripts/finish.sh` and the version `vYY.MM.DD-hash` in the report.
 
-  Модель времени: тик = 1/90000 с (i64), аудио 48 kHz stereo f32, burst = 1024 кадра =
-  1920 тиков, tick↔sample = 15/8 точно; в формате проекта только тики (capability time-model).
+  Time model: tick = 1/90000 s (i64), audio 48 kHz stereo f32, burst = 1024 frames =
+  1920 ticks, tick↔sample = 15/8 exactly; the project format holds only ticks (capability time-model).
 
-  Двенадцать инвариантов (нарушение любого — регрессия, у каждого есть тест):
-   1. Аудио внутри движка всегда f32 48 kHz/2ch — audio-render.
-   2. FX-состояние трогает только аудио-render-поток — audio-render.
-   3. Правка модели не уничтожает FX-состояние (diff цепочек по clip id) — audio-render.
-   4. Кэш — единственная правда о coverage; ступень декода — свойство клипа и часть
-      заказа (заказ == чтение) — video-plan, media-index.
-   5. Экземпляром декодера владеет ровно один поток: живое воспроизведение — через
-      очередь MediaWorker, офлайн — свой короткоживущий источник (BgJob) — media-index.
-   6. cpal-колбэк — мастер-часы; голодание не останавливает время — transport.
-   7. Код композиции один для превью и экспорта; CPU — байт-эталон, GPU — по допускам
-      `FrameTol`; гео-серии — одним проходом — video-plan, video-fx.
-   8. Скролл/зум таймлайна не порождает декод-запросов — media-index, ui-timeline.
-   9. Экспорт полностью внутрипроцессный (libav* системного FFmpeg) — export.
-  10. Бинарь не линкуется с libav*: FFmpeg через dlopen 6/7/8 — media-index.
-  11. Детерминизм: аудио байт-в-байт всегда; видео на CPU — против эталона; на GPU —
-      между прогонами на одном устройстве — video-plan, export.
-  12. Показ видео не квантуется аудио-колбэком, UI не греет систему (repaint только при
-      движении) — transport, ui-timeline.
+  Twelve invariants (breaking any is a regression, each has a test):
+   1. Audio inside the engine is always f32 48 kHz/2ch — audio-render.
+   2. FX state is touched only by the audio render thread — audio-render.
+   3. A model edit does not destroy FX state (chains diffed by clip id) — audio-render.
+   4. The cache is the only truth about coverage; the decode scale step is a clip property and
+      part of the order (order == read) — video-plan, media-index.
+   5. A decoder instance is owned by exactly one thread: live playback goes through the
+      MediaWorker queue, offline uses its own short-lived source (BgJob) — media-index.
+   6. The cpal callback is the master clock; starvation does not stop time — transport.
+   7. One composition code path for preview and export; CPU is the byte reference, GPU is held
+      to `FrameTol` tolerances; geometry series in one pass — video-plan, video-fx.
+   8. Timeline scroll/zoom produces no decode requests — media-index, ui-timeline.
+   9. Export is fully in-process (libav* of the system FFmpeg) — export.
+  10. The binary does not link against libav*: FFmpeg via dlopen 6/7/8 — media-index.
+  11. Determinism: audio byte for byte always; video on the CPU against the reference; on the GPU
+      between runs on one device — video-plan, export.
+  12. Video display is not quantized by the audio callback, the UI does not heat the system
+      (repaint only while something moves) — transport, ui-timeline.
 
-  Capability (по поведению): time-model, transport, audio-render, video-plan, video-fx,
+  Capabilities (by behaviour): time-model, transport, audio-render, video-plan, video-fx,
   audio-fx, transitions, automation, morpher, compositions, generators, media-index,
   export, project-format, durability, ui-timeline, ui-reach, telemetry.
 
-  Летописи: `docs/user-feedback.md` — слова и решения владельца по раундам (первоисточник,
-  дописывается ПЕРЕД работой); `docs/features/` — разведка ЧУЖИХ редакторов (наши решения
-  там только ссылкой `CAPABILITY:`). Перед новой функцией — заметка в docs/features/
+  Chronicles: `docs/user-feedback.md` — the owner's words and decisions by round (the primary
+  source, appended BEFORE work starts); `docs/features/` — reconnaissance of OTHER editors (our
+  decisions appear there only as a `CAPABILITY:` link). Before a new feature — a note in docs/features/
   (`python3 src/scripts/features-index.py --check`).
 
 rules:
   proposal:
     - >-
-      Перед разделом Capabilities прочитать `openspec/specs/<cap>/design.md` КАЖДОЙ затрагиваемой capability (не только spec.md): там причины прежних решений, отвергнутые варианты и пределы, поставленные владельцем по прямой просьбе.
+      Before the Capabilities section read `openspec/specs/<cap>/design.md` of EVERY affected capability (not only spec.md): it holds the reasons for earlier decisions, rejected options and limits set by the owner at his direct request.
     - >-
-      Перед новой ФУНКЦИЕЙ (не дефектом) проверить `docs/features/` — есть ли заметка с разведкой чужих редакторов; нет — сначала завести её (правила в docs/features/README.md).
+      Before a new FEATURE (not a defect) check `docs/features/` for a note with the reconnaissance of other editors; if there is none, create it first (rules in docs/features/README.md).
     - >-
-      Занести претензию/решения владельца в `docs/user-feedback.md` его словами до начала работы.
+      Record the owner's complaint/decisions in `docs/user-feedback.md` in his words before work starts.
   design:
     - >-
-      Решение, противоречащее `openspec/specs/<cap>/design.md` или его разделу «Отвергнуто и почему», оформлять явным пунктом «Пересмотр: <решение> — <причина>»; молчаливая отмена прежнего решения запрещена.
+      A decision that contradicts `openspec/specs/<cap>/design.md` or its "Rejected and why" section is written as an explicit item "Revision: <decision> — <reason>"; silently reverting an earlier decision is forbidden.
     - >-
-      Предел, режим или вид, поставленные по прямой просьбе владельца (design.md, «Что было и у кого болело»), не менять без новой просьбы.
+      A limit, mode or look set at the owner's direct request (design.md, "What hurt and for whom") is not changed without a new request.
     - >-
-      Не добавлять зависимость от FFmpeg/аудио-железа в kt-time/kt-model/kt-fx/kt-cache/ядро kt-engine; wgpu живёт только в kt-gpu.
+      Do not add a dependency on FFmpeg/audio hardware to kt-time/kt-model/kt-fx/kt-cache/the kt-engine core; wgpu lives only in kt-gpu.
   specs:
     - >-
-      Каждый сценарий несёт строку `- **TEST** tNNN (`путь/tests/файл.rs`)`; новый регрессионный тест получает следующий свободный номер tNNN (сквозная нумерация).
+      Every scenario carries a line `- **TEST** tNNN (`path/tests/file.rs`)`; a new regression test gets the next free number tNNN (running numbering).
     - >-
-      Пары «правятся только вместе» (transitions.rs ↔ composite.wgsl, kt-fx/geom.rs ↔ geom_fused.wgsl) — оба файла в одном сценарии.
+      Pairs that "change only together" (transitions.rs ↔ composite.wgsl, kt-fx/geom.rs ↔ geom_fused.wgsl) — both files in one scenario.
   tasks:
     - >-
-      Каждая задача называет тест tNNN или живой сценарий `src/scripts/live/*.py`, которым проверяется; обязательные тесты крейта — в `openspec show <cap> --type spec`.
+      Every task names the test tNNN or the live scenario `src/scripts/live/*.py` that checks it; the crate's mandatory tests are in `openspec show <cap> --type spec`.
     - >-
-      Последняя задача — `src/scripts/finish.sh` (пересборка kt-app/kt-cli, версия в отчёте); о скорости судить только по релизной сборке.
+      The last task is `src/scripts/finish.sh` (rebuilds kt-app/kt-cli, version in the report); judge speed only on a release build.
     - >-
-      После архива change: вердикт заметки docs/features/ обновить (статус, `CAPABILITY:`), а «почему» — дописать в `openspec/specs/<cap>/design.md`.
+      After archiving a change: update the verdict of the docs/features/ note (status, `CAPABILITY:`), and append the "why" to `openspec/specs/<cap>/design.md`.
 
 operations:
   apply:
     guidance:
       - >-
-        Коммитить автоматически каждый завершённый этап (раздел tasks.md или стадия
-        раунда), не дожидаясь просьбы: сообщение in English, первой строкой — что сделано
-        и номер стадии, в теле — какие тесты закрывают. Коммит только после зелёной
-        проверки этапа; незакоммиченная работа в конце сессии — дефект процесса.
+        Commit every finished stage automatically (a tasks.md section or a round
+        stage) without waiting to be asked: the message in English, the first line — what was done
+        and the stage number, the body — which tests cover it. Commit only after the stage's
+        check is green; uncommitted work at the end of a session is a process defect.
       - >-
         No co-authorship: never add `Co-Authored-By:` or any AI/agent attribution
         lines to commit messages, tags or PR texts (owner, 2026-10-21). Commits use
@@ -87,5 +87,5 @@ operations:
   archive:
     guidance:
       - >-
-        После архива — отдельный коммит с перемещением change в archive/ и
-        обновлёнными спеками.
+        After archiving — a separate commit moving the change into archive/ with the
+        updated specs.

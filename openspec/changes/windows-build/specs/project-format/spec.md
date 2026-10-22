@@ -3,7 +3,6 @@
 ## ADDED Requirements
 
 ### Requirement: Paths of media on Windows and across operating systems
-
 The writer SHALL encode a Windows absolute path as a valid file URL:
 `C:\a b\x.mp4` → `file:///C:/a%20b/x.mp4`, and a UNC path `\\server\share\x.mp4` →
 `file://server/share/x.mp4`. The reader SHALL decode `file:///C:/…`, `file://localhost/C:/…`
@@ -26,7 +25,7 @@ opinion: a project saved on Linux and opened on Windows turned `/home/u/a.mp4` i
 it current.
 
 #### Scenario: File URLs with drive letters and UNC both ways
-- **WHEN** Windows paths `C:\a b\x.mp4`, `D:\Медиа\кадр 1%.mov` and `\\server\share\x.mp4` are encoded and decoded by the Windows rules (pure functions, checked on any OS), and `file://localhost/C:/x.mp4` and the Linux `file:///home/u/a.mp4` are decoded
+- **WHEN** Windows paths `C:\a b\x.mp4`, "Media\frame 1%.mov" and `\\server\share\x.mp4` are encoded and decoded by the Windows rules (pure functions, checked on any OS), and `file://localhost/C:/x.mp4` and the Linux `file:///home/u/a.mp4` are decoded
 - **THEN** the URLs are `file:///C:/a%20b/x.mp4`, `file:///D:/%D0%9C…/%D0%BA%D0%B0%D0%B4%D1%80%201%25.mov` and `file://server/share/x.mp4`; each decodes back to the original path; `localhost` gives `C:\x.mp4`; the Linux URL decodes to `/home/u/a.mp4` unchanged
 - **TEST** t853 (`src/libs/kt-otio/tests/format.rs`)
 

@@ -2,113 +2,105 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Лента — ссылка внутри проекта в одном пространстве адресов
+### Requirement: A reel — a link inside the project in one address space
+A reel SHALL be an object inside the document (not a file), and an instance — an ordinary event
+whose media address resolves to the reel. A reel SHALL have optional OWN raster and fps
+(default — the project; the audio rate is always shared); a reel instance SHALL be conformed into the frame of its
+parent by the same rule and the same leading "Geometry" node as a file, with view = the reel's raster
+(SAR 1:1); the reel's scale step SHALL be computed from its raster, and the memo keys of the sub-composite
+and the reel's preview SHALL include its raster and fps. The identifiers of events, groups,
+transitions, morphers and media SHALL be unique across the WHOLE document; fresh addresses MUST
+be computed over the whole tree, not from the root. No model reference (transition ends, morpher
+targets, link group) MUST cross a reel boundary. The search for the source from an event SHALL
+live in one place. A reel that is the document's root SHALL be a legal document.
+Why: a reel has no path — otherwise the worker, the watchdog and the index service would take it for a
+file; matching ids from different reels would silently exchange material through the format's global maps; a square or vertical composition inside 16:9 is otherwise inexpressible (the owner's decision in R.62, a revision of R.50).
 
-Лента SHALL быть объектом внутри документа (не файлом), а экземпляр — обычным событием,
-чей адрес медиа разрешается в ленту. Лента SHALL иметь необязательные СВОИ растр и fps
-(умолчание — проект; частота аудио всегда общая); экземпляр ленты SHALL приводиться в кадр
-родителя тем же правилом и тем же ведущим узлом «Геометрия», что файл, с видом = растр
-ленты (SAR 1:1); ступень ленты SHALL считаться от её растра, а ключи мемоизации
-суб-композита и превью ленты SHALL включать её растр и fps. Идентификаторы событий, групп,
-переходов, морферов и медиа SHALL быть уникальны во ВСЁМ документе; свежие адреса MUST
-считаться по всему дереву, а не по корню. Ни одна ссылка модели (концы перехода, цели
-морфера, link-группа) MUST NOT пересекать границу ленты. Поиск источника от события SHALL
-жить в одном месте. Лента, стоящая корнем документа, SHALL быть законным документом.
-Почему: у ленты нет пути — иначе воркер, watchdog и служба индекса приняли бы её за
-файл; совпавшие id из разных лент молча обменялись бы материалом через глобальные карты
-формата; квадратная или вертикальная композиция внутри 16:9 иначе невыразима (решение
-владельца Р.62, пересмотр Р.50).
-
-#### Scenario: Одно пространство адресов и замкнутость лент
-- **WHEN** документ содержит ленты, и в разных лентах встречаются одинаковые id или ссылка через границу
-- **THEN** валидация отвергает документ; свежие адреса считаются максимумом по всему дереву
+#### Scenario: One address space and the closedness of reels
+- **WHEN** a document contains reels, and in different reels the same ids or a reference across the boundary are found
+- **THEN** validation rejects the document; fresh addresses are computed as the maximum over the whole tree
 - **TEST** t425 (`src/libs/kt-model/tests/nest.rs`), t575 (`src/libs/kt-model/tests/nest.rs`)
 
-#### Scenario: Лента не отстаёт от корня по полям содержимого
-- **WHEN** в корне заведено новое поле содержимого
-- **THEN** тест с исчерпывающим деструктурированием обеих структур не собирается, пока не решено, содержимое это ленты или свойство документа
+#### Scenario: A reel does not lag behind the root in content fields
+- **WHEN** a new content field is added to the root
+- **THEN** a test with exhaustive destructuring of both structures does not compile until it is decided whether the content is the reel's or a property of the document
 - **TEST** t426 (`src/libs/kt-model/tests/nest.rs`)
 
-#### Scenario: Источник от события ищется в одном месте
-- **WHEN** код смотрит от события к медиа
-- **THEN** он идёт через единственный дом разрешения источника; прямые обращения к `MediaRef` по адресу события запрещены сканирующим сторожем
+#### Scenario: The source from an event is searched in one place
+- **WHEN** code goes from an event to its media
+- **THEN** it goes through the single home of source resolution; direct accesses to `MediaRef` by event address are forbidden by a scanning guard
 - **TEST** t426b (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Лента корнем — законный документ
-- **WHEN** текущая лента отдаётся корнем документа (офлайн-счёт, плеер внутри ленты)
-- **THEN** такой проект валиден и рендерится
+#### Scenario: A reel as the root is a legitimate document
+- **WHEN** the current reel is served as the document root (offline count, a player inside the reel)
+- **THEN** such a project is valid and renders
 - **TEST** t598 (`src/libs/kt-model/tests/nest.rs`)
 
-#### Scenario: Свой растр ленты приводится правилом, ступень и ключи — от растра
-- **WHEN** лента 1080×1080 стоит в проекте 1920×1080 с правилами «вписать» и «заполнить»; растр ленты меняется командой
-- **THEN** «вписать» даёт квадрат с полями по бокам, «заполнить» режет верх и низ; ступень ленты считана от 1080×1080; ключ мемо суб-композита и превью ленты после смены растра другой; команда — один шаг undo
+#### Scenario: The reel's own raster is conformed by the rule, the level and keys come from the raster
+- **WHEN** a 1080×1080 reel sits in a 1920×1080 project with the rules "fit" and "fill"; the reel's raster is changed by a command
+- **THEN** "fit" gives a square with side margins, "fill" cuts the top and bottom; the reel's step is computed from 1080×1080; the memo key of the sub-composite and the reel's preview after the change of raster differ; the command is one undo step
 - **TEST** t723 (`src/libs/kt-model/tests/nest.rs`, `src/libs/kt-engine/tests/nest_render.rs`)
 
-### Requirement: Закон Э — вложение с пустой цепочкой тождественно содержимому
+### Requirement: Law E — a nested item with an empty chain is identical to its content
+A nesting with an empty chain, an identity leading node, level 1, without reversal, warp and
+transitions on the edges, in a reel WITHOUT its own raster and fps, SHALL render byte for byte
+as the expanded content — for video and for audio, in the preview and in export. A reel with its own
+raster or fps is not subject to law E by construction (its frame is a different canvas or a different
+grid), and the test SHALL assert this negatively. The order of frames and bursts SHALL go
+inward and match the order of the expanded content; the cost SHALL be linear in the number of events
+(a reel of 500 events, placed three times). The expansion into effective clips SHALL apply
+the instance's overrides.
+Why: the inline form is the reference oracle of the real subtree of the plan; an order that did not descend
+inside is a permanent cache miss (invariant 4); a reel's own raster is the owner's decision in R.62, and the oracle is honestly bounded rather than blurred by a tolerance.
 
-Вложение с пустой цепочкой, тождественным ведущим узлом, уровнем 1, без реверса, варпа и
-переходов на краях, у ленты БЕЗ своих растра и fps, SHALL рендериться байт-в-байт как
-развёрнутое содержимое — по видео и по аудио, в превью и в экспорте. Лента со своим
-растром или fps закону Э не подчиняется по построению (её кадр — другой холст или другая
-сетка), и тест SHALL утверждать это отрицательно. Заказ кадров и бёрстов SHALL уходить
-вглубь и совпадать с заказом развёрнутого; цена SHALL быть линейной по числу событий
-(лента в 500 событий, поставленная трижды). Раскрытие в эффективные клипы SHALL применять
-переопределения экземпляра.
-Почему: инлайн — эталон-оракул настоящего поддерева плана; заказ, не спустившийся внутрь,
-— вечный промах кэша (инвариант 4); свой растр у ленты — решение владельца Р.62, и оракул
-ограничивается честно, а не размывается допуском.
-
-#### Scenario: Аудио и видео байт-в-байт
-- **WHEN** рендерится проект с вложением и его раскрытая версия
-- **THEN** аудио и видео совпадают байт-в-байт, превью == экспорт
+#### Scenario: Audio and video byte for byte
+- **WHEN** a project with a nesting and its expanded version are rendered
+- **THEN** audio and video match byte for byte, preview == export
 - **TEST** t434 (`src/libs/kt-engine/tests/nest_render.rs`), t435 (`src/libs/kt-engine/tests/nest_render.rs`), t447 (`src/libs/kt-engine/tests/nest_render.rs`)
 
-#### Scenario: Заказ тот же и цена линейна
-- **WHEN** сравниваются заказы кадров и стоимость сборки у вложения и раскрытия
-- **THEN** заказы совпадают; потолок цены на ленте в 500 событий ×3 не превышен
+#### Scenario: The order is the same and the cost is linear
+- **WHEN** the frame orders and the build cost of a nesting and of the expansion are compared
+- **THEN** the orders match; the cost ceiling for a reel of 500 events ×3 is not exceeded
 - **TEST** t436 (`src/libs/kt-engine/tests/nest_render.rs`)
 
-#### Scenario: Закон Э с впечёнными переопределениями
-- **WHEN** экземпляр с переопределениями сверяется с развёрнутым содержимым, в которое значения впечены
-- **THEN** результат байт-в-байт
+#### Scenario: The E-law with baked-in overrides
+- **WHEN** an instance with overrides is compared with the expanded content into which the values are baked
+- **THEN** the result is byte for byte
 - **TEST** t688 (`src/libs/kt-engine/tests/nest_param.rs`)
 
-#### Scenario: Свои настройки ленты выводят из закона Э
-- **WHEN** та же лента получает свой растр (или свой fps) и сверяется с раскрытием
-- **THEN** результаты различаются (отрицательный оракул), а после сброса настроек в «проект» снова равны байт-в-байт
+#### Scenario: The reel's own settings take it out of the E-law
+- **WHEN** the same reel receives its own raster (or its own fps) and is compared with the expansion
+- **THEN** the results differ (a negative oracle), and after resetting the settings to "project" they are again equal byte for byte
 - **TEST** t725 (`src/libs/kt-engine/tests/nest_render.rs`)
 
-### Requirement: Внутреннее время ленты непрерывно; пол по сетке ставит только файловый лист
+### Requirement: The reel's internal time is continuous; only the file sheet sets a floor on the grid
+The instance's internal time SHALL be the editing time of the reel without rounding to the frame
+grid; a procedural source (generator, title, placeholder) SHALL be computed on the continuous
+tick; only the file sheet applies the grid floor. A reel with its OWN fps SHALL quantize
+all of its internal time to its own grid (a frame holds until the next one, without blending) before
+expanding the sub-plan; without its own fps the path is continuous, the bytes are as before. The audio
+of the reel does not depend on its fps. Frame blending on a nesting SHALL be inherited downward and
+done by the LEAVES (one sub-composite per frame); the flag must travel into the order, the chunk budget,
+coverage and the memo key. Source facts SHALL come from whoever opened the source.
+Why: at rate 0.5 two neighboring frames got one internal tick, and titles,
+automation and cameras inside went in steps of two frames; two sub-composites would be twice as expensive and would bring back the steps; the reel's own fps (the owner's decision in R.62) is precisely the intended steps, so it is enabled only by an explicit field.
 
-Внутреннее время экземпляра SHALL быть временем монтажа ленты без округления к сетке
-кадров; процедурный источник (генератор, титр, заглушка) SHALL считаться на непрерывном
-тике; пол по сетке ставит только файловый лист. Лента с СОБСТВЕННЫМ fps SHALL квантовать
-всё своё внутреннее время к своей сетке (кадр держится до следующего, без смешения) до
-раскрытия суб-плана; при отсутствии своего fps путь непрерывный, байты прежние. Аудио
-ленты от её fps не зависит. Смешивание кадров на вложении SHALL наследоваться вниз и
-делаться ЛИСТЬЯМИ (суб-композит на кадр один); флаг обязан ехать в заказ, бюджет чанка,
-coverage и ключ мемо. Факты источников SHALL приходить от того, кто источник открыл.
-Почему: при rate 0.5 два соседних кадра получали один внутренний тик, и титры,
-автоматизация и камеры внутри шли ступеньками по два кадра; два суб-композита были бы
-вдвое дороже и вернули бы ступеньки; свой fps ленты (решение владельца Р.62) — это и есть
-намеренные ступеньки, поэтому он включается только явным полем.
-
-#### Scenario: Замедленная лента анимируется полушагами
-- **WHEN** экземпляр замедлен вдвое, внутри титр с автоматизацией и файл
-- **THEN** чётный кадр равен кадру rate 1, нечётный — кадру ленты на полукадре; футаж прибит к сетке, заказ не двигается
+#### Scenario: A slowed reel animates in half steps
+- **WHEN** an instance is slowed by half, with a title with automation and a file inside
+- **THEN** the even frame equals the frame of rate 1, the odd one — the frame of the reel at the half frame; the footage is pinned to the grid, the order does not move
 - **TEST** t579 (`src/libs/kt-engine/tests/nest_render.rs`), t580 (`src/libs/kt-engine/tests/nest_render.rs`), t585 (`src/libs/kt-engine/tests/nest_render.rs`)
 
-#### Scenario: Смешивание на вложении делают листья
-- **WHEN** у экземпляра включено смешивание кадров
-- **THEN** результат равен смеси соседних кадров ИСТОЧНИКА внутри, заказ несёт обе стороны, «ближайший» держит кадр
+#### Scenario: Blending on a nested reel is done by the leaves
+- **WHEN** frame blending is enabled on the instance
+- **THEN** the result equals the blend of the neighboring frames of the SOURCE inside; the order carries both sides; "nearest" holds the frame
 - **TEST** t581 (`src/libs/kt-engine/tests/nest_render.rs`)
 
-#### Scenario: То же на GPU
-- **WHEN** замедленная лента и смешивание исполняются на GPU
-- **THEN** конформанс EXACT с CPU, полукадр ≠ кадр, смешивание ≠ ближайший, детерминизм
+#### Scenario: The same on GPU
+- **WHEN** the slowed reel and blending are executed on GPU
+- **THEN** conformance is EXACT with CPU, a half frame ≠ a frame, blending ≠ nearest, determinism
 - **TEST** t586 (`src/libs/kt-gpu/tests/gpu_render.rs`), t587 (`src/libs/kt-gpu/tests/gpu_render.rs`)
 
-#### Scenario: Свой fps ленты держит кадр
-- **WHEN** лента 12 fps с анимированным титром стоит в проекте 24 fps; та же лента без своего fps
-- **THEN** с fps кадры идут парами (нечётный равен чётному), автоматизация и камеры внутри квантованы; без fps — t579/t580 прежние байты; на GPU конформанс EXACT
+#### Scenario: The reel's own fps holds a frame
+- **WHEN** a reel at 12 fps with an animated title sits in a 24 fps project; the same reel without its own fps
+- **THEN** with fps the frames go in pairs (the odd one equals the even one), the automation and cameras inside are quantized; without fps — t579/t580 with their previous bytes; on GPU conformance is EXACT
 - **TEST** t724 (`src/libs/kt-engine/tests/nest_render.rs`), t724b (`src/libs/kt-gpu/tests/gpu_render.rs`)

@@ -1,204 +1,92 @@
-# Морфер — почему так
+# Morpher — why it is this way
 
-## Что было и у кого болело
+## What hurt and for whom
 
-Морфер родился как «патч на замороженный список клипов, действующий целиком и вне
-времени»: блок на таймлайне можно было двигать, и это ничего не значило. Владелец
-потребовал полноценный слой: «активны по времени», «применяются на всё, что НИЖЕ»,
-ссылка на регион/область вместо выделения, одно окно с одной цепочкой вместо двух видов
-морфера, копипаст, который «натравливает» скопированный морфер на новые объекты.
-Разведка чужих редакторов (Vegas Adjustment Events, AE adjustment layer) дала главный
-изъян: у них есть ползунок прозрачности наложения с фейдами, у нас — бинарный
-`enabled`. Позже владелец принёс два живых проекта: «звук от другого события откуда-то
-взялся» (морф-блок 0.6 с на 5020-й секунде подменил источник на 148-й), «pan3d не
-применяется, пока не отключу замену сурса» и «на событиях с фейдом морфер накладывает
-правки на всё событие вместо by time».
+The morpher was born as "a patch on a frozen list of clips, applying as a whole and outside of time": a block on the timeline could be moved, and that meant nothing. The owner demanded a full layer: "active by time", "applied to everything BELOW", a reference to a region/area instead of a selection, one window with one chain instead of two kinds of morpher, and copy-paste that "points" a copied morpher at new objects.
+Reconnaissance of other editors (Vegas Adjustment Events, AE adjustment layer) revealed the main flaw: they have an overlay opacity slider with fades, while we had a binary `enabled`. Later the owner brought two live projects: "sound from another event came from somewhere" (a morph block at 0.6 s at second 5020 replaced the source with the one at 148), "pan3d is not applied until I turn off the source replacement", and "on events with a fade the morpher applies its corrections to the whole event instead of by time".
 
-## Решения и почему
+## Decisions and why
 
-- **Расплющивание в модели, движок не знает о морферах.** Одна точка выдачи
-  (`Project::effective_clips`) кормит превью, экспорт, отрисовку и `kt-cli probe`;
-  bake == flatten по построению, и «бэтч звучит без bake» — следствие, а не отдельная
-  ветка. Цена — пер-клиповый вход: слой обрабатывает каждый клип, а не смикшированную
-  картинку дорожек ниже. Именно из этого растут подмена источника, `Areas` с набором
-  дорожек и честный bake — то, чего у Vegas/AE нет (заметка
-  `docs/features/morpher/gaps/composite-below-vs-per-clip.md`).
-- **«Ниже» — по строкам, порядок строк — в модели.** Иначе рендер зависел бы от
-  UI-состояния, которое undo не возвращает. Порядок наложения — снизу вверх, как
-  adjustment layer в AE; внутри строки прежний порядок по id, чтобы старый flatten-тест
-  остался верен.
-- **Патч = подмена + цепочки обоих видов.** Прямое требование «в ui морфера их
-  объединить». В окне это одна полоса, подмена — приколотая фиолетовая голова.
-- **Частичное покрытие: цель режется по границам блока** — решение владельца, как у
-  adjustment layer; осознанная цена — аудио-цепочка на куске стартует заново.
-  Позже (Р.55) сужено: режут только подмена источника и варп в патче, а патч из одних
-  эффектов ГАСИТ силу воротами — «я не понимаю, почему морфер херачит на всё событие,
-  если есть невинный переход». Резка ради цепочки не нужна вовсе.
-- **Граница липнет к краю кроссфейда/наезда, и это видно.** Резка ломает не цель,
-  а соседей: у видео порядок композиции «сверху тот, кто начался позже», у аудио
-  рампа считается из геометрии клипов. Куплено тем, что движок не трогается.
-- **Bake честно режет.** Инвариант «bake == то, что рисовалось» важнее чистого
-  таймлайна; на нём появляются новые стыки.
-- **Ссылка по имени, имена уникальны в одном пространстве с метками.** Метки
-  адресуются временем; перевод пяти команд меток на id стоил бы дороже уникальности,
-  которую владелец и так просил ради копипаста.
-- **Сила слоя — слот цепочки `LayerMix`, а не поле события.** Бесплатно получает
-  автоматизацию (фейды — её кривая), входит в ключ пост-FX кэша (60 % и 100 % — разные
-  кадры), едет копипастом и не трогает формат события. Ближайший аналог — не Vegas
-  opacity, а Effect Opacity в AE / Key Output Gain в Resolve
-  (`docs/features/morpher/gaps/opacity-and-wet-dry.md`).
-- **Домен кривых слоя — время блока.** У морфера нет материала; тот же домен, что у
-  камеры и перехода; в материал цели ключи переводятся общим отображением.
-- **Сначала досягаемость, потом вето.** Вопрос «дотянулся ли слой по времени»
-  задаётся раньше «резать или патчить целиком» — иначе вето раздаёт патч всему проекту.
-- **Единый пункт «Добавить морфер-слой» всегда создаёт слой в режиме «ниже»** и
-  поднимает морф-строку наверх — предсказуемо, а не «умное умолчание от контекста».
-- **При вставке — диалог с предзаполненным аффиксом**, умолчание суффикс «копия»
-  (копии сортируются рядом с оригиналом).
-- **Морфер едет в ленту вместе с выделением и `lane_order`** (capability
-  `compositions`): без порядка строк морф-строки в ленте последние, и слой «ниже»
-  молча накрывает пустоту — «морфер не попадает в композицию».
+- **Flattening in the model; the engine knows nothing about morphers.** A single output point (`Project::effective_clips`) feeds the preview, export, rendering and `kt-cli probe`; bake == flatten by construction, and "the batch sounds without bake" is a consequence, not a separate branch. The price is per-clip input: a layer processes each clip, not the mixed picture of the tracks below. It is precisely from this that source replacement, `Areas` with a set of tracks, and an honest bake grow — things that Vegas/AE do not have (note `docs/features/morpher/gaps/composite-below-vs-per-clip.md`).
+- **"Below" is by rows; the row order lives in the model.** Otherwise rendering would depend on UI state that undo does not restore. The overlay order is bottom to top, like an adjustment layer in AE; within a row the previous order by id is kept, so the old flatten test stays valid.
+- **Patch = substitution + chains of both kinds.** A direct requirement: "in the morpher UI, merge them". In the window this is one lane; the substitution is a pinned purple head.
+- **Partial coverage: the target is cut along block boundaries** — the owner's decision, as with an adjustment layer; the conscious cost is that the audio chain on the piece starts anew. Later (R.55) this was narrowed: only source substitution and warp in a patch are cut, and a patch made only of effects SUPPRESSES strength with gates — "I do not understand why the morpher slams the whole event if there is an innocent transition". Cutting for the sake of a chain is not needed at all.
+- **The boundary sticks to the edge of a crossfade/overlap, and this is visible.** Cutting breaks not the target but its neighbours: for video the composition order is "on top is the one that started later", for audio the ramp is computed from the geometry of the clips. This is paid for by the engine not being touched.
+- **Bake cuts honestly.** The invariant "bake == what was drawn" matters more than a clean timeline; new joins appear on it.
+- **Reference by name; names are unique within one space shared with markers.** Markers are addressed by time; switching the five marker commands to ids would cost more than the uniqueness the owner already asked for to support copy-paste.
+- **The layer's strength is a `LayerMix` chain slot, not an event field.** It gets automation for free (fades are its curve), enters the key of the post-FX cache (60 % and 100 % are different frames), travels with copy-paste, and does not touch the event format. The closest analogue is not Vegas opacity but Effect Opacity in AE / Key Output Gain in Resolve (`docs/features/morpher/gaps/opacity-and-wet-dry.md`).
+- **The layer's curve domain is block time.** The morpher has no material; it is the same domain as for a camera and a transition; keys are translated into the target's material by the common mapping.
+- **Reach first, then veto.** The question "did the layer reach by time" is asked before "cut or patch whole" — otherwise the veto would hand the patch to the whole project.
+- **The single item "Add morpher layer" always creates a layer in "below" mode** and raises the morph row to the top — predictable, not a "smart default from context".
+- **On paste — a dialog with a prefilled affix**, the default suffix "copy" (copies sort next to the original).
+- **The morpher travels into the reel together with the selection and `lane_order`** (capability `compositions`): without row order the morph rows in the reel are last, and a layer "below" silently covers the void — "the morpher does not get into the composition".
 
-## Отвергнуто и почему
+## Rejected and why
 
-- **Морфер действует на все дорожки** и **«ниже» по строкам, но порядок в UiState** —
-  отвергнуты: первое лишает смысла ссылочные режимы, второе делает рендер зависимым от
-  состояния вне undo.
-- **Пересеклись — патчим целиком** (без резки) — отвергнуто владельцем: слой должен
-  действовать по времени; позже для чистых цепочек заменено гашением, а не отменой резки.
-- **Движок учит геометрию оригинала** (точная резка внутри кроссфейда) — отвергнуто:
-  второй источник правды о геометрии и потеря точности bake. Записано как возможная
-  стадия, если прилипание помешает на живом монтаже.
-- **У слоя bake запрещён** — отвергнуто: bake обязан давать то, что рисовалось.
-- **Настоящие id у меток/областей** вместо имён — отвергнуто по цене (пять команд
-  меток на времени) при том, что уникальность имён нужна и так.
-- **Резать, но только сужая** и **оставить как есть, но назвать** (для «по времени»
-  на событии с фейдами) — не выбраны: владелец выбрал «не резать ради цепочки».
-- **Композитная стадия «эффекты на смикшированной картинке ниже»** (как Vegas/AE) —
-  не отвергнута, но отложена как ОТДЕЛЬНЫЙ объект, не совмещаемый галкой с
-  пер-клиповым слоем: объект «с двумя семантиками» хуже двух объектов.
-- **Сила как поле `ClipEvent`** — отвергнуто: правка десятков литералов и формата
-  события ради того, что слот даёт бесплатно.
-- **Кривые слоя в домене материала** — невозможно: у слоя нет материала.
-- **`MorphKind::Replace | EffectBatch`** — снят: два взаимоисключающих вида ради одной
-  правки.
-- **Режим размещения «клик по морф-дорожке, Esc — отмена»** — удалён вместе с единым
-  пунктом: файл теперь бросают прямо в поле источника окна.
+- **The morpher acting on all tracks** and **"below" by rows, but the order in UiState** — rejected: the first makes the reference modes meaningless, the second makes rendering depend on state outside undo.
+- **Overlapping — patch whole** (without cutting) — rejected by the owner: a layer must act by time; later, for pure chains, it was replaced by gating, not by cancelling the cut.
+- **The engine learns the geometry of the original** (exact cutting inside a crossfade) — rejected: a second source of truth about geometry and a loss of bake accuracy. Recorded as a possible stage, if sticking gets in the way on live editing.
+- **A layer's bake is forbidden** — rejected: bake must yield what was drawn.
+- **Real ids for markers/areas** instead of names — rejected on cost (five marker commands at times) given that name uniqueness is needed anyway.
+- **Cut, but only by narrowing** and **leave as is, but rename** (for "by time" on an event with fades) — not chosen: the owner chose "do not cut for the sake of a chain".
+- **A composite stage "effects on the mixed picture below"** (as in Vegas/AE) — not rejected, but deferred as a SEPARATE object, not combined with the per-clip layer via a checkbox: an object "with two semantics" is worse than two objects.
+- **Strength as a `ClipEvent` field** — rejected: editing dozens of literals and the event format for the sake of what the slot gives for free.
+- **Layer curves in the material domain** — impossible: a layer has no material.
+- **`MorphKind::Replace | EffectBatch`** — removed: two mutually exclusive kinds for the sake of one edit.
+- **Placement mode "click the morph track, Esc to cancel"** — removed together with the single item: the file is now dropped straight into the source field of the window.
 
-## Неочевидные детали
+## Non-obvious details
 
-- **Порядок проверок в `windows_on`** (`src/libs/kt-model/src/project.rs`,
-  `MorpherEvent::windows_on`): сначала `enabled`/накрывает по строкам/патч что-то делает
-  этому виду, потом окно по времени, и только потом вето варпа. Вето стояло первым и
-  возвращало всё тело, не спросив про время: в проекте владельца 1973 события из 1973
-  получили варп при 27 настоящих, playhead замер. Пустые ссылки у `Marks`/`Areas` —
-  «не дотянулся», а не «накрыл целиком» (t288).
-- **Резать или гасить решает `MorpherEvent::cuts_target`**
+- **Order of checks in `windows_on`** (`src/libs/kt-model/src/project.rs`,
+  `MorpherEvent::windows_on`): first `enabled`, covers-by-rows and patch-does-something to this kind, then the time window, and only then the warp veto. The veto used to come first and returned the whole body without asking about time: in the owner's project 1973 events out of 1973 got the warp with 27 real ones, and the playhead froze. Empty references in `Marks`/`Areas` mean "did not reach", not "covered entirely" (t288).
+- **Cut or gate is decided by `MorpherEvent::cuts_target`**
   (`src/libs/kt-model/src/project.rs`): `replaces_source() || warps_time_for(kind)`.
-  Вызывающий это не решает. Ворота строит `mix_curve_on` ПО КУСКУ: точки реза общие
-  на все слои (`morph_pass`), и слой без резки ложится на куски, порождённые другими;
-  окно от начала исходного тела уехало бы на длину отрезанного.
-- **Ступень ворот — два ключа на СОСЕДНИХ тиках** (`mix_curve_on`,
-  `src/libs/kt-model/src/project.rs`): на одном тике `dedup_by_key` схлопнет их, и
-  вместо ступени выйдет рампа во всё тело. Ключ за краем тела не ставится:
-  `clip_material_at` клампит края, и два ключа слились бы в один тик с разными
-  значениями. Ворота, покрывающие тело целиком, слота не создают — на этом стоят
-  GOLDEN_VIDEO/GOLDEN_AUDIO без перегенерации.
-- **Выталкивание из запретной зоны — только внутрь** (`snap_out_of`,
-  `src/libs/kt-model/src/project.rs`): начало окна вперёд, конец назад; сторона
-  задана, а не выбрана по близости. «К ближайшему краю» расширяло окно наружу, и у
-  события с фейдами с обеих сторон «по времени» становилось «на всё событие». Не
-  осталось окна — слой не дотянулся, и это честный ответ.
-- **Сначала сетка материала, потом зона** (`MorpherEvent::fit_window`,
-  `src/libs/kt-model/src/project.rs`): шаг — кадр у видео, 15 тиков у аудио; у
-  reversed отсчёт от КОНЦА тела (там якорь зеркала), иначе кусок отдаёт кламп-кадр
-  вместо настоящего. Край зоны бывает не на сетке — и неразрезанное окружение дороже.
-- **Запретные зоны считаются по ленте, а не по корню** (`forbidden_zones`,
-  `src/libs/kt-model/src/project.rs`): слой может лежать внутри вложения; настройки
-  берутся у проекта — у вложения своих нет.
-- **Id куска — `slice_id(origin, idx)` со старшим битом**
-  (`src/libs/kt-model/src/project.rs`): ни счётчиков, ни хэшей, ни нового поля в
-  `ClipEvent` (это была бы правка 83 литералов в 33 файлах). Кусок №0 = id оригинала,
-  поэтому клип, накрытый целиком, сохраняет FX-состояние (инвариант 3). Всё, что ищет
-  клип среди эффективных, обязано звать `same_clip`, а не `==`.
-- **Единственная правка движка ради резки — концы переходов**
-  (`src/libs/kt-engine/src/video.rs` и `audio.rs`, конструкторы рендереров):
-  `same_clip` + сверка границы со стыком, `t.joint(project)` считается по сырым клипам.
-  `gpu_required_clips` схлопывает куски в оригинал через `slice_origin`, иначе
-  preflight называл бы синтетические id.
-- **Одно правило точки входа куска — `clip_slice`** (`src/libs/kt-model/src/project.rs`):
-  через него идут и резка слоем, и `Command::Split`, и трим; у растянутого клипа
-  точка входа — интеграл скорости, ключи едут с якорем. Сторож «присваиваний
-  `source_in` вне `project.rs` не бывает» — t273 (capability `ui-reach`).
-- **`chain_for(Video)` отдаёт варп из `audio_fx`** (`MorphPatch::chain_for`,
-  `src/libs/kt-model/src/project.rs`): варп живёт в аудио-цепочке (канонический дом,
-  на нём стоят `merge_chains`/`split_chains` в `src/apps/kt-app/src/morpher_editor.rs`),
-  но это правило выбора кадра. `auto_for(kind)` идёт тем же порядком, что `chain_for`,
-  иначе кривая уехала бы на чужой эффект; окно морфера возит кривые вместе со слотами.
-- **`fx_off` события и слой** (`MorphPatch::apply_to`,
-  `src/libs/kt-model/src/project.rs`): при выключателе цепочка события уходит целиком
-  (с кривыми и bypass'ами), эффекты слоя дописываются в чистую. Раньше слой дописывал
-  в `c.fx`, и выключатель события гасил чужой слой (t214).
-- **Подмена источника двигает `fx_auto` события той же дельтой, что `source_in`**
-  (`MorphPatch::apply_to`, `src/libs/kt-model/src/project.rs`): кривые слоя к этому
-  не относятся — пересчитываются отдельно и дописываются ПОСЛЕ. Сочетание «своя
-  цепочка события + подмена слоем» не проверял ни один тест до t291.
-- **`from` у слота силы — с какого слота начинается вклад ЭТОГО слоя**
-  (`FxInstance::LayerMix { amount, from }`; CPU — `apply_chain_with_mixes` в
-  `src/libs/kt-engine/src/video.rs`, GPU — `layer_mix.wgsl` в `src/libs/kt-gpu`):
-  снимок делается ровно на границе `from`, иначе сила откатывала бы и собственные
-  эффекты события. Слои стекируются, у каждого свой `from`. Ядро смешения — готовый
-  целочисленный `dissolve_into`; разошедшиеся размеры (Pan/CamMotion ресемплят)
-  вписываются той же билинейкой, что все ресемплы. Аудио: реверб у движка один на
-  цепочку, «чей он» решает флаг (события — в сухой стороне, слоя — только в мокрой);
-  громкость разделена на «до слоя» и «слоя», иначе сила 0 съела бы уровень события.
-- **`MorpherEvent.enabled` ≠ `ClipEvent.fx_off`**: оба гасят, не трогая состояние
-  слотов и кривые (`src/libs/kt-model/src/project.rs`), но выключатель морфера
-  выключает слой, а выключатель события — только его цепочку.
-- **`RemoveMedia` спрашивает `MorpherEvent::media_refs`**
-  (`src/libs/kt-model/src/project.rs`): паттерн-матч по виду морфера компилятор не
-  ловит, на этом держался прежний дефект (t243).
-- **Замороженные цели держат команды**: `RemoveClip` вычищает id, `Split` добавляет
-  правую половину (`src/libs/kt-model/src/model.rs`; дефект D5 старого движка).
-- **Мёртвая ссылка на область остаётся** (`MorphTargets`, `ref_windows`,
-  `src/libs/kt-model/src/project.rs`): резолвится в ничто, окно морфера рисует её
-  ошибочным стилем; вернул область тем же именем — ожило. `RenameArea` правит ссылки
-  одним шагом. `unique_name` (`src/libs/kt-model/src/project.rs`) одна на команды и
-  вставку — разойдись суффиксами, батч вставки падал бы на собственных именах; UI зовёт
-  её до команды.
-- **Копипаст: что едет с выделением — `block_extras`**
-  (`src/libs/kt-model/src/ops.rs`) — единственное место (им же пользуется сворачивание
-  в ленту). `ClipBlock` сериализуется в системный буфер: новые поля только с
-  `#[serde(default, skip_serializing_if)]`. Батч атомарен, поэтому морфер без уцелевших
-  целей ПРОПУСКАЕТСЯ с подсчётом, а не роняет вставку.
-- **`timed = false` у файлов до схемы слоя** (`migrate_legacy_morpher`,
-  `src/libs/kt-model/src/project.rs`): односторонний апгрейд, старые проекты
-  рендерятся как прежде; версия конверта — по содержимому (capability
-  `project-format`). Смена правила «резать → гасить» версию НЕ подняла: схема не
-  изменилась, старая сборка получит приблизительно ту же картинку, а не молча
-  неправильную.
-- **Голова полосы — `ChainEdit.head`, выбор — `ChainSel { Head, Fx(usize) }`**
-  (`src/apps/kt-app/src/morpher_editor.rs`, `fx_editor.rs`): «голова = индекс 0»
-  гарантированно даёт off-by-one; в реестре эффектов головы нет и быть не может (t48).
-- **Свободная служебная строка — `KtApp::free_service_lane`**
-  (`src/apps/kt-app/src/app.rs`): первая строка, свободная НА ЭТОМ ПРОМЕЖУТКЕ, сверху
-  вниз; функция одна на морфер и камеру. `add_morph_layer` заводит строку и поднимает
-  её одним шагом истории — порознь эти действия бессмысленны.
-- **Куски одного клипа могут иметь разные ступени декода** — полоски прогретости берут
-  объединение (`merge_runs`, `src/apps/kt-app/src/util.rs`; capability `video-plan`).
-- **Слой в ссылочном режиме внутрь ленты не едет** (`validate_reel`,
-  `MorphRefInsideSequence`, `src/libs/kt-model/src/project.rs`): остаётся снаружи и
-  попадает в отчёт сворачивания; уехавшее внутрь убирается из корня, иначе слой ложится
-  дважды (capability `compositions`).
-- **Диагностика — `kt-cli probe`** (`src/apps/kt-cli/src/main.rs`): эффективные
-  события ПОСЛЕ морфер-слоёв и «чужое медиа в заказе». Первое, что спрашивать по жалобе
-  «тут звук/картинка от другого события» — п.298 найден им за один запуск.
+  The caller does not decide this. The gate is built by `mix_curve_on` PER PIECE: the cut points are shared by all layers (`morph_pass`), and a layer without a cut lands on pieces produced by others; the window counted from the start of the original body would have shifted by the length of what was cut off.
+- **A gate step is two keys on ADJACENT ticks** (`mix_curve_on`,
+  `src/libs/kt-model/src/project.rs`): on a single tick `dedup_by_key` would collapse them, and instead of a step a ramp across the whole body would come out. A key beyond the edge of the body is not set: `clip_material_at` clamps the edges, and the two keys would merge into one tick with different values. A gate covering the body entirely creates no slot — GOLDEN_VIDEO/GOLDEN_AUDIO rely on this without regeneration.
+- **Pushing out of a forbidden zone — inward only** (`snap_out_of`,
+  `src/libs/kt-model/src/project.rs`): the start of the window moves forward, the end backward; the side is given, not chosen by proximity. "To the nearest edge" widened the window outward, and for an event with fades on both sides "by time" became "the whole event". If no window is left, the layer did not reach, and that is the honest answer.
+- **Material grid first, then the zone** (`MorpherEvent::fit_window`,
+  `src/libs/kt-model/src/project.rs`): the step is a frame for video, 15 ticks for audio; for reversed the count runs from the END of the body (there is the mirror anchor), otherwise the piece would yield the clamped frame instead of the real one. The edge of a zone is sometimes off the grid — and the uncut surroundings are then more expensive.
+- **Forbidden zones are computed per reel, not per root** (`forbidden_zones`,
+  `src/libs/kt-model/src/project.rs`): a layer may lie inside a nested reel; the settings are taken from the project — a nested reel has none of its own.
+- **Piece id — `slice_id(origin, idx)` with the high bit set**
+  (`src/libs/kt-model/src/project.rs`): no counters, no hashes, no new field in `ClipEvent` (that would have been an edit of 83 literals across 33 files). Piece No. 0 = the original's id, so a clip covered entirely keeps its FX state (invariant 3). Anything that looks up a clip among the effective ones must call `same_clip`, not `==`.
+- **The only engine change for the sake of cutting — the ends of transitions**
+  (`src/libs/kt-engine/src/video.rs` and `audio.rs`, renderer constructors):
+  `same_clip` + checking the boundary against the join; `t.joint(project)` is computed from the raw clips. `gpu_required_clips` collapses pieces back to the original via `slice_origin`, otherwise preflight would name synthetic ids.
+- **One rule for a piece's entry point — `clip_slice`** (`src/libs/kt-model/src/project.rs`):
+  the layer cut, `Command::Split` and trim all go through it; for a stretched clip the entry point is the integral of speed, and keys travel with the anchor. The guard "there are no assignments to `source_in` outside `project.rs`" — t273 (capability `ui-reach`).
+- **`chain_for(Video)` returns the warp from `audio_fx`** (`MorphPatch::chain_for`,
+  `src/libs/kt-model/src/project.rs`): the warp lives in the audio chain (its canonical home, where `merge_chains`/`split_chains` in `src/apps/kt-app/src/morpher_editor.rs` operate), but this is a rule for choosing the frame. `auto_for(kind)` follows the same order as `chain_for`, otherwise a curve would end up on someone else's effect; the morpher window carries curves together with the slots.
+- **The event's `fx_off` and the layer** (`MorphPatch::apply_to`,
+  `src/libs/kt-model/src/project.rs`): when the switch is off, the event's chain goes away entirely (with curves and bypasses), and the layer's effects are appended to a clean one. Previously the layer appended into `c.fx`, and the event's switch turned off someone else's layer (t214).
+- **Source replacement shifts the event's `fx_auto` by the same delta as `source_in`** (`MorphPatch::apply_to`, `src/libs/kt-model/src/project.rs`): the layer's curves are not related to this — they are recomputed separately and appended AFTER. The combination "the event's own chain + substitution by a layer" was not checked by any test until t291.
+- **`from` of the strength slot — the slot from which THIS layer's contribution begins**
+  (`FxInstance::LayerMix { amount, from }`; CPU — `apply_chain_with_mixes` in
+  `src/libs/kt-engine/src/video.rs`, GPU — `layer_mix.wgsl` in `src/libs/kt-gpu`):
+  the snapshot is taken exactly at the boundary of `from`, otherwise strength would roll back the event's own effects too. Layers stack, each with its own `from`. The blending kernel is the ready integer `dissolve_into`; mismatched sizes (Pan/CamMotion resample) are fitted with the same bilinear as all resamples. Audio: the reverb is one per engine chain, and a flag decides "whose it is" (the event's — on the dry side, the layer's — only on the wet side); the volume is split into "before the layer" and "the layer", otherwise strength 0 would eat the event's level.
+- **`MorpherEvent.enabled` ≠ `ClipEvent.fx_off`**: both mute without touching the state of the slots and the curves (`src/libs/kt-model/src/project.rs`), but the morpher's switch turns off the layer, while the event's switch turns off only its chain.
+- **`RemoveMedia` asks `MorpherEvent::media_refs`**
+  (`src/libs/kt-model/src/project.rs`): the compiler does not catch pattern matching by morpher kind, and the former defect (t243) was held up by exactly this.
+- **Frozen targets hold commands**: `RemoveClip` clears the id, `Split` adds the right half (`src/libs/kt-model/src/model.rs`; defect D5 of the old engine).
+- **A dead area reference remains** (`MorphTargets`, `ref_windows`,
+  `src/libs/kt-model/src/project.rs`): it resolves to nothing, and the morpher window draws it in an error style; returning the area under the same name revives it. `RenameArea` updates references in one step. `unique_name` (`src/libs/kt-model/src/project.rs`) is one for the commands and for paste — if they diverged by suffixes, a paste batch would fail on its own names; the UI calls it before the command.
+- **Copy-paste: what travels with the selection — `block_extras`**
+  (`src/libs/kt-model/src/ops.rs`) — the single place (it is also used by collapsing into a reel). `ClipBlock` is serialized to the system clipboard: new fields only with `#[serde(default, skip_serializing_if)]`. A batch is atomic, so a morpher without surviving targets is SKIPPED with a count, rather than failing the paste.
+- **`timed = false` for files predating the layer schema** (`migrate_legacy_morpher`,
+  `src/libs/kt-model/src/project.rs`): a one-way upgrade; old projects render as before; the envelope version is determined by content (capability `project-format`). The change of rule "cut → gate" did NOT raise the version: the schema did not change, and an old build will get roughly the same picture rather than silently wrong.
+- **Head of the lane — `ChainEdit.head`, selection — `ChainSel { Head, Fx(usize) }`**
+  (`src/apps/kt-app/src/morpher_editor.rs`, `fx_editor.rs`): "head = index 0" guarantees an off-by-one; the effects registry has no head and cannot have one (t48).
+- **A free service row — `KtApp::free_service_lane`**
+  (`src/apps/kt-app/src/app.rs`): the first row FREE ON THIS INTERVAL, from top to bottom; the function is one for the morpher and the camera. `add_morph_layer` creates the row and raises it in one history step — separately these actions make no sense.
+- **Pieces of one clip may have different decode scale steps** — the coverage bars take the union (`merge_runs`, `src/apps/kt-app/src/util.rs`; capability `video-plan`).
+- **A layer in reference mode does not travel inside the reel** (`validate_reel`,
+  `MorphRefInsideSequence`, `src/libs/kt-model/src/project.rs`): it stays outside and gets into the collapse report; one that did travel inside is removed from the root, otherwise the layer would land twice (capability `compositions`).
+- **Diagnostics — `kt-cli probe`** (`src/apps/kt-cli/src/main.rs`): the effective events AFTER the morpher layers and "foreign media in the batch". The first thing to ask about a complaint "here the sound/picture is from another event" — item 298 was found by it in a single run.
 
-## Отложено
+## Deferred
 
-- Композитная стадия «эффекты на смикшированной картинке дорожек ниже» — отдельный
-  объект, не первым (`docs/features/morpher/gaps/composite-below-vs-per-clip.md`).
-- Точная резка внутри кроссфейда (движок учит геометрию оригинала) — только если
-  прилипание границы помешает на живом монтаже.
-- Морф-слой обходит запрет на варп у экземпляра ленты — записано в Р.55, не закрыто
-  (capability `compositions`).
+- The composite stage "effects on the mixed picture of the tracks below" — a separate object, not the first (`docs/features/morpher/gaps/composite-below-vs-per-clip.md`).
+- Exact cutting inside a crossfade (the engine learns the geometry of the original) — only if sticking of the boundary gets in the way on live editing.
+- The morph layer bypasses the ban on warp for a reel instance — recorded in R.55, not closed (capability `compositions`).

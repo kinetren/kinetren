@@ -2,179 +2,162 @@
 
 ## Context
 
-Мотивация и таблица замера — `proposal.md`. Здесь только то, что нужно, чтобы объяснить
-подход.
+The motivation and the measurement table are in `proposal.md`. Here only what is needed to explain
+the approach.
 
-Что уже построено в Р.68 и работает: программа сообщает рядом с дампом геометрии номер
-нарисованного кадра (`bench::frames()`) и число прочитанных ею событий ввода
-(`bench::inputs()`, `ui.ctx().input(|i| i.events.len())`); у каркаса есть `seen()`,
-`wait_seen(mark)`, `wait_frame(n)` и `settle()`; `settle` меряет тишину в НАБЛЮДАЕМЫХ
-шагах кадра (`self._dt`). Всё это используется щупами (`_probe_rect`, `has_probe`,
-`pixel_settled`) и не используется самими жестами.
+What is already built in R.68 and works: the program reports next to the geometry dump the number of the
+drawn frame (`bench::frames()`) and the number of input events it has read
+(`bench::inputs()`, `ui.ctx().input(|i| i.events.len())`); the harness has `seen()`,
+`wait_seen(mark)`, `wait_frame(n)` and `settle()`; `settle` measures silence in OBSERVABLE
+frame steps (`self._dt`). All of this is used by the probes (`_probe_rect`, `has_probe`,
+`pixel_settled`) and is not used by the gestures themselves.
 
-Что осталось на часах (замер на cbc5a3e, живой прогон 1582 с последовательно):
+What is still on the clock (measured on cbc5a3e, a live run of 1582 s sequentially):
 
-- `kt_live.py` — 265 с: `click` 0.55, `right_click` 0.65, `double_click` 0.69, `drag`
-  1.35, `key` 0.60, `hover` 0.70, `close_window` 1.00 (в каждом — 0.2 с на `focus()`);
-- `ui-probe.py` — 123 с: `move` 0.05, `button` 0.09 на каждое нажатие/отпускание,
-  `key` 0.05 + 0.12. Каркас уже умеет передавать драйверу свою паузу — в docstring
-  `button()` это написано прямым текстом, — но ни один вызов из `kt_live.py` её не
-  передаёт;
-- чтение экрана — ≈341 обращение к `xwd` + `convert` за прогон.
+- `kt_live.py` — 265 s: `click` 0.55, `right_click` 0.65, `double_click` 0.69, `drag`
+  1.35, `key` 0.60, `hover` 0.70, `close_window` 1.00 (each — 0.2 s on `focus()`);
+- `ui-probe.py` — 123 s: `move` 0.05, `button` 0.09 for each press/release, `key`
+  0.05 + 0.12. The harness can already pass its pause to the driver — the docstring of
+  `button()` says so in plain text — but not a single call from `kt_live.py` passes it;
+- reading the screen — ≈341 calls to `xwd` + `convert` per run.
 
-Пределы, которые нельзя трогать: набор проверок не ослабляется; вердикты всех 45 живых
-сценариев обязаны совпасть с нынешними; продукт (`kt-app`) не меняется — всё нужное он уже
-сообщает; правило «красное в параллели перегоняется один раз» остаётся вердиктом прогона.
+Limits that must not be touched: the set of checks is not weakened; the verdicts of all 45 live
+scenarios must match the current ones; the product (`kt-app`) does not change — it already reports everything needed; the rule "red in parallel is re-run once" remains the verdict of the run.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- Ни одного ожидания «на глазок» вокруг жеста: каркас спрашивает программу, прочитала ли
-  она ввод.
-- Оставшийся сон — перечислимый, объяснённый И ограниченный числом, а не только прозой.
-- Сторож видит ВСЮ живую проверку, включая драйвер X.
-- Чтение точки экрана стоит запроса к X, а не двух процессов ImageMagick.
+- Not a single "by eye" wait around a gesture: the harness asks the program whether it has read the input.
+- The remaining sleep — enumerable, explained AND bounded by a number, not only in prose.
+- The guard sees the WHOLE live check, including the X driver.
+- Reading a screen point costs an X request, not two ImageMagick processes.
 
 **Non-Goals:**
-- Постоянные расходы сценария (подъём проекта в стенде, `wait_loaded`, генерация фикстур
-  ffmpeg) — отдельный пол, названный в `durability/design.md`.
-- Ускорение прогона мастерской (215 с) — второй пол там же.
-- Правка самих сценариев: по построению они не должны заметить перемены, и это приёмка.
-- Достижение планки 300 с: арифметика в `durability/design.md` говорит, что пол при 45
-  сценариях ≈330 с. Раунд берёт то, что берётся, и называет остаток.
+- The fixed costs of a scenario (raising the project in the stand, `wait_loaded`, generation of ffmpeg fixtures) — a separate floor, named in `durability/design.md`.
+- Speeding up the workspace run (215 s) — the second floor there.
+- Editing the scenarios themselves: by construction they should not notice the change, and that is the acceptance test.
+- Reaching the 300 s target: the arithmetic in `durability/design.md` says the floor with 45 scenarios is ≈330 s. The round takes what can be taken and names the remainder.
 
 ## Decisions
 
-### 1. Жест ждёт РОСТ СЧЁТЧИКА ВВОДА, а фолбэк — названная пауза, а не тишина
+### 1. The gesture waits for the GROWTH OF THE INPUT COUNTER, and the fallback is a named pause, not silence
 
-`seen()` берётся ДО жеста, `wait_seen(mark)` ждёт после. Это не новый механизм — это тот
-самый, ради которого счётчик заводился (Р.68: «на этом молча терялся драг уровня»), просто
-доведённый до жестов.
+`seen()` is taken BEFORE the gesture, `wait_seen(mark)` waits after it. This is not a new mechanism — it is the
+very one for which the counter was created (R.68: "this is where a level drag was silently lost"), simply
+carried through to the gestures.
 
-Тонкость, которая решает форму: счётчик считает СОБЫТИЯ EGUI за кадр, а не наши XTest-события.
-egui и winit вправе склеить подряд идущие движения указателя в одно, поэтому ждать «счётчик
-вырос РОВНО на столько, сколько мы послали» нельзя — ожидание зависло бы на законном
-склеивании. Ждём РОСТ (счётчик стал больше метки) плюс кадр — этого достаточно: рост
-означает, что события доехали до egui, а кадр — что они попали в состояние.
+A subtlety that decides the shape: the counter counts EGUI EVENTS per frame, not our XTest events.
+egui and winit have the right to merge consecutive pointer movements into one, so waiting for "the counter grew
+EXACTLY by as many as we sent" is not allowed — the wait would hang on a legitimate
+merge. We wait for the GROWTH (the counter became greater than the mark) plus a frame — this is enough:
+growth means the events have reached egui, and the frame means they got into the state.
 
-Событие, которое egui законно НЕ порождает (движение в ту же точку, клавиша в окно без
-фокуса), даёт ожидание, которое ничем не кончится. Поэтому у каждого такого ожидания есть
-`soft`-исход, и он НЕ молчаливый: это названная пауза, она попадает в бюджет сна и видна
-сторожу. Молчаливый фолбэк вернул бы ровно ту слепоту, ради снятия которой раунд заведён.
+An event that egui LEGITIMATELY does NOT generate (a movement to the same point, a key into a window without
+focus) gives a wait that ends with nothing. Therefore each such wait has a
+`soft` outcome, and it is NOT silent: it is a named pause, it goes into the sleep budget and is
+visible to the guard. A silent fallback would bring back exactly the blindness for whose removal the round was set up.
 
-Альтернативы: считать посланные события и ждать точного числа (ломается о склеивание);
-ждать только кадра (кадр мог НАЧАТЬСЯ раньше события — это уже проверено в Р.68 и записано
-в `ui-reach/design.md`); ждать только тишины `settle` (тишина наступает и до того, как
-событие доехало).
+Alternatives: count the sent events and wait for the exact number (breaks on merging);
+wait only for the frame (the frame could have STARTED before the event — this is already checked in R.68 and recorded
+in `ui-reach/design.md`); wait only for the `settle` silence (the silence sets in even before
+the event has arrived).
 
-### 2. Паузы, которые ОСТАЮТСЯ, и почему они не исчезнут
+### 2. The pauses that REMAIN, and why they will not disappear
 
-Три штуки, и у каждой причина не в скорости кадра, а в механике egui:
+Three of them, and for each the reason is not the speed of the frame, but the mechanics of egui:
 
-- **Зазор двойного клика** (0.04 с между кликами). У egui двойной клик — ВРЕМЕННОЙ жест;
-  измерено в Р.34: 0.04 с — 5 из 5, 0.10 с — 0 из 5. Ждать тут нечего: проверяется само
-  время.
-- **Шаг драга между позициями.** egui засчитывает драг по порогу И по кадру; между
-  позициями обязан пройти кадр. Это ожидание КАДРА — оно заменяется `wait_frame(1)`, а
-  паузой остаётся только нажатие до первого сдвига, если кадр после нажатия не приходит
-  (программа могла не перерисоваться: repaint только при движении, инвариант №12).
-- **Часы автосейва и воспроизведение в реальном времени.** Сценарий, который слушает
-  полторы секунды игры, спит по делу — это сама проверка.
+- **The double-click gap** (0.04 s between clicks). In egui a double click is a TIME-BASED gesture;
+  measured in R.34: 0.04 s — 5 of 5, 0.10 s — 0 of 5. There is nothing to wait for here: the time itself is being checked.
+- **The drag step between positions.** egui counts a drag by a threshold AND by a frame; a frame must pass between
+  positions. This is a wait for a FRAME — it is replaced by `wait_frame(1)`, and the
+  pause that remains is only the press before the first shift, if a frame does not arrive after the press
+  (the program might not have redrawn: repaint only on movement, invariant No. 12).
+- **The autosave clock and playback in real time.** A scenario that listens to a second and a half of playback sleeps for a reason — this is the check itself.
 
-Это и есть содержание правила «перечислимы»: список закрыт, у каждого пункта измеримая
-причина, всё остальное — ожидание.
+This is the content of the rule "enumerable": the list is closed, each item has a measurable
+reason, everything else is a wait.
 
-### 3. Окно поднимается при СМЕНЕ окна: `raise_once` уже написан, его надо подключить
+### 3. The window is raised on a CHANGE of window: `raise_once` is already written, it must be connected
 
-`focus()` делает круг к X-серверу (`set_input_focus` + `configure(stack_mode=Above)` +
-`sync`) и спит 0.2 с. На 410 жестов это 82 с и 410 кругов. Окно при этом одно: модальные
-формы программы — это слои egui ВНУТРИ того же X-окна, и поднимать его между двумя кликами
-подряд незачем. `raise_once()` (Р.68) поднимает окно, если этого ещё не делали, и `resize()`
-уже сбрасывает флаг. Остаётся заменить безусловный `focus()` в жестах на `raise_once()` и
-сбрасывать флаг там, где X-окно действительно могло смениться: возврат геометрии окна при
-входе в стенд, свой процесс, ресайз.
+`focus()` makes a round trip to the X server (`set_input_focus` + `configure(stack_mode=Above)` +
+`sync`) and sleeps 0.2 s. On 410 gestures that is 82 s and 410 round trips. Meanwhile the window is one: the program's modal
+forms are egui layers INSIDE the same X window, and there is no point raising it between two consecutive clicks. `raise_once()` (R.68) raises the window if this has not yet been done, and `resize()`
+already resets the flag. What remains is to replace the unconditional `focus()` in the gestures with `raise_once()` and
+to reset the flag where the X window could really have changed: the return of the window geometry on
+entry to the stand, the own process, a resize.
 
-Риск, который тут прячется, назван в п.199: окно предыдущего сценария могло остаться
-поверх. В стенде процесс один, а сценарий со «своим процессом» получает экран себе — но
-проверяется это не рассуждением, а сверкой вердиктов всех 45 сценариев.
+The risk that hides here is named in item 199: the window of the previous scenario could have remained
+on top. In the stand there is one process, and a scenario with "its own process" gets a screen for itself — but
+this is verified not by reasoning, but by comparing the verdicts of all 45 scenarios.
 
-### 4. Драйвер X перестаёт спать за каркас, и сторож начинает его видеть
+### 4. The X driver stops sleeping on behalf of the harness, and the guard begins to see it
 
-`kt_live.py` передаёт `probe.move/button/key` свою паузу (почти ноль) — как и написано в
-docstring `button()`. Умолчания самого `ui-probe.py` НЕ меняются: скрипт остаётся ручным
-инструментом («запусти и посмотри»), где ждать кадра некому.
+`kt_live.py` passes `probe.move/button/key` its own pause (almost zero) — as written in the
+docstring of `button()`. The defaults of `ui-probe.py` itself are NOT changed: the script remains a manual
+tool ("run it and look"), where there is no one to wait for the frame.
 
-Область сторожа `live-sleeps.py` расширяется на `ui-probe.py` — с одной оговоркой, которую
-надо записать, чтобы её не «починили» обратно: у `move`/`button`/`key` сон живёт в
-ЗНАЧЕНИИ ПО УМОЛЧАНИЮ аргумента, а не в вызове, поэтому сторож проверяет и умолчания тоже.
+The scope of the guard `live-sleeps.py` is extended to `ui-probe.py` — with one caveat, which must be written down so that it is not "fixed" back: for `move`/`button`/`key` the sleep lives in
+the DEFAULT VALUE of the argument, and not in the call, so the guard checks the defaults too.
 
-### 5. Бюджет сна: статический предел у сторожа, фактическая сумма — в отчёте
+### 5. The sleep budget: a static limit at the guard, the actual sum — in the report
 
-Две разные вещи, и путать их нельзя:
+Two different things, and they must not be confused:
 
-- **Сторож считает ОБЪЯВЛЕННЫЕ секунды** — сумму констант всех фиксированных пауз каркаса
-  и драйвера — и падает при превышении предела. Это проверяется без прогона, не зависит от
-  машины и не зависит от того, сколько раз жест позвали. Храповик того же вида, что
-  `UNTOUCHED_LIMIT` у отчёта покрытия (Р.68).
-- **Каркас считает ФАКТИЧЕСКИЙ сон** прогона (сумма по `pause()`) и печатает его рядом с
-  ценой сценария. Это число для отчёта и для следующего замера, а не вердикт: вердикт,
-  зависящий от загрузки машины, — это флак по построению.
+- **The guard counts the DECLARED seconds** — the sum of the constants of all fixed pauses of the harness
+  and the driver — and fails when the limit is exceeded. This is checked without a run, does not depend on the machine and does not depend on how many times a gesture was called. A ratchet of the same kind as
+  `UNTOUCHED_LIMIT` of the coverage report (R.68).
+- **The harness counts the ACTUAL sleep** of the run (the sum over `pause()`) and prints it next to
+  the price of the scenario. This number is for the report and for the next measurement, not a verdict: a verdict that
+  depends on the machine's load is a flake by construction.
 
-Альтернатива «ронять прогон при превышении фактического сна» отвергнута именно поэтому:
-под четырьмя работниками сон не растёт, а вот ожидания растут, и порог начал бы ловить
-нагрузку вместо регрессии.
+The alternative "fail the run when the actual sleep is exceeded" was rejected for exactly this reason:
+with four workers the sleep does not grow, but the waits do grow, and the threshold would begin to catch
+the load instead of a regression.
 
-### 6. Точка экрана читается у X; `xwd` остаётся эталоном и фолбэком
+### 6. The screen point is read from X; `xwd` remains the reference and the fallback
 
-`pixel`, `pixel_settled` и `ink_box` берут прямоугольник через `get_image` python-xlib
-(тот же `Display`, что уже открыт драйвером) вместо `xwd` плюс двух `convert`.
+`pixel`, `pixel_settled` and `ink_box` take the rectangle via `get_image` of python-xlib
+(the same `Display` that the driver already has open) instead of `xwd` plus two `convert`.
 
-Сверка обязательна и не по вкусу: у окна eframe 32-битный визуал, и чтение корневого окна
-ImageMagick'ом уже отдавало ЧЁРНОЕ там, где картинка была (Р.33 п.228) — сценарий тогда
-сравнивал чёрное с чёрным и «проходил». Поэтому первый раз за прогон каркас читает точку
-ОБОИМИ путями на одном кадре: совпало — дальше идёт прямой путь; не совпало — весь прогон
-читает эталоном и ГОВОРИТ об этом. Тот же приём, что «CPU — байт-эталон, GPU — по
-допускам» (инвариант №7), и он же защищает от молчаливой черноты.
+The cross-check is mandatory and not a matter of taste: for the eframe window there is a 32-bit visual, and reading the root window
+by ImageMagick had already returned BLACK where there was a picture (R.33 item 228) — the scenario then compared black with black and "passed". Therefore, the first time in a run the harness reads the point
+by BOTH paths on one frame: if they match — the direct path goes on; if they do not — the whole run
+reads by the reference and SAYS so. The same technique as "CPU — byte reference, GPU — by
+tolerances" (invariant No. 7), and it also protects against silent blackness.
 
-`shot()` не трогается: артефакты и шаги `ПУТЬ` — это картинки для человека, их цена
-оправдана, и `finish.sh` печатает их список.
+`shot()` is not touched: the artifacts and the `PATH` steps are pictures for a person, their price
+is justified, and `finish.sh` prints their list.
 
-### 7. Приёмка — вердикты, а не секунды
+### 7. Acceptance — verdicts, not seconds
 
-Ни одно из решений выше не считается рабочим, пока не сошлись вердикты: полный прогон всех
-45 сценариев даёт ровно те же вердикты, что до раунда, и три прогона подряд идут без
-перегонов. Время — вторая проверка, и мерить его надо ТЕМ ЖЕ способом, что Р.68: таблица
-стадий `finish.sh` и `target/live-out/times.txt`.
+None of the decisions above is considered working until the verdicts converge: a full run of all
+45 scenarios gives exactly the same verdicts as before the round, and three runs in a row go without
+re-runs. Time is the second check, and it must be measured in THE SAME way as R.68: the stage table of
+`finish.sh` and `target/live-out/times.txt`.
 
 ## Risks / Trade-offs
 
-- **Ожидание тоньше механики egui — и это уже ломало раунд** (Р.68, грабли 2: пороги
-  драга, двойного клика и анимация меню). → Список остающихся пауз закрыт решением 2 и
-  держится сторожем; каждая замена проверяется сверкой вердиктов всех 45 сценариев, а не
-  одного.
-- **Событие, которого egui не породит, вешает ожидание.** → `soft`-исход у каждого
-  ожидания жеста, и он НЕ молчит: названная пауза в бюджете и видна сторожу.
-- **Снятый `focus()` возвращает «клик ушёл чужому окну» (п.199).** → Флаг сбрасывается на
-  входе в стенд, у своего процесса и после ресайза; сверка вердиктов ловит остальное.
-- **Прямое чтение пикселя молча отдаёт чёрное** (Р.33 п.228 — ровно этот класс). → Сверка с
-  `xwd` на одном кадре в начале прогона, фолбэк на эталон с объявлением.
-- **Сон станет меньше, а прогон — нет**, потому что ожидание займёт его место. → Это
-  законный исход, и он тоже результат: слепое ожидание меняется на зрячее. Числа пойдут в
-  отчёт как есть, без подгонки.
-- **Статический бюджет сна можно обойти, спрятав паузу в новую функцию.** → Сторож считает
-  паузы по всему дереву живой проверки (каркас, сценарии, драйвер), а не по списку имён.
+- **Waiting is subtler than the egui mechanics — and this has already broken a round** (R.68, pitfall 2: the thresholds of
+  the drag, the double click and the menu animation). → The list of remaining pauses is closed by decision 2
+  and is held by the guard; each replacement is checked by comparing the verdicts of all 45 scenarios, not
+  of one.
+- **An event that egui will not generate hangs the wait.** → A `soft` outcome for each gesture
+  wait, and it is NOT silent: a named pause in the budget and visible to the guard.
+- **The removed `focus()` returns "the click went to a foreign window" (item 199).** → The flag is reset
+  on entry to the stand, in one's own process and after a resize; the comparison of verdicts catches the rest.
+- **Direct reading of a pixel silently returns black** (R.33 item 228 — exactly this class). → A comparison with
+  `xwd` on one frame at the start of the run, a fallback to the reference with an announcement.
+- **The sleep will become smaller, but the run will not**, because the wait takes its place. → This is a
+  legitimate outcome, and it is also a result: blind waiting is changed into sighted waiting. The numbers will go into
+  the report as they are, without fitting.
+- **The static sleep budget can be circumvented by hiding a pause in a new function.** → The guard counts
+  the pauses across the whole tree of the live check (the harness, the scenarios, the driver), and not by a list of names.
 
 ## Migration Plan
 
-1. Замер и учёт: каркас считает фактический сон и печатает его; сторож расширяется на
-   драйвер X и получает статический бюджет с нынешним числом — сначала храповик, потом
-   ускорение (тот же порядок, что в Р.68).
-2. Жесты: `wait_seen` вместо пауз, `raise_once` вместо `focus()`, набор строки целиком;
-   драйверу передаётся своя пауза.
-3. Чтение точки экрана через X со сверкой с эталоном.
-4. Сверка вердиктов всех 45 сценариев и три прогона подряд; бюджет сна опускается до
-   достигнутого.
+1. Measurement and accounting: the harness counts the actual sleep and prints it; the guard is extended to the X driver and gets a static budget with the current number — first a ratchet, then the acceleration (the same order as in R.68).
+2. Gestures: `wait_seen` instead of pauses, `raise_once` instead of `focus()`, the whole line typed at once; the driver is passed its own pause.
+3. Reading the screen point through X with a comparison against the reference.
+4. Comparison of the verdicts of all 45 scenarios and three runs in a row; the sleep budget is lowered to what is achieved.
 
-Откат: каждый шаг обратим отдельно — паузы возвращаются числом, `raise_once` меняется
-обратно на `focus()`, чтение пикселя переключается на эталон одной строкой (этот путь
-остаётся в коде как фолбэк).
+Rollback: each step is reversible separately — the pauses return as numbers, `raise_once` is changed back to `focus()`, the pixel reading is switched to the reference with one line (this path remains in the code as a fallback).

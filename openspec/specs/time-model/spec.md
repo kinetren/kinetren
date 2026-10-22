@@ -1,59 +1,55 @@
-# Модель времени
+# Time model
 
 ## Purpose
 
-Единая целочисленная ось времени движка и формата проекта: тик 1/90000 с, из которого
-точно выводятся сетки кадров всех частот и границы аудио-burst'ов 48 kHz.
+A single integer time axis of the engine and the project format: a tick of 1/90000 s, from
+which the frame grids of all rates and the 48 kHz audio burst boundaries are derived exactly.
 
 ## Requirements
 
-### Requirement: Единица времени — тик 1/90000 с, целое i64
+### Requirement: Unit of time — tick 1/90000 s, integer i64
+All internal engine time and the project format SHALL be expressed in ticks (`Tick`, i64,
+90 000 per second). Milliseconds and floating-point seconds are allowed only at the UI and
+debug boundary. Negative ticks are valid and are divided with floor semantics.
+Why: 90 kHz divides 24/25/30/60 fps and the audio burst step, so no conversion accumulates error.
 
-Всё внутреннее время движка и формат проекта SHALL выражаться в тиках (`Tick`, i64,
-90 000 в секунде). Миллисекунды и секунды с плавающей точкой допускаются только на
-границе UI и отладки. Отрицательные тики валидны и делятся с floor-семантикой.
-Почему: 90 kHz делится на 24/25/30/60 fps и на шаг аудио-burst, поэтому ни одна
-конверсия не накапливает ошибку.
-
-#### Scenario: Сетки всех частот кадров целочисленны
-- **WHEN** создаётся сетка кадров для fps из {24, 25, 30, 60}
-- **THEN** шаг кадра — целое число тиков (90000/fps), а сетка для fps, не делящего 90000, отвергается паникой
+#### Scenario: Frame grids of all rates are integer
+- **WHEN** a frame grid is created for fps from {24, 25, 30, 60}
+- **THEN** the frame step is an integer number of ticks (90000/fps), and a grid for an fps that does not divide 90000 is rejected with a panic
 - **TEST** `fps_grids_divide_tick_hz` (`src/libs/kt-time/src/lib.rs`)
 
-#### Scenario: Отрицательное время округляется вниз
-- **WHEN** тик отрицателен и приводится к индексу кадра или burst'а
-- **THEN** индекс вычисляется floor-делением (`div_euclid`), а не усечением к нулю
+#### Scenario: Negative time rounds down
+- **WHEN** a tick is negative and is converted to a frame or burst index
+- **THEN** the index is computed by floor division (`div_euclid`), not by truncation toward zero
 - **TEST** `negative_ticks_floor_correctly` (`src/libs/kt-time/src/lib.rs`)
 
-#### Scenario: Диапазон полуоткрыт
-- **WHEN** диапазон тиков проверяется на вхождение, пересечение и длину
-- **THEN** начало включено, конец исключён; пустой диапазон ни с чем не пересекается
+#### Scenario: The range is half-open
+- **WHEN** a tick range is checked for membership, intersection and length
+- **THEN** the start is included, the end is excluded; an empty range intersects nothing
 - **TEST** `range_semantics_half_open` (`src/libs/kt-time/src/lib.rs`)
 
-### Requirement: Аудио-burst — 1024 кадра 48 kHz = 1920 тиков, конверсия точна
+### Requirement: Audio burst — 1024 frames at 48 kHz = 1920 ticks, conversion is exact
+The audio burst SHALL equal 1024 frames at 48 kHz, that is exactly 1920 ticks;
+tick↔sample SHALL be computed as `ticks * 48000 / 90000` (ratio 15/8) without
+floating point. The constants 90000, 48000 and 1024 are consistent and MUST NOT be changed
+separately.
 
-Аудио-burst SHALL равняться 1024 кадрам при 48 kHz, то есть ровно 1920 тикам;
-тик↔сэмпл SHALL считаться как `ticks * 48000 / 90000` (отношение 15/8) без
-плавающей точки. Константы 90000, 48000 и 1024 согласованы и MUST NOT меняться по
-отдельности.
-
-#### Scenario: Граница burst'а взаимно-однозначна с номером сэмпла
-- **WHEN** номер burst'а переводится в тик, а тик — обратно в номер сэмпла
-- **THEN** результат совпадает с исходным без остатка
+#### Scenario: The burst boundary is one-to-one with the sample number
+- **WHEN** a burst number is converted to a tick, and the tick back to a sample number
+- **THEN** the result matches the original with no remainder
 - **TEST** `audio_burst_step_is_exact` (`src/libs/kt-time/src/lib.rs`)
 
-#### Scenario: Кадры 48 kHz точны только кратные 8
-- **WHEN** число аудиокадров переводится в тики и обратно
-- **THEN** тождество выполняется тогда и только тогда, когда число кадров кратно 8 (тиков — кратно 15); границы клипов живут в тиках, и движок floor'ит их в кадры ровно один раз
-- **TEST** `t4_*` семейство (`src/libs/kt-engine/tests/fx.rs`) и `src/libs/kt-engine/tests/audio_engine.rs` — границы задаются кратными 8
+#### Scenario: 48 kHz frames are exact only for multiples of 8
+- **WHEN** an audio frame count is converted to ticks and back
+- **THEN** the identity holds if and only if the frame count is a multiple of 8 (ticks that are multiples of 15); clip boundaries live in ticks, and the engine floors them into frames exactly once
+- **TEST** the `t4_*` family (`src/libs/kt-engine/tests/fx.rs`) and `src/libs/kt-engine/tests/audio_engine.rs` — boundaries are set as multiples of 8
 
-### Requirement: kt-time не имеет зависимостей и float-времени в API
+### Requirement: kt-time has no dependencies and no float time in the API
+The kt-time crate SHALL build without dependencies (except serde) and without FFmpeg/audio
+hardware; the public API MUST NOT accept or return floating-point time, except the explicit
+`*_secs_f64` functions for UI and debugging.
 
-Крейт kt-time SHALL собираться без зависимостей (кроме serde) и без FFmpeg/аудио-железа;
-публичный API MUST NOT принимать или возвращать время с плавающей точкой, кроме явных
-`*_secs_f64` для UI и отладки.
-
-#### Scenario: Сборка ядра без системных библиотек
-- **WHEN** собираются kt-time, kt-model, kt-fx, kt-cache и ядро kt-engine
-- **THEN** сборка не требует dev-пакетов FFmpeg, clang и ALSA
-- **TEST** `cargo test -p kt-time -p kt-model -p kt-fx -p kt-cache` на машине без FFmpeg (правило корневого CLAUDE.md, раздел «Сборка и тесты»)
+#### Scenario: Building the core without system libraries
+- **WHEN** kt-time, kt-model, kt-fx, kt-cache and the kt-engine core are built
+- **THEN** the build does not require the FFmpeg, clang and ALSA dev packages
+- **TEST** `cargo test -p kt-time -p kt-model -p kt-fx -p kt-cache` on a machine without FFmpeg (the rule in the root CLAUDE.md, section "Build and tests")

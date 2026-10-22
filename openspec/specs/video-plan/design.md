@@ -1,209 +1,65 @@
-# Композиция видео — почему так
+# Video composition — why it is this way
 
-## Что было и у кого болело
+## What hurt and for whom
 
-Каждый видео-эффект был отдельной растеризацией в буфер размера выхода с
-квантованием в 8 бит между шагами; исходник ужимался в Quality ещё декодером. На
-цепочке владельца «сетка 2×2 → 3D-пан → сетка 2×2 → 3D-пан → зум обратно» после
-второго grid оставалась четверть детализации, и зум показывал мыло из увеличенных
-пикселей. Претензия дословно сводилась к «композитинга по сути нет», предложение
-владельца — тесселяция и UV-маппинг «от скейла»; интуиция верна на пиксель, а не
-на вершину. Второе, что болело: 3D считался только на GPU — CPU-эталон был дыряв,
-экспорт без GPU отказывал. Третье: три вызывающих (превью, префетч, экспорт)
-доклеивали Quality к заказу каждый сам и совпадали лишь потому, что читали одну
-переменную; на экспорте с большими кадрами это уже давало «чёрный рендер с
-редкими уцелевшими кадрами», когда чанк не доживал до композиции.
+Each video effect was a separate rasterization into a buffer of output size, with 8-bit quantization between steps; the source was also shrunk in Quality by the decoder. On the owner's chain "2×2 grid → 3D pan → 2×2 grid → 3D pan → zoom back", after the second grid only a quarter of the detail remained, and the zoom showed mush made of enlarged pixels. The complaint, word for word, came down to "there is essentially no compositing"; the owner's proposal was tessellation and UV mapping "from scale"; the intuition is right per pixel, not per vertex. The second thing that hurt: 3D was computed only on the GPU — the CPU reference had holes, and export without a GPU refused. The third: three callers (preview, prefetch, export) each glued Quality onto the request themselves and matched only because they read one variable; on export with large frames this already produced "a black render with rare surviving frames" when a chunk did not survive until composition.
 
-## Решения и почему
+## Decisions and why
 
-- **План кадра один, исполнителей два.** `VideoRenderer::frame_plan` строит
-  слои, веса, уровни, маппинг кадров и разрешённые кривые; CPU и GPU только
-  исполняют. Всё, что можно посчитать до исполнителя (кривые, смешивание пар,
-  переопределения экземпляров, параметры перехода), считается до него — тогда
-  паритет бэкендов держится автоматически, а шейдеры не знают о модели.
-- **GPU по умолчанию, CPU — эталон и полный фолбэк** (решение владельца:
-  «по умолчанию всегда gl/vk, и только если нет — notice и CPU»). Детерминизм
-  GPU — «float + допуски» к CPU; байт-в-байт требуется только на одном
-  устройстве. Pan3d переведён на обратную гомографию f64 в общем гео-проходе,
-  чтобы эталон стал полным и отказ «нужен GPU» исчез.
-- **Экспорт не смешивает бэкенды.** Кросс-бэкендная битовость недостижима, значит
-  смена бэкенда посреди файла — видимый шов. Ошибка GPU в экспорте — ошибка
-  экспорта; `TooLarge` — на CPU только этот план (он считает тот же план).
-- **Конкатенация гео-серий всегда и без переключателя** (решение владельца:
-  «вопроса „когда включать“ не существует»). Серия длины 1 без минификации
-  байт-в-байт равна старому проходу, значит выбирать нечего; старое поведение —
-  артефакт реализации, не стиль; второй путь — вечная поддержка.
-- **Решения цепочки — в одном планировщике kt-fx.** До него CPU и GPU
-  сегментировали цепочку двумя копиями одного обхода. Теперь расхождение
-  сегментации невозможно по построению; исполнители получают опы Run/Barrier/
-  Snapshot/Mix.
-- **Барьеры в K× и ступень декода — по «сколько деталей реально стиснуто».**
-  K = квант min(зум хвоста, сжатие выше); ступень S по КЛИПУ (максимум нетто-зума
-  за всю длительность — решение владельца: один ключ кэша на клип, точные
-  полоски, целые спаны декодера; цена — клип, зумящий только в конце,
-  декодируется крупно целиком). Дробный запас натива округляется ВВЕРХ («любой
-  запас файла работает»). Потолок `MAX_INTER_DIM = 4096` — проект-константа: лимит
-  устройства сделал бы экспорт зависимым от машины.
-- **Качество декода — в заказе.** Ступень делает размер функцией клипа, и схема
-  «каждый доклеивает Quality сам» немедленно разъезжается: префетч грел бы одно,
-  композит читал другое. Поэтому заказ отдаёт `(media, pts, Quality)`, и
-  полоски, экспорт-чанки и префетч спрашивают одно.
-- **Мемоизация пост-FX — только видео, только превью.** Видео-пост-FX кадр —
-  функция без истории, аудио-цепочка — потоковый автомат (её выход кэшировать
-  нельзя). В экспорте каждый t композится один раз, и полноразмерные пост-FX
-  кадры лишь вытесняли пре-кадры соседних дорожек — отсюда потерянные слои.
-- **Камера — одно правило на программу**, вынесенное из приватной функции ради
-  второго потребителя (миниатюры пикера): переписанное правило разошлось бы молча.
+- **One frame plan, two executors.** `VideoRenderer::frame_plan` builds the layers, weights, levels, frame mapping and the allowed curves; the CPU and the GPU only execute. Everything that can be computed before the executor (curves, blending of pairs, instance overrides, transition parameters) is computed before it — then backend parity holds automatically, and the shaders know nothing about the model.
+- **GPU by default, CPU is the reference and the full fallback** (the owner's decision: "always gl/vk by default, and only if not — notice and CPU"). GPU determinism is "float + tolerances" against the CPU; byte-for-byte is required only on one device. Pan3d was moved to an inverse homography in f64 in the shared geometry pass, so that the reference becomes complete and the "needs GPU" refusal disappears.
+- **Export does not mix backends.** Cross-backend bit-exactness is unreachable, so switching the backend in the middle of a file is a visible seam. A GPU error in export is an export error; `TooLarge` — only this plan on the CPU (it computes the same plan).
+- **Concatenation of geometry series always, with no switch** (the owner's decision: "there is no question of 'when to enable'"). A series of length 1 without minification is byte-for-byte equal to the old pass, so there is nothing to choose; the old behavior was an implementation artifact, not a style; the second path would be permanent support.
+- **Chain decisions live in one kt-fx planner.** Before it, the CPU and the GPU segmented the chain with two copies of one traversal. Now a segmentation mismatch is impossible by construction; the executors receive the ops Run/Barrier/Snapshot/Mix.
+- **Barriers at K× and the decode scale step are decided by "how much detail is actually squeezed".** K = quantum of min(zoom of the tail, compression above); the scale step S is per CLIP (the maximum net zoom over the whole duration — the owner's decision: one cache key per clip, exact coverage bars, whole decoder spans; the cost is that a clip zooming only at the end is decoded large in full). The fractional margin of the native size is rounded UP ("any file margin works"). The ceiling `MAX_INTER_DIM = 4096` is a project constant: a device limit would make export depend on the machine.
+- **Decode quality is part of the request.** The scale step makes the size a function of the clip, and the scheme "everyone glues Quality on themselves" would immediately diverge: prefetch would warm one thing, the composite would read another. Therefore the request carries `(media, pts, Quality)`, and the coverage bars, export chunks and prefetch all ask the same thing.
+- **Memoization of post-FX — video only, preview only.** The video post-FX frame is a function without history, while the audio chain is a streaming automaton (its output cannot be cached). In export each t is composed once, and full-size post-FX frames were only evicting the pre-frames of neighboring tracks — hence the lost layers.
+- **The camera — one rule per program**, moved out of a private function for the sake of a second consumer (the picker's thumbnails): a rewritten rule would silently diverge.
 
-## Отвергнуто и почему
+## Rejected and why
 
-- **Тесселяция / вершинный UV-маппинг** — все пять геометрических эффектов
-  аналитически обратимы (аффины, тайл-modulo, планарная гомография), обратный
-  per-pixel маппинг покрывает то же проще и точнее; compute и тесселяция
-  недоступны в downlevel-лимитах egui-wgpu на GL и на llvmpipe.
-- **Переключатель слияния (UI или env-флаг)** — отвергнут владельцем: если
-  слитый результат математически равен пошаговому минус потери, выбирать нечего.
-- **Строить гео-программу сразу в K·out** — ломает целочисленную геометрию сетки
-  (10 px / 4 колонки при K = 2 дают другую раскладку ячеек). Вместо этого
-  конъюгация: программа в 1×-семантике, масштабы вносят два аффина по краям,
-  при K = 1 оба тождественны точно.
-- **Гистерезис для «хлопанья K» и ступени** на кадре пересечения порога — запрещён
-  детерминизмом; величина скачка ограничена допуском инвариантности ядер к K.
-- **Fixed-function блендинг для композита** — целочисленная формула alpha_over с
-  множителем (1−sa)·da в нём не выражается; ping-pong двух аккумуляторов шейдером.
-- **Сэмплеры и compute на GPU** — субтексельная сетка фильтрации гуляет по
-  драйверам, compute недоступен на GL-downlevel; билинейка руками по 4 texelLoad.
-- **Отдельный SSE-tier SIMD** — f64-ядрам нужны 4 лейна, бит-точную вторую
-  реализацию пришлось бы держать вечно; уровни только Scalar/Avx2.
-- **Ad-hoc epsilon в GPU-тестах** — без класса допуска каждый тест изобретал бы
-  порог, и «на грани» подкручивалось бы вместо расследования.
-- **Пост-FX кэш kt-cache на GPU** — по-слойный readback съел бы весь выигрыш;
-  у GPU своя мемоизация целого плана по ключу.
-- **Ступень по кадру, а не по клипу** — рвала бы спаны декодера и давала два
-  ключа кэша на один клип; полоски прогретости стали бы врать.
+- **Tessellation / vertex UV mapping** — all five geometric effects are analytically invertible (affines, tile-modulo, planar homography), and the inverse per-pixel mapping covers the same more simply and more precisely; compute and tessellation are unavailable under the downlevel limits of egui-wgpu on GL and on llvmpipe.
+- **A merge switch (UI or env flag)** — rejected by the owner: if the merged result is mathematically equal to the step-by-step result minus the losses, there is nothing to choose.
+- **Build the geometry program straight into K·out** — breaks the integer geometry of the grid (10 px / 4 columns at K = 2 give a different cell layout). Instead, conjugation: the program is in 1× semantics, the scales are contributed by two affines at the edges, and at K = 1 both are exactly identical.
+- **Hysteresis for "flapping K" and for the scale step** on the frame where the threshold is crossed — forbidden by determinism; the size of the jump is bounded by the tolerance of the kernels' invariance to K.
+- **Fixed-function blending for the composite** — the integer alpha_over formula with the factor (1−sa)·da cannot be expressed in it; ping-pong of two accumulators in the shader.
+- **Samplers and compute on the GPU** — the sub-texel filtering grid drifts across drivers, and compute is unavailable on GL downlevel; bilinear done by hand with 4 texelLoad calls.
+- **A separate SSE tier of SIMD** — the f64 kernels need 4 lanes, and a bit-exact second implementation would have to be kept forever; the levels are only Scalar/Avx2.
+- **Ad-hoc epsilon in GPU tests** — without a tolerance class every test would invent its own threshold, and "borderline" cases would be tweaked instead of investigated.
+- **Post-FX cache of kt-cache on the GPU** — per-layer readback would eat up the whole gain; the GPU has its own memoization of the whole plan keyed by the key.
+- **Scale step per frame, not per clip** — would break the decoder spans and give two cache keys for one clip; the coverage bars would start lying.
 
-## Неочевидные детали
+## Non-obvious details
 
-- Серия длины 1 из Pan/CamMotion/Mirror без минификации идёт СТАРЫМИ ядрами
-  (`GeomExec::Legacy`, `src/libs/kt-fx/src/geom.rs`), одиночный EventGrid —
-  слитым проходом, но тайл-локальная фаза дословно воспроизводит старую арифметику;
-  поэтому голдены t26 стоят без перегенерации. Одиночный Mirror идёт в Legacy
-  ТОЛЬКО при равных масштабах краёв (`k_in == k_out`): перестановка пикселей
-  верна на равномерном масштабе, но не на смене масштаба между K×-сегментами —
-  это был латентный debug-краш (`src/libs/kt-fx/src/plan.rs`).
-- Суперсемплинг по якобиану при минификации ровно ×2 арифметически совпал со
-  старой билинейкой в полутекстельной фазе — санкционированный пересчёт голденов
-  не понадобился. У аффинных программ тапы считаются один раз в f64 и едут
-  юниформой; Proj-серии меряют якобиан по-пиксельно ТОЙ ЖЕ формулой `ss_taps`
-  (`src/libs/kt-fx/src/geom.rs`), иначе бэкенды на пороге выбрали бы разные
-  сетки тапов, и никакой FrameTol это не накроет.
-- Слитый гео-проход обязан правиться ПАРОЙ: `src/libs/kt-fx/src/geom.rs`/
-  `plan.rs` ↔ `src/libs/kt-gpu/src/shaders/geom_fused.wgsl` (обе копии цикла
-  примов). Коэффициенты перемножаются в f64 на CPU и едут однократно округлённые
-  f32; `FxOp::slot_units()` (`src/libs/kt-gpu/src/engine.rs`) обязан точно
-  предсказывать потребление арены, как `passes()`.
-- Ведущий барьер (до первого гео-рана) при ступени S исполняется в S×
-  ПРИНУДИТЕЛЬНО — кадр под ним физически крупный, benefit-формула там не
-  голосует; байтовый fast-path остаётся только при `S == 1 && все K == 1`
-  (`src/libs/kt-fx/src/plan.rs::plan_chain`). Слайс силы слоя получает
-  `in_scale` только если его вход совпадает размерами с декод-кадром; после первого
-  ресемпла и на стопах — 1× (`src/libs/kt-engine/src/video.rs`).
-- `chain_ops` возвращает максимум ПРОМЕЖУТОЧНЫХ размеров, и `resolve_chain`
-  сверяет его с лимитом устройства → аккуратный `TooLarge`
-  (`src/libs/kt-gpu/src/engine.rs`); иначе `create_texture` K×-буфера отравил бы
-  device валидацией.
-- Ступень клипа считается по нативам ОТКРЫТЫХ источников (в sidecar их нет):
-  `VideoRenderer::new` нативов не знает (ступень ≡ 1 — все прежние тесты живы),
-  плеер и экспорт зовут `new_with_natives`/`new_with_facts`
-  (`src/libs/kt-engine/src/video.rs`). `replace_media` бампает версию проекта, и
-  префетч-поток пересобирал свой рендерер, а рендерер плеера жил до правки модели
-  — поэтому смена состава источников пересобирает и его
-  (`src/libs/kt-engine/src/player.rs`).
-- Логическая база `head_zoom` — размер ПРОЕКТА, а не Quality: зум от Quality
-  почти не зависит, зато ступень обязана совпадать у превью и экспорта. Сэмплер —
-  сетка 33 точек + оба конца + все ключи кривых + границы камер
-  (`src/libs/kt-engine/src/video.rs::clip_decode_scale`,
-  `src/libs/kt-fx/src/plan.rs::chain_head_zoom`).
-- Ступень ЛЕНТЫ и вход цепочки ЭКЗЕМПЛЯРА — два разных числа: пустая цепочка,
-  сила слоя, ведущий стоп и барьеры без ресемпла ступени не потребляют, и
-  S×-кадр им никто не вернул бы в Quality. Разошлись — `NestSrc::fit_to`
-  (`src/libs/kt-engine/src/video_plan.rs`), CPU `kt_fx::video::fit_into`, GPU
-  `FxOp::Resample`; ступень ленты — в `postfx_key_hash` и `plan_key`.
-- Слой чужого размера — `complete = false`, у ленты ещё `debug_assert`: её размер
-  — наша арифметика, а не сообщение декодера. До этого композит пропускал слой и
-  объявлял кадр полным, экспорт писал его как годный
-  (`src/libs/kt-engine/src/video.rs::compose_from_cache*`, зеркало в
-  `src/libs/kt-gpu/src/engine.rs`).
-- Ключ пост-FX мемоизации (`src/libs/kt-engine/src/video.rs::postfx_key_hash`)
-  включает разрешённую камеру: она анимируется и выбирается по-кадрово, статический
-  `fx_hash` её не видит. GPU от этого защищён `put_cam3d` в `plan_key`
-  (`src/libs/kt-gpu/src/engine.rs`). Ступень входа — тоже в ключе: один клип на
-  одном Quality из входа 1× и 2× даёт разные байты.
-- `fx_chain_hash` хэширует и `fx`, и `auto`, поэтому смена скорости/кривых сама
-  инвалидирует пост-FX мемо; idx мемо — таймлайн-тик (`src/libs/kt-engine/src/video.rs`).
-- `LayerBlend` остаётся в слое как МЕТАДАННЫЕ (сосед + вес): они нужны ключу
-  кэша плана kt-gpu — те же два кадра с другим весом дают другую картинку.
-  `max_concurrent_layers` считает смешивающий слой за ДВА кадра, иначе чанк
-  экспорта вытесняет соседа до композиции и байты экспорта зависят от тайминга
-  кэша (`src/libs/kt-engine/src/video.rs`).
-- `u` (прогресс события) и `burst_index` (зерно шума) идут по ВЫХОДНОМУ времени
-  даже под варпом: иначе движение Ken Burns вжалось бы в первую треть замедленного
-  клипа, а зерно замерло бы на повторяющихся кадрах
-  (`src/libs/kt-engine/src/video.rs::layer_src`).
-- Реверс + растяжение — «варп, потом зеркало»: зеркало до варпа гнало бы кривую
-  скорости задом наперёд и рассинхронило A/V. Ось зеркала — пролёт материала, а
-  не граница «дальше тишина» с запасом ресемплера (`src/libs/kt-model/src/warp.rs`,
-  `src/libs/kt-engine/src/video.rs::clip_material_pos`).
-- Пол по сетке кадров ставит только ФАЙЛОВЫЙ лист: у процедурного источника кадр
-  — функция тика, у ленты пола нет вовсе (`clip_inner_tick == clip_material_pos`);
-  иначе замедленный титр шёл ступеньками по два кадра
-  (`src/libs/kt-engine/src/video.rs`).
-- Конец перехода на разрезанном клипе ищется по `kt_model::same_clip` + сверке
-  границы, а не по `c.id == id` — иначе он доставался куску №0 и молча исчезал
-  (`src/libs/kt-engine/src/video.rs`, `VideoRenderer::new`).
-- «Сверху тот, кто начался ПОЗЖЕ» — ключ композиции `(Reverse(lane), start)`
-  (`src/libs/kt-engine/src/video.rs`); полоса таймлайна рисует тем же порядком.
-- Все GPU-текстуры `Rgba8Uint`: `textureLoad` отдаёт сырые байты без
-  unorm-потерь, поэтому целочисленные ядра равны CPU байт-в-байт. wgpu ЖЁСТКО
-  той же мажорной версии, что в eframe (workspace-пин `src/Cargo.toml`): превью
-  делит `Arc<wgpu::Device>` с egui-wgpu.
-- Кроссфейд в ядра переходов не заходит — остаётся целочисленным `dissolve_into`
-  (на нём стоит GOLDEN_VIDEO); ext объёмных переходов считает одна `trans_ext`
-  (`src/libs/kt-engine/src/transitions.rs`), f64→f32 на CPU, в ключи не входит
-  — функция уже хэшированного.
-- В SIMD-ядрах запрещены FMA, переассоциация, rcp/rsqrt, f32 вместо f64 и
-  `_mm256_round_pd(NEAREST)` (half-to-even против half-away); `/255` — magic
-  `(x*0x8080_8081)>>39`, ходовая `(t+(t>>8))>>8` врёт на 255³
-  (`src/libs/kt-engine/src/video_simd.rs`, `src/libs/kt-fx/src/video_simd.rs`).
-- Ловушка тестов: свежий `BurstCache` нумерует содержимое заново, а `UploadCache`
-  kt-gpu ключуется ТОЛЬКО серийным номером — два кэша на один движок дают
-  одинаковые ключи у разных кадров; кэш в тесте один на все моменты
-  (`src/libs/kt-gpu/src/engine.rs`).
-- Тесты t315 и t296/t302 — red-proof: их копируют в worktree на коммите до
-  раунда и убеждаются, что там они красные; на `SyntheticSource` резкость не
-  измерить (натив фиктивный), нужен `CheckerSource`
-  (`src/libs/kt-media/src/synthetic.rs`).
+- A series of length 1 of Pan/CamMotion/Mirror without minification goes through the OLD kernels (`GeomExec::Legacy`, `src/libs/kt-fx/src/geom.rs`); a single EventGrid goes through the fused pass, but the tile-local phase reproduces the old arithmetic verbatim; therefore the goldens of t26 stand without regeneration. A single Mirror goes to Legacy ONLY when the edge scales are equal (`k_in == k_out`): the pixel permutation is correct at a uniform scale, but not at a change of scale between K×-segments — this was a latent debug crash (`src/libs/kt-fx/src/plan.rs`).
+- Supersampling by the Jacobian at exactly ×2 minification arithmetically coincided with the old bilinear filter in the half-texel phase — the sanctioned regeneration of goldens was not needed. For affine programs the taps are computed once in f64 and carried as a uniform; Proj series measure the Jacobian per pixel with the SAME formula `ss_taps` (`src/libs/kt-fx/src/geom.rs`), otherwise the backends at the threshold would choose different tap grids, and no FrameTol would cover that.
+- The fused geometry pass must be edited in PAIRS: `src/libs/kt-fx/src/geom.rs`/`plan.rs` ↔ `src/libs/kt-gpu/src/shaders/geom_fused.wgsl` (both copies of the primitive loop). The coefficients are multiplied in f64 on the CPU and passed as f32 rounded once; `FxOp::slot_units()` (`src/libs/kt-gpu/src/engine.rs`) must predict the consumption of the arena exactly, as `passes()` does.
+- The leading barrier (before the first geometry run) at scale step S is executed at S× FORCIBLY — the frame under it is physically large, and the benefit formula does not vote there; the byte fast-path remains only when `S == 1 && all K == 1` (`src/libs/kt-fx/src/plan.rs::plan_chain`). The layer strength slice receives `in_scale` only if its input matches the decode frame in size; after the first resample and on the stops — 1× (`src/libs/kt-engine/src/video.rs`).
+- `chain_ops` returns the maximum of the INTERMEDIATE sizes, and `resolve_chain` checks it against the device limit → a clean `TooLarge` (`src/libs/kt-gpu/src/engine.rs`); otherwise `create_texture` of the K×-buffer would poison the device with validation.
+- The scale step of a clip is computed from the natives of OPEN sources (they are not in the sidecar): `VideoRenderer::new` does not know the natives (the step ≡ 1 — all earlier tests stay alive); the player and export call `new_with_natives`/`new_with_facts` (`src/libs/kt-engine/src/video.rs`). `replace_media` bumps the project version, and the prefetch thread rebuilt its renderer, while the player's renderer lived until the model edit — therefore a change in the composition of sources rebuilds the player's renderer too (`src/libs/kt-engine/src/player.rs`).
+- The logical base `head_zoom` is the size of the PROJECT, not Quality: the zoom barely depends on Quality, but the step must match between preview and export. The sampler is a grid of 33 points + both ends + all curve keys + the camera boundaries (`src/libs/kt-engine/src/video.rs::clip_decode_scale`, `src/libs/kt-fx/src/plan.rs::chain_head_zoom`).
+- The REEL's scale step and the INSTANCE chain's input are two different numbers: an empty chain, the layer strength, the leading stop and the barriers without a resample of the step do not consume it, and nobody would return an S×-frame to Quality for them. If they diverge — `NestSrc::fit_to` (`src/libs/kt-engine/src/video_plan.rs`), CPU `kt_fx::video::fit_into`, GPU `FxOp::Resample`; the reel's step is in `postfx_key_hash` and `plan_key`.
+- A layer of a foreign size → `complete = false`; for a reel there is additionally a `debug_assert`: its size is our arithmetic, not a message from the decoder. Before this the composite skipped the layer and declared the frame complete, and export wrote it as good (`src/libs/kt-engine/src/video.rs::compose_from_cache*`, mirror in `src/libs/kt-gpu/src/engine.rs`).
+- The key of post-FX memoization (`src/libs/kt-engine/src/video.rs::postfx_key_hash`) includes the resolved camera: it is animated and selected per frame, and the static `fx_hash` does not see it. The GPU is protected from this by `put_cam3d` in `plan_key` (`src/libs/kt-gpu/src/engine.rs`). The input step is also in the key: one clip at one Quality from input 1× and 2× gives different bytes.
+- `fx_chain_hash` hashes both `fx` and `auto`, so a change of speed/curves invalidates the post-FX memo by itself; the idx memo is the timeline tick (`src/libs/kt-engine/src/video.rs`).
+- `LayerBlend` stays in the layer as METADATA (neighbor + weight): the key of the kt-gpu plan cache needs it — the same two frames with a different weight give a different picture. `max_concurrent_layers` counts a blending layer as TWO frames; otherwise the export chunk would evict the neighbor before composition, and the export bytes would depend on the timing of the cache (`src/libs/kt-engine/src/video.rs`).
+- `u` (the progress of the event) and `burst_index` (the noise seed) follow the OUTPUT time even under warp: otherwise the Ken Burns motion would be squeezed into the first third of a slowed clip, and the grain would freeze on repeated frames (`src/libs/kt-engine/src/video.rs::layer_src`).
+- Reverse + stretch is "warp, then mirror": a mirror before the warp would drive the speed curve backwards and desynchronize A/V. The mirror axis is the span of the material, not the "silence beyond" boundary with the resampler's margin (`src/libs/kt-model/src/warp.rs`, `src/libs/kt-engine/src/video.rs::clip_material_pos`).
+- The floor on the frame grid is set only by the FILE sheet: for a procedural source the frame is a function of the tick, and a reel has no floor at all (`clip_inner_tick == clip_material_pos`); otherwise a slowed title went in steps of two frames (`src/libs/kt-engine/src/video.rs`).
+- The end of a transition on a cut clip is found by `kt_model::same_clip` + a check of the boundary, not by `c.id == id` — otherwise it went to piece №0 and silently disappeared (`src/libs/kt-engine/src/video.rs`, `VideoRenderer::new`).
+- "The one that started LATER is on top" — the composition key is `(Reverse(lane), start)` (`src/libs/kt-engine/src/video.rs`); the timeline lane draws in the same order.
+- All GPU textures are `Rgba8Uint`: `textureLoad` returns raw bytes without unorm losses, so the integer kernels equal the CPU byte-for-byte. wgpu is STRICTLY pinned to the same major version as eframe (the workspace pin in `src/Cargo.toml`): the preview shares an `Arc<wgpu::Device>` with egui-wgpu.
+- The crossfade does not go into the transition kernels — it remains the integer `dissolve_into` (GOLDEN_VIDEO rests on it); the ext of volumetric transitions is computed by one `trans_ext` (`src/libs/kt-engine/src/transitions.rs`), f64→f32 on the CPU, and is not part of the keys — the function is already hashed.
+- In the SIMD kernels, FMA, reassociation, rcp/rsqrt, f32 instead of f64, and `_mm256_round_pd(NEAREST)` (half-to-even versus half-away) are forbidden; `/255` is the magic `(x*0x8080_8081)>>39`, the usual `(t+(t>>8))>>8` is wrong at 255³ (`src/libs/kt-engine/src/video_simd.rs`, `src/libs/kt-fx/src/video_simd.rs`).
+- A test trap: a fresh `BurstCache` renumbers the content anew, and kt-gpu's `UploadCache` is keyed ONLY by a serial number — two caches for one engine give identical keys for different frames; in a test there is one cache for all moments (`src/libs/kt-gpu/src/engine.rs`).
+- Tests t315 and t296/t302 are red-proof: they are copied into a worktree at the commit before the round, and it is confirmed that they are red there; sharpness cannot be measured on `SyntheticSource` (the native is fictitious), a `CheckerSource` is needed (`src/libs/kt-media/src/synthetic.rs`).
 
-## Отложено
+## Deferred
 
-- **Приведение частоты кадров источника** (F-SPD-005): правило «пол / ближайший /
-  смешение» у проекта с исключением у события, той же парой, что правило приведения
-  кадра; умолчание «пол» — сегодняшний `clip_frame_keys`, golden не двигаются.
-  Отложено Р.62: другая стадия конвейера (карта тик→кадр, не геометрия).
-- **Управление цветом** (F-CLR-008): теги пространства и диапазона в фактах источника,
-  рабочее пространство проекта, приведение парой CPU + WGSL, теги вывода. Отложено
-  Р.62: раунд размером с переходы; первый кусок — теги и диапазон 16–235 с умолчанием
-  «как есть» байт-в-байт.
+- **Frame-rate conform of the source** (F-SPD-005): the rule "floor / nearest / blend" at the project level with an exception at the event level, in the same pair as the frame conform rule; the default "floor" is today's `clip_frame_keys`, the goldens do not move. Deferred from R.62: a different pipeline stage (the map tick→frame, not geometry).
+- **Color management** (F-CLR-008): space and range tags in the source facts, the project's working space, conform as a CPU + WGSL pair, output tags. Deferred from R.62: a round the size of transitions; the first piece — tags and the range 16–235 with the default "as is", byte-for-byte.
 
-- AVX2 слитого гео-прохода — по замеру и правилу 1.3× (сегодня скалярный f64:
-  цепочка владельца 388 мс/кадр на 1080p в CPU-фолбэке).
-- Два клипа одного файла с разными ступенями чередуют спаны разных качеств и
-  пересоздают sws-контекст на каждом переключении — принято владельцем,
-  амортизируется длиной спана.
-- `FrameTol::WARP` не введён: жёсткие варпы держат `GEOM`; провал warp-hard —
-  расследование и ввод WARP ×2 от замера, не подкрутка GEOM.
-- **Р.62 B, дорожки:** КЛИПОВЫЙ режим наложения — у события уже есть уровень и переходы,
-  и смешивать две оси в одном раунде значило бы решать за владельца. Огибающие дорожки —
-  см. `audio-render/design.md`, ключ в другой оси времени. Пропуск декода заглушённой
-  дорожки: mute исключает её из `build_plan`, но НЕ из `wanted_frames` — заказ и чтение
-  обязаны совпадать (инвариант 4), иначе снятие mute даёт чёрный кадр до прогрева.
+- AVX2 of the fused geometry pass — by measurement and the 1.3× rule (today it is scalar f64: the owner's chain is 388 ms/frame at 1080p on the CPU fallback).
+- Two clips of one file with different steps alternate spans of different qualities and recreate the sws context on every switch — accepted by the owner, amortized by the span length.
+- `FrameTol::WARP` is not introduced: hard warps are held by `GEOM`; a failure of warp-hard — an investigation and the introduction of WARP ×2 from a measurement, not a tweak of GEOM.
+- **R.62 B, tracks:** a CLIP-level blend mode — the event already has a level and transitions, and mixing two axes in one round would mean deciding for the owner. Track envelopes — see `audio-render/design.md`, the key is on another time axis. Skipping the decode of a muted track: mute excludes it from `build_plan`, but NOT from `wanted_frames` — the request and the read must match (invariant 4), otherwise unmuting gives a black frame until warm-up.

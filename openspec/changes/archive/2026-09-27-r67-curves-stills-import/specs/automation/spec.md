@@ -2,101 +2,60 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Форма отрезка живёт на ключе и имеет свои параметры
+### Requirement: The segment shape lives on the key and has its own parameters
+The interpolation shape SHALL belong to the KEY and describe the segment AFTER it, not the curve as a whole. The set of shapes is closed, and each has its own parameters: linear (no parameters), third order (tension), step (no parameters), ease in and ease out (tension), zigzag (number of periods, amplitude, profile — triangle/rectangle/sine), **segment formula** (text; variables `s` — the fraction of the path 0..1, `a` and `b` — the values of the left and right keys, `t` — seconds from the left key; the same evaluator and the same closed set of operations as the source formula). The amplitude of the zigzag SHALL be set IN UNITS OF THE PARAMETER and clamped by the target's passport, not as a fraction of the difference between keys: the most common zigzag is an oscillation around a CONSTANT value, where the difference is zero. Each shape SHALL be a closed function `(fraction of the segment, ends, parameters)` without state; for the segment formula the ends are set by the formula itself (as with a step, it is allowed not to coincide with the key), and a non-computable text SHALL be rejected at the command and on loading with the position and the name, rather than giving a silent zero. The default shape for new keys is a field of the PROJECT, not a machine setting; changing the default MUST NOT touch the keys already placed. The command "apply the shape to all segments" SHALL exist for a curve and for an event and be recorded as one history step. The value at the last key is the final one; the shape of the last key has no effect.
+Why: a single boolean for the whole curve expresses neither "this segment as a step" nor a zigzag; a machine setting would give "one file — two behaviours" (the lesson of Vegas), and an amplitude taken from the difference would collapse the zigzag exactly where it is needed. R.67: the owner asked to "set something on separate areas" — a formula on a segment is exactly that area between two keys.
 
-Форма интерполяции SHALL принадлежать КЛЮЧУ и описывать участок ПОСЛЕ него, а не кривой
-целиком. Набор форм закрыт и у каждой свои параметры: прямая (без параметров), третий
-порядок (натяжение), ступень (без параметров), ease in и ease out (натяжение), зигзаг
-(число периодов, амплитуда, профиль — треугольник/прямоугольник/синус), **формула отрезка**
-(текст; переменные `s` — доля пути 0..1, `a` и `b` — значения левого и правого ключа, `t` —
-секунды от левого ключа; тот же вычислитель и тот же закрытый набор операций, что у
-формулы-источника). Амплитуда зигзага SHALL задаваться В ЕДИНИЦАХ ПАРАМЕТРА и клампиться
-паспортом цели, а не долей перепада между ключами: самый частый зигзаг — колебание вокруг
-ПОСТОЯННОГО значения, где перепад равен нулю. Каждая форма SHALL быть замкнутой функцией
-`(доля отрезка, концы, параметры)` без состояния; у формулы отрезка концы задаёт сама
-формула (как у ступени, ей разрешено не совпасть с ключом), а невычислимый текст SHALL
-отвергаться при команде и при загрузке с позицией и именем, а не давать молчаливый ноль.
-Умолчание формы для новых ключей — поле ПРОЕКТА, не настройка машины; смена умолчания MUST
-NOT трогать уже поставленные ключи. Команда «применить форму ко всем отрезкам» SHALL
-существовать для кривой и для события и ложиться одним шагом истории. Значение на
-последнем ключе — крайнее, форма последнего ключа не действует.
-Почему: одно булево на всю кривую не выражает ни «этот участок ступенькой», ни зигзаг;
-настройка машины дала бы «один файл — два поведения» (урок Vegas), а амплитуда от перепада
-схлопнула бы зигзаг ровно там, где он нужен. Р.67: владелец просил «отдельным областям
-что-то проставить» — формула на участке и есть та самая область между двумя ключами.
-
-#### Scenario: Формы считаются замкнуто и детерминированно
-- **WHEN** отрезок считается каждой формой в 0, 1 и середине, с крайними значениями натяжения, у зигзага — с дробным числом периодов и на постоянном отрезке
-- **THEN** концы отрезка равны значениям ключей у ВСЕХ форм кроме ступени (у ступени левое значение держится до следующего ключа); зигзаг на постоянном отрезке колеблется с заданной амплитудой в единицах параметра и клампится паспортом; два прогона дают одинаковые байты
+#### Scenario: Shapes are computed closed and deterministic
+- **WHEN** a segment is computed by each shape at 0, 1 and the middle, with extreme tension values; for the zigzag — with a fractional number of periods and on a constant segment
+- **THEN** the ends of the segment equal the key values for ALL shapes except the step (for the step the left value holds until the next key); the zigzag on a constant segment oscillates with the given amplitude in units of the parameter and is clamped by the passport; two runs give identical bytes
 - **TEST** t695 (`src/libs/kt-model/tests/fx_auto.rs`)
 
-#### Scenario: Умолчание воспроизводит прежнее сглаживание побайтово
-- **WHEN** кривая, созданная без указания формы, сравнивается с замороженным оракулом прежнего `curve_value(keys, ease = true, at)`
-- **THEN** значения совпадают побитово во всех пробах; `GOLDEN_AUDIO`, `GOLDEN_VIDEO` и `GOLDEN_TITLE_VIDEO` не двигаются
-- **TEST** t695b (`src/libs/kt-model/tests/fx_auto.rs`), t11 и t67 (`src/libs/kt-engine/tests/golden_export.rs`)
+#### Scenario: The default reproduces the former smoothing byte for byte
+- **WHEN** a curve created without specifying a shape is compared with the frozen oracle of the previous `curve_value(keys, ease = true, at)`
+- **THEN** the values match bit for bit at all sample points; `GOLDEN_AUDIO`, `GOLDEN_VIDEO` and `GOLDEN_TITLE_VIDEO` do not move
+- **TEST** t695b (`src/libs/kt-model/tests/fx_auto.rs`), t11 and t67 (`src/libs/kt-engine/tests/golden_export.rs`)
 
-#### Scenario: Скорость принимает только прямую и отказывает громко
-- **WHEN** ключу кривой `rate` назначается любая форма, кроме прямой — из интерфейса и командой
-- **THEN** команда отвергается с названной причиной (замкнутая форма обратной карты варпа стоит на кусочно-линейном профиле), в строке состояния — ошибка, а не тишина; карта варпа считает прежние числа
+#### Scenario: Speed accepts only linear and refuses loudly
+- **WHEN** any shape other than linear is assigned to a key of the curve `rate` — from the interface and by a command
+- **THEN** the command is rejected with a named reason (the closed form of the inverse warp map stands on a piecewise-linear profile), the status line shows an error, not silence; the warp map computes the previous numbers
 - **TEST** t696 (`src/libs/kt-model/tests/warp.rs`), t696b (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Умолчание проекта и команда «ко всем»
-- **WHEN** меняется умолчание формы в проекте, затем ставится новый ключ; затем применяется форма ко всем отрезкам кривой и всего события
-- **THEN** новый ключ берёт умолчание, прежние ключи не тронуты; команда меняет все отрезки одним undo; умолчание живёт в файле, а не в настройках программы
+#### Scenario: The project default and the "to all" command
+- **WHEN** the default shape in the project is changed, then a new key is placed; then the shape is applied to all segments of the curve and of the whole event
+- **THEN** the new key takes the default, the previous keys are untouched; the command changes all segments in one undo; the default lives in the file, not in the program's settings
 - **TEST** t697 (`src/libs/kt-model/tests/fx_auto.rs`)
 
-#### Scenario: Формула отрезка считается на участке и отвергается громко
-- **WHEN** участку между ключами 1.0 с (значение 0) и 3.0 с (значение 1) назначается формула `a + (b - a) * s * s`, затем `sin(t * 6.283)`; соседние участки — зигзаг и прямая; затем формула с неизвестным именем и с делением на ноль — командой и чтением файла
-- **THEN** значение на участке равно независимому оракулу в 0, 1/4, 1/2 и 1; соседние участки считают прежние числа; два прогона побайтово равны; неизвестное имя и деление на ноль отвергаются с позицией и текстом, файл с такой формой не грузится молча; форма пишется в файл и читается назад той же
+#### Scenario: The segment formula is computed on the segment and refuses loudly
+- **WHEN** the segment between the keys at 1.0 s (value 0) and 3.0 s (value 1) is assigned the formula `a + (b - a) * s * s`, then `sin(t * 6.283)`; the neighbouring segments are a zigzag and a line; then a formula with an unknown name and with division by zero — by the command and by reading a file
+- **THEN** the value on the segment equals the independent oracle at 0, 1/4, 1/2 and 1; the neighbouring segments compute the previous numbers; two runs are byte for byte equal; an unknown name and a division by zero are rejected with the position and the text, a file with such a shape does not load silently; the shape is written to the file and read back the same
 - **TEST** t787 (`src/libs/kt-model/tests/fx_auto.rs`), t787b (`src/libs/kt-otio/tests/convert.rs`)
 
 ## ADDED Requirements
 
-### Requirement: Кривая — ключи, формы отрезков, слой-формула и связь сочетаются и снимаются по отдельности
+### Requirement: Curve — keys, segment shapes, formula layer and links combine and are removed separately
+The value of a curve SHALL be computed in layers in a fixed order: the keys with segment shapes give `k`; on top — an optional LAYER-formula (text with the variables `k`, `t`, `src`), and on top of that — nothing; a link (`Link`) gives `src` and without a layer acts as before. Setting a layer MUST NOT erase keys and shapes; removing the layer SHALL return exactly `k`; setting a link MUST NOT erase the layer. The source formula (`Formula`) remains a legal file form and SHALL be read as "a layer over empty keys" — that is, the same curve, only without keys.
+The variable `t` of ANY formula (layer, source, segment — there from the left key) SHALL be counted in seconds from the start of the curve's MATERIAL, identically in the render and in any preview: a preview that counts `t` from the edge of the visible window would show a different line from the one that sounds. Curves with formulas SHALL be resolved into numbers before the audio stream by the same pass as the links (the frame grid, byte-for-byte determinism); a project without formulas and links MUST NOT pay anything.
+The curves of the OVERRIDES of a reel instance SHALL accept the same shapes and sources as the curves of a slot (validation does not reject a formula, a layer and a link inside the reel), and SHALL be resolved into keys IN THE DOMAIN OF THE REEL at the moment of overlaying onto the content, before the translation into the target's time: a formula typed in the instance's window on the instance's axis sounds on that same axis.
+A key SHALL appear ONLY from a person's gesture (click, drag, field, button): the clamp of a value by the widget, an external change of the displayed value and the course of playback MUST NOT write a key.
+Why: R.67, the owner verbatim: "I can EITHER draw the points myself, or set them in a table, or set a curve over the whole range, or a formula, or set something on separate areas, AND A COMBINATION OF ALL OF THIS"; "if after this I enter a formula, the points will disappear, the zigzag will disappear… maybe I changed my mind". His choice: a formula-layer sees `k`, a formula on a segment is the shape of the stretch. Self-writing keys: the field with a curve showed the value under the cursor, while a `DragValue` with limits clamped a zigzag that went beyond the passport and reported "changed" — in his project lie keys 66.1→0.20, 69.7→0.98, 69.9→0.07, 72.3→0.99, 74.7→0.16 that he did not set.
 
-Значение кривой SHALL считаться слоями в фиксированном порядке: ключи с формами отрезков
-дают `k`; поверх — необязательный СЛОЙ-формула (текст с переменными `k`, `t`, `src`), поверх
-него — ничего; связь (`Link`) даёт `src` и без слоя действует как прежде. Установка
-слоя MUST NOT стирать ключи и формы; снятие слоя SHALL возвращать ровно `k`; установка
-связи MUST NOT стирать слой. Формула-источник (`Formula`) остаётся законной формой файла и
-SHALL читаться как «слой над пустыми ключами» — то есть та же кривая, только без ключей.
-Переменная `t` у ЛЮБОЙ формулы (слой, источник, отрезок — там от левого ключа) SHALL
-считаться в секундах от начала МАТЕРИАЛА кривой, одинаково в рендере и в любом
-предпросмотре: предпросмотр, считающий `t` от края видимого окна, показывал бы другую
-линию, чем звучит. Кривые с формулами SHALL разрешаться в числа до аудио-потока тем же
-проходом, что связи (кадровая сетка, детерминизм байт-в-байт); проект без формул и связей
-MUST NOT платить ничего.
-Кривые ПЕРЕОПРЕДЕЛЕНИЙ экземпляра ленты SHALL принимать те же формы и источники, что
-кривые слота (валидация не отвергает формулу, слой и связь внутри ленты), и SHALL
-разрешаться в ключи В ДОМЕНЕ ЛЕНТЫ в момент наложения на содержимое, до перевода во
-время цели: формула, набранная в окне экземпляра по оси экземпляра, звучит по той же оси.
-Ключ SHALL появляться ТОЛЬКО от жеста человека (клик, драг, поле, кнопка): кламп значения
-виджетом, внешняя смена показанного значения и ход воспроизведения MUST NOT писать ключ.
-Почему: Р.67, владелец дословно: «я могу ЛИБО сам нарисовать точки проставить, либо
-проставить в таблице, либо проставить всему диапазону кривую, либо формулу, либо отдельным
-областям что-то проставить А ТАКЖЕ КОМБИНАЦИЯ ВСЕГО ЭТОГО»; «если ввести после этого
-формулу - то точки пропадут, пропадет зигзаг… я может быть передумал». Его выбор:
-формула-слой видит `k`, формула на отрезке — форма участка. Ключи-самописцы: поле с
-кривой показывало значение под курсором, а `DragValue` с пределами клампил вышедший за
-паспорт зигзаг и рапортовал «изменено» — на его проекте лежат ключи 66.1→0.20, 69.7→0.98,
-69.9→0.07, 72.3→0.99, 74.7→0.16, которых он не ставил.
-
-#### Scenario: Слой над ключами и снятие по отдельности
-- **WHEN** у кривой с тремя ключами и зигзагом на втором участке ставится слой `k * 0.5 + 0.1`; затем слой снимается; затем ставится связь и слой `k + src`; затем снимается связь
-- **THEN** со слоем значения равны `0.5·k + 0.1` в каждой пробе, ключи и зигзаг целы; без слоя — ровно прежние `k`; со связью и слоем — `k + src`; после снятия связи слой остался, `src` = 0; каждый шаг — один шаг истории; файл несёт слой и читается назад той же кривой
+#### Scenario: A layer over keys, and removal separately
+- **WHEN** a curve with three keys and a zigzag on the second segment has the layer `k * 0.5 + 0.1` set; then the layer is removed; then a link and the layer `k + src` are set; then the link is removed
+- **THEN** with the layer the values equal `0.5·k + 0.1` at every sample point, the keys and the zigzag are intact; without the layer — exactly the previous `k`; with the link and the layer — `k + src`; after removing the link the layer remains, `src` = 0; each step is one history step; the file carries the layer and is read back as the same curve
 - **TEST** t787c (`src/libs/kt-model/tests/fx_auto.rs`), t787d (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: `t` формулы — от начала материала, и в предпросмотре тот же
-- **WHEN** кривая-слой `t` (секунды) стоит на событии с точкой входа 10 с; рендер спрашивает значение на материале 12 с; предпросмотр графика строится для окна 11..13 с и для окна 5..20 с
-- **THEN** рендер даёт 2.0 (не 12.0 и не 0); оба предпросмотра дают ту же линию, что рендер, в тех же тиках — независимо от окна; на прежнем коде предпросмотр давал 0 на левом крае окна
+#### Scenario: The formula's `t` counts from the start of the material, and the preview is the same
+- **WHEN** a layer-curve `t` (seconds) is on an event with an entry point of 10 s; the render asks for the value at material time 12 s; the graph preview is built for the window 11..13 s and for the window 5..20 s
+- **THEN** the render gives 2.0 (not 12.0 and not 0); both previews give the same line as the render, at the same ticks — independently of the window; on the previous code the preview gave 0 at the left edge of the window
 - **TEST** t784 (`src/libs/kt-model/tests/formula.rs`), t784b (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Переопределение экземпляра принимает формулу, форму и слой и звучит по оси экземпляра
-- **WHEN** у экземпляра ленты (структура проекта владельца: два экземпляра одной ленты друг над другом, кривая у верхнего) переопределению ставится горка ключами 0→1→0, затем зигзаг на участке, затем слой `k * 0.5`, затем формула-источник `t / 10`
-- **THEN** каждая команда принята (на прежнем коде формула отвергалась `CurveSourceUnsupported`); значение цели внутри ленты на середине горки равно 1·0.5, на краях 0; формула `t/10` в момент «3 с от начала экземпляра» даёт 0.3 у цели; кадр экземпляра меняется вместе со значением; разрешение идёт в домене ленты до перевода в материал цели
+#### Scenario: An instance override accepts a formula, a shape and a layer, and sounds on the instance's axis
+- **WHEN** on the reel instance (the structure of the owner's project: two instances of one reel one above the other, the curve on the upper one) the override gets a hill of keys 0→1→0, then a zigzag on a segment, then the layer `k * 0.5`, then the source formula `t / 10`
+- **THEN** each command is accepted (on the previous code the formula was rejected with `CurveSourceUnsupported`); the value of the target inside the reel at the middle of the hill equals 1·0.5, at the edges 0; the formula `t/10` at the moment "3 s from the start of the instance" gives 0.3 for the target; the frame of the instance changes together with the value; the resolution goes in the domain of the reel before the translation into the material of the target
 - **TEST** t792 (`src/libs/kt-model/tests/pubparam.rs`), t792b (`src/libs/kt-engine/tests/nest_param.rs`)
 
-#### Scenario: Ключ только от жеста
-- **WHEN** у параметра с пределом 0..1 живёт зигзаг амплитудой 0.1 вокруг 1.0; окно с полем этого параметра открыто; воспроизведение идёт 120 кадров, поле не трогается; затем тот же прогон с ползунком; затем человек правит поле рукой
-- **THEN** после прогонов число ключей прежнее (на прежнем коде появлялись ключи со значением 1.0 на каждом кадре игры); правка рукой ставит ровно один ключ на курсоре
+#### Scenario: A key only from a gesture
+- **WHEN** a parameter with the limit 0..1 has a zigzag of amplitude 0.1 around 1.0 living on it; the window with the field of this parameter is open; playback runs for 120 frames, the field is not touched; then the same run with the slider; then the person edits the field by hand
+- **THEN** after the runs the number of keys is unchanged (on the previous code keys with the value 1.0 appeared on every frame of play); a manual edit places exactly one key at the cursor
 - **TEST** t786 (`src/apps/kt-app/src/layout_tests.rs`)

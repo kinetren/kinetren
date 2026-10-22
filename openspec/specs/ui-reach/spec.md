@@ -1,627 +1,578 @@
-# Достижимость интерфейса
+# Reachability of the interface
 
 ## Purpose
 
-Механизм «тупиков не бывает»: всё, что реализовано, достижимо из той точки, где действует
-человек; правая кнопка никогда не молчит; подсказки и пункты меню обещают только то, что
-программа делает, — и всё это роняет `cargo test`, а не просит в чек-листе.
+The mechanism "there are no dead ends": everything that is implemented is reachable from the point where the person acts;
+the right mouse button is never silent; hints and menu items promise only what the program
+does — and all of this breaks `cargo test`, rather than being left to a checklist.
 
 ## Requirements
 
-### Requirement: Осиротевших команд не бывает
+### Requirement: There are no orphaned commands
+Every variant of the model's `Command` SHALL be constructed by at least one line of the application's
+product code (test code does not count toward reachability). The list of exceptions "the command
+is not invoked from the GUI" SHALL start empty; an entry in it MUST carry a reason at least
+40 characters long and MUST be removed as soon as the command is wired up. Idioms that blind the scan
+(`use …Command::*`, `use kt_model::ops::…`) MUST NOT occur in the application.
+Why: four commands of named areas were implemented, covered by unit tests and never once
+invoked from the application — the area could be neither removed nor renamed while `cargo test`
+stayed green.
 
-Каждый вариант `Command` модели SHALL конструироваться хотя бы одной строкой продуктового
-кода приложения (тестовый код за достижимость не считается). Список исключений «команда
-не вызывается из GUI» SHALL стартовать пустым; запись в нём MUST нести причину длиной от
-40 символов и MUST удаляться, как только команду подключили. Идиомы, ослепляющие скан
-(`use …Command::*`, `use kt_model::ops::…`), MUST NOT встречаться в приложении.
-Почему: четыре команды именованных областей были реализованы, покрыты юнит-тестами и ни
-разу не вызывались из приложения — область нельзя было ни удалить, ни переименовать при
-зелёном `cargo test`.
-
-#### Scenario: Вариант перечисления найден в продуктовом корпусе
-- **WHEN** перечисление `Command` разбирается из исходника модели, и для каждого варианта ищется конструирование в коде приложения и в телах функций `kt_model::ops`, которые приложение зовёт
-- **THEN** каждый вариант найден по границе слова (`SetFx` не засчитывается за `SetFxOff`), самопроверка разбора нашла не меньше 40 вариантов и три сторожевых имени, дубликатов нет
+#### Scenario: An enum variant is found in the product corpus
+- **WHEN** the `Command` enum is parsed from the model source, and for each variant a construction is searched for in the application code and in the bodies of the `kt_model::ops` functions that the application calls
+- **THEN** each variant is found on a word boundary (`SetFx` does not count as `SetFxOff`), the parser's self-check finds no fewer than 40 variants and three guard names, and there are no duplicates
 - **TEST** t252 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Скан нельзя отключить одной строкой
-- **WHEN** в продуктовом файле приложения появляется `use …Command::*` или `use kt_model::ops::`
-- **THEN** тот же тест красный с указанием файла
+#### Scenario: The scan cannot be switched off with one line
+- **WHEN** `use …Command::*` or `use kt_model::ops::` appears in a product file of the application
+- **THEN** the same test is red, naming the file
 - **TEST** t252 (`src/apps/kt-app/src/reach_tests.rs`)
 
-### Requirement: У каждой сущности таймлайна полный набор глаголов
-
-Для каждой сущности таймлайна (`TlEntity`) SHALL быть записано, чем она создаётся,
-переименовывается, удаляется и открывается (содержимое или свойства). Таблица глаголов
-SHALL быть исчерпывающей по `TlEntity`, а литерал `TlEntity::ALL` — фиксированной длины:
-новая сущность MUST NOT собираться, пока её строка не заполнена. «Глагола нет» принимается
-только с причиной, «он в другом месте» — только со ссылкой на тест; длина объяснения
-проверяется. Каждая цель контекстного меню MUST называть свою сущность (исчерпывающий
+### Requirement: Every timeline entity has a full set of verbs
+For every timeline entity (`TlEntity`) it SHALL be recorded how it is created,
+renamed, deleted and opened (its contents or properties). The verb table
+SHALL be exhaustive over `TlEntity`, and the literal `TlEntity::ALL` — of fixed length:
+a new entity MUST NOT compile until its row is filled in. "No verb" is accepted
+only with a reason, "it is elsewhere" — only with a reference to a test; the length of the explanation
+is checked. Every target of the context menu MUST name its own entity (an exhaustive
 `match`).
-Почему: «создать можно, управлять нельзя» повторялось семь раундов подряд; проза чек-листа
-не роняла ничего.
+Why: "you can create it but not control it" repeated for seven rounds in a row; the prose of the checklist
+did not break anything.
 
-#### Scenario: Меню сущности предлагает обязательные глаголы из каждого места действия
-- **WHEN** правый клик приходит в сущность из КАЖДОГО места, откуда над ней действует человек (заголовок строки И сама дорожка), в своей сцене на каждое место
-- **THEN** сущность существует для хит-теста, её меню содержит пункты всех глаголов вида `Menu` (считается ПРИРОСТ вхождений подписи — та же надпись живёт в тулбаре), подсказка над ней не говорит «пустое место», а у глаголов `Absent`/`Elsewhere` объяснение не короче порога
+#### Scenario: The entity menu offers the mandatory verbs from every place of action
+- **WHEN** a right click arrives at the entity from EVERY place from which the person acts on it (the row header AND the track itself), in its own scene for each place
+- **THEN** the entity exists for hit-testing, its menu contains items for all verbs of the `Menu` kind (the INCREASE in the number of occurrences of the label is counted — the same caption lives in the toolbar), the hint above it does not say "empty place", and for the `Absent`/`Elsewhere` verbs the explanation is not shorter than the threshold
 - **TEST** t253 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Глагол «открыть» у вложения и прежних сущностей
-- **WHEN** сущность — вложенная лента, событие, морфер или переход
-- **THEN** строка таблицы называет, чем открывается содержимое или свойства (вход в ленту, окно FX, редактор морфера, окно вида перехода), либо объясняет отсутствие
-- **TEST** t253 (`src/apps/kt-app/src/reach_tests.rs`), t457 (`src/apps/kt-app/src/layout_tests.rs`) — четыре пути внутрь ленты одним телом (capability `compositions`)
+#### Scenario: The verb "open" for nested reels and earlier entities
+- **WHEN** the entity is a nested reel, an event, a morpher or a transition
+- **THEN** the table row names how the contents or properties are opened (entering the reel, the FX window, the morpher editor, the transition view window), or explains the absence
+- **TEST** t253 (`src/apps/kt-app/src/reach_tests.rs`), t457 (`src/apps/kt-app/src/layout_tests.rs`) — four paths into the reel through one body (capability `compositions`)
 
-#### Scenario: Каждый параметр и флаг паспорта достижим в окне
-- **WHEN** паспорт носителя объявляет параметр или флаг
-- **THEN** у параметра есть подпись из каталога, у флага — нарисованный контрол; объявленное без окна — тупик
+#### Scenario: Every parameter and flag of the passport is reachable in a window
+- **WHEN** the media passport declares a parameter or a flag
+- **THEN** the parameter has a caption from the catalog, and the flag has a drawn control; something declared without a window is a dead end
 - **TEST** t508, t509 (`src/apps/kt-app/src/reach_tests.rs`)
 
-### Requirement: Клик — это клик
+### Requirement: A click is a click
+Pressing and releasing at the CENTER of an element without pointer movement SHALL produce the element's action. `ui.dnd_drag_source` MUST NOT occur in the application: a draggable and clickable thing is drawn, and over its rectangle (extended by the grab zone) goes ONE interaction `Sense::click_and_drag()` — `clicked()` selects, `drag_started()` places the payload.
+Why: `dnd_drag_source` in egui 0.36 registers a `Sense::drag()` rectangle OVER the content and after it; `hit_test` returns `click: None`, and "activate parameter input" in the chain strip meant searching for an active pixel.
 
-Нажатие и отпускание в ЦЕНТРЕ элемента без движения указателя SHALL давать действие
-элемента. `ui.dnd_drag_source` MUST NOT встречаться в приложении: перетаскиваемая и
-кликабельная вещь рисуется, а поверх её прямоугольника (расширенного на зону хвата) идёт
-ОДНА интеракция `Sense::click_and_drag()` — `clicked()` выбирает, `drag_started()` кладёт
-payload.
-Почему: `dnd_drag_source` в egui 0.36 регистрирует `Sense::drag()`-прямоугольник ПОВЕРХ
-содержимого и после него; `hit_test` отдаёт `click: None`, и «активировать ввод параметров»
-в полосе цепочки означало искать активный пиксель.
-
-#### Scenario: Клик по слоту цепочки выбирает его
-- **WHEN** харнесс жмёт и отпускает в центре подписи слота без движения
-- **THEN** слот выбран (наступило последствие), а не «работает только полоска выше подписи»
+#### Scenario: A click on a chain slot selects it
+- **WHEN** the harness presses and releases at the center of the slot's caption without movement
+- **THEN** the slot is selected (the consequence has occurred), rather than "only the strip above the caption works"
 - **TEST** t254 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Запрет `dnd_drag_source` во всём приложении
-- **WHEN** сканируются продуктовые исходники приложения без комментариев
-- **THEN** ни одного вхождения `dnd_drag_source`
+#### Scenario: Ban on `dnd_drag_source` across the whole application
+- **WHEN** the product sources of the application are scanned without comments
+- **THEN** there is not a single occurrence of `dnd_drag_source`
 - **TEST** t254b (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Клик по ячейке галереи пикера доезжает до модели
-- **WHEN** человек открыл пикер эффектов, нажал в ячейку варианта, найденную по подписи
-- **THEN** на событии стоит эффект того же вида ИМЕННО с параметрами варианта; ввод в строку поиска попап НЕ закрывает (`CloseOnClickOutside`), выбор закрывает его явно
+#### Scenario: A click on a picker gallery cell reaches the model
+- **WHEN** the person has opened the effects picker and pressed on a variant cell found by its caption
+- **THEN** the event carries an effect of the same kind WITH exactly the variant's parameters; typing in the search field does NOT close the popup (`CloseOnClickOutside`), while selecting closes it explicitly
 - **TEST** t547 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Ось силы не отбирает клик у варианта
-- **WHEN** на ячейке нажали, повели вбок и отпустили — либо нажали и отпустили не двигаясь
-- **THEN** в первом случае на событии стоит смесь соседних точек ряда (то, что было под курсором, квантовано), во втором — ровно названный вариант; края оси упираются, центр ячейки — сам вариант
+#### Scenario: The axis of force does not take the click away from the variant
+- **WHEN** on a cell the person pressed, moved sideways and released — or pressed and released without moving
+- **THEN** in the first case the event carries a mix of neighbouring points of the row (what was under the cursor, quantized); in the second — exactly the named variant; the axis edges clamp, and the centre of the cell is the variant itself
 - **TEST** t551, t551b (`src/apps/kt-app/src/reach_tests.rs`)
 
-### Requirement: Текст помещается
+### Requirement: Text fits
+A long user name (file, source, cell) SHALL be truncated with an ellipsis onto one
+line, rather than wrapped letter by letter or stretching the strip; the truncation helper SHALL be
+ONE for all places where a name is shown. The test assertion is a comparison of two scenes (a short
+name against a long one) by the GALLERIES of the last frame, not by the accessibility tree.
+Why: a 196-character source name without spaces produced 11 lines in the chain strip, and the
+accessibility label is taken from the source text and never contains the ellipsis.
 
-Длинное имя пользователя (файл, источник, ячейка) SHALL усекаться многоточием в одну
-строку, а не переноситься по буквам и не растягивать полосу; помощник усечения SHALL быть
-ОДИН на все места, где показывается имя. Утверждение теста — сравнение двух сцен (короткое
-имя против длинного) по ГАЛЛЕЯМ последнего кадра, а не по дереву доступности.
-Почему: 196-символьное имя источника без пробелов давало 11 строк в полосе цепочки, а
-метка доступности берётся из исходного текста и многоточия не содержит никогда.
-
-#### Scenario: Длинное имя источника не растит полосу цепочки
-- **WHEN** в поле источника и в голове полосы стоит имя в сотни символов
-- **THEN** каждая галлея имени — одна строка с усечением, высота полосы равна высоте с коротким именем; перенос крошки ЦЕЛИКОМ на следующий ряд законен
+#### Scenario: A long source name does not grow the chain strip
+- **WHEN** a name of several hundred characters stands in the source field and in the strip's header
+- **THEN** each glyph gallery of the name is one truncated line, and the strip's height equals its height with a short name; moving the crumb ENTIRELY to the next row is legitimate
 - **TEST** t255 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Галерея пикера устойчива к тексту
-- **WHEN** открыта галерея пикера с длинными подписями вариантов и набранным поиском
-- **THEN** подпись ячейки усечена, заголовок категории напечатан один раз, ширина галереи не зависит от набранного, в аудио-пикере ячеек нет
+#### Scenario: The picker gallery is robust to text
+- **WHEN** the picker gallery is open with long variant captions and a typed search
+- **THEN** the cell caption is truncated, the category heading is printed once, the gallery's width does not depend on what was typed, and the audio picker has no cells
 - **TEST** t548 (`src/apps/kt-app/src/reach_tests.rs`)
 
-### Requirement: Обещание в комментарии закрывается сканирующим сторожем
+### Requirement: A promise in a comment is closed by a scanning guard
+A rule declared as "one for the whole project" SHALL have a scanning test that
+names every duplicate by name: an assignment to `source_in` from an expression with it MUST
+occur only in the rule's home, the piece's rule (`project.rs` of the model). The same device is applied to
+every "one home" (finding a source from a clip, the sender to the player, offline rendering of reels,
+the time floor of a gesture).
+Why: the comment above `clip_slice` promised that "the piece rule is ONE", but the linear formula had been
+written out by hand in six more places — fixing `Split` did not fix the trims and punch-out.
 
-Правило, объявленное «одним на весь проект», SHALL иметь сканирующий тест, который
-называет каждый дубликат поимённо: присваивание `source_in` из выражения с ним же MUST
-встречаться только в доме правила куска (`project.rs` модели). Тот же приём применяется к
-каждому «одному дому» (поиск источника от клипа, отправитель в плеер, офлайн-рендер лент,
-пол времени жеста).
-Почему: комментарий над `clip_slice` обещал «правило кусков ОДНО», а линейная формула была
-выписана руками ещё в шести местах — починка `Split` не чинила тримы и punch-out.
-
-#### Scenario: Своей формулы куска нет ни в командах, ни в операциях
-- **WHEN** сканируются `model.rs`, `ops.rs` и `project.rs` модели без комментариев
-- **THEN** строки с `source_in =`/`source_in +=` вне дома правила отсутствуют; на старом `ops.rs` сторож называет все пять дубликатов
+#### Scenario: There is no own copy of the piece's formula in either commands or operations
+- **WHEN** `model.rs`, `ops.rs` and `project.rs` of the model are scanned without comments
+- **THEN** lines with `source_in =`/`source_in +=` outside the rule's home are absent; on the old `ops.rs` the guard names all five duplicates
 - **TEST** t273 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Та же идиома у соседних «одних домов»
-- **WHEN** появляется второй поиск медиа от клипа, второе место решения «что играет», второй офлайн-рендер ленты или голый `.max(0)` над временем жеста
-- **THEN** соответствующий сканирующий сторож красный с именем файла (содержательные правила — у capability `compositions` и `ui-timeline`)
+#### Scenario: The same idiom in the neighbouring "one homes"
+- **WHEN** a second media lookup from a clip appears, a second place deciding "what plays", a second offline rendering of a reel, or a bare `.max(0)` over the time of a gesture
+- **THEN** the corresponding scanning guard is red, naming the file (the substantive rules belong to the capabilities `compositions` and `ui-timeline`)
 - **TEST** t426b, t456b, t554, t602, t637c (`src/apps/kt-app/src/reach_tests.rs`)
 
-### Requirement: Правый клик никогда не молчит
+### Requirement: A right click is never silent
+An object that answers a hover with a hint SHALL also answer the right mouse button, and the
+menu SHALL belong to what was aimed at. Panel targets live in a SECOND registry
+(`PanelTarget`/`PanelEntity`), separate from the timeline's targets; the table "panel entity →
+what the right button answers" SHALL be exhaustive, and the literal `ALL` — of fixed
+length. Timeline and panel targets MUST suppress each other: there is one menu on the screen. The right
+button MUST NOT be destructive in itself (a curve key is not deleted by a right click — only
+by a menu item).
+Why: reconnaissance found twelve places with a hint and no menu; a person learns the right
+button once, and silence reads as "there is no object" — so the area was deemed undeletable.
 
-Объект, который отвечает на наведение подсказкой, SHALL отвечать и на правую кнопку, и
-меню SHALL принадлежать тому, во что целились. Панельные цели живут во ВТОРОМ реестре
-(`PanelTarget`/`PanelEntity`), отдельном от целей таймлайна; таблица «панельная сущность →
-чем отвечает правая кнопка» SHALL быть исчерпывающей, литерал `ALL` — фиксированной
-длины. Цели таймлайна и панелей MUST гасить друг друга: меню на экране одно. Правая кнопка
-MUST NOT быть разрушающей сама по себе (ключ кривой не удаляется правым кликом — только
-пунктом меню).
-Почему: разведка нашла двенадцать мест с подсказкой и без меню; человек учится правой
-кнопке один раз, и молчание читается как «объекта нет» — так область сочли неудаляемой.
-
-#### Scenario: Каждый панельный объект называет цель
-- **WHEN** правый клик приходит в фон медиа-бина (по прямоугольнику бина, а не колонки), панель метров, окно превью, слот цепочки, приколотую голову цепочки и ключ кривой
-- **THEN** программа выставила именно эту панельную цель, и меню — её; протухшая цель таймлайна не переживает клик в панели
+#### Scenario: Every panel object names its target
+- **WHEN** a right click arrives in the background of the media bin (by the bin's rectangle, not the column), the meter panel, the preview window, a chain slot, the pinned chain head and a curve key
+- **THEN** the program has set exactly this panel target, and the menu is its menu; a stale timeline target does not survive a click in the panel
 - **TEST** t394 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Таблица панельных сущностей исчерпывающа
-- **WHEN** перечисляются все панельные сущности и все роды целей
-- **THEN** у каждой сказано, отвечает ли правая кнопка и чем (объяснение от 20 символов), а каждая цель принадлежит ровно одной сущности
+#### Scenario: The table of panel entities is exhaustive
+- **WHEN** all panel entities and all kinds of targets are enumerated
+- **THEN** each one states whether and how the right button responds (an explanation of at least 20 characters), and each target belongs to exactly one entity
 - **TEST** t395 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Объект с подсказкой обязан отвечать и на правую кнопку
-- **WHEN** сканируются ключи объектных подсказок каталога
-- **THEN** у каждой в паре стоит панельная сущность из реестра, а сам ключ существует в коде (таблица не сторожит выдуманное)
+#### Scenario: An object with a hint must also respond to the right button
+- **WHEN** the object-hint keys of the catalog are scanned
+- **THEN** each one is paired with a panel entity from the registry, and the key itself exists in the code (the table does not guard the invented)
 - **TEST** t396 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: У перехода своё меню, а у строки — одно меню из двух мест
-- **WHEN** правый клик приходит в окно перехода (хит-тест по ОКНУ целиком, не по ручкам ±6 px) или в саму дорожку (а не только в её 34-px заголовок)
-- **THEN** меню принадлежит переходу (вид в заголовке, свойства, снятие), а меню строки — то же тело, что из заголовка: добавить морфер/камеру сюда, глаголы строки, за чертой — вставка и регион
+#### Scenario: A transition has its own menu, and a row has one menu from two places
+- **WHEN** a right click arrives in the transition's window (a hit test over the WHOLE window, not over the ±6 px handles) or in the track itself (not only in its 34-px header)
+- **THEN** the menu belongs to the transition (the view in the header, the properties, removal), and the row's menu is the same body as from the header: add morpher/camera here, the row's verbs, beyond the line — paste and region
 - **TEST** t253 (`src/apps/kt-app/src/reach_tests.rs`), t397 (`src/scripts/live/rmb.py`)
 
-### Requirement: Подсказка и пункт меню обещают только то, что программа делает
+### Requirement: A hint and a menu item promise only what the program does
+A hint over an object SHALL describe a gesture that is actually performed in this zone. A key chord SHALL be passed to the menu item as an ARGUMENT (separator `\t`, as in
+system menus) and MUST NOT sit inside a translatable catalog phrase; a chord is promised
+only where the key does exactly that for THIS entity.
+Why: "double click — 0 dB" was promised for years, while the gesture opened the FX window; "Delete (Del)"
+on a named area named a key that the area does not touch.
 
-Подсказка над объектом SHALL описывать жест, который в этой зоне действительно выполняется.
-Аккорд клавиши SHALL передаваться пункту меню АРГУМЕНТОМ (разделитель `\t`, как в
-системных меню) и MUST NOT лежать внутри переводимой фразы каталога; аккорд обещается
-только там, где клавиша делает ровно это для ЭТОЙ сущности.
-Почему: «двойной клик — 0 dB» обещалось годами, а жест открывал окно FX; «Удалить (Del)»
-у именованной области называло клавишу, которая область не трогает.
-
-#### Scenario: Двойной клик по линии уровня сбрасывает уровень
-- **WHEN** двойной клик приходит в линию уровня аудио- или видео-события (линия одна на оба вида)
-- **THEN** у звука 0 dB, у видео полная непрозрачность; окно FX не открывается
+#### Scenario: A double click on the level line resets the level
+- **WHEN** a double click arrives at the level line of an audio or video event (the line is one for both kinds)
+- **THEN** audio is at 0 dB, video is at full opacity; the FX window does not open
 - **TEST** t392 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Аккорд в меню только у той сущности, где клавиша работает
-- **WHEN** открыто меню именованной области и меню камеры
-- **THEN** ни в одном языке значение каталога не содержит «(Del»; у области пункт удаления без аккорда, у камеры — с аккордом; у клипа аккорд показывается только когда региона нет (иначе Del режет регион)
+#### Scenario: A chord in the menu only for the entity where the key works
+- **WHEN** the menu of a named area and the menu of a camera are open
+- **THEN** in no language does a catalog value contain "(Del"; the area has the delete item without a chord, the camera has it with a chord; for a clip the chord is shown only when there is no region (otherwise Del cuts the region)
 - **TEST** t393 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Подсказка доезжает до строки состояния в том же кадре
-- **WHEN** указатель наведён на кнопку тулбара, кнопку окна или бин
-- **THEN** отрисованная строка состояния (`status_line_shown`, не внутреннее поле) начинается с подсказки этого объекта с родом «наведение»; ни одного слоя `egui::Order::Tooltip` в памяти egui
+#### Scenario: The hint reaches the status line in the same frame
+- **WHEN** the pointer hovers over a toolbar button, a window button or the bin
+- **THEN** the rendered status line (`status_line_shown`, not an internal field) begins with the hint of this object with the kind "hover"; not a single `egui::Order::Tooltip` layer exists in egui's memory
 - **TEST** t83 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Подсказка общего виджета внутри окна тоже доезжает
-- **WHEN** виджет внутри `Window::show` (откуда до модели не дотянуться) ставит подсказку через сток
-- **THEN** она показана в строке состояния, а непарсящийся адрес генератора — ошибка, не молчание
+#### Scenario: The hint of a shared widget inside a window also arrives
+- **WHEN** a widget inside `Window::show` (from where the model cannot be reached) sets a hint through the sink
+- **THEN** it is shown in the status line, and an unparseable generator address is an error, not silence
 - **TEST** t518 (`src/apps/kt-app/src/layout_tests.rs`)
 
-### Requirement: Подсказка одна, невозможность действия — ошибка, слоёв поверх интерфейса нет
+### Requirement: One hint; an impossible action is an error; there are no layers over the interface
+The hint's place SHALL be one — the bottom right of the status line, priority hover → mode
+→ message → standby line; there MUST NOT be pop-up tooltips or teaching overlays (`tooltip_delay` is blocking). A refused gesture SHALL be shown in an error style,
+overriding the hover: the obstacle is highlighted, and if it is outside the view the
+side and the distance are named, and at the edge of the strip a red arrow. A grey hover means "here is what can be done", not
+"it cannot be done".
+Why: the owner's decision "there are no pop-up hints at all" and the complaint "the hint is a pale faded little thing — everywhere such situations are made as errors"; both are direct requests and do not
+change without a new one.
 
-Место подсказки SHALL быть одно — правый низ строки состояния, приоритет наведение → режим
-→ сообщение → дежурная строка; всплывающих попапов и обучающих оверлеев MUST NOT быть
-(`tooltip_delay` заградительная). Отказ жеста SHALL показываться ошибочным стилем,
-перебивающим наведение: препятствие подсвечено, а если оно за пределами вида — названы
-сторона и расстояние, у края строки красная стрелка. Серый hover — «вот что тут можно», а
-не «сделать нельзя».
-Почему: решение владельца «всплывающих подсказок нет вообще» и претензия «подсказка
-беленькая блёклая — везде такие ситуации делаются как ошибочные»; оба — прямые просьбы, не
-меняются без новой.
-
-#### Scenario: Заблокированный перенос — ошибка с адресом препятствия
-- **WHEN** перенос события упирается в соседа, в том числе за пределами вида
-- **THEN** препятствие известно (есть что подсветить), в строке состояния род «ошибка» поверх наведения, за пределами вида — куда смотреть
+#### Scenario: A blocked move is an error with the address of the obstacle
+- **WHEN** the move of an event runs into a neighbour, including one outside the view
+- **THEN** the obstacle is known (there is something to highlight), in the status line the kind "error" overrides the hover, and outside the view — where to look
 - **TEST** t172 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Тултипов нет
-- **WHEN** после наведения проходит два кадра
-- **THEN** ни один слой egui не имеет порядок `Tooltip`
+#### Scenario: There are no tooltips
+- **WHEN** two frames pass after hovering
+- **THEN** no egui layer has the `Tooltip` order
 - **TEST** t83 (`src/apps/kt-app/src/layout_tests.rs`)
 
-### Requirement: Парные способы одного действия — одно тело, у действия одна дверь
+### Requirement: Paired ways of doing one action — one body; an action has one door
+An action available through a gesture, a menu item, a button and a key SHALL be executed by ONE
+body that accounts for the context identically (region, selection, reel). Publishing a parameter of a
+composition SHALL have exactly one door — a right click on the field's caption INSIDE the reel (both in
+full entry and in the expanded strip); outside the reel there is no item at all, but the status line
+explains where it lives — and only when compositions exist in the document. The handle's name is the author's
+text, drawn verbatim, bypassing the catalog.
+Why: the reference failure — the M gesture with a region made a range label, while the menu item made
+a point one; two entries with two copies — the same "two tracks from one +M".
 
-Действие, доступное жестом, пунктом меню, кнопкой и клавишей, SHALL исполняться ОДНИМ
-телом, одинаково учитывающим контекст (регион, выделение, ленту). Публикация параметра
-композиции SHALL иметь ровно одну дверь — правый клик по подписи поля ВНУТРИ ленты (и при
-полном входе, и в раскрытой полосе); вне ленты пункта нет вовсе, но строка состояния
-объясняет, где он живёт, — и только когда композиции в документе есть. Имя ручки — текст
-автора, рисуется дословно мимо каталога.
-Почему: эталонный провал — жест M при регионе делал метку-диапазон, а пункт меню
-точечную; два входа с двумя копиями — те же «две дорожки от одного +M».
-
-#### Scenario: Генератор создаётся из главного меню и из бина одним списком
-- **WHEN** подменю «Генератор» открывается из главного меню и из меню фона бина
-- **THEN** список видов один на оба входа, создание кладёт медиа и клип одним шагом истории
+#### Scenario: A generator is created from the main menu and from the bin with one list
+- **WHEN** the "Generator" submenu is opened from the main menu and from the bin's background menu
+- **THEN** the list of kinds is one for both entries, and creation puts the media and the clip in one history step
 - **TEST** t560 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Дверь публикации одна и достижима только изнутри
-- **WHEN** правый клик приходит в подпись параметра внутри ленты (полный вход и полоса), в ту же подпись вне ленты, и открывается меню экземпляра
-- **THEN** внутри — «Опубликовать…»/«Снять публикацию»; снаружи пункта нет, а строка состояния говорит почему; меню экземпляра достаёт до ОБОИХ окон — потребительского и авторского
+#### Scenario: The publish door is one and reachable only from inside
+- **WHEN** a right click arrives at the parameter's caption inside the reel (full entry and strip), at the same caption outside the reel, and the instance's menu is opened
+- **THEN** inside — "Publish…"/"Unpublish"; outside there is no item, and the status line says why; the instance's menu reaches BOTH windows — the consumer's and the author's
 - **TEST** t682 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Окно потребителя рисует каждый тип своим виджетом
-- **WHEN** у экземпляра открыто окно параметров композиции с ручками всех типов
-- **THEN** каждый тип нарисован своим виджетом, сброс шлёт снятие переопределения, число с кривой садит ключ в материале ЭКЗЕМПЛЯРА; сессия окна — один шаг истории
+#### Scenario: The consumer window draws each type with its own widget
+- **WHEN** the instance's window of composition parameters is open with handles of all types
+- **THEN** each type is drawn with its own widget, reset sends the removal of the override, a number with a curve places a key in the material of the INSTANCE; the window session is one history step
 - **TEST** t683 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Имя автора нарисовано дословно и не едет за языком
-- **WHEN** ручка объявлена с произвольным именем и язык программы переключается
-- **THEN** в НАРИСОВАННЫХ галлеях имя присутствует буква в букву на каждом языке (дерево доступности не спрашивается — там составное имя кнопки сброса)
+#### Scenario: The author's name is drawn verbatim and does not move with the language
+- **WHEN** a handle is declared with an arbitrary name and the program's language is switched
+- **THEN** in the DRAWN galleries the name is present letter for letter in every language (the accessibility tree is not queried — there the reset button's compound name is used)
 - **TEST** t684 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Бейджи говорят о переопределениях, ноль не пишется
-- **WHEN** у экземпляра есть переопределения, у ленты — объявленные ручки, либо публикаций нет вовсе
-- **THEN** булавка в хвосте подписи события и число в голове карточки ленты нарисованы; при нуле — ничего
+#### Scenario: Badges speak of overrides, zero is not written
+- **WHEN** the instance has overrides, the reel has declared handles, or there are no publications at all
+- **THEN** the pin at the tail of the event's caption and the number in the head of the reel card are drawn; at zero — nothing
 - **TEST** t685 (`src/apps/kt-app/src/layout_tests.rs`)
 
-### Requirement: Тест утверждает наблюдаемое следствие из точки, откуда действует человек; на каждый пункт — живой сценарий
+### Requirement: A test asserts the observable consequence from the point where the person acts; a live scenario for each item
+A reachability test SHALL assert what the person sees and does (the rectangle grew,
+the click landed, the block moved, the value reached the model/file), rather than the wiring ("the field
+was set", "the item is in the menu"). The point of action is part of the assertion: the scene SHALL
+return a LIST of places, and a new place is added to it, rather than "checked later". Closing
+a UI item SHALL be accompanied by a live scenario in the real window (Xvfb, a real mouse),
+which first proves that the gesture HAPPENED, and only then checks the consequence.
 
-Тест достижимости SHALL утверждать то, что видит и делает человек (прямоугольник вырос,
-клик попал, блок переехал, значение доехало до модели/файла), а не проводку («поле
-выставилось», «пункт в меню есть»). Точка действия — часть утверждения: сцена SHALL
-отдавать СПИСОК мест, и новое место добавляется в него, а не «проверяется потом». Закрытие
-пункта UI SHALL сопровождаться живым сценарием в настоящем окне (Xvfb, настоящая мышь),
-который сначала доказывает, что жест ПРОИЗОШЁЛ, и только потом проверяет следствие.
+**What a live run pays for is decided by a CRITERION, not by the author's taste.** The mouse in the real window
+SHALL check: a place that has NEVER been touched live; the hit of a gesture and its repeatability (hit test, edges, window order, modality, drag-and-drop); and a complex
+multi-step path named in the owner's complaint. A check that, after a gesture has taken place, asserts ONLY the state of the model or file and repeats a gesture
+already verified live in another scenario SHALL be moved to headless (the kt-app harness or a
+model test): in a live run such a check costs seconds and adds no knowledge. The move
+MUST keep the spec scenario and its `TEST` line with the NEW address — the scenario does not disappear,
+only the place of the check changes; deleting a scenario without a replacement remains a violation of the rule
+"tests from the specs are not weakened". The move SHALL be recorded MACHINE-READABLY — by a registry
+"live scenario → the tests that hold its assertions, and why" — and the guard SHALL
+fail if the file of a moved scenario remains on disk, or if the test it names does not
+exist: without the registry, "move to non-gui" and "delete" are indistinguishable by the tree. What has never been touched live SHALL be shown by the machine
+report of live coverage (the registry windows and fields that no scenario has clicked), and
+`finish.sh` SHALL print its total. The number of untouched places SHALL have a DECLARED
+LIMIT, and exceeding the limit SHALL be red: the limit is a ratchet, not a target, and a new
+place of the program either gets a live step, or the limit is moved deliberately.
+Why: everything the owner complained about in the round "you did not check" was green in the harness
+and broken in the window — t253 pressed RMB into the 34-px header, where the item had been placed. R.68: 96 % of the time of a
+live run is unconditional pauses (`nestparam`: 136 s, of which 130 s is sleep in 591 calls), and the
+scenarios partly repeat one another. The owner's decision: "move some of the tests to non-gui,
+since the tests partly repeat each other's actions… and click through the complex moments or those
+that have never been clicked through even once".
 
-**Чем платит живой прогон — решает КРИТЕРИЙ, а не вкус автора.** Мышью в настоящем окне
-SHALL проверяться: место, которое живьём не трогали НИ РАЗУ; попадание жеста и его
-повторяемость (хит-тест, кромки, порядок окон, модальность, drag-n-drop); и сложный
-многошаговый путь, названный в пункте претензии владельца. Проверка, которая после
-состоявшегося жеста утверждает ТОЛЬКО состояние модели или файла и повторяет жест,
-проверенный живьём в другом сценарии, SHALL переезжать в headless (harness kt-app или
-тест модели): в живом прогоне такая проверка стоит секунды и не добавляет знания. Переезд
-MUST сохранять сценарий спеки и его строку `TEST` с НОВЫМ адресом — сценарий не исчезает,
-меняется только место проверки; удаление сценария без замены остаётся нарушением правила
-«тесты из спек не ослабляются». Переезд SHALL быть записан МАШИНОЧИТАЕМО — реестром
-«живой сценарий → тесты, которые держат его утверждения, и почему», — и сторож SHALL
-падать, если файл переехавшего сценария остался на диске или если названный им тест не
-существует: без реестра «вынести в non-gui» и «выкинуть» неотличимы по дереву. Что живьём не тронуто ни разу, SHALL показывать машинный
-отчёт живого покрытия (окна реестра и поля, которые ни один сценарий не кликал), и
-`finish.sh` SHALL печатать его итог. Число нетронутых мест SHALL иметь ОБЪЯВЛЕННЫЙ
-ПРЕДЕЛ, и превышение предела SHALL быть красным: предел — храповик, а не цель, и новое
-место программы либо получает живой шаг, либо предел двигают осознанно.
-Почему: всё, на что жаловался владелец в раунде «ты не проверял», было зелено в харнессе
-и сломано в окне — t253 жал ПКМ в 34-px заголовок, куда пункт и положили. Р.68: 96 % времени
-живого прогона — безусловные паузы (`nestparam`: 136 с, из них 130 с сна в 591 вызове), а
-сценарии частично повторяют друг друга. Решение владельца: «часть тестов вынести в non-gui,
-ведь тесты отчасти повторяют действия между собой… и прокликивать сложные моменты или те
-которые не прокликали ни разу».
-
-#### Scenario: Высота строки доходит до события
-- **WHEN** строке задана индивидуальная высота
-- **THEN** прямоугольник события вырос и клик НИЖЕ старой границы попадает в событие (а не «`row_h` изменился»)
+#### Scenario: The row height reaches the event
+- **WHEN** an individual height is set on the row
+- **THEN** the event's rectangle has grown, and a click BELOW the old border lands on the event (rather than "`row_h` changed")
 - **TEST** t274 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Блоки не прячутся друг под другом и ловятся рамкой
-- **WHEN** «+M» жмут повторно на занятом промежутке; рамка выделения проходит по служебным блокам
-- **THEN** каждый блок ловится мышью в СВОЕЙ строке (свободная строка ищется на промежутке, новая — только если свободной нет); рамка ловит морферы и камеры, Del удаляет всё пойманное одним шагом
+#### Scenario: Blocks do not hide under one another and are caught by the frame
+- **WHEN** "+M" is pressed again on an occupied gap; the selection frame passes over service blocks
+- **THEN** each block is caught by the mouse in ITS OWN row (a free row is searched for on the gap, a new one — only if there is no free row); the frame catches morphers and cameras, and Del deletes everything caught in one step
 - **TEST** t275, t277 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Живые сценарии механизма
-- **WHEN** запускается живая проверка (`scripts/live-check.sh`)
-- **THEN** кромка морф-блока и высота строки доезжают до файла, ПКМ по контуру области меняет экран; ПКМ по переходу открывает его меню, двойной клик по уровню доезжает до .otio, бин и метры не молчат; путь публикации целиком мышью — от правого клика по подписи до второго выпуска со своим заголовком
+#### Scenario: Live scenarios of the mechanism
+- **WHEN** the live check is run (`scripts/live-check.sh`)
+- **THEN** the edge of the morph block and the row height reach the file; a right click on the outline of a region changes the screen; a right click on a transition opens its menu; a double click on the level reaches the .otio, and the bin and meters are not silent; the publish path as a whole by mouse — from a right click on the caption to the second release with its own title
 - **TEST** t264 (`src/scripts/live/deadend.py`), t397 (`src/scripts/live/rmb.py`), t689 (`src/scripts/live/nestparam.py`), `src/scripts/live/fxpicker.py`, `src/scripts/live/keys.py`
 
-#### Scenario: Отчёт живого покрытия и переезд проверки
-- **WHEN** считается живое покрытие: окна реестра `WINDOWS` и поля geom-дампа против того, что кликают сценарии `src/scripts/live/*.py` (и вызовом щупа по имени, и разбором прямоугольника из дампа — прицел по координате считается тем же прицелом); отдельно у сценария спеки адрес теста меняется с живого на headless; отдельно переехавший сценарий возвращается на диск; отдельно нетронутых мест становится больше объявленного предела
-- **THEN** отчёт называет окна и поля, не тронутые живьём НИ РАЗУ, их число и объявленный предел, а также реестр переезда «сценарий → новые адреса»; `finish.sh` печатает итог отчёта; сценарий спеки после переезда цел и его строка `TEST` указывает на существующий тест, а исчезновение сценария без замены, вернувшийся переехавший сценарий, несуществующий новый адрес и превышение предела — красное
-- **ПУТЬ** жеста нет: сторож читает реестр окон, geom-дамп и тексты живых сценариев и печатает, до каких мест человек ни разу не доходил мышью в проверке
-- **TEST** t804 (`src/apps/kt-app/src/reach_tests.rs`, зовёт `src/scripts/live-coverage.py --check`)
+#### Scenario: The live coverage report and moving a check
+- **WHEN** live coverage is counted: the `WINDOWS` registry windows and the fields of the geom dump against what the scenarios `src/scripts/live/*.py` click (both by calling a probe by name and by parsing a rectangle from the dump — an aim by coordinate is counted as the same kind of aim); separately, the test address of a spec scenario changes from live to headless; separately, a moved scenario returns to disk; separately, untouched places become more numerous than the declared limit
+- **THEN** the report names the windows and fields not touched live EVEN ONCE, their number and the declared limit, as well as the registry of the move "scenario → new addresses"; `finish.sh` prints the total of the report; after the move the spec scenario is intact and its `TEST` line points to an existing test, while the disappearance of a scenario without a replacement, a moved scenario returning, a non-existent new address and exceeding the limit are red
+- **PATH** there is no gesture: the guard reads the window registry, the geom dump and the texts of the live scenarios, and prints the places a person has never once reached by mouse in the check
+- **TEST** t804 (`src/apps/kt-app/src/reach_tests.rs`, calls `src/scripts/live-coverage.py --check`)
 
-#### Scenario: Глаголы дорожки прокликаны из МЕНЮ и из ОКНА
-- **WHEN** `src/scripts/live/trackverbs.py` открывает меню строки правым кликом по пустому месту дорожки и жмёт в нём «Заглушить», «Соло», «Замок», «Свойства…» и «Эффекты…»; затем в окне дорожки щёлкает галки «Заглушить»/«Соло»/«Замок», режим наложения «Сложение» и «Отмена»
-- **THEN** каждый пункт и каждая галка достижимы мышью, следствие видно В КАДРЕ (под заглушённой дорожкой — нижняя, при соло — только она, сложение зелёной с красной даёт жёлтое), «Замок» из меню отказывает драгу, «Отмена» возвращает и галку, и режим одним шагом и не оставляет режим в файле; программа публикует прямоугольник каждого из этих мест, а сценарий жмёт каждое
-- **ПУТЬ** правый клик по пустому месту верхней видеодорожки → «Заглушить» → в превью красное вместо зелёного → тот же пункт ещё раз → снова зелёное → правый клик по нижней дорожке → «Соло» → в кадре только она → «Соло» ещё раз → «Замок» → драг события не двигает его → «Замок» ещё раз → «Свойства…» → окно дорожки → галка «Заглушить» → кадр красный → галка ещё раз → режим наложения «Сложение» → кадр жёлтый → «Отмена» → кадр снова зелёный, окно закрылось → правый клик по дорожке → «Эффекты…» → то же окно с полосой цепочки
-- **TEST** t806 (`src/apps/kt-app/src/reach_tests.rs`), живой сценарий `src/scripts/live/trackverbs.py` (`./scripts/live-check.sh`)
+#### Scenario: The track verbs are clicked through from the MENU and from the WINDOW
+- **WHEN** `src/scripts/live/trackverbs.py` opens the row's menu with a right click on an empty place of the track and presses in it "Mute", "Solo", "Lock", "Properties…" and "Effects…"; then in the track's window it clicks the checkboxes "Mute"/"Solo"/"Lock", the blend mode "Add" and "Cancel"
+- **THEN** each item and each checkbox is reachable by mouse, the consequence is visible IN THE FRAME (under a muted track — the lower one; with solo — only it; add of green and red gives yellow), "Lock" from the menu refuses a drag, "Cancel" returns both the checkbox and the mode in one step and leaves no mode in the file; the program publishes the rectangle of each of these places, and the scenario presses each one
+- **PATH** right click on an empty place of the upper video track → "Mute" → in the preview red instead of green → the same item once more → green again → right click on the lower track → "Solo" → in the frame only it → "Solo" once more → "Lock" → a drag of the event does not move it → "Lock" once more → "Properties…" → the track window → the "Mute" checkbox → frame red → the checkbox once more → blend mode "Add" → frame yellow → "Cancel" → frame green again, the window closed → right click on the track → "Effects…" → the same window with the chain strip
+- **TEST** t806 (`src/apps/kt-app/src/reach_tests.rs`), live scenario `src/scripts/live/trackverbs.py` (`./scripts/live-check.sh`)
 
-### Requirement: Окно настроек и узел геометрии достижимы из точки, откуда действует человек
+### Requirement: The settings window and the geometry node are reachable from where the person acts
+The project settings window SHALL be reachable from the project menu, by the address in the status line and
+by a hotkey; the actions of the leading node (change the rule, reorder, add a second node)
+SHALL be reachable from the event's chain editor; the window and the node SHALL have a full set of
+verbs, checked by the machine against the paired entities. A live scenario SHALL drop a vertical
+file into a 16:9 project and assert the consequence: the preview with letterboxing, the hint with the address, the window at the address, and changing the project's rule changes the picture.
+A gesture over the FRAME SHALL be reachable and explained: the toggle for showing controls lives in the preview itself, its state is visible, and a right click on the frame names it in words; the hint of a handle
+says what it edits, in the status line (rule 10 — no pop-ups). An event that has no frame at all (audio, a foreign placeholder) SHALL get a NAMED reason, not
+silence. The gesture SHALL work repeatedly (rule 14) and in a SEPARATE preview window with the same body
+(rule 17).
+Why: "Dead ends: you can create it, you cannot control it" repeated for seven rounds; the test must probe from the point where the person acts. R.64: a control that cannot be discovered from the frame would repeat the Premiere complaint "I cannot call up the handles" (reconnaissance F-UI-001).
 
-Окно настроек проекта SHALL быть достижимо из меню проекта, по адресу из строки состояния и
-горячей клавишей; действия ведущего узла (сменить правило, переставить, добавить второй узел)
-SHALL быть достижимы из редактора цепочки события; у окна и узла SHALL быть полный набор
-глаголов, сверяемый машиной с парными сущностями. Живой сценарий SHALL бросить вертикальный
-файл в проект 16:9 и утверждать следствие: превью с полями, подсказка с адресом, окно по
-адресу, смена правила проекта меняет картинку.
-Жест над КАДРОМ SHALL быть достижим и объяснён: переключатель показа контролов живёт в самом
-превью, его состояние видно, а правый клик по кадру называет его словами; подсказка ручки
-говорит, что она правит, в строке состояния (правило 10 — без всплывающих). Событие, у
-которого рамки не бывает (аудио, чужой плейсхолдер), SHALL получать НАЗВАННУЮ причину, а не
-молчание. Жест SHALL работать повторно (правило 14) и в ОТДЕЛЁННОМ окне превью тем же телом
-(правило 17).
-Почему: «Тупики: создать можно, управлять нельзя» повторялись семь раундов; тест обязан
-щупать из точки, откуда действует человек. Р.64: контрол, о котором нельзя узнать из кадра,
-повторил бы претензию Premiere «не могу вызвать ручки» (разведка F-UI-001).
-
-#### Scenario: Достижимость и глаголы
-- **WHEN** сканируются меню, адрес строки состояния, горячие клавиши и редактор цепочки
-- **THEN** окно настроек и узел «Геометрия» достижимы каждым названным путём, набор глаголов полон
+#### Scenario: Reachability and verbs
+- **WHEN** the menus, the status-line address, the hotkeys and the chain editor are scanned
+- **THEN** the project settings window and the "Geometry" node are reachable by each of the named paths, and the set of verbs is complete
 - **TEST** t720 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Живой сценарий вертикального источника
-- **WHEN** `src/scripts/live/conform.py` бросает вертикальный файл в 16:9, открывает окно по адресу и меняет правило проекта
-- **THEN** скриншоты показывают поля, подсказку, окно и другую картинку после смены правила
-- **TEST** `src/scripts/live/conform.py` (живой сценарий, `./scripts/live-check.sh`)
+#### Scenario: A live scenario of a vertical source
+- **WHEN** `src/scripts/live/conform.py` drops a vertical file into a 16:9 project, opens the window at the address and changes the project's rule
+- **THEN** the screenshots show the letterboxing, the hint, the window, and a different picture after the rule change
+- **TEST** `src/scripts/live/conform.py` (live scenario, `./scripts/live-check.sh`)
 
-#### Scenario: Контролы над кадром достижимы и объяснены
-- **WHEN** сканируются превью и его меню; правый клик по кадру; наведение на ручку; выделено аудио-событие; превью отделено в своё окно
-- **THEN** переключатель показа контролов найден в превью и в меню правого клика, состояние видно; подсказка ручки — в строке состояния; у аудио-события причина названа словом; в отделённом окне жест работает тем же телом
+#### Scenario: Controls over the frame are reachable and explained
+- **WHEN** the preview and its menu are scanned; a right click on the frame; hovering over a handle; an audio event is selected; the preview is detached into its own window
+- **THEN** the toggle for showing controls is found in the preview and in the right-click menu, its state is visible; the handle's hint is in the status line; for an audio event the reason is named in a word; in the detached window the gesture works with the same body
 - **TEST** t766 (`src/apps/kt-app/src/reach_tests.rs`)
 
-### Requirement: У дорожки полный набор глаголов, парные пути — одно тело
+### Requirement: A track has the full set of verbs, paired paths share one body
+A track SHALL be a timeline entity with a full set of verbs (rename, delete,
+insert above/below, reorder, mute, solo, lock, level, blend mode, chain,
+properties), each reachable from the badge, the menu and a key where the path is declared; the set
+is checked by the machine against the paired entities; a live scenario SHALL assert the consequence
+(the picture changes on mute and on solo, the lock refuses a drag and names the track,
+a vignette set in the track's window lands ON THE TRACK, not on the event, the render window
+lists the muted track). The meters of a silent file would say nothing — the sum with level and mute
+is held by t732 on the engine's side.
+Why: the tests of R.38 checked the reachability of what was made, not the consequence; the rule of R.40 —
+probe from the point where the person acts.
 
-Дорожка SHALL быть сущностью таймлайна с полным набором глаголов (переименовать, удалить,
-вставить выше/ниже, переставить, mute, solo, замок, уровень, режим наложения, цепочка,
-свойства), каждый достижим из бейджа, меню и клавиши там, где путь объявлен; набор
-сверяется машиной с парными сущностями; живой сценарий SHALL утверждать следствие
-(картинка меняется при mute и при solo, замок отказывает драгу и называет дорожку,
-виньетка, поставленная в окне дорожки, ложится НА ДОРОЖКУ, а не на событие, окно рендера
-перечисляет mute). Метры молчащего файла ничего не сказали бы — сумму с уровнем и mute
-держит t732 на стороне движка.
-Почему: тесты Р.38 проверяли достижимость сделанного, а не следствие; правило Р.40 —
-щупать из точки, откуда действует человек.
-
-#### Scenario: Глаголы и пути
-- **WHEN** сканируются бейджи, меню, клавиши и окно свойств дорожки
-- **THEN** набор глаголов полон и совпадает у корня и внутри ленты, парные пути ведут в одну команду
+#### Scenario: Verbs and paths
+- **WHEN** the badges, menus, keys and the track's properties window are scanned
+- **THEN** the set of verbs is complete and matches at the root and inside a reel, and paired paths lead to one command
 - **TEST** t741 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Живой сценарий дорожки
-- **WHEN** `src/scripts/live/track.py` глушит дорожку, ставит соло, запирает и тянет событие, вешает виньетку из окна дорожки, открывает окно рендера
-- **THEN** цвет в превью меняется на цвет дорожки под заглушённой и обратно, драг по запертой не двигает событие и строка состояния называет её, виньетка оказывается в `kt.tracks`, а не на событии, окно рендера показывает строку о заглушённых
-- **TEST** `src/scripts/live/track.py` (живой сценарий, `./scripts/live-check.sh`)
+#### Scenario: A live scenario of a track
+- **WHEN** `src/scripts/live/track.py` mutes a track, sets solo, locks and drags an event, hangs a vignette from the track's window, opens the render window
+- **THEN** the colour in the preview changes to the track's colour under the muted one and back; a drag over the locked one does not move the event, and the status line names it; the vignette ends up in `kt.tracks`, not on the event; the render window shows the line about muted tracks
+- **TEST** `src/scripts/live/track.py` (live scenario, `./scripts/live-check.sh`)
 
-### Requirement: Окна только из реестра; инструмент помнит параметры; имя — по отрасли; виджет один
+### Requirement: Windows only from the registry; the tool remembers its parameters; name by industry; one widget
+A new window (`egui::Window`, `Modal`) SHALL be introduced only with an entry in the window
+registry (`src/apps/kt-app/src/reach_tests.rs`, `WINDOWS`): the id, what is in it and WHY it cannot be without a window; the
+guard SHALL enumerate all places of window creation in the kt-app sources and fail on a place
+outside the registry. Things that already have a place (the chain strip, the track window, the panel, the status line) MUST NOT get their own window. A tool with parameters (render, analysis) SHALL
+remember the last entered parameters in the user store and substitute them on the
+next call; a tool whose result is an envelope SHALL deliver it as ordinary
+automation curves. The name of the item, the tool and the window SHALL be a generally accepted industry
+name (Vegas/Premiere/Resolve/FCP), not a description of the mechanics.
+An instrument that already exists in the program SHALL show the new function by itself, rather than by a copy
+of its fields: ducking is a COMPRESSOR WITH A SIDECHAIN INPUT in the track's chain, shown
+by its own widget next to the compressor of the key track. The parameters of such a tool live in the
+PROJECT (they are the content itself — the track's chain) and go through undo; a workspace store is not created for them — "remembering what was entered" is ensured here by the project itself.
+The setting of a live instrument SHALL be reachable from where the person already stands: the
+audio track's window and its chain strip; a refusal (a cycle, a key on itself, a vanished track)
+SHALL be named in words, not fade silently.
+THE FORM OF A WINDOW SHALL obey a single contract, common to all windows of the registry:
+the body of the window scrolls, and the action buttons ("Close", "Cancel", "Apply", "Render",
+"Restore") live OUTSIDE the scroll and remain clickable at any screen height —
+a window that has outgrown the screen MUST NOT hide its actions. A numeric field SHALL be drawn
+by the COMMON row of widgets; there are no own `DragValue`s outside the common widget in windows.
+Limits, step and unit SHALL come from the parameter's passport (`ParamSpec`), and for a quantity
+without a passport they SHALL be declared in ONE place next to its definition and passed to the row as
+an argument; writing them into the drawing code MUST NOT be done.
+The six densest forms (the effect chain, morpher, transition, camera, project settings,
+render) SHALL be laid out on the model of the "Transform" section: collapsible groups, pairs
+on one line, a unit for every number, a slider for a quantity with both limits, reset
+in one action. The other windows of the registry are NOT subject to re-layout, but they obey the form contract.
+Why: R.63, the owner's words: "I forbid any agents to spawn any additional windows without an obvious purpose (like the window on closing the program)";
+"why does the agent… force him to enter all the parameters again"; "duck under a track…
+why didn't you simply name it properly"; "meaningless copy-pastes of the same code keep piling up everywhere". R.65: the ducking snapshot was taken together with its own parameter memory — a live instrument has its memory by construction, and a second one (in the store) would diverge from the project. R.66 (the owner's direct request of R.64 "go over this in all the other widgets and windows too"): prose about the look of a form does not work — by that point the scrolling of the body existed in exactly one window out of twenty-one, and it was added only after a test dropped a window with buttons hidden behind the edge.
 
-Новое окно (`egui::Window`, `Modal`) SHALL заводиться только с записью в реестре окон
-(`src/apps/kt-app/src/reach_tests.rs`, `WINDOWS`): id, что в нём и ПОЧЕМУ без окна нельзя;
-сторож SHALL перечислять все места создания окон в исходниках kt-app и падать на месте
-вне реестра. Вещи, у которых уже есть место (полоса цепочки, окно дорожки, панель, строка
-состояния), MUST NOT получать своё окно. Инструмент с параметрами (рендер, анализ) SHALL
-помнить последние введённые параметры в пользовательском хранилище и подставлять их при
-следующем вызове; инструмент, результат которого — огибающая, SHALL отдавать её обычными
-кривыми автоматизации. Название пункта, инструмента и окна SHALL быть общепринятым
-отраслевым именем (Vegas/Premiere/Resolve/FCP), а не описанием механики.
-Прибор, который уже есть в программе, SHALL показывать новую функцию собой, а не копией
-своих полей: дакинг — это КОМПРЕССОР С КЛЮЧЕВЫМ ВХОДОМ в цепочке дорожки, показанный
-своим же виджетом рядом с компрессором дорожки-ключа. Параметры такого инструмента живут в
-ПРОЕКТЕ (они и есть содержимое — цепочка дорожки) и ходят через undo; хранилище рабочего
-места для них не заводится — «помнить введённое» здесь обеспечено самим проектом.
-Настройка живого прибора SHALL быть достижима оттуда, где человек уже стоит: окно
-аудиодорожки и её полоса цепочки; отказ (цикл, ключ на самой себе, исчезнувшая дорожка)
-SHALL называться словами, а не гаснуть молча.
-ФОРМА ОКНА SHALL подчиняться одному контракту, общему для всех окон реестра:
-тело окна прокручивается, а кнопки действия («Закрыть», «Отмена», «Применить», «Рендер»,
-«Восстановить») живут ВНЕ прокрутки и остаются нажимаемыми при любой высоте экрана —
-окно, переросшее экран, MUST NOT прятать свои действия. Числовое поле SHALL рисоваться
-ОБЩИМ рядом виджетов; собственных `DragValue` вне общего виджета в окнах не бывает.
-Пределы, шаг и единица SHALL приходить из паспорта параметра (`ParamSpec`), а у величины
-без паспорта — объявляться ОДНИМ местом рядом с её определением и передаваться ряду
-аргументом; вписывать их в код отрисовки MUST NOT.
-Шесть самых плотных форм (цепочка эффектов, морфер, переход, камера, настройки проекта,
-рендер) SHALL быть выложены по образцу раздела «Трансформация»: свёртываемые группы, пары
-одной строкой, единица у каждого числа, ползунок у величины с обоими пределами, сброс
-одним действием. Остальные окна реестра под перевёрстку НЕ попадают, но контракту формы
-подчиняются.
-Почему: Р.63, слова владельца: «Я ставлю запрет любым агентам порождать какие-либо
-дополнительные окна без очевидного смысла (по типу окна при закрытии программы)»;
-«почему агент… вынуждает его вводить все параметры заново»; «duck under a track…
-почему ты нормально это не назвал»; «повсюду копятся бессмысленные копипасты одного и того
-же кода». Р.65: снимок дакинга снят вместе со своей памятью параметров — у живого прибора
-память есть по построению, и вторая (в хранилище) разошлась бы с проектом. Р.66 (прямая
-просьба владельца Р.64 «во всех других виджетах и окнах тоже пройтись надо будет»): проза
-про вид формы не работает — прокрутка тела к тому моменту была ровно у одного окна из
-двадцати одного, и её завели только после того, как тест уронил окно со спрятанными за
-кромкой кнопками.
-
-#### Scenario: Реестр окон
-- **WHEN** сканируются исходники kt-app на `egui::Window::new` и `Modal::new`; временно добавляется окно без записи; из реестра удаляется запись живого окна
-- **THEN** каждое место создания окна найдено в реестре с причиной длиной ≥ 25 символов; оба нарушения красны; окна `duck` и `inst_params` в реестре отсутствуют и в коде их нет
+#### Scenario: The window registry
+- **WHEN** the kt-app sources are scanned for `egui::Window::new` and `Modal::new`; a window without an entry is temporarily added; the entry of a live window is removed from the registry
+- **THEN** each place of window creation is found in the registry with a reason of at least 25 characters; both violations are red; the windows `duck` and `inst_params` are absent from the registry and do not exist in the code
 - **TEST** t757 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Инструмент помнит параметры и отдаёт кривые
-- **WHEN** рабочее место (ширина метров, вид проекта) проходит круг через файл хранилища, и файл без секции читается заново; отдельно — сайдчейн-компрессор дорожки: ключ и параметры правятся в окне дорожки
-- **THEN** настройки рабочего места вернулись, файл без секции читается по-прежнему; параметры сайдчейна лежат в ПРОЕКТЕ (цепочка дорожки), ходят через undo и правятся общим виджетом параметров — второй их копии в пользовательском хранилище нет
+#### Scenario: A tool remembers its parameters and delivers curves
+- **WHEN** the workspace (the meters' width, the project view) goes round a loop through the store file, and a file without the section is read again; separately — the track's sidechain compressor: the key and the parameters are edited in the track's window
+- **THEN** the workspace settings have returned, a file without the section is still read as before; the sidechain parameters live in the PROJECT (the track's chain), go through undo and are edited by the common parameter widget — there is no second copy of them in the user store
 - **TEST** t756b (`src/apps/kt-app/src/user_store.rs`), t775 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Имена — по отрасли
-- **WHEN** сканируются каталоги на слова, описывающие механику вместо имени («under a track», «под дорожкой», «snapshot of» в названиях пунктов)
-- **THEN** названий пунктов меню и окон с такими оборотами нет; у пунктов, чьи имена введены Р.63, есть все пять переводов
+#### Scenario: Names — by industry
+- **WHEN** the catalogs are scanned for words describing the mechanics instead of a name ("under a track", "Russian: "under a track"", "snapshot of" in the names of items)
+- **THEN** there are no menu items or windows with such phrases in their names; the items whose names were introduced by R.63 have all five translations
 - **TEST** t756c (`src/apps/kt-app/src/i18n_tests.rs`)
 
-#### Scenario: Сайдчейн достижим и объясняет отказ
-- **WHEN** сканируются окно аудиодорожки и её полоса цепочки на путь «назначить ключ»; делается попытка выбрать саму себя и дорожку, дающую цикл; живой сценарий ставит дакинг руками и слушает результат
-- **THEN** путь найден из обоих мест и ведёт в одну команду; невозможный выбор назван причиной в строке состояния, а не отсутствует молча; живой сценарий показывает, что музыка просела под речью и вернулась после неё
-- **TEST** t777 (`src/apps/kt-app/src/reach_tests.rs`), `src/scripts/live/sidechain.py` (живой сценарий, `./scripts/live-check.sh`)
+#### Scenario: The sidechain is reachable and explains a refusal
+- **WHEN** the audio track's window and its chain strip are scanned for the path "assign key"; an attempt is made to choose the track itself and a track that gives a cycle; a live scenario sets ducking by hand and listens to the result
+- **THEN** the path is found from both places and leads to one command; an impossible choice is named as a reason in the status line, rather than being silently absent; the live scenario shows that the music dipped under the speech and came back after it
+- **TEST** t777 (`src/apps/kt-app/src/reach_tests.rs`), `src/scripts/live/sidechain.py` (live scenario, `./scripts/live-check.sh`)
 
-#### Scenario: Контракт формы — по всем окнам реестра
-- **WHEN** каждое окно реестра `WINDOWS` открывается в НИЗКОМ окне; отдельно сканируются исходники kt-app на `egui::DragValue::new` вне `widgets.rs`
-- **THEN** у каждого окна кнопки действия видны в пределах экрана, тело живёт в прокрутке; окно, закрывающееся крестиком заголовка, и окно, короткое ПО ПОСТРОЕНИЮ, объявлены явно — с причиной и измеримым порогом строк; ни одного собственного `DragValue` вне общего виджета не найдено
-- **TEST** t779 (`src/apps/kt-app/src/reach_tests.rs`), `src/scripts/live/forms.py` (живой сценарий: кнопки видны и жмутся в настоящем низком окне)
+#### Scenario: The form contract — across all windows of the registry
+- **WHEN** each window of the `WINDOWS` registry is opened in a LOW window; separately the kt-app sources are scanned for `egui::DragValue::new` outside `widgets.rs`
+- **THEN** for each window the action buttons are visible within the screen, the body lives in a scroll; a window closed by the title's cross, and a window that is short BY CONSTRUCTION, are declared explicitly — with a reason and a measurable row threshold; not a single own `DragValue` outside the common widget is found
+- **TEST** t779 (`src/apps/kt-app/src/reach_tests.rs`), `src/scripts/live/forms.py` (live scenario: the buttons are visible and clickable in a real low window)
 
-#### Scenario: Шесть плотных форм выложены по образцу
-- **WHEN** открываются окна цепочки эффектов, морфера, перехода, камеры, настроек проекта и рендера
-- **THEN** у каждого есть свёртываемые группы, пары значений одной строкой, единица у каждого числа и ползунок у величины с обоими пределами; свёртка — состояние окна, не проекта; пределы совпадают с паспортом параметра
-- **TEST** t780 (`src/apps/kt-app/src/layout_tests.rs`), `src/scripts/live/forms.py` (живой сценарий: группа сворачивается и разворачивается)
+#### Scenario: Six dense forms are laid out on the model
+- **WHEN** the windows of the effect chain, morpher, transition, camera, project settings and render are opened
+- **THEN** each has collapsible groups, value pairs on one line, a unit for every number, and a slider for a quantity with both limits; the collapse state is the window's state, not the project's; the limits coincide with the parameter's passport
+- **TEST** t780 (`src/apps/kt-app/src/layout_tests.rs`), `src/scripts/live/forms.py` (live scenario: a group collapses and expands)
 
-### Requirement: Двери файла проекта — «Открыть» только свой формат, импорт одной дверью, экспорт названным действием
+### Requirement: Project file doors — "Open" only accepts our own format, import through one door, export as a named action
+"Open" (the menu, launch with a file, a drop onto the window) SHALL accept only a PROJECT file
+(`.kt`). An exchange file `.otio` and the legacy `.ktproj` SHALL be rejected with the kind of file and the name
+of the import item in the error text (rule 19), each with its own text; a file of a newer
+format version — with the version number and without a partial read. The item "Import older Kinetren
+project…" SHALL be ONE door for four inputs — the legacy `.ktproj`, our `.otio` of any
+envelope version, a foreign `.otio`, and a `.kt` with the former marker `kinotrain` (before the rename
+to Kinetren, 2026-10-21); the result SHALL open as an UNNAMED document of its own
+format with the edits flag raised and the hint "save as `<name>.kt` next to
+the source", and the source MUST NOT change; a project file of the current marker does not go through this door — the error
+names "Open"; "Open" rejects a file with the former marker, naming Kinotrain and
+the import item. Export to OTIO SHALL be a separate item `File → Export →
+OpenTimelineIO…`, named by industry; it MUST NOT change the project file, its path or its asterisk. A `.kt`, `.otio` and `.ktproj` dropped onto the window SHALL lead to three different outcomes.
+The dialog filters SHALL know the `.kt` extension, the import filter — both foreign ones.
+Why: the owner's decision (R.70) — "we are moving away from the otio format, we keep otio only for
+export"; a document after import has no project file, and writing `.kt` under a foreign name or
+quietly putting it alongside cannot be done — the name is chosen by the person in the dialog; the second
+item "Import .ktproj…" was an extra door with the same meaning.
 
-«Открыть» (меню, запуск с файлом, дроп на окно) SHALL принимать только файл ПРОЕКТА
-(`.kt`). Файл обмена `.otio` и легаси `.ktproj` SHALL отвергаться с видом файла и именем
-пункта импорта в тексте ошибки (правило 19), каждый своим текстом; файл более новой
-версии формата — с номером версии и без частичного чтения. Пункт «Import older Kinetren
-project…» SHALL быть ОДНОЙ дверью на четыре входа — легаси `.ktproj`, наш `.otio` любой
-версии конверта, чужой `.otio` и `.kt` с прежним признаком `kinotrain` (до переименования
-в Kinetren, 2026-10-21); результат SHALL открываться БЕЗЫМЯННЫМ документом своего
-формата с поднятым флагом правок и подсказкой «сохраниться в `<имя>.kt` рядом с
-исходником», исходник MUST NOT меняться; файл проекта нынешнего признака в эту дверь не идёт — ошибка
-называет «Открыть»; «Открыть» файл с прежним признаком отвергает с именем Kinotrain и
-пункта импорта. Экспорт в OTIO SHALL быть отдельным пунктом `File → Export →
-OpenTimelineIO…`, названным по отрасли; он MUST NOT менять файл проекта, его путь и
-звёздочку. Брошенные на окно `.kt`, `.otio` и `.ktproj` SHALL вести в три разных исхода.
-Фильтры диалогов SHALL знать расширение `.kt`, фильтр импорта — оба чужих.
-Почему: решение владельца (Р.70) — «мы уходим от otio-формата, оставляем otio только на
-экспорт»; у документа после импорта нет файла проекта, и писать `.kt` под чужим именем или
-молча класть его рядом нельзя — имя выбирает человек в диалоге; второй пункт
-«Импортировать .ktproj…» был лишней дверью с тем же смыслом.
-
-#### Scenario: «Открыть» принимает только свой формат и называет дверь
-- **WHEN** «Открыть» получает файл `.kt`; отдельно — экспортированный `.otio`, легаси `.ktproj` и `.kt` с версией больше нынешней
-- **THEN** первый открывается поле-в-поле с путём проекта; второй и третий отвергаются с именем пункта импорта и видом файла (тексты разные); четвёртый — с номером версии и без имени импорта
-- **ПУТЬ** File → Open → `film.otio` → окно ошибки: «файл OpenTimelineIO, а не проект — откройте через File / Import older Kinetren project…» → File → Open → `film.kt` → таймлайн с монтажом, имя проекта в заголовке
+#### Scenario: "Open" accepts only its own format and names the door
+- **WHEN** "Open" receives a `.kt` file; separately — an exported `.otio`, the legacy `.ktproj`, and a `.kt` with a version higher than the current one
+- **THEN** the first opens field by field with the project's path; the second and third are rejected with the name of the import item and the kind of file (the texts differ); the fourth — with the version number and without the import item's name
+- **PATH** File → Open → `film.otio` → error window: "an OpenTimelineIO file, not a project — open it via File / Import older Kinetren project…" → File → Open → `film.kt` → timeline with the edit, the project name in the title
 - **TEST** t818 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Одна дверь импорта на три входа
-- **WHEN** через «Import older Kinetren project…» по очереди подаются легаси `.ktproj`, наш `.otio` старой версии конверта и чужой `.otio` с незнакомыми полями; затем — файл `.kt`
-- **THEN** каждый из трёх открывается документом без пути, с подсказкой сохранения `<имя>.kt` рядом с исходником и звёздочкой, исходник байт-в-байт прежний, чужие поля — в passthrough; в меню «Файл» дверь одна (пункта «Импортировать .ktproj…» нет); файл `.kt` отвергнут с именем «Открыть»
-- **ПУТЬ** File → Import older Kinetren project… → `old.otio` → таймлайн с событиями, в заголовке «untitled *» → Ctrl+S → диалог предлагает `old.kt` рядом с исходником
-- **TEST** t819 (`src/apps/kt-app/src/reach_tests.rs`), живой сценарий `src/scripts/live/import_old.py`
+#### Scenario: One import door for three inputs
+- **WHEN** through "Import older Kinetren project…" the legacy `.ktproj`, our `.otio` of an old envelope version and a foreign `.otio` with unfamiliar fields are fed in turn; then — a `.kt` file
+- **THEN** each of the three opens as a document without a path, with the save hint `<name>.kt` next to the source and an asterisk, the source is byte-for-byte as before, the foreign fields — in passthrough; in the "File" menu there is one door (there is no item "Import .ktproj…"); the `.kt` file is rejected with the name "Open"
+- **PATH** File → Import older Kinetren project… → `old.otio` → timeline with events, title "untitled *" → Ctrl+S → the dialog offers `old.kt` next to the source
+- **TEST** t819 (`src/apps/kt-app/src/reach_tests.rs`), live scenario `src/scripts/live/import_old.py`
 
 #### Scenario: A project saved under the former name
-- **WHEN** «Open» gets a `.kt` whose root key is the former `kinotrain`; then «Import older Kinetren project…» gets the same file
-- **THEN** «Open» refuses it with a text naming Kinotrain as the former name and the import item; the import opens it as an untitled document with the star and the `<name>.kt` save hint, events and tracks equal to the file; the file's bytes are unchanged
-- **ПУТЬ** File → Open → `old.kt` → error window: «a project of Kinotrain (the former name) — use File → Import older Kinetren project…» → File → Import older Kinetren project… → `old.kt` → timeline with the edit, title «untitled *»
+- **WHEN** "Open" gets a `.kt` whose root key is the former `kinotrain`; then "Import older Kinetren project…" gets the same file
+- **THEN** "Open" refuses it with a text naming Kinotrain as the former name and the import item; the import opens it as an untitled document with the star and the `<name>.kt` save hint, events and tracks equal to the file; the file's bytes are unchanged
+- **PATH** File → Open → `old.kt` → error window: «a project of Kinotrain (the former name) — use File → Import older Kinetren project…» → File → Import older Kinetren project… → `old.kt` → timeline with the edit, title «untitled *»
 - **TEST** t832 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Экспорт в OTIO из меню
-- **WHEN** открывается меню «Файл» → подменю «Экспорт» → «OpenTimelineIO…» и называется файл; проект при этом с несохранёнными правками и чужим passthrough, лента в двух экземплярах
-- **THEN** пункт достижим и назван «OpenTimelineIO…»; файл обмена записан: `Timeline.1`, два `Stack` с непустыми телами, чужие поля возвращены; файл проекта байт-в-байт прежний, путь и звёздочка не тронуты; уведомление называет путь экспорта; «Открыть» этот файл отвергает
-- **ПУТЬ** File → Export → OpenTimelineIO… → диалог сохранения → имя файла → уведомление «экспортировано: …», звёздочка в заголовке как была
-- **TEST** t820 (`src/apps/kt-app/src/reach_tests.rs`), живой сценарий `src/scripts/live/export_otio.py`
+#### Scenario: Export to OTIO from the menu
+- **WHEN** the "File" menu → the "Export" submenu → "OpenTimelineIO…" is opened and a file is named; the project, meanwhile, has unsaved edits and a foreign passthrough, and the reel is in two instances
+- **THEN** the item is reachable and named "OpenTimelineIO…"; the exchange file is written: `Timeline.1`, two `Stack`s with non-empty bodies, the foreign fields are returned; the project file is byte-for-byte as before, the path and the asterisk are untouched; the notification names the export path; "Open" rejects this file
+- **PATH** File → Export → OpenTimelineIO… → save dialog → file name → notification "exported: …", the asterisk in the title as it was
+- **TEST** t820 (`src/apps/kt-app/src/reach_tests.rs`), live scenario `src/scripts/live/export_otio.py`
 
-#### Scenario: Три файла на окно — три исхода
-- **WHEN** на окно по очереди бросаются `film.kt`, `film.otio`, `film.ktproj`
-- **THEN** первый даёт вопрос «открыть или вставить композицией», монтаж не тронут; второй — уведомление с видом файла (OpenTimelineIO) и именем пункта импорта, без вопроса; третий — уведомление про легаси с тем же пунктом; тексты второго и третьего разные
-- **ПУТЬ** перетащить `film.otio` на окно → в колокольчике: «файл OpenTimelineIO, а не проект — откройте через File / Import older Kinetren project…» → перетащить `film.kt` → окно «Брошен проект: открыть или вставить композицией?»
+#### Scenario: Three files on the window — three outcomes
+- **WHEN** `film.kt`, `film.otio`, `film.ktproj` are dropped onto the window in turn
+- **THEN** the first gives the question "open or insert as a composition", the edit is untouched; the second — a notification with the kind of file (OpenTimelineIO) and the name of the import item, without a question; the third — a notification about the legacy format with the same item; the texts of the second and third differ
+- **PATH** drag `film.otio` onto the window → in the bell: «an OpenTimelineIO file, not a project — open it via File / Import older Kinetren project…» → drag `film.kt` → the window "Project dropped: open or insert as a composition?"
 - **TEST** t821 (`src/apps/kt-app/src/reach_tests.rs`)
 
-### Requirement: Импорт проекта старой версии — своя дверь; «Открыть» отвергает с адресом
+### Requirement: Import of an old-version project — its own door; "Open" rejects it with the address
+The "File" menu SHALL have the item "Import older Kinetren project…" (the industry name —
+"Import project", as in Premiere/Resolve), which reads an envelope file of the PREVIOUS version,
+applying repairs of the old forms, and opens it as an UNNAMED document of the current form
+(R.70: of its own `.kt` format) with the "has edits" flag raised and a hint to save it as
+`<name>.kt` next to the source (the next record goes in the new form; the source
+is not touched). An ordinary "Open" SHALL reject such a file with the file's version and with the name of the
+import item in the error text (rule 19: the dialog says where to change the decision), rather than
+"metadata.kt is unreadable". The item SHALL be in the verb registry and reachable from the menu and from the
+open-error window.
+Why: the owner's decision (R.67): "make an item in the File menu for importing old versions, and
+fix it precisely in the import so that the reader can read it normally". R.70: the old path
+no longer suits the document — it points to the exchange file, while the project is written in its own
+format under its own name.
 
-В меню «File» SHALL быть пункт «Import older Kinetren project…» (отраслевое имя —
-«Import project», как у Premiere/Resolve), который читает файл конверта ПРЕЖНЕЙ версии,
-применяя починки старых форм, и открывает его как БЕЗЫМЯННЫЙ документ текущей формы
-(Р.70: своего формата `.kt`) с поднятым флагом «есть правки» и подсказкой сохраниться в
-`<имя>.kt` рядом с исходником (следующая запись идёт новой формой, исходник не
-трогается). Обычное «Open» такой файл SHALL отвергать с версией файла и с именем пункта
-импорта в тексте ошибки (правило 19: диалог говорит, где изменить решение), а не
-«metadata.kt is unreadable». Пункт SHALL быть в реестре глаголов и достижим из меню и из
-окна ошибки открытия.
-Почему: решение владельца (Р.67): «делай пункт в меню File для импорта старых версий, и
-именно в импорте чини чтобы ридеру было нормально это читать». Р.70: прежний путь
-документу больше не подходит — он указывает на файл обмена, а проект пишется своим
-форматом под своим именем.
+#### Scenario: An old file through import, "Open" names the door
+- **WHEN** a v5 file with `targets: null` on the morphers (the form `untitled2_v26.09.26.otio`) is opened via "Open"; then via "Import older Kinetren project…"
+- **THEN** "Open" rejects it with a text containing the file's version (5) and the name of the import item; the import opens the project: morphers with `null` act on "everything below", the number of events and morphers equals the file's, the document has no path and carries the `<name>.kt` hint, the title bears the asterisk, saving writes its own format, and the next "Open" already reads the file itself
+- **PATH** File → Open → old file → error window: "version 5; use File → Import older Kinetren project…" → File → Import older… → the same file → timeline with events and morphers, title "untitled *"
+- **TEST** t783 (`src/apps/kt-app/src/reach_tests.rs`), t783b (`src/libs/kt-otio/tests/convert.rs`), live scenario `src/scripts/live/import_old.py`
 
-#### Scenario: Старый файл через импорт, «Открыть» называет дверь
-- **WHEN** файл v5 с `targets: null` у морферов (форма `untitled2_v26.09.26.otio`) открывается через «Open»; затем через «Import older Kinetren project…»
-- **THEN** «Open» отвергает с текстом, в котором есть версия файла (5) и имя пункта импорта; импорт открывает проект: морферы с `null` действуют на «всё, что ниже», число событий и морферов равно файлу, документ без пути с подсказкой `<имя>.kt`, заголовок несёт звёздочку, сохранение пишет свой формат и следующий «Open» уже читает файл сам
-- **ПУТЬ** File → Open → старый файл → окно ошибки: «версия 5; используйте File → Import older Kinetren project…» → File → Import older… → тот же файл → таймлайн с событиями и морферами, в заголовке «untitled *»
-- **TEST** t783 (`src/apps/kt-app/src/reach_tests.rs`), t783b (`src/libs/kt-otio/tests/convert.rs`), живой сценарий `src/scripts/live/import_old.py`
+### Requirement: User path for a new UI scenario; live scenario screenshots in the report
+Every scenario of a UI capability (`ui-timeline`, `ui-reach`) whose test lives in
+`src/apps/kt-app/` AND has the number t783 or higher SHALL carry a line `- **PATH**` —
+the sequence of the person's actions (where to click, what to drag) and what they SEE after
+each step; without it the spec check SHALL be red (the guard is a script run by the
+test and by `finish.sh`). A scenario where there is no gesture at all (the spec guard, the production
+of the report) carries on the same line a REASON in words — and it is measurable: a reason shorter than
+forty characters is not accepted, otherwise the excuse would become cheaper than the description. The threshold is by number, not "for everyone":
+the numbering is continuous and monotonic, and the rule applies from the round in which it was introduced — rewriting two hundred earlier scenarios for the sake of form is pointless.
+Live scenarios SHALL save a screenshot for each step of `PATH` into `target/live-out/`, and
+`finish.sh` SHALL print the list of these files after the version; the agent's report on UI work carries
+these screenshots. The run goes on OUR fixture projects, not on the owner's projects.
+Why: R.67, the owner: "HOW MANY TIMES DO I HAVE TO REPEAT THAT ALL AGENTS SHOULD THINK ABOUT THE USER FIRST? … THIS IS COORDINATE-LEVEL, IT NEEDS CHANGING!" — and his choice: both mechanisms, "but not on
+my projects". The rule in prose (checklist, R.40) held for seven rounds and did not work:
+the check "what the person sees" must be part of the text of the contract and part of the report.
 
-### Requirement: Путь пользователя у нового UI-сценария; скриншоты живых сценариев в отчёте
+#### Scenario: The guard of the user path
+- **WHEN** the specs are checked; temporarily the `PATH` line is removed from a new UI scenario; separately — for a scenario before t783
+- **THEN** the check is green on the current specs; removal from a new scenario is red with the address of the file and the scenario; for an old scenario — not required (the numbering is monotonic, the threshold is measurable)
+- **PATH** there is no gesture: the guard reads the texts of the specs and fails on a scenario without a described path — it is verified by running the script, not by mouse
+- **TEST** t799 (`src/apps/kt-app/src/reach_tests.rs`, calls `src/scripts/specs-user-path.py --check`)
 
-Каждый сценарий UI-capability (`ui-timeline`, `ui-reach`), чей тест живёт в
-`src/apps/kt-app/` И имеет номер t783 или выше, SHALL нести строку `- **ПУТЬ**` —
-последовательность действий человека (куда кликнуть, что потянуть) и что он ВИДИТ после
-каждого шага; без неё проверка спек SHALL быть красной (сторож — скрипт, запускаемый
-тестом и `finish.sh`). У сценария, где жеста нет вовсе (сторож спек, производство
-отчёта), в той же строке стоит ПРИЧИНА словами — и она измерима: короче сорока символов
-причина не принимается, иначе отговорка стала бы дешевле описания. Порог по номеру, а не
-«у всех»: нумерация сквозная и монотонная, и правило действует с раунда, в котором
-заведено, — переписывать две сотни прежних сценариев ради формы незачем.
-Живые сценарии SHALL сохранять скриншот на каждый шаг `ПУТЬ` в `target/live-out/`, а
-`finish.sh` SHALL печатать список этих файлов после версии; отчёт агента о UI-работе несёт
-эти скриншоты. Прогон идёт на НАШИХ проектах-фикстурах, не на проектах владельца.
-Почему: Р.67, владелец: «СКОЛЬКО РАЗ МНЕ ПОВТОРЯТЬ ЧТОБЫ ВСЕ АГЕНТЫ ДУМАЛИ О ПОЛЬЗОВАТЕЛЕ В
-ПЕРВУЮ ОЧЕРЕДЬ? … ЭТО КООРДИНАЛЬНО НАДО МЕНЯТЬ!» — и его выбор: оба механизма, «но не на
-моих проектах». Правило прозой (чек-лист, Р.40) держалось семь раундов и не сработало:
-проверка «что видит человек» обязана быть частью текста контракта и частью отчёта.
+#### Scenario: Step screenshots in the report
+- **WHEN** a live scenario with `PATH` steps is run; then `finish.sh`
+- **THEN** `target/live-out/<scenario>/` contains one file per step with the step's number and name; `finish.sh` prints their list after the version line; the list is non-empty for each scenario of the round
+- **PATH** there is no gesture: it is verified by the fact that after the run the step files lie in `target/live-out/<scenario>/`, and `finish.sh` prints their list
+- **TEST** live scenarios `src/scripts/live/curves.py`, `stills.py`, `import_old.py` (`./scripts/live-check.sh`), `src/scripts/finish.sh`
 
-#### Scenario: Сторож пути пользователя
-- **WHEN** проверяются спеки; временно у нового UI-сценария удаляется строка `ПУТЬ`; отдельно — у сценария до t783
-- **THEN** проверка зелёная на текущих спеках; удаление у нового сценария — красный с адресом файла и сценария; у старого сценария — не требуется (нумерация монотонна, порог измерим)
-- **ПУТЬ** жеста нет: сторож читает тексты спек и падает на сценарии без описанного пути — проверяется запуском скрипта, а не мышью
-- **TEST** t799 (`src/apps/kt-app/src/reach_tests.rs`, зовёт `src/scripts/specs-user-path.py --check`)
+### Requirement: Live rig: the process is reused, waiting follows the FRAME, not the clock
+The live check SHALL keep one kt-app process per worker and open projects in it ONE AFTER ANOTHER, instead of a cold start for each scenario. Opening a project in the bench SHALL
+bring the program to a clean state (closed windows, a reset workspace), and the
+scenario SHALL receive proof of cleanliness before the first gesture: the bench reports readiness, the number of open windows equals zero, and the open project is the one that was requested. A scenario
+that checks the program's OWN start (recovery after a crash, the question about
+unsaved work, the project lock, importing a file of an earlier version) SHALL declare "its own
+process" and obtain it; the declaration is part of the scenario, not a setting of the run.
 
-#### Scenario: Скриншоты шагов в отчёте
-- **WHEN** прогоняется живой сценарий с шагами `ПУТЬ`; затем `finish.sh`
-- **THEN** в `target/live-out/<сценарий>/` лежит по файлу на шаг с номером и названием шага; `finish.sh` печатает их список после строки версии; список непуст для каждого сценария раунда
-- **ПУТЬ** жеста нет: проверяется тем, что после прогона в `target/live-out/<сценарий>/` лежат файлы шагов, а `finish.sh` печатает их список
-- **TEST** живые сценарии `src/scripts/live/curves.py`, `stills.py`, `import_old.py` (`./scripts/live-check.sh`), `src/scripts/finish.sh`
+The wait after a gesture SHALL be bound to an OBSERVED event of the program — the number of
+input events read, the number of the drawn frame, the appearance of a widget in the geometry dump or
+a change of a pixel — rather than to a fixed pause. This SHALL apply also to the GESTURE ITSELF:
+a click, right click, double click, drag, key, wheel and hover wait until the
+program has READ their events, rather than for as long as a frame "usually" takes. The program SHALL
+report, next to the geometry dump, AND the number of the drawn frame, AND the number of input events it has read: one frame
+is not enough — it could have STARTED before the event arrived from the X server, and "frame drawn" then does not
+mean "gesture seen". The wait for "the program has reacted" SHALL be counted by the silence between
+frames, and this silence SHALL be measured in OBSERVED frame steps, not in seconds: under
+load a frame takes three times as long, and a fixed threshold would declare the program calm
+in the middle of drawing. A line of text SHALL
+arrive at the program whole, not character by character with a pause for each. The window SHALL be raised
+on a CHANGE of window and on the first gesture of a scenario, not before every gesture: raising is a round trip
+to the X server and its own pause, while the window between two consecutive clicks does not change.
 
-### Requirement: Живой стенд: процесс переиспользуется, ожидание идёт по КАДРУ, а не по часам
+Fixed pauses SHALL be enumerable THROUGHOUT the live check — in the harness, in the scenarios
+and in the mouse and keyboard driver: sleep hidden in the driver is no different from sleep in the
+harness, and a rule that does not see it holds less than it promises. Each remaining
+pause SHALL carry a REASON in words (a gesture that has no observable consequence, for example
+egui's timing threshold of a double click, or a step of a drag between positions), and the guard SHALL fail
+on a pause without a reason. The reasons SHALL NOT be the ONLY measure: the total fixed
+sleep of the run SHALL be computed by the machine, printed, and have a DECLARED LIMIT, exceeding
+which is red. The limit is a ratchet, not a knife: a new pause either fits within it, or the
+limit is moved deliberately, in one line and with a reason.
 
-Живая проверка SHALL держать один процесс kt-app на работника и открывать в нём проекты
-ПОДРЯД, вместо холодного старта на каждый сценарий. Открытие проекта в стенде SHALL
-приводить программу к чистому состоянию (закрытые окна, сброшенное рабочее место), и
-сценарий SHALL получать доказательство чистоты до первого жеста: стенд сообщает
-готовность, число открытых окон равно нулю, а открытый проект — тот, который просили. Сценарий,
-который проверяет САМ старт программы (восстановление после падения, вопрос о
-несохранённой работе, замок проекта, импорт файла прежней версии), SHALL объявлять «свой
-процесс» и получать его; объявление — часть сценария, а не настройка прогона.
+Reading a POINT or a small area of the screen SHALL go by a direct request to the X server, rather than
+by a snapshot of the whole screen parsed by an external tool. The screenshot (`xwd`) SHALL
+remain the REFERENCE: the program's window has a 32-bit visual, and reading the root window was already
+returning BLACK where the picture was — the direct path is accepted only after a cross-check
+against the reference ON ONE AND THE SAME frame, and a discrepancy returns the reading to the reference. Snapshots for
+artifacts and for the `PATH` steps remain snapshots.
 
-Ожидание после жеста SHALL быть привязано к НАБЛЮДАЕМОМУ событию программы — числу
-прочитанных событий ввода, номеру нарисованного кадра, появлению виджета в дампе геометрии
-или изменению пикселя, — а не к фиксированной паузе. Это SHALL относиться и к САМОМУ
-ЖЕСТУ: клик, правый клик, двойной клик, драг, клавиша, колесо и наведение ждут, пока
-программа ПРОЧИТАЕТ их события, а не столько, сколько кадр идёт «обычно». Программа SHALL
-сообщать рядом с дампом
-геометрии И номер нарисованного кадра, И число прочитанных ею событий ввода: одного кадра
-мало — он мог НАЧАТЬСЯ раньше, чем событие доехало от X-сервера, и «кадр нарисован» тогда не
-значит «жест увиден». Ожидание «программа дореагировала» SHALL считаться по тишине между
-кадрами, и эта тишина SHALL измеряться в НАБЛЮДАЕМЫХ шагах кадра, а не в секундах: под
-нагрузкой кадр идёт втрое дольше, и фиксированный порог объявил бы программу успокоившейся
-посреди отрисовки. Набор строки SHALL
-доезжать до программы целиком, а не по символу с паузой на каждый. Окно SHALL подниматься
-при СМЕНЕ окна и на первом жесте сценария, а не перед каждым жестом: поднятие — это круг к
-X-серверу и своя пауза, а окно между двумя кликами подряд не меняется.
+The bench's test channel SHALL be switched on
+only by an environment variable and SHALL have no effect in the product.
+Why: R.68 measured that 96 % of the live run's time is sleep: `nestparam` 136 s with 130 s of
+sleep in 591 calls, `curvesrc` 43 s with 42 s of sleep, `level` 4.7 s with 4.2 s of sleep. The pauses were
+tuned to software rendering ("a frame takes ~0.2 s"), that is, the harness waited HOURS for what
+the program could have said itself; the same blindness also gives false reds under load.
+The owner: "cut down the restarts of kt (you can open projects one after another, after all)".
+R.69: the wait on an event reached the probes but did not reach the gestures — 387 s out of a 1582 s
+sequential run remained sleep (click 0.78 s, key 0.77 s, drag 2.55 s, typing
+a line 0.77 s per character), and 123 s of them lived in the X driver, where the guard did not look. All
+265 s in the harness were at the same time "legitimate": each pause had a reason longer than forty
+characters. Prose did not hold — the exception must be MEASURABLE (the same lesson as
+the window registry of R.66 and the PATH guard of R.67).
 
-Фиксированные паузы SHALL быть перечислимы ВО ВСЕЙ живой проверке — в каркасе, в сценариях
-и в драйвере мыши и клавиатуры: сон, спрятанный в драйвере, ничем не отличается от сна в
-каркасе, и правило, которое его не видит, держит меньше, чем обещает. Каждая оставшаяся
-пауза SHALL нести ПРИЧИНУ словами (жест, у которого нет наблюдаемого следствия, например
-временной порог двойного клика egui или шаг драга между позициями), и сторож SHALL падать
-на паузе без причины. Причины SHALL быть НЕ ЕДИНСТВЕННОЙ мерой: суммарный фиксированный
-сон прогона SHALL считаться машиной, печататься и иметь ОБЪЯВЛЕННЫЙ ПРЕДЕЛ, превышение
-которого красное. Предел — храповик, а не нож: новая пауза либо укладывается в него, либо
-предел двигают осознанно, одной строкой и с причиной.
+#### Scenario: Projects one after another in one process, start where it is needed
+- **WHEN** a worker runs three scenarios in a row that did not declare "its own process"; then a scenario that declared it (the recovery check after SIGKILL)
+- **THEN** the first three passed in ONE kt-app process: each saw its own project, an empty list of open windows and a workspace with no traces of the previous scenario; the one that declared "its own process" got a new process and checked the start; the verdicts matched a run where each scenario started by itself
+- **PATH** the person does not see this: the scene is the run of the check; in the step screenshots of each scenario the first frame shows its own project and not a single open window from the previous one
+- **TEST** t805 (`src/apps/kt-app/src/reach_tests.rs`), live scenarios `src/scripts/live/recover.py`, `src/scripts/live/level.py` (`./scripts/live-check.sh`)
 
-Чтение ТОЧКИ или небольшой области экрана SHALL идти прямым запросом к X-серверу, а не
-снимком всего экрана с разбором внешним инструментом. Снимок экрана (`xwd`) SHALL
-оставаться ЭТАЛОНОМ: у окна программы 32-битный визуал, и чтение корневого окна уже
-отдавало ЧЁРНОЕ там, где картинка была, — прямой путь принимается только после сверки с
-эталоном НА ОДНОМ И ТОМ ЖЕ кадре, а расхождение возвращает чтение на эталон. Снимки для
-артефактов и для шагов `ПУТЬ` остаются снимками.
+#### Scenario: Waiting for the frame, not for the clock
+- **WHEN** a scenario clicks, types a line and waits for a widget to appear; separately a fixed pause without a reason is added to the harness
+- **THEN** each wait ends on an observed event (the program has read the input, the frame number has grown, the widget has appeared in the dump, the pixel has changed), the line arrived whole in one wait, and a pause without a reason makes the guard red; the total time of the live run on the same scenarios is noticeably less than before
+- **PATH** there is no gesture: the guard reads the harness and the scenarios, counts pauses without a reason and checks that the waits are bound to an event of the program
+- **TEST** t803 (`src/apps/kt-app/src/reach_tests.rs`, calls `src/scripts/live-sleeps.py --check`), live scenario `src/scripts/live/nestparam.py`
 
-Тестовый канал стенда SHALL включаться только
-переменной окружения и в продукте не действовать.
-Почему: Р.68 замерил, что 96 % времени живого прогона — сон: `nestparam` 136 с при 130 с
-сна в 591 вызове, `curvesrc` 43 с при 42 с сна, `level` 4.7 с при 4.2 с сна. Паузы
-подобраны под софт-рендер («кадр идёт ~0.2 с»), то есть каркас ждал ЧАСАМИ то, о чём
-программа могла сказать сама; та же слепота даёт и ложные покраснения под нагрузкой.
-Владелец: «сократить перезапуски kt (можно же подряд открывать проекты)».
-Р.69: ожидание по событию доехало до щупов и не доехало до жестов — 387 с из 1582 с
-последовательного прогона остались сном (клик 0.78 с, клавиша 0.77 с, драг 2.55 с, набор
-строки 0.77 с на символ), и 123 с из них жили в драйвере X, куда сторож не смотрел. Все
-265 с в каркасе при этом были «законными»: у каждой паузы стояла причина длиннее сорока
-символов. Проза не удержала — исключение обязано быть ИЗМЕРИМЫМ (тот же урок, что у
-реестра окон Р.66 и у сторожа ПУТЬ Р.67).
+#### Scenario: The gesture itself waits for the read input
+- **WHEN** the harness makes a click, right click, double click, drag, key press, wheel and hover; separately — two gestures in a row in ONE window; separately — a gesture after a change of window
+- **THEN** each gesture ends by the number of input events read by the program, not by the clock; the window is raised on the first gesture and on a change of window, and between two gestures in the same window it is not raised; the verdicts of all live scenarios match the run on the previous harness
+- **PATH** there is no gesture: the scene is the live check run itself; the guard reads the harness and asserts that the gesture has no fixed pause without a declared reason
+- **TEST** t807 (`src/apps/kt-app/src/reach_tests.rs`), cross-check run `./scripts/live-check.sh` (all scenarios, verdicts before and after)
 
-#### Scenario: Проекты подряд в одном процессе, старт — где нужен
-- **WHEN** работник прогоняет подряд три сценария, не объявивших «свой процесс»; затем сценарий, объявивший его (проверка восстановления после SIGKILL)
-- **THEN** три первых прошли в ОДНОМ процессе kt-app: каждый увидел свой проект, пустой список открытых окон и рабочее место без следов предыдущего сценария; объявивший «свой процесс» получил новый процесс и проверил старт; вердикты совпали с прогоном, где каждый сценарий стартовал сам
-- **ПУТЬ** человек этого не видит: сцена — прогон проверки; в скриншотах шагов каждого сценария первый кадр показывает его собственный проект и ни одного открытого окна от предыдущего
-- **TEST** t805 (`src/apps/kt-app/src/reach_tests.rs`), живые сценарии `src/scripts/live/recover.py`, `src/scripts/live/level.py` (`./scripts/live-check.sh`)
+#### Scenario: Sleep is enumerable across the WHOLE check and has a limit
+- **WHEN** the sleep guard reads the harness, the scenarios AND the mouse and keyboard driver; a pause without a reason is temporarily added to the driver; separately the total sleep of the run is raised above the declared limit
+- **THEN** the guard names the pause in the driver and turns red — the scope of the rule includes it on a par with the harness; the total fixed sleep is computed and printed, and exceeding the limit is red, naming the most expensive pause
+- **PATH** there is no gesture: the guard reads the sources of the live check and prints the sleep budget; it is verified by running the script, not by mouse
+- **TEST** t808 (`src/apps/kt-app/src/reach_tests.rs`, calls `src/scripts/live-sleeps.py --check`)
 
-#### Scenario: Ожидание по кадру, а не по часам
-- **WHEN** сценарий делает клик, набирает строку и ждёт появления виджета; отдельно в каркас добавляется фиксированная пауза без причины
-- **THEN** каждое ожидание кончается по наблюдаемому событию (программа прочитала ввод, номер кадра вырос, виджет появился в дампе, пиксель изменился), строка доехала целиком за одно ожидание, а пауза без причины делает сторож красным; суммарное время живого прогона на тех же сценариях заметно меньше прежнего
-- **ПУТЬ** жеста нет: сторож читает каркас и сценарии, считает паузы без причины и сверяет, что ожидания привязаны к событию программы
-- **TEST** t803 (`src/apps/kt-app/src/reach_tests.rs`, зовёт `src/scripts/live-sleeps.py --check`), живой сценарий `src/scripts/live/nestparam.py`
-
-#### Scenario: Сам жест ждёт прочитанный ввод
-- **WHEN** каркас делает клик, правый клик, двойной клик, драг, нажатие клавиши, колесо и наведение; отдельно — два жеста подряд в ОДНОМ окне; отдельно — жест после смены окна
-- **THEN** каждый жест кончается по числу событий ввода, прочитанных программой, а не по часам; окно поднимается на первом жесте и при смене окна, а между двумя жестами в одном окне не поднимается; вердикты всех живых сценариев совпадают с прогоном на прежнем каркасе
-- **ПУТЬ** жеста нет: сцена — сам прогон живой проверки; сторож читает каркас и утверждает, что у жеста нет фиксированной паузы без объявленной причины
-- **TEST** t807 (`src/apps/kt-app/src/reach_tests.rs`), сверочный прогон `./scripts/live-check.sh` (все сценарии, вердикты до и после)
-
-#### Scenario: Сон перечислим во ВСЕЙ проверке и имеет предел
-- **WHEN** сторож сна читает каркас, сценарии И драйвер мыши и клавиатуры; в драйвер временно добавляется пауза без причины; отдельно суммарный сон прогона поднимается выше объявленного предела
-- **THEN** сторож называет паузу в драйвере и краснеет — область правила включает его наравне с каркасом; суммарный фиксированный сон посчитан и напечатан, а превышение предела красное с названием самой дорогой паузы
-- **ПУТЬ** жеста нет: сторож читает исходники живой проверки и печатает бюджет сна; проверяется запуском скрипта, а не мышью
-- **TEST** t808 (`src/apps/kt-app/src/reach_tests.rs`, зовёт `src/scripts/live-sleeps.py --check`)
-
-#### Scenario: Точка экрана читается у X, а снимок остаётся эталоном
-- **WHEN** каркас читает цвет точки превью прямым запросом к X и тем же кадром — снимком `xwd`; отдельно прямой путь возвращает цвет, не совпадающий с эталоном
-- **THEN** цвета совпадают, и сценарии читают точку без снимка всего экрана; при расхождении чтение возвращается на эталон и говорит об этом, а не молча отдаёт чёрное
-- **ПУТЬ** жеста нет: сцена — чтение экрана каркасом; проверяется сверкой двух путей на одном кадре
-- **TEST** t809 (`src/apps/kt-app/src/reach_tests.rs`), живой сценарий `src/scripts/live/trans.py` (`./scripts/live-check.sh`)
+#### Scenario: A screen point is read from X, and the snapshot remains the reference
+- **WHEN** the harness reads the colour of a point of the preview by a direct request to X and, on the same frame, by the `xwd` snapshot; separately the direct path returns a colour that does not match the reference
+- **THEN** the colours match, and the scenarios read the point without a snapshot of the whole screen; on a discrepancy the reading returns to the reference and says so, rather than silently returning black
+- **PATH** there is no gesture: the scene is the harness reading the screen; it is verified by cross-checking the two paths on one frame
+- **TEST** t809 (`src/apps/kt-app/src/reach_tests.rs`), live scenario `src/scripts/live/trans.py` (`./scripts/live-check.sh`)

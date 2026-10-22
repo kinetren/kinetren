@@ -2,141 +2,135 @@
 
 ## ADDED Requirements
 
-### Requirement: Файл ПРОЕКТА — свой формат: каждая сущность записана один раз
+### Requirement: Project file — its own format: each entity written once
+The project SHALL be read and written in ITS OWN format (`.kt`), not in the interchange format. Each
+entity of the document SHALL be written ONCE: a reel is stored with its body at an address, and
+its instance on the edit is a reference to that address. The size of the file SHALL depend on the size of the
+MODEL, not on the number of instances: adding a second instance of the same reel MUST NOT
+increase the file by the size of its body.
+The file SHALL carry the VERSION of the format and a marker by which it is recognised by content, not by
+extension. An unknown (newer) version SHALL be rejected with an explicit error giving the version
+number and the name of the item with which the file can be opened — and it MUST NOT be read partially:
+"it opened, and part of the edit is missing" is worse than an honest refusal. Breaking changes of the format
+are PERMITTED (the owner's decision): a compatibility cascade with a foreign schema does not apply here.
+The foreign passthrough remnants of an imported interchange file SHALL travel in the project as a separate
+field and return on export: one cannot silently lose someone else's work.
+The file SHALL be TEXT, LINE-BY-LINE and DETERMINISTIC — "indexable in git"
+(the owner's requirement: "I am against binary stuff"). This is measurable: editing one event SHALL
+change a few lines, not the file; the same model SHALL give the same bytes; in the foreign
+passthrough, unordered maps (`HashMap` fields) SHALL be written with sorted keys
+so that their traversal does not become a false diff, while the order of the FOREIGN keys of the document SHALL
+be preserved — it is part of the promise to the interchange file. A binary format, compression and a single-line (compact) JSON MUST
+NOT be applied to the project file.
+Writing SHALL be atomic and idempotent under the same conditions that the interchange file had
+(`save(load(save(p))) == save(p)` byte for byte).
+Why: in the JSON interchange format there is NO object identity — there is no way to say "this is the same reel as
+above"; only the nested content is expressed, and the body of the reel is written anew into
+each of its instances. For the owner, three reels gave 15 220 clips and 115 MB per file, which
+autosave writes regularly. Measurement: `.otio` against model serialization — 17× on a flat
+project, 501× and 929× on nested scenes. The owner's decision: "we are moving away from the otio format,
+leaving otio only for export, and making breaking changes so that our format becomes a hundred times
+better".
 
-Проект SHALL читаться и писаться СВОИМ форматом (`.kt`), а не форматом обмена. Каждая
-сущность документа SHALL быть записана ОДИН РАЗ: лента хранится своим телом по адресу, а
-её экземпляр на монтаже — ссылкой на этот адрес. Размер файла SHALL зависеть от размера
-МОДЕЛИ, а не от числа экземпляров: добавление второго экземпляра той же ленты MUST NOT
-увеличивать файл на размер её тела.
-Файл SHALL нести ВЕРСИЮ формата и признак, по которому он опознаётся содержимым, а не
-расширением. Незнакомая (более новая) версия SHALL отвергаться явной ошибкой с номером
-версии и именем пункта, которым файл можно открыть, — и MUST NOT читаться частично:
-«открылось, и части монтажа нет» хуже честного отказа. Ломающие изменения формата
-РАЗРЕШЕНЫ (решение владельца): каскад совместимости с чужой схемой здесь не действует.
-Чужие passthrough-остатки импортированного файла обмена SHALL ехать в проекте отдельным
-полем и возвращаться при экспорте: потерять чужую работу молча нельзя.
-Файл SHALL быть ТЕКСТОВЫМ, ПОСТРОЧНЫМ и ДЕТЕРМИНИРОВАННЫМ — «индексируемым в git»
-(требование владельца: «я против бинарщины»). Это измеримо: правка одного события SHALL
-менять единицы строк, а не файл; одна и та же модель SHALL давать те же байты; у чужого
-passthrough неупорядоченные карты (`HashMap`-поля) SHALL писаться по отсортированным ключам,
-чтобы их обход не становился ложным диффом, а порядок ЧУЖИХ ключей документа SHALL
-сохраняться — он часть обещания файлу обмена. Двоичный формат, сжатие и однострочный (компактный) JSON MUST
-NOT применяться к файлу проекта.
-Запись SHALL быть атомарной и идемпотентной на тех же условиях, что были у файла обмена
-(`save(load(save(p))) == save(p)` байт-в-байт).
-Почему: в JSON-формате обмена НЕТ объектной идентичности — сказать «это та же лента, что
-выше» нечем, выражается только вложенное содержимое, и тело ленты записывается заново в
-каждый её экземпляр. У владельца три ленты дали 15 220 клипов и 115 МБ на файл, который
-автосейв пишет регулярно. Замер: `.otio` против сериализации модели — 17× на плоском
-проекте, 501× и 929× на вложенных сценах. Решение владельца: «мы уходим от otio-формата,
-оставляем otio только на экспорт и делаем breaking changes чтобы наш формат стал в сто раз
-лучше».
+#### Scenario: A second instance of a reel does not double the file
+- **WHEN** a project with a reel is saved; then the same reel is placed as a second and third instance and the project is saved again
+- **THEN** the growth of the file for each new instance equals the size of a REFERENCE, not the body of the reel; for a nested scene (a reel inside a reel, with several instances each) the file stays orders of magnitude smaller than the same project in the interchange format
+- **TEST** t810 (`src/libs/kt-model/tests/project_file.rs` — growth per instance; `src/libs/kt-otio/tests/project_file.rs` — against the interchange file)
 
-#### Scenario: Второй экземпляр ленты не удваивает файл
-- **WHEN** проект с лентой сохраняется; затем та же лента ставится вторым и третьим экземпляром и проект сохраняется снова
-- **THEN** прирост файла на каждый новый экземпляр равен размеру ССЫЛКИ, а не тела ленты; у вложенной сцены (лента в ленте, по несколько экземпляров) файл остаётся на порядки меньше того же проекта в формате обмена
-- **TEST** t810 (`src/libs/kt-model/tests/project_file.rs` — прирост на экземпляр; `src/libs/kt-otio/tests/project_file.rs` — против файла обмена)
-
-#### Scenario: Круг проекта поле-в-поле и байт-в-байт
-- **WHEN** проект с лентами, морферами, камерами, переходами, публичными параметрами и чужими passthrough-остатками пишется, читается и пишется снова
-- **THEN** прочитанная модель равна исходной поле-в-поле, второй круг байт-в-байт, passthrough цел
+#### Scenario: The project's round trip field by field and byte by byte
+- **WHEN** a project with reels, morphers, cameras, transitions, public parameters and foreign passthrough remnants is written, read and written again
+- **THEN** the read model equals the original field by field, the second round trip is byte for byte, and the passthrough is intact
 - **TEST** t811 (`src/libs/kt-model/tests/project_file.rs`)
 
-#### Scenario: Версия своего формата — отказ, а не частичное чтение
-- **WHEN** открывается файл своего формата с версией БОЛЬШЕ нынешней; отдельно — файл с версией меньше; отдельно — файл обмена `.otio`
-- **THEN** первый отвергается с номером версии в тексте ошибки; второй читается миграцией либо отвергается с именем пункта импорта; третий отвергается с именем пункта импорта, а не читается как проект
+#### Scenario: The version of its own format — refusal, not a partial read
+- **WHEN** a file of our own format with a version GREATER than the current one is opened; separately — a file with a lower version; separately — an interchange file `.otio`
+- **THEN** the first is rejected with the version number in the error text; the second is read by migration or rejected with the name of the import item; the third is rejected with the name of the import item, and is not read as a project
 - **TEST** t812 (`src/libs/kt-model/tests/project_file.rs`)
 
-#### Scenario: Файл индексируем в git
-- **WHEN** проект из полусотни событий сохраняется; затем одно событие сдвигается и проект сохраняется снова; отдельно — та же модель сохраняется дважды подряд; отдельно — проект с чужим passthrough сохраняется дважды
-- **THEN** файл многострочный (строк не меньше, чем событий), построчная разница между двумя сохранениями — единицы строк; два сохранения одной модели байт-в-байт равны, с passthrough — тоже
+#### Scenario: The file is indexable in git
+- **WHEN** a project of about fifty events is saved; then one event is shifted and the project is saved again; separately — the same model is saved twice in a row; separately — a project with foreign passthrough is saved twice
+- **THEN** the file is multi-line (no fewer lines than events), the line-by-line difference between two saves is a handful of lines; two saves of one model are byte for byte equal, and with the passthrough too
 - **TEST** t822 (`src/libs/kt-model/tests/project_file.rs`)
 
-#### Scenario: Запись честна к отключению питания
-- **WHEN** запись проекта обрывается между временным файлом и переименованием
-- **THEN** на диске остаётся либо прежний проект целиком, либо новый целиком; исход записи — тип, и отказ не выглядит успехом
-- **TEST** t813 (`src/libs/kt-otio/tests/project_file.rs` — там живёт атомарный писатель)
+#### Scenario: The write is honest about power loss
+- **WHEN** writing a project is interrupted between the temporary file and the rename
+- **THEN** either the previous project remains on disk whole, or the new one whole; the outcome of writing is a type, and a refusal does not look like success
+- **TEST** t813 (`src/libs/kt-otio/tests/project_file.rs` — the atomic writer lives there)
 
-### Requirement: Экспорт в OTIO — явная дверь, самодостаточный файл
+### Requirement: Export to OTIO — an explicit door, a self-contained file
+Export to OTIO SHALL be a SEPARATE named action (`File → Export → OpenTimelineIO…`),
+not a save. The exported file SHALL be SELF-CONTAINED: the reader does not know
+our conventions, so the body of a reel is inlined into each of its instances, and our envelope
+remains advisory. The ordinary "Open" MUST NOT accept an interchange file: it SHALL
+be rejected with the name of the import item in the error text (rule 19).
+Why: self-containment is needed by the exchange and harmful to the project — these are opposing requirements
+for two different files. Not a single major editor lives in an interchange format: Resolve
+keeps the project as records in a database and makes a `.drp` only on a person's command; FCP hides
+an SQLite database inside a bundle (reconnaissance F-PRJ-005).
 
-Экспорт в OTIO SHALL быть ОТДЕЛЬНЫМ названным действием (`File → Export → OpenTimelineIO…`),
-а не сохранением. Экспортированный файл SHALL быть САМОДОСТАТОЧНЫМ: читатель не знает
-наших соглашений, поэтому тело ленты инлайнится в каждый её экземпляр, а наш конверт
-остаётся совещательным. Обычное «Открыть» MUST NOT принимать файл обмена: он SHALL
-отвергаться с именем пункта импорта в тексте ошибки (правило 19).
-Почему: самодостаточность нужна обмену и вредна проекту — это противоположные требования
-к двум разным файлам. Ни один крупный редактор не живёт в обменном формате: Resolve
-держит проект записью в базе и делает `.drp` только по команде человека, FCP прячет
-внутри бандла базы SQLite (разведка F-PRJ-005).
-
-#### Scenario: Экспорт самодостаточен, открытие его не принимает
-- **WHEN** проект с лентой в трёх экземплярах экспортируется в OTIO; затем полученный файл подсовывается обычному «Открыть»
-- **THEN** в экспорте три `Stack` с НЕПУСТЫМИ телами и прежняя версия конверта; «Открыть» отвергает его с именем пункта импорта
+#### Scenario: The export is self-sufficient, opening does not accept it
+- **WHEN** a project with a reel in three instances is exported to OTIO; then the resulting file is offered to the ordinary "Open"
+- **THEN** the export has three `Stack`s with NON-EMPTY bodies and the previous envelope version; "Open" rejects it with the name of the import item
 - **TEST** t814 (`src/libs/kt-otio/tests/convert.rs`)
 
 ## MODIFIED Requirements
 
-### Requirement: Файл проекта — OTIO `Timeline.1`, формат определяется по содержимому
+### Requirement: Project file — OTIO `Timeline.1`, format detected by content
+**Since R.70 this requirement describes the EXCHANGE FILE, not the project file** (the project is a separate
+requirement "The PROJECT file is its own format"). The heading is left unchanged on purpose: it is the address
+by which the requirement is referenced, and renaming it would lose those references.
 
-**С Р.70 это требование описывает ФАЙЛ ОБМЕНА, а не файл проекта** (проект — отдельное
-требование «Файл ПРОЕКТА — свой формат»). Заголовок оставлен прежним намеренно: он адрес,
-по которому на требование ссылаются, и переименование стоило бы потери этих ссылок.
+The EXCHANGE file SHALL be read and written as one OTIO `Timeline.1` with the `Stack.1` of tracks.
+The kind of file SHALL be determined by content (the marker of its own format, `OTIO_SCHEMA`,
+`format_version`), not by extension. A root that is not a `Timeline` (for example
+`SerializableCollection`) SHALL be rejected with an explicit error. The old `.ktproj` and the interchange file
+`.otio` MUST NOT be opened as a project — only through a separate import item, which
+converts and opens the result in ITS OWN format, without touching the source.
+All other requirements of this capability that describe OTIO (idempotency, passthrough,
+schema versions, time in ticks, media paths, model mapping, the version of the `kt` envelope, migrations,
+transitions, nested reels, generators, the legacy `.ktproj`, conformance with the reference
+library) SHALL relate to the IMPORT AND EXPORT DOORS, not to the project file.
+Why: the owner's decision — "as a PROJECT, .ktproj no longer opens; no need to drag crutches along"; one cannot trust the extension, because recovery and tmp files carry other people's suffixes.
+R.70: the same argument extends to `.otio` — the interchange format has stopped being the project format, and the door to it is now called by its own name.
 
-Файл ОБМЕНА SHALL читаться и писаться как один OTIO `Timeline.1` со `Stack.1` дорожек.
-Вид файла SHALL определяться по содержимому (признак своего формата, `OTIO_SCHEMA`,
-`format_version`), а не по расширению. Корень, не являющийся `Timeline` (например
-`SerializableCollection`), SHALL отвергаться явной ошибкой. Старый `.ktproj` и файл обмена
-`.otio` MUST NOT открываться как проект — только отдельный пункт импорта, который
-конвертирует и открывает результат СВОИМ форматом, не трогая исходник.
-Все прочие требования этой capability, описывающие OTIO (идемпотентность, passthrough,
-версии схем, время в тиках, пути медиа, маппинг модели, версия конверта `kt`, миграции,
-переходы, вложенные ленты, генераторы, легаси `.ktproj`, конформанс с эталонной
-библиотекой), SHALL относиться к ДВЕРЯМ ИМПОРТА И ЭКСПОРТА, а не к файлу проекта.
-Почему: решение владельца — «как ПРОЕКТ .ktproj не открывается больше, костылей тянуть не
-надо»; расширению верить нельзя, потому что recovery- и tmp-файлы носят чужие суффиксы.
-Р.70: тот же довод распространён на `.otio` — обменный формат перестал быть форматом
-проекта, и дверь к нему теперь называется своим именем.
-
-#### Scenario: Детект по содержимому и отказ на чужом корне
-- **WHEN** на вход приходит JSON своего формата, JSON с `OTIO_SCHEMA`, JSON с `format_version`, либо `SerializableCollection.1`
-- **THEN** первый распознаётся как проект, второй — как файл обмена, третий — как легаси-проект (и загрузка обоих как проекта даёт ошибку с именем пункта импорта), четвёртый отвергается ошибкой «неподдерживаемый корень»
+#### Scenario: Detection by content and refusal on a foreign root
+- **WHEN** the input is JSON of our own format, JSON with `OTIO_SCHEMA`, JSON with `format_version`, or `SerializableCollection.1`
+- **THEN** the first is recognised as a project, the second as an interchange file, the third as a legacy project (and loading either of the first and third as a project gives an error with the name of the import item), and the fourth is rejected with an "unsupported root" error
 - **TEST** t144, t146 (`src/libs/kt-otio/tests/format.rs`)
 
-### Requirement: Вложенные ленты — `Stack` ребёнком `Track`, тело инлайном, сайдкар совещательный
+### Requirement: Nested reels — `Stack` as the child of `Track`, body inline, sidecar advisory
+In the EXCHANGE file an instance of a reel SHALL be written as a `Stack` child of a `Track` (the window — the
+`source_range` of the stack, the name — `Stack.name`, the chain and reverse — `Stack.effects`, the address of the reel —
+`metadata.kt.seq`), and the body of the reel SHALL be inlined into EACH instance. On reading, the
+instances SHALL collapse into one reel by address; diverged bodies SHALL become
+separate reels with fresh ids and a notice. The sidecar `metadata.kt.sequences` (tracks,
+the order of rows, morphers, cameras, the layer map of the reel) SHALL be advisory: if it is missing,
+the edit is read from the file with a notice. Foreign nested `Stack` and `Track` inside a `Track` SHALL
+be read as real reels. An event to the left of the zero of the reel SHALL carry `kt.start` only where
+its position in the track does not express it (v8).
+In the PROJECT file the body of a reel SHALL be stored ONCE, and an instance SHALL be a reference to its
+address: inlining is not needed there and is forbidden by its cost — it is what gave 115 MB.
+Why: JSON OTIO has no object identity; a silent choice of one of two bodies is the loss of
+someone else's work; a foreign editor draws the content of attachments, while a grey placeholder does not.
+R.70: the same fact (no object identity) means that for the PROJECT inlining is
+not a virtue but a multiplicative cost; the requirement is split by addressee.
 
-В файле ОБМЕНА экземпляр ленты SHALL писаться `Stack` ребёнком `Track` (окно —
-`source_range` стека, имя — `Stack.name`, цепочка и реверс — `Stack.effects`, адрес ленты —
-`metadata.kt.seq`), а тело ленты SHALL инлайниться в КАЖДЫЙ экземпляр. На чтении
-экземпляры SHALL схлопываться в одну ленту по адресу; разошедшиеся тела SHALL становиться
-отдельными лентами со свежими id и notice. Сайдкар `metadata.kt.sequences` (дорожки,
-порядок строк, морферы, камеры, карта слоёв ленты) SHALL быть совещательным: пропал —
-монтаж читается из файла с notice. Чужие вложенные `Stack` и `Track` внутри `Track` SHALL
-читаться настоящими лентами. Событие левее нуля ленты SHALL ехать `kt.start` только там,
-где позиция в треке его не выражает (v8).
-В файле ПРОЕКТА тело ленты SHALL храниться ОДИН раз, а экземпляр SHALL быть ссылкой на её
-адрес: инлайн там не нужен и запрещён ценой — он и дал 115 МБ.
-Почему: объектной идентичности в JSON OTIO нет; тихий выбор одного из двух тел — потеря
-чужой работы; чужой редактор рисует содержимое вложений, а серый плейсхолдер — нет.
-Р.70: тот же факт (нет объектной идентичности) означает, что для ПРОЕКТА инлайн —
-не достоинство, а мультипликативная цена; требование разделено по адресату.
-
-#### Scenario: Лента в двух экземплярах переживает круг
-- **WHEN** лента с кроссфейдом, морфер-слоем и камерой стоит дважды, у экземпляра уровень 0.5 и реверс; файл — ЭКСПОРТ в OTIO
-- **THEN** в файле два `Stack` с непустыми телами, версия v6; после чтения одна лента, содержимое поле-в-поле, экземпляры поле-в-поле, второй круг байт-в-байт
+#### Scenario: A reel in two instances survives a round trip
+- **WHEN** a reel with a crossfade, a morpher layer and a camera stands twice, one instance has level 0.5 and reverse; the file is an EXPORT to OTIO
+- **THEN** the file has two `Stack`s with non-empty bodies, version v6; after reading there is one reel, the content field by field, the instances field by field, and the second round trip is byte for byte
 - **TEST** t431 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Разошедшиеся тела и потерянный сайдкар
-- **WHEN** тело второго экземпляра изменено чужим редактором; сайдкар `sequences` удалён
-- **THEN** первое даёт две ленты с notice и валидный проект; второе — ленту с монтажом и кроссфейдом из файла, без морфера, с notice
+#### Scenario: Diverged bodies and a lost sidecar
+- **WHEN** the body of the second instance is changed by a foreign editor; the `sequences` sidecar is deleted
+- **THEN** the first gives two reels with a notice and a valid project; the second gives a reel with the edit and the crossfade from the file, without the morpher, with a notice
 - **TEST** t432, t433 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Чужие вложения становятся настоящими лентами
-- **WHEN** читается `nested_example.otio` (два `Stack` и `Track` внутри `Track`)
-- **THEN** три ленты с событиями, foreign пуст, после раскрытия ни одно событие не смотрит на ленту, круг идемпотентен
+#### Scenario: Foreign attachments become genuine reels
+- **WHEN** `nested_example.otio` is read (two `Stack`s and a `Track` inside a `Track`)
+- **THEN** three reels with events, `foreign` is empty, after unfolding no event points at a reel, and the round trip is idempotent
 - **TEST** t437 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Событие левее нуля внутри ленты
-- **WHEN** первое событие ленты начинается в −10000, второе стоит в своём времени
-- **THEN** `kt.start` есть ровно у двух смещённых событий, файл v8, круг байт-в-байт; обычный монтаж поля не несёт
+#### Scenario: An event to the left of zero inside a reel
+- **WHEN** the first event of a reel starts at −10000, the second stands at its own time
+- **THEN** `kt.start` is present on exactly the two shifted events, the file is v8, the round trip is byte for byte; an ordinary edit does not carry the field
 - **TEST** t638 (`src/libs/kt-otio/tests/convert.rs`)

@@ -2,296 +2,279 @@
 
 ## Context
 
-См. proposal.md — Why. Сегодня: `ClipEvent.lane: u32` — единственная связь с дорожкой;
-порядок строк `Project.lane_order`; имя/высота в `UiState` вне undo; микс —
-`out += buf × fade × overlap × gain` без уровня между клипом и выходом (`audio.rs`);
-`FxStateStore: HashMap<ClipId, ClipProcessor>`; видео — alpha-over по `lane` (`video.rs`),
-морфер — расплющивание в `effective_clips()`; ленты — суб-план `NestSrc` и суб-микс под
-фетчером; окно рендера уже перечисляет заглушки до старта (`render_dialog.rs`).
-Инварианты 2, 3, 6, 7, 11; правила UI 1, 9, 13, 16, 17, 19, 20.
+See proposal.md — Why. Today: `ClipEvent.lane: u32` is the only link to a track;
+the order of rows is `Project.lane_order`; the name/height live in `UiState` outside undo; the mix is
+`out += buf × fade × overlap × gain` with no level between the clip and the output (`audio.rs`);
+`FxStateStore: HashMap<ClipId, ClipProcessor>`; video is alpha-over by `lane` (`video.rs`),
+the morpher is flattened in `effective_clips()`; reels are a sub-plan `NestSrc` and a sub-mix under
+the fetcher; the render window already lists the stubs before the start (`render_dialog.rs`).
+Invariants 2, 3, 6, 7, 11; UI rules 1, 9, 13, 16, 17, 19, 20.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- Дорожка-объект со стабильным id, вся дорожечная семантика — на нём.
-- Стадия дорожки в аудио и видео, появляющаяся только там, где нужна; байты прежних
-  проектов не двигаются.
-- Mute/solo/замок/уровень/цепочка/режим наложения в модели, файле, интерфейсе, экспорте.
+- A track-object with a stable id; all track semantics live on it.
+- A track stage in audio and video, appearing only where it is needed; the bytes of old
+  projects do not move.
+- Mute/solo/lock/level/chain/blend mode in the model, file, interface, and export.
 
 **Non-Goals:**
-- Огибающие дорожки во времени таймлайна (второй домен автоматизации) — следующий change.
-- Шины, посылы, стемы, сайдчейн; родство дорожек (Vegas parent/child); клиповый режим
-  наложения; скрытие дорожки отдельно от mute.
+- Track envelopes over the timeline time (a second automation domain) — the next change.
+- Buses, sends, stems, sidechain; track parenthood (Vegas parent/child); a clip blend mode;
+  hiding a track separately from mute.
 
 ## Decisions
 
-- **`Track` — вектор в корне и в каждой ленте; порядок вектора = порядок строк.**
-  `lane_order`, четыре счётчика, `lane_names`, `lane_heights` удаляются. Номер дорожки
-  у события остаётся рангом внутри вида (инвариант «номер = ранг строки» из Р.56 — одна
-  дверь перестановки перенумеровывает содержимое), а `TrackId` — стабильный адрес для
-  состояния и файла. Альтернатива «`lane: TrackId` у события» отвергнута: 182 обращения к
-  рангу в отрисовке и планах, а ранг всё равно нужен для z-order; id нужен там, где
-  живёт состояние.
-- **Имя и высота — в undo.** Три параллельных вектора и шесть функций их синхронизации
-  исчезают — класс «имя есть, флага нет» после вставки закрывается по построению.
-- **Mute/solo — содержимое проекта (решение владельца).** Вместе с этим — обязанность
-  сказать: окно рендера перечисляет заглушённые дорожки и активное соло между настройками
-  и «Старт» (место, где уже стоит предупреждение о заглушках), kt-cli печатает notice.
-  Solo — множество внутри вида (видео и аудио независимо), не «mute остальных»: снятие
-  соло возвращает прежние mute (урок Kdenlive #421225).
-- **Mute = множитель 0, а не удаление из графа.** Аудио: клипы заглушённой дорожки
-  по-прежнему рендерятся в свою стадию, вес выхода 0 — FX-состояние живо (инвариант 3),
-  снятие mute не начинается с холодного реверба. Видео: заглушённая дорожка не
-  композится (состояния нет — исключение законно), но её заказ префетча остаётся, чтобы
-  снятие mute не давало чёрный кадр.
-- **Аудио-стадия дорожки только у дорожки, которой она нужна.** Условие: цепочка непуста
-  ИЛИ уровень ≠ 0 дБ ИЛИ mute/solo гасит дорожку. Без стадии клип складывается в выход
-  прежним порядком — иначе перестановка f32-сложений сдвинула бы GOLDEN_AUDIO. Прецедент —
-  «вход равен ступени → байты прежние». Стадия: scratch-буфер дорожки ← Σ клипов (те же
-  веса) → `TrackProcessor` (цепочка без формы клипа: ни источника, ни длины, ни варпа;
-  расщепление `ClipProcessor` на «добытчик» и «цепочку» в kt-fx, ядра не трогаются) →
-  × уровень → × (0 при mute/не-соло) → в выход.
-- **Ключ FX-состояния — составной `Clip(ClipId) | Track(TrackId)`.** Diff по отпечатку
-  структуры цепочки, как у клипа; удаление дорожки — `retain`.
-- **PDC у цепочки дорожки — упреждение, как у клипа.** Окно упреждения расширяет вперёд
-  окно суммирования дорожки: клипы рендерятся в scratch на `[t, t + La)`, выход выровнен со
-  входом, playhead не едет. Хвост: процессор дорожки крутится, пока играет транспорт, вход
-  — тишина за последним событием (хвост честный, как `ext_end` у клипа); цена — только у
-  дорожек с цепочкой.
-- **Видео: дорожка с цепочкой, уровнем ≠ 1 или режимом ≠ Normal — неявная лента в плане.**
-  `PlanLayer::TrackNest { track, sub_plan, fx, alpha, blend }` строится тем же кодом, что
-  `NestSrc` для ленты (растр = холст родителя, время = время родителя, ступень —
-  максимум по событиям дорожки); переходы, перекрытия и фейды — внутри суб-плана. Дорожка
-  без этого расплющивается в слои как сегодня — байты прежние. Мемо суб-композита — ключ
-  `(TrackId, редакция дорожки, t)` тем же механизмом, что у ленты. Морфер по-прежнему
-  пер-клиповый (расплющен до плана) и стоит ДО стадии дорожки.
-- **Режимы наложения — на композит дорожки, обе оси после альфы.** `out = lerp(below,
-  blend(below, above), a_above × level)`; Normal — прежний alpha_over байт-в-байт. Ядра
-  парой: CPU в `kt-engine` (`compose`), WGSL в `composite.wgsl`; класс допуска — как у
-  переходов. Список: Normal, Multiply, Screen, Add, Subtract, Darken, Lighten, Overlay,
-  Difference. Дыра на дорожке — прозрачность композита, не операнд (обход ловушки Vegas,
+- **`Track` — a vector at the root and in each reel; the order of the vector = the order of rows.**
+  `lane_order`, the four counters, `lane_names`, `lane_heights` are removed. The track number
+  of an event remains the rank inside the view (the invariant "number = row rank" from R.56 — one
+  reorder door renumbers the contents), and `TrackId` is the stable address for
+  state and the file. The alternative "`lane: TrackId` on the event" was rejected: 182 uses of
+  the rank in drawing and plans, and the rank is needed for z-order anyway; the id is needed where
+  the state lives.
+- **Name and height — in undo.** Three parallel vectors and six sync functions
+  disappear — the class "name exists, flag does not" after insertion is closed by construction.
+- **Mute/solo — project content (the owner's decision).** Together with this comes the duty to
+  say: the render window lists muted tracks and the active solo between the settings and "Start"
+  (the place where the mute warning already stands), kt-cli prints a notice.
+  Solo is a set inside the view (video and audio independently), not "mute the others": clearing
+  solo restores the previous mutes (lesson from Kdenlive #421225).
+- **Mute = multiplier 0, not removal from the graph.** Audio: the clips of a muted track
+  still render into their stage, the output weight is 0 — the FX state stays alive (invariant 3),
+  clearing mute does not start from a cold reverb. Video: a muted track is not composited
+  (there is no state — the exception is legitimate), but its prefetch order remains, so that
+  clearing mute does not produce a black frame.
+- **The audio track stage only on a track that needs it.** Condition: the chain is non-empty
+  OR the level ≠ 0 dB OR mute/solo silences the track. Without the stage, the clip is summed into the output
+  in the former order — otherwise reordering the f32 additions would shift GOLDEN_AUDIO. Precedent —
+  "input equals the step → former bytes". Stage: the track scratch buffer ← Σ clips (the same
+  weights) → `TrackProcessor` (a chain without the clip shape: no source, no length, no warp;
+  splitting `ClipProcessor` into a "producer" and a "chain" in kt-fx, the kernels are not touched)
+  × level → × (0 at mute/non-solo) → into the output.
+- **The FX state key is composite `Clip(ClipId) | Track(TrackId)`.** Diff by the fingerprint of the chain
+  structure, as for a clip; removing a track — `retain`.
+- **PDC of a track chain is lookahead, as for a clip.** The lookahead window extends forward the
+  track's summing window: clips render into scratch on `[t, t + La)`, the output is aligned with
+  the input, the playhead does not move. Tail: the track processor keeps running while the transport plays,
+  the input is silence after the last event (the tail is honest, like `ext_end` for a clip); the cost is only for
+  tracks with a chain.
+- **Video: a track with a chain, a level ≠ 1, or a mode ≠ Normal — an implicit reel in the plan.**
+  `PlanLayer::TrackNest { track, sub_plan, fx, alpha, blend }` is built by the same code as
+  `NestSrc` for a reel (raster = the parent's canvas, time = the parent's time, the step —
+  the maximum over the track's events); transitions, overlaps and fades are inside the sub-plan. A track
+  without this is flattened into layers as today — the former bytes. The memo of the sub-composite — key
+  `(TrackId, track revision, t)` by the same mechanism as for a reel. The morpher is still per-clip
+  (flattened before the plan) and stands BEFORE the track stage.
+- **Blend modes — on the track composite, both axes after alpha.** `out = lerp(below,
+  blend(below, above), a_above × level)`; Normal — the former alpha_over, byte for byte. The kernels in
+  pairs: CPU in `kt-engine` (`compose`), WGSL in `composite.wgsl`; the tolerance class is the same as for
+  transitions. The list: Normal, Multiply, Screen, Add, Subtract, Darken, Lighten, Overlay,
+  Difference. A hole on a track is transparency of the composite, not an operand (bypassing the Vegas trap,
   F-CMP-003).
-- **Замок — один гейт в модели.** Команды, трогающие события (добавить, двигать, тримить,
-  резать, удалять, вставлять, менять цепочку/уровень/геометрию, переход на краю), проверяют
-  замок дорожки цели и отвечают `Refuse::TrackLocked(id)`; UI показывает ошибку и
-  подсвечивает дорожку (правило 16, механизм t172). Свойства самой дорожки (mute, уровень,
-  имя, замок) правятся. Sync-lock не нужен: ripple у нас нет (F-TL-006).
-- **Свойства дорожки — в паспорте (Р.59), статические.** Уровень, непрозрачность, режим,
-  mute — типизированные свойства с клампом; кривые на дорожке отвергаются валидацией
-  громко (прецедент `CurveSource` до Р.61) — следующий change приносит домен таймлайна.
-- **Интерфейс.** Заголовок дорожки: ряд бейджей M / S / замок / FX под именем; ширина
-  gutter растёт ровно на галлею ряда и фиксируется (правило 3), хват-зона бейджа не
-  меньше 14 px (правило 1); морф/камерные строки втрое ниже — у них бейджи только замок.
-  Двойной клик по имени — переименование (как сегодня), правый клик — меню с теми же
-  глаголами, «Свойства дорожки» — окно с уровнем, режимом, выключателями и кнопкой
-  цепочки. FX-редактор получает второй вид адресата (`Track`), тот же виджет полосы
-  цепочки и тот же виджет автоматизации (кривые отклоняются с причиной). Горячие клавиши:
-  M/S на выделенной дорожке.
-- **Формат.** `Track.metadata.kt = { id, mute, solo, lock, level, blend, height }`
-  (умолчания не пишутся), `Track.enabled = !mute` (чужой читатель видит выключенную
-  дорожку честно, notice «нет per-track mute» снимается), цепочка дорожки — `Effect.1`
-  в `Track.effects` тем же кодом, что у клипа. Имя — в `Track.name` (дефолтные ярлыки
-  по-прежнему не пишутся). Чтение старых файлов: счётчики и `lane_order` → вектор
-  дорожек, `ui.lane_names/lane_heights` → поля дорожек, односторонне. Предикат v11 (раунд
-  Р.62) расширяется: файл с любым не-умолчанием дорожки — v11.
-- **kt-cli probe** печатает у каждой дорожки id, выключатели, уровень, режим и стадию
-  («стадия: да/нет, почему») — по жалобе «тут не звучит / картинка не та» первым.
+- **Lock — one gate in the model.** Commands that touch events (add, move, trim,
+  cut, delete, insert, change chain/level/geometry, transition at the edge) check the lock of the target
+  track and answer `Refuse::TrackLocked(id)`; the UI shows an error and highlights the track (rule 16, mechanism t172).
+  The track's own properties (mute, level, name, lock) remain editable. Sync-lock is not needed: we have no ripple (F-TL-006).
+- **Track properties — in the passport (R.59), static.** Level, opacity, mode,
+  mute — typed properties with clamping; curves on a track are rejected loudly by validation
+  (precedent `CurveSource` before R.61) — the next change brings the timeline domain.
+- **Interface.** Track header: a row of badges M / S / lock / FX under the name; the gutter width grows exactly by the row's gallery
+  and is fixed (rule 3), the badge hit zone is at least 14 px (rule 1); the morph/camera rows are three times lower — their badges are only the lock.
+  A double click on the name — rename (as today), a right click — a menu with the same
+  verbs, "Track properties" — a window with level, mode, switches and a chain button. The FX editor gets a second kind of target (`Track`), the same chain-strip widget and the same automation widget (curves are rejected with a reason). Hotkeys: M/S on the selected track.
+- **Format.** `Track.metadata.kt = { id, mute, solo, lock, level, blend, height }`
+  (defaults are not written), `Track.enabled = !mute` (a foreign reader sees the disabled
+  track honestly, the notice "no per-track mute" is removed), the track chain is `Effect.1`
+  in `Track.effects` by the same code as for a clip. The name is in `Track.name` (default labels
+  are still not written). Reading old files: the counters and `lane_order` → the vector
+  of tracks, `ui.lane_names/lane_heights` → fields of the tracks, one-way. The v11 predicate (round
+  R.62) is extended: a file with any non-default track property is v11.
+- **kt-cli probe** prints for each track its id, switches, level, mode, and stage
+  ("stage: yes/no, why") — first in the complaint "here nothing sounds / the picture is wrong".
 
-### Уточнения по ходу реализации (стадия 1)
+### Clarifications during implementation (stage 1)
 
-- **Порядок строк — порядок вектора `Project.tracks`/`Sequence.tracks`.** Отдельного поля
-  нет ни в модели, ни в файле; `lane_order`, четыре счётчика, `ui.lane_names/lane_heights`
-  остались ТОЛЬКО как легаси-вход чтения (`#[serde(skip_serializing)]`), миграция
-  односторонняя и живёт в `Project::canonicalize_lanes`.
-- **Дверь перестановки осталась одна — `SetLaneOrder`.** Отдельная `MoveTrack` не
-  заведена: команда уже называет строки текущими номерами и перенумеровывает содержимое,
-  а вторая дверь к тому же вектору — это второй источник правды.
-- **`InsertTrack`/`RemoveTrack` — по одной на все четыре вида** вместо прежних шести
-  команд (`InsertLane`, `SetLanes`, `Insert/RemoveMorphLane`, `Insert/RemoveCameraLane`):
-  вид стал параметром, потому что дорожка стала объектом. Удаление уносит события своей
-  дорожки одной командой — прежний батч «RemoveClip × N + MoveClip × N + SetLanes» в
-  приложении исчез.
-- **Валидация требует, чтобы дорожка СУЩЕСТВОВАЛА** (`TrackMissing`): событие на
-  несуществующей строке нельзя показать. Чтение дописывает дорожки (`normalize`),
-  команды растят их сами (`ensure_tracks` в `AddClip`/`MoveClip`/`AddCamera`/морфер).
-- **Новая дорожка без явного места встаёт в конец БЛОКА своего вида** (`natural_insert_pos`,
-  порядок V..A..M..C) — прежнее умолчание счётчиков; в конец списка её класть нельзя,
-  иначе морф-строка по умолчанию оказывалась бы под камерами.
-- **Полоса раскрытия больше НЕ в хвосте числового пространства.** Номер = ранг вектора,
-  а строки полосы стоят под своим экземпляром — значит база полосы считается по строкам
-  НАД экземпляром (`Band::of`), `merge_reel`/`unmerge_reel` сдвигают номера корневого
-  содержимого на длину блока, а вставка в КОРЕНЬ при открытой полосе перешагивает её
-  (`paste_here`): до этого низкие номера всегда принадлежали корню, и половина пары молча
-  уезжала внутрь ленты (сторож — t596).
-- **Файл: счётчики дорожек ОСТАЛИСЬ в конверте** (производные от вектора) — на них стоит
-  байт-стабильность всех прежних файлов (t433b) и ими выражается ПУСТАЯ строка. Новое —
-  `kt.tracks`: порядок строк и свойства; пишется, только когда порядок не естественный
-  или у дорожки есть что сказать. Имя, `enabled = !mute` и цепочка видео/аудио живут на
-  самих `Track` файла (чужой редактор обязан их видеть), в конверт не дублируются.
-- **Версию поднимает только НОВШЕСТВО** (`Track::has_novelty`: выключатели, уровень,
-  режим, цепочка). Имя и высота версию не двигают: имя и раньше лежало в `Track.name`,
-  высота — в `ui`, и старый читатель терял бы только удобство.
-- **Команды цепочки дорожки (`SetTrackFx`) в стадии 1 НЕ заводятся** — поля на `Track`
-  есть (их возит формат), а команда появится вместе с движком и редактором (стадия 3):
-  осиротевшая команда нарушила бы t252 и была бы фичей, недоступной человеку.
-- **Имя и высота дорожки теперь СОДЕРЖИМОЕ** (ходят через undo, поднимают `dirty_content`):
-  правило «правки содержимого ≠ правки удобства» для них пересмотрено — они живут на
-  объекте, который едет с монтажом.
+- **The row order is the order of the vector `Project.tracks`/`Sequence.tracks`.** There is no separate field
+  either in the model or in the file; `lane_order`, the four counters, `ui.lane_names/lane_heights`
+  remain ONLY as a legacy read input (`#[serde(skip_serializing)]`); the migration
+  is one-way and lives in `Project::canonicalize_lanes`.
+- **The reorder door is still one — `SetLaneOrder`.** A separate `MoveTrack` was not introduced:
+  the command already names the rows by their current numbers and renumbers the contents,
+  and a second door to the same vector would be a second source of truth.
+- **`InsertTrack`/`RemoveTrack` — one each for all four kinds** instead of the former six
+  commands (`InsertLane`, `SetLanes`, `Insert/RemoveMorphLane`, `Insert/RemoveCameraLane`):
+  the kind became a parameter, because the track became an object. Removal takes the events of its
+  track away in one command — the former batch "RemoveClip × N + MoveClip × N + SetLanes" in
+  the application has disappeared.
+- **Validation requires that the track EXISTS** (`TrackMissing`): an event on a nonexistent row
+  cannot be shown. Reading adds the missing tracks (`normalize`), commands grow them
+  themselves (`ensure_tracks` in `AddClip`/`MoveClip`/`AddCamera`/morpher).
+- **A new track without an explicit place goes to the end of the BLOCK of its kind** (`natural_insert_pos`,
+  order V..A..M..C) — the former default of the counters; it cannot be put at the end of the list,
+  otherwise the default morph row would end up under the cameras.
+- **The reel expansion band is NO LONGER at the tail of the number space.** The number = the rank in the vector,
+  and the rows of the band stand under their instance — so the band's base is counted from the rows
+  ABOVE the instance (`Band::of`), `merge_reel`/`unmerge_reel` shift the numbers of the root
+  contents by the length of the block, and pasting INTO THE ROOT while a band is open steps over it
+  (`paste_here`): before this, low numbers always belonged to the root, and half of the pairs silently
+  moved inside the reel (guard — t596).
+- **File: the track counters REMAINED in the envelope** (derived from the vector) — all former
+  files' byte stability (t433b) rests on them, and the EMPTY row is expressed by them. New —
+  `kt.tracks`: the row order and the properties; it is written only when the order is not natural
+  or the track has something to say. The name, `enabled = !mute`, and the video/audio chain live on
+  the file's own `Track` objects (a foreign editor must see them), and are not duplicated in the envelope.
+- **The version is raised only by a NOVELTY** (`Track::has_novelty`: switches, level,
+  mode, chain). The name and height do not raise the version: the name already lived in `Track.name`,
+  the height in `ui`, and an old reader would lose only convenience.
+- **The track chain commands (`SetTrackFx`) are NOT introduced in stage 1** — the fields on `Track`
+  exist (the format carries them), but the command will appear together with the engine and the editor (stage 3):
+  an orphaned command would break t252 and would be a feature unavailable to a human.
+- **The track name and height are now CONTENT** (they go through undo, raise `dirty_content`):
+  the rule "edits of content ≠ edits of convenience" is revised for them — they live on
+  the object that travels with the edit.
 
-- **Паспорт дорожки объявляет уровень ПО ВИДУ**: у аудио `gain_db` (дБ, пределы
-  `TRACK_GAIN_MIN_DB/MAX_DB`), у видео `opacity`; чужого ряда у дорожки нет вовсе, иначе в
-  окне свойств висел бы мёртвый контрол (правило UI 9). Все ряды — `ParamKind::Structural`:
-  `auto_params()` их не отдаёт, и повесить кривую нечем ни команде, ни интерфейсу; файл с
-  кривой на дорожке валит загрузку (`TrackCurvesUnsupported`). Режим наложения — `Choice`
-  КЛЮЧОМ варианта (`BLEND_KEYS`), у служебных строк из выключателей только замок.
-- **Замок — одна функция `Command::target_rows(p)`** с ИСЧЕРПЫВАЮЩИМ match без `_ =>`:
-  новая команда не соберётся, пока её не отнесли к «трогает события» (назови строки) или
-  «не трогает» (пустой список) — тот же приём, что у `Band::after_batch`. Гейт стоит первой
-  строкой `check_on`. Под замок попадают и ПЕРЕЕЗД на запертую дорожку (`MoveClip` называет
-  обе строки), и удаление дорожки (уносит события); свойства самой дорожки — нет, иначе её
-  нечем отпереть.
+- **The track's property passport declares the level BY KIND**: for audio `gain_db` (dB, limits
+  `TRACK_GAIN_MIN_DB/MAX_DB`), for video `opacity`; a track has no foreign row at all, otherwise a dead control
+  would hang in the properties window (UI rule 9). All rows are `ParamKind::Structural`:
+  `auto_params()` does not return them, and there is nothing to hang a curve on, neither for the command nor for the interface; a file with a curve on a track fails to load
+  (`TrackCurvesUnsupported`). The blend mode is a `Choice` by the variant KEY (`BLEND_KEYS`); the service rows of the switches have only the lock.
 
-### Уточнения по ходу реализации (стадия 2)
+- **The lock is one function `Command::target_rows(p)`** with an EXHAUSTIVE match without `_ =>`:
+  a new command will not compile until it is assigned to "touches events" (name the rows) or
+  "does not touch" (an empty list) — the same device as `Band::after_batch`. The gate stands
+  as the first line of `check_on`. The lock also covers a MOVE onto a locked track (`MoveClip` names
+  both rows) and the removal of a track (it takes the events away); the track's own properties are not covered, otherwise there would be
+  no way to unlock it.
 
-- **Без цепочки стадия дорожки — это СКАЛЯР, и своего буфера ей не нужно.** Уровень, mute и
-  соло складываются с `gain` события в одно число (`db_to_linear(clip) × track`): множитель
-  и так стоит последним, после весов перехода и перекрытия, поэтому результат тот же, а
-  ПОРЯДОК СЛОЖЕНИЯ f32 не меняется ни на такт — t2/t3 и GOLDEN_AUDIO стоят без единой
-  ветки. Scratch-буфер появится вместе с цепочкой дорожки (стадия 3.1), где он и правда
-  нужен: цепочка нелинейна и на сумму её иначе не наложить.
-- **Гашение — множитель 0, а не выброс события из графа** (инвариант 3): заглушённое
-  событие по-прежнему рендерится, его FX-состояние живёт, и снятие mute продолжает хвост
-  реверба, а не начинает его заново (t732b — сторож против «оптимизации» вида «не считать
-  заглушённое»).
-- **Видео: гашение — флаг `VideoClip.silent`, который смотрит ТОЛЬКО план композита.**
-  `layers_at_into`/`wanted_frames` его не видят, поэтому заказ префетча остаётся, и снятие
-  mute даёт полный кадр без промаха кэша (t735; красный, если гейт убрать).
-- **Что не попадёт в файл, формулируется ОДИН раз** — `kt_model::silenced_tracks(reel)`;
-  окно рендера и `kt-cli render/export` печатают её результат до старта (t740, t740b).
-  Отказа нет: mute и solo — содержимое проекта (решение владельца), но молчать нельзя.
+### Clarifications during implementation (stage 2)
 
-### Уточнения по ходу реализации (стадия 3)
+- **Without a chain the track stage is a SCALAR, and it needs no buffer of its own.** The level, mute, and solo are folded with the event's `gain` into one number (`db_to_linear(clip) × track`): the multiplier
+  stands last anyway, after the weights of the transition and the overlap, so the result is the same, and
+  the ORDER OF f32 ADDITION does not change by a single tick — t2/t3 and GOLDEN_AUDIO stand without a single
+  branch. The scratch buffer appears together with the track chain (stage 3.1), where it is really
+  needed: a chain is nonlinear, and the sum cannot otherwise be laid over it.
+- **Silencing — a multiplier 0, not removing the event from the graph** (invariant 3): the silenced
+  event still renders, its FX state lives on, and clearing mute continues the reverb tail
+  rather than starting it anew (t732b — a guard against an "optimization" of the form "do not compute
+  the silenced one").
+- **Video: silencing — the flag `VideoClip.silent`, which ONLY the composite plan looks at.**
+  `layers_at_into`/`wanted_frames` do not see it, so the prefetch order remains, and clearing
+  mute gives a full frame without a cache miss (t735; red if the gate is removed).
+- **What does not get into the file is formulated ONCE** — `kt_model::silenced_tracks(reel)`;
+  the render window and `kt-cli render/export` print its result before the start (t740, t740b).
+  There is no refusal: mute and solo are project content (the owner's decision), but one must not stay silent about them.
 
-- **`TrackProcessor` — ВТОРОЙ потребитель тех же узлов, а не копия `ClipProcessor`.**
-  Половина клипового процессора — это ДОБЫТЧИК материала (варп, курсор, «ручки», гейт
-  хвоста, домен автоматизации по длине события), и у дорожки ничего этого нет: её вход
-  уже собран сумматором. Общий у них ровно вектор `AudioNode`, поэтому ядра не
-  дублируются ни строкой (t322/t328 зелёные без правок).
-- **Хвоста у стадии нет отдельным полем.** Процессор дорожки крутится, пока играет
-  транспорт, и за последним событием получает тишину — хвост выходит сам собой (t733).
-  Поле «сколько звучать после конца» было бы вторым источником той же правды.
-- **Упреждение: вход окна суммирования сдвинут вперёд на `la`**, выход возвращают кольца
-  узлов — сдвига относительно дорожки без цепочки нет (t733b).
-- **Состояние дорожки — отдельная карта по `TrackId`**, а не составной enum-ключ: у
-  дорожки и у события разные процессоры, и ветка на каждом обращении ничего бы не дала
-  (t734: вставка дорожки выше не глушит соседей, удаление уносит своё).
-- **Видео: стадия — слой-вложение с суб-планом СВОИХ событий** (`track_stage_layer`), тем
-  же кодом, что лента: растр и время родительские, ступень — как у плоского слоя. Адрес
-  суб-композита синтетический (`NEST_TAG | TRACK_TAG | id`), редакция — свойства дорожки
-  плюс содержимое её событий, иначе мемо отдавало бы стейл.
-- **Режим наложения живёт на `LayerSrc`, а не отдельной веткой `PlanLayer`**: наложение —
-  свойство ЛЮБОГО слоя. `Normal` не заходит в новое ядро вовсе, и байты прежние
-  (GOLDEN_VIDEO). Формула `out = lerp(below, blend(below, above), α × уровень)` написана
-  дважды — `blend_ch` в kt-engine и её WGSL-зеркало в `composite.wgsl`, — и это ПАРА:
-  файлы правятся одним коммитом, сторож — t737 (CPU против GPU по всем девяти режимам,
-  на двух уровнях, класс допуска переходов). Номер режима едет в свободном слоте `u1.y`:
-  при наложении фейда не бывает по построению.
-- **Ленты применяют СВОИ стадии даром**: и аудио-, и видео-стадии собираются из `tracks`
-  ТОЙ ленты, для которой строится рендерер (t739).
+### Clarifications during implementation (stage 3)
 
-### Уточнения по ходу реализации (стадия 4)
+- **`TrackProcessor` is a SECOND consumer of the same nodes, not a copy of `ClipProcessor`.**
+  Half of the clip processor is the material PRODUCER (warp, cursor, "handles", tail gate,
+  the automation domain by event length), and a track has none of this: its input
+  is already assembled by the summer. What they share is exactly the vector `AudioNode`, so the kernels
+  are not duplicated by a single line (t322/t328 green without edits).
+- **The stage has no separate tail field.** The track processor keeps running while the
+  transport plays, and past the last event it gets silence — the tail comes out by itself (t733).
+  A field "how long to sound after the end" would be a second source of the same truth.
+- **Lookahead: the input of the summing window is shifted forward by `la`**, the output is returned by the node
+  rings — there is no shift relative to a track without a chain (t733b).
+- **The track state is a separate map by `TrackId`**, not a composite enum key: a track and an event
+  have different processors, and a branch at every access would gain nothing (t734: inserting a track above does not silence its neighbours, removing takes its own away).
+- **Video: the stage is a nested layer with a sub-plan of ITS OWN events** (`track_stage_layer`), by
+  the same code as a reel: raster and time are the parent's, the step is as for a flat layer. The
+  address of the sub-composite is synthetic (`NEST_TAG | TRACK_TAG | id`), the revision is the track's properties
+  plus the content of its events, otherwise the memo would return a stale result.
+- **The blend mode lives on `LayerSrc`, not in a separate branch of `PlanLayer`**: blending is a
+  property of ANY layer. `Normal` does not enter the new kernel at all, and the bytes are as before
+  (GOLDEN_VIDEO). The formula `out = lerp(below, blend(below, above), α × level)` is written
+  twice — `blend_ch` in kt-engine and its WGSL mirror in `composite.wgsl` — and this is a PAIR: the
+  files are edited in one commit, the guard — t737 (CPU against GPU for all nine modes,
+  at two levels, the tolerance class of transitions). The mode number travels in the free slot `u1.y`:
+  when blending there is no fade, by construction.
+- **Reels apply THEIR OWN stages for free**: both the audio and the video stages are assembled from the `tracks`
+  of THAT reel for which the renderer is built (t739).
 
-- **Горячие клавиши — ALT+M / ALT+S, а не голые M и S (отступление от tasks.md 4.1).**
-  Голая `M` в программе уже стоит на метке (жест п.142, раунд 24), голая `S` — на
-  разрезе; обе поставлены прямой просьбой владельца, а предел или привязка, поставленные
-  по просьбе, не меняются без новой просьбы. Переопредели мы их — человек потерял бы два
-  ежедневных жеста ради двух редких. Поэтому глушение и соло берут модификатор.
-- **«Выделенной дорожки» у нас нет — выделяются СОБЫТИЯ.** Клавиша действует на дорожку
-  выделенного события, а без выделения — на строку под указателем (ту самую, чьи бейджи
-  подсвечены). Решение живёт в одной функции `KtApp::key_target_track`, а само действие —
-  в общем теле `toggle_track_badge` с меню и бейджем (правило UI 17).
-- **Цепочка дорожки живёт в ОКНЕ ДОРОЖКИ, а не в `fx_editor.rs` (отступление от
-  tasks.md 4.3).** У дорожки правится шесть вещей плюс цепочка, и разводить их по двум
-  окнам значило бы заставлять человека открывать второе ради соседнего поля (правило 13).
-  Требование «тот же виджет полосы» выполнено буквально: окно зовёт ту же
-  `widgets::chain_strip`, что событие и морфер. Бейдж FX и пункт меню ведут в то же окно.
-- **Виджета автоматизации у дорожки нет намеренно**, а вставка цепочки С ОГИБАЮЩИМИ
-  законна и возможна в любой момент — поэтому кривые не роняются молча: они отбрасываются
-  с названной причиной и указанием, куда их класть (правила 16 и 19). Молчание дало бы
-  «эффект тот же, а звучит иначе», и искать это человек пошёл бы в движок.
-- **Esc закрывает окно дорожки КАСКАДОМ**, как окно эффектов: правки применяются на лету,
-  а вернуть их целиком умеет «Отмена». Своего обработчика окну не нужно — фокус у поля
-  имени Esc снимает сам egui в начале кадра, и до каскада клавиша доходит тем же нажатием.
-- **Подсветка запертой строки живёт столько же, сколько текст отказа** (`STATUS_TTL_MS`), а
-  не один кадр. Отказ приходит и от КЛАВИШИ (удаление, разрез), а `handle_keys` идёт раньше
-  отрисовки таймлайна: гасни подсветка в начале каждого прохода, человек увидел бы её ровно
-  ноль кадров. Сторож — t745.
-- **Глаголы дорожки в меню — одно тело `track_menu_items` на оба меню строк** (клиповое и
-  служебное) и на все виды. Глушение, соло и цепочка показываются только там, где им есть
-  что делать: мёртвый пункт меню запрещён правилом 9 ровно так же, как мёртвый бейдж
-  (t741). Глагол Open у всех трёх видов строк — окно свойств дорожки; прежняя запись
-  «открывать у дорожки нечего» снята.
-- **Имя щупа бейджа несёт вид строки** (`track.v1.mute`, а не `track.0.mute`): V1 и A1 —
-  разные дорожки, и без буквы вида живой сценарий жал бы в первую попавшуюся.
+### Clarifications during implementation (stage 4)
 
-### Что нашёл живой сценарий (стадия 4.7)
+- **Hotkeys — ALT+M / ALT+S, not bare M and S (a deviation from tasks.md 4.1).**
+  The bare `M` in the program is already taken by the marker (gesture item 142, round 24), the bare `S` — by
+  the cut; both were set by the owner's direct request, and a limit or binding set
+  at the request does not change without a new request. If we redefined them, a person would lose two
+  daily gestures for two rare ones. Therefore mute and solo take a modifier.
+- **We have no "selected track" — EVENTS are selected.** The key acts on the track of
+  the selected event, and without a selection on the row under the pointer (the very one whose badges are
+  highlighted). The decision lives in one function `KtApp::key_target_track`, and the action itself —
+  in the shared body `toggle_track_badge` with the menu and the badge (UI rule 17).
+- **The track chain lives in the TRACK WINDOW, not in `fx_editor.rs` (a deviation from
+  tasks.md 4.3).** A track has six things plus the chain to edit, and spreading them over two
+  windows would mean forcing a person to open a second one for a neighbouring field (rule 13).
+  The requirement "the same strip widget" is fulfilled literally: the window calls the same
+  `widgets::chain_strip` as the event and the morpher. The FX badge and the menu item lead to the same window.
+- **A track has no automation widget on purpose**, while inserting a chain WITH ENVELOPES is legitimate and possible at any moment — therefore curves are not silently dropped: they are discarded with
+  a named reason and an indication of where to put them (rules 16 and 19). Silence would give
+  "the effect is the same, but it sounds different", and a person would go looking for this in the engine.
+- **Esc closes the track window with a CASCADE**, like the effects window: edits are applied on the fly,
+  and "Undo" can revert them all at once. The window needs no handler of its own — the focus on the name
+  field is released by Esc by egui itself at the start of the frame, and the key reaches the cascade with the same press.
+- **The highlight of a locked row lives as long as the refusal text** (`STATUS_TTL_MS`), and
+  not for one frame. The refusal also comes from a KEY (delete, cut), and `handle_keys` runs before
+  drawing the timeline: if the highlight went out at the start of each pass, a person would see it for
+  exactly zero frames. Guard — t745.
+- **The track verbs in the menu — one body `track_menu_items` for both row menus** (the clip and the service one)
+  and for all kinds. Mute, solo and the chain are shown only where they have something to do:
+  a dead menu item is forbidden by rule 9 exactly as a dead badge is (t741). The verb Open for all three
+  kinds of rows is the track properties window; the former note "there is nothing to open on a track" is removed.
+- **The probe name of a badge carries the row kind** (`track.v1.mute`, not `track.0.mute`): V1 and A1 are
+  different tracks, and without the kind letter a live scenario would press the first one it finds.
 
-Оба дефекта были зелены в харнессе — ровно тот случай, ради которого живые сценарии и
-заведены.
+### What the live scenario found (stage 4.7)
 
-- **Вторая строка кнопок режима наложения наезжала на «Выключатели».** Девять кнопок
-  переносятся, а `Grid` высоту ПЕРЕНОСА не меряет. Режим и выключатели вынесены из сетки
-  своими строками; сторож — сверка ПРЯМОУГОЛЬНИКОВ нарисованного в t743 (по галлеям, а не
-  по дереву доступности: наезд виден только в координатах).
-- **Первые 8 px бейджа M были мертвы** — заголовки дорожек прижаты к левому краю окна, а
-  там зона ресайза (правило 15). Бейджи пишутся в `no_resize_rects`; самая кромка в
-  `WIN_BORDER` остаётся за ресайзом по решению п.9 р.12.
+Both defects were green in the harness — exactly the case for which the live scenarios were created.
 
-Порядок слоёв в фикстуре сценария: в OTIO верхняя дорожка — ПОСЛЕДНЯЯ в файле, и первая
-версия сценария ждала обратного. Это не дефект программы, а запись на будущее: фикстуру
-двух дорожек проверяй цветом, а не порядком в JSON.
+- **The second row of the blend mode buttons overlapped "Switches".** Nine buttons wrap, and `Grid` does not measure the height of the WRAP. The mode and the switches were moved out of the grid
+  into their own rows; guard — a check of the RECTANGLES drawn in t743 (by the gutters, not by the accessibility tree: the overlap is visible only in coordinates).
+- **The first 8 px of the M badge were dead** — the track headers are pressed against the left edge of the window, and there is the resize zone there (rule 15). The badges are written into `no_resize_rects`; the very edge in
+  `WIN_BORDER` remains with the resize, by the decision of item 9 of R.12.
 
-### Состояние проверок на конец change (стадия 5.2)
+The layer order in the scenario fixture: in OTIO the top track is the LAST in the file, and the first
+version of the scenario expected the reverse. This is not a defect of the program but a note for the future: check the two-track fixture by color, not by the order in the JSON.
 
-- `cargo test` покрейтно — зелено, kt-app 294 из 294 (проверено четырежды).
-- `cargo clippy --all-targets` — новых замечаний нет; те, что остались, старше раунда
-  (макрос `params_for`, `AddClip(ClipEvent)` в размере варианта, мёртвые методы
+### State of checks at the end of the change (stage 5.2)
+
+- `cargo test` per crate — green, kt-app 294 of 294 (checked four times).
+- `cargo clippy --all-targets` — no new warnings; the remaining ones are older than the round
+  (the macro `params_for`, `AddClip(ClipEvent)` in the size of the variant, dead methods
   `reel_preview`).
-- Живые сценарии — 41 из 41 зелёные.
-- **`cargo test --workspace` падает ВНЕ нашего кода**: тест-бинарь kt-app умирает с
-  SIGBUS при полной параллельной нагрузке (в одиночку зелёный, с kt-media/kt-engine/kt-gpu
-  парами — тоже). Памяти и места на диске вдоволь. Не отчитываются ровно два самых долгих
-  теста — t399 (пирамида пиков по часовому синтетику) и t640 (превью ленты из sidecar).
-  Дефект старше раунда (оба теста из Р.49 и Р.58) и вынесен в отдельную задачу: SIGBUS —
-  это страница отображённого ФАЙЛА, и искать надо владельца отображения, а не «флак».
-- Сценарий `nestparam` чинился здесь же: он целился в СЕРЕДИНУ второго выпуска, а тот
-  встаёт под курсор на 10-й секунде и длится 8 с — середина лежит за правой кромкой окна,
-  и правый клик уходил в корневое меню WM. Это ровно та ловушка, что записана в Р.37
-  («`x_at` умеет только то, что НА ЭКРАНЕ»), и сценарий теперь проверяет точку клика сам.
+- Live scenarios — 41 of 41 green.
+- **`cargo test --workspace` fails OUTSIDE our code**: the kt-app test binary dies with
+  SIGBUS under full parallel load (green alone, and also in pairs with kt-media/kt-engine/kt-gpu). Memory and disk space are plentiful. Exactly two of the longest tests are not reported — t399 (the peak pyramid over the hour-long synthetic) and t640 (the reel preview from the sidecar).
+  The defect is older than the round (both tests come from R.49 and R.58) and has been moved to a separate task: SIGBUS is
+  a page of a mapped FILE, and one must look for the owner of the mapping, not call it a "flake".
+- The scenario `nestparam` was fixed here as well: it aimed at the MIDDLE of the second release, and that one lands under the cursor at the 10th second and lasts 8 s — the middle lies beyond the right edge of the window,
+  and the right click went to the WM root menu. This is exactly the trap recorded in R.37
+  ("`x_at` can only do what is ON SCREEN"), and the scenario now checks the click point itself.
 
 ## Risks / Trade-offs
 
-- [Порядок f32-сложений] → стадия только там, где нужна; t729 держит t2/t3/GOLDEN_AUDIO.
-- [Muted-дорожка всё равно декодируется] → цена как у Vegas; оптимизация пропуска декода —
-  позже, спека её не запрещает.
-- [PDC дорожки расширяет окно суммирования — двойной рендер клипов на стыке чанков] →
-  scratch дорожки хранит хвост окна, как кольцо суб-микса ленты; t733 меряет цену.
-- [Дорожка-как-лента дороже плоских слоёв] → включается только условием; t736 —
-  байты и цена без условия прежние.
-- [Ширина gutter растёт] → ровно на галлею бейджей, предел фиксирован; t742 проверяет
-  «ничего не скачет» и попадание мышью.
-- [Удаление `lane_order` задевает t49/t241/t588–t594] → тесты переписываются на вектор
-  дорожек с теми же утверждениями (инвариант ранга не менялся), не ослабляются.
-- [Замок как гейт в модели — пропущенная команда] → сканирующий сторож: каждая команда с
-  адресом события проходит через одну функцию `target_track(cmd)`; t738 перебирает
-  реестр команд.
+- [Order of f32 additions] → the stage only where it is needed; t729 holds t2/t3/GOLDEN_AUDIO.
+- [A muted track is still decoded] → the cost is like Vegas; an optimization skipping the decode —
+  later, the spec does not forbid it.
+- [The track PDC widens the summing window — a double render of clips at the chunk boundary] →
+  the track's scratch keeps the window tail, like the reel sub-mix ring; t733 measures the cost.
+- [A track-as-reel is more expensive than flat layers] → enabled only by the condition; t736 —
+  the bytes and the cost without the condition are as before.
+- [The gutter width grows] → exactly by the badge gallery, the limit is fixed; t742 checks
+  "nothing jumps" and that the mouse hits.
+- [Removing `lane_order` affects t49/t241/t588–t594] → the tests are rewritten for the vector
+  of tracks with the same assertions (the rank invariant did not change), they are not weakened.
+- [The lock as a gate in the model — a skipped command] → a scanning guard: every command with
+  an event address passes through one function `target_track(cmd)`; t738 walks the
+  command registry.
 
 ## Migration Plan
 
-Совместимости не требуется (владелец). Чтение старых файлов — односторонняя миграция
-счётчиков/порядка/имён/высот в дорожки. Откат — git.
+No compatibility is required (the owner). Reading old files — a one-way migration of the
+counters/order/names/heights into the tracks. Rollback — git.
 
 ## Open Questions
 
-- Нужен ли solo-«эксклюзивный» клик (Ctrl+клик — одна дорожка, как в Vegas) сверх группы —
-  решается в UI при реализации, спеку не меняет.
+- Is an exclusive solo click (Ctrl+click — one track, as in Vegas) needed beyond the group —
+  it is decided in the UI during implementation, the spec does not change.

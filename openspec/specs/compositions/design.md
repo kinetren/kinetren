@@ -1,308 +1,135 @@
-# Композиции — почему так
+# Compositions — why it is this way
 
-## Что было и у кого болело
+## What hurt and for whom
 
-До вложенности «эффект на результат» был невыразим: эффекты живут на событиях, и
-единственный обходной путь — отрендерить кусок и подложить файлом — ломает
-недеструктивность. Разведка пяти редакторов (заметка `nested-sequences`) показала общую
-беду: нест как копия файла, свои настройки у неста (мыло, рывки, промежуточный ресемпл)
-и «войди в N уровней, чтобы понять, откуда кадр». Владелец принял два решения до кода:
-вложение — ссылка на объект ВНУТРИ проекта, и оно НАСЛЕДУЕТ настройки родителя.
+Before nesting, "an effect on the result" could not be expressed: effects live on events, and the
+only workaround — render a piece and lay it back as a file — breaks non-destructiveness. A survey of five editors (note `nested-sequences`) showed a common
+trouble: a nest as a copy of a file, its own settings for the nest (softness, jerks, an intermediate resample),
+and "enter N levels to understand where the frame comes from". The owner made two decisions before the code:
+a nesting is a reference to an object INSIDE the project, and it INHERITS the parent's settings.
 
-Дальше болело раундами: замедление и реверб на композиции не работали (стоял прямой
-запрет, а не поломка); внутри композиции играл корень, а вид оставался в оси корня;
-морфер и камера при сворачивании терялись (слой попадал внутрь и умирал без порядка
-строк); владелец потребовал гибридный режим — раскрывать композицию в том же таймлайне
-и играть всю программу; титр в замедленной композиции шёл ступеньками; дорожка под
-потолком не отображалась; вставка разводила пару A/V по концам монтажа; Enter не вёл
-внутрь; у композиций не было превью на таймлайне, потом оно не кэшировалось; внутри
-открытой ленты нельзя было раскрыть вложенную; эффект на композицию внутри композиции
-ронял программу; наконец, шаблон новостного выпуска нечем было параметризовать.
+Then it hurt round after round: slowing down and reverb on a composition did not work (there was a direct
+prohibition, not a breakage); inside a composition the root played, and the view stayed on the root's axis;
+a morpher and a camera were lost on collapse (the layer went inside and died without a row order); the owner demanded a hybrid mode — expand a composition in the same timeline
+and play the whole program; a title in a slowed composition went in steps; a track under the ceiling was not displayed; insertion split an A/V pair to the ends of the edit; Enter did not lead
+inside; compositions had no preview on the timeline, and later it was not cached; inside an
+open reel one could not expand a nested one; an effect on a composition inside a composition
+crashed the program; and finally, there was no way to parameterize the template of a news issue.
 
-## Решения и почему
+## Decisions and why
 
-- **Лента — ссылка внутри проекта, экземпляр — обычное событие.** Одна лента в N местах,
-  правка внутри меняет все; трим, драг, копипаст, переходы, реверс и варп работают
-  готовым кодом события. Адрес — `MediaId` в одном пространстве с файлами, но без
-  `MediaRef`: вопрос «это файл?» задаётся строкой в четырнадцати местах, и путь у ленты
-  превратил бы каждое в тихую неправильную работу.
-- **Наследование настроек ⇒ закон Э ⇒ оракул.** Вложение с пустой цепочкой тождественно
-  содержимому, поэтому раскрытие в эффективные клипы — не упрощение, а эталон, с которым
-  настоящее поддерево плана сверяется байт-в-байт по видео и аудио.
-- **Вложение — вход слоя, не ветка плана.** У экземпляра есть уровень, фейд, `u`, камера,
-  он бывает половиной перехода; отдельная ветка продублировала бы всё это в обоих
-  исполнителях (инвариант 7). Меняется только источник пре-FX кадра.
-- **Аудио: виртуальное медиа под фетчером, суб-микс только вперёд.** Миксер о лентах не
-  знает — отсюда закон Э по звуку байт-в-байт и нетронутый GOLDEN_AUDIO. Реверс и
-  растяжение действуют на сэмплы готового микса: «реверс развёрнутого» — это «отрендерить
-  вперёд и сыграть задом наперёд», третьего результата нет. Пре-ролл и блок — функции
-  проекта, не бюджета памяти: иначе байты выхода зависели бы от бюджета (инвариант 11).
-- **Три ключа.** Лента (тег в адресе), экземпляр (`fx_hash`), редакция (рекурсивный хэш
-  содержимого); с публикацией редакция — пара (лента, набор), при пустом наборе равная
-  хэшу ленты, чтобы проекты без публикаций не сдвинули ни одного ключа.
-- **Ступень ленты ≠ вход цепочки экземпляра.** Ступень — заказ, одна на ленту (иначе у
-  внутреннего листа два ключа кэша); вход — исполнение, что цепочка этого экземпляра
-  способна потребить; разошлись — вписывание одним решением на оба бэкенда.
-- **Контекст правки — обмен содержимого**, а не параметр у команд; раскрытие на месте —
-  тот же приём со смещением по времени и номеру дорожки. Полоса в хвосте числового
-  пространства дорожек — вставка корневой дорожки не трогает её по построению, а
-  «раскрыл — собрал» побайтовое тождество делает адресацию правок ненужной вовсе:
-  уехать через границу физически нечем.
-- **Номер дорожки = ранг строки.** Движок складывает по номеру, экран рисует по порядку
-  строк; правило «z-order == экран» держится одной дверью перестановки и сторожем
-  валидации. Исключение одно — бенч раскрытия.
-- **Время ленты непрерывно; пол ставит только файловый лист.** Лента не источник, у неё
-  нет кадров, к которым прижиматься; процедурный источник считается на любой тик.
-  Смешивание кадров наследуется листьям — суб-композит на кадр один.
-- **Превью ленты — сервис офлайн-рендера тем же кодом композиции**, ключ по экземпляру,
-  дисковый ярус в sidecar с отпечатком медиа.
-- **Публичные параметры: значение шаблона не хранится, экземпляр переопределяет только
-  опубликованное.** У нас экземпляр — ссылка, поэтому шаблон распространяет ПРАВКУ, и
-  переопределение — единственное законное место отличия экземпляра от ленты.
-- **Жесты.** Быстрый жест — режим по умолчанию (раскрыть на месте), названный пункт —
-  названный режим (полный вход); Enter каскадом вглубь, Esc каскадом наружу, полосы
-  переживают смену контекста (решение владельца, пересмотр прежнего «без полосы»).
+- **A reel is a reference inside the project, an instance is an ordinary event.** One reel in N places,
+  an edit inside changes all of them; trim, drag, copy-paste, transitions, reversal and warp work with the
+  ready event code. The address is a `MediaId` in one space with the files, but without a `MediaRef`: the question "is this a file?" is asked with a string in fourteen places, and a path for a reel would
+  turn each of them into a silent wrong result.
+- **Inheritance of settings ⇒ the E-law ⇒ an oracle.** A nesting with an empty chain is identical to
+  its content, so expansion into effective clips is not a simplification but the reference against which
+  the real sub-tree of the plan is checked byte for byte, for video and audio.
+- **A nesting is a layer input, not a branch of the plan.** An instance has a level, a fade, `u`, a camera;
+  it can be half of a transition; a separate branch would duplicate all of this in both
+  executors (invariant 7). Only the source of the pre-FX frame changes.
+- **Audio: a virtual media under the fetcher, a sub-mix only forward.** The mixer knows nothing about reels —
+  hence the E-law for sound byte for byte and the untouched GOLDEN_AUDIO. Reversal and stretching act on the samples of the finished mix: "reversing the expanded" means "render forward and play backwards", there is no third result. The pre-roll and the block are functions
+  of the project, not of the memory budget: otherwise the output bytes would depend on the budget (invariant 11).
+- **Three keys.** The reel (a tag in the address), the instance (`fx_hash`), the revision (a recursive hash
+  of the content); with publication the revision is a pair (reel, set), and with an empty set it equals
+  the hash of the reel, so that projects without publications do not move a single key.
+- **The reel's level ≠ the entry of the instance's chain.** The level is the order, one per reel (otherwise the inner sheet would have two cache keys); the entry is the execution, what this instance's chain is able to consume; when they diverge — fitting by one decision for both backends.
+- **The editing context is an exchange of content**, not a parameter of the commands; expansion in place is the same trick with a time offset and a track number. The strip in the tail of the numeric space of tracks — inserting a root track does not touch it by construction, and "expand — collapse" byte-for-byte identity makes the addressing of edits unnecessary altogether:
+  there is physically no way to cross the boundary.
+- **Track number = row rank.** The engine sums by number, the screen draws in row order; the rule "z-order == screen" is held by one reordering gate and a validation guard. There is one exception — the expansion benchmark.
+- **The reel's time is continuous; only the file sheet sets a floor.** A reel is not a source, it has no frames to snap to; a procedural source is computed at any tick.
+  Frame blending is inherited by the leaves — one sub-composite per frame.
+- **The reel's preview is a service of offline rendering by the same composition code**, keyed by instance, with a disk tier in the sidecar with a media fingerprint.
+- **Public parameters: the template's value is not stored, the instance overrides only what is published.** For us an instance is a reference, so the template propagates an EDIT, and the override is the only legitimate place where an instance differs from the reel.
+- **Gestures.** A quick gesture is the default mode (expand in place), a named item is a named mode (the full entry); Enter cascades inward, Esc cascades outward; the strips survive a change of context (the owner's decision, a revision of the former "without a strip").
 
-## Отвергнуто и почему
+## Rejected and why
 
-- `MediaRef { path: "seq:N" }` для ленты — воркер, watchdog и служба индекса приняли бы её
-  за файл; ни один отказ не отказ, а тихая работа.
-- Свои fps/растр/частота у вложения — приезжает вся семья дефектов конкурентов (мыло,
-  рывки, ресемпл); решение владельца — наследовать. **Пересмотр (Р.62, change
-  `frame-conform-and-event-geometry`): свой растр и свой fps у ленты — по прямой
-  просьбе владельца** («композиции нужны одни квадратные, другие прямоугольные внутри
-  прямоугольного проекта»); частота аудио остаётся общей. Причина принятия цены: без
-  своего растра квадратная/вертикальная композиция внутри 16:9 невыразима, а свой fps
-  на непрерывном времени ленты (Р.56) — это квантование, а не конверсия кадров.
-  Следствие для закона Э: оракул «лента == развёрнутое» действует при настройках,
-  равных проекту, и ограничивается честно (отрицательный тест), а не размывается
-  допуском; экземпляр ленты с чужим растром приводится тем же правилом, что файл.
-- «Внутрь только события и переходы, свернуть под морфером — отказ» — вдвое короче, но
-  оставляет класс «это свернуть нельзя».
-- Вложение как `MediaSource` — его чтение ждало бы кадров других воркеров из своего
-  воркер-потока: playback перестаёт быть неблокируемым (инвариант 5). Рекурсия — в
-  построении плана.
-- Суб-микс в кэше бёрстов с прогревом префетчем — производство суб-микса есть прогон
-  FX-состояния, а его трогает только аудио-render-поток (инвариант 2).
-- Ключ FX-состояния по ленте (а не по экземпляру) — два звучащих экземпляра делили реверб
-  и дрались за курсор продюсера; t564 красный на старом ключе.
-- «Текущая лента» параметром через шестьдесят рук команд — пропуск одной руки уводит
-  правку в корень молча.
-- Раскрытие через «ключ строки знает владельца + `apply_batch_in`» — параметризация
-  ~2700 строк отрисовки и аудит 182 вызовов рабочего вида с профилем «пропустил — тихо».
-- Два суб-композита на кадр для смешивания на вложении — вдвое дороже на обоих бэкендах и
-  возвращает ступеньки процедурному (оба собирались бы на сетке).
-- Хранить значение шаблона у ручки — второй источник факта, расходится при первой правке.
-- Переопределять «любое свойство внутри по адресу» — шаблон теряет интерфейс и ломается
-  при правке внутри.
-- Отвергнуты владельцем: хвосты раскрытия «только чтение»/«не показывать»; «спрашивать
-  при каждой правке общей ленты»/«всегда отвязывать»; вставка «на курсор» или «дорожки как
-  у оригинала»; «не показывать зону до нуля»; «общая папка данных» для кэша превью;
-  восстанавливать полосы «все, кроме входной»/«только корень».
-- Запись «филмстрипа у ленты не бывает» и «в sidecar нельзя — ключ по идентичности файла»
-  — сняты как неверные формулировки: невозможна тумба ПО ФАЙЛУ, а не рендер; идентичностью
-  файла ключуется API добавления медиа, не схема.
+- `MediaRef { path: "seq:N" }` for a reel — the worker, the watchdog and the index service would take it
+  for a file; not one of them would fail, they would silently do the wrong work.
+- Own fps/raster/frequency for the attachment — the whole family of competitors' defects arrives (softness,
+  jerks, resampling); the owner's decision is to inherit. **Revision (R.62, change
+  `frame-conform-and-event-geometry`): a reel's own raster and its own fps — by the owner's direct
+  request** ("compositions need some square ones and others rectangular inside a rectangular project");
+  the audio frequency remains shared. The reason for accepting the price: without its own raster a square/vertical composition inside 16:9 is inexpressible, and its own fps
+  on the continuous time of the reel (R.56) is quantization, not frame conversion.
+  Consequence for the E-law: the oracle "reel == expanded" applies when the settings
+  equal the project's, and is honestly bounded (a negative test), rather than blurred
+  by a tolerance; a reel instance with a foreign raster is brought in by the same rule as a file.
+- "Inward only events and transitions, collapsing under a morpher — a refusal" — half as long, but it leaves the class "this cannot be collapsed".
+- A nesting as a `MediaSource` — its reading would wait for the frames of other workers from its own worker thread: playback stops being non-blocking (invariant 5). Recursion is in the construction of the plan.
+- A sub-mix in the burst cache with warm-up by the prefetcher — producing a sub-mix is a run of the FX state, which only the audio-render thread touches (invariant 2).
+- The FX-state key by reel (rather than by instance) — two sounding instances shared the reverb and fought over the producer's cursor; t564 was red on the old key.
+- "The current reel" as a parameter through sixty hands of commands — missing one hand silently sends the edit to the root.
+- Expansion through "the row key knows the owner + `apply_batch_in`" — parameterizing ~2700 lines of drawing and auditing 182 calls of the working view with a profile "missed — silently".
+- Two sub-composites per frame for blending on a nesting — twice as expensive on both backends and brings back the steps to the procedural one (both would be assembled on the grid).
+- Storing the template's value at the handle — a second source of fact, which diverges at the first edit.
+- Overriding "any property inside by address" — the template loses its interface and breaks on an edit inside.
+- Rejected by the owner: the expansion tails "read-only"/"do not show"; "ask on every edit of the shared reel"/"always unlink"; inserting "at the cursor" or "tracks as in the original"; "do not show the zone at zero"; a "shared data folder" for the preview cache; restoring strips "all except the input"/"only the root".
+- The notes "a filmstrip does not exist for a reel" and "it cannot be in the sidecar — the key is by file identity" — withdrawn as incorrect wordings: a thumbnail BY FILE is impossible, not a render; file identity keys the media-adding API, not the schema.
 
-## Неочевидные детали
+## Non-obvious details
 
-- **У окна параметров экземпляра нет и не будет своего редактора ключей** (Р.60). Кривые
-  переопределений рисует `automation::draw` (`src/apps/kt-app/src/automation.rs`) — тот же
-  виджет, что у слота эффекта и у генератора. Первая редакция окна завела собственную
-  запись: безымянный глиф `+` создавал кривую, и дальше каждая правка поля клала ключ по
-  курсору, а посмотреть на кривую было негде («кривых автоматизаций я нигде не вижу»).
-  Кривые всех ручек собираются ОДНИМ рядом (`src/apps/kt-app/src/pubparam.rs`,
-  `draw_one_inst_params`): внутри окна кривая зовётся по номеру ручки (`pub_key`), при
-  записи имя возвращается целевым — две ручки вправе целиться в одноимённые параметры
-  разных событий, и по целевому имени они слиплись бы в одну линию.
-- **Ключ по курсору пишется только у ВИДИМОЙ кривой.** Правило живёт в одном месте —
-  `draw_value_row` (`src/apps/kt-app/src/pubparam.rs`): есть кривая в ряду — `bound_apply`,
-  нет — константа. Завести кривую можно только названным действием, поэтому скрытой записи
-  не остаётся по построению (t691).
-- **Пределы ручки не копируются в публикацию** (Р.60). Умолчание — паспорт ЦЕЛИ по адресу
-  (`Project::addr_spec`, `src/libs/kt-model/src/project.rs`), в `PubRange` ложится ТОЛЬКО
-  сужение (`PubRange::narrowed`, `src/libs/kt-model/src/published.rs`): равное пределу цели
-  значение хранится как `None`. Довод тот же, что против хранимого значения шаблона — копия
-  разошлась бы с целью при смене версии эффекта. До Р.60 пустое сужение рисовалось нулём.
+- **The instance parameters window has no and will not have its own keyframe editor** (R.60). The curves of overrides are drawn by `automation::draw` (`src/apps/kt-app/src/automation.rs`) — the same widget as the effect slot and the generator. The first edition of the window had its own record: a nameless `+` glyph created a curve, and from then on every edit of a field put a key at the cursor, and there was nowhere to look at the curve ("I don't see any automation curves anywhere"). The curves of all handles are collected in ONE row (`src/apps/kt-app/src/pubparam.rs`, `draw_one_inst_params`): inside the window the curve is called by the handle's number (`pub_key`), and on writing the name is returned as the target — two handles may aim at identically named parameters of different events, and by the target name they would merge into one line.
+- **A key at the cursor is written only for a VISIBLE curve.** The rule lives in one place — `draw_value_row` (`src/apps/kt-app/src/pubparam.rs`): if there is a curve in the row — `bound_apply`, if not — a constant. A curve can be created only by a named action, so no hidden recording remains by construction (t691).
+- **The handle's limits are not copied into the publication** (R.60). The default is the passport of the TARGET by address (`Project::addr_spec`, `src/libs/kt-model/src/project.rs`); ONLY the narrowing is laid into `PubRange` (`PubRange::narrowed`, `src/libs/kt-model/src/published.rs`): a value equal to the target's limit is stored as `None`. The argument is the same as against a stored template value — the copy would diverge from the target when the effect's version changes. Before R.60 an empty narrowing was drawn as zero.
+- The high bit of `MediaId` is given to the engine for the address of a reel (`NEST_TAG`, `src/libs/kt-model/src/project.rs`, `src/libs/kt-engine/src/video.rs`); a file with such an address is rejected by `validate`. In the video plan the address of a reel once went WITHOUT the tag and numerically matched a file with the same id — only the difference in `key_hash` saved it.
+- `Sequence` is a partial duplicate of `Project`, and a content field introduced at the root has nothing in the reel to catch it except an exhaustive destructuring of both in t426 (`src/libs/kt-model/tests/nest.rs`).
+- Fresh addresses of five kinds are computed over the WHOLE tree (`Project::max_clip_id` and relatives, `ops::NestCounters`, `src/libs/kt-model/src/ops.rs`): the maximum over the root gave a silent collision with an event inside a reel, and inserting a copy next to a nesting simply did not happen — it was found by a live scenario, not by a test.
+- The rule "what travels with the selection" is one — `block_extras` (`src/libs/kt-model/src/ops.rs`): a camera added for the sake of collapsing automatically travelled both on copy-paste, and that is correct. `collapse_into_sequence` projects `lane_order` onto the surviving rows — without it the morph rows are last, and the layer "everything below" covers nothing.
+- `expand_instance` (`src/libs/kt-model/src/ops.rs`) INSERTS tracks rather than occupying others' — otherwise the expansion silently changes the z-order of the neighbours; the addresses of the pieces of the inline start above the numbers handed out by the morpher pass to the same clip.
+- There is no return of handles on collapse: the material was not cut, and `restore_handles` would give it to clips that are not in the root (`src/libs/kt-model/src/ops.rs`).
+- Premultiplication: `execute_plan_cpu` starts with transparent black, and with `da == 0` the result is a premultiplied RGB with straight alpha. One conversion `unpremultiply` (`src/libs/kt-fx/src/video.rs`) and its mirror `shaders/unpremul.wgsl` (`src/libs/kt-gpu/src/engine.rs`) are edited in one commit; the arithmetic is integer, the boundary is checked against `FrameTol::EXACT`. Without the conversion the divergence is 48 LSB against 1.
+- Only the FULL sub-composite is memoized (`nest_frame_cpu`, `src/libs/kt-engine/src/video.rs`): a starved frame under the reel's edit key is a black reel forever; a live player hit this on every cold start.
+- The key of the GPU plan is recursive over the PLAN of the sub-tree, but not over the address/revision of the reel (`resolve_plan`/`encode_jobs`, `src/libs/kt-gpu/src/engine.rs`): starvation inside a reel changes the picture without changing the fields of the instance; an empty plan of a sub-tree must clear the texture — the pool hands out dirty ones.
+- The entry of an instance's chain: `clip_chain_scale` = min(the reel's level, what this instance's `head_zoom` consumes by the cameras of THAT reel where it stands) (`src/libs/kt-engine/src/video.rs`); fitting — `NestSrc::fit_to` (`src/libs/kt-engine/src/video_plan.rs`) → CPU `fit_into` (`src/libs/kt-fx/src/video.rs`) / GPU `Resample`. The most expensive row of the table — barriers without a resample: the `debug_assert` did not fire, and the layer dropped out silently with `complete == true`. Lesson: t450 built a falling construction and never rendered it.
+- The state of nested reels — `FxStateStore.nests`, taken out for the duration of the render (`take_nests`/`put_nests`, `src/libs/kt-engine/src/fxstore.rs`): the sub-render is called from the fetcher, which lives next to the store. Exactly one last burst of the sub-mix is cached: more is impossible (the chain is a streaming automaton), less is impossible (the cursor is on the burst).
+- `sync_fx` and `reset_all` go inward: without the first, the processor of the inner chain is not created and the event is LOST (a test "differs from dry" would miss it — the difference exists in silence too, which is why t449 compares energy); without the second, after a seek inside the reel the tail of another place sounds (`src/libs/kt-engine/src/audio.rs`).
+- `render_frames_raw` must wrap the fetcher with reels (`src/libs/kt-engine/src/audio.rs`): otherwise the order goes inward, but the reading does not (t565).
+- The order and the reading of the sub-mix are one function `nest_read_window`, gated by the REVERSAL, not by the warp (the warp is monotonic, the "cost is linear" t436 is intact); the veto on stretching asks for the VALUES, not the kind of the slot — `chain_warps_time` (`src/libs/kt-engine/src/audio.rs`, `src/libs/kt-model/src/warp.rs`), which is why reverb on a nesting is legitimate.
+- The warm-up of a nesting — a window by `warp.used()`, a stretched child "entirely or not at all" (`reel_coverage`, `src/libs/kt-engine/src/video.rs`): a linear translation under the warp would lie in the favourable direction.
+- Internal time: `clip_inner_tick == clip_material_pos` for a reel, the floor only for the file sheet; the sign of the procedural one — `MediaInfo.fps == None` with `has_video`, the facts travel in `SourceFacts` (`VideoRenderer::new_with_facts`, `src/libs/kt-engine/src/video.rs`). The blending flag must travel to four places: `clip_frame_keys`, `max_concurrent_layers_in`, `reel_coverage`, `nest_memo_key` (there too).
+- The render test of a reel puts the frame of a procedural clip as a worker (`RequestKind::video_on_grid`) and holds ONE `BurstCache` for all moments — `UploadCache` is keyed by its serial numbers (`src/libs/kt-gpu/src/engine.rs`).
+- Three views of the project (`src/libs/kt-model/src/model.rs`): `project()` — the working view, `document()` — the document, `reel_document()` — the current reel as the root. Validation runs over the DOCUMENT: in the working view the instance of the current reel lies inside the reel itself and looks like a cycle. The end of the content of the reel is taken AFTER the exchange — `sequence(c.media)` after `set_editing` holds the content of the root (`src/apps/kt-app/src/app.rs`, `enter_nest`).
+- "What plays" — `KtApp::player_project` / `push_project_to_player` (`src/apps/kt-app/src/app.rs`): `set_project` was called from eight places, and a single substitution would return the root at the first edit inside; the guard t554 checks that the decision point is exactly one — a prohibition without a self-check turns green on an empty set.
+- An instance at zero degenerates the formula of the cursor translation into an identity — t456 was green without the translation; the harness on a shifted instance plus the scene guard `assert_ne!(want, outside)` (`src/apps/kt-app/src/layout_tests.rs`).
+- The strip: `merge_reel`/`unmerge_reel` (`src/libs/kt-model/src/project.rs`), `bench`/`simulate`/`preview` (`src/libs/kt-model/src/model.rs`). `simulate` works on the bench and collects into the canon; `preview` must return the future bench — comparing the canon with the bench would silently and with undo cut the material of others' events; any edit of the canon calls `rebuild_bench()`, including fields outside the history. `Band::after_batch` is an exhaustive `match` without `_ =>`: the only place where correctness rests on a human.
+- `canon_order`: the natural order of rows is canonized into an EMPTY vector, otherwise "expanded and collapsed" writes an explicit order to the file where there was none (`src/libs/kt-model/src/project.rs`).
+- `BandOrderBroken` was introduced and removed: a break of the block by a root row is produced by the very insertion of a track, and the state does not live longer than a frame. One boundary remains — `BandEscape` (`src/libs/kt-model/src/project.rs`). The tail `base + len` belongs to the strip (`Band::lane_inserted`, `src/libs/kt-model/src/model.rs`) — otherwise an event on such a track silently drifted to the root.
+- `TimelineModel::clip` searches the WORKING view (`src/libs/kt-model/src/model.rs`): in the canon the event of the strip lies inside the reel, and every gesture on the strip would silently answer "no such one".
+- `Drag::NestWindow` (`src/apps/kt-app/src/timeline.rs`) — the only gesture where the pointer above the row of one reel edits an event of another; the commands are ordinary `TrimStart`/`TrimEnd`, `dt` under them is invariant (`clip_slice` moves `start` and `source_in` by one delta), and the content of the strip does not move — the window slides over like a shutter.
+- The veil of the tails and the zone at zero are drawn AFTER the events, and the rows of the strip are labelled with the reel's name — root names on them would lie (`src/apps/kt-app/src/timeline.rs`).
+- Strips across contexts — two memories, both keep `ClipId`, not `Band`: `NestStep::band` (removed BEFORE `set_editing`, which clears the strips unconditionally) and `KtApp::reel_bands` (`src/apps/kt-app/src/app.rs`); the strip is recalculated by `expand_band` (`src/libs/kt-model/src/model.rs`), and the undo snapshot wins.
+- The decision "what Enter does" — `enter_pressed_on_nest` (`src/apps/kt-app/src/app.rs`) by `bands.any(inst == id)`; two guards "expanding is allowed only at the root" stood with a wrong comment — the model did not forbid this. `after_bands_changed(keep)` holds the selection of the instance: without it the second Enter did not find its target.
+- The row rank: the single gate `Project::set_lane_order` computes `LanePerm` and renumbers everything, including `Retained.tracks` of kt-otio through `Retained::remap_tracks` — otherwise the metadata of a foreign track would drift to its neighbour (`src/libs/kt-model/src/project.rs`, `src/libs/kt-otio/src/convert.rs`). Rows in gestures are addressed by KEY: `reorder_rows` first collapses the strip, and the collapse changes the number of rows.
+- Clipboard: `ClipBlock::localize`/`shifted_to_row` (`src/libs/kt-model/src/ops.rs`) — the clamp is BY KIND, not by event (otherwise two tracks stick together), the tracks are created explicitly (`lanes_needed`), not by silent growth in `AddClip`: the number `base` belongs to the strip.
+- Zero of the reel: `KtApp::time_floor()` — the floor of gestures, `timeline::CURSOR_FLOOR` — the cursor (`src/apps/kt-app/src/app.rs`, `src/apps/kt-app/src/timeline.rs`); there are no bare `.max(0)` over time (t637c). In the file `kt.start` is written only when it diverges from the cursor of the OTIO track (`src/libs/kt-otio/src/convert.rs`).
+- Format: `KT_META_V6` — the FIRST condition of the cascade (`src/libs/kt-otio/src/meta.rs`); a foreign raw of tracks is returned only at the root — the key `(kind, lane)` inside a reel would collide with the root's; a foreign object at the level of the children of the root `Stack` is stored with its position (`Retained.root_foreign`). `read_reel` (`src/libs/kt-otio/src/convert.rs`) wraps a `Stack` without tracks in a synthetic `Track` — the rule "clip after clip with gaps" is one.
+- Preview of a reel: the request goes BEFORE the render loop by key; `PeakAcc` is extracted from `PeakPyramid::build_observed`, not written next to it; the moment of the frame — `thumbs::material_at` (`src/apps/kt-app/src/thumbs.rs`); `invalidate_seq` takes the SET of live revisions (`src/apps/kt-app/src/reel_preview.rs`). The disk tier — the tables `reel_strip`/`reel_frame`/`reel_peaks` by (seq, `content_hash`, `media_fp`); the key is computed in the thread of the task, `purge_media` does not touch them, `prune_reels` — from the task (`src/libs/kt-media/src/index.rs`).
+- Publication: `resolve_reel` — the only gate (`src/libs/kt-model/src/project.rs`), `reconcile_published` next to `reconcile_transitions` in `simulate` (`src/libs/kt-model/src/model.rs`) — on every batch, without a list of triggers. The field `published` exists in both `Project` and `Sequence`, and `swap_reel` exchanges them. A curve is converted by the same `clip_material_at` as the morpher layer; for a transition the domain is the tick from the window, for a camera it is the progress of the event, and an "almost correct" curve is worse than a refusal.
+- The salt of the generator: `gen_salt`/`gen_source_addr_in`, computed by `build_reel` and `gen_sources` (`src/libs/kt-engine/src/video.rs`); zero when `overrides_touch_sources == false` (`src/libs/kt-model/src/published.rs`). `content_hash` is computed from the Debug representation — the new field `overrides` shifted all revisions ONCE, the sidecar preview was recalculated once on opening; this is not a migration.
+- The owner reel of a publication — `owner_reel_of` by the working view (`src/apps/kt-app/src/pubparam.rs`): an event of a strip belongs to the reel of the strip, otherwise `reconcile_published` would have removed the handle in the same batch. The handle's name is checked by the DRAWN glyphs (`painted_texts`), not by the accessibility tree — the accessible name of the reset button is compound and carries the handle's name too (`src/apps/kt-app/src/layout_tests.rs`, t684).
+## R.67: reel preview survives to disk
 
-- Старший бит `MediaId` отдан движку под адрес ленты (`NEST_TAG`,
-  `src/libs/kt-model/src/project.rs`, `src/libs/kt-engine/src/video.rs`); файл с таким
-  адресом отвергает `validate`. В видео-плане адрес ленты однажды шёл БЕЗ тега и численно
-  совпадал с файлом того же id — спасало только различие `key_hash`.
-- `Sequence` — частичный дубль `Project`, и поле содержимого, заведённое в корне, в ленте
-  забыть нечем поймать, кроме исчерпывающего деструктурирования обеих в t426
-  (`src/libs/kt-model/tests/nest.rs`).
-- Свежие адреса пяти видов считаются по ВСЕМУ дереву (`Project::max_clip_id` и родня,
-  `ops::NestCounters`, `src/libs/kt-model/src/ops.rs`): максимум по корню давал молчаливое
-  столкновение с событием внутри ленты, и вставка копии рядом с вложением просто не
-  случалась — нашлось живым сценарием, не тестом.
-- Правило «что едет с выделением» одно — `block_extras` (`src/libs/kt-model/src/ops.rs`):
-  камера, добавленная ради сворачивания, автоматически поехала и при копипасте, и это
-  правильно. `collapse_into_sequence` проецирует `lane_order` на выжившие строки — без него
-  морф-строки последние, и слой «всё, что ниже» не накрывает ничего.
-- `expand_instance` (`src/libs/kt-model/src/ops.rs`) ВСТАВЛЯЕТ дорожки, а не занимает
-  чужие — иначе разворачивание молча меняет z-order соседей; адреса кусков инлайна
-  начинаются выше номеров, розданных морфер-проходом тому же клипу.
-- Возврата ручек при сворачивании не бывает: материал не резался, и `restore_handles`
-  отдал бы его клипам, которых в корне нет (`src/libs/kt-model/src/ops.rs`).
-- Премультипликация: `execute_plan_cpu` начинает с прозрачно-чёрного, и при `da == 0`
-  результат — премультиплицированный RGB при прямой альфе. Одна конверсия
-  `unpremultiply` (`src/libs/kt-fx/src/video.rs`) и её зеркало `shaders/unpremul.wgsl`
-  (`src/libs/kt-gpu/src/engine.rs`) правятся одним коммитом; арифметика целочисленная,
-  граница сверяется `FrameTol::EXACT`. Без конверсии расхождение 48 LSB против 1.
-- Мемоизируется только ПОЛНЫЙ суб-композит (`nest_frame_cpu`,
-  `src/libs/kt-engine/src/video.rs`): голодный кадр под ключом редакции — чёрная лента
-  навсегда; живой плеер попадал в это на каждом холодном старте.
-- Ключ GPU-плана рекурсивен по ПЛАНУ поддерева, но не по адресу/редакции ленты
-  (`resolve_plan`/`encode_jobs`, `src/libs/kt-gpu/src/engine.rs`): голод внутри ленты
-  меняет картинку, не меняя полей экземпляра; пустой план поддерева обязан очистить
-  текстуру — пул отдаёт грязные.
-- Вход цепочки экземпляра: `clip_chain_scale` = min(ступень ленты, что потребляет
-  `head_zoom` ЭТОГО экземпляра по камерам ТОЙ ленты, где он стоит)
-  (`src/libs/kt-engine/src/video.rs`); вписывание — `NestSrc::fit_to`
-  (`src/libs/kt-engine/src/video_plan.rs`) → CPU `fit_into`
-  (`src/libs/kt-fx/src/video.rs`) / GPU `Resample`. Самая дорогая строка таблицы —
-  барьеры без ресемпла: `debug_assert` не срабатывал, слой выпадал молча с
-  `complete == true`. Урок: t450 строил падающую конструкцию и ни разу её не рендерил.
-- Состояние вложенных лент — `FxStateStore.nests`, вынимается на время рендера
-  (`take_nests`/`put_nests`, `src/libs/kt-engine/src/fxstore.rs`): суб-рендер зовётся из
-  фетчера, живущего рядом со стором. Кэшируется ровно один последний бёрст суб-микса:
-  больше нельзя (цепочка — потоковый автомат), меньше нельзя (курсор на бёрсте).
-- `sync_fx` и `reset_all` уходят вглубь: без первого процессор внутренней цепочки не
-  заводится и событие ПРОПАДАЕТ (тест «отличается от сухого» пропустил бы — отличие есть
-  и у тишины, поэтому t449 сравнивает энергию); без второго после seek внутри ленты звучит
-  хвост из другого места (`src/libs/kt-engine/src/audio.rs`).
-- `render_frames_raw` обязан оборачивать фетчер лентами (`src/libs/kt-engine/src/audio.rs`):
-  иначе заказ уходит внутрь, а чтение — нет (t565).
-- Заказ и чтение суб-микса — одна функция `nest_read_window`, гейт по РЕВЕРСУ, не по
-  варпу (варп монотонен, «цена линейна» t436 цела); вето на растяжение спрашивает
-  ЗНАЧЕНИЯ, не вид слота — `chain_warps_time` (`src/libs/kt-engine/src/audio.rs`,
-  `src/libs/kt-model/src/warp.rs`), поэтому реверб на вложении законен.
-- Прогретость вложения — окно по `warp.used()`, растянутый ребёнок «целиком или никак»
-  (`reel_coverage`, `src/libs/kt-engine/src/video.rs`): линейный перевод под варпом врал
-  бы в хорошую сторону.
-- Внутреннее время: `clip_inner_tick == clip_material_pos` у ленты, пол — только у
-  файлового листа; признак процедурного — `MediaInfo.fps == None` при `has_video`, факты
-  едут `SourceFacts` (`VideoRenderer::new_with_facts`, `src/libs/kt-engine/src/video.rs`).
-  Флаг смешивания обязан ехать в четыре места: `clip_frame_keys`,
-  `max_concurrent_layers_in`, `reel_coverage`, `nest_memo_key` (там же).
-- Тест рендера ленты кладёт кадр процедурного клипа как воркер (`RequestKind::video_on_grid`)
-  и держит ОДИН `BurstCache` на все моменты — `UploadCache` ключуется его серийными
-  номерами (`src/libs/kt-gpu/src/engine.rs`).
-- Три вида проекта (`src/libs/kt-model/src/model.rs`): `project()` — рабочий вид,
-  `document()` — документ, `reel_document()` — текущая лента корнем. Валидация идёт по
-  ДОКУМЕНТУ: в рабочем виде экземпляр текущей ленты лежит внутри неё самой и выглядит
-  циклом. Конец содержимого ленты берётся ПОСЛЕ обмена — `sequence(c.media)` после
-  `set_editing` держит содержимое корня (`src/apps/kt-app/src/app.rs`, `enter_nest`).
-- «Что играет» — `KtApp::player_project` / `push_project_to_player`
-  (`src/apps/kt-app/src/app.rs`): `set_project` звался из восьми мест, и одна подстановка
-  вернула бы корень при первой правке внутри; сторож t554 проверяет, что точка решения
-  ровно одна — запрет без самопроверки зеленеет на пустом множестве.
-- Экземпляр в нуле вырождает формулу перевода курсора в тождество — t456 зеленел без
-  перевода; харнесс на сдвинутом экземпляре плюс сторож сцены `assert_ne!(want, outside)`
-  (`src/apps/kt-app/src/layout_tests.rs`).
-- Полоса: `merge_reel`/`unmerge_reel` (`src/libs/kt-model/src/project.rs`),
-  `bench`/`simulate`/`preview` (`src/libs/kt-model/src/model.rs`). `simulate` работает на
-  бенче и собирает в канон; `preview` обязана возвращать бенч будущего — сравнение канона с
-  бенчем срезало бы материал у чужих событий тихо и с undo; любая правка канона зовёт
-  `rebuild_bench()`, включая поля вне истории. `Band::after_batch` — исчерпывающий `match`
-  без `_ =>`: единственное место, где правильность держится на человеке.
-- `canon_order`: натуральный порядок строк канонизируется в ПУСТОЙ вектор, иначе «раскрыл
-  и свернул» пишет в файл явный порядок там, где его не было
-  (`src/libs/kt-model/src/project.rs`).
-- `BandOrderBroken` заведён и снят: разрыв блока корневой строкой порождает сама вставка
-  дорожки, и состояние не живёт дольше кадра. Осталась одна граница — `BandEscape`
-  (`src/libs/kt-model/src/project.rs`). Хвост `base + len` принадлежит полосе
-  (`Band::lane_inserted`, `src/libs/kt-model/src/model.rs`) — иначе событие на такой
-  дорожке молча уезжало в корень.
-- `TimelineModel::clip` ищет в РАБОЧЕМ ВИДЕ (`src/libs/kt-model/src/model.rs`): в каноне
-  событие полосы лежит внутри ленты, и каждый жест по полосе молча отвечал бы «нет такого».
-- `Drag::NestWindow` (`src/apps/kt-app/src/timeline.rs`) — единственный жест, где
-  указатель над строкой одной ленты правит событие другой; команды обычные `TrimStart`/
-  `TrimEnd`, `dt` под ними инвариантен (`clip_slice` двигает `start` и `source_in` на одну
-  дельту), и содержимое полосы не едет — окно наезжает шторкой.
-- Вуаль хвостов и зоны до нуля рисуется ПОСЛЕ событий, строки полосы подписаны именем
-  ленты — корневые имена на них соврали бы (`src/apps/kt-app/src/timeline.rs`).
-- Полосы через контексты — две памяти, обе хранят `ClipId`, не `Band`: `NestStep::band`
-  (снимается ДО `set_editing`, который чистит полосы безусловно) и `KtApp::reel_bands`
-  (`src/apps/kt-app/src/app.rs`); полоса пересчитывается `expand_band`
-  (`src/libs/kt-model/src/model.rs`), снимок undo побеждает.
-- Решение «что делает Enter» — `enter_pressed_on_nest` (`src/apps/kt-app/src/app.rs`) по
-  `bands.any(inst == id)`; два сторожа «раскрыть можно только в корне» стояли с неверным
-  комментарием — модель этого не запрещала. `after_bands_changed(keep)` держит выделение
-  экземпляра: без этого второй Enter не находил цели.
-- Ранг строки: единственная дверь `Project::set_lane_order` считает `LanePerm` и
-  перенумеровывает всё, включая `Retained.tracks` kt-otio через `Retained::remap_tracks`
-  — иначе metadata чужого трека уехала бы на соседний (`src/libs/kt-model/src/project.rs`,
-  `src/libs/kt-otio/src/convert.rs`). Строки в жестах адресуются КЛЮЧОМ: `reorder_rows`
-  сначала сворачивает полосу, а свёртка меняет число строк.
-- Клипборд: `ClipBlock::localize`/`shifted_to_row` (`src/libs/kt-model/src/ops.rs`) —
-  кламп ПО ВИДУ, не по событию (иначе две дорожки слипаются), дорожки заводятся явно
-  (`lanes_needed`), не молчаливым ростом в `AddClip`: номер `base` принадлежит полосе.
-- Ноль ленты: `KtApp::time_floor()` — пол жестов, `timeline::CURSOR_FLOOR` — курсор
-  (`src/apps/kt-app/src/app.rs`, `src/apps/kt-app/src/timeline.rs`); голых `.max(0)` над
-  временем нет (t637c). В файле `kt.start` пишется только при расхождении с курсором
-  трека OTIO (`src/libs/kt-otio/src/convert.rs`).
-- Формат: `KT_META_V6` — ПЕРВЫМ условием каскада (`src/libs/kt-otio/src/meta.rs`);
-  чужое сырьё дорожек возвращается только у корня — ключ `(kind, lane)` внутри ленты
-  столкнулся бы с корневым; чужой объект на уровне детей корневого `Stack` хранится с
-  позицией (`Retained.root_foreign`). `read_reel` (`src/libs/kt-otio/src/convert.rs`)
-  оборачивает `Stack` без треков синтетическим `Track` — правило «клип за клипом с гэпами»
-  одно.
-- Превью ленты: заявка ДО цикла отрисовки по ключу; `PeakAcc` выделен из
-  `PeakPyramid::build_observed`, не написан рядом; момент кадра — `thumbs::material_at`
-  (`src/apps/kt-app/src/thumbs.rs`); `invalidate_seq` принимает НАБОР живых редакций
-  (`src/apps/kt-app/src/reel_preview.rs`). Дисковый ярус — таблицы `reel_strip`/
-  `reel_frame`/`reel_peaks` по (seq, `content_hash`, `media_fp`), ключ считается в потоке
-  задачи, `purge_media` их не трогает, `prune_reels` — из задачи
-  (`src/libs/kt-media/src/index.rs`).
-- Публикация: `resolve_reel` — единственная дверь (`src/libs/kt-model/src/project.rs`),
-  `reconcile_published` рядом с `reconcile_transitions` в `simulate`
-  (`src/libs/kt-model/src/model.rs`) — на каждый батч, без списка триггеров. Поле
-  `published` есть и у `Project`, и у `Sequence`, и `swap_reel` их обменивает. Кривая
-  переводится тем же `clip_material_at`, что у морфер-слоя; у перехода домен — тик от
-  окна, у камеры — прогресс события, и «почти правильная» кривая хуже отказа.
-- Соль генератора: `gen_salt`/`gen_source_addr_in`, считают `build_reel` и `gen_sources`
-  (`src/libs/kt-engine/src/video.rs`); ноль при `overrides_touch_sources == false`
-  (`src/libs/kt-model/src/published.rs`). `content_hash` считается Debug-представлением
-  — новое поле `overrides` сдвинуло все редакции ОДИН раз, sidecar-превью пересчитался
-  один раз при открытии; это не миграция.
-- Лента-владелец публикации — `owner_reel_of` по рабочему виду
-  (`src/apps/kt-app/src/pubparam.rs`): событие полосы принадлежит ленте полосы, иначе
-  `reconcile_published` снял бы ручку тем же батчем. Имя ручки проверяется по НАРИСОВАННЫМ
-  галлеям (`painted_texts`), не по дереву доступности — доступное имя кнопки сброса
-  составное и несёт имя ручки тоже (`src/apps/kt-app/src/layout_tests.rs`, t684).
-## Р.67: превью ленты доживает до диска
+- **Frames are written in their own transaction, peaks in their own.** A single write after the audio stage
+  meant that a cancelled task (pause, edit, close) left nothing on disk — and the reel was rendered anew at every opening: "the composition preview is AGAIN not saved".
+- **Cancellation is not a failure.** The key of a cancelled task does not go into the negative cache, and an incomplete
+  record (frames without the envelope) RE-ISSUES the request: otherwise the envelope did not appear until the next edit of the reel. Only a render error counts as a failure.
+- **There is no "peaks present" flag in the schema** — it is the non-empty `reel_peaks`. Bumping `schema_version` for the sake of one boolean would wipe the batch index, the peaks and the thumbnails of ALL media of the project.
 
-- **Кадры пишутся своей транзакцией, пики — своей.** Одна запись после аудио-стадии
-  означала, что отменённая задача (пауза, правка, закрытие) не оставляет на диске ничего —
-  и лента рендерилась заново при каждом открытии: «превью композиции ОПЯТЬ не сохраняются».
-- **Отмена — не провал.** Ключ отменённой задачи не идёт в негативный кэш, а неполная
-  запись (кадры без огибающей) ПУСКАЕТ заявку заново: иначе огибающая не появлялась до
-  следующей правки ленты. Провалом считается только ошибка рендера.
-- **Флага «пики есть» в схеме нет** — это непустая `reel_peaks`. Бамп `schema_version` ради
-  одного булева снёс бы пакетный индекс, пики и тумбы ВСЕХ медиа проекта.
+## Deferred
 
-## Отложено
+- One strip at a time (recursive expansion) — the limitation is explicit, lifted by a line and a test (`src/apps/kt-app/src/app.rs`).
+- Known sticking points of the strip: `lane_names` are not exchanged by `swap_reel` (the full entry shows the root names), `trim_max_end` does not hit the end of the content, `overlap_layers` of different reels in one view, highlighting of the morpher across the strip boundary, `MarkedArea.lanes` on track insertion (`src/libs/kt-model/src/project.rs`).
+- Texture memoization of the sub-composite on the GPU and a switchable boundary (Collapse
+  Transformations); narrowing the `UploadCache` key to the address `(source, cache_idx)` (`src/libs/kt-gpu/src/engine.rs`).
+- The poster/scrub of the reel's card in the bin from the preview data (`src/apps/kt-app/src/reel_preview.rs`); a strict cross-render `nested_example` — melt
+  drops the nested `Stack` (`src/apps/kt-cli/tests/cross_render.rs`).
 
-- Одна полоса за раз (рекурсивное раскрытие) — ограничение явное, снимается строкой и
-  тестом (`src/apps/kt-app/src/app.rs`).
-- Известные упоры полосы: `lane_names` не обмениваются `swap_reel` (полный вход показывает
-  корневые имена), `trim_max_end` не упирается в конец содержимого, `overlap_layers` разных
-  лент в одном виде, подсветка морфера через границу полосы, `MarkedArea.lanes` при
-  вставке дорожки (`src/libs/kt-model/src/project.rs`).
-- Текстурная мемоизация суб-композита на GPU и отключаемая граница (Collapse
-  Transformations); сужение ключа `UploadCache` адресом `(source, cache_idx)`
-  (`src/libs/kt-gpu/src/engine.rs`).
-- Постер/скраб карточки ленты в бине из данных превью
-  (`src/apps/kt-app/src/reel_preview.rs`); строгий кросс-рендер `nested_example` — melt
-  выбрасывает вложенные `Stack` (`src/apps/kt-cli/tests/cross_render.rs`).
+## R.70: inline — a requirement of export, a reference — a requirement of the project
 
-## Р.70: инлайн — требование экспорта, ссылка — требование проекта
-
-Требование «тело ленты инлайном в каждый экземпляр, сайдкар совещательный» описывало
-ФАЙЛ ОБМЕНА и остаётся верным для него: чужой читатель не знает `metadata.kt.seq` и
-обязан увидеть монтаж. Для файла ПРОЕКТА то же свойство — мультипликативная цена (три
-ленты владельца → 15 220 клипов, 115 МБ), поэтому проект хранит ленту один раз, а
-экземпляр — ссылку на её адрес; это свойство модели (`Project.sequences`), и свой
-формат его не портит (t810). Законы Э и Г, порядок обработки и публичные параметры от
-формата не зависят — они читаются из той же модели.
+The requirement "the body of the reel inline in every instance, the sidecar advisory" described
+the EXCHANGE FILE and remains correct for it: a foreign reader does not know `metadata.kt.seq` and
+is obliged to see the edit. For the PROJECT file the same property is a multiplicative cost (the owner's three
+reels → 15 220 clips, 115 MB), therefore the project stores the reel once, and the instance stores a reference to its address; this is a property of the model (`Project.sequences`), and the project's own format does not spoil it (t810). The laws E and G, the processing order, and the public parameters do not depend on the format — they are read from the same model.

@@ -3,7 +3,6 @@
 ## ADDED Requirements
 
 ### Requirement: Windows build — cross-compiled in the same container, portable zip
-
 The Windows build SHALL be cross-compiled for `x86_64-pc-windows-gnu` from a `windows`
 stage of the one committed Dockerfile (`src/packaging/Dockerfile`). It uses the same
 pinned Rust toolchain, mingw-w64 as linker and C compiler, clang for bindgen with the
@@ -31,10 +30,9 @@ licence duties for distributing it.
 #### Scenario: The zip passes the delivery checks
 - **WHEN** `make windows` finishes
 - **THEN** both exes import only Windows system DLLs (no `av*`, `sw*`, `libgcc_s*`, `libstdc++*`, `libwinpthread*`), the zip has no `.dll`, and `sha256sum -c` passes on the pair; otherwise the build fails and no zip is left
-- **TEST** guard inside `src/scripts/release-build.sh` (invariant 10, Windows form; media-index scenario "Релизный бинарь не линкован с libav*")
+- **TEST** guard inside `src/scripts/release-build.sh` (invariant 10, Windows form; media-index scenario "Release binary is not linked against libav*")
 
 ### Requirement: Windows tests — wine in the container, real Windows in CI
-
 `make windows-test` SHALL build the workspace tests for the Windows target and run them
 under wine in the container. GPU and live scenarios skip themselves with a named reason,
 and tests that need FFmpeg use the pinned gyan.dev build, fetched once into the container's
@@ -55,7 +53,6 @@ on the Windows runner.
 - **TEST** t859 (`src/apps/kt-cli/tests/dist_guard.rs`)
 
 ### Requirement: A release carries the Windows zip
-
 The release workflow SHALL build the Windows zip through `release-build.sh --target windows`
 in the same run as the Linux tarball, and attach `kinetren-<version>-windows-x86_64.zip`
 and its `.sha256` to the same GitHub Release. If either build fails, no release is created.

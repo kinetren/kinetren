@@ -2,94 +2,91 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Публичные параметры — значение шаблона не хранится, переопределения до морфер-слоёв
+### Requirement: Public parameters — the template value is not stored, overrides come before morpher layers
+The reel SHALL declare handles (id, the author's name, the target address, type, narrowing of limits); the
+instance SHALL override ONLY what is published, by a value or by a curve. The template value MUST NOT be
+stored — it is read live from the target. The resolution of the reel for an instance SHALL go through one
+door; the overrides are laid BEFORE the morpher layers; an empty set — the former path without clones.
+The curve lives in the material of the instance (the reel's time); the carriers of a curve are the slot,
+the generator, the nesting. The address is glued to the id of the target: it survives a trim, a move, the
+left half of a cut; if the target has vanished or changed its type — the publication and all the overrides
+go away in one step, on each batch, without a list of triggers; validation rejects orphans and foreign
+types. The expansion strip shows the TEMPLATE, expansion bakes and names the number.
+The narrowing of the limits of a numeric handle SHALL by default equal the passport of the TARGET (`min`/`max`
+of its `ParamSpec`, obtained by the address): the author window shows the limits of the target, not zero;
+only the narrowing is written to the file — a value equal to the limit of the target is stored as absence
+(`None`); reset to the limits of the target — one action. The value at the consumer SHALL be clamped to the
+limits of the target and, on top of them, to the author's narrowing.
+Why: a stored copy would have diverged from the reel at the first edit inside it; the morpher appends slots
+to the end — after it the address of a slot would point to the wrong place; "min/max always 0" — an empty
+`Option` was drawn as zero, while the passport of the target already knows its own limits (R.60).
 
-Лента SHALL объявлять ручки (id, имя автора, адрес цели, тип, сужение пределов); экземпляр
-SHALL переопределять ТОЛЬКО опубликованное, значением или кривой. Значение шаблона MUST
-NOT храниться — читается у цели живьём. Разрешение ленты для экземпляра SHALL идти одной
-дверью, переопределения ложатся ДО морфер-слоёв; пустой набор — прежний путь без клонов.
-Кривая живёт в материале экземпляра (времени ленты); носители кривой — слот, генератор,
-вложение. Адрес приклеен к id цели: переживает трим, перенос, левую половину разреза;
-цель исчезла или сменила тип — публикация и все переопределения уходят одним шагом, на
-каждый батч без списка триггеров; валидация отвергает сирот и чужие типы. Полоса
-раскрытия показывает ШАБЛОН, разворачивание впекает и называет число.
-Сужение пределов числовой ручки SHALL по умолчанию равняться паспорту ЦЕЛИ (`min`/`max`
-её `ParamSpec`, полученному по адресу): окно автора показывает пределы цели, а не ноль;
-в файл пишется ТОЛЬКО сужение — значение, равное пределу цели, хранится как отсутствие
-(`None`); сброс к пределам цели — одно действие. Значение у потребителя SHALL зажиматься
-пределами цели и поверх них — сужением автора.
-Почему: хранимая копия разошлась бы с лентой при первой правке внутри; морфер дописывает
-слоты в конец — после него адрес слота указывал бы не туда; «min/max всегда в 0» — пустое
-`Option` рисовалось нулём, а паспорт цели уже знает свои пределы (Р.60).
-
-#### Scenario: Команды и два вопроса
-- **WHEN** ручка публикуется, переопределяется, снимается
-- **THEN** шесть команд с undo; «что в шаблоне» читается у цели, «что играет здесь» — с переопределением
+#### Scenario: Commands and two questions
+- **WHEN** a handle is published, overridden, removed
+- **THEN** six commands with undo; "what is in the template" is read from the target, "what plays here" — with the override
 - **TEST** t671 (`src/libs/kt-model/tests/pubparam.rs`)
 
-#### Scenario: Судьба цели
-- **WHEN** цель тримится, режется, переносится, удаляется или меняет тип
-- **THEN** адрес переживает трим и левую половину разреза; смерть цели уносит публикацию и переопределения одним шагом; сироты и чужие типы отвергаются валидацией
+#### Scenario: The target's fate
+- **WHEN** the target is trimmed, cut, moved, deleted or changes its type
+- **THEN** the address survives a trim and the left half of a cut; the death of the target takes the publication and the overrides away in one step; orphans and foreign types are rejected by validation
 - **TEST** t672 (`src/libs/kt-model/tests/pubparam.rs`), t672b (`src/libs/kt-model/tests/pubparam.rs`)
 
-#### Scenario: Пустой набор — прежний путь
-- **WHEN** экземпляр без переопределений разрешается
-- **THEN** переходы и камеры заимствуются (`Cow::Borrowed`), ни одного клона ленты
+#### Scenario: An empty set — the former path
+- **WHEN** an instance without overrides is resolved
+- **THEN** transitions and cameras are borrowed (`Cow::Borrowed`), not a single clone of the reel
 - **TEST** t673 (`src/libs/kt-model/tests/pubparam.rs`)
 
-#### Scenario: Полоса показывает шаблон, разворачивание впекает
-- **WHEN** экземпляр с переопределениями раскрыт полосой; развёрнут
-- **THEN** в полосе значения шаблона; после разворачивания значения в кусках, число впечённого названо
+#### Scenario: The band shows the template, expansion bakes it in
+- **WHEN** an instance with overrides is expanded by the strip; it is expanded
+- **THEN** the strip shows the values of the template; after the expansion the values are in pieces, and the number of baked ones is named
 - **TEST** t690 (`src/libs/kt-model/tests/pubparam.rs`)
 
-#### Scenario: Пределы ручки по умолчанию — паспорт цели
-- **WHEN** ручка числа только что опубликована; автор сужает `max`; автор возвращает `max` к пределу цели; автор нажимает «сброс к пределам цели»
-- **THEN** окно автора показывает `min`/`max` цели (не 0); в `PubRange` лежит только сужение (`min: None`); равное пределу цели значение снова `None`; после сброса `PubRange::is_empty()`, файл без сужений байт-в-байт прежний
+#### Scenario: Handle limits by default — the target's passport
+- **WHEN** a numeric handle has just been published; the author narrows `max`; the author returns `max` to the limit of the target; the author presses "reset to the limits of the target"
+- **THEN** the author window shows `min`/`max` of the target (not 0); `PubRange` holds only the narrowing (`min: None`); a value equal to the limit of the target is again `None`; after the reset `PubRange::is_empty()`, and a file without narrowings is byte-for-byte as before
 - **TEST** t692 (`src/libs/kt-model/tests/pubparam.rs`), t692b (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Поле потребителя зажато пределами цели
-- **WHEN** потребитель тянет значение ручки без сужения автора за предел паспорта цели; с сужением — за сужение
-- **THEN** значение не уходит за паспорт цели; с сужением — не уходит за сужение; в модели и в поле одно и то же число
+#### Scenario: The consumer's field is clamped to the target's limits
+- **WHEN** the consumer drags the value of a handle without the author's narrowing beyond the limit of the passport of the target; with the narrowing — beyond the narrowing
+- **THEN** the value does not go beyond the passport of the target; with the narrowing — does not go beyond the narrowing; in the model and in the field it is the same number
 - **TEST** t692b (`src/apps/kt-app/src/layout_tests.rs`)
 
-### Requirement: Интерфейс публикации — одна дверь, имя автора дословно, два бейджа
+### Requirement: Publishing interface — one door, the author's name verbatim, two badges
+The publication SHALL be reachable from one door — a right click on the label of a field inside the
+composition (the full entry or the strip); outside a reel there is no item, and the hint explains it — only
+when compositions exist in the document. The owner reel SHALL be counted by the working view (an event of
+the strip belongs to the strip's reel). The consumer window SHALL draw each type with its own widget, a reset
+sends the removal of the override; a session of the window is one step of history. The name of the handle
+SHALL be drawn verbatim, bypassing the translation catalogue. Badges: a pin at the tail of the event's label,
+a number at the head of the reel card; zero is not written.
+The override curves SHALL be VISIBLE in the consumer window with the same automation widget as that of the
+effect slot (graph ↔ key table, selection of the active curve, a key at the cursor, one axis lock for the
+whole program); a curve is created by the labelled action "Automation: add a curve…" (a menu over the number
+and colour handles), not by an unnamed glyph. Hidden recording of keys MUST NOT exist: editing a field puts a
+key at the cursor only for a handle whose curve is created and drawn; for a handle without a curve, editing the
+field is a constant. The automation controls SHALL have a hint in the status line (rule 10 — no pop-ups).
+Why: no editor has "show everything outward" — the interface is assembled by hand; publication into the "wrong"
+reel would have died in the cross-check by the same batch; a test over the accessibility tree was green on code
+that drew the catalogue row; the glyph "+" turned the window into a hidden automation recording mode without a
+single curve on the screen ("how did such a bug even get through", R.60) — a violation of "one animation
+mechanism for everything" (R.34).
 
-Публикация SHALL быть достижима из одной двери — правый клик по подписи поля внутри
-композиции (полный вход или полоса); вне ленты пункта нет, а подсказка объясняет — только
-когда композиции в документе есть. Лента-владелец SHALL считаться по рабочему виду
-(событие полосы принадлежит ленте полосы). Окно потребителя SHALL рисовать каждый тип
-своим виджетом, сброс шлёт снятие переопределения; сессия окна — один шаг истории. Имя
-ручки SHALL рисоваться дословно, мимо каталога переводов. Бейджи: булавка в хвосте подписи
-события, число в голове карточки ленты; ноль не пишется.
-Кривые переопределений SHALL быть ВИДНЫ в окне потребителя тем же виджетом автоматизации,
-что у слота эффекта (график ↔ таблица ключей, выбор активной кривой, ключ по курсору, замок
-оси один на программу); кривая заводится подписанным действием «Автоматизация: добавить
-кривую…» (меню по ручкам числа и цвета), а не безымянным глифом. Скрытой записи ключей
-MUST NOT быть: правка поля кладёт ключ по курсору только у ручки, чья кривая заведена и
-нарисована; у ручки без кривой правка поля — константа. У контролов автоматизации SHALL
-быть подсказка в строке состояния (правило 10 — без всплывающих).
-Почему: ни у одного редактора нет «показать наружу всё» — интерфейс собирается руками;
-публикация в «не ту» ленту умерла бы в сверке тем же батчем; тест по дереву доступности
-был зелёным на коде, рисующем строку каталога; глиф «+» превращал окно в скрытый режим
-записи автоматизации без единой кривой на экране («как такая ошибка вообще дошла», Р.60) —
-нарушение «одного механизма анимации на всё» (Р.34).
-
-#### Scenario: Одна дверь
-- **WHEN** правый клик по подписи из полного входа, из полосы, вне ленты; меню экземпляра
-- **THEN** есть, есть, нет вовсе (подсказка объясняет при наличии лент); меню экземпляра ведёт к обоим окнам
+#### Scenario: One door
+- **WHEN** a right click on the label from the full entry, from the strip, outside a reel; the instance menu
+- **THEN** present, present, absent entirely (the hint explains when reels exist); the instance menu leads to both windows
 - **TEST** t682 (`src/apps/kt-app/src/reach_tests.rs`), t518 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Окно потребителя, имя автора, бейджи
-- **WHEN** открыто окно параметров экземпляра; сменён язык программы; экземпляр переопределён
-- **THEN** каждый тип своим виджетом, сброс шлёт `ClearOverride`; имя нарисовано дословно и не едет за языком; булавка на событии, число на карточке, ничего при нуле
+#### Scenario: Consumer window, author name, badges
+- **WHEN** the parameter window of the instance is open; the program language is changed; the instance is overridden
+- **THEN** each type with its own widget, a reset sends `ClearOverride`; the name is drawn verbatim and does not move with the language; a pin on the event, a number on the card, nothing at zero
 - **TEST** t683 (`src/apps/kt-app/src/layout_tests.rs`), t684 (`src/apps/kt-app/src/layout_tests.rs`), t685 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Кривая переопределения видна и заводится названным действием
-- **WHEN** в окне экземпляра у ручки числа нет кривой и поле правится при двух разных позициях курсора; затем кривая заведена через «Автоматизация: добавить кривую…»; поле правится при двух позициях курсора
-- **THEN** без кривой в переопределении одно значение и ноль ключей; после заведения в окне есть виджет автоматизации с этой кривой (пробы графика/таблицы найдены), ключи сели в материале экземпляра по курсору и видны в таблице; глифа «+» в окне нет; у кнопок автоматизации есть подсказка строки состояния
+#### Scenario: The override curve is visible and created by a named action
+- **WHEN** in the instance window a numeric handle has no curve and the field is edited at two different cursor positions; then the curve is created through "Automation: add a curve…"; the field is edited at two cursor positions
+- **THEN** without a curve the override has one value and zero keys; after creation the window has the automation widget with this curve (the probes of the graph/table are found), the keys landed in the material of the instance at the cursor and are visible in the table; there is no glyph "+" in the window; the automation buttons have a status-line hint
 - **TEST** t691 (`src/apps/kt-app/src/layout_tests.rs`), t693 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Живой сценарий публикации
-- **WHEN** в настоящем kt-app публикуется ручка и переопределяется у экземпляра, затем у ручки заводится кривая и двигается ключ
-- **THEN** следствие видно в кадре и в файле; кривая видна в окне, ключ в файле стоит в материале экземпляра
+#### Scenario: Live publication scenario
+- **WHEN** in the real kt-app a handle is published and overridden on the instance, then a curve is created on the handle and a key is moved
+- **THEN** the consequence is visible in the frame and in the file; the curve is visible in the window, the key in the file is at the material of the instance
 - **TEST** t689 (`src/scripts/live/nestparam.py`)

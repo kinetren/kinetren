@@ -3,7 +3,7 @@
 ## Why
 
 The product is published as **Kinetren** (github.com/kinetren/kinetren, LICENSE holder
-Kinetren). The owner chose a **full rename** on 2026-10-21 ("kinetren, не kinotren";
+Kinetren). The owner chose a **full rename** on 2026-10-21 ("kinetren, not kinotren";
 answer: full rename, including the `.kt` root marker and internal names). The program
 still calls itself Kinotrain in the window title, menus, the desktop entry, the MIME type,
 icon file names, the per-user data directory, the release tarball and the project-file

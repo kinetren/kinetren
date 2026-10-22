@@ -1,221 +1,205 @@
-# Индекс медиа и декод — почему так
+# Media index and decode — why it is this way
 
-## Что было и у кого болело
+## What hurt and for whom
 
-Старый движок делил один декодер между prefetch и playback через mutex и гонял его
-seek'ами (циклы needReset/переоткрытия); один поток-пуллер тянул и аудио, и видео, и
-медленный видеодекод голодил звук. Coverage жил отдельными ms-бакетами, не связанными с
-кэшем, и врал четырьмя способами. Аудио-seek держал грубый byte-индекс, перестраиваемый
-каждый запуск, с переоткрытием декодера и ресемплера на каждый прыжок. Скролл и зум
-таймлайна давали шторм декодов тумбнейлов и волноформ, а в готовой Rust-версии тот же
-класс вернулся негативной формой: без негативных кэшей тумб FFmpeg-open доходил до
-1.6k/с при движении мыши.
+The old engine shared one decoder between prefetch and playback through a mutex and drove it with
+seeks (needReset/reopen cycles); one puller thread drew both audio and video, and the slow
+video decode starved the sound. Coverage lived in separate ms buckets, not tied to the
+cache, and lied in four ways. Audio seek kept a coarse byte index, rebuilt
+on every launch, with reopening of the decoder and the resampler on every jump. Scrolling and zooming
+the timeline produced a storm of decodes for thumbnails and waveforms, and in the finished Rust version the same
+class returned in a negative form: without negative caches for thumbnails, FFmpeg opens reached
+1.6k/s while the mouse moved.
 
-Владелец поставил сквозное требование: «никакой своей сборки FFmpeg и никаких
-плагинов» — только системный FFmpeg. Линковка с libav* давала бинарь, привязанный к
-мажору машины сборки (`libavcodec.so.60: cannot open shared object file` на системе
-с FFmpeg 7).
+The owner set a cross-cutting requirement: "no own FFmpeg build and no
+plugins" — only the system FFmpeg. Linking with libav* gave a binary tied to the
+major version of the build machine (`libavcodec.so.60: cannot open shared object file` on a system
+with FFmpeg 7).
 
-Позже болело другое: служба индекса поднимала новый поток на каждый вызов и молчала об
-ошибках (человек видел плейсхолдеры без слова о причине); автодакинг считался в
-UI-потоке и замораживал окно на десятки секунд; пропавший файл выкидывал клип из
-композиции, и превью навсегда висело в «Loading».
+Later another thing hurt: the index service started a new thread for every call and kept silent about
+errors (a person saw placeholders without a word about the cause); auto-ducking was computed in the
+UI thread and froze the window for tens of seconds; a vanished file dropped the clip from the
+composition, and the preview hung in "Loading" forever.
 
-## Решения и почему
+## Decisions and why
 
-- **FFmpeg через dlopen, типы по версионным модулям.** Bindgen генерирует только типы и
-  константы из вендоренных заголовков 6/7/8, функции резолвятся через `dlsym`, реализация
-  декодера включается в каждый версионный модуль — layout структур всегда соответствует
-  загруженной библиотеке. Один бинарь на все мажоры со всеми аппаратными ускорениями
-  системного FFmpeg; сборка не требует dev-пакетов libav*.
-- **Декодером владеет один поток.** Живое воспроизведение ходит только через очередь
-  `MediaWorker` с приоритетами и generation-отменой; playback не ждёт декода. Офлайн-путь
-  (индекс, анализ, экспорт, kt-cli) открывает свой источник при трёх условиях — не
-  делится, темпа не обещает, конечен и отменяем. Честная формулировка вместо «все клиенты
-  через очередь», которая была неправдой.
-- **Кэш — единственная правда о coverage.** Interval-set внутри кэша, quality в ключе,
-  пост-FX видео — отдельный kind, невидимый полоскам: инвариант «полоска = пре-FX данные»
-  сохранён, а мемоизация дорогих цепочек всё же есть.
-- **Prefetch без состояния и по сетке воспроизведения.** wanted − coverage → submit, и
-  wanted считает тот же код, что читает рендер (варп-окно, сырое реверс-окно). Разойдутся —
-  вечный промах.
-- **Sidecar-БД как кэш.** Пакетный индекс, пики, тумбы, анализ — рядом с проектом; потеря
-  не ошибка. Идентичность файла — size/mtime/xxhash, перестройка только затронутого.
-  Новые таблицы аддитивны, потому что бамп схемы сносит всё у всех медиа проекта.
-- **Заглушка — обычный источник.** `PlaceholderSource` у обычного воркера: монтаж при
-  пропаже не разрушается, рендер идёт, возврат файла — подмена на ходу.
-- **Задача и служба — разные типы.** `BgJob` (прогресс, пауза, отмена, `Drop` гасит поток)
-  и `IndexService` (один поток, очередь, ошибки наружу). Анализ — гейт «одна задача»,
-  дедуп, негативный кэш, показ не заказывает.
-- **Громкость — на проходе пирамиды.** Наблюдатель видит каждый burst, который индексация
-  и так читает; второй полный декод ради LUFS — минуты на часовом файле.
-- **Синхронизация — по пирамиде, а не по файлу.** Транзиенты общие у разных микрофонов,
-  а пирамида уже в памяти; поэтому она не в фоновой подсистеме — мгновенная работа не
-  нуждается в окне прогресса.
+- **FFmpeg through dlopen, types by version modules.** Bindgen generates only the types and
+  constants from the vendored headers of 6/7/8, the functions are resolved via `dlsym`, the decoder
+  implementation is included in each version module — the layout of the structures always matches
+  the loaded library. One binary for all majors with all hardware accelerations of the
+  system FFmpeg; the build does not require the libav* dev packages.
+- **One thread owns the decoder.** Live playback goes only through the `MediaWorker` queue
+  with priorities and generation cancellation; playback does not wait for the decode. The offline path
+  (index, analysis, export, kt-cli) opens its own source under three conditions — it is not
+  shared, it does not promise a pace, it is finite and cancellable. An honest formulation instead of "all clients
+  through the queue", which had been untrue.
+- **The cache is the only truth about coverage.** An interval set inside the cache, quality in the key,
+  post-FX video is a separate kind, invisible to the bars: the invariant "bar = pre-FX data"
+  is kept, and yet expensive chains are memoized.
+- **Prefetch is stateless and follows the playback grid.** wanted − coverage → submit, and
+  wanted is computed by the same code that the render reads (the warp window, the raw reverse window). If they diverge — an eternal miss.
+- **The sidecar DB as a cache.** Batch index, peaks, thumbnails, analysis — next to the project; a loss
+  is not an error. The file identity is size/mtime/xxhash, and only the affected part is rebuilt.
+  New tables are additive, because a schema bump wipes everything for all media of the project.
+- **The stub is an ordinary source.** `PlaceholderSource` lives in the ordinary worker: the edit does not
+  break when a file vanishes, the render goes on, and the return of the file is a substitution on the fly.
+- **A job and a service are different types.** `BgJob` (progress, pause, cancel, `Drop` stops the thread)
+  and `IndexService` (one thread, a queue, errors go outward). Analysis is a gate "one task",
+  deduplication, a negative cache, and display does not order it.
+- **Loudness is computed on the pyramid's pass.** The observer sees every burst that indexing
+  reads anyway; a second full decode for the sake of LUFS would be minutes on a one-hour file.
+- **Synchronization is by the pyramid, not by the file.** Transients are common to different microphones,
+  and the pyramid is already in memory; therefore it is not in the background subsystem — instant work
+  does not need a progress window.
 
-## Отвергнуто и почему
+## Rejected and why
 
-- Линковка с libav*, своя сборка FFmpeg, плагины — отвергнуто владельцем; бинарь на
-  чужом мажоре просто не запускался.
-- Общий декодер под mutex'ом — отвергнуто: ping-pong seek между prefetch и playback (дефект
-  старого движка h).
-- Отдельная бухгалтерия coverage — отвергнуто: ms-бакеты расходились с ключами кэша и
-  eviction'ом (дефект g).
-- Кэширование аудио-пост-FX — отвергнуто: FX дешевле декода, а состояние FX принадлежит
-  только аудио-render-потоку.
-- Перенастройка источника как `RequestKind` — отвергнуто: seek посреди драга параметра
-  молча отменил бы её generation-отменой; она едет отдельным полем очереди.
-- Заглушка при добавлении медиа в проект — отвергнуто: опечатка в пути молча стала бы
-  заглушкой; «ошибка = ошибка» там сохранена, заглушку подставляет отдельный хелпер.
-- Бамп `schema_version` под новые таблицы — отвергнуто: сносит пакетный индекс, пики и
-  тумбы всех медиа проекта.
-- f64 в таблицах анализа — отвергнуто: круг через БД обязан быть байт-точным, иначе
-  «пересчитали» неотличимо от «изменилось».
-- Синхронизация внутри фоновой подсистемы анализа — отвергнуто: считается по пирамиде за
-  миллисекунды без декода; окно прогресса было бы церемонией.
-- «Сдвиг 0» при неуверенности и кламп к нулю при совмещении — отвергнуто: оба выглядят
-  успехом, а материалы остаются вразнобой; синхронизация также не тримит и не линкует —
-  это отдельные решения монтажёра.
-- MT-декод VP9/AV1 — отвергнуто: нестабилен при частых seek; `threads=1`.
-- Автоповтор упавшей задачи анализа — отвергнуто: программа вечно долбилась бы в
-  недоступный файл.
+- Linking with libav*, our own FFmpeg build, plugins — rejected by the owner; a binary on
+  someone else's major simply did not run.
+- A shared decoder under a mutex — rejected: a ping-pong of seeks between prefetch and playback (a defect
+  of the old engine h).
+- A separate coverage bookkeeping — rejected: the ms buckets diverged from the cache keys and the
+  eviction (defect g).
+- Caching audio post-FX — rejected: FX is cheaper than decode, and the state of FX belongs
+  only to the audio-render thread.
+- Reconfiguring a source as a `RequestKind` — rejected: a seek in the middle of a parameter drag
+  would silently cancel it by generation cancellation; it travels as a separate field of the queue.
+- A stub when media is added to the project — rejected: a typo in the path would silently become
+  a stub; "error = error" is kept there, and a separate helper substitutes the stub.
+- A bump of `schema_version` for the new tables — rejected: it wipes the batch index, peaks and
+  thumbnails of all media of the project.
+- f64 in the analysis tables — rejected: the round trip through the DB must be byte-exact, otherwise
+  "recomputed" is indistinguishable from "changed".
+- Synchronization inside the background analysis subsystem — rejected: it is computed over the pyramid in
+  milliseconds without a decode; a progress window would be a ceremony.
+- "Shift 0" on uncertainty and a clamp to zero on alignment — rejected: both look like
+  success, while the materials stay out of step; synchronization also does not trim or link —
+  these are separate decisions of the editor.
+- MT decode of VP9/AV1 — rejected: unstable under frequent seeks; `threads=1`.
+- Automatic retry of a failed analysis task — rejected: the program would hammer
+  an unavailable file forever.
 
-## Неочевидные детали
+## Non-obvious details
 
-- `src/libs/kt-media/src/ffmpeg.rs`: два НЕЗАВИСИМЫХ демуксера на файл (аудио и видео не
-  дерутся за seek) плюс скан-проход пакетного индекса без декода. Аудио-seek — контейнерный
-  BACKWARD к индексированному пакету с запасом 3 пакета и ПОЛНОЕ пересоздание декодера и
-  swr; FIFO с абсолютным якорем по pts первого кадра после seek — так достигается
-  sample-accuracy (FLAC exact, AAC — нулевой фазовый сдвиг). Видео: backward seek = seek +
-  пересоздание декодера ВСЕГДА (дешевле, чем ловить артефакты MT H.264); вперёд ≤4 c —
-  сквозной декод без seek.
-- `src/libs/kt-media/src/ffmpeg.rs`: `unsafe impl Send` корректен только потому, что
-  экземпляром владеет ровно один воркер (`&mut self`); `Sync` не реализован намеренно.
-- `src/libs/kt-ffmpeg/src/source_impl.rs`: выбор кадра при несовпадающих сетках — floor
-  и только floor (t112). Раньше forward-путь брал ceil (предыдущий кадр уже освобождён), и
-  экспорт шёл `f0, f1, f0, f2…` — пользователь видел откаты.
-- `src/libs/kt-ffmpeg/src/lib.rs` (`iostats`): счётчики opens/packet_reads — глобальные
-  монотонные атомики, UI дифференцирует по времени; t37 не даёт панели снова показывать
-  мёртвые серии.
-- `src/libs/kt-engine/src/worker.rs` (`pick_next`): при равном приоритете — заявки
-  ВПЕРЁД по курсору, ближайшая первой; назад — только когда вперёд пусто. Playback-ключ
-  становится НАЧАЛОМ спана, и спан-добор идёт поверх приоритетов — иначе Playback-одиночки
-  вырождали спаны в «один кадр за раз» и покрытие переставало расти (t27). Ключи за EOF —
-  негативный кэш воркера.
-- `src/libs/kt-engine/src/worker.rs` (`worker_loop`): перенастройка источника лежит в
-  отдельном поле очереди, обрабатывается ПЕРВОЙ, до `pick_next`, и там же чистится кэш
-  источника — гонка «старый кадр дописан после чистки» снята по построению (t501).
-  `content_version` отделён от `project_version`: префетч просыпается, рендереры не
-  пересобираются.
-- `src/libs/kt-engine/src/player.rs` (`replace_media`): порядок обязателен — погасить
-  воркер → `invalidate_source` → поднять новый; иначе старый воркер дописывает кадр заглушки
-  после инвалидации. Смена состава источников пересобирает и рендерер плеера, потому что
-  нативы знает только ОТКРЫТЫЙ источник (в sidecar `probe_json` не заполняется): без этого
-  вернувшийся файл не менял ступень декода до первой правки таймлайна (t316).
-- `src/libs/kt-cache/src/lib.rs`: quality — часть ключа, а ступень декода входит ЧЕРЕЗ
-  качество (кадр со ступенью 2 лежит под ключом 2×Quality). Следствие для UI: полоски
-  обязаны спрашивать coverage по качеству ДЕКОДА клипа (`clip_decode_quality` в
-  `src/libs/kt-engine/src/video.rs`), иначе прогретый клип выглядит холодным.
-- `src/libs/kt-cache/src/lib.rs`: `contains` не трогает LRU и epoch (t27) — проба без
-  чтения, освежающая recency, вытесняла честно прочитанное. `unused_evictions` считает
-  записи без `had_hit`, выселенные ИЛИ перезаписанные (t37). `invalidate_source` идёт по
-  индексу `by_source`, а не линейно по кэшу — он зовётся на каждое нажатие клавиши в окне
-  генератора (t497). Pin исключает из eviction, но не из coverage.
-- `src/libs/kt-engine/src/audio.rs` (`merge_burst_ranges`): диапазоны одного медиа
-  схлопываются; по смыслу это то же множество бёрстов, поэтому ни один тест не двинулся, а
-  885 запросов coverage под мьютексом стали одним (t287). Пре-ролл микрособытие не тянет:
-  `hard_seek` клампит его по локальной позиции.
-- `src/libs/kt-engine/src/audio.rs` (`wanted_audio_bursts_raw`): сырой реверс-путь играет
-  события dry и линейно, варпа не знает; Playback-префетч при `dir < 0` обязан считать
-  окно этим кодом — варп-окно на замедленном событии покрывает другой пролёт источника,
-  и промах был вечным, до 1024 кадров за пропущенный бёрст (t285).
-- `src/libs/kt-media/src/ffmpeg.rs` (`open_indexed`): пакетный индекс пишет ЛЮБОЙ
-  `open_indexed` после свежего скана, поэтому уже второе открытие того же файла (плеер,
-  тумбы, перезапуск) обходится без скан-прохода. Ошибки БД — ошибки кэша: молчаливый откат
-  к обычному `open`.
-- `src/libs/kt-media/src/index.rs`: соединения короткоживущие, WAL + busy_timeout 5 с
-  покрывают конкуренцию потоков; UI-поток БД не трогает. Аддитивные таблицы создаются
-  `IF NOT EXISTS` при каждом открытии и появляются в уже существующих БД.
-- `src/libs/kt-media/src/index.rs` (`purge_media`): `sync_offset` ключуется ПАРОЙ, и
-  однородное `DELETE WHERE media_id` не видит запись, где подменённый файл второй, —
-  осталась бы синхронизация, посчитанная по другому звуку (t402). Таблицы `reel_*` этот
-  purge не трогает: подмену файла ловит отпечаток медиа в их ключе (capability `compositions`).
-- `src/libs/kt-media/src/lib.rs` (`PEAK_BLOCK_FRAMES = 256`): блок peak-пирамиды —
-  256 кадров 48 kHz (5.3 мс); это и предел разрешения волноформы при любом зуме, и
-  шаг, по которому считается синхрон по волноформе. Менять блок — пересчитывать пики
-  всех проектов и голдены синхрона (t413–t415).
-- `src/libs/kt-media/src/index.rs` (`build_observed`): наблюдатель пирамиды не меняет
-  саму пирамиду (t401b); истинный пик считается полифазой только вокруг сэмплов, сравнимых
-  с наибольшим — без гейта часовой файл упирался в эту сумму при каждом открытии проекта.
-- `src/libs/kt-media/src/sync.rs` (`offset_from_pyramids`): `a[i]` сравнивается с
-  `b[i+lag]`, положительный lag = «B позже» (t414); первый блок сравнивается сам с собой, а
-  не с нулём — иначе у каждой записи ложный «онсет» на нуле, и корреляция двух шумов на
-  нулевом сдвиге взлетает до 0.98 (t415); стартовый уровень выбирается ПО ДЛИНЕ, а не
-  «самый верхний» — на вершине один-два блока, и полного поиска не случилось бы вовсе.
-  Порог уверенности 0.30 — ниже ответа нет.
-- `src/libs/kt-model/src/ops.rs` (`sync_by_audio_commands`): перевод «материал →
-  таймлайн» только через `clip_timeline_at`/`clip_material_at` — своя арифметика по
-  `source_in` уехала бы на реверсе и подрезанном начале (t417); за начало проекта —
-  `OutOfRange`, не кламп (t417b).
-- `src/apps/kt-app/src/thumbs.rs`: ключи `thumbnails` — точный PK (media, t); «ближайший»
-  только через `thumbnail_near` с допуском параметром очереди; `ThumbKey` не расширять —
-  общий кэш бин↔таймлайн (t62). `SourceLru` ёмкостью 4 вместо `clear()` при >2 — при ≥4
-  медиа тумбы переоткрывали файл на каждый ключ (t71). Всё, что может не получиться у
-  воркера, обязано публиковать неудачу (t69) — иначе перезаказ на каждом UI-кадре, и
-  счётчик FFmpeg-open растёт пропорционально FPS интерфейса. Карта «тик события → кадр
-  источника» одна (`material_at`) на филмстрип, волноформу и миниатюры — она знает реверс.
-- `src/apps/kt-app/src/util.rs`: `open_source_indexed` оставлен строгим («ошибка =
-  ошибка») для добавления медиа и опроса разрешений в меню рендера; заглушку подставляет
-  только `open_source_or_placeholder`. `IndexService` переоткрывает БД лишь при смене пути.
-  В t399 дедлайн щедрый намеренно: `synth:`-источник длится час (`SYNTH_DURATION` в
-  `src/libs/kt-media/src/factory.rs`), тест утверждает «очередь не теряет работу», а не
-  «служба быстрая» — о скорости судят по релизу.
-- `src/libs/kt-media/src/placeholder.rs`: длительность заглушки 1000 часов (она не знает,
-  сколько длился файл, и не должна резать монтаж); `fps: None` — планирует сетка проекта;
-  кадр строится один раз на качество и кэшируется, от времени не зависит; не-ASCII →
-  «?», чтобы кадр не зависел от системных шрифтов (t208).
-- `src/libs/kt-media/src/generator.rs`: «нет звука» = `has_audio:false` И `Ok(тишина)`;
-  `Err` попадал бы в негативный кэш воркера как ложный underrun.
-- `src/libs/kt-media/src/factory.rs`: разбор псевдо-путей только здесь и
-  регистронезависимо; до фабрики `synth:Ramp` в живых сценариях считался пропавшим
-  файлом, и заглушка сделала эту молчаливую поломку видимой. `can_retune` обязан совпадать
-  с `MediaSource::retune` точь-в-точь (t499).
-- `src/apps/kt-app/src/analysis.rs`: `is_running` держится на живой задаче, а не на
-  «окно открыто» — иначе окно после финиша грело бы систему (повтор дефекта t38);
-  стейл-защита в `src/apps/kt-app/src/app.rs` (`on_analysis_done`) — по ревизии И по
-  присутствию медиа (t421).
-- `src/apps/kt-app/src/bg.rs`: отправитель прогресса ВЛАДЕЕТСЯ телом задачи, а не
-  одалживается — потребители вроде экспорта требуют `Fn + Send + Sync + 'static`, и ссылка
-  такого обещания дать не может. Отмена снимает паузу (t398b), иначе отменённая на паузе
-  задача висела бы вечно вместе с окном прогресса.
-- `src/libs/kt-engine/tests/offline_sources.rs` (t422): сторожится ТЕКСТ инварианта 5 и
-  выполнимость его условий (`Drop` у задачи и службы), а не код — родня «catalog keys
-  nobody uses».
+- `src/libs/kt-media/src/ffmpeg.rs`: two INDEPENDENT demuxers per file (audio and video do not
+  fight over seek) plus a scan pass of the batch index without decode. Audio seek — a container
+  BACKWARD seek to the indexed packet with a margin of 3 packets and a FULL recreation of the decoder and
+  swr; a FIFO with an absolute anchor by the pts of the first frame after the seek — this is how
+  sample accuracy is reached (FLAC exact, AAC — zero phase shift). Video: backward seek = seek +
+  recreation of the decoder ALWAYS (cheaper than catching artefacts of MT H.264); forward ≤4 s —
+  a continuous decode without seek.
+- `src/libs/kt-media/src/ffmpeg.rs`: `unsafe impl Send` is correct only because the instance is owned by exactly one worker (`&mut self`); `Sync` is deliberately not implemented.
+- `src/libs/kt-ffmpeg/src/source_impl.rs`: the choice of frame when the grids do not match is floor
+  and only floor (t112). Previously the forward path took ceil (the previous frame was already released), and
+  the export went `f0, f1, f0, f2…` — the user saw backward steps.
+- `src/libs/kt-ffmpeg/src/lib.rs` (`iostats`): the counters opens/packet_reads are global
+  monotonic atomics, the UI differentiates them by time; t37 prevents the panel from again showing
+  dead series.
+- `src/libs/kt-engine/src/worker.rs` (`pick_next`): at equal priority — requests
+  FORWARD from the cursor, the nearest first; backward — only when forward is empty. The playback key
+  becomes the START of the span, and the span top-up runs over the priorities — otherwise Playback singletons
+  degenerated spans into "one frame at a time" and the coverage stopped growing (t27). Keys beyond EOF —
+  the worker's negative cache.
+- `src/libs/kt-engine/src/worker.rs` (`worker_loop`): the retune of the source lies in a
+  separate field of the queue, is processed FIRST, before `pick_next`, and the source's cache is cleaned there too —
+  the race "the old frame was written back after the cleanup" is removed by construction (t501).
+  `content_version` is separated from `project_version`: prefetch wakes up, the renderers are not
+  rebuilt.
+- `src/libs/kt-engine/src/player.rs` (`replace_media`): the order is mandatory — shut down the
+  worker → `invalidate_source` → raise the new one; otherwise the old worker writes the placeholder frame
+  after the invalidation. A change of the set of sources rebuilds the player's renderer too, because the
+  natives are known only to the OPENED source (`probe_json` is not filled in the sidecar): without this
+  a returned file did not change the decode step until the first edit of the timeline (t316).
+- `src/libs/kt-cache/src/lib.rs`: quality is part of the key, and the decode step enters THROUGH the quality (a frame at step 2 lies under the key 2×Quality). The consequence for the UI: the bars
+  must ask the coverage by the DECODE quality of the clip (`clip_decode_quality` in
+  `src/libs/kt-engine/src/video.rs`), otherwise a warmed clip looks cold.
+- `src/libs/kt-cache/src/lib.rs`: `contains` does not touch the LRU and the epoch (t27) — a probe without
+  a read that refreshed the recency evicted what had been honestly read. `unused_evictions` counts
+  records without `had_hit`, evicted OR overwritten (t37). `invalidate_source` goes by the
+  `by_source` index, not linearly over the cache — it is called on every keystroke in the generator
+  window (t497). Pin excludes from eviction, but not from coverage.
+- `src/libs/kt-engine/src/audio.rs` (`merge_burst_ranges`): the ranges of one media are collapsed;
+  in meaning this is the same set of bursts, so no test moved, and
+  885 coverage requests under the mutex became one (t287). The pre-roll does not pull the micro-event:
+  `hard_seek` clamps it by the local position.
+- `src/libs/kt-engine/src/audio.rs` (`wanted_audio_bursts_raw`): the raw reverse path plays
+  the events dry and linearly, it does not know the warp; the Playback prefetch at `dir < 0` must compute
+  the window by this code — a warp window over a slowed event covers another pass of the source,
+  and the miss was eternal, up to 1024 frames per skipped burst (t285).
+- `src/libs/kt-media/src/ffmpeg.rs` (`open_indexed`): the batch index is written by ANY `open_indexed` after a fresh scan, so already the second opening of the same file (the player, thumbnails, a restart) goes without a scan pass. DB errors are cache errors: a silent fallback
+  to the ordinary `open`.
+- `src/libs/kt-media/src/index.rs`: the connections are short-lived, WAL + busy_timeout 5 s
+  cover the competition of threads; the UI thread does not touch the DB. Additive tables are created
+  with `IF NOT EXISTS` at every opening and appear in already existing DBs.
+- `src/libs/kt-media/src/index.rs` (`purge_media`): `sync_offset` is keyed by a PAIR, and
+  a uniform `DELETE WHERE media_id` does not see the record where the replaced file is the second one —
+  the synchronization computed from different sound would remain (t402). The `reel_*` tables this
+  purge does not touch: the replacement of a file is caught by the media fingerprint in their key (capability `compositions`).
+- `src/libs/kt-media/src/lib.rs` (`PEAK_BLOCK_FRAMES = 256`): a block of the peak pyramid —
+  256 frames of 48 kHz (5.3 ms); this is both the limit of the waveform's resolution at any zoom, and
+  the step by which the sync by waveform is computed. Changing the block means recomputing the peaks of
+  all projects and the sync goldens (t413–t415).
+- `src/libs/kt-media/src/index.rs` (`build_observed`): the observer of the pyramid does not change
+  the pyramid itself (t401b); the true peak is computed by polyphase only around samples comparable
+  with the largest — without the gate an hour-long file hit this sum on every opening of the project.
+- `src/libs/kt-media/src/sync.rs` (`offset_from_pyramids`): `a[i]` is compared with
+  `b[i+lag]`, a positive lag = "B later" (t414); the first block is compared with itself, and not with zero —
+  otherwise every record had a false "onset" at zero, and the correlation of two noises at
+  zero shift jumped to 0.98 (t415); the starting level is chosen BY LENGTH, not "the topmost" — at the top there are one or two blocks, and a full search would not have happened at all.
+  The confidence threshold 0.30 — below it there is no answer.
+- `src/libs/kt-model/src/ops.rs` (`sync_by_audio_commands`): the translation "material →
+  timeline" only through `clip_timeline_at`/`clip_material_at` — one's own arithmetic on `source_in` would drift on reverse and on a trimmed start (t417); beyond the start of the project —
+  `OutOfRange`, not a clamp (t417b).
+- `src/apps/kt-app/src/thumbs.rs`: the keys of `thumbnails` are an exact PK (media, t); "nearest"
+  only through `thumbnail_near` with the tolerance as a queue parameter; `ThumbKey` must not be extended —
+  a shared cache bin↔timeline (t62). `SourceLru` with capacity 4 instead of `clear()` at >2 — with ≥4
+  media the thumbnails reopened the file for every key (t71). Everything that may fail for the
+  worker must publish the failure (t69) — otherwise there is a re-order on every UI frame, and
+  the counter of FFmpeg opens grows in proportion to the FPS of the interface. The map "event tick → source
+  frame" is one (`material_at`) for the filmstrip, the waveform and the miniatures — it knows about reverse.
+- `src/apps/kt-app/src/util.rs`: `open_source_indexed` is left strict ("error = error") for adding media and polling permissions in the render menu; the stub is substituted
+  only by `open_source_or_placeholder`. `IndexService` reopens the DB only when the path changes.
+  In t399 the deadline is deliberately generous: the `synth:` source lasts an hour (`SYNTH_DURATION` in
+  `src/libs/kt-media/src/factory.rs`), the test asserts "the queue does not lose work", and not
+  "the service is fast" — speed is judged by the release build.
+- `src/libs/kt-media/src/placeholder.rs`: the duration of the stub is 1000 hours (it does not know
+  how long the file lasted, and must not cut the edit); `fps: None` — the project's grid plans it;
+  the frame is built once per quality and cached, it does not depend on time; non-ASCII →
+  "?", so that the frame does not depend on the system fonts (t208).
+- `src/libs/kt-media/src/generator.rs`: "no sound" = `has_audio:false` AND `Ok(silence)`;
+  an `Err` would have landed in the worker's negative cache as a false underrun.
+- `src/libs/kt-media/src/factory.rs`: parsing of pseudo-paths only here and
+  case-insensitively; before the factory `synth:Ramp` in live scenarios was taken as a missing
+  file, and the stub made this silent breakage visible. `can_retune` must match
+  `MediaSource::retune` exactly (t499).
+- `src/apps/kt-app/src/analysis.rs`: `is_running` is held by a live task, not by "the window is open" — otherwise the window after the finish would heat the system (a repeat of defect t38);
+  the stale guard in `src/apps/kt-app/src/app.rs` (`on_analysis_done`) — by revision AND by the presence of the media (t421).
+- `src/apps/kt-app/src/bg.rs`: the progress sender OWNS the body of the task, rather than borrowing it — consumers such as export require `Fn + Send + Sync + 'static`, and a reference cannot give such a promise. Cancellation releases the pause (t398b), otherwise a task cancelled on pause would hang forever together with the progress window.
+- `src/libs/kt-engine/tests/offline_sources.rs` (t422): the TEXT of invariant 5 and the feasibility of its conditions (`Drop` of the task and of the service) are guarded, not the code — a relative of "catalog keys nobody uses".
 
-## Р.67: одиночная картинка и правда об альфе
+## R.67: single image and the truth about alpha
 
-- **Стилл распознаётся по ДЕМУКСЕРУ** (`image2`, `*_pipe`), а не по длительности: `image2`
-  честно сообщает 0.04 с, и по длине картинка неотличима от очень короткого видео.
-- **По стиллу не делается seek.** Именно попытка seek оставляла поток без единого кадра —
-  «out of range» на любом тике, то самое вечное «Loading…». У картинки один кадр: его
-  отдают на любой запрошенный тик, длительность «практически бесконечная», как у заглушки.
-- **`has_alpha` спрашивают у дескриптора формата.** Оно было прибито `false`, и композит,
-  который альфу умеет, о ней не знал: PNG ложился непрозрачным прямоугольником (дыра
-  F-MED-003, замеренная ещё в Р.52).
-- **Путь добавляемого медиа абсолютизируется.** Относительность — свойство ЗАПИСИ и
-  считается от файла проекта; путь, относительный к каталогу запуска, писатель принимал за
-  относительный к проекту, и `sources/logo.jpg` превращался в `sources/sources/logo.jpg`.
+- **A still is recognized by the DEMUXER** (`image2`, `*_pipe`), not by duration: `image2`
+  honestly reports 0.04 s, and by length a picture is indistinguishable from a very short video.
+- **No seek is made on a still.** It was precisely the attempt at seek that left the stream without a single frame —
+  "out of range" at any tick, that same eternal "Loading…". A picture has one frame: it is given
+  at any requested tick, the duration is "practically infinite", as for the stub.
+- **`has_alpha` is asked of the format descriptor.** It had been nailed to `false`, and the composite,
+  which can handle alpha, did not know about it: a PNG was laid down as an opaque rectangle (the defect
+  F-MED-003, measured back in R.52).
+- **The path of the added media is made absolute.** Relativity is a property of the RECORD and
+  is computed from the project file; the writer took a path relative to the launch directory for one relative to the project, and `sources/logo.jpg` turned into `sources/sources/logo.jpg`.
 
-## Отложено
+## Deferred
 
-- Перепривязка исходников и сбор проекта в папку (`docs/features/media/organization/
-  relink-and-consolidate.md`, кандидат): команды правки пути в модели нет, `RemoveMedia`
-  закрыт гардом «медиа в работе», а новое `AddMedia` даёт новый id — пары команд с эффектом
-  перепривязки не существует. Материал для перепривязки ПО СОДЕРЖИМОМУ уже лежит в БД
-  (xxh3-128 в `ensure_media`).
-- Список энкодеров в диалоге рендера не совпадает с тем, что откроется: `h264_vaapi`/
-  `h264_qsv` без hw-контекста не открываются никогда, «Авто» на Intel/AMD молча падает на
-  libx264 (`docs/features/export/pipeline/hardware-encoder-selection.md`; capability `export`).
-- Найдено попутно и не чинилось: `warp_prefetch.rs` (t17) заполняет легаси-поле
-  `automation` при пустом `fx_auto`, а миграция в тестах не зовётся — кривой у него нет
-  вовсе, и он недотестирует после переезда автоматизации.
+- Relinking of sources and collecting the project into a folder (`docs/features/media/organization/
+  relink-and-consolidate.md`, candidate): there is no command in the model for editing a path, `RemoveMedia`
+  is closed by the guard "media in use", and a new `AddMedia` gives a new id — a pair of commands with the effect
+  of relinking does not exist. Material for relinking BY CONTENT already lies in the DB
+  (xxh3-128 in `ensure_media`).
+- The list of encoders in the render dialog does not match what will open: `h264_vaapi`/
+  `h264_qsv` without a hw context never open, and "Auto" on Intel/AMD silently falls
+  back to libx264 (`docs/features/export/pipeline/hardware-encoder-selection.md`; capability `export`).
+- Found along the way and not fixed: `warp_prefetch.rs` (t17) fills the legacy field
+  `automation` when `fx_auto` is empty, and the migration is not called in the tests — it has no curve
+  at all, and it under-tests after the move of automation.

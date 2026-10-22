@@ -2,282 +2,265 @@
 
 ## ADDED Requirements
 
-### Requirement: Форма отрезка живёт на ключе и имеет свои параметры
+### Requirement: The segment shape lives on the key and has its own parameters
+The interpolation form SHALL belong to a KEY and describe the segment AFTER it, not the curve
+as a whole. The set of forms is closed, and each has its own parameters: linear (no parameters),
+third order (tension), step (no parameters), ease in and ease out (tension), zigzag
+(number of periods, amplitude, profile — triangle/rectangle/sine). The zigzag amplitude
+SHALL be set IN UNITS OF THE PARAMETER and clamped by the target's passport, not as a fraction
+of the difference between the keys: the most common zigzag is an oscillation around a CONSTANT value, where the difference
+is zero. Each form SHALL be a closed, stateless function `(segment fraction, ends, parameters)`.
+The default form for new keys is a PROJECT field, not a machine setting; changing the
+default MUST NOT touch keys that are already set. The command "apply form to all
+segments" SHALL exist for a curve and for an event and SHALL land as one step in the history.
+The value at the last key is the final one; the form of the last key has no effect.
+Why: a single boolean for the whole curve expresses neither "this segment as a step" nor a zigzag;
+a machine setting would give "one file — two behaviors" (the Vegas lesson), and an amplitude taken from the
+difference would collapse the zigzag exactly where it is needed.
 
-Форма интерполяции SHALL принадлежать КЛЮЧУ и описывать участок ПОСЛЕ него, а не кривой
-целиком. Набор форм закрыт и у каждой свои параметры: прямая (без параметров), третий
-порядок (натяжение), ступень (без параметров), ease in и ease out (натяжение), зигзаг
-(число периодов, амплитуда, профиль — треугольник/прямоугольник/синус). Амплитуда зигзага
-SHALL задаваться В ЕДИНИЦАХ ПАРАМЕТРА и клампиться паспортом цели, а не долей перепада
-между ключами: самый частый зигзаг — колебание вокруг ПОСТОЯННОГО значения, где перепад
-равен нулю. Каждая форма SHALL быть замкнутой функцией `(доля отрезка, концы, параметры)`
-без состояния. Умолчание формы для новых ключей — поле ПРОЕКТА, не настройка машины; смена
-умолчания MUST NOT трогать уже поставленные ключи. Команда «применить форму ко всем
-отрезкам» SHALL существовать для кривой и для события и ложиться одним шагом истории.
-Значение на последнем ключе — крайнее, форма последнего ключа не действует.
-Почему: одно булево на всю кривую не выражает ни «этот участок ступенькой», ни зигзаг;
-настройка машины дала бы «один файл — два поведения» (урок Vegas), а амплитуда от перепада
-схлопнула бы зигзаг ровно там, где он нужен.
-
-#### Scenario: Формы считаются замкнуто и детерминированно
-- **WHEN** отрезок считается каждой формой в 0, 1 и середине, с крайними значениями натяжения, у зигзага — с дробным числом периодов и на постоянном отрезке
-- **THEN** концы отрезка равны значениям ключей у ВСЕХ форм кроме ступени (у ступени левое значение держится до следующего ключа); зигзаг на постоянном отрезке колеблется с заданной амплитудой в единицах параметра и клампится паспортом; два прогона дают одинаковые байты
+#### Scenario: Shapes are computed closed and deterministic
+- **WHEN** a segment is computed by each form at 0, 1 and the middle, with extreme tension values, for the zigzag with a fractional number of periods and on a constant segment
+- **THEN** the ends of the segment equal the key values for ALL forms except step (for step the left value holds until the next key); the zigzag on a constant segment oscillates with the given amplitude in parameter units and is clamped by the passport; two runs give identical bytes
 - **TEST** t695 (`src/libs/kt-model/tests/fx_auto.rs`)
 
-#### Scenario: Умолчание воспроизводит прежнее сглаживание побайтово
-- **WHEN** кривая, созданная без указания формы, сравнивается с замороженным оракулом прежнего `curve_value(keys, ease = true, at)`
-- **THEN** значения совпадают побитово во всех пробах; `GOLDEN_AUDIO`, `GOLDEN_VIDEO` и `GOLDEN_TITLE_VIDEO` не двигаются
-- **TEST** t695b (`src/libs/kt-model/tests/fx_auto.rs`), t11 и t67 (`src/libs/kt-engine/tests/golden_export.rs`)
+#### Scenario: The default reproduces the former smoothing byte for byte
+- **WHEN** a curve created without specifying a form is compared with the frozen oracle of the previous `curve_value(keys, ease = true, at)`
+- **THEN** the values match bit for bit at all sample points; `GOLDEN_AUDIO`, `GOLDEN_VIDEO` and `GOLDEN_TITLE_VIDEO` do not move
+- **TEST** t695b (`src/libs/kt-model/tests/fx_auto.rs`), t11 and t67 (`src/libs/kt-engine/tests/golden_export.rs`)
 
-#### Scenario: Скорость принимает только прямую и отказывает громко
-- **WHEN** ключу кривой `rate` назначается любая форма, кроме прямой — из интерфейса и командой
-- **THEN** команда отвергается с названной причиной (замкнутая форма обратной карты варпа стоит на кусочно-линейном профиле), в строке состояния — ошибка, а не тишина; карта варпа считает прежние числа
+#### Scenario: Speed accepts only linear and refuses loudly
+- **WHEN** any form other than linear is assigned to a key of the `rate` curve — from the interface and by command
+- **THEN** the command is rejected with the stated reason (the closed form of the inverse warp map rests on a piecewise-linear profile), the status line shows an error rather than silence; the warp map computes the previous numbers
 - **TEST** t696 (`src/libs/kt-model/tests/warp.rs`), t696b (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Умолчание проекта и команда «ко всем»
-- **WHEN** меняется умолчание формы в проекте, затем ставится новый ключ; затем применяется форма ко всем отрезкам кривой и всего события
-- **THEN** новый ключ берёт умолчание, прежние ключи не тронуты; команда меняет все отрезки одним undo; умолчание живёт в файле, а не в настройках программы
+#### Scenario: The project default and the "to all" command
+- **WHEN** the form default in the project is changed, then a new key is set; then the form is applied to all segments of the curve and of the whole event
+- **THEN** the new key takes the default, the earlier keys are untouched; the command changes all segments in one undo; the default lives in the file, not in the program settings
 - **TEST** t697 (`src/libs/kt-model/tests/fx_auto.rs`)
 
-### Requirement: Связь — значение ведёт другое свойство, с выражением пересчёта
+### Requirement: Link — a value drives another property, with a recalculation expression
+`CurveSource::Link` SHALL address a source property and carry an optional recalculation
+expression. The address SHALL point to any event of the PROJECT within ONE reel and MUST NOT
+cross the reel boundary in either direction: outward — because the reel would stop being self-contained and the
+law E (nesting is identical to the expanded content) would stop holding; inward — because public composition
+parameters already exist for that purpose.
+The common denominator of time for a link between DIFFERENT events is the TIMELINE tick: its own material position is converted to the timeline and back to the source material by the same
+function as the rest of the program; outside the source's body its extreme value is taken.
+Within ONE event no conversion is needed — the domain is shared.
+Non-numeric properties SHALL be tracked derivatively: a flag by a threshold, a choice, text, media and color by snapshots at marks on the VALUE axis of the leading property (between marks the previous
+snapshot holds). A dependency cycle SHALL be rejected by validation that traverses from ALL vertices and prints the
+path. Source resolution SHALL run in topological order once per renderer build, before the audio stream; there is no work in the compute callback.
+Why: the owner asked for a "view curve from another curve of the same event" and chose the
+address space of the whole project; the rig axis is the VALUE, not time, so a snapshot switches
+the font the same way a number moves the size.
 
-`CurveSource::Link` SHALL адресовать свойство-источник и нести необязательное выражение
-пересчёта. Адрес SHALL указывать на любое событие ПРОЕКТА в пределах ОДНОЙ ленты и MUST NOT
-пересекать границу ленты в обе стороны: наружу — потому что лента перестала бы быть
-самодостаточной и закон Э (вложение тождественно развёрнутому содержимому) перестал бы
-выполняться; внутрь — потому что для этого уже есть публичные параметры композиции.
-Общий знаменатель времени у связи между РАЗНЫМИ событиями — тик ТАЙМЛАЙНА: своя
-материальная позиция переводится в таймлайн и обратно в материал источника той же
-функцией, что у остальной программы; вне тела источника берётся его крайнее значение.
-Внутри ОДНОГО события перевод не нужен — домен общий.
-Нечисловые свойства SHALL вестись производно: флаг — порогом, выбор, текст, медиа и цвет —
-снимками на отметках оси ЗНАЧЕНИЯ ведущего свойства (между отметками держится предыдущий
-снимок). Цикл зависимостей SHALL отвергаться валидацией обходом со ВСЕХ вершин с печатью
-пути. Разрешение источников SHALL идти в топологическом порядке один раз на сборку
-рендерера, до аудио-потока; в колбэке вычислений нет.
-Почему: владелец просил «view-кривую от другой кривой этого же события» и выбрал адресное
-пространство всего проекта; ось риги — ЗНАЧЕНИЕ, а не время, поэтому снимок переключает
-шрифт так же, как число двигает размер.
-
-#### Scenario: Связь внутри события и между событиями
-- **WHEN** свойство ведётся другим свойством того же события; затем свойством ДРУГОГО события, стоящего в другом месте таймлайна, в том числе под тримом и реверсом
-- **THEN** внутри события значения совпадают на том же материальном тике; между событиями — на том же тике ТАЙМЛАЙНА; за телом источника берётся его крайнее значение
+#### Scenario: A link inside an event and between events
+- **WHEN** a property is driven by another property of the same event; then by a property of a DIFFERENT event placed elsewhere on the timeline, including under trim and reverse
+- **THEN** within the event the values match at the same material tick; between events they match at the same TIMELINE tick; beyond the source's body its extreme value is taken
 - **TEST** t702 (`src/libs/kt-model/tests/links.rs`)
 
-#### Scenario: Цикл отвергается с путём
-- **WHEN** свойство A ведёт B, B ведёт A; затем цикл длиной три через разные события; затем свойство ведёт само себя
-- **THEN** валидация отвергает документ и печатает путь; поиск идёт со всех вершин, а не от корня; проект без связей валиден как прежде
+#### Scenario: A cycle is rejected with its path
+- **WHEN** property A drives B and B drives A; then a cycle of length three through different events; then a property drives itself
+- **THEN** validation rejects the document and prints the path; the search runs from all vertices, not from the root; a project without links is valid as before
 - **TEST** t703 (`src/libs/kt-model/tests/links.rs`)
 
-#### Scenario: Нечисловое через пороги и снимки
-- **WHEN** число ведёт флаг через порог; ведёт выбор, текст, ссылку на медиа и цвет через снимки на отметках
-- **THEN** флаг переключается на пороге и не дрожит на равенстве; между отметками держится предыдущий снимок; ниже первой отметки — первый снимок; снимок нечислового типа в числовую цель отвергается валидацией
+#### Scenario: Non-numeric through thresholds and snapshots
+- **WHEN** a number drives a flag through a threshold; a choice, text, a media reference and a color are driven through snapshots at marks
+- **THEN** the flag switches at the threshold and does not flicker on equality; between marks the previous snapshot holds; below the first mark the first snapshot applies; a snapshot of a non-numeric type into a numeric target is rejected by validation
 - **TEST** t704 (`src/libs/kt-model/tests/links.rs`)
 
-#### Scenario: Граница ленты не пересекается
-- **WHEN** создаётся связь из события внутри ленты на событие корня и обратно
-- **THEN** обе отвергаются с названной причиной и подсказкой про публичные параметры; закон Э на ленте со связями внутри неё выполняется байт-в-байт
+#### Scenario: The reel boundary is not crossed
+- **WHEN** a link is created from an event inside a reel to an event of the root, and back
+- **THEN** both are rejected with the stated reason and a hint about public parameters; law E on a reel with links inside it holds byte for byte
 - **TEST** t702b (`src/libs/kt-model/tests/links.rs`), t688 (`src/libs/kt-engine/tests/nest_param.rs`)
 
-### Requirement: Формула — источник значения, считается своим вычислителем
+### Requirement: Formula — the source of a value, evaluated by its own evaluator
+`CurveSource::Formula` SHALL define a curve as TEXT over time and addressable properties, without
+keys. The evaluator is its own, with a CLOSED set of operations (arithmetic, comparisons, branching,
+`min`/`max`/`clamp`/`abs`/`floor`, trigonometry, `lerp`, `noise` from an integer seed), with no
+loops, no access to the file system, clock, or randomness from the environment. The same
+text with the same inputs SHALL always and everywhere produce the same bytes (the determinism
+invariant). Division by zero, overflow and `NaN` SHALL produce a NAMED parse or evaluation
+error, not a silent zero. The formula text SHALL be part of the post-FX key and of the chain
+hash: otherwise editing the formula would leave the old frames on screen. The formula SHALL
+resolve into numbers BEFORE the audio stream, in the same place as the curve profiles.
+A project without links and formulas MUST NOT pay anything: no plan is built, the chain
+is borrowed, the bytes are as before.
+Why: the owner's decision — "your own mini-formula, computed live on every frame, no external
+interpreters"; changing a third-party engine changed the result of finished projects in After Effects, and executable code in a document is the Blender lesson.
 
-`CurveSource::Formula` SHALL задавать кривую ТЕКСТОМ от времени и адресуемых свойств, без
-ключей. Вычислитель — свой, с ЗАКРЫТЫМ набором операций (арифметика, сравнения, ветвление,
-`min`/`max`/`clamp`/`abs`/`floor`, тригонометрия, `lerp`, `noise` от целого зерна), без
-циклов, без обращения к файловой системе, часам и случайности из окружения. Одинаковый
-текст при одинаковых входах SHALL давать одинаковые байты всегда и везде (инвариант
-детерминизма). Деление на ноль, переполнение и `NaN` SHALL давать НАЗВАННУЮ ошибку разбора
-или вычисления, а не молчаливый ноль. Текст формулы SHALL входить в ключ пост-FX и в хэш
-цепочки: иначе правка формулы оставила бы на экране прежние кадры. Формула SHALL
-разрешаться в числа ДО аудио-потока, тем же местом, где профили кривых.
-Проект без связей и формул MUST NOT платить ничего: план не строится, цепочка
-заимствуется, байты прежние.
-Почему: решение владельца — «своя мини-формула, считается вживую на каждом кадре, внешних
-интерпретаторов нет»; смена чужого движка у After Effects меняла результат готовых
-проектов, а исполняемый код в документе — урок Blender.
-
-#### Scenario: Вычислитель замкнут и детерминирован
-- **WHEN** разбираются и считаются выражения набора, затем выражение с неизвестным именем, с делением на ноль, с незакрытой скобкой и с попыткой обратиться к времени машины
-- **THEN** набор считается одинаково в двух прогонах; каждая из четырёх ошибок названа своим текстом с позицией в строке; ни одна не даёт молчаливого нуля
+#### Scenario: The evaluator is closed and deterministic
+- **WHEN** the expressions of the set are parsed and computed, then an expression with an unknown name, with division by zero, with an unclosed parenthesis, and with an attempt to access machine time
+- **THEN** the set is computed identically in two runs; each of the four errors is named by its own text with a position in the line; none of them gives a silent zero
 - **TEST** t701 (`src/libs/kt-model/tests/formula.rs`)
 
-#### Scenario: Формула как кривая без ключей
-- **WHEN** у свойства источник-формула от времени; затем формула, читающая другое свойство; затем формула на скорости варпа
-- **THEN** значения совпадают с независимым оракулом теста; чтение другого свойства идёт тем же адресом, что связь; на скорости формула отвергается по тому же правилу, что не-прямая форма
+#### Scenario: A formula as a curve without keys
+- **WHEN** a property's source is a formula of time; then a formula that reads another property; then a formula on the warp speed
+- **THEN** the values match the independent test oracle; reading another property uses the same address as a link; on speed the formula is rejected by the same rule as a non-linear form
 - **TEST** t707 (`src/libs/kt-model/tests/formula.rs`)
 
-#### Scenario: Текст формулы в ключе пост-FX
-- **WHEN** правится ТОЛЬКО текст формулы, при тех же параметрах эффекта
-- **THEN** ключ пост-FX меняется, кадр пересчитывается; мемоизация не отдаёт прежний кадр
+#### Scenario: The formula text in the post-FX key
+- **WHEN** ONLY the formula text is edited, with the same effect parameters
+- **THEN** the post-FX key changes, the frame is recomputed; memoization does not return the previous frame
 - **TEST** t708 (`src/libs/kt-engine/tests/postfx_cache.rs`)
 
-#### Scenario: Ноль цены без связей и формул
-- **WHEN** рендерится проект, где ни одного производного источника нет, и проект, где формула стоит на ОДНОМ событии из многих
-- **THEN** в первом байты и план побайтово прежние, графа зависимостей нет вовсе; во втором план соседних событий не изменился, а цена сборки не выросла с числом событий
+#### Scenario: Zero cost without links and formulas
+- **WHEN** a project where there is not a single derived source is rendered, and a project where a formula sits on ONE event out of many
+- **THEN** in the first, the bytes and the plan are byte-for-byte as before, and there is no dependency graph at all; in the second, the plan of neighboring events has not changed, and the build cost has not grown with the number of events
 - **TEST** t705 (`src/libs/kt-engine/tests/auto_plan.rs`), t710 (`src/libs/kt-engine/tests/cost.rs`)
 
-### Requirement: Источники значения кривой — ключи, связь, формула; плагин остаётся интерфейсом
+### Requirement: Sources of a curve value — keys, link, formula; a plugin remains an interface
+A curve SHALL have a value-source field: `Keys` (default, not serialized —
+the bytes of files with keys do not change), `Link` and `Formula`. All three SHALL be WORKING
+sources; the behavior of links and formulas is described in separate requirements. A source whose
+address does not resolve or whose text does not parse SHALL be rejected LOUDLY on load
+and on command — a silent "by keys" render would show something other than what is written in the file.
+The plugin SHALL remain ONLY an interface: a pure function with no clock, I/O or state between frames; on load it is refused for a declared state or tail; it never
+enters the golden-cycle registry.
+Why: the slot for sources was set up in R.59 in advance precisely so that the evaluator could arrive in the next round without breaking the format; the owner left plugins for later.
 
-У кривой SHALL быть поле источника значения: `Keys` (умолчание, не сериализуется —
-байты файлов с ключами не двигаются), `Link` и `Formula`. Все три SHALL быть РАБОЧИМИ
-источниками; поведение связи и формулы описано отдельными требованиями. Источник, чей
-адрес не разрешается или чей текст не разбирается, SHALL отвергаться ГРОМКО при загрузке
-и при команде — тихий рендер «по ключам» показал бы не то, что записано в файле.
-Плагин SHALL оставаться ТОЛЬКО интерфейсом: чистая функция без часов, ввода-вывода и
-состояния между кадрами, отказ при загрузке на объявленное состояние или хвост, никогда не
-попадает в реестр golden-цикла.
-Почему: место под источники заводилось в Р.59 заранее именно для того, чтобы вычислитель
-приехал следующим раундом, не ломая формат; плагины владелец оставил на потом.
-
-#### Scenario: Неразрешимый источник отвергается
-- **WHEN** у кривой источник с адресом на исчезнувшее свойство или с неразбираемым текстом
-- **THEN** проект с обычными кривыми валиден, с неразрешимым источником — явная ошибка с адресом и причиной
+#### Scenario: An unresolvable source is rejected
+- **WHEN** a curve's source has an address pointing to a vanished property or has unparseable text
+- **THEN** a project with ordinary curves is valid; with an unresolvable source it is an explicit error with the address and the reason
 - **TEST** t649 (`src/libs/kt-model/tests/props.rs`)
 
-#### Scenario: Плагин остаётся интерфейсом
-- **WHEN** проверяется контракт плагина
-- **THEN** объявленное состояние или хвост — отказ при загрузке; плагин не попадает в golden-реестр
+#### Scenario: The plugin remains an interface
+- **WHEN** the plugin contract is checked
+- **THEN** a declared state or tail is a refusal on load; the plugin does not enter the golden registry
 - **TEST** t649 (`src/libs/kt-model/tests/props.rs`)
 
 ## MODIFIED Requirements
 
-### Requirement: Копипаст эффектов, цепочек и огибающих — модель, вставка одна
+### Requirement: Copy-paste of effects, chains and envelopes — one model, one paste
+Buffer blocks (a slot, a chain with the donor's `src_in`, an envelope with a effect-kind tag) SHALL live in the model
+and be serialized in the same form to the system clipboard. **The system clipboard SHALL be
+the only source of paste**: there is no mirror of the buffer inside the program, the paste button NEVER
+turns off, the content is read ON PRESS, and content that cannot be parsed gives an error with
+a reason in the status line. Paste SHALL go through ONE append function for all carriers (event, morpher, preset): keys are reattached "input to input" without
+scaling, negative time is clamped to zero, curves are extended to the length of the
+chain, and the donor's `fx_off` is NOT applied to the receiver. An envelope going into a DIFFERENT effect kind SHALL
+be pasted with field matching: those matched by name and type land silently; for the remainder a
+window "curve → target parameter" opens; not a single curve is silently lost. A carrier without
+curves as a type MUST NOT exist. Paste returns commands — one undo step. When copying, the name gets the SUFFIX "copy" by default, not a prefix.
+Why: two truths about one action gave a silent loss of animation; a mirror of the buffer
+inside the program turned the button off based on content copied in another window — a state that must not exist (the owner's complaint in R.61).
 
-Блоки буфера (слот, цепочка с `src_in` донора, огибающая с тегом вида) SHALL жить в модели
-и сериализоваться той же формой в системный буфер. **Системный буфер SHALL быть
-единственным источником вставки**: зеркала буфера внутри программы не существует, кнопка
-вставки НИКОГДА не гаснет, содержимое читается ПО НАЖАТИЮ, и неразобранное даёт ошибку с
-причиной в строке состояния. Вставка SHALL идти ОДНОЙ функцией дописывания для всех
-носителей (событие, морфер, пресет): ключи перевешиваются «вход к входу» без
-масштабирования, отрицательное время клампится в ноль, кривые доращиваются до длины
-цепочки, `fx_off` донора НЕ применяется к приёмнику. Огибающая в ДРУГОЙ вид эффекта SHALL
-вставляться с сопоставлением полей: совпавшие по имени и типу ложатся молча, для остатка
-открывается окно «кривая → параметр цели»; молча не теряется ни одна кривая. Носитель без
-кривых как тип MUST NOT существовать. Вставка возвращает команды — один undo-шаг. Имя при
-копировании получает по умолчанию СУФФИКС «копия», не префикс.
-Почему: две правды об одном действии дали молчаливую потерю анимации; зеркало буфера
-внутри программы гасило кнопку на содержимом, скопированном в другом окне, — состояние,
-которого быть не должно (претензия владельца Р.61).
-
-#### Scenario: Слот, цепочка и огибающая переживают буфер
-- **WHEN** копируется цепочка со слотами, bypass и ключами, отдельный слот и огибающая, и блок гоняется через JSON
-- **THEN** цепочка вставляется на материал цели одним undo, слот дописывается в конец, огибающая ложится в свой вид, блок равен себе после круга
+#### Scenario: Slot, chain and envelope survive the buffer
+- **WHEN** a chain with slots, bypass and keys, a separate slot and an envelope are copied, and a block is run through JSON
+- **THEN** the chain is pasted onto the target material in one undo, the slot is appended to the end, the envelope lands in its kind, the block equals itself after the round trip
 - **TEST** t215 (`src/libs/kt-model/tests/fx_auto.rs`)
 
-#### Scenario: Одна функция вставки на событие и морфер
-- **WHEN** блок события вставляется в морфер (вход = 0) и обратно в событие с другой точкой входа, затем дописывается второй блок
-- **THEN** ключи считаются от точки входа донора в обе стороны, состояние слота переезжает, `fx_off` не наследуется, второй блок ложится в конец параллельно кривым
+#### Scenario: One paste function for an event and a morpher
+- **WHEN** an event block is pasted into a morpher (input = 0) and back into an event with a different entry point, then a second block is appended
+- **THEN** keys are computed from the donor's entry point in both directions, the slot state moves over, `fx_off` is not inherited, the second block lands at the end in parallel with the curves
 - **TEST** t342 (`src/libs/kt-model/tests/fx_auto.rs`)
 
-#### Scenario: Вставка в окно морфера несёт кривые
-- **WHEN** в окне морфера вставляется цепочка с кривой из буфера
-- **THEN** ключи доехали и пересчитаны в домен блока
+#### Scenario: Pasting into a morpher window carries curves
+- **WHEN** a chain with a curve from the buffer is pasted into the morpher window
+- **THEN** the keys arrived and were recomputed into the block's domain
 - **TEST** t343 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Копия названа суффиксом
-- **WHEN** именованное вставляется через окно префикса с умолчаниями
-- **THEN** имя получает суффикс «копия» (префикс — переключатель в том же окне), нумерация повторов через общее уникальное имя
-- **TEST** t263 (закрыт в `t250_paste_prefix_dialog`, `src/apps/kt-app/src/layout_tests.rs`), t249 (`src/libs/kt-model/tests/morph_slice.rs`)
+#### Scenario: The copy is named with a suffix
+- **WHEN** a named item is pasted through the prefix window with its defaults
+- **THEN** the name gets the suffix "copy" (the prefix is a toggle in the same window), repeats are numbered through the shared unique name
+- **TEST** t263 (closed in `t250_paste_prefix_dialog`, `src/apps/kt-app/src/layout_tests.rs`), t249 (`src/libs/kt-model/tests/morph_slice.rs`)
 
-#### Scenario: Вставка читает настоящий буфер и объясняет отказ
-- **WHEN** огибающая скопирована, затем в системный буфер положен чужой текст, затем буфер пуст
-- **THEN** кнопка активна во всех трёх случаях; в первом вставка происходит; во втором и третьем — ошибка с причиной, состояния буфера внутри программы в коде нет
+#### Scenario: Paste reads the real clipboard and explains a refusal
+- **WHEN** an envelope is copied, then foreign text is put on the system clipboard, then the clipboard is empty
+- **THEN** the button is active in all three cases; in the first the paste happens; in the second and third there is an error with a reason, and there is no clipboard state inside the program in the code
 - **TEST** t699 (`src/apps/kt-app/src/layout_tests.rs`), t699b (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Ремаппинг полей при чужом виде эффекта
-- **WHEN** огибающая вставляется в другой вид эффекта: часть имён совпала, часть нет, часть совпала именем но не типом
-- **THEN** совпавшие именем И типом легли молча; для остальных открылось окно сопоставления со списком свободных параметров цели; отказ от сопоставления не теряет кривую молча, а называет её
+#### Scenario: Field remapping for a foreign kind of effect
+- **WHEN** an envelope is pasted into a different effect kind: some names matched, some did not, some matched by name but not by type
+- **THEN** those matched by name AND type landed silently; for the rest a matching window opened with a list of free target parameters; refusing the matching does not silently lose the curve but names it
 - **TEST** t700 (`src/libs/kt-model/tests/fx_auto.rs`), t700b (`src/apps/kt-app/src/layout_tests.rs`)
 
-### Requirement: Домен ключа — тик материала источника
+### Requirement: Key domain — the source media tick
+The position of an automation key SHALL be a tick of the MATERIAL in the `source_in` coordinate system,
+not a fraction of the event's length and not a timeline tick. Attachment to the material is ensured by the
+REPRESENTATION: trim, split, reverse and moving an event do not touch the curves at all; a key
+outside the visible piece is legal (hidden by the trim). The conversion "timeline tick → material" is one
+function for the whole project (the engine, UI and tests all call the same one); a curve is sampled at the
+grid-aligned material position of the frame. The value beyond the curve's edges is the extreme one;
+the domain is not clamped at the top or bottom. Anything that moves the read anchor `source_in` NOT together with the
+material (cutting under a warp, swapping the source with a morpher layer) MUST shift the keys by the
+same delta. Audio is automated by the same mechanism: curves are converted into profiles once
+when the renderer is built; slowed&reverb has no second domain.
+The shape of a segment lives ON THE KEY and refers to the segment after it; when an event is cut, the shape
+of the last key of the left half is kept, and the value at the joint is the same on both sides.
+A link between DIFFERENT events is computed on the common denominator — the TIMELINE tick, through the
+same conversion function; there is no second rule for converting time in the program.
+Why: the "event fraction" domain was rubbery (trimming the end moved the middle of the animation;
+Split duplicated the curve into both halves); the owner's decision — "like in Premiere".
 
-Позиция ключа автоматизации SHALL быть тиком МАТЕРИАЛА в системе координат `source_in`,
-а не долей длины события и не тиком таймлайна. Приклеенность к материалу обеспечивается
-ПРЕДСТАВЛЕНИЕМ: обрезка, разрез, реверс и перенос события кривые не трогают вовсе; ключ
-вне видимого куска законен (спрятан обрезкой). Перевод «тик таймлайна → материал» — одна
-функция на весь проект (движок, UI и тесты зовут её же); кривая сэмплируется по
-выровненной по сетке кадров материальной позиции. Значение за краями кривой — крайнее;
-домен сверху и снизу не клампится. Всё, что двигает якорь чтения `source_in` НЕ вместе с
-материалом (резка под варпом, подмена источника морфер-слоем), MUST сдвинуть ключи на ту
-же дельту. Аудио автоматизируется тем же механизмом: кривые переводятся в профили один раз
-при сборке рендерера, второго домена у slowed&reverb нет.
-Форма участка живёт НА КЛЮЧЕ и относится к отрезку после него; при резке события форма
-последнего ключа левой половины сохраняется, а значение на стыке одинаково с обеих сторон.
-Связь между РАЗНЫМИ событиями считается по общему знаменателю — тику ТАЙМЛАЙНА, через ту
-же функцию перевода; второго правила перевода времени в программе нет.
-Почему: домен «доля события» был резиновым (обрезал конец — уехала середина анимации,
-Split дублировал кривую в обе половины); решение владельца — «как в Premiere».
-
-#### Scenario: Правки геометрии не двигают ключи
-- **WHEN** событие с кривой обрезается с обоих концов, режется пополам и разворачивается
-- **THEN** ключи в обеих половинах побайтово прежние, значение кривой на стыке разреза одинаково с обеих сторон, форма последнего ключа левой половины сохранена
+#### Scenario: Geometry edits do not move keys
+- **WHEN** an event with a curve is trimmed at both ends, split in half and reversed
+- **THEN** the keys in both halves are byte-for-byte as before, the curve value at the split joint is the same on both sides, the shape of the last key of the left half is preserved
 - **TEST** t212 `t212_keys_stick_to_material_through_edits` (`src/libs/kt-model/tests/fx_auto.rs`)
 
-#### Scenario: Значение кривой за телом клипа
-- **WHEN** кривая читается до первого ключа, после последнего и при отрицательной позиции
-- **THEN** возвращается крайнее значение (ручка перехода и пре-ролл законны), одна точка — константа, пустая кривая не действует
+#### Scenario: Curve value outside the clip body
+- **WHEN** a curve is read before the first key, after the last key and at a negative position
+- **THEN** the extreme value is returned (transition handles and pre-roll are legal), one point is a constant, an empty curve has no effect
 - **TEST** t190 `t190_curve_value_semantics` (`src/libs/kt-model/tests/fx_auto.rs`)
 
-#### Scenario: Старые файлы с долевым доменом читаются
-- **WHEN** открывается файл до v3, где ключи записаны долями длины события
-- **THEN** ключи конвертируются в тики материала по геометрии своего клипа (у реверсированного — зеркально), перезапись поднимает версию
+#### Scenario: Old files with a fractional domain are read
+- **WHEN** a file older than v3 is opened, where keys are recorded as fractions of the event length
+- **THEN** keys are converted into the material's ticks according to the geometry of their own clip (mirrored for a reversed one); saving raises the version
 - **TEST** t212 `t212_pre_v3_curves_migrate_to_material_ticks` (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Аудио по кривой тем же механизмом
-- **WHEN** у аудио-события кривая усиления, а у старого файла — легаси-кейфреймы slowed
-- **THEN** громкость следует кривой по материалу, без кривой сигнал не тронут байт-в-байт, легаси-поле переводится в кривые при чтении
+#### Scenario: Audio by curve, same mechanism
+- **WHEN** an audio event has a gain curve, and an old file has legacy slowed keyframes
+- **THEN** the volume follows the curve along the material; without a curve the signal is untouched byte for byte; the legacy field is converted into curves on read
 - **TEST** t213 (`src/libs/kt-engine/tests/fx.rs`)
 
-#### Scenario: Подмена источника слоем везёт кривые события
-- **WHEN** морфер-слой с подменой источника сдвигает `source_in` события с собственной анимацией
-- **THEN** значение кривой в середине события то же, что без подмены — ключи сдвинуты на ту же дельту, что якорь
+#### Scenario: Source substitution by a layer carries the event's curves
+- **WHEN** a morpher layer with a source substitution shifts the `source_in` of an event with its own animation
+- **THEN** the curve value in the middle of the event is the same as without the substitution — the keys are shifted by the same delta as the anchor
 - **TEST** t291 (`src/libs/kt-model/tests/morph_slice.rs`)
 
-#### Scenario: Резка растянутого клипа — ключи едут с якорем
-- **WHEN** событие под варпом (в том числе реверсированное, с кривой скорости) режется посередине
-- **THEN** кусок попадает в тот материал (интеграл скорости, не линейно), ключи переносятся на дельту якоря, шов без разрыва, а клип без варпа байт-в-байт прежний
+#### Scenario: Cutting a stretched clip, keys travel with the anchor
+- **WHEN** an event under a warp (including a reversed one, with a speed curve) is cut in the middle
+- **THEN** the piece lands in that material (the integral of speed, not linear), the keys are moved by the anchor's delta, the seam has no break, and a clip without a warp is byte for byte as before
 - **TEST** t270, t270b, t270c, t270d, t270e (`src/libs/kt-model/tests/morph_slice.rs`)
 
-### Requirement: Компилированная автоматизация видео и ноль цены
+### Requirement: Compiled video automation and zero cost
+Curves of the video path SHALL be compiled ONCE when the renderer is built into a plan (slot,
+row index of the passport, keys, segment shape); on a frame — a write by index without a search by
+name and without a clone of the chain. Derived sources (link, formula) SHALL be resolved in the
+same place and in TOPOLOGICAL order, once per build. A clip without live curves (no
+curves, a curve without keys, an orphaned curve) MUST borrow the chain, not copy it.
+Curves and links on one event MUST NOT change the plan of a neighbor. The post-FX hash is computed from the
+raw curves, before compilation, and includes the formula text and the link address: the cache keys do not depend on the
+method of addressing, but they DO necessarily depend on the CONTENT of the source.
+Why: the owner's requirement "a simple project does not lag, physics on one source does not
+weigh down the whole project"; in audio this rule has been in place from the start.
 
-Кривые видео-пути SHALL компилироваться ОДИН раз при сборке рендерера в план (слот,
-индекс ряда паспорта, ключи, форма отрезков); на кадре — запись по индексу без поиска по
-имени и без клона цепочки. Производные источники (связь, формула) SHALL разрешаться в том
-же месте и в ТОПОЛОГИЧЕСКОМ порядке, один раз на сборку. Клип без живых кривых (нет
-кривых, кривая без ключей, кривая-сирота) MUST заимствовать цепочку, а не копировать её.
-Кривые и связи на одном событии MUST NOT менять план соседнего. Хэш пост-FX считается от
-сырых кривых, до компиляции, и включает текст формулы и адрес связи: ключи кэша от способа
-адресации не зависят, но от СОДЕРЖАНИЯ источника зависят обязательно.
-Почему: требование владельца «простой проект не лагает, физика на одном сурсе не
-утяжеляет весь проект»; у звука это правило исполнено с самого начала.
-
-#### Scenario: План равен замороженному именному пути
-- **WHEN** для всех видов эффектов, обоих концов диапазона, форм отрезка, реверса и кривых-сирот план сверяется с дословной копией прежнего именного пути, живущей в тесте
-- **THEN** числа совпадают побитово, сирота не компилируется, кламп совпал у двух путей
+#### Scenario: The plan equals the frozen named path
+- **WHEN** for all effect kinds, both ends of the range, segment shapes, reversal and orphaned curves, the plan is checked against a verbatim copy of the previous named path that lives in the test
+- **THEN** the numbers match bit for bit, the orphan is not compiled, the clamp matched between the two paths
 - **TEST** t643 (`src/libs/kt-model/tests/props.rs`)
 
-#### Scenario: Нечего компилировать — плана нет
-- **WHEN** у цепочки нет кривых, кривые пусты или без ключей
-- **THEN** компиляция возвращает `None`
+#### Scenario: Nothing to compile means no plan
+- **WHEN** a chain has no curves, its curves are empty or have no keys
+- **THEN** compilation returns `None`
 - **TEST** t643b (`src/libs/kt-model/tests/props.rs`)
 
-#### Scenario: Клип без кривых заимствует цепочку
-- **WHEN** рендерятся событие без кривых и событие с кривой-сиротой
-- **THEN** цепочка слоя заимствована (не скопирована); копирует только клип с живой кривой
+#### Scenario: A clip without curves borrows the chain
+- **WHEN** an event without curves and an event with an orphaned curve are rendered
+- **THEN** the layer's chain is borrowed (not copied); only the clip with a live curve copies it
 - **TEST** t644 (`src/libs/kt-engine/tests/auto_plan.rs`)
 
-#### Scenario: Кривые соседа не облагают других
-- **WHEN** на одном событии есть кривые или связи, на соседних нет
-- **THEN** план соседей побайтово тот же, что в проекте без кривых
+#### Scenario: A neighbour's curves do not affect others
+- **WHEN** an event has curves or links, and its neighbors have none
+- **THEN** the neighbors' plan is byte-for-byte the same as in a project without curves
 - **TEST** t645 (`src/libs/kt-engine/tests/auto_plan.rs`), t705 (`src/libs/kt-engine/tests/auto_plan.rs`)
 
 ## REMOVED Requirements
 
-### Requirement: Выражения и плагины — только интерфейсы
-**Reason**: посылка требования исчезла — формула и связь перестали быть местом в схеме и
-стали рабочими источниками значения (решение владельца Р.61). Держать рядом требование
-«формулу валидация обязана отвергать» и требование «формула работает» значило бы иметь в
-спеке две правды об одном поле.
-**Migration**: заменено требованием «Источники значения кривой — ключи, связь, формула;
-плагин остаётся интерфейсом». Часть про плагин перенесена туда дословно и в силе;
-сценарий `t649` переписан с «формула отвергается» на «неразрешимый источник отвергается».
+### Requirement: Expressions and plugins — interfaces only
+**Reason**: the requirement's basis has disappeared — the formula and the link stopped being a place in the schema and
+became working sources of the value (the owner's decision in R.61). Keeping next to it the requirement
+"validation MUST reject the formula" and the requirement "the formula works" would mean having two truths in the spec about one field.
+**Migration**: replaced by the requirement "The value sources of a curve are keys, link, formula;
+the plugin remains an interface". The part about the plugin was carried over verbatim and remains in force;
+scenario `t649` was rewritten from "formula is rejected" to "an unresolvable source is rejected".

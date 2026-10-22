@@ -48,7 +48,7 @@ artifacts) and for a Docker build with simple `make` commands.
   (and is not) stored on GitHub.
 
 ### Modified Capabilities
-<!-- none: the media-index scenario "Релизный бинарь не линкован с libav*" keeps its guard in
+<!-- none: the media-index scenario "Release binary is not linked against libav*" keeps its guard in
      src/scripts/release-build.sh; this change only makes CI run it on every release. -->
 
 ## Impact

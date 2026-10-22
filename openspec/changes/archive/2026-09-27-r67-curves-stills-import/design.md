@@ -2,226 +2,179 @@
 
 ## Context
 
-См. proposal.md — Why. Ниже только то, что есть в коде и определяет форму решения.
+See proposal.md — Why. Below is only what exists in the code and determines the shape of the solution.
 
-- **Кривая сегодня** (`src/libs/kt-model/src/project.rs`): `ParamCurve { param, keys,
-  source: CurveSource }`, форма — на ключе (`AutoKey::shape: SegShape`, замкнутая
-  функция `SegShape::at(s, a, b)`), источники `Keys | Link | Formula` разрешаются в ключи
-  ДО аудио-потока проходом `links.rs::resolve_*` (кадровая сетка, `t` от `source_in`).
-  `apply_curves` пропускает кривую без ключей — формула без разрешения молча не звучит.
-- **Предпросмотр формулы** (`links.rs::formula_preview`) считает `t` от `from` — левого
-  края ОКНА графика, рендер — от `me.source_in`. Две правды об одном `t`.
-- **График** (`src/apps/kt-app/src/automation.rs::graph`) рисует `Shape::line` по
-  `c.keys` — прямые между ключами; t698 утверждает `curve_value`, не рисунок.
-- **«Форма всех отрезков»** (`widgets::shape_all_control`) зовётся из `fx_editor.rs` и
-  `gen_ui.rs` с `curves[view.active]`; активная кривая выбирается только кликом по имени в
-  тулбаре виджета; у головы экземпляра (`pubparam.rs::draw_inst_head`) этот блок не зовётся.
-- **Поле с кривой** (`widgets::param_row_bound*` → `bound_apply`) пишет ключ по
-  `r.changed()`; egui `DragValue::range`/`Slider` клампят входящее значение и помечают
-  ответ изменённым — значение зигзага за паспортом даёт ключ каждый кадр игры.
-- **Связь**: `CurveSource::Link { path, expr, stops }` и `LinkPath::parse` есть, UI-двери
-  нет ни в одном файле kt-app (только показ имени `name <- path` и «отвязать»).
-- **Переопределения** (`published.rs::apply_overrides`, `validate_overrides`): кривые с
-  источником отвергаются (`CurveSourceUnsupported`), ключи переводятся из времени ленты в
-  материал цели `retime_curve`.
-- **Рамка геометрии** (`geomctl.rs`): `geom_ctl` стартует `GeomMode::Off`, живёт в `KtApp`,
-  в `user_store` не пишется, переключается пунктом контекстного меню превью
-  (`app.rs::cycle_geom_mode`). `frame_schema` рисует `schema_quad` в `painter_at(rect)`.
-- **Голова полосы** (`fx_editor.rs` ~545, `widgets::HeadSlot`): подпись
-  `📌 Composition parameters`, `color: theme::ACCENT`, не усекается.
-- **Превью лент** (`reel_preview.rs`): кадры уходят в UI сразу, в sidecar пишутся вместе
-  с пиками после аудио-стадии одной транзакцией; `Err(cancelled)` попадает в `failed`.
-- **Ридер** (`kt-otio`): `check_kt_version` отказывает только «слишком новым»; v5-файл
-  падает внутри `MorphTargets` (untagged `Repr` без варианта `null`); миграции v<3, v4,
-  v8, `ease` живут в ридере. Импорт легаси `.ktproj` — отдельный вход `import_legacy`
-  (образец двери).
-- **Стиллы**: `kt-ffmpeg` открывает файл через libavformat (image2/png_pipe даёт один
-  пакет, `duration` 0 или N/A), фикстур картинок нет, `MediaInfo.duration` для них —
-  ноль; «Loading…» — скрим при `!complete` дольше 180 мс (`app.rs`).
-- **Пути**: `project_to_timeline` пишет `media_target_url(dir, path)` — относительный
-  путь модели проходит как есть; добавление медиа кладёт путь, каким его дали.
-- **Тег `tested-48`** (19.09, 3a9160e) — сборка, на которой владелец видел эффекты
-  региона `rendereg3`.
+- **The curve today** (`src/libs/kt-model/src/project.rs`): `ParamCurve { param, keys,
+  source: CurveSource }`, the shape sits on the key (`AutoKey::shape: SegShape`, a closed
+  function `SegShape::at(s, a, b)`); the sources `Keys | Link | Formula` are resolved into keys
+  BEFORE the audio stream by the pass `links.rs::resolve_*` (the frame grid, `t` from `source_in`).
+  `apply_curves` skips a curve without keys — a formula without resolution silently does not sound.
+- **The formula preview** (`links.rs::formula_preview`) computes `t` from `from` — the left
+  edge of the graph WINDOW, while the render computes it from `me.source_in`. Two truths about one `t`.
+- **The graph** (`src/apps/kt-app/src/automation.rs::graph`) draws `Shape::line` over
+  `c.keys` — straight lines between keys; t698 asserts `curve_value`, not the drawing.
+- **"The shape of all segments"** (`widgets::shape_all_control`) is called from `fx_editor.rs` and
+  `gen_ui.rs` with `curves[view.active]`; the active curve is selected only by clicking its name in
+  the widget's toolbar; for the head of an instance (`pubparam.rs::draw_inst_head`) this block is not called.
+- **The field with a curve** (`widgets::param_row_bound*` → `bound_apply`) writes a key on
+  `r.changed()`; egui's `DragValue::range`/`Slider` clamp the incoming value and mark the response
+  as changed — a zigzag value beyond the passport produces a key on every frame of play.
+- **The link**: `CurveSource::Link { path, expr, stops }` and `LinkPath::parse` exist, but there
+  is no UI door to them in any kt-app file (only the display of the name `name <- path` and "unlink").
+- **Overrides** (`published.rs::apply_overrides`, `validate_overrides`): curves with a
+  source are rejected (`CurveSourceUnsupported`), the keys are translated from the timeline time
+  into the target's material by `retime_curve`.
+- **The geometry frame** (`geomctl.rs`): `geom_ctl` starts as `GeomMode::Off`, lives in `KtApp`,
+  is not written to `user_store`, and is switched by an item of the preview's context menu
+  (`app.rs::cycle_geom_mode`). `frame_schema` draws `schema_quad` in `painter_at(rect)`.
+- **The head of a strip** (`fx_editor.rs` ~545, `widgets::HeadSlot`): the label
+  `📌 Composition parameters`, `color: theme::ACCENT`, is not truncated.
+- **The reel preview** (`reel_preview.rs`): the frames go to the UI at once, while they are written
+  to the sidecar together with the peaks after the audio stage in one transaction; `Err(cancelled)` falls into `failed`.
+- **The reader** (`kt-otio`): `check_kt_version` refuses only "too new"; a v5 file
+  falls inside `MorphTargets` (an untagged `Repr` without a `null` variant); the migrations of v<3, v4,
+  v8, `ease` live in the reader. The import of a legacy `.ktproj` is a separate door `import_legacy`
+  (the model of a door).
+- **Stills**: `kt-ffmpeg` opens the file through libavformat (image2/png_pipe gives one
+  packet, `duration` 0 or N/A); there are no picture fixtures, and `MediaInfo.duration` for them is
+  zero; "Loading…" is a scrim when `!complete` lasts longer than 180 ms (`app.rs`).
+- **Paths**: `project_to_timeline` writes `media_target_url(dir, path)` — a relative
+  model path passes through as is; adding media stores the path as it was given.
+- **Tag `tested-48`** (19.09, 3a9160e) — the build on which the owner saw the effects of
+  region `rendereg3`.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Одна модель кривой, в которой ключи, формы (включая формулу на отрезке), слой-формула и
-  связь сосуществуют и снимаются по отдельности; одно правило `t`; один блок UI на всех
-  носителей; график рисует вычислителем.
-- Ключ — только жестом человека.
-- Отдельная дверь импорта старых версий с починками, отмирающими по версиям.
-- Стиллы под фикстурой и тестом; превью лент доживает до диска.
-- Рамка в превью — по умолчанию и с памятью; голова полосы короткая.
-- Механизм «путь пользователя» в спеках и скриншоты в отчёте.
+- One curve model, in which keys, shapes (including a formula on a segment), a formula layer and
+  a link coexist and are removed separately; one rule for `t`; one UI block for all carriers; the graph draws with the evaluator.
+- A key — only by a person's gesture.
+- A separate door for importing old versions, with fixes that retire by version.
+- Stills under a fixture and a test; reel previews survive to disk.
+- The frame in the preview — by default and with memory; the head of a strip is short.
+- The "user path" mechanism in the specs and screenshots in the report.
 
 **Non-Goals:**
 
-- Режим записи автоматизации при игре (владелец: «только починить»).
-- Стек модификаторов с областями времени (владелец выбрал «отрезок + слой»).
-- Безье-ручки и ручки скорости (F-AUT-001 «кандидат», `rate` — только прямая).
-- Релинк и сбор медиа (media-index, отложено).
-- Правка ридера под v5 (решение: только импорт).
+- A recording mode for automation during play (the owner: "only fix it").
+- A stack of modifiers with time scopes (the owner chose "segment + layer").
+- Bezier handles and speed handles (F-AUT-001 "candidate", `rate` — only direct).
+- Relink and media collection (media-index, deferred).
+- Editing the reader for v5 (the decision: import only).
 
 ## Decisions
 
-- **Формула на отрезке — вариант `SegShape::Formula { expr }`, а не новый источник.**
-  Так решил владелец про зигзаг (Р.61: «форма — на отрезке между двумя ключами»), и
-  формула на участке — тот же случай «на этом куске»: у неё есть начало и конец, заданные
-  ключами. Переменные `s`, `a`, `b`, `t` (секунды от левого ключа). Концы не принуждаются
-  (как у ступени): формула вправе дать разрыв, это её дело. `SegShape::at` для формулы
-  зовёт вычислитель; разбор кэшируется по тексту в вызывающем (виджет и резолвер), сама
-  форма остаётся `Copy`-подобной по семантике, но хранит `String` — поэтому `SegShape`
-  теряет `Copy`; места, копировавшие форму, клонируют. Альтернатива «формула-отрезок как
-  Link с окном» отвергнута: адрес участка живёт бы вне ключа и ломался при вставке ключа.
-- **Слой — поле `ParamCurve.layer: Option<String>`, разрешается ПОСЛЕ ключей.** Порядок
-  фиксирован: `k = curve_value(keys)` → `layer(k, t, src)`. Не стек и не список: владелец
-  выбрал «отрезок + слой», а стек с областями отвергнут в Non-Goals. `CurveSource::Formula`
-  остаётся законной формой файла и на чтении семантически равна «слой над пустыми ключами»
-  (в файле не переписывается — байты старых файлов не двигаются). Снятие слоя = `None`;
-  снятие источника не трогает слой. Резолвер flatten'ит слой и формулы-отрезки в ключи на
-  кадровой сетке тем же проходом, что связи: рендер по-прежнему видит только `Keys` с
-  `Linear`; проект без формул не платит (счётчик обращений 0 — t705/t710 остаются).
-- **`t` считается от начала материала везде**: `formula_preview` получает `source_in`
-  вместо `from` и берёт окно только как диапазон выборки. Это дефект, а не выбор.
-- **График рисует выборкой значения**, а не ключами: `curve_value` в каждом пикселе
-  (шаг — max(1 px, кадр)), ромбики ключей поверх. Для кривой со слоем — две линии: `k`
-  (сплошная) и результат (штрих). Тест утверждает пиксели линии против `curve_value`, а
-  не модель (урок t698: «график перерисован по той же функции» было прозой). Аллокации —
-  один переиспользуемый `Vec<Pos2>` в `AutoView` (инвариант 12).
-- **Ручка параметра формы — на середине участка.** Главный параметр (натяжение/амплитуда)
-  — вертикальный драг, периоды — Shift+горизонталь, число рядом на время драга (как у
-  скорости — оверлей значения, не попап). Хват-зона 14 px (правило 1). Формула-отрезок
-  ручки не имеет (её параметр — текст).
-- **Один блок «кривая как параметр» (`widgets::curve_block`)** зовётся из слота, генератора
-  и головы экземпляра с одной сигнатурой; заголовок — имя и цвет выбранной кривой;
-  выбор кривой — по имени, линии или полю (`AutoView.active` ставится и из поля через
-  `CurveBind`). У экземпляра `AutoView` уже живёт в `gen_views`. Блок без кривой не
-  рисуется: «форма всех отрезков» у невидимой кривой была источником «второе поле не
-  меняется».
-- **Ключ только от жеста: `param_row_bound` сравнивает «что показали» и «что вернул
-  виджет» и пишет только при `r.dragged() || r.has_focus() && changed || reset`**,
-  плюс клапан: значение показывается уже ЗАКЛАМПЛЕННЫМ паспортом до виджета, чтобы
-  виджету нечего было клампить. Тест воспроизводит игру 120 кадров с зигзагом за
-  паспортом — на прежнем коде это ставит 120 ключей.
-- **Дверь связи — меню «Ведётся…» в блоке**: первый уровень — «это событие / другие
-  события ленты (имя, время)», второй — свойства носителей по паспортам (`param_specs`
-  слотов, геометрии, генератора). Даёт `CurveSource::Link { path }` с `expr: None`; текст
-  пересчёта — в том же поле формулы (как сейчас для Link). Границу ленты не пересекает —
-  список других событий строится внутри текущей ленты, а отказ модели показывается строкой.
-- **Справка — группа в блоке + строка состояния + Tab.** Попапы запрещены (ui-reach,
-  отвергнуто), поэтому список имён — свёртываемая группа, а дополнение — на месте по
-  единственному кандидату либо по общему префиксу (как в оболочке); список кандидатов —
-  строкой состояния. Содержимое группы строится из реестра вычислителя (`Fun::by_name`
-  получает обратный список `Fun::ALL` с арностью) — не копия.
-- **Ширины полей — по галлее**: `plain_row`/`param_value` ставят `DragValue` фиксированную
-  ширину по галлее самого длинного значения паспорта (`min`, `max` с единицей); поле
-  формулы — фиксированные 220 px; выбор формы — по галлее самого длинного названия
-  (правило 3 чек-листа). Тест меряет прямоугольники при двух ширинах окна.
-- **Переопределения принимают источники; разрешение — в домене ленты при наложении.**
-  `apply_overrides` перед `retime_curve` зовёт резолвер с контекстом «лента как материал»
-  (`source_in = 0`, длительность ленты), получает `Keys`, и только их переводит во время
-  цели. Так формула, набранная по оси экземпляра, звучит по ней же (`t` = секунды
-  экземпляра). Валидация принимает `Formula`/`Link` (внутри ленты) и любые формы.
-- **Импорт старых версий — `kt_otio::import_older(text, base) -> (ProjectBundle,
-  Vec<Fixup>)`**: JSON-предобработка (`serde_json::Value`) по таблице
-  `FIXUPS: &[(u32 /*версия, для которой заведена*/, fn(&mut Value) -> usize)]`, затем
-  обычный `timeline_to_project`. Первая починка `v5_null_morph_targets`. `load_project`
-  при ошибке чтения файла с `v < KT_META_VERSION` заворачивает её в
-  `Error::NeedsImport { version }` — kt-app показывает версию и имя пункта. Ридер не
-  трогается. Правило для агентов (CLAUDE.md корня и kt-otio): починки — только в
-  `legacy_import.rs`, каждая с версией; таблица «версии с починками» — одно место; снятие
-  поддержки версии удаляет её починки.
-- **Стиллы — свойство источника, не спецпуть плеера.** `kt-ffmpeg` распознаёт
-  «одна картинка» (демуксер image2/png_pipe/jpeg_pipe, `nb_frames ≤ 1`, нет аудио) и
-  отдаёт `MediaInfo { duration: PLACEHOLDER-подобная «бесконечность», fps: None, still:
-  true }`; `read_video` на любой тик возвращает единственный декодированный кадр (кэш в
-  источнике, декод один раз). Ступень декода и план не меняются: для них это видео с
-  одним кадром. Заглушка отсутствующего файла помечается ПОЛНЫМ кадром — это и есть
-  причина «вечного Loading…» у пропавшей картинки: `complete` считался по наличию кадра
-  из декодера, а заглушка кадром не считалась. Альтернатива «стилл как генератор» отвергнута:
-  у генератора нет натива и ступени декода, а PNG 4K обязан идти ступенью.
-- **Путь абсолютизируется при добавлении** (`KtApp::add_media_path` и `kt-cli`):
-  `std::path::absolute` против cwd; модель не хранит относительных путей к файлам. Это
-  правило, а не миграция: старые файлы с «кривым» относительным путём не переписываются
-  (их чинит релинк, отложено), но новые так не сломаются.
-- **Превью лент: кадры — своя транзакция сразу после кадровой стадии** (`put_reel_frames`),
-  пики — `put_reel_peaks` потом; чтение принимает полосу без пиков (огибающая пуста,
-  заявка на пики ставится отдельно). Отмена возвращает `Cancelled` отдельным вариантом,
-  который в `failed` не кладётся, а ключ переставляется в очередь на первом `poll` без
-  паузы. Тест повторяет форму проекта владельца (две ленты друг над другом, набор у
-  верхней, пропавший стилл) и открывает его дважды.
-- **Рамка: `geom_ctl` — в `user_store` (`geom_controls: bool`, умолчание true)**, режим
-  «Трансформация» при включении; кнопка-переключатель — в углу превью (иконка, не
-  чекбокс — правило 9), пункт меню остаётся. Схема формы — масштаб по охвату `union(кадр,
-  рамка)`, кадр рисуется внутри той же схемы штрихом.
-- **Голова полосы — `📌 <имя ленты>` через `elided_name` (SLOT_NAME_CHARS), цвет слота.**
-  Полное имя — подсказкой строки (правило 10).
-- **rendereg3 — сравнение сборок в Xvfb**: `git worktree add … tested-48`, сборка
-  kt-app, оба бинаря открывают `untitled_v26.09.26.otio` (заглушки вместо медиа — FX
-  на заглушках видны так же), встают на 1380/1390/1400 с, скриншоты превью,
-  `compare`-разница. Нашлось — причина в design, регрессионный тест t798; не нашлось —
-  скриншоты в отчёт и вопрос владельцу с просьбой о медиа.
-- **Сторож «ПУТЬ»** — `src/scripts/specs-user-path.py --check`: разбирает
-  `openspec/specs/{ui-timeline,ui-reach}/spec.md`, для сценариев с `TEST` в
-  `src/apps/kt-app/` и номером ≥ 783 требует строку `- **ПУТЬ**` не короче 40 символов;
-  зовётся из `reach_tests` (t799) и `finish.sh`. Порог по номеру — потому что нумерация
-  монотонна и переписывать двести прежних сценариев ради формы не нужно. Живые сценарии
-  получают помощник `step(name)` в `kt_live.py`, который снимает скриншот в
-  `target/live-out/<сценарий>/NN-<name>.png`; `finish.sh` печатает список после версии.
+- **A formula on a segment is the variant `SegShape::Formula { expr }`, not a new source.**
+  This is what the owner decided about the zigzag (R.61: "the shape is on the segment between two keys"), and a formula on a stretch is the same case of "on this piece": it has a start and an end, set by keys. The variables `s`, `a`, `b`, `t` (seconds from the left key). The ends are not forced (as with a step): the formula is free to give a discontinuity, that is its business. `SegShape::at` for a formula calls the evaluator; the parsing is cached by the text in the caller (the widget and the resolver), the shape itself stays `Copy`-like in semantics, but holds a `String` — therefore `SegShape` loses `Copy`; the places that copied the shape clone it. The alternative "a formula-segment as a Link with a window" was rejected: the address of the stretch would live outside the key and would break when a key is inserted.
+- **The layer is the field `ParamCurve.layer: Option<String>`, resolved AFTER the keys.** The order is fixed: `k = curve_value(keys)` → `layer(k, t, src)`. Not a stack and not a list: the owner chose "segment + layer", and a stack with scopes was rejected in Non-Goals. `CurveSource::Formula`
+  remains a legal file form and on reading is semantically equal to "a layer over empty keys" (it is not rewritten in the file — the bytes of old files do not move). Removing the layer = `None`;
+  removing the source does not touch the layer. The resolver flattens the layer and the segment formulas into keys on the frame grid in the same pass as the links: the render still sees only `Keys` with
+  `Linear`; a project without formulas pays nothing (the call counter is 0 — t705/t710 remain).
+- **`t` is counted from the start of the material everywhere**: `formula_preview` receives `source_in`
+  instead of `from` and takes the window only as the sampling range. This is a defect, not a choice.
+- **The graph draws by sampling values**, not by keys: `curve_value` at every pixel
+  (the step is max(1 px, frame)), with the key diamonds on top. For a curve with a layer — two lines: `k`
+  (solid) and the result (dashed). The test asserts the pixels of the line against `curve_value`, not the model
+  (the lesson of t698: "the graph is redrawn by the same function" was prose). Allocations —
+  one reusable `Vec<Pos2>` in `AutoView` (invariant 12).
+- **The handle of a shape parameter is at the middle of the segment.** The main parameter (tension/amplitude)
+  — a vertical drag, periods — Shift+horizontal, the number next to it for the duration of the drag (as with
+  speed — a value overlay, not a popup). A grab zone of 14 px (rule 1). A segment-formula
+  has no handles (its parameter is text).
+- **One block "curve as a parameter" (`widgets::curve_block`)** is called from the slot, the generator
+  and the head of an instance with one signature; the header — the name and colour of the selected curve;
+  the choice of curve — by name, line or field (`AutoView.active` is set also from the field via
+  `CurveBind`). For an instance `AutoView` already lives in `gen_views`. A block without a curve is not
+  drawn: "the shape of all segments" on an invisible curve was the source of "the second field does not
+  change".
+- **A key only from a gesture: `param_row_bound` compares "what was shown" and "what the widget returned" and writes only on `r.dragged() || r.has_focus() && changed || reset`**,
+  plus a valve: the value is shown already CLAMPED by the passport before the widget, so that the widget has nothing to clamp. The test reproduces 120 frames of play with a zigzag beyond
+  the passport — on the previous code this sets 120 keys.
+- **The door of a link — a menu "Driven…" in the block**: the first level — "this event / other
+  events of the reel (name, time)", the second — properties of the carriers by their passports (the slots' `param_specs`,
+  geometry, the generator). It gives `CurveSource::Link { path }` with `expr: None`; the text of the recalculation — in the same formula field (as now for Link). It does not cross the reel boundary — the list of other events is built inside the current reel, and a refusal of the model is shown as a line.
+- **Help — a group in the block + a status line + Tab.** Popups are forbidden (ui-reach,
+  rejected), therefore the list of names is a collapsible group, and completion is in place by the
+  single candidate or by the common prefix (as in a shell); the list of candidates — in the status line. The content of the group is built from the evaluator's registry (`Fun::by_name`
+  gets a reverse list `Fun::ALL` with the arity) — not a copy.
+- **Field widths — by the gallery**: `plain_row`/`param_value` set the `DragValue` a fixed width by the gallery of the longest value of the passport (`min`, `max` with the unit); the formula field — a fixed 220 px; the choice of shape — by the gallery of the longest name
+  (rule 3 of the checklist). The test measures rectangles at two window widths.
+- **Overrides accept sources; resolution — in the domain of the reel on overlay.**
+  `apply_overrides` before `retime_curve` calls the resolver with the context "the reel as material"
+  (`source_in = 0`, the reel's duration), gets `Keys`, and only those it translates into the target's time. So a formula typed on the instance's axis sounds by that same axis (`t` = seconds of
+  the instance). Validation accepts `Formula`/`Link` (inside the reel) and any shapes.
+- **Import of old versions — `kt_otio::import_older(text, base) -> (ProjectBundle,
+  Vec<Fixup>)`**: JSON pre-processing (`serde_json::Value`) by the table
+  `FIXUPS: &[(u32 /*version for which it was made*/, fn(&mut Value) -> usize)]`, then the
+  ordinary `timeline_to_project`. The first fix is `v5_null_morph_targets`. `load_project`
+  on a file-read error with `v < KT_META_VERSION` wraps it in
+  `Error::NeedsImport { version }` — kt-app shows the version and the name of the import item. The reader
+  is not touched. The rule for agents (the root CLAUDE.md and kt-otio): fixes — only in
+  `legacy_import.rs`, each with its version; the table "versions with fixes" — one place; removing
+  support of a version deletes its fixes.
+- **Stills — a property of the source, not a special path of the player.** `kt-ffmpeg` recognises
+  "one picture" (the demuxer image2/png_pipe/jpeg_pipe, `nb_frames ≤ 1`, no audio) and
+  returns `MediaInfo { duration: a PLACEHOLDER-like "infinity", fps: None, still:
+  true }`; `read_video` at any tick returns the single decoded frame (a cache in the
+  source, decoded once). The decode scale step and the plan do not change: for them it is a video with
+  one frame. The stub of a missing file is marked as a FULL frame — and this is the reason for
+  the "endless Loading…" of a vanished picture: `complete` was computed from the presence of a frame
+  from the decoder, and the stub did not count as a frame. The alternative "a still as a generator" was rejected:
+  a generator has no native and no decode scale step, while a 4K PNG must go through a step.
+- **The path is made absolute when added** (`KtApp::add_media_path` and `kt-cli`):
+  `std::path::absolute` against the cwd; the model does not store relative paths to files. This is
+  a rule, not a migration: old files with a "crooked" relative path are not rewritten
+  (they are fixed by relink, deferred), but new ones will not break this way.
+- **Reel previews: frames — their own transaction right after the frame stage** (`put_reel_frames`),
+  peaks — `put_reel_peaks` afterwards; reading accepts a strip without peaks (the envelope is empty,
+  the request for peaks is placed separately). Cancellation returns `Cancelled` as a separate variant,
+  which is not put into `failed`, and the key is re-queued on the first `poll` without a
+  pause. The test repeats the shape of the owner's project (two reels one above the other, the set on
+  the upper one, a vanished still) and opens it twice.
+- **The frame: `geom_ctl` — in `user_store` (`geom_controls: bool`, default true)**, the
+  "Transform" mode when enabled; the toggle button — in the corner of the preview (an icon, not
+  a checkbox — rule 9), the menu item remains. The schema of the form — scale by the coverage `union(frame,
+  rect)`; the frame is drawn inside the same schema with a dashed stroke.
+- **The head of a strip — `📌 <reel name>` via `elided_name` (SLOT_NAME_CHARS), the colour of the slot.**
+  The full name — as the row's tooltip (rule 10).
+- **rendereg3 — comparison of builds in Xvfb**: `git worktree add … tested-48`, a build of
+  kt-app, both binaries open `untitled_v26.09.26.otio` (stubs instead of media — the FX
+  on stubs is visible in the same way), stop at 1380/1390/1400 s, preview screenshots,
+  a `compare` difference. If found — the cause in design, a regression test t798; if not found — the screenshots in the report and a question to the owner asking for media.
+- **The guard "PATH"** — `src/scripts/specs-user-path.py --check`: parses
+  `openspec/specs/{ui-timeline,ui-reach}/spec.md`, for scenarios with `TEST` in
+  `src/apps/kt-app/` and a number ≥ 783 requires a line `- **PATH**` no shorter than 40 characters;
+  it is called from `reach_tests` (t799) and `finish.sh`. The threshold by number is because the numbering
+  is monotonic and rewriting two hundred earlier scenarios for the sake of the form is not needed. Live scenarios
+  get the helper `step(name)` in `kt_live.py`, which takes a screenshot into
+  `target/live-out/<scenario>/NN-<name>.png`; `finish.sh` prints the list after the version.
 
-## Что показало сравнение с `tested-48` (п.2 владельца)
+## What the comparison with `tested-48` showed (item 2 of the owner)
 
-Задача 7.1 выполнена, и результат отрицательный ПО ИЗМЕРИМОЙ ПРИЧИНЕ, а не «не нашли»:
+Task 7.1 is done, and the result is negative FOR A MEASURABLE REASON, not "not found":
 
-- **Сборка `tested-48` (kt26.09.19) файл `untitled_v26.09.26.otio` НЕ ОТКРЫВАЕТ вовсе**:
-  в окне 0 клипов и 0 медиа, заголовок «untitled» — версия конверта файла выше, чем та
-  сборка умеет. Сравнивать кадры региона не с чем.
-- **Ни одного исходника этого проекта на машине нет**: новая сборка открывает файл (70
-  событий в окне региона, 46 уведомлений о пропавших файлах), но кадр пуст, потому что
-  весь материал — заглушки. Скриншоты обеих сборок на 1380/1390/1400 с лежат в
-  `target/live-out/rendereg3/`.
-- **Что проверено вместо картинки:** все 21 833 эффекта файла разбираются текущей моделью
-  (`FxInstance`), при загрузке ни одного «эффект отброшен»; в регионе действуют вложенная
-  лента «Reel 3» (три уровня) и морфер-слои, добавляющие ей fx (1 → 3). То есть данные
-  целы — вопрос только в картинке, которую без медиа не получить.
+- **The build `tested-48` (kt26.09.19) does NOT OPEN the file `untitled_v26.09.26.otio` at all**: the window shows 0 clips and 0 media, the title "untitled" — the envelope version of the file is higher than that build can read. There is nothing to compare the frames of the region with.
+- **There is not a single source of this project on the machine**: the new build opens the file (70 events in the region's window, 46 notices about missing files), but the frame is empty, because all the material is stubs. The screenshots of both builds at 1380/1390/1400 s are in `target/live-out/rendereg3/`.
+- **What was checked instead of the picture:** all 21,833 effects of the file are parsed by the current model (`FxInstance`), on loading not a single "effect dropped"; in the region the nested reel "Reel 3" (three levels) and the morpher layers that add fx to it (1 → 3) are in effect. That is, the data is intact — the question is only about the picture, which cannot be obtained without the media.
 
-Чтобы закрыть п.2 по существу, нужен либо материал (хотя бы пара файлов из региона), либо
-экспорт этого участка старой сборкой как эталон. Спрошено у владельца в отчёте.
+To close item 2 in substance, either the material (at least a couple of files from the region) or an export of this section by the old build as a reference is needed. This was asked of the owner in the report.
 
 ## Risks / Trade-offs
 
-- [`SegShape` теряет `Copy`] → места с копией формы — `keys[ki].shape`, `shape_all`,
-  `insert_key` — переходят на `clone()`; компилятор найдёт все.
-- [Разбор формулы-отрезка в `curve_value` на каждый вызов] → кэш разбора по тексту в
-  резолвере и в виджете; рендер формул-отрезков не считает вовсе (flatten до аудио-потока).
-- [Слой поверх формулы-источника меняет семантику старых файлов] → нет: `Formula` без
-  ключей = слой над пустотой, значение то же; t707 остаётся.
-- [Стилл как «бесконечный» источник ломает `available_range`/трим] → длительность у
-  заглушки такая же и трим уже это переживает (t208–t211); тест на трим стилла в t796.
-- [Импорт открывает файл с прежним путём — можно случайно перезаписать старую версию] →
-  импорт не пишет; сохранение по Ctrl+S пишет новую форму — это и есть цель владельца
-  («постепенно эти правки будут удаляться»); recovery-копия старого файла не заводится.
-- [Кнопка на превью — новый слой поверх кадра] → одна иконка в углу, рисуется только на
-  паузе, без анимации (инвариант 12); t764 остаётся.
-- [Сторож «ПУТЬ» по порогу номера пропускает сценарии, добавленные без номера] → сценарий
-  без `TEST` уже отвергается `openspec validate`.
-- [Сравнение tested-48 на заглушках может не показать разницу, которую владелец видел на
-  медиа] → тогда отчёт со скриншотами и явная просьба о медиа; задача не считается
-  закрытой «нет разницы» без слов об этом.
+- [`SegShape` loses `Copy`] → the places with a copy of the shape — `keys[ki].shape`, `shape_all`, `insert_key` — switch to `clone()`; the compiler will find all of them.
+- [Parsing of a segment formula in `curve_value` on every call] → a cache of the parsing by text in the resolver and in the widget; the render of segment formulas does not compute at all (flatten before the audio stream).
+- [A layer over a source formula changes the semantics of old files] → no: `Formula` without keys = a layer over emptiness, the value is the same; t707 remains.
+- [A still as an "infinite" source breaks `available_range`/trim] → the stub's duration is the same and trim already survives this (t208–t211); a test of trimming a still is in t796.
+- [Import opens the file with the old path — an old version could be overwritten by mistake] → import does not write; saving with Ctrl+S writes the new form — this is the owner's goal ("gradually these edits will be removed"); a recovery copy of the old file is not created.
+- [The button on the preview — a new layer over the frame] → one icon in the corner, drawn only on pause, without animation (invariant 12); t764 remains.
+- [The "PATH" guard by number threshold skips scenarios added without a number] → a scenario without `TEST` is already rejected by `openspec validate`.
+- [The comparison of tested-48 on stubs may not show the difference that the owner saw on media] → then a report with screenshots and an explicit request for media; the task is not considered closed as "no difference" without saying so.
 
 ## Migration Plan
 
-Формат: v13 по содержимому (формула-отрезок, слой) — файлы без них пишутся прежними
-байтами. Старые файлы, отвергаемые ридером, идут через импорт; починки удаляются при
-снятии поддержки версии. Пользовательское хранилище получает `geom_controls` с умолчанием
-«включено» — отсутствие ключа читается как включено. Sidecar: таблица `reel_strip`
-получает флаг «пики есть»; строки без флага считаются полными (прежняя запись шла только
-с пиками) — бампа `schema_version` нет (media-index: отвергнуто).
+Format: v13 by content (segment formula, layer) — files without them are written with the same bytes as before. Old files rejected by the reader go through the import; the fixes are removed when the version's support is dropped. The user storage gets `geom_controls` with the default "enabled" — the absence of the key is read as enabled. Sidecar: the table `reel_strip` gets a flag "peaks present"; rows without the flag are considered complete (the previous record was written only with peaks) — there is no `schema_version` bump (media-index: rejected).
 
 ## Open Questions
 
-- Нужен ли у формулы-отрезка доступ к `k` соседних участков (например, «продолжить
-  наклон»)? Не меняет спеки: переменная добавляется расширением набора, а не формы файла;
-  решать после первого использования владельцем.
+- Does a segment formula need access to `k` of the neighbouring stretches (for example, "continue the slope")? It does not change the specs: the variable is added by extending the set, not the file form; to be decided after the owner's first use.

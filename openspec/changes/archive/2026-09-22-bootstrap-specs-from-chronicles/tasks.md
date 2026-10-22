@@ -1,66 +1,66 @@
 # Tasks
 
-Все команды `openspec …` — через Node 24: `export PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"`.
-Порядок — по design.md D4: сначала все 17 capability, потом усечение источников,
-потом конфигурация и заморозка. До раздела 4 старые летописи остаются целыми.
+All `openspec …` commands — through Node 24: `export PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"`.
+The order — per design.md D4: first all 17 capabilities, then truncation of the sources,
+then configuration and freezing. Until section 4 the old chronicles remain intact.
 
-## 1. Подготовка и инвентарь
+## 1. Preparation and inventory
 
-- [x] 1.1 Снять базовую линию: `openspec validate --all --strict` и `python3 src/scripts/features-index.py --check` зелёные, вывод сохранён в scratchpad; проверка — оба кода возврата 0
-- [x] 1.2 Построить карту «tNNN → capability» из таблицы «Карта крейт → обязательные тесты» корневого `CLAUDE.md` по таблице D2 design.md (скрипт в scratchpad: извлечь все `t\d{2,3}[a-g]?` по строкам таблицы, приписать capability); проверка — каждый tNNN таблицы приписан ровно одной capability, список неприписанных пуст или явно разложен вручную
-- [x] 1.3 Построить карту «источник → capability» для трёх летописей: главы `docs/porting-notes.md` (по `## `/`### `), разделы раундов `docs/user-feedback.md` (`## Раунд Р.N`), заметки `docs/features/*` со статусом `сделано`/`принято`/`уже-есть`/`отвергнуто` — по таблице D2; проверка — карта сохранена в scratchpad, у каждой из 17 capability есть хотя бы один источник, у каждой «нашей» заметки есть capability
-- [x] 1.4 Заготовить формат файлов: `spec.md` = `# <Имя>` / `## Purpose` / `## Requirements` с `### Requirement:` и `#### Scenario:` (WHEN/THEN + последняя строка `- **TEST** tNNN (`путь/tests/файл.rs`)`); `design.md` = разделы «Что было и у кого болело», «Решения и почему», «Отвергнуто и почему», «Неочевидные детали (пути src/…)», «Отложено» — проверка: пробная capability из 2.1 проходит `openspec validate --specs --strict`
+- [x] 1.1 Take the baseline: `openspec validate --all --strict` and `python3 src/scripts/features-index.py --check` green, the output saved in the scratchpad; check — both exit codes 0
+- [x] 1.2 Build the map "tNNN → capability" from the table "Crate → mandatory tests" of the root `CLAUDE.md` by the table D2 of design.md (a script in the scratchpad: extract all `t\d{2,3}[a-g]?` by the lines of the table, attach a capability); check — each tNNN of the table is attached to exactly one capability, the list of unattached ones is empty or explicitly sorted by hand
+- [x] 1.3 Build the map "source → capability" for the three chronicles: the chapters of `docs/porting-notes.md` (by `## `/`### `), the sections of the rounds of `docs/user-feedback.md` (`## Раунд Р.N`, i.e. "## Round R.N"), the notes of `docs/features/*` with status `done`/`accepted`/`already-have`/"done/accepted/already-have/rejected" — by the table D2; check — the map is saved in the scratchpad, each of the 17 capabilities has at least one source, each "our" note has a capability
+- [x] 1.4 Prepare the file format: `spec.md` = `# <Name>` / `## Purpose` / `## Requirements` with `### Requirement:` and `#### Scenario:` (WHEN/THEN + last line `- **TEST** tNNN (`path/tests/file.rs`)`); `design.md` = sections "What was and who was hurt", "Decisions and why", "Rejected and why", "Non-obvious details (src/… paths)", "Deferred" — check: a trial capability from 2.1 passes `openspec validate --specs --strict`
 
-## 2. Capability: spec.md + design.md (по одной, каждая проверяется отдельно)
+## 2. Capability: spec.md + design.md (one by one, each checked separately)
 
-Общая проверка каждой задачи раздела: `openspec validate --specs --strict` зелёный;
-`openspec show <cap> --type spec --json` возвращает все требования; каждый сценарий
-несёт строку `TEST`; все tNNN, приписанные capability в 1.2, встречаются в её `spec.md`
-(скрипт-сверка из scratchpad); в `design.md` нет хронологии («в Р.N сначала…») и
-сравнений с C++ без правила, к которому они ведут.
+The common check of each task of the section: `openspec validate --specs --strict` green;
+`openspec show <cap> --type spec --json` returns all requirements; each scenario
+carries a `TEST` line; all tNNN attached to the capability in 1.2 occur in its `spec.md`
+(the cross-check script from the scratchpad); `design.md` has no chronology ("in R.N first…") and
+comparisons with C++ without the rule they lead to.
 
-- [x] 2.1 `time-model` — из «Модель времени» CLAUDE.md, kt-time; проверка общая + решение по открытому вопросу design.md: если требований < 3 — записать в design.md capability пометку «слить в transport в 2.2» и выполнить слияние там
-- [x] 2.2 `transport` — инв. 6/12, Р.43 (часы под голоданием, t284), Р.57 (шкала со знаком, t603/t604/t616–t619, t626–t629), kt-engine/CLAUDE.md, user-feedback Р.43/Р.57; проверка общая
-- [x] 2.3 `audio-render` — инв. 1–3, каталог дефектов slowed&reverb (a–d → правила без C++-путей), cost.rs t292–t295, Р.48 (PDC t334–t341), loudness t403–t407, sync t413–t419, features audio/processing (8 «сделано») и loudness/audio-waveform-sync; проверка общая
-- [x] 2.4 `video-plan` — инв. 4/7/11, Р.44–46 (ступень декода t310–t317, слияние гео t296–t309, память t66), kt-gpu/CLAUDE.md, features transform-concatenation; проверка общая
-- [x] 2.5 `video-fx` — Р.47 реестр (t322/t328/t329/t330–t333), Р.54 миниатюры (t543–t551), features fx/* (4 «сделано»), color/basic-color-fx, preset-gallery; проверка общая
-- [x] 2.6 `audio-fx` — реестр 16 узлов (t319–t327), features audio/processing по цепочке узлов; проверка общая
-- [x] 2.7 `transitions` — Р.33 С4, Р.51 (t223–t226, t232, t459–t468), пара rs+wgsl, features transition-vocabulary, same-track-transitions; проверка общая
-- [x] 2.8 `automation` — Р.33–34, §466–467, props t641–t649, fx_auto t190/t212–t215/t248, features keyframe-domain, presets-carrying-automation, expressions-and-drivers (принято — только интерфейс), plugin-abi-and-sandbox (принято — только интерфейс); проверка общая
-- [x] 2.9 `morpher` — H1 (t35–t36), morph_slice (t233–t249, t555–t556), п.300 (подмена источника везёт кривые, t291), user-feedback про Adjustment Events; проверка общая
-- [x] 2.10 `compositions` — Р.50/Р.55/Р.56/Р.58 (t423–t458, t552–t602, t631–t640), §459–464 (в т.ч. отложенное разрастание .otio → раздел «Отложено»), §469–470 и nest_param t671–t690, features nested-sequences, inline-nest-expansion, composition-public-parameters; проверка общая
-- [x] 2.11 `generators` — Р.52–53, §468 (t469–t495, t656–t670), kt-text/CLAUDE.md (шрифт/пины/FONT-MANIFEST), features titles/* (5 «сделано»), solid-gradient-shapes; проверка общая
-- [x] 2.12 `media-index` — инв. 5/8/10, docs/media-index.md, kt-media/kt-ffmpeg (t10/t21/t34/t37/t70/t208), Р.49 волна Б (t398–t412, t420–t421), kt-cache (t8/t14/t27/t28/t37/t65); проверка общая
-- [x] 2.13 `export` — инв. 9, golden_export (11, 25, 33, 67, 479), export_loudness t406–t407, features hardware-encoder-selection, preview-vs-export-mismatch; проверка общая
-- [x] 2.14 `project-format` — docs/file-format.md, kt-otio/CLAUDE.md (t144–t154, t164–t165, t178–t180, t189, t192, t212, t222, t240–t251, t431–t437, t465, t473–t474, t494, t593, t606, t638, t664–t665, t681), §464; проверка общая
-- [x] 2.15 `durability` — Р.49 (t351–t391, journal t354, lock t362), features resilience/* (6 «сделано»), user-feedback «ты не проверял» (правило finish.sh + живые сценарии); проверка общая
-- [x] 2.16 `ui-timeline` — kt-app/CLAUDE.md (repaint/часы показа/чек-лист удобства/локализация/шрифты), layout_tests и font/i18n тесты из таблицы CLAUDE.md, таблица «повторял больше одного раза» user-feedback (пределы «поставлено по жалобе»); проверка общая
-- [x] 2.17 `ui-reach` — Р.38/Р.40 (t252–t255, t273), волна В Р.49 (t392–t396), features help/* (4 «уже-есть», accelerator-visibility «сделано»); проверка общая
-- [x] 2.18 Сводная сверка раздела: скрипт из 1.2 подтверждает, что КАЖДЫЙ tNNN таблицы CLAUDE.md встречается ровно в одной `openspec/specs/*/spec.md`; список 17 (или 16 после 2.1) каталогов совпадает с D2; `openspec list --specs --json` показывает их все
+- [x] 2.1 `time-model` — from "Time model" of CLAUDE.md, kt-time; the common check + a decision on the open question of design.md: if the requirements are < 3 — write in design.md of the capability the note "merge into transport in 2.2" and perform the merge there
+- [x] 2.2 `transport` — inv. 6/12, R.43 (the clock under starvation, t284), R.57 (the signed scale, t603/t604/t616–t619, t626–t629), kt-engine/CLAUDE.md, user-feedback R.43/R.57; the common check
+- [x] 2.3 `audio-render` — inv. 1–3, the defect catalogue slowed&reverb (a–d → rules without C++ paths), cost.rs t292–t295, R.48 (PDC t334–t341), loudness t403–t407, sync t413–t419, features audio/processing (8 "done") and loudness/audio-waveform-sync; the common check
+- [x] 2.4 `video-plan` — inv. 4/7/11, R.44–46 (the decode scale step t310–t317, the geometry merge t296–t309, memory t66), kt-gpu/CLAUDE.md, features transform-concatenation; the common check
+- [x] 2.5 `video-fx` — R.47 registry (t322/t328/t329/t330–t333), R.54 thumbnails (t543–t551), features fx/* (4 "done"), color/basic-color-fx, preset-gallery; the common check
+- [x] 2.6 `audio-fx` — registry of 16 nodes (t319–t327), features audio/processing along the chain of nodes; the common check
+- [x] 2.7 `transitions` — R.33 S4, R.51 (t223–t226, t232, t459–t468), the rs+wgsl pair, features transition-vocabulary, same-track-transitions; the common check
+- [x] 2.8 `automation` — R.33–34, §466–467, props t641–t649, fx_auto t190/t212–t215/t248, features keyframe-domain, presets-carrying-automation, expressions-and-drivers (accepted — the interface only), plugin-abi-and-sandbox (accepted — the interface only); the common check
+- [x] 2.9 `morpher` — H1 (t35–t36), morph_slice (t233–t249, t555–t556), item 300 (source swap carries curves, t291), user-feedback about Adjustment Events; the common check
+- [x] 2.10 `compositions` — R.50/R.55/R.56/R.58 (t423–t458, t552–t602, t631–t640), §459–464 (including the deferred growth of .otio → the section "Deferred"), §469–470 and nest_param t671–t690, features nested-sequences, inline-nest-expansion, composition-public-parameters; the common check
+- [x] 2.11 `generators` — R.52–53, §468 (t469–t495, t656–t670), kt-text/CLAUDE.md (font/pins/FONT-MANIFEST), features titles/* (5 "done"), solid-gradient-shapes; the common check
+- [x] 2.12 `media-index` — inv. 5/8/10, docs/media-index.md, kt-media/kt-ffmpeg (t10/t21/t34/t37/t70/t208), R.49 wave B (t398–t412, t420–t421), kt-cache (t8/t14/t27/t28/t37/t65); the common check
+- [x] 2.13 `export` — inv. 9, golden_export (11, 25, 33, 67, 479), export_loudness t406–t407, features hardware-encoder-selection, preview-vs-export-mismatch; the common check
+- [x] 2.14 `project-format` — docs/file-format.md, kt-otio/CLAUDE.md (t144–t154, t164–t165, t178–t180, t189, t192, t212, t222, t240–t251, t431–t437, t465, t473–t474, t494, t593, t606, t638, t664–t665, t681), §464; the common check
+- [x] 2.15 `durability` — R.49 (t351–t391, journal t354, lock t362), features resilience/* (6 "done"), user-feedback "you did not check" (the rule of finish.sh + live scenarios); the common check
+- [x] 2.16 `ui-timeline` — kt-app/CLAUDE.md (repaint/display clock/usability checklist/localization/fonts), layout_tests and the font/i18n tests from the table of CLAUDE.md, the table "repeated more than once" of user-feedback (limits "set on a complaint"); the common check
+- [x] 2.17 `ui-reach` — R.38/R.40 (t252–t255, t273), wave V of R.49 (t392–t396), features help/* (4 "already-have", accelerator-visibility "done"); the common check
+- [x] 2.18 Summary cross-check of the section: the script from 1.2 confirms that EVERY tNNN of the CLAUDE.md table occurs in exactly one `openspec/specs/*/spec.md`; the list of 17 (or 16 after 2.1) directories matches D2; `openspec list --specs --json` shows all of them
 
-## 3. Усечение источников (только после 2.18)
+## 3. Truncation of the sources (only after 2.18)
 
-Предпосылка (записанное допущение): усекаются только заметки со статусом
-`сделано`/`принято`/`уже-есть`/`отвергнуто` — их «Как ложится» есть решение или причина
-отказа. У заметок `кандидат` раздел остаётся: это ещё не решение; их усечёт тот раунд,
-который их возьмёт, по новому правилу README.
+Premise (a recorded assumption): only notes with status
+`done`/`accepted`/`already-have`/"done/accepted/already-have/rejected" are truncated — their "How it fits" holds a decision or the
+reason for rejection. Notes with status "candidate" keep the section: this is not yet a decision; the
+round that takes them will truncate them under the new README rule.
 
-- [x] 3.1 Перед усечением каждой заметки сверить её «Как ложится» с `spec.md`/`design.md` capability: все пути `src/…` и tNNN из раздела либо есть в capability, либо переносятся туда (риск 1 design.md); проверка — скрипт в scratchpad печатает по заметке список непокрытых путей/тестов, список пуст
-- [x] 3.2 Усечь «Как ложится на Kinotrain» в заметках `сделано` (30 шт.) до ≤ 5 строк: одна строка `CAPABILITY: openspec/specs/<cap>/` + суть решения; «Вердикт» не трогать (правило 7 README — заметка заморожена, но вырезка «нашего» разрешена этим change явно); проверка — `wc -l` раздела ≤ 5 у каждой, строка `CAPABILITY:` есть
-- [x] 3.3 То же для заметок `принято` (3), `уже-есть` (7) и `отвергнуто` (6; у отвергнутых причина остаётся в «Вердикте» и дублируется в `design.md` capability, раздел «Отвергнуто и почему»); проверка — как в 3.2
-- [x] 3.4 `docs/features/README.md`: правило 5 переписать — «Как ложится» обязана нести строку `CAPABILITY: openspec/specs/<cap>/` (существующий каталог) и у статусов `сделано`/`принято`/`уже-есть`/`отвергнуто` быть ≤ 5 строк; у `кандидат`/`исследовано` пути `src/…` по-прежнему обязательны; правило 8 дополнить: «проектирование живёт в change OpenSpec»; проверка — текст правил обновлён, таблица покрытия README не сломана
-- [x] 3.5 `src/scripts/features-index.py --check`: реализовать правило 3.4 (проверка существования каталога capability; проверка «src/ обязателен» только для незамороженных статусов; лимит строк для замороженных); проверка — `--check` зелёный на дереве после 3.2–3.3 и красный на заметке-пробе без `CAPABILITY:` (проба удаляется)
+- [x] 3.1 Before truncating each note, compare its "How it fits" with the `spec.md`/`design.md` of the capability: all `src/…` paths and tNNN from the section either exist in the capability or are carried over there (risk 1 of design.md); check — the script in the scratchpad prints for each note the list of uncovered paths/tests, the list is empty
+- [x] 3.2 Truncate "How it fits Kinotrain" in the notes "done" (30 of them) to ≤ 5 lines: one line `CAPABILITY: openspec/specs/<cap>/` + the essence of the decision; do not touch the "Verdict" (rule 7 of the README — the note is frozen, but cutting out of "ours" is explicitly allowed by this change); check — `wc -l` of the section ≤ 5 for each, the `CAPABILITY:` line is present
+- [x] 3.3 The same for the notes "accepted" (3), "already-have" (7) and "rejected" (6; for the rejected ones the reason remains in the "Verdict" and is duplicated in the capability's `design.md`, section "Rejected and why"); check — as in 3.2
+- [x] 3.4 `docs/features/README.md`: rewrite rule 5 — "How it fits" must carry a line `CAPABILITY: openspec/specs/<cap>/` (an existing directory), and for the statuses `done`/`accepted`/`already-have`/`rejected` be ≤ 5 lines; for `candidate`/"candidate/researched" the `src/…` paths remain mandatory; extend rule 8: "design lives in an OpenSpec change"; check — the text of the rules is updated, the coverage table of the README is not broken
+- [x] 3.5 `src/scripts/features-index.py --check`: implement rule 3.4 (check that the capability directory exists; the check "src/ is mandatory" only for non-frozen statuses; a line limit for frozen ones); check — `--check` is green on the tree after 3.2–3.3 and red on a probe note without `CAPABILITY:` (the probe is deleted)
 
-## 4. Конфигурация OpenSpec и заморозка летописей
+## 4. OpenSpec configuration and freezing of the chronicles
 
-- [x] 4.1 `openspec/config.yaml`: `context` — модель времени и 12 инвариантов по строке каждый со ссылкой на capability, Node-24 замечание; `rules.proposal` — «перед Capabilities прочитать `openspec/specs/<cap>/design.md` каждой затрагиваемой capability»; `rules.design` — «решение, противоречащее `design.md` capability, оформляется пунктом `Пересмотр: <решение> — <причина>`»; `rules.tasks` — «работа заканчивается `src/scripts/finish.sh` и версией в отчёте»; проверка — `openspec instructions proposal --change <любой> --json` возвращает `context` и `rules` без предупреждений о неизвестных артефактах
-- [x] 4.2 Корневой `CLAUDE.md`: таблицу «Карта крейт → обязательные тесты» заменить абзацем «контракты и обязательные тесты — `openspec/specs/<cap>/spec.md`, почему — `design.md` рядом; правишь крейт → `openspec show <cap> --type spec`»; инварианты 1–12 оставить по одной-две строки каждый с указанием capability, историю пунктов (п.NNN) из них убрать; проверка — в файле нет `t\d{3}` вне указателя, каждый инвариант ссылается на существующий каталог capability
-- [x] 4.3 `docs/porting-notes.md`: в шапку добавить блок «ЗАМОРОЖЕНО на §470 (2026-09-21). Актуальные правила и тесты — `openspec/specs/`; новые дефекты — в change OpenSpec»; тело не менять; проверка — `git diff --stat` файла показывает только шапку
-- [x] 4.4 `docs/architecture.md`: решить открытый вопрос design.md — если после переноса в нём остаётся только то, что есть в `design.md` capability, заменить файл оглавлением «capability → spec/design» (по строке на capability); иначе оставить с указателем; проверка — файл ссылается на все каталоги `openspec/specs/*`
-- [x] 4.5 `CLAUDE.md` крейтов не трогать (в объёме нет), но в каждый добавить одну строку-указатель «контракты крейта — `openspec/specs/<cap1>,<cap2>`»; проверка — у каждого из 10 крейтовых CLAUDE.md есть строка, каталоги существуют
+- [x] 4.1 `openspec/config.yaml`: `context` — the time model and the 12 invariants, one line each with a reference to the capability, the Node-24 note; `rules.proposal` — "before Capabilities read `openspec/specs/<cap>/design.md` of each affected capability"; `rules.design` — "a decision that contradicts the capability's `design.md` is formalized as an item `Revision: <decision> — <reason>`"; `rules.tasks` — "the work ends with `src/scripts/finish.sh` and the version in the report"; check — `openspec instructions proposal --change <any> --json` returns `context` and `rules` without warnings about unknown artifacts
+- [x] 4.2 Root `CLAUDE.md`: replace the table "Crate → mandatory tests" with a paragraph "contracts and mandatory tests — `openspec/specs/<cap>/spec.md`, the why — `design.md` next to it; when you edit a crate → `openspec show <cap> --type spec`"; keep invariants 1–12 at one or two lines each with the indication of the capability, remove from them the history of items (item NNN); check — the file has no `t\d{3}` outside the pointer, each invariant references an existing capability directory
+- [x] 4.3 `docs/porting-notes.md`: add to the header the block "FROZEN at §470 (2026-09-21). Current rules and tests — `openspec/specs/`; new defects — in an OpenSpec change"; do not change the body; check — `git diff --stat` of the file shows only the header
+- [x] 4.4 `docs/architecture.md`: resolve the open question of design.md — if after the transfer only what is in the capability's `design.md` remains in it, replace the file with a table of contents "capability → spec/design" (one line per capability); otherwise keep it with a pointer; check — the file references all directories `openspec/specs/*`
+- [x] 4.5 Do not touch the crates' `CLAUDE.md` (out of scope), but add to each one line-pointer "the contracts of the crate — `openspec/specs/<cap1>,<cap2>`"; check — each of the 10 crate CLAUDE.md files has the line, the directories exist
 
-## 5. Проверка целиком
+## 5. Verification as a whole
 
-- [x] 5.1 `openspec validate --all --strict` зелёный; `python3 src/scripts/features-index.py --check` зелёный; `git diff --stat` не содержит файлов под `src/` кроме `src/scripts/features-index.py` и `src/**/CLAUDE.md`; `cd src && cargo test -p kt-time` (дешёвый дым, что дерево цело)
-- [x] 5.2 Живая проверка правила D1: завести временный change `probe-rules`, выполнить `openspec instructions proposal --change probe-rules --json` и `… design …`, убедиться, что `rules` содержат обязанность читать `design.md` capability; временный change удалить; проверка — `openspec list --json` не показывает `probe-rules`
-- [x] 5.3 Сводка в отчёт: число требований и сценариев по capability, число усечённых заметок, строк удалено из «Как ложится», список tNNN без capability (должен быть пуст)
+- [x] 5.1 `openspec validate --all --strict` green; `python3 src/scripts/features-index.py --check` green; `git diff --stat` contains no files under `src/` except `src/scripts/features-index.py` and `src/**/CLAUDE.md`; `cd src && cargo test -p kt-time` (a cheap smoke test that the tree is whole)
+- [x] 5.2 A live check of rule D1: create a temporary change `probe-rules`, run `openspec instructions proposal --change probe-rules --json` and `… design …`, make sure that `rules` contain the obligation to read the capability's `design.md`; delete the temporary change; check — `openspec list --json` does not show `probe-rules`
+- [x] 5.3 Summary for the report: the number of requirements and scenarios per capability, the number of truncated notes, the number of lines removed from "How it fits", the list of tNNN without a capability (must be empty)

@@ -2,31 +2,30 @@
 
 ## ADDED Requirements
 
-### Requirement: Претензии владельца индексируются реестром; сторож держит его полным и честным
+### Requirement: The owner's claims are indexed by the registry; the guard keeps it complete and honest
+The owner's claims file SHALL be stored verbatim (`docs/ktprompts/<version>.txt`) and have a
+registry `docs/ktprompts/<version>-index.md`, where EACH numbered item of the file has
+a row with a state from the closed set: `done` (with the round and the test number),
+`partial` (what exists, what is missing), `no` (a defect — with a capability; a feature — with a note in `docs/features`
+or the mark "no note"), `question` (with the text of the question to the owner), `future`. A row
+SHALL have a stage (a round number or "later"). The guard SHALL fail if a source item
+has no row, a state is outside the set, a `done` has no test `tNNN` existing in the
+sources, or a `question` has no text; the guard SHALL be part of `finish.sh`. The owner's answer to a
+question SHALL be recorded verbatim in `docs/user-feedback.md`, and move the row from
+`question` to a decision. An item that the OTIO exchange file cannot express SHALL go into
+the registry section "what export loses".
+Why: the owner asked "to make notes for agents and tests, so as not to return to the
+same kinds of problems"; without a registry the next round would take from the file what is already done
+(generator automation, freeze frame, moving away from OTIO) or would do the opposite of what was
+decided (the format name, the import door). A rule in prose has already failed here twice
+("do not make obvious labels" — checklist item 17 of R.7, and "Add morpher here").
 
-Файл претензий владельца SHALL храниться дословно (`docs/ktprompts/<версия>.txt`) и иметь
-реестр `docs/ktprompts/<версия>-index.md`, где у КАЖДОГО нумерованного пункта файла есть
-строка с состоянием из закрытого набора: `сделано` (с раундом и номером теста), `частично`
-(что есть, чего нет), `нет` (дефект — с capability; функция — с заметкой `docs/features`
-или пометкой «заметки нет»), `вопрос` (с текстом вопроса владельцу), `будущее`. У строки
-SHALL быть стадия (номер раунда или «дальше»). Сторож SHALL падать, если пункт источника
-не имеет строки, состояние вне набора, у `сделано` нет теста `tNNN`, существующего в
-исходниках, у `вопрос` нет текста; сторож SHALL входить в `finish.sh`. Ответ владельца на
-вопрос SHALL записываться дословно в `docs/user-feedback.md` и переводить строку из
-`вопрос` в решение. Пункт, который файл обмена OTIO выразить не может, SHALL попадать в
-раздел реестра «что теряет экспорт».
-Почему: владелец просил «делать заметки для агентов и тесты, чтобы не возвращаться к
-однотипным проблемам»; без реестра следующий раунд взял бы из файла уже сделанное
-(автоматизация генераторов, стоп-кадр, уход от OTIO) или сделал бы противоположное
-решённому (имя формата, дверь импорта). Правило прозой здесь уже не сработало дважды
-(«очевидных надписей не делать» — чек-лист п.17 р.7 и «Add morpher here»).
-
-#### Scenario: Реестр полон и честен
-- **WHEN** проверяется реестр `v26.10`; временно удаляется строка одного пункта; отдельно — строке `сделано` приписывается несуществующий тест; отдельно — строка `вопрос` остаётся без текста
-- **THEN** на целом реестре сторож зелёный и печатает счёт по состояниям; каждая из трёх порч делает его красным с адресом пункта
+#### Scenario: The registry is complete and honest
+- **WHEN** the registry `v26.10` is checked; a row of one item is temporarily deleted; separately — a `done` row is given a non-existent test; separately — a `question` row is left without text
+- **THEN** on the whole registry the guard is green and prints the count by state; each of the three corruptions makes it red with the item's address
 - **TEST** t823 (`src/apps/kt-app/src/reach_tests.rs`), `src/scripts/ktprompts-index.py`
 
-#### Scenario: Закрытый пункт ссылается на живой тест
-- **WHEN** строка реестра стоит в состоянии `сделано Р.NN, tNNN`
-- **THEN** функция `fn tNNN_` существует в исходниках `src/`, иначе сторож красный — как у реестра переезда живых сценариев
+#### Scenario: A closed item refers to a live test
+- **WHEN** a registry row is in the state `done R.NN, tNNN`
+- **THEN** the function `fn tNNN_` exists in the sources of `src/`, otherwise the guard is red — as with the registry of the migration of live scenarios
 - **TEST** t823 (`src/apps/kt-app/src/reach_tests.rs`)

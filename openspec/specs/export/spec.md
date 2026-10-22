@@ -1,323 +1,306 @@
-# Экспорт и headless-рендер
+# Export and headless render
 
 ## Purpose
 
-Офлайн-прогон того же движка, что и превью: внутрипроцессный мукс в mp4 через системный
-FFmpeg, golden-эталоны сырых потоков, headless-инструменты `kt-cli` (render/export/probe)
-и кросс-рендер против чужого редактора как внешний конформанс.
+Offline run of the same engine as the preview: in-process muxing to mp4 through the system
+FFmpeg, golden references for raw streams, the headless `kt-cli` tools (render/export/probe),
+and cross-render against another editor as external conformance.
 
 ## Requirements
 
-### Requirement: Экспорт полностью внутрипроцессный, энкодер выбирается открытием
+### Requirement: Export is fully in-process, the encoder is chosen by opening it
+Muxing and encoding SHALL go through libavformat/libavcodec of the SYSTEM FFmpeg, loaded
+at runtime (capability `media-index`): no temporary files, no external `ffmpeg` binary,
+no mkfifo. The video encoder SHALL be chosen by trying the candidates
+`h264_nvenc → h264_vaapi → h264_qsv → libx264 → mpeg4` with a REAL open check
+(`avcodec_open2`) in the same process that writes the file; an explicitly requested encoder MUST
+either open or produce an export error — there is no silent substitution. The name of the actual
+encoder SHALL be reported in the export statistics. Frames MUST NOT be lost to encoder
+backpressure: on EAGAIN the send is retried.
+Why: the presence of an encoder in a build does not mean it will work (nvenc without libcuda fails),
+and we have no cached "verdict of usability", so there is nothing that could diverge from reality.
 
-Мукс и кодирование SHALL идти через libavformat/libavcodec СИСТЕМНОГО FFmpeg, загруженного
-в рантайме (capability `media-index`): ни временных файлов, ни внешнего бинарника `ffmpeg`,
-ни mkfifo. Видео-энкодер SHALL выбираться перебором кандидатов
-`h264_nvenc → h264_vaapi → h264_qsv → libx264 → mpeg4` с РЕАЛЬНОЙ проверкой открытия
-(`avcodec_open2`) в том же процессе, который пишет файл; явно затребованный энкодер MUST
-либо открыться, либо дать ошибку экспорта — тихой подмены нет. Имя фактического энкодера
-SHALL сообщаться в статистике экспорта. Кадры MUST NOT теряться на backpressure энкодера:
-при EAGAIN отправка повторяется.
-Почему: наличие энкодера в сборке не значит, что он заработает (nvenc без libcuda падает),
-а кэшируемого «вердикта о годности» у нас нет — значит, нечему разойтись с реальностью.
-
-#### Scenario: Автовыбор и принудительный энкодер
-- **WHEN** экспорт запускается без указания энкодера / с `libx264` / с несуществующим именем
-- **THEN** авто выбирает открывшийся кандидат; `libx264` выбран ровно он и файл читается собственным декодером; неизвестное имя — явная ошибка, файла нет
+#### Scenario: Auto selection and forced encoder
+- **WHEN** export starts without an encoder specified / with `libx264` / with a nonexistent name
+- **THEN** auto picks the first candidate that opens; `libx264` is chosen exactly, and the file is read by our own decoder; an unknown name is an explicit error, and no file is left
 - **TEST** t25 (`src/libs/kt-engine/tests/export_options.rs`)
 
-#### Scenario: В файле все кадры
-- **WHEN** экспортируется 60 кадров при 30 fps
-- **THEN** движок отдал 60 кадров И в файле, прочитанном собственным декодером по всем ключам сетки, декодировано не меньше 60
-- **TEST** t33 (`src/libs/kt-engine/tests/export_options.rs`), t10 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`) — собственный декодер годится верификатором, потому что его seek sample-accurate
+#### Scenario: All frames in the file
+- **WHEN** 60 frames are exported at 30 fps
+- **THEN** the engine delivered 60 frames AND, in the file read by our own decoder across all grid keys, no fewer than 60 frames are decoded
+- **TEST** t33 (`src/libs/kt-engine/tests/export_options.rs`), t10 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`) — our own decoder serves as the verifier because its seek is sample-accurate
 
-#### Scenario: Отмена и ошибка не оставляют частичного файла
-- **WHEN** экспорт отменён или упал посреди видео-/аудио-фазы
-- **THEN** муксер закрывается, частичный файл удаляется, результат — `Cancelled` либо ошибка
-- **TEST** t25 семейство (`src/libs/kt-engine/tests/export_options.rs`) — принудительная ошибка энкодера не оставляет файла; путь отмены — `export_mp4_with_backends` (`src/libs/kt-engine/src/export.rs`)
+#### Scenario: Cancel and error leave no partial file
+- **WHEN** export is cancelled or fails in the middle of the video or audio phase
+- **THEN** the muxer is closed, the partial file is deleted, and the result is `Cancelled` or an error
+- **TEST** t25 family (`src/libs/kt-engine/tests/export_options.rs`) — a forced encoder error leaves no file; the cancel path is `export_mp4_with_backends` (`src/libs/kt-engine/src/export.rs`)
 
-### Requirement: Превью == экспорт байт-в-байт на одном бэкенде
+### Requirement: Preview == export byte-for-byte on one backend
+Export SHALL use the same frame plan and the same audio/video renderers as the preview
+(capability `video-plan`, invariant 7): the only differences are the "clock by readiness" and
+Quality = project resolution. An export stream frame MUST be byte-for-byte equal to the
+preview composite of the same moment at the same Quality — with an empty chain, with an FX chain
+(cold and warm post-FX cache), with a generator, and with a title; on GPU, by the same
+GPU executor. Source facts (native, procedural) export SHALL query open sources the same way as the
+player, and the list of generator sources SHALL be computed by ONE code path (`gen_sources`) for the player, export and kt-cli.
+Why: two composition codes ("PlaybackPipeline versus ProjectRenderer") were a defect n
+of the old engine: the preview showed one thing, and the file contained another.
 
-Экспорт SHALL использовать тот же план кадра и те же рендереры аудио/видео, что превью
-(capability `video-plan`, инвариант 7): единственные отличия — «часы по готовности» и
-Quality = разрешение проекта. Кадр экспортного потока MUST байт-в-байт равняться
-превью-композиту того же момента при том же Quality — с пустой цепочкой, с цепочкой FX
-(холодный и прогретый пост-FX кэш), с генератором и с титром; на GPU — тем же
-GPU-исполнителем. Факты источников (натив, процедурность) экспорт SHALL спрашивать
-у открытых источников так же, как плеер, а список источников генераторов SHALL считать
-ОДИН код (`gen_sources`) на плеер, экспорт и kt-cli.
-Почему: два кода композиции («PlaybackPipeline против ProjectRenderer») — дефект n
-старого движка: превью показывало одно, файл содержал другое.
-
-#### Scenario: Кадр экспорта равен превью
-- **WHEN** берётся кадр №17 экспортного потока и превью-композит того же тика при том же Quality
-- **THEN** байты равны
+#### Scenario: Export frame equals preview
+- **WHEN** frame No. 17 of the export stream and the preview composite of the same tick at the same Quality are taken
+- **THEN** the bytes are equal
 - **TEST** t11_preview_equals_export_frame (`src/libs/kt-engine/tests/golden_export.rs`)
 
-#### Scenario: С FX-цепочкой, холодный и прогретый
-- **WHEN** на видео-клипах цепочка Mirror → Glow → VHS; превью композится дважды (второй раз — из пост-FX мемоизации)
-- **THEN** оба композита байт-в-байт равны кадру экспорта
-- **TEST** t67 (`src/libs/kt-engine/tests/golden_export.rs`), t66c (`src/libs/kt-engine/tests/postfx_cache.rs`) — экспортный композит НЕ мемоизирует пост-FX, но байты те же
+#### Scenario: With FX chain, cold and warm
+- **WHEN** on video clips the chain is Mirror → Glow → VHS; the preview is composited twice (the second time from the post-FX memoization)
+- **THEN** both composites are byte-for-byte equal to the export frame
+- **TEST** t67 (`src/libs/kt-engine/tests/golden_export.rs`), t66c (`src/libs/kt-engine/tests/postfx_cache.rs`) — the export composite does NOT memoize post-FX, but the bytes are the same
 
-#### Scenario: Генератор и титр в рендер-пути
-- **WHEN** сцена содержит solid-генератор / титр (capability `generators`)
-- **THEN** экспорт детерминирован между прогонами, кадр в зоне генератора — заданный цвет, превью == экспорт байт-в-байт
+#### Scenario: Generator and title in the render path
+- **WHEN** the scene contains a solid generator / a title (capability `generators`)
+- **THEN** export is deterministic between runs, the frame in the generator's zone has the set color, and preview == export byte-for-byte
 - **TEST** t479 (`src/libs/kt-engine/tests/golden_export.rs`), t485_title_preview_equals_export (`src/libs/kt-engine/tests/title_golden.rs`)
 
-#### Scenario: На GPU — тем же исполнителем
-- **WHEN** есть адаптер; превью и экспорт исполняются GPU-бэкендом, холодный и прогретый
-- **THEN** кадры равны байт-в-байт (без адаптера — skip; `KT_REQUIRE_GPU=1` требует)
+#### Scenario: On GPU, by the same executor
+- **WHEN** an adapter is present; preview and export are executed by the GPU backend, cold and warm
+- **THEN** frames are equal byte-for-byte (without an adapter — skip; `KT_REQUIRE_GPU=1` requires it)
 - **TEST** t184 (`src/libs/kt-gpu/tests/gpu_render.rs`)
 
-### Requirement: Начатый экспорт завершается на бэкенде начала; без GPU рендерится всё
+### Requirement: A started export completes on the backend it began with; without GPU everything renders
+The export backend (GPU executor or CPU) SHALL be passed explicitly by the product (kt-app/kt-cli);
+test constructors use CPU. A GPU error IN THE MIDDLE of an export MUST be an export error, not a
+silent fallback to CPU: one file does not mix backends. The CPU path SHALL be complete —
+3D effects (Pan3d, cameras) are computed on CPU too; there is no "needs GPU" refusal; export without an adapter
+is legal and merely slower. In kt-cli, `KT_VIDEO_GPU=0` forces CPU.
+Why: mixing backends inside one file would produce a visible seam within the GPU↔CPU tolerances, and a
+"3D only on GPU" refusal turned a missing driver into the impossibility of rendering the project.
 
-Бэкенд экспорта (GPU-исполнитель или CPU) SHALL передаваться явно продуктом (kt-app/kt-cli);
-тестовые конструкторы — CPU. Ошибка GPU ПОСРЕДИ экспорта MUST быть ошибкой экспорта, а не
-молчаливым переходом на CPU: один файл не смешивает бэкенды. CPU-путь SHALL быть полным —
-3D-эффекты (Pan3d, камеры) считаются и на CPU; отказа «нужен GPU» нет, экспорт без адаптера
-легален и просто медленнее. В kt-cli `KT_VIDEO_GPU=0` принудительно выбирает CPU.
-Почему: смешение бэкендов внутри файла дало бы видимый шов в допусках GPU↔CPU, а отказ
-«3D только на GPU» превращал отсутствие драйвера в невозможность отрендерить проект.
-
-#### Scenario: Экспорт без GPU несёт 3D
-- **WHEN** проект с Pan3d рендерится с `ExportBackends::default()` (CPU)
-- **THEN** экспорт проходит, кадр отличается от кадра без эффекта, а при живом адаптере CPU и GPU сходятся в допуске `FrameTol::GEOM`
+#### Scenario: Export without GPU carries 3D
+- **WHEN** a project with Pan3d is rendered with `ExportBackends::default()` (CPU)
+- **THEN** the export passes, the frame differs from the frame without the effect, and with a live adapter the CPU and GPU agree within the tolerance `FrameTol::GEOM`
 - **TEST** t301 (`src/libs/kt-gpu/tests/gpu_render.rs`)
 
-### Requirement: Golden-эталоны сырых потоков
+### Requirement: Golden references for raw streams
+The raw stream functions (`render_raw_audio`/`render_raw_video`) SHALL deliver audio f32
+48 kHz/2ch and RGBA frames to the callbacks BEFORE the muxer; their hashes MUST be byte-for-byte equal
+between runs and (on linux/x86_64) to the committed `GOLDEN_AUDIO`/`GOLDEN_VIDEO`; the title scene —
+to its own `GOLDEN_TITLE_VIDEO`. A reference changes ONLY by a deliberate decision with the reason
+and the previous value recorded next to the constant (for the title — also in `FONT-MANIFEST.txt`); in
+the reference projects there is no net zoom and the native size of the synthetics is smaller than Quality, so the decode scale
+there is ≡ 1, and new mechanisms MUST leave the reference in place.
+Why: the reference is the only guard of determinism (invariant 11) at once for the audio mix,
+warp, transitions, composite and SIMD kernels; the bytes of the output .mp4 will never be
+identical for two users (the encoder is a property of the machine), so the stream is hashed BEFORE the
+encoder.
 
-Функции сырых потоков (`render_raw_audio`/`render_raw_video`) SHALL отдавать аудио f32
-48 kHz/2ch и RGBA-кадры колбэкам ДО муксера; их хэши MUST быть байт-в-байт равны между
-прогонами и (на linux/x86_64) закоммиченным `GOLDEN_AUDIO`/`GOLDEN_VIDEO`; титровая сцена —
-своему `GOLDEN_TITLE_VIDEO`. Эталон меняется ТОЛЬКО осознанным решением с записью причины
-и прежнего значения рядом с константой (для титра — ещё и в `FONT-MANIFEST.txt`); в
-эталонных проектах нет нетто-зума и натив синтетики меньше Quality, поэтому ступень декода
-там ≡ 1 и новые механизмы обязаны оставлять эталон на месте.
-Почему: эталон — единственный сторож детерминизма (инвариант 11) сразу для аудио-микса,
-варпа, переходов, композита и SIMD-ядер; байты выходного .mp4 у двух пользователей
-одинаковыми не будут никогда (энкодер — свойство машины), поэтому хэшируется поток ДО
-энкодера.
-
-#### Scenario: Детерминизм и эталон
-- **WHEN** golden-проект рендерится дважды
-- **THEN** хэши аудио и видео совпадают между прогонами (120 000 аудио-кадров, 75 видео-кадров) и равны закоммиченным константам на linux/x86_64
+#### Scenario: Determinism and the reference
+- **WHEN** the golden project is rendered twice
+- **THEN** the audio and video hashes match between runs (120 000 audio frames, 75 video frames) and equal the committed constants on linux/x86_64
 - **TEST** t11_streams_are_deterministic_across_runs, t11_streams_match_committed_golden (`src/libs/kt-engine/tests/golden_export.rs`)
 
-#### Scenario: Титровый эталон отдельный и не двигается
-- **WHEN** титровая сцена рендерится дважды / параметры титра переехали на событие
-- **THEN** хэш стабилен и равен `GOLDEN_TITLE_VIDEO` (gated linux/x86_64); перенос значений эталон не сдвинул
+#### Scenario: The title reference is separate and does not move
+- **WHEN** the title scene is rendered twice / the title parameters have moved to an event
+- **THEN** the hash is stable and equals `GOLDEN_TITLE_VIDEO` (gated linux/x86_64); moving the values did not shift the reference
 - **TEST** t485_title_export_is_deterministic, t485_title_matches_committed_golden, t662 (`src/libs/kt-engine/tests/title_golden.rs`)
 
-### Requirement: Чанк экспорта считается от памяти, слоёв и качества декода
+### Requirement: Export chunk is computed from memory, layers and decode quality
+Export SHALL decode frames in batches via span reads (by the same path as the preview) and
+composite from the cache; the batch size MUST be computed from the cache budget (no more than half),
+the frame size at the LARGEST decode quality (decode scale step S gives S² memory), and the number
+of simultaneous video layers (a blending layer counts as two frames; a pair inside a reel is counted).
+The export composite MUST NOT memoize post-FX frames. The finished export frame MUST NOT
+depend on cache timing: the batch must survive until composition.
+Why: "black render" (120 frames of 1080p = 995 MB did not fit into the cache, and the LRU evicted them before
+composition) and "broken render" (a batch for one layer displaced the pre-frames of the neighbouring track;
+post-FX frames of 8.3 MB displaced pre-frames not yet used) — both regressions were seen
+by the owner, and both showed up only at a large Quality.
 
-Экспорт SHALL декодировать кадры пачками через span-чтение (тем же путём, что превью) и
-композить из кэша; размер пачки MUST считаться от бюджета кэша (не больше половины),
-размера кадра по САМОМУ КРУПНОМУ качеству декода (ступень S даёт S² памяти) и числа
-одновременных видео-слоёв (смешивающий слой — за два кадра; пара внутри ленты считается).
-Экспортный композит MUST NOT мемоизировать пост-FX кадры. Готовый кадр экспорта MUST NOT
-зависеть от тайминга кэша: пачка обязана дожить до композиции.
-Почему: «чёрный рендер» (120 кадров 1080p = 995 МБ не влезали в кэш, LRU выбрасывал их до
-композиции) и «рендер поломан» (пачка на один слой вытесняла пре-кадры соседней дорожки;
-пост-FX кадры 8.3 МБ вытесняли ещё не использованные пре-кадры) — обе регрессии видел
-владелец, обе проявлялись только на крупном Quality.
-
-#### Scenario: Пачка не превышает половины бюджета с учётом слоёв
-- **WHEN** считается размер чанка для крупного Quality и N слоёв
-- **THEN** пачка ≤ половины бюджета / N, и живой экспорт крупного Quality не даёт чёрных кадров
+#### Scenario: A batch does not exceed half the budget, accounting for layers
+- **WHEN** the chunk size is computed for a large Quality and N layers
+- **THEN** the batch ≤ half the budget / N, and live export at large Quality yields no black frames
 - **TEST** t116 (`src/libs/kt-engine/tests/frame_order.rs`)
 
-#### Scenario: Ступень декода уменьшает чанк
-- **WHEN** клип берётся в ×2 ступени (натив с запасом, зум ×2)
-- **THEN** чанк по качеству декода вчетверо меньше чанка по Quality, а живой рендер — `missing_video_layers == 0`
+#### Scenario: A decode scale step shrinks the chunk
+- **WHEN** a clip is taken at a ×2 step (native with headroom, zoom ×2)
+- **THEN** the chunk by decode quality is four times smaller than the chunk by Quality, and the live render has `missing_video_layers == 0`
 - **TEST** t314 (`src/libs/kt-engine/tests/decode_scale.rs`)
 
-#### Scenario: Пара смешивания и вложение считаются в бюджет
-- **WHEN** внутри ленты кадры смешиваются парой (capability `compositions`)
-- **THEN** бюджет чанка считает оба кадра пары, голод не срабатывает, байты не зависят от тайминга кэша
+#### Scenario: A blending pair and nesting are counted in the budget
+- **WHEN** inside a reel frames are blended as a pair (capability `compositions`)
+- **THEN** the chunk budget counts both frames of the pair, starvation does not trigger, and the bytes do not depend on cache timing
 - **TEST** t583 (`src/libs/kt-engine/tests/nest_render.rs`)
 
-#### Scenario: Span-чтение равно покадровому
-- **WHEN** экспорт читает пачку ключей span'ом
-- **THEN** кадры байт-в-байт равны покадровому чтению, декодер не переоткрывается
+#### Scenario: Span reading equals per-frame reading
+- **WHEN** export reads a batch of keys as a span
+- **THEN** the frames are byte-for-byte equal to per-frame reading, and the decoder is not reopened
 - **TEST** t21 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`)
 
-### Requirement: Диапазон рендера — до монтажной длины, регион — только в GUI
+### Requirement: Render range — up to the edit length; the region is GUI-only
+The render length SHALL be `max(end of the material, project timeline_end)`: a trailing Gap
+of someone else's file is rendered as black/silence. The GUI SHALL offer export of the selected region;
+kt-cli ignores the region — by a direct decision of the owner ("we do not do it").
+Why: foreign files set the editing length with emptiness after the last clip, and without it
+our render was shorter than melt by 605 frames (found by cross-render).
 
-Длина рендера SHALL быть `max(конец материала, timeline_end проекта)`: хвостовой Gap
-чужого файла рендерится чёрным/тишиной. GUI SHALL предлагать экспорт выделенного региона;
-kt-cli регион игнорирует — по прямому решению владельца («не делаем»).
-Почему: чужие файлы задают монтажную длину пустотой после последнего клипа, и без неё наш
-рендер был короче melt на 605 кадров (найдено кросс-рендером).
-
-#### Scenario: Хвостовой Gap рендерится
-- **WHEN** чужой .otio с Gap после последнего клипа рендерится нами и melt
-- **THEN** длительности совпадают
+#### Scenario: The trailing Gap is rendered
+- **WHEN** a foreign .otio with a Gap after the last clip is rendered by us and by melt
+- **THEN** the durations match
 - **TEST** t158 (`src/apps/kt-cli/tests/cross_render.rs`)
 
-### Requirement: Громкость измеряется на проходе экспорта, без мастер-гейна
+### Requirement: Loudness is measured in the export pass, without master gain
+Export SHALL report the integrated loudness, the true peak and the LRA (BS.1770/EBU R128)
+of the finished mix, feeding the meter with the FINISHED chunk buffer — not a single extra decode or
+pass. The master gain MUST NOT take part in the measurement and MUST NOT exist in the project
+model: it is a monitoring loudness that lives only in the player. There is no "normalize" button —
+a reference line "to −23 LUFS: +N dB" is shown.
+Why: the number in the preview and the number in the file match BY CONSTRUCTION only if one
+code counts both over the same material; normalizing after the fact would mean re-encoding the file.
 
-Экспорт SHALL сообщать интегрированную громкость, истинный пик и LRA (BS.1770/EBU R128)
-готового микса, кормя метр ГОТОВЫМ буфером чанка — ни одного дополнительного декода или
-прохода. Мастер-гейн MUST NOT участвовать в измерении и MUST NOT существовать в модели
-проекта: это громкость контроля, живущая только в плеере. Кнопки «нормализовать» нет —
-показывается справочная строка «до −23 LUFS: +N dB».
-Почему: число в превью и число в файле совпадают ПО ПОСТРОЕНИЮ только если считает их
-один код по одному материалу; нормализация задним числом означала бы перекодировать файл.
-
-#### Scenario: Громкость слышит уровень события
-- **WHEN** то же событие экспортируется с 0 dB и −10 dB
-- **THEN** разница ровно 10 LU (±0.15), истинный пик соответствует амплитуде источника
+#### Scenario: Loudness hears the event level
+- **WHEN** the same event is exported at 0 dB and at −10 dB
+- **THEN** the difference is exactly 10 LU (±0.15), and the true peak matches the amplitude of the source
 - **TEST** t406 (`src/libs/kt-engine/tests/export_loudness.rs`)
 
-#### Scenario: Мастер-гейн не в измерении
-- **WHEN** настройки проекта печатаются и экспорт повторяется
-- **THEN** поля с мастер-гейном в проекте нет, число детерминировано
+#### Scenario: The master gain is not in the measurement
+- **WHEN** the project settings are printed and the export is repeated
+- **THEN** there is no master-gain field in the project, and the number is deterministic
 - **TEST** t407 (`src/libs/kt-engine/tests/export_loudness.rs`)
 
-#### Scenario: Метр, которым меряет экспорт
-- **WHEN** метр получает калибровочный синус / межсэмпловый выброс / тот же сигнал разной нарезкой
-- **THEN** 1 кГц полной шкалы = 0.0 LUFS; истинный пик видит выброс между сэмплами; нарезка не меняет результат; суммы — в f64, потому что f32-накопление за 10 минут дрейфует на 0.37 LU (сторож УТВЕРЖДЕНИЯ, не кода)
-- **TEST** t403, t403b, t405 (`src/libs/kt-fx/tests/loudness.rs`) — сам метр принадлежит capability `audio-render`
+#### Scenario: The meter that export measures with
+- **WHEN** the meter receives a calibration sine / an inter-sample overshoot / the same signal cut differently
+- **THEN** 1 kHz at full scale = 0.0 LUFS; the true peak sees the overshoot between samples; the cutting does not change the result; the sums are in f64, because f32 accumulation over 10 minutes drifts by 0.37 LU (a guard of the APPROVAL, not of the code)
+- **TEST** t403, t403b, t405 (`src/libs/kt-fx/tests/loudness.rs`) — the meter itself belongs to capability `audio-render`
 
-### Requirement: Рендер с недоступными исходниками идёт, а не отменяется
+### Requirement: A render with unavailable sources proceeds rather than being cancelled
+In the GUI an unavailable source SHALL get a stub (a dark plate with the file name; audio is
+silence); the settings window BEFORE the start SHALL list such sources, and the summary AFTER SHALL
+show the number of stubs and the engine's `missing_video_layers`. In kt-cli unavailable media is
+a REFUSAL without an output file; `--allow-missing` switches this on deliberately.
+Why: the owner's requirement — "missing sources must not be a blocker: notify and
+render"; but kt-cli has no dialog, and silence in a file is worse than a refusal.
 
-В GUI недоступный исходник SHALL получать заглушку (тёмная плашка с именем файла; аудио —
-тишина), окно настроек ДО старта SHALL перечислять такие исходники, сводка ПОСЛЕ SHALL
-показывать число заглушек и `missing_video_layers` движка. В kt-cli недоступное медиа —
-ОТКАЗ без выходного файла; `--allow-missing` переключает это осознанно.
-Почему: требование владельца — «отсутствие исходников не должно быть блокером, уведомлять и
-рендерить»; но у kt-cli нет диалога, и тишина в файле хуже отказа.
-
-#### Scenario: GUI предупреждает и рендерит
-- **WHEN** в проекте есть `gone.mp4`, а окно рендера открывает источники
-- **THEN** экспорт не отменяется, список недоступных виден до старта, потерянные слои — в сводке
+#### Scenario: The GUI warns and renders
+- **WHEN** the project has `gone.mp4`, and the render window opens the sources
+- **THEN** the export is not cancelled, the list of unavailable items is visible before the start, and the lost layers are in the summary
 - **TEST** t210 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: kt-cli отказывает без флага
-- **WHEN** `kt-cli render` получает проект с несуществующими файлами
-- **THEN** код ошибки и файла нет; с `--allow-missing` рендер проходит
+#### Scenario: kt-cli refuses without the flag
+- **WHEN** `kt-cli render` receives a project with nonexistent files
+- **THEN** an error code is returned and there is no file; with `--allow-missing` the render passes
 - **TEST** t389 (`src/apps/kt-cli/tests/cli.rs`)
 
-### Requirement: Имя файла рендера — по шаблону проекта, региона и длины
+### Requirement: Render file name — by the project, region and length template
+The default name SHALL be `kt-<project>-<region>-<length>s.mp4`, where the region is the name of the
+range marker MATCHING the region (no match or an empty name — the segment is omitted),
+the length is the whole seconds of the range; spaces → `-`, forbidden file-system characters → `_`.
+Why: the owner's requirement verbatim; the former `kp-render-<unix-time>` said nothing about
+the project or the region.
 
-Имя по умолчанию SHALL быть `kt-<проект>-<регион>-<длина>s.mp4`, где регион — имя
-метки-диапазона, СОВПАДАЮЩЕЙ с регионом (нет совпадения или пустое имя — сегмент опускается),
-длина — целые секунды диапазона; пробелы → `-`, запрещённые ФС-символы → `_`.
-Почему: требование владельца дословно; прежнее `kp-render-<unix-время>` не говорило ни о
-проекте, ни о регионе.
-
-#### Scenario: Шаблон и живой регион
-- **WHEN** проект `song.otio`, метка `chorus` 1…5 с и регион 1…5 с / регион 0…5 с без метки
-- **THEN** `kt-song-chorus-4s.mp4` / `kt-song-5s.mp4`; санитизация имени проверена на «scene 2: take?»
+#### Scenario: Template and a live region
+- **WHEN** the project `song.otio`, the marker `chorus` 1…5 s, and the region 1…5 s / the region 0…5 s without a marker
+- **THEN** `kt-song-chorus-4s.mp4` / `kt-song-5s.mp4`; name sanitizing is checked on "scene 2: take?"
 - **TEST** t201 (`src/apps/kt-app/src/layout_tests.rs`)
 
-### Requirement: kt-cli — headless-интерфейс того же движка
+### Requirement: kt-cli — the headless interface of the same engine
+`kt-cli` SHALL be able to `new`, `demo`, `roundtrip`, `convert`, `probe`, `render` (wav),
+`export` (mp4, the third argument is a forced encoder). Writing a project SHALL go through the same
+atomic writer as the GUI; an existing file MUST NOT be overwritten without `--force`.
+`demo` by default SHALL refer to synthetic sources (`synth:`), so that
+`demo && render` works without a single media file. Relative media paths SHALL be resolved
+exactly once (when the project is loaded), and `.ktproj` in `render/export` — a refusal with a hint to
+`convert`. Export opens the files with the project's sidecar index.
+Why: kt-cli has neither an asterisk nor a dialog — there was nothing to prevent silent overwriting;
+`demo` referred to eight files that nobody had; a double join of the path base silently
+rendered empty layers with exit 0.
 
-`kt-cli` SHALL уметь `new`, `demo`, `roundtrip`, `convert`, `probe`, `render` (wav),
-`export` (mp4, третий аргумент — принудительный энкодер). Запись проекта SHALL идти тем же
-атомарным писателем, что GUI; существующий файл MUST NOT перезаписываться без `--force`.
-`demo` по умолчанию SHALL ссылаться на синтетические источники (`synth:`), чтобы
-`demo && render` работал без единого медиафайла. Относительные пути медиа SHALL разрешаться
-ровно один раз (при загрузке проекта), а `.ktproj` в `render/export` — отказ с подсказкой на
-`convert`. Экспорт открывает файлы с sidecar-индексом проекта.
-Почему: у kt-cli нет ни звёздочки, ни диалога — помешать молчаливому затиранию нечему;
-`demo` ссылалось на восемь файлов, которых не было ни у кого; двойной join базы пути тихо
-рендерил пустые слои с exit 0.
-
-#### Scenario: Потоки .otio
+#### Scenario: .otio flows
 - **WHEN** `new` → `demo` → `roundtrip` → `convert` → `render .ktproj`
-- **THEN** валидный OTIO; демо с переходом и метками; roundtrip байт-стабилен; конверсия легаси; `.ktproj` отвергнут с подсказкой
+- **THEN** valid OTIO; the demo with a transition and markers; roundtrip is byte-stable; the legacy conversion works; `.ktproj` is rejected with a hint
 - **TEST** t151 (`src/apps/kt-cli/tests/cli.rs`)
 
-#### Scenario: Без --force не затирает, с --force — атомарно
-- **WHEN** `new`/`demo` на существующий файл
-- **THEN** отказ с упоминанием `--force`, содержимое цело; с флагом — записано, `.tmp` не остаётся
+#### Scenario: Without --force it does not overwrite, with --force it is atomic
+- **WHEN** `new`/`demo` onto an existing file
+- **THEN** a refusal mentioning `--force`, the content is intact; with the flag the file is written, and no `.tmp` remains
 - **TEST** t387 (`src/apps/kt-cli/tests/cli.rs`)
 
-#### Scenario: Демо рендерится из коробки
-- **WHEN** `demo` затем `render`
-- **THEN** проект ссылается на `synth:`, wav > 1 МБ; `--files` возвращает прежние имена файлов
+#### Scenario: The demo renders out of the box
+- **WHEN** `demo` and then `render`
+- **THEN** the project refers to `synth:`, the wav is > 1 MB; `--files` returns the former file names
 - **TEST** t388 (`src/apps/kt-cli/tests/cli.rs`)
 
-#### Scenario: Относительный путь к проекту
-- **WHEN** `kt-cli export sub/p.otio …` с медиа `clip.mp4` рядом с проектом
-- **THEN** без «decode failed», `missing layers 0`
-- **TEST** t307 (`src/apps/kt-cli/tests/cli.rs`), t34 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`) — открытие с sidecar-индексом не сканирует файл повторно
+#### Scenario: A relative path to the project
+- **WHEN** `kt-cli export sub/p.otio …` with the media `clip.mp4` next to the project
+- **THEN** without "decode failed", `missing layers 0`
+- **TEST** t307 (`src/apps/kt-cli/tests/cli.rs`), t34 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`) — opening with the sidecar index does not rescan the file again
 
-### Requirement: `kt-cli probe` — «что звучит в этом месте»
+### Requirement: `kt-cli probe` — "what sounds at this point"
+`probe <project> <from_s> <to_s>` SHALL print cleanly from the model, without decode and without audio
+hardware: the effective events AFTER the morpher layers, the prefetch order, on a separate line the foreign
+media in the order, the number of events with warp, the cost of assembling the engine, a video-order section with the
+native size, the decode step and size per clip, the tree of reels with the path of each nested item, and the
+ACTUAL content window of the instance. `--time` SHALL open the real sources and
+print TWO numbers — the share of real time of the linear run and the REPEAT of the region through
+`BurstCache`, as in the program; unavailable media is skipped in probe with a warning.
+For the complaint "here the sound/picture is from another event" probe is run FIRST; judge
+speed ONLY by the release build (debug is 9 times slower).
+Why: the first wave of analysis of the owner's complaint looked for the cause in the engine, because there was
+no way to ask "which media is playing here"; with the tool the defect was found in one run.
 
-`probe <проект> <от_с> <до_с>` SHALL печатать чисто по модели, без декода и звукового
-железа: эффективные события ПОСЛЕ морфер-слоёв, заказ префетча, отдельной строкой чужое
-медиа в заказе, число событий с варпом, стоимость сборки движка, секцию видео-заказа с
-нативом, ступенью и размером декода по клипам, дерево лент с путём каждого вложения и
-ФАКТИЧЕСКОЕ окно содержимого экземпляра. `--time` SHALL открыть настоящие источники и
-напечатать ДВА числа — долю реального времени линейного прогона и ПОВТОРА региона через
-`BurstCache`, как в программе; недоступное медиа в probe пропускается с предупреждением.
-По жалобе «тут звук/картинка от другого события» probe запускается ПЕРВЫМ; о скорости
-судить ТОЛЬКО по релизной сборке (debug медленнее в 9 раз).
-Почему: первая волна разбора жалобы владельца искала причину в движке, потому что спросить
-«какое медиа звучит здесь» было нечем; с инструментом дефект нашёлся за один запуск.
+#### Scenario: Smoke test of the sections
+- **WHEN** probe on the demo project over the first seconds
+- **THEN** there are `effective clips`, `no foreign media in the order`, `clips with a time warp`, `video decode order` with `stage x`, the tree of reels, and `is a NESTED REEL` for the nested item
+- **TEST** t290, t318, t452b (`src/apps/kt-cli/tests/cli.rs`) — the behaviour of the layers itself is guarded by kt-model (capability `morpher`); a test of printing does not replace it
 
-#### Scenario: Дымовой тест разделов
-- **WHEN** probe на демо-проекте по первым секундам
-- **THEN** есть `effective clips`, `no foreign media in the order`, `clips with a time warp`, `video decode order` со `stage x`, дерево лент и `is a NESTED REEL` у вложения
-- **TEST** t290, t318, t452b (`src/apps/kt-cli/tests/cli.rs`) — само поведение слоёв сторожит kt-model (capability `morpher`), тест на печать его не заменяет
+### Requirement: Cross-render against a foreign renderer — gated conformance
+Foreign .otio files from upstream SHALL be rendered by us (`kt-cli export … libx264`) and by melt
+(`real_time=0`), and the frames SHALL be compared by colour classification against the table of conventions
+BT.601/709 × limited/full; the tiers are strict (pixel by pixel) and smoke (both did not fail,
+the durations matched). A real film is compared by a SELF-CALIBRATING metric: our frame resembles
+the melt frame of the same moment more than the frame one and a half seconds away does; the melt profile is the fraction
+24000/1001. Without tools the tests MUST be skipped with a clear reason;
+`KT_REQUIRE_CROSS_RENDER=1`/`KT_REQUIRE_OC_RENDER=1` turn the skip into a failure. The media and
+.otio of the film are not committed (script `fetch-oc-media.sh`).
+Why: a match of JSON is not yet a match of the edit — a shifted cut is visible only in
+the picture; a pixel-by-pixel comparison of real video is impossible (two encoders), and the automatic
+encoder choice of ours could slide into nvenc and add noise.
 
-### Requirement: Кросс-рендер против чужого рендерера — gated-конформанс
-
-Чужие .otio из апстрима SHALL рендериться нами (`kt-cli export … libx264`) и melt
-(`real_time=0`), кадры — сравниваться классификацией цвета по таблице конвенций
-BT.601/709 × limited/full; ярусы — строгий (попиксельно) и smoke (оба не упали, длительности
-сошлись). Настоящий фильм сравнивается САМОКАЛИБРУЮЩЕЙСЯ метрикой: наш кадр похож на кадр
-melt того же момента сильнее, чем на кадр в полутора секундах; профиль melt — дробь
-24000/1001. Без инструментов тесты MUST пропускаться с внятной причиной;
-`KT_REQUIRE_CROSS_RENDER=1`/`KT_REQUIRE_OC_RENDER=1` превращают пропуск в провал. Медиа и
-.otio фильма не коммитятся (скрипт `fetch-oc-media.sh`).
-Почему: совпадение JSON ещё не совпадение монтажа — уехавшая склейка видна только в
-картинке; попиксельная сверка настоящего видео невозможна (два энкодера), а автовыбор
-энкодера у нас мог уйти в nvenc и добавить шума.
-
-#### Scenario: Синтетика апстрима
-- **WHEN** сэмплы simple_cut/multiple_track/preflattened/multitrack/premiere/screening рендерятся обеими программами
-- **THEN** классы цвета совпадают в probe-точках вне окон переходов и ±1 кадра от склеек; файлы с переходами и вложенными Stack — smoke-ярус (melt их выбрасывает — расходимся не мы)
+#### Scenario: Upstream synthetics
+- **WHEN** the samples simple_cut/multiple_track/preflattened/multitrack/premiere/screening are rendered by both programs
+- **THEN** the colour classes match at the probe points outside the transition windows and within ±1 frame of the cuts; files with transitions and nested Stacks are the smoke tier — melt drops them, and we do not diverge
 - **TEST** t158 (`src/apps/kt-cli/tests/cross_render.rs`)
 
-#### Scenario: Настоящий фильм
-- **WHEN** окно 30 с «Sol Levante» (H.264, B-кадры, 23.976 fps, таймкод с часа) рендерится обеими программами
-- **THEN** каждая точка объясняется кадром melt в пределах двух кадров (дрейф сетки 24 против 23.976 допустим, уехавшая склейка — нет); длительности сверяются в секундах
+#### Scenario: A real film
+- **WHEN** the 30 s window of "Sol Levante" (H.264, B-frames, 23.976 fps, timecode from the hour) is rendered by both programs
+- **THEN** each point is explained by a melt frame within two frames (drift of the 24 versus 23.976 grid is allowed, a shifted cut is not); the durations are compared in seconds
 - **TEST** t179 (`src/apps/kt-cli/tests/oc_render.rs`)
 
-### Requirement: Экспорт в чужом разрешении приводит теми же долями
+### Requirement: Export in a foreign resolution arrives at the same fractions
+Export at a resolution different from the project raster SHALL compute the layer geometry in fractions
+of the export canvas by the same function as the preview: the export frame is similar to the preview composite
+within the tolerance of the resampling class, and the conform rule and the node position are not recomputed
+by hand. The golden on matching proportions MUST stay byte-for-byte without regeneration.
+Why: before R.62 "Max (W×H)" added the maxima of width and height independently and offered a resolution that no source had, and the result was stretched.
 
-Экспорт с разрешением, отличным от растра проекта, SHALL считать геометрию слоёв в долях
-холста экспорта той же функцией, что превью: кадр экспорта подобен превью-композиту в
-допуске класса ресемплинга, правило приведения и положение узла не пересчитываются
-руками. Golden на совпадающих пропорциях MUST остаться байт-в-байт без перегенерации.
-Почему: до Р.62 «Max (W×H)» складывал максимумы ширины и высоты независимо и предлагал
-разрешение, которого нет ни у одного источника, а результат растягивался.
-
-#### Scenario: Подобие превью и экспорта в чужом разрешении
-- **WHEN** проект 1920×1080 с вертикальным источником экспортируется в 1280×720
-- **THEN** прямоугольник слоя пропорционален превью 1920×1080 в допуске, поля на месте; t715 зелёный
+#### Scenario: Similarity of preview and export at a foreign resolution
+- **WHEN** a 1920×1080 project with a vertical source is exported at 1280×720
+- **THEN** the layer rectangle is proportional to the 1920×1080 preview within the tolerance, the margins are in place; t715 is green
 - **TEST** t728b (`src/libs/kt-engine/tests/golden_export.rs`)
 
-### Requirement: Mute и solo действуют на файл и перечисляются до старта
+### Requirement: Mute and solo act on the file and are listed before start
+Export SHALL apply track mute and solo the same way as the preview (the same renderers). The render window
+SHALL list the muted tracks and the active solo BEFORE the start, in the same place
+where the unavailable sources are listed, with the address "where to change" (the track header);
+kt-cli SHALL print the same before the render. There is no refusal — the owner's decision of R.62: mute and
+solo are the content of the project.
+Why: "forgot to clear solo — delivered one track" is a risk the owner accepted; the price is the duty to say so
+(rules 16, 19; Kdenlive #498560 asks for exactly this).
 
-Экспорт SHALL применять mute и solo дорожек так же, как превью (одни рендереры). Окно
-рендера SHALL перечислять заглушённые дорожки и активное соло ДО старта, в том же месте,
-где перечисляются недоступные исходники, с адресом «где изменить» (заголовок дорожки);
-kt-cli SHALL печатать то же перед рендером. Отказа нет — решение владельца Р.62: mute и
-solo — содержимое проекта.
-Почему: «забыл снять соло — сдал одну дорожку» — риск, который владелец принял; цена —
-обязанность сказать (правила 16, 19; Kdenlive #498560 просит ровно этого).
-
-#### Scenario: Окно и kt-cli перечисляют
-- **WHEN** у проекта заглушена дорожка и две в соло; открыто окно рендера; `kt-cli render`
-- **THEN** список видит обе вещи с именами дорожек и адресом; рендер идёт; kt-cli печатает notice; файл не содержит заглушённого
+#### Scenario: The window and kt-cli list
+- **WHEN** the project has one track muted and two in solo; the render window is open; `kt-cli render`
+- **THEN** the list shows both things with the track names and the address; the render goes on; kt-cli prints a notice; the file does not contain the muted track
 - **TEST** t740 (`src/apps/kt-app/src/layout_tests.rs`), t740b (`src/apps/kt-cli/tests/cli.rs`)
 
 ### Requirement: kt-cli showcase builds a dense project from a directory of real footage
-
 `kt-cli showcase <out.kt> --sources <dir> [--force]` SHALL write a valid project file built
 from the media files found directly in `<dir>` (non-recursive, ordered by file name, media
 durations and streams probed through the same media layer the editor uses). Video files

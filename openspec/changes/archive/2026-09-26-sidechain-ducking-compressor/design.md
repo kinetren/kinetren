@@ -2,120 +2,59 @@
 
 ## Context
 
-См. proposal.md — Why. Ниже только то, что уже есть в коде и определяет форму решения.
+See proposal.md — Why. Below only what is already in the code and determines the shape of the solution.
 
-- **Стадия аудиодорожки готова** (`src/libs/kt-engine/src/audio.rs`, `TrackStage`): сумма
-  событий дорожки → `TrackProcessor` → уровень/гашение → в выход. У стадии уже есть
-  упреждение (`la`), честный хвост и состояние по `TrackId` (`fxstore.rs`).
-- **Компрессор уже узел** (`src/libs/kt-fx/src/audio/nodes.rs`, `CompNode`): peak-детектор
-  `EnvFollower` со стерео-линком, сглаженные параметры. Детектор читает ТОТ ЖЕ буфер, что
-  сжимает, — это единственное место, которое надо развести.
-- **Узлы уже получают позицию**: `AudioNode::process(buf, pos)`; ключевой сигнал ложится
-  рядом третьим аргументом, а не в состояние узла.
-- **Снимок дакинга** (`kt-engine/src/ducking.rs` + `kt_model::ops::duck_curve_commands` +
-  фоновая задача в `analysis.rs` + секция в `track_window.rs` + `Workspace::duck`) — цел и
-  подлежит удалению целиком (ответ владельца Р.65: «убрать совсем»).
-- **Адрес дорожки стабилен**: `TrackId` уже служит ключом FX-состояния именно потому, что
-  номер дорожки — это ранг строки (Р.62).
-- **Версия конверта — v11**; новое поле, теряемое старой сборкой молча, обязано поднять её.
+- **The audio track stage is ready** (`src/libs/kt-engine/src/audio.rs`, `TrackStage`): the sum of the track's events → `TrackProcessor` → level/mute → to the output. The stage already has lookahead (`la`), an honest tail, and state keyed by `TrackId` (`fxstore.rs`).
+- **The compressor is already a node** (`src/libs/kt-fx/src/audio/nodes.rs`, `CompNode`): a peak detector `EnvFollower` with stereo link, smoothed parameters. The detector reads the SAME buffer that it compresses — this is the only place that has to be separated.
+- **The nodes already receive the position**: `AudioNode::process(buf, pos)`; the key signal goes alongside as a third argument, not into the node's state.
+- **The ducking snapshot** (`kt-engine/src/ducking.rs` + `kt_model::ops::duck_curve_commands` + the background task in `analysis.rs` + the section in `track_window.rs` + `Workspace::duck`) — intact and subject to complete removal (the owner's answer in R.65: "remove it entirely").
+- **The track address is stable**: `TrackId` already serves as the key of the FX state precisely because the track number is the row rank (R.62).
+- **The envelope version is v11**; a new field that the old build silently drops MUST raise it.
 
 ## Goals / Non-Goals
 
 **Goals:**
-
-- Живой сайдчейн у существующего компрессора: ключ — другая аудиодорожка, закон сжатия тот же.
-- Порядок стадий по зависимости, без потери детерминизма и без изменения порядка сложения f32
-  там, где ключей нет.
-- Форма из двух компрессоров в уже существующем месте (окно аудиодорожки).
-- Полное удаление снимка вместе с его памятью параметров и фоновой задачей.
+- A live sidechain on the existing compressor: the key is another audio track; the compression law is the same.
+- The order of stages by dependency, without losing determinism and without changing the f32 summation order where there are no keys.
+- The shape of two compressors in the already existing place (the audio track window).
+- Full removal of the snapshot together with its parameter memory and background task.
 
 **Non-Goals:**
-
-- Шины, посылы, сайдчейн от события, от шины или из файла (F-AUD-004 остаётся отложенной).
-- Упреждение (lookahead) у сайдчейн-детектора и внешний фильтр ключа (HPF на детекторе).
-- Ключ у гейта/экспандера: у владельца речь шла о дакинге, а каждый новый прибор с ключом —
-  свой набор вопросов про порядок стадий.
+- Buses, sends, a sidechain from an event, from a bus or from a file (F-AUD-004 stays deferred).
+- Lookahead on the sidechain detector and an external key filter (HPF on the detector).
+- A key on a gate/expander: the owner was talking about ducking, and each new instrument with a key has its own set of questions about the stage order.
 
 ## Decisions
 
-- **Пересмотр: «Дакинг — снимок, живой сайдчейн отвергнут (XL)» отменяется.** В
-  `openspec/specs/audio-render/design.md` стояло «Живой сайдчейн — второй вход у эффекта,
-  шины, правка формата (XL); практическая польза покрывается огибающей». Причина отмены —
-  прямое решение владельца (Р.63, подтверждено ответами Р.65), и оценка XL больше не верна:
-  шины не нужны (ключ — ДОРОЖКА, а стадии дорожек появились в Р.62), второй вход — это
-  аргумент обработки, а не новый граф, правка формата — одно поле по содержимому.
-- **Ключ — поле существующего `Compressor`, а не новый вид эффекта.** Правило владельца
-  «один виджет — не копия»: «дакинг» это компрессор с назначенным ключом. Альтернатива
-  (`FxInstance::Ducker`) отвергнута: она удвоила бы паспорт параметров, реестр, подписи,
-  каркасные тесты и дала бы два разных закона сжатия при первой же правке.
-- **Ключ — `TrackId`, а не номер дорожки.** Номер есть ранг строки; вставка дорожки выше
-  перевесила бы ключ на чужой сигнал — ровно тот дефект, из-за которого FX-состояние
-  ключуется `TrackId` с Р.62.
-- **Ключ — «как дорожка звучит»: события с их весами и FX, цепочка ключа, уровень,
-  mute/solo.** Владелец выбрал «настоящий компрессор речи» вторым виджетом — значит
-  детектор обязан слышать его работу. Альтернатива «сумма событий без цепочки ключа»
-  дешевле, но тогда правка компрессора речи не меняет дакинг, и второй виджет врёт.
-- **Ключ считается НА ПОЗИЦИИ СЛОТА, своим потоком, со своим состоянием.** Стадия цели с
-  упреждением читает вход на сдвинутом окне, а узлы ПОСЛЕ узла с окном анализа видят сэмплы
-  старше входа на его окно; детектор обязан быть выровнен с тем, что сжимает (см. «Уроки
-  исполнения»). Альтернатива «взять кэшированный выход стадии ключа» отвергнута: при упреждении
-  цели окна не совпадают, а прокрутить один и тот же процессор дважды за кадр нельзя —
-  он потеряет непрерывность (инвариант 3). Цена — второй прогон цепочки ключа; она
-  измеряется тестом, а не утверждается (требование audio-fx «цена измеряется»).
-- **Порядок стадий — топологический по ключу, стабильный.** При отсутствии зависимостей
-  порядок ровно прежний (ранг строки), иначе поехал бы порядок сложения f32 и `GOLDEN_AUDIO`.
-- **Цикл запрещён В МОДЕЛИ, а рендер страхуется обрывом на первом уровне.** Команда,
-  создающая цикл, отвергается с названной причиной (правило 16); внутри ключевой ветки
-  компрессор с ключом работает как обычный — тогда даже файл, собранный чужой рукой, даёт
-  определённый кадр, а не панику.
-- **Сайдчейн не добавляет упреждения.** `chain_lookahead` от ключа не зависит: у дакинга нет
-  задержки выхода, а PDC Р.48 требует, чтобы упреждение жило в обеих формулах и совпадало.
-- **Мёртвый ключ — это «ключа нет», а не ошибка.** Дорожка удалена или стала видео — прибор
-  работает обычным компрессором, проект открывается, интерфейс говорит словами. Правило 20:
-  ничего не отрубается само, но и рендер не имеет права молча выдать тишину.
-- **Форма — два компрессора одним виджетом `params_grid`.** Слева цепочка этой дорожки,
-  справа компрессор дорожки-ключа приглушённо; его нет — заводится одним действием и тем же
-  undo-шагом сессии окна. Новых окон нет (правило 22), своей формы из четырёх чисел нет
-  (правило 24), параметры живут в проекте и потому «помнятся» по построению (правило 23).
-- **Снимок удаляется целиком.** Прямой ответ владельца. Кривые, уже напечённые в проектах,
-  — обычная автоматизация: они читаются и звучат, формат их не меняется.
-- **Версия конверта — v12 по содержимому**, только при назначенном ключе.
+- **Revision: "Ducking — snapshot, live sidechain rejected (XL)" is cancelled.** In `openspec/specs/audio-render/design.md` it said: "Live sidechain — a second input to the effect, buses, a format change (XL); practical use is covered by the envelope". The reason for the cancellation is the owner's direct decision (R.63, confirmed by the answers in R.65), and the XL estimate is no longer correct: buses are not needed (the key is a TRACK, and track stages appeared in R.62); the second input is a processing argument, not a new graph; the format change is one field by content.
+- **The key is a field of the existing `Compressor`, not a new kind of effect.** The owner's rule "one widget — not a copy": "ducking" is a compressor with an assigned key. The alternative (`FxInstance::Ducker`) was rejected: it would double the parameter passport, the registry, the captions and the skeleton tests, and would give two different compression laws at the first edit.
+- **The key is `TrackId`, not the track number.** The number is the row rank; inserting a track above would hand the key to someone else's signal — exactly the defect because of which FX state has been keyed by `TrackId` since R.62.
+- **The key is "how the track sounds": the events with their weights and FX, the key's chain, level, mute/solo.** The owner chose "a real speech compressor" as the second widget — so the detector must hear its work. The alternative "the sum of the events without the key's chain" is cheaper, but then editing the speech compressor would not change the ducking, and the second widget would lie.
+- **The key is computed AT THE SLOT'S POSITION, on its own thread, with its own state.** The target stage with lookahead reads its input on a shifted window, and the nodes AFTER the node with the analysis window see samples older than the input by its window; the detector must be aligned with what it compresses (see "Execution lessons"). The alternative "take the cached output of the key stage" was rejected: with lookahead on the target the windows do not coincide, and one processor cannot be run twice per frame — it would lose continuity (invariant 3). The cost is a second run of the key's chain; it is measured by a test, not asserted (the audio-fx requirement "the cost is measured").
+- **The stage order is a topological sort by key, stable.** With no dependencies the order is exactly as before (the row rank); otherwise the f32 summation order and `GOLDEN_AUDIO` would shift.
+- **A cycle is forbidden IN THE MODEL, and the render guards with a break at the first level.** A command that creates a cycle is rejected with a named reason (rule 16); inside the key branch the compressor with a key works as an ordinary one — then even a file assembled by another hand gives a definite frame, not a panic.
+- **The sidechain adds no lookahead.** `chain_lookahead` does not depend on the key: ducking has no output delay, and PDC (R.48) requires that lookahead lives in both formulas and matches.
+- **A dead key means "no key", not an error.** The track is deleted or became a video — the instrument works as an ordinary compressor, the project opens, and the interface says so in words. Rule 20: nothing is cut off by itself, but the render has no right to silently produce silence.
+- **The shape is two compressors in one `params_grid` widget.** On the left, the chain of this track; on the right, the compressor of the key track, dimmed; if it is absent, it is created by one action and the same undo step of the window session. No new windows (rule 22), no own form of four numbers (rule 24); the parameters live in the project and therefore "are remembered" by construction (rule 23).
+- **The snapshot is removed entirely.** The owner's direct answer. Curves already baked into projects are ordinary automation: they are read and sound, and their format does not change.
+- **The envelope version is v12 by content**, only when a key is assigned.
 
 ## Risks / Trade-offs
 
-- [Цепочка ключа считается дважды — на свой выход и на детектор] → типичный ключ это
-  речь с компрессором (дёшево); цена меряется тестом на плотной сцене, и если она окажется
-  заметной, у нас есть дешёвый запасной ход — кэш выхода ключа при `la == 0` у цели.
-- [Ключ заглушён mute → дакинга нет, и это можно принять за поломку] → строка состояния
-  говорит об этом у выбора ключа; поведение то же, что слышит человек.
-- [Топологический порядок меняет порядок сложения f32 в проектах С ключами] → у таких
-  проектов прежнего эталона нет по построению (сайдчейна раньше не было); проекты БЕЗ
-  ключей идут прежним порядком, и на них стоят `GOLDEN_AUDIO`, t2, t3.
-- [Удаление снимка отнимает путь «отдать огибающую наружу»] → владелец выбрал это прямым
-  ответом, зная о потере; напечённые кривые в старых проектах целы.
-- [Второй компрессор правится из чужого окна — легко получить неожиданный undo-шаг] →
-  обе правки идут одной сессией окна дорожки и одним шагом истории, «Отмена» откатывает обе.
+- [The key chain is computed twice — for its own output and for the detector] → a typical key is speech with a compressor (cheap); the cost is measured by a test on a dense scene, and if it turns out to be noticeable, we have a cheap fallback — the key's output cache at `la == 0` on the target.
+- [The key is muted → no ducking, and this can be taken for a breakage] → the status line says so at the key's selection; the behaviour is the same as what the person hears.
+- [The topological order changes the f32 summation order in projects WITH keys] → such projects have no former reference by construction (a sidechain did not exist before); projects WITHOUT keys keep the former order, and `GOLDEN_AUDIO`, t2, t3 stand on them.
+- [Removing the snapshot takes away the path "send the envelope outward"] → the owner chose this as a direct answer, knowing the loss; the curves baked into old projects are intact.
+- [The second compressor is edited from another window — it is easy to get an unexpected undo step] → both edits go through one session of the track window and one history step; "Cancel" rolls back both.
 
-## Уроки исполнения (Р.65)
+## Execution lessons (R.65)
 
-- **Ключ выравнивается по СЛОТУ, а не по окну цепочки.** Узел после лимитера обрабатывает
-  сэмплы, задержанные на окно этого лимитера; ключ, взятый на окне входа цепочки, приезжал
-  на 5 мс раньше речи. Появилась `TrackProcessor::slot_delay(slot)` — сумма упреждений узлов
-  ДО слота, и окно ключа сдвигается на неё. Поймано t770, в харнессе UI этого не видно.
-- **Эталон для «просело ли» — прогон БЕЗ ПРИБОРА, а не без ключа.** Компрессор без ключа
-  сжимает свой вход, и под речью оба прогона случайно совпадают: первый вариант живого
-  сценария объявил работающий дакинг сломанным, а второй — сломанный работающим.
-- **Окно, которое выросло, ломает достижимость.** С двумя компрессорами окно дорожки
-  переросло экран, и «Закрыть»/«Отмена» уехали за кромку (t775 упал именно на этом). Тело
-  окна теперь в прокрутке, кнопки — под ней.
-- **Удаление функции тянет за собой каталог.** Со снимком осиротел ключ `msg.analysis_stale`
-  (его единственный потребитель), и t125 честно покраснел; ключ удалён из пяти каталогов.
-- **`kt-cli render` пишет float32 WAV**, который модуль `wave` в Python читать отказывается
-  (`unknown format: 3`) — живой сценарий разбирает чанки сам.
+- **The key is aligned to the SLOT, not to the chain's window.** The node after the limiter processes samples delayed by that limiter's window; the key taken on the input window of the chain arrived 5 ms earlier than the speech. `TrackProcessor::slot_delay(slot)` appeared — the sum of the lookaheads of the nodes BEFORE the slot — and the window of the key is shifted by it. Caught by t770; in the UI harness this is not visible.
+- **The reference for "did it dip" is a run WITHOUT THE INSTRUMENT, not without the key.** A compressor without a key compresses its own input, and under speech the two runs coincidentally match: the first version of the live scenario declared a working ducking broken, and the second declared a broken one working.
+- **A window that grew breaks reachability.** With two compressors the track window outgrew the screen, and "Close"/"Cancel" moved past the edge (t775 failed precisely on this). The window body is now in a scroll area, and the buttons are under it.
+- **Removing a function drags the catalogue along.** With the snapshot, the key `msg.analysis_stale` was orphaned (its only consumer), and t125 honestly turned red; the key was removed from all five catalogues.
+- **`kt-cli render` writes a float32 WAV**, which Python's `wave` module refuses to read (`unknown format: 3`) — the live scenario parses the chunks itself.
 
 ## Migration Plan
 
-Формат: поле ключа пишется только когда ключ назначен; файл без сайдчейна остаётся
-байт-в-байт прежним и на прежней версии. Файл с ключом — v12; старая сборка получит честный
-отказ по версии вместо молчаливой потери. Откат: снять ключ — следующая запись вернёт файл
-на прежнюю версию. Проекты с напечёнными кривыми дакинга работают без изменений.
+Format: the key field is written only when a key is assigned; a file without a sidechain stays byte-for-byte the same and on the same version. A file with a key — v12; an old build gets an honest refusal by version instead of a silent loss. Rollback: remove the key — the next write returns the file to the former version. Projects with baked ducking curves work without changes.

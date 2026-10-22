@@ -2,71 +2,68 @@
 
 ## Why
 
-Владелец положил файл претензий `ktprompts_v26.10` (36 КБ, ~75 нумерованных пунктов по
-двенадцати областям: генераторы, юзабилити, таймлайн, рендер, окна, автоматизация,
-раскладки, NLE, ядро/формат, плагины, FX, 3D, OpenFX, кэш рендера, память, будущее) и
-попросил «проиндексировать его в ближайший план правок». Его собственные правила в файле:
-«поделить на стадии, обсудить и решить», «прямо по отдельности каждый момент
-прорабатываем», «обратной совместимости не надо», «по любым пунктам могу быть не прав —
-задавай вопросы, не ограничивайся», «делай заметки для агентов, тесты, чтобы не
-возвращаться к однотипным проблемам».
+The owner put the claims file `ktprompts_v26.10` (36 KB, ~75 numbered items across
+twelve areas: generators, usability, timeline, render, windows, automation,
+layouts, NLE, core/format, plugins, FX, 3D, OpenFX, render cache, memory, future)
+and asked to "index it into the nearest plan of edits". His own rules in the file:
+"split into stages, discuss and decide", "we work through each point separately, one by one",
+"no backward compatibility needed", "on any points I may be wrong — ask questions, don't hold back",
+"make notes for agents, tests, so as not to return to the same kinds of problems".
 
-Сверка с кодом и спеками (03.10–12.10.2026) показала, почему индекс нужен ДО любой правки:
-**часть пунктов уже закрыта раундами Р.49–Р.70** (автоматизация генераторов — Р.59,
-генератор и эффекты в одном окне — Р.59, стоп-кадр — Р.57, отчёт о падении — Р.49, уход от
-OTIO и git-индексируемость — Р.70), **часть противоречит его же более поздним решениям**
-(имя формата `ktproj` и удаление импорта старых файлов против `.kt` и одной двери импорта
-Р.67/Р.70), **часть — дефекты, которые уже повторяются** (ресайз и зона прыжка воруют
-клики — тема р.12/р.13; «очевидные надписи» — чек-лист п.17 р.7, нарушен «Add morpher
-here»), остальное — функции без заметки разведки и будущее. Без реестра следующий раунд
-взял бы из файла уже сделанное или сделал бы противоположное решённому.
+A cross-check against the code and specs (03.10–12.10.2026) showed why the index is needed BEFORE any edit:
+**part of the items is already closed by rounds R.49–R.70** (generator automation — R.59,
+generator and effects in one window — R.59, freeze frame — R.57, crash report — R.49, moving away from
+OTIO and git-indexability — R.70), **part contradicts his own later decisions** (the format name `ktproj` and removing the import of old files against `.kt` and one import door
+R.67/R.70), **part are defects that are already repeating** (resize and the jump zone steal
+clicks — the theme of R.12/R.13; "obvious labels" — checklist item 17 of R.7, broken by "Add morpher
+here"), the rest are features without a reconnaissance note, and the future. Without a registry the next round
+would take from the file what is already done or would do the opposite of what was decided.
 
 ## What Changes
 
-- **Реестр претензий** `docs/ktprompts/v26.10-index.md`: каждая претензия файла получает
-  строку с состоянием из закрытого набора (`сделано` — раунд и тест; `частично`; `нет` —
-  дефект или функция с адресом capability/заметки; `вопрос` — текст вопроса владельцу;
-  `будущее`), и стадией. Дословный источник — `docs/ktprompts/v26.10.txt` (скопирован при
-  предложении, это первоисточник; он же цитируется в `docs/user-feedback.md`).
-- **Сторож полноты** `src/scripts/ktprompts-index.py --check` (по образцу
-  `features-index.py` и `live-coverage.py`): пункт без строки, состояние вне набора,
-  «сделано» без существующего теста в исходниках, «вопрос» без текста — красный; входит в
-  `finish.sh` и в тест t823. Это и есть «заметки для агентов и тесты, чтобы не
-  возвращаться» — в форме, которая роняет проверку, а не просит в чек-листе.
-- **Вопросы владельцу** — одиннадцать, собраны в `design.md`; ответы ложатся в
-  `docs/user-feedback.md` дословно и переводят строки реестра из `вопрос` в решение.
-- **Ближайший план** — порядок следующих раундов по реестру (предложение, подтверждается
-  ответом на вопрос 11): Р.72 генераторы (первая секция файла) → Р.73 дефекты таймлайна и
-  транспорта (дёшево и много) → Р.74 рендер (энкодеры, форматы, громкость, падение) → Р.75
-  окна и glow → Р.76 автоматизация и пресеты; дальше — функции по заметкам (заметки на
-  таймлайне, cut региона, раскладки, NLE, плагины/OpenFX, FX, 3D, кэш рендера, память).
-  Каждый раунд — свой change; этот change кода программы не меняет.
-- **Правило для агентов** (в CLAUDE.md корня, задача стадии 3): любое изменение модели,
-  которое файл обмена OTIO выразить не может, записывается в раздел «что теряет экспорт»
-  реестра — требование владельца из секции CORE («любой агент при добавлении фичи, ломающей
-  otio, должен записать это в отдельный список»).
+- **Claims registry** `docs/ktprompts/v26.10-index.md`: each claim of the file gets a row with a state from the closed set (`done` — round and test; `partial`; `no` —
+  a defect or a feature with an address of a capability/note; `question` — the text of the question to the owner;
+  `future`), and a stage. The verbatim source — `docs/ktprompts/v26.10.txt` (copied at
+  the proposal, this is the primary source; it is also quoted in `docs/user-feedback.md`).
+- **Completeness guard** `src/scripts/ktprompts-index.py --check` (modeled on
+  `features-index.py` and `live-coverage.py`): an item without a row, a state outside the set,
+  "done" without an existing test in the sources, a "question" without text — red; it is part of
+  `finish.sh` and of test t823. This is the "notes for agents and tests, so as not to
+  return" — in a form that fails the check, not one that asks for a checklist.
+- **Questions to the owner** — eleven, collected in `design.md`; the answers go into
+  `docs/user-feedback.md` verbatim and move the registry rows from `question` to a decision.
+- **Nearest plan** — the order of the next rounds by the registry (a proposal, confirmed by the
+  answer to question 11): R.72 generators (the first section of the file) → R.73 timeline and
+  transport defects (cheap and many) → R.74 render (encoders, formats, loudness, crash) → R.75
+  windows and glow → R.76 automation and presets; further — features by notes (timeline notes, region
+  cut, layouts, NLE, plugins/OpenFX, FX, 3D, render cache, memory). Each round is its own change; this change does not
+  alter the application code.
+- **Rule for agents** (in the root CLAUDE.md, a task of stage 3): any change to the model
+  that the OTIO exchange file cannot express is recorded in the "what export loses" section of the
+  registry — the owner's requirement from the CORE section ("any agent adding a feature that
+  breaks otio must record this in a separate list").
 
-Не входит: реализация ни одной претензии (каждая — свой change после ответов), разведка
-чужих редакторов по новым функциям (заводится заметкой в том раунде, который берёт функцию;
-исключение — пункты, где заметка уже есть, они указаны в реестре).
+Not included: implementation of any claim (each — its own change after the answers), reconnaissance of
+other editors for new features (opened as a note in the round that takes the feature;
+the exception — items where a note already exists, they are named in the registry).
 
 ## Capabilities
 
 ### New Capabilities
 
-(нет)
+(none)
 
 ### Modified Capabilities
 
-- `durability`: добавляется требование «Претензии владельца индексируются реестром;
-  сторож держит его полным и честным» — рядом с требованием «Работа заканчивается
-  `finish.sh`», потому что это тот же класс: процесс, который роняет проверку, а не
-  надеется на чек-лист.
+- `durability`: a requirement is added, "The owner's claims are indexed by the registry;
+  the guard keeps it complete and honest" — next to the requirement "The work ends with
+  `finish.sh`", because it is the same class: a process that fails the check rather than
+  relying on a checklist.
 
 ## Impact
 
-- `docs/ktprompts/` (новый каталог: дословный источник и реестр), `docs/user-feedback.md`
-  (раздел Р.71 — записан при предложении), `src/scripts/ktprompts-index.py` (новый
-  сторож), `src/scripts/finish.sh` (вызов сторожа), `src/apps/kt-app/src/reach_tests.rs`
-  (t823), `CLAUDE.md` (правило «что теряет экспорт»), `openspec/specs/durability`.
-- Код приложения, kt-cli, модель, формат — не меняются.
+- `docs/ktprompts/` (a new directory: the verbatim source and the registry), `docs/user-feedback.md`
+  (section R.71 — written at the proposal), `src/scripts/ktprompts-index.py` (the new
+  guard), `src/scripts/finish.sh` (the call of the guard), `src/apps/kt-app/src/reach_tests.rs`
+  (t823), `CLAUDE.md` (the rule "what export loses"), `openspec/specs/durability`.
+- Application code, kt-cli, model, format — do not change.

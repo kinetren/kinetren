@@ -1,206 +1,162 @@
-# Транспорт — почему так
+# Transport — why it is this way
 
-## Что было и у кого болело
+## What hurt and for whom
 
-- **Голодание кольца останавливало часы.** Колбэк при пустом кольце тянул последний
-  кадр и не увеличивал потребление, а playhead двигался ровно на потреблённое. Каждый
-  кадр underrun'а — кадр, на который таймлайн не проехал: реальное время идёт, а
-  программа играет медленнее. Владелец видел это как «M3TEOR замедленн почему-то» и
-  «потом там вообще нет ни звука ни видео у основного события» — замедлялось не
-  событие, а вся программа. Это противоречило собственному инварианту движка
-  («промах к дедлайну → тишина + underrun-флаг»): тишина была, время стояло.
-- **Underrun'ы измерялись в двух единицах.** Путь без FX считал кадры, путь с FX —
-  промахи бёрстов; одно голодание давало 24000 против 24. Счётчики в UI не были
-  подписаны, и владелец читал их как «левый/правый» каналы («underruns очень давно
-  сломался, мы не будем bisect делать» — bisect и не был нужен).
-- **Правка региона пересобирала весь движок.** Каждое движение границы и каждое
-  нажатие Loop клонировали проект в 1961 событие и останавливали аудио-поток; кольцо
-  пустело, а через часы под голоданием всё после этого играло медленнее.
-- **Видео показывало ровно 24 кадра/с** независимо от качества и бэкенда — playhead
-  двигался квантами колбэка (PipeWire до 2048 сэмплов = 42.7 мс), и потребители
-  читали сырой transport.
-- **Джаддер на медленной скорости.** Задержка вывода вычиталась в wall-clock кадрах
-  из позиции таймлайна без учёта скорости: при 0.25× перекомпенсация вчетверо, а
-  дрожь EMA задержки разворачивала картинку назад.
-- **Loop рассогласован с транспортом.** Seek правее конца региона: курсор ехал
-  линейно, звук и превью крутили регион. Reverse-loop тихо ломался через круг.
-  Выключение Loop на ходу прыгало звуком в тишину далеко за курсором.
-- **Скорость.** Интервал (0, 0.25) на полосе транспорта был непредставим по
-  построению; в slowed малое или отрицательное значение молча превращалось в 0.25
-  тремя независимыми клампами; отрицательной скорости внутри события не было как
-  понятия. Владелец: «я должен иметь возможность выставить 0,05 или −0,03».
-- **В паузе система лагала** даже с пустым проектом: render-поток крутился 500 раз/с,
-  prefetch клонировал проект каждые 100 мс.
+- **Starvation of the ring stopped the clock.** When the ring was empty, the callback repeated the last
+  frame and did not increase consumption, and the playhead moved exactly by what was consumed. Every
+  underrun frame was a frame the timeline did not advance over: real time went on, but the programme
+  played slower. The owner saw this as "M3TEOR is somehow slowed down" and "then there is no sound or
+  video at all for the main event" — it was not the event that slowed down, but the whole programme.
+  This contradicted the engine's own invariant ("a miss at the deadline → silence + underrun flag"):
+  there was silence, and time stood still.
+- **Underruns were measured in two units.** The path without FX counted frames, the path with FX
+  counted burst misses; one starvation gave 24000 against 24. The counters in the UI were not labelled,
+  and the owner read them as "left/right" channels ("underruns broke a long time ago, we will not do a
+  bisect" — and no bisect was needed).
+- **Editing a region rebuilt the whole engine.** Every move of a boundary and every press of Loop cloned
+  the project into 1961 events and stopped the audio stream; the ring emptied, and after hours under
+  starvation everything played slower from then on.
+- **Video showed exactly 24 frames/s** regardless of quality and backend — the playhead moved in quanta
+  of the callback (PipeWire up to 2048 samples = 42.7 ms), and consumers read the raw transport.
+- **Judder at slow speed.** The output latency was subtracted from the timeline position in wall-clock
+  frames without taking the speed into account: at 0.25× the compensation was four times too large, and
+  the jitter of the latency EMA rolled the picture back.
+- **Loop was out of step with the transport.** A seek to the right of the region's end: the cursor moved
+  linearly, while the sound and the preview looped the region. Reverse loop silently broke across the
+  wrap. Switching Loop off on the fly jumped the sound into silence far beyond the cursor.
+- **Speed.** The interval (0, 0.25) on the transport strip was unrepresentable by construction; in slowed
+  a small or negative value silently became 0.25 through three independent clamps; a negative speed inside
+  an event did not exist as a notion at all. The owner: "I must be able to set 0.05 or −0.03".
+- **At pause the system lagged** even with an empty project: the render thread spun 500 times per second,
+  the prefetch cloned the project every 100 ms.
 
-## Решения и почему
+## Decisions and why
 
-- **Часы идут по выданным колбэком кадрам.** Голодание — слышимая тишина и
-  `callback_underruns`, но не остановка времени. Единственное исключение — до ПЕРВОГО
-  кадра после старта/flush'а: идти не от чего, а буферы интерполяции держат материал
-  до seek'а. Инвариант 6 корневого CLAUDE.md переформулирован ровно так.
-- **Колбэк знает только модуль скорости.** Направление применяет render-поток при
-  продвижении playhead; смена знака — мини-seek без бампа generation. Реверс-транспорт
-  (rate < 0 на транспорте) играет сырым путём без FX — «как Vegas» — и это отдельная
-  ветка от знаковой скорости ВНУТРИ события (capability `audio-render`).
-- **Часы показа — отдельная функция.** Интерполяция wall-clock'ом между шагами
-  мастер-часов, сглаженная задержка, масштабирование задержки скоростью, ратчет ключа.
-  Все потребители позиции для показа (превью, курсор таймлайна, таймкод тулбара) ходят
-  через неё — инвариант 12 (capability `ui-timeline`).
-- **Вооружённость лупа — только на прыжках.** Условие принадлежности одно на всех:
-  заворот при пересечении конца ИЗНУТРИ, грань инклюзивна, реверс зеркален. Флип
-  региона Some↔None при игре — мини-seek. Регион и флаг Loop живут в «удобстве» UI
-  и движком из проекта не читаются: луп доезжает отдельным вызовом, содержимое —
-  командами модели.
-- **Заворот — шов, не seek.** FX-состояние не сбрасывается, реверб дозванивает через
-  круг; настоящий seek с пре-роллом узнаётся по `reset()`. Промахи пре-ролла — не
-  underrun'ы (их не слышно).
-- **Шкала транспорта — кусочная.** Линейно 0.01 → 0.25 на первых 30 % хода, дальше
-  логарифм 0.25 → 2; наклоны на стыке 0.0096 и 0.0089 ×/px — излом глазом не читается.
-  Стоп — только узкая зона `|t| < 0.018` (1.5 px при половине полосы 85 px). Принято
-  владельцем: «плавная шкала ±0.01…±2 + Shift + ввод числом», стоп 1–2 px в центре,
-  двойной клик — 1×, высота виджета не меняется.
-- **Две оси скорости события.** P = ∫rate — знаковая позиция (адрес чтения, необратима);
-  A = ∫|rate| — потребление (монотонно, обращается, по нему живёт курсор ресемплера и
-  тримы). Ось зеркала «Реверса» — пролёт (min P, max P). Решение владельца: минус —
-  как velocity-огибающая Vegas, направление может меняться посреди события, 0 —
-  стоп-кадр, у края материала — держим кадр, флаг «Реверс» остаётся зеркалом поверх.
-- **Удержание ниже 0.01.** Решение владельца: «тянуть до 0.01, тишина только в нуле».
-  Курсор стоит, выход нулевой, узлы работают — хвост реверба дозванивает, как в паузе
-  между событиями.
-- **Пауза = парковка потоков** на condvar со страховочным таймаутом; prefetch
-  пересобирает графы только по версии проекта.
-- **Чёрный ящик** — кольцо на 512 записей, дедуп, снимок раз в секунду при ненулевых
-  дельтах, `STALL`. Владелец просил компактность из-за прыжков по мелким регионам.
+- **The clock runs on the frames handed out by the callback.** Starvation is audible silence and
+  `callback_underruns`, but not a stop of time. The only exception is before the FIRST frame after
+  start/flush: there is nothing to go from, and the interpolation buffers hold the material up to the seek.
+  Invariant 6 of the root CLAUDE.md was reformulated exactly so.
+- **The callback knows only the speed module.** The direction is applied by the render thread when the
+  playhead advances; a sign change is a mini-seek without a generation bump. Reverse transport (rate < 0 on
+  the transport) plays through the raw path without FX — "like Vegas" — and this is a separate branch from
+  the signed speed INSIDE an event (capability `audio-render`).
+- **The display clock is a separate function.** Wall-clock interpolation between the steps of the master
+  clock, smoothed latency, scaling of latency by speed, ratchet of the key. All consumers of the display
+  position (the preview, the timeline cursor, the toolbar timecode) go through it — invariant 12 (capability `ui-timeline`).
+- **The loop's armed state — only on jumps.** The membership condition is one for all: a wrap when crossing
+  the end FROM INSIDE, the edge is inclusive, reverse is mirrored. Flipping the region Some↔None during
+  playback is a mini-seek. The region and the Loop flag live in the UI "convenience" and are not read from
+  the project by the engine: the loop arrives through a separate call, the content — through model commands.
+- **A wrap is a seam, not a seek.** The FX state is not reset, the reverb rings out across the loop; a real
+  seek with pre-roll is recognised by `reset()`. Pre-roll misses are not underruns (they are not audible).
+- **The transport scale is piecewise.** Linear 0.01 → 0.25 over the first 30 % of travel, then logarithmic
+  0.25 → 2; the slopes at the joint, 0.0096 and 0.0089 ×/px, are not perceptible as a break. Stop — only a
+  narrow zone `|t| < 0.018` (1.5 px at a half-strip of 85 px). Accepted by the owner: "smooth scale ±0.01…±2 +
+  Shift + typed input", stop 1–2 px at the centre, a double click — 1×, the height of the widget does not change.
+- **Two axes of the event's speed.** P = ∫rate — the signed position (the read address, irreversible); A = ∫|rate|
+  — the consumption (monotonic, reversible, the resampler cursor and the trims live on it). The mirror axis of
+  "Reverse" is the span (min P, max P). The owner's decision: minus — like the velocity envelope of Vegas, the
+  direction may change in the middle of an event; 0 — a freeze frame; at the edge of the material we hold the
+  frame; the "Reverse" flag remains a mirror on top.
+- **Holding below 0.01.** The owner's decision: "drag down to 0.01, silence only at zero". The cursor stands
+  still, the output is zero, the nodes keep working — the reverb tail rings out, as in a pause between events.
+- **Pause = parking the threads** on a condvar with a safety timeout; the prefetch rebuilds the graphs only on
+  the project version.
+- **Black box** — a ring of 512 records, deduplication, a snapshot once per second when deltas are non-zero, `STALL`.
+  The owner asked for compactness because of jumps over small regions.
 
-## Отвергнуто и почему
+## Rejected and why
 
-- **Не двигать время при голодании** (прежнее поведение) — нарушало инвариант движка
-  и делало всю программу медленнее реального времени.
-- **Чистый логарифм для шкалы скорости** — у него нет нуля (стоп всё равно пришлось
-  бы пришивать зоной), а внизу шкала бесконечно чувствительна.
-- **Shift как деление позиции курсора** (`t = (pos.x − left)/8`) — Shift, нажатый
-  посреди жеста, мгновенно утащил бы значение к центру. Делится приращение.
-- **Поле ввода скорости отдельным окном** — владелец зафиксировал форму тулбара
-  («две параллельные полосы, высоту не менять»); поле — на месте полосы.
-- **«Минус в slowed = второй вход в кнопку Реверс»** — отвергнуто владельцем: минус
-  идёт назад по материалу внутри события и может менять направление посреди него.
-- **«Ниже 0.25 глушить»** — отвергнуто владельцем в пользу удержания ниже 0.01.
-- **Обращать позицию P** — немонотонна, обратить нечем; обращать надо было потребление.
-- **Решать удержание на кадр** — курсор ресемплера этого не переживёт; решение на чанк.
-- **`render_head` как источник вооружённости** — при armed-лупе он растёт линейно и
-  фолдится на каждом бёрсте, для условия принадлежности непригоден.
-- **Абсолютный порог гистерезиса разгона 0.02** — на базе 0.05 это 40 % базы: виджет
-  показывал разгон, а плеер играл как стоял.
-- **`set_project` на правку региона** — клон проекта и остановка render-потока ради
-  правки, которой план не касается.
+- **Not moving time on starvation** (the earlier behaviour) — violated the engine's invariant
+  and made the whole programme slower than real time.
+- **A pure logarithm for the speed scale** — it has no zero (stop would still have to be pinned with a zone),
+  and at the bottom the scale is infinitely sensitive.
+- **Shift as division of the cursor position** (`t = (pos.x − left)/8`) — Shift pressed in the middle of a gesture
+  would instantly pull the value toward the centre. The increment is divided instead.
+- **The speed input field as a separate window** — the owner fixed the toolbar's form ("two parallel strips, do not
+  change the height"); the field is in place of the strip.
+- **"Minus in slowed = a second input to the Reverse button"** — rejected by the owner: the minus goes backward through
+  the material inside the event and may change direction in its middle.
+- **"Mute below 0.25"** — rejected by the owner in favour of holding below 0.01.
+- **Reversing the position P** — it is non-monotonic, there is nothing to reverse; the consumption had to be reversed.
+- **Deciding the hold per frame** — the resampler cursor would not survive it; the decision is per chunk.
+- **`render_head` as the source of the armed state** — with an armed loop it grows linearly and folds on every burst,
+  unsuitable for the membership condition.
+- **An absolute hysteresis threshold of the boost 0.02** — on a base of 0.05 this is 40 % of the base: the widget showed
+  a boost while the player played as if standing still.
+- **`set_project` on an edit of the region** — cloning the project and stopping the render thread for an edit the plan
+  does not touch.
 
-## Неочевидные детали
+## Non-obvious details
 
-- Потребление в `varispeed_fill` (`src/libs/kt-engine/src/player.rs`) включает два
-  кадра прайминга интерполяции: при rate = 1 и 100 выходных кадрах `consumed == 102`;
-  после конца источника выдаётся последний кадр, но потребление продолжает расти.
-  Неположительный или NaN шаг — тишина без потребления (иначе фаза уходила в −∞ и
-  интерполяция расходилась — опасно громко).
-- `callback_step` (`src/libs/kt-engine/src/player.rs`) отдаёт `None` при
-  `|rate| < 0.001` — единственный настоящий нижний предел скорости; `set_playback_rate`
-  клампит ±`ENGINE_RATE_MAX` = 8. Все прочие «0.25» были ползунком, не движком.
-- Сырая `output_latency` дрожит между колбэками на ±кадр: читается `latency_smooth`
-  (EMA `sm + (raw − sm)/8` в render-потоке, `src/libs/kt-engine/src/player.rs`),
-  а `Player::video_playhead` берёт её вместе с `display_extrapolation`.
-- `display_extrapolation` клампит ход размером последнего кванта; `set_playback_rate`
-  сбрасывает окно экстраполяции (оно выучено на шагах прежней скорости) — поэтому
-  разгон пробелом обязан идти с гистерезисом (`boost_needs_update`,
-  `src/apps/kt-app/src/app.rs`): 2 % от базы с полом 0.0005.
-- `video_display_frame(head, latency, region, dir, rate)`
-  (`src/libs/kt-engine/src/player.rs`) вычитает `latency · |rate|`, при реверсе
-  прибавляет (слышимое сейчас ПОЗЖЕ по таймлайну); замер t114: старая формула при
-  0.25× давала 186 откатов из 1600 выборок, новая — 10; при 1× обе — 34.
-- `preview_key_step` (`src/libs/kt-engine/src/player.rs`) — ратчет: откат запрещён
-  при любом размере, переанкор только по seek/паузе, при реверсе норма — убывание.
-  Ратчет — редкая страховка; если он срабатывает постоянно, часы показа дрожат.
-- `loop_arm_after_jump(head, region, dir)` (`src/libs/kt-engine/src/player.rs`):
-  forward — до конца включительно, реверс — от начала включительно; без региона и
-  при вырожденном регионе — всегда вооружён. Guard reverse-fill — `render_head <= re`,
-  прежний `> rs` гас, когда render_head (опережая playhead на глубину кольца)
-  уходил ниже начала региона.
-- `lookahead_windows(head, len, region)` (`src/libs/kt-engine/src/player.rs`)
-  фолдит окно упреждения в регион и не длиннее круга — иначе десятки заказов одного
-  бёрста и вытеснение головы региона (prefetch-thrash).
-- Шов заворота — `ClipProcessor::seam` (`src/libs/kt-fx/src/audio/mod.rs`):
-  переставляет источник без сброса состояния. Правки границ региона без флипа
-  (Shift+A/D внутри лупа) пересборку не вызывают.
-- `on_region_changed` (`src/apps/kt-app/src/app.rs`) не зовёт `set_project`; луп
-  доезжает `Player::set_loop_region`. Прецедент того же класса — `retune_media`
-  (capability `generators`).
-- Три «0.25» в разных местах — `RATE_KNEE` (`src/apps/kt-app/src/app.rs`), прежний
-  `RATE_CLAMP` (`src/libs/kt-model/src/warp.rs`), спека `rate` эффекта — совпадали
-  числом по разным причинам, и только одна была настоящей. Правило: предел без
-  записанной причины — подозреваемый, а не факт; прежде чем повторить число рядом,
-  спроси, из чего оно следует ТАМ.
-- Константы шкалы (`src/apps/kt-app/src/app.rs`, `slider_to_rate`/`rate_to_slider`):
-  `RATE_STOP = 0.018`, `RATE_FLOOR = 0.01`, `RATE_KNEE = 0.25` на `RATE_KNEE_T = 30 %`
-  хода, `RATE_MAX = 2`; 1× стоит в 65–80 % хода; `|r| > 2` садится на край (метка
-  разгона остаётся видимой). Слабые риски у 0.1 и 0.25 без подписей.
-- `drag_advance` (`src/apps/kt-app/src/app.rs`) копит виртуальный курсор
-  `speed_drag_vx`, Shift делит приращение на `SPEED_FINE_DIV = 8`; «второе дыхание»
-  (уход мышью за край полосы) считает `over_px` от того же виртуального курсора.
-- Поле ввода `speed_entry` (`draw_speed_entry`, `src/apps/kt-app/src/app.rs`) —
-  форма маски таймкода тулбара (170×20, моноширинный, подчёркивание акцентом),
-  события съедаются, чтобы цифры и Enter не утекли в хоткеи; первая цифра заменяет
-  приглушённое текущее значение целиком; нечитаемое значение НЕ закрывает поле и
-  красит подчёркивание; `surrender_focus` — на КАЖДОМ пути закрытия, включая
-  Esc-каскад (гард в `draw_speed_control` возвращает фокус следующим кадром).
-- `parse_rate_text` (`src/apps/kt-app/src/app.rs`) принимает запятую, типографский
-  минус и хвост «×»/«x»; `normalize_rate` — почти-ноль (< 0.005) в стоп, выше — пол
-  0.01 со знаком.
-- Бит-тождество карты варпа на положительных кривых — конструкция, не надежда
-  (`src/libs/kt-model/src/warp.rs`): тело `source_progress` не тронуто, знак появился
-  от симметричного клампа; `consumed_abs` разбивает сегмент в нуле СТРОГО при
-  `r0·r1 < 0` — на положительных кривых ветка не исполняется, `fabs` положительного
-  f64 тождественна, порядок сложений тот же. Сторож — замороженная копия старой карты
-  В ТЕСТЕ t603d, сверка `to_bits()`: GOLDEN узнал бы позже и не сказал бы, ЧТО поехало.
-- `span()` vs `used()` (`ClipWarp`, `src/libs/kt-model/src/warp.rs`): на знаковой
-  кривой событие может уйти назад и вернуться, съев вдвое больше, чем прошло. Зеркало
-  берётся вокруг пролёта; у зеркальной ветки кламп `max(0)` до начала файла стоял не
-  всегда — нашлось t604g.
-- Охват модуля скорости для ресемплера считается по РАЗБИТЫМ сегментам
-  (`src/libs/kt-model/src/warp.rs`): по одним концам минимум вышел бы завышенным, и
-  ресемплер отверг бы смену отношения — нашлось покрасневшим t322 (capability
-  `audio-fx`).
-- Тримы растянутого клипа экстраполируют скоростью в нуле; при rate ≤ 0 деление на
-  ноль давало `i64::MIN` и переполнение в debug — теперь край отвечает «материал слева
-  этим событием не потребляется» (`trim_min_start`/`trim_max_end`,
-  `src/libs/kt-model/src/warp.rs`).
-- `RATE_AUDIO_FLOOR = 0.01` живёт в `src/libs/kt-model/src/warp.rs`; удержание
-  решается на чанк по правилу середины (`src/libs/kt-fx/src/audio/mod.rs`,
-  `eff_rate(..).abs() < RATE_AUDIO_FLOOR`); в рубато уходит модуль
-  (`src/libs/kt-fx/src/audio/warp.rs`). `set_rate` там раньше глотал отказ через
-  `let _ =` — кривая вне окна ±32 вокруг якоря молча застревала; теперь отказ считается
-  (`rejected`) и ловится `debug_assert`.
-- Адресная карта аудио — раны постоянного направления, позиции ранов накапливаются
-  ЦЕЛЫМИ `p_{k+1} = p_k ± (a_{k+1} − a_k)` (`src/libs/kt-fx/src/audio/mod.rs`): при
-  округлении по отдельности на стыке был бы пропуск или сдвоенный кадр — щелчок ровно
-  в точке разворота.
-- Постоянная −1 остаётся на ПЛОСКОМ пути (`has_warp` смотрит на модуль, растяжения
-  нет, ресемплер не нужен) — поэтому равенство t616 с «Реверсом» точное, а не «в
-  допуске» (`src/libs/kt-engine/tests/reverse.rs`).
-- Реверс-транспорт имеет СВОЙ `wanted_audio_bursts_raw`
-  (`src/libs/kt-engine/src/audio.rs`): сырой путь читает линейно, а окно по варпу
-  грело не те бёрсты — вечный промах (capability `audio-render`).
-- Гейт суб-микса вложенной ленты — по НЕМОНОТОННОСТИ чтения, а не по флагу реверса
-  (`NestStream::new_for` с пре-роллом и блоком, `src/libs/kt-engine/src/audio.rs`;
-  знаковость кривой — `kt_model::rate_signed` через `src/libs/kt-fx/src/audio/mod.rs`):
-  зеркальный экземпляр и знаковая скорость означают одно — переезд на каждый бёрст
-  (capability `compositions`).
-- `FlightRecorder` (`src/libs/kt-engine/src/flight.rs`) пишет только render-поток —
-  в колбэк не заходит (инвариант 6); `STALL` — играем, а playhead стоит больше секунды;
-  дамп — в `<проект>.ktflight.log`, и именно он доказал заморозку у владельца.
+- The consumption in `varispeed_fill` (`src/libs/kt-engine/src/player.rs`) includes two frames of interpolation priming:
+  at rate = 1 and 100 output frames `consumed == 102`; after the end of the source the last frame is output, but the
+  consumption keeps growing. A non-positive or NaN step — silence without consumption (otherwise the phase went to −∞
+  and the interpolation diverged — dangerously loud).
+- `callback_step` (`src/libs/kt-engine/src/player.rs`) returns `None` at `|rate| < 0.001` — the only real lower limit of speed;
+  `set_playback_rate` clamps to ±`ENGINE_RATE_MAX` = 8. All other "0.25"s were a slider, not the engine.
+- The raw `output_latency` jitters between callbacks by ±1 frame: the `latency_smooth` is read
+  (EMA `sm + (raw − sm)/8` in the render thread, `src/libs/kt-engine/src/player.rs`), and
+  `Player::video_playhead` takes it together with `display_extrapolation`.
+- `display_extrapolation` clamps the step to the size of the last quantum; `set_playback_rate` resets the extrapolation
+  window (it was learned on the steps of the previous speed) — therefore a boost by the space bar must go with hysteresis
+  (`boost_needs_update`, `src/apps/kt-app/src/app.rs`): 2 % of the base with a floor of 0.0005.
+- `video_display_frame(head, latency, region, dir, rate)` (`src/libs/kt-engine/src/player.rs`) subtracts `latency · |rate|`,
+  and in reverse adds it (what is audible now is LATER on the timeline); measurement t114: the old formula at 0.25× gave 186
+  rollbacks out of 1600 samples, the new one — 10; at 1× both — 34.
+- `preview_key_step` (`src/libs/kt-engine/src/player.rs`) is a ratchet: rollback is forbidden at any size, re-anchoring only
+  on seek/pause, in reverse the norm is a decrease. The ratchet is a rare safeguard; if it fires constantly, the display clock jitters.
+- `loop_arm_after_jump(head, region, dir)` (`src/libs/kt-engine/src/player.rs`): forward — up to and including the end, reverse —
+  from the start inclusive; without a region and with a degenerate region — always armed. The guard of reverse-fill is
+  `render_head <= re`; the former `> rs` went out when render_head (ahead of the playhead by the depth of the ring) went below the start of the region.
+- `lookahead_windows(head, len, region)` (`src/libs/kt-engine/src/player.rs`) folds the lookahead window into the region and no longer than
+  the loop — otherwise dozens of orders for one burst and the eviction of the region's head (prefetch-thrash).
+- The seam of a wrap is `ClipProcessor::seam` (`src/libs/kt-fx/src/audio/mod.rs`): it re-sets the source without resetting the state.
+  Edits of the region boundaries without a flip (Shift+A/D inside the loop) do not trigger a rebuild.
+- `on_region_changed` (`src/apps/kt-app/src/app.rs`) does not call `set_project`; the loop arrives through `Player::set_loop_region`.
+  A precedent of the same class — `retune_media` (capability `generators`).
+- The three "0.25"s in different places — `RATE_KNEE` (`src/apps/kt-app/src/app.rs`), the former `RATE_CLAMP` (`src/libs/kt-model/src/warp.rs`),
+  the `rate` spec of the effect — coincided as a number for different reasons, and only one was real. Rule: a limit without a written reason is
+  a suspect, not a fact; before repeating a number next to it, ask what it follows from THERE.
+- The constants of the scale (`src/apps/kt-app/src/app.rs`, `slider_to_rate`/`rate_to_slider`): `RATE_STOP = 0.018`, `RATE_FLOOR = 0.01`,
+  `RATE_KNEE = 0.25` at `RATE_KNEE_T = 30 %` of travel, `RATE_MAX = 2`; 1× stands at 65–80 % of travel; `|r| > 2` sits at the edge (the boost mark
+  remains visible). Weak notches at 0.1 and 0.25 without labels.
+- `drag_advance` (`src/apps/kt-app/src/app.rs`) accumulates a virtual cursor `speed_drag_vx`, Shift divides the increment by `SPEED_FINE_DIV = 8`;
+  the "second wind" (the mouse going beyond the edge of the strip) computes `over_px` from the same virtual cursor.
+- The input field `speed_entry` (`draw_speed_entry`, `src/apps/kt-app/src/app.rs`) — the shape of the timecode mask of the toolbar (170×20, monospaced,
+  underline in the accent colour); events are consumed so that digits and Enter do not leak into hotkeys; the first digit replaces the dimmed current value
+  entirely; an unreadable value does NOT close the field and colours the underline; `surrender_focus` — on EVERY closing path, including the Esc cascade
+  (the guard in `draw_speed_control` returns the focus on the next frame).
+- `parse_rate_text` (`src/apps/kt-app/src/app.rs`) accepts a comma, a typographic minus and the suffix "×"/"x"; `normalize_rate` — an almost-zero (< 0.005)
+  goes to the stop, above it — the floor 0.01 with a sign.
+- The bit identity of the warp map on positive curves is by construction, not by hope (`src/libs/kt-model/src/warp.rs`): the body of `source_progress`
+  is untouched, the sign appeared from the symmetric clamp; `consumed_abs` splits the segment at zero STRICTLY when `r0·r1 < 0` — on positive curves
+  the branch is not executed, `fabs` of a positive f64 is identical, the order of additions is the same. The guard — a frozen copy of the old map
+  IN THE TEST t603d, comparison by `to_bits()`: GOLDEN would find out later and would not say WHAT had shifted.
+- `span()` vs `used()` (`ClipWarp`, `src/libs/kt-model/src/warp.rs`): on a signed curve the event can go back and return, consuming twice what was passed.
+  The mirror is taken around the span; the mirrored branch did not always have the clamp `max(0)` to the start of the file — t604g found it.
+- The coverage of the speed module for the resampler is computed over the SPLIT segments (`src/libs/kt-model/src/warp.rs`): from the ends alone the minimum
+  would come out overstated, and the resampler would reject a change of ratio — found red as t322 (capability `audio-fx`).
+- The trims of a stretched clip extrapolate the speed at zero; at rate ≤ 0 division by zero gave `i64::MIN` and an overflow in debug — now the edge answers
+  "the material to the left is not consumed by this event" (`trim_min_start`/`trim_max_end`, `src/libs/kt-model/src/warp.rs`).
+- `RATE_AUDIO_FLOOR = 0.01` lives in `src/libs/kt-model/src/warp.rs`; the hold is decided per chunk by the midpoint rule (`src/libs/kt-fx/src/audio/mod.rs`,
+  `eff_rate(..).abs() < RATE_AUDIO_FLOOR`); the module goes into rubato (`src/libs/kt-fx/src/audio/warp.rs`). There `set_rate` previously swallowed a refusal via
+  `let _ =` — a curve outside the window ±32 around the anchor silently got stuck; now a refusal is counted (`rejected`) and caught by `debug_assert`.
+- The address map of audio — runs of constant direction; the run positions accumulate as INTEGERS `p_{k+1} = p_k ± (a_{k+1} − a_k)`
+  (`src/libs/kt-fx/src/audio/mod.rs`): with rounding separately at a joint there would be a skip or a doubled frame — a click exactly at the turning point.
+- The constant −1 stays on the FLAT path (`has_warp` looks at the modulus, there is no stretching, the resampler is not needed) — therefore the equality of t616
+  with "Reverse" is exact, not "within tolerance" (`src/libs/kt-engine/tests/reverse.rs`).
+- Reverse transport has ITS OWN `wanted_audio_bursts_raw` (`src/libs/kt-engine/src/audio.rs`): the raw path reads linearly, while the window by the warp
+  was warming the wrong bursts — an eternal miss (capability `audio-render`).
+- The gate of the sub-mix of a nested reel is by the NON-MONOTONICITY of the read, not by the reverse flag (`NestStream::new_for` with pre-roll and a block,
+  `src/libs/kt-engine/src/audio.rs`; the signedness of the curve — `kt_model::rate_signed` through `src/libs/kt-fx/src/audio/mod.rs`): a mirrored instance
+  and a signed speed mean the same thing — a move on every burst (capability `compositions`).
+- `FlightRecorder` (`src/libs/kt-engine/src/flight.rs`) is written only by the render thread — it does not enter the callback (invariant 6); `STALL` — playing,
+  while the playhead stands still for more than a second; the dump goes to `<project>.ktflight.log`, and it is exactly that which proved the freeze for the owner.
 
-## Отложено
+## Deferred
 
-- Расширенный режим ресемплера (кривая ниже 0.25) ограничивает якорь 2×: на быстрых
-  участках ТАКОЙ кривой срез анти-алиасинга грубее. Оставлено осознанно — комбинация
-  «ниже 0.01 и выше 2× в одной кривой» редка, а память дороже
-  (`src/libs/kt-fx/src/audio/warp.rs`).
-- Известный фазовый сдвиг live-edit при правке границ региона без флипа Some↔None
-  сохранён как был.
+- The extended resampler mode (a curve below 0.25) limits the anchor to 2×: on fast sections of SUCH a curve the
+  anti-aliasing cut is coarser. Left deliberately — the combination "below 0.01 and above 2× in one curve" is rare,
+  and memory costs more (`src/libs/kt-fx/src/audio/warp.rs`).
+- The known phase shift of a live edit when editing the region boundaries without a Some↔None flip is kept as it was.

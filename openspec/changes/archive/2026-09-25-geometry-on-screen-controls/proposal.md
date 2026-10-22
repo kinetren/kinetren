@@ -2,67 +2,65 @@
 
 ## Why
 
-Геометрия события — единственный узел, которым человек правит КАДР, и править его сегодня
-можно только числами в окне FX. Владелец (Р.63 п.6): «fx геометрии по прежнему очень скуден,
-сплошные скучные поля ввода, даже в Vegas и то лучше сделано… нужно удобнее всех делать.
-КАК МИНИМУМ у нас должно быть редактирование прям в превью удобное». Уточнение того же
-раунда: экранные контролы — **в дополнение** к полям, а сами поля — «в нормальном виде».
+The geometry of an event is the only node with which a person edits the FRAME, and today it can
+be edited only with numbers in the FX window. The owner (R.63 item 6): "the geometry fx is still very poor,
+solid boring input fields, even Vegas does it better… we must make it more convenient than anyone.
+AT MINIMUM we should have editing right in the preview that is convenient". A clarification from the same
+round: the on-screen controls are **in addition** to the fields, and the fields themselves are to be "in a normal form".
 
-Почему сейчас: параметры под контрол уже готовы целиком (`EventGeometry` — кроп, позиция,
-зум, поворот, якорь; все в ДОЛЯХ холста, все автоматизируются, все публикуются с Р.63), а
-арифметика размещения уже посчитана одной функцией в `kt-fx::geom` — не хватает ровно жеста
-над кадром. Обратная зависимость сильнее прямой: без единого жеста над кадром заблокированы
-маски (F-MSK-001) и экранная правка титров (F-TXT-001).
+Why now: the parameters for the control are already fully ready (`EventGeometry` — crop, position,
+zoom, rotation, anchor; all in FRACTIONS of the canvas, all are automated, all are published since R.63), and the
+placement arithmetic is already computed by one function in `kt-fx::geom` — exactly the gesture
+over the frame is missing. The reverse dependency is stronger than the direct one: without a single gesture over the frame, masks (F-MSK-001) and on-screen editing of titles (F-TXT-001) are blocked.
 
 ## What Changes
 
-- **Рамка трансформации над кадром превью у ВЫДЕЛЕННОГО видео-события**: перенос за тело,
-  восемь ручек масштаба, ручка поворота, точка якоря, четыре ручки кропа. Жест правит
-  `EventGeometry` того события, у которого ведущий узел, — в темпе жеста (живое значение в
-  плеер каждый кадр) и ОДНИМ шагом истории на жест.
-- **Якорь двигается, не двигая картинку** (компенсация позиции), и это верно на повёрнутом
-  слое тоже — место, где у After Effects дефект, подтверждённый цитатами в F-UI-001.
-- **Прямоугольник размещения слоя становится общедоступной чистой функцией**: её зовут и
-  гео-программа (как сейчас), и интерфейс (рисунок рамки), и обратный пересчёт «экранный
-  сдвиг → параметр». Второй арифметики размещения не заводится (правило 17).
-- **Показ контролов** — переключатель в превью; при воспроизведении контролы гаснут сами
-  (правило отрасли: FCP гасит всегда, AE — автоматически), стоимость кадра без жеста не
-  растёт (инвариант 12).
-- **Форма полей геометрии в окне FX — раздел «Трансформация»** по образцу Premiere/AE:
-  свёртываемые группы, пары X/Y одной строкой, единицы (× / ° / %), ползунки у зума и
-  поворота, схема рамки рядом с числами, «сбросить геометрию» одним действием. Поля и
-  контрол — один и тот же параметр и одно и то же число (правило 17).
-- **Доля превью перестаёт искажать пропорции кадра**: сегодня 1920×1080 при 1/8 даёт
-  240×134, при 1/16 — 120×66 (1.79 и 1.82 против 1.78), то есть «вписать» на превью и на
-  экспорте считают РАЗНЫЕ рамки. Доля выбирает размер, подобный кадру проекта.
-- НЕ входит: камеры и `Pan3d` (их контрол — следующий заход), маски, траектория ключей,
-  разметка (safe-зоны, сетка), режимы сравнения «до/после». Причина — каждый из них
-  добавляет свой набор над тем же кадром и свою развилку «где мои ручки».
+- **A transformation frame over the preview frame of the SELECTED video event**: a move by the body, eight scale handles, a rotation handle, the anchor point, four crop handles. The gesture edits the
+  `EventGeometry` of that event which has the leading node — at the tempo of the gesture (the live value into the
+  player every frame) and in ONE history step per gesture.
+- **The anchor moves without moving the picture** (position compensation), and this is correct on a rotated
+  layer too — the place where After Effects has a defect, confirmed by quotes in F-UI-001.
+- **The placement rectangle of a layer becomes a publicly available pure function**: it is called by
+  the geometry program (as now), by the interface (the drawing of the frame), and by the inverse recomputation "screen
+  shift → parameter". A second placement arithmetic is not introduced (rule 17).
+- **The display of the controls** — a toggle in the preview; during playback the controls hide
+  themselves (the industry rule: FCP always hides, AE does so automatically), the cost of a frame without a gesture
+  does not grow (invariant 12).
+- **The form of the geometry fields in the FX window — a "Transformation" section** modelled on Premiere/AE:
+  collapsible groups, X/Y pairs on one row, units (× / ° / %), sliders at zoom and
+  rotation, a frame scheme next to the numbers, "reset geometry" in one action. The fields and the
+  control are one and the same parameter and one and the same number (rule 17).
+- **The fraction of the preview stops distorting the proportions of the frame**: today 1920×1080 at 1/8 gives
+  240×134, at 1/16 — 120×66 (1.79 and 1.82 against 1.78), that is, "fit" on the preview and on
+  the export compute DIFFERENT frames. The fraction chooses a size similar to the project frame.
+- NOT included: cameras and `Pan3d` (their control is the next pass), masks, the keyframe path,
+  guides (safe zones, grid), "before/after" comparison modes. The reason — each of them
+  adds its own set over the same frame and its own fork "where are my handles".
 
 ## Capabilities
 
 ### New Capabilities
 
-(нет — вся работа ложится на существующие capability)
+(none — all the work falls on the existing capabilities)
 
 ### Modified Capabilities
 
-- `ui-timeline`: рамка трансформации над кадром превью (жесты, хват-зоны, гашение при игре,
-  стоимость кадра), форма полей геометрии «Трансформация», подобие доли превью кадру проекта.
-- `video-plan`: прямоугольник размещения слоя отдаётся НАРУЖУ той же чистой функцией, что
-  строит гео-программу; обратный пересчёт «точка холста → параметр узла» — её же пара.
-- `ui-reach`: достижимость нового жеста и его переключателя из точки, откуда действует
-  человек; правый клик по кадру не молчит; живой сценарий на каждый жест.
+- `ui-timeline`: the transformation frame over the preview frame (gestures, hit zones, hiding during playback,
+  frame cost), the form of the geometry fields "Transformation", the similarity of the preview fraction to the project frame.
+- `video-plan`: the placement rectangle of a layer is given OUTWARD by the same pure function
+  that builds the geometry program; the inverse recomputation "canvas point → node parameter" is its pair.
+- `ui-reach`: the reachability of the new gesture and its toggle from the point where the person acts;
+  a right click on the frame is not silent; a live scenario for each gesture.
 
 ## Impact
 
-- `src/libs/kt-fx/src/geom.rs` — вынести арифметику размещения ведущего узла в публичную
-  функцию (`placement`) и её обратную пару; тело гео-программы зовёт её же.
-- `src/apps/kt-app/src/app.rs` — `draw_preview`: слой контролов, хит-тест, драги, гашение
-  при игре; `preview_rect`/`img_rect` наружу для живых сценариев (`KT_GEOM_DUMP`).
-- `src/apps/kt-app/src/fx_editor.rs` + `widgets.rs` — раздел «Трансформация» у ведущего узла.
-- `src/apps/kt-app/src/app.rs` — выбор доли превью (подобие кадру проекта).
-- Формат проекта НЕ меняется: правятся существующие поля существующими командами
-  (`Command::SetGeometry`), состояние «показывать контролы» — вьюпорт (не содержимое).
-- Тесты: харнесс `layout_tests.rs`/`reach_tests.rs`, чистые функции в `kt-fx`, живой
-  сценарий `src/scripts/live/geomctl.py`.
+- `src/libs/kt-fx/src/geom.rs` — move the arithmetic of placing the leading node into a public
+  function (`placement`) and its inverse pair; the body of the geometry program calls the same one.
+- `src/apps/kt-app/src/app.rs` — `draw_preview`: the controls layer, hit testing, drags, hiding
+  during playback; `preview_rect`/`img_rect` outward for the live scenarios (`KT_GEOM_DUMP`).
+- `src/apps/kt-app/src/fx_editor.rs` + `widgets.rs` — the "Transformation" section of the leading node.
+- `src/apps/kt-app/src/app.rs` — the choice of the preview fraction (similarity to the project frame).
+- The project format does NOT change: the existing fields are edited by the existing commands
+  (`Command::SetGeometry`), the state "show the controls" is the viewport (not the content).
+- Tests: the harness `layout_tests.rs`/`reach_tests.rs`, pure functions in `kt-fx`, the live
+  scenario `src/scripts/live/geomctl.py`.

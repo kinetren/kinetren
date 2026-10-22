@@ -2,40 +2,39 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Формат — `Stack` ребёнком `Track`, сайдкар совещательный
+### Requirement: Format — `Stack` as the child of `Track`, sidecar is advisory
+In the EXCHANGE file an instance SHALL be written as a `Stack` child of a `Track` with the body of the reel
+inlined into each instance; on reading, the instances collapse by the address of the reel, and
+diverged bodies SHALL become separate reels with a notice. The sidecar of the reels (the number of
+tracks, the order of rows, morphers, cameras, the layer map) SHALL be advisory: if it is missing or
+does not match — a notice, and the edit is read from the file. Foreign nested `Stack` and `Track` inside a
+`Track` SHALL be read as real reels. The version cascade MUST NOT move files without
+attachments.
+In the PROJECT file a reel SHALL be stored ONCE with its body, and an instance SHALL be a
+reference to its address; there is no inlining there. The difference is one of addressing, not of taste: the exchange
+needs self-containment (the reader does not know our conventions), the project needs non-repetition.
+Why: JSON OTIO has no object identity; a silent choice of one of two diverged bodies
+is the loss of someone else's work; an old build would read the attachment as a placeholder and, on rewriting,
+would turn the live edit into dead raw data. R.70: the same fact — the absence of object
+identity — makes inlining for the PROJECT a multiplicative cost: the owner's three reels
+produced 15 220 clips and 115 MB.
 
-В файле ОБМЕНА экземпляр SHALL писаться как `Stack` ребёнком `Track` с телом ленты,
-инлайненным в каждый экземпляр; на чтении экземпляры схлопываются по адресу ленты, а
-разошедшиеся тела SHALL становиться отдельными лентами с notice. Сайдкар лент (число
-дорожек, порядок строк, морферы, камеры, карта слоёв) SHALL быть совещательным: пропал
-или не сошёлся — notice и чтение монтажа из файла. Чужие вложенные `Stack` и `Track` в
-`Track` SHALL читаться настоящими лентами. Каскад версий MUST NOT двигать файлы без
-вложений.
-В файле ПРОЕКТА лента SHALL храниться ОДИН раз своим телом, а экземпляр SHALL быть
-ссылкой на её адрес; инлайна там нет. Разница адресная, а не вкусовая: обмену нужна
-самодостаточность (читатель не знает наших соглашений), проекту — неповторяемость.
-Почему: объектной идентичности в JSON OTIO нет; тихий выбор одного из двух разошедшихся тел
-— потеря чужой работы; старая сборка прочла бы вложение плейсхолдером и при перезаписи
-вернула бы живой монтаж мёртвым сырьём. Р.70: тот же факт — отсутствие объектной
-идентичности — делает инлайн для ПРОЕКТА мультипликативной ценой: три ленты владельца
-дали 15 220 клипов и 115 МБ.
-
-#### Scenario: Круг файла с вложением
-- **WHEN** проект с лентой сохраняется и читается СВОИМ форматом; отдельно — экспортируется в OTIO и читается импортом
-- **THEN** в обоих случаях лента, экземпляры и их id переживают круг, идемпотентность сохраняется; в проекте тело ленты записано один раз, в экспорте — инлайном в каждый экземпляр
+#### Scenario: The round trip of a file with an attachment
+- **WHEN** a project with a reel is saved and read in ITS OWN format; separately — it is exported to OTIO and read by import
+- **THEN** in both cases the reel, its instances and their ids survive the round trip, and idempotency is preserved; in the project the body of the reel is written once, in the export — inlined into each instance
 - **TEST** t431 (`src/libs/kt-otio/tests/convert.rs`), t810 (`src/libs/kt-model/tests/project_file.rs`)
 
-#### Scenario: Разошедшиеся тела и совещательный сайдкар
-- **WHEN** чужой редактор правил один экземпляр и не правил другой; сайдкар пропал
-- **THEN** второе тело становится отдельной лентой с notice; без сайдкара монтаж читается из треков
+#### Scenario: Diverged bodies and an advisory sidecar
+- **WHEN** a foreign editor changed one instance and did not change the other; the sidecar is missing
+- **THEN** the second body becomes a separate reel with a notice; without the sidecar the edit is read from the tracks
 - **TEST** t432 (`src/libs/kt-otio/tests/convert.rs`), t433 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Каскад версии не двигает старые файлы
-- **WHEN** все закоммиченные `.otio` без вложений пересохраняются экспортом
-- **THEN** байт-в-байт и с той же версией
+#### Scenario: The version cascade does not move old files
+- **WHEN** all committed `.otio` files without attachments are re-saved by export
+- **THEN** byte for byte and with the same version
 - **TEST** t433b (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Чужие вложения — настоящие ленты
-- **WHEN** читается `nested_example.otio`
-- **THEN** три ленты, ни одного плейсхолдера, круг идемпотентен
+#### Scenario: Foreign attachments are real reels
+- **WHEN** `nested_example.otio` is read
+- **THEN** three reels, not a single placeholder, and the round trip is idempotent
 - **TEST** t437 (`src/libs/kt-otio/tests/convert.rs`)

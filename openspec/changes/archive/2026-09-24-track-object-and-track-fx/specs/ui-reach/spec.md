@@ -2,25 +2,16 @@
 
 ## ADDED Requirements
 
-### Requirement: У дорожки полный набор глаголов, парные пути — одно тело
+### Requirement: A track has the full set of verbs, paired paths share one body
+A track SHALL be a timeline entity with the full set of verbs (rename, delete, insert above/below, reorder, mute, solo, lock, level, blend mode, chain, properties), each reachable from the badge, the menu, and the key where the path is declared; the set is checked by a machine against the paired entities; the live scenario SHALL assert the consequence (the picture changes on mute and on solo, the lock refuses a drag and names the track, a vignette placed in the track window lies ON THE TRACK, not on the event, the render window lists the mute). The meters of a silent file would say nothing — the sum with level and mute is held by t732 on the engine side.
+Why: the tests of R.38 checked the reachability of what was done, not the consequence; the rule of R.40 — probe from the point where the person acts.
 
-Дорожка SHALL быть сущностью таймлайна с полным набором глаголов (переименовать, удалить,
-вставить выше/ниже, переставить, mute, solo, замок, уровень, режим наложения, цепочка,
-свойства), каждый достижим из бейджа, меню и клавиши там, где путь объявлен; набор
-сверяется машиной с парными сущностями; живой сценарий SHALL утверждать следствие
-(картинка меняется при mute и при solo, замок отказывает драгу и называет дорожку,
-виньетка, поставленная в окне дорожки, ложится НА ДОРОЖКУ, а не на событие, окно рендера
-перечисляет mute). Метры молчащего файла ничего не сказали бы — сумму с уровнем и mute
-держит t732 на стороне движка.
-Почему: тесты Р.38 проверяли достижимость сделанного, а не следствие; правило Р.40 —
-щупать из точки, откуда действует человек.
-
-#### Scenario: Глаголы и пути
-- **WHEN** сканируются бейджи, меню, клавиши и окно свойств дорожки
-- **THEN** набор глаголов полон и совпадает у корня и внутри ленты, парные пути ведут в одну команду
+#### Scenario: Verbs and paths
+- **WHEN** the badges, the menu, the keys and the track properties window are scanned
+- **THEN** the set of verbs is complete and matches for the root and inside a reel; paired paths lead to one command
 - **TEST** t741 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Живой сценарий дорожки
-- **WHEN** `src/scripts/live/track.py` глушит дорожку, ставит соло, запирает и тянет событие, вешает виньетку из окна дорожки, открывает окно рендера
-- **THEN** цвет в превью меняется на цвет дорожки под заглушённой и обратно, драг по запертой не двигает событие и строка состояния называет её, виньетка оказывается в `kt.tracks`, а не на событии, окно рендера показывает строку о заглушённых
-- **TEST** `src/scripts/live/track.py` (живой сценарий, `./scripts/live-check.sh`)
+#### Scenario: A live scenario of a track
+- **WHEN** `src/scripts/live/track.py` mutes a track, sets solo, locks and drags an event, applies a vignette from the track window, opens the render window
+- **THEN** the color in the preview changes to the color of the track under the muted one and back; a drag on the locked one does not move the event, and the status bar names it; the vignette ends up in `kt.tracks`, not on the event; the render window shows the line about muted tracks
+- **TEST** `src/scripts/live/track.py` (live scenario, `./scripts/live-check.sh`)

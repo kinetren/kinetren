@@ -2,50 +2,48 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Кадр генератора — чистая функция ровно запрошенного качества
+### Requirement: A generator frame is a pure function of exactly the requested quality
+`GeneratorSource` SHALL deliver a frame of EXACTLY the requested Quality (the composite silently
+discards a foreign size), deterministically from (state, pts, Quality) — two
+runs byte for byte. "No sound" SHALL be expressed as `has_audio:false` AND
+`Ok(silence)`, never `Err`. `info()` SHALL report duration=0 ("no duration"),
+fps=None (the container's grid) and a native equal to the raster of the CONTAINER (the project or the
+reel in which the event sits), SAR 1:1 — so the generator is conformed identically and a
+title in a square reel is computed in its raster; the margin of detail for the decode step is given by the
+step formula (native ≥ Quality → step by the chain's zoom). Pseudo-paths do not take part in
+"Max (by sources)". The frame cache by Quality SHALL hold several qualities without double copying and be disabled only for kinds that depend on time, and for
+animated (with curves) states. The 3×5 pixel font (placeholder, timecode, countdown)
+SHALL be a shared module and is not a rasterization of user text.
+Why: `Err` on "no sound" accumulated false underruns in the worker's negative cache; a native
+4096×4096 with the conform rule would mean "as is" at 4096 and fitting a
+square into 16:9 — the generator must have the container's proportions.
 
-`GeneratorSource` SHALL отдавать кадр РОВНО запрошенного Quality (композит молча
-выбрасывает чужой размер), детерминированно от (состояние, pts, Quality) — два
-прогона байт-в-байт. «Нет звука» SHALL выражаться как `has_audio:false` И
-`Ok(тишина)`, никогда `Err`. `info()` SHALL сообщать duration=0 («длительности
-нет»), fps=None (сетка контейнера) и натив, равный растру КОНТЕЙНЕРА (проекта или
-ленты, в которой стоит событие), SAR 1:1 — так генератор приводится тождественно и
-титр в квадратной ленте считается в её растре; запас деталей для ступени декода даёт
-формула ступени (натив ≥ Quality → ступень по зуму цепочки). В «Max (по источникам)»
-псевдо-пути не участвуют. Кэш кадра по Quality SHALL держать несколько качеств без
-двойного копирования и отключаться только у видов, зависящих от времени, и у
-анимированных (с кривыми) состояний. Пиксель-шрифт 3×5 (плейсхолдер, тайм-код, отсчёт)
-SHALL быть общим модулем и не является растеризацией пользовательского текста.
-Почему: `Err` на «нет звука» копил ложные underrun'ы в негативном кэше воркера; натив
-4096×4096 с правилом приведения означал бы «как есть» размером 4096 и вписывание
-квадрата в 16:9 — генератор обязан иметь пропорции контейнера.
-
-#### Scenario: Детерминизм и контракт `info()`
-- **WHEN** один и тот же генератор рендерится дважды в одном Quality и опрашивается `info()` в проекте 1920×1080
-- **THEN** байты совпадают, размер ровно Quality, duration=0, fps=None, натив 1920×1080
+#### Scenario: Determinism and the `info()` contract
+- **WHEN** the same generator is rendered twice at one Quality and `info()` is queried in a 1920×1080 project
+- **THEN** the bytes match, the size is exactly Quality, duration=0, fps=None, native 1920×1080
 - **TEST** t471 (`src/libs/kt-media/src/generator.rs`)
 
-#### Scenario: Тишина вместо ошибки
-- **WHEN** у генератора без звука читается аудио-burst
-- **THEN** возвращается `Ok` с тишиной, `has_audio` ложен
+#### Scenario: Silence instead of an error
+- **WHEN** an audio burst is read from a generator without sound
+- **THEN** `Ok` with silence is returned, `has_audio` is false
 - **TEST** t472 (`src/libs/kt-media/src/generator.rs`)
 
-#### Scenario: Натив генератора кормит ступень декода
-- **WHEN** над титром стоит зумящая цепочка
-- **THEN** заказывается S×Quality по формуле ступени от натива контейнера; без FX — ровно Quality
+#### Scenario: The native of the generator feeds the decode step
+- **WHEN** a zooming chain sits above a title
+- **THEN** S×Quality is ordered by the step formula from the container's native; without FX — exactly Quality
 - **TEST** t484b (`src/libs/kt-engine/tests/decode_scale.rs`)
 
-#### Scenario: Титр в ленте своего растра
-- **WHEN** титр стоит в ленте 1080×1080, лента — в проекте 1920×1080
-- **THEN** титр считается в 1080×1080 (натив = растр ленты), экземпляр вписан с полями, байты детерминированы
+#### Scenario: A title in the reel of its own raster
+- **WHEN** a title sits in a 1080×1080 reel, the reel is in a 1920×1080 project
+- **THEN** the title is computed at 1080×1080 (native = the reel's raster), the instance is fitted with margins, the bytes are deterministic
 - **TEST** t726 (`src/libs/kt-engine/tests/nest_render.rs`)
 
-#### Scenario: Кэш по качеству
-- **WHEN** один кадр запрашивается в нескольких Quality повторно
-- **THEN** каждое качество рендерится один раз; у анимированного титра кэш обходится, статический от появления анимации не страдает
+#### Scenario: Cache by quality
+- **WHEN** one frame is requested repeatedly at several Qualities
+- **THEN** each quality is rendered once; for an animated title the cache is bypassed, a static one does not suffer from the appearance of an animation
 - **TEST** t507, t539 (`src/libs/kt-media/src/generator.rs`)
 
-#### Scenario: Плейсхолдер и общий пиксель-шрифт детерминированы
-- **WHEN** кадр-заглушка отсутствующего файла рендерится с подписью, в том числе не-ASCII
-- **THEN** байты повторяемы и не зависят от времени; не-ASCII даёт «?», звук — тишина
+#### Scenario: The placeholder and the common pixel font are deterministic
+- **WHEN** the placeholder frame for a missing file is rendered with a caption, including non-ASCII
+- **THEN** the bytes are repeatable and do not depend on time; non-ASCII gives "?", the sound is silence
 - **TEST** t208 (`src/libs/kt-media/src/placeholder.rs`)

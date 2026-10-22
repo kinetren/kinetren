@@ -2,85 +2,74 @@
 
 ## Why
 
-Две претензии владельца (Р.61, 2026-09-22). Первая: у эффектов и генераторов нужна
-кривая, ВЕДОМАЯ другой кривой того же события (другой эффект, другое значение), с
-собственной формулой пересчёта; итоговый график рисуется, но мышкой не правится. Как
-продолжение — задание кривой формулой, без расстановки ключей. Вторая: у автоматизации
-нужны ФОРМЫ ОТРЕЗКОВ — третий порядок, зигзаг, прямая, со своими параметрами, с
-возможностью включить форму всем разом и настроить отдельную кривую по-своему.
+Two claims of the owner (R.61, 2026-09-22). The first: effects and generators need a curve that is LED by another
+curve of the same event (another effect, another value), with its own recalculation formula; the resulting graph
+is drawn, but cannot be edited with the mouse. As a continuation — setting a curve by a formula, without placing
+keys. The second: automation needs SEGMENT SHAPES — the cubic, the zigzag, the straight line, each with its own
+parameters, with the option to turn a shape on for all at once and to set up a separate curve in its own way.
 
-Плюс дефект, найденный владельцем по косвенному признаку: кнопка «Вставить огибающую»
-умеет быть погашенной, значит состояние буфера живёт внутри программы. Разведка
-подтверждает: копирование пишет и в системный буфер, и в зеркало `env_clipboard`, а
-доступность кнопки решается по зеркалу — скопированное в другом окне не вставить. Второй
-половиной того же места кнопка гаснет при другом виде эффекта, то есть ремаппинг полей не
-просто отсутствует, а запрещён.
+Plus a defect found by the owner from an indirect sign: the "Paste envelope" button can be disabled, so the state of
+the buffer lives inside the program. The reconnaissance confirms it: copying writes both to the system buffer and to
+the mirror `env_clipboard`, and the availability of the button is decided by the mirror — what was copied in another
+window cannot be pasted. The second half of the same place: the button goes dark for a different kind of effect, that
+is, the remapping of fields is not merely absent but forbidden.
 
-Место под это заложено заранее: `CurveSource` с вариантами `Keys`/`Formula`/`Link`
-существует с Р.59 и сегодня отвергается валидацией громко. Форма же сегодня одна на всю
-кривую — булево `ease`.
+The place for this was laid in advance: `CurveSource` with the variants `Keys`/`Formula`/`Link` has existed since R.59
+and today is rejected loudly by validation. The shape, however, is today one for the whole curve — the boolean `ease`.
 
 ## What Changes
 
-Раунд идёт пятью стадиями; порядок выбран так, что каждая следующая опирается на
-предыдущую, а не наоборот.
+The round runs in five stages; the order is chosen so that each next one relies on the previous, not the other way round.
 
-- **С0. Летопись и база фич.** Претензия и решения — в историю требований. Вердикты
-  F-AUT-007/008/009 получают решение раунда; вердикт F-AUT-009 в части «зигзаг — это
-  источник, а не форма» **пересматривается по прямому решению владельца** (см. design.md).
-- **С1. Форма отрезка.** Форма переезжает с кривой на КЛЮЧ и описывает участок ПОСЛЕ него.
-  Закрытый набор с собственными параметрами у каждого вида: прямая, третий порядок
-  (с натяжением), ступень, ease in / ease out, зигзаг (периоды, амплитуда, профиль).
-  **BREAKING:** поле `ease` исчезает; обратная совместимость не требуется (решение
-  владельца), старые файлы мигрируют на чтении. Умолчание формы — поле ПРОЕКТА, плюс
-  команда «применить форму ко всем отрезкам кривой / всего события» с одним undo.
-  Скорость (`rate`) принимает только прямую и отказывает ГРОМКО.
-- **С2. Буфер обмена огибающих.** Зеркало внутри программы удаляется. Кнопка вставки
-  никогда не гаснет: по нажатию читается настоящий системный буфер, и если разобрать не
-  удалось — ошибка с причиной в строке состояния. При вставке в другой вид эффекта
-  совпавшие по имени и типу поля ложатся молча, для остатка открывается окно
-  сопоставления «кривая → параметр цели».
-- **С3. Связь и вычислитель.** `CurveSource::Link` начинает работать: значение ведёт другое
-  свойство по адресу, с выражением пересчёта. Появляется вычислитель мини-формулы с
-  закрытым набором операций. Адресуется любое событие ПРОЕКТА в пределах одной ленты (см.
-  design.md о границе ленты). Нечисловые свойства ведутся через пороги (флаг) и снимки на
-  отметках оси значения (выбор, текст, медиа, цвет). Производный график рисуется, но
-  мышкой не правится. Цикл зависимостей отвергается валидацией с путём.
-- **С4. Формула как источник.** `CurveSource::Formula` начинает работать: кривая без ключей,
-  заданная текстом от времени и адресуемых свойств; ввод из окна. Текст формулы входит в
-  ключ пост-FX. Проект без связей и формул платит ноль — это проверяется тестом.
+- **S0. Chronicle and feature base.** The claim and the decisions — into the history of requirements. The verdicts
+  F-AUT-007/008/009 receive the decision of the round; the verdict of F-AUT-009 in the part "the zigzag is a source, not
+  a shape" is **revised by the owner's direct decision** (see design.md).
+- **S1. Segment shape.** The shape moves from the curve to the KEY and describes the stretch AFTER it. A closed set with
+  its own parameters for each kind: straight line, cubic (with tension), step, ease in / ease out, zigzag (periods,
+  amplitude, profile). **BREAKING:** the field `ease` disappears; backward compatibility is not required (the owner's
+  decision), old files are migrated on reading. The default shape is a PROJECT field, plus a command "apply the shape to
+  all segments of the curve / of the whole event" with a single undo. The speed (`rate`) accepts only a straight line and
+  refuses LOUDLY.
+- **S2. Envelope clipboard.** The mirror inside the program is removed. The paste button never goes dark: on press the real
+  system buffer is read, and if parsing failed — an error with a reason in the status line. When pasting into another kind
+  of effect, fields that match by name and type land silently; for the remainder a matching window opens, "curve → target
+  parameter".
+- **S3. Link and evaluator.** `CurveSource::Link` starts to work: the value is led by another property by address, with a
+  recalculation expression. A mini-formula evaluator with a closed set of operations appears. ANY event of the PROJECT within
+  one reel is addressable (see design.md about the reel boundary). Non-numeric properties are led through thresholds (a flag)
+  and snapshots at the marks of the value axis (choice, text, media, colour). The derived graph is drawn, but cannot be edited
+  with the mouse. A dependency cycle is rejected by validation with its path.
+- **S4. Formula as a source.** `CurveSource::Formula` starts to work: a curve without keys, set by a text of time and addressable
+  properties; input from the window. The text of the formula enters the key of post-FX. A project without links and formulas pays
+  zero — this is checked by a test.
 
 ## Capabilities
 
 ### New Capabilities
 
-Нет.
+None.
 
 ### Modified Capabilities
 
-- `automation`: «Домен ключа — тик материала источника» (форма живёт на ключе; у связи
-  между событиями общий знаменатель — время таймлайна); «Копипаст эффектов, цепочек и
-  огибающих» (источник — системный буфер, ремаппинг полей); «Выражения и плагины — только
-  интерфейсы» (формула и связь перестают быть только интерфейсом); «Компилированная
-  автоматизация видео и ноль цены» (план компилирует и производные источники). Плюс новые
-  требования: форма отрезка, связь как источник, формула как источник, вычислитель.
-- `ui-timeline`: новое требование об интерфейсе форм, производного графика, поля формулы и
-  буфера огибающих.
-- `project-format`: «Версия конверта `kt`» — формат v10 по содержимому: форма на ключе,
-  рабочие источники кривой, умолчание формы проекта; чтение старых файлов односторонней
-  миграцией.
+- `automation`: "The domain of a key — the tick of the source material" (the shape lives on the key; for a link between events the
+  common denominator is the timeline time); "Copy-paste of effects, chains and envelopes" (the source is the system buffer, the
+  remapping of fields); "Expressions and plugins — interfaces only" (the formula and the link cease to be only an interface);
+  "Compiled automation of video and zero cost" (the plan compiles derived sources too). Plus new requirements: the segment shape,
+  the link as a source, the formula as a source, the evaluator.
+- `ui-timeline`: a new requirement on the interface of the shapes, the derived graph, the formula field and the envelope buffer.
+- `project-format`: "The version of the envelope `kt`" — the format v10 by content: the shape on the key, the working sources of a
+  curve, the default shape of the project; reading of old files by a one-way migration.
 
 ## Impact
 
-- Модель: `src/libs/kt-model/src/project.rs` (`AutoKey`, `ParamCurve`, `CurveSource`,
-  `curve_value`), `warp.rs` (отказ скорости), `autoplan.rs` (компиляция источников), новый
-  модуль вычислителя и адресации связей, `ops.rs` (блоки буфера, ремаппинг).
-- Движок: `src/libs/kt-engine/src/video.rs` и аудио-путь (разрешение источников до
-  потока, ключ пост-FX), `fxstore.rs`.
-- Интерфейс: `src/apps/kt-app/src/automation.rs` (формы, производный график, поле
-  формулы), `fx_editor.rs` и `morpher_editor.rs` (буфер), `pubparam.rs`, `gen_ui.rs`,
-  каталоги `i18n/*.toml` ×5 и сабсеты шрифтов.
-- Формат: `src/libs/kt-otio/src/convert.rs`, `docs/file-format.md`.
-- Эталоны: `GOLDEN_AUDIO`, `GOLDEN_VIDEO`, `GOLDEN_TITLE_VIDEO` двигаться НЕ должны —
-  умолчание формы обязано воспроизводить сегодняшнее сглаживание побайтово.
-- Новые регрессионные тесты: t695–t710 (сквозная нумерация; следующий свободный — t695).
+- Model: `src/libs/kt-model/src/project.rs` (`AutoKey`, `ParamCurve`, `CurveSource`, `curve_value`), `warp.rs`
+  (refusal of speed), `autoplan.rs` (compilation of sources), a new module of the evaluator and of link addressing,
+  `ops.rs` (buffer blocks, remapping).
+- Engine: `src/libs/kt-engine/src/video.rs` and the audio path (resolution of sources before the stream, the key of
+  post-FX), `fxstore.rs`.
+- Interface: `src/apps/kt-app/src/automation.rs` (shapes, derived graph, formula field), `fx_editor.rs` and
+  `morpher_editor.rs` (buffer), `pubparam.rs`, `gen_ui.rs`, the catalogues `i18n/*.toml` ×5 and the font subsets.
+- Format: `src/libs/kt-otio/src/convert.rs`, `docs/file-format.md`.
+- References: `GOLDEN_AUDIO`, `GOLDEN_VIDEO`, `GOLDEN_TITLE_VIDEO` must NOT move — the default shape must reproduce today's
+  smoothing bit for bit.
+- New regression tests: t695–t710 (a project-wide numbering; the next free one is t695).

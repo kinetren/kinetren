@@ -2,17 +2,11 @@
 
 ## ADDED Requirements
 
-### Requirement: Свойства дорожки — в паспорте, статические; кривые на дорожке отвергаются громко
+### Requirement: Track properties — in the passport, static; curves on a track are rejected loudly
+The level, opacity, blend mode, and switches of a track SHALL be typed passport properties with clamping, addressable by the track id; the properties window and the track FX editor SHALL read the limits from the passport. A curve on a track property or on a parameter of a track chain SHALL be rejected by validation and by the interface with a reason ("the time domain of the track is the next work"), and not silently accepted in the domain of material.
+Why: a track has no material, its key is the timeline tick, and this is a second automation domain (F-AUT-003); the place is established now so that the next change does not break the format.
 
-Уровень, непрозрачность, режим наложения и выключатели дорожки SHALL быть типизированными
-свойствами паспорта с клампом, адресуемыми по id дорожки; окно свойств и FX-редактор
-дорожки SHALL читать пределы из паспорта. Кривая на свойстве дорожки или на параметре
-цепочки дорожки SHALL отвергаться валидацией и интерфейсом с причиной («домен времени
-дорожки — следующая работа»), а не приниматься молча в домене материала.
-Почему: у дорожки нет материала, её ключ — тик таймлайна, а это второй домен автоматизации
-(F-AUT-003); место заводится сейчас, чтобы следующий change не ломал формат.
-
-#### Scenario: Паспорт дорожки и громкий отказ кривой
-- **WHEN** свойства дорожки читаются по адресу; на уровень дорожки ставится ключ командой и из виджета
-- **THEN** пределы и типы совпадают со спекой; команда отвергается с причиной, в строке состояния ошибка, модель не тронута
+#### Scenario: The track's passport and a loud refusal of a curve
+- **WHEN** the properties of a track are read by address; a key is set on the track level by the command and from the widget
+- **THEN** the limits and types match the spec; the command is rejected with a reason, an error appears in the status bar, the model is untouched
 - **TEST** t730 (`src/libs/kt-model/tests/track.rs`), t744 (`src/apps/kt-app/src/layout_tests.rs`)

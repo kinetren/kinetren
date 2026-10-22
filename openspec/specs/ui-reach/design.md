@@ -1,377 +1,294 @@
-# Достижимость интерфейса — почему так
+# Reachability of the interface — why it is this way
 
-## Что было и у кого болело
+## What hurt and for whom
 
-Претензия «создать можно, управлять нельзя» приходила от владельца семь раундов подряд:
-«я не понимаю как удалить saved area region… пкм ничего не дает», «не могу никак добавить
-морфер-событие на морфер трек», «не понимаю как работает камерный трек», «в fx-chain
-виджетах проблематично активировать ввод параметров», «весь чейн разлетается по длинне».
-И главное — не про код: «Я устал напоминать агентам чтобы они думали об этих мелочах.
-ОБЯЖИ ИХ ЭТО ПРОВЕРЯТЬ».
+The complaint "you can create it, you cannot manage it" came from the owner for seven rounds in a row:
+"I don't understand how to delete a saved area region… RMB gives nothing", "I cannot add a morpher event
+to a morpher track in any way", "I don't understand how the camera track works", "in the fx-chain widgets
+it is awkward to activate parameter input", "the whole chain falls apart along its length". And most importantly —
+not about the code: "I am tired of reminding the agents to think about these details. FORCE THEM TO CHECK THIS".
 
-Честный ответ: чек-лист в `src/apps/kt-app/CLAUDE.md` уже запрещал три из этих претензий
-дословно, рядом стояло «повторное замечание = правило не записано» — и не помогло. Проза
-ничего не роняет. Доказательство механизма провала: четыре команды именованных областей
-были реализованы, покрыты юнит-тестами модели и ни разу не вызывались из приложения;
-тесты проверяли модель, а не достижимость.
+The honest answer: the checklist in `src/apps/kt-app/CLAUDE.md` already forbade three of these complaints
+word for word, right next to it stood "a repeated remark = the rule is not written down" — and it did not help.
+Prose drops nothing. Proof of the failure mechanism: four commands of named areas were implemented, covered by
+unit tests of the model, and were never called from the application; the tests checked the model, not reachability.
 
-Первая волна тестов (t252–t255) тоже не сработала: следующий раунд назывался «ты нихуя не
-проверял», и все одиннадцать претензий были верны при зелёном `cargo test`. Тесты
-проверяли ДОСТИЖИМОСТЬ СДЕЛАННОГО (пункт в меню есть — в 34-px заголовке строки, куда его
-положили), а не следствие из точки, где человек действительно жмёт (по дорожке).
+The first wave of tests (t252–t255) also did not work: the next round was titled "you didn't check shit at all", and all
+eleven complaints were correct while `cargo test` was green. The tests checked the REACHABILITY of what was made (the item
+is in the menu — in the 34-px header of the row, where it was put), and not the consequence from the point where a person
+really presses (on the track).
 
-Третья боль — подсказки. Крик «КУДА ПРОПАЛИ ПОДСКАЗКИ КНОПОК?!» и «не понимаю как
-удалить» — не одна проблема, решённая наполовину, а две: строка состояния — pull-канал
-(навёл — узнал), а «я не понимаю как…» — отказ push-канала: нельзя навести мышь на то,
-чего не нашёл. Семь из девятнадцати претензий раунда тупиков жили только там. Отсюда
-волна «правый клик никогда не молчит»: разведка нашла двенадцать объектов с подсказкой и
-без меню и два обещания подсказок, которые никогда не выполнялись.
+The third pain — hints. The cry "WHERE DID THE BUTTON HINTS GO?!" and "I don't understand how to
+delete" were not one problem solved halfway, but two: the status bar is a pull channel (hover — learn), while
+"I don't understand how…" is a failure of the push channel: you cannot hover the mouse over what you did not find.
+Seven of the nineteen complaints of the round of dead ends lived only there. Hence the wave "the right click never stays silent":
+the reconnaissance found twelve objects with a hint and no menu, and two hint promises that were never kept.
 
-## Решения и почему
+## Decisions and why
 
-- **Правила достижимости роняют сборку, а не просят.** `t252` разбирает `enum Command` ИЗ
-  ИСХОДНИКА (список в тесте был бы вторым местом правды) и требует конструирования в
-  продуктовом корпусе. `TlEntity::ALL` — литерал фиксированной длины в продуктовом коде:
-  добавил сущность — не собирается всё приложение, пока строку глаголов не заполнили.
-  `CtxTarget::entity()` — исчерпывающий `match`: завёл цель меню — назови сущность.
-- **Глаголы — четыре, и отсутствие оплачивается причиной.** Create/Rename/Delete/Open;
-  `Reach::Absent(причина)` и `Reach::Elsewhere(ссылка на тест)` с проверкой длины —
-  иначе «нет» и «где-то там» превращаются в тот же прозаический чек-лист. `Open` заведён
-  вложенными лентами: без него «войти» некуда было записать, а вход — единственное, чем
-  вложение отличается от клипа; глагол оказался осмыслен и у прежних сущностей.
-- **Тест утверждает следствие и щупает из точки действия человека.** `scene()` отдаёт
-  СПИСОК мест на сущность (заголовок строки И дорожка), своя сцена на каждое место. На
-  новой таблице тест сразу назвал ровно те два тупика, на которые жаловался владелец.
-  «Поле выставилось» — не следствие; «прямоугольник вырос и клик ниже старой границы
-  попал» — следствие. Живой сценарий на пункт — условие закрытия, потому что харнесс
-  ничего не доказывает про настоящее окно (первые 16 px gutter'а — ресайз окна).
-- **Одна интеракция вместо `dnd_drag_source`.** Идиома, уже принятая в пяти файлах
-  репозитория: подпись рисуется, поверх её прямоугольника (расширенного на зону хвата) —
-  `Sense::click_and_drag()`; запрет закрыт сканом по всему приложению одной строкой.
-- **Один помощник усечения на все имена.** Иначе половина мест разъезжается снова: то же
-  имя рисовало и поле источника морфера, и оно тоже растягивало окно.
-- **Второй реестр целей для панелей, а не расширение `CtxTarget`.** У целей таймлайна
-  общая сцена (одна полоса, один хит-тест по позиции, одно меню в конце кадра) и общий
-  род идентификатора (время и дорожка); у панелей ни того, ни другого — слот живёт в окне
-  FX, карточка в бине, фейдер в метрах. В одном enum половина веток никогда не встречалась
-  бы в своём месте. Цели гасят друг друга: меню одно, и протухшая цель таймлайна дала бы
-  зелёный на сломанном.
-- **Правая кнопка безопасна для пробы.** Ключ кривой правым кликом не удаляется — только
-  пунктом меню; destructive ПКМ обесценил бы обещание «правой кнопкой можно пробовать»
-  во всех остальных местах (решение владельца, зафиксировано по итогам раунда).
-- **Переход получает меню по ОКНУ, а не по ручкам.** Ручки — про жест (±6 px у стыка),
-  правый клик целится в то, что ВИДНО; окно нарисовано поверх соседей — значит и меню
-  даёт оно (правило «переход выигрывает пиксель у клипа», уже так в hover и press).
-- **Аккорд — аргумент пункта, не часть фразы.** Лечится класс, а не экземпляр: одна
-  подпись «Удалить» обслуживала три контекста, и в одном обещание было ложным.
-  Переводчику легче — аккорд не переводится, а правился в пяти каталогах.
-- **Меню строки живёт в одном месте и открывается из двух.** `service_lane_menu` /
-  `clip_lane_menu` / `empty_place_menu` зовутся и из заголовка, и с дорожки; второй копии
-  не заводили намеренно — два источника правды и есть дефект, на котором обожглись.
-  Тот же принцип у «+M»: место блока считает одна `morph_span`, её зовут и кнопка, и
-  пункт меню; четыре пути внутрь ленты — одно тело.
-- **Одна дверь публикации — подпись поля внутри ленты.** Разведка: ни в одном из четырёх
-  редакторов с этим механизмом нет команды «показать наружу всё интересное», интерфейс
-  собирается руками там, где автор на него смотрит. Вне ленты пункта нет вовсе, но не
-  молчание: строка состояния объясняет, где он живёт.
-- **Подсказка одна, в строке состояния; push уезжает на вторые поверхности.** Слово
-  «тултип» склеивало три решения: перекрытие и задержка приняты владельцем дословно,
-  ёмкость/направление не решал никто. Вердикты волны справки ищут вторую поверхность
-  (контекстное меню, сама подпись, место, куда приходят намеренно), а не возврат попапов.
-- **Невозможность действия — ошибка с адресом.** Препятствие подсвечено, стиль
-  ошибочный поверх наведения, за пределами вида — сторона, расстояние и стрелка; третьей
-  части нет ни у одного из пяти редакторов ядра, поэтому наш Move-жест — эталон.
-- **Сканирующие сторожа «одного дома».** Обещание в комментарии («правило кусков ОДНО»),
-  которое нечем проверить, перестаёт выполняться. Приём t252 переиспользован для
-  `source_in`, поиска медиа от клипа, отправителя в плеер, офлайн-рендера лент и пола
-  времени жеста.
+- **Reachability rules break the build, they do not ask.** `t252` parses `enum Command` FROM
+  THE SOURCE (a list in the test would be a second place of truth) and requires its construction in
+  the product corpus. `TlEntity::ALL` — a literal of fixed length in the product code:
+  add an entity — the whole application will not build until the row of verbs is filled in.
+  `CtxTarget::entity()` — an exhaustive `match`: if you create a menu target, you must name the entity.
+- **Verbs — four, and an absence is paid for by a reason.** Create/Rename/Delete/Open;
+  `Reach::Absent(reason)` and `Reach::Elsewhere(link to a test)` with a length check —
+  otherwise "no" and "somewhere over there" turn into the same prose checklist. `Open` was introduced for
+  nested reels: without it there was nowhere to record "enter", and entering is the only thing by which a nesting differs from a clip;
+  the verb turned out to be meaningful for the former entities as well.
+- **The test asserts the consequence and probes from the point of a person's action.** `scene()` gives
+  a LIST of places per entity (the row header AND the track), its own scene for each place. On the new table
+  the test at once named exactly the two dead ends about which the owner had complained.
+  "The field got set" is not a consequence; "the rectangle grew and a click below the old border hit it" is a consequence.
+  A live scenario per item is the closing condition, because the harness proves nothing about the real window
+  (the first 16 px of the gutter are the window resize).
+- **One interaction instead of `dnd_drag_source`.** An idiom already accepted in five files of the repository: the label is drawn,
+  over its rectangle (extended by the grab zone) — `Sense::click_and_drag()`; the prohibition is closed by a one-line scan of the whole application.
+- **One truncation helper for all names.** Otherwise half of the places drift apart again: the same name drew the source field of
+  the morpher, and it too stretched the window.
+- **A second registry of targets for panels, rather than extending `CtxTarget`.** The timeline targets have a common scene (one strip,
+  one hit test by position, one menu at the end of the frame) and a common kind of identifier (time and track); the panels have neither —
+  the slot lives in the FX window, the card in the bin, the fader in the meters. In one enum half of the branches would never meet
+  in their own place. The targets cancel each other out: the menu is one, and a stale timeline target would give a green result on a broken one.
+- **The right button is safe for probing.** A curve key is not deleted by a right click — only by a menu item; a destructive RMB would devalue the promise
+  "the right button can be used to try" in all the other places (the owner's decision, fixed after the round).
+- **A transition gets its menu by the WINDOW, not by its handles.** The handles are about the gesture (±6 px at the joint),
+  the right click targets what is VISIBLE; the window is drawn over the neighbours — so the menu is given by it too (the rule "the transition wins the pixel over the clip",
+  already so in hover and press).
+- **The chord is an argument of the item, not part of the phrase.** The class is cured, not the instance: one label "Delete" served three contexts, and in one
+  of them the promise was false. It is easier for the translator — the chord is not translated, and was edited in five catalogues.
+- **The menu of a row lives in one place and is opened from two.** `service_lane_menu` /
+  `clip_lane_menu` / `empty_place_menu` are called both from the header and from the track; a second copy was deliberately not created — two sources of truth are exactly the defect that was burned on.
+  The same principle with "+M": the place of a block is computed by one `morph_span`, it is called by both the button and the menu item; the four paths into the lane — one body.
+- **One door of publication — a label of the field inside the lane.** Reconnaissance: in none of the four editors with this mechanism is there a command "show outward everything interesting";
+  the interface is assembled by hand where the author looks at it. Outside the lane there is no item at all, but not silence: the status bar explains where it lives.
+- **One hint, in the status bar; the push goes to the second surfaces.** The word "tooltip" glued together three decisions: the overlap and the delay were accepted by the owner word for word,
+  the capacity/direction were decided by no one. The verdicts of the reference wave look for a second surface
+  (the context menu, the label itself, the place where people come on purpose), not for a return of popups.
+- **The impossibility of an action is an error with an address.** The obstacle is highlighted, the error style is on top of the hover, beyond the view's edge — the side, the distance and an arrow; a third part
+  is absent in any of the five core editors, therefore our Move gesture is the reference.
+- **Scanning guards of "one home".** A promise in a comment ("the rule of pieces is ONE"), which there is nothing to check it with, stops being kept. The technique of t252 is reused for
+  `source_in`, the search for media from a clip, the sender to the player, the offline render of reels and the floor of the time of a gesture.
 
-## Отвергнуто и почему
+## Rejected and why
 
-- **Guided tour / coach marks поверх интерфейса — не берём.** Три упора: (1) инвариант
-  «repaint только при движении» — пульсирующая выноска стала бы шестой причиной 60 fps в
-  закрытом списке `animating`; (2) правило «подсказка одна» обходится, не нарушаясь:
-  выноска на `Order::Foreground` не роняет t83, который ловит только `Order::Tooltip`, —
-  худший исход, перекрытие при зелёном страже; (3) целиться не во что — ни реестра
-  команд, ни устойчивых id, только прямоугольники, пересчитываемые каждый кадр. И
-  адресат не тот: претензии «я не понимаю как» написал владелец посреди работы, тур
-  говорит с новичком при первом запуске. Ни один из пяти редакторов ядра живого тура не
-  имеет; Ableton, выбравший ту же архитектуру подсказки, завёл отдельный вид, а не слой.
-- **Возврат всплывающих подсказок — не берём.** Перекрытие и задержка — прямые слова
-  владельца; ёмкость строки не растёт ни на символ, потому что не лечит ни одну из семи
-  push-претензий.
-- **Разрушающий правый клик по ключу (как в Resolve) — отвергнут** ради обещания
-  «правой кнопкой пробовать безопасно» везде.
-- **Один enum на цели таймлайна и панелей — отвергнут:** половина веток никогда не
-  встречалась бы в своём месте.
-- **Список команд внутри теста — отвергнут:** второе место правды; разбирается исходник.
-- **Подменю видов перехода в его меню — отвергнуто:** вид меняется в окне свойств, где
-  рядом видно кривую и стороны (правило «ничего лишнего»).
-- **Проверка «что видно» по дереву доступности — отвергнута:** оно отвечает «что
-  объявлено». Метка кнопки берётся из исходного текста и многоточия не содержит; доступное
-  имя кнопки сброса составное и несёт имя ручки — первая версия t684 была зелёной на коде,
-  рисующем строку каталога. Утверждения про видимое — по галлеям.
-- **Вторая копия меню строки в заголовке — отвергнута:** два источника правды.
+- **A guided tour / coach marks over the interface — not taken.** Three stops: (1) the invariant "repaint only on
+  movement" — a pulsing callout would become the sixth cause of 60 fps in the closed list `animating`; (2) the rule "one hint"
+  is bypassed without breaking it: a callout on `Order::Foreground` does not trip t83, which catches only `Order::Tooltip` —
+  the worst outcome, an overlap under a green guard; (3) there is nothing to aim at — neither a registry of
+  commands nor stable ids, only rectangles recomputed every frame. And the addressee is wrong too: the complaints "I don't understand how…" were written by the owner in the middle of work, while the tour speaks to a newcomer on first launch.
+  None of the five core editors has a live tour; Ableton, which chose the same architecture of hints, made a separate view rather than a layer.
+- **Bringing back pop-up hints — not taken.** The overlap and the delay are the owner's direct words; the capacity of the row does not grow by a single character,
+  because it cures none of the seven push complaints.
+- **A destructive right click on a key (as in Resolve) — rejected** for the sake of the promise
+  "a right click is safe to try" everywhere.
+- **One enum for the targets of the timeline and of the panels — rejected:** half of the branches would never
+  meet in their own place.
+- **A list of commands inside the test — rejected:** a second place of truth; the source is parsed instead.
+- **A submenu of transition kinds in its menu — rejected:** the kind is changed in the properties window, where the curve and the sides are visible next to it (the rule "nothing superfluous").
+- **Checking "what is visible" by the accessibility tree — rejected:** it answers "what is declared". The label of a button is taken from the source text and does not contain the ellipsis; the accessible name of the reset button is compound and carries the name of the handle — the first version of t684 was green on code that drew the catalogue row. Assertions about what is visible are made by the galleys.
+- **A second copy of the row menu in the header — rejected:** two sources of truth.
 
-## Неочевидные детали
+## Non-obvious details
 
-- **t252 врёт без четырёх тонкостей** (`src/apps/kt-app/src/reach_tests.rs`,
-  `command_variants`/`production_corpus`): границы слова в поиске `Command::X`
-  (`SetFx` — префикс `SetFxOff`, `egui::ViewportCommand::Close` содержит `Command::Close`);
-  второй уровень корпуса — тела функций `kt_model::ops`, которые зовёт приложение
-  (`LinkClips` конструирует только `ops::magnetize_commands`); корпус берётся из
-  `font_tests::sources()`, режущего файл по `\n#[cfg(test)]` — тестовый код за
-  достижимость не считается; `NOT_FROM_UI` стартует пустым и держится тремя ассертами.
-  Ограничение записано честно: тест доказывает, что строка конструирования СУЩЕСТВУЕТ,
-  команда в мёртвой ветке пройдёт.
-- **Две ловушки харнесса t253** (`src/apps/kt-app/src/reach_tests.rs`, `scene`): Esc
-  гасит и регион, и выделение — общий харнесс молча ломал сцену следующей сущности,
-  поэтому сцена своя на каждое место; правый клик при открытом меню ЗАКРЫВАЕТ его, а не
-  открывает своё — ветка «цели нет» уходила в `continue` мимо закрытия. Пункты считаются
-  приростом вхождений подписи: у дорожек подпись удаления несёт счётчик.
-- **Первые `WIN_EDGE` px gutter'а — зона ресайза окна** (`src/apps/kt-app/src/timeline.rs`
-  и `src/scripts/live/deadend.py`): нажатие уходит window-менеджеру. Ширина gutter'а
-  34 px, рабочая полоса есть, но и харнесс, и сценарий обязаны целиться в середину —
-  иначе «зелёный на сломанном» превращается в «красный на рабочем». Зона берётся по точке
-  НАЖАТИЯ (`press_origin`): `drag_started` приходит после порога, указатель выползает из
-  кромки, и жест высоты молча становился реордером.
-- **Дамп геометрии — координаты ОТНОСИТЕЛЬНО ОКНА, XTest водит мышью по ЭКРАНУ**
-  (`src/scripts/live/kt_live.py`, `x_at`/`lane_y`): своя формула по `row["top"]` кликает
-  в пустоту и выглядит как «фича не работает в живом окне». Сценарий сначала доказывает,
-  что жест ПРОИЗОШЁЛ (первая редакция `src/scripts/live/keys.py` была вакуумной: клип в
-  нуле, край не хватался, «ключи не съехали» выполнялось само).
-- **`dnd_drag_source` убивает клик по устройству egui 0.36**
-  (`src/apps/kt-app/src/widgets.rs`, `SLOT_GRAB_PAD`): регистрирует `Sense::drag()`
-  прямоугольник поверх содержимого и после него, `hit_test` отдаёт `click: None`.
-  Скан t254b режет комментарии, иначе ловит собственное объяснение.
-- **`elided_name` отдаёт ГОТОВУЮ галлею** (`src/apps/kt-app/src/widgets.rs`,
-  `elided_name`, `SLOT_NAME_CHARS`): `LayoutJob` с `max_rows: 1` и `overflow_character`,
-  разложенный заранее. `WidgetText` из `LayoutJob` виджет переложил бы под доступную
-  ширину и вернул перенос. Причина переноса по буквам — `horizontal_wrapped` ставит
-  `TextWrapMode::Wrap`, а в имени файла нет пробелов.
-- **Аккорд через `\t` — не колонка** (`src/apps/kt-app/src/widgets.rs`, `menu_item`):
-  в epaint табуляция — четыре пробела, аккорды стоят лесенкой; настоящая колонка
-  (`Button::shortcut_text`) не взята — отложено. У клипа аккорд Del обещается только без
-  региона: с регионом Del режет регион.
-- **Фон бина ловится по прямоугольнику ПРОШЛОГО кадра и именно бина**
-  (`src/apps/kt-app/src/bin_panel.rs`, `bin_rect`): свою высоту бин узнаёт, только
-  дорисовав карточки, а интеракция обязана регистрироваться ДО них (позже
-  зарегистрированное лежит выше); `ui.clip_rect()` внутри `ScrollArea` равен вьюпорту
-  КОЛОНКИ, а ниже бина живёт перф-панель. У бина есть свободная полоса внизу — на плотной
-  сетке «фона» физически не оставалось.
-- **Хит-тест ключа кривой — поверх меток, которые заполняет ОТРИСОВКА**
-  (`src/apps/kt-app/src/automation.rs`, `AutoView::key_at`/`key_marks`): раньше щуп жил
-  в цикле рисования и срабатывал только на `interact_pointer_pos`, то есть при НАЖАТОЙ
-  кнопке, — ключ молчал и на наведение, и на правую кнопку. Меню привязывается ДО ранних
-  `return` в `graph`; буфер меток переиспользуется (в draw-путях не аллоцируем).
-- **Строка состояния рисуется ПОСЛЕДНЕЙ отдельным слоем** (`src/apps/kt-app/src/app.rs`,
-  `draw_status_hint`, `status_line_shown`): статусбар — вторая панель кадра, кнопки
-  рисуются позже, и он читал пустой `hover_hint`. Тест проверяет отрисованное, старые
-  тесты читали поле ПОСЛЕ кадра и были ложно-зелёными. `tooltip_delay = 1.0e6` в
-  `src/apps/kt-app/src/theme.rs` глушит даже чужие `on_hover_text`.
-- **t83 ловит только `Order::Tooltip`** (`src/apps/kt-app/src/layout_tests.rs`): выше
-  `Order::Middle` живут восемь именованных слоёв (четыре — ввод на месте, четыре — показ
-  состояния), и ни один не объясняет интерфейс; слой на `Order::Foreground` вернул бы
-  перекрытие при зелёном страже — закрытый список слоёв тестом пока не сторожится.
-- **Стоки `hint_sink`/`publish_sink`** (`src/apps/kt-app/src/widgets.rs`): внутри
-  `Window::show` до модели не дотянуться — виджет кладёт заявку в сток, приложение
-  разбирает после кадра. Подписи полей отдают свой прямоугольник (`lbl.<param>`): подпись
-  — цель жеста, а `Label` в дереве доступности живому сценарию не найти.
-- **Объяснение «публикация живёт внутри композиции» — только когда ленты есть**
-  (`src/apps/kt-app/src/widgets.rs`, `PublishCtx::explain_outside`; сторож t518): в
-  проекте без единой ленты фраза висела бы у КАЖДОЙ подписи про механизм, которого человек
-  не заводил. Двери нет там, куда нельзя войти: у титра краски — не свойства, `color_row`
-  спрашивает сам носитель (`value_type(stem).is_some()`), а не список исключений.
-- **Лента-владелец — по РАБОЧЕМУ ВИДУ** (`src/apps/kt-app/src/pubparam.rs`,
-  `owner_reel_of`): событие раскрытой полосы лежит рядом с корневыми, но принадлежит ленте
-  полосы; публикация в «текущую» умерла бы в `reconcile_published` тем же батчем.
-  Подтверждение при необходимости ВХОДИТ в нужную ленту тем же телом, что глагол «войти».
-- **Препятствие живёт ровно один кадр** (`src/apps/kt-app/src/app.rs`, `blocked`,
-  `blocked_text`): ставится обработчиком драга, гасится в начале следующего прохода. У
-  выключенного виджета egui `hovered()` всегда `false` — подсказка серости мертва по
-  устройству, объяснять надо через `contains_pointer()` (пока сделано не везде, см.
-  «Отложено»).
-- **Галерея пикера** (`src/apps/kt-app/src/fx_registry.rs`, `axis_at`, `CELL_DRAW_W`):
-  дефолт меню egui `CloseOnClick` закрывает попап любым кликом внутри — обязателен
-  `CloseOnClickOutside`; доступное имя ячейки составное («Blur Плотно») — «Мягко» есть у
-  шести видов; ячейка ниже сгиба прокрутки не рисуется (`is_rect_visible`) — иначе она
-  публикует прямоугольник ниже попапа и живой сценарий кликает мимо, в таймлайн. Ось силы
-  считается от ЦЕНТРА ячейки по абсолютной позиции указателя, на кадре отпускания
-  `dragged()` уже false — читается `drag_stopped()`.
-- **`free_service_lane` ищет строку, свободную НА ПРОМЕЖУТКЕ** (`src/apps/kt-app/src/app.rs`):
-  первая починка переиспользовала первую строку всегда и прятала блок под блоком (хит-тест
-  идёт с конца списка). Улов рамки был `Vec<ClipId>` — тип сам заявлял «рамка про клипы».
+- **t252 lies without four subtleties** (`src/apps/kt-app/src/reach_tests.rs`,
+  `command_variants`/`production_corpus`): word boundaries in the search for `Command::X`
+  (`SetFx` is a prefix of `SetFxOff`, and `egui::ViewportCommand::Close` contains `Command::Close`);
+  the second level of the corpus — the bodies of the functions of `kt_model::ops` that the application calls
+  (`LinkClips` constructs only `ops::magnetize_commands`); the corpus is taken from
+  `font_tests::sources()`, which cuts the file at `\n#[cfg(test)]` — test code is not counted as reachability;
+  `NOT_FROM_UI` starts empty and is held by three asserts.
+  The limitation is recorded honestly: the test proves that the construction line EXISTS,
+  a command in a dead branch will pass.
+- **Two traps of the harness of t253** (`src/apps/kt-app/src/reach_tests.rs`, `scene`): Esc
+  clears both the region and the selection — the shared harness silently broke the scene of the next entity,
+  therefore the scene is its own for each place; a right click with a menu open CLOSES it rather than opening its own — the branch "no target" went to `continue` past the closing.
+  Items are counted by the increase in occurrences of the label: for tracks the delete label carries a counter.
+- **The first `WIN_EDGE` px of the gutter are the window resize zone** (`src/apps/kt-app/src/timeline.rs`
+  and `src/scripts/live/deadend.py`): a press goes to the window manager. The gutter is
+  34 px wide, a working strip exists, but both the harness and the scenario must aim at the middle —
+  otherwise "green on the broken" turns into "red on the working". The zone is taken from the point of the PRESS
+  (`press_origin`): `drag_started` arrives after the threshold, the pointer creeps off the edge, and a height gesture silently became a reorder.
+- **The geometry dump — coordinates RELATIVE TO THE WINDOW, XTest moves the mouse across the SCREEN**
+  (`src/scripts/live/kt_live.py`, `x_at`/`lane_y`): one's own formula over `row["top"]` clicks into emptiness and looks like "the feature does not work in the live window". The scenario first proves that
+  the gesture HAPPENED (the first revision of `src/scripts/live/keys.py` was vacuous: the clip was at zero, the edge was not grabbed, and "the keys did not shift" was passing by itself).
+- **`dnd_drag_source` kills the click on the device of egui 0.36**
+  (`src/apps/kt-app/src/widgets.rs`, `SLOT_GRAB_PAD`): it registers a `Sense::drag()`
+  rectangle over the content and after it, and `hit_test` returns `click: None`. The scan of t254b strips comments, otherwise it catches its own explanation.
+- **`elided_name` returns a READY galley** (`src/apps/kt-app/src/widgets.rs`,
+  `elided_name`, `SLOT_NAME_CHARS`): a `LayoutJob` with `max_rows: 1` and `overflow_character`,
+  laid out in advance. A `WidgetText` made from a `LayoutJob` would have been fitted by the widget to the available width and would have returned a wrap.
+  The reason for the wrap by letters: `horizontal_wrapped` sets `TextWrapMode::Wrap`, and a file name has no spaces.
+- **The chord via `\t` is not a column** (`src/apps/kt-app/src/widgets.rs`, `menu_item`):
+  in epaint a tab is four spaces, and the chords stand in a staircase; the real column
+  (`Button::shortcut_text`) was not taken — deferred. For a clip the chord Del is promised only without a region: with a region, Del cuts the region.
+- **The background of the bin is caught by the rectangle of the PREVIOUS frame and specifically of the bin**
+  (`src/apps/kt-app/src/bin_panel.rs`, `bin_rect`): the bin learns its own height only after drawing the cards, while the interaction must be registered BEFORE them (what is registered later lies on top);
+  `ui.clip_rect()` inside `ScrollArea` equals the viewport of the COLUMN, and the perf panel lives below the bin. The bin has a free strip at the bottom — on a dense grid
+  the "background" physically did not remain.
+- **The hit test of a curve key — over the marks that the DRAWING fills in**
+  (`src/apps/kt-app/src/automation.rs`, `AutoView::key_at`/`key_marks`): previously the probe lived in the drawing loop and fired only on `interact_pointer_pos`, that is, with the button PRESSED —
+  the key was silent both on hover and on the right button. The menu is attached BEFORE the early `return`s in `graph`; the buffer of marks is reused (we do not allocate in the draw paths).
+- **The status line is drawn LAST as a separate layer** (`src/apps/kt-app/src/app.rs`,
+  `draw_status_hint`, `status_line_shown`): the status bar is the second panel of the frame, the buttons
+  are drawn later, and it read an empty `hover_hint`. The test checks what was drawn; the old tests read the field AFTER the frame and were falsely green. `tooltip_delay = 1.0e6` in
+  `src/apps/kt-app/src/theme.rs` silences even other people's `on_hover_text`.
+- **t83 catches only `Order::Tooltip`** (`src/apps/kt-app/src/layout_tests.rs`): above
+  `Order::Middle` live eight named layers (four — input in place, four — the display of state), and none of them explains the interface; a layer on `Order::Foreground` would return the overlap
+  under a green guard — the closed list of layers is not yet guarded by a test.
+- **The sinks `hint_sink`/`publish_sink`** (`src/apps/kt-app/src/widgets.rs`): inside
+  `Window::show` the model cannot be reached — the widget puts the request into the sink, and the application parses it after the frame. The labels of fields give their own rectangle (`lbl.<param>`): the label
+  is the target of a gesture, and a `Label` in the accessibility tree cannot be found by the live scenario.
+- **The explanation "publication lives inside a composition" — only when there are reels** (`src/apps/kt-app/src/widgets.rs`, `PublishCtx::explain_outside`; guard t518): in a
+  project without a single reel the phrase would hang over EVERY label about a mechanism the person did not set up. There is no door where one cannot enter: for a paint title it is not a property — `color_row`
+  asks the carrier itself (`value_type(stem).is_some()`), rather than a list of exceptions.
+- **The owner reel — by the WORKING VIEW** (`src/apps/kt-app/src/pubparam.rs`,
+  `owner_reel_of`): an event of an expanded lane lies next to the root ones but belongs to the reel of the lane; a publication into the "current" one would die in `reconcile_published` in the same batch.
+  The confirmation, if needed, ENTERS the required reel by the same body as the verb "enter".
+- **The obstacle lives exactly one frame** (`src/apps/kt-app/src/app.rs`, `blocked`,
+  `blocked_text`): it is set by the drag handler and cleared at the start of the next pass. For a disabled egui widget `hovered()` is always `false` — the hint about greyness is dead by the device, it must be explained through `contains_pointer()` (not yet done everywhere, see
+  "Deferred").
+- **The gallery of the picker** (`src/apps/kt-app/src/fx_registry.rs`, `axis_at`, `CELL_DRAW_W`):
+  the egui menu default `CloseOnClick` closes the popup on any click inside — `CloseOnClickOutside` is mandatory; the accessible name of a cell is compound (""Blur Dense"") — ""Soft"" exists for six kinds; a cell below the fold of the scroll is not drawn (`is_rect_visible`) — otherwise it publishes a rectangle below the popup and the live scenario clicks past it, into the timeline. The axis of strength
+  is computed from the CENTRE of the cell by the absolute position of the pointer; on the release frame `dragged()` is already false — `drag_stopped()` is read.
+- **`free_service_lane` searches for a row that is free ON THE INTERVAL** (`src/apps/kt-app/src/app.rs`):
+  the first fix always reused the first row and hid a block under a block (the hit test goes from the end of the list). The catch of the frame was a `Vec<ClipId>` — the type itself declared "the frame is about clips".
 
-## Р.67: «путь пользователя» — часть контракта
+## R.67: "user path" as part of the contract
 
-- **Правило прозой не работает.** Чек-лист «UI делается для пользователя» держался с Р.8,
-  а владелец в Р.67 написал: «СКОЛЬКО РАЗ МНЕ ПОВТОРЯТЬ ЧТОБЫ ВСЕ ___ВСЕ___ АГЕНТЫ ДУМАЛИ О
-  ПОЛЬЗОВАТЕЛЕ В ПЕРВУЮ ОЧЕРЕДЬ? … ЭТО КООРДИНАЛЬНО НАДО МЕНЯТЬ!». Поэтому у сценария
-  UI-capability с тестом kt-app от t783 обязательна строка `ПУТЬ` — шаги мышью и что видно
-  после каждого; сторож `specs-user-path.py` зовётся тестом t799 и `finish.sh`.
-- **Исключение обязано быть ИЗМЕРИМЫМ** (тот же урок, что у реестра окон в Р.66): у
-  сценария без жеста в строке стоит причина словами не короче сорока символов. Сторож сразу
-  поймал две отговорки автора правила — «(не UI-сценарий: сторож спек)».
-- **Скриншоты шагов — в отчёт.** `kt_live.step()` снимает кадр на каждый шаг ПУТИ,
-  `finish.sh` печатает их список. Прогон — на НАШИХ фикстурах: «п.1 но не на моих
-  проектах» (владелец).
+- **A rule in prose does not work.** The checklist "UI is made for the user" held since R.8,
+  but in R.67 the owner wrote: "HOW MANY TIMES DO I HAVE TO REPEAT THAT ALL ___ALL___ AGENTS SHOULD
+  THINK ABOUT THE USER FIRST? … THIS IS COORDINATE-LEVEL, IT NEEDS CHANGING!". Therefore a UI-capability
+  scenario with a kt-app test from t783 must have a `PATH` line: the mouse steps and what is visible
+  after each one; the guard `specs-user-path.py` is called by test t799 and by `finish.sh`.
+- **The exception MUST be MEASURABLE** (the same lesson as the window registry in R.66): a scenario
+  without a gesture must state the reason in the line in words of no fewer than forty characters. The guard
+  immediately caught two excuses from the author of the rule: "(not a UI scenario: the spec guard)".
+- **Screenshots of the steps go into the report.** `kt_live.step()` takes a frame for each step of the PATH,
+  and `finish.sh` prints the list of them. The run is on OUR fixtures: "item 1 but not on my
+  projects" (the owner).
 
-## Р.68: живая проверка ждёт ПРОГРАММУ, а не часы
+## R.68: the live check waits for the PROGRAM, not for the clock
 
-- **96 % живого прогона было сном.** Замер перехватом `time.sleep`:
-  `nestparam` — 130.5 с из 135.9 в 591 вызове, `curvesrc` — 41.9 из 43.2,
-  `level` — 4.2 из 4.7. Паузы подбирались под софт-рендер («кадр идёт
-  ~0.2 с»), то есть каркас ждал того, о чём программа может сказать сама.
-- **Кадра мало — нужен ВВОД.** Программа сообщает и номер нарисованного
-  кадра, и число прочитанных ею событий ввода: кадр мог НАЧАТЬСЯ раньше, чем
-  событие доехало от X-сервера, и «кадр нарисован» тогда не значит «жест
-  увиден». На этом молча терялся драг уровня (`level`), а в драге события
-  непрочитанные движения складывались в прыжок — egui начинал жест уже в
-  конечной точке, и клип не двигался вовсе.
-- **«Дореагировала» — это тишина между кадрами, измеренная В ШАГАХ КАДРА.**
-  Фиксированный порог тишины объявлял программу успокоившейся посреди
-  отрисовки, как только машина становилась медленнее (нагрузка работников).
-  Порог считается от НАБЛЮДАЕМОГО шага кадра — то самое свойство, которого
-  не было у фиксированной паузы и из-за которого «краснели разом» (§468).
-- **Прицел в попап читается ПОСЛЕ тишины.** Дамп пишется каждым кадром, и
-  первый кадр с открытым меню застаёт его в середине анимации: клик уходил
-  РЯДОМ с пунктом (`conform`, `curvesrc`). Прямоугольник щупа перечитывается,
-  когда картинка устоялась.
-- **Память egui живёт ВНЕ `KtApp`.** `*self = KtApp::open(..)` строит
-  состояние программы заново, но прокрутки, свёртки, позиции окон, фокус и
-  незакрытый драг лежат в `egui::Context`, который принадлежит eframe. Без
-  сброса третий сценарий подряд терял драг события. Это и есть «сброшенное
-  рабочее место» из контракта стенда.
-- **«Чисто» считается по окнам (`Order::Middle`) плюс модальные от самой
-  программы.** `Order::Foreground` для этого не годится: там же рисуется
-  строка состояния (правило «одна подсказка в одном месте»), и «чисто»
-  превращалось в «одно окно открыто» на ровном месте.
-- **Свой процесс объявляет СЦЕНАРИЙ** (`OWN_PROCESS = True`): проверка
-  старта — восстановление после SIGKILL, вопрос о несохранённом, замок,
-  импорт чужой версии. Работник читает объявление ДО запуска и гасит стенд,
-  иначе на экране два окна kinotrain и `probe.window()` целится в чужое.
-  Окружение, которое читается при старте процесса (`KT_AUTOSAVE_SECS`,
-  `KT_FILE_PICK`), в стенде подменить нечем — несовпадение красное и просит
-  объявить свой процесс, а не игнорируется.
-- **Что живьём, а что в headless — по отчёту, а не по вкусу.**
-  `scripts/live-coverage.py` сводит места, которые программа публикует
-  (именованные прямоугольники), с тем, что кликают сценарии: на момент
-  раунда — 174 места, 66 трогают, 108 не трогали НИ РАЗУ. Красным отчёт
-  делают только ЛОЖНЫЕ вещи: прицел в несуществующее место и ссылка спеки на
-  исчезнувший сценарий (переезд проверки обязан МЕНЯТЬ адрес, а не выкидывать
-  сценарий). Тест t804.
-- **Отчёт покрытия умеет врать В СВОЮ ПОЛЬЗУ, и это опаснее, чем врать
-  против.** Прицел бывает трёх видов, а считался один: вызов щупа по имени;
-  разбор дампа и клик по координате (`f["param"] == "bin.reel"` в
-  `nestparam`, полоса скорости в `rate`); прицел по ПРИСТАВКЕ, когда имени
-  сценарий заранее не знает (`startswith("auto.add.")` в `formula` —
-  параметр зависит от проекта). Пока считался один, отчёт звал дырой то,
-  что прокликано руками, и посылал заводить второй такой же сценарий.
-  Считать надо все три: 66 тронутых мест на деле были 86.
-- **Имя щупа в живом сценарии пишется ЛИТЕРАЛОМ на месте вызова.** Отчёт
-  читает исходники и переменную не развернёт: вынеси имя пункта в аргумент
-  вспомогательной функции — и место числится непрокликанным, хотя по нему
-  кликают. Поймано тем же сценарием, который его и закрывал
-  (`trackverbs.py`, задача 5.3).
-- **Переезд в headless — это СМЕНА АДРЕСА, записанная машиной.** Реестр
-  `MIGRATED` называет для каждого уехавшего сценария тесты, которые держат
-  его утверждения, и причину; сторож падает и на оставшемся на диске файле,
-  и на несуществующем адресе. Без реестра «вынести в non-gui» и «выкинуть»
-  неотличимы по дереву — а это ровно подмена, от которой защищает правило
-  «тесты из спек не ослабляются». Р.68 так уехали шесть сценариев
+- **96 % of a live run was sleep.** Measured by intercepting `time.sleep`:
+  `nestparam` — 130.5 s out of 135.9 in 591 calls, `curvesrc` — 41.9 out of 43.2,
+  `level` — 4.2 out of 4.7. The pauses were tuned to software rendering ("a frame
+  takes ~0.2 s"), that is, the harness was waiting for something the program could tell it itself.
+- **A frame is not enough — INPUT is needed.** The program reports both the number of the drawn
+  frame and the number of input events it has read: a frame could have STARTED before the event
+  reached us from the X server, and then "frame drawn" does not mean "gesture seen". This silently
+  lost the level drag (`level`), and in the drag the unread mouse movements were summed into a jump — egui began
+  the gesture already at the end point, and the clip did not move at all.
+- **"Has reacted" is silence between frames, measured IN FRAME STEPS.** A fixed silence threshold
+  declared the program calm in the middle of drawing as soon as the machine became slower (load from the workers).
+  The threshold is computed from the OBSERVED frame step — the very property that a fixed pause lacked, and
+  because of which things "turned red all at once" (§468).
+- **The aim at a popup is read AFTER the silence.** The dump is written every frame, and the first
+  frame with an open menu catches it in the middle of an animation: the click landed NEXT TO the item
+  (`conform`, `curvesrc`). The probe rectangle is re-read once the picture has settled.
+- **egui's memory lives OUTSIDE `KtApp`.** `*self = KtApp::open(..)` rebuilds the
+  program's state from scratch, but scrolling, collapsing, window positions, focus and an
+  unfinished drag live in `egui::Context`, which belongs to eframe. Without a reset, the third scenario in a row
+  lost the drag events. This is the "reset workspace" from the contract of the bench.
+- **"Clean" is counted by windows (`Order::Middle`) plus the program's own modals.** `Order::Foreground` is not
+  suitable for this: the status line is drawn there too (the rule "one hint in one place"), and "clean"
+  turned into "one window open" for no reason.
+- **The scenario declares its OWN PROCESS** (`OWN_PROCESS = True`): the start check is recovery after SIGKILL, the question about unsaved changes, the lock,
+  importing another version's file. The worker reads the declaration BEFORE launch and shuts the bench down,
+  otherwise there are two kinotrain windows on the screen and `probe.window()` aims at the wrong one.
+  An environment that is read at process start (`KT_AUTOSAVE_SECS`,
+  `KT_FILE_PICK`) cannot be substituted on the bench — a mismatch is red and asks to declare an own process,
+  it is not ignored.
+- **What is live and what is headless is decided by the report, not by taste.**
+  `scripts/live-coverage.py` matches the places the program publishes (named rectangles) against what the scenarios click: at the time of the round — 174 places, 66 touched, 108 NEVER touched. The report
+  turns red only for things that are FALSE: an aim at a non-existent place and a spec link to a vanished scenario (a move of a check must CHANGE the address, not drop the scenario). Test t804.
+- **The coverage report can lie IN ITS OWN FAVOR, and that is more dangerous than lying against it.** There are three kinds of aim, but only one was counted: a call of the probe by name; parsing of the dump and a click by coordinate (`f["param"] == "bin.reel"` in
+  `nestparam`, the speed bar in `rate`); an aim by PREFIX, when the scenario does not know the name in advance (`startswith("auto.add.")` in `formula` — the parameter depends on the project). While only one was counted, the report called
+  what was clicked by hand a hole, and ordered a second identical scenario to be written. All three must be counted: the 66 touched places were in fact 86.
+- **The probe name in a live scenario is written as a LITERAL at the call site.** The report
+  reads the sources and cannot expand a variable: move the name of the item into an argument of a helper function — and the place counts as unclicked, although it is clicked. Caught by the same scenario that was closing it
+  (`trackverbs.py`, task 5.3).
+- **The move to headless is a CHANGE OF ADDRESS, recorded by the machine.** The `MIGRATED` registry names, for every scenario that moved, the tests that hold its assertions, and the reason; the guard falls over both on a file still left on disk and on a non-existent address. Without the registry, "move to non-gui" and "delete" are indistinguishable by the tree — and that is exactly the substitution against which the rule "tests from the specs are not weakened" protects. In R.68 six scenarios moved this way
   (`nest`, `nestenter`, `nestopen`, `nestzero`, `fxfield`, `curvesrc` —
-  175 с из 1677 с последовательного живого прогона).
-- **У числа дыр есть ОБЪЯВЛЕННЫЙ ПРЕДЕЛ-ХРАПОВИК** (`UNTOUCHED_LIMIT`).
-  Он не цель и не нож: новое место программы либо получает живой шаг, либо
-  число двигают осознанно — одной строкой и с причиной. Без храповика
-  закрытые дыры открылись бы обратно молча, как это уже было с правилами,
-  записанными прозой.
-- **Отрицательная проверка после свёртки ждёт ТИШИНЫ.** Свёртка группы у
-  egui анимирована: пока она едет, поля ещё рисуются и честно публикуют
-  свои прямоугольники, и `has_probe` видит то, чего уже «нет». Перед «этого
-  больше не показано» нужен `settle()` — родня правила «прицел в попап
-  читается ПОСЛЕ тишины».
-- **Двойной клик по первой секунде попадает в ПОДПИСЬ ДОРОЖКИ.** Подпись
-  лежит поверх начала строки, и когда вид уехал (курсор поездил при игре),
-  `x_at(1 с)` оказывается под ней: вместо окна эффектов открывается
-  переименование V1. Целиться надо в середину монтажа, а не в его начало.
+  175 s out of 1677 s of the sequential live run).
+- **The number of holes has a DECLARED RATCHET LIMIT** (`UNTOUCHED_LIMIT`).
+  It is neither a target nor a knife: a new place of the program either gets a live step, or the number is moved deliberately — in one line and with a reason. Without the ratchet
+  the closed holes would silently open again, as already happened with rules written in prose.
+- **A negative check after collapsing waits for SILENCE.** Collapsing a group in egui is animated: while it is moving, the fields are still drawn and honestly publish
+  their rectangles, and `has_probe` sees what is already "gone". Before "this is no longer shown" a `settle()` is needed — a relative of the rule "the aim at a popup is read AFTER the silence".
+- **A double click on the first second lands on the TRACK LABEL.** The label
+  lies over the start of the row, and when the view has moved (the cursor drifted during play), `x_at(1 s)` falls under it: instead of the effects window, the rename of V1 opens. The aim must be at the middle of the edit, not at its start.
 
-## Р.69: ожидание доехало до ЖЕСТОВ, и что это вскрыло
+## R.69: the wait reached the GESTURES, and what this revealed
 
-- **Правило, записанное и не доехавшее, — это не правило.** Ожидание по
-  наблюдаемому событию построено в Р.68 и применено к ЩУПАМ; сами жесты
-  остались на часах, и замер показал **539 с сна из 1587 с прогона**
-  (34 %). Статическая оценка давала 387 с и была занижена на 39 %: она
-  считала МЕСТА ВЫЗОВА, а сценарии зовут жесты в циклах и повторах.
-  Считать сон обязана машина, а не глаз.
-- **Сон, спрятанный в драйвере, ничем не отличается от сна в каркасе.**
-  123 с из 387 жили в `ui-probe.py`, куда сторож не смотрел, и опаснее
-  всего они были в ЗНАЧЕНИЯХ ПО УМОЛЧАНИЮ аргументов: на месте жеста такой
-  паузы не видно вовсе. Область правила — вся живая проверка.
-- **«Причина словами» — слабая мера; у сна есть БЮДЖЕТ.** Все 265 с в
-  каркасе были законными: у каждой паузы стояло объяснение длиннее сорока
-  символов. Предел — сумма ОБЪЯВЛЕННЫХ секунд, проверяется без прогона и не
-  зависит ни от машины, ни от числа вызовов. Вердикт на ФАКТИЧЕСКОМ сне
-  ловил бы загрузку вместо регрессии, поэтому факт печатается, а не судит.
-  Дыра нашлась сразу: пауза с вычисляемой длительностью в счёт не попадала —
-  теперь в каркасе длительность обязана быть числом на месте вызова или
-  умолчанием параметра, которое и считается.
-- **МОДИФИКАТОРУ НУЖЕН СВОЙ КАДР — и клавиатуре тоже.** Правило было
-  записано у мышиных жестов (`_mods`) и не применено к `key`: с нулевой
-  паузой Ctrl и S уезжали в X одним пакетом, egui читал «s» без Ctrl, и
-  **Ctrl+S ломался молча**. Жест на экране проходил, сценарий читал с диска
-  файл БЕЗ правки и винил в этом драг — полтора часа разбора. По той же
-  причине символ через Shift (`*`, `+`) выпадает из пачки набора строки.
-- **`settle()` отвечает на «картинка устоялась», а НЕ на «жест применён».**
-  Тишина после жеста не наступает вовсе: программа законно перерисовывается
-  под указателем. Поставленный после отпускания драга, он выжигал свой
-  таймаут — **10 с на каждый драг** (+300 с на прогон) и столько же на
-  каждое наведение (`analysis` 54 с против 17 с). После жеста ждут КАДР;
-  тишину просят там, где её и правда ждут, и с коротким сроком.
-- **Двойной клик — ВРЕМЕННОЙ жест, и окно узкое с двух сторон.** Четыре
-  события, уехавшие в один кадр, egui считает одним кликом; разнесённые
-  больше 0.3 с — двумя одиночными. Убрав паузы драйвера, раунд убрал и
-  разнос, и клик начал срываться под нагрузкой (`nestparam` красный дважды).
-  Прежние 0.09 с вернулись, но уже названными паузами в бюджете.
-- **Метка «сколько ввода прочитано» бывает УСТАРЕВШЕЙ.** Дамп идёт 10 Гц,
-  поэтому прочитанное за последние 100 мс в нём не отражено, и рост
-  счётчика после жеста бывает чужим — от хвоста предыдущего. Метка парная
-  (кадр, ввод), и ожидание требует дампа, написанного заведомо ПОЗЖЕ метки.
-  Поодиночке оба условия обманывают: «ввод вырос» — чужим ростом, «кадр
-  нарисован» — кадром, начавшимся раньше события.
-- **Ускорение вскрывает то, что прятала цена проверки.** Чтение точки
-  экрана стоило 84 мс (снимок 1920×1080 плюс два процесса ImageMagick) и
-  давало программе фору; прямой `XGetImage` стоит 0.04 мс — и `gpufx` начал
-  читать ПРЕДЫДУЩИЙ кадр. Правило «пиксель после жеста читается
-  `pixel_settled`» было записано давно, просто медленное чтение его
-  маскировало. Прямой путь при этом принимается только после сверки с
-  `xwd` на одном кадре: у окна eframe 32-битный визуал, и чтение корневого
-  окна уже отдавало ЧЁРНОЕ там, где картинка была (Р.33 п.228).
-- **Отрицательная проверка тоньше положительной.** Щупы копятся между
-  записями дампа, а свёртки и попапы анимированы: «поля исчезли?»,
-  спрошенное один раз наугад, мигает. Для этого есть `wait_gone(имя)` —
-  ждать, пока СВЕЖИЙ дамп перестанет нести имя.
-- **Сторож ловит и собственную потерю автора.** Тело драга, случайно
-  оставшееся прежним после бисекта, пережило три зелёных прогона и было
-  найдено только правилом «каждый жест ждёт прочитанный ввод» (t807).
-- **Тест, который ломает сторожа, ломает его на СВОЕЙ копии.** t803, t807 и
-  t808 проверяют один и тот же скрипт нарушениями, и порча рабочего дерева
-  делала вердикт соседа случайным — это прошло по удаче ордеринга и
-  вскрылось первым же совместным прогоном. У сторожа подменяемый корень,
-  у каждого теста своя копия.
+- **A rule that was written down but did not arrive is not a rule.** The wait on an observed event was built in R.68 and applied to the PROBES; the gestures themselves
+  stayed on the clock, and the measurement showed **539 s of sleep out of a 1587 s run**
+  (34 %). The static estimate gave 387 s and was understated by 39 %: it counted the CALL SITES, while scenarios call gestures in loops and repeats.
+  The machine must count the sleep, not the eye.
+- **Sleep hidden in the driver is no different from sleep in the harness.**
+  123 s out of 387 lived in `ui-probe.py`, where the guard did not look, and most dangerous of all they were in the DEFAULT VALUES of arguments: at the call site of a gesture such a
+  pause is not visible at all. The scope of the rule is the entire live check.
+- **"A reason in words" is a weak measure; sleep has a BUDGET.** All 265 s in
+  the harness were legitimate: each pause had an explanation longer than forty
+  characters. The limit is the sum of the DECLARED seconds, checked without a run and independent of either the machine or the number of calls. A verdict on the ACTUAL sleep
+  would catch the load instead of the regression, so the fact is printed, not judged.
+  A hole was found at once: a pause with a computed duration did not count toward it —
+  now in the harness the duration must be a number at the call site or a parameter default that is itself computed.
+- **A MODIFIER NEEDS ITS OWN FRAME — and so does the keyboard.** The rule had been
+  written for mouse gestures (`_mods`) and not applied to `key`: with a zero
+  pause, Ctrl and S went to X in one packet, egui read "s" without Ctrl, and
+  **Ctrl+S broke silently**. The gesture passed on screen, the scenario read the
+  file from disk WITHOUT the edit and blamed the drag for it — an hour and a half of analysis. For the same
+  reason, a character typed with Shift (`*`, `+`) drops out of a batch of typed text.
+- **`settle()` answers "the picture has settled", and NOT "the gesture has been applied".**
+  Silence after a gesture never comes at all: the program legitimately redraws
+  under the pointer. Placed after releasing a drag, it burned its own timeout — **10 s on every drag** (+300 s per run) and the same amount on
+  every hover (`analysis` 54 s against 17 s). After a gesture one waits for a FRAME;
+  silence is requested where it is really expected, and with a short deadline.
+- **A double click is a TIMING gesture, and the window is narrow on both sides.** Four
+  events arriving in one frame are counted by egui as one click; spaced more than
+  0.3 s apart — as two single clicks. When the round removed the driver's pauses, it also removed
+  the spacing, and the click began to fail under load (`nestparam` red twice).
+  The old 0.09 s came back, but now as named pauses within the budget.
+- **The label "how much input has been read" can be STALE.** The dump runs at 10 Hz,
+  so what was read in the last 100 ms is not reflected in it, and an increase of the
+  counter after a gesture may belong to someone else — to the tail of the previous one. The label is a pair
+  (frame, input), and the wait requires a dump that was certainly written LATER than the label.
+  Taken singly, both conditions mislead: "input has grown" — by someone else's growth; "frame
+  drawn" — by a frame that started before the event.
+- **Speeding up exposed what the cost of checking had hidden.** Reading a screen point
+  cost 84 ms (a 1920×1080 snapshot plus two ImageMagick processes) and
+  gave the program a head start; a direct `XGetImage` costs 0.04 ms — and `gpufx` began
+  to read the PREVIOUS frame. The rule "the pixel after a gesture is read by
+  `pixel_settled`" had been written long ago; only the slow read was masking it. The direct path is
+  accepted only after a cross-check against
+  `xwd` on a single frame: the eframe window has a 32-bit visual, and reading the root
+  window was already returning BLACK where the picture was (R.33 item 228).
+- **The negative check is subtler than the positive one.** Probes accumulate between
+  dump records, and collapses and popups are animated: "have the fields disappeared?",
+  asked once at random, flickers. For this there is `wait_gone(name)` —
+  to wait until a FRESH dump no longer carries the name.
+- **The guard also catches the loss of its own author.** A drag body that by chance stayed
+  the same after bisection survived three green runs and was found only by the
+  rule "every gesture waits for the read input" (t807).
+- **A test that breaks the guard breaks it on ITS OWN copy.** t803, t807 and
+  t808 check the same script with violations, and corrupting the working tree
+  made a neighbour's verdict random — this passed by the luck of ordering and
+  surfaced in the first joint run. The guard has a replaceable root,
+  and each test has its own copy.
 
-## Отложено
+## Deferred
 
-- Вердикты волны справки, не реализованные кодом: сторож «аккорд из одного источника»
-  (аккорд как данные, настоящая колонка `shortcut_text`; сегодня `Ctrl+Y` и `Backspace` не
-  названы ни в одном каталоге); сторож «отказ — ошибка везде» (правило распространить с
-  Move-жеста на трим, серые `add_enabled`-виджеты и отвергнутые команды модели —
-  `Severity` без варианта `Error`, `TimelineModel::check_on` приватна); сторож закрытого
-  списка слоёв выше `Order::Middle`.
-- Docs-as-code: конвейер `site/build.py --check` и автосъёмка скриншотов настоящим окном
-  построены, но `finish.sh` их не зовёт — производство документации без документации.
-- Обучающий слой в форме «урок проверяет выполненную команду» — только после реестра
-  команд (объекта «команда» нет, сказать «шаг закрыт» некому).
+- Verdicts of the help wave not implemented in code: the guard "chord from one source"
+  (a chord as data, a real column `shortcut_text`; today `Ctrl+Y` and `Backspace` are not
+  named in any catalog); the guard "refusal is an error everywhere" (extend the rule from the Move gesture
+  to trim, grey `add_enabled` widgets and rejected model commands —
+  `Severity` has no `Error` variant, `TimelineModel::check_on` is private); the guard of the closed
+  list of layers above `Order::Middle`.
+- Docs-as-code: the pipeline `site/build.py --check` and automatic screenshot capture by the real
+  window are built, but `finish.sh` does not call them — documentation production without documentation.
+- A learning layer in the form "the lesson checks the executed command" — only after a command
+  registry (there is no "command" object, so there is nobody to say "step closed" to).
 
 ## The import door has a fourth input: projects of the former name (2026-10-21)
 

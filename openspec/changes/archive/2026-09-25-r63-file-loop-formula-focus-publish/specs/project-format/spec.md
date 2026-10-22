@@ -2,41 +2,26 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Старые файлы мигрируют на чтении, односторонне
+### Requirement: Old files migrate on read, one-way
+Files up to the current version SHALL be read and converted to the current semantics on read; the next write SHALL already go in the new form: curves in fractions 0..1 → material ticks by the clip's geometry (v<3); camera keyframes in fractions → common curves; the morpher up to v4 → a patch with `timed: false`; `ui.lane_order` → the model's `lane_order`; the generator's values in `parameters` and the title's animation mode → values on the event and curves by the same formulas as the preset in the window; the former boolean `ease` of a curve → the segment shape on the keyframe, and for a SPEED curve (`rate`) `ease: true` SHALL be read in the LINEAR form — that is how it always sounded (the warp map sits on the piecewise-linear profile and never read the `ease` field). Migration MUST NOT produce a file that its own validation rejects: a file that opened in the previous build SHALL open in the next one too, and the sound and the frame SHALL remain as before.
+Why: backward compatibility is not required, but the owner's working projects MUST open and sound/look as before; a divergence of the migration from the preset would give "the same button — a different result". R.63: `untitled_v26.09.19.otio` (14 speed curves with `ease: true`) was rejected by `RateShapeMustBeLinear` — the reader translated `ease` into "smooth", while the speed validator accepts only the straight form; the former warp did not see the shape at all, so the correct translation is "linear".
 
-Файлы до текущей версии SHALL читаться и переводиться в текущую семантику на чтении,
-следующая запись SHALL идти уже в новой форме: кривые в долях 0..1 → тики материала по
-геометрии клипа (v<3); кейфреймы камеры в долях → общие кривые; морфер до v4 → патч с
-`timed: false`; `ui.lane_order` → `lane_order` модели; значения генератора в `parameters`
-и режим анимации титра → значения на событии и кривые теми же формулами, что пресет в окне;
-прежнее булево `ease` кривой → форма отрезка на ключе, причём у кривой СКОРОСТИ (`rate`)
-`ease: true` SHALL читаться ПРЯМОЙ формой — так она всегда звучала (карта варпа стоит на
-кусочно-линейном профиле и поле `ease` не читала никогда). Миграция MUST NOT порождать
-файл, который отвергает собственная валидация: файл, открывавшийся прежней сборкой, SHALL
-открыться и следующей, а звук и кадр SHALL остаться прежними.
-Почему: обратной совместимости не требуется, но рабочие проекты владельца обязаны открыться
-и звучать/выглядеть как раньше; расхождение миграции с пресетом дало бы «та же кнопка —
-другой результат». Р.63: `untitled_v26.09.19.otio` (14 кривых скорости с `ease: true`)
-отвергался `RateShapeMustBeLinear` — читатель перевёл `ease` в «плавно», а валидатор
-скорости принимает только прямую; прежний варп форму не видел, значит правильный перевод —
-«линейно».
-
-#### Scenario: Кривые старого домена переводятся в тики материала
-- **WHEN** файл v2 с ключами 0.0 и 0.5 у клипа 0..90000 читается и пересохраняется
-- **THEN** ключи стали 0 и 45000, запись — v3
+#### Scenario: Curves of the old domain are translated into material ticks
+- **WHEN** a v2 file with keys 0.0 and 0.5 on a clip 0..90000 is read and re-saved
+- **THEN** the keys become 0 and 45000; the write is v3
 - **TEST** t212 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Легаси-кейфреймы камеры, старый морфер и старое место порядка
-- **WHEN** камера несёт `keyframes` в долях события; морфер записан голым массивом целей и внешне-тегированным видом; порядок строк лежит в `ui.lane_order`
-- **THEN** кейфреймы съедены миграцией в кривые в тиках; морфер читается с `timed: false` и прежней семантикой, версию до v4 не поднимает; порядок переезжает в модель
+#### Scenario: Legacy camera keyframes, the old morpher and the old place of order
+- **WHEN** the camera carries `keyframes` as fractions of the event; the morpher is written as a bare array of targets and an externally tagged view; the row order lies in `ui.lane_order`
+- **THEN** the keyframes are consumed by the migration into curves in ticks; the morpher is read with `timed: false` and the former semantics, and does not raise the version up to v4; the order moves into the model
 - **TEST** t189, t240, t241 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Генератор старого файла раздаёт значения событию
-- **WHEN** файл v8 с текстом и режимом анимации внутри `parameters` и без `kt.gen` у клипа
-- **THEN** путь медиа укоротился до вида, значения доехали до события, кривые анимации равны тем, что ставит пресет, проект законен
+#### Scenario: The generator of an old file hands the values to the event
+- **WHEN** a v8 file with text and an animation mode inside `parameters`, and without `kt.gen` on the clip
+- **THEN** the media path was shortened to its form; the values moved to the event; the animation curves equal those the preset sets; the project is valid
 - **TEST** t665 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Кривая скорости с прежним `ease` читается прямой и файл открывается
-- **WHEN** читается файл до Р.61 с кривыми `rate` `ease: true` на событии, в патче морфера и внутри вложенной ленты (форма файла — как у `untitled_v26.09.19.otio`), и такой же с `ease: false`
-- **THEN** проект законен, у всех ключей скорости форма `Linear`, у прочих кривых `ease: true` даёт прежнее сглаживание; карта варпа даёт те же тики, что до Р.61; пересохранение пишет `shape` только там, где он не умолчание; на прежнем коде — отказ `RateShapeMustBeLinear`
-- **TEST** t747 (`src/libs/kt-otio/tests/convert.rs`), t747b (`src/libs/kt-model/tests/fx_auto.rs`), живой сценарий `src/scripts/live/oldfile.py`
+#### Scenario: A speed curve with the former `ease` is read as straight and the file opens
+- **WHEN** a file before R.61 is read with `rate` curves `ease: true` on the event, in the morpher's patch and inside a nested reel (the file shape as in `untitled_v26.09.19.otio`), and the same with `ease: false`
+- **THEN** the project is valid; all speed keys have the shape `Linear`; the other curves with `ease: true` give the former smoothing; the warp map gives the same ticks as before R.61; re-saving writes `shape` only where it is not the default; on the old code — rejection by `RateShapeMustBeLinear`
+- **TEST** t747 (`src/libs/kt-otio/tests/convert.rs`), t747b (`src/libs/kt-model/tests/fx_auto.rs`), live scenario `src/scripts/live/oldfile.py`

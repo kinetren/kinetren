@@ -10,7 +10,6 @@ UI or a second of exit.
 ## ADDED Requirements
 
 ### Requirement: Two events, and a missing close is the crash signal
-
 The GUI SHALL send `app_started` once per process, after the first frame is drawn, and
 `app_closed` from `on_exit` with `duration_s` — whole seconds since process start
 (`std::time::Instant`, not wall clock). Both events of one run SHALL carry the same
@@ -36,7 +35,6 @@ directory and a heartbeat for an answer the pair already gives.
 - **TEST** t836 (`src/apps/kt-app/src/telemetry.rs`)
 
 ### Requirement: The payload is a closed allow-list, and it is anonymous
-
 Every event SHALL carry exactly these properties and no others: `$session_id`,
 `app_version` (`kt_version::display()`), `os` (`std::env::consts::OS`), `arch`
 (`std::env::consts::ARCH`), `lang` (the resolved UI language code), `$process_person_profile:
@@ -63,7 +61,6 @@ identifies nothing outside PostHog and is gone when the data directory is remove
 - **TEST** t838 (`src/apps/kt-app/src/telemetry.rs`)
 
 ### Requirement: On by default, said once, switched off in the View menu
-
 Telemetry SHALL be enabled unless any of these holds: the build has no project key; the
 environment has `KINETREN_TELEMETRY=0` (or `off`/`false`) or `DO_NOT_TRACK=1`; the person
 turned it off. The choice SHALL be stored in eframe storage under `telemetry` (`on`/`off`)
@@ -102,7 +99,7 @@ convention of command-line tools; honouring it costs one line.
   after the restart; in every catalog the notice text contains both the "sent" and the "not
   sent" list and the View menu item name, and the checkbox hover text holds the same two lists; View holds the checkbox, checked; unchecking it sets the stored value to
   `off` and the recording sink receives no `app_closed` on exit
-- **ПУТЬ** start Kinetren for the first time → a notice lists what is sent, what is NOT sent
+- **PATH** start Kinetren for the first time → a notice lists what is sent, what is NOT sent
   (projects, files, media, names, IP) and points to View → open View → the checkbox "Send anonymous usage statistics" is checked next
   to Language → uncheck it → it stays unchecked after a restart, and no notice appears again
 - **TEST** t840 (`src/apps/kt-app/src/reach_tests.rs`)
@@ -115,7 +112,6 @@ convention of command-line tools; honouring it costs one line.
 - **TEST** t843 (`src/apps/kt-app/src/layout_tests.rs`)
 
 ### Requirement: Sending never blocks the UI and never holds the exit
-
 Events SHALL be sent from one background thread fed by a bounded channel; the UI thread only
 enqueues. The HTTP request SHALL use HTTPS to the EU ingestion host
 (`https://eu.i.posthog.com/i/v0/e/`) with a connect timeout of 1 s and a total timeout of
@@ -136,7 +132,6 @@ server that is down must look exactly like no telemetry.
 - **TEST** t841 (`src/apps/kt-app/src/telemetry.rs`)
 
 ### Requirement: Only release builds carry the key
-
 The project key SHALL enter the binary only at compile time through
 `option_env!("KINETREN_POSTHOG_KEY")`; the source tree MUST NOT hard-code it in Rust code.
 `src/scripts/release-build.sh` (and through it `make` and the release workflow) SHALL read

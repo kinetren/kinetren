@@ -2,90 +2,46 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Живой стенд: процесс переиспользуется, ожидание идёт по КАДРУ, а не по часам
+### Requirement: Live rig: the process is reused, waiting follows the FRAME, not the clock
+The live check SHALL keep one kt-app process per worker and open projects IN IT ONE AFTER ANOTHER, instead of a cold start for each scenario. Opening a project in the stand SHALL bring the program to a clean state (closed windows, reset workspace), and the scenario SHALL receive proof of cleanliness before the first gesture: the stand reports readiness, the number of open windows is zero, and the open project is the one that was requested. A scenario that checks the START of the program ITSELF (recovery after a crash, the question about unsaved work, the project lock, importing a file of an older version) SHALL declare "its own process" and receive it; the declaration is part of the scenario, not a setting of the run.
 
-Живая проверка SHALL держать один процесс kt-app на работника и открывать в нём проекты
-ПОДРЯД, вместо холодного старта на каждый сценарий. Открытие проекта в стенде SHALL
-приводить программу к чистому состоянию (закрытые окна, сброшенное рабочее место), и
-сценарий SHALL получать доказательство чистоты до первого жеста: стенд сообщает
-готовность, число открытых окон равно нулю, а открытый проект — тот, который просили. Сценарий,
-который проверяет САМ старт программы (восстановление после падения, вопрос о
-несохранённой работе, замок проекта, импорт файла прежней версии), SHALL объявлять «свой
-процесс» и получать его; объявление — часть сценария, а не настройка прогона.
+The wait after a gesture SHALL be tied to an OBSERVABLE event of the program — the number of input events read, the number of the frame drawn, the appearance of a widget in the geometry dump, or a change of a pixel — and not to a fixed pause. This SHALL apply to the GESTURE ITSELF too: click, right click, double click, drag, key, wheel and hover wait until the program READS their events, not for as long as a frame usually takes. Next to the geometry dump, the program SHALL report BOTH the number of the frame drawn AND the number of input events it has read: one frame is not enough — it could have STARTED before the event arrived from the X server, and "frame drawn" would then not mean "gesture seen". The wait for "the program has finished reacting" SHALL be computed from the quiet between frames, and this quiet SHALL be measured in OBSERVABLE steps of the frame, not in seconds: under load a frame takes three times as long, and a fixed threshold would declare the program calm in the middle of drawing. A line of text SHALL reach the program whole, not character by character with a pause for each. The window SHALL be raised when the WINDOW CHANGES and at the first gesture of a scenario, not before every gesture: raising is a round trip to the X server and its own pause, while the window does not change between two consecutive clicks.
 
-Ожидание после жеста SHALL быть привязано к НАБЛЮДАЕМОМУ событию программы — числу
-прочитанных событий ввода, номеру нарисованного кадра, появлению виджета в дампе геометрии
-или изменению пикселя, — а не к фиксированной паузе. Это SHALL относиться и к САМОМУ
-ЖЕСТУ: клик, правый клик, двойной клик, драг, клавиша, колесо и наведение ждут, пока
-программа ПРОЧИТАЕТ их события, а не столько, сколько кадр идёт «обычно». Программа SHALL
-сообщать рядом с дампом
-геометрии И номер нарисованного кадра, И число прочитанных ею событий ввода: одного кадра
-мало — он мог НАЧАТЬСЯ раньше, чем событие доехало от X-сервера, и «кадр нарисован» тогда не
-значит «жест увиден». Ожидание «программа дореагировала» SHALL считаться по тишине между
-кадрами, и эта тишина SHALL измеряться в НАБЛЮДАЕМЫХ шагах кадра, а не в секундах: под
-нагрузкой кадр идёт втрое дольше, и фиксированный порог объявил бы программу успокоившейся
-посреди отрисовки. Набор строки SHALL
-доезжать до программы целиком, а не по символу с паузой на каждый. Окно SHALL подниматься
-при СМЕНЕ окна и на первом жесте сценария, а не перед каждым жестом: поднятие — это круг к
-X-серверу и своя пауза, а окно между двумя кликами подряд не меняется.
+Fixed pauses SHALL be enumerable IN THE WHOLE live check — in the harness, in the scenarios and in the mouse and keyboard driver: a sleep hidden in the driver is no different from a sleep in the harness, and a rule that does not see it holds less than it promises. Every remaining pause SHALL carry a REASON in words (a gesture that has no observable consequence, for example the egui double-click time threshold or the step of a drag between positions), and the guard SHALL fail on a pause without a reason. Reasons SHALL NOT be the ONLY measure: the total fixed sleep of a run SHALL be counted by the machine, printed, and have a DECLARED LIMIT, exceeding which is red. The limit is a ratchet, not a knife: a new pause either fits within it, or the limit is moved deliberately, in one line and with a reason.
 
-Фиксированные паузы SHALL быть перечислимы ВО ВСЕЙ живой проверке — в каркасе, в сценариях
-и в драйвере мыши и клавиатуры: сон, спрятанный в драйвере, ничем не отличается от сна в
-каркасе, и правило, которое его не видит, держит меньше, чем обещает. Каждая оставшаяся
-пауза SHALL нести ПРИЧИНУ словами (жест, у которого нет наблюдаемого следствия, например
-временной порог двойного клика egui или шаг драга между позициями), и сторож SHALL падать
-на паузе без причины. Причины SHALL быть НЕ ЕДИНСТВЕННОЙ мерой: суммарный фиксированный
-сон прогона SHALL считаться машиной, печататься и иметь ОБЪЯВЛЕННЫЙ ПРЕДЕЛ, превышение
-которого красное. Предел — храповик, а не нож: новая пауза либо укладывается в него, либо
-предел двигают осознанно, одной строкой и с причиной.
+Reading a POINT or a small area of the screen SHALL go through a direct request to the X server, not through a snapshot of the whole screen parsed by an external tool. The screenshot (`xwd`) SHALL remain the REFERENCE: the program window has a 32-bit visual, and reading the root window had already returned BLACK where there was a picture — the direct path is accepted only after a check against the reference ON THE SAME frame, and a discrepancy returns the reading to the reference. Snapshots for artifacts and for the steps of `PATH` remain snapshots.
 
-Чтение ТОЧКИ или небольшой области экрана SHALL идти прямым запросом к X-серверу, а не
-снимком всего экрана с разбором внешним инструментом. Снимок экрана (`xwd`) SHALL
-оставаться ЭТАЛОНОМ: у окна программы 32-битный визуал, и чтение корневого окна уже
-отдавало ЧЁРНОЕ там, где картинка была, — прямой путь принимается только после сверки с
-эталоном НА ОДНОМ И ТОМ ЖЕ кадре, а расхождение возвращает чтение на эталон. Снимки для
-артефактов и для шагов `ПУТЬ` остаются снимками.
+The test channel of the stand SHALL be enabled ONLY by an environment variable and SHALL have no effect in the product.
+Why: R.68 measured that 96 % of the time of a live run is sleep: `nestparam` 136 s with 130 s of sleep in 591 calls, `curvesrc` 43 s with 42 s of sleep, `level` 4.7 s with 4.2 s of sleep. The pauses were picked for the software renderer ("a frame takes about 0.2 s"), that is, the harness was waiting for HOURS for something the program could have said itself; the same blindness also gives false reds under load.
+The owner: "cut down kt restarts (you can just open projects one after another)."
+R.69: the wait by event reached the probes but did not reach the gestures — 387 s out of 1582 s of a sequential run remained sleep (click 0.78 s, key 0.77 s, drag 2.55 s, typing a line 0.77 s per character), and 123 s of them lived in the X driver, which the guard did not look at. All 265 s in the harness, meanwhile, were "legitimate": each pause had a reason longer than forty characters. Prose did not hold — an exception must be MEASURABLE (the same lesson as the window registry R.66 and the PATH guard R.67).
 
-Тестовый канал стенда SHALL включаться только
-переменной окружения и в продукте не действовать.
-Почему: Р.68 замерил, что 96 % времени живого прогона — сон: `nestparam` 136 с при 130 с
-сна в 591 вызове, `curvesrc` 43 с при 42 с сна, `level` 4.7 с при 4.2 с сна. Паузы
-подобраны под софт-рендер («кадр идёт ~0.2 с»), то есть каркас ждал ЧАСАМИ то, о чём
-программа могла сказать сама; та же слепота даёт и ложные покраснения под нагрузкой.
-Владелец: «сократить перезапуски kt (можно же подряд открывать проекты)».
-Р.69: ожидание по событию доехало до щупов и не доехало до жестов — 387 с из 1582 с
-последовательного прогона остались сном (клик 0.78 с, клавиша 0.77 с, драг 2.55 с, набор
-строки 0.77 с на символ), и 123 с из них жили в драйвере X, куда сторож не смотрел. Все
-265 с в каркасе при этом были «законными»: у каждой паузы стояла причина длиннее сорока
-символов. Проза не удержала — исключение обязано быть ИЗМЕРИМЫМ (тот же урок, что у
-реестра окон Р.66 и у сторожа ПУТЬ Р.67).
+#### Scenario: Projects one after another in one process, start where it is needed
+- **WHEN** a worker runs three scenarios in a row that did not declare "its own process"; then a scenario that declared it (a recovery check after SIGKILL)
+- **THEN** the first three passed in ONE kt-app process: each saw its own project, an empty list of open windows and a workspace without traces of the previous scenario; the one that declared "its own process" got a new process and checked the start; the verdicts matched the run where each scenario started on its own
+- **PATH** the person does not see this: the scene is a run of the check; in the step screenshots of each scenario, the first frame shows its own project and not a single open window from the previous one
+- **TEST** t805 (`src/apps/kt-app/src/reach_tests.rs`), live scenarios `src/scripts/live/recover.py`, `src/scripts/live/level.py` (`./scripts/live-check.sh`)
 
-#### Scenario: Проекты подряд в одном процессе, старт — где нужен
-- **WHEN** работник прогоняет подряд три сценария, не объявивших «свой процесс»; затем сценарий, объявивший его (проверка восстановления после SIGKILL)
-- **THEN** три первых прошли в ОДНОМ процессе kt-app: каждый увидел свой проект, пустой список открытых окон и рабочее место без следов предыдущего сценария; объявивший «свой процесс» получил новый процесс и проверил старт; вердикты совпали с прогоном, где каждый сценарий стартовал сам
-- **ПУТЬ** человек этого не видит: сцена — прогон проверки; в скриншотах шагов каждого сценария первый кадр показывает его собственный проект и ни одного открытого окна от предыдущего
-- **TEST** t805 (`src/apps/kt-app/src/reach_tests.rs`), живые сценарии `src/scripts/live/recover.py`, `src/scripts/live/level.py` (`./scripts/live-check.sh`)
+#### Scenario: Waiting for the frame, not for the clock
+- **WHEN** a scenario clicks, types a line and waits for a widget to appear; separately, a fixed pause without a reason is added to the harness
+- **THEN** each wait ends on an observable event (the program has read the input, the frame number has increased, the widget has appeared in the dump, the pixel has changed); the line arrived whole in one wait, and a pause without a reason makes the guard red; the total time of a live run on the same scenarios is noticeably less than before
+- **PATH** there is no gesture: the guard reads the harness and the scenarios, counts pauses without a reason, and checks that the waits are tied to an event of the program
+- **TEST** t803 (`src/apps/kt-app/src/reach_tests.rs`, calls `src/scripts/live-sleeps.py --check`), live scenario `src/scripts/live/nestparam.py`
 
-#### Scenario: Ожидание по кадру, а не по часам
-- **WHEN** сценарий делает клик, набирает строку и ждёт появления виджета; отдельно в каркас добавляется фиксированная пауза без причины
-- **THEN** каждое ожидание кончается по наблюдаемому событию (программа прочитала ввод, номер кадра вырос, виджет появился в дампе, пиксель изменился), строка доехала целиком за одно ожидание, а пауза без причины делает сторож красным; суммарное время живого прогона на тех же сценариях заметно меньше прежнего
-- **ПУТЬ** жеста нет: сторож читает каркас и сценарии, считает паузы без причины и сверяет, что ожидания привязаны к событию программы
-- **TEST** t803 (`src/apps/kt-app/src/reach_tests.rs`, зовёт `src/scripts/live-sleeps.py --check`), живой сценарий `src/scripts/live/nestparam.py`
+#### Scenario: The gesture itself waits for the read input
+- **WHEN** the harness performs a click, a right click, a double click, a drag, a key press, a wheel and a hover; separately, two gestures in a row in ONE window; separately, a gesture after a window change
+- **THEN** each gesture ends by the number of input events read by the program, not by the clock; the window is raised at the first gesture and when the window changes, and between two gestures in the same window it is not raised; the verdicts of all live scenarios match the run on the previous harness
+- **PATH** there is no gesture: the scene is the live check run itself; the guard reads the harness and asserts that the gesture has no fixed pause without a declared reason
+- **TEST** t807 (`src/apps/kt-app/src/reach_tests.rs`), comparison run `./scripts/live-check.sh` (all scenarios, verdicts before and after)
 
-#### Scenario: Сам жест ждёт прочитанный ввод
-- **WHEN** каркас делает клик, правый клик, двойной клик, драг, нажатие клавиши, колесо и наведение; отдельно — два жеста подряд в ОДНОМ окне; отдельно — жест после смены окна
-- **THEN** каждый жест кончается по числу событий ввода, прочитанных программой, а не по часам; окно поднимается на первом жесте и при смене окна, а между двумя жестами в одном окне не поднимается; вердикты всех живых сценариев совпадают с прогоном на прежнем каркасе
-- **ПУТЬ** жеста нет: сцена — сам прогон живой проверки; сторож читает каркас и утверждает, что у жеста нет фиксированной паузы без объявленной причины
-- **TEST** t807 (`src/apps/kt-app/src/reach_tests.rs`), сверочный прогон `./scripts/live-check.sh` (все сценарии, вердикты до и после)
+#### Scenario: Sleep is enumerable across the WHOLE check and has a limit
+- **WHEN** the sleep guard reads the harness, the scenarios AND the mouse and keyboard driver; a pause without a reason is temporarily added to the driver; separately, the total sleep of a run is raised above the declared limit
+- **THEN** the guard names the pause in the driver and turns red — the scope of the rule includes it on equal terms with the harness; the total fixed sleep is computed and printed, and exceeding the limit is red with the name of the most expensive pause
+- **PATH** there is no gesture: the guard reads the sources of the live check and prints the sleep budget; it is verified by running the script, not by the mouse
+- **TEST** t808 (`src/apps/kt-app/src/reach_tests.rs`, calls `src/scripts/live-sleeps.py --check`)
 
-#### Scenario: Сон перечислим во ВСЕЙ проверке и имеет предел
-- **WHEN** сторож сна читает каркас, сценарии И драйвер мыши и клавиатуры; в драйвер временно добавляется пауза без причины; отдельно суммарный сон прогона поднимается выше объявленного предела
-- **THEN** сторож называет паузу в драйвере и краснеет — область правила включает его наравне с каркасом; суммарный фиксированный сон посчитан и напечатан, а превышение предела красное с названием самой дорогой паузы
-- **ПУТЬ** жеста нет: сторож читает исходники живой проверки и печатает бюджет сна; проверяется запуском скрипта, а не мышью
-- **TEST** t808 (`src/apps/kt-app/src/reach_tests.rs`, зовёт `src/scripts/live-sleeps.py --check`)
-
-#### Scenario: Точка экрана читается у X, а снимок остаётся эталоном
-- **WHEN** каркас читает цвет точки превью прямым запросом к X и тем же кадром — снимком `xwd`; отдельно прямой путь возвращает цвет, не совпадающий с эталоном
-- **THEN** цвета совпадают, и сценарии читают точку без снимка всего экрана; при расхождении чтение возвращается на эталон и говорит об этом, а не молча отдаёт чёрное
-- **ПУТЬ** жеста нет: сцена — чтение экрана каркасом; проверяется сверкой двух путей на одном кадре
-- **TEST** t809 (`src/apps/kt-app/src/reach_tests.rs`), живой сценарий `src/scripts/live/trans.py` (`./scripts/live-check.sh`)
+#### Scenario: A screen point is read from X, and the snapshot remains the reference
+- **WHEN** the harness reads the colour of a preview point by a direct request to X and with the same frame — an `xwd` snapshot; separately, the direct path returns a colour that does not match the reference
+- **THEN** the colours match, and the scenarios read the point without a snapshot of the whole screen; on a discrepancy the reading falls back to the reference and says so, rather than silently returning black
+- **PATH** there is no gesture: the scene is the harness reading the screen; it is verified by comparing the two paths on the same frame
+- **TEST** t809 (`src/apps/kt-app/src/reach_tests.rs`), live scenario `src/scripts/live/trans.py` (`./scripts/live-check.sh`)

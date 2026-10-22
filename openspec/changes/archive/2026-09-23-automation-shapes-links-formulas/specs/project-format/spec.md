@@ -2,72 +2,68 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Версия конверта `kt` — одна на файл и ставится ПО СОДЕРЖИМОМУ
+### Requirement: Version of the `kt` envelope — one per file, set BY CONTENT
+`Timeline.metadata.kt.v` SHALL be the only file version; nested version envelopes do not
+carry one. The writer SHALL set the lowest version at which an older build would read the file
+without silent corruption: v2 — cameras; v3 — curves in material ticks, switches, transition kind and
+audio curve; v4 — morpher layer and regions; v5 — curves and layer strength; v6 — nested reels;
+v7 — inverted and overlapping transitions; v8 — an event left of zero in the reel; v9 — a generator on an
+event, public parameters and overrides; **v10 — the segment shape on a key, working sources of a curve (a link with an address and an expression, a formula with text) and the project's default form** (one version per round, a single predicate).
+A file newer than the supported version SHALL be rejected with `KtMetaTooNew`; unknown fields of our
+envelope SHALL pass through as passthrough. A file without new features MUST remain byte-stable and at its
+earlier version — the cascade is checked over all committed fixtures.
+**BREAKING (model):** the form moves from the curve to the KEY; the `ParamCurve::ease` field in the model
+is removed. In the FILE the form is written BY CONTENT, by the same rule as the version: a curve whose
+keys all carry one form SHALL be written with the previous `ease` field (cubic —
+`true`, linear — `false`) and the version is not bumped; a curve with different forms, or with a form not
+expressible by this field, SHALL write the form on the keys and raise the file to v10. Reading:
+`ease` expands into a uniform form; a form on a key overrides it. A link to a vanished property and an unparseable formula SHALL be rejected on read with the address and the
+reason.
+Why: the owner does not require backward compatibility, but "ours so that nobody breaks": a
+refusal is more honest than silent corruption, and a condition built into the cascade in the wrong place raises the version for every
+file in a row; a silent change of form during migration would shift the frames of finished projects.
 
-`Timeline.metadata.kt.v` SHALL быть единственной версией файла; вложенные конверты версий не
-несут. Писатель SHALL ставить младшую версию, при которой старая сборка прочла бы файл без
-молчаливой порчи: v2 — камеры; v3 — кривые в тиках материала, выключатели, вид перехода и
-кривая аудио; v4 — морфер-слой и области; v5 — кривые и сила слоя; v6 — вложенные ленты;
-v7 — инверсия и наложенные переходы; v8 — событие левее нуля в ленте; v9 — генератор на
-событии, публичные параметры и переопределения; **v10 — форма отрезка на ключе, рабочие
-источники кривой (связь с адресом и выражением, формула с текстом) и умолчание формы
-проекта** (одна версия на раунд, единый предикат).
-Файл новее поддерживаемой SHALL отвергаться `KtMetaTooNew`; неизвестные поля нашего
-конверта SHALL проходить passthrough. Файл без новшеств MUST оставаться байт-стабильным и на
-прежней версии — каскад проверяется по всем закоммиченным фикстурам.
-**BREAKING (модель):** форма переезжает с кривой на КЛЮЧ, поле `ParamCurve::ease` в модели
-удалено. В ФАЙЛЕ форма пишется ПО СОДЕРЖИМОМУ, тем же правилом, что и версия: кривая, все
-ключи которой несут одну форму, SHALL писаться прежним полем `ease` (третий порядок —
-`true`, прямая — `false`) и версию не двигать; кривая с разными формами или с формой, не
-выразимой этим полем, SHALL писать форму на ключах и поднимать файл до v10. Чтение:
-`ease` разворачивается в однородную форму, форма на ключе её перекрывает. Связь на
-исчезнувшее свойство и неразбираемая формула SHALL отвергаться при чтении с адресом и
-причиной.
-Почему: обратной совместимости владелец не требует, но «наше чтобы никто не ломал»:
-отказ честнее тихой порчи, а условие, встроенное в каскад не туда, поднимает версию всем
-файлам подряд; молчаливая смена формы при миграции сдвинула бы кадры сведённых проектов.
-
-#### Scenario: Файл новее сборки отвергается, версия читается
-- **WHEN** в конверте `v: 999`; в обычном файле `v: 1`
-- **THEN** проверка версии даёт `KtMetaTooNew(999)`; версия читается как 1
+#### Scenario: A file newer than the build is rejected, the version is read
+- **WHEN** the envelope has `v: 999`; in an ordinary file `v: 1`
+- **THEN** the version check gives `KtMetaTooNew(999)`; the version is read as 1
 - **TEST** t146 (`src/libs/kt-otio/tests/format.rs`)
 
-#### Scenario: Камеры — v2, автоматизация — v3, без них — v1; будущие поля проходят
-- **WHEN** пишутся проект без камер, проект с камерами без кривых, проект с камерами и кривыми; в конверт вписано неизвестное поле
-- **THEN** версии 1/2/3 соответственно; без камер камерных ключей нет; круг идемпотентен; неизвестное поле возвращается; вывод байт-в-байт равен golden `demo-3d.otio`
+#### Scenario: Cameras — v2, automation — v3, without them — v1; future fields pass through
+- **WHEN** a project without cameras, a project with cameras without curves, and a project with cameras and curves are written; an unknown field is put into the envelope
+- **THEN** the versions are 1/2/3 respectively; without cameras there are no camera keys; the round trip is idempotent; the unknown field comes back; the output is byte-for-byte equal to the golden `demo-3d.otio`
 - **TEST** t189, t189b (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Автоматизация эффекта поднимает до v3, битая кривая — отказ
-- **WHEN** плоский проект с кривой радиуса blur сохраняется; затем в файле ключ с отрицательной позицией; затем `auto` заменён на мусор
-- **THEN** v3, круг поле-в-поле и байт-в-байт; оба испорченных файла валят загрузку явно
+#### Scenario: Effect automation raises to v3, a broken curve is a refusal
+- **WHEN** a flat project with a blur-radius curve is saved; then in the file a key with a negative position; then `auto` is replaced with garbage
+- **THEN** v3, the round trip field-for-field and byte-for-byte; both corrupted files fail the load explicitly
 - **TEST** t192 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Морфер-слой и области — v4, естественный порядок строк не хранится
-- **WHEN** морфер становится слоем «по времени» на всё ниже; в проект добавлена именованная область; порядок строк перемешан
-- **THEN** файл v4, умолчания слоя не сериализуются; область переживает круг; порядок пишется своим полем `lane_order` вне `ui`; проект без морферов/областей/перестановок не несёт этих ключей и версию не двигает
+#### Scenario: The morpher layer and areas — v4, the natural order of rows is not stored
+- **WHEN** a morpher becomes a "by time" layer for everything below; a named region is added to the project; the order of rows is shuffled
+- **THEN** the file is v4, the layer defaults are not serialized; the region survives the round trip; the order is written in its own field `lane_order` outside `ui`; a project without morphers/regions/reorderings carries none of these keys and does not bump the version
 - **TEST** t240, t241, t248 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Каскад версии не двигает старые файлы
-- **WHEN** каждая закоммиченная фикстура `src/fixtures/*.otio` читается и пересохраняется
-- **THEN** версия конверта та же, что была, вывод байт-в-байт равен исходнику, вложений в них нет
+#### Scenario: The version cascade does not move old files
+- **WHEN** every committed fixture `src/fixtures/*.otio` is read and re-saved
+- **THEN** the envelope version is the same as it was, the output is byte-for-byte equal to the source, and there are no attachments in them
 - **TEST** t433b (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Публичные параметры и переопределения — v9
-- **WHEN** лента объявляет ручку «текст титра», второй экземпляр несёт своё значение; обычная лента без публикаций
-- **THEN** первый файл v9, набор и переопределения переживают круг идемпотентно; второй не содержит ни `published`, ни `overrides` и остаётся v6
+#### Scenario: Public parameters and overrides — v9
+- **WHEN** a reel declares a handle "title text", a second instance carries its own value; an ordinary reel without publications
+- **THEN** the first file is v9, the set and the overrides survive the round trip idempotently; the second contains neither `published` nor `overrides` and remains v6
 - **TEST** t681 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Форма, связь и формула поднимают до v10
-- **WHEN** сохраняется проект без новых возможностей; затем проект с формой отрезка; затем со связью; затем с формулой
-- **THEN** первый остаётся прежней версией и байт-в-байт прежним, остальные получают v10; версия в файле одна
+#### Scenario: A shape, a link and a formula raise to v10
+- **WHEN** a project without new features is saved; then a project with a segment shape; then with a link; then with a formula
+- **THEN** the first remains its previous version and byte-for-byte the same, the others get v10; there is one version in the file
 - **TEST** t698b (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Круг v10 и однородная форма прежним полем
-- **WHEN** файл v10 с разными формами на ключах читается и пишется; затем читается файл со старым полем `ease` в обоих значениях; затем пишется кривая, все ключи которой несут одну форму
-- **THEN** круг тождественен; `ease = true` стал третьим порядком с прежним сглаживанием, `ease = false` — прямой, значения кривой после чтения побитово равны значениям до него; однородная кривая записана прежним полем `ease`, байты и версия файла не двинулись
+#### Scenario: The v10 round trip and the uniform shape in the former field
+- **WHEN** a v10 file with different forms on keys is read and written; then a file with the old `ease` field in both values is read; then a curve whose keys all carry one form is written
+- **THEN** the round trip is identical; `ease = true` became the cubic with the previous smoothing, `ease = false` — linear; the curve values after reading are bit-for-bit equal to the values before it; the uniform curve is written with the previous `ease` field, the bytes and the file version did not move
 - **TEST** t698c (`src/libs/kt-otio/tests/convert.rs`), t433b (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Неразрешимый источник в файле — ошибка с адресом
-- **WHEN** читается файл, где связь указывает на исчезнувшее событие, а формула не разбирается
-- **THEN** чтение отвергается с адресом и причиной, а не рисует кривую по ключам молча
+#### Scenario: An unresolvable source in the file — an error with an address
+- **WHEN** a file is read where a link points to a vanished event and a formula does not parse
+- **THEN** the read is rejected with the address and the reason, rather than silently drawing the curve from the keys
 - **TEST** t698d (`src/libs/kt-otio/tests/convert.rs`)

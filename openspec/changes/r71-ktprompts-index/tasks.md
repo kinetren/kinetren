@@ -1,27 +1,27 @@
 # Tasks
 
-Change не меняет код программы: его продукт — реестр, сторож и ответы владельца. Стадии
-проверяемы отдельно; каждая заканчивается коммитом по-русски.
+The change does not change the program's code: its product is the registry, the guard and the owner's answers. The stages
+are verifiable separately; each ends with a commit in Russian.
 
-## 1. Источник и реестр
+## 1. Source and registry
 
-- [ ] 1.1 Реестр `docs/ktprompts/v26.10-index.md`: таблица из `design.md` §3 переносится как есть (все пункты G/U/T/W/A/L/N/C/P/F/R/O/X/M/Q/K/S/E/MW/TD/FUT), колонки: номер, претензия дословно (кратко), состояние по закрытому набору, адрес, стадия; раздел «что теряет экспорт OTIO» (пока пуст — правило стадии 3). Проверка: каждый нумерованный пункт `docs/ktprompts/v26.10.txt` имеет строку (сторож стадии 2).
-- [ ] 1.2 Раздел Р.71 в `docs/user-feedback.md` дописан вопросами 1–11 из `design.md` §4 (сами слова владельца уже записаны при предложении). Проверка: раздел есть, вопросы пронумерованы так же, как в реестре.
+- [ ] 1.1 Registry `docs/ktprompts/v26.10-index.md`: the table from `design.md` §3 is carried over as is (all items G/U/T/W/A/L/N/C/P/F/R/O/X/M/Q/K/S/E/MW/TD/FUT), columns: number, claim verbatim (brief), state from the closed set, address, stage; section "what OTIO export loses" (empty for now — the rule of stage 3). Check: each numbered item of `docs/ktprompts/v26.10.txt` has a row (the guard of stage 2).
+- [ ] 1.2 Section R.71 in `docs/user-feedback.md` is appended with questions 1–11 from `design.md` §4 (the owner's own words are already recorded at the proposal). Check: the section exists, the questions are numbered the same way as in the registry.
 
-## 2. Сторож
+## 2. Guard
 
-- [ ] 2.1 `src/scripts/ktprompts-index.py --check`: читает источник (нумерованные пункты по секциям `== … ==` и блокам), читает реестр, падает на пункте без строки, состоянии вне набора, `сделано` без `fn tNNN_` в исходниках `src/`, `вопрос` без текста; печатает счёт по состояниям. Проверка: t823 (`src/apps/kt-app/src/reach_tests.rs`) — целый реестр зелёный, три порчи (удалённая строка, несуществующий тест, пустой вопрос) красные с адресом пункта.
-- [ ] 2.2 Сторож в `src/scripts/finish.sh` рядом с `features-index.py --check` и `specs-user-path.py --check`. Проверка: `./scripts/finish.sh` печатает его строку.
+- [ ] 2.1 `src/scripts/ktprompts-index.py --check`: reads the source (numbered items by sections `== … ==` and blocks), reads the registry, fails on an item without a row, a state outside the set, `done` without `fn tNNN_` in the sources of `src/`, a `question` without text; prints the count by state. Check: t823 (`src/apps/kt-app/src/reach_tests.rs`) — the whole registry is green, three corruptions (a deleted row, a non-existent test, an empty question) are red with the item's address.
+- [ ] 2.2 The guard in `src/scripts/finish.sh` next to `features-index.py --check` and `specs-user-path.py --check`. Check: `./scripts/finish.sh` prints its line.
 
-## 3. Правило для агентов
+## 3. Rule for agents
 
-- [ ] 3.1 В `CLAUDE.md` корня — правило: изменение модели, которое файл обмена OTIO не выражает, записывается в раздел «что теряет экспорт» реестра претензий (требование владельца, секция CORE); в `openspec/specs/project-format/design.md` — ссылка на реестр из раздела Р.70. Проверка: `openspec validate --all --strict`.
+- [ ] 3.1 In the root `CLAUDE.md` — the rule: a model change that the OTIO exchange file does not express is recorded in the "what export loses" section of the claims registry (the owner's requirement, CORE section); in `openspec/specs/project-format/design.md` — a reference to the registry from the R.70 section. Check: `openspec validate --all --strict`.
 
-## 4. Ответы владельца и ближайший план
+## 4. Owner's answers and the nearest plan
 
-- [ ] 4.1 Вопросы 1–11 заданы владельцу (AskUserQuestion по одному-два за раз — он просил обсуждать каждый момент отдельно); ответы дословно — в `docs/user-feedback.md` Р.71, строки `вопрос` реестра переведены в решения. Проверка: сторож зелёный, ни одной строки `вопрос` без ответа или без пометки «ждёт».
-- [ ] 4.2 По ответу на вопрос 11 — заведён change следующего раунда (`/opsx:propose`) по первой стадии реестра; в реестре у его пунктов проставлен номер раунда. Проверка: `openspec list` показывает новый change, реестр ссылается на него.
+- [ ] 4.1 Questions 1–11 are asked to the owner (AskUserQuestion one or two at a time — he asked to discuss each point separately); the answers verbatim — in `docs/user-feedback.md` R.71, the registry's `question` rows are moved to decisions. Check: the guard is green, not one `question` row without an answer or without the mark "waiting".
+- [ ] 4.2 Following the answer to question 11 — the change of the next round is opened (`/opsx:propose`) for the first stage of the registry; in the registry its items have the round number set. Check: `openspec list` shows the new change, the registry refers to it.
 
-## 5. Финал
+## 5. Finish
 
-- [ ] 5.1 `./scripts/finish.sh` целиком (код не менялся — проверяется только, что сторож встроен и зелёный); версия `vYY.MM.DD-hash` в отчёте.
+- [ ] 5.1 `./scripts/finish.sh` in full (the code has not changed — only checked that the guard is built in and green); version `vYY.MM.DD-hash` in the report.

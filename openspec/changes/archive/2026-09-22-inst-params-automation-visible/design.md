@@ -2,98 +2,97 @@
 
 ## Context
 
-См. proposal.md — Why. Что есть в коде сегодня:
+See proposal.md — Why. What exists in the code today:
 
-- Окно потребителя `draw_one_inst_params` (`src/apps/kt-app/src/pubparam.rs`) рисует строку
-  на ручку своим `draw_value_row`; у числа — глиф `icons::PLUS`, заводящий `ParamCurve` с
-  одним ключом в `at` (материал экземпляра через `clip_material_at`), после чего
-  `DragValue` пишет через `widgets::bound_apply(curve, None, at, v)` — ключ по курсору.
-  Виджета `automation::draw` в окне нет.
-- Общий виджет `automation::draw(ui, id, &AutoCtx, curves, &mut AutoView, playhead, hover)`
-  с `AutoCtx { specs, range, view, linked, to_timeline, to_curve, frame_step }`. Генератор на
-  событии (`gen_ui.rs`, ~строки 700–990) — образец подключения носителя БЕЗ `FxInstance`:
-  `CurveBind { curves, sel: view.sel, at }` для полей и тот же `AutoCtx` для графика;
-  `axis_linked` читается из `UiState`, просьбы `set_linked`/`set_view`/`seek` — из
-  `AutoResult`.
-- Окно автора рисует `min`/`max` из `PubRange` (`Option<f64>`), `NaN → 0.0`. Паспорта по
-  адресу нет: есть только `Project::addr_type`/`addr_value` (`project.rs` ~6889–6950) с
-  `match` по `ParamOwner`.
-- Решение владельца Р.59: экземпляр переопределяет опубликованное «значением или кривой в
-  собственном времени»; кривые — у числа и цвета. Это остаётся, меняется только ИНТЕРФЕЙС.
+- The consumer window `draw_one_inst_params` (`src/apps/kt-app/src/pubparam.rs`) draws a row
+  per handle with its own `draw_value_row`; next to a number there is the glyph `icons::PLUS`,
+  which creates a `ParamCurve` with one key at `at` (the instance's material via
+  `clip_material_at`), after which `DragValue` writes through
+  `widgets::bound_apply(curve, None, at, v)` — the key at the cursor.
+  There is no `automation::draw` widget in the window.
+- The shared widget `automation::draw(ui, id, &AutoCtx, curves, &mut AutoView, playhead, hover)`
+  with `AutoCtx { specs, range, view, linked, to_timeline, to_curve, frame_step }`. The generator
+  on an event (`gen_ui.rs`, lines ~700–990) is the model for attaching a carrier WITHOUT a
+  `FxInstance`: `CurveBind { curves, sel: view.sel, at }` for the fields and the same `AutoCtx`
+  for the graph; `axis_linked` is read from `UiState`, the requests `set_linked`/`set_view`/`seek`
+  come from `AutoResult`.
+- The author window draws `min`/`max` from `PubRange` (`Option<f64>`), `NaN → 0.0`. There is no
+  passport by address: there is only `Project::addr_type`/`addr_value` (`project.rs` ~6889–6950)
+  with a `match` over `ParamOwner`.
+- The owner's decision of R.59: the instance overrides the published item "by a value or by a curve
+  in its own time"; curves are on numbers and colours. This remains, only the INTERFACE changes.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- Кривая переопределения видна и управляется тем же виджетом, что у слота и генератора.
-- Ключ по курсору пишется только у видимой кривой; иначе — константа.
-- Пределы ручки: умолчание = паспорт цели, в файле — только сужение.
+- The override curve is visible and controlled by the same widget as that of the slot and the generator.
+- The key at the cursor is written only to a visible curve; otherwise — a constant.
+- The limits of a handle: the default = the passport of the target, in the file — only narrowing.
 
 **Non-Goals:**
-- Не менять модель `Override`/`PubRange`/формат v9.
-- Не делать «режим записи» автоматизации (write/touch/latch) — его нет и у слота.
-- Не трогать полосу раскрытия и впекание (t690).
+- Do not change the model `Override`/`PubRange`/format v9.
+- Do not make a "recording mode" of automation (write/touch/latch) — there is none for the slot either.
+- Do not touch the expansion strip and baking (t690).
 
 ## Decisions
 
-### D1. Виджет автоматизации в окне экземпляра — `automation::draw`, как у генератора
+### D1. The automation widget in the instance window — `automation::draw`, as for the generator
 
-Под сеткой ручек — секция «Автоматизация», ровно как в FX-редакторе: меню
-«+ кривая» (ключ `fx.auto_add` переиспользуется; подпись меню — по имени ручки автора,
-дословно) для ручек числа и цвета без кривой, затем сам `automation::draw`. `AutoCtx`:
-`specs` — паспорта ручек по `addr_spec` с подменой `label` на имя автора и `min/max` на
-сужение; `range` — материал экземпляра `(source_in, source_in + used)`; `view` — окно
-главного таймлайна, переведённое в материал экземпляра теми же `to_curve`/`to_timeline`,
-что у слота (реверс учтён); `linked` — общий замок из `UiState`; `frame_step` проекта.
-`AutoView` живёт в `InstParamsWin` (как `view` у генератора).
-Поля значений переводятся на `CurveBind` (`sel`, `at`) — `draw_value_row` получает
-`Option<&mut CurveBind>` и перестаёт трогать `bound_apply` напрямую.
+Under the grid of handles — a section "Automation", exactly as in the FX editor: a menu
+"+ curve" (the key `fx.auto_add` is reused; the menu label — by the author's handle name, verbatim)
+for the number and colour handles without a curve, then the `automation::draw` itself. `AutoCtx`:
+`specs` — the passports of the handles by `addr_spec` with the `label` replaced by the author's name and
+`min/max` by the narrowing; `range` — the instance's material `(source_in, source_in + used)`; `view` —
+the main timeline window, translated into the instance's material by the same `to_curve`/`to_timeline`
+as for the slot (reversal taken into account); `linked` — the shared lock from `UiState`; `frame_step`
+of the project. `AutoView` lives in `InstParamsWin` (as `view` of the generator does).
+The value fields are translated to `CurveBind` (`sel`, `at`) — `draw_value_row` receives
+`Option<&mut CurveBind>` and stops touching `bound_apply` directly.
 
-*Альтернатива — своя мини-таблица ключей в окне экземпляра.* Отвергнута: третий редактор
-кейфреймов — ровно та развилка, которую закрыл Р.34 («у каждого носителя свой редактор —
-и они разъезжались»).
+*Alternative — its own mini-table of keys in the instance window.* Rejected: a third keyframe editor is
+exactly the fork that R.34 closed ("each carrier has its own editor — and they drifted apart").
 
-### D2. Ключ по курсору — только у видимой кривой
+### D2. The key at the cursor — only for a visible curve
 
-Правило одно, из FX-редактора: поле пишет ключ, когда у параметра есть кривая
-(`CurveBind::has_curve`), иначе — значение. Поскольку заведение кривой теперь возможно
-только через подписанное меню под графиком, «скрытой записи» не остаётся по построению;
-t691 это утверждает как наблюдаемое следствие (два разных значения при двух позициях
-курсора без кривой → один ключ нет, значение одно).
+The rule is one, from the FX editor: a field writes a key when the parameter has a curve
+(`CurveBind::has_curve`), otherwise — a value. Since creating a curve is now possible only through the
+labelled menu under the graph, no "hidden recording" remains by construction; t691 asserts this as an
+observable consequence (two different values at two cursor positions without a curve → no key, the value
+is one).
 
-### D3. Пределы: `addr_spec` в kt-model, окно автора показывает паспорт цели
+### D3. Limits: `addr_spec` in kt-model, the author window shows the passport of the target
 
-`Project::addr_spec(seq, &ParamAddr) -> Option<ParamSpec>` — зеркало `addr_type` с тем же
-исчерпывающим `match` по владельцу (`FxSlot` → `param_specs()` слота; `Generator` →
-паспорт генератора; `ClipAttr` → паспорт атрибута (уровень, скорость и т.д. — завести
-`clip_attr_spec` рядом с `clip_attr_type`); `Transition`/`Camera` → их паспорта;
-`Nested { pub_id }` → паспорт цели внутренней публикации с наложенным её сужением).
-Окно автора: поле показывает `range.min.unwrap_or(spec.min)`; при правке значение,
-равное пределу цели (с допуском шага), пишется как `None`; кнопка «к пределам цели»
-делает `PubRange::default()`. Окно потребителя: `DragValue.range(spec.min..=spec.max)`
-поверх которого `PubRange::clamp` (порядок неважен — обе операции кламп, как в модели).
+`Project::addr_spec(seq, &ParamAddr) -> Option<ParamSpec>` — a mirror of `addr_type` with the same
+exhaustive `match` over the owner (`FxSlot` → `param_specs()` of the slot; `Generator` → the passport
+of the generator; `ClipAttr` → the passport of the attribute (level, speed, etc. — create `clip_attr_spec`
+next to `clip_attr_type`); `Transition`/`Camera` → their passports; `Nested { pub_id }` → the passport
+of the target of the inner publication with its narrowing applied on top).
+Author window: the field shows `range.min.unwrap_or(spec.min)`; on editing, a value equal to the limit of
+the target (within the step tolerance) is written as `None`; the button "to the target's limits" does
+`PubRange::default()`. Consumer window: `DragValue.range(spec.min..=spec.max)`, on top of which
+`PubRange::clamp` (order does not matter — both operations are clamps, as in the model).
 
-*Альтернатива — хранить пределы цели в `PubRange` при публикации.* Отвергнута: копия
-разошлась бы с паспортом при смене версии эффекта — тот же аргумент, что и против
-хранимого значения шаблона (Р.59).
+*Alternative — store the limits of the target in `PubRange` at publication.* Rejected: the copy would
+diverge from the passport when the version of the effect changes — the same argument as against a stored
+template value (R.59).
 
-### D4. Подсказки — строкой состояния, через `widgets::hint`
+### D4. Hints — by the status line, through `widgets::hint`
 
-У меню кривой, кнопок виджета и кнопки «к пределам цели» — `hint(...)` (правило 10 kt-app:
-никаких всплывающих); ключи в пяти каталогах. t393 проверяет, что обещание подсказки
-исполняется.
+For the curve menu, the widget buttons and the "to the target's limits" button — `hint(...)` (rule 10
+of kt-app: no pop-ups); the keys in five catalogues. t393 checks that the promise of the hint is kept.
 
 ## Risks / Trade-offs
 
-- [Окно экземпляра растёт в высоту с графиком] → секция сворачиваемая (`CollapsingHeader`
-  как у слота), по умолчанию раскрыта, когда есть хоть одна кривая.
-- [t683 закрепляет глиф «+» и ключ через поле] → тест переписывается на меню и виджет в
-  той же задаче, что и код; проверяется, что старая проба `inst.curve.<id>` не находится.
-- [`addr_spec` для `Nested` при глубине > 1] → рекурсия по тому же `addr_spec` внутренней
-  ленты; предел глубины уже гарантирован моделью (t424).
-- [Замок оси общий на программу — окно экземпляра начнёт двигать главный таймлайн] → это
-  и есть требуемое поведение (Р.40 п.15), как у слота; проверяется в t691 через `set_view`.
+- [The instance window grows in height with the graph] → the section is collapsible (`CollapsingHeader`
+  as for the slot), expanded by default when there is at least one curve.
+- [t683 pins the glyph "+" and the key through the field] → the test is rewritten for the menu and the
+  widget in the same task as the code; it is checked that the old probe `inst.curve.<id>` is not found.
+- [`addr_spec` for `Nested` at depth > 1] → recursion through the same `addr_spec` of the inner reel; the
+  depth limit is already guaranteed by the model (t424).
+- [The axis lock is shared across the program — the instance window will start moving the main timeline]
+  → this is exactly the required behaviour (R.40 item 15), as for the slot; checked in t691 through `set_view`.
 
 ## Open Questions
 
-Нет: ключ автоматизации у цвета (поканально) уже поддержан виджетом; строка меню —
-имя автора дословно (t684).
+None: the automation key on a colour (per channel) is already supported by the widget; the menu label —
+the author's name verbatim (t684).

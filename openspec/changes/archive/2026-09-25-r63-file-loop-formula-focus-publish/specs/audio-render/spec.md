@@ -2,40 +2,24 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Дакинг — снимок огибающей, а не живой сайдчейн
+### Requirement: Ducking — a snapshot of the envelope, not a live sidechain
+Auto-ducking SHALL be computed by an explicit command: an honest render of the source track (gains,
+fades, FX accounted for) → speech intervals → an ordinary volume curve on the Gain slot of the music events, all in one history step. An event's sound MUST NOT become a function of another track in real time — until change `sidechain-ducking-compressor` (the owner's decision in R.63: a live sidechain compressor on the track, shown by the same compressor widget).
+The analysis runs in the background with its own fetcher; the result is applied only if the model and the media have not changed.
+The tool SHALL be called by its industry name in all catalogues — "Ducking (background attenuation under speech)" / "Audio ducking"; the parameters (threshold, depth, attack, release, source track) SHALL BE REMEMBERED between calls and sessions in the user store (`user_store`) and substituted at the next call; the call SHALL live in the track window (its chain) as an action on THIS background track — there MUST NOT be a separate ducking window; the result is ordinary level curves of the events, which are visible, editable, and recomputed by a repeat call with the same (remembered) parameters.
+Why: a live sidechain needs a second input on the effect and the bus (XL work), while a snapshot is visible to the eye, is edited by hand, and is rolled back with one undo. R.63 (the owner): "Duck under a track" — "what is under the track, what needs ducking?? is this Audio-Ducking? why didn't you name it properly"; "why the hell do I have to remember every time which parameters I entered last time"; "this could obviously be done more conveniently via fx-audio on the whole track".
 
-Автодакинг SHALL считаться по явной команде: честный рендер дорожки-источника (гейны,
-фейды, FX учтены) → интервалы речи → обычная кривая громкости на слоте Gain событий
-музыки, всё одним шагом истории. Звук события MUST NOT становиться функцией чужой
-дорожки в реальном времени — до change `sidechain-ducking-compressor` (решение владельца
-Р.63: живой сайдчейн-компрессор на дорожке, показанный тем же виджетом компрессора).
-Анализ идёт в фоне своим фетчером, результат применяется только если модель и медиа не
-изменились.
-Инструмент SHALL называться своим отраслевым именем во всех каталогах — «Дакинг
-(приглушение фона под речь)» / «Audio ducking»; параметры (порог, глубина, атака,
-возврат, дорожка-источник) SHALL ПОМНИТЬСЯ между вызовами и сессиями в пользовательском
-хранилище (`user_store`) и подставляться при следующем вызове; вызов SHALL жить в окне
-дорожки (её цепочке) как действие над ЭТОЙ дорожкой-фоном — отдельного окна дакинга MUST
-NOT быть; результат — обычные кривые уровня событий, которые видны, правятся и
-пересчитываются повторным вызовом с теми же (запомненными) параметрами.
-Почему: живой сайдчейн — второй вход у эффекта и шины (XL-работа), а снимок виден на
-глаз, правится руками и откатывается одним undo. Р.63 (владелец): «Приглушить под
-дорожкой» — «что находится под дорожкой, что надо приглушить?? это Audio-Ducking? почему
-ты нормально это не назвал»; «какого хера я вынужден каждый раз запоминать, какие я
-параметры ввел в предыдущий раз»; «это банально можно удобнее сделать через fx-аудио на
-весь трек».
-
-#### Scenario: Музыка приглушается под голосом
-- **WHEN** на дорожке голоса два «слова», на другой — музыка; вызван дакинг с глубиной 9 дБ
-- **THEN** интервалы найдены с точностью до шага, по четыре ключа на интервал, музыка под речью тише на 9 дБ, вне речи — прежняя, undo возвращает модель байт-в-байт
+#### Scenario: Music is ducked under the voice
+- **WHEN** on the voice track there are two "words", and on another — music; ducking is invoked with a depth of 9 dB
+- **THEN** the intervals are found to within a step, four keys per interval, the music under speech is quieter by 9 dB, outside speech it is unchanged, undo returns the model byte-for-byte
 - **TEST** t341 (`src/libs/kt-engine/tests/ducking.rs`)
 
-#### Scenario: Дакинг в фоне и стейл-защита
-- **WHEN** дакинг запущен на длинном монтаже, а во время счёта модель или медиа изменились
-- **THEN** окно живо (счёт идёт в фоне), а устаревший результат не применяется
-- **TEST** t420, t421 (`src/apps/kt-app/src/layout_tests.rs`, перенесены на окно дорожки)
+#### Scenario: Ducking in the background and stale protection
+- **WHEN** ducking is started on a long edit, and while the computation runs the model or the media changes
+- **THEN** the window stays alive (the computation runs in the background), and the stale result is not applied
+- **TEST** t420, t421 (`src/apps/kt-app/src/layout_tests.rs`, moved to the track window)
 
-#### Scenario: Имя, память параметров, вызов из окна дорожки
-- **WHEN** дакинг вызывается из окна аудиодорожки-фона с изменёнными порогом и глубиной; окно закрыто и открыто снова; программа перезапущена (user_store в памяти под cfg(test) и в файле в живом окне); пункт ищется по всем пяти каталогам
-- **THEN** поля показывают прежние значения, а не умолчания (на прежнем коде — `DuckParams::default()`); в каталогах слово «ducking»/«дакинг» есть, «under a track»/«под дорожкой» нет; в программе нет окна с id `duck`; глифы в шрифте
+#### Scenario: Name, parameter memory, call from the track window
+- **WHEN** ducking is invoked from the window of a background audio track with changed threshold and depth; the window is closed and opened again; the program is restarted (user_store in memory under cfg(test) and in the file in a live window); the item is searched for across all five catalogues
+- **THEN** the fields show the previous values, not the defaults (on the old code — `DuckParams::default()`); the catalogues contain the word «ducking»/"ducking" and do NOT contain «under a track»/"under a track"; the program has no window with id `duck`; the glyphs are in the font
 - **TEST** t756 (`src/apps/kt-app/src/layout_tests.rs`), t756b (`src/apps/kt-app/src/user_store.rs`), `i18n_tests.rs`, `font_tests.rs`

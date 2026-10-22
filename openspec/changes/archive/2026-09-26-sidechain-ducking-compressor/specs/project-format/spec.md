@@ -2,21 +2,12 @@
 
 ## ADDED Requirements
 
-### Requirement: Ключевой вход компрессора в файле — v12 по содержимому
+### Requirement: Compressor key input in the file — v12 by content
+The sidechain key SHALL be written in the compressor's parameters as the address of a TRACK (`TrackId`), not as its number: the number is the row rank, and inserting a track above would reassign the key to someone else's signal. A compressor WITHOUT a key MUST NOT write the field at all — a project file without a sidechain remains byte for byte the same and keeps the previous envelope version. A file carrying at least one assigned key SHALL raise the envelope version to v12: an old build would silently lose the key and would sound different, and the version is the only honest way to tell it so.
+Reading SHALL be tolerant: a key pointing at a track that is not in the file is read as "no key" (the device is an ordinary compressor), the project opens, and there is no error. The "read → write" cycle with a key SHALL be idempotent.
+Why: the envelope rule is that the version follows the CONTENT and is one per round; an address by row rank had already led to the state being reassigned to a neighbour (R.62, the `TrackId` key in the FX state).
 
-Ключ сайдчейна SHALL писаться в параметрах компрессора адресом ДОРОЖКИ (`TrackId`), а не
-её номером: номер — это ранг строки, и вставка дорожки выше перевесила бы ключ на чужой
-сигнал. Компрессор БЕЗ ключа MUST NOT писать поле вовсе — файл проекта без сайдчейна
-остаётся байт-в-байт прежним и на прежней версии конверта. Файл, несущий хотя бы один
-назначенный ключ, SHALL поднимать версию конверта до v12: старая сборка потеряла бы ключ
-молча и звучала бы иначе, а версия — единственный честный способ ей об этом сказать.
-Чтение SHALL быть терпимым: ключ, указывающий на дорожку, которой в файле нет, читается
-как «ключа нет» (прибор — обычный компрессор), проект открывается, ошибки нет. Круг
-«прочитать → записать» с ключом SHALL быть идемпотентным.
-Почему: правило конверта — версия по СОДЕРЖИМОМУ и одна на раунд; адрес по рангу строки
-уже приводил к перевешиванию состояния на соседа (Р.62, ключ `TrackId` в FX-состоянии).
-
-#### Scenario: Круг v12 и байт-стабильность файла без сайдчейна
-- **WHEN** сохраняется проект с компрессором без ключа; затем тот же проект с назначенным ключом; затем читается файл, где ключ указывает на удалённую дорожку
-- **THEN** первый — прежняя версия и байт-в-байт; второй — v12 с идемпотентным кругом и тем же `TrackId` после чтения; третий открывается, ключ прочитан как отсутствующий, запись его не воскрешает
+#### Scenario: v12 round trip and byte stability of a file without a sidechain
+- **WHEN** a project with a compressor without a key is saved; then the same project with an assigned key; then a file is read where the key points at a deleted track
+- **THEN** the first is the previous version and byte for byte; the second is v12 with an idempotent cycle and the same `TrackId` after reading; the third opens, the key is read as missing, and writing does not revive it
 - **TEST** t773 (`src/libs/kt-otio/tests/convert.rs`)

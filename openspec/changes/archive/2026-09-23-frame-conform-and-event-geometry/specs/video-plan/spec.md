@@ -2,100 +2,94 @@
 
 ## ADDED Requirements
 
-### Requirement: Геометрия слоя — прямоугольник размещения, прозрачные поля, одна функция
+### Requirement: Layer geometry — placement rectangle, transparent margins, one function
+Each video layer of the plan SHALL carry placement geometry: a rectangle in FRACTIONS of the canvas and
+the decode size, computed by ONE pure function from the source's view (native × pixel
+aspect ratio), the canvas, the conform rule (fit / fill / stretch / as is),
+the crop and the zoom. The composite SHALL place the layer into its rectangle; the canvas area outside the
+rectangle is alpha 0 (transparent margins), the frame background stays as before. The rule "fit" SHALL
+preserve proportions and scale in both directions; "fill" — preserve proportions and crop; "stretch" — pull to the edges; "as is" — place 1:1 pixels centered, with a
+source larger than the canvas — past the edge. Placement SHALL run as an affine in the common
+geo-program with the edge primitive "transparent", as a pair CPU kernel ↔ WGSL by tolerance class;
+an affine with a frame equal to the canvas SHALL give the previous path byte for byte. An unknown source view
+SHALL be conformed as "stretch" deterministically.
+Why: stretching was accepted by the decoder — outside the single composition code; a black margin on the
+top layer erases everything under it (Pitivi #1378); "as is" is the only rule that does not invent pixels.
 
-Каждый видео-слой плана SHALL нести геометрию размещения: прямоугольник в ДОЛЯХ холста и
-размер декода, посчитанные ОДНОЙ чистой функцией от вида источника (натив × пиксельное
-соотношение), холста, правила приведения (вписать / заполнить / растянуть / как есть),
-кропа и зума. Композит SHALL класть слой в его прямоугольник; область холста вне
-прямоугольника — альфа 0 (прозрачные поля), фон кадра — прежний. Правило «вписать» SHALL
-сохранять пропорции и масштабировать в обе стороны; «заполнить» — сохранять пропорции и
-резать; «растянуть» — тянуть до краёв; «как есть» — класть 1:1 пиксель по центру, при
-источнике крупнее холста — за край. Размещение SHALL исполняться как аффин в общей
-гео-программе с краевым примитивом «прозрачно», парой CPU-ядро ↔ WGSL по классам допуска;
-аффин с рамкой, равной холсту, SHALL давать байт-в-байт прежний путь. Неизвестный вид
-источника SHALL приводиться как «растянуть» детерминированно.
-Почему: растяжение принималось декодером — вне единого кода композиции; чёрное поле на
-верхнем слое стирает всё под собой (Pitivi #1378); «как есть» — единственное правило, не
-выдумывающее пикселей.
-
-#### Scenario: Четыре правила на четырёх источниках
-- **WHEN** вертикальный, горизонтальный, меньший и больший холста источники (и источник с SAR 2:1) приводятся каждым из четырёх правил
-- **THEN** прямоугольники равны аналитическим (вписать — поля по длинной стороне, заполнить — обрезка по короткой, растянуть — весь холст, как есть — натив по центру, за край при избытке), размер декода чётный и не выше потолка, SAR учтён в виде
+#### Scenario: Four rules on four sources
+- **WHEN** vertical, horizontal, smaller-than-canvas and larger-than-canvas sources (and a source with SAR 2:1) are conformed by each of the four rules
+- **THEN** the rectangles equal the analytic ones (fit — margins along the long side, fill — cropping along the short side, stretch — the whole canvas, as is — native centered, past the edge on excess), the decode size is even and not above the ceiling, SAR is accounted for in the view
 - **TEST** t712 (`src/libs/kt-fx/tests/conform.rs`)
 
-#### Scenario: Прозрачные поля на обоих бэкендах, тождество на совпадающих пропорциях
-- **WHEN** вертикальный источник композится в 16:9 на CPU и GPU; источник 16:9 — с identity-аффином
-- **THEN** поля прозрачны (нижний слой виден сквозь них), класс допуска EXACT при K = 1; identity-аффин байт-в-байт равен прежнему пути
+#### Scenario: Transparent margins on both backends, an identity on matching proportions
+- **WHEN** a vertical source is composited into 16:9 on CPU and GPU; a 16:9 source — with an identity affine
+- **THEN** the margins are transparent (the lower layer is visible through them), the tolerance class is EXACT at K = 1; the identity affine is byte for byte equal to the previous path
 - **TEST** t713 (`src/libs/kt-fx/tests/video_fx.rs`, `src/libs/kt-gpu/tests/parity.rs`), t714b (`src/libs/kt-gpu/tests/gpu_render.rs`)
 
-#### Scenario: Golden не двигаются
-- **WHEN** прогоняются golden-экспорты и «превью == экспорт» на фикстурах с совпадающими пропорциями
-- **THEN** `GOLDEN_VIDEO`, t11, t67, t184 зелёные без перегенерации; вертикальный источник даёт кадр с полями (замер геометрии белого прямоугольника)
+#### Scenario: Goldens do not move
+- **WHEN** the golden exports and "preview == export" are run on fixtures with matching proportions
+- **THEN** `GOLDEN_VIDEO`, t11, t67, t184 are green without regeneration; a vertical source gives a frame with margins (a measurement of the geometry of the white rectangle)
 - **TEST** t715 (`src/libs/kt-engine/tests/golden_export.rs`)
 
 ## MODIFIED Requirements
 
-### Requirement: Ступень декода — свойство клипа и часть заказа (заказ == чтение)
+### Requirement: Decode scale step — a property of the clip and part of the order (order == read)
+The decode size of the pre-FX frame SHALL be a property of the clip: the step S ∈ 1..4 =
+min(how much the chain asks for by the maximum net zoom over the whole duration of the clip, the native's margin over the conform size, rounded UP, `MAX_INTER_DIM / max(conform size)`);
+if the native is unknown → S = 1; the decode is NEVER smaller than the conform size. The conform size — from the
+layer's geometry (rule, crop, zoom, canvas); "as is" — the native with the ceiling. The step is
+determined by the project, the native and the canvas and MUST NOT depend on the device or budgets.
+The decode quality SHALL travel in the order `layers_at`/`wanted_frames` as `(media, pts, Quality)`,
+where Quality is the decode size from the geometry: prefetch, composite, export and the warmth bars
+ask the same thing. The step of a REEL (the order, one per reel — the maximum over the tree of
+instances, from the reel's raster) and the chain input of an INSTANCE (execution) are different numbers;
+if they diverge — a sub-composite is fitted before the chain. The chunk budgets of export and the
+look-ahead window SHALL be computed by the largest decode quality. A change of the set of sources SHALL
+rebuild the player's renderer.
+Why: three callers each appended Quality themselves and matched by accident; with a clip-function size
+this immediately gives a permanent cache miss and a black frame; the conform rule changes the number of needed pixels, and computing it outside the order is the same permanent miss.
 
-Размер декода пре-FX кадра SHALL быть свойством клипа: ступень S ∈ 1..4 =
-min(сколько просит цепочка по максимуму нетто-зума за всю длительность клипа, запас
-натива над размером приведения с округлением ВВЕРХ, `MAX_INTER_DIM / max(размер приведения)`);
-натив неизвестен → S = 1; декод NEVER мельче размера приведения. Размер приведения — из
-геометрии слоя (правило, кроп, зум, холст); «как есть» — натив с потолком. Ступень
-детерминирована проектом, нативом и холстом и MUST NOT зависеть от устройства или бюджетов.
-Качество декода SHALL ехать в заказе `layers_at`/`wanted_frames` как `(media, pts, Quality)`,
-где Quality — размер декода из геометрии: префетч, композит, экспорт и полоски прогретости
-спрашивают одно и то же. Ступень ЛЕНТЫ (заказ, одна на ленту — максимум по дереву
-экземпляров, от растра ленты) и вход цепочки ЭКЗЕМПЛЯРА (исполнение) — разные числа;
-разошлись — суб-композит вписывается перед цепочкой. Бюджеты чанка экспорта и окна
-лукахеда SHALL считаться по самому крупному качеству декода. Смена состава источников SHALL
-пересобирать рендерер плеера.
-Почему: три вызывающих доклеивали Quality каждый сам и совпадали случайно; с
-размером-функцией-клипа это немедленно даёт вечный промах кэша и чёрный кадр; правило
-приведения меняет число нужных пикселей, и считать его вне заказа — тот же вечный промах.
-
-#### Scenario: Формула ступени
-- **WHEN** клип с зумом ×2 на нативе 1920×1080 / 2560×1440 / 1280×720 / 640×360 / неизвестном при Quality 1280×720, 4K-выход, нетто-единичная цепочка, зум 1.01, зум ×8
-- **THEN** декод 2560×1440 / 2560×1440 / 1280×720 / 1280×720 / 1280×720; 4K режется потолком; нетто-зум ≤ 1 и квант гасят ступень; потолок ступени — 4
+#### Scenario: The step formula
+- **WHEN** a clip with a ×2 zoom on a native of 1920×1080 / 2560×1440 / 1280×720 / 640×360 / unknown at a Quality of 1280×720, 4K output, a net-unit chain, zoom 1.01, zoom ×8
+- **THEN** the decode is 2560×1440 / 2560×1440 / 1280×720 / 1280×720 / 1280×720; 4K is cut by the ceiling; net zoom ≤ 1 and the quantization cancel the step; the step ceiling is 4
 - **TEST** t310 (`src/libs/kt-engine/tests/decode_scale.rs`)
 
-#### Scenario: Ступень берётся по максимуму зума за весь клип
-- **WHEN** зум задан кривой 1 → 4 (и обратной), со стопом силы в нуле или на реверсной оси
-- **THEN** ступень ловится в максимуме кривой с любого конца, стоп силы ступени не даёт, реверс оси её не ломает
+#### Scenario: The step is taken from the maximum zoom over the whole clip
+- **WHEN** the zoom is set by a curve 1 → 4 (and the reverse), with a strength stop at zero or on a reversed axis
+- **THEN** the step is caught at the curve's maximum from either end, the strength stop does not give the step, the axis reversal does not break it
 - **TEST** t311 (`src/libs/kt-engine/tests/decode_scale.rs`)
 
-#### Scenario: Заказ равен чтению вместе с размером
-- **WHEN** кэш прогрет строго по `wanted_frames` / прогрет «в Quality» как раньше
-- **THEN** первый композит полон, второй — слой своего кадра не находит; при растяжении множества пар (кадр, качество) у префетча и рендера совпадают, ключи строго возрастают
+#### Scenario: The order equals the read, together with the size
+- **WHEN** the cache is warmed strictly by `wanted_frames` / warmed "at Quality" as before
+- **THEN** the first composite is full, the second — the layer does not find its frame; when the set of (frame, quality) pairs is stretched, the prefetch and the render coincide, the keys strictly increase
 - **TEST** t312 (`src/libs/kt-engine/tests/decode_scale.rs`), t247d (`src/libs/kt-engine/tests/video_warp.rs`)
 
-#### Scenario: Заказ равен чтению на каждом правиле приведения
-- **WHEN** вертикальный источник стоит четырьмя событиями с четырьмя правилами, кэш прогрет строго по `wanted_frames`
-- **THEN** все четыре композита полны, размер декода у «как есть» — натив, у «заполнить» — крупнее, чем у «вписать», ступень считана от размера приведения
+#### Scenario: The order equals the read for every conform rule
+- **WHEN** a vertical source sits in four events with four rules, the cache is warmed strictly by `wanted_frames`
+- **THEN** all four composites are full; the decode size for "as is" is the native, for "fill" — larger than for "fit"; the step is computed from the conform size
 - **TEST** t714 (`src/libs/kt-engine/tests/decode_scale.rs`)
 
-#### Scenario: Резкость зума на файле с запасом натива
-- **WHEN** проект 128×72, файл 512×288 с полосами по 2 px натива, зум ×2 / без зума
-- **THEN** контраст готового кадра ≈ 223 из 255 (на коде до ступени — 0.0); без зума — 0.0: ступень не раздаётся всем подряд
+#### Scenario: Zoom sharpness on a file with a native margin
+- **WHEN** the project is 128×72, the file is 512×288 with stripes of 2 px of native, zoom ×2 / no zoom
+- **THEN** the contrast of the finished frame is ≈ 223 out of 255 (on the code before the step — 0.0); without zoom — 0.0: the step is not handed out to everyone indiscriminately
 - **TEST** t315 (`src/libs/kt-engine/tests/decode_sharpness.rs`)
 
-#### Scenario: Бюджет чанка экспорта по качеству декода
-- **WHEN** ступень 2 и чанк экспорта, посчитанный по Quality, влезает в бюджет, а по качеству декода — нет
-- **THEN** чанк падает вчетверо, живой рендер со ступенью проходит с `missing_video_layers == 0`
+#### Scenario: The export chunk budget by decode quality
+- **WHEN** step 2 and an export chunk computed by Quality fit the budget, but by the decode quality they do not
+- **THEN** the chunk shrinks fourfold, the live render with the step passes with `missing_video_layers == 0`
 - **TEST** t314 (`src/libs/kt-engine/tests/decode_scale.rs`)
 
-#### Scenario: Вернувшийся файл меняет ступень на ходу
-- **WHEN** источник заменён (файл вернулся на диск) без правки модели
-- **THEN** рендерер плеера пересобирается, новый натив меняет ступень
+#### Scenario: A returned file changes the step on the fly
+- **WHEN** a source is replaced (the file has returned to disk) without any edit of the model
+- **THEN** the player's renderer is rebuilt, the new native changes the step
 - **TEST** t316 (`src/libs/kt-engine/tests/player_dynamic.rs`)
 
-#### Scenario: Ступень ленты одна на ленту, вход цепочки — свой у экземпляра
-- **WHEN** два экземпляра одной ленты, один из них зумит (в том числе опубликованным параметром)
-- **THEN** заказ внутренних листьев у обоих один (ступень — максимум по экземплярам), содержимое ленты заказано не в ступени зумящего входа, а невписанный вход вписывается перед цепочкой; ступень ленты входит в ключ пост-FX
+#### Scenario: The reel's step is one per reel, the chain input is its own per instance
+- **WHEN** two instances of one reel, one of them zooms (including through a published parameter)
+- **THEN** the order of the inner leaves is the same for both (the step is the maximum over the instances), the reel's content is not ordered at the step of the zooming input, and an unfitted input is fitted before the chain; the reel's step is part of the post-FX key
 - **TEST** t450 (`src/libs/kt-engine/tests/nest_render.rs`), t679 (`src/libs/kt-engine/tests/nest_param.rs`), t631c (`src/libs/kt-engine/tests/nest_render.rs`)
 
-#### Scenario: Подмена медиа у экземпляра — заказ по новому адресу
-- **WHEN** экземпляр ленты переопределяет медиа («логотип»)
-- **THEN** заказ уходит вглубь по новому адресу и чтение идёт по нему же
+#### Scenario: Media substitution in an instance — the order goes to the new address
+- **WHEN** a reel instance overrides the media ("logo")
+- **THEN** the order goes inward by the new address and the read goes by the same address
 - **TEST** t677 (`src/libs/kt-engine/tests/nest_param.rs`)

@@ -2,224 +2,208 @@
 
 ## Context
 
-См. proposal.md — Why. Сегодняшняя цепочка: `to_rgba` (`src/libs/kt-ffmpeg/src/source_impl.rs`)
-масштабирует в `Quality` без соотношения сторон; `execute_plan_cpu` (`src/libs/kt-engine/src/video.rs`)
-и зеркало в `src/libs/kt-gpu/src/engine.rs` кладут слой только при `(w, h) == Quality`;
-`pan_frame` (`src/libs/kt-fx/src/video.rs`) считает рамку в координатах уже растянутого
-источника; `place_media_at` (`src/apps/kt-app/src/app.rs`) из `info` читает только длительность
-и наличие дорожек; `ProjectSettings` — `fps/width/height/sample_rate/pitch_engine/default_shape`;
-`Sequence` своих настроек не имеет (спека compositions, решение Р.50).
+See proposal.md — Why. Today's chain: `to_rgba` (`src/libs/kt-ffmpeg/src/source_impl.rs`)
+scales to `Quality` without regard to the aspect ratio; `execute_plan_cpu` (`src/libs/kt-engine/src/video.rs`)
+and the mirror in `src/libs/kt-gpu/src/engine.rs` place the layer only when `(w, h) == Quality`;
+`pan_frame` (`src/libs/kt-fx/src/video.rs`) computes the frame in the coordinates of the already stretched
+source; `place_media_at` (`src/apps/kt-app/src/app.rs`) reads only the duration
+and the presence of tracks from `info`; `ProjectSettings` — `fps/width/height/sample_rate/pitch_engine/default_shape`;
+`Sequence` has no settings of its own (the compositions spec, the R.50 decision).
 
-Ограничения: инвариант 4 (заказ == чтение, качество в ключе кэша), 7 (план один, CPU —
-байт-эталон, GPU — по допускам, пара `geom.rs` ↔ `geom_fused.wgsl`), 8 (тумбы из sidecar),
-11 (golden на совпадающих пропорциях не двигаются), правила UI 4/9/13/16/19/20.
+Constraints: invariant 4 (order == read, quality in the cache key), 7 (one plan, CPU is the
+byte reference, GPU is within tolerances, the pair `geom.rs` ↔ `geom_fused.wgsl`), 8 (thumbnails from the sidecar),
+11 (golden on matching proportions do not move), UI rules 4/9/13/16/19/20.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- Правило приведения как ГЕОМЕТРИЯ СЛОЯ в плане, одна функция на декод, размещение, тумбы,
-  превью и экспорт.
-- Прозрачные поля; «как есть» с выходом за кадр; поворот и якорь в узле.
-- Уровень правила: проект + исключение у события; ленты — свой растр и fps.
-- Ничего не двигается байт-в-байт там, где пропорции совпадают.
+- The conform rule as the LAYER'S GEOMETRY in the plan, one function for decode, placement, thumbnails,
+  previews and export.
+- Transparent margins; "as is" with overflow beyond the frame; rotation and anchor in the node.
+- The level of the rule: project + an exception on the event; reels — their own raster and fps.
+- Nothing moves byte for byte where the proportions match.
 
 **Non-Goals:**
-- Маски в узле (место оставлено, отдельный change); приведение частоты кадров источника
-  (blend/дублирование); управление цветом; экранный контрол трансформации (F-UI-001).
-- Клиповый режим наложения (F-CMP-003 — у дорожки, change B).
+- Masks in the node (the place is left, a separate change); conforming the source frame rate
+  (blend/duplication); color management; an on-screen transform control (F-UI-001).
+- Clip-level blend mode (F-CMP-003 — on the track, change B).
 
 ## Decisions
 
-- **Контракт декодера не меняется, меняется заказчик.** `conform_geometry(native_display,
-  canvas, rule, crop, zoom) -> LayerGeom { decode: (w, h), rect: [x, y, w, h] в долях canvas }`
-  — одна чистая функция в kt-fx (без FFmpeg, инвариант крейтов). Размер декода —
-  прямоугольник размещения × ступень S, выровненный на чётное, с потолком `MAX_INTER_DIM`;
-  для «как есть» — натив (с потолком). Декодер по-прежнему отдаёт РОВНО запрошенное, значит
-  `Quality` остаётся ключом кэша и заказ равен чтению. Альтернатива «декодер всегда отдаёт
-  натив в рамке, план дорисовывает» отвергнута: «заполнить» пришлось бы увеличивать из
-  вписанного кадра — мыло по построению.
-- **Натив — в пикселях экрана.** `MediaInfo` получает `sar` (num/den); вид кадра =
-  `width × sar`; всё приведение считается от вида, тумбы и «Max (по источникам)» — тоже.
-  Иначе DV 4:3 (720×576, SAR 16:15) — ещё один молчаливый растяг.
-- **Размещение — часть гео-серии.** Ведущий узел «Геометрия» — аффин источник → кадр
-  (правило × кроп × положение × зум × поворот вокруг якоря) в общей программе
-  `kt-fx::geom` с новым краевым примитивом `Transparent` (вместо `Clamp`-плато) и зеркалом
-  в `geom_fused.wgsl`. Эффекты ДО ведущего узла работают на буфере размера декода
-  (пространство источника), ПОСЛЕ — на холсте размера выхода. Ровно так у Vegas («effects
-  applied before or after any event panning and cropping»), и это даёт «как есть» без
-  особого случая: холст меньше источника — источник торчит за край.
-- **Прямоугольник и положение — в ДОЛЯХ холста, кроп — в долях источника.** Так превью
-  1/4 подобно кадру и экспорт в чужом разрешении приводит тем же числом; UI показывает
-  пиксели растра проекта, модель хранит доли. Поворот — градусы, якорь — доли источника
-  (умолчание 0.5/0.5).
-- **Ведущий узел — слот цепочки с флагом `lead`.** Валидация: у видео-события ровно один
-  ведущий; только он несёт правило (`Conform::Project | Fit | Fill | Stretch | AsIs`);
-  удаление ведущего — отказ с причиной (правило 16), перестановка — обычная; дополнительные
-  узлы «Геометрия» без правила — обычные слоты. Аудио-события узла не имеют. Дроп события
-  создаёт ведущий узел с правилом `Project` и тождественными параметрами → байты прежние
-  на совпадающих пропорциях (identity-хэш, как у прежнего Pan без зума).
-- **Место под маску.** Узел проектируется как `Geometry { rule, crop, pos, zoom, rot,
-  anchor }`; маска станет соседним полем узла (`mask: Option<…>`) — не пишется, пока нет
-  (правило 9), но краевой примитив `Transparent` и порядок «маска после кропа, до
-  размещения» фиксируются здесь, чтобы change масок не переписывал узел.
-- **Уровень правила.** `ProjectSettings.conform` (умолчание Fit) действует задним числом на
-  события с `Conform::Project`; событие с явным правилом не меняется (правило 20). Это
-  ровно пара Resolve + FCP, отсутствие которой породило kde-invent #538 и Olive #1106.
-- **Прозрачные поля, чёрный — только фон кадра.** Поля слоя — альфа 0; композит без слоёв
-  под ними — прежний фон. Урок Pitivi #1378: чёрное поле на верхнем слое стирает всё под
-  собой.
-- **Ступень декода — от размера приведения.** Формула S прежняя, «Quality» в ней —
-  размер декода из геометрии; «как есть» с нативом крупнее холста — ступень 1 (декод =
-  натив, потолок 4096).
-- **Тумбы филмстрипа** заказываются как «вид источника в рамке 320×180» (sidecar-таблица
-  аддитивна: новый размер — новый ключ), рисуются с полями цвета фона строки.
-- **Окно настроек проекта** — одно тело с комбо панели превью (`Command::SetSettings`,
-  правило 17). Растр — два поля с проверкой (чётное, 16…8192); fps — список делителей
-  90 000 в диапазоне 1…120 (24/25/30/48/50/60/100/120 и др.) плюс поле с проверкой
-  `TICK_HZ % fps == 0` (29.97 невыразим — отказ с причиной, правило 16). Открывается из
-  меню проекта и из адреса в строке состояния. Флаг `settings_explicit` встаёт при
-  применении окна.
-- **Первый клип задаёт проект** только когда в корне нет событий И настройки не явные;
-  берётся вид источника (с SAR, чётное) и fps, если он делит 90 000; иначе fps не трогается и
-  строка состояния говорит почему. Внутри ленты — не действует (у ленты свои настройки,
-  умолчание — проект).
-- **Сообщение о несовпадении** — через `KtApp::hint()` (одна подсказка в одном месте),
-  ошибочным стилем не является (действие выполнено), но называет адрес: «Геометрия события /
-  Настройки проекта».
-- **Пересмотр: ленты получают свой растр и fps (решение владельца Р.62)** — прежнее
-  «наследовать всё» (Р.50, compositions/design.md «Отвергнуто») снято по прямой просьбе.
-  `Sequence.raster: Option<(u32,u32)>`, `Sequence.fps: Option<u32>`; `None` — проект.
-  Натив экземпляра = растр ленты (вид 1:1), приводится ведущим узлом экземпляра как файл.
-  Свой fps — квантование ВСЕГО внутреннего времени экземпляра к сетке ленты
-  (`floor(t·fps_l/90000)·90000/fps_l`) до раскрытия суб-плана; при `None` — непрерывно, как
-  Р.56. Аудио: сетка 48 kHz общая, fps ленты на звук не влияет. Закон Э: требование
-  переформулировано «при настройках, равных проекту»; тесты t434/t435/t447 остаются как
-  есть (их ленты без настроек), добавляется отрицательный тест. Ступень ленты считается от
-  её растра; ключ мемо суб-композита включает растр и fps ленты (иначе смена настроек
-  ленты отдала бы старый кадр).
-- **Генераторы: натив = растр контейнера.** Титр в квадратной ленте 1080×1080 обязан
-  считаться в её растре; 4096×4096 как «запас деталей» заменяется честным нативом контейнера
-  × запас ступени (формула S даёт тот же S для генератора с нативом ≥ Quality).
-- **Формат v11 по содержимому:** ведущий узел с правилом `Project` и тождественными
-  параметрами НЕ пишется (файл без новшеств байт-стабилен на прежней версии); правило
-  проекта пишется только не-умолчание; `Pan` в старом файле читается в ведущий узел
-  (`mode` → правило, `pan/zoom` → положение/зум), односторонне. Флаг `settings_explicit`
-  пишется только `true`.
-- **kt-cli probe** печатает у видео-события правило, прямоугольник и размер декода — первое,
-  что спросят по жалобе «картинка растянута/обрезана».
+- **The decoder contract does not change, the client does.** `conform_geometry(native_display,
+  canvas, rule, crop, zoom) -> LayerGeom { decode: (w, h), rect: [x, y, w, h] in fractions of canvas }`
+  — one pure function in kt-fx (without FFmpeg, the crate invariant). The decode size is the placement rectangle × the scale step S, aligned to even, with the ceiling `MAX_INTER_DIM`;
+  for "as is" — the native (with the ceiling). The decoder still delivers EXACTLY what was requested, so
+  `Quality` remains the cache key and the order equals the read. The alternative "the decoder always delivers
+  native inside the frame, the plan fills in" was rejected: "fill" would have to upscale from the inscribed frame — blur by construction.
+- **Native — in screen pixels.** `MediaInfo` gets `sar` (num/den); the frame's view =
+  `width × sar`; all conforming is computed from the view, and so are thumbnails and "Max (by sources)". Otherwise DV 4:3 (720×576, SAR 16:15) is yet another silent stretch.
+- **Placement is part of the geometry series.** The leading node "Geometry" — the affine source → frame
+  (rule × crop × position × zoom × rotation around the anchor) in the common program
+  `kt-fx::geom` with a new edge primitive `Transparent` (instead of the `Clamp` plateau) and a mirror
+  in `geom_fused.wgsl`. Effects BEFORE the leading node work on a buffer of decode size
+  (source space), AFTER — on a canvas of output size. Exactly so in Vegas ("effects
+  applied before or after any event panning and cropping"), and this gives "as is" without
+  a special case: if the canvas is smaller than the source, the source sticks out past the edge.
+- **The rectangle and position — in FRACTIONS OF THE CANVAS, the crop — in fractions of the source.** So the 1/4 preview looks like the frame, and export in another resolution conforms by the same number; the UI shows the project raster's pixels, the model stores fractions. Rotation — degrees, the anchor — fractions of the source (default 0.5/0.5).
+- **The leading node — a chain slot with the `lead` flag.** Validation: a video event has exactly one
+  leading node; only it carries the rule (`Conform::Project | Fit | Fill | Stretch | AsIs`);
+  removing the leading node — a refusal with a reason (rule 16), reordering is ordinary; additional
+  "Geometry" nodes without a rule are ordinary slots. Audio events have no such node. Dropping an event
+  creates a leading node with the rule `Project` and identity parameters → bytes as before
+  on matching proportions (an identity hash, like the previous Pan without zoom).
+- **Place for a mask.** The node is designed as `Geometry { rule, crop, pos, zoom, rot,
+  anchor }`; a mask will become a neighboring field of the node (`mask: Option<…>`) — it is not written until it exists
+  (rule 9), but the edge primitive `Transparent` and the order "mask after crop, before
+  placement" are fixed here so that the masks change does not rewrite the node.
+- **The rule's level.** `ProjectSettings.conform` (default Fit) acts retroactively on
+  events with `Conform::Project`; an event with an explicit rule does not change (rule 20). This is
+  exactly the Resolve + FCP pair, whose absence produced kde-invent #538 and Olive #1106.
+- **Transparent margins, black — only the frame background.** The layer's margins are alpha 0; the composite with no layers
+  under them keeps the previous background. Lesson of Pitivi #1378: a black margin on the top layer erases everything beneath it.
+- **The decode step — from the conform size.** The formula S is the same as before, "Quality" in it is the
+  decode size from the geometry; "as is" with a native larger than the canvas — step 1 (decode =
+  native, ceiling 4096).
+- **Filmstrip thumbnails** are ordered as "a view of the source in a 320×180 frame" (the sidecar table is additive: a new size — a new key), drawn with the margins in the row's background color.
+- **The project settings window** — one body with the preview panel's combo box (`Command::SetSettings`,
+  rule 17). The raster — two validated fields (even, 16…8192); fps — a list of divisors of
+  90 000 in the range 1…120 (24/25/30/48/50/60/100/120 etc.) plus a field with the validation
+  `TICK_HZ % fps == 0` (29.97 is not expressible — a refusal with a reason, rule 16). It opens from
+  the project menu and from the address in the status line. The flag `settings_explicit` is set
+  when the window is applied.
+- **The first clip sets the project** only when there are no events in the root AND the settings are not explicit;
+  the source's view (with SAR, even) and fps are taken, if it divides 90 000; otherwise fps is not touched and
+  the status line says why. Inside a reel — it does not apply (the reel has its own settings,
+  the default is the project).
+- **The mismatch message** — via `KtApp::hint()` (one hint in one place); it is not an error style
+  (the action was performed), but it names the address: "Event geometry /
+  Project settings".
+- **Revision: reels get their own raster and fps (the owner's decision in R.62)** — the previous
+  "inherit everything" (R.50, compositions/design.md "Rejected") is lifted by direct request.
+  `Sequence.raster: Option<(u32,u32)>`, `Sequence.fps: Option<u32>`; `None` — the project.
+  The native of an instance = the reel's raster (1:1 view), conformed by the instance's leading node like a file.
+  Its own fps — quantization of ALL the instance's internal time to the reel's grid
+  (`floor(t·fps_l/90000)·90000/fps_l`) before expanding the sub-plan; at `None` — continuous, as in
+  R.56. Audio: the 48 kHz grid is shared, the reel's fps does not affect sound. Law E: the requirement is
+  reworded as "with settings equal to the project's"; tests t434/t435/t447 remain as they are (their reels have no settings), a negative test is added. The reel's scale step is computed from
+  its raster; the sub-composite memo key includes the reel's raster and fps (otherwise changing the reel's settings
+  would return the old frame).
+- **Generators: native = the container's raster.** A title in a square 1080×1080 reel must be computed in its raster; 4096×4096 as a "detail margin" is replaced by the honest native of the container
+  × the step margin (formula S gives the same S for a generator with a native ≥ Quality).
+- **Format v11 by content:** a leading node with the rule `Project` and identity parameters is NOT written (a file without new features stays byte-stable at the previous version); the project rule is written only when it is not the default; `Pan` in an old file is read into the leading node
+  (`mode` → rule, `pan/zoom` → position/zoom), one-way. The flag `settings_explicit`
+  is written only as `true`.
+- **kt-cli probe** prints for a video event the rule, the rectangle and the decode size — the first
+  thing asked for the complaint "the picture is stretched/cropped".
 
-### Уточнения по ходу реализации (стадии 1–2)
+### Clarifications during implementation (stages 1–2)
 
-- **Ведущий узел — поле события (`ClipEvent.geometry` + `geometry_pos` + `geometry_auto`),
-  а не слот `fx`.** Вклейка в цепочку живёт в двух местах: движок материализует узел в
-  `VideoClip.fx` на позиции `geometry_pos` (в счёте активных слотов; `LayerMix.from` за
-  точкой вставки сдвигается на один), редактор FX — только внутри вызова полосы, переводя
-  индексы на границе (`ChainSel::Lead` для выбранного узла). Причина: индексы слотов —
-  адреса кривых, публикации (`ParamOwner::FxSlot`) и контекст-меню; узел в `fx` сдвинул бы
-  их все, и старые файлы получили бы кривые не на тех слотах.
-- **Тождественность ведущего узла — в контексте.** Параметры по умолчанию делают узел
-  «не эффектом» ровно тогда, когда рамка приведения равна холсту (`geometry_is_identity_in`);
-  иначе он обязан положить кадр чужих пропорций в рамку. Планировщик считает тождественный
-  узел прозрачным (как аудио-FX), чтобы одиночные CamMotion/Mirror рядом с ним не теряли
-  старое ядро (t297).
-- **Процедурный источник (генератор, титр, заглушка) и лента — вид `None`.** Кадр —
-  функция запрошенного качества, пропорций нет: рамка = холст, узел тождествен. Натив
-  генератора 4096×4096 при этом в правило не попадает (t663/t670).
-- **Контекст ведущего узла входит в оба ключа мемоизации** (`postfx_key_hash` на CPU,
-  `plan_key` на GPU): та же цепочка на том же кадре с другим правилом — другая картинка;
-  без этого t714b читал стейл (найдено по расхождению CPU↔GPU).
-- **Pan упразднён без миграции режима.** `kt:pan` в старом файле читается в
-  дополнительный узел «Геометрия» на ТОМ ЖЕ слоте (индексы не двигаются), кривые
-  `pan_x/pan_y` переезжают на `pos_x/pos_y` через `pan_to_pos(pan, zoom) =
-  −pan·(1−1/z)/2`; режим не переносится — все три давали один кадр (F-MED-004).
-  `CamMotion` остаётся эффектом со старым ядром и тем же переводом при чтении.
-- **Отказ вне таймлайна — `KtApp::refuse`**: строка состояния показывает его ошибкой
-  (`HintKind::Error`, как упор жеста) с TTL статуса, в журнал и ретроспективу; удаление
-  ведущего узла крестиком — первый потребитель.
-- **Пресет цепочки ведущий узел не несёт** (он свойство события); буфер обмена цепочки —
-  тоже.
+- **The leading node is an event field (`ClipEvent.geometry` + `geometry_pos` + `geometry_auto`),
+  not an `fx` slot.** The insertion into the chain lives in two places: the engine materializes the node into
+  `VideoClip.fx` at the position `geometry_pos` (in the count of active slots; `LayerMix.from` past the
+  insertion point shifts by one), and the FX editor — only inside the strip call, translating
+  indices at the boundary (`ChainSel::Lead` for the selected node). Reason: slot indices are the
+  addresses of curves, publications (`ParamOwner::FxSlot`) and the context menu; a node in `fx` would shift
+  all of them, and old files would get curves on the wrong slots.
+- **The identity of the leading node is in context.** The default parameters make the node "not an effect"
+  exactly when the conform frame equals the canvas (`geometry_is_identity_in`);
+  otherwise it must place a frame of foreign proportions into the frame. The scheduler treats an identity
+  node as transparent (like audio FX), so that single CamMotion/Mirror nodes next to it do not lose
+  the old kernel (t297).
+- **A procedural source (generator, title, placeholder) and a reel — view `None`.** The frame is a
+  function of the requested quality, there are no proportions: the frame = canvas, the node is identity. The generator's
+  native 4096×4096 does not enter the rule in this case (t663/t670).
+- **The context of the leading node is part of both memo keys** (`postfx_key_hash` on CPU,
+  `plan_key` on GPU): the same chain on the same frame with a different rule — a different picture;
+  without this, t714b read a stale value (found by a CPU↔GPU discrepancy).
+- **Pan is abolished without a mode migration.** `kt:pan` in an old file is read into an
+  additional "Geometry" node on the SAME slot (indices do not move), the curves
+  `pan_x/pan_y` move to `pos_x/pos_y` via `pan_to_pos(pan, zoom) =
+  −pan·(1−1/z)/2`; the mode is not carried over — all three produced one frame (F-MED-004).
+  `CamMotion` remains an effect with the old kernel and the same conversion on read.
+- **Refusal outside the timeline — `KtApp::refuse`**: the status line shows it as an error
+  (`HintKind::Error`, like the gesture's stop) with the status TTL, to the log and the retrospective; deleting
+  the leading node with the cross is the first consumer.
+- **A chain preset does not carry the leading node** (it is a property of the event); the chain clipboard
+  as well.
 
-### Уточнения по ходу реализации (стадии 3–4)
+### Clarifications during implementation (stages 3–4)
 
-- **Окно настроек — одна дверь на проект и ленту.** «Файл / Настройки проекта…» в корне
-  правит проект; внутри ленты (`model.editing()`) — её растр и fps с галками «как в
-  проекте». Правило приведения проекта показано рядом из четырёх слов, не выпадающим
-  списком: один клик, всё видно.
-- **Первый клип задаёт проект внутри `clip_cmds_for`**, а не в `place_media_at`: туда же
-  ходит создание генератора, и адоптация гейтится `info.fps.is_some()` — у процедурного
-  источника пропорций нет, проект он не задаёт. `SetSettings` кладётся ПЕРВЫМ в батч
-  постановки — один undo-шаг.
-- **Лента со своим растром = файл с нативом-растром.** Вид экземпляра — растр ленты,
-  база размера декода — рамка правила (`clip_base_quality`), суб-план собирается в базе
-  × ступень, `NestSrc::fit_to` берёт базу из размера плана, а не из холста родителя.
-  Генератор внутри ленты считается в её растре без своего участия (вид None).
-- **Свой fps ленты — квантование `clip_inner_tick`** (`floor(m·fps/90000)·90000/fps`)
-  ТОЛЬКО при `Sequence.fps = Some`; без него путь прежний (t579/t580 байт-в-байт).
-- **Растр и fps ленты — часть редакции** (`hash_reel`): ключи мемо суб-композита,
-  превью ленты в sidecar и GPU-план видят смену настроек.
-- **Generators (уточнение спеки):** натив генератора 4096×4096 остаётся запасом ступени;
-  в правило приведения он не входит — процедурный источник получает вид `None`, рамка =
-  холст контейнера. Дельта спеки `generators` приведена к этому.
+- **The settings window — one door for the project and for a reel.** "File / Project settings…" at the root
+  edits the project; inside a reel (`model.editing()`) — its raster and fps with the checkboxes "as in
+  the project". The project's conform rule is shown next to it as four words, not as a drop-down list: one click, everything visible.
+- **The first clip sets the project inside `clip_cmds_for`**, not in `place_media_at`: the generator
+  creation also goes there, and the adoption is gated by `info.fps.is_some()` — a procedural source has no
+  proportions, so it does not set the project. `SetSettings` is put FIRST in the placement batch — one undo step.
+- **A reel with its own raster = a file with a native raster.** The instance's view is the reel's raster,
+  the base of the decode size is the rule's frame (`clip_base_quality`); the sub-plan is assembled at the base
+  × step, `NestSrc::fit_to` takes the base from the plan size, not from the parent's canvas.
+  A generator inside a reel is computed in its raster without participating itself (view None).
+- **The reel's own fps — quantization of `clip_inner_tick`** (`floor(m·fps/90000)·90000/fps`)
+  ONLY when `Sequence.fps = Some`; without it the path is as before (t579/t580 byte-for-byte).
+- **The reel's raster and fps are part of the revision** (`hash_reel`): the sub-composite memo keys,
+  the reel's preview in the sidecar and the GPU plan see the change of settings.
+- **Generators (clarification of the spec):** the generator's native 4096×4096 remains as the step margin;
+  it is not part of the conform rule — the procedural source gets view `None`, frame =
+  the container's canvas. The delta of the `generators` spec is brought in line with this.
 
-### Уточнения по ходу реализации (стадия 5 и хвосты стадии 1)
+### Clarifications during implementation (stage 5 and stage 1 tails)
 
-- **Тумбы — по ВИДУ источника, сайдкар аддитивен.** `thumb_quality(view)` вписывает вид в
-  рамку 320×180 (чётно); ключ `thumbnails` не менялся, но появилась таблица `thumb_meta`
-  (media → размер тумб): у сайдкаров до Р.62 строки нет, их раздавленные тумбы не читаются
-  и перестраиваются при первом заказе. Бамп `SCHEMA_VERSION` отвергнут: он снёс бы индекс и
-  пики всех медиа ради одной таблицы. Ячейка филмстрипа центрирует узкую тумбу
-  (`thumb_cell_fit`), широкая режется справа как прежде (t719, unit + харнесс по шейпам).
-- **Версия проекта — часть ключа превью.** Живой сценарий `conform` показал: правило
-  записано в файл, а превью на паузе висит с прежним кадром — ключ видел тик, качество и
-  версию содержимого источников, но не версию ПРОЕКТА. Теперь `preview_project` сверяется
-  с `Player::project_version()` (t722b, красный на старом коде). Это закрывает и любую другую
-  правку модели на паузе.
-- **Дамп геометрии несёт строку состояния** (`status`, как нарисована; управляющие символы
-  заменены пробелом — иначе JSON не разбирался) и щупы `menu.file`, `bin.file`,
-  `settings.conform.<rule>`, `settings.apply`: сценарий приведения жмёт то, что программа
-  отдала сама, а не угадывает.
-- **t728b** сравнивает ДОЛИ (ширина заливки, центр) кадров 1920×1080 и 1280×720 — подобие,
-  не байты: ресемплинг в разном разрешении байт-в-байт не обязан совпадать.
-- **Фикстуры SAR** (`testsrc_sar11/21.mp4`): одни пиксели, разный `setsar`; t711 сверяет
-  `info().sar`/`view_size()` и байт-равенство декода — SAR трогает только вид.
+- **Thumbnails — by the source's VIEW, the sidecar is additive.** `thumb_quality(view)` fits the view into the
+  320×180 frame (even); the `thumbnails` key did not change, but a `thumb_meta` table appeared
+  (media → thumbnail size): sidecars from before R.62 have no row, their squashed thumbnails are not read
+  and are rebuilt on the first request. A bump of `SCHEMA_VERSION` was rejected: it would wipe the index and
+  peaks of all media for the sake of one table. The filmstrip cell centers a narrow thumbnail
+  (`thumb_cell_fit`), a wide one is cut on the right as before (t719, unit + harness by shapes).
+- **The project version is part of the preview key.** The live scenario `conform` showed: the rule
+  was written to the file, but the preview on pause hung on the previous frame — the key saw the tick, the quality and
+  the version of the source contents, but not the version of the PROJECT. Now `preview_project` checks
+  against `Player::project_version()` (t722b, red on the old code). This also closes any other
+  model edit while paused.
+- **The geometry dump carries the status line** (`status`, as drawn; control characters
+  replaced with a space — otherwise the JSON did not parse) and the probes `menu.file`, `bin.file`,
+  `settings.conform.<rule>`, `settings.apply`: the conform scenario presses what the program itself gave, rather than guessing.
+- **t728b** compares the FRACTIONS (fill width, center) of frames 1920×1080 and 1280×720 — similarity,
+  not bytes: resampling at different resolutions is not obliged to match byte for byte.
+- **SAR fixtures** (`testsrc_sar11/21.mp4`): the same pixels, different `setsar`; t711 checks
+  `info().sar`/`view_size()` and the byte equality of the decode — SAR touches only the view.
 
-- **Миграция CamMotion — точна в ключах, между ключами в допуске (t230 пересмотрен).** Узел
-  «Геометрия» хранит позицию `pos = pan_to_pos(pan, zoom)`; легаси интерполировал pan и zoom
-  порознь и перемножал, и гладкая кривая позиции произведение не воспроизводит. Печь ключ на
-  каждый кадр ради байтов отвергнуто (файл распухает, кривая нередактируема); владелец
-  сказал «обратной совместимости не надо». Замер на 64×36: среднее расхождение < 3,
-  одиночный пиксель кромки до 90 — допуск в тесте `mean < 4`.
-- **Ранний выход «цепочка тождественна» в сэмплере ступени учитывает живой план** (t311):
-  узел «Геометрия» с zoom 1 и кривой 1 → 4 статически тождествен; до Р.62 от раннего выхода
-  спасал Pan, который тождеством не считался.
+- **The CamMotion migration — exact in the keys, within tolerance between keys (t230 revised).** The
+  "Geometry" node stores the position `pos = pan_to_pos(pan, zoom)`; the legacy interpolated pan and zoom
+  separately and multiplied them, and a smooth position curve does not reproduce the product. Baking a key on
+  every frame for the sake of bytes was rejected (the file bloats, the curve is not editable); the owner
+  said "backward compatibility is not needed". Measurement at 64×36: the mean deviation < 3,
+  a single edge pixel up to 90 — the tolerance in the test `mean < 4`.
+- **The early exit "chain is identical" in the step sampler takes the live plan into account** (t311):
+  a "Geometry" node with zoom 1 and a curve 1 → 4 is statically identical; before R.62 the early exit was saved by Pan, which was not considered identity.
 
 ## Risks / Trade-offs
 
-- [Гео-серия с прозрачным краем меняет байты на границе кадра у существующих проектов] →
-  identity-аффин с рамкой, равной холсту, обязан давать байт-в-байт прежний путь (K = 1,
-  край не достигается); t715 держит GOLDEN_VIDEO и t11/t67/t184 без перегенерации.
-- [Ступень декода от геометрии даёт другой ключ кэша у клипов с явным правилом] →
-  заказ и чтение считает одна функция; t714 проверяет заказ == чтение на всех правилах.
-- [Эффекты до ведущего узла работают на буфере чужого размера — ядра, инвариантные к
-  разрешению, но не к пропорциям (EventGrid, Vignette)] → это ожидаемая семантика
-  (пространство источника); в UI ведущий узел по умолчанию первый, тест t717 фиксирует
-  оба порядка.
-- [Свой fps ленты ломает интуицию «непрерывное время» Р.56] → квантование включается
-  только явным полем; при `None` путь прежний; t724 — оба.
-- [Первый клип меняет настройки проекта «сам»] → только пустой корень И неявные настройки,
-  сообщение с адресом; t721 проверяет, что явные настройки не трогаются (правило 20).
-- [Окно настроек — новое место в UI] → правило 13: диалог, не полоса; открывается по
-  адресу; reach-тест t720.
-- [SAR-фикстуры требуют ffmpeg при генерации] → фикстура в `src/fixtures/gen.sh`,
-  тест под feature `ffmpeg`, синтетический источник несёт `sar` без FFmpeg.
+- [A geo-series with a transparent edge changes the bytes at the frame boundary of existing projects] →
+  an identity affine with a frame equal to the canvas must yield the previous path byte for byte (K = 1,
+  the edge is not reached); t715 holds GOLDEN_VIDEO and t11/t67/t184 without regeneration.
+- [The decode step from the geometry gives a different cache key for clips with an explicit rule] →
+  the order and the read are computed by one function; t714 checks order == read on all rules.
+- [Effects before the leading node work on a buffer of a foreign size — kernels that are invariant to
+  resolution but not to proportions (EventGrid, Vignette)] → this is the expected semantics
+  (source space); in the UI the leading node is by default the first, and test t717 fixes
+  both orders.
+- [A reel's own fps breaks the intuition of "continuous time" of R.56] → quantization is enabled
+  only by an explicit field; at `None` the path is as before; t724 — both.
+- [The first clip changes the project settings "by itself"] → only an empty root AND implicit settings,
+  a message with the address; t721 checks that explicit settings are not touched (rule 20).
+- [The settings window is a new place in the UI] → rule 13: a dialog, not a strip; it opens by
+  address; reach-test t720.
+- [SAR fixtures require ffmpeg at generation time] → the fixture is in `src/fixtures/gen.sh`,
+  the test under feature `ffmpeg`; the synthetic source carries `sar` without FFmpeg.
 
 ## Migration Plan
 
-Совместимости не требуется (решение владельца). Чтение старых файлов: `Pan` → ведущий узел
-односторонне; события без узла получают ведущий узел с правилом `Project` при чтении;
-ленты без настроек — `None`. Новые файлы — v11 по содержимому. Откат — git.
+Compatibility is not required (the owner's decision). Reading old files: `Pan` → the leading node one-way;
+events without a node get a leading node with the rule `Project` on read;
+reels without settings — `None`. New files — v11 by content. Rollback — git.
 
 ## Open Questions
 
-- Нужен ли отдельный пункт «Match Output Aspect» (Vegas) как команда над кропом ведущего
-  узла — решается в UI при реализации, спеку не меняет.
+- Is a separate item "Match Output Aspect" (Vegas) needed as a command over the crop of the leading
+  node — it is decided in the UI during implementation, the spec does not change.

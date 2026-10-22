@@ -2,84 +2,83 @@
 
 ## Why
 
-Дорожки как сущности нет: это счётчики `video_lanes/audio_lanes/morph_lanes/camera_lanes`,
-вектор порядка строк и поле `lane: u32` у события; имя и высота живут вне undo. Аудио
-суммируется клипами прямо в выход, видео складывается alpha-over поклипно, у морфера вход
-пер-клиповый. Поэтому у дорожки нет ни mute, ни solo, ни замка, ни уровня, ни цепочки FX, ни
-режима наложения — третья претензия владельца Р.62 («хотелось бы мутить треки, накладывать
-эффекты и т.д., чтобы у треков были свои возможности наложения»). Ключ «(вид, номер)» для
-FX-состояния не годится: вставка дорожки перенумеровывает соседей и убила бы состояние
-цепочек (инвариант 3) — дорожке нужен свой стабильный id.
+There is no track as an entity: there are counters `video_lanes/audio_lanes/morph_lanes/camera_lanes`,
+a vector of the row order and a field `lane: u32` on the event; the name and height live outside undo. Audio
+is summed by clips straight into the output, video is stacked per clip by alpha-over, and the morpher's input is per clip.
+Therefore a track has no mute, no solo, no lock, no level, no FX chain, no
+blend mode — the owner's third claim in R.62 ("I would like to mute tracks, apply
+effects, etc., so that tracks have their own blending capabilities"). The key "(kind, number)" for
+FX state is unsuitable: inserting a track renumbers its neighbours and would kill the state
+of the chains (invariant 3) — a track needs its own stable id.
 
 ## What Changes
 
-- **Дорожка — объект модели со стабильным id** (`Track { id, kind, name, height, mute,
-  solo, lock, level, blend, fx… }`) в корне и в каждой ленте; порядок строк = порядок
-  вектора дорожек; номер дорожки у события по-прежнему ранг внутри вида (инвариант «номер =
-  ранг строки» не меняется). **BREAKING (модель):** счётчики дорожек, `lane_order`,
-  `UiState.lane_names/lane_heights` удалены; имя и высота — в undo.
-- **Mute и solo — содержимое проекта, действуют на экспорт** (решение владельца). Mute —
-  множитель 0 / исключение из композита, не удаление из графа (инвариант 3); solo —
-  множество по виду; окно рендера и kt-cli перечисляют заглушённое и соло до старта.
-- **Замок**: правки событий запертой дорожки отвергаются одним гейтом модели с причиной;
-  свойства самой дорожки правятся.
-- **Уровень дорожки**: громкость в дБ (аудио) / непрозрачность (видео) — ещё один множитель
-  после весов и gain события; статические, в паспорте свойств (огибающие — следующий change).
-- **Цепочка FX дорожки.** Видео: дорожка с цепочкой, уровнем ≠ 1 или режимом ≠ Normal
-  становится в плане неявной лентой — композит её событий, затем цепочка, уровень, наложение
-  вниз; дорожка без этого идёт прежним путём байт-в-байт. Аудио: сумма событий дорожки →
-  потоковый процессор цепочки (ключ состояния — id дорожки) → уровень → mute → в микс;
-  дорожка без стадии складывается прежним порядком (GOLDEN_AUDIO не двигается).
-- **Режим наложения видеодорожки** (Normal, Multiply, Screen, Add, Subtract, Darken,
-  Lighten, Overlay, Difference) на композит дорожки, оси «режим» и «уровень» раздельны, обе
-  после альфы; парой CPU + WGSL по классам допуска (заметка F-CMP-003).
-- **Интерфейс**: заголовок дорожки получает бейджи M / S / замок / FX, окно «Свойства
-  дорожки» (имя, уровень, режим, выключатели, кнопка цепочки), FX-редактор адресует дорожку
-  тем же виджетом цепочки; меню и горячие клавиши; полный набор глаголов сверяется машиной.
-- **Формат**: `Track.metadata.kt` (id, выключатели, уровень, режим, высота), `Track.enabled
-  = !mute`, цепочка дорожки — стандартными `Effect.1` на треке; предикат v11 раунда Р.62
-  расширяется.
-- **Отложено с записью**: огибающие дорожки во времени таймлайна; шины/посылы; клиповый
-  режим наложения.
+- **A track is a model object with a stable id** (`Track { id, kind, name, height, mute,
+  solo, lock, level, blend, fx… }`) at the root and in each reel; the row order = the order
+  of the vector of tracks; the track number of an event is still the rank inside the kind (the invariant "number =
+  row rank" does not change). **BREAKING (model):** the track counters, `lane_order`,
+  `UiState.lane_names/lane_heights` are removed; the name and height go into undo.
+- **Mute and solo are project content and affect the export** (the owner's decision). Mute —
+  a multiplier 0 / exclusion from the composite, not removal from the graph (invariant 3); solo —
+  a set by kind; the render window and kt-cli list the muted and soloed tracks before the start.
+- **Lock**: edits of the events of a locked track are rejected by one model gate with a reason;
+  the track's own properties remain editable.
+- **Track level**: volume in dB (audio) / opacity (video) — one more multiplier
+  after the weights and the event gain; static, in the property passport (envelopes — the next change).
+- **Track FX chain.** Video: a track with a chain, a level ≠ 1, or a mode ≠ Normal
+  becomes in the plan an implicit reel — the composite of its events, then the chain, level, blending
+  downward; a track without this goes the former way, byte for byte. Audio: the sum of the track's events →
+  the streaming chain processor (the state key is the track id) → level → mute → into the mix;
+  a track without a stage is summed in the former order (GOLDEN_AUDIO does not move).
+- **Video track blend mode** (Normal, Multiply, Screen, Add, Subtract, Darken,
+  Lighten, Overlay, Difference) on the track composite; the "mode" and "level" axes are separate, both
+  after alpha; a pair of CPU + WGSL by tolerance classes (note F-CMP-003).
+- **Interface**: the track header gets the badges M / S / lock / FX, a "Track properties" window (name, level, mode, switches, chain button), the FX editor addresses a track
+  with the same chain widget; the menu and hotkeys; the full set of verbs is checked by a machine.
+- **Format**: `Track.metadata.kt` (id, switches, level, mode, height), `Track.enabled
+  = !mute`, the track chain — standard `Effect.1` on the track; the v11 predicate of round R.62
+  is extended.
+- **Deferred, with a note**: track envelopes over the timeline's time; buses/sends; a clip
+  blend mode.
 
 ## Capabilities
 
 ### New Capabilities
 
-(нет)
+(none)
 
 ### Modified Capabilities
 
-- `ui-timeline`: дорожка как объект строк (имя/высота в undo), заголовок с бейджами, окно
-  свойств дорожки, FX-редактор по дорожке, замок как отказ жестам.
-- `ui-reach`: у дорожки полный набор глаголов (переименовать, удалить, вставить, mute, solo,
-  замок, уровень, цепочка, режим), живой сценарий.
-- `audio-render`: стадия дорожки (сумма → цепочка → уровень → mute/solo), ключ FX-состояния
-  дорожки, PDC цепочки дорожки, хвост за последним событием; путь без стадии байт-в-байт
-  прежний.
-- `video-plan`: дорожка как неявная лента в плане; режимы наложения парой CPU + WGSL; mute/solo
-  видео; ключ мемо композита дорожки.
-- `morpher`: «ниже» по строкам считается по порядку дорожек-объектов; морф- и камерные
-  дорожки — те же объекты без уровня и цепочки.
-- `compositions`: инвариант «номер = ранг строки» через вектор дорожек; дорожки ленты —
-  объекты ленты; суб-микс ленты применяет её дорожечные стадии.
-- `automation`: свойства дорожки в паспорте, кривые на дорожке отвергаются громко до
-  следующего change.
-- `project-format`: конверт трека, `enabled`, эффекты трека, миграция счётчиков и имён на
-  чтении, предикат v11.
-- `export`: перечисление mute/solo до старта в окне рендера и в kt-cli; mute/solo — в файле.
+- `ui-timeline`: the track as an object of rows (name/height in undo), a header with badges, a track
+  properties window, the FX editor by track, the lock as a refusal to gestures.
+- `ui-reach`: the track has the full set of verbs (rename, delete, insert, mute, solo,
+  lock, level, chain, mode), a live scenario.
+- `audio-render`: the track stage (sum → chain → level → mute/solo), the track FX state key,
+  the PDC of the track chain, the tail after the last event; the path without a stage is byte for byte
+  as before.
+- `video-plan`: the track as an implicit reel in the plan; blend modes as a pair of CPU + WGSL; video mute/solo;
+  the memo key of the track composite.
+- `morpher`: "below" by rows is counted by the order of the track objects; morph and camera
+  tracks are the same objects without level and chain.
+- `compositions`: the invariant "number = row rank" through the vector of tracks; the tracks of a reel are
+  objects of the reel; the sub-mix of a reel applies its track stages.
+- `automation`: the properties of a track in the passport; curves on a track are rejected loudly until the
+  next change.
+- `project-format`: the track envelope, `enabled`, track effects, migration of counters and names on
+  reading, the v11 predicate.
+- `export`: listing of mute/solo before the start in the render window and in kt-cli; mute/solo — in the file.
 
 ## Impact
 
-- `src/libs/kt-model` (`project.rs`: `Track`, удаление счётчиков/`lane_order`/`lane_names`/
-  `lane_heights`, `rows()`, валидация ранга; `model.rs`: команды дорожки и гейт замка, шесть
-  команд перенумерации), `src/libs/kt-engine` (`audio.rs` стадия дорожки, `fxstore.rs`
-  составной ключ, `video_plan.rs`/`video.rs` дорожка-как-лента и бленд, `export.rs`
-  preflight), `src/libs/kt-gpu` (`composite.wgsl` режимы наложения парой с CPU-ядрами),
-  `src/libs/kt-fx` (потоковый процессор цепочки без формы клипа), `src/libs/kt-otio`
-  (конверт трека, эффекты трека, миграция), `src/apps/kt-app` (`timeline.rs` заголовок и
-  gutter, окно свойств, `fx_editor.rs` адресат-дорожка, `render_dialog.rs`, i18n),
-  `src/apps/kt-cli` (probe/render печатают mute/solo).
-- Тесты: t2/t3/GOLDEN_AUDIO и GOLDEN_VIDEO не двигаются; t49/t241/t588–t594 переезжают на
-  вектор дорожек; новые t729–t746. Заметки: F-TL-006, F-AUD-004 (первый кусок), F-MPH-005
-  (уровень дорожки), F-CMP-003 → «сделано» после архива.
+- `src/libs/kt-model` (`project.rs`: `Track`, removal of the counters/`lane_order`/`lane_names`/
+  `lane_heights`, `rows()`, rank validation; `model.rs`: track commands and the lock gate, six
+  renumbering commands), `src/libs/kt-engine` (`audio.rs` track stage, `fxstore.rs`
+  composite key, `video_plan.rs`/`video.rs` track-as-reel and blend, `export.rs`
+  preflight), `src/libs/kt-gpu` (`composite.wgsl` blend modes as a pair with the CPU kernels),
+  `src/libs/kt-fx` (the streaming chain processor without the clip shape), `src/libs/kt-otio`
+  (track envelope, track effects, migration), `src/apps/kt-app` (`timeline.rs` header and
+  gutter, properties window, `fx_editor.rs` track target, `render_dialog.rs`, i18n),
+  `src/apps/kt-cli` (probe/render print mute/solo).
+- Tests: t2/t3/GOLDEN_AUDIO and GOLDEN_VIDEO do not move; t49/t241/t588–t594 move to the vector of
+  tracks; new t729–t746. Notes: F-TL-006, F-AUD-004 (first part), F-MPH-005
+  (track level), F-CMP-003 → "done" after the archive.

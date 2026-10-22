@@ -2,61 +2,56 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Автосейв пишет в файл восстановления, проект меняет только Ctrl+S
+### Requirement: Autosave writes to a recovery file, only Ctrl+S changes the project
+Background writing SHALL go to `<full project name>.recovery.kt` next to the
+project (an unnamed project — to the data directory) and MUST NOT touch the user's file or clear the asterisk. The recovery file SHALL be of the same
+format as the project: writing megabytes of the interchange format every half minute is
+both interface lag and a window of loss on a crash. A successful save
+SHALL delete only ITS OWN recovery; exiting the program SHALL write
+the recovery, not the project; a clean exit takes its own recovery with it. Drift of the
+viewport (zoom, scroll, cursor) MUST NOT trigger writing. There are TWO revision
+guards — one for the project, one for the recovery. The gate "not during a gesture and not during playback" SHALL yield after two quiet intervals.
+Why: the owner's decision — there must be a SECOND state on disk, otherwise there is nowhere to roll back to; a shared guard raised the bar with background writing, and the next
+Ctrl+S turned out to be "stale"; substituting the extension merged `film.otio` and
+`film.mp4.otio` into one recovery; zoom every 30 s ran a full serialization without a single edit. R.70: for the owner, autosave wrote 115 MB, because the project
+lived in the interchange format and the body of the reel was repeated in each instance.
 
-Фоновая запись SHALL идти в `<полное имя проекта>.recovery.kt` рядом с
-проектом (безымянный проект — в каталог данных) и MUST NOT трогать файл
-пользователя и гасить звёздочку. Файл восстановления SHALL быть того же
-формата, что проект: писать мегабайты обменного формата каждые полминуты —
-это и задержка интерфейса, и окно потери при падении. Успешное сохранение
-SHALL удалять только СВОЁ восстановление. Выход из программы SHALL писать
-восстановление, а не проект; чистый выход уносит своё восстановление. Дрейф
-вьюпорта (зум, прокрутка, курсор) MUST NOT запускать запись. Сторожей
-ревизии ДВА — свой у проекта, свой у восстановления. Гейт «не во время жеста
-и не при игре» SHALL уступать после двух тихих интервалов.
-Почему: решение владельца — на диске должно быть ВТОРОЕ состояние, иначе
-откатиться некуда; общий сторож поднимал планку фоновой записью, и следующий
-Ctrl+S оказывался «устаревшим»; подмена расширения склеивала `film.otio` и
-`film.mp4.otio` в одно восстановление; зум раз в 30 с гонял полную сериализацию
-без единой правки. Р.70: у владельца автосейв писал 115 МБ, потому что проект
-жил в обменном формате и тело ленты повторялось в каждом экземпляре.
-
-#### Scenario: Фоновая запись не касается проекта и не гасит звёздочку
-- **WHEN** есть правка содержимого и прошёл интервал автосейва
-- **THEN** файл проекта байт-в-байт прежний, `dirty_content` горит, в recovery лежит модель с правкой
+#### Scenario: Background write does not touch the project and does not clear the asterisk
+- **WHEN** there is a content edit and the autosave interval has passed
+- **THEN** the project file is byte for byte the same as before, `dirty_content` is lit, and the recovery holds the model with the edit
 - **TEST** t358 (`src/apps/kt-app/src/layout_tests.rs`), t194 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Имя восстановления дописывается к полному имени
-- **WHEN** проекты `film.kt` и `film.mp4.kt`
-- **THEN** у них разные файлы восстановления рядом с проектом; у безымянного — каталог данных
+#### Scenario: The recovery name is appended to the full name
+- **WHEN** the projects `film.kt` and `film.mp4.kt`
+- **THEN** they have different recovery files next to the project; for an unnamed one — the data directory
 - **TEST** t357 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Ctrl+S уносит только своё восстановление
-- **WHEN** рядом лежат своё и чужое восстановление и пользователь сохраняется
-- **THEN** своё удалено, чужое цело, отметка `recovery_written` снята
+#### Scenario: Ctrl+S removes only its own recovery
+- **WHEN** its own and someone else's recovery lie side by side and the user saves
+- **THEN** its own is deleted, the other's is intact, and the `recovery_written` mark is cleared
 - **TEST** t359 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Дрейф вьюпорта не пишет, правка пишет
-- **WHEN** менялись только зум и прокрутка при чистом проекте
-- **THEN** фоновая запись не запускается; после правки содержимого — запускается
+#### Scenario: Viewport drift does not write, an edit does
+- **WHEN** only the zoom and scroll changed on a clean project
+- **THEN** background writing does not start; after a content edit — it starts
 - **TEST** t360 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Сторож восстановления не блокирует сохранение
-- **WHEN** фоновая запись восстановления подняла свой сторож
-- **THEN** сторож проекта остался на нуле и Ctrl+S той же ревизии проходит
+#### Scenario: The recovery guard does not block saving
+- **WHEN** the background recovery write has raised its own guard
+- **THEN** the project's guard remained at zero, and Ctrl+S of the same revision passes
 - **TEST** t361 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Правки внутри жеста двигают ревизию
-- **WHEN** окно FX или драг края правит модель через `apply_coalesced`
-- **THEN** ревизия растёт и автосейв не считает правку сохранённой
+#### Scenario: Edits inside a gesture advance the revision
+- **WHEN** the FX window or a drag of an edge edits the model via `apply_coalesced`
+- **THEN** the revision grows and autosave does not consider the edit saved
 - **TEST** t200 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Автосейв большого проекта перестал быть событием
-- **WHEN** проект с лентой в нескольких экземплярах (сцена, дающая в обменном формате мегабайты) пишется автосейвом
-- **THEN** файл восстановления на порядки меньше того же проекта в обменном формате, а запись укладывается в интервал без задержки интерфейса
+#### Scenario: Autosave of a large project stopped being an event
+- **WHEN** a project with a reel in several instances (a scene that gives megabytes in the interchange format) is written by autosave
+- **THEN** the recovery file is orders of magnitude smaller than the same project in the interchange format, and the write fits into the interval without interface lag
 - **TEST** t815 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Живой SIGKILL
-- **WHEN** правка настоящим жестом → фоновая запись → `SIGKILL` → перезапуск
-- **THEN** файл проекта не тронут, программа сама предлагает восстановить, работа на месте — и так дважды
-- **TEST** живой `recover.py` (`src/scripts/live/recover.py`, через `src/scripts/live-check.sh`)
+#### Scenario: Live SIGKILL
+- **WHEN** an edit by a real gesture → background write → `SIGKILL` → restart
+- **THEN** the project file is untouched, the program itself offers to recover, the work is in place — and this twice over
+- **TEST** live `recover.py` (`src/scripts/live/recover.py`, via `src/scripts/live-check.sh`)

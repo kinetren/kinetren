@@ -1,175 +1,60 @@
-# Экспорт и headless-рендер — почему так
+# Export and headless rendering — why it is this way
 
-## Что было и у кого болело
+## What hurt and for whom
 
-Старый движок держал два кода композиции: один для превью, другой для экспорта со своим
-пулом и другим Quality — файл содержал не то, что показывал редактор (дефект n). Экспорт
-писал сырые rgb24+s16le во временные файлы (tmpfs → гигабайты в RAM) и потом муксил
-внешним `ffmpeg` (дефект o). У владельца по ходу раундов болело конкретно: «в рендере теперь
-чёрная картинка» (чанк не влезал в кэш), «рендер поломан» (терялась нижняя дорожка на
-многослойном монтаже с FX), «отсутствие исходников не должно быть блокером», имя файла без
-проекта и региона, и главное — жалоба «тут звук от другого события», на разбор которой
-ушли часы, потому что спросить движок «что ты читаешь в этом месте» было нечем.
+The old engine kept two composition codes: one for the preview and another for export, with its own pool and a different Quality — the file contained something other than what the editor showed (defect n). Export wrote raw rgb24+s16le into temporary files (tmpfs → gigabytes in RAM) and then muxed them with an external `ffmpeg` (defect o). The owner hurt concretely over the course of the rounds: "the render now shows a black picture" (a chunk did not fit into the cache), "the render is broken" (the bottom track was lost on a multi-layer edit with FX), "missing sources must not be a blocker", a file name without the project and region, and above all the complaint "here the sound is from another event", the analysis of which took hours, because there was no way to ask the engine "what are you reading at this point".
 
-## Решения и почему
+## Decisions and why
 
-- **Экспорт = офлайн-прогон превью.** `render_raw_audio`/`render_raw_video` зовут те же
-  `AudioRenderer`/`VideoRenderer`, что плеер; отличие — `DirectFetcher` («часы по
-  готовности») и Quality проекта. Поэтому «превью == экспорт» доказывается, а не
-  обещается: t11/t67/t479/t485/t184 сравнивают байты.
-- **Муксер внутрипроцессный, энкодер — пробой открытия.** Кандидаты перебираются до первого
-  `avcodec_open2 >= 0`; список в программе — КАНДИДАТЫ, а не обещание (состав энкодеров —
-  свойство системного FFmpeg машины). Это лучше «пробного кодирования» других редакторов:
-  там пробу выполняет чужой бинарник из упаковки, и вердикт врёт; у нас пробует тот же
-  процесс, который пишет файл, и кэшируемого вердикта нет вовсе.
-- **Golden — хэш потоков ДО муксера.** Байты .mp4 у двух пользователей одинаковыми не
-  будут (энкодер — свойство машины), поэтому эталон сторожит сырые потоки; t25 форсирует
-  `libx264` только ради roundtrip'а, эталон энкодера не касается. Титр — отдельный
-  `GOLDEN_TITLE_VIDEO`, чтобы смена шрифта не трогала общий эталон.
-- **Один бэкенд на файл.** Ошибка GPU посреди экспорта — ошибка экспорта: допуски GPU↔CPU
-  (`FrameTol`) законно кладут различие на стык, и смешение бэкендов дало бы видимый шов.
-  Отказ `GpuRequired` снят, когда CPU-путь стал полным (Pan3d через обратную гомографию):
-  без адаптера экспорт медленнее, но возможен (t301).
-- **Чанк от памяти, слоёв и качества декода.** Пачка ≤ половины бюджета, поделённая на
-  `max_concurrent_layers`, размер кадра — по `max_decode_quality` (ступень S даёт S²
-  памяти). Иначе LRU выбрасывает пре-кадры до композиции, срабатывает ветка голода и
-  байты экспорта зависят от тайминга кэша — нарушение детерминизма, а не только качества.
-- **Пост-FX в экспорте не мемоизируется.** В превью мемоизация спасает loop; в экспорте
-  каждый t композится ровно один раз, и полноразмерные пост-FX кадры лишь вытесняют
-  пре-кадры соседних дорожек (t66c).
-- **Громкость — на проходе, который и так нужен.** Метр кормится готовым буфером чанка;
-  мастер-гейн не измеряется, потому что его нет в проекте — это громкость контроля.
-  Кнопки «нормализовать» нет: цель (−23/−14/−27) выбирает человек, а применить её задним
-  числом значит перекодировать файл.
-- **Заглушки вместо отказа в GUI, отказ вместо тишины в kt-cli.** Решение владельца для
-  GUI — «уведомлять и рендерить», плашка с именем файла (сразу видно, ЧЕГО не хватает).
-  У kt-cli нет диалога, поэтому там — отказ и явный `--allow-missing`.
-- **`probe` считается моделью, `probe --time` — через `BurstCache`.** Диагностика обязана
-  повторять обвязку движка: цена места на лупе постоянна (кэш держит источник, реверб —
-  потоковый автомат), и мерить её надо режимом ПОВТОРА, линейный замер зависимости от длины
-  региона не видит.
-- **Кросс-рендер — внешний оракул монтажа.** melt (движок Kdenlive/Shotcut, headless);
-  сэмплы — закоммиченные копии с прибитым SHA («из интернета» — про происхождение, не про
-  доставку). Сравнение — цвет + длительность; звук отложен (equal-power против линейного
-  mix заведомо расходится). Настоящий фильм добавлен по предложению владельца и сразу
-  нашёл дыру с NTSC-частотами.
+- **Export = an offline run of the preview.** `render_raw_audio`/`render_raw_video` call the same `AudioRenderer`/`VideoRenderer` as the player; the difference is `DirectFetcher` ("clock by readiness") and the project's Quality. That is why "preview == export" is proven rather than promised: t11/t67/t479/t485/t184 compare bytes.
+- **The muxer is in-process; the encoder is chosen by a probe of opening.** Candidates are tried until the first `avcodec_open2 >= 0`; the list in the program is CANDIDATES, not a promise (the set of encoders is a property of the machine's system FFmpeg). This is better than the "trial encoding" of other editors: there a trial is run by someone else's binary from a package, and its verdict lies; here the same process that writes the file does the probing, and there is no cacheable verdict at all.
+- **Golden — a hash of the streams BEFORE the muxer.** The bytes of an .mp4 will not be identical for two users (the encoder is a property of the machine), so the reference guards the raw streams; t25 forces `libx264` only for the roundtrip and does not touch the encoder reference. The title is a separate `GOLDEN_TITLE_VIDEO`, so that a change of font does not touch the shared reference.
+- **One backend per file.** A GPU error in the middle of an export is an export error: the GPU↔CPU tolerances (`FrameTol`) legitimately put a difference at the seam, and mixing backends would produce a visible seam. The `GpuRequired` refusal was removed when the CPU path became complete (Pan3d via the inverse homography): without an adapter the export is slower but possible (t301).
+- **The chunk is bounded by memory, layers and decode quality.** A batch ≤ half of the budget, divided by `max_concurrent_layers`; the frame size — by `max_decode_quality` (decode scale step S gives S² memory). Otherwise LRU evicts the pre-frames before the composition, the starvation branch fires, and the export bytes depend on cache timing — a violation of determinism, not only of quality.
+- **Post-FX in export is not memoized.** In the preview, memoization saves the loop; in export each t is composed exactly once, and full-size post-FX frames only evict the pre-frames of neighbouring tracks (t66c).
+- **Loudness — on a pass that is needed anyway.** The meter is fed by the ready chunk buffer; the master gain is not measured, because it is not in the project — it is the monitoring loudness. There is no "normalize" button: the target (−23/−14/−27) is chosen by a person, and applying it after the fact would mean re-encoding the file.
+- **Placeholders instead of refusal in the GUI, refusal instead of silence in kt-cli.** The owner's decision for the GUI is "notify and render", with a banner showing the file name (you see at once WHAT is missing). kt-cli has no dialog, so there it is a refusal and an explicit `--allow-missing`.
+- **`probe` is computed by the model; `probe --time` goes through `BurstCache`.** Diagnostics must repeat the engine's wiring: the cost of a place on the loop is constant (the cache holds the source; the reverb is a streaming automaton), and it must be measured in REPEAT mode, since a linear measurement of the dependence on the region's length does not see it.
+- **The cross-render is an external oracle of the edit.** melt (the engine of Kdenlive/Shotcut, headless); the samples are committed copies with a pinned SHA ("from the internet" is about provenance, not delivery). The comparison is colour + duration; audio is deferred (equal-power versus linear mix inevitably diverge). A real film was added at the owner's suggestion and immediately found a hole with NTSC frequencies.
 
-## Отвергнуто и почему
+## Rejected and why
 
-- **Склейка кусков после параллельного рендера (F-COL-040) — отвергнуто.** Все
-  промышленные сборщики (`ffmpeg -f concat`, `mkvmerge`, сборщик менеджера заданий) —
-  внешний процесс, закрытый инвариантом 9 по договору, а не по цене; внутрипроцессная
-  сборка требует пути «пакет из файла → в муксер без декода», которого нет. Вторая причина —
-  детерминизм локален: куски от разных адаптеров различаются законно, и различие ложится
-  на стык. Третья — «кусок можно посчитать дешевле» есть второй путь композиции.
-  Не причина: отсутствие сети, сложность concat, объём кода. Эквивалент: N регионов →
-  N самостоятельных файлов. Переоткрывать только вслед за smart render (F-EXP-003).
-- **Облачный рендер (F-COL-041) — отвергнуто.** Документ — килобайты, материал —
-  гигабайты, и наш экспорт читает его трижды (скан пакетов при открытии, видео-проход,
-  аудио-проход по второму набору источников); отправить задание туда, где материала нет,
-  значит перевезти материал. Второй исполнитель за пределами процесса — второй продукт.
-  Переоткрывать как вопрос про прокси и адрес материала по содержимому, не про рендер.
-- **Регион в kt-cli — «не делаем»** (прямое решение владельца): расхождение с GUI
-  сознательное.
-- **«Ускорим превью, это же только показ»** — запрещено вердиктом F-RES по инварианту 7:
-  цена «превью не быстрее экспорта на том же кадре» названа заранее; единственный
-  разрешённый способ ускорить — уменьшить Quality.
-- **Стриминг в пайпы внешнего `ffmpeg` (stdin + mkfifo)** — промежуточное решение,
-  заменено внутрипроцессным муксером: без внешнего процесса стали доступны аппаратные
-  энкодеры системного FFmpeg, а инвариант 9 усилился «не только без temp-файлов, но и без
-  процессов».
-- **Явный SIMD в экспорте** — нет: CPU-путь есть байт-эталон, автовекторизация меняла бы
-  f64-суммы и детерминизм между машинами; ускорение — GPU.
+- **Joining chunks after a parallel render (F-COL-040) — rejected.** All the industrial assemblers (`ffmpeg -f concat`, `mkvmerge`, a job-manager assembler) are external processes, excluded by invariant 9 by contract, not by cost; an in-process assembly requires a path "package from file → into the muxer without decoding", which does not exist. The second reason: determinism is local — chunks from different adapters differ legitimately, and the difference would land at the seam. The third: "a chunk can be computed more cheaply" is a second composition path. Not a reason: the absence of a network, the complexity of concat, the amount of code. The equivalent: N regions → N independent files. Reopen only after smart render (F-EXP-003).
+- **Cloud render (F-COL-041) — rejected.** The document is kilobytes, the material is gigabytes, and our export reads it three times (a packet scan on opening, the video pass, the audio pass over the second set of sources); sending the job to where there is no material means moving the material. A second executor outside the process is a second product. Reopen as a question about proxies and the material address by content, not about rendering.
+- **The region in kt-cli — "we do not do it"** (a direct decision of the owner): the divergence from the GUI is deliberate.
+- **"Let's speed up the preview, it's only for display"** — forbidden by the verdict F-RES under invariant 7: the cost "the preview is not faster than export on the same frame" is named in advance; the only permitted way to speed up is to reduce Quality.
+- **Streaming to the pipes of an external `ffmpeg` (stdin + mkfifo)** — an interim decision, replaced by the in-process muxer: without an external process the system FFmpeg's hardware encoders became available, and invariant 9 was strengthened to "not only without temp files, but without processes".
+- **Explicit SIMD in export** — no: the CPU path is the byte reference, and auto-vectorization would change the f64 sums and the determinism between machines; the speed-up is the GPU.
 
-## Неочевидные детали
+## Non-obvious details
 
-- `export_chunk_frames` (`src/libs/kt-engine/src/export.rs`) клампит пачку в 1…120 и
-  делит половину бюджета на `layers`; `max_concurrent_layers` в
-  `src/libs/kt-engine/src/video.rs` считает смешивающий слой за ДВА кадра, а флаг смешивания
-  вложения обязан ехать в четырёх местах (`clip_frame_keys`, `max_concurrent_layers_in`,
-  `reel_coverage`, `nest_memo_key`) — иначе бюджет и заказ разойдутся (t583).
-- Регрессия «чёрный рендер» проявляется только на крупном Quality: на 320×180 чанк из 120
-  кадров влезает в кэш. Тест на экспорт, проверенный на маленьком кадре, ничего не сторожит
-  — t116 (`src/libs/kt-engine/tests/frame_order.rs`) задаёт крупное Quality намеренно.
-- Экспорт читает кадры span'ом (`read_video_span`), а не покадрово
-  (`src/libs/kt-engine/src/export.rs`, `render_raw_video_range_with`): покадровое чтение при
-  fps проекта > fps источника уходило в seek+пересоздание декодера на каждом втором кадре и
-  расходилось с семантикой выборки превью — джаддер в готовом файле.
-- Нативы и процедурность источников экспорт берёт из ОТКРЫТЫХ источников
-  (`SourceFacts`, `VideoRenderer::new_with_facts` в `src/libs/kt-engine/src/video.rs`):
-  `VideoRenderer::new` их не знает (ступень ≡ 1). Экспорт, построивший рендерер без фактов,
-  разойдётся с превью по ступени декода — заказ и ключи кэша станут другими.
-- Источники генераторов открывает САМ экспорт по `gen_sources(project)`
-  (`src/libs/kt-engine/src/export.rs`): их адрес производен от события, и вызывающему их
-  взять неоткуда; второго перечисления быть не должно.
-- Муксер пишет видео и аудио ПОСЛЕДОВАТЕЛЬНО в один `Muxer`
-  (`src/libs/kt-engine/src/export.rs`, `export_mp4_with_backends`), перемежение делает
-  `av_interleaved_write_frame`; `audio_sources`/`video_sources` — ДВА независимых набора,
-  оба открываются вызывающим (`open_all()` дважды в `src/apps/kt-cli/src/main.rs` и
-  `src/apps/kt-app/src/render_dialog.rs`) — один экспорт есть два полных прохода по материалу.
-- Пауза экспорта — кооперативный wait 40 мс в progress-обёртках
-  (`src/libs/kt-engine/src/export.rs`), отменяемый; ETA и скорость считает UI — wall-clock
-  в движке запрещён.
-- На время проб энкодеров уровень лога FFmpeg поднимается до FATAL и опускается обратно
-  (`src/libs/kt-ffmpeg/src/muxer_impl.rs`, `Muxer::open`): неудачные кандидаты — норма.
-  Известный остаток: `h264_vaapi`/`h264_qsv` при нашей схеме кадра (yuv420p, без
-  hw-контекста) не открываются никогда (−22), но остаются в списке и в комбо диалога
-  (F-EXP-004, вердикт «привести список к правде» — не сделан).
-- `ExportError` (`src/libs/kt-engine/src/export.rs`) больше не содержит `GpuRequired`;
-  `FfmpegFailed(ExitStatus)` — рудимент пайпового пути и живым кодом не порождается.
-- `project_range` (`src/libs/kt-engine/src/export.rs`) — `max(материал, timeline_end)`;
-  `timeline_end` пишется в файл ТОЛЬКО когда длина больше материала, иначе наш же файл
-  обрастал бы полем и ломал байт-стабильность roundtrip'а (t151).
-- Громкость: `ExportStats.loudness` считается в `render_raw_audio_range`
-  (`src/libs/kt-engine/src/export.rs`) тем же метром `kt_fx::audio::loudness`
-  (`src/libs/kt-fx/src/audio/loudness.rs`), что и анализ источников; причина f64 — СУММЫ
-  квадратов (0.37 LU дрейфа за 10 минут в f32), а не коэффициенты биквада (те дают
-  ≤ 0.002 LU) — t403b сторожит именно это утверждение.
-- `render_file_name` и `sanitize_name_part` (`src/apps/kt-app/src/render_dialog.rs`):
-  регион даёт сегмент только при метке-диапазоне, СОВПАДАЮЩЕЙ с регионом, — имя не врёт.
-- kt-cli `open_all` (`src/apps/kt-cli/src/main.rs`): псевдо-пути разбирает ТОЛЬКО
-  `kt_media::factory` — вторая, регистрозависимая копия разбора `synth:` там уже жила и
-  разъехалась (`synth:Ramp` считался отсутствующим файлом). Путь медиа уже разрешён
-  `kt_otio::load_project`; второй join базы делал `sub/sub/clip.mp4` (t307).
-- `probe --time` (`src/apps/kt-cli/src/main.rs`, `probe_range`) печатает линейный прогон И
-  повтор региона (`render_looped_with`): заворот — шов, сбрасывающий буфер ресемплера, и
-  короткий регион по хвостам ревербов стоит вдвое дороже длинного. Числа dev-сборки
-  завышены в 6–9 раз против релиза — судить только по `cargo build --release`.
-- `probe` печатает у экземпляра ленты ФАКТИЧЕСКОЕ окно содержимого (`warp.used()`,
-  `REVERSED`), а не длину на таймлайне — у растянутого они не совпадают; литерал
-  `is a NESTED REEL` держит t452b (`src/apps/kt-cli/tests/cli.rs`).
-- Кросс-рендер (`src/apps/kt-cli/tests/cross_render.rs`): порог классификации 32 при
-  разносе палитры ≥ 96 (D > 2T — доказуемая разделимость); probe-сетка строится из НАШЕЙ
-  модели — окна переходов, ±1 кадр от склеек и зоны плейсхолдеров исключены (кривые фейдов
-  у нас и у melt разные по определению); EDL-клипы с часа катушки ребейзятся к нулю
-  (`rebased_clips`) — у одноцветного источника точка входа на картинку не влияет; melt без
-  `real_time=0` дропает кадры и тест недетерминирован.
-- Настоящий фильм (`src/apps/kt-cli/tests/oc_render.rs`): стартовый таймкод сносится к
-  нулю ТОЛЬКО для MLT-стороны — наш рендер получает файл как есть, иначе тест перестал бы
-  проверять наше поведение; смещение до двух кадров допускается как дрейф 24 против 23.976
-  (сетка 90 кГц не выражает NTSC-ряд точно).
-- `nested_example.otio` остаётся в smoke-ярусе t158 (`SAMPLES` в
-  `src/apps/kt-cli/tests/cross_render.rs`) по причине, ПРОТИВОПОЛОЖНОЙ прежней: вложенные
-  Stack выбрасывает melt (его рендер короче на сумму их длительностей), а не мы.
+- `export_chunk_frames` (`src/libs/kt-engine/src/export.rs`) clamps the batch to 1…120 and divides half of the budget by `layers`; `max_concurrent_layers` in `src/libs/kt-engine/src/video.rs` counts a blending layer as TWO frames, and the clip's blending flag must travel in four places (`clip_frame_keys`, `max_concurrent_layers_in`, `reel_coverage`, `nest_memo_key`) — otherwise the budget and the order would diverge (t583).
+- The "black render" regression shows only at a large Quality: at 320×180 a chunk of 120 frames fits into the cache. An export test checked on a small frame guards nothing — t116 (`src/libs/kt-engine/tests/frame_order.rs`) sets a large Quality deliberately.
+- Export reads frames as a span (`read_video_span`), not frame by frame (`src/libs/kt-engine/src/export.rs`, `render_raw_video_range_with`): frame-by-frame reading, when the project fps > the source fps, went into a seek plus decoder re-creation on every second frame and diverged from the preview's sampling semantics — judder in the finished file.
+- Natives and procedurality of sources are taken by export from the OPEN sources (`SourceFacts`, `VideoRenderer::new_with_facts` in `src/libs/kt-engine/src/video.rs`): `VideoRenderer::new` does not know them (step ≡ 1). An export that builds a renderer without facts would diverge from the preview in the decode scale step — the order and the cache keys would become different.
+- The generator sources are opened BY the export itself via `gen_sources(project)` (`src/libs/kt-engine/src/export.rs`): their address is derived from the event, and the caller has nowhere to get them; there must be no second enumeration.
+- The muxer writes video and audio SEQUENTIALLY into one `Muxer` (`src/libs/kt-engine/src/export.rs`, `export_mp4_with_backends`); the interleaving is done by `av_interleaved_write_frame`; `audio_sources`/`video_sources` are TWO independent sets, both opened by the caller (`open_all()` twice in `src/apps/kt-cli/src/main.rs` and `src/apps/kt-app/src/render_dialog.rs`) — one export is two full passes over the material.
+- The export pause is a cooperative 40 ms wait in the progress wrappers (`src/libs/kt-engine/src/export.rs`), cancellable; the ETA and speed are computed by the UI — wall-clock in the engine is forbidden.
+- During encoder probes the FFmpeg log level is raised to FATAL and lowered back (`src/libs/kt-ffmpeg/src/muxer_impl.rs`, `Muxer::open`): failed candidates are normal. A known remainder: `h264_vaapi`/`h264_qsv` with our frame scheme (yuv420p, no hw context) never open (−22), but they stay in the list and in the dialog's combo box (F-EXP-004; the verdict "bring the list in line with the truth" — not done).
+- `ExportError` (`src/libs/kt-engine/src/export.rs`) no longer contains `GpuRequired`; `FfmpegFailed(ExitStatus)` is a remnant of the pipe path and is not produced by live code.
+- `project_range` (`src/libs/kt-engine/src/export.rs`) — `max(material, timeline_end)`; `timeline_end` is written to the file ONLY when its length exceeds the material, otherwise our own file would accumulate a field and break the byte stability of the roundtrip (t151).
+- Loudness: `ExportStats.loudness` is computed in `render_raw_audio_range` (`src/libs/kt-engine/src/export.rs`) by the same meter `kt_fx::audio::loudness` (`src/libs/kt-fx/src/audio/loudness.rs`) as the source analysis; the reason for f64 is the SUMS of squares (0.37 LU of drift over 10 minutes in f32), not the biquad coefficients (those give ≤ 0.002 LU) — t403b guards exactly this claim.
+- `render_file_name` and `sanitize_name_part` (`src/apps/kt-app/src/render_dialog.rs`): a region gives a segment only for a marker range that MATCHES the region — the name does not lie.
+- kt-cli `open_all` (`src/apps/kt-cli/src/main.rs`): pseudo-paths are parsed ONLY by `kt_media::factory` — a second, case-sensitive copy of the `synth:` parsing had already lived there and diverged (`synth:Ramp` counted as a missing file). The media path is already resolved by `kt_otio::load_project`; a second join of the base made `sub/sub/clip.mp4` (t307).
+- `probe --time` (`src/apps/kt-cli/src/main.rs`, `probe_range`) prints a linear run AND a repeat of the region (`render_looped_with`): the wrap is a seam that resets the resampler buffer, and a short region's reverb tails cost twice as much as a long one. The numbers from a dev build are inflated by 6–9 times relative to release — judge only by `cargo build --release`.
+- `probe` prints for a reel instance the ACTUAL content window (`warp.used()`, `REVERSED`), not the length on the timeline — for a stretched one they do not coincide; the literal `is a NESTED REEL` is held by t452b (`src/apps/kt-cli/tests/cli.rs`).
+- Cross-render (`src/apps/kt-cli/tests/cross_render.rs`): the classification threshold is 32 with a palette spread ≥ 96 (D > 2T — provable separability); the probe grid is built from OUR model — transition windows, ±1 frame around splices and placeholder zones are excluded (the fade curves in ours and in melt differ by definition); EDL clips from the reel's hour are rebased to zero (`rebased_clips`) — for a single-colour source the entry point into the picture has no effect; melt without `real_time=0` drops frames and the test is non-deterministic.
+- The real film (`src/apps/kt-cli/tests/oc_render.rs`): the start timecode is stripped to zero ONLY on the MLT side — our render gets the file as is, otherwise the test would stop checking our behaviour; an offset of up to two frames is allowed as drift of 24 versus 23.976 (the 90 kHz grid cannot express the NTSC series exactly).
+- `nested_example.otio` remains in the smoke tier of t158 (`SAMPLES` in `src/apps/kt-cli/tests/cross_render.rs`) for a reason OPPOSITE to the former one: nested Stacks are dropped by melt (its render is shorter by the sum of their durations), not by us.
 
-## Отложено
+## Deferred
 
-- Список энкодеров в диалоге и кандидатах привести к тому, что реально откроется
-  (vaapi/qsv), назвать энкодер в строке прогресса, снять подпись «CRF» с ползунка для
-  не-CRF энкодеров (F-EXP-004, S). Аппаратное кодирование Intel/AMD (hw-контексты, NV12,
-  вторая ветка заливки кадра) — отдельная работа L.
-- Масштабирование пиксельных параметров FX (blur/glow/vhs) по `quality / project` и тест
-  «доля разрешения не меняет картинку» — остаток F-RES-006 (превью и экспорт равны только
-  при ОДИНАКОВОМ Quality).
-- Строка «экспорт идёт на GPU/CPU» в окне рендера и сводке (данные есть, поверхности нет).
-- Рациональный fps (24000/1001) в модели, времени и экспорте — остаточный дрейф NTSC 0.1 %.
-- Звук в кросс-рендере (адаптер mlt ограничен по аудио).
+- Bring the list of encoders in the dialog and in the candidates to what actually opens (vaapi/qsv), name the encoder in the progress line, and remove the "CRF" label from the slider for non-CRF encoders (F-EXP-004, S). Hardware encoding for Intel/AMD (hw contexts, NV12, a second branch of frame filling) — separate work, L.
+- Scaling of FX pixel parameters (blur/glow/vhs) by `quality / project` and the test "the resolution fraction does not change the picture" — the remainder of F-RES-006 (preview and export are equal only at an IDENTICAL Quality).
+- A line "export runs on GPU/CPU" in the render window and the summary (the data exists, the surface does not).
+- A rational fps (24000/1001) in the model, time and export — the residual NTSC drift of 0.1 %.
+- Sound in the cross-render (the mlt adapter is limited on audio).
 
 ## `kt-cli showcase` (readme-showcase, 2026-10-21)
 
-A separate subcommand, not a `demo` flag: `demo` is synthetic by contract (t388).
-`showcase` cuts the README project from real footage, with media referenced by absolute
-path and never copied, byte-identical for the same folder (t824). Refusals (t825): a
-missing folder, no video, or no audio anywhere — the music bed needs audio. Text files
-next to the footage are skipped, because FFmpeg's text demuxer would read `CREDITS.txt`
-as a video. Background and the screenshot pipeline: `openspec/specs/showcase/design.md`.
+A separate subcommand, not a `demo` flag: `demo` is synthetic by contract (t388). `showcase` cuts the README project from real footage, with media referenced by absolute path and never copied, byte-identical for the same folder (t824). Refusals (t825): a missing folder, no video, or no audio anywhere — the music bed needs audio. Text files next to the footage are skipped, because FFmpeg's text demuxer would read `CREDITS.txt` as a video. Background and the screenshot pipeline: `openspec/specs/showcase/design.md`.

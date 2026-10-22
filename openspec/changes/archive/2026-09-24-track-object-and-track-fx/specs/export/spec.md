@@ -2,17 +2,11 @@
 
 ## ADDED Requirements
 
-### Requirement: Mute и solo действуют на файл и перечисляются до старта
+### Requirement: Mute and solo act on the file and are listed before start
+Export SHALL apply the mute and solo of tracks the same way as the preview (the same renderers). The render window SHALL list the muted tracks and the active solo BEFORE the start, in the same place where unavailable sources are listed, with an address "where to change" (the track header); kt-cli SHALL print the same before rendering. There is no refusal — the owner's decision in R.62: mute and solo are project content.
+Why: "forgot to clear solo — delivered one track" is a risk the owner accepted; the price is the duty to say so (rules 16, 19; Kdenlive #498560 asks for exactly this).
 
-Экспорт SHALL применять mute и solo дорожек так же, как превью (одни рендереры). Окно
-рендера SHALL перечислять заглушённые дорожки и активное соло ДО старта, в том же месте,
-где перечисляются недоступные исходники, с адресом «где изменить» (заголовок дорожки);
-kt-cli SHALL печатать то же перед рендером. Отказа нет — решение владельца Р.62: mute и
-solo — содержимое проекта.
-Почему: «забыл снять соло — сдал одну дорожку» — риск, который владелец принял; цена —
-обязанность сказать (правила 16, 19; Kdenlive #498560 просит ровно этого).
-
-#### Scenario: Окно и kt-cli перечисляют
-- **WHEN** у проекта заглушена дорожка и две в соло; открыто окно рендера; `kt-cli render`
-- **THEN** список видит обе вещи с именами дорожек и адресом; рендер идёт; kt-cli печатает notice; файл не содержит заглушённого
+#### Scenario: The window and kt-cli list
+- **WHEN** a project has one track muted and two in solo; the render window is open; `kt-cli render`
+- **THEN** the list shows both things with the track names and the address; the render proceeds; kt-cli prints a notice; the file does not contain the muted track
 - **TEST** t740 (`src/apps/kt-app/src/layout_tests.rs`), t740b (`src/apps/kt-cli/tests/cli.rs`)

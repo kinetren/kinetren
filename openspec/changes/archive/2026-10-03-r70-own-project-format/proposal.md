@@ -2,89 +2,76 @@
 
 ## Why
 
-Kinotrain держит проект в ОБМЕННОМ формате (OpenTimelineIO), и платит за это ровно тем,
-от чего обменный формат не защищает: **объектной идентичности в JSON OTIO нет**. Сказать
-«вот эта композиция — та же самая, что выше» нечем, выражается только вложенное
-содержимое, поэтому тело ленты записывается заново в КАЖДЫЙ её экземпляр. У владельца три
-ленты дали **15 220 клипов и 115 МБ** на файл, и автосейв пишет этот объём регулярно.
+Kinotrain keeps the project in an INTERCHANGE format (OpenTimelineIO), and pays for this with exactly
+what an interchange format does not protect against: **object identity does not exist in OTIO JSON**. There is no way
+to say "this composition is the same one as above"; only the nested content can be expressed, so the body of a reel is written anew into EACH of its instances. The owner's three
+reels produced **15 220 clips and 115 MB** per file, and autosave writes this volume regularly.
 
-Замер (02.10.2026, синтетические сцены; модель ходит через serde круг поле-в-поле):
+Measurement (02.10.2026, synthetic scenes; the model goes through serde with a field-by-field round trip):
 
-| сцена (клипов ленты / экз. / экз.) | `.otio` | сериализация модели | выигрыш |
+| scene (reel clips / instances / instances) | `.otio` | model serialization | gain |
 |---|---|---|---|
-| плоский проект без повторов | 33 КБ | 2.0 КБ | 17× |
-| 10 / 4 / 4 | 496 КБ | 2.8 КБ | 176× |
-| 10 / 8 / 8 | 1.97 МБ | 3.9 КБ | **501×** |
-| 40 / 8 / 8 | 7.36 МБ | 7.9 КБ | **929×** |
+| flat project without repeats | 33 KB | 2.0 KB | 17× |
+| 10 / 4 / 4 | 496 KB | 2.8 KB | 176× |
+| 10 / 8 / 8 | 1.97 MB | 3.9 KB | **501×** |
+| 40 / 8 / 8 | 7.36 MB | 7.9 KB | **929×** |
 
-Разведка (`docs/features/project/structure/project-file-vs-interchange.md`, F-PRJ-005):
-**ни один крупный редактор не живёт в обменном формате.** Resolve держит проект записью в
-БАЗЕ, а `.drp` делает только по явной команде человека; FCP прячет внутри `.fcpbundle`
-базы SQLite; у Premiere свой контейнер, и там публично видна цена ошибки — сжатие при
-сохранении жмёт 30–50 %, работает одним ядром и отключается ради скорости. На разрастание
-Adobe отвечает не форматом, а разрезанием проекта («Productions»), и хорошо умеет только
-ОДИН уровень вложения — та же стена, в которую упёрлись мы.
+Reconnaissance (`docs/features/project/structure/project-file-vs-interchange.md`, F-PRJ-005):
+**not a single major editor lives in an interchange format.** Resolve keeps the project as records in a
+DATABASE, and writes a `.drp` only on an explicit command from a person; FCP hides an SQLite
+database inside a `.fcpbundle`; Premiere has its own container, and there the price of a mistake is public — compression on
+save takes 30–50 %, runs on one core, and is turned off for the sake of speed. Adobe answers growth not with a format,
+but by splitting the project ("Productions"), and handles ONE level of nesting well — the same wall we ran into.
 
-Решение владельца (02.10.2026) дословно: «мы уходим от otio-формата, оставляем otio только
-на экспорт и делаем breaking changes чтобы наш формат стал в сто раз лучше».
+The owner's decision (02.10.2026), verbatim: "we are moving away from the otio format, leaving otio only for export, and making breaking changes so that our format becomes a hundred times better".
 
 ## What Changes
 
-- **Проект живёт в СВОЁМ формате** (`.kt`): сериализация модели, где каждая сущность
-  записана ОДИН раз, а экземпляр ленты — ссылка на её адрес. Разрастание §464 исчезает по
-  построению, а не затыкается.
-- **Файл текстовый, построчный и детерминированный — «индексируемый в git»** (требование
-  владельца: «я против бинарщины»). Это измеримо: правка одного события меняет единицы
-  строк, а не файл; одна и та же модель даёт те же байты. Компактный JSON отвергнут —
-  одна строка на весь файл диффа не имеет.
-- **Требование «тело инлайном в КАЖДЫЙ экземпляр» не отменяется, а ПЕРЕАДРЕСУЕТСЯ
-  ЭКСПОРТУ.** Чужому читателю самодостаточность нужна — он не знает наших соглашений;
-  проекту нужна ссылка. Это два противоположных требования к двум разным файлам, и
-  попытка усидеть на обоих стульях и дала 115 МБ.
-- **У OTIO остаются две двери, и обе явные**: `File → Export → OpenTimelineIO…` (обмен) и
-  `File → Import older Kinotrain project…` (существующие `.otio`-проекты владельца и
-  легаси `.ktproj` — та же дверь, что у старых версий, правило Р.67). Обычное «Открыть»
-  принимает только свой формат и отвергает чужой с именем пункта импорта (правило 19).
-- **Автосейв, файл восстановления и замок** переходят на свой формат: писать мегабайты
-  каждые полминуты — это и задержка интерфейса, и окно потери при падении.
-- **Версия своего формата — одна, ломающие изменения разрешены прямо** (решение
-  владельца). Незнакомая версия — честный отказ с номером и адресом двери, а не
-  молчаливая потеря.
-- **Чужой passthrough не теряется**: остатки импортированного `.otio` (`Retained`) едут в
-  нашем файле отдельным полем и возвращаются при экспорте. Потерять чужую работу молча
-  нельзя — это правило старше этого раунда.
+- **The project lives in ITS OWN format** (`.kt`): serialization of the model, where each entity is
+  written ONCE, and a reel instance is a reference to its address. The growth of §464 disappears by construction, rather than being plugged.
+- **The file is text, line-by-line and deterministic — "indexable in git"** (the owner's requirement: "I am against binary stuff"). This is measurable: editing one event changes a few
+  lines, not the file; the same model gives the same bytes. Compact JSON is rejected —
+  one line for the whole file has no meaningful diff.
+- **The requirement "the body inline in EACH instance" is not cancelled, but is RE-ADDRESSED
+  to EXPORT.** A foreign reader needs self-containment — it does not know our conventions;
+  the project needs a reference. These are two opposing requirements for two different files, and
+  the attempt to sit on both chairs gave 115 MB.
+- **OTIO keeps two doors, and both are explicit**: `File → Export → OpenTimelineIO…` (exchange) and
+  `File → Import older Kinotrain project…` (the owner's existing `.otio` projects and the
+  legacy `.ktproj` — the same door as for old versions, the R.67 rule). The ordinary "Open"
+  accepts only its own format and rejects a foreign one with the name of the import item (rule 19).
+- **Autosave, the recovery file and the lock** move to our own format: writing megabytes
+  every half minute is both interface lag and a window of loss on a crash.
+- **The version of our own format is one; breaking changes are explicitly permitted** (the
+  owner's decision). An unknown version is an honest refusal with the number and the address of the door, not a
+  silent loss.
+- **The foreign passthrough is not lost**: the remnants of the imported `.otio` (`Retained`) travel in
+  our file as a separate field and return on export. One cannot silently lose someone else's work — this is a rule older than this round.
 
-Не входит: сжатие файла проекта (при 8 КБ оно решает ноль и стоит зависимости), база
-данных вместо файла (Resolve-путь — другой раунд и другая цена), разрезание проекта на
-части («Productions»), смена модели — формат меняется, модель нет.
+Not included: compressing the project file (at 8 KB it solves nothing and costs a dependency), a database instead of a file (the Resolve path — another round and another price), splitting the project into
+parts ("Productions"), changing the model — the format changes, the model does not.
 
 ## Capabilities
 
 ### New Capabilities
 
-(нет — файл проекта уже описан требованиями `project-format`, меняется ЧТО это за файл)
+(none — the project file is already described by the requirements of `project-format`; WHAT this file is changes)
 
 ### Modified Capabilities
 
-- `project-format`: добавляется требование «Файл проекта — свой формат» (что это, версия,
-  отказ на незнакомой, атомарная запись); требование «Файл проекта — OTIO `Timeline.1`»
-  переписывается в «Файл ОБМЕНА — OTIO»: остальные OTIO-требования остаются в силе, но
-  describe дверь импорта/экспорта, а не проект; требование «Вложенные ленты — тело
-  инлайном» получает явный адресат (экспорт), а проект хранит ленту один раз.
-- `durability`: автосейв, файл восстановления и `Drop`-рубеж пишут свой формат; исход
-  записи и атомарность не меняются.
-- `compositions`: требование «Формат — `Stack` ребёнком `Track`, сайдкар совещательный»
-  переадресуется экспорту; в проекте экземпляр — ссылка на адрес ленты.
+- `project-format`: a requirement "The project file is its own format" is added (what it is, the version, refusal on an unknown one, atomic writing); the requirement "The project file is OTIO `Timeline.1`" is rewritten into "The EXCHANGE file is OTIO": the remaining OTIO requirements stay in force, but describe the import/export door, not the project; the requirement "Nested reels — the body inline" gets an explicit addressee (export), while the project stores the reel once.
+- `durability`: autosave, the recovery file and the `Drop` barrier write their own format; the outcome of writing and atomicity do not change.
+- `compositions`: the requirement "Format — `Stack` as a child of `Track`, the sidecar is advisory" is redirected to export; in the project the instance is a reference to the address of the reel.
 
 ## Impact
 
-- Новый крейт или модуль формата проекта (чтение, запись, версия, отказ) —
-  `src/libs/kt-model` (сериализация уже есть) плюс точка входа, которой сегодня нет.
-- `src/libs/kt-otio` — меняет роль: читает только в импорте, пишет только в экспорте;
-  `Retained` получает перевод в JSON и обратно.
-- `src/apps/kt-app` — `File → Open`/`Save`, автосейв и восстановление, новый пункт
-  экспорта, расширение диалогов; `src/apps/kt-cli` — те же двери для headless.
-- `openspec/specs/{project-format,durability,compositions}/{spec,design}.md`; новые тесты
-  от **t810**; живые сценарии на обе двери.
-- Существующие `.otio`-проекты владельца открываются импортом и сохраняются своим
-  форматом — это и есть путь перехода.
+- A new crate or module of the project format (reading, writing, version, refusal) —
+  `src/libs/kt-model` (serialization already exists) plus an entry point that does not exist today.
+- `src/libs/kt-otio` — changes its role: it reads only in import, writes only in export;
+  `Retained` gets translation to JSON and back.
+- `src/apps/kt-app` — `File → Open`/`Save`, autosave and recovery, the new export item,
+  dialog extensions; `src/apps/kt-cli` — the same doors for headless use.
+- `openspec/specs/{project-format,durability,compositions}/{spec,design}.md`; new tests
+  from **t810**; live scenarios for both doors.
+- The owner's existing `.otio` projects open by import and are saved in our own
+  format — this is the migration path itself.

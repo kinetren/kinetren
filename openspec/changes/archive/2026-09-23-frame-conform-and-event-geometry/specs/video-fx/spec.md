@@ -2,70 +2,66 @@
 
 ## ADDED Requirements
 
-### Requirement: Узел «Геометрия» — ведущий, обязательный, перемещаемый
+### Requirement: The "Geometry" node — leading, mandatory, movable
+Each video event SHALL have exactly one LEADING "Geometry" node in its chain (the conform rule "follow the project" or its own, crop in fractions of the source, position in fractions of the canvas,
+zoom, rotation, anchor); only the leading node carries the rule. Deleting the leading node SHALL
+be rejected with a reason; reordering along the chain SHALL be ordinary; a "Geometry" node without a
+rule SHALL be addable from the catalog any number of times. Effects BEFORE the leading node SHALL
+run in the source's space (a buffer of decode size), AFTER — on the canvas; Pan3d and
+CamMotion remain effects and by default stand above the conformed frame. The `Pan` kind SHALL
+be absent from the registry; a leading node with defaults SHALL be an identity and share the
+identity hash with the previous identity kinds. The order inside the node — crop, (the place for the mask),
+placement — is fixed, so that a mask does not rewrite the node.
+Why: in Vegas, Pan/Crop is the first node of the chain and draggable ("effects applied before
+or after any event panning and cropping"); the owner asked for "not worse, but cooler"; the dead combo of three Pan modes is exactly the extra widget of rule 9.
 
-У каждого видео-события SHALL быть ровно один ВЕДУЩИЙ узел «Геометрия» в цепочке (правило
-приведения «следовать проекту» либо своё, кроп в долях источника, положение в долях холста,
-зум, поворот, якорь); только ведущий узел несёт правило. Удаление ведущего узла SHALL
-отвергаться с причиной; перестановка по цепочке SHALL быть обычной; узел «Геометрия» без
-правила SHALL добавляться из каталога сколько угодно раз. Эффекты ДО ведущего узла SHALL
-исполняться в пространстве источника (буфер размера декода), ПОСЛЕ — на холсте; Pan3d и
-CamMotion остаются эффектами и по умолчанию стоят над приведённым кадром. Вид `Pan` SHALL
-отсутствовать в реестре; ведущий узел с умолчаниями SHALL быть тождеством и делить
-identity-хэш с прежними тождественными видами. Порядок внутри узла — кроп, (место под
-маску), размещение — зафиксирован, чтобы маска не переписывала узел.
-Почему: у Vegas Pan/Crop — первый узел цепочки и перетаскиваемый («effects applied before
-or after any event panning and cropping»), владелец просил «не хуже, а круче»; мёртвое
-комбо трёх режимов Pan — ровно тот лишний виджет правила 9.
-
-#### Scenario: Ведущий узел неудаляем, перемещаем, добавляем повторно
-- **WHEN** пользователь удаляет ведущий узел, переставляет его после Blur, добавляет второй узел «Геометрия», а `FxInstance::all()` сверяется с golden-таблицей
-- **THEN** удаление — отказ с причиной, перестановка и второй узел проходят, у второго узла правила нет, `Pan` в реестре отсутствует, узел с умолчаниями даёт identity-хэш
+#### Scenario: The leading node cannot be deleted, is moved, is added again
+- **WHEN** the user deletes the leading node, moves it after Blur, adds a second "Geometry" node, and `FxInstance::all()` is checked against the golden table
+- **THEN** the deletion is refused with a reason, the reordering and the second node pass, the second node has no rule, `Pan` is absent from the registry, the node with defaults gives the identity hash
 - **TEST** t716 (`src/libs/kt-model/tests/fx_chain.rs`), t328 (`src/libs/kt-fx/tests/video_fx.rs`)
 
-#### Scenario: До узла — пространство источника, после — холст
-- **WHEN** на вертикальном источнике цепочки Blur → Геометрия и Геометрия → Blur; поворот 90° вертикального источника в 16:9
-- **THEN** кадры различаются (размытие поля против размытия материала), оба бэкенда в допуске; повёрнутый источник заполняет холст без полей
+#### Scenario: Before the node — source space, after — canvas
+- **WHEN** on a vertical source, the chains Blur → Geometry and Geometry → Blur; a 90° rotation of the vertical source in 16:9
+- **THEN** the frames differ (blurring the margin versus blurring the material), both backends are within tolerance; the rotated source fills the canvas without margins
 - **TEST** t717 (`src/libs/kt-fx/tests/video_fx.rs`, `src/libs/kt-gpu/tests/parity.rs`)
 
 ## MODIFIED Requirements
 
-### Requirement: Реестр видео-эффектов замкнут golden-циклом
+### Requirement: The video effect registry is closed by a golden cycle
+Each video kind from the shared registry `FxInstance::all()` SHALL have a row in the
+golden table of default templates, and the table SHALL cover the registry in both directions:
+a new kind does not build until its row is entered. Each kind MUST declare
+its class for the scheduler (pointwise / barrier / geo) — an undeclared kind
+is caught by a panic when run through the barrier path. The default of any new
+parameter MUST give the previous behavior byte for byte: goldens are not
+regenerated when parameters are added. The defaults of "identity" kinds
+(Geometry, Pan 3D, Color Grade, Corner Pin, Drop Shadow on an opaque frame) legitimately
+share one identity hash; the kind `Pan` is removed from the registry, and its row is absent from the table.
+Why: "a new variant compiles and silently does nothing" — a forgotten arm of the
+classification became a barrier and broke the geo-series; the completeness lock makes this
+a build error rather than a finding of the user.
 
-Каждый видео-вид из общего реестра `FxInstance::all()` SHALL иметь строку в
-golden-таблице дефолт-шаблонов, и таблица SHALL покрывать реестр в обе стороны:
-новый вид не собирается, пока не заведена его строка. Каждый вид MUST объявить
-свой класс планировщику (поточечный / барьер / гео) — необъявленный вид
-ловится паникой при прогоне через барьерный путь. Умолчание любого нового
-параметра MUST давать прежнее поведение байт-в-байт: golden'ы не
-перегенерируются при добавлении параметров. Дефолты «тождественных» видов
-(Геометрия, Pan 3D, Color Grade, Corner Pin, Drop Shadow на непрозрачном кадре)
-законно делят один identity-хэш; вид `Pan` из реестра удалён, его строки в таблице нет.
-Почему: «новый вариант компилируется и молча ничего не делает» — забытый арм
-классификации становился барьером и рвал гео-серии; замок полноты делает это
-ошибкой сборки, а не находкой пользователя.
-
-#### Scenario: Новый вид не соберётся без строки
-- **WHEN** в реестр добавлен видео-вид без строки в golden-таблице или с забытым классом
-- **THEN** golden-цикл падает на замке полноты (или debug-паникой барьерного пути), а хэши всех прежних дефолтов стоят
+#### Scenario: A new kind will not build without a row
+- **WHEN** a video kind is added to the registry without a row in the golden table or with a forgotten class
+- **THEN** the golden cycle fails at the completeness lock (or a debug panic of the barrier path), while the hashes of all previous defaults stand
 - **TEST** t328 (`src/libs/kt-fx/tests/video_fx.rs`)
 
-#### Scenario: Десять исходных ядер и их свойства
-- **WHEN** каждое из ядер первой десятки применяется к тест-кадру
-- **THEN** хэши совпадают с эталоном; зеркало — инволюция, blur сохраняет среднее и снижает дисперсию, greenscreen обнуляет альфу ключевого угла, шум детерминирован по позиции, плитки сетки идентичны, ведущий узел «Геометрия» с умолчаниями — тождество
-- **TEST** t26 (`src/libs/kt-fx/tests/video_fx.rs`), t26 (`src/libs/kt-engine/tests/reverse.rs`) — цепочка применяется в едином пути композита, кэш хранит пре-FX кадры (capability `video-plan`)
+#### Scenario: The ten original kernels and their properties
+- **WHEN** each of the first ten kernels is applied to a test frame
+- **THEN** the hashes match the reference; mirror is an involution, blur preserves the mean and reduces the variance, greenscreen zeroes the alpha of the key corner, noise is deterministic by position, the grid tiles are identical, the leading "Geometry" node with defaults is an identity
+- **TEST** t26 (`src/libs/kt-fx/tests/video_fx.rs`), t26 (`src/libs/kt-engine/tests/reverse.rs`) — the chain is applied in the single composite path, the cache stores the pre-FX frames (capability `video-plan`)
 
-#### Scenario: Новый параметр меняет картинку, умолчание тождественно
-- **WHEN** у эффекта появился параметр (radius_y, thickness, size/color шума, threshold/tint свечения, scan_step/jitter VHS, spill ключа)
-- **THEN** каждое ненулевое значение осмысленно меняет кадр, а умолчание даёт байты прежнего ядра; проверка идёт по ВСЕМ каналам, включая те, которых ядро раньше не касалось
+#### Scenario: A new parameter changes the picture, the default is identity
+- **WHEN** an effect has gained a parameter (radius_y, thickness, noise size/color, glow threshold/tint, VHS scan_step/jitter, key spill)
+- **THEN** each non-zero value meaningfully changes the frame, and the default gives the bytes of the previous kernel; the check runs over ALL channels, including those the kernel did not previously touch
 - **TEST** t228 (`src/libs/kt-fx/tests/video_fx.rs`)
 
-#### Scenario: Сетка крупнее кадра не переполняется
-- **WHEN** EventGrid просят больше колонок/строк, чем пикселей у кадра
-- **THEN** сетка рисуется от нуля без центрирования, размер кадра цел, результат детерминирован и зеркалит GPU-гард
+#### Scenario: A grid larger than the frame does not overflow
+- **WHEN** EventGrid is asked for more columns/rows than the frame has pixels
+- **THEN** the grid is drawn from zero without centering, the frame size is an integer, the result is deterministic and mirrors the GPU guard
 - **TEST** t299 (`src/libs/kt-fx/tests/video_fx.rs`)
 
-#### Scenario: Пул буферов не меняет байты
-- **WHEN** цепочка исполняется с «грязным» переиспользованным пулом буферов
-- **THEN** результат байт-идентичен свежему прогону для каждого вида и для цепочки Mirror+Grid+Glow+VHS
+#### Scenario: The buffer pool does not change the bytes
+- **WHEN** the chain is executed with a "dirty" reused buffer pool
+- **THEN** the result is byte-identical to a fresh run for each kind and for the chain Mirror+Grid+Glow+VHS
 - **TEST** t68 (`src/libs/kt-fx/tests/video_fx.rs`)

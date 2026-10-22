@@ -8,7 +8,6 @@ show, and the reproducible pipeline that re-takes those screenshots from real fo
 ## Requirements
 
 ### Requirement: README and user guide are English and self-consistent
-
 `README.md`, `CONTRIBUTING.md` and every file under `docs/guide/` SHALL be written in
 English and MUST NOT contain Cyrillic characters (proper names of Russian-language
 documents are linked by path, not quoted). Every relative link in them SHALL resolve to an
@@ -33,11 +32,10 @@ references accumulate silently in git history.
 - **TEST** t827 (`src/apps/kt-cli/tests/readme_guard.rs`)
 
 ### Requirement: README shows the real editor on free footage, including nested reels and automation
-
 The README SHALL be about the product: what it does, screenshots, how to install and run
 it, where the documentation is, and the license. It MUST NOT contain architecture,
 crate lists, engine invariants, porting history or footage credits (owner, 2026-10-22:
-"ридми это про продукт, как его запустить, а не про технический мусор"); that material
+""the README is about the product, how to run it, not about technical junk""; that material
 lives in `CONTRIBUTING.md` and the design documents. The README SHALL open with the
 application icon, the name and badges, then a full-window screenshot of the editor on the
 showcase project DURING PLAYBACK: the media bin wide, in free layout with its groups, and
@@ -68,7 +66,6 @@ slowed-reverb automation curves", "nested reels belong on the timeline screensho
 - **TEST** live `src/scripts/live/readme_shots.py`
 
 ### Requirement: Screenshots are re-taken by one command, without pixel coordinates
-
 `src/scripts/readme-shots.py --sources <dir>` SHALL build the showcase project with
 `kt-cli showcase`, launch the freshly built `kt-app` in a virtual screen with the English
 UI, reach every view through named probe rectangles and real gestures (no hard-coded window
@@ -81,7 +78,7 @@ fixture media as a live scenario of `live-check.sh`, writing to its artifact dir
 never to `docs/images/`. Without `--sources` the command-line entry SHALL exit with a usage
 message.
 Why: the landing page's `site/screenshots.py` drives the window by coordinates measured
-before Р.49 and silently produces wrong crops after any layout change.
+before R.49 and silently produces wrong crops after any layout change.
 
 #### Scenario: A full re-shoot on fixture media
 - **WHEN** the script runs with `--sources` pointing at the generated fixture videos and an output directory in a temporary location

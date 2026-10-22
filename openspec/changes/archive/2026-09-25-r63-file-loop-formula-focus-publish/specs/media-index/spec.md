@@ -2,51 +2,38 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Живое воспроизведение ходит через приоритетную очередь MediaWorker
+### Requirement: Live playback goes through the MediaWorker priority queue
+One thread SHALL exclusively own the decoder instance (`&mut self`). Playback, prefetch and thumbnails MUST NOT touch the decoder directly — only by requests into the queue with priorities
+Playback > NearPrefetch > FarPrefetch > Thumbnail and generation-cancellation; at equal priority, requests are served FORWARD from the decoder's cursor, and backward when forward is empty; a key is served no more than once per enqueue; what is already in the cache is not decoded. Playback MUST NOT block on decoding: if there is no data by the deadline → silence/last frame + underrun flag.
+Playback audio MUST NOT starve behind the video of the same worker: after a jump (seek) into a file of any length, the first audio bursts with Playback priority SHALL be served before the video requests (Playback video — not before the audio of the same deadline; video prefetch — only when there are no Playback/NearPrefetch audio requests), and a single video frame MUST NOT hold the thread for longer than one audio burst without checking the queue; after pre-roll the underruns SHALL be zero, while the source is read faster than real time.
+Why: the old engine shared one decoder between prefetch and playback through a mutex and drove it with seeks (defect h), and a single puller thread pulled both audio and video — a slow video decode starved the sound (defect l). R.63: per the flight log of paintitblack, each jump into the 870 s file (H.264 1080p) gave 1–6 s of complete silence (u≈48 000 frames/s at a render cost of 2% of real time) — that is, defect l came back in different clothes: the sound was waiting for the video.
 
-Экземпляром декодера SHALL владеть ровно один поток (`&mut self`). Playback, prefetch и
-тумбнейлы MUST NOT трогать декодер напрямую — только заявками в очередь с приоритетами
-Playback > NearPrefetch > FarPrefetch > Thumbnail и generation-отменой; при равном приоритете
-обслуживаются заявки ВПЕРЁД по курсору декодера, назад — когда вперёд пусто; ключ обслуживается
-не более раза за постановку; уже лежащее в кэше не декодируется. Playback MUST NOT блокироваться
-на декоде: нет данных к дедлайну → тишина/последний кадр + underrun-флаг.
-Аудио воспроизведения MUST NOT голодать за видео того же воркера: после прыжка (seek) в
-файл любой длины первые бёрсты аудио с приоритетом Playback SHALL обслуживаться раньше
-видео-заявок (Playback-видео — не раньше аудио того же дедлайна, префетч видео — только
-когда аудио-заявок Playback/NearPrefetch нет), а один видео-кадр MUST NOT удерживать поток
-дольше одного бёрста аудио без проверки очереди; после пре-ролла underrun'ы SHALL быть
-нулём, пока источник читается быстрее реального времени.
-Почему: старый движок делил один декодер между prefetch и playback через mutex и гонял его
-seek'ами (дефект h), а один поток-пуллер тянул и аудио, и видео — медленный видеодекод голодил звук (дефект l). Р.63: по флайт-логу paintitblack каждый прыжок в файл 870 с
-(H.264 1080p) давал 1–6 с полной тишины (u≈48 000 кадров/с при цене рендера 2 % реального
-времени) — то есть дефект l вернулся в другой одежде: звук ждал видео.
-
-#### Scenario: Планировщик — приоритет, отмена, дедуп, направление
-- **WHEN** очередь забита дальним префетчем и прилетает Playback; поколение бампается; один ключ ставится дважды; равные приоритеты по обе стороны курсора
-- **THEN** Playback обслужен в первых трёх; устаревшее поколение дропается; ключ обслужен один раз; сначала заявки вперёд от курсора; проход префетча идемпотентен
+#### Scenario: Scheduler — priority, cancellation, deduplication, direction
+- **WHEN** the queue is clogged by a far prefetch and a Playback request arrives; the generation is bumped; one key is queued twice; equal priorities lie on both sides of the cursor
+- **THEN** Playback is served among the first three; the stale generation is dropped; the key is served once; requests forward of the cursor are served first; the prefetch pass is idempotent
 - **TEST** t9 (`src/libs/kt-engine/tests/scheduler.rs`)
 
-#### Scenario: Последовательная сетка без decode-шторма
-- **WHEN** 90 кадров сетки заказаны подряд, затем повторно по тёплому кэшу; аудио и видео чередуются
-- **THEN** ноль backward-чтений, каждый кадр декодирован не более раза, тёплый повтор — ноль декодов, курсоры аудио и видео не идут зигзагом друг за другом
+#### Scenario: Sequential grid without a decode storm
+- **WHEN** 90 grid frames are ordered in a row, then again over the warm cache; audio and video alternate
+- **THEN** zero backward reads; each frame is decoded at most once; the warm repeat — zero decodes; the audio and video cursors do not zigzag after one another
 - **TEST** t21 (`src/libs/kt-engine/tests/video_span.rs`)
 
-#### Scenario: Видео-кэш не встаёт под потоком Playback-запросов
-- **WHEN** «медленный 4К» плюс постоянные Playback-одиночки текущего кадра и NearPrefetch-проходы
-- **THEN** спан-добор идёт ПОВЕРХ приоритетов (Playback-ключ становится началом спана), покрытие растёт непрерывно до конца, каждый кадр декодирован один раз; ключ за EOF декодируется максимум один раз (негативный кэш)
+#### Scenario: The video cache does not stand under a stream of Playback requests
+- **WHEN** "slow 4K" plus constant Playback singles of the current frame and NearPrefetch passes
+- **THEN** span top-up goes ON TOP OF the priorities (the Playback key becomes the start of the span); coverage grows continuously to the end; each frame is decoded once; the key past EOF is decoded at most once (negative cache)
 - **TEST** t27 (`src/libs/kt-engine/tests/video_stall.rs`)
 
-#### Scenario: Воркер вставляет coverage полосой по шагу сетки
-- **WHEN** 30 кадров заказаны по сетке
-- **THEN** coverage — один непрерывный run [0, n·step)
+#### Scenario: The worker inserts coverage as a strip along the grid step
+- **WHEN** 30 frames are ordered on the grid
+- **THEN** coverage is one continuous run [0, n·step)
 - **TEST** t28 (`src/libs/kt-engine/tests/video_stall.rs`)
 
-#### Scenario: Перенастройка источника — не заявка
-- **WHEN** источник перенастраивается посреди seek'ов (драг параметра генератора)
-- **THEN** перенастройка не подчиняется generation-отмене, применяется первой, и кэш её источника чистит ТОТ ЖЕ поток воркера — ни одного кадра старых параметров не остаётся
+#### Scenario: Retuning a source is not a request
+- **WHEN** the source is reconfigured in the middle of seeks (dragging a generator parameter)
+- **THEN** the reconfiguration is not subject to generation-cancellation, is applied first, and the cache of its source is cleared by THE SAME worker thread — not a single frame with the old parameters remains
 - **TEST** t501 (`src/libs/kt-engine/tests/scheduler.rs`)
 
-#### Scenario: Прыжок в длинный файл — звук не ждёт видео
-- **WHEN** источник с медленным видео (кадр дороже бёрста аудио) и длиной ≥ 300 с; плеер прыгает в его хвост и в середину несколько раз подряд, видео-префетч окна включён
-- **THEN** первые аудио-бёрсты после каждого прыжка обслужены раньше любого видео-кадра, underrun'ы после пре-ролла равны нулю (на прежнем коде — тысячи кадров), видео при этом догоняет без пропуска кадров сетки; в живом окне на `kt-untitled-review-870s.mp4` после прыжка на 817 с флайт-лог не содержит SNAP с `u` > 0 после первой секунды
-- **TEST** t758 (`src/libs/kt-engine/tests/video_stall.rs`), живой сценарий `src/scripts/live/seekjump.py`
+#### Scenario: A jump into a long file — the sound does not wait for the video
+- **WHEN** a source with slow video (a frame costlier than an audio burst) and length ≥ 300 s; the player jumps into its tail and into the middle several times in a row, with the window's video prefetch on
+- **THEN** the first audio bursts after each jump are served before any video frame; the underruns after pre-roll are zero (on the old code — thousands of frames), while the video catches up without skipping grid frames; in the live window on `kt-untitled-review-870s.mp4`, after a jump to 817 s the flight log contains no SNAP with `u` > 0 after the first second
+- **TEST** t758 (`src/libs/kt-engine/tests/video_stall.rs`), live scenario `src/scripts/live/seekjump.py`

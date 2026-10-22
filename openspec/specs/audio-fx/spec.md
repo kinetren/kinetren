@@ -1,311 +1,225 @@
-# Аудио-эффекты
+# Audio effects
 
 ## Purpose
 
-Реестр аудио-эффектов события и узловая цепочка, которая их исполняет: обработка в
-порядке слотов, состояние как функция позиции клипа, честные хвосты, упреждение без
-задержки выхода и автоматизация в домене времени события.
+The registry of audio effects of an event and the node chain that runs them: processing in slot order, state as a function of the clip position, honest tails, look-ahead without delaying the output, and automation in the event's time domain.
 
 ## Requirements
 
-### Requirement: Реестр аудио-видов и параметризованный каркас контракта
+### Requirement: Registry of audio kinds and a parameterized contract skeleton
+Every audio effect kind SHALL be listed in the `FxInstance::all()` registry with a unique tag, and the audio effect contract SHALL be checked by one parameterized harness over all audio kinds in the registry: the default sounds and is deterministic, every smoothable parameter is audible at least at one end of its range, the parameter curve works, reverse with a curve is deterministic, a repeated seek is byte-for-byte identical, and the static formulas for tail and look-ahead agree with the processor's device. A new kind MUST NOT build without a tag and MUST fall under the harness without its own copy-pasted checks.
+Why: with 16+ kinds, hand-written tests "per effect" drift away from the code, and the completeness lock by tags catches an effect that "compiles and silently does nothing".
 
-Каждый аудио-вид эффекта SHALL быть перечислен в реестре `FxInstance::all()` с
-уникальным тегом, а контракт аудио-эффекта SHALL проверяться одним параметризованным
-каркасом по всем аудио-видам реестра: дефолт звучит и детерминирован, каждый
-сглаживаемый параметр слышен хотя бы от одного конца диапазона, кривая параметра
-отрабатывает, реверс с кривой детерминирован, повторный seek байт-в-байт, статические
-формулы хвоста и упреждения согласны с устройством процессора. Новый вид MUST NOT
-собираться без тега и MUST попадать под каркас без своих копипастных проверок.
-Почему: при 16+ видах ручные тесты «на каждый эффект» расходятся с кодом, а замок
-полноты по тегам ловит эффект, который «компилируется и молча ничего не делает».
-
-#### Scenario: Новый аудио-вид попадает под каркас сам
-- **WHEN** в реестр добавлен аудио-вид (вариант, тег, узел цепочки)
-- **THEN** каркас прогоняет его по всем пунктам контракта без правки теста, а набор покрытых тегов равен набору аудио-тегов реестра
+#### Scenario: A new audio kind falls under the harness automatically
+- **WHEN** an audio kind (variant, tag, chain node) is added to the registry
+- **THEN** the harness runs it through all points of the contract without editing the test, and the set of covered tags equals the set of audio tags in the registry
 - **TEST** t322 (`src/libs/kt-engine/tests/audio_fx_registry.rs`)
 
-#### Scenario: Хвост и упреждение — одна формула в двух домах
-- **WHEN** у вида есть память (хвост) или окно анализа (упреждение)
-- **THEN** статическая формула цепочки без состояния совпадает с ответом построенного процессора: хвост — с допуском 2 % на целочисленные усечения линий, упреждение — точно в кадрах, с кривой и без
-- **TEST** t322 пункты (е)/(ж) (`src/libs/kt-engine/tests/audio_fx_registry.rs`)
+#### Scenario: Tail and look-ahead are one formula in two homes
+- **WHEN** a kind has memory (tail) or an analysis window (look-ahead)
+- **THEN** the static formula of the stateless chain matches the answer of the built processor: the tail within a 2 % tolerance for integer truncation of lines, look-ahead exactly in frames, with and without a curve
+- **TEST** t322 items (e)/(zh) (`src/libs/kt-engine/tests/audio_fx_registry.rs`)
 
-### Requirement: Обработка идёт в порядке слотов цепочки
+### Requirement: Processing follows the order of the chain slots
+Chain nodes SHALL execute strictly in slot order, as the chain strip in the UI shows them; no hard-wired pipeline "volume always after reverb" may exist. Single-slot chains SHALL sound byte-for-byte the same as before the node chain. Why: the interface allows dragging slots with the mouse and thereby promises an order; with nonlinear effects (distortion, compressor) the order is audible even on constants.
 
-Узлы цепочки SHALL исполняться строго в порядке слотов, как их показывает полоса
-цепочки в UI; никакого прибитого конвейера «громкость всегда после реверба» быть не
-должно. Одно-слотовые цепочки SHALL звучать байт-в-байт как до узловой цепочки.
-Почему: интерфейс разрешает таскать слоты мышью и тем обещает порядок; с
-нелинейными эффектами (дисторшн, компрессор) порядок слышен даже на константах.
-
-#### Scenario: Громкость перед ревербом — фейд входа
-- **WHEN** автоматизированный Gain стоит ПЕРЕД ревербом и уходит в ноль к концу события
-- **THEN** хвост реверба дозванивает после того, как вход ушёл в ноль (последняя четверть не задушена)
+#### Scenario: Volume before reverb — an input fade
+- **WHEN** an automated Gain stands BEFORE reverb and goes to zero by the end of the event
+- **THEN** the reverb tail rings on after the input has gone to zero (the last quarter is not choked)
 - **TEST** t320 (`src/libs/kt-engine/tests/fx.rs`)
 
-#### Scenario: Порядок слышен на нелинейности
-- **WHEN** одна и та же пара [тихий Gain, Distortion] стоит в двух порядках
-- **THEN** «тихо → перегруз» чист, «перегруз → тихо» грязный: RMS различаются более чем вдвое
+#### Scenario: Order is audible on a nonlinearity
+- **WHEN** the same pair [quiet Gain, Distortion] stands in two orders
+- **THEN** "quiet → overdrive" is clean, "overdrive → quiet" is dirty: the RMS values differ by more than a factor of two
 - **TEST** t323 (`src/libs/kt-engine/tests/fx.rs`)
 
-#### Scenario: Один слот — прежние байты
-- **WHEN** цепочка состоит из одного Gain −6 дБ
-- **THEN** выход равен источнику, умноженному на 10^(−6/20), поэлементно; закоммиченный аудио-эталон не перегенерируется
+#### Scenario: One slot — the same bytes as before
+- **WHEN** the chain consists of a single Gain of −6 dB
+- **THEN** the output equals the source multiplied by 10^(−6/20), element by element; the committed audio reference is not regenerated
 - **TEST** t321 (`src/libs/kt-engine/tests/fx.rs`), `t11_streams_match_committed_golden` (`src/libs/kt-engine/tests/golden_export.rs`)
 
-### Requirement: Значение узла — функция позиции клипа, не счётчика обработанного
+### Requirement: Node value — a function of the clip position, not a counter of processed items
+Everything that depends on time inside a node (LFO phase, the hold grid of a crusher, the grids of grains and hops of pitch shifting) SHALL be computed from the clip position, not from the number of processed frames or calls. Rendering in one piece MUST match rendering in chunks of arbitrary length, and a seek MUST match a cold render without warm-up.
+Why: otherwise export and playback would sound different, and a seek would require a warm-up that an LFO does not have.
 
-Всё, что зависит от времени внутри узла (фаза LFO, сетка удержания крашера, гриды
-зёрен и хопов питча), SHALL считаться от позиции клипа, а не от числа обработанных
-кадров или вызовов. Рендер одним куском MUST совпадать с рендером кусками
-произвольной длины, а seek — с холодным рендером без прогрева.
-Почему: иначе экспорт и воспроизведение звучали бы по-разному, а seek требовал бы
-прогрева, которого у LFO нет.
-
-#### Scenario: Фаза LFO не зависит от нарезки буферов
-- **WHEN** тремоло рендерится одним куском и кусками, а также после seek
-- **THEN** результаты байт-в-байт равны; кривая частоты 2→8 Гц ускоряет модуляцию ко второй половине клипа
+#### Scenario: LFO phase does not depend on buffer slicing
+- **WHEN** a tremolo is rendered in one piece and in chunks, and also after a seek
+- **THEN** the results are byte-for-byte equal; a frequency curve from 2 to 8 Hz speeds up the modulation toward the second half of the clip
 - **TEST** t325 (`src/libs/kt-engine/tests/audio_fx_registry.rs`)
 
-#### Scenario: Питч не зависит от нарезки
-- **WHEN** сдвиг высоты рендерится одним куском и кусками на обоих движках
-- **THEN** результаты совпадают байт-в-байт
+#### Scenario: Pitch does not depend on slicing
+- **WHEN** a pitch shift is rendered in one piece and in chunks on both engines
+- **THEN** the results match byte for byte
 - **TEST** t338 (`src/libs/kt-engine/tests/audio_pitch.rs`)
 
-#### Scenario: Seek зачищает всё состояние, включая предзадержку реверба
-- **WHEN** реверб с predelay > 0 сбрасывается перед seek
-- **THEN** на нулевом входе после сброса выход строго ноль — старый материал не протекает
+#### Scenario: A seek clears all state, including the reverb predelay
+- **WHEN** a reverb with predelay > 0 is reset before a seek
+- **THEN** on zero input after the reset the output is strictly zero — old material does not leak through
 - **TEST** t319 (`src/libs/kt-fx/tests/audio_nodes.rs`)
 
-### Requirement: Два разрыва позиции — seek и шов — различаются
+### Requirement: Two position breaks — seek and splice — are told apart
+The processor SHALL distinguish a real seek (after `reset()`, a warm-up `hard_seek` with a pre-roll of `max(tail, 100 ms)`) from a position jump during CONTINUOUS output (a loop-region wrap-around, a clip shifted with the mouse during playback). At such a jump, only the source is reassigned as a seam; the state of the nodes and the resampler lives on. Parameter edits MUST NOT reset the buffers: smoothed values glide via a one-pole filter of about 20 ms.
+Why: a pre-roll on every lap of a loop warmed the processor and dropped the ring into underruns, while resetting state on any edit killed reverb tails.
 
-Процессор SHALL различать настоящий seek (после `reset()` — прогрев `hard_seek` с
-пре-роллом `max(tail, 100 мс)`) и разрыв позиции при НЕПРЕРЫВНОМ выходе (заворот
-loop-региона, сдвиг клипа мышью при игре) — шов, при котором переставляется только
-источник, а состояние узлов и ресемплера живёт дальше. Правка параметров MUST NOT
-сбрасывать буферы: сглаживаемые значения едут one-pole ~20 мс.
-Почему: пре-ролл на каждом круге лупа грел процессор и ронял кольцо в underrun'ы, а
-сброс состояния при любой правке убивал хвосты реверба.
-
-#### Scenario: Заворот лупа — шов, а не seek
-- **WHEN** FX-клип играет три круга по loop-региону
-- **THEN** ни одного нового прогрева, хвост реверба переживает заворот
+#### Scenario: Loop wrap-around — a seam, not a seek
+- **WHEN** an FX clip plays three laps over the loop region
+- **THEN** no new warm-up occurs at all, and the reverb tail survives the wrap-around
 - **TEST** t166 (`src/libs/kt-engine/tests/loop_fx.rs`)
 
-#### Scenario: Пересборка графа посреди хвоста
-- **WHEN** модель правится во время звучания хвоста реверба
-- **THEN** цепочка с тем же отпечатком структуры переиспользует состояние: выход байт-идентичен непрерывному
+#### Scenario: Graph rebuild in the middle of a tail
+- **WHEN** the model is edited while a reverb tail is sounding
+- **THEN** the chain with the same structural fingerprint reuses its state: the output is byte-identical to the continuous one
 - **TEST** `t6_graph_rebuild_mid_tail_preserves_state` (`src/libs/kt-engine/tests/fx.rs`)
 
-#### Scenario: Ступенька параметра не щёлкает
-- **WHEN** параметр mix меняется скачком
-- **THEN** скачок выхода не превышает 1.5× естественного наклона синуса
+#### Scenario: A parameter step does not click
+- **WHEN** the mix parameter changes in a jump
+- **THEN** the output jump does not exceed 1.5× the natural slope of a sine
 - **TEST** `t5_param_step_does_not_click` (`src/libs/kt-engine/tests/fx.rs`)
 
-### Requirement: Хвост честный, «греть» и «звучать» разведены
+### Requirement: The tail is honest; "warming up" and "sounding" are kept apart
+The chain tail SHALL be the maximum over the nodes and honest (t60 for the longest line); the extension of the event window relies on it. The tail rings past the clip boundary and decays to −60 dB within `tail()`. Look-ahead (the analysis window) MUST NOT enter the tail: it warms up a seek and widens the source window, but it does not extend the event.
+Why: the tail and the warm-up used to be one number; a limiter with an analysis window does not ring after the clip, and an extra tail would be audible as the event sounding after its end.
 
-Хвост цепочки SHALL быть максимумом по узлам и честным (t60 по самой длинной линии);
-на него опирается расширение окна события. Хвост дозванивает за границей клипа и
-затухает до −60 дБ в пределах `tail()`. Упреждение (окно анализа) MUST NOT входить в
-хвост: оно прогревает seek и расширяет окно источника, но не продлевает событие.
-Почему: хвост и прогрев были одним числом; лимитер с окном анализа не звенит после
-клипа, и лишний хвост стал бы слышен как звучание события после его конца.
-
-#### Scenario: Хвост реверба дозванивает и затухает
-- **WHEN** клип с ревербом кончается
-- **THEN** выход за границей клипа не нулевой и затухает на −60 дБ в пределах `tail()`
+#### Scenario: A reverb tail rings on and decays
+- **WHEN** a clip with reverb ends
+- **THEN** the output past the clip boundary is not zero and decays by −60 dB within `tail()`
 - **TEST** `t6_reverb_tail_rings_past_clip_end_and_decays` (`src/libs/kt-engine/tests/fx.rs`)
 
-#### Scenario: Окно лимитера не растит хвост
-- **WHEN** событие с лимитером кончается
-- **THEN** за концом события — тишина: окно анализа не продлевает звучание
+#### Scenario: The limiter window does not grow the tail
+- **WHEN** an event with a limiter ends
+- **THEN** after the end of the event there is silence: the analysis window does not extend the sound
 - **TEST** t335 (`src/libs/kt-engine/tests/audio_lookahead.rs`)
 
-### Requirement: Упреждение — вход обгоняет выход, задержки для хоста нет
+### Requirement: Lookahead — input runs ahead of output, no delay for the host
+An effect with an analysis window SHALL read the source ahead of the output position and deliver its output aligned: for the rest of the engine the delay is zero, the playhead and crossfades do not move. The source window SHALL be extended forward by the look-ahead in ONE function, which both the render and the prefetch ask. Changing the look-ahead window (and the pitch engine) is structural: the processor is rebuilt. The total look-ahead MUST be less than the minimum seek pre-roll (4800 frames).
+Why: the output delay would drift against the master clock and neighboring tracks; a window extended only for the render would produce a silent cache miss — beyond the window the source would return silence without an underrun.
 
-Эффект с окном анализа SHALL читать источник вперёд выходной позиции и отдавать
-выход выровненным: для остального движка задержка нулевая, playhead и кроссфейды не
-едут. Окно источника SHALL расширяться вперёд на упреждение в ОДНОЙ функции, которую
-спрашивают и рендер, и префетч. Смена окна упреждения (и движка питча) — структурная:
-процессор пересобирается. Суммарное упреждение MUST быть меньше минимального
-пре-ролла seek'а (4800 кадров).
-Почему: задержка выхода поехала бы против мастер-часов и соседних дорожек; окно,
-расширенное только у рендера, давало бы молчаливый промах кэша — за окном источник
-отдаёт тишину без underrun'а.
-
-#### Scenario: Упреждение не сдвигает выход
-- **WHEN** лимитер с окном 5 мс стоит в линейном режиме (порог и потолок 0 дБ)
-- **THEN** выход сэмпл в сэмпл равен цепочке без лимитера
+#### Scenario: Look-ahead does not shift the output
+- **WHEN** a limiter with a 5 ms window sits in linear mode (threshold and ceiling at 0 dB)
+- **THEN** the output equals the chain without the limiter, sample for sample
 - **TEST** t334 (`src/libs/kt-engine/tests/audio_lookahead.rs`)
 
-#### Scenario: Потолок гарантирован и редукция начинается до пика
-- **WHEN** лимитер с потолком −6 дБ обрабатывает щелчки
-- **THEN** пик ровно в потолок, гейн снижается за окно до пика
+#### Scenario: The ceiling is guaranteed and the reduction starts before the peak
+- **WHEN** a limiter with a −6 dB ceiling processes clicks
+- **THEN** the peak is exactly at the ceiling, and the gain drops within the window before the peak
 - **TEST** t335 (`src/libs/kt-engine/tests/audio_lookahead.rs`)
 
-#### Scenario: Префетч покрывает окно упреждения
-- **WHEN** цепочка с упреждающим узлом рендерится
-- **THEN** всё прочитанное из источника входит в заказ префетча (`wanted ⊇ прочитанного`)
+#### Scenario: Prefetch covers the look-ahead window
+- **WHEN** a chain with a look-ahead node is rendered
+- **THEN** everything read from the source enters the prefetch request (`wanted ⊇ read`)
 - **TEST** t336 (`src/libs/kt-engine/tests/audio_lookahead.rs`)
 
-### Requirement: Нейтральный эффект — байт-в-байт тождество
+### Requirement: A neutral effect — byte-for-byte identity
+An effect with neutral parameters and no curves SHALL NOT touch the buffer and SHALL NOT require look-ahead: zero semitones for pitch, zero gains for EQ, width 1.0 for stereo width. The default of a new parameter SHALL be the previous behavior byte for byte; the committed audio reference MUST NOT be regenerated when a kind is added.
+Why: an effect added "to try out" must not silently change the export.
 
-Эффект с нейтральными параметрами и без кривых SHALL не трогать буфер и не требовать
-упреждения: ноль полутонов у питча, нулевые гейны у EQ, width 1.0 у стерео-ширины.
-Умолчание нового параметра SHALL быть прежним поведением байт-в-байт; закоммиченный
-аудио-эталон MUST NOT перегенерироваться при добавлении вида.
-Почему: эффект, добавленный «на попробовать», не смеет менять экспорт молча.
-
-#### Scenario: Нейтральный питч — пропуск
-- **WHEN** PitchShift с нулём полутонов и центов без кривых стоит в цепочке на любом движке
-- **THEN** выход равен сухому байт-в-байт, упреждение цепочки ноль
+#### Scenario: Neutral pitch — pass-through
+- **WHEN** PitchShift with zero semitones and cents and no curves stands in a chain on any engine
+- **THEN** the output equals the dry signal byte for byte, and the chain's look-ahead is zero
 - **TEST** t337 (`src/libs/kt-engine/tests/audio_pitch.rs`)
 
-#### Scenario: Эталон стоит
-- **WHEN** в реестр добавлен вид или параметр
-- **THEN** golden-экспорт совпадает с закоммиченным хэшем
+#### Scenario: The reference holds
+- **WHEN** a kind or a parameter is added to the registry
+- **THEN** the golden export matches the committed hash
 - **TEST** `t11_streams_match_committed_golden` (`src/libs/kt-engine/tests/golden_export.rs`)
 
-### Requirement: Питч — высота без смены длительности, движок — настройка проекта
+### Requirement: Pitch — height without changing duration; the engine is a project setting
+PitchShift SHALL work on the clip-local stream AFTER the warp, without consuming the source (the event duration does not change, the warp's monopoly stays intact). There are two engines: WSOLA and a phase vocoder. The choice SHALL be a project setting (not an effect parameter), change through an ordinary command with undo, and survive saving; the default is not written to the file.
+Why: the engines cover different material, and the choice is part of the editor's work for the whole edit, not a hidden application setting.
 
-PitchShift SHALL работать на клип-локальном потоке ПОСЛЕ варпа, не потребляя
-источник (длительность события не меняется, монополия варпа цела). Движков два — WSOLA
-и фазовый вокодер; выбор SHALL быть настройкой проекта (не параметром эффекта),
-меняться обычной командой с undo и переживать сохранение; дефолт в файл не пишется.
-Почему: движки закрывают разный материал, и выбор — часть работы монтажёра на весь
-монтаж, а не скрытая настройка приложения.
-
-#### Scenario: Оба движка сдвигают высоту
-- **WHEN** синус 440 Гц сдвигается на +7 и −5 полутонов каждым движком
-- **THEN** пик спектра на 440·2^(st/12) (±0.5 %), исходная частота ушла >100× по энергии, результат детерминирован
+#### Scenario: Both engines shift the pitch
+- **WHEN** a 440 Hz sine is shifted by +7 and −5 semitones with each engine
+- **THEN** the spectral peak is at 440·2^(st/12) (±0.5 %), the original frequency has lost more than 100× in energy, and the result is deterministic
 - **TEST** t339 (`src/libs/kt-engine/tests/audio_pitch.rs`)
 
-#### Scenario: Движок — правка модели
-- **WHEN** движок питча меняется в настройках проекта
-- **THEN** звук меняется, выбор переживает round-trip файла, смена откатывается undo
+#### Scenario: Engine — a model edit
+- **WHEN** the pitch engine is changed in the project settings
+- **THEN** the sound changes, the choice survives a file round-trip, and the change is undone by undo
 - **TEST** t340 (`src/libs/kt-engine/tests/audio_pitch.rs`)
 
-### Requirement: Эффекты делают то, что написано на ручках
+### Requirement: Effects do what is written on their handles
+The formulas of the kinds SHALL be verified by direct probes: a filter cuts, an EQ shelf does not touch another band, a crusher produces a harmonic comb, width 0 gives equal channels, a delay repeats exactly every time_ms in a decaying series, ping-pong crosses the channels, a compressor follows its ratio law, a gate silences quiet input and passes loud input. The frequency response graph of the equalizer SHALL be computed by the same code that produces the sound.
+Why: the harness checks "audible" but not "correct"; a frequency response picture computed by a second copy of the formulas would diverge from the DSP at the first edit of the kernel.
 
-Формулы видов SHALL проверяться прямыми пробами: фильтр режет, полка EQ не трогает
-чужую полосу, крашер рождает гребёнку гармоник, width 0 даёт равные каналы, дилей
-повторяет ровно через time_ms убывающей серией, ping-pong пересекает каналы,
-компрессор следует закону ratio, гейт глушит тихое и пропускает громкое. График АЧХ
-эквалайзера SHALL считаться тем же кодом, что звучит.
-Почему: каркас проверяет «слышно», но не «правильно»; картинка АЧХ, посчитанная
-второй копией формул, разошлась бы с DSP при первой же правке ядра.
-
-#### Scenario: Спектральные пробы фильтра, EQ, крашера и ширины
-- **WHEN** синусы проходят через LP-фильтр, полку EQ −12 дБ, 3-битный крашер и width 0
-- **THEN** LP-срез ≥ 40 дБ на 8 кГц, полка не трогает ВЧ, у крашера пик гармоники в полосе, каналы при width 0 равны
+#### Scenario: Spectral probes of the filter, EQ, crusher, and width
+- **WHEN** sines pass through an LP filter, an EQ shelf at −12 dB, a 3-bit crusher, and width 0
+- **THEN** the LP cutoff is ≥ 40 dB at 8 kHz, the shelf does not touch the high frequencies, the crusher's harmonic peak lies in its band, and the channels are equal at width 0
 - **TEST** t324 (`src/libs/kt-engine/tests/fx.rs`)
 
-#### Scenario: Эхо и динамика
-- **WHEN** щелчки проходят через Delay (в т.ч. ping-pong), Compressor 4:1 и Gate
-- **THEN** повтор на time_ms, серия убывает, второй повтор ping-pong в противоканале; −6 дБ → −15 дБ (±1.5 дБ); тихий синус заглушен, громкий проходит
+#### Scenario: Echo and dynamics
+- **WHEN** clicks pass through a Delay (including ping-pong), a Compressor at 4:1, and a Gate
+- **THEN** the repeat occurs at time_ms, the series decays, the second repeat in ping-pong is in the opposite channel; −6 dB → −15 dB (±1.5 dB); a quiet sine is muted, a loud one passes
 - **TEST** t326 (`src/libs/kt-engine/tests/audio_fx_registry.rs`)
 
-#### Scenario: АЧХ эквалайзера из коэффициентов ядра
-- **WHEN** график отклика EQ считается по текущим коэффициентам биквадов
-- **THEN** пик равен усилению своей полосы на f0 (±0.05 дБ), нули дают 0 дБ на всём свипе, Q сужает, каскад — сумма дБ
+#### Scenario: EQ frequency response from the kernel coefficients
+- **WHEN** the EQ response graph is computed from the current biquad coefficients
+- **THEN** the peak equals the gain of its band at f0 (±0.05 dB), zeros give 0 dB across the whole sweep, Q narrows the band, and the cascade is the sum in dB
 - **TEST** t348 (`src/libs/kt-fx/tests/audio_nodes.rs`)
 
-### Requirement: Автоматизация аудио живёт в домене времени события
+### Requirement: Audio automation lives in the event's time domain
+The curve of any audio parameter SHALL be a function of the event's output progress (the "span cut out by the event, without accounting for slowdown"), while the keyframe is stored in the MATERIAL's tick. The source consumption under a speed curve SHALL be the integral `S(tau) = ∫rate` over output time; the warp profile SHALL start at zero even when the keyframe is hidden by trimming to the left of the input; for a mirrored clip the curve MUST NOT play backwards. A slot without a curve SHALL collapse into a single multiplier (the constant path stays byte-for-byte the same as before).
+Why: a domain in material terms made the speed curve's axis depend on the curve itself, shifted the firing moments of other people's keyframes, and left the right side of the graph unreachable.
 
-Кривая любого аудио-параметра SHALL быть функцией выходного прогресса события
-(«промежуток, вырезанный событием, без учёта замедления»), при этом ключ хранится в
-тике МАТЕРИАЛА. Потребление источника под кривой скорости SHALL быть интегралом
-`S(tau) = ∫rate` по выходному времени; профиль варпа SHALL начинаться в нуле даже при
-ключе, спрятанном обрезкой левее входа; у зеркального клипа кривая MUST NOT играться
-задом наперёд. Слот без кривой SHALL сворачиваться в один множитель (константный путь
-байт-в-байт прежний).
-Почему: домен по материалу делал ось кривой скорости зависимой от самой кривой,
-сдвигал моменты срабатывания чужих ключей и оставлял правую часть графика
-недостижимой.
-
-#### Scenario: Ранний бамп скорости не двигает моменты поздних ключей
-- **WHEN** перед профилем скорости добавлен ранний бамп ×2
-- **THEN** поздние ключи срабатывают в те же моменты выходного времени, но на другом материале (проба и на плато τ=0.55, и в хвосте τ=0.90)
+#### Scenario: An early speed bump does not shift the moments of later keyframes
+- **WHEN** an early ×2 bump is added before the speed profile
+- **THEN** later keyframes fire at the same output-time moments but on different material (the probe both on the plateau τ=0.55 and in the tail τ=0.90)
 - **TEST** t31 (`src/libs/kt-engine/tests/fx.rs`)
 
-#### Scenario: Громкость по кривой, без кривой — не тронута
-- **WHEN** на Gain стоит треугольная кривая db, а у соседнего клипа кривой нет
-- **THEN** уровень растёт к середине и падает к концу, на пике — исходный уровень; без кривой сигнал не тронут; легаси-кейфреймы slowed мигрируют в кривые и продолжают действовать
+#### Scenario: Volume by curve, and without a curve — untouched
+- **WHEN** a triangular db curve is on a Gain, and the neighboring clip has no curve
+- **THEN** the level rises toward the middle and falls toward the end, and at the peak it equals the original level; without a curve the signal is untouched; legacy slowed keyframes migrate into curves and continue to act
 - **TEST** t213 (`src/libs/kt-engine/tests/fx.rs`)
 
-#### Scenario: Потребление — интеграл по выходному времени
-- **WHEN** скорость линейно идёт 1.0 → 0.5 по событию
-- **THEN** к половине события съедено 0.625 длины (парабола), а не 0.75
+#### Scenario: Consumption — the integral over output time
+- **WHEN** the speed goes linearly from 1.0 to 0.5 over the event
+- **THEN** by the half of the event 0.625 of the length has been consumed (a parabola), not 0.75
 - **TEST** t246 (`src/libs/kt-engine/tests/fx.rs`), `clip_processor_follows_integral_map` (`src/libs/kt-fx/tests/integral_map.rs`)
 
-#### Scenario: Кривая другого параметра на замедленном клипе
-- **WHEN** клип замедлен вдвое, а кривая громкости — треугольник с пиком в середине материала события
-- **THEN** пик приходится на СЕРЕДИНУ события, а не на его конец
+#### Scenario: The curve of another parameter on a slowed clip
+- **WHEN** the clip is slowed by half, and the volume curve is a triangle with its peak in the middle of the event's material
+- **THEN** the peak falls in the MIDDLE of the event, not at its end
 - **TEST** t246b (`t246_gain_curve_peaks_at_event_middle_under_warp`, `src/libs/kt-engine/tests/fx.rs`)
 
-#### Scenario: Профиль начинается в нуле при спрятанном ключе
-- **WHEN** ключ скорости лежит левее `source_in` (после TrimStart или правой половины Split)
-- **THEN** `S(0)` ровно ноль, прямая и обратная карты остаются взаимно обратными, за краями экстраполяция скоростью в нуле
+#### Scenario: The profile starts at zero when the keyframe is hidden
+- **WHEN** the speed keyframe lies to the left of `source_in` (after a TrimStart or on the right half of a Split)
+- **THEN** `S(0)` is exactly zero, the forward and inverse maps remain mutually inverse, and beyond the edges the extrapolation holds the speed at zero
 - **TEST** t269 (`src/libs/kt-model/src/warp.rs`)
 
-#### Scenario: Зеркальный клип не играет кривую задом наперёд
-- **WHEN** у клипа с `reversed` ключ поставлен в начале события
-- **THEN** он срабатывает в начале, а не в конце: зеркало живёт в нормировке ключа, DSP про реверс не знает
-- **TEST** t271 (`src/libs/kt-model/src/warp.rs`), t322 пункт (г) (`src/libs/kt-engine/tests/audio_fx_registry.rs`)
+#### Scenario: A mirrored clip does not play its curve backwards
+- **WHEN** on a clip with `reversed` a keyframe is placed at the start of the event
+- **THEN** it fires at the start, not at the end: the mirror lives in the keyframe normalization, and the DSP knows nothing about reversal
+- **TEST** t271 (`src/libs/kt-model/src/warp.rs`), t322 item (g) (`src/libs/kt-engine/tests/audio_fx_registry.rs`)
 
-### Requirement: Варп — не узел; потребляет источник монопольно и чисто
+### Requirement: Warp is not a node; it consumes the source exclusively and cleanly
+The warp (resampler) SHALL remain a separate field of the processor, not a node: it alone consumes the source strictly sequentially through an internal cursor, without skips, duplicates, or seam stitching; the speed module feeds into the resampler. The chain's input and output are only f32 48 kHz/2ch; no node MUST see the file's sample rate.
+Why: two consumers of the source would diverge from the prefetch window, and computing at the file's frequency produced periodic clicks.
 
-Варп (ресемплер) SHALL оставаться отдельным полем процессора, а не узлом: он один
-потребляет источник строго последовательно через внутренний курсор, без пропусков,
-дублей и сшивки швов; в ресемплер уходит модуль скорости. Вход и выход цепочки —
-только f32 48 kHz/2ch; ни один узел MUST NOT видеть sample-rate файла.
-Почему: два потребителя источника разошлись бы с окном префетча, а расчёт в частоте
-файла давал периодические щелчки.
-
-#### Scenario: Замедление вдвое чисто и потребляет ровно rate·duration
-- **WHEN** синус 440 Гц замедлен вдвое
-- **THEN** тон 220 Гц, паразиты < −60 дБ вне ±16 бинов; потреблено ровно rate·duration без дрейфа
+#### Scenario: Halving the speed is clean and consumes exactly rate·duration
+- **WHEN** a 440 Hz sine is slowed by half
+- **THEN** the tone is 220 Hz, artifacts are below −60 dB outside ±16 bins; exactly rate·duration is consumed, with no drift
 - **TEST** `t4_slowed_halves_pitch_without_artifacts`, `t4_warp_consumes_source_at_rate` (`src/libs/kt-engine/tests/fx.rs`)
 
-### Requirement: Цена плотной цепочки измеряется, а не утверждается
+### Requirement: The cost of a dense chain is measured, not asserted
+The cost of audio rendering for dense chains SHALL be measured by a printout in the release build (`#[ignore]`), not by an assertion: speed is judged only on release builds.
+Why: in debug the numbers are off by a factor of nine, and a threshold in an assertion would break on any CI machine.
 
-Стоимость аудио-рендера плотных цепочек SHALL измеряться печатью в релизной сборке
-(`#[ignore]`), не ассертом: о скорости судят только по релизу.
-Почему: в debug числа врут вдевятеро, а порог в ассерте ломался бы на любой машине CI.
-
-#### Scenario: Печать цены семи полных цепочек
-- **WHEN** семь событий с цепочкой из шести узлов рендерятся в релизе
-- **THEN** печатается мс на секунду звука; ориентир — единицы-десятки процентов реального времени
+#### Scenario: Printing the price of seven full chains
+- **WHEN** seven events with a chain of six nodes are rendered in release
+- **THEN** the milliseconds per second of sound are printed; the reference point is units to tens of percent of real time
 - **TEST** t327 (`src/libs/kt-engine/tests/audio_fx_registry.rs`)
 
-### Requirement: Компрессор с КЛЮЧЕВЫМ входом — дакинг тем же прибором
+### Requirement: Compressor with a KEY input — ducking with the same instrument
+The compressor SHALL accept an optional KEY signal (sidechain): the detector computes the envelope from it, while the compression is applied to the node's own input. The compression law, units, and parameter limits MUST NOT change — the key changes only the SOURCE OF THE DETECTOR. Without a key the node SHALL compute exactly what it did before this work, byte for byte (`GOLDEN_AUDIO`, t2/t3 without regeneration), and MUST NOT pay for the key branch with an allocation or an extra pass.
+The key signal SHALL arrive at the node as a processing argument in the same domain (f32 48 kHz/2ch) and over the same window as its input; the key branch MUST NOT have its own state, its own fetcher, or its own copy of the parameters — otherwise the device would have a second definition of what it does. A key BELOW the threshold SHALL leave the signal untouched (the ducking does not "breathe" in the pauses), and a key ABOVE the threshold SHALL produce the same reduction that the same signal would produce on its own input (one formula, verified by comparing two runs).
+A second kind of effect for ducking SHALL NOT exist: "ducking" is a compressor with an assigned key, and it is shown by the same parameter widget.
+Why: the owner of R.63 — "everywhere meaningless copy-pastes of the same code accumulate, when it is possible to… show that ducking works in the program, for example via two compressors"; the industry precedent is the Track FX ducker in Resolve, which is fed by the signals of the dialogue tracks. A key as STATE of the node (a setter that lives between calls) was rejected: it would create a hidden dependence on the order of calls, and invariant 2 requires that state be touched only by the render thread and only on its own window.
 
-Компрессор SHALL принимать необязательный КЛЮЧЕВОЙ сигнал (сайдчейн): детектор считает
-огибающую по нему, а сжатие применяется к собственному входу узла. Закон сжатия, единицы
-и пределы параметров MUST NOT меняться — ключ меняет только ИСТОЧНИК ДЕТЕКТОРА. Без ключа
-узел SHALL считать ровно то же, что до этой работы, байт-в-байт (`GOLDEN_AUDIO`, t2/t3 без
-перегенерации), и MUST NOT платить за ветку ключа ни аллокацией, ни лишним проходом.
-Ключевой сигнал SHALL приходить узлу аргументом обработки в том же домене (f32 48 kHz/2ch)
-и на том же окне, что и его вход; своего состояния, своего фетчера и своей копии параметров
-у ключевой ветки MUST NOT быть — иначе у прибора появляется второе определение того, что он
-делает. Ключ ТИШЕ порога SHALL оставлять сигнал нетронутым (дакинг не «дышит» в паузах),
-ключ ГРОМЧЕ порога SHALL давать то же снижение, что дал бы этот же сигнал на собственном
-входе (одна формула, проверяемая сравнением двух прогонов).
-Второго вида эффекта для дакинга SHALL NOT существовать: «дакинг» — это компрессор, у
-которого назначен ключ, и показывается он тем же виджетом параметров.
-Почему: владелец Р.63 — «повсюду копятся бессмысленные копипасты одного и того же кода,
-когда можно… показать, что дакинг работает в программе, например, через два компрессора»;
-отраслевой прецедент — Track FX ducker в Resolve, где ducker питается сигналом дорожек
-диалога. Ключ как СОСТОЯНИЕ узла (сеттер, живущий между вызовами) отвергнут: он завёл бы
-скрытую зависимость от порядка вызовов, а инвариант 2 требует, чтобы состояние трогал
-только render-поток и только на своём окне.
-
-#### Scenario: Ключ управляет, вход сжимается
-- **WHEN** на вход компрессора подан ровный тон, а ключом — речь-образец с паузами; затем тот же прогон без ключа
-- **THEN** с ключом уровень выхода падает ровно в интервалах речи и возвращается в паузах (атака/возврат по своим параметрам), вне речи выход равен входу с точностью до makeup; без ключа результат байт-в-байт равен прежнему коду
+#### Scenario: The key controls, the input is compressed
+- **WHEN** a steady tone is fed to the compressor's input and a speech sample with pauses is fed as the key; then the same run without the key
+- **THEN** with the key the output level drops exactly during the speech intervals and returns during the pauses (attack/release by its own parameters); outside the speech the output equals the input up to makeup; without the key the result is byte-for-byte equal to the previous code
 - **TEST** t767 (`src/libs/kt-fx/tests/sidechain.rs`)
 
-#### Scenario: Нейтральность и цена
-- **WHEN** прогоняются golden-цепочки без единого ключа; затем цепочка с ключом при тишине в ключе
-- **THEN** `GOLDEN_AUDIO`, t2, t3, t322-каркас зелёные без перегенерации; при тишине в ключе выход равен входу (с точностью до makeup), аллокаций в обработке нет
+#### Scenario: Neutrality and cost
+- **WHEN** the golden chains are run without a single key; then a chain with a key during silence in the key
+- **THEN** `GOLDEN_AUDIO`, t2, t3, and the t322 harness are green without regeneration; with silence in the key the output equals the input (up to makeup), and there are no allocations in the processing
 - **TEST** t768 (`src/libs/kt-fx/tests/sidechain.rs`), t322 (`src/libs/kt-fx/tests/audio_registry.rs`)

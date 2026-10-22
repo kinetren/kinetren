@@ -1,44 +1,44 @@
-# Модель времени — почему так
+# Time model — why it is this way
 
-## Что было и у кого болело
+## What hurt and for whom
 
-Старый движок (C++ v1) держал время в миллисекундах и в частоте источника. Две
-последствия, которые стоили слышимых дефектов: warp-путь считал в sample-rate файла,
-и для 44.1 kHz каждые ~230 мс пропадал burst источника (периодические щелчки);
-ms-бакеты coverage не совпадали с границами кадров. Владелец требовал «никаких
-миллисекунд в формате».
+The old engine (C++ v1) kept time in milliseconds and in the source's frame rate. Two
+consequences cost audible defects: the warp path counted in the file's sample rate, and
+for 44.1 kHz every ~230 ms the source's burst dropped out (periodic clicks); the ms
+buckets of coverage did not match frame boundaries. The owner demanded "no milliseconds in
+the format".
 
-## Решения и почему
+## Decisions and why
 
-- **90 000 тиков в секунду.** Наименьшее удобное число, делящееся на 24, 25, 30, 60 и
-  на 48000/1024-шаг burst'а (1920). Отсюда тик↔сэмпл = 15/8 точно, кадр любой частоты —
-  целое число тиков. Float-время не накапливает ошибку, потому что его нет.
-- **Burst = 1024 кадра = 1920 тиков.** Размер выбран под кольцо cpal-колбэка и под
-  кэш (`kt-cache` ключует burst-индексом). Три константы связаны формулой; менять
-  одну — ломать взаимно-однозначность.
-- **Отрицательные тики валидны.** Индексация до нуля нужна лентам (ноль ленты — не
-  стена, capability `compositions`) и pre-roll'у seek'а; floor через `div_euclid`,
-  а не усечение.
-- **Тик — единица формата.** `.otio` хранит только тики (capability `project-format`).
+- **90 000 ticks per second.** The smallest convenient number divisible by 24, 25, 30, 60 and
+  by the 48000/1024 burst step (1920). Hence tick↔sample = 15/8 exactly, and a frame of any
+  rate is an integer number of ticks. Float time does not accumulate error, because there is none.
+- **Burst = 1024 frames = 1920 ticks.** The size was chosen for the cpal callback ring and for
+  the cache (`kt-cache` keys by burst index). The three constants are linked by a formula;
+  changing one breaks the one-to-one mapping.
+- **Negative ticks are valid.** Indexing down to zero is needed by reels (the zero of a reel is
+  not a wall, capability `compositions`) and by seek's pre-roll; the floor is taken via
+  `div_euclid`, not truncation.
+- **The tick is the format unit.** `.otio` stores only ticks (capability `project-format`).
 
-## Отвергнуто и почему
+## Rejected and why
 
-- Время в f64 секундах — отвергнуто: накопление ошибки на длинных таймлайнах и
-  недетерминизм между платформами (capability `video-plan`, инвариант детерминизма).
-- Миллисекунды как во v1 — отвергнуто: 1 мс не кратна ни кадру 24/30 fps, ни burst'у.
+- Time as f64 seconds — rejected: error accumulates on long timelines and results are
+  non-deterministic across platforms (capability `video-plan`, the determinism invariant).
+- Milliseconds as in v1 — rejected: 1 ms is a multiple of neither a 24/30 fps frame nor a burst.
 
-## Неочевидные детали
+## Non-obvious details
 
-- Кадры 48 kHz ↔ тики взаимно-точны ТОЛЬКО для кадров, кратных 8 (тиков, кратных 15):
-  `from_audio_frames(f).to_audio_frames() == f` ⇔ `f % 8 == 0`. Границы клипов живут
-  в тиках; `AudioRenderer` (`src/libs/kt-engine/src/audio.rs`) floor'ит их в кадры
-  один раз. Тест, задающий границы клипов в кадрах не кратными 8, получит шов, уехавший
-  на 1 сэмпл, — и это не дефект движка.
-- Playhead в UI живёт в АУДИОКАДРАХ, а не в тиках (capability `transport`): часы —
-  cpal-колбэк, и его квант — кадры.
-- `FpsGrid::new` паникует на fps, не делящем 90000, — намеренно: дробная сетка была
-  бы молчаливой ошибкой формата.
+- 48 kHz frames ↔ ticks are mutually exact ONLY for frame counts that are multiples of 8
+  (ticks that are multiples of 15): `from_audio_frames(f).to_audio_frames() == f` ⇔ `f % 8 == 0`.
+  Clip boundaries live in ticks; `AudioRenderer` (`src/libs/kt-engine/src/audio.rs`) floors
+  them into frames once. A test that sets clip boundaries in frames not multiples of 8 would get
+  a seam shifted by 1 sample — and that is not an engine defect.
+- The playhead in the UI lives in AUDIO FRAMES, not in ticks (capability `transport`): the clock
+  is the cpal callback, and its quantum is frames.
+- `FpsGrid::new` panics on an fps that does not divide 90000 — deliberately: a fractional grid
+  would be a silent format error.
 
-## Отложено
+## Deferred
 
-Нет.
+Nothing.

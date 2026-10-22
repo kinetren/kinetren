@@ -2,83 +2,76 @@
 
 ## Why
 
-Круг проверки стоит **21 минуту** на тёплом дереве 32-ядерной машины (замер на 5c7dc09,
-подробности в `docs/user-feedback.md`, Р.68): живые сценарии — 1012 с, `cargo test
---workspace` — 259 с, каскад сборки от правки в kt-model плюс сборка kt-app/kt-cli — ещё
-~100 с. Владелец дословно: «тесты в finish.sh или что-то типо того - очень долго
-выполняются, нужно что-то придумать».
+One verification cycle takes **21 minutes** on a warm tree of a 32-core machine (measured on 5c7dc09,
+details in `docs/user-feedback.md`, R.68): live scenarios — 1012 s, `cargo test
+--workspace` — 259 s, the build cascade from an edit in kt-model plus the build of kt-app/kt-cli — another
+~100 s. The owner, verbatim: "tests in finish.sh or something like that - take a very long time
+to run, we need to come up with something".
 
-Цена не в минутах, а в том, что дорогую проверку начинают обходить: правило «работа
-заканчивается `finish.sh`» существует именно потому, что владелец трижды получал
-непроверенную работу («ты не проверял» ×3). Проверка, которая стоит четверть часа, сама
-создаёт соблазн, от которого это правило защищает. При этом 85 % времени уходит не на
-проверки, а на механику: 50 холодных старта kt-app по 3-5 с, фиксированные паузы
-(`sleep 0.35` на клик, 0.65 с на КАЖДЫЙ набранный символ) вместо ожидания кадра, и строго
-последовательный прогон на машине, где заняты 7 ядер из 32.
+The cost is not in the minutes, but in the fact that the expensive check starts to be bypassed: the rule "the work ends with
+`finish.sh`" exists precisely because the owner three times received unverified work ("you didn't check" ×3). A check that takes a quarter of an hour
+itself creates the temptation against which this rule protects. Moreover, 85 % of the time goes not to
+checks, but to mechanics: 50 cold starts of kt-app at 3–5 s each, fixed pauses
+(`sleep 0.35` per click, 0.65 s for EACH typed character) instead of waiting for a frame, and a strictly
+sequential run on a machine where 7 of 32 cores are busy.
 
 ## What Changes
 
-- **`finish.sh` становится единственной точкой проверки и называет цену каждой стадии.**
-  Скрипт гоняет прогон тестов мастерской сам (сейчас это отдельная команда агента),
-  печатает время каждой стадии и итог, держит **бюджет 5 минут** (решение владельца) и
-  помечает стадию, вышедшую за свою долю бюджета. Стадия `cargo test -p kt-gpu` снимается
-  как покрытая прогоном мастерской; SIMD-стадии остаются — у них СВОЁ окружение
-  (`KT_REQUIRE_SIMD=1`, `KT_SIMD=0`), и стоят они две секунды на все четыре.
-- **Живой стенд: один kt-app на работника, проекты открываются подряд.** Программа
-  получает тестовый канал готовности (расширение существующего `KT_GEOM_DUMP`): «открой
-  проект, сбрось рабочее место, доложи о готовности» и НОМЕР НАРИСОВАННОГО КАДРА. Каркас
-  `kt_live.py` ждёт кадр, а не спит фиксированно. Сценарии, которые проверяют САМ старт
-  (восстановление после SIGKILL, вопрос о несохранённом, замок проекта, импорт старого
-  файла), объявляют «свой процесс» и получают его.
-- **Живые сценарии гоняются в несколько работников** (решение владельца, пересмотр правила
-  Р.59 §468): у каждого свой Xvfb, своё `XDG_DATA_HOME` и урезанное число потоков
-  софт-рендера; число работников ограничено по ядрам; красный сценарий автоматически
-  перегоняется ОДИН в одиночку, и только второй красный считается красным.
-- **Линкер мастерской — mold** (прямая просьба владельца; в системе уже стоит 2.30.0).
-  Профили `release`/`dist` и инвариант №10 («ldd без libav*») не меняются.
-- **Ревизия набора живых проверок без ослабления** (решение владельца: «часть тестов
-  вынести в non-gui… прокликивать сложные моменты или те которые не прокликали ни разу»).
-  Появляется машинный отчёт «что живьём ни разу не трогали» (поля и окна из реестра
-  `WINDOWS` и geom-дампа против того, что кликают сценарии). Простая повторяющаяся масса
-  уезжает в harness/модельные тесты с сохранением строк `TEST` в спеках; мышью остаются
-  сложные места и непрокликанное. Ни один сценарий спеки не исчезает молча: у каждого
-  переехавшего — новый адрес теста в той же строке спеки.
-- **Бюджет держится тестом, а не памятью агента**: сторож проверяет, что скрипт печатает
-  время стадий и итог и что бюджет объявлен; отчёт о работе несёт эти числа.
+- **`finish.sh` becomes the single point of verification and names the price of each stage.**
+  The script runs the workspace test run itself (now it is a separate command of the agent),
+  prints the time of each stage and the total, keeps a **5-minute budget** (the owner's decision), and
+  flags a stage that exceeded its share of the budget. The `cargo test -p kt-gpu` stage is removed
+  as covered by the workspace run; the SIMD stages remain — they have THEIR OWN environment
+  (`KT_REQUIRE_SIMD=1`, `KT_SIMD=0`), and they take two seconds for all four.
+- **The live stand: one kt-app per worker, projects are opened one after another.** The program
+  gets a test readiness channel (an extension of the existing `KT_GEOM_DUMP`): "open a
+  project, reset the workplace, report readiness" and the NUMBER OF THE DRAWN FRAME. The frame `kt_live.py`
+  waits for the frame, not a fixed sleep. Scenarios that check the START itself (recovery after SIGKILL, the question about unsaved work, the project lock, importing an old
+  file) declare "their own process" and get it.
+- **Live scenarios run in several workers** (the owner's decision, a revision of the rule
+  R.59 §468): each has its own Xvfb, its own `XDG_DATA_HOME` and a reduced number of software-rendering
+  threads; the number of workers is limited by cores; a red scenario is automatically
+  re-run ALONE, and only a second red counts as red.
+- **The workspace linker — mold** (a direct request of the owner; 2.30.0 is already installed on the system).
+  The `release`/`dist` profiles and invariant No. 10 ("ldd without libav*") do not change.
+- **A revision of the live checks set without weakening it** (the owner's decision: "move some of the tests
+  to non-gui… click through the complex moments or those that were never clicked even once").
+  A machine report "what was never touched live" appears (the fields and windows from the registry
+  `WINDOWS` and the geom dump compared with what the scenarios click). The simple repetitive mass
+  moves to the harness/model tests with the `TEST` lines in the specs preserved; the mouse stays on
+  the complex places and the never-clicked ones. Not a single spec scenario disappears silently: each moved one gets a new test address on the same spec line.
+- **The budget is held by a test, not by the agent's memory**: a guard checks that the script prints
+  the stage times and the total, and that the budget is declared; the work report carries these numbers.
 
-Не входит: сокращение самого набора проверок (владелец выбрал «только механика, набор не
-трогать»), правка `release`/`dist`-профилей, и разбор двух красных сценариев `fxfield` и
-`fxpicker`, найденных при замере (отдельная работа, отмечено в `docs/user-feedback.md`).
+Not included: reducing the set of checks itself (the owner chose "only the mechanics, don't touch the set"), editing the `release`/`dist` profiles, and analysis of the two red scenarios `fxfield` and
+`fxpicker`, found during the measurement (separate work, noted in `docs/user-feedback.md`).
 
 ## Capabilities
 
 ### New Capabilities
 
-(нет — машинерия проверки уже описана требованиями `durability` и `ui-reach`)
+(none — the verification machinery is already described by the requirements of `durability` and `ui-reach`)
 
 ### Modified Capabilities
 
-- `durability`: требование «Работа заканчивается `finish.sh`, а доказательство — живой
-  сценарий» — снимается запрет «живые сценарии не гоняются в два потока» (заменяется
-  ограниченной параллелью с автоперезапуском красного в одиночку), добавляется бюджет
-  времени, печать цены каждой стадии и правило «прогон мастерской — стадия того же
-  скрипта»; стадия kt-gpu снимается как покрытая.
-- `ui-reach`: требование «Тест утверждает наблюдаемое следствие из точки, откуда действует
-  человек; на каждый пункт — живой сценарий» — появляется КРИТЕРИЙ, что проверяется живьём
-  (сложное и ни разу не прокликанное) и что уезжает в headless, машинный отчёт живого
-  покрытия, и правило живого стенда (переиспользуемый процесс против «своего процесса» у
-  сценариев старта).
+- `durability`: the requirement "The work ends with `finish.sh`, and the proof is a live scenario" — the ban "live scenarios are not run in two threads" is removed (replaced by
+  bounded parallelism with an automatic single re-run of the red), a time budget is added, printing the price of each stage and the rule "the workspace run is a stage of the same
+  script"; the kt-gpu stage is removed as covered.
+- `ui-reach`: the requirement "A test asserts an observable consequence from the point where the person acts; for each item — a live scenario" — a CRITERION appears for what is checked live
+  (the complex and never-clicked) and what moves to headless, a machine report of live
+  coverage, and the rule of the live stand (a reused process versus "its own process" for the startup
+  scenarios).
 
 ## Impact
 
-- `src/scripts/finish.sh` — стадии, их хронометраж, бюджет, снятая стадия kt-gpu.
-- `src/scripts/live-check.sh` — работники, свои экраны и хранилища, перезапуск красного.
-- `src/scripts/live/kt_live.py` и 50 сценариев в `src/scripts/live/` — ожидание кадра
-  вместо пауз, объявление «свой процесс» у сценариев старта.
-- `src/apps/kt-app` — тестовый канал готовности и номер кадра рядом с `KT_GEOM_DUMP`
-  (под переменной окружения, в продукте мёртв).
-- `src/.cargo/config.toml` (новый файл) — mold для хозяйской платформы.
-- Новый сторож живого покрытия в `src/scripts/`, новые тесты от **t800**.
+- `src/scripts/finish.sh` — the stages, their timing, the budget, the removed kt-gpu stage.
+- `src/scripts/live-check.sh` — workers, their own screens and storages, the re-run of the red.
+- `src/scripts/live/kt_live.py` and 50 scenarios in `src/scripts/live/` — waiting for a frame
+  instead of pauses, declaring "its own process" for the startup scenarios.
+- `src/apps/kt-app` — the test readiness channel and the frame number next to `KT_GEOM_DUMP`
+  (under an environment variable, dead in the product).
+- `src/.cargo/config.toml` (a new file) — mold for the host platform.
+- A new live coverage guard in `src/scripts/`, new tests from **t800**.
 - `openspec/specs/durability/{spec,design}.md`, `openspec/specs/ui-reach/{spec,design}.md`.
-- Тесты, переехавшие из живых сценариев в harness/модель: адреса в строках `TEST`
-  затронутых capability.
+- Tests moved from live scenarios into the harness/model: the addresses in the `TEST` lines of the
+  affected capabilities.

@@ -1,273 +1,265 @@
-# Интерфейс таймлайна — почему так
+# Timeline interface — why it is like this
 
-## Что было и у кого болело
+## What hurt and for whom
 
-Интерфейс «компилировался и рисовался», но им нельзя было пользоваться, и
-владелец пять раундов подряд присылал замечания про одни и те же подходы
-(«UI/UX делается ДЛЯ ПОЛЬЗОВАТЕЛЯ, ты же делаешь непойми для кого»). Конкретные
-боли, из которых выросли правила: система грелась на 60 fps в простое из-за
-«горящих» метров; видео показывало ровно 24 кадра/с при любом качестве, потому
-что playhead двигался квантами аудио-колбэка; превью «пропадало вникуда» —
-панель раздувалась контентом; ширина медиа-бина ужималась «по аналогии» три
-раунда подряд; подсказки кнопок исчезли, потому что статусбар читал их раньше,
-чем их писали; фейдер улетал на 400 dB («по ушам больно»); квадраты-заглушки
-вместо значков; кнопка «Вперёд» молча застревала; значение, набранное в поле
-FX, «скидывалось на предыдущее»; фоновый автосейв перетирал свежий Ctrl+S.
-Отдельная категория — «ты не проверял»: предел метров был зелёным в тесте, а
-пользователь запускал `target/debug/kt-app`, который `cargo test` не
-пересобирает.
+The interface "compiled and drew", but it could not be used, and
+the owner for five rounds in a row sent remarks about the same approaches
+("UI/UX is made FOR THE USER, yet you make it for who-knows-whom"). The concrete
+pains from which the rules grew: the system heated up at 60 fps while idle because of "burning"
+meters; the video showed exactly 24 frames/s at any quality, because
+the playhead moved in quanta of the audio callback; the preview "disappeared without trace" —
+the panel swelled with content; the width of the media bin was squeezed "by analogy" for three
+rounds in a row; the button hints vanished because the status bar read them before
+they were written; the fader flew to 400 dB ("painful to the ears"); square stubs
+instead of icons; the "Forward" button silently got stuck; a value typed into the
+FX field "reverted to the previous one"; the background autosave overwrote a fresh Ctrl+S.
+A separate category — "you did not check": the meters' limit was green in a test, while the
+user ran `target/debug/kt-app`, which `cargo test` does not
+rebuild.
 
-## Решения и почему
+## Decisions and why
 
-- **Repaint = движение, ключ превью по сетке fps, меши вместо примитивов,
-  троттлинг по epoch.** Это инвариант 12 корневого CLAUDE.md: UI не имеет права
-  греть систему. Любое новое анимируемое состояние обязано сходиться; сырой тик
-  как ключ превью запрещён.
-- **Часы показа интерполируются** между шагами мастер-часов (capability
-  `transport`): аудио остаётся мастером, показ — вычисляется. Сырую задержку
-  вывода сглаживают, ключ клампят монотонно.
-- **Чек-лист UI/UX — часть которого роняет сборку.** Проза не сработала: правила
-  1, 7, 17 были записаны и нарушены дословно, поэтому появились сторожа
-  capability `ui-reach` (нет осиротевших команд, полный набор глаголов у каждой
-  сущности, клик достигает цели, имя усекается). Остальные пункты — прозой, но
-  «пункт без пометки „закрыт тестом“ — заявка на тест».
-- **Пределы по просьбе владельца не двигаются**: 420 px левая колонка, 90 px
-  метры, 640×640 окно, вертикальные 30/84/16/120, высота полосы скорости 20 px.
-  Рядом с пределом — комментарий «поставлено по п.N раунда M»; перед изменением —
+- **Repaint = movement, the preview key on the fps grid, meshes instead of primitives,
+  throttling by epoch.** This is invariant 12 of the root CLAUDE.md: the UI has no right
+  to heat up the system. Any new animated state MUST converge; a raw tick
+  as the preview key is forbidden.
+- **The display clock is interpolated** between the steps of the master clock (capability
+  `transport`): audio remains the master, the display is computed. The raw output
+  latency is smoothed, the key is clamped monotonically.
+- **The UI/UX checklist — part of which breaks the build.** Prose did not work: rules
+  1, 7, 17 were written down and violated word for word, therefore the guards of the
+  capability `ui-reach` appeared (no orphaned commands, a full set of verbs for each
+  entity, a click reaches the target, a name is truncated). The remaining items — in prose, but
+  "an item without the mark 'closed by a test' is a claim for a test".
+- **Limits are not moved at the owner's request**: a 420 px left column, 90 px
+  meters, a 640×640 window, vertical 30/84/16/120, a speed strip height of 20 px.
+  Next to a limit — the comment "set per item N of round M"; before a change —
   `git log -S`.
-- **«Замечание — класс проблем, но не ужать всё подряд».** Обобщать можно на
-  однотипные ДЕФЕКТЫ (все иконки, все подсказки), но не на настройки, о которых
-  не просили — предел бина срезали «по аналогии» с метрами и сломали работу в
-  третий раз.
-- **Не тратить место впустую.** Имя метки — на строке подписей времени, имя
-  группы — в разрыве рамки, имя дорожки — ярлыком под именем клипа, имя вида
-  перехода — в окне перехода, сила морфера — ломаной внутри блока. Полоса ради
-  редкой подписи — дефект.
-- **Одна подсказка в одном месте** (правый низ статусбара), без всплывающих
-  инструкций; всё, что наполняется в кадре, рисуется в конце кадра отдельным
-  слоем.
-- **Содержимое ≠ удобство.** Два флага грязности, ни одного третьего; порядок
-  строк переехал в содержимое, потому что морфер-слой действует «на всё ниже» и
-  расположение дорожек меняет картинку.
-- **Все правки модели — через обёртки приложения.** На ревизии модели висят гейт
-  автосейва и кэши кадра; живые пути шлют команду только при реальном изменении.
-  Регион и loop движок из проекта не читает — правка региона не пересобирает
-  рендереры.
-- **Один виджет на один смысл.** Строка параметра по спеке модели, одна полоса
-  цепочки, один виджет автоматизации, одна сетка параметров у перехода и камеры
-  (трейт параметров в kt-model), один помощник усечения, один сток подсказок.
-  Разнобой диапазонов Gain между окнами — прямое следствие «каждое окно рисует
-  само».
-- **Превью события считает ту же карту, что рендер** (capability `video-plan`):
-  формула «тик события → материал» живёт в движке и в одной функции kt-app; своей
-  в UI не заводить — то же правило, что у геометрии таймлайна.
-- **Тумбы и пики не порождают декода от скролла/зума** (инвариант 8): sidecar-БД,
-  peak-пирамида, негативные кэши, LRU источников. Всё, что может не получиться у
-  воркера, публикует неудачу — иначе UI перезаказывает каждый кадр.
-- **Локализация — каталоги, английские литералы, глифы проверяются тестом.**
-  Правило про непечатные символы без теста не работало (два квадрата у
-  пользователя), поэтому сканер литералов стал тестом; сабсеты Noto собираются
-  скриптом по каталогам, а не рукой.
-- **Тест утверждает следствие и щупает оттуда, откуда действует человек.**
-  Механизм Р.38 был зелёным на программе, где три его пункта не работали: тесты
-  проверяли достижимость сделанного, а не следствие, и жали в заголовок строки,
-  куда сам агент положил пункт меню. Живой сценарий на пункт — условие закрытия.
-- **О скорости судят по релизу.** Dev-профиль получил `opt-level = 1` (glob
-  `package."*"` покрывал только зависимости), но замер темпа — только
-  `kt-cli probe --time` на релизной сборке.
+- **"A remark is a class of problems, but do not squeeze everything in a row."** One may generalise to
+  homogeneous DEFECTS (all icons, all hints), but not to settings nobody asked about — the bin's limit was trimmed "by analogy" with the meters, and broke the work for the third time.
+- **Do not waste space.** The name of a label — on the time caption row, the name of a
+  group — in the gap of the frame, the name of a track — as a tag under the clip's name, the name of the
+  transition kind — in the transition window, the morpher's strength — as a polyline inside the block. A strip for the sake of a
+  rare caption is a defect.
+- **One hint in one place** (bottom right of the status bar), without pop-up
+  instructions; everything that is filled in the frame is drawn at the end of the frame as a separate
+  layer.
+- **Content ≠ convenience.** Two dirty flags, not a third; the order of the
+  rows was moved into the content, because a morpher layer acts "on everything below" and the
+  arrangement of tracks changes the picture.
+- **All model edits go through the application's wrappers.** On the model's revision hang the
+  autosave gate and the frame caches; live paths send a command only on a real change.
+  The region and loop are not read by the engine from the project — editing the region does not rebuild
+  the renderers.
+- **One widget for one meaning.** The parameter row per the model's spec, one chain strip, one
+  automation widget, one parameter grid for the transition and the camera
+  (the parameters trait in kt-model), one truncation helper, one hint sink.
+  The disarray of Gain ranges between windows is a direct consequence of "each window draws
+  for itself".
+- **The event's preview computes the same map as the render** (capability `video-plan`):
+  the formula "event tick → material" lives in the engine and in one function of kt-app; do not
+  set up one's own in the UI — the same rule as for the timeline's geometry.
+- **Thumbnails and peaks do not produce decode from scrolling/zooming** (invariant 8): sidecar DB,
+  peak pyramid, negative caches, LRU of sources. Anything that may fail for a worker publishes the failure — otherwise the UI re-requests every frame.
+- **Localisation — catalogs, English literals, glyphs are checked by a test.**
+  The rule about non-printable characters did not work without a test (two squares for the
+  user), so the literal scanner became a test; the Noto subsets are assembled by
+  a script from the catalogs, not by hand.
+- **The test asserts the consequence and probes from where the person acts.**
+  The R.38 mechanism was green on a program where three of its items did not work: the tests
+  checked the reachability of what was made, not the consequence, and pressed into the row's header,
+  where the agent himself had put the menu item. A live scenario per item is the condition for closing it.
+- **Speed is judged by the release build.** The dev profile got `opt-level = 1` (the glob
+  `package."*"` covered only the dependencies), but the measurement of pace — only
+  `kt-cli probe --time` on a release build.
 
-## Отвергнуто и почему
+## Rejected and why
 
-- **Гейт «только на паузе» для окна ввода, поиска, меток** — отвергнут: плеер
-  умеет seek на ходу, гейт ставится лишь когда без него ломается инвариант
-  движка, а не «чтобы не думать».
-- **Чекбоксы и очевидные надписи («зум:», «FPS:», «(loop)»)** — отвергнуты по
-  прямому требованию: режимы — иконкой, состояние — подсветкой кнопки.
-- **Стандартный `TextEdit`/`Slider` посреди фирменного тулбара** — отвергнут
-  («нельзя тупо херачить туда inputfield»): ввод рисуется в том же
-  прямоугольнике и шрифте, что заменяемое значение (маска тайм-кода, поле
-  скорости).
-- **Второй выключатель «видео-варп» отдельным полем** — отвергнут: галка слота в
-  полосе цепочки уже есть и включена по умолчанию; второй выключатель того же
-  смысла нарушает правило «ничего лишнего».
-- **Умная логика, «доправляющая» соседей за пользователя** — отвергнута
-  («НИЧЕГО НИГДЕ НЕ ДОЛЖНО ОТРАСТАТЬ/ОТРУБАТЬСЯ»): редактирование меняет ровно то,
-  за что тянули; повторный жест по переходу правит только офсеты.
-- **Явная схема интегрирования для анимаций** — отвергнута: `stable_dt` после
-  простоя до 250 мс, схема расходится; только аналитика/EMA.
-- **Собственные формулы геометрии («offset(kind)+lane», деление на высоту
-  строки) вне кэша геометрии** — отвергнуты: врут на смешанных высотах строк.
-- **Посимвольный `reorder_line` для арабского** — отвергнут: harfrust
-  разворачивает прогон второй раз, формы букв считаются на развёрнутой
-  последовательности; переупорядочиваются слова.
-- **Синхронная запись проекта из `App::save`** — отвергнута: роняла FPS в ноль
-  раз в 30 с; сохранение — фоновым потоком со сторожем ревизии.
-- **Подделка таймера автосейва изнутри для живых сценариев** — отвергнута: это
-  была бы не та программа, которую запускает пользователь; есть
-  `KT_AUTOSAVE_SECS`.
-- **Множественное число в каталогах** — отвергнуто: «существительное: N»
-  снимает таблицы плюральных форм для пяти языков.
+- **A gate "only while paused" for the input window, the search, the labels** — rejected: the player
+  can seek on the fly; a gate is set only when without it an engine invariant breaks,
+  not "so as not to think".
+- **Checkboxes and obvious captions ("zoom:", "FPS:", "(loop)")** — rejected by
+  direct requirement: modes are shown by an icon, state by highlighting the button.
+- **A standard `TextEdit`/`Slider` in the middle of the branded toolbar** — rejected
+  ("you can't just bang an inputfield in there"): the input is drawn in the same
+  rectangle and font as the value it replaces (the timecode mask, the speed field).
+- **A second "video warp" toggle as a separate field** — rejected: the slot's checkbox in the
+  chain strip already exists and is on by default; a second toggle of the same meaning breaks the rule "nothing superfluous".
+- **Smart logic that "corrects" neighbours on the user's behalf** — rejected
+  ("NOTHING ANYWHERE SHOULD GROW OR BE SWITCHED OFF"): an edit changes exactly what was pulled;
+  a repeated gesture on a transition adjusts only the offsets.
+- **An explicit integration scheme for animations** — rejected: `stable_dt` after
+  an idle period of up to 250 ms, the scheme diverges; only analytic/EMA.
+- **Own geometry formulas ("offset(kind)+lane", division by the row height) outside the geometry cache** — rejected: they lie on mixed row heights.
+- **A per-character `reorder_line` for Arabic** — rejected: harfrust
+  reverses the run a second time, the letter forms are computed on the reversed
+  sequence; words are reordered instead.
+- **A synchronous project write from `App::save`** — rejected: it dropped the FPS to zero
+  once every 30 s; saving is done by a background thread with a revision guard.
+- **Forging the autosave timer from inside for live scenarios** — rejected: it would not be the
+  program the user runs; there is `KT_AUTOSAVE_SECS`.
+- **Plural forms in the catalogs** — rejected: "noun: N"
+  would require tables of plural forms for five languages.
 
-## Неочевидные детали
+## Non-obvious details
 
-- **Активность метра — «бары движутся», а не «горят».** Условие «выше минимума»
-  залипало после первого звука; замер под курсором держится только пока курсор
-  двигают (`src/apps/kt-app/src/meters.rs`, `MeterState::is_active`, `tick`,
-  `meter_holds_level`). Ряды свечения стоят на фиксированных dB-стопах, альфа —
-  `glow_row_alpha` от собственного dB ряда.
-- **Ключ кадра превью выровнен по сетке**: `preview_key_tick`
-  (`src/apps/kt-app/src/app.rs`); позиция показа — `Player::video_playhead`
-  с `latency_smooth` (`src/libs/kt-engine/src/player.rs`); буфер композиции
-  переиспользуется `compose_preview_into`.
-- **Порядок слоёв метров — часть вида**: подложка → свечение → сегменты → блик.
-  Перестановка подложки поверх свечения убила «настоящий» вид на два раунда;
-  симптом «погашенная шкала горит» был хвостом градиента, а не заливкой
+- **The activity of a meter is "the bars move", not "they burn".** The condition "above the minimum"
+  stuck after the first sound; the measurement under the cursor holds only while the cursor
+  is moved (`src/apps/kt-app/src/meters.rs`, `MeterState::is_active`, `tick`,
+  `meter_holds_level`). The glow rows sit on fixed dB stops; the alpha is
+  `glow_row_alpha` from its own dB row.
+- **The preview's frame key is aligned to the grid**: `preview_key_tick`
+  (`src/apps/kt-app/src/app.rs`); the display position is `Player::video_playhead`
+  with `latency_smooth` (`src/libs/kt-engine/src/player.rs`); the composition buffer
+  is reused by `compose_preview_into`.
+- **The order of the meter layers is part of the look**: underlay → glow → segments → highlight.
+  Moving the underlay over the glow killed the "real" look for two rounds;
+  the symptom "the faded scale glows" was the tail of a gradient, not the fill
   (`src/apps/kt-app/src/meters.rs`, `t40_glow_layout`).
-- **Сепаратор живёт у ФАКТИЧЕСКОГО края панели** (`PanelState::outer_rect`), а не
-  у запрошенной ширины: панель egui 0.36 растёт под контент
-  (`src/apps/kt-app/src/layout_tests.rs`, хелпер фактического прямоугольника).
-- **Зона ресайза — не виджет**: указатель читается в конце кадра, `BeginResize`
-  уходит на самом нажатии (виджет проигрывал hit-test, а `drag_started` наступал
-  после 6 px — уже вне 4-px зоны); два радиуса 8/16 px
-  (`src/apps/kt-app/src/app.rs`, `resize_zone`). Всё в 16 px от края — в
+- **The separator lives at the ACTUAL edge of the panel** (`PanelState::outer_rect`), not at the
+  requested width: the egui 0.36 panel grows to fit its content
+  (`src/apps/kt-app/src/layout_tests.rs`, helper of the actual rectangle).
+- **The resize zone is not a widget**: the pointer is read at the end of the frame, `BeginResize`
+  is sent at the press itself (the widget lost the hit test, and `drag_started` came
+  after 6 px — already outside the 4-px zone); two radii 8/16 px
+  (`src/apps/kt-app/src/app.rs`, `resize_zone`). Everything within 16 px of the edge is in
   `no_resize_rects` (`src/apps/kt-app/src/toolbar.rs`).
-- **X11 `_NET_WM_MOVERESIZE` съедает ButtonReleased**: после каждого
+- **X11 `_NET_WM_MOVERESIZE` swallows ButtonReleased**: after every
   `StartDrag`/`BeginResize` — `release_pointer_after_wm_grab`
-  (`src/apps/kt-app/src/app.rs`); гейты колеса — `contains_pointer()` +
-  `hover_pos()` из input, не `response.hover_pos()`.
-- **Корневой `Ui` eframe обрамлён 8 px** — рисуем на полном `content_rect`
-  (`src/apps/kt-app/src/app.rs`), иначе «отступ метров справа».
-- **Подсказка рисуется последней в кадре** `Area(Foreground).interactable(false)`
-  — иначе слой крадёт драг окна; тест читает `status_line_shown`, а не поле
-  (`src/apps/kt-app/src/app.rs`, `status_line`). Внутри `Window::show` нет
-  `&mut KtApp` — виджеты кладут подсказку в `hint_sink`
-  (`src/apps/kt-app/src/widgets.rs`), тот же приём у `field_probe`.
-- **`ui.max_rect()` внутри `ScrollArea` — вьюпорт в координатах содержимого**:
-  решения «курсор вышел» — по `clip_rect()`. Колесо у `ScrollArea` глушится на
-  время любого драга — программный скролл через
+  (`src/apps/kt-app/src/app.rs`); the wheel gates are `contains_pointer()` +
+  `hover_pos()` from input, not `response.hover_pos()`.
+- **The eframe root `Ui` is framed by 8 px** — we draw on the full `content_rect`
+  (`src/apps/kt-app/src/app.rs`), otherwise "the meters' indent on the right".
+- **The hint is drawn last in the frame** `Area(Foreground).interactable(false)`
+  — otherwise the layer steals the window's drag; the test reads `status_line_shown`, not the field
+  (`src/apps/kt-app/src/app.rs`, `status_line`). Inside `Window::show` there is no
+  `&mut KtApp` — the widgets put the hint into `hint_sink`
+  (`src/apps/kt-app/src/widgets.rs`), the same device for `field_probe`.
+- **`ui.max_rect()` inside a `ScrollArea` is the viewport in the content's coordinates**:
+  decisions "the cursor has left" are made by `clip_rect()`. The wheel of a `ScrollArea` is muted for the
+  duration of any drag — programmatic scrolling through
   `scroll_with_delta_animation(…, none())` + `request_repaint`
   (`src/apps/kt-app/src/bin_panel.rs`, `bin_edge_scroll`).
-- **`key_pressed` включает автоповтор**: удержание пробела читается событием
-  `repeat:false`, решение — на отпускании; разгон — аналитическая экспонента
-  `space_boost_step`, гистерезис отправки 2 % ОТ БАЗЫ, не абсолютный
+- **`key_pressed` enables auto-repeat**: holding the space bar is read as the event
+  `repeat:false`, the decision is made on release; the acceleration is the analytic exponential
+  `space_boost_step`, the hysteresis of sending is 2 % OF THE BASE, not absolute
   (`src/apps/kt-app/src/app.rs`).
-- **Playhead в аудиокадрах**: навигация «правее» — по `Tick::align_audio_up`,
-  «конец» учитывает метки и регион (`src/apps/kt-app/src/app.rs`, `nav_jump`,
+- **The playhead in audio frames**: navigation "to the right" — by `Tick::align_audio_up`,
+  "the end" accounts for the markers and the region (`src/apps/kt-app/src/app.rs`, `nav_jump`,
   `t82_stop_points_and_jumps`).
-- **Геометрия строк**: `TlGeom` с `row_height`, префиксными суммами,
+- **Row geometry**: `TlGeom` with `row_height`, prefix sums,
   `row_at_y_unbounded`, `lane_y`, `anchor_at` (`src/apps/kt-app/src/timeline.rs`);
-  `KT_GEOM_DUMP` отдаёт у каждой строки своё `h`, `lane_h` в корне — базовая.
-- **Магнит**: кандидат «без снапа» не участвует в сравнении, link-группа
-  исключена из целей, линия возвращается вместе с результатом (`snap_move`,
+  `KT_GEOM_DUMP` gives each row its own `h`, `lane_h` at the root — the base.
+- **Magnet**: a candidate "without snap" does not take part in the comparison, the link group
+  is excluded from the targets, the line is returned together with the result (`snap_move`,
   `src/apps/kt-app/src/timeline.rs`).
-- **Наезд классифицирует `plan_move`**; жесты разрыва идут через
-  `apply_batch_restoring` — возврат ручек умерших кроссфейдов тем же undo-шагом;
-  reconcile переходов — один раз на батч (`src/apps/kt-app/src/app.rs`,
+- **Overlap is classified by `plan_move`**; the gestures of a break go through
+  `apply_batch_restoring` — the return of the handles of the dead crossfades by the same undo step;
+  the reconcile of transitions — once per batch (`src/apps/kt-app/src/app.rs`,
   `src/apps/kt-app/src/timeline.rs`).
-- **Верхняя полоса**: `top_strip_h`, хват ручек `fade_grab_for_width` (треть
-  ширины, середина свободна), уровень `clip_level`/`gain_to_level`
-  (`src/apps/kt-app/src/timeline.rs`); уголок приоритетнее окна перехода в
-  полосе — иначе задвинутый фейд не снять.
-- **Превью материала при жестах**: `preview_src_shift` — трим начала → дельта
-  края, всё остальное → 0 (`src/apps/kt-app/src/timeline.rs`).
-- **Препятствие живёт один кадр**: `KtApp.blocked`, `block_view` решает
-  видимость (`src/apps/kt-app/src/timeline.rs`, `src/apps/kt-app/src/app.rs`).
-- **Рамка только с пустого места**: Ctrl на событии снимает магнит — два жеста
-  делят зону нажатия, а не модификатор; попадание — `rubber_hits`, упор пачки —
-  `plan_move_block`, `DragState.extra` пустой = прежний одиночный драг
+- **The top strip**: `top_strip_h`, the grab of the handles `fade_grab_for_width` (a third
+  of the width, the middle is free), the level `clip_level`/`gain_to_level`
+  (`src/apps/kt-app/src/timeline.rs`); the corner takes priority over the transition window in the
+  strip — otherwise a pushed-in fade cannot be removed.
+- **The preview of the material during gestures**: `preview_src_shift` — the trim of the start → the delta
+  of the edge, everything else → 0 (`src/apps/kt-app/src/timeline.rs`).
+- **The obstacle lives one frame**: `KtApp.blocked`, `block_view` decides
+  visibility (`src/apps/kt-app/src/timeline.rs`, `src/apps/kt-app/src/app.rs`).
+- **The frame only from an empty place**: Ctrl on an event removes the magnet — two gestures
+  share the press zone, not a modifier; the hit — `rubber_hits`, the stop of the batch —
+  `plan_move_block`, `DragState.extra` empty = the former single drag
   (`src/apps/kt-app/src/timeline.rs`).
-- **Двойные клики**: одно тело `region_from_event`, `marker_here`
-  (`src/apps/kt-app/src/app.rs`); выбор метки — `pick_range_marker`
+- **Double clicks**: one body `region_from_event`, `marker_here`
+  (`src/apps/kt-app/src/app.rs`); the choice of a marker — `pick_range_marker`
   (`src/apps/kt-app/src/timeline.rs`).
-- **Обёртки правок** `apply`/`apply_batch`/`apply_coalesced` бампают `model_rev`
-  и зовут `sync_media_sources`; `on_region_changed` НЕ зовёт `set_project`;
-  запись — только `write_project_guarded` (`src/apps/kt-app/src/app.rs`).
-- **Поля и цепочки**: `param_row`/`params_grid`, `chain_strip`, `elided_name`,
-  `param_value` (проценты — только там) — `src/apps/kt-app/src/widgets.rs`;
-  правка при живой кривой возвращает `ParamsChanged { base, curve }` — база →
-  `SetFx`, кривая → `SetFxAuto` (`src/apps/kt-app/src/fx_editor.rs`); эталон —
-  единый флаг морфера (`src/apps/kt-app/src/morpher_editor.rs`, `merge_chains`).
-- **Виджет автоматизации**: шкала по ключам, окно замораживается на драге
-  (`AutoView.drag_win`), сортировка времени на отпускании (`AutoView.t_edit`),
-  перевод материал ↔ таймлайн только `kt_model::clip_material_at`/
+- **The edit wrappers** `apply`/`apply_batch`/`apply_coalesced` bump `model_rev`
+  and call `sync_media_sources`; `on_region_changed` does NOT call `set_project`;
+  writing — only `write_project_guarded` (`src/apps/kt-app/src/app.rs`).
+- **Fields and chains**: `param_row`/`params_grid`, `chain_strip`, `elided_name`,
+  `param_value` (percentages — only there) — `src/apps/kt-app/src/widgets.rs`;
+  an edit with a live curve returns `ParamsChanged { base, curve }` — the base →
+  `SetFx`, the curve → `SetFxAuto` (`src/apps/kt-app/src/fx_editor.rs`); the reference — the
+  single flag of the morpher (`src/apps/kt-app/src/morpher_editor.rs`, `merge_chains`).
+- **The automation widget**: the scale by keys, the window is frozen on a drag
+  (`AutoView.drag_win`), the time sort on release (`AutoView.t_edit`),
+  the conversion material ↔ timeline only via `kt_model::clip_material_at`/
   `clip_timeline_at` (`src/apps/kt-app/src/automation.rs`).
-- **У `DragValue` нет узла доступности** — координата поля берётся из настоящей
-  вёрстки, подпись параметра встречается дважды, нужна верхняя
+- **`DragValue` has no accessibility node** — the field's coordinate is taken from the real
+  layout, the parameter's caption occurs twice, the top one is needed
   (`src/apps/kt-app/src/layout_tests.rs`, `t281`).
-- **Окно, растущее от ввода, ломает координаты теста** — кнопки щупать после
-  перерисовки (`src/apps/kt-app/src/layout_tests.rs`, `t345`).
-- **Тумбы**: ключ `thumbnails` — точный PK, «ближайший» — через
-  `thumbnail_near`, `ThumbKey` не расширять; одна карта `thumbs::material_at`/
-  `material_key_t` (`src/apps/kt-app/src/thumbs.rs`); карта варпа в кэше по паре
-  (ревизия, число клипов) — модель подменяется без бампа при открытии проекта
-  (`warp_maps`, `src/apps/kt-app/src/app.rs`); постер — `frame_score`.
-- **Заглушка**: `open_source_indexed` строгая, подставляет
+- **A window that grows from input breaks the test's coordinates** — the buttons are to be probed after
+  the redraw (`src/apps/kt-app/src/layout_tests.rs`, `t345`).
+- **Thumbnails**: the key `thumbnails` is an exact PK, "nearest" — through
+  `thumbnail_near`, `ThumbKey` is not to be extended; one map `thumbs::material_at`/
+  `material_key_t` (`src/apps/kt-app/src/thumbs.rs`); the warp map is cached by the pair
+  (revision, number of clips) — the model is swapped without a bump when a project is opened
+  (`warp_maps`, `src/apps/kt-app/src/app.rs`); the poster — `frame_score`.
+- **The placeholder**: `open_source_indexed` is strict, it is substituted by
   `open_source_or_placeholder` (`src/apps/kt-app/src/util.rs`); `replace_media`
-  обязан бампать версию проекта, иначе префетч в простое не заметит
+  must bump the project version, otherwise the prefetch at idle will not notice
   (`src/libs/kt-engine/src/player.rs`).
-- **Шрифты**: порядок в `install_fonts` (`src/apps/kt-app/src/icons.rs`) —
-  латиница за Ubuntu-Light, PUA за Phosphor, Noto последними: на этом стоит
-  предикат «атом арабского» в `src/apps/kt-app/src/i18n/bidi.rs` (`visual`).
-  Кодпоинт глифа Phosphor ищется по лигатурам GSUB.
-- **`#[cfg(test)]` посреди UI-файла обрезает сканеры** `font_tests::sources()`
-  (`src/apps/kt-app/src/font_tests.rs`): тестовый модуль — в самом конце файла,
-  с нулевым отступом.
-- **Полный путь ключа каталога**: t125 ищет `k::секция::КОНСТАНТА`, сокращённый
-  `use` прячет ключ (`src/apps/kt-app/src/i18n_tests.rs`); `Window::new(title)`
-  выводит id из заголовка — явный `.id()` у каждого окна.
-- **Итог рендера едет по каналу ЧИСЛАМИ**: язык лежит в TLS UI-потока, в фоне
-  всегда был бы английским (`src/apps/kt-app/src/render_dialog.rs`).
-- **Харнесс**: `harness_lang` ставит настоящие шрифты; `drop_at` кладёт
-  ButtonRelease и PointerGone, `step()` — кадр на событие, команды окна собирать
-  после явного отпускания; двойной клик — `with_step_dt(0.02)` и свой харнесс
+- **Fonts**: the order in `install_fonts` (`src/apps/kt-app/src/icons.rs`) —
+  Latin behind Ubuntu-Light, PUA behind Phosphor, Noto last: on this rests the predicate
+  "an Arabic atom" in `src/apps/kt-app/src/i18n/bidi.rs` (`visual`).
+  The codepoint of a Phosphor glyph is looked up through the GSUB ligatures.
+- **`#[cfg(test)]` in the middle of a UI file truncates the scanners** `font_tests::sources()`
+  (`src/apps/kt-app/src/font_tests.rs`): the test module goes at the very end of the file,
+  with zero indentation.
+- **The full path of a catalog key**: t125 looks for `k::section::CONSTANT`; an abbreviated
+  `use` hides the key (`src/apps/kt-app/src/i18n_tests.rs`); `Window::new(title)`
+  derives the id from the title — an explicit `.id()` for each window.
+- **The render result travels through the channel as NUMBERS**: the language lives in the TLS of the UI thread; in the background it would always be English
+  (`src/apps/kt-app/src/render_dialog.rs`).
+- **The harness**: `harness_lang` installs the real fonts; `drop_at` sends
+  ButtonRelease and PointerGone, `step()` — a frame per event; window commands are collected after an
+  explicit release; a double click — `with_step_dt(0.02)` and its own harness
   (`src/apps/kt-app/src/layout_tests.rs`).
-- **Живые сценарии** (`src/scripts/live/*.py`): координаты из `KT_GEOM_DUMP`,
-  модальные окна через `fields` дампа (`widgets::field_probe`), скриншот `xwd`
-  (ImageMagick отдаёт чёрное на GL-окне), отпускание с паузой 0.35 с, двойной
-  клик с зазором 0.04 с, пиксель после жеста — `pixel_settled`, сначала доказать,
-  что жест произошёл и медиа разрешилось.
-- **Что играет плеер — `KtApp::player_project`**, отправитель
-  `push_project_to_player` (`src/apps/kt-app/src/app.rs`); два пола времени —
-  `time_floor` для жестов и `CURSOR_FLOOR` для курсора
-  (`src/apps/kt-app/src/timeline.rs`), голых `.max(0)` не бывает.
-- **Иконка**: `with_icon` обязателен; на X11 WM_CLASS = имя бинаря `kt-app`,
-  `StartupWMClass` в `.desktop` совпадает с ним (`src/apps/kt-app/src/app.rs`).
-- **Деатач превью** — `show_viewport_immediate`, один `egui::Context`;
-  `ctx.input()` внутри вьюпорта — input этого вьюпорта, шорткаты дублируются
+- **Live scenarios** (`src/scripts/live/*.py`): coordinates from `KT_GEOM_DUMP`,
+  modal windows through the dump's `fields` (`widgets::field_probe`), the snapshot `xwd`
+  (ImageMagick returns black on a GL window), release with a pause of 0.35 s, a double
+  click with a gap of 0.04 s, the pixel after a gesture — `pixel_settled`; first prove
+  that the gesture happened and the media was resolved.
+- **What the player plays — `KtApp::player_project`**, the sender
+  `push_project_to_player` (`src/apps/kt-app/src/app.rs`); two time floors —
+  `time_floor` for gestures and `CURSOR_FLOOR` for the cursor
+  (`src/apps/kt-app/src/timeline.rs`); there are no bare `.max(0)`.
+- **The icon**: `with_icon` is mandatory; on X11 WM_CLASS = the binary name `kt-app`,
+  `StartupWMClass` in `.desktop` matches it (`src/apps/kt-app/src/app.rs`).
+- **Detaching the preview** — `show_viewport_immediate`, one `egui::Context`;
+  `ctx.input()` inside a viewport is that viewport's input, the shortcuts are duplicated
   (`src/apps/kt-app/src/app.rs`, `t51_preview_detach_state`).
 
-## Р.67: график рисует то, что звучит; блок кривой один
+## R.67: the graph draws what sounds; the curve block is one
 
-- **Линия строится выборкой `curve_value` по пикселям**, а не отрезками между ключами.
-  t698 утверждал модель и был зелёным на графике, рисовавшем прямые: «визуально для
-  пользователя вообще не видно что там за кривая». Утверждение о рисунке делается по
-  нарисованным ломаным (`painted_lines`), а не по модели.
-- **Ручка параметра формы — на середине участка.** У параметрических форм (зигзаг, третий
-  порядок) геометрических ручек безье нет, а крутить число в поле — то самое «вместо ввода
-  цифр». Захват берётся по ТОЧКЕ НАЖАТИЯ (`press_origin`): egui объявляет драг, когда
-  указатель уже ушёл на порог, и текущая позиция бывает дальше хват-зоны.
-- **Блок «кривая как параметр» один на слот, генератор и экземпляр ленты** и относится к
-  кривой, которую человек ВИДИТ выбранной. Прежде «форма всех отрезков» правила невидимо
-  активную кривую — отсюда «меняется только одно поле, хотя я в двух полях задал зигзаги».
-- **Справка — группа в блоке, дополнение — Tab на месте.** Всплывающие слои запрещены
-  (`ui-reach`), поэтому список имён живёт в свёртке, а кандидаты уходят в строку состояния.
-  Содержимое строится из реестра вычислителя (`formula::FUNCTIONS`) — не вторая копия языка.
-- **Одна прокрутка на окно.** Внешний `vscroll` окна FX прокручивал и кнопки действия:
-  «Готово» уезжало за нижнюю кромку, как только под графиком появился блок. Теперь
-  прокручивается только тело (`window_body`), и оно само оставляет место кнопкам
-  (`ACTIONS_H`). Нашлось живым сценарием, харнесс молчал.
-- **Рамка геометрии включена по умолчанию и помнится.** Полезный контрол, выключенный по
-  умолчанию и спрятанный в контекстное меню, для человека не существует (правило 4).
-  Кнопка на кадре регистрируется ПОСЛЕ контролов: тело рамки покрывает весь кадр и иначе
-  забирает у неё клик.
+- **The line is built by sampling `curve_value` per pixel**, not by segments between keys.
+  t698 asserted the model and was green on a graph that drew straight lines: "visually, the user
+  cannot see what kind of curve is there at all". An assertion about the drawing is made on the
+  drawn polylines (`painted_lines`), not on the model.
+- **The handle of a shape parameter — at the middle of the span.** Parametric shapes (zigzag, third
+  order) have no geometric Bezier handles, and turning a number in a field is exactly "instead of entering
+  digits". The grab is taken from the POINT OF PRESS (`press_origin`): egui declares a drag when
+  the pointer has already moved past the threshold, and the current position can be further than the grab zone.
+- **The block "curve as a parameter" is one per slot, generator and reel instance**, and it refers to the
+  curve that the person SEES as selected. Before, "the shape of all segments" silently applied the rule
+  to the active curve — hence "only one field changes, although I set zigzags in two fields".
+- **The reference is a group in the block, the completion is Tab in place.** Pop-up layers are forbidden
+  (`ui-reach`), so the list of names lives in a collapsible group, and the candidates go to the status line.
+  The content is built from the evaluator's registry (`formula::FUNCTIONS`) — not a second copy of the language.
+- **One scroll per window.** The window's outer `vscroll` of FX scrolled the action buttons too:
+  "Done" slid past the bottom edge as soon as a block appeared under the graph. Now only the body
+  scrolls (`window_body`), and it itself leaves room for the buttons
+  (`ACTIONS_H`). It was found by a live scenario; the harness was silent.
+- **The geometry frame is on by default and remembered.** A useful control that is off by
+  default and hidden in a context menu does not exist for a person (rule 4).
+  The button on the frame is registered AFTER the controls: the frame's body covers the whole frame and otherwise
+  takes the click from it.
 
-## Отложено
+## Deferred
 
-- `lane_names` живут в `Project.ui`, и `swap_reel` их не обменивает — полный вход
-  показывает на дорожках ленты корневые имена (известный дефект, capability
+- `lane_names` live in `Project.ui`, and `swap_reel` does not swap them — the full entry
+  shows the root names on the reel's tracks (a known defect, capability
   `compositions`).
-- Стабилизация XTest-жестов живых сценариев (флак в софт-рендере) — отдельная
-  работа, не выполнялась.
-- Заметки `docs/features/ui/*` (клавиши, раскладки, системный файловый диалог,
-  цвета клипов, экранные контролы вьюера) — статус «кандидат», в контракт не
-  входят.
+- Stabilisation of the XTest gestures of the live scenarios (flakiness in software rendering) — a separate
+  piece of work, not done.
+- The notes `docs/features/ui/*` (keys, layouts, the system file dialog,
+  clip colours, the viewer's on-screen controls) — status "candidate", not part of the contract.

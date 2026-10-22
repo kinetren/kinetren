@@ -2,164 +2,146 @@
 
 ## Context
 
-См. proposal.md — Why. Ниже только то, что уже есть в коде и определяет форму решения.
+See proposal.md — Why. Below is only what is already in the code and defines the shape of the solution.
 
-- **Арифметика размещения ведущего узла уже посчитана и она одна** — `src/libs/kt-fx/src/geom.rs`,
-  ветка `FxInstance::Geometry` построителя: `dest` от правила приведения (`conform_dest` по виду
-  источника, кроп режет вид ДО правила), `dw = dest·zoom`, центр `fw/2 + pos_x·fw`, якорь в долях
-  рамки, поворот вокруг якоря, `bounds` — прозрачные поля. Всё в ДОЛЯХ холста, поэтому от доли
-  превью параметры не зависят. Сейчас эта арифметика живёт ВНУТРИ построителя и наружу не выдана.
-- **Машинерия живого жеста готова**: `KtApp::apply_coalesced(Command::SetGeometry {…}, gesture)`
-  (`src/apps/kt-app/src/app.rs`) правит модель, растит `model_rev` и толкает проект в плеер —
-  ровно то, чем уже пользуется окно FX (`fx_editor.rs`, строка с `SetGeometry`). Вся сессия жеста
-  с одним токеном — ОДИН шаг истории.
-- **Ключ превью уже видит правки модели**: в него входят `content_version` и `project_version`
-  (Р.62, t722b). Дефект «гейт перекомпозиции не смотрит на ревизию», записанный в заметке
-  F-UI-001 от 2026-09-07, ПОЧИНЕН — в этот заход не берём.
-- **Дефект подобия жив**: доли превью считают оси независимо (`(w·f) as u32 & !1`), и 1920×1080
-  даёт 240×134 при 1/8 и 120×66 при 1/16 — 1.791 и 1.818 против 1.778.
-- **Холст композита — это и есть качество превью** (`compose_preview_into` возвращает `Quality`),
-  а картинка кладётся на экран одним масштабом: `img_rect = from_center_size(rect.center(), q·s)`
-  (`draw_preview`). Значит цепочка «экран → холст → доли холста» — два умножения без поворотов.
-- **Превью уже ловит клики**: одиночный — play/pause, двойной — отделить окно, правый — меню
-  (`draw_preview`). Новый жест обязан встроиться в этот разбор, а не рядом с ним.
-- **Правило программы**: ручки рисуются у ВЫДЕЛЕННОГО события («жест, который не видно, не
-  существует» — `apps/kt-app/CLAUDE.md`, раздел про верхнюю полосу события).
+- **The arithmetic of placing the leading node is already computed, and it is one — `src/libs/kt-fx/src/geom.rs`,
+  the `FxInstance::Geometry` branch of the builder: `dest` from the conform rule (`conform_dest` by the kind of
+  source, the crop cuts the kind BEFORE the rule), `dw = dest·zoom`, center `fw/2 + pos_x·fw`, anchor in fractions of the
+  frame, rotation around the anchor, `bounds` — transparent margins. Everything is in FRACTIONS of the canvas, so the parameters do not depend on the preview fraction.
+  Now this arithmetic lives INSIDE the builder and is not exposed outward.
+- **The machinery of the live gesture is ready**: `KtApp::apply_coalesced(Command::SetGeometry {…}, gesture)`
+  (`src/apps/kt-app/src/app.rs`) edits the model, raises `model_rev` and pushes the project into the player — exactly what
+  the FX window already uses (`fx_editor.rs`, the line with `SetGeometry`). The whole session of a gesture with
+  one token is ONE history step.
+- **The preview key already sees the edits of the model**: `content_version` and `project_version` go into it
+  (R.62, t722b). The defect "the recomposition gate does not look at the revision", recorded in the note
+  F-UI-001 of 2026-09-07, has been FIXED — we do not take it in this pass.
+- **The similarity defect is alive**: the preview fractions compute the axes independently (`(w·f) as u32 & !1`), and 1920×1080
+  gives 240×134 at 1/8 and 120×66 at 1/16 — 1.791 and 1.818 against 1.778.
+- **The canvas of the composite is the preview quality itself** (`compose_preview_into` returns `Quality`),
+  and the picture is put on the screen at one scale: `img_rect = from_center_size(rect.center(), q·s)`
+  (`draw_preview`). So the chain "screen → canvas → canvas fractions" is two multiplications without rotations.
+- **The preview already catches clicks**: a single one — play/pause, a double one — detach the window, a right one — the menu
+  (`draw_preview`). A new gesture must be built into this parsing, not next to it.
+- **A program rule**: the handles are drawn at the SELECTED event ("a gesture that is not visible does not
+  exist" — `apps/kt-app/CLAUDE.md`, the section about the top strip of the event).
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Один общий слой контролов над кадром, считающий ту же геометрию, что рендер.
-- Пять жестов (перенос, масштаб, поворот, якорь, кроп) поверх СУЩЕСТВУЮЩИХ команд и
-  существующего undo-механизма — без новых команд и без правок формата.
-- Форма полей геометрии, которую не стыдно поставить рядом с Premiere/AE.
-- Превью, подобное кадру проекта на всех долях.
+- One common layer of controls over the frame, computing the same geometry as the render.
+- Five gestures (move, scale, rotate, anchor, crop) over the EXISTING commands and the
+  existing undo mechanism — without new commands and without changes to the format.
+- A form of the geometry fields that is not ashamed to be placed next to Premiere/AE.
+- A preview similar to the project frame at all fractions.
 
 **Non-Goals:**
 
-- Камеры и `Pan3d` (у них своя развилка «какая камера активна» и свои единицы — мировые px).
-- Маски, траектория ключей, разметка (safe-зоны, сетка, центр), режимы сравнения «до/после».
-- Мультивыделение: рамка — у ОДНОГО выделенного события (см. решение ниже).
-- Приведение формы полей во ВСЕХ прочих окнах: владелец сказал «на будущее во всех других
-  виджетах и окнах тоже пройтись надо будет» — это отдельная работа, здесь только геометрия.
+- Cameras and `Pan3d` (they have their own fork "which camera is active" and their own units — world px).
+- Masks, the keyframe path, guides (safe zones, grid, center), "before/after" comparison modes.
+- Multi-selection: the frame belongs to ONE selected event (see the decision below).
+- Bringing the form of the fields in ALL other windows into line: the owner said "in the future we will need to go over this in all other widgets and windows too" — this is separate work, here only the geometry.
 
 ## Decisions
 
-- **Прямоугольник размещения выносится в публичную функцию kt-fx, построитель зовёт её же.**
+- **The placement rectangle is moved into a public function of kt-fx, and the builder calls that same one.**
   `geom::lead_placement(lead: LeadCtx, canvas: (f64,f64), g: &EventGeometry) -> Placement`
-  (`Placement { ox, oy, dw, dh, rot_deg, anchor_px, crop_view }`), и ветка `FxInstance::Geometry`
-  строит свой `Aff`/`Proj` ИЗ НЕЁ. Альтернатива «посчитать рамку в kt-app по тем же формулам»
-  отвергнута: это второй источник той же правды, и разойдутся они молча — ровно тот класс
-  дефектов, из-за которого в Р.39 появилось правило `clip_slice` (одна формула куска).
-- **Обратные пересчёты — пара к той же функции, в том же файле**: `pos_for_drag`,
-  `zoom_for_handle`, `rot_for_point`, `anchor_move`, `crop_for_handle`. Все — чистые функции без
-  egui, тестируются на CPU без GPU и без FFmpeg (правило крейтов: kt-fx не зависит ни от того,
-  ни от другого).
-- **Якорь: компенсация считается ПО ПРЯМОУГОЛЬНИКУ, а не по формуле смещения.** `anchor_move`
-  возвращает `(anchor, pos)` такие, что `lead_placement` до и после даёт тот же прямоугольник и
-  тот же поворот. Это единственная форма, которая не ломается на повёрнутом слое: у After
-  Effects компенсация выведена аналитически и на повороте врёт (цитаты в F-UI-001). Сторож —
-  t761 сравнивает прямоугольники, а не значения.
-- **Жест идёт СУЩЕСТВУЮЩЕЙ командой**: `Command::SetGeometry { id, geometry, pos, auto }` через
-  `apply_coalesced` с токеном, выданным на нажатии. Никаких «живых» полей мимо модели: картинка
-  в темпе жеста получается потому, что `apply_coalesced` толкает проект в плеер (SetGeometry
-  трогает план). Альтернатива «драг правит копию и коммитит на отпускании» отвергнута: тогда
-  превью показывает старый кадр, а контрол без живой картинки бесполезен.
-- **Кривая автоматизации под жестом**: если у параметра ЕСТЬ кривая, жест правит КЛЮЧ по курсору
-  (тем же правилом, что поле в окне FX — `CurveBind`), а не константу. Второго правила «куда
-  писать значение» в программе быть не должно.
-- **Рамка — у ОДНОГО выделенного видео-события, накрывающего курсор.** Ноль выделенных, больше
-  одного, аудио-событие, событие не под курсором — рамки нет, причина названа строкой состояния
-  (правило 16). Альтернатива «рамка вокруг объединения выделенных» отвергнута: жест пришлось бы
-  раскладывать в N команд с разными якорями и разными правилами приведения — это другая фича
-  (групповая трансформация), и решать её за владельца нельзя.
-- **Разбор клика по превью дополняется, а не дублируется.** Порядок: ручка → тело рамки →
-  прежний разбор (play/pause, двойной клик, меню). Пока идёт драг, одиночный клик превью не
-  срабатывает. Обратное тоже верно: при выключенных контролах превью ведёт себя ровно как
-  сегодня (байт-в-байт прежний путь для тестов t-preview).
-- **Переключатель показа — в самом превью и в его меню правого клика**, состояние — вьюпорт
-  (`UiState`, `dirty_ui`), новых окон нет (правило 22 Р.63). При воспроизведении контролы
-  гаснут САМИ и возвращаются на паузе — отраслевое поведение (FCP гасит всегда) и наше правило
-  стоимости кадра.
-- **Подобие доли превью — ближайшая ЧЁТНАЯ ПАРА, а не независимое округление осей.** Для доли
-  ищется пара (w, h) из окрестности ±2 по каждой оси, минимизирующая |w/h − pw/ph| (при равенстве
-  — большая площадь). Для 1920×1080: 1/8 → 238×134 (1.7761 вместо 1.7910), 1/16 → 118×66
-  (1.7879 вместо 1.8182). Чётность остаётся требованием декодера (4:2:0), поэтому точного
-  подобия на малых долях не существует — и требование спеки сформулировано как «не более
-  половины пикселя по короткой стороне».
-- **Вид источника интерфейсу отдаёт плеер**: `Player::source_view(media) -> Option<(f64, f64)>`
-  поверх уже имеющегося `SourceFacts.views`. Альтернатива «спросить у kt-media прямо из UI»
-  отвергнута инвариантом 5: декодером владеет воркер, интерфейс к нему не ходит.
-- **Форма «Трансформация»** собирается из существующих кирпичей `widgets.rs` (`param_row`,
-  ползунок, `pub_label` с дверью публикации) — новых виджетов ровно два: строка пары X/Y и
-  схема рамки. Свёртка групп — состояние окна FX, не проекта.
+  (`Placement { ox, oy, dw, dh, rot_deg, anchor_px, crop_view }`), and the `FxInstance::Geometry` branch
+  builds its `Aff`/`Proj` FROM IT. The alternative "compute the frame in kt-app by the same formulas" was rejected: it is a second source of the same truth, and they would diverge silently — exactly the class
+  of defect for which the rule `clip_slice` (one formula of the slice) appeared in R.39.
+- **The inverse recomputations are a pair to the same function, in the same file**: `pos_for_drag`,
+  `zoom_for_handle`, `rot_for_point`, `anchor_move`, `crop_for_handle`. All are pure functions without egui, tested on the CPU without GPU and without FFmpeg (the crate rule: kt-fx depends on neither the one nor the other).
+- **Anchor: the compensation is computed BY THE RECTANGLE, not by the offset formula.** `anchor_move`
+  returns `(anchor, pos)` such that `lead_placement` before and after gives the same rectangle and
+  the same rotation. This is the only form that does not break on a rotated layer: After
+  Effects derives the compensation analytically and it lies on rotation (quotes in F-UI-001). The guard —
+  t761 compares the rectangles, not the values.
+- **The gesture goes through the EXISTING command**: `Command::SetGeometry { id, geometry, pos, auto }` via `apply_coalesced` with a token issued on the press. No "live" fields bypassing the model: the picture at the tempo of the gesture is obtained because `apply_coalesced` pushes the project into the player (SetGeometry
+  touches the plan). The alternative "the drag edits a copy and commits on release" was rejected: then
+  the preview shows the old frame, and a control without a live picture is useless.
+- **An automation curve under the gesture**: if the parameter HAS a curve, the gesture edits the KEY under the cursor
+  (by the same rule as the field in the FX window — `CurveBind`), not the constant. There must be no second
+  rule in the program for "where to write the value".
+- **The frame belongs to ONE selected video event covering the cursor.** Zero selected, more than
+  one, an audio event, an event not under the cursor — there is no frame, the reason is named by the status line
+  (rule 16). The alternative "a frame around the union of selected ones" was rejected: the gesture would have to be split into N commands with different anchors and different conform rules — this is another feature
+  (group transformation), and it cannot be decided on the owner's behalf.
+- **The parsing of a click on the preview is supplemented, not duplicated.** Order: handle → body of the frame →
+  the former parsing (play/pause, double click, menu). While a drag is in progress, a single click on the preview does not fire. The reverse is also true: with the controls off, the preview behaves
+  exactly as today (the byte-for-byte former path for the t-preview tests).
+- **The toggle for showing — in the preview itself and in its right-click menu**, the state — the viewport (`UiState`, `dirty_ui`), no new windows
+  (rule 22 of R.63). During playback the controls hide THEMSELVES and return on pause — the industry behaviour (FCP always hides) and our rule of frame cost.
+- **Similarity of the preview fraction — the nearest EVEN PAIR, not independent rounding of the axes.** For a fraction
+  a pair (w, h) is sought from the neighbourhood ±2 along each axis, minimizing |w/h − pw/ph| (on a tie — the larger area).
+  For 1920×1080: 1/8 → 238×134 (1.7761 instead of 1.7910), 1/16 → 118×66
+  (1.7879 instead of 1.8182). Evenness remains a requirement of the decoder (4:2:0), therefore exact
+  similarity at small fractions does not exist — and the requirement of the spec is formulated as "no more than
+  half a pixel along the short side".
+- **The source view is given to the interface by the player**: `Player::source_view(media) -> Option<(f64, f64)>`
+  on top of the already existing `SourceFacts.views`. The alternative "ask kt-media directly from the UI" was rejected
+  by invariant 5: the decoder is owned by the worker, the interface does not go to it.
+- **The "Transformation" form** is assembled from the existing bricks of `widgets.rs` (`param_row`,
+  slider, `pub_label` with the publication door) — exactly two new widgets: a row of the X/Y pair and
+  the frame scheme. The folding of groups is the state of the FX window, not of the project.
 
 ## Risks / Trade-offs
 
-- [Жест правит кадр каждые несколько миллисекунд, а композит превью на 1/2 стоит десятки мс] →
-  жест не ждёт композита: `apply_coalesced` толкает проект, а превью пересобирается своим
-  темпом; на слабой машине картинка отстаёт от рамки, но рамка всегда показывает МОДЕЛЬ.
-- [Ручки перекрывают кадр ровно там, куда человек смотрит] → гашение при игре, переключатель,
-  и контур тонкий: заливок поверх картинки нет.
-- [Мелкая рамка: восемь ручек не влезают] → приоритет ближайшей к указателю, хват-зона 14 px,
-  тело рамки не перехватывает жест ручки (t763).
-- [Смена доли превью меняет ключи кэша и ступень декода] → это уже так при каждой смене доли;
-  новая пара считается тем же местом, что и прежняя.
-- [Кривая под жестом: человек не ждёт, что драг поставит ключ] → правило то же, что у поля в
-  окне FX, и оно уже принято владельцем в Р.60; иного места для значения у автоматизированного
-  параметра нет.
+- [The gesture edits the frame every few milliseconds, and the preview composite at 1/2 costs tens of ms] →
+  the gesture does not wait for the composite: `apply_coalesced` pushes the project, and the preview is rebuilt at its
+  own tempo; on a weak machine the picture lags behind the frame, but the frame always shows the MODEL.
+- [The handles overlap the frame exactly where the person is looking] → hiding during playback, a toggle,
+  and the outline is thin: there is no fill on top of the picture.
+- [A small frame: eight handles do not fit] → priority to the handle nearest the pointer, a hit zone of 14 px,
+  the body of the frame does not intercept a handle gesture (t763).
+- [Changing the preview fraction changes the cache keys and the decode step] → this is already so at every change
+  of the fraction; the new pair is computed in the same place as the former one.
+- [A curve under the gesture: the person does not expect the drag to set a key] → the rule is the same as for the field in the
+  FX window, and the owner has already accepted it in R.60; an automated parameter has no other place for a value.
 
-## Уроки исполнения (Р.64)
+## Lessons from execution (R.64)
 
-- **Масштаб «экран → холст» считается по КАРТИНКЕ, а не по панели превью.** У панели есть
-  поля letterbox, и перевод 48 px указателя через её ширину давал другое число долей. Тест
-  t760 краснел на ВЕРНОМ коде, пока брал `preview_rect`; прямоугольник картинки теперь
-  отдаётся наружу полем `KtApp::preview_img_rect` — им же пользуются живой сценарий и все
-  харнесс-тесты жестов.
-- **Жест ключуется ТОЧКОЙ НАЖАТИЯ (`press_origin`), а не фактом «драг идёт».** Ручку можно
-  выбрать только по точке нажатия (к первому кадру, который доходит до контрола, указатель
-  уже вышел из хват-зоны), а снимок геометрии берётся один раз на нажатие: egui сообщает
-  stop/start посреди движения, и пересъёмка засчитывала пройденное дважды (60.5 px вместо 48).
-- **`drag_at` в харнессе гасит модификатор кадра**: он шлёт `PointerButton { modifiers: NONE }`,
-  и Shift до шага 15° не доезжал. Модификатор едет И отдельным событием, И в самой кнопке —
-  родня урока `ctrl_click_at` (Р.57).
-- **Жест, доступный ТОЛЬКО с Alt, до программы не доходит.** Alt+перетаскивание перехватывает
-  оконный менеджер (openbox, GNOME, KDE — перенос окна). Поймано живым сценарием `geomctl`;
-  в харнессе этого не видно в принципе. Якорь теперь берётся за свою точку узкой зоной (8 px),
-  а Alt лишь расширяет её до общей.
-- **Точечная проба пикселя не доказывает, что картинка поехала.** На цветных полосах перенос
-  на 60 px оставляет точку внутри той же полосы. Живой сценарий сравнивает ОТПЕЧАТОК области
-  превью (сетка 14×8): настоящий перенос даёт отличие 78 уровней, шевеление тонкого контура
-  рамки при переносе якоря — 0.2.
-- **`synth:`-источник картинки не даёт** (ровная зелёная заливка, звук настоящий): сценариям
-  про геометрию нужен файл со структурой — `pattern_media` (полосы SMPTE) рядом с
-  `color_media`.
+- **The scale "screen → canvas" is computed by the PICTURE, not by the preview panel.** The panel has letterbox
+  margins, and translating 48 px of the pointer through its width gave a different number of fractions. Test
+  t760 was red on the CORRECT code while it took `preview_rect`; the rectangle of the picture is now
+  exposed outward by the field `KtApp::preview_img_rect` — the live scenario and all the harness gesture tests use it too.
+- **A gesture is keyed by the POINT OF THE PRESS (`press_origin`), not by the fact that "a drag is going".** A handle
+  can be chosen only by the press point (by the first frame that reaches the control, the pointer has
+  already left the hit zone), and the geometry snapshot is taken once per press: egui reports
+  stop/start in the middle of a movement, and re-taking counted the distance covered twice (60.5 px instead of 48).
+- **`drag_at` in the harness switched off the frame modifier**: it sent `PointerButton { modifiers: NONE }`,
+  and Shift did not reach the 15° step. The modifier now travels BOTH as a separate event AND in the button itself —
+  a relative of the lesson `ctrl_click_at` (R.57).
+- **A gesture available ONLY with Alt does not reach the program.** Alt+drag is intercepted by the window manager (openbox, GNOME, KDE — moving a window). Caught by the live scenario `geomctl`;
+  in the harness this is not visible at all. The anchor now is grabbed at its point by a narrow zone (8 px),
+  and Alt only widens it to the common one.
+- **A point probe of a pixel does not prove that the picture moved.** On colour bars a move
+  of 60 px leaves the point inside the same bar. The live scenario compares the FINGERPRINT of the preview area
+  (a 14×8 grid): a real move gives a difference of 78 levels, the stirring of the thin outline of the frame when the anchor moves — 0.2.
+- **The `synth:` source of the picture does not give** (a flat green fill, the sound is real): the scenarios
+  about geometry need a file with structure — `pattern_media` (SMPTE bars) next to `color_media`.
 
 ## Migration Plan
 
-Формат проекта не меняется; состояние «показывать контролы» — вьюпорт, старые файлы читаются
-как есть. Откат — выключить контролы: разбор клика по превью возвращается к сегодняшнему.
+The project format does not change; the state "show the controls" is the viewport, old files are read as they are. Rollback — switch the controls off: the parsing of a click on the preview returns to today's.
 
-## Найдено на проекте владельца (2026-09-25, `sources/paintitblack.otio`)
+## Found on the owner's project (2026-09-25, `sources/paintitblack.otio`)
 
-Проект открыт собранным бинарём в виртуальном экране (медиа владельца на этой машине
-НЕТ — пути ведут за пределы дерева, источники получают заглушки, п.209). Рамка появляется
-у выделенного события и стоит ровно на картинке. Но правило проекта — «как есть», а
-заглушка мелкая, и рамка вышла 45×25 px: **восемь ручек с хват-зоной 14 px покрывают её
-целиком, и хватать ТЕЛО нечем**. Приоритет ближайшей ручки (t763) спасает от промаха между
-ручками, но не даёт места под перенос.
+The project was opened with the built binary in a virtual screen (the owner's media is NOT on this machine —
+the paths lead outside the tree, the sources get stubs, item 209). The frame appears at
+the selected event and lies exactly on the picture. But the project rule is "as is", and the stub is small, and the frame came out 45×25 px: **eight handles with a hit zone of 14 px cover it
+entirely, and there is nothing to grab the BODY with**. The priority of the nearest handle (t763) saves from a miss between
+handles, but does not leave room for the move.
 
-Отложено сознательно (в задачах раунда этого нет): при рамке меньше ~3 хват-зон ручки
-масштаба надо выносить НАРУЖУ её кромок (так делают Resolve и AE), а тело оставлять внутри.
-Это правка ЭКРАННОЙ геометрии ручек (в чистых функциях `kt-fx` её знать неоткуда) плюс свой
-тест — отдельная работа, а не хвост этой.
+Deliberately deferred (it is not in the tasks of this round): when the frame is smaller than about 3 hit zones of the scale handle,
+the handles must be moved OUTSIDE its edges (as Resolve and AE do), and the body is left inside.
+This is a change to the SCREEN geometry of the handles (the pure functions of `kt-fx` have no way to know it) plus
+its own test — separate work, not a tail of this one.
 
-## Отложено
+## Deferred
 
-- **Форма полей во ВСЕХ прочих окнах и виджетах** — прямые слова владельца Р.64: «и не забудь
-  на будущее во всех других виджетах и окнах тоже пройтись надо будет». Здесь приведена только
-  геометрия; остальное — отдельная работа со своим обходом окон (реестр `WINDOWS` из Р.63 даёт
-  готовый список мест).
-- Экранные контролы КАМЕР и `Pan3d` (мировые px, активная камера под курсором).
-- Разметка (safe-зоны, сетка, центр) и режимы сравнения «до/после» — отдельные развилки.
+- **The form of the fields in ALL other windows and widgets** — the owner's direct words of R.64: "and do not forget
+  to go over this in all other widgets and windows too in the future". Here only the geometry is brought in line; the rest is separate work with its own walk of the windows (the `WINDOWS` registry of R.63 gives
+  a ready list of places).
+- The screen controls of CAMERAS and `Pan3d` (world px, the active camera under the cursor).
+- Guides (safe zones, grid, center) and "before/after" comparison modes — separate forks.

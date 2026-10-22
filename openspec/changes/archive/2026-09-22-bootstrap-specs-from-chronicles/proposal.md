@@ -2,68 +2,64 @@
 
 ## Why
 
-Проект переходит на OpenSpec, но его проектные решения лежат не там, где OpenSpec их
-читает. Сегодня одно решение раунда размазано по пяти летописям: `docs/features/*`
-(63 500 строк, из них ~36 % — «Как ложится на Kinotrain», то есть наши решения, а не
-разведка чужих редакторов), `docs/porting-notes.md` (7 191 строка; с §440 — журнал
-раундов в жанре «что было / причина / правило», а не каталог дефектов),
-`docs/user-feedback.md` (2 637 строк решений владельца), `docs/architecture.md`
-(150 строк, пустая) и таблица тестов в корневом `CLAUDE.md` (строки по 5 КБ).
-Новый change в OpenSpec ничего из этого автоматически не увидит: долговременно
-OpenSpec читает только `openspec/specs/<capability>/spec.md` и `openspec/config.yaml`.
+The project is moving to OpenSpec, but its project decisions lie not where OpenSpec reads them.
+Today one decision of a round is smeared across five chronicles: `docs/features/*`
+(63,500 lines, of which ~36 % is "How it fits Kinotrain", that is, our decisions, not the survey of
+other editors), `docs/porting-notes.md` (7,191 lines; from §440 on it is a log of rounds in the
+genre "what was / cause / rule", not a catalogue of defects), `docs/user-feedback.md` (2,637 lines of
+the owner's decisions), `docs/architecture.md` (150 lines, empty) and the test table in the root
+`CLAUDE.md` (lines of 5 KB each). A new change in OpenSpec will not see any of this automatically:
+in the long term OpenSpec reads only `openspec/specs/<capability>/spec.md` and `openspec/config.yaml`.
 
 ## What Changes
 
-- Создать `openspec/specs/<capability>/` для 17 capability **по поведению** (список в
-  design.md). В каждой два файла: `spec.md` — контракт (требования + сценарии, каждый
-  сценарий называет регрессионный тест tNNN); `design.md` — «почему» (что было, у кого
-  болело, что отвергли и по какой причине, какая деталь неочевидна, пути `src/…`).
-- Выцедить содержимое из трёх источников по ОДНОМУ критерию: строка остаётся, если она
-  **до сих пор ограничивает код** (есть тест, инвариант или правило, которое агент
-  нарушит, не зная его) — плюс её «почему». Хронология раундов, «переписали с C++»,
-  сравнение с v1, отвергнутое без причины, номера пунктов — мусор.
-  - `docs/features/*`: раздел «Как ложится на Kinotrain» и «наши» части «Вердикта»
-    переезжают в `design.md` capability; в заметке остаётся 3–5 строк и ссылка на
-    capability. Разведка чужих редакторов, «фишка фишки», цитаты — не трогаются.
-  - `docs/porting-notes.md`: правила и их тесты → `spec.md`; «что было / причина» →
-    `design.md`. Файл **замораживается на §470** как исторический документ порта;
-    новые главы в него не пишутся.
-  - `docs/user-feedback.md`: «болело X → потребовал Y → правило Z» → `design.md`
-    соответствующей capability. Сам файл не трогается — это первоисточник цитат.
-- Заполнить `openspec/config.yaml`: `context` — модель времени и 12 инвариантов по
-  строке каждый; `rules.proposal` и `rules.design` — обязанность прочитать `design.md`
-  каждой затрагиваемой capability и оформлять противоречие ему явным пунктом «пересмотр»
-  с причиной.
-- Корневой `CLAUDE.md`: таблица «крейт → обязательные тесты» переезжает в сценарии
-  спек; в файле остаётся указатель на `openspec/specs/`. Инварианты 1–12 остаются
-  (это самый читаемый агентами текст), но без истории пунктов.
-- `docs/features/README.md`: правило 5 («Как ложится» с путями в коде) заменяется
-  правилом «Как ложится» = ссылка на capability + ≤ 5 строк; `--check` обновить
-  под новое правило.
-- `docs/architecture.md`: либо становится оглавлением `openspec/specs/*/design.md`,
-  либо удаляется — решается в tasks по факту остатка.
+- Create `openspec/specs/<capability>/` for 17 capabilities **by behaviour** (the list is in
+  design.md). In each there are two files: `spec.md` — the contract (requirements + scenarios, each
+  scenario names a regression test tNNN); `design.md` — the "why" (what was, who was hurt, what was
+  rejected and for what reason, which detail is non-obvious, `src/…` paths).
+- Distill the content from the three sources by ONE criterion: a line stays if it **still constrains
+  the code** (there is a test, an invariant or a rule that an agent would break without knowing it) —
+  plus its "why". The chronology of rounds, "rewritten from C++", the comparison with v1, things
+  rejected without a reason, item numbers — rubbish.
+  - `docs/features/*`: the section "How it fits Kinotrain" and the "our" parts of the "Verdict" move
+    into the capability's `design.md`; 3–5 lines and a reference to the capability remain in the
+    note. The survey of other editors, "the trick behind it", quotes — are not touched.
+  - `docs/porting-notes.md`: rules and their tests → `spec.md`; "what was / cause" → `design.md`.
+    The file is **frozen at §470** as a historical document of the port; new chapters are not written
+    into it.
+  - `docs/user-feedback.md`: "hurt by X → demanded Y → rule Z" → `design.md` of the corresponding
+    capability. The file itself is not touched — it is the primary source of the quotes.
+- Fill in `openspec/config.yaml`: `context` — the time model and the 12 invariants, one line each;
+  `rules.proposal` and `rules.design` — the obligation to read `design.md` of every affected capability
+  and to formalize a contradiction of it as an explicit "revision" item with a reason.
+- Root `CLAUDE.md`: the table "crate → mandatory tests" moves into the scenarios of the specs; the file
+  keeps a pointer to `openspec/specs/`. Invariants 1–12 remain (this is the text most readable by
+  agents), but without the history of items.
+- `docs/features/README.md`: rule 5 ("How it fits" with code paths) is replaced by the rule "How it
+  fits" = a reference to the capability + ≤ 5 lines; `--check` is updated for the new rule.
+- `docs/architecture.md`: either it becomes a table of contents of `openspec/specs/*/design.md`, or it
+  is deleted — decided in tasks according to what is left.
 
-Поведение программы **не меняется**. Change не создаёт delta-спек: он создаёт главные
-спеки напрямую, поэтому `.openspec.yaml` несёт `skip_specs: true`.
+Program behaviour **does not change**. The change does not create delta specs: it creates the main
+specs directly, so `.openspec.yaml` carries `skip_specs: true`.
 
 ## Capabilities
 
 ### New Capabilities
 
-Ни одной через delta: главные спеки создаются напрямую в `openspec/specs/` задачами
-этого change (bootstrap). Список capability и привязка источников — в design.md.
+None via a delta: the main specs are created directly in `openspec/specs/` by the tasks of this change
+(bootstrap). The list of capabilities and the binding of sources — in design.md.
 
 ### Modified Capabilities
 
-Нет.
+None.
 
 ## Impact
 
-- Только документация и конфигурация OpenSpec: `openspec/specs/**`, `openspec/config.yaml`,
-  `docs/features/**` (усечение разделов), `docs/features/README.md` и
-  `src/scripts/features-index.py` (правило «Как ложится»), `docs/porting-notes.md`
-  (заморозка, шапка), корневой `CLAUDE.md` (таблица тестов), `docs/architecture.md`.
-- Код и тесты не трогаются. `cargo test` и `features-index.py --check` обязаны остаться
-  зелёными.
-- Окружение: `openspec` CLI требует Node ≥ 20 (`import … with` в cli-spinners);
-  системный Node 18 не подходит, работает `~/.nvm/versions/node/v24.21.0`.
+- Only documentation and OpenSpec configuration: `openspec/specs/**`, `openspec/config.yaml`,
+  `docs/features/**` (truncation of sections), `docs/features/README.md` and
+  `src/scripts/features-index.py` (the rule "How it fits"), `docs/porting-notes.md`
+  (freezing, header), the root `CLAUDE.md` (test table), `docs/architecture.md`.
+- Code and tests are not touched. `cargo test` and `features-index.py --check` must remain green.
+- Environment: the `openspec` CLI requires Node ≥ 20 (`import … with` in cli-spinners); the system
+  Node 18 does not fit, `~/.nvm/versions/node/v24.21.0` works.

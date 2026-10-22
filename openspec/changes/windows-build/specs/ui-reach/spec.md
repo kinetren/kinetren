@@ -3,7 +3,6 @@
 ## ADDED Requirements
 
 ### Requirement: The FFmpeg window — state, Download, Locate, Rescan
-
 *View → FFmpeg…* SHALL open a window that shows the search report (capability
 `media-index`): the loaded FFmpeg's folder (or SONAME) and version, or "not found", and
 every rejected candidate with its reason. On Windows the window SHALL offer **Download
@@ -24,11 +23,10 @@ mouse. A notice without buttons would be a dead end ("create, but can't manage",
 #### Scenario: From the notice to playing media
 - **WHEN** the app starts with the FFmpeg search limited to an empty folder and a project with one video clip; the notice's **Locate folder…** gets a folder without DLLs, then a folder with a complete set; then *View → FFmpeg…* is opened. On Windows the complete set is the pinned gyan.dev build. On Linux the test's search seam reports that folder as complete and loads the system FFmpeg behind it, so the same UI path runs in CI on both OSes
 - **THEN** before: the notice is shown once, the clip is a placeholder, the window lists the empty folder as rejected; the folder without DLLs is refused with "no avcodec-*.dll" and the choice is unchanged; after the complete folder: the clip shows frames without a restart, the window shows the folder and the loaded version, and the choice is in the saved settings
-- **ПУТЬ** start → notice "FFmpeg not found" over the timeline, clip drawn as a placeholder → **Locate folder…** → folder picker → pick the folder with DLLs → notice closes, the clip's filmstrip and the preview show frames → View → FFmpeg… → window: folder path, "FFmpeg 8.1.2 (avcodec 62.x)", no rejected list except the empty folder
+- **PATH** start → notice "FFmpeg not found" over the timeline, clip drawn as a placeholder → **Locate folder…** → folder picker → pick the folder with DLLs → notice closes, the clip's filmstrip and the preview show frames → View → FFmpeg… → window: folder path, "FFmpeg 8.1.2 (avcodec 62.x)", no rejected list except the empty folder
 - **TEST** t849 (`src/apps/kt-app/src/reach_tests.rs`)
 
 ### Requirement: UI language on Windows comes from the user's locale
-
 On first start, when no language has been chosen, the UI language SHALL come from
 `LC_ALL` → `LC_MESSAGES` → `LANG` when one of them is set and not empty (on any OS), and
 otherwise on Windows from the user's default locale name (`ru-RU`, `zh-Hans-CN`, `es-MX`, …)
@@ -41,7 +39,6 @@ Why: these variables are unset on Windows, so every Windows user started in Engl
 - **TEST** t860 (`src/apps/kt-app/src/i18n_tests.rs`)
 
 ### Requirement: Windows window behaviour matches Linux where the user can see it
-
 On Windows a dropped file SHALL land where the pointer is when it is released over the
 timeline (lane and time), as on Linux, and the drop silhouette SHALL follow the pointer.
 The release build MUST NOT open a console window next to the program. The executable SHALL

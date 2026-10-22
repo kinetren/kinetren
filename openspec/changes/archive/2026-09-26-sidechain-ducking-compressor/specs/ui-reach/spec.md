@@ -2,48 +2,28 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Окна только из реестра; инструмент помнит параметры; имя — по отрасли; виджет один
+### Requirement: Windows only from the registry; the tool remembers its parameters; name by industry; one widget
+A new window (`egui::Window`, `Modal`) SHALL be created only together with an entry in the window registry (`src/apps/kt-app/src/reach_tests.rs`, `WINDOWS`): its id, what it contains, and WHY the feature cannot work without a window; the guard SHALL enumerate all places in the kt-app sources where windows are created and SHALL fail on any place outside the registry. Things that already have a place (the chain strip, the track window, the panel, the status line) MUST NOT get their own window. A tool with parameters (render, analysis) SHALL remember the last entered parameters in the user storage and substitute them on the next call; a tool whose result is an envelope SHALL return it as ordinary automation curves. The name of the menu item, the tool and the window SHALL be the generally accepted industry name (Vegas/Premiere/Resolve/FCP), not a description of the mechanics.
+A device that already exists in the program SHALL show the new function by itself, not by a copy of its own fields: ducking is a COMPRESSOR WITH A KEY INPUT in the track's chain, shown by its own widget next to the compressor of the key track. The parameters of such a tool live in the PROJECT (they are the content — the track's chain) and go through undo; a workspace store is not created for them — "remembering what was entered" is here ensured by the project itself.
+Settings of a live device SHALL be reachable from where the person already stands: the window of the audio track and its chain strip; a refusal (a cycle, a key on itself, a vanished track) SHALL be named in words, not fade out silently.
+Why: R.63, the owner's words: "I impose a ban on any agents generating any additional windows without an obvious purpose (like the window on closing the program)"; "why the agent… forces him to enter all the parameters again"; "duck under a track… why didn't you name it normally"; "everywhere, meaningless copy-pastes of the same code pile up". R.65: the ducking snapshot was removed together with its parameter memory — a live device has its memory by construction, and a second one (in the storage) would diverge from the project.
 
-Новое окно (`egui::Window`, `Modal`) SHALL заводиться только с записью в реестре окон
-(`src/apps/kt-app/src/reach_tests.rs`, `WINDOWS`): id, что в нём и ПОЧЕМУ без окна нельзя;
-сторож SHALL перечислять все места создания окон в исходниках kt-app и падать на месте
-вне реестра. Вещи, у которых уже есть место (полоса цепочки, окно дорожки, панель, строка
-состояния), MUST NOT получать своё окно. Инструмент с параметрами (рендер, анализ) SHALL
-помнить последние введённые параметры в пользовательском хранилище и подставлять их при
-следующем вызове; инструмент, результат которого — огибающая, SHALL отдавать её обычными
-кривыми автоматизации. Название пункта, инструмента и окна SHALL быть общепринятым
-отраслевым именем (Vegas/Premiere/Resolve/FCP), а не описанием механики.
-Прибор, который уже есть в программе, SHALL показывать новую функцию собой, а не копией
-своих полей: дакинг — это КОМПРЕССОР С КЛЮЧЕВЫМ ВХОДОМ в цепочке дорожки, показанный
-своим же виджетом рядом с компрессором дорожки-ключа. Параметры такого инструмента живут в
-ПРОЕКТЕ (они и есть содержимое — цепочка дорожки) и ходят через undo; хранилище рабочего
-места для них не заводится — «помнить введённое» здесь обеспечено самим проектом.
-Настройка живого прибора SHALL быть достижима оттуда, где человек уже стоит: окно
-аудиодорожки и её полоса цепочки; отказ (цикл, ключ на самой себе, исчезнувшая дорожка)
-SHALL называться словами, а не гаснуть молча.
-Почему: Р.63, слова владельца: «Я ставлю запрет любым агентам порождать какие-либо
-дополнительные окна без очевидного смысла (по типу окна при закрытии программы)»;
-«почему агент… вынуждает его вводить все параметры заново»; «duck under a track…
-почему ты нормально это не назвал»; «повсюду копятся бессмысленные копипасты одного и того
-же кода». Р.65: снимок дакинга снят вместе со своей памятью параметров — у живого прибора
-память есть по построению, и вторая (в хранилище) разошлась бы с проектом.
-
-#### Scenario: Реестр окон
-- **WHEN** сканируются исходники kt-app на `egui::Window::new` и `Modal::new`; временно добавляется окно без записи; из реестра удаляется запись живого окна
-- **THEN** каждое место создания окна найдено в реестре с причиной длиной ≥ 25 символов; оба нарушения красны; окна `duck` и `inst_params` в реестре отсутствуют и в коде их нет
+#### Scenario: The window registry
+- **WHEN** the kt-app sources are scanned for `egui::Window::new` and `Modal::new`; a window without an entry is temporarily added; the entry of a live window is removed from the registry
+- **THEN** every place where a window is created is found in the registry with a reason at least 25 characters long; both violations are red; the `duck` and `inst_params` windows are absent from the registry and do not exist in the code
 - **TEST** t757 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Инструмент помнит параметры и отдаёт кривые
-- **WHEN** рабочее место (ширина метров, вид проекта) проходит круг через файл хранилища, и файл без секции читается заново; отдельно — сайдчейн-компрессор дорожки: ключ и параметры правятся в окне дорожки
-- **THEN** настройки рабочего места вернулись, файл без секции читается по-прежнему; параметры сайдчейна лежат в ПРОЕКТЕ (цепочка дорожки), ходят через undo и правятся общим виджетом параметров — второй их копии в пользовательском хранилище нет
+#### Scenario: A tool remembers its parameters and delivers curves
+- **WHEN** the workspace (the meter width, the project view) goes through a round trip via the storage file, and a file without the section is read again; separately — the track's sidechain compressor: the key and the parameters are edited in the track window
+- **THEN** the workspace settings are restored, a file without the section is still read; the sidechain parameters live in the PROJECT (the track's chain), go through undo and are edited by the common parameter widget — there is no second copy of them in the user storage
 - **TEST** t756b (`src/apps/kt-app/src/user_store.rs`), t775 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Имена — по отрасли
-- **WHEN** сканируются каталоги на слова, описывающие механику вместо имени («under a track», «под дорожкой», «snapshot of» в названиях пунктов)
-- **THEN** названий пунктов меню и окон с такими оборотами нет; у пунктов, чьи имена введены Р.63, есть все пять переводов
+#### Scenario: Names — by industry
+- **WHEN** the catalogs are scanned for words describing the mechanics instead of a name ("under a track", "Russian: "under the track"", "snapshot of" in item names)
+- **THEN** there are no menu item names or windows with such phrasing; the items whose names were introduced by R.63 have all five translations
 - **TEST** t756c (`src/apps/kt-app/src/i18n_tests.rs`)
 
-#### Scenario: Сайдчейн достижим и объясняет отказ
-- **WHEN** сканируются окно аудиодорожки и её полоса цепочки на путь «назначить ключ»; делается попытка выбрать саму себя и дорожку, дающую цикл; живой сценарий ставит дакинг руками и слушает результат
-- **THEN** путь найден из обоих мест и ведёт в одну команду; невозможный выбор назван причиной в строке состояния, а не отсутствует молча; живой сценарий показывает, что музыка просела под речью и вернулась после неё
-- **TEST** t777 (`src/apps/kt-app/src/reach_tests.rs`), `src/scripts/live/sidechain.py` (живой сценарий, `./scripts/live-check.sh`)
+#### Scenario: The sidechain is reachable and explains a refusal
+- **WHEN** the track window and its chain strip are scanned for the path "assign key"; an attempt is made to choose the track itself and a track that would produce a cycle; a live scenario sets ducking by hand and listens to the result
+- **THEN** the path is found from both places and leads to one command; an impossible choice is named with its reason in the status line, rather than missing silently; the live scenario shows that the music dipped under the speech and came back after it
+- **TEST** t777 (`src/apps/kt-app/src/reach_tests.rs`), `src/scripts/live/sidechain.py` (live scenario, `./scripts/live-check.sh`)

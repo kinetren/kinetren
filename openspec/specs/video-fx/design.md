@@ -1,199 +1,187 @@
-# Видео-эффекты — почему так
+# Video effects — why it is so
 
-## Что было и у кого болело
+## What hurt and for whom
 
-- Видов было 11, и владелец прямо просил «не хватает эффектов для видео,
-  нужно 10-20 ещё как 2d так и 3d» (курс на After Effects); параллельно —
-  «слишком мало управляющих параметров во всех эффектах».
-- Каждый гео-шаг ресемплировал заново: сетка 2×2 → зум ×2 превращала
-  шахматку в ровный серый (контраст 0.00). Барьер посреди серии добивал
-  остаток. Владелец: старое поведение — артефакт реализации, не стиль;
-  переключателей не будет.
-- Обход цепочки жил двумя копиями — в CPU-исполнителе и в GPU-сборщике
-  опов; расхождение сегментации ловилось только глазами.
-- «3D только GPU»: CPU-эталон детерминизма имел дыру, экспорт без GPU
-  отказывал.
-- Пикер эффектов — текстовый список. Владелец: «иконка какая-нибудь бы не
-  помешала, и не помешал бы пререндер миниатюры… только через секунду
-  пытаться делать (вдруг мисклик), и если компьютер не вывозит — сбавлять
-  обороты».
-- Забытый арм классификации нового вида молча делал его барьером и рвал
-  гео-серии; wgsl-диспетчер примов заканчивался хвостовым `else`, и пятый
-  прим исполнился бы как Proj.
+- There were 11 kinds, and the owner directly asked for "not enough effects for video,
+  10-20 more are needed, both 2D and 3D" (course towards After Effects); at the same time —
+  "too few control parameters in all effects".
+- Every geo step resampled again: a 2×2 grid → a ×2 zoom turned
+  a checkerboard into a flat grey (contrast 0.00). A barrier in the middle of a series finished
+  off the rest. The owner: old behaviour is an artefact of implementation, not a style;
+  there will be no switches.
+- The chain traversal lived in two copies — in the CPU executor and in the GPU
+  op builder; a divergence of segmentation was caught only by eye.
+- "3D only on GPU": the CPU reference of determinism had a hole, export without a GPU
+  refused.
+- The effect picker was a text list. The owner: "some kind of icon would not hurt, and a pre-rendered thumbnail would not hurt either… only trying it after a second
+  (what if it was a misclick), and if the computer cannot cope — slow down the pace".
+- A forgotten arm of the classification of a new kind silently made it a barrier and broke
+  geo series; the wgsl dispatcher of primitives ended with a trailing `else`, and the fifth
+  primitive would have run as Proj.
 
-## Решения и почему
+## Decisions and why
 
-- **Один планировщик цепочки в kt-fx.** Сегментация, маршрутизация
-  legacy/fused, поглощение поточечных, K барьеров, снапшоты силы слоя —
-  одна функция; оба бэкенда исполняют. Инвариант «код композиции один»
-  закреплён на уровне цепочки: расхождение невозможно по построению.
-- **Гео-серии — конкатенация обратных карт.** Примитивы Affine / Clamp /
-  Fold / Proj / Warp; серия любой длины — один проход с суперсемплингом по
-  якобиану. Серия длины 1 без минификации идёт старым ядром, поэтому
-  golden'ы первой десятки не перегенерировались ни разу.
-- **K×-барьеры с конъюгацией.** Барьер исполняется в K× только там, где
-  деталь реально стиснута (squeeze-cap): K = квант min(зум хвоста, сжатие).
-  Физический масштаб вносят два краевых аффина, арифметика шагов остаётся
-  1× — иначе целочисленная сетка EventGrid раскладывалась бы иначе.
-  `MAX_INTER_DIM = 4096` — проект-константа: экспорт не должен зависеть от
-  машины.
-- **Pan3d — гомография f64 на CPU.** Квад планарный, z_clip ≡ 0, значит
-  это 3×3-матрица, исполнимая обратно обычным циклом; CPU снова полный
-  эталон, экспорт без GPU легален.
-- **Формула поточечного вида живёт в одном f64-тексте** (tap-функции), и
-  его зовут все четыре исполнителя: CPU-барьер, CPU-тап, GPU-пасс,
-  GPU-тап. Классификация вида обязательна и заперта замками сборки.
-- **Один Warp-прим с режимами** вместо пяти видов: дорога (четыре копии
-  цикла примов, юниформа, суперсемплинг PerPixel) платится один раз.
-  Нормализация — в аффинах: прим работает в пространстве величин ~1, и
-  это держит f32-паритет без класса допуска WARP.
-- **Миниатюра = «вписать + применить»** через единственный вход с
-  `in_scale = 1` на опорном размере тумбы 320×180. Видео-FX — чистые
-  функции без состояния, поэтому картинка в ячейке стоит доли
-  миллисекунды и обязана совпадать с результатом клика.
-- **Встроенные варианты — экземпляры того же вида**, поставленные по имени
-  через `set_param`: клик идёт прежним путём, новых команд и сущностей
-  таймлайна не появляется; новый параметр не трогает 77 мест.
-- **Служба миниатюр — форма сервиса** (бесконечная очередь мелких заявок),
-  без декодера, БД и персиста: кадр-основу даёт вызывающий из готовых тумб.
-- **Ось силы смешивает две курированные точки** (варианты), а не
-  «главный параметр»: полезный диапазон уже задан крайними вариантами.
-- **Правило альфы — три класса шага**, Preserves молчит: иначе геометрия
-  стирала объявления соседей и титр ложился непрозрачным прямоугольником.
+- **One chain planner in kt-fx.** Segmentation, legacy/fused routing, absorption of point-wise ones, K barriers, snapshots of the layer's strength —
+  one function; both backends execute it. The invariant "the composition code is one"
+  is fixed at the chain level: divergence is impossible by construction.
+- **Geo series — concatenation of inverse maps.** Primitives Affine / Clamp /
+  Fold / Proj / Warp; a series of any length — one pass with supersampling over the
+  Jacobian. A series of length 1 without minification goes through the old kernel, so
+  the goldens of the first ten were never regenerated.
+- **K×-barriers with conjugation.** The barrier is executed at K× only where
+  the detail is really squeezed (squeeze-cap): K = quantum of min(tail zoom, compression).
+  The physical scale is contributed by two edge affines; the step arithmetic stays
+  1× — otherwise the integer grid of EventGrid would lay out differently.
+  `MAX_INTER_DIM = 4096` is a project constant: export must not depend on the machine.
+- **Pan3d — an f64 homography on CPU.** The quad is planar, z_clip ≡ 0, so this is
+  a 3×3 matrix, executable backwards by an ordinary loop; the CPU is again the full
+  reference, export without a GPU is legal.
+- **The formula of the point-wise kind lives in one f64 text** (tap functions), and
+  all four executors call it: CPU barrier, CPU tap, GPU pass,
+  GPU tap. Classification of the kind is mandatory and locked by build locks.
+- **One Warp primitive with modes** instead of five kinds: the road (four copies of
+  the primitive loop, uniforms, PerPixel supersampling) is paid once.
+  Normalisation is in the affines: the primitive works in the space of magnitudes ~1, and
+  this keeps f32 parity without a WARP tolerance class.
+- **Thumbnail = "fit + apply"** through the single entry with `in_scale = 1` at the reference thumbnail size 320×180. Video FX are
+  pure functions without state, so a picture in a cell costs a fraction of
+  a millisecond and must coincide with the result of a click.
+- **Built-in variants are instances of the same kind**, set by name through
+  `set_param`: the click goes the old way, no new commands or timeline entities
+  appear; a new parameter touches none of the 77 places.
+- **The thumbnail service is the shape of a service** (an endless queue of small requests),
+  without a decoder, DB or persistence: the base frame is given by the caller from ready thumbs.
+- **The strength axis blends two curated points** (variants), not a "main parameter":
+  the useful range is already set by the extreme variants.
+- **Alpha rule — three classes of step**, Preserves stays silent: otherwise geometry
+  erased the neighbours' declarations and the title lay down as an opaque rectangle.
 
-## Отвергнуто и почему
+## Rejected and why
 
-- **Нодовый граф грейдинга** (F-CLR-006). «Цепочка — упорядоченный список»
-  одновременно ключ пост-FX кэша, форма обоих байт-совпадающих
-  исполнителей, `Item.effects` формата OTIO и единственный виджет полосы.
-  Граф отменяет это в четырёх местах сразу и рождает новый класс
-  расхождений CPU↔GPU без тестов и эталонов. Ценность графа — матте как
-  сигнал — снимается полем «источник ключа» у эффекта, без DAG.
-- **Переключатели слияния/K** (UI или env) — прямой ответ владельца:
-  старое поведение — артефакт, не стиль.
-- **«Главный параметр» у каждого вида** (ось FCP): у VHS и Color Grade их
-  четыре равноправных, у Mirror числовых нет, у Corner Pin восемь координат.
-- **Персист миниатюр в индекс-БД и фоновая джоба «рендерить после
-  добавления сурса»**: дорогая половина (декод) уже лежит JPEG'ом в тумбах,
-  наложить цепочку дешевле, чем прочитать sqlite. Владелец согласился.
-- **«Чистый кадр + один эффект» в ячейке**: после клика получилось бы не
-  то, что показано. Полоска считает цепочку события плюс кандидата.
-- **Только глифы категории / только картинка** для иконки: на 27 видов
-  подходящих глифов не найти (были случаи tofu); взяли глиф плюс миниатюру.
-- **Каркас конечной фоновой задачи для миниатюр**: он про задачу с
-  прогрессом, а миниатюры — очередь, живущая пока открыт пикер.
-- **Направленный (линейный) блюр, сеточный Warper, формы/трекинг «Censor»,
-  сепия/инверт отдельными видами, свет/шейдинг цилиндра** — перекрываются
-  radial-zoom, пресетами Duotone или относятся к маскам/трекингу.
-- **Отдельный SSE-tier SIMD**: f64-ядрам нужны 4 лейна, а бит-точную вторую
-  реализацию пришлось бы держать вечно; уровни только Scalar/AVX2.
-- **`Mutex` для кэша текстур**: текстуры трогает только UI-поток; `RefCell`
-  в службе, потому что окна FX/морфера держат `&self.model` в ui-замыкании.
+- **A node graph of grading** (F-CLR-006). "The chain is an ordered list" is simultaneously
+  the key of the post-FX cache, the shape of both byte-matching
+  executors, `Item.effects` of the OTIO format and the only strip widget.
+  A graph cancels this in four places at once and gives birth to a new class
+  of CPU↔GPU divergences without tests and references. The value of a graph — a matte as
+  a signal — is taken off by the "key source" field of an effect, without a DAG.
+- **Switches for merge/K** (UI or env) — a direct answer of the owner:
+  the old behaviour is an artefact, not a style.
+- **A "main parameter" for each kind** (the FCP axis): VHS and Color Grade have four
+  equal ones, Mirror has no numeric ones, Corner Pin has eight coordinates.
+- **Persisting thumbnails into the index DB and a background job "render after
+  adding the source"**: the expensive half (decoding) already lies as a JPEG in the thumbs,
+  overlaying the chain is cheaper than reading sqlite. The owner agreed.
+- **"A clean frame + one effect" in the cell**: after a click it would come out
+  not what is shown. The strip counts the event's chain plus the candidate.
+- **Only category glyphs / only a picture** for the icon: for 27 kinds no suitable
+  glyphs can be found (there were cases of tofu); took a glyph plus a thumbnail.
+- **The frame of a finite background task for thumbnails**: it is about a task with
+  progress, while thumbnails are a queue that lives while the picker is open.
+- **A directional (linear) blur, a grid Warper, the shapes/tracking "Censor",
+  sepia/invert as separate kinds, light/shading of a cylinder** — they overlap with
+  radial-zoom, the Duotone presets, or belong to masks/tracking.
+- **A separate SSE tier of SIMD**: the f64 kernels need 4 lanes, and a bit-exact second
+  implementation would have to be kept forever; the levels are only Scalar/AVX2.
+- **`Mutex` for the texture cache**: only the UI thread touches the textures; `RefCell`
+  in the service, because the FX/morpher windows hold `&self.model` in the ui closure.
 
-## Неочевидные детали
+## Non-obvious details
 
-- `plan_chain` (`src/libs/kt-fx/src/plan.rs`) — единственное место
-  решений; `chain_head_zoom` там же отдаёт нетто-зум префикса до первого
-  стопа, им kt-engine решает ступень декода клипа. Байтовый fast-path —
-  только при `S == 1 && все K == 1`.
-- Одиночный `Mirror` идёт в Legacy ТОЛЬКО при `k_in == k_out`
-  (`src/libs/kt-fx/src/geom.rs`, `build_geom_exec`): перестановка
-  пикселей верна на любом равномерном масштабе, но не на смене; иначе
-  цепочка [сетка, vhs, зеркало, blur, зум] валила ассерт плана.
-- Правишь `src/libs/kt-fx/src/geom.rs` или `plan.rs` — правишь
-  `src/libs/kt-gpu/src/shaders/geom_fused.wgsl` тем же коммитом; общая
-  параметрика (`pan_frame`/`cam_at`/`noise_seed`) в `video.rs` pub именно
-  для зеркал. Арм нового прима — во все четыре копии цикла (map_pos,
-  map_pos_rec CPU; geo_map, geo_sample WGSL) одним коммитом.
-- Суперсемплинг (`ss_taps`, `src/libs/kt-fx/src/geom.rs`): включение
-  строго при len > 1 + 1/64, квант 1/32 px, потолок 4×4. У аффинных
-  программ якобиан считается один раз в f64 и едет в юниформу; только
-  Proj/Warp меряют по-пиксельно. Мёртвая прямая проба за силуэтом
-  заменяется обратной — иначе кромка тождественной карты теряла
-  байт-точность.
-- Tap-опы (`TapOp { after_prim, kind }`, `src/libs/kt-fx/src/geom.rs`)
-  применяются к значению сабтапа после билинейки, до box-среднего; зерно
-  Noise и координата Vignette берутся от СВОЕЙ стадии (`stage_w/h`):
-  виньетка перед зумом темнит стадию, зум срезает углы — это контракт, не
-  дефект. Поглощаются только ВНУТРЕННИЕ поточечные; ведущие/замыкающие —
-  барьеры, чтобы байты K=1-цепочек стояли.
-- `res_scale` в ядрах барьеров (`src/libs/kt-fx/src/video.rs`,
-  `apply_barrier`) — внутренний параметр, не пользовательский и не в
-  формате; K множит производные величины после клампа. VHS берёт строчный
-  контекст от логической строки y/K; Noise — ячейку size·K (узор побитно
-  равен 1×); Halftone — весь узор в логических координатах.
-- Sharpen (`src/libs/kt-fx/src/video.rs`): `radius ≥ 2` — минимум спеки,
-  потому что шаг 1 даёт базу, равную источнику, и нулевой эффект.
-- Pixelate — целочисленная копия центра ячейки C = size·K, паритет EXACT;
-  DropShadow — offset целые px ×K, вход без альфы passthrough на обоих
-  путях, а при неизвестной GPU-альфе формула на 255 вырождается в
-  тождество (раннее отсечение — оптимизация, не другой результат);
-  RadialBlur — ровно 16 тапов на обоих бэкендах (`src/libs/kt-fx/src/video.rs`).
-- Pan3d (`pan3d_forward`, `src/libs/kt-fx/src/geom.rs`): семантика мира
-  заморожена форматом; t.z ≤ 0 и uv вне [0,1]² — прозрачность, |det| ≈ 0 —
-  прозрачный слой. CornerPin строит гомографию замкнутой формой и кладёт в
-  существующий Proj; его арм НЕ наследует `let Some(c3) = cam3d else
-  continue` — камера не нужна. Kaleidoscope — треугольная волна без
-  int-модуло: floor одинаков в f64 и f32.
-- Ключ CPU-мемоизации пост-FX (`postfx_key_hash`,
-  `src/libs/kt-engine/src/video.rs`) содержит разрешённую камеру: она
-  выбирается покадрово, статический хэш цепочки её не видит.
-- `round()` в WGSL округляет половины к чётному, в Rust — от нуля:
-  параметр квантуется один раз (×1024) и дальше считается целочисленно на
-  обоих путях (`src/libs/kt-fx/src/video.rs`, VHS). Ядро, правящее кадр
-  на месте, обязано писать ВСЕ каналы — VHS не трогал зелёный вне
-  скан-линии, и зеркала расходились.
-- SIMD (`src/libs/kt-fx/src/video_simd.rs`): запрещены FMA,
-  переассоциация, rcp/rsqrt, f32 вместо f64, `_mm256_round_pd(NEAREST)`
-  вместо эмуляции half-away; `/255` — magic `(x*0x8080_8081)>>39` (ходовая
-  формула врёт на 255³). Порог полезности 1.3×, ниже — скаляр.
-- Golden-цикл `GOLDEN_ALL` (`src/libs/kt-fx/tests/video_fx.rs`, t328):
-  не-гео не-поточечный вид прогоняется через `apply_barrier` — забытый арм
-  ловится debug-паникой; `drop_shadow` на непрозрачном тест-кадре —
-  identity-хэш, и это контракт passthrough.
-- `render_fx_thumb` (`src/libs/kt-fx/src/video.rs`): `in_scale` всегда 1 —
-  ступень означает «кадр крупнее логики», у миниатюры наоборот; подставить
-  ступень значит просить план о несуществующем запасе деталей.
-  `test_pattern` там же — эталон, а не украшение: правка меняет иконки всех
-  видов сразу.
-- У f32-параметра ровный потолок спеки после `set_param`
-  (`src/libs/kt-model/src/project.rs`) оказывается ВНЕ спеки: кламп в f64,
-  запись в f32 округляет вверх (0.05 → 0.05000000074). Вариант «Глитч»
-  отодвинут на 0.045; t543 (`src/apps/kt-app/src/fx_registry.rs`) строг
-  намеренно.
-- Рецепт ячейки (`recipe_hash`, `src/apps/kt-app/src/fx_thumbs.rs`) —
-  xxh3 по `Debug` цепочки, а не serde: половина полей под
-  `skip_serializing_if`, и новое поле с умолчанием выпало бы из ключа.
-  Ключ помнит `ThumbKey`, который от параметров генератора не зависит —
-  поэтому `invalidate_media` стоит рядом с `retune_media` службы тумб.
-- Пикер (`fx_picker_with_head`, `src/apps/kt-app/src/fx_registry.rs`):
-  `CloseOnClickOutside` обязателен; гард `ui.is_rect_visible` перед
-  ячейкой — иначе одно открытие заказывало 160 миниатюр и невидимая ячейка
-  ловила клик в таймлайн. Составное доступное имя склеивается внутри
-  `widget_info` — ноль аллокаций без доступности.
-- Момент полоски (`src/apps/kt-app/src/fx_registry.rs`,
-  `src/apps/kt-app/src/thumbs.rs::material_at`): замораживается только при
-  игре; `set_busy(играем || экспорт)` заставляет воркер спать 25 мс между
-  рендерами; гейт перерисовки — на `pending()`, а не на «пикер открыт»,
-  иначе открытое меню держит 60 fps в простое.
-- Ось силы (`axis_at`, `src/apps/kt-app/src/fx_registry.rs`): отсчёт от
-  центра ячейки по абсолютной позиции, не накоплением `drag_delta`
-  (уезжает на пропущенных кадрах); на кадре отпускания `dragged()` уже
-  false — читается `drag_stopped()`. Квантование не украшение: каждая
-  позиция — свой рецепт и свой рендер. `FxInstance::lerp`
-  (`src/libs/kt-model/src/project.rs`) переключает нечисловое ровно в
-  середине.
-- В подсказке оси нет стрелки «→»: глифа U+2192 нет ни в одном шрифте
-  программы, «похожий символ» подставлять запрещено (`src/apps/kt-app/src/font_tests.rs`, t100).
+- `plan_chain` (`src/libs/kt-fx/src/plan.rs`) — the only place of
+  decisions; `chain_head_zoom` there gives the net zoom of the prefix up to the first
+  stop, and kt-engine uses it to decide the decode scale step of the clip. The byte
+  fast-path — only when `S == 1 && all K == 1`.
+- A single `Mirror` goes to Legacy ONLY when `k_in == k_out`
+  (`src/libs/kt-fx/src/geom.rs`, `build_geom_exec`): a permutation of
+  pixels is correct at any uniform scale, but not at a change of it; otherwise the
+  chain [grid, vhs, mirror, blur, zoom] tripped the plan's assertion.
+- If you edit `src/libs/kt-fx/src/geom.rs` or `plan.rs` — you edit
+  `src/libs/kt-gpu/src/shaders/geom_fused.wgsl` in the same commit; the shared
+  parametrics (`pan_frame`/`cam_at`/`noise_seed`) in `video.rs` are pub precisely
+  for the mirrors. The arm of a new primitive — into all four copies of the loop
+  (map_pos, map_pos_rec on CPU; geo_map, geo_sample in WGSL) in one commit.
+- Supersampling (`ss_taps`, `src/libs/kt-fx/src/geom.rs`): switched on strictly at len > 1 + 1/64, quantum 1/32 px, ceiling 4×4. For affine
+  programs the Jacobian is computed once in f64 and travels into the uniform; only
+  Proj/Warp measure per pixel. A dead straight probe behind the silhouette
+  is replaced by the inverse one — otherwise the edge of the identity map lost
+  byte-exactness.
+- Tap ops (`TapOp { after_prim, kind }`, `src/libs/kt-fx/src/geom.rs`)
+  are applied to the value of the subtap after bilinear, before the box average; the grain of
+  Noise and the coordinate of Vignette are taken from ITS OWN stage (`stage_w/h`):
+  the vignette before the zoom darkens the stage, the zoom cuts the corners — this is the contract, not
+  a defect. Only INTERNAL point-wise ops are absorbed; leading/trailing ones are
+  barriers, so that the bytes of K=1 chains stand.
+- `res_scale` in the barrier kernels (`src/libs/kt-fx/src/video.rs`,
+  `apply_barrier`) is an internal parameter, not user-facing and not in the
+  format; K multiplies the derived quantities after the clamp. VHS takes the line
+  context from the logical line y/K; Noise — the cell size·K (the pattern is bitwise
+  equal to 1×); Halftone — the whole pattern in logical coordinates.
+- Sharpen (`src/libs/kt-fx/src/video.rs`): `radius ≥ 2` is the minimum of the spec,
+  because step 1 gives a base equal to the source, and a zero effect.
+- Pixelate — an integer copy of the centre of the cell C = size·K, parity EXACT;
+  DropShadow — offset in integer px ×K, an input without alpha is passthrough on both
+  paths, and when the GPU alpha is unknown the formula degenerates to identity at 255
+  (the early cut-off is an optimisation, not a different result);
+  RadialBlur — exactly 16 taps on both backends (`src/libs/kt-fx/src/video.rs`).
+- Pan3d (`pan3d_forward`, `src/libs/kt-fx/src/geom.rs`): the semantics of the world are frozen by the format; t.z ≤ 0 and uv outside [0,1]² — transparency, |det| ≈ 0 — a
+  transparent layer. CornerPin builds the homography in closed form and puts it into the
+  existing Proj; its arm does NOT inherit `let Some(c3) = cam3d else
+  continue` — the camera is not needed. Kaleidoscope — a triangular wave without
+  int-modulo: floor is identical in f64 and f32.
+- The key of CPU memoisation of post-FX (`postfx_key_hash`,
+  `src/libs/kt-engine/src/video.rs`) contains the resolved camera: it is chosen per frame, and the static hash of the chain does not see it.
+- `round()` in WGSL rounds halves to even, in Rust — away from zero: the parameter is
+  quantised once (×1024) and then computed in integers on both paths
+  (`src/libs/kt-fx/src/video.rs`, VHS). A kernel that edits the frame
+  in place must write ALL channels — VHS did not touch green outside the scan line, and the mirrors diverged.
+- SIMD (`src/libs/kt-fx/src/video_simd.rs`): forbidden are FMA,
+  reassociation, rcp/rsqrt, f32 instead of f64, `_mm256_round_pd(NEAREST)`
+  instead of emulating half-away; `/255` — the magic `(x*0x8080_8081)>>39` (the common
+  formula is wrong at 255³). The usefulness threshold is 1.3×, below it — scalar.
+- Golden loop `GOLDEN_ALL` (`src/libs/kt-fx/tests/video_fx.rs`, t328):
+  a non-geo non-point-wise kind is run through `apply_barrier` — a forgotten arm
+  is caught by a debug panic; `drop_shadow` on an opaque test frame is an
+  identity hash, and that is the passthrough contract.
+- `render_fx_thumb` (`src/libs/kt-fx/src/video.rs`): `in_scale` is always 1 —
+  the step means "the frame is larger than the logic"; for a thumbnail it is the reverse; to substitute a step is to ask the plan for a non-existent detail reserve.
+  `test_pattern` there is a reference, not a decoration: an edit changes the icons of all
+  kinds at once.
+- For an f32 parameter the even ceiling of the spec after `set_param`
+  (`src/libs/kt-model/src/project.rs`) turns out to be OUTSIDE the spec: the clamp is in f64,
+  the write into f32 rounds up (0.05 → 0.05000000074). The "Glitch" variant
+  is pushed back by 0.045; t543 (`src/apps/kt-app/src/fx_registry.rs`) is deliberately strict.
+- The cell recipe (`recipe_hash`, `src/apps/kt-app/src/fx_thumbs.rs`) is xxh3 over the `Debug` of the chain, not serde: half of the fields are under
+  `skip_serializing_if`, and a new field with a default would drop out of the key.
+  The key remembers `ThumbKey`, which does not depend on the generator's parameters —
+  therefore `invalidate_media` sits next to `retune_media` of the thumbnail service.
+- The picker (`fx_picker_with_head`, `src/apps/kt-app/src/fx_registry.rs`):
+  `CloseOnClickOutside` is mandatory; the guard `ui.is_rect_visible` before
+  a cell — otherwise one opening ordered 160 thumbnails, and an invisible cell
+  caught a click into the timeline. A composite accessible name is concatenated inside
+  `widget_info` — zero allocations without accessibility.
+- The moment of the strip (`src/apps/kt-app/src/fx_registry.rs`,
+  `src/apps/kt-app/src/thumbs.rs::material_at`): it is frozen only during
+  playback; `set_busy(playing || export)` makes the worker sleep 25 ms between
+  renders; the redraw gate is on `pending()`, not on "the picker is open",
+  otherwise an open menu keeps 60 fps while idle.
+- The strength axis (`axis_at`, `src/apps/kt-app/src/fx_registry.rs`): counted from the
+  centre of the cell by absolute position, not by accumulating `drag_delta`
+  (it drifts on skipped frames); on the release frame `dragged()` is already
+  false — `drag_stopped()` is read. The quantisation is not a decoration: each
+  position is its own recipe and its own render. `FxInstance::lerp`
+  (`src/libs/kt-model/src/project.rs`) switches the non-numeric exactly at the
+  midpoint.
+- The hint of the axis has no arrow "→": the glyph U+2192 is absent from every font of the
+  program, substituting a "similar symbol" is forbidden (`src/apps/kt-app/src/font_tests.rs`, t100).
 
-## Отложено
+## Deferred
 
-- AVX2 слитого гео-прохода и SIMD новых ядер — по замеру и правилу 1.3×
-  (CPU — эталон и фолбэк, продукт считает на GPU).
-- Класс допуска `FrameTol::WARP` — вводится ×2 от замера, если warp-hard
-  кейс t329 провалится на каком-то бэкенде; подкрутка GEOM запрещена.
-- Coring у Sharpen — по жалобе; направленный блюр — режимом RadialBlur.
-- Поле «источник ключа» у эффекта (общая маска на два эффекта, Outside)
-  — единственная ценность графа, снимаемая без DAG.
-- «Хлопанье» K на кадре пересечения порога 1 + 1/64 при автоматизации зума
-  — величина скачка ограничена допуском t303, отдельного решения нет.
+- AVX2 of the fused geo pass and SIMD of the new kernels — by measurement and the 1.3× rule
+  (CPU is the reference and fallback, the product computes on GPU).
+- The tolerance class `FrameTol::WARP` — introduced ×2 from the measurement, if the warp-hard
+  case t329 fails on some backend; tuning GEOM is forbidden.
+- Coring in Sharpen — on complaint; a directional blur — as the RadialBlur mode.
+- The "key source" field of an effect (a shared mask for two effects, Outside)
+  — the only value of the graph that can be taken without a DAG.
+- The "flapping" of K on the frame where the 1 + 1/64 threshold is crossed during zoom automation
+  — the size of the jump is limited by the tolerance t303, there is no separate decision.

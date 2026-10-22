@@ -10,7 +10,7 @@
   doesn't reach a container without mold.
 - `finish.sh` is the owner's full check: build, nextest (or `cargo test`), SIMD parity,
   live scenarios in Xvfb, guards. With nextest it is green; with plain `cargo test`, t663
-  can time out under load (finish.sh comment, Р.68).
+  can time out under load (finish.sh comment, R.68).
 - Tests need: the FFmpeg 6/7/8 shared libraries at runtime (dlopen), the `ffmpeg` binary
   (`src/fixtures/gen.sh` generates fixtures on first run), clang/libclang (bindgen over the
   vendored headers), `libasound2-dev`. GPU tests skip themselves without an adapter.
@@ -86,7 +86,7 @@ or `debug_assert!`. Those keep the dev-profile semantics the tests are written a
 Rejected: a second image recipe is the exact drift D1 removes, and building the image
 on every push costs minutes for nothing.
 *Alternative*: `cargo test` instead of nextest. Rejected: t663 times out under
-`cargo test`'s per-binary parallelism (Р.68 measurement). nextest is how `finish.sh` runs it.
+`cargo test`'s per-binary parallelism (R.68 measurement). nextest is how `finish.sh` runs it.
 
 ### D6. Release workflow reuses `release-build.sh` as is
 `on: push: tags: ['v*']`, `permissions: contents: write`. Steps: checkout with
@@ -132,8 +132,8 @@ owner's third-round rule, "the README is about the product and how to run it". T
 `[[bin]] name = "kinetren", path = "src/main.rs"` in `src/apps/kt-app/Cargo.toml`. The
 build output is then `target/<profile>/kinetren`, and the tarball, `make run`, `finish.sh`'s
 "run this" line and the live scenarios all name the same file. The owner asked for the
-name "при билде и распространении", and `finish.sh` exists precisely so the owner runs what
-was just built (п.7 р.12).
+name "when building and distributing", and `finish.sh` exists precisely so the owner runs what
+was just built (item 7, R.12).
 *Alternative*: copy `kt-app` as `kinetren` only when packing the tarball. Rejected: there
 would be two names for one program, `finish.sh` would print a `kt-app` path, and a script
 could start a stale `kt-app` left in `target/` after the rename.

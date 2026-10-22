@@ -12,7 +12,7 @@ text from now on are in English** — which contradicts the current Russian-only
 revised explicitly rather than silently ignored.
 
 Screenshots made by hand rot on the next UI change (the landing page's `site/screenshots.py`
-already drives the window by fixed pixel coordinates captured before Р.49). The showcase
+already drives the window by fixed pixel coordinates captured before R.49). The showcase
 therefore has to be reproducible: one command builds the showcase project from a sources
 directory, one command re-takes every README image in a virtual screen.
 

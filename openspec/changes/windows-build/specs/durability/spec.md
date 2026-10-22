@@ -2,46 +2,44 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Замок на проект — flock на соседнем файле, вторая копия деградирует честно
+### Requirement: Project lock — flock on an adjacent file, a second copy degrades honestly
+An open project SHALL take the core lock on a file in the data directory: `flock` on Linux,
+`LockFileEx` on Windows (the key — a hash of the absolute path; the path inside). The key on Windows MUST
+be computed from a normalized path: without the `\\?\` prefix, with one kind of separator and without
+regard to case, because `C:\Proj\a.kt` and `c:\proj\A.kt` are one file. The process number of the holder
+SHALL lie in a separate file next to the lock: the Windows lock is mandatory, and
+a locked file cannot be read by a second copy. The lock is placed not on the project itself and
+not globally on the program. A second copy MUST NOT be forbidden: it gets a warning with
+the number of the other process (or without a number, if its file could not be read), ITS OWN
+recovery file, ITS OWN temporary file, and one question at the first Ctrl+S of the session. kt-cli warns
+about the busy state before writing, but does not refuse.
+Why: a global lock would have killed live scenarios and "opened a second time to look"; a lock
+on the project's inode would fall off after the first atomic `rename`; a file with a pid without a
+kernel lock would leave a permanent block after `SIGKILL` (the pid file here is only a reference, the kernel holds
+the lock); a shared tmp of two copies would replace the project with the half-written contents of
+the other. On Windows the lock was a stub "always free", and two copies wrote one project.
 
-Открытый проект SHALL заниматься замком ядра на файле в каталоге данных: `flock` на Linux,
-`LockFileEx` на Windows (ключ — хэш абсолютного пути; путь внутри). Ключ на Windows MUST
-считаться от нормализованного пути: без префикса `\\?\`, с одним видом разделителя и без
-учёта регистра, потому что `C:\Proj\a.kt` и `c:\proj\A.kt` — один файл. Номер процесса
-держателя SHALL лежать в отдельном файле рядом с замком: замок Windows обязательный, и
-заблокированный файл вторая копия прочитать не может. Замок ставится не на самом проекте и
-не глобально на программу. Вторая копия MUST NOT запрещаться: она получает предупреждение с
-номером чужого процесса (или без номера, если его файл не прочитался), СВОЙ файл
-восстановления, СВОЙ временный файл и один вопрос при первом Ctrl+S за сессию. kt-cli перед
-записью предупреждает о занятости, но не отказывает.
-Почему: глобальный замок убил бы живые сценарии и «открыл второй раз посмотреть»; замок
-на inode проекта отваливался бы после первого атомарного `rename`; файл с pid без замка
-ядра оставлял бы вечную блокировку после `SIGKILL` (файл pid здесь только справка, держит
-замок ядро); общий tmp двух копий подменял бы проект наполовину записанным содержимым
-другой. На Windows замок был заглушкой «всегда свободно», и две копии писали один проект.
-
-#### Scenario: Замок именной и переживает атомарное сохранение
-- **WHEN** проект занят, затем атомарно перезаписан
-- **THEN** второй дескриптор получает `Busy` с pid, соседний проект берётся свободно, после перезаписи замок держится, после drop отпускается
+#### Scenario: The lock is named and survives an atomic save
+- **WHEN** the project is busy, then atomically overwritten
+- **THEN** the second handle gets `Busy` with the pid, a neighbouring project is taken freely, after the overwrite the lock is held, after drop it is released
 - **TEST** t362 (`src/apps/kt-app/src/project_lock.rs`), t362b (`src/apps/kt-app/src/project_lock.rs`)
 
-#### Scenario: У второй копии свои tmp и recovery
-- **WHEN** временное имя и цель восстановления считаются при занятом проекте
-- **THEN** в tmp есть pid и полное имя проекта; recovery второй копии отличается от владельца и остаётся `.otio`
+#### Scenario: The second copy has its own tmp and recovery
+- **WHEN** the temporary name and the recovery target are computed while the project is busy
+- **THEN** the tmp contains the pid and the full project name; the recovery of the second copy differs from the owner's and remains `.otio`
 - **TEST** t363 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Первый Ctrl+S на занятом проекте спрашивает один раз
-- **WHEN** проект занят соседом и пользователь сохраняется
-- **THEN** уведомление с pid, вопрос; «не сохранять» оставляет файл и звёздочку; «всё равно» пишет и больше не переспрашивает
+#### Scenario: The first Ctrl+S on an occupied project asks once
+- **WHEN** the project is busy with a neighbour and the user saves
+- **THEN** a notice with the pid, a question; "don't save" leaves the file and the asterisk; "save anyway" writes and no longer asks again
 - **TEST** t364 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Ключ замка нормализован, pid читается при занятом замке
-- **WHEN** ключ замка считается для `C:\Proj\a.kt`, `c:\proj\A.kt`, `\\?\C:\Proj\a.kt` и `C:/Proj/a.kt` по правилу Windows (чистая функция, проверяется на любой ОС); на Windows проект занят одним дескриптором и берётся вторым
-- **THEN** все четыре ключа равны, а по правилу Linux `/p/a.kt` и `/p/A.kt` различны; второй дескриптор получает `Busy` с pid держателя, прочитанным из файла pid
+#### Scenario: The lock key is normalized, the pid is read while the lock is busy
+- **WHEN** the lock key is computed for `C:\Proj\a.kt`, `c:\proj\A.kt`, `\\?\C:\Proj\a.kt` and `C:/Proj/a.kt` by the Windows rule (a pure function, checked on any OS); on Windows the project is held by one handle and taken by a second
+- **THEN** all four keys are equal, and by the Linux rule `/p/a.kt` and `/p/A.kt` differ; the second handle gets `Busy` with the holder's pid, read from the pid file
 - **TEST** t851 (`src/apps/kt-app/src/project_lock.rs`)
 
 ### Requirement: Per-user data lives in `kinetren`; the former directory is moved once
-
 The application's per-user data directory SHALL be `$XDG_DATA_HOME/kinetren` (falling
 back to `~/.local/share/kinetren`) on Linux and `%APPDATA%\kinetren\data` on Windows (the
 Roaming known folder, the same directory eframe uses for its own storage). It covers
@@ -82,7 +80,6 @@ any `kinotrain` folder found there.
 ## ADDED Requirements
 
 ### Requirement: Atomic replace on Windows survives a briefly held target
-
 On Windows the rename step of `kt_otio::write_atomic` SHALL replace the project with
 `MoveFileExW(MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)` and SHALL retry on a
 sharing violation or access denied within a budget of about one second, with growing

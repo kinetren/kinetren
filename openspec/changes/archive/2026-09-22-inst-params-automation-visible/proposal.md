@@ -2,64 +2,64 @@
 
 ## Why
 
-Владелец (Р.60, 2026-09-22) опубликовал параметр эффекта наружу из композиции и
-обнаружил, что в окне «Параметры композиции» экземпляра можно «в разных местах поставить
-разные значения», и получается «что-то типа автоматизации кривых», при этом «кривых
-автоматизаций я нигде не вижу… ни одной кнопки в окне про автоматизацию нет». Второе:
-«значения min/max всегда в 0 проставляются по умолчанию».
+The owner (R.60, 2026-09-22) published an effect parameter outward from a composition and
+discovered that in the "Composition parameters" window of the instance one can "put different
+values in different places", and it turns out to be "something like automation of curves", while
+"I don't see any automation curves anywhere… there isn't a single button in the automation window".
+Second: "the min/max values are always set to 0 by default".
 
-Разведка подтверждает оба: в окне потребителя (`src/apps/kt-app/src/pubparam.rs`,
-`draw_one_inst_params`) у числовой ручки стоит безымянная кнопка-глиф «+», которая
-заводит кривую с одним ключом под курсором; после этого КАЖДАЯ правка поля кладёт ключ в
-позиции курсора (`bound_apply` с `key = None`), а самой кривой в окне нет — ни графика, ни
-таблицы ключей, ни подсказки в строке состояния. Это скрытый режим записи автоматизации,
-и это нарушение решения Р.34 «один механизм анимации на всё»: у FX-редактора и генератора
-кривые рисует общий виджет (`automation::draw`, t221), окно экземпляра его обошло.
-Пределы в окне автора: `PubRange` хранит `Option`, а поле рисует `NaN` как `0.0` — пустое
-сужение выглядит как «0», хотя у цели есть собственный паспорт (`ParamSpec.min/max/default`),
-и именно он должен быть умолчанием.
+The reconnaissance confirms both: in the consumer window (`src/apps/kt-app/src/pubparam.rs`,
+`draw_one_inst_params`) a numeric handle has an unnamed glyph button "+", which creates a curve with one
+key under the cursor; after that EVERY edit of the field puts a key at the cursor position
+(`bound_apply` with `key = None`), and the curve itself is not in the window — no graph, no key table,
+no hint in the status line. This is a hidden automation recording mode, and it violates the decision of
+R.34 "one animation mechanism for everything": the FX editor and the generator draw curves with the shared
+widget (`automation::draw`, t221), while the instance window bypassed it.
+Limits in the author window: `PubRange` stores an `Option`, and the field draws `NaN` as `0.0` — an empty
+narrowing looks like "0", although the target has its own passport (`ParamSpec.min/max/default`), and it
+is that which must be the default.
 
 ## What Changes
 
-- Окно «Параметры композиции» экземпляра рисует кривые переопределений ТЕМ ЖЕ виджетом
-  автоматизации, что FX-редактор (график ↔ таблица, ключ по курсору, копипаст огибающих),
-  с подписанной кнопкой «Автоматизация: добавить кривую…» вместо глифа «+». Ключ садится
-  по курсору только когда кривая ЕСТЬ и ВИДНА; без кривой правка поля — константа.
-- Ось времени виджета — материал экземпляра (время ленты), с тем же замком оси на всю
-  программу и подсветкой курсора, что у слота.
-- Пределы ручки в окне автора: умолчание — пределы ЦЕЛИ по её паспорту (`min/max`), поле
-  показывает их, а не 0; в файл пишется только СУЖЕНИЕ (равные пределам цели значения
-  остаются `None`); сброс к пределам цели — одним действием. Для этого в kt-model появляется
-  `Project::addr_spec` (паспорт по адресу — зеркало `addr_type`).
-- Поле значения у потребителя ограничено пределами цели, а поверх них — сужением автора
-  (сейчас без сужения предел ±1e9).
-- Подсказки строки состояния у новых контролов (правило 10: без всплывающих).
-- **BREAKING (поведение UI, не формат):** глиф «+» и запись ключей без видимой кривой
-  исчезают; файл `.otio` не меняется (`Override.curves` уже есть, v9).
+- The "Composition parameters" window of the instance draws the override curves with THE SAME automation
+  widget as the FX editor (graph ↔ table, key at the cursor, copy-paste of envelopes), with a labelled
+  button "Automation: add a curve…" instead of the glyph "+". A key is placed at the cursor only when the
+  curve EXISTS and is VISIBLE; without a curve, editing the field is a constant.
+- The time axis of the widget is the material of the instance (the reel's time), with the same axis lock
+  for the whole program and the same cursor highlight as for the slot.
+- The handle limits in the author window: the default is the limits of the TARGET by its passport
+  (`min/max`), the field shows them rather than 0; only the NARROWING is written to the file (values equal
+  to the target's limits remain `None`); reset to the target's limits — with one action. For this,
+  `Project::addr_spec` appears in kt-model (the passport by address — a mirror of `addr_type`).
+- The value field of the consumer is limited by the limits of the target, and on top of them by the
+  author's narrowing (now without narrowing the limit is ±1e9).
+- Status-line hints for the new controls (rule 10: no pop-ups).
+- **BREAKING (UI behaviour, not the format):** the glyph "+" and the writing of keys without a visible curve
+  disappear; the `.otio` file does not change (`Override.curves` already exists, v9).
 
 ## Capabilities
 
 ### New Capabilities
 
-Нет.
+None.
 
 ### Modified Capabilities
 
-- `compositions`: требование «Интерфейс публикации — одна дверь, имя автора дословно, два
-  бейджа» — окно потребителя обязано ПОКАЗЫВАТЬ кривые переопределений виджетом
-  автоматизации, скрытой записи ключей не бывает; требование «Публичные параметры —
-  значение шаблона не хранится…» — сужение пределов ручки по умолчанию равно паспорту цели
-  и хранится только как сужение.
-- `automation`: новое требование «Кривые любого носителя показывает один виджет» —
-  носители (слот, генератор, ВЛОЖЕНИЕ) рисуют кривые одним кодом; паспорт по адресу
-  (`addr_spec`) — единственный источник пределов и умолчаний для публикации.
+- `compositions`: the requirement "The publication interface — one door, the author's name verbatim, two
+  badges" — the consumer window is obliged to SHOW the override curves with the automation widget; hidden
+  recording of keys does not exist; the requirement "Public parameters — the template value is not stored…" —
+  the default narrowing of the handle limits equals the passport of the target and is stored only as a
+  narrowing.
+- `automation`: the new requirement "Curves of any carrier are shown by one widget" — the carriers (slot,
+  generator, NESTING) draw curves with one code; the passport by address (`addr_spec`) is the only source of
+  limits and defaults for publication.
 
 ## Impact
 
-- Код: `src/apps/kt-app/src/pubparam.rs` (окно потребителя и окно автора),
-  `src/apps/kt-app/src/automation.rs` (без изменений API, переиспользование),
-  `src/libs/kt-model/src/project.rs` (`addr_spec`), каталоги `i18n/*.toml` (новые строки
-  ×5 языков, сабсеты при новых глифах), `src/scripts/live/nestparam.py` (шаг с кривой).
-- Тесты: t683 меняется (виджет вместо глифа), новые t691–t694 (см. specs), reach-тесты
-  t252–t255 обязаны остаться зелёными (любая правка UI), t392/t393 (обещания подсказок).
-- Формат проекта не меняется; `GOLDEN_*` не тронуты.
+- Code: `src/apps/kt-app/src/pubparam.rs` (the consumer window and the author window),
+  `src/apps/kt-app/src/automation.rs` (no API changes, reuse), `src/libs/kt-model/src/project.rs`
+  (`addr_spec`), the catalogues `i18n/*.toml` (new strings ×5 languages, subsets when new glyphs appear),
+  `src/scripts/live/nestparam.py` (the step with a curve).
+- Tests: t683 changes (the widget instead of the glyph), new t691–t694 (see specs), the reach tests
+  t252–t255 must remain green (any UI edit), t392/t393 (the promises of the hints).
+- The project format does not change; `GOLDEN_*` are not touched.

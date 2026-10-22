@@ -2,88 +2,68 @@
 
 ## Why
 
-Источник с чужими пропорциями (4:3 в 16:9, вертикальное видео, логотип 200×200) молча
-растягивается до краёв кадра: `sws_scale` в декодере тянет кадр ровно в размер проекта,
-композитор чужой размер не вписывает, а отбраковывает, режимы Pan Fit/Fill/Stretch дают один
-и тот же кадр байт-в-байт, и ни один регресс-тест не подаёт материал с несовпадающими
-пропорциями. Ни у проекта, ни у события, ни у ленты нет ни поля правила приведения, ни
-окна настроек. Владелец назвал это первой претензией раунда Р.62 («по идиотски
-растягивается»), разведка F-MED-004 замерила дефект ещё 08.09 и вынесла вердикт «берём,
-приоритет A, как геометрию слоя, а не как галочку».
+A source with foreign proportions (4:3 in 16:9, vertical video, a 200×200 logo) is silently
+stretched to the edges of the frame: `sws_scale` in the decoder pulls the frame exactly to the project size,
+the compositor does not fit a foreign size but rejects it, the Pan modes Fit/Fill/Stretch give
+one and the same frame byte for byte, and not a single regression test feeds material with mismatched
+proportions. Neither the project, nor the event, nor the reel has a conform-rule field or a
+settings window. The owner named this the first complaint of round R.62 ("stretched in a stupid way"); the reconnaissance F-MED-004 measured the defect back on 08.09 and gave the verdict "take it, priority A, as the layer's geometry rather than as a checkbox".
 
 ## What Changes
 
-- **Геометрия слоя в плане кадра.** Одна функция от (натив с пиксельным соотношением,
-  растр выхода, правило, ступень) даёт и размер декода, и прямоугольник размещения слоя;
-  композит кладёт слой в прямоугольник с ПРОЗРАЧНЫМИ полями, парой CPU + WGSL по классам
-  допуска. Контракт «декодер отдаёт ровно запрошенное качество» не меняется — меняется,
-  кто считает запрошенное. Тумбы филмстрипа — в пропорциях источника внутри рамки.
-- **Правило приведения — четыре: вписать / заполнить / растянуть / как есть.** Живёт у
-  ПРОЕКТА (умолчание «вписать», действует задним числом на всех, кто следует проекту) с
-  ИСКЛЮЧЕНИЕМ у события.
-- **Узел «Геометрия» — встроенный первый узел цепочки видео-события** (правило, кроп,
-  положение, зум, поворот, якорь): ведущий узел неудаляем, но перетаскивается по цепочке
-  (эффекты до него — в пространстве источника, после — в кадре проекта); такой же узел
-  можно добавить из каталога ещё раз. Место под маску зарезервировано проектом узла, сама
-  маска — отдельный change. **BREAKING:** FX `Pan` упраздняется (старые файлы мигрируют на
-  чтении в ведущий узел); Pan3d и CamMotion остаются эффектами над приведённым кадром.
-- **Окно настроек проекта:** произвольный растр, fps из делителей 90 000, частота, правило
-  приведения по умолчанию, движок питча, форма отрезка; комбо в панели превью остаются
-  быстрым доступом к той же команде.
-- **Постановка источника:** первый клип в пустой проект с неявными настройками задаёт растр
-  и fps проекта; дальше несовпадение пропорций не спрашивает, а сообщается в строке
-  состояния с адресом «где изменить».
-- **Ленты со своим растром и fps** (умолчание — проект): экземпляр приводится тем же
-  правилом, что файл; свой fps — квантование непрерывного времени ленты к её сетке; закон Э
-  действует при настройках, равных проекту. **Пересмотр** решения Р.50 «наследовать всё» —
-  по прямой просьбе владельца.
-- Версия конверта файла v11 (одна на раунд Р.62, предикат по содержимому).
-- Отложено с записью: приведение частоты кадров источника и управление цветом — заметки в
-  `docs/features/`, «Отложено» в design.md capability.
+- **The layer's geometry in the frame plan.** One function of (native with pixel aspect ratio,
+  output raster, rule, step) gives both the decode size and the layer's placement rectangle;
+  the composite puts the layer into the rectangle with TRANSPARENT margins, as a pair of CPU + WGSL by tolerance
+  classes. The contract "the decoder delivers exactly the requested quality" does not change — what changes is
+  who computes the requested value. Filmstrip thumbnails — in the source's proportions inside the frame.
+- **The conform rule — four: fit / fill / stretch / as is.** It lives at the PROJECT level (default "fit", acting retroactively on everyone who follows the project) with an EXCEPTION at the event level.
+- **The "Geometry" node — a built-in first node of the video event's chain** (rule, crop,
+  position, zoom, rotation, anchor): the leading node cannot be deleted but can be dragged along the chain
+  (effects before it — in source space, after it — in the project frame); the same node
+  can be added from the catalog again. The place for a mask is reserved by the node's design, the mask itself — a separate change. **BREAKING:** the FX `Pan` is abolished (old files migrate on
+  read to the leading node); Pan3d and CamMotion remain effects over the conformed frame.
+- **The project settings window:** an arbitrary raster, fps from divisors of 90 000, frequency, the default conform
+  rule, the pitch engine, the segment shape; the combo boxes in the preview panel remain quick access to the same command.
+- **Placing a source:** the first clip into an empty project with implicit settings sets the project's
+  raster and fps; after that a proportion mismatch does not ask, but is reported in the status line
+  with the address "where to change it".
+- **Reels with their own raster and fps** (default — the project): an instance is conformed by the same
+  rule as a file; its own fps — quantization of the reel's continuous time to its grid; law E
+  holds with settings equal to the project's. The **revision** of the R.50 decision "inherit everything" —
+  by the owner's direct request.
+- File envelope version v11 (one per round R.62, a predicate by content).
+- Deferred, with a note: conforming the source frame rate and color management — notes in
+  `docs/features/`, "Deferred" in the capability's design.md.
 
 ## Capabilities
 
 ### New Capabilities
 
-(нет — приведение кадра ложится в существующие capability)
+(none — frame conform falls into the existing capabilities)
 
 ### Modified Capabilities
 
-- `video-plan`: слой получает прямоугольник размещения и правило приведения; размер декода и
-  прямоугольник считает одна функция; прозрачные поля; ступень декода считается от размера
-  приведения; узел «Геометрия» — часть гео-серии с прозрачным краем.
-- `video-fx`: `Pan` удалён из реестра; узел «Геометрия» — ведущий, обязательный,
-  перемещаемый, добавляемый повторно; эффекты до ведущего узла работают в пространстве
-  источника; Pan3d/CamMotion — над приведённым кадром.
-- `media-index`: факты источника несут пиксельное соотношение и вид кадра; тумбы — в
-  пропорциях источника; контракт «кадр ровно запрошенного качества» сохранён, запрошенное
-  считается функцией геометрии.
-- `compositions`: своя ширина/высота/fps у ленты (умолчание — проект); экземпляр приводится
-  правилом; квантование времени ленты к её сетке; закон Э — при равных настройках; ступень
-  ленты — от её растра.
-- `generators`: натив генератора — растр контейнера (проекта или ленты), а не 4096×4096;
-  кадр по-прежнему ровно запрошенного качества.
-- `project-format`: v11 — правило проекта, ведущий узел геометрии, настройки ленты;
-  миграция `Pan` → узел на чтении; флаг явных настроек проекта.
-- `ui-timeline`: окно настроек проекта; дроп первого клипа; сообщение о несовпадении;
-  редактор цепочки с неудаляемым ведущим узлом; тумбы филмстрипа в пропорциях источника.
-- `ui-reach`: достижимость окна настроек и действий узла из точки, откуда действует человек;
-  живой сценарий на вертикальный источник.
-- `export`: экспорт в разрешении, отличном от проекта, приводит теми же правилами
-  (геометрия в долях кадра); golden не двигаются на совпадающих пропорциях.
+- `video-plan`: the layer gets a placement rectangle and a conform rule; one function computes the decode size and the rectangle; transparent margins; the decode step is computed from the conform size; the "Geometry" node is part of the geo-series with a transparent edge.
+- `video-fx`: `Pan` removed from the registry; the "Geometry" node is leading, mandatory, movable, re-addable; effects before the leading node work in the source space; Pan3d/CamMotion — over the conformed frame.
+- `media-index`: the source facts carry the pixel aspect ratio and the frame view; thumbnails — in the source's proportions; the contract "a frame of exactly the requested quality" is preserved, the requested value is computed by the geometry function.
+- `compositions`: its own width/height/fps for a reel (default — the project); the instance is conformed by the rule; quantization of reel time to its grid; law E — with equal settings; the reel's scale step — from its raster.
+- `generators`: the generator's native — the raster of the container (the project or the reel), not 4096×4096; the frame is still of exactly the requested quality.
+- `project-format`: v11 — the project rule, the leading geometry node, the reel settings; migration `Pan` → node on read; the flag of explicit project settings.
+- `ui-timeline`: the project settings window; dropping the first clip; the mismatch message; the chain editor with an undeletable leading node; filmstrip thumbnails in the source's proportions.
+- `ui-reach`: reachability of the settings window and the node's actions from the point where the person acts; a live scenario for a vertical source.
+- `export`: export at a resolution different from the project conforms by the same rules (geometry in fractions of the frame); golden do not move on matching proportions.
 
 ## Impact
 
-- `src/libs/kt-fx` (`video.rs` `pan_frame`/`pan_zoom` → геометрия узла, `geom.rs` +
-  `kt-gpu` `geom_fused.wgsl` — прозрачный край парой), `src/libs/kt-engine`
-  (`video_plan.rs` прямоугольник слоя, `video.rs` `execute_plan_cpu` и `fits`,
-  `decode_scale`, `export.rs`), `src/libs/kt-gpu/src/engine.rs` (размещение слоя),
-  `src/libs/kt-media` (`Quality` остаётся, `MediaInfo.sar`, тумбы), `src/libs/kt-ffmpeg`
-  (`to_rgba` — только читает SAR; масштаб по-прежнему в запрошенный размер),
+- `src/libs/kt-fx` (`video.rs` `pan_frame`/`pan_zoom` → node geometry, `geom.rs` +
+  `kt-gpu` `geom_fused.wgsl` — the transparent edge as a pair), `src/libs/kt-engine`
+  (`video_plan.rs` the layer's rectangle, `video.rs` `execute_plan_cpu` and `fits`,
+  `decode_scale`, `export.rs`), `src/libs/kt-gpu/src/engine.rs` (layer placement),
+  `src/libs/kt-media` (`Quality` remains, `MediaInfo.sar`, thumbnails), `src/libs/kt-ffmpeg`
+  (`to_rgba` — only reads SAR; the scale is still to the requested size),
   `src/libs/kt-model` (`ProjectSettings.conform`, `settings_explicit`, `FxInstance::Geometry`,
-  удаление `Pan`, `Sequence.raster/fps`), `src/libs/kt-otio` (v11, миграция Pan),
-  `src/apps/kt-app` (окно настроек, дроп, строка состояния, fx_editor, thumbs, i18n —
-  пять каталогов), `src/apps/kt-cli` (probe печатает правило и прямоугольник).
-- Тесты: golden `GOLDEN_VIDEO`, t11/t67/t184 обязаны остаться зелёными без перегенерации;
-  новые t711–t728. Заметки: F-MED-004 (после архива — «сделано»), новые F-SPD/F-CLR по
-  отложенному.
+  removal of `Pan`, `Sequence.raster/fps`), `src/libs/kt-otio` (v11, Pan migration),
+  `src/apps/kt-app` (settings window, drop, status line, fx_editor, thumbs, i18n —
+  five catalogs), `src/apps/kt-cli` (probe prints the rule and the rectangle).
+- Tests: golden `GOLDEN_VIDEO`, t11/t67/t184 must remain green without regeneration;
+  new t711–t728. Notes: F-MED-004 (after archiving — "done"), new F-SPD/F-CLR for the deferred items.

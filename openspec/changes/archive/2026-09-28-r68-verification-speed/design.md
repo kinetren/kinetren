@@ -2,213 +2,210 @@
 
 ## Context
 
-Мотивация — `proposal.md`. Здесь важны только измеренные числа и пределы механики
-(замер на 5c7dc09, 32 ядра, тёплое дерево; таблица целиком — `docs/user-feedback.md`, Р.68).
+The motivation is in `proposal.md`. Only the measured numbers and the limits of the mechanics matter here
+(measured on 5c7dc09, 32 cores, warm tree; the full table — `docs/user-feedback.md`, R.68).
 
-- Живые сценарии: 50 штук, **1012 с** последовательно, разброс 4-136 с (`nestparam` — 136 с).
-- Доля безусловного `time.sleep` внутри сценария: `nestparam` 130.5 с из 135.9 (591 вызов),
-  `curvesrc` 41.9 из 43.2 (213), `level` 4.2 из 4.7 (24). То есть **96 %** живого прогона —
-  это сон, а не работа программы и не жесты.
-- `cargo test --workspace` (тёплый прогон, без сборки) — **259 с**; внутри: kt-app ~71 с,
-  kt-gpu ~28 с, kt-engine ~26 с, остальные крейты 0-3 с каждый. Тестовых бинарей 96, и
-  cargo запускает их ПО ОДНОМУ.
-- Сборка: каскад от правки в kt-model (`--no-run` всей мастерской) — 61 с, сборка
-  kt-app + kt-cli — 43 с, перелинковка одного тестового бинаря — 2 с.
-- Стадии finish.sh кроме живых сценариев: kt-gpu 10 с, четыре SIMD-стадии ~2 с на все.
-- Один kt-app в софт-рендере (`WGPU_BACKEND=gl`, llvmpipe) держит нагрузку около 7 при
-  32 ядрах; кадр в этом режиме идёт ~0.2 с (задокументировано в каркасе).
+- Live scenarios: 50 of them, **1012 s** sequentially, spread 4–136 s (`nestparam` — 136 s).
+- The share of unconditional `time.sleep` inside a scenario: `nestparam` 130.5 s of 135.9 (591 calls),
+  `curvesrc` 41.9 of 43.2 (213), `level` 4.2 of 4.7 (24). That is, **96 %** of a live run
+  is sleep, not the program's work and not gestures.
+- `cargo test --workspace` (a warm run, without build) — **259 s**; inside: kt-app ~71 s,
+  kt-gpu ~28 s, kt-engine ~26 s, the other crates 0–3 s each. There are 96 test binaries, and
+  cargo runs them ONE AFTER ANOTHER.
+- Build: the cascade from an edit in kt-model (`--no-run` of the whole workspace) — 61 s,
+  build of kt-app + kt-cli — 43 s, relinking of one test binary — 2 s.
+- The finish.sh stages other than live scenarios: kt-gpu 10 s, four SIMD stages ~2 s in all.
+- One kt-app in software rendering (`WGPU_BACKEND=gl`, llvmpipe) holds a load of about 7 on
+  32 cores; a frame in this mode takes ~0.2 s (documented in the frame).
 
-Пределы, которые нельзя трогать: набор проверок не ослабляется (выбор владельца), тесты из
-спек не удаляются и не ослабляются, вердикт стадии берётся у проверяющей команды (Р.58),
-красное называется своим именем (Р.55), профили `release`/`dist` и инвариант №10 («ldd без
-libav*») остаются как есть.
+Limits that must not be touched: the set of checks is not weakened (the owner's choice), tests from
+the specs are not removed or weakened, the verdict of a stage is taken from the checking command (R.58),
+red is called by its own name (R.55), the `release`/`dist` profiles and invariant No. 10 ("ldd without
+libav*") remain as they are.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- `finish.sh` — одна команда, которая проверяет ВСЁ и укладывается в 5 минут, называя цену
-  каждой стадии.
-- Живой прогон перестаёт спать: ожидание привязано к наблюдаемому событию программы.
-- Живой прогон использует машину: работники с изолированными экранами и хранилищами,
-  красный отличается от «покраснел под нагрузкой» автоматически.
-- Живьём остаётся то, что живьём и проверяется (попадание жеста, непрокликанное, сложные
-  пути); повторяющаяся масса уезжает в headless без потери сценариев спек.
+- `finish.sh` — one command that checks EVERYTHING and fits within 5 minutes, naming the price
+  of each stage.
+- The live run stops sleeping: the wait is tied to an observable event of the program.
+- The live run uses the machine: workers with isolated screens and storages,
+  red is told apart from "turned red under load" automatically.
+- What is live is what is checked live (the hit of a gesture, the unclicked, complex
+  paths); the repetitive mass moves to headless without losing the spec scenarios.
 
 **Non-Goals:**
-- Сокращение набора проверок, «быстрый режим» с частичным прогоном, правка
-  `release`/`dist`, разбор красных `fxfield`/`fxpicker` (отдельная работа).
-- Слияние 96 тестовых бинарей в один: адреса тестов стоят в сотнях строк `TEST` спек, и
-  выигрыш (2 с на перелинковку) не окупает переписывания контрактов.
-- Настоящая видеокарта в виртуальном экране: проверять надо тот путь, которым идёт человек
-  без карты, и kt-gpu-конформанс всё равно гоняется отдельной стадией на реальном адаптере.
+- Reducing the set of checks, a "fast mode" with a partial run, editing
+  `release`/`dist`, analysis of the red `fxfield`/`fxpicker` (separate work).
+- Merging the 96 test binaries into one: the test addresses stand in hundreds of `TEST` lines of the specs, and
+  the gain (2 s per relinking) does not pay for rewriting the contracts.
+- A real graphics card in the virtual screen: one must check the path that a person without
+  a card takes, and kt-gpu conformance is run anyway as a separate stage on a real adapter.
 
 ## Decisions
 
-### 1. Пересмотр: «живые сценарии не гоняются в два потока» → ограниченная параллель с одиночным перегоном красного
+### 1. Revision: "live scenarios are not run in two threads" → bounded parallelism with a single re-run of the red
 
-**Пересмотр: запрет параллели снимается — причина запрета закрывается механизмом, а не
-надеждой.** Запрет появился в Р.59 §468: второй `live-check.sh` под нагрузкой ~14 покрасил
-зелёные сценарии, одиночный прогон дал 36 из 36. Владелец разрешил параллель прямым ответом
-(«Да, с ограничением нагрузки и авто-перезапуском красного»), и механизм закрывает ровно
-тот механизм провала:
+**Revision: the ban on parallelism is lifted — the cause of the ban is closed by a mechanism, not by hope.** The ban appeared in R.59 §468: a second `live-check.sh` under a load of ~14 turned green scenarios red, while a single run gave 36 of 36. The owner allowed parallelism with a direct answer
+("Yes, with a load limit and an automatic restart of the red"), and the mechanism closes exactly
+that mechanism of failure:
 
-- работников не больше, чем ядер на семь (один kt-app в софт-рендере), с потолком из
-  переменной окружения; софт-рендеру каждого работника урезается число потоков
-  (`LP_NUM_THREADS`), чтобы работники не отбирали ядра друг у друга;
-- у работника свой `DISPLAY` (свой Xvfb + openbox), свой `XDG_DATA_HOME`/`KT_USER_STORE_DIR`
-  и свой каталог в `target/live-out` — иначе `probe.window()` находит окно соседа по
-  `WM_CLASS`, а хранилище смешивает журналы и замки;
-- **красный в параллели не вердикт**: сценарий перегоняется один, в одиночку, и только
-  второе падение считается красным. Это ровно то правило, которое уже записано для
-  «упавшего на паузе или порядке фонового потока» — теперь оно исполняется машиной, а не
-  памятью агента. Отчёт называет прошедших со второго раза: молчаливый перегон превратил бы
-  флак в невидимку.
+- there are no more workers than cores divided by seven (one kt-app in software rendering), with a cap from
+  an environment variable; for software rendering each worker's thread count is reduced
+  (`LP_NUM_THREADS`), so that the workers do not take cores from each other;
+- each worker has its own `DISPLAY` (its own Xvfb + openbox), its own `XDG_DATA_HOME`/`KT_USER_STORE_DIR`
+  and its own directory in `target/live-out` — otherwise `probe.window()` finds a neighbor's window by
+  `WM_CLASS`, and the storage mixes journals and locks;
+- **red in parallel is not a verdict**: the scenario is re-run once, alone, and only
+  a second failure counts as red. This is exactly the rule that is already written for
+  "failed at a pause or in the order of a background thread" — now it is enforced by the machine, not by the agent's memory. The report names those who passed on the second attempt: a silent re-run would turn
+  a flake into an invisible thing.
 
-Альтернативы: оставить один поток (владелец решил иначе; и без параллели цель 5 минут
-недостижима); гонять живые сценарии в контейнерах по одному на ядро (та же изоляция ценой
-образа и прав); отдать параллель `pytest -n` (сценарии — самостоятельные программы, а не
-тесты pytest; ещё одна зависимость ради того же цикла по каталогу).
+Alternatives: keep a single thread (the owner decided otherwise; and without parallelism the 5-minute goal
+is unattainable); run live scenarios in containers, one per core (the same isolation at the cost
+of an image and rights); hand the parallelism to `pytest -n` (the scenarios are self-contained programs, not
+pytest tests; one more dependency for the same loop over a directory).
 
-### 2. Сон заменяется наблюдаемым событием; программа сообщает НОМЕР КАДРА
+### 2. The sleep is replaced by an observable event; the program reports the FRAME NUMBER
 
-96 % живого времени — сон, потому что каркас ждёт «на глазок»: 0.35 с после клика, 0.45 после
-ПКМ, 0.6 после драга, 0.2 на `focus()` и **0.65 с на каждый набранный символ**. Всё это —
-попытка дождаться КАДРА, о котором программа может сказать сама.
+96 % of live time is sleep, because the frame waits "by eye": 0.35 s after a click, 0.45 after
+RMB, 0.6 after a drag, 0.2 on `focus()` and **0.65 s for each typed character**. All of this is an
+attempt to wait for a FRAME that the program could report itself.
 
-- kt-app рядом с `KT_GEOM_DUMP` сообщает номер нарисованного кадра (и признак «жду ввод»);
-  каркас получает `wait_frames(n)` и ждёт кадр, а не часы. При кадре 0.2 с выигрыш на
-  клике невелик, но у 591 ожидания `nestparam` он складывается в минуты, а главное —
-  исчезает причина ложных покраснений: под нагрузкой ожидание РАСТЯГИВАЕТСЯ вместе с
-  кадром, чего фиксированная пауза не умеет.
-- набор строки едет целиком: egui читает события ввода кадром, и вся строка попадает в один
-  кадр — вместо `len(text) × 0.65 с` получается одно ожидание.
-- `focus()` перед каждым жестом не нужен, пока окно не менялось: поднятие окна остаётся при
-  СМЕНЕ окна (модальные формы, попапы) и при первом жесте сценария.
-- остаток пауз законен там, где ждать нечего: временной порог двойного клика egui (0.04 с
-  между кликами — измерено в Р.34: 5 из 5 против 0 из 5), автосейв по часам, пауза внутри
-  драга между позициями. Каждая такая пауза несёт причину словами, и сторож
-  (`live-sleeps.py`) падает на паузе без причины — тот же приём, что у реестра окон Р.66 и
-  у сторожа ПУТЬ Р.67: правило прозой не держится, держится сторож с измеримым исключением.
+- kt-app, next to `KT_GEOM_DUMP`, reports the number of the drawn frame (and a sign "waiting for input");
+  the frame gets `wait_frames(n)` and waits for a frame, not for the clock. At a frame of 0.2 s the gain on
+  a click is small, but for 591 waits of `nestparam` it adds up to minutes, and most importantly,
+  the cause of false reds disappears: under load the wait STRETCHES together with the
+  frame, which a fixed pause cannot do.
+- typing a line goes in full: egui reads input events per frame, and the whole line lands in one
+  frame — instead of `len(text) × 0.65 s` there is a single wait.
+- `focus()` before each gesture is not needed while the window has not changed: raising the window remains on a
+  CHANGE of window (modal forms, pop-ups) and on the first gesture of a scenario.
+- the remaining pauses are legitimate where there is nothing to wait for: the egui double-click time threshold (0.04 s
+  between clicks — measured in R.34: 5 of 5 against 0 of 5), autosave by the clock, a pause inside
+  a drag between positions. Each such pause carries its reason in words, and the guard
+  (`live-sleeps.py`) fails on a pause without a reason — the same technique as the window registry of R.66 and
+  the PATH guard of R.67: a rule in prose does not hold, a guard with a measurable exception does.
 
-Альтернативы: поднять частоту кадров в стенде (уменьшает цену ожидания, но не устраняет
-слепоту — оставлено как отдельная задача-замер: потоки llvmpipe против размера окна);
-`xdotool --sync` (умеет ждать только появление окна); ожидание по скриншоту на каждый жест
-(ImageMagick-снимок сам стоит 0.3-1 с — дороже кадра).
+Alternatives: raise the frame rate in the stand (reduces the price of waiting, but does not remove
+the blindness — left as a separate measurement task: llvmpipe threads against window size);
+`xdotool --sync` (can only wait for a window to appear); waiting by a screenshot on each gesture
+(the ImageMagick snapshot itself costs 0.3–1 s — more than a frame).
 
-### 3. Стенд держит процесс, «свой процесс» объявляет сценарий
+### 3. The stand keeps the process, the scenario declares "its own process"
 
-Холодный старт — это `_wait_window` со снимками через ImageMagick до «экран не однотонный»
-плюс 0.5 с сверху, то есть 3-5 с на каждый из 50 сценариев. Стенд открывает проекты подряд
-в одном процессе:
+The cold start is `_wait_window` with snapshots via ImageMagick until "the screen is not monochrome"
+plus 0.5 s on top, that is 3–5 s for each of the 50 scenarios. The stand opens projects one after another
+in one process:
 
-- канал управления включается переменной окружения (в продукте мёртв) и умеет ровно три
-  вещи: «открой проект», «приведи в чистое состояние», «доложи готовность и номер кадра».
-  Открытие проекта в стенде НЕ спрашивает о несохранённой работе — иначе сценарий начинался
-  бы с модального окна предыдущего;
-- чистота доказывается, а не предполагается: список открытых окон в дампе геометрии пуст,
-  адрес открытого проекта — тот, который просили. Без этого утечка состояния между
-  сценариями дала бы ровно тот класс, которым Kinotrain уже болел: «зелёное, потому что
-  смотрели не туда»;
-- сценарии старта (`recover.py` — SIGKILL, `unsaved.py` — вопрос о несохранённом,
-  `oldfile.py`/`import_old.py` — чтение чужой версии, проверка замка) объявляют «свой
-  процесс» флагом в самом сценарии: решение о том, что проверяется, принадлежит сценарию, а
-  не настройке прогона.
+- the control channel is switched on by an environment variable (dead in the product) and can do exactly
+  three things: "open a project", "bring to a clean state", "report readiness and the frame number".
+  Opening a project in the stand does NOT ask about unsaved work — otherwise a scenario would start
+  with the modal window of the previous one;
+- cleanliness is proven, not assumed: the list of open windows in the geometry dump is empty,
+  the address of the open project is the one that was requested. Without this, a leak of state between
+  scenarios would produce exactly the class of problem by which Kinotrain was already sick: "green, because
+  we looked in the wrong place";
+- the startup scenarios (`recover.py` — SIGKILL, `unsaved.py` — the question about unsaved work,
+  `oldfile.py`/`import_old.py` — reading a foreign version, checking the lock) declare "their own
+  process" by a flag in the scenario itself: the decision about what is checked belongs to the scenario, and not to
+  the run's setting.
 
-Альтернативы: держать процесс, но открывать проекты через меню File мышью (тот же стенд
-ценой десятка жестов на каждый сценарий и зависимости от диалога файлов); форк процесса из
-прогретого состояния (wgpu/X-соединение форк не переживают).
+Alternatives: keep the process, but open projects through the File menu with the mouse (the same stand
+at the cost of a dozen gestures per scenario and dependence on the file dialog); fork the process
+from the warmed-up state (wgpu/X connections do not survive a fork).
 
-### 4. Линкер — mold; профили и инвариант №10 не меняются
+### 4. The linker is mold; the profiles and invariant No. 10 do not change
 
-`src/.cargo/config.toml` ставит mold для `x86_64-unknown-linux-gnu` (в системе стоит
-2.30.0; в поставке рядом лежит `rust-lld` из тулчейна как запасной путь). Флаги линкера —
-это `rustflags`, то есть однократная полная пересборка дерева; выигрыш замеряется на
-каскаде от kt-model (61 с) и на сборке kt-app/kt-cli (43 с), и если он меньше 20 %, mold
-остаётся, но задача честно пишет, что дело было не в линкере (перелинковка одного бинаря
-уже стоит 2 с — большая часть каскада это КОМПИЛЯЦИЯ). `release-build.sh` собирает в
-контейнере Ubuntu 22.04: если mold там не стоит, конфиг не должен ронять сборку поставки —
-проверяется прогоном `scripts/release-build.sh` и порогом GLIBC_ с «ldd без libav*».
+`src/.cargo/config.toml` sets mold for `x86_64-unknown-linux-gnu` (2.30.0 is installed on the system;
+the toolchain's `rust-lld` ships alongside as a fallback path). The linker flags are
+`rustflags`, that is, a one-time full rebuild of the tree; the gain is measured on the
+cascade from kt-model (61 s) and on the build of kt-app/kt-cli (43 s), and if it is less than 20 %, mold
+stays, but the task honestly states that the matter was not the linker (relinking of one binary
+already costs 2 s — most of the cascade is COMPILATION). `release-build.sh` builds in the
+Ubuntu 22.04 container: if mold is not installed there, the config must not break the release build —
+checked by running `scripts/release-build.sh` and by the GLIBC_ threshold with "ldd without libav*".
 
-### 5. Прогон мастерской — стадия скрипта; kt-gpu снимается; nextest — по замеру
+### 5. The workspace run is a stage of the script; kt-gpu is removed; nextest — by measurement
 
-Сегодня `cargo test` гоняет агент, а `finish.sh` — только kt-gpu и SIMD; бюджет и вердикт
-распадаются на две половины, а стадия kt-gpu дублирует мастерскую. Прогон мастерской
-становится стадией скрипта, стадия kt-gpu снимается, SIMD-стадии остаются (у них своё
-окружение и они стоят 2 с).
-`cargo test` запускает 96 тестовых бинарей по одному — при 1078 тестах и 32 ядрах это
-главная причина 259 с. `cargo-nextest` раздаёт тесты по процессам и обычно даёт 2-4×, но
-меняет модель изоляции (тест в своём процессе), поэтому берётся ТОЛЬКО по замеру и только
-если полный набор остаётся зелёным; `cargo test` остаётся эталоном и путём без внешнего
-инструмента. Если nextest меняет вердикт хотя бы одного теста — он не берётся, а расхождение
-разбирается как дефект изоляции.
+Today `cargo test` is run by the agent, while `finish.sh` runs only kt-gpu and SIMD; the budget and the verdict
+fall into two halves, and the kt-gpu stage duplicates the workspace. The workspace run
+becomes a stage of the script, the kt-gpu stage is removed, the SIMD stages remain (they have their own
+environment and take 2 s).
+`cargo test` runs the 96 test binaries one by one — with 1078 tests and 32 cores this is
+the main cause of 259 s. `cargo-nextest` distributes tests across processes and usually gives 2–4×, but
+it changes the isolation model (a test in its own process), so it is taken ONLY by measurement and only
+if the full set stays green; `cargo test` remains the reference and the path without an external
+tool. If nextest changes the verdict of at least one test — it is not taken, and the discrepancy
+is analyzed as an isolation defect.
 
-### 6. Бюджет считает скрипт, держит сторож
+### 6. The budget is counted by the script, the guard holds it
 
-Каждая стадия обёрнута замером, итог печатается таблицей, бюджет — 300 с. Арифметика
-бюджета и оформление живут в отдельном скрипте (`finish-budget.py`), чтобы их можно было
-проверить тестом на синтетических данных, а сторож дополнительно сверяет: у каждой стадии,
-которую скрипт ВЫПОЛНИЛ, есть строка времени (иначе стадию можно было бы тихо вынести из
-бюджета — тот же класс, что «красное чужим именем»).
+Each stage is wrapped in a measurement, the total is printed as a table, the budget is 300 s. The budget
+arithmetic and the formatting live in a separate script (`finish-budget.py`), so that they can be
+checked by a test on synthetic data, and the guard additionally verifies: each stage that the script
+EXECUTED has a timing line (otherwise a stage could be quietly removed from the
+budget — the same class as "red under someone else's name").
 
-### 7. Что уезжает в headless — по отчёту покрытия, не по вкусу
+### 7. What moves to headless — by the coverage report, not by taste
 
-`live-coverage.py` сводит: окна реестра `WINDOWS`, поля geom-дампа и жесты сценариев
-(`src/scripts/live/*.py`) — и печатает, до каких мест человек ни разу не доходил мышью.
-Отчёт даёт две вещи: список кандидатов на переезд (проверки, чей жест уже прокликан в другом
-сценарии, а утверждение — про модель/файл) и список дыр (места, не прокликанные ни разу) —
-именно то, что просил владелец. Переезд обязан сохранить сценарий спеки и его строку `TEST`
-с новым адресом; удаление сценария — нарушение правила «тесты из спек не ослабляются».
+`live-coverage.py` combines: the windows of the `WINDOWS` registry, the fields of the geom dump and the gestures of the scenarios
+(`src/scripts/live/*.py`) — and prints which places a person has never once reached with the mouse.
+The report gives two things: a list of candidates for moving (checks whose gesture is already clicked in another
+scenario, and whose assertion is about the model/file) and a list of holes (places not clicked even once) —
+exactly what the owner asked for. A move must keep the spec scenario and its `TEST` line
+with the new address; removing a scenario is a violation of the rule "tests from the specs are not weakened".
 
 ## Risks / Trade-offs
 
-- **Параллель возвращает флак** → работников ограничивает нагрузка, у каждого свой экран и
-  хранилище, красный перегоняется один; прошедшие со второго раза печатаются, и повторяемый
-  «второй раз» — сигнал разбирать сценарий, а не мириться.
-- **Переиспользованный процесс протекает состоянием и делает проверку ложно зелёной** →
-  чистота доказывается до первого жеста (пустой список окон, адрес проекта); сценарии
-  старта имеют свой процесс; стадия сравнения «стенд против холодных старта» один раз
-  прогоняется целиком и сверяет вердикты.
-- **Переезд проверок в headless уносит именно то, что ловилось только в окне** → критерий
-  записан в спеке (жест, попадание, непрокликанное — живьём), отчёт покрытия показывает
-  дыры, и каждый переезд оставляет сценарий спеки на месте.
-- **mold или nextest ломают редкий путь сборки/изоляции** → поставка проверяется
-  `release-build.sh`, nextest берётся только при полном зелёном и сохраняет `cargo test`
-  как эталон.
-- **Бюджет 5 минут начнёт давить на набор** → бюджет печатает и помечает, но не удаляет
-  проверок; выход за бюджет — повод ускорять механику или разбивать стадию, а не выкидывать
-  тест (правило «тесты из спек не ослабляются» сильнее бюджета).
-- **Тестовый канал стенда — дырка в продукте** → включается только переменной окружения,
-  сторож достижимости проверяет, что без неё канал мёртв.
+- **Parallelism brings back the flake** → the load limits the workers, each has its own screen
+  and storage, a red one is re-run alone; those who passed on the second attempt are printed, and a repeated
+  "second time" is a signal to analyze the scenario, not to put up with it.
+- **A reused process leaks state and makes the check falsely green** → cleanliness is proven before the first gesture
+  (an empty list of windows, the project address); the startup scenarios
+  have their own process; the stage comparing "the stand against cold starts" is run in full once
+  and checks the verdicts against each other.
+- **Moving checks to headless takes away exactly what was caught only in the window** → the criterion
+  is written in the spec (gesture, hit, unclicked — live), the coverage report shows the holes,
+  and each move leaves the spec scenario in place.
+- **mold or nextest break a rare build/isolation path** → the delivery is checked by
+  `release-build.sh`, nextest is taken only with a full green and keeps `cargo test`
+  as the reference.
+- **The 5-minute budget will start to press on the set** → the budget prints and flags, but does not remove
+  checks; exceeding the budget is a reason to speed up the mechanics or split the stage, not to throw out
+  a test (the rule "tests from the specs are not weakened" outweighs the budget).
+- **The stand's test channel is a hole in the product** → it is switched on only by an environment variable,
+  a reachability guard checks that without it the channel is dead.
 
-## Данные для стадии 5 (собраны машиной, Р.68)
+## Data for stage 5 (collected by the machine, R.68)
 
-Отчёт `scripts/live-coverage.py` на момент раунда: программа публикует **174**
-именованных места, сценарии трогают **66**, **108 не трогали мышью ни разу**
-(список группируется по местам: `ask.*`, `track.menu.*`, `pub.row.*`,
-`settings.*`, `bin.reel.*` и другие) — это и есть очередь на живую проверку.
+The `scripts/live-coverage.py` report at the time of the round: the program publishes **174**
+named places, the scenarios touch **66**, and **108 were never touched with the mouse**
+(the list is grouped by places: `ask.*`, `track.menu.*`, `pub.row.*`,
+`settings.*`, `bin.reel.*` and others) — this is the queue for live checking.
 
-Кандидаты на переезд в headless считаются по тому же принципу «утверждение без
-картинки»: **27 сценариев из 50 не читают ни одного пикселя** (`nestenter`,
+Candidates for moving to headless are counted by the same principle "an assertion without
+a picture": **27 scenarios of 50 read not a single pixel** (`nestenter`,
 `nestopen`, `rate`, `nestshare`, `nestzero`, `formula`, `nestwarp`, `nest`,
 `curves`, `curvesrc`, `geomctl`, `nestpreview`, `oldfile`, `seekjump`,
 `fxfield`, `corner`, `select`, `stills`, `unsaved`, `envclip`, `forms`, `keys`,
-`sidechain`, `level`, `recover`, `import_old`, `ruler`), то есть их вердикт —
-это состояние модели и файла. Переезжает при этом не сценарий целиком, а
-ПРОВЕРКА: жест остаётся живым там, где он единственный (хит-тест, кромки,
-порядок окон), и уезжает та часть, которая повторяет уже прокликанный жест
-ради проверки модели.
+`sidechain`, `level`, `recover`, `import_old`, `ruler`), that is, their verdict is
+the state of the model and the file. What moves is not the whole scenario, however, but the
+CHECK: the gesture stays live where it is the only one (a hit test, the edges,
+the order of windows), and the part that repeats an already clicked gesture
+for the sake of checking the model moves out.
 
 ## Migration Plan
 
-1. Хронометраж и бюджет (ничего не ускоряя) — чтобы дальше сравнивать с числом, а не с
-   памятью; сюда же прогон мастерской как стадия и снятие kt-gpu.
-2. mold и замер сборки.
-3. Стенд: канал готовности и номер кадра, ожидание по кадру, набор строки целиком;
-   сценарии старта объявляют «свой процесс».
-4. Параллель работников и перегон красного в одиночку.
-5. Отчёт живого покрытия; переезд повторяющейся массы в headless; закрытие дыр новыми
-   живыми проверками.
+1. Timing and budget (without speeding anything up) — so that further comparison is with a number, not with
+   memory; here also the workspace run as a stage and the removal of kt-gpu.
+2. mold and the measurement of the build.
+3. The stand: the readiness channel and the frame number, waiting by frame, the whole line typed at once;
+   the startup scenarios declare "their own process".
+4. Parallel workers and the re-run of the red alone.
+5. The live coverage report; moving the repetitive mass into headless; closing the holes with new
+   live checks.
 
-Откат: каждый шаг обратим отдельно — `.cargo/config.toml` удаляется, параллель
-выключается ключом (`KT_LIVE_WORKERS=1`), стенд выключается переменной окружения (каркас
-возвращается к холодному старту), хронометраж безвреден.
+Rollback: each step is reversible separately — `.cargo/config.toml` is deleted, parallelism
+is switched off with a key (`KT_LIVE_WORKERS=1`), the stand is switched off by an environment variable (the frame
+returns to a cold start), the timing is harmless.

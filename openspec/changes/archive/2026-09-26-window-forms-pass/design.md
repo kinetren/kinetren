@@ -2,119 +2,56 @@
 
 ## Context
 
-См. proposal.md — Why. Ниже только то, что есть в коде и определяет форму решения.
+See proposal.md — Why. Below is only what exists in the code and determines the shape of the solution.
 
-- **Образец уже написан и принят владельцем** — `src/apps/kt-app/src/geomctl.rs`,
-  `transform_form`: `CollapsingHeader` с `id_salt` (свёртка — память egui, то есть состояние
-  ОКНА), `geom_row` (пара значений одной строкой), `shown_spec` (единица из паспорта, доля
-  показывается процентом), `frame_schema` (схема рядом с числами), сброс одним действием
-  тем же правилом `CurveBind`.
-- **Ряд с ползунком уже общий** — `widgets::param_row_bound_ex(.., slider: Option<f32>)`
-  (Р.64): число и ползунок правят одно значение и пишут по правилу `CurveBind`.
-- **Прокрутка тела уже сделана в одном окне** — `track_window.rs` (Р.65): `ScrollArea` с
-  `max_height = 0.62 × content_rect`, кнопки НИЖЕ неё. Это и есть образец контракта.
-- **Реестр окон есть** — `reach_tests.rs`, `WINDOWS`: 21 запись, сторож t757 проверяет
-  наличие записи, но не вид формы.
-- **Прецеденты запрета-сканером**: `dnd_drag_source` запрещён во всём приложении (t254),
-  прямые формы `set_project(model.document())` запрещены (t554). Тот же приём годится для
-  `DragValue::new` вне `widgets.rs`.
-- **Величины БЕЗ паспорта существуют**: `source_in_delta` морфера в мс, длительность камеры
-  в секундах, поля таймлайна. У них нет `ParamSpec`, и притворяться, что есть, — значит
-  выдумывать пределы.
-- **Ручки рамки считаются в долях холста** (`kt-fx::geom::Handle::point`), а хват-зона — в
-  ПИКСЕЛЯХ ЭКРАНА (`geomctl::GRAB = 14.0`). Значит «мелкая рамка» — свойство экранного
-  масштаба, и решать его надо там, где известен `to_screen`.
+- **The model is already written and accepted by the owner** — `src/apps/kt-app/src/geomctl.rs`, `transform_form`: `CollapsingHeader` with `id_salt` (collapsing is egui memory, that is, the state of the WINDOW), `geom_row` (a pair of values on one row), `shown_spec` (a unit from the passport, a fraction is shown as a percentage), `frame_schema` (the schema next to the numbers), a reset with one action by the same `CurveBind` rule.
+- **The row with a slider is already shared** — `widgets::param_row_bound_ex(.., slider: Option<f32>)` (R.64): the number and the slider edit one value and write by the `CurveBind` rule.
+- **Body scrolling is already done in one window** — `track_window.rs` (R.65): `ScrollArea` with `max_height = 0.62 × content_rect`, the buttons BELOW it. This is the model of the contract.
+- **The window registry exists** — `reach_tests.rs`, `WINDOWS`: 21 entries; the t757 guard checks the presence of an entry, but not the kind of the form.
+- **Precedents of a ban by a scanner**: `dnd_drag_source` is forbidden in the whole application (t254), direct forms `set_project(model.document())` are forbidden (t554). The same trick works for `DragValue::new` outside `widgets.rs`.
+- **Quantities WITHOUT a passport exist**: the morpher's `source_in_delta` in ms, the camera duration in seconds, the timeline fields. They have no `ParamSpec`, and pretending that they do means inventing limits.
+- **The frame handles are computed in fractions of the canvas** (`kt-fx::geom::Handle::point`), while the grab zone is in SCREEN PIXELS (`geomctl::GRAB = 14.0`). So a "small frame" is a property of the screen scale, and it must be decided where `to_screen` is known.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Один контракт формы на все окна реестра и сторож, который его держит.
-- Шесть плотных форм, выложенных по образцу «Трансформации».
-- Ручки мелкой рамки — снаружи кромок, тело — под переносом.
+- One form contract for all windows of the registry, and a guard that holds it.
+- Six dense forms, laid out on the model of "Transform".
+- The handles of a small frame — outside the edges, the body — under the carry-over.
 
 **Non-Goals:**
 
-- Единый «инспектор» вместо окон: владелец запретил новые окна, но и сносить существующие
-  он не просил — просьба была про ВИД форм.
-- Перевёрстка пятнадцати остальных окон (модалки-вопросы, журнал, поиск, диагностика):
-  они попадают под сторож, но их формы — одна-две строки, группировать там нечего.
-- Темы, цвета, шрифты, состав параметров, новые виджеты автоматизации.
+- A single "inspector" instead of windows: the owner banned new windows, but did not ask to remove the existing ones — the request was about the LOOK of the forms.
+- A re-layout of the other fifteen windows (question modals, log, search, diagnostics): they fall under the guard, but their forms are one or two rows, there is nothing to group there.
+- Themes, colors, fonts, the set of parameters, new automation widgets.
 
 ## Decisions
 
-- **Контракт формы живёт в `ui-reach`, а не расползается по шести capability.** Окно FX
-  описано в `ui-timeline`, морфер — в `morpher`, переход — в `transitions`, камера — в
-  `video-fx`, рендер — в `export`. Записать «тело прокручивается» в каждую из них значило
-  бы пять копий одного правила (ровно то, за что владелец ругал копипасты). Правило одно и
-  лежит там же, где реестр окон; сценарии отдельных окон на него ссылаются.
-- **Сторож утверждает следствие ТАМ, ГДЕ ОНО НАБЛЮДАЕМО.** Кнопки действия проверяются
-  следствием: окно открывается в НИЗКОМ окне, кнопка ищется и обязана быть в пределах
-  экрана. А вот «часть формы недостижима» приборами kittest не видно вовсе (см. «Уроки
-  исполнения»: окно egui зажимается экраном, клипованные узлы приходят с обрезанными
-  прямоугольниками), поэтому прокрутка проверяется структурно — по состояниям `ScrollArea`
-  в памяти egui, — и рядом стоит живой сценарий, который крутит колесо в настоящем окне.
-- **`DragValue::new` вне `widgets.rs` запрещён сканером.** Это единственный способ не
-  получить седьмую форму с собственными пределами через два раунда. Исключение ровно одно —
-  сам `widgets.rs`, где ряд и определён.
-- **Величине без паспорта дают паспорт ИЛИ явный ряд с аргументами.** Где значение —
-  свойство модели с диапазоном (длительность камеры, сдвиг морфера), заводится `ParamSpec`
-  рядом с определением типа; где это разовое поле интерфейса — используется
-  `widgets::plain_row(label, unit, range, step)`, и пределы приходят аргументом из ОДНОГО
-  места. Выдумывать паспорт там, где величина не параметр, — значит врать о её природе.
-- **Мелкая рамка: ручки выносятся НАРУЖУ по экранному размеру.** Порог — сторона рамки
-  меньше `3 × GRAB` (42 px): при нём восемь ручек масштаба смещаются на `GRAB` наружу от
-  своих кромок вдоль нормалей, и хит-тест берёт их там же. Альтернатива «уменьшать
-  хват-зону» отвергнута: 14 px поставлены правилом 1 чек-листа и жалобой владельца о
-  попадании мышью; альтернатива «прятать ручки на мелкой рамке» отвергнута — жест, который
-  не видно, не существует.
-- **Смещение считает kt-app, а не kt-fx.** `Handle::point` остаётся геометрией ХОЛСТА
-  (её же зовёт рендер), а вынос наружу — экранная правка: она зависит от масштаба превью,
-  которого kt-fx не знает. В kt-fx уезжает только чистая функция «наружная нормаль ручки»
-  (t782), чтобы направление выноса считалось одним местом с самой рамкой.
-- **Свёртка групп — память egui по `id_salt`**, как в «Трансформации»: это состояние окна,
-  не проекта; в файл не попадает и через undo не ходит.
+- **The form contract lives in `ui-reach`, not spread across six capabilities.** The FX window is described in `ui-timeline`, the morpher in `morpher`, the transition in `transitions`, the camera in `video-fx`, the render in `export`. Writing "the body scrolls" into each of them would mean five copies of one rule (exactly what the owner scolded for as copy-pastes). The rule is one and lies where the window registry is; the scenarios of the individual windows refer to it.
+- **The guard asserts the consequence WHERE IT IS OBSERVABLE.** Action buttons are checked by the consequence: the window opens in a LOW window, the button is searched for and must be within the bounds of the screen. But "part of the form is unreachable" is not visible to kittest at all (see "Lessons of execution": an egui window is clamped by the screen, clipped nodes come with truncated rectangles), therefore scrolling is checked structurally — by the states of the `ScrollArea` in egui memory — and next to it is a live scenario that turns the wheel in a real window.
+- **`DragValue::new` outside `widgets.rs` is forbidden by the scanner.** This is the only way not to get a seventh form with its own limits through two rounds. The exception is exactly one — `widgets.rs` itself, where the row is defined.
+- **A quantity without a passport is given either a passport OR an explicit row with arguments.** Where the value is a property of the model with a range (the camera duration, the morpher shift), a `ParamSpec` is created next to the type definition; where it is a one-off interface field, `widgets::plain_row(label, unit, range, step)` is used, and the limits come as arguments from ONE place. Inventing a passport where the quantity is not a parameter means lying about its nature.
+- **Small frame: the handles are moved OUTWARD by screen size.** The threshold is a side of the frame smaller than `3 × GRAB` (42 px): below it the eight scale handles are offset by `GRAB` outward from their edges along the normals, and the hit test takes them at the same place. The alternative "reduce the grab zone" was rejected: 14 px was set by rule 1 of the checklist and by the owner's complaint about hitting with the mouse; the alternative "hide the handles on a small frame" was rejected — a gesture that is not visible does not exist.
+- **The offset is computed by kt-app, not kt-fx.** `Handle::point` remains the geometry of the CANVAS (it is also called by the render), while moving outward is a screen-level correction: it depends on the scale of the preview, which kt-fx does not know. Only the pure function "the outward normal of a handle" (t782) moves into kt-fx, so that the direction of the offset is computed in one place together with the frame itself.
+- **Grouping of groups is egui memory keyed by `id_salt`**, as in "Transform": this is the state of the window, not the project; it does not go into the file and does not go through undo.
 
 ## Risks / Trade-offs
 
-- [Сканер `DragValue` уронит сборку на чужом коде, который придёт позже] → это и есть цель;
-  у запрета один явный адрес-исключение и понятная замена (общий ряд).
-- [Перевёрстка шести окон — много кода без нового поведения] → каждое окно закрывается
-  своим утверждением в t780 (группы, пары, единицы, ползунки) и живым сценарием; риск
-  «переставили и сломали» ловится прежними тестами этих окон (t716b, t743, t744 и родня).
-- [Вынос ручек наружу мешает на рамке, прижатой к краю кадра] → ручки рисуются за кромкой
-  рамки, но внутри области превью; у рамки в углу они уходят к краю картинки, и это
-  видно — поведение то же, что у Resolve с мелким PiP.
-- [Открыть 21 окно в одном тесте — долго] → окна открываются по одному, кадр каждого
-  прогоняется дважды; если тест окажется медленнее секунды, он разбивается по окнам.
+- [The `DragValue` scanner will break the build on someone else's code that comes later] → that is the goal; the ban has one explicit address-exception and a clear replacement (the common row).
+- [Re-layout of six windows — a lot of code without new behaviour] → each window is closed by its own assertion in t780 (groups, pairs, units, sliders) and by a live scenario; the risk of "rearranged and broke it" is caught by the previous tests of these windows (t716b, t743, t744 and kin).
+- [Moving the handles outward gets in the way on a frame pressed against the edge of the picture] → the handles are drawn beyond the edge of the frame, but inside the preview area; for a frame in a corner they go to the edge of the picture, and this is visible — the behaviour is the same as Resolve's with a small PiP.
+- [Opening 21 windows in one test is slow] → the windows are opened one by one, each frame is run twice; if the test turns out slower than a second, it is split by window.
 
-## Уроки исполнения (Р.66)
+## Lessons of execution (R.66)
 
-- **Сторож без сцены ничего не держит.** Первый вариант t779 проверял кнопки и был ЗЕЛЁН
-  на окнах вовсе без прокрутки: открытые им окна помещались в низкий экран. Понадобилась
-  плотная сцена (цепочка из пяти эффектов) — и проверка того, ЧТО ИМЕННО не помещается.
-- **Окно egui зажимается экраном, и «узел за кромкой» не появляется никогда**: клипованные
-  узлы приходят в дерево доступности с ОБРЕЗАННЫМИ прямоугольниками, а спрятанные строки из
-  дерева не исчезают. Следствие «часть формы недостижима» приборами kittest не наблюдаемо,
-  поэтому прокрутка проверяется структурно — по числу состояний `ScrollArea` в памяти
-  egui, — а «не вокруг пустоты ли она» держит живой сценарий `forms.py`, который в
-  настоящем низком окне сворачивает группу и жмёт кнопку.
-- **Исключение обязано быть ИЗМЕРИМЫМ.** У окна, закрывающегося крестиком заголовка, и у
-  окна, короткого по построению, причина написана словами И проверена числом (заголовок
-  виден на экране; своих строк не больше 25). Иначе список исключений становится дешевле
-  проверки — та же ловушка, что у «глаголов в другом месте» в t253.
-- **Единый ряд вскрыл расхождение единиц.** Поле экземпляра публичного параметра и пределы
-  в окне автора показывали долю сырым числом, а то же поле внутри композиции — процентом.
-  После перевода на общий ряд единица стала одна; t691 и t692b переписаны с объяснением.
-- **Живую проверку нельзя судить под сборкой.** `finish.sh` прогоняет сценарии, пока рядом
-  идёт компиляция: под такой нагрузкой упало 12 сценариев. Тот же набор на спокойной машине
-  (load average 3.6) дал 0 провалов — это известный флак по нагрузке, а не регрессия; вывод
-  о живых сценариях делается ТОЛЬКО по отдельному прогону `./scripts/live-check.sh`.
-- **Первая строка отладочного вывода теста склеивается с именем теста** (`test foo ... FORM …`),
-  и `grep "^FORM"` её не видит — полчаса ушло на поиск «пропавшего» окна, которое на самом
-  деле обрабатывалось первым.
+- **A guard with no scene holds nothing.** The first version of t779 checked the buttons and was GREEN on windows with no scrolling at all: the windows it opened fit into a low screen. A dense scene (a chain of five effects) was needed — and a check of WHAT EXACTLY does not fit.
+- **An egui window is clamped by the screen, and a "node beyond the edge" never appears**: clipped nodes come into the accessibility tree with TRUNCATED rectangles, and hidden rows do not disappear from the tree. The consequence "part of the form is unreachable" is not observable by kittest instruments, therefore scrolling is checked structurally — by the number of `ScrollArea` states in egui memory — and "is it not just empty space around it" is held by the live scenario `forms.py`, which in a real low window collapses a group and presses a button.
+- **An exception must be MEASURABLE.** For a window that closes by the title's cross, and for a window that is short by construction, the reason is written in words AND checked by a number (the title is visible on screen; there are no more than 25 of its own rows). Otherwise the list of exceptions becomes cheaper than the check — the same trap as "verbs in another place" in t253.
+- **The single row exposed a unit mismatch.** The instance field of a public parameter and the limits in the author's window showed the fraction as a raw number, while the same field inside a composition showed a percentage. After the move to the common row there is one unit; t691 and t692b were rewritten with an explanation.
+- **The live check cannot be judged under build load.** `finish.sh` runs the scenarios while compilation is going on nearby: under such load 12 scenarios failed. The same set on a quiet machine (load average 3.6) gave 0 failures — this is a known flake under load, not a regression; a conclusion about the live scenarios is drawn ONLY from a separate run of `./scripts/live-check.sh`.
+- **The first line of a test's debug output is glued to the test name** (`test foo ... FORM …`), and `grep "^FORM"` does not see it — half an hour went into searching for a "missing" window that was in fact processed first.
 
 ## Migration Plan
 
-Формат проекта не меняется; состояние свёрток — память окна. Откат любой перевёрстки —
-локальный: контракт формы и сторож не зависят от того, как именно выложено конкретное окно.
+The project format does not change; the state of the groupings is the window's memory. Rolling back any re-layout is local: the form contract and the guard do not depend on how exactly a particular window is laid out.

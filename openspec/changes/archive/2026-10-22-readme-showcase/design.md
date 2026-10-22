@@ -15,7 +15,7 @@ See proposal.md — Why. Relevant current state:
   `kt_live`, `worker`, `balance`, `_*`) and `live-coverage.py` checks probe names are still
   published.
 - `site/screenshots.py` (landing page) drives the window by fixed pixel coordinates
-  captured before Р.49; it is the counter-example this design avoids.
+  captured before R.49; it is the counter-example this design avoids.
 - The footage (`../sources/README_SOURCES`, ≈ 375 MB): six music/film videos, 69–563 s,
   resolutions 3840×2160, 1920×1080 (25 and 60 fps), 1280×720 @ 29.97, 1920×800, 1080×1080,
   all with audio. Mixed sizes and rates are useful: they exercise conform on screen.
@@ -65,7 +65,7 @@ function of (sorted names, durations):
 - **V3 "PLATES"**: a few full-frame plates with FX, so three video layers overlap.
 - **A2 "MUSIC"**: two long beds from the two longest sources, joined by a crossfade; the
   first carries **Slowed+Reverb with `rate` and `mix` curves of 5–6 keys each**, with at
-  least one non-linear segment shape (Р.67 segment shapes) so the curve reads as a curve in
+  least one non-linear segment shape (R.67 segment shapes) so the curve reads as a curve in
   the screenshot; the second carries a gain envelope.
 - **A3 "AMBIENCE"**: a quiet bed, so the mixer/meters show three audio tracks.
 - **Morph track "BATCH"**: one morpher over a mid section applying a video FX batch.
@@ -140,7 +140,7 @@ Recorded here so the omission is a decision, not an oversight.
   sources and publishes the repo; `--sources` lets anyone re-shoot with other footage.
 - [Binary churn in git history on every re-shoot] → re-shoot only when the visible UI
   changes; WebP budgets cap each revision.
-- [`finish.sh` time (Р.68 budget)] → the live scenario runs on small fixture media through
+- [`finish.sh` time (R.68 budget)] → the live scenario runs on small fixture media through
   the shared worker bench; target ≤ 40 s; if it exceeds that, run only the hero + one
   window shot in `live-check.sh` and the full set manually.
 - [4K source decode slows the first preview frame] → wait on a decoded-frame condition,

@@ -1,371 +1,360 @@
-# Генераторы
+# Generators
 
 ## Purpose
 
-Видео-генераторы — источники без файла (сплошной цвет, градиенты, шахматка, шум,
-SMPTE-полосы, тайм-код, фигуры, подложка, отсчёт, инженерные таблицы и титр):
-третий вид `MediaSource`, чей кадр — чистая функция (значения на событии, тик,
-качество), а титр растеризуется детерминированно вендоренным шрифтом.
+Video generators — sources without a file (solid colour, gradients, checkerboard, noise,
+SMPTE bars, timecode, shapes, backdrop, countdown, engineering tables and titles):
+a third kind of `MediaSource`, whose frame is a pure function (values on the event, tick,
+quality), while the title is rasterized deterministically with a vendored font.
 
 ## Requirements
 
-### Requirement: Генератор — медиа без файла, путь несёт только вид
+### Requirement: A generator — media without a file; the path carries only the kind
+A generator SHALL be an ordinary media record with the pseudo-path `gen:<kind>[:<key>=…]`,
+where the path canonically carries ONLY THE KIND of the generator (and the sort of the variant, if the name of the kind is
+a function of the value), and not the values of the parameters. The dictionary of kinds and the parsing/assembly of the path
+SHALL exist in one place (kt-model), parsing is case-insensitive, garbage gives
+`None`; string values are escaped losslessly. Opening any pseudo-path
+(`synth:`, `gen:`) SHALL go ONLY through the kt-media factory: a broken pseudo-path is an
+honest error, it does not go to FFmpeg, and the sidecar DB is not opened for it. The lookup
+of a source by a clip SHALL have one home (`Project::source()`).
+Why: the parsing of `synth:` lived in two copies and diverged by case — a real
+source was silently taken as a missing file.
 
-Генератор SHALL быть обычной записью медиа с псевдо-путём `gen:<вид>[:<ключ>=…]`,
-где путь канонически несёт ТОЛЬКО ВИД генератора (и сорт варианта, если имя вида —
-функция значения), а не значения параметров. Словарь видов и разбор/сборка пути
-SHALL существовать в одном месте (kt-model), разбор регистронезависим, мусор даёт
-`None`; строковые значения экранируются лослесс. Открытие любого псевдо-пути
-(`synth:`, `gen:`) SHALL идти ТОЛЬКО через фабрику kt-media: битый псевдо-путь —
-честная ошибка, в FFmpeg он не ходит, sidecar-БД для него не открывается. Поиск
-источника по клипу SHALL иметь один дом (`Project::source()`).
-Почему: разбор `synth:` жил двумя копиями и расходился по регистру — настоящий
-источник молча считался отсутствующим файлом.
-
-#### Scenario: Словарь видов и канонический путь
-- **WHEN** путь генератора разбирается и собирается обратно, в том числе с текстом, содержащим разделители и не-ASCII
-- **THEN** разбор регистронезависим, сборка канонична и идемпотентна, строковые значения переживают круг без потерь, у каждого вида полный паспорт параметров
+#### Scenario: Dictionary of kinds and the canonical path
+- **WHEN** a generator path is parsed and assembled back, including with text containing separators and non-ASCII
+- **THEN** parsing is case-insensitive, assembly is canonical and idempotent, string values survive the round trip without loss, and each kind has a full passport of parameters
 - **TEST** t469, t469b, t470 (`src/libs/kt-model/tests/genmedia.rs`)
 
-#### Scenario: Фабрика — единственная дверь псевдо-путей
-- **WHEN** открывается путь `synth:…`, `gen:…` или обычный файл
-- **THEN** фабрика маршрутизирует по схеме без учёта регистра, битый псевдо-путь возвращает ошибку, а не плейсхолдер и не вызов FFmpeg
+#### Scenario: The factory is the only door for pseudo-paths
+- **WHEN** a path `synth:…`, `gen:…` or an ordinary file is opened
+- **THEN** the factory routes by scheme without regard to case, a broken pseudo-path returns an error, and neither a placeholder nor a call to FFmpeg
 - **TEST** t471b (`src/libs/kt-media/src/factory.rs`)
 
-#### Scenario: Псевдо-путь не трогает sidecar-БД
-- **WHEN** тумб-сервис или синк источников встречает `gen:`-медиа
-- **THEN** sqlite не открывается (ключ БД — метаданные файла, у генератора их нет), источник поднимается фабрикой напрямую
+#### Scenario: A pseudo-path does not touch the sidecar DB
+- **WHEN** the thumbnail service or the source sync meets `gen:` media
+- **THEN** sqlite is not opened (the DB key is the file's metadata, and a generator has none), and the source is raised by the factory directly
 - **TEST** t504 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Непарсящийся вид — ошибка, а не молчание
-- **WHEN** в форму генератора приходит медиа с неизвестным видом
-- **THEN** форма показывает ошибку, подсказки общих виджетов доезжают до строки состояния
+#### Scenario: An unparsable kind — an error, not silence
+- **WHEN** media with an unknown kind arrives at the generator form
+- **THEN** the form shows an error, and the hints of the common widgets reach the status line
 - **TEST** t518 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Источник клипа ищется в одном месте (см. capability `ui-reach`)
-- **WHEN** код вне `project.rs` сопоставляет элемент `project.media` с полем `media` клипа
-- **THEN** сканирующий сторож называет файл — у события-генератора адрес источника производен от события, и прямой перебор медиа даст пустой кадр
+#### Scenario: The clip's source is looked up in one place (see capability `ui-reach`)
+- **WHEN** code outside `project.rs` matches an element of `project.media` with the `media` field of a clip
+- **THEN** the scanning guard names the file — for a generator event the address of the source is derived from the event, and a direct search of the media gives an empty frame
 - **TEST** t426b (`src/apps/kt-app/src/reach_tests.rs`)
 
-### Requirement: Кадр генератора — чистая функция ровно запрошенного качества
+### Requirement: A generator frame is a pure function of exactly the requested quality
+`GeneratorSource` SHALL return a frame of EXACTLY the requested Quality (the composite silently discards someone else's size), deterministically from (state, pts, Quality) — two
+runs are byte-for-byte equal. "No sound" SHALL be expressed as `has_audio:false` AND
+`Ok(silence)`, never `Err`. `info()` SHALL report duration=0 ("no duration"),
+fps=None (the container's grid) and a native size equal to the raster of the CONTAINER (the project or the
+reel in which the event stands), SAR 1:1 — so the generator is conformed as an identity and
+a title in a square reel is computed in its raster; the margin of detail for the decode step is given by the
+step formula (native ≥ Quality → step by the zoom of the chain). The "Max (by sources)"
+pseudo-path does not take part. The frame cache by Quality SHALL hold several qualities without
+double copying, and be disabled only for kinds that depend on time, and for
+animated (with curves) states. The 3×5 pixel font (placeholder, timecode, countdown)
+SHALL be a common module and is not the rasterization of user text.
+Why: `Err` on "no sound" accumulated false underruns in the negative cache of the worker; a
+native 4096×4096 with the conform rule would mean "as is" at 4096 size and fitting a
+square into 16:9 — the generator must have the proportions of the container.
 
-`GeneratorSource` SHALL отдавать кадр РОВНО запрошенного Quality (композит молча
-выбрасывает чужой размер), детерминированно от (состояние, pts, Quality) — два
-прогона байт-в-байт. «Нет звука» SHALL выражаться как `has_audio:false` И
-`Ok(тишина)`, никогда `Err`. `info()` SHALL сообщать duration=0 («длительности
-нет»), fps=None (сетка контейнера) и натив, равный растру КОНТЕЙНЕРА (проекта или
-ленты, в которой стоит событие), SAR 1:1 — так генератор приводится тождественно и
-титр в квадратной ленте считается в её растре; запас деталей для ступени декода даёт
-формула ступени (натив ≥ Quality → ступень по зуму цепочки). В «Max (по источникам)»
-псевдо-пути не участвуют. Кэш кадра по Quality SHALL держать несколько качеств без
-двойного копирования и отключаться только у видов, зависящих от времени, и у
-анимированных (с кривыми) состояний. Пиксель-шрифт 3×5 (плейсхолдер, тайм-код, отсчёт)
-SHALL быть общим модулем и не является растеризацией пользовательского текста.
-Почему: `Err` на «нет звука» копил ложные underrun'ы в негативном кэше воркера; натив
-4096×4096 с правилом приведения означал бы «как есть» размером 4096 и вписывание
-квадрата в 16:9 — генератор обязан иметь пропорции контейнера.
-
-#### Scenario: Детерминизм и контракт `info()`
-- **WHEN** один и тот же генератор рендерится дважды в одном Quality и опрашивается `info()` в проекте 1920×1080
-- **THEN** байты совпадают, размер ровно Quality, duration=0, fps=None, натив 1920×1080
+#### Scenario: Determinism and the `info()` contract
+- **WHEN** the same generator is rendered twice in one Quality and `info()` is polled in a 1920×1080 project
+- **THEN** the bytes match, the size is exactly Quality, duration=0, fps=None, native 1920×1080
 - **TEST** t471 (`src/libs/kt-media/src/generator.rs`)
 
-#### Scenario: Тишина вместо ошибки
-- **WHEN** у генератора без звука читается аудио-burst
-- **THEN** возвращается `Ok` с тишиной, `has_audio` ложен
+#### Scenario: Silence instead of an error
+- **WHEN** an audio burst is read from a generator without sound
+- **THEN** `Ok` with silence is returned, `has_audio` is false
 - **TEST** t472 (`src/libs/kt-media/src/generator.rs`)
 
-#### Scenario: Натив генератора кормит ступень декода
-- **WHEN** над титром стоит зумящая цепочка
-- **THEN** заказывается S×Quality по формуле ступени от натива контейнера; без FX — ровно Quality
+#### Scenario: The native of the generator feeds the decode step
+- **WHEN** a zooming chain stands over the title
+- **THEN** S×Quality is ordered by the step formula from the native of the container; without FX — exactly Quality
 - **TEST** t484b (`src/libs/kt-engine/tests/decode_scale.rs`)
 
-#### Scenario: Титр в ленте своего растра
-- **WHEN** титр стоит в ленте 1080×1080, лента — в проекте 1920×1080
-- **THEN** титр считается в 1080×1080 (натив = растр ленты), экземпляр вписан с полями, байты детерминированы
+#### Scenario: A title in the reel of its own raster
+- **WHEN** a title stands in a 1080×1080 reel, and the reel is in a 1920×1080 project
+- **THEN** the title is computed at 1080×1080 (native = the raster of the reel), the instance is fitted with margins, the bytes are deterministic
 - **TEST** t726 (`src/libs/kt-engine/tests/nest_render.rs`)
 
-#### Scenario: Кэш по качеству
-- **WHEN** один кадр запрашивается в нескольких Quality повторно
-- **THEN** каждое качество рендерится один раз; у анимированного титра кэш обходится, статический от появления анимации не страдает
+#### Scenario: Cache by quality
+- **WHEN** one frame is requested repeatedly in several Qualities
+- **THEN** each quality is rendered once; for an animated title the cache is bypassed, and a static one does not suffer from the appearance of the animation
 - **TEST** t507, t539 (`src/libs/kt-media/src/generator.rs`)
 
-#### Scenario: Плейсхолдер и общий пиксель-шрифт детерминированы
-- **WHEN** кадр-заглушка отсутствующего файла рендерится с подписью, в том числе не-ASCII
-- **THEN** байты повторяемы и не зависят от времени; не-ASCII даёт «?», звук — тишина
+#### Scenario: The placeholder and the common pixel font are deterministic
+- **WHEN** the stub frame of a missing file is rendered with a caption, including non-ASCII
+- **THEN** the bytes are repeatable and do not depend on time; non-ASCII gives "?", the sound is silence
 - **TEST** t208 (`src/libs/kt-media/src/placeholder.rs`)
 
-### Requirement: Значения параметров живут на событии, вид — на медиа
+### Requirement: Parameter values live on the event, the kind lives on the media
+The values of the generator and their curves SHALL be stored on the event (`ClipEvent.gen`,
+`gen_auto`); the media stays a kind and a cache bar; a mismatch between the kind of the event and the
+media SHALL be rejected by validation. The source address of a generator event SHALL be
+derived from the event, and the shape of the order `(address, tick, quality)` — the same as for
+files: order == read for two titles of one kind. The curves SHALL be resolved by the source itself at its own tick (the plan does not know about them); without curves — zero cost. A change
+of a value SHALL reach the source by retuning in place (`retune_gen`),
+without rebuilding the renderer and without restarting the worker; the predicate "can it"
+(`can_retune_gen`) MUST match the implementation. The retune request MUST NOT be
+cancelled by a seek and MUST invalidate the cache inside the worker thread, including
+the ancestor reels. Editing parameters MUST redraw the preview with a motionless
+cursor.
+Why: two titles on one media could not carry different text, and every key in the
+title field shut down the decoder and rebuilt both renderers ("this sounds terrible").
 
-Значения генератора и их кривые SHALL храниться на событии (`ClipEvent.gen`,
-`gen_auto`), медиа остаётся видом и кэш-полоской; расхождение вида события и
-медиа SHALL отвергаться валидацией. Адрес источника события-генератора SHALL быть
-производным от события, а форма заказа `(адрес, тик, качество)` — той же, что у
-файлов: заказ == чтение у двух титров одного вида. Кривые SHALL разрешать сам
-источник по своему тику (план о них не знает), без кривых — ноль цены. Правка
-значения SHALL доезжать до источника перенастройкой на месте (`retune_gen`),
-без пересборки рендерера и без перезапуска воркера; предикат «умеет ли»
-(`can_retune_gen`) MUST совпадать с реализацией. Заявка перенастройки MUST NOT
-отменяться seek'ом и MUST инвалидировать кэш внутри потока воркера, включая
-ленты-предки. Правка параметров MUST перерисовать превью при неподвижном
-курсоре.
-Почему: два титра на одно медиа не могли нести разный текст, а каждая клавиша в
-поле титра гасила декодер и пересобирала оба рендерера («это звучит ужасно»).
-
-#### Scenario: Значения на событии и строгая валидация
-- **WHEN** событие-генератор создаётся, меняет медиа или сериализуется
-- **THEN** путь медиа несёт только вид, пустые поля не сериализуются; значения чужого вида или без медиа-генератора отвергаются валидацией
+#### Scenario: Values on the event and strict validation
+- **WHEN** a generator event is created, changes its media, or is serialized
+- **THEN** the media path carries only the kind, empty fields are not serialized; values of a foreign kind or without a generator medium are rejected by validation
 - **TEST** t656, t657 (`src/libs/kt-model/tests/genmedia.rs`)
 
-#### Scenario: Заказ равен чтению у двух титров одного вида
-- **WHEN** два титра одного медиа с разным текстом стоят в одном тике
-- **THEN** заказаны два слоя с разными адресами, композит полон, картинки различны
+#### Scenario: The order equals the read for two titles of one kind
+- **WHEN** two titles of one media with different text stand at one tick
+- **THEN** two layers with different addresses are ordered, the composite is full, the pictures differ
 - **TEST** t658 (`src/libs/kt-engine/tests/gen_event.rs`)
 
-#### Scenario: Кривую разрешает источник
-- **WHEN** на параметре генератора стоит кривая
-- **THEN** кадр — функция тика, второй прогон равен первому до бита, план кривых не видит
+#### Scenario: The source resolves the curve
+- **WHEN** a curve stands on a generator parameter
+- **THEN** the frame is a function of the tick, the second run equals the first to the bit, and the plan does not see the curves
 - **TEST** t659 (`src/libs/kt-engine/tests/gen_event.rs`)
 
-#### Scenario: Правка значения не пересобирает рендерер
-- **WHEN** применяется `SetClipGen`/`SetClipGenAuto`/`SetMediaPath`
-- **THEN** план рендера не трогается, `set_project` не зовётся, воркер и рендереры остаются прежними
+#### Scenario: Editing a value does not rebuild the renderer
+- **WHEN** `SetClipGen`/`SetClipGenAuto`/`SetMediaPath` is applied
+- **THEN** the render plan is not touched, `set_project` is not called, the worker and the renderers remain as they were
 - **TEST** t661, t500 (`src/libs/kt-engine/tests/player_dynamic.rs`), t501 (`src/libs/kt-engine/tests/scheduler.rs`), t502 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Смена вида — команда над путём медиа
-- **WHEN** применяется и откатывается `SetMediaPath` на медиа-генераторе
-- **THEN** путь заменён непрозрачно (годится будущему relink), события переодеты под новый вид, undo возвращает прежний путь
+#### Scenario: Changing the kind — a command over the media path
+- **WHEN** `SetMediaPath` is applied and rolled back on a generator medium
+- **THEN** the path is replaced opaquely (suitable for a future relink), the events are re-dressed for the new kind, undo returns the former path
 - **TEST** t475 (`src/libs/kt-model/tests/genmedia.rs`)
 
-#### Scenario: Перенастройка на месте и её предикат
-- **WHEN** источник получает новые значения того же паспорта / другого паспорта
-- **THEN** `true` = применено и `info()` не изменился, `false` = вызывающий пересоздаёт источник; предикат совпадает с реализацией по всем парам видов
+#### Scenario: Retuning in place and its predicate
+- **WHEN** the source receives new values of the same passport / of a different passport
+- **THEN** `true` = applied and `info()` did not change; `false` = the caller recreates the source; the predicate matches the implementation over all pairs of kinds
 - **TEST** t498, t499, t660 (`src/libs/kt-media/src/factory.rs`, `src/libs/kt-media/src/generator.rs`)
 
-#### Scenario: Лента не отдаёт стейл после retune
-- **WHEN** правится значение генератора внутри вложенной ленты при неподвижном курсоре
-- **THEN** суб-композит ленты инвалидируется вместе с листом и показывает новую картинку
+#### Scenario: The reel does not give a stale frame after retune
+- **WHEN** a generator value is edited inside a nested reel with a motionless cursor
+- **THEN** the sub-composite of the reel is invalidated together with the sheet and shows the new picture
 - **TEST** t663 (`src/libs/kt-engine/tests/gen_event.rs`)
 
-#### Scenario: Превью перерисовывается без движения курсора
-- **WHEN** правится параметр генератора
-- **THEN** превью пересобрано, тик ключа превью не двинулся
+#### Scenario: The preview is redrawn without cursor motion
+- **WHEN** a generator parameter is edited
+- **THEN** the preview is rebuilt, the preview key's tick has not moved
 - **TEST** t541 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Экспорт поднимает свои генераторы и равен превью
-- **WHEN** экспорт стартует без единого внешнего источника
-- **THEN** список источников считается одним кодом для плеера, экспорта и kt-cli; кадр равен превью байт-в-байт; GOLDEN_AUDIO/GOLDEN_VIDEO не тронуты
+#### Scenario: Export raises its own generators and equals the preview
+- **WHEN** export starts without a single external source
+- **THEN** the list of sources is computed by one code for the player, export and kt-cli; the frame equals the preview byte-for-byte; GOLDEN_AUDIO/GOLDEN_VIDEO are untouched
 - **TEST** t670 (`src/libs/kt-engine/tests/gen_event.rs`), t479 (`src/libs/kt-engine/tests/golden_export.rs`)
 
-### Requirement: Формат обмена — первоклассная `GeneratorReference.1` (см. capability `project-format`)
+### Requirement: Exchange format — first-class `GeneratorReference.1` (see capability `project-format`)
+Our generator SHALL be written with the schema `GeneratorReference.1` with `generator_kind="kt.<kind>"`,
+`parameters` and a mandatory `available_range` (exactly what the clip consumed);
+the values of the event SHALL go into its envelope. A foreign `generator_kind` MUST NOT be
+typed — passthrough plus a noticeable stub; byte idempotence of foreign
+files costs more than typing. The import alias `SMPTEBars` SHALL be canonicalized to our
+`gen:smpte`. Old files with values in the path and an animation mode SHALL
+migrate to the event by the same formulas that the preset sets.
+Why: the old build sees a stub instead of a frame and carries the node verbatim —
+there is no silent corruption, and we do not create converters (the owner's decision).
 
-Наш генератор SHALL писаться схемой `GeneratorReference.1` с `generator_kind="kt.<вид>"`,
-`parameters` и обязательным `available_range` (ровно потреблённое клипом);
-значения события SHALL уезжать в его конверт. Чужой `generator_kind` MUST NOT
-типизироваться — passthrough плюс заметная заглушка; байт-идемпотентность чужих
-файлов дороже типизации. Импорт-алиас `SMPTEBars` SHALL канонизироваться в наш
-`gen:smpte`. Старые файлы со значениями в пути и режимом анимации SHALL
-мигрировать на событие теми же формулами, что ставит пресет.
-Почему: старая сборка видит заглушку вместо кадра и возит узел verbatim —
-молчаливой порчи нет, конвертеров не заводим (решение владельца).
-
-#### Scenario: Круг первоклассной схемы и чужой вид
-- **WHEN** проект с генератором сохраняется и читается; чужой файл несёт `generator_kind` не `kt.*`
-- **THEN** наш генератор читается тем же видом идемпотентно; чужой — passthrough с заглушкой, файл байт-стабилен
+#### Scenario: The round trip of a first-class schema and a foreign kind
+- **WHEN** a project with a generator is saved and read; a foreign file carries `generator_kind` not `kt.*`
+- **THEN** our generator is read back as the same kind idempotently; the foreign one is passthrough with a stub, the file is byte-stable
 - **TEST** t473, t474 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Алиас SMPTEBars
-- **WHEN** импортируется апстрим-файл с `SMPTEBars`
-- **THEN** он становится `gen:smpte` и канонизируется на пересохранении
+#### Scenario: The SMPTEBars alias
+- **WHEN** an upstream file with `SMPTEBars` is imported
+- **THEN** it becomes `gen:smpte` and is canonicalized on re-saving
 - **TEST** t494 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Значения события в файле и миграция старых
-- **WHEN** два титра одного вида с разным текстом пишутся и читаются; читается файл прошлой сборки со значениями в пути и режимом анимации полем
-- **THEN** каждый титр возвращается со своими значениями; старый файл даёт значения и кривые, равные пресету
+#### Scenario: Event values in the file and migration of old ones
+- **WHEN** two titles of one kind with different text are written and read; a file of the previous build with values in the path and the animation mode in a field is read
+- **THEN** each title returns with its own values; the old file gives values and curves equal to the preset
 - **TEST** t664, t665 (`src/libs/kt-otio/tests/convert.rs`)
 
-### Requirement: Титр детерминирован — вендоренный шрифт, пины, свой эталон
+### Requirement: A title is deterministic — vendored font, pins, its own reference
+The frame of a title SHALL be a pure function (parameters, W, H) without time, locale and
+environment; rasterization SHALL go in a crate without GUI. The font of the frame — ONLY the
+vendored one (passport `FONT-MANIFEST.txt` with sha256), the shaper and the rasterizer
+are pinned `=x.y.z`, hinting is not executed, and a sixth FFmpeg library
+(libass/freetype/avfilter) MUST NOT appear. A change of the font file or of a pin SHALL
+mean regeneration of the title's goldens with an entry in the manifest; `GOLDEN_VIDEO` MUST
+NOT move — the scene with a title lives in the separate `GOLDEN_TITLE_VIDEO`. Positions
+SHALL be computed by the shaper (GPOS kerning, ligatures), pixels — by the rasterizer from the
+same bytes; the scale is derived via `units_per_em` in one function. The sizes of
+the parameters are relative (the size of the type is a fraction of the frame height, the rest are fractions of em). The system
+family SHALL resolve to a concrete file whose path and bytes enter the identity of the
+frame; a miss on this machine — substitution by the vendored byte-for-byte plus a visible
+notification (once per family). Codepoints without a glyph SHALL be visible to the
+user. The styling (plate/shadow/outline/fill) SHALL be composed by the stored `order`.
+Why: Noto Sans has no legacy `kern` — without the shaper the kerning would be zero;
+`PxScale` is the height, not the em; any `cargo update` of the rasterizer would silently shift
+the bytes of the golden.
 
-Кадр титра SHALL быть чистой функцией (параметры, W, H) без времени, локали и
-окружения; растеризация SHALL идти в крейте без GUI. Шрифт кадра — ТОЛЬКО
-вендоренный (паспорт `FONT-MANIFEST.txt` с sha256), шейпер и растеризатор
-запинены `=x.y.z`, хинтинг не исполняется, шестая библиотека FFmpeg
-(libass/freetype/avfilter) MUST NOT появляться. Смена файла шрифта или пина SHALL
-означать перегенерацию голденов титра с записью в манифест; `GOLDEN_VIDEO` MUST
-NOT двигаться — сцена с титром живёт в отдельном `GOLDEN_TITLE_VIDEO`. Позиции
-SHALL считаться шейпером (кернинг GPOS, лигатуры), пиксели — растеризатором от
-тех же байт; масштаб выводится через `units_per_em` одной функцией. Размеры
-параметров относительные (кегль — доля высоты кадра, прочее — доли em). Системная
-семья SHALL резолвиться в конкретный файл, чьи путь и байты входят в идентичность
-кадра; промах на этой машине — подмена вендоренным байт-в-байт плюс видимое
-уведомление (один раз на семью). Кодпоинты без глифа SHALL быть видимы
-пользователю. Оформление (плашка/тень/обводка/заливка) SHALL складываться по
-сохраняемому `order`.
-Почему: у Noto Sans нет legacy `kern` — без шейпера кернинг был бы нулевым;
-`PxScale` — это высота, не em; любой `cargo update` растеризатора тихо сдвинул бы
-байты голдена.
-
-#### Scenario: Якорь растеризации и метрика
-- **WHEN** титр рендерится вендоренным шрифтом; раскладка считается в ×2 кадре
-- **THEN** хэш кадра равен якорю (сторож пинов и шрифта); раскладка ровно ×2 (ловушка PxScale)
+#### Scenario: The rasterization anchor and the metric
+- **WHEN** a title is rendered with the vendored font; the layout is computed in the ×2 frame
+- **THEN** the frame hash equals the anchor (a guard of the pins and the font); the layout is exactly ×2 (the PxScale trap)
 - **TEST** t480, t481 (`src/libs/kt-text/src/lib.rs`)
 
-#### Scenario: Кернинг GPOS и непокрытые кодпоинты
-- **WHEN** раскладывается пара «AV» и строка с иероглифом вне шрифта
-- **THEN** ширина пары меньше суммы одиночных; список непокрытых кодпоинтов непуст и точен
+#### Scenario: GPOS kerning and uncovered codepoints
+- **WHEN** the pair "AV" and a string with a character outside the font are laid out
+- **THEN** the width of the pair is less than the sum of the singles; the list of uncovered codepoints is non-empty and exact
 - **TEST** t482, t483 (`src/libs/kt-text/src/lib.rs`)
 
-#### Scenario: Оформление и порядок слоёв
-- **WHEN** у титра включены плашка, тень и обводка в заданном `order`
-- **THEN** обводка не съедает штрих глифа (заливка сверху), тень — сдвинутый размытый силуэт одного канала, плашка — по строке
+#### Scenario: Styling and the order of layers
+- **WHEN** the title has the plate, shadow and outline enabled in the given `order`
+- **THEN** the outline does not eat the stroke of the glyph (fill on top), the shadow is a shifted blurred silhouette of one channel, the plate follows the line
 - **TEST** t486 (`src/libs/kt-text/src/lib.rs`)
 
-#### Scenario: Системные семьи и подмена
-- **WHEN** запрошена системная семья, которой нет на машине; список семей опрашивается повторно
-- **THEN** кадр байт-в-байт равен вендоренному и помечен «подменён»; список строится один раз
+#### Scenario: System families and substitution
+- **WHEN** a system family that is absent on the machine is requested; the list of families is polled again
+- **THEN** the frame is byte-for-byte equal to the vendored one and marked "substituted"; the list is built once
 - **TEST** t490, t506 (`src/libs/kt-text/src/lib.rs`)
 
-#### Scenario: Уведомления в UI — «нет глифа» и «шрифт подменён» один раз
-- **WHEN** пользователь вводит символ без глифа; проект несёт отсутствующую семью и правится много раз
-- **THEN** форма показывает «Нет глифа: „…“ U+…»; notice о подмене выдаётся один раз на семью, а не на каждое нажатие
+#### Scenario: UI notices — "no glyph" and "font substituted", once
+- **WHEN** the user enters a character without a glyph; the project carries a missing family and is edited many times
+- **THEN** the form shows "No glyph: „…“ U+…"; the notice about the substitution is issued once per family, not on every keystroke
 - **TEST** t488, t505 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Отдельный голден титра
-- **WHEN** экспортируется сцена с титром над солидом
-- **THEN** результат детерминирован, равен закоммиченному `GOLDEN_TITLE_VIDEO`, превью == экспорт; перенос значений на событие эталон не сдвинул
+#### Scenario: A separate golden for the title
+- **WHEN** a scene with a title over a solid is exported
+- **THEN** the result is deterministic, equals the committed `GOLDEN_TITLE_VIDEO`, preview == export; moving the values to the event did not shift the reference
 - **TEST** t485, t662 (`src/libs/kt-engine/tests/title_golden.rs`), t484 (`src/libs/kt-media/src/generator.rs`)
 
-### Requirement: Анимация титра — числа вида, кластеры, пресеты ставят всё
+### Requirement: Title animation — numeric kinds, clusters, presets set everything
+kt-text SHALL have no time: the animation arrives as numbers of a kind (`reveal`,
+`reveal_soft`, `offset_x/y`), which the source computes from the pts of the material.
+The layout SHALL be computed once over the full line; the unit of reveal is the
+grapheme cluster of the shaper (a ligature, a base with diacritics, ZWJ — one unit);
+at full visibility the EXACTLY former branch is taken. The offset of a block SHALL be
+quantized to 1/64 px before being passed on — the mutual geometry of the glyphs between frames
+is constant bit for bit. Animation presets SHALL set values AND curves, including
+position and anchor, in one step of history; the active preset SHALL be determined by the inverse
+function over both halves, and there is no flag "which preset was pressed". The formulas of the presets
+and the migration of old files SHALL be the same ones.
+Why: a typewriter that cuts the line feeds the shaper a different sequence
+on every frame — the glyphs would mutate; a "crawl" not shifted off the edge is
+useless (the owner's decision).
 
-Времени в kt-text SHALL не быть: анимация приходит числами вида (`reveal`,
-`reveal_soft`, `offset_x/y`), которые источник считает из pts материала.
-Раскладка SHALL считаться один раз по полной строке; единица раскрытия —
-графемный кластер шейпера (лигатура, база с диакритикой, ZWJ — одна единица);
-при полной видимости берётся ТОЧНО прежняя ветка. Смещение блока SHALL
-квантоваться до 1/64 px до передачи — взаимная геометрия глифов между кадрами
-бит-в-бит постоянна. Пресеты анимации SHALL ставить значения И кривые, включая
-позицию и якорь, одним шагом истории; активный пресет SHALL определяться обратной
-функцией по обеим половинам, флага «какой пресет нажали» нет. Формулы пресетов
-и миграции старых файлов SHALL быть одними.
-Почему: печатная машинка, режущая строку, подаёт шейперу другую последовательность
-на каждом кадре — глифы мутировали бы; «бегущая строка», не сдвинутая за край,
-бесполезна (решение владельца).
-
-#### Scenario: Кластеры и раскрытие
-- **WHEN** раскладка запрашивает боксы; `reveal` растёт от 0 до 1; включён мягкий фронт
-- **THEN** боксы кластеров отданы; кластеры открываются по порядку (для RTL — справа налево); мягкое раскрытие не является жёстким срезом; при `reveal>=1` кадр равен статическому
+#### Scenario: Clusters and reveal
+- **WHEN** the layout requests the boxes; `reveal` grows from 0 to 1; the soft front is enabled
+- **THEN** the boxes of the clusters are returned; the clusters open in order (for RTL — right to left); the soft reveal is not a hard cut; at `reveal>=1` the frame equals the static one
 - **TEST** t534, t535, t536 (`src/libs/kt-text/src/lib.rs`)
 
-#### Scenario: Смещение блока без перешейпинга
-- **WHEN** блок смещается на произвольную долю пикселя
-- **THEN** глифы переносятся без изменения формы, смещение квантовано до 1/64 px
+#### Scenario: Offset of a block without reshaping
+- **WHEN** a block is shifted by an arbitrary fraction of a pixel
+- **THEN** the glyphs are moved without changing the shape; the offset is quantized to 1/64 px
 - **TEST** t537, t538 (`src/libs/kt-text/src/lib.rs`)
 
-#### Scenario: Анимация следует времени материала
-- **WHEN** анимированный титр читается в разных pts
-- **THEN** кадры различаются по pts материала, а не по тику таймлайна
+#### Scenario: Animation follows the time of the material
+- **WHEN** an animated title is read at different pts
+- **THEN** the frames differ by the pts of the material, not by the tick of the timeline
 - **TEST** t539 (`src/libs/kt-media/src/generator.rs`)
 
-#### Scenario: Пресет — один шаг, обратная функция
-- **WHEN** нажат пресет; затем пользователь подкручивает поле
-- **THEN** значения, кривые, позиция и якорь ставятся одним undo-шагом; после подкрутки активный пресет — «не совпадает ни с одним»
+#### Scenario: Preset — one step, inverse function
+- **WHEN** a preset is pressed; then the user tweaks a field
+- **THEN** the values, curves, position and anchor are set in one undo step; after the tweak the active preset is "matches none"
 - **TEST** t540 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Кривые генератора из формы
-- **WHEN** в форме генератора (компактный вид) добавляется кривая на параметр
-- **THEN** кривая доезжает до модели (`gen_auto`)
+#### Scenario: Generator curves from the form
+- **WHEN** in the generator form (compact view) a curve is added to a parameter
+- **THEN** the curve reaches the model (`gen_auto`)
 - **TEST** t666 (`src/apps/kt-app/src/layout_tests.rs`)
 
-### Requirement: Прочие виды — детерминизм, честная альфа, звук одной формулы
+### Requirement: Other kinds — determinism, honest alpha, sound from one formula
+Noise SHALL be counter-based: the grain is a function of a cell of the base grid 1920×1080 and the
+pts of the material; the shift of the clip, the step and the Quality do not change the picture. The SMPTE tone and the
+countdown beep SHALL be computed by one code with the phase from the global sample number
+(a seek does not click); switching the tone on makes `has_audio` true. The timecode and the countdown
+SHALL show the time of the MATERIAL. A kind SHALL be a variant of an enum when it
+has its own numbers (Rect/Ellipse/Line — three kinds; tables — one kind with a field
+of variety). The alpha of a kind SHALL be declared by an exhaustive method, not by
+`matches!`; the rasterization of shapes is an integer distance field, float only in the
+preamble of the frame. A title with alpha under the FX chain SHALL remain transparent outside the
+glyphs.
+Why: a new transparent kind slipping past `matches!` would land in the composite as a black plate; a second
+sine would drift out of phase.
 
-Шум SHALL быть counter-based: зерно — функция клетки базовой сетки 1920×1080 и
-pts материала; сдвиг клипа, ступень и Quality картинку не меняют. Тон SMPTE и
-биип отсчёта SHALL считаться одним кодом с фазой от глобального номера сэмпла
-(seek не щёлкает); включение тона делает `has_audio` истинным. Тайм-код и отсчёт
-SHALL показывать время МАТЕРИАЛА. Вид SHALL быть вариантом enum тогда, когда у
-него свои числа (Rect/Ellipse/Line — три вида; таблицы — один вид с полем
-разновидности). Альфа вида SHALL объявляться исчерпывающим методом, а не
-`matches!`; растеризация фигур — целочисленное дистанс-поле, float только в
-преамбуле кадра. Титр с альфой под цепочкой FX SHALL оставаться прозрачным вне
-глифов.
-Почему: новый прозрачный вид мимо `matches!` лёг бы в композит чёрной плитой; второй
-синус разошёлся бы фазой.
-
-#### Scenario: Шум, SMPTE, тайм-код
-- **WHEN** шум читается со сдвинутым `source_in` и в другом Quality; включён тон SMPTE; тайм-код читается в pts
-- **THEN** зерно шума неизменно; тон на заданном dBFS, `has_audio` истинен; цифры тайм-кода следуют материалу с заданным fps
+#### Scenario: Noise, SMPTE, timecode
+- **WHEN** the noise is read with a shifted `source_in` and in another Quality; the SMPTE tone is enabled; the timecode is read at a pts
+- **THEN** the grain of the noise is unchanged; the tone is at the set dBFS, `has_audio` is true; the timecode digits follow the material at the set fps
 - **TEST** t491, t492, t493 (`src/libs/kt-media/src/generator.rs`)
 
-#### Scenario: Фигуры — вид = свои числа, покрытие честное
-- **WHEN** сравниваются паспорта прямоугольника, эллипса и отрезка; рендерятся Rect и Line
-- **THEN** у каждого вида свои параметры без мёртвых контролов; Rect покрывает ровно заявленное, Line — капсула между концами
+#### Scenario: Shapes — a kind is its own numbers, the coverage is honest
+- **WHEN** the passports of the rectangle, the ellipse and the segment are compared; Rect and Line are rendered
+- **THEN** each kind has its own parameters without dead controls; Rect covers exactly what is declared, Line is a capsule between the ends
 - **TEST** t525 (`src/libs/kt-model/tests/genmedia.rs`), t528, t529 (`src/libs/kt-media/src/generator.rs`)
 
-#### Scenario: Альфа объявлена каждым видом
-- **WHEN** перебираются все виды реестра
-- **THEN** `has_alpha` кадра равен объявлению вида; титр под цепочкой не становится непрозрачной плитой
+#### Scenario: The alpha is declared by each kind
+- **WHEN** all kinds of the registry are enumerated
+- **THEN** the `has_alpha` of the frame equals the declaration of the kind; a title under the FX chain does not become an opaque plate
 - **TEST** t527 (`src/libs/kt-media/src/generator.rs`), t521 (`src/libs/kt-engine/tests/transitions_video.rs`)
 
-#### Scenario: Отсчёт и таблицы
-- **WHEN** отсчёт читается по секундам и на «2-pop»; таблицы рендерятся
-- **THEN** цифра убывает, белое поле длиной 1/fps, биип — по целым секундам с воротами; значения таблиц заморожены
+#### Scenario: Countdown and tables
+- **WHEN** the countdown is read by seconds and on "2-pop"; the tables are rendered
+- **THEN** the digit decreases, the white field has a length of 1/fps, the beep is on whole seconds with gates; the values of the tables are frozen
 - **TEST** t530, t533, t531 (`src/libs/kt-media/src/generator.rs`)
 
-### Requirement: UI генератора — один список видов, событие под курсор, форма в голове цепочки
+### Requirement: Generator UI — one list of kinds, the event under the cursor, the form at the chain head
+Creating a generator SHALL be available from the main menu and from the bin menu through one
+list of kinds (the entries do not enumerate the kinds themselves); creation puts the media AND a clip under the
+cursor in one step of history and opens the form. The form of the generator/title SHALL live
+as the first crumb of the event window (the head has no switch); all entries
+are routed into it; the change of kind is its own step of history; a session of the form is one
+undo step; an edit SHALL reach the model and the source, and undo too. Fractions of the frame SHALL
+be shown as percentages (storage — a fraction), a double click on a label resets the
+parameter; every parameter has a label, every flag has a control; the colours
+of the title are shown as real (direct fields, unmultiplied components). Safe zones
+SHALL be drawn over the preview while the title is open; dragging the title in the preview SHALL
+write the position with the same command and the same gesture as the form. The bin card SHALL
+show the name of the kind, hide a zero duration, count the "×N" places, and build
+a real thumbnail without a file; an empty default frame is labelled with the name of the kind;
+the event is labelled with the name of the kind and is not repainted on every keystroke.
+Why: the owner did not find the single entry (right click on the empty background of the bin);
+the title window was a dead end without a kind picker; a double click placed two clips overlapping.
 
-Создание генератора SHALL быть доступно из главного меню и из меню бина одним
-списком видов (входы не перебирают виды сами); создание кладёт медиа И клип под
-курсор одним шагом истории и открывает форму. Форма генератора/титра SHALL жить
-первой крошкой окна события (у головы нет выключателя); все входы
-маршрутизируются в неё; смена вида — свой шаг истории; сессия формы — один шаг
-undo; правка SHALL доезжать до модели и источника, undo — тоже. Доли кадра SHALL
-показываться процентами (хранение — доля), двойной клик по подписи сбрасывает
-параметр; у каждого параметра есть подпись, у каждого флага — контрол; цвета
-титра показываются реальными (прямые поля, компоненты unmultiplied). Safe-зоны
-SHALL рисоваться поверх превью, пока открыт титр; драг титра в превью SHALL
-писать позицию той же командой и тем же gesture, что форма. Карточка бина SHALL
-показывать имя вида, скрывать нулевую длительность, считать «×N» мест и строить
-настоящую тумбу без файла; пустой кадр умолчания подписывается именем вида;
-событие подписано именем вида и не перекрашивается на каждое нажатие.
-Почему: владелец не нашёл единственный вход (правый клик по пустому фону бина);
-окно титра было тупиком без пикера вида; двойной клик ставил два клипа внахлёст.
-
-#### Scenario: Один список видов на все входы
-- **WHEN** проверяются главное меню и меню бина
-- **THEN** оба зовут общее меню генераторов и не перебирают `GeneratorKind::all()` сами
+#### Scenario: One list of kinds for all entries
+- **WHEN** the main menu and the bin menu are checked
+- **THEN** both call the common generators menu and do not enumerate `GeneratorKind::all()` themselves
 - **TEST** t560 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Создание из бина и посадка на таймлайн
-- **WHEN** выбран вид в меню; по карточке сделан двойной клик
-- **THEN** появляются медиа, источник, карточка и клип под курсор одним шагом истории, форма открыта; двойной клик даёт один клип, не два
+#### Scenario: Creation from the bin and placement on the timeline
+- **WHEN** a kind is selected in the menu; a double click is made on the card
+- **THEN** the media, the source, the card and the clip under the cursor appear in one step of history, the form is open; a double click gives one clip, not two
 - **TEST** t477, t512, t514 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Правка доезжает и откатывается
-- **WHEN** в форме меняется значение; затем undo; затем 30 правок подряд
-- **THEN** модель и кадр источника обновлены, undo возвращает картинку, сессия — один шаг, ноль перезапусков источника
+#### Scenario: An edit reaches the model and is rolled back
+- **WHEN** a value is changed in the form; then undo; then 30 edits in a row
+- **THEN** the model and the frame of the source are updated, undo returns the picture, the session is one step, zero restarts of the source
 - **TEST** t478, t502 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Маршрутизация формы и смена вида
-- **WHEN** открывается форма для `gen:text` и для солида; в пикере меняется вид
-- **THEN** каждый вид получает свою форму, смена вида — свой шаг истории
+#### Scenario: Routing of the form and changing the kind
+- **WHEN** the form for `gen:text` and for a solid is opened; the kind is changed in the picker
+- **THEN** each kind gets its own form, a change of kind is its own step of history
 - **TEST** t487, t511 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Проценты, сброс, подписи, цвета
-- **WHEN** доля кадра рисуется в форме; подпись получает двойной клик; перебираются параметры и флаги; открывается титр с цветами
-- **THEN** показано «7.0 %» при хранении 0.07; параметр сброшен к умолчанию спеки; у каждого параметра подпись, у флага контрол; цвета формы равны модели
+#### Scenario: Percentages, reset, labels, colours
+- **WHEN** a fraction of the frame is drawn in the form; a label receives a double click; parameters and flags are enumerated; a title with colours is opened
+- **THEN** "7.0 %" is shown for a stored 0.07; the parameter is reset to the default of the spec; each parameter has a label, the flag has a control; the colours of the form equal the model
 - **TEST** t516, t517, t542 (`src/apps/kt-app/src/layout_tests.rs`), t508, t509 (`src/apps/kt-app/src/reach_tests.rs`)
 
-#### Scenario: Safe-зоны и драг в превью
-- **WHEN** открыт титр; блок тащится мышью в превью
-- **THEN** safe-зоны 5 %/10 % видны только пока титр открыт; позиция записана той же командой и gesture — один шаг undo
+#### Scenario: Safe zones and dragging in the preview
+- **WHEN** a title is open; the block is dragged with the mouse in the preview
+- **THEN** the 5 %/10 % safe zones are visible only while the title is open; the position is written by the same command and gesture — one undo step
 - **TEST** t489, t495 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Карточка и событие
-- **WHEN** генератор лежит в бине без файла, стоит в N местах; событие на таймлайне
-- **THEN** тумба и probe строятся без файла и без БД, вид «видео без аудио», длительность 0 скрыта, «×N» показан; событие подписано именем вида
+#### Scenario: Card and event
+- **WHEN** a generator lies in the bin without a file, stands in N places; an event is on the timeline
+- **THEN** the thumbnail and probe are built without a file and without a DB, the kind "video without audio", the zero duration is hidden, "×N" is shown; the event is labelled with the name of the kind
 - **TEST** t476 (`src/apps/kt-app/src/thumbs.rs`), t513, t515 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Сущность-генератор в механизме «тупиков не бывает» (см. capability `ui-reach`)
-- **WHEN** появляется `TlEntity::Generator` с глаголом «открыть параметры»
-- **THEN** таблица глаголов, отсутствие осиротевших команд и ответ панели на правый клик покрывают генератор своей строкой
+#### Scenario: The generator entity in the "no dead ends" mechanism (see capability `ui-reach`)
+- **WHEN** `TlEntity::Generator` appears with the verb "open parameters"
+- **THEN** the verb table, the absence of orphaned commands and the panel's response to a right click cover the generator with its own row
 - **TEST** t252, t253, t395 (`src/apps/kt-app/src/reach_tests.rs`)

@@ -1,480 +1,440 @@
-# Композиция видео
+# Video composition
 
 ## Purpose
 
-Один план кадра для превью и экспорта: слои, веса переходов и фейдов, уровни,
-маппинг «тик → кадр источника», ступень декода и цепочка эффектов считаются одним
-кодом, а бэкенд-исполнитель (GPU wgpu по умолчанию, CPU — байт-эталон и полный
-фолбэк) — параметр исполнения, не второй путь.
+One frame plan for preview and export: layers, transition and fade weights, levels, the mapping "tick → source frame", the decode scale step and the effect chain are computed by one piece of code, and the backend executor (GPU wgpu by default, CPU is the byte reference and the full fallback) is an execution parameter, not a second path.
 
 ## Requirements
 
-### Requirement: Код композиции один, бэкенд — параметр исполнения
+### Requirement: The composition code is one; the backend is an execution parameter
+The frame plan (layers, order, transition and fade weights, event levels, the mapping "tick →
+source frame", the allowed automation curves, frame blending, the decode scale step)
+SHALL be built by one piece of code for preview and export. There are two executors — CPU and GPU —
+and they MUST only execute the ready plan, without making decisions of their own. Automation
+curves SHALL be resolved once when the plan is built: the executors see
+ready values. Blending of neighboring frames under stretch SHALL be done in the shared
+plan code by the same integer kernel as the crossfade; both executors receive
+an already blended pre-FX frame. Public values of a reel instance SHALL be resolved
+by the model before the plan.
+Why: a second composition path is "the preview shows one thing, the export writes another",
+and it is impossible to keep two copies of one arithmetic (the CPU kernel and WGSL) in sync.
 
-План кадра (слои, порядок, веса переходов и фейдов, уровни событий, маппинг «тик →
-кадр источника», разрешённые кривые автоматизации, смешивание кадров, ступень декода)
-SHALL строиться одним кодом для превью и экспорта. Исполнителей два — CPU и GPU, —
-и они MUST лишь исполнять готовый план, не принимая собственных решений. Кривые
-автоматизации SHALL разрешаться один раз при построении плана: исполнители видят
-готовые значения. Смешивание соседних кадров при растяжении SHALL делаться в общем
-коде плана тем же целочисленным ядром, что кроссфейд; оба исполнителя получают
-уже смешанный пре-FX кадр. Публичные значения экземпляра ленты SHALL разрешаться
-моделью до плана.
-Почему: второй путь композиции — это «превью показывает одно, экспорт пишет другое»,
-и держать две копии одной арифметики (CPU-ядро и WGSL) синхронными невозможно.
-
-#### Scenario: Превью равно экспорту на CPU-пути, холодном и прогретом
-- **WHEN** кадр с видео-FX-цепочкой композится для превью (без мемоизации и из пост-FX кэша) и берётся из экспортного потока в тот же момент
-- **THEN** все три кадра байт-в-байт равны
+#### Scenario: Preview equals export on the CPU path, cold and warm
+- **WHEN** a frame with a video-FX chain is composed for preview (without memoization and from the post-FX cache) and taken from the export stream at the same moment
+- **THEN** all three frames are byte-for-byte equal
 - **TEST** t67 (`src/libs/kt-engine/tests/golden_export.rs`), t26 (`src/libs/kt-engine/tests/reverse.rs`)
 
-#### Scenario: Превью равно экспорту на GPU-пути
-- **WHEN** тот же план исполняется GPU-движком превью (свежим и с прогретым кэшем плана) и GPU-экспортом
-- **THEN** кадры байт-в-байт равны; экспорт детерминирован между прогонами на одном устройстве и лежит в допуске к CPU-эталону
+#### Scenario: Preview equals export on the GPU path
+- **WHEN** the same plan is executed by the GPU engine of the preview (fresh and with a warm plan cache) and by GPU export
+- **THEN** the frames are byte-for-byte equal; export is deterministic between runs on one device and lies within tolerance of the CPU reference
 - **TEST** t184 (`src/libs/kt-gpu/tests/gpu_render.rs`)
 
-#### Scenario: Анимированный клип равен статическому в каждый момент
-- **WHEN** параметры цепочки заданы кривыми и кадр композится в момент t
-- **THEN** результат байт-в-байт равен композиту клипа со статически выставленными значениями кривых в этот момент; пост-FX кэш не отдаёт стейлов между разными t и после правки кривой
+#### Scenario: An animated clip equals a static one at every moment
+- **WHEN** the chain parameters are set by curves and the frame is composed at moment t
+- **THEN** the result is byte-for-byte equal to the clip's composite with the curve values statically set at that moment; the post-FX cache gives no stale results between different t and after a curve edit
 - **TEST** t191 (`src/libs/kt-engine/tests/fx_auto_render.rs`)
 
-#### Scenario: Смешивание кадров живёт в плане, а не в исполнителе
-- **WHEN** событие растянуто и включён режим кадров «смешивание»
-- **THEN** пре-FX кадр слоя — линейная смесь двух соседних исходных кадров ядром кроссфейда; на позициях ровно на сетке (вес 0) пары нет и путь байт-в-байт прежний; префетч греет оба кадра пары
+#### Scenario: Frame blending lives in the plan, not in the executor
+- **WHEN** an event is stretched and the frame mode "blend" is on
+- **THEN** the layer's pre-FX frame is a linear mix of two neighboring source frames by the crossfade kernel; at positions exactly on the grid (weight 0) there is no pair and the path stays byte-for-byte as before; prefetch warms both frames of the pair
 - **TEST** t250 (`src/libs/kt-engine/tests/video_warp.rs`)
 
-#### Scenario: Переопределения экземпляра разрешены до плана
-- **WHEN** два экземпляра одной ленты переопределены по-разному (разный заголовок), без переопределений, кривая переопределения под тримом и реверсом, шаблон в шаблоне, вложение с пустой цепочкой
-- **THEN** кадры у экземпляров разные, а GPU сходится с CPU у обоих; без переопределений — один суб-рендерер и прежние байты; кривая приземляется на тот же кадр материала цели; внешняя ручка внутреннего экземпляра разрешается тем же кодом этажом ниже; вложение равно развёрнутому содержимому со значениями экземпляра (закон Э, модель — capability `compositions`)
+#### Scenario: Instance overrides are resolved before the plan
+- **WHEN** two instances of one reel are overridden differently (different title), without overrides, an override curve under a trim and a reverse, a template inside a template, a nest with an empty chain
+- **THEN** the frames of the instances differ, and the GPU agrees with the CPU for both; without overrides — one sub-renderer and the earlier bytes; the curve lands on the same material frame of the target; the external handle of an inner instance is resolved by the same code one level down; a nest equals the expanded content with the instance's values (the law of E, model — capability `compositions`)
 - **TEST** t687 (`src/libs/kt-gpu/tests/gpu_render.rs`), t675 (`src/libs/kt-engine/tests/nest_param.rs`), t676 (`src/libs/kt-engine/tests/nest_param.rs`), t674 (`src/libs/kt-engine/tests/nest_param.rs`), t686 (`src/libs/kt-engine/tests/nest_param.rs`), t688 (`src/libs/kt-engine/tests/nest_param.rs`)
 
-### Requirement: CPU — байт-эталон и полный фолбэк, GPU — по умолчанию
+### Requirement: CPU is the byte reference and full fallback; GPU is the default
+When a live adapter is present (llvmpipe counts), all video SHALL be computed on the GPU; the CPU path
+SHALL remain the full byte reference, including Pan3d (inverse homography in f64) —
+export without a GPU is legitimate and only slower, and a refusal "needs GPU" MUST NOT exist.
+`TooLarge` from the GPU SHALL move only this plan to the CPU; `DeviceLost`/`Validation`
+SHALL "poison" the GPU until the end of the session with a warning exactly once; in export a
+GPU error SHALL be an export error — a started export finishes on the backend on which it started,
+and the file does not mix backends.
+Why: cross-backend bit-exactness is unreachable, so mixing backends within
+one file is a visible seam; and a reference with a hole (3D only on the GPU) is not a reference.
 
-При живом адаптере (llvmpipe считается) всё видео SHALL считаться на GPU; CPU-путь
-SHALL оставаться полным байт-эталоном, включая Pan3d (обратная гомография f64) —
-экспорт без GPU легален и лишь медленнее, отказа «нужен GPU» MUST NOT быть.
-`TooLarge` от GPU SHALL переводить на CPU только этот план; `DeviceLost`/`Validation`
-SHALL «отравлять» GPU до конца сессии с предупреждением ровно один раз; в экспорте
-ошибка GPU SHALL быть ошибкой экспорта — начатый экспорт завершается на бэкенде,
-на котором начался, файл не смешивает бэкенды.
-Почему: кросс-бэкендная битовость недостижима, поэтому смешение бэкендов внутри
-одного файла — это видимый шов; а эталон с дырой (3D только на GPU) не эталон.
-
-#### Scenario: Экспорт без GPU рендерит 3D
-- **WHEN** проект с Pan3d экспортируется без GPU-бэкенда
-- **THEN** экспорт не отказывает, кадры реально несут эффект, а при живом адаптере CPU и GPU сходятся в допуске `GEOM`
+#### Scenario: Export without a GPU renders 3D
+- **WHEN** a project with Pan3d is exported without the GPU backend
+- **THEN** the export does not refuse, the frames actually carry the effect, and with a live adapter the CPU and the GPU agree within the tolerance `GEOM`
 - **TEST** t301 (`src/libs/kt-gpu/tests/gpu_render.rs`)
 
-#### Scenario: Pan3d — тождество на дефолтах и сверка с CPU каждым прогоном
-- **WHEN** Pan3d исполняется с дефолтами, сдвигом, масштабом < 1 на GPU
-- **THEN** дефолты дают кадр 1:1, сдвиг перемещает маркер ровно на заданные px, масштаб открывает прозрачные поля, и каждый кадр сверяется с CPU-композитом в допуске `GEOM`
+#### Scenario: Pan3d — identity at defaults and a check against the CPU on every run
+- **WHEN** Pan3d is executed on the GPU with defaults, a shift, and a scale < 1
+- **THEN** the defaults give a 1:1 frame, the shift moves the marker by exactly the given px, the scale opens transparent margins, and every frame is checked against the CPU composite within the tolerance `GEOM`
 - **TEST** t187 (`src/libs/kt-gpu/tests/pan3d.rs`)
 
-#### Scenario: Потеря GPU — предупреждение один раз, дальше CPU молча
-- **WHEN** GPU-исполнитель превью падает с `DeviceLost`
-- **THEN** предупреждение показывается ровно один раз, превью идёт на CPU до конца сессии, статус бэкенда честный
+#### Scenario: GPU loss — a warning once, then the CPU silently
+- **WHEN** the GPU preview engine fails with `DeviceLost`
+- **THEN** the warning is shown exactly once, the preview goes to the CPU until the end of the session, and the backend status is honest
 - **TEST** t185 (`src/apps/kt-app/src/layout_tests.rs`)
 
-### Requirement: Конформанс GPU↔CPU — только через классы допуска
+### Requirement: GPU↔CPU conformance — only through tolerance classes
+The comparison of the GPU with the CPU SHALL go exclusively through `assert_frames_close` with the
+`FrameTol` class (EXACT / BILINEAR / THRESHOLD / GEOM); an ad-hoc epsilon MUST NOT
+appear. Integer kernels (composite, mirror, noise, tiling) SHALL be
+byte-for-byte equal to the CPU; the rules of layer presence and of the `complete` flag on the GPU SHALL
+mirror the CPU verbatim; a layer of a foreign size SHALL give `complete = false`, not a
+silent skip. The tolerance threshold is set at ×2 from a measurement; a failure "on the edge" is an
+investigation, not a tweak. Without an adapter the tests are skipped with a printout,
+and `KT_REQUIRE_GPU=1` turns the skip into a failure.
+Why: a single tolerance methodology is the only thing that tells "the GPU broke" apart from
+"the driver rounded differently"; without a tolerance class every test would invent its own threshold.
 
-Сравнение GPU с CPU SHALL идти исключительно через `assert_frames_close` с классом
-`FrameTol` (EXACT / BILINEAR / THRESHOLD / GEOM); ad-hoc epsilon MUST NOT
-появляться. Целочисленные ядра (композит, зеркало, шум, тайлинг) SHALL быть
-байт-в-байт равны CPU; правила присутствия слоёв и флага `complete` у GPU SHALL
-дословно зеркалить CPU; слой чужого размера SHALL давать `complete = false`, а не
-молчаливый пропуск. Порог допуска ставится ×2 от замера; провал «на грани» —
-расследование, не подкрутка. Без адаптера тесты пропускаются с печатью,
-`KT_REQUIRE_GPU=1` превращает пропуск в провал.
-Почему: единая методика допусков — единственное, что отличает «GPU сломался» от
-«драйвер округлил иначе»; без класса допуска каждый тест изобретал бы свой порог.
-
-#### Scenario: Каждый эффект и цепочки в допуске своего вида арифметики
-- **WHEN** каждый видео-эффект и характерные цепочки (гео-серии, tap-опы, K×-барьеры, Pan3d-цепочки, альфа-кейсы) исполняются на обоих бэкендах
-- **THEN** кадры сходятся в классе допуска по виду арифметики; `complete` совпадает
+#### Scenario: Each effect and chains are within the tolerance of their kind of arithmetic
+- **WHEN** each video effect and the characteristic chains (geometry series, tap ops, K×-barriers, Pan3d chains, alpha cases) are executed on both backends
+- **THEN** the frames converge within the tolerance class for the kind of arithmetic; `complete` matches
 - **TEST** t181 (`src/libs/kt-gpu/tests/parity.rs`)
 
-#### Scenario: Композит байт-в-байт
-- **WHEN** сцены композита (over, уровень, сольный фейд, dissolve, недостающая половина пары, слой чужого размера) исполняются на GPU
-- **THEN** кадр равен CPU в `EXACT`, ожидаемый `complete` совпадает у обоих, чужой размер даёт `complete = false`
+#### Scenario: Composite byte-for-byte
+- **WHEN** composite scenes (over, level, solo fade, dissolve, a missing half of a pair, a layer of a foreign size) are executed on the GPU
+- **THEN** the frame equals the CPU in `EXACT`, the expected `complete` matches on both, and a foreign size gives `complete = false`
 - **TEST** t182 (`src/libs/kt-gpu/tests/parity.rs`), t633 (`src/libs/kt-engine/tests/decode_scale.rs`)
 
-#### Scenario: Конформанс-цикл по всему видео-реестру
-- **WHEN** для каждого видео-эффекта реестра исполняется одиночный кейс и сэндвич «сетка 2×2 → эффект → зум ×2»
-- **THEN** оба сходятся в классе допуска из таблицы; вид без строки в таблице валит тест
+#### Scenario: Conformance cycle over the whole video registry
+- **WHEN** for each video effect of the registry a single case and a sandwich "2×2 grid → effect → zoom ×2" are executed
+- **THEN** both converge within the tolerance class from the table; a kind without a row in the table fails the test
 - **TEST** t329 (`src/libs/kt-gpu/tests/parity.rs`)
 
-#### Scenario: Ступень декода на GPU
-- **WHEN** пре-FX кадр приходит вдвое крупнее Quality (`src_scale = 2`)
-- **THEN** конъюгация, ведущие барьеры в 2×, поглощённые поточечные, Legacy-зеркало на 2× и Pan3d сходятся с CPU в штатных допусках без подкрутки
+#### Scenario: Decode scale step on the GPU
+- **WHEN** the pre-FX frame arrives twice the size of Quality (`src_scale = 2`)
+- **THEN** the conjugation, the leading barriers at 2×, the absorbed pointwise ops, the Legacy mirror at 2× and Pan3d converge with the CPU within the standard tolerances without tweaking
 - **TEST** t309 (`src/libs/kt-gpu/tests/parity.rs`)
 
-#### Scenario: Ступень ленты выше входа цепочки — вписывание в допуске
-- **WHEN** суб-композит ленты заказан в ступени выше входа цепочки экземпляра
-- **THEN** GPU вписывает его ресемплом во весь кадр и сходится с CPU в `BILINEAR`; при равных ступенях шага нет и байты прежние
+#### Scenario: A reel's step above the chain input — fitting within the tolerance
+- **WHEN** the reel's sub-composite is requested at a step above the input of the instance chain
+- **THEN** the GPU fits it into the whole frame by a resample and converges with the CPU in `BILINEAR`; at equal steps there is no resample and the bytes stay as before
 - **TEST** t632 (`src/libs/kt-gpu/tests/gpu_render.rs`), t631b (`src/libs/kt-engine/tests/nest_render.rs`)
 
-### Requirement: Детерминизм — байт-в-байт на одном устройстве
+### Requirement: Determinism — byte-for-byte on one device
+Video on the CPU path SHALL be byte-for-byte identical between runs and against the committed
+reference (GOLDEN_VIDEO is not regenerated; gated linux/x86_64). Video on the GPU path
+SHALL be byte-for-byte identical between runs on one device: no atomics,
+a fixed order of passes, zeroing load ops, a shader ping-pong composite of two
+accumulators, no samplers (bilinear done by hand). Between
+machines/drivers only the tolerance to the CPU reference is guaranteed. SIMD kernels SHALL
+be byte-for-byte equal to the scalar ones on any CPU; the scalar is the definition of the bytes.
+Wall-clock time in offline paths MUST NOT be read.
+Why: GPU tests compare exact values only on one device, and cross-backend only by tolerance; any
+ordering variable (atomics, fixed-function blending, a driver's sub-texel grid) breaks both.
 
-Видео на CPU-пути SHALL быть байт-в-байт между прогонами и против закоммиченного
-эталона (GOLDEN_VIDEO не перегенерируется; gated linux/x86_64). Видео на GPU-пути
-SHALL быть байт-в-байт между прогонами на одном устройстве: никаких атомиков,
-фиксированный порядок пассов, зануляемые load-op'ы, композит ping-pong двух
-аккумуляторов шейдером, никаких сэмплеров (билинейка руками). Между
-машинами/драйверами гарантируется только допуск к CPU-эталону. SIMD-ядра SHALL
-быть байт-в-байт равны скалярным на любом CPU; скаляр — определение байтов.
-Wall-clock в офлайн-путях MUST NOT читаться.
-Почему: GPU-тесты сравнивают точные значения только на одном устройстве, а
-кросс-бэкенд — только по допуску; любая переменная порядка (атомики, блендинг
-fixed-function, субтексельная сетка драйвера) ломает и то и другое.
+#### Scenario: Two engines on one adapter and a "dirty" pool
+- **WHEN** two independent GPU engines execute one plan, and the texture pool of the first is dirtied by other plans (a geometry series, a K×-barrier)
+- **THEN** the frames are byte-for-byte equal; recomputation with a dirty pool and a plan-cache hit give the same bytes
+- **TEST** t183 (`src/libs/kt-gpu/tests/parity.rs`), t187b (`src/libs/kt-gpu/tests/pan3d.rs`), t184b — GPU export is deterministic and within tolerance of the CPU (`src/libs/kt-gpu/tests/gpu_render.rs`)
 
-#### Scenario: Два движка на одном адаптере и «грязный» пул
-- **WHEN** два независимых GPU-движка исполняют один план, а пул текстур первого испачкан другими планами (гео-серия, K×-барьер)
-- **THEN** кадры байт-в-байт равны; пересчёт грязным пулом и хит кэша плана дают те же байты
-- **TEST** t183 (`src/libs/kt-gpu/tests/parity.rs`), t187b (`src/libs/kt-gpu/tests/pan3d.rs`), t184b — GPU-экспорт детерминирован и в допуске от CPU (`src/libs/kt-gpu/tests/gpu_render.rs`)
-
-#### Scenario: AVX2-ядра композита и билинейки равны скаляру
-- **WHEN** alpha_over / dissolve / scale_alpha, деление на 255, округление half-away, билинейка и шум исполняются AVX2-ядром на некратных размерах и крайних значениях
-- **THEN** результат байт-в-байт равен скалярному, включая ветвления скаляра (`sa == 0` не трогает dst)
+#### Scenario: AVX2 kernels of composite and bilinear equal the scalar
+- **WHEN** alpha_over / dissolve / scale_alpha, division by 255, half-away rounding, bilinear and noise are executed by the AVX2 kernel on non-multiple sizes and extreme values
+- **THEN** the result is byte-for-byte equal to the scalar one, including the branches of the scalar (`sa == 0` does not touch dst)
 - **TEST** t198 (`src/libs/kt-engine/tests/simd_parity.rs`), t198 (`src/libs/kt-fx/tests/simd_parity.rs`)
 
-### Requirement: План цепочки строится в одном месте, гео-серии — одним проходом
+### Requirement: The chain plan is built in one place; geometry series in one pass
+All decisions about the video effect chain (segmentation into runs and barriers, legacy/fused,
+absorption of pointwise ops into tap ops, K× barriers, snapshot points of the layer strength) SHALL
+be made by the shared planner in kt-fx; CPU and GPU MUST execute the ready plan. Consecutive
+geometric effects SHALL be executed in one pass of inverse mappings
+without intermediate rasterizations; a series of length 1 without minification SHALL go through the earlier
+kernels byte-for-byte; at K = 1 and step 1 the whole plan is byte-for-byte as before.
+Non-local barriers (Blur/Glow/Edges/VHS) SHALL be executed at K× when "compression above +
+zoom below", K — the quantum of min(zoom of the tail, compression), the ceiling of the buffer side
+`MAX_INTER_DIM = 4096` is a project constant, not a device limit. The layer strength stops
+zero the accumulators: mixing is always at 1×. There MUST NOT be any merge switches — neither in the UI nor in env. The formulas of the kernels, `geom.rs`/`plan.rs` and `geom_fused.wgsl`
+SHALL be edited in one commit (the effect kernels — capability `video-fx`).
+Why: two copies of one chain traversal (CPU and GPU) would drift apart in segmentation,
+and segmentation is what decides where a raster is materialized and loses detail.
 
-Все решения по цепочке видео-эффектов (сегментация на раны и барьеры, legacy/fused,
-поглощение поточечных в tap-опы, K× барьеров, снапшот-точки силы слоя) SHALL
-принимать общий планировщик в kt-fx; CPU и GPU MUST исполнять готовый план. Подряд
-идущие геометрические эффекты SHALL исполняться одним проходом обратных отображений
-без промежуточных растеризаций; серия длины 1 без минификации SHALL идти прежними
-ядрами байт-в-байт; при K = 1 и ступени 1 весь план байт-в-байт прежний.
-Нелокальные барьеры (Blur/Glow/Edges/VHS) SHALL исполняться в K× при «сжатие выше +
-зум ниже», K — квант min(зум хвоста, сжатие), потолок стороны буфера
-`MAX_INTER_DIM = 4096` — проект-константа, не лимит устройства. Стопы силы слоя
-обнуляют аккумуляторы: смешение всегда на 1×. Переключателей слияния MUST NOT
-быть — ни в UI, ни в env. Формулы ядер, `geom.rs`/`plan.rs` и `geom_fused.wgsl`
-SHALL правиться одним коммитом (ядра эффектов — capability `video-fx`).
-Почему: две копии одного обхода цепочки (CPU и GPU) разъезжались бы в сегментации,
-а сегментация — это то, что решает, где растр материализуется и теряет детали.
-
-#### Scenario: План слайса силы слоя равен куску плана целого
-- **WHEN** цепочка режется по стопам силы слоя на слайсы
-- **THEN** план каждого слайса совпадает с соответствующим куском плана всей цепочки; раны/барьеры/маркеры/бюджет шагов совпадают у обоих бэкендов
+#### Scenario: The plan of a layer-strength slice equals the piece of the plan of the whole
+- **WHEN** a chain is cut into slices along the layer strength stops
+- **THEN** the plan of each slice matches the corresponding piece of the plan of the whole chain; the runs/barriers/markers/step budget match on both backends
 - **TEST** t306 (`src/libs/kt-fx/tests/geo_fuse.rs`)
 
-#### Scenario: Маршрутизация и байт-гарантии серий
-- **WHEN** серия геометрических эффектов длины 1 без минификации / длины > 1 / с прозрачным аудио-FX внутри
-- **THEN** длина 1 идёт старыми ядрами байт-в-байт, длина > 1 — слитым проходом (grid → mirror равен точной перестановке, mirror∘mirror — тождество), аудио-FX серию не рвёт
+#### Scenario: Routing and byte guarantees of series
+- **WHEN** a series of geometric effects of length 1 without minification / of length > 1 / with a transparent audio FX inside
+- **THEN** length 1 goes through the old kernels byte-for-byte, length > 1 goes through the fused pass (grid → mirror equals an exact permutation, mirror∘mirror is an identity), an audio FX does not break the series
 - **TEST** t297 (`src/libs/kt-fx/tests/geo_fuse.rs`)
 
-#### Scenario: Нетто-единичная цепочка возвращает детализацию
-- **WHEN** шахматка проходит «сетка 2×2 → зум ×2» (и то же с барьером VHS между ними)
-- **THEN** контраст возвращается целым (не серый из полуфазы растеризации), а K×-барьер деталь не убивает
+#### Scenario: A net-unit chain returns the detail
+- **WHEN** a checkerboard passes "grid 2×2 → zoom ×2" (and the same with a VHS barrier between them)
+- **THEN** the contrast comes back whole (not gray from the half-phase of rasterization), and the K× barrier does not kill the detail
 - **TEST** t296 (`src/libs/kt-fx/tests/geo_fuse.rs`), t302 (`src/libs/kt-fx/tests/geo_fuse.rs`)
 
-#### Scenario: Правило K и байтовый якорь K = 1
-- **WHEN** планируются цепочки с пустым/не-зумящим/сжимающим хвостом, squeeze-cap, «сетка + зум», соседними барьерами и стопом силы
-- **THEN** K = 1 во всех первых случаях, K = 2 у «сетка + зум», соседние барьеры делят один K, стоп силы рвёт; K = 1-цепочка с барьером даёт заранее зафиксированный хэш
+#### Scenario: The K rule and the byte anchor K = 1
+- **WHEN** chains are planned with an empty / non-zooming / compressing tail, a squeeze cap, "grid + zoom", adjacent barriers and a strength stop
+- **THEN** K = 1 in all the first cases, K = 2 for "grid + zoom", adjacent barriers share one K, a strength stop cuts; a K = 1 chain with a barrier gives a hash fixed in advance
 - **TEST** t304 (`src/libs/kt-fx/tests/geo_fuse.rs`), t308 (`src/libs/kt-fx/tests/geo_fuse.rs`), t308b (`src/libs/kt-fx/tests/geo_fuse.rs`)
 
-### Requirement: Ступень декода — свойство клипа и часть заказа (заказ == чтение)
+### Requirement: Decode scale step — a property of the clip and part of the order (order == read)
+The decode size of the pre-FX frame SHALL be a property of the clip: the scale step S ∈ 1..4 =
+min(how much the chain asks by the maximum net zoom over the whole duration of the clip, the margin
+of the native over the conform size with rounding UP, `MAX_INTER_DIM / max(conform size)`);
+if the native is unknown → S = 1; decoding is NEVER smaller than the conform size. The conform size comes from the
+geometry of the layer (rule, crop, zoom, canvas); "as is" — the native with the ceiling. The step
+is determined by the project, the native and the canvas, and MUST NOT depend on the device or on budgets.
+The decode quality SHALL travel in the order `layers_at`/`wanted_frames` as `(media, pts, Quality)`,
+where Quality is the decode size from the geometry: prefetch, composite, export and the coverage bars
+ask the same thing. The REEL's step (the order, one per reel — the maximum over the tree of
+instances, from the reel's raster) and the INSTANCE chain's input (execution) are different numbers;
+if they diverge — the sub-composite is fitted before the chain. The chunk budgets of export and the
+lookahead window SHALL be computed by the largest decode quality. A change in the composition of sources SHALL
+rebuild the player's renderer.
+Why: three callers each glued Quality on themselves and matched by accident; with a size that is a function of the clip,
+this immediately gives a permanent cache miss and a black frame; the conform rule changes the number of needed pixels, and computing it outside the order is the same permanent miss.
 
-Размер декода пре-FX кадра SHALL быть свойством клипа: ступень S ∈ 1..4 =
-min(сколько просит цепочка по максимуму нетто-зума за всю длительность клипа, запас
-натива над размером приведения с округлением ВВЕРХ, `MAX_INTER_DIM / max(размер приведения)`);
-натив неизвестен → S = 1; декод NEVER мельче размера приведения. Размер приведения — из
-геометрии слоя (правило, кроп, зум, холст); «как есть» — натив с потолком. Ступень
-детерминирована проектом, нативом и холстом и MUST NOT зависеть от устройства или бюджетов.
-Качество декода SHALL ехать в заказе `layers_at`/`wanted_frames` как `(media, pts, Quality)`,
-где Quality — размер декода из геометрии: префетч, композит, экспорт и полоски прогретости
-спрашивают одно и то же. Ступень ЛЕНТЫ (заказ, одна на ленту — максимум по дереву
-экземпляров, от растра ленты) и вход цепочки ЭКЗЕМПЛЯРА (исполнение) — разные числа;
-разошлись — суб-композит вписывается перед цепочкой. Бюджеты чанка экспорта и окна
-лукахеда SHALL считаться по самому крупному качеству декода. Смена состава источников SHALL
-пересобирать рендерер плеера.
-Почему: три вызывающих доклеивали Quality каждый сам и совпадали случайно; с
-размером-функцией-клипа это немедленно даёт вечный промах кэша и чёрный кадр; правило
-приведения меняет число нужных пикселей, и считать его вне заказа — тот же вечный промах.
-
-#### Scenario: Формула ступени
-- **WHEN** клип с зумом ×2 на нативе 1920×1080 / 2560×1440 / 1280×720 / 640×360 / неизвестном при Quality 1280×720, 4K-выход, нетто-единичная цепочка, зум 1.01, зум ×8
-- **THEN** декод 2560×1440 / 2560×1440 / 1280×720 / 1280×720 / 1280×720; 4K режется потолком; нетто-зум ≤ 1 и квант гасят ступень; потолок ступени — 4
+#### Scenario: The step formula
+- **WHEN** a clip with zoom ×2 on natives 1920×1080 / 2560×1440 / 1280×720 / 640×360 / unknown, at Quality 1280×720, 4K output, a net-unit chain, zoom 1.01, zoom ×8
+- **THEN** decode 2560×1440 / 2560×1440 / 1280×720 / 1280×720 / 1280×720; 4K is cut by the ceiling; net zoom ≤ 1 and the quantum suppress the step; the ceiling of the step is 4
 - **TEST** t310 (`src/libs/kt-engine/tests/decode_scale.rs`)
 
-#### Scenario: Ступень берётся по максимуму зума за весь клип
-- **WHEN** зум задан кривой 1 → 4 (и обратной), со стопом силы в нуле или на реверсной оси
-- **THEN** ступень ловится в максимуме кривой с любого конца, стоп силы ступени не даёт, реверс оси её не ломает
+#### Scenario: The step is taken from the maximum zoom over the whole clip
+- **WHEN** the zoom is set by a curve 1 → 4 (and back), with a strength stop at zero or on the reversed axis
+- **THEN** the step is caught at the maximum of the curve from either end; a strength stop does not give the step; the reversal of the axis does not break it
 - **TEST** t311 (`src/libs/kt-engine/tests/decode_scale.rs`)
 
-#### Scenario: Заказ равен чтению вместе с размером
-- **WHEN** кэш прогрет строго по `wanted_frames` / прогрет «в Quality» как раньше
-- **THEN** первый композит полон, второй — слой своего кадра не находит; при растяжении множества пар (кадр, качество) у префетча и рендера совпадают, ключи строго возрастают
+#### Scenario: The order equals the read, together with the size
+- **WHEN** the cache is warmed strictly by `wanted_frames` / warmed "at Quality" as before
+- **THEN** the first composite is full, the second — the layer does not find its frame; when stretching, the sets of pairs (frame, quality) of prefetch and render match, and the keys strictly increase
 - **TEST** t312 (`src/libs/kt-engine/tests/decode_scale.rs`), t247d (`src/libs/kt-engine/tests/video_warp.rs`)
 
-#### Scenario: Заказ равен чтению на каждом правиле приведения
-- **WHEN** вертикальный источник стоит четырьмя событиями с четырьмя правилами, кэш прогрет строго по `wanted_frames`
-- **THEN** все четыре композита полны, размер декода у «как есть» — натив, у «заполнить» — крупнее, чем у «вписать», ступень считана от размера приведения
+#### Scenario: The order equals the read for every conform rule
+- **WHEN** a vertical source stands in four events with four rules, the cache is warmed strictly by `wanted_frames`
+- **THEN** all four composites are full; the decode size of "as is" is the native, of "fill" is larger than that of "fit", the step is counted from the conform size
 - **TEST** t714 (`src/libs/kt-engine/tests/decode_scale.rs`)
 
-#### Scenario: Резкость зума на файле с запасом натива
-- **WHEN** проект 128×72, файл 512×288 с полосами по 2 px натива, зум ×2 / без зума
-- **THEN** контраст готового кадра ≈ 223 из 255 (на коде до ступени — 0.0); без зума — 0.0: ступень не раздаётся всем подряд
+#### Scenario: Zoom sharpness on a file with a native margin
+- **WHEN** the project is 128×72, the file is 512×288 with stripes of 2 native px, zoom ×2 / no zoom
+- **THEN** the contrast of the finished frame ≈ 223 of 255 (on the code before the step — 0.0); without zoom — 0.0: the step is not handed out to everyone
 - **TEST** t315 (`src/libs/kt-engine/tests/decode_sharpness.rs`)
 
-#### Scenario: Бюджет чанка экспорта по качеству декода
-- **WHEN** ступень 2 и чанк экспорта, посчитанный по Quality, влезает в бюджет, а по качеству декода — нет
-- **THEN** чанк падает вчетверо, живой рендер со ступенью проходит с `missing_video_layers == 0`
+#### Scenario: The export chunk budget by decode quality
+- **WHEN** the step is 2 and the export chunk computed by Quality fits into the budget, while by the decode quality it does not
+- **THEN** the chunk is cut to a quarter, the live render with the step passes with `missing_video_layers == 0`
 - **TEST** t314 (`src/libs/kt-engine/tests/decode_scale.rs`)
 
-#### Scenario: Вернувшийся файл меняет ступень на ходу
-- **WHEN** источник заменён (файл вернулся на диск) без правки модели
-- **THEN** рендерер плеера пересобирается, новый натив меняет ступень
+#### Scenario: A returned file changes the step on the fly
+- **WHEN** the source is replaced (the file came back to disk) without an edit of the model
+- **THEN** the player's renderer is rebuilt, and the new native changes the step
 - **TEST** t316 (`src/libs/kt-engine/tests/player_dynamic.rs`)
 
-#### Scenario: Ступень ленты одна на ленту, вход цепочки — свой у экземпляра
-- **WHEN** два экземпляра одной ленты, один из них зумит (в том числе опубликованным параметром)
-- **THEN** заказ внутренних листьев у обоих один (ступень — максимум по экземплярам), содержимое ленты заказано не в ступени зумящего входа, а невписанный вход вписывается перед цепочкой; ступень ленты входит в ключ пост-FX
+#### Scenario: The reel's step is one per reel, the chain input is its own per instance
+- **WHEN** two instances of one reel, one of which zooms (including through a published parameter)
+- **THEN** the order of the inner leaves is the same for both (the step is the maximum over the instances); the content of the reel is ordered not at the step of the zooming input, and an unfitted input is fitted before the chain; the reel's step is part of the post-FX key
 - **TEST** t450 (`src/libs/kt-engine/tests/nest_render.rs`), t679 (`src/libs/kt-engine/tests/nest_param.rs`), t631c (`src/libs/kt-engine/tests/nest_render.rs`)
 
-#### Scenario: Подмена медиа у экземпляра — заказ по новому адресу
-- **WHEN** экземпляр ленты переопределяет медиа («логотип»)
-- **THEN** заказ уходит вглубь по новому адресу и чтение идёт по нему же
+#### Scenario: Media substitution in an instance — the order goes to the new address
+- **WHEN** an instance of a reel overrides the media ("logo")
+- **THEN** the order goes deeper to the new address, and the read goes along the same address
 - **TEST** t677 (`src/libs/kt-engine/tests/nest_param.rs`)
 
-### Requirement: Кэш — единственная правда о coverage
+### Requirement: The cache is the only truth about coverage
+The coverage bars SHALL be `coverage()` of the cache by the DECODE quality of the clip (for a clip cut by a morpher layer — the union of the qualities of the pieces), and not a separate bookkeeping and not a poll by the preview's Quality. Post-FX frames MUST NOT be visible to
+the coverage bars, prefetch and pin.
+Why: the cache is quality-exact; a clip with a step, warmed properly, would look entirely cold when polled by Quality — a lie in the user's eyes.
 
-Полоски прогретости SHALL быть `coverage()` кэша по качеству ДЕКОДА клипа (у
-нарезанного морфер-слоем клипа — объединение качеств кусков), а не отдельная
-бухгалтерия и не опрос по Quality превью. Пост-FX кадры MUST NOT быть видны
-coverage-полоскам, префетчу и пину.
-Почему: кэш качество-точный; клип со ступенью, прогретый как надо, при опросе по
-Quality выглядел бы полностью холодным — ложь в глазах пользователя.
-
-#### Scenario: Полоски спрашивают качество декода
-- **WHEN** префетч положил кадры клипа со ступенью строго по заказу
-- **THEN** coverage по качеству декода непуст, по Quality превью — пуст
+#### Scenario: The bars ask about the decode quality
+- **WHEN** prefetch has put the frames of a clip with a step strictly by the order
+- **THEN** the coverage by the decode quality is non-empty, by the preview's Quality it is empty
 - **TEST** t317 (`src/libs/kt-engine/tests/decode_scale.rs`)
 
-### Requirement: Мемоизация пост-FX кадра и её ключ
+### Requirement: Memoization of the post-FX frame and its key
+A video post-FX frame SHALL be memoized in the preview as a function of (frame, chain, t)
+without history; export MUST NOT memoize post-FX (each t is composed once,
+full-size frames would evict the pre-frames of neighboring tracks). The key SHALL include the
+hash of the chain with its curves, the geometry of the clip, the resolved camera (it is selected
+per frame and is not visible to a static hash), the decode step of the input, and the step of the reel. On the
+GPU, memoization is a separate cache of the whole plan keyed by the plan key, which SHALL include the
+parameters of the transition kind, the camera, the step, the reel's step and the blend flag;
+the post-FX cache of kt-cache is a mechanism of the CPU path only.
+Why: any parameter that affects the bytes and is not in the key is a stale value, which shows up as "did not apply".
 
-Видео-пост-FX кадр SHALL мемоизироваться в превью как функция (кадр, цепочка, t)
-без истории; экспорт MUST NOT мемоизировать пост-FX (каждый t композится один раз,
-полноразмерные кадры вытесняли бы пре-кадры соседних дорожек). Ключ SHALL включать
-хэш цепочки с кривыми, геометрию клипа, разрешённую камеру (она выбирается
-по-кадрово и статическим хэшем не видна), ступень декода входа и ступень ленты. На
-GPU мемоизация — свой кэш целого плана по ключу плана, в который SHALL входить
-параметры вида перехода, камера, ступень, ступень ленты и флаг смешивания;
-пост-FX кэш kt-cache — механика только CPU-пути.
-Почему: любой параметр, влияющий на байты и не вошедший в ключ, — стейл, который
-показывается как «не применилось».
-
-#### Scenario: Повтор из кэша, правка — пересчёт
-- **WHEN** кадр FX-клипа композится повторно / после смены параметров цепочки или сдвига клипа
-- **THEN** повтор байт-идентичен и читается из кэша без применения цепочки; смена меняет ключ, стейл не читается
+#### Scenario: A repeat from the cache, an edit — a recomputation
+- **WHEN** the frame of an FX clip is composed again / after a change of the chain parameters or a shift of the clip
+- **THEN** the repeat is byte-identical and is read from the cache without applying the chain; the change alters the key, and no stale value is read
 - **TEST** t66 (`src/libs/kt-engine/tests/postfx_cache.rs`)
 
-#### Scenario: Экспортный compose не мемоизирует
-- **WHEN** тот же кадр композится экспортным и превьюшным путём
-- **THEN** экспортный не раздувает кэш пост-FX кадрами, превьюшный мемоизирует, байты равны
+#### Scenario: The export compose does not memoize
+- **WHEN** the same frame is composed by the export path and by the preview path
+- **THEN** the export path does not inflate the post-FX cache with frames, the preview path memoizes, and the bytes are equal
 - **TEST** t66c (`src/libs/kt-engine/tests/postfx_cache.rs`)
 
-#### Scenario: Камера в ключе
-- **WHEN** камера правится или переносится при том же fx-хэше клипа с Pan3d
-- **THEN** кадр пересчитывается, стейл не читается
+#### Scenario: The camera is in the key
+- **WHEN** the camera is edited or moved while the clip's fx hash with Pan3d stays the same
+- **THEN** the frame is recomputed, and no stale value is read
 - **TEST** t66d (`src/libs/kt-engine/tests/postfx_cache.rs`)
 
-#### Scenario: Ступень в ключе
-- **WHEN** один клип на одном Quality композится из входа 1× и входа 2×
-- **THEN** оба кадра лежат в кэше одновременно и повторы отдают каждый свои байты
+#### Scenario: The step is in the key
+- **WHEN** one clip at one Quality is composed from input 1× and from input 2×
+- **THEN** both frames lie in the cache at the same time, and repeats return each its own bytes
 - **TEST** t313 (`src/libs/kt-engine/tests/decode_scale.rs`)
 
-#### Scenario: Параметры перехода в ключе плана GPU
-- **WHEN** каждый вид перехода исполняется на нескольких фазах, обеих осях направления и обоих состояниях флагов
-- **THEN** GPU сходится с CPU в допуске (объёмные — `GEOM`), кадр перехода другого вида из кэша плана не отдаётся
+#### Scenario: Transition parameters in the GPU plan key
+- **WHEN** each transition kind is executed at several phases, both axes of direction, and both states of the flags
+- **THEN** the GPU converges with the CPU within tolerance (volumetric ones — `GEOM`); a transition frame of another kind is not returned from the plan cache
 - **TEST** t224 (`src/libs/kt-gpu/tests/parity.rs`)
 
-### Requirement: Маппинг «тик → кадр источника» — одна функция для всех потребителей
+### Requirement: The mapping "tick → source frame" is one function for all consumers
+The choice of the source frame (reverse, stretch by the integral of the signed speed,
+blending of pairs) SHALL be computed by one function, which feeds `layers_at`,
+`wanted_frames`, prefetch, preview and export. Reverse SHALL give the frame of the mirror
+pts within the piece of the source; reverse + stretch is "warp, then mirror", the mirror axis
+is the span (min P, max P). A clip without a warp SHALL go through the earlier path byte-for-byte.
+Why: if the order diverges from the read — a permanent cache miss and a black frame; this is the
+video analogue of the rule "a single source of truth for prefetch and render".
 
-Выбор исходного кадра (реверс, растяжение по интегралу знаковой скорости,
-смешивание пар) SHALL считаться одной функцией, от которой кормятся `layers_at`,
-`wanted_frames`, префетч, превью и экспорт. Реверс SHALL давать кадр зеркального
-pts внутри куска источника; реверс + растяжение — «варп, потом зеркало», ось зеркала
-— пролёт (min P, max P). Клип без варпа SHALL идти байт-в-байт прежним путём.
-Почему: разойдётся заказ с чтением — вечный промах кэша и чёрный кадр; это
-видео-аналог правила «единый источник правды для prefetch и рендера».
-
-#### Scenario: Реверс — зеркальный pts
-- **WHEN** событие reversed композится на кадрах i
-- **THEN** pts источника равен pts прямого события на зеркальном кадре
+#### Scenario: Reverse — the mirror pts
+- **WHEN** an event that is reversed is composed on frames i
+- **THEN** the pts of the source equals the pts of the forward event on the mirror frame
 - **TEST** t24 (`src/libs/kt-engine/tests/reverse.rs`)
 
-#### Scenario: Видео следует скорости, кривой и реверсу
-- **WHEN** событие с постоянной / кривой скоростью / реверс поверх растяжения
-- **THEN** дорожка pts идёт по интегралу скорости, реверс с растяжением композируются
+#### Scenario: Video follows speed, curve and reverse
+- **WHEN** an event with constant / curved speed / reverse on top of a stretch
+- **THEN** the pts track follows the integral of the speed, and reverse with stretch is composed
 - **TEST** t247 (`src/libs/kt-engine/tests/video_warp.rs`)
 
-#### Scenario: Знаковая скорость — ход назад и зеркало над пролётом
-- **WHEN** кривая скорости 1 → −1 / постоянная −0.5 с включённым реверсом
-- **THEN** материал поднимается к середине и возвращается в старт, вторая половина строго убывает; реверс над отрицательной скоростью идёт вперёд монотонно
+#### Scenario: Signed speed — motion backwards and a mirror over the span
+- **WHEN** a speed curve 1 → −1 / constant −0.5 with reverse enabled
+- **THEN** the material rises to the middle and returns to the start, the second half strictly decreases; reverse over negative speed goes forward monotonically
 - **TEST** t604a (`src/libs/kt-engine/tests/video_warp.rs`), t604g (`src/libs/kt-engine/tests/video_warp.rs`)
 
-### Requirement: Слои, веса переходов и фейдов, уровень события — в плане
-
-Пара клипов в окне перехода SHALL блендиться в один слой целочисленным весом k/4096
-до alpha_over; недостающая половина пары — присутствующая с полным весом и
-`complete = false`; сольный фейд — тем же ядром с пустой второй стороной, слой
-умножается на альфу, `complete` не сбрасывается (пары нет по модели). Уровень
-события SHALL множиться на альфу слоя там же, где фейды; у пары уровни смешиваются
-тем же весом, что картинка; 1.0 — тождество. Инверсия перехода SHALL исполняться
-планом (swap сторон + обратный прогресс), ядра и ключи не трогая; наложенный
-переход берётся по переходам ленты, а не корня. Вид перехода превращается в
-плоские параметры ровно один раз, CPU-ядро и WGSL читают одни числа (ядра — capability
+### Requirement: Layers, transition and fade weights, event level — in the plan
+A pair of clips in a transition window SHALL be blended into one layer with the integer weight k/4096
+before alpha_over; the missing half of the pair is the present one at full weight with
+`complete = false`; a solo fade is the same kernel with an empty second side, the layer
+is multiplied by the alpha, `complete` is not reset (there is no pair by the model). The level
+of the event SHALL be multiplied by the alpha of the layer where the fades are; for a pair the levels are blended
+with the same weight as the picture; 1.0 is an identity. The inversion of a transition SHALL be executed
+by the plan (swap of sides + reverse progress), without touching the kernels and keys; an overlaid
+transition is taken from the transitions of the reel, not of the root. The transition kind is turned
+into flat parameters exactly once; the CPU kernel and WGSL read the same numbers (the kernels — capability
 `transitions`).
-Почему: веса и уровни, посчитанные в исполнителе, разошлись бы между бэкендами и
-между превью и экспортом.
+Why: weights and levels computed in the executor would diverge between backends and
+between preview and export.
 
-#### Scenario: Dissolve пары, недостающая половина, ручки, цепочка на паре
-- **WHEN** кроссфейд между двумя клипами композится в окне, с одной половиной в кэше, с ручками за краями куска и с FX-цепочкой на паре
-- **THEN** пара блендится линейно и детерминированно; отсутствующая половина даёт полный вес и `complete = false`; слои включают ручки; цепочка на паре переживает dissolve
+#### Scenario: Dissolve of a pair, the missing half, handles, a chain on the pair
+- **WHEN** a crossfade between two clips is composed in the window, with one half in the cache, with handles beyond the edges of the piece, and with an FX chain on the pair
+- **THEN** the pair is blended linearly and deterministically; the missing half gives full weight and `complete = false`; the layers include the handles; the chain on the pair survives the dissolve
 - **TEST** t137 (`src/libs/kt-engine/tests/transitions_video.rs`)
 
-#### Scenario: Сольный фейд масштабирует альфу и остаётся полным
-- **WHEN** фейд у края события (in/out)
-- **THEN** альфа слоя следует кривой, `complete` остаётся true, у выходного края кадр темнеет
+#### Scenario: A solo fade scales the alpha and stays full
+- **WHEN** a fade at the edge of the event (in/out)
+- **THEN** the alpha of the layer follows the curve, `complete` remains true, at the outgoing edge the frame darkens
 - **TEST** t156 (`src/libs/kt-engine/tests/transitions_video.rs`)
 
-#### Scenario: Уровень события масштабирует слой
-- **WHEN** у события выставлен уровень < 1
-- **THEN** слой множится на уровень там же, где фейды; 1.0 — байт-в-байт тождество
+#### Scenario: The level of the event scales the layer
+- **WHEN** the event's level is set to < 1
+- **THEN** the layer is multiplied by the level where the fades are; 1.0 — an identity byte-for-byte
 - **TEST** t174 (`src/libs/kt-engine/tests/transitions_video.rs`)
 
-#### Scenario: Вид перехода доезжает до картинки
-- **WHEN** вайп / шторки / выталкивание / dip / новые 2D-семейства / объёмные виды композятся в середине окна
-- **THEN** зоны кадра соответствуют аналитическим ожиданиям вида (резкая граница, симметрия кромок, обмен половин, гашение в цвет, прозрачность за панелями), кроссфейд — однородная смесь
+#### Scenario: The transition kind reaches the picture
+- **WHEN** wipe / shutters / push / dip / new 2D families / volumetric kinds are composed in the middle of the window
+- **THEN** the zones of the frame match the analytical expectations of the kind (a sharp boundary, symmetry of the edges, exchange of halves, fading to color, transparency behind the panels), the crossfade is a uniform mix
 - **TEST** t225 (`src/libs/kt-engine/tests/transitions_video.rs`), t467 (`src/libs/kt-engine/tests/transitions_video.rs`), t468 (`src/libs/kt-engine/tests/transitions_video.rs`)
 
-#### Scenario: Инверсия исполняется планом
-- **WHEN** переход помечен инверсным
-- **THEN** кроссфейд — тождество, направленный вид совпадает с противоположным направлением, соло-фейд режется с другой стороны
+#### Scenario: The inversion is executed by the plan
+- **WHEN** a transition is marked as inverted
+- **THEN** the crossfade is an identity, the directional kind matches the opposite direction, the solo fade is cut from the other side
 - **TEST** t461 (`src/libs/kt-engine/tests/transitions_video.rs`)
 
-#### Scenario: Наложенный переход доезжает до картинки
-- **WHEN** два клипа наложены без перехода / с переходом
-- **THEN** без перехода — жёсткий срез (поздний сверху непрозрачен), с переходом пара схлопывается в dissolve и вид виден в кадре
+#### Scenario: An overlaid transition reaches the picture
+- **WHEN** two clips are overlaid without a transition / with a transition
+- **THEN** without a transition — a hard cut (the later one on top is opaque); with a transition the pair collapses into a dissolve and the kind is visible in the frame
 - **TEST** t464 (`src/libs/kt-engine/tests/transitions_video.rs`)
 
-### Requirement: Морфер-слой в плане — сила как слот смешения, резка не видна
-
-Сила слоя SHALL входить в план как снапшот-точка/слот смешения обработанной картинки
-с необработанной: сила 1.0 — прежний кадр байт-в-байт (слота нет), 0.0 — кадр без
-вклада слоя, но с собственными эффектами события, промежуточная — линейная смесь;
-фейды блока — та же кривая силы. Цепочка подаётся исполнителю цельными слайсами
-между стопами силы. Переход на разрезанном слоем клипе SHALL оставаться живым (конец
-перехода находится по «тот же клип» + сверке границы), а резка, ничего не меняющая
-для этого вида, SHALL давать байт-в-байт прежний результат (модель резки — capability
+### Requirement: The morpher layer in the plan — strength as a mix slot; the cut is not visible
+The layer strength SHALL enter the plan as a snapshot point / blend slot of the processed picture
+with the unprocessed one: strength 1.0 — the earlier frame byte-for-byte (no slot), 0.0 — the frame without
+the layer's contribution but with the event's own effects, an intermediate value — a linear mix;
+the block's fades use the same strength curve. The chain is passed to the executor in whole slices
+between the strength stops. A transition on a clip cut by a layer SHALL remain live (the end
+of the transition is found by "the same clip" + a check of the boundary), and a cut that changes nothing
+for this kind SHALL give the earlier result byte-for-byte (the cut model — capability
 `morpher`).
-Почему: id оригинала после резки носит только кусок №0, и сравнение по id молча
-теряло переход; сила, режущая цепочку по одному эффекту, ломала слияние гео-серий.
+Why: the id of the original after a cut carries only piece №0, and a comparison by id silently
+lost the transition; a strength that cut a chain at one effect broke the fusion of geometry series.
 
-#### Scenario: Сила слоя смешивает только вклад слоя
-- **WHEN** событие со своим эффектом накрыто слоем с силой 1.0 / 0.0 / 0.5 и блоком с фейдами по краям
-- **THEN** 1.0 — байт-в-байт прежний кадр, 0.0 — кадр без слоя с собственным эффектом, 0.5 — ровно линейная смесь; у кромки блока слой не действует, в середине — полностью; в звуке то же правило
+#### Scenario: The layer strength blends only the layer's contribution
+- **WHEN** an event with its own effect is covered by a layer with strength 1.0 / 0.0 / 0.5 and a block with fades at the edges
+- **THEN** 1.0 — the earlier frame byte-for-byte, 0.0 — the frame without the layer with its own effect, 0.5 — exactly a linear mix; at the edge of the block the layer has no effect, in the middle — fully; in the sound the same rule
 - **TEST** t267 (`src/libs/kt-engine/tests/morph_slice_render.rs`), t267b (`src/libs/kt-engine/tests/morph_slice_render.rs`), t268 (`src/libs/kt-engine/tests/morph_slice_render.rs`)
 
-#### Scenario: Переход на разрезанном клипе жив, резка не слышна и не видна
-- **WHEN** слой режет хвост клипа вместе с окном кроссфейда / патч этому виду клипа ничего не делает / клип с варпом времени
-- **THEN** переход перевешивается на кусок со стыком и кадр равен разрезанному руками; результат байт-в-байт прежний; варпнутый клип не режется вовсе
+#### Scenario: A transition on a cut clip is alive, the cut is neither heard nor seen
+- **WHEN** a layer cuts the tail of a clip together with the crossfade window / a patch does nothing to this kind of clip / a clip with a time warp
+- **THEN** the transition is reattached to the piece with the joint and the frame equals the one cut by hand; the result is byte-for-byte as before; a warped clip is not cut at all
 - **TEST** t237 (`src/libs/kt-engine/tests/morph_slice_render.rs`), t238 (`src/libs/kt-engine/tests/morph_slice_render.rs`)
 
-### Requirement: Камера разрешается одним правилом на программу
+### Requirement: The camera is resolved by one rule per programme
+The 3D camera for Pan3d SHALL be resolved by one function: pinned by id → active by time → the default "50 mm" (an identity for Pan3d with defaults); a camera pinned to a nonexistent id falls back to the active one; a chain without a Pan3d camera does not get one.
+`world_scale` = the size of the target / the size of the project — the camera world is frozen by the format in the
+world pixels of the project. The semantics of the world (X to the right, Y down, Z into depth, Rz·Rx·Ry,
+auto-distance) MUST NOT change.
+Why: the second consumer (the picker's thumbnails) physically could not call the rule from a
+private function and would have rewritten it; they would have diverged silently — the variant in the picker
+would look different from the one after a click.
 
-Камера 3D для Pan3d SHALL разрешаться одной функцией: прибитая по id → активная по
-времени → дефолтная «50 мм» (тождество для Pan3d с дефолтами); прибитая по
-несуществующему id падает на активную; цепочка без Pan3d камеры не получает.
-`world_scale` = размер цели / размер проекта — мир камеры заморожен форматом в
-мировых пикселях проекта. Семантика мира (X вправо, Y вниз, Z вглубь, Rz·Rx·Ry,
-авто-дистанция) MUST NOT меняться.
-Почему: второй потребитель (миниатюры пикера) физически не мог позвать правило из
-приватной функции и переписал бы его; разошлись бы молча — вариант в пикере
-выглядел бы иначе, чем после клика.
-
-#### Scenario: Прибитая → активная → дефолт, масштаб цели
-- **WHEN** камера разрешается для цепочки с/без Pan3d, с прибитым, удалённым и отсутствующим id, для цели 320 px в проекте 1920 px
-- **THEN** порядок приоритетов соблюдён, дефолт равен `CameraParams::default()`, `world_scale` = 1/6, нулевой размер проекта не делит на ноль
+#### Scenario: Pinned → active → default, the target scale
+- **WHEN** the camera is resolved for a chain with/without Pan3d, with a pinned, deleted and missing id, for a target of 320 px in a 1920 px project
+- **THEN** the order of priorities is kept, the default equals `CameraParams::default()`, `world_scale` = 1/6, a zero project size does not divide by zero
 - **TEST** t545 (`src/libs/kt-engine/tests/cam_resolve.rs`)
 
-### Requirement: Геометрия слоя — прямоугольник размещения, прозрачные поля, одна функция
+### Requirement: Layer geometry — placement rectangle, transparent margins, one function
+Each video layer of the plan SHALL carry placement geometry: a rectangle in FRACTIONS of the canvas and the decode size, computed by ONE pure function from the kind of source (native × pixel aspect), the canvas, the conform rule (fit / fill / stretch / as is), the crop and the zoom. The composite SHALL put the layer into its rectangle; the canvas area outside the rectangle is alpha 0 (transparent margins), the frame background is the earlier one. The "fit" rule SHALL keep the proportions and scale in both directions; "fill" — keep the proportions and crop; "stretch" — pull to the edges; "as is" — put 1:1 pixel in the center, and if the source is larger than the canvas — past the edge. The placement SHALL be executed as an affine in the shared geometry program with the edge primitive "transparent", as a CPU kernel ↔ WGSL pair by tolerance classes; an affine with a frame equal to the canvas SHALL give the earlier path byte-for-byte. An unknown kind of source SHALL be conformed as "stretch" deterministically.
+THIS SAME function SHALL hand the placement rectangle OUTWARD — to the interface that draws the
+frame over the picture: the rectangle in fractions of the canvas, the rotation angle and the anchor point in the same
+coordinates the composite sees. The inverse computation "canvas point → node parameter value" SHALL be its
+pair in the same place: moving the point on the canvas gives the position, pulling a corner gives the zoom,
+dragging the rotation handle gives the angle, moving the anchor gives the anchor TOGETHER with a compensation of the position, under which
+the placement rectangle does not change (at any rotation). There MUST NOT be a second arithmetic of placement
+in the program.
+Why: stretching was accepted by the decoder — outside the single composition code; a black margin on
+the top layer erases everything under it (Pitivi #1378); "as is" is the only rule that does not invent pixels. R.64: an on-screen gesture over the picture must compute exactly the frame that will go to the file, otherwise the control shows one thing and the export gives another.
 
-Каждый видео-слой плана SHALL нести геометрию размещения: прямоугольник в ДОЛЯХ холста и
-размер декода, посчитанные ОДНОЙ чистой функцией от вида источника (натив × пиксельное
-соотношение), холста, правила приведения (вписать / заполнить / растянуть / как есть),
-кропа и зума. Композит SHALL класть слой в его прямоугольник; область холста вне
-прямоугольника — альфа 0 (прозрачные поля), фон кадра — прежний. Правило «вписать» SHALL
-сохранять пропорции и масштабировать в обе стороны; «заполнить» — сохранять пропорции и
-резать; «растянуть» — тянуть до краёв; «как есть» — класть 1:1 пиксель по центру, при
-источнике крупнее холста — за край. Размещение SHALL исполняться как аффин в общей
-гео-программе с краевым примитивом «прозрачно», парой CPU-ядро ↔ WGSL по классам допуска;
-аффин с рамкой, равной холсту, SHALL давать байт-в-байт прежний путь. Неизвестный вид
-источника SHALL приводиться как «растянуть» детерминированно.
-ЭТА ЖЕ функция SHALL отдавать прямоугольник размещения НАРУЖУ — интерфейсу, который рисует
-рамку над кадром: прямоугольник в долях холста, угол поворота и точку якоря в тех же
-координатах, что видит композит. Обратный пересчёт «точка холста → значение параметра узла»
-SHALL быть её парой в том же месте: смещение точки на холсте даёт позицию, тяга угла — зум,
-тяга ручки поворота — угол, перенос якоря — якорь ВМЕСТЕ с компенсацией позиции, при которой
-прямоугольник размещения не меняется (при любом повороте). Второй арифметики размещения в
-программе MUST NOT быть.
-Почему: растяжение принималось декодером — вне единого кода композиции; чёрное поле на
-верхнем слое стирает всё под собой (Pitivi #1378); «как есть» — единственное правило, не
-выдумывающее пикселей. Р.64: экранный жест над кадром обязан считать ровно ту рамку, что
-уедет в файл, иначе контрол показывает одно, а экспорт даёт другое.
-
-#### Scenario: Четыре правила на четырёх источниках
-- **WHEN** вертикальный, горизонтальный, меньший и больший холста источники (и источник с SAR 2:1) приводятся каждым из четырёх правил
-- **THEN** прямоугольники равны аналитическим (вписать — поля по длинной стороне, заполнить — обрезка по короткой, растянуть — весь холст, как есть — натив по центру, за край при избытке), размер декода чётный и не выше потолка, SAR учтён в виде
+#### Scenario: Four rules on four sources
+- **WHEN** vertical, horizontal, smaller-than-canvas and larger-than-canvas sources (and a source with SAR 2:1) are conformed by each of the four rules
+- **THEN** the rectangles equal the analytical ones (fit — margins along the long side, fill — cropping along the short side, stretch — the whole canvas, as is — the native centered, past the edge on excess); the decode size is even and not above the ceiling; the SAR is taken into account in the shape
 - **TEST** t712 (`src/libs/kt-fx/tests/conform.rs`)
 
-#### Scenario: Прозрачные поля на обоих бэкендах, тождество на совпадающих пропорциях
-- **WHEN** вертикальный источник композится в 16:9 на CPU и GPU; источник 16:9 — с identity-аффином
-- **THEN** поля прозрачны (нижний слой виден сквозь них), класс допуска EXACT при K = 1; identity-аффин байт-в-байт равен прежнему пути
+#### Scenario: Transparent margins on both backends, an identity on matching proportions
+- **WHEN** a vertical source is composed in 16:9 on the CPU and the GPU; a 16:9 source — with an identity affine
+- **THEN** the margins are transparent (the lower layer is visible through them), the tolerance class is EXACT at K = 1; the identity affine is byte-for-byte equal to the earlier path
 - **TEST** t713 (`src/libs/kt-fx/tests/video_fx.rs`, `src/libs/kt-gpu/tests/parity.rs`), t714b (`src/libs/kt-gpu/tests/gpu_render.rs`)
 
-#### Scenario: Golden не двигаются
-- **WHEN** прогоняются golden-экспорты и «превью == экспорт» на фикстурах с совпадающими пропорциями
-- **THEN** `GOLDEN_VIDEO`, t11, t67, t184 зелёные без перегенерации; вертикальный источник даёт кадр с полями (замер геометрии белого прямоугольника)
+#### Scenario: Goldens do not move
+- **WHEN** the golden exports and "preview == export" are run on fixtures with matching proportions
+- **THEN** `GOLDEN_VIDEO`, t11, t67, t184 are green without regeneration; a vertical source gives a frame with margins (a measurement of the geometry of a white rectangle)
 - **TEST** t715 (`src/libs/kt-engine/tests/golden_export.rs`)
 
-#### Scenario: Прямоугольник наружу и обратный пересчёт
-- **WHEN** у события заданы кроп, зум, позиция, поворот и якорь; интерфейс спрашивает прямоугольник размещения; затем просит пересчитать сдвиг точки холста в позицию, тягу угла в зум и перенос якоря
-- **THEN** прямоугольник равен тому, по которому композит кладёт слой (сверка с кадром); обратный пересчёт возвращает значения, дающие ровно запрошенное смещение; перенос якоря с компенсацией оставляет прямоугольник неизменным при повороте 0° и 30°
+#### Scenario: The rectangle outward and the inverse computation
+- **WHEN** the event has a crop, zoom, position, rotation and anchor set; the interface asks for the placement rectangle; then asks to recompute the shift of a canvas point into a position, a corner pull into zoom, and an anchor move
+- **THEN** the rectangle equals the one by which the composite places the layer (checked against the frame); the inverse computation returns values that give exactly the requested shift; the anchor move with compensation leaves the rectangle unchanged at rotation 0° and 30°
 - **TEST** t761 (`src/libs/kt-fx/tests/placement.rs`)
 
-### Requirement: Дорожка как неявная лента в плане; режимы наложения парой; mute/solo видео
+### Requirement: Track as an implicit reel in the plan; blend modes as a pair; video mute/solo
+A video track with a non-empty chain, a level ≠ 1 or a blend mode ≠ Normal SHALL
+enter the plan as one nested layer: the composite of its events (transitions, overlaps, fades,
+event levels — inside) by the same code as a nested reel (the raster — the parent's canvas, the time
+— the parent's, the step — the maximum over its events), then the track's chain, then alpha ×
+level and the blend down with the chosen mode. A track without these properties SHALL
+be flattened into layers as before — byte-for-byte and at the same cost. A muted (mute / not
+in solo) video track MUST NOT be composited, but its prefetch order SHALL be kept. The blend
+mode SHALL be computed as `out = lerp(below, blend(below, above), α_above × level)`;
+Normal — the earlier alpha_over byte-for-byte; the set: Normal, Multiply, Screen, Add, Subtract,
+Darken, Lighten, Overlay, Difference; the CPU kernel and WGSL are edited as a pair by the tolerance class
+of transitions. A hole on a track is the transparency of its composite, not an operand. The memo of the track's composite
+SHALL be keyed by (track, track revision, tick) by the same mechanism as the reel's; the morpher
+remains per-clip and stands BEFORE the track stage.
+Why: a chain appended to every event gives a different picture at transitions and overlaps and cannot do a vignette "over everything" (F-MPH-005/007); a mode on a track whose operand is emptiness would ink the lower layers in Vegas (F-CMP-003); a mute that loses the order would give a black frame on unmuting.
 
-Видеодорожка с непустой цепочкой, уровнем ≠ 1 или режимом наложения ≠ Normal SHALL
-входить в план одним слоем-вложением: композит её событий (переходы, перекрытия, фейды,
-уровни событий — внутри) тем же кодом, что вложенная лента (растр — холст родителя, время
-— родителя, ступень — максимум по её событиям), затем цепочка дорожки, затем альфа ×
-уровень и наложение вниз выбранным режимом. Дорожка без этих свойств SHALL
-расплющиваться в слои как прежде — байт-в-байт и по той же цене. Заглушённая (mute / не
-в соло) видеодорожка MUST NOT композиться, но её заказ префетча SHALL сохраняться. Режим
-наложения SHALL считаться `out = lerp(below, blend(below, above), α_above × уровень)`;
-Normal — прежний alpha_over байт-в-байт; набор: Normal, Multiply, Screen, Add, Subtract,
-Darken, Lighten, Overlay, Difference; CPU-ядро и WGSL правятся парой по классу допуска
-переходов. Дыра на дорожке — прозрачность её композита, не операнд. Мемо композита дорожки
-SHALL ключеваться (дорожка, редакция дорожки, тик) тем же механизмом, что у ленты; морфер
-остаётся пер-клиповым и стоит ДО стадии дорожки.
-Почему: цепочка, дописанная в каждое событие, даёт на переходах и перекрытиях другую
-картинку и не умеет виньетку «на всё» (F-MPH-005/007); режим у дорожки с пустотой-операндом
-чернил нижние слои у Vegas (F-CMP-003); mute с потерей заказа дал бы чёрный кадр при снятии.
-
-#### Scenario: Без условия — прежние байты и цена; с цепочкой — композит дорожки
-- **WHEN** проект без дорожечных свойств; затем виньетка на дорожке с переходом между двумя событиями; второй композит того же тика; экспорт
-- **THEN** t11/t67/t184/`GOLDEN_VIDEO` байт-в-байт и число слоёв прежнее; виньетка накрывает переход целиком и не равна виньетке, дописанной в каждое событие; второй композит попадает в мемо дорожки; превью == экспорт
+#### Scenario: Without a condition — the earlier bytes and cost; with a chain — the track's composite
+- **WHEN** a project without track properties; then a vignette on a track with a transition between two events; a second composite of the same tick; export
+- **THEN** t11/t67/t184/`GOLDEN_VIDEO` are byte-for-byte and the number of layers is as before; the vignette covers the transition entirely and is not equal to a vignette appended to every event; the second composite hits the track's memo; preview == export
 - **TEST** t736 (`src/libs/kt-engine/tests/track_video.rs`)
 
-#### Scenario: Режимы наложения против формулы, парой
-- **WHEN** каждый режим применяется к паре дорожек с известными цветами; уровень дорожки 0.5; на дорожке с Multiply — дыра; те же планы на GPU
-- **THEN** результат равен аналитической формуле; Normal байт-в-байт прежний; 0.5 — половина пути к результату режима, а не режим над полупрозрачным; в дыре видны нижние слои без затемнения; конформанс GPU в классе допуска переходов
+#### Scenario: Blend modes against the formula, as a pair
+- **WHEN** each mode is applied to a pair of tracks with known colors; the track level is 0.5; on the track with Multiply — a hole; the same plans on the GPU
+- **THEN** the result equals the analytical formula; Normal is byte-for-byte as before; 0.5 — half the way to the result of the mode, not the mode over a semi-transparent layer; in the hole the lower layers are visible without darkening; GPU conformance is within the tolerance class of transitions
 - **TEST** t737 (`src/libs/kt-engine/tests/track_blend.rs`, `src/libs/kt-gpu/tests/parity.rs`)
 
-#### Scenario: Mute и solo видео
-- **WHEN** дорожка заглушена; затем две из трёх в соло; затем mute снят
-- **THEN** кадр без заглушённой дорожки, `wanted_frames` её кадры содержит; в соло композятся ровно две; после снятия mute кадр полон без промаха кэша
+#### Scenario: Video mute and solo
+- **WHEN** a track is muted; then two of three are soloed; then mute is removed
+- **THEN** the frame is without the muted track, `wanted_frames` contains its frames; in solo exactly two are composited; after removing mute the frame is full with no cache miss
 - **TEST** t735 (`src/libs/kt-engine/tests/track_video.rs`)

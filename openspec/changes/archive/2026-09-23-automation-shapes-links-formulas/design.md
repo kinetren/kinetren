@@ -2,181 +2,172 @@
 
 ## Context
 
-См. proposal.md — Why. Что есть в дереве сегодня:
+See proposal.md — Why. What exists in the tree today:
 
-- Форма одна на всю кривую: `ParamCurve::ease: bool`, умолчание `true`. Считает
-  `curve_value(keys, ease, at)` (`src/libs/kt-model/src/project.rs`) — линейная
-  интерполяция, при `ease` — `smoothstep01`. Поле читают семь мест, включая
-  `autoplan.rs` (компилированный план Р.59), `warp.rs` и `kt-otio/convert.rs`.
-- `CurveSource { Keys, Formula { expr }, Link { path } }` заведён в Р.59 и отвергается
-  валидацией громко (t649). Поле не сериализуется на умолчании.
-- Буфер огибающих: копирование пишет в системный буфер (`ui.ctx().copy_text`) И в зеркало
-  `KtApp::env_clipboard`; доступность кнопки считается по зеркалу и по совпадению
-  `fx_tag` (`src/apps/kt-app/src/fx_editor.rs`). `arboard` уже в дереве через eframe.
-- Прецеденты, на которые опираемся: `AudioCurve` — закрытый набор форм кроссфейда с одной
-  функцией на все половины; `Project::addr_spec`/`addr_type` (Р.60) — паспорт и тип по
-  адресу; поиск цикла лент обходом со всех вершин (t423); `clip_material_at` /
-  `clip_timeline_at` — единственный перевод времени.
-- Разведка чужих редакторов лежит в `docs/features/automation/keyframes/`:
-  F-AUT-007 (выражения, принято), F-AUT-008 (связь параметров), F-AUT-009 (формы отрезка).
+- The shape is one for the whole curve: `ParamCurve::ease: bool`, default `true`. It is computed by
+  `curve_value(keys, ease, at)` (`src/libs/kt-model/src/project.rs`) — linear interpolation, with `ease` —
+  `smoothstep01`. The field is read in seven places, including `autoplan.rs` (the compiled plan of R.59),
+  `warp.rs` and `kt-otio/convert.rs`.
+- `CurveSource { Keys, Formula { expr }, Link { path } }` was introduced in R.59 and is rejected loudly by
+  validation (t649). The field is not serialized at its default.
+- The envelope buffer: copying writes to the system buffer (`ui.ctx().copy_text`) AND to the mirror
+  `KtApp::env_clipboard`; the availability of the button is computed from the mirror and by a match of
+  `fx_tag` (`src/apps/kt-app/src/fx_editor.rs`). `arboard` is already in the tree through eframe.
+- The precedents we rely on: `AudioCurve` — a closed set of crossfade shapes with one function for all
+  halves; `Project::addr_spec`/`addr_type` (R.60) — the passport and the type by address; the search for a
+  cycle of reels by a traversal from all vertices (t423); `clip_material_at` / `clip_timeline_at` — the only
+  translation of time.
+- The survey of other editors lies in `docs/features/automation/keyframes/`:
+  F-AUT-007 (expressions, accepted), F-AUT-008 (parameter linking), F-AUT-009 (segment shapes).
 
 ## Goals / Non-Goals
 
 **Goals:**
-- Форма принадлежит отрезку и имеет собственные параметры.
-- Значение свойства может быть ведомо другим свойством или текстом формулы, и это видно.
-- Буфер огибающих — настоящий системный, вставка в чужой вид эффекта возможна.
-- Проект, который ничем из этого не пользуется, не платит ни байта и ни такта.
+- A shape belongs to the segment and has its own parameters.
+- The value of a property may be driven by another property or by the text of a formula, and this is visible.
+- The envelope buffer is a real system one; pasting into another effect's view is possible.
+- A project that uses none of this pays neither a byte nor a tick.
 
 **Non-Goals:**
-- Не делать плагины: контракт остаётся интерфейсом.
-- Не делать физику и симуляции.
-- Не делать связь через границу ленты (см. D3) — для этого есть публичные параметры.
-- Не хранить обратную совместимость формата (прямое решение владельца), но и не двигать
-  `GOLDEN_*`.
+- Do not make plugins: the contract remains an interface.
+- Do not make physics and simulations.
+- Do not make linking across the reel boundary (see D3) — public parameters exist for that.
+- Do not keep backward compatibility of the format (the owner's direct decision), but do not move
+  `GOLDEN_*` either.
 
 ## Decisions
 
-### D1. Форма — на ключе, с параметрами вида; `ease` умирает
+### D1. The shape — on the key, with parameters of its kind; `ease` dies
 
-`AutoKey` получает поле формы, описывающей отрезок ПОСЛЕ ключа. Форма — перечисление с
-данными, а не число: у третьего порядка и ease — натяжение, у зигзага — периоды, амплитуда
-и профиль. `curve_value` становится диспетчером по форме левого ключа; каждая форма —
-замкнутая функция `(s ∈ [0,1], a, b, параметры)`, как `AudioCurve::rise`.
+`AutoKey` gets a field of the shape describing the segment AFTER the key. The shape is an enumeration with
+data, not a number: the cubic and ease have tension, the zigzag has periods, amplitude and profile.
+`curve_value` becomes a dispatcher by the shape of the left key; each shape is a closed function
+`(s ∈ [0,1], a, b, parameters)`, like `AudioCurve::rise`.
 
-*Альтернатива — форма числом и общий параметр «жёсткость».* Отвергнута следствием D2:
-зигзагу одного числа мало.
+*Alternative — the shape as a number and a common parameter "stiffness".* Rejected by the consequence of D2:
+one number is not enough for a zigzag.
 
-**Умолчание обязано воспроизводить сегодняшний `smoothstep01` побитово.** Иначе двинутся
-`GOLDEN_AUDIO`/`GOLDEN_VIDEO`, а это регрессия детерминизма, а не «новая возможность».
-Поэтому третий порядок с натяжением по умолчанию считается ровно `s*s*(3-2s)`, и это
-закреплено тестом против замороженного оракула (t695b).
+**The default must reproduce today's `smoothstep01` bit for bit.** Otherwise `GOLDEN_AUDIO`/`GOLDEN_VIDEO`
+would move, and that is a regression of determinism, not a "new feature". Therefore the cubic with the default
+tension is computed exactly as `s*s*(3-2s)`, and this is fixed by a test against a frozen oracle (t695b).
 
-### D1b. Формат кривой: `ease` остаётся ПРОВОДОМ для однородной формы
+### D1b. The curve format: `ease` remains the WIRE for the uniform shape
 
-Найдено при реализации. Сегодня `ParamCurve::ease` пишется в файл ВСЕГДА (у поля есть
-`default` для чтения, но нет `skip_serializing_if`). Если поле просто исчезнет, байты
-изменятся у каждого файла с кривыми — а это ломает требование «файл без новшеств остаётся
-прежними байтами» и тест каскада версий по всем закоммиченным фикстурам (t433b), плюс
-golden `demo-3d.otio` (t189b).
+Found during implementation. Today `ParamCurve::ease` is ALWAYS written to the file (the field has a `default`
+for reading, but no `skip_serializing_if`). If the field simply disappeared, the bytes would change for every
+file with curves — and that breaks the requirement "a file without novelties remains with the same bytes" and
+the version-cascade test over all committed fixtures (t433b), plus the golden `demo-3d.otio` (t189b).
 
-Решение: **в МОДЕЛИ форма живёт на ключе, в ФАЙЛЕ она пишется по содержимому.** Все ключи
-кривой несут одну и ту же форму, и это третий порядок с натяжением по умолчанию — пишется
-прежнее `ease: true`; все Linear — `ease: false`; во всех остальных случаях пишутся
-per-key формы, и файл получает v10. Чтение: `ease` разворачивается в однородную форму,
-per-key форма её перекрывает.
+Decision: **in the MODEL the shape lives on the key, in the FILE it is written by content.** All keys of a curve
+carry one and the same shape, and that is the cubic with the default tension — the former `ease: true` is
+written; all Linear — `ease: false`; in all other cases per-key shapes are written, and the file gets v10.
+Reading: `ease` expands into the uniform shape, a per-key shape overrides it.
 
-Это не обратная совместимость, от которой владелец отказался, а то же правило «версия по
-СОДЕРЖИМОМУ», применённое на уровень ниже: проект не платит версией и не платит байтами за
-возможность, которой не пользуется. Формулировка предыдущей редакции спеки («прямая как
-умолчание не сериализуется») была неточной и заменена.
+This is not the backward compatibility that the owner refused, but the same rule "the version by CONTENT",
+applied one level lower: the project pays neither in version nor in bytes for a feature it does not use.
+The wording of the previous revision of the spec ("the straight line as default is not serialized") was
+imprecise and has been replaced.
 
-### D2. Пересмотр: зигзаг — это ФОРМА ОТРЕЗКА, а не источник
+### D2. Revision: the zigzag is a SHAPE OF A SEGMENT, not a source
 
-**Пересмотр вердикта F-AUT-009, пункт 3 — решение владельца (Р.61).** Заметка утверждала:
-«зигзаг, заданный числом периодов, ключами не выражается вовсе, и пытаться впихнуть его
-шестым видом в закрытый список — прямой путь к Smooth 2», и относила зигзаг к источнику
-значения. Владелец решил иначе: зигзаг — форма на отрезке между двумя соседними ключами.
+**A revision of the verdict of F-AUT-009, item 3 — the owner's decision (R.61).** The note claimed:
+"a zigzag set by a number of periods is not expressible by keys at all, and trying to squeeze it as a sixth
+kind into the closed list is a direct path to Smooth 2", and referred the zigzag to the source of the value.
+The owner decided otherwise: the zigzag is a shape on the segment between two neighbouring keys.
 
-Причина решения: зигзаг между ДВУМЯ КЛЮЧАМИ — это локальное украшение участка, и у него
-есть начало и конец, заданные ключами; источник же описывает кривую ЦЕЛИКОМ и ключей не
-имеет вовсе. Смешивать их значило бы требовать формулу там, где человек хочет «вот на этом
-куске подрожи».
+The reason for the decision: a zigzag between TWO KEYS is a local ornament of a stretch, and it has a beginning
+and an end set by the keys; a source, however, describes the curve WHOLLY and has no keys at all. Mixing them
+would mean requiring a formula where a person wants "to tremble on this piece".
 
-Следствие, которое заметка предсказала верно и которое принимается вместе с решением: у
-формы обязан быть СВОЙ набор параметров, а не одно число жёсткости. Поэтому форма —
-перечисление с данными (D1), и добавление шестого вида не ломает ни файл, ни экран.
+A consequence that the note predicted correctly and that is accepted together with the decision: the shape must
+have ITS OWN set of parameters, not one number of stiffness. Therefore the shape is an enumeration with data
+(D1), and adding a sixth kind breaks neither the file nor the screen.
 
-Отдельное следствие, найденное при разборе: **амплитуда зигзага задаётся в единицах
-параметра, а не долей перепада между ключами.** Самый частый зигзаг — дрожание вокруг
-ПОСТОЯННОГО значения, где перепад равен нулю: доля схлопнула бы фичу ровно там, где она
-нужна. Амплитуда клампится паспортом цели (`addr_spec`, Р.60).
+A separate consequence, found while analysing: **the amplitude of the zigzag is set in units of the parameter,
+not as a share of the difference between the keys.** The most frequent zigzag is a tremor around a CONSTANT value,
+where the difference is zero: a share would collapse the feature exactly where it is needed. The amplitude is
+clamped by the passport of the target (`addr_spec`, R.60).
 
-### D3. Адреса связи: любое событие проекта, но НЕ через границу ленты
+### D3. Link addresses: any event of the project, but NOT across the reel boundary
 
-**Решение владельца — «любое событие проекта»** (выбрано против рекомендации «только своё
-событие»). Принимается. Из инвариантов выводится ровно одно ограничение, и оно не
-сужает решение, а объясняет, где у «проекта» край.
+**The owner's decision — "any event of the project"** (chosen against the recommendation "only one's own
+event"). Accepted. Exactly one restriction follows from the invariants, and it does not narrow the decision;
+it explains where the "project" has its edge.
 
-Связь MUST NOT пересекать границу ленты. Наружу — потому что лента, читающая событие
-снаружи, перестаёт быть самодостаточной: два её экземпляра дали бы разные картинки, а
-закон Э (инлайн тождественен развёрнутому содержимому, t434-t436) перестал бы выполняться.
-Внутрь — потому что «снаружи задать значение внутри» уже сделано и называется публичными
-параметрами композиции (Р.59). Таким образом «любое событие проекта» = любое событие в том
-же адресном пространстве, а пространство у нас и так замкнуто лентой (t425).
+A link MUST NOT cross the boundary of a reel. Outward — because a reel that reads an event from outside stops
+being self-sufficient: two of its instances would give different pictures, and the law E (inline is identical
+to the expanded content, t434–t436) would stop holding. Inward — because "setting a value from outside inside"
+is already done and is called the public parameters of the composition (R.59). Thus "any event of the project"
+= any event within the same address space, and our space is already closed by the reel (t425).
 
-**Время между разными событиями считается по таймлайну.** Домен ключа — материал своего
-события, и у двух событий в разных местах монтажа общего материального времени нет. Перевод
-идёт через `clip_timeline_at` своего события и `clip_material_at` источника — ту же пару,
-которой пользуется вся программа; второго правила перевода не заводим. Вне тела источника
-берётся его крайнее значение.
+**Time between different events is computed by the timeline.** The domain of a key is the material of its own
+event, and two events in different places of the edit have no common material time. The translation goes through
+`clip_timeline_at` of its own event and `clip_material_at` of the source — the same pair that the whole program
+uses; we do not introduce a second translation rule. Outside the body of the source its edge value is taken.
 
-*Альтернатива — считать связь в долях длины.* Отвергнута тем же доводом, что убил долевой
-домен ключей: резина.
+*Alternative — compute the link in fractions of the length.* Rejected for the same reason that killed the
+fractional domain of keys: rubber.
 
-### D4. Вычислитель: один на связь и формулу, топологический порядок, ноль цены
+### D4. The evaluator: one for the link and the formula, topological order, zero cost
 
-Мини-формула — один парсер и один вычислитель, общий для выражения пересчёта у связи и
-для формулы-источника. Набор операций закрыт; часов, файлов и случайности из окружения нет
-(инвариант детерминизма). Разрешение производных источников идёт ОДИН раз при сборке
-рендерера, в топологическом порядке графа зависимостей, рядом с компиляцией кривых
-(`autoplan.rs`) и с профилями звука — в аудио-колбэке вычислений не появляется.
+The mini-formula — one parser and one evaluator, shared by the recalculation expression of a link and by the
+formula source. The set of operations is closed; there are no clocks, files or randomness from the environment
+(the determinism invariant). The resolution of derived sources goes ONCE at the build of the renderer, in the
+topological order of the dependency graph, next to the compilation of curves (`autoplan.rs`) and the audio
+profiles — no appearance in the audio callback.
 
-Граф зависимостей строится ТОЛЬКО по событиям, у которых есть производные источники.
-Проект без них не строит графа вовсе: это и есть «ноль цены», и оно проверяется тестом, а
-не обещанием (t705, t710).
+The dependency graph is built ONLY over events that have derived sources. A project without them builds no graph
+at all: this is "zero cost", and it is checked by a test, not by a promise (t705, t710).
 
-Цикл ищется обходом со всех вершин и печатает путь — тем же приёмом, что цикл лент (t423).
-Причина «со всех вершин»: пара свойств, ведущих друг друга и никем не читаемых, всё равно
-цикл, и файл с ней сохранился бы, а открылся бы с ошибкой.
+A cycle is searched by a traversal from all vertices and prints the path — by the same technique as the cycle of
+reels (t423). The reason for "from all vertices": a pair of properties that lead each other and are read by nobody
+is still a cycle, and the file with it would be saved but would fail to open.
 
-**Текст формулы и адрес связи входят в хэш цепочки и в ключ пост-FX.** Иначе правка формулы
-оставила бы на экране прежние кадры — тот же класс, что «ступень ленты в ключе мемо».
+**The text of the formula and the address of the link enter the hash of the chain and the key of post-FX.**
+Otherwise an edit of the formula would leave the old frames on the screen — the same class as "the reel's scale
+step in the memo key".
 
-### D5. Нечисловое — пороги и снимки; ось у риги ЗНАЧЕНИЕ, а не время
+### D5. Non-numeric values — thresholds and snapshots; the axis of the rig is the VALUE, not the time
 
-**Решение владельца — вести и нечисловые свойства** (выбрано против рекомендации «только
-число и цвет»). Флаг ведётся порогом, остальное — снимками на отметках оси ЗНАЧЕНИЯ
-ведущего свойства: между отметками держится предыдущий снимок. Это не кривая во времени, и
-путать их нельзя: у снимка ось — значение ведущего, у ключа — время.
+**The owner's decision — to lead non-numeric properties too** (chosen against the recommendation "only number and
+colour"). A flag is led by a threshold, the rest — by snapshots at the marks of the VALUE axis of the leading
+property: between the marks the previous snapshot is held. This is not a curve over time, and the two must not be
+confused: for a snapshot the axis is the value of the leader, for a key it is the time.
 
-Гистерезис на пороге не заводим: порог сравнивается один раз на кадр от уже разрешённого
-числа, дрожания источника тут нет по построению. Равенство порогу трактуется в одну
-сторону явным правилом и закреплено тестом (t704).
+A hysteresis at the threshold is not introduced: the threshold is compared once per frame against the already
+resolved number; there is no jitter of the source here by construction. Equality with the threshold is treated in
+one direction by an explicit rule and is fixed by a test (t704).
 
-### D6. Буфер огибающих: зеркала нет, разбор по нажатию
+### D6. The envelope buffer: no mirror, parsing on press
 
-Зеркало `env_clipboard` удаляется целиком. Кнопка вставки активна всегда; по нажатию
-читается системный буфер (`arboard`, уже в дереве), содержимое разбирается, и неудача
-объявляется ошибкой с причиной — правило «невозможность действия это ошибка, а не тишина»
-(t172). Ремаппинг: совпавшие по имени И типу параметры ложатся молча, для остатка
-открывается окно сопоставления; отказ от сопоставления называет потерянные кривые.
+The mirror `env_clipboard` is removed entirely. The paste button is always active; on press the system buffer is
+read (`arboard`, already in the tree), the content is parsed, and a failure is announced as an error with a reason —
+the rule "the impossibility of an action is an error, not silence" (t172). Remapping: parameters that match BOTH by name
+AND by type land silently; for the remainder a matching window opens; refusing the matching names the lost curves.
 
-*Альтернатива — держать зеркало и чинить только ремаппинг.* Отвергнута: состояние осталось
-бы, и скопированное в другом окне по-прежнему не вставлялось бы.
+*Alternative — keep the mirror and fix only the remapping.* Rejected: the state would remain, and what was copied in
+another window would still not be pasted.
 
 ## Risks / Trade-offs
 
-- [Удаление `ease` двигает байты всех файлов с кривыми] → D7: поле остаётся проводом
-  однородной формы; сторож — t433b (каскад по фикстурам) и t189b (golden `demo-3d.otio`).
-- [Смена `curve_value` двигает `GOLDEN_*`] → умолчание формы бит-в-бит равно прежнему
-  `smoothstep01`, сторож — тест против замороженного оракула (t695b) плюс голдены экспорта.
-- [Адресация по всему проекту делает правку события O(монтажа)] → граф строится только по
-  участникам; тест утверждает, что план соседей побайтово прежний и цена не растёт с
-  числом событий (t705, t710). Если тест покажет иначе — сузить адресацию до ленты и
-  вернуться к владельцу, а не «оптимизировать» молча.
-- [Зигзаг на скорости варпа сломает замкнутую карту] → `rate` принимает только прямую,
-  отказ громкий (t696); это правило уже существует для `ease` и просто становится шире.
-- [Мини-формула превращается в язык] → набор операций закрыт списком в спеке; расширение
-  набора — отдельное решение, а не правка на месте.
-- [Связь и публичные параметры делают одно и то же на границе ленты] → граница описана в
-  D3 и проверяется тестом с обеих сторон (t702b).
+- [Removing `ease` moves the bytes of all files with curves] → D7: the field remains the wire of the uniform shape;
+  the guard — t433b (the cascade over fixtures) and t189b (golden `demo-3d.otio`).
+- [Changing `curve_value` moves `GOLDEN_*`] → the default shape is bit-for-bit equal to the former `smoothstep01`; the
+  guard — the test against the frozen oracle (t695b) plus the export goldens.
+- [Addressing across the whole project makes an edit of an event O(edit)] → the graph is built only over the participants;
+  a test asserts that the neighbour plan is byte-for-byte the same and the cost does not grow with the number of events
+  (t705, t710). If the test shows otherwise — narrow the addressing to the reel and return to the owner, rather than
+  "optimize" silently.
+- [A zigzag at warp speed will break the closed map] → `rate` accepts only a straight line, the refusal is loud (t696);
+  this rule already exists for `ease` and merely becomes wider.
+- [The mini-formula turns into a language] → the set of operations is closed by a list in the spec; extending the set is a
+  separate decision, not an in-place edit.
+- [A link and public parameters do the same thing at the reel boundary] → the boundary is described in D3 and checked by a
+  test from both sides (t702b).
 
 ## Open Questions
 
-- Профиль зигзага (треугольник/прямоугольник/синус) — три вида или один с параметром
-  скважности. Решается при написании t695: если три замкнутые функции короче одной
-  параметризованной, берутся три.
-- Нужно ли действие «превратить производную кривую в ключи» с выбором шага дискретизации,
-  или хватает шага сетки кадров. Решается в С3 по месту, в спеке закреплено только само
-  наличие действия «отвязать».
+- The profile of the zigzag (triangle/rectangle/sine) — three kinds or one with a duty-cycle parameter. Decided
+  when writing t695: if three closed functions are shorter than one parameterized one, three are taken.
+- Whether an action "turn a derived curve into keys" with a choice of sampling step is needed, or the frame grid
+  step is enough. Decided in S3 on the spot; the spec fixes only the existence of the action "unlink".

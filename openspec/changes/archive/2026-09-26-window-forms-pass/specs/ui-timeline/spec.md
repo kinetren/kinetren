@@ -2,85 +2,56 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Рамка трансформации над кадром превью — жесты, гашение, одна арифметика с рендером
+### Requirement: Transform frame over the preview picture — gestures, damping, one arithmetic with render
+The preview SHALL show the transform frame of the leading "Geometry" node of the SELECTED video event while the display of controls is on: the outline of the frame, eight scale handles, the rotation handle, the anchor point and four crop handles. A gesture over the frame SHALL edit the `EventGeometry` of that same event: the body — position, the corner and side handles — zoom, the rotation handle — angle, the anchor point — anchor, the crop handles — crop. All gestures SHALL run at gesture pace (the picture is rebuilt on every movement) and be recorded in the history as ONE step per gesture.
 
-Превью SHALL показывать рамку трансформации ведущего узла «Геометрия» у ВЫДЕЛЕННОГО
-видео-события, пока показ контролов включён: контур рамки, восемь ручек масштаба, ручка
-поворота, точка якоря и четыре ручки кропа. Жест над кадром SHALL править `EventGeometry`
-того же события: тело — позицию, угловая и боковая ручка — зум, ручка поворота — угол,
-точка якоря — якорь, ручки кропа — кроп. Все жесты SHALL идти в темпе жеста (картинка
-пересобирается на каждое движение) и записываться в историю ОДНИМ шагом на жест.
+The geometry of the frame on screen SHALL be computed by THE SAME placement function that builds the render's geo-program, and the inverse computation "shift on the canvas → parameter value" SHALL be its pair: a second placement arithmetic is not created in the program. The number that a gesture produces and the number in the FX window's field SHALL coincide.
 
-Геометрия рамки на экране SHALL считаться ТОЙ ЖЕ функцией размещения, что строит гео-программу
-рендера, а обратный пересчёт «сдвиг на холсте → значение параметра» SHALL быть её парой:
-второй арифметики размещения в программе не заводится. Число, которое даёт жест, и число в
-поле окна FX SHALL совпадать.
+A SMALL FRAME has no right to swallow the carry-over: when a side of the frame on screen is smaller than three grab zones, the eight scale handles SHALL be drawn and caught BEYOND the edges of the frame (outside), while its body SHALL remain under the carry-over. The rotation handle and the anchor point stay in their places. The rule SHALL act on the size ON SCREEN, not on canvas fractions: the same geometry at different fractions of the preview gives a different frame.
 
-МЕЛКАЯ РАМКА не имеет права съесть перенос: когда сторона рамки на экране меньше трёх
-хват-зон, восемь ручек масштаба SHALL рисоваться и ловиться ЗА кромками рамки (снаружи), а
-её тело SHALL оставаться под переносом. Ручка поворота и точка якоря остаются на своих
-местах. Правило SHALL действовать от размера НА ЭКРАНЕ, а не от долей холста: одна и та же
-геометрия на разных долях превью даёт разную рамку.
+Dragging the ANCHOR MUST NOT move the picture: the position is compensated by the same history step, and this holds at any rotation of the layer. The anchor SHALL be grabbed by ITS OWN point without a modifier (a narrow zone, so as not to take the carry-over of the picture — it sits at the centre of the frame), and a modifier SHALL only widen its zone to the common one: a gesture available ONLY with Alt never reaches the program at all — Alt+drag is intercepted by the window manager. The other handles SHALL be sufficient for a hit on the first try (the grab zone is at least 14 px even with a frame a few pixels across) and MUST NOT overlap each other: when the frame is smaller than the sum of the grab zones, priority goes to the handle nearest the pointer.
 
-Перетаскивание ЯКОРЯ MUST NOT двигать картинку: позиция компенсируется тем же шагом истории,
-и это верно при любом повороте слоя. Якорь SHALL браться за СВОЮ точку без модификатора
-(узкая зона, чтобы не забирать перенос картинки, — он стоит в центре рамки), а модификатор
-SHALL лишь расширять его зону до общей: жест, доступный ТОЛЬКО с Alt, до программы не
-доходит вовсе — Alt+перетаскивание перехватывает оконный менеджер. Прочие ручки SHALL быть
-достаточными для попадания с первого раза (хват-зона не меньше 14 px даже при рамке в
-несколько пикселей) и MUST NOT перекрывать друг друга: при рамке меньше суммы хват-зон
-приоритет — у ручки, ближайшей к указателю.
+A parameter with a LIVE CURVE SHALL be edited by a KEY at the cursor — by the same rule as the FX window's field — and not by a constant; the frame SHALL show the EFFECTIVE geometry (the base under the curves) in that case, that is, exactly what the render draws.
 
-Параметр с ЖИВОЙ КРИВОЙ жест SHALL править КЛЮЧОМ по курсору — тем же правилом, что поле
-окна FX, — а не константой; рамка при этом SHALL показывать ЭФФЕКТИВНУЮ геометрию (базу под
-кривыми), то есть ровно то, что рисует рендер.
+The controls SHALL fade during playback and return on pause; the person SHALL have a display toggle, and its state is a property of the workspace (the viewport), not of the project's content. Without a gesture the controls MUST NOT raise the cost of a frame: neither allocations in the draw path nor a repaint while idle (invariant 12). An event without a leading node (audio, someone else's placeholder) does not get a frame, and the impossibility is named by a status line, not by silence.
+Why: R.63 item 6 of the owner — "AT LEAST we should have convenient editing right in the preview"; the industry fades the controls during playback (FCP — always, AE — automatically), and compensating the anchor on a rotated layer is a defect of After Effects confirmed by quotations, which we have no reason to repeat (`docs/features/ui/viewer/on-screen-controls.md`).
 
-Контролы SHALL гаснуть при воспроизведении и возвращаться на паузе; человек SHALL иметь
-переключатель показа, и его состояние — свойство рабочего места (вьюпорта), а не содержимого
-проекта. Без жеста контролы MUST NOT повышать стоимость кадра: ни аллокаций в draw-пути, ни
-repaint в простое (инвариант 12). Событие без ведущего узла (аудио, чужой плейсхолдер) рамки
-не получает, а невозможность назвается строкой состояния, а не молчанием.
-Почему: Р.63 п.6 владельца — «КАК МИНИМУМ у нас должно быть редактирование прям в превью
-удобное»; отрасль гасит контролы при игре (FCP — всегда, AE — автоматически), а компенсация
-якоря на повёрнутом слое — подтверждённый цитатами дефект After Effects, который нам
-повторять незачем (`docs/features/ui/viewer/on-screen-controls.md`).
-
-#### Scenario: Перенос, масштаб и поворот правят те же числа, что поля
-- **WHEN** выделено видео-событие; рамка тянется за тело, за угловую ручку и за ручку поворота
-- **THEN** меняются `pos_x`/`pos_y`, `zoom` и `rot` события, значения в полях окна FX совпадают с экранным жестом до последнего знака, на каждый жест один шаг истории, промежуточные кадры уходят в плеер; поворот с Shift идёт шагом 15°
+#### Scenario: Move, zoom and rotation edit the same numbers as the fields
+- **WHEN** a video event is selected; the frame is dragged by the body, by the corner handle and by the rotation handle
+- **THEN** the `pos_x`/`pos_y`, `zoom` and `rot` of the event change; the values in the FX window's fields coincide with the on-screen gesture to the last digit; each gesture is one history step; intermediate frames go to the player; rotation with Shift goes in steps of 15°
 - **TEST** t760, t760b (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Якорь двигается, картинка стоит — и на повёрнутом слое
-- **WHEN** якорь перетаскивается у слоя без поворота и у слоя, повёрнутого на 30°
-- **THEN** значения якоря меняются, а размещение картинки на холсте остаётся прежним в обоих случаях (сравнение прямоугольника размещения до и после), компенсация позиции входит в тот же шаг истории
+#### Scenario: The anchor moves, the picture stays — and on a rotated layer too
+- **WHEN** the anchor is dragged on a layer without rotation and on a layer rotated by 30°
+- **THEN** the anchor values change, while the placement of the picture on the canvas stays the same in both cases (a comparison of the placement rectangle before and after); the position compensation is part of the same history step
 - **TEST** t761 (`src/libs/kt-fx/tests/placement.rs`), t761b (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Кроп своими ручками, поля прозрачны
-- **WHEN** тянутся четыре ручки кропа
-- **THEN** меняются `crop_l`/`crop_t`/`crop_r`/`crop_b`, рамка следует за кропнутым видом по правилу приведения, обрезанное — прозрачно (не чёрно)
+#### Scenario: Crop with its own handles, the margins are transparent
+- **WHEN** the four crop handles are dragged
+- **THEN** `crop_l`/`crop_t`/`crop_r`/`crop_b` change, the frame follows the cropped view by the reduction rule, and the cropped-away part is transparent (not black)
 - **TEST** t762 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Мелкая рамка отдаёт ручки наружу, тело остаётся своим
-- **WHEN** рамка меньше трёх хват-зон по стороне (правило «как есть» с мелким источником или заглушкой): указатель наводится на каждую ручку масштаба и в центр рамки
-- **THEN** ручки ловятся ЗА кромками рамки и рисуются там же, центр рамки даёт ПЕРЕНОС, а не ручку; на обычной рамке ручки остаются на кромках, как прежде
+#### Scenario: A small frame gives its handles outward, the body stays its own
+- **WHEN** the frame is smaller than three grab zones on a side (the "as is" rule with a small source or a placeholder): the pointer is moved onto each scale handle and onto the centre of the frame
+- **THEN** the handles are caught BEYOND the edges of the frame and are drawn there too; the centre of the frame gives the CARRY-OVER, not a handle; on an ordinary frame the handles remain on the edges, as before
 - **TEST** t781 (`src/apps/kt-app/src/layout_tests.rs`), t782 (`src/libs/kt-fx/tests/placement.rs`)
 
-#### Scenario: Попадание в ручку и приоритет при мелкой рамке
-- **WHEN** указатель наводится на каждую из ручек, в том числе у рамки размером меньше суммы хват-зон; отдельно — на точку якоря и на точку в нескольких пикселях от неё
-- **THEN** хват-зона каждой ручки не меньше 14 px, попадание однозначно (ближайшая к указателю), тело рамки не перехватывает жест ручки; якорь берётся за свою точку, в стороне от неё — уже тело, с модификатором — зона общая
+#### Scenario: Hitting a handle and priority with a small frame
+- **WHEN** the pointer is moved onto each of the handles, including on a frame smaller than the sum of the grab zones; separately — onto the anchor point and onto a point a few pixels from it
+- **THEN** the grab zone of each handle is at least 14 px, the hit is unambiguous (the nearest to the pointer), the body of the frame does not intercept a handle's gesture; the anchor is grabbed at its own point, and aside from it is already the body — with a modifier the zone is the common one
 - **TEST** t763 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Жест над анимированным параметром ставит ключ
-- **WHEN** у `pos_x` события живёт кривая, а у `pos_y` её нет; рамка тянется за тело
-- **THEN** константа `pos_x` цела, в кривой появился ключ по курсору с новым значением, `pos_y` правит базу, кривой у него не заводится, шаг истории один; рамка до жеста показывала значение КРИВОЙ под курсором
+#### Scenario: A gesture over an animated parameter sets a key
+- **WHEN** `pos_x` of the event has a live curve, and `pos_y` does not; the frame is dragged by the body
+- **THEN** the constant of `pos_x` is intact, a key appears in the curve at the cursor with the new value, `pos_y` edits the base, a curve is not created for it, the history step is one; before the gesture the frame showed the value of the CURVE under the cursor
 - **TEST** t762b (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Контролы гаснут при игре и не греют простой
-- **WHEN** запущено воспроизведение; затем пауза; затем простой без движения указателя
-- **THEN** при игре контролов нет, на паузе они вернулись, в простое дополнительных repaint и аллокаций в draw-пути нет
+#### Scenario: Controls fade during playback and do not heat the idle state
+- **WHEN** playback is started; then pause; then idling without pointer movement
+- **THEN** during playback there are no controls, on pause they have returned, in idle there are no extra repaints and no allocations in the draw path
 - **TEST** t764 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Живой сценарий жеста над кадром
-- **WHEN** в настоящем kt-app событие выделено, рамка тянется за тело, за угол, за поворот и за якорь
-- **THEN** пиксель превью меняется на переносе, масштабе и повороте и НЕ меняется на переносе якоря; файл после сохранения несёт новые значения геометрии
-- **TEST** `src/scripts/live/geomctl.py` (живой сценарий, `./scripts/live-check.sh`)
+#### Scenario: Live scenario of a gesture over the picture
+- **WHEN** in the real kt-app an event is selected, and the frame is dragged by the body, by the corner, by the rotation and by the anchor
+- **THEN** the preview pixel changes on the carry-over, the scale and the rotation, and does NOT change on the anchor carry-over; the file after saving carries the new geometry values
+- **TEST** `src/scripts/live/geomctl.py` (live scenario, `./scripts/live-check.sh`)

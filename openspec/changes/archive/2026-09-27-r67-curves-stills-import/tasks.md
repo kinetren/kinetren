@@ -1,156 +1,155 @@
 # Tasks
 
-## 0. Заметки фич и правила для агентов (до кода)
+## 0. Feature notes and agent rules (before code)
 
 - [x] 0.1 `docs/features/automation/keyframes/formula-as-segment-and-layer.md` (F-AUT-010):
-  сочетание ключей, форм отрезков, формулы на отрезке и слоя-формулы у Vegas/Premiere/
-  Resolve/FCP/AE, «фишка фишки», вердикт со ссылкой `CAPABILITY: openspec/specs/automation/`.
-  Проверка: `python3 src/scripts/features-index.py --check` зелёный.
+  the combination of keys, segment shapes, a formula on a segment and a formula layer in Vegas/Premiere/
+  Resolve/FCP/AE, "the trick behind the trick", verdict with the reference `CAPABILITY: openspec/specs/automation/`.
+  Check: `python3 src/scripts/features-index.py --check` is green.
 - [x] 0.2 `docs/features/automation/keyframes/shape-parameters-by-mouse.md` (F-AUT-011):
-  ручки параметров формы на графике (натяжение/амплитуда/периоды под мышь) у пяти
-  редакторов; вердикт с `CAPABILITY: openspec/specs/ui-timeline/`. Проверка: `--check`.
-- [x] 0.3 `docs/features/help/hints/formula-input-help.md` (F-HLP-034): справка и дополнение
-  в поле формулы (AE expression menu, Resolve Fusion, Blender drivers) без попапов; форма
-  вердикта `ТЕСТ: t789 …`; `ui_rules: [10]`. Проверка: `--check`.
-- [x] 0.4 Правила в `CLAUDE.md` (корень, kt-otio, kt-app): «починки старых файлов — только в
-  импорте, с версией, отмирают с версией»; «у нового UI-сценария — строка ПУТЬ, у живого
-  сценария — скриншот на шаг, список в отчёте»; «ключ только от жеста, виджет не пишет
-  сам». Проверка: t799 (задача 7.2) читает порог из тех же слов; `docs/user-feedback.md`
-  Р.67 уже записан.
+  shape parameter handles on the graph (tension/amplitude/periods under the mouse) in five
+  editors; verdict with `CAPABILITY: openspec/specs/ui-timeline/`. Check: `--check`.
+- [x] 0.3 `docs/features/help/hints/formula-input-help.md` (F-HLP-034): reference and completion
+  in the formula field (AE expression menu, Resolve Fusion, Blender drivers) without pop-ups; the verdict form
+  `TEST: t789 …`; `ui_rules: [10]`. Check: `--check`.
+- [x] 0.4 Rules in `CLAUDE.md` (root, kt-otio, kt-app): "repairs of old files — only in the
+  import, with the version, they die out with the version"; "a new UI scenario has a PATH line, a live
+  scenario has a screenshot per step, the list goes into the report"; "the key only from a gesture, the widget does not
+  write by itself". Check: t799 (task 7.2) reads the threshold from the same words; `docs/user-feedback.md`
+  R.67 is already recorded.
 
-## 1. Импорт старых версий (п.1)
+## 1. Import of old versions (item 1)
 
-- [x] 1.1 `kt-otio`: `legacy_import.rs` — таблица починок с версией, первая
-  `v5_null_morph_targets`; `import_older(text, base)`; `load_project` заворачивает ошибку
-  чтения файла версии < текущей в `Error::NeedsImport { version }` с текстом, называющим
-  импорт. Тест t783b (`src/libs/kt-otio/tests/convert.rs`) на форме `untitled2_v26.09.26`
-  (синтетическая копия структуры: три `null`, два объекта, один список); КРАСНЫЙ до правки
-  (сегодня — `untagged enum Repr`).
-- [x] 1.2 `kt-app`: пункт `File → Import older Kinotrain project…` (реестр глаголов,
-  каталоги ×5), окно ошибки «Открыть» с версией и именем пункта, импорт открывает документ
-  с прежним путём и звёздочкой. Тест t783 (`reach_tests.rs`); живой сценарий
-  `src/scripts/live/import_old.py` (копия структуры v5 в фикстуре, шаги ПУТЬ со
-  скриншотами). Затем открыть сам `sources/26.09.26/untitled2_v26.09.26.otio` через импорт
-  в Xvfb и сказать в отчёте, что видно.
+- [x] 1.1 `kt-otio`: `legacy_import.rs` — table of repairs with the version, the first
+  `v5_null_morph_targets`; `import_older(text, base)`; `load_project` wraps the error of reading a file of a version < current into `Error::NeedsImport { version }` with a text naming
+  the import. Test t783b (`src/libs/kt-otio/tests/convert.rs`) on the form `untitled2_v26.09.26`
+  (a synthetic copy of the structure: three `null`, two objects, one list); RED before the fix
+  (today — `untagged enum Repr`).
+- [x] 1.2 `kt-app`: item `File → Import older Kinotrain project…` (verb registry, catalogs ×5),
+  the "Open" error window with the version and the name of the item, the import opens the document
+  with the previous path and an asterisk. Test t783 (`reach_tests.rs`); live scenario
+  `src/scripts/live/import_old.py` (a copy of the v5 structure in the fixture, PATH steps
+  with screenshots). Then open `sources/26.09.26/untitled2_v26.09.26.otio` itself through the import
+  in Xvfb and say in the report what is visible.
 
-## 2. Модель кривой: формула-отрезок, слой, `t`, переопределения, ключ только жестом (пп.3–6, 11, 12)
+## 2. Curve model: segment formula, layer, `t`, overrides, key only by gesture (items 3–6, 11, 12)
 
-- [x] 2.1 `kt-model`: `SegShape::Formula { expr }` (переменные `s`, `a`, `b`, `t`; кэш разбора;
-  громкий отказ в валидации и команде), `Copy` снимается — места с копией формы на
-  `clone()`. Тест t787 (`src/libs/kt-model/tests/fx_auto.rs`); `GOLDEN_*` не двигаются
+- [x] 2.1 `kt-model`: `SegShape::Formula { expr }` (variables `s`, `a`, `b`, `t`; a parse cache;
+  a loud refusal in validation and in the command), `Copy` is removed — places with a copy of the shape use
+  `clone()`. Test t787 (`src/libs/kt-model/tests/fx_auto.rs`); `GOLDEN_*` do not move
   (t11, t67, t695b).
-- [x] 2.2 `kt-model`: `ParamCurve.layer: Option<String>` с переменными `k`, `t`, `src`;
-  порядок ключи → слой; резолвер flatten'ит слой и формулы-отрезки в ключи на кадровой
-  сетке тем же проходом, что связи; `Formula`-источник читается как слой над пустыми
-  ключами (t707 зелёный); проект без формул — счётчик обращений 0 (t705, t710). Тест
+- [x] 2.2 `kt-model`: `ParamCurve.layer: Option<String>` with variables `k`, `t`, `src`;
+  order keys → layer; the resolver flattens the layer and segment formulas into keys on the frame
+  grid in the same pass as the links; a `Formula` source is read as a layer over empty
+  keys (t707 green); a project without formulas — 0 access count (t705, t710). Test
   t787c (`fx_auto.rs`).
-- [x] 2.3 `kt-otio`: конверт формы `formula` и поля `layer`, v13 ПО СОДЕРЖИМОМУ, круг
-  байт-в-байт, отказ старого ридера по версии. Тесты t787b, t787d
-  (`src/libs/kt-otio/tests/convert.rs`); t144 идемпотентность зелёный.
-- [x] 2.4 `kt-model`: `formula_preview` считает `t` от начала материала (получает
-  `source_in`), окно — только диапазон выборки. Тест t784 (`src/libs/kt-model/tests/
-  formula.rs`); КРАСНЫЙ до правки (предпросмотр даёт 0 на левом крае окна).
-- [x] 2.5 `kt-model` + `kt-engine`: валидация переопределений принимает формулу, слой,
-  формы и связь внутри ленты; `apply_overrides` разрешает источники в домене ленты до
-  `retime_curve`. Тесты t792 (`src/libs/kt-model/tests/published.rs`) — структура проекта
-  владельца (два экземпляра друг над другом, кривая у верхнего): горка 0→1→0 даёт
-  0.5 в середине у цели; t792b (`src/libs/kt-engine/tests/nest_param.rs`) — кадр
-  экземпляра меняется по формуле `t/10`. КРАСНЫЙ до правки (`CurveSourceUnsupported`).
-- [x] 2.6 `kt-app/widgets.rs`: поле с живой кривой пишет только от жеста
-  (`dragged`/фокус+`changed`/сброс), показ — заклампленный паспортом до виджета. Тест
-  t786 (`layout_tests.rs`): 120 кадров игры с зигзагом за паспортом — на прежнем коде
-  120 ключей, после — 0; правка рукой — ровно один.
+- [x] 2.3 `kt-otio`: the envelope of the shape `formula` and the field `layer`, v13 BY CONTENT, round trip
+  byte for byte, refusal of the old reader by version. Tests t787b, t787d
+  (`src/libs/kt-otio/tests/convert.rs`); t144 idempotence green.
+- [x] 2.4 `kt-model`: `formula_preview` counts `t` from the start of the material (receives
+  `source_in`), the window is only the range of the sample. Test t784 (`src/libs/kt-model/tests/
+  formula.rs`); RED before the fix (the preview gives 0 at the left edge of the window).
+- [x] 2.5 `kt-model` + `kt-engine`: validation of overrides accepts a formula, a layer,
+  shapes and a link inside the reel; `apply_overrides` resolves sources in the reel's domain before
+  `retime_curve`. Tests t792 (`src/libs/kt-model/tests/published.rs`) — the owner's project structure
+  (two instances one above the other, the curve on the upper one): a ramp 0→1→0 gives
+  0.5 in the middle at the target; t792b (`src/libs/kt-engine/tests/nest_param.rs`) — the frame
+  of the instance changes by the formula `t/10`. RED before the fix (`CurveSourceUnsupported`).
+- [x] 2.6 `kt-app/widgets.rs`: the field with a live curve writes only from a gesture
+  (`dragged`/focus+`changed`/reset), the display is clamped by the passport before the widget. Test
+  t786 (`layout_tests.rs`): 120 frames of play with a zigzag beyond the passport — on the previous code
+  120 keys, after — 0; a manual edit — exactly one.
 
-## 3. Виджет автоматизации: рисунок, ручка, блок, дверь связи, справка, ширины (пп.3, 4, 6)
+## 3. Automation widget: drawing, handle, block, link door, reference, widths (items 3, 4, 6)
 
-- [x] 3.1 `automation.rs`: линия строится выборкой `curve_value` по пикселям (буфер в
-  `AutoView`, инвариант 12), у слоя — две линии (`k` сплошная, результат штрих). Тест
-  t784b (`layout_tests.rs`): пиксели линии против `curve_value` на зигзаге/ступени/
-  формуле-отрезке; КРАСНЫЙ до правки (расхождение ≥ 10 px на пике зигзага).
-- [x] 3.2 `automation.rs`: ручка параметра формы на середине участка (вертикаль — главный
-  параметр, Shift+горизонталь — периоды, число рядом на время драга, хват 14 px, один шаг
-  истории). Тест t785b (`layout_tests.rs`).
-- [x] 3.3 `widgets::curve_block` — один блок «кривая как параметр» (заголовок именем и
-  цветом выбранной кривой; форма всех отрезков с параметрами; поле слоя; «Ведётся…»;
-  «отвязать»; удалить); зовётся из `fx_editor.rs`, `gen_ui.rs`, `pubparam.rs`
-  (голова экземпляра); выбор кривой — по имени, линии и полю (`CurveBind` ставит
-  `active`). Тесты t785 (две кривые — зигзаг ложится на выбранную; КРАСНЫЙ до правки),
-  t791 (блок у экземпляра тот же и `t*2` не стирается; КРАСНЫЙ до правки). Живой сценарий `curves.py`.
-- [x] 3.4 Дверь связи «Ведётся…»: меню «это событие / другие события ленты» → свойства по
-  паспортам носителей; `CurveSource::Link { path }`; отказ модели — строкой состояния.
-  Тест t788 (`reach_tests.rs`); каталоги ×5.
-- [x] 3.5 Справка: группа в блоке из реестра вычислителя (`Fun::ALL` с арностью, переменные
-  с назначением), подсказка строки состояния у поля, ошибка «нет имени» с ближайшими,
-  Tab дополняет на месте без списка (`Order` выше Middle не появляется). Тесты t789
-  (`layout_tests.rs`), t789b (`reach_tests.rs`); t83 (нет всплывающих) зелёный.
-- [x] 3.6 Ширины: `param_value`/`plain_row` — по галлее самого длинного значения паспорта,
-  поле формулы/слоя — 220 px, выбор формы — по галлее длиннейшего названия. Тест t790
-  (`layout_tests.rs`) при ширинах окна 900 и 1800; КРАСНЫЙ до правки на выборе формы/поле
-  формулы.
-- [x] 3.7 Подписи блока, справки, двери связи, ошибок — во все пять каталогов, сабсеты
-  шрифтов пересобраны (`python3 scripts/subset-fonts.py`). Тесты `i18n_tests.rs`,
+- [x] 3.1 `automation.rs`: the line is built by sampling `curve_value` per pixel (buffer in
+  `AutoView`, invariant 12); for a layer — two lines (`k` solid, the result dashed). Test
+  t784b (`layout_tests.rs`): the line's pixels against `curve_value` on a zigzag/step/
+  segment formula; RED before the fix (a deviation ≥ 10 px at the zigzag peak).
+- [x] 3.2 `automation.rs`: the shape parameter handle at the middle of the segment (vertical — the main
+  parameter, Shift+horizontal — periods, the number next to it for the duration of the drag, a 14 px grab, one history
+  step). Test t785b (`layout_tests.rs`).
+- [x] 3.3 `widgets::curve_block` — one "curve as parameter" block (header with the name and
+  color of the selected curve; the shape of all segments with parameters; the layer field; "Driven…";
+  "unlink"; delete); called from `fx_editor.rs`, `gen_ui.rs`, `pubparam.rs`
+  (the head of the instance); the choice of the curve — by name, line and field (`CurveBind` sets
+  `active`). Tests t785 (two curves — the zigzag lands on the selected one; RED before the fix),
+  t791 (the block at the instance is the same and `t*2` is not erased; RED before the fix). Live scenario `curves.py`.
+- [x] 3.4 The link door "Driven…": a menu "this event / other events of the reel" → properties by
+  the passports of the carriers; `CurveSource::Link { path }`; the model's refusal — by a status-line string.
+  Test t788 (`reach_tests.rs`); catalogs ×5.
+- [x] 3.5 Reference: a group in the block from the evaluator's registry (`Fun::ALL` with arity, variables
+  with their purpose), a hint in the status line at the field, the "no name" error with the nearest ones,
+  Tab completes in place without a list (`Order` above Middle does not appear). Tests t789
+  (`layout_tests.rs`), t789b (`reach_tests.rs`); t83 (no pop-ups) green.
+- [x] 3.6 Widths: `param_value`/`plain_row` — by the width of the longest value of the passport,
+  the formula/layer field — 220 px, the shape choice — by the width of the longest name. Test t790
+  (`layout_tests.rs`) at window widths 900 and 1800; RED before the fix on the shape choice/
+  formula field.
+- [x] 3.7 Labels of the block, the reference, the link door, the errors — into all five catalogs, font
+  subsets rebuilt (`python3 scripts/subset-fonts.py`). Tests `i18n_tests.rs`,
   `font_tests.rs`.
 
-## 4. Рамка в превью и голова полосы (пп.8, 9)
+## 4. Frame in the preview and the head of the strip (items 8, 9)
 
-- [x] 4.1 `geomctl.rs`/`user_store.rs`/`app.rs`: `geom_controls` в хранилище пользователя
-  (умолчание включено, режим «Трансформация»), кнопка-иконка в углу превью (только на
-  паузе, без анимации) + прежний пункт меню; схема формы вписывает `union(кадр, рамка)`.
-  Тест t794 (`layout_tests.rs`): первый запуск — рамка есть; выключил, перезапустил —
-  нет; схема при 2× содержит все углы рамки; t764 (простой без repaint) зелёный. Живой
-  сценарий `geomctl.py` дополнен шагами ПУТЬ.
-- [x] 4.2 `fx_editor.rs`/`widgets::HeadSlot`: голова экземпляра — `📌 <имя ленты>` через
-  `elided_name`, цвет слота, выделенная той же ширины, полное имя — подсказкой. Тест t793
-  (`layout_tests.rs`); живой сценарий `forms.py` дополнен шагом.
+- [x] 4.1 `geomctl.rs`/`user_store.rs`/`app.rs`: `geom_controls` in the user storage
+  (default on, "Transform" mode), an icon button in the corner of the preview (only on
+  pause, without animation) + the previous menu item; the form's scheme fits `union(frame, rectangle)`.
+  Test t794 (`layout_tests.rs`): first launch — the frame is there; switched off, restarted —
+  it is not; the scheme at 2× contains all corners of the frame; t764 (idle without repaint) green. Live
+  scenario `geomctl.py` extended with PATH steps.
+- [x] 4.2 `fx_editor.rs`/`widgets::HeadSlot`: the head of the instance — `📌 <reel name>` via
+  `elided_name`, the slot color, the selected one of the same width, the full name — as a hint. Test t793
+  (`layout_tests.rs`); live scenario `forms.py` extended with a step.
 
-## 5. Превью лент доживает до диска (п.10)
+## 5. Reel previews survive to disk (item 10)
 
-- [x] 5.1 `kt-media/index.rs`: `put_reel_frames` и `put_reel_peaks` раздельными
-  транзакциями, флаг «пики есть» без бампа `schema_version`, чтение полосы без пиков.
-  Тест t795b (`src/libs/kt-media/tests/index_db.rs`).
-- [x] 5.2 `reel_preview.rs`: запись кадров сразу после кадровой стадии; `Cancelled`
-  отдельно от провала, повторная заявка на первой паузе. Тест t795 (`layout_tests.rs`):
-  отмена после кадров → строка на диске; второе открытие проекта в форме файла владельца
-  (две ленты друг над другом с набором, пропавший стилл) — ноль рендеров; КРАСНЫЙ до
-  правки. Затем открыть сам `paintitblack_v26.09.26.otio` в Xvfb дважды и сказать в
-  отчёте, сколько рендеров.
+- [x] 5.1 `kt-media/index.rs`: `put_reel_frames` and `put_reel_peaks` in separate
+  transactions, the flag "peaks are present" without a bump of `schema_version`, reading the strip without peaks.
+  Test t795b (`src/libs/kt-media/tests/index_db.rs`).
+- [x] 5.2 `reel_preview.rs`: writing of frames right after the frame stage; `Cancelled`
+  separately from failure, a repeated request at the first pause. Test t795 (`layout_tests.rs`):
+  cancel after frames → a row on disk; a second opening of the project in the form of the owner's file
+  (two reels one above the other with a set, a missing still) — zero renders; RED before the
+  fix. Then open `paintitblack_v26.09.26.otio` itself in Xvfb twice and say in the
+  report how many renders.
 
-## 6. Стиллы и пути медиа (п.13)
+## 6. Stills and media paths (item 13)
 
 - [x] 6.1 `fixtures/gen.sh`: `still.jpg`, `still_alpha.png` (ffmpeg lavfi); `kt-ffmpeg`:
-  распознавание одиночной картинки, один кадр на любой тик, «бесконечная» длительность,
-  тишина, натив → ступень. Тест t796 (`src/libs/kt-media/tests/conformance.rs`).
-- [x] 6.2 `kt-engine`: план и экспорт со стиллом (JPEG и PNG с альфой поверх фона),
-  детерминизм. Тест t796b (`src/libs/kt-engine/tests/stills.rs`).
-- [x] 6.3 `kt-app`: превью стилла без «Loading…» (укомплектовано до 180 мс); заглушка
-  пропавшего файла — полный кадр, скрима нет, имя в кадре, возврат файла подменяет. Тесты
-  t796c, t796d (`layout_tests.rs`); КРАСНЫЙ до правки на пропавшем файле. Живой сценарий
-  `src/scripts/live/stills.py` (шаги ПУТЬ).
-- [x] 6.4 Путь добавляемого медиа абсолютизируется при добавлении (kt-app, kt-cli);
-  относительность — только на записи. Тесты t797 (`layout_tests.rs`), t797b
-  (`src/libs/kt-otio/tests/format.rs`); t147 зелёный.
+  recognition of a single picture, one frame at any tick, "infinite" duration,
+  silence, native → a scale step. Test t796 (`src/libs/kt-media/tests/conformance.rs`).
+- [x] 6.2 `kt-engine`: the plan and the export with a still (JPEG and PNG with alpha over a background),
+  determinism. Test t796b (`src/libs/kt-engine/tests/stills.rs`).
+- [x] 6.3 `kt-app`: the preview of a still without "Loading…" (complete within 180 ms); the placeholder
+  of a missing file — a full frame, no scrim, the name in the frame, returning the file replaces it. Tests
+  t796c, t796d (`layout_tests.rs`); RED before the fix on a missing file. Live scenario
+  `src/scripts/live/stills.py` (PATH steps).
+- [x] 6.4 The path of added media is made absolute when added (kt-app, kt-cli);
+  relativity — only on writing. Tests t797 (`layout_tests.rs`), t797b
+  (`src/libs/kt-otio/tests/format.rs`); t147 green.
 
-## 7. rendereg3, сторож «ПУТЬ», скриншоты в отчёте (пп.2, 7)
+## 7. rendereg3, PATH guard, screenshots in the report (items 2, 7)
 
-- [x] 7.1 `git worktree add ../kt-tested-48 tested-48`, сборка kt-app там; оба бинаря в Xvfb
-  на `untitled_v26.09.26.otio` на 1380/1390/1400 с, скриншоты превью, разница
-  (`compare`). Есть разница → причина в design.md, регрессионный тест t798 (крейт по
-  причине), фикс; нет → скриншоты и слова в отчёте, вопрос владельцу о медиа. Проверка:
-  файлы `target/live-out/rendereg3/*.png` и абзац в отчёте.
-- [x] 7.2 `src/scripts/specs-user-path.py --check` (строка ПУТЬ у UI-сценариев с тестом
-  ≥ t783 в kt-app), тест t799 (`reach_tests.rs`) зовёт его; `kt_live.py::step(name)` —
-  скриншот на шаг в `target/live-out/<сценарий>/`; `finish.sh` печатает список после
-  версии; `live-check.sh` знает `curves`, `stills`, `import_old`. Проверка: t799 красный
-  при удалённой строке ПУТЬ у нового сценария, зелёный на спеках раунда.
+- [x] 7.1 `git worktree add ../kt-tested-48 tested-48`, build of kt-app there; both binaries in Xvfb
+  on `untitled_v26.09.26.otio` at 1380/1390/1400 s, screenshots of the preview, the difference
+  (`compare`). If there is a difference → the cause in design.md, a regression test t798 (the crate by
+  the cause), the fix; if not → screenshots and words in the report, a question to the owner about the media. Check:
+  files `target/live-out/rendereg3/*.png` and a paragraph in the report.
+- [x] 7.2 `src/scripts/specs-user-path.py --check` (the PATH line for UI scenarios with a test
+  ≥ t783 in kt-app), test t799 (`reach_tests.rs`) calls it; `kt_live.py::step(name)` —
+  a screenshot per step into `target/live-out/<scenario>/`; `finish.sh` prints the list after the
+  version; `live-check.sh` knows `curves`, `stills`, `import_old`. Check: t799 is red
+  when the PATH line of a new scenario is removed, green on the round's specs.
 
-## 8. Спеки и финал
+## 8. Specs and finish
 
-- [x] 8.1 Спеки capability обновлены по дельте, `openspec validate --all --strict`; в
-  `design.md` capability записаны «почему» (формула-отрезок как форма, слой после ключей,
-  `t` от материала, ключ только жестом, импорт вместо ридера, стилл как источник, кадры
-  до пиков); вердикты F-AUT-008/F-MED-003 и новых заметок обновлены статусом и
-  `CAPABILITY:` после архива.
-- [x] 8.2 `cargo test --workspace` (kt-app покрейтно при SIGBUS-флаке), `cargo clippy
-  --all-targets`, `./scripts/live-check.sh` (все сценарии, отдельным прогоном без нагрузки
-  сборки), `./src/scripts/finish.sh` — версия и список скриншотов в отчёте; коммит
-  стадии; отчёт по всем тринадцати пунктам владельца с тем, что видно на скриншотах.
+- [x] 8.1 The capability specs updated by the delta, `openspec validate --all --strict`; in
+  `design.md` of the capability the "why" is recorded (the segment formula as a shape, the layer after keys,
+  `t` from the material, the key only by gesture, import instead of the reader, a still as a source, frames
+  before peaks); the verdicts F-AUT-008/F-MED-003 and the new notes are updated with the status and
+  `CAPABILITY:` after archiving.
+- [x] 8.2 `cargo test --workspace` (kt-app per crate with the SIGBUS flake), `cargo clippy
+  --all-targets`, `./scripts/live-check.sh` (all scenarios, in a separate run without build load),
+  `./src/scripts/finish.sh` — the version and the list of screenshots in the report; a commit
+  of the stage; a report on all thirteen items of the owner with what is visible in the screenshots.

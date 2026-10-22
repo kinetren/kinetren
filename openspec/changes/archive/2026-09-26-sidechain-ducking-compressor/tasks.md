@@ -1,96 +1,44 @@
 # Tasks
 
-## 1. Ключевой вход у прибора (kt-fx, без движка и без модели)
+## 1. Key input on the device (kt-fx, without the engine and without the model)
 
-- [x] 1.1 `AudioNode::process` принимает необязательный КЛЮЧЕВОЙ срез (третьим аргументом,
-  рядом с позицией); все прочие узлы игнорируют его дословно прежним кодом. Проверка:
-  `cargo test -p kt-fx` зелёный без перегенерации, каркас t322 проходит по `FxInstance::all()`.
-- [x] 1.2 `CompNode` считает детектор по ключу, когда он есть, и по своему входу, когда его
-  нет; закон сжатия, пределы и сглаживание не меняются. Тест t767 (`src/libs/kt-fx/tests/sidechain.rs`):
-  ровный тон + речь-образец ключом — просадка ровно в интервалах речи; тот же прогон без
-  ключа байт-в-байт равен прежнему коду.
-- [x] 1.3 Нейтральность и цена: тест t768 (`src/libs/kt-fx/tests/sidechain.rs`) — тишина в
-  ключе оставляет вход нетронутым (с точностью до makeup), аллокаций в обработке нет;
-  `GOLDEN_AUDIO`, t2, t3 зелёные без перегенерации.
+- [x] 1.1 `AudioNode::process` accepts an optional KEY slice (as a third argument, next to the position); all other nodes ignore it verbatim with the previous code. Check: `cargo test -p kt-fx` is green without regeneration, the t322 skeleton passes over `FxInstance::all()`.
+- [x] 1.2 `CompNode` computes the detector from the key when it is present, and from its own input when it is absent; the compression law, limits and smoothing do not change. Test t767 (`src/libs/kt-fx/tests/sidechain.rs`): a steady tone + a speech sample as the key — a dip exactly within the speech intervals; the same run without the key is byte for byte equal to the previous code.
+- [x] 1.3 Neutrality and cost: test t768 (`src/libs/kt-fx/tests/sidechain.rs`) — silence in the key leaves the input untouched (up to makeup), there are no allocations in processing; `GOLDEN_AUDIO`, t2, t3 are green without regeneration.
 
-## 2. Ключ в модели: адрес, валидация, отказ вместо молчания
+## 2. The key in the model: address, validation, refusal instead of silence
 
-- [x] 2.1 `FxInstance::Compressor` получает поле ключа (`Option<TrackId>`, serde-умолчание
-  «нет»); паспорт параметров и подписи не меняются. Проверка: `cargo test -p kt-model`
-  зелёный, t48 (реестр видов) не краснеет — нового вида эффекта не завелось.
-- [x] 2.2 Валидация модели: ключ допустим ТОЛЬКО в цепочке аудиодорожки (не на событии, не
-  на видео), указывает на существующую аудиодорожку той же ленты и не создаёт цикла любой
-  длины. Тест t772 (`src/libs/kt-model/tests/model.rs`): каждая из четырёх попыток —
-  названная ошибка и нетронутая модель; красный на прежней модели (она приняла бы всё).
-- [x] 2.3 Удаление дорожки-ключа НЕ правит чужие приборы (правило 20): ключ остаётся
-  записанным, а читается как «нет ключа». Тест t772 (продолжение): после удаления команда не
-  трогала соседей, undo возвращает дорожку и ключ снова живой.
+- [x] 2.1 `FxInstance::Compressor` gets a key field (`Option<TrackId>`, serde default "none"); the parameter passport and labels do not change. Check: `cargo test -p kt-model` is green, t48 (the registry of kinds) does not turn red — no new kind of effect was added.
+- [x] 2.2 Model validation: a key is allowed ONLY in the chain of an audio track (not on an event, not on video), points to an existing audio track of the same reel, and does not create a cycle of any length. Test t772 (`src/libs/kt-model/tests/model.rs`): each of the four attempts is a named error and an untouched model; red on the previous model (it would have accepted everything).
+- [x] 2.3 Deleting the key track does NOT edit other people's devices (rule 20): the key remains written, and is read as "no key". Test t772 (continuation): after deletion the command did not touch the neighbours; undo restores the track and the key is live again.
 
-## 3. Живой сайдчейн в движке
+## 3. Live sidechain in the engine
 
-- [x] 3.1 Порядок стадий — топологический по ключу, стабильный (при равных — прежний ранг
-  строки); сборка стадий отказывается от цикла (страховка к 2.2). Тест t770
-  (`src/libs/kt-engine/tests/sidechain.rs`): ключ НИЖЕ цели по рангу считается раньше,
-  проект без ключей идёт прежним порядком сложения.
-- [x] 3.2 Ключевой сигнал: своя ветка рендера дорожки-ключа (события + её цепочка + уровень
-  + гашение) на ОКНЕ ЦЕЛИ, со своим состоянием в `fxstore`; внутри ветки компрессор с ключом
-  работает как обычный (обрыв рекурсии). Тест t769 (`src/libs/kt-engine/tests/sidechain.rs`):
-  музыка проседает ровно под речью и возвращается между репликами.
-- [x] 3.3 Выравнивание и детерминизм при упреждении цели: тест t770 (продолжение) — с узлом
-  упреждения в цепочке цели дакинг совпадает по времени с речью, два прогона с разными
-  границами чанков байт-в-байт равны.
-- [x] 3.4 Мёртвый и заглушённый ключ: тест t771 (`src/libs/kt-engine/tests/sidechain.rs`) —
-  с удалённой дорожкой прибор звучит обычным компрессором, с mute на ключе дакинга нет,
-  паники и тишины в музыке нет.
-- [x] 3.5 Цена ключевой ветки измерена на плотной сцене (десяток дорожек, ключ с цепочкой):
-  тест t778 (`src/libs/kt-engine/tests/sidechain.rs`) держит потолок относительно того же
-  проекта без ключей — правило «цена измеряется, а не утверждается».
+- [x] 3.1 The order of stages is topological by key, stable (with equal ranks — the previous row rank); the assembly of stages refuses a cycle (a safeguard for 2.2). Test t770 (`src/libs/kt-engine/tests/sidechain.rs`): a key BELOW the target by rank is computed first; a project without keys keeps the previous summation order.
+- [x] 3.2 The key signal: its own render branch of the key track (events + its chain + level + muting) on the WINDOW OF THE TARGET, with its own state in `fxstore`; inside the branch a compressor with a key works as an ordinary one (the recursion is cut). Test t769 (`src/libs/kt-engine/tests/sidechain.rs`): the music dips exactly under the speech and returns between the lines.
+- [x] 3.3 Alignment and determinism with lookahead on the target: test t770 (continuation) — with a lookahead node in the target's chain, the ducking coincides in time with the speech; two runs with different chunk boundaries are byte for byte equal.
+- [x] 3.4 Dead and muted key: test t771 (`src/libs/kt-engine/tests/sidechain.rs`) — with a deleted track the device sounds like an ordinary compressor; with mute on the key there is no ducking; there is no panic and no silence in the music.
+- [x] 3.5 The cost of the key branch is measured on a dense scene (a dozen tracks, a key with a chain): test t778 (`src/libs/kt-engine/tests/sidechain.rs`) holds a ceiling relative to the same project without keys — the rule "cost is measured, not asserted".
 
-## 4. Формат
+## 4. Format
 
-- [x] 4.1 Ключ пишется адресом дорожки, только когда назначен; файл без сайдчейна
-  байт-в-байт прежний; файл с ключом — v12; ключ на несуществующую дорожку читается как
-  «нет ключа» и не воскрешается при записи. Тест t773 (`src/libs/kt-otio/tests/convert.rs`),
-  t433b зелёный без правок.
+- [x] 4.1 The key is written as a track address, only when it is assigned; a file without a sidechain is byte for byte the same as before; a file with a key — v12; a key to a non-existent track is read as "no key" and is not revived on writing. Test t773 (`src/libs/kt-otio/tests/convert.rs`), t433b is green without edits.
 
-## 5. Форма: два компрессора в окне дорожки
+## 5. Form: two compressors in the track window
 
-- [x] 5.1 Секция дакинга в `track_window.rs` переписана на ДВА компрессора тем же
-  `params_grid`: слева прибор этой дорожки с выбором ключа, справа приглушённый компрессор
-  дорожки-ключа (нет — заводится одним действием). Обе правки — одна сессия окна и один шаг
-  истории, «Отмена» откатывает обе. Тест t775 (`src/apps/kt-app/src/layout_tests.rs`).
-- [x] 5.2 Список ключей не предлагает невозможного (себя, цикл), причина названа строкой
-  состояния; мёртвый ключ показан как «ключа нет» и снимается одним действием. Тест t776
-  (`src/apps/kt-app/src/layout_tests.rs`).
-- [x] 5.3 Новые подписи — во все пять каталогов, сабсеты шрифтов пересобраны
-  (`python3 scripts/subset-fonts.py`). Тесты `i18n_tests.rs`, `font_tests.rs`, t756c зелёные.
-- [x] 5.4 Достижимость: путь «назначить ключ» есть и из окна дорожки, и из её полосы цепочки,
-  и это одно тело. Тест t777 (`src/apps/kt-app/src/reach_tests.rs`).
+- [x] 5.1 The ducking section in `track_window.rs` is rewritten into TWO compressors with the same `params_grid`: on the left the device of this track with the key choice, on the right the muted compressor of the key track (if absent, it is created by one action). Both edits are one window session and one history step; "Cancel" reverts both. Test t775 (`src/apps/kt-app/src/layout_tests.rs`).
+- [x] 5.2 The key list does not offer the impossible (itself, a cycle), the reason is named in the status line; a dead key is shown as "no key" and is cleared with one action. Test t776 (`src/apps/kt-app/src/layout_tests.rs`).
+- [x] 5.3 New labels — into all five catalogs; the font subsets are rebuilt (`python3 scripts/subset-fonts.py`). Tests `i18n_tests.rs`, `font_tests.rs`, t756c are green.
+- [x] 5.4 Reachability: the path "assign key" exists both from the track window and from its chain strip, and it is one body. Test t777 (`src/apps/kt-app/src/reach_tests.rs`).
 
-## 6. Удаление снимка
+## 6. Removing the snapshot
 
-- [x] 6.1 Удалить `src/libs/kt-engine/src/ducking.rs`, `kt_model::ops::duck_curve_commands`,
-  фоновую задачу дакинга (`analysis.rs`), `Workspace::duck` (`user_store.rs`) и их вызовы в
-  `app.rs`; тесты t341 и части t420/t421/t756/t756b про дакинг убрать или перевести на
-  оставшиеся анализы. Проверка: `cargo test --workspace` зелёный, в исходниках kt-app и
-  kt-engine слова `duck_spans`/`duck_curve_commands` нет.
-- [x] 6.2 Сторож «задачи дакинга больше нет»: тест t774 (`src/apps/kt-app/src/analysis.rs`) —
-  в очереди фоновых анализов её не существует, громкость и синхрон работают как прежде.
-- [x] 6.3 Реестр окон и достижимость целы: t757 и t252/t253 зелёные — удаление секции не
-  оставило осиротевшей команды и мёртвого пункта меню.
+- [x] 6.1 Remove `src/libs/kt-engine/src/ducking.rs`, `kt_model::ops::duck_curve_commands`, the background ducking task (`analysis.rs`), `Workspace::duck` (`user_store.rs`) and their calls in `app.rs`; remove the ducking parts of tests t341 and t420/t421/t756/t756b or port them to the remaining analyses. Check: `cargo test --workspace` is green, and the words `duck_spans`/`duck_curve_commands` do not appear in the kt-app and kt-engine sources.
+- [x] 6.2 The guard "the ducking task no longer exists": test t774 (`src/apps/kt-app/src/analysis.rs`) — it does not exist in the queue of background analyses, loudness and sync work as before.
+- [x] 6.3 The window registry and reachability are intact: t757 and t252/t253 are green — removing the section left no orphaned command and no dead menu item.
 
-## 7. Живой сценарий и финал
+## 7. Live scenario and finish
 
-- [x] 7.1 `src/scripts/live/sidechain.py`: на дорожке речи две реплики, на дорожке музыки
-  ровный тон; ключ назначается руками из окна дорожки; утверждать, что при игре уровень
-  музыки проседает под речью и возвращается между репликами (замер по выходу, а не по
-  картинке), и что после Ctrl+S в файле стоит ключ. Прогон — `./scripts/live-check.sh sidechain`.
-- [x] 7.2 Спеки capability обновлены по дельте, `openspec validate --all --strict`; в
-  `openspec/specs/audio-render/design.md` и `audio-fx/design.md` записаны «почему» (пересмотр
-  решения о снимке, окно ключа, порядок стадий, запрет циклов); в
-  `docs/features/audio/processing/compressor-and-limiter.md` в «Вердикте» отмечено, что
-  прежнее «живой сайдчейн — не сейчас» отменено решением владельца, с адресом change'а.
-- [x] 7.3 `cargo test --workspace` (kt-app покрейтно при SIGBUS-флаке), `cargo clippy
-  --all-targets`, `./scripts/live-check.sh` (все сценарии), `./src/scripts/finish.sh` —
-  версия в отчёте; коммит стадии; открыть проект владельца собранным kt-app и сказать в
-  отчёте, что видно.
+- [x] 7.1 `src/scripts/live/sidechain.py`: on the speech track two lines, on the music track a steady tone; the key is assigned by hand from the track window; assert that during playback the music level dips under the speech and comes back between the lines (measured on the output, not from the picture), and that after Ctrl+S the key is in the file. Run — `./scripts/live-check.sh sidechain`.
+- [x] 7.2 The capability specs are updated by the delta, `openspec validate --all --strict`; in `openspec/specs/audio-render/design.md` and `audio-fx/design.md` the "why" is recorded (the revision of the snapshot decision, the key window, the order of stages, the ban on cycles); in `docs/features/audio/processing/compressor-and-limiter.md` the "Verdict" notes that the former "live sidechain — not now" is cancelled by the owner's decision, with the change's address.
+- [x] 7.3 `cargo test --workspace` (kt-app per crate under the SIGBUS flake), `cargo clippy --all-targets`, `./scripts/live-check.sh` (all scenarios), `./src/scripts/finish.sh` — the version in the report; a commit of the stage; open the owner's project with the built kt-app and say in the report what is visible.

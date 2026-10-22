@@ -2,47 +2,41 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Номер дорожки внутри вида = ранг строки
+### Requirement: Track number within a view = row rank
+The tracks of the root and of each reel SHALL be objects with a stable id; the row order is the order of
+their vector. Within each kind the rows SHALL go in ascending order of event number; the order of
+rows encodes only the alternation of kinds. The single reorder door SHALL renumber everything addressed by the track number (clips, morphers, cameras, foreign raw material, regions), at the root and in each reel; the name, height, switches, level, chain and mode travel
+together with the object without renumbering; validation rejects a non-canonical form, reading canonicalizes it.
+The sub-mix and the sub-plan of a reel SHALL apply the track stages of the reel; the law E holds
+for tracks without stages. There is exactly one exception — the expansion bench (the band at the tail); commands that apply the invariant while the band is open SHALL be rejected and SHALL not collapse the band themselves.
+Why: the engine summed layers by number, the screen drew by row order — a track under the ceiling was the bottom layer; three parallel property vectors and six functions for their synchronization — the class "the name exists, the flag does not" after an insertion.
 
-Дорожки корня и каждой ленты SHALL быть объектами со стабильным id, порядок строк — порядок
-их вектора. Внутри каждого вида строки SHALL идти по возрастанию номера события; порядок
-строк кодирует только чередование видов. Единственная дверь перестановки SHALL
-перенумеровывать всё, что адресовано номером дорожки (клипы, морферы, камеры, чужое сырьё,
-области), в корне и в каждой ленте; имя, высота, выключатели, уровень, цепочка и режим едут
-вместе с объектом без перенумерации; валидация отвергает неканон, чтение канонизирует.
-Суб-микс и суб-план ленты SHALL применять дорожечные стадии ленты; закон Э держится при
-дорожках без стадий. Исключение ровно одно — бенч раскрытия (полоса в хвосте); команды,
-применяющие инвариант, при открытой полосе SHALL отвергаться и не сворачивать полосу сами.
-Почему: движок складывал слои по номеру, экран рисовал по порядку строк — дорожка под
-потолком была нижним слоем; три параллельных вектора свойств и шесть функций их
-синхронизации — класс «имя есть, флага нет» после вставки.
-
-#### Scenario: Перестановка перенумеровывает, композиция == экран
-- **WHEN** строки переставлены
-- **THEN** содержимое перенумеровано, порядок композиции совпадает с порядком строк, область/чужой трек/имя/высота едут, undo возвращает
+#### Scenario: Reorder renumbers, composition == screen
+- **WHEN** the rows are reordered
+- **THEN** the contents are renumbered, the order of the composition matches the order of the rows, the region / foreign track / name / height move with them, undo restores
 - **TEST** t588 (`src/libs/kt-model/tests/lane_order.rs`), t241 (`src/libs/kt-model/tests/lane_order.rs`)
 
-#### Scenario: Сторож и канонизация на чтении
-- **WHEN** документ или лента неканоничны
-- **THEN** валидация отвергает; чтение канонизирует корень и ленты; файл в форме проекта владельца читается канонически, чужое сырьё трека едет за дорожкой
+#### Scenario: Guard and canonicalization on read
+- **WHEN** a document or a reel is non-canonical
+- **THEN** validation rejects; reading canonicalizes the root and the reels; a file in the owner's project form is read canonically, the foreign raw material of a track moves with the track
 - **TEST** t589 (`src/libs/kt-model/tests/lane_order.rs`), t590 (`src/libs/kt-model/tests/lane_order.rs`), t593 (`src/libs/kt-otio/tests/convert.rs`)
 
-#### Scenario: Бенч выведен
-- **WHEN** при открытой полосе вызвана перестановка строк или число дорожек
-- **THEN** отказ `BandsOpen`, полоса не свёрнута отказом
+#### Scenario: Bench is open
+- **WHEN** a reorder of rows or a count of tracks is invoked while a band is open
+- **THEN** refusal `BandsOpen`; the band is not collapsed by the refusal
 - **TEST** t591 (`src/libs/kt-model/tests/nest.rs`)
 
-#### Scenario: Дорожка под потолком — верхний слой
-- **WHEN** из меню морф-строки добавлена видеодорожка и на неё положено событие
-- **THEN** событие рисуется верхним слоем
+#### Scenario: Track at the top — top layer
+- **WHEN** a video track is added from the menu of a morph row and an event is placed on it
+- **THEN** the event is drawn as the top layer
 - **TEST** t594 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Id дорожки стабилен, свойства едут с объектом
-- **WHEN** дорожка вставлена сверху, переставлена, соседняя удалена; имя и высота изменены
-- **THEN** id прежний, имя/высота/выключатели на месте, изменения имени и высоты откатываются undo, t426 (деструктурирование корня и ленты) собирается с новым полем
+#### Scenario: Track id is stable, properties travel with the object
+- **WHEN** a track is inserted above, reordered, a neighbour is removed; the name and height are changed
+- **THEN** the id is the same, the name/height/switches are in place, changes of name and height are rolled back by undo, t426 (destructuring of the root and of a reel) compiles with the new field
 - **TEST** t729 (`src/libs/kt-model/tests/track.rs`)
 
-#### Scenario: Стадии дорожек внутри ленты
-- **WHEN** у дорожки внутри ленты стоит цепочка и уровень; та же лента без дорожечных свойств
-- **THEN** экземпляр звучит и выглядит со стадией дорожки; без свойств — закон Э байт-в-байт (t434/t435/t447)
+#### Scenario: Track stages inside a reel
+- **WHEN** a track inside a reel has a chain and a level; the same reel without track properties
+- **THEN** the instance sounds and looks with the track stage; without properties — the law E byte for byte (t434/t435/t447)
 - **TEST** t739 (`src/libs/kt-engine/tests/nest_render.rs`)

@@ -2,39 +2,38 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Контракт источника — аудио 48 kHz/2ch f32 по burst'ам, кадр ровно запрошенного качества
+### Requirement: Source contract — audio 48 kHz/2ch f32 by bursts, frame at exactly the requested quality
+Any `MediaSource` SHALL deliver audio only as 48 kHz stereo f32 interleaved, exactly in
+1024-frame bursts, where burst idx covers the samples [idx·1024, (idx+1)·1024) from the start of the stream;
+format conversion happens INSIDE the source. A video frame SHALL be exactly the requested
+Quality (the composite discards a foreign size); the requested Quality is computed by the layer's geometry
+(capability `video-plan`), not by the consumer from the project's raster. `info()` SHALL report the
+pixel aspect ratio (SAR, default 1:1) and the frame view = native × SAR; all conforming,
+thumbnails and "Max (by sources)" are computed from the view. A source without sound SHALL answer
+`has_audio: false` AND `Ok(silence)`, not `Err`. The parsing of pseudo-paths (`synth:`, `gen:`) SHALL
+live only in the factory and be case-insensitive; a broken pseudo-path is an honest error, it does not go to
+FFmpeg.
+Why: no consumer should see the file's sample rate (a defect of the old engine —
+hiss in slowed&reverb); an `Err` for "no sound" turned into false underruns through the worker's
+negative cache; two parsings of `synth:` diverged by case; two files with identical pixels and a
+different SAR gave byte-for-byte one frame — anamorphic was inexpressible.
 
-Любой `MediaSource` SHALL отдавать аудио только как 48 kHz stereo f32 interleaved ровно по
-1024 кадра на burst, где burst idx покрывает сэмплы [idx·1024, (idx+1)·1024) от начала потока;
-приведение форматов происходит ВНУТРИ источника. Кадр видео SHALL быть ровно запрошенного
-Quality (композит выбрасывает чужой размер); запрошенное Quality считает геометрия слоя
-(capability `video-plan`), а не потребитель по растру проекта. `info()` SHALL сообщать
-пиксельное соотношение (SAR, умолчание 1:1) и вид кадра = натив × SAR; всё приведение,
-тумбы и «Max (по источникам)» считаются от вида. Источник без звука SHALL отвечать
-`has_audio: false` И `Ok(тишина)`, а не `Err`. Разбор псевдо-путей (`synth:`, `gen:`) SHALL
-жить только в фабрике и быть регистронезависимым; битый псевдо-путь — честная ошибка, в
-FFmpeg он не ходит.
-Почему: ни один потребитель не должен видеть sample-rate файла (дефект старого движка —
-хрипы slowed&reverb); `Err` «нет звука» превращался в ложные underrun'ы через негативный кэш
-воркера; два разбора `synth:` расходились по регистру; два файла с одинаковыми пикселями и
-разным SAR давали байт-в-байт один кадр — анаморф был невыразим.
-
-#### Scenario: Sample-accurate burst'ы
-- **WHEN** источник читается вразброс и подряд
-- **THEN** результаты совпадают байт-в-байт
+#### Scenario: Sample-accurate bursts
+- **WHEN** a source is read out of order and sequentially
+- **THEN** the results match byte for byte
 - **TEST** t10 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`)
 
-#### Scenario: Пиксельное соотношение доезжает до вида кадра
-- **WHEN** два файла 640×480 с одинаковыми пикселями и SAR 1:1 / 2:1; синтетический источник с `sar`
-- **THEN** `info()` отдаёт разные виды (4:3 и 8:3), кадры приведения различаются, синтетика без FFmpeg несёт то же поле
+#### Scenario: The pixel aspect ratio reaches the kind of the frame
+- **WHEN** two 640×480 files with identical pixels and SAR 1:1 / 2:1; a synthetic source with `sar`
+- **THEN** `info()` gives different views (4:3 and 8:3), the conform frames differ, the synthetic source without FFmpeg carries the same field
 - **TEST** t711 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`), t711b (`src/libs/kt-media/src/synthetic.rs`)
 
-#### Scenario: Предикат перенастройки совпадает с самой перенастройкой
-- **WHEN** фабрика отвечает, умеет ли источник `retune`
-- **THEN** ответ точь-в-точь совпадает с поведением `MediaSource::retune` (файл — никогда, генератор — да)
+#### Scenario: The retune predicate matches the retune itself
+- **WHEN** the factory answers whether the source can `retune`
+- **THEN** the answer exactly matches the behavior of `MediaSource::retune` (a file — never, a generator — yes)
 - **TEST** t499 (`src/libs/kt-media/src/factory.rs`)
 
-#### Scenario: Тестовые источники честны в том, что меряют
-- **WHEN** тест утверждает «ноль декодов» или «резкость зума»
-- **THEN** «ноль декодов» меряется счётчиками `SyntheticSource`, а резкость — только на `CheckerSource` с настоящим нативом и box-минификацией (у синтетики натив фиктивен)
+#### Scenario: Test sources are honest about what they measure
+- **WHEN** a test asserts "zero decodes" or "zoom sharpness"
+- **THEN** "zero decodes" is measured by the counters of `SyntheticSource`, and sharpness — only on `CheckerSource` with a real native and box minification (the synthetic's native is fictitious)
 - **TEST** t13 (`src/libs/kt-engine/tests/viewport.rs`), t315 (`src/libs/kt-engine/tests/decode_sharpness.rs`, capability `video-plan`)

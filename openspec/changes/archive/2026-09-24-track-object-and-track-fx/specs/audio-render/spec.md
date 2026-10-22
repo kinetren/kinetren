@@ -2,130 +2,125 @@
 
 ## ADDED Requirements
 
-### Requirement: Стадия дорожки — сумма, цепочка, уровень, mute/solo; без нужды — путь прежний
+### Requirement: Track stage — sum, chain, level, mute/solo; without need, the path stays the same
+An audio track with a non-empty chain, a level ≠ 0 dB, or silencing (mute / not in the solo set) SHALL have a stage: the sum of its events with the same weights (fade × overlap × event gain) →
+the track chain (a streaming processor without the clip shape: no source, no length, no warp) →
+× level → × 0 when silenced → into the output. A track without a stage SHALL be summed into the output
+in the former order of addition — byte for byte. Silencing is a multiplier, not removal from the graph:
+the FX state of the events of a muted track stays alive. Solo SHALL be a set of tracks within a
+kind; clearing solo returns the former mutes. The FX state key SHALL be composite:
+an event or a track; insertion, removal and reordering of tracks MUST NOT touch the state of neighbours.
+The track chain SHALL receive lookahead like the event chain (the summing window
+is extended forward, the output is aligned with the input) and ring out as a tail past the last event
+(the input is silence). Mute/solo are project content and affect the export.
+Why: reordering f32 additions would shift GOLDEN_AUDIO; removal from the graph would wipe the
+state (invariant 3, defects b/f of the old engine); the key "(kind, number)" would die on
+inserting a track; the owner's decision in R.62 — mute and solo in the project.
 
-Аудио-дорожка с непустой цепочкой, уровнем ≠ 0 дБ или гашением (mute / не в соло-множестве)
-SHALL иметь стадию: сумма её событий с теми же весами (фейд × перекрытие × gain события) →
-цепочка дорожки (потоковый процессор без формы клипа: ни источника, ни длины, ни варпа) →
-× уровень → × 0 при гашении → в выход. Дорожка без стадии SHALL складываться в выход
-прежним порядком сложения — байт-в-байт. Гашение — множитель, не удаление из графа:
-FX-состояние событий заглушённой дорожки живо. Solo SHALL быть множеством дорожек внутри
-вида, снятие соло возвращает прежние mute. Ключ FX-состояния SHALL быть составным: событие
-либо дорожка; вставка, удаление и перестановка дорожек MUST NOT трогать состояние соседей.
-Цепочка дорожки SHALL получать упреждение как цепочка события (окно суммирования
-расширяется вперёд, выход выровнен со входом) и звучать хвостом за последним событием
-(вход — тишина). Mute/solo — содержимое проекта и действуют на экспорт.
-Почему: перестановка f32-сложений сдвинула бы GOLDEN_AUDIO; удаление из графа снесло бы
-состояние (инвариант 3, дефекты b/f старого движка); ключ «(вид, номер)» умирал бы при
-вставке дорожки; решение владельца Р.62 — mute и solo в проекте.
-
-#### Scenario: Без стадии — байты прежние; уровень, mute и solo точны
-- **WHEN** проект без дорожечных свойств рендерится; затем уровень −6 дБ у дорожки; затем mute у дорожки с ревербом на событии и снятие mute посреди хвоста; затем solo двух из трёх дорожек
-- **THEN** t2/t3/`GOLDEN_AUDIO` байт-в-байт; −6 дБ применён точно после весов и gain события; при mute — тишина дорожки, после снятия хвост реверба продолжается без холодного старта; в соло звучат ровно две, снятие соло возвращает прежние mute
+#### Scenario: Without a stage — the bytes are as before; level, mute, and solo are exact
+- **WHEN** a project without track properties is rendered; then a level of −6 dB on a track; then mute on a track with a reverb on an event and clearing mute in the middle of the tail; then solo of two of the three tracks
+- **THEN** t2/t3/`GOLDEN_AUDIO` byte for byte; −6 dB is applied exactly after the weights and the event gain; under mute — the track is silent, after clearing the reverb tail continues without a cold start; in solo exactly two sound, clearing solo returns the former mutes
 - **TEST** t732 (`src/libs/kt-engine/tests/track_mix.rs`)
 
-#### Scenario: Цепочка дорожки на сумме, упреждение и хвост
-- **WHEN** реверб стоит на дорожке из десяти реплик; лимитер с упреждением — на дорожке; последнее событие кончилось
-- **THEN** хвост тянется через швы (как t449), выход выровнен со входом (сдвиг 0 относительно дорожки без цепочки), хвост дозванивает за последним событием; цена окна измерена и не растёт с размером проекта
+#### Scenario: A track's chain on the sum, look-ahead, and tail
+- **WHEN** a reverb is on a track of ten lines; a limiter with lookahead is on the track; the last event has ended
+- **THEN** the tail extends across the seams (as t449), the output is aligned with the input (shift 0 relative to a track without a chain), the tail rings out past the last event; the cost of the window is measured and does not grow with the size of the project
 - **TEST** t733 (`src/libs/kt-engine/tests/track_fx.rs`)
 
-#### Scenario: Ключ состояния дорожки переживает перестановки
-- **WHEN** посреди хвоста цепочки дорожки вставляется дорожка выше, затем дорожки переставляются, затем дорожка удаляется
-- **THEN** состояние цепочки ниже не тронуто (выход непрерывен), после удаления состояние выброшено
+#### Scenario: The track's state key survives reorderings
+- **WHEN** in the middle of the tail of a track chain a track is inserted above, then the tracks are reordered, then a track is removed
+- **THEN** the state of the chain below is untouched (the output is continuous); after the removal the state is discarded
 - **TEST** t734 (`src/libs/kt-engine/tests/track_fx.rs`)
 
 ## MODIFIED Requirements
 
-### Requirement: Правка модели не уничтожает FX-состояние
+### Requirement: A model edit does not destroy FX state
+On any rebuild of the audio renderer the state of the chains SHALL be reconciled by the composite key
+(clip id or track id) and the fingerprint of the chain STRUCTURE (the kinds of slots): the same structure → the
+same processor, the parameters arrive smoothly (one-pole ~20 ms), curves and the GEOMETRY (entry point, length, handles) also arrive; buffers are zeroed only on a real seek (`reset`).
+Structural changes (the lookahead window, the pitch engine, the geometry of the reverb lines) SHALL
+rebuild the processor without touching the fingerprint. Silencing a track (mute, not-solo) MUST NOT
+remove its chains from the graph.
+Why: any twitch of the UI was recreating the FX nodes and tearing reverb tails (defect f); the fingerprint
+knows only the kinds of slots, and without carrying the geometry a trim left the processor with the old anchor —
+"sound from another event"; a key by track number would die when a neighbour is inserted.
 
-При любой пересборке аудио-рендерера состояние цепочек SHALL сверяться по составному ключу
-(clip id либо track id) и отпечатку СТРУКТУРЫ цепочки (виды слотов): та же структура → тот
-же процессор, параметры доезжают сглаженно (one-pole ~20 мс), кривые и ГЕОМЕТРИЯ (точка
-входа, длина, ручки) доносятся тоже; буферы зануляются только при настоящем seek (`reset`).
-Структурные смены (окно упреждения, движок питча, геометрия линий реверба) SHALL
-пересобирать процессор, не трогая отпечаток. Гашение дорожки (mute, не-соло) MUST NOT
-удалять её цепочки из графа.
-Почему: любой чих UI пересоздавал FX-узлы и рвал хвосты реверба (дефект f); отпечаток
-знает лишь виды слотов, и без доноса геометрии трим оставлял процессор со старым якорем —
-«звук от другого события»; ключ по номеру дорожки умирал бы при вставке соседа.
-
-#### Scenario: Пересборка графа посреди хвоста
-- **WHEN** во время звучания хвоста реверба правится другое событие и граф пересобирается
-- **THEN** хвост дозванивает за границей события, затухает −60 dB в пределах `tail()`, а выход после пересборки байт-идентичен непрерывному
+#### Scenario: Graph rebuild in the middle of a tail
+- **WHEN** while a reverb tail is sounding, another event is edited and the graph is rebuilt
+- **THEN** the tail rings out past the event boundary, decays −60 dB within `tail()`, and the output after the rebuild is byte-identical to a continuous one
 - **TEST** t6 (`src/libs/kt-engine/tests/fx.rs`)
 
-#### Scenario: Ступенька параметра не щёлкает
-- **WHEN** параметр цепочки меняется скачком во время игры
-- **THEN** скачок сэмпл-к-сэмплу не превышает 1.5× естественного наклона синуса — параметр дошёл через сглаживание, буферы не занулялись
+#### Scenario: A parameter step does not click
+- **WHEN** a chain parameter changes by a jump during playback
+- **THEN** the sample-to-sample jump does not exceed 1.5× the natural slope of the sine — the parameter arrived through smoothing, the buffers were not zeroed
 - **TEST** t5 (`src/libs/kt-engine/tests/fx.rs`)
 
-#### Scenario: Смена точки входа при той же цепочке слышна
-- **WHEN** `source_in` события сдвинут (трим, разрез, punch-out, переанкоринг морф-куска) при том же id и той же структуре цепочки
-- **THEN** звучащий материал сдвинут ровно на эту величину; якорь переставлен ШВОМ, выход непрерывен, реверб дозванивает
+#### Scenario: Changing the entry point with the same chain is audible
+- **WHEN** the `source_in` of an event is shifted (trim, cut, punch-out, re-anchoring of a morph piece) with the same id and the same chain structure
+- **THEN** the material that sounds is shifted by exactly that amount; the anchor is repositioned with a SEAM, the output is continuous, the reverb rings out
 - **TEST** t283 (`src/libs/kt-engine/tests/reverse.rs`)
 
-#### Scenario: Структурная смена пересобирает процессор
-- **WHEN** меняется окно упреждения узла, нейтраль питча становится активом или переключается движок питча проекта
-- **THEN** процессор пересобран (слышно как мини-seek), а статические формулы хвоста и упреждения согласны с узлом для каждого вида реестра
+#### Scenario: A structural change rebuilds the processor
+- **WHEN** the lookahead window of the node changes, the pitch neutral becomes an asset, or the project's pitch engine is switched
+- **THEN** the processor is rebuilt (heard as a mini-seek), and the static tail and lookahead formulas agree with the node for each kind of registry
 - **TEST** t340 (`src/libs/kt-engine/tests/audio_pitch.rs`), t322 (`src/libs/kt-engine/tests/audio_fx_registry.rs`)
 
-#### Scenario: Mute не убивает состояние
-- **WHEN** дорожка с ревербом на событии заглушается и снимается с mute посреди хвоста
-- **THEN** цепочка не пересоздана, хвост продолжается с того же места
+#### Scenario: Mute does not kill the state
+- **WHEN** a track with a reverb on an event is silenced and unmuted in the middle of the tail
+- **THEN** the chain is not recreated, the tail continues from the same place
 - **TEST** t732 (`src/libs/kt-engine/tests/track_mix.rs`)
 
-### Requirement: Микс — веса переходов, фейды, перекрытия, gain, сумма дорожек
+### Requirement: Mix — transition weights, fades, overlaps, gain, track sum
+A transition at a seam SHALL give a crossfade over the window with the curve chosen by the user;
+equal-power (`√(1−t)` / `√t`) SHALL remain the former formula, byte for byte. A fade is
+a transition with one live end, with the same weights against emptiness. The overlap of events of one
+track without a transition (`overlap_layers`) SHALL sound equal-power for two and 1/N for
+three or more; an overlapping transition silences this weight and applies its own curve — a double
+attenuation MUST NOT occur. Tracks without a stage are summed without weights in the former order; for
+a track with a stage the sum of its events passes the chain, the level and the track's silencing, and then
+is summed into the output. The gain of the event (dB → linear) is applied after the weights; the FX tail beyond the
+material is not weighted. The "handles" of a transition read the source beyond the edges of the body; material beyond the
+edges of the file — silence WITHOUT an underrun.
+Why: `GOLDEN_AUDIO` rests on these formulas, and the conversion of old overlaps must
+be byte-exact; the absence of a handle is a fact of the model, not starvation; the track stage appears
+only where it is needed, so that the summation order of old projects does not move.
 
-Переход на стыке SHALL давать кроссфейд по окну с кривой, выбранной пользователем;
-equal-power (`√(1−t)` / `√t`) SHALL оставаться прежней формулой байт-в-байт. Фейд —
-переход с одним живым концом теми же весами напротив пустоты. Перекрытие событий одной
-дорожки без перехода (`overlap_layers`) SHALL звучать equal-power на двоих и 1/N при
-трёх и более; наложенный переход глушит этот вес и применяет свою кривую — двойного
-затухания MUST NOT быть. Дорожки без стадии суммируются без весов прежним порядком; у
-дорожки со стадией сумма её событий проходит цепочку, уровень и гашение дорожки, затем
-складывается в выход. gain события (dB → линейный) применяется после весов; FX-хвост за
-материалом не взвешивается. «Ручки» перехода читают источник за краями тела; материал за
-краями файла — тишина БЕЗ underrun.
-Почему: на этих формулах стоит `GOLDEN_AUDIO`, а конверсия старых перекрытий обязана
-быть байт-точной; отсутствие ручки — факт модели, а не голод; стадия дорожки появляется
-только там, где она нужна, чтобы порядок сложений прежних проектов не двигался.
-
-#### Scenario: Конвертированное перекрытие звучит как старое
-- **WHEN** легаси-перекрытие приведено к стыку с переходом того же окна
-- **THEN** рендер байт-в-байт равен аналитической формуле старого кроссфейда; веса и материал ручек точны по кадрам; FX-путь без варпа читает ручки как plain; реверс-сосед продолжает зеркальную формулу; префетч греет ручки
+#### Scenario: A converted overlap sounds like the old one
+- **WHEN** a legacy overlap has been brought to a seam with a transition of the same window
+- **THEN** the render is byte-for-byte equal to the analytic formula of the old crossfade; the weights and the handle material are exact by frames; the FX path without warp reads the handles as plain; the reversed neighbour continues the mirrored formula; the prefetch warms the handles
 - **TEST** t136 (`src/libs/kt-engine/tests/transitions_audio.rs`), t2 (`src/libs/kt-engine/tests/audio_engine.rs`)
 
-#### Scenario: Ручка длиннее материала
-- **WHEN** incoming начинается с `source_in = 0`, а окно перехода просит материал левее нуля
-- **THEN** там тишина и `underruns == 0`
+#### Scenario: A handle longer than the material
+- **WHEN** incoming starts at `source_in = 0`, and the transition window asks for material to the left of zero
+- **THEN** there is silence there and `underruns == 0`
 - **TEST** t136 (`src/libs/kt-engine/tests/transitions_audio.rs`)
 
-#### Scenario: Фейд у края
-- **WHEN** у события переход с одним живым концом
-- **THEN** звук поднимается из тишины (гаснет в тишину) той же equal-power рампой, половина в середине окна, к краю — тишина
+#### Scenario: A fade at the edge
+- **WHEN** an event has a transition with one live end
+- **THEN** the sound rises from silence (decays into silence) by the same equal-power ramp, half at the middle of the window, silence at the edge
 - **TEST** t156 (`src/libs/kt-engine/tests/transitions_audio.rs`)
 
-#### Scenario: Кривая кроссфейда доезжает до сэмплов
-- **WHEN** у перехода выбрана Linear / SCurve / Exponential / EqualPower (capability `transitions`)
-- **THEN** каждая считается своей формулой и различима на слух, а EqualPower бит-в-бит равна прежней
+#### Scenario: The crossfade curve reaches the samples
+- **WHEN** a transition has Linear / SCurve / Exponential / EqualPower chosen (capability `transitions`)
+- **THEN** each is computed by its own formula and is distinguishable by ear, and EqualPower is bit-for-bit equal to the former one
 - **TEST** t226 (`src/libs/kt-engine/tests/transitions_audio.rs`)
 
-#### Scenario: Наложенный переход применяет свою кривую
-- **WHEN** два события «лесенкой» с явным переходом на зоне наложения
-- **THEN** Linear даёт полусумму в середине против √-закона, equal-power равен голому перекрытию байт-в-байт, без перехода путь прежний
+#### Scenario: An overlapping transition applies its own curve
+- **WHEN** two events in a "staircase" with an explicit transition on the overlap zone
+- **THEN** Linear gives the half-sum in the middle against the √-law, equal-power equals the bare overlap byte for byte, without a transition the path is as before
 - **TEST** t463 (`src/libs/kt-engine/tests/transitions_audio.rs`)
 
-#### Scenario: Перекрытие без перехода
-- **WHEN** события одной дорожки наезжают при включённом `overlap_layers`
-- **THEN** двое — equal-power по зоне наезда, трое и более — 1/N; при выключенной опции наложение отвергается валидацией
+#### Scenario: An overlap without a transition
+- **WHEN** events of one track overlap with `overlap_layers` enabled
+- **THEN** two — equal-power over the overlap zone, three or more — 1/N; with the option disabled the overlap is rejected by validation
 - **TEST** t162 (`src/libs/kt-engine/tests/audio_engine.rs`)
 
-#### Scenario: Дорожки и gain
-- **WHEN** события лежат на разных дорожках, у одного gain ±6 dB
-- **THEN** дорожки суммируются без весов, gain применён точно
+#### Scenario: Tracks and gain
+- **WHEN** events lie on different tracks, one of them has a gain of ±6 dB
+- **THEN** the tracks are summed without weights, the gain is applied exactly
 - **TEST** t2, t3 (`src/libs/kt-engine/tests/audio_engine.rs`)
 
-#### Scenario: Уровень дорожки после gain события
-- **WHEN** у дорожки уровень −6 дБ, у события на ней gain +6 дБ
-- **THEN** результат равен исходному в пределах округления f32, стадия дорожки включена только у неё
+#### Scenario: Track level after the event's gain
+- **WHEN** a track has a level of −6 dB, and an event on it has a gain of +6 dB
+- **THEN** the result equals the original within f32 rounding; the track stage is enabled only for it
 - **TEST** t732 (`src/libs/kt-engine/tests/track_mix.rs`)

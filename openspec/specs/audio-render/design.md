@@ -1,229 +1,74 @@
-# Аудио-рендер — почему так
+# Audio render — why it is this way
 
-## Что было и у кого болело
+## What hurt and for whom
 
-Старый движок хрипел на slowed&reverb по шести независимым причинам: варп считал в
-частоте источника (44.1 kHz → пропуск бёрста каждые ~230 мс), stateful-FX без локов
-дёргали четыре потока (отравленный delay line), ресемплер дублировал крайний сэмпл
-каждые 1024 кадра (треск 46.9 Гц), каждая правка параметра зануляла буферы, хвосты
-резались на границе события, а любой чих UI пересоздавал FX-узлы. Владелец пришёл с
-этим в первом же раунде, и на каждый пункт заведён регрессионный тест (t1–t7).
+The old engine crackled on slowed&reverb for six independent reasons: the warp computed at the source's frequency (44.1 kHz → a burst skipped every ~230 ms), stateful FX without locks were pulled by four threads (a poisoned delay line), the resampler duplicated the last sample every 1024 frames (a 46.9 Hz crackle), every parameter edit zeroed the buffers, tails were cut at the event boundary, and any UI hiccup recreated the FX nodes. The owner came with this in the very first round, and a regression test was filed for each item (t1–t7).
 
-Вторая волна боли — воспроизведение по кругу и реверсы: «шумит компьютер», «underruns
-растут», «картинка замирает», «звук от другого события откуда-то взялся», «неужели два
-реверса НАСТОЛЬКО тяжёлые», «регион внутри начала события 21 — растут underruns».
-Одна претензия была прислана дважды: первый заход чинил симптомы, потому что смотреть на
-модель было нечем — отсюда `kt-cli probe`, который по жалобе «звук от другого события»
-запускается ПЕРВЫМ.
+The second wave of pain was playback in a loop and reverses: "the computer is noisy", "underruns are growing", "the picture freezes", "the sound from another event came from somewhere", "are two reverses really THAT heavy", "a region inside the start of event 21 — underruns are growing". One complaint was sent twice: the first pass fixed symptoms, because there was nothing to look at in the model — hence `kt-cli probe`, which is run FIRST on a complaint like "sound from another event".
 
-Третья — «музыка забивает голос» (самая частая живая претензия к любому редактору по
-разведке), «сдал и узнал о громкости от площадки», и запрос на знаковую скорость:
-«реверсивное проигрывание в slowed», «должен иметь возможность выставить 0,05 или −0,03».
+The third — "the music drowns out the voice" (the most frequent live complaint about any editor in the reconnaissance), "I delivered and learned about the loudness from the venue", and a request for signed speed: "reverse playback in slowed", "I should be able to set 0.05 or −0.03".
 
-## Решения и почему
+## Decisions and why
 
-- **Весь тракт f32 48 kHz/2ch, границы floor'ятся в кадры один раз.** Единственный
-  способ, при котором FX и микс не знают о файле, а тик↔сэмпл точен (capability
-  `time-model`). Коэффициенты BS.1770 выписаны ровно для 48 kHz — редкий случай,
-  когда инвариант совпал со стандартом буквально.
-- **FX-состояние — у одного потока, без мьютексов; prefetch греет только пре-FX
-  источник.** Выход цепочки — потоковый автомат: хвост зависит от всей истории, и
-  кэшировать его нельзя в принципе (второй круг лупа даёт другой выход). У видео
-  пост-FX кадр мемоизируется именно потому, что он функция `(кадр, цепочка, t)` без
-  истории (capability `video-plan`).
-- **Diff цепочек по clip id и отпечатку структуры; параметры сглаженно; буферы —
-  только в `reset`.** Иначе правка модели рвёт хвост реверба. Отпечаток знает лишь виды
-  слотов, поэтому store обязан доносить и ГЕОМЕТРИЮ (точка входа, длина, ручки) — и
-  доносит её швом, не seek'ом.
-- **Два разрыва.** Настоящий seek (player делает `reset`) — пре-ролл в мусор;
-  разрыв позиции при непрерывном выходе — шов, где ресемплер и реверб живут дальше.
-  Пре-ролл на каждом круге лупа стоил ≈1.25 с на цепочку и был причиной «шумит
-  компьютер»; промахи пре-ролла не слышны, поэтому считаются отдельно.
-- **Underrun'ы в кадрах.** Кадры сравнимы с длиной события и задержкой вывода; бёрсты
-  не сравнимы ни с чем. Голодание колбэка показано пользователю миллисекундами тишины.
-- **Веса equal-power — прежняя формула байт-в-байт, всё остальное — поверх.** На ней
-  стоит `GOLDEN_AUDIO`: кривые переходов, фейды, наложенные переходы, ленты — всё
-  устроено так, что на событиях встык и без опций вес тождественно 1.0 и эталон не
-  двигается. Перекрытие без перехода (equal-power на двоих, 1/N при 3+) возвращено как
-  законное состояние по прямому требованию владельца («включи по умолчанию»); точной
-  компенсации по-сэмплово переменного 1/N не существует, поэтому при импорте 3+
-  перекрытий громкость не компенсируется — решение владельца.
-- **Реверс — «варп, потом зеркало», ось — потреблённое.** Зеркало ДО варпа гнало бы
-  кривую скорости задом наперёд и рассинхронило A/V; ось с запасом ресемплера уводила
-  звук на 63 % длины события. Ось считает одна функция, и та же ось стоит в заказе
-  бёрстов.
-- **Знаковая скорость: в ресемплер уходит модуль, знак — в адресной карте.** Rubato
-  читает виртуальный поток и о направлении не знает; позиции ранов накапливаются
-  целыми, иначе щелчок ровно в точке разворота. Решение владельца: минус — velocity-
-  огибающая Vegas (идёт в материал ДО точки входа), звук тянется до |rate| = 0.01,
-  тишина только в нуле, хвост дозванивает. Постоянная −1 остаётся на плоском пути,
-  поэтому равна флагу «Реверс» со сдвигом ТОЧНО, а не в допуске.
-- **Заказ == чтение — одна функция окна.** За окном источник отдаёт тишину без
-  underrun'а, значит расхождение заказа и чтения — вечный промах, которого не видно.
-  Сырой реверс-транспорт («как Vegas», линейно и без варпа) получил свой заказ.
-- **Цена места: подметание дорожки + двоичный поиск; чанк за `gate_end`
-  пропускается.** Три раунда подряд симптом объяснялся профилем сборки и длиной
-  региона; причина нашлась, когда стали ОТСЕКАТЬ: замер без FX дал ту же цену, замер с
-  далёкими событиями — линейный рост. Пропуск хвоста байт-идентичен по построению:
-  гейт и так обнулял всё сам.
-- **PDC — упреждение, а не задержка.** Выход выровнен со входом, для движка задержки
-  нет, playhead и кроссфейды не едут; цена — окно источника расширяется вперёд. «Греть»
-  и «звучать» разведены: La входит в прогрев, но не в хвост.
-- **Дакинг — снимок.** Результат виден, правится руками, откатывается одним undo, не
-  делает звук события функцией чужой дорожки. Цена названа в диалоге: поменялась музыка
-  — позвать снова.
-- **Громкость в f64, на проходе, без мастер-гейна, без кнопки «нормализовать».**
-  Второй проход ради LUFS — второй полный декод (часовой файл — минуты). Мастер-гейн
-  живёт только в плеере и в экспорт не попадает — это громкость КОНТРОЛЯ; число превью
-  и файла совпадают по построению. Цель (−23/−14/−27) выбирает человек.
-- **Синхрон — по пирамиде пиков, транзиентами, с отказом.** Данные уже в памяти ради
-  волноформ и уже в единой сетке 48 kHz; у разных микрофонов формы огибающих не похожи,
-  транзиенты общие. Команда только двигает: рекордер длиннее камеры, и резать его —
-  ошибка магнита, а не синхронизации.
+- **The whole path is f32 48 kHz/2ch; the boundaries are floored to frames once.** The only way in which FX and the mix do not know about the file, and tick↔sample is exact (capability `time-model`). The BS.1770 coefficients are written out exactly for 48 kHz — a rare case where an invariant coincided with the standard to the letter.
+- **FX state belongs to one thread, without mutexes; prefetch warms only the pre-FX source.** The chain's output is a streaming automaton: the tail depends on the entire history, and it cannot be cached in principle (a second lap of the loop yields a different output). For video, the post-FX frame is memoized precisely because it is a function of `(frame, chain, t)` without history (capability `video-plan`).
+- **Chain diff by clip id and structure fingerprint; parameters are smoothed; buffers are cleared only in `reset`.** Otherwise a model edit would tear the reverb tail. The fingerprint knows only the kinds of slots, so the store MUST also convey the GEOMETRY (entry point, length, handles) — and it conveys it with a seam, not a seek.
+- **Two kinds of break.** A real seek (the player does `reset`) — a pre-roll into the void; a position break during continuous output — a seam, where the resampler and the reverb live on. A pre-roll on every lap of the loop cost ≈1.25 s per chain and was the cause of "the computer is noisy"; misses of the pre-roll are not audible, so they are counted separately.
+- **Underruns in frames.** Frames are comparable to the length of the event and the output delay; bursts are not comparable to anything. Starvation of the callback is shown to the user as milliseconds of silence.
+- **Equal-power weights — the previous formula byte for byte; everything else is on top of it.** `GOLDEN_AUDIO` rests on it: transition curves, fades, overlapping transitions, reels — everything is arranged so that for back-to-back events with no options the weight is identically 1.0 and the reference does not move. An overlap without a transition (equal-power for two, 1/N for 3+) was reinstated as a legitimate state by the owner's direct request ("turn it on by default"); there is no exact sample-by-sample compensation for a varying 1/N, so when importing 3+ overlaps the loudness is not compensated — the owner's decision.
+- **Reverse — "warp, then mirror; the axis is consumed amount."** A mirror BEFORE the warp would drive the speed curve backwards and desynchronize A/V; an axis with the resampler's margin would pull the sound off by 63 % of the event's length. One function computes the axis, and the same axis stands in the burst order.
+- **Signed speed: the modulus goes into the resampler, the sign goes into the address map.** Rubato reads a virtual stream and knows nothing about direction; the run positions accumulate as integers, otherwise there would be a click exactly at the reversal point. The owner's decision: minus is the Vegas velocity envelope (applied to the material BEFORE the entry point), the sound stretches down to |rate| = 0.01, silence only at zero, and the tail rings on. A constant −1 stays on the flat path, so it equals the "Reverse" flag with a shift EXACTLY, not within a tolerance.
+- **Order == read — one window function.** Beyond the window the source returns silence without an underrun, so a mismatch between the order and the read is a permanent miss that cannot be seen. Raw reverse transport ("like Vegas", linear and without warp) received its own order.
+- **The price of a place: sweeping the track + binary search; a chunk past `gate_end` is skipped.** Three rounds in a row the symptom was explained by the build profile and the length of the region; the cause was found when they began to CUT: a measurement without FX gave the same price, and a measurement with distant events gave linear growth. Skipping the tail is byte-identical by construction: the gate was zeroing everything by itself anyway.
+- **PDC — look-ahead, not delay.** The output is aligned with the input, there is no delay for the engine, the playhead and crossfades do not move; the price is that the source window is extended forward. "Warming" and "sounding" are separated: La is included in the warm-up, but not in the tail.
+- **Ducking — a snapshot.** The result is visible, can be edited by hand, is undone with a single undo, and does not make the sound of the event a function of another track. The cost is stated in the dialog: if the music changed — call it again.
+- **Loudness in f64, in one pass, without a master gain, without a "normalize" button.** A second pass for LUFS would mean a second full decode (an hour-long file — minutes). The master gain lives only in the player and does not get into the export — it is a CONTROL loudness; the preview number and the file's number match by construction. The target (−23/−14/−27) is chosen by a person.
+- **Sync — by the peak pyramid, by transients, with refusal.** The data is already in memory for the waveforms and already on the unified 48 kHz grid; for different microphones the envelope shapes do not look alike, while the transients are shared. The command only moves: a recorder longer than the camera, and trimming it, is an error of the magnet, not of the synchronization.
 
-## Отвергнуто и почему
+## Rejected and why
 
-- **Кэшировать выход аудио-FX** — потоковый автомат, тот же кусок на втором круге
-  звучит иначе; байты зависели бы от истории чтения.
-- **Обход варпа в хвосте ради скорости в том же раунде** — трогает байтовый путь под
-  `GOLDEN_AUDIO`; сделано отдельной работой (пропуск чанка за гейтом), когда стало
-  ясно, что он байт-идентичен по построению.
-- **Живой сайдчейн** — второй вход у эффекта, шины, правка формата (XL); практическая
-  польза покрывается огибающей.
-- **Задержка выхода как реализация look-ahead** — звук уехал бы от картинки на окно, и
-  тесты этого не увидели бы.
-- **Ниже 0.25 глушить / «минус = второй вход в кнопку Реверс»** — отвергнуто
-  владельцем: тянуть до 0.01, минус — огибающая скорости с разворотом посреди события.
-- **Кнопка «нормализовать к −23»** — бесполезна всем, кроме вещателей, и требует
-  перекодировать уже записанный файл.
-- **f32-накопители громкости «ради скорости»** — 0.37 LU дрейфа за десять минут при
-  допуске 0.1; путь офлайновый, скорость не аргумент.
-- **Синхрон «на глазок» при низкой уверенности и кламп к нулю** — прижатое выглядит
-  синхронизированным; сдвиг с фленжером хуже отказа.
-- **Компенсация дрейфа в синхроне** — требует ретайминга видео; притворяться, что кнопка
-  это лечит, хуже, чем не иметь кнопки.
-- **Уточнение синхрона до сэмпла через MediaWorker** — 480 тиков = 1/8 кадра, хватает;
-  декод шёл бы мимо очереди воспроизведения.
-- **Рендерить вложенную ленту назад** — третий, ничей результат: внутренний реверб
-  обязан звучать вперёд внутри ленты (capability `compositions`).
+- **Caching the audio FX output** — a streaming automaton: the same piece on a second lap sounds different; the bytes would depend on the read history.
+- **Bypassing the warp in the tail for speed within the same round** — touches the byte path under `GOLDEN_AUDIO`; it was done as separate work (skipping a chunk past the gate), once it became clear that it is byte-identical by construction.
+- **A live sidechain** — a second input on the effect, buses, a format change (XL); the practical benefit is covered by the envelope.
+- **Output delay as the implementation of look-ahead** — the sound would drift from the picture by the window, and the tests would not see it.
+- **Muting below 0.25 / "minus = a second input on the Reverse button"** — rejected by the owner: stretch down to 0.01, minus is a speed envelope with a reversal in the middle of the event.
+- **A "normalize to −23" button** — useless to everyone except broadcasters, and it requires re-encoding an already recorded file.
+- **f32 loudness accumulators "for the sake of speed"** — 0.37 LU of drift over ten minutes against a tolerance of 0.1; the path is offline, speed is not an argument.
+- **Sync "by eye" at low confidence and a clamp to zero** — a pinned value looks synchronized; a shift with a flanger is worse than a refusal.
+- **Drift compensation in sync** — requires retiming the video; pretending that a button cures it is worse than not having a button.
+- **Refining the sync to the sample via MediaWorker** — 480 ticks = 1/8 of a frame, which is enough; decoding would bypass the playback queue.
+- **Rendering a nested reel backwards** — a third result that belongs to no one: the inner reverb must sound forward inside the reel (capability `compositions`).
 
-## Неочевидные детали
+## Non-obvious details
 
-- Осью зеркала reversed-события служит `kt_fx::chain_source_used`
-  (`src/libs/kt-fx/src/audio/mod.rs`), а не `.end` окна `chain_source_window_ext`:
-  в конец входит `WARP_SOURCE_MARGIN_FRAMES` = 8192 кадра запаса ресемплера. Обе
-  величины живут в `SrcWindow` раздельно; та же ось обязана стоять в зеркальной ветке
-  `wanted_audio_bursts_for` (`src/libs/kt-engine/src/audio.rs`).
-- `FxStateStore::sync_clip` (`src/libs/kt-engine/src/fxstore.rs`) на ветке
-  переиспользования зовёт `ClipProcessor::set_src_in` (`src/libs/kt-fx/src/audio/mod.rs`)
-  — якорь переставляется швом. `reset()` тут не помогает: `hard_seek` и `seam` считают
-  позицию от того же поля. Там же сверяются `lookahead_frames()` со статической
-  `chain_lookahead` и `opts()` с настройками проекта — расхождение пересобирает процессор.
-- `ClipProcessor::read` (`src/libs/kt-fx/src/audio/mod.rs`) различает разрывы по
-  `next_local == i64::MIN`: так выглядит только состояние после `reset()`. Любой другой
-  прыжок — `seam`: `Warp::seek_source` (`src/libs/kt-fx/src/audio/warp.rs`) сбрасывает
-  готовый буфер ресемплера, но не состояние sinc'а и не реверб. Шов стоит ≈0.3 мс на
-  цепочку — поэтому цена места зависит от длины региона, и мерить её надо режимом
-  повтора `kt-cli probe … --time`, а не линейным прогоном.
-- `PullKind::{Output, Warmup}` (`src/libs/kt-fx/src/lib.rs`) — роль обращения к
-  источнику; промахи `Warmup` идут в `RenderStats.warmup_misses`, а не в `underruns`
-  (`src/libs/kt-engine/src/audio.rs`). `MIN_PREROLL_FRAMES` = 4800 там же — все
-  окна упреждения (лимитер ≤ 960, питч 4608) меньше него, иначе после seek'а кольцо
-  упреждающего узла было бы пустым.
-- `overlap_weight` (`src/libs/kt-engine/src/audio.rs`) берёт «первые два» из набора
-  накрывающих событий в ВОЗРАСТАЮЩЕМ порядке индексов — на этом порядке стоит
-  `GOLDEN_AUDIO` (сложение f32 не ассоциативно). Наборы строит `LaneCover` там же,
-  карты лежат в массиве по номеру дорожки: хэш на каждый кадр стоил 40 % на малых
-  проектах. Флаг `overlaps` закрывает путь у события, которое ни с кем не пересекается.
-- `ClipProcessor::produce` (`src/libs/kt-fx/src/audio/mod.rs`) пропускает чанк, целиком
-  лежащий за `gate_end = clip_len + tail_ext`, без ресемплера и чтения. Состояние варпа
-  при этом «отстаёт», и это безопасно: вернуться в материал можно только прыжком
-  `local`, а его ловит `read` и переставляет источник швом или seek'ом.
-- PDC: `produce` ведёт две позиции чанка — выходную `q` и входную `p = q + La`
-  (`src/libs/kt-fx/src/audio/mod.rs`); источник, варп и гейт хвоста живут во ВХОДНОМ
-  домене, узел слота k получает `q + ahead[k]`. Принятая цена: при живой кривой скорости
-  карта варпа сэмплируется по входной позиции — фаза кривой сдвинута на La (≤ 20 мс),
-  иначе потребление разошлось бы с `source_offset`. `LayerMix` поверх упреждающего узла
-  задерживает сухую сторону кольцом на «съеденное» окно, при нулевой дельте кольца нет.
-- Формула упреждения вида живёт в одном доме (`nodes::limiter_la_frames`,
-  `PITCH_LOOKAHEAD_FRAMES` в `src/libs/kt-fx/src/audio/nodes.rs`) и зовётся и узлом,
-  и статической `chain_lookahead`; аккумулятор OLA питча обязан вмещать чанк 1024 ПЛЮС
-  полное окно синтеза 2048 — на кольце 2048 результат зависел от нарезки буферов.
-- Знаковая скорость: `Warp::new`/`set_rate` (`src/libs/kt-fx/src/audio/warp.rs`)
-  берут `rate.abs()`, адрес даёт `chain_addr_knots` (`src/libs/kt-fx/src/audio/mod.rs`)
-  ранами постоянного направления, `fill_source_signed` (`src/libs/kt-engine/src/audio.rs`)
-  читает по ним. Удержание (|rate| < `RATE_AUDIO_FLOOR` = 0.01, `src/libs/kt-model`)
-  решается НА ЧАНК тем же правилом середины, что цели автоматизации; на кадр его
-  принимать нельзя — курсор ресемплера не переживёт. Отказ rubato в смене отношения
-  считается (`Warp::rejected`), раньше глотался `let _ =` и кривая молча застревала.
-- `has_warp` смотрит на МОДУЛЬ скорости (`src/libs/kt-engine/src/audio.rs`): постоянная
-  −1 растяжения не даёт и остаётся на плоском пути — поэтому t616 сверяет БАЙТЫ.
-- Сырой путь `render_frames_raw` играет всё через `render_plain_clip`
-  (`src/libs/kt-engine/src/audio.rs`), и заказ для него — `wanted_audio_bursts_raw`;
-  Playback-префетч при `dir < 0` ходит через него. Над вложением сырой путь обязан
-  оборачивать фетчер: адрес ленты в обычном фетчере — тишина плюс underrun'ы.
-- Аудио вешает окна переходов по `reel.transitions()` в `AudioRenderer::build_reel`
-  (`src/libs/kt-engine/src/audio.rs`), а не по корню проекта: переход внутри вложенной
-  ленты иначе молча не кроссфейдил. Окно наложенного перехода помечено `fade_*_excl`,
-  и `overlap_at` глушит зашитый equal-power — иначе двойное затухание.
-- У reversed-FX событий ручки перехода отключены (`head_ext`/`tail_ext` = 0 в
-  `render_fx_clip`, `src/libs/kt-engine/src/audio.rs`): зеркальный якорь источника
-  завязан на конец окна, расширение сдвинуло бы тело. Fade-веса действуют.
-- Суб-микс ленты: `NestStream` (`src/libs/kt-engine/src/fxstore.rs`) ключуется
-  `ClipId` экземпляра, продюсер в `src/libs/kt-engine/src/audio.rs` имеет ровно три
-  ветки (в кольце / догнать вперёд / канонический переезд с границы блока минус пре-ролл);
-  четвёртая ветка — новый сорт недетерминизма. Гейт переезда — по НЕМОНОТОННОСТИ чтения
-  (реверс или знаковая скорость), не по варпу. Заказ и чтение — одна `nest_read_window`.
-- `LoudnessMeter` (`src/libs/kt-fx/src/audio/loudness.rs`) держит в f64 всю цепочку, а
-  не «вот эту сумму»: сторожить по отдельности пришлось бы вечно. Обычный `Biquad` в f32
-  остаётся у эффектов — там он звучит, а не измеряет. Истинный пик считается полифазной
-  суммой только вокруг сэмплов, сравнимых с наибольшим: без гейта час файла стоил 4.4 с
-  на каждом открытии проекта (`build_observed`, `src/libs/kt-media/src/index.rs`).
-- Экспорт кормит метр готовым буфером чанка в `render_raw_audio`
-  (`src/libs/kt-engine/src/export.rs`); мастер-гейн есть только у `Player`
-  (`src/libs/kt-engine/src/player.rs`), и t407 сторожит, чтобы поле с таким смыслом не
-  появилось в `ProjectSettings` незаметно.
-- Дакинг: `duck_spans` (`src/libs/kt-engine/src/ducking.rs`) рендерит клон проекта с
-  одной дорожкой, RMS окном 960/шагом 480, окно не рвётся на границе чанка; паузы < 300 мс
-  сливаются, спаны < 150 мс отбрасываются — иначе кривая «икает» между словами.
-  `duck_curve_commands` (`src/libs/kt-model/src/ops.rs`) кладёт ключи в тиках МАТЕРИАЛА
-  через `clip_material_at` и ЗАМЕНЯЕТ существующую кривую `db`, а не наслаивает.
-- Синхрон: `offset_from_pyramids` (`src/libs/kt-media/src/sync.rs`) сравнивает `a[i]` с
-  `b[i + lag]`; первый блок сравнивается сам с собой (иначе ложный «онсет» на нулевом
-  блоке даёт корреляцию 0.98 у двух несвязанных шумов); стартовый уровень пирамиды
-  выбирается ПО ДЛИНЕ, а не «самый верхний» — на вершине один-два блока, и полного
-  поиска не случится. `sync_by_audio_commands` (`src/libs/kt-model/src/ops.rs`) ходит
-  только через `clip_timeline_at`/`clip_material_at` — своя арифметика уехала бы на реверсе.
-- Таблицы `loudness` и `sync_offset` в sidecar (`src/libs/kt-media/src/index.rs`)
-  хранят целые ×100 (round-trip байт-точен) и добавлены без бампа `SCHEMA_VERSION`
-  (бамп сносит пакетный индекс, пики и тумбы всех медиа); у `sync_offset` ключ — ПАРА,
-  и однородный `DELETE ... WHERE media_id` её не чистит (capability `media-index`).
-- Инвариант 5 в редакции Р.49: офлайн-путь (дакинг, индекс, экспорт) открывает СВОЙ
-  короткоживущий источник при трёх условиях — ни с кем не делится, темпа не обещает,
-  задача конечна и отменяема (`src/apps/kt-app/src/analysis.rs`, `bg.rs`). Кэш
-  воспроизведения прогрет только вокруг курсора, огибающей целой дорожки там нет.
+- The axis of the mirror of a reversed event is `kt_fx::chain_source_used` (`src/libs/kt-fx/src/audio/mod.rs`), not the `.end` of the window `chain_source_window_ext`: the end includes `WARP_SOURCE_MARGIN_FRAMES` = 8192 frames of resampler margin. Both quantities live separately in `SrcWindow`; the same axis MUST stand in the mirror branch of `wanted_audio_bursts_for` (`src/libs/kt-engine/src/audio.rs`).
+- `FxStateStore::sync_clip` (`src/libs/kt-engine/src/fxstore.rs`) in the reuse branch calls `ClipProcessor::set_src_in` (`src/libs/kt-fx/src/audio/mod.rs`) — the anchor is reassigned by a seam. `reset()` does not help here: `hard_seek` and `seam` compute the position from the same field. There, `lookahead_frames()` is also checked against the static `chain_lookahead`, and `opts()` against the project settings — a mismatch rebuilds the processor.
+- `ClipProcessor::read` (`src/libs/kt-fx/src/audio/mod.rs`) distinguishes breaks by `next_local == i64::MIN`: only the state after `reset()` looks like that. Any other jump is a `seam`: `Warp::seek_source` (`src/libs/kt-fx/src/audio/warp.rs`) discards the ready resampler buffer, but not the sinc state and not the reverb. A seam costs ≈0.3 ms per chain — so the price of the place depends on the length of the region, and it must be measured in the repeat mode of `kt-cli probe … --time`, not by a linear run.
+- `PullKind::{Output, Warmup}` (`src/libs/kt-fx/src/lib.rs`) is the role of an access to the source; `Warmup` misses go to `RenderStats.warmup_misses`, not to `underruns` (`src/libs/kt-engine/src/audio.rs`). `MIN_PREROLL_FRAMES` = 4800 is there too — all look-ahead windows (limiter ≤ 960, pitch 4608) are smaller than it, otherwise after a seek the ring of the look-ahead node would be empty.
+- `overlap_weight` (`src/libs/kt-engine/src/audio.rs`) takes the "first two" from the set of covering events in ASCENDING index order — `GOLDEN_AUDIO` rests on this order (f32 addition is not associative). The sets are built by `LaneCover` there; the maps lie in an array indexed by track number: a hash per frame cost 40 % on small projects. The `overlaps` flag closes the path for an event that intersects no other.
+- `ClipProcessor::produce` (`src/libs/kt-fx/src/audio/mod.rs`) skips a chunk lying entirely beyond `gate_end = clip_len + tail_ext`, without the resampler and without the read. The warp state "lags" in this case, and that is safe: one can return to the material only by a `local` jump, and `read` catches it and reassigns the source by a seam or a seek.
+- PDC: `produce` keeps two positions of the chunk — the output `q` and the input `p = q + La` (`src/libs/kt-fx/src/audio/mod.rs`); the source, the warp, and the tail gate live in the INPUT domain, and slot node k receives `q + ahead[k]`. The accepted price: with a live speed curve the warp map is sampled at the input position — the curve's phase is shifted by La (≤ 20 ms), otherwise the consumption would diverge from `source_offset`. A `LayerMix` on top of a look-ahead node delays the dry side by a ring over the "eaten" window; with a zero delta there is no ring.
+- The look-ahead formula of a kind lives in one home (`nodes::limiter_la_frames`, `PITCH_LOOKAHEAD_FRAMES` in `src/libs/kt-fx/src/audio/nodes.rs`) and is called both by the node and by the static `chain_lookahead`; the OLA accumulator of the pitch shifter MUST hold a chunk of 1024 PLUS the full synthesis window of 2048 — on a ring of 2048 the result depended on the slicing of the buffers.
+- Signed speed: `Warp::new`/`set_rate` (`src/libs/kt-fx/src/audio/warp.rs`) take `rate.abs()`, the address is given by `chain_addr_knots` (`src/libs/kt-fx/src/audio/mod.rs`) as runs of constant direction, and `fill_source_signed` (`src/libs/kt-engine/src/audio.rs`) reads along them. The hold (|rate| < `RATE_AUDIO_FLOOR` = 0.01, `src/libs/kt-model`) is decided PER CHUNK by the same midpoint rule as the automation targets; it MUST NOT be accepted per frame — the resampler cursor would not survive. A rejection by rubato on a change of ratio is counted (`Warp::rejected`); before, it was swallowed by `let _ =`, and the curve silently got stuck.
+- `has_warp` looks at the MODULUS of the speed (`src/libs/kt-engine/src/audio.rs`): a constant −1 gives no stretch and stays on the flat path — which is why t616 compares BYTES.
+- The raw path `render_frames_raw` plays everything through `render_plain_clip` (`src/libs/kt-engine/src/audio.rs`), and its order is `wanted_audio_bursts_raw`; the Playback prefetch with `dir < 0` goes through it. Over an embedding, the raw path MUST wrap the fetcher: the reel's address in an ordinary fetcher is silence plus underruns.
+- Audio attaches the transition windows via `reel.transitions()` in `AudioRenderer::build_reel` (`src/libs/kt-engine/src/audio.rs`), not via the project root: otherwise a transition inside a nested reel would silently not crossfade. The window of an overlapping transition is marked `fade_*_excl`, and `overlap_at` mutes the built-in equal-power — otherwise there is double fading.
+- For reversed FX events the transition handles are disabled (`head_ext`/`tail_ext` = 0 in `render_fx_clip`, `src/libs/kt-engine/src/audio.rs`): the mirror anchor of the source is tied to the end of the window, and extension would shift the body. The fade weights still apply.
+- The reel's sub-mix: `NestStream` (`src/libs/kt-engine/src/fxstore.rs`) is keyed by the instance's `ClipId`; the producer in `src/libs/kt-engine/src/audio.rs` has exactly three branches (in the ring / catch up forward / canonical move from the block boundary minus the pre-roll); a fourth branch is a new kind of nondeterminism. The gate of the move is decided by the NON-MONOTONICITY of the read (reverse or signed speed), not by the warp. The order and the read are one `nest_read_window`.
+- `LoudnessMeter` (`src/libs/kt-fx/src/audio/loudness.rs`) keeps the whole chain in f64, not "this particular sum": guarding it separately would mean guarding forever. The ordinary `Biquad` in f32 remains in the effects — there it sounds, rather than measures. The true peak is computed by a polyphase sum only around the samples comparable to the largest; without the gate an hour-long file cost 4.4 s on every opening of the project (`build_observed`, `src/libs/kt-media/src/index.rs`).
+- The export feeds the meter with the finished chunk buffer in `render_raw_audio` (`src/libs/kt-engine/src/export.rs`); the master gain exists only in `Player` (`src/libs/kt-engine/src/player.rs`), and t407 guards against a field with such a meaning appearing unnoticed in `ProjectSettings`.
+- Ducking: `duck_spans` (`src/libs/kt-engine/src/ducking.rs`) renders a clone of the project with a single track, RMS with a window of 960 / step of 480; the window is not broken at a chunk boundary; pauses < 300 ms are merged, spans < 150 ms are discarded — otherwise the curve "hiccups" between words. `duck_curve_commands` (`src/libs/kt-model/src/ops.rs`) places the keys in ticks of the MATERIAL via `clip_material_at` and REPLACES the existing `db` curve rather than layering onto it.
+- Sync: `offset_from_pyramids` (`src/libs/kt-media/src/sync.rs`) compares `a[i]` with `b[i + lag]`; the first block is compared with itself (otherwise a false "onset" on the zero block gives a correlation of 0.98 for two unrelated noises); the starting level of the pyramid is chosen BY LENGTH, not as "the topmost" — at the top there are one or two blocks, and a full search would never happen. `sync_by_audio_commands` (`src/libs/kt-model/src/ops.rs`) goes only through `clip_timeline_at`/`clip_material_at` — its own arithmetic would drift on a reversal.
+- The `loudness` and `sync_offset` tables in the sidecar (`src/libs/kt-media/src/index.rs`) store integers ×100 (the round-trip is byte-exact) and were added without bumping `SCHEMA_VERSION` (a bump would wipe the batch index, peaks, and thumbnails of all media); for `sync_offset` the key is a PAIR, and a uniform `DELETE ... WHERE media_id` does not clear it (capability `media-index`).
+- Invariant 5 in the wording of R.49: the offline path (ducking, index, export) opens ITS OWN short-lived source under three conditions — it is shared with no one, it promises no tempo, and its task is finite and cancellable (`src/apps/kt-app/src/analysis.rs`, `bg.rs`). The playback cache is warm only around the cursor; there is no envelope of a whole track there.
 
-## Отложено
+## Deferred
 
-- Обход ресемплера в хвосте варпа сверх пропуска чанка за гейтом (одна статья расхода
-  `problems1` остаётся).
-- Живой EBU-режим метра (M/S/I/LRA/dBTP в панели) и «привести к цели» с выбором цели.
-- Синхронизация по таймкоду (`tmcd` в kt-ffmpeg, поле в `MediaInfo`) и компенсация
-  дрейфа длинных дублей.
-- **Пересмотр Р.63: дакинг-СНИМОК → ЖИВОЙ САЙДЧЕЙН следующим change** (решение
-  владельца). «Дакинг работает в программе, например, через два компрессора» — то есть
-  компрессор с входом управления, а не записанная заранее огибающая. В Р.63 сделано
-  ровно то, что не трогает движок: имя по отрасли, секция в окне аудиодорожки вместо
-  своего окна, параметры инструмента в `user_store`; снимок кривой остался снимком, и
-  оговорка «поменяли голос — вызовите снова» вместе с ним. Следующий change —
-  `sidechain-ducking-compressor` (заметка `docs/features/audio/mixing/buses-and-track-fx.md`).
-- Мастер-лимитер (мастер-фейдер существует только в превью).
-- Формант-коррекция и движок питча на событие вместо настройки проекта.
-- Расширенный режим варпа (кривая ниже 0.25) ограничивает якорь 2× — срез
-  анти-алиасинга на быстрых участках грубее; принято осознанно.
-- **Р.62 B, дорожки:** огибающие ДОРОЖКИ (кривая по тику таймлайна, а не по материалу
-  события) — её ключ живёт в другой оси, и вводить его вместе со стадией значило бы
-  менять два контракта разом. Шины и посылы: у дорожки сегодня ровно один выход — микс.
-  Пропуск ДЕКОДА заглушённой дорожки: заказ префетча остаётся целым намеренно (инвариант
-  4 — «заказ == чтение»), цена как у Vegas, а снятие mute обязано звучать без холодного
-  старта.
+- Bypassing the resampler in the warp tail beyond skipping a chunk past the gate (one item of spending `problems1` remains).
+- A live EBU mode of the meter (M/S/I/LRA/dBTP in the panel) and "normalize to target" with a choice of target.
+- Sync by timecode (`tmcd` in kt-ffmpeg, a field in `MediaInfo`) and drift compensation for long duplicates.
+- **Revision of R.63: ducking SNAPSHOT → LIVE SIDECHAIN in the next change** (the owner's decision). "Ducking works in the program, for example via two compressors" — that is, a compressor with a control input, not an envelope recorded in advance. In R.63 only what does not touch the engine was done: the name according to the industry, a section in the audio track's window instead of its own window, the instrument's parameters in `user_store`; the curve snapshot remained a snapshot, and the caveat "if the voice was changed — call it again" stayed with it. The next change is `sidechain-ducking-compressor` (note `docs/features/audio/mixing/buses-and-track-fx.md`).
+- A master limiter (the master fader exists only in the preview).
+- Formant correction and a pitch engine per event instead of a project setting.
+- The extended warp mode (a curve below 0.25) limits the anchor to 2× — the anti-aliasing cut on fast sections is coarser; this was accepted deliberately.
+- **R.62 B, tracks:** envelopes of a TRACK (a curve along the timeline tick, not along the event's material) — its key lives on a different axis, and introducing it together with the stage would mean changing two contracts at once. Buses and sends: a track today has exactly one output — the mix. Skipping the DECODE of a muted track: the prefetch order stays whole deliberately (invariant 4 — "order == read"), the cost is as in Vegas, and unmuting MUST sound without a cold start.

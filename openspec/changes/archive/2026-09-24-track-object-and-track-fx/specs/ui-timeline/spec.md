@@ -2,40 +2,26 @@
 
 ## ADDED Requirements
 
-### Requirement: Дорожка на экране — бейджи, окно свойств, цепочка, замок как отказ
+### Requirement: Track on screen — badges, properties window, chain, lock as a refusal
+The track header SHALL carry a row of badges M / S / lock / FX under the name (service rows — only the lock); the width of the header strip SHALL be fixed by the gallery of the row and not change with state (rule 3), the badge's hit zone is at least 14 px (rule 1); the badge works repeatedly and during playback. The same verbs SHALL be in the right-click menu and on the hotkeys ALT+M / ALT+S — one body (rule 17); the bare M and S remain with the marker and the cut (the owner's bindings), and the target of the key is the track of the SELECTED event, without a selection — the row under the pointer. The "Track properties" window SHALL edit the name, level, blend mode, switches AND THE CHAIN in one session and in one undo step, hand back focus and close with an Esc cascade. The track chain SHALL be drawn with the same strip widget as for an event and a morpher; the track has no automation widget, and envelopes arriving with an inserted chain SHALL be rejected with a reason and an address of where to put them. A gesture over an event of a locked track SHALL be shown as an error with the track highlighted, not silent. The name and height of a track SHALL go through undo.
+Why: "Dead ends: you can create, you cannot control" — seven rounds; rule 13 forbids a full-height strip for three buttons, so the badges stand under the name in the place already occupied.
 
-Заголовок дорожки SHALL нести ряд бейджей M / S / замок / FX под именем (служебные строки —
-только замок); ширина полосы заголовков SHALL быть фиксирована галлеей ряда и не меняться
-от состояния (правило 3), хват-зона бейджа не меньше 14 px (правило 1); бейдж работает
-повторно и во время воспроизведения. Те же глаголы SHALL быть в меню правого клика и на
-горячих клавишах ALT+M / ALT+S — одно тело (правило 17); голые M и S остаются за меткой и
-разрезом (привязки владельца), а целью клавиши служит дорожка ВЫДЕЛЕННОГО события, без
-выделения — строка под указателем. Окно «Свойства дорожки» SHALL править имя, уровень,
-режим наложения, выключатели И ЦЕПОЧКУ одной сессией и одним undo-шагом, отдавать фокус и
-закрываться Esc-каскадом. Цепочка дорожки SHALL рисоваться тем же виджетом полосы, что у
-события и морфера; виджета автоматизации у дорожки нет, а огибающие, приехавшие со
-вставленной цепочкой, SHALL отвергаться с причиной и адресом, куда их класть. Жест над
-событием запертой дорожки SHALL показываться как ошибка с подсветкой дорожки, не молчать.
-Имя и высота дорожки SHALL ходить через undo.
-Почему: «Тупики: создать можно, управлять нельзя» — семь раундов; правило 13 запрещает
-полосу во всю высоту ради трёх кнопок, поэтому бейджи стоят под именем в уже занятом месте.
-
-#### Scenario: Бейджи попадают, не скачут, работают повторно
-- **WHEN** из точки человека нажимаются M, S, замок, FX у дорожки клипов и замок у морф-строки, дважды подряд, включая край бейджа у кромки окна; состояния меняются
-- **THEN** каждое нажатие доходит до модели (кромка окна кликов не ворует), ширина полосы заголовков не меняется, повторное нажатие снимает состояние, служебная строка без M/S/FX, ALT+M и ALT+S делают то же и не отбирают метку и разрез
+#### Scenario: The badges are hit, do not jump, work repeatedly
+- **WHEN** from the person's point M, S, lock, FX of a clip track and the lock of a morph row are pressed twice in a row, including the edge of the badge at the window edge; states change
+- **THEN** each press reaches the model (the window edge does not steal clicks), the width of the header strip does not change, a repeated press clears the state, the service row has no M/S/FX, ALT+M and ALT+S do the same and do not take away the marker and the cut
 - **TEST** t742 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Окно свойств дорожки
-- **WHEN** окно открыто дважды; правятся имя, уровень, режим, выключатели; «Отмена»
-- **THEN** правки — один undo-шаг, «Отмена» откатывает всё, фокус отдан, пределы — из паспорта
+#### Scenario: The track properties window
+- **WHEN** the window is opened twice; name, level, mode, switches are edited; "Cancel"
+- **THEN** the edits are one undo step, "Cancel" rolls back everything, focus is handed back, the limits come from the passport
 - **TEST** t743 (`src/apps/kt-app/src/layout_tests.rs`)
 
-#### Scenario: Цепочка дорожки в её окне
-- **WHEN** окно дорожки открыто; в полосу вставлена цепочка С ОГИБАЮЩИМИ
-- **THEN** полоса та же, что у события, эффект в модели одним шагом, кривые отброшены с названной причиной и адресом, а не молча; подписи из каталогов, глифы в шрифте
+#### Scenario: The track chain in its window
+- **WHEN** the track window is open; a chain WITH ENVELOPES is inserted into the strip
+- **THEN** the strip is the same as for an event, the effect is in the model in one step, the curves are dropped with a named reason and an address, not silently; the captions come from the catalogs, the glyphs are in the font
 - **TEST** t744 (`src/apps/kt-app/src/layout_tests.rs`), `i18n_tests.rs`, `font_tests.rs`
 
-#### Scenario: Замок отказывает жесту
-- **WHEN** событие на запертой дорожке тянут, тримят, режут, удаляют; правят её mute
-- **THEN** каждый жест — ошибка с подсветкой дорожки и причиной, модель не тронута; mute применён
+#### Scenario: A lock refuses a gesture
+- **WHEN** an event on a locked track is dragged, trimmed, cut, deleted; its mute is edited
+- **THEN** each gesture is an error with the track highlighted and a reason, the model is untouched; the mute is applied
 - **TEST** t745 (`src/apps/kt-app/src/layout_tests.rs`)
