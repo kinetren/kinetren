@@ -105,7 +105,7 @@ The most frequent live complaint from reconnaissance was "the music drowns out t
 - The tail lives in TWO formulas — `AudioNode::tail()` and the static `chain_tail`
   (`src/libs/kt-fx/src/audio/mod.rs`); the look-ahead — in `AudioNode::lookahead()` and
   `chain_lookahead` there; formulas of this kind are kept in one house (`nodes::limiter_la_frames`
-  is called by both sides). Agreement is guarded by t322 (е [e])/(ж [zh]); the tail tolerance of 2 % is for the integer truncation of line lengths.
+  is called by both sides). Agreement is guarded by t322 (f)/(g); the tail tolerance of 2 % is for the integer truncation of line lengths.
 - The filter recomputes its coefficients in sub-blocks of 128 frames from the smoothed parameters
   (`src/libs/kt-fx/src/audio/nodes.rs`, `FilterNode`): a chunk of 1024 = 21 ms is audible on sweeps
   as zipper noise; changing the cut kind does NOT re-create the state; the tail is the ringing of the resonance,

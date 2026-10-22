@@ -122,7 +122,7 @@ The owner's decisions that settle the note's open questions:
 
 ### THE DOOR APPEARED (R.67)
 
-Before R.67 the link existed in the model and in the tests, but there was NOTHING to assign it to a person with. The owner wrote: "about view curves, I don't understand at all how to assign/insert them". Now the curve block has an item "Driven by…" (curve events → their properties, by passports); the address is visible in the curve name; "«отвязать»" (unlink) returns the keys. Test t788 (`reach_tests.rs`).
+Before R.67 the link existed in the model and in the tests, but there was NOTHING to assign it to a person with. The owner wrote: "about view curves, I don't understand at all how to assign/insert them". Now the curve block has an item "Driven by…" (curve events → their properties, by passports); the address is visible in the curve name; "Unlink" returns the keys. Test t788 (`reach_tests.rs`).
 
 ## Sources
 

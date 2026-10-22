@@ -733,7 +733,7 @@ Complaint 3 turned out not to be a set of separate problems but one cause with f
 
 ### Second wave of R.43: the first pass did not help
 
-Complaints verbatim: "in problems1 there is still a problem; before the problems there was sound from the source "far" and with problems it's "salute", and the marked regions still have the problem, it feels like my project itself is breaking something in the program, because there is a slightly earlier version of the project untitled2_v26.09.04.otio where at least rendereg works correctly and зацикленность5 (looping5) also works without problems."
+Complaints verbatim: "in problems1 there is still a problem; before the problems there was sound from the source "far" and with problems it's "salute", and the marked regions still have the problem, it feels like my project itself is breaking something in the program, because there is a slightly earlier version of the project untitled2_v26.09.04.otio where at least rendereg works correctly and looping5 also works without problems."
 
 The user brought media files, BOTH versions of the project and two `ktflight.log` files. The earlier version was the answer: it has **zero morphers**, while the later one has seven. Everything else (sound from a foreign source, dead curves, a frozen region) turned out to be one defect — item 298.
 
@@ -860,7 +860,7 @@ After R.47 the owner asked "what next?", received three candidates and replied: 
 * **Presets are the user's file, not the model**: saving and deleting a preset do not go into the project's undo (undo edits the edit, not the library); deletion warns about this with a hint. The file survives unknown effects from future versions (they are kept as is) and is not overwritten by a newer format version.
 * In passing, the tail of R.38 is closed: inserting an FX chain into a morpher silently lost curves. The reconnaissance verdict explicitly forbade starting a preset library before this.
 
-→ implementation: items 337–348 of porting-notes, tests t322ж, t334–t350, feature notes F-AUD-001/002/013 and F-AUT-004 (all closed).
+→ implementation: items 337–348 of porting-notes, tests t322g, t334–t350, feature notes F-AUD-001/002/013 and F-AUT-004 (all closed).
 
 ## Round R.49 (2026-09-15): "let's do item 1, item 2, item 3, item 4" — durability, push channel, offline analysis
 
@@ -1256,7 +1256,7 @@ A consequence that the note predicted correctly and that was accepted together w
 * **Zigzag — a SHAPE of a segment** (a revision of the verdict of F-AUT-009 item 3, see above).
 * **The paste button is always active**; on press the real system clipboard is read; if it does not parse — an error with a reason. The mirror inside the program is removed.
 * **Remapping**: fields matching by name and type are placed silently; for the remainder — a matching window "curve → target parameter".
-* **Addressing of a link — any event of the project** (chosen against the recommendation "only one's own event"). The derived restriction: a link does not cross the boundary of a reel — outward because the reel would stop being self-contained and law Э would break, inward because public parameters of a composition already exist for that.
+* **Addressing of a link — any event of the project** (chosen against the recommendation "only one's own event"). The derived restriction: a link does not cross the boundary of a reel — outward because the reel would stop being self-contained and law E would break, inward because public parameters of a composition already exist for that.
 * **The default shape for new keys lives in the PROJECT**, not in the machine settings: a machine setting would give "one file — two behaviors" (a lesson of Vegas).
 * **Non-numeric values are also covered** (chosen against the recommendation "only number and color"): a flag — by threshold, a choice, text, media and color — by snapshots at the marks of the VALUE axis of the leading property.
 
@@ -1298,7 +1298,7 @@ Plus the earlier permissions: "On any points I may be wrong, ask questions where
 * **The default — "fit" with TRANSPARENT margins.** It scales both up and down.
 * **Geometry — a built-in node of the event, first in the chain, like Pan/Crop in Vegas.** The node can be dragged along the chain (effects before it work in source space, after it — in project frame), the leading one cannot be deleted, and the SAME node can be added from the catalog again later in the chain. The FX "Pan" (2D) is abolished; Pan3d and CamMotion remain effects and work on the conformed frame. Masks — a separate change afterwards, but the node is designed with a place for the mask.
 * **On placement: the first clip into an empty project sets the project settings** (raster, fps, if fps divides 90 000); afterwards a mismatch does NOT ask (UI rule 4), but is reported in the status line with the address "where to change it" (rules 16, 19).
-* **Reels get THEIR OWN raster and THEIR OWN fps** (chosen against the recommendation "raster only"). This is a revision of the R.50 decision "inherit everything" — confirmed by a separate question with the named consequences: law Э and the oracle "reel == expanded" hold only with settings equal to the project's; its own fps — quantization of the reel's continuous time to its grid (the frame is held, no blending), the audio grid is common; a reel instance is conformed by the same rule as a file.
+* **Reels get THEIR OWN raster and THEIR OWN fps** (chosen against the recommendation "raster only"). This is a revision of the R.50 decision "inherit everything" — confirmed by a separate question with the named consequences: law E and the oracle "reel == expanded" hold only with settings equal to the project's; its own fps — quantization of the reel's continuous time to its grid (the frame is held, no blending), the audio grid is common; a reel instance is conformed by the same rule as a file.
 * **"Different fps, different color encodings" of sources — not in this round**: create notes in docs/features (frame-rate conforming, color management) and record "Deferred".
 * **Track mute and solo — project content, and they apply to export** (chosen against the recommendation "solo — listening only"). Consequence: the render window must list the muted tracks and the active solo BEFORE start (rules 16, 19), and kt-cli must print them.
 * **Track properties in this round — all four**: level (dB / opacity), FX chain (audio and video), lock, blend mode of the video track.
@@ -1602,7 +1602,7 @@ From here on entries are written in English; the owner's words stay verbatim.
 
 Same day, about history and authorship:
 
-> Also — all the commits need to be translated into English, and those that don't translate (like "w", "ц") —
+> Also — all the commits need to be translated into English, and those that don't translate (like "w" or a single Cyrillic letter) —
 > write "wip". The commit times must be kept.
 
 > put the authorship log@kinetren.com everywhere and remove claude co-author from the commits (and messages) —

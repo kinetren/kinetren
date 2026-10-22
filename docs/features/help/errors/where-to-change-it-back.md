@@ -88,7 +88,7 @@ And one more thing that is visible only when you search for feedback: **there ar
 ## Cons
 
 - **The pointer lives longer than the place it points to.** As soon as the path is printed in prose, any rearrangement of the menu makes the text a lie — and a silent lie: no test can tell a correct path from a stale one.
-- **The price multiplies by languages.** The path is translated itself: `View → Economy UI` / `Вид → Экономный UI` / `视图 → 省电界面` / `عرض → واجهة موفرة`. One decision — five texts, each of which must be edited in sync with the menu.
+- **The price multiplies by languages.** The path is translated itself: `View → Economy UI` / `视图 → 省电界面` / `عرض → واجهة موفرة`. One decision — five texts, each of which must be edited in sync with the menu.
 - **A button leads away from the dialog.** The objection of Material 3 ("navigates the user away from the dialog") is real: a third action in a modal window breaks the choice for which the window was opened. Therefore a button is legitimate not everywhere, but where leaving is not a pity.
 - **The deep link tempts to persuade.** The Android ban ("don't link to system settings in an effort to convince the user to change their decision") is about the fact that the mechanism "where to get it back" easily degenerates into "change your mind".
 - **Discipline does not hold by itself.** The best example is inside Microsoft: the Win32 guide requires "Restore messages", while the VS Code guide for extension authors in the section "✔️ Do" prescribes "Add a **Do not show again** option for every notification" and says nothing about the way back.
@@ -198,13 +198,12 @@ ADDRESS: src/libs/kt-model/src/project.rs:3306 — the class "pressed once and c
   each, **2610 lines** (counted by `^([A-Za-z_0-9]+)\s*=\s*"(.*)"$`). Three
   questions to the corpus:
   1. *Does a value name the path in a menu?* A regex over the menu names of all five
-     languages (`File|Edit|View|Файл|Правка|Вид|文件|编辑|视图|Archivo|Editar|Ver|
+     languages (`File|Edit|View|文件|编辑|视图|Archivo|Editar|Ver|
      ملف|تحرير|عرض`) with a mandatory separator `/ → > »`. The result is **one key**,
-     `msg.ktproj_import_only` («Старый .ktproj открывается только
-     через Файл / Импортировать .ktproj…» — "The old .ktproj opens only
+     `msg.ktproj_import_only` ("The old .ktproj opens only
      via File / Import .ktproj…"), and it is about rule 18 (WHERE to FIND
      the action), not about 19 (WHERE to RESTORE the decision). The separator in the regex
-     is mandatory: without it the Arabic `عرض` («показ» — "display") and `ملف` («файл» — "file") give three
+     is mandatory: without it the Arabic `عرض` ("display") and `ملف` ("file") give three
      false hits in `cam.axis_fit_hint`, `hint.idle`,
      `msg.media_missing`.
   2. *Can the catalog say at all how to restore?* It can: **30 values**
@@ -212,9 +211,9 @@ ADDRESS: src/libs/kt-model/src/project.rs:3306 — the class "pressed once and c
      the `[tb]` section even declares this as a rule in a comment. The catalog says
      HOW; it never says WHERE.
   3. *Are there any words about restoring?* Four keys:
-     `hint.preview_detached` («закрой его, чтобы вернуть» — "close it to restore"),
-     `tl.lane.row_height` («ПКМ — сбросить» — "RMB — reset"), `mrph.revert_hint`,
-     `fx.cancel` («Отмена (вернуть как было)» — "Cancel (restore as it was)"). The first two name a GESTURE,
+     `hint.preview_detached` ("close it to restore"),
+     `tl.lane.row_height` ("RMB — reset"), `mrph.revert_hint`,
+     `fx.cancel` ("Cancel (restore as it was)"). The first two name a GESTURE,
      the last two — a rollback inside the window. None names a place.
 
   Result: rule 19 has been carried out **0 times out of 2610**.
@@ -338,7 +337,7 @@ A frame, not a spec. The main design decision that the round must make conscious
 
 Rule 19 is not "almost fulfilled" and not "partly fulfilled" — it has been fulfilled zero times out of 2610 catalog lines, and it was not fulfilled in the very round that produced it: the overlap option lives in the model, in the format and in the mix, and it cannot be switched by anything except hand-editing the .otio. The cause is exactly the same one that closed R.38: prose drops nothing. t252 did not miss this out of oversight but by design — it enumerates the variants of `enum Command`, while what was orphaned is not a command but a DECISION that lives as a project field.
 
-The reconnaissance has also changed the subject of the requirement itself. The owner asked for a phrase («IN THE BANNER SAY WHERE» — "В ПЛАШКЕ ГОВОРИ ГДЕ"), but for everyone whose mechanism works, this is not a phrase but an addressable object: a settings URI in VS Code, a generated table of anchors in Blender, `Configurable` in JetBrains. A phrase is cheap to write and expensive to maintain — it binds the text tightly to the location of a menu item, and for us this is also five languages, a third copy of the existing values outside t125, and Arabic, where the substitution of a path is physically wrong. Therefore we take the requirement, but not its form: the place is named by the BUTTON that leads there, and no printed path is put into the catalog at all.
+The reconnaissance has also changed the subject of the requirement itself. The owner asked for a phrase ("IN THE BANNER SAY WHERE"), but for everyone whose mechanism works, this is not a phrase but an addressable object: a settings URI in VS Code, a generated table of anchors in Blender, `Configurable` in JetBrains. A phrase is cheap to write and expensive to maintain — it binds the text tightly to the location of a menu item, and for us this is also five languages, a third copy of the existing values outside t125, and Arabic, where the substitution of a path is physically wrong. Therefore we take the requirement, but not its form: the place is named by the BUTTON that leads there, and no printed path is put into the catalog at all.
 
 A third thing that should be said directly: here we are not catching up. Of the five core editors, the number of dialogs that name the place of their own cancellation is zero, the number of transition buttons to the settings is zero, and Resolve does not document the pattern at all. The owner's requirement puts us ahead of the market, not level with it, and this is a rare case where "doing it as others do" is certainly worse than doing it as he asked.
 

@@ -3,7 +3,7 @@
 ## 1. Owner's words and the language rule
 
 - [x] 1.1 Add an entry to `docs/user-feedback.md` (English framing, owner's words verbatim in the original): README/screenshots/docs request, footage from `kt.9/sources/README_SOURCES`, slowed-reverb curves shown in README, "commits and all text from now on in English", owner publishes to GitHub; verify with `git diff docs/user-feedback.md`
-- [x] 1.2 Revise the language convention (design D7): `openspec/config.yaml` context + apply guidance, root `CLAUDE.md` agent rule on commit messages, memory note `kinotrain-auto-commit.md`/`MEMORY.md`; verify `openspec validate readme-showcase` still passes and `grep -n 'по-русски' openspec/config.yaml CLAUDE.md` shows no remaining "write in Russian" rule
+- [x] 1.2 Revise the language convention (design D7): `openspec/config.yaml` context + apply guidance, root `CLAUDE.md` agent rule on commit messages, memory note `kinotrain-auto-commit.md`/`MEMORY.md`; verify `openspec validate readme-showcase` still passes and `grep -n 'in Russian' openspec/config.yaml CLAUDE.md` shows no remaining "write in Russian" rule
 - [x] 1.3 Commit stage 1 (English message)
 
 ## 2. `kt-cli showcase`

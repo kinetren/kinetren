@@ -1,8 +1,8 @@
 # Contributing
 
 Kinetren is a cargo workspace in [`src/`](src). This page covers building, testing
-and the rules every change follows. The design documents linked from here are written
-in Russian; new text, code comments and commit messages are written in English.
+and the rules every change follows. Documentation, code comments and commit messages
+are written in English.
 
 ## Build
 

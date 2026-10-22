@@ -124,7 +124,7 @@ And on what the scope is opened for before grading at all — in a reply to the 
 ### What is missing
 
 - There are no instruments at all: `grep -rniE "histogram|vectorscope|parade|false
-  ?color|гистограм|вектороскоп"` over `src/` returns EXACTLY one match —
+  ?color"` over `src/` returns EXACTLY one match —
   the histogram of frame DIFFERENCES in `kt_gpu::assert_frames_close`
   (`src/libs/kt-gpu/src/lib.rs:39`), which is test diagnostics, not an instrument.
 - It is not decided WHAT we measure. The preview is computed at `preview_quality` —

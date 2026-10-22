@@ -185,7 +185,7 @@ auto is non-empty" preserves the bytes of old chains — `apply` sets the bases)
 the phase of the LFO is a FUNCTION OF POSITION (`lfo_phase` = the integral of the frequency curve,
 `param_integral` in kt-model), not a counter; an effect with memory MUST live in
 BOTH formulas of the tail — `AudioNode::tail()` and the static `chain_tail`
-(their agreement is guarded by t322е); on zero input in the tail the node rings out.
+(their agreement is guarded by t322f); on zero input in the tail the node rings out.
 
 Checklist "add an audio effect": an enum variant + serde defaults +
 `params_for!` + a constructor + `class() -> Audio` (DO NOT forget — otherwise silently
@@ -209,7 +209,7 @@ everything is arithmetically identical to the PDC version — GOLDEN_AUDIO stand
 
 Rules of a lookahead node:
 - **it lives in BOTH formulas** — `AudioNode::lookahead()` and the static
-  `chain_lookahead`; their agreement is guarded by t322ж. The formula is kept in ONE
+  `chain_lookahead`; their agreement is guarded by t322g. The formula is kept in ONE
   home (`limiter_la_frames` is called by both sides);
 - **lookahead is not a tail**: it enters the pre-roll of `hard_seek` and the window
   `chain_source_window_ext`, but NOT `chain_tail` (otherwise the event sounds

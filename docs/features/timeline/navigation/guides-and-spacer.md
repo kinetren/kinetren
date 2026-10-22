@@ -104,7 +104,7 @@ for a gesture over a mode, and it was obtained by counting, not by taste.
 - **A global "moves/does not move" lock is wrong each time.** It is right for one line and wrong for a neighbouring one standing two seconds away, and it switches for the whole project. This is the same disease as Vegas's ripple types, only made more cheaply.
 - **The spacer is the heaviest gesture on the timeline.** It touches everything to the right of the point on all tracks, and it is the only operation whose cost grows with the length of the film. Five tasks in a row in one tracker are about it being slow, hanging or crashing on large projects.
 - **"Everything to the right" is not the same as "everything that needs to be moved".** A locked track, a watermark spanning the whole length, a music bed: in Kdenlive it had to be asked for separately that the spacer not touch them. A scope you do not set explicitly has to be defined afterwards by requests for years.
-- **The word is taken.** In AE and Photoshop "guide" is a line in the FRAME, not in time; in Pitivi the only task with the word guide in the title is also about a composition grid in the monitor. A term taken into the Russian UI as "направляющая" [guide] will collide with the same line in the viewer, once hands reach the markup of the frame.
+- **The word is taken.** In AE and Photoshop "guide" is a line in the FRAME, not in time; in Pitivi the only task with the word guide in the title is also about a composition grid in the monitor. A term taken into the Russian UI as the word for "guide" will collide with the same line in the viewer, once hands reach the markup of the frame.
 
 ## What users say
 

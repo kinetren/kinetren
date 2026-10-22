@@ -221,7 +221,7 @@ not a message but behaviour, so they live here, not in `help/`.
   this note are counted over the three available ones, and the share of the topic in the third (pitivi)
   is shown separately precisely because two is too few.
 - Reproducing the numbers: `python3 src/scripts/tracker-rank.py --themes`
-  (the "fixes" column), `--theme 'аппарат/драйвер'`,
+  (the "fixes" column), `--theme 'hardware/driver'`,
   `--query 'nvenc|vaapi|qsv|cuda|movit|hardware accel'`.
 - https://invent.kde.org/multimedia/kdenlive/-/work_items/1594 (accessed
   08.09.2026)

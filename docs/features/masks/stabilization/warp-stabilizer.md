@@ -171,7 +171,7 @@ to stabilize already-stabilized (steadicam) footage with default settings:
 ### What already exists
 
 The executor of the second phase is half-written for us; the analysis of the first phase is not written at all. Checked by grep:
-`stabiliz|стабилиз|tracker|optical.flow|
+`stabiliz|tracker|optical.flow|
 rolling.shutter` over `src/` gives not a single hit in the code.
 
 - **The lower rung of the compensation ladder is an existing effect.**

@@ -126,7 +126,7 @@ The copy alongside (`.bak`) is not brought into this note: it is cheaper and cov
 
 - `python3 src/scripts/tracker-rank.py --query '(corrupt|damaged|truncated|zero.byte|0 bytes|empty).*(project|\.kdenlive|\.xges|save file)'` — 21 / 6346 (0.3%) kde-bugzilla, 7 / 2217 (0.3%) kde-invent, 1 / 2300 (0.0%) pitivi (08.09.2026)
 - `python3 src/scripts/tracker-rank.py --query 'save|autosave|backup|recover'` — 2.9% / 2.1% / 2.3% (08.09.2026)
-- `python3 src/scripts/tracker-rank.py --theme 'потеря данных' (data loss)` — 211 tasks, weight 333, share of real fixes among the closed ones 0.67 (08.09.2026)
+- `python3 src/scripts/tracker-rank.py --theme 'data loss'` — 211 tasks, weight 333, share of real fixes among the closed ones 0.67 (08.09.2026)
 - The count of `fsync` = 0 and `atomic` = 4 (all of them — `atomicity.h`/`atomic_base.h` in backtraces) was obtained by a direct pass over the dumps
   `~/.cache/kinotrain/trackers/*.jsonl` with task bodies: `--query` looks only at the title, labels and component
 - https://gitlab.gnome.org/GNOME/pitivi/-/work_items/2245 (access date 08.09.2026, from the dump)
